@@ -103,31 +103,31 @@ func TestMultiProviderE2E(t *testing.T) {
 	}
 
 	// (2) provider_id="openrouter" routes a turn to the OpenRouter-bound provider.
-	if got := runProviderTurn(t, svc, workspace, server.ProviderSelector{ProviderID: providerOpenRouter}); got != "REPLY-FROM-openrouter" {
+	if got := runProviderTurn(t, svc, server.ProviderSelector{ProviderID: providerOpenRouter}); got != "REPLY-FROM-openrouter" {
 		t.Fatalf("openrouter selector routed to %q, want REPLY-FROM-openrouter", got)
 	}
 
 	// (3) provider_id="openai" routes to the openai-bound provider (distinct reply).
-	if got := runProviderTurn(t, svc, workspace, server.ProviderSelector{ProviderID: providerOpenAI}); got != "REPLY-FROM-openai" {
+	if got := runProviderTurn(t, svc, server.ProviderSelector{ProviderID: providerOpenAI}); got != "REPLY-FROM-openai" {
 		t.Fatalf("openai selector routed to %q, want REPLY-FROM-openai", got)
 	}
 
 	// (4) provider_id="anthropic" routes a turn to the native-Anthropic-bound
 	// provider (distinct reply) — proving the registry wires it and per-session
 	// routing / engineDepsForProvider / capability intersection treat it as data.
-	if got := runProviderTurn(t, svc, workspace, server.ProviderSelector{ProviderID: providerAnthropic}); got != "REPLY-FROM-anthropic" {
+	if got := runProviderTurn(t, svc, server.ProviderSelector{ProviderID: providerAnthropic}); got != "REPLY-FROM-anthropic" {
 		t.Fatalf("anthropic selector routed to %q, want REPLY-FROM-anthropic", got)
 	}
 
 	// An unknown provider still ⇒ InvalidArgument (never a silent fallback).
-	_, err = svc.CreateSessionWithProvider(ctx, workspace, session.ModeDefault, defaultLimits(),
+	_, err = svc.CreateSessionWithProvider(ctx, session.ModeDefault, defaultLimits(),
 		server.ProviderSelector{ProviderID: "does-not-exist"})
 	if !errors.Is(err, server.ErrInvalidArgument) {
 		t.Fatalf("unknown-provider create error = %v, want ErrInvalidArgument", err)
 	}
 
 	// (5) zero selector ⇒ the shared default-provider engine (openai is the default).
-	zeroSess, err := svc.CreateSession(ctx, workspace, session.ModeDefault, defaultLimits())
+	zeroSess, err := svc.CreateSession(ctx, session.ModeDefault, defaultLimits())
 	if err != nil {
 		t.Fatalf("CreateSession(zero): %v", err)
 	}
@@ -183,7 +183,7 @@ func TestMultiProviderCapabilityEcho(t *testing.T) {
 	// (REPLY-FROM-openrouter) AND that session's caps reflect openrouter's intersected
 	// caps (Image:true), in ONE test.
 	imgModel, _ := firstImageModel(t, providerOpenRouter)
-	orSess, err := svc.CreateSessionWithProvider(ctx, workspace, session.ModeDefault, defaultLimits(),
+	orSess, err := svc.CreateSessionWithProvider(ctx, session.ModeDefault, defaultLimits(),
 		server.ProviderSelector{ProviderID: providerOpenRouter, ModelID: imgModel})
 	if err != nil {
 		t.Fatalf("create openrouter session: %v", err)
@@ -203,7 +203,7 @@ func TestMultiProviderCapabilityEcho(t *testing.T) {
 	// intersection is false, it DIFFERS from the openrouter echo (per-session), AND the
 	// turn routes to the openai-bound provider — proving routing and caps agree on the
 	// SAME provider per session.
-	oaSess, err := svc.CreateSessionWithProvider(ctx, workspace, session.ModeDefault, defaultLimits(),
+	oaSess, err := svc.CreateSessionWithProvider(ctx, session.ModeDefault, defaultLimits(),
 		server.ProviderSelector{ProviderID: providerOpenAI, ModelID: imgModel})
 	if err != nil {
 		t.Fatalf("create openai session: %v", err)
@@ -221,7 +221,7 @@ func TestMultiProviderCapabilityEcho(t *testing.T) {
 
 	// (5) zero-selector session ⇒ echo == DefaultCapabilities (the default provider's
 	// intersected caps). The default is openai (Image:false) on the empty model.
-	zeroSess, err := svc.CreateSession(ctx, workspace, session.ModeDefault, defaultLimits())
+	zeroSess, err := svc.CreateSession(ctx, session.ModeDefault, defaultLimits())
 	if err != nil {
 		t.Fatalf("create zero-selector session: %v", err)
 	}
@@ -272,7 +272,7 @@ func TestMultiProviderResolvedModelEcho(t *testing.T) {
 	// (a) zero-selector default session ⇒ DefaultResolvedModel: the default provider
 	// (openai) + the resolved cfg.Model ("gpt-5"), echoed verbatim — NOT the empty
 	// request model_id. The context window is the catalog's gpt-5 limit (>0).
-	zeroSess, err := svc.CreateSession(ctx, workspace, session.ModeDefault, defaultLimits())
+	zeroSess, err := svc.CreateSession(ctx, session.ModeDefault, defaultLimits())
 	if err != nil {
 		t.Fatalf("CreateSession(zero): %v", err)
 	}
@@ -288,7 +288,7 @@ func TestMultiProviderResolvedModelEcho(t *testing.T) {
 	// model), not the default and not a naive read-back. Use a real catalogued model
 	// so the window resolves from the catalog.
 	orModel, _ := firstImageModel(t, providerOpenRouter)
-	orSess, err := svc.CreateSessionWithProvider(ctx, workspace, session.ModeDefault, defaultLimits(),
+	orSess, err := svc.CreateSessionWithProvider(ctx, session.ModeDefault, defaultLimits(),
 		server.ProviderSelector{ProviderID: providerOpenRouter, ModelID: orModel})
 	if err != nil {
 		t.Fatalf("CreateSessionWithProvider(openrouter): %v", err)
@@ -339,7 +339,7 @@ func TestServerConfiguredDefaultModelEcho(t *testing.T) {
 	defer built.Close()
 	svc := built.Service
 
-	sess, err := svc.CreateSession(ctx, workspace, session.ModeDefault, defaultLimits())
+	sess, err := svc.CreateSession(ctx, session.ModeDefault, defaultLimits())
 	if err != nil {
 		t.Fatalf("CreateSession(zero-selector): %v", err)
 	}
@@ -365,7 +365,7 @@ func TestServerConfiguredDefaultModelEcho(t *testing.T) {
 	// default: the echo and the routing both follow the selector (the configured
 	// tier sits BELOW client-side choices in the precedence chain).
 	const selModel = "gpt-5"
-	selSess, err := svc.CreateSessionWithProvider(ctx, workspace, session.ModeDefault, defaultLimits(),
+	selSess, err := svc.CreateSessionWithProvider(ctx, session.ModeDefault, defaultLimits(),
 		server.ProviderSelector{ProviderID: providerOpenAI, ModelID: selModel})
 	if err != nil {
 		t.Fatalf("CreateSessionWithProvider(openai selector): %v", err)
@@ -415,7 +415,7 @@ func TestResolvedModelMCPOnlySessionMatchesDefaultWindow(t *testing.T) {
 	svc := built.Service
 
 	// The default-path window (no per-session engine) — the single-source value.
-	dfltSess, err := svc.CreateSession(ctx, workspace, session.ModeDefault, defaultLimits())
+	dfltSess, err := svc.CreateSession(ctx, session.ModeDefault, defaultLimits())
 	if err != nil {
 		t.Fatalf("CreateSession(default): %v", err)
 	}
@@ -428,7 +428,7 @@ func TestResolvedModelMCPOnlySessionMatchesDefaultWindow(t *testing.T) {
 	// specs are attached. The unreachable URL degrades to core-only tools but the
 	// per-session-engine factory path still runs (the catalog-seed window fix lives
 	// there).
-	mcpSess, err := svc.CreateSessionWithMCP(ctx, workspace, session.ModeDefault, defaultLimits(),
+	mcpSess, err := svc.CreateSessionWithMCP(ctx, session.ModeDefault, defaultLimits(),
 		[]mcp.ServerConfig{{Name: "docs", URL: "https://unreachable.invalid/mcp"}})
 	if err != nil {
 		t.Fatalf("CreateSessionWithMCP(zero selector + spec): %v", err)
@@ -495,7 +495,6 @@ func TestSessionCapabilitiesNoSecrets(t *testing.T) {
 	h := server.NewHarnessServer(svc)
 	imgModel, _ := firstImageModel(t, providerOpenRouter)
 	resp, err := h.CreateSession(ctx, &mecatlv1.CreateSessionRequest{
-		Workspace:  workspace,
 		ProviderId: providerOpenRouter,
 		ModelId:    imgModel,
 	})
@@ -566,7 +565,7 @@ func TestSubAgentPinsAnthropic(t *testing.T) {
 	defer built.Close()
 	svc := built.Service
 
-	sess, err := svc.CreateSession(ctx, workspace, session.ModeDefault, defaultLimits())
+	sess, err := svc.CreateSession(ctx, session.ModeDefault, defaultLimits())
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -587,9 +586,9 @@ func TestSubAgentPinsAnthropic(t *testing.T) {
 
 // runProviderTurn creates a session bound to sel, drives one turn, and returns the
 // terminal text (so the test can assert which provider backed it).
-func runProviderTurn(t *testing.T, svc *server.Service, workspace string, sel server.ProviderSelector) string {
+func runProviderTurn(t *testing.T, svc *server.Service, sel server.ProviderSelector) string {
 	t.Helper()
-	sess, err := svc.CreateSessionWithProvider(context.Background(), workspace, session.ModeDefault, defaultLimits(), sel)
+	sess, err := svc.CreateSessionWithProvider(context.Background(), session.ModeDefault, defaultLimits(), sel)
 	if err != nil {
 		t.Fatalf("CreateSessionWithProvider(%+v): %v", sel, err)
 	}

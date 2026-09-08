@@ -1,0 +1,29 @@
+// SPDX-FileCopyrightText: Copyright 2026 Stacklok, Inc.
+// SPDX-License-Identifier: LicenseRef-Stacklok-Proprietary
+
+// Privileged local-client workspace-context API (ADR 0296).
+//
+// This service is deliberately separate from HarnessService. It is registered only
+// for operator-enabled, local-client-trusted listeners; ordinary gRPC and HTTP
+// surfaces must not expose its physical workspace-path projection.
+syntax = "proto3";
+
+package mecatl.v1;
+
+import "buf/validate/validate.proto";
+
+// LocalSessionContextService exposes the narrow privileged projection required by
+// local clients. workspace_path is observational only: it grants no authority to
+// create, rebind, fork, or otherwise select a session placement.
+service LocalSessionContextService {
+  rpc GetLocalSessionContext(GetLocalSessionContextRequest) returns (GetLocalSessionContextResponse);
+}
+
+message GetLocalSessionContextRequest {
+  string session_id = 1 [(buf.validate.field).string.min_len = 1];
+}
+
+message GetLocalSessionContextResponse {
+  // workspace_path is a privileged local-client disclosure, not placement authority.
+  string workspace_path = 1;
+}

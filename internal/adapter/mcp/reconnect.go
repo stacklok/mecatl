@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/url"
 	"strings"
 	"syscall"
 	"unicode/utf8"
@@ -46,7 +47,6 @@ var connectionDropSignatures = []string{
 	"client is closing",
 	"connection closed",
 	"connection refused",
-	"http: server closed idle connection",
 	"EOF",
 }
 
@@ -86,6 +86,29 @@ func isConnectionDrop(err error) bool {
 		}
 	}
 	return false
+}
+
+// isAmbiguousTransportFailure reports a request whose delivery cannot be known.
+// net/http emits this unexported error after an idle server connection closes while
+// a POST may already have been written. It must be normalized for the model but
+// never retried: replaying a mutating MCP call could apply it twice.
+func isAmbiguousTransportFailure(err error) bool {
+	var urlErr *url.Error
+	return errors.As(err, &urlErr) && urlErr.Err != nil &&
+		urlErr.Err.Error() == "http: server closed idle connection"
+}
+
+// unavailableMessage returns a safe model-facing error for a transport failure.
+// An ambiguous delivery is never retried, whereas an unambiguous session drop
+// retains the existing reconnect-and-retry behavior.
+func unavailableMessage(err error, operation, server string) string {
+	if isAmbiguousTransportFailure(err) {
+		return fmt.Sprintf("%s: MCP server %q unavailable; request outcome is unknown", operation, server)
+	}
+	if isConnectionDrop(err) || errors.Is(err, errReconnectFailed) {
+		return fmt.Sprintf("%s: MCP server %q unavailable after reconnect", operation, server)
+	}
+	return ""
 }
 
 // liveSession returns the live SDK session, re-establishing it if the current

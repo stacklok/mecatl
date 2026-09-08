@@ -5,6 +5,11 @@ import (
 	"sync"
 )
 
+// ArtifactHandle is an opaque handle for a preserved delegation artifact. It is
+// deliberately distinct from the server's placement-selector protocol: artifact
+// discovery never grants placement authority, and no placement API accepts this value.
+type ArtifactHandle string
+
 // PreservedForkStore is the seam the Parallel tool uses to retain a winning branch's
 // PRESERVED fork (join=first / join=judge) under a BOUNDED policy. A winner's
 // fork is intentionally not torn down at the end of the call — its contents are
@@ -22,11 +27,10 @@ import (
 // Implementations must be safe for concurrent use: several Parallel calls can finish
 // concurrently and each preserves at most one winner.
 type PreservedForkStore interface {
-	// Preserve records a winning fork's root path and the cleanup that tears it
-	// down. The store retains it (keeping the fork on disk) until the cap forces
-	// its eviction, at which point it invokes cleanup. A nil cleanup is ignored
-	// (nothing to reap); root is used only for identity/diagnostics.
-	Preserve(root string, cleanup func() error)
+	// Preserve records a winning fork under an opaque artifact handle and retains
+	// its private cleanup capability until eviction. The handle is safe to surface;
+	// the physical root remains private to the Environment and cleanup closure.
+	Preserve(handle ArtifactHandle, cleanup func() error)
 }
 
 // LRUForkReaper is a process-scoped, bounded PreservedForkStore: it keeps the
@@ -45,14 +49,13 @@ type LRUForkReaper struct {
 	closed    bool
 	evictions sync.WaitGroup
 	closeDone chan struct{}
-	order     *list.List               // front = oldest, back = newest
-	elems     map[string]*list.Element // root -> element (dedupes re-preserved roots)
+	order     *list.List                       // front = oldest, back = newest
+	elems     map[ArtifactHandle]*list.Element // handle -> element
 }
 
-// preservedFork is one retained winner fork: its root and the cleanup that reaps
-// it. Stored as a *list.Element value in the LRU order list.
+// preservedFork is one retained winner artifact and its cleanup capability.
 type preservedFork struct {
-	root    string
+	handle  ArtifactHandle
 	cleanup func() error
 }
 
@@ -72,16 +75,16 @@ func NewLRUForkReaper(capacity int) *LRUForkReaper {
 		cap:       capacity,
 		closeDone: make(chan struct{}),
 		order:     list.New(),
-		elems:     make(map[string]*list.Element),
+		elems:     make(map[ArtifactHandle]*list.Element),
 	}
 }
 
 // Preserve records a winner fork and reaps the oldest beyond the cap. Re-preserving
-// the same root refreshes its recency (and adopts the new cleanup) rather than
+// the same handle refreshes its recency (and adopts the new cleanup) rather than
 // double-counting. A nil cleanup is ignored. After Close, cleanup runs immediately.
 // Cleanup runs OUTSIDE the lock so a slow filesystem teardown does not serialize
 // concurrent Parallel calls.
-func (r *LRUForkReaper) Preserve(root string, cleanup func() error) {
+func (r *LRUForkReaper) Preserve(handle ArtifactHandle, cleanup func() error) {
 	if cleanup == nil {
 		return
 	}
@@ -93,22 +96,22 @@ func (r *LRUForkReaper) Preserve(root string, cleanup func() error) {
 		_ = cleanup()
 		return
 	}
-	if el, ok := r.elems[root]; ok && root != "" {
+	if el, ok := r.elems[handle]; ok && handle != "" {
 		// Already tracked: refresh recency and adopt the latest cleanup.
-		el.Value = preservedFork{root: root, cleanup: cleanup}
+		el.Value = preservedFork{handle: handle, cleanup: cleanup}
 		r.order.MoveToBack(el)
 	} else {
-		el := r.order.PushBack(preservedFork{root: root, cleanup: cleanup})
-		if root != "" {
-			r.elems[root] = el
+		el := r.order.PushBack(preservedFork{handle: handle, cleanup: cleanup})
+		if handle != "" {
+			r.elems[handle] = el
 		}
 	}
 	for r.order.Len() > r.cap {
 		front := r.order.Front()
 		pf := front.Value.(preservedFork)
 		r.order.Remove(front)
-		if pf.root != "" {
-			delete(r.elems, pf.root)
+		if pf.handle != "" {
+			delete(r.elems, pf.handle)
 		}
 		evicted = append(evicted, pf.cleanup)
 	}

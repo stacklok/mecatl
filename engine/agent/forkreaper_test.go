@@ -93,7 +93,7 @@ func TestLRUForkReaperCloseReapsRetainedForksOnce(t *testing.T) {
 	r := agent.NewLRUForkReaper(2)
 	for i := range cleaned {
 		i := i
-		r.Preserve(fmt.Sprintf("/fork/%d", i), func() error {
+		r.Preserve(agent.ArtifactHandle(fmt.Sprintf("/fork/%d", i)), func() error {
 			cleaned[i].Add(1)
 			return nil
 		})
@@ -142,7 +142,7 @@ func TestLRUForkReaperConcurrentPreserveAndCloseCleansEveryFork(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-start
-			r.Preserve(fmt.Sprintf("/fork/%d", i), func() error {
+			r.Preserve(agent.ArtifactHandle(fmt.Sprintf("/fork/%d", i)), func() error {
 				cleaned[i].Add(1)
 				return nil
 			})
@@ -176,6 +176,7 @@ type uniqueForker struct {
 	mu      sync.Mutex
 	seq     int
 	cleaned map[string]bool
+	winners []string
 }
 
 func newUniqueForker() *uniqueForker { return &uniqueForker{cleaned: map[string]bool{}} }
@@ -184,6 +185,9 @@ func (m *uniqueForker) Fork(_ context.Context, _ tool.Environment, label string)
 	m.mu.Lock()
 	m.seq++
 	root := fmt.Sprintf("/fork/%s/%d", label, m.seq)
+	if label == "branch-2" {
+		m.winners = append(m.winners, root)
+	}
 	m.mu.Unlock()
 	ws := memfs.NewWorkspace(root)
 	cleanup := func() error {
@@ -230,8 +234,14 @@ func TestForkWinnerReaperBoundsPreservedForks(t *testing.T) {
 		if err != nil || res.IsError {
 			t.Fatalf("call %d: err=%v res=%+v", i, err, res)
 		}
-		// The winner (branch-2) is preserved; extract its reported root from the result.
-		root := extractWinnerRoot(t, res.Content)
+		// Capture the private winner root from the test forker rather than from the
+		// public result.
+		uf.mu.Lock()
+		root := uf.winners[len(uf.winners)-1]
+		uf.mu.Unlock()
+		if strings.Contains(res.Content, root) {
+			t.Fatalf("call %d leaked winner root in result: %s", i, res.Content)
+		}
 		winnerRoots = append(winnerRoots, root)
 	}
 
@@ -250,20 +260,4 @@ func TestForkWinnerReaperBoundsPreservedForks(t *testing.T) {
 			t.Fatalf("old winner %q (call %d) was NOT reaped (unbounded leak)", root, i)
 		}
 	}
-}
-
-// extractWinnerRoot pulls the preserved winner workspace path out of a join=judge
-// result body ("winner workspace (ephemeral ...): <root>").
-func extractWinnerRoot(t *testing.T, content string) string {
-	t.Helper()
-	const marker = "): "
-	for _, line := range strings.Split(content, "\n") {
-		if strings.Contains(line, "winner workspace (ephemeral") {
-			if j := strings.Index(line, marker); j >= 0 {
-				return line[j+len(marker):]
-			}
-		}
-	}
-	t.Fatalf("no winner workspace path in result:\n%s", content)
-	return ""
 }

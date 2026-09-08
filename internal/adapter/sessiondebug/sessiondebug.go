@@ -110,13 +110,14 @@ func (t *inspectTool) revalidateScope(ctx context.Context, binding *lineageNode)
 func (*inspectTool) Spec() tool.ToolSpec {
 	return tool.ToolSpec{
 		Name:        ToolName,
-		Description: "Inspect bounded read-only evidence rooted at the debug target. Start with status and related; use returned opaque scope/history handles to inspect retained authorized descendants and archived history. Raw session IDs are never accepted.",
+		Description: "Inspect bounded read-only evidence rooted at the debug target. Start with status and related. Omit scope_handle for root/target views; only opaque scope handles returned by related evidence select retained authorized descendants. Use returned history handles to inspect archived history. Raw session IDs are never accepted.",
 		Schema:      json.RawMessage(`{"type":"object","properties":{"view":{"type":"string","enum":["status","transcript","activity","performance","network","related","delegation","history","manifest"]},"scope_handle":{"type":"string"},"history_handle":{"type":"string"},"offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1}},"required":["view"],"additionalProperties":false}`),
 	}
 }
 
 func (*inspectTool) ReadOnly() bool { return true }
 
+//nolint:gocyclo // The view dispatch preserves the target-bound evidence contract in one place.
 func (t *inspectTool) Execute(ctx context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	var args inspectArgs
 	if msg, ok := session.ParseArgs(call, &args); !ok {
@@ -125,11 +126,17 @@ func (t *inspectTool) Execute(ctx context.Context, call session.ToolCall, _ tool
 	if args.Offset < 0 || args.Limit < 0 {
 		return session.NewToolError(call.ID, "offset must be non-negative and limit must be positive when set"), nil
 	}
+	if args.ScopeHandle == rootScope {
+		args.ScopeHandle = ""
+	}
 	root, err := t.loadTarget(ctx)
 	if err != nil {
 		return session.NewToolError(call.ID, err.Error()), nil
 	}
-	graph := t.scanLineage(ctx, root)
+	var graph lineageGraph
+	if args.ScopeHandle != "" || args.View == "related" || args.View == "delegation" {
+		graph = t.scanLineage(ctx, root)
+	}
 	target, scope, scopeBinding, err := t.resolveScope(ctx, root, graph, args.ScopeHandle)
 	if err != nil {
 		return session.NewToolError(call.ID, err.Error()), nil

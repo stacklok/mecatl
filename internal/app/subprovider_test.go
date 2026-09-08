@@ -20,7 +20,6 @@ import (
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/agents"
 	"github.com/stacklok/mecatl/internal/adapter/hookexec"
-	"github.com/stacklok/mecatl/internal/adapter/osfs"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/adapter/slogdiag"
 	"github.com/stacklok/mecatl/internal/adapter/tokenizer"
@@ -305,7 +304,7 @@ func TestDefaultConfigPolicyEvaluatesWithoutPanic(t *testing.T) {
 	defer built.Close()
 	svc := built.Service
 
-	sess, err := svc.CreateSession(ctx, workspace, session.ModeDefault, defaultLimits())
+	sess, err := svc.CreateSession(ctx, session.ModeDefault, defaultLimits())
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -387,7 +386,7 @@ func TestSubproviderHalfAFullBuildE2E(t *testing.T) {
 	defer built.Close()
 	svc := built.Service
 
-	sess, err := svc.CreateSession(ctx, workspace, session.ModeDefault, defaultLimits())
+	sess, err := svc.CreateSession(ctx, session.ModeDefault, defaultLimits())
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -420,7 +419,7 @@ func writeFile(t *testing.T, dir, name, content string) {
 func runSubagentAgent(t *testing.T, _ *mockllm.Provider, engines map[string]*agent.Engine, meta []agent.AgentMeta, name string) string {
 	t.Helper()
 	defaultEngine := agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Model: "gpt-5"})
-	task := agent.NewSubagentTool(defaultEngine, agent.WithAgentEngines(engines, meta))
+	task := newTestSubagentTool(defaultEngine, agent.WithAgentEngines(engines, meta))
 	parentCat := tool.NewCatalog()
 	parentCat.MustRegister(task)
 
@@ -435,7 +434,7 @@ func runSubagentAgent(t *testing.T, _ *mockllm.Provider, engines map[string]*age
 		Model:   "gpt-5",
 	})
 	r := e.Run(context.Background(),
-		session.New("s1", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0)),
+		session.New("s1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0)),
 		memEnvironment("/ws"), agent.RunRequest{Text: "go"})
 
 	var last string
@@ -615,17 +614,10 @@ func TestHalfBSelectedSessionCapBounded(t *testing.T) {
 	store := memstore.New()
 	policy := permpolicy.NewPolicy([]governance.Rule{{Effect: governance.Allow}}, nil)
 	factory := sessionEngineFactory(Config{Model: "gpt-5"}, reg, oa, store, policy, hookexec.New(nil), nil, nil, catalogAssets{agentReg: defs}, nil)
-	wsFactory := func(root string) tool.Workspace {
-		ws, werr := osfs.NewWorkspace(root)
-		if werr != nil {
-			t.Fatalf("osfs workspace %q: %v", root, werr)
-		}
-		return ws
-	}
-	svc, err := server.NewService(server.Config{
-		Engine:            noopEngine(),
-		Store:             store,
-		Workspaces:        wsFactory,
+	svc, err := newTestServerService(server.Config{
+		Engine: noopEngine(),
+		Store:  store,
+
 		Now:               func() time.Time { return time.Unix(0, 0) },
 		SessionEngine:     factory,
 		MaxSessionEngines: 1,
@@ -637,18 +629,18 @@ func TestHalfBSelectedSessionCapBounded(t *testing.T) {
 
 	// Cap is 1: a single selected session fills the one slot regardless of its 3
 	// per-def child engines; CloseSession frees it; a second create then succeeds.
-	sess, err := svc.CreateSessionWithProvider(context.Background(), t.TempDir(), session.ModeDefault, defaultLimits(),
+	sess, err := svc.CreateSessionWithProvider(context.Background(), session.ModeDefault, defaultLimits(),
 		server.ProviderSelector{ProviderID: providerOpenRouter})
 	if err != nil {
 		t.Fatalf("first selected create (with 3 per-def children): %v", err)
 	}
 	// A second selected session must hit the cap (proving the first counts as ONE).
-	if _, err := svc.CreateSessionWithProvider(context.Background(), t.TempDir(), session.ModeDefault, defaultLimits(),
+	if _, err := svc.CreateSessionWithProvider(context.Background(), session.ModeDefault, defaultLimits(),
 		server.ProviderSelector{ProviderID: providerOpenRouter}); err == nil {
 		t.Fatal("second selected create should hit MaxSessionEngines=1 (the first counts as ONE entry)")
 	}
 	svc.CloseSession(sess.ID)
-	if _, err := svc.CreateSessionWithProvider(context.Background(), t.TempDir(), session.ModeDefault, defaultLimits(),
+	if _, err := svc.CreateSessionWithProvider(context.Background(), session.ModeDefault, defaultLimits(),
 		server.ProviderSelector{ProviderID: providerOpenRouter}); err != nil {
 		t.Fatalf("after CloseSession the slot should free: %v", err)
 	}
@@ -664,7 +656,7 @@ func runFactorySubagentTurn(t *testing.T, factory server.SessionEngineFactory, s
 		t.Fatalf("factory(%+v): %v", sel, err)
 	}
 	defer func() { _ = res.Close() }()
-	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{MaxTurns: 5}, time.Now())
+	sess := session.New("s1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 5}, time.Now())
 	r := res.Engine.Run(context.Background(), sess, memEnvironment("/ws"), agent.RunRequest{Text: "go", Parts: nil})
 	var last string
 	for ev := range r.Events() {

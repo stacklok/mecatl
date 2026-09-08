@@ -21,8 +21,21 @@ func TestPermanentErrorBlockRendersSummary(t *testing.T) {
 	if !strings.Contains(out, "invalid_encrypted_content: the provider rejected the encrypted payload") {
 		t.Errorf("collapsed permanent error must contain the first-line summary, got %q", out)
 	}
-	if !strings.Contains(out, "retrying won't help") {
-		t.Errorf("collapsed permanent error must contain retry advisory, got %q", out)
+	if !strings.Contains(out, "ctrl+t shows details") {
+		t.Errorf("collapsed permanent error must name the default details chord, got %q", out)
+	}
+}
+
+func TestPermanentErrorBlockUsesLiveExpandToolsChord(t *testing.T) {
+	m, _, _ := newTestModel(t, theme.New("aztec", theme.AztecPalette()), func(deps *Deps) {
+		deps.KeyOverrides = map[string][]string{"ExpandTools": {"ctrl+f11"}}
+	})
+	c := &conversation{}
+	c.addPermanentError("invalid request")
+
+	out := stripANSIstr(m.rend.renderBlock(0, &c.blocks[0], false))
+	if !strings.Contains(out, "ctrl+f11 shows details") || strings.Contains(out, "ctrl+t shows details") {
+		t.Errorf("collapsed permanent error must use the live details chord, got %q", out)
 	}
 }
 

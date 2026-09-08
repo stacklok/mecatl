@@ -1,6 +1,5 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
@@ -23,13 +22,25 @@ export interface ReadyDocument {
 export interface Daemon {
   ready: ReadyDocument;
   runtimeDirectory: string;
+  storeDirectory: string;
   workspace: string;
+  restart(options?: DaemonRestartOptions): Promise<void>;
 }
 
-interface DaemonOptions {
+export interface DaemonOptions {
+  durable?: boolean;
   http?: boolean;
   script?: string;
   uds?: boolean;
+}
+
+export interface DaemonRestartOptions {
+  script?: string;
+}
+
+interface RunningDaemon {
+  child: ChildProcess;
+  ready: ReadyDocument;
 }
 
 export function fixture(name: string): string {
@@ -40,10 +51,69 @@ export async function withDaemon<T>(
   options: DaemonOptions,
   run: (daemon: Daemon) => Promise<T>,
 ): Promise<T> {
-  const runtimeDirectory = await mkdtemp(join(tmpdir(), "mecatl-sdk-e2e-"));
+  const scratchDirectory = join(repositoryRoot, ".scratch");
+  await mkdir(scratchDirectory, { recursive: true });
+  const runtimeDirectory = await mkdtemp(join(scratchDirectory, "sdk-e2e-"));
   const readyFile = join(runtimeDirectory, "ready.json");
+  const storeDirectory = join(runtimeDirectory, "store");
   const workspace = join(runtimeDirectory, "workspace");
-  await mkdir(workspace);
+  await Promise.all([mkdir(storeDirectory), mkdir(workspace)]);
+  let effectiveOptions = { ...options };
+  try {
+    let running = await startDaemon(
+      effectiveOptions,
+      readyFile,
+      storeDirectory,
+      workspace,
+      undefined,
+    );
+    const daemon: Daemon = {
+      ready: running.ready,
+      restart: async (restartOptions = {}) => {
+        const previousReady = running.ready;
+        await stop(running.child);
+        await rm(readyFile, { force: true });
+        if (previousReady.socket_path !== undefined) {
+          await rm(previousReady.socket_path, { force: true });
+        }
+        if (effectiveOptions.durable === true) {
+          // The local JSONL store auto-wires a session lease. A killed daemon cannot
+          // write its release tombstone, so wait past the deliberately short e2e TTL
+          // before the replacement process tries to adopt the same session.
+          await delay(400);
+        }
+        effectiveOptions = { ...effectiveOptions, ...restartOptions };
+        running = await startDaemon(
+          effectiveOptions,
+          readyFile,
+          storeDirectory,
+          workspace,
+          previousReady,
+        );
+        daemon.ready = running.ready;
+      },
+      runtimeDirectory,
+      storeDirectory,
+      workspace,
+    };
+
+    try {
+      return await run(daemon);
+    } finally {
+      await stop(running.child);
+    }
+  } finally {
+    await rm(runtimeDirectory, { force: true, recursive: true });
+  }
+}
+
+async function startDaemon(
+  options: DaemonOptions,
+  readyFile: string,
+  storeDirectory: string,
+  workspace: string,
+  previousReady: ReadyDocument | undefined,
+): Promise<RunningDaemon> {
   const args = [
     "serve",
     "--mock",
@@ -58,12 +128,21 @@ export async function withDaemon<T>(
     "--no-scheduler",
     "--flight-recorder=false",
   ];
+  if (options.durable === true) {
+    args.push("--store-dir", storeDirectory, "--session-lease-ttl", "300ms");
+  }
   if (options.uds === true) {
-    args.push("--grpc-unix-socket", join(runtimeDirectory, "mecated.sock"));
+    args.push(
+      "--grpc-unix-socket",
+      previousReady?.socket_path ?? join(dirname(readyFile), "mecated.sock"),
+    );
     args.push("--http-addr", "");
   } else {
-    args.push("--grpc-addr", "127.0.0.1:0");
-    args.push("--http-addr", options.http === true ? "127.0.0.1:0" : "");
+    args.push("--grpc-addr", previousReady?.grpc_address ?? "127.0.0.1:0");
+    args.push(
+      "--http-addr",
+      options.http === true ? (previousReady?.http_address ?? "127.0.0.1:0") : "",
+    );
   }
   if (options.script !== undefined) args.push("--mock-script", options.script);
 
@@ -85,10 +164,10 @@ export async function withDaemon<T>(
   try {
     const ready = await waitForReady(child, readyFile, () => stderr);
     assertLoopbackOnly(ready);
-    return await run({ ready, runtimeDirectory, workspace });
-  } finally {
+    return { child, ready };
+  } catch (error) {
     await stop(child);
-    await rm(runtimeDirectory, { force: true, recursive: true });
+    throw error;
   }
 }
 
@@ -138,8 +217,8 @@ function assertLoopbackOnly(ready: ReadyDocument): void {
 
 async function stop(child: ChildProcess): Promise<void> {
   if (child.exitCode !== null) return;
-  child.kill("SIGTERM");
   const exited = new Promise<void>((resolveExit) => child.once("exit", () => resolveExit()));
+  child.kill("SIGTERM");
   if ((await Promise.race([exited.then(() => true), delay(3_000).then(() => false)])) === false) {
     child.kill("SIGKILL");
     await exited;

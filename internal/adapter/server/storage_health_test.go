@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memschedulestore"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
@@ -49,9 +48,9 @@ func storageHealthService(t *testing.T, store port.SessionStore, authorize func(
 func storageHealthServiceWithUpdate(t *testing.T, store port.SessionStore, authorize func(context.Context) bool, update func(server.StorageMaintenanceEvent)) *server.Service {
 	t.Helper()
 	llm := mockllm.New()
-	svc, err := server.NewService(server.Config{
-		Engine: agent.NewEngine(agent.Deps{LLM: llm, Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil)}),
-		Store:  store, Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+	svc, err := newPlacementTestService(server.Config{
+		Engine:                      agent.NewEngine(agent.Deps{LLM: llm, Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil)}),
+		Store:                       store,
 		StorageManagementAuthorized: authorize,
 		StorageMaintenanceUpdate:    update,
 		RetentionPolicy:             server.RetentionPolicy{MainMaxAge: 24 * time.Hour, MainMaxCount: 4, SweepCadence: time.Hour},
@@ -85,8 +84,8 @@ func TestStorageHealthIncludesOwnerlessCutoverInventory(t *testing.T) {
 	schedules := memschedulestore.New()
 	alice := &session.Principal{Issuer: "https://issuer.example", Subject: "alice", GrantType: session.GrantTypeUser}
 
-	legacy := session.New("legacy-session", session.ModeDefault, "/legacy", session.Limits{}, time.Now())
-	owned := session.New("owned-session", session.ModeDefault, "/owned", session.Limits{}, time.Now())
+	legacy := session.New("legacy-session", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/legacy", Revision: "in-tree-v1"}, session.Limits{}, time.Now())
+	owned := session.New("owned-session", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/owned", Revision: "in-tree-v1"}, session.Limits{}, time.Now())
 	if err := owned.RestoreLabels(alice, session.Authority{}); err != nil {
 		t.Fatal(err)
 	}
@@ -102,9 +101,9 @@ func TestStorageHealthIncludesOwnerlessCutoverInventory(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	svc, err := server.NewService(server.Config{
-		Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil)}),
-		Store:  sessions, Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+	svc, err := newPlacementTestService(server.Config{
+		Engine:                      agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil)}),
+		Store:                       sessions,
 		ScheduleManager:             server.NewScheduleManager(server.ScheduleManagerConfig{Store: sessions, ScheduleStore: schedules}),
 		StorageManagementAuthorized: func(context.Context) bool { return true },
 	})

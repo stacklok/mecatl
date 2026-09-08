@@ -209,6 +209,9 @@ func TestRegistryMockShortCircuit(t *testing.T) {
 	if reg.Default() != "mock" {
 		t.Errorf("Default() = %q, want mock", reg.Default())
 	}
+	if got := reg.defaultModel; got != "mock" {
+		t.Errorf("defaultModel = %q, want mock", got)
+	}
 	e, ok := reg.Lookup("mock")
 	if !ok || e.provider == nil {
 		t.Fatal("mock entry missing or nil provider")

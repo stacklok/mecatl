@@ -25,8 +25,10 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -43,6 +45,7 @@ import (
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/adapter/clientauth"
 	"github.com/stacklok/mecatl/internal/adapter/credentialstore"
+	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
 	"github.com/stacklok/mecatl/internal/adapter/slogdiag"
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
 	"github.com/stacklok/mecatl/internal/app"
@@ -283,7 +286,7 @@ func runWithOptions(argv []string, options runOptions) error {
 
 	connectionMode := resolveConnectionMode(cfg)
 	deps := applyLaunchIntent(cfg, ui.Deps{
-		Session:                &sessionAdapter{cl: cl, workspace: cfg.workspace, mode: cfg.mode, debugTarget: cfg.debugTarget, debugMCP: cfg.debugMCP},
+		Session:                &sessionAdapter{cl: cl, mode: cfg.mode, debugTarget: cfg.debugTarget, debugMCP: cfg.debugMCP},
 		Conv:                   cl,
 		MCP:                    cl,
 		Cmds:                   cl,
@@ -301,7 +304,6 @@ func runWithOptions(argv []string, options runOptions) error {
 		Migration:              cl,
 		Cleanup:                cl,
 		SessionManagement:      cl,
-		Adoption:               cl,
 		Transcript:             cl,
 		Replayer:               cl,
 		LiveStream:             cl,
@@ -322,6 +324,7 @@ func runWithOptions(argv []string, options runOptions) error {
 		Theme:                  th,
 		ThemeAutoDetect:        themeAutoDetect,
 		StatusSource:           statusSource,
+		LocalSessionContext:    cl,
 		Server:                 target,
 		ConnectionMode:         connectionMode,
 		ClientBuild:            buildinfo.BuildID,
@@ -355,25 +358,18 @@ func runWithOptions(argv []string, options runOptions) error {
 		// Dynamic terminal window/tab title: off collapses to bare "mecatui".
 		// Default false (dynamic: "<title> — <status word> mecatui").
 		NoWindowTitle: cfg.terminalTitleOff,
-		// Diagnostic: MECATUI_DEBUG_MOUSE=1 shows raw mouse coords + content mapping in
-		// the footer (for diagnosing selection/coordinate issues). Default off.
-		DebugMouse: os.Getenv("MECATUI_DEBUG_MOUSE") != "",
-		// Diagnostic: MECATUI_DEBUG_STEER=1 traces steer ack/echo correlation (incoming
-		// id vs live id, match/burn/drop) in the status line. Default off.
-		DebugSteer: os.Getenv("MECATUI_DEBUG_STEER") != "",
-		// Diagnostic: MECATUI_DEBUG_ASK=1 registers /debug-ask, which injects a fake
-		// long-args permission ask through the real reducer (for exercising the
-		// modal's wrap/scroll/full-screen-args behaviour by hand). Default off;
-		// deliberately env-only so it never appears in --help.
-		DebugAsk: os.Getenv("MECATUI_DEBUG_ASK") != "",
 		// Seed prompt from -p/--prompt + --prompt-file: joined at startup and
 		// auto-submitted once the first session is ready (interactive-seed, NOT a
 		// one-shot — the TUI stays open for follow-ups). Empty = no seed.
 		InitialPrompt: initialPromptForConfig(cfg),
 		DebugTarget:   cfg.debugTarget,
 	})
+	applyDebugConfig(cfg, &deps)
 	deps.ServerImpl = mecatuiServerImplementation
 	wireManualCompaction(&deps, cl)
+	deps.MCPAuthorization = cl
+	deps.WorkspaceEnrollment = cl
+	deps.OpenURL = openBrowserURL
 
 	// Apply keymap overrides (CLI for now).
 	if err := applyKeyOverridesToDeps(cfg, &deps); err != nil {
@@ -397,6 +393,13 @@ func runWithOptions(argv []string, options runOptions) error {
 		writeFinalSessionHandoff(os.Stderr, finalModel)
 	}
 	return runErr
+}
+
+func applyDebugConfig(cfg config, deps *ui.Deps) {
+	deps.Debug = cfg.debug
+	deps.DebugMouse = cfg.debugMouse
+	deps.DebugSteer = cfg.debugSteer
+	deps.DebugAsk = cfg.debugAsk
 }
 
 // parseRunConfig resolves the transport-independent flags, then applies the
@@ -639,6 +642,22 @@ func emitDebugPrivacyWarning(w io.Writer, target string, servers ...string) {
 	}
 }
 
+// openBrowserURL opens only a presentation URL obtained from the authenticated
+// server control surface. The URL is an argument, never a shell fragment.
+func openBrowserURL(_ context.Context, url string) error {
+	var name string
+	switch runtime.GOOS {
+	case "darwin":
+		name = "open"
+	case "windows":
+		name = "rundll32"
+		return exec.Command(name, "url.dll,FileProtocolHandler", url).Start()
+	default:
+		name = "xdg-open"
+	}
+	return exec.Command(name, url).Start()
+}
+
 // emitAuthFileWarning is the command-root's single warning emission seam.
 // Credential resolution may aggregate multiple safe findings into one string;
 // the TUI still emits at most one pre-alt-screen line and embeddedConfig remains
@@ -803,14 +822,14 @@ func resolveTransport(ctx context.Context, cfg config) (target string, dial clie
 	// ADDRESS and NEVER probes/embeds; the bare invocation ALWAYS embeds and
 	// NEVER probes loopback.
 	if cfg.transportMode == modeConnect {
-		dial := client.DialConfig{Server: cfg.connectAddress, AuthToken: cfg.authToken, UseTLS: cfg.useTLS, TLSCAFile: cfg.tlsCA, Insecure: cfg.insecure, RemotePlaintextAllowed: cfg.tlsExplicit && !cfg.useTLS}
-		if cfg.authToken == "" && !cfg.noSavedAuth {
+		dial := client.DialConfig{Server: cfg.connectAddress, AuthToken: cfg.authToken, ExplicitAnonymous: cfg.anonymous, UseTLS: cfg.useTLS, TLSCAFile: cfg.tlsCA, Insecure: cfg.insecure, RemotePlaintextAllowed: cfg.tlsExplicit && !cfg.useTLS}
+		if cfg.authToken == "" && !cfg.anonymous {
 			root := filepath.Join(xdg.ConfigHome, "mecatl")
 			registry, regErr := clientauth.OpenExistingRegistry(root)
 			if regErr != nil {
 				return target, client.DialConfig{}, noop, &client.AuthError{Reason: client.AuthStorageUnavailable}
 			}
-			conn, findErr := registry.FindTarget(cfg.connectAddress)
+			conn, findErr := registry.Find(cfg.connectAddress)
 			if findErr == nil {
 				target = conn.Identity.Target
 				dial.Server = target
@@ -872,7 +891,11 @@ func resolveTransport(ctx context.Context, cfg config) (target string, dial clie
 				return target, dial, func() { _ = source.Close(); _ = store.Close() }, nil
 			}
 			if errors.Is(findErr, credentialstore.ErrNotFound) {
-				return cfg.connectAddress, client.DialConfig{}, noop, &client.AuthError{Reason: client.AuthNeverEnrolled}
+				// A clean registry miss is not an authentication decision. The server
+				// remains authoritative: dial without a bearer and recover only if it
+				// actually returns Unauthenticated. Registry/storage errors still fail
+				// closed.
+				return cfg.connectAddress, dial, noop, nil
 			}
 			return target, client.DialConfig{}, noop, &client.AuthError{Reason: client.AuthStorageUnavailable}
 		}
@@ -1160,11 +1183,14 @@ func embeddedConfig(cfg config, diag port.Diagnostics) app.Config {
 	cfg.providerFlags.ApplyResolved(&out, keys)
 	out.UseOpenAI = keys.OpenAI != ""
 	cfg.toolhiveLLMFlags.Apply(&out)
-	// Operator-tier mcp.servers profiles (settings.yaml): the embedded server
-	// is a composition root like mecated, so it loads the operator MCP profiles
-	// over the same resolver the other binaries use. The legacy --mcp-server
-	// flag stays off (heavier opt-in), but operator settings are honored here.
+	// Operator-tier MCP profiles use the canonical authority resolver (global vs
+	// broker) rather than MCPProfileLoader.Load's global-mode-only path. The
+	// embedded server supports broker construction while retaining the existing
+	// profile loader for compatibility with consumers that use it directly.
 	out.MCPProfileLoader = cliconfig.NewMCPProfileResolver(nil, os.LookupEnv)
+	out.MCPAuthorityLoader = cliconfig.NewMCPProfileResolver(nil, os.LookupEnv)
+	out.MCPAuthorityDefault = mcpauthority.Global
+	out.MCPBrokerSupported = true
 	out.ProviderCredentialLoader = cliconfig.NewProviderCredentialResolver(cfg.providerFlags, keys)
 	out.ProviderOverrides = cfg.providerFlags.EndpointOverrides()
 	return out
@@ -1338,17 +1364,11 @@ func themeDirs(workspace, extraDir string) []string {
 	return dirs
 }
 
-// sessionAdapter bridges the ui's SessionCreator to the client's
-// CreateSession(ctx, workspace, mode, sel). The workspace is fixed at startup;
-// the mode and model selection are per-call so in-TUI mode switches and /models
-// restarts carry the current desired posture through the same proto-build point.
-// The ui never sees the proto request. CreateSessionInWorkspace (issue #102) is
-// the /worktrees switch path: it passes an explicit workspace (a sibling git
-// worktree); CreateSession delegates to it with the launch workspace so the
-// existing restart + connect paths are byte-identical.
+// sessionAdapter bridges the ui's SessionCreator to the path-free client API.
+// Embedded workspace configuration is consumed by app.Build; no session request
+// carries it. Mode and model selection remain per-call.
 type sessionAdapter struct {
 	cl          *client.Client
-	workspace   string
 	mode        string
 	debugTarget string
 	debugMCP    []string
@@ -1365,17 +1385,10 @@ func (s *sessionAdapter) CreateSession(ctx context.Context, sel client.ModelSele
 		}
 		return id, caps, resolved, err
 	}
-	return s.CreateSessionInWorkspace(ctx, s.workspace, sel, mode)
+	return s.cl.CreateSession(ctx, client.ModeFromString(mode), sel)
 }
 
 func (s *sessionAdapter) DebugTargetID() string { return s.debugTarget }
-
-func (s *sessionAdapter) CreateSessionInWorkspace(ctx context.Context, workspace string, sel client.ModelSelection, mode string) (string, client.Capabilities, client.ResolvedModel, error) {
-	if mode == "" {
-		mode = s.mode
-	}
-	return s.cl.CreateSession(ctx, workspace, client.ModeFromString(mode), sel)
-}
 
 // CreateSessionWithCarryover implements the ui SessionCreator's carryover seam
 // (issue #20): like CreateSession it carries the pick + mode, but it ALSO sets
@@ -1384,11 +1397,12 @@ func (s *sessionAdapter) CreateSessionInWorkspace(ctx context.Context, workspace
 // is the authority on same-vs-cross (same-provider replays verbatim, cross-provider
 // strips the prior provider's replay blobs via StripProviderState). Best-effort
 // CloseSession of the source is the CALLER's job (after the new session is ready).
-func (s *sessionAdapter) CreateSessionWithCarryover(ctx context.Context, sourceSessionID string, sel client.ModelSelection, mode string) (string, client.Capabilities, client.ResolvedModel, error) {
-	if mode == "" {
-		mode = s.mode
-	}
-	return s.cl.CreateSessionWithCarryover(ctx, s.workspace, client.ModeFromString(mode), sel, sourceSessionID)
+func (s *sessionAdapter) CreateSessionWithCarryover(ctx context.Context, sourceSessionID string, sel client.ModelSelection) (string, client.Capabilities, client.ResolvedModel, error) {
+	return s.cl.CreateSessionWithCarryover(ctx, sel, sourceSessionID)
+}
+
+func (s *sessionAdapter) ClearSession(ctx context.Context, sourceID string, selector *client.WorktreeSelector) (string, client.SessionSnapshot, error) {
+	return s.cl.ClearSession(ctx, sourceID, selector)
 }
 
 func (s *sessionAdapter) CloseSession(ctx context.Context, id string) error {

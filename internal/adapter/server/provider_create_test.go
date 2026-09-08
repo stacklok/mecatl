@@ -12,7 +12,6 @@ import (
 	"google.golang.org/grpc/status"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -34,7 +33,7 @@ func TestCreateSessionDefaultSelectorUsesSharedEngine(t *testing.T) {
 	}
 	svc := newMCPService(t, "SHARED-REPLY", factory)
 
-	sess, err := svc.CreateSessionWithProvider(context.Background(), "/ws", session.ModeDefault, session.Limits{}, server.ProviderSelector{})
+	sess, err := svc.CreateSessionWithProvider(context.Background(), session.ModeDefault, session.Limits{}, server.ProviderSelector{})
 	if err != nil {
 		t.Fatalf("CreateSessionWithProvider(zero): %v", err)
 	}
@@ -69,7 +68,7 @@ func TestCreateSessionModelSelectorRegistersPerSessionEngine(t *testing.T) {
 	svc := newMCPService(t, "SHARED-REPLY", factory)
 
 	sel := server.ProviderSelector{ProviderID: "openrouter", ModelID: "anthropic/claude-opus-4.5"}
-	sess, err := svc.CreateSessionWithProvider(context.Background(), "/ws", session.ModeDefault, session.Limits{}, sel)
+	sess, err := svc.CreateSessionWithProvider(context.Background(), session.ModeDefault, session.Limits{}, sel)
 	if err != nil {
 		t.Fatalf("CreateSessionWithProvider: %v", err)
 	}
@@ -99,7 +98,7 @@ func TestCreateSessionUnknownProviderInvalidArgument(t *testing.T) {
 	svc := newMCPService(t, "shared", factory)
 
 	// Service-level: the error wraps ErrInvalidArgument.
-	_, err := svc.CreateSessionWithProvider(context.Background(), "/ws", session.ModeDefault, session.Limits{},
+	_, err := svc.CreateSessionWithProvider(context.Background(), session.ModeDefault, session.Limits{},
 		server.ProviderSelector{ProviderID: "nope"})
 	if !errors.Is(err, server.ErrInvalidArgument) {
 		t.Fatalf("service error = %v, want it to wrap ErrInvalidArgument", err)
@@ -109,7 +108,6 @@ func TestCreateSessionUnknownProviderInvalidArgument(t *testing.T) {
 	client, cleanup := dialGRPC(t, svc)
 	defer cleanup()
 	_, gerr := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{
-		Workspace:  "/ws",
 		ProviderId: "nope",
 	})
 	if status.Code(gerr) != codes.InvalidArgument {
@@ -128,7 +126,7 @@ func TestCreateSessionModelWithoutProviderInvalidArgument(t *testing.T) {
 	}
 	svc := newMCPService(t, "shared", factory)
 
-	_, err := svc.CreateSessionWithProvider(context.Background(), "/ws", session.ModeDefault, session.Limits{},
+	_, err := svc.CreateSessionWithProvider(context.Background(), session.ModeDefault, session.Limits{},
 		server.ProviderSelector{ModelID: "gpt-x"})
 	if !errors.Is(err, server.ErrInvalidArgument) {
 		t.Fatalf("error = %v, want ErrInvalidArgument for model_id without provider_id", err)
@@ -141,8 +139,7 @@ func TestCreateSessionModelWithoutProviderInvalidArgument(t *testing.T) {
 	client, cleanup := dialGRPC(t, svc)
 	defer cleanup()
 	_, gerr := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{
-		Workspace: "/ws",
-		ModelId:   "gpt-x",
+		ModelId: "gpt-x",
 	})
 	if status.Code(gerr) != codes.InvalidArgument {
 		t.Fatalf("gRPC code = %v, want InvalidArgument", status.Code(gerr))
@@ -180,7 +177,7 @@ func TestGRPCCreateSessionNoSelectorOldClientContract(t *testing.T) {
 	defer cleanup()
 
 	// Old-client shape: no provider_id / model_id on the request.
-	resp, err := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{Workspace: "/ws"})
+	resp, err := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{})
 	if err != nil {
 		t.Fatalf("CreateSession(no selector): %v", err)
 	}
@@ -220,10 +217,10 @@ func cappedSelectorService(t *testing.T, limit int, closed *atomic.Int32) *serve
 		})
 		return server.SessionEngineResult{Engine: eng, Close: func() error { closed.Add(1); return nil }}, nil
 	}
-	svc, err := server.NewService(server.Config{
-		Engine:            shared,
-		Store:             memstore.New(),
-		Workspaces:        func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+	svc, err := newPlacementTestService(server.Config{
+		Engine: shared,
+		Store:  memstore.New(),
+
 		DefaultLimits:     session.Limits{MaxTurns: 10},
 		Now:               func() time.Time { return time.Unix(0, 0) },
 		SessionEngine:     factory,
@@ -249,7 +246,7 @@ func TestCreateSessionEnginesCapped(t *testing.T) {
 	// Fill the registry to the cap.
 	ids := make([]session.SessionID, 0, maxEngines)
 	for i := 0; i < maxEngines; i++ {
-		sess, err := svc.CreateSessionWithProvider(ctx, "/ws", session.ModeDefault, session.Limits{}, sel)
+		sess, err := svc.CreateSessionWithProvider(ctx, session.ModeDefault, session.Limits{}, sel)
 		if err != nil {
 			t.Fatalf("CreateSessionWithProvider #%d: %v", i, err)
 		}
@@ -257,7 +254,7 @@ func TestCreateSessionEnginesCapped(t *testing.T) {
 	}
 
 	// The (N+1)th is rejected at the Service layer with the cap sentinel.
-	_, err := svc.CreateSessionWithProvider(ctx, "/ws", session.ModeDefault, session.Limits{}, sel)
+	_, err := svc.CreateSessionWithProvider(ctx, session.ModeDefault, session.Limits{}, sel)
 	if !errors.Is(err, server.ErrTooManySessionEngines) {
 		t.Fatalf("create past cap: err = %v, want ErrTooManySessionEngines", err)
 	}
@@ -265,7 +262,7 @@ func TestCreateSessionEnginesCapped(t *testing.T) {
 	// And over gRPC it maps to ResourceExhausted.
 	client, cleanup := dialGRPC(t, svc)
 	defer cleanup()
-	_, gerr := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{Workspace: "/ws", ProviderId: "openrouter"})
+	_, gerr := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{ProviderId: "openrouter"})
 	if status.Code(gerr) != codes.ResourceExhausted {
 		t.Fatalf("gRPC create past cap: code = %v, want ResourceExhausted (err=%v)", status.Code(gerr), gerr)
 	}
@@ -277,7 +274,7 @@ func TestCreateSessionEnginesCapped(t *testing.T) {
 	if closed.Load() < 1 {
 		t.Fatalf("EndSession did not run the per-session close (closed=%d)", closed.Load())
 	}
-	if _, err := svc.CreateSessionWithProvider(ctx, "/ws", session.ModeDefault, session.Limits{}, sel); err != nil {
+	if _, err := svc.CreateSessionWithProvider(ctx, session.ModeDefault, session.Limits{}, sel); err != nil {
 		t.Fatalf("create after freeing a slot: %v", err)
 	}
 }

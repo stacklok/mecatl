@@ -101,6 +101,22 @@ fixture CA to `.scratch/kind/mecatl-dev/fixture-ca.crt`, and prints the exact
 `mecatui login` and `mecatui connect` commands. The task exits after readiness
 checks; the mappings remain available while the cluster exists.
 
+Or skip straight to a shell: `task mecak8s:kind-login` (adds the `/etc/hosts`
+aliases, refreshes the CA, runs `mecatui login`) then `task
+mecak8s:kind-connect` (same, then `mecatui connect`) — both bake in this
+fixture's fixed issuer/client/audience/scopes, so there's nothing to copy from
+the printed commands above.
+
+> **The exported CA is only valid for the CURRENT cluster.** `kind-destroy` +
+> recreate mints a brand-new self-signed CA; a `fixture-ca.crt` left over from
+> a previous cluster fails TLS verification against the new one, and mecatui
+> surfaces that as a bare `clientauth: OIDC discovery rejected` — nothing in
+> that message hints that the cause is a stale CA rather than a real
+> rejection. `kind-login`/`kind-connect` always refresh the CA before
+> connecting, so this can't happen through them; if you invoke `mecatui`
+> directly with a CA path from an earlier session, re-run
+> `task mecak8s:kind-keycloak-demo` (or either shorthand task) first.
+
 The authenticated mecak8s API is reached through the Kind host mappings: gRPC at
 `18080`, HTTPS at `18081`. `localhost` and `127.0.0.1` are
 both certificate-covered names, so a plain TLS client (`curl`, `openssl

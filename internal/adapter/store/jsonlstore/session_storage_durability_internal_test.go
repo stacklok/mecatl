@@ -647,7 +647,7 @@ func assertNoSnapshotTemps(t *testing.T, snapshotPath string) {
 }
 
 func newSnapshotSession(id session.SessionID, title string) *session.Session {
-	s := session.New(id, session.ModeDefault, "/workspace", session.Limits{}, time.Unix(1700000000, 0).UTC())
+	s := session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1700000000, 0).UTC())
 	s.SetTitle(title)
 	return s
 }

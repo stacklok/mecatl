@@ -3,6 +3,7 @@ package session
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"time"
 )
 
 // EventType is the kind of a domain Event. This is the single event taxonomy
@@ -13,6 +14,10 @@ type EventType string
 const (
 	// EvSessionInit is emitted once when a run starts.
 	EvSessionInit EventType = "session.init"
+	// EvSessionTitle is emitted after a durable title lifecycle change. It carries
+	// only the source-free authoritative TitlePayload; title-source prompts and
+	// provider errors never cross the event boundary.
+	EvSessionTitle EventType = "session.title"
 	// EvModelRetry is emitted immediately after session.init when a failed-step retry
 	// starts. ModelRetry carries authoritative typed reconstruction data; Text is bounded,
 	// harness-authored lifecycle guidance and is never recorded in model history.
@@ -141,6 +146,12 @@ const (
 	// loop emits it and the relay persists it. It never carries raw errors, URLs,
 	// headers, request/response bodies, prompts, or credentials.
 	EvNetworkAttempt EventType = "network.attempt"
+	// EvAuthorizationRequired records that a tool call is parked on an external
+	// authorization lifecycle. Authorization carries only safe correlation data.
+	EvAuthorizationRequired EventType = "authorization.required"
+	// EvAuthorizationResolved closes a previously required authorization lifecycle
+	// after its matching tool result has been durably recorded.
+	EvAuthorizationResolved EventType = "authorization.resolved"
 	// EvResult is the terminal event: success / limit / error / cancelled.
 	EvResult EventType = "result"
 	// EvUserPrompt is emitted when a USER-ROLE message is recorded into the
@@ -917,22 +928,20 @@ type SubagentPayload struct {
 // unbounded args/result/message body can never be copied verbatim, and a branch's
 // permission.ask is DROPPED entirely: it is NEVER forwarded, so a pending-ask reason
 // (which can quote secrets or sensitive args) never reaches the stream. The only
-// other non-scalar it carries is the per-branch fork-root PATHS (a handle the model
-// is already given in the Parallel ToolResult text, not branch content). The
+// payload forwards only bounded previews and non-sensitive lifecycle metadata. The
 // forwarding is CLIENT-ONLY: nothing here ever enters the parent Session's
 // Conversation (gauntlet #7 unchanged).
 //
 // Unlike the FLAT SubagentPayload, a Parallel run is a GROUP: N branches of ONE call
-// (keyed by ParentCallID) sharing a join strategy, a single winner (join=first/judge),
-// and preserved per-branch fork paths. Those are RUN-LEVEL facts carried on the
-// start/end events; the per-branch events carry per-branch metadata keyed by BranchIndex.
+// (keyed by ParentCallID) sharing a join strategy and a single winner
+// (join=first/judge). The per-branch events carry metadata keyed by BranchIndex.
 //
 // Which fields are set depends on the event kind:
 //   - EvParallelStart:                       ParentCallID, Join, BranchCount.
 //   - EvParallelBranch (Kind=branch_start):  ParentCallID, Kind, BranchIndex, ChildID, BranchLabel, Goal, [RoutedCategory, RoutedModel, RoutingReason], Model.
 //   - EvParallelBranch (Kind=branch_tool):   ParentCallID, Kind, BranchIndex, ToolName, IsError, ToolCount, and — when a preview is available — Text / Detail / InnerKind.
-//   - EvParallelBranch (Kind=branch_end):    ParentCallID, Kind, BranchIndex, ChildID, ToolCount, Stop, Usage, DurationMs, Failed, Workspace.
-//   - EvParallelEnd:                         ParentCallID, Join, BranchCount, Winner, WinnerWorkspace, Usage (run total), Stop.
+//   - EvParallelBranch (Kind=branch_end):    ParentCallID, Kind, BranchIndex, ChildID, ToolCount, Stop, Usage, DurationMs, Failed.
+//   - EvParallelEnd:                         ParentCallID, Join, BranchCount, Winner, Usage (run total), Stop.
 type ParallelPayload struct {
 	// ParentCallID is the parent's Parallel tool-call id; it is the GROUP key (one
 	// Parallel call = one group) and attributes every parallel.* event to the
@@ -1026,10 +1035,6 @@ type ParallelPayload struct {
 	// Failed reports whether the branch's child run failed (StopError / cancelled /
 	// fork failure). Set on the branch_end kind.
 	Failed bool
-	// Workspace is this branch's forked workspace ROOT path — the no-auto-merge handle
-	// (the same path surfaced in the Parallel ToolResult text). It is server-side path
-	// text, NOT branch conversation content. Set on the branch_end kind.
-	Workspace string
 
 	// Stop is the branch's terminal stop reason (branch_end) or the run-level stop
 	// (EvParallelEnd; the winner's stop for join=first/judge, zero/omitted for join=all).
@@ -1044,10 +1049,6 @@ type ParallelPayload struct {
 	// BranchIndex for join=first/judge, or -1 for join=all and none-succeeded. Set on
 	// EvParallelEnd only.
 	Winner int
-	// WinnerWorkspace is the PRESERVED winner fork root on EvParallelEnd (the deliverable
-	// handle for join=first/judge); empty for join=all / none-succeeded. Set on
-	// EvParallelEnd only.
-	WinnerWorkspace string
 }
 
 // SchedulePayload is the structured detail carried by the schedule.* events
@@ -1371,6 +1372,65 @@ type TeamPayload struct {
 	Cause string
 }
 
+// AuthorizationStatus is the closed external-authorization lifecycle grammar.
+// Pending is valid only on EvAuthorizationRequired; all other values are terminal.
+type AuthorizationStatus string
+
+const (
+	// AuthorizationPending marks an open authorization lifecycle.
+	AuthorizationPending AuthorizationStatus = "pending"
+	// AuthorizationGranted records a successful authorization grant.
+	AuthorizationGranted AuthorizationStatus = "granted"
+	// AuthorizationDenied records a denied authorization request.
+	AuthorizationDenied AuthorizationStatus = "denied"
+	// AuthorizationCancelled records cancellation.
+	AuthorizationCancelled AuthorizationStatus = "cancelled"
+	// AuthorizationExpired records expiry.
+	AuthorizationExpired AuthorizationStatus = "expired"
+	// AuthorizationInterrupted records interruption before completion.
+	AuthorizationInterrupted AuthorizationStatus = "interrupted"
+	// AuthorizationFailed records an authorization failure.
+	AuthorizationFailed AuthorizationStatus = "failed"
+	// AuthorizationClosed records closure without another terminal outcome.
+	AuthorizationClosed AuthorizationStatus = "closed"
+)
+
+// AuthorizationPayload is the safe correlation carried by authorization events.
+// DisplayName is an optional bounded human-facing authority or service label.
+type AuthorizationPayload struct {
+	AuthorizationID string
+	DisplayName     string
+	Call            ToolCallID
+	ExpiresAt       time.Time
+	Status          AuthorizationStatus
+}
+
+// Valid reports whether the payload uses the bounded authorization identifier
+// grammar, has a non-zero expiry, and carries a closed lifecycle status.
+func (p AuthorizationPayload) Valid() bool {
+	return validAuthorizationID(p.AuthorizationID) &&
+		(p.DisplayName == "" || validAuthorizationDisplayName(p.DisplayName)) &&
+		validAuthorizationID(string(p.Call)) &&
+		!p.ExpiresAt.IsZero() &&
+		p.Status.valid()
+}
+
+func (s AuthorizationStatus) valid() bool {
+	switch s {
+	case AuthorizationPending,
+		AuthorizationGranted,
+		AuthorizationDenied,
+		AuthorizationCancelled,
+		AuthorizationExpired,
+		AuthorizationInterrupted,
+		AuthorizationFailed,
+		AuthorizationClosed:
+		return true
+	default:
+		return false
+	}
+}
+
 // Event is the domain-owned, provider-neutral unit of the streaming model. The
 // loop runs as a producer writing Events to a channel; server adapters relay
 // them to the gRPC server-stream or HTTP SSE.
@@ -1383,6 +1443,9 @@ type Event struct {
 	Turn int
 	// Text carries streamed or final text where applicable.
 	Text string
+	// Title is set on EvSessionTitle and carries the authoritative, source-free
+	// title lifecycle projection after a persisted change.
+	Title *TitlePayload
 	// ToolCall is set on EvToolCall.
 	ToolCall *ToolCall
 	// ToolResult is set on EvToolResult.
@@ -1398,6 +1461,10 @@ type Event struct {
 	// NetworkAttempt is set on EvNetworkAttempt. It is log-only sanitized
 	// transport/provider evidence emitted by the loop from the resilience observer.
 	NetworkAttempt *NetworkAttemptPayload
+	// Authorization is set on EvAuthorizationRequired and EvAuthorizationResolved.
+	// It contains only safe lifecycle correlation; private continuation state and
+	// sensitive tool or backend data never enter the event.
+	Authorization *AuthorizationPayload
 	// Result is set on EvResult.
 	Result *ResultPayload
 	// TurnEnd is set on EvTurnEnd (this turn's usage + elapsed time).

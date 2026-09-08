@@ -111,20 +111,31 @@ func Enroll(ctx context.Context, conn Connection, token Token, cfg EnrollmentCon
 		return err
 	}
 	id := conn.Identity
+	if conn.ResourceURL != "" {
+		unlockResource, lockErr := cfg.Registry.lockTarget(ctx, "resource:"+conn.ResourceURL)
+		if lockErr != nil {
+			return lockErr
+		}
+		defer unlockResource()
+	}
 	unlock, err := cfg.Registry.lockTarget(ctx, id.Target)
 	if err != nil {
 		return err
 	}
 	defer unlock()
 
-	oldEntries, err := cfg.Registry.targetSnapshot(id.Target)
+	targetEntries, err := cfg.Registry.targetSnapshot(id.Target)
 	if err != nil {
 		return err
 	}
-	if !cfg.checkExpectedTarget(oldEntries) {
+	displacedEntries, err := cfg.Registry.enrollmentSnapshot(id.Target, conn.ResourceURL)
+	if err != nil {
+		return err
+	}
+	if !cfg.checkExpectedTarget(targetEntries) {
 		return ErrTargetChanged
 	}
-	snapshots, err := snapshotEnrollmentCredentials(ctx, cfg.Credentials, id, oldEntries)
+	snapshots, err := snapshotEnrollmentCredentials(ctx, cfg.Credentials, id, displacedEntries)
 	if err != nil {
 		return err
 	}
@@ -140,7 +151,7 @@ func Enroll(ctx context.Context, conn Connection, token Token, cfg EnrollmentCon
 	// From here onward cancellation must not strand a state we can reconcile.
 	txnCtx := context.WithoutCancel(ctx)
 	desired := []Connection{conn}
-	committed, registryErr := commitEnrollmentRegistry(cfg.Registry, id.Target, oldEntries, desired)
+	committed, registryErr := commitEnrollmentRegistry(cfg.Registry, id.Target, conn.ResourceURL, displacedEntries, desired)
 	if !committed {
 		if newSnapshot.unusable {
 			// The registry already identifies this exact credential. The repaired
@@ -221,12 +232,12 @@ func storeEnrollmentCredential(ctx context.Context, creds *Credentials, id Ident
 	return CredentialRecord{}, fmt.Errorf("clientauth: write enrollment credential: %w", err)
 }
 
-func commitEnrollmentRegistry(registry *Registry, target string, expected, desired []Connection) (bool, error) {
-	err := registry.replaceTarget(target, expected, desired)
+func commitEnrollmentRegistry(registry *Registry, target, resource string, expected, desired []Connection) (bool, error) {
+	err := registry.replaceEnrollment(target, resource, expected, desired)
 	if err == nil {
 		return true, nil
 	}
-	current, readErr := registry.targetSnapshot(target)
+	current, readErr := registry.enrollmentSnapshot(target, resource)
 	if readErr != nil {
 		return false, fmt.Errorf("%w: registry commit could not be determined", ErrIncompleteEnrollment)
 	}

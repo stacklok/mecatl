@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/adapter/permstore"
 	"github.com/stacklok/mecatl/engine/adapter/wallclock"
@@ -107,10 +106,11 @@ func runFireCancelTest(t *testing.T, shareStore bool) {
 	const schedName = "cancel-on-shutdown"
 	if err := schedStore.Save(ctx, port.Schedule{
 		Spec: port.ScheduleSpec{
-			Name:      schedName,
-			Prompt:    "run until cancelled",
-			Workspace: workspace,
-			Trigger:   port.TriggerSpec{OneShot: time.Now().Add(-1 * time.Second)}, // already due
+			Name:           schedName,
+			Prompt:         "run until cancelled",
+			EnvironmentRef: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: workspace, Revision: "in-tree-v1"},
+			PlacementScope: "legacy-local",
+			Trigger:        port.TriggerSpec{OneShot: time.Now().Add(-1 * time.Second)}, // already due
 		},
 		State: port.ScheduleState{
 			NextFireAt: time.Now().Add(-1 * time.Second), // due now (Claim's due-check needs NextFireAt <= now)
@@ -137,10 +137,10 @@ func runFireCancelTest(t *testing.T, shareStore bool) {
 		Model:   "test-model",
 		Store:   engineStore,
 	})
-	svc, err := server.NewService(server.Config{
-		Engine:              engine,
-		Store:               store, // the Service store is ALWAYS the real one (create + Persist use it)
-		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+	svc, err := newTestServerService(server.Config{
+		Engine: engine,
+		Store:  store, // the Service store is ALWAYS the real one (create + Persist use it)
+
 		Now:                 time.Now,
 		DefaultCapabilities: llm.Capabilities(),
 		EventLog:            store,

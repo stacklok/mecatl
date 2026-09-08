@@ -76,11 +76,17 @@
     ifacemethod func (StreamProgressError).StreamProgress() session.StreamProgress
     ifacemethod func (ToolCallRecorder).ToolCall(id session.SessionID, call session.ToolCall, result session.ToolResult, queued time.Duration, took time.Duration)
     ifacemethod func (error).Error() string
+    method func (*SessionLoadFailureError).Class() SessionLoadFailureClass
+    method func (*SessionLoadFailureError).Error() string
+    method func (*SessionLoadFailureError).Is(target error) bool
+    method func (*SessionLoadFailureError).Unwrap() error
     method func (NopDeliveryQueue).Enqueue(_ context.Context, origin session.SessionID, _ string) (DeliveryNote, error)
     method func (NopDeliveryQueue).MarkDelivered(_ context.Context, _ session.SessionID, _ uint64) error
     method func (NopDeliveryQueue).Pending(_ context.Context, _ session.SessionID) ([]DeliveryNote, error)
     method func (NopDiagnostics).Log(context.Context, Level, string, ...any)
     method func (NopDiagnostics).With(...any) Diagnostics
+    method func (SessionLoadFailureClass).String() string
+    method func (SessionLoadFailureClass).Valid() bool
     method func (TriggerSpec).Kind() TriggerKind
     method func (TriggerSpec).Validate() error
 const AuthorityResourceWorkspaceFile AuthorityResourceKind = "workspace_file"
@@ -108,6 +114,9 @@ const RetryDispositionUnknown session.RetryDisposition = 0
 const SchedulerLeaderLeaseID session.SessionID = "__scheduler__"
 const SessionLineagePruned SessionLineageState = "pruned"
 const SessionLineageRetained SessionLineageState = "retained"
+const SessionLoadFailureSnapshot SessionLoadFailureClass = 2
+const SessionLoadFailureStore SessionLoadFailureClass = 1
+const SessionLoadFailureUnknown SessionLoadFailureClass = 0
 const SessionMigrationCancelled SessionMigrationState = "cancelled"
 const SessionMigrationCompleted SessionMigrationState = "completed"
 const SessionMigrationPlanned SessionMigrationState = "planned"
@@ -119,9 +128,12 @@ const StreamProgressVisible session.StreamProgress = 2
 const TriggerCron TriggerKind = 1
 const TriggerNone TriggerKind = 0
 const TriggerOneShot TriggerKind = 2
+func AppendHTTPErrorDisplay(message string, request *http.Request, correlationID string) string
+func ClassifySessionLoadFailure(err error) SessionLoadFailureClass
 func CompareSessionMetadataOrder(a SessionDiscoveryMeta, b SessionDiscoveryMeta) int
 func DecodeCursor(cur Cursor, id session.SessionID, currentGeneration string) (position string, err error)
 func EncodeCursor(id session.SessionID, generation string, position string) Cursor
+func NewSessionLoadFailure(class SessionLoadFailureClass, cause error) error
 func ObserveAttempt(ctx context.Context, observation session.NetworkAttemptPayload)
 func PaginateSessionMetadata(rows []SessionDiscoveryMeta, request SessionMetadataPageRequest) SessionMetadataPage
 func PaginateSessionMetadataBound(rows []SessionDiscoveryMeta, request SessionMetadataPageRequest, generation string) (SessionMetadataPage, error)
@@ -183,12 +195,12 @@ type ScheduleFire struct{ID string; ScheduleName string; SessionID session.Sessi
 type ScheduleManager interface{CreateSchedule(ctx context.Context, spec ScheduleSpec) (Schedule, error); DeleteSchedule(ctx context.Context, name string) error; FireNow(ctx context.Context, name string) (ScheduleFire, error); GetSchedule(ctx context.Context, name string) (Schedule, error); ListFires(ctx context.Context, scheduleName string) ([]ScheduleFire, error); ListSchedules(ctx context.Context) ([]Schedule, error); PauseSchedule(ctx context.Context, name string) error; ResumeSchedule(ctx context.Context, name string) error; UpdateSchedule(ctx context.Context, spec ScheduleSpec) (Schedule, error)}
 type ScheduleOneShotReArmer interface{ReArmOneShot(ctx context.Context, name string, nextFire time.Time) error}
 type ScheduleProviderSelector struct{ProviderID string; ModelID string}
-type ScheduleSpec struct{Name string; Prompt string; Parts []session.Content; Trigger TriggerSpec; Selector ScheduleProviderSelector; Profile string; Workspace string; Mode session.PermissionMode; Limits session.Limits; Mutating bool; MaxFires int; Misfire MisfirePolicy; Singleton bool; Timezone string; CreatedAt time.Time; OneShotRetry bool; OneShotMaxRetries int; CarryContext bool; OriginSessionID session.SessionID; Owner *session.Principal; FireTimeout time.Duration}
+type ScheduleSpec struct{Name string; Prompt string; Parts []session.Content; Trigger TriggerSpec; Selector ScheduleProviderSelector; Profile string; EnvironmentRef session.EnvironmentRef; PlacementScope string; Mode session.PermissionMode; Limits session.Limits; Mutating bool; MaxFires int; Misfire MisfirePolicy; Singleton bool; Timezone string; CreatedAt time.Time; OneShotRetry bool; OneShotMaxRetries int; CarryContext bool; OriginSessionID session.SessionID; Owner *session.Principal; FireTimeout time.Duration}
 type ScheduleState struct{NextFireAt time.Time; LastFireAt time.Time; FireCount int; Enabled bool; LastFireSessionID session.SessionID; OneShotRetryCount int; LastFireStartedAt time.Time; LastFireProgressAt time.Time; FireDeadline time.Time}
 type ScheduleStore interface{Claim(ctx context.Context, name string, now time.Time, nextFire time.Time) (Schedule, error); ClaimNow(ctx context.Context, name string, now time.Time, nextFire time.Time) (Schedule, error); Delete(ctx context.Context, name string) error; Due(ctx context.Context, now time.Time) ([]Schedule, error); List(ctx context.Context) ([]Schedule, error); ListFires(ctx context.Context, scheduleName string) ([]ScheduleFire, error); Load(ctx context.Context, name string) (Schedule, error); LoadFire(ctx context.Context, fireID string) (ScheduleFire, error); RecordFire(ctx context.Context, f ScheduleFire) error; RecordFireProgress(ctx context.Context, name string, fireID string, at time.Time) error; RecordFireStart(ctx context.Context, name string, fire ScheduleFire) error; Save(ctx context.Context, s Schedule) error; SetEnabled(ctx context.Context, name string, enabled bool) error}
 type SessionCreator interface{Create(ctx context.Context, s *session.Session) error}
 type SessionDeleteSupport interface{SupportsSessionDelete() bool}
-type SessionDiscoveryMeta struct{ID session.SessionID; ModifiedAt time.Time; State session.State; Turns int; ModelID string; CreatedAt time.Time; Title string; TitleProvenance session.TitleProvenance; Owner *session.Principal; Workspace string; Kind session.SessionKind; Relationship session.SessionRelationship; EstimatedBytes int64}
+type SessionDiscoveryMeta struct{ID session.SessionID; ModifiedAt time.Time; State session.State; Turns int; ModelID string; CreatedAt time.Time; Title string; TitleProvenance session.TitleProvenance; Owner *session.Principal; EnvironmentRef session.EnvironmentRef; Kind session.SessionKind; Relationship session.SessionRelationship; EstimatedBytes int64}
 type SessionLease interface{Acquire(ctx context.Context, id session.SessionID, owner string) (Lease, error); Release(ctx context.Context, l Lease) error; Renew(ctx context.Context, l Lease) (Lease, error)}
 type SessionLineageQuery struct{RootID session.SessionID; RootIncarnation session.IncarnationID; Limit int}
 type SessionLineageReader interface{ReadSessionLineage(ctx context.Context, query SessionLineageQuery) (SessionLineageResult, error)}
@@ -196,6 +208,8 @@ type SessionLineageRecord struct{ID session.SessionID; Kind session.SessionKind;
 type SessionLineageResult struct{Records []SessionLineageRecord; Truncated bool}
 type SessionLineageState string
 type SessionLiveness interface{IsLive(session.SessionID) bool; Register(ctx context.Context, id session.SessionID, cancel context.CancelFunc) (release func(), err error)}
+type SessionLoadFailureClass uint8
+type SessionLoadFailureError struct{}
 type SessionMeta struct{ID session.SessionID; ModifiedAt time.Time; State session.State; Turns int; ModelID string; CreatedAt time.Time; Title string; Owner *session.Principal}
 type SessionMetadataCursor struct{ModifiedAt time.Time; ID session.SessionID; Generation string; Scope string; Continuation string}
 type SessionMetadataPage struct{Sessions []SessionDiscoveryMeta; NextCursor *SessionMetadataCursor; TotalCount int}
@@ -228,6 +242,7 @@ var ErrScheduleNotFound error
 var ErrScheduleUnsupported error
 var ErrSessionAlreadyExists error
 var ErrSessionLineageUnsupported error
+var ErrSessionLoadFailure error
 var ErrSessionMetadataCursorRestart error
 var ErrSessionMetadataPagingUnsupported error
 var ErrSessionNotFound error

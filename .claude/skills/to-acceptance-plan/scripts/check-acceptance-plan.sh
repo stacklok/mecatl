@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # check-acceptance-plan.sh — validate a docs/acceptance/<plan>.md against the
-# acceptance-plan contract: numbered acceptance criteria, >=1 ADR / architecture
-# / AGENTS.md citation per scenario, and an out-of-scope section.
+# acceptance-plan contract: exact `**Contract:** human-reviewed/v1` metadata, at
+# least one scenario, numbered acceptance criteria, a non-empty human-decisions section consistent with status, a non-empty interface
+# contract, >=1 ADR / architecture / AGENTS.md citation per scenario, and an
+# out-of-scope section.
 #
 # This is the authoring-time check for /to-acceptance-plan. The runtime gate on
 # a landed plan's verify: contract is `task ac-trace-strict` (the ac-trace tool;
@@ -14,7 +16,8 @@
 #
 # Exit codes:
 #   0  hard checks pass (advisory warnings may still print)
-#   1  hard absence: no numbered ACs, no citations, or no out-of-scope section
+#   1  hard absence: no scenarios, no numbered ACs, missing verify: coverage,
+#      missing/empty interface contract, no citations, or no out-of-scope section
 #   2  usage / file-not-found
 
 set -euo pipefail
@@ -35,6 +38,16 @@ warn=0
 note_fail() { printf 'FAIL: %s\n' "$1" >&2; fail=1; }
 note_warn() { printf 'WARN: %s\n' "$1" >&2; warn=1; }
 
+# The marker opts a plan into the current human-reviewed contract without
+# retroactively bulk-migrating the historical catalogue.
+contract_count=$(grep -cE '^\*\*Contract:\*\*' "$plan" || true)
+contract_exact=$(grep -cFx '**Contract:** human-reviewed/v1' "$plan" || true)
+if [[ "$contract_count" -eq 1 && "$contract_exact" -eq 1 ]]; then
+  printf 'ok: human-reviewed/v1 contract metadata\n'
+else
+  note_fail 'expected exactly one exact "**Contract:** human-reviewed/v1" declaration.'
+fi
+
 # A citation is a markdown link into ../adr/**, ../architecture*,
 # ../design/**, or ../../AGENTS.md (relative to docs/acceptance/), or a bare
 # ADR-NNNN / invariant reference.
@@ -42,28 +55,200 @@ CITE_LINK='\]\((\.\./(adr/|architecture|design/)|\.\./\.\./AGENTS\.md)'
 
 # --- (a) numbered acceptance criteria ----------------------------------
 ac_labeled=$(grep -cE '(\*\*)?AC[0-9]+\.[0-9]+(\*\*)?:' "$plan" || true)
-has_ac_heading=$(grep -cE '^\*\*Acceptance:?\*\*|^##+ +Acceptance( criteria)?' "$plan" || true)
-ac_ordered=$(grep -cE '^[[:space:]]*[0-9]+\. ' "$plan" || true)
 
 if [[ "$ac_labeled" -gt 0 ]]; then
   printf 'ok: %s numbered AC<n>.<m> criteria\n' "$ac_labeled"
-elif [[ "$has_ac_heading" -gt 0 && "$ac_ordered" -gt 0 ]]; then
-  printf 'ok: ordered acceptance-criteria list under an Acceptance heading\n'
-  note_warn 'no AC<scenario>.<n> labels — downstream task briefs, ac-trace, and panel-review prefer stable AC2.3-style identifiers. Consider numbering.'
 else
-  note_fail 'no numbered acceptance criteria (expected AC<scenario>.<n>: labels, or an ordered "1." list under an "Acceptance" heading).'
+  note_fail 'no numbered acceptance criteria (expected stable AC<scenario>.<n>: labels).'
 fi
 
-# --- (b) verify: sub-line coverage (advisory here; ac-trace --strict gates) --
+# --- (b) verify: sub-line coverage (hard authoring contract) -----------
 ac_count=$(grep -cE '(\*\*)?AC[0-9]+\.[0-9]+(\*\*)?:' "$plan" || true)
-verify_count=$(grep -cE '^[[:space:]]*-?[[:space:]]*verify:' "$plan" || true)
-if [[ "$ac_count" -gt 0 && "$verify_count" -lt "$ac_count" ]]; then
-  note_warn "found $ac_count ACs but only $verify_count verify: lines — every AC needs a verify: sub-line (test names, or none/inspection/demonstration + reason). ac-trace --strict fails a landed plan otherwise (see docs/acceptance/README.md)."
-elif [[ "$verify_count" -gt 0 ]]; then
-  printf 'ok: %s verify: line(s)\n' "$verify_count"
+missing_verify=$(awk '
+  function flush() { if (ac != "" && !verified) print ac }
+  function start_ac(line) {
+    ac = line
+    sub(/^.*AC/, "AC", ac)
+    sub(/:.*/, "", ac)
+    gsub(/\*\*/, "", ac)
+    verified = 0
+  }
+  /(\*\*)?AC[0-9]+\.[0-9]+(\*\*)?:/ {
+    flush()
+    start_ac($0)
+    next
+  }
+  ac != "" && /^#{1,6}[[:space:]]/ {
+    flush()
+    ac = ""
+    verified = 0
+    next
+  }
+  ac != "" && /^[[:space:]]*-?[[:space:]]*verify:[[:space:]]*[^[:space:]]/ {
+    verified = 1
+  }
+  END { flush() }
+' "$plan")
+if [[ -n "$missing_verify" ]]; then
+  missing_csv=$(printf '%s\n' "$missing_verify" | paste -sd, -)
+  note_fail "missing or empty verify: sub-line in AC block for: $missing_csv"
+elif [[ "$ac_count" -gt 0 ]]; then
+  printf 'ok: %s ACs each have non-empty verify: coverage\n' "$ac_count"
 fi
 
-# --- (c) >=1 citation per scenario -------------------------------------
+# --- (c) lifecycle and delivery declarations ----------------------------
+status_count=$(grep -cE '^\*\*Status:\*\*' "$plan" || true)
+status_line=$(grep -E '^\*\*Status:\*\*' "$plan" || true)
+status=''
+if [[ "$status_count" -eq 1 && "$status_line" =~ ^\*\*Status:\*\*[[:space:]]+(draft|proposed|approved|in-progress|landed)([,.[:space:]]|$) ]]; then
+  status=${BASH_REMATCH[1]}
+  printf 'ok: allowed status declaration\n'
+else
+  note_fail 'expected exactly one valid "**Status:**" prefix (allowed: draft, proposed, approved, in-progress, landed).'
+fi
+
+# Human decisions are deliberately bounded to one machine-readable section. Do not
+# infer unresolved decisions from arbitrary prose elsewhere in the plan.
+human_heading_count=$(grep -cE '^##[[:space:]]+Human decisions[[:space:]]*$' "$plan" || true)
+human_block=$(awk '
+  /^##[[:space:]]+Human decisions[[:space:]]*$/ { in_decisions = 1; next }
+  in_decisions && /^#{1,6}[[:space:]]+/ { exit }
+  in_decisions { print }
+' "$plan")
+human_lines=$(printf '%s\n' "$human_block" | grep -vE '^[[:space:]]*$' || true)
+human_line_count=$(printf '%s\n' "$human_lines" | grep -cE '.' || true)
+
+if [[ "$human_heading_count" -ne 1 ]]; then
+  note_fail 'expected exactly one "## Human decisions" section.'
+elif [[ "$human_line_count" -eq 0 ]]; then
+  note_fail '"## Human decisions" must be non-empty.'
+elif printf '%s\n' "$human_lines" | grep -qiE '(^|[^[:alnum:]_])(TBD|TODO|N/A|PLACEHOLDER|REPLACE ME)([^[:alnum:]_]|$)|<[^>]+>'; then
+  note_fail '"## Human decisions" contains placeholder content.'
+else
+  none_count=$(printf '%s\n' "$human_lines" | grep -cE '^None[[:space:]]+(-|–|—)[[:space:]]+[^[:space:]].*$' || true)
+  if [[ "$none_count" -eq 1 && "$human_line_count" -eq 1 ]]; then
+    printf 'ok: no open human decisions, with rationale\n'
+  else
+    invalid_decision_lines=$(printf '%s\n' "$human_lines" | grep -vE '^- \[ \] [^[:space:]].*$|^- \[[xX]\] [^[:space:]].*[[:space:]](-|–|—)[[:space:]]+Decision:[[:space:]]+[^[:space:]].*$' || true)
+    if [[ -n "$invalid_decision_lines" ]]; then
+      note_fail 'human decisions must be unchecked checklist items or checked items ending "— Decision: <decision>".'
+    else
+      unchecked_count=$(printf '%s\n' "$human_lines" | grep -cE '^- \[ \] ' || true)
+      if [[ "$unchecked_count" -gt 0 ]]; then
+        if [[ "$status" == draft ]]; then
+          printf 'ok: %s open human decision(s) keep plan in draft\n' "$unchecked_count"
+        else
+          note_fail 'unchecked human decisions require "**Status:** draft"; proposed, approved, in-progress, and landed require every decision resolved.'
+        fi
+      else
+        printf 'ok: all human decisions are resolved and recorded\n'
+      fi
+    fi
+  fi
+fi
+
+if grep -qE '^\*\*Delivery:\*\* (Split|Combined)([,.[:space:]]|$)' "$plan"; then
+  printf 'ok: Split or Combined delivery declaration\n'
+else
+  note_fail 'missing or invalid "**Delivery:** Split|Combined" declaration.'
+fi
+
+combined=0
+if grep -qE '^\*\*Delivery:\*\* Combined([,.[:space:]]|$)' "$plan"; then
+  combined=1
+fi
+
+# Combined has machine-readable one-task eligibility metadata. Keep these as
+# standalone fields so orchestration does not infer task count or rationale from prose.
+if [[ "$combined" -eq 1 ]]; then
+  expected_tasks_count=$(grep -cE '^\*\*Expected tasks:\*\*' "$plan" || true)
+  expected_tasks_exact=$(grep -cE '^\*\*Expected tasks:\*\* 1$' "$plan" || true)
+  if [[ "$expected_tasks_count" -eq 1 && "$expected_tasks_exact" -eq 1 ]]; then
+    printf 'ok: Combined expected task count is exactly 1\n'
+  else
+    note_fail 'Combined delivery requires exactly one exact "**Expected tasks:** 1" declaration.'
+  fi
+
+  combined_rationale_count=$(grep -cE '^\*\*Combined rationale:\*\*' "$plan" || true)
+  combined_rationale=$(grep -E '^\*\*Combined rationale:\*\*' "$plan" | head -n 1 || true)
+  combined_rationale=${combined_rationale#'**Combined rationale:**'}
+  combined_rationale=${combined_rationale#" "}
+  combined_rationale_compact=${combined_rationale//[[:space:]]/}
+  if [[ "$combined_rationale_count" -ne 1 || -z "$combined_rationale_compact" ]]; then
+    note_fail 'Combined delivery requires exactly one non-empty "**Combined rationale:** <explanation>" declaration.'
+  elif printf '%s\n' "$combined_rationale" | grep -qiE '^[[:space:]]*(TBD|TODO|N/A|None)[[:space:].]*$|<[^>]+>'; then
+    note_fail 'Combined rationale must be a non-placeholder explanation of why separate plan review adds no value.'
+  else
+    printf 'ok: Combined rationale is populated\n'
+  fi
+fi
+
+# --- (d) complete interface contract -------------------------------------
+interface_block=$(awk '
+  /^##[[:space:]]+Interface contract[[:space:]]*$/ { in_contract = 1; next }
+  in_contract && /^#{1,6}[[:space:]]+/ { exit }
+  in_contract { print }
+' "$plan")
+
+if grep -qE '^##[[:space:]]+Interface contract[[:space:]]*$' "$plan"; then
+  printf 'ok: interface contract section present\n'
+else
+  note_fail 'missing "## Interface contract" section.'
+fi
+
+category_labels=(
+  '- **gRPC / protobuf:**'
+  '- **Exported Go APIs / interfaces:**'
+  '- **Tool schemas:**'
+  '- **CLI / config:**'
+  '- **Events / persistence:**'
+  '- **Security / authority:**'
+  '- **Compatibility / migration:**'
+)
+
+for label in "${category_labels[@]}"; do
+  category_count=$(printf '%s\n' "$interface_block" | awk -v label="$label" 'index($0, label) == 1 && substr($0, length(label) + 1, 1) == " " { count++ } END { print count + 0 }')
+  if [[ "$category_count" -ne 1 ]]; then
+    note_fail "expected exactly one canonical interface category: $label"
+    continue
+  fi
+
+  category_line=$(printf '%s\n' "$interface_block" | awk -v label="$label" 'index($0, label) == 1 && substr($0, length(label) + 1, 1) == " " { print; exit }')
+  category_content=${category_line#"$label"}
+  category_content=${category_content#" "}
+  if [[ -z "$category_content" ]]; then
+    note_fail "empty interface category: $label"
+  elif printf '%s\n' "$category_content" | grep -qiE '(^|[^[:alnum:]_])TBD([^[:alnum:]_]|$)|<[^>]+>'; then
+    note_fail "placeholder interface content: $label"
+  elif [[ "$category_content" =~ ^None([[:space:]]*)$ ]]; then
+    note_fail "bare None requires a dash and rationale: $label"
+  elif [[ "$category_content" == None* ]] && ! [[ "$category_content" =~ ^None[[:space:]]+(-|–|—)[[:space:]]+[^[:space:]].* ]]; then
+    note_fail "None declaration requires 'None — rationale' (hyphen, en dash, or em dash): $label"
+  else
+    printf 'ok: populated interface category %s\n' "$label"
+  fi
+done
+
+# Combined is the workflow-only exception. Its six runtime-facing categories must
+# explicitly be absent; compatibility/migration may describe the workflow change.
+if [[ "$combined" -eq 1 ]]; then
+  combined_labels=(
+    '- **gRPC / protobuf:**'
+    '- **Exported Go APIs / interfaces:**'
+    '- **Tool schemas:**'
+    '- **CLI / config:**'
+    '- **Events / persistence:**'
+    '- **Security / authority:**'
+  )
+  for label in "${combined_labels[@]}"; do
+    category_line=$(printf '%s\n' "$interface_block" | awk -v label="$label" 'index($0, label) == 1 && substr($0, length(label) + 1, 1) == " " { print; exit }')
+    category_content=${category_line#"$label"}
+    category_content=${category_content#" "}
+    if ! [[ "$category_content" =~ ^None[[:space:]]+(-|–|—)[[:space:]]+[^[:space:]].* ]]; then
+      note_fail "Combined delivery requires '$label None — <rationale>'"
+    fi
+  done
+fi
 total_citations=$(grep -cE "$CITE_LINK" "$plan" || true)
 if [[ "$total_citations" -eq 0 ]]; then
   note_fail 'no citations — every scenario must link at least once to ../adr/**, ../architecture.md, ../design/**, or ../../AGENTS.md (relative to docs/acceptance/).'
@@ -77,6 +262,9 @@ if [[ -n "$scenario_lines" ]]; then
   while IFS= read -r ln; do [[ -n "$ln" ]] && starts+=("$ln"); done <<< "$scenario_lines"
   total_lines=$(wc -l < "$plan")
   n=${#starts[@]}
+  if [[ "$combined" -eq 1 && "$n" -ne 1 ]]; then
+    note_fail "Combined delivery requires exactly one ### Scenario heading (found $n)."
+  fi
   for ((i = 0; i < n; i++)); do
     start=${starts[i]}
     if ((i + 1 < n)); then end=$(( ${starts[i + 1]} - 1 )); else end=$total_lines; fi
@@ -91,10 +279,10 @@ if [[ -n "$scenario_lines" ]]; then
     fi
   done
 else
-  note_warn 'no "### Scenario N" headings — per-scenario citation check skipped (single-feature plans may use a flat "## Acceptance criteria" list).'
+  note_fail 'no "### Scenario N" headings — scenario-first plans require at least one scenario. Focused plans should use one compact scenario, a small AC set, and may map to one orchestration task.'
 fi
 
-# --- (d) out-of-scope section ------------------------------------------
+# --- (e) out-of-scope section ------------------------------------------
 if grep -qiE '^##+ +Out of scope' "$plan"; then
   printf 'ok: out-of-scope section present\n'
 else
@@ -111,7 +299,7 @@ fi
 
 printf '\n'
 if [[ "$fail" -ne 0 ]]; then
-  printf 'check-acceptance-plan: FAILED (hard absences above). Fix before handing to /plan-orchestrate.\n' >&2
+  printf 'check-acceptance-plan: FAILED (hard absences above). Fix before opening the Plan / Interface PR.\n' >&2
   exit 1
 fi
 if [[ "$warn" -ne 0 ]]; then

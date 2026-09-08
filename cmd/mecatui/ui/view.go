@@ -2,7 +2,6 @@ package ui
 
 import (
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -40,6 +39,7 @@ func mouseCaptureEnabled(m Model) bool {
 // (not a string); we set Content and request the alt screen.
 func (m Model) View() tea.View {
 	var v tea.View
+	v.KeyboardEnhancements.ReportEventTypes = true
 	v.AltScreen = !m.deps.NoAltScreen
 	v.WindowTitle = m.windowTitle()
 	// Capture the mouse — but ONLY on the alt screen, and ONLY when mouse capture
@@ -90,11 +90,14 @@ func (m Model) View() tea.View {
 func (m Model) renderBody() string {
 	m.hits.clear()
 	m.metrics.clear()
+	if m.phase == phaseAuthorizing {
+		return m.renderMCPAuthorization()
+	}
 	switch {
 	case m.sessionDetailsOpen:
 		return renderSessionDetails(m.deps.Theme, m.sessionDetails(), m.helpKeyMarkings(), m.width, m.vp.Height())
 	case m.showHelp:
-		return renderHelpOverlay(m.deps.Theme, m.caps, m.width, m.vp.Height(), m.helpKeyMarkings())
+		return renderHelpOverlay(m.deps.Theme, m.caps, m.width, m.vp.Height(), m.helpScroll, m.helpKeyMarkings())
 	case m.team.view != teamNone:
 		return renderAgentsOverlay(m.deps.Theme, m.agentsTab, m.subagents, m.parallel, m.team, m.conv.latestTeamBlock(), m.conv.subagentFleet, m.conv.parallelGroups, m.helpKeyMarkings(), m.width, m.vp.Height())
 	case m.agentsInv.view != agentsInvNone:
@@ -364,12 +367,9 @@ func (m Model) headerIdentityParts(sid, withNext string) []string {
 	if mode != "" {
 		parts = append(parts, m.renderHeaderMode(mode))
 	}
-	// Workspace segment (issue #102): shown only when the session is rooted at a
-	// DIFFERENT workspace than the launch directory (no noise in the common case).
-	// Display just the last path component to keep the header compact.
-	if ws := m.activeWorkspace; ws != "" && ws != m.deps.Workspace {
-		wsPart := m.deps.Theme.Style("muted").Render("ws:" + filepath.Base(ws))
-		parts = append(parts, wsPart)
+	// Placement metadata is display-only; never derive or expose a server path.
+	if label := m.activePlacement.Label; label != "" {
+		parts = append(parts, m.deps.Theme.Style("muted").Render("place:"+sanitizeTerminal(label)))
 	}
 	if m.deps.Server != "" {
 		parts = append(parts, m.deps.Server)
@@ -555,7 +555,7 @@ func (m Model) footerActivity() string {
 	default:
 		left = m.idleFooterLeft()
 	}
-	if m.deps.DebugMouse && m.mouseDebug != "" {
+	if (m.deps.Debug || m.deps.DebugMouse) && m.mouseDebug != "" {
 		left = m.deps.Theme.Style("muted").Render(m.mouseDebug)
 	}
 	return left
@@ -647,6 +647,8 @@ func (m Model) idleFooterLeft() string {
 		return m.selectionStatus()
 	case m.gatewayNotice != "":
 		return m.deps.Theme.Style("muted").Render(m.gatewayNotice)
+	case m.workspaceEnrollmentNotice != "":
+		return m.deps.Theme.Style("muted").Render(m.workspaceEnrollmentNotice)
 	default:
 		if m.statusMsg == "" {
 			return "ready"

@@ -11,6 +11,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
 	"github.com/stacklok/mecatl/internal/adapter/slogdiag"
 	"github.com/stacklok/mecatl/internal/app"
 	"github.com/stacklok/mecatl/internal/cliconfig"
@@ -360,7 +361,7 @@ func usageEpilogue(fs *flag.FlagSet) func() {
 		_, _ = fmt.Fprintf(out, "mecatequi — single-shot, headless mecatl runner for CI / batch use.\n\n")
 		_, _ = fmt.Fprintf(out, "Usage: mecatequi --prompt <text> [flags]\n\n")
 		_, _ = fmt.Fprintf(out, "Flags:\n")
-		fs.PrintDefaults()
+		cliconfig.PrintDefaults(out, fs)
 		_, _ = fmt.Fprintln(out, "\nVersion: mecatequi --version prints the build version and exits.")
 		_, _ = fmt.Fprintf(out, `
 Output routing:
@@ -405,6 +406,9 @@ func appConfig(f flags, diag port.Diagnostics, obs observability) app.Config {
 		// never registered (a hand-built test config).
 		MCPServers:               f.mcpServers.Servers(),
 		MCPProfileLoader:         cliconfig.NewMCPProfileResolver(f.mcpServers, os.LookupEnv),
+		MCPAuthorityLoader:       cliconfig.NewMCPProfileResolver(f.mcpServers, os.LookupEnv),
+		MCPAuthorityDefault:      mcpauthority.Global,
+		MCPBrokerSupported:       false,
 		ProviderCredentialLoader: cliconfig.NewProviderCredentialResolver(f.providerFlags, f.providerCredentials),
 		ProviderOverrides:        f.providerFlags.EndpointOverrides(),
 		PermissionsConventional:  true,
@@ -446,9 +450,10 @@ func appConfig(f flags, diag port.Diagnostics, obs observability) app.Config {
 		// Observability (issue #343, ADR 0098): OPT-IN OTLP push. With no --otlp-*
 		// flags the handles are zero-valued (nil Sink/ToolCallRecorder/
 		// MetricsRoleScoper) — the byte-identical no-telemetry posture.
-		Sink:              obs.Sink,
-		ToolCallRecorder:  obs.ToolCallRecorder,
-		MetricsRoleScoper: obs.MetricsRoleScoper,
+		Sink:                             obs.Sink,
+		ToolCallRecorder:                 obs.ToolCallRecorder,
+		MetricsRoleScoper:                obs.MetricsRoleScoper,
+		SessionLoadFailureMetricsEmitter: obs.SessionLoadFailureMetricsEmitter,
 	}
 	keys := f.providerCredentials
 	f.providerFlags.ApplyResolved(&out, keys)

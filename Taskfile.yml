@@ -22,6 +22,9 @@ includes:
   sdk:
     taskfile: sdk/typescript/Taskfile.yml
     dir: sdk/typescript
+  slack-bot:
+    taskfile: sdk/typescript/examples/slack-bot/Taskfile.yml
+    dir: sdk/typescript/examples/slack-bot
   mecak8s:
     taskfile: deploy/mecak8s-kind/Taskfile.yml
     dir: .
@@ -354,8 +357,10 @@ tasks:
       session persistence, and OIDC caller identity against an in-cluster Dex.
       Export OPENROUTER_API_KEY to ALSO run the LIVE variant (real LLM turns
       through the pods proving the plumbing under load; the live specs Skip
-      without the key). Needs Docker + kind + ko + helm + kubectl. NOT part of
-      `task test` (slow ~5-8 min mock-only, ~10-15 min with live).
+      without the key). Uses Docker by default, or rootless Podman with
+      `CONTAINER_ENGINE=podman` (Kind's `k8s-file` Podman log driver is required;
+      see https://kind.sigs.k8s.io/docs/user/rootless/). NOT part of `task test`
+      (slow ~5-8 min mock-only, ~10-15 min with live).
     deps: [build]
     preconditions:
       - sh: command -v kind >/dev/null 2>&1
@@ -366,6 +371,18 @@ tasks:
         msg: "helm is not installed (https://helm.sh/docs/intro/install/)"
       - sh: command -v kubectl >/dev/null 2>&1
         msg: "kubectl is not installed"
+      - sh: |
+          runtime="${CONTAINER_ENGINE:-${KIND_EXPERIMENTAL_PROVIDER:-docker}}"
+          case "$runtime" in docker|podman) command -v "$runtime" >/dev/null 2>&1 ;; *) exit 1 ;; esac
+        msg: "CONTAINER_ENGINE must be docker (default) or podman, and the selected runtime must be on PATH"
+      - sh: |
+          runtime="${CONTAINER_ENGINE:-${KIND_EXPERIMENTAL_PROVIDER:-docker}}"
+          test "$runtime" != podman || podman info --format json | grep -Eq '"rootless"[[:space:]]*:[[:space:]]*true'
+        msg: "e2e:k8s:podman supports rootless Podman only"
+      - sh: |
+          runtime="${CONTAINER_ENGINE:-${KIND_EXPERIMENTAL_PROVIDER:-docker}}"
+          test "$runtime" != podman || podman info --format json | grep -Eq '"logDriver"[[:space:]]*:[[:space:]]*"k8s-file"'
+        msg: "rootless Podman requires log_driver = \"k8s-file\"; see https://kind.sigs.k8s.io/docs/user/rootless/"
     cmds:
       # 30m accommodates the LIVE specs when OPENROUTER_API_KEY is exported: a
       # real haiku turn takes 10-30s, the live lease/persistence specs each drive
@@ -373,7 +390,19 @@ tasks:
       # ~1-2 min. Without the key the live specs Skip and the suite fits in 15m;
       # the outer bound only matters when the live variant runs. GOWORK=off proves
       # the image uses tagged external dependencies rather than workspace overlays.
-      - GOWORK=off go test -tags kind_e2e -count=1 -timeout 30m ./e2e/k8s/...
+      - cmd: |
+          runtime="${CONTAINER_ENGINE:-${KIND_EXPERIMENTAL_PROVIDER:-docker}}"
+          case "$runtime:${KIND_EXPERIMENTAL_PROVIDER:-}" in
+            docker:|podman:podman) ;;
+            podman:) export KIND_EXPERIMENTAL_PROVIDER=podman ;;
+            *) echo "CONTAINER_ENGINE and KIND_EXPERIMENTAL_PROVIDER disagree" >&2; exit 2 ;;
+          esac
+          GOWORK=off go test -tags kind_e2e -count=1 -timeout 30m ./e2e/k8s/...
+
+  e2e:k8s:podman:
+    desc: Run e2e:k8s with rootless Podman (requires the k8s-file Podman log driver)
+    cmds:
+      - CONTAINER_ENGINE=podman task e2e:k8s
 
   deploy:check:
     desc: |
@@ -469,7 +498,11 @@ tasks:
         git stash && BENCHCOUNT=10 task bench | tee old.txt && git stash pop
         benchstat old.txt new.txt
       allocs/op is the deterministic, gate-hard signal; treat ns/op as advisory
-      on shared CI. Override the sample count with BENCHCOUNT (default 10).
+      on shared CI. The BenchmarkRun*Turn benchmarks measure startup-inclusive
+      first-session/first-prompt work; BenchmarkSteadyState*Turn prewarms that
+      lifecycle then measures one recurring continuation turn. Both families are
+      hard-gated independently. Override the sample count with BENCHCOUNT (default
+      10).
     vars:
       BENCHCOUNT: '{{.BENCHCOUNT | default "10"}}'
     cmds:
@@ -618,28 +651,28 @@ tasks:
     env:
       GOLANGCI_LINT: "{{.ROOT_DIR}}/.tools/bin/golangci-lint"
     preconditions:
-      - sh: test -x $GOLANGCI_LINT
+      - sh: test -x "$GOLANGCI_LINT"
         msg: "missing pinned golangci-lint; run: task tools:golangci-lint"
     cmds:
-      - $GOLANGCI_LINT run --allow-parallel-runners ./...
+      - '"$GOLANGCI_LINT" run --allow-parallel-runners ./...'
       - go vet ./...
       # engine/ is its own module — it shares the ROOT golangci config (no
       # engine-local .golangci.yml) so the depguard layering allowlists stay the
       # single source of truth across the module boundary.
-      - cd engine && $GOLANGCI_LINT run --config ../.golangci.yml --allow-parallel-runners ./...
+      - 'cd engine && "$GOLANGCI_LINT" run --config ../.golangci.yml --allow-parallel-runners ./...'
       - cd engine && go vet ./...
       # authn/oidc is a separate opt-in adapter module, sharing the root config.
-      - cd authn/oidc && $GOLANGCI_LINT run --config ../../.golangci.yml --allow-parallel-runners ./...
+      - 'cd authn/oidc && "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners ./...'
       - cd authn/oidc && go vet ./...
       # provider/ submodules (ADR 0093) — each its own module; sharing the ROOT
       # golangci config so the depguard allowlists stay the single source of truth.
-      - cd provider/ssefilter && $GOLANGCI_LINT run --config ../../.golangci.yml --allow-parallel-runners ./...
+      - 'cd provider/ssefilter && "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners ./...'
       - cd provider/ssefilter && go vet ./...
-      - cd provider/anthropic && $GOLANGCI_LINT run --config ../../.golangci.yml --allow-parallel-runners ./...
+      - 'cd provider/anthropic && "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners ./...'
       - cd provider/anthropic && go vet ./...
-      - cd provider/openai && $GOLANGCI_LINT run --config ../../.golangci.yml --allow-parallel-runners ./...
+      - 'cd provider/openai && "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners ./...'
       - cd provider/openai && go vet ./...
-      - cd provider/openaichat && $GOLANGCI_LINT run --config ../../.golangci.yml --allow-parallel-runners ./...
+      - 'cd provider/openaichat && "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners ./...'
       - cd provider/openaichat && go vet ./...
 
   vuln:
@@ -684,16 +717,16 @@ tasks:
     env:
       GOLANGCI_LINT: "{{.ROOT_DIR}}/.tools/bin/golangci-lint"
     preconditions:
-      - sh: test -x $GOLANGCI_LINT
+      - sh: test -x "$GOLANGCI_LINT"
         msg: "missing pinned golangci-lint; run: task tools:golangci-lint"
     cmds:
-      - $GOLANGCI_LINT run --allow-parallel-runners --fix ./...
-      - cd engine && $GOLANGCI_LINT run --config ../.golangci.yml --allow-parallel-runners --fix ./...
-      - cd authn/oidc && $GOLANGCI_LINT run --config ../../.golangci.yml --allow-parallel-runners --fix ./...
-      - cd provider/ssefilter && $GOLANGCI_LINT run --config ../../.golangci.yml --allow-parallel-runners --fix ./...
-      - cd provider/anthropic && $GOLANGCI_LINT run --config ../../.golangci.yml --allow-parallel-runners --fix ./...
-      - cd provider/openai && $GOLANGCI_LINT run --config ../../.golangci.yml --allow-parallel-runners --fix ./...
-      - cd provider/openaichat && $GOLANGCI_LINT run --config ../../.golangci.yml --allow-parallel-runners --fix ./...
+      - '"$GOLANGCI_LINT" run --allow-parallel-runners --fix ./...'
+      - 'cd engine && "$GOLANGCI_LINT" run --config ../.golangci.yml --allow-parallel-runners --fix ./...'
+      - 'cd authn/oidc && "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners --fix ./...'
+      - 'cd provider/ssefilter && "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners --fix ./...'
+      - 'cd provider/anthropic && "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners --fix ./...'
+      - 'cd provider/openai && "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners --fix ./...'
+      - 'cd provider/openaichat && "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners --fix ./...'
 
   test:docs-only-classifier:
     desc: Run the offline docs-only CI classifier and workflow-wiring tests
@@ -793,28 +826,8 @@ tasks:
           fi
         silent: true
       # Regenerate the committed configuration-reference + settings.yaml skeleton
-      # from the permconfig schema (the CI freshness gate enforces this), BEFORE
-      # llms.txt so the new reference page is in the link graph llms.txt indexes.
+      # from the permconfig schema (the CI freshness gate enforces this).
       - task: docs:configref
-      # Regenerate the committed llms.txt navigation surface so it never drifts
-      # from the docs (the CI freshness gate enforces this).
-      - task: docs:llms
-
-  docs:llms:
-    desc: Regenerate the committed llms.txt navigation surface (matlatl)
-    cmds:
-      # matlatl renders an importance-ordered llms.txt from the doc link graph.
-      # Pinned to a matlatl release; --title MUST match the README H1 ("mecatl")
-      # and the freshness gate in .github/workflows/ci.yml. Never hand-edit
-      # llms.txt — regenerate. MATLATL_BIN lets CI reuse the binary built by
-      # the private, organization-approved action without persisting git auth;
-      # the local fallback needs GOPRIVATE set.
-      - |
-        if [ -n "${MATLATL_BIN:-}" ]; then
-          "$MATLATL_BIN" index . --llms --title "mecatl" > llms.txt
-        else
-          go run github.com/stacklok/matlatl/cmd/matlatl@v0.0.8 index . --llms --title "mecatl" > llms.txt
-        fi
 
   docs:configref:
     desc: Regenerate the committed config-init skeleton + configuration-reference.md from the permconfig schema
@@ -824,12 +837,13 @@ tasks:
       # surfaces (config init + the reference page) read. go/ast stays in this
       # build-time program — the shipped mecated binary embeds the skeleton. The CI
       # docs job diffs the regenerated artifacts against these committed files and
-      # fails on drift (the llms.txt pattern). Never hand-edit either output.
+      # fails on drift. Never hand-edit either output.
       - go run ./internal/configgen/cmd/configref --skeleton internal/configgen/settings.skeleton.yaml --reference docs/configuration-reference.md
 
   docs:check:
-    desc: Gate ADR-number uniqueness and stale moved paths, then doc link health with matlatl (strict — broken links/anchors, orphans, unreachable)
+    desc: Gate acceptance-plan checker fixtures, ADR-number uniqueness and stale moved paths, then doc link health with matlatl (strict — broken links/anchors, orphans, unreachable)
     cmds:
+      - bash .claude/skills/to-acceptance-plan/scripts/check-acceptance-plan-test.sh
       - go test ./docs/lint -run '^TestRealADRNumberUniqueness$'
       - go test ./docs/lint -run '^TestNoStaleMovedADRSlugs$'
       - go run github.com/stacklok/matlatl/cmd/matlatl@v0.0.8 check . --strict
@@ -845,21 +859,21 @@ tasks:
       - go run github.com/stacklok/modelith/cmd/modelith@73429dd46a22b3c3491c4654edca391fc9bd63f2 lint --completeness error docs/architecture/mecatl.modelith.yaml
 
   docs:
-    desc: Refresh the config reference + llms.txt and gate doc links (matlatl) — run before committing doc changes
+    desc: Refresh the configuration reference and gate doc links (matlatl) — run before committing doc changes
     cmds:
       - task: docs:configref
-      - task: docs:llms
       - task: docs:check
 
   ac-trace:
     desc: "Report acceptance-criteria → test coverage for every docs/acceptance/ plan (report-only)"
     # sdk:install is a REAL dependency, not a convenience: .actrace.yml resolves
-    # `vitest:` proofs through scripts/resolve-vitest-proof.mjs, which parses the
-    # TypeScript AST using the compiler from sdk/typescript/node_modules. Without
-    # it every vitest proof is rejected ("TypeScript is unavailable"), which is
-    # merely noisy here but FATAL under --strict once a plan carrying vitest
-    # proofs is landed. The install task is fingerprinted on package.json +
-    # pnpm-lock.yaml, so this is a no-op on an already-installed tree.
+    # titled TypeScript proofs through the `vitest:` and `playwright:` resolvers,
+    # which parse the TypeScript AST using the compiler from
+    # sdk/typescript/node_modules. Without it every titled proof is rejected
+    # ("TypeScript is unavailable"), which is merely noisy here but FATAL under
+    # --strict once its plan lands. The install task is fingerprinted on
+    # package.json + pnpm-lock.yaml, so this is a no-op on an already-installed
+    # tree.
     deps: [sdk:install]
     cmds:
       # go run (pinned), NOT a go.mod `tool` directive — ac-trace is an INTERNAL

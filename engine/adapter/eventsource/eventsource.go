@@ -40,9 +40,10 @@
 // carry, in a richer event schema) this contract boundary. This is a DOCUMENTED
 // CONTRACT LIMITATION (engine/COMPATIBILITY.md, ADR 0038), not a bug.
 //
-// CREATION METADATA is supplied via SessionMeta: the id, mode, limits, workspace,
-// profile, provider/model selector, reasoning effort, authoritative title/provenance,
-// kind/relationship, adoption source/request digest, and createdAt are facts that NO event carries, so the caller
+// CREATION METADATA is supplied via SessionMeta: id, mode, limits, exact
+// EnvironmentRef, display-only placement metadata, profile, provider/model selector,
+// reasoning effort, authoritative title/provenance, kind/relationship, and createdAt
+// are facts that NO event carries, so the caller
 // (who created or discovered the session and thus knows them) provides them alongside
 // the stream. A legacy empty title falls back to the first genuine EvUserPrompt.
 // There is deliberately no EvSessionCreated event (ADR 0038 records that as a
@@ -55,8 +56,8 @@
 // pre-compaction span recovered from EvCompactionArchive carries its user messages
 // verbatim. The reconstructed conversation is therefore COMPLETE except the
 // provider-private replay fields above. (Project-instruction messages discovered at
-// turn 0 — AGENTS.md/CLAUDE.md — are NOT event-carried; they are derivable from the
-// workspace and are out of the conversation the fold rebuilds.)
+// turn 0 — AGENTS.md/CLAUDE.md — are NOT event-carried; they are reassembled from
+// the exactly reattached environment and are out of the conversation the fold rebuilds.)
 //
 // This is an EXCLUDED reference adapter (engine/COMPATIBILITY.md): it carries no
 // public-API stability promise and is not part of the guarded core surface.
@@ -85,8 +86,10 @@ type SessionMeta struct {
 	Mode session.PermissionMode
 	// Limits are the configured stop conditions.
 	Limits session.Limits
-	// Workspace is the root directory tools operate against.
-	Workspace string
+	// EnvironmentRef is the exact durable execution-environment identity.
+	EnvironmentRef session.EnvironmentRef
+	// Placement is safe display-only metadata; it is never used for reattachment.
+	Placement session.PlacementMetadata
 	// Profile is the opaque tool-surface profile label ("" = default).
 	Profile string
 	// ProviderID and ModelID are the opaque neutral provider+model selector pair
@@ -106,6 +109,14 @@ type SessionMeta struct {
 	// supplied. A legacy empty title is derived from the first genuine user event.
 	Title           string
 	TitleProvenance session.TitleProvenance
+	// TitleRevision is the title-specific durable metadata revision. Zero is legacy.
+	TitleRevision uint64
+	// Title-generation metadata is authoritative metadata, not event-carried run data.
+	TitleGeneration    session.TitleGenerationState
+	TitleSourcePrompts []string
+	TitleAttempts      []session.TitleAttempt
+	// TokenUsage is the canonical durable accounting ledger supplied by snapshot metadata.
+	TokenUsage map[session.UsageKind]session.TokenUsage
 	// Kind and Relationship are the trusted producer taxonomy supplied alongside
 	// the event stream. An empty kind is legacy and folds to unknown.
 	Kind         session.SessionKind
@@ -118,11 +129,12 @@ type SessionMeta struct {
 	// metadata. Nil is a documented pre-feature legacy record; a present payload
 	// is validated and bound before reconstruction proceeds.
 	Authority *session.Authority
-	// AdoptionSourceID and AdoptionRequestDigest are the immutable legacy-session
-	// adoption proof. They mirror sessnap's flat AdoptionMetadata fields because
-	// events do not carry creation metadata.
-	AdoptionSourceID      session.SessionID
-	AdoptionRequestDigest string
+	// ExternalBinding is the opaque composition-issued process-external
+	// identity (e.g. an MCP broker attachment binding). Not event-carried:
+	// safe to omit for a pure fold UNLESS the host requires exact external-
+	// runtime reattachment, in which case it MUST be supplied here — there is
+	// no other path into Fold's reconstructed Session for it.
+	ExternalBinding session.ExternalBinding
 	// CreatedAt is the creation timestamp.
 	CreatedAt time.Time
 }
@@ -135,6 +147,10 @@ var (
 	// ErrReconstruct is returned when the folded events cannot be reconstructed into
 	// a valid Session (an unpairable conversation, an inconsistent terminal state).
 	ErrReconstruct = errors.New("eventsource: cannot reconstruct session")
+	// ErrPrivateStateRequired is returned when an otherwise well-formed external
+	// authorization lifecycle remains open. Safe events deliberately omit the
+	// private continuation state required to resume it.
+	ErrPrivateStateRequired = errors.New("eventsource: private state required")
 )
 
 // Fold reconstructs a *session.Session by folding the durable event stream back
@@ -147,8 +163,9 @@ var (
 // ProviderPhase / ReasoningItemID / ItemID are not event-carried).
 //
 // It returns ErrStream (wrapping the per-item error) if the iterator yields an
-// error, and ErrReconstruct if the reconstructed history is not provider-replayable
-// or the derived state is inconsistent. It never panics.
+// error, ErrReconstruct if the reconstructed history or authorization lifecycle is
+// inconsistent, and ErrPrivateStateRequired if a well-formed authorization lifecycle
+// remains open after the final event. It never panics.
 func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Session, error) {
 	f := &folder{}
 	for ev, err := range events {
@@ -156,10 +173,19 @@ func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Se
 			return nil, fmt.Errorf("%w: %w", ErrStream, err)
 		}
 		f.consume(ev)
+		if f.reconstructErr != nil {
+			return nil, fmt.Errorf("%w: %v", ErrReconstruct, f.reconstructErr)
+		}
+	}
+	if len(f.authorizations) != 0 {
+		return nil, ErrPrivateStateRequired
 	}
 	f.finalizeOpenTurn()
 
-	s := session.New(meta.ID, meta.Mode, meta.Workspace, meta.Limits, meta.CreatedAt)
+	if !meta.EnvironmentRef.Valid() {
+		return nil, fmt.Errorf("%w: missing or invalid environment ref", ErrReconstruct)
+	}
+	s := session.New(meta.ID, meta.Mode, meta.EnvironmentRef, meta.Limits, meta.CreatedAt)
 	if err := s.RestoreSessionMetadata(meta.Kind, meta.Relationship); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrReconstruct, err)
 	}
@@ -173,24 +199,18 @@ func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Se
 		return nil, fmt.Errorf("%w: %w", ErrReconstruct, err)
 	}
 	// Inert creation labels — opaque to the domain, restored by direct assignment
-	// exactly as sessnap.Restore does (these are authoritative exported values, not
-	// state transitions).
+	// exactly as sessnap.Restore does. Title-specific metadata restores atomically
+	// through RestoreTitleMetadata below.
+	s.Placement = meta.Placement
 	s.Profile = meta.Profile
 	s.ProviderID = meta.ProviderID
 	s.ModelID = meta.ModelID
 	s.ReasoningEffort = meta.ReasoningEffort
+	s.ExternalBinding = meta.ExternalBinding
 	s.DebugMCPServers = append([]string(nil), meta.DebugMCPServers...)
 	s.DebugMCPTools = append([]string(nil), meta.DebugMCPTools...)
 	s.DebugTargetFingerprint = meta.DebugTargetFingerprint
-	if meta.AdoptionSourceID != "" || meta.AdoptionRequestDigest != "" {
-		s.Adoption = &session.AdoptionMetadata{
-			AdoptionSourceID:      meta.AdoptionSourceID,
-			AdoptionRequestDigest: meta.AdoptionRequestDigest,
-		}
-	}
-	s.Title = meta.Title
-	s.TitleProvenance = meta.TitleProvenance
-
+	s.RestoreTitleMetadata(meta.Title, meta.TitleProvenance, meta.TitleRevision, meta.TitleGeneration, meta.TitleSourcePrompts, meta.TitleAttempts)
 	if f.pending != nil {
 		// AWAITING: the live session at pause time holds the assistant message WITH its
 		// not-yet-answered tool call (RecordAssistant runs before dispatch; the ask
@@ -211,6 +231,7 @@ func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Se
 	if err := sessnap.RestoreState(s, f.restoreState(), f.stop, nil, f.finalCounters(), f.usage, f.permanent, f.lastError); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrReconstruct, err)
 	}
+	restoreTokenUsage(s, meta.TokenUsage, f.usage)
 	if s.State == session.StateFailed {
 		if err := s.RecordFailureMetadata(f.disposition, f.progress); err != nil {
 			return nil, fmt.Errorf("%w: restore failure metadata: %w", ErrReconstruct, err)
@@ -227,6 +248,20 @@ func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Se
 	// title survives compaction here (better than the snapshot lazy fallback).
 	s.SetTitle(f.firstGenuineText)
 	return s, nil
+}
+
+// restoreTokenUsage makes canonical persisted usage authoritative and derives it
+// from the legacy compatibility projection only when the ledger is absent.
+func restoreTokenUsage(s *session.Session, persisted map[session.UsageKind]session.TokenUsage, legacy session.Usage) {
+	if persisted != nil {
+		s.RestoreTokenUsage(persisted)
+		return
+	}
+	if legacy != (session.Usage{}) {
+		s.RestoreTokenUsage(map[session.UsageKind]session.TokenUsage{
+			session.UsageKindMain: {Total: legacy, Models: map[string]session.Usage{"unknown": legacy}},
+		})
+	}
 }
 
 func (f *folder) finalizeOpenTurn() {
@@ -272,7 +307,7 @@ func restoreAuthority(s *session.Session, authority *session.Authority) error {
 // f.messages is the paired prefix; we seed that, then drive the trailing turn through
 // the running aggregate and pause on the ask — mirroring how the loop reached the
 // awaiting state.
-func (f *folder) reconstructAwaiting(s *session.Session, _ SessionMeta) (*session.Session, error) {
+func (f *folder) reconstructAwaiting(s *session.Session, meta SessionMeta) (*session.Session, error) {
 	if err := s.SeedHistory(f.messages); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrReconstruct, err)
 	}
@@ -285,7 +320,7 @@ func (f *folder) reconstructAwaiting(s *session.Session, _ SessionMeta) (*sessio
 	if err := s.RecordAssistant(session.NewAssistantMessage(f.curText, "", f.curCalls)); err != nil {
 		return nil, fmt.Errorf("%w: awaiting assistant: %w", ErrReconstruct, err)
 	}
-	s.Usage = f.usage
+	restoreTokenUsage(s, meta.TokenUsage, f.usage)
 	if err := s.PauseForApproval(*f.pending); err != nil {
 		return nil, fmt.Errorf("%w: awaiting pause: %w", ErrReconstruct, err)
 	}
@@ -293,6 +328,13 @@ func (f *folder) reconstructAwaiting(s *session.Session, _ SessionMeta) (*sessio
 	// fold (same set-once seam as the non-awaiting path above).
 	s.SetTitle(f.firstGenuineText)
 	return s, nil
+}
+
+type authorizationLifecycle struct {
+	call        session.ToolCallID
+	displayName string
+	expiresAt   time.Time
+	answered    bool
 }
 
 // folder accumulates the per-turn reconstruction state as it walks the stream.
@@ -343,6 +385,16 @@ type folder struct {
 	retryDisposition session.RetryDisposition
 	retryProgress    session.StreamProgress
 
+	// authorizations contains only currently open lifecycles. The seen sets retain
+	// full-stream uniqueness after resolution; openAuthorizationCalls gives each
+	// durable tool.result at most one open lifecycle to answer.
+	authorizations         map[string]authorizationLifecycle
+	openAuthorizationCalls map[session.ToolCallID]string
+	seenAuthorizationIDs   map[string]struct{}
+	seenAuthorizationCalls map[session.ToolCallID]struct{}
+	toolResultCalls        map[session.ToolCallID]struct{}
+	reconstructErr         error
+
 	// counters of the CURRENT run segment (reset on each terminal, so the final
 	// values reflect the latest run — mirroring resetToIdle on Reopen).
 	curTurns      int
@@ -357,6 +409,10 @@ type folder struct {
 // consume folds one event into the accumulator.
 func (f *folder) consume(ev session.Event) {
 	switch ev.Type {
+	case session.EvAuthorizationRequired:
+		f.requireAuthorization(ev.Authorization)
+	case session.EvAuthorizationResolved:
+		f.resolveAuthorization(ev.Authorization)
 	case session.EvCompactionArchive, session.EvUserPrompt:
 		f.consumeHistoryEvent(ev)
 	case session.EvModelRetry:
@@ -401,6 +457,7 @@ func (f *folder) consume(ev session.Event) {
 		// then append the tool-role message. Mirrors RecordToolResults' counter updates.
 		f.flushTurn()
 		if ev.ToolResult != nil {
+			f.recordAuthorizationResult(ev.ToolResult.CallID)
 			f.messages = append(f.messages, session.NewToolMessage(*ev.ToolResult))
 			f.curToolCalls++
 			if ev.ToolResult.IsError {
@@ -426,6 +483,89 @@ func (f *folder) consume(ev session.Event) {
 		// no_progress, hook, the delegation families) carry no conversation or lifecycle
 		// state a fold needs — ignore them.
 	}
+}
+
+func (f *folder) requireAuthorization(p *session.AuthorizationPayload) {
+	if f.reconstructErr != nil {
+		return
+	}
+	if p == nil || !p.Valid() || p.Status != session.AuthorizationPending {
+		f.reconstructErr = errors.New("malformed authorization.required event")
+		return
+	}
+	if _, exists := f.seenAuthorizationIDs[p.AuthorizationID]; exists {
+		f.reconstructErr = errors.New("reused authorization id")
+		return
+	}
+	if _, exists := f.seenAuthorizationCalls[p.Call]; exists {
+		f.reconstructErr = errors.New("reused authorization call id")
+		return
+	}
+	if _, exists := f.toolResultCalls[p.Call]; exists {
+		f.reconstructErr = errors.New("authorization.required follows matching tool.result")
+		return
+	}
+	if f.authorizations == nil {
+		f.authorizations = make(map[string]authorizationLifecycle)
+		f.openAuthorizationCalls = make(map[session.ToolCallID]string)
+		f.seenAuthorizationIDs = make(map[string]struct{})
+		f.seenAuthorizationCalls = make(map[session.ToolCallID]struct{})
+	}
+	f.seenAuthorizationIDs[p.AuthorizationID] = struct{}{}
+	f.seenAuthorizationCalls[p.Call] = struct{}{}
+	f.authorizations[p.AuthorizationID] = authorizationLifecycle{
+		call:        p.Call,
+		displayName: p.DisplayName,
+		expiresAt:   p.ExpiresAt,
+	}
+	f.openAuthorizationCalls[p.Call] = p.AuthorizationID
+}
+
+func (f *folder) resolveAuthorization(p *session.AuthorizationPayload) {
+	if f.reconstructErr != nil {
+		return
+	}
+	if p == nil || !p.Valid() || p.Status == session.AuthorizationPending {
+		f.reconstructErr = errors.New("malformed authorization.resolved event")
+		return
+	}
+	open, exists := f.authorizations[p.AuthorizationID]
+	if !exists {
+		f.reconstructErr = errors.New("authorization.resolved has no matching open lifecycle")
+		return
+	}
+	if open.call != p.Call {
+		f.reconstructErr = errors.New("authorization.resolved call does not match required call")
+		return
+	}
+	if open.displayName != p.DisplayName {
+		f.reconstructErr = errors.New("authorization.resolved display name does not match required display name")
+		return
+	}
+	if !open.expiresAt.Equal(p.ExpiresAt) {
+		f.reconstructErr = errors.New("authorization.resolved expiry does not match required expiry")
+		return
+	}
+	if !open.answered {
+		f.reconstructErr = errors.New("authorization.resolved precedes matching tool.result")
+		return
+	}
+	delete(f.authorizations, p.AuthorizationID)
+	delete(f.openAuthorizationCalls, p.Call)
+}
+
+func (f *folder) recordAuthorizationResult(call session.ToolCallID) {
+	if f.toolResultCalls == nil {
+		f.toolResultCalls = make(map[session.ToolCallID]struct{})
+	}
+	f.toolResultCalls[call] = struct{}{}
+	id, exists := f.openAuthorizationCalls[call]
+	if !exists {
+		return
+	}
+	open := f.authorizations[id]
+	open.answered = true
+	f.authorizations[id] = open
 }
 
 func (f *folder) consumeHistoryEvent(ev session.Event) {

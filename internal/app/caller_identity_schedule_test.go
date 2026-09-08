@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memschedulestore"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
@@ -65,7 +64,8 @@ func newScheduleOwnerFixture(t *testing.T) (*memstore.Store, interface {
 // saveOwnedSession persists an idle session owned by owner (nil = ownerless).
 func saveOwnedSession(t *testing.T, store *memstore.Store, id session.SessionID, owner *session.Principal) {
 	t.Helper()
-	sess := session.New(id, session.ModePlan, "/ws", session.Limits{}, time.Now())
+	sess := session.New(id, session.ModePlan, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Now())
+	sess.EnvironmentRef = session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}
 	if err := sess.RestoreLabels(owner, session.Authority{}); err != nil {
 		t.Fatalf("RestoreLabels: %v", err)
 	}
@@ -74,13 +74,14 @@ func saveOwnedSession(t *testing.T, store *memstore.Store, id session.SessionID,
 	}
 }
 
-// ownedScheduleSpec is a minimal valid one-shot spec (non-mutating ⇒ plan mode,
-// default profile ⇒ a workspace is required).
+// ownedScheduleSpec is a minimal valid one-shot spec with trusted exact
+// placement for the standalone manager fixture.
 func ownedScheduleSpec(name string, origin session.SessionID) port.ScheduleSpec {
 	return port.ScheduleSpec{
 		Name:            name,
 		Prompt:          "check the build",
-		Workspace:       "/ws",
+		EnvironmentRef:  session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"},
+		PlacementScope:  "legacy-local",
 		Mode:            session.ModePlan,
 		Trigger:         port.TriggerSpec{OneShot: time.Now().Add(time.Hour)},
 		OriginSessionID: origin,
@@ -256,10 +257,10 @@ func TestCallerIdentity_Scenario4_FireRunsAsOwnerClientCredentials(t *testing.T)
 		Model:   "test-model",
 		Store:   store,
 	})
-	svc, err := server.NewService(server.Config{
-		Engine:              engine,
-		Store:               store,
-		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+	svc, err := newTestServerService(server.Config{
+		Engine: engine,
+		Store:  store,
+
 		Now:                 time.Now,
 		DefaultCapabilities: llm.Capabilities(),
 		EventLog:            store,
@@ -271,11 +272,12 @@ func TestCallerIdentity_Scenario4_FireRunsAsOwnerClientCredentials(t *testing.T)
 
 	owner := alicePrincipal
 	sched := port.Schedule{Spec: port.ScheduleSpec{
-		Name:      "owned-fire",
-		Prompt:    "say hi",
-		Workspace: workspace,
-		Mode:      session.ModePlan,
-		Owner:     &owner,
+		Name:           "owned-fire",
+		Prompt:         "say hi",
+		EnvironmentRef: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: workspace, Revision: "in-tree-v1"},
+		PlacementScope: "legacy-local",
+		Mode:           session.ModePlan,
+		Owner:          &owner,
 	}}
 
 	// The scheduler's fire goroutine runs under the system principal.

@@ -1,0 +1,13 @@
+{
+  "turns": [
+    {
+      "tool_calls": [
+        {
+          "id": "present-plan",
+          "name": "PresentPlan",
+          "args": { "plan": "1. Inspect the target. 2. Apply the change. 3. Verify it." }
+        }
+      ]
+    }
+  ]
+}

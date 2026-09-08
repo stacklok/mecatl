@@ -9,6 +9,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/memschedulestore"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
@@ -92,7 +93,10 @@ func TestScheduleVerbsUnaffectedWhenEnforcementDisabled(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	if _, err := mgr.CreateSchedule(ctx, testSchedule("no-enforcement")); err != nil {
+	spec := testSchedule("no-enforcement")
+	spec.EnvironmentRef = session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}
+	spec.PlacementScope = "legacy-local"
+	if _, err := mgr.CreateSchedule(ctx, spec); err != nil {
 		t.Fatalf("CreateSchedule(unenforced, no caller): %v", err)
 	}
 	if _, err := mgr.GetSchedule(ctx, "no-enforcement"); err != nil {

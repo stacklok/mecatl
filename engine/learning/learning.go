@@ -66,6 +66,9 @@ func (m Mode) Next() Mode {
 // Trajectory is an owned snapshot of one newly completed run. Messages has a
 // fresh backing slice and never aliases a live session aggregate.
 type Trajectory struct {
+	// RunID binds this completion to the durable host-minted run that produced it.
+	// Empty or non-durable identities cannot authorize durable learning admission.
+	RunID     string
 	SessionID session.SessionID
 	Workspace string
 	Stop      session.StopReason

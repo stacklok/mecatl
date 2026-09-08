@@ -42,14 +42,13 @@ semantic-version protocol.
 | RPC | Kind | Purpose |
 | --- | --- | --- |
 | `CreateSession(CreateSessionRequest) → CreateSessionResponse` | unary | allocate a server-side session, return its id |
-| `GetSession(GetSessionRequest) → GetSessionResponse` | unary | snapshot of an existing session |
-| `RenameSession(RenameSessionRequest) → RenameSessionResponse` | unary | replace an owned idle main session's title and mark its provenance operator-authored; ownership, kind, state, liveness, and lease are revalidated at execution |
+| `GetSession(GetSessionRequest) → GetSessionResponse` | unary | snapshot of an existing session, including authoritative title/provenance, title-generation lifecycle, and canonical durable token usage when present |
+| `RenameSession(RenameSessionRequest) → RenameSessionResponse` | unary | replace an owned idle main session's title and mark its provenance operator-authored; this permanently disables automatic title generation; ownership, kind, state, liveness, and lease are revalidated at execution |
 | `DeleteSession(DeleteSessionRequest) → DeleteSessionResponse` | unary | permanently remove an owned idle main session snapshot and store-managed sidecars; the same execution-time gates apply |
 | `CompactSession(CompactSessionRequest) → CompactSessionResponse` | unary | force one configured compaction pass on an owned main chat at an idle or terminal boundary; creates no conversation turn and returns `compacted` to distinguish a rewrite from a successful no-op |
-| `CloseSession(CloseSessionRequest) → CloseSessionResponse` | unary | end a session and release its server-side resources (learned rules, per-session engine/workspace); idempotent |
-| `ForkSession(ForkSessionRequest) → ForkSessionResponse` | unary | create a new peer session whose conversation history is a snapshot of an existing session's, inheriting the source's mode, workspace, limits, and provider/model/profile labels (same provider and model only; ADR 0065). An optional `reasoning_effort` override changes ONLY the fork's effort tier — provider/model always inherit (ADR 0068). The source must be at a turn boundary (idle/terminal); a running/awaiting source is `FAILED_PRECONDITION`. No streaming — returns the new session id |
-| `PreflightSessionAdoption(PreflightSessionAdoptionRequest) → PreflightSessionAdoptionResponse` | unary | authenticate and authorize one legacy `unknown` source, then return stable eligibility/binding reason codes. Workspace/environment and provider/model are mandatory explicit bindings; no omitted binding falls back to the current default |
-| `AdoptSession(AdoptSessionRequest) → AdoptSessionResponse` | unary | revalidate the source under run-entry serialization and its mutation lease, then atomically publish one new explicit-main copy. `idempotency_key` is bound to caller+source; retries return the same complete target, while foreign/absent sources are both `NOT_FOUND`. The source is unchanged |
+| `CloseSession(CloseSessionRequest) → CloseSessionResponse` | unary | end a session and release its server-side resources; idempotent |
+| `ClearSession(ClearSessionRequest) → ClearSessionResponse` | unary | create a distinct empty-history successor. With no `worktree_selector`, inherit the source's exact placement and labels; a fresh source-scoped selector may choose one currently eligible worktree. The source is unchanged and failures publish nothing |
+| `ForkSession(ForkSessionRequest) → ForkSessionResponse` | unary | create a history-carrying successor. Placement inherits exactly unless a fresh source-scoped `worktree_selector` is supplied; provider/model/reasoning overrides and placement resolve atomically. The source must be owned and at a legal turn boundary; failure creates no partial successor |
 | `Converse(stream ConverseRequest) → stream ConverseResponse` | bidi | drive one agent run; the first frame is either a new `Prompt` or prompt-free `RetryStart` |
 | `ApprovePlan(ApprovePlanRequest) → stream Event` | server-stream | atomically resolve a parked **plan-approval** ask (a `PresentPlan` call surfaced in plan mode, issue #206 / [ADR 0069](../adr/0069-plan-approval-gate.md)) and — on an ALLOW verdict — start a FRESH continuation run carrying the proceed message, streaming BOTH runs' events on one stream. `target_mode` selects the verdict: `DEFAULT` → allow-once (flip to default), `ACCEPT_EDITS` → allow-always (flip to accept-edits), `PLAN`/`UNSPECIFIED` → deny (iterate, no flip, no continuation run). A live run is rejected (`FAILED_PRECONDITION` — use the `Converse` `resume_approval` frame for an in-flight run); a session not `awaiting` a `PlanOriginated` ask is `FAILED_PRECONDITION` (`ErrNotAwaitingPlan`); an unknown session is `NOT_FOUND`. |
 | `StreamSessionEvents(StreamSessionEventsRequest) → stream Event` | server-stream | replay a session's durable event log (cloud-native Phase 3a read-back); an unknown id yields an empty stream; `UNIMPLEMENTED` when no durable `EventLog` is wired. **Replays the FULL timeline, including the log-only `approval`/`compaction_archive`/`user_prompt` events a live `Converse` skips** — a client opening a past session gets the verdicts and user prompts, which ARE the transcript |
@@ -72,8 +71,22 @@ not — a retry does not recover them. That guarantee is deliberately bounded: i
 covers durably-appended events, and a total backend outage combined with loss of
 the process holding the watchers leaves a gap nothing can report.
 
-**Dedicated debugger creation.** Set `CreateSessionRequest.profile = "no-fs"`, leave
-`workspace` empty, and set `debug_target_session_id` to the exact authorized target.
+**Server-owned placement.** `CreateSessionRequest` has no workspace, cwd, exact
+EnvironmentRef, placement ID, or worktree selector. Omitted `profile` binds the
+trusted deployment default; `profile:"no-fs"` explicitly attenuates filesystem access.
+The response and `GetSession` expose bounded `PlacementMetadata` only. Exact
+`EnvironmentRef{Kind, ID, Revision}` remains private in the session snapshot and trusted
+driver storage and is reattached exactly at run entry—never inferred from a current
+default.
+
+`ListCommandsRequest` and `ListWorktreesRequest` carry `session_id`, not a root.
+The server owner-authorizes and exactly reattaches that source before discovery; no-FS
+returns empty without invoking filesystem providers. Each worktree has display-safe
+metadata and an opaque caller/source-scoped selector accepted only by ClearSession or
+ForkSession. Local selectors expire on restart and must be relisted; they are neither
+paths nor durable bearer IDs.
+
+**Dedicated debugger creation.** Set `CreateSessionRequest.profile = "no-fs"` and set `debug_target_session_id` to the exact authorized target.
 Optional repeated `debug_mcp_servers` names only already-configured server-global
 streaming-HTTP MCP servers. The response advertises `session_debug`/`debug_mcp` and persists
 the selected names plus exact tool ceiling. The resulting conversation uses ordinary
@@ -90,22 +103,13 @@ per-session engine, so their tools and their auth headers never leak into anothe
 session. Each entry carries `name`, `url`, `type` (`"http"`, or empty with a
 `url`), and optional `headers`.
 
-The field is **listener-scoped**, and the scope is a DEPLOYMENT property decided
-once at startup, not a per-connection one ([ADR 0237](../adr/0237-listener-scoped-workspace-authority.md)).
-Exactly one topology accepts it: a **`--grpc-unix-socket` listener with
-`--http-addr ""`** — the SDK-spawned daemon shape. Every other deployment,
-**loopback TCP included**, refuses every non-empty value with `UNIMPLEMENTED` /
-code `client_mcp_unsupported`. One `Service` backs both API listeners, so adding
-any TCP listener gives the field up on all of them, the UNIX socket included.
-
-That threshold is stricter than the one `--workspace-authority` derives, which
-does accept loopback. The asymmetry is deliberate: a workspace path selects among
-roots the operator already owns, while an MCP endpoint plus its headers points the
-daemon at a host of the caller's choosing and has it carry supplied credentials
-there. Loopback TCP is reachable by every local process and local user on the
-host; a UNIX socket is guarded by filesystem permissions on an owner-only
-directory. The refusal is the server's, so it holds against a client that never
-checked.
+The field is **listener-scoped** as a separate outbound-network/credential policy
+([ADR 0248](../adr/0248-sdk-compatibility-and-error-contract.md)), not as workspace authority. Exactly
+one topology accepts it: a `--grpc-unix-socket` listener with `--http-addr ""`.
+Every other deployment, loopback TCP included, refuses every non-empty value with
+`UNIMPLEMENTED` / code `client_mcp_unsupported`. A UNIX socket is guarded by
+filesystem permissions on an owner-only directory; loopback TCP is reachable by
+other local processes. The refusal is server-enforced.
 
 Check `mcp_servers_on_create` in `GetCompatibilityInfo.features` before sending
 the field; the advertisement and the enforcement read the same value, so an
@@ -173,12 +177,14 @@ hide the action. Calling an old server's unknown method returns `UNIMPLEMENTED`.
 | --- | --- | --- |
 | `ListModels` | unary | the selectable provider/model inventory — public metadata only (powers the `/models` picker; see §3) |
 | `ListAgents` | unary | the discovered agent-definition registry (name, description, resolved model, tool scope) |
-| `ListCommands` | unary | the available slash commands for a workspace (discovery only — expansion happens on the run path) |
-| `ListWorktrees` | unary | the git worktrees of a repo (discovery only — powers the mecatui `/worktrees` switch; nil-safe on a no-FS/cloud server) |
+| `ListCommands` | unary | slash commands for an owned source session; owner-authorizes and exactly reattaches first; no-FS returns empty |
+| `ListWorktrees` | unary | display-safe eligible worktrees plus opaque caller/source-scoped selectors for ClearSession/ForkSession; no paths or exact refs; relist after restart |
 | `ListSkills` | unary | the discovered skills inventory (name + one-line description) |
 | `GetSoul` | unary | the resolved soul's build-time snapshot: content, size/hash, provenance, trust + drift state |
 | `GetUserModel` | unary | the **live**, bounded user-model index; optional `key` lazily returns exact read-only detail plus up to 16 revisions, including proposal linkage when present. No mutation rides this RPC — Forget remains a permission-gated tool |
 | `ReflectSession` | unary | synchronously reflect one caller-owned completed session through its persisted provider/model (the reflection slot may change only the model); remains available with automatic mode off through lazy Build-owned initialization |
+| `GetLearningAttempt` / `ListLearningAttempts` | unary | content-free lifecycle metadata from only the verified caller's private attempt partition; list accepts closed `state`, opaque `cursor`, and a bounded `limit` (default 50, maximum 200). Foreign and missing IDs are both `NOT_FOUND`; no attempt watch or EventLog projection is exposed |
+| `RetryLearningAttempt` / `AbandonLearningAttempt` | unary | retry a failed attempt or non-compensatingly abandon an unclaimed nonterminal attempt using its opaque `expected_version`. Both mutate only the caller-partitioned attempt repository; stale versions, terminal conflicts, and live claims return closed conflict errors without changing state, and abandon promises no downstream rollback |
 | `GenerateDreamPlan` | unary | spend one planner call to generate a bounded-lifetime review for exactly `project_memory` or `user_model`; returns displayed exact-duplicate and synthesized-replacement operations plus an opaque process-local plan id |
 | `DecideDreamPlan` | unary | apply or dismiss the authoritative retained whole plan by id; accepts no operation content and returns planned/applied/conflicted/skipped/failed source counts |
 | `ListLearningProposals` / `GetLearningProposal` | unary | bounded, cursor-paged proposal metadata in the verified caller partition; optional project partitions remain reviewable, while approve/undo is limited to the trusted launch root; evidence reports digest-verified availability without returning source text |
@@ -257,8 +263,10 @@ The bidi stream drives exactly one run:
 | `cancel` (`Cancel{}`) | abort the in-flight run |
 | `cancel_child` (`CancelChild{child_id}`) | cancel ONE child run by its id (the `agentId:` / `child_id` handle), leaving the run and sibling children untouched; unknown/finished ids are ignored on the stream |
 
-A second `prompt` or `retry`, or any unknown control frame, is ignored. A single
-`Converse` stream drives a single run.
+A received second `prompt` or `retry` is `InvalidArgument`; unknown control frames
+are ignored. A single `Converse` stream drives a single run. Because the server
+closes the stream on the terminal result, a control frame still in transit at that
+boundary may instead observe normal EOF.
 
 For a failed model stream, inspect the terminal Result's optional
 `retry_disposition` and `stream_progress`. New servers set both fields even when the
@@ -347,8 +355,7 @@ func main() {
 
 	// 1. Create a session.
 	cs, err := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{
-		Workspace: "/path/to/workspace",
-		Mode:      mecatlv1.PermissionMode_PERMISSION_MODE_DEFAULT,
+		Mode: mecatlv1.PermissionMode_PERMISSION_MODE_DEFAULT,
 	})
 	if err != nil {
 		log.Fatal(err)
@@ -395,8 +402,9 @@ func main() {
 }
 ```
 
-`GetSession` returns a snapshot (`session_id`, `state`, `mode`, `workspace`,
-`limits`, `turns`, `tool_calls`, `created_at_unix`).
+`GetSession` returns a snapshot (`session_id`, `state`, `mode`, bounded
+`placement` metadata, `limits`, `turns`, `tool_calls`, `created_at_unix`). It never
+returns the exact private EnvironmentRef or a filesystem path.
 
 **Inspecting / reopening a past session:** `ListSessions` returns the stored-
 session inventory (picker rows: id, timestamps, state, turn count, model id —
@@ -420,11 +428,11 @@ over a UNIX socket (built via the shared composition layer, the same assembly
 `mecated` uses), and `mecatui connect ADDRESS` dials an external server:
 
 ```sh
-OPENAI_API_KEY=sk-... bin/mecatui --workspace "$PWD"        # embedded (default)
-bin/mecatui --mock --workspace "$PWD"                       # embedded, offline mock
+OPENAI_API_KEY=sk-... bin/mecatui        # embedded (cwd is private server config)
+bin/mecatui --mock                       # embedded, offline mock
 
-bin/mecated serve &                                         # …or an external server
-bin/mecatui connect 127.0.0.1:8080 --workspace "$PWD"
+bin/mecated serve &                       # external server owns its configured root
+bin/mecatui connect 127.0.0.1:8080        # no workspace/cwd crosses the API
 ```
 
 The embedded server enables every **free + local** feature by default — memory

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
+	"github.com/stacklok/mecatl/engine/adapter/memledger"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -31,6 +32,9 @@ import (
 
 // demoWorkspaceRoot is the root the in-memory demo workspace is mounted at.
 const demoWorkspaceRoot = "/workspace"
+
+// demoEnvironmentRevision identifies the in-memory demo environment.
+const demoEnvironmentRevision = "in-tree-v1"
 
 // demoFilePath is the file the scenario seeds and the model Reads.
 const demoFilePath = "greeting.txt"
@@ -67,12 +71,12 @@ func RunScenario(ctx context.Context, provider port.LLMProvider, model string) (
 	sess := session.New(
 		"demo-session",
 		session.ModeDefault,
-		demoWorkspaceRoot,
+		session.EnvironmentRef{Kind: session.EnvKindLocal, ID: demoWorkspaceRoot, Revision: demoEnvironmentRevision},
 		session.Limits{MaxTurns: 8, MaxToolCalls: 16, MaxConsecutiveFailures: 3},
 		time.Now(),
 	)
 
-	run := engine.Run(ctx, sess, tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: demoWorkspaceRoot}, ws, nil), agent.RunRequest{Text: "Read greeting.txt and then save a note, then summarize."})
+	run := engine.Run(ctx, sess, tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: demoWorkspaceRoot, Revision: demoEnvironmentRevision}, ws, memledger.New(), nil), agent.RunRequest{Text: "Read greeting.txt and then save a note, then summarize."})
 
 	var events []session.Event
 	for ev := range run.Events() {
@@ -207,11 +211,12 @@ func RunTeamScenario(ctx context.Context) (agent.TeamOutcome, error) {
 		})}
 	}
 
-	baseEnv := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: demoWorkspaceRoot}, base, nil)
+	baseEnv := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: demoWorkspaceRoot, Revision: demoEnvironmentRevision}, base, memledger.New(), nil)
 	sup := agent.NewSupervisor(tm, baseEnv, factory,
 		agent.WithTeamGoal("verify the demo greeting file is intact"),
 		agent.WithMemberStore(memstore.New()),
 		agent.WithMemberSessionPrefix("team-demo"),
+		agent.WithTeamReadLedgerFactory(func() tool.ReadLedger { return memledger.New() }),
 		agent.WithMaxRounds(6))
 	if err := sup.AddMember(ctx, agent.MemberSpec{Name: "lead", Lead: true, InitialPrompt: "coordinate the verification"}); err != nil {
 		return agent.TeamOutcome{}, fmt.Errorf("enrol lead: %w", err)
@@ -280,7 +285,7 @@ func RunBackgroundScenario(ctx context.Context) ([]session.Event, []string) {
 	)
 
 	cat := tool.NewCatalog()
-	cat.MustRegister(agent.NewSubagentTool(childEngine))
+	cat.MustRegister(agent.NewSubagentTool(childEngine, agent.WithSubagentReadLedgerFactory(func() tool.ReadLedger { return memledger.New() })))
 	cat.MustRegister(agent.NewSubagentStatusTool())
 	engine := agent.NewEngine(agent.Deps{
 		LLM: parentLLM, Catalog: cat, Policy: allow, Hooks: hookexec.New(nil),
@@ -290,12 +295,12 @@ func RunBackgroundScenario(ctx context.Context) ([]session.Event, []string) {
 	sess := session.New(
 		"demo-background-session",
 		session.ModeDefault,
-		demoWorkspaceRoot,
+		session.EnvironmentRef{Kind: session.EnvKindLocal, ID: demoWorkspaceRoot, Revision: demoEnvironmentRevision},
 		session.Limits{MaxTurns: 8, MaxToolCalls: 16, MaxConsecutiveFailures: 3},
 		time.Now(),
 	)
 	bgWS := memfs.NewWorkspace(demoWorkspaceRoot)
-	run := engine.Run(ctx, sess, tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: demoWorkspaceRoot}, bgWS, nil),
+	run := engine.Run(ctx, sess, tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: demoWorkspaceRoot, Revision: demoEnvironmentRevision}, bgWS, memledger.New(), nil),
 		agent.RunRequest{Text: "Verify the greeting in the background, then report."})
 
 	var events []session.Event

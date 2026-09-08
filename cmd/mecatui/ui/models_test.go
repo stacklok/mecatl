@@ -1561,6 +1561,53 @@ func TestModelsPickerStatuses_ThreadedFromMsg(t *testing.T) {
 	}
 }
 
+// TestModelsPickerCustomProviderStatusRendersAlongsideFloor proves generic picker
+// status rendering keeps an operator-defined provider's configured default row
+// selectable while showing each safe listing state.
+func TestModelsPickerCustomProviderStatusRendersAlongsideFloor(t *testing.T) {
+	for _, tc := range []struct {
+		name, state, want string
+	}{
+		{name: "unreachable", state: "unreachable", want: "gateway: model service not reachable — check provider configuration"},
+		{name: "unauthorized", state: "unauthorized", want: "gateway: model service rejected access — check provider access configuration"},
+		{name: "empty", state: "empty", want: "gateway: no selectable models"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			wantSelection := client.ModelSelection{ProviderID: "gateway", ModelID: "gateway-default"}
+			fm := &fakeModels{
+				models:   []client.ModelInfo{{ProviderID: wantSelection.ProviderID, ID: wantSelection.ModelID, DisplayName: "Gateway Default"}},
+				statuses: []client.ProviderStatus{{ProviderID: wantSelection.ProviderID, State: tc.state}},
+			}
+			m := newModelsModel(t, fm, &fakeStore{}, modelsCaps(), client.ModelSelection{})
+			mm, cmd := m.runModels()
+			m = feedCmd(t, mm.(Model), cmd)
+			rendered := stripANSIstr(m.View().Content)
+			for _, want := range []string{"gateway · Gateway Default", tc.want} {
+				if !strings.Contains(rendered, want) {
+					t.Errorf("rendered picker missing %q:\n%s", want, rendered)
+				}
+			}
+			for _, unwanted := range []string{"proxy not reachable", "gateway rejected the credential", "credential lists no models", "https://", "listing response body", "gateway-secret"} {
+				if strings.Contains(rendered, unwanted) {
+					t.Errorf("rendered custom status leaked or used ToolHive copy %q:\n%s", unwanted, rendered)
+				}
+			}
+
+			mm, cmd, handled := m.onOverlayKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+			m = mm.(Model)
+			if !handled || m.createModelSelection != wantSelection || m.phase != phaseConnecting || m.modal != nil {
+				t.Fatalf("Enter selection = %+v, phase=%v modal=%T handled=%v; want %+v, connecting, closed, handled",
+					m.createModelSelection, m.phase, m.modal, handled, wantSelection)
+			}
+			m = feedModelSwitchBusiness(t, m, cmd)
+			if conv(m).createdSel != wantSelection || conv(m).carryoverCalls() != 1 {
+				t.Fatalf("restart request = selection %+v, carryover calls %d; want %+v, 1",
+					conv(m).createdSel, conv(m).carryoverCalls(), wantSelection)
+			}
+		})
+	}
+}
+
 // TestModelsCatalogUpdatesWhilePickerClosed proves catalog results remain root-owned:
 // a late update reconciles the next-create selection and feeds gateway/header state
 // without reopening the picker.

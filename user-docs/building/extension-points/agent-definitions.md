@@ -1,6 +1,7 @@
 ---
 sidebar_position: 8
 title: Agent definitions
+description: Define specialist agents with reusable instructions, tools, models, and memory settings.
 ---
 
 # Agent definitions

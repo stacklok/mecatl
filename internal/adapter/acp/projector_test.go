@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stacklok/mecatl/engine/session"
 )
@@ -592,5 +593,50 @@ func TestChunkUpdateMarshalShape(t *testing.T) {
 	content, ok := m["content"].(map[string]any)
 	if !ok || content["type"] != "text" || content["text"] != "hi" {
 		t.Errorf("content = %v", m["content"])
+	}
+}
+
+func TestProjectUpdateAuthorizationIsSafeStatusOnly(t *testing.T) {
+	pending := session.AuthorizationPayload{
+		AuthorizationID: "auth-1",
+		DisplayName:     "GitHub Enterprise",
+		Call:            "call-1",
+		ExpiresAt:       time.Unix(1, 0),
+		Status:          session.AuthorizationPending,
+	}
+	got, ok := projectUpdate(session.Event{Type: session.EvAuthorizationRequired, Authorization: &pending})
+	if !ok {
+		t.Fatal("required authorization was not projected")
+	}
+	card := got.(toolCallUpdate)
+	if card.ToolCallID != "call-1" || card.Status != toolStatusFailed || len(card.Content) != 1 {
+		t.Fatalf("required projection = %+v", card)
+	}
+	if card.Content[0].Content.Text != "MCP authorization for GitHub Enterprise is unavailable for ACP sessions" {
+		t.Fatalf("required projection text = %q", card.Content[0].Content.Text)
+	}
+	if strings.Contains(card.Content[0].Content.Text, "auth-1") {
+		t.Fatalf("required projection exposed authorization correlation: %+v", card)
+	}
+
+	resolved := pending
+	resolved.Status = session.AuthorizationGranted
+	got, ok = projectUpdate(session.Event{Type: session.EvAuthorizationResolved, Authorization: &resolved})
+	if !ok {
+		t.Fatal("resolved authorization was not projected")
+	}
+	note := got.(chunkUpdate)
+	if note.Content.Text != "MCP authorization for GitHub Enterprise status: granted" {
+		t.Fatalf("resolved projection = %+v", note)
+	}
+
+	unsafe := pending
+	unsafe.DisplayName = "GitHub\nforged"
+	got, ok = projectUpdate(session.Event{Type: session.EvAuthorizationRequired, Authorization: &unsafe})
+	if !ok {
+		t.Fatal("authorization with unsafe display text was not projected")
+	}
+	if text := got.(toolCallUpdate).Content[0].Content.Text; strings.Contains(text, "GitHub") {
+		t.Fatalf("unsafe display text was projected: %q", text)
 	}
 }

@@ -25,7 +25,7 @@ import (
 // mode — Catalog.Available hides PresentPlan under ModeDefault/ModeAccept).
 func newPlanSession(t *testing.T) *session.Session {
 	t.Helper()
-	return session.New("s1", session.ModePlan, "/ws", session.Limits{}, time.Unix(0, 0))
+	return session.New("s1", session.ModePlan, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 }
 
 // planCatalog returns a catalog with the PresentPlan tool registered (the
@@ -442,7 +442,7 @@ func TestPresentPlanAdvertisedOnlyInPlanMode(t *testing.T) {
 	// (the misroute path) and NO ask surfaces.
 	llm := mockllm.New(mockllm.ToolCallTurn(toolCall("c1", "PresentPlan", `{"note":"x"}`)), mockllm.TextTurn("done"))
 	e := newEngine(agent.Deps{LLM: llm, Catalog: cat, Interactive: true})
-	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	sess := session.New("s1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	evs := drain(r)
 	// No EvPermissionAsk may fire outside plan mode (the dispatcher does not intercept).

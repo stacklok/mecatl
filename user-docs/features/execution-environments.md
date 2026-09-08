@@ -1,7 +1,7 @@
 ---
 sidebar_position: 7
 title: Execution environments
-description: Understand workspaces, shells, forks, and persisted execution environments in mecatl.
+description: Understand workspaces, shells, forks, and persisted execution environments in Mecatl.
 ---
 
 # Execution environments

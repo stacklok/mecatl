@@ -24,13 +24,17 @@ func TestEnvironmentKindConstants(t *testing.T) {
 // pointer) so it is comparable and never escapes to the heap on the hot dispatch
 // path.
 func TestEnvironmentRefComparable(t *testing.T) {
-	a := EnvironmentRef{Kind: EnvKindMem, ID: "r"}
-	b := EnvironmentRef{Kind: EnvKindMem, ID: "r"}
-	c := EnvironmentRef{Kind: EnvKindLocal, ID: "r"}
+	a := EnvironmentRef{Kind: EnvKindMem, ID: "r", Revision: "v1"}
+	b := EnvironmentRef{Kind: EnvKindMem, ID: "r", Revision: "v1"}
+	c := EnvironmentRef{Kind: EnvKindLocal, ID: "r", Revision: "v1"}
+	d := EnvironmentRef{Kind: EnvKindMem, ID: "r", Revision: "v2"}
 	if a != b {
 		t.Fatal("equal refs must compare equal")
 	}
 	if a == c {
 		t.Fatal("refs differing in Kind must not compare equal")
+	}
+	if a == d {
+		t.Fatal("refs differing in Revision must not compare equal")
 	}
 }

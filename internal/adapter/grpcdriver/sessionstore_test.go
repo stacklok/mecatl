@@ -206,6 +206,9 @@ func TestLoadUnknownFormatIsInfraError(t *testing.T) {
 	if errors.Is(err, port.ErrSessionNotFound) {
 		t.Errorf("Load(unknown format) error = %v: must NEVER be ErrSessionNotFound", err)
 	}
+	if got := port.ClassifySessionLoadFailure(err); got != port.SessionLoadFailureSnapshot {
+		t.Errorf("Load(unknown format) class = %s, want snapshot", got)
+	}
 	if want := "sessnap-json/99"; !strings.Contains(err.Error(), want) {
 		t.Errorf("Load(unknown format) error %q does not name the offending format %q", err, want)
 	}
@@ -215,6 +218,61 @@ func TestLoadUnknownFormatIsInfraError(t *testing.T) {
 // tag this client does not speak.
 type unknownFormatServer struct {
 	driverv1.UnimplementedSessionStoreServiceServer
+}
+
+func TestLoadTransportFailureIsClassifiedStore(t *testing.T) {
+	conn := dialBufconn(t, func(gs *grpc.Server) {
+		driverv1.RegisterSessionStoreServiceServer(gs, unavailableLoadServer{})
+	})
+	st := mustNewSessionStore(t, conn)
+	_, err := st.Load(context.Background(), "any-id")
+	if got := port.ClassifySessionLoadFailure(err); got != port.SessionLoadFailureStore {
+		t.Fatalf("Load transport class = %s, want store: %v", got, err)
+	}
+}
+
+func TestLoadMalformedSnapshotIsClassifiedSnapshot(t *testing.T) {
+	conn := dialBufconn(t, func(gs *grpc.Server) {
+		driverv1.RegisterSessionStoreServiceServer(gs, snapshotLoadServer{payload: []byte("not-json")})
+	})
+	st := mustNewSessionStore(t, conn)
+	_, err := st.Load(context.Background(), "requested")
+	if got := port.ClassifySessionLoadFailure(err); got != port.SessionLoadFailureSnapshot {
+		t.Fatalf("Load malformed snapshot class = %s, want snapshot: %v", got, err)
+	}
+}
+
+func TestLoadMismatchedReturnedIDIsClassifiedSnapshot(t *testing.T) {
+	sess := session.New("different", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "r1"}, session.Limits{}, time.Unix(1, 0))
+	payload, err := sessnap.Marshal(sess)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn := dialBufconn(t, func(gs *grpc.Server) {
+		driverv1.RegisterSessionStoreServiceServer(gs, snapshotLoadServer{payload: payload})
+	})
+	st := mustNewSessionStore(t, conn)
+	_, err = st.Load(context.Background(), "requested")
+	if got := port.ClassifySessionLoadFailure(err); got != port.SessionLoadFailureSnapshot {
+		t.Fatalf("Load mismatched ID class = %s, want snapshot: %v", got, err)
+	}
+}
+
+type snapshotLoadServer struct {
+	driverv1.UnimplementedSessionStoreServiceServer
+	payload []byte
+}
+
+func (s snapshotLoadServer) Load(context.Context, *driverv1.LoadRequest) (*driverv1.LoadResponse, error) {
+	return &driverv1.LoadResponse{Snapshot: &driverv1.SessionSnapshot{Format: SnapshotFormat, Payload: s.payload}}, nil
+}
+
+type unavailableLoadServer struct {
+	driverv1.UnimplementedSessionStoreServiceServer
+}
+
+func (unavailableLoadServer) Load(context.Context, *driverv1.LoadRequest) (*driverv1.LoadResponse, error) {
+	return nil, status.Error(codes.Unavailable, "backend unavailable")
 }
 
 func (unknownFormatServer) Load(context.Context, *driverv1.LoadRequest) (*driverv1.LoadResponse, error) {
@@ -282,7 +340,7 @@ func TestContextCancelPassthrough(t *testing.T) {
 func TestSaveLoadOverWire(t *testing.T) {
 	st := newWiredSessionStore(t)
 	ctx := context.Background()
-	s := session.New("wire-1", session.ModeDefault, "/ws", session.Limits{}, time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC))
+	s := session.New("wire-1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC))
 	if err := s.RecordUserPrompt("hello driver", nil); err != nil {
 		t.Fatalf("RecordUserPrompt: %v", err)
 	}
@@ -298,6 +356,21 @@ func TestSaveLoadOverWire(t *testing.T) {
 	}
 }
 
+func TestADR_0291_DriverStorageCarriesExactPrivateEnvironmentRef(t *testing.T) {
+	want := session.EnvironmentRef{Kind: "remote", ID: "opaque-private-id", Revision: "inventory-r17"}
+	entry, err := metadataToProto(port.SessionDiscoveryMeta{ID: "s1", EnvironmentRef: want})
+	if err != nil {
+		t.Fatalf("metadataToProto: %v", err)
+	}
+	if entry.GetEnvironmentRef() == nil || entry.GetEnvironmentRef().GetRevision() != want.Revision {
+		t.Fatalf("driver environment ref = %+v, want exact private ref %+v", entry.GetEnvironmentRef(), want)
+	}
+	got := metadataFromProto(entry)
+	if got.EnvironmentRef != want {
+		t.Fatalf("round-tripped environment ref = %+v, want %+v", got.EnvironmentRef, want)
+	}
+}
+
 // TestServerWrapperSaveRejectsBadEnvelope pins the server wrapper's Save
 // pre-validation: every malformed envelope shape — blank session_id, missing
 // snapshot, unknown format, empty payload, undecodable payload, and a
@@ -308,7 +381,7 @@ func TestServerWrapperSaveRejectsBadEnvelope(t *testing.T) {
 	srv := NewSessionStoreServer(memstore.New())
 	ctx := context.Background()
 
-	goodPayload, err := sessnap.Marshal(session.New("id-1", session.ModeDefault, "/ws", session.Limits{}, time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)))
+	goodPayload, err := sessnap.Marshal(session.New("id-1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)))
 	if err != nil {
 		t.Fatalf("sessnap.Marshal: %v", err)
 	}

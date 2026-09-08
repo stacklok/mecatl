@@ -91,7 +91,7 @@ func TestPathEscapePosture_Scenario5_BaseSharingMemberNotRelaxed(t *testing.T) {
 				}
 			}
 			ctx := context.Background()
-			teamID, _, err := built.Service.CreateTeam(ctx, f.workspace, "pathescape", "", 0,
+			teamID, _, err := built.Service.CreateTeamOnDefaultPlacement(ctx, "pathescape", "", 0,
 				[]agent.MemberSpec{{Name: "lead", Lead: true, InitialPrompt: "read the file outside the workspace"}})
 			if err != nil {
 				t.Fatalf("CreateTeam: %v", err)
@@ -246,26 +246,27 @@ func TestPathEscapePosture_Scenario5_IsolatedMembersUnchanged(t *testing.T) {
 
 // runTeamWithForkers drives a one-member team over base through the real
 // server.Service/CreateTeam/RunTeam wiring with the given forked tiers (nil
-// forkers select the base-share fallback). It deliberately wires NO
-// SharedBaseWorkspace re-view: this helper exists for the ISOLATED tiers only
-// (worktree IsolateReadOnly + Mutating force-copy, AC5.1e), which never
-// consult the re-view.
+// forkers select the base-share fallback). It deliberately wires no shared
+// Workspace view because this helper exercises only the isolated tiers
+// (worktree IsolateReadOnly + Mutating force-copy, AC5.1e), which never consult
+// the base-sharing fallback.
 func runTeamWithForkers(t *testing.T, base tool.Workspace, factory server.MemberEngineFactory, roFk, mutatingFk tool.EnvironmentForker, spec agent.MemberSpec, sink func(agent.TeamEvent)) {
 	t.Helper()
-	svc, err := server.NewService(server.Config{
-		Engine:         noopEngine(),
-		Store:          memstore.New(),
-		Workspaces:     func(string) tool.Workspace { return base },
-		Now:            func() time.Time { return time.Unix(0, 0) },
-		MemberEngine:   factory,
-		Forker:         mutatingFk,
-		ReadOnlyForker: roFk,
+	svc, err := newTestServerService(server.Config{
+		Engine: noopEngine(),
+		Store:  memstore.New(),
+
+		SharedEngineRoot: base.Root(),
+		Now:              func() time.Time { return time.Unix(0, 0) },
+		MemberEngine:     factory,
+		Forker:           mutatingFk,
+		ReadOnlyForker:   roFk,
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
 	}
 	ctx := context.Background()
-	teamID, _, err := svc.CreateTeam(ctx, base.Root(), "pathescape", "", 0, []agent.MemberSpec{spec})
+	teamID, _, err := svc.CreateTeamOnDefaultPlacement(ctx, "pathescape", "", 0, []agent.MemberSpec{spec})
 	if err != nil {
 		t.Fatalf("CreateTeam: %v", err)
 	}

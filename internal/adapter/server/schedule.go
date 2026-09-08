@@ -185,7 +185,7 @@ func (s *Service) FireNow(ctx context.Context, name string) (port.ScheduleFire, 
 	if err != nil {
 		return port.ScheduleFire{}, err
 	}
-	if err := s.validatePersistedScheduleWorkspace(sched.Spec); err != nil {
+	if err := s.validatePersistedSchedulePlacement(sched.Spec); err != nil {
 		return port.ScheduleFire{}, err
 	}
 	return mgr.FireNow(ctx, name)

@@ -38,9 +38,11 @@ const fsCallTimeout = 30 * time.Second
 //   - Read / Write — DELEGATED through fs/* over the ACP connection.
 //   - ReadVersion / CreateFile / ReplaceFile — version-bearing reads and explicit
 //     mutations over the editor buffer; versions are sha256 of fs/read content.
-//   - RecordRead / RecordedVersion — the I/O-free session ledger, so Edit's
-//     read-before-edit-and-unchanged invariant tracks the editor's BUFFER, not disk
-//     (strictly better than osfs for an editor session).
+//     The Environment's separately-selected ReadLedger (a fresh memledger,
+//     composition-supplied at session/new) then tracks the editor's BUFFER
+//     versions, not disk (strictly better than osfs for an editor session) —
+//     fsWorkspace itself carries NO ledger (ADR 0281: content and read evidence
+//     are independently composed at the Environment).
 //   - Root / Glob / Grep — COMPOSED from an osfs.Workspace rooted at the SAME
 //     session cwd. ACP has no fs/list or fs/grep, so these read the local on-disk
 //     tree. The residual: Grep/Glob see disk, not unsaved buffers. This is
@@ -56,7 +58,7 @@ const fsCallTimeout = 30 * time.Second
 // It is registered per-session on the shared *server.Service via
 // SetSessionEnvironment and evicted on editor disconnect; concurrent read-only
 // dispatch may fire several Read (hence fs/read_text_file) calls at once, which
-// the ACP Conn handles safely, and the local ledger has its OWN mutex.
+// the ACP Conn handles safely.
 type fsWorkspace struct {
 	conn      *Conn
 	sessionID string
@@ -69,12 +71,6 @@ type fsWorkspace struct {
 	// callTimeout bounds a single fs/* round-trip. It defaults to fsCallTimeout;
 	// tests may shrink it to assert the bound fires against a non-responsive peer.
 	callTimeout time.Duration
-
-	// ledgerMu guards ONLY the in-memory ledger map. Ledger methods (RecordRead/
-	// RecordedVersion) take it alone and perform NO I/O, so a parked RPC
-	// mutation never blocks a ledger lookup or record.
-	ledgerMu sync.Mutex
-	ledger   map[string]tool.FileVersion // LedgerKey(path) -> version of last fs/read content
 
 	// callMu serializes the buffer CAS / create RPC SEQUENCES in CreateFile and
 	// ReplaceFile (the read-then-write compare-and-swap), so a same-instance
@@ -100,7 +96,6 @@ func newFSWorkspace(conn *Conn, sessionID, root string) (*fsWorkspace, error) {
 		sessionID:   sessionID,
 		local:       local,
 		callTimeout: fsCallTimeout,
-		ledger:      make(map[string]tool.FileVersion),
 	}, nil
 }
 
@@ -492,30 +487,4 @@ func (w *fsWorkspace) Glob(ctx context.Context, pattern string) ([]string, error
 // never become a stale EDIT.
 func (w *fsWorkspace) Grep(ctx context.Context, pattern, pathGlob string) ([]tool.GrepMatch, error) {
 	return w.local.Grep(ctx, pattern, pathGlob)
-}
-
-// RecordRead stores the EXACT authoritative version for path under the session
-// ledger, performing NO I/O: it stores the FileVersion the caller supplies (the
-// one ReadVersion minted). The version authority is the BUFFER (sha256 of the
-// fs/read content), so a later comparison tracks what the editor would actually
-// overwrite. The I/O-free lexical key (tool.LedgerKey over the shared osfs root)
-// makes ordinary absolute-root and relative forms share one entry; symlink
-// aliases may require another Read.
-func (w *fsWorkspace) RecordRead(path string, version tool.FileVersion) {
-	key := tool.LedgerKey(w.Root(), path)
-	w.ledgerMu.Lock()
-	w.ledger[key] = version
-	w.ledgerMu.Unlock()
-}
-
-// RecordedVersion returns the version previously recorded for path via
-// RecordRead, performing NO I/O. ok is false if path was never recorded. The
-// lookup uses the same lexical ledger key (tool.LedgerKey) as RecordRead, so
-// ordinary absolute-root and relative forms agree without filesystem/editor I/O.
-func (w *fsWorkspace) RecordedVersion(path string) (tool.FileVersion, bool) {
-	key := tool.LedgerKey(w.Root(), path)
-	w.ledgerMu.Lock()
-	version, ok := w.ledger[key]
-	w.ledgerMu.Unlock()
-	return version, ok
 }

@@ -42,70 +42,79 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	HarnessService_GetCompatibilityInfo_FullMethodName     = "/mecatl.v1.HarnessService/GetCompatibilityInfo"
-	HarnessService_CreateSession_FullMethodName            = "/mecatl.v1.HarnessService/CreateSession"
-	HarnessService_GetServerInfo_FullMethodName            = "/mecatl.v1.HarnessService/GetServerInfo"
-	HarnessService_GetSession_FullMethodName               = "/mecatl.v1.HarnessService/GetSession"
-	HarnessService_GetSessionTranscript_FullMethodName     = "/mecatl.v1.HarnessService/GetSessionTranscript"
-	HarnessService_SetMode_FullMethodName                  = "/mecatl.v1.HarnessService/SetMode"
-	HarnessService_CloseSession_FullMethodName             = "/mecatl.v1.HarnessService/CloseSession"
-	HarnessService_RenameSession_FullMethodName            = "/mecatl.v1.HarnessService/RenameSession"
-	HarnessService_DeleteSession_FullMethodName            = "/mecatl.v1.HarnessService/DeleteSession"
-	HarnessService_CompactSession_FullMethodName           = "/mecatl.v1.HarnessService/CompactSession"
-	HarnessService_ForkSession_FullMethodName              = "/mecatl.v1.HarnessService/ForkSession"
-	HarnessService_PreflightSessionAdoption_FullMethodName = "/mecatl.v1.HarnessService/PreflightSessionAdoption"
-	HarnessService_AdoptSession_FullMethodName             = "/mecatl.v1.HarnessService/AdoptSession"
-	HarnessService_Converse_FullMethodName                 = "/mecatl.v1.HarnessService/Converse"
-	HarnessService_ListMcpResources_FullMethodName         = "/mecatl.v1.HarnessService/ListMcpResources"
-	HarnessService_ReadMcpResource_FullMethodName          = "/mecatl.v1.HarnessService/ReadMcpResource"
-	HarnessService_ListMcpPrompts_FullMethodName           = "/mecatl.v1.HarnessService/ListMcpPrompts"
-	HarnessService_GetMcpPrompt_FullMethodName             = "/mecatl.v1.HarnessService/GetMcpPrompt"
-	HarnessService_ListMcpSources_FullMethodName           = "/mecatl.v1.HarnessService/ListMcpSources"
-	HarnessService_ListToolHiveGroups_FullMethodName       = "/mecatl.v1.HarnessService/ListToolHiveGroups"
-	HarnessService_ListAgents_FullMethodName               = "/mecatl.v1.HarnessService/ListAgents"
-	HarnessService_ListCommands_FullMethodName             = "/mecatl.v1.HarnessService/ListCommands"
-	HarnessService_ListWorktrees_FullMethodName            = "/mecatl.v1.HarnessService/ListWorktrees"
-	HarnessService_StreamSessionEvents_FullMethodName      = "/mecatl.v1.HarnessService/StreamSessionEvents"
-	HarnessService_StreamSessionLive_FullMethodName        = "/mecatl.v1.HarnessService/StreamSessionLive"
-	HarnessService_WatchSessionEvents_FullMethodName       = "/mecatl.v1.HarnessService/WatchSessionEvents"
-	HarnessService_ListSessions_FullMethodName             = "/mecatl.v1.HarnessService/ListSessions"
-	HarnessService_GetStorageHealth_FullMethodName         = "/mecatl.v1.HarnessService/GetStorageHealth"
-	HarnessService_PlanSessionMigration_FullMethodName     = "/mecatl.v1.HarnessService/PlanSessionMigration"
-	HarnessService_ApplySessionMigration_FullMethodName    = "/mecatl.v1.HarnessService/ApplySessionMigration"
-	HarnessService_ResumeSessionMigration_FullMethodName   = "/mecatl.v1.HarnessService/ResumeSessionMigration"
-	HarnessService_CancelSessionMigration_FullMethodName   = "/mecatl.v1.HarnessService/CancelSessionMigration"
-	HarnessService_GetSessionMigrationJob_FullMethodName   = "/mecatl.v1.HarnessService/GetSessionMigrationJob"
-	HarnessService_PlanSessionCleanup_FullMethodName       = "/mecatl.v1.HarnessService/PlanSessionCleanup"
-	HarnessService_ApplySessionCleanup_FullMethodName      = "/mecatl.v1.HarnessService/ApplySessionCleanup"
-	HarnessService_CancelSessionCleanup_FullMethodName     = "/mecatl.v1.HarnessService/CancelSessionCleanup"
-	HarnessService_GetSessionCleanupJob_FullMethodName     = "/mecatl.v1.HarnessService/GetSessionCleanupJob"
-	HarnessService_ListSkills_FullMethodName               = "/mecatl.v1.HarnessService/ListSkills"
-	HarnessService_GetSoul_FullMethodName                  = "/mecatl.v1.HarnessService/GetSoul"
-	HarnessService_GetUserModel_FullMethodName             = "/mecatl.v1.HarnessService/GetUserModel"
-	HarnessService_ReflectSession_FullMethodName           = "/mecatl.v1.HarnessService/ReflectSession"
-	HarnessService_GenerateDreamPlan_FullMethodName        = "/mecatl.v1.HarnessService/GenerateDreamPlan"
-	HarnessService_DecideDreamPlan_FullMethodName          = "/mecatl.v1.HarnessService/DecideDreamPlan"
-	HarnessService_ListLearningProposals_FullMethodName    = "/mecatl.v1.HarnessService/ListLearningProposals"
-	HarnessService_GetLearningProposal_FullMethodName      = "/mecatl.v1.HarnessService/GetLearningProposal"
-	HarnessService_DecideLearningProposal_FullMethodName   = "/mecatl.v1.HarnessService/DecideLearningProposal"
-	HarnessService_UndoLearningPromotion_FullMethodName    = "/mecatl.v1.HarnessService/UndoLearningPromotion"
-	HarnessService_ListLearnedSkills_FullMethodName        = "/mecatl.v1.HarnessService/ListLearnedSkills"
-	HarnessService_GetLearnedSkill_FullMethodName          = "/mecatl.v1.HarnessService/GetLearnedSkill"
-	HarnessService_DiffLearnedSkillVersions_FullMethodName = "/mecatl.v1.HarnessService/DiffLearnedSkillVersions"
-	HarnessService_ActivateLearnedSkill_FullMethodName     = "/mecatl.v1.HarnessService/ActivateLearnedSkill"
-	HarnessService_RejectLearnedSkill_FullMethodName       = "/mecatl.v1.HarnessService/RejectLearnedSkill"
-	HarnessService_ArchiveLearnedSkill_FullMethodName      = "/mecatl.v1.HarnessService/ArchiveLearnedSkill"
-	HarnessService_RollbackLearnedSkill_FullMethodName     = "/mecatl.v1.HarnessService/RollbackLearnedSkill"
-	HarnessService_ListSkillChanges_FullMethodName         = "/mecatl.v1.HarnessService/ListSkillChanges"
-	HarnessService_ListModels_FullMethodName               = "/mecatl.v1.HarnessService/ListModels"
-	HarnessService_CreateTeam_FullMethodName               = "/mecatl.v1.HarnessService/CreateTeam"
-	HarnessService_SpawnTeammate_FullMethodName            = "/mecatl.v1.HarnessService/SpawnTeammate"
-	HarnessService_SendTeammateMessage_FullMethodName      = "/mecatl.v1.HarnessService/SendTeammateMessage"
-	HarnessService_CancelTeammate_FullMethodName           = "/mecatl.v1.HarnessService/CancelTeammate"
-	HarnessService_RunTeam_FullMethodName                  = "/mecatl.v1.HarnessService/RunTeam"
-	HarnessService_ListTeam_FullMethodName                 = "/mecatl.v1.HarnessService/ListTeam"
-	HarnessService_CleanupTeam_FullMethodName              = "/mecatl.v1.HarnessService/CleanupTeam"
-	HarnessService_ApprovePlan_FullMethodName              = "/mecatl.v1.HarnessService/ApprovePlan"
+	HarnessService_GetCompatibilityInfo_FullMethodName            = "/mecatl.v1.HarnessService/GetCompatibilityInfo"
+	HarnessService_CreateSession_FullMethodName                   = "/mecatl.v1.HarnessService/CreateSession"
+	HarnessService_GetServerInfo_FullMethodName                   = "/mecatl.v1.HarnessService/GetServerInfo"
+	HarnessService_GetSession_FullMethodName                      = "/mecatl.v1.HarnessService/GetSession"
+	HarnessService_GetSessionTranscript_FullMethodName            = "/mecatl.v1.HarnessService/GetSessionTranscript"
+	HarnessService_SetMode_FullMethodName                         = "/mecatl.v1.HarnessService/SetMode"
+	HarnessService_CloseSession_FullMethodName                    = "/mecatl.v1.HarnessService/CloseSession"
+	HarnessService_RenameSession_FullMethodName                   = "/mecatl.v1.HarnessService/RenameSession"
+	HarnessService_DeleteSession_FullMethodName                   = "/mecatl.v1.HarnessService/DeleteSession"
+	HarnessService_CompactSession_FullMethodName                  = "/mecatl.v1.HarnessService/CompactSession"
+	HarnessService_ClearSession_FullMethodName                    = "/mecatl.v1.HarnessService/ClearSession"
+	HarnessService_ForkSession_FullMethodName                     = "/mecatl.v1.HarnessService/ForkSession"
+	HarnessService_Converse_FullMethodName                        = "/mecatl.v1.HarnessService/Converse"
+	HarnessService_ListMcpResources_FullMethodName                = "/mecatl.v1.HarnessService/ListMcpResources"
+	HarnessService_ReadMcpResource_FullMethodName                 = "/mecatl.v1.HarnessService/ReadMcpResource"
+	HarnessService_ListMcpPrompts_FullMethodName                  = "/mecatl.v1.HarnessService/ListMcpPrompts"
+	HarnessService_GetMcpPrompt_FullMethodName                    = "/mecatl.v1.HarnessService/GetMcpPrompt"
+	HarnessService_ListMcpSources_FullMethodName                  = "/mecatl.v1.HarnessService/ListMcpSources"
+	HarnessService_ListToolHiveGroups_FullMethodName              = "/mecatl.v1.HarnessService/ListToolHiveGroups"
+	HarnessService_ListAgents_FullMethodName                      = "/mecatl.v1.HarnessService/ListAgents"
+	HarnessService_ListCommands_FullMethodName                    = "/mecatl.v1.HarnessService/ListCommands"
+	HarnessService_ListWorktrees_FullMethodName                   = "/mecatl.v1.HarnessService/ListWorktrees"
+	HarnessService_StreamSessionEvents_FullMethodName             = "/mecatl.v1.HarnessService/StreamSessionEvents"
+	HarnessService_StreamSessionLive_FullMethodName               = "/mecatl.v1.HarnessService/StreamSessionLive"
+	HarnessService_WatchSessionEvents_FullMethodName              = "/mecatl.v1.HarnessService/WatchSessionEvents"
+	HarnessService_GetMcpAuthorizationPresentation_FullMethodName = "/mecatl.v1.HarnessService/GetMcpAuthorizationPresentation"
+	HarnessService_RecheckMcpAuthorization_FullMethodName         = "/mecatl.v1.HarnessService/RecheckMcpAuthorization"
+	HarnessService_CancelMcpAuthorization_FullMethodName          = "/mecatl.v1.HarnessService/CancelMcpAuthorization"
+	HarnessService_ListSessions_FullMethodName                    = "/mecatl.v1.HarnessService/ListSessions"
+	HarnessService_GetStorageHealth_FullMethodName                = "/mecatl.v1.HarnessService/GetStorageHealth"
+	HarnessService_PlanSessionMigration_FullMethodName            = "/mecatl.v1.HarnessService/PlanSessionMigration"
+	HarnessService_ApplySessionMigration_FullMethodName           = "/mecatl.v1.HarnessService/ApplySessionMigration"
+	HarnessService_ResumeSessionMigration_FullMethodName          = "/mecatl.v1.HarnessService/ResumeSessionMigration"
+	HarnessService_CancelSessionMigration_FullMethodName          = "/mecatl.v1.HarnessService/CancelSessionMigration"
+	HarnessService_GetSessionMigrationJob_FullMethodName          = "/mecatl.v1.HarnessService/GetSessionMigrationJob"
+	HarnessService_PlanSessionCleanup_FullMethodName              = "/mecatl.v1.HarnessService/PlanSessionCleanup"
+	HarnessService_ApplySessionCleanup_FullMethodName             = "/mecatl.v1.HarnessService/ApplySessionCleanup"
+	HarnessService_CancelSessionCleanup_FullMethodName            = "/mecatl.v1.HarnessService/CancelSessionCleanup"
+	HarnessService_GetSessionCleanupJob_FullMethodName            = "/mecatl.v1.HarnessService/GetSessionCleanupJob"
+	HarnessService_ListSkills_FullMethodName                      = "/mecatl.v1.HarnessService/ListSkills"
+	HarnessService_GetSoul_FullMethodName                         = "/mecatl.v1.HarnessService/GetSoul"
+	HarnessService_GetUserModel_FullMethodName                    = "/mecatl.v1.HarnessService/GetUserModel"
+	HarnessService_ReflectSession_FullMethodName                  = "/mecatl.v1.HarnessService/ReflectSession"
+	HarnessService_GetLearningAttempt_FullMethodName              = "/mecatl.v1.HarnessService/GetLearningAttempt"
+	HarnessService_ListLearningAttempts_FullMethodName            = "/mecatl.v1.HarnessService/ListLearningAttempts"
+	HarnessService_RetryLearningAttempt_FullMethodName            = "/mecatl.v1.HarnessService/RetryLearningAttempt"
+	HarnessService_AbandonLearningAttempt_FullMethodName          = "/mecatl.v1.HarnessService/AbandonLearningAttempt"
+	HarnessService_GenerateDreamPlan_FullMethodName               = "/mecatl.v1.HarnessService/GenerateDreamPlan"
+	HarnessService_DecideDreamPlan_FullMethodName                 = "/mecatl.v1.HarnessService/DecideDreamPlan"
+	HarnessService_ListLearningProposals_FullMethodName           = "/mecatl.v1.HarnessService/ListLearningProposals"
+	HarnessService_GetLearningProposal_FullMethodName             = "/mecatl.v1.HarnessService/GetLearningProposal"
+	HarnessService_DecideLearningProposal_FullMethodName          = "/mecatl.v1.HarnessService/DecideLearningProposal"
+	HarnessService_UndoLearningPromotion_FullMethodName           = "/mecatl.v1.HarnessService/UndoLearningPromotion"
+	HarnessService_ListLearnedSkills_FullMethodName               = "/mecatl.v1.HarnessService/ListLearnedSkills"
+	HarnessService_GetLearnedSkill_FullMethodName                 = "/mecatl.v1.HarnessService/GetLearnedSkill"
+	HarnessService_DiffLearnedSkillVersions_FullMethodName        = "/mecatl.v1.HarnessService/DiffLearnedSkillVersions"
+	HarnessService_ActivateLearnedSkill_FullMethodName            = "/mecatl.v1.HarnessService/ActivateLearnedSkill"
+	HarnessService_RejectLearnedSkill_FullMethodName              = "/mecatl.v1.HarnessService/RejectLearnedSkill"
+	HarnessService_ArchiveLearnedSkill_FullMethodName             = "/mecatl.v1.HarnessService/ArchiveLearnedSkill"
+	HarnessService_RollbackLearnedSkill_FullMethodName            = "/mecatl.v1.HarnessService/RollbackLearnedSkill"
+	HarnessService_ListSkillChanges_FullMethodName                = "/mecatl.v1.HarnessService/ListSkillChanges"
+	HarnessService_ListModels_FullMethodName                      = "/mecatl.v1.HarnessService/ListModels"
+	HarnessService_CreateTeam_FullMethodName                      = "/mecatl.v1.HarnessService/CreateTeam"
+	HarnessService_SpawnTeammate_FullMethodName                   = "/mecatl.v1.HarnessService/SpawnTeammate"
+	HarnessService_SendTeammateMessage_FullMethodName             = "/mecatl.v1.HarnessService/SendTeammateMessage"
+	HarnessService_CancelTeammate_FullMethodName                  = "/mecatl.v1.HarnessService/CancelTeammate"
+	HarnessService_RunTeam_FullMethodName                         = "/mecatl.v1.HarnessService/RunTeam"
+	HarnessService_ListTeam_FullMethodName                        = "/mecatl.v1.HarnessService/ListTeam"
+	HarnessService_CleanupTeam_FullMethodName                     = "/mecatl.v1.HarnessService/CleanupTeam"
+	HarnessService_ApprovePlan_FullMethodName                     = "/mecatl.v1.HarnessService/ApprovePlan"
+	HarnessService_ConnectWorkspaceServices_FullMethodName        = "/mecatl.v1.HarnessService/ConnectWorkspaceServices"
+	HarnessService_RetryWorkspaceEnrollment_FullMethodName        = "/mecatl.v1.HarnessService/RetryWorkspaceEnrollment"
+	HarnessService_CancelWorkspaceEnrollment_FullMethodName       = "/mecatl.v1.HarnessService/CancelWorkspaceEnrollment"
 )
 
 // HarnessServiceClient is the client API for HarnessService service.
@@ -149,10 +158,10 @@ type HarnessServiceClient interface {
 	// remains authoritative: a mid-turn change is rejected with InvalidArgument, so
 	// clients that want "next prompt" semantics must defer and retry once idle.
 	SetMode(ctx context.Context, in *SetModeRequest, opts ...grpc.CallOption) (*SetModeResponse, error)
-	// CloseSession ends a session and releases its server-side resources (per-session
-	// learned permission rules, per-session engine/workspace). Idempotent: closing an
-	// unknown or already-closed session via the wire returns NotFound only for a
-	// never-created id; an already-released session succeeds.
+	// CloseSession ends a session and releases its server-side resources (learned
+	// permission rules, bound placement, and any per-session engine). Idempotent:
+	// closing an unknown or already-closed session via the wire returns NotFound only
+	// for a never-created id; an already-released session succeeds.
 	CloseSession(ctx context.Context, in *CloseSessionRequest, opts ...grpc.CallOption) (*CloseSessionResponse, error)
 	// RenameSession explicitly replaces an idle main session's title.
 	RenameSession(ctx context.Context, in *RenameSessionRequest, opts ...grpc.CallOption) (*RenameSessionResponse, error)
@@ -161,23 +170,17 @@ type HarnessServiceClient interface {
 	// CompactSession applies one manual compaction pass to an owned main-chat
 	// session at a turn boundary. It creates no model turn.
 	CompactSession(ctx context.Context, in *CompactSessionRequest, opts ...grpc.CallOption) (*CompactSessionResponse, error)
-	// ForkSession creates a new peer session whose conversation history is a
-	// snapshot of an existing session's, inheriting the source's mode, workspace,
-	// limits, and provider/model/profile labels. Same provider and model only;
-	// the ONE permitted selector delta is an OPTIONAL reasoning-effort override
-	// (ADR 0068). The source must be at a turn boundary (idle/terminal); a
-	// running/awaiting source is rejected. No streaming.
+	// ClearSession creates a distinct empty-history successor that inherits the
+	// source session's placement unless a fresh source-scoped selector is supplied.
+	ClearSession(ctx context.Context, in *ClearSessionRequest, opts ...grpc.CallOption) (*ClearSessionResponse, error)
+	// ForkSession creates a history-carrying successor with optional placement and
+	// model-routing overrides.
 	ForkSession(ctx context.Context, in *ForkSessionRequest, opts ...grpc.CallOption) (*ForkSessionResponse, error)
-	// PreflightSessionAdoption evaluates one authenticated caller-owned legacy
-	// source against explicit workspace/environment/provider/model bindings.
-	PreflightSessionAdoption(ctx context.Context, in *PreflightSessionAdoptionRequest, opts ...grpc.CallOption) (*PreflightSessionAdoptionResponse, error)
-	// AdoptSession atomically publishes a new explicit-main copy of one eligible
-	// legacy source. Retries are caller+source-bound by idempotency_key.
-	AdoptSession(ctx context.Context, in *AdoptSessionRequest, opts ...grpc.CallOption) (*AdoptSessionResponse, error)
-	// Converse drives one run. The first frame MUST be `prompt`; subsequent
-	// frames are zero or more `resume_approval` / `cancel` control frames. The
-	// server streams `Event` envelopes until the terminal `result` event, then
-	// closes the stream. A context cancel from the client aborts the run.
+	// Converse drives one run. The first frame MUST be `prompt` or `retry`; later
+	// frames may carry controls. A received second `prompt` or `retry` is rejected
+	// with INVALID_ARGUMENT. The server streams `Event` envelopes until the terminal
+	// `result` event, then closes the stream; controls still in transit may instead
+	// observe normal stream completion. A context cancel from the client aborts the run.
 	Converse(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ConverseRequest, ConverseResponse], error)
 	// ListMcpResources returns the static resource snapshots advertised by the
 	// connected MCP servers. An empty `server` returns the union across every
@@ -207,21 +210,18 @@ type HarnessServiceClient interface {
 	// model, its effective read-only tool scope, permission mode, and UX color.
 	// Derived from the snapshot taken at startup; it performs no live discovery.
 	ListAgents(ctx context.Context, in *ListAgentsRequest, opts ...grpc.CallOption) (*ListAgentsResponse, error)
-	// ListCommands returns the available slash commands (name + short
-	// description) discovered under the configured command directories of the
-	// requested workspace. It powers the client's in-input command palette; it is
-	// DISCOVERY only — expanding a command remains a run-path concern (the server's
-	// CommandExpander handles it when a "/<cmd> args" prompt is submitted). An
-	// empty workspace, or a server with no command expander, returns an empty list.
+	// ListCommands returns slash commands discovered for one owned session's exact
+	// server-bound placement. It authorizes and reattaches that session before
+	// discovery and accepts no workspace/root input. It powers the client's command
+	// palette; command expansion remains a run-path concern. A no-FS session or a
+	// server with no command expander returns an empty list.
 	ListCommands(ctx context.Context, in *ListCommandsRequest, opts ...grpc.CallOption) (*ListCommandsResponse, error)
-	// ListWorktrees returns the git worktrees of the repo rooted at the requested
-	// workspace (issue #102). It powers the client's /worktrees overlay — the
-	// first-class operator workflow for binding a session to an EXISTING sibling
-	// worktree (a new session rooted there, not a live-session switch). It is
-	// DISCOVERY only, composition-injected (nil-safe: a no-FS/cloud server, or an
-	// untrusted workspace, returns an empty list); it never performs a live
-	// model/network call and never mutates anything. An empty workspace or a server
-	// with no worktree lister also returns an empty list.
+	// ListWorktrees discovers eligible alternatives for one owned source session's
+	// exactly reattached placement. Results carry bounded display metadata and an
+	// opaque source-scoped selector accepted only by ClearSession or ForkSession.
+	// The server re-enumerates and matches current choices on use; selectors are not
+	// paths, are not persisted, and expire on restart. A no-FS session or a server
+	// with no worktree lister returns an empty list.
 	ListWorktrees(ctx context.Context, in *ListWorktreesRequest, opts ...grpc.CallOption) (*ListWorktreesResponse, error)
 	// StreamSessionEvents replays a session's durable event log as a server stream
 	// of `Event` envelopes (cloud-native Phase 3a read-back). It is the client-tier
@@ -341,6 +341,17 @@ type HarnessServiceClient interface {
 	// from a position and being handed everything is a correctness problem dressed
 	// as a performance one. Ownership is enforced exactly as on GetSession.
 	WatchSessionEvents(ctx context.Context, in *WatchSessionEventsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[WatchSessionEventsResponse], error)
+	// GetMcpAuthorizationPresentation returns the live browser URL for one owned,
+	// still-pending authorization. The request carries correlation only; the URL
+	// is returned only by this live control and never enters an Event or snapshot.
+	GetMcpAuthorizationPresentation(ctx context.Context, in *GetMcpAuthorizationPresentationRequest, opts ...grpc.CallOption) (*GetMcpAuthorizationPresentationResponse, error)
+	// RecheckMcpAuthorization is a bidirectional authorization-control stream.
+	// Its first frame MUST carry owned session/authorization correlation;
+	// subsequent frames may resolve permission asks or cancel the continuation.
+	RecheckMcpAuthorization(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[RecheckMcpAuthorizationRequest, RecheckMcpAuthorizationResponse], error)
+	// CancelMcpAuthorization is the cancellation counterpart with the same
+	// first-frame and continuation-control grammar.
+	CancelMcpAuthorization(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[CancelMcpAuthorizationRequest, CancelMcpAuthorizationResponse], error)
 	// ListSessions returns the stored-session inventory — the picker metadata a
 	// client renders to let an operator open an EXISTING session by id (issue #245
 	// Phase 1). It is backed by `port.PrunableStore.List` (type-asserted on the
@@ -390,6 +401,14 @@ type HarnessServiceClient interface {
 	// ReflectSession explicitly reflects one completed, caller-owned session. It
 	// remains available when automatic learning is off if reflection is configured.
 	ReflectSession(ctx context.Context, in *ReflectSessionRequest, opts ...grpc.CallOption) (*ReflectSessionResponse, error)
+	// Learning attempts expose content-free lifecycle metadata from only the
+	// verified caller's private partition. Pagination cursors are opaque IDs.
+	GetLearningAttempt(ctx context.Context, in *GetLearningAttemptRequest, opts ...grpc.CallOption) (*GetLearningAttemptResponse, error)
+	ListLearningAttempts(ctx context.Context, in *ListLearningAttemptsRequest, opts ...grpc.CallOption) (*ListLearningAttemptsResponse, error)
+	// Retry and abandon are opaque-version CAS controls over only the attempt.
+	// Abandon is non-compensating and does not promise downstream rollback.
+	RetryLearningAttempt(ctx context.Context, in *MutateLearningAttemptRequest, opts ...grpc.CallOption) (*MutateLearningAttemptResponse, error)
+	AbandonLearningAttempt(ctx context.Context, in *MutateLearningAttemptRequest, opts ...grpc.CallOption) (*MutateLearningAttemptResponse, error)
 	// GenerateDreamPlan creates a bounded-lifetime manual consolidation review for
 	// one closed, deployment-owned target. The request carries no mutation material.
 	// Unavailable deployments return Unimplemented (HTTP parity: 501).
@@ -481,6 +500,11 @@ type HarnessServiceClient interface {
 	// event of whichever run ran last (the continuation run on an allow path; the
 	// resumed run on a deny path).
 	ApprovePlan(ctx context.Context, in *ApprovePlanRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[Event], error)
+	// Workspace enrollment is a client-owned pre-prompt bundle. These unary
+	// controls carry only whole-bundle correlation; no backend selector exists.
+	ConnectWorkspaceServices(ctx context.Context, in *WorkspaceEnrollmentConnectRequest, opts ...grpc.CallOption) (*WorkspaceEnrollment, error)
+	RetryWorkspaceEnrollment(ctx context.Context, in *WorkspaceEnrollmentControlRequest, opts ...grpc.CallOption) (*WorkspaceEnrollment, error)
+	CancelWorkspaceEnrollment(ctx context.Context, in *WorkspaceEnrollmentControlRequest, opts ...grpc.CallOption) (*WorkspaceEnrollment, error)
 }
 
 type harnessServiceClient struct {
@@ -591,30 +615,20 @@ func (c *harnessServiceClient) CompactSession(ctx context.Context, in *CompactSe
 	return out, nil
 }
 
+func (c *harnessServiceClient) ClearSession(ctx context.Context, in *ClearSessionRequest, opts ...grpc.CallOption) (*ClearSessionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ClearSessionResponse)
+	err := c.cc.Invoke(ctx, HarnessService_ClearSession_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *harnessServiceClient) ForkSession(ctx context.Context, in *ForkSessionRequest, opts ...grpc.CallOption) (*ForkSessionResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ForkSessionResponse)
 	err := c.cc.Invoke(ctx, HarnessService_ForkSession_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *harnessServiceClient) PreflightSessionAdoption(ctx context.Context, in *PreflightSessionAdoptionRequest, opts ...grpc.CallOption) (*PreflightSessionAdoptionResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(PreflightSessionAdoptionResponse)
-	err := c.cc.Invoke(ctx, HarnessService_PreflightSessionAdoption_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *harnessServiceClient) AdoptSession(ctx context.Context, in *AdoptSessionRequest, opts ...grpc.CallOption) (*AdoptSessionResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(AdoptSessionResponse)
-	err := c.cc.Invoke(ctx, HarnessService_AdoptSession_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -781,6 +795,42 @@ func (c *harnessServiceClient) WatchSessionEvents(ctx context.Context, in *Watch
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type HarnessService_WatchSessionEventsClient = grpc.ServerStreamingClient[WatchSessionEventsResponse]
 
+func (c *harnessServiceClient) GetMcpAuthorizationPresentation(ctx context.Context, in *GetMcpAuthorizationPresentationRequest, opts ...grpc.CallOption) (*GetMcpAuthorizationPresentationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetMcpAuthorizationPresentationResponse)
+	err := c.cc.Invoke(ctx, HarnessService_GetMcpAuthorizationPresentation_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *harnessServiceClient) RecheckMcpAuthorization(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[RecheckMcpAuthorizationRequest, RecheckMcpAuthorizationResponse], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &HarnessService_ServiceDesc.Streams[4], HarnessService_RecheckMcpAuthorization_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[RecheckMcpAuthorizationRequest, RecheckMcpAuthorizationResponse]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type HarnessService_RecheckMcpAuthorizationClient = grpc.BidiStreamingClient[RecheckMcpAuthorizationRequest, RecheckMcpAuthorizationResponse]
+
+func (c *harnessServiceClient) CancelMcpAuthorization(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[CancelMcpAuthorizationRequest, CancelMcpAuthorizationResponse], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &HarnessService_ServiceDesc.Streams[5], HarnessService_CancelMcpAuthorization_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[CancelMcpAuthorizationRequest, CancelMcpAuthorizationResponse]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type HarnessService_CancelMcpAuthorizationClient = grpc.BidiStreamingClient[CancelMcpAuthorizationRequest, CancelMcpAuthorizationResponse]
+
 func (c *harnessServiceClient) ListSessions(ctx context.Context, in *ListSessionsRequest, opts ...grpc.CallOption) (*ListSessionsResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListSessionsResponse)
@@ -925,6 +975,46 @@ func (c *harnessServiceClient) ReflectSession(ctx context.Context, in *ReflectSe
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ReflectSessionResponse)
 	err := c.cc.Invoke(ctx, HarnessService_ReflectSession_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *harnessServiceClient) GetLearningAttempt(ctx context.Context, in *GetLearningAttemptRequest, opts ...grpc.CallOption) (*GetLearningAttemptResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetLearningAttemptResponse)
+	err := c.cc.Invoke(ctx, HarnessService_GetLearningAttempt_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *harnessServiceClient) ListLearningAttempts(ctx context.Context, in *ListLearningAttemptsRequest, opts ...grpc.CallOption) (*ListLearningAttemptsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListLearningAttemptsResponse)
+	err := c.cc.Invoke(ctx, HarnessService_ListLearningAttempts_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *harnessServiceClient) RetryLearningAttempt(ctx context.Context, in *MutateLearningAttemptRequest, opts ...grpc.CallOption) (*MutateLearningAttemptResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(MutateLearningAttemptResponse)
+	err := c.cc.Invoke(ctx, HarnessService_RetryLearningAttempt_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *harnessServiceClient) AbandonLearningAttempt(ctx context.Context, in *MutateLearningAttemptRequest, opts ...grpc.CallOption) (*MutateLearningAttemptResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(MutateLearningAttemptResponse)
+	err := c.cc.Invoke(ctx, HarnessService_AbandonLearningAttempt_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1123,7 +1213,7 @@ func (c *harnessServiceClient) CancelTeammate(ctx context.Context, in *CancelTea
 
 func (c *harnessServiceClient) RunTeam(ctx context.Context, in *RunTeamRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[TeamEvent], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &HarnessService_ServiceDesc.Streams[4], HarnessService_RunTeam_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &HarnessService_ServiceDesc.Streams[6], HarnessService_RunTeam_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1162,7 +1252,7 @@ func (c *harnessServiceClient) CleanupTeam(ctx context.Context, in *CleanupTeamR
 
 func (c *harnessServiceClient) ApprovePlan(ctx context.Context, in *ApprovePlanRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[Event], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &HarnessService_ServiceDesc.Streams[5], HarnessService_ApprovePlan_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &HarnessService_ServiceDesc.Streams[7], HarnessService_ApprovePlan_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1178,6 +1268,36 @@ func (c *harnessServiceClient) ApprovePlan(ctx context.Context, in *ApprovePlanR
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type HarnessService_ApprovePlanClient = grpc.ServerStreamingClient[Event]
+
+func (c *harnessServiceClient) ConnectWorkspaceServices(ctx context.Context, in *WorkspaceEnrollmentConnectRequest, opts ...grpc.CallOption) (*WorkspaceEnrollment, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(WorkspaceEnrollment)
+	err := c.cc.Invoke(ctx, HarnessService_ConnectWorkspaceServices_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *harnessServiceClient) RetryWorkspaceEnrollment(ctx context.Context, in *WorkspaceEnrollmentControlRequest, opts ...grpc.CallOption) (*WorkspaceEnrollment, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(WorkspaceEnrollment)
+	err := c.cc.Invoke(ctx, HarnessService_RetryWorkspaceEnrollment_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *harnessServiceClient) CancelWorkspaceEnrollment(ctx context.Context, in *WorkspaceEnrollmentControlRequest, opts ...grpc.CallOption) (*WorkspaceEnrollment, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(WorkspaceEnrollment)
+	err := c.cc.Invoke(ctx, HarnessService_CancelWorkspaceEnrollment_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
 
 // HarnessServiceServer is the server API for HarnessService service.
 // All implementations must embed UnimplementedHarnessServiceServer
@@ -1220,10 +1340,10 @@ type HarnessServiceServer interface {
 	// remains authoritative: a mid-turn change is rejected with InvalidArgument, so
 	// clients that want "next prompt" semantics must defer and retry once idle.
 	SetMode(context.Context, *SetModeRequest) (*SetModeResponse, error)
-	// CloseSession ends a session and releases its server-side resources (per-session
-	// learned permission rules, per-session engine/workspace). Idempotent: closing an
-	// unknown or already-closed session via the wire returns NotFound only for a
-	// never-created id; an already-released session succeeds.
+	// CloseSession ends a session and releases its server-side resources (learned
+	// permission rules, bound placement, and any per-session engine). Idempotent:
+	// closing an unknown or already-closed session via the wire returns NotFound only
+	// for a never-created id; an already-released session succeeds.
 	CloseSession(context.Context, *CloseSessionRequest) (*CloseSessionResponse, error)
 	// RenameSession explicitly replaces an idle main session's title.
 	RenameSession(context.Context, *RenameSessionRequest) (*RenameSessionResponse, error)
@@ -1232,23 +1352,17 @@ type HarnessServiceServer interface {
 	// CompactSession applies one manual compaction pass to an owned main-chat
 	// session at a turn boundary. It creates no model turn.
 	CompactSession(context.Context, *CompactSessionRequest) (*CompactSessionResponse, error)
-	// ForkSession creates a new peer session whose conversation history is a
-	// snapshot of an existing session's, inheriting the source's mode, workspace,
-	// limits, and provider/model/profile labels. Same provider and model only;
-	// the ONE permitted selector delta is an OPTIONAL reasoning-effort override
-	// (ADR 0068). The source must be at a turn boundary (idle/terminal); a
-	// running/awaiting source is rejected. No streaming.
+	// ClearSession creates a distinct empty-history successor that inherits the
+	// source session's placement unless a fresh source-scoped selector is supplied.
+	ClearSession(context.Context, *ClearSessionRequest) (*ClearSessionResponse, error)
+	// ForkSession creates a history-carrying successor with optional placement and
+	// model-routing overrides.
 	ForkSession(context.Context, *ForkSessionRequest) (*ForkSessionResponse, error)
-	// PreflightSessionAdoption evaluates one authenticated caller-owned legacy
-	// source against explicit workspace/environment/provider/model bindings.
-	PreflightSessionAdoption(context.Context, *PreflightSessionAdoptionRequest) (*PreflightSessionAdoptionResponse, error)
-	// AdoptSession atomically publishes a new explicit-main copy of one eligible
-	// legacy source. Retries are caller+source-bound by idempotency_key.
-	AdoptSession(context.Context, *AdoptSessionRequest) (*AdoptSessionResponse, error)
-	// Converse drives one run. The first frame MUST be `prompt`; subsequent
-	// frames are zero or more `resume_approval` / `cancel` control frames. The
-	// server streams `Event` envelopes until the terminal `result` event, then
-	// closes the stream. A context cancel from the client aborts the run.
+	// Converse drives one run. The first frame MUST be `prompt` or `retry`; later
+	// frames may carry controls. A received second `prompt` or `retry` is rejected
+	// with INVALID_ARGUMENT. The server streams `Event` envelopes until the terminal
+	// `result` event, then closes the stream; controls still in transit may instead
+	// observe normal stream completion. A context cancel from the client aborts the run.
 	Converse(grpc.BidiStreamingServer[ConverseRequest, ConverseResponse]) error
 	// ListMcpResources returns the static resource snapshots advertised by the
 	// connected MCP servers. An empty `server` returns the union across every
@@ -1278,21 +1392,18 @@ type HarnessServiceServer interface {
 	// model, its effective read-only tool scope, permission mode, and UX color.
 	// Derived from the snapshot taken at startup; it performs no live discovery.
 	ListAgents(context.Context, *ListAgentsRequest) (*ListAgentsResponse, error)
-	// ListCommands returns the available slash commands (name + short
-	// description) discovered under the configured command directories of the
-	// requested workspace. It powers the client's in-input command palette; it is
-	// DISCOVERY only — expanding a command remains a run-path concern (the server's
-	// CommandExpander handles it when a "/<cmd> args" prompt is submitted). An
-	// empty workspace, or a server with no command expander, returns an empty list.
+	// ListCommands returns slash commands discovered for one owned session's exact
+	// server-bound placement. It authorizes and reattaches that session before
+	// discovery and accepts no workspace/root input. It powers the client's command
+	// palette; command expansion remains a run-path concern. A no-FS session or a
+	// server with no command expander returns an empty list.
 	ListCommands(context.Context, *ListCommandsRequest) (*ListCommandsResponse, error)
-	// ListWorktrees returns the git worktrees of the repo rooted at the requested
-	// workspace (issue #102). It powers the client's /worktrees overlay — the
-	// first-class operator workflow for binding a session to an EXISTING sibling
-	// worktree (a new session rooted there, not a live-session switch). It is
-	// DISCOVERY only, composition-injected (nil-safe: a no-FS/cloud server, or an
-	// untrusted workspace, returns an empty list); it never performs a live
-	// model/network call and never mutates anything. An empty workspace or a server
-	// with no worktree lister also returns an empty list.
+	// ListWorktrees discovers eligible alternatives for one owned source session's
+	// exactly reattached placement. Results carry bounded display metadata and an
+	// opaque source-scoped selector accepted only by ClearSession or ForkSession.
+	// The server re-enumerates and matches current choices on use; selectors are not
+	// paths, are not persisted, and expire on restart. A no-FS session or a server
+	// with no worktree lister returns an empty list.
 	ListWorktrees(context.Context, *ListWorktreesRequest) (*ListWorktreesResponse, error)
 	// StreamSessionEvents replays a session's durable event log as a server stream
 	// of `Event` envelopes (cloud-native Phase 3a read-back). It is the client-tier
@@ -1412,6 +1523,17 @@ type HarnessServiceServer interface {
 	// from a position and being handed everything is a correctness problem dressed
 	// as a performance one. Ownership is enforced exactly as on GetSession.
 	WatchSessionEvents(*WatchSessionEventsRequest, grpc.ServerStreamingServer[WatchSessionEventsResponse]) error
+	// GetMcpAuthorizationPresentation returns the live browser URL for one owned,
+	// still-pending authorization. The request carries correlation only; the URL
+	// is returned only by this live control and never enters an Event or snapshot.
+	GetMcpAuthorizationPresentation(context.Context, *GetMcpAuthorizationPresentationRequest) (*GetMcpAuthorizationPresentationResponse, error)
+	// RecheckMcpAuthorization is a bidirectional authorization-control stream.
+	// Its first frame MUST carry owned session/authorization correlation;
+	// subsequent frames may resolve permission asks or cancel the continuation.
+	RecheckMcpAuthorization(grpc.BidiStreamingServer[RecheckMcpAuthorizationRequest, RecheckMcpAuthorizationResponse]) error
+	// CancelMcpAuthorization is the cancellation counterpart with the same
+	// first-frame and continuation-control grammar.
+	CancelMcpAuthorization(grpc.BidiStreamingServer[CancelMcpAuthorizationRequest, CancelMcpAuthorizationResponse]) error
 	// ListSessions returns the stored-session inventory — the picker metadata a
 	// client renders to let an operator open an EXISTING session by id (issue #245
 	// Phase 1). It is backed by `port.PrunableStore.List` (type-asserted on the
@@ -1461,6 +1583,14 @@ type HarnessServiceServer interface {
 	// ReflectSession explicitly reflects one completed, caller-owned session. It
 	// remains available when automatic learning is off if reflection is configured.
 	ReflectSession(context.Context, *ReflectSessionRequest) (*ReflectSessionResponse, error)
+	// Learning attempts expose content-free lifecycle metadata from only the
+	// verified caller's private partition. Pagination cursors are opaque IDs.
+	GetLearningAttempt(context.Context, *GetLearningAttemptRequest) (*GetLearningAttemptResponse, error)
+	ListLearningAttempts(context.Context, *ListLearningAttemptsRequest) (*ListLearningAttemptsResponse, error)
+	// Retry and abandon are opaque-version CAS controls over only the attempt.
+	// Abandon is non-compensating and does not promise downstream rollback.
+	RetryLearningAttempt(context.Context, *MutateLearningAttemptRequest) (*MutateLearningAttemptResponse, error)
+	AbandonLearningAttempt(context.Context, *MutateLearningAttemptRequest) (*MutateLearningAttemptResponse, error)
 	// GenerateDreamPlan creates a bounded-lifetime manual consolidation review for
 	// one closed, deployment-owned target. The request carries no mutation material.
 	// Unavailable deployments return Unimplemented (HTTP parity: 501).
@@ -1552,6 +1682,11 @@ type HarnessServiceServer interface {
 	// event of whichever run ran last (the continuation run on an allow path; the
 	// resumed run on a deny path).
 	ApprovePlan(*ApprovePlanRequest, grpc.ServerStreamingServer[Event]) error
+	// Workspace enrollment is a client-owned pre-prompt bundle. These unary
+	// controls carry only whole-bundle correlation; no backend selector exists.
+	ConnectWorkspaceServices(context.Context, *WorkspaceEnrollmentConnectRequest) (*WorkspaceEnrollment, error)
+	RetryWorkspaceEnrollment(context.Context, *WorkspaceEnrollmentControlRequest) (*WorkspaceEnrollment, error)
+	CancelWorkspaceEnrollment(context.Context, *WorkspaceEnrollmentControlRequest) (*WorkspaceEnrollment, error)
 	mustEmbedUnimplementedHarnessServiceServer()
 }
 
@@ -1592,14 +1727,11 @@ func (UnimplementedHarnessServiceServer) DeleteSession(context.Context, *DeleteS
 func (UnimplementedHarnessServiceServer) CompactSession(context.Context, *CompactSessionRequest) (*CompactSessionResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CompactSession not implemented")
 }
+func (UnimplementedHarnessServiceServer) ClearSession(context.Context, *ClearSessionRequest) (*ClearSessionResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ClearSession not implemented")
+}
 func (UnimplementedHarnessServiceServer) ForkSession(context.Context, *ForkSessionRequest) (*ForkSessionResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ForkSession not implemented")
-}
-func (UnimplementedHarnessServiceServer) PreflightSessionAdoption(context.Context, *PreflightSessionAdoptionRequest) (*PreflightSessionAdoptionResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method PreflightSessionAdoption not implemented")
-}
-func (UnimplementedHarnessServiceServer) AdoptSession(context.Context, *AdoptSessionRequest) (*AdoptSessionResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method AdoptSession not implemented")
 }
 func (UnimplementedHarnessServiceServer) Converse(grpc.BidiStreamingServer[ConverseRequest, ConverseResponse]) error {
 	return status.Errorf(codes.Unimplemented, "method Converse not implemented")
@@ -1639,6 +1771,15 @@ func (UnimplementedHarnessServiceServer) StreamSessionLive(*StreamSessionLiveReq
 }
 func (UnimplementedHarnessServiceServer) WatchSessionEvents(*WatchSessionEventsRequest, grpc.ServerStreamingServer[WatchSessionEventsResponse]) error {
 	return status.Errorf(codes.Unimplemented, "method WatchSessionEvents not implemented")
+}
+func (UnimplementedHarnessServiceServer) GetMcpAuthorizationPresentation(context.Context, *GetMcpAuthorizationPresentationRequest) (*GetMcpAuthorizationPresentationResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetMcpAuthorizationPresentation not implemented")
+}
+func (UnimplementedHarnessServiceServer) RecheckMcpAuthorization(grpc.BidiStreamingServer[RecheckMcpAuthorizationRequest, RecheckMcpAuthorizationResponse]) error {
+	return status.Errorf(codes.Unimplemented, "method RecheckMcpAuthorization not implemented")
+}
+func (UnimplementedHarnessServiceServer) CancelMcpAuthorization(grpc.BidiStreamingServer[CancelMcpAuthorizationRequest, CancelMcpAuthorizationResponse]) error {
+	return status.Errorf(codes.Unimplemented, "method CancelMcpAuthorization not implemented")
 }
 func (UnimplementedHarnessServiceServer) ListSessions(context.Context, *ListSessionsRequest) (*ListSessionsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListSessions not implemented")
@@ -1684,6 +1825,18 @@ func (UnimplementedHarnessServiceServer) GetUserModel(context.Context, *GetUserM
 }
 func (UnimplementedHarnessServiceServer) ReflectSession(context.Context, *ReflectSessionRequest) (*ReflectSessionResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ReflectSession not implemented")
+}
+func (UnimplementedHarnessServiceServer) GetLearningAttempt(context.Context, *GetLearningAttemptRequest) (*GetLearningAttemptResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetLearningAttempt not implemented")
+}
+func (UnimplementedHarnessServiceServer) ListLearningAttempts(context.Context, *ListLearningAttemptsRequest) (*ListLearningAttemptsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListLearningAttempts not implemented")
+}
+func (UnimplementedHarnessServiceServer) RetryLearningAttempt(context.Context, *MutateLearningAttemptRequest) (*MutateLearningAttemptResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RetryLearningAttempt not implemented")
+}
+func (UnimplementedHarnessServiceServer) AbandonLearningAttempt(context.Context, *MutateLearningAttemptRequest) (*MutateLearningAttemptResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method AbandonLearningAttempt not implemented")
 }
 func (UnimplementedHarnessServiceServer) GenerateDreamPlan(context.Context, *GenerateDreamPlanRequest) (*GenerateDreamPlanResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GenerateDreamPlan not implemented")
@@ -1753,6 +1906,15 @@ func (UnimplementedHarnessServiceServer) CleanupTeam(context.Context, *CleanupTe
 }
 func (UnimplementedHarnessServiceServer) ApprovePlan(*ApprovePlanRequest, grpc.ServerStreamingServer[Event]) error {
 	return status.Errorf(codes.Unimplemented, "method ApprovePlan not implemented")
+}
+func (UnimplementedHarnessServiceServer) ConnectWorkspaceServices(context.Context, *WorkspaceEnrollmentConnectRequest) (*WorkspaceEnrollment, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ConnectWorkspaceServices not implemented")
+}
+func (UnimplementedHarnessServiceServer) RetryWorkspaceEnrollment(context.Context, *WorkspaceEnrollmentControlRequest) (*WorkspaceEnrollment, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RetryWorkspaceEnrollment not implemented")
+}
+func (UnimplementedHarnessServiceServer) CancelWorkspaceEnrollment(context.Context, *WorkspaceEnrollmentControlRequest) (*WorkspaceEnrollment, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CancelWorkspaceEnrollment not implemented")
 }
 func (UnimplementedHarnessServiceServer) mustEmbedUnimplementedHarnessServiceServer() {}
 func (UnimplementedHarnessServiceServer) testEmbeddedByValue()                        {}
@@ -1955,6 +2117,24 @@ func _HarnessService_CompactSession_Handler(srv interface{}, ctx context.Context
 	return interceptor(ctx, in, info, handler)
 }
 
+func _HarnessService_ClearSession_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ClearSessionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HarnessServiceServer).ClearSession(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HarnessService_ClearSession_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HarnessServiceServer).ClearSession(ctx, req.(*ClearSessionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _HarnessService_ForkSession_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ForkSessionRequest)
 	if err := dec(in); err != nil {
@@ -1969,42 +2149,6 @@ func _HarnessService_ForkSession_Handler(srv interface{}, ctx context.Context, d
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(HarnessServiceServer).ForkSession(ctx, req.(*ForkSessionRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _HarnessService_PreflightSessionAdoption_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(PreflightSessionAdoptionRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(HarnessServiceServer).PreflightSessionAdoption(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: HarnessService_PreflightSessionAdoption_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(HarnessServiceServer).PreflightSessionAdoption(ctx, req.(*PreflightSessionAdoptionRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _HarnessService_AdoptSession_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(AdoptSessionRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(HarnessServiceServer).AdoptSession(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: HarnessService_AdoptSession_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(HarnessServiceServer).AdoptSession(ctx, req.(*AdoptSessionRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -2210,6 +2354,38 @@ func _HarnessService_WatchSessionEvents_Handler(srv interface{}, stream grpc.Ser
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type HarnessService_WatchSessionEventsServer = grpc.ServerStreamingServer[WatchSessionEventsResponse]
+
+func _HarnessService_GetMcpAuthorizationPresentation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetMcpAuthorizationPresentationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HarnessServiceServer).GetMcpAuthorizationPresentation(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HarnessService_GetMcpAuthorizationPresentation_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HarnessServiceServer).GetMcpAuthorizationPresentation(ctx, req.(*GetMcpAuthorizationPresentationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _HarnessService_RecheckMcpAuthorization_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(HarnessServiceServer).RecheckMcpAuthorization(&grpc.GenericServerStream[RecheckMcpAuthorizationRequest, RecheckMcpAuthorizationResponse]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type HarnessService_RecheckMcpAuthorizationServer = grpc.BidiStreamingServer[RecheckMcpAuthorizationRequest, RecheckMcpAuthorizationResponse]
+
+func _HarnessService_CancelMcpAuthorization_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(HarnessServiceServer).CancelMcpAuthorization(&grpc.GenericServerStream[CancelMcpAuthorizationRequest, CancelMcpAuthorizationResponse]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type HarnessService_CancelMcpAuthorizationServer = grpc.BidiStreamingServer[CancelMcpAuthorizationRequest, CancelMcpAuthorizationResponse]
 
 func _HarnessService_ListSessions_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ListSessionsRequest)
@@ -2477,6 +2653,78 @@ func _HarnessService_ReflectSession_Handler(srv interface{}, ctx context.Context
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(HarnessServiceServer).ReflectSession(ctx, req.(*ReflectSessionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _HarnessService_GetLearningAttempt_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetLearningAttemptRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HarnessServiceServer).GetLearningAttempt(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HarnessService_GetLearningAttempt_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HarnessServiceServer).GetLearningAttempt(ctx, req.(*GetLearningAttemptRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _HarnessService_ListLearningAttempts_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListLearningAttemptsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HarnessServiceServer).ListLearningAttempts(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HarnessService_ListLearningAttempts_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HarnessServiceServer).ListLearningAttempts(ctx, req.(*ListLearningAttemptsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _HarnessService_RetryLearningAttempt_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MutateLearningAttemptRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HarnessServiceServer).RetryLearningAttempt(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HarnessService_RetryLearningAttempt_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HarnessServiceServer).RetryLearningAttempt(ctx, req.(*MutateLearningAttemptRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _HarnessService_AbandonLearningAttempt_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MutateLearningAttemptRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HarnessServiceServer).AbandonLearningAttempt(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HarnessService_AbandonLearningAttempt_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HarnessServiceServer).AbandonLearningAttempt(ctx, req.(*MutateLearningAttemptRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -2881,6 +3129,60 @@ func _HarnessService_ApprovePlan_Handler(srv interface{}, stream grpc.ServerStre
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type HarnessService_ApprovePlanServer = grpc.ServerStreamingServer[Event]
 
+func _HarnessService_ConnectWorkspaceServices_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(WorkspaceEnrollmentConnectRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HarnessServiceServer).ConnectWorkspaceServices(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HarnessService_ConnectWorkspaceServices_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HarnessServiceServer).ConnectWorkspaceServices(ctx, req.(*WorkspaceEnrollmentConnectRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _HarnessService_RetryWorkspaceEnrollment_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(WorkspaceEnrollmentControlRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HarnessServiceServer).RetryWorkspaceEnrollment(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HarnessService_RetryWorkspaceEnrollment_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HarnessServiceServer).RetryWorkspaceEnrollment(ctx, req.(*WorkspaceEnrollmentControlRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _HarnessService_CancelWorkspaceEnrollment_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(WorkspaceEnrollmentControlRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HarnessServiceServer).CancelWorkspaceEnrollment(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HarnessService_CancelWorkspaceEnrollment_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HarnessServiceServer).CancelWorkspaceEnrollment(ctx, req.(*WorkspaceEnrollmentControlRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // HarnessService_ServiceDesc is the grpc.ServiceDesc for HarnessService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -2929,16 +3231,12 @@ var HarnessService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _HarnessService_CompactSession_Handler,
 		},
 		{
+			MethodName: "ClearSession",
+			Handler:    _HarnessService_ClearSession_Handler,
+		},
+		{
 			MethodName: "ForkSession",
 			Handler:    _HarnessService_ForkSession_Handler,
-		},
-		{
-			MethodName: "PreflightSessionAdoption",
-			Handler:    _HarnessService_PreflightSessionAdoption_Handler,
-		},
-		{
-			MethodName: "AdoptSession",
-			Handler:    _HarnessService_AdoptSession_Handler,
 		},
 		{
 			MethodName: "ListMcpResources",
@@ -2975,6 +3273,10 @@ var HarnessService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListWorktrees",
 			Handler:    _HarnessService_ListWorktrees_Handler,
+		},
+		{
+			MethodName: "GetMcpAuthorizationPresentation",
+			Handler:    _HarnessService_GetMcpAuthorizationPresentation_Handler,
 		},
 		{
 			MethodName: "ListSessions",
@@ -3035,6 +3337,22 @@ var HarnessService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ReflectSession",
 			Handler:    _HarnessService_ReflectSession_Handler,
+		},
+		{
+			MethodName: "GetLearningAttempt",
+			Handler:    _HarnessService_GetLearningAttempt_Handler,
+		},
+		{
+			MethodName: "ListLearningAttempts",
+			Handler:    _HarnessService_ListLearningAttempts_Handler,
+		},
+		{
+			MethodName: "RetryLearningAttempt",
+			Handler:    _HarnessService_RetryLearningAttempt_Handler,
+		},
+		{
+			MethodName: "AbandonLearningAttempt",
+			Handler:    _HarnessService_AbandonLearningAttempt_Handler,
 		},
 		{
 			MethodName: "GenerateDreamPlan",
@@ -3120,6 +3438,18 @@ var HarnessService_ServiceDesc = grpc.ServiceDesc{
 			MethodName: "CleanupTeam",
 			Handler:    _HarnessService_CleanupTeam_Handler,
 		},
+		{
+			MethodName: "ConnectWorkspaceServices",
+			Handler:    _HarnessService_ConnectWorkspaceServices_Handler,
+		},
+		{
+			MethodName: "RetryWorkspaceEnrollment",
+			Handler:    _HarnessService_RetryWorkspaceEnrollment_Handler,
+		},
+		{
+			MethodName: "CancelWorkspaceEnrollment",
+			Handler:    _HarnessService_CancelWorkspaceEnrollment_Handler,
+		},
 	},
 	Streams: []grpc.StreamDesc{
 		{
@@ -3142,6 +3472,18 @@ var HarnessService_ServiceDesc = grpc.ServiceDesc{
 			StreamName:    "WatchSessionEvents",
 			Handler:       _HarnessService_WatchSessionEvents_Handler,
 			ServerStreams: true,
+		},
+		{
+			StreamName:    "RecheckMcpAuthorization",
+			Handler:       _HarnessService_RecheckMcpAuthorization_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
+		},
+		{
+			StreamName:    "CancelMcpAuthorization",
+			Handler:       _HarnessService_CancelMcpAuthorization_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
 		},
 		{
 			StreamName:    "RunTeam",

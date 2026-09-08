@@ -32,7 +32,7 @@ func TestServiceNoProgressSurfacesAndReopens(t *testing.T) {
 	svc := newService(t, llm, allowRules())
 
 	// MaxTurns disabled so the nudge BUDGET (not the turn cap) is what bounds the run.
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

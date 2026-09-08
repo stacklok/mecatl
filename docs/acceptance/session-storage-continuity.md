@@ -1,7 +1,7 @@
 # Session storage continuity — acceptance plan
 
 **Phase:** Large historical stores, migration, cleanup, and writable legacy continuity.
-**Status:** landed, 2026-08-18. All implementation waves, aggregate gates, and final panel review completed.
+**Status:** draft historical record, partially superseded 2026-09-02 by [ADR 0291](../adr/0291-server-owned-session-placement.md). Storage migration/cleanup landed; writable legacy-adoption criteria and their deleted proofs are no longer current acceptance claims.
 **Issue:** [stacklok/mecatl#583](https://github.com/stacklok/mecatl/issues/583), with sub-issues [#586](https://github.com/stacklok/mecatl/issues/586)–[#596](https://github.com/stacklok/mecatl/issues/596).
 **ADR:** [ADR-0226](../adr/0226-session-storage-maintenance.md) — bounded current snapshots, indexed metadata, distinct maintenance jobs, and explicit legacy adoption.
 **Accumulator branch:** `acc/session-storage-continuity` (off `main`).
@@ -257,7 +257,7 @@ The scenario test names are the `verify:` identifiers above. `TestInvariant_rete
 ## Definition of done
 
 1. `task lint` and `task test` pass across root, engine, authn, and provider modules with race detection.
-2. `task docs` regenerates `llms.txt`; matlatl strict and the user-docs Docusaurus build are green.
+2. `task docs` regenerates the configuration reference; matlatl strict and the user-docs Docusaurus build are green.
 3. `task api:check` passes, or intentional engine additions update `engine/api/*.txt` and `engine/CHANGELOG.md` per `engine/COMPATIBILITY.md`.
 4. `task ac-trace-strict` resolves every `verify:` proof after this plan is `landed`.
 5. Every scenario test and `TestInvariant_retention_requires_durable_taxonomy` is green and grep-locatable.

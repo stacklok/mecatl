@@ -12,7 +12,6 @@ import (
 	"time"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -29,10 +28,10 @@ func newSessionManagementService(t *testing.T, ownership bool, lease port.Sessio
 		llm = mockllm.New()
 	}
 	store := memstore.New()
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine: agent.NewEngine(agent.Deps{LLM: llm, Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "test"}),
-		Store:  store, Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		Now: func() time.Time { return time.Unix(1, 0) }, OwnershipEnforced: ownership,
+		Store:  store,
+		Now:    func() time.Time { return time.Unix(1, 0) }, OwnershipEnforced: ownership,
 		SessionLease: lease, LeaseOwner: "manager", LeaseTTL: time.Hour, LeaseRenewInterval: time.Hour,
 	})
 	if err != nil {
@@ -199,10 +198,10 @@ func (s *managementBarrierStore) counts() (int, int) {
 
 func newManagementBarrierService(t *testing.T, store port.SessionStore, lease port.SessionLease) *server.Service {
 	t.Helper()
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "test"}),
-		Store:  store, Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		Now: time.Now, OwnershipEnforced: true,
+		Store:  store,
+		Now:    time.Now, OwnershipEnforced: true,
 		SessionLease: lease, LeaseOwner: "manager", LeaseTTL: time.Hour, LeaseRenewInterval: time.Hour,
 	})
 	if err != nil {
@@ -216,7 +215,7 @@ func newManagementBarrierFixture(t *testing.T) (*managementBarrierStore, *sessio
 	t.Helper()
 	base := memstore.New()
 	alice := &session.Principal{Issuer: "issuer", Subject: "alice", GrantType: session.GrantTypeUser}
-	sess := session.New("alice-session", session.ModeDefault, "/ws", session.Limits{}, time.Unix(1, 0))
+	sess := session.New("alice-session", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 	if err := sess.RestoreLabels(alice, session.Authority{}); err != nil {
 		t.Fatalf("RestoreLabels: %v", err)
 	}
@@ -237,10 +236,10 @@ func newManagementBarrierFixture(t *testing.T) (*managementBarrierStore, *sessio
 
 func newSessionManagementServiceWithStore(t *testing.T, store port.SessionStore, lease port.SessionLease) *server.Service {
 	t.Helper()
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "test"}),
-		Store:  store, Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		Now: time.Now, SessionLease: lease, LeaseOwner: "manager", LeaseTTL: time.Hour, LeaseRenewInterval: time.Hour,
+		Store:  store,
+		Now:    time.Now, SessionLease: lease, LeaseOwner: "manager", LeaseTTL: time.Hour, LeaseRenewInterval: time.Hour,
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
@@ -361,7 +360,7 @@ func TestCallerSeparation_ForeignForkDoesNotContendOnOwnerCoordination(t *testin
 	}
 	ownerResult := make(chan result, 1)
 	go func() {
-		id, err := svc.ForkSession(aliceCtx, sess.ID, "", "")
+		id, err := forkSession(svc, aliceCtx, sess.ID, "", "")
 		ownerResult <- result{id: id, err: err}
 	}()
 	select {
@@ -372,7 +371,7 @@ func TestCallerSeparation_ForeignForkDoesNotContendOnOwnerCoordination(t *testin
 
 	foreignResult := make(chan error, 1)
 	go func() {
-		_, err := svc.ForkSession(bobCtx, sess.ID, "", "")
+		_, err := forkSession(svc, bobCtx, sess.ID, "", "")
 		foreignResult <- err
 	}()
 	select {
@@ -383,7 +382,7 @@ func TestCallerSeparation_ForeignForkDoesNotContendOnOwnerCoordination(t *testin
 	case <-time.After(time.Second):
 		t.Fatal("foreign fork contended on the owner's coordination lock")
 	}
-	if _, err := svc.ForkSession(bobCtx, "missing", "", ""); !errors.Is(err, server.ErrNotFound) {
+	if _, err := forkSession(svc, bobCtx, "missing", "", ""); !errors.Is(err, server.ErrNotFound) {
 		t.Fatalf("missing ForkSession = %v, want ErrNotFound", err)
 	}
 	if saves, deletes := store.counts(); saves != 0 || deletes != 0 {
@@ -416,7 +415,7 @@ func TestCallerSeparation_ManagementReloadReauthorizesAfterPreflight(t *testing.
 			return svc.DeleteSession(ctx, id)
 		}},
 		{name: "fork", run: func(svc *server.Service, ctx context.Context, id session.SessionID) error {
-			_, err := svc.ForkSession(ctx, id, "", "")
+			_, err := forkSession(svc, ctx, id, "", "")
 			return err
 		}},
 	}
@@ -424,7 +423,7 @@ func TestCallerSeparation_ManagementReloadReauthorizesAfterPreflight(t *testing.
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			store, sess, aliceCtx, _ := newManagementBarrierFixture(t)
-			replacement := session.New(sess.ID, session.ModeDefault, "/ws", session.Limits{}, time.Unix(2, 0))
+			replacement := session.New(sess.ID, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(2, 0))
 			if err := replacement.RestoreLabels(&session.Principal{Issuer: "issuer", Subject: "bob", GrantType: session.GrantTypeUser}, session.Authority{}); err != nil {
 				t.Fatalf("RestoreLabels replacement: %v", err)
 			}
@@ -470,7 +469,7 @@ func TestCallerSeparation_ManagementReauthorizesAfterLeaseAcquisition(t *testing
 			return svc.DeleteSession(ctx, id)
 		}},
 		{name: "fork", run: func(svc *server.Service, ctx context.Context, id session.SessionID) error {
-			_, err := svc.ForkSession(ctx, id, "", "")
+			_, err := forkSession(svc, ctx, id, "", "")
 			return err
 		}},
 	}
@@ -479,14 +478,14 @@ func TestCallerSeparation_ManagementReauthorizesAfterLeaseAcquisition(t *testing
 		t.Run(tt.name, func(t *testing.T) {
 			base := memstore.New()
 			alice := &session.Principal{Issuer: "issuer", Subject: "alice", GrantType: session.GrantTypeUser}
-			sess := session.New("alice-session", session.ModeDefault, "/ws", session.Limits{}, time.Unix(1, 0))
+			sess := session.New("alice-session", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 			if err := sess.RestoreLabels(alice, session.Authority{}); err != nil {
 				t.Fatalf("RestoreLabels: %v", err)
 			}
 			if err := base.Save(context.Background(), sess); err != nil {
 				t.Fatalf("Save fixture: %v", err)
 			}
-			replacement := session.New(sess.ID, session.ModeDefault, "/ws", session.Limits{}, time.Unix(2, 0))
+			replacement := session.New(sess.ID, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(2, 0))
 			if err := replacement.RestoreLabels(&session.Principal{Issuer: "issuer", Subject: "bob", GrantType: session.GrantTypeUser}, session.Authority{}); err != nil {
 				t.Fatalf("RestoreLabels replacement: %v", err)
 			}
@@ -524,7 +523,7 @@ func TestSessionManagementRevalidatesAfterLeaseWithoutOwnership(t *testing.T) {
 			return svc.DeleteSession(ctx, id)
 		}},
 		{name: "fork", run: func(svc *server.Service, ctx context.Context, id session.SessionID) error {
-			_, err := svc.ForkSession(ctx, id, "", "")
+			_, err := forkSession(svc, ctx, id, "", "")
 			return err
 		}},
 	}
@@ -532,11 +531,11 @@ func TestSessionManagementRevalidatesAfterLeaseWithoutOwnership(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			base := memstore.New()
-			sess := session.New("session", session.ModeDefault, "/ws", session.Limits{}, time.Unix(1, 0))
+			sess := session.New("session", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 			if err := base.Save(context.Background(), sess); err != nil {
 				t.Fatalf("Save fixture: %v", err)
 			}
-			replacement := session.New(sess.ID, session.ModeDefault, "/ws", session.Limits{}, time.Unix(2, 0))
+			replacement := session.New(sess.ID, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(2, 0))
 			if err := replacement.RestoreSessionMetadata(session.SessionKindSubagent, session.SessionRelationship{ParentSessionID: "parent", CallID: "call"}); err != nil {
 				t.Fatalf("RestoreSessionMetadata replacement: %v", err)
 			}
@@ -560,7 +559,7 @@ func TestSessionManagementRenameDeleteAndOwnership(t *testing.T) {
 	svc, store := newSessionManagementService(t, true, nil, nil)
 	alice := session.WithPrincipal(context.Background(), &session.Principal{Issuer: "issuer", Subject: "alice", GrantType: session.GrantTypeUser})
 	bob := session.WithPrincipal(context.Background(), &session.Principal{Issuer: "issuer", Subject: "bob", GrantType: session.GrantTypeUser})
-	sess, err := svc.CreateSession(alice, "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(alice, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -599,7 +598,7 @@ func TestSessionManagementRenameDeleteAndOwnership(t *testing.T) {
 
 func TestSessionManagementRejectsInvalidUTF8IDBeforeRenameResponse(t *testing.T) {
 	inner := memstore.New()
-	corrupt := session.New("bad\xffid", session.ModeDefault, "/workspace", session.Limits{}, time.Unix(1, 0))
+	corrupt := session.New("bad\xffid", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 	svc := newSessionManagementServiceWithStore(t, &corruptSessionIDStore{SessionStore: inner, sess: corrupt}, nil)
 
 	if _, err := svc.RenameSession(context.Background(), corrupt.ID, "renamed"); !errors.Is(err, server.ErrInternal) {
@@ -611,14 +610,14 @@ func TestSessionManagementRejectsKindAwaitingAndLive(t *testing.T) {
 	svc, store := newSessionManagementService(t, false, nil, blockingProvider{})
 	ctx := context.Background()
 
-	child := session.New("subagent-parent-call", session.ModeDefault, "/ws", session.Limits{}, time.Unix(1, 0))
+	child := session.New("subagent-parent-call", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 	if err := child.RestoreSessionMetadata(session.SessionKindSubagent, session.SessionRelationship{ParentSessionID: "parent", CallID: "call"}); err != nil {
 		t.Fatalf("RestoreSessionMetadata: %v", err)
 	}
 	if err := store.Save(ctx, child); err != nil {
 		t.Fatalf("Save child: %v", err)
 	}
-	if _, err := svc.ForkSession(ctx, child.ID, "", ""); !errors.Is(err, server.ErrFailedPrecondition) {
+	if _, err := forkSession(svc, ctx, child.ID, "", ""); !errors.Is(err, server.ErrFailedPrecondition) {
 		t.Fatalf("ForkSession(child) = %v, want ErrFailedPrecondition", err)
 	}
 	if _, err := svc.RenameSession(ctx, child.ID, "no"); !errors.Is(err, server.ErrFailedPrecondition) {
@@ -628,7 +627,7 @@ func TestSessionManagementRejectsKindAwaitingAndLive(t *testing.T) {
 		t.Fatalf("DeleteSession(child) = %v, want ErrFailedPrecondition", err)
 	}
 
-	awaiting, err := svc.CreateSession(ctx, "/ws", session.ModeDefault, session.Limits{})
+	awaiting, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("Create awaiting: %v", err)
 	}
@@ -648,7 +647,7 @@ func TestSessionManagementRejectsKindAwaitingAndLive(t *testing.T) {
 	if err := store.Save(ctx, awaiting); err != nil {
 		t.Fatalf("Save awaiting: %v", err)
 	}
-	if _, err := svc.ForkSession(ctx, awaiting.ID, "", ""); !errors.Is(err, server.ErrFailedPrecondition) {
+	if _, err := forkSession(svc, ctx, awaiting.ID, "", ""); !errors.Is(err, server.ErrFailedPrecondition) {
 		t.Fatalf("ForkSession(awaiting) = %v, want ErrFailedPrecondition", err)
 	}
 	if _, err := svc.RenameSession(ctx, awaiting.ID, "no"); !errors.Is(err, server.ErrFailedPrecondition) {
@@ -658,7 +657,7 @@ func TestSessionManagementRejectsKindAwaitingAndLive(t *testing.T) {
 		t.Fatalf("DeleteSession(awaiting) = %v, want ErrFailedPrecondition", err)
 	}
 
-	live, err := svc.CreateSession(ctx, "/ws", session.ModeDefault, session.Limits{})
+	live, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("Create live: %v", err)
 	}
@@ -666,7 +665,7 @@ func TestSessionManagementRejectsKindAwaitingAndLive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StartRun: %v", err)
 	}
-	if _, err := svc.ForkSession(ctx, live.ID, "", ""); !errors.Is(err, server.ErrFailedPrecondition) {
+	if _, err := forkSession(svc, ctx, live.ID, "", ""); !errors.Is(err, server.ErrFailedPrecondition) {
 		t.Fatalf("ForkSession(live) = %v, want ErrFailedPrecondition", err)
 	}
 	if _, err := svc.RenameSession(ctx, live.ID, "no"); !errors.Is(err, server.ErrFailedPrecondition) {
@@ -684,7 +683,7 @@ func TestSessionManagementRejectsKindAwaitingAndLive(t *testing.T) {
 func TestSessionManagementRejectsLeaseHeldElsewhere(t *testing.T) {
 	lease := &fakeLease{acquireErr: port.ErrLeaseHeld}
 	svc, _ := newSessionManagementService(t, false, lease, nil)
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -703,7 +702,7 @@ func TestRetentionDeleteRevalidatesCandidateAfterPlanning(t *testing.T) {
 	svc, store := newSessionManagementService(t, false, nil, nil)
 	ctx := context.Background()
 
-	running, err := svc.CreateSession(ctx, "/ws", session.ModeDefault, session.Limits{})
+	running, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -720,7 +719,7 @@ func TestRetentionDeleteRevalidatesCandidateAfterPlanning(t *testing.T) {
 		t.Fatalf("running candidate was deleted: %v", err)
 	}
 
-	unknown := session.New("legacy-unknown", session.ModeDefault, "/ws", session.Limits{}, time.Now())
+	unknown := session.New("legacy-unknown", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Now())
 	if err := unknown.RestoreSessionMetadata(session.SessionKindUnknown, session.SessionRelationship{}); err != nil {
 		t.Fatalf("RestoreSessionMetadata: %v", err)
 	}
@@ -742,7 +741,7 @@ func TestSessionManagementGRPCAndHTTPParity(t *testing.T) {
 	httpServer := httptest.NewServer(server.NewHTTPHandler(svc))
 	defer httpServer.Close()
 
-	grpcSession, err := svc.CreateSession(ctx, "/grpc", session.ModeDefault, session.Limits{})
+	grpcSession, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("Create gRPC session: %v", err)
 	}
@@ -750,7 +749,7 @@ func TestSessionManagementGRPCAndHTTPParity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("gRPC RenameSession: %v", err)
 	}
-	if got := grpcRename.GetSession(); got.GetTitle() != "renamed" || got.GetTitleProvenance() != string(session.TitleProvenanceOperator) {
+	if got := grpcRename.GetSession(); got.GetTitleMetadata().GetTitle() != "renamed" || got.GetTitleMetadata().GetProvenance() != string(session.TitleProvenanceOperator) {
 		t.Fatalf("gRPC rename response = %+v", got)
 	}
 	if _, err := grpcServer.DeleteSession(ctx, &mecatlv1.DeleteSessionRequest{SessionId: string(grpcSession.ID)}); err != nil {
@@ -760,7 +759,7 @@ func TestSessionManagementGRPCAndHTTPParity(t *testing.T) {
 		t.Fatalf("gRPC idempotent delete = %v", err)
 	}
 
-	httpSession, err := svc.CreateSession(ctx, "/http", session.ModeDefault, session.Limits{})
+	httpSession, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("Create HTTP session: %v", err)
 	}
@@ -814,7 +813,7 @@ func TestSessionInventoryProjectsDeleteStorageCapability(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			svc := newSessionManagementServiceWithStore(t, tc.store, nil)
-			sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+			sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 			if err != nil {
 				t.Fatalf("CreateSession: %v", err)
 			}
@@ -836,11 +835,11 @@ func TestSessionManagementActionReasonsTransportParity(t *testing.T) {
 	store := &pagingOnlySessionStore{inner: memstore.New(memstore.WithNow(func() time.Time { return time.Unix(2_000, 0) }))}
 	svc := newSessionManagementServiceWithStore(t, store, nil)
 	ctx := context.Background()
-	main, err := svc.CreateSession(ctx, "/main", session.ModeDefault, session.Limits{})
+	main, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
-	child := session.New("child", session.ModeDefault, "/child", session.Limits{}, time.Unix(1, 0))
+	child := session.New("child", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/child", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 	if err := child.RestoreSessionMetadata(session.SessionKindSubagent, session.SessionRelationship{ParentSessionID: main.ID, CallID: "call"}); err != nil {
 		t.Fatalf("RestoreSessionMetadata: %v", err)
 	}
@@ -910,18 +909,18 @@ func TestForkSessionUsesManagementGateAndScopedLease(t *testing.T) {
 	svc, store := newSessionManagementService(t, true, lease, nil)
 	alice := session.WithPrincipal(context.Background(), &session.Principal{Issuer: "issuer", Subject: "alice", GrantType: session.GrantTypeUser})
 	bob := session.WithPrincipal(context.Background(), &session.Principal{Issuer: "issuer", Subject: "bob", GrantType: session.GrantTypeUser})
-	src, err := svc.CreateSession(alice, "/ws", session.ModeDefault, session.Limits{})
+	src, err := svc.CreateSession(alice, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
-	if _, err := svc.ForkSession(bob, src.ID, "", ""); !errors.Is(err, server.ErrNotFound) {
+	if _, err := forkSession(svc, bob, src.ID, "", ""); !errors.Is(err, server.ErrNotFound) {
 		t.Fatalf("foreign ForkSession = %v, want ErrNotFound", err)
 	}
 	if lease.acquires != 0 {
 		t.Fatalf("foreign fork acquired %d leases, want 0", lease.acquires)
 	}
 
-	child := session.New("subagent-legacy", session.ModeDefault, "/ws", session.Limits{}, time.Unix(1, 0))
+	child := session.New("subagent-legacy", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 	child.Owner = session.PrincipalFromContext(alice).Clone()
 	if err := child.RestoreSessionMetadata(session.SessionKindMain, session.SessionRelationship{}); err != nil {
 		t.Fatalf("RestoreSessionMetadata: %v", err)
@@ -929,11 +928,11 @@ func TestForkSessionUsesManagementGateAndScopedLease(t *testing.T) {
 	if err := store.Save(alice, child); err != nil {
 		t.Fatalf("Save child: %v", err)
 	}
-	if _, err := svc.ForkSession(alice, child.ID, "", ""); !errors.Is(err, server.ErrFailedPrecondition) {
+	if _, err := forkSession(svc, alice, child.ID, "", ""); !errors.Is(err, server.ErrFailedPrecondition) {
 		t.Fatalf("legacy-prefix ForkSession = %v, want ErrFailedPrecondition", err)
 	}
 
-	forkID, err := svc.ForkSession(alice, src.ID, "", "")
+	forkID, err := forkSession(svc, alice, src.ID, "", "")
 	if err != nil {
 		t.Fatalf("ForkSession: %v", err)
 	}
@@ -949,7 +948,7 @@ func TestSessionManagementMutationLeasesAreScoped(t *testing.T) {
 	lease := &fakeLease{}
 	svc, _ := newSessionManagementService(t, false, lease, nil)
 	ctx := context.Background()
-	rename, err := svc.CreateSession(ctx, "/ws", session.ModeDefault, session.Limits{})
+	rename, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("Create rename: %v", err)
 	}
@@ -960,7 +959,7 @@ func TestSessionManagementMutationLeasesAreScoped(t *testing.T) {
 		t.Fatalf("rename lease calls = acquire %d release %d, want 1/1", lease.acquires, lease.releaseCount())
 	}
 
-	preheld, err := svc.CreateSession(ctx, "/ws", session.ModeDefault, session.Limits{})
+	preheld, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("Create preheld: %v", err)
 	}
@@ -985,7 +984,7 @@ func TestSessionManagementFailedDeleteLeaseOwnership(t *testing.T) {
 		lease := &fakeLease{}
 		store := &failingDeleteSessionStore{Store: memstore.New(), err: errors.New("delete failed")}
 		svc := newSessionManagementServiceWithStore(t, store, lease)
-		sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+		sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 		if err != nil {
 			t.Fatalf("CreateSession: %v", err)
 		}
@@ -1001,7 +1000,7 @@ func TestSessionManagementFailedDeleteLeaseOwnership(t *testing.T) {
 		lease := &fakeLease{}
 		store := &failingDeleteSessionStore{Store: memstore.New(), err: errors.New("delete failed")}
 		svc := newSessionManagementServiceWithStore(t, store, lease)
-		sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+		sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 		if err != nil {
 			t.Fatalf("CreateSession: %v", err)
 		}

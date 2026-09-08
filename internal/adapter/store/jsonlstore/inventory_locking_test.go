@@ -22,7 +22,7 @@ func TestSessionStorageContinuity_Scenario2_UnrelatedMutationNotBlocked(t *testi
 	ids := []session.SessionID{"inventory-source", "save-target", "load-target", "event-target", "tool-target"}
 	sessions := make(map[session.SessionID]*session.Session, len(ids))
 	for _, id := range ids {
-		sessions[id] = session.New(id, session.ModeDefault, "/workspace", session.Limits{}, time.Unix(1_700_000_000, 0).UTC())
+		sessions[id] = session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1_700_000_000, 0).UTC())
 		if err := st.Save(ctx, sessions[id]); err != nil {
 			t.Fatalf("seed %q: %v", id, err)
 		}
@@ -96,14 +96,14 @@ func TestSessionStorageContinuity_Scenario2_SameFamilyMutationSerialized(t *test
 		verify func(*testing.T, *Store, session.SessionID)
 	}{
 		{name: "Save", run: func(ctx context.Context, st *Store, id session.SessionID) error {
-			return st.Save(ctx, session.New(id, session.ModeDefault, "/workspace", session.Limits{}, time.Unix(1_700_000_000, 0).UTC()))
+			return st.Save(ctx, session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1_700_000_000, 0).UTC()))
 		}},
 		{name: "Migration promotion", setup: func(t *testing.T, st *Store, id session.SessionID) {
 			t.Helper()
 			if err := st.Delete(ctx, id); err != nil {
 				t.Fatalf("remove canonical seed: %v", err)
 			}
-			legacy := session.New(id, session.ModeDefault, "/legacy", session.Limits{}, time.Unix(1_600_000_000, 0).UTC())
+			legacy := session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/legacy", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1_600_000_000, 0).UTC())
 			payload, err := sessnap.Marshal(legacy)
 			if err != nil {
 				t.Fatalf("marshal legacy snapshot: %v", err)
@@ -115,7 +115,7 @@ func TestSessionStorageContinuity_Scenario2_SameFamilyMutationSerialized(t *test
 				t.Fatalf("write legacy sidecar: %v", err)
 			}
 		}, run: func(ctx context.Context, st *Store, id session.SessionID) error {
-			return st.Save(ctx, session.New(id, session.ModeDefault, "/workspace", session.Limits{}, time.Unix(1_700_000_000, 0).UTC()))
+			return st.Save(ctx, session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1_700_000_000, 0).UTC()))
 		}, verify: func(t *testing.T, st *Store, id session.SessionID) {
 			t.Helper()
 			if _, err := os.Stat(st.resolver.canonicalPath(id, kindTools)); err != nil {
@@ -159,10 +159,10 @@ func TestSessionStorageContinuity_Scenario2_SameFamilyMutationSerialized(t *test
 			}
 			id := session.SessionID("same-family")
 			otherID := session.SessionID("unrelated-family")
-			if err := first.Save(ctx, session.New(id, session.ModeDefault, "/workspace", session.Limits{}, time.Unix(1_700_000_000, 0).UTC())); err != nil {
+			if err := first.Save(ctx, session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1_700_000_000, 0).UTC())); err != nil {
 				t.Fatalf("seed family: %v", err)
 			}
-			if err := first.Save(ctx, session.New(otherID, session.ModeDefault, "/workspace", session.Limits{}, time.Unix(1_700_000_000, 0).UTC())); err != nil {
+			if err := first.Save(ctx, session.New(otherID, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1_700_000_000, 0).UTC())); err != nil {
 				t.Fatalf("seed unrelated family: %v", err)
 			}
 			if tc.setup != nil {
@@ -212,7 +212,7 @@ func TestSessionFamilyOperationsHonorContextWhileLockIsHeld(t *testing.T) {
 		t.Fatalf("New Store: %v", err)
 	}
 	id := session.SessionID("context-lock-target")
-	seed := session.New(id, session.ModeDefault, "/workspace", session.Limits{}, time.Unix(1_700_000_000, 0).UTC())
+	seed := session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1_700_000_000, 0).UTC())
 	seed.SetTitle("before")
 	if err := st.Save(context.Background(), seed); err != nil {
 		t.Fatalf("seed Save: %v", err)
@@ -237,7 +237,7 @@ func TestSessionFamilyOperationsHonorContextWhileLockIsHeld(t *testing.T) {
 	}
 	defer func() { _ = familyLock.Close() }()
 
-	changed := session.New(id, session.ModeDefault, "/workspace", session.Limits{}, time.Unix(1_700_000_000, 0).UTC())
+	changed := session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1_700_000_000, 0).UTC())
 	changed.SetTitle("after")
 	operations := []struct {
 		name string

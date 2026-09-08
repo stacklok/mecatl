@@ -54,7 +54,6 @@ func TestCreateSessionCarriesReasoningEffort(t *testing.T) {
 	defer cleanup()
 
 	resp, err := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{
-		Workspace:       "/ws",
 		ProviderId:      "openai",
 		ModelId:         "gpt-5.2",
 		ReasoningEffort: "max", // requested max; the factory echoes the clamped "high"
@@ -90,7 +89,7 @@ func TestCreateSessionEffortPersistsOnSession(t *testing.T) {
 	factory := effortEchoFactory("high", &gotSel)
 	svc := newMCPService(t, "SHARED-REPLY", factory)
 
-	sess, err := svc.CreateSessionWithProvider(context.Background(), "/ws", session.ModeDefault, session.Limits{},
+	sess, err := svc.CreateSessionWithProvider(context.Background(), session.ModeDefault, session.Limits{},
 		server.ProviderSelector{ProviderID: "openai", ModelID: "gpt-5.2", ReasoningEffort: "high"})
 	if err != nil {
 		t.Fatalf("CreateSessionWithProvider: %v", err)
@@ -112,7 +111,6 @@ func TestEffortSessionRehydratesWithPersistedEffort(t *testing.T) {
 	ctx := context.Background()
 	store := memstore.New()
 
-	const wantWorkspace = "/work/effortsess"
 	wantSel := server.ProviderSelector{ProviderID: "openai", ModelID: "gpt-5.2", ReasoningEffort: "high"}
 
 	// "Before the restart": create the effort-bound session.
@@ -121,7 +119,7 @@ func TestEffortSessionRehydratesWithPersistedEffort(t *testing.T) {
 		calls  atomic.Int32
 	)
 	svc1 := selectorServiceOverStore(t, store, selectorRecordingFactory("PRE-RESTART", &gotSel, &calls), nil)
-	sess, err := svc1.CreateSessionWithProvider(ctx, wantWorkspace, session.ModeDefault, session.Limits{}, wantSel)
+	sess, err := svc1.CreateSessionWithProvider(ctx, session.ModeDefault, session.Limits{}, wantSel)
 	if err != nil {
 		t.Fatalf("CreateSessionWithProvider: %v", err)
 	}

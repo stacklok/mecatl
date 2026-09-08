@@ -11,9 +11,10 @@ import (
 // in one session/fork namespace:
 //
 //   - an EnvironmentRef naming the backend family + opaque identity;
-//   - a NON-NULL Workspace (the rooted, path-scoped filesystem seam — every
-//     tool reads through it, and the agent-facing Edit/Write enforce their
-//     read-before-edit / conditional-mutation invariants through it);
+//   - a NON-NULL Workspace (the rooted, path-scoped content/search/versioned-
+//     mutation seam);
+//   - a NON-NULL ReadLedger holding this session's read-before-write evidence,
+//     independently selected from the Workspace content backend;
 //   - an OPTIONAL bound CommandRunner (present when the host has a shell for
 //     this namespace — the main session, a worktree or force-copy fork child;
 //     absent for a file-less / in-memory / shell-less namespace). The Bash
@@ -23,23 +24,23 @@ import (
 // forker, or merger. Those stay on the engine's Deps / the composition root.
 // The Environment is the per-namespace CAPABILITY bundle threaded through the
 // loop and handed to each Tool.Execute (as the env parameter), binding a
-// Workspace + optional CommandRunner into one per-namespace seam.
+// Workspace + ReadLedger + optional CommandRunner into one per-namespace seam.
 //
 // It is immutable: construct once with NewEnvironment, read via the
 // accessors. A fork constructs a fresh child Environment bound to the child
 // namespace (EnvironmentForker); the parent Environment is never mutated.
 //
-// The ZERO VALUE Environment{} has a nil Workspace and a nil CommandRunner
-// and is INVALID for execution: NewEnvironment/MustEnvironment enforce a
-// non-nil Workspace (the one mandatory capability), so every valid
-// Environment carries a non-nil Workspace. Callers at trust boundaries MUST
-// use NewEnvironment (handling its error) rather than assuming a zero value
-// is usable; MustEnvironment is for construction sites where a nil Workspace
-// is a programmer error.
+// The ZERO VALUE Environment{} has nil mandatory capabilities and is INVALID
+// for execution: NewEnvironment/MustEnvironment enforce a non-nil Workspace and
+// ReadLedger, so every valid Environment carries both. Callers at trust boundaries
+// MUST use NewEnvironment (handling its error) rather than assuming a zero value
+// is usable; MustEnvironment is for construction sites where a nil mandatory
+// capability is a programmer error.
 type Environment struct {
-	ref       session.EnvironmentRef
-	workspace Workspace
-	runner    CommandRunner
+	ref        session.EnvironmentRef
+	workspace  Workspace
+	readLedger ReadLedger
+	runner     CommandRunner
 }
 
 // ErrEnvironmentNoWorkspace is the sentinel NewEnvironment returns when a
@@ -49,23 +50,28 @@ type Environment struct {
 // capabilities.
 var ErrEnvironmentNoWorkspace = errors.New("tool: Environment requires a non-nil Workspace")
 
+// ErrEnvironmentNoReadLedger is returned when an Environment is constructed
+// without its mandatory session-scoped read evidence capability.
+var ErrEnvironmentNoReadLedger = errors.New("tool: Environment requires a non-nil ReadLedger")
+
 // NewEnvironment constructs an immutable Environment from a ref, a NON-NULL
-// workspace, and an OPTIONAL bound command runner. A nil workspace is
-// rejected (it is the one mandatory capability); a nil runner is allowed and
-// means "no shell in this namespace" (the Bash tool surfaces ErrNoShell).
-func NewEnvironment(ref session.EnvironmentRef, ws Workspace, runner CommandRunner) (Environment, error) {
+// workspace, a NON-NULL read ledger, and an OPTIONAL bound command runner.
+func NewEnvironment(ref session.EnvironmentRef, ws Workspace, ledger ReadLedger, runner CommandRunner) (Environment, error) {
 	if ws == nil {
 		return Environment{}, ErrEnvironmentNoWorkspace
 	}
-	return Environment{ref: ref, workspace: ws, runner: runner}, nil
+	if ledger == nil {
+		return Environment{}, ErrEnvironmentNoReadLedger
+	}
+	return Environment{ref: ref, workspace: ws, readLedger: ledger, runner: runner}, nil
 }
 
 // MustEnvironment constructs an Environment like NewEnvironment but panics on
-// a nil workspace. Use it only at construction sites where a nil workspace is
-// a programmer error (composition roots, test fixtures); prefer NewEnvironment
+// a nil mandatory capability. Use it only at construction sites where such a
+// nil is a programmer error (composition roots, test fixtures); prefer NewEnvironment
 // at boundaries that read a config value.
-func MustEnvironment(ref session.EnvironmentRef, ws Workspace, runner CommandRunner) Environment {
-	env, err := NewEnvironment(ref, ws, runner)
+func MustEnvironment(ref session.EnvironmentRef, ws Workspace, ledger ReadLedger, runner CommandRunner) Environment {
+	env, err := NewEnvironment(ref, ws, ledger, runner)
 	if err != nil {
 		panic(err)
 	}
@@ -82,6 +88,10 @@ func (e Environment) Ref() session.EnvironmentRef { return e.ref }
 // Tool.Execute's env parameter rather than reading it from the
 // Environment directly.
 func (e Environment) Workspace() Workspace { return e.workspace }
+
+// ReadLedger returns the session-scoped read-before-write evidence capability.
+// It is non-nil for every Environment built through the constructors.
+func (e Environment) ReadLedger() ReadLedger { return e.readLedger }
 
 // CommandRunner returns the bound command runner, or nil when the namespace
 // has no shell. The Bash tool surfaces nil as ErrNoShell.

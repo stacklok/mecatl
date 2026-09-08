@@ -127,7 +127,7 @@ func TestDigestChildActivityClamps(t *testing.T) {
 // in StateRunning, ready for RecordAssistant (the loop's normal turn-0 sequence).
 func mustChildSession(t *testing.T, id session.SessionID, clk time.Time) *session.Session {
 	t.Helper()
-	s := session.New(id, session.ModeDefault, "/ws", session.Limits{}, clk)
+	s := session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, clk)
 	if err := s.RecordUserPrompt("investigate", nil); err != nil {
 		t.Fatalf("RecordUserPrompt: %v", err)
 	}

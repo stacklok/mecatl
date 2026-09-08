@@ -142,7 +142,7 @@ func TestAbsoluteOutOfRootThroughRealTools(t *testing.T) {
 	// the test on a harness-level error.
 	writeCall := call(t, "Write", map[string]any{"path": other, "content": "x"})
 	writeTool := WriteTool{}
-	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: ws.Root()}, ws, nil)
+	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: ws.Root()}, ws, testLedger(ws), nil)
 	if _, err := writeTool.Execute(context.Background(), writeCall, env); err == nil || !strings.Contains(err.Error(), "escapes workspace root") {
 		t.Fatalf("Write(out-of-root absolute) must surface the escape error, got %v", err)
 	}

@@ -1,12 +1,12 @@
 ---
 sidebar_position: 5
 title: Use mecatui
-description: Use the mecatl terminal UI to work with sessions, models, tools, and approvals.
+description: Use the Mecatl terminal UI to work with sessions, models, tools, and approvals.
 ---
 
 # Use mecatui
 
-`mecatui` is mecatl's interactive terminal client. It is a skin over the shared
+`mecatui` is Mecatl's interactive terminal client. It is a skin over the shared
 agent/server core: bare `mecatui` hosts an embedded `mecated` server in the same
 process, while `mecatui connect ADDRESS` displays and controls a server that is
 already running.
@@ -77,6 +77,15 @@ Use the dedicated guides for those workflows:
   and model switching.
 - [Commands and memory](../mecatui/commands-and-memory.md) — learning,
   reflections, and memory-maintenance commands.
+
+## Keyboard help
+
+Press `?` on an empty prompt to open the keys-and-features overlay. When the
+overlay is taller than the conversation area, use **Up/Down** to move one line,
+**Page Up/Page Down** to move a page, and **Home/End** to jump to the beginning
+or end. The overlay shows its current line range; press `?` or **Esc** to close
+it. The displayed key labels and capability availability reflect the active
+client keymap and connected server.
 
 ## Configuration ownership
 

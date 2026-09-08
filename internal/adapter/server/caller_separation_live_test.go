@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
+	"github.com/stacklok/mecatl/engine/adapter/memledger"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -22,7 +23,7 @@ import (
 // callerSeparationTestEnv wraps a throwaway memfs Workspace into an Environment
 // for these tests' non-FS tools (InspectSubagent/InspectMember/Ask).
 func callerSeparationTestEnv() tool.Environment {
-	return tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws"}, memfs.NewWorkspace("/ws"), nil)
+	return tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws"}, memfs.NewWorkspace("/ws"), memledger.New(), nil)
 }
 
 type callerSeparationAskTool struct{}
@@ -37,15 +38,15 @@ func callerSeparationLiveService(t *testing.T) (*server.Service, context.Context
 	t.Helper()
 	catalog := tool.NewCatalog()
 	catalog.MustRegister(callerSeparationAskTool{})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine: agent.NewEngine(agent.Deps{
 			LLM:     mockllm.New(mockllm.ToolCallTurn(session.NewToolCall("ask", "Ask", json.RawMessage(`{}`)))),
 			Catalog: catalog,
 			Policy:  permpolicy.NewPolicy([]governance.Rule{{Effect: governance.Ask}}, nil),
 			Model:   "test-model",
 		}),
-		Store:             memstore.New(),
-		Workspaces:        func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Store: memstore.New(),
+
 		Now:               func() time.Time { return time.Unix(0, 0) },
 		OwnershipEnforced: true,
 	})
@@ -59,7 +60,7 @@ func callerSeparationLiveService(t *testing.T) (*server.Service, context.Context
 
 func callerSeparationAwaitingRun(owner context.Context, t *testing.T, svc *server.Service) (*session.Session, *agent.Run, string) {
 	t.Helper()
-	sess, err := svc.CreateSession(owner, "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(owner, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -80,7 +81,7 @@ func callerSeparationAwaitingRun(owner context.Context, t *testing.T, svc *serve
 // every prompt request re-evaluates the session owner before run entry.
 func TestCallerSeparation_Scenario3_RepeatedForeignPromptIsNotFound(t *testing.T) {
 	svc, aliceCtx, bobCtx := callerSeparationLiveService(t)
-	sess, err := svc.CreateSession(aliceCtx, "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(aliceCtx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +176,7 @@ func TestCallerSeparation_Scenario3_LiveRunVerbsAreOwnerChecked(t *testing.T) {
 // a model cannot use another caller's child or team transcript handle.
 func TestCallerSeparation_Scenario3_ModelFacingHandlesAreOwnerChecked(t *testing.T) {
 	store := memstore.New()
-	child := session.New("subagent-alice", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	child := session.New("subagent-alice", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	if err := child.RestoreLabels(&session.Principal{Issuer: "https://idp.example", Subject: "alice", GrantType: session.GrantTypeUser}, session.Authority{}); err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +187,7 @@ func TestCallerSeparation_Scenario3_ModelFacingHandlesAreOwnerChecked(t *testing
 		t.Fatal(err)
 	}
 	inspect := agent.NewInspectSubagentToolWithOwnership(store, true)
-	member := session.New(agent.MemberSessionID("team-alice", "researcher"), session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	member := session.New(agent.MemberSessionID("team-alice", "researcher"), session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	if err := member.RestoreLabels(&session.Principal{Issuer: "https://idp.example", Subject: "alice", GrantType: session.GrantTypeUser}, session.Authority{}); err != nil {
 		t.Fatal(err)
 	}
@@ -252,7 +253,7 @@ func TestCallerSeparation_Scenario3_ForeignLiveRunReplayIsNotFound(t *testing.T)
 // event Alice's run produces is ever fanned to him. Alice can open her own.
 func TestCallerSeparation_Scenario3_LiveSubscriptionIsOwnerChecked(t *testing.T) {
 	svc, aliceCtx, bobCtx := callerSeparationLiveService(t)
-	sess, err := svc.CreateSession(aliceCtx, "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(aliceCtx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}

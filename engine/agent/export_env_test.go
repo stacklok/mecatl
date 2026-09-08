@@ -7,6 +7,7 @@
 package agent
 
 import (
+	"github.com/stacklok/mecatl/engine/adapter/memledger"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 )
@@ -14,5 +15,5 @@ import (
 // EnvForWS wraps a Workspace into a tool.Environment with an optional bound
 // runner (exported for the external agent_test package).
 func EnvForWS(ws tool.Workspace, runner tool.CommandRunner) tool.Environment {
-	return tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "test"}, ws, runner)
+	return tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: ws.Root(), Revision: "in-tree-v1"}, ws, memledger.New(), runner)
 }

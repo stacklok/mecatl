@@ -1,8 +1,10 @@
 # Spine convergence — acceptance plan
 
+**Contract:** human-reviewed/v1
 **Phase:** agentic development spine (process infrastructure)
 **Status:** draft, 2026-07-24. Converges the the internal sibling repos spine into mecatl.
-**Accumulator branch:** `feat/spine-convergence` (off `main`).
+**Delivery:** Split. Historical plan that predates the Combined exception.
+**Accumulator branch:** `acc/spine-convergence` (off `main`).
 
 The smallest set of work that brings the spine (acceptance-plan →
 orchestrate → TDD workers → ac-trace gate → panel-review) into mecatl so
@@ -12,15 +14,30 @@ repos already run.
 The doc is organized scenario-first because acceptance is about what a
 contributor (human or agent) can do in the repo, not which files exist.
 
+## Human decisions
+
+- [ ] Decide when `ac-trace-strict` becomes a mandatory CI gate.
+
+## Interface contract
+
+- **gRPC / protobuf:** None — historical repository process work; no wire contract changed.
+- **Exported Go APIs / interfaces:** None — no exported Go surface changed.
+- **Tool schemas:** None — no model-facing runtime tool schema changed.
+- **CLI / config:** None — no binary or operator configuration changed.
+- **Events / persistence:** None — no runtime event or persistence shape changed.
+- **Security / authority:** None — the historical plan introduced repository workflow checks, not a runtime authority boundary.
+- **Compatibility / migration:** The repository workflow contract is superseded where necessary by [ADR 0306](../adr/0306-human-reviewed-development-contracts.md); no runtime migration applies.
+
 ## Why these scope cuts
 
-- **mecatl's `panel-review` is the converged one.** It already carries the
-  default-on reuse pair (`code-duplication-reviewer` +
-  `library-reuse-reviewer`) and the references; the sibling skills are the
-  older two-axis shape. No change to panel-review beyond keeping it as-is.
-- **`/dev-pipeline` stays** as the issue-scale track; the spine is the
-  capability-scale track. Both are routers onto the same review/test
-  primitives.
+- **mecatl's panel review was the convergence base, not an unchanged artifact.**
+  It already carried the default-on reuse pair (`code-duplication-reviewer` +
+  `library-reuse-reviewer`) and its references. Convergence preserved those
+  strengths and added independent Test adequacy as the fourth axis and stable
+  `PANEL:` automation contract.
+- **One spine serves every substantive change.** Focused issues use a compact
+  one-scenario, one-task plan; larger capabilities decompose only along real
+  dependency boundaries. Trivial or mechanical edits may remain direct.
 - **ac-trace is report-only in CI until this plan lands.** `task
   ac-trace-strict` only bites on a `landed` plan, so wiring it in can't
   fail the build on an empty `docs/acceptance/` tree.
@@ -112,13 +129,13 @@ workflow in [`AGENTS.md`](../../AGENTS.md).
 |---|---|---|
 | Wiring `ac-trace-strict` into a mandatory CI job | a later PR, once ≥1 landed plan exists | the tool only gates `landed` plans |
 | Converging the host-specific specialists (arch-*, kind-*, ui-*) | never — not mecatl's domain | host-specific |
-| Changing `panel-review` | this PR keeps it as-is | mecatl's reuse-pair version is the converged one |
+| Extending `panel-review` beyond the then-current three axes | ADR 0295 convergence | the common final gate now includes independent test adequacy |
 | A first *feature* acceptance plan driven through orchestrate | the next capability | this PR lands the machinery + one dogfood plan |
 
 ## Definition of done
 
 1. `task lint` and `task test` pass (both modules, `-race`).
-2. `task docs` — `llms.txt` regenerated and the matlatl strict link gate green.
+2. `task docs` — configuration reference regenerated and the matlatl strict link gate green.
 3. `task ac-trace` runs and reports this plan.
 4. The bundled `check-acceptance-plan.sh` passes on this file.
 5. `go run ./cmd/mecademo` still prints a full offline session.
@@ -126,8 +143,6 @@ workflow in [`AGENTS.md`](../../AGENTS.md).
 
 ## Deferred decisions and known risks
 
-- **When to make `ac-trace-strict` a mandatory CI gate.** Once a second
-  plan lands `landed`, promote the strict task into the CI workflow.
 - **The orchestrate skill's worker-dispatch verb** is written for the
   mecatl harness (`Subagent mode:"read-write"`) with the Claude-Code
   `Agent`/`tdd-worker` dispatch noted as the equivalent — the contract is

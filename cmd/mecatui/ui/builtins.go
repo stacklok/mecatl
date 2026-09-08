@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"unicode"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -41,8 +42,10 @@ type wiredCollaborators struct {
 	Scheduling   bool
 	Sessions     bool // /sessions picker — gated on inventory + authoritative transcript
 	Learning     bool // /learning operator-settings enum
-	DebugAsk     bool // /debug-ask — env-gated (MECATUI_DEBUG_ASK=1) fake-ask injector
+	Debug        bool // all debug-only builtins
+	DebugAsk     bool // /debug-ask narrow compatibility alias
 	Connect      bool // /connect — saved remote target picker
+	Workspace    bool // /tools-connect, /tools-cancel — workspace enrollment
 	DebugSession bool // dedicated target-bound debugger: hide binding-breaking actions
 }
 
@@ -62,14 +65,16 @@ func (m Model) wiredCollaborators() wiredCollaborators {
 		Worktrees:   m.deps.Worktrees != nil, Scheduling: m.deps.Sched != nil,
 		Sessions:     m.deps.Sessions != nil && m.deps.Transcript != nil,
 		Learning:     m.deps.Learning != nil,
+		Debug:        m.deps.Debug,
 		DebugAsk:     m.deps.DebugAsk,
 		Connect:      m.deps.Connect != nil,
+		Workspace:    m.deps.WorkspaceEnrollment != nil,
 		DebugSession: m.deps.DebugTarget != "",
 	}
 }
 
 // builtinCommands returns the caps-filtered built-in set for the connected
-// server. /clear and /help are ALWAYS present — they act purely on the Model and
+// server. /clear, /help, and /quit are ALWAYS present — they act purely on the Model and
 // need no server feature. /mcp is present only when the server advertises MCP
 // AND a Commander-independent MCP collaborator is wired (w.MCP); /agents (the
 // definition inventory) only when the server advertises Agents AND an agents
@@ -85,8 +90,8 @@ func (m Model) wiredCollaborators() wiredCollaborators {
 // scheduled-tasks overlay, issue #234) only when the server advertises
 // scheduling AND a schedule lister is wired (w.Scheduling). /effort (the
 // reasoning-effort picker, ADR 0055) is gated identically to /models and sits
-// directly after it. The order is fixed (clear, help, mcp, agents, team, skills,
-// soul, usermodel, models, effort, worktrees, schedule) and locked by a test so
+// directly after it. The order is fixed (clear, help, quit, mcp, agents, team, skills,
+// soul, usermodel, models, effort, worktrees, schedule, tools-connect, tools-cancel) and locked by a test so
 // the palette ordering is stable.
 //
 //nolint:gocyclo // capability-gated built-ins remain explicit and ordered
@@ -101,6 +106,19 @@ func builtinCommands(caps client.Capabilities, w wiredCollaborators) []builtin {
 			name: "help",
 			desc: "show keys & features",
 			run:  Model.runHelp,
+		},
+		{
+			name: "quit",
+			desc: "quit mecatui",
+			run:  Model.runQuit,
+		},
+		{
+			name:        "title",
+			desc:        "show or rename the active session title",
+			acceptsArgs: true,
+			run: func(m Model) (tea.Model, tea.Cmd) {
+				return m.runTitle(), nil
+			},
 		},
 		{
 			name: "session",
@@ -215,10 +233,16 @@ func builtinCommands(caps client.Capabilities, w wiredCollaborators) []builtin {
 		})
 	}
 	if w.Connect {
-		out = append(out, builtin{name: "connect", desc: "sign in and connect to a saved remote target", run: Model.runConnect})
+		out = append(out, builtin{name: connectCommand, desc: "sign in and connect to a saved remote target", run: Model.runConnect})
+	}
+	if caps.WorkspaceEnrollment && w.Workspace {
+		out = append(out,
+			builtin{name: "tools-connect", desc: "connect the bundled protected-tool workspace services", run: Model.runToolsConnect},
+			builtin{name: "tools-cancel", desc: "cancel a pending workspace-services connection", run: Model.runToolsCancel},
+		)
 	}
 	out = appendLearningBuiltin(out, w)
-	out = appendDebugAskBuiltin(out, w)
+	out = appendDebugBuiltins(out, w)
 	// /posture prints the server-wide operator posture tier + a line per defense.
 	// Gated on a non-empty caps.Posture (an older server omits the field), so it never
 	// appears against a server that cannot report it. Chrome only — it changes nothing.
@@ -254,18 +278,30 @@ func appendLearningBuiltin(out []builtin, w wiredCollaborators) []builtin {
 	)
 }
 
-// appendDebugAskBuiltin registers /debug-ask ONLY under the env-gated Deps.DebugAsk
-// (MECATUI_DEBUG_ASK=1) — a hand-testing affordance for the permission modal's
-// long-args surfaces (issue #488), never a documented feature.
-func appendDebugAskBuiltin(out []builtin, w wiredCollaborators) []builtin {
-	if !w.DebugAsk {
-		return out
-	}
-	return append(out, builtin{
+type debugBuiltin struct {
+	builtin
+	legacyEnabled func(wiredCollaborators) bool
+}
+
+// debugBuiltins is the single declaration of debug-only local commands. Both
+// enabled registration and known-but-gated interception derive from this slice.
+// Each optional legacy gate remains narrow to that one command.
+var debugBuiltins = []debugBuiltin{{
+	builtin: builtin{
 		name: "debug-ask",
 		desc: "(debug) inject a fake permission ask (long bash)",
 		run:  Model.runDebugAsk,
-	})
+	},
+	legacyEnabled: func(w wiredCollaborators) bool { return w.DebugAsk },
+}}
+
+func appendDebugBuiltins(out []builtin, w wiredCollaborators) []builtin {
+	for _, debug := range debugBuiltins {
+		if w.Debug || (debug.legacyEnabled != nil && debug.legacyEnabled(w)) {
+			out = append(out, debug.builtin)
+		}
+	}
+	return out
 }
 
 // builtinByName looks up a built-in by name within the caps-filtered set, for
@@ -280,15 +316,23 @@ func builtinByName(caps client.Capabilities, w wiredCollaborators, name string) 
 	return builtin{}, false
 }
 
-// runClear starts a create-first handoff to a new empty session. It is idle-only:
-// while a run streams it is a no-op with an explanatory status, so a /clear
-// mid-turn can't tear out the live stream's backing state. The old session and
-// its UI stay bound until creation succeeds; this both avoids data loss on a
-// create failure and prevents a prompt from reaching the old session while the
-// handoff is pending.
+// clearHandoff identifies the one source-bound ClearSession request whose
+// response may replace the current binding.
+type clearHandoff struct {
+	sourceID      string
+	token         uint64
+	sourcePhase   phase
+	sourceSettled bool
+	failure       string
+}
+
+// runClear starts a create-first handoff to a new empty session from every
+// interactive phase. The server owns cancellation and settlement of an active
+// run or durable approval; the old binding and transcript remain visible until
+// the correlated successor response succeeds.
 func (m Model) runClear() (tea.Model, tea.Cmd) {
-	if m.phase != phaseIdle {
-		m.statusMsg = m.deps.Theme.Style("warning").Render("cannot clear while running")
+	if m.clearPending != nil {
+		m.statusMsg = m.deps.Theme.Style("warning").Render("clear is already in progress")
 		return m, nil
 	}
 	if m.deps.Session == nil {
@@ -297,58 +341,44 @@ func (m Model) runClear() (tea.Model, tea.Cmd) {
 	}
 
 	oldID := m.sessionID
-	m.phase = phaseConnecting // blocks input while the old session is still displayed
-	m.statusMsg = "clearing — creating a fresh session…"
-	return m, tea.Batch(m.clearSessionCmd(oldID), m.sp.Tick)
+	m.clearRequestToken++
+	m.clearPending = &clearHandoff{sourceID: oldID, token: m.clearRequestToken, sourcePhase: m.phase}
+	m.phase = phaseConnecting
+	m.statusMsg = "clearing — cancelling the current run and creating a fresh session…"
+	return m, tea.Batch(m.clearSessionCmd(oldID, m.clearRequestToken), m.sp.Tick)
 }
 
-// clearSessionSelection prefers the server's effective model echo, while retaining
-// the locally requested reasoning effort when an older server did not echo it.
-func (m Model) clearSessionSelection() client.ModelSelection {
-	sel := m.createModelSelection
-	if resolved := m.resolvedSessionModel; resolved.ProviderID != "" || resolved.ModelID != "" {
-		if resolved.ProviderID != "" {
-			sel.ProviderID = resolved.ProviderID
-		}
-		if resolved.ModelID != "" {
-			sel.ModelID = resolved.ModelID
-		}
-		if resolved.ReasoningEffort != "" {
-			sel.ReasoningEffort = resolved.ReasoningEffort
-		}
-	}
-	return sel
-}
-
-// clearSessionCmd creates the replacement before the old session is touched. The
-// reducer performs the local reset and binding before it schedules the best-effort
-// close, so a create failure leaves the old session entirely usable.
-func (m Model) clearSessionCmd(oldID string) tea.Cmd {
+// clearSessionCmd asks the server to settle the source and create an
+// empty-history successor. Server inheritance carries placement, mode, model,
+// effort, limits, and permission posture.
+func (m Model) clearSessionCmd(oldID string, token uint64) tea.Cmd {
 	deps := m.deps
-	workspace := m.activeWorkspace
-	if workspace == "" {
-		workspace = deps.Workspace
-	}
-	sel := m.clearSessionSelection()
-	mode := m.desiredMode()
 	return func() tea.Msg {
-		id, caps, resolved, err := deps.Session.CreateSessionInWorkspace(deps.Ctx, workspace, sel, mode)
+		id, snapshot, err := deps.Session.ClearSession(deps.Ctx, oldID, nil)
 		if err != nil {
-			return clearSessionFailedMsg{err: err}
+			return clearSessionFailedMsg{sourceID: oldID, token: token, err: err}
 		}
 		return clearSessionReadyMsg{
-			ready: client.SessionReadyMsg{SessionID: id, Capabilities: caps, ResolvedModel: resolved, Mode: mode},
-			oldID: oldID,
+			ready:     client.SessionReadyMsg{SessionID: id, Capabilities: snapshot.Capabilities, ResolvedModel: snapshot.ResolvedModel, Mode: snapshot.Mode},
+			placement: snapshot.Placement,
+			oldID:     oldID,
+			token:     token,
 		}
 	}
 }
 
 type clearSessionReadyMsg struct {
-	ready client.SessionReadyMsg
-	oldID string
+	ready     client.SessionReadyMsg
+	placement client.Placement
+	oldID     string
+	token     uint64
 }
 
-type clearSessionFailedMsg struct{ err error }
+type clearSessionFailedMsg struct {
+	sourceID string
+	token    uint64
+	err      error
+}
 
 // closeSessionCmd is deliberately best-effort: the replacement is already bound,
 // so failure to close the old persisted session must not affect the new one.
@@ -391,6 +421,10 @@ func (m Model) runHelp() (tea.Model, tea.Cmd) {
 	m.showHelp = true
 	m.prompt.Blur()
 	return m, nil
+}
+
+func (m Model) runQuit() (tea.Model, tea.Cmd) {
+	return m.quitNow()
 }
 
 func (m Model) runSessionDetails() (tea.Model, tea.Cmd) {
@@ -522,7 +556,7 @@ var debugAskPayloads = []string{
 // runDebugAsk injects a FAKE permission ask with long Bash args through the SAME
 // reducer the wire drives (applyPermissionAsk over a client.PermissionAskMsg), so
 // queueing, dedupe, focus, the (1 of N) badge, and the click geometry all
-// exercise for real. Registered only under MECATUI_DEBUG_ASK=1. Each invocation
+// exercise for real. Registered only in client debug mode. Each invocation
 // rotates to the next canned payload (debugAskCycle). At phaseIdle the modal
 // opens directly (applyPermissionAsk does not gate on phase) — that is the
 // intended debug affordance, and a phaseAwaitingApproval invocation queues FIFO
@@ -544,7 +578,7 @@ func (m Model) runDebugAsk() (tea.Model, tea.Cmd) {
 		AskID:  fmt.Sprintf("sess-debug-ask-%d", n),
 		Tool:   "Bash",
 		Args:   string(args),
-		Reason: "debug ask (MECATUI_DEBUG_ASK) — not from the model",
+		Reason: "debug ask (client debug mode) — not from the model",
 	})
 }
 
@@ -564,7 +598,7 @@ func postureSummary(p string) string {
 	}
 	label := p
 	if label == "" {
-		label = "unknown"
+		label = unknownLabel
 	}
 	return "posture " + label +
 		" — allow-all " + onoff(allowAll) +
@@ -582,19 +616,22 @@ type builtinName struct {
 // builtinNameRegistry is the static registry identity and argument policy used
 // before a capability-gated builtin can be dispatched.
 var builtinNameRegistry = []builtinName{
-	{name: "clear", acceptsArgs: false}, {name: "help", acceptsArgs: false}, {name: "session", acceptsArgs: false},
+	{name: "clear", acceptsArgs: false}, {name: "help", acceptsArgs: false}, {name: "quit", acceptsArgs: false}, {name: "title", acceptsArgs: true}, {name: "session", acceptsArgs: false},
 	{name: "retry", acceptsArgs: false}, {name: "diagnostics", acceptsArgs: false}, {name: "compact", acceptsArgs: false},
 	{name: "mcp", acceptsArgs: false}, {name: "agents", acceptsArgs: false}, {name: "team", acceptsArgs: false},
 	{name: "skills", acceptsArgs: false}, {name: "soul", acceptsArgs: false}, {name: "usermodel", acceptsArgs: false},
 	{name: "models", acceptsArgs: false}, {name: "effort", acceptsArgs: false}, {name: "worktrees", acceptsArgs: false},
 	{name: "schedule", acceptsArgs: false}, {name: "sessions", acceptsArgs: false}, {name: "learning", acceptsArgs: false},
-	{name: "learning-sensitivity", acceptsArgs: false}, {name: "posture", acceptsArgs: false}, {name: "debug-ask", acceptsArgs: false},
+	{name: "learning-sensitivity", acceptsArgs: false}, {name: "posture", acceptsArgs: false},
 }
 
 func allBuiltins() map[string]bool {
-	set := make(map[string]bool, len(builtinNameRegistry))
+	set := make(map[string]bool, len(builtinNameRegistry)+len(debugBuiltins))
 	for _, builtin := range builtinNameRegistry {
 		set[builtin.name] = builtin.acceptsArgs
+	}
+	for _, debug := range debugBuiltins {
+		set[debug.name] = debug.acceptsArgs
 	}
 	return set
 }
@@ -609,17 +646,72 @@ func isKnownBuiltinName(name string) bool {
 	return ok
 }
 
+func canonicalBuiltinName(name string) string {
+	if name == "exit" {
+		return "quit"
+	}
+	return name
+}
+
+// titleCommand recognizes /title without treating arbitrary model-facing slash
+// commands as client commands. Whitespace after /title is equivalent to a bare
+// title read; only non-whitespace suffixes rename the title.
+func titleCommand(text string) (title string, bare, ok bool) {
+	raw := strings.TrimLeftFunc(text, unicode.IsSpace)
+	if !strings.HasPrefix(strings.ToLower(raw), "/title") {
+		return "", false, false
+	}
+	if len(raw) > len("/title") && !unicode.IsSpace(rune(raw[len("/title")])) {
+		return "", false, false
+	}
+	title = strings.TrimSpace(raw[len("/title"):])
+	return title, title == "", true
+}
+
+// runTitle adds a local, nonpersistent title/provenance notice. It deliberately
+// does not send prompt content or open a stream.
+func (m Model) runTitle() tea.Model {
+	title := m.sessionTitle
+	if title == "" {
+		title = "(untitled)"
+	}
+	provenance := titleProvenanceLabel(m.sessionTitleProvenance)
+	m.conv.addNotice("Session title: " + title + " (" + provenance + ")")
+	m.refreshView()
+	return m
+}
+
+func (m Model) renameTitle(title string) (tea.Model, tea.Cmd) {
+	if m.sessionID == "" || m.deps.SessionManagement == nil {
+		m.statusMsg = m.deps.Theme.Style("warning").Render("title rename is unavailable")
+		return m, nil
+	}
+	m.titleRenameRequestToken++
+	m.sessionTitle = title
+	m.sessionTitleProvenance = "operator"
+	m.prompt.Reset()
+	return m, client.RenameSessionCmdWithToken(m.deps.Ctx, m.deps.SessionManagement, m.sessionID, title, m.titleRenameRequestToken)
+}
+
 // dispatchBareBuiltin checks whether raw text is a slash command after trimming
 // surrounding Unicode whitespace. A current bare built-in executes locally. A
 // recognized built-in that does not accept arguments keeps the input and shows a
 // local warning. Unknown slash commands remain model-facing.
 func (m Model) dispatchBareBuiltin(text string) (tea.Model, tea.Cmd, bool) {
+	if title, bare, ok := titleCommand(text); ok {
+		if bare {
+			m.prompt.Reset()
+			return m.runTitle(), nil, true
+		}
+		mm, cmd := m.renameTitle(title)
+		return mm, cmd, true
+	}
 	trimmed := strings.TrimSpace(text)
 	fields := strings.Fields(trimmed)
 	if len(fields) > 1 {
 		name, ok := commandPrefix(fields[0])
 		if ok {
-			name = strings.ToLower(name)
+			name = canonicalBuiltinName(strings.ToLower(name))
 			acceptsArgs, known := knownBuiltinNames[name]
 			if b, found := builtinByName(m.caps, m.wiredCollaborators(), name); found {
 				acceptsArgs, known = b.acceptsArgs, true
@@ -638,7 +730,7 @@ func (m Model) dispatchBareBuiltin(text string) (tea.Model, tea.Cmd, bool) {
 	// against all-lowercase names, so "/MODELS" would miss both the dispatch
 	// path and the isKnownBuiltinName guard. Lowercasing here aligns the two
 	// without changing the downstream palette/completion paths.
-	name = strings.ToLower(name)
+	name = canonicalBuiltinName(strings.ToLower(name))
 	if b, found := builtinByName(m.caps, m.wiredCollaborators(), name); found {
 		// A successful bare-command dispatch consumes the command line, so close its
 		// derived palette state too. This path serves both idle and running input.

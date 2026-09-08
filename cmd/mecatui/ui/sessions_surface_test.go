@@ -253,9 +253,8 @@ func TestSessionsSurfaceStartupEscapeRecordsModelKeyIntent(t *testing.T) {
 
 func TestSessionsSurfaceSemanticFormsStayStateOwned(t *testing.T) {
 	for name, set := range map[string]func(*sessionsState){
-		"adoption": func(st *sessionsState) { st.adoptionReview = true },
-		"rename":   func(st *sessionsState) { st.renaming = true },
-		"delete":   func(st *sessionsState) { st.confirmDelete = true },
+		"rename": func(st *sessionsState) { st.renaming = true },
+		"delete": func(st *sessionsState) { st.confirmDelete = true },
 	} {
 		t.Run(name, func(t *testing.T) {
 			st := newSessionsPanelState()

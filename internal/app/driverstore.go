@@ -103,16 +103,25 @@ func canonicalConfiguredDir(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	resolved, err := filepath.EvalSymlinks(abs)
-	if err == nil {
+	if resolved, resolveErr := filepath.EvalSymlinks(abs); resolveErr == nil {
 		return filepath.Clean(resolved), nil
 	}
-	// A not-yet-created leaf cannot be symlink-aliased; resolve its existing parent.
-	parent, parentErr := filepath.EvalSymlinks(filepath.Dir(abs))
-	if parentErr != nil {
-		return "", err
+	// A not-yet-created leaf (and possibly several missing ancestors, e.g. a
+	// completely fresh install) cannot be symlink-aliased; walk up until an
+	// existing ancestor resolves, then rejoin the missing suffix onto it.
+	missing := filepath.Base(abs)
+	dir := filepath.Dir(abs)
+	for {
+		if resolved, resolveErr := filepath.EvalSymlinks(dir); resolveErr == nil {
+			return filepath.Clean(filepath.Join(resolved, missing)), nil
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", err
+		}
+		missing = filepath.Join(filepath.Base(dir), missing)
+		dir = parent
 	}
-	return filepath.Join(parent, filepath.Base(abs)), nil
 }
 
 // driverConns is the per-target driver connection cache: equal URLs share ONE

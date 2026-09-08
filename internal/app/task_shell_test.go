@@ -215,7 +215,7 @@ func TestSubagentRunsGitInWorktreeEndToEnd(t *testing.T) {
 	parentCat.MustRegister(task)
 	parentEng := newChildEngine(cfg, "", parentProvider, parentCat, cfg.Model, fixedDefaultWindow, promptConfig(cfg, cfg.gitStatus))
 
-	sess := session.New("parent", session.ModeDefault, repo, session.Limits{MaxTurns: 5}, time.Now())
+	sess := session.New("parent", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: repo, Revision: "in-tree-v1"}, session.Limits{MaxTurns: 5}, time.Now())
 	run := parentEng.Run(context.Background(), sess, parentEnv, agent.RunRequest{Text: "go"})
 
 	var sawSubagentResult bool
@@ -320,7 +320,7 @@ func TestBuildSubagentToolRealWiringForksChildShellWhenShell(t *testing.T) {
 	parentCat.MustRegister(task)
 	parentEng := newChildEngine(cfg, "", parentProvider, parentCat, cfg.Model, fixedDefaultWindow, promptConfig(cfg, cfg.gitStatus))
 
-	sess := session.New("parent", session.ModeDefault, repo, session.Limits{MaxTurns: 5}, time.Now())
+	sess := session.New("parent", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: repo, Revision: "in-tree-v1"}, session.Limits{MaxTurns: 5}, time.Now())
 	run := parentEng.Run(context.Background(), sess, parentEnv, agent.RunRequest{Text: "go"})
 	for ev := range run.Events() {
 		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == "t1" && ev.ToolResult.IsError {
@@ -392,7 +392,7 @@ func TestBuildSubagentToolRealWiringNoShellNoForker(t *testing.T) {
 	parentCat.MustRegister(task)
 	parentEng := newChildEngine(cfg, "", parentProvider, parentCat, cfg.Model, fixedDefaultWindow, promptConfig(cfg, cfg.gitStatus))
 
-	sess := session.New("parent", session.ModeDefault, repo, session.Limits{MaxTurns: 5}, time.Now())
+	sess := session.New("parent", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: repo, Revision: "in-tree-v1"}, session.Limits{MaxTurns: 5}, time.Now())
 	run := parentEng.Run(context.Background(), sess, parentEnv, agent.RunRequest{Text: "go"})
 	for ev := range run.Events() {
 		_ = ev // drain to completion; the child's lack of Bash is asserted via the probe
@@ -447,7 +447,7 @@ func TestSubagentSeesDirtyWorkspaceEndToEnd(t *testing.T) {
 	parentCat.MustRegister(task)
 	parentEng := newChildEngine(cfg, "", parentProvider, parentCat, cfg.Model, fixedDefaultWindow, promptConfig(cfg, cfg.gitStatus))
 
-	sess := session.New("parent", session.ModeDefault, repo, session.Limits{MaxTurns: 6}, time.Now())
+	sess := session.New("parent", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: repo, Revision: "in-tree-v1"}, session.Limits{MaxTurns: 6}, time.Now())
 	run := parentEng.Run(context.Background(), sess, parentEnv, agent.RunRequest{Text: "go"})
 	for ev := range run.Events() {
 		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == "t1" && ev.ToolResult.IsError {
@@ -521,14 +521,16 @@ func newSubagentToolForTestOpts(t *testing.T, cfg Config, childProvider *mockllm
 	// worktree so the forked subagent's Bash observes its OWN namespace. The
 	// builder applies the SAME trust-gated hardening buildSandboxedCommandRunner
 	// does (runner != nil above already proves the gate passed at build time).
-	roFk := forker.New(func(root string) (tool.Workspace, error) { return osfs.NewWorkspace(root) },
+	roFk := forker.New(func(root string) (tool.Workspace, error) {
+		return osfs.NewWorkspace(root)
+	},
 		append(opts, forker.WithRunner(func(childRoot string) tool.CommandRunner {
 			if cfg.NoBash || cfg.Shell == "" || !cfg.TrustProject {
 				return nil
 			}
 			return newHardenedRunnerForRoot(cfg, childRoot)
 		}))...)
-	return agent.NewSubagentTool(childEng, agent.WithChildForker(roFk))
+	return agent.NewSubagentTool(childEng, agent.WithChildForker(roFk), agent.WithSubagentReadLedgerFactory(testReadLedger))
 }
 
 // osfsWSForTest builds an osfs workspace rooted at dir, failing the test on error.

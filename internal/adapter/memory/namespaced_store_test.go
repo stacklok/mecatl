@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stacklok/mecatl/engine/adapter/memledger"
 	"github.com/stacklok/mecatl/engine/adapter/nofs"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
@@ -17,7 +18,7 @@ func memoryArgs(raw string) json.RawMessage { return json.RawMessage(raw) }
 
 // noFSTestEnv is a stand-in Environment for these tests' memory tools, none of
 // which touch a filesystem.
-var noFSTestEnv = tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: "test"}, nofs.New(), nil)
+var noFSTestEnv = tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: "test"}, nofs.New(), memledger.New(), nil)
 
 func callerContext(subject, workspace string) context.Context {
 	ctx := session.WithPrincipal(context.Background(), &session.Principal{Issuer: "https://issuer.example", Subject: subject})

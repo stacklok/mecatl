@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -36,11 +35,12 @@ func newScheduleService(t *testing.T, now time.Time) (*server.Service, port.Sche
 		Model:   "test-model",
 		Store:   store,
 	})
-	svc, err := server.NewService(server.Config{
-		Engine:     engine,
-		Store:      store,
-		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		Now:        func() time.Time { return now },
+	svc, err := newPlacementTestService(server.Config{
+		Engine:           engine,
+		Store:            store,
+		SharedEngineRoot: "/tmp",
+
+		Now: func() time.Time { return now },
 	})
 	if err != nil {
 		t.Fatalf("new service: %v", err)
@@ -56,11 +56,10 @@ func TestCreateScheduleCron(t *testing.T) {
 	ctx := context.Background()
 
 	sched, err := svc.CreateSchedule(ctx, port.ScheduleSpec{
-		Name:      "cron-1",
-		Prompt:    "rotate keys",
-		Trigger:   port.TriggerSpec{Cron: "* * * * *"},
-		Mutating:  true,
-		Workspace: "/tmp",
+		Name:     "cron-1",
+		Prompt:   "rotate keys",
+		Trigger:  port.TriggerSpec{Cron: "* * * * *"},
+		Mutating: true,
 	})
 	if err != nil {
 		t.Fatalf("CreateSchedule: %v", err)
@@ -96,22 +95,20 @@ func TestCreateScheduleRejectsDuplicateName(t *testing.T) {
 	ctx := context.Background()
 
 	if _, err := svc.CreateSchedule(ctx, port.ScheduleSpec{
-		Name:      "dup",
-		Prompt:    "original prompt",
-		Trigger:   port.TriggerSpec{Cron: "* * * * *"},
-		Mutating:  true,
-		Workspace: "/tmp",
+		Name:     "dup",
+		Prompt:   "original prompt",
+		Trigger:  port.TriggerSpec{Cron: "* * * * *"},
+		Mutating: true,
 	}); err != nil {
 		t.Fatalf("first CreateSchedule: %v", err)
 	}
 
 	// A second create with the SAME name but a DIFFERENT spec must be rejected.
 	_, err := svc.CreateSchedule(ctx, port.ScheduleSpec{
-		Name:      "dup",
-		Prompt:    "CLOBBERING prompt",
-		Trigger:   port.TriggerSpec{Cron: "0 0 * * *"},
-		Mutating:  true,
-		Workspace: "/other",
+		Name:     "dup",
+		Prompt:   "CLOBBERING prompt",
+		Trigger:  port.TriggerSpec{Cron: "0 0 * * *"},
+		Mutating: true,
 	})
 	if err == nil {
 		t.Fatal("second CreateSchedule with a duplicate name succeeded, want ErrInvalidArgument")
@@ -130,8 +127,9 @@ func TestCreateScheduleRejectsDuplicateName(t *testing.T) {
 	if loaded.Spec.Prompt != "original prompt" {
 		t.Errorf("persisted Prompt = %q, want %q (original NOT clobbered)", loaded.Spec.Prompt, "original prompt")
 	}
-	if loaded.Spec.Workspace != "/tmp" {
-		t.Errorf("persisted Workspace = %q, want %q (original NOT clobbered)", loaded.Spec.Workspace, "/tmp")
+	wantRef := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/tmp", Revision: "in-tree-v1"}
+	if loaded.Spec.EnvironmentRef != wantRef || loaded.Spec.PlacementScope != "test" {
+		t.Errorf("persisted placement = (%+v, %q), want exact original (%+v, %q)", loaded.Spec.EnvironmentRef, loaded.Spec.PlacementScope, wantRef, "test")
 	}
 }
 
@@ -144,11 +142,10 @@ func TestCreateScheduleOneShotFuture(t *testing.T) {
 
 	future := now.Add(time.Hour)
 	sched, err := svc.CreateSchedule(ctx, port.ScheduleSpec{
-		Name:      "once-future",
-		Prompt:    "x",
-		Trigger:   port.TriggerSpec{OneShot: future},
-		Mutating:  true,
-		Workspace: "/tmp",
+		Name:     "once-future",
+		Prompt:   "x",
+		Trigger:  port.TriggerSpec{OneShot: future},
+		Mutating: true,
 	})
 	if err != nil {
 		t.Fatalf("CreateSchedule future: %v", err)
@@ -160,11 +157,10 @@ func TestCreateScheduleOneShotFuture(t *testing.T) {
 	// Past one-shot rejected (Mutating=true so the mode check passes; the
 	// future-invariant is what rejects).
 	if _, err := svc.CreateSchedule(ctx, port.ScheduleSpec{
-		Name:      "once-past",
-		Prompt:    "x",
-		Trigger:   port.TriggerSpec{OneShot: now.Add(-time.Hour)},
-		Mutating:  true,
-		Workspace: "/tmp",
+		Name:     "once-past",
+		Prompt:   "x",
+		Trigger:  port.TriggerSpec{OneShot: now.Add(-time.Hour)},
+		Mutating: true,
 	}); !errors.Is(err, server.ErrInvalidArgument) {
 		t.Fatalf("CreateSchedule past one-shot = %v, want ErrInvalidArgument", err)
 	}
@@ -182,58 +178,50 @@ func TestCreateScheduleRejectsReadleaningWithWriteMode(t *testing.T) {
 	// rejection asserted below is genuinely the mode check, not a masked
 	// workspace error.
 	if _, err := svc.CreateSchedule(ctx, port.ScheduleSpec{
-		Name:      "bad",
-		Prompt:    "x",
-		Trigger:   port.TriggerSpec{Cron: "* * * * *"},
-		Mutating:  false,
-		Mode:      session.ModeDefault,
-		Workspace: "/tmp",
+		Name:     "bad",
+		Prompt:   "x",
+		Trigger:  port.TriggerSpec{Cron: "* * * * *"},
+		Mutating: false,
+		Mode:     session.ModeDefault,
 	}); !errors.Is(err, server.ErrInvalidArgument) {
 		t.Fatalf("CreateSchedule Mutating=false Mode=default = %v, want ErrInvalidArgument", err)
 	}
 	// Mutating=false + ModePlan (read-only) → accepted.
 	if _, err := svc.CreateSchedule(ctx, port.ScheduleSpec{
-		Name:      "good",
-		Prompt:    "x",
-		Trigger:   port.TriggerSpec{Cron: "* * * * *"},
-		Mutating:  false,
-		Mode:      session.ModePlan,
-		Workspace: "/tmp",
+		Name:     "good",
+		Prompt:   "x",
+		Trigger:  port.TriggerSpec{Cron: "* * * * *"},
+		Mutating: false,
+		Mode:     session.ModePlan,
 	}); err != nil {
 		t.Fatalf("CreateSchedule Mutating=false Mode=plan: %v", err)
 	}
 }
 
-// TestCreateScheduleWorkspaceProfileInvariant: the workspace/profile check is
-// PROFILE-AWARE, mirroring the session create-seam. A default-profile schedule
-// with no workspace is rejected (a fire would mint a filesystem session with
-// nothing to root — an unfireable schedule); a no-fs-profile schedule WITH a
-// workspace is also rejected (a no-FS fire has no filesystem to root).
-func TestCreateScheduleWorkspaceProfileInvariant(t *testing.T) {
+// TestADR_0291_ScheduleResolvesSelectorBeforePersistingExactEnvironmentRef
+// proves a public create carries no private path/ref while the server resolves
+// its default selector and persists the exact durable identity and scope.
+func TestADR_0291_ScheduleResolvesSelectorBeforePersistingExactEnvironmentRef(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
-	svc, _ := newScheduleService(t, now)
+	svc, schedStore := newScheduleService(t, now)
 	ctx := context.Background()
 
-	// Default profile, empty workspace → rejected.
-	if _, err := svc.CreateSchedule(ctx, port.ScheduleSpec{
-		Name:     "no-workspace",
-		Prompt:   "x",
-		Trigger:  port.TriggerSpec{Cron: "* * * * *"},
-		Mutating: true,
-	}); !errors.Is(err, server.ErrInvalidArgument) {
-		t.Fatalf("CreateSchedule default-profile no workspace = %v, want ErrInvalidArgument", err)
+	created, err := svc.CreateSchedule(ctx, port.ScheduleSpec{
+		Name: "resolved-placement", Prompt: "x", Trigger: port.TriggerSpec{Cron: "* * * * *"}, Mutating: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateSchedule: %v", err)
 	}
-
-	// no-fs profile, non-empty workspace → rejected.
-	if _, err := svc.CreateSchedule(ctx, port.ScheduleSpec{
-		Name:      "no-fs-with-workspace",
-		Prompt:    "x",
-		Trigger:   port.TriggerSpec{Cron: "* * * * *"},
-		Mutating:  true,
-		Profile:   string(server.ProfileNoFS),
-		Workspace: "/tmp",
-	}); !errors.Is(err, server.ErrInvalidArgument) {
-		t.Fatalf("CreateSchedule no-fs profile with workspace = %v, want ErrInvalidArgument", err)
+	stored, err := schedStore.Load(ctx, created.Spec.Name)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	wantRef := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/tmp", Revision: "in-tree-v1"}
+	if stored.Spec.EnvironmentRef != wantRef || stored.Spec.PlacementScope != "test" {
+		t.Fatalf("stored placement = (%+v, %q), want (%+v, %q)", stored.Spec.EnvironmentRef, stored.Spec.PlacementScope, wantRef, "test")
+	}
+	if created.Spec.EnvironmentRef != wantRef || created.Spec.PlacementScope != "test" {
+		t.Fatalf("returned placement = (%+v, %q), want exact persisted placement", created.Spec.EnvironmentRef, created.Spec.PlacementScope)
 	}
 }
 
@@ -265,11 +253,11 @@ func TestScheduleAccessorsNoStore(t *testing.T) {
 		Model:   "test-model",
 		Store:   memstore.New(),
 	})
-	svc, err := server.NewService(server.Config{
-		Engine:     engine,
-		Store:      memstore.New(),
-		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		Now:        func() time.Time { return time.Unix(0, 0) },
+	svc, err := newPlacementTestService(server.Config{
+		Engine: engine,
+		Store:  memstore.New(),
+
+		Now: func() time.Time { return time.Unix(0, 0) },
 	})
 	if err != nil {
 		t.Fatalf("new service: %v", err)
@@ -296,11 +284,10 @@ func TestPauseResumeSchedule(t *testing.T) {
 	ctx := context.Background()
 
 	spec := port.ScheduleSpec{
-		Name:      "pause-resume",
-		Prompt:    "x",
-		Trigger:   port.TriggerSpec{Cron: "* * * * *"},
-		Mutating:  true,
-		Workspace: "/tmp",
+		Name:     "pause-resume",
+		Prompt:   "x",
+		Trigger:  port.TriggerSpec{Cron: "* * * * *"},
+		Mutating: true,
 	}
 	if _, err := svc.CreateSchedule(ctx, spec); err != nil {
 		t.Fatalf("CreateSchedule: %v", err)
@@ -346,11 +333,10 @@ func TestUpdateSchedulePreservesCreatedAt(t *testing.T) {
 	ctx := context.Background()
 
 	spec := port.ScheduleSpec{
-		Name:      "updatable",
-		Prompt:    "v1",
-		Trigger:   port.TriggerSpec{Cron: "0 9 * * *"},
-		Mutating:  true,
-		Workspace: "/tmp",
+		Name:     "updatable",
+		Prompt:   "v1",
+		Trigger:  port.TriggerSpec{Cron: "0 9 * * *"},
+		Mutating: true,
 	}
 	created, err := svc.CreateSchedule(ctx, spec)
 	if err != nil {
@@ -397,11 +383,10 @@ func TestFireDelivery_Scenario1_OutOfBandCreateHasEmptyOrigin(t *testing.T) {
 
 	// Create without setting OriginSessionID — the field is left at its zero value.
 	sched, err := svc.CreateSchedule(ctx, port.ScheduleSpec{
-		Name:      "empty-origin",
-		Prompt:    "p",
-		Trigger:   port.TriggerSpec{Cron: "* * * * *"},
-		Mutating:  true,
-		Workspace: "/tmp",
+		Name:     "empty-origin",
+		Prompt:   "p",
+		Trigger:  port.TriggerSpec{Cron: "* * * * *"},
+		Mutating: true,
 	})
 	if err != nil {
 		t.Fatalf("CreateSchedule: %v", err)
@@ -435,7 +420,6 @@ func TestFireDelivery_Scenario1_UnknownOriginRejected(t *testing.T) {
 		Prompt:          "p",
 		Trigger:         port.TriggerSpec{Cron: "* * * * *"},
 		Mutating:        true,
-		Workspace:       "/tmp",
 		OriginSessionID: "no-such-session",
 	})
 	if !errors.Is(err, server.ErrInvalidArgument) {

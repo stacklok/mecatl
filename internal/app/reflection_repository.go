@@ -7,6 +7,11 @@ import (
 	"github.com/stacklok/mecatl/engine/learning"
 )
 
+type proposalManifestRepository interface {
+	StageBatchManifest(context.Context, learning.ProposalPartition, learning.MaterializationManifest, []learning.Candidate, []learning.Signal) ([]learning.ProposalRecord, error)
+	GetManifest(context.Context, learning.ProposalPartition, learning.ProposalID) (learning.MaterializationManifest, bool, error)
+}
+
 // lazyProposalRepository defers filesystem creation and flock construction until
 // an explicit reflection or proposal operation actually needs persistence.
 type lazyProposalRepository struct {
@@ -27,6 +32,30 @@ func (r *lazyProposalRepository) StageBatch(ctx context.Context, p learning.Prop
 		return nil, err
 	}
 	return repo.StageBatch(ctx, p, digest, candidates, signals)
+}
+
+func (r *lazyProposalRepository) StageBatchManifest(ctx context.Context, p learning.ProposalPartition, manifest learning.MaterializationManifest, candidates []learning.Candidate, signals []learning.Signal) ([]learning.ProposalRecord, error) {
+	repo, err := r.get()
+	if err != nil {
+		return nil, err
+	}
+	manifestRepo, ok := repo.(proposalManifestRepository)
+	if !ok {
+		return nil, learning.ErrInvalidProposal
+	}
+	return manifestRepo.StageBatchManifest(ctx, p, manifest, candidates, signals)
+}
+
+func (r *lazyProposalRepository) GetManifest(ctx context.Context, p learning.ProposalPartition, id learning.ProposalID) (learning.MaterializationManifest, bool, error) {
+	repo, err := r.get()
+	if err != nil {
+		return learning.MaterializationManifest{}, false, err
+	}
+	manifestRepo, ok := repo.(proposalManifestRepository)
+	if !ok {
+		return learning.MaterializationManifest{}, false, nil
+	}
+	return manifestRepo.GetManifest(ctx, p, id)
 }
 func (r *lazyProposalRepository) List(ctx context.Context, p learning.ProposalPartition, options learning.ProposalList) (learning.ProposalPage, error) {
 	repo, err := r.get()

@@ -4,12 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
+	"github.com/stacklok/mecatl/engine/adapter/memledger"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -48,7 +48,7 @@ var _ tool.Tool = (*writeAskTool)(nil)
 // the parking service passes engineSaves=false (Service.Persist still writes via
 // Config.Store). The RESUMING service passes engineSaves=true so the completed
 // terminal is durable.
-func newAskingService(t *testing.T, store port.SessionStore, ps *permstore.Memory, ran *atomic.Int64, llm port.LLMProvider, engineSaves bool) *server.Service {
+func newAskingService(t *testing.T, store port.SessionStore, ps *permstore.Memory, ran *atomic.Int64, llm port.LLMProvider, engineSaves bool, placement ...server.PlacementProvider) *server.Service {
 	t.Helper()
 	cat := tool.NewCatalog()
 	cat.MustRegister(&writeAskTool{ran: ran})
@@ -63,12 +63,18 @@ func newAskingService(t *testing.T, store port.SessionStore, ps *permstore.Memor
 		Model:   "test-model",
 		Store:   engineStore,
 	})
-	svc, err := server.NewService(server.Config{
-		Engine:     engine,
-		Store:      store,
-		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		Now:        func() time.Time { return time.Unix(0, 0) },
-	})
+	cfg := server.Config{
+		Engine: engine,
+		Store:  store,
+
+		Now: func() time.Time { return time.Unix(0, 0) },
+	}
+	if len(placement) > 0 {
+		cfg.PlacementProvider = placement[0]
+		cfg.PlacementScope = "test"
+		cfg.SharedEngineRoot = "/ws"
+	}
+	svc, err := newPlacementTestService(cfg)
 	if err != nil {
 		t.Fatalf("new service: %v", err)
 	}
@@ -115,7 +121,7 @@ func TestApproveAfterRestartResumesAwaiting(t *testing.T) {
 	// svc1's engine: a Write tool call that parks awaiting (one turn only).
 	svc1 := newAskingService(t, store1, ps1, &ran1,
 		mockllm.New(mockllm.ToolCallTurn(session.NewToolCall("w1", "Write", json.RawMessage(`{"path":"a.go"}`)))), false)
-	sess, err := svc1.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc1.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -182,7 +188,7 @@ func TestApproveNonAwaitingYieldsNoActiveRun(t *testing.T) {
 	ps := permstore.New()
 	var ran atomic.Int64
 	svc1 := newAskingService(t, store1, ps, &ran, mockllm.New(mockllm.TextTurn("done")), true)
-	sess, err := svc1.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc1.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -215,7 +221,7 @@ func TestApproveNonAwaitingYieldsNoActiveRun(t *testing.T) {
 func TestApproveFailedSessionYieldsNoActiveRun(t *testing.T) {
 	store := memstore.New()
 	svc := newServiceWithStore(t, store)
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -250,7 +256,7 @@ func TestApproveSameProcessUsesLiveRun(t *testing.T) {
 			mockllm.ToolCallTurn(session.NewToolCall("w1", "Write", json.RawMessage(`{"path":"a.go"}`))),
 			mockllm.TextTurn("done"),
 		), true)
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -290,13 +296,10 @@ func TestApproveSameProcessUsesLiveRun(t *testing.T) {
 	}
 }
 
-// TestConcurrentApproveAfterRestartExecutesOnce is the B1 concurrency oracle: TWO
-// goroutines call ApproveRun for the SAME awaiting session concurrently, both missing
-// the live-run fast path (the parking process died). The per-session resume lock must
-// ensure only ONE ResumeApproval is spawned: the pending Write executes EXACTLY ONCE
-// and exactly one run drives to completion. Mutation-verified: dropping the
-// per-session serialization (route both straight to engine.ResumeApproval) makes the
-// Write counter reach 2 and fails this test.
+// TestConcurrentApproveAfterRestartExecutesOnce holds a winning resume in provisional
+// admission while a concurrent stale control waits on resumeMu. The unqualified
+// allow resumes and executes exactly once; after promotion the stale deny is
+// rejected instead of being delivered to the newer run.
 func TestConcurrentApproveAfterRestartExecutesOnce(t *testing.T) {
 	dir := t.TempDir()
 	store1, err := jsonlstore.New(dir)
@@ -306,61 +309,94 @@ func TestConcurrentApproveAfterRestartExecutesOnce(t *testing.T) {
 	var ran1 atomic.Int64
 	svc1 := newAskingService(t, store1, permstore.New(), &ran1,
 		mockllm.New(mockllm.ToolCallTurn(session.NewToolCall("w1", "Write", json.RawMessage(`{"path":"a.go"}`)))), false)
-	sess, err := svc1.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc1.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
 	askID := driveServiceToAwaiting(t, svc1, sess.ID)
 
-	// "Restart": a fresh Service over the SAME store. Its engine has TWO continuation
-	// turns so that even the (incorrect) double-spawn case completes cleanly without a
-	// mockllm exhaustion artifact — the Write COUNTER is the exactly-once oracle, and
-	// it is incremented BEFORE the continuation turn on each spawned run.
+	// "Restart": a fresh Service over the SAME store. The stale concurrent
+	// control must never reach this continuation; ran2 is the exactly-once oracle.
 	store2, err := jsonlstore.New(dir)
 	if err != nil {
 		t.Fatalf("jsonlstore reopen: %v", err)
 	}
 	var ran2 atomic.Int64
+	resumeEntered := make(chan struct{})
+	releaseResume := make(chan struct{})
+	placement := admissionPlacementProvider{resolve: func(ctx context.Context, ref session.EnvironmentRef) (tool.Environment, error) {
+		close(resumeEntered)
+		select {
+		case <-releaseResume:
+			return tool.MustEnvironment(ref, memfs.NewWorkspace(ref.ID), memledger.New(), nil), nil
+		case <-ctx.Done():
+			return tool.Environment{}, ctx.Err()
+		}
+	}}
 	svc2 := newAskingService(t, store2, permstore.New(), &ran2,
-		mockllm.New(mockllm.TextTurn("done one"), mockllm.TextTurn("done two")), true)
+		mockllm.New(mockllm.TextTurn("done one"), mockllm.TextTurn("done two")), true, placement)
 
-	// Two concurrent Approves, released together by a start barrier so they race the
-	// resume decision.
-	start := make(chan struct{})
-	var wg sync.WaitGroup
-	var runs [2]*agent.Run
-	var errs [2]error
-	for i := range 2 {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			<-start
-			runs[i], errs[i] = svc2.ApproveRun(context.Background(), sess.ID, askID, session.VerdictAllowOnce, "")
-		}(i)
+	// Hold the winning resume after it installs its provisional runState but before
+	// promotion. The concurrent stale control must wait for that exact resumeMu
+	// transaction; once the winner promotes its live run, the recheck must reject
+	// the stale run id before it can deliver its deny verdict.
+	type approvalResult struct {
+		name string
+		run  *agent.Run
+		err  error
 	}
-	close(start)
-	wg.Wait()
+	results := make(chan approvalResult, 2)
+	go func() {
+		run, err := svc2.ApproveRun(context.Background(), sess.ID, askID, session.VerdictAllowOnce, "")
+		results <- approvalResult{name: "unqualified allow", run: run, err: err}
+	}()
+	select {
+	case <-resumeEntered:
+	case <-time.After(time.Second):
+		t.Fatal("awaiting resume admission did not reach placement reattach")
+	}
+	go func() {
+		run, err := svc2.ApproveRun(context.Background(), sess.ID, askID, session.VerdictDeny, "stale-run-id")
+		results <- approvalResult{name: "stale deny", run: run, err: err}
+	}()
+	select {
+	case result := <-results:
+		t.Fatalf("approval escaped while awaiting resume was provisional: %s: %v", result.name, result.err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(releaseResume)
 
-	// Drain whichever run(s) were returned (the winner's resumed run; the loser
-	// returns nil run via the same-process channel route, or ErrNoActiveRun if it
-	// raced in after the winner already finished+deregistered — both acceptable).
-	driven := 0
-	for i := range 2 {
-		if errs[i] != nil && !errors.Is(errs[i], server.ErrNoActiveRun) {
-			t.Fatalf("ApproveRun[%d] = %v, want nil or ErrNoActiveRun", i, errs[i])
-		}
-		if runs[i] != nil {
-			driven++
-			drainRun(t, runs[i])
-			svc2.FinishRun(sess.ID, runs[i])
+	var winner *agent.Run
+	for range 2 {
+		result := <-results
+		switch result.name {
+		case "unqualified allow":
+			if result.err != nil {
+				t.Fatalf("ApproveRun(%s) = %v, want nil", result.name, result.err)
+			}
+			if result.run == nil {
+				t.Fatalf("ApproveRun(%s) returned nil run, want the resumed run", result.name)
+			}
+			winner = result.run
+		case "stale deny":
+			if !errors.Is(result.err, server.ErrStaleRunControl) {
+				t.Fatalf("ApproveRun(%s) = %v, want ErrStaleRunControl", result.name, result.err)
+			}
+			if result.run != nil {
+				t.Fatalf("ApproveRun(%s) returned a run; stale controls must not apply", result.name)
+			}
+		default:
+			t.Fatalf("unexpected approval result %q", result.name)
 		}
 	}
+
+	// Drain the one resumed run. The unqualified legacy control succeeds exactly
+	// once; the stale deny is rejected before it can reach that live run.
+	drainRun(t, winner)
+	svc2.FinishRun(sess.ID, winner)
 
 	if ran2.Load() != 1 {
 		t.Fatalf("pending Write executed %d time(s) under concurrent Approve, want EXACTLY 1 (the per-session resume lock must serialize the spawn)", ran2.Load())
-	}
-	if driven != 1 {
-		t.Fatalf("%d resumed runs were spawned, want EXACTLY 1 (the second Approve must route to the live run's channel, not spawn)", driven)
 	}
 	final, err := svc2.GetSession(context.Background(), sess.ID)
 	if err != nil {

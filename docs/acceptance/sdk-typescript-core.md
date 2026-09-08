@@ -535,7 +535,7 @@ live model). One CI job runs the unit suites and this e2e for every PR.
 - `docs/architecture.md`: a short SDK section (what the SDK is, the
   transport split, where the trees live); `docs/design/IMPLEMENTATION-NOTES.md`:
   the dense per-subsystem notes for `sdk/typescript/`.
-- `task docs` regeneration (`llms.txt`) with every Markdown change.
+- `task docs` configuration-reference regeneration with every Markdown change.
 - No `engine/` API change is expected; if one sneaks in, `task api:check` /
   `task api:update` + `engine/CHANGELOG.md` per the standing rule.
 
@@ -564,7 +564,7 @@ proofs are vitest suites under `sdk/typescript/`, cited per AC.
 
 1. `task lint` and `task test` pass (both Go modules, `-race`), plus the new
    `task sdk:*` gates.
-2. `task docs` — `llms.txt` regenerated and the matlatl strict link gate green.
+2. `task docs` — configuration reference regenerated and the matlatl strict link gate green.
 3. `task generate` reproduces both generated trees byte-identically (the CI
    freshness step is green).
 4. `task ac-trace-strict` — every AC's `verify:` proof resolves (this plan is

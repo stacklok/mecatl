@@ -10,6 +10,22 @@
 
 ## Observability & persistence
 
+### Offline performance regression tracking
+
+`task bench` measures deterministic `allocs/op` for two complementary agent-loop
+contracts. `BenchmarkRun*Turn` constructs a fresh session for every iteration, so
+it captures bounded session lifecycle and first-prompt initialization. The matching
+`BenchmarkSteadyState*Turn` prewarms that first run and measures one normal
+continuation turn after `Session.Reopen`, including recurring reopen and run work
+without attributing startup initialization to every turn. Both families are
+hard-gated independently by `perf/cmd/allocsgate`; the PR workflow compares them
+against the main baseline but never publishes a new baseline from a PR.
+
+`task perf:scenarios` remains the separate whole-loop signal. In particular,
+`BenchmarkSingleSessionLong` preserves the approximately 500-turn single-session
+coverage for allocations, RSS, tokens, cache-hit rate, and goroutine hygiene. See
+`docs/adr/0019-perf-tracking.md` for the performance-tracking decision.
+
 - **EventSink** (`port.EventSink`) — an optional secondary relay.
   `Emit(ctx, ev)` carries the run's `context.Context` so telemetry can parent a
   run span to an inbound request span (the ctx is a **trace/baggage carrier
@@ -32,7 +48,14 @@
   command roots share an exact `--log-level` flag (`debug`, `info`, `warn`, or
   `error`; default `info`). Each root installs its configured stderr logger as
   the global `slog` default and wraps that same logger with `slogdiag`, so
-  ambient library records and injected diagnostics obey one threshold. Invalid
+  ambient library records and injected diagnostics obey one threshold. Embedded
+  `mecatui` instead redirects its diagnostics to its private state log. A stable
+  cross-process lock is held for the writer lifetime, so another instance fails
+  closed rather than replacing an actively written log. At startup it opens the
+  data path without following symlinks, atomically retains a recent 10 MiB tail
+  of an oversized regular log, syncs the replacement and containing directory,
+  then appends. Unsafe paths and failures before replacement preserve the prior
+  log and fall back to `io.Discard`. Invalid
   values, including an explicitly empty value, fail soft to `info` and produce
   one warning after logger installation.
 - **Telemetry** (`internal/adapter/telemetry`) — one adapter that implements
@@ -59,6 +82,23 @@
   `main|subagent|member|parallel|usermodel|child`, never the raw role (which can
   embed a def name or model id), so label cardinality stays bounded; without a
   scoper they stay nil, byte-identical to the metrics-off posture.
+  Session lookup failures use a separate target-free callback: under ownership
+  enforcement, one non-not-found `GetSession` failure emits one WARN and increments
+  `mecatl_session_load_failures_total{class="store|snapshot|unknown"}` once. Unlike
+  run-derived metrics, this service-boundary counter has no `role` label: `class` is
+  its only label. `store` means retrieval or transport failed; `snapshot` means
+  retrieved bytes failed format, decode, persisted-identity, or validation checks;
+  `unknown` is the fail-safe result for an untyped custom-store error. Operators
+  should respectively check backend reachability/configuration, storage integrity or
+  mis-keying and backup recovery, or the custom adapter's bounded health diagnostics
+  and typed wrapping. They must not infer a class from text or add target data while
+  investigating. `Service.GetSession` invokes its injected diagnostics sink with a
+  detached clean context and supplies only the port-owned `class` field and constant
+  `ownership=enforced` marker. It adds no request target, principal, path, cause,
+  blob content, or blob size data. Attributes deliberately pre-bound by the trusted
+  operator-supplied `port.Diagnostics` sink are outside this producer's control.
+  Genuine absence and foreign ownership remain silent and caller-visible as the same
+  NotFound result.
   The domain counters include the run-terminal `mecatl_runs_total{stop,role}`
   (one per run, by terminal stop reason) and — for **turn-semantics**
   observability (issue #81) — `mecatl_turns_total{role}` (one per COMPLETED
@@ -250,8 +290,9 @@
   (so a session saved mid-`awaiting` reloads with its pending ask intact). It
   captures the terminal reason via `RecordedStopReason()` for exact round-trips,
   and (cloud-native Phase 1) the per-session profile, the opaque provider/model
-  selector pair, and the cumulative token `usage` — additive fields so a
-  restarted process rebuilds the SAME engine and the `MaxRunTokens` budget
+  selector pair, the title/provenance and title-generation metadata, the canonical
+  auxiliary `token_usage` ledger, and the cumulative token `usage` — additive fields
+  so a restarted process rebuilds the SAME engine and the `MaxRunTokens` budget
   continues across restart (see `docs/adr/0027-cloud-native.md`).
   A store may additionally implement the optional **`port.PrunableStore`**
   (`List`/`Delete`; `ErrPruneUnsupported` otherwise) — the retention MECHANISM.
@@ -289,9 +330,13 @@
   `SessionStore`+`ToolCallRecorder`+`EventLog` (a `.events.jsonl` sidecar);
   memstore has an in-memory sibling; `grpcdriver` carries the remote
   `EventLogService` (`--event-log-url`, independent of the session store). The
-  log also records the new **log-only `EvUserPrompt`** — every user-role turn
-  (the genuine prompt plus the harness's synthetic continuations), skipped on the
-  client wire — so that a fold can reconstruct what the user asked. **Three**
+  log also records the log-only **`EvUserPrompt`** and out-of-band
+  **`EvSessionTitle`** events. A title event follows a successful snapshot save and
+  carries only title lifecycle metadata; it contains no title-source prompts or
+  provider errors. It is also offered best-effort to gRPC live-session subscribers,
+  while HTTP clients reconcile it through the authoritative snapshot or durable
+  event stream. The `EvUserPrompt` records every user-role turn (the genuine prompt
+  plus the harness's synthetic continuations), skipped on the client wire — so that a fold can reconstruct what the user asked. **Three**
   consumers, all in **composition** (never the loop): the non-destructive
   **compaction archive**; the **permstore verdict-replay**
   (`internal/app/approvalreplay.go`) that re-derives learned allow-always rules

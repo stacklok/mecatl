@@ -16,7 +16,6 @@ import (
 	"time"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memlease"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
@@ -41,9 +40,9 @@ func migrationService(t *testing.T, store port.SessionStore, authorize func(cont
 
 func migrationServiceWithUpdate(t *testing.T, store port.SessionStore, authorize func(context.Context) bool, lease port.SessionLease, update func(server.StorageMaintenanceEvent)) *server.Service {
 	t.Helper()
-	svc, err := server.NewService(server.Config{
-		Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil)}),
-		Store:  store, Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+	svc, err := newPlacementTestService(server.Config{
+		Engine:                              agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil)}),
+		Store:                               store,
 		StorageManagementAuthorized:         authorize,
 		LocalStorageMaintenanceSingleWriter: lease == nil,
 		StorageMaintenanceUpdate:            update,
@@ -151,7 +150,7 @@ func writeV1Family(t *testing.T, dir string, sess *session.Session, tools, event
 
 func newLegacySession(t *testing.T, id string, owner *session.Principal) *session.Session {
 	t.Helper()
-	sess := session.New(session.SessionID(id), session.ModePlan, "/workspace", session.Limits{MaxTurns: 7}, time.Unix(1700000000, 0).UTC())
+	sess := session.New(session.SessionID(id), session.ModePlan, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 7}, time.Unix(1700000000, 0).UTC())
 	if err := sess.RestoreSessionMetadata(session.SessionKindUnknown, session.SessionRelationship{}); err != nil {
 		t.Fatalf("RestoreSessionMetadata: %v", err)
 	}
@@ -589,10 +588,9 @@ func TestSessionStorageContinuity_Scenario4_MigrationAuthorizationAndNoOracle(t 
 	writeV1Family(t, dir, newLegacySession(t, "private-family", owner), nil, nil, time.Unix(1700000000, 0))
 	svc := migrationService(t, store, func(ctx context.Context) bool {
 		p := session.PrincipalFromContext(ctx)
-		return p != nil && p.Subject != "mallory"
+		return p == nil || p.Subject != "mallory"
 	}, nil)
-	alicePrincipal := &session.Principal{Issuer: "https://idp.example", Subject: "alice", GrantType: session.GrantTypeUser}
-	grpcClient, closeClient := adoptionGRPCClient(t, svc, alicePrincipal)
+	grpcClient, closeClient := dialGRPC(t, svc)
 	defer closeClient()
 	wirePlan, err := grpcClient.PlanSessionMigration(context.Background(), &mecatlv1.PlanSessionMigrationRequest{})
 	if err != nil || wirePlan.GetV1Families() != 1 {

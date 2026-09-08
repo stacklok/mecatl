@@ -49,6 +49,7 @@ func TestMecak8sKindFixture_Scenario1_DedicatedKubeconfig(t *testing.T) {
 		"KUBECONFIG: deploy/mecak8s-kind/kconfig.yaml", "CONTEXT: kind-mecatl-dev",
 		"--kubeconfig={{.KUBECONFIG}}", "--context={{.CONTEXT}}", "--kube-context={{.CONTEXT}}",
 		"kind delete cluster --name={{.CLUSTER}}", "rm -rf {{.STATE}}", "rm -f {{.KUBECONFIG}} {{.SETUP_LOCK}}",
+		"umask 077",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("dedicated fixture lifecycle missing %q", want)
@@ -121,6 +122,23 @@ func TestMecak8sKindFixture_Scenario2_MockDefault(t *testing.T) {
 	}
 }
 
+// TestMecak8sKindFixture_Scenario2_KeycloakRetainsProviderOverlay pins that
+// Keycloak's Helm layer cannot reset a real-provider setup to the mock overlay.
+func TestMecak8sKindFixture_Scenario2_KeycloakRetainsProviderOverlay(t *testing.T) {
+	text := fixtureTaskClosure(t, "chart-keycloak-apply")
+	for _, want := range []string{
+		`if [ -n "${OPENROUTER_API_KEY:-}" ]; then`,
+		"provider_values=deploy/mecak8s-kind/kind-provider-real.yaml",
+		"provider_values=deploy/mecak8s-kind/kind-provider-mock.yaml",
+		"--values=deploy/helm/mecak8s/values-kind-keycloak.yaml",
+		`--values="$provider_values"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("Keycloak chart layer missing provider overlay control %q", want)
+		}
+	}
+}
+
 // TestInvariant_credential_not_process_argument pins that the fixture's
 // operator credential crosses only kubectl's standard input as a file payload.
 func TestInvariant_credential_not_process_argument(t *testing.T) {
@@ -185,6 +203,43 @@ func TestMecak8sKindFixture_Scenario2_LiveSmokeIsExplicit(t *testing.T) {
 	}
 	if strings.Contains(fixtureTaskClosure(t, "kind-setup"), "live-smoke") {
 		t.Fatal("setup must not invoke the live-provider smoke action")
+	}
+}
+
+func TestMecak8sKindFixture_LearningDriverManifest(t *testing.T) {
+	body, err := os.ReadFile("learning-driver.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts := strings.Split(string(body), "\n---\n")
+	if len(parts) != 2 {
+		t.Fatalf("learning driver manifest has %d documents, want Service and Deployment", len(parts))
+	}
+	var service, deployment map[string]any
+	if err = yaml.Unmarshal([]byte(parts[0]), &service); err != nil {
+		t.Fatalf("decode learning driver Service: %v", err)
+	}
+	if err = yaml.Unmarshal([]byte(parts[1]), &deployment); err != nil {
+		t.Fatalf("decode learning driver Deployment: %v", err)
+	}
+	if service["kind"] != "Service" || deployment["kind"] != "Deployment" {
+		t.Fatalf("manifest kinds = %v, %v; want Service, Deployment", service["kind"], deployment["kind"])
+	}
+	text := string(body)
+	for _, want := range []string{
+		"type: ClusterIP", "replicas: 1", "type: Recreate", "automountServiceAccountToken: false",
+		"runAsNonRoot: true", "runAsUser: 65532", "allowPrivilegeEscalation: false",
+		"readOnlyRootFilesystem: true", `capabilities: {drop: ["ALL"]}`, "seccompProfile: {type: RuntimeDefault}",
+		"emptyDir: {}", "secretName: learning-driver-tls", "--data-dir=/data", "--tls-cert=", "--tls-key=",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("learning driver manifest missing %q", want)
+		}
+	}
+	for _, forbidden := range []string{"kind: StatefulSet", "replicas: 2", "type: LoadBalancer", "type: NodePort"} {
+		if strings.Contains(text, forbidden) {
+			t.Errorf("learning driver fixture contains unsupported topology %q", forbidden)
+		}
 	}
 }
 

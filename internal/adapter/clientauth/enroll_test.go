@@ -627,6 +627,52 @@ func TestEnrollDetectsTargetLoggedOutDuringSignIn(t *testing.T) {
 	}
 }
 
+// TestReplaceEnrollmentDetectsConcurrentSameResourceTargetRemoval pins the
+// complete displaced-set CAS: a same-resource row changed after the snapshot
+// must not be silently removed by a target-only enrollment.
+func TestReplaceEnrollmentDetectsConcurrentSameResourceTargetRemoval(t *testing.T) {
+	root := t.TempDir()
+	reg, err := OpenRegistry(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := OpenRegistry(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldID := identity("old-resource-target.example:443")
+	resource := "https://resource.example"
+	old := Connection{Identity: oldID, ResourceURL: resource}
+	if _, err := reg.Upsert(old); err != nil {
+		t.Fatal(err)
+	}
+	expected, err := reg.enrollmentSnapshot("new-target.example:443", resource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The enrolling target has no row; only the same-resource row is displaced.
+	if len(expected) != 1 || !expected[0].Identity.Equal(oldID) {
+		t.Fatalf("displaced snapshot = %#v", expected)
+	}
+
+	release := make(chan struct{})
+	result := make(chan error, 1)
+	go func() {
+		<-release
+		result <- reg.replaceEnrollment("new-target.example:443", resource, expected, []Connection{{Identity: identity("new-target.example:443"), ResourceURL: resource}})
+	}()
+	if _, err := other.DeleteTarget(oldID.Target, []Connection{old}); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	if err := <-result; !errors.Is(err, credentialstore.ErrConflict) {
+		t.Fatalf("replaceEnrollment error = %v, want conflict", err)
+	}
+	if _, err := reg.FindTarget("new-target.example:443"); !IsNotEnrolled(err) {
+		t.Fatalf("concurrent same-resource change was overwritten: %v", err)
+	}
+}
+
 // TestEnrollDetectsNewerEnrollmentDuringSignIn pins the other half of the same
 // CAS precondition: if a NEWER enrollment lands for the same target while an
 // older interactive browser sign-in is still in progress, the older sign-in's

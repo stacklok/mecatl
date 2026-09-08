@@ -54,6 +54,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/hashutil"
+	"github.com/stacklok/mecatl/internal/adapter/managedtemp"
 	"github.com/stacklok/mecatl/internal/adapter/procgroup"
 )
 
@@ -459,7 +460,22 @@ func (f *FileSystem) Stat(_ context.Context, path string) (tool.FileInfo, error)
 // recursively) in addition to the usual shell-style "*", "?", "[…]" and "{…}"
 // metacharacters. The pattern is interpreted relative to the root; matches that
 // resolve outside the root are discarded.
-func (f *FileSystem) Glob(_ context.Context, pattern string) ([]string, error) {
+func (f *FileSystem) Glob(ctx context.Context, pattern string) ([]string, error) {
+	var matches []string
+	if err := f.globWalk(ctx, pattern, func(path string, _ fs.DirEntry) error {
+		matches = append(matches, path)
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	// The public contract advertises sorted output independently of traversal
+	// order.
+	sort.Strings(matches)
+	return matches, nil
+}
+
+// globWalk visits root-relative matches without first materializing them.
+func (f *FileSystem) globWalk(ctx context.Context, pattern string, visit func(string, fs.DirEntry) error) error {
 	// doublestar patterns are root-relative, slash-separated paths. normalizeGlobPattern
 	// preserves the old filepath.Join leniency (silently absorbing a leading "/"
 	// or "./", which would otherwise be an invalid absolute pattern). An empty or
@@ -467,7 +483,7 @@ func (f *FileSystem) Glob(_ context.Context, pattern string) ([]string, error) {
 	// "" upstream, but stay robust here rather than globbing the entire root.
 	pat := normalizeGlobPattern(filepath.ToSlash(pattern))
 	if pat == "" {
-		return nil, nil
+		return nil
 	}
 
 	// Walk the os.Root-confined fs.FS. f.r.FS() (Go 1.24+) returns an fs.FS that
@@ -475,35 +491,26 @@ func (f *FileSystem) Glob(_ context.Context, pattern string) ([]string, error) {
 	// intermediate-directory components are rejected by construction — closing
 	// the filename-enumeration leak filepath.Glob had. WithNoFollow keeps the
 	// walk from descending into symlinked directories.
-	var matches []string
-	err := doublestar.GlobWalk(f.r.FS(), pat, func(p string, d fs.DirEntry) error {
+	return doublestar.GlobWalk(f.r.FS(), pat, func(path string, entry fs.DirEntry) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		// Drop leaf symlink matches to preserve the previous behavior exactly: a
 		// symlink inside the root can still target a file outside it, and Glob
 		// must not be a channel for following links out of the workspace. This
 		// mirrors the old Lstat + fs.ModeSymlink drop.
-		if d.Type()&fs.ModeSymlink != 0 {
+		if entry.Type()&fs.ModeSymlink != 0 {
 			return nil
 		}
 		// A bare "**" matches the root itself as "."; surfacing the workspace root
 		// to the model is meaningless, so drop it (filepath.Glob never produced it).
-		if p == "." {
+		if path == "." {
 			return nil
 		}
-		// p is already root-relative and slash-separated.
-		matches = append(matches, p)
-		return nil
+		// path is already root-relative and slash-separated. Returning the visitor
+		// error stops GlobWalk immediately.
+		return visit(path, entry)
 	}, doublestar.WithNoFollow())
-	if err != nil {
-		// doublestar returns ErrBadPattern (wrapping path.ErrBadPattern) for a
-		// malformed pattern; surface it like filepath.Glob's ErrBadPattern.
-		// IO errors are not requested (no WithFailOnIOErrors), matching the old
-		// lenient "skip unreadable" behavior.
-		return nil, err
-	}
-	// filepath.Glob returned sorted matches and the contract advertises sorted
-	// output; GlobWalk visits in directory order, so sort to preserve it.
-	sort.Strings(matches)
-	return matches, nil
 }
 
 // normalizeGlobPattern applies the leniency the old filepath.Join-based Glob
@@ -719,20 +726,15 @@ func pathLock(canon string) *sync.Mutex {
 // without any shell at all.
 type Workspace struct {
 	fs *FileSystem
-
-	mu     sync.Mutex
-	ledger map[string]tool.FileVersion // canonical ledger key -> recorded version
 }
 
-// NewWorkspace returns a Workspace rooted at the given directory. The root is
-// created if it does not already exist (NewFileSystem creates it before opening
-// the os.Root). Options are passed through to the underlying FileSystem.
+// NewWorkspace returns a content Workspace rooted at the given directory.
 func NewWorkspace(root string, opts ...Option) (*Workspace, error) {
 	fsys, err := NewFileSystem(root, opts...)
 	if err != nil {
 		return nil, err
 	}
-	return &Workspace{fs: fsys, ledger: make(map[string]tool.FileVersion)}, nil
+	return &Workspace{fs: fsys}, nil
 }
 
 // Compile-time assertions that Workspace satisfies the filesystem and authority seams.
@@ -1028,84 +1030,121 @@ func (w *Workspace) Glob(ctx context.Context, pattern string) ([]string, error) 
 	return w.fs.Glob(ctx, pattern)
 }
 
+// maxGrepFiles and maxGrepBytes bound every search before a broad path glob can
+// turn a workspace root into an unbounded traversal.
+const (
+	maxGrepFiles   = 10_000
+	maxGrepBytes   = 64 << 20 // 64 MiB
+	grepMatchLimit = 201      // GrepTool renders 200 matches plus its truncation marker.
+)
+
+var errGrepMatchLimit = errors.New("osfs: grep match limit reached")
+
+const grepSafetyBudgetMessage = "grep search exceeds the workspace safety budget; narrow the path (for example, internal/**/*.go)"
+
 // Grep returns the matches of a regular expression across files selected by an
-// optional path glob (relative to root). When pathGlob is empty, the whole tree
-// under root is searched. Binary-looking files (those containing a NUL byte) are
-// skipped. The search honors ctx cancellation.
+// optional path glob (relative to root), within an aggregate safety budget.
+// Binary-looking files (those containing a NUL byte) are skipped. The search
+// honors ctx cancellation.
 func (w *Workspace) Grep(ctx context.Context, pattern, pathGlob string) ([]tool.GrepMatch, error) {
 	re, err := regexp.Compile(pattern)
 	if err != nil {
 		return nil, fmt.Errorf("osfs: invalid grep pattern: %w", err)
 	}
-
-	var files []string
+	search := grepSearch{
+		ctx:      ctx,
+		re:       re,
+		maxFiles: maxGrepFiles,
+		maxBytes: maxGrepBytes,
+	}
 	if pathGlob == "" {
-		files, err = w.walkAll(ctx)
+		err = w.grepAll(&search)
 	} else {
-		files, err = w.fs.Glob(ctx, pathGlob)
+		err = w.grepGlob(pathGlob, &search)
+	}
+	if errors.Is(err, errGrepMatchLimit) {
+		return search.matches, nil
 	}
 	if err != nil {
 		return nil, err
 	}
+	return search.matches, nil
+}
 
-	var matches []tool.GrepMatch
-	for _, rel := range files {
-		if err := ctx.Err(); err != nil {
-			return nil, err
+type grepSearch struct {
+	ctx       context.Context
+	re        *regexp.Regexp
+	matches   []tool.GrepMatch
+	files     int
+	readBytes int64
+	maxFiles  int
+	maxBytes  int64
+}
+
+func (s *grepSearch) scan(w *Workspace, rel string, info fs.FileInfo) error {
+	if err := s.ctx.Err(); err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return nil
+	}
+	s.files++
+	if s.files > s.maxFiles || info.Size() > s.maxBytes-s.readBytes {
+		return errors.New(grepSafetyBudgetMessage)
+	}
+	s.readBytes += info.Size()
+	data, err := w.fs.Read(s.ctx, rel)
+	if err != nil {
+		return nil // unreadable / vanished file: skip
+	}
+	if bytes.IndexByte(data, 0) >= 0 {
+		return nil // binary file
+	}
+	for lineNo, line := range strings.Split(string(data), "\n") {
+		if err := s.ctx.Err(); err != nil {
+			return err
 		}
-		data, err := w.fs.Read(ctx, rel)
-		if err != nil {
-			continue // unreadable / vanished file: skip
-		}
-		if bytes.IndexByte(data, 0) >= 0 {
-			continue // binary file
-		}
-		lineNo := 0
-		for _, line := range strings.Split(string(data), "\n") {
-			lineNo++
-			if re.MatchString(line) {
-				matches = append(matches, tool.GrepMatch{
-					Path: rel,
-					Line: lineNo,
-					Text: line,
-				})
+		if s.re.MatchString(line) {
+			s.matches = append(s.matches, tool.GrepMatch{Path: rel, Line: lineNo + 1, Text: line})
+			if len(s.matches) == grepMatchLimit {
+				return errGrepMatchLimit
 			}
 		}
 	}
-	return matches, nil
+	return nil
 }
 
-// walkAll returns every regular file under root as a session-relative path.
-func (w *Workspace) walkAll(ctx context.Context) ([]string, error) {
-	var out []string
-	err := filepath.WalkDir(w.fs.root, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
+func (w *Workspace) grepGlob(pathGlob string, search *grepSearch) error {
+	return w.fs.globWalk(search.ctx, pathGlob, func(rel string, entry fs.DirEntry) error {
+		info, err := entry.Info()
+		if err != nil || !info.Mode().IsRegular() {
+			return nil
+		}
+		return search.scan(w, rel, info)
+	})
+}
+
+func (w *Workspace) grepAll(search *grepSearch) error {
+	return filepath.WalkDir(w.fs.root, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if err := search.ctx.Err(); err != nil {
 			return err
 		}
-		if cerr := ctx.Err(); cerr != nil {
-			return cerr
-		}
-		if d.IsDir() {
+		if entry.IsDir() || entry.Type()&fs.ModeSymlink != 0 {
 			return nil
 		}
-		// Skip symlinks entirely: WalkDir does not descend into them, but a
-		// symlinked FILE could still point outside the root. Excluding them here
-		// keeps Grep from surfacing out-of-root content (and Read would refuse
-		// it anyway via os.Root).
-		if d.Type()&fs.ModeSymlink != 0 {
+		info, err := entry.Info()
+		if err != nil || !info.Mode().IsRegular() {
 			return nil
 		}
-		rel, rerr := w.fs.toRel(p)
-		if rerr != nil {
+		rel, err := w.fs.toRel(path)
+		if err != nil {
 			return nil
 		}
-		out = append(out, rel)
-		return nil
+		return search.scan(w, rel, info)
 	})
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
 }
 
 // CommandRunner runs shell commands via /bin/sh -c with a fixed working
@@ -1124,11 +1163,22 @@ type CommandRunner struct {
 	// inherited git danger is REMOVED, not merely overridden. osfs stays free of
 	// git-specific knowledge — it just sets whatever complete env it is handed.
 	env []string
+	// managedWorkspace owns foreground command and background-job leases. It is
+	// nil for system temporary storage and for runners that cannot make the managed
+	// guarantee.
+	managedWorkspace *managedtemp.Workspace
+	// systemTempDir is the configured/inherited host temporary directory applied
+	// only when the trusted caller selects the system scope.
+	systemTempDir string
 	// waitDelay is the per-command cmd.WaitDelay (defaultCommandWaitDelay unless
 	// overridden via WithCommandWaitDelay — tests use a short one). See
 	// defaultCommandWaitDelay for the grandchild-pipe rationale (A7).
 	waitDelay time.Duration
 }
+
+// BoundWorkspaceRoot reports the immutable command namespace root. Placement
+// binding uses it to prove that a returned runner and Workspace share one root.
+func (r *CommandRunner) BoundWorkspaceRoot() string { return r.root }
 
 // CommandRunnerOption configures a CommandRunner at construction.
 type CommandRunnerOption func(*CommandRunner)
@@ -1147,6 +1197,20 @@ func WithCommandEnvList(env []string) CommandRunnerOption {
 	return func(r *CommandRunner) {
 		r.env = append([]string(nil), env...)
 	}
+}
+
+// WithManagedTemporaryWorkspace makes foreground Run calls allocate one private
+// managed command lease from workspace. The overlay is constructed internally
+// after the runner's already-scrubbed base environment; callers cannot supply
+// lease paths through shell text or tool arguments.
+func WithManagedTemporaryWorkspace(workspace *managedtemp.Workspace) CommandRunnerOption {
+	return func(r *CommandRunner) { r.managedWorkspace = workspace }
+}
+
+// WithSystemTemporaryDirectory sets the configured/inherited system temporary
+// directory used for explicit system-scope Bash calls.
+func WithSystemTemporaryDirectory(dir string) CommandRunnerOption {
+	return func(r *CommandRunner) { r.systemTempDir = dir }
 }
 
 // WithCommandWaitDelay overrides the runner's cmd.WaitDelay (default
@@ -1194,8 +1258,12 @@ func NewCommandRunnerShell(dir, shell string, opts ...CommandRunnerOption) (tool
 // OPTIONAL streaming capability (a background command's tail-ring capture runs
 // through it).
 var (
-	_ tool.CommandRunner   = (*CommandRunner)(nil)
-	_ tool.CommandStreamer = (*CommandRunner)(nil)
+	_ tool.CommandRunner                 = (*CommandRunner)(nil)
+	_ tool.CommandStreamer               = (*CommandRunner)(nil)
+	_ tool.CommandEnvironmentRunner      = (*CommandRunner)(nil)
+	_ tool.CommandEnvironmentStreamer    = (*CommandRunner)(nil)
+	_ tool.CommandTemporaryScopeRunner   = (*CommandRunner)(nil)
+	_ tool.CommandTemporaryScopeStreamer = (*CommandRunner)(nil)
 )
 
 // Run runs command via /bin/sh -c, capturing (and truncating) stdout/stderr and
@@ -1209,11 +1277,36 @@ var (
 // portable backstop. A non-zero exit is reported via the returned
 // CommandResult.ExitCode, not as an error.
 func (r *CommandRunner) Run(ctx context.Context, command string) (tool.CommandResult, error) {
+	return r.runResult(ctx, command, tool.CommandEnvironmentOverlay{}, true)
+}
+
+// RunWithTemporaryScope selects the closed temporary-storage scope for this
+// invocation. System scope never allocates a managed lease.
+func (r *CommandRunner) RunWithTemporaryScope(ctx context.Context, command string, scope tool.TemporaryScope) (tool.CommandResult, error) {
+	overlay := tool.CommandEnvironmentOverlay{}
+	managed := scope == tool.TemporaryScopeManaged
+	if scope == tool.TemporaryScopeSystem || r.managedWorkspace == nil {
+		managed = false
+		if r.systemTempDir != "" {
+			overlay.TempDir = r.systemTempDir
+			overlay.GoTempDir = r.systemTempDir
+		}
+	}
+	return r.runResult(ctx, command, overlay, managed)
+}
+
+// RunWithEnvironment runs command with overlay applied only to this invocation.
+// It preserves the runner's bound root and does not retain the overlay.
+func (r *CommandRunner) RunWithEnvironment(ctx context.Context, command string, overlay tool.CommandEnvironmentOverlay) (tool.CommandResult, error) {
+	return r.runResult(ctx, command, overlay, true)
+}
+
+func (r *CommandRunner) runResult(ctx context.Context, command string, overlay tool.CommandEnvironmentOverlay, managed bool) (tool.CommandResult, error) {
 	var stdout, stderr cappedBuffer
 	stdout.cap = maxCommandOutput
 	stderr.cap = maxCommandOutput
 
-	exitCode, err := r.run(ctx, command, &stdout, &stderr)
+	exitCode, err := r.run(ctx, command, overlay, managed, "cmd", &stdout, &stderr)
 	res := tool.CommandResult{
 		Stdout:   stdout.String(),
 		Stderr:   stderr.String(),
@@ -1231,7 +1324,29 @@ func (r *CommandRunner) Run(ctx context.Context, command string) (tool.CommandRe
 // retain the stream itself. The returned exitCode replaces CommandResult for
 // this path: a non-zero exit is reported there, not as an error.
 func (r *CommandRunner) RunStreaming(ctx context.Context, command string, out io.Writer) (int, error) {
-	return r.run(ctx, command, out, out)
+	return r.run(ctx, command, tool.CommandEnvironmentOverlay{}, false, "", out, out)
+}
+
+// RunStreamingWithTemporaryScope is RunStreaming with a trusted temporary
+// scope selection. System scope never allocates a managed lease.
+func (r *CommandRunner) RunStreamingWithTemporaryScope(ctx context.Context, command string, scope tool.TemporaryScope, out io.Writer) (int, error) {
+	overlay := tool.CommandEnvironmentOverlay{}
+	managed := scope == tool.TemporaryScopeManaged
+	if scope == tool.TemporaryScopeSystem || r.managedWorkspace == nil {
+		managed = false
+		if r.systemTempDir != "" {
+			overlay.TempDir = r.systemTempDir
+			overlay.GoTempDir = r.systemTempDir
+		}
+	}
+	return r.run(ctx, command, overlay, managed, "job", out, out)
+}
+
+// RunStreamingWithEnvironment streams command output with overlay applied only
+// to this invocation. It preserves the runner's bound root and does not retain
+// the overlay.
+func (r *CommandRunner) RunStreamingWithEnvironment(ctx context.Context, command string, overlay tool.CommandEnvironmentOverlay, out io.Writer) (int, error) {
+	return r.run(ctx, command, overlay, false, "", out, out)
 }
 
 // run is the ONE spawn/wait tail Run and RunStreaming share, so the two cannot
@@ -1243,11 +1358,18 @@ func (r *CommandRunner) RunStreaming(ctx context.Context, command string, out io
 // whatever output the writers captured so far standing; and a WaitDelay expiry
 // on a successfully-exited shell is a SUCCESS carrying the partial output (see
 // the exec.ErrWaitDelay branch below), not a harness failure.
-func (r *CommandRunner) run(ctx context.Context, command string, stdout, stderr io.Writer) (exitCode int, err error) {
-	if _, ok := ctx.Deadline(); !ok {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, defaultCommandTimeout)
-		defer cancel()
+func (r *CommandRunner) run(ctx context.Context, command string, overlay tool.CommandEnvironmentOverlay, managed bool, leaseKind string, stdout, stderr io.Writer) (exitCode int, err error) {
+	if !managed {
+		if _, ok := ctx.Deadline(); !ok {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(ctx, defaultCommandTimeout)
+			defer cancel()
+		}
+	}
+
+	lease, overlay, leaseErr := r.managedLease(managed, leaseKind, overlay)
+	if leaseErr != nil {
+		return 0, leaseErr
 	}
 
 	cmd := exec.CommandContext(ctx, r.shell, "-c", command)
@@ -1264,16 +1386,38 @@ func (r *CommandRunner) run(ctx context.Context, command string, stdout, stderr 
 	// backgrounded grandchild would otherwise be orphaned (and keep holding the
 	// pipes past the WaitDelay until it exits on its own).
 	procgroup.Configure(cmd)
-	// A hardened (team-member) runner carries a COMPLETE, pre-scrubbed environment
-	// (computed in composition via gitenv.Scrub: inherited GIT_* danger removed,
-	// neutralising config appended); use it verbatim so removal of an inherited
-	// variable actually takes effect. An unhardened runner has r.env == nil, so
-	// cmd.Env stays nil and exec inherits os.Environ() unchanged, as before.
-	if r.env != nil {
+	// A hardened runner carries a COMPLETE, pre-scrubbed environment. A per-call
+	// overlay is merged over that same base only for this command, so it cannot
+	// change the runner's namespace or affect later invocations.
+	if overlay != (tool.CommandEnvironmentOverlay{}) {
+		env, envErr := overlayEnvironment(r.env, overlay)
+		if envErr != nil {
+			if lease != nil {
+				_ = lease.Remove()
+			}
+			return 0, envErr
+		}
+		cmd.Env = env
+	} else if r.env != nil {
 		cmd.Env = r.env
 	}
 
-	runErr := cmd.Run()
+	if startErr := cmd.Start(); startErr != nil {
+		if lease != nil {
+			_ = lease.Remove()
+		}
+		return 0, startErr
+	}
+	if lease != nil {
+		if leaseErr := lease.Started(cmd.Process.Pid); leaseErr != nil {
+			_ = procgroup.Kill(cmd.Process.Pid)
+			_ = cmd.Wait()
+			_ = lease.Close()
+			return 0, fmt.Errorf("osfs: record managed command lease: %w", leaseErr)
+		}
+	}
+	runErr := cmd.Wait()
+	finishManagedLease(lease, cmd.Process.Pid, ctx.Err() != nil)
 
 	if cerr := ctx.Err(); cerr != nil {
 		// Context cancellation/timeout is a harness-level failure.
@@ -1298,29 +1442,73 @@ func (r *CommandRunner) run(ctx context.Context, command string, stdout, stderr 
 	return 0, nil
 }
 
-// RecordRead stores the EXACT authoritative version for path under the session
-// ledger. It performs NO I/O: it stores the FileVersion the caller supplies (the
-// one ReadVersion minted), so a later RecordedVersion lookup compares against the
-// recorded token without re-reading the file. The I/O-free lexical key
-// (tool.LedgerKey over the canonical root) makes ordinary absolute-root and
-// relative forms share one entry; symlink aliases may require a re-read.
-func (w *Workspace) RecordRead(path string, version tool.FileVersion) {
-	key := tool.LedgerKey(w.fs.root, path)
-	w.mu.Lock()
-	w.ledger[key] = version
-	w.mu.Unlock()
+func (r *CommandRunner) managedLease(managed bool, kind string, overlay tool.CommandEnvironmentOverlay) (*managedtemp.Lease, tool.CommandEnvironmentOverlay, error) {
+	if !managed || r.managedWorkspace == nil {
+		return nil, overlay, nil
+	}
+	lease, err := r.managedWorkspace.Allocate(kind)
+	if err != nil {
+		return nil, overlay, fmt.Errorf("osfs: allocate managed command lease: %w", err)
+	}
+	overlay.TempDir = lease.TempDir()
+	overlay.GoTempDir = lease.TempDir()
+	overlay.TestHomeMarker = lease.Path()
+	return lease, overlay, nil
 }
 
-// RecordedVersion returns the version previously recorded for path via RecordRead,
-// performing NO I/O. ok is false if path was never recorded. The lookup uses the
-// same lexical ledger key (tool.LedgerKey) as RecordRead, so an ordinary
-// absolute-root path and relative path agree without filesystem I/O.
-func (w *Workspace) RecordedVersion(path string) (tool.FileVersion, bool) {
-	key := tool.LedgerKey(w.fs.root, path)
-	w.mu.Lock()
-	version, ok := w.ledger[key]
-	w.mu.Unlock()
-	return version, ok
+func finishManagedLease(lease *managedtemp.Lease, pid int, cancelled bool) {
+	if lease == nil {
+		return
+	}
+	_ = lease.Terminal()
+	groupGone := !procgroup.GroupAlive(pid)
+	if !groupGone && cancelled {
+		groupGone = procgroup.WaitGone(pid, 100*time.Millisecond)
+	}
+	if groupGone {
+		_ = lease.Remove()
+		return
+	}
+	_ = lease.Close()
+}
+
+// overlayEnvironment merges a trusted one-call temporary-storage overlay over
+// base without retaining either slice. A nil base means the process environment,
+// matching exec.Cmd's ordinary inheritance semantics. Replacing an existing key
+// avoids duplicate entries whose resolution varies by platform.
+func overlayEnvironment(base []string, overlay tool.CommandEnvironmentOverlay) ([]string, error) {
+	overlaid := map[string]string{}
+	if overlay.TempDir != "" {
+		overlaid["TMPDIR"] = overlay.TempDir
+	}
+	if overlay.GoTempDir != "" {
+		overlaid["GOTMPDIR"] = overlay.GoTempDir
+	}
+	if overlay.TestHomeMarker != "" {
+		overlaid["MECATL_TEST_TEMP_LEASE"] = overlay.TestHomeMarker
+	}
+	keys := make([]string, 0, len(overlaid))
+	for key, value := range overlaid {
+		if strings.ContainsRune(value, '\x00') {
+			return nil, fmt.Errorf("osfs: invalid command environment value for %q", key)
+		}
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	if base == nil {
+		base = os.Environ()
+	}
+	merged := make([]string, 0, len(base)+len(keys))
+	for _, entry := range base {
+		key, _, _ := strings.Cut(entry, "=")
+		if _, replaced := overlaid[key]; !replaced {
+			merged = append(merged, entry)
+		}
+	}
+	for _, key := range keys {
+		merged = append(merged, key+"="+overlaid[key])
+	}
+	return merged, nil
 }
 
 // cappedBuffer is a bytes.Buffer-like writer that stops accepting bytes once cap

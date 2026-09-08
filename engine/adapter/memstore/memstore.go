@@ -158,7 +158,11 @@ func (st *Store) Load(_ context.Context, id session.SessionID) (*session.Session
 	if !ok {
 		return nil, fmt.Errorf("%w: %q", ErrNotFound, id)
 	}
-	return snap.Restore()
+	sess, err := snap.Restore()
+	if err != nil {
+		return nil, port.NewSessionLoadFailure(port.SessionLoadFailureSnapshot, err)
+	}
+	return sess, nil
 }
 
 // List returns every stored session's id and last Save time, in no guaranteed
@@ -186,7 +190,7 @@ func (st *Store) PageSessionMetadata(_ context.Context, request port.SessionMeta
 		rows = append(rows, port.SessionDiscoveryMeta{
 			ID: id, ModifiedAt: st.savedAt[id], State: snap.State,
 			Turns: snap.Counters.Turns, ModelID: snap.ModelID, CreatedAt: snap.CreatedAt,
-			Title: snap.Title, TitleProvenance: snap.TitleProvenance, Workspace: snap.Workspace,
+			Title: snap.Title, TitleProvenance: snap.TitleProvenance, EnvironmentRef: snap.EnvironmentRef,
 			Kind: kind, Relationship: snap.Relationship, Owner: snap.Owner,
 			EstimatedBytes: st.estimatedBytes[id],
 		})
@@ -201,10 +205,10 @@ func (st *Store) PageSessionMetadata(_ context.Context, request port.SessionMeta
 // the cached scalar. Fixed overhead accounts for field names and scalar values,
 // while every variable-length persisted payload contributes its byte length.
 func estimateSnapshotBytes(snap sessnap.Snapshot) int64 {
-	size := int64(256 + len(snap.ID) + len(snap.State) + len(snap.Mode) + len(snap.Workspace) +
+	size := int64(256 + len(snap.ID) + len(snap.State) + len(snap.Mode) +
 		len(snap.StopReason) + len(snap.Kind) + len(snap.Profile) + len(snap.ProviderID) +
 		len(snap.ModelID) + len(snap.ReasoningEffort) + len(snap.Title) + len(snap.TitleProvenance) +
-		len(snap.LastError) + len(snap.Incarnation) + len(snap.EnvironmentRef.Kind) + len(snap.EnvironmentRef.ID))
+		len(snap.LastError) + len(snap.Incarnation) + len(snap.EnvironmentRef.Kind) + len(snap.EnvironmentRef.ID) + len(snap.EnvironmentRef.Revision))
 
 	if authority := snap.Authority; authority != nil {
 		size += int64(96 + len(authority.Provenance) + len(authority.DefinitionIdentity))
@@ -229,9 +233,6 @@ func estimateSnapshotBytes(snap sessnap.Snapshot) int64 {
 	}
 	if snap.Usage != nil {
 		size += 96
-	}
-	if snap.AdoptionMetadata != nil {
-		size += int64(64 + len(snap.AdoptionSourceID) + len(snap.AdoptionRequestDigest))
 	}
 
 	for _, message := range snap.Messages {

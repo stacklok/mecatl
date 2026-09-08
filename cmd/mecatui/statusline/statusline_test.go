@@ -59,8 +59,8 @@ func TestStatusCustomization_Scenario1_StatusInputExcludesSensitiveContent(t *te
 		t.Fatalf("Workspace field count = %d, want %d", got, want)
 	}
 	for i := range workspace.NumField() {
-		if workspace.Field(i).Name == "Launch" {
-			t.Fatal("workspace must not expose a launch workspace")
+		if name := workspace.Field(i).Name; name == "Launch" || name == "Basename" {
+			t.Fatalf("workspace must not expose %q", name)
 		}
 	}
 }

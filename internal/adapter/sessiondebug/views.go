@@ -553,7 +553,7 @@ func (t *inspectTool) historyView(ctx context.Context, s *session.Session, scope
 					}{"compaction_archive", ev.CompactionArchive.Replaced, true, true})
 				}
 			}
-			folded, foldErr := eventsource.Fold(eventsource.SessionMeta{ID: s.ID, Mode: s.Mode, Workspace: s.Workspace, Limits: s.Limits, CreatedAt: s.CreatedAt, Kind: s.Kind, Relationship: s.Relationship}, seqEvents(events))
+			folded, foldErr := eventsource.Fold(eventsource.SessionMeta{ID: s.ID, Mode: s.Mode, EnvironmentRef: s.EnvironmentRef, Limits: s.Limits, CreatedAt: s.CreatedAt, Kind: s.Kind, Relationship: s.Relationship}, seqEvents(events))
 			if foldErr == nil {
 				sources = append(sources, struct {
 					name          string
@@ -604,7 +604,7 @@ func (t *inspectTool) historyView(ctx context.Context, s *session.Session, scope
 }
 
 func transcriptFromMessages(messages []session.Message, offset, limit int) transcriptEvidence {
-	s := session.New("history", session.ModeDefault, "", session.Limits{}, time.Time{})
+	s := session.New("history", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Time{})
 	_ = s.SeedHistory(messages)
 	return transcriptView(s, offset, limit)
 }

@@ -1,0 +1,56 @@
+version: '3'
+
+tasks:
+  build-sdk:
+    desc: Build the local @stacklok/mecatl-sdk dist this example links against
+    dir: ../..
+    sources:
+      - src/**/*.ts
+      - package.json
+      - tsconfig*.json
+    generates:
+      - dist/**/*
+    cmds:
+      - task build
+
+  install:
+    desc: Install the Slack bot example's dependencies from the frozen pnpm lockfile
+    deps: [build-sdk]
+    sources:
+      - package.json
+      - pnpm-lock.yaml
+    generates:
+      - node_modules/.modules.yaml
+    cmds:
+      - pnpm install --frozen-lockfile
+
+  lint:
+    desc: Lint and format-check the Slack bot example with Biome
+    deps: [install]
+    cmds:
+      - pnpm run lint
+
+  format:
+    desc: Format and apply safe import organization to the Slack bot example
+    deps: [install]
+    cmds:
+      - pnpm run format
+
+  typecheck:
+    desc: Type-check the Slack bot example without emitting files
+    deps: [install]
+    cmds:
+      - pnpm run typecheck
+
+  test:
+    desc: Run the Slack bot example's offline bridge test against a spawned mecated --mock
+    deps: [install]
+    cmds:
+      - task --dir ../../../.. build
+      - pnpm run test
+
+  dev:
+    desc: Run the Slack bot against a real, already-running mecated (see README.md)
+    deps: [install]
+    cmds:
+      - pnpm run dev

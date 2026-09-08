@@ -2,10 +2,14 @@
 {{- include "mecak8s.validateRedis" . -}}
 {{- include "mecak8s.validateOIDC" . -}}
 {{- include "mecak8s.validateTLS" . -}}
+{{- include "mecak8s.validateLearningStore" . -}}
 {{- include "mecak8s.validateProviderSecurity" . -}}
+{{- $learningStoreEnabled := ne .Values.learning.store.endpoint "" -}}
+{{- $learningStoreTokenConfigured := and .Values.learning.store.tokenSecret .Values.learning.store.tokenKey -}}
 {{- include "mecak8s.validateMCP" . -}}
 {{- $mcpOAuth := false -}}
 {{- range .Values.mcp.servers -}}{{- if eq .auth.mode "oauth" -}}{{- $mcpOAuth = true -}}{{- end -}}{{- end -}}
+{{- $mcpSettings := or $mcpOAuth (not .Values.mcp.servers) -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -14,8 +18,18 @@ metadata:
 spec:
   replicas: {{ .Values.replicaCount }}
   strategy:
+    {{- if $mcpOAuth }}
+    # Broker mode: session/grant/authorization state is process-local. A surge
+    # rollout (the RollingUpdate default) would briefly run a second, empty
+    # broker incarnation alongside the old one before it drains, which can
+    # receive traffic bound to the old pod's in-flight state. Recreate retires
+    # the old pod completely before starting the new one — a real downtime
+    # window, but the only correct choice until broker state is shared.
+    type: Recreate
+    {{- else }}
     type: RollingUpdate
     rollingUpdate: {maxSurge: 1, maxUnavailable: 0}
+    {{- end }}
   selector:
     matchLabels: {{- include "mecak8s.selectorLabels" . | nindent 6 }}
   template:
@@ -28,7 +42,7 @@ spec:
       {{- if and (not .Values.mockProvider) (not .Values.security.allowUnsafeRealProvider) .Values.security.tlsTerminatedUpstream }}
       {{- $_ := set $chartAnnotations "mecatl.stacklok.com/tls-terminated-upstream" "true" }}
       {{- end }}
-      {{- if $mcpOAuth }}
+      {{- if $mcpSettings }}
       {{- $_ := set $chartAnnotations "checksum/mcp-profile" (include "mecak8s.mcpOAuthSettings" . | sha256sum) }}
       {{- end }}
       {{- $userAnnotations := omit (deepCopy .Values.podAnnotations) "mecatl.stacklok.com/unsafe-real-provider" "mecatl.stacklok.com/tls-terminated-upstream" "checksum/mcp-profile" }}
@@ -49,7 +63,7 @@ spec:
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets: {{- toYaml . | nindent 8 }}
       {{- end }}
-      terminationGracePeriodSeconds: 60
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
       {{- with .Values.topologySpreadConstraints }}
       topologySpreadConstraints:
         {{- range . }}
@@ -82,7 +96,14 @@ spec:
           args:
             - --grpc-addr=0.0.0.0:8080
             - --http-addr=0.0.0.0:8081
+            - --drain-addr=0.0.0.0:8082
             - {{ printf "--redis-url=%s" .Values.redis.endpoint | quote }}
+            {{- if .Values.redis.filesystem.enabled }}
+            - --redis-filesystem
+            {{- end }}
+            {{- if .Values.redis.readLedger.enabled }}
+            - --redis-read-ledger
+            {{- end }}
             - {{ printf "--session-lease-k8s-namespace=%s" .Release.Namespace | quote }}
             - --headless=true
             - --posture=auto
@@ -119,6 +140,19 @@ spec:
             - --redis-tls
             {{- end }}
             {{- end }}
+            {{- if $learningStoreEnabled }}
+            - {{ printf "--learning-store-url=%s" .Values.learning.store.endpoint | quote }}
+            {{- if .Values.learning.store.tls.enabled }}
+            - --driver-tls
+            {{- end }}
+            {{- if .Values.learning.store.tls.caSecret }}
+            - {{ printf "--driver-tls-ca=/var/run/secrets/learning-store-ca/%s" .Values.learning.store.tls.caKey | quote }}
+            {{- end }}
+            {{- if .Values.learning.store.tls.mtlsSecret }}
+            - {{ printf "--driver-tls-cert=/var/run/secrets/learning-store-mtls/%s" .Values.learning.store.tls.certKey | quote }}
+            - {{ printf "--driver-tls-key=/var/run/secrets/learning-store-mtls/%s" .Values.learning.store.tls.keyKey | quote }}
+            {{- end }}
+            {{- end }}
             {{- if .Values.oidc.enabled }}
             - {{ printf "--oidc-issuer=%s" .Values.oidc.issuer | quote }}
             - {{ printf "--oidc-audience=%s" .Values.oidc.audience | quote }}
@@ -132,6 +166,13 @@ spec:
             - --oidc-allow-private-https-issuer
             {{- end }}
             - {{ printf "--oidc-max-jwks-staleness=%s" .Values.oidc.maxJWKSStaleness | quote }}
+            {{- if .Values.oidc.resource }}
+            - {{ printf "--oidc-resource=%s" .Values.oidc.resource | quote }}
+            - {{ printf "--oidc-client-id=%s" .Values.oidc.clientID | quote }}
+            {{- if .Values.oidc.scopes }}
+            - {{ printf "--oidc-scopes=%s" (join "," .Values.oidc.scopes) | quote }}
+            {{- end }}
+            {{- end }}
             {{- end }}
             {{- if .Values.tls.enabled }}
             - {{ printf "--tls-cert=/var/run/secrets/tls/%s" .Values.tls.certKey | quote }}
@@ -141,23 +182,30 @@ spec:
             - --skills-conventional=true
             {{- end }}
             {{- range $server := .Values.mcp.servers }}
-            {{- if ne $server.auth.mode "oauth" }}
+            {{- if and (ne $server.auth.mode "oauth") (not (and $mcpOAuth (eq $server.auth.mode "none"))) }}
             - {{ printf "--mcp-server=%s=%s" $server.name $server.url | quote }}
             {{- end }}
             {{- if $server.insecureHTTP }}
             - {{ printf "--mcp-server-insecure-http=%s" $server.name | quote }}
             {{- end }}
             {{- end }}
-            {{- if $mcpOAuth }}
-            - --permission-config=/etc/mecatl-mcp/settings.yaml
-            {{- end }}
             {{- with .Values.extraArgs }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
+            {{- if $mcpSettings }}
+            - --permission-config=/etc/mecatl-mcp/settings.yaml
+            {{- end }}
           {{- $mcpEnvServers := false }}
           {{- range .Values.mcp.servers }}{{- if ne .auth.mode "none" }}{{- $mcpEnvServers = true }}{{- end }}{{- end }}
-          {{- if or .Values.extraEnv $mcpEnvServers }}
+          {{- if or .Values.extraEnv $mcpEnvServers $learningStoreTokenConfigured }}
           env:
+            {{- if $learningStoreTokenConfigured }}
+            - name: MECATL_DRIVER_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.learning.store.tokenSecret | quote }}
+                  key: {{ .Values.learning.store.tokenKey | quote }}
+            {{- end }}
             {{- range $server := .Values.mcp.servers }}
             {{- if eq $server.auth.mode "staticBearer" }}
             - name: {{ printf "MCP_%s_TOKEN" (upper $server.name) }}
@@ -169,9 +217,6 @@ spec:
               valueFrom:
                 secretKeyRef: {{- toYaml $server.auth.oauth.client.preregistered.secretKeyRef | nindent 18 }}
             {{- end }}
-            - name: {{ printf "MECATL_MCP_%s_CREDENTIAL" (upper $server.name) }}
-              valueFrom:
-                secretKeyRef: {{- toYaml $server.auth.oauth.credentials.secretKeyRef | nindent 18 }}
             {{- end }}
             {{- end }}
             {{- with .Values.extraEnv }}
@@ -181,6 +226,7 @@ spec:
           ports:
             - {name: grpc, containerPort: 8080}
             - {name: http, containerPort: 8081}
+            - {name: drain, containerPort: 8082}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -209,9 +255,9 @@ spec:
           lifecycle:
             preStop:
               httpGet:
-                scheme: {{ if .Values.tls.enabled }}HTTPS{{ else }}HTTP{{ end }}
+                scheme: HTTP
                 path: /drain
-                port: http
+                port: drain
           resources: {{- toYaml .Values.resources | nindent 12 }}
           volumeMounts:
             - {name: tmp, mountPath: /tmp}
@@ -224,7 +270,13 @@ spec:
             {{- if .Values.oidc.caSecret }}
             - {name: oidc-ca, mountPath: /var/run/secrets/oidc-ca, readOnly: true}
             {{- end }}
-            {{- if $mcpOAuth }}
+            {{- if .Values.learning.store.tls.caSecret }}
+            - {name: learning-store-ca, mountPath: /var/run/secrets/learning-store-ca, readOnly: true}
+            {{- end }}
+            {{- if .Values.learning.store.tls.mtlsSecret }}
+            - {name: learning-store-mtls, mountPath: /var/run/secrets/learning-store-mtls, readOnly: true}
+            {{- end }}
+            {{- if $mcpSettings }}
             - {name: mcp-profile, mountPath: /etc/mecatl-mcp, readOnly: true}
             {{- end }}
             {{- with .Values.extraVolumeMounts }}
@@ -266,7 +318,24 @@ spec:
             items:
               - {key: {{ .Values.oidc.caKey | quote }}, path: {{ .Values.oidc.caKey | quote }}}
         {{- end }}
-        {{- if $mcpOAuth }}
+        {{- if .Values.learning.store.tls.caSecret }}
+        - name: learning-store-ca
+          secret:
+            secretName: {{ .Values.learning.store.tls.caSecret }}
+            defaultMode: 0440
+            items:
+              - {key: {{ .Values.learning.store.tls.caKey | quote }}, path: {{ .Values.learning.store.tls.caKey | quote }}}
+        {{- end }}
+        {{- if .Values.learning.store.tls.mtlsSecret }}
+        - name: learning-store-mtls
+          secret:
+            secretName: {{ .Values.learning.store.tls.mtlsSecret }}
+            defaultMode: 0440
+            items:
+              - {key: {{ .Values.learning.store.tls.certKey | quote }}, path: {{ .Values.learning.store.tls.certKey | quote }}}
+              - {key: {{ .Values.learning.store.tls.keyKey | quote }}, path: {{ .Values.learning.store.tls.keyKey | quote }}}
+        {{- end }}
+        {{- if $mcpSettings }}
         - name: mcp-profile
           configMap:
             name: {{ include "mecak8s.fullname" . }}-mcp

@@ -216,19 +216,19 @@ func TestGRPCAuthBearer(t *testing.T) {
 	defer cancel()
 
 	// No token -> Unauthenticated.
-	_, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{Workspace: "/ws"})
+	_, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{})
 	if status.Code(err) != codes.Unauthenticated {
 		t.Fatalf("no-token code = %v, want Unauthenticated", status.Code(err))
 	}
 
 	// Wrong token -> Unauthenticated.
-	_, err = client.CreateSession(bearerCtx(ctx, "nope"), &mecatlv1.CreateSessionRequest{Workspace: "/ws"})
+	_, err = client.CreateSession(bearerCtx(ctx, "nope"), &mecatlv1.CreateSessionRequest{})
 	if status.Code(err) != codes.Unauthenticated {
 		t.Fatalf("wrong-token code = %v, want Unauthenticated", status.Code(err))
 	}
 
 	// Correct token -> OK.
-	if _, err := client.CreateSession(bearerCtx(ctx, "secret"), &mecatlv1.CreateSessionRequest{Workspace: "/ws"}); err != nil {
+	if _, err := client.CreateSession(bearerCtx(ctx, "secret"), &mecatlv1.CreateSessionRequest{}); err != nil {
 		t.Fatalf("correct-token CreateSession: %v", err)
 	}
 }
@@ -242,7 +242,7 @@ func TestGRPCAuthDisabledAllows(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if _, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{Workspace: "/ws"}); err != nil {
+	if _, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{}); err != nil {
 		t.Fatalf("auth-disabled CreateSession: %v", err)
 	}
 }
@@ -338,20 +338,20 @@ func TestGRPCRateLimit(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	if _, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{Workspace: "/ws"}); err != nil {
+	if _, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{}); err != nil {
 		t.Fatalf("call 1: %v", err)
 	}
-	if _, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{Workspace: "/ws"}); err != nil {
+	if _, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{}); err != nil {
 		t.Fatalf("call 2: %v", err)
 	}
-	_, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{Workspace: "/ws"})
+	_, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{})
 	if status.Code(err) != codes.ResourceExhausted {
 		t.Fatalf("call 3 code = %v, want ResourceExhausted", status.Code(err))
 	}
 
 	// After ~1s a token refills and a call recovers.
 	time.Sleep(1100 * time.Millisecond)
-	if _, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{Workspace: "/ws"}); err != nil {
+	if _, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{}); err != nil {
 		t.Fatalf("recovery call: %v", err)
 	}
 }
@@ -373,7 +373,7 @@ func TestHTTPAuthBearer(t *testing.T) {
 	srv := httptest.NewServer(secureHTTP(svc, auth))
 	defer srv.Close()
 
-	body := func() *strings.Reader { return strings.NewReader(`{"workspace":"/ws"}`) }
+	body := func() *strings.Reader { return strings.NewReader(`{}`) }
 
 	// No token -> 401.
 	resp, err := http.Post(srv.URL+"/v1/sessions", "application/json", body())

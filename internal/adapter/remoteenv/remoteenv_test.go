@@ -150,7 +150,6 @@ func TestTwoHandlesSameIDStaleVersionConflict(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadVersion: %v", err)
 	}
-	ws1.RecordRead("doc.txt", v1)
 
 	// Handle 2 replaces the file (new version).
 	if _, err := ws2.ReplaceFile(context.Background(), "doc.txt", v1, []byte("v2-by-2")); err != nil {
@@ -251,7 +250,6 @@ func TestMergeAppliesChildChanges(t *testing.T) {
 	if _, v, err := child.Workspace().ReadVersion(context.Background(), "keep.txt"); err != nil {
 		t.Fatalf("ReadVersion keep.txt: %v", err)
 	} else {
-		child.Workspace().RecordRead("keep.txt", v)
 		if _, err := child.Workspace().ReplaceFile(context.Background(), "keep.txt", v, []byte("modified-by-child")); err != nil {
 			t.Fatalf("ReplaceFile keep.txt: %v", err)
 		}
@@ -287,7 +285,6 @@ func TestMergeConflictPreservesChild(t *testing.T) {
 	if _, v, err := parent.Workspace().ReadVersion(context.Background(), "both.txt"); err != nil {
 		t.Fatalf("parent ReadVersion: %v", err)
 	} else {
-		parent.Workspace().RecordRead("both.txt", v)
 		if _, err := parent.Workspace().ReplaceFile(context.Background(), "both.txt", v, []byte("parent-mutated")); err != nil {
 			t.Fatalf("parent ReplaceFile: %v", err)
 		}
@@ -296,7 +293,6 @@ func TestMergeConflictPreservesChild(t *testing.T) {
 	if _, v, err := child.Workspace().ReadVersion(context.Background(), "both.txt"); err != nil {
 		t.Fatalf("child ReadVersion: %v", err)
 	} else {
-		child.Workspace().RecordRead("both.txt", v)
 		if _, err := child.Workspace().ReplaceFile(context.Background(), "both.txt", v, []byte("child-mutated")); err != nil {
 			t.Fatalf("child ReplaceFile: %v", err)
 		}

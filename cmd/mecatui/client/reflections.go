@@ -5,7 +5,10 @@ package client
 import (
 	"context"
 	"sort"
+	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
 	"google.golang.org/grpc/codes"
@@ -26,9 +29,30 @@ const (
 
 func IsProposalConflict(err error) bool { return grpcstatus.Code(err) == codes.Aborted }
 
+func ReflectionErrorText(err error) string {
+	switch grpcstatus.Code(err) {
+	case codes.Canceled:
+		return "reflection was cancelled"
+	case codes.DeadlineExceeded:
+		return "reflection timed out"
+	case codes.FailedPrecondition:
+		return "reflection source is unavailable or changed"
+	case codes.ResourceExhausted:
+		return "reflection queue is full"
+	case codes.InvalidArgument:
+		return "reflection request is invalid"
+	case codes.Unavailable:
+		return "reflection service is unavailable"
+	case codes.Unimplemented:
+		return "reflection is not configured"
+	default:
+		return "reflection failed"
+	}
+}
+
 // ReflectionReceipt is the bounded result of explicit reflection.
 type ReflectionReceipt struct {
-	ID, Disposition                      string
+	ID, Disposition, Reason, Message     string
 	Queued, Staged, Promoted, Conflicted int
 	Abstained                            bool
 }
@@ -91,12 +115,53 @@ type ReflectionMsg struct {
 }
 
 func (c *Client) ReflectSession(ctx context.Context, sessionID string) (ReflectionReceipt, error) {
-	resp, err := c.svc.ReflectSession(ctx, &mecatlv1.ReflectSessionRequest{SessionId: sessionID})
+	resp, err := c.svc.ReflectSession(withSessionAffinity(ctx, sessionID), &mecatlv1.ReflectSessionRequest{SessionId: sessionID})
 	if err != nil {
 		return ReflectionReceipt{}, err
 	}
-	r := resp.GetReceipt()
-	return ReflectionReceipt{ID: r.GetReflectionId(), Disposition: r.GetDisposition(), Queued: int(r.GetQueued()), Abstained: r.GetAbstained(), Staged: int(r.GetStaged()), Promoted: int(r.GetPromoted()), Conflicted: int(r.GetConflicted())}, nil
+	return mapReflectionReceipt(resp.GetReceipt()), nil
+}
+
+func mapReflectionReceipt(r *mecatlv1.ReflectionReceipt) ReflectionReceipt {
+	if r == nil {
+		return ReflectionReceipt{}
+	}
+	reason := safeReflectionText(r.GetReason())
+	message := ""
+	switch reason {
+	case "no_eligible_evidence":
+		message = "No eligible evidence was available for reflection."
+	case "mandatory_span_exceeds_bounds":
+		message = "The required evidence span exceeds reflection bounds."
+	default:
+		reason = ""
+	}
+	return ReflectionReceipt{
+		ID: safeReflectionText(r.GetReflectionId()), Disposition: safeReflectionText(r.GetDisposition()),
+		Reason: reason, Message: message, Queued: int(r.GetQueued()), Abstained: r.GetAbstained(),
+		Staged: int(r.GetStaged()), Promoted: int(r.GetPromoted()), Conflicted: int(r.GetConflicted()),
+	}
+}
+
+func safeReflectionText(value string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.Is(unicode.C, r) {
+			return -1
+		}
+		return r
+	}, strings.ToValidUTF8(value, "\uFFFD"))
+}
+
+func boundedReflectionPreview(value string) string {
+	value = safeReflectionText(value)
+	if len(value) <= 1024 {
+		return value
+	}
+	for len(value) > 1024 {
+		_, size := utf8.DecodeLastRuneInString(value)
+		value = value[:len(value)-size]
+	}
+	return value
 }
 
 func (c *Client) ListLearningProposals(ctx context.Context, status, cursor string, limit int, project string) (LearningProposalPage, error) {
@@ -110,7 +175,7 @@ func (c *Client) ListLearningProposals(ctx context.Context, status, cursor strin
 	if err != nil {
 		return LearningProposalPage{}, err
 	}
-	out := LearningProposalPage{NextCursor: resp.GetNextCursor(), Proposals: make([]LearningProposal, len(resp.GetProposals()))}
+	out := LearningProposalPage{NextCursor: safeReflectionText(resp.GetNextCursor()), Proposals: make([]LearningProposal, len(resp.GetProposals()))}
 	for i, p := range resp.GetProposals() {
 		out.Proposals[i] = mapLearningProposal(p)
 	}
@@ -142,7 +207,10 @@ func mapLearningProposal(p *mecatlv1.LearningProposal) LearningProposal {
 	if p == nil {
 		return LearningProposal{}
 	}
-	out := LearningProposal{ID: p.GetId(), Version: p.GetVersion(), Status: p.GetStatus(), Kind: p.GetKind(), Key: p.GetKey(), Value: p.GetValue(), Description: p.GetDescription(), Title: p.GetTitle(), Body: p.GetBody(), Triggers: append([]string(nil), p.GetTriggers()...), ProjectScoped: p.GetProjectScoped(), PromotionAvailable: p.GetPromotionAvailable(), PromotionUnavailableReason: p.GetPromotionUnavailableReason(), LearnedSkillID: p.GetLearnedSkillId()}
+	out := LearningProposal{ID: safeReflectionText(p.GetId()), Version: safeReflectionText(p.GetVersion()), Status: safeReflectionText(p.GetStatus()), Kind: safeReflectionText(p.GetKind()), Key: safeReflectionText(p.GetKey()), Value: safeReflectionText(p.GetValue()), Description: safeReflectionText(p.GetDescription()), Title: safeReflectionText(p.GetTitle()), Body: safeReflectionText(p.GetBody()), ProjectScoped: p.GetProjectScoped(), PromotionAvailable: p.GetPromotionAvailable(), PromotionUnavailableReason: safeReflectionText(p.GetPromotionUnavailableReason()), LearnedSkillID: safeReflectionText(p.GetLearnedSkillId())}
+	for _, trigger := range p.GetTriggers() {
+		out.Triggers = append(out.Triggers, safeReflectionText(trigger))
+	}
 	if t := p.GetCreatedAt(); t != nil && t.IsValid() {
 		out.CreatedAt = t.AsTime()
 	}
@@ -150,17 +218,17 @@ func mapLearningProposal(p *mecatlv1.LearningProposal) LearningProposal {
 		out.UpdatedAt = t.AsTime()
 	}
 	for _, e := range p.GetEvidence() {
-		out.Evidence = append(out.Evidence, LearningEvidence{SessionID: e.GetSessionId(), Locator: e.GetLocator(), Ordinal: int(e.GetOrdinal()), EventSeq: e.GetEventSeq(), ToolCallID: e.GetToolCallId(), Digest: e.GetDigest(), Available: e.GetAvailable(), Availability: e.GetAvailability(), Preview: e.GetPreview()})
+		out.Evidence = append(out.Evidence, LearningEvidence{SessionID: safeReflectionText(e.GetSessionId()), Locator: safeReflectionText(e.GetLocator()), Ordinal: int(e.GetOrdinal()), EventSeq: e.GetEventSeq(), ToolCallID: safeReflectionText(e.GetToolCallId()), Digest: safeReflectionText(e.GetDigest()), Available: e.GetAvailable(), Availability: safeReflectionText(e.GetAvailability()), Preview: boundedReflectionPreview(e.GetPreview())})
 	}
 	for _, d := range p.GetDecisions() {
-		x := LearningDecision{Kind: d.GetKind(), Actor: d.GetActor(), Reason: d.GetReason()}
+		x := LearningDecision{Kind: safeReflectionText(d.GetKind()), Actor: safeReflectionText(d.GetActor()), Reason: safeReflectionText(d.GetReason())}
 		if t := d.GetAt(); t != nil && t.IsValid() {
 			x.At = t.AsTime()
 		}
 		out.Decisions = append(out.Decisions, x)
 	}
 	if r := p.GetPromotion(); r != nil {
-		out.Promotion = &LearningPromotion{MemoryKey: r.GetMemoryKey(), PreviousExists: r.GetPreviousExists(), PreviousVersion: r.GetPreviousVersion(), ResultVersion: r.GetResultVersion()}
+		out.Promotion = &LearningPromotion{MemoryKey: safeReflectionText(r.GetMemoryKey()), PreviousExists: r.GetPreviousExists(), PreviousVersion: safeReflectionText(r.GetPreviousVersion()), ResultVersion: safeReflectionText(r.GetResultVersion())}
 	}
 	return out
 }

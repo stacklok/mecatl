@@ -64,7 +64,7 @@ func TestSDKServerEnablers_Scenario4_EveryRunEventCarriesOneID(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
-	cs, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{Workspace: "/ws"})
+	cs, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -109,7 +109,7 @@ func TestADR_0249_LoopStampsEveryEmittedEvent(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
-	cs, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{Workspace: "/ws"})
+	cs, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -131,7 +131,7 @@ func TestADR_0249_LoopStampsEveryEmittedEvent(t *testing.T) {
 // persisted at all: without it the resumed run would mint a second identity and
 // a client following the first would never see it finish.
 func TestADR_0249_AwaitingResumeKeepsRunID(t *testing.T) {
-	sess := session.New("s-resume", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	sess := session.New("s-resume", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	const want = "run_persisted_identity"
 	sess.BeginRun(want)
 
@@ -157,7 +157,7 @@ func TestADR_0249_AwaitingResumeKeepsRunID(t *testing.T) {
 // empty id and be stamped on its next run — additive, no migration sweep, the
 // Profile/ProviderID precedent.
 func TestSDKServerEnablers_Scenario4_LegacySnapshotRestoresEmpty(t *testing.T) {
-	sess := session.New("s-legacy", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	sess := session.New("s-legacy", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	snap, err := sessnap.Of(sess)
 	if err != nil {
 		t.Fatalf("Of: %v", err)
@@ -190,11 +190,11 @@ func TestADR_0249_FoldIgnoresRunID(t *testing.T) {
 			{Type: session.EvResult, Seq: 2, RunID: runID, Result: &session.ResultPayload{Text: "hi", Stop: session.StopEndTurn}},
 		}
 	}
-	withID, err := eventsource.Fold(eventsource.SessionMeta{ID: "s1", Workspace: "/ws", Mode: session.ModeDefault}, seqOf(build("run_abc")))
+	withID, err := eventsource.Fold(eventsource.SessionMeta{ID: "s1", EnvironmentRef: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, Mode: session.ModeDefault}, seqOf(build("run_abc")))
 	if err != nil {
 		t.Fatalf("Fold with run id: %v", err)
 	}
-	without, err := eventsource.Fold(eventsource.SessionMeta{ID: "s1", Workspace: "/ws", Mode: session.ModeDefault}, seqOf(build("")))
+	without, err := eventsource.Fold(eventsource.SessionMeta{ID: "s1", EnvironmentRef: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, Mode: session.ModeDefault}, seqOf(build("")))
 	if err != nil {
 		t.Fatalf("Fold without run id: %v", err)
 	}
@@ -242,7 +242,7 @@ func TestSDKServerEnablers_Scenario4_PlanResolutionSpansTwoRunIDs(t *testing.T) 
 	)
 	svc := planApprovalService(t, llm, allowRules())
 
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModePlan, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModePlan, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

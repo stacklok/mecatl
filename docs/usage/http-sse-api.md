@@ -44,14 +44,17 @@ compatibility. `build_id` is not a semantic-version API.
 
 | Method & path | Body | Response |
 | --- | --- | --- |
-| `POST /v1/sessions` | `{workspace, mode?, limits?, provider_id?, model_id?, profile?, mcp_servers?}` | `201` `{session_id}`; `501` code `client_mcp_unsupported` when `mcp_servers` is non-empty on a deployment that does not accept it (see below) |
-| `GET /v1/sessions` | — | `200` `{sessions: [...]}` — the stored-session inventory (picker rows: id, timestamps, state, turns, model id; no conversation content), most-recently-active first |
-| `GET /v1/sessions/{id}` | — | `200` session snapshot |
-| `GET /v1/sessions/{id}/events` | — | `200` `text/event-stream` — replay a session's durable event log (full timeline incl. the log-only `approval`/`compaction_archive`/`user_prompt` a live prompt stream skips); empty for an unknown id, `501` when no durable `EventLog` is wired |
+| `POST /v1/sessions` | `{mode?, limits?, provider_id?, model_id?, profile?, mcp_servers?}`; `profile` omitted = server default, `"no-fs"` = explicit attenuation | `201` `{session_id, placement}` where placement is bounded display metadata; no path or exact private ref |
+| `GET /v1/sessions` | — | `200` `{sessions: [...]}` — path-free stored-session inventory |
+| `GET /v1/sessions/{id}` | — | `200` authoritative session snapshot, including title/provenance, title-generation lifecycle, and canonical durable token usage when present |
+| `GET /v1/sessions/{id}/events` | — | `200` `text/event-stream` — replay a session's durable event log (including `session.title` changes and the log-only `approval`/`compaction_archive`/`user_prompt` a live prompt stream skips); empty for an unknown id, `501` when no durable `EventLog` is wired |
 | `GET /v1/sessions/{id}/watch?cursor=&run_id=` | — | `200` `text/event-stream` — **durable replay-then-follow** ([ADR 0250](../adr/0250-durable-cursors-and-watch.md)). Each `data:` frame is `{event, cursor, phase}` (NOT a bare Event like `/events`); `phase` is an open string `replay`/`live`/`gap`. Exactly one event-less `live` frame marks the replay→live boundary; an event-less `gap` frame marks a failed durable append. `cursor` is opaque — empty means the beginning; hand back the last one you PROCESSED to resume. Optional `run_id` narrows delivery to one run; a cursor is **scoped to the `run_id` it was issued under** — resume with the same filter, or from the beginning, since a filtered watch's position advances past the records it dropped. The stream STAYS OPEN (unlike `/events`, which ends). `501` when no durable `EventLog` or no cursor seam, `404` when the caller may not read the session, `400` for a delegation-child session id. A **cursor fault is not a status code on this route**: the cursor is decoded after the `200` is committed, so a malformed or expired cursor arrives as the same terminal frame everything else does (`cursor_malformed` / `cursor_expired`); over gRPC it is a status. A mid-stream fault arrives as a final SSE frame tagged `event: error` whose `data:` line carries `{"code","error"}` — `watch_lagging` is **resumable** (reconnect with your last cursor), `activity_gap` means recorded events are missing |
 | `POST /v1/sessions/{id}/rename` | `{title}` | `200` updated session snapshot with operator title provenance; `412` when kind/state/liveness gates reject the stale action, `409` when another replica holds the session lease |
 | `POST /v1/sessions/{id}/delete` | — | `204` after permanently removing the snapshot and store-managed sidecars; `412` when the target is active, awaiting, or not a main chat, `409` when another replica holds the session lease, `501` when the configured store cannot physically delete |
 | `POST /v1/sessions/{id}/compact` | no body | `200` `{"compacted":true}` when one forced pass saved shorter model history, or `{"compacted":false}` for a successful no-op; `412` for an active/awaiting/non-main session, `409` when another replica holds its lease |
+| `POST /v1/sessions/{id}/workspace-enrollment/connect` | no body | `200` safe `WorkspaceEnrollment` projection; begins an eligible pre-prompt workspace-service enrollment or observes its exact pending enrollment |
+| `POST /v1/sessions/{id}/workspace-enrollment/{enrollment_id}/retry` | no body | `200` safe `WorkspaceEnrollment` projection; cancels the exact pending enrollment before beginning its replacement; stale IDs return `412` |
+| `POST /v1/sessions/{id}/workspace-enrollment/{enrollment_id}/cancel` | no body | `200` safe `WorkspaceEnrollment` projection; cancels only the exact pending enrollment and clears its prompt gate; stale IDs return `412` |
 | `DELETE /v1/sessions/{id}` | — | `204` — close the session, releasing its per-session resources (not physical stored-session deletion) |
 | `POST /v1/sessions/{id}/prompt` | `{text}` | `200` `text/event-stream` of events; rejected while failed-step retry intent is pending |
 | `POST /v1/sessions/{id}/retry` | no body | `200` `text/event-stream` for a prompt-free failed-step retry; reuses conversation/tool state but re-resolves live instruction sources; `409` unless persisted state is eligible |
@@ -59,17 +62,17 @@ compatibility. `build_id` is not a semantic-version API.
 | `POST /v1/sessions/{id}/plan:approve` | `{"target_mode": "default" \| "accept_edits" \| "plan", "note": "..."}` | `200` `text/event-stream` — atomically resolve a parked **plan-approval** ask ([ADR 0069](../adr/0069-plan-approval-gate.md)): on `default`/`accept_edits` resume the parked run AND start the continuation run (both streamed); on `plan`/`""` iterate (no continuation). `409` on a precondition failure (live run / not awaiting / not a plan ask), `404` on an unknown session |
 | `POST /v1/sessions/{id}/cancel` | — | `204` |
 | `POST /v1/sessions/{id}/cancel-child` | `{child_id}` | `204`; `404` for an unknown / already-finished child |
-| `POST /v1/sessions/{id}/fork` | `{"title": "...", "reasoning_effort": "..."}` (both optional; empty/absent inherits the source's) | `201` `{session_id}` — create a peer session from `{id}`'s conversation history snapshot (ADR 0065); same provider/model only, with the ONE optional selector delta a reasoning-effort override (ADR 0068); `412` if `{id}` is not an idle/terminal main chat or is live in this process, `409` when another replica holds its lease |
-| `POST /v1/sessions/{id}/adoption:preflight` | `{workspace, environment_kind, environment_id, provider_id, model_id, profile?}` | `200` `{eligible, reason_code, bindings}`. Requires authenticated caller ownership; absent and foreign IDs are both `404`. Every binding is explicit and unresolved bindings return `binding_unresolved` rather than selecting a default |
-| `POST /v1/sessions/{id}/adopt` | the same explicit bindings plus `idempotency_key` | `201` `{session_id, source_session_id, capabilities, resolved_model}`. Revalidates under the source mutation lease; a retry returns the same complete target. The legacy source is unchanged |
+| `POST /v1/sessions/{id}/clear` | `{"worktree_selector":"..."}` optional | `201` `{session_id, placement}` — distinct empty-history successor; omitted selector inherits exact source placement |
+| `POST /v1/sessions/{id}/fork` | optional `{title, reasoning_effort, provider_id, model_id, worktree_selector}` | `201` `{session_id, placement}` — history-carrying successor; omitted selector inherits exact placement, supplied selector must be fresh and source-scoped; all overrides resolve atomically |
+
+`WorkspaceEnrollment` contains only `enrollment_id`, `status`, `required_services`, and the ephemeral `presentation_url` when a new enrollment needs browser presentation. These unary controls reject every request body, validate the session and enrollment correlation from the path, retain the request context, and do not expose callbacks, selectors, or broker state.
 
 `mcp_servers` mounts client-provided streaming-HTTP MCP servers for the created
 session's lifetime, via a per-session engine. Each entry is
 `{name, url, type?, headers?}` — the HTTP mirror of the gRPC
 `CreateSessionRequest.mcp_servers` field, documented in full in
-[the gRPC API guide](./grpc-api.md). The short version: it is **listener-scoped**
-per [ADR 0237](../adr/0237-listener-scoped-workspace-authority.md) and the scope is
-a deployment property. Only a `--grpc-unix-socket` daemon with `--http-addr ""`
+[the gRPC API guide](./grpc-api.md). The short version: client MCP is a separate
+listener-scoped outbound-network/credential policy ([ADR 0248](../adr/0248-sdk-compatibility-and-error-contract.md)). Only a `--grpc-unix-socket` daemon with `--http-addr ""`
 accepts it — which means the HTTP surface never does, since serving HTTP at all is
 a TCP listener; every other deployment, loopback included, returns `501` /
 `client_mcp_unsupported`. Check `mcp_servers_on_create` in `GET /v1/compatibility`
@@ -87,11 +90,15 @@ protojson spelling `mcpServers` used to be dropped, returning `201` for a sessio
 with none of the requested servers. It applies to every field on the body, so a
 client sending stray keys that previously succeeded now gets a `400`.
 
-Adoption is available only when authenticated caller ownership and a per-session engine
-factory are wired (`ServerCapabilities.legacy_adoption`). It accepts no message array or
-transcript upload: transcript authority comes only from the server's `SessionStore.Load`.
-There is no automatic or bulk endpoint. A cross-provider target strips provider-private
-reasoning/phase/item identifiers through the same carryover rule used by model switches.
+**Placement is server-owned.** The create body has no workspace, cwd, placement ID,
+exact EnvironmentRef, or worktree selector. Local/embedded `--workspace` is trusted
+server configuration only. `GET /v1/commands?session_id=...` and
+`GET /v1/worktrees?session_id=...` authorize and exactly reattach that source session;
+no-FS returns empty without touching filesystem providers. Worktrees contain bounded
+display metadata and an opaque caller/source-scoped selector accepted only by the clear
+and fork successor routes. Selectors are not paths or durable IDs and expire on server
+restart, so clients relist. Sessions/snapshots and trusted driver storage retain the
+exact private `EnvironmentRef{kind,id,revision}`; HTTP projections never do.
 
 **Inventory & introspection** (the HTTP mirrors of the gRPC inventory RPCs in §9):
 
@@ -100,10 +107,15 @@ reasoning/phase/item identifiers through the same carryover rule used by model s
 | `GET /v1/models` | the selectable provider/model inventory (`ListModels`) |
 | `GET /v1/agents` | the agent-definition inventory |
 | `GET /v1/skills` | the skills inventory |
-| `GET /v1/commands` | the slash-command palette for a workspace |
+| `GET /v1/commands?session_id=...` | slash commands for an owned, exactly reattached source; no-FS returns empty |
+| `GET /v1/worktrees?session_id=...` | display-safe worktrees plus ephemeral caller/source-scoped selectors; no paths/exact refs |
 | `GET /v1/soul` | the resolved soul snapshot (provenance, trust, drift) |
 | `GET /v1/usermodel` | the live bounded user-model index; `?key=<exact-key>` also returns read-only value/version/provenance/proposal linkage/timestamps/bounded history when available |
 | `POST /v1/sessions/{id}/reflect` | synchronously reflect a caller-owned completed session on its persisted provider (optional empty/`{}` body); returns bounded abstained/staged/promoted/conflicted counts |
+| `GET /v1/learning/attempts` | content-free caller-partitioned attempt page; accepts closed `state`, opaque `cursor`, and bounded `limit` (default 50, maximum 200) |
+| `GET /v1/learning/attempts/{id}` | content-free attempt lifecycle detail; foreign and missing IDs both return `404` |
+| `POST /v1/learning/attempts/{id}/retry` | body `{"expected_version":"<opaque>"}`; failed-to-queued attempt CAS only |
+| `POST /v1/learning/attempts/{id}/abandon` | body `{"expected_version":"<opaque>"}`; non-compensating attempt CAS only, with no downstream rollback promise |
 | `POST /v1/dream/plans` | body `{"target":"project_memory"}` or `{"target":"user_model"}`; spends one planner call and returns the bounded-lifetime exact/synthesized review plan plus opaque process-local id |
 | `POST /v1/dream/plans/{plan_id}/decision` | body `{"decision":"apply"}` or `{"decision":"dismiss"}`; decides the authoritative retained whole plan and returns planned/applied/conflicted/skipped/failed source counts |
 | `GET /v1/learning/proposals` | bounded caller-partitioned proposal page (`status`, `cursor`, `limit`, optional reviewable `project`; promotion remains launch-root/trust-gated) |
@@ -149,16 +161,14 @@ All examples below were captured against a live `mecated serve --mock`.
 ### Create a session
 
 ```console
-$ curl -s -X POST http://127.0.0.1:8081/v1/sessions \
-       -d '{"workspace":"/tmp/mecatlws"}'
-{"session_id":"8867bdea940108c1dd82d13d3fb7fc61"}
+$ curl -s -X POST http://127.0.0.1:8081/v1/sessions -d '{}'
+{"session_id":"8867bdea940108c1dd82d13d3fb7fc61","placement":{"kind":"local"}}
 ```
 
 Optional fields:
 
 ```json
 {
-  "workspace": "/tmp/mecatlws",
   "mode": "plan",
   "limits": { "max_turns": 20, "max_tool_calls": 80, "max_consecutive_failures": 3 }
 }
@@ -167,8 +177,9 @@ Optional fields:
 `mode` accepts `default`, `plan`, `acceptedits` (also `accept_edits` / `accept`);
 unknown/empty falls back to the server default (`default`). A `limits` object
 with all-zero (or omitted) fields gets the server's non-zero defaults
-substituted (see §11). `workspace` is required for the default profile —
-omitting it returns `400` `{"error":"workspace is required"}`.
+substituted (see §11). The deployment default is selected by omission. A
+`workspace`, `cwd`, placement ID, or exact environment ref is an unknown field
+and the strict decoder returns `400`; configure local `--workspace` on the server.
 
 ### Create a no-filesystem session (`profile: "no-fs"`)
 
@@ -185,8 +196,8 @@ $ curl -s -X POST http://127.0.0.1:8081/v1/sessions \
 The same `profile` field exists on the gRPC `CreateSessionRequest` (enum-as-
 string: `""` = default, `"no-fs"`). Rules, all enforced server-side:
 
-- `"no-fs"` REQUIRES an **empty** `workspace` (the combination is contradictory
-  and returns `400`/`InvalidArgument`); the default profile still requires one.
+- `"no-fs"` binds the server's filesystem-free placement; no workspace field exists.
+  Omitted profile binds the server's deployment default.
 - Any other profile value is rejected loudly — never a silent fallback.
 - The no-FS session has **no** Read/Edit/Write/Grep/Glob/Bash/BashStatus, no
   Parallel, and no SkillDraft. It keeps MCP tools (server-global + resource meta-tools +
@@ -204,7 +215,7 @@ string: `""` = default, `"no-fs"`). Rules, all enforced server-side:
 
 ```console
 $ curl -s http://127.0.0.1:8081/v1/sessions/8867bdea940108c1dd82d13d3fb7fc61
-{"session_id":"8867bdea940108c1dd82d13d3fb7fc61","state":"idle","mode":"default","workspace":"/tmp/mecatlws","turns":0,"tool_calls":0}
+{"session_id":"8867bdea940108c1dd82d13d3fb7fc61","state":"idle","mode":"default","placement":{"kind":"local"},"turns":0,"tool_calls":0}
 ```
 
 A missing id returns `404` `{"error":"not found: \"...\""}`.
@@ -361,8 +372,11 @@ client may send `steer` frames; when absent/false the server reports `too_late`
 stdin/stdout — for an editor that spawned `mecated` as a subprocess. It is the
 stdio alternative to the gRPC/HTTP listeners (which are skipped); everything
 else is the **same wiring**: the engine, tools, permission policy, session
-store, MCP, and skills come from the same `app.Build` assembly, and the session
-workspace is the editor-provided cwd. Logs go to **stderr**, so stdout carries
+store, MCP, and skills come from the same `app.Build` assembly. ACP `session/new`
+binds the trusted configured placement and `session/load` exactly reattaches the persisted
+private ref before access. The editor-provided cwd is only a local consistency assertion;
+a mismatch is rejected and cwd cannot select or construct authority. Other ACP session,
+discovery, error, and event projections remain path-free. Logs go to **stderr**, so stdout carries
 only JSON-RPC frames.
 
 - There is **no TLS / auth / rate limiting** on this surface — stdio to the

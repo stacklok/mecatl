@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -74,10 +73,10 @@ func defaultLiveWindowServiceCfg(t *testing.T, reg *providerRegistry, provider *
 	sharedDeps := baseEngineDeps(cfg, reg, provider, store, policy, hookexec.New(nil), nil, prompt.RootAssembler{})
 	sharedDeps.Catalog = tool.NewCatalog()
 	shared := agent.NewEngine(sharedDeps)
-	svc, err := server.NewService(server.Config{
-		Engine:               shared,
-		Store:                store,
-		Workspaces:           func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+	svc, err := newTestServerService(server.Config{
+		Engine: shared,
+		Store:  store,
+
 		DefaultLimits:        session.Limits{MaxTurns: 5, MaxToolCalls: 10},
 		Now:                  func() time.Time { return time.Unix(0, 0) },
 		SessionEngine:        factory,
@@ -116,7 +115,7 @@ func TestDefaultLiveOnlyModelSelfCorrectsAtUse(t *testing.T) {
 		t.Fatalf("pre-swap contextWindowFor(%q) = %d, want 0 (live-only model, catalog floor)", liveModel, got)
 	}
 
-	sess, err := svc.CreateSession(ctx, "/work/livewin", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -186,7 +185,7 @@ func TestCataloguedDefaultModelEchoesCatalogWindow(t *testing.T) {
 
 	svc, factoryCalls := defaultLiveWindowService(t, reg, provider, model)
 
-	sess, err := svc.CreateSession(ctx, "/work/catalogued", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -243,7 +242,7 @@ func TestContextWindowOverrideReachesEcho(t *testing.T) {
 	svc, _ := defaultLiveWindowServiceCfg(t, reg, provider, Config{Model: model, ContextWindowOverride: overrideW})
 
 	// DEFAULT session (shared-engine echo path): the override beats the live window.
-	def, err := svc.CreateSession(ctx, "/work/override-default", session.ModeDefault, session.Limits{})
+	def, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession(default): %v", err)
 	}
@@ -253,7 +252,7 @@ func TestContextWindowOverrideReachesEcho(t *testing.T) {
 
 	// SELECTOR session (per-session-engine echo path): same override, same single
 	// windowResolver — it must win here too.
-	sel, err := svc.CreateSessionWithProvider(ctx, "/work/override-selector", session.ModeDefault, session.Limits{}, server.ProviderSelector{ProviderID: providerOpenAI, ModelID: model})
+	sel, err := svc.CreateSessionWithProvider(ctx, session.ModeDefault, session.Limits{}, server.ProviderSelector{ProviderID: providerOpenAI, ModelID: model})
 	if err != nil {
 		t.Fatalf("CreateSessionWithProvider(selector): %v", err)
 	}

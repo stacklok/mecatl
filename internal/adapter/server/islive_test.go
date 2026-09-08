@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -28,7 +27,7 @@ func TestServiceIsLiveTracksRunRegistry(t *testing.T) {
 	if svc.IsLive("never-seen") {
 		t.Error("IsLive(unknown id) = true, want false")
 	}
-	sess, err := svc.CreateSession(ctx, "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -90,9 +89,8 @@ func TestServiceIsLiveIncludesEngineChildren(t *testing.T) {
 	engine := agent.NewEngine(agent.Deps{
 		LLM: llm, Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(allowRules(), nil), Model: "test",
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine: engine, Store: memstore.New(), SessionLiveness: tracker,
-		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
 	})
 	if err != nil {
 		t.Fatal(err)

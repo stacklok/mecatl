@@ -216,8 +216,8 @@ func TestRemoteSkillSourceDefaultAndNoFSLogicalAssetWiring(t *testing.T) {
 		tl   tool.Tool
 		env  tool.Environment
 	}{
-		{"default", defaultSkill, tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "default"}, memfs.NewWorkspace("/workspace"), nil)},
-		{"no-fs", noFSSkill, tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: "no-fs"}, nofs.New(), nil)},
+		{"default", defaultSkill, tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "default"}, memfs.NewWorkspace("/workspace"), testReadLedger(), nil)},
+		{"no-fs", noFSSkill, tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: "no-fs"}, nofs.New(), testReadLedger(), nil)},
 	}
 	for _, profile := range profiles {
 		t.Run(profile.name, func(t *testing.T) {
@@ -297,12 +297,7 @@ func TestRemoteSkillSourceBuildRunDefaultAndNoFS(t *testing.T) {
 			}
 			defer built.Close()
 
-			var sess *session.Session
-			if profile == server.ProfileNoFS {
-				sess, err = built.Service.CreateSessionWithProfile(ctx, "", session.ModeDefault, session.Limits{}, server.ProviderSelector{}, profile)
-			} else {
-				sess, err = built.Service.CreateSessionWithProfile(ctx, t.TempDir(), session.ModeDefault, session.Limits{}, server.ProviderSelector{}, profile)
-			}
+			sess, err := built.Service.CreateSessionWithProfile(ctx, session.ModeDefault, session.Limits{}, server.ProviderSelector{}, profile)
 			if err != nil {
 				t.Fatalf("CreateSessionWithProfile: %v", err)
 			}
@@ -830,7 +825,7 @@ func TestBuildCommandDriverProbeOnceAcrossSessionEngines(t *testing.T) {
 	// TWO per-session engines through the production factory (a non-zero
 	// provider selector forces the per-session path).
 	for i := range 2 {
-		if _, serr := built.Service.CreateSessionWithProvider(context.Background(), t.TempDir(),
+		if _, serr := built.Service.CreateSessionWithProvider(context.Background(),
 			session.ModeDefault, defaultLimits(), server.ProviderSelector{ProviderID: providerMock}); serr != nil {
 			t.Fatalf("CreateSessionWithProvider #%d: %v", i, serr)
 		}
@@ -875,7 +870,7 @@ func TestSessionEngineCommandExpanderUsesStashedDriverSource(t *testing.T) {
 		if ferr != nil {
 			t.Fatalf("factory #%d: %v", i, ferr)
 		}
-		sess := session.New(session.SessionID(fmt.Sprintf("cmd-sess-%d", i)), session.ModeDefault, "/ws",
+		sess := session.New(session.SessionID(fmt.Sprintf("cmd-sess-%d", i)), session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"},
 			session.Limits{MaxTurns: 3}, time.Now())
 		drainRun(res.Engine.Run(ctx, sess, memEnvironment("/ws"), agent.RunRequest{Text: "/driver-cmd fix-it", Parts: nil}))
 		expanded := false

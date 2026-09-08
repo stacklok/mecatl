@@ -1,12 +1,12 @@
 ---
 sidebar_position: 2
 title: Capability and deployment matrix
-description: Choose the mecatl deployment surface that provides the capabilities you need.
+description: Choose the Mecatl deployment surface that provides the capabilities you need.
 ---
 
 # Capability and deployment matrix
 
-Most mecatl capabilities come from the shared engine and server composition.
+Most Mecatl capabilities come from the shared engine and server composition.
 Choose a deployment based on the differences that affect your environment:
 where the workspace lives, how state is stored, whether a person can approve
 requests, and which client/API surface you need.

@@ -99,6 +99,10 @@ type SecurityConfig struct {
 	// leaves the path byte-identical to a mecatl without identity: no
 	// validation, no principal, no new failure mode.
 	Validator PrincipalValidator
+	// HTTP bearer challenges are deliberately generic. The configured resource is
+	// a service-wide base identity, while API requests are subordinate paths and
+	// the request Host is untrusted; this middleware cannot prove an exact RFC
+	// 9728 resource identity for a request.
 	// Diagnostics receives sanitized authentication-rejection records. Nil leaves
 	// diagnostics disabled; records never include credentials or validator errors.
 	Diagnostics port.Diagnostics
@@ -623,7 +627,7 @@ func (a *Authenticator) Middleware(next http.Handler) http.Handler {
 					category = authCategoryMissingBearer
 				}
 				a.logRejection(r.Context(), category, "http", "401")
-				w.Header().Set("WWW-Authenticate", "Bearer")
+				w.Header().Set("WWW-Authenticate", protectedResourceChallenge())
 				writeError(w, http.StatusUnauthorized, "missing or invalid bearer token")
 				return
 			}
@@ -661,7 +665,7 @@ func (a *Authenticator) Middleware(next http.Handler) http.Handler {
 				category = authCategoryMissingBearer
 			}
 			a.logRejection(r.Context(), category, "http", "401")
-			w.Header().Set("WWW-Authenticate", "Bearer")
+			w.Header().Set("WWW-Authenticate", protectedResourceChallenge())
 			writeError(w, http.StatusUnauthorized, "missing or invalid bearer token")
 			return
 		}

@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/adapter/permstore"
@@ -32,17 +31,16 @@ func TestCloseCancelsInFlightRun(t *testing.T) {
 		Policy:  permpolicy.NewPolicy(nil, ps),
 		Model:   "test-model",
 	})
-	svc, err := server.NewService(server.Config{
-		Engine:     engine,
-		Store:      store,
-		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+	svc, err := newPlacementTestService(server.Config{
+		Engine: engine,
+		Store:  store,
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
 	}
 	// Do NOT call svc.Close in Cleanup — the test calls it explicitly.
 
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -110,11 +108,11 @@ func TestCloseEngineTimeoutBound(t *testing.T) {
 	})
 
 	// A SessionEngine factory that returns an engine whose Close blocks until release.
-	svc, err := server.NewService(server.Config{
-		Engine:           sharedEngine,
-		Store:            store,
-		Workspaces:       func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		DefaultWorkspace: "/default-ws",
+	svc, err := newPlacementTestService(server.Config{
+		Engine: sharedEngine,
+		Store:  store,
+
+		SharedEngineRoot: "/default-ws",
 		SessionEngine: func(_ context.Context, _ server.ProviderSelector, _ []mcp.ServerConfig, _ server.SessionProfile, _ string, _ session.PermissionMode) (server.SessionEngineResult, error) {
 			return server.SessionEngineResult{
 				Engine: agent.NewEngine(agent.Deps{
@@ -134,9 +132,9 @@ func TestCloseEngineTimeoutBound(t *testing.T) {
 		t.Fatalf("NewService: %v", err)
 	}
 
-	// Create a session with a workspace DIFFERENT from DefaultWorkspace to trigger
-	// the per-session engine path (same mechanism as the worktree-routing tests).
-	sess, err := svc.CreateSession(context.Background(), "/other-ws", session.ModeDefault, session.Limits{})
+	// An explicit selector requires a per-session engine without relying on
+	// client-selected workspace placement.
+	sess, err := svc.CreateSessionWithProvider(context.Background(), session.ModeDefault, session.Limits{}, server.ProviderSelector{ProviderID: "test"})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

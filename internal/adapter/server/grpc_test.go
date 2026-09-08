@@ -17,7 +17,6 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -72,7 +71,7 @@ func newServiceWithImplementation(t *testing.T, llm *mockllm.Provider, rules []g
 		Policy:  permpolicy.NewPolicy(rules, nil),
 		Model:   "test-model",
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTeamTestService(server.Config{
 		Engine:               engine,
 		BuildID:              "test-build",
 		ServerImplementation: implementation,
@@ -82,9 +81,11 @@ func newServiceWithImplementation(t *testing.T, llm *mockllm.Provider, rules []g
 			}
 			return "https://user:secret@provider.example:8443/api/../v1?token=secret#fragment"
 		},
-		Store:      memstore.New(),
-		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		Now:        func() time.Time { return time.Unix(0, 0) },
+		Store: memstore.New(),
+
+		PlacementProvider: testPlacementProvider{},
+		PlacementScope:    "test",
+		Now:               func() time.Time { return time.Unix(0, 0) },
 		// The server reads DefaultCapabilities (composition-computed), not the engine.
 		// In these tests there is no catalog/selector, so the intersection is the bare
 		// adapter caps — mirror that by sourcing them from the wired provider.
@@ -162,7 +163,7 @@ func TestGRPCConverseFullCycle(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	cs, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{Workspace: "/ws"})
+	cs, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -209,7 +210,7 @@ func TestGRPCConverseInvalidUTF8ToolResult(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	cs, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{Workspace: "/ws"})
+	cs, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -262,7 +263,7 @@ func TestGRPCCloseSession(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	cs, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{Workspace: "/ws"})
+	cs, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -319,7 +320,7 @@ func TestGRPCSetMode(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	cs, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{Workspace: "/ws"})
+	cs, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -361,7 +362,7 @@ func TestGRPCConversePermissionApprove(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	cs, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{Workspace: "/ws"})
+	cs, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -434,10 +435,10 @@ func newLearningService(t *testing.T, llm *mockllm.Provider, rules []governance.
 		Model:   "test-model",
 		Store:   store,
 	})
-	svc, err := server.NewService(server.Config{
-		Engine:              engine,
-		Store:               store,
-		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+	svc, err := newPlacementTeamTestService(server.Config{
+		Engine: engine,
+		Store:  store,
+
 		Now:                 func() time.Time { return time.Unix(0, 0) },
 		DefaultCapabilities: llm.Capabilities(),
 	})
@@ -471,7 +472,7 @@ func TestGRPCConverseAllowAlwaysLearns(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	cs, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{Workspace: "/ws"})
+	cs, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -561,7 +562,7 @@ func TestGRPCConverseCancel(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	cs, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{Workspace: "/ws"})
+	cs, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -660,7 +661,7 @@ func TestGRPCCreateSessionWithCarryover(t *testing.T) {
 	// Build the source over gRPC CreateSession, then drive its turn through the
 	// SERVICE-level API (StartRun→drain→Persist→FinishRun, the driveCompletedTurn
 	// pattern) so its history is durably persisted for loadAndReopen on carryover.
-	src, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{Workspace: "/ws/grpc-carry"})
+	src, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{})
 	if err != nil {
 		t.Fatalf("CreateSession source: %v", err)
 	}
@@ -670,8 +671,7 @@ func TestGRPCCreateSessionWithCarryover(t *testing.T) {
 	}
 
 	// The wire field: SourceSessionId must cross the handler into a seeded history.
-	cs, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{
-		Workspace:       "/ws/grpc-carry",
+	cs, err := client.ForkSession(ctx, &mecatlv1.ForkSessionRequest{
 		SourceSessionId: src.GetSessionId(),
 	})
 	if err != nil {
@@ -742,10 +742,10 @@ func TestGRPCCreateSessionCrossProviderCarryover(t *testing.T) {
 		Model:   "test-model",
 	})
 	store := memstore.New()
-	svc, err := server.NewService(server.Config{
-		Engine:        shared,
-		Store:         store,
-		Workspaces:    func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+	svc, err := newPlacementTeamTestService(server.Config{
+		Engine: shared,
+		Store:  store,
+
 		DefaultLimits: session.Limits{MaxTurns: 10, MaxToolCalls: 20},
 		Now:           func() time.Time { return time.Unix(0, 0) },
 		SessionEngine: carryoverFactory(newReply, &seen),
@@ -767,8 +767,7 @@ func TestGRPCCreateSessionCrossProviderCarryover(t *testing.T) {
 	// The WIRE call: source_session_id + an explicit CROSS-provider selector.
 	newSel := server.ProviderSelector{ProviderID: "openai", ModelID: "gpt-4o"}
 	seen.Store(server.ProviderSelector{})
-	cs, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{
-		Workspace:       "/ws/grpc-cross",
+	cs, err := client.ForkSession(ctx, &mecatlv1.ForkSessionRequest{
 		SourceSessionId: "grpc-src-cross",
 		ProviderId:      newSel.ProviderID,
 		ModelId:         newSel.ModelID,
@@ -928,7 +927,7 @@ func TestGRPCRunTeamEmitsOutcomeFrame(t *testing.T) {
 	defer cancel()
 
 	created, err := client.CreateTeam(ctx, &mecatlv1.CreateTeamRequest{
-		Workspace: "/ws", Name: "test",
+		SessionId: "source", Name: "test",
 		Members: []*mecatlv1.TeammateSpec{{Name: "lead", Lead: true, InitialPrompt: "go"}},
 	})
 	if err != nil {
@@ -988,7 +987,7 @@ func TestGRPCRunTeamSurfacesBudgetExhausted(t *testing.T) {
 	defer cancel()
 
 	created, err := client.CreateTeam(ctx, &mecatlv1.CreateTeamRequest{
-		Workspace: "/ws", Name: "test", Goal: "do one round of work",
+		SessionId: "source", Name: "test", Goal: "do one round of work",
 		MaxTeamTokens: 500,
 		Members: []*mecatlv1.TeammateSpec{
 			{Name: "lead", Lead: true, InitialPrompt: "delegate then synthesise"},

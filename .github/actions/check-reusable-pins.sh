@@ -22,7 +22,7 @@ WF="${ROOT}/workflows/mecatequi-reusable.yml"
 
 # The CURRENT release tag the reusable workflow's sibling-action pins must equal. Bump this
 # in lockstep with the @vX.Y.Z pins in mecatequi-reusable.yml at release time.
-EXPECTED_TAG="${EXPECTED_TAG:-v0.0.23}"
+EXPECTED_TAG="${EXPECTED_TAG:-v0.0.26}"
 
 if [ ! -f "${WF}" ]; then
   echo "check-reusable-pins: ${WF} not found" >&2

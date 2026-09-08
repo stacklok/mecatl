@@ -1,6 +1,7 @@
 package learning
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/stacklok/mecatl/engine/session"
@@ -161,9 +162,11 @@ func (r AdmissionReason) Valid() bool {
 	}
 }
 
-// AdmissionRequest contains the bounded reflection input to classify.
+// AdmissionRequest contains the borrowed completed trajectory to classify.
+// Policies must not retain or copy the full source.
 type AdmissionRequest struct {
-	Input Input
+	Trajectory Trajectory
+	Signals    []Signal
 }
 
 // AdmissionDecision is deterministic and content-free apart from its validated signals.
@@ -177,8 +180,9 @@ type AdmissionDecision struct {
 }
 
 // AdmissionPolicy decides whether an automatic completed trajectory warrants reflection.
+// Decide must observe ctx while scanning the borrowed source.
 type AdmissionPolicy interface {
-	Decide(AdmissionRequest) AdmissionDecision
+	Decide(context.Context, AdmissionRequest) (AdmissionDecision, error)
 }
 
 // ThresholdPolicy implements the standard weighted and hard-trigger policy.
@@ -187,36 +191,47 @@ type ThresholdPolicy struct{ Sensitivity Sensitivity }
 // Decide applies hard provenance, stop/kind exclusions, standard weights, and modifiers.
 //
 //nolint:gocyclo // the closed policy table is clearest as one visibly ordered decision
-func (p ThresholdPolicy) Decide(req AdmissionRequest) AdmissionDecision {
-	in := req.Input
+func (p ThresholdPolicy) Decide(ctx context.Context, req AdmissionRequest) (AdmissionDecision, error) {
+	if err := ctx.Err(); err != nil {
+		return AdmissionDecision{}, err
+	}
+	trajectory := req.Trajectory
 	threshold := p.Sensitivity.Threshold()
 	skipped := func(reason AdmissionReason) AdmissionDecision {
 		return AdmissionDecision{Class: AdmissionSkipped, Threshold: threshold, Reasons: []AdmissionReason{reason}}
 	}
-	if in.Trajectory.Kind != session.SessionKindMain {
-		return skipped(ReasonNonMainSession)
+	if trajectory.Kind != session.SessionKindMain {
+		return skipped(ReasonNonMainSession), nil
 	}
-	span := in.Trajectory.Current
-	if !span.Valid(len(in.Trajectory.Messages)) || !session.IsGenuineUserPrompt(in.Trajectory.Messages[span.Start]) {
-		return skipped(ReasonInvalidCurrentSpan)
+	span := trajectory.Current
+	if !span.Valid(len(trajectory.Messages)) || !session.IsGenuineUserPrompt(trajectory.Messages[span.Start]) {
+		return skipped(ReasonInvalidCurrentSpan), nil
 	}
-	signals := DetectSignalsScoped(in, DetectionScope{Current: span})
+	for range trajectory.Messages {
+		if err := ctx.Err(); err != nil {
+			return AdmissionDecision{}, err
+		}
+	}
+	signals := detectSignalsScoped(trajectory, nil, req.Signals, nil, DetectionScope{Current: span})
+	if err := ctx.Err(); err != nil {
+		return AdmissionDecision{}, err
+	}
 	for _, signal := range signals {
 		if signal.Kind == SignalExplicitRemember || signal.Kind == SignalExplicitLearnProcedure {
-			if hardStop(in.Trajectory.Stop) && signalHasGenuineCurrentPrompt(in, signal, span) {
+			if hardStop(trajectory.Stop) && signalHasGenuineCurrentPrompt(trajectory, signal, span) {
 				reason := ReasonExplicitRemember
 				if signal.Kind == SignalExplicitLearnProcedure {
 					reason = ReasonExplicitLearnProcedure
 				}
-				return AdmissionDecision{Admitted: true, Class: AdmissionHard, Threshold: threshold, Reasons: []AdmissionReason{reason}, Signals: signals}
+				return AdmissionDecision{Admitted: true, Class: AdmissionHard, Threshold: threshold, Reasons: []AdmissionReason{reason}, Signals: signals}, nil
 			}
 		}
 	}
-	if in.Trajectory.Stop != session.StopEndTurn {
-		return skipped(ReasonIneligibleStop)
+	if trajectory.Stop != session.StopEndTurn {
+		return skipped(ReasonIneligibleStop), nil
 	}
-	if in.Trajectory.Counters.Turns <= 1 && in.Trajectory.Counters.ToolCalls == 0 {
-		return skipped(ReasonTrivialRun)
+	if trajectory.Counters.Turns <= 1 && trajectory.Counters.ToolCalls == 0 {
+		return skipped(ReasonTrivialRun), nil
 	}
 
 	score := 0
@@ -241,17 +256,17 @@ func (p ThresholdPolicy) Decide(req AdmissionRequest) AdmissionDecision {
 		}
 	}
 	if score == 0 {
-		return skipped(ReasonBelowThreshold)
+		return skipped(ReasonBelowThreshold), nil
 	}
-	if in.Trajectory.Counters.Turns >= 4 {
+	if trajectory.Counters.Turns >= 4 {
 		score++
 		reasons = append(reasons, ReasonModelTurnsModifier)
 	}
-	if successfulToolResults(in, span) >= 5 {
+	if successfulToolResults(trajectory, span) >= 5 {
 		score++
 		reasons = append(reasons, ReasonSuccessfulToolsModifier)
 	}
-	if in.Trajectory.Usage.TotalTokens() >= 12000 {
+	if trajectory.Usage.TotalTokens() >= 12000 {
 		score++
 		reasons = append(reasons, ReasonRunTokensModifier)
 	}
@@ -262,26 +277,26 @@ func (p ThresholdPolicy) Decide(req AdmissionRequest) AdmissionDecision {
 	} else {
 		reasons = append(reasons, ReasonBelowThreshold)
 	}
-	return AdmissionDecision{Admitted: admitted, Class: class, Score: score, Threshold: threshold, Reasons: reasons, Signals: signals}
+	return AdmissionDecision{Admitted: admitted, Class: class, Score: score, Threshold: threshold, Reasons: reasons, Signals: signals}, nil
 }
 
 func hardStop(stop session.StopReason) bool {
 	return stop == session.StopEndTurn || stop == session.StopMaxTurns || stop == session.StopMaxToolCalls || stop == session.StopBudget
 }
 
-func signalHasGenuineCurrentPrompt(in Input, signal Signal, span MessageSpan) bool {
+func signalHasGenuineCurrentPrompt(trajectory Trajectory, signal Signal, span MessageSpan) bool {
 	for _, ref := range signal.Evidence {
-		if ref.Locator == EvidenceMessage && span.Contains(ref.Ordinal) && ref.Ordinal < len(in.Trajectory.Messages) && session.IsGenuineUserPrompt(in.Trajectory.Messages[ref.Ordinal]) {
+		if ref.Locator == EvidenceMessage && span.Contains(ref.Ordinal) && ref.Ordinal < len(trajectory.Messages) && session.IsGenuineUserPrompt(trajectory.Messages[ref.Ordinal]) {
 			return true
 		}
 	}
 	return false
 }
 
-func successfulToolResults(in Input, span MessageSpan) int {
+func successfulToolResults(trajectory Trajectory, span MessageSpan) int {
 	count := 0
 	for i := span.Start; i < span.End; i++ {
-		message := in.Trajectory.Messages[i]
+		message := trajectory.Messages[i]
 		if message.Role == session.RoleTool && message.ToolResult != nil && !message.ToolResult.IsError {
 			count++
 		}
@@ -293,18 +308,33 @@ func successfulToolResults(in Input, span MessageSpan) int {
 type AlwaysPolicy struct{}
 
 // Decide admits any valid main/current trajectory.
-func (AlwaysPolicy) Decide(req AdmissionRequest) AdmissionDecision {
-	tr := req.Input.Trajectory
-	if tr.Kind != session.SessionKindMain || !tr.Current.Valid(len(tr.Messages)) {
-		return AdmissionDecision{Class: AdmissionSkipped, Reasons: []AdmissionReason{ReasonPolicyNever}}
+func (AlwaysPolicy) Decide(ctx context.Context, req AdmissionRequest) (AdmissionDecision, error) {
+	if err := ctx.Err(); err != nil {
+		return AdmissionDecision{}, err
 	}
-	return AdmissionDecision{Admitted: true, Class: AdmissionWeighted, Reasons: []AdmissionReason{ReasonPolicyAlways}, Signals: DetectSignalsScoped(req.Input, DetectionScope{Current: tr.Current})}
+	tr := req.Trajectory
+	if tr.Kind != session.SessionKindMain || !tr.Current.Valid(len(tr.Messages)) {
+		return AdmissionDecision{Class: AdmissionSkipped, Reasons: []AdmissionReason{ReasonPolicyNever}}, nil
+	}
+	for range tr.Messages {
+		if err := ctx.Err(); err != nil {
+			return AdmissionDecision{}, err
+		}
+	}
+	signals := detectSignalsScoped(tr, nil, req.Signals, nil, DetectionScope{Current: tr.Current})
+	if err := ctx.Err(); err != nil {
+		return AdmissionDecision{}, err
+	}
+	return AdmissionDecision{Admitted: true, Class: AdmissionWeighted, Reasons: []AdmissionReason{ReasonPolicyAlways}, Signals: signals}, nil
 }
 
 // NeverPolicy disables automatic admission.
 type NeverPolicy struct{}
 
 // Decide always returns the closed policy-never skip.
-func (NeverPolicy) Decide(AdmissionRequest) AdmissionDecision {
-	return AdmissionDecision{Class: AdmissionSkipped, Reasons: []AdmissionReason{ReasonPolicyNever}}
+func (NeverPolicy) Decide(ctx context.Context, _ AdmissionRequest) (AdmissionDecision, error) {
+	if err := ctx.Err(); err != nil {
+		return AdmissionDecision{}, err
+	}
+	return AdmissionDecision{Class: AdmissionSkipped, Reasons: []AdmissionReason{ReasonPolicyNever}}, nil
 }

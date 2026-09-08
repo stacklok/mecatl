@@ -5,7 +5,6 @@ package server
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"strings"
 	"sync"
@@ -13,9 +12,12 @@ import (
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/encoding/protowire"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
+	"github.com/stacklok/mecatl/contracts/sessionaffinity"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
@@ -35,16 +37,53 @@ func NewHarnessServer(svc *Service) *HarnessServer {
 	return &HarnessServer{svc: svc}
 }
 
+const invalidSessionAffinityMessage = "invalid session affinity metadata"
+
+func validateGRPCCreateSessionAffinity(ctx context.Context, debugTargetID string) error {
+	md, _ := metadata.FromIncomingContext(ctx)
+	values := md.Get(sessionaffinity.HeaderName)
+	if len(values) == 0 {
+		return nil
+	}
+	if debugTargetID == "" || len(values) != 1 || !sessionaffinity.ValidValue(values[0]) || values[0] != debugTargetID {
+		return status.Error(codes.InvalidArgument, invalidSessionAffinityMessage)
+	}
+	return nil
+}
+
+// validateGRPCSessionAffinity validates the optional routing hint without
+// granting it authority. An empty authoritativeID validates metadata shape only,
+// which lets Converse reject ambiguous metadata before its first Recv.
+func validateGRPCSessionAffinity(ctx context.Context, authoritativeID string) error {
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return nil
+	}
+	values := md.Get(sessionaffinity.HeaderName)
+	if len(values) == 0 {
+		return nil
+	}
+	if len(values) != 1 || !sessionaffinity.ValidValue(values[0]) || (authoritativeID != "" && values[0] != authoritativeID) {
+		return status.Error(codes.InvalidArgument, invalidSessionAffinityMessage)
+	}
+	return nil
+}
+
 // compile-time assertion that HarnessServer satisfies the generated interface.
 var _ mecatlv1.HarnessServiceServer = (*HarnessServer)(nil)
 
 // CreateSession allocates a new session and returns its id.
 func (h *HarnessServer) CreateSession(ctx context.Context, req *mecatlv1.CreateSessionRequest) (*mecatlv1.CreateSessionResponse, error) {
-	// Session profile (issue #55): "" = default (full filesystem), "no-fs" = the
-	// no-filesystem profile; anything else is a loud InvalidArgument. The
-	// workspace requirement is PROFILE-AWARE and enforced in the service
-	// (createSession): default requires a workspace, no-fs requires an EMPTY one
-	// — so there is deliberately NO unconditional empty-workspace guard here.
+	if hasLegacyCreateSessionField(req.ProtoReflect().GetUnknown()) {
+		return nil, status.Error(codes.InvalidArgument, "legacy workspace placement fields are unsupported")
+	}
+	if err := validateGRPCCreateSessionAffinity(ctx, req.GetDebugTargetSessionId()); err != nil {
+		return nil, err
+	}
+	// Session profile: "" binds the server-owned default placement and "no-fs"
+	// requests explicit filesystem attenuation; anything else is a loud
+	// InvalidArgument. Binding and exact EnvironmentRef validation happen in the
+	// service, so this transport never accepts or derives a workspace.
 	profile, err := ParseSessionProfile(req.GetProfile())
 	if err != nil {
 		return nil, toStatus(err)
@@ -55,9 +94,6 @@ func (h *HarnessServer) CreateSession(ctx context.Context, req *mecatlv1.CreateS
 	// provider_id, surfaces as InvalidArgument via toStatus.
 	sel := ProviderSelector{ProviderID: req.GetProviderId(), ModelID: req.GetModelId(), ReasoningEffort: req.GetReasoningEffort()}
 	var opts []CreateSessionOption
-	if src := req.GetSourceSessionId(); src != "" {
-		opts = append(opts, WithSourceSession(session.SessionID(src)))
-	}
 	if target := req.GetDebugTargetSessionId(); target != "" {
 		opts = append(opts, WithDebugTarget(session.SessionID(target)))
 	}
@@ -76,7 +112,7 @@ func (h *HarnessServer) CreateSession(ctx context.Context, req *mecatlv1.CreateS
 	if !grant.IsEmpty() {
 		opts = append(opts, WithClientMCP(grant))
 	}
-	sess, err := h.svc.CreateSessionWithProfile(ctx, req.GetWorkspace(), modeFromProto(req.GetMode()), limitsFromProto(req.GetLimits()), sel, profile, opts...)
+	sess, err := h.svc.CreateSessionWithProfile(ctx, modeFromProto(req.GetMode()), limitsFromProto(req.GetLimits()), sel, profile, opts...)
 	if err != nil {
 		return nil, toStatus(err)
 	}
@@ -97,7 +133,27 @@ func (h *HarnessServer) CreateSession(ctx context.Context, req *mecatlv1.CreateS
 			Audio: scaps.Audio,
 		},
 		ResolvedModel: resolvedModelToProto(h.svc.ResolvedModel(sess.ID)),
+		Placement:     placementMetadataToProto(sess.Placement),
 	}, nil
+}
+
+func hasLegacyCreateSessionField(raw []byte) bool {
+	for len(raw) > 0 {
+		number, wireType, n := protowire.ConsumeTag(raw)
+		if n < 0 {
+			return false
+		}
+		raw = raw[n:]
+		if number == 1 || number == 8 {
+			return true
+		}
+		n = protowire.ConsumeFieldValue(number, wireType, raw)
+		if n < 0 {
+			return false
+		}
+		raw = raw[n:]
+	}
+	return false
 }
 
 // clientMCPFromProto maps the wire McpServerSpec list onto the transport-neutral
@@ -132,6 +188,9 @@ func (h *HarnessServer) GetServerInfo(_ context.Context, req *mecatlv1.GetServer
 
 // GetSession returns a snapshot of the requested session.
 func (h *HarnessServer) GetSession(ctx context.Context, req *mecatlv1.GetSessionRequest) (*mecatlv1.GetSessionResponse, error) {
+	if err := validateGRPCSessionAffinity(ctx, req.GetSessionId()); err != nil {
+		return nil, err
+	}
 	if req.GetSessionId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "session_id is required")
 	}
@@ -144,13 +203,19 @@ func (h *HarnessServer) GetSession(ctx context.Context, req *mecatlv1.GetSession
 	// (or is empty) gets a derived label so GetSession shows one without a
 	// write-on-read — sess.Title is NOT mutated.
 	if sess.Title == "" {
-		proto.Title = DeriveTitle(sess)
+		derived := DeriveTitle(sess)
+		//nolint:staticcheck // dual-write compatibility title alongside canonical metadata.
+		proto.Title = derived
+		proto.TitleMetadata.Title = derived
 	}
 	return &mecatlv1.GetSessionResponse{Session: proto}, nil
 }
 
 // GetSessionTranscript returns the owned session's snapshot-derived transcript.
 func (h *HarnessServer) GetSessionTranscript(ctx context.Context, req *mecatlv1.GetSessionTranscriptRequest) (*mecatlv1.GetSessionTranscriptResponse, error) {
+	if err := validateGRPCSessionAffinity(ctx, req.GetSessionId()); err != nil {
+		return nil, err
+	}
 	if req.GetSessionId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "session_id is required")
 	}
@@ -163,6 +228,9 @@ func (h *HarnessServer) GetSessionTranscript(ctx context.Context, req *mecatlv1.
 
 // SetMode changes the permission posture of the requested session.
 func (h *HarnessServer) SetMode(ctx context.Context, req *mecatlv1.SetModeRequest) (*mecatlv1.SetModeResponse, error) {
+	if err := validateGRPCSessionAffinity(ctx, req.GetSessionId()); err != nil {
+		return nil, err
+	}
 	if req.GetSessionId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "session_id is required")
 	}
@@ -178,6 +246,9 @@ func (h *HarnessServer) SetMode(ctx context.Context, req *mecatlv1.SetModeReques
 // (idempotent). It calls Service.EndSession, NOT the void Service.CloseSession, so
 // an unknown id surfaces as NotFound rather than a silent success.
 func (h *HarnessServer) CloseSession(ctx context.Context, req *mecatlv1.CloseSessionRequest) (*mecatlv1.CloseSessionResponse, error) {
+	if err := validateGRPCSessionAffinity(ctx, req.GetSessionId()); err != nil {
+		return nil, err
+	}
 	if req.GetSessionId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "session_id is required")
 	}
@@ -189,6 +260,9 @@ func (h *HarnessServer) CloseSession(ctx context.Context, req *mecatlv1.CloseSes
 
 // RenameSession explicitly replaces an idle main session's persisted title.
 func (h *HarnessServer) RenameSession(ctx context.Context, req *mecatlv1.RenameSessionRequest) (*mecatlv1.RenameSessionResponse, error) {
+	if err := validateGRPCSessionAffinity(ctx, req.GetSessionId()); err != nil {
+		return nil, err
+	}
 	if req.GetSessionId() == "" || strings.TrimSpace(req.GetTitle()) == "" {
 		return nil, status.Error(codes.InvalidArgument, "session_id and non-blank title are required")
 	}
@@ -201,6 +275,9 @@ func (h *HarnessServer) RenameSession(ctx context.Context, req *mecatlv1.RenameS
 
 // DeleteSession physically removes an idle main session and store-managed sidecars.
 func (h *HarnessServer) DeleteSession(ctx context.Context, req *mecatlv1.DeleteSessionRequest) (*mecatlv1.DeleteSessionResponse, error) {
+	if err := validateGRPCSessionAffinity(ctx, req.GetSessionId()); err != nil {
+		return nil, err
+	}
 	if req.GetSessionId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "session_id is required")
 	}
@@ -212,6 +289,9 @@ func (h *HarnessServer) DeleteSession(ctx context.Context, req *mecatlv1.DeleteS
 
 // CompactSession applies one out-of-band compaction pass to an owned session.
 func (h *HarnessServer) CompactSession(ctx context.Context, req *mecatlv1.CompactSessionRequest) (*mecatlv1.CompactSessionResponse, error) {
+	if err := validateGRPCSessionAffinity(ctx, req.GetSessionId()); err != nil {
+		return nil, err
+	}
 	if req.GetSessionId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "session_id is required")
 	}
@@ -222,72 +302,87 @@ func (h *HarnessServer) CompactSession(ctx context.Context, req *mecatlv1.Compac
 	return &mecatlv1.CompactSessionResponse{Compacted: result.Changed}, nil
 }
 
-// ForkSession creates a peer session from an existing session's history snapshot
-// (ADR 0065). The new session inherits the source's mode, workspace, limits, and
-// provider/model/profile labels; same provider and model only, with the ONE
-// optional selector delta being a reasoning-effort override (ADR 0068, empty
-// inherits). The source must be at a turn boundary (idle/terminal); a
-// running/awaiting source is rejected with FailedPrecondition. No streaming — the
-// fork is synchronous.
+// ClearSession creates a distinct empty-history successor.
+func (h *HarnessServer) ClearSession(ctx context.Context, req *mecatlv1.ClearSessionRequest) (*mecatlv1.ClearSessionResponse, error) {
+	if err := validateGRPCSessionAffinity(ctx, req.GetSourceSessionId()); err != nil {
+		return nil, err
+	}
+	if req.GetSourceSessionId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "source_session_id is required")
+	}
+	id, err := h.svc.ClearSessionSuccessor(ctx, session.SessionID(req.GetSourceSessionId()), SuccessorPlacement{Selector: req.GetWorktreeSelector(), SelectorPresent: req.WorktreeSelector != nil})
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	created, err := h.svc.GetSession(ctx, id)
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return &mecatlv1.ClearSessionResponse{SessionId: string(id), Placement: placementMetadataToProto(created.Placement)}, nil
+}
+
+// ForkSession creates a history-carrying successor.
 func (h *HarnessServer) ForkSession(ctx context.Context, req *mecatlv1.ForkSessionRequest) (*mecatlv1.ForkSessionResponse, error) {
+	if err := validateGRPCSessionAffinity(ctx, req.GetSourceSessionId()); err != nil {
+		return nil, err
+	}
 	if req.GetSourceSessionId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "source_session_id is required")
 	}
-	id, err := h.svc.ForkSession(ctx, session.SessionID(req.GetSourceSessionId()), req.GetTitle(), req.GetReasoningEffort())
+	id, err := h.svc.ForkSessionSuccessor(ctx, ForkSuccessorRequest{
+		Source: session.SessionID(req.GetSourceSessionId()), Placement: SuccessorPlacement{Selector: req.GetWorktreeSelector(), SelectorPresent: req.WorktreeSelector != nil},
+		Title: req.GetTitle(), ProviderID: req.GetProviderId(), ModelID: req.GetModelId(), ReasoningEffort: req.GetReasoningEffort(),
+	})
 	if err != nil {
 		return nil, toStatus(err)
 	}
-	return &mecatlv1.ForkSessionResponse{SessionId: string(id)}, nil
+	created, err := h.svc.GetSession(ctx, id)
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return &mecatlv1.ForkSessionResponse{SessionId: string(id), Placement: placementMetadataToProto(created.Placement)}, nil
 }
 
-func adoptionBindingsFromProto(binding *mecatlv1.AdoptionBindings) (AdoptionBindings, error) {
-	if binding == nil {
-		return AdoptionBindings{}, fmt.Errorf("%w: bindings are required", ErrInvalidArgument)
+func (h *HarnessServer) startConverse(ctx context.Context, first *mecatlv1.ConverseRequest) (session.SessionID, *agent.Run, bool, error) {
+	switch {
+	case first.GetPrompt() != nil:
+		prompt := first.GetPrompt()
+		if prompt.GetSessionId() == "" {
+			return "", nil, false, status.Error(codes.InvalidArgument, "converse: prompt session_id is required")
+		}
+		if prompt.GetText() == "" && len(prompt.GetParts()) == 0 {
+			return "", nil, false, status.Error(codes.InvalidArgument, "converse: prompt text or parts is required")
+		}
+		parts, err := contentFromProto(prompt.GetParts())
+		if err != nil {
+			return "", nil, false, status.Error(codes.InvalidArgument, err.Error())
+		}
+		id := session.SessionID(prompt.GetSessionId())
+		if err := validateGRPCSessionAffinity(ctx, string(id)); err != nil {
+			return "", nil, false, err
+		}
+		run, err := h.svc.StartInteractiveRunContent(ctx, id, prompt.GetText(), parts)
+		if err != nil {
+			return "", nil, false, toStatus(err)
+		}
+		return id, run, false, nil
+	case first.GetRetry() != nil:
+		retry := first.GetRetry()
+		if retry.GetSessionId() == "" {
+			return "", nil, false, status.Error(codes.InvalidArgument, "converse: retry session_id is required")
+		}
+		id := session.SessionID(retry.GetSessionId())
+		if err := validateGRPCSessionAffinity(ctx, string(id)); err != nil {
+			return "", nil, false, err
+		}
+		run, err := h.svc.RetryFailedRun(ctx, id)
+		if err != nil {
+			return "", nil, false, toStatus(err)
+		}
+		return id, run, true, nil
+	default:
+		return "", nil, false, status.Error(codes.InvalidArgument, "converse: first frame must be a prompt or retry")
 	}
-	profile, err := ParseSessionProfile(binding.GetProfile())
-	if err != nil {
-		return AdoptionBindings{}, err
-	}
-	return AdoptionBindings{
-		Workspace:      binding.GetWorkspace(),
-		EnvironmentRef: session.EnvironmentRef{Kind: session.EnvironmentKind(binding.GetEnvironmentKind()), ID: binding.GetEnvironmentId()},
-		ProviderID:     binding.GetProviderId(), ModelID: binding.GetModelId(), Profile: profile,
-	}, nil
-}
-
-func adoptionBindingsToProto(binding AdoptionBindings) *mecatlv1.AdoptionBindings {
-	return &mecatlv1.AdoptionBindings{Workspace: binding.Workspace, EnvironmentKind: string(binding.EnvironmentRef.Kind), EnvironmentId: binding.EnvironmentRef.ID, ProviderId: binding.ProviderID, ModelId: binding.ModelID, Profile: string(binding.Profile)}
-}
-
-func (h *HarnessServer) PreflightSessionAdoption(ctx context.Context, req *mecatlv1.PreflightSessionAdoptionRequest) (*mecatlv1.PreflightSessionAdoptionResponse, error) {
-	if req.GetSourceSessionId() == "" {
-		return nil, status.Error(codes.InvalidArgument, "source_session_id is required")
-	}
-	bindings, err := adoptionBindingsFromProto(req.GetBindings())
-	if err != nil {
-		return nil, toStatus(err)
-	}
-	result, err := h.svc.PreflightSessionAdoption(ctx, session.SessionID(req.GetSourceSessionId()), bindings)
-	if err != nil {
-		return nil, toStatus(err)
-	}
-	return &mecatlv1.PreflightSessionAdoptionResponse{Eligible: result.Eligible, ReasonCode: string(result.Reason), Bindings: adoptionBindingsToProto(result.Bindings)}, nil
-}
-
-func (h *HarnessServer) AdoptSession(ctx context.Context, req *mecatlv1.AdoptSessionRequest) (*mecatlv1.AdoptSessionResponse, error) {
-	if req.GetSourceSessionId() == "" || req.GetIdempotencyKey() == "" {
-		return nil, status.Error(codes.InvalidArgument, "source_session_id and idempotency_key are required")
-	}
-	bindings, err := adoptionBindingsFromProto(req.GetBindings())
-	if err != nil {
-		return nil, toStatus(err)
-	}
-	sess, err := h.svc.AdoptSession(ctx, session.SessionID(req.GetSourceSessionId()), req.GetIdempotencyKey(), bindings)
-	if err != nil {
-		return nil, toStatus(err)
-	}
-	caps := h.svc.SessionCapabilities(sess.ID)
-	return &mecatlv1.AdoptSessionResponse{SessionId: string(sess.ID), SourceSessionId: string(adoptionSourceID(sess)), Capabilities: h.svc.capabilities(), SessionCapabilities: &mecatlv1.SessionCapabilities{Image: caps.Image, Audio: caps.Audio}, ResolvedModel: resolvedModelToProto(h.svc.ResolvedModel(sess.ID))}, nil
 }
 
 // Converse drives one run over a bidi stream. The first frame MUST be a Prompt
@@ -297,6 +392,9 @@ func (h *HarnessServer) AdoptSession(ctx context.Context, req *mecatlv1.AdoptSes
 // terminal result was delivered) or the stream context is cancelled.
 func (h *HarnessServer) Converse(stream mecatlv1.HarnessService_ConverseServer) error {
 	ctx := stream.Context()
+	if err := validateGRPCSessionAffinity(ctx, ""); err != nil {
+		return err
+	}
 
 	first, err := stream.Recv()
 	if err != nil {
@@ -305,41 +403,11 @@ func (h *HarnessServer) Converse(stream mecatlv1.HarnessService_ConverseServer) 
 		}
 		return err
 	}
-	var (
-		id       session.SessionID
-		run      *agent.Run
-		retrying bool
-	)
-	switch {
-	case first.GetPrompt() != nil:
-		prompt := first.GetPrompt()
-		if prompt.GetSessionId() == "" {
-			return status.Error(codes.InvalidArgument, "converse: prompt session_id is required")
-		}
-		if prompt.GetText() == "" && len(prompt.GetParts()) == 0 {
-			return status.Error(codes.InvalidArgument, "converse: prompt text or parts is required")
-		}
-		parts, perr := contentFromProto(prompt.GetParts())
-		if perr != nil {
-			return status.Error(codes.InvalidArgument, perr.Error())
-		}
-		id = session.SessionID(prompt.GetSessionId())
-		run, err = h.svc.StartRunContent(ctx, id, prompt.GetText(), parts)
-	case first.GetRetry() != nil:
-		retry := first.GetRetry()
-		if retry.GetSessionId() == "" {
-			return status.Error(codes.InvalidArgument, "converse: retry session_id is required")
-		}
-		id = session.SessionID(retry.GetSessionId())
-		retrying = true
-		run, err = h.svc.RetryFailedRun(ctx, id)
-	default:
-		return status.Error(codes.InvalidArgument, "converse: first frame must be a prompt or retry")
-	}
+	id, run, _, err := h.startConverse(ctx, first)
 	if err != nil {
-		return toStatus(err)
+		return err
 	}
-	defer h.svc.deregister(id, run)
+	defer h.svc.finishRelayRun(context.WithoutCancel(ctx), id, run)
 
 	// The single-writer gate for EVERY Send on this bidi stream: a gRPC stream
 	// is NOT goroutine-safe — Send called concurrently from the RecoverNotice
@@ -373,7 +441,8 @@ func (h *HarnessServer) Converse(stream mecatlv1.HarnessService_ConverseServer) 
 	// frame never hits the terminal original behind the client's back).
 	ct := &controlTarget{run: run}
 
-	rl := &runRelay{ctx: ctx, logCtx: context.WithoutCancel(ctx), id: id, acks: steerAcks, snd: snd}
+	controlErrors := make(chan error, 1)
+	rl := &runRelay{ctx: ctx, logCtx: context.WithoutCancel(ctx), id: id, acks: steerAcks, controlErr: controlErrors, snd: snd}
 	rl.recorder = NewRunEventRecorder(rl.logCtx, h.svc, id)
 
 	// Read subsequent control frames concurrently so an approval/cancel/steer
@@ -430,14 +499,12 @@ func (h *HarnessServer) Converse(stream mecatlv1.HarnessService_ConverseServer) 
 		defer close(done)
 		defer rl.recorder.Close()
 		pushErr(h.relayRun(rl, run))
-		if retrying {
-			h.svc.Persist(context.WithoutCancel(ctx), id)
-		}
+		// Terminal persistence is owned by RunEventRecorder.Observe(EvResult).
 		// The terminal original must leave the registry before a steer already
 		// being routed can reopen the session. Finish it before sealing the
 		// mailbox; a route that began before the seal is allowed to post its
 		// promoted run, while a later frame is correctly too late.
-		h.svc.FinishRun(id, run)
+		h.svc.finishRelayRun(rl.logCtx, id, run)
 		// Seal new routes and wait only for a Steer handler that has already
 		// received its frame. This closes the receive→post race without adding a
 		// grace delay to ordinary completed runs.
@@ -452,7 +519,7 @@ func (h *HarnessServer) Converse(stream mecatlv1.HarnessService_ConverseServer) 
 			// never the terminal original.
 			ct.swap(p.run)
 			pushErr(h.relayRun(rl, p.run))
-			h.svc.FinishRun(id, p.run)
+			h.svc.finishRelayRun(rl.logCtx, id, p.run)
 			// The promoted run's terminal ack is SENT INLINE (never the ack
 			// lane — relayRun already returned, so a lane-queued ack could lose
 			// the select race to the closed events channel and ride after the
@@ -549,13 +616,14 @@ func (s *streamSender) Send(m *mecatlv1.ConverseResponse) error {
 // on the SAME goroutine (one relayRun call at a time), so no cross-goroutine
 // access exists by construction.
 type runRelay struct {
-	ctx      context.Context
-	logCtx   context.Context
-	id       session.SessionID
-	acks     chan *mecatlv1.SteerAck
-	snd      *streamSender
-	recorder *RunEventRecorder
-	sendErr  error
+	ctx        context.Context
+	logCtx     context.Context
+	id         session.SessionID
+	acks       chan *mecatlv1.SteerAck
+	controlErr chan error
+	snd        *streamSender
+	recorder   *RunEventRecorder
+	sendErr    error
 }
 
 // sendEvent relays one run event through the streamSender, applying the
@@ -614,8 +682,15 @@ func (h *HarnessServer) sendEvent(rl *runRelay, ev session.Event) {
 func (h *HarnessServer) relayRun(rl *runRelay, run *agent.Run) error {
 	events := run.Events()
 	acks := rl.acks
+	controlErr := rl.controlErr
 	for events != nil {
 		select {
+		case err := <-controlErr:
+			controlErr = nil
+			if rl.sendErr == nil {
+				rl.sendErr = err
+			}
+			run.Cancel()
 		case ev, ok := <-events:
 			if !ok {
 				events = nil // the run ended
@@ -793,7 +868,9 @@ func (h *HarnessServer) readControl(ctx context.Context, id session.SessionID, c
 				if h.staleStreamControl(ctx, id, "resume_approval", ra.GetExpectedRunId(), ct.active()) {
 					break
 				}
-				ct.active().Approve(ra.GetAskId(), verdictFromResumeApproval(ra.GetVerdict(), ra.GetAllow()))
+				if err := h.svc.approveLiveRun(id, ct.active(), ra.GetAskId(), verdictFromResumeApproval(ra.GetVerdict(), ra.GetAllow()), ra.GetExpectedRunId()); err != nil {
+					h.svc.Diagnostics().Log(ctx, port.LevelWarn, "live approval frame refused", "session", string(id), "err", err.Error())
+				}
 			}
 		case *mecatlv1.ConverseRequest_Cancel:
 			if k.Cancel != nil && h.staleStreamControl(ctx, id, "cancel", k.Cancel.GetExpectedRunId(), ct.active()) {
@@ -817,9 +894,19 @@ func (h *HarnessServer) readControl(ctx context.Context, id session.SessionID, c
 			if k.SteerCancel != nil {
 				h.handleSteerCancelFrame(ctx, id, k.SteerCancel.GetMessageId(), rl)
 			}
+		case *mecatlv1.ConverseRequest_Prompt, *mecatlv1.ConverseRequest_Retry:
+			// A second start frame is always ambiguous and must not replace the
+			// identity established by the first frame.
+			select {
+			case rl.controlErr <- status.Error(codes.InvalidArgument, "converse: unexpected start frame after start"):
+			default:
+			}
+			ct.active().Cancel()
+			return
 		default:
-			// A second Prompt or an unknown frame is ignored: the run is
-			// already driving and a new prompt cannot start a second run here.
+			// Preserve protobuf forward compatibility: an unset or future unknown
+			// oneof arm carries no understood control and is ignored.
+			continue
 		}
 	}
 }
@@ -1097,11 +1184,50 @@ func (h *HarnessServer) GetUserModel(ctx context.Context, req *mecatlv1.GetUserM
 
 // ReflectSession submits one caller-owned completed session to the bounded coordinator.
 func (h *HarnessServer) ReflectSession(ctx context.Context, req *mecatlv1.ReflectSessionRequest) (*mecatlv1.ReflectSessionResponse, error) {
+	if err := validateGRPCSessionAffinity(ctx, req.GetSessionId()); err != nil {
+		return nil, err
+	}
 	receipt, err := h.svc.ReflectSession(ctx, session.SessionID(req.GetSessionId()))
 	if err != nil {
 		return nil, toStatus(err)
 	}
 	return &mecatlv1.ReflectSessionResponse{Receipt: receipt}, nil
+}
+
+// GetLearningAttempt returns one content-free attempt projection from the caller partition.
+func (h *HarnessServer) GetLearningAttempt(ctx context.Context, req *mecatlv1.GetLearningAttemptRequest) (*mecatlv1.GetLearningAttemptResponse, error) {
+	attempt, err := h.svc.GetLearningAttempt(ctx, req.GetId())
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return &mecatlv1.GetLearningAttemptResponse{Attempt: attempt}, nil
+}
+
+// ListLearningAttempts returns one bounded attempt page from the caller partition.
+func (h *HarnessServer) ListLearningAttempts(ctx context.Context, req *mecatlv1.ListLearningAttemptsRequest) (*mecatlv1.ListLearningAttemptsResponse, error) {
+	response, err := h.svc.ListLearningAttempts(ctx, req.GetState(), req.GetCursor(), int(req.GetLimit()))
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return response, nil
+}
+
+// RetryLearningAttempt retries one failed attempt under opaque-version CAS.
+func (h *HarnessServer) RetryLearningAttempt(ctx context.Context, req *mecatlv1.MutateLearningAttemptRequest) (*mecatlv1.MutateLearningAttemptResponse, error) {
+	attempt, err := h.svc.RetryLearningAttempt(ctx, req.GetId(), req.GetExpectedVersion())
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return &mecatlv1.MutateLearningAttemptResponse{Attempt: attempt}, nil
+}
+
+// AbandonLearningAttempt abandons only the attempt; it performs no compensation.
+func (h *HarnessServer) AbandonLearningAttempt(ctx context.Context, req *mecatlv1.MutateLearningAttemptRequest) (*mecatlv1.MutateLearningAttemptResponse, error) {
+	attempt, err := h.svc.AbandonLearningAttempt(ctx, req.GetId(), req.GetExpectedVersion())
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return &mecatlv1.MutateLearningAttemptResponse{Attempt: attempt}, nil
 }
 
 // GenerateDreamPlan creates a retained manual consolidation review.
@@ -1215,28 +1341,42 @@ func (h *HarnessServer) ListSkillChanges(ctx context.Context, req *mecatlv1.List
 	return resp, nil
 }
 
-// ListCommands returns the available slash commands for the requested workspace.
+// ListCommands returns commands for an owned session placement.
 func (h *HarnessServer) ListCommands(ctx context.Context, req *mecatlv1.ListCommandsRequest) (*mecatlv1.ListCommandsResponse, error) {
-	cmds, err := h.svc.ListCommands(ctx, req.GetWorkspace())
+	if err := validateGRPCSessionAffinity(ctx, req.GetSessionId()); err != nil {
+		return nil, err
+	}
+	if req.GetSessionId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "session_id is required")
+	}
+	cmds, err := h.svc.ListCommandsForSession(ctx, session.SessionID(req.GetSessionId()))
 	if err != nil {
 		return nil, toStatus(err)
 	}
 	return &mecatlv1.ListCommandsResponse{Commands: toProtoCommands(cmds)}, nil
 }
 
-// ListWorktrees returns the git worktrees of the repo rooted at the requested
-// workspace (issue #102).
+// ListWorktrees returns scoped placement choices for an owned session.
 func (h *HarnessServer) ListWorktrees(ctx context.Context, req *mecatlv1.ListWorktreesRequest) (*mecatlv1.ListWorktreesResponse, error) {
-	wts, err := h.svc.ListWorktrees(ctx, req.GetWorkspace())
+	if err := validateGRPCSessionAffinity(ctx, req.GetSessionId()); err != nil {
+		return nil, err
+	}
+	if req.GetSessionId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "session_id is required")
+	}
+	wts, err := h.svc.ListWorktreesForSession(ctx, session.SessionID(req.GetSessionId()))
 	if err != nil {
 		return nil, toStatus(err)
 	}
-	return &mecatlv1.ListWorktreesResponse{Worktrees: toProtoWorktrees(wts)}, nil
+	return &mecatlv1.ListWorktreesResponse{Worktrees: toProtoScopedWorktrees(wts)}, nil
 }
 
 // StreamSessionEvents replays a session's durable event log as a server stream
 // of Event envelopes (issue #245 Phase 1; cloud-native Phase 3a read-back).
 func (h *HarnessServer) StreamSessionEvents(req *mecatlv1.StreamSessionEventsRequest, stream grpc.ServerStreamingServer[mecatlv1.Event]) error {
+	if err := validateGRPCSessionAffinity(stream.Context(), req.GetSessionId()); err != nil {
+		return err
+	}
 	if req.GetSessionId() == "" {
 		return status.Error(codes.InvalidArgument, ErrInvalidArgument.Error())
 	}
@@ -1267,6 +1407,286 @@ func (h *HarnessServer) StreamSessionEvents(req *mecatlv1.StreamSessionEventsReq
 	return nil
 }
 
+func (h *HarnessServer) ConnectWorkspaceServices(ctx context.Context, req *mecatlv1.WorkspaceEnrollmentConnectRequest) (*mecatlv1.WorkspaceEnrollment, error) {
+	if err := validateGRPCSessionAffinity(ctx, req.GetSessionId()); err != nil {
+		return nil, err
+	}
+	if req.GetSessionId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "session_id is required")
+	}
+	result, err := h.svc.ConnectWorkspaceServices(ctx, session.SessionID(req.GetSessionId()))
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return toProtoWorkspaceEnrollment(result), nil
+}
+
+func (h *HarnessServer) RetryWorkspaceEnrollment(ctx context.Context, req *mecatlv1.WorkspaceEnrollmentControlRequest) (*mecatlv1.WorkspaceEnrollment, error) {
+	if err := validateGRPCSessionAffinity(ctx, req.GetSessionId()); err != nil {
+		return nil, err
+	}
+	id := session.WorkspaceEnrollmentID(req.GetEnrollmentId())
+	if req.GetSessionId() == "" || !id.Valid() {
+		return nil, status.Error(codes.InvalidArgument, "valid session_id and enrollment_id are required")
+	}
+	result, err := h.svc.RetryWorkspaceEnrollment(ctx, session.SessionID(req.GetSessionId()), id)
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return toProtoWorkspaceEnrollment(result), nil
+}
+
+func (h *HarnessServer) CancelWorkspaceEnrollment(ctx context.Context, req *mecatlv1.WorkspaceEnrollmentControlRequest) (*mecatlv1.WorkspaceEnrollment, error) {
+	if err := validateGRPCSessionAffinity(ctx, req.GetSessionId()); err != nil {
+		return nil, err
+	}
+	id := session.WorkspaceEnrollmentID(req.GetEnrollmentId())
+	if req.GetSessionId() == "" || !id.Valid() {
+		return nil, status.Error(codes.InvalidArgument, "valid session_id and enrollment_id are required")
+	}
+	result, err := h.svc.CancelWorkspaceEnrollment(ctx, session.SessionID(req.GetSessionId()), id)
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return toProtoWorkspaceEnrollment(result), nil
+}
+
+func toProtoWorkspaceEnrollment(result WorkspaceEnrollmentProjection) *mecatlv1.WorkspaceEnrollment {
+	return &mecatlv1.WorkspaceEnrollment{
+		EnrollmentId: string(result.Ref.ID), Status: string(result.Status),
+		RequiredServices: result.Ref.RequiredServices, PresentationUrl: valid(result.URL),
+	}
+}
+
+// GetMcpAuthorizationPresentation returns the live browser URL for one owned,
+// still-pending authorization. The request carries correlation only.
+func (h *HarnessServer) GetMcpAuthorizationPresentation(ctx context.Context, req *mecatlv1.GetMcpAuthorizationPresentationRequest) (*mecatlv1.GetMcpAuthorizationPresentationResponse, error) {
+	if err := validateGRPCSessionAffinity(ctx, req.GetSessionId()); err != nil {
+		return nil, err
+	}
+	if req.GetSessionId() == "" || !session.ValidAuthorizationID(req.GetAuthorizationId()) {
+		return nil, status.Error(codes.InvalidArgument, "invalid session_id or authorization_id")
+	}
+	id := session.SessionID(req.GetSessionId())
+	url, err := h.svc.MCPAuthorizationPresentation(ctx, id, MCPAuthorizationControl{SessionID: id, AuthorizationID: req.GetAuthorizationId()})
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return &mecatlv1.GetMcpAuthorizationPresentationResponse{Url: valid(url)}, nil
+}
+
+func (h *HarnessServer) RecheckMcpAuthorization(stream grpc.BidiStreamingServer[mecatlv1.RecheckMcpAuthorizationRequest, mecatlv1.RecheckMcpAuthorizationResponse]) error {
+	if err := validateGRPCSessionAffinity(stream.Context(), ""); err != nil {
+		return err
+	}
+	first, err := stream.Recv()
+	if err != nil {
+		return status.Error(codes.InvalidArgument, "authorization control requires an initial frame")
+	}
+	if first.GetControl() != nil || first.GetSessionId() == "" || !session.ValidAuthorizationID(first.GetAuthorizationId()) {
+		return status.Error(codes.InvalidArgument, "first authorization control frame must contain only valid session_id and authorization_id")
+	}
+	id := session.SessionID(first.GetSessionId())
+	if err := validateGRPCSessionAffinity(stream.Context(), string(id)); err != nil {
+		return err
+	}
+	runCtx := context.WithoutCancel(stream.Context())
+	result, err := h.svc.RecheckMCPAuthorization(runCtx, id, MCPAuthorizationControl{SessionID: id, AuthorizationID: first.GetAuthorizationId()})
+	if err != nil {
+		return toStatus(err)
+	}
+	return h.relayMCPAuthorizationControl(stream.Context(), id, result,
+		func(ev *mecatlv1.Event) error {
+			return stream.Send(&mecatlv1.RecheckMcpAuthorizationResponse{Event: ev})
+		},
+		func() (authorizationControlFrame, error) {
+			frame, err := stream.Recv()
+			if err != nil {
+				return authorizationControlFrame{}, err
+			}
+			if frame.GetSessionId() != "" || frame.GetAuthorizationId() != "" {
+				return authorizationControlFrame{}, status.Error(codes.InvalidArgument, "authorization control initial frame may not be repeated")
+			}
+			switch k := frame.GetControl().(type) {
+			case *mecatlv1.RecheckMcpAuthorizationRequest_ResumeApproval:
+				return authorizationControlFrame{approval: k.ResumeApproval}, nil
+			case *mecatlv1.RecheckMcpAuthorizationRequest_Cancel:
+				return authorizationControlFrame{cancel: k.Cancel}, nil
+			default:
+				return authorizationControlFrame{}, status.Error(codes.InvalidArgument, "invalid authorization control frame")
+			}
+		})
+}
+
+func (h *HarnessServer) CancelMcpAuthorization(stream grpc.BidiStreamingServer[mecatlv1.CancelMcpAuthorizationRequest, mecatlv1.CancelMcpAuthorizationResponse]) error {
+	if err := validateGRPCSessionAffinity(stream.Context(), ""); err != nil {
+		return err
+	}
+	first, err := stream.Recv()
+	if err != nil {
+		return status.Error(codes.InvalidArgument, "authorization control requires an initial frame")
+	}
+	if first.GetControl() != nil || first.GetSessionId() == "" || !session.ValidAuthorizationID(first.GetAuthorizationId()) {
+		return status.Error(codes.InvalidArgument, "first authorization control frame must contain only valid session_id and authorization_id")
+	}
+	id := session.SessionID(first.GetSessionId())
+	if err := validateGRPCSessionAffinity(stream.Context(), string(id)); err != nil {
+		return err
+	}
+	runCtx := context.WithoutCancel(stream.Context())
+	result, err := h.svc.CancelMCPAuthorization(runCtx, id, MCPAuthorizationControl{SessionID: id, AuthorizationID: first.GetAuthorizationId()})
+	if err != nil {
+		return toStatus(err)
+	}
+	return h.relayMCPAuthorizationControl(stream.Context(), id, result,
+		func(ev *mecatlv1.Event) error {
+			return stream.Send(&mecatlv1.CancelMcpAuthorizationResponse{Event: ev})
+		},
+		func() (authorizationControlFrame, error) {
+			frame, err := stream.Recv()
+			if err != nil {
+				return authorizationControlFrame{}, err
+			}
+			if frame.GetSessionId() != "" || frame.GetAuthorizationId() != "" {
+				return authorizationControlFrame{}, status.Error(codes.InvalidArgument, "authorization control initial frame may not be repeated")
+			}
+			switch k := frame.GetControl().(type) {
+			case *mecatlv1.CancelMcpAuthorizationRequest_ResumeApproval:
+				return authorizationControlFrame{approval: k.ResumeApproval}, nil
+			case *mecatlv1.CancelMcpAuthorizationRequest_Cancel:
+				return authorizationControlFrame{cancel: k.Cancel}, nil
+			default:
+				return authorizationControlFrame{}, status.Error(codes.InvalidArgument, "invalid authorization control frame")
+			}
+		})
+}
+
+type authorizationControlFrame struct {
+	approval *mecatlv1.ResumeApproval
+	cancel   *mecatlv1.Cancel
+}
+
+//nolint:gocyclo // relays a live continuation while racing control frames and cancellation; inherent.
+func (h *HarnessServer) relayMCPAuthorizationControl(ctx context.Context, id session.SessionID, result MCPAuthorizationResult, send func(*mecatlv1.Event) error, recv func() (authorizationControlFrame, error)) error {
+	logCtx := context.WithoutCancel(ctx)
+	recorder := NewRunEventRecorder(logCtx, h.svc, id)
+	defer recorder.Close()
+	// The authorization status is the authoritative result of this control, not
+	// an event from a continuation. Record it before its first client delivery so
+	// status-only controls and failed-client continuations have the same durable
+	// result, exactly once.
+	recorder.Observe(result.Event)
+	if result.Run == nil {
+		return send(toProto(result.Event))
+	}
+	defer h.svc.FinishRun(id, result.Run)
+
+	// The authoritative authorization status precedes its continuation. A control
+	// stream is a one-shot RPC, not the continuation's owner: the run is started on
+	// a context deliberately detached from this stream, so a transport failure here
+	// is NOT a cancellation. It is specifically the window in which the continuation
+	// parks a FOLLOW-UP authorization, and cancelling then destroys that park and
+	// leaves the session unrecoverably `cancelled` (H-K5/H-K23). Keep the failure
+	// caller-visible, keep draining into the log, and let the run finish.
+	//
+	// The one exception is a run this dead stream has stranded: while parked on a
+	// permission ask, the run emits nothing and only an approval frame — which no
+	// longer has a channel to arrive on — can move it. Cancel that, and only that.
+	sendErr := send(toProto(result.Event))
+	parkedOnAsk := false
+	strand := func() {
+		if sendErr != nil && parkedOnAsk {
+			result.Run.Cancel()
+		}
+	}
+
+	var controlDone chan error
+	if sendErr == nil {
+		controlDone = make(chan error, 1)
+		go func() {
+			for {
+				frame, err := recv()
+				if err != nil {
+					controlDone <- err
+					return
+				}
+				if frame.approval != nil {
+					ra := frame.approval
+					if !h.staleStreamControl(ctx, id, "resume_approval", ra.GetExpectedRunId(), result.Run) {
+						result.Run.Approve(ra.GetAskId(), verdictFromResumeApproval(ra.GetVerdict(), ra.GetAllow()))
+					}
+				} else if frame.cancel != nil {
+					if !h.staleStreamControl(ctx, id, "cancel", frame.cancel.GetExpectedRunId(), result.Run) {
+						result.Run.Cancel()
+					}
+				}
+			}
+		}()
+	}
+
+	events := result.Run.Events()
+	for events != nil {
+		select {
+		case err := <-controlDone:
+			controlDone = nil
+			if err != nil && !errors.Is(err, io.EOF) {
+				if sendErr == nil {
+					sendErr = err
+				}
+				strand()
+			}
+		case ev, ok := <-events:
+			if !ok {
+				events = nil
+				continue
+			}
+			// PrepareAfterAuthorization repeats this status at the head of the
+			// continuation. The control result above is its durable record, so
+			// forward the repeat without appending it again while draining.
+			if sameMCPAuthorizationControlEvent(result.Event, ev) {
+				parkedOnAsk = false
+				if sendErr == nil {
+					if err := send(toProto(ev)); err != nil {
+						sendErr = err
+						strand()
+					}
+				}
+				continue
+			}
+			// A parked run emits nothing, so an ask being the most recent event is
+			// what "parked awaiting approval" looks like from here.
+			parkedOnAsk = ev.Type == session.EvPermissionAsk
+			if sendErr != nil {
+				recorder.Observe(ev)
+				strand()
+				continue
+			}
+			if !h.svc.relayEvent(ctx, id, ev, false, recorder) {
+				continue
+			}
+			if err := send(toProto(ev)); err != nil {
+				sendErr = err
+				strand()
+			}
+		}
+	}
+	return sendErr
+}
+
+func sameMCPAuthorizationControlEvent(first, next session.Event) bool {
+	if first.Type != session.EvAuthorizationRequired && first.Type != session.EvAuthorizationResolved {
+		return false
+	}
+	if next.Type != first.Type || first.Authorization == nil || next.Authorization == nil {
+		return false
+	}
+	return first.Authorization.AuthorizationID == next.Authorization.AuthorizationID &&
+		first.Authorization.DisplayName == next.Authorization.DisplayName &&
+		first.Authorization.Call == next.Authorization.Call &&
+		first.Authorization.ExpiresAt.Equal(next.Authorization.ExpiresAt) &&
+		first.Authorization.Status == next.Authorization.Status
+}
+
 // StreamSessionLive is the LIVE per-session event stream (ADR 0075
 // fire-result-delivery Scenario 6 / Wave 3): a thin transport over the in-process
 // per-session subscription registry (Service.Subscribe / PublishSessionEvent). It
@@ -1290,6 +1710,9 @@ func (h *HarnessServer) StreamSessionEvents(req *mecatlv1.StreamSessionEventsReq
 // durable log records the tail regardless (it is appended by the relay/loop,
 // independent of this stream).
 func (h *HarnessServer) StreamSessionLive(req *mecatlv1.StreamSessionLiveRequest, stream grpc.ServerStreamingServer[mecatlv1.Event]) error {
+	if err := validateGRPCSessionAffinity(stream.Context(), req.GetSessionId()); err != nil {
+		return err
+	}
 	if req.GetSessionId() == "" {
 		return status.Error(codes.InvalidArgument, ErrInvalidArgument.Error())
 	}
@@ -1347,6 +1770,9 @@ func (h *HarnessServer) StreamSessionLive(req *mecatlv1.StreamSessionLiveRequest
 // There is no drain-to-discard to do — unlike a live relay, this stream pulls
 // from durable storage and has no run whose emits could wedge behind it.
 func (h *HarnessServer) WatchSessionEvents(req *mecatlv1.WatchSessionEventsRequest, stream grpc.ServerStreamingServer[mecatlv1.WatchSessionEventsResponse]) error {
+	if err := validateGRPCSessionAffinity(stream.Context(), req.GetSessionId()); err != nil {
+		return err
+	}
 	if req.GetSessionId() == "" {
 		return status.Error(codes.InvalidArgument, ErrInvalidArgument.Error())
 	}

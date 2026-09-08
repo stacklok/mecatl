@@ -19,7 +19,6 @@ import (
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/adapter/eventsource"
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -56,15 +55,15 @@ func TestGRPCRelayStreamsOriginalChunksAndDurablyCoalesces(t *testing.T) {
 	engine := agent.NewEngine(agent.Deps{
 		LLM: llm, Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "test-model",
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine: engine, Store: memstore.New(), EventLog: log,
-		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		Now:        func() time.Time { return time.Unix(0, 0) }, DefaultCapabilities: llm.Capabilities(),
+
+		Now: func() time.Time { return time.Unix(0, 0) }, DefaultCapabilities: llm.Capabilities(),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +107,7 @@ func TestGRPCRelayStreamsOriginalChunksAndDurablyCoalesces(t *testing.T) {
 		t.Fatalf("durable delta chunks = %q, want one bounded coalesced chunk", durable)
 	}
 	folded, err := eventsource.Fold(eventsource.SessionMeta{
-		ID: sess.ID, Mode: session.ModeDefault, Workspace: "/ws", CreatedAt: time.Unix(0, 0),
+		ID: sess.ID, Mode: session.ModeDefault, EnvironmentRef: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, CreatedAt: time.Unix(0, 0),
 	}, log.Read(context.Background(), sess.ID))
 	if err != nil {
 		t.Fatal(err)
@@ -136,15 +135,15 @@ func TestLiveRelaysPersistButOmitObservedNetworkAttempt(t *testing.T) {
 				},
 			}}
 			engine := agent.NewEngine(agent.Deps{LLM: llm, Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "test-model", EnableDurableEvidence: true})
-			svc, err := server.NewService(server.Config{
+			svc, err := newPlacementTestService(server.Config{
 				Engine: engine, Store: memstore.New(), EventLog: log,
-				Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-				Now:        func() time.Time { return time.Unix(0, 0) }, DefaultCapabilities: llm.Capabilities(),
+
+				Now: func() time.Time { return time.Unix(0, 0) }, DefaultCapabilities: llm.Capabilities(),
 			})
 			if err != nil {
 				t.Fatal(err)
 			}
-			sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+			sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -271,10 +270,10 @@ func observedAttemptTeamService(t *testing.T, log port.EventLog, logID session.S
 	engine := agent.NewEngine(agent.Deps{
 		LLM: mockllm.New(mockllm.TextTurn("unused")), Catalog: tool.NewCatalog(), Policy: allow, Model: "mock",
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTeamTestService(server.Config{
 		Engine: engine, Store: memstore.New(), EventLog: log,
-		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		Now:        func() time.Time { return time.Unix(0, 0) }, MemberEngine: memberEngine,
+
+		Now: func() time.Time { return time.Unix(0, 0) }, MemberEngine: memberEngine,
 	})
 	if err != nil {
 		t.Fatalf("new service: %v", err)
@@ -295,7 +294,7 @@ func TestDirectTeamTransportsOmitNetworkAttemptWithoutAffectingDurableObservatio
 				client, cleanup := dialGRPC(t, svc)
 				defer cleanup()
 				created, err := client.CreateTeam(context.Background(), &mecatlv1.CreateTeamRequest{
-					Workspace: "/ws", Name: "test",
+					SessionId: "source", Name: "test",
 					Members: []*mecatlv1.TeammateSpec{{Name: "lead", Lead: true, InitialPrompt: "go"}},
 				})
 				if err != nil {
@@ -313,7 +312,7 @@ func TestDirectTeamTransportsOmitNetworkAttemptWithoutAffectingDurableObservatio
 			case "http":
 				srv := httptest.NewServer(server.NewHTTPHandler(svc))
 				defer srv.Close()
-				create, err := http.Post(srv.URL+"/v1/teams", "application/json", strings.NewReader(`{"workspace":"/ws","name":"test","members":[{"name":"lead","lead":true,"initial_prompt":"go"}]}`))
+				create, err := http.Post(srv.URL+"/v1/teams", "application/json", strings.NewReader(`{"session_id":"source","name":"test","members":[{"name":"lead","lead":true,"initial_prompt":"go"}]}`))
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -374,10 +373,10 @@ func askingEventLogService(t *testing.T, log port.EventLog) (*server.Service, *m
 		Policy:  permpolicy.NewPolicy(nil, nil), // no rules: a mutating call asks
 		Model:   "test-model",
 	})
-	svc, err := server.NewService(server.Config{
-		Engine:              engine,
-		Store:               memstore.New(),
-		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+	svc, err := newPlacementTestService(server.Config{
+		Engine: engine,
+		Store:  memstore.New(),
+
 		Now:                 func() time.Time { return time.Unix(0, 0) },
 		DefaultCapabilities: llm.Capabilities(),
 		EventLog:            log,
@@ -385,7 +384,7 @@ func askingEventLogService(t *testing.T, log port.EventLog) (*server.Service, *m
 	if err != nil {
 		t.Fatalf("new service: %v", err)
 	}
-	cs, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	cs, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -579,7 +578,7 @@ func TestEventLogInheritsStreamRedaction(t *testing.T) {
 		Policy:  permpolicy.NewPolicy(allowRules(), nil),
 		Model:   "child-model",
 	})
-	task := agent.NewSubagentTool(childEngine)
+	task := newServerTestSubagent(childEngine)
 
 	parentCat := tool.NewCatalog()
 	parentCat.MustRegister(task)
@@ -593,10 +592,10 @@ func TestEventLogInheritsStreamRedaction(t *testing.T) {
 		Policy:  permpolicy.NewPolicy(allowRules(), nil),
 		Model:   "test-model",
 	})
-	svc, err := server.NewService(server.Config{
-		Engine:              engine,
-		Store:               memstore.New(),
-		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+	svc, err := newPlacementTestService(server.Config{
+		Engine: engine,
+		Store:  memstore.New(),
+
 		Now:                 func() time.Time { return time.Unix(0, 0) },
 		DefaultCapabilities: parentLLM.Capabilities(),
 		EventLog:            log,
@@ -604,7 +603,7 @@ func TestEventLogInheritsStreamRedaction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new service: %v", err)
 	}
-	cs, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	cs, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -688,12 +687,12 @@ func askingEventLogServiceOverStore(t *testing.T, store port.SessionStore, log p
 		Model:   "test-model",
 		Store:   engineStore,
 	})
-	svc, err := server.NewService(server.Config{
-		Engine:     engine,
-		Store:      store,
-		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		Now:        func() time.Time { return time.Unix(0, 0) },
-		EventLog:   log,
+	svc, err := newPlacementTestService(server.Config{
+		Engine: engine,
+		Store:  store,
+
+		Now:      func() time.Time { return time.Unix(0, 0) },
+		EventLog: log,
 	})
 	if err != nil {
 		t.Fatalf("new service: %v", err)
@@ -724,7 +723,7 @@ func TestEventLogRecordsResumePathVerdict(t *testing.T) {
 	var ran1 atomic.Int64
 	svc1 := askingEventLogServiceOverStore(t, store1, log, permstore.New(), &ran1,
 		mockllm.New(mockllm.ToolCallTurn(session.NewToolCall("w1", "Write", json.RawMessage(`{"path":"a.go"}`)))), false)
-	sess, err := svc1.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc1.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -828,10 +827,10 @@ func TestEventLogSurvivesClientDisconnect(t *testing.T) {
 		Policy:  permpolicy.NewPolicy(allowRules(), nil),
 		Model:   "test-model",
 	})
-	svc, err := server.NewService(server.Config{
-		Engine:              engine,
-		Store:               memstore.New(),
-		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+	svc, err := newPlacementTestService(server.Config{
+		Engine: engine,
+		Store:  memstore.New(),
+
 		Now:                 func() time.Time { return time.Unix(0, 0) },
 		DefaultCapabilities: llm.Capabilities(),
 		EventLog:            log,
@@ -839,7 +838,7 @@ func TestEventLogSurvivesClientDisconnect(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new service: %v", err)
 	}
-	cs, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	cs, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -897,9 +896,12 @@ func TestEventLogSurvivesClientDisconnect(t *testing.T) {
 	// the client (the decoupling under test). The disconnect cancels the run, so the
 	// terminal stop may be cancelled — the point is the log RECORDED the terminal
 	// regardless of client liveness, not which terminal it is.
+	// Prompt-ingress title metadata is persisted after the terminal loop event, so a
+	// post-save session.title notification may follow the terminal result. The result
+	// itself remains the required post-disconnect durable evidence.
 	logged := readEventLog(t, log, cs.ID)
-	if logged[len(logged)-1].Type != session.EvResult {
-		t.Fatalf("last logged event = %q, want the terminal result (the post-disconnect tail must be recorded)", logged[len(logged)-1].Type)
+	if last := logged[len(logged)-1].Type; last != session.EvResult && last != session.EvSessionTitle {
+		t.Fatalf("last logged event = %q, want the terminal result or its post-save title notification", last)
 	}
 }
 
@@ -1187,10 +1189,10 @@ func nilEventLogService(t *testing.T) *server.Service {
 		Policy:  permpolicy.NewPolicy(nil, nil),
 		Model:   "test-model",
 	})
-	svc, err := server.NewService(server.Config{
-		Engine:              engine,
-		Store:               memstore.New(),
-		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+	svc, err := newPlacementTestService(server.Config{
+		Engine: engine,
+		Store:  memstore.New(),
+
 		Now:                 func() time.Time { return time.Unix(0, 0) },
 		DefaultCapabilities: llm.Capabilities(),
 		// EventLog intentionally nil.

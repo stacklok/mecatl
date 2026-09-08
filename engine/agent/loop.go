@@ -320,10 +320,9 @@ type Deps struct {
 	// ChildAskReviewer is set.
 	ChildAskReviewMaxDenies int
 
-	// MaxRunTokens is the loop-level cumulative TOKEN ceiling for a single run: when
-	// the run's accumulated session.Usage (input+output, via Usage.TotalTokens) crosses
-	// this value, the loop terminates CLEANLY at the next turn boundary with
-	// session.StopBudget. It is the shared runaway brake the AGENT-TEAMS-SPIKE named the
+	// MaxRunTokens is the loop-level token ceiling for one run: when lifetime main
+	// usage since the Run's immutable baseline crosses this value, the loop
+	// terminates CLEANLY at the next turn boundary with session.StopBudget. It is the shared runaway brake the AGENT-TEAMS-SPIKE named the
 	// missing token budget — checked in drive Step 2, so it serves EVERY engine: main +
 	// Subagent + Team member + lead synthesis + Fork branch. Semantics: 0 (the default;
 	// existing Deps built without it) DISABLES the budget (behaviour byte-identical to
@@ -563,15 +562,35 @@ func (e *Engine) catalogTools() []catalogToolInfo {
 	return out
 }
 
+// RunOutcome records why a Run's event stream closed. Its zero value means the
+// run is still active.
+type RunOutcome int32
+
+const (
+	// RunOutcomeUnknown means the run is still active.
+	RunOutcomeUnknown RunOutcome = iota
+	// RunOutcomeCompleted means the run emitted a terminal EvResult.
+	RunOutcomeCompleted
+	// RunOutcomeAuthorizationPending means the run durably parked without an
+	// EvResult or terminal session stop.
+	RunOutcomeAuthorizationPending
+)
+
 // Run is the handle to one in-flight prompt. It exposes the Event stream plus the
 // out-of-band controls the bidi API needs (Approve resolves a permission.ask;
 // Cancel aborts the run). The Events channel is closed exactly once, when the run
 // terminates.
 type Run struct {
-	events chan session.Event
-	asks   *askRegistry
-	cancel context.CancelFunc
-	seq    atomic.Int64
+	events  chan session.Event
+	asks    *askRegistry
+	cancel  context.CancelFunc
+	seq     atomic.Int64
+	outcome atomic.Int32
+
+	// closureMu linearizes the final authorization.required publication against
+	// Cancel. That publication is the one nonterminal way an event stream closes.
+	closureMu       sync.Mutex
+	cancelRequested bool
 	// hardAbort is closed a short grace AFTER Cancel (hardAbortOnce arms the
 	// hardAbortGrace timer BEFORE the ctx cancel) — the explicit "stop blocking
 	// anywhere" unwedge signal every guarded send on this run selects on (emit,
@@ -608,6 +627,12 @@ type Run struct {
 	// runID is the host-minted identity stamped onto every event this run emits
 	// (ADR 0249). Read ONLY by emit/emitOrAbort; the loop never branches on it.
 	runID string
+	// budgetBaseline is the immutable cumulative main usage captured when this run
+	// starts. Ordinary runs use zero; privileged package-private continuations
+	// (team synthesis and a budget-stopped child cleanup) capture the session's
+	// lifetime main usage to receive one bounded allowance without changing the
+	// durable ledger or compatibility mirror.
+	budgetBaseline session.Usage
 	// ctx is the run's context, captured at Engine.Run. Engine.emit forwards it
 	// to the injected EventSink so telemetry adapters can read a trace span from
 	// it and correlate spans/metrics to the originating request. Each run (including
@@ -616,6 +641,9 @@ type Run struct {
 	// parent. It is set once before the run goroutine starts and only read after,
 	// so it needs no synchronisation.
 	ctx context.Context //nolint:containedctx // run-scoped carrier forwarded to the EventSink; never the request's own field
+	// workspace is the private runtime root of the live Environment. Durable
+	// EnvironmentRef IDs are provider-opaque and must never be interpreted as paths.
+	workspace string
 	// diag is the run-scoped operational-logging seam: deps.Diagnostics bound to
 	// this run's session id (and, for a child engine, its agent role) via With, so
 	// every line emitted through it carries the correlation keys. It is bound ONCE
@@ -766,6 +794,9 @@ type RunRequest struct {
 	// Parts carries non-text media (image/audio) alongside Text. nil for a text-only
 	// prompt. The media passes through to the engine untouched.
 	Parts []session.Content
+	// CanPresentAuthorization permits this main run to present a required external
+	// authorization. The zero value fails closed.
+	CanPresentAuthorization bool
 	// MaxRunTokensOverride, when > 0, is a per-run TIGHTEN-ONLY override of the engine's
 	// Deps.MaxRunTokens budget: the effective ceiling for THIS run is the lower of the
 	// two non-zero values (a per-call ceiling may make the run stricter than the operator
@@ -842,9 +873,14 @@ type RunRequest struct {
 // be the one the caller is holding).
 func (r *Run) RunID() string { return r.runID }
 
-// Events returns the channel of domain Events for this run. It is closed when the
-// run ends (after the terminal result Event has been delivered).
+// Events returns the channel of domain Events for this run. It closes after a
+// terminal result or a durable external-authorization park.
 func (r *Run) Events() <-chan session.Event { return r.events }
+
+// Outcome reports why this Run's event stream closed.
+func (r *Run) Outcome() RunOutcome { return RunOutcome(r.outcome.Load()) }
+
+func (r *Run) setOutcome(outcome RunOutcome) { r.outcome.Store(int32(outcome)) }
 
 // Approve resolves the permission.ask identified by askID with the client's
 // verdict: VerdictDeny refuses the call, VerdictAllowOnce permits this call only,
@@ -861,6 +897,19 @@ func (r *Run) Approve(askID string, v session.ApprovalVerdict) {
 		return
 	}
 	r.asks.resolve(askID, v)
+}
+
+// RetractPermissionAsk withdraws this run's own pending permission ask without
+// resolving it and emits one permission.retract event. It returns false when the
+// ask is unknown or already resolved. The run remains parked until its host
+// cancels it; this narrow seam lets a lease-owning host retract local delivery
+// while preserving an already-durable awaiting snapshot for a successor.
+func (r *Run) RetractPermissionAsk(askID string) bool {
+	if !r.asks.discard(askID) {
+		return false
+	}
+	r.emit(session.Event{Type: session.EvPermissionRetract, Ask: &session.PendingAsk{AskID: askID}})
+	return true
 }
 
 // registerChildAsk records a surfaced child ask in this run's router so a later
@@ -909,6 +958,14 @@ var hardAbortGrace = time.Second
 // or while awaiting an approval) and terminates with a result carrying
 // StopCancelled.
 func (r *Run) Cancel() {
+	r.closureMu.Lock()
+	if r.Outcome() == RunOutcomeAuthorizationPending {
+		r.closureMu.Unlock()
+		return
+	}
+	r.cancelRequested = true
+	r.closureMu.Unlock()
+
 	r.hardAbortOnce.Do(func() {
 		if r.hardAbort != nil {
 			time.AfterFunc(hardAbortGrace, func() { close(r.hardAbort) })
@@ -971,19 +1028,47 @@ func (r *Run) unregisterChildAsk(askID string) bool {
 	return r.childAsks != nil && r.childAsks.unregister(askID)
 }
 
-// Run is the single normal entry point: it starts processing req.Text and/or
-// req.Parts against sess in a background goroutine and returns immediately with a Run
-// handle. The loop runs until it produces a terminal result Event, then closes the
-// Events channel. ws is the session-scoped workspace tools execute against.
-//
-// req carries the user prompt (text and/or non-text media parts) plus the run-scoped
-// overrides (a tighten-only token ceiling and run-scoped extra tools). The zero value of
-// the override fields is the legacy run (no override, no extras). For a text-only prompt
-// set only req.Text; for a multimodal prompt set req.Parts (and req.Text, which may be
-// empty). Command expansion and the UserPromptSubmit hook operate on the TEXT only; the
-// media parts pass through untouched and are recorded verbatim on the user message.
+// validateRunEnvironment enforces exact durable/live placement identity before
+// any provider or tool activity.
+func validateRunEnvironment(sess *session.Session, env tool.Environment) error {
+	ref := env.Ref()
+	if !sess.EnvironmentRef.Valid() || !ref.Valid() || sess.EnvironmentRef != ref {
+		return errors.New("agent: environment identity mismatch")
+	}
+	return nil
+}
+
+func (e *Engine) prepareRunEnvironment(ctx context.Context, r *Run, sess *session.Session, env tool.Environment) bool {
+	if err := validateRunEnvironment(sess, env); err != nil {
+		e.emit(r, session.Event{Type: session.EvSessionInit})
+		e.terminate(ctx, r, sess, session.StopError, "", session.Usage{}, err, false)
+		return false
+	}
+	r.workspace = env.Workspace().Root()
+	return true
+}
+
+// Run starts processing req against sess with the exact supplied environment and
+// returns immediately with a handle to the background run.
 func (e *Engine) Run(ctx context.Context, sess *session.Session, env tool.Environment, req RunRequest) *Run {
-	return e.startRun(ctx, sess, req, func(ctx context.Context, r *Run) {
+	return e.startRun(ctx, sess, req, session.Usage{}, func(ctx context.Context, r *Run) {
+		if !e.prepareRunEnvironment(ctx, r, sess, env) {
+			return
+		}
+		e.drive(ctx, r, sess, env, req.Text, req.Parts)
+	})
+}
+
+// runWithCurrentMainUsageBaseline drives one internal, bounded continuation with a
+// fresh budget allowance without mutating durable session accounting. It is
+// package-private so external callers cannot select a budget baseline; ordinary
+// Engine.Run calls always use the zero baseline.
+func (e *Engine) runWithCurrentMainUsageBaseline(ctx context.Context, sess *session.Session, env tool.Environment, req RunRequest) *Run {
+	baseline := sess.TokenUsageSnapshot()[session.UsageKindMain].Total
+	return e.startRun(ctx, sess, req, baseline, func(ctx context.Context, r *Run) {
+		if !e.prepareRunEnvironment(ctx, r, sess, env) {
+			return
+		}
 		e.drive(ctx, r, sess, env, req.Text, req.Parts)
 	})
 }
@@ -993,7 +1078,10 @@ func (e *Engine) Run(ctx context.Context, sess *session.Session, env tool.Enviro
 // instructions and system prompt inputs are re-resolved by the normal request builder.
 // sess must carry durable failed-step retry intent prepared by the host.
 func (e *Engine) RetryFailedStep(ctx context.Context, sess *session.Session, env tool.Environment) *Run {
-	return e.startRun(ctx, sess, RunRequest{}, func(ctx context.Context, r *Run) {
+	return e.startRun(ctx, sess, RunRequest{}, session.Usage{}, func(ctx context.Context, r *Run) {
+		if !e.prepareRunEnvironment(ctx, r, sess, env) {
+			return
+		}
 		e.emit(r, session.Event{Type: session.EvSessionInit})
 		disposition, progress, pending := sess.FailedStepRetryPending()
 		if !pending {
@@ -1012,7 +1100,7 @@ func (e *Engine) RetryFailedStep(ctx context.Context, sess *session.Session, env
 	})
 }
 
-// ResumeApproval is the FOURTH, awaiting-ONLY run-entry seam (cloud-native Phase
+// ResumeApprovalOptions configures ResumeApproval, the FOURTH, awaiting-ONLY run-entry seam (cloud-native Phase
 // 2): it re-enters the loop AT a parked permission ask on a session that is in
 // StateAwaiting (typically loaded fresh from a snapshot after the process that
 // parked the ask died), applies verdict to the pending tool call, closes out any
@@ -1037,7 +1125,20 @@ func (e *Engine) RetryFailedStep(ctx context.Context, sess *session.Session, env
 // terminal EvResult (Stop == StopError, the Error field), exactly like any other
 // terminal — it never silently completes. The pending tool executes EXACTLY ONCE on
 // the allow path and NOT AT ALL on a precondition failure or a deny.
+type ResumeApprovalOptions struct {
+	// CanPresentAuthorization permits this resumed main run to present a newly
+	// required external authorization. The zero value fails closed.
+	CanPresentAuthorization bool
+}
+
+// ResumeApproval resumes an awaiting permission decision with default host capabilities.
 func (e *Engine) ResumeApproval(ctx context.Context, sess *session.Session, env tool.Environment, askID string, verdict session.ApprovalVerdict) *Run {
+	return e.ResumeApprovalWith(ctx, sess, env, askID, verdict, ResumeApprovalOptions{})
+}
+
+// ResumeApprovalWith resumes an awaiting permission decision with explicit host
+// capabilities that may be needed by the continued tool call.
+func (e *Engine) ResumeApprovalWith(ctx context.Context, sess *session.Session, env tool.Environment, askID string, verdict session.ApprovalVerdict, opts ResumeApprovalOptions) *Run {
 	// The resumed run CONTINUES the run that parked awaiting this ask — it is not
 	// a new one — so it carries that run's identity forward, read from the session
 	// the host restored it onto (ADR 0249). This is what makes a cross-process
@@ -1047,7 +1148,10 @@ func (e *Engine) ResumeApproval(ctx context.Context, sess *session.Session, env 
 	// never read the id off the session: a reused session still carries the id of
 	// the run that just ended, and inheriting it would silently attribute a brand
 	// new run's events to the previous one.
-	return e.startRun(ctx, sess, RunRequest{RunID: sess.RunID()}, func(ctx context.Context, r *Run) {
+	return e.startRun(ctx, sess, RunRequest{RunID: sess.RunID(), CanPresentAuthorization: opts.CanPresentAuthorization}, session.Usage{}, func(ctx context.Context, r *Run) {
+		if !e.prepareRunEnvironment(ctx, r, sess, env) {
+			return
+		}
 		e.driveFromAwaiting(ctx, r, sess, env, askID, verdict)
 	})
 }
@@ -1081,13 +1185,166 @@ func askDiscriminatorFor(req RunRequest, serial int64) (value string, colonRejec
 	return fmt.Sprintf("r%d", serial), d != ""
 }
 
+// PreparedRunTransition reports the observed state transition of Start or Abort.
+type PreparedRunTransition string
+
+const (
+	// PreparedRunStarted means Start won and released execution.
+	PreparedRunStarted PreparedRunTransition = "started"
+	// PreparedRunAborted means Abort won and closed the inert run.
+	PreparedRunAborted PreparedRunTransition = "aborted"
+	// PreparedRunDuplicateStart means Start was called again after starting.
+	PreparedRunDuplicateStart PreparedRunTransition = "duplicate_start"
+	// PreparedRunDuplicateAbort means Abort was called again after aborting.
+	PreparedRunDuplicateAbort PreparedRunTransition = "duplicate_abort"
+	// PreparedRunStartAfterAbort means Start lost because Abort already won.
+	PreparedRunStartAfterAbort PreparedRunTransition = "start_after_abort"
+	// PreparedRunAbortAfterStart means Abort lost because Start already won.
+	PreparedRunAbortAfterStart PreparedRunTransition = "abort_after_start"
+)
+
+type preparedRunState uint8
+
+const (
+	preparedRunInert preparedRunState = iota
+	preparedRunStarted
+	preparedRunAborted
+)
+
+// PreparedRun is a fully initialized, inert Run. Start releases its
+// execution goroutine exactly once, allowing a host to register the run before
+// a durably parked protected call can execute.
+type PreparedRun struct {
+	run   *Run
+	start func()
+	abort func()
+	mu    sync.Mutex
+	state preparedRunState
+}
+
+// Run returns the inert run handle for registration before Start.
+func (p *PreparedRun) Run() *Run { return p.run }
+
+// Start releases an inert prepared run and reports whether it started, was a
+// duplicate start, or lost to Abort.
+func (p *PreparedRun) Start() (*Run, PreparedRunTransition) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	switch p.state {
+	case preparedRunInert:
+		p.state = preparedRunStarted
+		p.start()
+		return p.run, PreparedRunStarted
+	case preparedRunStarted:
+		return p.run, PreparedRunDuplicateStart
+	default:
+		return p.run, PreparedRunStartAfterAbort
+	}
+}
+
+// Abort closes an inert prepared run without executing its body and reports
+// whether it aborted, was a duplicate abort, or lost to Start.
+func (p *PreparedRun) Abort() PreparedRunTransition {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	switch p.state {
+	case preparedRunInert:
+		p.state = preparedRunAborted
+		p.abort()
+		return PreparedRunAborted
+	case preparedRunAborted:
+		return PreparedRunDuplicateAbort
+	default:
+		return PreparedRunAbortAfterStart
+	}
+}
+
+// PrepareAuthorizationContinuation prepares an already durably claimed
+// external-authorization continuation without executing it. The caller must
+// register Run before Start. It may present another authorization because its
+// sole production caller has already authenticated the owner at the Service
+// boundary.
+func (e *Engine) PrepareAuthorizationContinuation(ctx context.Context, sess *session.Session, env tool.Environment, pending session.PendingAuthorization, resolution session.AuthorizationResolution) (*PreparedRun, error) {
+	if !resolution.Valid() {
+		return nil, errors.New("agent: authorization continuation requires a terminal resolution")
+	}
+	status := resolution.Status()
+	return e.prepareRun(ctx, sess, RunRequest{RunID: sess.RunID(), CanPresentAuthorization: true}, session.Usage{}, func(ctx context.Context, r *Run) {
+		e.emit(r, session.Event{Type: session.EvSessionInit})
+		toolToRun, ok := e.deps.Catalog.Lookup(pending.Call.Name)
+		if !ok {
+			results := []session.ToolResult{session.NewToolError(pending.Call.ID, "authorization continuation tool is unavailable")}
+			for _, deferred := range pending.Deferred {
+				results = append(results, session.NewToolError(deferred.ID, "authorization deferred sibling was not executed"))
+			}
+			if err := sess.RecordToolResults(results); err != nil {
+				e.terminate(ctx, r, sess, session.StopError, "", session.Usage{}, err, false)
+				return
+			}
+			e.save(ctx, r, sess)
+			e.emitAuthorizationResolution(r, sess.Counters.Turns, pending.Authorization, pending.Call.ID, status, results)
+			e.terminate(ctx, r, sess, session.StopError, "", session.Usage{}, fmt.Errorf("tool %q unavailable", pending.Call.Name), false)
+			return
+		}
+		result := e.execute(ctx, r, sess, env, sess.Counters.Turns, pending.Call, toolToRun, time.Time{})
+		results := []session.ToolResult{result}
+		for _, deferred := range pending.Deferred {
+			deferredResult := session.NewToolError(deferred.ID, "authorization deferred sibling was not executed")
+			e.emit(r, session.Event{Type: session.EvToolResult, Turn: sess.Counters.Turns, ToolResult: ptr(deferredResult)})
+			results = append(results, deferredResult)
+		}
+		if err := sess.RecordToolResults(results); err != nil {
+			e.terminate(ctx, r, sess, session.StopError, "", session.Usage{}, err, false)
+			return
+		}
+		e.save(ctx, r, sess)
+		e.emitAuthorizationResolution(r, sess.Counters.Turns, pending.Authorization, pending.Call.ID, status, nil)
+		e.runLoop(ctx, r, sess, env, session.Usage{}, "", false)
+	}), nil
+}
+
+// PrepareAfterAuthorization prepares the ordinary model loop after a terminal
+// external-authorization outcome has been durably paired. Results must be the
+// exact ordered ToolResults already recorded on sess. The caller must register
+// Run before Start. It may present another authorization because its sole
+// production caller has already authenticated the owner at the Service boundary.
+func (e *Engine) PrepareAfterAuthorization(ctx context.Context, sess *session.Session, env tool.Environment, authorization session.ExternalAuthorization, callID session.ToolCallID, results []session.ToolResult, resolution session.AuthorizationResolution) (*PreparedRun, error) {
+	if !resolution.Valid() {
+		return nil, errors.New("agent: authorization continuation requires a terminal resolution")
+	}
+	status := resolution.Status()
+	return e.prepareRun(ctx, sess, RunRequest{RunID: sess.RunID(), CanPresentAuthorization: true}, session.Usage{}, func(ctx context.Context, r *Run) {
+		e.emit(r, session.Event{Type: session.EvSessionInit})
+		e.emitAuthorizationResolution(r, sess.Counters.Turns, authorization, callID, status, results)
+		e.runLoop(ctx, r, sess, env, session.Usage{}, "", false)
+	}), nil
+}
+
+func (e *Engine) emitAuthorizationResolution(r *Run, turn int, authorization session.ExternalAuthorization, callID session.ToolCallID, status session.AuthorizationStatus, results []session.ToolResult) {
+	for i := range results {
+		e.emit(r, session.Event{Type: session.EvToolResult, Turn: turn, ToolResult: ptr(results[i])})
+	}
+	e.emit(r, session.Event{Type: session.EvAuthorizationResolved, Authorization: &session.AuthorizationPayload{
+		AuthorizationID: authorization.ID, DisplayName: authorization.DisplayName, Call: callID, ExpiresAt: authorization.ExpiresAt, Status: status,
+	}})
+}
+
 // startRun mints a Run with the full concurrency preamble (events buffer, ask
 // registry, run-scoped diagnostics, interactive child-ask router, ask-review
 // breaker, child-run registry) and launches body in the run goroutine under the
 // LIFO seal/close discipline. It is the single Run-construction site shared by
 // Engine.Run (→ drive) and ResumeApproval (→ driveFromAwaiting) so the two
 // entry seams cannot drift in their concurrency setup.
-func (e *Engine) startRun(ctx context.Context, sess *session.Session, req RunRequest, body func(context.Context, *Run)) *Run {
+func (e *Engine) startRun(ctx context.Context, sess *session.Session, req RunRequest, budgetBaseline session.Usage, body func(context.Context, *Run)) *Run {
+	prepared := e.prepareRun(ctx, sess, req, budgetBaseline, body)
+	run, transition := prepared.Start()
+	if transition != PreparedRunStarted {
+		panic("agent: fresh prepared run did not start")
+	}
+	return run
+}
+
+func (e *Engine) prepareRun(ctx context.Context, sess *session.Session, req RunRequest, budgetBaseline session.Usage, body func(context.Context, *Run)) *PreparedRun {
 	ctx, cancel := context.WithCancel(ctx)
 	serial := runSerial.Add(1)
 	ctx = port.WithRunAttemptContext(ctx, sess.ID, serial)
@@ -1104,13 +1361,14 @@ func (e *Engine) startRun(ctx context.Context, sess *session.Session, req RunReq
 	}
 	ctx = tool.WithMemoryAttribution(ctx, attribution)
 	r := &Run{
-		events:    make(chan session.Event, 64),
-		asks:      newAskRegistry(),
-		cancel:    cancel,
-		ctx:       ctx,
-		req:       req,
-		hardAbort: make(chan struct{}),
-		serial:    serial,
+		events:         make(chan session.Event, 64),
+		asks:           newAskRegistry(),
+		cancel:         cancel,
+		ctx:            ctx,
+		req:            req,
+		budgetBaseline: budgetBaseline,
+		hardAbort:      make(chan struct{}),
+		serial:         serial,
 		// Bind the run-scoped diagnostics ONCE here, where the live session is in
 		// scope: correlate every emitted line to this session id, and (for a child
 		// engine, Role != "") to its agent role too. The main engine has Role=="" so
@@ -1184,21 +1442,28 @@ func (e *Engine) startRun(ctx context.Context, sess *session.Session, req RunReq
 	// unregister reports false and no retract is ever emitted — correct:
 	// nothing was ever surfaced.
 	r.children.unregisterAsk = r.unregisterChildAsk
-	go func() {
-		// Defers run LIFO: cancel first (releases the run's ctx tree), then the
-		// belt-and-braces seal — its abort-before-emitMu ordering closes emitAbort,
-		// which is what unwinds any guarded send still parked on a full events
-		// channel (Run.emitOrAbort selects on it; the run ctx is NOT a guarded
-		// send's escape hatch), then sets sealed so every later emit is a safe
-		// no-op — and only THEN close(r.events): seal-before-close is the
-		// send-on-closed-channel panic guard. (drive's terminate paths normally
-		// drain+seal already; this defer covers them idempotently.)
-		defer close(r.events)
-		defer r.children.seal()
-		defer cancel()
-		body(ctx, r)
-	}()
-	return r
+	start := func() {
+		go func() {
+			// Defers run LIFO: cancel first (releases the run's ctx tree), then the
+			// belt-and-braces seal — its abort-before-emitMu ordering closes emitAbort,
+			// which is what unwinds any guarded send still parked on a full events
+			// channel (Run.emitOrAbort selects on it; the run ctx is NOT a guarded
+			// send's escape hatch), then sets sealed so every later emit is a safe
+			// no-op — and only THEN close(r.events): seal-before-close is the
+			// send-on-closed-channel panic guard. (drive's terminate paths normally
+			// drain+seal already; this defer covers them idempotently.)
+			defer close(r.events)
+			defer r.children.seal()
+			defer cancel()
+			body(ctx, r)
+		}()
+	}
+	abort := func() {
+		cancel()
+		r.children.seal()
+		close(r.events)
+	}
+	return &PreparedRun{run: r, start: start, abort: abort}
 }
 
 // drive runs the loop algorithm for one prompt. It always terminates the session
@@ -1240,9 +1505,8 @@ func (e *Engine) drive(ctx context.Context, r *Run, sess *session.Session, env t
 
 	// total is THIS run's per-run usage delta (the EvResult.Usage figure the team
 	// supervisor sums per round). It starts at zero each Run. The MaxRunTokens budget
-	// brake is evaluated against the AGGREGATE's cumulative Usage (sess.Usage) instead
-	// — which RecordUsage below keeps in lock-step and which the snapshot persists —
-	// so the budget survives reopen/restart while EvResult.Usage stays per-run.
+	// brake is evaluated against lifetime main usage since this Run's immutable baseline,
+	// while the aggregate's Session.Usage remains the durable compatibility mirror.
 	e.runLoop(ctx, r, sess, env, session.Usage{}, "", false)
 }
 
@@ -1256,10 +1520,12 @@ func (e *Engine) drive(ctx context.Context, r *Run, sess *session.Session, env t
 // total seeds the per-run usage delta (zero for a fresh prompt; the
 // already-spent-this-re-entry delta for driveFromAwaiting, so the EvResult figure
 // the team supervisor sums stays accurate). lastText seeds the last meaningful
-// assistant text. The budget brake reads sess.Usage directly (persisted spend is
-// honoured), independent of total. skipFirstBoundaryInjections is used only by
-// failed-step retry reuses conversation state; live instruction sources are re-resolved.
+// assistant text. The budget brake reads lifetime main usage through sess.Usage
+// (the durable compatibility mirror), measured from r.budgetBaseline and independent
+// of total. skipFirstBoundaryInjections is used only by failed-step retry reuses conversation state; live instruction sources are re-resolved.
 // while every later iteration resumes the ordinary boundary drains.
+//
+//nolint:unparam // total is a seed seam shared by prompt and resumed-entry callers.
 func (e *Engine) runLoop(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, total session.Usage, lastText string, skipFirstBoundaryInjections bool) {
 	// no-progress nudge accounting (Workstream A). noProgressNudges counts the
 	// continuation messages injected this run; nudgeCap is the budget (defaulted in
@@ -1412,28 +1678,171 @@ func (e *Engine) runLoop(ctx context.Context, r *Run, sess *session.Session, env
 		}
 
 		// Step 6: dispatch the tool calls, then loop back to step 2.
-		results, cancelled := e.dispatch(ctx, r, sess, env, turnIdx, asst.ToolCalls)
-		if cancelled {
-			e.terminate(ctx, r, sess, session.StopCancelled, lastText, total, nil, false)
-			return
-		}
-		if err := sess.RecordToolResults(results); err != nil {
-			e.terminate(ctx, r, sess, session.StopError, lastText, total, err, false)
-			return
-		}
-		e.save(ctx, r, sess)
-
-		// Plan-approval gate (issue #206): if a plan verdict (approved OR iterate)
-		// is pending this turn, terminate instead of looping back to the model. On
-		// Allow the run ends with StopPlanApproved (terminateComplete flips the mode
-		// at the boundary); on Deny (iterate) the run ends with StopPlanIterate so
-		// the operator's next typed prompt drives the revision (the session stays
-		// ModePlan — no mode flip). CLEAN terminals (completed path,
-		// Reopen-recoverable), parallel to StopBudget/StopNoProgress.
-		if e.planApprovalTerminal(ctx, r, sess, lastText, total) {
+		if e.dispatchTurn(ctx, r, sess, env, turnIdx, asst.ToolCalls, lastText, total) {
 			return
 		}
 	}
+}
+
+// dispatchTurn owns the dispatch-to-record tail and reports whether the run ended.
+func (e *Engine) dispatchTurn(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, calls []session.ToolCall, lastText string, total session.Usage) bool {
+	results, park, cancelled := e.dispatch(ctx, r, sess, env, turnIdx, calls)
+	if cancelled {
+		e.terminate(ctx, r, sess, session.StopCancelled, lastText, total, nil, false)
+		return true
+	}
+	if park != nil {
+		outcome := e.parkAuthorization(ctx, r, sess, turnIdx, park, results)
+		switch {
+		case outcome.cancelled:
+			e.terminate(ctx, r, sess, session.StopCancelled, lastText, total, nil, false)
+			return true
+		case outcome.fatal != nil:
+			e.terminate(ctx, r, sess, session.StopError, lastText, total, outcome.fatal, false)
+			return true
+		case outcome.parked:
+			return true
+		default:
+			results = outcome.results
+		}
+	}
+	if err := sess.RecordToolResults(results); err != nil {
+		e.terminate(ctx, r, sess, session.StopError, lastText, total, err, false)
+		return true
+	}
+	e.save(ctx, r, sess)
+	return e.planApprovalTerminal(ctx, r, sess, lastText, total)
+}
+
+type authorizationParkResult struct {
+	results   []session.ToolResult
+	parked    bool
+	cancelled bool
+	fatal     error
+}
+
+func (e *Engine) authorizationParkFailures(r *Run, turnIdx int, park *dispatchPark, message string) []session.ToolResult {
+	results := make([]session.ToolResult, 0, len(park.deferred)+1)
+	pending := session.NewToolError(park.call.ID, message)
+	e.emit(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(pending)})
+	results = append(results, pending)
+	for _, call := range park.deferred {
+		e.openCard(r, turnIdx, call)
+		result := session.NewToolError(call.ID, "external authorization deferred sibling was not executed")
+		e.emit(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(result)})
+		results = append(results, result)
+	}
+	return results
+}
+
+const authorizationAbortTimeout = 5 * time.Second
+
+func abortAuthorization(ctx context.Context, park *dispatchPark) error {
+	if park.requester == nil {
+		return nil
+	}
+	abortCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), authorizationAbortTimeout)
+	defer cancel()
+	return park.requester.AbortAuthorization(abortCtx, park.authorization)
+}
+
+func (e *Engine) rollbackAuthorization(ctx context.Context, sess *session.Session, park *dispatchPark, reason string) error {
+	if _, err := sess.AbortAuthorization(reason); err != nil {
+		return errors.Join(err, abortAuthorization(ctx, park))
+	}
+	rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), authorizationAbortTimeout)
+	saveErr := e.saveRequired(rollbackCtx, sess)
+	cancel()
+	abortErr := abortAuthorization(ctx, park)
+	if saveErr != nil {
+		saveErr = fmt.Errorf("persist authorization rollback: %w", saveErr)
+	}
+	return errors.Join(saveErr, abortErr)
+}
+
+// parkAuthorization is the single ownership tail after a requester allocated an
+// external authorization. The aggregate transition is persisted before its event
+// is delivered; every failure aborts the requester and restores running state.
+func (e *Engine) parkAuthorization(ctx context.Context, r *Run, sess *session.Session, turnIdx int, park *dispatchPark, completed []session.ToolResult) authorizationParkResult {
+	if len(completed) > 0 {
+		if err := sess.RecordToolResults(completed); err != nil {
+			return authorizationParkResult{fatal: errors.Join(
+				fmt.Errorf("record results before external authorization: %w", err),
+				abortAuthorization(ctx, park),
+			)}
+		}
+	}
+	if park.fatal != nil {
+		return authorizationParkResult{fatal: park.fatal}
+	}
+	if !r.req.CanPresentAuthorization || e.deps.Role != "" {
+		if err := abortAuthorization(ctx, park); err != nil {
+			return authorizationParkResult{fatal: fmt.Errorf("abort ineligible external authorization: %w", err)}
+		}
+		return authorizationParkResult{results: e.authorizationParkFailures(r, turnIdx, park, "external authorization cannot be presented by this run")}
+	}
+	if ctx.Err() != nil {
+		if err := abortAuthorization(ctx, park); err != nil {
+			return authorizationParkResult{fatal: fmt.Errorf("abort cancelled external authorization: %w", err)}
+		}
+		return authorizationParkResult{cancelled: true}
+	}
+	if err := sess.PauseForAuthorization(session.PendingAuthorization{
+		Authorization: park.authorization,
+		Call:          park.call,
+		Deferred:      park.deferred,
+	}); err != nil {
+		return authorizationParkResult{fatal: errors.Join(
+			fmt.Errorf("park external authorization: %w", err),
+			abortAuthorization(ctx, park),
+		)}
+	}
+	if ctx.Err() != nil {
+		if err := e.rollbackAuthorization(ctx, sess, park, "cancelled"); err != nil {
+			return authorizationParkResult{fatal: err}
+		}
+		return authorizationParkResult{cancelled: true}
+	}
+	if err := e.saveRequired(ctx, sess); err != nil {
+		rollbackErr := e.rollbackAuthorization(ctx, sess, park, "failed")
+		return authorizationParkResult{fatal: errors.Join(fmt.Errorf("persist external authorization: %w", err), rollbackErr)}
+	}
+
+	e.drainChildren(ctx, r)
+	if ctx.Err() != nil {
+		if err := e.rollbackAuthorization(ctx, sess, park, "cancelled"); err != nil {
+			return authorizationParkResult{fatal: err}
+		}
+		return authorizationParkResult{cancelled: true}
+	}
+	payload := session.AuthorizationPayload{
+		AuthorizationID: park.authorization.ID,
+		DisplayName:     park.authorization.DisplayName,
+		Call:            park.call.ID,
+		ExpiresAt:       park.authorization.ExpiresAt,
+		Status:          session.AuthorizationPending,
+	}
+	sequenced, emitted, cancelled := r.emitAuthorizationRequired(session.Event{Type: session.EvAuthorizationRequired, Turn: turnIdx, Authorization: &payload})
+	if !emitted {
+		if err := e.rollbackAuthorization(ctx, sess, park, "cancelled"); err != nil {
+			return authorizationParkResult{fatal: err}
+		}
+		if cancelled {
+			return authorizationParkResult{cancelled: true}
+		}
+		return authorizationParkResult{fatal: errors.New("deliver external authorization event: event buffer unavailable")}
+	}
+	if e.deps.Sink != nil {
+		e.deps.Sink.Emit(r.ctx, sequenced)
+	}
+	return authorizationParkResult{parked: true}
+}
+
+func (e *Engine) saveRequired(ctx context.Context, sess *session.Session) error {
+	if e.deps.Store == nil {
+		return errors.New("agent: external authorization requires a durable session store")
+	}
+	return e.deps.Store.Save(ctx, sess)
 }
 
 func shouldRunBoundaryInjections(firstIteration, skipFirst bool) bool {
@@ -1735,18 +2144,15 @@ func (e *Engine) effectiveMaxRunTokens(r *Run) int {
 	}
 }
 
-// budgetExhausted reports whether the session's CUMULATIVE usage has crossed the
-// effective loop-level token ceiling (Deps.MaxRunTokens folded with the run's
-// tighten-only RunRequest override). A non-positive effective ceiling (the default)
-// disables the budget and always returns false.
-//
-// It reads the AGGREGATE's cumulative Usage (the value RecordUsage accumulates and
-// the snapshot persists), NOT the per-run delta, so the budget brake bounds the
-// logical run across reopen/restart — a reloaded session resumes with its prior
-// spend already counted. The per-run delta stays the EvResult.Usage figure.
+// budgetExhausted reports whether lifetime main usage accrued since this Run's
+// immutable baseline has crossed the effective loop-level token ceiling
+// (Deps.MaxRunTokens folded with the run's tighten-only RunRequest override). A
+// non-positive effective ceiling (the default) disables the budget and always
+// returns false. Ordinary runs have a zero baseline; only the package-private
+// team-lead synthesis path captures the current main total.
 func (e *Engine) budgetExhausted(r *Run, cumulative session.Usage) bool {
 	ceiling := e.effectiveMaxRunTokens(r)
-	return ceiling > 0 && cumulative.TotalTokens() >= ceiling
+	return ceiling > 0 && cumulative.TotalTokens()-r.budgetBaseline.TotalTokens() >= ceiling
 }
 
 // lookupTool resolves a tool by name for THIS run: the run-scoped ExtraTools overlay
@@ -1844,7 +2250,7 @@ func (e *Engine) recordPrompt(ctx context.Context, r *Run, sess *session.Session
 		return false, "", fmt.Errorf("agent: record user prompt: %w", rerr)
 	}
 	if messages := sess.Conversation.Messages; len(messages) > 0 {
-		owned := learning.NewTrajectory(sess.ID, sess.Workspace, session.StopNone, session.Usage{}, messages[len(messages)-1:])
+		owned := learning.NewTrajectory(sess.ID, env.Workspace().Root(), session.StopNone, session.Usage{}, messages[len(messages)-1:])
 		r.currentPrompt = &owned.Messages[0]
 	}
 	// Seed the session Title ONCE from this genuine prompt (set-once guard in
@@ -1854,6 +2260,8 @@ func (e *Engine) recordPrompt(ctx context.Context, r *Run, sess *session.Session
 	// notice never seeds or overwrites the title. A multimodal-only prompt
 	// (finalText=="" with parts) leaves Title=="" — the lazy fallback applies.
 	sess.SetTitle(finalText)
+	// This is the sole title-source ingress. Continuations deliberately bypass it.
+	sess.RecordTitleSourcePrompt(finalText)
 	// Emit the durable, log-only EvUserPrompt so the EventLog records WHAT THE USER
 	// ASKED (the relay never re-emits the prompt to the client). Turn 0 — the genuine
 	// prompt opens the run. parts ride verbatim so a fold rebuilds a multimodal prompt.
@@ -2195,7 +2603,7 @@ func (e *Engine) buildRequest(ctx context.Context, r *Run, sess *session.Session
 	cfg.Env.Model = e.deps.Model
 	cfg.Env.Mode = string(sess.Mode)
 	if cfg.Env.Cwd == "" {
-		cfg.Env.Cwd = sess.Workspace
+		cfg.Env.Cwd = env.Workspace().Root()
 	}
 	e.refreshOperatorProfile(ctx, r, &cfg)
 	// PromptBuilder (issue #127): a host-supplied builder replaces prompt.Build
@@ -2402,6 +2810,28 @@ func (e *Engine) bindRunDiag(id session.SessionID) port.Diagnostics {
 // consumes its Seq — monotonic-with-gaps, exactly emitOrAbort's documented
 // contract — and is still returned for sink mirroring.
 func (r *Run) emit(ev session.Event) session.Event {
+	sequenced, _ := r.emitChecked(ev)
+	return sequenced
+}
+
+func (r *Run) emitAuthorizationRequired(ev session.Event) (session.Event, bool, bool) {
+	r.closureMu.Lock()
+	defer r.closureMu.Unlock()
+	if r.cancelRequested {
+		return ev, false, true
+	}
+	ev.Seq = r.seq.Add(1)
+	ev.RunID = r.runID
+	select {
+	case r.events <- ev:
+		r.setOutcome(RunOutcomeAuthorizationPending)
+		return ev, true, false
+	default:
+		return ev, false, false
+	}
+}
+
+func (r *Run) emitChecked(ev session.Event) (session.Event, bool) {
 	ev.Seq = r.seq.Add(1)
 	// The run labels its own events with run-scoped identity. Seq answers "where
 	// in this run", RunID answers "which run" — Seq restarts every run, so it
@@ -2412,14 +2842,15 @@ func (r *Run) emit(ev session.Event) session.Event {
 	ev.RunID = r.runID
 	select {
 	case r.events <- ev:
-		return ev
+		return ev, true
 	default:
 	}
 	select {
 	case r.events <- ev:
+		return ev, true
 	case <-r.hardAbort:
+		return ev, false
 	}
-	return ev
 }
 
 // emitOrAbort is emit's give-up-at-seal sibling for the OUT-OF-BAND child
@@ -2578,6 +3009,7 @@ func (e *Engine) deferFailedStepRetry(ctx context.Context, r *Run, sess *session
 	e.closeSteerDrained(ctx, r, sess)
 	e.drainChildren(ctx, r)
 	e.fireStop(ctx, r, sess, reason)
+	r.setOutcome(RunOutcomeCompleted)
 	e.emitResult(r, sess, reason, text, usage, "", session.RetryDispositionUnknown, session.StreamProgressUnknown)
 	e.save(ctx, r, sess)
 }
@@ -2609,6 +3041,7 @@ func (e *Engine) terminate(ctx context.Context, r *Run, sess *session.Session, r
 		errMsg = cause.Error()
 	}
 	e.fireStop(ctx, r, sess, reason)
+	r.setOutcome(RunOutcomeCompleted)
 	e.emitResult(r, sess, reason, text, usage, errMsg, disposition, progress)
 	e.save(ctx, r, sess)
 }
@@ -2667,6 +3100,7 @@ func (e *Engine) terminateComplete(ctx context.Context, r *Run, sess *session.Se
 	e.save(ctx, r, sess)
 	e.observeCompletion(ctx, r, sess, reason, usage)
 	e.fireStop(ctx, r, sess, reason)
+	r.setOutcome(RunOutcomeCompleted)
 	// terminateComplete has no Go error to classify (the provider relays a stop
 	// CHUNK, not an error), so the permanence bit is always false here — honest
 	// fail-open. Only the error terminate() path carries a real classified cause.
@@ -2682,7 +3116,8 @@ func (e *Engine) observeCompletion(ctx context.Context, r *Run, sess *session.Se
 		sess.State != session.StateCompleted || reason == session.StopError || reason == session.StopCancelled {
 		return
 	}
-	tr := learning.NewTrajectory(sess.ID, sess.Workspace, reason, usage, sess.Conversation.Messages)
+	tr := learning.NewTrajectory(sess.ID, r.workspace, reason, usage, sess.Conversation.Messages)
+	tr.RunID = sess.RunID()
 	tr.Principal = sess.Owner.Clone()
 	tr.Kind = sess.Kind
 	tr.Counters = sess.Counters
@@ -2783,6 +3218,8 @@ func (e *Engine) emitResult(r *Run, _ *session.Session, reason session.StopReaso
 	})
 }
 
+const sessionPersistenceTimeout = 5 * time.Second
+
 // save best-effort persists the session if a Store is configured.
 //
 // A failure is WARNed once per run, never propagated: a persist failure must not
@@ -2794,11 +3231,25 @@ func (e *Engine) emitResult(r *Run, _ *session.Session, reason session.StopReaso
 // its event log all silently stopped working with no line anywhere. r.diag
 // carries the session id and, for a child engine, the agent role — exactly the
 // correlation that absence made impossible to debug.
+//
+// A live run uses its original context directly. Once that context is cancelled,
+// the terminal save gets a short cancel-detached window so context-aware stores
+// can durably record the terminal state without letting a wedged store block run
+// teardown indefinitely. Diagnostics retain the original run context and its
+// bound session/role correlation.
 func (e *Engine) save(ctx context.Context, r *Run, sess *session.Session) {
 	if e.deps.Store == nil {
 		return
 	}
-	if err := e.deps.Store.Save(ctx, sess); err != nil && !r.saveWarned {
+	var err error
+	if ctx.Err() == nil {
+		err = e.deps.Store.Save(ctx, sess)
+	} else {
+		saveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sessionPersistenceTimeout)
+		err = e.deps.Store.Save(saveCtx, sess)
+		cancel()
+	}
+	if err != nil && !r.saveWarned {
 		r.saveWarned = true
 		r.diag.Log(ctx, port.LevelWarn,
 			"session persistence failed; this session may not be resumable after a restart",

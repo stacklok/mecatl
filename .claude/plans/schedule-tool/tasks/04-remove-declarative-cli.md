@@ -49,7 +49,7 @@ normal startup / unknown-subcommand handling, never to the deleted HTTP client.
 from, then regenerate). Remove the declarative-settings + `mecated schedules`
 CLI sections from `docs/usage.md` (replace with a pointer to the in-chat
 `Schedule` tool + the REST/gRPC API). Update `docs/architecture.md`'s
-scheduled-tasks section. Run `task docs` (llms.txt regen + matlatl strict
+scheduled-tasks section. Run `task docs` (configuration-reference regeneration + matlatl strict
 gate) — you touched markdown.
 
 **Keep green.** AC3.3 asserts the gRPC/REST surface survives — the mecatui

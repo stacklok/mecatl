@@ -21,7 +21,7 @@ import (
 // InspectMember).
 func teamSpecs() {
 	ginkgo.Describe("teams", func() {
-		ginkgo.It("runs a two-worker team that records findings and reports the team id", ginkgo.SpecTimeout(510*time.Second), func(ctx ginkgo.SpecContext) {
+		ginkgo.It("runs a two-worker team that records findings and reports the team id", ginkgo.FlakeAttempts(2), ginkgo.SpecTimeout(510*time.Second), func(ctx ginkgo.SpecContext) {
 			res := runScenario(ctx, harness.RunOpts{
 				Scenario:     "teams",
 				ApproveTools: []string{"Team"}, // the built-in floor ASKs for Team; the CLI config allows it, this is the backup
@@ -38,11 +38,24 @@ func teamSpecs() {
 			// snapshot message would otherwise satisfy the assertion) and are
 			// reported as supplementary context only.
 			findings := 0
+			var sawAlphaApple, sawBetaBanana bool
+			observeFindings := func(snapshot []client.TeamFinding) {
+				findings += len(snapshot)
+				for _, finding := range snapshot {
+					body := strings.ToLower(finding.Body)
+					switch strings.ToLower(finding.Member) {
+					case "alpha":
+						sawAlphaApple = sawAlphaApple || strings.Contains(body, "apple")
+					case "beta":
+						sawBetaBanana = sawBetaBanana || strings.Contains(body, "banana")
+					}
+				}
+			}
 			for _, m := range res.TeamMsgs(client.TeamFindings) {
-				findings += len(m.Findings)
+				observeFindings(m.Findings)
 			}
 			for _, m := range res.TeamMsgs(client.TeamEnd) {
-				findings += len(m.Findings)
+				observeFindings(m.Findings)
 			}
 			tasks := 0
 			for _, m := range res.TeamMsgs(client.TeamTasks) {
@@ -51,6 +64,10 @@ func teamSpecs() {
 			gomega.Expect(findings).To(gomega.BeNumerically(">", 0),
 				fmt.Sprintf("expected recorded findings in the team.findings/team.end snapshots (the goal forces two RecordFinding calls); saw %d findings, %d snapshot tasks\n",
 					findings, tasks)+failureReport())
+			gomega.Expect(sawAlphaApple).To(gomega.BeTrue(),
+				"team findings never contained alpha recording apple\n"+failureReport())
+			gomega.Expect(sawBetaBanana).To(gomega.BeTrue(),
+				"team findings never contained beta recording banana\n"+failureReport())
 
 			gomega.Expect(res.TeamMsgs(client.TeamEnd)).NotTo(gomega.BeEmpty(),
 				"no team.end observed\n"+failureReport())

@@ -61,12 +61,12 @@ func TestScheduleSharedCatalog_Scenario3_DefaultSessionHasTool(t *testing.T) {
 	llm2 := mockllm.New(
 		mockllm.ToolCallTurn(session.NewToolCall("q1", agent.ScheduleQueryToolName, []byte(`{"verb":"list"}`))),
 		mockllm.ToolCallTurn(session.NewToolCall("q2", agent.ScheduleToolName,
-			[]byte(`{"verb":"create","name":"ac31","prompt":"p","cron":"@every 1h","workspace":"`+t.TempDir()+`"}`))),
+			[]byte(`{"verb":"create","name":"ac31","prompt":"p","cron":"@every 1h"}`))),
 		mockllm.TextTurn("done"),
 	)
-	built2, ws := scheduleScenario3Build(t, llm2)
+	built2, _ := scheduleScenario3Build(t, llm2)
 	// Launch-root workspace → sessionNeedsPerFactory false → the SHARED engine.
-	sess2, err := built2.Service.CreateSession(ctx, ws, session.ModeDefault, session.Limits{})
+	sess2, err := built2.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession (dispatch): %v", err)
 	}
@@ -119,7 +119,7 @@ func TestScheduleSharedCatalog_Scenario3_SystemPromptCarriesScheduleNote(t *test
 			invoked = true
 		}),
 	}, mockllm.TextTurn("ok"))
-	built, ws := scheduleScenario3Build(t, llm)
+	built, _ := scheduleScenario3Build(t, llm)
 	ctx := context.Background()
 
 	// Create the session on the LAUNCH-ROOT workspace (ws == cfg.Workspace) so
@@ -127,7 +127,7 @@ func TestScheduleSharedCatalog_Scenario3_SystemPromptCarriesScheduleNote(t *test
 	// shared-engine fast path a plain mecatui launch takes. (A DIFFERENT
 	// workspace would route to the per-session factory, which already carries
 	// the note — asserting there would not exercise the shared engine.)
-	sess, err := built.Service.CreateSession(ctx, ws, session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -165,7 +165,7 @@ func TestScheduleSharedCatalog_Scenario3_SystemPromptCarriesScheduleNote(t *test
 		t.Fatalf("Build (no store): %v", err)
 	}
 	defer builtNone.Close()
-	sessNone, err := builtNone.Service.CreateSession(ctx, wsNone, session.ModeDefault, session.Limits{})
+	sessNone, err := builtNone.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession (no store): %v", err)
 	}
@@ -202,7 +202,7 @@ func TestScheduleSharedCatalog_Scenario3_OriginAndDeliveryWired(t *testing.T) {
 	// own sched-- run consumes turn 3.
 	llm := mockllm.New(
 		mockllm.ToolCallTurn(session.NewToolCall("c1", agent.ScheduleToolName,
-			[]byte(`{"verb":"create","name":"nightly","prompt":"check ci","cron":"@every 1h","workspace":"`+workspace+`"}`))),
+			[]byte(`{"verb":"create","name":"nightly","prompt":"check ci","cron":"@every 1h"}`))),
 		mockllm.TextTurn("scheduled"),
 		mockllm.TextTurn("fire output"),
 	)
@@ -220,9 +220,13 @@ func TestScheduleSharedCatalog_Scenario3_OriginAndDeliveryWired(t *testing.T) {
 	}
 	defer built.Close()
 
-	sess, err := built.Service.CreateSession(ctx, workspace, session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
+	}
+
+	if _, err := built.Service.ReattachPlacement(ctx, sess.EnvironmentRef); err != nil {
+		t.Fatalf("created session exact placement cannot reattach before schedule creation: ref=%+v err=%v", sess.EnvironmentRef, err)
 	}
 
 	// The origin run creates the schedule. startRun places THIS session id on
@@ -365,7 +369,7 @@ func TestScheduleSharedCatalog_Scenario3_RehydratedSessionKeepsTool(t *testing.T
 	if err != nil {
 		t.Fatalf("Build 1: %v", err)
 	}
-	sess, err := built1.Service.CreateSession(ctx, workspace, session.ModeDefault, session.Limits{})
+	sess, err := built1.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

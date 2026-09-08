@@ -231,7 +231,7 @@ func performImport(req importRequest, out io.Writer) error {
 		}
 	}
 
-	imported := session.New(session.SessionID(req.id), session.ModeDefault, req.workspace, session.Limits{}, req.transcript.CreatedAt)
+	imported := session.New(session.SessionID(req.id), session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: req.workspace, Revision: "in-tree-v1"}, session.Limits{}, req.transcript.CreatedAt)
 	if err := imported.SeedHistory(req.transcript.Messages); err != nil {
 		return fmt.Errorf("seed imported conversation: %w", err)
 	}

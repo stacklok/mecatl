@@ -5,6 +5,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stacklok/mecatl/engine/adapter/fstools"
+	"github.com/stacklok/mecatl/engine/adapter/memledger"
+	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/osfs"
 )
@@ -44,46 +47,36 @@ func TestPathEscapePosture_EditLedgerPseudoFSGuarded(t *testing.T) {
 	}
 	ws := newEscapeWorkspace(base, clf)
 
-	// /proc/version exists on every Linux host running these tests; its bytes
-	// are readable via a plain os.ReadFile, so an unguarded ReadVersion WOULD
-	// mint a version for it — the guard must be the thing that stops it, not a
-	// missing file.
+	ledger := memledger.New()
+	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: root}, ws, ledger, nil)
+	ctx := context.Background()
 	const procPath = "/proc/version"
-	if _, err := ws.Read(context.Background(), procPath); err == nil || !strings.Contains(err.Error(), "pseudo-filesystem") {
-		t.Fatalf("escapeWorkspace.Read(%q) = %v, want the pseudo-fs refusal (sanity: the read guard is armed)", procPath, err)
+	readResult, err := (fstools.ReadTool{}).Execute(ctx, session.ToolCall{ID: "read", Name: "Read", Args: []byte(`{"path":"/proc/version"}`)}, env)
+	if err != nil || !readResult.IsError || !strings.Contains(readResult.Content, "pseudo-filesystem") {
+		t.Fatalf("Read(%q) = (%+v, %v), want pseudo-filesystem refusal", procPath, readResult, err)
+	}
+	key := tool.LedgerKey(ws.Root(), procPath)
+	if _, ok, err := ledger.RecordedVersion(ctx, key); err != nil || ok {
+		t.Fatalf("ledger after refused Read = (ok=%v, err=%v), want absent", ok, err)
 	}
 
-	// RecordRead must NOT silently store a pseudo-fs entry in the ledger: the
-	// record is guarded, so the entry stays unrecorded.
-	ws.RecordRead(procPath, tool.NewFileVersion("caller-token"))
-	if _, ok := ws.RecordedVersion(procPath); ok {
-		t.Fatalf("RecordedVersion(%q) reported ok=true after a guarded RecordRead", procPath)
+	// Planted evidence cannot bypass the content workspace's pseudo-filesystem guard.
+	if err := ledger.RecordRead(ctx, key, tool.NewFileVersion("caller-token")); err != nil {
+		t.Fatal(err)
+	}
+	editResult, err := (fstools.EditTool{}).Execute(ctx, session.ToolCall{ID: "edit", Name: "Edit", Args: []byte(`{"path":"/proc/version","old_string":"x","new_string":"y"}`)}, env)
+	if err != nil || !editResult.IsError || !strings.Contains(editResult.Content, "pseudo-filesystem") {
+		t.Fatalf("Edit(%q) = (%+v, %v), want pseudo-filesystem refusal", procPath, editResult, err)
 	}
 
-	// Even with a PLANTED ledger entry (as if the record half regressed to the
-	// inner workspace), the check half must not validate a pseudo-fs read:
-	// RecordedVersion consults the guard itself, so the planted entry can never
-	// satisfy an Edit's read-before-edit check.
-	ews, isEscape := ws.(*escapeWorkspace)
-	if !isEscape {
-		t.Fatalf("newEscapeWorkspace returned %T, want *escapeWorkspace", ws)
+	if _, err := ws.CreateFile(ctx, "in-root.txt", []byte("v1")); err != nil {
+		t.Fatalf("CreateFile: %v", err)
 	}
-	ews.Workspace.RecordRead(procPath, tool.NewFileVersion("caller-token"))
-	if _, ok := ws.RecordedVersion(procPath); ok {
-		t.Fatalf("RecordedVersion(%q) reported ok=true with a planted entry", procPath)
+	readResult, err = (fstools.ReadTool{}).Execute(ctx, session.ToolCall{ID: "read2", Name: "Read", Args: []byte(`{"path":"in-root.txt"}`)}, env)
+	if err != nil || readResult.IsError {
+		t.Fatalf("ordinary Read = (%+v, %v)", readResult, err)
 	}
-
-	// The guard never touches an ordinary in-root path: the ledger behaves
-	// exactly as the unwrapped workspace for the ordinary case.
-	if _, err := ws.CreateFile(context.Background(), "in-root.txt", []byte("v1")); err != nil {
-		t.Fatalf("CreateFile(in-root.txt): %v", err)
-	}
-	if _, ver, err := ws.ReadVersion(context.Background(), "in-root.txt"); err != nil {
-		t.Fatalf("ReadVersion(in-root.txt): %v — the ledger guard must leave ordinary paths untouched", err)
-	} else {
-		ws.RecordRead("in-root.txt", ver)
-		if got, ok := ws.RecordedVersion("in-root.txt"); !ok || !got.Equal(ver) {
-			t.Fatalf("in-root RecordedVersion did not return the recorded version (ok=%v)", ok)
-		}
+	if _, ok, err := ledger.RecordedVersion(ctx, tool.LedgerKey(ws.Root(), "in-root.txt")); err != nil || !ok {
+		t.Fatalf("ordinary read evidence = (ok=%v, err=%v), want present", ok, err)
 	}
 }

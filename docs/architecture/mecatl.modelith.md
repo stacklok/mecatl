@@ -486,7 +486,9 @@ erDiagram
 
 - **budget-enforced-at-turn-boundary** — The token budget is checked at a `Turn` boundary: an in-flight `Turn` always completes, and the budget then stops the next `Turn` cleanly.
 
-- **delegation-budget-inherited-tighten-only** — A shared token budget is inherited by every delegated `Subagent` and `TeamMember`; a per-call override may only tighten it, never raise it.
+- **per-engine-budget-inherited-tighten-only** — `MaxRunTokens` is the same configured ceiling for the main engine, each `Subagent`, each `Parallel` branch, every `TeamMember`, and lead synthesis, but each engine enforces it only against its own session usage. Child spend never draws down parent usage; per-call overrides may only tighten a child's ceiling. A delegation tree can therefore exceed this per-engine ceiling.
+
+- **team-budget-round-aggregate** — `MaxTeamTokens` is a distinct, tighten-only aggregate checked between team rounds. Crossing it prevents new rounds; the in-flight round and lead synthesis still complete. Cross-tree aggregate enforcement and observability are deferred.
 
 - **rehydration-needs-snapshot-plus-log** — Rehydrating a `Session` after a restart restores the aggregate from its snapshot and re-derives volatile state — learned `PermissionRules` and the pre-compaction `Conversation` archive — by replaying the `EventLog`; the snapshot alone is insufficient.
 
@@ -617,7 +619,7 @@ erDiagram
 
 1. The model issues delegation `ToolCalls` that spawn several `Subagents` from an `AgentDef`, bounded by the concurrency gate.
 2. Each `Subagent` runs a read-only child loop and cannot spawn its own `Subagents`.
-3. A child `PermissionAsk` surfaces without raw arguments; the children's token spend draws down the inherited budget.
+3. A child `PermissionAsk` surfaces without raw arguments; every child gets the configured `MaxRunTokens` value as its own independently enforced ceiling, so child spend does not draw down the parent.
 
 **Invariants touched**
 
@@ -626,7 +628,7 @@ erDiagram
 - **subagent-fanout-bounded** — Concurrent child agents are bounded by a child-concurrency gate.
 - **child-ask-redacts-raw-args** — A child `PermissionAsk` surfaced to a parent or reviewer never carries the child's raw `ToolCall` arguments.
 
-- **delegation-budget-inherited-tighten-only** — A shared token budget is inherited by every delegated `Subagent` and `TeamMember`; a per-call override may only tighten it, never raise it.
+- **per-engine-budget-inherited-tighten-only** — `MaxRunTokens` is the same configured ceiling for the main engine, each `Subagent`, each `Parallel` branch, every `TeamMember`, and lead synthesis, but each engine enforces it only against its own session usage. Child spend never draws down parent usage; per-call overrides may only tighten a child's ceiling. A delegation tree can therefore exceed this per-engine ceiling.
 
 
 ### A team works a shared task and the lead synthesizes
@@ -638,6 +640,8 @@ erDiagram
 1. A `Team` is spawned with a trusted goal; each `TeamMember` runs an isolated loop and records findings to the shared ledger.
 2. Peer messages between members are treated as untrusted input.
 3. `Lead` reads the ledger and returns one consolidated synthesis as the `Team`'s result.
+4. Each `TeamMember` and the `Lead` synthesis use the configured `MaxRunTokens` value as independently enforced per-engine ceilings; their spend does not draw down the parent.
+5. The separate `MaxTeamTokens` ceiling aggregates team rounds: when crossed it prevents new rounds, while the in-flight round and lead synthesis finish.
 
 **Invariants touched**
 
@@ -647,7 +651,9 @@ erDiagram
 
 - **team-returns-lead-synthesis** — A `Team` returns the `Lead`'s consolidated synthesis, not concatenated `TeamMember` output.
 
-- **delegation-budget-inherited-tighten-only** — A shared token budget is inherited by every delegated `Subagent` and `TeamMember`; a per-call override may only tighten it, never raise it.
+- **per-engine-budget-inherited-tighten-only** — `MaxRunTokens` is the same configured ceiling for the main engine, each `Subagent`, each `Parallel` branch, every `TeamMember`, and lead synthesis, but each engine enforces it only against its own session usage. Child spend never draws down parent usage; per-call overrides may only tighten a child's ceiling. A delegation tree can therefore exceed this per-engine ceiling.
+
+- **team-budget-round-aggregate** — `MaxTeamTokens` is a distinct, tighten-only aggregate checked between team rounds. Crossing it prevents new rounds; the in-flight round and lead synthesis still complete. Cross-tree aggregate enforcement and observability are deferred.
 
 
 ### A run crosses the token budget

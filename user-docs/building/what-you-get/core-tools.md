@@ -1,11 +1,12 @@
 ---
 sidebar_position: 2
 title: Core tools
+description: Understand Mecatl's built-in tools and the read-parallel, mutate-serial dispatch model.
 ---
 
 # Core tools
 
-The **tool catalog** is the set of tools the model can invoke during a session. mecatl assembles it at startup from the core built-ins, any configured MCP servers, and opt-in features (skills, memory). Every tool — built-in or remote — is the same `tool.Tool` interface, so the model and the dispatch layer see one uniform surface.
+The **tool catalog** is the set of tools the model can invoke during a session. Mecatl assembles it at startup from the core built-ins, any configured MCP servers, and opt-in features (skills, memory). Every tool — built-in or remote — is the same `tool.Tool` interface, so the model and the dispatch layer see one uniform surface.
 
 Two dispatch rules govern execution:
 
@@ -27,8 +28,9 @@ These tools are always present in a default session (no extra configuration requ
 | `Edit` | Apply an exact-string replacement to a file. Enforces read-before-edit, exact match, and uniqueness (or `replace_all`). The file must be unchanged since it was read; a concurrent change or deletion since the read surfaces as a model-visible refusal to re-read and retry. Safer than Write for targeted changes. | No |
 | `Bash` | Execute a shell command. The model's general-purpose escape hatch for tasks no other tool covers. Subject to permission rules. Supports `background: true` for long-running commands (see below). | No |
 | `BashStatus` | Check on the background commands `Bash` started in this run: poll a job's output tail, collect a finished job's result, or cancel a job. Registered wherever `Bash` is. | Yes |
-| `Grep` | Search file contents for a pattern (regex or literal) across the workspace. Returns matching lines with context. Supports `**` recursive globs when scoping the search to a subtree. | Yes |
+| `Grep` | Search file contents for a pattern (regex or literal) across the workspace. Returns matching lines with context. Supports `**` recursive globs when scoping the search to a subtree; broad unscoped searches have a safety budget, so supply `path` for large workspaces. | Yes |
 | `Glob` | List files matching a glob pattern. Useful for discovering which files exist before reading them. Supports `**` for recursive matching across any number of directory levels. | Yes |
+| `DiscoverModels` | Inspect the server's resolved model inventory through a bounded, safe projection. Each returned `provider_id` + `model_id` pair is an exact selection handle. Present in default and no-filesystem profiles. | Yes |
 | `WebFetch` | Fetch readable text from a public HTTP(S) URL. Present in both default and no-filesystem session profiles. | Yes |
 | `WebSearch` | Run a web search and return results. Present in both default and no-filesystem session profiles. | Yes |
 | `ToolSearch` | Search the catalog for hidden (progressively-disclosed) tools by keyword and hydrate them into the session. Only registered when progressive tool disclosure is enabled. | Yes |
@@ -39,13 +41,32 @@ These tools are always present in a default session (no extra configuration requ
 
 The fetcher does not use browser cookies, proxy settings, custom headers, or credentials. It rejects private, loopback, link-local, metadata, and reserved destinations, pins the DNS result used for the connection, and repeats those checks on every redirect. URLs are capped at 8 KiB, redirects at five hops, downloads and decompressed bodies at 5 MiB, and model-visible output at 25,000 bytes. Binary files and unsupported content types are rejected.
 
-Fetched text is external input. mecatl strips active HTML elements, converts the remaining page to text, repairs invalid UTF-8, and wraps the result in the same untrusted-content fence used by WebSearch. If you enable model-backed guardrails, their default rules inspect `WebFetch` results before the model sees them.
+Fetched text is external input. Mecatl strips active HTML elements, converts the remaining page to text, repairs invalid UTF-8, and wraps the result in the same untrusted-content fence used by WebSearch. If you enable model-backed guardrails, their default rules inspect `WebFetch` results before the model sees them.
 
 :::note[Bash is mutating]
 
 `Bash` is always classified as mutating regardless of what the command does. If you need the model to run read-only shell commands concurrently, use `Grep` and `Glob` instead — they are purpose-built read-only tools that run in parallel.
 
 :::
+
+### Managed temporary storage (Linux and macOS)
+
+Bash uses a private managed temporary lease by default. On normal completion the
+harness removes that lease; a bounded maintenance worker later reclaims only
+validated, unlocked abandoned command/job leases after the operator-configured
+TTL. It never sweeps arbitrary system temporary files and never blocks command
+allocation. The lifecycle is available on Linux and macOS; other platforms must
+use system mode.
+
+An operator can set `temporary_storage.mode: system` in user-global
+`~/.config/mecatl/settings.yaml` to restore system temporary storage. This rollback
+mode creates no new managed leases, runs no reaper, and leaves existing managed
+storage untouched for explicit inspection or removal. A model's `temp_scope:
+system` request remains permission-gated; it needs both the normal Bash decision
+and the separate `BashSystemTemp` capability. In managed mode, `managed_root`,
+`system_temp_dir`, `command_reap_after`, `reap_interval`, `reap_timeout` (default
+five minutes), and `shutdown_reap_timeout` (default one minute) configure storage
+and cleanup.
 
 ### Background commands
 

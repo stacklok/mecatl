@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -93,6 +94,117 @@ func TestMCPValidTaggedUnionVariants(t *testing.T) {
 	}
 }
 
+func TestMCPStaticProtectedToolsAreStrictTrustedDeclarations(t *testing.T) {
+	const config = `mcp:
+  servers:
+    - name: protected
+      url: https://mcp.example/mcp
+      auth:
+        mode: oauth
+        oauth:
+          issuer: https://issuer.example
+          client:
+            mode: preregistered
+            preregistered: {id: client, secret_env: MECATL_CLIENT_SECRET}
+          scopes: [read]
+          credentials:
+            mode: local
+            local: {root: /credentials, key_env: MECATL_KEY}
+          network: {additional_origins: [], private_origins: [], max_redirects: 0}
+          tools:
+            - name: reviewed
+              description: statically admitted
+              input_schema: {type: object}
+              read_only: true
+`
+	cfg, err := parseYAML([]byte(config))
+	if err != nil {
+		t.Fatalf("parse protected static tool: %v", err)
+	}
+	tool := cfg.MCP.Servers[0].Auth.OAuth.Tools[0]
+	if tool.Name != "reviewed" || string(tool.InputSchema) != `{"type":"object"}` || !tool.ReadOnly {
+		t.Fatalf("static tool declaration = %#v", tool)
+	}
+	if _, err := parseYAML([]byte(strings.Replace(config, "read_only: true", "unexpected: value", 1))); err == nil {
+		t.Fatal("unknown static-tool field parsed successfully")
+	}
+}
+
+func TestMCPAuthoritySyntaxIsLosslessAndStrict(t *testing.T) {
+	cfg, err := parseYAML([]byte(`mcp:
+  mode: broker
+  broker:
+    callback_url: https://agent.example/callback
+  servers:
+    - name: protected
+      url: https://mcp.example/mcp
+      auth:
+        mode: oauth
+        oauth:
+          upstream:
+            mode: oauth2
+            oauth2:
+              authorization_endpoint: https://auth.example/authorize
+              token_endpoint: https://auth.example/token
+          client:
+            mode: cimd
+            cimd: {document_url: https://auth.example/client.json}
+          scopes: [read]
+          network: {additional_origins: [], private_origins: [], max_redirects: 0}
+`))
+	if err != nil {
+		t.Fatalf("parse broker declaration: %v", err)
+	}
+	if cfg.MCP.Mode != "broker" || cfg.MCP.Broker.CallbackURL != "https://agent.example/callback" || cfg.MCP.Servers[0].Auth.OAuth.Upstream.OAuth2.TokenEndpoint != "https://auth.example/token" {
+		t.Fatalf("lossless broker declaration = %#v", cfg.MCP)
+	}
+	for _, body := range []string{
+		`mcp: {mode: broker, broker: {callback: https://agent.example/callback}, servers: []}`,
+		`mcp: {mode: broker, servers: [{name: x, url: https://x.example/mcp, auth: {mode: oauth, oauth: {upstream: {mode: oauth2, oauth2: {authorization_endpoint: http://auth.example/authorize, token_endpoint: https://auth.example/token}}, client: {mode: cimd, cimd: {document_url: https://auth.example/client.json}}, scopes: [read], network: {additional_origins: [], private_origins: [], max_redirects: 0}}}}]}`,
+	} {
+		if _, err := parseYAML([]byte(body)); err == nil {
+			t.Fatal("invalid authority syntax parsed successfully")
+		}
+	}
+}
+
+func TestTokenEndpointRejectsQueryString(t *testing.T) {
+	base := `mcp:
+  mode: broker
+  broker:
+    callback_url: https://agent.example/callback
+  servers:
+    - name: protected
+      url: https://mcp.example/mcp
+      auth:
+        mode: oauth
+        oauth:
+          upstream:
+            mode: oauth2
+            oauth2:
+              authorization_endpoint: https://auth.example/authorize
+              token_endpoint: %s
+          client:
+            mode: cimd
+            cimd: {document_url: https://auth.example/client.json}
+          scopes: [read]
+          network: {additional_origins: [], private_origins: [], max_redirects: 0}
+`
+	if _, err := parseYAML([]byte(fmt.Sprintf(base, "https://auth.example/token?tenant=1"))); err == nil {
+		t.Fatal("token_endpoint with a query string parsed successfully")
+	}
+	if _, err := parseYAML([]byte(fmt.Sprintf(base, "https://auth.example/token"))); err != nil {
+		t.Fatalf("token_endpoint without a query string failed to parse: %v", err)
+	}
+	// mcp.servers[].url legitimately carries a query string; this validator
+	// must stay scoped to the token endpoint only.
+	withServerQuery := strings.Replace(fmt.Sprintf(base, "https://auth.example/token"),
+		"url: https://mcp.example/mcp", "url: https://mcp.example/mcp?workspace=1", 1)
+	if _, err := parseYAML([]byte(withServerQuery)); err != nil {
+		t.Fatalf("mcp.servers[].url with a query string failed to parse: %v", err)
+	}
+}
+
 func TestMCPStrictValidation(t *testing.T) {
 	minimalOAuth := `
 mcp:
@@ -128,13 +240,10 @@ mcp:
 		"dcr client":                         replace("mode: preregistered", "mode: dcr"),
 		"cross client variant":               replace("            preregistered:", "            cimd: {document_url: https://client.example/cimd.json}\n            preregistered:"),
 		"client with null cross variant":     replace("            preregistered:", "            cimd: null\n            preregistered:"),
-		"credentials mapping omitted":        replace("          credentials:\n            mode: local\n            local: {root: /credentials, key_env: MECATL_KEY}\n", ""),
 		"unknown credentials":                replace("mode: local", "mode: vault"),
 		"cross credential variant":           replace("            local:", "            environment: {credential_env: MECATL_CREDENTIAL}\n            local:"),
 		"credential with null cross variant": replace("            local:", "            environment: null\n            local:"),
 		"missing scopes":                     replace("          scopes: [read]\n", ""),
-		"empty profile":                      replace("profile: work", `profile: ""`),
-		"empty principal":                    replace("principal: alice", `principal: ""`),
 		"invalid env reference":              replace("MECATL_CLIENT_SECRET", "CLIENT_SECRET"),
 		"secret value not reference":         replace("MECATL_CLIENT_SECRET", "actual-secret-value"),
 		"relative root":                      replace("root: /credentials", "root: credentials"),

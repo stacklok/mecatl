@@ -181,7 +181,7 @@ func readAll(t *testing.T, st lineageStore, root *session.Session) port.SessionL
 
 func mustSession(t *testing.T, id session.SessionID, kind session.SessionKind, rel session.SessionRelationship, owner *session.Principal) *session.Session {
 	t.Helper()
-	s := session.New(id, session.ModeDefault, "", session.Limits{}, time.Unix(1, 0))
+	s := session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 	if err := s.RestoreSessionMetadata(kind, rel); err != nil {
 		t.Fatal(err)
 	}

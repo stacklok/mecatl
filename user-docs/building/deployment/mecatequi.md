@@ -1,11 +1,12 @@
 ---
 sidebar_position: 5
 title: Single-shot CI with mecatequi
+description: Run one bounded Mecatl prompt in CI and produce a patch, summary, and exit status.
 ---
 
 # Single-shot CI with mecatequi
 
-`mecatequi` (`cmd/mecatequi/`) is the headless, single-shot mecatl runner. One prompt in, three artifacts out, then exit. It is stateless by design: there is no session state between runs, no listeners, no TLS, no auth layer. It shares the same engine and service assembly as `mecated` (assembled through `internal/app.Build`) so its behaviour matches the daemon's — the same tool catalog, the same permission model, the same compaction. What it does not have is any forge awareness. It knows nothing about GitHub. The split-privilege job graph, issue extraction, and PR creation live entirely in `.github/` workflows and shell scripts.
+`mecatequi` (`cmd/mecatequi/`) is the headless, single-shot Mecatl runner. One prompt in, three artifacts out, then exit. It is stateless by design: there is no session state between runs, no listeners, no TLS, no auth layer. It shares the same engine and service assembly as `mecated` (assembled through `internal/app.Build`) so its behaviour matches the daemon's — the same tool catalog, the same permission model, the same compaction. What it does not have is any forge awareness. It knows nothing about GitHub. The split-privilege job graph, issue extraction, and PR creation live entirely in `.github/` workflows and shell scripts.
 
 It reads the same operator global MCP profiles as `mecated`, but never launches an OAuth
 browser. Authorize local credentials before the job or inject a preprovisioned environment
@@ -124,7 +125,7 @@ jobs:
       default-provider: openrouter
 ```
 
-Replace `v0.0.3` with the latest released tag. The reusable workflow is the same three jobs with the same per-job permissions, so the token boundary is preserved exactly. No vendored scripts, no mecatl checkout in the consumer — the composite action builds the binary from its own tagged source tree.
+Replace `v0.0.3` with the latest released tag. The reusable workflow is the same three jobs with the same per-job permissions, so the token boundary is preserved exactly. No vendored scripts, no Mecatl checkout in the consumer — the composite action builds the binary from its own tagged source tree.
 
 The alternative is the escape-hatch template (`.github/workflows/mecatequi-example.yml`), which is a hand-rolled copy of the full job graph. Use it when you need to customise the job graph: a custom author-gate job, an extra approval stage, a different trigger.
 
@@ -179,7 +180,8 @@ No two outputs may share a sink. Two writers on one stream interleave and corrup
 | `--trust-project` | `false` | One-shot workspace trust. Admits BOTH cloned-repo steering and the read-only child shell (vouches for `.git`). Headless posture never grants trust; `trustedWorkspaces:` or undrifted remembered trust are equivalent persistent/declarative sources. With no source, auto gives allow-all with neither steering nor child shell. See [ADR 0095](https://github.com/stacklok/mecatl/blob/main/docs/adr/0095-root-aware-project-trust.md). |
 | `--headless` | `true` | Default on (inverted from `mecated`). A single-shot CI run has no human approver; child asks are auto-denied or routed to the opt-in ask reviewer. |
 | `--timeout` | `0` (disabled) | Wall-clock bound on the whole run (e.g. `40m`). A timeout-cancelled run exits 1 with `stop_reason: cancelled`. |
-| `--max-run-tokens` | `0` (unlimited) | Cumulative input+output token ceiling. Crossing it ends cleanly with `stop_reason: budget`. |
+| `--max-run-tokens` | `0` (unlimited) | Per-engine cumulative input+output token ceiling. The same ceiling is inherited by the main engine, subagents, Parallel branches, team members, and lead synthesis, but each enforces it only against its own session usage. Child spend is excluded from the parent, so a delegation tree can exceed it. Crossing an engine's ceiling ends that engine cleanly with `stop_reason: budget`. |
+| `--max-team-tokens` | `0` (unlimited) | Separate team-round aggregate token ceiling, not a per-engine run ceiling. When crossed, it prevents new team rounds; the current round and lead synthesis still complete. It does not enforce or report a cross-tree aggregate outside that team. |
 | `--max-turns` | `0` (deployment default) | Turn cap for this run. `0` inherits the composition default. |
 
 ### Provider keys

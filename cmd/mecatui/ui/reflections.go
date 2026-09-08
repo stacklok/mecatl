@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
@@ -40,7 +41,7 @@ func (m Model) openReflections() (tea.Model, tea.Cmd) {
 	m.prompt.Blur()
 	m.reflectionsGen++
 	m.reflections = reflectionsState{view: reflectionsList, loading: true}
-	return m, client.ListReflectionsCmd(m.deps.Ctx, m.deps.Reflections, "", client.ReflectionCursors{}, m.activeWorkspace, m.reflectionsGen)
+	return m, client.ListReflectionsCmd(m.deps.Ctx, m.deps.Reflections, "", client.ReflectionCursors{}, m.deps.Workspace, m.reflectionsGen)
 }
 func (m Model) runReflect() (tea.Model, tea.Cmd) {
 	if m.phase != phaseIdle || m.deps.Reflections == nil || m.sessionID == "" || m.conv.isEmpty() {
@@ -94,7 +95,7 @@ func (m Model) onReflectionsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) 
 				m.reflections.cursors = next
 				m.reflectionsGen++
 				m.reflections.loading = true
-				return m, client.ListReflectionsCmd(m.deps.Ctx, m.deps.Reflections, "", next, m.activeWorkspace, m.reflectionsGen), true
+				return m, client.ListReflectionsCmd(m.deps.Ctx, m.deps.Reflections, "", next, m.deps.Workspace, m.reflectionsGen), true
 			}
 		case msg.String() == "p":
 			if n := len(m.reflections.previous); n > 0 {
@@ -103,7 +104,7 @@ func (m Model) onReflectionsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) 
 				m.reflections.cursors = previous
 				m.reflectionsGen++
 				m.reflections.loading = true
-				return m, client.ListReflectionsCmd(m.deps.Ctx, m.deps.Reflections, "", previous, m.activeWorkspace, m.reflectionsGen), true
+				return m, client.ListReflectionsCmd(m.deps.Ctx, m.deps.Reflections, "", previous, m.deps.Workspace, m.reflectionsGen), true
 			}
 		case key.Matches(msg, m.keys.Choose):
 			if m.reflections.cursor < len(m.reflections.page.Proposals) {
@@ -182,12 +183,21 @@ func (m Model) updateReflectionsMsg(msg tea.Msg) (tea.Model, bool) {
 		if m.reflections.view == reflectionsNone {
 			if x.Receipt != nil && x.Err == nil {
 				if x.Receipt.Abstained {
-					m.statusMsg = m.deps.Theme.Style("muted").Render("reflection " + reflectionDisplayText(x.Receipt.Disposition, 48) + ": abstained")
+					message := x.Receipt.Message
+					if message == "" {
+						message = "reflection abstained"
+					}
+					m.statusMsg = m.deps.Theme.Style("muted").Render(reflectionDisplayText(message, 160))
 				} else {
-					m.statusMsg = m.deps.Theme.Style("success").Render(fmt.Sprintf("reflection %s: %d staged, %d promoted, %d conflicted", reflectionDisplayText(x.Receipt.Disposition, 48), x.Receipt.Staged, x.Receipt.Promoted, x.Receipt.Conflicted))
+					count := x.Receipt.Staged + x.Receipt.Promoted + x.Receipt.Conflicted
+					label := "proposals"
+					if count == 1 {
+						label = "proposal"
+					}
+					m.statusMsg = m.deps.Theme.Style("success").Render(fmt.Sprintf("reflection completed: %d %s", count, label))
 				}
 			} else if x.Err != nil {
-				m.statusMsg = m.deps.Theme.Style("errorText").Render(sanitizeTerminal(x.Err.Error()))
+				m.statusMsg = m.deps.Theme.Style("errorText").Render(client.ReflectionErrorText(x.Err))
 			}
 			return m, true
 		}
@@ -224,6 +234,7 @@ func reflectionApprovable(p client.LearningProposal) bool {
 //nolint:gocyclo // explicit status/detail rendering keeps every bounded state visible
 func renderReflectionsOverlay(th theme.Theme, st reflectionsState, caps client.Capabilities, hk helpKeys, width, height int) string {
 	lines := []string{th.Style("overlayTitle").Render("Reflections")}
+	budget := cardTextWidth(width)
 	if !caps.LearningProposals {
 		lines = append(lines, th.Style("warning").Render("proposal review is not supported by this server"))
 	} else if st.loading {
@@ -235,7 +246,12 @@ func renderReflectionsOverlay(th theme.Theme, st reflectionsState, caps client.C
 		}
 	} else if st.view == reflectionsDetail && st.detail != nil {
 		p := st.detail
-		lines = append(lines, th.Style("toolName").Render(sanitizeTerminal(p.ID)), "status: "+sanitizeTerminal(p.Status), "version: "+sanitizeTerminal(p.Version), "kind: "+sanitizeTerminal(p.Kind))
+		lines = append(lines,
+			renderToolCardText(th.Style("toolName"), sanitizeTerminal(p.ID), budget),
+			wrapCardText("status: "+p.Status, budget),
+			wrapCardText("version: "+p.Version, budget),
+			wrapCardText("kind: "+p.Kind, budget),
+		)
 		if p.ProjectScoped {
 			lines = append(lines, "scope: trusted project")
 		} else {
@@ -281,7 +297,7 @@ func renderReflectionsOverlay(th theme.Theme, st reflectionsState, caps client.C
 			}
 			lines = append(lines, line, "    digest="+reflectionDisplayText(evidence.Digest, 72))
 			if evidence.Preview != "" {
-				lines = append(lines, wrapReflectionField("    preview: ", evidence.Preview, width-12)...)
+				lines = append(lines, wrapReflectionField("    preview: ", boundedReflectionPreview(evidence.Preview), width-12)...)
 			}
 		}
 		if len(p.Decisions) > 0 {
@@ -386,6 +402,18 @@ func wrapReflectionField(label, value string, width int) []string {
 		}
 	}
 	return out
+}
+
+func boundedReflectionPreview(value string) string {
+	value = sanitizeTerminal(value)
+	if len(value) <= 1024 {
+		return value
+	}
+	value = value[:1024]
+	for !utf8.ValidString(value) {
+		value = value[:len(value)-1]
+	}
+	return value
 }
 
 func reflectionDisplayText(value string, limit int) string {

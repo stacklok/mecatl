@@ -10,6 +10,7 @@ import (
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/buildinfo"
+	"github.com/stacklok/mecatl/internal/cliconfig"
 	"github.com/stacklok/mecatl/provider/openai"
 )
 
@@ -95,7 +96,7 @@ func parseFlags(args []string) (demoFlags, error) {
 	fs.StringVar(&parsed.model, "model", demoModel, "model identifier when --openai is set")
 	fs.StringVar(&parsed.baseURL, "openai-base-url", "", "override the OpenAI API base URL")
 	fs.Usage = func() {
-		fs.PrintDefaults()
+		cliconfig.PrintDefaults(fs.Output(), fs)
 		_, _ = fmt.Fprintln(fs.Output(), "\nVersion: mecademo --version prints the build version and exits.")
 	}
 	if err := fs.Parse(args); err != nil {

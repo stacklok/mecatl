@@ -3,7 +3,12 @@ import { WireType } from "@bufbuild/protobuf/wire";
 import { createRouterTransport } from "@connectrpc/connect";
 import { describe, expect, expectTypeOf, it } from "vitest";
 
-import type { Event, TeamEventPayload, ToolCallEventPayload } from "../src/events.js";
+import type {
+  Event,
+  SessionTitleEventPayload,
+  TeamEventPayload,
+  ToolCallEventPayload,
+} from "../src/events.js";
 import { EventSchema, HarnessService } from "../src/gen/mecatl/v1/harness_pb.js";
 import { connect } from "../src/index.js";
 import { sseResponse } from "./scripted-state.js";
@@ -39,6 +44,18 @@ describe("event unions", () => {
               type: "team.member",
             },
           };
+          yield {
+            event: {
+              runId: "run-known",
+              title: {
+                generationState: "generated",
+                latestAttempt: { id: "attempt-1", outcome: "succeeded" },
+                provenance: "generated",
+                title: "Inspect event kinds",
+              },
+              type: "session.title",
+            },
+          };
           yield terminal("run-known");
         },
       });
@@ -58,7 +75,17 @@ describe("event unions", () => {
     expectTypeOf(team.payload).toEqualTypeOf<TeamEventPayload>();
     expect(team.payload.member).toBe("scout");
 
-    const result = events[2];
+    const title = events[2];
+    if (title?.kind !== "session.title") throw new Error("expected session.title");
+    expectTypeOf(title.payload).toEqualTypeOf<SessionTitleEventPayload>();
+    expect(title.payload).toMatchObject({
+      generationState: "generated",
+      latestAttempt: { id: "attempt-1", outcome: "succeeded" },
+      provenance: "generated",
+      title: "Inspect event kinds",
+    });
+
+    const result = events[3];
     if (result?.kind !== "result") throw new Error("expected result");
     expect(result.payload.stop).toBe("end_turn");
     await client.close();

@@ -10,6 +10,7 @@ import (
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/osfs"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
+	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
 // slots.go is the COMPOSITION-LAYER per-slot model resolver (ADR 0030, Phase 1+2):
@@ -60,6 +61,9 @@ const (
 	// natural fourth consumer) but is deliberately NOT wired this slice — the lead
 	// synthesis runs on the lead member's whole engine and lacks a clean seam.
 	slotSynthesis = "synthesis"
+	// slotTitle routes the opt-in server-owned title generator. It deliberately has
+	// no default tier: title generation remains disabled until explicitly configured.
+	slotTitle = "title"
 	// slotPlan routes the SESSION model when the session's PermissionMode is ModePlan
 	// (ADR 0030 Layer 3, the opusplan pattern). It is the ONE slot wired on the MODE
 	// axis rather than the internal-call axis: it is consumed by the per-session engine
@@ -100,6 +104,7 @@ var knownSlotNames = map[string]struct{}{
 	slotGuardrail:   {},
 	slotReflection:  {},
 	slotSynthesis:   {},
+	slotTitle:       {},
 	slotPlan:        {},
 	slotRouter:      {},
 	slotCheap:       {},
@@ -160,6 +165,47 @@ func resolveSlotModel(cfg Config, slotName, parentModel string) (model string, c
 		return id, true
 	}
 	return "", false // configured but unresolvable: fail-soft, degrade to inherit.
+}
+
+// titleGenerationEligible resolves the opt-in title slot once per session creation.
+// The returned closure intentionally exposes only eligibility to the server: title
+// routing remains composition-owned and the session provider is never changed.
+func titleGenerationEligible(cfg Config, reg *providerRegistry) func(server.ProviderSelector) bool {
+	if model, configured := resolveSlotModel(cfg, slotTitle, cfg.Model); !configured || model == "" {
+		return nil
+	}
+	return func(sel server.ProviderSelector) bool {
+		providerID := sel.ProviderID
+		if providerID == "" {
+			providerID = reg.Default()
+		}
+		_, available := reg.Lookup(providerID)
+		return available
+	}
+}
+
+// titleGeneratorForSession resolves each call against the session's fixed provider.
+// It returns nil when the provider disappeared or the explicit slot is unavailable.
+func titleGeneratorForSession(cfg Config, reg *providerRegistry) func(server.ProviderSelector) server.SessionTitleGenerator {
+	model, configured := resolveSlotModel(cfg, slotTitle, cfg.Model)
+	if !configured || model == "" {
+		return nil
+	}
+	return func(sel server.ProviderSelector) server.SessionTitleGenerator {
+		providerID := sel.ProviderID
+		if providerID == "" {
+			providerID = reg.Default()
+		}
+		entry, ok := reg.Lookup(providerID)
+		if !ok {
+			return nil
+		}
+		generator, err := server.NewSessionTitleGeneratorWithAttribution(entry.provider, providerID, model)
+		if err != nil {
+			return nil
+		}
+		return generator
+	}
 }
 
 // selectorForSlot returns the trimmed selector a slot resolves through: the explicit
@@ -663,7 +709,7 @@ func logSlotConfigFacts(cfg Config) {
 	if len(cfg.ModelSlots) == 0 {
 		return
 	}
-	for _, slot := range []string{slotCompaction, slotAskReviewer, slotGuardrail, slotPlan, slotRouter} {
+	for _, slot := range []string{slotCompaction, slotAskReviewer, slotGuardrail, slotTitle, slotPlan, slotRouter} {
 		model, ok := resolveSlotModel(cfg, slot, cfg.Model)
 		// The three internal call-slots route a lightweight housekeeping call; the
 		// plan slot (ADR 0030 Layer 3) instead re-resolves the SESSION model in plan
@@ -671,6 +717,9 @@ func logSlotConfigFacts(cfg Config) {
 		active := "model slot ACTIVE: this internal lightweight call runs on the slot model instead of the session model"
 		if slot == slotPlan {
 			active = "model slot ACTIVE: plan-mode turns run on the plan model instead of the session model (opusplan), re-resolved between turns on a mode change"
+		}
+		if slot == slotTitle {
+			active = "model slot ACTIVE: server-owned title generation runs on the title model without changing the session model"
 		}
 		switch {
 		case ok:

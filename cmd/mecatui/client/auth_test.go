@@ -17,7 +17,6 @@ func TestAuthFailureUsesTypedLocalCausesAndBearerProvenance(t *testing.T) {
 		bearer bool
 		want   AuthReason
 	}{
-		{"never enrolled", &AuthError{Reason: AuthNeverEnrolled}, false, AuthNeverEnrolled},
 		{"not enrolled", &AuthError{Reason: AuthNotEnrolled}, false, AuthNotEnrolled},
 		{"expired", &AuthError{Reason: AuthSessionExpired}, true, AuthSessionExpired},
 		{"unusable", &AuthError{Reason: AuthCredentialUnusable}, true, AuthCredentialUnusable},
@@ -26,6 +25,7 @@ func TestAuthFailureUsesTypedLocalCausesAndBearerProvenance(t *testing.T) {
 		{"issuer", &AuthError{Reason: AuthStorageUnavailable}, true, AuthStorageUnavailable},
 		{"cleanup", &AuthError{Reason: AuthCredentialCleanup}, true, AuthCredentialCleanup},
 		{"anonymous server rejection", status.Error(codes.Unauthenticated, "anything"), false, AuthNotEnrolled},
+		{"explicit anonymous server rejection", &credentialFreeAuthError{cause: status.Error(codes.Unauthenticated, "anything"), reason: AuthAnonymousRejected, msg: "rejected"}, false, AuthAnonymousRejected},
 		{"bearer server rejection", status.Error(codes.Unauthenticated, "anything"), true, AuthRejected},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -52,7 +52,7 @@ func TestAuthFailureUsesTypedLocalCausesAndBearerProvenance(t *testing.T) {
 		t.Fatalf("unknown source error classified as %q; want unclassified", reason)
 	}
 	// A reason label never carries caller-supplied text, whichever path produced it.
-	for _, r := range []AuthReason{AuthNeverEnrolled, AuthNotEnrolled, AuthSessionExpired, AuthCredentialUnusable, AuthCredentialUnusable, AuthStorageUnavailable, AuthStorageUnavailable, AuthCredentialCleanup, AuthRejected} {
+	for _, r := range []AuthReason{AuthNotEnrolled, AuthAnonymousRejected, AuthSessionExpired, AuthCredentialUnusable, AuthCredentialUnusable, AuthStorageUnavailable, AuthStorageUnavailable, AuthCredentialCleanup, AuthRejected} {
 		if got := (&AuthError{Reason: r}).Error(); got != "authentication unavailable: "+string(r) {
 			t.Fatalf("AuthError text = %q; must be the closed label alone", got)
 		}

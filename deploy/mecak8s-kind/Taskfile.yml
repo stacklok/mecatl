@@ -37,8 +37,18 @@ tasks:
       - task: kind-setup
       - task: kind-keycloak-apply
 
-  kind-keycloak-demo:
-    desc: Wait for direct loopback mappings and print the remote OIDC quickstart (requires kind-keycloak-setup and kind-hosts-add)
+  # kind-fixture-ca-refresh waits for the three direct loopback mappings and
+  # (re)writes .scratch/kind/mecatl-dev/fixture-ca.crt from the cluster's
+  # CURRENT fixture-ca Secret. cert-manager mints a fresh self-signed CA on
+  # every kind-destroy + recreate, so this file goes silently stale across a
+  # teardown/recreate cycle unless re-run — a stale CA fails TLS verification
+  # against the new cluster and surfaces as mecatui's generic
+  # "clientauth: OIDC discovery rejected", with no hint that the cause is a
+  # rotated CA rather than a real server-side rejection. kind-login and
+  # kind-connect below always refresh it first, so that whole failure class
+  # can't occur through them.
+  kind-fixture-ca-refresh:
+    internal: true
     preconditions:
       - sh: command -v nc >/dev/null 2>&1
         msg: nc is required to wait for the loopback mappings
@@ -88,8 +98,16 @@ tasks:
             exit 1
           fi
           chmod 0600 "$decoded"
-          mv "$decoded" "$ca"
+          mv -f "$decoded" "$ca"
+          BASHEOF
 
+  kind-keycloak-demo:
+    desc: Wait for direct loopback mappings and print the remote OIDC quickstart (requires kind-keycloak-setup and kind-hosts-add)
+    cmds:
+      - task: kind-fixture-ca-refresh
+      - cmd: |
+          set -eu
+          ca={{.STATE}}/fixture-ca.crt
           printf '\nFixture direct mappings are ready. In another terminal, run:\n\n'
           # NOT localhost:18080 -- mecatui's client treats a "localhost"-named
           # target as co-located and defaults its workspace field to the
@@ -98,8 +116,35 @@ tasks:
           # codes.InvalidArgument. The DNS alias below is not cosmetic.
           printf '%s\n' "mecatui login mecak8s-mecak8s.mecatl.svc.cluster.local:18080 --issuer https://keycloak.mecatl.svc.cluster.local:8443/realms/mecatl --client-id mecatui-kind --audience mecak8s --tls-ca $ca --private-issuer --scopes openid,profile,mecak8s:access,offline_access"
           printf '%s\n' "mecatui connect mecak8s-mecak8s.mecatl.svc.cluster.local:18080 --tls --tls-ca $ca"
+          printf '\nOr just run: task mecak8s:kind-login && task mecak8s:kind-connect\n'
           printf '\nThe CA is at %s. Kind maps container NodePorts directly to loopback host ports; this task exits after readiness checks.\n' "$ca"
-          BASHEOF
+
+  kind-login:
+    desc: >-
+      Shorthand for the Keycloak login journey: add the /etc/hosts aliases
+      (may prompt for sudo once), refresh the fixture CA, and run `mecatui
+      login` with this fixture's fixed issuer/client/audience/scopes.
+      Requires kind-keycloak-setup and ./bin/mecatui (task build).
+    preconditions:
+      - sh: test -x ./bin/mecatui
+        msg: ./bin/mecatui not found — run `task build` first
+    cmds:
+      - task: kind-hosts-add
+      - task: kind-fixture-ca-refresh
+      - ./bin/mecatui login mecak8s-mecak8s.mecatl.svc.cluster.local:18080 --issuer https://keycloak.mecatl.svc.cluster.local:8443/realms/mecatl --client-id mecatui-kind --audience mecak8s --tls-ca {{.STATE}}/fixture-ca.crt --private-issuer --scopes openid,profile,mecak8s:access,offline_access
+
+  kind-connect:
+    desc: >-
+      Shorthand to connect: add the /etc/hosts aliases (may prompt for sudo
+      once), refresh the fixture CA, and run `mecatui connect`. Run
+      kind-login first (or have a still-valid stored token).
+    preconditions:
+      - sh: test -x ./bin/mecatui
+        msg: ./bin/mecatui not found — run `task build` first
+    cmds:
+      - task: kind-hosts-add
+      - task: kind-fixture-ca-refresh
+      - ./bin/mecatui connect mecak8s-mecak8s.mecatl.svc.cluster.local:18080 --tls --tls-ca {{.STATE}}/fixture-ca.crt
 
   kind-status:
     desc: Show the local mecak8s Kind baseline
@@ -193,6 +238,7 @@ tasks:
           set -eu
           trap 'status=$?; deploy/mecak8s-kind/cleanup-on-failure.sh "$status"' EXIT
           mkdir -p {{.STATE}}
+          umask 077
           kind create cluster --name={{.CLUSTER}} --config=deploy/mecak8s-kind/kind-config.yaml
           kind get kubeconfig --name={{.CLUSTER}} > {{.KUBECONFIG}}
 
@@ -224,6 +270,33 @@ tasks:
           "$runtime" save {{.IMAGE}} -o "$archive"
           kind load image-archive "$archive" --name={{.CLUSTER}}
           rm -f "$archive"
+
+  image-refresh:
+    desc: >-
+      Rebuild the mecak8s image from the current source tree, load it straight into
+      the running mecatl-dev Kind cluster's node, and restart the deployment to pick
+      it up — for iterating on code without tearing the cluster down.
+      `image-build-load` (above) is `internal: true` and is only reachable via the
+      destructive `kind-setup` chain (reset-state → cluster-create → ... ), so there
+      was previously no safe way to just refresh the image — this task exists to
+      close that gap.
+    preconditions:
+      - sh: command -v ko >/dev/null 2>&1
+        msg: ko is required
+    cmds:
+      - task: cluster-ready
+      - cmd: |
+          set -eu
+          runtime=docker
+          [ "${KIND_EXPERIMENTAL_PROVIDER:-}" != podman ] || runtime=podman
+          command -v "$runtime" >/dev/null 2>&1 || { echo "$runtime is required"; exit 1; }
+          KO_DOCKER_REPO=ko.local/mecak8s ko build --local --bare --tags=dev ./cmd/mecak8s >/dev/null
+          archive={{.STATE}}/mecak8s.tar
+          "$runtime" save {{.IMAGE}} -o "$archive"
+          kind load image-archive "$archive" --name={{.CLUSTER}}
+          rm -f "$archive"
+      - kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} --namespace={{.NAMESPACE}} rollout restart deployment/{{.RELEASE}}-mecak8s
+      - kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} --namespace={{.NAMESPACE}} rollout status deployment/{{.RELEASE}}-mecak8s --timeout=240s
 
   cert-manager-install:
     internal: true
@@ -263,7 +336,14 @@ tasks:
         msg: helm is required
     cmds:
       - task: cluster-ready
-      - helm upgrade --install {{.RELEASE}} deploy/helm/mecak8s --namespace={{.NAMESPACE}} --kubeconfig={{.KUBECONFIG}} --kube-context={{.CONTEXT}} --values=deploy/helm/mecak8s/values-kind.yaml --values=deploy/mecak8s-kind/kind-nodeports.yaml --values=deploy/helm/mecak8s/values-kind-keycloak.yaml --wait --timeout=4m
+      - cmd: |
+          set -eu
+          if [ -n "${OPENROUTER_API_KEY:-}" ]; then
+            provider_values=deploy/mecak8s-kind/kind-provider-real.yaml
+          else
+            provider_values=deploy/mecak8s-kind/kind-provider-mock.yaml
+          fi
+          helm upgrade --install {{.RELEASE}} deploy/helm/mecak8s --namespace={{.NAMESPACE}} --kubeconfig={{.KUBECONFIG}} --kube-context={{.CONTEXT}} --values=deploy/helm/mecak8s/values-kind.yaml --values=deploy/mecak8s-kind/kind-nodeports.yaml --values=deploy/helm/mecak8s/values-kind-keycloak.yaml --values="$provider_values" --wait --timeout=4m
       - kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} rollout status deployment/{{.RELEASE}}-mecak8s -n {{.NAMESPACE}} --timeout=240s
 
   chart-apply:

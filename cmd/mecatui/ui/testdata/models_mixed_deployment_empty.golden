@@ -14,6 +14,7 @@
 ┃       openai · GPT-5 mini  reason 128K                                                              ┃
 ┃       openai · text-embed                                                                           ┃
 ┃       openrouter · Claude  img reason 1M                                                            ┃
+┃                                                                                                     ┃
 ┃  toolhive: credential lists no models — ask your platform admin or re-run `mecatui llm login`       ┃
 ┃                                                                                                     ┃
 ┃  type to filter · ↑/↓/pgup move · enter use · ctrl+g set global default · esc clear filter / close  ┃

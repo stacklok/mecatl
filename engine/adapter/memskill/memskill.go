@@ -23,14 +23,15 @@ type skillRecord struct {
 }
 
 type Store struct {
-	mu      sync.RWMutex
-	records map[string]map[learning.SkillID]*skillRecord
-	next    uint64
-	now     func() time.Time
+	mu          sync.RWMutex
+	records     map[string]map[learning.SkillID]*skillRecord
+	generations map[string]learning.SkillGeneration
+	next        uint64
+	now         func() time.Time
 }
 
 func New() *Store {
-	return &Store{records: map[string]map[learning.SkillID]*skillRecord{}, now: time.Now}
+	return &Store{records: map[string]map[learning.SkillID]*skillRecord{}, generations: map[string]learning.SkillGeneration{}, now: time.Now}
 }
 
 var _ learning.SkillRepository = (*Store)(nil)
@@ -45,6 +46,27 @@ func skillID(p learning.SkillPartition, owner, name string) learning.SkillID {
 	sum := sha256.Sum256(raw)
 	return learning.SkillID("skill-" + hex.EncodeToString(sum[:16]))
 }
+func (s *Store) generationLocked(p learning.SkillPartition) learning.SkillGeneration {
+	return s.generations[partitionKey(p)]
+}
+
+func (s *Store) advanceGenerationLocked(p learning.SkillPartition) {
+	key := partitionKey(p)
+	s.generations[key]++
+}
+
+func (s *Store) Generation(ctx context.Context, p learning.SkillPartition) (learning.SkillGeneration, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	if err := learning.ValidateSkillPartition(p, "generation"); err != nil {
+		return 0, err
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.generationLocked(p), nil
+}
+
 func (s *Store) revision() learning.Revision {
 	s.next++
 	return learning.Revision("mem-" + strconv.FormatUint(s.next, 10))
@@ -176,6 +198,7 @@ func (s *Store) CreateDraft(ctx context.Context, p learning.SkillPartition, owne
 				record.versions[i].Disposition = merged.ValidationDisposition
 				record.versions[i].Revision = s.revision()
 				record.versions[i].UpdatedAt = s.now().UTC()
+				s.advanceGenerationLocked(p)
 			}
 			return clone(record.versions[i]), nil
 		}
@@ -186,6 +209,7 @@ func (s *Store) CreateDraft(ctx context.Context, p learning.SkillPartition, owne
 		previous := record.versions[len(record.versions)-1]
 		v := learning.SkillVersion{ID: previous.ID, Version: versionID, Revision: s.revision(), State: learning.SkillDraft, OwnerAgent: owner, Partition: p, Bundle: bundle, Provenance: provenance, Disposition: provenance.ValidationDisposition, Supersedes: previous.Version, CreatedAt: now, UpdatedAt: now}
 		record.versions = append(record.versions, clone(v))
+		s.advanceGenerationLocked(p)
 		return clone(v), nil
 	}
 	if len(bucket) >= learning.MaxSkillsPerPartition {
@@ -195,6 +219,7 @@ func (s *Store) CreateDraft(ctx context.Context, p learning.SkillPartition, owne
 	id := skillID(p, owner, bundle.Name)
 	v := learning.SkillVersion{ID: id, Version: versionID, Revision: s.revision(), State: learning.SkillDraft, OwnerAgent: owner, Partition: p, Bundle: bundle, Provenance: provenance, Disposition: provenance.ValidationDisposition, CreatedAt: now, UpdatedAt: now}
 	bucket[id] = &skillRecord{owner: owner, name: bundle.Name, versions: []learning.SkillVersion{clone(v)}}
+	s.advanceGenerationLocked(p)
 	return clone(v), nil
 }
 func mustJSON(v any) string { raw, _ := json.Marshal(v); return string(raw) }
@@ -273,7 +298,7 @@ func (s *Store) List(ctx context.Context, p learning.SkillPartition, o learning.
 		}
 	}
 	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
-	var page learning.SkillPage
+	page := learning.SkillPage{Generation: s.generationLocked(p)}
 	for i, id := range ids {
 		if i == o.Limit {
 			page.Next = page.Versions[len(page.Versions)-1].ID
@@ -311,6 +336,7 @@ func (s *Store) update(ctx context.Context, p learning.SkillPartition, owner str
 	}
 	r.versions[i].Revision = s.revision()
 	r.versions[i].UpdatedAt = now
+	s.advanceGenerationLocked(p)
 	return clone(r.versions[i]), nil
 }
 func (s *Store) RecordEvaluation(ctx context.Context, p learning.SkillPartition, owner string, id learning.SkillID, version learning.VersionID, expected learning.Revision, evaluation learning.SkillEvaluation) (learning.SkillVersion, error) {
@@ -457,6 +483,7 @@ func (s *Store) Rollback(ctx context.Context, p learning.SkillPartition, owner s
 	t.State = learning.SkillActive
 	t.Revision = s.revision()
 	t.UpdatedAt = now
+	s.advanceGenerationLocked(p)
 	return clone(*t), nil
 }
 

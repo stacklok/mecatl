@@ -6,7 +6,6 @@ import (
 	"time"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -44,6 +43,10 @@ func (noopMemStore) Search(context.Context, string, int) ([]tool.MemoryEntry, er
 	return nil, nil
 }
 
+type stubCommandLister struct{}
+
+func (*stubCommandLister) List(context.Context, string) ([]server.Command, error) { return nil, nil }
+
 // stubMemberEngine satisfies Config.MemberEngine (MemberEngineFactory) just
 // enough to be non-nil; the Service only nil-checks it for the teams cap. It is
 // never invoked.
@@ -75,10 +78,10 @@ func buildCapsService(
 		Model:   "test-model",
 	})
 	cfg := server.Config{
-		Engine:     engine,
-		Store:      memstore.New(),
-		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		Now:        func() time.Time { return time.Unix(0, 0) },
+		Engine: engine,
+		Store:  memstore.New(),
+
+		Now: func() time.Time { return time.Unix(0, 0) },
 	}
 	if mcpProvider {
 		cfg.MCPProvider = &fakeProvider{}
@@ -89,7 +92,7 @@ func buildCapsService(
 	if teams {
 		cfg.MemberEngine = stubMemberEngine
 	}
-	svc, err := server.NewService(cfg)
+	svc, err := newPlacementTestService(cfg)
 	if err != nil {
 		t.Fatalf("new service: %v", err)
 	}
@@ -105,7 +108,7 @@ func capsFromCreate(t *testing.T, svc *server.Service) *mecatlv1.ServerCapabilit
 	defer cleanup()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	resp, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{Workspace: "/ws"})
+	resp, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -126,11 +129,11 @@ func TestCapabilitiesMediaFromProvider(t *testing.T) {
 		Policy:  permpolicy.NewPolicy(nil, nil),
 		Model:   "test-model",
 	})
-	svc, err := server.NewService(server.Config{
-		Engine:     engine,
-		Store:      memstore.New(),
-		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		Now:        func() time.Time { return time.Unix(0, 0) },
+	svc, err := newPlacementTestService(server.Config{
+		Engine: engine,
+		Store:  memstore.New(),
+
+		Now: func() time.Time { return time.Unix(0, 0) },
 		// The server reads DefaultCapabilities (composition-computed), not the engine.
 		DefaultCapabilities: port.ProviderCapabilities{Image: true},
 	})
@@ -162,12 +165,12 @@ func TestCapabilitiesAgentsFromSnapshot(t *testing.T) {
 			Policy:  permpolicy.NewPolicy(nil, nil),
 			Model:   "test-model",
 		})
-		svc, err := server.NewService(server.Config{
-			Engine:     engine,
-			Store:      memstore.New(),
-			Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-			Now:        func() time.Time { return time.Unix(0, 0) },
-			Agents:     agents,
+		svc, err := newPlacementTestService(server.Config{
+			Engine: engine,
+			Store:  memstore.New(),
+
+			Now:    func() time.Time { return time.Unix(0, 0) },
+			Agents: agents,
 		})
 		if err != nil {
 			t.Fatalf("new service: %v", err)

@@ -68,8 +68,12 @@ func (m *memoryKeyring) value(account string) (string, bool) {
 
 func TestExistingOnlyRegistryDoesNotCreateState(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "missing")
-	if _, err := OpenExistingRegistry(root); err != nil {
+	missing, err := OpenExistingRegistry(root)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if _, err := missing.FindTarget("unix:///run/user/1000/mecated.sock"); !errors.Is(err, credentialstore.ErrNotFound) {
+		t.Fatalf("FindTarget on a clean missing registry = %v, want ErrNotFound", err)
 	}
 	if _, err := os.Stat(root); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("missing registry root was created: %v", err)

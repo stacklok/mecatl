@@ -1,13 +1,14 @@
 ---
 sidebar_position: 1
-title: Building on mecatl
+title: Building on Mecatl
+description: Embed, extend, and deploy Mecatl using its Go engine, services, and adapter ports.
 ---
 
-# Building on mecatl
+# Building on Mecatl
 
-mecatl is a cloud-native harness for building agentic systems. It ships as a runnable service (`mecated`, `mecak8s`) and as an importable Go engine (`github.com/stacklok/mecatl/engine`) with a deliberate port model: you wire in the adapters your stack needs and the loop, tools, permissions, hooks, and resilience are already there.
+Mecatl is a cloud-native harness for building agentic systems. It ships as a runnable service (`mecated`, `mecak8s`) and as an importable Go engine (`github.com/stacklok/mecatl/engine`) with a deliberate port model: you wire in the adapters your stack needs and the loop, tools, permissions, hooks, and resilience are already there.
 
-This guide is for teams building **on** mecatl — embedding the engine, writing adapters, deploying to k8s, or wiring mecatl into their own product.
+This guide is for teams building **on** Mecatl — embedding the engine, writing adapters, deploying to k8s, or wiring Mecatl into their own product.
 
 ---
 
@@ -20,6 +21,7 @@ This guide is for teams building **on** mecatl — embedding the engine, writing
 | [Build your first agent](/building/getting-started/first-agent.md) | Install the engine and build a working Go agent from a clean module |
 | [See it in 60 seconds](/building/getting-started/demo.md) | Run `mecademo` offline and watch a real engine turn |
 | [Pick your deployment shape](/building/getting-started/deployment-decision.md) | Decision guide: embed vs service vs CI runner |
+| [Use the TypeScript SDK](/building/getting-started/typescript-sdk.md) | Connect Node, Bun, or browser applications through the published package |
 
 ### What you get out of the box
 

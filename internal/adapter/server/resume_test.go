@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -31,11 +30,11 @@ func newServiceWithStore(t *testing.T, store port.SessionStore) *server.Service 
 		Model:   "test-model",
 		Store:   store,
 	})
-	svc, err := server.NewService(server.Config{
-		Engine:     engine,
-		Store:      store,
-		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		Now:        func() time.Time { return time.Unix(0, 0) },
+	svc, err := newPlacementTestService(server.Config{
+		Engine: engine,
+		Store:  store,
+
+		Now: func() time.Time { return time.Unix(0, 0) },
 	})
 	if err != nil {
 		t.Fatalf("new service: %v", err)
@@ -56,7 +55,7 @@ func TestAutoResumeFromStore(t *testing.T) {
 
 	// Process 1: create and persist a session.
 	svc1 := newServiceWithStore(t, store)
-	sess, err := svc1.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{MaxTurns: 3})
+	sess, err := svc1.CreateSession(context.Background(), session.ModeDefault, session.Limits{MaxTurns: 3})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -72,7 +71,7 @@ func TestAutoResumeFromStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSession after restart: %v", err)
 	}
-	if got.ID != sess.ID || got.Workspace != "/ws" || got.Mode != session.ModeDefault {
+	if got.ID != sess.ID || got.EnvironmentRef.ID != "/ws" || got.Mode != session.ModeDefault {
 		t.Fatalf("loaded session mismatch: %+v", got)
 	}
 	if got.Limits.MaxTurns != 3 {
@@ -91,7 +90,7 @@ func TestApproveFallsBackToStore(t *testing.T) {
 	}
 
 	svc1 := newServiceWithStore(t, store)
-	sess, err := svc1.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{MaxTurns: 3})
+	sess, err := svc1.CreateSession(context.Background(), session.ModeDefault, session.Limits{MaxTurns: 3})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -120,7 +119,7 @@ func TestApproveFallsBackToStore(t *testing.T) {
 func TestSetModePersistsAndValidates(t *testing.T) {
 	store := memstore.New()
 	svc := newServiceWithStore(t, store)
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{MaxTurns: 3})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{MaxTurns: 3})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -157,7 +156,7 @@ func TestSetModePersistsAndValidates(t *testing.T) {
 func TestLoadSessionReopensCompleted(t *testing.T) {
 	store := memstore.New()
 	svc := newServiceWithStore(t, store)
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{MaxTurns: 3})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{MaxTurns: 3})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -215,11 +214,11 @@ func newServiceWithEngine(t *testing.T, llm port.LLMProvider, cat *tool.Catalog)
 		Model:   "test-model",
 		Store:   store,
 	})
-	svc, err := server.NewService(server.Config{
-		Engine:     engine,
-		Store:      store,
-		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		Now:        func() time.Time { return time.Unix(0, 0) },
+	svc, err := newPlacementTestService(server.Config{
+		Engine: engine,
+		Store:  store,
+
+		Now: func() time.Time { return time.Unix(0, 0) },
 	})
 	if err != nil {
 		t.Fatalf("new service: %v", err)
@@ -242,7 +241,7 @@ func TestStartRunContentRecoversCancelledSession(t *testing.T) {
 	)
 	svc, _ := newServiceWithEngine(t, llm, cat)
 
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -288,7 +287,7 @@ func TestStartRunContentRecoversCancelledSession(t *testing.T) {
 func TestLoadSessionRecoversCancelledViaInterrupt(t *testing.T) {
 	store := memstore.New()
 	svc := newServiceWithStore(t, store)
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -344,7 +343,7 @@ func TestLoadSessionRecoversCancelledViaInterrupt(t *testing.T) {
 func TestLoadSessionRecoversFailedViaRecover(t *testing.T) {
 	store := memstore.New()
 	svc := newServiceWithStore(t, store)
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -420,7 +419,7 @@ func TestStartRunContentRecoversFailedSession(t *testing.T) {
 	)
 	svc, _ := newServiceWithEngine(t, llm, tool.NewCatalog())
 
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -484,7 +483,7 @@ func TestStartRunContentRecoversFailedSessionAfterToolWork(t *testing.T) {
 	)
 	svc, _ := newServiceWithEngine(t, llm, cat)
 
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -560,7 +559,7 @@ func TestRecoverAdversarialMidDispatchFailure(t *testing.T) {
 		mockllm.TextTurn("retried fine"),
 	)
 	svc, store := newServiceWithEngine(t, llm, tool.NewCatalog())
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -652,7 +651,7 @@ func TestStartRunContentRecoversAcrossRepeatedFailures(t *testing.T) {
 		mockllm.TextTurn("third time lucky"),
 	)
 	svc, _ := newServiceWithEngine(t, llm, tool.NewCatalog())
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -741,7 +740,7 @@ func TestRecoverMidStreamFailureReplayIsPaired(t *testing.T) {
 		mockllm.TextTurn("after recovery"),
 	)
 	svc, _ := newServiceWithEngine(t, llm, cat)
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

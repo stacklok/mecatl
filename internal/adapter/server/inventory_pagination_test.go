@@ -12,7 +12,6 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -29,10 +28,10 @@ func inventoryService(t *testing.T, store port.SessionStore, ownership bool) *se
 		LLM: mockllm.New(mockllm.TextTurn("ok")), Catalog: tool.NewCatalog(),
 		Policy: permpolicy.NewPolicy(nil, nil),
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine: eng, Store: store, OwnershipEnforced: ownership,
-		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		Now:        time.Now,
+
+		Now: time.Now,
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
@@ -42,7 +41,7 @@ func inventoryService(t *testing.T, store port.SessionStore, ownership bool) *se
 
 func saveInventorySession(t *testing.T, st port.SessionStore, id session.SessionID, owner *session.Principal, kind session.SessionKind, rel session.SessionRelationship) {
 	t.Helper()
-	s := session.New(id, session.ModeDefault, "/workspace", session.Limits{}, time.Unix(1_700_000_000, 0))
+	s := session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1_700_000_000, 0))
 	if err := s.RestoreLabels(owner, session.Authority{}); err != nil {
 		t.Fatalf("RestoreLabels(%q): %v", id, err)
 	}
@@ -155,7 +154,7 @@ func TestSessionContinuityUX_Scenario3_TransportParity(t *testing.T) {
 	}
 	row := grpcList.GetSessions()[0]
 	if row.GetKind() != string(session.SessionKindSubagent) || row.GetRelationship().GetParentSessionId() != "parent" ||
-		row.GetWorkspace() != "/workspace" || row.GetCapabilities().GetPublicChat() ||
+		row.GetCapabilities().GetPublicChat() ||
 		!row.GetCapabilities().GetAuthoritativeTranscript() || row.GetCapabilities().GetActivityReplay() ||
 		row.GetReasonCode() != string(server.CapabilityReasonInspectOnlyKind) {
 		t.Fatalf("inventory taxonomy/workspace/capability projection incomplete: %+v", row)

@@ -42,7 +42,7 @@ func seedReplayFixture(t *testing.T, callID session.ToolCallID, inHistory bool) 
 		t.Fatal("replayApprovals returned nil with a real log+policy")
 	}
 
-	sess := session.New("s-replay", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	sess := session.New("s-replay", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	call := session.NewToolCall(callID, "Write", json.RawMessage(`{"path":"note.txt","content":"x"}`))
 	if inHistory {
 		if err := sess.BeginTurn(); err != nil {
@@ -113,7 +113,7 @@ func TestReplayApprovalsIdempotent(t *testing.T) {
 	policy := permpolicy.NewPolicy(nil, store)
 	replay := replayApprovals(log, policy, port.NopDiagnostics{})
 
-	sess := session.New("s-dup", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	sess := session.New("s-dup", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	call := session.NewToolCall("dup1", "Write", json.RawMessage(`{"path":"note.txt","content":"x"}`))
 	if err := sess.BeginTurn(); err != nil {
 		t.Fatalf("BeginTurn: %v", err)

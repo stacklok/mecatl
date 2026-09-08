@@ -254,7 +254,7 @@ func driveSubagentWithRoleMetrics(t *testing.T) []*dto.MetricFamily {
 		),
 	)
 	childEng := buildChildEngine(cfg, nil, childProvider, "", cfg.Model, nil)
-	task := agent.NewSubagentTool(childEng)
+	task := newTestSubagentTool(childEng)
 
 	// The parent calls Subagent once and ends with its OWN distinct usage, so the
 	// no-double-count assertion can separate main from child token counts.
@@ -272,9 +272,10 @@ func driveSubagentWithRoleMetrics(t *testing.T) []*dto.MetricFamily {
 	// the uniform-label property the cmd wiring establishes with WithRole(RoleMain).
 	parentEng := newChildEngine(cfg, "", parentProvider, parentCat, cfg.Model, fixedDefaultWindow, promptConfig(cfg, cfg.gitStatus))
 
-	sess := session.New("parent", session.ModeDefault, ws, session.Limits{MaxTurns: 5}, time.Now())
 	parentWS := osfsWSForTest(t, ws)
-	run := parentEng.Run(context.Background(), sess, testEnvironment(parentWS, nil), agent.RunRequest{Text: "go"})
+	parentEnv := testEnvironment(parentWS, nil)
+	sess := session.New("parent", session.ModeDefault, parentEnv.Ref(), session.Limits{MaxTurns: 5}, time.Now())
+	run := parentEng.Run(context.Background(), sess, parentEnv, agent.RunRequest{Text: "go"})
 	for ev := range run.Events() {
 		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == "t1" && ev.ToolResult.IsError {
 			t.Fatalf("Subagent tool result is an error: %q", ev.ToolResult.Content)

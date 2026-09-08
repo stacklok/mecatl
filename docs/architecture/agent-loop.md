@@ -83,13 +83,18 @@ A permanently-failed session that is recovered for re-entry emits a one-time
 `recover_notice` advisory BEFORE the first turn, so the operator sees the
 warning before burning a provider call.
 
-A run-level **token budget** bounds the whole loop: `Deps.MaxRunTokens`
-(`--max-run-tokens`; **default: unlimited**, `0` disables the brake) is checked at the turn boundary — never
-mid-stream, so an in-flight turn always completes — against the run's
+A run-level **per-engine token budget** bounds that engine's loop: `Deps.MaxRunTokens`
+(`--max-run-tokens`; **default: unlimited**, `0` disables the brake) is a token
+ceiling, not a currency billing cap. It is checked at the turn boundary — never
+mid-stream, so an in-flight turn always completes — against that engine session's
 accumulated `session.Usage` (input + output; cache tokens excluded). Crossing
 it ends the run cleanly with `StopBudget` (a NON-error terminal → `completed`,
 Reopen-recoverable, mirroring `StopNoProgress`). Every child engine — Subagent,
-Parallel branch, team member, lead synthesis — inherits it; a per-call override
+Parallel branch, team member, and lead synthesis — inherits the configured value
+as its own ceiling; each engine checks only its own persisted session usage. Parent
+usage and `EvResult` do not include child spend, so a delegation tree can exceed
+`MaxRunTokens`; cross-tree aggregate observability and enforcement are deferred
+and out of scope. A per-call override
 (`RunRequest.MaxRunTokensOverride`, the Subagent `max_run_tokens` arg — `max_tokens`
 is the deprecated alias for the same budget) may only
 **tighten** it. The team-aggregate counterpart is `--max-team-tokens` ([parallelism](parallelism.md)).
@@ -125,15 +130,25 @@ sequenceDiagram
 
 ### Read-parallel / mutate-serial dispatch (`dispatch.go`)
 
-Enforced in `Engine.dispatch`, keyed off `Tool.ReadOnly()`:
-- Calls are processed **in original order**, batched into maximal runs of
-  consecutive read-only tools.
+Enforced in `Engine.dispatch`:
+- Calls are processed **in original order**. Ordinary `Tool.ReadOnly()==true`
+  sibling calls form maximal concurrent batches.
+- A read-only tool implementing the static `tool.DispatchSerial` marker forms a
+  **run-local barrier**: the dispatcher flushes the preceding read batch, runs
+  the marked call alone, then starts the following batch. The marker changes
+  neither `ReadOnly` semantics nor tool advertisement.
 - A read-only batch (`runReadBatch`) authorizes + runs PreToolUse hooks for
   every call first (permission **asks are sequenced one at a time**, never two
   at once), then executes the cleared calls **concurrently**, one goroutine per
   call, results merged under a mutex.
 - A mutating or **unknown** tool (`runOne`) runs **alone, serially**, never
-  overlapping anything.
+  overlapping a sibling call in that dispatch.
+- A read-only tool whose specific call implements the unexported
+  `parentMutatingCaller` predicate and returns true gets the same run-local
+  barrier, preserving writable Subagent and auto-merging Parallel behavior.
+- These barriers apply only among sibling calls within one run/dispatch.
+  Shared adapter state reached by concurrent runs still requires its own
+  synchronization.
 - Results are keyed by `CallID` and re-assembled in input order.
 
 A `cancelled` flag propagates from `dispatch` so the loop terminates as

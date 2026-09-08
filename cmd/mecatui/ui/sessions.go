@@ -19,7 +19,7 @@ type sessionDetailsView struct {
 	DebugTargetID string
 	Title         string
 	State         string
-	Workspace     string
+	Placement     client.Placement
 	CreatedAt     int64
 	ModifiedAt    int64
 	ProviderID    string
@@ -68,7 +68,6 @@ func (m *Model) newSessionsSurface(startup bool) *sessionsState {
 		healthFetcher:                 m.deps.StorageHealth,
 		migration:                     m.deps.Migration,
 		cleanup:                       m.deps.Cleanup,
-		adopter:                       m.deps.Adoption,
 		forker:                        m.deps.Session,
 		manager:                       m.deps.SessionManagement,
 		clipboard:                     m.deps.Clipboard,
@@ -87,6 +86,14 @@ func (m Model) bindSessionID(id string) Model {
 	if id != m.sessionID {
 		m.compactPending = false
 		m.compactRequestToken++
+		if m.clearPending != nil && m.clearPending.sourceID != id {
+			m.clearPending = nil
+		}
+		if m.authorization.controlCancel != nil {
+			m.authorization.controlCancel()
+		}
+		m.authorization = mcpAuthorizationState{}
+		m.authorizationEvents = nil
 	}
 	m.sessionID = id
 	m.sessionState = ""
@@ -98,7 +105,7 @@ func (m Model) bindSessionID(id string) Model {
 func (m Model) sessionDetails() sessionDetailsView {
 	return sessionDetailsView{
 		ID: m.sessionID, DebugTargetID: m.deps.DebugTarget, Title: m.sessionTitle, State: m.sessionState,
-		Workspace: m.activeWorkspace, CreatedAt: m.sessionCreatedAt,
+		Placement: m.activePlacement, CreatedAt: m.sessionCreatedAt,
 		ModifiedAt: m.sessionModifiedAt, ProviderID: m.resolvedSessionModel.ProviderID,
 		ModelID: m.resolvedSessionModel.ModelID,
 	}
@@ -182,7 +189,7 @@ func (m Model) onSessionIDCopyResult(msg sessionIDCopyResultMsg) Model {
 
 func formatSessionTimestamp(unixSec int64) string {
 	if unixSec <= 0 {
-		return "unknown"
+		return unknownLabel
 	}
 	return time.Unix(unixSec, 0).UTC().Format(time.RFC3339)
 }
@@ -190,23 +197,25 @@ func formatSessionTimestamp(unixSec int64) string {
 func renderSessionDetails(th theme.Theme, details sessionDetailsView, hk helpKeys, width, height int) string {
 	unknown := func(value string) string {
 		if value == "" {
-			return "unknown"
+			return unknownLabel
 		}
 		return sanitizeTerminal(value)
 	}
+	budget := cardTextWidth(width)
+	row := func(label, value string) string { return wrapCardText(label+unknown(value), budget) }
 	var b strings.Builder
 	b.WriteString(th.Style("askTitle").Render("Active session") + "\n\n")
-	b.WriteString("ID: " + indentWrap(safeSessionID(details.ID), cardTextWidth(width)) + "\n")
+	b.WriteString(wrapCardText("ID: "+safeSessionID(details.ID), budget) + "\n")
 	if details.DebugTargetID != "" {
-		b.WriteString("Debug target ID: " + indentWrap(safeSessionID(details.DebugTargetID), cardTextWidth(width)) + "\n")
+		b.WriteString(wrapCardText("Debug target ID: "+safeSessionID(details.DebugTargetID), budget) + "\n")
 	}
-	b.WriteString("Title: " + unknown(details.Title) + "\n")
-	b.WriteString("State: " + unknown(details.State) + "\n")
-	b.WriteString("Workspace: " + unknown(details.Workspace) + "\n")
+	b.WriteString(row("Title: ", details.Title) + "\n")
+	b.WriteString(row("State: ", details.State) + "\n")
+	b.WriteString(row("Placement: ", details.Placement.Label) + "\n")
 	b.WriteString("Created: " + formatSessionTimestamp(details.CreatedAt) + "\n")
 	b.WriteString("Modified: " + formatSessionTimestamp(details.ModifiedAt) + "\n")
-	b.WriteString("Provider: " + unknown(details.ProviderID) + "\n")
-	b.WriteString("Model: " + unknown(details.ModelID) + "\n\n")
+	b.WriteString(row("Provider: ", details.ProviderID) + "\n")
+	b.WriteString(row("Model: ", details.ModelID) + "\n\n")
 	copyHelp := "c: copy exact ID"
 	if details.DebugTargetID != "" {
 		copyHelp += "  t: copy exact target ID"
@@ -233,28 +242,6 @@ func (m Model) openSessions() (tea.Model, tea.Cmd) {
 		cmds = append(cmds, cleanupStatusCmd(m.deps.Ctx, m.deps.Cleanup, m.maintenanceCleanupJobID))
 	}
 	return m, tea.Batch(cmds...)
-}
-
-func (m Model) adoptionBindings() client.AdoptionBindings {
-	provider, model := m.resolvedSessionModel.ProviderID, m.resolvedSessionModel.ModelID
-	if provider == "" && model == "" {
-		provider, model = m.deps.InitialModel.ProviderID, m.deps.InitialModel.ModelID
-	}
-	return client.AdoptionBindings{
-		Workspace: m.activeWorkspace, EnvironmentKind: "local", EnvironmentID: m.activeWorkspace,
-		ProviderID: provider, ModelID: model,
-	}
-}
-
-func (m Model) adoptionPreflightCmd(row client.SessionListItem) tea.Cmd {
-	if row.Kind != client.SessionKindUnknown || m.deps.Adoption == nil {
-		return nil
-	}
-	bindings := m.adoptionBindings()
-	if !completeAdoptionBindings(bindings) {
-		return nil
-	}
-	return client.PreflightSessionAdoptionCmd(m.deps.Ctx, m.deps.Adoption, row.ID, bindings)
 }
 
 func (m Model) chooseSession() (tea.Model, tea.Cmd, bool) {
@@ -291,10 +278,12 @@ func (m Model) adoptAuthoritativeTranscript(row client.SessionListItem, loaded c
 	m = m.resetSession()
 	m = m.bindSessionID(row.ID)
 	m.sessionTitle = row.Title
+	m.sessionTitleProvenance = row.TitleProvenance
+	m.sessionTitleRevision = row.TitleRevision
 	m.sessionState = row.State
 	m.sessionCreatedAt = row.CreatedAt
 	m.sessionModifiedAt = row.ModifiedAt
-	m.activeWorkspace = row.Workspace
+	m.activePlacement = row.Placement
 	m.conv = loaded
 	m.restartedThisRun = true
 	m.closeModal()

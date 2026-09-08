@@ -1,6 +1,8 @@
 ---
 sidebar_position: 4
-title: Sessions
+title: Manage sessions
+sidebar_label: Sessions
+description: Resume, browse, inspect, fork, and maintain Mecatl sessions from mecatui.
 ---
 
 # Manage sessions
@@ -104,12 +106,42 @@ per-instance `admin.sock`. That raw metrics/pprof surface is for the human
 operator and is **not** placed in model context; the debugger's performance view
 is the bounded event-derived projection.
 
+## Name the active chat
+
+Use `/title <text>` while an ordinary chat is open to set its title. Mecatui
+updates the label immediately, then the server's existing rename operation validates
+and persists it; if the request is rejected, the stored title is restored or
+refetched. A manual title has `operator` provenance and stops automatic title
+generation permanently. Use bare `/title` to display the active title and whether it
+was generated or set by an operator; it does not change the session.
+
+Automatic titles are optional. An operator enables them with an explicit compatible
+`models.slots.title` binding; without that slot no extra model call occurs. The
+server—not the client—collects up to three early genuine prompts and may generate a
+concise title after a successful chat exchange. It does not delay or rewrite the
+chat, and its separately recorded `session_title` token usage does not consume the
+chat's run budget. Generated-title updates normally appear live in an open mecatui;
+a reconnect or reopened session refetches the authoritative snapshot, so a missed
+live update is corrected.
+
 ## Start fresh with `/clear`
 
-Use `/clear` when you want a fresh session and empty context while staying in the
-current workspace and model. The old conversation remains stored and discoverable
-through `/sessions`; mecatui releases its old runtime resources only on a best-effort
-basis after the replacement session is ready.
+Use `/clear` when you want empty context without changing placement. You can issue it
+while idle, while a response is streaming, or while an approval is open; you do not need to
+press Esc first. It calls the server's `ClearSession` operation, which cancels the active run
+or durable approval, waits for that exact lifecycle to settle, then creates a distinct
+empty-history successor that inherits the source's exact server-owned placement, owner, mode,
+model/effort, and limits. Previously completed workspace and tool mutations remain in place;
+clear resets conversation history, not the workspace.
+
+The source conversation remains stored and discoverable through `/sessions`. Mecatui keeps
+that source and transcript selected while the handoff is pending and blocks prompts,
+approvals, and duplicate clears against it. It switches only after the correlated successor
+creation succeeds. Cancelling an active run or approval is irreversible: if replacement
+creation then fails, no successor is created and the source stays selected, but it may already
+be shown as cancelled. Retry `/clear` once its local stream has settled. A failure detected
+before cancellation, such as an invalid worktree selection, leaves an awaiting source and its
+approval unchanged. Clear never rolls back workspace mutations.
 
 ## Reduce model history with `/compact`
 
@@ -131,6 +163,13 @@ bin/mecatui connect 127.0.0.1:8080 sessions
 Choose a main chat to **Continue**, or open scheduled, child, and other runs to **Inspect** their authoritative transcript without attaching to them. Eligible main chats can also be **Forked** into a new chat. The inventory can copy an ID, rename a session, and—when the server permits it—delete it. Actions are checked again by the server, so an old inventory row cannot bypass active-session or lease protections. Caller identity, where enabled, records ownership but does not isolate sessions between authenticated callers.
 
 Use `/sessions` from an open chat for the same inventory. It has separate tabs for chats, scheduled runs, child runs, and other rows; search and pagination keep large inventories usable.
+
+Use `/worktrees` to move a history-carrying successor to an eligible server-owned
+worktree. The client sends the source session ID, receives only safe display metadata plus
+a short-lived opaque selector, and passes that selector to `ForkSession`; no path or exact
+private environment ref crosses the API. Selectors expire on server restart, so mecatui
+relists. A stale selector, relist failure, or fork failure leaves the source chat active.
+No-FS sessions cannot upgrade through this surface.
 
 ## Privacy and maintenance
 

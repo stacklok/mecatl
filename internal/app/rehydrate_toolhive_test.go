@@ -62,7 +62,7 @@ func TestToolhiveRehydrationWithProxyDownE2E(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Build #1: %v", err)
 	}
-	sess, err := built1.Service.CreateSessionWithProvider(ctx, workspace, session.ModeDefault, session.Limits{},
+	sess, err := built1.Service.CreateSessionWithProvider(ctx, session.ModeDefault, session.Limits{},
 		server.ProviderSelector{ProviderID: providerToolhive, ModelID: "claude-sonnet-4-6"})
 	if err != nil {
 		built1.Close()

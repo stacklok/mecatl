@@ -57,10 +57,11 @@ func TestScheduleTool_TuiEmbeddedSchedulerOn(t *testing.T) {
 	due := time.Now().Add(50 * time.Millisecond)
 	if err := schedStore.Save(ctx, port.Schedule{
 		Spec: port.ScheduleSpec{
-			Name:      schedName,
-			Prompt:    "say hello from the embedded scheduler",
-			Workspace: workspace,
-			Trigger:   port.TriggerSpec{OneShot: due},
+			Name:           schedName,
+			Prompt:         "say hello from the embedded scheduler",
+			Trigger:        port.TriggerSpec{OneShot: due},
+			EnvironmentRef: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: workspace, Revision: "configured-v1"},
+			PlacementScope: "deployment",
 		},
 		State: port.ScheduleState{NextFireAt: due, Enabled: true},
 	}); err != nil {
@@ -92,7 +93,7 @@ func TestScheduleTool_TuiEmbeddedSchedulerOn(t *testing.T) {
 		t.Fatalf("dial embedded server: %v", err)
 	}
 	defer func() { _ = cl.Close() }()
-	_, caps, _, err := cl.CreateSession(ctx, workspace, client.ModeFromString("default"), client.ModelSelection{})
+	_, caps, _, err := cl.CreateSession(ctx, client.ModeFromString("default"), client.ModelSelection{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

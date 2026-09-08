@@ -6,8 +6,13 @@ import { HarnessService, PermissionMode } from "../src/gen/mecatl/v1/harness_pb.
 export interface ScriptedState {
   features: string[];
   futureField?: string;
+  placement: {
+    branch: string;
+    kind: string;
+    label: string;
+    revision: string;
+  };
   sessionId: string;
-  workspace: string;
 }
 
 export interface RecordedRequest {
@@ -20,8 +25,13 @@ export interface RecordedRequest {
 export const scriptedState: ScriptedState = {
   features: ["server_info", "future_transport"],
   futureField: "kept-verbatim",
+  placement: {
+    branch: "main",
+    kind: "local",
+    label: "default",
+    revision: "abc123",
+  },
   sessionId: "session-scripted",
-  workspace: "/workspace",
 };
 
 export function routerFor(
@@ -30,14 +40,14 @@ export function routerFor(
 ): Transport {
   return createRouterTransport((router) => {
     router.service(HarnessService, {
-      createSession: () => ({ sessionId: state.sessionId }),
+      createSession: () => ({ placement: state.placement, sessionId: state.sessionId }),
       getCompatibilityInfo: () => ({ apiMajor: 1, features: state.features }),
       getSession: () => ({
         session: {
           mode: PermissionMode.DEFAULT,
+          placement: state.placement,
           sessionId: state.sessionId,
           state: "idle",
-          workspace: state.workspace,
         },
       }),
       streamSessionEvents: async function* () {
@@ -81,14 +91,17 @@ export function fetchFor(
       });
     }
     if (path === "/v1/sessions" && method === "POST") {
-      return Response.json({ session_id: state.sessionId }, { status: 201 });
+      return Response.json(
+        { placement: state.placement, session_id: state.sessionId },
+        { status: 201 },
+      );
     }
     if (path === `/v1/sessions/${state.sessionId}` && method === "GET") {
       return Response.json({
         mode: "default",
+        placement: state.placement,
         session_id: state.sessionId,
         state: "idle",
-        workspace: state.workspace,
       });
     }
     if (path === `/v1/sessions/${state.sessionId}/events`) {

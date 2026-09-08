@@ -2,7 +2,9 @@ package client
 
 import (
 	"context"
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 )
@@ -26,6 +28,24 @@ func (*pagingReflectionClient) UndoLearningPromotion(context.Context, string, st
 }
 func (*pagingReflectionClient) ReflectSession(context.Context, string) (ReflectionReceipt, error) {
 	return ReflectionReceipt{}, nil
+}
+
+func TestADR_0300_MecatuiClientMapsClosedSafeAbstentionReason(t *testing.T) {
+	got := mapReflectionReceipt(&mecatlv1.ReflectionReceipt{
+		ReflectionId: "id\xff\x1b[31m",
+		Disposition:  "abstained\x00selected",
+		Abstained:    true,
+		Reason:       "no_eligible_evidence\x1b",
+		Message:      "attacker-controlled text\xff\nforged",
+	})
+	if got.Reason != "no_eligible_evidence" || got.Message != "No eligible evidence was available for reflection." || !got.Abstained {
+		t.Fatalf("closed abstention mapping = %+v", got)
+	}
+	for name, value := range map[string]string{"id": got.ID, "disposition": got.Disposition, "reason": got.Reason, "message": got.Message} {
+		if !utf8.ValidString(value) || strings.ContainsAny(value, "\x00\x1b\n\r") {
+			t.Fatalf("%s is not output safe: %q", name, value)
+		}
+	}
 }
 
 func TestMapLearningProposalPreservesInformedReviewFields(t *testing.T) {

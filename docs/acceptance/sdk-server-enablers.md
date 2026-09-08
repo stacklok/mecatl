@@ -241,8 +241,8 @@ What a spawned local daemon needs. No proto change; `cmd/mecated` only.
   - verify: `TestSDKServerEnablers_Scenario8_ReadyFileAtomicAndLate`
 - AC8.4: The ready file, startup logs, and startup errors contain no credential or secret-shaped value.
   - verify: `TestSDKServerEnablers_Scenario8_ReadinessCarriesNoSecrets`
-- AC8.5: EOF on the inherited lifetime pipe gracefully stops the daemon — the parent-crash path.
-  - verify: `TestSDKServerEnablers_Scenario8_LifetimePipeEOFStops`
+- AC8.5: EOF on either accepted inherited lifetime descriptor — a FIFO read end or a connected UNIX-domain stream socketpair endpoint — gracefully stops the daemon through the parent-crash path. Regular files, terminals, listening sockets, network sockets, nonzero descriptors below 3, and closed descriptors remain refused; `0` remains the disabled value.
+  - verify: `TestSDKServerEnablers_Scenario8_LifetimePipeEOFStops`, `TestSDKServerEnablers_Scenario8_LifetimeSocketpairEOFStops`, `TestSDKServerEnablers_Scenario8_LifetimePipeIsOptionalAndValidated`, `TestSDKServerEnablers_Scenario8_LifetimePipeRejectsANonPipeDescriptor`, `TestSDKServerEnablers_Scenario8_LifetimeFDStillRejectsFilesAndDevices`
 - AC8.6: A stale socket from a dead process is cleaned up on start; a socket held by a live process is not.
   - verify: `TestSDKServerEnablers_Scenario8_StaleSocketCleanup`
 - AC8.7: The socket is created with owner-only permissions.
@@ -279,7 +279,7 @@ The server-side half of callback tools. The boundary is enforced by the listener
 - `task lint && task test` green on every PR in the stack, and on the assembled stack head.
 - `task api:check` — Scenarios 4 and 6 change the engine public API; each ships `task api:update` output plus an `engine/CHANGELOG.md` entry classified per [`engine/COMPATIBILITY.md`](../../engine/COMPATIBILITY.md) (both **Added = minor**).
 - `task generate` after every proto change; `contracts/gen/` committed, never hand-edited.
-- `task docs` after every Markdown change — `llms.txt` is generated and the strict link gate must pass.
+- `task docs` after every Markdown change — the configuration reference is generated and the strict link gate must pass.
 - `go run ./cmd/mecademo` still prints a full offline session.
 - Every long-lived resource added here — each watcher, each size-poll ticker, each spawned-daemon lifetime pipe — gets a row in [ADR-0027](../adr/0027-cloud-native.md)'s resource inventory (owner / scope / cleanup / re-attach), and a rehydrate-fidelity row where it holds state a restart would lose.
 - `user-docs/` updated in the same PR for every operator-visible flag: `--deployment-id`, `--cors-origins`, `--grpc-unix-socket`, `--ready-file`.

@@ -331,18 +331,19 @@ internal/adapter/redisstore/
 cmd/mecak8s/
   main.go       # flags → app.Build → serve → shutdown; os.Exit
   flags.go      # k8s-specific flags + appConfig() via cliconfig.ProviderFlags
-  serve.go      # signal ctx, HTTP/gRPC listeners, health probes, bounded GracefulStop, /drain
+  serve.go      # signal ctx, HTTP/gRPC/drain listeners, health probes, bounded GracefulStop
   main_test.go  # offline test over mockllm+memfs
 ```
 
 - **Storage-free:** `--redis-url` points at Redis; NO `--store-dir`, NO PVC.
 - Dynamic `ReadyFunc` (`!draining && redisOK`).
-- Drain gate armed on SIGTERM + `/drain` HTTP GET (preStop).
+- Drain gate armed on SIGTERM + plaintext drain-only `GET /drain` (preStop).
 - Bounded `GracefulStop`.
 - `--session-lease-k8s-namespace` defaults to `mecatl`.
 - `--headless=true` + `--posture=auto` defaults.
 - Provider flags via `cliconfig`.
-- `/drain` endpoint (GET, blocks ~3s, outside auth).
+- Plaintext drain-only listener on `0.0.0.0:8082` serves `GET /drain` (blocks
+  ~3s, outside auth); the normal HTTP listener has no drain route.
 
 **Shutdown sequence:**
 ```
@@ -355,7 +356,7 @@ SIGTERM (or preStop httpGet /drain)
   3. grpcSrv.GracefulStop() in goroutine + select 30s timer
   4. on timeout: grpcSrv.Stop() (hard) — in-flight runs cancelled,
      persist best-effort, Recover-able on successor (issue #51)
-  5. httpSrv.Shutdown(10s ctx)
+  5. httpSrv.Shutdown(10s ctx) + drainSrv.Shutdown(10s ctx)
   6. built.Close() → Service.Close():
      → stops every held-lease renewer
      → releases every held coordination.k8s.io Lease (cancel-detached short-ctx)
@@ -399,7 +400,8 @@ deploy/mecak8s/
 - `terminationGracePeriodSeconds: 60`.
 - `automountServiceAccountToken: true` (for leases).
 - PSS restricted in full.
-- `preStop: httpGet: /drain` (distroless-safe).
+- `preStop: httpGet: /drain` on a named Pod-only plaintext drain port
+  (`8082`, distroless-safe); Service exposes only gRPC + HTTP.
 - Probes: startup (/readyz), readiness (/readyz, dynamic), liveness (/healthz).
 - Args: `--redis-url=redis:6379`,
   `--session-lease-k8s-namespace=mecatl`, `--mock` (e2e) / `--openai` (prod).
@@ -451,7 +453,7 @@ e2e/k8s/
 
 **Architecture:**
 ```
-1. kind create cluster --name mecatl-e2e --image kindest/node:v1.34.3
+1. kind create cluster --name mecatl-e2e --image kindest/node:v1.35.8@sha256:07b2536e30b803ed61d1677a79df6115f798ce64c80f9e22f6ed45afd09323c0
 2. ko build --local --bare ./cmd/mecak8s  →  ko.local/mecak8s:sha
 3. kind load docker-image ko.local/mecak8s:<sha> --name mecatl-e2e
 4. ko resolve -f deploy/mecak8s/  |  kubectl apply -f -
@@ -625,7 +627,6 @@ MODIFIED:
   docs/usage.md                                     # mecak8s section (Step 8)
   docs/architecture.md                              # mecak8s in the binary list (Step 8)
   docs/design/PRODUCTION-READINESS.md               # mecak8s status row (Step 8)
-  llms.txt                                          # regenerated (task generate)
 
 NOT TOUCHED:
   engine/**              # no port/domain change

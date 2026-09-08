@@ -1,6 +1,7 @@
 ---
 sidebar_position: 10
 title: Status line customization
+description: Customize mecatui's local header and footer status surfaces with templates or a command.
 ---
 
 # Status line customization
@@ -79,7 +80,7 @@ are zero, and `Clock.Now` is the zero time until the source refreshes it.
 
 | JSON path | Type | Meaning |
 | --- | --- | --- |
-| `Version` | integer | Status input protocol version (currently `2`). |
+| `Version` | integer | Status input protocol version (currently `3`). |
 | `Server.DisplayTarget` | string | Credential-free target shown by the client. |
 | `Server.ConnectionMode` | string | `embedded`, `connect`, or empty while unknown. |
 | `Session.Title` | string | Optional display title. |
@@ -93,7 +94,8 @@ are zero, and `Clock.Now` is the zero time until the source refreshes it.
 | `Context.{Used,Window}.{Raw,Human}` | integer, string | Current context use and capacity as exact and display-ready values. |
 | `Context.Percent` | integer | `Used.Raw / Window.Raw` as an integer percentage, or `0` when unknown. |
 | `Workspace.Location` | string | `local`, `remote`, or `unknown`. |
-| `Workspace.Path`, `Workspace.Basename` | strings | Local-session path and basename only. They are empty for remote or unknown workspaces. |
+| `Workspace.Name` | string | Provider-supplied workspace display metadata. It is not a directory basename or a usable path. |
+| `Workspace.Path` | string | Exact local root returned by the privileged local-context RPC. It is available to status templates through their StatusML-escaped projection and to a configured direct local status command. It is empty for remote, untrusted, no-FS, unavailable, and otherwise ineligible sessions. |
 | `Terminal.Rows`, `Terminal.Cols` | integers | Measured terminal dimensions. |
 | `Terminal.HeaderAvailCols`, `Terminal.FooterAvailCols` | integers | Columns remaining after mecatui reserves mandatory header and footer lanes. |
 | `MainAgent.State` | string | `connecting`, `idle`, `thinking`, `running_tool`, `awaiting_approval`, `completed`, `failed`, or `cancelled`. |
@@ -105,9 +107,14 @@ are zero, and `Clock.Now` is the zero time until the source refreshes it.
 | `Clock.Now` | RFC 3339 time | Source-owned current time; an interval refreshes it. |
 
 The input deliberately excludes prompts, transcript and tool content, credentials,
-authentication metadata, diagnostics, command output, and the local launch
-directory. The source privately uses the local launch directory only as a command
-working-directory fallback.
+authentication metadata, diagnostics, and command output. `Workspace.Path` is the
+single privileged exception: status templates receive it through their StatusML-escaped
+projection and a configured local direct executable receives it in raw input when the
+embedded local-context RPC successfully resolves the active eligible local session.
+Without that root, the command uses the configured helper executable's cleaned absolute
+parent directory, falling
+back to its launch directory only if the parent cannot be determined; it never
+implicitly selects `HOME`.
 
 ## StatusML
 
@@ -127,10 +134,20 @@ these semantic tokens:
 `text`, `muted`, `primary`, `secondary`, `accent`, `success`, `warning`, `error`,
 and `info`.
 
-A link keeps its display text separate from its destination:
+A link keeps its display text separate from its destination. `<link>` is a
+StatusML element, **not** the HTML `<a>` element. It must be a direct child of
+`<header>` or `<footer>` and its contents must be plain text; semantic-token
+and nested-link children are not supported:
 
 ```text
 <footer><link href="https://docs.example.test/status">status docs</link></footer>
+```
+
+These forms are invalid:
+
+```text
+<footer><a href="https://docs.example.test/status">status docs</a></footer>
+<footer><link href="https://docs.example.test/status"><text>status docs</text></link></footer>
 ```
 
 ### Escaping dynamic command output
@@ -155,7 +172,7 @@ For example, a command written in Python can safely include a dynamic label:
 ```python
 from html import escape
 
-label = status["Workspace"]["Basename"]
+label = status["Workspace"]["Name"]
 print(f"<footer><text>{escape(label, quote=False)}</text></footer>")
 ```
 
@@ -165,11 +182,33 @@ or validate it with a URL parser before producing the StatusML document.
 
 Only bounded `http` and `https` URLs without user information are retained. Until
 terminal hyperlink support is added, a link is rendered as theme-styled underlined
-text rather than an OSC 8 sequence. Malformed or unknown markup is literalized;
-unsafe link destinations lose their destination but retain their display text.
-Control characters, including ANSI, OSC, newline, tab, and Unicode line-separator
-controls, are removed from markup text, link metadata, and theme data before rendering.
-StatusML is always rendered as one terminal line.
+text rather than an OSC 8 sequence. Unsafe link destinations lose their destination
+but retain their display text. Control characters, including ANSI, OSC, newline, tab,
+and Unicode line-separator controls, are removed from markup text, link metadata,
+and theme data before rendering. StatusML is always rendered as one terminal line.
+
+### Command failures and troubleshooting
+
+A status command has a one-second invocation deadline and a combined 4 KiB
+`stdout`/`stderr` limit. Its complete combined output must be one valid StatusML
+document. In particular, do not write logs, warnings, tracebacks, or progress output
+to `stderr`: it is combined with `stdout`, so it makes the document invalid.
+
+If the executable cannot start, exits unsuccessfully, times out, exceeds the output
+limit, or emits malformed StatusML, mecatui keeps the most recently successful custom
+surface and marks it `[stale]`. If it has no successful custom surface yet, it instead
+uses the shipped default surface. The command does not receive a failure result or
+retry signal. `/diagnostics` reports safe current command state: each header/footer
+is `default`, `custom`, or `stale`; `error` is `none`, `unsupported`, `timeout`,
+`output_limit`, `invalid_statusml`, `exit`, or `failed`. It never reports captured
+output, arguments, paths, or raw failure text. `[stale]` remains the only in-client
+failure indication; it is not a machine-readable feedback channel for the command.
+
+Test a command independently with representative JSON input before configuring it.
+Have it write exactly one StatusML document to standard output, and send any
+command-specific diagnostics to a separate destination that is not its standard
+error stream. StatusML markup used directly in a template is safely literalized when
+malformed; malformed command output instead triggers the fallback behavior above.
 
 The v1 token-to-palette mapping is a best effort, not a cross-widget compatibility
 promise. [Issue #799](https://github.com/stacklok/mecatl/issues/799) owns the
@@ -274,9 +313,15 @@ trailing newline from the Python `print` example above while preserving whitespa
 inside markup text. A supplied header or footer replaces that surface;
 an omitted surface continues to use its shipped default.
 
-Mecatui runs the executable in the known local session workspace. If that workspace
-is remote or unknown, it uses the local directory from which mecatui was launched;
-a remote path is never used as a local CWD. The process receives a fixed safe
+Mecatui runs the executable in the eligible local root of the active session when
+its opt-in local session-context service can resolve one. It refreshes that private
+lookup after a session is created, adopted, cleared, forked, or switched, and
+ignores an older response after a newer session becomes active. The root is used
+only as `Workspace.Path` in raw command JSON and as the process CWD; templates
+receive it through their StatusML-escaped projection. If context is unavailable or
+ineligible, `Workspace.Path` is empty and mecatui uses the configured helper executable's cleaned absolute parent directory;
+the local launch directory is retained only when that parent cannot be determined.
+A remote path is never used as a local CWD. The process receives a fixed safe
 baseline: `HOME`, `PATH`, `TERM`, `LANG`, `LC_ALL`, `COLUMNS`, and `LINES` when
 available. `COLUMNS` and `LINES` come from the submitted terminal dimensions.
 

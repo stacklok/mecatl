@@ -49,8 +49,8 @@ service ScheduleService {
   // created aggregate. The create-seam (composition) validates the spec — the
   // exactly-one-of(cron, one_shot) trigger XOR, the prompt-or-parts non-empty
   // rule, the cron grammar — fail-closed; the proto carries per-field
-  // constraints only (cross-field rules are server-enforced, the
-  // CreateSessionRequest.workspace posture).
+  // constraints only; cross-field rules and exact server-owned placement binding
+  // are server-enforced.
   rpc CreateSchedule(CreateScheduleRequest) returns (CreateScheduleResponse);
 
   // GetSchedule returns the schedule stored under name (spec + state).
@@ -156,8 +156,8 @@ message ScheduleSpec {
   ScheduleProviderSelector selector = 5;
   // profile is the session tool-surface profile ("" default, "no-fs" file-less).
   string profile = 6;
-  // workspace is the session cwd. "" means the deployment default.
-  string workspace = 7;
+  reserved 7;
+  reserved "workspace";
   // mode is the session permission posture. Reuses the PermissionMode enum from
   // harness.proto (same package — proto allows cross-file refs within a package).
   PermissionMode mode = 8;

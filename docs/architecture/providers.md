@@ -52,7 +52,12 @@
 
 **SSE → Chunk translation** (`stream.go`, `translate` — a pure function driven
 directly from recorded fixtures by `decodeSSE` in tests):
-- `response.output_text.delta` → `ChunkText`
+- `response.output_text.delta` → `ChunkText`. Every non-empty visible delta is
+  projected in serial SSE arrival order, even when item, output, or content
+  identities differ. Those provider identities are deliberately discarded at the
+  adapter boundary; the engine concatenates the chunks into the one
+  `Message.Text` string without synthetic separators or text-part metadata
+  ([ADR 0302](../adr/0302-openai-visible-text-delta-projection.md)).
 - `response.reasoning_summary_text.delta` / `response.reasoning_text.delta` →
   `ChunkReasoning` (the DISPLAY summary)
 - `response.output_item.done` (reasoning) → BUFFERED into `streamState.reasoning`
@@ -69,8 +74,9 @@ directly from recorded fixtures by `decodeSSE` in tests):
   `Usage.CacheReadTokens`)
 - `response.incomplete` → `ChunkUsage` then `ChunkDone(error)`
 - `response.failed` / `error` → a non-nil stream **error** carrying the
-  provider's message verbatim (so the real reason reaches the terminal
-  `result`, not an opaque "error")
+  provider's in-band message verbatim; HTTP API rejections instead render only
+  their structured `code` (or `type`) and message as `code: message`, never the
+  SDK's raw response body, request URL, or correlation ID.
 
 **Cancellation**: `Stream` (`openai.go`) selects on `ctx.Done()` each iteration
 and abandons the underlying stream; a deliberate `ctx` cancel is **not** reported
@@ -260,10 +266,13 @@ reachability (register-on-intent; a session persisting `provider_id: "toolhive"`
 survive a restart with the proxy down, never rejected as "unknown or unavailable
 provider"). Each `providerEntry` carries an `intentDriven` bit that
 `preferredDefaultProvider` reads to place intent-driven providers at an explicit
-LOWEST-preference tier (any key-driven provider always wins the default) and that the
-`ListModels` `provider_status` projection also carries operator-actionable Codex
-entitlement outcomes, while `intentDriven` alone controls the TUI's `org` tier and
-gateway availability notices. A BOUNDED (≤1.5s) Build-time probe runs immediately after
+LOWEST-preference tier (any key-driven provider always wins the default).
+`ListModels` `provider_status` projects operator-actionable live-listing outcomes
+for intent-driven gateways, Codex entitlements, and operator-defined custom
+providers (identified by their configured custom default model); it exposes only
+safe provider ID/state/hint metadata, never an endpoint, credential, or raw
+listing error/body. `intentDriven` alone controls the TUI's `org` tier and gateway
+availability notices. A BOUNDED (≤1.5s) Build-time probe runs immediately after
 registration and drives ONLY the startup diagnostic, the initial live-model snapshot,
 and default-model eligibility for a SOLE intent-driven provider — never registration
 itself. See `docs/adr/0064-toolhive-llm-gateway-provider.md` for the full design
@@ -341,12 +350,18 @@ the provider id.)
 **Model inventory (`ListModels` / `internal/app/modelsnapshot.go`).** `modelSnapshot`
 joins the registry's AVAILABLE providers to the embedded catalog and projects each
 model into the proto `ModelInfo` (public metadata only — id, provider_id, display_name,
-image/reasoning flags, context_limit — never a key/env/base-URL). The composition root
-injects the snapshot into `server.Config.Models`; the server adapter holds only the
-proto slice (mirroring the `ListAgents` idiom). The `mock` provider advertises no
-selectable models. `ServerCapabilities.model_selection` is true iff the snapshot is
-non-empty, gating the client's model picker the way `agents` gates `/agents`. Provider
-key/base-URL flags landed in `cmd/mecated` earlier; the picker UX is a client concern.
+image/reasoning flags, context_limit — never a key/env/base-URL). Composition stores
+that projection in one atomic resolved inventory shared by `ListModels` and the
+read-only `DiscoverModels` tool. Live refresh swaps that same inventory, so both views
+retain the existing floor/last-known-good/empty semantics without a second lister or
+probe. `DiscoverModels` exact-filters only `provider_id` and `model_id`, returns at most
+50 complete provider/model handles (20 by default), and has a 32 KiB output ceiling.
+The pair is the exact selection handle; a model id never implies its provider. The tool
+is registered through the common catalog assembly, including no-FS sessions, and
+receives no workspace or shell input. The `mock` provider advertises no selectable
+models. `ServerCapabilities.model_selection` is true iff the inventory is non-empty or
+a refresh source is available, gating the client's model picker. Provider key/base-URL
+flags landed in `cmd/mecated` earlier; the picker UX is a client concern.
 
 **Capability single-source (`internal/app/capability.go`).** A model's true input
 capability is the INTERSECTION `catalog-per-model-modalities ∩ adapter-Capabilities()`,

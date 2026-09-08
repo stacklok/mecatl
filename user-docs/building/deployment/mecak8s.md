@@ -1,6 +1,7 @@
 ---
 sidebar_position: 4
 title: Cloud-native k8s with mecak8s
+description: Deploy Mecatl on Kubernetes with Redis-backed state and lease-based session ownership.
 ---
 
 # Cloud-native k8s with mecak8s
@@ -21,6 +22,24 @@ flowchart TD
 ```
 
 Kill any pod. The survivor acquires the lease and resumes interrupted sessions from the Redis snapshot. The pod is disposable; the session is not.
+
+## Server-owned session placement
+
+Mecak8s uses the same path-free, server-owned placement contract as mecated. Its
+storage-free default binds new sessions to no-FS; clients omit placement or explicitly
+request `profile:"no-fs"` and never send a workspace/cwd/exact ref. Redis/driver state
+retains the exact private EnvironmentRef needed for reattachment. Schedule fires reauthorize
+that stored placement, and delegation cannot upgrade no-FS. A future remote filesystem
+provider can implement the same private Bind/Reattach contract without changing clients.
+
+## Drain endpoint isolation
+
+The chart runs a plaintext, Pod-only drain listener on port 8082. Kubernetes calls
+`GET /drain` there during preStop; normal HTTP/SSE API traffic, including TLS traffic,
+has no drain route. The Service intentionally exposes only gRPC and HTTP, not port
+8082. This protects Service and gateway traffic, but it is not a Pod-IP firewall:
+operators must restrict direct access to port 8082 with NetworkPolicy, mesh policy, or
+equivalent controls.
 
 ## Try mecak8s locally with Kind
 
@@ -43,7 +62,7 @@ or use provider credentials.
 
 ### Basic local fixture
 
-From a clone of the mecatl repository:
+From a clone of the Mecatl repository:
 
 ```sh
 task mecak8s:kind-setup
@@ -144,7 +163,17 @@ ordinary offline tests. See the [fixture's setup and CA instructions](https://gi
 
 ---
 
-## How mecak8s differs from mecated
+## OAuth protected-resource profile
+
+For remote `mecatui` discovery, set the same optional profile flags on either
+composition root: `--oidc-resource` is the externally reachable RFC 9728 URL,
+`--oidc-client-id` is the public mecatl extension, and `--oidc-scopes` is CSV
+scope metadata. The Helm chart exposes these as `oidc.resource`, `oidc.clientID`,
+and `oidc.scopes`; it rejects partial profiles and never infers a resource from
+pod bind addresses. Metadata bootstrap is anonymous HTTPS and intentionally
+separate from authenticated gRPC transport. ToolHive supplied implementation
+provenance for the client discovery path; it is not an engine dependency.
+
 
 `mecak8s` has a deliberately narrower surface than `mecated`. The differences are not runtime configuration — they are compile-time defaults and removed capabilities.
 
@@ -154,8 +183,8 @@ ordinary offline tests. See the [fixture's setup and CA instructions](https://gi
 | `--posture` default | `strict` | `auto` |
 | Project-tier ingestion + read-only child shell | granted at `auto`/`yolo` by the interactive ladder | one root-aware trust decision — explicit `--trust-project`, `trustedWorkspaces:`, or remembered trust admits BOTH; without trust, headless auto gives allow-all with neither |
 | Bind address default | `127.0.0.1` (loopback) | `0.0.0.0` (pod netns) |
-| Workspace authority | Loopback client-selected by default | **Always server-assigned; no mounted root by default** |
-| New-session profile | Default filesystem profile unless requested otherwise | **`no-fs`** when the wire profile is omitted or empty (no mounted root); a filesystem session when `--workspace` mounts one |
+| Session placement | Server-owned local default configured by the operator; public clients send no path | **Server-owned no-FS default; no mounted root by default** |
+| New-session profile | Omitted profile binds the configured default; `no-fs` explicitly attenuates | Omitted or `no-fs` binds the no-FS default; no public workspace field |
 | Session store | In-memory or JSONL on disk (`--store-dir`); optional `--session-store-url` | **Redis only** (`--redis-url`; no `--store-dir`) |
 | Session lease | Optional (`--session-lease-k8s-namespace`) | **On by default** (`--session-lease-k8s-namespace=mecatl`) |
 | Prometheus `/metrics` listener | Yes | Opt-in (`--metrics-addr`, loopback only) |
@@ -167,9 +196,9 @@ ordinary offline tests. See the [fixture's setup and CA instructions](https://gi
 The `--redis-url` flag exists **only on `cmd/mecak8s`**. `mecated` does not expose it. If you want Redis-backed state with `mecated`, you need `mecak8s`.
 
 The no-FS default is intentional. A standard mecak8s pod is storage-free and
-has no authoritative filesystem root, so a client must not send a workspace
-path. Empty profile/workspace values request the no-FS session; they never mean
-“use the client cwd” or “choose a pod path.”
+has no authoritative filesystem root, so the server binds omitted/default profile
+to its configured no-FS placement. Clients never send a workspace path; explicit
+`profile:"no-fs"` attenuates to the same filesystem-free surface.
 
 ### Mounted workspace (shared filesystem root)
 
@@ -177,10 +206,8 @@ To give sessions a real filesystem, mount a volume into the pod and point
 `--workspace` at it (for example a PVC mounted at `/workspace`). A configured
 root turns mecak8s into a **server-assigned filesystem deployment** rooted
 there: every session is assigned that single root, the filesystem tools and
-Bash operate on it, and — because authority is server-assigned — a client still
-cannot select a different root (a non-empty client workspace is rejected with
-`InvalidArgument`). The path must be absolute and clean; a relative value is
-refused at startup.
+Bash operate on it, and clients have no field with which to select another root.
+The path must be absolute and clean; a relative value is refused at startup.
 
 This does not change mecak8s's storage-free posture: harness and session state
 still live in Redis and the Kubernetes API, and the mounted volume holds only
@@ -190,20 +217,22 @@ to one replica or use a per-pod volume if your storage class cannot do RWX. The
 operator vouches for the mount, so scope it deliberately — see the pod-filesystem
 note below.
 
-:::note[MCP OAuth credentials from Kubernetes Secrets]
+### Redis virtual workspace
 
-`mecak8s` wires the operator profile's explicit read-only credential Reader from one
-base64 environment value; it installs no browser presenter and no Kubernetes Secret writer.
-The selected name must use the `MECATL_` prefix and the strict uppercase
-`[A-Z_][A-Z0-9_]{0,127}` grammar — for example,
-`MECATL_MCP_OAUTH_CREDENTIAL` — so the credential is removed from every agent-facing
-shell environment. A Secret projected as an environment variable is immutable for the running
-pod. The Reader warm-restores a valid credential. Persistent rotation requires an external
-controller to update the Secret followed by a rolling pod restart, or a future Secret backend
-using Kubernetes `resourceVersion` compare-and-swap. In-memory refresh is explicit and
-process-local; the default fails before refresh network when no writer exists.
+Set `redis.filesystem.enabled=true` (or pass `--redis-filesystem`) to provide
+persistent Read/Edit/Write/Grep/Glob files without mounting a volume. Files are
+partitioned by the session owner's exact OIDC issuer/subject pair; same-owner
+sessions share a namespace, while ownerless sessions share a reserved anonymous
+namespace. The persisted placement is revalidated on every run. Redis failures,
+missing namespace markers, and corrupt records fail closed rather than appearing
+as an empty filesystem.
 
-:::
+This mode is deliberately file-lite: it has no Bash, executable-file semantics,
+git worktrees, or filesystem branch/merge workflow. It is mutually exclusive with
+`workspace`. Set `redis.readLedger.enabled=true` independently to persist each
+session's read-before-write evidence; deleting a session deletes that ledger but
+not the principal's shared files. mecak8s sets no TTL on either representation.
+Redis durability, backups, capacity and eviction policy remain operator concerns.
 
 ---
 
@@ -250,6 +279,50 @@ The chart creates no agent PVC and ships no general NetworkPolicy.
 The cluster must provide network isolation because agent egress depends on operator-selected endpoints.
 The `oidc.*` values add a narrow raw-driver NetworkPolicy when caller identity is enabled.
 
+### Session affinity is an infrastructure contract
+
+Official clients attach the exact `X-Mecatl-Session-ID` field to session-bound gRPC and
+HTTP requests when the ID is non-empty printable ASCII without boundary spaces. The
+TypeScript raw affinity helper rejects an illegal explicit ID synchronously without
+altering caller headers. A high-level session ID supplied by the server outside that
+common browser/gRPC set remains usable without affinity when no explicit bind was
+requested. Existing clients may omit it. Duplicate, malformed, or byte-mismatched
+values are rejected before work with one non-disclosing error. The field is a routing
+and provider-correlation hint only: it grants no authentication, authorization, caller
+ownership, lease ownership, fencing, tracing, idempotency, or cache authority. Provider
+adapters derive the outbound value from the authoritative run context, never by blindly
+forwarding client metadata.
+
+Route a legal value consistently to improve affinity, but keep the Kubernetes session
+lease authoritative. Lease loss invalidates the stale pod's local mutation capability
+before cancellation; it prevents new local saves, deletes, event/tool records, and
+metadata/sidecar changes. This is not Redis fencing: an already-admitted call may finish.
+An awaiting approval loses only its local ask delivery; its durable `PendingAsk` remains
+unresolved for a successor after lease TTL.
+
+Closing a live running or awaiting session fails precondition and does not release its
+lease. During shutdown, mecak8s stops admission first, preserves awaiting resume points,
+cancels and joins executing runs, and releases ownership only after each run settles.
+If the drain deadline expires, it stops local mutation and renewal but leaves the lease
+for process-death/TTL takeover. Hard handoff drops the client stream; the client retries
+after endpoint and TTL convergence. There is no transparent owner-to-owner forwarding,
+and external provider/tool effects are not exactly once.
+
+The Helm chart intentionally creates no `Gateway`, `HTTPRoute`, `GRPCRoute`, `TLSRoute`,
+`Route`, `Certificate`, `BackendTrafficPolicy`, or Gateway/session-affinity configuration
+surface. Its `affinity` value remains the unrelated standard Kubernetes pod-scheduling
+field, alongside topology spread constraints, node selectors, and tolerations. The modeled
+two-Service/fake-clock tests prove application lease and Redis repair ordering; they do
+not prove real Gateway routing, EndpointSlice convergence, or production timings.
+
+The separate infrastructure PR has a **blocking prerequisite** before affinity rollout:
+live validation must show authenticated admission, request and header-size bounds, and
+client, IP, and principal rate limits apply before or independently of affinity routing.
+The recorded authenticated bounded-load test must demonstrate that legal,
+attacker-chosen session IDs cannot become an unbounded targeted-replica sink. Chart
+rendering, Helm lint, Kind, and offline tests do not satisfy this external acceptance
+gate.
+
 ```sh
 helm upgrade --install mecak8s deploy/helm/mecak8s --namespace mecatl --create-namespace \
   --set image.repository=registry.example/mecak8s \
@@ -274,18 +347,27 @@ Server cert/key and file-backed Redis CA/ACL Secret rotations are transactional 
 the last valid generation if projection is partial or validation fails. Keep old and new
 CAs together for an overlap period, then remove the old one after leaves have rotated.
 The server client-CA trust pool remains static and changing it requires a rolling restart.
+When broker mode is also configured, its embedded OAuth authorization server opens its
+own separate Redis connection using the same credential files but does not watch or
+reload them — a rotation requires restarting the pod for that connection to pick up the
+new credentials, even though readiness (driven by the main session store) stays healthy.
 
 The Redis Secret is mounted read-only with `defaultMode: 0440` and projects exactly the configured CA and ACL keys; unrelated Secret keys are not exposed. A password key alone uses Redis's default ACL user, while a username key requires a password key. `caKey` is optional: leaving it empty selects system-trust TLS, so an install against a publicly-rooted managed Redis with no ACL renders `--redis-tls` and no Secret volume at all. `credentialsSecret` is required exactly when some key needs reading. TLS-without-ACL external deployments are valid. The rendered command receives paths only, never Secret values. `values-kind.yaml` is deliberately the only profile that permits `ko.local` and plaintext Redis, and it passes `--redis-allow-plaintext` explicitly. It is not a production configuration.
 
 ### Connect global MCP servers
 
-Use `mcp.servers` for global Streamable HTTP MCP connections. The chart supports
+Use `mcp.servers` for global Streamable HTTP MCP connections. Global OAuth profiles
+support the strict exact-origin `network` policy. For mecak8s broker OAuth, Helm values
+must use the explicit empty policy (`additionalOrigins: []`, `privateOrigins: []`,
+`maxRedirects: 0`); the rendered operator profile is the equivalent empty network
+policy. Non-default controls remain rejected until ToolHive can enforce the policy
+equivalently. The chart supports
 no authentication, a bearer from a Kubernetes Secret, or the runtime's strict
 OAuth profile. Helm checks the values structure and Secret references; `mecak8s`
 is the authority for semantic URL, canonical-origin, and loopback validation and
 fails closed at startup. A successful chart render does not bypass those runtime
 checks. The chart does not expose inline credentials, arbitrary headers,
-stdio/SSE transports, browser login, or a writable credential store.
+stdio/SSE transports, browser credentials, or a writable credential store.
 
 ```yaml
 mcp:
@@ -302,11 +384,39 @@ mcp:
 ```
 
 The static token is projected as `MCP_GITHUB_TOKEN`; it never appears in Helm
-values, arguments, or a ConfigMap. OAuth similarly projects a preregistered
-client secret (when used) and an externally exported credential record from
-Secret keys into generated `MECATL_MCP_*` variables. Its non-secret profile is
-mounted from a read-only chart-managed ConfigMap and selected with
-`--permission-config`. See the [operator guide](https://github.com/stacklok/mecatl/blob/main/docs/usage/mecak8s.md#configuring-mcp-servers-with-helm)
+values, arguments, or a ConfigMap. `staticBearer` covers a personal access
+token; for a GitHub OAuth App's real browser consent flow, use `auth.mode:
+oauth` with `upstream: {mode: oauth2, oauth2: {authorizationEndpoint,
+tokenEndpoint}}` instead of `issuer` — GitHub has no OIDC discovery endpoint —
+and optionally a static `tools` catalogue. OAuth selects the session MCP broker instead
+of global routing. One session enrollment can cover multiple configured protected upstreams:
+ToolHive drives their sequential browser flow, owns callback state and refresh, and injects
+each upstream token only into its configured backend. Mecatl exposes one opaque enrollment,
+not per-backend controls or OAuth material.
+
+Set `mcp.broker.callbackURL` to ToolHive's final public HTTPS redirect to mecatl. Your ingress
+or gateway must also route the complete fixed `/v1/mcp/broker/` prefix, including ToolHive's
+upstream callback, to the mecak8s HTTP listener. Helm rejects an OAuth server without the final
+callback URL and the runtime rejects an invalid URL. Protected static declarations and live
+discovery stay hidden until enrollment succeeds; mecatl then strictly discovers every protected
+backend, collision-checks, and freezes the complete catalogue. A failed enrollment admits no
+partial protected tools. OAuth broker mode also requires the chart's OIDC caller identity
+(`oidc.enabled: true`, issuer, and audience), so broker authorization controls have verified
+callers. The broker profile and server metadata are non-secret ConfigMap data. A preregistered
+client secret remains a `SecretKeyRef` projection only—never a values field or ConfigMap entry;
+the browser authorizes the broker for that session rather than Helm accepting a credential-record
+value. With `mcp.servers: []`, Helm explicitly
+writes `mcp.mode: global`; a no-auth or static-bearer-only list keeps the existing
+global route behavior.
+
+:::caution Process-local broker limitation
+Broker sessions and OAuth state are process-local. The chart schema now enforces
+`replicaCount: 1` whenever `mcp.broker.callbackURL` is set, and renders a
+`Recreate` rollout strategy instead of the default rolling update — there is no
+high availability or zero-downtime rollout for OAuth broker mode until an
+affinity or durable-broker decision lands.
+:::
+See the [operator guide](https://github.com/stacklok/mecatl/blob/main/docs/usage/mecak8s.md#configuring-mcp-servers-with-helm)
 for the complete OAuth values shape.
 
 Keep MCP and OAuth endpoints on HTTPS and provide pod egress through your
@@ -318,8 +428,8 @@ makes startup fail. Use it only for a tightly isolated in-cluster endpoint.
 
 OAuth profile changes alter a pod-template checksum and trigger a rollout.
 Secret-backed environment variables do not rotate inside a running pod, so roll
-the Deployment after replacing a static bearer, OAuth client secret, or OAuth
-credential record. Keep old and new credentials valid during the rollout.
+the Deployment after replacing a static bearer or OAuth client secret. Keep old
+and new credentials valid during the rollout.
 `extraArgs` and `extraEnv` remain available, but `extraEnv` cannot collide with
 environment names generated by `mcp.servers`.
 
@@ -466,8 +576,7 @@ They default to the standard `tls.crt` and `tls.key` data keys; set the values
 when your Secret uses different PEM key names. The container receives the
 fixed mounted paths `/var/run/secrets/tls/<certKey>` and
 `/var/run/secrets/tls/<keyKey>` as `--tls-cert` and `--tls-key`, enabling TLS
-for both gRPC and HTTP/SSE. The chart also changes health, readiness, and drain
-requests to HTTPS. This is the in-pod TLS + OIDC secure real-provider posture;
+for both gRPC and HTTP/SSE. The chart also changes health and readiness requests to HTTPS; the Pod-only drain listener remains plaintext HTTP on port 8082. This is the in-pod TLS + OIDC secure real-provider posture;
 include the OIDC values shown above for a real provider. For an operator-owned edge
 TLS boundary instead, set `security.tlsTerminatedUpstream=true` with OIDC. Keeping
 `tls.enabled=true` is valid re-encryption and preserves that upstream attestation;
@@ -576,9 +685,9 @@ know.
 Key details from `deployment.yaml`:
 
 - `replicas: 2` by default with `RollingUpdate`, `maxSurge: 1`, `maxUnavailable: 0` — there is always a ready survivor during a multi-replica rolling update. With one replica, a surge replacement can preserve availability only if it schedules and becomes Ready.
-- `terminationGracePeriodSeconds: 60` — the bounded `GracefulStop` window.
+- `terminationGracePeriodSeconds: 60` by default, operator-configurable — larger than the default 43-second full budget (3s preStop + 15s drain + 10s gRPC + 5s HTTP + 5s close + 5s telemetry).
 - No PVC, no `--store-dir`. The only `volumeMount` is `/tmp` for the Go runtime and SSE buffering under `readOnlyRootFilesystem: true`.
-- A `preStop` lifecycle hook calls `GET /drain` on the HTTP port. This arms the drain gate and blocks ~3 seconds for endpoint propagation before returning, so the kubelet's SIGTERM arrives after the pod has left the Service endpoints.
+- A `preStop` lifecycle hook calls plaintext `GET /drain` on the named Pod-only drain port (8082). This arms the drain gate and blocks ~3 seconds for endpoint propagation before returning, so the kubelet's SIGTERM arrives after the pod has left the Service endpoints. The Service still exposes only gRPC and HTTP/SSE; NetworkPolicy or mesh policy must restrict direct Pod-IP access to the drain port.
 - PSS `restricted` in full: `runAsNonRoot`, `allowPrivilegeEscalation: false`, `capabilities: drop: ALL`, `seccompProfile: RuntimeDefault`.
 
 For `replicaCount: 1`, the chart omits the PDB so a voluntary disruption may evict the only pod instead of blocking the node drain. This mode is not HA: node failures, evictions, or an unschedulable replacement cause downtime, although Redis preserves successfully persisted session state. For two or more replicas, the PDB keeps at least one pod available during voluntary disruptions.
@@ -627,15 +736,15 @@ fullnameOverride=<name>` at install time to pin a different one.
 
 ## Readiness and health
 
-mecak8s exposes three endpoints on the HTTP port (default `0.0.0.0:8081`), all mounted **outside** the auth boundary:
+mecak8s exposes two unauthenticated probe endpoints on the HTTP port (default `0.0.0.0:8081`). A separate plaintext, Pod-only drain listener defaults to `0.0.0.0:8082` and serves only `GET /drain`:
 
 | Endpoint | Purpose |
 |---|---|
 | `GET /healthz` | Liveness — returns 200 unless the process is hung |
 | `GET /readyz` | Readiness — returns 200 only when `!draining && redisOK`; flips to 503 on drain or Redis failure |
-| `GET /drain` | preStop hook target — arms the drain gate, blocks ~3s for endpoint propagation, returns 200 |
+| `GET /drain` on port 8082 | preStop hook target — arms the drain gate, blocks ~3s for endpoint propagation, returns 200 |
 
-The `readyz` probe is dynamic: it calls `svc.StorageReady`, which pings the Redis store with a 2-second timeout. A Redis failure shows up as not-ready and removes the pod from Service endpoints without a restart.
+The Service exposes only ports 8080 and 8081, so normal Service/gateway API traffic cannot invoke `/drain`. Direct Pod-IP access to 8082 remains an operator network-isolation responsibility. The `readyz` probe is dynamic: it calls `svc.StorageReady`, which pings the Redis store with a 2-second timeout. A Redis failure shows up as not-ready and removes the pod from Service endpoints without a restart.
 
 ---
 
@@ -657,13 +766,17 @@ sequenceDiagram
   D-->>K: 200 draining
   K->>K: SIGTERM
   Note over G,GS: svc.Drain() is idempotent — no double-drain
-  GS->>GS: grpcSrv.GracefulStop() (30s timeout)
-  note over GS: in-flight runs cancelled, Recover-able on survivor
+  GS->>GS: cancel/join runs (15s), then gRPC GracefulStop (10s)
+  note over GS: HTTP (5s), resource close (5s), telemetry (5s) remain bounded
   GS->>L: built.Close() → release all held coordination.k8s.io Leases
   note over L: cancel-detached short ctx, survivor acquires immediately
 ```
 
-The `GracefulStop` timeout is 30 seconds, well within the 60-second `terminationGracePeriodSeconds`. If it elapses, the server hard-stops: in-flight runs are cancelled but immediately `Recover`-able on the successor pod from the Redis snapshot (ADR 0027 issue #51 — `Session.Recover` repairs orphaned tool calls and moves the session to idle).
+The default complete termination budget is 43 seconds: the 3-second preStop delay plus
+15 seconds for Service drain, 10 seconds for gRPC, 5 seconds for HTTP, 5 seconds for
+resource close, and 5 seconds for telemetry. That is safely below the configurable
+60-second `terminationGracePeriodSeconds` default. Operators who raise any runtime bound
+must raise the Helm value so the strict inequality still holds. If a bound elapses, the server hard-stops: in-flight runs are cancelled but immediately `Recover`-able on the successor pod from the Redis snapshot (ADR 0027 issue #51 — `Session.Recover` repairs orphaned tool calls and moves the session to idle).
 
 Releasing leases uses a cancel-detached context with a short timeout so the release succeeds even though the signal context is already cancelled. A survivor can acquire the released lease immediately — it does not have to wait for the 30-second TTL (`--session-lease-ttl`, default 30s) to expire.
 
@@ -794,7 +907,7 @@ owner, replay skipped work, or adopt a record for the first caller.
 ### Validator and bounded signing-key cache
 
 The production OIDC/JWT validator is a delegated, actively-maintained library —
-mecatl never hand-rolls token verification. A bad OIDC
+Mecatl never hand-rolls token verification. A bad OIDC
 configuration, including an unreachable initial key fetch, fails closed at startup
 rather than serving unauthenticated traffic. After a successful fetch, the last
 good JWKS can cover a short IdP outage. The chart's default `oidc.maxJWKSStaleness`

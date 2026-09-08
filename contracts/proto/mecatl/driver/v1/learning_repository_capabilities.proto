@@ -1,0 +1,45 @@
+// SPDX-FileCopyrightText: Copyright 2026 Stacklok, Inc.
+// SPDX-License-Identifier: LicenseRef-Stacklok-Proprietary
+
+// mecatl driver API: explicit distributed-learning repository negotiation.
+//
+// A harness selects this endpoint only as one complete backend for attempts,
+// proposals, and learned skills. A positive response never conveys caller
+// identity, workspace paths, credentials, or repository content.
+syntax = "proto3";
+
+package mecatl.driver.v1;
+
+service LearningRepositoryCapabilitiesService {
+  rpc Capabilities(LearningRepositoryCapabilitiesRequest) returns (LearningRepositoryCapabilitiesResponse);
+}
+
+message LearningRepositoryCapabilitiesRequest {}
+
+message LearningRepositoryCapabilitiesResponse {
+  bool attempt_repository = 1;
+  bool proposal_repository = 2;
+  bool skill_repository = 3;
+  bool validated_skill_activation = 4;
+
+  // Ownership mode is explicit: metadata presence never upgrades a trusted
+  // infrastructure-only driver to caller-enforcing mode.
+  LearningRepositoryOwnershipMode ownership_mode = 5;
+  // Reserved declaration for future negotiation of separately authenticated
+  // caller and maintenance surfaces. Current composition does not trust this
+  // self-advertisement as evidence that those surfaces exist.
+  bool caller_infrastructure_rpcs_separated = 6;
+  // Automatic mode requires this ledger beside the complete repository set;
+  // explicit-only deployments may omit it.
+  bool automatic_admission_ledger = 7;
+}
+
+enum LearningRepositoryOwnershipMode {
+  LEARNING_REPOSITORY_OWNERSHIP_MODE_UNSPECIFIED = 0;
+  LEARNING_REPOSITORY_OWNERSHIP_MODE_TRUSTED = 1;
+  // ENFORCED is reserved for future ADR-0213 negotiation. The current raw
+  // Attempt/Proposal/Skill RPCs do not authenticate workload claims or maintain
+  // private owner bindings, so advertising this value is not proof of enforcement
+  // and current composition treats it no stronger than TRUSTED.
+  LEARNING_REPOSITORY_OWNERSHIP_MODE_ENFORCED = 2;
+}

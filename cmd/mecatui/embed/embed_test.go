@@ -40,7 +40,7 @@ import (
 // assertion downstream. It uses the generated proto client directly (this package
 // is one of the few allowed to import contracts/gen) because the higher-level
 // client.Stream exposes no synchronous Recv for a test to drain.
-func driveTurn(ctx context.Context, t *testing.T, target, workspace string) {
+func driveTurn(ctx context.Context, t *testing.T, target, _ string) {
 	t.Helper()
 	conn, err := grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
@@ -49,7 +49,7 @@ func driveTurn(ctx context.Context, t *testing.T, target, workspace string) {
 	defer func() { _ = conn.Close() }()
 	svc := mecatlv1.NewHarnessServiceClient(conn)
 
-	cs, err := svc.CreateSession(ctx, &mecatlv1.CreateSessionRequest{Workspace: workspace})
+	cs, err := svc.CreateSession(ctx, &mecatlv1.CreateSessionRequest{})
 	if err != nil {
 		t.Fatalf("CreateSession for turn: %v", err)
 	}
@@ -113,7 +113,7 @@ func TestStartServesOverSocket(t *testing.T) {
 	}
 	defer func() { _ = cl.Close() }()
 
-	sessID, _, _, err := cl.CreateSession(ctx, workspace, client.ModeFromString("default"), client.ModelSelection{})
+	sessID, _, _, err := cl.CreateSession(ctx, client.ModeFromString("default"), client.ModelSelection{})
 	if err != nil {
 		t.Fatalf("CreateSession over embedded socket: %v", err)
 	}
@@ -164,7 +164,7 @@ func TestStartWithMemoryDirServes(t *testing.T) {
 	}
 	defer func() { _ = cl.Close() }()
 
-	sessID, caps, resolved, err := cl.CreateSession(ctx, workspace, client.ModeFromString("default"), client.ModelSelection{})
+	sessID, caps, resolved, err := cl.CreateSession(ctx, client.ModeFromString("default"), client.ModelSelection{})
 	if err != nil {
 		t.Fatalf("CreateSession over embedded socket (memory enabled): %v", err)
 	}
@@ -240,7 +240,7 @@ func TestStartListAgentsOverSocket(t *testing.T) {
 	}
 	defer func() { _ = cl.Close() }()
 
-	_, caps, _, err := cl.CreateSession(ctx, workspace, client.ModeFromString("default"), client.ModelSelection{})
+	_, caps, _, err := cl.CreateSession(ctx, client.ModeFromString("default"), client.ModelSelection{})
 	if err != nil {
 		t.Fatalf("CreateSession over embedded socket: %v", err)
 	}
@@ -490,7 +490,7 @@ func TestStartPerfServesAdminSurface(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dial embedded gRPC server with perf enabled: %v", err)
 	}
-	perfSessID, _, _, err := cl.CreateSession(ctx, workspace, client.ModeFromString("default"), client.ModelSelection{})
+	perfSessID, _, _, err := cl.CreateSession(ctx, client.ModeFromString("default"), client.ModelSelection{})
 	if err != nil {
 		t.Fatalf("CreateSession with perf enabled: %v", err)
 	}
@@ -801,7 +801,7 @@ func TestFireDelivery_EmbeddedEndToEnd(t *testing.T) {
 	hc := mecatlv1.NewHarnessServiceClient(conn)
 
 	// 1. Create the ORIGIN session S over the real socket.
-	cs, err := hc.CreateSession(ctx, &mecatlv1.CreateSessionRequest{Workspace: workspace})
+	cs, err := hc.CreateSession(ctx, &mecatlv1.CreateSessionRequest{})
 	if err != nil {
 		t.Fatalf("CreateSession origin: %v", err)
 	}
@@ -863,12 +863,11 @@ func TestFireDelivery_EmbeddedEndToEnd(t *testing.T) {
 	// picks up exercises the REAL tick→fire→deliver chain (stronger than FireNow:
 	// it proves the tick loop, the Claim-before-fire, and the deliverFireResult
 	// callback all wire together). The schedule is read-leaning (mutating:false)
-	// in plan mode, rooted at the workspace.
+	// in plan mode and inherits the origin session's exact private placement.
 	schedName := "embedded-delivery-e2e"
 	spec := port.ScheduleSpec{
 		Name:            schedName,
 		Prompt:          "monitor the build",
-		Workspace:       workspace,
 		Mode:            session.ModePlan,
 		Mutating:        false,
 		OriginSessionID: originID, // <- the metadata-only routing key the wire cannot carry

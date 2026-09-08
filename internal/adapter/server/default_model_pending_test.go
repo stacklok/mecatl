@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -34,17 +33,17 @@ func pendingDefaultService(t *testing.T, pending bool, factoryCalled *bool) (*se
 		Model:   "test-model",
 	})
 	cfg := server.Config{
-		Engine:              engine,
-		Store:               memstore.New(),
-		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Engine: engine,
+		Store:  memstore.New(),
+
 		Now:                 func() time.Time { return time.Unix(0, 0) },
-		DefaultWorkspace:    workspace,
+		SharedEngineRoot:    workspace,
 		DefaultModelPending: pending,
 	}
 	if factoryCalled != nil {
 		cfg.SessionEngine = fakeSessionEngineFactory(factoryCalled)
 	}
-	svc, err := server.NewService(cfg)
+	svc, err := newPlacementTestService(cfg)
 	if err != nil {
 		t.Fatalf("new service: %v", err)
 	}
@@ -62,8 +61,8 @@ func TestDefaultModelPendingRoutesZeroSelectorThroughPerSessionFactory(t *testin
 
 	t.Run("pending=true routes through the factory", func(t *testing.T) {
 		var called bool
-		svc, workspace := pendingDefaultService(t, true, &called)
-		sess, err := svc.CreateSession(ctx, workspace, session.ModeDefault, session.Limits{})
+		svc, _ := pendingDefaultService(t, true, &called)
+		sess, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{})
 		if err != nil {
 			t.Fatalf("CreateSession: %v", err)
 		}
@@ -77,8 +76,8 @@ func TestDefaultModelPendingRoutesZeroSelectorThroughPerSessionFactory(t *testin
 
 	t.Run("pending=false stays on the shared engine (byte-identical)", func(t *testing.T) {
 		var called bool
-		svc, workspace := pendingDefaultService(t, false, &called)
-		if _, err := svc.CreateSession(ctx, workspace, session.ModeDefault, session.Limits{}); err != nil {
+		svc, _ := pendingDefaultService(t, false, &called)
+		if _, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{}); err != nil {
 			t.Fatalf("CreateSession: %v", err)
 		}
 		if called {
@@ -94,7 +93,7 @@ func TestDefaultModelPendingRoutesZeroSelectorThroughPerSessionFactory(t *testin
 // the factory at run entry and picks up a heal that landed meanwhile.
 func TestNeedsRehydration_DefaultModelPending(t *testing.T) {
 	const workspace = "/srv/base"
-	sess := session.New("s1", session.ModeDefault, workspace, session.Limits{}, time.Unix(0, 0))
+	sess := session.New("s1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: workspace, Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 
 	svcPending, _ := pendingDefaultService(t, true, nil)
 	if !svcPending.NeedsRehydrationForTest(sess) {

@@ -1,12 +1,12 @@
 ---
 sidebar_position: 0
 title: Build your first agent
-description: Install the importable mecatl engine and build a working Go agent.
+description: Install the importable Mecatl engine and build a working Go agent.
 ---
 
 # Build your first agent
 
-This is the shortest path from a clean Go module to a working mecatl agent. You
+This is the shortest path from a clean Go module to a working Mecatl agent. You
 will create an `agent.Engine`, give it a session-scoped `tool.Environment`, run
 one prompt, and consume the resulting events.
 
@@ -67,7 +67,7 @@ func main() {
 ```
 
 The same source is available at [`examples/first-agent/main.go`](https://github.com/stacklok/mecatl/blob/main/examples/first-agent/main.go).
-Run it from a clean module rather than from the mecatl checkout:
+Run it from a clean module rather than from the Mecatl checkout:
 
 ```sh
 mkdir first-agent && cd first-agent

@@ -1,12 +1,12 @@
 ---
 sidebar_position: 7
 title: Skills, commands, and soul
-description: Shape mecatl runs with reusable skills, slash commands, and a durable persona.
+description: Shape Mecatl runs with reusable skills, slash commands, and a durable persona.
 ---
 
 # Skills, commands, and soul
 
-mecatl has three ways to add reusable guidance to a run:
+Mecatl has three ways to add reusable guidance to a run:
 
 - **Skills** are progressive-disclosure instruction bundles. Their metadata is
   always available, while the full `SKILL.md` body is loaded only when activated.
@@ -137,7 +137,7 @@ soul is loaded only when project trust is enabled.
 
 ### Drift protection
 
-mecatl records the SHA-256 of the cleaned soul body in a sidecar next to the
+Mecatl records the SHA-256 of the cleaned soul body in a sidecar next to the
 file, for example `~/.config/mecatl/soul.md.sha256`:
 
 - the first load establishes a trust-on-first-use baseline;

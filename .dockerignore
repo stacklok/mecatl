@@ -1,0 +1,7 @@
+# Keeps the mecated demo image's build context (sdk/typescript/examples/slack-bot/docker-compose.yml)
+# small and avoids copying local build/dependency artifacts the Go build doesn't need.
+.git
+bin/
+.scratch/
+**/node_modules
+**/dist

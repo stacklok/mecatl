@@ -35,12 +35,15 @@ For the exhaustive, auto-generated key/type/default/tier table, see the
 this guide are illustrative; the reference page is the complete source of truth
 (generated from the schema, so it never drifts).
 
-### Global MCP authentication profiles
+### MCP authentication profiles
 
 All three headless roots read the same operator-tier `mcp.servers` profiles. A project
 `.mecatl/settings.yaml` cannot define them. Each server selects exactly one auth mode:
 `none`, `static_bearer`, or `oauth`; secret-bearing fields name `MECATL_*` environment
-variables rather than containing values. See the [generated reference](../configuration-reference.md)
+variables rather than containing values. Global OAuth profiles support the strict
+exact-origin `network` policy. Broker OAuth requires an explicit empty `network: {}`;
+`additional_origins`, `private_origins`, and non-zero `max_redirects` are rejected until
+ToolHive can enforce the policy equivalently. See the [generated reference](../configuration-reference.md)
 for the complete strict schema.
 
 Local OAuth credentials require an absolute `credentials.local.root` and a canonical
@@ -113,14 +116,33 @@ reserved-token budgets and coordinator capacity. Historical, tool, web, MCP, ass
 and repository text cannot hard-trigger. An unverifiable post-compaction current span
 fails closed.
 
-The automatic limits are sliding, process-local reservations. Zero for any maximum
+The automatic limits are sliding durable reservations once a non-off standard
+application has successfully selected its `AutomaticAdmissionLedger`. Zero for any maximum
 disables automatic reflection under that bound; cooldown zero disables only cooldown.
 The window must be 1m–24h. A reservation estimates the selected reflection model's
 bounded canonical input plus a 4096-token output cap and remains consumed after failure,
-timeout, or abstention. Queue-full does not consume it. Restart resets windows,
-cooldowns, and the 24-hour/1024-entry duplicate cache by design. There is no startup or
-shutdown catch-up. In a multi-replica deployment each replica owns a separate budget,
-so aggregate spend may be the configured limit multiplied by replica count.
+timeout, or abstention. Queue-full does not consume it. The deterministic attempt ID binds
+reservation to durable attempt create; after its backend-minted fence expires, a Build-owned
+joined reconciler discovers it through either local or remote storage without replaying the original
+admission. A crash before create is reclaimed, while an observable attempt retains its charge.
+Local composition stores the ledger
+beside the attempt store, caps durable reservation records at 512 globally and 128 per opaque
+principal partition, and prunes resolved records after deduplication retention; unresolved
+saturation fails closed instead of growing the bounded document indefinitely. Cooperating processes
+share global/principal count and token
+windows, cooldown, and 24-hour digest deduplication. A configured learning driver must
+advertise and serve the ledger whenever automatic learning is enabled; startup fails rather
+than falling back to per-process accounting. An embedding that does not wire the durable
+ledger retains ADR-0114's process-local limitation and must not advertise global bounds.
+
+Automatic admission reports `queued` only after an exact non-empty persisted `RunID` and
+idempotent durable `AttemptRepository.Create`. That caller/session/run/digest record—not the
+coordinator, receipt cache, or EventLog—is workflow authority across restart. It stores bounded
+content-free provenance and source references, never transcript/tool/provider content. Recovery
+reconstructs only the bounded canonical projection, verifies owner/run/order/digest, fences it at
+every model boundary, and fails closed when exact evidence is unavailable. The attempt APIs expose
+get/list and opaque-version retry/abandon only; no attempt-watch feed exists, and ADR-0250 session
+EventLog watch is not a substitute.
 
 `review` signal-gates eligible clean completions into the process-wide reflection
 coordinator and durably stages valid proposals without changing memory. `auto` uses the same
@@ -199,12 +221,15 @@ environment-variable fallback. `auth.yaml` accepts only built-in IDs plus the
 validated custom IDs from the resolved operator configuration, so unknown or malformed
 entries fail closed without echoing credentials.
 
-### Workspace
+### Workspace and placement
 
-`--workspace` (server-wide default) and the per-session `workspace` field set
-the root all file/command tools operate against. The server builds an `osfs`
-workspace rooted there. A root that cannot be opened yields a nil workspace;
-tool calls then return readable errors the model can act on.
+`--workspace` is trusted server-side configuration for the local deployment default;
+it is never a per-session public field. `CreateSession` either omits `profile` to bind
+that default or sends `profile:"no-fs"` to attenuate filesystem access. Alternate
+worktrees are discovered from an owned source session and selected only with a fresh
+opaque selector on ClearSession/ForkSession. Sessions persist the exact private
+`EnvironmentRef`, not a duplicate workspace path; public inventory exposes bounded
+placement metadata only.
 
 ### Model
 
@@ -323,6 +348,22 @@ conforming driver must accept snapshot payloads up to **64 MiB** (mount the
 gRPC server with a matching receive limit; the harness client is already
 configured for it).
 
+`--learning-store-url` selects one driver target for the distributed learning
+repository set. The target must implement the capability-negotiation service and
+positively advertise `AttemptRepositoryService`, `ProposalRepositoryService`, and
+`SkillRepositoryService` together. Startup fails if any member is absent; mecatl
+never combines a partial remote set with local fallback repositories. The same
+Build-owned connection cache and shutdown path used by the other driver seams owns
+this connection. Principal and project repository partitions cross this transport
+only as opaque SHA-256 values, never as authenticated identity claims or raw
+workspace paths. This negotiation does not by itself make the raw driver a tenant
+boundary. The shipped RPCs are permitted only as explicitly trusted single-tenant
+infrastructure when `OwnershipEnforced=false`; ownership-enforced startup fails closed
+until ADR-0213 workload-authenticated middleware, a private owner registry, and separated
+maintenance RPCs land. The explicit flag is still dialed, probed, and composed in Off mode
+for explicit reflection, learned-skill inspection, and recovery of already-admitted work;
+it does not enable automatic observation or admission.
+
 Transport posture: **only LOCAL targets may ride plaintext** — loopback hosts
 and unix sockets (the single-user default). Any other driver target
 **requires `--driver-tls`, token or not**: the client refuses cleartext
@@ -415,8 +456,55 @@ unleased.
 
 Without an explicit backend, mecatl can also discover a lease from a session
 store that happens to implement the lease seam (type-assertion, like the
-retention seam); today's jsonlstore does not, so the no-flag default is no
-leasing. See `docs/adr/0027-cloud-native.md` for the full design.
+retention seam). See `docs/adr/0027-cloud-native.md` for the full design.
+
+#### Session affinity and owner handoff
+
+Official clients send `X-Mecatl-Session-ID` on each session-bound gRPC or HTTP
+operation. The value is exact: it is neither trimmed nor normalized, and the HTTP
+comparison uses the decoded path ID. A missing header remains compatible for older
+clients. Duplicate values, an illegal field value, or any byte mismatch return the
+non-disclosing `invalid session affinity metadata` error before work begins; the server
+never echoes either value. The field is only a routing/correlation hint. It does not
+authenticate, authorize, establish caller or lease ownership, fence storage, select
+provider state, or grant any other authority.
+
+Provider requests do not trust the ingress copy. The engine places the loaded session
+ID in the authoritative run context, and each provider attempt/fallback reads it there.
+An absent or illegal run binding is omitted without failing inference. The TypeScript
+raw `withSessionAffinity` helper rejects an illegal explicit ID synchronously and leaves
+caller headers untouched; high-level use of an unrepresentable server-issued ID remains
+compatible by omitting affinity when no explicit bind was requested. This preserves
+legacy clients and custom providers without a protobuf change.
+
+With leasing configured, every session-family mutation must own the session lease. On
+renewal loss, local mutation authority is invalidated before cancellation, so later
+saves, deletes, event/tool records, metadata updates, and sidecar changes cannot start.
+This is not backend fencing: a storage call admitted before invalidation may finish.
+For a local awaiting run, lease loss retracts only the local ask and leaves its durable
+`PendingAsk` unchanged and unresolved for a successor after TTL expiry.
+
+`CloseSession` (and HTTP `DELETE /v1/sessions/{id}`) fails precondition while a local
+run is active or awaiting; it does not release ownership or tear down that live
+session. A persisted awaiting session with no live local run may close its local
+resources while retaining the durable resume point. `GracefulDrain` first rejects all
+new prompt/resume admission, then preserves awaiting snapshots, cancels and joins
+executing runs, persists settled state, and only then releases their leases. If the
+bound expires before a run joins, the stale process stops renewal and local mutation
+but does not release the lease; takeover waits for process death and TTL.
+
+Handoff is intentionally modeled as client retry, not owner forwarding. A killed
+owner's stream drops; pre-TTL requests cannot acquire, then one post-TTL successor
+acquires, reloads Redis, repairs a crash-orphaned `running` snapshot, and continues.
+The offline fake-clock tests establish application sequencing only. They are not proof
+of Gateway/mesh routing, EndpointSlice convergence, production timing, or exactly-once
+external effects.
+
+Before enabling affinity, the separate infrastructure rollout is blocked until live
+acceptance proves authenticated admission, request and header-size bounds, and client,
+IP, and principal rate limits apply before or independently of affinity. Legal,
+attacker-chosen IDs must not create an unbounded targeted-replica sink. Helm and offline
+checks prove only that this chart stays neutral; they do not satisfy that external gate.
 
 ### Remote content-source drivers (skills + soul)
 

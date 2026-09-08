@@ -24,7 +24,7 @@ func TestSDKServerEnablers_Scenario5_MatchingExpectedRunIDSucceeds(t *testing.T)
 	llm := mockllm.New(mockllm.TextTurn("done"))
 	svc := newService(t, llm, allowRules())
 
-	sess, err := svc.CreateSession(t.Context(), "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(t.Context(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -55,7 +55,7 @@ func TestADR_0249_StaleControlCannotTouchNewerRun(t *testing.T) {
 	llm := mockllm.New(mockllm.TextTurn("first"), mockllm.TextTurn("second"))
 	svc := newService(t, llm, allowRules())
 
-	sess, err := svc.CreateSession(t.Context(), "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(t.Context(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestSDKServerEnablers_Scenario5_OmittedExpectedRunIDUnchanged(t *testing.T)
 	llm := mockllm.New(mockllm.TextTurn("done"))
 	svc := newService(t, llm, allowRules())
 
-	sess, err := svc.CreateSession(t.Context(), "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(t.Context(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -127,7 +127,7 @@ func TestADR_0249_StrictSteerNeverPromotes(t *testing.T) {
 	llm := mockllm.New(mockllm.TextTurn("first"), mockllm.TextTurn("promoted"))
 	svc := newService(t, llm, allowRules())
 
-	sess, err := svc.CreateSession(t.Context(), "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(t.Context(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -165,7 +165,7 @@ func TestSDKServerEnablers_Scenario5_PromotionRetainedOnRawAPI(t *testing.T) {
 	llm := mockllm.New(mockllm.TextTurn("first"), mockllm.TextTurn("promoted"))
 	svc := newService(t, llm, allowRules())
 
-	sess, err := svc.CreateSession(t.Context(), "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(t.Context(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -204,7 +204,7 @@ func TestSDKServerEnablers_Scenario5_StaleControlOverHTTPIsTyped(t *testing.T) {
 	srv := httptest.NewServer(server.NewHTTPHandler(svc))
 	defer srv.Close()
 
-	sess, err := svc.CreateSession(t.Context(), "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(t.Context(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

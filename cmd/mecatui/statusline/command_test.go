@@ -2,6 +2,7 @@ package statusline
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -9,6 +10,15 @@ import (
 	"testing"
 	"time"
 )
+
+func TestOnlyCommandSourcesExposeCommandDiagnostics(t *testing.T) {
+	for _, source := range []Source{NewDefaultSource(0), NewTemplateSource(TemplateSet{}, 0)} {
+		if _, ok := source.(CommandDiagnosticsSource); ok {
+			t.Fatalf("non-command source unexpectedly exposes command diagnostics: %T", source)
+		}
+		_ = source.Close(context.Background())
+	}
+}
 
 func TestCommandRequiresDirectAbsoluteExecutable(t *testing.T) {
 	t.Parallel()
@@ -64,11 +74,10 @@ func TestStatusCustomization_Scenario3_CommandAndTemplateShareSurfaces(t *testin
 
 func TestStatusCustomization_Scenario3_CommandBoundaryIsLocalAndSecretFree(t *testing.T) {
 	dir := t.TempDir()
-	physicalDir := physicalPath(t, dir)
-	t.Setenv("STATUS_SECRET", "do-not-leak")
-	source := NewCommandSource(commandTest(dir, "boundary", physicalDir))
+	physicalHelperParent := physicalPath(t, filepath.Dir("/bin/sh"))
+	source := NewCommandSource(commandTest(dir, "boundary", physicalHelperParent))
 	t.Cleanup(func() { _ = source.Close(context.Background()) })
-	source.Submit(Input{Workspace: Workspace{Location: "remote", Path: "/untrusted/remote"}, Terminal: Terminal{HeaderAvailCols: 80, FooterAvailCols: 80}})
+	source.Submit(Input{Workspace: Workspace{Location: "remote"}, Terminal: Terminal{HeaderAvailCols: 80, FooterAvailCols: 80}})
 	waitStatusChange(t, source)
 	if got, want := statusSurfaceText(source.Latest().Header), "command header"; got != want {
 		t.Fatalf("remote command result = %q, want %q", got, want)
@@ -158,6 +167,24 @@ func TestStatusLineCommandInvalidConfigurationDoesNotLeakArguments(t *testing.T)
 	}
 }
 
+func TestStatusLineCommandInvalidStatusMLReportsSafeDiagnostics(t *testing.T) {
+	source := NewCommandSource(Command{Path: "/bin/sh", Args: []string{"-c", `read input; printf 'unsafe failure detail'`}, LaunchDir: t.TempDir()})
+	t.Cleanup(func() { _ = source.Close(context.Background()) })
+	source.Submit(Input{Terminal: Terminal{HeaderAvailCols: 80, FooterAvailCols: 80}})
+	waitStatusChange(t, source)
+
+	diagnostics, ok := source.(CommandDiagnosticsSource)
+	if !ok {
+		t.Fatal("command source does not expose command diagnostics")
+	}
+	if got, want := diagnostics.CommandDiagnostics(), (CommandDiagnostics{Header: CommandSurfaceDefault, Footer: CommandSurfaceDefault, Error: CommandErrorInvalidStatusML}); got != want {
+		t.Fatalf("command diagnostics = %#v, want %#v", got, want)
+	}
+	if line := source.Latest(); strings.Contains(statusSurfaceText(line.Header)+statusSurfaceText(line.Footer), "unsafe failure detail") {
+		t.Fatal("invalid StatusML reached status surfaces")
+	}
+}
+
 func TestStatusLineCommandEnvironmentIsExactAllowlist(t *testing.T) {
 	t.Setenv("HOME", "/home/operator")
 	t.Setenv("PATH", "/bin")
@@ -222,14 +249,78 @@ func TestStatusLineCommandDoesNotTrimNonASCIIOutputBoundary(t *testing.T) {
 	}
 }
 
-func TestStatusLineCommandCWDUsesLocalSessionWorkspace(t *testing.T) {
+func TestADR_0296_StatusInputProtocolV3WorkspacePathAndName(t *testing.T) {
+	input := Input{Version: ProtocolVersion, Workspace: Workspace{Location: "local", Name: "provider label", Path: "/eligible/root"}, Terminal: Terminal{FooterAvailCols: 80}}
+	wire, err := json.Marshal(input)
+	if err != nil {
+		t.Fatalf("marshal status input: %v", err)
+	}
+	if ProtocolVersion != 3 || !strings.Contains(string(wire), `"Name":"provider label"`) || !strings.Contains(string(wire), `"Path":"/eligible/root"`) || strings.Contains(string(wire), "Basename") {
+		t.Fatalf("status input v3 workspace projection = %s", wire)
+	}
+	templates := NewTemplateSource(TemplateSet{Footer: SurfaceTemplates{Full: `<footer><text>[{{.Workspace.Path}}]</text></footer>`}}, 0)
+	t.Cleanup(func() { _ = templates.Close(context.Background()) })
+	templates.Submit(input)
+	waitStatusChange(t, templates)
+	if got, want := statusSurfaceText(templates.Latest().Footer), "[/eligible/root]"; got != want {
+		t.Fatalf("template workspace path = %q, want %q", got, want)
+	}
+	emptyPath := input
+	emptyPath.Workspace.Path = ""
+	templates.Submit(emptyPath)
+	waitStatusChange(t, templates)
+	if got, want := statusSurfaceText(templates.Latest().Footer), "[]"; got != want {
+		t.Fatalf("template workspace path without eligible context = %q, want %q", got, want)
+	}
+}
+
+func TestADR_0296_StatusCommandReceivesRootInInputAndCWD(t *testing.T) {
 	launch, workspace := t.TempDir(), t.TempDir()
 	physicalWorkspace := physicalPath(t, workspace)
-	result, err := runCommand(context.Background(), commandTest(launch, "boundary", physicalWorkspace), Input{Workspace: Workspace{Location: "local", Path: workspace}})
-	if err != nil || !strings.Contains(string(result), "command header") {
-		t.Fatalf("local workspace CWD was not used: err=%v result=%q", err, result)
+	expected := filepath.Join(launch, "expected-cwd")
+	observedCWD := filepath.Join(launch, "observed-cwd")
+	observedInput := filepath.Join(launch, "observed-input")
+	observedEnv := filepath.Join(launch, "observed-env")
+	if err := os.WriteFile(expected, []byte(physicalWorkspace), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	if filepath.Clean(commandCWD(Command{LaunchDir: launch}, Input{Workspace: Workspace{Location: "remote", Path: workspace}})) != filepath.Clean(launch) {
-		t.Fatal("remote workspace became command CWD")
+	command := Command{
+		Path:      "/bin/sh",
+		Args:      []string{"-c", `read input; pwd -P > "$2"; printf %s "$input" > "$3"; env > "$4"; test "$(pwd -P)" = "$(cat "$1")" && printf '%s' '<status><header><accent>command header</accent></header></status>'`, "--", expected, observedCWD, observedInput, observedEnv},
+		LaunchDir: launch,
+	}
+	source := NewCommandSource(command)
+	t.Cleanup(func() { _ = source.Close(context.Background()) })
+	SetCommandCWD(source, physicalWorkspace)
+	source.Submit(Input{Workspace: Workspace{Location: "local", Name: "safe-label", Path: physicalWorkspace}, Terminal: Terminal{HeaderAvailCols: 80, FooterAvailCols: 80}})
+	waitStatusChange(t, source)
+	if got, want := statusSurfaceText(source.Latest().Header), "command header"; got != want {
+		t.Fatalf("status command CWD/projection boundary failed: got %q, want %q", got, want)
+	}
+	for name, path := range map[string]string{"CWD": observedCWD, "Input": observedInput} {
+		value, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read observed %s: %v", name, err)
+		}
+		if name == "CWD" && strings.TrimSpace(string(value)) != physicalWorkspace {
+			t.Fatalf("command CWD = %q, want %q", value, physicalWorkspace)
+		}
+		if name == "Input" && !strings.Contains(string(value), `"Path":"`+physicalWorkspace+`"`) {
+			t.Fatalf("session root absent from command input: %q", value)
+		}
+	}
+}
+
+func TestADR_0296_StatusCommandUsesHelperParentWhenContextUnavailable(t *testing.T) {
+	command := Command{Path: "/opt/helpers/../bin/mecatui-status", LaunchDir: "/launch/fallback"}
+	if got, want := commandCWD(command, Input{}), "/opt/bin"; got != want {
+		t.Fatalf("command CWD = %q, want helper parent %q", got, want)
+	}
+}
+
+func TestStatusLineCommandCWDUsesLaunchDirectoryWhenHelperParentUnavailable(t *testing.T) {
+	launch := t.TempDir()
+	if got := commandCWD(Command{LaunchDir: launch}, Input{}); filepath.Clean(got) != filepath.Clean(launch) {
+		t.Fatalf("command CWD = %q, want launch directory %q", got, launch)
 	}
 }

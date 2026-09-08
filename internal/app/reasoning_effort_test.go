@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -247,7 +246,7 @@ func TestFactoryRemintsOnEffortDiffersFromDefault(t *testing.T) {
 		t.Errorf("echoed ReasoningEffort = %q, want high", res.ReasoningEffort)
 	}
 	// The turn runs on the re-minted provider.
-	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{MaxTurns: 5}, time.Now())
+	sess := session.New("s1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 5}, time.Now())
 	got := drainRun(res.Engine.Run(context.Background(), sess, memEnvironment("/ws"), agent.RunRequest{Text: "hi", Parts: nil}))
 	if got != "REMINTED:high" {
 		t.Errorf("turn ran on %q, want the re-minted provider (REMINTED:high)", got)
@@ -356,7 +355,7 @@ func TestFactoryDefaultPathNoRemint(t *testing.T) {
 	if res.ReasoningEffort != "" {
 		t.Errorf("echoed ReasoningEffort = %q, want empty (unset)", res.ReasoningEffort)
 	}
-	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{MaxTurns: 5}, time.Now())
+	sess := session.New("s1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 5}, time.Now())
 	got := drainRun(res.Engine.Run(context.Background(), sess, memEnvironment("/ws"), agent.RunRequest{Text: "hi", Parts: nil}))
 	if got != "DEFAULT-REPLY" {
 		t.Errorf("turn ran on %q, want the shared default provider (DEFAULT-REPLY)", got)
@@ -376,15 +375,15 @@ func TestServiceToRealFactoryRemintsClampedEffort(t *testing.T) {
 	factory := sessionEngineFactory(Config{Model: "gpt-5"}, reg, reg.entries[providerOpenAI].provider,
 		store, permpolicy.NewPolicy(defaultRules(), nil), hookexec.New(nil), nil, prompt.RootAssembler{}, catalogAssets{}, nil)
 
-	svc, err := server.NewService(server.Config{
+	svc, err := newTestServerService(server.Config{
 		Engine: agent.NewEngine(agent.Deps{
 			LLM:     mockllm.New(mockllm.TextTurn("SHARED")),
 			Catalog: tool.NewCatalog(),
 			Policy:  permpolicy.NewPolicy(nil, nil),
 			Model:   "gpt-5",
 		}),
-		Store:         store,
-		Workspaces:    func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Store: store,
+
 		DefaultLimits: session.Limits{MaxTurns: 5},
 		Now:           func() time.Time { return time.Unix(0, 0) },
 		SessionEngine: factory,
@@ -393,7 +392,7 @@ func TestServiceToRealFactoryRemintsClampedEffort(t *testing.T) {
 		t.Fatalf("NewService: %v", err)
 	}
 
-	sess, err := svc.CreateSessionWithProvider(ctx, "/ws", session.ModeDefault, session.Limits{},
+	sess, err := svc.CreateSessionWithProvider(ctx, session.ModeDefault, session.Limits{},
 		server.ProviderSelector{ProviderID: providerOpenAI, ModelID: "gpt-5", ReasoningEffort: "max"})
 	if err != nil {
 		t.Fatalf("CreateSessionWithProvider: %v", err)

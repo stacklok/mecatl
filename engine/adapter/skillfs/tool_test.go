@@ -24,7 +24,7 @@ func call(t *testing.T, m map[string]any) session.ToolCall {
 
 func exec(t *testing.T, tl tool.Tool, in session.ToolCall) session.ToolResult {
 	t.Helper()
-	env, err := tool.NewEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "test"}, stubWS{}, nil)
+	env, err := tool.NewEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "test"}, stubWS{}, stubLedger{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,8 +53,13 @@ func (stubWS) Stat(context.Context, string) (tool.FileInfo, error) {
 }
 func (stubWS) Glob(context.Context, string) ([]string, error)                 { return nil, nil }
 func (stubWS) Grep(context.Context, string, string) ([]tool.GrepMatch, error) { return nil, nil }
-func (stubWS) RecordRead(string, tool.FileVersion)                            {}
-func (stubWS) RecordedVersion(string) (tool.FileVersion, bool)                { return tool.FileVersion{}, false }
+
+type stubLedger struct{}
+
+func (stubLedger) RecordRead(context.Context, string, tool.FileVersion) error { return nil }
+func (stubLedger) RecordedVersion(context.Context, string) (tool.FileVersion, bool, error) {
+	return tool.FileVersion{}, false, nil
+}
 
 func newSourceTool(source tool.SkillSource) Tool {
 	return NewTool([]tool.SkillMeta{{Name: "review", Description: "Review code", Compatibility: "mecatl >= 1", AllowedTools: []string{"Grep"}}}, source)

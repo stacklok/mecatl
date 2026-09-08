@@ -14,6 +14,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memlease"
+	"github.com/stacklok/mecatl/engine/adapter/memledger"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/adapter/wallclock"
@@ -62,10 +63,11 @@ func TestSchedulerFire(t *testing.T) {
 	due := time.Now().Add(100 * time.Millisecond)
 	if err := schedStore.Save(ctx, port.Schedule{
 		Spec: port.ScheduleSpec{
-			Name:      schedName,
-			Prompt:    "say hello from the scheduler",
-			Workspace: workspace,
-			Trigger:   port.TriggerSpec{OneShot: due},
+			Name:           schedName,
+			Prompt:         "say hello from the scheduler",
+			EnvironmentRef: configuredLocalPlacementRef(workspace),
+			PlacementScope: string(defaultPlacementScope),
+			Trigger:        port.TriggerSpec{OneShot: due},
 		},
 		State: port.ScheduleState{
 			NextFireAt: due, // the store is parser-free; the seed must set the first fire instant
@@ -174,10 +176,10 @@ func TestMakeFireFuncUsesScheduleOwnerForRunEntry(t *testing.T) {
 		Model:   "test-model",
 		Store:   store,
 	})
-	svc, err := server.NewService(server.Config{
-		Engine:              engine,
-		Store:               store,
-		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+	svc, err := newTestServerService(server.Config{
+		Engine: engine,
+		Store:  store,
+
 		Now:                 time.Now,
 		DefaultCapabilities: llm.Capabilities(),
 		EventLog:            store,
@@ -194,11 +196,12 @@ func TestMakeFireFuncUsesScheduleOwnerForRunEntry(t *testing.T) {
 	fire := makeFireFunc(svc, store.ScheduleStore(), defaultFireTimeout, nil)
 	result, err := fire(syscaller.Context(context.Background(), syscaller.RootScheduler), port.Schedule{
 		Spec: port.ScheduleSpec{
-			Name:      physical,
-			Prompt:    "say done",
-			Workspace: t.TempDir(),
-			Mode:      session.ModePlan,
-			Owner:     owner,
+			Name:           physical,
+			Prompt:         "say done",
+			EnvironmentRef: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: t.TempDir(), Revision: "in-tree-v1"},
+			PlacementScope: "legacy-local",
+			Mode:           session.ModePlan,
+			Owner:          owner,
 		},
 	}, time.Now())
 	if err != nil {
@@ -212,6 +215,49 @@ func TestMakeFireFuncUsesScheduleOwnerForRunEntry(t *testing.T) {
 	}
 	if !strings.Contains(result.ID, literal) {
 		t.Fatalf("fire id = %q, want literal schedule name %q", result.ID, literal)
+	}
+}
+
+func TestInvariant_scheduled_placement_is_reauthorized_at_fire(t *testing.T) {
+	ref := session.EnvironmentRef{Kind: "remote", ID: "opaque-schedule-placement", Revision: "inventory-r9"}
+	provider := &compositionPlacementProvider{binding: server.PlacementBinding{
+		Ref:         ref,
+		Environment: tool.MustEnvironment(ref, memfs.NewWorkspace("/private/scheduled-root"), memledger.New(), nil),
+	}}
+	storeDir := t.TempDir()
+	built, err := Build(context.Background(), Config{
+		Workspace: t.TempDir(), StoreDir: storeDir, UseMock: true,
+		MockProvider:      mockllm.New(mockllm.TextTurn("done")),
+		PlacementProvider: provider, PlacementScope: "deployment-a",
+	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer built.Close()
+
+	owner := &session.Principal{Issuer: "https://issuer.example", Subject: "alice", GrantType: session.GrantTypeUser}
+	store, err := jsonlstore.New(storeDir)
+	if err != nil {
+		t.Fatalf("jsonlstore.New: %v", err)
+	}
+	beforeBinds := len(provider.calls)
+	fire := makeFireFunc(built.Service, store.ScheduleStore(), defaultFireTimeout, nil)
+	got, err := fire(context.Background(), port.Schedule{Spec: port.ScheduleSpec{
+		Name: "reauthorized", Prompt: "run", Mode: session.ModePlan, Owner: owner,
+		EnvironmentRef: ref, PlacementScope: "deployment-a",
+	}}, time.Now())
+	if err != nil || got.Stop != session.StopEndTurn {
+		t.Fatalf("fire = (%+v, %v), want successful exact reattachment", got, err)
+	}
+	if len(provider.calls) != beforeBinds {
+		t.Fatalf("Bind calls changed from %d to %d at fire; exact fire must never follow the current default", beforeBinds, len(provider.calls))
+	}
+	if len(provider.reattachCalls) != 2 {
+		t.Fatalf("Reattach calls = %d, want schedule authorization plus fresh run-entry reattachment", len(provider.reattachCalls))
+	}
+	req := provider.reattachCalls[len(provider.reattachCalls)-1]
+	if req.Ref != ref || req.Scope != "deployment-a" || req.Principal == nil || !req.Principal.SameIdentity(owner) {
+		t.Fatalf("Reattach request = %+v, want exact ref/scope reauthorized as schedule owner", req)
 	}
 }
 
@@ -233,14 +279,16 @@ func TestFireFailedUsesPresentedScheduleNameOnCreateFailure(t *testing.T) {
 		Model:   "test-model",
 		Store:   store,
 	})
-	svc, err := server.NewService(server.Config{
-		Engine:            engine,
-		Store:             store,
-		Workspaces:        func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+	svc, err := newTestServerService(server.Config{
+		Engine: engine,
+		Store:  store,
+
 		Now:               time.Now,
 		EventLog:          store,
 		Diagnostics:       port.NopDiagnostics{},
 		OwnershipEnforced: true,
+		PlacementProvider: appTestPlacementProvider{root: "/workspace", failReattach: true},
+		PlacementScope:    "legacy-local",
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
@@ -255,10 +303,11 @@ func TestFireFailedUsesPresentedScheduleNameOnCreateFailure(t *testing.T) {
 	// fallback (internal/app/scheduler_fire.go's newFireID(...) fallback branch).
 	result, err := fire(syscaller.Context(context.Background(), syscaller.RootScheduler), port.Schedule{
 		Spec: port.ScheduleSpec{
-			Name:      physical,
-			Prompt:    "say done",
-			Workspace: "",
-			Owner:     owner,
+			Name:           physical,
+			Prompt:         "say done",
+			EnvironmentRef: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"},
+			PlacementScope: "legacy-local",
+			Owner:          owner,
 		},
 	}, time.Now())
 	if err == nil {
@@ -327,10 +376,10 @@ func TestMakeFireFuncReleasesSessionLease(t *testing.T) {
 		Store:   store,
 	})
 	lease := memlease.New(wallclock.Clock{}, 30*time.Second)
-	svc, err := server.NewService(server.Config{
-		Engine:              engine,
-		Store:               store,
-		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+	svc, err := newTestServerService(server.Config{
+		Engine: engine,
+		Store:  store,
+
 		Now:                 time.Now,
 		DefaultCapabilities: llm.Capabilities(),
 		EventLog:            store,
@@ -346,10 +395,11 @@ func TestMakeFireFuncReleasesSessionLease(t *testing.T) {
 	fire := makeFireFunc(svc, store.ScheduleStore(), defaultFireTimeout, nil)
 	sched := port.Schedule{
 		Spec: port.ScheduleSpec{
-			Name:      "lease-release",
-			Prompt:    "say hi",
-			Workspace: workspace,
-			Mode:      session.ModePlan,
+			Name:           "lease-release",
+			Prompt:         "say hi",
+			EnvironmentRef: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: workspace, Revision: "in-tree-v1"},
+			PlacementScope: "legacy-local",
+			Mode:           session.ModePlan,
 		},
 	}
 

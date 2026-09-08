@@ -6,7 +6,6 @@ import (
 	"time"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -29,10 +28,10 @@ func newResolvedModelService(t *testing.T, dflt server.ResolvedModel, factory se
 		Policy:  permpolicy.NewPolicy(nil, nil),
 		Model:   "test-model",
 	})
-	svc, err := server.NewService(server.Config{
-		Engine:               shared,
-		Store:                memstore.New(),
-		Workspaces:           func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+	svc, err := newPlacementTestService(server.Config{
+		Engine: shared,
+		Store:  memstore.New(),
+
 		DefaultLimits:        session.Limits{MaxTurns: 10, MaxToolCalls: 20},
 		Now:                  func() time.Time { return time.Unix(0, 0) },
 		SessionEngine:        factory,
@@ -54,10 +53,10 @@ func newResolvedModelServiceWithResolver(t *testing.T, dflt server.ResolvedModel
 		Policy:  permpolicy.NewPolicy(nil, nil),
 		Model:   "test-model",
 	})
-	svc, err := server.NewService(server.Config{
-		Engine:               shared,
-		Store:                memstore.New(),
-		Workspaces:           func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+	svc, err := newPlacementTestService(server.Config{
+		Engine: shared,
+		Store:  memstore.New(),
+
 		DefaultLimits:        session.Limits{MaxTurns: 10, MaxToolCalls: 20},
 		Now:                  func() time.Time { return time.Unix(0, 0) },
 		SessionEngine:        factory,
@@ -85,7 +84,7 @@ func TestServiceResolvedModelLiveFirstWindow(t *testing.T) {
 	}
 	svc := newResolvedModelServiceWithResolver(t, dflt, nil, resolve)
 
-	sess, err := svc.CreateSessionWithProvider(context.Background(), "/ws", session.ModeDefault, session.Limits{}, server.ProviderSelector{})
+	sess, err := svc.CreateSessionWithProvider(context.Background(), session.ModeDefault, session.Limits{}, server.ProviderSelector{})
 	if err != nil {
 		t.Fatalf("CreateSessionWithProvider(zero): %v", err)
 	}
@@ -122,7 +121,7 @@ func TestServiceResolvedModelLiveOnlyDefaultProvisionalThenHeals(t *testing.T) {
 	}
 	svc := newResolvedModelServiceWithResolver(t, dflt, nil, resolve)
 
-	sess, err := svc.CreateSessionWithProvider(context.Background(), "/ws", session.ModeDefault, session.Limits{}, server.ProviderSelector{})
+	sess, err := svc.CreateSessionWithProvider(context.Background(), session.ModeDefault, session.Limits{}, server.ProviderSelector{})
 	if err != nil {
 		t.Fatalf("CreateSessionWithProvider(zero): %v", err)
 	}
@@ -148,7 +147,7 @@ func TestServiceResolvedModelNilResolverByteIdentical(t *testing.T) {
 	dflt := server.ResolvedModel{ProviderID: "openai", ModelID: "gpt-default", ContextWindow: 128000}
 	svc := newResolvedModelServiceWithResolver(t, dflt, nil, nil) // nil resolver
 
-	sess, err := svc.CreateSessionWithProvider(context.Background(), "/ws", session.ModeDefault, session.Limits{}, server.ProviderSelector{})
+	sess, err := svc.CreateSessionWithProvider(context.Background(), session.ModeDefault, session.Limits{}, server.ProviderSelector{})
 	if err != nil {
 		t.Fatalf("CreateSessionWithProvider(zero): %v", err)
 	}
@@ -174,7 +173,7 @@ func TestServiceResolvedModelResolverZeroKeepsBaked(t *testing.T) {
 	resolve := func(_, _ string) int64 { return 0 }
 	svc := newResolvedModelServiceWithResolver(t, dflt, nil, resolve)
 
-	sess, err := svc.CreateSessionWithProvider(context.Background(), "/ws", session.ModeDefault, session.Limits{}, server.ProviderSelector{})
+	sess, err := svc.CreateSessionWithProvider(context.Background(), session.ModeDefault, session.Limits{}, server.ProviderSelector{})
 	if err != nil {
 		t.Fatalf("CreateSessionWithProvider(zero): %v", err)
 	}
@@ -199,7 +198,7 @@ func TestServiceResolvedModelResolverNeverLowers(t *testing.T) {
 	}
 	svc := newResolvedModelServiceWithResolver(t, dflt, nil, resolve)
 
-	sess, err := svc.CreateSessionWithProvider(context.Background(), "/ws", session.ModeDefault, session.Limits{}, server.ProviderSelector{})
+	sess, err := svc.CreateSessionWithProvider(context.Background(), session.ModeDefault, session.Limits{}, server.ProviderSelector{})
 	if err != nil {
 		t.Fatalf("CreateSessionWithProvider(zero): %v", err)
 	}
@@ -245,7 +244,7 @@ func TestServiceResolvedModelSelectorLiveFirst(t *testing.T) {
 	svc := newResolvedModelServiceWithResolver(t, dflt, factory, resolve)
 
 	sel := server.ProviderSelector{ProviderID: "openrouter", ModelID: "openai/gpt-5.5"}
-	sess, err := svc.CreateSessionWithProvider(context.Background(), "/ws", session.ModeDefault, session.Limits{}, sel)
+	sess, err := svc.CreateSessionWithProvider(context.Background(), session.ModeDefault, session.Limits{}, sel)
 	if err != nil {
 		t.Fatalf("CreateSessionWithProvider: %v", err)
 	}
@@ -273,7 +272,7 @@ func TestServiceResolvedModelDefaultPath(t *testing.T) {
 	dflt := server.ResolvedModel{ProviderID: "openai", ModelID: "gpt-default", ContextWindow: 128000}
 	svc := newResolvedModelService(t, dflt, nil)
 
-	sess, err := svc.CreateSessionWithProvider(context.Background(), "/ws", session.ModeDefault, session.Limits{}, server.ProviderSelector{})
+	sess, err := svc.CreateSessionWithProvider(context.Background(), session.ModeDefault, session.Limits{}, server.ProviderSelector{})
 	if err != nil {
 		t.Fatalf("CreateSessionWithProvider(zero): %v", err)
 	}
@@ -320,7 +319,7 @@ func TestServiceResolvedModelPerSession(t *testing.T) {
 	svc := newResolvedModelServiceWithResolver(t, dflt, factory, resolve)
 
 	sel := server.ProviderSelector{ProviderID: "anthropic", ModelID: "claude-opus-4.5"}
-	sess, err := svc.CreateSessionWithProvider(context.Background(), "/ws", session.ModeDefault, session.Limits{}, sel)
+	sess, err := svc.CreateSessionWithProvider(context.Background(), session.ModeDefault, session.Limits{}, sel)
 	if err != nil {
 		t.Fatalf("CreateSessionWithProvider: %v", err)
 	}
@@ -363,7 +362,7 @@ func TestGRPCCreateSessionEchoesResolvedModel(t *testing.T) {
 	h := server.NewHarnessServer(svc)
 
 	t.Run("default selector echoes the composition default", func(t *testing.T) {
-		resp, err := h.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{Workspace: "/ws"})
+		resp, err := h.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{})
 		if err != nil {
 			t.Fatalf("CreateSession: %v", err)
 		}
@@ -378,7 +377,6 @@ func TestGRPCCreateSessionEchoesResolvedModel(t *testing.T) {
 		// "anthropic" provider with a 200000 window. The echo must reflect the RESOLVED
 		// values from Service.ResolvedModel, not be a naive read-back of the request.
 		resp, err := h.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{
-			Workspace:  "/ws",
 			ProviderId: "anthropic",
 			ModelId:    "claude-opus-4.5",
 		})
@@ -416,7 +414,6 @@ func TestGRPCGetSessionEchoesResolvedModel(t *testing.T) {
 	h := server.NewHarnessServer(svc)
 
 	createResp, err := h.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{
-		Workspace:  "/ws",
 		ProviderId: "anthropic",
 		ModelId:    "claude-opus-4.5",
 	})

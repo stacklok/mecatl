@@ -439,6 +439,7 @@ func TestCarryoverHandoff(t *testing.T) {
 		t.Fatalf("carryover source ids = %v, want [sess-test-0001] (the old session)", srcs)
 	}
 	// (b) the OLD session was closed (best-effort, after the new one was ready).
+	waitForClosedSession(t, "old session close after carryover handoff", conv, "sess-test-0001", 5*time.Second)
 	closed := conv.closed()
 	if len(closed) != 1 || closed[0] != "sess-test-0001" {
 		t.Fatalf("CloseSession calls = %v, want [sess-test-0001] (the old session, closed after the new one was ready)", closed)
@@ -759,6 +760,7 @@ func TestRestartNowCreateFailureRecovers(t *testing.T) {
 	m = mm2.(Model)
 
 	// The old session was closed (best-effort teardown ran in the cmd).
+	waitForClosedSession(t, "old session close after failed restart", conv, "sess-test-0001", 5*time.Second)
 	if closed := conv.closed(); len(closed) != 1 || closed[0] != "sess-test-0001" {
 		t.Fatalf("CloseSession calls = %v, want [sess-test-0001]", closed)
 	}

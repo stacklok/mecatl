@@ -13,6 +13,120 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Added
 
+- **Session-load failure classification** — adds `port.SessionLoadFailureClass`,
+  `SessionLoadFailureError`, `ErrSessionLoadFailure`, `NewSessionLoadFailure`, and
+  `ClassifySessionLoadFailure`. Snapshot-backed stores can distinguish bounded
+  retrieval (`store`) from decode/validation (`snapshot`) failures through
+  `errors.Is`/`errors.As` without exposing backend error text. Added (minor).
+
+- **`port.AppendHTTPErrorDisplay`** ([ADR 0309](../docs/adr/0299-safe-http-rejection-display-evidence.md)) — a stdlib-only helper for independently versioned provider modules to append only a validated HTTP(S) request target and bounded opaque correlation ID to a structured HTTP rejection. Added (minor).
+- **Versioned bounded reflection evidence materialization (ADR 0300)** — adds the storage-neutral `learning.MaterializeEvidence` protocol, immutable aggregate manifests, distinct selected-local and durable source coordinates, and closed no-work outcomes. Added (minor).
+
+- **Session placement authority repair** — removes the orphan exported `session.PlacementSelector` protocol, adds persisted display-only `session.PlacementMetadata`, requires a valid `EnvironmentRef` at aggregate construction, and rejects direct engine runs whose live environment does not match the session identity. Changed (breaking, pre-v1 minor).
+
+- **Delegation artifact boundary (ADR 0288)** — adds the distinct `agent.ArtifactHandle` type, changes `agent.PreservedForkStore.Preserve` to key retained forks by that opaque handle rather than a physical root, and removes `Workspace`/`WinnerWorkspace` from `session.ParallelPayload`. Parallel results now expose an opaque preserved-artifact handle while physical fork roots remain private orchestration state. Changed (breaking, pre-v1 minor).
+
+- **Unified environment and placement identity** — adds `Revision` and `Valid` to `session.EnvironmentRef`, makes that exact `{Kind, ID, Revision}` value the runtime and durable placement identity, and removes the short-lived duplicate `session.PlacementRef`/`PlacementKind` types. Engine-created Subagent, Parallel, and Team child sessions now persist the identity carried by their `tool.Environment`; `port.ScheduleSpec` and `port.SessionDiscoveryMeta` replace workspace paths with the exact private environment identity, with schedules also retaining their trusted placement scope. Changed (breaking, pre-v1 minor).
+
+- **`agent.Run.RetractPermissionAsk`** ([ADR 0294](../docs/adr/0294-session-correlation-and-affinity.md)) — lets a lease-owning host atomically withdraw one still-pending local permission ask without resolving it, emitting the matching retraction before cancellation while leaving an already-durable awaiting snapshot untouched for successor handoff. Added (minor).
+- **Title metadata revisions** — adds `Session.TitleRevision` and
+  `TitlePayload.Revision`: a durable, title-specific monotonic revision that
+  advances only for effective title metadata mutations. Added (minor).
+- **Canonical token-usage buckets and title lifecycle projection** — adds
+  `session.UsageKind`/`TokenUsage` and `Session.TokenUsageSnapshot`, canonical
+  token usage kinds with opaque model attribution maps. Each total is normalized
+  to the sum of its model entries; legacy snapshots map unattributed usage to
+  `unknown`. The snapshot is an owned read view of the aggregate's private
+  canonical ledger. `Session.Usage` remains dual-written compatibility data.
+  `SessionTitle` is the source-free canonical title lifecycle projection; its
+  nested usage is removed. Added (minor); the retained wire title/provenance
+  fields are deprecated (pre-v1 breaking compatibility classification).
+
+- **Reversible external-authorization claims** — `session.Session.RestoreAuthorizationClaim` compensates a claimed continuation that could not be registered, returning the aggregate to the exact durable `authorizing` state instead of abandoning unresolved tool calls in `running`. Added (minor).
+
+- **Terminal external-authorization resolution value** — `session.AuthorizationResolution` and `session.NewAuthorizationResolution` make pending and unknown statuses unrepresentable at the continuation boundary while preserving `AuthorizationStatus` as the complete event-lifecycle vocabulary. Added (minor).
+
+- **`tool.TemporaryScope`, `tool.CommandTemporaryScopeRunner`, and `tool.CommandTemporaryScopeStreamer`** ([ADR 0281](../docs/adr/0281-managed-temporary-command-leases.md)) — optional bound-runner capabilities for the closed managed/system temporary-storage scope selection. The capability carries no path or environment value and preserves the existing `CommandRunner` fallback for runners that do not manage temporary storage. Added (minor).
+
+- **`tool.CommandEnvironmentOverlay`, `tool.CommandEnvironmentRunner`, and `tool.CommandEnvironmentStreamer`** ([ADR 0281](../docs/adr/0281-managed-temporary-command-leases.md)) — an optional, per-invocation command-environment overlay for host-owned runtime values such as managed temporary storage. The optional capability preserves the existing bound-runner API and namespace affinity: callers that require an overlay must decline honestly when a runner does not implement it, never interpolate environment values into shell text or fall back to an unoverlayed call. Added (minor).
+
+- **Session title-generation domain metadata and lifecycle event** — adds generated title provenance,
+  durable title-generation lifecycle/source/attempt records, canonical title-model
+  token usage, and the source-free `EvSessionTitle` / `TitlePayload` event
+  projection. Title lifecycle attempts retain only identity and outcome;
+  title usage is intentionally separate from `Session.Usage`, normal run budgets,
+  result usage, and conversation. Snapshot and event-source metadata round-trip
+  the title-specific state. Added (minor).
+
+- **Workspace-enrollment broker proof and atomic authority replacement** —
+  `session.Session.CompleteWorkspaceEnrollment` accepts the complete pending
+  correlation plus only a validated exact tool-name set, then clones the bound
+  authority before replacing its tools so present and future non-tool axes cannot
+  be caller-supplied. `session.ValidWorkspaceEnrollmentToolNames` provides the
+  enrollment-only bounded framing and duplicate check without tightening legacy
+  `Authority.Valid` inputs. The optional neutral
+  `internal/mcpbroker.WorkspaceEnrollmentAttachment` boundary exposes broker-owned
+  begin/observe/cancel operations, closed statuses, ephemeral presentation URLs,
+  and a connected-only immutable frozen catalogue result without adding enrollment
+  methods to anonymous broker attachments. Added (minor).
+
+- **Pre-prompt workspace-enrollment correlation** —
+  `session.PendingWorkspaceEnrollment` and the `Session` begin/read/abort methods
+  add a bounded, authority-bound aggregate contract that persists only an opaque
+  enrollment id, required-service count, and expiry through `sessnap.Snapshot`.
+  It is an exclusive pre-prompt gate while remaining storage-independent from
+  tool authorization and agent-loop pending state. Added (minor).
+
+- **Prepared external-authorization continuations** — `agent.PreparedRun`,
+  `Engine.PrepareAuthorizationContinuation`, and
+  `Engine.PrepareAfterAuthorization` let a host fully initialize and
+  register an inert continuation, atomically install the effective pending-call
+  result set, and inspect the closed `PreparedRunTransition` outcome through
+  `Start` or `Abort`. Added (minor).
+
+- **Opaque external runtime binding** — `session.Session.ExternalBinding` stores a
+  composition-issued logical-session binding without interpreting broker topology;
+  `sessnap.Snapshot` persists it for exact reattachment checks. Added (minor).
+
+- **Generic authorization dispatch parking** — `agent.RunRequest.CanPresentAuthorization`
+  opt-in permits an attached main run to durably park a
+  `tool.AuthorizationRequester` call after permission and `PreToolUse` gates;
+  `agent.ResumeApprovalWith` carries the same explicit capability on restored
+  permission continuations. `agent.Run.Outcome` reports `RunOutcomeAuthorizationPending` for this
+  nonterminal close; no `session.StopReason` or `EvResult` is emitted. Added
+  (minor).
+
+- **Safe external-authorization events** — `session.EvAuthorizationRequired`,
+  `session.EvAuthorizationResolved`, `session.AuthorizationStatus`, and
+  `session.AuthorizationPayload` add a provider-neutral durable lifecycle grammar;
+  `AuthorizationPayload.Valid` centralizes its bounded identifier, optional
+  human-facing authority/service label, expiry, and status validation.
+  The payload otherwise carries only an authorization id, tool-call id, expiry,
+  and closed status; it omits private continuation state, routing/configuration
+  labels, URLs, arguments, and credentials. `session.ValidAuthorizationID` exports the canonical
+  bounded correlation grammar for transport trust boundaries.
+  `eventsource.Fold` reconstructs fully resolved historical lifecycles, rejects
+  malformed ordering, and requires private state only while a well-formed
+  lifecycle remains open. Added (minor).
+
+- **Generic external authorization continuation** — `session.ExternalAuthorization`,
+  `session.PendingAuthorization`, and `session.StateAuthorizing` add a durable,
+  provider-neutral aggregate park/claim/abort lifecycle with exact tool-pairing
+  validation, effective-call ownership, and deep-copy isolation.
+  `tool.AuthorizationRequester` receives that effective call explicitly and aborts
+  with the complete private `ExternalAuthorization` correlation; aggregate abort
+  reasons are closed harness tokens rendered as fixed messages. The private
+  `sessnap.Snapshot.PendingAuthorization` DTO base64-encodes private continuation
+  argument bytes for exact round-trip fidelity without changing the existing
+  `sessnap.RestoreState` signature. Added (minor).
+
+- **`tool.DispatchSerial`** — optional static marker for read-only tools whose
+  sibling call must form a run-local dispatch barrier. It preserves
+  `Tool.ReadOnly` semantics and tool advertisement while making the dispatcher
+  flush concurrent read batches before and after the marked call. The guarantee
+  applies only within one run/dispatch; shared adapter state reached by concurrent
+  runs still requires its own synchronization. Added (minor).
+
 - **`port.CursorEventLog`, `port.Cursor`, `port.EncodeCursor`/`DecodeCursor`, `port.LogRecord`/`LogRecordKind`, `port.ReadOptions`, `port.ErrCursorMalformed`/`ErrCursorExpired`** (issue #821, [ADR 0250](../docs/adr/0250-durable-cursors-and-watch.md)) — durable positions over the event log: an append reports WHERE the record landed, and a read resumes from a position rather than always from the start.
 
   It exists because the two read paths the engine shipped cannot express replay-then-follow as one operation. `port.EventLog.Read` is a complete, ordered, durable replay with no position and no follow — it reads the whole log and stops — so catching up and then watching means reading everything and THEN subscribing, and any event appended between those two steps is silently lost. `CursorEventLog.ReadAfter` closes that window: `ReadOptions.Follow` keeps the iterator open at the tail, and `LogRecord.Live` reports the replay/live boundary a follower needs in order to tell a caller it is caught up.
@@ -77,13 +191,62 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
   All four additions are **Added = minor**. `Event` and `RunRequest` gain a field, which breaks external UNKEYED struct literals — but both are already routinely constructed keyed, and `Event` is a wide event-payload struct nobody builds positionally.
 
+- **`tool.ReadLedger`, `tool.ErrLedgerUnavailable`** ([ADR 0298](../docs/adr/0298-persistent-read-before-write-ledgers.md)) — the storage-independent, context-aware read-before-write evidence capability selected independently of file content and carried by `tool.Environment`. `RecordRead(ctx, key, version) error` and `RecordedVersion(ctx, key) (version, ok, err)` distinguish a valid recorded token, ordinary absence, and an unavailable/corrupt lookup (`err != nil`). `engine/adapter/memledger` is the in-memory reference implementation; `engine/adapter/ledgerconformance` is the shared behavioral suite every implementation runs. Both additions are **Added = minor**.
+
+- **`tool.EncodeFileVersion`, `tool.DecodeFileVersion`, `tool.ErrInvalidFileVersion`** ([ADR 0298](../docs/adr/0298-persistent-read-before-write-ledgers.md), repair-wave task 05) — a narrow persistence/transport codec for opaque `FileVersion` values. It round-trips valid empty and non-empty tokens byte-exactly while rejecting the invalid zero value. **Added = minor**.
+
+- **`agent.WithSubagentReadLedgerFactory`, `agent.WithTeamReadLedgerFactory`, `agent.WithTeamToolReadLedgerFactory`** (repair-wave task 05) — inject factories that mint a fresh ledger for every child environment without importing a concrete adapter into `engine/agent`. **Added = minor**.
+
 ### Changed
+
+- **Durable main-usage budget baseline** — `Session.Usage` is now permanently the
+  deprecated lifetime mirror of `TokenUsage[UsageKindMain].Total`. `MaxRunTokens`
+  measures usage since an immutable internal run baseline; ordinary runs use zero, while
+  team-lead synthesis and exactly one `StopBudget` free-text Subagent cleanup capture
+  their current main total without mutating session accounting. Auxiliary usage remains
+  outside this budget and `EvResult.Usage`.
+
+- **Simplified title-model token accounting** — removes the title-specific
+  `session.AuxiliaryUsage`/`AuxiliaryOperation` API and its per-attempt ledger.
+  `Session.RecordTokenUsage` records canonical usage by kind and opaque selected-model
+  attribution, and `RestoreTitleMetadata` now atomically restores the complete durable
+  title metadata, including its revision. Removed APIs and the changed restore signature
+  are breaking; pre-v1 this is a minor compatibility classification.
+
+- **Title-attempt timestamps** — `session.TitleAttempt.CreatedAt` is removed.
+  Attempt identity and outcome remain sufficient for the lifecycle and UI failure
+  deduplication. Removed is breaking (pre-v1 minor) per COMPATIBILITY.md.
+
+- **`session.Session.ResetUsage`** — the externally callable accounting reset is
+  removed. It could discard durable lifetime usage to grant a synthesis allowance;
+  the internal run baseline now provides that allowance without a reset. Removed is
+  breaking (pre-v1 minor) per COMPATIBILITY.md.
+
+- **`learning.AttemptRepository.DiscoverWork`, `learning.AttemptWork{List,Page,Cursor}`, and `learning.MaxAttemptWorkBatch`** ([ADR 0259](../docs/adr/0259-cloud-native-learning.md)) — adds bounded, cursor-paged, storage-neutral discovery of queued attempts and running attempts with expired claims across opaque owner partitions. The cursor is only a disposable scan position and grants no workflow authority. This makes the repository, including a remote driver, the sole worker authority for work admitted after startup and claim-expiry reassignment. Extending the interface is Changed/breaking (pre-v1 a minor bump).
+
+- **`tool.Workspace` loses `RecordRead`/`RecordedVersion`; `tool.Environment` gains a mandatory `ReadLedger()`; `tool.NewEnvironment`/`MustEnvironment` take a new required `ledger ReadLedger` parameter** ([ADR 0298](../docs/adr/0298-persistent-read-before-write-ledgers.md), repair-wave task 05) — completes the read-ledger/content-backend separation the prior entry started: `Workspace` is now a pure content/search/versioned-mutation seam with no read-evidence capability of its own, and the read ledger is instead an independently-selected, mandatory second capability carried on `Environment` alongside `Workspace`. `NewEnvironment(ref, ws, ledger, runner)` / `MustEnvironment(ref, ws, ledger, runner)` replace the three-argument forms (`ledger` inserted before `runner`); a nil `ledger` is rejected with the new `ErrEnvironmentNoReadLedger`, mirroring the existing nil-`Workspace` rejection. The built-in Read/Edit/Write tools now record/consult evidence via `env.ReadLedger()` (keyed with the existing I/O-free `tool.LedgerKey(ws.Root(), path)`), not through the Workspace. Changed/breaking (pre-v1 a minor bump). Every in-tree `Workspace` implementation (osfs, memfs, nofs, the ACP fs-delegation workspace, remoteenv) drops its ledger methods; every `Environment` construction site now supplies an explicit ledger (a fresh `memledger.New()` for a session's default environment; a forked/direct-write child environment gets its OWN fresh ledger over the SAME content backend it was handed, never the parent's).
+
+- **`FileVersion.Token`** ([ADR 0298](../docs/adr/0298-persistent-read-before-write-ledgers.md), repair-wave task 05) — removed because it exposed an interpretation API for an opaque token. Persistence callers migrate to the added `tool.EncodeFileVersion`/`DecodeFileVersion` codec above. Changed/breaking (pre-v1 a minor bump).
+
+- **Child workspace-view options** (repair-wave task 05) — `agent.WithSharedChildWorkspace`, `agent.WithTeamSharedBaseWorkspace`, and `agent.WithTeamToolSharedBaseWorkspace` now accept `func(tool.Workspace) tool.Workspace` rather than a root-to-Workspace factory. Base-sharing/direct-write children therefore retain the exact parent content backend through a potentially stricter authority view instead of reconstructing storage from `Workspace.Root()`; composition uses that view to preserve child path-escape containment while the independent read-ledger factory supplies fresh evidence. Changed/breaking (pre-v1 a minor bump).
+
+- **Versioned bounded reflection evidence materialization (ADR 0300)** — `learning.Input` now carries its aggregate `MaterializationManifest`; `learning.EvidenceRef` now carries the explicit protocol, manifest index, durable original coordinate, and aggregate digest needed to distinguish `reflection-evidence/v1` references from historical input-local `reflection-evidence/legacy-v0` ordinals; and `learning.MaterializeEvidence` now accepts a `context.Context` plus an optional streaming event source so full message/event scans are cancellable and selected-event limits apply after source ranking. `learning.AdmissionPolicy.Decide` now accepts a context and borrowed `Trajectory` request rather than a full `Input`, allowing cancellation without constructing an unbounded admission input. Adding fields to these exported structs and changing the function and interface signatures break external callers and unkeyed literals, so this is Changed/breaking (pre-v1 a minor bump).
+
+- **`Engine.PrepareAuthorizationContinuation` and `Engine.PrepareAfterAuthorization` require `session.AuthorizationResolution` and return an error** — callers must construct a validated terminal outcome before preparing a continuation; pending, zero, and unknown statuses are rejected before run construction or session mutation. Changed/breaking (pre-v1 a minor bump).
+
+- **`session.Session.ExternalBinding` is now the named `session.ExternalBinding` type** — the opaque process-external session identity can no longer be accidentally interchanged with an arbitrary runtime string or the distinct per-authorization `AuthorizationBinding`. Its JSON representation remains an unchanged string. Changed/breaking (pre-v1 a minor bump).
 
 - **`agent.Deps.EnableDurableEvidence`** — adds the explicit opt-in gate for
   debugger-only request-manifest construction/emission and sanitized network-attempt capture. The zero value preserves the allocation-sensitive
   default loop; composition enables it only alongside durable EventLog retention. Adding a field
   to an exported struct breaks external unkeyed literals, so this is Changed/breaking (pre-v1 a
   minor bump).
+
+- **`session.Event.Authorization`** — adds the safe external-authorization payload
+  arm to the domain event envelope. The field is required for durable authorization
+  lifecycle reconstruction and intentionally carries no binding, route, URL,
+  arguments, or credentials. Adding a field breaks external unkeyed `Event` struct
+  literals. Changed/breaking (pre-v1 a minor bump).
 
 - **`agent.Run.EnqueueSteer`** (issue #861, [ADR 0251](../docs/adr/0251-multimodal-steer.md)) — changes from `EnqueueSteer(text string)` to `EnqueueSteer(text string, parts []session.Content)`, making one canonical text, media, or mixed steer entry point. Changed/breaking (pre-v1 a minor bump).
 
@@ -1027,9 +1190,8 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
     exhaustion, not a fault/cancel), routed through the completed path so the
     session ends `completed` and stays Reopen-recoverable. A string passthrough on
     the wire (no proto enum). Added to `agent.isEmptyTerminalStop`'s allow-set
-    (a clean bounded terminal) following `StopBudget`'s classification; NOT in
-    the salvage ResetUsage arm (it is a wall-clock deadline, not a token
-    ceiling, so it follows `StopNoProgress` there).
+    (a clean bounded terminal); it remains subject to the carried token budget
+    during a salvage drive.
   - `port.ScheduleStore.RecordFireStart(ctx, name, fire)` — persists the IN-FLIGHT
     fire (id/SessionID/StartedAt/Deadline, Stop empty) and stamps
     `ScheduleState.LastFireSessionID` to the real session id +

@@ -75,7 +75,7 @@ func TestBuildOperatorYAMLDefaultProviderSeam(t *testing.T) {
 	// A zero-selector session inherits the deployment default: with the YAML
 	// override ACTIVE, the resolved provider is toolhive (NOT openrouter, the
 	// keyed ladder winner absent the override).
-	sess, err := svc.CreateSession(ctx, t.TempDir(), session.ModeDefault, defaultLimits())
+	sess, err := svc.CreateSession(ctx, session.ModeDefault, defaultLimits())
 	if err != nil {
 		t.Fatalf("CreateSession(zero-selector): %v", err)
 	}
@@ -100,7 +100,7 @@ func TestBuildOperatorYAMLDefaultProviderAbsentKeepsLadderDefault(t *testing.T) 
 	defer built.Close()
 	svc := built.Service
 
-	sess, err := svc.CreateSession(ctx, t.TempDir(), session.ModeDefault, defaultLimits())
+	sess, err := svc.CreateSession(ctx, session.ModeDefault, defaultLimits())
 	if err != nil {
 		t.Fatalf("CreateSession(zero-selector): %v", err)
 	}
@@ -141,7 +141,7 @@ func TestBuildOperatorYAMLDefaultProviderCLIWins(t *testing.T) {
 	defer built.Close()
 	svc := built.Service
 
-	sess, err := svc.CreateSession(ctx, t.TempDir(), session.ModeDefault, defaultLimits())
+	sess, err := svc.CreateSession(ctx, session.ModeDefault, defaultLimits())
 	if err != nil {
 		t.Fatalf("CreateSession(zero-selector): %v", err)
 	}

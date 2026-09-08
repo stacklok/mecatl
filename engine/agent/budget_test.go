@@ -286,15 +286,17 @@ func (p *countingProvider) Stream(ctx context.Context, req port.LLMRequest) (ite
 	return p.inner.Stream(ctx, req)
 }
 
-// TestBudgetReadsCumulativeAggregate is the restart-budget guard (cloud-native
-// Phase 1): a session loaded carrying cumulative Usage ALREADY past the MaxRunTokens
-// ceiling (the snapshot-restore shape) must trip StopBudget at the FIRST turn
-// boundary — before any model call — instead of re-granting a full fresh budget.
+// TestOrdinaryRunUsesZeroBudgetBaseline is the restart-budget guard (cloud-native
+// Phase 1): an ordinary Engine.Run always has a zero baseline, so a session loaded
+// carrying cumulative Usage ALREADY past the MaxRunTokens ceiling trips StopBudget
+// at the FIRST turn boundary — before any model call — instead of re-granting a
+// fresh budget. Internal cleanup/synthesis baselines must never leak into this
+// public run entry point.
 // The budget brake is evaluated against the AGGREGATE's cumulative Usage
 // (sess.Usage), NOT a fresh-from-zero per-run total; there is no loop seed. Mutation:
 // changing the budget check from `budgetExhausted(r, sess.Usage)` to
 // `budgetExhausted(r, total)` makes the run proceed and the model gets called.
-func TestBudgetReadsCumulativeAggregate(t *testing.T) {
+func TestOrdinaryRunUsesZeroBudgetBaseline(t *testing.T) {
 	const budget = 350
 
 	inner := mockllm.New(mockllm.TextTurn("should-never-run"))

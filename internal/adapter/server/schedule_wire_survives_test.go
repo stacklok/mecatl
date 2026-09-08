@@ -31,11 +31,10 @@ func TestScheduleTool_WireSurvivesSettingsCLIRemoval(t *testing.T) {
 	gsrv := server.NewScheduleServer(svc)
 
 	if _, err := gsrv.CreateSchedule(ctx, &mecatlv1.CreateScheduleRequest{Spec: &mecatlv1.ScheduleSpec{
-		Name:      "wire-keep",
-		Prompt:    "summarize commits",
-		Workspace: "/repo",
-		Mutating:  true,
-		Trigger:   &mecatlv1.TriggerSpec{Cron: "0 9 * * *"},
+		Name:     "wire-keep",
+		Prompt:   "summarize commits",
+		Mutating: true,
+		Trigger:  &mecatlv1.TriggerSpec{Cron: "0 9 * * *"},
 	}}); err != nil {
 		t.Fatalf("gRPC CreateSchedule: %v", err)
 	}
@@ -46,11 +45,10 @@ func TestScheduleTool_WireSurvivesSettingsCLIRemoval(t *testing.T) {
 		t.Fatalf("gRPC ListSchedules: %v", err)
 	}
 	if _, err := gsrv.UpdateSchedule(ctx, &mecatlv1.UpdateScheduleRequest{Spec: &mecatlv1.ScheduleSpec{
-		Name:      "wire-keep",
-		Prompt:    "summarize commits (updated)",
-		Workspace: "/repo",
-		Mutating:  true,
-		Trigger:   &mecatlv1.TriggerSpec{Cron: "0 10 * * *"},
+		Name:     "wire-keep",
+		Prompt:   "summarize commits (updated)",
+		Mutating: true,
+		Trigger:  &mecatlv1.TriggerSpec{Cron: "0 10 * * *"},
 	}}); err != nil {
 		t.Fatalf("gRPC UpdateSchedule: %v", err)
 	}
@@ -82,11 +80,10 @@ func TestScheduleTool_WireSurvivesSettingsCLIRemoval(t *testing.T) {
 	// REST half lists its fires below; ListFires is keyed on an existing
 	// schedule name).
 	if _, err := gsrv.CreateSchedule(ctx, &mecatlv1.CreateScheduleRequest{Spec: &mecatlv1.ScheduleSpec{
-		Name:      "grpc-del",
-		Prompt:    "x",
-		Workspace: "/repo",
-		Mutating:  true,
-		Trigger:   &mecatlv1.TriggerSpec{Cron: "0 1 * * *"},
+		Name:     "grpc-del",
+		Prompt:   "x",
+		Mutating: true,
+		Trigger:  &mecatlv1.TriggerSpec{Cron: "0 1 * * *"},
 	}}); err != nil {
 		t.Fatalf("gRPC CreateSchedule (throwaway): %v", err)
 	}
@@ -115,7 +112,7 @@ func TestScheduleTool_WireSurvivesSettingsCLIRemoval(t *testing.T) {
 	}
 
 	// POST /v1/schedules (create).
-	if resp := do("POST", "/v1/schedules", `{"name":"rest-keep","prompt":"hi","workspace":"/repo","mutating":true,"trigger":{"cron":"0 9 * * *"}}`); resp.StatusCode != http.StatusCreated {
+	if resp := do("POST", "/v1/schedules", `{"name":"rest-keep","prompt":"hi","mutating":true,"trigger":{"cron":"0 9 * * *"}}`); resp.StatusCode != http.StatusCreated {
 		_ = resp.Body.Close()
 		t.Fatalf("POST /v1/schedules status = %d, want 201", resp.StatusCode)
 	} else {
@@ -131,7 +128,7 @@ func TestScheduleTool_WireSurvivesSettingsCLIRemoval(t *testing.T) {
 	}{
 		{"GET", "/v1/schedules", "", http.StatusOK},
 		{"GET", "/v1/schedules/rest-keep", "", http.StatusOK},
-		{"PUT", "/v1/schedules/rest-keep", `{"prompt":"hi2","workspace":"/repo","mutating":true,"trigger":{"cron":"0 10 * * *"}}`, http.StatusOK},
+		{"PUT", "/v1/schedules/rest-keep", `{"prompt":"hi2","mutating":true,"trigger":{"cron":"0 10 * * *"}}`, http.StatusOK},
 		{"POST", "/v1/schedules/rest-keep/pause", "", http.StatusNoContent},
 		{"POST", "/v1/schedules/rest-keep/resume", "", http.StatusNoContent},
 		{"GET", "/v1/schedules/wire-keep/fires", "", http.StatusOK},

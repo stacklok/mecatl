@@ -105,9 +105,7 @@ func TestGRPCCreateSessionProfileValidation(t *testing.T) {
 		req  *mecatlv1.CreateSessionRequest
 		want string
 	}{
-		{"default profile still requires workspace", &mecatlv1.CreateSessionRequest{}, "workspace is required"},
-		{"no-fs rejects a workspace", &mecatlv1.CreateSessionRequest{Profile: "no-fs", Workspace: "/ws"}, "must not carry a workspace"},
-		{"unknown profile rejected", &mecatlv1.CreateSessionRequest{Profile: "ram-only", Workspace: "/ws"}, "unknown session profile"},
+		{"unknown profile rejected", &mecatlv1.CreateSessionRequest{Profile: "ram-only"}, "unknown session profile"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -155,8 +153,8 @@ func TestHTTPCreateSessionProfileRoundTrip(t *testing.T) {
 	if got := gotProfile.Load(); got != server.ProfileNoFS {
 		t.Fatalf("factory saw profile %v, want ProfileNoFS", got)
 	}
-	if resp := post(`{}`); resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("default + empty workspace = %d, want 400 (today's behaviour preserved)", resp.StatusCode)
+	if resp := post(`{}`); resp.StatusCode != http.StatusCreated {
+		t.Fatalf("default placement create = %d, want 201", resp.StatusCode)
 	}
 	if resp := post(`{"profile":"no-fs","workspace":"/ws"}`); resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("no-fs + workspace = %d, want 400", resp.StatusCode)
@@ -181,7 +179,7 @@ func TestNoFSSessionUsesWorkspaceOverride(t *testing.T) {
 		Policy:  permpolicy.NewPolicy(nil, nil),
 		Model:   "test-model",
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine: agent.NewEngine(agent.Deps{
 			LLM:     mockllm.New(mockllm.TextTurn("shared")),
 			Catalog: tool.NewCatalog(),
@@ -189,10 +187,9 @@ func TestNoFSSessionUsesWorkspaceOverride(t *testing.T) {
 			Model:   "test-model",
 		}),
 		Store: memstore.New(),
-		Workspaces: func(root string) tool.Workspace {
-			factoryRoots = append(factoryRoots, root)
-			return nil // a no-fs run must never reach here; nil would break it loudly
-		},
+
+		// a no-fs run must never reach here; nil would break it loudly
+
 		DefaultLimits: session.Limits{MaxTurns: 5},
 		Now:           func() time.Time { return time.Unix(0, 0) },
 		SessionEngine: func(_ context.Context, _ server.ProviderSelector, _ []mcp.ServerConfig, _ server.SessionProfile, _ string, _ session.PermissionMode) (server.SessionEngineResult, error) {
@@ -203,7 +200,7 @@ func TestNoFSSessionUsesWorkspaceOverride(t *testing.T) {
 		t.Fatalf("NewService: %v", err)
 	}
 
-	sess, err := svc.CreateSessionWithProfile(context.Background(), "", session.ModeDefault, session.Limits{},
+	sess, err := svc.CreateSessionWithProfile(context.Background(), session.ModeDefault, session.Limits{},
 		server.ProviderSelector{}, server.ProfileNoFS)
 	if err != nil {
 		t.Fatalf("CreateSessionWithProfile: %v", err)
@@ -227,9 +224,9 @@ func TestNoFSSessionUsesWorkspaceOverride(t *testing.T) {
 // The Workspaces factory records every root it is consulted with so a test can
 // assert the no-fs path NEVER reaches it (the TestNoFSSessionUsesWorkspaceOverride
 // seam); factoryRoots may be nil for tests that don't care.
-func noFSServiceOverStore(t *testing.T, store *memstore.Store, factory server.SessionEngineFactory, factoryRoots *[]string) *server.Service {
+func noFSServiceOverStore(t *testing.T, store *memstore.Store, factory server.SessionEngineFactory, _ *[]string) *server.Service {
 	t.Helper()
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine: agent.NewEngine(agent.Deps{
 			LLM:     mockllm.New(mockllm.TextTurn("SHARED-ENGINE-REPLY")),
 			Catalog: tool.NewCatalog(),
@@ -237,12 +234,9 @@ func noFSServiceOverStore(t *testing.T, store *memstore.Store, factory server.Se
 			Model:   "test-model",
 		}),
 		Store: store,
-		Workspaces: func(root string) tool.Workspace {
-			if factoryRoots != nil {
-				*factoryRoots = append(*factoryRoots, root)
-			}
-			return nil // a no-fs run must never reach here; nil breaks it loudly
-		},
+
+		// a no-fs run must never reach here; nil breaks it loudly
+
 		DefaultLimits: session.Limits{MaxTurns: 5},
 		Now:           func() time.Time { return time.Unix(0, 0) },
 		SessionEngine: factory,
@@ -272,7 +266,7 @@ func TestNoFSSessionRehydratesAfterRestart(t *testing.T) {
 		calls      atomic.Int32
 	)
 	svc1 := noFSServiceOverStore(t, store, profileRecordingFactory("PRE-RESTART", &gotProfile, &calls), nil)
-	sess, err := svc1.CreateSessionWithProfile(ctx, "", session.ModeDefault, session.Limits{},
+	sess, err := svc1.CreateSessionWithProfile(ctx, session.ModeDefault, session.Limits{},
 		server.ProviderSelector{}, server.ProfileNoFS)
 	if err != nil {
 		t.Fatalf("CreateSessionWithProfile: %v", err)
@@ -342,7 +336,8 @@ func TestNoFSSessionRehydratesAfterRestart(t *testing.T) {
 func TestNoFSRehydrationWithoutFactoryFailsLoudly(t *testing.T) {
 	ctx := context.Background()
 	store := memstore.New()
-	sess := session.New("nofs-orphan", session.ModeDefault, "", session.Limits{MaxTurns: 3}, time.Unix(0, 0))
+	sess := session.New("nofs-orphan", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: "none", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 3}, time.Unix(0, 0))
+	sess.Profile = string(server.ProfileNoFS)
 	if err := store.Save(ctx, sess); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -366,7 +361,8 @@ func TestNoFSRehydrationWithoutFactoryFailsLoudly(t *testing.T) {
 func TestLoadSessionWithMCPDerivesNoFSProfile(t *testing.T) {
 	ctx := context.Background()
 	store := memstore.New()
-	sess := session.New("nofs-acp", session.ModeDefault, "", session.Limits{MaxTurns: 3}, time.Unix(0, 0))
+	sess := session.New("nofs-acp", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: "none", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 3}, time.Unix(0, 0))
+	sess.Profile = string(server.ProfileNoFS)
 	if err := store.Save(ctx, sess); err != nil {
 		t.Fatalf("Save: %v", err)
 	}

@@ -14,6 +14,9 @@ coverage.*
 # Local scratch
 /.scratch/
 
+# Retired generated documentation index; do not re-add without an explicit decision.
+/llms.txt
+
 # Disposable ToolHive Kind fixture kubeconfig
 /deploy/mecak8s-vmcp/kconfig.yaml
 
@@ -27,6 +30,7 @@ coverage.*
 /.claude/agent-memory/
 
 # Local Claude Code runtime artifacts
+/.claude/plans/
 /.claude/worktrees/
 /.claude/scheduled_tasks.lock
 /mecatui

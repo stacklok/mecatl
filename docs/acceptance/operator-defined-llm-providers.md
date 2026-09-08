@@ -254,7 +254,7 @@ session rehydration.
 ## Definition of done
 
 1. `task lint` and `task test` pass.
-2. `task docs` regenerates `llms.txt` and passes the strict link gate.
+2. `task docs` regenerates the configuration reference and passes the strict link gate.
 3. `task api:check` passes without a core API change; if an exported engine API becomes
    necessary, `task api:update` and the required `engine/CHANGELOG.md` note are included.
 4. `task ac-trace-strict` resolves every acceptance proof after the plan is marked

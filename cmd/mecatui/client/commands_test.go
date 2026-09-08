@@ -41,8 +41,8 @@ func TestListCommandsMapping(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListCommands: %v", err)
 	}
-	if fake.lastReq.GetWorkspace() != "/proj" {
-		t.Fatalf("request workspace = %q, want /proj", fake.lastReq.GetWorkspace())
+	if fake.lastReq.GetSessionId() != "/proj" {
+		t.Fatalf("request session = %q, want /proj", fake.lastReq.GetSessionId())
 	}
 	if len(cmds) != 2 {
 		t.Fatalf("commands = %d, want 2", len(cmds))

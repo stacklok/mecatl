@@ -15,15 +15,15 @@ import (
 // unknown provider falls back to the parent (still routable); a reference-only MCP is fine.
 func TestRoutableAgentNamesMatrix(t *testing.T) {
 	defs := []agents.AgentDef{
-		{Name: "unpinned"},                                // routable
-		{Name: "inherit-pin", Model: "inherit"},           // pinned (explicit inherit)
-		{Name: "alias-pin", Model: "sonnet"},              // pinned (built-in alias)
-		{Name: "concrete-pin", Model: "gpt-4o"},           // pinned (concrete id)
-		{Name: "unknown-alias-pin", Model: "zzz-unknown"}, // pinned (any non-empty)
-		{Name: "switched", Provider: "other"},             // excluded (known provider switch)
-		{Name: "unknown-provider", Provider: "ghost"},     // routable (unknown ⇒ falls back to parent)
-		{Name: "inline-mcp", MCPServers: []tool.AgentMCPServer{{Name: "x", URL: "http://h/mcp"}}}, // excluded (inline MCP)
-		{Name: "reference-mcp", MCPServers: []tool.AgentMCPServer{{Name: "github"}}},              // routable (reference-only MCP)
+		{Name: "unpinned"},
+		{Name: "inherit-pin", Model: "inherit"},
+		{Name: "alias-pin", Model: "sonnet"},
+		{Name: "concrete-pin", Model: "gpt-4o"},
+		{Name: "unknown-alias-pin", Model: "zzz-unknown"},
+		{Name: "switched", Provider: "other"},
+		{Name: "unknown-provider", Provider: "ghost"},
+		{Name: "inline-mcp", MCPServers: []tool.AgentMCPServer{{Name: "x", URL: "http://h/mcp"}}},
+		{Name: "reference-mcp", MCPServers: []tool.AgentMCPServer{{Name: "github"}}},
 	}
 	reg := agents.NewRegistry(defs)
 	// Parent provider = providerMock; "other" is a KNOWN second provider (a real switch).

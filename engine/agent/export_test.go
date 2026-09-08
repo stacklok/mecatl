@@ -22,3 +22,10 @@ var CancelSteerForTest = (*Run).cancelSteer
 // internal concurrency test can simulate run-terminal without driving a full
 // loop to completion.
 var CloseSteerForTest = (*Run).closeSteer
+
+// WithParallelBranchRegisteredForTest explicitly observes branch registration
+// before its worker-slot wait, so external cancellation tests do not rely on
+// scheduler timing.
+func WithParallelBranchRegisteredForTest(fn func(int)) ParallelOption {
+	return func(t *ParallelTool) { t.onBranchRegistered = fn }
+}

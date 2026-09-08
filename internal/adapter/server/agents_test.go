@@ -7,7 +7,6 @@ import (
 	"time"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -26,12 +25,12 @@ func agentsService(t *testing.T, snapshot []*mecatlv1.AgentInfo) *server.Service
 		Policy:  permpolicy.NewPolicy(allowRules(), nil),
 		Model:   "test-model",
 	})
-	svc, err := server.NewService(server.Config{
-		Engine:     engine,
-		Store:      memstore.New(),
-		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		Now:        func() time.Time { return time.Unix(0, 0) },
-		Agents:     snapshot,
+	svc, err := newPlacementTestService(server.Config{
+		Engine: engine,
+		Store:  memstore.New(),
+
+		Now:    func() time.Time { return time.Unix(0, 0) },
+		Agents: snapshot,
 	})
 	if err != nil {
 		t.Fatalf("new service: %v", err)

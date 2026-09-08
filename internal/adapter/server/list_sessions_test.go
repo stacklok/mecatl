@@ -18,7 +18,6 @@ import (
 	"google.golang.org/grpc/status"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -43,11 +42,11 @@ func listSessionsService(t *testing.T, store port.SessionStore) *server.Service 
 		Policy:  permpolicy.NewPolicy(nil, nil),
 		Model:   "test-model",
 	})
-	svc, err := server.NewService(server.Config{
-		Engine:     engine,
-		Store:      store,
-		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		Now:        func() time.Time { return time.Unix(0, 0) },
+	svc, err := newPlacementTestService(server.Config{
+		Engine: engine,
+		Store:  store,
+
+		Now: func() time.Time { return time.Unix(0, 0) },
 		DefaultResolvedModel: server.ResolvedModel{
 			ProviderID: "openai",
 			ModelID:    "test-model",
@@ -138,7 +137,7 @@ func TestListSessionsOverJsonlstore(t *testing.T) {
 	// the session's OWN model, never the default engine's (the M1 regression this
 	// test guards).
 	mkSession := func(id session.SessionID, created time.Time, turns int, modelID string) *session.Session {
-		s := session.New(id, session.ModeDefault, "/ws", session.Limits{}, created)
+		s := session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, created)
 		s.ModelID = modelID
 		// Bump the turn counter by recording assistant turns.
 		for i := 0; i < turns; i++ {
@@ -444,11 +443,11 @@ func TestListSessionsGRPC(t *testing.T) {
 	if err != nil {
 		t.Fatalf("jsonlstore: %v", err)
 	}
-	sA := session.New("ls-a", session.ModeDefault, "/ws", session.Limits{}, time.Unix(1700000000, 0).UTC())
+	sA := session.New("ls-a", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1700000000, 0).UTC())
 	if err := st.Save(ctx, sA); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	sB := session.New("ls-b", session.ModeDefault, "/ws", session.Limits{}, time.Unix(1700000100, 0).UTC())
+	sB := session.New("ls-b", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1700000100, 0).UTC())
 	// sB used a non-default model at create time; its OWN persisted ModelID must
 	// surface here, never the service's DefaultResolvedModel ("test-model") — the
 	// M1 regression this test guards (a non-live row previously reported the
@@ -488,7 +487,7 @@ func TestListSessionsHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("jsonlstore: %v", err)
 	}
-	s := session.New("ls-http", session.ModeDefault, "/ws", session.Limits{}, time.Unix(1700000000, 0).UTC())
+	s := session.New("ls-http", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1700000000, 0).UTC())
 	if err := st.Save(ctx, s); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -546,11 +545,11 @@ func listSessionsServiceOverStore(t *testing.T, store port.SessionStore) *server
 		Policy:  permpolicy.NewPolicy(nil, nil),
 		Model:   "test-model",
 	})
-	svc, err := server.NewService(server.Config{
-		Engine:     engine,
-		Store:      store,
-		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		Now:        func() time.Time { return time.Unix(0, 0) },
+	svc, err := newPlacementTestService(server.Config{
+		Engine: engine,
+		Store:  store,
+
+		Now: func() time.Time { return time.Unix(0, 0) },
 		DefaultResolvedModel: server.ResolvedModel{
 			ProviderID: "openai",
 			ModelID:    "test-model",
@@ -645,7 +644,7 @@ func (s *corruptSessionIDStore) Load(context.Context, session.SessionID) (*sessi
 // malformed persisted bytes must not be repaired into a different clipboard handle.
 func TestGetSessionRejectsInvalidUTF8IDBeforeProtoMapping(t *testing.T) {
 	inner := memstore.New()
-	corrupt := session.New("bad\xffid", session.ModeDefault, "/workspace", session.Limits{}, time.Unix(1, 0))
+	corrupt := session.New("bad\xffid", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 	svc := listSessionsServiceOverStore(t, &corruptSessionIDStore{SessionStore: inner, sess: corrupt})
 
 	if _, err := svc.GetSession(context.Background(), "lookup-id"); !errors.Is(err, server.ErrInternal) {

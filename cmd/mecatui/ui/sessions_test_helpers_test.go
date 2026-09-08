@@ -17,7 +17,6 @@ func setActiveSessions(m *Model, state sessionsState) {
 	healthFetcher := initialized.healthFetcher
 	migration := initialized.migration
 	cleanup := initialized.cleanup
-	adopter := initialized.adopter
 	forker := initialized.forker
 	manager := initialized.manager
 	clipboard := initialized.clipboard
@@ -32,7 +31,6 @@ func setActiveSessions(m *Model, state sessionsState) {
 	initialized.healthFetcher = healthFetcher
 	initialized.migration = migration
 	initialized.cleanup = cleanup
-	initialized.adopter = adopter
 	initialized.forker = forker
 	initialized.manager = manager
 	initialized.clipboard = clipboard

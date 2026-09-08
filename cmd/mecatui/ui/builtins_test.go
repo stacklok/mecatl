@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -69,7 +70,7 @@ func builtinNames(caps client.Capabilities, w wiredCollaborators) []string {
 }
 
 // TestBuiltinCommandsCapsFilter pins the caps gate AND the fixed order: /clear,
-// /help, and /session are always present (and lead, in that order); /mcp needs
+// /help, /quit, and /session are always present (and lead, in that order); /mcp needs
 // caps.MCP && the MCP collaborator wired; /agents (the def inventory) needs caps.Agents &&
 // the agents collaborator wired; /team (the live overlay) needs caps.Teams;
 // /skills needs caps.Skills && the skills collaborator wired; /soul needs
@@ -77,7 +78,7 @@ func builtinNames(caps client.Capabilities, w wiredCollaborators) []string {
 // the user-model collaborator wired; /models needs caps.ModelSelection && the model
 // lister wired; /worktrees needs caps.Worktrees && the worktree lister wired
 // (issue #102); /effort is gated identically to /models and follows it (ADR 0055).
-// The fixed order is clear, help, session, mcp, agents, team, skills, soul, usermodel,
+// The fixed order is clear, help, quit, session, mcp, agents, team, skills, soul, usermodel,
 // models, effort, worktrees.
 func TestBuiltinCommandsCapsFilter(t *testing.T) {
 	all := client.Capabilities{MCP: true, Agents: true, Teams: true, Skills: true, Soul: true, UserModel: true, ModelSelection: true, Worktrees: true, Scheduling: true, ManualCompaction: true, Posture: "auto"}
@@ -118,6 +119,9 @@ func TestBuiltinCommandsCapsFilter(t *testing.T) {
 		{"schedule cap and wired", client.Capabilities{Scheduling: true}, wiredCollaborators{Scheduling: true}, []string{"clear", "help", "schedule"}},
 		{"sessions wired (no caps bit)", client.Capabilities{}, wiredCollaborators{Sessions: true}, []string{"clear", "help", "sessions"}},
 		{"sessions not wired", client.Capabilities{}, wiredCollaborators{}, []string{"clear", "help"}},
+		{"workspace enrollment cap but not wired", client.Capabilities{WorkspaceEnrollment: true}, wiredCollaborators{}, []string{"clear", "help"}},
+		{"workspace enrollment wired but no cap", client.Capabilities{}, wiredCollaborators{Workspace: true}, []string{"clear", "help"}},
+		{"workspace enrollment cap and wired", client.Capabilities{WorkspaceEnrollment: true}, wiredCollaborators{Workspace: true}, []string{"clear", "help", "tools-connect", "tools-cancel"}},
 		{"posture empty omits the builtin", client.Capabilities{}, wiredCollaborators{}, []string{"clear", "help"}},
 		{"posture set adds the builtin", client.Capabilities{Posture: "yolo"}, wiredCollaborators{}, []string{"clear", "help", "posture"}},
 		{"posture strict still shows (chrome is reportable)", client.Capabilities{Posture: "strict"}, wiredCollaborators{}, []string{"clear", "help", "posture"}},
@@ -131,7 +135,7 @@ func TestBuiltinCommandsCapsFilter(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			got := builtinNames(tc.caps, tc.w)
-			want := append([]string{"clear", "help", "session", "retry", "diagnostics"}, tc.want[2:]...)
+			want := append([]string{"clear", "help", "quit", "title", "session", "retry", "diagnostics"}, tc.want[2:]...)
 			if strings.Join(got, ",") != strings.Join(want, ",") {
 				t.Fatalf("builtinCommands order/filter = %v, want %v", got, want)
 			}
@@ -189,15 +193,48 @@ func TestBuiltinByName(t *testing.T) {
 	}
 }
 
-// TestDebugAskBuiltinGatedOnEnv pins the /debug-ask gate (issue #488): without
-// Deps.DebugAsk the builtin is absent; with it, it is registered.
-func TestDebugAskBuiltinGatedOnEnv(t *testing.T) {
+// TestDebugAskBuiltinGated pins the /debug-ask gate: without debug it is
+// absent; canonical Debug and the narrow DebugAsk alias each register it from
+// the same declaration used by known-name interception.
+func TestDebugAskBuiltinGated(t *testing.T) {
 	caps := client.Capabilities{}
 	if _, ok := builtinByName(caps, wiredCollaborators{}, "debug-ask"); ok {
-		t.Error("/debug-ask must be ABSENT without the DebugAsk gate")
+		t.Error("/debug-ask must be ABSENT without a debug gate")
 	}
-	if _, ok := builtinByName(caps, wiredCollaborators{DebugAsk: true}, "debug-ask"); !ok {
-		t.Error("/debug-ask must be registered with the DebugAsk gate on")
+	for _, wired := range []wiredCollaborators{{Debug: true}, {DebugAsk: true}} {
+		if _, ok := builtinByName(caps, wired, "debug-ask"); !ok {
+			t.Errorf("/debug-ask must be registered with debug wiring %+v", wired)
+		}
+	}
+	if len(debugBuiltins) != 1 || debugBuiltins[0].name != "debug-ask" || !isKnownBuiltinName(debugBuiltins[0].name) {
+		t.Fatalf("debug builtin declaration does not drive known-name interception: %#v", debugBuiltins)
+	}
+	for _, b := range builtinCommands(caps, wiredCollaborators{}) {
+		if b.name == "debug-ask" {
+			t.Fatal("debug-ask leaked into the normal palette rows")
+		}
+	}
+	for _, name := range builtinNameRegistry {
+		if name.name == "debug-ask" {
+			t.Fatal("debug-ask leaked into the normal builtin-name registry")
+		}
+	}
+}
+
+func TestDebugAskDispatchIsLocalOnlyWhenEnabled(t *testing.T) {
+	m, send := builtinDispatchModel(t, client.Capabilities{}, false)
+	m = typeText(t, m, "/debug-ask")
+	m, cmd := pressEnter(t, m)
+	if cmd != nil || len(send.frames()) != 0 || m.prompt.Value() == "" {
+		t.Fatal("disabled /debug-ask must stay local, blocked, and editable")
+	}
+
+	m, send = builtinDispatchModel(t, client.Capabilities{}, false)
+	m.deps.DebugAsk = true
+	m = typeText(t, m, "/debug-ask")
+	m, cmd = pressEnter(t, m)
+	if cmd != nil || len(send.frames()) != 0 || m.phase != phaseAwaitingApproval || m.prompt.Value() != "" {
+		t.Fatalf("enabled /debug-ask did not dispatch locally: phase=%v input=%q cmd=%v frames=%d", m.phase, m.prompt.Value(), cmd, len(send.frames()))
 	}
 }
 
@@ -267,9 +304,14 @@ func TestMergeCommands(t *testing.T) {
 	builtins := []client.Command{
 		{Name: "clear", Description: "clear it", Builtin: true},
 		{Name: "help", Description: "help", Builtin: true},
+		{Name: "quit", Description: "quit", Builtin: true},
 	}
 	discovered := []client.Command{
 		{Name: "clear", Description: "WORKSPACE clear — should be shadowed"}, // collides → dropped
+		{Name: "quit", Description: "WORKSPACE quit — should be shadowed"},   // collides → dropped
+		{Name: "QUIT", Description: "WORKSPACE upper quit — should be shadowed"},
+		{Name: "exit", Description: "WORKSPACE exit — alias is reserved"},
+		{Name: "EXIT", Description: "WORKSPACE upper exit — alias is reserved"},
 		{Name: "deploy", Description: "deploy"},
 		{Name: "deploy", Description: "dup deploy"}, // duplicate discovered → dropped
 		{Name: "review", Description: "review"},
@@ -277,7 +319,7 @@ func TestMergeCommands(t *testing.T) {
 
 	got := mergeCommands(builtins, discovered)
 
-	wantNames := []string{"clear", "help", "deploy", "review"}
+	wantNames := []string{"clear", "help", "quit", "deploy", "review"}
 	if len(got) != len(wantNames) {
 		t.Fatalf("merged len = %d (%v), want %d %v", len(got), got, len(wantNames), wantNames)
 	}
@@ -287,9 +329,14 @@ func TestMergeCommands(t *testing.T) {
 		}
 	}
 	// The "clear" that survived must be the BUILT-IN one (precedence), not the
-	// workspace row.
+	// workspace row. The dispatch-only /exit alias must have no palette row.
 	if !got[0].Builtin || got[0].Description != "clear it" {
 		t.Fatalf("collision: want built-in clear to win, got %+v", got[0])
+	}
+	for _, command := range got {
+		if !command.Builtin && (strings.EqualFold(command.Name, "quit") || strings.EqualFold(command.Name, "exit")) {
+			t.Fatalf("workspace quit/exit variants must not appear in the palette, got %+v", command)
+		}
 	}
 }
 
@@ -379,14 +426,14 @@ func TestClearBuiltinCreatesThenBindsThenCloses(t *testing.T) {
 	m.stuck = false
 	m.resolvedSessionModel = client.ResolvedModel{ProviderID: "effective-provider", ModelID: "effective-model", ReasoningEffort: "high"}
 	m.createModelSelection = client.ModelSelection{ProviderID: "stale-provider", ModelID: "stale-model", ReasoningEffort: "low"}
-	m.activeWorkspace = "/current-worktree"
+	m.activePlacement = client.Placement{Kind: "local", Label: "current-worktree"}
 	oldID := m.sessionID
 
 	m.pendingMode = "plan"
 	mm, clearCmd := m.runClear()
 	m = mm.(Model)
-	if m.phase != phaseConnecting || m.sessionID != oldID || m.conv.isEmpty() {
-		t.Fatalf("pending /clear must retain the old UI/session while blocking input: phase=%v id=%q empty=%v", m.phase, m.sessionID, m.conv.isEmpty())
+	if m.phase != phaseConnecting || m.sessionID != oldID || m.conv.isEmpty() || m.clearPending == nil {
+		t.Fatalf("pending /clear must retain the old UI/session while blocking input: phase=%v id=%q empty=%v pending=%v", m.phase, m.sessionID, m.conv.isEmpty(), m.clearPending)
 	}
 	if got := conv.closed(); len(got) != 0 {
 		t.Fatalf("old session closed before replacement creation: %v", got)
@@ -401,14 +448,8 @@ func TestClearBuiltinCreatesThenBindsThenCloses(t *testing.T) {
 	if !ok {
 		t.Fatalf("clear create message = %T, want clearSessionReadyMsg", msg)
 	}
-	if got := conv.createdWksp; got != "/current-worktree" {
-		t.Errorf("clear workspace = %q, want current worktree", got)
-	}
-	if got := conv.createdSel; got != (client.ModelSelection{ProviderID: "effective-provider", ModelID: "effective-model", ReasoningEffort: "high"}) {
-		t.Errorf("clear selection = %+v, want effective model plus effort", got)
-	}
-	if got := conv.mode; got != m.desiredMode() {
-		t.Errorf("clear mode = %q, want desired mode %q", got, m.desiredMode())
+	if ready.placement.Label == "" {
+		t.Error("clear successor omitted server-authored placement metadata")
 	}
 	if got := conv.closed(); len(got) != 0 {
 		t.Fatalf("old session closed before successful new-session binding: %v", got)
@@ -429,7 +470,7 @@ func TestClearBuiltinCreatesThenBindsThenCloses(t *testing.T) {
 	// A delayed mode response for the old session must not alter the replacement.
 	mm, _ = m.Update(client.ModeChangedMsg{SessionID: oldID, Mode: "plan"})
 	m = mm.(Model)
-	if m.activeMode != "plan" {
+	if m.activeMode != "default" {
 		t.Errorf("stale old-session mode update changed replacement mode to %q", m.activeMode)
 	}
 	m.prompt.Rewrite("new prompt")
@@ -446,21 +487,11 @@ func TestClearBuiltinCreatesThenBindsThenCloses(t *testing.T) {
 	if got := conv.closed(); !reflect.DeepEqual(got, []string{oldID}) {
 		t.Errorf("closed sessions = %v, want old session only after binding", got)
 	}
-	if got := conv.ops(); !reflect.DeepEqual(got, []string{"create", "close"}) {
+	if got := conv.ops(); !reflect.DeepEqual(got, []string{"clear", "close"}) {
 		t.Errorf("session RPC order = %v, want [create close]", got)
 	}
 	if m.sessionID == oldID || m.sessionID == "" {
 		t.Errorf("best-effort close failure must retain new session: id=%q", m.sessionID)
-	}
-}
-
-func TestClearSessionSelectionFallsBackWithoutResolvedModel(t *testing.T) {
-	m, _ := builtinDispatchModel(t, client.Capabilities{}, false)
-	want := client.ModelSelection{ProviderID: "saved-provider", ModelID: "saved-model", ReasoningEffort: "medium"}
-	m.createModelSelection = want
-	m.resolvedSessionModel = client.ResolvedModel{} // older server: no create/session echo
-	if got := m.clearSessionSelection(); got != want {
-		t.Errorf("clear selection without echo = %+v, want %+v", got, want)
 	}
 }
 
@@ -503,9 +534,9 @@ func TestClearBuiltinCreateFailureKeepsOldSession(t *testing.T) {
 	}
 }
 
-// TestClearBuiltinNoOpWhileRunning asserts /clear is rejected with a status while
-// a run streams, leaving the conversation intact.
-func TestClearBuiltinNoOpWhileRunning(t *testing.T) {
+// TestClearBuiltinWhileRunning starts one immediate clear request, preserves the
+// source transcript, and rejects a duplicate while the correlated handoff waits.
+func TestClearBuiltinWhileRunning(t *testing.T) {
 	m, _ := builtinDispatchModel(t, client.Capabilities{}, false)
 	m.conv.addUser("a prompt")
 	m.phase = phaseRunning
@@ -513,14 +544,143 @@ func TestClearBuiltinNoOpWhileRunning(t *testing.T) {
 	mm, cmd := m.runClear()
 	m = mm.(Model)
 
-	if m.conv.isEmpty() {
-		t.Error("/clear must NOT clear the conversation while running")
+	if m.conv.isEmpty() || m.phase != phaseConnecting || m.clearPending == nil {
+		t.Fatalf("/clear must preserve the running source while pending: empty=%v phase=%v pending=%v", m.conv.isEmpty(), m.phase, m.clearPending)
 	}
-	if cmd != nil {
-		t.Error("/clear no-op should issue no command")
+	if cmd == nil {
+		t.Fatal("/clear while running must issue ClearSession immediately")
 	}
-	if !strings.Contains(stripANSIstr(m.statusMsg), "cannot clear while running") {
-		t.Errorf("want 'cannot clear while running' status, got %q", stripANSIstr(m.statusMsg))
+	mm, duplicate := m.runClear()
+	m = mm.(Model)
+	if duplicate != nil || !strings.Contains(stripANSIstr(m.statusMsg), "already in progress") {
+		t.Fatalf("duplicate /clear = cmd %v status %q", duplicate, stripANSIstr(m.statusMsg))
+	}
+}
+
+func TestClearPendingBlocksSourceContinuationOnTerminal(t *testing.T) {
+	m, send := builtinDispatchModel(t, client.Capabilities{}, false)
+	m.phase = phaseRunning
+	m.queued = []string{"must stay queued"}
+	m.failedStepRetryRun = true
+	mm, _ := m.runClear()
+	m = mm.(Model)
+
+	beforeFrames := len(send.frames())
+	mm, cmd := m.Update(client.ResultMsg{Stop: "plan_approved"})
+	m = mm.(Model)
+	if m.clearPending == nil || !m.clearPending.sourceSettled || m.phase != phaseConnecting {
+		t.Fatalf("terminal source did not settle under pending clear: phase=%v pending=%+v", m.phase, m.clearPending)
+	}
+	if got := m.queued; !reflect.DeepEqual(got, []string{"must stay queued"}) {
+		t.Fatalf("pending clear drained source queue: %v", got)
+	}
+	if len(send.frames()) != beforeFrames {
+		t.Fatalf("pending clear started a source continuation: frames=%d want %d", len(send.frames()), beforeFrames)
+	}
+	if m.failedStepRetryRun || m.failedStepRetryAuthoritative {
+		t.Fatal("pending clear retained failed-step retry state after source settlement")
+	}
+	if cmd == nil {
+		t.Fatal("terminal source facts should still request a safe repaint")
+	}
+}
+
+func TestClearFailureAfterSourceStreamClosedReturnsIdle(t *testing.T) {
+	m, _ := builtinDispatchModel(t, client.Capabilities{}, false)
+	m.phase = phaseAwaitingApproval
+	mm, _ := m.runClear()
+	m = mm.(Model)
+	pending := *m.clearPending
+
+	mm, _ = m.Update(client.StreamClosedMsg{})
+	m = mm.(Model)
+	if m.clearPending == nil || !m.clearPending.sourceSettled || m.phase != phaseConnecting {
+		t.Fatalf("closed source was not tracked during clear: phase=%v pending=%+v", m.phase, m.clearPending)
+	}
+	mm, _ = m.Update(clearSessionFailedMsg{sourceID: pending.sourceID, token: pending.token, err: errors.New("temporary")})
+	m = mm.(Model)
+	if m.clearPending != nil || m.phase != phaseIdle {
+		t.Fatalf("failed clear restored a dead source stream: phase=%v pending=%+v", m.phase, m.clearPending)
+	}
+}
+
+func TestClearPendingPreservesGlobalSuspendAndQuit(t *testing.T) {
+	m, _ := builtinDispatchModel(t, client.Capabilities{}, false)
+	mm, _ := m.runClear()
+	m = mm.(Model)
+
+	mm, suspendCmd := m.Update(tea.KeyPressMsg{Code: 'z', Mod: tea.ModCtrl})
+	m = mm.(Model)
+	if !isSuspendCmd(suspendCmd) {
+		t.Fatal("pending clear swallowed global suspend")
+	}
+	mm, _ = m.Update(ctrlC())
+	m = mm.(Model)
+	if !m.quitArmed {
+		t.Fatal("pending clear swallowed global quit guard")
+	}
+	_, quitCmd := m.Update(ctrlC())
+	if !isQuitCmd(quitCmd) {
+		t.Fatal("pending clear swallowed confirmed global quit")
+	}
+}
+
+func TestClearFailureKeepsActiveSourceBlockedUntilDelayedTerminal(t *testing.T) {
+	m, send := builtinDispatchModel(t, client.Capabilities{}, false)
+	m.deps.DebugAsk = true
+	mm, _ := m.runDebugAsk()
+	m = mm.(Model)
+	askID := approvalSurfaceOf(t, m).ask.AskID
+	oldID := m.sessionID
+	m.queued = []string{"must not continue"}
+
+	m.prompt.Rewrite("/clear")
+	mm, clearCmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = mm.(Model)
+	if clearCmd == nil {
+		t.Fatal("/clear entered during approval did not issue ClearSession")
+	}
+	pending := *m.clearPending
+	mm, _ = m.Update(clearSessionFailedMsg{sourceID: oldID, token: pending.token, err: errors.New("temporary")})
+	m = mm.(Model)
+	if m.clearPending == nil || m.phase != phaseConnecting {
+		t.Fatalf("active clear failure re-enabled source: pending=%+v phase=%v", m.clearPending, m.phase)
+	}
+	if got := stripANSIstr(m.statusMsg); !strings.Contains(got, "waiting for the source to settle") || !strings.Contains(got, "retry") {
+		t.Fatalf("failure status = %q, want settle/retry guidance", got)
+	}
+
+	beforeFrames := len(send.frames())
+	m.prompt.Rewrite("must not send")
+	mm, promptCmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = mm.(Model)
+	if promptCmd != nil || len(send.frames()) != beforeFrames {
+		t.Fatal("clear failure admitted a prompt before source settlement")
+	}
+	mm, approvalCmd := m.Update(tea.KeyPressMsg{Code: 'a', Text: "a"})
+	m = mm.(Model)
+	if approvalCmd != nil || approvalSurfaceOf(t, m).ask.AskID != askID {
+		t.Fatal("clear failure admitted source approval before settlement")
+	}
+
+	mm, _ = m.Update(client.ResultMsg{Stop: "plan_approved"})
+	m = mm.(Model)
+	if m.clearPending != nil || m.phase != phaseIdle || m.sessionID != oldID {
+		t.Fatalf("delayed result did not settle failed clear: pending=%+v phase=%v id=%q", m.clearPending, m.phase, m.sessionID)
+	}
+	if len(send.frames()) != beforeFrames {
+		t.Fatal("delayed terminal started a plan or queue continuation")
+	}
+	if got := m.queued; !reflect.DeepEqual(got, []string{"must not continue"}) {
+		t.Fatalf("failed clear drained source queue: %v", got)
+	}
+	mm, _ = m.Update(client.StreamClosedMsg{})
+	m = mm.(Model)
+	if m.phase != phaseIdle || m.sessionID != oldID {
+		t.Fatalf("post-result stream close destabilized source: phase=%v id=%q", m.phase, m.sessionID)
+	}
+	if got := stripANSIstr(m.statusMsg); !strings.Contains(got, "retry /clear") {
+		t.Fatalf("settled failure status = %q, want retry guidance", got)
 	}
 }
 
@@ -567,8 +727,8 @@ func TestPaletteEnterRunsBuiltinDirectly(t *testing.T) {
 	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)
 
-	if m.phase != phaseConnecting || m.conv.isEmpty() {
-		t.Error("enter on built-in /clear row should start a create-first handoff, not text-complete")
+	if m.phase != phaseConnecting || m.conv.isEmpty() || m.clearPending == nil {
+		t.Error("enter on built-in /clear row should start a source-preserving handoff, not text-complete")
 	}
 	// Text-completion would have left "/clear " in the input; running clears it.
 	if strings.HasPrefix(m.prompt.Value(), "/clear") {
@@ -634,6 +794,67 @@ func TestBuiltinSubmitNeverSends(t *testing.T) {
 			}
 			if name == "/clear" && cmd == nil {
 				t.Errorf("%s submit should start session creation", name)
+			}
+		})
+	}
+}
+
+// TestQuitAliasesDispatchLocally pins /quit's always-on local dispatch and the
+// dispatch-only /exit alias, including case and Unicode-whitespace normalization.
+func TestQuitAliasesDispatchLocally(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		input string
+		phase phase
+	}{
+		{name: "quit idle", input: "/quit", phase: phaseIdle},
+		{name: "exit idle", input: "/exit", phase: phaseIdle},
+		{name: "quit case-insensitive", input: "/QUIT", phase: phaseRunning},
+		{name: "exit case-insensitive", input: "/EXIT", phase: phaseRunning},
+		{name: "quit Unicode whitespace", input: " \u2003/quit\u00a0", phase: phaseIdle},
+		{name: "exit Unicode whitespace", input: " \u2003/exit\u00a0", phase: phaseRunning},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, send := builtinDispatchModel(t, client.Capabilities{}, false)
+			m.phase = tc.phase
+			cancelled := false
+			m.cancelRun = func() { cancelled = true }
+			m.prompt.Rewrite(tc.input)
+
+			mm, cmd, handled := m.dispatchBareBuiltin(m.prompt.Value())
+			m = mm.(Model)
+			if !handled || !isQuitCmd(cmd) {
+				t.Fatalf("%q must dispatch locally to tea.Quit: handled=%t cmd=%v", tc.input, handled, cmd)
+			}
+			if !cancelled {
+				t.Error("local quit must cancel the active run closure")
+			}
+			if m.prompt.Value() != "" {
+				t.Errorf("local quit must consume its input, got %q", m.prompt.Value())
+			}
+			if len(send.frames()) != 0 {
+				t.Errorf("local quit must not send prompt frames, got %d", len(send.frames()))
+			}
+		})
+	}
+}
+
+// TestQuitAliasesWithArgsStayLocal verifies that both names retain argument-bearing
+// input and use the canonical no-arguments warning without sending a prompt.
+func TestQuitAliasesWithArgsStayLocal(t *testing.T) {
+	for _, input := range []string{"/quit now", "/EXIT\nnow"} {
+		t.Run(strings.ReplaceAll(input, "\n", "\\n"), func(t *testing.T) {
+			m, send := builtinDispatchModel(t, client.Capabilities{}, false)
+			m = typeText(t, m, input)
+			m, cmd := pressEnter(t, m)
+			if cmd != nil || len(send.frames()) != 0 {
+				t.Fatalf("%q must stay local: cmd=%v frames=%d", input, cmd, len(send.frames()))
+			}
+			if m.prompt.Value() != input {
+				t.Errorf("input = %q, want retained %q", m.prompt.Value(), input)
+			}
+			if got := stripANSIstr(m.statusMsg); !strings.Contains(got, "/quit does not take arguments; use bare /quit") {
+				t.Errorf("status = %q, want canonical /quit argument warning", got)
 			}
 		})
 	}
@@ -709,8 +930,8 @@ func TestDispatchBareBuiltinUnicodeWhitespaceThroughTextarea(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("Unicode-whitespace /clear must start its local replacement-session handoff")
 	}
-	if m.phase != phaseConnecting || m.conv.isEmpty() {
-		t.Fatalf("pending Unicode-whitespace /clear must retain the old UI while connecting: phase=%v empty=%v", m.phase, m.conv.isEmpty())
+	if m.phase != phaseConnecting || m.conv.isEmpty() || m.clearPending == nil {
+		t.Fatalf("pending Unicode-whitespace /clear must retain the old UI while awaiting handoff: phase=%v empty=%v pending=%v", m.phase, m.conv.isEmpty(), m.clearPending)
 	}
 	ready := firstBatchLeaf(t, cmd)
 	mm, _ := m.Update(ready)
@@ -733,7 +954,7 @@ func TestDispatchBareBuiltinUnicodeWhitespaceThroughTextarea(t *testing.T) {
 // from the builtinCommands table AND that an unknown name is false.
 func TestIsKnownBuiltinName(t *testing.T) {
 	known := []string{
-		"clear", "help", "session", "retry", "diagnostics", "compact", "mcp", "agents", "team", "skills", "soul", "usermodel",
+		"clear", "help", "quit", "title", "session", "retry", "diagnostics", "compact", "mcp", "agents", "team", "skills", "soul", "usermodel",
 		"models", "effort", "worktrees", "schedule", "sessions", "learning", "learning-sensitivity", "posture",
 		"debug-ask",
 	}

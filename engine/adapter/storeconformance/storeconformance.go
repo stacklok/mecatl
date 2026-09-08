@@ -147,6 +147,19 @@ func Run(t *testing.T, newStore func(t *testing.T) port.SessionStore) {
 				t.Errorf("PendingAsk = %+v want %+v", gotAsk, ask)
 			}
 		})
+		t.Run("authorizing with pending authorization", func(t *testing.T) {
+			st := newStore(t)
+			s := authorizingSession(t, "conf-authorizing")
+			got := roundTrip(t, st, s)
+			pending, ok := got.PendingAuthorization()
+			if got.State != session.StateAuthorizing || !ok {
+				t.Fatalf("round trip = state %q pending %+v, %v", got.State, pending, ok)
+			}
+			wantExpiry := time.Unix(1_800_000_000, 0)
+			if pending.Authorization.ID != "authorization-1" || pending.Authorization.Binding != "opaque binding/value\nline" || !pending.Authorization.ExpiresAt.Equal(wantExpiry) || pending.Call.ID != "parked" || string(pending.Call.Args) != "{ \"effective\" : true }" || len(pending.Deferred) != 1 || pending.Deferred[0].ID != "later" {
+				t.Fatalf("PendingAuthorization = %+v", pending)
+			}
+		})
 		t.Run("cancelled", func(t *testing.T) {
 			st := newStore(t)
 			s := newSession("conf-cancelled")
@@ -614,8 +627,8 @@ func RunMetadataPager(t *testing.T, newStore func(t *testing.T) port.SessionStor
 			if row.EstimatedBytes <= 0 {
 				t.Fatalf("discovery metadata for %q omitted a positive byte estimate", row.ID)
 			}
-			if row.Workspace != "/work/space" || row.Kind != session.SessionKindMain {
-				t.Fatalf("discovery metadata for %q = workspace %q kind %q", row.ID, row.Workspace, row.Kind)
+			if row.EnvironmentRef != (session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/work/space", Revision: "rev-1"}) || row.Kind != session.SessionKindMain {
+				t.Fatalf("discovery metadata for %q = environment_ref %+v kind %q", row.ID, row.EnvironmentRef, row.Kind)
 			}
 		}
 	}
@@ -671,17 +684,44 @@ func RunConditionalPrunable(t *testing.T, newStore func(t *testing.T) port.Sessi
 	}
 }
 
-// newSession constructs an idle session with non-default limits, workspace,
+func authorizingSession(t *testing.T, id session.SessionID) *session.Session {
+	t.Helper()
+	s := newSession(id)
+	mustOK(t, "BeginTurn", s.BeginTurn())
+	calls := []session.ToolCall{
+		session.NewToolCall("done", "Read", json.RawMessage(`{"path":"done"}`)),
+		session.NewToolCall("parked", "external_create", json.RawMessage(`{"title":"review"}`)),
+		session.NewToolCall("later", "external_list", json.RawMessage(`{"after":"today"}`)),
+	}
+	mustOK(t, "RecordAssistant", s.RecordAssistant(session.NewAssistantMessage("", "", calls)))
+	mustOK(t, "RecordToolResults", s.RecordToolResults([]session.ToolResult{session.NewToolResult("done", "ok")}))
+	effectiveCall := calls[1]
+	effectiveCall.Args = json.RawMessage(`{ "effective" : true }`)
+	mustOK(t, "PauseForAuthorization", s.PauseForAuthorization(session.PendingAuthorization{
+		Authorization: session.ExternalAuthorization{
+			ID:        "authorization-1",
+			Binding:   "opaque binding/value\nline",
+			ExpiresAt: time.Unix(1_800_000_000, 0),
+		},
+		Call: effectiveCall, Deferred: []session.ToolCall{calls[2]},
+	}))
+	return s
+}
+
+// newSession constructs an idle session with non-default limits, exact placement,
+// mode and a fixed (whole-nanosecond, UTC) creation time so timestamp
 // mode and a fixed (whole-nanosecond, UTC) creation time so timestamp
 // round-trip equality is well-defined.
 func newSession(id session.SessionID) *session.Session {
-	return session.New(
+	s := session.New(
 		id,
 		session.ModeAccept,
-		"/work/space",
+		session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/work/space", Revision: "in-tree-v1"},
 		session.Limits{MaxTurns: 7, MaxToolCalls: 21, MaxConsecutiveFailures: 3},
 		time.Date(2026, 6, 1, 12, 30, 45, 123456789, time.UTC),
 	)
+	s.EnvironmentRef = session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/work/space", Revision: "rev-1"}
+	return s
 }
 
 // representativeSession builds a session exercising every history shape
@@ -759,8 +799,8 @@ func assertSessionEqual(t *testing.T, got, want *session.Session) {
 	if got.Counters != want.Counters {
 		t.Errorf("Counters = %+v want %+v", got.Counters, want.Counters)
 	}
-	if got.Workspace != want.Workspace {
-		t.Errorf("Workspace = %q want %q", got.Workspace, want.Workspace)
+	if got.EnvironmentRef != want.EnvironmentRef {
+		t.Errorf("EnvironmentRef = %+v want %+v", got.EnvironmentRef, want.EnvironmentRef)
 	}
 	if got.Profile != want.Profile {
 		t.Errorf("Profile = %q want %q", got.Profile, want.Profile)

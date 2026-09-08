@@ -15,7 +15,6 @@ import (
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/adapter/eventsource"
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -49,10 +48,10 @@ func eventActorService(t *testing.T, log port.EventLog) *server.Service {
 		Policy:  permpolicy.NewPolicy(allowRules(), nil),
 		Model:   "test-model",
 	})
-	svc, err := server.NewService(server.Config{
-		Engine:              engine,
-		Store:               memstore.New(),
-		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+	svc, err := newPlacementTestService(server.Config{
+		Engine: engine,
+		Store:  memstore.New(),
+
 		Now:                 func() time.Time { return time.Unix(0, 0) },
 		DefaultCapabilities: llm.Capabilities(),
 		EventLog:            log,
@@ -139,7 +138,7 @@ func TestCallerIdentity_Scenario4_EventActorStampedAtAppendOnly(t *testing.T) {
 
 	newAliceSession := func() *session.Session {
 		t.Helper()
-		s, err := svc.CreateSession(ctx, "/ws", session.ModeDefault, session.Limits{MaxTurns: 4})
+		s, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{MaxTurns: 4})
 		if err != nil {
 			t.Fatalf("CreateSession: %v", err)
 		}
@@ -186,7 +185,7 @@ func TestCallerIdentity_Scenario4_EventActorStampedAtAppendOnly(t *testing.T) {
 
 	// (c) The loop half: a session drained straight off Run.Events() so no relay
 	// (and therefore no appendEvent) is involved.
-	direct, err := svc.CreateSession(ctx, "/ws", session.ModeDefault, session.Limits{MaxTurns: 4})
+	direct, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{MaxTurns: 4})
 	if err != nil {
 		t.Fatalf("CreateSession (direct): %v", err)
 	}
@@ -222,7 +221,7 @@ func TestCallerIdentity_Scenario4_EventActorLogOnly(t *testing.T) {
 	ctx := session.WithPrincipal(context.Background(), alice)
 	log := memstore.NewEventLog()
 	svc := eventActorService(t, log)
-	sess, err := svc.CreateSession(ctx, "/ws", session.ModeDefault, session.Limits{MaxTurns: 4})
+	sess, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{MaxTurns: 4})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -264,7 +263,7 @@ func TestCallerIdentity_Scenario4_EventActorLogOnly(t *testing.T) {
 		stamped[i].Actor = bob // a DIFFERENT principal than the snapshot owner
 	}
 	meta := eventsource.SessionMeta{
-		ID: "s-fold", Mode: session.ModeDefault, Workspace: "/ws", CreatedAt: time.Unix(0, 0),
+		ID: "s-fold", Mode: session.ModeDefault, EnvironmentRef: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, CreatedAt: time.Unix(0, 0),
 	}
 	plain, err := eventsource.Fold(meta, evSeq(base))
 	if err != nil {
@@ -302,7 +301,7 @@ func TestCallerIdentity_Scenario4_OwnerlessEventActorAbsent(t *testing.T) {
 	log := memstore.NewEventLog()
 	svc := eventActorService(t, log)
 	// No principal in the context: the pre-ship / no-auth path.
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{MaxTurns: 4})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{MaxTurns: 4})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -312,7 +311,7 @@ func TestCallerIdentity_Scenario4_OwnerlessEventActorAbsent(t *testing.T) {
 	driveConverse(t, svc, sess.ID)
 
 	// An OWNED session driven with no verified caller on the context.
-	owned, err := svc.CreateSession(session.WithPrincipal(context.Background(), alice), "/ws", session.ModeDefault, session.Limits{MaxTurns: 4})
+	owned, err := svc.CreateSession(session.WithPrincipal(context.Background(), alice), session.ModeDefault, session.Limits{MaxTurns: 4})
 	if err != nil {
 		t.Fatalf("CreateSession (owned): %v", err)
 	}

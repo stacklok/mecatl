@@ -39,6 +39,7 @@ import (
 	"time"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+	"golang.org/x/oauth2"
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/tool"
@@ -74,9 +75,15 @@ type ServerConfig struct {
 	// Headers are extra HTTP headers sent on every request to the server, such
 	// as "Authorization: Bearer ...". Optional.
 	Headers map[string]string
+	// TokenSource supplies a session-scoped OAuth bearer at request time. It is
+	// mutually exclusive with credential Headers and preserves token refresh/expiry.
+	TokenSource oauth2.TokenSource
 	// OAuth enables the adapter-local authorization-code controller. It is
 	// mutually exclusive with a static Authorization header.
 	OAuth *OAuthOptions
+	// HTTPClient optionally supplies the transport for the Streamable HTTP client.
+	// Nil preserves the default transport behavior.
+	HTTPClient *http.Client
 	// Timeout bounds the connect handshake and tool listing. If zero,
 	// defaultConnectTimeout is used. It does not bound later tool calls, which
 	// are governed by the per-call context.
@@ -379,6 +386,43 @@ func (h *headerRoundTripper) RoundTrip(req *http.Request) (*http.Response, error
 	return h.base.RoundTrip(req)
 }
 
+type bearerRoundTripper struct {
+	base   http.RoundTripper
+	origin string
+	source oauth2.TokenSource
+}
+
+func (t *bearerRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	base := t.base
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	if requestOrigin(req.URL) != t.origin {
+		return base.RoundTrip(req)
+	}
+	return (&oauth2.Transport{Source: bearerTokenSource{source: t.source}, Base: base}).RoundTrip(req)
+}
+
+type bearerTokenSource struct {
+	source oauth2.TokenSource
+}
+
+func (s bearerTokenSource) Token() (*oauth2.Token, error) {
+	token, err := s.source.Token()
+	if err != nil {
+		return nil, err
+	}
+	if token == nil || token.AccessToken == "" || (token.TokenType != "" && !strings.EqualFold(token.TokenType, "Bearer")) {
+		return nil, errors.New("mcp: token source returned a non-bearer token")
+	}
+	if token.TokenType == "" {
+		tokenClone := *token
+		tokenClone.TokenType = "Bearer"
+		token = &tokenClone
+	}
+	return token, nil
+}
+
 // requestOrigin returns the lowercased scheme://host origin of u (host includes the
 // port). It is the comparison key headerRoundTripper uses to decide whether the
 // per-server headers may ride on a request — a redirected cross-origin hop yields a
@@ -462,6 +506,20 @@ func HasCredentialHeaders(headers map[string]string) bool {
 }
 
 func prepareOAuthServerConfig(ctx context.Context, cfg ServerConfig) (ServerConfig, *OAuthController, error) {
+	if cfg.TokenSource != nil && HasCredentialHeaders(cfg.Headers) {
+		return cfg, nil, errors.New("mcp: static credential headers and token source are mutually exclusive")
+	}
+	if cfg.TokenSource != nil && cfg.OAuth != nil {
+		return cfg, nil, errors.New("mcp: token source and OAuth are mutually exclusive")
+	}
+	if cfg.TokenSource != nil {
+		if err := ValidateClientURL(cfg.URL); err != nil {
+			return cfg, nil, err
+		}
+	}
+	if cfg.HTTPClient != nil && cfg.OAuth != nil {
+		return cfg, nil, errors.New("mcp: custom HTTP client and OAuth are mutually exclusive")
+	}
 	if cfg.OAuth == nil {
 		return cfg, nil, nil
 	}
@@ -487,6 +545,10 @@ func prepareOAuthServerConfig(ctx context.Context, cfg ServerConfig) (ServerConf
 
 func newMCPHTTPClient(cfg ServerConfig, oauth *OAuthController) *http.Client {
 	client := &http.Client{}
+	if cfg.HTTPClient != nil {
+		clientCopy := *cfg.HTTPClient
+		client = &clientCopy
+	}
 	if oauth != nil {
 		resourceURL, _ := url.Parse(cfg.URL)
 		client.CheckRedirect = mcpOAuthRedirectPolicy(requestOrigin(resourceURL), cfg.OAuth.Network.MaxRedirects)
@@ -513,6 +575,13 @@ func newMCPHTTPClient(cfg ServerConfig, oauth *OAuthController) *http.Client {
 		// The OAuth branch above has its own stricter origin-pinned policy
 		// (mcpOAuthRedirectPolicy) and keeps it; this is the branch that had none.
 		client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	}
+	if cfg.TokenSource != nil {
+		origin := ""
+		if parsed, err := url.Parse(cfg.URL); err == nil {
+			origin = requestOrigin(parsed)
+		}
+		client.Transport = &bearerRoundTripper{base: client.Transport, origin: origin, source: cfg.TokenSource}
 	}
 	if len(cfg.Headers) == 0 {
 		return client

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"math"
 
+	"google.golang.org/protobuf/types/known/timestamppb"
+
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/session"
@@ -134,6 +136,9 @@ func toProto(ev session.Event) *mecatlv1.Event {
 		Turn:  ClampInt32(ev.Turn),
 		Text:  valid(ev.Text),
 	}
+	if ev.Title != nil {
+		out.Title = toProtoSessionTitle(*ev.Title)
+	}
 	if ev.ToolCall != nil {
 		out.ToolCall = toProtoToolCall(*ev.ToolCall)
 	}
@@ -148,6 +153,9 @@ func toProto(ev session.Event) *mecatlv1.Event {
 			RetryDisposition: retryDispositionToProto(ev.ModelRetry.Disposition),
 			StreamProgress:   streamProgressToProto(ev.ModelRetry.Progress),
 		}
+	}
+	if ev.Authorization != nil {
+		out.Authorization = toProtoAuthorization(*ev.Authorization)
 	}
 	if ev.Result != nil {
 		out.Result = toProtoResult(*ev.Result)
@@ -188,6 +196,16 @@ func toProto(ev session.Event) *mecatlv1.Event {
 	return out
 }
 
+func toProtoAuthorization(p session.AuthorizationPayload) *mecatlv1.Authorization {
+	return &mecatlv1.Authorization{
+		AuthorizationId: valid(p.AuthorizationID),
+		DisplayName:     valid(p.DisplayName),
+		CallId:          valid(string(p.Call)),
+		ExpiresAt:       timestamppb.New(p.ExpiresAt),
+		Status:          string(p.Status),
+	}
+}
+
 // toProtoSteer maps a session.SteerPayload to its proto SteerEcho form: the
 // CLIENT-VISIBLE, authoritative echo of the committed operator steer (EvSteer).
 // The text is operator-supplied (producer-influenced), so it rides the valid()
@@ -205,31 +223,29 @@ func toProtoSteer(p session.SteerPayload) *mecatlv1.SteerEcho {
 // content — preserving gauntlet #7.
 func toProtoParallel(p session.ParallelPayload) *mecatlv1.Parallel {
 	return &mecatlv1.Parallel{
-		ParentCallId:    p.ParentCallID,
-		Kind:            string(p.Kind),
-		Join:            valid(p.Join), // model-authored arg, not a harness token: normalizeJoin passes unknown values through
-		BranchCount:     ClampInt32(p.BranchCount),
-		BranchIndex:     ClampInt32(p.BranchIndex),
-		ChildId:         p.ChildID,
-		BranchLabel:     valid(p.BranchLabel),
-		Goal:            valid(p.Goal),
-		RoutedCategory:  p.RoutedCategory,
-		RoutedModel:     p.RoutedModel,
-		RoutingReason:   p.RoutingReason,
-		Model:           p.Model,
-		ToolName:        valid(p.ToolName),
-		IsError:         p.IsError,
-		ToolCount:       ClampInt32(p.ToolCount),
-		InnerKind:       string(p.InnerKind),
-		Text:            valid(p.Text),
-		Detail:          valid(p.Detail),
-		Failed:          p.Failed,
-		Workspace:       valid(p.Workspace),
-		Stop:            string(p.Stop),
-		Usage:           toProtoUsage(p.Usage),
-		DurationMs:      p.DurationMs,
-		Winner:          ClampInt32(p.Winner),
-		WinnerWorkspace: valid(p.WinnerWorkspace),
+		ParentCallId:   p.ParentCallID,
+		Kind:           string(p.Kind),
+		Join:           valid(p.Join), // model-authored arg, not a harness token: normalizeJoin passes unknown values through
+		BranchCount:    ClampInt32(p.BranchCount),
+		BranchIndex:    ClampInt32(p.BranchIndex),
+		ChildId:        p.ChildID,
+		BranchLabel:    valid(p.BranchLabel),
+		Goal:           valid(p.Goal),
+		RoutedCategory: p.RoutedCategory,
+		RoutedModel:    p.RoutedModel,
+		RoutingReason:  p.RoutingReason,
+		Model:          p.Model,
+		ToolName:       valid(p.ToolName),
+		IsError:        p.IsError,
+		ToolCount:      ClampInt32(p.ToolCount),
+		InnerKind:      string(p.InnerKind),
+		Text:           valid(p.Text),
+		Detail:         valid(p.Detail),
+		Failed:         p.Failed,
+		Stop:           string(p.Stop),
+		Usage:          toProtoUsage(p.Usage),
+		DurationMs:     p.DurationMs,
+		Winner:         ClampInt32(p.Winner),
 	}
 }
 
@@ -790,27 +806,77 @@ func toProtoUsage(u session.Usage) *mecatlv1.Usage {
 	}
 }
 
+func toProtoTokenUsage(in map[session.UsageKind]session.TokenUsage) map[string]*mecatlv1.TokenUsage {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]*mecatlv1.TokenUsage, len(in))
+	for kind, bucket := range in {
+		models := make(map[string]*mecatlv1.Usage, len(bucket.Models))
+		for model, usage := range bucket.Models {
+			models[valid(model)] = toProtoUsage(usage)
+		}
+		out[string(kind)] = &mecatlv1.TokenUsage{Total: toProtoUsage(bucket.Total), Models: models}
+	}
+	return out
+}
+
 // toProtoSession maps a session.Session aggregate to its proto snapshot.
 func toProtoSession(s *session.Session, rm ResolvedModel, caps *mecatlv1.ServerCapabilities) *mecatlv1.Session {
+	//nolint:staticcheck // title/provenance are intentionally dual-written compatibility fields.
 	return &mecatlv1.Session{
-		SessionId:               string(s.ID),
-		State:                   string(s.State),
-		Mode:                    modeToProto(s.Mode),
-		Workspace:               valid(s.Workspace),
-		Limits:                  limitsToProto(s.Limits),
-		Turns:                   ClampInt32(s.Counters.Turns),
-		ToolCalls:               ClampInt32(s.Counters.ToolCalls),
-		CreatedAtUnix:           s.CreatedAt.Unix(),
-		ResolvedModel:           resolvedModelToProto(rm),
-		Title:                   valid(s.Title),
-		TitleProvenance:         string(s.TitleProvenance),
-		Capabilities:            caps,
-		AdoptionSourceSessionId: valid(string(adoptionSourceID(s))),
-		Kind:                    string(s.Kind),
-		Relationship:            toProtoSessionRelationship(s.Relationship),
-		DebugMcpServers:         validStrings(s.DebugMCPServers),
-		DebugMcpTools:           validStrings(s.DebugMCPTools),
+		SessionId:       string(s.ID),
+		State:           string(s.State),
+		Mode:            modeToProto(s.Mode),
+		Limits:          limitsToProto(s.Limits),
+		Turns:           ClampInt32(s.Counters.Turns),
+		ToolCalls:       ClampInt32(s.Counters.ToolCalls),
+		CreatedAtUnix:   s.CreatedAt.Unix(),
+		ResolvedModel:   resolvedModelToProto(rm),
+		Title:           valid(s.Title),
+		TitleProvenance: valid(string(s.TitleProvenance)),
+		TitleMetadata:   toProtoSessionTitle(titlePayload(s)),
+		TokenUsage:      toProtoTokenUsage(s.TokenUsageSnapshot()),
+		Capabilities:    caps,
+		Kind:            string(s.Kind),
+		Relationship:    toProtoSessionRelationship(s.Relationship),
+		DebugMcpServers: validStrings(s.DebugMCPServers),
+		DebugMcpTools:   validStrings(s.DebugMCPTools),
+		Placement:       placementMetadataToProto(s.Placement),
 	}
+}
+
+func titlePayload(s *session.Session) session.TitlePayload {
+	payload := session.TitlePayload{
+		Title:           DeriveTitle(s),
+		Provenance:      s.TitleProvenance,
+		GenerationState: s.TitleGeneration,
+		Revision:        s.TitleRevision,
+	}
+	if s.Title == "" && payload.Title != "" {
+		payload.Provenance = session.TitleProvenanceFirstPrompt
+	}
+	if attempts := s.TitleAttempts(); len(attempts) > 0 {
+		payload.LatestAttempt = &attempts[len(attempts)-1]
+	}
+	return payload
+}
+
+// toProtoSessionTitle maps only the bounded, source-free title lifecycle
+// projection. Title source prompts and provider errors have no wire fields.
+func toProtoSessionTitle(p session.TitlePayload) *mecatlv1.SessionTitle {
+	out := &mecatlv1.SessionTitle{
+		Title:           valid(p.Title),
+		Provenance:      valid(string(p.Provenance)),
+		GenerationState: valid(string(p.GenerationState)),
+		Revision:        p.Revision,
+	}
+	if p.LatestAttempt != nil {
+		out.LatestAttempt = &mecatlv1.TitleAttemptSummary{
+			Id: valid(p.LatestAttempt.ID), Outcome: valid(string(p.LatestAttempt.Outcome)),
+		}
+	}
+	return out
 }
 
 // resolvedModelToProto maps the server-side ResolvedModel value to its proto form.
@@ -975,21 +1041,22 @@ func toProtoCommands(cs []Command) []*mecatlv1.Command {
 	return out
 }
 
-// toProtoWorktree maps a Service Worktree to its proto form (issue #102).
-func toProtoWorktree(w Worktree) *mecatlv1.Worktree {
-	return &mecatlv1.Worktree{
-		Path:   valid(w.Path),
-		Branch: valid(w.Branch),
-		Head:   valid(w.Head),
-		Bare:   w.Bare,
+func placementMetadataToProto(meta session.PlacementMetadata) *mecatlv1.PlacementMetadata {
+	if meta.Kind == "" {
+		return nil
+	}
+	return &mecatlv1.PlacementMetadata{
+		Kind: valid(meta.Kind), Label: valid(meta.Label), Branch: valid(meta.Branch), Revision: valid(meta.Revision),
 	}
 }
 
-// toProtoWorktrees maps a slice of Service Worktrees to their proto form.
-func toProtoWorktrees(wts []Worktree) []*mecatlv1.Worktree {
+func toProtoScopedWorktrees(wts []ScopedWorktree) []*mecatlv1.Worktree {
 	out := make([]*mecatlv1.Worktree, 0, len(wts))
 	for _, w := range wts {
-		out = append(out, toProtoWorktree(w))
+		out = append(out, &mecatlv1.Worktree{
+			Selector: valid(w.Selector), Kind: "worktree", Label: valid(w.Label),
+			Branch: valid(w.Branch), Revision: valid(w.Revision), Bare: w.Bare,
+		})
 	}
 	return out
 }
@@ -998,6 +1065,12 @@ func toProtoWorktrees(wts []Worktree) []*mecatlv1.Worktree {
 // picker row, issue #245 Phase 1) to its proto form. It projects ONLY the
 // picker metadata — no conversation content.
 func toProtoSessionSummary(s SessionSummary) *mecatlv1.SessionSummary {
+	metadata := s.TitleMetadata
+	if metadata.Title == "" {
+		metadata.Title = s.Title
+		metadata.Provenance = s.TitleProvenance
+	}
+	//nolint:staticcheck // title/provenance are intentionally dual-written compatibility fields.
 	return &mecatlv1.SessionSummary{
 		SessionId:       s.SessionID,
 		ModifiedAtUnix:  s.ModifiedAtUnix,
@@ -1006,8 +1079,10 @@ func toProtoSessionSummary(s SessionSummary) *mecatlv1.SessionSummary {
 		ModelId:         s.ModelID,
 		CreatedAtUnix:   s.CreatedAtUnix,
 		Title:           valid(s.Title),
-		TitleProvenance: string(s.TitleProvenance),
-		Workspace:       valid(s.Workspace),
+		TitleProvenance: valid(string(s.TitleProvenance)),
+		TitleMetadata:   toProtoSessionTitle(metadata),
+		TokenUsage:      toProtoTokenUsage(s.TokenUsage),
+		Placement:       placementMetadataToProto(s.Placement),
 		Owner:           toProtoPrincipal(s.Owner),
 		Kind:            string(s.Kind),
 		Relationship:    toProtoSessionRelationship(s.Relationship),

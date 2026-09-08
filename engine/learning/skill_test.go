@@ -71,6 +71,10 @@ func TestExplicitLearnProcedureSignalDoesNotBroadenFactRemember(t *testing.T) {
 
 type compileSkillRepository struct{}
 
+func (compileSkillRepository) Generation(context.Context, learning.SkillPartition) (learning.SkillGeneration, error) {
+	return 0, nil
+}
+
 func (compileSkillRepository) CreateDraft(context.Context, learning.SkillPartition, string, learning.SkillBundle, learning.SkillProvenance) (learning.SkillVersion, error) {
 	return learning.SkillVersion{}, nil
 }

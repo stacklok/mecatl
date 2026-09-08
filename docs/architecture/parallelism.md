@@ -107,51 +107,37 @@ and the Team-unique structures add task/finding snapshots (capped value types), 
 cue, the context meter, and `team.end` aggregate usage plus closed-enum
 member dispositions (`done` or `stopped` for `error`/`cancelled`/`budget`).
 
-A team-wide **token budget** complements the per-run one ([the agent loop](agent-loop.md)):
-`Supervisor.WithTeamTokenBudget` (`--max-team-tokens`, **default: unlimited**; gRPC
-`CreateTeamRequest.max_team_tokens`; a per-call Team `max_team_tokens` arg may
-only tighten it) is a supervisor-level ceiling checked at the ROUND boundary
-before scheduling — the in-flight round and the lead's synthesis still
-complete, and members are never individually stopped — accumulating each
-member's per-drive usage and surfacing via `TeamOutcome.BudgetExhausted` plus
-a `StopBudget` team stop. It is orthogonal to `--max-run-tokens`, which each
-member inherits per-run.
+A team-wide **token budget** is distinct from the independently enforced per-engine
+`MaxRunTokens` ceilings ([the agent loop](agent-loop.md)). The configured
+`MaxRunTokens` value is inherited by the main engine, every Subagent, every Parallel
+branch, every team member, and lead synthesis; each engine checks only its own session
+usage. Parent usage excludes child spend, so a delegation tree can exceed that
+per-engine ceiling. `Supervisor.WithTeamTokenBudget` (`--max-team-tokens`, **default:
+unlimited**; gRPC `CreateTeamRequest.max_team_tokens`; a per-call Team
+`max_team_tokens` arg may only tighten it) is instead a supervisor-level aggregate
+checked at the ROUND boundary before scheduling. Once crossed it prevents new rounds;
+the current round and the lead's synthesis still complete, and members are never
+individually stopped. It surfaces via `TeamOutcome.BudgetExhausted` plus a `StopBudget`
+team stop.
 
-## Worktree binding — operator-owned existing worktrees (issue #102)
+## Worktree placement — server-owned existing worktrees (ADR 0291)
 
-The fork seam above creates EPHEMERAL internal worktrees for isolation. A
-distinct, operator-facing concern is binding a session to an ALREADY-EXISTING git
-worktree so ALL local tools (`Read`/`Edit`/`Write`/`Grep`/`Glob`/`Bash`) are
-rooted there. The session workspace is set at `CreateSession` time and the file
-tools scope to it; the gap mecatl had was no first-class way to pick a sibling
-worktree AFTER launch (issue #102).
+The fork seam above creates ephemeral internal environments for isolation. Operator-facing
+worktree selection is a different, source-session-scoped capability. Clients cannot pass a
+path at CreateSession. `ListWorktrees(session_id)` authorizes the owner, exactly reattaches
+the source environment, and enumerates only currently eligible worktrees. Results contain
+bounded display metadata and an opaque selector, never a root or exact EnvironmentRef.
 
-The fix (see [ADR 0032](../adr/0032-worktree-binding.md)) is three clear,
-separated interfaces:
+The local selector is HMAC-SHA256 over provider-private current identity plus caller/source
+scope using one random Build-owned key. It is never decoded or retained in a registry/map.
+ClearSession/ForkSession re-list and constant-time match it, then atomically bind the complete
+successor Environment. Restart invalidates selectors and clients relist. No-FS returns empty
+without filesystem discovery and cannot upgrade. Mecatui keeps the source active when relist
+or successor creation fails. Internal preserved-fork, delegation, and artifact handles are
+distinct typed capabilities and can never be replayed as these selectors.
 
-- **Discovery** — a `ListWorktrees(workspace)` RPC backed by a
-  composition-injected, nil-safe `WorktreeLister` port (mirrors `ListCommands`).
-  The osfs-backed implementation shells out to `git worktree list --porcelain`
-  with the same scrubbed+neutralised git env as `gitSnapshot`, trust-gated,
-  fail-soft. A no-FS/cloud deployment leaves it nil ⇒ empty list +
-  `ServerCapabilities.worktrees = false`, so the feature is honestly absent
-  there (cloud-native compatible).
-- **Routing** — a session whose `workspace != Config.DefaultWorkspace` (the
-  launch root) routes through the per-session engine factory, which ALREADY
-  re-pins the CHILD permission resolver to the session root
-  (`childPermResolverFor`). The main policy ALREADY re-resolves
-  `.mecatl/settings.yaml` per workspace. When `DefaultWorkspace == ""` (a
-  child/member/cloud service) the trigger never fires. The session rehydrates to
-  the SAME worktree-rooted engine after a restart (the `needsRehydration`
-  widening).
-- **Switching** — mecatui's `/worktrees` overlay (a selecting overlay mirroring
-  `/models`) lists the worktrees and, on select, closes the old session and
-  creates a NEW one rooted at the chosen worktree via
-  `CreateSessionInWorkspace` (the restart-now precedent). Operator-driven only;
-  the model has no workspace-switch tool; a live session is never mutated.
-
-Trust stays OPERATOR-tier at launch (worktrees share `.git`); osfs path
-confinement is unchanged.
+Trust remains composition/operator policy; osfs confinement and the Environment
+Workspace/runner affinity are unchanged.
 
 ## Prerequisites
 

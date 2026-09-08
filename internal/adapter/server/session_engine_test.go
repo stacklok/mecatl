@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -38,10 +37,10 @@ func newMCPServiceStore(t *testing.T, sharedReply string, factory server.Session
 		Model:   "test-model",
 	})
 	store := memstore.New()
-	svc, err := server.NewService(server.Config{
-		Engine:        shared,
-		Store:         store,
-		Workspaces:    func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+	svc, err := newPlacementTestService(server.Config{
+		Engine: shared,
+		Store:  store,
+
 		DefaultLimits: session.Limits{MaxTurns: 10, MaxToolCalls: 20},
 		Now:           func() time.Time { return time.Unix(0, 0) },
 		SessionEngine: factory,
@@ -57,7 +56,7 @@ func newMCPServiceStore(t *testing.T, sharedReply string, factory server.Session
 // the reopen-if-completed path. It returns the session id.
 func persistCompleted(t *testing.T, store *memstore.Store) session.SessionID {
 	t.Helper()
-	sess := session.New("sess-1", session.ModeDefault, "/ws", session.Limits{MaxTurns: 3}, time.Unix(0, 0))
+	sess := session.New("sess-1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 3}, time.Unix(0, 0))
 	if err := sess.BeginTurn(); err != nil {
 		t.Fatalf("BeginTurn: %v", err)
 	}
@@ -92,7 +91,7 @@ func TestCreateSessionWithMCPEmptySpecsSharedEngine(t *testing.T) {
 	}
 	svc := newMCPService(t, "shared reply", factory)
 
-	sess, err := svc.CreateSessionWithMCP(context.Background(), "/ws", session.ModeDefault, session.Limits{}, nil)
+	sess, err := svc.CreateSessionWithMCP(context.Background(), session.ModeDefault, session.Limits{}, nil)
 	if err != nil {
 		t.Fatalf("CreateSessionWithMCP: %v", err)
 	}
@@ -114,7 +113,7 @@ func TestCreateSessionWithMCPEmptySpecsSharedEngine(t *testing.T) {
 // SessionEngine factory configured is an invalid-argument error.
 func TestCreateSessionWithMCPNilFactory(t *testing.T) {
 	svc := newMCPService(t, "shared", nil) // no SessionEngine
-	_, err := svc.CreateSessionWithMCP(context.Background(), "/ws", session.ModeDefault, session.Limits{},
+	_, err := svc.CreateSessionWithMCP(context.Background(), session.ModeDefault, session.Limits{},
 		[]mcp.ServerConfig{{Name: "docs", URL: "https://example.test/mcp"}})
 	if err == nil || !errors.Is(err, server.ErrInvalidArgument) {
 		t.Fatalf("want ErrInvalidArgument for specs without a factory, got %v", err)
@@ -139,7 +138,7 @@ func TestStartRunRoutesToPerSessionEngine(t *testing.T) {
 	}
 	svc := newMCPService(t, "shared reply", factory)
 
-	sess, err := svc.CreateSessionWithMCP(context.Background(), "/ws", session.ModeDefault, session.Limits{},
+	sess, err := svc.CreateSessionWithMCP(context.Background(), session.ModeDefault, session.Limits{},
 		[]mcp.ServerConfig{{Name: "docs", URL: "https://example.test/mcp"}})
 	if err != nil {
 		t.Fatalf("CreateSessionWithMCP: %v", err)
@@ -198,10 +197,10 @@ func TestEndSessionEvictsLearnedAndTearsDown(t *testing.T) {
 		Policy:  permpolicy.NewPolicy(nil, nil),
 		Model:   "test-model",
 	})
-	svc, err := server.NewService(server.Config{
-		Engine:        shared,
-		Store:         memstore.New(),
-		Workspaces:    func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+	svc, err := newPlacementTestService(server.Config{
+		Engine: shared,
+		Store:  memstore.New(),
+
 		DefaultLimits: session.Limits{MaxTurns: 10, MaxToolCalls: 20},
 		Now:           func() time.Time { return time.Unix(0, 0) },
 		SessionEngine: factory,
@@ -213,7 +212,7 @@ func TestEndSessionEvictsLearnedAndTearsDown(t *testing.T) {
 		t.Fatalf("new service: %v", err)
 	}
 
-	sess, err := svc.CreateSessionWithMCP(context.Background(), "/ws", session.ModeDefault, session.Limits{},
+	sess, err := svc.CreateSessionWithMCP(context.Background(), session.ModeDefault, session.Limits{},
 		[]mcp.ServerConfig{{Name: "docs", URL: "https://example.test/mcp"}})
 	if err != nil {
 		t.Fatalf("CreateSessionWithMCP: %v", err)
@@ -253,11 +252,11 @@ func TestServiceCloseTearsDownSessionEngines(t *testing.T) {
 		return server.SessionEngineResult{Engine: eng, Close: func() error { closed.Add(1); return nil }}, nil
 	}
 	svc := newMCPService(t, "shared", factory)
-	if _, err := svc.CreateSessionWithMCP(context.Background(), "/ws", session.ModeDefault, session.Limits{},
+	if _, err := svc.CreateSessionWithMCP(context.Background(), session.ModeDefault, session.Limits{},
 		[]mcp.ServerConfig{{Name: "a", URL: "https://a.test/mcp"}}); err != nil {
 		t.Fatalf("create a: %v", err)
 	}
-	if _, err := svc.CreateSessionWithMCP(context.Background(), "/ws", session.ModeDefault, session.Limits{},
+	if _, err := svc.CreateSessionWithMCP(context.Background(), session.ModeDefault, session.Limits{},
 		[]mcp.ServerConfig{{Name: "b", URL: "https://b.test/mcp"}}); err != nil {
 		t.Fatalf("create b: %v", err)
 	}

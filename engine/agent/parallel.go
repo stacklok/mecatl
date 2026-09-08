@@ -187,6 +187,11 @@ type ParallelTool struct {
 	// ids, the prefixes keeping them disjoint by convention. The store is consumed as
 	// the port.SessionStore interface, never a concrete adapter.
 	store port.SessionStore
+
+	// onBranchRegistered is a test-only sequencing seam. It runs after a branch is
+	// registered with the parent child-run registry and before its worker-slot wait.
+	// Nil in production.
+	onBranchRegistered func(int)
 }
 
 // ParallelOption configures a ParallelTool.
@@ -351,10 +356,10 @@ func (*ParallelTool) Spec() tool.ToolSpec {
 			"`join` controls the result: 'all' (default) returns every branch summary, then destroys " +
 			"every branch fork — files cannot later be inspected, copied, or merged, so each branch must " +
 			"include any needed patch or details in its summary; 'first' returns the first branch that " +
-			"SUCCEEDS, cancels the rest, and keeps the winner's fork (path reported); 'judge'/'best' " +
+			"SUCCEEDS, cancels the rest, and keeps the winner's fork (opaque artifact handle reported); 'judge'/'best' " +
 			"has an LLM pick the single best branch against `criteria` and keeps the winner's fork " +
-			"(path reported). Multi-branch runs never auto-merge (inspect a preserved winner's fork path " +
-			"yourself if needed). Each branch reports a `branch id:` line you can pass to InspectSubagent " +
+			"(opaque artifact handle reported). Multi-branch runs never auto-merge. " +
+			"Each branch reports a `branch id:` line you can pass to InspectSubagent " +
 			"to pull that branch's bounded transcript (e.g. to debug a failed or not-selected branch).",
 		Schema: parallelSchema,
 	}
@@ -431,6 +436,9 @@ type branchResult struct {
 	index     int
 	label     string
 	childRoot string
+	// artifact is the opaque public handle for a preserved winner. It never
+	// contains or resolves as a placement selector or physical root.
+	artifact ArtifactHandle
 	// childEnv is the forked child Environment (Workspace + bound runner), kept
 	// for the single-branch auto-merge fast path (EnvironmentMerger.Merge takes
 	// child + parent Environments). nil on a fork-failed / no-fork branch. Not
@@ -480,7 +488,7 @@ func (r branchResult) runCleanup() {
 // immediately, so callers must treat the reported workspace path as ephemeral.
 func (t *ParallelTool) preserveWinner(w branchResult) {
 	if t.winnerReaper != nil {
-		t.winnerReaper.Preserve(w.childRoot, w.cleanup)
+		t.winnerReaper.Preserve(w.artifact, w.cleanup)
 	}
 }
 
@@ -590,7 +598,6 @@ func (e branchEmitter) branchEnd(res branchResult, stop session.StopReason, usag
 		ChildIncarnation: res.childIncarnation,
 		ToolCount:        toolCount,
 		Failed:           res.failed,
-		Workspace:        res.childRoot,
 		Stop:             stop,
 		Usage:            usage,
 		DurationMs:       dur.Milliseconds(),
@@ -598,20 +605,18 @@ func (e branchEmitter) branchEnd(res branchResult, stop session.StopReason, usag
 }
 
 // end emits the run-level parallel.end event after the winner is resolved. winner is a
-// real branchResult.index (join=first/judge) or -1 (join=all / none-succeeded); ws is the
-// winner's preserved fork root ("" when there is no winner).
-func (e branchEmitter) end(join string, branchCount, winner int, winnerWorkspace string, usage session.Usage, stop session.StopReason) {
+// real branchResult.index (join=first/judge) or -1 (join=all / none-succeeded).
+func (e branchEmitter) end(join string, branchCount, winner int, usage session.Usage, stop session.StopReason) {
 	if !e.active() {
 		return
 	}
 	e.emit(session.Event{Type: session.EvParallelEnd, Parallel: &session.ParallelPayload{
-		ParentCallID:    e.parentCallID,
-		Join:            join,
-		BranchCount:     branchCount,
-		Winner:          winner,
-		WinnerWorkspace: winnerWorkspace,
-		Usage:           usage,
-		Stop:            stop,
+		ParentCallID: e.parentCallID,
+		Join:         join,
+		BranchCount:  branchCount,
+		Winner:       winner,
+		Usage:        usage,
+		Stop:         stop,
 	}})
 }
 
@@ -691,7 +696,7 @@ func (t *ParallelTool) run(ctx context.Context, call session.ToolCall, env tool.
 			r.runCleanup()
 		}
 		// join=all has no winner: Winner=-1, no preserved workspace.
-		be.end(join, len(tasks), -1, "", sumBranchUsage(results), session.StopReason(""))
+		be.end(join, len(tasks), -1, sumBranchUsage(results), session.StopReason(""))
 		return session.NewToolResult(call.ID, joinBranches(results)), nil
 	}
 }
@@ -713,7 +718,7 @@ func (t *ParallelTool) executeFirst(ctx context.Context, callID session.ToolCall
 		for _, r := range results {
 			r.runCleanup()
 		}
-		be.end(joinFirst, len(results), -1, "", sumBranchUsage(results), session.StopReason(""))
+		be.end(joinFirst, len(results), -1, sumBranchUsage(results), session.StopReason(""))
 		return session.NewToolResult(callID, joinBranches(results))
 	}
 	// Clean every loser before auto-merging the winner. The winner is not handed
@@ -730,7 +735,7 @@ func (t *ParallelTool) executeFirst(ctx context.Context, callID session.ToolCall
 	if errResult != nil {
 		return *errResult
 	}
-	be.end(joinFirst, len(results), winner, results[winner].childRoot, sumBranchUsage(results), session.StopEndTurn)
+	be.end(joinFirst, len(results), winner, sumBranchUsage(results), session.StopEndTurn)
 	return session.NewToolResult(callID, joinFirstResult(results, winner, autoMerged))
 }
 
@@ -748,11 +753,11 @@ func (t *ParallelTool) autoMergeWinner(ctx context.Context, env tool.Environment
 		return false, nil
 	}
 	if merr := t.autoMerger.Merge(ctx, results[winner].childEnv, env); merr != nil {
-		be.end(join, len(results), winner, results[winner].childRoot, sumBranchUsage(results), session.StopError)
+		be.end(join, len(results), winner, sumBranchUsage(results), session.StopError)
 		errRes := session.NewToolError(callID, fmt.Sprintf(
 			"Parallel: auto-merge of the winning branch into this workspace FAILED: %v "+
-				"(winner workspace path: %q; it is ephemeral and may already be removed if graceful shutdown began)",
-			merr, results[winner].childRoot))
+				"(preserved artifact %q remains available for authorized inspection until LRU eviction or graceful app shutdown; it may already have been removed if shutdown began)",
+			merr, results[winner].artifact))
 		return false, &errRes
 	}
 	return true, nil
@@ -780,7 +785,7 @@ func (t *ParallelTool) executeJudge(ctx context.Context, callID session.ToolCall
 		for _, r := range results {
 			r.runCleanup()
 		}
-		be.end(joinJudge, len(results), -1, "", sumBranchUsage(results), session.StopReason(""))
+		be.end(joinJudge, len(results), -1, sumBranchUsage(results), session.StopReason(""))
 		return session.NewToolResult(callID, joinBranches(results))
 	}
 
@@ -818,7 +823,7 @@ func (t *ParallelTool) executeJudge(ctx context.Context, callID session.ToolCall
 	if errResult != nil {
 		return *errResult
 	}
-	be.end(joinJudge, len(results), winner, results[winner].childRoot, sumBranchUsage(results), session.StopEndTurn)
+	be.end(joinJudge, len(results), winner, sumBranchUsage(results), session.StopEndTurn)
 	return session.NewToolResult(callID, joinJudgeResult(results, winner, rationale, autoMerged))
 }
 
@@ -879,6 +884,9 @@ func (t *ParallelTool) launchBranch(ctx context.Context, sem chan struct{}, call
 	if err := caps.registerChildRun(branchCtx, childID, childFamilyParallelBranch, branchLabel(i), cancel, false); err != nil {
 		return branchResult{index: i, label: branchLabel(i), childID: string(childID), failed: true,
 			failReason: fmt.Sprintf("child session could not be protected: %v", err)}
+	}
+	if t.onBranchRegistered != nil {
+		t.onBranchRegistered(i)
 	}
 	select {
 	case sem <- struct{}{}:
@@ -994,7 +1002,8 @@ func (t *ParallelTool) runBranch(ctx context.Context, callID session.ToolCallID,
 	// childID is the branch's child session id, set up front so EVERY terminal (incl.
 	// fork-failed / errored / cancelled) carries the discoverable "branch id:" — the
 	// same id the registry/emitter use and WithParallelStore persists under.
-	res := branchResult{index: i, label: label, childID: string(t.childSessionID(caps.parentSessionID, callID, i))}
+	childID := string(t.childSessionID(caps.parentSessionID, callID, i))
+	res := branchResult{index: i, label: label, childID: childID, artifact: ArtifactHandle("artifact-" + childID)}
 
 	// OPT-IN model router (ADR 0034): classify this branch's composed prompt ONCE (each
 	// branch routes at most once — this is the only call site, on the per-branch
@@ -1063,13 +1072,13 @@ func (t *ParallelTool) runBranch(ctx context.Context, callID session.ToolCallID,
 	if caps.parentSessionID == "" {
 		// Direct Tool.Execute has no parent aggregate identity. Classify that
 		// custom-host path unknown rather than fabricating lineage or granting main.
-		childSess = session.New(t.childSessionID("", callID, i), t.childMode,
-			childEnv.Workspace().Root(), t.limits, branchEngine.now())
+		childSess = newChildSessionInEnvironment(t.childSessionID("", callID, i), t.childMode,
+			childEnv, t.limits, branchEngine.now())
 		err = childSess.RestoreSessionMetadata(session.SessionKindUnknown, session.SessionRelationship{})
 	} else {
-		childSess, err = session.NewParallelBranch(
+		childSess, err = newParallelBranchSessionInEnvironment(
 			t.childSessionID(caps.parentSessionID, callID, i), t.childMode,
-			childEnv.Workspace().Root(), t.limits, branchEngine.now(),
+			childEnv, t.limits, branchEngine.now(),
 			caps.parentSessionID, caps.parentIncarnation, callID, i)
 	}
 	if err != nil {
@@ -1342,9 +1351,9 @@ func joinFirstResult(results []branchResult, winner int, autoMerged bool) string
 	var b strings.Builder
 	fmt.Fprintf(&b, "Parallel (join=first): %s succeeded first of %d branch(es).\n", w.label, len(results))
 	if autoMerged {
-		fmt.Fprintf(&b, "winner auto-merged into this workspace (--parallel-auto-merge): %s\n", w.childRoot)
+		b.WriteString("winner auto-merged into this workspace (--parallel-auto-merge)\n")
 	} else {
-		writeWinnerWorkspace(&b, w)
+		writeWinnerArtifact(&b, w)
 	}
 	fmt.Fprintf(&b, "\n=== %s [WINNER] ===\n", w.label)
 	// The winner's discoverable "branch id:" (issue #30) — prominent so the model can
@@ -1407,9 +1416,9 @@ func joinJudgeResult(results []branchResult, winner int, rationale string, autoM
 		fmt.Fprintf(&b, "Judge rationale: %s\n", rationale)
 	}
 	if autoMerged {
-		fmt.Fprintf(&b, "winner auto-merged into this workspace: %s\n", w.childRoot)
+		b.WriteString("winner auto-merged into this workspace\n")
 	} else {
-		writeWinnerWorkspace(&b, w)
+		writeWinnerArtifact(&b, w)
 	}
 	fmt.Fprintf(&b, "\n=== %s [WINNER] ===\n", w.label)
 	// The winner's discoverable "branch id:" (issue #30).
@@ -1441,14 +1450,13 @@ func joinJudgeResult(results []branchResult, winner int, rationale string, autoM
 	return b.String()
 }
 
-// writeWinnerWorkspace renders the selected winner's ephemeral workspace path.
-// If the reaper is still open it retains the cleanup until LRU eviction or graceful
-// app shutdown; if shutdown has begun, Preserve immediately cleans it. A crash can
-// still leave the workspace behind. A single-branch winner may already be auto-merged
-// into the parent, which its caller reports separately.
-func writeWinnerWorkspace(b *strings.Builder, w branchResult) {
-	if w.childRoot != "" {
-		fmt.Fprintf(b, "winner workspace (ephemeral — inspect or merge before LRU eviction or graceful app shutdown; it may already be removed if shutdown began, while a crash may leave it behind): %s\n", w.childRoot)
+// writeWinnerArtifact renders the opaque preserved-artifact handle for a selected
+// winner. The handle carries no root, exact EnvironmentRef, or placement authority.
+// Retention remains bounded by LRU eviction and graceful app shutdown.
+func writeWinnerArtifact(b *strings.Builder, w branchResult) {
+	if w.artifact != "" {
+		fmt.Fprintf(b, "winner artifact (PRESERVED): %s\n", w.artifact)
+		b.WriteString("artifact retention is ephemeral — inspect or merge before LRU eviction or graceful app shutdown; it may already be removed if shutdown began\n")
 	}
 }
 

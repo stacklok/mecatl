@@ -24,7 +24,6 @@ import (
 	"google.golang.org/grpc/status"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -139,10 +138,10 @@ func clientMCPServiceUnreachable(t *testing.T, permit bool, rec *mcpSpecRecorder
 		Model:   "test-model",
 	})
 	cfg := server.Config{
-		Engine:           shared,
-		Store:            memstore.New(),
-		Workspaces:       func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		DefaultWorkspace: "/ws",
+		Engine: shared,
+		Store:  memstore.New(),
+
+		SharedEngineRoot: "/ws",
 		Now:              func() time.Time { return time.Unix(0, 0) },
 		Diagnostics:      diag,
 		// The deployment policy under test. Derived by mecated from listener
@@ -187,7 +186,7 @@ func clientMCPServiceUnreachable(t *testing.T, permit bool, rec *mcpSpecRecorder
 			}, nil
 		},
 	}
-	svc, err := server.NewService(cfg)
+	svc, err := newPlacementTestService(cfg)
 	if err != nil {
 		t.Fatalf("new service: %v", err)
 	}
@@ -272,7 +271,6 @@ func TestSDKServerEnablers_Scenario9_UDSSessionMountsMCPServers(t *testing.T) {
 		defer cancel()
 
 		cs, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{
-			Workspace:  "/ws",
 			McpServers: []*mecatlv1.McpServerSpec{protoMCPEntry()},
 		})
 		if err != nil {
@@ -324,7 +322,6 @@ func TestSDKServerEnablers_Scenario9_UDSSessionMountsMCPServers(t *testing.T) {
 		srv := httpFor(t, svc)
 
 		code, body := postCreate(t, srv, map[string]any{
-			"workspace":   "/ws",
 			"mcp_servers": []any{httpMCPEntry()},
 		})
 		if code != http.StatusCreated {
@@ -345,7 +342,7 @@ func TestSDKServerEnablers_Scenario9_UDSSessionMountsMCPServers(t *testing.T) {
 		client, cleanup := dialGRPC(t, svc)
 		defer cleanup()
 
-		if _, err := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{Workspace: "/ws"}); err != nil {
+		if _, err := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{}); err != nil {
 			t.Fatalf("CreateSession without mcp_servers: %v", err)
 		}
 		if rec.count() != 0 {
@@ -375,7 +372,6 @@ func TestSDKServerEnablers_Scenario9_McpServersRejectedOnTCPListener(t *testing.
 		defer cleanup()
 
 		_, err := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{
-			Workspace:  "/ws",
 			McpServers: []*mecatlv1.McpServerSpec{protoMCPEntry()},
 		})
 		if err == nil {
@@ -399,7 +395,6 @@ func TestSDKServerEnablers_Scenario9_McpServersRejectedOnTCPListener(t *testing.
 		srv := httpFor(t, svc)
 
 		code, body := postCreate(t, srv, map[string]any{
-			"workspace":   "/ws",
 			"mcp_servers": []any{httpMCPEntry()},
 		})
 		if code != http.StatusNotImplemented {
@@ -420,7 +415,7 @@ func TestSDKServerEnablers_Scenario9_McpServersRejectedOnTCPListener(t *testing.
 		client, cleanup := dialGRPC(t, svc)
 		defer cleanup()
 
-		if _, err := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{Workspace: "/ws"}); err != nil {
+		if _, err := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{}); err != nil {
 			t.Fatalf("plain CreateSession on a network-facing deployment: %v", err)
 		}
 	})
@@ -440,7 +435,7 @@ func TestSDKServerEnablers_Scenario9_ClientMCPRefusalIsWireScoped(t *testing.T) 
 	rec := &mcpSpecRecorder{}
 	svc := clientMCPService(t, false, rec, nil, mockllm.New(mockllm.TextTurn("ok")))
 
-	if _, err := svc.CreateSessionWithMCP(context.Background(), "/ws", session.ModeDefault, session.Limits{}, []mcp.ServerConfig{{
+	if _, err := svc.CreateSessionWithMCP(context.Background(), session.ModeDefault, session.Limits{}, []mcp.ServerConfig{{
 		Name: "notes", URL: "https://mcp.example/mcp", Timeout: mcp.ClientConnectTimeout,
 	}}); err != nil {
 		t.Fatalf("the in-process ACP entry was refused by a WIRE deployment policy: %v", err)
@@ -538,7 +533,6 @@ func TestSDKServerEnablers_Scenario9_ListenerScopedFeatureAdvertisement(t *testi
 
 			// Advertised implies accepted; unadvertised implies refused.
 			_, err = client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{
-				Workspace:  "/ws",
 				McpServers: []*mecatlv1.McpServerSpec{protoMCPEntry()},
 			})
 			if tc.permit && err != nil {
@@ -608,7 +602,6 @@ func TestInvariant_no_stdio_mcp_ever(t *testing.T) {
 
 				client, cleanup := dialGRPC(t, svc)
 				_, err := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{
-					Workspace: "/ws",
 					McpServers: []*mecatlv1.McpServerSpec{{
 						Name:    tc.spec.Name,
 						Url:     tc.spec.URL,
@@ -636,7 +629,6 @@ func TestInvariant_no_stdio_mcp_ever(t *testing.T) {
 
 				srv := httpFor(t, svc)
 				code, body := postCreate(t, srv, map[string]any{
-					"workspace": "/ws",
 					"mcp_servers": []any{map[string]any{
 						"name":    tc.spec.Name,
 						"url":     tc.spec.URL,
@@ -699,7 +691,6 @@ func TestSDKServerEnablers_Scenario9_McpHeadersNeverLogged(t *testing.T) {
 		defer cancel()
 
 		cs, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{
-			Workspace:  "/ws",
 			McpServers: []*mecatlv1.McpServerSpec{protoMCPEntry()},
 		})
 		if err != nil {
@@ -753,7 +744,6 @@ func TestSDKServerEnablers_Scenario9_McpHeadersNeverLogged(t *testing.T) {
 
 				client, cleanup := dialGRPC(t, svc)
 				_, err := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{
-					Workspace: "/ws",
 					McpServers: []*mecatlv1.McpServerSpec{{
 						Name:    "notes",
 						Url:     a.url,
@@ -770,7 +760,6 @@ func TestSDKServerEnablers_Scenario9_McpHeadersNeverLogged(t *testing.T) {
 
 				srv := httpFor(t, svc)
 				_, body := postCreate(t, srv, map[string]any{
-					"workspace": "/ws",
 					"mcp_servers": []any{map[string]any{
 						"name":    "notes",
 						"url":     a.url,
@@ -798,7 +787,6 @@ func TestSDKServerEnablers_Scenario9_McpHeadersNeverLogged(t *testing.T) {
 
 		client, cleanup := dialGRPC(t, svc)
 		_, err := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{
-			Workspace:  "/ws",
 			McpServers: []*mecatlv1.McpServerSpec{protoMCPEntry()},
 		})
 		cleanup()
@@ -809,7 +797,6 @@ func TestSDKServerEnablers_Scenario9_McpHeadersNeverLogged(t *testing.T) {
 
 		srv := httpFor(t, svc)
 		_, body := postCreate(t, srv, map[string]any{
-			"workspace":   "/ws",
 			"mcp_servers": []any{httpMCPEntry()},
 		})
 		assertClean(t, "http problem body", string(body))
@@ -894,7 +881,6 @@ func TestSDKServerEnablers_Scenario9_SingleMCPValidationPath(t *testing.T) {
 		}
 
 		_, err := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{
-			Workspace:  "/ws",
 			McpServers: []*mecatlv1.McpServerSpec{{Name: bad.Name, Type: bad.Type, Url: bad.URL}},
 		})
 		if err == nil {
@@ -915,7 +901,7 @@ func TestSDKServerEnablers_Scenario9_SingleMCPValidationPath(t *testing.T) {
 		for i := range mcp.MaxClientServers + 1 {
 			many = append(many, &mecatlv1.McpServerSpec{Name: fmt.Sprintf("s%d", i), Type: "http", Url: "https://mcp.example/mcp"})
 		}
-		if _, err := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{Workspace: "/ws", McpServers: many}); err == nil {
+		if _, err := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{McpServers: many}); err == nil {
 			t.Fatalf("accepted %d servers; the shared cap is %d (a create connects them concurrently under a bounded fan-out, so the cap bounds connection blast, not wall-clock)", len(many), mcp.MaxClientServers)
 		}
 	})
@@ -994,7 +980,6 @@ func TestSDKServerEnablers_Scenario9_PartialMountFailsTheWireCreate(t *testing.T
 		defer cleanup()
 
 		_, err := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{
-			Workspace:  "/ws",
 			McpServers: twoServers,
 		})
 		if err == nil {
@@ -1032,7 +1017,6 @@ func TestSDKServerEnablers_Scenario9_PartialMountFailsTheWireCreate(t *testing.T
 		defer cleanup()
 
 		_, err := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{
-			Workspace:  "/ws",
 			McpServers: twoServers,
 		})
 		if err == nil {
@@ -1050,7 +1034,6 @@ func TestSDKServerEnablers_Scenario9_PartialMountFailsTheWireCreate(t *testing.T
 		srv := httpFor(t, svc)
 
 		code, body := postCreate(t, srv, map[string]any{
-			"workspace": "/ws",
 			"mcp_servers": []map[string]any{
 				{"name": "notes", "url": "https://notes.example/mcp", "type": "http"},
 				{"name": "calendar", "url": "https://cal.example/mcp", "type": "http"},
@@ -1082,7 +1065,6 @@ func TestSDKServerEnablers_Scenario9_PartialMountFailsTheWireCreate(t *testing.T
 		defer cleanup()
 
 		cs, err := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{
-			Workspace:  "/ws",
 			McpServers: twoServers,
 		})
 		if err != nil {
@@ -1107,7 +1089,7 @@ func TestSDKServerEnablers_Scenario9_PartialMountToleratedOnACPPath(t *testing.T
 	rec := &mcpSpecRecorder{}
 	svc := clientMCPServiceUnreachable(t, true, rec, nil, mockllm.New(mockllm.TextTurn("ok")), []string{"calendar"})
 
-	sess, err := svc.CreateSessionWithMCP(context.Background(), "/ws", session.ModeDefault, session.Limits{}, []mcp.ServerConfig{
+	sess, err := svc.CreateSessionWithMCP(context.Background(), session.ModeDefault, session.Limits{}, []mcp.ServerConfig{
 		{Name: "notes", URL: "https://notes.example/mcp", Timeout: mcp.ClientConnectTimeout},
 		{Name: "calendar", URL: "https://cal.example/mcp", Timeout: mcp.ClientConnectTimeout},
 	})
@@ -1132,10 +1114,10 @@ func TestSDKServerEnablers_Scenario9_PartialMountToleratedOnACPPath(t *testing.T
 // exists to prevent, and it would pass its tests while doing so.
 func TestSDKServerEnablers_Scenario9_UnreportedMountFailsClosed(t *testing.T) {
 	svc := mustService(t, server.Config{
-		Engine:            sharedTestEngine(),
-		Store:             memstore.New(),
-		Workspaces:        func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		DefaultWorkspace:  "/ws",
+		Engine: sharedTestEngine(),
+		Store:  memstore.New(),
+
+		SharedEngineRoot:  "/ws",
 		Now:               func() time.Time { return time.Unix(0, 0) },
 		ClientMCPOnCreate: true,
 		// A factory that mounts specs but never populates MountedClientMCP.
@@ -1150,7 +1132,6 @@ func TestSDKServerEnablers_Scenario9_UnreportedMountFailsClosed(t *testing.T) {
 	defer cleanup()
 
 	_, err := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{
-		Workspace:  "/ws",
 		McpServers: []*mecatlv1.McpServerSpec{protoMCPEntry()},
 	})
 	if err == nil {
@@ -1163,7 +1144,7 @@ func TestSDKServerEnablers_Scenario9_UnreportedMountFailsClosed(t *testing.T) {
 
 	// An ordinary create with NO mcp_servers must be entirely unaffected: the
 	// check keys on a REQUEST for servers, never on the field being unpopulated.
-	if _, err := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{Workspace: "/ws"}); err != nil {
+	if _, err := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{}); err != nil {
 		t.Fatalf("ordinary create broke: %v", err)
 	}
 }
@@ -1181,7 +1162,7 @@ func sharedTestEngine() *agent.Engine {
 
 func mustService(t *testing.T, cfg server.Config) *server.Service {
 	t.Helper()
-	svc, err := server.NewService(cfg)
+	svc, err := newPlacementTestService(cfg)
 	if err != nil {
 		t.Fatalf("new service: %v", err)
 	}
@@ -1258,7 +1239,6 @@ func TestSDKServerEnablers_Scenario9_ServerNameIsValidated(t *testing.T) {
 			defer cleanup()
 
 			_, err := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{
-				Workspace:  "/ws",
 				McpServers: tc.servers,
 			})
 			if err == nil {
@@ -1286,7 +1266,6 @@ func TestSDKServerEnablers_Scenario9_ServerNameIsValidated(t *testing.T) {
 		client, cleanup := dialGRPC(t, svc)
 		defer cleanup()
 		if _, err := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{
-			Workspace:  "/ws",
 			McpServers: []*mecatlv1.McpServerSpec{{Name: "notes-v2.1_x", Url: "https://a.example/mcp", Type: "http"}},
 		}); err != nil {
 			t.Fatalf("a legal name was rejected: %v", err)
@@ -1314,7 +1293,6 @@ func TestSDKServerEnablers_Scenario9_URLCredentialsRejected(t *testing.T) {
 		defer cleanup()
 
 		_, err := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{
-			Workspace: "/ws",
 			McpServers: []*mecatlv1.McpServerSpec{{
 				Name: "notes",
 				Url:  "https://user:" + urlSecret + "@mcp.example/mcp",
@@ -1351,7 +1329,6 @@ func TestSDKServerEnablers_Scenario9_URLCredentialsRejected(t *testing.T) {
 		defer cleanup()
 
 		_, err := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{
-			Workspace: "/ws",
 			McpServers: []*mecatlv1.McpServerSpec{{
 				Name: "notes",
 				Url:  "ftp://mcp.example/mcp?access_token=" + urlSecret,
@@ -1387,7 +1364,6 @@ func TestSDKServerEnablers_Scenario9_UnknownCreateFieldIsRejected(t *testing.T) 
 
 	t.Run("protojson spelling is a 400, not a silent drop", func(t *testing.T) {
 		code, body := postCreate(t, srv, map[string]any{
-			"workspace":  "/ws",
 			"mcpServers": []any{httpMCPEntry()},
 		})
 		if code != http.StatusBadRequest {
@@ -1401,7 +1377,6 @@ func TestSDKServerEnablers_Scenario9_UnknownCreateFieldIsRejected(t *testing.T) 
 
 	t.Run("the snake_case spelling still works", func(t *testing.T) {
 		code, body := postCreate(t, srv, map[string]any{
-			"workspace":   "/ws",
 			"mcp_servers": []any{httpMCPEntry()},
 		})
 		if code != http.StatusCreated {
@@ -1410,7 +1385,7 @@ func TestSDKServerEnablers_Scenario9_UnknownCreateFieldIsRejected(t *testing.T) 
 	})
 
 	t.Run("an ordinary create is unaffected", func(t *testing.T) {
-		code, body := postCreate(t, srv, map[string]any{"workspace": "/ws"})
+		code, body := postCreate(t, srv, map[string]any{})
 		if code != http.StatusCreated {
 			t.Fatalf("POST /v1/sessions = %d, want 201; body=%s", code, body)
 		}
@@ -1437,7 +1412,7 @@ func TestSDKServerEnablers_Scenario9_ClientMCPGrantIsUnforgeable(t *testing.T) {
 	// nothing mounted (which would fail every create).
 	rec := &mcpSpecRecorder{}
 	svc := clientMCPService(t, false, rec, nil, mockllm.New(mockllm.TextTurn("ok")))
-	sess, err := svc.CreateSessionWithProfile(context.Background(), "/ws", session.ModeDefault,
+	sess, err := svc.CreateSessionWithProfile(context.Background(), session.ModeDefault,
 		session.Limits{}, server.ProviderSelector{}, server.ProfileDefault, server.WithClientMCP(forged))
 	if err != nil {
 		t.Fatalf("an empty grant must be a no-op, but the create failed: %v", err)

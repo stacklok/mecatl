@@ -3,6 +3,7 @@
 - Status: Accepted
 - Date: 2026-08-05
 - Scope: `engine/port.PermanentError` interface → `session.ResultPayload.Permanent` → `EvRecoverNotice` advisory
+- Superseded by: ADR 0295's HTTP-rejection display exclusion only
 
 ## Context
 

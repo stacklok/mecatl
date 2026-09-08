@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"iter"
-	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -21,6 +20,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
+	"github.com/stacklok/mecatl/engine/adapter/memledger"
 	"github.com/stacklok/mecatl/engine/adapter/nofs"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/learning"
@@ -33,41 +33,8 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/scheduler"
 	"github.com/stacklok/mecatl/internal/adapter/skills"
 	"github.com/stacklok/mecatl/internal/adapter/tools"
+	brokercontract "github.com/stacklok/mecatl/internal/mcpbroker"
 )
-
-// WorkspaceAuthority controls whether a Service accepts a client-selected
-// workspace or binds every filesystem session to its configured deployment root.
-// It belongs at the server boundary: engine code never receives listener topology
-// or filesystem-authority policy.
-type WorkspaceAuthority uint8
-
-const (
-	// WorkspaceAuthorityClientSelected preserves the embedded and loopback behavior:
-	// callers select the workspace for filesystem sessions.
-	WorkspaceAuthorityClientSelected WorkspaceAuthority = iota
-	// WorkspaceAuthorityServerAssigned rejects every non-empty filesystem request
-	// and assigns Config.AuthoritativeWorkspace instead. It REQUIRES a configured
-	// AuthoritativeWorkspace.
-	WorkspaceAuthorityServerAssigned
-	// WorkspaceAuthorityFileless is a server-assigned deployment with no filesystem
-	// root at all (mecak8s): the wire's empty/omitted profile means ProfileNoFS and
-	// every filesystem profile is refused. It REQUIRES an EMPTY
-	// AuthoritativeWorkspace — which is why it is a distinct authority rather than
-	// a separate flag: "server-assigned with no root" is otherwise
-	// indistinguishable from "server-assigned, root not configured yet".
-	WorkspaceAuthorityFileless
-)
-
-// clientSelectsRoot reports whether the CALLER, not the deployment, chooses the
-// session root. Only the explicit client-selected authority does; every other
-// authority — server-assigned, file-less, and any value added later — is
-// deployment-assigned. Phrasing the ONE predicate around the single permissive
-// value is deliberate: a new authority constant is deployment-assigned by default
-// (the authority gates enforce), rather than silently client-selectable the way a
-// `== ServerAssigned || == Fileless` test would leave it.
-func (a WorkspaceAuthority) clientSelectsRoot() bool {
-	return a == WorkspaceAuthorityClientSelected
-}
 
 // WorkspaceFactory builds the session-scoped tool.Workspace for a session root.
 // The server is workspace-agnostic: the composition root injects memfs (tests)
@@ -77,6 +44,12 @@ type WorkspaceFactory func(root string) tool.Workspace
 // Clock returns the current wall time. It defaults to time.Now when nil so the
 // server can stamp session creation timestamps deterministically in tests.
 type Clock func() time.Time
+
+// AuthorizationTimer is a cancellable process-local expiry handle.
+type AuthorizationTimer interface{ Stop() bool }
+
+// AuthorizationTimerFactory creates one expiry observation for a parked authorization.
+type AuthorizationTimerFactory func(time.Duration, func()) AuthorizationTimer
 
 // IDGenerator returns a fresh, unique session id. It defaults to a random hex
 // id when nil; tests may inject a deterministic generator.
@@ -239,7 +212,30 @@ type SessionEngineFactory func(ctx context.Context, sel ProviderSelector, specs 
 // authorized target incarnation; neither may be projected to the model or wire.
 type DebugSessionEngineFactory func(ctx context.Context, sel ProviderSelector, profile SessionProfile, mode session.PermissionMode, target session.SessionID, targetFingerprint string, targetOwner *session.Principal, selectedServers, toolCeiling []string) (SessionEngineResult, error)
 
-// Config wires the server adapter to the WP8 engine and its collaborators.
+// ModelInventory is the resolved composition-owned inventory shared by
+// ListModels and model-facing discovery. Implementations must provide atomic reads
+// and swaps. Nil retains the Service-owned compatibility path.
+type ModelInventory interface {
+	CurrentModels() []*mecatlv1.ModelInfo
+	SetModels([]*mecatlv1.ModelInfo)
+}
+
+func seedModelInventory(cfg Config) []*mecatlv1.ModelInfo {
+	if cfg.ModelInventory == nil {
+		return cfg.Models
+	}
+	if cfg.Models != nil {
+		cfg.ModelInventory.SetModels(cfg.Models)
+	}
+	return cfg.ModelInventory.CurrentModels()
+}
+
+// SessionEngineWithToolsFactory is the explicit per-session catalogue seam used
+// for host-owned wrapper tools. Tools are ordinary arguments: catalogue assembly
+// must not recover them from context values or a process-global fallback.
+type SessionEngineWithToolsFactory func(ctx context.Context, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, workspace string, mode session.PermissionMode, sessionTools []tool.Tool) (SessionEngineResult, error)
+
+// Config wires the Service's collaborators and resolved composition values.
 type Config struct {
 	// BuildID is the composed binary build identity exposed by GetServerInfo only.
 	BuildID string
@@ -293,17 +289,6 @@ type Config struct {
 	// existing caller-selected ID, and the store must implement port.SessionCreator
 	// so no generated, forked, or scheduled session can overwrite an existing snapshot.
 	OwnershipEnforced bool
-	// Workspaces builds a Workspace for a session root. Required.
-	Workspaces WorkspaceFactory
-	// WorkspaceAuthority decides whether API callers choose filesystem roots or the
-	// deployment assigns one. The zero value preserves client-selectable local use.
-	WorkspaceAuthority WorkspaceAuthority
-	// AuthoritativeWorkspace is the configured root assigned to every filesystem
-	// session under WorkspaceAuthorityServerAssigned, which requires it to be a
-	// non-empty absolute, already-clean path; no symlink resolution is performed.
-	// It must be EMPTY under WorkspaceAuthorityFileless and is ignored under
-	// WorkspaceAuthorityClientSelected.
-	AuthoritativeWorkspace string
 	// ClientMCPOnCreate permits CLIENT-PROVIDED MCP servers on a session-creating
 	// API request (CreateSessionRequest.mcp_servers and its HTTP peer). It is a
 	// deployment/composition policy in the shape ADR 0237 requires, NOT an
@@ -315,11 +300,9 @@ type Config struct {
 	// ambient network authority to a remote principal, so a composition root that
 	// has not thought about it must not accidentally grant it. mecated derives it
 	// from listener topology (clientMCPOnCreateForListeners): permitted only on a
-	// UNIX-socket gRPC listener with HTTP disabled. That is STRICTER than the
-	// loopback-tolerant WorkspaceAuthority derivation above, because an
-	// attacker-named endpoint carrying caller-supplied credentials is a larger
-	// grant than a root the operator chose, and loopback TCP is reachable by every
-	// local process on the host.
+	// UNIX-socket gRPC listener with HTTP disabled. An attacker-named endpoint
+	// carrying caller-supplied credentials lends greater ambient authority than
+	// ordinary loopback traffic.
 	//
 	// It gates the WIRE surface only. The in-process CreateSessionWithMCP /
 	// LoadSessionWithMCP entries are unaffected: their caller is the ACP adapter,
@@ -329,42 +312,20 @@ type Config struct {
 	// The SAME value drives the mcp_servers_on_create advertisement (FeatureScope),
 	// so a deployment cannot advertise what it will refuse.
 	ClientMCPOnCreate bool
-	// CommandRunner is the MAIN session's bound command runner (issue #462). It is
-	// the runner the main session's Environment binds when the session runs on the
-	// DEFAULT workspace; a session whose workspace DIFFERS (a worktree binding, an
-	// ACP buffer, a no-fs profile) builds its own runner via CommandRunnerFactory
-	// (below) bound to that root, or is shell-less when the factory returns nil.
-	// nil when Bash is disabled (the catalog omits Bash and the Environment's Bash
-	// surfaces ErrNoShell). The forker builds its OWN bound runners for forked
-	// children, so this is the main-session runner only.
-	CommandRunner tool.CommandRunner
-	// CommandRunnerFactory, when non-nil, builds a command runner BOUND to a
-	// session root that differs from the main workspace (issue #462): a worktree-
-	// bound session needs its Bash rooted at the worktree, not the launch root.
-	// It is the same env-scrubbed construction as CommandRunner, parameterised by
-	// the session root. nil (the default) means a differing workspace gets a
-	// shell-less Environment (Bash surfaces ErrNoShell) — acceptable for no-fs /
-	// ACP / cloud deployments. The factory returns nil when Bash is disabled.
-	CommandRunnerFactory func(root string) tool.CommandRunner
-	// EnvironmentResolver, when non-nil, resolves a persisted session.EnvironmentRef
-	// to a LIVE tool.Environment for a non-in-tree Kind (ADR 0214, issue #462 phase
-	// 3). It is the reattachment half of the Environment seam: a restarted process
-	// reads the persisted ref off a loaded session and reattaches a live
-	// Environment to the SAME backend (a remote worker, a container) rather than
-	// silently re-deriving one from the workspace/profile. Context is required
-	// (a future network backend may dial out). The resolver MUST return an
-	// Environment whose Ref() equals the requested ref; a nil/mismatch/nil-
-	// Workspace result fails loudly (composition maps it to ErrFailedPrecondition,
-	// never a silent local fallback). Local/mem/nofs NEVER reach the resolver:
-	// a zero ref uses the legacy Workspace-derived resolution, and the in-tree
-	// Kinds resolve through the existing Workspaces/CommandRunnerFactory path.
-	// nil (the default) means any non-in-tree Kind fails loudly — the feature is
-	// off, byte-identical to a pre-phase-3 build. Do NOT conflate this with
-	// per-session engine rehydration: rehydration rebuilds the ENGINE for a
-	// persisted provider/model selector; this reattaches the ENVIRONMENT for a
-	// persisted environment ref. The two are independent (a session may need
-	// either, both, or neither).
-	EnvironmentResolver func(context.Context, session.EnvironmentRef) (tool.Environment, error)
+	// PlacementProvider is the deployment-owned atomic placement seam (ADR 0291).
+	// Bind authorizes creation/successor choices, Reattach resolves only an exact
+	// persisted EnvironmentRef, and ListWorktrees issues source-scoped ephemeral
+	// selectors. app.Build always supplies the trusted local default; alternative
+	// composition may supply one provider that owns worktree or remote placements.
+	// It is mandatory.
+	PlacementProvider PlacementProvider
+	// PlacementScope is the trusted deployment scope supplied to every provider
+	// Bind. It must be non-empty when PlacementProvider is configured.
+	PlacementScope PlacementScope
+	// SessionReadLedger optionally selects a durable read-before-write ledger for
+	// each session independently of its placement's content backend. The returned
+	// handle must be non-nil; nil fails the run closed.
+	SessionReadLedger func(session.SessionID) tool.ReadLedger
 	// RootAuthority mints a complete authority set for a newly composed root.
 	// A nil callback preserves host-managed legacy sessions; app.Build always wires
 	// this callback with its assembled catalog. Carryover forks copy their source
@@ -381,6 +342,8 @@ type Config struct {
 	DefaultLimits session.Limits
 	// Now supplies the creation timestamp; defaults to time.Now.
 	Now Clock
+	// AuthorizationTimer creates process-local expiry observations. It defaults to time.AfterFunc.
+	AuthorizationTimer AuthorizationTimerFactory
 	// NewID allocates session ids; defaults to a crypto-random hex generator.
 	NewID IDGenerator
 	// MCPProvider exposes the connected MCP servers' resources/prompts to the
@@ -413,31 +376,11 @@ type Config struct {
 	// It is read-only and called per request (discovery is cheap file scanning).
 	Commands CommandLister
 
-	// Worktrees lists the git worktrees of a repo root, backing the ListWorktrees
-	// RPC (the client's /worktrees overlay — the first-class operator workflow for
-	// binding a session to an EXISTING sibling worktree, issue #102). It is the
-	// composition-injected discovery seam: the composition root supplies an
-	// osfs-backed implementation that shells out to `git worktree list --porcelain`
-	// with a scrubbed env, trust-gated; a no-FS/cloud deployment (or an untrusted
-	// workspace) leaves it nil. Optional and nil-safe: when nil, ListWorktrees
-	// returns an empty list and the ServerCapabilities.worktrees bit is false so a
-	// client hides the overlay honestly. Read-only and called per request.
-	Worktrees WorktreeLister
-
-	// DefaultWorkspace is the workspace the SHARED engine was assembled for (the
-	// server's launch root). A CreateSession whose workspace DIFFERS (non-empty and
-	// != DefaultWorkspace) routes through the per-session engine factory so the
-	// session's subagents/members pin their CHILD permission resolver to the
-	// session root (the same re-pin sessionEngineFactory already applies for no-fs
-	// / selector / mode sessions), and the session rehydrates to the SAME engine
-	// after a process restart. The main policy ALREADY re-resolves `.mecatl/
-	// settings.yaml` per workspace on every session; the per-session route closes
-	// the CHILD-resolver gap (a shared-engine child would otherwise read the launch
-	// root's project rules) and the restart-fidelity gap. Empty for a child/member
-	// service or a no-root cloud deployment — then the trigger never fires (every
-	// non-empty workspace is "different" but worktree discovery is nil there, so
-	// the feature is inert). See docs/adr/0032-worktree-binding.md.
-	DefaultWorkspace string
+	// SharedEngineRoot is the verified workspace root the shared engine's policy
+	// collaborators were assembled for. Every filesystem-capable placement with a
+	// different root must use SessionEngine, including custom environment kinds and
+	// rootless shared deployments.
+	SharedEngineRoot string
 
 	// Agents is the resolved agent-definition snapshot taken at startup. It backs
 	// ListAgents and is a pure read of this snapshot (no live discovery). The
@@ -447,15 +390,14 @@ type Config struct {
 	// agents adapter. May be empty (agent definitions disabled or none found).
 	Agents []*mecatlv1.AgentInfo
 
-	// Models is the resolved selectable-model inventory snapshot taken at startup
-	// (multi-provider Phase 0, S3). It backs ListModels and is a pure read of this
-	// snapshot (no live discovery — the registry's available providers + the
-	// embedded catalog are both fixed for the process lifetime). The composition
-	// root (internal/app) joins the registry's AVAILABLE providers to the catalog
-	// and projects each model into the proto form (modelSnapshot) so the server
-	// adapter never imports providercatalog or the registry. May be empty (zero
-	// providers available). NO secret material (no key, env var name, or base URL).
+	// Models seeds the resolved selectable-model inventory projected by composition.
+	// It carries public ModelInfo metadata only and remains the compatibility path
+	// when ModelInventory is nil.
 	Models []*mecatlv1.ModelInfo
+	// ModelInventory optionally supplies the composition-owned atomic inventory
+	// shared by ListModels and model-facing discovery. When set, SetModels updates
+	// this source and the Service's local scheduling projection in one operation.
+	ModelInventory ModelInventory
 
 	// DefaultCapabilities is the NEUTRAL per-(default provider+default model) input
 	// capability — the catalog ∩ adapter INTERSECTION computed once in composition
@@ -541,10 +483,15 @@ type Config struct {
 	UserModel UserModelLister
 
 	// ReflectSession enables explicit completed-session reflection independently of
-	// automatic learning mode. Proposals and the mutation callbacks expose the
-	// bounded, caller-partitioned staged-learning review surface.
+	// automatic learning mode. Attempts expose only content-free lifecycle
+	// projections from the verified caller's private partition. Proposals and the
+	// mutation callbacks expose the bounded, caller-partitioned staged-learning
+	// review surface.
 	ReflectSession          ExplicitReflector
+	Attempts                learning.AttemptRepository
+	AttemptPrincipal        func(*session.Principal) string
 	Proposals               learning.ProposalRepository
+	ProposalManifest        ProposalManifestLoader
 	ProposalPrincipal       func(*session.Principal) string
 	PromoteProposal         ProposalPromoter
 	UndoProposal            ProposalUndoer
@@ -562,12 +509,23 @@ type Config struct {
 	// publisher atomically refreshes the shared live Skill catalog after mutations.
 	LearnedSkills             learning.SkillRepository
 	PublishLearnedSkills      func(context.Context, learning.SkillPartition) error
-	BeginSkillPublication     func() func()
-	RevokeLearnedSkill        func(learning.SkillPartition, string)
+	BeginSkillPublication     func(learning.SkillPartition) func()
 	LiveSkillGeneration       func(learning.SkillPartition) uint64
 	SkillActionAvailable      func(learning.SkillPartition, string) (bool, string)
 	LearnedSkillNameAvailable func(string) bool
 	LiveSkills                func(context.Context) []*mecatlv1.SkillInfo
+
+	// TitleGenerationEligible is the composition-resolved eligibility check for
+	// server-owned automatic title generation. Nil and false keep the durable
+	// lifecycle disabled; true persists pending at session creation. It receives
+	// only the neutral fixed session selector, never registry or credential access.
+	TitleGenerationEligible func(ProviderSelector) bool
+	// TitleGenerator is the optional Build-owned, server-private title call. When
+	// absent automatic work is unavailable; it never receives session authority.
+	TitleGenerator SessionTitleGenerator
+	// TitleGeneratorForSession resolves a title generator for the session's fixed
+	// provider selector. It takes precedence over TitleGenerator when present.
+	TitleGeneratorForSession func(ProviderSelector) SessionTitleGenerator
 
 	// SessionEngine builds a PER-SESSION engine over a non-default provider/model
 	// selector AND/OR client-provided streaming-HTTP MCP servers (the ACP
@@ -579,6 +537,14 @@ type Config struct {
 	// uses the shared Engine (zero overhead). The composition root (internal/app)
 	// supplies it.
 	SessionEngine SessionEngineFactory
+	// SessionEngineWithTools is required when MCPBroker is wired. It receives the
+	// exact wrappers owned by the local broker attachment.
+	SessionEngineWithTools SessionEngineWithToolsFactory
+	// MCPBroker owns logical broker state; Service owns only local attachments.
+	MCPBroker brokercontract.Service
+	// WorkspaceEnrollment advertises the optional pre-prompt enrollment capability.
+	// It must be true only when MCPBroker attachments implement the enrollment boundary.
+	WorkspaceEnrollment bool
 
 	// ModeNeedsEngine reports whether a given session PermissionMode resolves a model
 	// that DIFFERS from the shared engine's model (ADR 0030 Layer 3) — i.e. whether a
@@ -630,7 +596,7 @@ type Config struct {
 	// threaded to agent.WithTeamSharedBaseWorkspace). The composition root wires it
 	// whenever the Workspaces factory may return a relaxed workspace (auto/yolo).
 	// Optional; nil keeps the historical verbatim base share.
-	SharedBaseWorkspace func(root string) tool.Workspace
+	SharedBaseWorkspace func(tool.Workspace) tool.Workspace
 	// TeamHooks fires the team lifecycle hooks (TeammateIdle) and is passed to
 	// member coordination tools for the TaskCreated / TaskCompleted gates.
 	// Optional.
@@ -680,6 +646,12 @@ type Config struct {
 	// root supplies the same sink the rest of the build uses.
 	Diagnostics port.Diagnostics
 
+	// SessionLoadFailureMetric records one bounded class for each non-not-found
+	// GetSession load failure under ownership enforcement. It receives no target,
+	// principal, locator, cause, blob, or size. Optional and nil-safe; diagnostics
+	// remain enabled when this callback is nil.
+	SessionLoadFailureMetric func(port.SessionLoadFailureClass)
+
 	// ReplayApprovals repopulates the in-memory learned-rule store (permstore) for a
 	// loaded session from its durable EventLog allow-always verdicts (cloud-native
 	// Phase 3b). It is the consumer that kills the Phase 2 re-ask wart: the permstore
@@ -722,6 +694,12 @@ type Config struct {
 	// storage-agnostic discipline as EventLog). A backend that reports
 	// ErrLeaseUnsupported is stickily disabled (one INFO, then the no-lease path).
 	SessionLease port.SessionLease
+
+	// MutationCapability is the process-local admission gate shared by Service
+	// and the engine's guarded persistence/recorder adapters. Composition supplies
+	// one instance to both. When nil, Service creates the matching local gate;
+	// no-lease and unsupported-lease paths remain pass-through.
+	MutationCapability *SessionMutationCapability
 
 	// LeaseOwner is this process's owner-identity string for SessionLease, built
 	// once per Build (e.g. "<hostname>-<pid>-<nonce>") so two Builds in one
@@ -871,6 +849,10 @@ var engineCloseTimeout = 10 * time.Second
 type Service struct {
 	cfg Config
 
+	// placementBinder is the sole creation/successor placement binding seam.
+	// It is nil only for legacy hand-built configurations that have not migrated.
+	placementBinder *PlacementBinder
+
 	// models is the selectable-model inventory, SEEDED from cfg.Models at
 	// construction and atomically SWAPPED by SetModels when the composition layer's
 	// background live-catalog refresh completes (multi-provider live listing). It is
@@ -919,6 +901,22 @@ type Service struct {
 	// Config.MaxSessionEngines (mirroring MaxTeams): createSession returns
 	// ErrTooManySessionEngines once the cap is reached, and CloseSession frees a slot.
 	sessionEngines map[session.SessionID]*sessionEngine
+	// brokerAttachments are process-local handles. Closing one never deletes the
+	// broker's logical session state. brokerMu serializes attach/build/commit,
+	// local detach, and permanent logical deletion for one canonical session ID;
+	// it is separate from runEntryMu because engine rebuilds may already hold that
+	// run-entry lock.
+	brokerAttachments map[session.SessionID]brokercontract.Attachment
+	brokerMu          keyedMutex
+	// authorizationExpiry is Service-owned and guarded by mu.
+	authorizationExpiry map[session.SessionID]*authorizationExpiry
+	// beforeAuthorizationContinuationStart is an inert test synchronization seam.
+	// It is configured before serving and runs while the continuation handoff lock
+	// is held, immediately before cancellation is disarmed.
+	beforeAuthorizationContinuationStart func()
+	closed                               bool
+	shutdownComplete                     bool
+	closeMu                              sync.Mutex
 	// sessionEnvironments holds per-session Environment OVERRIDES. When an entry
 	// is present for a session id, StartRun uses it as the COMPLETE execution
 	// environment (Workspace + optional bound CommandRunner + accurate ref) instead
@@ -957,6 +955,15 @@ type Service struct {
 	// a transient failure stores nothing. It is a sync.Map (lock-free for the
 	// common NOT-present read path in RecoverNotice — called at every run-entry).
 	recoverNotices sync.Map
+
+	// runEntryGenerations fences requests that were admitted before a Clear crossed
+	// its cancellation boundary. Callers snapshot the generation before waiting on
+	// per-session coordination and validate it after acquiring runEntryMu; Clear
+	// advances it while holding runEntryMu and s.mu. Entries intentionally survive
+	// source settlement so a later request for the same id can snapshot the new
+	// generation and proceed while already-queued requests remain retired.
+	// Guarded by s.mu.
+	runEntryGenerations map[session.SessionID]uint64
 
 	// resumeMu serializes the awaiting-approval resume DECISION per session id
 	// (cloud-native Phase 2): ApproveRun holds the per-session lock across the whole
@@ -1017,6 +1024,10 @@ type Service struct {
 	// Config.SessionLease is not wired (the byte-identical default). See List 1
 	// (the resource inventory) in ADR 0027.
 	heldLeases map[session.SessionID]*heldLease
+	// lostOwnership remembers that this Service definitively lost an id even after
+	// the heavyweight heldLease/capability tombstones are removed at lifecycle
+	// settlement. It is cleared only by explicit CloseSession teardown.
+	lostOwnership map[session.SessionID]struct{}
 
 	// leaseDisabled is set (once) when Config.SessionLease reports
 	// ErrLeaseUnsupported: the seam never works on this backend, so the run-entry
@@ -1047,6 +1058,10 @@ type Service struct {
 	// its only effect is to mark the closing state (in-flight runs are cancelled
 	// explicitly via run.Cancel below). Kept as a one-time idempotent signal.
 	shutdownCancel context.CancelFunc
+
+	// titleCoordinator owns bounded asynchronous title work outside chat runs.
+	// It is nil when title generation is unavailable.
+	titleCoordinator *titleCoordinator
 
 	// schedMgr is the embedded store-shaped schedule manager (ADR 0076): the
 	// single truth the Service's nine port.ScheduleManager methods +
@@ -1124,6 +1139,7 @@ type heldLease struct {
 	lease  port.Lease
 	ctx    context.Context
 	cancel context.CancelFunc
+	valid  bool
 }
 
 // sessionEngine couples a per-session engine (built over that session's
@@ -1180,9 +1196,48 @@ type sessionEngine struct {
 // does not persist an awaiting snapshot, so there is no resumable state to
 // preserve.
 type runState struct {
-	run      *agent.Run
-	sess     *session.Session
-	awaiting atomic.Bool
+	run  *agent.Run
+	sess *session.Session
+	// cancelling is guarded by Service.mu. Clear marks the exact registered
+	// lifecycle before signalling cancellation so no approval, steer, or admission
+	// promotion can restart work across the irreversible clear boundary.
+	cancelling bool
+	// resumeAdmission distinguishes the provisional lifecycle installed by
+	// resumeFromAwaiting from ordinary prompt/retry admission. A concurrent approval
+	// must wait for the former under resumeMu instead of treating its nil run as a
+	// terminal registry entry.
+	resumeAdmission bool
+	// admissionCancel is non-nil until the provisional run-entry has atomically
+	// promoted to a real agent.Run. Drain and lease loss cancel it before any
+	// provider/tool work can start.
+	admissionCancel context.CancelFunc
+	// runContextStop releases the lease-linked launch context after the promoted
+	// run has settled. It must outlive the run-entry call itself.
+	runContextStop context.CancelFunc
+	awaiting       atomic.Bool
+	// titleRevision is the last title metadata revision successfully persisted and
+	// published for this run. It starts from the admitted durable snapshot so
+	// prompt-ingress changes publish only after their save succeeds.
+	titleRevision uint64
+	// persistMu makes admission of the durable awaiting save and drain's
+	// awaiting/non-awaiting decision one lifecycle transaction. Backend calls
+	// admitted before invalidation may still complete.
+	persistMu sync.Mutex
+	// preserveDurable prevents a shutdown-cancelled local awaiting run from
+	// overwriting the already-durable PendingAsk handoff point.
+	preserveDurable atomic.Bool
+	settled         chan struct{}
+	settledOnce     sync.Once
+	// removeCapabilityOnSettle retains denial when normal teardown releases a
+	// lease while stale run references are still unwinding.
+	removeCapabilityOnSettle bool
+}
+
+func (st *runState) approvalRun() *agent.Run {
+	if st.cancelling {
+		return nil
+	}
+	return st.run
 }
 
 // keyedMutex is a map of per-key mutexes with reference counting, so a caller can
@@ -1230,35 +1285,6 @@ func (k *keyedMutex) lock(key session.SessionID) func() {
 	}
 }
 
-// validateWorkspaceAuthorityConfig rejects an invalid configured root without
-// touching the filesystem. The client-selectable zero value intentionally ignores
-// an authority root so embedded callers retain their historical behavior.
-func validateWorkspaceAuthorityConfig(cfg Config) error {
-	switch cfg.WorkspaceAuthority {
-	case WorkspaceAuthorityClientSelected:
-		// The configured root is ignored, so an incidental value is not an error:
-		// embedded callers keep their historical behavior.
-		return nil
-	case WorkspaceAuthorityServerAssigned:
-		// A filesystem deployment with no root would build and then reject every
-		// filesystem request. Fail here instead, once, at construction.
-		if cfg.AuthoritativeWorkspace == "" {
-			return fmt.Errorf("%w: server-assigned workspace authority requires an authoritative workspace (use WorkspaceAuthorityFileless for a file-less deployment)", ErrConfig)
-		}
-		if !isCleanAbs(cfg.AuthoritativeWorkspace) {
-			return fmt.Errorf("%w: authoritative workspace must be a clean absolute path", ErrConfig)
-		}
-		return nil
-	case WorkspaceAuthorityFileless:
-		if cfg.AuthoritativeWorkspace != "" {
-			return fmt.Errorf("%w: file-less workspace authority must not configure an authoritative workspace; got %q", ErrConfig, cfg.AuthoritativeWorkspace)
-		}
-		return nil
-	default:
-		return fmt.Errorf("%w: unknown workspace authority %d", ErrConfig, cfg.WorkspaceAuthority)
-	}
-}
-
 // normalizeServerImplementation admits only a stable, non-identifying composition
 // family token for GetServerInfo. All other input is intentionally indistinguishable.
 func normalizeServerImplementation(value string) string {
@@ -1275,19 +1301,24 @@ func normalizeServerImplementation(value string) string {
 	return value
 }
 
-// NewService validates cfg and constructs a Service. It returns ErrConfig if
-// Engine, Store or Workspaces is nil.
+// NewService validates cfg and constructs a Service using a background startup
+// context. Composition roots with a lifecycle context should call
+// NewServiceContext.
 func NewService(cfg Config) (*Service, error) {
+	return NewServiceContext(context.Background(), cfg)
+}
+
+// NewServiceContext validates cfg and constructs a Service. ctx bounds and
+// propagates trusted startup context to configured placement providers.
+func NewServiceContext(ctx context.Context, cfg Config) (*Service, error) {
 	if cfg.Engine == nil {
 		return nil, fmt.Errorf("%w: Engine is required", ErrConfig)
 	}
 	if cfg.Store == nil {
 		return nil, fmt.Errorf("%w: Store is required", ErrConfig)
 	}
-	if cfg.Workspaces == nil {
-		return nil, fmt.Errorf("%w: Workspaces is required", ErrConfig)
-	}
-	if err := validateWorkspaceAuthorityConfig(cfg); err != nil {
+	placementBinder, err := configuredPlacementBinder(ctx, cfg)
+	if err != nil {
 		return nil, err
 	}
 	cfg.ServerImplementation = normalizeServerImplementation(cfg.ServerImplementation)
@@ -1296,6 +1327,9 @@ func NewService(cfg Config) (*Service, error) {
 	}
 	if cfg.Now == nil {
 		cfg.Now = time.Now
+	}
+	if cfg.AuthorizationTimer == nil {
+		cfg.AuthorizationTimer = func(delay time.Duration, f func()) AuthorizationTimer { return time.AfterFunc(delay, f) }
 	}
 	if cfg.NewID == nil {
 		cfg.NewID = randomID
@@ -1308,6 +1342,9 @@ func NewService(cfg Config) (*Service, error) {
 	}
 	if cfg.Diagnostics == nil {
 		cfg.Diagnostics = port.NopDiagnostics{}
+	}
+	if cfg.MutationCapability == nil {
+		cfg.MutationCapability = NewSessionMutationCapability(cfg.SessionLease != nil)
 	}
 	if cfg.SessionLease != nil {
 		if cfg.LeaseTTL <= 0 {
@@ -1327,20 +1364,26 @@ func NewService(cfg Config) (*Service, error) {
 	_, shutdownCancel := context.WithCancel(context.Background())
 	svc := &Service{
 		cfg:                 cfg,
+		placementBinder:     placementBinder,
 		shutdownCancel:      shutdownCancel,
 		runs:                make(map[session.SessionID]*runState),
 		teams:               make(map[string]*teamState),
 		sessionEngines:      make(map[session.SessionID]*sessionEngine),
+		brokerAttachments:   make(map[session.SessionID]brokercontract.Attachment),
+		authorizationExpiry: make(map[session.SessionID]*authorizationExpiry),
 		sessionEnvironments: make(map[session.SessionID]tool.Environment),
 		reservedIDs:         make(map[session.SessionID]struct{}),
+		runEntryGenerations: make(map[session.SessionID]uint64),
 		replayedApprovals:   make(map[session.SessionID]struct{}),
 		steerMsgIDs:         make(map[session.SessionID][]steerMsgID),
 		heldLeases:          make(map[session.SessionID]*heldLease),
+		lostOwnership:       make(map[session.SessionID]struct{}),
 		cleanupTokenKey:     cleanupTokenKey,
 		cleanupPlans:        make(map[string]cleanupTokenPayload),
 		cleanupJobs:         make(map[string]cleanupJobRecord),
 		subscriptions:       make(map[session.SessionID]map[int64]chan session.Event),
 	}
+	svc.titleCoordinator = buildTitleCoordinator(svc, cfg)
 	// Narrow the durable log to the cursor seam once (ADR 0250). A backend that
 	// does not implement it leaves this nil, and the watch surface reports the
 	// feature unsupported rather than degrading to a full replay.
@@ -1353,7 +1396,7 @@ func NewService(cfg Config) (*Service, error) {
 	// ModelSelection cap read this atomic so a later live-catalog SetModels swap is
 	// race-free. A nil cfg.Models seeds an empty (non-nil) slice so the pointer is
 	// never nil.
-	seed := cfg.Models
+	seed := seedModelInventory(cfg)
 	svc.models.Store(&seed)
 	// providerStatus starts empty — no intent-driven provider has been probed
 	// yet at construction time; Build's post-construction SetProviderStatus
@@ -1393,6 +1436,60 @@ func NewService(cfg Config) (*Service, error) {
 	return svc, nil
 }
 
+func (s *Service) placementDiscoveryAvailable() bool {
+	_, ok := s.cfg.PlacementProvider.(PlacementDiscoverer)
+	return ok
+}
+
+// BindPlacement atomically authorizes and resolves a placement through the
+// deployment provider. The caller principal comes only from the authenticated
+// context and the scope only from trusted composition; neither is supplied by
+// the selector or inferred from possession of its opaque ID.
+func (s *Service) BindPlacement(ctx context.Context, selector PlacementSelector, operation PlacementOperation) (PlacementBinding, error) {
+	if s == nil || s.placementBinder == nil {
+		return PlacementBinding{}, fmt.Errorf("%w: no PlacementProvider is configured", ErrConfig)
+	}
+	binding, err := s.placementBinder.Bind(ctx, PlacementBindRequest{
+		Selector:  selector,
+		Principal: session.PrincipalFromContext(ctx),
+		Scope:     s.cfg.PlacementScope,
+		Operation: operation,
+	})
+	if err != nil {
+		s.logPlacementProviderError(ctx, "bind", err)
+	}
+	return binding, err
+}
+
+// ReattachPlacement authorizes and resolves the exact persisted environment
+// identity. It never invokes Bind and therefore cannot follow a changed default.
+func (s *Service) ReattachPlacement(ctx context.Context, ref session.EnvironmentRef) (PlacementBinding, error) {
+	if s == nil || s.placementBinder == nil {
+		return PlacementBinding{}, fmt.Errorf("%w: no PlacementProvider is configured", ErrFailedPrecondition)
+	}
+	binding, err := s.placementBinder.Reattach(ctx, PlacementReattachRequest{
+		Ref: ref, Principal: session.PrincipalFromContext(ctx), Scope: s.cfg.PlacementScope,
+	})
+	if err != nil {
+		s.logPlacementProviderError(ctx, "reattach", err)
+		return PlacementBinding{}, err
+	}
+	return binding, nil
+}
+
+func (s *Service) schedulePlacementScope() PlacementScope {
+	return s.cfg.PlacementScope
+}
+
+// ReattachPlacementInScope requires the durable schedule scope to match this
+// deployment before reauthorizing and resolving the exact persisted ref.
+func (s *Service) ReattachPlacementInScope(ctx context.Context, ref session.EnvironmentRef, scope string) (PlacementBinding, error) {
+	if s == nil || scope == "" || PlacementScope(scope) != s.schedulePlacementScope() {
+		return PlacementBinding{}, fmt.Errorf("%w: scheduled placement scope changed", ErrFailedPrecondition)
+	}
+	return s.ReattachPlacement(ctx, ref)
+}
+
 // wireScheduleManager attaches the post-construction seams the schedule manager
 // can only receive once the Service exists. Both are no-ops without a manager.
 func (s *Service) wireScheduleManager(cfg Config) {
@@ -1402,14 +1499,10 @@ func (s *Service) wireScheduleManager(cfg Config) {
 	if cfg.Scheduler != nil {
 		s.schedMgr.SetScheduler(cfg.Scheduler)
 	}
-	// Install the authority hook ONLY where it changes the outcome. Under
-	// client-selected authority its sole effect on a default-profile schedule
-	// would be to reject an empty workspace — which validateScheduleSpec already
-	// does, with a message that explains WHY a schedule needs one. Leaving the
-	// hook nil there keeps client-selected schedule validation byte-identical.
-	if !cfg.WorkspaceAuthority.clientSelectsRoot() {
-		s.schedMgr.setWorkspaceForCreate(s.workspaceForCreate)
-	}
+	// Exact placement is private durable state. Install the resolver on every
+	// schedule-capable Service; it binds the deployment default for out-of-band
+	// creates and reauthorizes an invoking session's exact ref.
+	s.schedMgr.setPlacementForCreate(s.resolveSchedulePlacement)
 }
 
 // SetModels atomically swaps the selectable-model inventory. It is the composition
@@ -1424,6 +1517,10 @@ func (s *Service) SetModels(models []*mecatlv1.ModelInfo) {
 	if models == nil {
 		models = []*mecatlv1.ModelInfo{}
 	}
+	if s.cfg.ModelInventory != nil {
+		s.cfg.ModelInventory.SetModels(models)
+		models = s.cfg.ModelInventory.CurrentModels()
+	}
 	s.models.Store(&models)
 }
 
@@ -1431,6 +1528,9 @@ func (s *Service) SetModels(models []*mecatlv1.ModelInfo) {
 // after NewService). It is the single internal read used by ListModels and the
 // ModelSelection capability so they cannot disagree.
 func (s *Service) currentModels() []*mecatlv1.ModelInfo {
+	if s.cfg.ModelInventory != nil {
+		return s.cfg.ModelInventory.CurrentModels()
+	}
 	if p := s.models.Load(); p != nil {
 		return *p
 	}
@@ -1526,6 +1626,9 @@ type createSessionOpts struct {
 	// which is the wire path's only entry — the ACP path keeps composition's
 	// best-effort mount. See verifyClientMCPMounted.
 	clientMCPStrict bool
+	// placement is a trusted, already-reauthorized exact binding supplied only by
+	// server composition (scheduled fire). It bypasses default placement binding.
+	placement *PlacementBinding
 }
 
 // WithSessionID overrides the session id a CreateSession* call mints. When set,
@@ -1536,6 +1639,13 @@ type createSessionOpts struct {
 // uses to mint "sched--"-prefixed fire-session ids.
 func WithSessionID(id session.SessionID) CreateSessionOption {
 	return func(o *createSessionOpts) { o.id, o.idSet = id, true }
+}
+
+// WithPlacementBinding supplies a trusted exact binding already reauthorized by
+// composition. It is intended for scheduled fire only; public transports cannot
+// construct or select it.
+func WithPlacementBinding(binding PlacementBinding) CreateSessionOption {
+	return func(o *createSessionOpts) { o.placement = &binding }
 }
 
 // WithSourceSession seeds a NEW session's conversation history from the named
@@ -1684,32 +1794,29 @@ func resolveOwner(ctx context.Context, opts createSessionOpts) *session.Principa
 	return session.PrincipalFromContext(ctx)
 }
 
-func newCreatedSession(id session.SessionID, mode session.PermissionMode, workspace string, limits session.Limits, createdAt time.Time, opts createSessionOpts) (*session.Session, error) {
+func newCreatedSession(id session.SessionID, mode session.PermissionMode, ref session.EnvironmentRef, limits session.Limits, createdAt time.Time, opts createSessionOpts) (*session.Session, error) {
 	switch {
 	case opts.debugTargetID != "":
-		return session.NewDebug(id, mode, limits, createdAt, opts.debugTargetID, opts.debugTargetIncarnation)
+		return session.NewDebug(id, mode, ref, limits, createdAt, opts.debugTargetID, opts.debugTargetIncarnation)
 	case opts.scheduled != nil:
-		return session.NewScheduled(id, mode, workspace, limits, createdAt, opts.scheduled.ScheduleName, opts.scheduled.OriginSessionID, opts.scheduled.OriginIncarnation)
+		return session.NewScheduled(id, mode, ref, limits, createdAt, opts.scheduled.ScheduleName, opts.scheduled.OriginSessionID, opts.scheduled.OriginIncarnation)
 	default:
-		return session.New(id, mode, workspace, limits, createdAt), nil
+		return session.New(id, mode, ref, limits, createdAt), nil
 	}
 }
 
-// CreateSession allocates a new idle session on the SHARED engine, persists it,
-// and returns it. workspace must be non-empty. An unspecified mode falls back to
-// DefaultMode. It is the no-selector, no-MCP fast path: it delegates to the
-// generalized createSession with the zero selector, nil specs and the default
-// profile.
-func (s *Service) CreateSession(ctx context.Context, workspace string, mode session.PermissionMode, limits session.Limits) (*session.Session, error) {
-	return s.createSession(ctx, workspace, mode, limits, ProviderSelector{}, nil, ProfileDefault, createSessionOpts{})
+// CreateSession allocates a new idle session on the server-owned default placement,
+// persists it, and returns it. An unspecified mode falls back to DefaultMode. It
+// is the no-selector, no-MCP fast path.
+func (s *Service) CreateSession(ctx context.Context, mode session.PermissionMode, limits session.Limits) (*session.Session, error) {
+	return s.createSession(ctx, mode, limits, ProviderSelector{}, nil, ProfileDefault, createSessionOpts{})
 }
 
 // CreateSessionWithProvider creates a session bound to a non-default
 // provider/model selector (multi-provider Phase 0, S3) via a PER-SESSION engine,
-// with no client MCP and the DEFAULT profile. It delegates to
-// CreateSessionWithProfile; see there for the selector semantics.
-func (s *Service) CreateSessionWithProvider(ctx context.Context, workspace string, mode session.PermissionMode, limits session.Limits, sel ProviderSelector) (*session.Session, error) {
-	return s.CreateSessionWithProfile(ctx, workspace, mode, limits, sel, ProfileDefault)
+// with no client MCP and the DEFAULT profile.
+func (s *Service) CreateSessionWithProvider(ctx context.Context, mode session.PermissionMode, limits session.Limits, sel ProviderSelector) (*session.Session, error) {
+	return s.CreateSessionWithProfile(ctx, mode, limits, sel, ProfileDefault)
 }
 
 // CreateSessionWithProfile creates a session bound to an optional non-default
@@ -1720,13 +1827,14 @@ func (s *Service) CreateSessionWithProvider(ctx context.Context, workspace strin
 // ErrInvalidArgument) and resolves through the factory (an unknown/unavailable
 // provider id surfaces as ErrInvalidArgument). Setting ModelID with an empty
 // ProviderID is rejected (a bare model on the env-derived default provider is
-// ambiguous). The workspace requirement is PROFILE-AWARE — see createSession.
+// ambiguous). Placement is bound exclusively from the server-owned default or
+// explicit no-FS profile.
 //
 // opts is the variadic options pattern (CreateSessionOption): WithSessionID
 // overrides the minted id (ADR 0059 decision #7 Phase-2 — the scheduler fire
 // path mints a "sched--"-prefixed id). Zero opts is byte-identical to the
 // pre-Phase-2 signature.
-func (s *Service) CreateSessionWithProfile(ctx context.Context, workspace string, mode session.PermissionMode, limits session.Limits, sel ProviderSelector, profile SessionProfile, opts ...CreateSessionOption) (*session.Session, error) {
+func (s *Service) CreateSessionWithProfile(ctx context.Context, mode session.PermissionMode, limits session.Limits, sel ProviderSelector, profile SessionProfile, opts ...CreateSessionOption) (*session.Session, error) {
 	if sel.ProviderID == "" && sel.ModelID != "" {
 		return nil, fmt.Errorf("%w: model_id requires provider_id (a bare model on the default provider is ambiguous)", ErrInvalidArgument)
 	}
@@ -1734,14 +1842,14 @@ func (s *Service) CreateSessionWithProfile(ctx context.Context, workspace string
 	for _, opt := range opts {
 		opt(&o)
 	}
-	return s.createSessionWithOptions(ctx, workspace, mode, limits, sel, profile, o)
+	return s.createSessionWithOptions(ctx, mode, limits, sel, profile, o)
 }
 
-func (s *Service) createSessionWithOptions(ctx context.Context, workspace string, mode session.PermissionMode, limits session.Limits, sel ProviderSelector, profile SessionProfile, opts createSessionOpts) (*session.Session, error) {
+func (s *Service) createSessionWithOptions(ctx context.Context, mode session.PermissionMode, limits session.Limits, sel ProviderSelector, profile SessionProfile, opts createSessionOpts) (*session.Session, error) {
 	if err := validateDebugMCPNames(opts.debugTargetID, opts.debugMCPServers); err != nil {
 		return nil, err
 	}
-	return s.createSession(ctx, workspace, mode, limits, sel, opts.clientMCP, profile, opts)
+	return s.createSession(ctx, mode, limits, sel, opts.clientMCP, profile, opts)
 }
 
 // createSession is the single create path generalizing the shared-engine fast
@@ -1755,15 +1863,11 @@ func (s *Service) createSessionWithOptions(ctx context.Context, workspace string
 // the engine was built, the per-session MCP manager is torn down so a failed
 // create never leaks it.
 //
-// PROFILE-AWARE workspace rule (replacing the old unconditional empty-workspace
-// guard): the default profile REQUIRES a workspace (unchanged); the no-fs
-// profile REQUIRES an EMPTY one — the combination is contradictory and is
-// REJECTED loudly, never resolved by silently dropping either field. A no-fs
-// session persists Workspace == "" and registers the no-FS Workspace as its
-// per-session workspace OVERRIDE at create time (the ACP-buffer-workspace
-// mechanism, same lock as the engine registration), so StartRun can never hand
-// "" to the osfs workspace factory (which would MkdirAll/OpenRoot the process
-// cwd).
+// The placement binder returns the complete environment for either the
+// server-owned default or explicit no-FS attenuation. A no-FS session registers
+// that complete environment as its per-session OVERRIDE at create time (the
+// ACP-buffer-workspace mechanism, under the same lock as engine registration),
+// so run entry never constructs a filesystem workspace for it.
 // setSessionLabels records the neutral provider+model selector and the
 // tool-surface profile onto the freshly-created aggregate as write-once creation
 // labels. The aggregate stores them opaquely (it never interprets the
@@ -1781,8 +1885,32 @@ func setSessionLabels(sess *session.Session, sel ProviderSelector, profile Sessi
 	return sess.RestoreLabels(owner, authority)
 }
 
-func (s *Service) setPerSessionLabels(sess *session.Session, sel ProviderSelector, profile SessionProfile, owner *session.Principal, opts createSessionOpts, res SessionEngineResult, carried session.Authority, carriedBound bool) error {
+func (s *Service) setTitleGenerationEligibility(sess *session.Session, sel ProviderSelector) {
+	if s.cfg.TitleGenerationEligible != nil && s.cfg.TitleGenerationEligible(sel) {
+		sess.SetTitleGeneration(session.TitleGenerationPending)
+	}
+}
+
+func (s *Service) setPerSessionLabels(sess *session.Session, sel ProviderSelector, profile SessionProfile, owner *session.Principal, opts createSessionOpts, res SessionEngineResult, broker []tool.Tool, carried session.Authority, carriedBound bool) error {
 	authority := s.rootAuthority(sess.Kind, carried, carriedBound)
+	// Broker wrappers are created only after the process root authority was
+	// minted. Include this session's exact wrappers in a fresh root without
+	// widening authority carried from another session.
+	if !carriedBound && len(broker) != 0 {
+		seen := make(map[string]struct{}, len(authority.CapabilitySet.Tools)+len(broker))
+		for _, name := range authority.CapabilitySet.Tools {
+			seen[name] = struct{}{}
+		}
+		for _, candidate := range broker {
+			name := candidate.Spec().Name
+			if _, ok := seen[name]; ok {
+				continue
+			}
+			seen[name] = struct{}{}
+			authority.CapabilitySet.Tools = append(authority.CapabilitySet.Tools, name)
+		}
+		sort.Strings(authority.CapabilitySet.Tools)
+	}
 	if sess.Kind == session.SessionKindDebug {
 		authority.CapabilitySet.Tools = append(authority.CapabilitySet.Tools, res.DebugMCPTools...)
 		sess.DebugMCPServers = append([]string(nil), opts.debugMCPServers...)
@@ -1823,18 +1951,18 @@ func seedCarryover(sess *session.Session, snap []session.Message) error {
 // must match. It deliberately excludes the owner: that comes only from the
 // verified context and is checked separately.
 type createRequest struct {
-	workspace    string
-	mode         session.PermissionMode
-	limits       session.Limits
-	selector     ProviderSelector
-	profile      SessionProfile
-	sourceID     session.SessionID
-	kind         session.SessionKind
-	relationship session.SessionRelationship
+	environmentRef session.EnvironmentRef
+	mode           session.PermissionMode
+	limits         session.Limits
+	selector       ProviderSelector
+	profile        SessionProfile
+	sourceID       session.SessionID
+	kind           session.SessionKind
+	relationship   session.SessionRelationship
 }
 
-func newCreateRequest(workspace string, mode session.PermissionMode, limits session.Limits, selector ProviderSelector, profile SessionProfile, sourceID session.SessionID, opts createSessionOpts) createRequest {
-	request := createRequest{workspace: workspace, mode: mode, limits: limits, selector: selector, profile: profile, sourceID: sourceID, kind: session.SessionKindMain}
+func newCreateRequest(ref session.EnvironmentRef, mode session.PermissionMode, limits session.Limits, selector ProviderSelector, profile SessionProfile, sourceID session.SessionID, opts createSessionOpts) createRequest {
+	request := createRequest{environmentRef: ref, mode: mode, limits: limits, selector: selector, profile: profile, sourceID: sourceID, kind: session.SessionKindMain}
 	switch {
 	case opts.debugTargetID != "":
 		request.kind = session.SessionKindDebug
@@ -1847,7 +1975,7 @@ func newCreateRequest(workspace string, mode session.PermissionMode, limits sess
 }
 
 func (r createRequest) matches(sess *session.Session) bool {
-	return r.sourceID == "" && sess.Workspace == r.workspace && sess.Mode == r.mode &&
+	return r.sourceID == "" && sess.EnvironmentRef == r.environmentRef && sess.Mode == r.mode &&
 		sess.Limits == r.limits && sess.ProviderID == r.selector.ProviderID &&
 		sess.ModelID == r.selector.ModelID && sess.ReasoningEffort == r.selector.ReasoningEffort &&
 		sess.Profile == string(r.profile) && sess.Kind == r.kind && sess.Relationship == r.relationship
@@ -1905,15 +2033,16 @@ func (s *Service) reserveSessionID(ctx context.Context, id session.SessionID, ow
 		s.mu.Unlock()
 	}
 	// Probe the store for a persisted session under this id. A not-found error
-	// means the id is clear; any other error is an infra fault that must not
-	// silently pass, so it is propagated.
+	// means the id is clear; any other infrastructure fault fails closed and is
+	// exposed only through a content-free public category.
 	if existing, lerr := s.cfg.Store.Load(ctx, id); lerr == nil && existing != nil {
 		release()
 		winner, classifyErr := s.classifyCreateWinner(existing, owner, request)
 		return winner, nil, classifyErr
 	} else if lerr != nil && !errors.Is(lerr, port.ErrSessionNotFound) {
 		release()
-		return nil, nil, fmt.Errorf("server: probe session id %q: %w", id, lerr)
+		s.logDiscoveryError(ctx, "probe session placement", lerr)
+		return nil, nil, fmt.Errorf("%w: placement storage failed", ErrInternal)
 	}
 	return nil, release, nil
 }
@@ -1925,7 +2054,7 @@ func (s *Service) persistNewSession(ctx context.Context, sess *session.Session) 
 	if s.cfg.OwnershipEnforced {
 		return fmt.Errorf("%w: ownership enforcement requires a session store with atomic create capability", ErrConfig)
 	}
-	return s.cfg.Store.Save(ctx, sess)
+	return s.saveSession(ctx, sess)
 }
 
 func (s *Service) persistCreatedSession(ctx context.Context, sess *session.Session, owner *session.Principal, request *createRequest) (*session.Session, error) {
@@ -1933,7 +2062,17 @@ func (s *Service) persistCreatedSession(ctx context.Context, sess *session.Sessi
 		if existing, ok, collisionErr := s.resolveCreateCollision(ctx, sess.ID, owner, request, err); ok || collisionErr != nil {
 			return existing, collisionErr
 		}
-		return nil, fmt.Errorf("server: persist session: %w", err)
+		if errors.Is(err, port.ErrSessionAlreadyExists) {
+			return nil, fmt.Errorf("%w", port.ErrSessionAlreadyExists)
+		}
+		if errors.Is(err, ErrConfig) {
+			return nil, err
+		}
+		s.logDiscoveryError(ctx, "persist session placement", err)
+		return nil, fmt.Errorf("%w: placement storage failed", ErrInternal)
+	}
+	if sess.TitleGeneration != session.TitleGenerationDisabled {
+		s.publishTitle(context.WithoutCancel(ctx), sess)
 	}
 	return sess, nil
 }
@@ -1944,68 +2083,11 @@ func (s *Service) resolveCreateCollision(ctx context.Context, id session.Session
 	}
 	existing, err := s.cfg.Store.Load(ctx, id)
 	if err != nil {
-		return nil, false, fmt.Errorf("server: load session create winner: %w", err)
+		s.logDiscoveryError(ctx, "load session placement collision", err)
+		return nil, false, fmt.Errorf("%w: placement storage failed", ErrInternal)
 	}
 	winner, err := s.classifyCreateWinner(existing, owner, *request)
 	return winner, err == nil, err
-}
-
-// profileForCreate resolves the deployment's effective profile for a request.
-// A file-less deployment reads the wire's empty (omitted/default) profile as
-// no-FS and refuses every other profile, so a caller cannot ask a deployment
-// with no filesystem root for a filesystem session.
-func (s *Service) profileForCreate(profile SessionProfile) (SessionProfile, error) {
-	if s.cfg.WorkspaceAuthority != WorkspaceAuthorityFileless {
-		return profile, nil
-	}
-	switch profile {
-	case ProfileDefault, ProfileNoFS:
-		return ProfileNoFS, nil
-	default:
-		return "", fmt.Errorf("%w: this deployment is file-less: profile %q is not available (supported: \"\" (default, treated as %q) and %q)", ErrInvalidArgument, profile, ProfileNoFS, ProfileNoFS)
-	}
-}
-
-// workspaceForCreate enforces the profile-aware request contract before any
-// factory, trust, or environment seam receives a root. Server-assigned mode
-// intentionally checks only direct-request emptiness: client input is never
-// cleaned or compared with the configured root. It returns the EFFECTIVE profile
-// alongside the root so every caller persists the profile the deployment
-// actually applied, rather than the requested one.
-func (s *Service) workspaceForCreate(workspace string, profile SessionProfile) (string, SessionProfile, error) {
-	profile, err := s.profileForCreate(profile)
-	if err != nil {
-		return "", "", err
-	}
-	switch profile {
-	case ProfileDefault:
-		// Unreachable under Fileless (profileForCreate mapped every profile to
-		// no-FS), so this arm sees only ClientSelected and ServerAssigned.
-		if !s.cfg.WorkspaceAuthority.clientSelectsRoot() {
-			if workspace != "" {
-				return "", "", fmt.Errorf("%w: deployment assigns the workspace; filesystem session requests must leave workspace empty", ErrInvalidArgument)
-			}
-			if s.cfg.AuthoritativeWorkspace == "" {
-				// NewService rejects this combination; kept as a fail-closed guard so a
-				// future second constructor cannot turn it into an empty-root session.
-				return "", "", fmt.Errorf("%w: deployment assigns the workspace but no authoritative workspace is configured", ErrInvalidArgument)
-			}
-			return s.cfg.AuthoritativeWorkspace, profile, nil
-		}
-		if workspace == "" {
-			return "", "", fmt.Errorf("%w: workspace is required", ErrInvalidArgument)
-		}
-		return workspace, profile, nil
-	case ProfileNoFS:
-		if workspace != "" {
-			return "", "", fmt.Errorf("%w: profile %q must not carry a workspace (a no-FS session has no filesystem to root); got %q", ErrInvalidArgument, ProfileNoFS, workspace)
-		}
-		return "", profile, nil
-	default:
-		// Defensive: the wire handlers ParseSessionProfile first, but an
-		// in-process caller could hand anything.
-		return "", "", fmt.Errorf("%w: unknown session profile %q (supported: \"\" (default) and %q)", ErrInvalidArgument, profile, ProfileNoFS)
-	}
 }
 
 func (s *Service) authorizeDebugTarget(ctx context.Context, id session.SessionID) error {
@@ -2022,12 +2104,12 @@ func (s *Service) authorizeDebugTarget(ctx context.Context, id session.SessionID
 	return nil
 }
 
-func (s *Service) validateDebugCreate(ctx context.Context, workspace string, profile SessionProfile, specs []mcp.ServerConfig, opts createSessionOpts) error {
+func (s *Service) validateDebugCreate(ctx context.Context, profile SessionProfile, specs []mcp.ServerConfig, opts createSessionOpts) error {
 	if opts.debugTargetID == "" {
 		return nil
 	}
-	if profile != ProfileNoFS || workspace != "" {
-		return fmt.Errorf("%w: debug sessions require profile %q and an empty workspace", ErrInvalidArgument, ProfileNoFS)
+	if profile != ProfileNoFS {
+		return fmt.Errorf("%w: debug sessions require profile %q", ErrInvalidArgument, ProfileNoFS)
 	}
 	if opts.sourceSessionID != "" || opts.scheduled != nil || len(specs) > 0 {
 		return fmt.Errorf("%w: debug target cannot be combined with source, scheduled, or client MCP relationships", ErrInvalidArgument)
@@ -2056,15 +2138,18 @@ func (s *Service) bindRelatedIncarnations(ctx context.Context, opts *createSessi
 	return nil
 }
 
-func (s *Service) createSession(ctx context.Context, workspace string, mode session.PermissionMode, limits session.Limits, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, opts createSessionOpts) (*session.Session, error) {
-	if err := s.validateDebugCreate(ctx, workspace, profile, specs, opts); err != nil {
+//nolint:gocyclo // Creation intentionally keeps placement, ownership, limits, engine selection, and persistence in one transaction.
+func (s *Service) createSession(ctx context.Context, mode session.PermissionMode, limits session.Limits, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, opts createSessionOpts) (*session.Session, error) {
+	if profile != ProfileDefault && profile != ProfileNoFS {
+		return nil, fmt.Errorf("%w: unknown session profile %q", ErrInvalidArgument, profile)
+	}
+	if err := s.validateDebugCreate(ctx, profile, specs, opts); err != nil {
 		return nil, err
 	}
-	var err error
-	workspace, profile, err = s.workspaceForCreate(workspace, profile)
-	if err != nil {
-		return nil, err
-	}
+	var (
+		err       error
+		workspace string
+	)
 	if mode == "" {
 		mode = s.cfg.DefaultMode
 	}
@@ -2078,6 +2163,28 @@ func (s *Service) createSession(ctx context.Context, workspace string, mode sess
 	// The owner stamped on the new session: the explicit WithOwner injection, else
 	// the verified principal on the context, else nil (the ownerless no-auth path).
 	owner := resolveOwner(ctx, opts)
+	var placement *PlacementBinding
+	if opts.placement != nil {
+		if err := validatePlacementBinding(*opts.placement); err != nil {
+			return nil, err
+		}
+		placement = opts.placement
+		workspace = placement.Environment.Workspace().Root()
+		if profile == ProfileNoFS && workspace != "" || profile != ProfileNoFS && workspace == "" {
+			return nil, ErrInvalidPlacementBinding
+		}
+	} else {
+		workspace, placement, err = s.bindPlacementForCreate(ctx, profile, owner)
+		if err != nil {
+			return nil, err
+		}
+		if placement != nil && placement.Ref.Kind == session.EnvKindNoFS {
+			profile = ProfileNoFS
+		}
+	}
+	if placement != nil && placement.Close != nil {
+		defer func() { _ = placement.Close() }()
+	}
 	if err := s.bindRelatedIncarnations(ctx, &opts); err != nil {
 		return nil, err
 	}
@@ -2095,7 +2202,7 @@ func (s *Service) createSession(ctx context.Context, workspace string, mode sess
 		if opts.id == "" {
 			return nil, fmt.Errorf("%w: session id must not be empty", ErrInvalidArgument)
 		}
-		request := newCreateRequest(workspace, mode, limits, sel, profile, opts.sourceSessionID, opts)
+		request := newCreateRequest(placement.Ref, mode, limits, sel, profile, opts.sourceSessionID, opts)
 		retryRequest = &request
 		existing, release, err := s.reserveSessionID(ctx, opts.id, owner, request)
 		if err != nil {
@@ -2106,6 +2213,32 @@ func (s *Service) createSession(ctx context.Context, workspace string, mode sess
 		}
 		defer release()
 		mintID = func() session.SessionID { return opts.id }
+	}
+	// A broker attachment is keyed by the canonical persisted identity. Mint and
+	// reserve generated IDs before any attachment or catalogue construction.
+	if s.cfg.MCPBroker != nil && !opts.idSet {
+		id := mintID()
+		request := newCreateRequest(placement.Ref, mode, limits, sel, profile, opts.sourceSessionID, opts)
+		// Populate the outer retryRequest too (not just the local var used for
+		// reserveSessionID above): persistCreatedSession's collision-retry path
+		// (resolveCreateCollision) needs a non-nil *createRequest to classify an
+		// idempotent-retry winner on this generated-id branch, exactly as the
+		// opts.idSet branch above already does. Before this fix, retryRequest
+		// stayed nil here (the "request" identifier above is a fresh local, not
+		// the outer var), so resolveCreateCollision's request==nil guard always
+		// short-circuited and a genuine ErrSessionAlreadyExists from persistNewSession
+		// always hard-failed instead of resolving to the existing winner.
+		retryRequest = &request
+		existing, release, reserveErr := s.reserveSessionID(ctx, id, owner, request)
+		if reserveErr != nil {
+			return nil, reserveErr
+		}
+		if existing != nil {
+			release()
+			return nil, fmt.Errorf("%w: generated session id %q already exists", ErrInvalidArgument, id)
+		}
+		defer release()
+		mintID = func() session.SessionID { return id }
 	}
 
 	// Issue #20 (model-switch context carryover): when a source session is
@@ -2137,28 +2270,27 @@ func (s *Service) createSession(ctx context.Context, workspace string, mode sess
 		owner = srcOwner
 	}
 
-	needPerSession := s.sessionNeedsPerFactory(sel, specs, profile, workspace) ||
-		s.cfg.LearnedSkills != nil && session.PrincipalFromContext(ctx) != nil
+	needPerSession := s.cfg.MCPBroker != nil || s.sessionNeedsPerFactory(sel, specs, profile, workspace) || s.cfg.LearnedSkills != nil
 	if !needPerSession {
 		// Shared-engine fast path (today's behaviour, byte-identical). The labels are
 		// the empty pair + default profile here (the empty-selector default profile is
 		// exactly the no-per-session case), so setLabels persists nothing new — the
 		// snapshot stays byte-identical to a pre-Phase-1 default session.
-		sess, err := newCreatedSession(mintID(), mode, workspace, limits, s.cfg.Now(), opts)
+		sess, err := newCreatedSession(mintID(), mode, placement.Ref, limits, s.cfg.Now(), opts)
 		if err != nil {
 			return nil, fmt.Errorf("server: create session metadata: %w", err)
 		}
 		if err := setSessionLabels(sess, sel, profile, owner, s.rootAuthority(sess.Kind, carriedAuthority, carriedAuthorityBound)); err != nil {
 			return nil, err
 		}
-		stampDefaultEnvironmentRef(sess)
+		s.setTitleGenerationEligibility(sess, sel)
 		if err := seedCarryover(sess, carrySnap); err != nil {
 			return nil, err
 		}
-		return s.persistCreatedSession(ctx, sess, owner, retryRequest)
+		return s.persistPlacedCreatedSession(ctx, sess, owner, retryRequest, placement)
 	}
 
-	return s.createPerSessionEngine(ctx, mintID, mode, workspace, limits, sel, specs, profile, carrySnap, owner, opts, carriedAuthority, carriedAuthorityBound, retryRequest)
+	return s.createPerSessionEngine(ctx, mintID, mode, workspace, limits, sel, specs, profile, carrySnap, owner, opts, carriedAuthority, carriedAuthorityBound, retryRequest, placement)
 }
 
 // createPerSessionEngine is the per-session-engine create branch, factored out
@@ -2170,15 +2302,13 @@ func (s *Service) createSession(ctx context.Context, workspace string, mode sess
 // create leaks neither a slot nor a connection. See createSession for the
 // profile-aware workspace rule and the carryover snapshot semantics.
 //
-//nolint:gocyclo // Creation keeps factory, authorization, registration, and teardown in one transaction.
-func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() session.SessionID, mode session.PermissionMode, workspace string, limits session.Limits, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, carrySnap []session.Message, owner *session.Principal, opts createSessionOpts, carriedAuthority session.Authority, carriedAuthorityBound bool, retryRequest *createRequest) (*session.Session, error) {
-	factory := s.cfg.SessionEngine
+//nolint:gocyclo // Creation keeps factory, authorization, broker ownership, registration, and teardown in one transaction.
+func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() session.SessionID, mode session.PermissionMode, workspace string, limits session.Limits, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, carrySnap []session.Message, owner *session.Principal, opts createSessionOpts, carriedAuthority session.Authority, carriedAuthorityBound bool, retryRequest *createRequest, placement *PlacementBinding) (*session.Session, error) {
 	if opts.debugTargetID != "" {
 		if s.cfg.DebugSessionEngine == nil {
 			return nil, fmt.Errorf("%w: session debugging is not supported", ErrInvalidArgument)
 		}
-		factory = nil
-	} else if factory == nil {
+	} else if s.cfg.SessionEngine == nil && s.cfg.SessionEngineWithTools == nil {
 		return nil, fmt.Errorf("%w: per-session engine not supported (no session-engine factory configured)", ErrInvalidArgument)
 	}
 	// Cheap cap pre-check (CWE-770): reject BEFORE the factory connects MCP /
@@ -2196,6 +2326,9 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 	var res SessionEngineResult
 	var err error
 	var debugTarget *session.Session
+	var broker *localBrokerAttachment
+	var committed bool
+	var id session.SessionID
 	if opts.debugTargetID != "" {
 		debugTarget, err = s.cfg.Store.Load(ctx, opts.debugTargetID)
 		if err != nil || debugTarget == nil || s.authorizeSession(ctx, debugTarget) != nil {
@@ -2206,7 +2339,17 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 		}
 		res, err = s.cfg.DebugSessionEngine(ctx, sel, profile, mode, opts.debugTargetID, session.DebugTargetFingerprint(debugTarget), debugTarget.Owner, opts.debugMCPServers, nil)
 	} else {
-		res, err = factory(ctx, sel, specs, profile, workspace, mode)
+		if s.cfg.MCPBroker != nil {
+			id = mintID()
+			unlockBroker := s.brokerMu.lock(id)
+			defer unlockBroker()
+			broker, err = s.openBrokerAttachment(ctx, id, "", false)
+			if err != nil {
+				return nil, err
+			}
+			defer s.finalizeBrokerAttachment(broker, &committed)
+		}
+		res, err = s.callSessionEngine(ctx, sel, specs, profile, workspace, mode, brokerTools(broker))
 	}
 	if err != nil {
 		// Factory maps an unknown/unavailable provider to ErrInvalidArgument; any
@@ -2214,8 +2357,8 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 		return nil, err
 	}
 	eng, closeFn := res.Engine, res.Close
-	// All-or-nothing client MCP on the WIRE path, BEFORE an id is minted or
-	// anything is persisted: a caller that asked for tools must not be handed a
+	// All-or-nothing client MCP on the wire path, before a non-broker id is minted
+	// or anything is persisted: a caller that asked for tools must not be handed a
 	// session quietly missing them. Teardown uses the same closeFn idiom as every
 	// other rejection below, so a refused create leaks neither a connection nor a
 	// registry slot.
@@ -2225,18 +2368,24 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 		}
 		return nil, err
 	}
-	sess, err := newCreatedSession(mintID(), mode, workspace, limits, s.cfg.Now(), opts)
+	if id == "" {
+		id = mintID()
+	}
+	sess, err := newCreatedSession(id, mode, placement.Ref, limits, s.cfg.Now(), opts)
 	if err != nil {
 		if closeFn != nil {
 			_ = closeFn()
 		}
 		return nil, fmt.Errorf("server: create session metadata: %w", err)
 	}
+	if broker != nil {
+		sess.ExternalBinding = broker.attachment.Binding()
+	}
 	// Persist the neutral provider+model selector and the profile as write-once
 	// creation labels on the aggregate, so a restarted process re-derives the SAME
 	// per-session engine via the factory (rehydrateSession) instead of falling to the
 	// default-provider floor / inferring the profile from the empty-workspace pun.
-	if err := s.setPerSessionLabels(sess, sel, profile, owner, opts, res, carriedAuthority, carriedAuthorityBound); err != nil {
+	if err := s.setPerSessionLabels(sess, sel, profile, owner, opts, res, brokerTools(broker), carriedAuthority, carriedAuthorityBound); err != nil {
 		if closeFn != nil {
 			_ = closeFn()
 		}
@@ -2245,7 +2394,10 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 	if debugTarget != nil {
 		sess.DebugTargetFingerprint = session.DebugTargetFingerprint(debugTarget)
 	}
-	stampDefaultEnvironmentRef(sess)
+	if placement != nil {
+		sess.Placement = canonicalPlacementMetadata(*placement)
+	}
+	s.setTitleGenerationEligibility(sess, sel)
 	if err := seedCarryover(sess, carrySnap); err != nil {
 		if closeFn != nil {
 			_ = closeFn()
@@ -2277,16 +2429,6 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 		builtForMode:    res.BuiltForMode,
 		close:           closeFn,
 	}
-	if profile == ProfileNoFS {
-		// Register the no-FS Environment as this session's per-session
-		// environment OVERRIDE under the SAME lock as the engine registration,
-		// so the moment the session is visible StartRun resolves its environment
-		// here and NEVER hands the empty root to the shared osfs Workspaces
-		// factory (which would MkdirAll/OpenRoot the server process's cwd — the
-		// exact hazard). It is a complete shell-less Environment with an honest
-		// nofs ref (no command runner: a file-less namespace has no shell).
-		s.sessionEnvironments[sess.ID] = tool.MustEnvironment(defaultEnvironmentRef(sess), nofs.New(), nil)
-	}
 	s.mu.Unlock()
 
 	persisted, perr := s.persistCreatedSession(ctx, sess, owner, retryRequest)
@@ -2302,6 +2444,15 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 			_ = closeFn()
 		}
 		return persisted, perr
+	}
+	if broker != nil {
+		commitCtx, cancelCommit := context.WithTimeout(context.WithoutCancel(ctx), engineCloseTimeout)
+		commitErr := s.commitBrokerAttachment(commitCtx, id, broker)
+		cancelCommit()
+		if commitErr != nil {
+			return nil, fmt.Errorf("%w: %v", ErrInternal, commitErr)
+		}
+		committed = true
 	}
 	return sess, nil
 }
@@ -2354,7 +2505,7 @@ func (s *Service) capabilities() *mecatlv1.ServerCapabilities {
 		Image:             pcaps.Image,
 		Audio:             pcaps.Audio,
 		Posture:           s.cfg.Posture,
-		Worktrees:         s.cfg.Worktrees != nil,
+		Worktrees:         s.placementDiscoveryAvailable(),
 		Reflection:        s.cfg.ReflectSession != nil,
 		LearningProposals: s.cfg.Proposals != nil,
 		LearnedSkills:     s.cfg.LearnedSkills != nil,
@@ -2362,7 +2513,6 @@ func (s *Service) capabilities() *mecatlv1.ServerCapabilities {
 		StorageHealth:     s.cfg.StorageManagementAuthorized != nil && (implementsStorageHealth(s.cfg.Store) || s.scheduleStore() != nil),
 		StorageMigration:  s.cfg.StorageManagementAuthorized != nil && s.maintenanceMutationAvailable() && func() bool { _, ok := migrationStore(s.cfg.Store); return ok }(),
 		StorageCleanup:    s.cfg.StorageManagementAuthorized != nil && s.maintenanceMutationAvailable() && supportsCleanupDelete(s.cfg.Store),
-		LegacyAdoption:    s.cfg.OwnershipEnforced && s.cfg.SessionEngine != nil,
 		ManualDream:       toProtoDreamCapabilities(s.ManualDreamCapabilities()),
 		// Steer reads the SAME wired engine knob the runs consult (Deps.EnableSteer
 		// via Engine.SteerEnabled) — the advertisement can never claim a steer
@@ -2372,9 +2522,10 @@ func (s *Service) capabilities() *mecatlv1.ServerCapabilities {
 		Steer: s.cfg.Engine != nil && s.cfg.Engine.SteerEnabled(),
 		// Manual compaction uses the configured engine, or a per-session engine
 		// derived under the same service construction semantics.
-		ManualCompaction: s.cfg.Engine != nil,
-		SessionDebug:     s.cfg.DebugSessionEngine != nil,
-		DebugMcp:         s.cfg.DebugMCP,
+		ManualCompaction:    s.cfg.Engine != nil,
+		SessionDebug:        s.cfg.DebugSessionEngine != nil,
+		DebugMcp:            s.cfg.DebugMCP,
+		WorkspaceEnrollment: s.cfg.WorkspaceEnrollment,
 	}
 }
 
@@ -2508,14 +2659,14 @@ func (s *Service) ClientMCPFromWire(servers []mcp.ClientServer) (ClientMCPGrant,
 //
 // The per-session engine's MCP manager is torn down by CloseSession (editor
 // disconnect) or by the Service's Close.
-func (s *Service) CreateSessionWithMCP(ctx context.Context, workspace string, mode session.PermissionMode, limits session.Limits, specs []mcp.ServerConfig) (*session.Session, error) {
+func (s *Service) CreateSessionWithMCP(ctx context.Context, mode session.PermissionMode, limits session.Limits, specs []mcp.ServerConfig) (*session.Session, error) {
 	// Thin wrapper over the generalized create path with the ZERO provider
 	// selector and the DEFAULT profile: no specs uses the shared engine (today's
 	// behaviour), specs build a per-session engine. The zero selector leaves the
 	// per-session engine bound to the DEFAULT provider, matching the pre-S3 MCP
 	// path exactly. (ACP carries no profile in P0 — every ACP session is the
 	// default filesystem profile.)
-	return s.createSession(ctx, workspace, mode, limits, ProviderSelector{}, specs, ProfileDefault, createSessionOpts{})
+	return s.createSession(ctx, mode, limits, ProviderSelector{}, specs, ProfileDefault, createSessionOpts{})
 }
 
 // SetSessionEnvironment registers a per-session Environment OVERRIDE for id, so a
@@ -2552,6 +2703,35 @@ func (s *Service) SetSessionEnvironment(id session.SessionID, env tool.Environme
 // editor disconnect already implies the run is being abandoned, so blocking briefly
 // for the in-flight call to unwind is the correct, leak-free behaviour.
 func (s *Service) CloseSession(id session.SessionID) {
+	unlockEntry := s.runEntryMu.lock(id)
+	defer unlockEntry()
+	s.closeSessionAuthorized(id)
+}
+
+// closeSessionAuthorized performs the authorization-settlement teardown. The
+// caller must already hold runEntryMu for id: CloseSession itself acquires it
+// for direct callers (e.g. the ACP disconnect path), while EndSession already
+// holds it across its live-run precondition check and calls this directly to
+// avoid re-locking the non-reentrant per-id mutex.
+func (s *Service) closeSessionAuthorized(id session.SessionID) {
+	if err := s.acquireLease(context.Background(), id); err != nil {
+		s.cfg.Diagnostics.Log(context.Background(), port.LevelWarn, "session close authorization settlement deferred",
+			"session", string(id), "err", err.Error())
+		return
+	}
+	if err := s.settleAuthorizationLocked(context.Background(), id); err != nil {
+		return // settlement logged the persistence/authority failure; retain attachment + lease for retry.
+	}
+	s.stopAuthorizationExpiry(id)
+	unlockBroker := s.brokerMu.lock(id)
+	defer unlockBroker()
+	s.closeSessionLocal(id)
+}
+
+// closeSessionLocal releases only process-local ownership. The caller must hold
+// brokerMu for id so no engine can borrow and install the attachment while it is
+// being closed.
+func (s *Service) closeSessionLocal(id session.SessionID) {
 	// Release composition-owned session-scoped state first (e.g. the per-session
 	// learned permission rules) so it never outlives the session, even if the
 	// per-session engine teardown below is a no-op for this id.
@@ -2559,10 +2739,14 @@ func (s *Service) CloseSession(id session.SessionID) {
 		s.cfg.OnCloseSession(id)
 	}
 	s.mu.Lock()
+	expiry := s.authorizationExpiry[id]
+	delete(s.authorizationExpiry, id)
 	se, ok := s.sessionEngines[id]
 	if ok {
 		delete(s.sessionEngines, id)
 	}
+	brokerAttachment := s.brokerAttachments[id]
+	delete(s.brokerAttachments, id)
 	// Drop any per-session environment override too: it closes over the (now
 	// disconnecting) connection, so it must not outlive the session.
 	delete(s.sessionEnvironments, id)
@@ -2583,9 +2767,23 @@ func (s *Service) CloseSession(id session.SessionID) {
 	// entry in steerMsgIDs until process exit (same unbounded-map class the
 	// neighboring two deletes close).
 	delete(s.steerMsgIDs, id)
+	delete(s.lostOwnership, id)
 	s.mu.Unlock()
+	if expiry != nil && expiry.timer != nil {
+		expiry.timer.Stop()
+	}
 	if ok && se.close != nil {
-		_ = se.close()
+		if err := se.close(); err != nil {
+			s.cfg.Diagnostics.Log(context.Background(), port.LevelWarn, "per-session engine close failed")
+		}
+	}
+	if brokerAttachment != nil {
+		closeCtx, cancel := context.WithTimeout(context.Background(), engineCloseTimeout)
+		_, err := brokerAttachment.Close(closeCtx)
+		cancel()
+		if err != nil {
+			s.cfg.Diagnostics.Log(context.Background(), port.LevelWarn, "MCP broker attachment close failed")
+		}
 	}
 	// Stop the session's renewer and release its cross-process lease (cloud-native
 	// Phase 4): the session is ending, so a competitor may now take it over. No-op
@@ -2596,28 +2794,56 @@ func (s *Service) CloseSession(id session.SessionID) {
 // EndSession is the precondition-checked sibling of CloseSession: the
 // surface-facing session-end entry for the gRPC/HTTP transports (the ACP adapter
 // calls the void CloseSession directly on disconnect). It verifies the session
-// exists, then runs the same teardown as CloseSession (OnCloseSession ->
-// learned-rule Forget, per-session engine + workspace eviction). It returns
-// ErrNotFound for a never-created id; teardown is idempotent, so closing an
-// already-released (but still persisted) session succeeds. It does NOT delete the
-// persisted snapshot and does NOT cancel an in-flight run (orthogonal to Cancel).
+// exists and serializes against run admission. A locally registered run owns the
+// session until its relay calls FinishRun, so close fails with
+// ErrFailedPrecondition without releasing the lease or tearing down any local
+// engine, policy, or environment. A persisted awaiting snapshot with no local run
+// is not active ownership: teardown releases local resources while leaving the
+// durable PendingAsk untouched. Closing an already-released (but still persisted)
+// session remains idempotent. EndSession never deletes the persisted snapshot and
+// never cancels a run; cancellation is an orthogonal operation.
 func (s *Service) EndSession(ctx context.Context, id session.SessionID) error {
+	unlock := s.runEntryMu.lock(id)
+	defer unlock()
 	if _, err := s.GetSession(ctx, id); err != nil {
 		return err
 	}
-	s.CloseSession(id)
+	s.mu.Lock()
+	_, live := s.runs[id]
+	s.mu.Unlock()
+	if live {
+		return fmt.Errorf("%w: session has a local active run", ErrFailedPrecondition)
+	}
+	s.closeSessionAuthorized(id)
 	return nil
 }
 
 // Close tears down all per-session engines' MCP managers. It is the Service's
 // shutdown hook so a process exit does not leak any per-session MCP connection.
 // It is safe to call multiple times.
+//
+//nolint:gocyclo // shutdown sequences multiple independent teardown phases in order; inherent.
 func (s *Service) Close() {
+	s.closeMu.Lock()
+	defer s.closeMu.Unlock()
+	s.mu.Lock()
+	complete := s.shutdownComplete
+	s.mu.Unlock()
+	if complete {
+		return
+	}
+	// Stop and join auxiliary title workers before tearing down their session
+	// dependencies. A cancelled in-flight provider call records interruption.
+	if s.titleCoordinator != nil {
+		s.titleCoordinator.Close()
+	}
 	// Signal shutdown so in-flight runs (scheduled fires and foreground turns)
 	// observe the cancellation and unwind. This fires BEFORE the scheduler stop
 	// and before engine-close so runs unblock promptly rather than waiting on
 	// the full shutdown sequence.
 	s.shutdownCancel()
+
+	s.prepareAuthorizationClose()
 
 	// Cancel every in-flight run so an LLM/MCP call blocked on its context
 	// unwinds. Snapshot under s.mu, then cancel outside to avoid holding the
@@ -2647,10 +2873,17 @@ func (s *Service) Close() {
 	}
 	s.mu.Unlock()
 	for _, rs := range runs {
-		if rs.awaiting.Load() {
+		rs.persistMu.Lock()
+		awaiting := rs.awaiting.Load()
+		rs.persistMu.Unlock()
+		if awaiting {
 			continue // resumable cross-process via the durable awaiting snapshot
 		}
-		rs.run.Cancel()
+		if rs.run != nil {
+			rs.run.Cancel()
+		} else if rs.admissionCancel != nil {
+			rs.admissionCancel()
+		}
 	}
 
 	// Stop the scheduler FIRST so in-flight fires drain while the service is
@@ -2674,6 +2907,8 @@ func (s *Service) Close() {
 	s.mu.Lock()
 	engines := s.sessionEngines
 	s.sessionEngines = make(map[session.SessionID]*sessionEngine)
+	brokerAttachments := s.brokerAttachments
+	s.brokerAttachments = make(map[session.SessionID]brokercontract.Attachment)
 	// Drop all per-session environment overrides on shutdown; they hold no resources
 	// of their own (the underlying connection is closed separately) but must not
 	// linger past the Service.
@@ -2706,7 +2941,9 @@ func (s *Service) Close() {
 	go func() {
 		for _, se := range engines {
 			if se.close != nil {
-				_ = se.close()
+				if err := se.close(); err != nil {
+					s.cfg.Diagnostics.Log(context.Background(), port.LevelWarn, "per-session engine close failed during shutdown")
+				}
 			}
 		}
 		close(done)
@@ -2717,6 +2954,19 @@ func (s *Service) Close() {
 		s.cfg.Diagnostics.Log(context.Background(), port.LevelWarn, "timed out waiting for per-session engine close; abandoning",
 			"timeout", engineCloseTimeout.String())
 	}
+	attachmentCtx, cancelAttachments := context.WithTimeout(context.Background(), engineCloseTimeout)
+	var attachmentWG sync.WaitGroup
+	for _, attachment := range brokerAttachments {
+		attachmentWG.Add(1)
+		go func() {
+			defer attachmentWG.Done()
+			if _, err := attachment.Close(attachmentCtx); err != nil {
+				s.cfg.Diagnostics.Log(context.Background(), port.LevelWarn, "MCP broker attachment close failed during shutdown")
+			}
+		}()
+	}
+	attachmentWG.Wait()
+	cancelAttachments()
 
 	// Stop every renewer and release every held cross-process lease on shutdown
 	// (cloud-native Phase 4), so a restarted process can take the sessions over
@@ -2724,6 +2974,9 @@ func (s *Service) Close() {
 	for _, id := range leasedIDs {
 		s.releaseLease(id)
 	}
+	s.mu.Lock()
+	s.shutdownComplete = true
+	s.mu.Unlock()
 }
 
 // Drain arms the drain gate (ADR 0048, mecak8s): subsequent run-entries
@@ -2735,6 +2988,21 @@ func (s *Service) Close() {
 // binary; Drain only gates new entries. The gate is one-way: there is no
 // un-drain (a draining replica is retiring).
 func (s *Service) Drain() {
+	// Close admission and snapshot provisional cancellations under the same lock
+	// used by promotion, so a run cannot cross from provisional to provider-start
+	// after the drain gate wins.
+	s.mu.Lock()
+	s.draining.Store(true)
+	var provisional []context.CancelFunc
+	for _, st := range s.runs {
+		if st.run == nil && st.admissionCancel != nil {
+			provisional = append(provisional, st.admissionCancel)
+		}
+	}
+	s.mu.Unlock()
+	for _, cancel := range provisional {
+		cancel()
+	}
 	// Arm the scheduler's drain gate too so no NEW fires start mid-tick during
 	// shutdown (in-flight fires complete or are cancelled by Close's Stop).
 	// The scheduler lives on the embedded scheduleManager (ADR 0076) as an
@@ -2744,7 +3012,133 @@ func (s *Service) Drain() {
 			sch.Drain()
 		}
 	}
-	s.draining.Store(true)
+}
+
+func (s *Service) snapshotDrainState() (map[session.SessionID]*runState, []session.SessionID) {
+	s.mu.Lock()
+	runs := make(map[session.SessionID]*runState, len(s.runs))
+	for id, st := range s.runs {
+		runs[id] = st
+	}
+	leaseOnly := make([]session.SessionID, 0, len(s.heldLeases))
+	for id := range s.heldLeases {
+		if _, live := runs[id]; !live {
+			leaseOnly = append(leaseOnly, id)
+		}
+	}
+	s.mu.Unlock()
+
+	// Do not hold s.mu while taking persistMu: Persist takes them in the opposite
+	// order to revalidate registry identity after its potentially blocking save.
+	for _, st := range runs {
+		st.persistMu.Lock()
+		if st.awaiting.Load() {
+			st.preserveDurable.Store(true)
+		}
+		st.persistMu.Unlock()
+	}
+	return runs, leaseOnly
+}
+
+// GracefulDrain settles locally-owned runs after closing admission. Executing
+// runs are cancelled and must be joined by their relay (FinishRun) before their
+// terminal aggregate is persisted and their lease is explicitly released.
+// Awaiting runs are cancelled only in memory: preserveDurable prevents the relay
+// from replacing the already-persisted PendingAsk handoff point. A context
+// timeout invalidates local mutation capability and stops renewal, but never
+// explicitly releases an unjoined run's lease; TTL then governs takeover.
+func (s *Service) GracefulDrain(ctx context.Context) error {
+	s.Drain()
+
+	runs, leaseOnly := s.snapshotDrainState()
+
+	// Ownership with no local run is already settled (including an unattended
+	// durable awaiting snapshot), so it can hand off immediately.
+	for _, id := range leaseOnly {
+		s.releaseLease(id)
+	}
+	for id, st := range runs {
+		if st.run != nil {
+			// The already-persisted awaiting snapshot is the handoff point. Deny
+			// the engine's terminal cancellation save before cancelling it.
+			if st.preserveDurable.Load() {
+				s.cfg.MutationCapability.Invalidate(id)
+			}
+			st.run.Cancel()
+		} else if st.admissionCancel != nil {
+			st.admissionCancel()
+		}
+	}
+
+	pending := make(map[session.SessionID]*runState, len(runs))
+	settled := make(chan session.SessionID, len(runs))
+	for id, st := range runs {
+		pending[id] = st
+		go func(id session.SessionID, done <-chan struct{}) {
+			select {
+			case <-done:
+				settled <- id
+			case <-ctx.Done():
+			}
+		}(id, st.settled)
+	}
+	settle := func(id session.SessionID) {
+		st, ok := pending[id]
+		if !ok {
+			return
+		}
+		delete(pending, id)
+		st.persistMu.Lock()
+		preserveDurable := st.preserveDurable.Load()
+		st.persistMu.Unlock()
+		if !preserveDurable {
+			saveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), leaseAcquireTimeout)
+			if s.mutationLeaseHeld(id) {
+				if err := s.saveSession(saveCtx, st.sess); err != nil {
+					s.cfg.Diagnostics.Log(saveCtx, port.LevelWarn, "drain persistence failed; prior durable state remains authoritative",
+						"session", string(id), "err", err.Error())
+				}
+			}
+			cancel()
+		}
+		s.releaseLease(id)
+	}
+	for len(pending) > 0 {
+		select {
+		case id := <-settled:
+			settle(id)
+		case <-ctx.Done():
+			// A settlement may race the timeout. Recheck every pending lifecycle
+			// directly before deciding which genuinely unjoined owners retain TTL.
+			for id, st := range pending {
+				select {
+				case <-st.settled:
+					settle(id)
+				default:
+				}
+			}
+			for pendingID := range pending {
+				s.retainLeaseForTTL(pendingID)
+			}
+			return ctx.Err()
+		}
+	}
+	return nil
+}
+
+// retainLeaseForTTL stops renewal and invalidates local mutation authority while
+// leaving ownership unreleased for process-death/TTL takeover.
+func (s *Service) retainLeaseForTTL(id session.SessionID) {
+	s.mu.Lock()
+	h := s.heldLeases[id]
+	if h != nil && h.valid {
+		h.valid = false
+		s.cfg.MutationCapability.Invalidate(id)
+	}
+	s.mu.Unlock()
+	if h != nil {
+		h.cancel()
+	}
 }
 
 // SetScheduler, SetScheduleMinInterval, HasScheduler, and ScheduleManager are
@@ -2814,6 +3208,17 @@ func (s *Service) StorageReady(ctx context.Context) bool {
 	return p.Ping(ctx) == nil
 }
 
+func (s *Service) saveSession(ctx context.Context, sess *session.Session) error {
+	return s.cfg.MutationCapability.GuardStore(s.cfg.Store).Save(ctx, sess)
+}
+
+func (s *Service) deleteSessionFamily(ctx context.Context, id session.SessionID, store port.PrunableStore) error {
+	if !s.mutationLeaseHeld(id) {
+		return fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, id)
+	}
+	return store.Delete(ctx, id)
+}
+
 // GetSession returns the persisted session under id, or ErrNotFound.
 //
 // Absence, foreign ownership, and a broken store are deliberately ONE
@@ -2825,18 +3230,23 @@ func (s *Service) StorageReady(ctx context.Context) bool {
 func (s *Service) GetSession(ctx context.Context, id session.SessionID) (*session.Session, error) {
 	sess, err := s.cfg.Store.Load(ctx, id)
 	if err != nil && !errors.Is(err, port.ErrSessionNotFound) {
-		// Under enforcement the line carries NO target: neither the id nor the
-		// store's error, which routinely embeds the record path. An operator only
-		// needs the RATE of this line to see an outage, and withholding the target
-		// keeps a probing caller from correlating anything through the log.
 		if s.cfg.OwnershipEnforced {
-			s.cfg.Diagnostics.Log(ctx, port.LevelWarn, "session load failed; reported to callers as absent (target withheld under ownership enforcement)")
+			class := port.ClassifySessionLoadFailure(err)
+			// This target-free operator fact must not inherit request trace/baggage:
+			// handlers may project context values into the final log record.
+			s.cfg.Diagnostics.Log(context.Background(), port.LevelWarn, "session load failed", "class", class.String(), "ownership", "enforced")
+			if s.cfg.SessionLoadFailureMetric != nil {
+				s.cfg.SessionLoadFailureMetric(class)
+			}
 		} else {
 			s.cfg.Diagnostics.Log(ctx, port.LevelWarn, "session load failed; reported to the caller as absent",
 				"session", string(id), "err", err.Error())
 		}
 	}
 	if err != nil || s.authorizeSession(ctx, sess) != nil {
+		if s.cfg.OwnershipEnforced {
+			return nil, ErrNotFound
+		}
 		return nil, fmt.Errorf("%w: %q", ErrNotFound, id)
 	}
 	// The session ID is an opaque handle, so repairing malformed bytes here would
@@ -2938,7 +3348,7 @@ func (s *Service) CompactSession(ctx context.Context, id session.SessionID, call
 	if !leaseHeld() {
 		return agent.ManualCompactionResult{}, fmt.Errorf("%w: session lease was lost during compaction", ErrSessionLeasedElsewhere)
 	}
-	if err := s.cfg.Store.Save(compactCtx, sess); err != nil {
+	if err := s.saveSession(compactCtx, sess); err != nil {
 		return agent.ManualCompactionResult{}, fmt.Errorf("%w: persist compacted session: %v", ErrInternal, err)
 	}
 
@@ -2990,9 +3400,10 @@ func (s *Service) RenameSession(ctx context.Context, id session.SessionID, title
 	if err := sess.RenameTitle(title); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidArgument, err)
 	}
-	if err := s.cfg.Store.Save(ctx, sess); err != nil {
+	if err := s.saveSession(ctx, sess); err != nil {
 		return nil, fmt.Errorf("%w: rename session: %v", ErrInternal, err)
 	}
+	s.publishTitle(context.WithoutCancel(ctx), sess)
 	return sess, nil
 }
 
@@ -3023,8 +3434,18 @@ func (s *Service) DeleteSession(ctx context.Context, id session.SessionID) error
 	if err != nil || absent {
 		return err
 	}
-	if err := prunable.Delete(ctx, sess.ID); err != nil {
+	unlockBroker := s.brokerMu.lock(id)
+	defer unlockBroker()
+	if err := s.deleteSessionFamily(ctx, sess.ID, prunable); err != nil {
 		if errors.Is(err, port.ErrSessionNotFound) {
+			// The durable record is already gone: still attempt broker cleanup
+			// (best-effort) before reporting success, so a locally-retained
+			// broker handle is never orphaned by an already-completed delete.
+			if brokerErr := s.deleteBrokerSessionLocked(ctx, id); brokerErr != nil {
+				s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelWarn, "broker cleanup after already-deleted session failed",
+					"session", string(id), "err", brokerErr.Error())
+			}
+			s.closeSessionLocal(id)
 			return nil
 		}
 		if errors.Is(err, port.ErrPruneUnsupported) {
@@ -3032,7 +3453,17 @@ func (s *Service) DeleteSession(ctx context.Context, id session.SessionID) error
 		}
 		return fmt.Errorf("%w: delete session: %v", ErrInternal, err)
 	}
-	s.CloseSession(id)
+	// The durable record is gone; broker cleanup is now best-effort. Reordered
+	// deliberately (I-8): deleting broker state FIRST left an unrecoverable
+	// partial-deletion window if the durable delete then failed — the snapshot
+	// would survive pointing at broker state that no longer exists. Broker
+	// state is process-local, so an orphaned entry here is a bounded leak, the
+	// strictly safer failure direction.
+	if err := s.deleteBrokerSessionLocked(ctx, id); err != nil {
+		s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelWarn, "broker cleanup after session delete failed",
+			"session", string(id), "err", err.Error())
+	}
+	s.closeSessionLocal(id)
 	return nil
 }
 
@@ -3073,6 +3504,11 @@ func (s *Service) DeleteSessionForRetentionCandidate(ctx context.Context, candid
 	if !retentionCandidateMatches(sess, candidate) {
 		return errRetentionCandidateChanged
 	}
+	unlockBroker := s.brokerMu.lock(candidate.ID)
+	defer unlockBroker()
+	if !s.mutationLeaseHeld(candidate.ID) {
+		return fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, candidate.ID)
+	}
 	deleted, err := deleter.DeleteSessionIfUnchanged(ctx, candidate)
 	if err != nil {
 		if errors.Is(err, port.ErrPruneUnsupported) {
@@ -3083,7 +3519,13 @@ func (s *Service) DeleteSessionForRetentionCandidate(ctx context.Context, candid
 	if !deleted {
 		return errRetentionCandidateChanged
 	}
-	s.CloseSession(candidate.ID)
+	// The durable record is gone; broker cleanup is now best-effort (I-8: see
+	// deleteBrokerSessionLocked's doc comment for the ordering rationale).
+	if err := s.deleteBrokerSessionLocked(ctx, candidate.ID); err != nil {
+		s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelWarn, "broker cleanup after retention delete failed",
+			"session", string(candidate.ID), "err", err.Error())
+	}
+	s.closeSessionLocal(candidate.ID)
 	return nil
 }
 
@@ -3093,7 +3535,7 @@ func retentionCandidateMatches(sess *session.Session, candidate port.SessionDisc
 	}
 	ownerMatches := candidate.Owner == nil && sess.Owner == nil || candidate.Owner != nil && candidate.Owner.SameIdentity(sess.Owner)
 	return sess.ID == candidate.ID && ownerMatches && sess.Kind == candidate.Kind && sess.State == candidate.State &&
-		sess.State != session.StateRunning && sess.State != session.StateAwaiting && sess.Kind != session.SessionKindUnknown &&
+		sess.State != session.StateRunning && sess.State != session.StateAwaiting && sess.State != session.StateAuthorizing && sess.Kind != session.SessionKindUnknown &&
 		session.ValidateSessionMetadata(sess.Kind, sess.Relationship) == nil
 }
 
@@ -3129,11 +3571,18 @@ func (s *Service) DeleteSessionForRetention(ctx context.Context, id session.Sess
 		sess.Kind == session.SessionKindUnknown || sess.Kind == session.SessionKindMain && hasLegacyNonChatPrefix(id) {
 		return fmt.Errorf("%w: retention candidate has no valid durable taxonomy", ErrFailedPrecondition)
 	}
-	if sess.State == session.StateRunning || sess.State == session.StateAwaiting || s.IsLive(id) {
+	if sess.State == session.StateRunning || sess.State == session.StateAwaiting || sess.State == session.StateAuthorizing || s.IsLive(id) {
 		return fmt.Errorf("%w: retention candidate is active or awaiting approval", ErrFailedPrecondition)
 	}
-	if err := prunable.Delete(ctx, id); err != nil {
+	unlockBroker := s.brokerMu.lock(id)
+	defer unlockBroker()
+	if err := s.deleteSessionFamily(ctx, id, prunable); err != nil {
 		if errors.Is(err, port.ErrSessionNotFound) {
+			if brokerErr := s.deleteBrokerSessionLocked(ctx, id); brokerErr != nil {
+				s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelWarn, "broker cleanup after already-deleted retention candidate failed",
+					"session", string(id), "err", brokerErr.Error())
+			}
+			s.closeSessionLocal(id)
 			return nil
 		}
 		if errors.Is(err, port.ErrPruneUnsupported) {
@@ -3141,7 +3590,13 @@ func (s *Service) DeleteSessionForRetention(ctx context.Context, id session.Sess
 		}
 		return fmt.Errorf("%w: delete retention candidate: %v", ErrInternal, err)
 	}
-	s.CloseSession(id)
+	// The durable record is gone; broker cleanup is now best-effort (I-8: see
+	// deleteBrokerSessionLocked's doc comment for the ordering rationale).
+	if err := s.deleteBrokerSessionLocked(ctx, id); err != nil {
+		s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelWarn, "broker cleanup after retention delete failed",
+			"session", string(id), "err", err.Error())
+	}
+	s.closeSessionLocal(id)
 	return nil
 }
 
@@ -3173,10 +3628,10 @@ func (s *Service) managementOwnershipPreflight(ctx context.Context, id session.S
 	return false, nil
 }
 
-// managementTarget performs the common management authorization and eligibility
-// gate. The caller must hold runEntryMu for id. concealAbsence makes missing and
-// foreign sessions indistinguishable idempotent success for DeleteSession.
-func (s *Service) managementTarget(ctx context.Context, id session.SessionID, concealAbsence bool) (*session.Session, bool, error) {
+// managementSession performs the common management authorization and taxonomy
+// validation without applying the generic idle-only management gate. The caller
+// must hold runEntryMu for id.
+func (s *Service) managementSession(ctx context.Context, id session.SessionID, concealAbsence bool) (*session.Session, bool, error) {
 	sess, err := s.cfg.Store.Load(ctx, id)
 	if err != nil {
 		if errors.Is(err, port.ErrSessionNotFound) {
@@ -3201,7 +3656,18 @@ func (s *Service) managementTarget(ctx context.Context, id session.SessionID, co
 	if sess.Kind != session.SessionKindMain || hasLegacyNonChatPrefix(id) {
 		return nil, false, fmt.Errorf("%w: session is not a main session", ErrFailedPrecondition)
 	}
-	if sess.State == session.StateRunning || sess.State == session.StateAwaiting || s.IsLive(id) {
+	return sess, false, nil
+}
+
+// managementTarget adds the generic idle-only eligibility gate used by
+// management operations other than ClearSession. The caller must hold
+// runEntryMu for id.
+func (s *Service) managementTarget(ctx context.Context, id session.SessionID, concealAbsence bool) (*session.Session, bool, error) {
+	sess, absent, err := s.managementSession(ctx, id, concealAbsence)
+	if err != nil || absent {
+		return nil, absent, err
+	}
+	if sess.State == session.StateRunning || sess.State == session.StateAwaiting || sess.State == session.StateAuthorizing || s.IsLive(id) {
 		return nil, false, fmt.Errorf("%w: session is active or awaiting approval", ErrFailedPrecondition)
 	}
 	return sess, false, nil
@@ -3219,14 +3685,31 @@ func (s *Service) managementTarget(ctx context.Context, id session.SessionID, co
 // change while a turn is in flight, so the caller must defer it to the next
 // prompt. A change to the mode the session already has is a no-op success.
 func (s *Service) SetMode(ctx context.Context, id session.SessionID, mode session.PermissionMode) (*session.Session, error) {
+	if s.draining.Load() {
+		return nil, fmt.Errorf("%w: %q", ErrUnavailable, id)
+	}
 	if mode == "" {
 		return nil, fmt.Errorf("%w: mode is required", ErrInvalidArgument)
 	}
+	// Ownership is established before caller-selected coordination, then
+	// revalidated under runEntryMu before and after lease acquisition.
 	if _, err := s.GetSession(ctx, id); err != nil {
 		return nil, err
 	}
+	unlock := s.runEntryMu.lock(id)
+	defer unlock()
+	if _, err := s.GetSession(ctx, id); err != nil {
+		return nil, err
+	}
+	release, err := s.acquireMutationLease(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
 	// Prefer the live session the engine drives (if registered) so the change is
-	// observed by the same object; otherwise operate on the stored snapshot.
+	// observed by the same object; otherwise reload the authoritative snapshot
+	// after acquiring the lease.
 	s.mu.Lock()
 	st, live := s.runs[id]
 	s.mu.Unlock()
@@ -3234,10 +3717,13 @@ func (s *Service) SetMode(ctx context.Context, id session.SessionID, mode sessio
 	var sess *session.Session
 	if live {
 		sess = st.sess
-	} else {
-		loaded, err := s.GetSession(ctx, id)
-		if err != nil {
+		if err := s.authorizeSession(ctx, sess); err != nil {
 			return nil, err
+		}
+	} else {
+		loaded, loadErr := s.GetSession(ctx, id)
+		if loadErr != nil {
+			return nil, loadErr
 		}
 		sess = loaded
 	}
@@ -3246,7 +3732,7 @@ func (s *Service) SetMode(ctx context.Context, id session.SessionID, mode sessio
 		// A mid-turn refusal from the aggregate is a client-sequencing error.
 		return nil, fmt.Errorf("%w: %v", ErrInvalidArgument, err)
 	}
-	if err := s.cfg.Store.Save(ctx, sess); err != nil {
+	if err := s.saveSession(ctx, sess); err != nil {
 		return nil, fmt.Errorf("server: persist session: %w", err)
 	}
 	return sess, nil
@@ -3268,116 +3754,6 @@ func (s *Service) SetMode(ctx context.Context, id session.SessionID, mode sessio
 // and the id was never created in this process).
 func (s *Service) LoadSession(ctx context.Context, id session.SessionID) (*session.Session, error) {
 	return s.loadAndReopen(ctx, id)
-}
-
-// ForkSession creates a new peer session whose conversation history is a snapshot
-// of an existing session's, inheriting the source's mode, workspace, limits, and
-// provider/model/profile labels (ADR 0065). Same provider and model only; the ONE
-// permitted selector delta is an optional reasoning-effort override (ADR 0068).
-//
-// The source is authorized and checked for main-kind, liveness, and awaiting state
-// under runEntryMu, then leased before terminal recovery or snapshotting. A terminal
-// source is recovered to idle first (completed→Reopen / cancelled→Interrupt /
-// failed→Recover) and approval replay runs. The snapshot is session.ForkSnapshot
-// (fresh backing array, trailing orphans stripped, tool-pairing-valid), seeded via
-// session.SeedHistory into a fresh session.New aggregate. The new session starts
-// with zeroed Counters/Usage but inherits the source's history verbatim (not re-fenced —
-// peer-trust parity, same as the subagent fork).
-//
-// title overrides the forked session's title when non-empty; empty inherits the
-// source's title verbatim.
-//
-// effortOverride (ADR 0068) overrides the forked session's reasoning-effort label
-// when non-empty; empty inherits the source's effort verbatim. The override changes
-// ONLY the effort label/engine — provider and model ALWAYS inherit (a fork carries
-// provider-private replay blobs, so cross-provider/model stays out of scope). A
-// non-empty override makes the fork need a per-session engine (sessionNeedsPerFactory
-// fires on the changed selector), which the rehydrate path below builds.
-//
-// The engine is rehydrated ONLY when the source needed a per-session engine
-// (non-default selector / no-fs profile / worktree workspace), mirroring
-// createSession's branching on sessionNeedsPerFactory; a default-FS fork rides the
-// shared engine (zero overhead, no registry entry). The MaxSessionEngines cap is
-// enforced by the rehydrate path. Returns the new id.
-func (s *Service) ForkSession(ctx context.Context, srcID session.SessionID, title, effortOverride string) (session.SessionID, error) {
-	absent, err := s.managementOwnershipPreflight(ctx, srcID, false)
-	if err != nil {
-		return "", err
-	}
-	if absent {
-		return "", fmt.Errorf("%w: %q", ErrNotFound, srcID)
-	}
-	unlock := s.runEntryMu.lock(srcID)
-	defer unlock()
-	_, absent, err = s.managementTarget(ctx, srcID, false)
-	if err != nil {
-		return "", err
-	}
-	if absent {
-		return "", fmt.Errorf("%w: %q", ErrNotFound, srcID)
-	}
-	release, err := s.acquireMutationLease(ctx, srcID)
-	if err != nil {
-		return "", err
-	}
-	defer release()
-	src, absent, err := s.managementTarget(ctx, srcID, false)
-	if err != nil {
-		return "", err
-	}
-	if absent {
-		return "", fmt.Errorf("%w: %q", ErrNotFound, srcID)
-	}
-	src, err = s.reopenLoadedSession(ctx, src)
-	if err != nil {
-		return "", err
-	}
-	snap := session.ForkSnapshot(src.Conversation)
-	forked := session.New(s.cfg.NewID(), src.Mode, src.Workspace, src.Limits, s.cfg.Now())
-	if err := forked.SeedHistory(snap); err != nil {
-		return "", fmt.Errorf("server: seed fork history: %w", err)
-	}
-	sel := ProviderSelector{ProviderID: src.ProviderID, ModelID: src.ModelID, ReasoningEffort: src.ReasoningEffort}
-	// ADR 0068: the ONE permitted selector delta — a non-empty override replaces
-	// ONLY the effort label (provider/model inherit regardless), so a mid-
-	// conversation effort switch forks the transcript onto the new tier.
-	if effortOverride != "" {
-		sel.ReasoningEffort = effortOverride
-	}
-	profile := profileForSession(src)
-	// The fork inherits the SOURCE's owner (ADR 0204 decision 4), NOT the
-	// principal of whoever called ForkSession — otherwise fork is an
-	// ownership-laundering path. An ownerless source forks ownerless.
-	// A peer fork copies the source authority and provenance verbatim; it never
-	// re-mints from the current catalog.
-	authority, bound := src.BoundAuthority()
-	if !bound {
-		authority = session.Authority{}
-	}
-	if err := setSessionLabels(forked, sel, profile, src.Owner, authority); err != nil {
-		return "", err
-	}
-	if title != "" {
-		if err := forked.RenameTitle(title); err != nil {
-			return "", fmt.Errorf("%w: %v", ErrInvalidArgument, err)
-		}
-	} else {
-		forked.Title = src.Title
-		forked.TitleProvenance = src.TitleProvenance
-	}
-	// Save first, then rehydrate: a rehydrate failure (e.g. ErrTooManySessionEngines)
-	// leaves a valid persisted session that self-heals at the next StartRunContent
-	// (needsRehydration re-runs rehydrateSession). Do NOT Store.Delete on failure —
-	// it would race a concurrent rehydrating StartRunContent on the same id.
-	if err := s.persistNewSession(ctx, forked); err != nil {
-		return "", fmt.Errorf("server: persist forked session: %w", err)
-	}
-	if s.sessionNeedsPerFactory(sel, nil, profile, forked.Workspace) {
-		if _, err := s.rehydrateSession(ctx, forked); err != nil {
-			return "", err
-		}
-	}
-	return forked.ID, nil
 }
 
 // validateCarryover loads a source session (issue #20: model-switch context
@@ -3422,7 +3798,7 @@ func (s *Service) validateCarryover(ctx context.Context, srcID session.SessionID
 	if err != nil {
 		return nil, nil, session.Authority{}, false, err
 	}
-	if src.State == session.StateRunning || src.State == session.StateAwaiting {
+	if src.State == session.StateRunning || src.State == session.StateAwaiting || src.State == session.StateAuthorizing {
 		return nil, nil, session.Authority{}, false, fmt.Errorf("%w: carryover requires a session at a turn boundary; source %q is %s", ErrFailedPrecondition, srcID, src.State)
 	}
 	// The SOURCE's owner travels with the carried history (ADR 0204 decision 4):
@@ -3432,10 +3808,10 @@ func (s *Service) validateCarryover(ctx context.Context, srcID session.SessionID
 	// yields an ownerless fork, never a fabricated one.
 	srcOwner := src.Owner
 	srcAuthority, srcAuthorityBound := src.BoundAuthority()
-	// Canonicalise each side: empty => the server default provider, mirroring how
-	// createSession resolves the selector (a zero ProviderSelector rides the
-	// shared/default engine). DefaultResolvedModel.ProviderID is the composition-
-	// computed canonical default id (reg.Default()).
+	return s.providerCarryoverSnapshot(src, newProviderID), srcOwner, srcAuthority, srcAuthorityBound, nil
+}
+
+func (s *Service) providerCarryoverSnapshot(src *session.Session, newProviderID string) []session.Message {
 	defaultProv := s.cfg.DefaultResolvedModel.ProviderID
 	srcProv := src.ProviderID
 	if srcProv == "" {
@@ -3446,32 +3822,14 @@ func (s *Service) validateCarryover(ctx context.Context, srcID session.SessionID
 		newProv = defaultProv
 	}
 	snap := session.ForkSnapshot(src.Conversation)
-	if srcProv != newProv {
-		// Cross-provider: strip the provider-private replay blobs so the history
-		// is provider-neutral (session.StripProviderState clears Reasoning/
-		// ProviderPhase/ItemID, preserving text/roles/tool-call IDs/Args/results).
-		stripped := session.StripProviderState(snap)
-		// When the new provider rides the openai adapter, every stripped ToolCall
-		// has an empty ItemID. The openai adapter is store:false (full history
-		// replay every turn) and uses ItemID (the provider's "id" field, e.g.
-		// "fc_1") to de-duplicate replayed function_call items
-		// (request.go:353-359). Without stable unique ids the provider
-		// auto-assigns sequential fc_N values; on the SECOND post-carryover turn
-		// those collide with the current response's items → "Duplicate item
-		// found with id fc_N" HTTP 400 (observed on Azure GPT-5.x). Synthesise
-		// stable, unique, positional ids with a carryover-namespaced prefix that
-		// cannot collide with the provider's fc_ scheme. "openrouter" rides the
-		// SAME openai adapter construction (internal/app/registry.go
-		// newOpenAICompatEntry), so it needs the same synthesis — this is a
-		// provider-id check, not an adapter-type check, because the server
-		// layer only has the resolved id, not the adapter.
-		if usesResponsesReplayIDs(newProv) {
-			return synthesizeOpenAIItemIDs(stripped), srcOwner, srcAuthority, srcAuthorityBound, nil
-		}
-		return stripped, srcOwner, srcAuthority, srcAuthorityBound, nil
+	if srcProv == newProv {
+		return snap
 	}
-	// Same provider: replay the blobs verbatim (warm cache).
-	return snap, srcOwner, srcAuthority, srcAuthorityBound, nil
+	stripped := session.StripProviderState(snap)
+	if usesResponsesReplayIDs(newProv) {
+		return synthesizeOpenAIItemIDs(stripped)
+	}
+	return stripped
 }
 
 // usesResponsesReplayIDs reports whether a resolved provider replays through
@@ -3555,84 +3913,65 @@ func (s *Service) maybeReplayApprovals(ctx context.Context, sess *session.Sessio
 // recovers it via Recover (both repair the history), then re-persists. ErrNotFound
 // propagates from GetSession.
 func (s *Service) loadAndReopen(ctx context.Context, id session.SessionID) (*session.Session, error) {
+	// Ownership is checked before caller-selected coordination, then revalidated
+	// under runEntryMu before and after acquiring the mutation lease.
+	if _, err := s.GetSession(ctx, id); err != nil {
+		return nil, err
+	}
+	unlock := s.runEntryMu.lock(id)
+	defer unlock()
+	if _, err := s.GetSession(ctx, id); err != nil {
+		return nil, err
+	}
+	release, err := s.acquireMutationLease(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	sess, err := s.GetSession(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	// Persisted workspace authority is enforced at the top of reopenLoadedSession
-	// (the shared recovery choke point); nothing runs between the load and the
-	// reopen here, so a separate check would be pure redundancy.
+	// Persisted workspace authority is enforced at the top of reopenLoadedSession.
 	return s.reopenLoadedSession(ctx, sess)
 }
 
-// validatePersistedWorkspace makes server-assigned authority durable. Unlike a
-// direct request, stored state is compared only under a narrow lexical identity:
-// both roots must be absolute and clean and their cleaned strings must match.
-// It intentionally never resolves symlinks or opens a workspace.
-func (s *Service) validatePersistedWorkspace(sess *session.Session) error {
-	if s.cfg.WorkspaceAuthority.clientSelectsRoot() || profileForSession(sess) == ProfileNoFS {
-		return nil
-	}
-	if !s.isAuthoritativeWorkspace(sess.Workspace) {
-		return fmt.Errorf("%w: persisted session %q workspace does not match the deployment-assigned workspace", ErrFailedPrecondition, sess.ID)
+// validatePersistedWorkspace keeps the run-entry call sites explicit while
+// placement reattachment validates the exact persisted EnvironmentRef.
+func (*Service) validatePersistedWorkspace(sess *session.Session) error {
+	if !sess.EnvironmentRef.Valid() {
+		return fmt.Errorf("%w: persisted session %q has no exact placement", ErrFailedPrecondition, sess.ID)
 	}
 	return nil
 }
 
-// isCleanAbs reports whether p is a non-empty, absolute, already-clean path — the
-// single lexical invariant the authoritative-root checks share. Kept in one place
-// so validateWorkspaceAuthorityConfig (the configured root) and
-// isAuthoritativeWorkspace (a stored root) cannot drift.
-func isCleanAbs(p string) bool {
-	return p != "" && filepath.IsAbs(p) && filepath.Clean(p) == p
-}
-
-func (s *Service) isAuthoritativeWorkspace(root string) bool {
-	// Once root == the configured value, the configured side's non-empty/abs/clean
-	// tests are implied by the same tests on root, so one isCleanAbs suffices.
-	return root == s.cfg.AuthoritativeWorkspace && isCleanAbs(root)
-}
-
-// validatePersistedScheduleWorkspace prevents durable schedule specs from
-// becoming a filesystem-authority bypass at fire time.
-func (s *Service) validatePersistedScheduleWorkspace(spec port.ScheduleSpec) error {
-	if s.cfg.WorkspaceAuthority.clientSelectsRoot() {
-		return nil
+// validatePersistedSchedulePlacement rejects legacy or cross-scope schedule
+// records before claim. Exact reauthorization still happens for every fire.
+func (s *Service) validatePersistedSchedulePlacement(spec port.ScheduleSpec) error {
+	if !spec.EnvironmentRef.Valid() || spec.PlacementScope == "" {
+		return fmt.Errorf("%w: persisted schedule %q has no exact placement", ErrFailedPrecondition, spec.Name)
 	}
-	// A server-assigned schedule persists the empty WIRE workspace for BOTH
-	// profiles (ADR 0237): a no-FS fire has no root, and a default-profile fire is
-	// assigned the deployment root when it mints its session. A non-empty persisted
-	// workspace is therefore stale off-root state — a schedule written under an
-	// earlier client-selected configuration, or via a shared client-selected store.
-	if spec.Workspace == "" {
-		return nil
+	if PlacementScope(spec.PlacementScope) != s.schedulePlacementScope() {
+		return fmt.Errorf("%w: persisted schedule %q placement scope changed", ErrFailedPrecondition, spec.Name)
 	}
-	return fmt.Errorf("%w: persisted schedule %q workspace does not match the deployment-assigned workspace", ErrFailedPrecondition, spec.Name)
+	return nil
 }
 
 // CanProcessSchedule reports whether a durable schedule is eligible to be
 // claimed by this deployment's scheduler. Rejected legacy state is logged before
 // the scheduler's claim fence so it cannot revive an off-root filesystem path.
 func (s *Service) CanProcessSchedule(sched port.Schedule) bool {
-	if err := s.validatePersistedScheduleWorkspace(sched.Spec); err != nil {
+	if err := s.validatePersistedSchedulePlacement(sched.Spec); err != nil {
 		s.cfg.Diagnostics.Log(context.Background(), port.LevelWarn, "scheduler: refusing schedule outside deployment workspace authority", "schedule", sched.Spec.Name, "err", err.Error())
 		return false
 	}
 	return true
 }
 
-func (s *Service) validateEnvironmentOverride(sess *session.Session, env tool.Environment) error {
-	if s.cfg.WorkspaceAuthority.clientSelectsRoot() || profileForSession(sess) == ProfileNoFS {
-		return nil
-	}
-	ws := env.Workspace()
-	// Use the same lexical identity rule as the other persisted-root gates rather
-	// than a raw string compare: under WorkspaceAuthorityFileless the configured
-	// root is "", and a bare `ws.Root() != ""` would ACCEPT an empty-root override
-	// on a non-no-FS session, where isAuthoritativeWorkspace fails closed. Equivalent
-	// to the old compare under ServerAssigned (a non-empty clean absolute root).
-	if ws == nil || !s.isAuthoritativeWorkspace(ws.Root()) {
-		return fmt.Errorf("%w: environment override does not match the deployment-assigned workspace", ErrFailedPrecondition)
+func (*Service) validateEnvironmentOverride(sess *session.Session, env, authorized tool.Environment) error {
+	if env.Workspace() == nil || authorized.Workspace() == nil || env.Ref() != sess.EnvironmentRef ||
+		authorized.Ref() != sess.EnvironmentRef || env.Workspace().Root() != authorized.Workspace().Root() {
+		return fmt.Errorf("%w: environment override does not match the session's exact placement namespace", ErrFailedPrecondition)
 	}
 	return nil
 }
@@ -3691,21 +4030,21 @@ func (s *Service) repairTerminalState(ctx context.Context, sess *session.Session
 		if rerr := sess.Reopen(); rerr != nil {
 			return fmt.Errorf("server: reopen session: %w", rerr)
 		}
-		if serr := s.cfg.Store.Save(ctx, sess); serr != nil {
+		if serr := s.saveSession(ctx, sess); serr != nil {
 			return fmt.Errorf("server: persist reopened session: %w", serr)
 		}
 	case session.StateCancelled:
 		if rerr := sess.Interrupt(); rerr != nil {
 			return fmt.Errorf("server: interrupt session: %w", rerr)
 		}
-		if serr := s.cfg.Store.Save(ctx, sess); serr != nil {
+		if serr := s.saveSession(ctx, sess); serr != nil {
 			return fmt.Errorf("server: persist interrupted session: %w", serr)
 		}
 	case session.StateFailed:
 		if rerr := sess.Recover(); rerr != nil {
 			return fmt.Errorf("server: recover session: %w", rerr)
 		}
-		if serr := s.cfg.Store.Save(ctx, sess); serr != nil {
+		if serr := s.saveSession(ctx, sess); serr != nil {
 			return fmt.Errorf("server: persist recovered session: %w", serr)
 		}
 	}
@@ -3762,23 +4101,21 @@ func (s *Service) LoadSessionWithMCP(ctx context.Context, id session.SessionID, 
 	if err != nil {
 		return nil, err
 	}
-	// Re-mount client MCP on resume, re-deriving the provider+model selector AND the
-	// profile from the PERSISTED snapshot labels (cloud-native Phase 1) rather than
-	// hardcoding the default provider + inferring the profile from the empty
-	// workspace. A selector session keeps its SAME model on resume (the persisted
-	// ProviderID/ModelID), not the default-provider floor. The profile derivation
-	// keeps the empty-workspace inference as the second defense for a pre-label
-	// snapshot.
+	// Re-mount client MCP on resume, re-deriving provider/model and profile from
+	// persisted server-owned labels. EnvironmentRef is the sole placement identity;
+	// privateWorkspace exactly reattaches it and never infers authority from a path.
 	sel := ProviderSelector{ProviderID: sess.ProviderID, ModelID: sess.ModelID, ReasoningEffort: sess.ReasoningEffort}
-	// The profile derivation keeps the empty-workspace inference as the second defense
-	// for a pre-label snapshot (profileForSession).
 	profile := profileForSession(sess)
-	// The persisted workspace is the session's base root: the rebuilt engine's
-	// child permission resolver pins to IT (issue #32) — "" for no-fs. The MODE is the
+	// The exact persisted placement is the session's base namespace: the rebuilt
+	// engine's child permission resolver pins to that reattached root. The MODE is
 	// loaded session's persisted Mode (ADR 0030 Layer 3), so a session loaded into plan
 	// mode mounts the plan model; builtForMode is stamped from the result so a later
 	// in-process mode switch on this reloaded session triggers the CASE 1 rebuild.
-	res, err := s.cfg.SessionEngine(ctx, sel, specs, profile, sess.Workspace, sess.Mode)
+	workspace, err := s.privateWorkspace(ctx, sess)
+	if err != nil {
+		return nil, err
+	}
+	res, err := s.cfg.SessionEngine(ctx, sel, specs, profile, workspace, sess.Mode)
 	if err != nil {
 		// The session was loaded + (if needed) reopened and re-persisted, but the
 		// per-session engine could not be built. We deliberately do NOT roll that
@@ -3804,12 +4141,12 @@ func (s *Service) LoadSessionWithMCP(ctx context.Context, id session.SessionID, 
 		builtForMode:    res.BuiltForMode,
 		close:           res.Close,
 	}
-	if profile == ProfileNoFS {
+	if profile == ProfileNoFS && (s.placementBinder == nil || !sess.EnvironmentRef.Valid()) {
 		// A no-fs session's environment override is re-registered with the engine
 		// under the same lock (the create-time discipline), so StartRun never
 		// consults the shared factory with the empty root. It is a complete
 		// shell-less Environment with an honest nofs ref.
-		s.sessionEnvironments[id] = tool.MustEnvironment(defaultEnvironmentRef(sess), nofs.New(), nil)
+		s.sessionEnvironments[id] = tool.MustEnvironment(sess.EnvironmentRef, nofs.New(), memledger.New(), nil)
 	}
 	s.mu.Unlock()
 	return sess, nil
@@ -3842,7 +4179,16 @@ func (s *Service) StartRun(ctx context.Context, id session.SessionID, text strin
 // scheduled sessions, unknown metadata, and every historical child/fire prefix
 // fail closed. The trusted scheduler uses StartScheduledRunContent instead.
 func (s *Service) StartRunContent(ctx context.Context, id session.SessionID, text string, parts []session.Content) (*agent.Run, error) {
-	return s.startRunContent(ctx, id, text, parts, runPurposeChat)
+	generation := s.captureRunEntryGeneration(id)
+	return s.startRunContent(ctx, id, text, parts, runPurposeChat, generation, false)
+}
+
+// StartInteractiveRunContent starts a public HTTP/gRPC run whose transport can
+// present and control browser authorization. Non-interactive adapters must use
+// StartRunContent so protected calls fail without parking.
+func (s *Service) StartInteractiveRunContent(ctx context.Context, id session.SessionID, text string, parts []session.Content) (*agent.Run, error) {
+	generation := s.captureRunEntryGeneration(id)
+	return s.startRunContent(ctx, id, text, parts, runPurposeChat, generation, true)
 }
 
 // StartScheduledRunContent is the trusted scheduler-purpose entry. It admits
@@ -3850,7 +4196,8 @@ func (s *Service) StartRunContent(ctx context.Context, id session.SessionID, tex
 // legacy unknown snapshots. It is intentionally absent from public transports;
 // scheduler composition calls it directly.
 func (s *Service) StartScheduledRunContent(ctx context.Context, id session.SessionID, text string, parts []session.Content) (*agent.Run, error) {
-	return s.startRunContent(ctx, id, text, parts, runPurposeScheduler)
+	generation := s.captureRunEntryGeneration(id)
+	return s.startRunContent(ctx, id, text, parts, runPurposeScheduler, generation, false)
 }
 
 // RetryFailedRun resumes the failed model step from the persisted conversation state
@@ -3860,6 +4207,10 @@ func (s *Service) StartScheduledRunContent(ctx context.Context, id session.Sessi
 // persisted typed terminal metadata and is consumed only after every fallible setup step
 // has succeeded and the recovered idle snapshot has been saved.
 func (s *Service) RetryFailedRun(ctx context.Context, id session.SessionID) (*agent.Run, error) {
+	generation := s.captureRunEntryGeneration(id)
+	if s.draining.Load() {
+		return nil, fmt.Errorf("%w: %q", ErrUnavailable, id)
+	}
 	if s.cfg.OwnershipEnforced {
 		if _, err := s.GetSession(ctx, id); err != nil {
 			return nil, err
@@ -3867,6 +4218,9 @@ func (s *Service) RetryFailedRun(ctx context.Context, id session.SessionID) (*ag
 	}
 	unlock := s.runEntryMu.lock(id)
 	defer unlock()
+	if err := s.validateRunEntryGeneration(id, generation); err != nil {
+		return nil, err
+	}
 
 	sess, err := s.GetSession(ctx, id)
 	if err != nil {
@@ -3889,9 +4243,22 @@ func (s *Service) RetryFailedRun(ctx context.Context, id session.SessionID) (*ag
 		return nil, fmt.Errorf("%w: session %q: %v", ErrFailedStepRetryIneligible, id, err)
 	}
 
-	if err := s.acquireLease(ctx, id); err != nil {
+	st, admissionParent, err := s.beginRunAdmission(ctx, id, sess, false)
+	if err != nil {
 		return nil, err
 	}
+	promoted := false
+	defer s.cleanupRunAdmission(id, st, &promoted)
+	if err := s.acquireLease(admissionParent, id); err != nil {
+		return nil, err
+	}
+	admissionCtx, stopAdmission, leaseHeld := s.mutationLeaseContext(admissionParent, id)
+	defer func() {
+		if !promoted {
+			stopAdmission()
+		}
+	}()
+	ctx = admissionCtx
 	engine, env, err := s.engineAndEnvironmentFor(ctx, sess)
 	if err != nil {
 		return nil, err
@@ -3903,9 +4270,17 @@ func (s *Service) RetryFailedRun(ctx context.Context, id session.SessionID) (*ag
 		return nil, err
 	}
 
-	ctx = memory.WithWorkspace(ctx, sess.Workspace)
-	run := engine.RetryFailedStep(ctx, sess, env)
-	s.register(id, run, sess)
+	if !leaseHeld() {
+		return nil, fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, id)
+	}
+	ctx = memory.WithWorkspace(ctx, env.Workspace().Root())
+	run, err := s.promoteRunAdmission(id, st, stopAdmission, func() *agent.Run {
+		return engine.RetryFailedStep(ctx, sess, env)
+	})
+	if err != nil {
+		return nil, err
+	}
+	promoted = true
 	return run, nil
 }
 
@@ -3934,8 +4309,30 @@ func (s *Service) prepareFailedStepRetry(ctx context.Context, sess *session.Sess
 			return fmt.Errorf("server: abandon crashed failed-step retry: %w", err)
 		}
 	}
-	if err := s.cfg.Store.Save(ctx, sess); err != nil {
+	if err := s.saveSession(ctx, sess); err != nil {
 		return fmt.Errorf("server: persist failed-step retry preparation: %w", err)
+	}
+	return nil
+}
+
+type runEntryGeneration uint64
+
+func (s *Service) captureRunEntryGeneration(id session.SessionID) runEntryGeneration {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return runEntryGeneration(s.runEntryGenerations[id])
+}
+
+// validateRunEntryGeneration must be called while runEntryMu for id is held.
+func (s *Service) validateRunEntryGeneration(id session.SessionID, generation runEntryGeneration) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.validateRunEntryGenerationLocked(id, generation)
+}
+
+func (s *Service) validateRunEntryGenerationLocked(id session.SessionID, generation runEntryGeneration) error {
+	if runEntryGeneration(s.runEntryGenerations[id]) != generation {
+		return fmt.Errorf("%w: session %q was cleared while the request waited for admission", ErrFailedPrecondition, id)
 	}
 	return nil
 }
@@ -3948,7 +4345,11 @@ const (
 	scheduleFireSessionPrefix = "sched--"
 )
 
-func (s *Service) startRunContent(ctx context.Context, id session.SessionID, text string, parts []session.Content, purpose runPurpose) (*agent.Run, error) {
+//nolint:gocyclo // run-entry funnel keeps repair, lease, engine-resolve, and launch in one ordered transaction; inherent.
+func (s *Service) startRunContent(ctx context.Context, id session.SessionID, text string, parts []session.Content, purpose runPurpose, generation runEntryGeneration, canPresentAuthorization bool) (*agent.Run, error) {
+	if s.draining.Load() {
+		return nil, fmt.Errorf("%w: %q", ErrUnavailable, id)
+	}
 	if text == "" && len(parts) == 0 {
 		return nil, fmt.Errorf("%w: prompt text or parts is required", ErrInvalidArgument)
 	}
@@ -3968,6 +4369,9 @@ func (s *Service) startRunContent(ctx context.Context, id session.SessionID, tex
 	// reload prevents the preflight from becoming a durable grant.
 	unlock := s.runEntryMu.lock(id)
 	defer unlock()
+	if err := s.validateRunEntryGeneration(id, generation); err != nil {
+		return nil, err
+	}
 	// Authorize the exact id before revealing whether its metadata or legacy prefix
 	// is runnable. Foreign, ownerless-under-enforcement, pruned, and absent ids all
 	// remain the same ErrNotFound class.
@@ -4007,8 +4411,32 @@ func (s *Service) startRunContent(ctx context.Context, id session.SessionID, tex
 	// human AllowAlways verdict, never from a parsed directive in `text`. This replaces
 	// the removed ADR-0061 /guardrail-allow prompt directive (no scan, no strip, no
 	// near-miss WARN). The `text` param flows straight through.
+	// Register a cancellable provisional lifecycle before lease acquisition and
+	// engine construction. Drain can now cancel admission even in the gap between
+	// acquiring ownership and constructing the run.
+	st, admissionParent, err := s.beginRunAdmission(ctx, id, sess, false)
+	if err != nil {
+		return nil, err
+	}
+	promoted := false
+	defer s.cleanupRunAdmission(id, st, &promoted)
+	// Cross-process single-writer gate: take the session lease after runEntryMu and
+	// before terminal recovery can mutate or persist the aggregate.
+	if err := s.acquireLease(admissionParent, id); err != nil {
+		return nil, err
+	}
+	// Bind every fallible admission step to this exact hold. Renewal loss cancels
+	// construction and the final revalidation below prevents provider/tool start.
+	admissionCtx, stopAdmission, leaseHeld := s.mutationLeaseContext(admissionParent, id)
+	defer func() {
+		if !promoted {
+			stopAdmission()
+		}
+	}()
+	ctx = admissionCtx
 	// Apply the unchanged reopen/interrupt/recover funnel only after the trusted
-	// purpose gate. Rejected kinds are never mutated as a side effect of probing.
+	// purpose and ownership gates and lease acquisition. Rejected kinds are never
+	// mutated as a side effect of probing.
 	sess, err = s.reopenLoadedSession(ctx, sess)
 	if err != nil {
 		return nil, err
@@ -4017,13 +4445,6 @@ func (s *Service) startRunContent(ctx context.Context, id session.SessionID, tex
 	// per-session engine for a mode→model change, ADR 0030 Layer 3) + run launch +
 	// register. The lock was acquired before loading so the entire run-entry
 	// transaction observes one authoritative snapshot.
-	// Cross-process single-writer gate (cloud-native Phase 4): take the session
-	// lease AFTER the in-process runEntryMu so same-process exclusion stays cheap.
-	// A competing live owner refuses the run with ErrSessionLeasedElsewhere; nil
-	// SessionLease is the byte-identical no-lease default.
-	if err := s.acquireLease(ctx, id); err != nil {
-		return nil, err
-	}
 	// Crash-orphan repair (issue #475): loadAndReopen's switch deliberately does
 	// NOT handle StateRunning (see its no-op comment) because repairing it there
 	// would run before this process holds the real lease/lock, racing a
@@ -4039,19 +4460,42 @@ func (s *Service) startRunContent(ctx context.Context, id session.SessionID, tex
 	// check above therefore runs while runEntryMu is held and before reopen/save.
 	// Reaching this branch proves the running snapshot has no same-process owner
 	// and may be repaired.
-	if sess.State == session.StateRunning {
-		if err := sess.Abandon(); err != nil {
-			return nil, fmt.Errorf("server: abandon stale running session: %w", err)
+	sess, interruptedAuthorization, err := s.interruptRestoredAuthorizationLocked(ctx, sess)
+	if err != nil {
+		return nil, err
+	}
+	// interruptRestoredAuthorizationLocked may reload/replace the aggregate
+	// (e.g. to interrupt a restored authorizing session); st.sess was captured
+	// by beginRunAdmission above from the PRE-repair load, so it must be kept
+	// in sync or Persist/GracefulDrain would observe the stale object.
+	st.sess = sess
+	// interruptedContinuationOwned is non-nil only on the interruptedAuthorization
+	// branch below; the flag it points to starts false and must flip true at the
+	// exact moment a real Engine.Run takes ownership (BeginRun below), or the
+	// deferred repair stays armed for every return in between.
+	var interruptedContinuationOwned *bool
+	if !interruptedAuthorization {
+		if err := s.repairRunningSession(ctx, sess); err != nil {
+			return nil, err
 		}
-		if err := s.cfg.Store.Save(ctx, sess); err != nil {
-			return nil, fmt.Errorf("server: persist abandoned session: %w", err)
-		}
+	} else {
+		// interruptRestoredAuthorizationLocked already durably saved sess
+		// StateRunning, correct ONLY because this function is about to hand it
+		// to a real Engine.Run below. Every return between here and that
+		// handoff leaves the same durable StateRunning with no owning run —
+		// the exact stranded-snapshot shape repairRunningSession exists for.
+		owned := false
+		interruptedContinuationOwned = &owned
+		defer func() {
+			if !*interruptedContinuationOwned {
+				_ = s.repairRunningSession(context.WithoutCancel(ctx), sess)
+			}
+		}()
 	}
 	engine, env, err := s.engineAndEnvironmentFor(ctx, sess)
 	if err != nil {
 		return nil, err
 	}
-	ctx = memory.WithWorkspace(ctx, sess.Workspace)
 	// Mint this run's identity and stamp it on the aggregate BEFORE launching, so
 	// the id is on the snapshot the moment the run can park awaiting an approval —
 	// which is what lets a cross-process resume continue THE SAME run rather than
@@ -4060,9 +4504,36 @@ func (s *Service) startRunContent(ctx context.Context, id session.SessionID, tex
 	// one mint site for a new run.
 	runID := newRunID()
 	sess.BeginRun(runID)
-	run := engine.Run(ctx, sess, env, agent.RunRequest{Text: text, Parts: parts, RunID: runID})
-	s.register(id, run, sess)
+	if !leaseHeld() {
+		return nil, fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, id)
+	}
+	ctx = memory.WithWorkspace(ctx, env.Workspace().Root())
+	run, err := s.promoteRunAdmission(id, st, stopAdmission, func() *agent.Run {
+		return engine.Run(ctx, sess, env, agent.RunRequest{Text: text, Parts: parts, RunID: runID, CanPresentAuthorization: canPresentAuthorization})
+	})
+	if err != nil {
+		return nil, err
+	}
+	// engine.Run is now actively driving sess in its own goroutine and owns its
+	// persistence from here — the deferred repair above must stand down.
+	if interruptedContinuationOwned != nil {
+		*interruptedContinuationOwned = true
+	}
+	promoted = true
 	return run, nil
+}
+
+func (s *Service) repairRunningSession(ctx context.Context, sess *session.Session) error {
+	if sess.State != session.StateRunning {
+		return nil
+	}
+	if err := sess.Abandon(); err != nil {
+		return fmt.Errorf("server: abandon stale running session: %w", err)
+	}
+	if err := s.saveSession(ctx, sess); err != nil {
+		return fmt.Errorf("server: persist abandoned session: %w", err)
+	}
+	return nil
 }
 
 // Steer routes an operator steer (mid-run injected input, issue #512) for a
@@ -4091,24 +4562,41 @@ func (s *Service) startRunContent(ctx context.Context, id session.SessionID, tex
 // the EvSteer drain echo can echo it (LookupSteerMessageID); the ACK-side echo
 // is the caller's own frame field (it never crosses the Service).
 func (s *Service) Steer(ctx context.Context, id session.SessionID, text string, parts []session.Content, messageID, expectedRunID string) (agent.SteerOutcome, bool, *agent.Run, error) {
+	generation := s.captureRunEntryGeneration(id)
 	// Authorize before touching the in-memory registry or the run-entry funnel:
 	// a steer injects caller input into a run / drives a follow-up, so a foreign
 	// request must be absence-equivalent (ErrNotFound), mirroring Cancel/Approve.
 	if _, err := s.GetSession(ctx, id); err != nil {
 		return agent.SteerTooLate, false, nil, err
 	}
-	// Live-run fast path: enqueue to the run's steer inbox. A live run whose
-	// engine disarmed steer (EnableSteer off) reports too_late; it is PROMOTED
-	// rather than dropped — same lost-race contract as a closed inbox.
-	if run, ok := s.LookupRun(id); ok {
+	// Live-run fast path: validate the exact lease hold and enqueue while holding
+	// the service lock, ordering admission atomically against lease invalidation.
+	s.mu.Lock()
+	if err := s.validateRunEntryGenerationLocked(id, generation); err != nil {
+		s.mu.Unlock()
+		return agent.SteerTooLate, false, nil, err
+	}
+	st := s.runs[id]
+	if st != nil && st.run != nil {
+		if st.cancelling {
+			s.mu.Unlock()
+			return agent.SteerTooLate, false, nil, ErrNoActiveRun
+		}
+		if s.cfg.SessionLease != nil && !s.leaseDisabled {
+			h := s.heldLeases[id]
+			if h == nil || !h.valid || h.ctx.Err() != nil {
+				s.mu.Unlock()
+				return agent.SteerTooLate, false, nil, fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, id)
+			}
+		}
+		run := st.run
 		if err := checkExpectedRun(expectedRunID, run.RunID()); err != nil {
+			s.mu.Unlock()
 			return agent.SteerTooLate, false, nil, err
 		}
 		outcome, err := run.EnqueueSteer(text, parts)
+		s.mu.Unlock()
 		if err == nil && outcome != agent.SteerTooLate {
-			// Track BOTH accepted (new bundle) and appended (merged into the pending
-			// bundle): the watermark echo needs the full ordered id-list of the
-			// bundle that drains.
 			if outcome == agent.SteerAccepted || outcome == agent.SteerAppended {
 				s.trackSteerMessageID(id, messageID)
 			}
@@ -4117,6 +4605,8 @@ func (s *Service) Steer(ctx context.Context, id session.SessionID, text string, 
 		if err != nil {
 			return outcome, false, nil, fmt.Errorf("server: steer enqueue: %w", err)
 		}
+	} else {
+		s.mu.Unlock()
 	}
 	// Terminal race → promote through the run-entry funnel. An unknown id or an
 	// unrepaired-terminal-state error surfaces here rather than ever dropping.
@@ -4145,7 +4635,7 @@ func (s *Service) Steer(ctx context.Context, id session.SessionID, text string, 
 	if expectedRunID != "" {
 		return agent.SteerTooLate, false, nil, checkExpectedRun(expectedRunID, "")
 	}
-	promotedRun, err := s.promotedSteerRun(ctx, id, text, parts)
+	promotedRun, err := s.promotedSteerRun(ctx, id, text, parts, generation)
 	if err != nil {
 		return agent.SteerTooLate, false, nil, err
 	}
@@ -4161,8 +4651,8 @@ func (s *Service) Steer(ctx context.Context, id session.SessionID, text string, 
 // byte-identical: only the promoted steer waits out a drain, so a prompt on a
 // genuinely-live session is not slowed by the grace. An unknown session id
 // surfaces ErrNotFound from the first funnel call.
-func (s *Service) promotedSteerRun(ctx context.Context, id session.SessionID, text string, parts []session.Content) (*agent.Run, error) {
-	run, err := s.StartRunContent(ctx, id, text, parts)
+func (s *Service) promotedSteerRun(ctx context.Context, id session.SessionID, text string, parts []session.Content, generation runEntryGeneration) (*agent.Run, error) {
+	run, err := s.startRunContent(ctx, id, text, parts, runPurposeChat, generation, false)
 	if err == nil {
 		return run, nil // no live run blocked the entry — promoted immediately
 	}
@@ -4182,7 +4672,7 @@ func (s *Service) promotedSteerRun(ctx context.Context, id session.SessionID, te
 	// Registry cleared: the original relay finished and the run's final terminal
 	// state is durable. Drive the follow-up through the hardened funnel, which
 	// now sees the terminal state and reopens it.
-	return s.StartRunContent(ctx, id, text, parts)
+	return s.startRunContent(ctx, id, text, parts, runPurposeChat, generation, false)
 }
 
 // CancelSteer retracts the session's live run's PENDING (un-drained) steer,
@@ -4340,14 +4830,14 @@ func admitRunPurpose(sess *session.Session, purpose runPurpose) error {
 // registration did not survive a restart. It is the SINGLE resolution point shared
 // by the prompt run-entry (StartRunContent) and the awaiting-approval re-entry
 // (resumeFromAwaiting) so the two paths cannot drift — both rebuild the SAME engine
-// for a rehydrated selector/no-fs session, and both fall back to the shared engine
-// for a default FS session.
+// for a rehydrated model-routed or no-FS session. Every path exactly reattaches
+// the persisted EnvironmentRef; neither path follows the current default.
 //
-// Resolution order (unchanged from the inlined StartRunContent logic): a per-session
-// workspace override (e.g. the ACP fs/* buffer, the no-fs override) is preferred,
-// else built from the shared factory; a per-session engine (client MCP, selector, or
-// no-fs) is preferred, else the shared engine. The empty-workspace inference stays as
-// the SECOND defense after the profile/selector trigger.
+// Resolution order: exact placement reattachment validates the durable binding first.
+// An authorized per-session environment overlay (for example ACP buffers) may then be
+// used only when its identity and namespace match that binding. A per-session engine
+// (client MCP, provider/model routing, no-fs, or non-default placement root) is
+// preferred; otherwise the shared engine is used.
 //
 // MODE→MODEL RE-RESOLUTION (ADR 0030 Layer 3) widens the rebuild trigger between
 // turns, never mid-stream (this runs at the run-entry funnel, after loadAndReopen
@@ -4364,11 +4854,36 @@ func admitRunPurpose(sess *session.Session, purpose runPurpose) error {
 //     keeps the shared engine — BYTE-IDENTICAL to pre-Phase-3.
 func (s *Service) engineAndEnvironmentFor(ctx context.Context, sess *session.Session) (*agent.Engine, tool.Environment, error) { //nolint:gocyclo // the per-session engine/environment resolution is inherently branched
 	id := sess.ID
+	attribution := s.ResolvedModel(id)
+	sess.SetUsageAttribution(attribution.ProviderID, attribution.ModelID)
 	engine := s.cfg.Engine
 	s.mu.Lock()
 	se, hasEngine := s.sessionEngines[id]
 	envOverride, hasEnvOverride := s.sessionEnvironments[id]
 	s.mu.Unlock()
+	if !sess.EnvironmentRef.Valid() {
+		return nil, tool.Environment{}, ErrInvalidPlacementSelection
+	}
+	verified, err := s.ReattachPlacement(ctx, sess.EnvironmentRef)
+	if err != nil {
+		return nil, tool.Environment{}, err
+	}
+	if s.cfg.SessionReadLedger != nil {
+		ledger := s.cfg.SessionReadLedger(id)
+		if ledger == nil {
+			return nil, tool.Environment{}, fmt.Errorf("%w: session read-ledger factory returned nil", ErrConfig)
+		}
+		verified.Environment, err = tool.NewEnvironment(verified.Ref, verified.Environment.Workspace(), ledger, verified.Environment.CommandRunner())
+		if err != nil {
+			return nil, tool.Environment{}, fmt.Errorf("%w: bind session read ledger: %v", ErrConfig, err)
+		}
+	}
+	verifiedPlacement := &verified
+	if hasEnvOverride {
+		if err := s.validateEnvironmentOverride(sess, envOverride, verifiedPlacement.Environment); err != nil {
+			return nil, tool.Environment{}, err
+		}
+	}
 	switch {
 	case hasEngine && se.builtForMode != "" && se.builtForMode != sess.Mode:
 		// CASE 1 (ADR 0030 Layer 3): the registered per-session engine was built for a
@@ -4381,7 +4896,8 @@ func (s *Service) engineAndEnvironmentFor(ctx context.Context, sess *session.Ses
 		// AUTHORITATIVE use-after-close guard. This cheap pre-check is only an early-out so
 		// an obviously-live session does not pay a wasted factory build.
 		s.mu.Lock()
-		_, live := s.runs[id]
+		st := s.runs[id]
+		live := st != nil && st.run != nil
 		s.mu.Unlock()
 		if live {
 			return nil, tool.Environment{}, fmt.Errorf("%w: cannot rebuild engine for session %q mid-run (mode change must be deferred to a turn boundary)", ErrInvalidArgument, id)
@@ -4410,295 +4926,84 @@ func (s *Service) engineAndEnvironmentFor(ctx context.Context, sess *session.Ses
 		}
 		se, hasEngine = promoted, true
 	}
-	if !hasEngine && s.needsRehydration(sess) {
+	placementNeedsEngine := !hasEngine && !s.needsRehydration(sess) &&
+		sess.EnvironmentRef.Kind != session.EnvKindNoFS &&
+		verifiedPlacement.Environment.Workspace().Root() != s.cfg.SharedEngineRoot
+	if !hasEngine && (s.needsRehydration(sess) || placementNeedsEngine) {
 		// RESTART REHYDRATION (issue #55, widened in the cloud-native Phase 1): a
 		// PERSISTED session that needed a PER-SESSION engine — a non-default
 		// provider/model selector, OR the no-fs profile — has its engine + (for no-fs)
 		// its environment override living only in process memory; after a restart both
 		// are gone. Without rehydration the session would silently DEGRADE onto the
-		// shared engine: a no-fs session would ESCALATE onto the full FS tools + Bash
-		// over a workspace built from the empty root, and a selector session would run
-		// on the WRONG (default-provider) model — wrong enough that its persisted
-		// MaxRunTokens budget would be metered through a different model. Rebuild the
-		// SAME engine through the factory path create used, reading the PERSISTED
-		// selector+profile back off the loaded session. The MaxSessionEngines cap is
-		// inherited by the widened trigger (rehydrateSession enforces it). The
-		// empty-workspace inference stays as the SECOND defense below.
+		// shared engine: a no-fs session would gain the wrong FS-capable tool surface,
+		// and a selector session could run the wrong model. Rebuild the same engine
+		// through the factory path used at creation, reading persisted selector and
+		// profile labels.
 		var err error
 		se, err = s.rehydrateSession(ctx, sess)
 		if err != nil {
 			return nil, tool.Environment{}, err
 		}
 		hasEngine = true
-		if !isRemoteEnvironmentRef(sess.EnvironmentRef) && (sess.Profile == string(ProfileNoFS) || sess.Workspace == "") {
-			// rehydrateSession re-registered the no-fs environment override (same as
-			// create); read it back so the resolution below uses the complete override.
-			// A REMOTE EnvironmentRef (ADR 0214) is excluded: its Environment is
-			// reattached at run entry through the EnvironmentResolver, NOT relabeled
-			// no-fs from its empty persisted Workspace (a remote backend's filesystem
-			// is not a local root). Reading the no-fs override here would preempt the
-			// resolver below (issue #462 phase-3 finding #1).
-			s.mu.Lock()
-			envOverride, hasEnvOverride = s.sessionEnvironments[id]
-			s.mu.Unlock()
-			if !hasEnvOverride {
-				// Defensive: if the override somehow was not registered, install the
-				// honest file-less environment directly (the no-fs chokepoint).
-				envOverride = tool.MustEnvironment(defaultEnvironmentRef(sess), nofs.New(), nil)
-				hasEnvOverride = true
-			}
-		}
+		// Placement environments are never restored from the override registry;
+		// every ordinary run reattaches a fresh provider binding below.
 	}
 	if hasEngine {
 		engine = se.engine
 	}
 	if hasEnvOverride {
-		if err := s.validateEnvironmentOverride(sess, envOverride); err != nil {
-			return nil, tool.Environment{}, err
-		}
-		// A per-session Environment override (ACP fs/* buffers, no-fs) is COMPLETE:
-		// the creator supplied the accurate ref and the correct (possibly nil)
-		// CommandRunner. Use it directly — never guess a ref or runner from the
-		// override's presence (issue #462 phase-2 finding #2). Stamp the default ref
-		// from the live override so a legacy zero-ref session persists it on the next
-		// save (ADR 0214, issue #462 phase 3).
-		stampDefaultEnvironmentRef(sess)
+		// The override was authorized and namespace-matched before any engine
+		// selection or factory call above could observe it. ACP buffer and no-FS
+		// overrides are complete environments: the creator supplied the accurate ref
+		// and the correct (possibly nil) CommandRunner. Use them directly; never guess
+		// a ref, namespace, or runner from the override's presence.
 		return engine, envOverride, nil
 	}
-	// ENVIRONMENT REATTACHMENT (ADR 0214, issue #462 phase 3): a loaded session
-	// with a PERSISTED non-in-tree EnvironmentRef (a remote worker, a container)
-	// reattaches a LIVE Environment through the configured resolver. This runs
-	// ONLY when no in-process override is registered (a remote session registers
-	// none — its Environment is the reattached one, not an ACP/no-fs override).
-	// A zero ref (legacy snapshot, or a pre-phase-3 session) and the in-tree
-	// Kinds (local/mem/nofs) NEVER reach the resolver: the zero ref falls
-	// through to the Workspace-derived default path below (and gets a fresh ref
-	// stamped there), and the in-tree Kinds resolve through the existing
-	// Workspaces/CommandRunnerFactory path. A non-in-tree Kind with no resolver
-	// wired, a ref mismatch, or a nil-Workspace result fails loudly
-	// (ErrFailedPrecondition) — never a silent local fallback.
-	if isRemoteEnvironmentRef(sess.EnvironmentRef) {
-		env, rerr := s.resolveEnvironmentRef(ctx, sess.EnvironmentRef)
-		if rerr != nil {
-			return nil, tool.Environment{}, rerr
-		}
-		return engine, env, nil
-	}
-	// Default path: build the environment from the shared Workspace + runner
-	// factories. The workspace requirement is profile-aware: an empty persisted
-	// workspace is a no-fs session (the defensive chokepoint — normally
-	// unreachable, since create/rehydrate register the override).
-	var ws tool.Workspace
-	if sess.Workspace == "" {
-		// DEFENSIVE CHOKEPOINT (issue #55): never hand an EMPTY root to the
-		// shared Workspaces factory — the osfs factory would MkdirAll/OpenRoot
-		// the server process's cwd. An empty persisted workspace is by
-		// construction a no-fs session, so the honest no-filesystem workspace
-		// is the only sound value here (normally unreachable: create and the
-		// rehydration above both register the override).
-		ws = nofs.New()
-	} else {
-		ws = s.cfg.Workspaces(sess.Workspace)
-	}
-	env, err := s.buildSessionEnvironment(sess, ws)
-	if err != nil {
-		return nil, tool.Environment{}, err
-	}
-	// Stamp the resolved default ref from the live Environment so a legacy
-	// zero-ref session persists it on the next ordinary save (ADR 0214, issue
-	// #462 phase 3 — no migration sweep).
-	stampDefaultEnvironmentRef(sess)
-	return engine, env, nil
-}
-
-// isRemoteEnvironmentRef reports whether ref names a non-in-tree backend that
-// requires an EnvironmentResolver to reattach (ADR 0214). The zero ref and the
-// in-tree Kinds (local/mem/nofs) return false; any other Kind returns true. The
-// in-tree set is closed here (the session package owns the constants); a
-// future remote transport adds its own Kind label and this predicate returns
-// true for it without widening the session package.
-func isRemoteEnvironmentRef(ref session.EnvironmentRef) bool {
-	if ref == (session.EnvironmentRef{}) {
-		return false
-	}
-	switch ref.Kind {
-	case session.EnvKindLocal, session.EnvKindMem, session.EnvKindNoFS:
-		return false
-	}
-	return true
-}
-
-// resolveEnvironmentRef reattaches a LIVE tool.Environment for a persisted
-// non-in-tree EnvironmentRef via the configured EnvironmentResolver (ADR 0214,
-// issue #462 phase 3). It validates the returned Environment's Ref() equals
-// the requested ref and carries a non-nil Workspace; a nil resolver, a ref
-// mismatch, or a nil-Workspace result fails loudly (ErrFailedPrecondition),
-// never a silent local fallback. The resolver is composition-owned — the loop
-// and the engine stay storage/transport-agnostic.
-func (s *Service) resolveEnvironmentRef(ctx context.Context, ref session.EnvironmentRef) (tool.Environment, error) {
-	if s.cfg.EnvironmentResolver == nil {
-		return tool.Environment{}, fmt.Errorf("%w: session environment ref %q (kind %q) requires an EnvironmentResolver but none is configured", ErrFailedPrecondition, ref.ID, ref.Kind)
-	}
-	env, err := s.cfg.EnvironmentResolver(ctx, ref)
-	if err != nil {
-		return tool.Environment{}, fmt.Errorf("%w: resolve environment %q (kind %q): %v", ErrFailedPrecondition, ref.ID, ref.Kind, err)
-	}
-	if env.Workspace() == nil {
-		return tool.Environment{}, fmt.Errorf("%w: EnvironmentResolver returned an Environment with a nil workspace for ref %q (kind %q)", ErrFailedPrecondition, ref.ID, ref.Kind)
-	}
-	if got := env.Ref(); got != ref {
-		return tool.Environment{}, fmt.Errorf("%w: EnvironmentResolver returned a mismatched ref: got %q (kind %q), want %q (kind %q)", ErrFailedPrecondition, got.ID, got.Kind, ref.ID, ref.Kind)
-	}
-	return env, nil
-}
-
-// buildSessionEnvironment wraps a session's resolved Workspace into a complete
-// tool.Environment for the DEFAULT (non-override) path, binding the command
-// runner appropriate to the session's namespace (issue #462). It is called ONLY
-// when no per-session Environment override is registered: the main session
-// (running on the DEFAULT workspace) binds the main CommandRunner; a session on
-// a DIFFERENT root (a worktree binding) builds a runner bound to that root via
-// CommandRunnerFactory when wired, else is shell-less; an empty persisted
-// workspace (a no-fs session that somehow reached the default path — normally
-// unreachable, since create/rehydrate register the override) is shell-less with
-// a nofs ref. The Environment carries the session's backend ref (local for an
-// osfs workspace, nofs for a no-fs profile). Override creators (ACP, no-fs)
-// supply their OWN complete Environment with an accurate ref via
-// SetSessionEnvironment — this function never guesses a ref or runner for an
-// override (issue #462 phase-2 finding #2).
-func (s *Service) buildSessionEnvironment(sess *session.Session, ws tool.Workspace) (tool.Environment, error) {
-	var runner tool.CommandRunner
-	if sess.Workspace != "" {
-		if sess.Workspace == s.cfg.DefaultWorkspace {
-			runner = s.cfg.CommandRunner
-		} else if s.cfg.CommandRunnerFactory != nil {
-			// A worktree-bound session (or any root differing from the launch root):
-			// build a runner bound to the session root so Bash observes the session
-			// namespace, not the launch root.
-			runner = s.cfg.CommandRunnerFactory(sess.Workspace)
-		}
-	}
-	// The ref is the SAME default derivation the create-time stamp uses
-	// (defaultEnvironmentRef is the single source — issue #462 phase-3 finding
-	// #6), so the live Environment's ref and the persisted/stamped ref always
-	// agree for the in-tree backends.
-	ref := defaultEnvironmentRef(sess)
-	return tool.NewEnvironment(ref, ws, runner)
-}
-
-// defaultEnvironmentRef computes the resolved default EnvironmentRef for a
-// session from its workspace/profile. It is the SINGLE source for the in-tree
-// default ref (ADR 0214, issue #462 phase 3 — finding #6 collapsed the
-// duplicate derivation): buildSessionEnvironment uses it for the LIVE
-// Environment's ref, and stampDefaultEnvironmentRef uses it for the ref STAMPED
-// at create time so the next ordinary save persists it. The two therefore
-// always agree for the in-tree backends: local (ID = workspace root) for a
-// filesystem session, nofs (empty ID) for a no-fs / empty-workspace session. A
-// non-zero persisted ref is NOT overwritten — only a zero (unspecified) ref
-// gets the default stamped. This is the create-time stamp; reattaching a ref
-// for a non-in-tree Kind goes through resolveEnvironmentRef at run entry.
-func defaultEnvironmentRef(sess *session.Session) session.EnvironmentRef {
-	if sess.Workspace == "" {
-		return session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: ""}
-	}
-	return session.EnvironmentRef{Kind: session.EnvKindLocal, ID: sess.Workspace}
-}
-
-// stampDefaultEnvironmentRef stamps the resolved default EnvironmentRef onto a
-// freshly-created (or zero-ref) session. It is a no-op when the session already
-// carries a non-zero ref (a re-created carryover fork inherits its labels, an
-// override creator stamped its own). Called at createSession after setSessionLabels
-// so the first Store.Save persists the resolved default, and at run entry when a
-// loaded legacy session (zero ref) is first resolved to a live Environment — the
-// next ordinary save persists it (no migration sweep).
-func stampDefaultEnvironmentRef(sess *session.Session) {
-	if sess.EnvironmentRef != (session.EnvironmentRef{}) {
-		return
-	}
-	sess.EnvironmentRef = defaultEnvironmentRef(sess)
+	return engine, verifiedPlacement.Environment, nil
 }
 
 // sessionNeedsPerFactory reports whether a CreateSession with the given inputs
 // must route through the per-session engine factory (rather than the shared
 // engine fast path). It is the single expression behind needPerSession in
 // createSession, extracted so createSession stays under the cyclomatic cap. The
-// worktree arm (issue #102): a session whose workspace DIFFERS from the server's
-// launch root routes through the factory so children pin their resolver to the
-// session root. When DefaultWorkspace == "" (a child/member/cloud service) the
-// arm never fires (a non-empty workspace can't differ from ""). The
+// workspace is compared with the verified shared-engine policy root; a mismatch
+// routes through the factory so children pin
+// their resolver to the session root. This comparison is unconditional for
+// filesystem-capable placements: a rootless shared deployment must not run a
+// custom non-empty namespace with rootless policy collaborators. The
 // DefaultModelPending arm (issue #262 review finding 1) routes EVERY
 // zero-selector session through the factory when the shared engine booted
 // with an unresolved intent-driven default model, so the per-session build
 // resolves it at session-build time instead of freezing "".
 func (s *Service) sessionNeedsPerFactory(sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, workspace string) bool {
 	return sel != (ProviderSelector{}) || len(specs) > 0 || profile == ProfileNoFS ||
-		s.cfg.DefaultModelPending ||
-		(workspace != "" && s.cfg.DefaultWorkspace != "" && workspace != s.cfg.DefaultWorkspace)
+		s.cfg.DefaultModelPending || workspace != s.cfg.SharedEngineRoot
 }
 
-// needsRehydration reports whether a loaded session that has NO live per-session
-// engine registered (i.e. its in-memory registrations did not survive a restart)
-// must have one rebuilt before it runs. It is the WIDENED Phase 1 trigger: the
-// original issue-#55 condition was empty-Workspace (no-fs only); a session also
-// needs rehydration when it persisted a non-default provider/model selector
-// (`ProviderID`/`ModelID` set) or the no-fs profile, because both require the
-// per-session factory engine, not the shared one. A default FS session (empty
-// selector, default profile, non-empty workspace) returns false: it keeps riding
-// the shared engine with zero rehydration overhead, exactly as before. The
-// empty-workspace check stays as the SECOND defense (a no-fs session that
-// somehow persisted no profile label still rehydrates) — but it is GUARDED
-// against a REMOTE EnvironmentRef (ADR 0214, issue #462 phase 3): a remote
-// session carries an empty persisted Workspace (its filesystem lives in the
-// remote backend, not on a local root), so the empty-workspace arm must NOT
-// fire for it — that would relabel it no-fs (profileForSession → ProfileNoFS),
-// register a no-fs environment override, and preempt the EnvironmentResolver at
-// run entry. A remote session still rehydrates when it carries a non-default
-// provider/model selector (the selector arms fire), but never via the
-// empty-workspace inference.
-//
-// Worktree binding (issue #102, docs/adr/0032): a session whose persisted
-// workspace DIFFERS from the server's launch root (DefaultWorkspace) ALSO needs
-// rehydration — its per-session engine (which re-pins the CHILD permission
-// resolver to the session root) lived only in process memory and is gone after a
-// restart. When DefaultWorkspace is empty (a child/member service or a no-root
-// cloud deployment) this arm never fires (a non-empty workspace can't differ
-// from ""), so the cloud/no-root posture is byte-identical. A default FS session
-// (Workspace == DefaultWorkspace) does NOT rehydrate, exactly as before.
-//
-// The DefaultModelPending arm (issue #262 review finding 1) rehydrates a
-// PERSISTED zero-selector session too: setSessionLabels persists the
-// SELECTOR (ProviderID/ModelID/ReasoningEffort), which stays empty for a
-// zero-selector session, so none of the arms above would otherwise fire for
-// it — a session created before a restart into a still-down proxy would
-// keep riding whatever engine gets (re)built for it without ever picking up
-// a heal that lands after the restart.
+// needsRehydration reports whether a loaded session with no live per-session engine
+// must rebuild one before running. Persisted profile/provider/model/reasoning labels,
+// debug/learned-skill scope, and unresolved default-model intent drive this decision.
+// Placement does not: engineAndEnvironmentFor always exactly reattaches EnvironmentRef,
+// then separately compares the verified live root with SharedEngineRoot to decide whether
+// placement affinity needs a per-session engine.
 func (s *Service) needsRehydration(sess *session.Session) bool {
-	return s.cfg.LearnedSkills != nil && sess.Owner != nil && sess.Owner.Issuer != "" && sess.Owner.Subject != "" ||
+	return s.cfg.MCPBroker != nil || s.cfg.LearnedSkills != nil ||
 		sess.Kind == session.SessionKindDebug ||
 		sess.Profile == string(ProfileNoFS) ||
 		sess.ProviderID != "" || sess.ModelID != "" ||
 		sess.ReasoningEffort != "" ||
-		(sess.Workspace == "" && !isRemoteEnvironmentRef(sess.EnvironmentRef)) ||
-		s.cfg.DefaultModelPending ||
-		(sess.Workspace != "" && s.cfg.DefaultWorkspace != "" && sess.Workspace != s.cfg.DefaultWorkspace)
+		s.cfg.DefaultModelPending
 }
 
-// profileForSession reconstructs the SessionProfile from a loaded session's persisted
-// inert labels (the SAME mapping rehydrateSession uses): the explicit no-fs label, or
-// the second-defense empty-workspace inference. It is the shared profile source for the
-// mode→model rebuild (CASE 1) so a no-fs session that switches mode rebuilds the no-FS
-// catalog, never silently escalating onto the FS tools. A REMOTE EnvironmentRef
-// (ADR 0214, issue #462 phase 3) is excluded from the empty-workspace inference: a
-// remote session carries an empty persisted Workspace (its filesystem lives in the
-// remote backend), so inferring no-fs from it would relabel the session and register a
-// no-fs environment override that preempts the EnvironmentResolver. A remote session
-// with an explicit no-fs profile label (a hybrid that opted into no-FS tools) still
-// honors the explicit label.
+// profileForSession reconstructs the tool-surface profile from server-owned durable
+// state. The explicit profile label is primary; an exact no-FS EnvironmentRef also
+// requires the no-FS catalog so profile metadata cannot widen its placement authority.
+// No path, workspace emptiness, or current deployment default participates.
 func profileForSession(sess *session.Session) SessionProfile {
 	switch {
 	case sess.Profile == string(ProfileNoFS):
 		return ProfileNoFS
-	case sess.Profile == "" && sess.Workspace == "" && !isRemoteEnvironmentRef(sess.EnvironmentRef):
+	case sess.Profile == "" && sess.EnvironmentRef.Kind == session.EnvKindNoFS:
 		return ProfileNoFS
 	default:
 		return ProfileDefault
@@ -4722,7 +5027,7 @@ func profileForSession(sess *session.Session) SessionProfile {
 // the winner's engine and tears its own down).
 func (s *Service) rehydrateSession(ctx context.Context, sess *session.Session) (*sessionEngine, error) {
 	if sess.Kind == session.SessionKindDebug {
-		if sess.Profile != string(ProfileNoFS) || sess.Workspace != "" || sess.Relationship.DebugTargetID == "" || sess.DebugTargetFingerprint == "" {
+		if sess.Profile != string(ProfileNoFS) || sess.EnvironmentRef.Kind != session.EnvKindNoFS || sess.Relationship.DebugTargetID == "" || sess.DebugTargetFingerprint == "" {
 			return nil, fmt.Errorf("%w: persisted debug session %q has invalid no-fs metadata", ErrInvalidArgument, sess.ID)
 		}
 		if s.cfg.DebugSessionEngine == nil {
@@ -4772,9 +5077,16 @@ func (s *Service) rehydrateSession(ctx context.Context, sess *session.Session) (
 // On ProfileNoFS it (re-)registers the no-fs workspace override under the SAME lock as
 // the engine, the create-time discipline.
 //
-//nolint:gocyclo // Rehydration keeps validation, factory, and atomic registration together.
+//nolint:gocyclo // Explicit validation, rebuild, broker, capacity, and rollback gates stay ordered.
 func (s *Service) buildAndRegisterSessionEngine(ctx context.Context, sess *session.Session, sel ProviderSelector, profile SessionProfile, mode session.PermissionMode, replace bool) (*sessionEngine, error) {
+	return s.buildAndRegisterSessionEngineWithBrokerTools(ctx, sess, sel, profile, mode, replace, nil, false)
+}
+
+//nolint:gocyclo // rehydration keeps validation, factory selection, broker, capacity, and rollback gates ordered; inherent.
+func (s *Service) buildAndRegisterSessionEngineWithBrokerTools(ctx context.Context, sess *session.Session, sel ProviderSelector, profile SessionProfile, mode session.PermissionMode, replace bool, exactTools []tool.Tool, useExactTools bool) (*sessionEngine, error) {
 	id := sess.ID
+	unlockBroker := s.brokerMu.lock(id)
+	defer unlockBroker()
 	// On replace we are swapping an existing registration, so the cap is not exceeded
 	// (the slot is already counted); on a first build the pre-check rejects when full.
 	if !replace {
@@ -4787,6 +5099,8 @@ func (s *Service) buildAndRegisterSessionEngine(ctx context.Context, sess *sessi
 	}
 	var res SessionEngineResult
 	var err error
+	var broker *localBrokerAttachment
+	var brokerCommitted bool
 	if sess.Kind == session.SessionKindDebug {
 		target, loadErr := s.cfg.Store.Load(ctx, sess.Relationship.DebugTargetID)
 		if loadErr != nil || target == nil || sess.DebugTargetFingerprint == "" || !sess.Relationship.DebugTargetIncarnation.Valid() ||
@@ -4797,8 +5111,23 @@ func (s *Service) buildAndRegisterSessionEngine(ctx context.Context, sess *sessi
 			return nil, fmt.Errorf("%w: debug target is stale or inaccessible", ErrNotFound)
 		}
 		res, err = s.cfg.DebugSessionEngine(ctx, sel, profile, mode, sess.Relationship.DebugTargetID, sess.DebugTargetFingerprint, target.Owner, sess.DebugMCPServers, sess.DebugMCPTools)
+	} else if useExactTools {
+		workspace, workspaceErr := s.privateWorkspace(ctx, sess)
+		if workspaceErr != nil {
+			return nil, workspaceErr
+		}
+		res, err = s.callSessionEngine(ctx, sel, nil, profile, workspace, mode, append([]tool.Tool(nil), exactTools...))
 	} else {
-		res, err = s.cfg.SessionEngine(ctx, sel, nil, profile, sess.Workspace, mode)
+		broker, err = s.openBrokerAttachment(ctx, id, sess.ExternalBinding, true)
+		if err != nil {
+			return nil, err
+		}
+		defer s.finalizeBrokerAttachment(broker, &brokerCommitted)
+		workspace, workspaceErr := s.privateWorkspace(ctx, sess)
+		if workspaceErr != nil {
+			return nil, workspaceErr
+		}
+		res, err = s.callSessionEngine(ctx, sel, nil, profile, workspace, mode, brokerTools(broker))
 	}
 	if err != nil {
 		return nil, fmt.Errorf("server: build session engine %q: %w", id, err)
@@ -4834,10 +5163,10 @@ func (s *Service) buildAndRegisterSessionEngine(ctx context.Context, sess *sessi
 		// AUTHORITATIVE no-live-run check (use-after-close guard): a run that became
 		// live for id since the cheap pre-check would still be reading the prior engine
 		// (and its client MCP transport). Closing it now would tear that transport out
-		// from under the in-flight run. Re-check UNDER the lock that owns both s.runs and
-		// the swap, and ABORT if a run is live — never close an in-use engine. The
-		// freshly-built engine is discarded (its MCP torn down) so the abort leaks nothing.
-		if _, live := s.runs[id]; live {
+		// from under the in-flight run. A provisional entry owned by the serialized
+		// run admission is not live yet and is exactly what this rebuild prepares.
+		st := s.runs[id]
+		if st != nil && st.run != nil {
 			s.mu.Unlock()
 			if se.close != nil {
 				_ = se.close()
@@ -4846,16 +5175,38 @@ func (s *Service) buildAndRegisterSessionEngine(ctx context.Context, sess *sessi
 		}
 	}
 	s.sessionEngines[id] = se
-	if profile == ProfileNoFS {
+	if profile == ProfileNoFS && (s.placementBinder == nil || !sess.EnvironmentRef.Valid()) {
 		// Re-register the no-fs environment override under the SAME lock as the engine
 		// (the create-time discipline), so the run below — and every later run —
 		// resolves its environment here and never consults the shared factory with the
 		// empty root. It is a complete shell-less Environment with an honest nofs ref.
 		// A selector session with a real workspace needs no override: the run-entry
 		// seam builds its environment from the shared factory as usual.
-		s.sessionEnvironments[id] = tool.MustEnvironment(defaultEnvironmentRef(sess), nofs.New(), nil)
+		s.sessionEnvironments[id] = tool.MustEnvironment(sess.EnvironmentRef, nofs.New(), memledger.New(), nil)
 	}
 	s.mu.Unlock()
+	if broker != nil {
+		commitCtx, cancelCommit := context.WithTimeout(context.WithoutCancel(ctx), engineCloseTimeout)
+		commitErr := s.commitBrokerAttachment(commitCtx, id, broker)
+		cancelCommit()
+		if commitErr != nil {
+			s.mu.Lock()
+			if s.sessionEngines[id] == se {
+				if replace && hadPrior {
+					s.sessionEngines[id] = prior
+				} else {
+					delete(s.sessionEngines, id)
+				}
+				delete(s.sessionEnvironments, id)
+			}
+			s.mu.Unlock()
+			if se.close != nil {
+				_ = se.close()
+			}
+			return nil, fmt.Errorf("%w: %v", ErrInternal, commitErr)
+		}
+		brokerCommitted = true
+	}
 	// On a clean replace, free the displaced prior engine's MCP manager OUTSIDE the lock
 	// (no I/O under the mutex). The under-lock check above proved no run was live AND the
 	// new engine is now registered, so no goroutine can still read prior after this point.
@@ -4968,7 +5319,7 @@ func (s *Service) LookupRun(id session.SessionID) (*agent.Run, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	st, ok := s.runs[id]
-	if !ok {
+	if !ok || st.run == nil {
 		return nil, false
 	}
 	return st.run, true
@@ -5026,11 +5377,38 @@ func (s *Service) awaitRunDeregister(ctx context.Context, id session.SessionID, 
 	}
 }
 
+// approveLiveRun routes an in-stream verdict through the Service-owned lease gate.
+// The service mutex orders the approval with renewal-loss invalidation; a surfaced
+// child ask is still addressed through its parent run's approval router.
+func (s *Service) approveLiveRun(id session.SessionID, target *agent.Run, askID string, verdict session.ApprovalVerdict, expectedRunID string) error {
+	if s.draining.Load() {
+		return fmt.Errorf("%w: %q", ErrUnavailable, id)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st := s.runs[id]
+	if st == nil || st.run == nil || st.run != target || st.cancelling {
+		return ErrNoActiveRun
+	}
+	if s.cfg.SessionLease != nil && !s.leaseDisabled {
+		h := s.heldLeases[id]
+		if h == nil || !h.valid || h.ctx.Err() != nil {
+			return fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, id)
+		}
+	}
+	if err := checkExpectedRun(expectedRunID, target.RunID()); err != nil {
+		return err
+	}
+	target.Approve(askID, verdict)
+	return nil
+}
+
 // Approve resolves the paused permission ask on the session's in-flight run with
 // the client's three-way verdict (deny / allow-once / allow-always).
 //
-// SAME-PROCESS path FIRST and unchanged: a live registered run resolves the ask
-// over its in-memory channel exactly as before. On a LookupRun MISS — typically the
+// SAME-PROCESS path FIRST: a live registered run resolves the ask over its
+// in-memory channel while this process still holds the session lease. On a
+// LookupRun MISS — typically the
 // process that parked the ask died and a different process now serves the Approve —
 // it falls to resumeFromAwaiting (cloud-native Phase 2): if the persisted session is
 // in StateAwaiting it loads the snapshot, rebuilds the engine, re-enters the loop AT
@@ -5058,7 +5436,8 @@ func (s *Service) Approve(ctx context.Context, id session.SessionID, askID strin
 // decision is therefore serialized per session via s.resumeMu: under the per-session
 // lock the loser re-checks LookupRun, sees the winner's now-registered run, and
 // routes its verdict to that run's channel (the same-process path) — the pending tool
-// runs EXACTLY ONCE. The common live-run case takes a lock-free fast path first.
+// runs EXACTLY ONCE. The common live-run case takes the service lock only long
+// enough to order approval against lease-loss invalidation.
 //
 // WIRE EXPOSURE: the rehydrate-resume path (no live run → resumeFromAwaiting) is
 // reachable only through the HTTP POST /v1/sessions/{id}/approve endpoint, which
@@ -5070,23 +5449,59 @@ func (s *Service) Approve(ctx context.Context, id session.SessionID, askID strin
 // follow-up (additive, out of the Phase 2 gate) — see docs/adr/0027-cloud-native.md
 // Phase 2.
 func (s *Service) ApproveRun(ctx context.Context, id session.SessionID, askID string, verdict session.ApprovalVerdict, expectedRunID string) (*agent.Run, error) {
+	generation := s.captureRunEntryGeneration(id)
+	if s.draining.Load() {
+		return nil, fmt.Errorf("%w: %q", ErrUnavailable, id)
+	}
 	// Authorize before reading the in-memory registry: a mismatch must be
 	// indistinguishable from a missing handle and cannot signal a live run.
 	if _, err := s.GetSession(ctx, id); err != nil {
 		return nil, err
 	}
-	// Fast path (lock-free): a live registered run resolves the ask over its channel.
-	if run, ok := s.LookupRun(id); ok {
+	// Fast path: resolve a live local ask only while this process still owns its
+	// session mutation capability. Keep the service lock through the registry
+	// resolution so lease-loss invalidation and approval are ordered: whichever
+	// wins the lock wins, and a verdict can never enter after declared loss.
+	s.mu.Lock()
+	if err := s.validateRunEntryGenerationLocked(id, generation); err != nil {
+		s.mu.Unlock()
+		return nil, err
+	}
+	st, ok := s.runs[id]
+	if ok {
+		if st.cancelling {
+			s.mu.Unlock()
+			return nil, ErrNoActiveRun
+		}
+		if st.run == nil {
+			resumeAdmission := st.resumeAdmission
+			s.mu.Unlock()
+			if resumeAdmission {
+				return s.resumeFromAwaiting(ctx, id, askID, verdict, expectedRunID, generation)
+			}
+			return nil, ErrNoActiveRun
+		}
+		if s.cfg.SessionLease != nil && !s.leaseDisabled {
+			h := s.heldLeases[id]
+			if h == nil || !h.valid || h.ctx.Err() != nil {
+				s.mu.Unlock()
+				return nil, fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, id)
+			}
+		}
+		run := st.run
 		// Compare against the run that would ACTUALLY receive the verdict, not the
 		// session's stored id: after a terminal race those can differ, and the
 		// whole point of expected_run_id is to refuse exactly that case (ADR 0249).
 		if err := checkExpectedRun(expectedRunID, run.RunID()); err != nil {
+			s.mu.Unlock()
 			return nil, err
 		}
 		run.Approve(askID, verdict)
+		s.mu.Unlock()
 		return nil, nil
 	}
-	return s.resumeFromAwaiting(ctx, id, askID, verdict, expectedRunID)
+	s.mu.Unlock()
+	return s.resumeFromAwaiting(ctx, id, askID, verdict, expectedRunID, generation)
 }
 
 // resumeFromAwaiting is the service half of the fourth (awaiting-only) run-entry
@@ -5111,17 +5526,54 @@ func (s *Service) ApproveRun(ctx context.Context, id session.SessionID, askID st
 // mirrors rehydrateSession's loser-teardown/MaxSessionEngines guard via
 // engineAndEnvironmentFor; the resumed run is registered into s.runs like any other so
 // a concurrent Cancel/Approve reaches it and FinishRun cleans it up.
-func (s *Service) resumeFromAwaiting(ctx context.Context, id session.SessionID, askID string, verdict session.ApprovalVerdict, expectedRunID string) (*agent.Run, error) {
+//
+//nolint:gocyclo // Approval resume keeps generation, lock ordering, lease, and exact-once launch in one transaction.
+func (s *Service) resumeFromAwaiting(ctx context.Context, id session.SessionID, askID string, verdict session.ApprovalVerdict, expectedRunID string, generation runEntryGeneration) (*agent.Run, error) {
+	if s.draining.Load() {
+		return nil, fmt.Errorf("%w: %q", ErrUnavailable, id)
+	}
 	unlock := s.resumeMu.lock(id)
 	defer unlock()
+	entryUnlock := s.runEntryMu.lock(id)
+	defer entryUnlock()
+	if err := s.validateRunEntryGeneration(id, generation); err != nil {
+		return nil, err
+	}
 
-	// Re-check under the lock: a concurrent resume that won the race has registered a
-	// live run. Route this verdict to its channel (same-process) instead of spawning a
-	// second run — the exactly-once guarantee for the pending tool.
-	if run, ok := s.LookupRun(id); ok {
+	// Re-check under the locks: a concurrent resume that won the race has registered a
+	// live run. Route this verdict only while its local lease capability remains
+	// valid, using the same service-lock ordering as ApproveRun's fast path.
+	s.mu.Lock()
+	st, ok := s.runs[id]
+	if ok {
+		run := st.approvalRun()
+		if run == nil {
+			s.mu.Unlock()
+			return nil, ErrNoActiveRun
+		}
+		if s.cfg.SessionLease != nil && !s.leaseDisabled {
+			h := s.heldLeases[id]
+			if h == nil || !h.valid || h.ctx.Err() != nil {
+				s.mu.Unlock()
+				return nil, fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, id)
+			}
+		}
+		if err := checkExpectedRun(expectedRunID, run.RunID()); err != nil {
+			s.mu.Unlock()
+			return nil, err
+		}
 		run.Approve(askID, verdict)
+		s.mu.Unlock()
 		return nil, nil
 	}
+	s.mu.Unlock()
+
+	// ADR 0030 Layer 3 note: engineAndEnvironmentFor's mode→model rebuild (CASE 1) is a
+	// NO-OP here. SetMode is rejected from StateAwaiting by the aggregate, so a parked
+	// session's Mode cannot have changed since its engine was built — se.builtForMode ==
+	// sess.Mode always holds, and the stale-mode branch never fires. (A restart-parked
+	// awaiting session is rehydrated on its persisted Mode first, so the rebuilt engine's
+	// builtForMode matches too.) The model is fixed for the resumed turn.
 
 	// GetSession (read-only snapshot load): ErrNotFound for an unknown session. We do
 	// NOT use loadAndReopen here — its job is to drive completed/cancelled/failed back
@@ -5144,31 +5596,40 @@ func (s *Service) resumeFromAwaiting(ctx context.Context, id session.SessionID, 
 		// stranded-for-Approve as before (last-write-wins / nothing to resume).
 		return nil, ErrNoActiveRun
 	}
-	// ADR 0030 Layer 3 note: engineAndEnvironmentFor's mode→model rebuild (CASE 1) is a
-	// NO-OP here. SetMode is rejected from StateAwaiting by the aggregate, so a parked
-	// session's Mode cannot have changed since its engine was built — se.builtForMode ==
-	// sess.Mode always holds, and the stale-mode branch never fires. (A restart-parked
-	// awaiting session is rehydrated on its persisted Mode first, so the rebuilt engine's
-	// builtForMode matches too.) The model is fixed for the resumed turn. We still take
-	// runEntryMu (nested inside resumeMu, the resumeMu→runEntryMu order) around the
-	// engine-resolve+register so the run-entry critical section is uniform with
-	// StartRunContent — the rebuild's under-lock liveness check stays authoritative even
-	// though it cannot fire on this path.
-	entryUnlock := s.runEntryMu.lock(id)
-	defer entryUnlock()
+	st, admissionParent, err := s.beginRunAdmission(ctx, id, sess, true)
+	if err != nil {
+		return nil, err
+	}
+	promoted := false
+	defer s.cleanupRunAdmission(id, st, &promoted)
 	// Cross-process single-writer gate (cloud-native Phase 4): the resumed run is a
 	// run-entry like any other, so it acquires the session lease too — a competing
 	// process that took over this evicted session must refuse the resume.
-	if err := s.acquireLease(ctx, id); err != nil {
+	if err := s.acquireLease(admissionParent, id); err != nil {
 		return nil, err
 	}
+	admissionCtx, stopAdmission, leaseHeld := s.mutationLeaseContext(admissionParent, id)
+	defer func() {
+		if !promoted {
+			stopAdmission()
+		}
+	}()
+	ctx = admissionCtx
 	engine, env, err := s.engineAndEnvironmentFor(ctx, sess)
 	if err != nil {
 		return nil, err
 	}
-	ctx = memory.WithWorkspace(ctx, sess.Workspace)
-	run := engine.ResumeApproval(ctx, sess, env, askID, verdict)
-	s.register(id, run, sess)
+	if !leaseHeld() {
+		return nil, fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, id)
+	}
+	ctx = memory.WithWorkspace(ctx, env.Workspace().Root())
+	run, err := s.promoteRunAdmission(id, st, stopAdmission, func() *agent.Run {
+		return engine.ResumeApproval(ctx, sess, env, askID, verdict)
+	})
+	if err != nil {
+		return nil, err
+	}
+	promoted = true
 	return run, nil
 }
 
@@ -5211,9 +5672,18 @@ func (s *Service) resumeFromAwaiting(ctx context.Context, id session.SessionID, 
 // cancel the passed ctx once it stops draining, or the run can wedge behind a
 // dead relay (mirrors the run.Cancel() the live relays call on disconnect).
 func (s *Service) ApprovePlan(ctx context.Context, id session.SessionID, targetMode session.PermissionMode, note string) (<-chan session.Event, error) {
-	// Authorize before reading the in-memory registry. A foreign caller must not
-	// learn that a run exists or trigger any live-run side effect.
-	if _, err := s.GetSession(ctx, id); err != nil {
+	generation := s.captureRunEntryGeneration(id)
+	return s.approvePlan(ctx, id, targetMode, note, generation)
+}
+
+func (s *Service) approvePlan(ctx context.Context, id session.SessionID, targetMode session.PermissionMode, note string, generation runEntryGeneration) (<-chan session.Event, error) {
+	if s.draining.Load() {
+		return nil, fmt.Errorf("%w: %q", ErrUnavailable, id)
+	}
+	// Authorize and load before reading the in-memory registry. A foreign caller
+	// must not learn that a run exists or trigger any live-run side effect.
+	sess, err := s.GetSession(ctx, id)
+	if err != nil {
 		return nil, err
 	}
 	// (1) A live run means an approve-mid-run: reject. The operator must use the
@@ -5221,14 +5691,9 @@ func (s *Service) ApprovePlan(ctx context.Context, id session.SessionID, targetM
 	if _, ok := s.LookupRun(id); ok {
 		return nil, fmt.Errorf("%w: session %q has a live run (use the Converse resume_approval frame for an in-flight run)", ErrNotAwaitingPlan, id)
 	}
-	// (2) Load the session to validate the plan-originated precondition and read
-	// the askID. This is a read-only GetSession (NOT loadAndReopen — the session
-	// is awaiting, not completed/cancelled/failed, so there is nothing to drive
-	// idle). ErrNotFound propagates for an unknown session.
-	sess, err := s.GetSession(ctx, id)
-	if err != nil {
-		return nil, err
-	}
+	// (2) Validate the plan-originated precondition and read the askID from the
+	// authorized snapshot. resumeFromAwaiting reloads and revalidates under the
+	// admission locks before any work can start.
 	if sess.State != session.StateAwaiting {
 		return nil, fmt.Errorf("%w: session %q is in state %q, not awaiting", ErrNotAwaitingPlan, id, sess.State)
 	}
@@ -5251,7 +5716,7 @@ func (s *Service) ApprovePlan(ctx context.Context, id session.SessionID, targetM
 	// caller approves THE PLAN this session is parked on, and the askID is read
 	// off the snapshot rather than supplied. There is no caller expectation to
 	// enforce, so it passes no expected run id.
-	resumed, rerr := s.resumeFromAwaiting(ctx, id, ask.AskID, verdict, "")
+	resumed, rerr := s.resumeFromAwaiting(ctx, id, ask.AskID, verdict, "", generation)
 	if rerr != nil {
 		return nil, rerr
 	}
@@ -5282,7 +5747,7 @@ func (s *Service) ApprovePlan(ctx context.Context, id session.SessionID, targetM
 		// (loadAndReopen → engineAndEnvironmentFor CASE 1 rebuild on the flipped
 		// mode → execute model). The StopPlanApproved-completed session is
 		// reopened to idle by loadAndReopen.
-		cont, cerr := s.StartRunContent(ctx, id, proceed, nil)
+		cont, cerr := s.startRunContent(ctx, id, proceed, nil, runPurposeChat, generation, false)
 		if cerr != nil {
 			// Surface the continuation-launch failure honestly on the stream as a
 			// synthetic terminal result so the relay's client sees a terminal
@@ -5374,17 +5839,26 @@ func (s *Service) Cancel(ctx context.Context, id session.SessionID, expectedRunI
 	if _, err := s.GetSession(ctx, id); err != nil {
 		return err
 	}
-	run, ok := s.LookupRun(id)
-	if ok {
-		// Cancelling the WRONG run is the costliest stale-control outcome — it
-		// destroys work rather than merely permitting it — so the guard runs before
-		// the signal, never after.
+	s.mu.Lock()
+	st := s.runs[id]
+	if st != nil && st.run != nil {
+		if s.cfg.SessionLease != nil && !s.leaseDisabled {
+			h := s.heldLeases[id]
+			if h == nil || !h.valid || h.ctx.Err() != nil {
+				s.mu.Unlock()
+				return fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, id)
+			}
+		}
+		run := st.run
 		if err := checkExpectedRun(expectedRunID, run.RunID()); err != nil {
+			s.mu.Unlock()
 			return err
 		}
 		run.Cancel()
+		s.mu.Unlock()
 		return nil
 	}
+	s.mu.Unlock()
 	return s.noActiveRun(ctx, id)
 }
 
@@ -5448,12 +5922,30 @@ func (s *Service) Persist(ctx context.Context, id session.SessionID) {
 	if !ok {
 		return
 	}
+	// Serialize the durable-awaiting admission and marker resolution with drain's
+	// lifecycle snapshot. Drain either sees the successful awaiting marker or
+	// waits for a failed save and treats the run as non-awaiting.
+	st.persistMu.Lock()
+	defer st.persistMu.Unlock()
+	s.mu.Lock()
+	current := s.runs[id] == st
+	s.mu.Unlock()
+	if !current || st.preserveDurable.Load() {
+		return
+	}
+	if !s.mutationLeaseHeld(id) {
+		return
+	}
+	s.persistRun(ctx, id, st)
+}
+
+func (s *Service) persistRun(ctx context.Context, id session.SessionID, st *runState) {
 	// Save FIRST, then mark awaiting on success (H1 ordering): the flag must be
 	// set only after the durable StateAwaiting snapshot has actually landed, so
 	// Close (which skips cancelling awaiting runs) never skips a run whose
 	// resumable snapshot was never persisted. Set-before-save would let Close
 	// skip a run whose Save then fails, losing the resume point.
-	err := s.cfg.Store.Save(ctx, st.sess)
+	err := s.saveSession(ctx, st.sess)
 	if err != nil {
 		// Persistence is best-effort: a Save failure must not break the live
 		// stream. The run continues from in-memory state; only resume-across-
@@ -5465,6 +5957,37 @@ func (s *Service) Persist(ctx context.Context, id session.SessionID) {
 	if st.sess.State == session.StateAwaiting {
 		st.awaiting.Store(true)
 	}
+	if st.sess.TitleRevision != st.titleRevision {
+		s.publishTitle(context.WithoutCancel(ctx), st.sess)
+		st.titleRevision = st.sess.TitleRevision
+	}
+	// Title work is submitted only after the completed chat snapshot (including
+	// the ingress-captured source) is durable. Submission is non-blocking.
+	if st.sess.State == session.StateCompleted && st.sess.TitleGeneration == session.TitleGenerationPending && len(st.sess.TitleSourcePrompts()) > 0 {
+		s.submitTitleGeneration(id)
+	}
+}
+
+// completeRelay persists a terminal run before the relay removes its registry
+// entry. It is deliberately internal: authorization occurred at run entry, while
+// this late completion must retain dead-client persistence without a request
+// principal.
+func (s *Service) completeRelay(ctx context.Context, id session.SessionID, run *agent.Run) {
+	s.mu.Lock()
+	st, ok := s.runs[id]
+	s.mu.Unlock()
+	if ok && st.run == run && (st.sess.State == session.StateCompleted || st.sess.State == session.StateCancelled || st.sess.State == session.StateFailed) {
+		st.persistMu.Lock()
+		defer st.persistMu.Unlock()
+		s.persistRun(ctx, id, st)
+	}
+}
+
+// finishRelayRun is the one terminal path for wire relays: persist first so a
+// disconnected client cannot lose the terminal snapshot, then release the run.
+func (s *Service) finishRelayRun(ctx context.Context, id session.SessionID, run *agent.Run) {
+	s.completeRelay(ctx, id, run)
+	s.deregister(id, run)
 }
 
 // appendEvent durably records one projected relay event to the configured
@@ -5482,6 +6005,9 @@ func (s *Service) Persist(ctx context.Context, id session.SessionID) {
 func (s *Service) appendEvent(ctx context.Context, id session.SessionID, ev session.Event) error {
 	if s.cfg.EventLog == nil {
 		return nil
+	}
+	if !s.mutationLeaseHeld(id) {
+		return fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, id)
 	}
 	// The actor is the verified caller who ACTED, NOT the session's owner. The two
 	// are different questions and routinely different values: this phase ships no
@@ -5530,8 +6056,9 @@ func (s *Service) appendEvent(ctx context.Context, id session.SessionID, ev sess
 //     streaming deltas and durably flushes them before this event when it is a
 //     boundary; client liveness never gates observation, so the post-disconnect
 //     tail still includes the terminal EvResult.
-//  2. skip the client wire for the five log-only kinds (EvApproval,
-//     EvCompactionArchive, EvUserPrompt, EvNetworkAttempt, EvRequestManifest) — recorded above but
+//  2. skip the client wire for the seven log-only kinds (EvApproval,
+//     EvCompactionArchive, EvUserPrompt, EvNetworkAttempt, EvRequestManifest,
+//     EvAuthorizationRequired, EvAuthorizationResolved) — recorded above but
 //     NOT forwarded.
 //  3. on EvPermissionAsk: Persist (snapshot semantics, gated to the healthy
 //     path — the passed ctx, NOT the cancel-detached one) and — when autoApprove
@@ -5554,15 +6081,20 @@ func (s *Service) relayEvent(ctx context.Context, id session.SessionID, ev sessi
 	// itself is handled below (Persist sets the flag), so it is excluded from this clear.
 	if ev.Type != session.EvPermissionAsk {
 		s.mu.Lock()
-		if st, ok := s.runs[id]; ok {
-			st.awaiting.Store(false)
-		}
+		st := s.runs[id]
 		s.mu.Unlock()
+		if st != nil {
+			st.persistMu.Lock()
+			st.awaiting.Store(false)
+			st.persistMu.Unlock()
+		}
 	}
-	// EvApproval (3a), EvCompactionArchive (3b), EvUserPrompt (ADR 0038),
-	// EvNetworkAttempt (ADR 0255), and EvRequestManifest are consumed by the durable
-	// log ONLY — appended above but NOT relayed to the client wire. Debugger-only
-	// evidence never crosses an ordinary client surface.
+	// EvApproval (3a), EvCompactionArchive (3b), and EvUserPrompt (ADR 0038) are
+	// consumed by the durable log ONLY — appended above but NOT relayed to the
+	// client wire. EvNetworkAttempt (ADR 0255) and EvRequestManifest are the
+	// remaining isPublicEvent exclusions. authorization.required/resolved ARE
+	// relayed — cmd/mecatui/client/msgs.go decodes them into MCPAuthorizationMsg,
+	// the client's only signal to show the MCP-authorization modal.
 	if !isPublicEvent(ev) || ev.Type == session.EvApproval || ev.Type == session.EvCompactionArchive || ev.Type == session.EvUserPrompt {
 		return false
 	}
@@ -5603,6 +6135,7 @@ func (s *Service) MaybeAutoApprovePlan(ctx context.Context, id session.SessionID
 	if ev.Ask.Origin() != session.AskOriginPlan {
 		return
 	}
+	generation := s.captureRunEntryGeneration(id)
 	// Emit the LOUD diagnostic BEFORE the verdict: the operator must see that no
 	// human reviewed this plan. The note is also the operator-visible reason on
 	// the session.
@@ -5622,9 +6155,16 @@ func (s *Service) MaybeAutoApprovePlan(ctx context.Context, id session.SessionID
 	// Case 1 is the common headless path (the run is parked in-process); case 2
 	// covers a restart where the process that parked the ask died.
 	if run, ok := s.LookupRun(id); ok {
-		// Live run: deliver the verdict directly (ModeDefault → allow-once, the
-		// planApprovedTarget flip). The run terminates StopPlanApproved and the
-		// mode flips. A continuation run MUST then proceed — a headless auto-approve
+		// Live run: deliver the verdict through the Service-owned lifecycle gate.
+		// Clear may have marked this exact run cancelling after LookupRun; in that
+		// case refuse both the verdict and its continuation.
+		if err := s.approveLiveRun(id, run, ev.Ask.AskID, session.VerdictAllowOnce, ""); err != nil {
+			s.cfg.Diagnostics.Log(ctx, port.LevelWarn,
+				"plan_mode_auto_approve: auto-approve failed (ask stays parked)",
+				"session", string(id), "err", err.Error())
+			return
+		}
+		// The mode flips at the terminal boundary. A continuation run MUST then proceed — a headless auto-approve
 		// has no operator to re-prompt, so leaving the session idle (completed at
 		// StopPlanApproved) is useless. This mirrors the cross-process path
 		// (ApprovePlan's atomic continuation) so BOTH live and cross-process
@@ -5633,7 +6173,6 @@ func (s *Service) MaybeAutoApprovePlan(ctx context.Context, id session.SessionID
 		// flips the mode; THIS goroutine drives the continuation via the SAME
 		// StartRunContent path ApprovePlan uses (loadAndReopen → execute model)
 		// carrying agent.PlanApprovedProceedText.
-		run.Approve(ev.Ask.AskID, session.VerdictAllowOnce)
 		// Drive the continuation run in the background. The relay that owns the
 		// ORIGINAL run's client stream drains the StopPlanApproved terminal; this
 		// goroutine waits for the session to reach a terminal state (the verdict
@@ -5641,12 +6180,12 @@ func (s *Service) MaybeAutoApprovePlan(ctx context.Context, id session.SessionID
 		// events to the durable log (appendEvent) so it never wedges. The
 		// continuation's events are NOT relayed to the original client stream
 		// (same discipline as the cross-process path's drain goroutine).
-		go s.autoApproveContinuation(ctx, id)
+		go s.autoApproveContinuation(ctx, id, generation)
 		return
 	}
 	// Cross-process: the run is dead, the session is parked in the store. Drive
 	// the EXISTING ApprovePlan path (resumeFromAwaiting → continuation run).
-	events, err := s.ApprovePlan(ctx, id, session.ModeDefault, "auto-approved: no human reviewed this plan")
+	events, err := s.approvePlan(ctx, id, session.ModeDefault, "auto-approved: no human reviewed this plan", generation)
 	if err != nil {
 		// Fail-safe: log and return. The ask stays parked; the run continues in
 		// plan mode (the model iterates). An error here means the session state
@@ -5693,7 +6232,7 @@ func (s *Service) MaybeAutoApprovePlan(ctx context.Context, id session.SessionID
 // than StopPlanApproved (cancel/error) is NOT continued (the plan was not
 // approved); only a StopPlanApproved terminal proceeds, matching
 // ApprovePlan's `resumedStop == StopPlanApproved` gate.
-func (s *Service) autoApproveContinuation(ctx context.Context, id session.SessionID) {
+func (s *Service) autoApproveContinuation(ctx context.Context, id session.SessionID, generation runEntryGeneration) {
 	logCtx := context.WithoutCancel(ctx)
 	deadline := time.Now().Add(autoApproveWaitTimeout)
 	for {
@@ -5725,7 +6264,7 @@ func (s *Service) autoApproveContinuation(ctx context.Context, id session.Sessio
 	// mode → execute model). The StopPlanApproved-completed session is reopened
 	// to idle by loadAndReopen.
 	proceed := agent.PlanApprovedProceedText + "\n\nOperator note: auto-approved: no human reviewed this plan"
-	cont, cerr := s.StartRunContent(logCtx, id, proceed, nil)
+	cont, cerr := s.startRunContent(logCtx, id, proceed, nil, runPurposeChat, generation, false)
 	if cerr != nil {
 		s.cfg.Diagnostics.Log(logCtx, port.LevelWarn,
 			"plan_mode_auto_approve: continuation run failed to start",
@@ -5771,13 +6310,28 @@ func (s *Service) acquireMutationLease(ctx context.Context, id session.SessionID
 	return func() { s.releaseLease(id) }, nil
 }
 
+func (s *Service) mutationLeaseHeld(id session.SessionID) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.cfg.SessionLease == nil || s.leaseDisabled {
+		return true
+	}
+	h := s.heldLeases[id]
+	return h != nil && h.valid && h.ctx.Err() == nil
+}
+
 func (s *Service) mutationLeaseContext(parent context.Context, id session.SessionID) (context.Context, func(), func() bool) {
 	s.mu.Lock()
 	h := s.heldLeases[id]
 	leasingRequired := s.cfg.SessionLease != nil && !s.leaseDisabled
 	s.mu.Unlock()
-	if !leasingRequired || h == nil {
+	if !leasingRequired {
 		return parent, func() {}, func() bool { return true }
+	}
+	if h == nil {
+		ctx, cancel := context.WithCancel(parent)
+		cancel()
+		return ctx, func() {}, func() bool { return false }
 	}
 	ctx, cancel := context.WithCancel(parent)
 	stop := context.AfterFunc(h.ctx, cancel)
@@ -5788,7 +6342,7 @@ func (s *Service) mutationLeaseContext(parent context.Context, id session.Sessio
 	stillHeld := func() bool {
 		s.mu.Lock()
 		defer s.mu.Unlock()
-		return s.heldLeases[id] == h && h.ctx.Err() == nil
+		return s.heldLeases[id] == h && h.valid && h.ctx.Err() == nil
 	}
 	return ctx, cleanup, stillHeld
 }
@@ -5821,13 +6375,21 @@ func (s *Service) acquireLease(ctx context.Context, id session.SessionID) error 
 	// BEFORE leasing/launching so a shutting-down replica steers new traffic to a
 	// survivor. Checked here (the single run-entry chokepoint covering
 	// StartRunContent + resumeFromAwaiting) so both prompt and awaiting-resume
-	// paths are gated uniformly. An in-flight same-process Approve on a LIVE run
-	// does NOT pass through acquireLease (it resolves over the channel), so a
-	// verdict on an already-running session stays allowed during drain. The gate
-	// starts false — byte-identical default for mecated and an undrained mecak8s.
+	// paths are gated uniformly. Live approval/control paths perform their own
+	// drain and exact-held-capability checks because they do not reacquire here.
 	if s.draining.Load() {
 		return fmt.Errorf("%w: %q", ErrUnavailable, id)
 	}
+	return s.reaffirmLease(ctx, id)
+}
+
+// reaffirmLease is acquireLease's body MINUS the new-run-entry drain gate. It
+// exists for close/shutdown authorization settlement (prepareAuthorizationClose),
+// which reaffirms a lease this process may already hold for ids discovered from
+// its OWN bookkeeping (heldLeases/brokerAttachments/authorizationExpiry) — never
+// a fresh admission — so the drain gate (which exists to refuse NEW run-entries)
+// must not reject it: Close() legitimately runs after Drain() has armed.
+func (s *Service) reaffirmLease(ctx context.Context, id session.SessionID) error {
 	if s.cfg.SessionLease == nil {
 		return nil
 	}
@@ -5836,8 +6398,16 @@ func (s *Service) acquireLease(ctx context.Context, id session.SessionID) error 
 		s.mu.Unlock()
 		return nil
 	}
-	if _, held := s.heldLeases[id]; held {
+	if _, lost := s.lostOwnership[id]; lost {
 		s.mu.Unlock()
+		return fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, id)
+	}
+	if h, held := s.heldLeases[id]; held {
+		valid := h.valid
+		s.mu.Unlock()
+		if !valid {
+			return fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, id)
+		}
 		return nil // already ours for this session; acquire only on first entry.
 	}
 	s.mu.Unlock()
@@ -5853,6 +6423,7 @@ func (s *Service) acquireLease(ctx context.Context, id session.SessionID) error 
 		firstTime := !s.leaseDisabled
 		s.leaseDisabled = true
 		s.mu.Unlock()
+		s.cfg.MutationCapability.Disable()
 		if firstTime {
 			s.cfg.Diagnostics.Log(ctx, port.LevelInfo, "session leasing unsupported by backend; disabling (running without cross-process exclusion)",
 				"owner", s.cfg.LeaseOwner)
@@ -5872,9 +6443,11 @@ func (s *Service) acquireLease(ctx context.Context, id session.SessionID) error 
 		cancel()
 		return nil
 	}
-	s.heldLeases[id] = &heldLease{lease: lease, ctx: renewCtx, cancel: cancel}
+	h := &heldLease{lease: lease, ctx: renewCtx, cancel: cancel, valid: true}
+	s.cfg.MutationCapability.Grant(id)
+	s.heldLeases[id] = h
 	s.mu.Unlock()
-	go s.renewLoop(renewCtx, id)
+	go s.renewLoop(renewCtx, id, h)
 	return nil
 }
 
@@ -5882,10 +6455,10 @@ func (s *Service) acquireLease(ctx context.Context, id session.SessionID) error 
 // cancelled (CloseSession / shutdown). The renewer is OWNED BY Service -- the
 // loop never imports port.SessionLease (the storage-agnostic discipline).
 //
-// SINGLE SOURCE OF TRUTH: each tick reads the CURRENT lease from
-// heldLeases[id].lease UNDER s.mu (not a goroutine-local copy), refreshes it, and
-// writes the refreshed value back under s.mu — so releaseLease/onLeaseLost always
-// see the latest token/expiry and there is no unguarded read of the lease value.
+// GENERATION IDENTITY: the heldLease pointer captured at startup identifies this
+// renewer generation. Every completion rechecks that heldLeases[id] is still that
+// exact pointer before updating state or declaring loss, so a delayed backend call
+// can never affect a CloseSession/reacquire successor.
 //
 // LOSS HANDLING is graceful for TRANSIENT faults, definitive for ErrLeaseHeld:
 //   - Renew -> ErrLeaseHeld is DEFINITIVE loss (someone else took the lease): cancel
@@ -5896,7 +6469,7 @@ func (s *Service) acquireLease(ctx context.Context, id session.SessionID) error 
 //     clock.Now() is within one renew-interval of the lease's Expiry (i.e. the next
 //     tick would land past expiry). Until then we keep the run and retry next tick.
 //   - A ctx-cancelled error is just shutdown/close racing a tick -> exit quietly.
-func (s *Service) renewLoop(renewCtx context.Context, id session.SessionID) {
+func (s *Service) renewLoop(renewCtx context.Context, id session.SessionID, expected *heldLease) {
 	ticker := time.NewTicker(s.cfg.LeaseRenewInterval)
 	defer ticker.Stop()
 	renewTimeout := s.cfg.LeaseRenewInterval / leaseRenewFraction
@@ -5908,26 +6481,36 @@ func (s *Service) renewLoop(renewCtx context.Context, id session.SessionID) {
 		case <-renewCtx.Done():
 			return
 		case <-ticker.C:
-			// Read the current lease under the lock (single source of truth). If the
-			// hold is gone (released concurrently) there is nothing to renew.
 			s.mu.Lock()
-			h, ok := s.heldLeases[id]
-			if !ok {
+			if s.heldLeases[id] != expected {
 				s.mu.Unlock()
 				return
 			}
-			lease := h.lease
+			lease := expected.lease
 			s.mu.Unlock()
 
 			rCtx, rCancel := context.WithTimeout(renewCtx, renewTimeout)
 			refreshed, err := s.cfg.SessionLease.Renew(rCtx, lease)
 			rCancel()
+
+			// Renew implementations may complete after cancellation. In all cases the
+			// captured pointer, not merely the session id, is the generation fence.
+			s.mu.Lock()
+			current := s.heldLeases[id] == expected
+			if current && err == nil {
+				expected.lease = refreshed
+			}
+			s.mu.Unlock()
+			if !current {
+				return
+			}
+
 			switch {
 			case errors.Is(err, context.Canceled):
 				return // shutdown / close raced the tick.
 			case errors.Is(err, port.ErrLeaseHeld):
 				// Definitive loss: a competitor holds it now.
-				s.onLeaseLost(renewCtx, id, err)
+				s.onLeaseLost(renewCtx, id, expected, err)
 				return
 			case err != nil:
 				// Transient/infra fault: keep the run unless we are within one renew
@@ -5935,34 +6518,82 @@ func (s *Service) renewLoop(renewCtx context.Context, id session.SessionID) {
 				if s.cfg.Now().Add(s.cfg.LeaseRenewInterval).Before(lease.Expiry) {
 					continue // still have headroom; retry next tick.
 				}
-				s.onLeaseLost(renewCtx, id, err)
+				s.onLeaseLost(renewCtx, id, expected, err)
 				return
 			}
-			s.mu.Lock()
-			if h, ok := s.heldLeases[id]; ok {
-				h.lease = refreshed // keep the latest token/expiry for Release.
-			}
-			s.mu.Unlock()
 		}
 	}
 }
 
-// onLeaseLost handles a declared lease loss: WARN, cancel the renewer's own ctx
-// (so the goroutine's WithCancel child is not leaked), cancel the session's live
-// run so a competitor can take over, and drop the hold. The cancelled run
-// terminates cleanly (StopCancelled is recoverable), so this is fail-safe.
-func (s *Service) onLeaseLost(ctx context.Context, id session.SessionID, cause error) {
-	s.cfg.Diagnostics.Log(ctx, port.LevelWarn, "lost session lease; cancelling run",
-		"session", string(id), "owner", s.cfg.LeaseOwner, "err", cause.Error())
-	if run, ok := s.LookupRun(id); ok {
-		run.Cancel()
-	}
+// onLeaseLost handles a declared lease loss only when expected remains the
+// current hold. Local mutation capability is invalidated before the owning run
+// is stopped. For a durably parked awaiting run, its exact local ask is withdrawn
+// before cancellation; cancellation can then unwind only in memory and cannot
+// overwrite the durable awaiting handoff point. The lifecycle record remains until
+// its relay drains and FinishRun performs identity-safe removal. A lightweight
+// lost-owner tombstone prevents this stale Service from reacquiring the session.
+// The successor now owns durable state, so any process-local authorization expiry
+// timer and local broker transaction are also stopped/invalidated here; the
+// durable snapshot itself is never mutated. Do not acquire runEntryMu here: lease
+// loss cancels operations that may be holding it, so waiting for that lock would
+// deadlock their cancellation.
+func (s *Service) onLeaseLost(ctx context.Context, id session.SessionID, expected *heldLease, cause error) {
+	s.stopAuthorizationExpiry(id)
+	s.invalidateLocalAuthorization(context.WithoutCancel(ctx), id)
+	var run *agent.Run
+	var admissionCancel context.CancelFunc
+	var leaseCancel context.CancelFunc
+	var lease port.Lease
+	var askID string
+	var preserveAwaiting bool
 	s.mu.Lock()
-	if h, ok := s.heldLeases[id]; ok {
-		h.cancel() // release the renewer's WithCancel child (self-cancel is harmless).
+	if s.heldLeases[id] != expected || !expected.valid {
+		s.mu.Unlock()
+		return
+	}
+	expected.valid = false
+	s.lostOwnership[id] = struct{}{}
+	s.cfg.MutationCapability.Invalidate(id)
+	leaseCancel = expected.cancel
+	lease = expected.lease
+	if st := s.runs[id]; st != nil {
+		run = st.run
+		admissionCancel = st.admissionCancel
+		preserveAwaiting = st.awaiting.Load()
+		if preserveAwaiting {
+			if ask, pending := st.sess.PendingAsk(); pending {
+				askID = ask.AskID
+			}
+		}
+	}
+	if !preserveAwaiting {
 		delete(s.heldLeases, id)
 	}
 	s.mu.Unlock()
+	if run != nil && askID != "" {
+		run.RetractPermissionAsk(askID)
+	}
+	if leaseCancel != nil {
+		leaseCancel()
+	}
+	if admissionCancel != nil {
+		admissionCancel()
+	}
+	if run != nil {
+		run.Cancel()
+	}
+	if !preserveAwaiting {
+		releaseCtx, releaseCancel := context.WithTimeout(context.WithoutCancel(ctx), leaseAcquireTimeout)
+		defer releaseCancel()
+		if err := s.cfg.SessionLease.Release(releaseCtx, lease); err != nil {
+			s.cfg.Diagnostics.Log(releaseCtx, port.LevelWarn, "session lease release failed after loss",
+				"session", string(id), "owner", s.cfg.LeaseOwner, "err", err.Error())
+		}
+	}
+	// Emit diagnostics only after cancellation has been signalled, so observers
+	// never see a loss report while the stale lifecycle is still admissible.
+	s.cfg.Diagnostics.Log(ctx, port.LevelWarn, "lost session lease; cancelling run",
+		"session", string(id), "owner", s.cfg.LeaseOwner, "err", cause.Error())
 }
 
 // releaseLease stops the session's renewer and releases its cross-process lease,
@@ -5979,20 +6610,38 @@ func (s *Service) releaseLease(id session.SessionID) {
 	s.mu.Lock()
 	h, ok := s.heldLeases[id]
 	var lease port.Lease
+	valid := false
+	removeOnReturn := false
 	if ok {
 		lease = h.lease // guarded snapshot of the latest token/expiry.
+		valid = h.valid
+		h.valid = false
+		s.cfg.MutationCapability.Invalidate(id)
 		delete(s.heldLeases, id)
+		if st := s.runs[id]; st != nil {
+			st.removeCapabilityOnSettle = valid
+		} else {
+			removeOnReturn = valid
+		}
 	}
 	s.mu.Unlock()
 	if !ok {
 		return
 	}
 	h.cancel() // stop the renewer first.
+	if !valid {
+		return // declared loss: TTL/takeover owns transition; never release stale ownership.
+	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(context.Background()), leaseAcquireTimeout)
 	defer cancel()
 	if err := s.cfg.SessionLease.Release(ctx, lease); err != nil {
 		s.cfg.Diagnostics.Log(ctx, port.LevelWarn, "session lease release failed",
 			"session", string(id), "owner", s.cfg.LeaseOwner, "err", err.Error())
+	}
+	if removeOnReturn {
+		// No stale run reference remains, so normal teardown can forget the
+		// invalidation rather than accumulating a per-session tombstone.
+		s.cfg.MutationCapability.Remove(id)
 	}
 }
 
@@ -6148,6 +6797,9 @@ func (s *Service) SettleIfStale(ctx context.Context, id session.SessionID) (bool
 	if !staleReconcileAuthorized(ctx) {
 		return false, ErrManagementUnauthorized
 	}
+	// Authorization precedes caller-selected coordination. Revalidation after
+	// runEntryMu and the maintenance mutation lease prevents an advisory stale
+	// scan from becoming a durable grant.
 	sess, err := s.cfg.Store.Load(ctx, id)
 	if err != nil {
 		return false, fmt.Errorf("server: load session for stale settle: %w", err)
@@ -6158,43 +6810,119 @@ func (s *Service) SettleIfStale(ctx context.Context, id session.SessionID) (bool
 	if !staleMaintenanceSessionCandidate(sess) {
 		return false, nil
 	}
-	// ponytail: narrows, doesn't close, the TOCTOU window between the sweep's
-	// staleness decision and this write — a real run could still register
-	// between this check and the Save below. Store.Save has no CAS; closing
-	// it fully needs one. See ADR write-up (Step 5).
+	unlock := s.runEntryMu.lock(id)
+	defer unlock()
 	if s.IsLive(id) {
+		return false, nil
+	}
+	release, err := s.acquireMutationLease(ctx, id)
+	if err != nil {
+		return false, err
+	}
+	defer release()
+	sess, err = s.cfg.Store.Load(ctx, id)
+	if err != nil {
+		return false, fmt.Errorf("server: reload session for stale settle: %w", err)
+	}
+	if s.cfg.OwnershipEnforced && sess.Owner == nil || !staleMaintenanceSessionCandidate(sess) || s.IsLive(id) {
 		return false, nil
 	}
 	if err := sess.Abandon(); err != nil {
 		return false, fmt.Errorf("server: abandon stale running session: %w", err)
 	}
-	if err := s.cfg.Store.Save(ctx, sess); err != nil {
+	if err := s.saveSession(ctx, sess); err != nil {
 		return false, fmt.Errorf("server: persist abandoned session: %w", err)
 	}
 	return true, nil
 }
 
-// register records run (and the live session it drives) as the in-flight run
-// for id. A FRESH run also clears any parked steer message-id correlation the
-// session still holds: a parked steer lives on its run's in-memory inbox and
-// dies with it, so a leftover entry from the PREVIOUS run could never drain —
-// and clearing here keeps a promoted follow-up run's own steers (tracked AFTER
-// its register) from ever matching a dead run's text.
-func (s *Service) register(id session.SessionID, run *agent.Run, sess *session.Session) {
+func (s *Service) cleanupRunAdmission(id session.SessionID, st *runState, promoted *bool) {
+	if *promoted {
+		return
+	}
+	st.admissionCancel()
+	s.removeRunState(id, st)
+}
+
+// beginRunAdmission installs a cancellable provisional lifecycle before lease
+// acquisition or engine construction. resumeAdmission marks the awaiting-resume
+// path so concurrent approvals wait for its resumeMu transaction to promote.
+// The caller holds runEntryMu for id.
+func (s *Service) beginRunAdmission(parent context.Context, id session.SessionID, sess *session.Session, resumeAdmission bool) (*runState, context.Context, error) {
+	ctx, cancel := context.WithCancel(parent)
+	st := &runState{sess: sess, admissionCancel: cancel, settled: make(chan struct{}), resumeAdmission: resumeAdmission, titleRevision: sess.TitleRevision}
 	s.mu.Lock()
-	s.runs[id] = &runState{run: run, sess: sess}
+	if s.draining.Load() {
+		s.mu.Unlock()
+		cancel()
+		return nil, nil, fmt.Errorf("%w: %q", ErrUnavailable, id)
+	}
+	if _, exists := s.runs[id]; exists {
+		s.mu.Unlock()
+		cancel()
+		return nil, nil, fmt.Errorf("%w: session %q already has an active run", ErrFailedPrecondition, id)
+	}
+	s.runs[id] = st
 	delete(s.steerMsgIDs, id)
 	s.mu.Unlock()
+	return st, ctx, nil
+}
+
+func (s *Service) removeRunState(id session.SessionID, st *runState) {
+	removeCapability := false
+	var stopRunContext context.CancelFunc
+	s.mu.Lock()
+	if s.runs[id] == st {
+		delete(s.runs, id)
+		stopRunContext = st.runContextStop
+		st.runContextStop = nil
+		st.settledOnce.Do(func() { close(st.settled) })
+		removeCapability = st.removeCapabilityOnSettle
+		if h := s.heldLeases[id]; h != nil && !h.valid {
+			delete(s.heldLeases, id)
+			removeCapability = true
+		}
+	}
+	s.mu.Unlock()
+	if stopRunContext != nil {
+		stopRunContext()
+	}
+	if removeCapability {
+		s.cfg.MutationCapability.Remove(id)
+	}
+}
+
+// promoteRunAdmission atomically validates the exact hold and drain gate while
+// launching the engine. Holding s.mu orders launch against loss and drain.
+func (s *Service) promoteRunAdmission(id session.SessionID, st *runState, stop context.CancelFunc, launch func() *agent.Run) (*agent.Run, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.runs[id] != st || st.cancelling || s.draining.Load() {
+		return nil, fmt.Errorf("%w: %q", ErrUnavailable, id)
+	}
+	if s.cfg.SessionLease != nil && !s.leaseDisabled {
+		h := s.heldLeases[id]
+		if h == nil || !h.valid || h.ctx.Err() != nil {
+			return nil, fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, id)
+		}
+	}
+	run := launch()
+	st.run = run
+	st.runContextStop = stop
+	st.admissionCancel = nil
+	return run, nil
 }
 
 // deregister removes the in-flight run for id (only if it is still the one
 // recorded, so a later run for the same session is never clobbered).
 func (s *Service) deregister(id session.SessionID, run *agent.Run) {
 	s.mu.Lock()
-	if st, ok := s.runs[id]; ok && st.run == run {
-		delete(s.runs, id)
-	}
+	st := s.runs[id]
+	matches := st != nil && st.run == run
 	s.mu.Unlock()
+	if matches {
+		s.removeRunState(id, st)
+	}
 }
 
 // FinishRun removes run from the in-flight registry for id. It is the EXPORTED
@@ -6204,7 +6932,22 @@ func (s *Service) deregister(id session.SessionID, run *agent.Run) {
 // is still the one recorded (a later run for the same session is never
 // clobbered), so it is safe to call unconditionally after a drain.
 func (s *Service) FinishRun(id session.SessionID, run *agent.Run) {
-	s.deregister(id, run)
+	s.mu.Lock()
+	st, ok := s.runs[id]
+	s.mu.Unlock()
+	if !ok || st.run != run {
+		return
+	}
+	parked := run.Outcome() == agent.RunOutcomeAuthorizationPending
+	var pending session.PendingAuthorization
+	var pendingOK bool
+	if parked && st.sess != nil {
+		pending, pendingOK = st.sess.PendingAuthorization()
+	}
+	s.removeRunState(id, st)
+	if parked {
+		s.scheduleAuthorizationExpiry(id, pending, pendingOK)
+	}
 }
 
 // Subscribe registers a new per-session live event subscriber and returns a
@@ -6424,16 +7167,15 @@ func (s *Service) ListAgents(_ context.Context) []*mecatlv1.AgentInfo {
 
 // ListSkills returns the current skills inventory (possibly empty).
 func (s *Service) ListSkills(ctx context.Context) []*mecatlv1.SkillInfo {
-	if s.cfg.BeginSkillPublication != nil {
-		unlock := s.cfg.BeginSkillPublication()
+	partition, partitionErr := s.skillPartition(ctx, "")
+	if s.cfg.BeginSkillPublication != nil && partitionErr == nil {
+		unlock := s.cfg.BeginSkillPublication(partition)
 		defer unlock()
 	}
-	if s.cfg.PublishLearnedSkills != nil {
-		if partition, err := s.skillPartition(ctx, ""); err == nil {
-			publishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), skillPublicationTimeout)
-			_ = s.cfg.PublishLearnedSkills(publishCtx, partition)
-			cancel()
-		}
+	if s.cfg.PublishLearnedSkills != nil && partitionErr == nil {
+		publishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), skillPublicationTimeout)
+		_ = s.cfg.PublishLearnedSkills(publishCtx, partition)
+		cancel()
 	}
 	if s.cfg.LiveSkills != nil {
 		return s.cfg.LiveSkills(ctx)
@@ -6602,22 +7344,7 @@ type CommandLister interface {
 	List(ctx context.Context, root string) ([]Command, error)
 }
 
-// ListCommands returns the available slash commands for the given workspace
-// root. An empty root, a nil lister (command expansion disabled), or a lister
-// that enumerates nothing all yield an empty slice. A discovery fault from the
-// lister is returned as ErrInternal so the wire adapters surface it distinctly.
-func (s *Service) ListCommands(ctx context.Context, workspace string) ([]Command, error) {
-	if s.cfg.Commands == nil || workspace == "" {
-		return nil, nil
-	}
-	cmds, err := s.cfg.Commands.List(ctx, workspace)
-	if err != nil {
-		return nil, fmt.Errorf("%w: list commands: %v", ErrInternal, err)
-	}
-	return cmds, nil
-}
-
-// --- Worktree discovery (issue #102) ----------------------------------------
+// --- Worktree discovery (provider-private) -----------------------------------
 
 // Worktree is one discovered git worktree of a repo, mirroring the proto Worktree
 // message (a `git worktree list --porcelain` record). The Service exposes its own
@@ -6648,29 +7375,6 @@ type WorktreeLister interface {
 	// `git worktree list` order), or an error on a genuine discovery fault. An
 	// untrusted/non-repo root yields an empty slice, NOT an error (fail-soft).
 	List(ctx context.Context, root string) ([]Worktree, error)
-}
-
-// ListWorktrees returns the git worktrees of the repo rooted at the given
-// workspace. An empty root, a nil lister (worktree discovery disabled — a no-FS
-// or cloud server), or a lister that enumerates nothing all yield an empty slice.
-// A discovery fault from the lister is returned as ErrInternal so the wire
-// adapters surface it distinctly. Read-only.
-//
-// Security: when DefaultWorkspace is configured, only the default workspace root
-// is allowed. A client supplying any other path would otherwise trigger a git
-// shell-out against an arbitrary directory; the clamp returns empty instead.
-func (s *Service) ListWorktrees(ctx context.Context, workspace string) ([]Worktree, error) {
-	if s.cfg.Worktrees == nil || workspace == "" {
-		return nil, nil
-	}
-	if s.cfg.DefaultWorkspace != "" && workspace != s.cfg.DefaultWorkspace {
-		return nil, nil
-	}
-	wts, err := s.cfg.Worktrees.List(ctx, workspace)
-	if err != nil {
-		return nil, fmt.Errorf("%w: list worktrees: %v", ErrInternal, err)
-	}
-	return wts, nil
 }
 
 // --- Stored-session inventory (issue #245 Phase 1) --------------------------
@@ -6711,8 +7415,12 @@ type SessionSummary struct {
 	// TitleProvenance reports whether the title is prompt-derived, operator-authored,
 	// or legacy/unknown.
 	TitleProvenance session.TitleProvenance
-	// Workspace is the stored session root used for search and display.
-	Workspace string
+	// TitleMetadata is the bounded source-free title lifecycle projection.
+	TitleMetadata session.TitlePayload
+	// TokenUsage is the canonical durable accounting ledger for this row.
+	TokenUsage map[session.UsageKind]session.TokenUsage
+	// Placement is bounded display-only placement metadata.
+	Placement session.PlacementMetadata
 	// Owner is the verified caller the session is attributed to.
 	Owner *session.Principal
 	// Kind and Relationship are the durable trusted-producer taxonomy.
@@ -7010,7 +7718,7 @@ func (s *Service) summaryFromDiscoveryMeta(meta port.SessionDiscoveryMeta) Sessi
 		SessionID: string(meta.ID), ModifiedAtUnix: meta.ModifiedAt.Unix(), State: string(meta.State),
 		Turns: meta.Turns, ModelID: meta.ModelID, CreatedAtUnix: created, Title: meta.Title,
 		TitleProvenance: meta.TitleProvenance,
-		Workspace:       meta.Workspace, Owner: meta.Owner.Clone(), Kind: kind, Relationship: meta.Relationship,
+		Owner:           meta.Owner.Clone(), Kind: kind, Relationship: meta.Relationship,
 		Capabilities: caps, Reasons: reasons, ReasonCode: reasons.PublicChat,
 	}
 }
@@ -7130,7 +7838,9 @@ func (s *Service) ListSessions(ctx context.Context) ([]SessionSummary, error) {
 			}
 			summary.Title = DeriveTitle(sess)
 			summary.TitleProvenance = sess.TitleProvenance
-			summary.Workspace = sess.Workspace
+			summary.TitleMetadata = titlePayload(sess)
+			summary.TokenUsage = sess.TokenUsageSnapshot()
+			summary.Placement = sess.Placement
 			// Clone: the row must not carry a live pointer into the loaded
 			// session, or a consumer of the row can rewrite the recorded owner.
 			summary.Owner = sess.Owner.Clone()

@@ -110,11 +110,15 @@ jobs:
           echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
 
   sdk:
-    name: TypeScript SDK
+    name: TypeScript SDK (Node ${{ matrix.node-version }})
     needs: changes
     if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ['22.x', '24.x']
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -122,41 +126,24 @@ jobs:
 
       # Install the packageManager pin explicitly. Do not rely on corepack being
       # present or enabled on the runner.
-      - uses: pnpm/action-setup@7088e561eb65bb68695d245aa206f005ef30921d # v4.1.0
+      - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
         with:
           version: 11.25.0
           run_install: false
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '24'
+          node-version: ${{ matrix.node-version }}
           cache: pnpm
           cache-dependency-path: sdk/typescript/pnpm-lock.yaml
-
-      # The SDK job becomes hybrid as later slices add codegen freshness and a
-      # same-checkout mecated e2e. Provision those tools now without perturbing
-      # the existing Go jobs.
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-          cache: true
-          cache-dependency-path: |
-            go.sum
-            engine/go.sum
-
-      - name: Remember checkout Go path
-        id: sdk-go-path
-        shell: bash
-        run: echo "bin=$(go env GOROOT)/bin" >> "$GITHUB_OUTPUT"
-
-      - uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99 # v1.50.0
-        with:
-          version: '1.72.0'
 
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
 
       - name: Install SDK dependencies (frozen)
         run: task sdk:install
+
+      - name: Audit SDK dependency closure
+        run: task sdk:audit
 
       - name: Lint and format-check SDK
         run: task sdk:lint
@@ -170,38 +157,224 @@ jobs:
       - name: Build SDK
         run: task sdk:build
 
+      - name: Type-check published SDK examples
+        run: task sdk:examples:typecheck
+
       - name: Pack SDK
         run: task sdk:pack
 
       - name: Verify SDK API reports
         run: task sdk:api:check
 
-      # The repository token cannot clone the private matlatl module directly.
-      # The organization-approved action builds it from its own checkout and
-      # exposes the binary for task generate's llms.txt regeneration.
-      - name: Acquire matlatl generator
-        id: sdk-matlatl
-        uses: stacklok/matlatl@de0d613703c3414aea70e13981f9b1b5c067dcb0 # v0.0.8
+  sdk-integration:
+    name: TypeScript SDK codegen and offline e2e
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          annotate: "false"
-          job-summary: "false"
+          persist-credentials: false
 
-      # The action prepends its own go.mod toolchain. Put the already-installed
-      # checkout toolchain back first without restoring the module cache twice.
-      - name: Restore checkout Go path
-        env:
-          MECATL_GO_BIN: ${{ steps.sdk-go-path.outputs.bin }}
-        run: echo "$MECATL_GO_BIN" >> "$GITHUB_PATH"
+      - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+        with:
+          version: 11.25.0
+          run_install: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.x'
+          cache: pnpm
+          cache-dependency-path: sdk/typescript/pnpm-lock.yaml
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: '1.4.1'
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            engine/go.sum
+
+      - uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99 # v1.50.0
+        with:
+          version: '1.72.0'
+
+      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+
+      - name: Install SDK dependencies (frozen)
+        run: task sdk:install
 
       - name: Verify generated contracts are fresh
-        env:
-          MATLATL_BIN: ${{ steps.sdk-matlatl.outputs.binary-path }}
         run: |
           task generate
           git diff --exit-code -- contracts/gen sdk/typescript/src/gen
 
       - name: Run offline SDK e2e against same-checkout mecated
         run: task sdk:e2e
+
+  sdk-browser:
+    name: TypeScript SDK browser (${{ matrix.label }})
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - browser: chromium
+            label: Chromium full flow
+            project: chromium-full
+            runner: ubuntu-24.04
+          - browser: firefox
+            label: Firefox smoke
+            project: firefox-smoke
+            runner: ubuntu-24.04
+          - browser: webkit
+            label: WebKit smoke
+            project: webkit-smoke
+            runner: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+        with:
+          version: 11.25.0
+          run_install: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.x'
+          cache: pnpm
+          cache-dependency-path: sdk/typescript/pnpm-lock.yaml
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            engine/go.sum
+
+      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+
+      - name: Install SDK dependencies (frozen)
+        run: task sdk:install
+
+      - name: Resolve pinned Playwright version
+        id: playwright-version
+        working-directory: sdk/typescript
+        run: node -e "process.stdout.write('version=' + require('@playwright/test/package.json').version + '\\n')" >> "$GITHUB_OUTPUT"
+
+      - name: Cache pinned Playwright browser
+        id: playwright-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ matrix.runner }}-${{ runner.arch }}-${{ matrix.browser }}-${{ steps.playwright-version.outputs.version }}
+
+      - name: Ensure pinned Playwright browser and host dependencies
+        working-directory: sdk/typescript
+        run: pnpm exec playwright install --with-deps ${{ matrix.browser }}
+
+      - name: Run browser project
+        run: task sdk:browser:project PROJECT="${{ matrix.project }}"
+
+  sdk-macos-spawn:
+    name: TypeScript SDK macOS spawn (macos-14, Node 22)
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
+    runs-on: macos-14
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+        with:
+          version: 11.25.0
+          run_install: false
+
+      # setup-node and setup-go include runner OS and architecture in their cache
+      # keys, so this macos-14 job cannot restore either Linux cache family.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22.x'
+          cache: pnpm
+          cache-dependency-path: sdk/typescript/pnpm-lock.yaml
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            engine/go.sum
+
+      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+
+      - name: Install SDK dependencies (frozen)
+        run: task sdk:install
+
+      - name: Run the focused macOS Node spawn smoke
+        run: task sdk:macos-spawn
+
+  slack-bot-example:
+    name: Slack bot example
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Install the packageManager pin explicitly. Do not rely on corepack being
+      # present or enabled on the runner.
+      - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+        with:
+          version: 11.25.0
+          run_install: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          cache: pnpm
+          cache-dependency-path: sdk/typescript/examples/slack-bot/pnpm-lock.yaml
+
+      # Builds the SDK's dist/ (this example's own dependency) and, for the
+      # offline bridge test, bin/mecated — both are plain Go/tsc builds, same
+      # toolchain the `sdk` job above already provisions.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            engine/go.sum
+
+      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+
+      - name: Install Slack bot example dependencies (frozen)
+        run: task slack-bot:install
+
+      - name: Lint and format-check Slack bot example
+        run: task slack-bot:lint
+
+      - name: Type-check Slack bot example
+        run: task slack-bot:typecheck
+
+      - name: Test Slack bot example (offline, spawns mecated --mock)
+        run: task slack-bot:test
 
   build:
     name: Build
@@ -273,6 +446,31 @@ jobs:
           (cd provider/anthropic && go build ./...)
           (cd provider/openai && go build ./...)
           (cd provider/openaichat && go build ./...)
+
+  managed-temp-macos:
+    name: Managed temporary storage (macOS)
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
+    runs-on: macos-14
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            engine/go.sum
+      - name: Run managed temporary storage tests
+        run: |
+          go test ./internal/adapter/managedtemp -count=1
+          go test ./internal/adapter/osfs -run '^TestADR_0281_.*' -count=1
+          go test ./internal/app -run '^TestADR_0281_ManagedModeUnixAdmission$' -count=1
+          GOOS=freebsd GOARCH=amd64 go test -c -o "$RUNNER_TEMP/osfs-freebsd.test" ./internal/adapter/osfs
+          GOOS=freebsd GOARCH=amd64 go test -c -o "$RUNNER_TEMP/app-freebsd.test" ./internal/app
 
   test-race-root-a:
     name: Test (race root-a)
@@ -849,7 +1047,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 20
     # Supply-chain hygiene that travels with the engine library: govulncheck
     # reports only REACHABLE vulnerabilities (call-graph analysis, not a bare
     # require-list scan), so a reachable CVE in either module's dependency cone
@@ -892,29 +1090,39 @@ jobs:
       - name: Test govulncheck gate
         run: bash .github/scripts/govulncheck-gate_test.sh
 
-      # govulncheck is PINNED via `go run` (the house idiom — like
-      # actionlint@v1.7.7 above), not added as a require. `./...` from the root
-      # does NOT cross the engine module boundary, so the engine module is a
-      # second, separate invocation against its OWN go.mod/go.sum.
+      # govulncheck is PINNED and installed ONCE here (`go install`, not `go run`
+      # per invocation) — four separate `go run pkg@version` calls below each
+      # re-resolved+downloaded the SAME govulncheck dep closure (x/vuln,
+      # x/telemetry, x/mod, x/tools, x/sync) from scratch, which repeatedly ate
+      # into this job's network-bound window and its timeout budget. Installing
+      # once cuts that 4x down to 1x; `go env GOPATH`/bin is added to PATH so
+      # every module-scoped step below can just call `govulncheck`.
+      - name: Install govulncheck (pinned, shared by every module below)
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      # `./...` from the root does NOT cross the engine module boundary, so the
+      # engine module is a second, separate invocation against its OWN go.mod/go.sum.
       - name: govulncheck (root module — allowlisted gate)
         shell: bash
         run: |
           set -o pipefail
-          go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 -format json ./... \
+          govulncheck -format json ./... \
             | go run .github/scripts/govulncheck-gate.go # v1.1.4 — no allowlist (toolhive v0.31.0 cleared the docker/docker vulns)
 
       - name: govulncheck (engine module — strict, no allowlist)
         shell: bash
         run: |
           set -o pipefail
-          cd engine && go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 -format json ./... \
+          cd engine && govulncheck -format json ./... \
             | go run ../.github/scripts/govulncheck-gate.go # v1.1.4
 
       - name: govulncheck (OIDC authn module — strict, no allowlist)
         shell: bash
         run: |
           set -o pipefail
-          cd authn/oidc && go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 -format json ./... \
+          cd authn/oidc && govulncheck -format json ./... \
             | go run ../../.github/scripts/govulncheck-gate.go # v1.1.4
 
       # provider/ submodules (ADR 0093) — each its own module; scan against its
@@ -923,13 +1131,13 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          (cd provider/ssefilter && go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 -format json ./... \
+          (cd provider/ssefilter && govulncheck -format json ./... \
             | go run ../../.github/scripts/govulncheck-gate.go) # v1.1.4
-          (cd provider/anthropic && go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 -format json ./... \
+          (cd provider/anthropic && govulncheck -format json ./... \
             | go run ../../.github/scripts/govulncheck-gate.go) # v1.1.4
-          (cd provider/openai && go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 -format json ./... \
+          (cd provider/openai && govulncheck -format json ./... \
             | go run ../../.github/scripts/govulncheck-gate.go) # v1.1.4
-          (cd provider/openaichat && go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 -format json ./... \
+          (cd provider/openaichat && govulncheck -format json ./... \
             | go run ../../.github/scripts/govulncheck-gate.go) # v1.1.4
 
   docs:
@@ -972,8 +1180,7 @@ jobs:
 
       # Freshness gate for the generated configuration reference + the embedded
       # config-init skeleton: regenerate both to a temp dir and fail if they differ
-      # from what's committed (the same generate->commit->diff discipline as
-      # llms.txt). The error names the exact regen command.
+      # from what's committed. The error names the exact regen command.
       - name: configuration reference is up to date
         shell: bash
         run: |
@@ -1001,24 +1208,9 @@ jobs:
       # records the tag. findings.json + junit.xml land in matlatl-out/.
       - name: matlatl docs gate (strict)
         id: matlatl
-        uses: stacklok/matlatl@de0d613703c3414aea70e13981f9b1b5c067dcb0 # v0.0.8
+        uses: stacklok/matlatl@166a04c0fec85155f5be150eab34e3451672b033 # v0.0.8
         with:
           strict: "true"
-
-      # Freshness gate for the committed llms.txt: regenerate it with the binary
-      # the action already built and fail if it differs from what's checked in.
-      # Keep --title in lockstep with `task docs:llms` and the README H1.
-      - name: llms.txt is up to date
-        shell: bash
-        env:
-          BIN: ${{ steps.matlatl.outputs.binary-path }}
-        run: |
-          set -euo pipefail
-          "$BIN" index . --llms --title "mecatl" > "${RUNNER_TEMP}/llms.expected"
-          if ! diff -u llms.txt "${RUNNER_TEMP}/llms.expected"; then
-            echo "::error file=llms.txt::llms.txt is out of date — run 'task docs:llms' and commit the result."
-            exit 1
-          fi
 
   user-docs:
     name: User docs (Docusaurus build)
@@ -1040,7 +1232,7 @@ jobs:
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '22'
+          node-version: '24'
           cache: 'npm'
           cache-dependency-path: website/package-lock.json
 

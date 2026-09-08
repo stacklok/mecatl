@@ -183,6 +183,12 @@ message PageSessionMetadataRequest {
   string owner_subject = 5;
 }
 
+message StoredEnvironmentRef {
+  string kind = 1;
+  string id = 2;
+  string revision = 3;
+}
+
 message SessionMetadataEntry {
   string session_id = 1;
   google.protobuf.Timestamp modified_at = 2;
@@ -204,7 +210,11 @@ message SessionMetadataEntry {
   string owner_grant_type = 18;
   string owner_name = 19;
   bool has_owner = 20;
-  string workspace = 21;
+  reserved 21;
+  reserved "workspace";
+  // Exact private storage identity. Trusted driver transport only; public
+  // Harness/client projections must never expose it.
+  StoredEnvironmentRef environment_ref = 28;
   // title_provenance is "first-prompt", "operator", or empty for legacy/unknown.
   string title_provenance = 22;
   int64 estimated_bytes = 23;

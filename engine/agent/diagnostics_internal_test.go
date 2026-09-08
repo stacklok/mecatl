@@ -108,7 +108,7 @@ func TestCompactionReplaceRejectedEmitsWarn(t *testing.T) {
 
 	// A freshly-created session is StateIdle (NOT StateRunning), so ReplaceHistory
 	// rejects with an illegal-transition error — exactly the branch under test.
-	sess := session.New("sess-replace", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	sess := session.New("sess-replace", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	if err := sess.SeedHistory([]session.Message{session.NewUserMessage(strings.Repeat("history", 20))}); err != nil {
 		t.Fatalf("SeedHistory: %v", err)
 	}

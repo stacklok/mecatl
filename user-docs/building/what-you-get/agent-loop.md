@@ -1,6 +1,7 @@
 ---
 sidebar_position: 1
 title: The agent loop
+description: Understand how the Mecatl engine runs turns, dispatches tools, records events, and finishes sessions.
 ---
 
 # The agent loop
@@ -138,7 +139,7 @@ On the wire: the gRPC `Converse` stream carries the verdict in a `ResumeApproval
 
 ## Context limits & compaction
 
-mecatl manages the model's context window automatically. Before each turn, it estimates
+Mecatl manages the model's context window automatically. Before each turn, it estimates
 the complete model-visible request: system instructions, ephemeral fragments, persisted
 messages, typed tool results, and advertised tool schemas. If that estimate reaches 80%
 of the model's context window by default, the loop compresses persisted history before
@@ -163,7 +164,7 @@ may still spend tokens on its summarization model. See [Context windows](/featur
 
 ### Where "the model's context window" comes from
 
-The 80%-of-window trigger above needs an actual number to be 80% of, and that number isn't always known up front. mecatl resolves it in this order: an explicit override, then a live provider-reported window, then the embedded model catalog, then a 128k floor for a model it's never heard of. It resolves this **live, at the point of use** — not once at session start — so a background catalog refresh that lands mid-session takes effect on the very next check without restarting anything.
+The 80%-of-window trigger above needs an actual number to be 80% of, and that number isn't always known up front. Mecatl resolves it in this order: an explicit override, then a live provider-reported window, then the embedded model catalog, then a 128k floor for a model it's never heard of. It resolves this **live, at the point of use** — not once at session start — so a background catalog refresh that lands mid-session takes effect on the very next check without restarting anything.
 
 The operator escape hatch is `--context-window-override` (`mecated`/`mecatui`, default off): pin a specific token count when a provider under-reports its own window or sits behind a proxy that does. It moves both the compaction trigger and (in `mecatui`) the context-meter denominator together — a small override value makes the agent compact on nearly every turn, which is useful for stress-testing compaction but not much else.
 
@@ -171,9 +172,9 @@ In `mecatui`, the context meter's denominator can briefly show as unresolved (`c
 
 ### Token budget
 
-You can bound the total token spend for a run with `MaxRunTokens`. This is checked at the turn boundary — never mid-stream, so an in-flight turn always completes — against the session's accumulated input and output tokens (cache tokens are excluded).
+You can bound one engine session's cumulative token spend with `--max-run-tokens` (`MaxRunTokens`). This is checked at the turn boundary — never mid-stream, so an in-flight turn always completes — against that session's accumulated input and output tokens (cache tokens are excluded). It is a token ceiling, not a currency billing cap.
 
-When the budget is crossed, the run ends cleanly with stop reason `budget`. That is a non-error terminal: the session is in `completed` state and can be reopened to continue. Every child run — subagent, parallel branch, team member — inherits the same budget. A per-call override can only tighten it, never raise it.
+When the budget is crossed, the run ends cleanly with stop reason `budget`. That is a non-error terminal: the session is in `completed` state and can be reopened to continue. Every child engine — subagent, parallel branch, team member, and lead synthesis — inherits the configured value but enforces it only against its own persisted session usage. Parent usage does not include child spend, so the total delegation tree can exceed `MaxRunTokens`; cross-tree aggregate observability and enforcement are deferred and out of scope. A per-call override can only tighten a child's ceiling, never raise it.
 
 :::note[Default]
 

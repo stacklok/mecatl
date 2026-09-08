@@ -18,10 +18,12 @@ import (
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
+	"github.com/stacklok/mecatl/engine/adapter/memledger"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/agent"
+	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
@@ -36,6 +38,18 @@ import (
 // BOTH surfaces (gRPC codes.Unauthenticated + HTTP 401). They are fully offline
 // (mockllm provider, loopback bufconn/httptest only) and the asserted request —
 // CreateSession — is rejected PRE-auth, so they consume ZERO provider turns.
+
+type offlinePlacementProvider struct{}
+
+func (offlinePlacementProvider) Bind(context.Context, server.PlacementBindRequest) (server.PlacementBinding, error) {
+	ref := session.EnvironmentRef{Kind: session.EnvKindMem, ID: "offline", Revision: "v1"}
+	return server.PlacementBinding{Ref: ref, Environment: tool.MustEnvironment(ref, memfs.NewWorkspace("/ws"), memledger.New(), nil)}, nil
+}
+
+func (offlinePlacementProvider) Reattach(context.Context, server.PlacementReattachRequest) (server.PlacementBinding, error) {
+	ref := session.EnvironmentRef{Kind: session.EnvKindMem, ID: "offline", Revision: "v1"}
+	return server.PlacementBinding{Ref: ref, Environment: tool.MustEnvironment(ref, memfs.NewWorkspace("/ws"), memledger.New(), nil)}, nil
+}
 
 // newOfflineService builds a *server.Service over the offline reference adapters
 // (mockllm provider, in-memory store + workspace), the same way the server
@@ -53,11 +67,14 @@ func newOfflineService(t *testing.T) *server.Service {
 		Model:  "test-model",
 	})
 	svc, err := server.NewService(server.Config{
-		Engine:              engine,
-		Store:               memstore.New(),
-		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Engine: engine,
+		Store:  memstore.New(),
+
 		Now:                 func() time.Time { return time.Unix(0, 0) },
 		DefaultCapabilities: llm.Capabilities(),
+		PlacementProvider:   offlinePlacementProvider{},
+		PlacementScope:      "test",
+		SharedEngineRoot:    "/ws",
 	})
 	if err != nil {
 		t.Fatalf("new offline service: %v", err)
@@ -152,15 +169,15 @@ func TestAuthWiringGRPC(t *testing.T) {
 	defer cancel()
 
 	// reject: no token.
-	if _, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{Workspace: "/ws"}); status.Code(err) != codes.Unauthenticated {
+	if _, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{}); status.Code(err) != codes.Unauthenticated {
 		t.Fatalf("no-token code = %v, want Unauthenticated", status.Code(err))
 	}
 	// reject: wrong token.
-	if _, err := client.CreateSession(grpcBearer(ctx, "nope"), &mecatlv1.CreateSessionRequest{Workspace: "/ws"}); status.Code(err) != codes.Unauthenticated {
+	if _, err := client.CreateSession(grpcBearer(ctx, "nope"), &mecatlv1.CreateSessionRequest{}); status.Code(err) != codes.Unauthenticated {
 		t.Fatalf("wrong-token code = %v, want Unauthenticated", status.Code(err))
 	}
 	// accept: correct token.
-	if _, err := client.CreateSession(grpcBearer(ctx, token), &mecatlv1.CreateSessionRequest{Workspace: "/ws"}); err != nil {
+	if _, err := client.CreateSession(grpcBearer(ctx, token), &mecatlv1.CreateSessionRequest{}); err != nil {
 		t.Fatalf("correct-token CreateSession through wired auth: %v", err)
 	}
 }
@@ -175,7 +192,7 @@ func TestAuthWiringHTTP(t *testing.T) {
 	srv := httptest.NewServer(wiredHTTP(svc, auth))
 	defer srv.Close()
 
-	body := func() *strings.Reader { return strings.NewReader(`{"workspace":"/ws"}`) }
+	body := func() *strings.Reader { return strings.NewReader(`{}`) }
 
 	// reject: no token.
 	resp, err := http.Post(srv.URL+"/v1/sessions", "application/json", body())
@@ -235,10 +252,10 @@ func TestAuthWiringTokenFromEnv(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	if _, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{Workspace: "/ws"}); status.Code(err) != codes.Unauthenticated {
+	if _, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{}); status.Code(err) != codes.Unauthenticated {
 		t.Fatalf("env-token no-credential code = %v, want Unauthenticated", status.Code(err))
 	}
-	if _, err := client.CreateSession(grpcBearer(ctx, token), &mecatlv1.CreateSessionRequest{Workspace: "/ws"}); err != nil {
+	if _, err := client.CreateSession(grpcBearer(ctx, token), &mecatlv1.CreateSessionRequest{}); err != nil {
 		t.Fatalf("env-token correct-credential CreateSession: %v", err)
 	}
 }

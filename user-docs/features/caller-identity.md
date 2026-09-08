@@ -1,7 +1,7 @@
 ---
 sidebar_position: 6
 title: Caller identity and OIDC
-description: Configure authenticated caller identity and ownership boundaries for mecatl sessions.
+description: Configure authenticated caller identity and ownership boundaries for Mecatl sessions.
 ---
 
 # Caller identity and OIDC
@@ -17,7 +17,12 @@ Caller identity is an opt-in server feature for `mecated` and `mecak8s`. It
 protects both wire surfaces with the same validator and ownership rules. `mecatui`
 can either send an operator-supplied static bearer with `--auth-token`, or enroll a
 remote target with `mecatui login` and obtain, validate, and refresh its own OIDC
-credential. Remote targets use verified TLS automatically; a static bearer is never
+credential. With no explicit credential, an existing saved enrollment is preserved; any
+clean enrollment miss is attempted credential-free and the server decides whether caller
+authentication is required. Use connect-only `--anonymous` to intentionally bypass saved
+credentials when no static token is selected. A token supplied through `--auth-token` or
+`MECATL_AUTH_TOKEN` wins if both are present; `--anonymous` has no environment equivalent. Remote
+targets use verified TLS automatically; a static bearer is never
 sent over explicit non-loopback plaintext, and saved OIDC authentication always
 requires verified TLS. Those are distinct client modes; the server still only validates the
 bearer presented on each request.
@@ -76,7 +81,10 @@ The essential server settings are:
 | `--oidc-audience` | Required accepted `aud` value; prevents accepting tokens minted for another service. |
 | `--oidc-jwks-uri` | Optional pinned JWKS endpoint; otherwise discovery obtains it from the issuer. |
 | `--oidc-max-jwks-staleness` | Maximum age of a last-good signing-key cache during an IdP outage. `0` deliberately removes the bound. |
-| `--auth-token` | Separate static bearer authentication option when OIDC identity is not needed. |
+| `--oidc-resource` | Optional canonical external HTTPS protected-resource URL (RFC 9728). |
+| `--oidc-client-id` | Optional public mecatui client-registration hint; a mecatl extension, not an RFC 9728 field. |
+| `--oidc-scopes` | Optional CSV scope list advertised as `scopes_supported`. It is a narrow operator-configured public-client request allowlist, not server authorization policy; discovered login requests exactly the confirmed set or an explicit subset. |
+
 
 A typical configuration uses the issuer and audience together:
 
@@ -93,14 +101,34 @@ JWKS endpoints resolving to private, loopback, link-local, or metadata
 addresses. Initial configuration or key-fetch failure fails closed rather than
 starting an unauthenticated service.
 
-The production validator is a delegated, maintained OIDC/JWT library; mecatl
+The production validator is a delegated, maintained OIDC/JWT library; Mecatl
 does not hand-roll signature verification. A successful JWKS fetch is cached in
 process. During a short IdP outage, the last-good keys may continue to work
 until the staleness limit; after that the service returns `503` until it can
 refresh. A malformed, expired, wrong-issuer, or wrong-audience token returns
 `401`. The cache is not persisted, so a restarted process fetches keys again.
 
-## Use an authenticated client
+## Protected-resource discovery (RFC 9728)
+
+A deployment may publish a canonical HTTPS resource profile with
+`--oidc-resource`, `--oidc-client-id`, and optional `--oidc-scopes`. RFC 9728
+fields (`resource`, `authorization_servers`, and `scopes_supported`) are kept
+separate from mecatl extensions (`com.stacklok.mecatl.audience` and
+`com.stacklok.mecatl.client_id`). The existing issuer and audience remain the
+OIDC validator's source of truth. Discovery is anonymous HTTPS bootstrap and is
+separate from authenticated gRPC transport; it never inherits private-issuer CA
+exceptions. ToolHive's metadata/networking code is provenance for the client
+implementation, not a runtime dependency of the engine. `scopes_supported` is a
+narrow operator-configured public-client request allowlist, not server authorization
+policy: discovered login requests exactly the confirmed configured set (or an explicit
+subset) and never expands a saved enrollment from later metadata. The direct configured
+well-known endpoint serves metadata; subordinate API 401 responses remain generic
+`Bearer` because their route and untrusted Host cannot prove the configured resource
+identity. With a published profile, `mecatui login ADDRESS` discovers and
+confirms the public tuple from a hostname or HTTPS resource URL. The explicit
+`mecatui login --issuer ...` form remains compatible for deployments without a
+profile and for private issuers.
+
 
 For a static bearer, obtain a token through your identity provider and pass it to
 mecatui or another client. Keep it out of shell history where possible. This mode does
@@ -134,6 +162,27 @@ For non-loopback connections, mecatui refuses to send a bearer over cleartext. U
 (and `connect --tls-ca` for a private server CA). A gRPC dial can succeed before the first request
 is authenticated; verify that an unauthenticated first request fails before
 producing a model response.
+
+### Credential-free private-network connection
+
+`--anonymous` means “bypass saved OIDC enrollment and send no bearer”; it is not a login
+mode and creates no saved state. A clean enrollment miss already gets a credential-free
+attempt. For remote use, verified TLS remains the default. If a Tailscale deployment
+deliberately uses the tailnet as shared authority and transport, explicitly select plaintext:
+
+```console
+mecatui connect ozzllama:9080 --tls=false
+```
+
+Add `--anonymous` only to override an existing saved enrollment.
+
+Bind `mecated` to one concrete Tailscale address rather than a wildcard, do not enable
+Funnel, and make tailnet ACLs the load-bearing reachability boundary. Use a dedicated
+server workspace, run with the least OS authority that can access it, and configure a
+restrictive rate limit. The server's non-loopback no-caller-authentication warning is
+expected: ordinary TLS does not authenticate callers. Never infer this posture from a
+private IP, hostname, or Tailscale-like name. A non-loopback client's current directory
+is not the workspace; the server selects and governs its workspace.
 
 For a non-loopback target, the server's listener policy selects the workspace or no-FS
 profile: mecatui sends no local cwd and rejects `--workspace`. A loopback connection may
@@ -178,7 +227,7 @@ This distinction is intentional:
 - `mecatequi` and scheduled/headless jobs do not open a browser. Pre-provision a
   short-lived identity or use the deployment's non-interactive credential path.
 - Raw remote store and memory drivers are trusted infrastructure; caller
-  ownership is enforced at the mecatl service edge, not by an unauthenticated
+  ownership is enforced at the Mecatl service edge, not by an unauthenticated
   driver endpoint.
 - A workspace path is not an ownership boundary. Use separate namespaces,
   containers, or operating-system permissions when tenants must not share files.

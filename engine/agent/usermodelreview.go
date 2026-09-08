@@ -98,7 +98,7 @@ func (r *UserModelReviewer) Review(ctx context.Context, sessionID string) error 
 	// middleware already bound the caller's principal onto (authn.go) before the
 	// run — see reviewMessages.
 	ctx = session.WithPrincipal(ctx, sess.Owner)
-	return r.reviewMessages(ctx, sessionID, sess.Workspace, sess.Conversation.Messages)
+	return r.reviewMessages(ctx, sessionID, sess.EnvironmentRef.ID, sess.Conversation.Messages)
 }
 
 // Observe implements learning.Observer from an owned completed-trajectory snapshot.
@@ -118,12 +118,11 @@ func (r *UserModelReviewer) reviewMessages(ctx context.Context, sessionID, works
 	// A FRESH, single-shot child session — its own id, own conversation. This is
 	// the whole point of R10: the user session stays terminal; we run a NEW session.
 	childID := session.SessionID(fmt.Sprintf("%s-%s", r.idPrefix, sessionID))
+	reviewEnv := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "usermodel", Revision: "in-tree-v1"}, noopWorkspace{root: workspace}, emptyReadLedger{}, nil)
 	child := session.New(
 		childID,
 		session.ModeDefault,
-		// No workspace root needed: the only tool is RememberUser. Use the user
-		// session's root as a harmless label so logs correlate.
-		workspace,
+		reviewEnv.Ref(),
 		userModelReviewLimits,
 		r.engine.now(),
 	)
@@ -132,7 +131,6 @@ func (r *UserModelReviewer) reviewMessages(ctx context.Context, sessionID, works
 	// off the loaded session's Owner before reaching this shared path, and
 	// Observe's ctx is the same one Engine.Run's request-edge middleware already
 	// bound it onto — see the callers above.
-	reviewEnv := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "usermodel"}, noopWorkspace{root: workspace}, nil)
 	ctx = tool.WithMemoryAttribution(ctx, tool.MemoryAttribution{
 		Writer: tool.MemoryWriterModel, Origin: tool.MemoryOriginLearning,
 		Source: tool.MemorySource{SessionID: sessionID},

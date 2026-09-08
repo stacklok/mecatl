@@ -1,7 +1,7 @@
     ifacemethod func (BranchJudge).Judge(ctx context.Context, candidates []BranchSummary, criteria string) (winner int, rationale string, err error)
     ifacemethod func (ChildAskReviewer).Review(ctx context.Context, req ChildAskReviewRequest) (ChildAskReview, error)
     ifacemethod func (Compactor).Compact(ctx context.Context, conv *session.Conversation) (compacted []session.Message, summary string, err error)
-    ifacemethod func (PreservedForkStore).Preserve(root string, cleanup func() error)
+    ifacemethod func (PreservedForkStore).Preserve(handle ArtifactHandle, cleanup func() error)
     ifacemethod func (TokenCounter).Count(text string) int
     ifacemethod func (TokenCounter).CountMessages(msgs []session.Message) int
     method func (*BashStatusTool).Execute(_ context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error)
@@ -13,11 +13,15 @@
     method func (*Engine).ContextWindow() int
     method func (*Engine).HasTool(name string) bool
     method func (*Engine).Model() string
+    method func (*Engine).PrepareAfterAuthorization(ctx context.Context, sess *session.Session, env tool.Environment, authorization session.ExternalAuthorization, callID session.ToolCallID, results []session.ToolResult, resolution session.AuthorizationResolution) (*PreparedRun, error)
+    method func (*Engine).PrepareAuthorizationContinuation(ctx context.Context, sess *session.Session, env tool.Environment, pending session.PendingAuthorization, resolution session.AuthorizationResolution) (*PreparedRun, error)
     method func (*Engine).ResumeApproval(ctx context.Context, sess *session.Session, env tool.Environment, askID string, verdict session.ApprovalVerdict) *Run
+    method func (*Engine).ResumeApprovalWith(ctx context.Context, sess *session.Session, env tool.Environment, askID string, verdict session.ApprovalVerdict, opts ResumeApprovalOptions) *Run
     method func (*Engine).RetryFailedStep(ctx context.Context, sess *session.Session, env tool.Environment) *Run
     method func (*Engine).Run(ctx context.Context, sess *session.Session, env tool.Environment, req RunRequest) *Run
     method func (*Engine).SteerEnabled() bool
     method func (*EvidenceReflector).Reflect(ctx context.Context, in learning.Input) (learning.Outcome, error)
+    method func (*EvidenceReflector).ReflectProjection(ctx context.Context, projection learning.Projection) (learning.Outcome, error)
     method func (*EvidenceReflector).RequestTokenEstimate(in learning.Input) (int, error)
     method func (*InspectMemberTool).Execute(ctx context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error)
     method func (*InspectMemberTool).ReadOnly() bool
@@ -27,23 +31,28 @@
     method func (*InspectSubagentTool).Spec() tool.ToolSpec
     method func (*LRUForkReaper).Close()
     method func (*LRUForkReaper).Len() int
-    method func (*LRUForkReaper).Preserve(root string, cleanup func() error)
+    method func (*LRUForkReaper).Preserve(handle ArtifactHandle, cleanup func() error)
     method func (*ParallelTool).Execute(ctx context.Context, call session.ToolCall, env tool.Environment) (session.ToolResult, error)
     method func (*ParallelTool).ExecuteWithParent(ctx context.Context, call session.ToolCall, env tool.Environment, emit func(session.Event), caps parentCaps) (session.ToolResult, error)
     method func (*ParallelTool).MutatesParent(call session.ToolCall) bool
     method func (*ParallelTool).ReadOnly() bool
     method func (*ParallelTool).Spec() tool.ToolSpec
+    method func (*PreparedRun).Abort() PreparedRunTransition
+    method func (*PreparedRun).Run() *Run
+    method func (*PreparedRun).Start() (*Run, PreparedRunTransition)
     method func (*Run).Approve(askID string, v session.ApprovalVerdict)
     method func (*Run).Cancel()
     method func (*Run).CancelChild(childID string) bool
     method func (*Run).CancelSteer() (SteerOutcome, error)
     method func (*Run).EnqueueSteer(text string, parts []session.Content) (SteerOutcome, error)
     method func (*Run).Events() <-chan session.Event
+    method func (*Run).Outcome() RunOutcome
+    method func (*Run).RetractPermissionAsk(askID string) bool
     method func (*Run).RunID() string
     method func (*ScheduleQueryTool).Execute(ctx context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error)
     method func (*ScheduleQueryTool).ReadOnly() bool
     method func (*ScheduleQueryTool).Spec() tool.ToolSpec
-    method func (*ScheduleTool).Execute(ctx context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error)
+    method func (*ScheduleTool).Execute(ctx context.Context, call session.ToolCall, env tool.Environment) (session.ToolResult, error)
     method func (*ScheduleTool).ReadOnly() bool
     method func (*ScheduleTool).Spec() tool.ToolSpec
     method func (*SubagentStatusTool).Execute(_ context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error)
@@ -84,11 +93,20 @@ const DispositionStopped MemberDisposition = "stopped"
 const MinSubagentRunTokens untyped int = 25000
 const ParallelSessionPrefix untyped string = "parallel-"
 const PlanApprovedProceedText untyped string = "Plan approved by operator. Proceed with execution."
+const PreparedRunAbortAfterStart PreparedRunTransition = "abort_after_start"
+const PreparedRunAborted PreparedRunTransition = "aborted"
+const PreparedRunDuplicateAbort PreparedRunTransition = "duplicate_abort"
+const PreparedRunDuplicateStart PreparedRunTransition = "duplicate_start"
+const PreparedRunStartAfterAbort PreparedRunTransition = "start_after_abort"
+const PreparedRunStarted PreparedRunTransition = "started"
 const RouterMissBadVerdict untyped string = "bad-verdict"
 const RouterMissCancelled untyped string = "cancelled"
 const RouterMissClassifierError untyped string = "classifier-error"
 const RouterMissDegenerateInput untyped string = "degenerate-input"
 const RouterMissUnknownCategory untyped string = "unknown-category"
+const RunOutcomeAuthorizationPending RunOutcome = 2
+const RunOutcomeCompleted RunOutcome = 1
+const RunOutcomeUnknown RunOutcome = 0
 const ScheduleQueryToolName untyped string = "ScheduleQuery"
 const ScheduleToolName untyped string = "Schedule"
 const SteerAccepted SteerOutcome = "accepted"
@@ -166,10 +184,11 @@ func WithPinnedAgents(names []string) SubagentOption
 func WithReadOnlyForker(f tool.EnvironmentForker) SupervisorOption
 func WithRootAuthority(authority session.Authority) SupervisorOption
 func WithRoutableAgents(names []string) SubagentOption
-func WithSharedChildWorkspace(f func(root string) tool.Workspace) SubagentOption
+func WithSharedChildWorkspace(view func(tool.Workspace) tool.Workspace) SubagentOption
 func WithSubagentEngineFactory(f func(model string) (*Engine, bool)) SubagentOption
 func WithSubagentNoFSNote() SubagentOption
 func WithSubagentOwnershipEnforced(ownershipEnforced bool) SubagentOption
+func WithSubagentReadLedgerFactory(factory func() tool.ReadLedger) SubagentOption
 func WithSubagentShellDisabledNote(reason string) SubagentOption
 func WithSubagentStopHook(h port.HookRunner) SubagentOption
 func WithSubagentStore(store port.SessionStore) SubagentOption
@@ -179,12 +198,14 @@ func WithTeamHooks(h port.HookRunner) SupervisorOption
 func WithTeamLimits(l session.Limits) SupervisorOption
 func WithTeamMode(m session.PermissionMode) SupervisorOption
 func WithTeamOwner(owner *session.Principal) SupervisorOption
-func WithTeamSharedBaseWorkspace(f func(root string) tool.Workspace) SupervisorOption
+func WithTeamReadLedgerFactory(factory func() tool.ReadLedger) SupervisorOption
+func WithTeamSharedBaseWorkspace(view func(tool.Workspace) tool.Workspace) SupervisorOption
 func WithTeamTokenBudget(n int) SupervisorOption
 func WithTeamToolForker(f tool.EnvironmentForker) TeamOption
 func WithTeamToolHooks(h port.HookRunner) TeamOption
+func WithTeamToolReadLedgerFactory(factory func() tool.ReadLedger) TeamOption
 func WithTeamToolReadOnlyForker(f tool.EnvironmentForker) TeamOption
-func WithTeamToolSharedBaseWorkspace(f func(root string) tool.Workspace) TeamOption
+func WithTeamToolSharedBaseWorkspace(view func(tool.Workspace) tool.Workspace) TeamOption
 func WithTeamToolStore(s port.SessionStore) TeamOption
 func WithTeamToolTokenBudget(n int) TeamOption
 func WithUntrustedGoal(untrusted bool) SupervisorOption
@@ -192,6 +213,7 @@ func WithWinnerReaper(s PreservedForkStore) ParallelOption
 func WithWritableChildEngine(e *Engine) SubagentOption
 func WithWritableEngineFactory(f func(model string) (*Engine, bool)) SubagentOption
 type AgentMeta struct{Name string; Description string; Limits session.Limits; AuthorityCeiling governance.CapabilitySet; WritableAuthorityCeiling governance.CapabilitySet; Managed bool}
+type ArtifactHandle string
 type BashStatusTool struct{}
 type BashTool struct{}
 type BranchJudge interface{Judge(ctx context.Context, candidates []BranchSummary, criteria string) (winner int, rationale string, err error)}
@@ -223,10 +245,14 @@ type ModelRouteCategory struct{Name string; Description string}
 type ModelRouteRequest struct{TaskPrompt string; Categories []ModelRouteCategory; Default string}
 type ParallelOption func(*ParallelTool)
 type ParallelTool struct{}
-type PreservedForkStore interface{Preserve(root string, cleanup func() error)}
+type PreparedRun struct{}
+type PreparedRunTransition string
+type PreservedForkStore interface{Preserve(handle ArtifactHandle, cleanup func() error)}
 type ReflectionLimits struct{InputBytes int; Events int; Existing int; Candidates int; EvidencePerCandidate int; OutputBytes int; Tokens int; Timeout time.Duration}
+type ResumeApprovalOptions struct{CanPresentAuthorization bool}
 type Run struct{}
-type RunRequest struct{Text string; Parts []session.Content; MaxRunTokensOverride int; ExtraTools []tool.Tool; RunID string; AskIDDiscriminator string}
+type RunOutcome int32
+type RunRequest struct{Text string; Parts []session.Content; CanPresentAuthorization bool; MaxRunTokensOverride int; ExtraTools []tool.Tool; RunID string; AskIDDiscriminator string}
 type ScheduleQueryTool struct{}
 type ScheduleTool struct{}
 type SteerOutcome string

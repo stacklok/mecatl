@@ -48,12 +48,20 @@ type config struct {
 	theme             string
 	themeDir          string
 	authToken         string
+	anonymous         bool
 	useTLS            bool
 	tlsExplicit       bool
 	tlsCA             string
 	insecure          bool
-	noSavedAuth       bool
 	listThemes        bool
+	// debug enables mecatui's client-side diagnostic surfaces. An explicit
+	// --debug value outranks MECATUI_DEBUG and the legacy per-surface aliases.
+	debug        bool
+	debugFlagSet bool
+	debugMouse   bool
+	debugSteer   bool
+	debugAsk     bool
+	debugKeymap  bool
 
 	// noAltScreen renders mecatui INLINE in the terminal's normal buffer instead
 	// of the alternate screen. Off by default (full-screen TUI on the alt screen);
@@ -355,7 +363,7 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string, brows
 	cfg.browseSessions = len(browseSessions) > 0 && browseSessions[0]
 	fs := flag.NewFlagSet("mecatui", flag.ContinueOnError)
 	fs.SetOutput(out)
-	fs.StringVar(&cfg.workspace, "workspace", "", "absolute workspace root for a new session (default: cwd); an adopted session keeps its stored workspace")
+	fs.StringVar(&cfg.workspace, "workspace", "", "embedded server only: absolute deployment workspace root (default: cwd); not accepted by connect")
 	fs.StringVar(&cfg.mode, "mode", "default", "permission mode: default | plan | accept-edits")
 	fs.Func("debug-mcp", "debug sessions only: select one already-configured server-global streaming-HTTP MCP server by name (repeatable)", func(value string) error {
 		cfg.debugMCP = append(cfg.debugMCP, value)
@@ -369,11 +377,12 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string, brows
 	fs.StringVar(&cfg.theme, "theme", "", "theme name (default: aztec)")
 	fs.StringVar(&cfg.themeDir, "theme-dir", "", "extra directory of *.json themes to load")
 	fs.StringVar(&cfg.authToken, "auth-token", "", "bearer token for an external server (or MECATL_AUTH_TOKEN)")
+	fs.BoolVar(&cfg.anonymous, "anonymous", false, "bypass saved OIDC enrollment and send no bearer unless --auth-token or MECATL_AUTH_TOKEN supplies one")
 	fs.BoolVar(&cfg.useTLS, "tls", false, "use verified TLS for an external server (default for non-loopback targets; --tls=false explicitly permits plaintext)")
 	fs.StringVar(&cfg.tlsCA, "tls-ca", "", "path to a PEM CA bundle for external-server verification")
 	fs.BoolVar(&cfg.insecure, "insecure", false, "skip TLS verification (testing only)")
-	fs.BoolVar(&cfg.noSavedAuth, "no-saved-auth", false, "ignore saved remote login credentials")
 	fs.BoolVar(&cfg.listThemes, "list-themes", false, "list available themes and exit")
+	fs.BoolVar(&cfg.debug, "debug", false, "enable client-side diagnostic surfaces: mouse mapping, steer correlation, and debug-only built-ins")
 	fs.BoolVar(&cfg.noAltScreen, "no-alt-screen", false, "render inline in the terminal's normal buffer instead of the alternate screen, preserving native scrollback/search")
 	fs.BoolVar(&cfg.noAltScreen, "inline", false, "alias for --no-alt-screen: render inline in the normal buffer, preserving native scrollback/search")
 	fs.BoolVar(&cfg.noMouse, "no-mouse", false, "disable mouse capture on the alt screen so the terminal's NATIVE click-drag selection works (for tmux/zellij/web terminals that strip OSC52, or when you prefer native select); trades away in-app mouse-wheel scroll and the in-app drag-select/copy layer. Keyboard scroll (pgup/pgdn/home/end) is unaffected. Or set MECATUI_NO_MOUSE=1")
@@ -391,7 +400,7 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string, brows
 	// Shared model alias/slot flags (cliconfig); mecatui keeps its own help wording.
 	cfg.modelAliases, cfg.modelSlots = cliconfig.RegisterModelFlags(fs, cliconfig.ModelFlagHelp{
 		ModelAlias: "embedded server only: model alias mapping as name=model-id (repeatable), e.g. --model-alias cheap=gpt-4o-mini. Aliases are resolved in the composition layer; a --model-slot selector and an agent def's `model: <alias>` resolve through this map",
-		ModelSlot:  "embedded server only: per-slot model binding as slot=selector (repeatable), e.g. --model-slot compaction=cheap (ADR 0030). A SLOT routes an internal lightweight LLM call to its own model: under mecatui the wired slots are `compaction` (the compaction summary call) and `guardrail` (the content checker); the `ask-reviewer` slot is INERT here (mecatui runs INTERACTIVE, so the headless child-ask reviewer never engages — that slot only routes on a headless `mecated --headless`). A TIER key (`cheap`/`fast`/`reasoning`) gives a default a slot falls through to (each routed slot defaults to `cheap`). The selector is an alias (--model-alias / built-ins) or a concrete id. Empty keeps every call on the session model. FAIL-SOFT on a typo/inherit. Operator-tier only",
+		ModelSlot:  "embedded server only: per-slot model binding as slot=selector (repeatable), e.g. --model-slot compaction=cheap (ADR 0030). A SLOT routes an internal lightweight LLM call to its own model: under mecatui the wired slots are `compaction` (the compaction summary call), `guardrail` (the content checker), and `title` (automatic session-title generation). `title` is explicit opt-in and has NO default-tier or session-model fallback: without a compatible binding it makes no title-model call. The `ask-reviewer` slot is INERT here (mecatui runs INTERACTIVE, so the headless child-ask reviewer never engages — that slot only routes on a headless `mecated --headless`). A TIER key (`cheap`/`fast`/`reasoning`) gives a default a slot falls through to (each routed slot except `title` defaults to `cheap`). The selector is an alias (--model-alias / built-ins) or a concrete id. Empty keeps every call on the session model. FAIL-SOFT on a typo/inherit. Operator-tier only",
 	})
 	fs.BoolVar(&cfg.subagentModelRouter, "subagent-model-router", false, "embedded server only: Semantic model router KILL-SWITCH (ADR 0042, superseding 0031's enable model): the router is ENABLED by an operator-tier models.router: category taxonomy in the user-global settings.yaml (configure = enable, guardrails-parity), NOT by this flag. Pass --subagent-model-router=false to force it OFF despite a taxonomy (also models.router.disabled: true in YAML). When enabled, a tiny classifier on the `router` slot picks the child model per plain Subagent delegation before the child is minted (decide-once, same-provider); fail-soft to the inherited model on any miss. The router IS meaningful under mecatui — it picks a child's model before the child runs, in both interactive and headless modes")
 	// Shared provider base-URL flags (cliconfig); mecatui keeps its own help wording.
@@ -623,6 +632,8 @@ func recordExplicitFlag(f *flag.Flag, cfg *config) {
 	switch f.Name {
 	case "tls":
 		cfg.tlsExplicit = true
+	case "debug":
+		cfg.debugFlagSet = true
 	case "posture":
 		cfg.postureFlagSet = true
 	case "subagent-model-router":
@@ -645,6 +656,24 @@ func recordExplicitFlag(f *flag.Flag, cfg *config) {
 	markRetentionCLIFlag(&cfg.retentionCLISet, f.Name)
 }
 
+// resolveDebugConfig applies the canonical debug switch and its legacy env aliases.
+func resolveDebugConfig(cfg *config) {
+	// Explicit --debug=false suppresses all env fallbacks; without an explicit flag,
+	// the legacy variables remain narrow aliases for their original surfaces.
+	if !cfg.debugFlagSet {
+		cfg.debug = os.Getenv("MECATUI_DEBUG") == "1"
+		cfg.debugMouse = cfg.debug || os.Getenv("MECATUI_DEBUG_MOUSE") != ""
+		cfg.debugSteer = cfg.debug || os.Getenv("MECATUI_DEBUG_STEER") != ""
+		cfg.debugAsk = cfg.debug || os.Getenv("MECATUI_DEBUG_ASK") != ""
+		cfg.debugKeymap = cfg.debug || os.Getenv("MECATUI_DEBUG_KEYMAP") == "1"
+		return
+	}
+	cfg.debugMouse = cfg.debug
+	cfg.debugSteer = cfg.debug
+	cfg.debugAsk = cfg.debug
+	cfg.debugKeymap = cfg.debug
+}
+
 func finalizeParsedConfig(fs *flag.FlagSet, cfg *config) error {
 	// Record explicit flags so composition lets CLI out-rank the operator-global
 	// settings.yaml keys (mirrors mecated). Extracted to recordExplicitFlag to keep
@@ -654,9 +683,16 @@ func finalizeParsedConfig(fs *flag.FlagSet, cfg *config) error {
 	if cfg.authToken == "" {
 		cfg.authToken = os.Getenv("MECATL_AUTH_TOKEN")
 	}
+	if cfg.authToken != "" {
+		// Static bearer credentials are the highest-priority credential source.
+		// --anonymous only overrides saved OIDC state when no static token was
+		// supplied explicitly or through MECATL_AUTH_TOKEN.
+		cfg.anonymous = false
+	}
 	if cfg.theme == "" {
 		cfg.theme = os.Getenv("MECATUI_THEME")
 	}
+	resolveDebugConfig(cfg)
 	// Env fallback: --no-mouse wins if passed; otherwise MECATUI_NO_MOUSE=1/true
 	// enables it (set-and-forget in a shell rc for a multiplexer that strips OSC52).
 	if !cfg.noMouse {
@@ -775,16 +811,9 @@ func transportUsage(fs *flag.FlagSet, mode transportMode, browseSessions ...bool
 // rejected before a dial or CreateSession call. Embedded and loopback workflows
 // retain the local cwd/worktree default.
 func configureWorkspaceForTransport(cfg *config) error {
-	if cfg.debugTarget != "" && cfg.transportMode == modeConnect {
+	if cfg.transportMode == modeConnect {
 		if cfg.workspaceExplicit {
-			return errors.New("--workspace is not allowed when connecting to a remote debug session")
-		}
-		cfg.workspace = ""
-		return nil
-	}
-	if cfg.transportMode == modeConnect && !client.IsLoopbackHost(cfg.connectAddress) {
-		if cfg.workspaceExplicit {
-			return errors.New("--workspace is not allowed when connecting to a remote server")
+			return errors.New("--workspace configures only the embedded server and is not allowed with connect")
 		}
 		cfg.workspace = ""
 		return nil
@@ -835,7 +864,7 @@ func (c config) validate() error {
 			return errors.New("debug conflicts with sessions launch")
 		}
 	}
-	if c.workspace == "" && c.debugTarget == "" && (c.transportMode != modeConnect || client.IsLoopbackHost(c.connectAddress)) {
+	if c.workspace == "" && c.debugTarget == "" && c.transportMode != modeConnect {
 		return errors.New("workspace is required")
 	}
 	if c.workspace != "" && !filepath.IsAbs(c.workspace) {

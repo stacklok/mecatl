@@ -158,13 +158,11 @@ type TeamTool struct {
 	// cheap git worktree. Required only if the factory marks a read-only member
 	// IsolateReadOnly (which the composition root does only when this is wired). When
 	// nil, read-only members base-share with no shell.
-	roForker tool.EnvironmentForker
-	// sharedBaseWS re-views the parent workspace for a BASE-SHARING read-only
-	// member (the no-shell fallback tier) so it never inherits the main session's
-	// out-of-root relaxation (the path-escape-posture Scenario 5 boundary —
-	// threaded into the supervisor as WithTeamSharedBaseWorkspace). nil keeps the
-	// historical verbatim base share.
-	sharedBaseWS func(root string) tool.Workspace
+	roForker      tool.EnvironmentForker
+	ledgerFactory func() tool.ReadLedger
+	// sharedBaseWS narrows base-sharing member authority without replacing the
+	// parent Workspace's content backend.
+	sharedBaseWS func(tool.Workspace) tool.Workspace
 	// hooks fires the team lifecycle hooks (TeammateIdle) — shared with the member
 	// coordination tools by the composition root. nil disables them.
 	hooks port.HookRunner
@@ -197,16 +195,15 @@ func WithTeamToolReadOnlyForker(f tool.EnvironmentForker) TeamOption {
 	return func(t *TeamTool) { t.roForker = f }
 }
 
-// WithTeamToolSharedBaseWorkspace injects the NON-relaxed workspace view a
-// BASE-SHARING read-only member runs against (threaded into the supervisor as
-// WithTeamSharedBaseWorkspace). The composition root wires it whenever the
-// parent workspace may carry out-of-root relaxation (the path-escape-posture
-// auto/yolo main-session relax): the in-loop Team tool's base IS the parent's
-// relaxed workspace at those postures, so a shell-less member must re-view it
-// through the non-relaxed construction. nil (the default) is byte-identical to
-// the pre-option behaviour.
-func WithTeamToolSharedBaseWorkspace(f func(root string) tool.Workspace) TeamOption {
-	return func(t *TeamTool) { t.sharedBaseWS = f }
+// WithTeamToolReadLedgerFactory injects the fresh ledger factory for members.
+func WithTeamToolReadLedgerFactory(factory func() tool.ReadLedger) TeamOption {
+	return func(t *TeamTool) { t.ledgerFactory = factory }
+}
+
+// WithTeamToolSharedBaseWorkspace injects the capability-narrowing Workspace
+// view the Team tool forwards to its Supervisor for base-sharing members.
+func WithTeamToolSharedBaseWorkspace(view func(tool.Workspace) tool.Workspace) TeamOption {
+	return func(t *TeamTool) { t.sharedBaseWS = view }
 }
 
 // WithTeamToolHooks injects the HookRunner threaded into the Supervisor (and, by
@@ -357,6 +354,7 @@ func (t *TeamTool) run(ctx context.Context, call session.ToolCall, env tool.Envi
 		// here: the in-loop Team tool's goal is always principal-authored and trusted.
 		WithTeamGoal(args.Goal),
 		WithMemberSessionPrefix(memberSessionIDPrefix + teamID),
+		WithTeamReadLedgerFactory(t.ledgerFactory),
 	}
 	if t.forker != nil {
 		opts = append(opts, WithForker(t.forker))

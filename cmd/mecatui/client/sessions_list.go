@@ -38,12 +38,6 @@ const (
 	CapabilityReasonTranscriptUnavailable  CapabilityReason = "transcript_unavailable"
 	CapabilityReasonEnvironmentUnavailable CapabilityReason = "environment_unavailable"
 	CapabilityReasonStorageUnsupported     CapabilityReason = "storage_unsupported"
-	CapabilityReasonProtectedProvenance    CapabilityReason = "protected_provenance"
-	CapabilityReasonInvalidTranscript      CapabilityReason = "invalid_transcript"
-	CapabilityReasonAdoptionActive         CapabilityReason = "active"
-	CapabilityReasonAdoptionLeased         CapabilityReason = "leased"
-	CapabilityReasonBindingUnresolved      CapabilityReason = "binding_unresolved"
-	CapabilityReasonNotLegacy              CapabilityReason = "not_legacy"
 	CapabilityReasonUnknown                CapabilityReason = "unknown"
 )
 
@@ -94,7 +88,8 @@ type SessionListItem struct {
 	CreatedAt       int64
 	Title           string
 	TitleProvenance string
-	Workspace       string
+	TitleRevision   uint64
+	Placement       Placement
 	Kind            SessionKind
 	Relationship    SessionRelationship
 	Capabilities    SessionInventoryCapabilities
@@ -179,8 +174,9 @@ func listSessionsFromProto(in []*mecatlv1.SessionSummary) []SessionListItem {
 		reasons := caps.GetReasons()
 		out = append(out, SessionListItem{
 			ID: s.GetSessionId(), ModifiedAt: s.GetModifiedAtUnix(), State: s.GetState(),
-			Turns: s.GetTurns(), ModelID: s.GetModelId(), CreatedAt: s.GetCreatedAtUnix(), Title: s.GetTitle(),
-			TitleProvenance: s.GetTitleProvenance(), Workspace: s.GetWorkspace(), Kind: SessionKind(s.GetKind()),
+			Turns: s.GetTurns(), ModelID: s.GetModelId(), CreatedAt: s.GetCreatedAtUnix(), Title: titleFromSummary(s),
+			TitleProvenance: titleProvenanceFromSummary(s), TitleRevision: s.GetTitleMetadata().GetRevision(),
+			Placement: placementFrom(s.GetPlacement()), Kind: SessionKind(s.GetKind()),
 			Relationship: SessionRelationship{
 				ParentSessionID: rel.GetParentSessionId(), CallID: rel.GetCallId(), BranchIndex: branchIndex,
 				ScheduleName: rel.GetScheduleName(), OriginSessionID: rel.GetOriginSessionId(),
@@ -201,6 +197,22 @@ func listSessionsFromProto(in []*mecatlv1.SessionSummary) []SessionListItem {
 		})
 	}
 	return out
+}
+
+func titleFromSummary(s *mecatlv1.SessionSummary) string {
+	if title := s.GetTitleMetadata().GetTitle(); title != "" {
+		return title
+	}
+	//nolint:staticcheck // compatibility fallback for a pre-SessionTitle server.
+	return s.GetTitle()
+}
+
+func titleProvenanceFromSummary(s *mecatlv1.SessionSummary) string {
+	if provenance := s.GetTitleMetadata().GetProvenance(); provenance != "" {
+		return provenance
+	}
+	//nolint:staticcheck // compatibility fallback for a pre-SessionTitle server.
+	return s.GetTitleProvenance()
 }
 
 // SessionPager fetches one bounded stored-session inventory page.

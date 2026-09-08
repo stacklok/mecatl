@@ -209,7 +209,7 @@ func renderUserModelPanel(th theme.Theme, st userModelState, caps client.Capabil
 			if i == st.cursor {
 				marker = "› "
 			}
-			lines = append(lines, th.Style("toolName").Render(marker+sanitizeTerminal(e.Key)))
+			lines = append(lines, renderToolCardText(th.Style("toolName"), marker+sanitizeTerminal(e.Key), budget))
 			if e.Description != "" {
 				lines = append(lines, strings.Split(th.Style("toolArgs").Render(indentWrap(sanitizeTerminal(e.Description), budget)), "\n")...)
 			}
@@ -239,24 +239,26 @@ func userModelWindowLines(height, total int) int {
 func renderUserModelDetail(th theme.Theme, st userModelState, hk helpKeys, width, height int) string {
 	var b strings.Builder
 	b.WriteString(th.Style("askTitle").Render("User model detail") + "\n\n")
+	budget := cardTextWidth(width)
+	wrap := func(text string) string { return wrapCardText(text, budget) }
 	var lines []string
 	if st.loading {
 		lines = append(lines, th.Style("muted").Render("loading…"))
 	} else if st.err != nil {
-		lines = append(lines, strings.Split(th.Style("errorText").Render(sanitizeTerminal(st.err.Error())), "\n")...)
+		lines = append(lines, strings.Split(th.Style("errorText").Render(wrap(st.err.Error())), "\n")...)
 	} else if st.detail != nil {
 		rev := st.detail.Current
-		lines = append(lines, th.Style("toolName").Render(sanitizeTerminal(rev.Key)))
+		lines = append(lines, renderToolCardText(th.Style("toolName"), sanitizeTerminal(rev.Key), budget))
 		for _, row := range []struct{ label, value string }{{"status", rev.Status}, {"version", rev.Version}, {"writer", rev.Writer}, {"origin", rev.Origin}, {"source session", rev.SourceSessionID}, {"proposal", rev.SourceProposalID}} {
 			if row.value != "" {
-				lines = append(lines, th.Style("muted").Render(row.label+": ")+sanitizeTerminal(row.value))
+				lines = append(lines, th.Style("muted").Render(row.label+": ")+wrap(row.value))
 			}
 		}
 		if !rev.UpdatedAt.IsZero() {
 			lines = append(lines, th.Style("muted").Render("updated: ")+sanitizeTerminal(rev.UpdatedAt.UTC().Format("2006-01-02 15:04:05Z")))
 		}
 		if rev.Description != "" {
-			lines = append(lines, th.Style("muted").Render("description: ")+sanitizeTerminal(rev.Description))
+			lines = append(lines, th.Style("muted").Render("description: ")+wrap(rev.Description))
 		}
 		lines = append(lines, "")
 		lines = append(lines, strings.Split(th.Style("toolArgs").Render(indentWrap(sanitizeTerminal(rev.Value), cardTextWidth(width))), "\n")...)

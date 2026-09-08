@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/stacklok/mecatl/engine/adapter/memledger"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/forker"
@@ -17,7 +18,7 @@ import (
 // filesystem while adapting them to the EnvironmentForker API. Dedicated
 // environment tests assert the child ref and bound runner.
 func forkWorkspace(f *forker.Forker, ctx context.Context, base tool.Workspace, label string) (tool.Workspace, func() error, string, error) { //nolint:revive // context.Context is not first to mirror the forker.Fork signature this wraps
-	baseEnv := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: base.Root()}, base, nil)
+	baseEnv := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: base.Root()}, base, memledger.New(), nil)
 	child, cleanup, advisory, err := f.Fork(ctx, baseEnv, label)
 	if err != nil {
 		return nil, cleanup, advisory, err
@@ -26,8 +27,8 @@ func forkWorkspace(f *forker.Forker, ctx context.Context, base tool.Workspace, l
 }
 
 func mergeWorkspaces(m tool.EnvironmentMerger, ctx context.Context, child, parent tool.Workspace) error { //nolint:revive // context.Context is not first to mirror the merger.Merge signature this wraps
-	childEnv := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: child.Root()}, child, nil)
-	parentEnv := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: parent.Root()}, parent, nil)
+	childEnv := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: child.Root()}, child, memledger.New(), nil)
+	parentEnv := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: parent.Root()}, parent, memledger.New(), nil)
 	return m.Merge(ctx, childEnv, parentEnv)
 }
 
@@ -37,6 +38,29 @@ func mergeRoot(m tool.EnvironmentMerger, ctx context.Context, childRoot string, 
 		return err
 	}
 	return mergeWorkspaces(m, ctx, child, parent)
+}
+
+func TestPersistentReadLedgers_ForkPreservesContentBackendAndFreshLedger(t *testing.T) {
+	root := t.TempDir()
+	ws, err := osfs.NewWorkspace(root)
+	if err != nil {
+		t.Fatalf("NewWorkspace: %v", err)
+	}
+	parentLedger := memledger.New()
+	parent := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: root}, ws, parentLedger, nil)
+	f := forker.New(func(childRoot string) (tool.Workspace, error) { return osfs.NewWorkspace(childRoot) }, forker.WithForceCopy())
+
+	child, cleanup, _, err := f.Fork(context.Background(), parent, "fresh-ledger")
+	if err != nil {
+		t.Fatalf("Fork: %v", err)
+	}
+	t.Cleanup(func() { _ = cleanup() })
+	if child.Workspace().Root() == parent.Workspace().Root() {
+		t.Fatal("fork child must retain its isolated content backend")
+	}
+	if child.ReadLedger() == nil || child.ReadLedger() == parent.ReadLedger() {
+		t.Fatal("fork child must receive a fresh non-parent ledger")
+	}
 }
 
 // TestForkReturnsEnvironmentWithBoundRunner proves the EnvironmentForker returns
@@ -52,11 +76,13 @@ func TestForkReturnsEnvironmentWithBoundRunner(t *testing.T) {
 	if err != nil {
 		t.Fatalf("base ws: %v", err)
 	}
-	baseEnv := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: base}, baseWS, nil)
+	baseEnv := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: base}, baseWS, memledger.New(), nil)
 
 	// WithRunner wires a bound runner for each child directory. The runner is
 	// bound to the child root so its cwd follows the fork.
-	f := forker.New(func(root string) (tool.Workspace, error) { return osfs.NewWorkspace(root) },
+	f := forker.New(func(root string) (tool.Workspace, error) {
+		return osfs.NewWorkspace(root)
+	},
 		forker.WithRunner(func(childRoot string) tool.CommandRunner {
 			r, rerr := osfs.NewCommandRunnerShell(childRoot, "/bin/sh")
 			if rerr != nil {
@@ -126,14 +152,16 @@ func TestForkFallbackCopyAffinity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("base ws: %v", err)
 	}
-	baseEnv := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: base}, baseWS, nil)
+	baseEnv := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: base}, baseWS, memledger.New(), nil)
 
 	// tmpBase scopes the child directories so the test can enumerate them and
 	// assert no stray reservation remains after the fallback.
 	tmpBase := t.TempDir()
 	var runnerRoots []string
 	f := forker.New(
-		func(root string) (tool.Workspace, error) { return osfs.NewWorkspace(root) },
+		func(root string) (tool.Workspace, error) {
+			return osfs.NewWorkspace(root)
+		},
 		forker.WithTempBase(tmpBase),
 		forker.WithRunner(func(childRoot string) tool.CommandRunner {
 			runnerRoots = append(runnerRoots, childRoot)
@@ -216,8 +244,10 @@ func TestForkWithoutRunnerIsShellLess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("base ws: %v", err)
 	}
-	baseEnv := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: base}, baseWS, nil)
-	f := forker.New(func(root string) (tool.Workspace, error) { return osfs.NewWorkspace(root) })
+	baseEnv := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: base}, baseWS, memledger.New(), nil)
+	f := forker.New(func(root string) (tool.Workspace, error) {
+		return osfs.NewWorkspace(root)
+	})
 
 	child, cleanup, _, ferr := f.Fork(context.Background(), baseEnv, "t")
 	if ferr != nil {
@@ -243,14 +273,14 @@ func TestMergerRejectsNilWorkspace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parent ws: %v", err)
 	}
-	parentEnv := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: ws.Root()}, ws, nil)
+	parentEnv := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: ws.Root()}, ws, memledger.New(), nil)
 	if err := m.Merge(ctx, zeroChild, parentEnv); err == nil {
 		t.Fatal("Merge with nil child Workspace must return an error, not nil")
 	}
 
 	// Nil parent Workspace (zero-value Environment).
 	var zeroParent tool.Environment
-	childEnv := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: ws.Root()}, ws, nil)
+	childEnv := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: ws.Root()}, ws, memledger.New(), nil)
 	if err := m.Merge(ctx, childEnv, zeroParent); err == nil {
 		t.Fatal("Merge with nil parent Workspace must return an error, not nil")
 	}

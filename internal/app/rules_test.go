@@ -216,7 +216,7 @@ func TestPerSessionAssemblerMatchesShared(t *testing.T) {
 		Catalog:      tool.NewCatalog(),
 		Instructions: asm,
 	})
-	sess := session.New("sPerSession", session.ModeDefault, "/ws", session.Limits{MaxTurns: 1}, time.Now())
+	sess := session.New("sPerSession", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 1}, time.Now())
 	run := eng.Run(ctx, sess, memEnvironment("/ws"), agent.RunRequest{Text: "hello"})
 	for ev := range run.Events() {
 		_ = ev

@@ -69,7 +69,7 @@ func TestPlanModeAutoApproveOffByDefault(t *testing.T) {
 	}
 	defer built.Close()
 
-	sess, err := built.Service.CreateSession(context.Background(), cfg.Workspace, session.ModePlan, session.Limits{})
+	sess, err := built.Service.CreateSession(context.Background(), session.ModePlan, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -111,7 +111,7 @@ func TestPlanModeAutoApproveFiresOnParkedPlanAsk(t *testing.T) {
 	}
 	defer built.Close()
 
-	sess, err := built.Service.CreateSession(context.Background(), cfg.Workspace, session.ModePlan, session.Limits{})
+	sess, err := built.Service.CreateSession(context.Background(), session.ModePlan, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -206,7 +206,7 @@ func TestPlanModeAutoApproveDoesNotFireInteractive(t *testing.T) {
 	}
 	defer built.Close()
 
-	sess, err := built.Service.CreateSession(context.Background(), cfg.Workspace, session.ModePlan, session.Limits{})
+	sess, err := built.Service.CreateSession(context.Background(), session.ModePlan, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -251,7 +251,7 @@ func TestPlanModeAutoApproveDoesNotFireInDefaultMode(t *testing.T) {
 	}
 	defer built.Close()
 
-	sess, err := built.Service.CreateSession(context.Background(), cfg.Workspace, session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -283,7 +283,7 @@ func TestPlanModeAutoApproveDoesNotFireForNonPlanAsk(t *testing.T) {
 	}
 	defer built.Close()
 
-	sess, err := built.Service.CreateSession(context.Background(), cfg.Workspace, session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

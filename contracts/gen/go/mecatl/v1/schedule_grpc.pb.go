@@ -77,8 +77,8 @@ type ScheduleServiceClient interface {
 	// created aggregate. The create-seam (composition) validates the spec — the
 	// exactly-one-of(cron, one_shot) trigger XOR, the prompt-or-parts non-empty
 	// rule, the cron grammar — fail-closed; the proto carries per-field
-	// constraints only (cross-field rules are server-enforced, the
-	// CreateSessionRequest.workspace posture).
+	// constraints only; cross-field rules and exact server-owned placement binding
+	// are server-enforced.
 	CreateSchedule(ctx context.Context, in *CreateScheduleRequest, opts ...grpc.CallOption) (*CreateScheduleResponse, error)
 	// GetSchedule returns the schedule stored under name (spec + state).
 	GetSchedule(ctx context.Context, in *GetScheduleRequest, opts ...grpc.CallOption) (*GetScheduleResponse, error)
@@ -233,8 +233,8 @@ type ScheduleServiceServer interface {
 	// created aggregate. The create-seam (composition) validates the spec — the
 	// exactly-one-of(cron, one_shot) trigger XOR, the prompt-or-parts non-empty
 	// rule, the cron grammar — fail-closed; the proto carries per-field
-	// constraints only (cross-field rules are server-enforced, the
-	// CreateSessionRequest.workspace posture).
+	// constraints only; cross-field rules and exact server-owned placement binding
+	// are server-enforced.
 	CreateSchedule(context.Context, *CreateScheduleRequest) (*CreateScheduleResponse, error)
 	// GetSchedule returns the schedule stored under name (spec + state).
 	GetSchedule(context.Context, *GetScheduleRequest) (*GetScheduleResponse, error)

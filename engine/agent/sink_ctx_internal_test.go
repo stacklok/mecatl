@@ -62,7 +62,7 @@ func TestEngineEmitForwardsRunCtxToSink(t *testing.T) {
 		Sink:    sink,
 		Model:   "test-model",
 	})
-	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	sess := session.New("s1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 
 	// Engine.Run wraps ctx in context.WithCancel but PRESERVES values, so the
 	// marker must survive into the sink if the run forwards its own ctx.

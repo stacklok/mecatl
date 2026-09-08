@@ -6,9 +6,8 @@ version: 1
 # .git/info/exclude, global excludes) with .matlatlignore. Local-only files
 # (HANDOFF.md, CLAUDE.local.md, agent scratch notes) are otherwise scanned as
 # corpus documents and flagged as orphans, which (a) fails `check --strict`
-# locally on files a clean CI checkout never sees, and (b) bakes a nonzero
-# orphan count into a regenerated llms.txt, breaking CI's clean-checkout
-# staleness gate. No-op when the scan root is not a git work tree.
+# locally on files a clean CI checkout never sees. No-op when the scan root is
+# not a git work tree.
 respectGitignore: true
 
 # Promote the graduated structure findings (under-linked, dead-end) from Info to
@@ -30,9 +29,8 @@ structureFindingsSeverity: warning
 inboundThreshold: 1
 
 # emitExclude keeps these docs IN the graph — still scanned, link-checked,
-# ranked, and gated by `check` — but hides them from the human/LLM consumption
-# surfaces (llms.txt, index.md, trails.json, and backlink clauses). It has zero
-# effect on the check exit code or graph.json.
+# ranked, and gated by `check` — but hides them from generated documentation
+# surfaces. It has zero effect on the check exit code or graph.json.
 #
 # Used here for Claude Code agent scaffolding: these files are dev tooling, not
 # product documentation, so they shouldn't appear in the navigation surface or

@@ -1,0 +1,10 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "allowImportingTsExtensions": false,
+    "noEmit": true,
+    "types": ["node"]
+  },
+  "include": ["./*.ts"],
+  "exclude": ["./slack-bot"]
+}

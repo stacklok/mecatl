@@ -287,7 +287,7 @@ concrete task split.
 ## Definition of done
 
 1. `task lint` and `task test` pass.
-2. `task docs` regenerates `llms.txt` and passes the strict documentation link gate.
+2. `task docs` regenerates the configuration reference and passes the strict documentation link gate.
 3. `task api:check` passes; if an engine exported surface changes, `task api:update`
    and the required `engine/CHANGELOG.md` compatibility note are included.
 4. `task ac-trace-strict` passes when this plan is marked `landed`.

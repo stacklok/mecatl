@@ -6,10 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
@@ -258,9 +258,10 @@ func (a *Agent) handleInitialize(params json.RawMessage) (any, error) {
 	}, nil
 }
 
-// handleSessionNew creates a mecatl session rooted at the client's cwd via
-// Service.CreateSessionWithMCP, and returns its id. It ACCEPTS client-provided
-// streaming-HTTP MCP servers — they are validated and mounted PER-SESSION (so
+// handleSessionNew creates a mecatl session on the composition-configured
+// placement via Service.CreateACPSession. The required cwd only asserts equality
+// with that trusted binding; it never selects or constructs the environment.
+// Client-provided streaming-HTTP MCP servers are validated and mounted PER-SESSION (so
 // their tools and auth never leak into other sessions). A stdio (command-shaped)
 // entry and an sse entry are hard-rejected (CLAUDE.md: no stdio MCP, ever; mecatl
 // never spawns a server process). The session mode is always default this phase;
@@ -278,52 +279,28 @@ func (a *Agent) handleSessionNew(ctx context.Context, params json.RawMessage) (a
 		return nil, err
 	}
 
-	sess, err := a.svc.CreateSessionWithMCP(ctx, req.Cwd, session.ModeDefault, session.Limits{}, specs)
+	var overlay server.ACPEnvironmentOverlay
+	if a.fsDelegation {
+		overlay = func(id session.SessionID, base tool.Environment) (tool.Environment, error) {
+			ws, err := newFSWorkspace(a.conn, string(id), base.Workspace().Root())
+			if err != nil {
+				return tool.Environment{}, err
+			}
+			return tool.NewEnvironment(base.Ref(), ws, base.ReadLedger(), nil)
+		}
+	}
+	sess, err := a.svc.CreateACPSession(ctx, req.Cwd, session.ModeDefault, session.Limits{}, specs, overlay)
 	if err != nil {
 		return nil, newMethodErr(codeInvalidParams, "acp: session/new: "+err.Error())
 	}
-	// Track sessions created with a per-session engine so the Serve loop can tear
-	// them down (and their client MCP managers) on editor disconnect. A session
-	// with no client MCP uses the shared engine and is not tracked.
-	if len(specs) > 0 {
+	// Track every session with connection-scoped resources: client MCP and/or an
+	// editor-buffer overlay.
+	if len(specs) > 0 || a.fsDelegation {
 		a.trackSession(string(sess.ID))
 	}
-	// When the client advertised fs.readTextFile && fs.writeTextFile, register a
-	// per-session workspace that routes file Read/Write through the editor's
-	// buffers (fs/* calls) for THIS session. It composes an osfs workspace rooted
-	// at the same cwd for Root/Stat/Glob/Grep and overrides Read/Write plus the
-	// read-ledger to delegate. The override is keyed by session id on the shared
-	// Service (mirroring the per-session engine registry) and torn down on
-	// disconnect alongside the engines. Registration is independent of client MCP:
-	// it applies to every session/new while delegating, so we also track the
-	// session for teardown even when it carries no MCP servers.
-	if a.fsDelegation {
-		ws, werr := newFSWorkspace(a.conn, string(sess.ID), sess.Workspace)
-		if werr != nil {
-			// A bad cwd (osfs could not root there) is a session-creation failure: the
-			// session exists but its workspace cannot be built, so fail loudly rather
-			// than silently falling back to disk under a client that asked for buffers.
-			return nil, newMethodErr(codeInvalidParams, "acp: session/new: "+werr.Error())
-		}
-		// Register a COMPLETE shell-less Environment: the ACP fsWorkspace is a
-		// real-filesystem workspace rooted at the session cwd (a local-kind
-		// namespace), but the editor provides NO shell, so the CommandRunner is
-		// nil (Bash surfaces ErrNoShell honestly). The ref ID is the session root
-		// so the parent can identify the namespace (issue #462 phase-2 finding #2).
-		env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: ws.Root()}, ws, nil)
-		a.svc.SetSessionEnvironment(sess.ID, env)
-		if len(specs) == 0 {
-			// Not already tracked via the MCP path; track now so the override is
-			// evicted on disconnect.
-			a.trackSession(string(sess.ID))
-		}
-	}
-	// Advertise the slash commands for this workspace as an available_commands_update
-	// so the editor can offer them in its input palette. Best-effort: a discovery
-	// fault or an empty list simply means no (or an empty) update — it must not fail
-	// session creation. Sent AFTER the session exists so the notification's
-	// sessionId is valid.
-	a.notifyAvailableCommands(ctx, string(sess.ID), sess.Workspace)
+	// Discovery is session-scoped: the Service owner-authorizes and exactly
+	// reattaches the persisted placement without exposing its root here.
+	a.notifyAvailableCommands(ctx, string(sess.ID))
 
 	return newSessionResponse{
 		SessionID: string(sess.ID),
@@ -349,8 +326,8 @@ func modeStateFor(current session.PermissionMode) *sessionModeState {
 // Service seam and, when any are found, pushes an available_commands_update. A
 // nil lister, an empty result, or a discovery fault yields NO update (the palette
 // stays empty) — command discovery must never break the session.
-func (a *Agent) notifyAvailableCommands(ctx context.Context, sessionID, workspace string) {
-	cmds, err := a.svc.ListCommands(ctx, workspace)
+func (a *Agent) notifyAvailableCommands(ctx context.Context, sessionID string) {
+	cmds, err := a.svc.ListCommandsForSession(ctx, session.SessionID(sessionID))
 	if err != nil {
 		a.diag.Log(ctx, port.LevelDebug, "acp: list commands failed", "session", sessionID, "err", err)
 		return
@@ -373,7 +350,8 @@ func (a *Agent) notifyAvailableCommands(ctx context.Context, sessionID, workspac
 // like session/new — ACCEPTS client-provided streaming-HTTP MCP servers: they are
 // validated (via the SAME partitionClientMCP helper, so stdio/sse reject, the SSRF
 // allowlist, the server cap, and the bounded connect timeout all apply identically)
-// and RE-MOUNTED PER-SESSION via Service.LoadSessionWithMCP. It then loads (and, if
+// and re-mounted only after Service.LoadACPSession owner-authorizes and reattaches
+// the exact persisted placement. It then loads (and, if
 // the session had cleanly completed, reopens) the session and REPLAYS the persisted
 // conversation as session/update notifications (see
 // replayHistory): a re-attaching editor would otherwise see an empty transcript,
@@ -413,23 +391,24 @@ func (a *Agent) handleSessionLoad(ctx context.Context, params json.RawMessage) (
 	if err != nil {
 		return nil, err
 	}
-	// NOTE: session/load deliberately does NOT register an fs/* workspace override; a
-	// resumed session stays on osfs (fs/* delegation on load is a separate deferred
-	// item — see ADR 0001 "Deferred").
-
-	sess, err := a.svc.LoadSessionWithMCP(ctx, session.SessionID(req.SessionID), specs)
+	var overlay server.ACPEnvironmentOverlay
+	if a.fsDelegation {
+		overlay = func(id session.SessionID, base tool.Environment) (tool.Environment, error) {
+			ws, err := newFSWorkspace(a.conn, string(id), base.Workspace().Root())
+			if err != nil {
+				return tool.Environment{}, err
+			}
+			return tool.NewEnvironment(base.Ref(), ws, base.ReadLedger(), nil)
+		}
+	}
+	sess, err := a.svc.LoadACPSession(ctx, session.SessionID(req.SessionID), req.Cwd, specs, overlay)
 	if err != nil {
-		// An unknown/never-persisted session (incl. the in-memory store after a
-		// restart) is a client error: the id does not resolve.
 		return nil, newMethodErr(codeInvalidParams, "acp: session/load: "+err.Error())
 	}
-	// Track sessions resumed with a per-session engine so the Serve loop tears them
-	// down (and their re-mounted client MCP managers) on editor disconnect — identical
-	// to session/new. A session resumed with no client MCP uses the shared engine and
-	// is not tracked.
-	if len(specs) > 0 {
+	if len(specs) > 0 || a.fsDelegation {
 		a.trackSession(string(sess.ID))
 	}
+	a.notifyAvailableCommands(ctx, string(sess.ID))
 	// Rebuild the editor's transcript from the persisted history BEFORE returning,
 	// so a re-attaching editor sees the prior turns rather than an empty session.
 	a.replayHistory(ctx, req.SessionID, sess.Conversation)
@@ -536,6 +515,7 @@ func (a *Agent) handleSessionPrompt(ctx context.Context, params json.RawMessage)
 	defer a.svc.FinishRun(session.SessionID(req.SessionID), run)
 
 	stop := stopEndTurn
+	authorizationIneligible := false
 	for ev := range run.Events() {
 		switch ev.Type {
 		case session.EvPermissionAsk:
@@ -549,6 +529,11 @@ func (a *Agent) handleSessionPrompt(ctx context.Context, params json.RawMessage)
 				// editor's reply (the loop is paused awaiting Approve anyway, but
 				// concurrent tool results from a parallel read still flow).
 				a.requestPermission(ctx, req.SessionID, run, *ev.Ask)
+			}
+		case session.EvAuthorizationRequired:
+			authorizationIneligible = true
+			if update, ok := projectUpdate(ev); ok {
+				a.notifyUpdate(ctx, req.SessionID, update)
 			}
 		case session.EvResult:
 			if ev.Result != nil {
@@ -567,6 +552,9 @@ func (a *Agent) handleSessionPrompt(ctx context.Context, params json.RawMessage)
 	// engine mutates the session in place, and only this Save captures the
 	// completed turn's history durably.
 	a.svc.Persist(ctx, session.SessionID(req.SessionID))
+	if authorizationIneligible {
+		return nil, newMethodErr(codeInvalidParams, "acp: session/prompt: MCP authorization is unavailable for ACP sessions")
+	}
 	return promptResponse{StopReason: stop}, nil
 }
 
@@ -601,9 +589,8 @@ func (a *Agent) handleSessionCancel(ctx context.Context, params json.RawMessage)
 //     under a live run) lets the run unwind so its deferred FinishRun
 //     deregisters it before teardown closes the engine — the same documented
 //     concurrency-safe race profile as the disconnect path.
-//  2. untrackSession removes the id from the tracked set so the eventual
-//     closeTrackedSessions on disconnect does NOT double-close this session's
-//     per-session engine (the load-bearing guard — see TestSessionClose_*).
+//  2. wait for the prompt relay's deferred FinishRun to release local ownership;
+//     EndSession deliberately rejects while a local run is still registered.
 //  3. svc.EndSession runs the precondition-checked teardown (the step shared with
 //     the gRPC/HTTP surfaces): ErrNotFound for a never-created id maps to
 //     codeInvalidParams — mirroring this adapter's OWN session/load unknown-id
@@ -611,6 +598,8 @@ func (a *Agent) handleSessionCancel(ctx context.Context, params json.RawMessage)
 //     (which map ErrNotFound to codes.NotFound / HTTP 404). A created session
 //     tears down idempotently (a repeated session/close succeeds because the
 //     persisted snapshot still resolves).
+//  4. untrackSession removes the id only after successful teardown, so a rejected
+//     close retains the disconnect backstop for every still-owned resource.
 func (a *Agent) handleSessionClose(ctx context.Context, params json.RawMessage) (any, error) {
 	var req closeSessionRequest
 	if err := json.Unmarshal(params, &req); err != nil {
@@ -625,14 +614,38 @@ func (a *Agent) handleSessionClose(ctx context.Context, params json.RawMessage) 
 		!errors.Is(err, server.ErrNoActiveRun) && !errors.Is(err, server.ErrNotFound) {
 		a.diag.Log(ctx, port.LevelDebug, "acp: session/close: cancel", "session", req.SessionID, "err", err)
 	}
-	// Untrack BEFORE teardown so a later closeTrackedSessions on disconnect skips
-	// this id (no double-close). delete on an absent key is a no-op, so untracking
-	// a never-tracked (shared-engine) session is harmless.
-	a.untrackSession(req.SessionID)
+	if err := a.waitForRunTeardown(ctx, id); err != nil {
+		return nil, newMethodErr(codeInvalidParams, "acp: session/close: "+err.Error())
+	}
 	if err := a.svc.EndSession(ctx, id); err != nil {
 		return nil, newMethodErr(codeInvalidParams, "acp: session/close: "+err.Error())
 	}
+	// Untrack only after teardown succeeds. A rejected close must retain the
+	// disconnect backstop for the resources it did not release.
+	a.untrackSession(req.SessionID)
 	return closeSessionResponse{}, nil
+}
+
+const closeRunTeardownTimeout = 2 * time.Second
+
+func (a *Agent) waitForRunTeardown(ctx context.Context, id session.SessionID) error {
+	if !a.svc.IsLive(id) {
+		return nil
+	}
+	ticker := time.NewTicker(time.Millisecond)
+	defer ticker.Stop()
+	timer := time.NewTimer(closeRunTeardownTimeout)
+	defer timer.Stop()
+	for a.svc.IsLive(id) {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timer.C:
+			return fmt.Errorf("timed out waiting for cancelled run to finish")
+		case <-ticker.C:
+		}
+	}
+	return nil
 }
 
 // requestPermission issues the outbound session/request_permission, awaits the
@@ -685,13 +698,10 @@ type runApprover interface {
 	Approve(askID string, verdict session.ApprovalVerdict)
 }
 
-// validateCwd enforces ACP's absolute-existing-directory cwd contract, shared by
-// session/new and session/load. ACP contracts cwd as an ABSOLUTE path, and
-// CreateSession -> osfs would silently CREATE a missing dir; we fail loudly
-// instead, so a non-absolute or typo'd/nonexistent cwd is rejected rather than
-// spawning a session rooted at an accidentally-created directory. (os.Root
-// confines tool I/O, so this is input validation, CWE-20, not an escape.) method
-// is the ACP method name for the error prefix.
+// validateCwd enforces only ACP's syntactic absolute-path contract. The Service
+// performs the semantic equality assertion after binding the trusted placement;
+// this adapter must not stat, resolve, select, or construct an environment from
+// the client-supplied value. method is used only for the ACP error prefix.
 func validateCwd(cwd, method string) error {
 	if strings.TrimSpace(cwd) == "" {
 		return newMethodErr(codeInvalidParams, "acp: "+method+": cwd is required (absolute path)")
@@ -699,10 +709,6 @@ func validateCwd(cwd, method string) error {
 	if !filepath.IsAbs(cwd) {
 		return newMethodErr(codeInvalidParams,
 			fmt.Sprintf("acp: %s: cwd %q must be an absolute path", method, cwd))
-	}
-	if info, statErr := os.Stat(cwd); statErr != nil || !info.IsDir() {
-		return newMethodErr(codeInvalidParams,
-			fmt.Sprintf("acp: %s: cwd %q must be an existing directory", method, cwd))
 	}
 	return nil
 }

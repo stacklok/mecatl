@@ -12,12 +12,22 @@ import (
 // reaches inner entities only through the Session aggregate root.
 type SessionID string
 
+// ExternalBinding is an opaque composition-issued identity for process-external
+// session state. The session aggregate persists it without interpretation; the
+// empty value means no external runtime is bound.
+type ExternalBinding string
+
 // State is the session lifecycle state. The state machine is:
 //
-//	idle → running → awaiting → running → completed
+//	idle → running → completed
+//	          ↕ awaiting
+//	          ↕ authorizing
 //
-// with Cancel permitted from any non-terminal state and Fail from any
-// non-terminal state. completed, failed, and cancelled are terminal. Each terminal
+// Awaiting is resumed only through ResumeWith. Authorizing can leave only
+// through ClaimAuthorization, AbortAuthorization, or InterruptAuthorization;
+// generic terminal transitions reject it.
+//
+// Cancel and Fail are otherwise permitted from any non-terminal state. completed, failed, and cancelled are terminal. Each terminal
 // state has its own recovery seam back to idle: Reopen (from completed), Interrupt
 // (from cancelled, also repairing the interrupted turn's history), Recover
 // (from failed, same history repair — issue #51), and Abandon (from running,
@@ -32,6 +42,8 @@ const (
 	StateRunning State = "running"
 	// StateAwaiting means the loop is paused on a permission "ask".
 	StateAwaiting State = "awaiting"
+	// StateAuthorizing means the loop is paused on an external authorization.
+	StateAuthorizing State = "authorizing"
 	// StateCompleted is a terminal success state.
 	StateCompleted State = "completed"
 	// StateFailed is a terminal failure state.
@@ -323,23 +335,10 @@ var (
 	// ErrNoPendingAsk is returned by ResumeWith when the session is not awaiting
 	// approval.
 	ErrNoPendingAsk = errors.New("session: no pending ask to resume")
+	// ErrNoPendingAuthorization is returned when authorization resolution is
+	// requested outside StateAuthorizing.
+	ErrNoPendingAuthorization = errors.New("session: no pending external authorization")
 )
-
-// AdoptionMetadata records the immutable source and request proof for an
-// explicitly adopted legacy session. Ordinary sessions have no adoption metadata.
-type AdoptionMetadata struct {
-	AdoptionSourceID      SessionID `json:"adoption_source_id,omitempty"`
-	AdoptionRequestDigest string    `json:"adoption_request_digest,omitempty"`
-}
-
-// Clone returns an independent copy, preserving nil.
-func (m *AdoptionMetadata) Clone() *AdoptionMetadata {
-	if m == nil {
-		return nil
-	}
-	clone := *m
-	return &clone
-}
 
 // Session is the aggregate root of the Agent Session context. All mutation of
 // the conversation, counters, and lifecycle flows through its intention-revealing
@@ -359,49 +358,46 @@ type Session struct {
 	Limits Limits
 	// Counters are the running totals for stop-condition evaluation.
 	Counters Counters
-	// Usage is the CUMULATIVE token accounting for the logical run. It is the value
-	// the MaxRunTokens budget brake (StopBudget) is evaluated against, so it is
-	// persisted into the snapshot and the brake reads it DIRECTLY (the loop keeps a
-	// separate zero-based per-run delta for the EvResult figure; there is no seed) —
-	// the budget therefore survives reopen/restart instead of re-granting a full
-	// fresh allowance every time the session continues. Mutate it through RecordUsage
-	// (accumulate) or ResetUsage (the explicit fresh-allowance reset). CRITICAL:
-	// unlike Counters, it is NOT cleared by resetToIdle (see the comment there).
+	// tokenUsage is the aggregate-owned canonical durable accounting ledger.
+	// TokenUsageSnapshot returns an owned external view.
+	tokenUsage map[UsageKind]TokenUsage
+	// usageAttribution is the normalized run-scoped provider/model attribution
+	// selected by composition. Empty means a restored or inert session has not
+	// yet lazily derived it from its durable labels.
+	usageAttribution string
+	// Usage is the deprecated lifetime main-token compatibility projection. It always
+	// mirrors TokenUsage[UsageKindMain].Total. Unlike Counters, it is deliberately
+	// NOT cleared by resetToIdle; the sole exception is the explicit ResetUsage
+	// seam, which clears both this mirror and its underlying ledger bucket together.
 	Usage Usage
-	// Workspace is the root directory tools operate against (the session cwd).
-	Workspace string
-	// EnvironmentRef is the resolved execution-environment identity this session
-	// runs against (ADR 0211 phase 3, issue #462). The aggregate STORES it but never
-	// interprets it — the EnvironmentKind/ID pair is opaque here, and resolution to a
-	// live tool.Environment lives entirely in composition (server.Config.
-	// EnvironmentResolver for a non-in-tree Kind). It is the durable identity half of
-	// the Environment seam: persisting it lets a restarted process reattach a live
-	// Environment to the SAME backend (a remote worker, a container) rather than
-	// silently re-deriving one from the workspace/profile. It is a write-once
-	// creation label stamped by the composition root after New (no mutator): for the
-	// in-tree backends the resolved default is `local` (ID = workspace root) for a
-	// filesystem session and `nofs` (empty ID) for a no-fs session. The zero value
-	// {Kind:"", ID:""} is the "unspecified" ref carried by a legacy snapshot or a
-	// session built without a ref; composition stamps it from the first
-	// successfully resolved live Environment so the next ordinary save persists it.
-	// Local/mem/nofs never need a resolver; any other Kind requires one.
+	// EnvironmentRef is the sole durable identity of the execution environment.
+	// It is minted by the placement provider and must be valid before persistence
+	// or execution. Resolution to live capabilities belongs to composition.
 	EnvironmentRef EnvironmentRef
+	// Placement is safe display-only metadata minted by the placement provider.
+	// It is persisted for public inventory projection but never used to bind or
+	// reattach an environment.
+	Placement PlacementMetadata
+	// ExternalBinding is an opaque composition-issued binding to process-external
+	// session state. The aggregate stores and persists it without interpretation.
+	// An empty value means no external runtime is bound.
+	ExternalBinding ExternalBinding
 	// Profile is an opaque tool-surface profile label (e.g. "" for the default
 	// filesystem profile, "no-fs" for the no-filesystem one). The aggregate STORES
-	// it but never interprets it: the meaning lives entirely in the composition
-	// layer, the same inert-label posture as Workspace/ProviderID/ModelID. It is a
-	// write-once creation label set by the composition root after New (no mutator);
-	// persisting it lets a restarted process rebuild the same engine instead of
-	// inferring the profile from the empty-workspace pun.
+	// it but never interprets it: the meaning lives entirely in composition, like
+	// ProviderID and ModelID. It is a write-once creation label set by the
+	// composition root after New (no mutator); persisting it lets a restarted
+	// process rebuild the same tool surface. The exact EnvironmentRef remains the
+	// sole placement identity.
 	Profile string
 	// ProviderID and ModelID are the opaque neutral provider+model selector pair
 	// this session was bound to. The aggregate STORES them but never interprets
 	// them — the ProviderSelector type and all resolution stay in composition; only
-	// these two opaque strings cross into the domain (the same inert-label posture
-	// as Workspace). Persisting them lets a restarted process re-derive the SAME
-	// per-session engine via the factory instead of falling to the default-provider
-	// floor. Write-once creation labels set by the composition root after New (no
-	// mutator). The empty pair means "server default".
+	// these two opaque strings cross into the domain. Persisting them lets a
+	// restarted process re-derive the same per-session engine via the factory
+	// instead of falling to the default-provider floor. They are write-once
+	// creation labels set by composition after New (no mutator). The empty pair
+	// means "server default".
 	ProviderID string
 	ModelID    string
 	// ReasoningEffort is the opaque neutral reasoning-effort token (ADR 0055) this
@@ -435,6 +431,18 @@ type Session struct {
 	// TitleProvenance records whether Title came from the first genuine prompt or
 	// an explicit operator rename. The zero value means legacy/unknown.
 	TitleProvenance TitleProvenance
+	// TitleGeneration is automatic title generation's durable lifecycle. New
+	// sessions default to disabled until composition explicitly enables it.
+	TitleGeneration TitleGenerationState
+	// TitleRevision advances once for each effective durable title metadata
+	// mutation. It is independent of event sequences, environment revisions, and
+	// event-log cursors; zero is the legacy value.
+	TitleRevision uint64
+	// titleSourcePrompts captures only the first three genuine non-empty principal
+	// text prompts at prompt ingress; it never derives candidates from history.
+	titleSourcePrompts []string
+	// titleAttempts records durable title-generation lifecycle attempts.
+	titleAttempts []TitleAttempt
 	// Owner is the verified caller this session is attributed to, or nil when the
 	// session is ownerless (a pre-ship snapshot, or a deployment with no identity
 	// verifier wired). It is a WRITE-ONCE label stamped through RestoreLabels —
@@ -452,9 +460,6 @@ type Session struct {
 	// Relationship carries kind-specific durable lineage. It is empty for main
 	// and legacy unknown sessions.
 	Relationship SessionRelationship
-	// Adoption is non-nil only for the rare explicitly adopted main session, so
-	// ordinary sessions retain the aggregate's hot-path size class.
-	Adoption *AdoptionMetadata
 	// CreatedAt is the creation timestamp.
 	CreatedAt time.Time
 
@@ -468,6 +473,11 @@ type Session struct {
 	authorityBound bool
 	// pending is set iff State == StateAwaiting.
 	pending *PendingAsk
+	// pendingAuthorization is set iff State == StateAuthorizing.
+	pendingAuthorization *PendingAuthorization
+	// pendingWorkspaceEnrollment is safe pre-prompt correlation state. It is
+	// independent of the agent-loop lifecycle and other pending continuations.
+	pendingWorkspaceEnrollment *PendingWorkspaceEnrollment
 	// stop holds the terminal stop reason once the session has stopped.
 	stop StopReason
 	// permanent is the compatibility projection of failureDisposition==Permanent.
@@ -535,18 +545,25 @@ func clampSnapshotRunes(s string, n int) string {
 	return string(r[:n]) + "…"
 }
 
-// New constructs an idle Session with an empty conversation.
-func New(id SessionID, mode PermissionMode, workspace string, limits Limits, createdAt time.Time) *Session {
+// New constructs an idle Session with an empty conversation and an exact
+// durable environment identity. Callers must provide a valid provider-minted
+// reference; persistence and run entry enforce the same invariant.
+func New(id SessionID, mode PermissionMode, ref EnvironmentRef, limits Limits, createdAt time.Time) *Session {
+	if !ref.Valid() {
+		panic("session: New requires a valid environment ref")
+	}
 	return &Session{
-		ID:           id,
-		State:        StateIdle,
-		Mode:         mode,
-		Conversation: &Conversation{},
-		Limits:       limits,
-		Workspace:    workspace,
-		Kind:         SessionKindMain,
-		CreatedAt:    createdAt,
-		incarnation:  NewIncarnationID(),
+		ID:              id,
+		State:           StateIdle,
+		Mode:            mode,
+		Conversation:    &Conversation{},
+		Limits:          limits,
+		tokenUsage:      make(map[UsageKind]TokenUsage),
+		EnvironmentRef:  ref,
+		Kind:            SessionKindMain,
+		TitleGeneration: TitleGenerationDisabled,
+		CreatedAt:       createdAt,
+		incarnation:     NewIncarnationID(),
 	}
 }
 
@@ -556,6 +573,9 @@ func New(id SessionID, mode PermissionMode, workspace string, limits Limits, cre
 // turn limit is already reached it returns ErrIllegalTransition is NOT used;
 // callers should consult StopReason before beginning a turn.
 func (s *Session) BeginTurn() error {
+	if err := s.rejectWhileWorkspaceEnrollmentPending("BeginTurn"); err != nil {
+		return err
+	}
 	if s.State != StateIdle && s.State != StateRunning {
 		return fmt.Errorf("%w: BeginTurn from %q", ErrIllegalTransition, s.State)
 	}
@@ -594,29 +614,43 @@ func (s *Session) RecordToolResults(results []ToolResult) error {
 	return nil
 }
 
+// SetUsageAttribution selects the normalized provider/model attribution for
+// subsequent main usage.
+func (s *Session) SetUsageAttribution(providerID, modelID string) {
+	s.usageAttribution = modelAttribution(providerID, modelID)
+}
+
 // RecordUsage accumulates the token usage of a model call onto the aggregate's
-// cumulative Usage. It is the intention-revealing seam the loop uses instead of
-// poking the public Usage field, mirroring RecordAssistant/RecordToolResults: it
-// is legal ONLY while running (a usage record belongs to an in-flight turn). The
-// loop calls it each turn (alongside its own zero-based per-run delta); the budget
-// brake reads this cumulative value, so the next Save persists the accumulated
-// spend. Unlike the Counters, Usage is deliberately NOT reset by resetToIdle so
-// the MaxRunTokens budget survives reopen/restart (see resetToIdle).
+// canonical main ledger and its deprecated lifetime compatibility mirror. It is
+// the intention-revealing seam the loop uses instead of poking the public Usage
+// field, mirroring RecordAssistant/RecordToolResults: it is legal ONLY while
+// running (a usage record belongs to an in-flight turn). Unlike Counters, Usage
+// is deliberately NOT reset by resetToIdle.
 func (s *Session) RecordUsage(u Usage) error {
 	if s.State != StateRunning {
 		return fmt.Errorf("%w: RecordUsage from %q", ErrIllegalTransition, s.State)
 	}
-	s.Usage = s.Usage.Add(u)
+	attribution := s.usageAttribution
+	if attribution == "" {
+		attribution = modelAttribution(s.ProviderID, s.ModelID)
+		s.usageAttribution = attribution
+	}
+	s.recordTokenUsage(UsageKindMain, attribution, u)
+	s.Usage = s.tokenUsage[UsageKindMain].Total
 	return nil
 }
 
-// ResetUsage zeroes the aggregate's cumulative Usage, granting a fresh
-// MaxRunTokens allowance for the next run. It is the EXPLICIT counterpart to the
-// deliberate non-reset in resetToIdle: because Usage survives Reopen/Interrupt/
-// Recover (so the budget brake bounds the whole logical run across restart), a
-// caller that genuinely wants a fresh budget for a NEW phase of work must say so
-// through this intention-revealing seam rather than poking the public Usage field
-// (the aggregate-mutation discipline RecordUsage established).
+// ResetUsage zeroes the aggregate's cumulative Usage (and its underlying
+// UsageKindMain ledger bucket — RecordUsage re-derives Usage from that bucket,
+// so clearing only the mirror would be silently undone by the next call),
+// granting a fresh MaxRunTokens allowance for the next run. It is the EXPLICIT
+// counterpart to the deliberate non-reset in resetToIdle: because Usage
+// survives Reopen/Interrupt/Recover (so the budget brake bounds the whole
+// logical run across restart), a caller that genuinely wants a fresh budget
+// for a NEW phase of work must say so through this intention-revealing seam
+// rather than poking the public Usage field (the aggregate-mutation
+// discipline RecordUsage established). The UsageKindSessionTitle bucket is
+// untouched — this seam bounds only the main-run budget.
 //
 // It is legal from any NON-running state (idle, completed, or the other terminals)
 // — NOT while running, where it would discard an in-flight turn's spend mid-budget
@@ -627,9 +661,10 @@ func (s *Session) RecordUsage(u Usage) error {
 // the working drive and the synthesis drive (the synthesis spend is then folded
 // into the team outcome separately). Returns ErrIllegalTransition from running.
 func (s *Session) ResetUsage() error {
-	if s.State == StateRunning {
+	if s.State == StateRunning || s.State == StateAuthorizing {
 		return fmt.Errorf("%w: ResetUsage from %q", ErrIllegalTransition, s.State)
 	}
+	delete(s.tokenUsage, UsageKindMain)
 	s.Usage = Usage{}
 	return nil
 }
@@ -652,7 +687,10 @@ func (s *Session) RecordUserPrompt(text string, instructions []Message) error {
 // difference is the recorded user message carries Parts. It is legal from any
 // non-terminal state.
 func (s *Session) RecordUserPromptWithParts(text string, parts []Content, instructions []Message) error {
-	if s.State.IsTerminal() || (s.retryPending && s.State == StateIdle) {
+	if err := s.rejectWhileWorkspaceEnrollmentPending("RecordUserPrompt"); err != nil {
+		return err
+	}
+	if s.State.IsTerminal() || (s.retryPending && s.State == StateIdle) || s.State == StateAuthorizing {
 		return fmt.Errorf("%w: RecordUserPrompt from %q", ErrIllegalTransition, s.State)
 	}
 	for _, m := range instructions {
@@ -694,7 +732,10 @@ func (s *Session) ReplaceHistory(messages []Message) error {
 // The replacement must satisfy ValidateToolPairing so the resulting history is
 // provider-replayable in both directions.
 func (s *Session) ReplaceHistoryAtBoundary(messages []Message) error {
-	if s.State == StateRunning || s.State == StateAwaiting {
+	if err := s.rejectWhileWorkspaceEnrollmentPending("ReplaceHistoryAtBoundary"); err != nil {
+		return err
+	}
+	if s.State == StateRunning || s.State == StateAwaiting || s.State == StateAuthorizing {
 		return fmt.Errorf("%w: ReplaceHistoryAtBoundary from %q", ErrIllegalTransition, s.State)
 	}
 	if err := ValidateToolPairing(messages); err != nil {
@@ -720,6 +761,9 @@ func (s *Session) ReplaceHistoryAtBoundary(messages []Message) error {
 // the conversation is always provider-replayable regardless of what the caller
 // supplies.
 func (s *Session) SeedHistory(messages []Message) error {
+	if err := s.rejectWhileWorkspaceEnrollmentPending("SeedHistory"); err != nil {
+		return err
+	}
 	if s.State != StateIdle {
 		return fmt.Errorf("%w: SeedHistory from %q", ErrIllegalTransition, s.State)
 	}
@@ -769,9 +813,13 @@ func (s *Session) ResumeWith() (PendingAsk, error) {
 }
 
 // Complete marks a successful terminal end of the run. It is legal from any
-// non-terminal state and records StopEndTurn unless a stop reason is already set.
+// non-terminal state except StateAuthorizing and records StopEndTurn unless a
+// stop reason is already set.
 func (s *Session) Complete() error {
-	if s.State.IsTerminal() {
+	if err := s.rejectWhileWorkspaceEnrollmentPending("Complete"); err != nil {
+		return err
+	}
+	if s.State.IsTerminal() || s.State == StateAuthorizing {
 		return fmt.Errorf("%w: Complete from %q", ErrIllegalTransition, s.State)
 	}
 	if s.stop == StopNone {
@@ -784,9 +832,13 @@ func (s *Session) Complete() error {
 }
 
 // Stop marks a successful terminal end carrying an explicit stop reason (e.g. a
-// limit was reached). It is legal from any non-terminal state.
+// limit was reached). It is legal from any non-terminal state except
+// StateAuthorizing.
 func (s *Session) Stop(reason StopReason) error {
-	if s.State.IsTerminal() {
+	if err := s.rejectWhileWorkspaceEnrollmentPending("Stop"); err != nil {
+		return err
+	}
+	if s.State.IsTerminal() || s.State == StateAuthorizing {
 		return fmt.Errorf("%w: Stop from %q", ErrIllegalTransition, s.State)
 	}
 	s.stop = reason
@@ -797,9 +849,12 @@ func (s *Session) Stop(reason StopReason) error {
 }
 
 // Cancel transitions the session to StateCancelled. It is legal from any
-// non-terminal state.
+// non-terminal state except StateAuthorizing.
 func (s *Session) Cancel() error {
-	if s.State.IsTerminal() {
+	if err := s.rejectWhileWorkspaceEnrollmentPending("Cancel"); err != nil {
+		return err
+	}
+	if s.State.IsTerminal() || s.State == StateAuthorizing {
 		return fmt.Errorf("%w: Cancel from %q", ErrIllegalTransition, s.State)
 	}
 	s.stop = StopCancelled
@@ -960,7 +1015,7 @@ func (s *Session) RunID() string {
 }
 
 // Fail transitions the session to StateFailed with StopError. It is legal from
-// any non-terminal state.
+// any non-terminal state except StateAuthorizing.
 //
 // A failed session recovers through Recover (failed→idle, history-repaired —
 // issue #51), so a transient provider failure no longer bricks the session
@@ -970,7 +1025,10 @@ func (s *Session) RunID() string {
 // snapping the kept-tail boundary past leading tool results and self-validating
 // via ValidateToolPairing.
 func (s *Session) Fail() error {
-	if s.State.IsTerminal() {
+	if err := s.rejectWhileWorkspaceEnrollmentPending("Fail"); err != nil {
+		return err
+	}
+	if s.State.IsTerminal() || s.State == StateAuthorizing {
 		return fmt.Errorf("%w: Fail from %q", ErrIllegalTransition, s.State)
 	}
 	s.stop = StopError
@@ -1003,7 +1061,8 @@ func (s *Session) Fail() error {
 // Limits bound EACH prompt's work, matching their single-run meaning rather than
 // silently becoming a session-lifetime cap. A caller that wants a lifetime budget
 // (e.g. a team supervisor bounding total turns across a teammate's life) must
-// enforce it separately. Conversation, Mode, Limits, and Workspace are preserved.
+// enforce it separately. Conversation, Mode, Limits, EnvironmentRef, and Placement
+// are preserved.
 func (s *Session) Reopen() error {
 	if s.State != StateCompleted {
 		return fmt.Errorf("%w: Reopen from %q", ErrIllegalTransition, s.State)
@@ -1181,20 +1240,17 @@ func (s *Session) Abandon() error {
 	return nil
 }
 
-// Rehome repoints the session's workspace root. Legal only from StateIdle (a
-// recovered, not-yet-running session). It keeps the persisted session's recorded
-// workspace consistent with where the resumed run actually executes: the resume
-// path re-forks a fresh checkout and the original worktree is torn down, so
-// without the re-home the re-persisted snapshot would record a dead path.
-//
-// NOTE: the child's prompt cwd is independently sourced from the engine's
-// PromptConfig and is NOT affected by this field (the loop's Workspace fallback
-// only fires when the configured prompt Env.Cwd is empty).
-func (s *Session) Rehome(workspace string) error {
+// Rehome replaces the exact environment identity of an idle delegated session
+// after a fresh child environment has been minted. The live environment used by
+// the caller must carry the same ref.
+func (s *Session) Rehome(ref EnvironmentRef) error {
 	if s.State != StateIdle {
 		return fmt.Errorf("%w: Rehome from %q", ErrIllegalTransition, s.State)
 	}
-	s.Workspace = workspace
+	if !ref.Valid() {
+		return fmt.Errorf("session: Rehome requires a valid environment ref")
+	}
+	s.EnvironmentRef = ref
 	return nil
 }
 
@@ -1212,7 +1268,7 @@ func (s *Session) Rehome(workspace string) error {
 // set_mode while running must defer it (apply on the next prompt). Setting the
 // mode it already has is a no-op success.
 func (s *Session) SetMode(mode PermissionMode) error {
-	if s.State == StateRunning || s.State == StateAwaiting {
+	if s.State == StateRunning || s.State == StateAwaiting || s.State == StateAuthorizing {
 		return fmt.Errorf("%w: SetMode from %q", ErrIllegalTransition, s.State)
 	}
 	s.Mode = mode
@@ -1235,6 +1291,7 @@ func (s *Session) SetTitle(text string) {
 	if s.Title == "" && strings.TrimSpace(text) != "" {
 		s.Title = ClampTitle(text)
 		s.TitleProvenance = TitleProvenanceFirstPrompt
+		s.bumpTitleRevision()
 	}
 }
 
@@ -1246,8 +1303,12 @@ func (s *Session) RenameTitle(text string) error {
 	if title == "" {
 		return fmt.Errorf("session: title must not be blank")
 	}
+	if s.Title == title && s.TitleProvenance == TitleProvenanceOperator {
+		return nil
+	}
 	s.Title = title
 	s.TitleProvenance = TitleProvenanceOperator
+	s.bumpTitleRevision()
 	return nil
 }
 

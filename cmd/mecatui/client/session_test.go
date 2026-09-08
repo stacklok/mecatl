@@ -30,9 +30,9 @@ func TestSnapshotFromReadsState(t *testing.T) {
 // Title field — the footer/heal surface may surface it. Covers the populated,
 // empty, and nil cases (nil-safe via the getter).
 func TestSnapshotFromReadsTitle(t *testing.T) {
-	snap := snapshotFrom(&mecatlv1.Session{Title: "Fix the CI"})
-	if snap.Title != "Fix the CI" {
-		t.Fatalf("Title = %q, want %q", snap.Title, "Fix the CI")
+	snap := snapshotFrom(&mecatlv1.Session{TitleMetadata: &mecatlv1.SessionTitle{Title: "Fix the CI", Provenance: "generated", Revision: 7}})
+	if snap.Title != "Fix the CI" || snap.TitleProvenance != "generated" || snap.TitleRevision != 7 {
+		t.Fatalf("title/provenance/revision = %q/%q/%d, want Fix the CI/generated/7", snap.Title, snap.TitleProvenance, snap.TitleRevision)
 	}
 	empty := snapshotFrom(&mecatlv1.Session{})
 	if empty.Title != "" {

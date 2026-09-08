@@ -7,11 +7,13 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/stacklok/mecatl/engine/adapter/memledger"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/nofs"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/team"
+	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/agents"
 	"github.com/stacklok/mecatl/internal/adapter/memory"
 	"github.com/stacklok/mecatl/internal/adapter/server"
@@ -55,7 +57,7 @@ func noFSTeamWiring(t *testing.T, provider port.LLMProvider, a catalogAssets) (s
 	sup := agent.NewSupervisor(tm, testEnvironment(nofs.New(), nil),
 		func(spec agent.MemberSpec, routedModel string) agent.MemberBuild {
 			return factory(tm, spec, routedModel)
-		})
+		}, agent.WithTeamReadLedgerFactory(func() tool.ReadLedger { return memledger.New() }))
 	return factory, sup, tm
 }
 

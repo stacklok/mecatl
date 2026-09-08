@@ -25,7 +25,9 @@ import "context"
 // or an overlay; the agent never knows (or cares) which. The contract is only:
 //
 //   - the returned child is a fully usable Environment rooted at an isolated
-//     namespace (Workspace + bound runner);
+//     namespace (Workspace + bound runner) with a fresh child-session read
+//     ledger; it never inherits or writes the base Environment's selected
+//     ledger, including when the base selected durable storage;
 //   - writes through the child do NOT affect the base tree;
 //   - cleanup tears the child down (removes the worktree/copy) and is safe to
 //     call exactly once after the child is no longer in use.

@@ -144,7 +144,7 @@ func TestScheduleTool_RegisteredOnlyWhenStoreBacked(t *testing.T) {
 // (jsonlstore → ScheduleStore-backed; memstore → not) + a mockllm engine,
 // mirroring the composition Build wires, WITHOUT the tick loop (the manual
 // FireNow path needs only SetScheduler, done by the caller where relevant).
-func newScheduleTestService(t *testing.T, store port.SessionStore, llm *mockllm.Provider, _ string) *server.Service {
+func newScheduleTestService(t *testing.T, store port.SessionStore, llm *mockllm.Provider, workspace string) *server.Service {
 	t.Helper()
 	engine := agent.NewEngine(agent.Deps{
 		LLM:     llm,
@@ -153,13 +153,20 @@ func newScheduleTestService(t *testing.T, store port.SessionStore, llm *mockllm.
 		Model:   "test-model",
 		Store:   store,
 	})
-	svc, err := server.NewService(server.Config{
-		Engine:              engine,
-		Store:               store,
-		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+	svc, err := newTestServerService(server.Config{
+		Engine:           engine,
+		Store:            store,
+		SharedEngineRoot: workspace,
+
 		Now:                 time.Now,
 		DefaultCapabilities: llm.Capabilities(),
 		Diagnostics:         port.NopDiagnostics{},
+		PlacementProvider: &localPlacementProvider{
+			scope: defaultPlacementScope, root: workspace,
+			workspace:     func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+			runnerForRoot: func(string) tool.CommandRunner { return nil },
+		},
+		PlacementScope: defaultPlacementScope,
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
@@ -196,7 +203,7 @@ func TestScheduleTool_CreateValidatesLikeRESTSeam(t *testing.T) {
 	// --- the happy path rides the seam: a valid cron saves ENABLED with the
 	// cronparse-computed first fire ---
 	const cronExpr = "0 9 * * *"
-	res := execSchedule(t, cat, `{"verb":"create","name":"daily","prompt":"check ci","cron":"`+cronExpr+`","workspace":"`+workspace+`"}`)
+	res := execSchedule(t, cat, `{"verb":"create","name":"daily","prompt":"check ci","cron":"`+cronExpr+`"}`)
 	if res.IsError {
 		t.Fatalf("valid cron create = error %q", res.Content)
 	}
@@ -237,16 +244,16 @@ func TestScheduleTool_CreateValidatesLikeRESTSeam(t *testing.T) {
 			name: "invalid cron grammar",
 			spec: port.ScheduleSpec{
 				Name: "badcron", Prompt: "p", Trigger: port.TriggerSpec{Cron: "not a cron at all"},
-				Workspace: workspace, Mode: session.ModePlan,
+				Mode: session.ModePlan,
 			},
-			toolArgs: `{"verb":"create","name":"badcron2","prompt":"p","cron":"not a cron at all","workspace":"` + workspace + `"}`,
+			toolArgs: `{"verb":"create","name":"badcron2","prompt":"p","cron":"not a cron at all"}`,
 			wantMsg:  "invalid cron expression",
 		},
 		{
 			name: "non-plan non-mutating mode",
 			spec: port.ScheduleSpec{
 				Name: "badmode", Prompt: "p", Trigger: port.TriggerSpec{Cron: cronExpr},
-				Workspace: workspace, Mode: session.ModeDefault, Mutating: false,
+				Mode: session.ModeDefault, Mutating: false,
 			},
 			// The tool pins Mode=plan for a read-leaning create, so the model
 			// cannot mint this spec through the tool at all.
@@ -256,7 +263,7 @@ func TestScheduleTool_CreateValidatesLikeRESTSeam(t *testing.T) {
 			name: "non-plan non-mutating via an unset mode (seam default)",
 			spec: port.ScheduleSpec{
 				Name: "rawmode", Prompt: "p", Trigger: port.TriggerSpec{Cron: cronExpr},
-				Workspace: workspace, Mode: "", Mutating: false,
+				Mode: "", Mutating: false,
 			},
 			// A raw-args injection mints the spec directly (the caller controls
 			// every field): Mode="" resolves to default at the seam, so the
@@ -265,15 +272,6 @@ func TestScheduleTool_CreateValidatesLikeRESTSeam(t *testing.T) {
 			// would reject a stale instant before the mode check, a cascade).
 			toolArgs: "raw",
 			wantMsg:  "must use plan mode",
-		},
-		{
-			name: "empty workspace on a default-profile schedule",
-			spec: port.ScheduleSpec{
-				Name: "nows", Prompt: "p", Trigger: port.TriggerSpec{Cron: cronExpr},
-				Workspace: "", Mode: session.ModePlan,
-			},
-			toolArgs: `{"verb":"create","name":"nows2","prompt":"p","cron":"` + cronExpr + `"}`,
-			wantMsg:  "requires a workspace",
 		},
 	}
 	for _, tc := range rejections {
@@ -386,13 +384,13 @@ func TestScheduleTool_CreateEnforcesPhase2FieldRules(t *testing.T) {
 	// tool that dropped the field would accept the create and go red.
 	cronRetry := port.ScheduleSpec{
 		Name: "cronretry", Prompt: "p", Trigger: port.TriggerSpec{Cron: "0 9 * * *"},
-		Workspace: workspace, Mode: session.ModePlan,
+		Mode:         session.ModePlan,
 		OneShotRetry: true,
 	}
 	if _, err := svc.CreateSchedule(ctx, cronRetry); !errors.Is(err, server.ErrInvalidArgument) {
 		t.Fatalf("CreateSchedule(oneShotRetry on a cron) = %v, want ErrInvalidArgument", err)
 	}
-	res := execSchedule(t, cat, `{"verb":"create","name":"cronretry2","prompt":"p","cron":"0 9 * * *","workspace":"`+workspace+`","one_shot_retry":true}`)
+	res := execSchedule(t, cat, `{"verb":"create","name":"cronretry2","prompt":"p","cron":"0 9 * * *","one_shot_retry":true}`)
 	if !res.IsError {
 		t.Fatalf("tool create oneShotRetry on a cron = %q, want the fail-closed rejection (the field must not be silently dropped)", res.Content)
 	}
@@ -407,7 +405,7 @@ func TestScheduleTool_CreateEnforcesPhase2FieldRules(t *testing.T) {
 	// applies the default of 3 — THROUGH the tool, on the SAVED spec (the
 	// applyScheduleDefaults half of the seam).
 	future := time.Now().Add(2 * time.Hour).UTC().Format(time.RFC3339)
-	res = execSchedule(t, cat, `{"verb":"create","name":"retryme","prompt":"p","one_shot":"`+future+`","workspace":"`+workspace+`","one_shot_retry":true}`)
+	res = execSchedule(t, cat, `{"verb":"create","name":"retryme","prompt":"p","one_shot":"`+future+`","one_shot_retry":true}`)
 	if res.IsError {
 		t.Fatalf("one-shot oneShotRetry create = error %q", res.Content)
 	}
@@ -546,7 +544,7 @@ func TestScheduleTool_FireAndInspectRoundTrip(t *testing.T) {
 	cat := assembleScheduleCatalog(t, svc.ScheduleManager)
 
 	// Create a cron schedule through the tool.
-	res := execSchedule(t, cat, `{"verb":"create","name":"nightly","prompt":"check ci","cron":"@every 1m","workspace":"`+workspace+`"}`)
+	res := execSchedule(t, cat, `{"verb":"create","name":"nightly","prompt":"check ci","cron":"@every 1m"}`)
 	if res.IsError {
 		t.Fatalf("create = error %q", res.Content)
 	}
@@ -639,8 +637,13 @@ func fireFuncForScheduleTest(svc *server.Service) scheduler.FireFunc {
 			limits.MaxToolCalls = 200
 		}
 		fireID := "sched--" + sched.Spec.Name + "-test"
-		sess, err := svc.CreateSessionWithProfile(ctx, sched.Spec.Workspace, mode, limits, server.ProviderSelector{}, server.ProfileDefault,
+		placement, err := svc.ReattachPlacementInScope(ctx, sched.Spec.EnvironmentRef, sched.Spec.PlacementScope)
+		if err != nil {
+			return port.ScheduleFire{ID: fireID, ScheduleName: sched.Spec.Name, FiredAt: now, Stop: session.StopError, Err: err.Error()}, err
+		}
+		sess, err := svc.CreateSessionWithProfile(ctx, mode, limits, server.ProviderSelector{}, server.ProfileDefault,
 			server.WithSessionID(session.SessionID(fireID)),
+			server.WithPlacementBinding(placement),
 			server.WithScheduledRelationship(sched.Spec.Name, sched.Spec.OriginSessionID))
 		if err != nil {
 			return port.ScheduleFire{ID: fireID, ScheduleName: sched.Spec.Name, FiredAt: now, Stop: session.StopError, Err: err.Error()}, err
@@ -692,12 +695,13 @@ func TestScheduleTool_FireOverlapRejected(t *testing.T) {
 	clk := testWallClock{}
 	if err := schedStore.Save(ctx, port.Schedule{
 		Spec: port.ScheduleSpec{
-			Name:      "singleton",
-			Prompt:    "x",
-			Trigger:   port.TriggerSpec{Cron: "@every 1m"},
-			Workspace: workspace,
-			Mode:      session.ModePlan,
-			Singleton: true,
+			Name:           "singleton",
+			Prompt:         "x",
+			Trigger:        port.TriggerSpec{Cron: "@every 1m"},
+			EnvironmentRef: configuredLocalPlacementRef(workspace),
+			PlacementScope: string(defaultPlacementScope),
+			Mode:           session.ModePlan,
+			Singleton:      true,
 		},
 		State: port.ScheduleState{
 			NextFireAt:        clk.Now().Add(time.Hour),
@@ -845,7 +849,7 @@ func TestScheduleTool_SharesStoreWithRESTSurface(t *testing.T) {
 	cat := assembleScheduleCatalog(t, svc.ScheduleManager)
 
 	// Create via the TOOL.
-	res := execSchedule(t, cat, `{"verb":"create","name":"shared","prompt":"p","cron":"@every 1m","workspace":"`+workspace+`"}`)
+	res := execSchedule(t, cat, `{"verb":"create","name":"shared","prompt":"p","cron":"@every 1m"}`)
 	if res.IsError {
 		t.Fatalf("tool create = error %q", res.Content)
 	}
@@ -911,10 +915,11 @@ func TestScheduleTool_SchedulerOnByDefault(t *testing.T) {
 	due := time.Now().Add(100 * time.Millisecond)
 	if err := schedStore.Save(ctx, port.Schedule{
 		Spec: port.ScheduleSpec{
-			Name:      schedName,
-			Prompt:    "say hello from the default-on scheduler",
-			Workspace: workspace,
-			Trigger:   port.TriggerSpec{OneShot: due},
+			Name:           schedName,
+			Prompt:         "say hello from the default-on scheduler",
+			EnvironmentRef: configuredLocalPlacementRef(workspace),
+			PlacementScope: string(defaultPlacementScope),
+			Trigger:        port.TriggerSpec{OneShot: due},
 		},
 		State: port.ScheduleState{NextFireAt: due, Enabled: true},
 	}); err != nil {
@@ -1017,10 +1022,11 @@ func TestScheduleTool_NoSchedulerDisablesTickOnly(t *testing.T) {
 	due := time.Now().Add(100 * time.Millisecond)
 	if err := schedStore.Save(ctx, port.Schedule{
 		Spec: port.ScheduleSpec{
-			Name:      schedName,
-			Prompt:    "must not auto-fire under --no-scheduler",
-			Workspace: workspace,
-			Trigger:   port.TriggerSpec{OneShot: due},
+			Name:           schedName,
+			Prompt:         "must not auto-fire under --no-scheduler",
+			EnvironmentRef: configuredLocalPlacementRef(workspace),
+			PlacementScope: string(defaultPlacementScope),
+			Trigger:        port.TriggerSpec{OneShot: due},
 		},
 		State: port.ScheduleState{NextFireAt: due, Enabled: true},
 	}); err != nil {
@@ -1065,7 +1071,7 @@ func TestScheduleTool_NoSchedulerDisablesTickOnly(t *testing.T) {
 	// the REST handler rides.
 	if _, err := built.Service.CreateSchedule(ctx, port.ScheduleSpec{
 		Name: "manual", Prompt: "p", Trigger: port.TriggerSpec{Cron: "0 9 * * *"},
-		Workspace: workspace, Mode: session.ModePlan,
+		Mode: session.ModePlan,
 	}); err != nil {
 		t.Fatalf("CreateSchedule under --no-scheduler: %v (manual management is independent of the tick loop)", err)
 	}
@@ -1159,8 +1165,8 @@ func TestScheduleTool_CreateRejectsUnknownSelector(t *testing.T) {
 	} {
 		spec := port.ScheduleSpec{
 			Name: "sel-" + strings.ReplaceAll(tc.name, " ", "-"), Prompt: "p",
-			Trigger: port.TriggerSpec{Cron: "0 9 * * *"}, Workspace: workspace,
-			Mode: session.ModePlan, Selector: tc.selector,
+			Trigger: port.TriggerSpec{Cron: "0 9 * * *"},
+			Mode:    session.ModePlan, Selector: tc.selector,
 		}
 		if _, err := svc.CreateSchedule(ctx, spec); !errors.Is(err, server.ErrInvalidArgument) {
 			t.Fatalf("%s: CreateSchedule = %v, want ErrInvalidArgument (fail-closed, like an invalid cron)", tc.name, err)
@@ -1176,12 +1182,12 @@ func TestScheduleTool_CreateRejectsUnknownSelector(t *testing.T) {
 	// SUBSET of the seam would accept it).
 	rawSpec := port.ScheduleSpec{
 		Name: "rawbad", Prompt: "p", Trigger: port.TriggerSpec{Cron: "0 9 * * *"},
-		Workspace: workspace, Mode: session.ModePlan,
+		Mode:     session.ModePlan,
 		Selector: port.ScheduleProviderSelector{ProviderID: "nonexistent", ModelID: "x"},
 	}
 	rawMgr := &rawScheduleManager{inner: svc, spec: rawSpec}
 	rawCat := assembleScheduleCatalog(t, func() port.ScheduleManager { return rawMgr })
-	raw := execSchedule(t, rawCat, `{"verb":"create","name":"rawbad","prompt":"p","cron":"0 9 * * *","workspace":"`+workspace+`"}`)
+	raw := execSchedule(t, rawCat, `{"verb":"create","name":"rawbad","prompt":"p","cron":"0 9 * * *"}`)
 	if !raw.IsError {
 		t.Fatalf("tool create with an unknown selector = %q, want the seam's fail-closed rejection", raw.Content)
 	}
@@ -1194,7 +1200,7 @@ func TestScheduleTool_CreateRejectsUnknownSelector(t *testing.T) {
 
 	// An empty selector (the deployment default) is ALWAYS valid — through
 	// the tool.
-	res := execSchedule(t, cat, `{"verb":"create","name":"defaultsel","prompt":"p","cron":"0 9 * * *","workspace":"`+workspace+`"}`)
+	res := execSchedule(t, cat, `{"verb":"create","name":"defaultsel","prompt":"p","cron":"0 9 * * *"}`)
 	if res.IsError {
 		t.Fatalf("empty-selector create = error %q, want accepted (the deployment default is always valid)", res.Content)
 	}
@@ -1242,7 +1248,7 @@ func TestScheduleTool_CreateEnforcesMinInterval(t *testing.T) {
 	// THROUGH the tool: a tighter-than-floor cadence is rejected, for both
 	// the @every macro and the fixed-field cron form.
 	for _, cron := range []string{"@every 1m", "* * * * *"} {
-		res := execSchedule(t, cat, `{"verb":"create","name":"tootight","prompt":"p","cron":"`+cron+`","workspace":"`+workspace+`"}`)
+		res := execSchedule(t, cat, `{"verb":"create","name":"tootight","prompt":"p","cron":"`+cron+`"}`)
 		if !res.IsError {
 			t.Fatalf("tool create cron %q under a 5m floor = %q, want the fail-closed rejection (the floor is consulted at the create verb)", cron, res.Content)
 		}
@@ -1257,13 +1263,13 @@ func TestScheduleTool_CreateEnforcesMinInterval(t *testing.T) {
 	// Direct against the SHARED seam (the REST create path rides it too).
 	if _, err := built.Service.CreateSchedule(ctx, port.ScheduleSpec{
 		Name: "tight-direct", Prompt: "p", Trigger: port.TriggerSpec{Cron: "@every 30s"},
-		Workspace: workspace, Mode: session.ModePlan,
+		Mode: session.ModePlan,
 	}); !errors.Is(err, server.ErrInvalidArgument) {
 		t.Fatalf("CreateSchedule(@every 30s under a 5m floor) = %v, want ErrInvalidArgument", err)
 	}
 
 	// At/above the floor: accepted through the tool.
-	res := execSchedule(t, cat, `{"verb":"create","name":"okcadence","prompt":"p","cron":"@every 10m","workspace":"`+workspace+`"}`)
+	res := execSchedule(t, cat, `{"verb":"create","name":"okcadence","prompt":"p","cron":"@every 10m"}`)
 	if res.IsError {
 		t.Fatalf("tool create @every 10m under a 5m floor = error %q, want accepted", res.Content)
 	}

@@ -59,7 +59,7 @@ func TestADR_0233_AuthorityEvaluator_VerticalSlice(t *testing.T) {
 	}
 	defer built.Close()
 
-	parent, err := built.Service.CreateSession(ctx, workspace, session.ModeDefault, defaultLimits())
+	parent, err := built.Service.CreateSession(ctx, session.ModeDefault, defaultLimits())
 	if err != nil {
 		built.Close()
 		t.Fatalf("CreateSession: %v", err)
@@ -205,7 +205,7 @@ forbid(principal, action, resource) when { resource.path like "` + filepath.ToSl
 	}
 	defer built.Close()
 
-	parent, err := built.Service.CreateSession(ctx, workspace, session.ModeDefault, defaultLimits())
+	parent, err := built.Service.CreateSession(ctx, session.ModeDefault, defaultLimits())
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -271,7 +271,7 @@ forbid(principal, action, resource) when { resource.path like "` + filepath.ToSl
 	}
 	defer built.Close()
 
-	sess, err := built.Service.CreateSession(ctx, workspace, session.ModeDefault, defaultLimits())
+	sess, err := built.Service.CreateSession(ctx, session.ModeDefault, defaultLimits())
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -316,7 +316,7 @@ func TestADR_0233_AuthorityEvaluator_OwnerlessCompositionUsesLocalEvaluator(t *t
 	}
 	defer built.Close()
 
-	sess, err := built.Service.CreateSession(context.Background(), workspace, session.ModeDefault, defaultLimits())
+	sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, defaultLimits())
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -368,7 +368,7 @@ func TestADR_0233_AuthorityEvaluator_OwnerlessCedarSessionFailsClosed(t *testing
 	}
 	defer built.Close()
 
-	sess, err := built.Service.CreateSession(context.Background(), workspace, session.ModeDefault, defaultLimits())
+	sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, defaultLimits())
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -422,7 +422,7 @@ func assertAuthorityVerticalMetaTarget(ctx context.Context, t *testing.T, worksp
 	if err != nil {
 		t.Fatalf("Build meta setup: %v", err)
 	}
-	parent, err := built.Service.CreateSession(ctx, workspace, session.ModeDefault, defaultLimits())
+	parent, err := built.Service.CreateSession(ctx, session.ModeDefault, defaultLimits())
 	if err != nil {
 		built.Close()
 		t.Fatalf("CreateSession meta setup: %v", err)
@@ -490,7 +490,7 @@ func authoritySnapshotWithNarrowedTools(t *testing.T, source *session.Session, t
 		t.Fatal("cannot narrow an unbound authority")
 	}
 	authority.CapabilitySet.Tools = removeAuthorityTool(tools, removed)
-	narrowed := session.New(source.ID, source.Mode, source.Workspace, source.Limits, source.CreatedAt)
+	narrowed := session.New(source.ID, source.Mode, source.EnvironmentRef, source.Limits, source.CreatedAt)
 	if err := narrowed.RestoreLabels(source.Owner, authority); err != nil {
 		t.Fatalf("stamp narrowed authority snapshot: %v", err)
 	}

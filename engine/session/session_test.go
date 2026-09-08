@@ -9,7 +9,7 @@ import (
 )
 
 func newTestSession(limits Limits) *Session {
-	return New("s1", ModeDefault, "/tmp/ws", limits, time.Unix(0, 0))
+	return New("s1", ModeDefault, EnvironmentRef{Kind: EnvKindLocal, ID: "/tmp/ws", Revision: "in-tree-v1"}, limits, time.Unix(0, 0))
 }
 
 // mustOK fails the test immediately when a session-aggregate transition errors.
@@ -569,16 +569,17 @@ func TestReopenIllegalFromNonCompletedStates(t *testing.T) {
 	}
 }
 
-func TestRehomeFromIdleRepointsWorkspace(t *testing.T) {
+func TestRehomeFromIdleRepointsEnvironment(t *testing.T) {
 	s := newTestSession(Limits{})
 	if s.State != StateIdle {
 		t.Fatalf("precondition: state = %q, want idle", s.State)
 	}
-	if err := s.Rehome("/tmp/fresh-fork"); err != nil {
+	ref := EnvironmentRef{Kind: EnvKindLocal, ID: "/tmp/fresh-fork", Revision: "fork-2"}
+	if err := s.Rehome(ref); err != nil {
 		t.Fatalf("Rehome: %v", err)
 	}
-	if s.Workspace != "/tmp/fresh-fork" {
-		t.Fatalf("after Rehome workspace = %q, want /tmp/fresh-fork", s.Workspace)
+	if s.EnvironmentRef != ref {
+		t.Fatalf("after Rehome ref = %+v, want %+v", s.EnvironmentRef, ref)
 	}
 	if s.State != StateIdle {
 		t.Fatalf("after Rehome state = %q, want idle (unchanged)", s.State)
@@ -599,7 +600,7 @@ func TestRehomeIllegalFromNonIdleStates(t *testing.T) {
 		t.Run(mk.name, func(t *testing.T) {
 			s := newTestSession(Limits{})
 			mk.setup(s)
-			if err := s.Rehome("/tmp/fresh-fork"); !errors.Is(err, ErrIllegalTransition) {
+			if err := s.Rehome(EnvironmentRef{Kind: EnvKindLocal, ID: "/tmp/fresh-fork", Revision: "fork-2"}); !errors.Is(err, ErrIllegalTransition) {
 				t.Fatalf("Rehome from %s: err = %v, want ErrIllegalTransition", mk.name, err)
 			}
 		})
@@ -1451,46 +1452,27 @@ func TestAbandonIsIdempotentAgainstAlreadyRepairedHistory(t *testing.T) {
 	}
 }
 
-// TestResetUsage pins the explicit ResetUsage seam (the aggregate-mutation counterpart
-// to resetToIdle's deliberate Usage-preservation): it zeroes Usage from any NON-running
-// state and is rejected from running (where it would race the loop's RecordUsage and
-// discard an in-flight turn's spend mid-budget). It is the seam the team supervisor's
-// synthesise step uses to grant a budget-stopped lead a fresh allowance.
-func TestResetUsage(t *testing.T) {
-	spend := Usage{InputTokens: 5000, OutputTokens: 1200}
+// TestRecordUsageKeepsLifetimeCompatibilityMirror pins the deprecated Usage
+// projection to the canonical main ledger. It never resets across terminal
+// lifecycle transitions.
+func TestRecordUsageKeepsLifetimeCompatibilityMirror(t *testing.T) {
+	s := newTestSession(Limits{})
+	first := Usage{InputTokens: 5000, OutputTokens: 1200}
+	second := Usage{InputTokens: 300, OutputTokens: 70}
+	mustOK(t, s.BeginTurn())
+	mustOK(t, s.RecordUsage(first))
+	mustOK(t, s.Complete())
+	mustOK(t, s.Reopen())
+	mustOK(t, s.BeginTurn())
+	mustOK(t, s.RecordUsage(second))
 
-	t.Run("idle", func(t *testing.T) {
-		s := newTestSession(Limits{})
-		s.Usage = spend
-		mustOK(t, s.ResetUsage())
-		if s.Usage != (Usage{}) {
-			t.Fatalf("ResetUsage(idle) left Usage = %+v, want zero", s.Usage)
-		}
-	})
-
-	t.Run("completed", func(t *testing.T) {
-		s := newTestSession(Limits{})
-		mustOK(t, s.BeginTurn())
-		mustOK(t, s.RecordUsage(spend))
-		mustOK(t, s.Complete())
-		mustOK(t, s.ResetUsage())
-		if s.Usage != (Usage{}) {
-			t.Fatalf("ResetUsage(completed) left Usage = %+v, want zero", s.Usage)
-		}
-	})
-
-	t.Run("running rejected", func(t *testing.T) {
-		s := newTestSession(Limits{})
-		mustOK(t, s.BeginTurn())
-		mustOK(t, s.RecordUsage(spend))
-		err := s.ResetUsage()
-		if !errors.Is(err, ErrIllegalTransition) {
-			t.Fatalf("ResetUsage from running err = %v, want ErrIllegalTransition", err)
-		}
-		if s.Usage != spend {
-			t.Fatalf("rejected ResetUsage mutated Usage: %+v", s.Usage)
-		}
-	})
+	want := first.Add(second)
+	if s.Usage != want {
+		t.Fatalf("Usage = %+v, want lifetime main total %+v", s.Usage, want)
+	}
+	if got := s.TokenUsageSnapshot()[UsageKindMain].Total; got != want {
+		t.Fatalf("TokenUsageSnapshot()[main].Total = %+v, want %+v", got, want)
+	}
 }
 
 // TestLimitsWithDefaults covers the per-field merge: an all-zero Limits inherits

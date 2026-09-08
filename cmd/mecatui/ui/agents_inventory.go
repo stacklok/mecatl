@@ -219,7 +219,7 @@ func agentMetaLine(a client.Agent) string {
 func agentsInvRowLines(th theme.Theme, agents []client.Agent, budget int) []string {
 	var lines []string
 	for _, a := range agents {
-		lines = append(lines, agentNameStyle(th, a.Color).Render(sanitizeTerminal(a.Name)))
+		lines = append(lines, renderToolCardText(agentNameStyle(th, a.Color), sanitizeTerminal(a.Name), budget))
 		if a.Description != "" {
 			desc := th.Style("toolArgs").Render(indentWrap(sanitizeTerminal(a.Description), budget))
 			lines = append(lines, strings.Split(desc, "\n")...)

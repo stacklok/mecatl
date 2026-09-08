@@ -34,6 +34,37 @@ func TestNewRejectsEmptyAddr(t *testing.T) {
 	}
 }
 
+// TestNewClientConnectsToConfiguredRedis proves NewClient builds a working
+// redis.UniversalClient against the same address/policy NewWithConfig would
+// use, for a caller (the bundled MCP-broker's embedded OAuth auth server)
+// that needs its OWN connection to the SAME managed Redis instance rather
+// than reaching into a Store's internal, rotation-managed client.
+func TestNewClientConnectsToConfiguredRedis(t *testing.T) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("miniredis: %v", err)
+	}
+	t.Cleanup(mr.Close)
+
+	client, err := redisstore.NewClient(redisstore.Config{Addr: mr.Addr(), AllowPlaintext: true})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	defer func() { _ = client.Close() }()
+	if err := client.Ping(context.Background()).Err(); err != nil {
+		t.Fatalf("Ping: %v", err)
+	}
+}
+
+// TestNewClientRejectsEmptyAddr mirrors TestNewRejectsEmptyAddr: NewClient
+// shares NewWithConfig's validateAddr fail-fast, not a silent localhost
+// default.
+func TestNewClientRejectsEmptyAddr(t *testing.T) {
+	if _, err := redisstore.NewClient(redisstore.Config{}); err == nil {
+		t.Fatal("NewClient(Config{}) = nil error, want rejection")
+	}
+}
+
 // TestMecak8sRedisTLS_Scenario2_AuthenticatedTrustedEndpoint proves the
 // Secret-file configuration reaches authenticated TLS Redis and the single Store
 // still persists snapshots, events, and tool-call records. It is entirely

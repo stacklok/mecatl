@@ -547,8 +547,8 @@ func TestClampEffortForProvider_Toolhive(t *testing.T) {
 }
 
 // (12) Status projection: providerStatusProto covers ok/unreachable/
-// unauthorized/empty; openrouter/anthropic produce NO status rows (v1 is
-// toolhive-scoped).
+// unauthorized/empty for intent-driven, Codex, and custom-provider entries;
+// ordinary built-ins such as openrouter/anthropic produce NO status rows.
 func TestProviderStatusProto_ToolhiveScopedOnly(t *testing.T) {
 	reg := &providerRegistry{
 		entries: map[string]providerEntry{

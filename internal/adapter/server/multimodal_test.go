@@ -30,7 +30,7 @@ func TestStartRunContentRecordsMultimodal(t *testing.T) {
 	llm := mockllm.New(mockllm.TextTurn("I see it"))
 	svc := newService(t, llm, allowRules())
 
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{MaxTurns: 2})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{MaxTurns: 2})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -69,7 +69,7 @@ func TestStartRunContentRecordsMultimodal(t *testing.T) {
 
 func TestStartRunContentEmptyRejected(t *testing.T) {
 	svc := newService(t, mockllm.New(), allowRules())
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -82,7 +82,7 @@ func TestStartRunContentEmptyRejected(t *testing.T) {
 func TestStartRunDelegatesToContent(t *testing.T) {
 	llm := mockllm.New(mockllm.TextTurn("ok"))
 	svc := newService(t, llm, allowRules())
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{MaxTurns: 2})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{MaxTurns: 2})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestStartRunContentReopensCompletedSession(t *testing.T) {
 	llm := mockllm.New(mockllm.TextTurn("first"), mockllm.TextTurn("second"))
 	svc := newService(t, llm, allowRules())
 
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{MaxTurns: 2})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{MaxTurns: 2})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -181,7 +181,7 @@ func TestGRPCConverseRejectsBadPart(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	cs, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{Workspace: "/ws"})
+	cs, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -231,7 +231,7 @@ func TestGRPCConverseCarriesMediaPart(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	cs, err := gclient.CreateSession(ctx, &mecatlv1.CreateSessionRequest{Workspace: "/ws"})
+	cs, err := gclient.CreateSession(ctx, &mecatlv1.CreateSessionRequest{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

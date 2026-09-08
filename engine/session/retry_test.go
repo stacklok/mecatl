@@ -26,7 +26,7 @@ func TestRetryVocabularyValidation(t *testing.T) {
 }
 
 func TestRecordFailureMetadataRejectsInvalidVocabulary(t *testing.T) {
-	s := New("invalid", ModeDefault, "/ws", Limits{}, time.Now())
+	s := New("invalid", ModeDefault, EnvironmentRef{Kind: EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, Limits{}, time.Now())
 	if err := s.BeginTurn(); err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +45,7 @@ func TestRecordFailureMetadataRejectsInvalidVocabulary(t *testing.T) {
 }
 
 func TestFailureMetadataGuardAndClear(t *testing.T) {
-	s := New("retry", ModeDefault, "/ws", Limits{}, time.Now())
+	s := New("retry", ModeDefault, EnvironmentRef{Kind: EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, Limits{}, time.Now())
 	if err := s.RecordFailureMetadata(RetryDispositionRetryable, StreamProgressVisible); !errors.Is(err, ErrIllegalTransition) {
 		t.Fatalf("RecordFailureMetadata(idle) = %v, want ErrIllegalTransition", err)
 	}
@@ -85,7 +85,7 @@ func TestFailureMetadataGuardAndClear(t *testing.T) {
 }
 
 func TestFailedStepRetryIntentSurvivesAbandonAndBlocksPrompt(t *testing.T) {
-	s := New("pending", ModeDefault, "/ws", Limits{}, time.Now())
+	s := New("pending", ModeDefault, EnvironmentRef{Kind: EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, Limits{}, time.Now())
 	if err := s.BeginTurn(); err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +116,7 @@ func TestFailedStepRetryIntentSurvivesAbandonAndBlocksPrompt(t *testing.T) {
 }
 
 func TestFailedStepRetrySecondFailureReplacesIntent(t *testing.T) {
-	s := New("second", ModeDefault, "/ws", Limits{}, time.Now())
+	s := New("second", ModeDefault, EnvironmentRef{Kind: EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, Limits{}, time.Now())
 	if err := s.BeginTurn(); err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +147,7 @@ func TestFailedStepRetrySecondFailureReplacesIntent(t *testing.T) {
 }
 
 func TestFailurePermanenceCompatibilitySetsTypedDisposition(t *testing.T) {
-	s := New("legacy", ModeDefault, "/ws", Limits{}, time.Now())
+	s := New("legacy", ModeDefault, EnvironmentRef{Kind: EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, Limits{}, time.Now())
 	if err := s.BeginTurn(); err != nil {
 		t.Fatal(err)
 	}

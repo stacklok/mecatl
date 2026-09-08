@@ -106,12 +106,11 @@ func (f *sessionsLaunchCreator) CreateSession(context.Context, client.ModelSelec
 	return "", client.Capabilities{}, client.ResolvedModel{}, errors.New("CreateSession must not be called")
 }
 
-func (f *sessionsLaunchCreator) CreateSessionInWorkspace(context.Context, string, client.ModelSelection, string) (string, client.Capabilities, client.ResolvedModel, error) {
-	f.createCalls++
-	return "", client.Capabilities{}, client.ResolvedModel{}, errors.New("CreateSessionInWorkspace must not be called")
+func (*sessionsLaunchCreator) ClearSession(context.Context, string, *client.WorktreeSelector) (string, client.SessionSnapshot, error) {
+	return "", client.SessionSnapshot{}, errors.New("ClearSession must not be called")
 }
 
-func (f *sessionsLaunchCreator) CreateSessionWithCarryover(context.Context, string, client.ModelSelection, string) (string, client.Capabilities, client.ResolvedModel, error) {
+func (f *sessionsLaunchCreator) CreateSessionWithCarryover(context.Context, string, client.ModelSelection) (string, client.Capabilities, client.ResolvedModel, error) {
 	f.createCalls++
 	return "", client.Capabilities{}, client.ResolvedModel{}, errors.New("CreateSessionWithCarryover must not be called")
 }
@@ -665,7 +664,7 @@ func flagValueForTest(name string) string {
 	switch name {
 	case "mock", "no-bash", "trust-project", "yolo", "no-memory", "no-store",
 		"no-soul", "approve-soul", "soul-strict", "no-user-model", "user-model-review",
-		"no-commands", "no-skills", "perf", "perf-mcp", "tls", "insecure",
+		"no-commands", "no-skills", "perf", "perf-mcp", "tls", "insecure", "anonymous",
 		"no-alt-screen", "inline", "no-mouse", "no-banner", "list-themes",
 		"subagent-model-router", "help-all", "quiet", "no-prompt-cache":
 		return "" // bool: no value consumed
@@ -746,6 +745,13 @@ func TestAskReviewerFlagsAreUnknownFlagErrors(t *testing.T) {
 				t.Errorf("removed flag --%s should surface as a stdlib unknown-flag error, got: %v", name, err)
 			}
 		})
+	}
+}
+
+func TestNoSavedAuthFlagIsUnknownFlagError(t *testing.T) {
+	_, _, err := parseTransportFlagsTest(t, modeConnect, []string{"--no-saved-auth"})
+	if err == nil || !strings.Contains(err.Error(), "not defined") {
+		t.Fatalf("removed --no-saved-auth error = %v, want unknown flag", err)
 	}
 }
 
@@ -844,12 +850,16 @@ func helpRenderOutForLaunch(t *testing.T, mode transportMode, browseSessions boo
 }
 
 // hasFlagHeader reports whether the rendered help output contains the flag's
-// own header line ("  -<name>" at the start of a line) — distinguishing the
-// flag's own entry from a bare mention of "-<name>" inside prose (e.g. "--mock"
-// appears in the connect help description naming the rejected embedded flags).
+// own header line — distinguishing the flag's own entry from a bare mention in
+// prose. Multi-character names use the conventional -- spelling while aliases
+// retain the single-dash form.
 func hasFlagHeader(out, name string) bool {
+	prefix := "  --"
+	if len(name) == 1 {
+		prefix = "  -"
+	}
 	for _, line := range strings.Split(out, "\n") {
-		rest := strings.TrimPrefix(line, "  -"+name)
+		rest := strings.TrimPrefix(line, prefix+name)
 		if rest == line {
 			continue
 		}
@@ -898,9 +908,12 @@ func TestBareHelpFlagsRealRendererShowsCommonFlags(t *testing.T) {
 		t.Errorf("bare help missing the no-probe note:\n%s", out)
 	}
 	assertCatalogCommandsRendered(t, out)
-	// Embedded flags appear in the bare common help (--mock is common+local).
-	if !hasFlagHeader(out, "mock") {
-		t.Errorf("bare help missing the embedded --mock common flag header:\n%s", out)
+	// Embedded flags appear in the bare common help (--mock is common+local), and
+	// the client-side debug switch is shared by local and connect modes.
+	for _, name := range []string{"mock", "debug"} {
+		if !hasFlagHeader(out, name) {
+			t.Errorf("bare help missing --%s common flag header:\n%s", name, out)
+		}
 	}
 	// Remote-only flags do NOT appear in the bare common help.
 	if hasFlagHeader(out, "auth-token") {
@@ -941,8 +954,11 @@ func TestConnectHelpRealRendererShowsCommonFlags(t *testing.T) {
 	}
 	// Remote flags appear in connect common help (--server is NOT applicable in
 	// connect — connect takes ADDRESS — so it must NOT appear; --auth-token IS).
-	if !hasFlagHeader(out, "auth-token") {
-		t.Errorf("connect help missing remote --auth-token flag header:\n%s", out)
+	// The shared client-side --debug flag appears here too.
+	for _, name := range []string{"auth-token", "anonymous", "debug"} {
+		if !hasFlagHeader(out, name) {
+			t.Errorf("connect help missing remote --%s flag header:\n%s", name, out)
+		}
 	}
 	if hasFlagHeader(out, "mock") {
 		t.Errorf("connect help leaked embedded-only --mock as a flag header:\n%s", out)

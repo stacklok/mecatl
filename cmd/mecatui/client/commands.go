@@ -34,9 +34,9 @@ type CommandsMsg struct {
 	Err      error
 }
 
-// ListCommands lists the available slash commands for workspace ("" => empty).
-func (c *Client) ListCommands(ctx context.Context, workspace string) ([]Command, error) {
-	resp, err := c.svc.ListCommands(ctx, &mecatlv1.ListCommandsRequest{Workspace: workspace})
+// ListCommands lists slash commands for an owned source session.
+func (c *Client) ListCommands(ctx context.Context, sessionID string) ([]Command, error) {
+	resp, err := c.svc.ListCommands(withSessionAffinity(ctx, sessionID), &mecatlv1.ListCommandsRequest{SessionId: sessionID})
 	if err != nil {
 		return nil, err
 	}
@@ -56,14 +56,13 @@ func mapCommands(in []*mecatlv1.Command) []Command {
 // it out keeps the ui injectable with a fake for offline tests; *Client
 // satisfies it.
 type Commander interface {
-	ListCommands(ctx context.Context, workspace string) ([]Command, error)
+	ListCommands(ctx context.Context, sessionID string) ([]Command, error)
 }
 
-// ListCommandsCmd fetches the slash commands for workspace off the update
-// goroutine; the result (success or error) arrives as a CommandsMsg.
-func ListCommandsCmd(ctx context.Context, c Commander, workspace string) tea.Cmd {
+// ListCommandsCmd fetches session-scoped slash commands off the update goroutine.
+func ListCommandsCmd(ctx context.Context, c Commander, sessionID string) tea.Cmd {
 	return func() tea.Msg {
-		cmds, err := c.ListCommands(ctx, workspace)
+		cmds, err := c.ListCommands(ctx, sessionID)
 		if err != nil {
 			return CommandsMsg{Err: err}
 		}

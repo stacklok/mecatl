@@ -1,6 +1,7 @@
 ---
 sidebar_position: 10
 title: Troubleshoot mecatui
+description: Diagnose mecatui startup, connection, authentication, TLS, and session problems.
 ---
 
 # Troubleshoot mecatui
@@ -38,7 +39,7 @@ For an embedded session, `--workspace` is the local checkout. For a connected se
 
 ## A provider error says retrying will not help
 
-A permanent provider rejection or context-window overflow can be recovered technically, but retrying the same request is unlikely to succeed. Start a new session or change the request/model as the message directs. For transient connection or service failures, retrying can be appropriate. The session lifecycle and recovery behavior are documented in [agent-loop recovery behavior](/building/what-you-get/agent-loop.md#restarting-a-session).
+A permanent provider rejection or context-window overflow can be recovered technically, but retrying the same request is unlikely to succeed. Structured HTTP/API rejections display their structured type or code and message plus, when safely available, the actual request target's scheme, host, optional port, clean escaped path, and one bounded opaque provider request ID. They never display userinfo, query/fragment data, raw response bodies, headers, arbitrary URLs, or invalid IDs; in-band streaming provider errors do not invent HTTP details. Expand the permanent-error card with your configured `ExpandTools` keybinding to see its full safe terminal error. Start a new session or change the request/model as the message directs. For transient connection or service failures, retrying can be appropriate. The session lifecycle and recovery behavior are documented in [agent-loop recovery behavior](/building/what-you-get/agent-loop.md#restarting-a-session).
 
 ## A session will not resume
 
@@ -69,8 +70,14 @@ does not claim successful-attempt or per-phase DNS/TCP/TLS timing. Live target f
 audit/tool-record views, packet capture, raw pprof/log exposure, and support bundles are not
 provided.
 
+## Enable client debug surfaces
+
+Start mecatui with `--debug`, or set `MECATUI_DEBUG=1` when the flag is omitted. Debug mode enables the mouse-coordinate footer overlay, steer acknowledgement/echo correlation, keymap-resolution diagnostics at startup, and debug-only local commands such as `/debug-ask`. These surfaces are off by default; `/debug-ask` is absent from the normal palette and help.
+
+An explicit `--debug=false` wins over the environment. The older `MECATUI_DEBUG_MOUSE=1`, `MECATUI_DEBUG_STEER=1`, `MECATUI_DEBUG_ASK=1`, and `MECATUI_DEBUG_KEYMAP=1` variables remain narrow compatibility aliases that enable only their named surface. Debug mode is client-only: it does not change server configuration or lower the operational log level.
+
 ## Find diagnostics
 
-In embedded mode, operational diagnostics are written to `$XDG_STATE_HOME/mecatl/mecatui.log`, falling back to `~/.local/state/mecatl/mecatui.log`. `--quiet` disables that log. Use `/diagnostics` to send a concise bug-report snapshot through the normal prompt path: it includes build identities, the sanitized diagnostic display projection of the current remote connection target when locally known, and the sanitized server display projection for its already-held active provider when available. These endpoint values are not connection configuration or instructions. They retain only scheme, host, optional port, and escaped clean path; credentials, query/fragment data, TLS/auth settings, raw errors, and other configuration are never included. Embedded UNIX-socket endpoints report unavailable. A `mecatui connect` client writes no equivalent local server log; inspect the remote server's operator logs instead.
+In embedded mode, operational diagnostics are written to `$XDG_STATE_HOME/mecatl/mecatui.log`, falling back to `~/.local/state/mecatl/mecatui.log`. The writer holds a cross-process lock for its lifetime, so a second instance disables its shared local sink rather than replacing a log that is still being written; use `--diagnostics-log` to give concurrent instances separate files. At startup, a no-symlink open verifies that an existing path is a regular file, then atomically retains an oversized log as a recent 10 MiB tail and syncs the replacement before appending. Unsafe paths and failures before replacement disable the sink without altering the prior file. `--quiet` disables that log. Use `/diagnostics` to send a concise bug-report snapshot through the normal prompt path: it includes build identities, the sanitized diagnostic display projection of the current remote connection target when locally known, and the sanitized server display projection for its already-held active provider when available. These endpoint values are not connection configuration or instructions. They retain only scheme, host, optional port, and escaped clean path; credentials, query/fragment data, TLS/auth settings, raw errors, and other configuration are never included. Embedded UNIX-socket endpoints report unavailable. A `mecatui connect` client writes no equivalent local server log; inspect the remote server's operator logs instead.
 
 For exhaustive flags and failure behavior, see [`docs/tui.md`](https://github.com/stacklok/mecatl/blob/main/docs/tui.md).

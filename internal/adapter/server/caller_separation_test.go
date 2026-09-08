@@ -9,7 +9,6 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memschedulestore"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
@@ -28,15 +27,15 @@ import (
 // absence from a colliding caller-selected ID.
 func TestCallerSeparation_Scenario1_AtomicCreationBindsVerifiedOwner(t *testing.T) {
 	store := memstore.New()
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine: agent.NewEngine(agent.Deps{
 			LLM:     mockllm.New(),
 			Catalog: tool.NewCatalog(),
 			Policy:  permpolicy.NewPolicy(nil, nil),
 			Model:   "test-model",
 		}),
-		Store:             store,
-		Workspaces:        func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Store: store,
+
 		Now:               func() time.Time { return time.Unix(0, 0) },
 		OwnershipEnforced: true,
 	})
@@ -47,11 +46,11 @@ func TestCallerSeparation_Scenario1_AtomicCreationBindsVerifiedOwner(t *testing.
 	id := session.SessionID("caller-selected-id")
 	alice := &session.Principal{Issuer: "https://idp.example/alice", Subject: "same", GrantType: session.GrantTypeUser}
 	bob := &session.Principal{Issuer: "https://idp.example/bob", Subject: "same", GrantType: session.GrantTypeUser}
-	request := func(ctx context.Context, workspace string) (*session.Session, error) {
-		return svc.CreateSessionWithProfile(ctx, workspace, session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault, server.WithSessionID(id))
+	request := func(ctx context.Context) (*session.Session, error) {
+		return svc.CreateSessionWithProfile(ctx, session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault, server.WithSessionID(id))
 	}
 
-	created, err := request(session.WithPrincipal(context.Background(), alice), "/ws")
+	created, err := request(session.WithPrincipal(context.Background(), alice))
 	if err != nil {
 		t.Fatalf("first create: %v", err)
 	}
@@ -61,7 +60,7 @@ func TestCallerSeparation_Scenario1_AtomicCreationBindsVerifiedOwner(t *testing.
 
 	retry, err := request(session.WithPrincipal(context.Background(), &session.Principal{
 		Issuer: alice.Issuer, Subject: alice.Subject, GrantType: session.GrantTypeClientCredentials, Name: "untrusted display",
-	}), "/ws")
+	}))
 	if err != nil {
 		t.Fatalf("same-owner identical retry: %v", err)
 	}
@@ -69,10 +68,7 @@ func TestCallerSeparation_Scenario1_AtomicCreationBindsVerifiedOwner(t *testing.
 		t.Fatalf("retry = %+v, want the original owned session", retry)
 	}
 
-	if _, err := request(session.WithPrincipal(context.Background(), alice), "/other"); !errors.Is(err, server.ErrInvalidArgument) {
-		t.Fatalf("same owner different immutable request error = %v, want ErrInvalidArgument", err)
-	}
-	if _, err := request(session.WithPrincipal(context.Background(), bob), "/ws"); !errors.Is(err, server.ErrNotFound) {
+	if _, err := request(session.WithPrincipal(context.Background(), bob)); !errors.Is(err, server.ErrNotFound) {
 		t.Fatalf("cross-owner collision error = %v, want ErrNotFound", err)
 	}
 	persisted, err := store.Load(context.Background(), id)
@@ -88,12 +84,13 @@ func callerSeparationFixture(t *testing.T) (*server.Service, *memstore.Store, *m
 	t.Helper()
 	sessions := memstore.New()
 	schedules := memschedulestore.New()
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "test-model"}),
 		Store:  sessions, EventLog: memstore.NewEventLog(),
-		ScheduleManager: server.NewScheduleManager(server.ScheduleManagerConfig{Store: sessions, ScheduleStore: schedules, OwnershipEnforced: true}),
-		Workspaces:      func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		Now:             func() time.Time { return time.Unix(0, 0) }, OwnershipEnforced: true,
+		ScheduleManager:  server.NewScheduleManager(server.ScheduleManagerConfig{Store: sessions, ScheduleStore: schedules, OwnershipEnforced: true}),
+		SharedEngineRoot: "/ws",
+
+		Now: func() time.Time { return time.Unix(0, 0) }, OwnershipEnforced: true,
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
@@ -104,12 +101,12 @@ func callerSeparationFixture(t *testing.T) (*server.Service, *memstore.Store, *m
 }
 
 func callerSchedule(name string) port.ScheduleSpec {
-	return port.ScheduleSpec{Name: name, Prompt: "do work", Workspace: "/ws", Mode: session.ModePlan, Trigger: port.TriggerSpec{OneShot: time.Now().Add(time.Hour)}}
+	return port.ScheduleSpec{Name: name, Prompt: "do work", Mode: session.ModePlan, Trigger: port.TriggerSpec{OneShot: time.Now().Add(time.Hour)}}
 }
 
 func TestCallerSeparation_Scenario1_OwnerCanAccessOwnedResources(t *testing.T) {
 	svc, _, _, alice, _ := callerSeparationFixture(t)
-	sess, err := svc.CreateSession(alice, "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(alice, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -126,7 +123,7 @@ func TestCallerSeparation_Scenario1_OwnerCanAccessOwnedResources(t *testing.T) {
 
 func TestCallerSeparation_Scenario1_OwnerlessResourcesAreNotAdopted(t *testing.T) {
 	svc, sessions, schedules, alice, _ := callerSeparationFixture(t)
-	ownerless := session.New("ownerless", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	ownerless := session.New("ownerless", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	if err := sessions.Save(context.Background(), ownerless); err != nil {
 		t.Fatalf("save ownerless session: %v", err)
 	}
@@ -151,34 +148,34 @@ func TestCallerSeparation_Scenario1_OwnerlessResourcesAreNotAdopted(t *testing.T
 
 func TestCallerSeparation_Scenario1_ForkAndCarryoverAuthorizeSource(t *testing.T) {
 	svc, sessions, _, alice, bob := callerSeparationFixture(t)
-	source, err := svc.CreateSession(alice, "/ws", session.ModeDefault, session.Limits{})
+	source, err := svc.CreateSession(alice, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession source: %v", err)
 	}
-	if _, err := svc.ForkSession(bob, source.ID, "", ""); !errors.Is(err, server.ErrNotFound) {
+	if _, err := forkSession(svc, bob, source.ID, "", ""); !errors.Is(err, server.ErrNotFound) {
 		t.Fatalf("Bob ForkSession = %v, want ErrNotFound", err)
 	}
-	if _, err := svc.CreateSessionWithProfile(bob, "/ws", session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault, server.WithSourceSession(source.ID)); !errors.Is(err, server.ErrNotFound) {
+	if _, err := svc.CreateSessionWithProfile(bob, session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault, server.WithSourceSession(source.ID)); !errors.Is(err, server.ErrNotFound) {
 		t.Fatalf("Bob carryover = %v, want ErrNotFound", err)
 	}
 	stored, err := sessions.Load(context.Background(), source.ID)
 	if err != nil || stored.Owner == nil || !stored.Owner.SameIdentity(session.PrincipalFromContext(alice)) {
 		t.Fatalf("source changed after denied references: %+v, %v", stored, err)
 	}
-	if _, err := svc.ForkSession(alice, source.ID, "", ""); err != nil {
+	if _, err := forkSession(svc, alice, source.ID, "", ""); err != nil {
 		t.Fatalf("Alice ForkSession: %v", err)
 	}
-	if _, err := svc.CreateSessionWithProfile(alice, "/ws", session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault, server.WithSourceSession(source.ID)); err != nil {
+	if _, err := svc.CreateSessionWithProfile(alice, session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault, server.WithSourceSession(source.ID)); err != nil {
 		t.Fatalf("Alice carryover: %v", err)
 	}
 }
 
 func TestCallerSeparation_Scenario2_ListMetadataIsOwnerScoped(t *testing.T) {
 	svc, _, _, alice, bob := callerSeparationFixture(t)
-	if _, err := svc.CreateSession(alice, "/ws", session.ModeDefault, session.Limits{}); err != nil {
+	if _, err := svc.CreateSession(alice, session.ModeDefault, session.Limits{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.CreateSession(bob, "/ws", session.ModeDefault, session.Limits{}); err != nil {
+	if _, err := svc.CreateSession(bob, session.ModeDefault, session.Limits{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := svc.CreateSchedule(alice, callerSchedule("alice-list")); err != nil {
@@ -199,7 +196,7 @@ func TestCallerSeparation_Scenario2_ListMetadataIsOwnerScoped(t *testing.T) {
 
 func TestCallerSeparation_Scenario2_OwnerMismatchIsNotFound(t *testing.T) {
 	svc, _, _, alice, bob := callerSeparationFixture(t)
-	sess, err := svc.CreateSession(alice, "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(alice, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -213,7 +210,7 @@ func TestCallerSeparation_Scenario2_OwnerMismatchIsNotFound(t *testing.T) {
 
 func TestCallerSeparation_Scenario2_EventStreamsResolveParentOwner(t *testing.T) {
 	svc, _, _, alice, bob := callerSeparationFixture(t)
-	sess, err := svc.CreateSession(alice, "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(alice, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -248,11 +245,12 @@ func TestCallerSeparation_Scenario2_ScheduleNotFoundDoesNotLeakPhysicalKey(t *te
 		t.Fatalf("redisstore.New: %v", err)
 	}
 	sessions := memstore.New()
-	svc, err := server.NewService(server.Config{
-		Engine:            agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "test-model"}),
-		Store:             sessions,
-		ScheduleManager:   server.NewScheduleManager(server.ScheduleManagerConfig{Store: sessions, ScheduleStore: rst.ScheduleStore(), OwnershipEnforced: true}),
-		Workspaces:        func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+	svc, err := newPlacementTestService(server.Config{
+		Engine:           agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "test-model"}),
+		Store:            sessions,
+		ScheduleManager:  server.NewScheduleManager(server.ScheduleManagerConfig{Store: sessions, ScheduleStore: rst.ScheduleStore(), OwnershipEnforced: true}),
+		SharedEngineRoot: "/ws",
+
 		OwnershipEnforced: true,
 	})
 	if err != nil {
@@ -384,12 +382,13 @@ func TestCallerSeparation_Scenario6_CollisionProbeDoesNotLeakOtherOwner(t *testi
 func TestCallerSeparation_Scenario6_OwnerlessNamespaceUnchanged(t *testing.T) {
 	sessions := memstore.New()
 	schedules := memschedulestore.New()
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "test-model"}),
 		Store:  sessions, EventLog: memstore.NewEventLog(),
-		ScheduleManager: server.NewScheduleManager(server.ScheduleManagerConfig{Store: sessions, ScheduleStore: schedules}),
-		Workspaces:      func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		Now:             func() time.Time { return time.Unix(0, 0) },
+		ScheduleManager:  server.NewScheduleManager(server.ScheduleManagerConfig{Store: sessions, ScheduleStore: schedules}),
+		SharedEngineRoot: "/ws",
+
+		Now: func() time.Time { return time.Unix(0, 0) },
 		// OwnershipEnforced left false: the byte-identical no-verifier posture.
 	})
 	if err != nil {
@@ -429,11 +428,12 @@ func redisCallerScheduleFixture(t *testing.T) (*server.Service, port.ScheduleSto
 	}
 	sessions := memstore.New()
 	schedules := rst.ScheduleStore()
-	svc, err := server.NewService(server.Config{
-		Engine:            agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "test-model"}),
-		Store:             sessions,
-		ScheduleManager:   server.NewScheduleManager(server.ScheduleManagerConfig{Store: sessions, ScheduleStore: schedules, OwnershipEnforced: true}),
-		Workspaces:        func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+	svc, err := newPlacementTestService(server.Config{
+		Engine:           agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "test-model"}),
+		Store:            sessions,
+		ScheduleManager:  server.NewScheduleManager(server.ScheduleManagerConfig{Store: sessions, ScheduleStore: schedules, OwnershipEnforced: true}),
+		SharedEngineRoot: "/ws",
+
 		OwnershipEnforced: true,
 	})
 	if err != nil {
@@ -520,11 +520,11 @@ func TestCallerSeparation_Scenario2_GetFireRejectsForeignPhysicalParent(t *testi
 func TestCallerSeparation_Scenario2_OwnerlessGetFireKeepsOrphanCompatibility(t *testing.T) {
 	sessions := memstore.New()
 	schedules := memschedulestore.New()
-	svc, err := server.NewService(server.Config{
-		Engine:          agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "test-model"}),
-		Store:           sessions,
-		ScheduleManager: server.NewScheduleManager(server.ScheduleManagerConfig{Store: sessions, ScheduleStore: schedules}),
-		Workspaces:      func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+	svc, err := newPlacementTestService(server.Config{
+		Engine:           agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "test-model"}),
+		Store:            sessions,
+		ScheduleManager:  server.NewScheduleManager(server.ScheduleManagerConfig{Store: sessions, ScheduleStore: schedules}),
+		SharedEngineRoot: "/ws",
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
@@ -567,7 +567,7 @@ func callerScheduleWithOrigin(name string, origin session.SessionID) port.Schedu
 func TestCallerSeparation_Scenario_ForeignScheduleOriginIsRejected(t *testing.T) {
 	svc, sessions, schedules, alice, bob := callerSeparationFixture(t)
 
-	bobSess, err := svc.CreateSession(bob, "/ws", session.ModeDefault, session.Limits{})
+	bobSess, err := svc.CreateSession(bob, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("Bob CreateSession: %v", err)
 	}
@@ -616,7 +616,7 @@ func TestCallerSeparation_Scenario_ForeignScheduleOriginIsRejected(t *testing.T)
 func TestCallerSeparation_Scenario_ForeignAndMissingScheduleOriginErrorsAreIndistinguishable(t *testing.T) {
 	svc, _, _, alice, bob := callerSeparationFixture(t)
 
-	bobSess, err := svc.CreateSession(bob, "/ws", session.ModeDefault, session.Limits{})
+	bobSess, err := svc.CreateSession(bob, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("Bob CreateSession: %v", err)
 	}
@@ -652,7 +652,7 @@ func TestCallerSeparation_Scenario_ForeignAndMissingScheduleOriginErrorsAreIndis
 func TestCallerSeparation_Scenario_OwnScheduleOriginIsStillAccepted(t *testing.T) {
 	svc, _, _, alice, _ := callerSeparationFixture(t)
 
-	aliceSess, err := svc.CreateSession(alice, "/ws", session.ModeDefault, session.Limits{})
+	aliceSess, err := svc.CreateSession(alice, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("Alice CreateSession: %v", err)
 	}

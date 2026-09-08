@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
+	"github.com/stacklok/mecatl/engine/adapter/memledger"
 	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
@@ -32,12 +33,12 @@ func exec(t *testing.T, tl tool.Tool, in session.ToolCall, ws tool.Workspace) se
 	t.Helper()
 	var env tool.Environment
 	if ws != nil {
-		env = tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: ws.Root()}, ws, nil)
+		env = tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: ws.Root()}, ws, memledger.New(), nil)
 	} else {
 		// WebSearch never touches the workspace; a shell-less mem Environment over a
 		// stub root is an honest stand-in for the call sites that historically passed
 		// nil (issue #462).
-		env = tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "test"}, memfs.NewWorkspace("/"), nil)
+		env = tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "test"}, memfs.NewWorkspace("/"), memledger.New(), nil)
 	}
 	res, err := tl.Execute(context.Background(), in, env)
 	if err != nil {

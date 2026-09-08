@@ -8,6 +8,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"math/big"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,6 +17,8 @@ import (
 	"time"
 
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/internal/adapter/mcpbroker"
+	"github.com/stacklok/mecatl/internal/cliconfig"
 )
 
 func TestBuildTLSConfigWiresReloadLifecycleAndStaticClientCA(t *testing.T) {
@@ -186,6 +189,33 @@ func TestBuildTLSConfigRejectsUnsafeStaticClientCAWithoutPathDisclosure(t *testi
 			}
 			if err == nil || err.Error() != "--client-ca load failed" || strings.Contains(err.Error(), marker) {
 				t.Fatalf("client CA error = %v", err)
+			}
+		})
+	}
+}
+
+func TestBrokerControlsRequireVerifiedCallerIdentity(t *testing.T) {
+	handlers := mcpbroker.HandlerBundle{Callback: http.NotFoundHandler()}
+	for _, tc := range []struct {
+		name    string
+		cfg     config
+		tlsCfg  *tls.Config
+		wantErr bool
+	}{
+		{name: "server TLS only", tlsCfg: &tls.Config{}, wantErr: true},
+		{name: "auth token", cfg: config{authToken: "token"}},
+		{name: "OIDC", cfg: config{oidc: cliconfig.OIDCConfig{Issuer: "https://issuer.example", Audience: "mecatl"}}},
+		{name: "verified mTLS", tlsCfg: &tls.Config{ClientAuth: tls.RequireAndVerifyClientCert}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateBrokerControlOwnership(
+				"0.0.0.0:8081",
+				brokerControlVerifiedIdentity(tc.cfg, tc.tlsCfg),
+				false,
+				handlers,
+			)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("validateBrokerControlOwnership() error = %v, want error = %t", err, tc.wantErr)
 			}
 		})
 	}

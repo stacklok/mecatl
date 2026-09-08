@@ -8,8 +8,10 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
+	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 )
@@ -150,6 +152,18 @@ func MessageEvidenceRef(in Input, ordinal int, callID session.ToolCallID) (Evide
 	}
 	ref := EvidenceRef{SessionID: in.Trajectory.SessionID, Locator: EvidenceMessage, Ordinal: ordinal, ToolCallID: callID}
 	ref.Digest = digestCanonical(projectMessage(message))
+	if in.Manifest != nil && in.Manifest.Protocol == ReflectionEvidenceV1 {
+		entryIndex, entry, ok := manifestEntryForHandle(in.Manifest, "m:"+strconv.Itoa(ordinal))
+		if !ok || entry.OriginalMessage == nil {
+			return EvidenceRef{}, fmt.Errorf("%w: selected message %d is absent from manifest", ErrInvalidEvidence, ordinal)
+		}
+		ref.Protocol = ReflectionEvidenceV1
+		ref.ManifestIndex = entryIndex
+		original := *entry.OriginalMessage
+		ref.OriginalMessage = &original
+		ref.AggregateDigest = in.Manifest.Digest
+		ref.Digest = entry.Digest
+	}
 	return ref, nil
 }
 
@@ -165,16 +179,35 @@ func EventEvidenceRef(in Input, ordinal int, callID session.ToolCallID) (Evidenc
 	seq := event.Seq
 	ref := EvidenceRef{SessionID: in.Trajectory.SessionID, Locator: EvidenceEvent, Ordinal: ordinal, EventSeq: &seq, ToolCallID: callID}
 	ref.Digest = digestCanonical(projectEvent(event))
+	if in.Manifest != nil && in.Manifest.Protocol == ReflectionEvidenceV1 {
+		entryIndex, entry, ok := manifestEntryForHandle(in.Manifest, "e:"+strconv.Itoa(ordinal))
+		if !ok || entry.EventSequence == nil {
+			return EvidenceRef{}, fmt.Errorf("%w: selected event %d is absent from manifest", ErrInvalidEvidence, ordinal)
+		}
+		ref.Protocol = ReflectionEvidenceV1
+		ref.ManifestIndex = entryIndex
+		ref.AggregateDigest = in.Manifest.Digest
+		ref.Digest = entry.Digest
+		sequence := *entry.EventSequence
+		ref.EventSeq = &sequence
+	}
 	return ref, nil
 }
 
 // EvidenceHandle returns the compact model-facing handle for a reference.
 func EvidenceHandle(ref EvidenceRef) string {
+	ordinal := ref.Ordinal
+	if ref.ResolvedProtocol() == ReflectionEvidenceV1 {
+		// ManifestIndex addresses all entry kinds, while model handles are compact
+		// independently within their message/event namespaces. Persisted refs keep
+		// Ordinal as that selected-local namespace index for compatibility with Input.
+		ordinal = ref.Ordinal
+	}
 	switch ref.Locator {
 	case EvidenceMessage:
-		return "m:" + strconv.Itoa(ref.Ordinal)
+		return "m:" + strconv.Itoa(ordinal)
 	case EvidenceEvent:
-		return "e:" + strconv.Itoa(ref.Ordinal)
+		return "e:" + strconv.Itoa(ordinal)
 	default:
 		return ""
 	}
@@ -221,8 +254,10 @@ func ResolveEvidence(in Input, ref EvidenceRef) error {
 	if err != nil {
 		return err
 	}
-	if expected.Digest != ref.Digest || !equalOptionalInt64(expected.EventSeq, ref.EventSeq) {
-		return fmt.Errorf("%w: digest or event sequence mismatch", ErrInvalidEvidence)
+	if expected.Digest != ref.Digest || !equalOptionalInt64(expected.EventSeq, ref.EventSeq) ||
+		expected.ResolvedProtocol() != ref.ResolvedProtocol() || expected.AggregateDigest != ref.AggregateDigest ||
+		expected.ManifestIndex != ref.ManifestIndex || !equalOptionalInt(expected.OriginalMessage, ref.OriginalMessage) {
+		return fmt.Errorf("%w: digest, protocol, coordinate, or event sequence mismatch", ErrInvalidEvidence)
 	}
 	return nil
 }
@@ -276,6 +311,9 @@ func canonicalParts(parts []PartProjection) []session.Content {
 		out[i] = session.Content{
 			BlockKind: session.BlockKind(part.Kind), MIMEType: part.MIMEType,
 			Text: part.Text, Name: part.Name, Title: part.Title, Description: part.Description,
+		}
+		if part.Binary {
+			out[i].Data = []byte{0}
 		}
 	}
 	return out
@@ -372,7 +410,7 @@ func projectParts(parts []session.Content) []PartProjection {
 var projectionCredential = regexp.MustCompile(`(?i)(?:(?:sk-|ghp_|github_pat_|xoxb-|xoxp-)[a-z0-9_-]{20,}|(?:AKIA|ASIA)[A-Z0-9]{16}|[a-z0-9_-]{16,}\.[a-z0-9_-]{16,}\.[a-z0-9_-]{16,})`)
 
 func safeProjectionText(key, value string) string {
-	value = truncateUTF8(tool.CanonicalMemoryText(value), maxProjectionTextBytes)
+	value = boundedCanonicalText(value, maxProjectionTextBytes)
 	value = projectionCredential.ReplaceAllString(value, "[redacted-secret]")
 	lines := strings.Split(value, "\n")
 	for i, line := range lines {
@@ -380,7 +418,27 @@ func safeProjectionText(key, value string) string {
 			lines[i] = "[redacted-secret]"
 		}
 	}
-	return strings.Join(lines, "\n")
+	return governance.NeutraliseFraming(strings.Join(lines, "\n"))
+}
+
+func boundedCanonicalText(value string, limit int) string {
+	var out strings.Builder
+	out.Grow(min(len(value), limit))
+	for _, r := range value {
+		if unicode.Is(unicode.Cf, r) || unicode.IsControl(r) && r != '\n' && r != '\t' {
+			continue
+		}
+		width := utf8.RuneLen(r)
+		if width < 0 {
+			width = len("�")
+			r = '�'
+		}
+		if out.Len()+width > limit {
+			break
+		}
+		out.WriteRune(r)
+	}
+	return out.String()
 }
 
 func projectExisting(existing []ExistingFact) []ExistingFact {
@@ -473,6 +531,22 @@ func eventToolCallIDAt(in Input, ordinal int) session.ToolCallID {
 		return ""
 	}
 	return eventToolCallID(in.Events[ordinal])
+}
+
+func equalOptionalInt(a, b *int) bool {
+	return a == nil && b == nil || a != nil && b != nil && *a == *b
+}
+
+func manifestEntryForHandle(manifest *MaterializationManifest, handle string) (int, ManifestEntry, bool) {
+	if manifest == nil {
+		return 0, ManifestEntry{}, false
+	}
+	for i, entry := range manifest.Entries {
+		if entry.Handle == handle {
+			return i, entry, true
+		}
+	}
+	return 0, ManifestEntry{}, false
 }
 
 func equalOptionalInt64(a, b *int64) bool {

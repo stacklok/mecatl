@@ -16,7 +16,6 @@ import (
 	"google.golang.org/grpc/status"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -44,10 +43,10 @@ func planApprovalService(t *testing.T, llm *mockllm.Provider, rules []governance
 		Interactive: true,
 		Store:       store, // auto-save terminals so the resumed run's StateCompleted persists for the continuation
 	})
-	svc, err := server.NewService(server.Config{
-		Engine:              engine,
-		Store:               store,
-		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+	svc, err := newPlacementTestService(server.Config{
+		Engine: engine,
+		Store:  store,
+
 		Now:                 func() time.Time { return time.Unix(0, 0) },
 		DefaultCapabilities: llm.Capabilities(),
 	})
@@ -161,7 +160,7 @@ func TestApprovePlanAllowOnceFlipsModeAndRunsExecution(t *testing.T) {
 	)
 	svc := planApprovalService(t, llm, allowRules())
 
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModePlan, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModePlan, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -230,7 +229,7 @@ func TestApprovePlanAllowAlwaysFlipsToAcceptEdits(t *testing.T) {
 	)
 	svc := planApprovalService(t, llm, allowRules())
 
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModePlan, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModePlan, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -267,7 +266,7 @@ func TestApprovePlanDenyIterates(t *testing.T) {
 	)
 	svc := planApprovalService(t, llm, allowRules())
 
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModePlan, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModePlan, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -371,7 +370,7 @@ func TestApprovePlanMidRunFailsPrecondition(t *testing.T) {
 	)
 	svc := newService(t, llm, allowRules(), read)
 
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -399,7 +398,7 @@ func TestApprovePlanNotAwaitingFails(t *testing.T) {
 	llm := mockllm.New()
 	svc := planApprovalService(t, llm, allowRules())
 
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModePlan, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModePlan, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -436,17 +435,17 @@ func TestApprovePlanNotPlanAskFails(t *testing.T) {
 		Model:       "test-model",
 		Interactive: true,
 	})
-	svc, err := server.NewService(server.Config{
-		Engine:              engine,
-		Store:               memstore.New(),
-		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+	svc, err := newPlacementTestService(server.Config{
+		Engine: engine,
+		Store:  memstore.New(),
+
 		Now:                 func() time.Time { return time.Unix(0, 0) },
 		DefaultCapabilities: llm.Capabilities(),
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
 	}
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -489,7 +488,7 @@ func TestApprovePlanRecordsProceedMessage(t *testing.T) {
 	)
 	svc := planApprovalService(t, llm, allowRules())
 
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModePlan, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModePlan, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -610,7 +609,7 @@ func createHTTPSessionWithMode(t *testing.T, srv *httptest.Server, mode session.
 	default:
 		modeStr = "default"
 	}
-	body := strings.NewReader(`{"workspace":"/ws","mode":"` + modeStr + `"}`)
+	body := strings.NewReader(`{"mode":"` + modeStr + `"}`)
 	resp, err := http.Post(srv.URL+"/v1/sessions", "application/json", body)
 	if err != nil {
 		t.Fatalf("POST /v1/sessions: %v", err)
@@ -696,8 +695,7 @@ func TestApprovePlanGRPCStreaming(t *testing.T) {
 	defer cancel()
 
 	cs, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{
-		Workspace: "/ws",
-		Mode:      mecatlv1.PermissionMode_PERMISSION_MODE_PLAN,
+		Mode: mecatlv1.PermissionMode_PERMISSION_MODE_PLAN,
 	})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
@@ -764,7 +762,7 @@ func TestApprovePlanGRPCMidRunFailsPrecondition(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	cs, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{Workspace: "/ws"})
+	cs, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -909,10 +907,10 @@ func TestApprovePlanHTTPNotPlanAsk409(t *testing.T) {
 		Model:       "test-model",
 		Interactive: true,
 	})
-	svc, err := server.NewService(server.Config{
-		Engine:              engine,
-		Store:               memstore.New(),
-		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+	svc, err := newPlacementTestService(server.Config{
+		Engine: engine,
+		Store:  memstore.New(),
+
 		Now:                 func() time.Time { return time.Unix(0, 0) },
 		DefaultCapabilities: llm.Capabilities(),
 	})

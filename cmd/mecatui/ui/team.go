@@ -335,14 +335,18 @@ func teamWindow(cursor, total, rows int) (start, end, above, below int) {
 // uncapped overlay the same height-safety the inline card has (cap + roll-up):
 // at 20–32 members the card never grows taller than the terminal and clips its
 // footer or the selected row. height<=0 (size unknown) shows all rows.
-func renderTeamRoster(th theme.Theme, st teamState, b *block, hk helpKeys, height int) string {
+func renderTeamRoster(th theme.Theme, st teamState, b *block, hk helpKeys, height int, widths ...int) string {
 	muted := th.Style("muted")
+	bodyWidth := 0
+	if len(widths) > 0 {
+		bodyWidth = widths[0]
+	}
 	var out strings.Builder
 
-	out.WriteString(th.Style("askTitle").Render(teamRosterHeader(b)))
+	out.WriteString(renderDelegationRows(th.Style("askTitle"), "", teamRosterHeader(b), bodyWidth))
 	out.WriteString("\n")
 	if sub := teamRosterSubhead(b); sub != "" {
-		out.WriteString(muted.Render(sub) + "\n")
+		out.WriteString(renderDelegationRows(muted, "", sub, bodyWidth) + "\n")
 	}
 	out.WriteString("\n")
 
@@ -352,19 +356,19 @@ func renderTeamRoster(th theme.Theme, st teamState, b *block, hk helpKeys, heigh
 	start, end, above, below := teamWindow(cursor, len(order), teamRosterRows(height))
 
 	if above > 0 {
-		out.WriteString(muted.Render(fmt.Sprintf("  · +%d above", above)) + "\n")
+		out.WriteString(renderDelegationRows(muted, "  ", fmt.Sprintf("· +%d above", above), bodyWidth) + "\n")
 	}
 	for row := start; row < end; row++ {
 		ln := &b.teamLanes[order[row]]
 		line := teamRosterLine(th, ln, nameW, b.teamDone)
 		if row == cursor {
-			out.WriteString(th.Style("askButtonActive").Render("› "+line) + "\n")
+			out.WriteString(renderDelegationRows(th.Style("askButtonActive"), "› ", line, bodyWidth) + "\n")
 		} else {
-			out.WriteString(muted.Render("  "+line) + "\n")
+			out.WriteString(renderDelegationRows(muted, "  ", line, bodyWidth) + "\n")
 		}
 	}
 	if below > 0 {
-		out.WriteString(muted.Render(fmt.Sprintf("  · +%d below", below)) + "\n")
+		out.WriteString(renderDelegationRows(muted, "  ", fmt.Sprintf("· +%d below", below), bodyWidth) + "\n")
 	}
 
 	// SHORTER than the old roster hint (the paging chords still work, unnamed): the
@@ -373,7 +377,7 @@ func renderTeamRoster(th theme.Theme, st teamState, b *block, hk helpKeys, heigh
 	// (centerCard does not wrap). Same discipline as the Subagents-tab hint. Every
 	// chord reads the LIVE keyMap markings (hk) so an override propagates (issue
 	// #457); with defaults the hint is byte-identical to the historical literal.
-	out.WriteString("\n" + muted.Render(hk.navUp+"/"+hk.navDown+" select · "+hk.choose+" focus · "+hk.cancelChild+" cancel · "+hk.tasks+" tasks · "+hk.findings+" findings · "+agentsEmptyHint(hk)))
+	out.WriteString("\n" + renderDynamicCardChromeLine(muted, "", hk.navUp+"/"+hk.navDown+" select · "+hk.choose+" focus · "+hk.cancelChild+" cancel · "+hk.tasks+" tasks · "+hk.findings+" findings · "+agentsEmptyHint(hk), bodyWidth))
 	return out.String()
 }
 
@@ -438,17 +442,17 @@ func teamRosterSubhead(b *block) string {
 // header and trace are height-bounded, not width-wrapped. A focused name with no
 // matching lane (the member vanished — defensive) falls back to a muted note. All
 // text is sanitized.
-func renderTeamFocus(th theme.Theme, b *block, member string, hk helpKeys, width, height int) string {
+func renderTeamFocus(th theme.Theme, b *block, member string, hk helpKeys, bodyWidth, height int) string {
 	muted := th.Style("muted")
 	ln := teamFindLane(b, member)
 	if ln == nil {
-		return th.Style("askTitle").Render("agents") + "\n\n" +
-			muted.Render("member "+sanitizeTerminal(member)+" is no longer in the roster") + "\n\n" +
-			muted.Render(focusBackHint(hk))
+		return renderDynamicCardChromeLine(th.Style("askTitle"), "", "agents", bodyWidth) + "\n\n" +
+			renderDynamicCardChromeLine(muted, "", "member "+sanitizeTerminal(member)+" is no longer in the roster", bodyWidth) + "\n\n" +
+			renderDynamicCardChromeLine(muted, "", focusBackHint(hk), bodyWidth)
 	}
 
 	var out strings.Builder
-	out.WriteString(th.Style("askTitle").Render("agent · " + truncate(sanitizeTerminal(ln.name), maxTeamNameWidth)))
+	out.WriteString(th.Style("askTitle").Render(wrapFocusMetadataAtWidth("agent · "+truncate(sanitizeTerminal(ln.name), maxTeamNameWidth), bodyWidth)))
 	out.WriteString("\n")
 	// The member's own lane line (reusing the inline vocabulary) as a sub-header so
 	// the focus pane is self-describing: glyph, mutating cue, name, [lead], state,
@@ -458,10 +462,10 @@ func renderTeamFocus(th theme.Theme, b *block, member string, hk helpKeys, width
 	if ln.ctxWindow > 0 {
 		subhead += " · " + renderContextMeter(th, ln.ctxUsed, ln.ctxWindow)
 	}
-	out.WriteString(muted.Render(subhead))
+	out.WriteString(muted.Render(wrapFocusMetadataAtWidth(subhead, bodyWidth)))
 	out.WriteString("\n\n")
 
-	r := &renderer{th: th, marks: hk} // a width-0 renderer: chips don't wrap, traces render full
+	r := &renderer{th: th, marks: hk, traceWidth: bodyWidth}
 	trace := r.renderTrace(ln.trace)
 	if trace == "" {
 		out.WriteString(muted.Render("(no activity yet)"))
@@ -479,7 +483,7 @@ func renderTeamFocus(th theme.Theme, b *block, member string, hk helpKeys, width
 	// (possibly retried) member does not render it (it recovered).
 	if b.teamDone && ln.stopped && ln.stopReason == teamStopReasonError && ln.cause != "" {
 		out.WriteString("\n")
-		out.WriteString(teamFailureLine(ln, width))
+		out.WriteString(teamFailureLineAtWidth(ln, bodyWidth))
 	}
 
 	// The cancel hint shows only for a CANCELLABLE member: a live team, a lane not
@@ -489,7 +493,7 @@ func renderTeamFocus(th theme.Theme, b *block, member string, hk helpKeys, width
 	if !b.teamDone && !ln.stopped && ln.sessionID != "" {
 		hint = hk.cancelChild + " cancel · " + focusBackHint(hk)
 	}
-	out.WriteString("\n\n" + muted.Render(hint))
+	out.WriteString("\n\n" + renderDynamicCardChromeLine(muted, "", hint, bodyWidth))
 	return out.String()
 }
 
@@ -524,10 +528,14 @@ func capRenderedLines(th theme.Theme, s string, maxLines int) string {
 // subagentFailureLine, so a future caller without the renderTeamFocus gate cannot
 // render a stale cause on a recovered (done) member or a non-error stop.
 func teamFailureLine(ln *teamLane, width int) string {
+	return teamFailureLineAtWidth(ln, focusCardTextWidth(width))
+}
+
+func teamFailureLineAtWidth(ln *teamLane, bodyWidth int) string {
 	if !ln.stopped || ln.stopReason != teamStopReasonError || ln.cause == "" {
 		return ""
 	}
-	return indentWrap("failed: "+truncate(sanitizeTerminal(strings.Join(strings.Fields(ln.cause), " ")), maxSubagentCauseWidth), cardTextWidth(width))
+	return indentWrap("failed: "+truncate(sanitizeTerminal(strings.Join(strings.Fields(ln.cause), " ")), maxSubagentCauseWidth), bodyWidth)
 }
 
 // teamFindLane returns the lane named member off the team block, or nil. Names
@@ -623,18 +631,22 @@ func teamSubViewHint(hk helpKeys, flip string) string {
 // task (glyph · id · state · assignee · deps). An empty list reads as a muted
 // "(no tasks)". All task-derived strings are terminal-sanitized. It mirrors the
 // roster's height-window math so a long task list never clips the footer.
-func renderTeamTasks(th theme.Theme, b *block, hk helpKeys, height int) string {
+func renderTeamTasks(th theme.Theme, b *block, hk helpKeys, height int, widths ...int) string {
 	muted := th.Style("muted")
+	bodyWidth := 0
+	if len(widths) > 0 {
+		bodyWidth = widths[0]
+	}
 	var out strings.Builder
 
-	out.WriteString(th.Style("askTitle").Render("tasks"))
+	out.WriteString(renderDelegationRows(th.Style("askTitle"), "", "tasks", bodyWidth))
 	out.WriteString("\n")
-	out.WriteString(muted.Render(teamTasksSummary(b.teamTasks)))
+	out.WriteString(renderDelegationRows(muted, "", teamTasksSummary(b.teamTasks), bodyWidth))
 	out.WriteString("\n\n")
 
 	if len(b.teamTasks) == 0 {
-		out.WriteString(muted.Render("(no tasks)"))
-		out.WriteString("\n\n" + muted.Render(teamSubViewHint(hk, hk.tasks)))
+		out.WriteString(renderDynamicCardChromeLine(muted, "", "(no tasks)", bodyWidth))
+		out.WriteString("\n\n" + renderDynamicCardChromeLine(muted, "", teamSubViewHint(hk, hk.tasks), bodyWidth))
 		return out.String()
 	}
 
@@ -648,13 +660,13 @@ func renderTeamTasks(th theme.Theme, b *block, hk helpKeys, height int) string {
 	rows := teamTasksRows(height)
 	start, end, _, below := teamWindow(0, len(b.teamTasks), rows)
 	for i := start; i < end; i++ {
-		out.WriteString("  " + muted.Render(taskRow(b.teamTasks[i], byID)) + "\n")
+		out.WriteString(renderDelegationRows(muted, "  ", taskRow(b.teamTasks[i], byID), bodyWidth) + "\n")
 	}
 	if below > 0 {
-		out.WriteString(muted.Render(fmt.Sprintf("  · +%d more", below)) + "\n")
+		out.WriteString(renderDelegationRows(muted, "  ", fmt.Sprintf("· +%d more", below), bodyWidth) + "\n")
 	}
 
-	out.WriteString("\n" + muted.Render(teamSubViewHint(hk, hk.tasks)))
+	out.WriteString("\n" + renderDynamicCardChromeLine(muted, "", teamSubViewHint(hk, hk.tasks), bodyWidth))
 	return out.String()
 }
 
@@ -743,18 +755,22 @@ func teamFindingsRows(height int) int {
 // (member · body). An empty ledger reads as a muted "(no findings)". All
 // finding-derived strings are terminal-sanitized. It mirrors renderTeamTasks's
 // chrome and height-window math so a long ledger never clips the footer.
-func renderTeamFindings(th theme.Theme, b *block, hk helpKeys, height int) string {
+func renderTeamFindings(th theme.Theme, b *block, hk helpKeys, height int, widths ...int) string {
 	muted := th.Style("muted")
+	bodyWidth := 0
+	if len(widths) > 0 {
+		bodyWidth = widths[0]
+	}
 	var out strings.Builder
 
-	out.WriteString(th.Style("askTitle").Render("findings"))
+	out.WriteString(renderDelegationRows(th.Style("askTitle"), "", "findings", bodyWidth))
 	out.WriteString("\n")
-	out.WriteString(muted.Render(teamFindingsSummary(b.teamFindings)))
+	out.WriteString(renderDelegationRows(muted, "", teamFindingsSummary(b.teamFindings), bodyWidth))
 	out.WriteString("\n\n")
 
 	if len(b.teamFindings) == 0 {
-		out.WriteString(muted.Render("(no findings)"))
-		out.WriteString("\n\n" + muted.Render(teamSubViewHint(hk, hk.findings)))
+		out.WriteString(renderDynamicCardChromeLine(muted, "", "(no findings)", bodyWidth))
+		out.WriteString("\n\n" + renderDynamicCardChromeLine(muted, "", teamSubViewHint(hk, hk.findings), bodyWidth))
 		return out.String()
 	}
 
@@ -763,13 +779,13 @@ func renderTeamFindings(th theme.Theme, b *block, hk helpKeys, height int) strin
 	rows := teamFindingsRows(height)
 	start, end, _, below := teamWindow(0, len(b.teamFindings), rows)
 	for i := start; i < end; i++ {
-		out.WriteString("  " + muted.Render(findingRow(b.teamFindings[i])) + "\n")
+		out.WriteString(renderDelegationRows(muted, "  ", findingRow(b.teamFindings[i]), bodyWidth) + "\n")
 	}
 	if below > 0 {
-		out.WriteString(muted.Render(fmt.Sprintf("  · +%d more", below)) + "\n")
+		out.WriteString(renderDelegationRows(muted, "  ", fmt.Sprintf("· +%d more", below), bodyWidth) + "\n")
 	}
 
-	out.WriteString("\n" + muted.Render(teamSubViewHint(hk, hk.findings)))
+	out.WriteString("\n" + renderDynamicCardChromeLine(muted, "", teamSubViewHint(hk, hk.findings), bodyWidth))
 	return out.String()
 }
 

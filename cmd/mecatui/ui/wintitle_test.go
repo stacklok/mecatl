@@ -203,8 +203,8 @@ func TestWindowTitleSeedsSetOnce(t *testing.T) {
 	)
 	// First prompt seeds the title.
 	m = sendText(t, m, "refactor the auth module")
-	if m.sessionTitle != "refactor the auth module" {
-		t.Fatalf("after first prompt sessionTitle = %q, want the sent text", m.sessionTitle)
+	if m.sessionTitle != "refactor the auth module" || m.sessionTitleProvenance != "first-prompt" {
+		t.Fatalf("after first prompt title/provenance = %q/%q, want sent text/first-prompt", m.sessionTitle, m.sessionTitleProvenance)
 	}
 	// A second prompt must NOT overwrite the set-once title.
 	m = sendText(t, m, "now add tests")
@@ -231,9 +231,8 @@ func TestWindowTitleClearedByResetSession(t *testing.T) {
 	}
 }
 
-// TestWindowTitleAdoptsResolvedModelMsgTitle asserts onResolvedModelMsg adopts
-// the msg's Title ONLY when the local title is still empty (self-heal), and
-// drops a stale-session msg (SessionID mismatch).
+// TestWindowTitleAdoptsResolvedModelMsgTitle asserts a current authoritative
+// snapshot replaces the title, while a stale-session msg is dropped.
 func TestWindowTitleAdoptsResolvedModelMsgTitle(t *testing.T) {
 	m, _, _ := newTestModel(t, theme.New("aztec", theme.AztecPalette()))
 	m = applyAll(m,
@@ -242,19 +241,20 @@ func TestWindowTitleAdoptsResolvedModelMsgTitle(t *testing.T) {
 	)
 	// No local title yet → adopt the server's stored title.
 	m = applyAll(m, client.ResolvedModelMsg{
-		SessionID: "sess-heal-0001",
-		Title:     "carryover task from a fork",
+		SessionID:       "sess-heal-0001",
+		Title:           "carryover task from a fork",
+		TitleProvenance: "operator",
 	})
-	if m.sessionTitle != "carryover task from a fork" {
-		t.Fatalf("after self-heal sessionTitle = %q, want the msg title", m.sessionTitle)
+	if m.sessionTitle != "carryover task from a fork" || m.sessionTitleProvenance != "operator" {
+		t.Fatalf("after self-heal title/provenance = %q/%q, want server title/operator", m.sessionTitle, m.sessionTitleProvenance)
 	}
-	// A second msg with a different title must NOT overwrite the set-once.
+	// A newer authoritative snapshot replaces the prior title.
 	m = applyAll(m, client.ResolvedModelMsg{
 		SessionID: "sess-heal-0001",
 		Title:     "different server title",
 	})
-	if m.sessionTitle != "carryover task from a fork" {
-		t.Errorf("after second heal sessionTitle = %q, want the FIRST to stick (set-once)", m.sessionTitle)
+	if m.sessionTitle != "different server title" {
+		t.Errorf("after second heal sessionTitle = %q, want current authoritative title", m.sessionTitle)
 	}
 }
 
@@ -282,7 +282,7 @@ func TestWindowTitleDropsStaleSessionResolvedModelMsg(t *testing.T) {
 func TestWindowTitleContinueSessionAdoptsTitle(t *testing.T) {
 	longTitle := strings.Repeat("z", windowTitleRunes+10)
 	row := client.SessionListItem{
-		ID: "sess-stored-0001", Title: longTitle, Kind: client.SessionKindMain,
+		ID: "sess-stored-0001", Title: longTitle, TitleProvenance: "generated", Kind: client.SessionKindMain,
 		Capabilities: client.SessionInventoryCapabilities{PublicChat: true},
 	}
 	loader := &fakeSessionTranscriptLoader{transcript: client.SessionTranscript{SessionID: row.ID, Complete: true}}
@@ -290,8 +290,8 @@ func TestWindowTitleContinueSessionAdoptsTitle(t *testing.T) {
 	ensureActiveSessions(&m).filtered = []client.SessionListItem{row}
 	mm, cmd, _ := m.chooseSession()
 	m = applyAll(mm.(Model), cmd())
-	if m.sessionTitle != longTitle {
-		t.Errorf("continued sessionTitle = %q, want the full stored title verbatim", m.sessionTitle)
+	if m.sessionTitle != longTitle || m.sessionTitleProvenance != "generated" {
+		t.Errorf("continued title/provenance = %q/%q, want stored title/generated", m.sessionTitle, m.sessionTitleProvenance)
 	}
 	if got := m.windowTitle(); !strings.Contains(got, "…") {
 		t.Errorf("windowTitle() = %q, want it to clamp the over-cap stored title with an ellipsis", got)
@@ -338,9 +338,8 @@ func TestWindowTitleHealRefetchRoundTrip(t *testing.T) {
 		t.Errorf("windowTitle() = %q, want the healed title at idle", got)
 	}
 
-	// 3) A SECOND session-ready (a rebind) refreshes the session metadata. The
-	// refetch must preserve the locally adopted title: titles are set-once so a
-	// later snapshot cannot clobber the user's current tab identity.
+	// 3) A second session-ready refreshes authoritative metadata, including a
+	// title changed by an asynchronous generator while the client was disconnected.
 	before := conv.getSessionCalls()
 	_, cmd = m.Update(client.SessionReadyMsg{SessionID: "sess-fork-0001"})
 	if cmd == nil {
@@ -354,11 +353,11 @@ func TestWindowTitleHealRefetchRoundTrip(t *testing.T) {
 		SessionID: "sess-fork-0001",
 		Title:     "newer server title",
 		State:     "idle",
-		Workspace: "/workspace",
+		Placement: client.Placement{Kind: "local", Label: "workspace"},
 		CreatedAt: 1_700_000_000,
 	})
-	if m.sessionTitle != "forked carryover task" {
-		t.Errorf("metadata refresh overwrote set-once sessionTitle = %q", m.sessionTitle)
+	if m.sessionTitle != "newer server title" {
+		t.Errorf("metadata refresh title = %q, want current authoritative title", m.sessionTitle)
 	}
 }
 

@@ -695,18 +695,14 @@ type SubagentTool struct {
 	// shared base would be the exact hazard isolation exists to prevent.
 	childForker tool.EnvironmentForker
 
-	// sharedChildWS, when non-nil, re-views the parent workspace for a
-	// BASE-SHARING child (a nil-forker read-only child — no shell — and the
-	// mode:"read-write" direct-write child, ADR 0077). Without it the child
-	// runs against the parent ws VERBATIM, so a parent workspace built with
-	// out-of-root relaxation would silently hand the child the main session's
-	// escape reach (the path-escape-posture Scenario 5 boundary: the relax is
-	// main-session-only). The composition root wires it to a NON-relaxed
-	// workspace over the SAME root. A FORKED child (childForker wired) never
-	// consults it — the fork already lands in a non-relaxed constructor. It is
-	// layering-clean: only func(string) tool.Workspace crosses into
-	// engine/agent (same shape as WithChildForker).
-	sharedChildWS func(root string) tool.Workspace
+	// ledgerFactory mints one fresh read-evidence ledger per child Environment.
+	// It is injected so engine/agent never imports a concrete ledger adapter.
+	ledgerFactory func() tool.ReadLedger
+	// sharedChildWS narrows the Workspace authority exposed to a base-sharing child
+	// without replacing its content backend. Composition uses this to remove the
+	// main session's relaxed path-escape reach while preserving ACP/remote/custom
+	// backend identity. Nil keeps the parent Workspace unchanged.
+	sharedChildWS func(tool.Workspace) tool.Workspace
 
 	// childGate bounds how many Subagent children may run CONCURRENTLY — forking AND
 	// forker-less. It is a buffered channel used as a counting semaphore, acquired at
@@ -908,9 +904,8 @@ const defaultStructuredOutputRetries = 2
 // fetching/reading and never reached its conclusion. The salvage asks the child to
 // stop and summarize its partial findings; it explicitly forbids further tool use
 // because the salvage drive is hard-bound to a single turn (see
-// salvageEmptyStop). For a token-budget stop the salvage drive uses a
-// ResetUsage call (mirroring the Supervisor.synthesise precedent) so the one wrap-up
-// turn is not immediately re-blocked by the working run's cumulative spend.
+// salvageEmptyStop). A budget-stopped child gets one internal cleanup allowance
+// measured from its current main usage; that baseline never resets accounting.
 const salvageWrapUpPrompt = "You have reached your budget and must stop now. " +
 	"Do not call any more tools. Summarize concisely what you found so far and give " +
 	"your best partial answer as your final response."
@@ -1042,6 +1037,10 @@ func (p resumePosture) note() string {
 // SubagentOption configures a SubagentTool.
 type SubagentOption func(*SubagentTool)
 
+// testReadLedgerFactory is nil in production. The agent package's tests set it
+// so legacy constructor-focused fixtures need not each duplicate composition wiring.
+var testReadLedgerFactory func() tool.ReadLedger
+
 // WithChildLimits overrides the subagent's stop conditions. Use it to make a
 // child even tighter (or, rarely, looser) than the defaults.
 func WithChildLimits(l session.Limits) SubagentOption {
@@ -1074,26 +1073,23 @@ func WithChildSessionPrefix(p string) SubagentOption {
 // a throwaway git worktree, never the shared parent base — preserving Subagent's
 // read-parallel safety (see ReadOnly). It should be the forker's DEFAULT mode (git
 // worktree: shares the base repo's `.git` ⇒ full history for git log/show). When the
-// forker is nil (the default), the child runs against the parent workspace exactly as
-// before. A fork failure on this path is a tool error, not a silent fallback.
+// forker is nil (the default), the child shares the parent content backend through
+// any composition-supplied authority-narrowing Workspace view. A fork failure on this path is a tool error, not a silent fallback.
 func WithChildForker(f tool.EnvironmentForker) SubagentOption {
 	return func(t *SubagentTool) { t.childForker = f }
 }
 
-// WithSharedChildWorkspace injects the NON-relaxed workspace view a
-// BASE-SHARING child runs against. The composition root wires it whenever the
-// parent workspace may carry out-of-root relaxation (the path-escape-posture
-// auto/yolo main-session relax — docs/acceptance/path-escape-posture.md
-// Scenario 5): a nil-forker read-only child (no shell wired) and the
-// mode:"read-write" direct-write child both run against the parent base, and
-// must see it WITHOUT the relax (the relax is main-session-only). The closure
-// receives the parent workspace root and returns the child's workspace; a nil
-// return falls back to the parent ws unchanged (fail-open to the historical
-// behaviour — composition never returns nil). A FORKED child (childForker
-// wired) never consults it. nil (the default) is byte-identical to the
-// pre-option behaviour.
-func WithSharedChildWorkspace(f func(root string) tool.Workspace) SubagentOption {
-	return func(t *SubagentTool) { t.sharedChildWS = f }
+// WithSubagentReadLedgerFactory injects the mandatory fresh child-ledger factory.
+func WithSubagentReadLedgerFactory(factory func() tool.ReadLedger) SubagentOption {
+	return func(t *SubagentTool) { t.ledgerFactory = factory }
+}
+
+// WithSharedChildWorkspace injects a capability-narrowing view for base-sharing
+// children. The function receives the actual parent Workspace and must preserve
+// its content backend; it exists so child authority can be stricter than a
+// posture-relaxed main-session wrapper without reconstructing storage from Root.
+func WithSharedChildWorkspace(view func(tool.Workspace) tool.Workspace) SubagentOption {
+	return func(t *SubagentTool) { t.sharedChildWS = view }
 }
 
 // WithSubagentStore injects the optional session store each child session is
@@ -1407,6 +1403,9 @@ func NewSubagentTool(childEngine *Engine, opts ...SubagentOption) tool.Tool {
 	}
 	for _, o := range opts {
 		o(t)
+	}
+	if t.ledgerFactory == nil {
+		t.ledgerFactory = testReadLedgerFactory
 	}
 	// Always size the child-concurrency gate (forking AND forker-less): a read-parallel
 	// fan-out of N Subagent calls in one turn each consumes a child session + an LLM slot, so
@@ -2273,23 +2272,20 @@ func (t *SubagentTool) resolveEngineAndLimits(callID session.ToolCallID, args su
 func (t *SubagentTool) prepareChildSession(ctx context.Context, call session.ToolCall, env tool.Environment, args subagentArgs, resuming, writable bool, childID, parentID session.SessionID, parentIncarnation session.IncarnationID, limits session.Limits, forkHistory []session.Message) (child *session.Session, runEnv tool.Environment, cleanup func() error, advisory string, editsSurvived bool, errResult session.ToolResult, ok bool) {
 	noop := func() error { return nil }
 	var resumedChild *session.Session
-	// priorWorkspace is the resumed child's PERSISTED workspace root, captured here
-	// because buildChildSession's Rehome overwrites it. For a read-only child it is the
-	// throwaway worktree its earlier run executed in (long torn down); for a writable
-	// (direct-write, ADR 0077) child it is the real parent root, which still exists.
-	priorWorkspace := ""
+	priorRef := session.EnvironmentRef{}
 	if resuming {
 		loaded, errRes, rok := t.resolveResumeSession(ctx, call.ID, childID, args)
 		if !rok {
 			return nil, tool.Environment{}, noop, "", false, errRes, false
 		}
 		resumedChild = loaded
-		priorWorkspace = loaded.Workspace
+		priorRef = loaded.EnvironmentRef
 	}
 	// A mode:"read-write" child runs DIRECTLY against the parent workspace (no fork —
 	// ADR 0077): its Edit/Write/Bash mutate the real tree in place, exactly as the
 	// main agent does, and git is the rollback layer. So a writable call passes NO
-	// forker (nil) — forkChildEnvironment then returns the parent ws directly. A
+	// forker (nil) — forkChildEnvironment then shares the parent content backend
+	// through any composition-supplied authority-narrowing Workspace view. A
 	// read-only child still uses t.childForker (a throwaway git worktree when it has a
 	// shell, else the shared parent ws — read-parallel-safe via worktree isolation).
 	forker := t.childForker
@@ -2310,8 +2306,8 @@ func (t *SubagentTool) prepareChildSession(ctx context.Context, call session.Too
 	// that worktree, so it may genuinely have applied edits that are now GONE: telling it
 	// otherwise is the exact falsehood resumeWritableNote exists to prevent, inverted.
 	// The path comparison is the honest test and needs no new persisted field.
-	editsSurvived = writable && priorWorkspace != "" && priorWorkspace == env.Workspace().Root()
-	child, errRes, bok := t.buildChildSession(call.ID, childID, parentID, parentIncarnation, resumedChild, runEnv.Workspace().Root(), limits, forkHistory)
+	editsSurvived = writable && priorRef.Valid() && priorRef == env.Ref()
+	child, errRes, bok := t.buildChildSession(call.ID, childID, parentID, parentIncarnation, resumedChild, runEnv, limits, forkHistory)
 	if !bok {
 		_ = cleanupWS()
 		return nil, tool.Environment{}, noop, "", false, errRes, false
@@ -2899,7 +2895,7 @@ func (t *SubagentTool) driveBackground(ctx context.Context, b backgroundChild) {
 		return
 	}
 	defer func() { _ = cleanupWS() }()
-	child, errResult, ok := t.buildChildSession(b.call.ID, b.childID, b.caps.parentSessionID, b.caps.parentIncarnation, b.resumed, runEnv.Workspace().Root(), b.limits, b.forkHistory)
+	child, errResult, ok := t.buildChildSession(b.call.ID, b.childID, b.caps.parentSessionID, b.caps.parentIncarnation, b.resumed, runEnv, b.limits, b.forkHistory)
 	if !ok {
 		endOnError(errResult)
 		return
@@ -3738,9 +3734,8 @@ func driveChild(ctx context.Context, engine *Engine, child *session.Session, run
 // wall-clock timeout) plus an EMPTY clean end (StopEndTurn). The caller pairs it
 // with a blank-finalText guard so a NORMAL StopEndTurn that produced text is never
 // disturbed. StopTimeout follows StopBudget's classification (a clean bounded
-// terminal, recoverable); it is NOT in the ResetUsage arm below (it is a wall-clock
-// deadline, not a token ceiling — it does not stop on the budget, so the carried
-// budget keeps braking the salvage turn, like StopNoProgress/StopEndTurn).
+// terminal, recoverable); it remains subject to the carried token budget like
+// StopNoProgress and StopEndTurn.
 func isEmptyTerminalStop(stop session.StopReason) bool {
 	switch stop {
 	case session.StopMaxTurns, session.StopMaxToolCalls, session.StopBudget,
@@ -3791,12 +3786,9 @@ func digestChildActivity(child *session.Session) string {
 //     through. (StopNoProgress/empty-StopEndTurn are the issue-#152 additions: a
 //     reasoning-only or silently-empty turn discarded the child's work the same way a
 //     limit stop did.)
-//   - For StopBudget ONLY, calls child.ResetUsage() AFTER child.Reopen() (mirroring the
-//     Supervisor.synthesise precedent in engine/agent/teamsupervisor.go) so the one
-//     wrap-up turn is not immediately re-blocked by the working run's cumulative spend.
-//     The salvage turn's own spend is still folded into the returned usage accumulator.
-//     StopNoProgress/StopEndTurn never ResetUsage (they did not stop on the token
-//     ceiling, so the carried budget must keep braking the salvage turn).
+//   - StopBudget uses an internal baseline captured immediately before the
+//     cleanup re-drive. The baseline grants only this bounded cleanup turn and
+//     never resets the child's lifetime accounting.
 //   - Reuses the SAME child session via Reopen() (which resets Counters), mirroring the
 //     structured-output retry seam. A non-recoverable session (failed/cancelled) simply
 //     keeps the empty result.
@@ -3830,10 +3822,7 @@ func salvageEmptyStop(ctx context.Context, engine *Engine, child *session.Sessio
 	// loop-local accumulator, NOT session.Usage). A resumed child whose cumulative
 	// session.Usage already exceeds the ceiling trips StopBudget at the FIRST boundary
 	// before any model call, producing zero per-run spend — there is nothing to salvage,
-	// and running the wrap-up drive would incorrectly grant an extra turn (the ResetUsage
-	// below would clear the prior-run spend, undermining the cloud-native Phase 1 budget
-	// carry guarantee). By contrast a normal budget stop always has per-run spend > 0
-	// because the child made at least one model call before crossing the ceiling.
+	// and a wrap-up drive would immediately observe the same budget.
 	if stop == session.StopBudget && usage.TotalTokens() == 0 {
 		return finalText, usage
 	}
@@ -3841,15 +3830,6 @@ func salvageEmptyStop(ctx context.Context, engine *Engine, child *session.Sessio
 	// so the child is completed here. A failed/cancelled session is not recoverable — bail.
 	if err := child.Reopen(); err != nil {
 		return finalText, usage
-	}
-	// For a token-budget stop, the cumulative session.Usage survives Reopen (cloud-native
-	// Phase 1), so the working run's spend would immediately re-trip the budget ceiling on
-	// the salvage turn's first boundary check. Reset the accumulator so the ONE wrap-up
-	// turn is allowed to run — mirroring Supervisor.synthesise. A reset error is impossible
-	// on this idle path (Reopen just transitioned to idle) but is non-fatal: at worst the
-	// salvage turn re-trips the budget and we fall back to the empty placeholder.
-	if stop == session.StopBudget {
-		_ = child.ResetUsage()
 	}
 	// Pin the salvage to exactly ONE turn, restoring the real limits afterwards.
 	savedLimits := child.Limits
@@ -3860,7 +3840,12 @@ func salvageEmptyStop(ctx context.Context, engine *Engine, child *session.Sessio
 	// tighten-only MaxRunTokensOverride and run-scoped ExtraTools survive the salvage drive.
 	salvageReq := runReq
 	salvageReq.Text = salvageWrapUpPrompt
-	run := engine.Run(ctx, child, runEnv, salvageReq)
+	var run *Run
+	if stop == session.StopBudget {
+		run = engine.runWithCurrentMainUsageBaseline(ctx, child, runEnv, salvageReq)
+	} else {
+		run = engine.Run(ctx, child, runEnv, salvageReq)
+	}
 	text, _, _, u, _ := drainChildObserved(run, emit, string(call.ID), string(childID), posture)
 	// Sum the salvage turn's usage (mirror the structured-output usage accumulation);
 	// the caller's usage already excludes this drive, so there is no double-count.
@@ -4063,8 +4048,8 @@ func (t *SubagentTool) resolveResumeSession(ctx context.Context, callID session.
 // ReadOnly). A fork FAILURE is a tool error (ok=false), NOT a silent fallback to the
 // shared ws: the child has Bash precisely because isolation was available, so running
 // it shared would be the exact hazard. With a nil forker the child runs against the
-// parent ws unchanged (the read-only no-shell path AND the writable direct-write
-// path). The returned cleanup is ALWAYS non-nil (a no-op when nothing was forked) so
+// parent content backend through any configured authority-narrowing Workspace
+// view (the read-only no-shell path AND the writable direct-write path). The returned cleanup is ALWAYS non-nil (a no-op when nothing was forked) so
 // the caller can defer it unconditionally.
 //
 // advisory is the forker's OPTIONAL degraded-fork note (empty in the normal case): a
@@ -4074,25 +4059,38 @@ func (t *SubagentTool) resolveResumeSession(ctx context.Context, callID session.
 // degradation instead of silently reporting "nothing to review".
 func (t *SubagentTool) forkChildEnvironment(ctx context.Context, callID session.ToolCallID, env tool.Environment, label string, forker tool.EnvironmentForker) (runEnv tool.Environment, cleanup func() error, advisory string, errResult session.ToolResult, ok bool) {
 	if forker == nil {
-		// Base-sharing child (a shell-less read-only explorer, or the writable
-		// direct-write child): re-view the parent ws through the NON-relaxed
-		// child workspace when composition wired one — a relaxed parent base
-		// must never hand the child the main session's out-of-root reach (the
-		// path-escape-posture Scenario 5 boundary). A nil view (or no wired
-		// re-view) keeps the historical verbatim parent env. The child
-		// Environment reuses the PARENT's bound runner so a direct-write child's
-		// Bash still observes the parent namespace (issue #462).
+		if t.ledgerFactory == nil {
+			return tool.Environment{}, nil, "", session.NewToolError(callID, "Subagent: child read ledger is not configured"), false
+		}
+		workspace := env.Workspace()
 		if t.sharedChildWS != nil {
-			if childWS := t.sharedChildWS(env.Workspace().Root()); childWS != nil {
-				childEnv := tool.MustEnvironment(env.Ref(), childWS, env.CommandRunner())
-				return childEnv, func() error { return nil }, "", session.ToolResult{}, true
+			if childWorkspace := t.sharedChildWS(workspace); childWorkspace != nil {
+				workspace = childWorkspace
 			}
 		}
-		return env, func() error { return nil }, "", session.ToolResult{}, true
+		ledger := t.ledgerFactory()
+		childEnv, err := tool.NewEnvironment(env.Ref(), workspace, ledger, env.CommandRunner())
+		if err != nil {
+			return tool.Environment{}, nil, "", session.NewToolError(callID, "Subagent: child environment failed: "+err.Error()), false
+		}
+		return childEnv, func() error { return nil }, "", session.ToolResult{}, true
 	}
 	forkEnv, forkCleanup, advisory, err := forker.Fork(ctx, env, label)
 	if err != nil {
 		return tool.Environment{}, nil, "", session.NewToolError(callID, "Subagent: workspace isolation failed: "+err.Error()), false
+	}
+	if t.ledgerFactory == nil {
+		if forkCleanup != nil {
+			_ = forkCleanup()
+		}
+		return tool.Environment{}, nil, "", session.NewToolError(callID, "Subagent: child read ledger is not configured"), false
+	}
+	forkEnv, err = tool.NewEnvironment(forkEnv.Ref(), forkEnv.Workspace(), t.ledgerFactory(), forkEnv.CommandRunner())
+	if err != nil {
+		if forkCleanup != nil {
+			_ = forkCleanup()
+		}
+		return tool.Environment{}, nil, "", session.NewToolError(callID, "Subagent: child environment failed: "+err.Error()), false
 	}
 	if forkCleanup == nil {
 		forkCleanup = func() error { return nil }
@@ -4109,7 +4107,7 @@ func (t *SubagentTool) forkChildEnvironment(ctx context.Context, callID session.
 // torn down, and without the re-home the re-persisted snapshot would record a dead
 // path. (The child's prompt cwd is independently sourced from the engine's PromptConfig
 // and is NOT affected by this field.)
-func (t *SubagentTool) buildChildSession(callID session.ToolCallID, childID, parentID session.SessionID, parentIncarnation session.IncarnationID, resumedChild *session.Session, root string, limits session.Limits, forkHistory []session.Message) (*session.Session, session.ToolResult, bool) {
+func (t *SubagentTool) buildChildSession(callID session.ToolCallID, childID, parentID session.SessionID, parentIncarnation session.IncarnationID, resumedChild *session.Session, env tool.Environment, limits session.Limits, forkHistory []session.Message) (*session.Session, session.ToolResult, bool) {
 	if resumedChild == nil {
 		// When a named agent def pins limits, the child runs under THOSE; otherwise it uses
 		// the Subagent tool's default limits.
@@ -4118,10 +4116,10 @@ func (t *SubagentTool) buildChildSession(callID session.ToolCallID, childID, par
 		if parentID == "" {
 			// Direct Tool.Execute has no parent aggregate identity. Classify that
 			// custom-host path unknown rather than fabricating lineage or granting main.
-			child = session.New(childID, t.childMode, root, limits, t.childEngine.now())
+			child = newChildSessionInEnvironment(childID, t.childMode, env, limits, t.childEngine.now())
 			err = child.RestoreSessionMetadata(session.SessionKindUnknown, session.SessionRelationship{})
 		} else {
-			child, err = session.NewSubagent(childID, t.childMode, root, limits, t.childEngine.now(), parentID, parentIncarnation, callID)
+			child, err = newSubagentSessionInEnvironment(childID, t.childMode, env, limits, t.childEngine.now(), parentID, parentIncarnation, callID)
 		}
 		if err != nil {
 			return nil, session.NewToolError(callID,
@@ -4142,7 +4140,7 @@ func (t *SubagentTool) buildChildSession(callID session.ToolCallID, childID, par
 		}
 		return child, session.ToolResult{}, true
 	}
-	if err := resumedChild.Rehome(root); err != nil {
+	if err := rehomeSessionInEnvironment(resumedChild, env); err != nil {
 		return nil, session.NewToolError(callID,
 			fmt.Sprintf("Subagent: failed to re-home resumed subagent %q: %v", childID, err)), false
 	}

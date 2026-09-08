@@ -47,6 +47,8 @@ import (
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/adapter/agents"
 	"github.com/stacklok/mecatl/internal/adapter/daemonconfig"
+	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
+	"github.com/stacklok/mecatl/internal/adapter/mcpbroker"
 	"github.com/stacklok/mecatl/internal/adapter/mcpperf"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/adapter/skills"
@@ -99,15 +101,15 @@ type config struct {
 	// readyFile is the path of the atomically-published readiness document, written
 	// only after composition and every listener are up. Empty writes nothing.
 	readyFile string
-	// lifetimePipeFD is an INHERITED read-end descriptor whose EOF means the
-	// spawning parent died; the daemon then stops through the ordinary shutdown
-	// path. 0 disables it (0/1/2 are the standard streams, never a lifetime pipe).
-	lifetimePipeFD     int
-	workspace          string
-	workspaceAuthority string
-	model              string
-	defaultProvider    string
-	defaultModel       string
+	// lifetimePipeFD is an INHERITED pipe read end or connected UNIX-domain
+	// stream socketpair endpoint whose EOF means the spawning parent died; the
+	// daemon then stops through the ordinary shutdown path. 0 disables it
+	// (0/1/2 are the standard streams, never a lifetime descriptor).
+	lifetimePipeFD  int
+	workspace       string
+	model           string
+	defaultProvider string
+	defaultModel    string
 	// defaultProviderFlagSet is true when --default-provider was passed explicitly
 	// (set after parse via fs.Visit), so composition lets CLI out-rank the
 	// operator-global settings.yaml models.default_provider: key.
@@ -219,6 +221,7 @@ type config struct {
 	commandSourceURL string
 	eventLogURL      string
 	scheduleStoreURL string
+	learningStoreURL string
 	driverAuthToken  string
 	driverTLS        bool
 	driverTLSCA      string
@@ -949,6 +952,9 @@ func run(mode commandMode, remaining []string) error {
 		return err
 	}
 	defer built.Close()
+	if err := validateBrokerHosting(cfg, built.MCPBroker != nil); err != nil {
+		return err
+	}
 
 	// ACP mode: serve the Agent Client Protocol over stdio instead of the network
 	// daemon. The same engine/service assembly (app.Build) backs it; only the wire
@@ -962,7 +968,7 @@ func run(mode commandMode, remaining []string) error {
 		return serveACP(ctx, built.Service, cfg.storeDir != "" || cfg.sessionStoreURL != "", diag)
 	}
 
-	return serve(ctx, cfg, built.Service, obs.providers.Registry, obs.recorder, slowTurns)
+	return serveBuilt(ctx, cfg, built, obs.providers.Registry, obs.recorder, slowTurns)
 }
 
 // observability holds the handles setupObservability returns and run() threads
@@ -1061,8 +1067,6 @@ const mecatedServerImplementation = "mecated"
 func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, roleScoper func(string) (port.EventSink, port.ToolCallRecorder), metrics *telemetry.Metrics, diag port.Diagnostics) app.Config {
 	out := app.Config{
 		Workspace:                     cfg.workspace,
-		WorkspaceAuthority:            mustWorkspaceAuthority(cfg),
-		AuthoritativeWorkspace:        cfg.workspace,
 		ClientMCPOnCreate:             clientMCPOnCreateForListeners(cfg),
 		Model:                         cfg.model,
 		DefaultProvider:               cfg.defaultProvider,
@@ -1104,6 +1108,7 @@ func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, 
 		MemoryStoreURL:                cfg.memoryStoreURL,
 		EventLogURL:                   cfg.eventLogURL,
 		ScheduleStoreURL:              cfg.scheduleStoreURL,
+		LearningStoreURL:              cfg.learningStoreURL,
 		SessionLeaseURL:               cfg.sessionLeaseURL,
 		SessionLeaseDir:               cfg.sessionLeaseDir,
 		SessionLeaseK8sNamespace:      cfg.sessionLeaseK8sNamespace,
@@ -1152,25 +1157,31 @@ func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, 
 		// and cost knobs are operator-tier YAML only (the `guardrails:` subtree of the
 		// user-global settings.yaml), folded onto Config by foldOperatorGuardrails — a
 		// flag cannot express a rule list.
-		GuardrailsModel:          cfg.guardrailsModel,
-		GuardrailsDisabled:       cfg.guardrailsOff,
-		ModelAliases:             cfg.modelAliases.AsMap(),
-		ModelSlots:               cfg.modelSlots.AsMap(),
-		CommandsDir:              cfg.commandsDir,
-		EnableCommands:           cfg.enableCommands,
-		EnableParallel:           cfg.enableParallel,
-		WebSearchURL:             cfg.websearchURL,
-		WebSearchAPIKey:          cfg.websearchAPIKey,
-		WebSearchAuthHeader:      cfg.websearchAuthHeader,
-		WebSearchQueryParam:      cfg.websearchQueryParam,
-		SearXNGURL:               cfg.searxngURL,
-		BraveAPIKey:              cfg.braveAPIKey,
-		ExaAPIKey:                cfg.exaAPIKey,
-		WebSearchOff:             cfg.websearchOff,
-		ForkPreservedCap:         cfg.forkPreservedCap,
-		EnableTeams:              cfg.enableTeams,
-		MCPServers:               cfg.mcpServers.Servers(),
-		MCPProfileLoader:         cliconfig.NewMCPProfileResolver(cfg.mcpServers, os.LookupEnv),
+		GuardrailsModel:     cfg.guardrailsModel,
+		GuardrailsDisabled:  cfg.guardrailsOff,
+		ModelAliases:        cfg.modelAliases.AsMap(),
+		ModelSlots:          cfg.modelSlots.AsMap(),
+		CommandsDir:         cfg.commandsDir,
+		EnableCommands:      cfg.enableCommands,
+		EnableParallel:      cfg.enableParallel,
+		WebSearchURL:        cfg.websearchURL,
+		WebSearchAPIKey:     cfg.websearchAPIKey,
+		WebSearchAuthHeader: cfg.websearchAuthHeader,
+		WebSearchQueryParam: cfg.websearchQueryParam,
+		SearXNGURL:          cfg.searxngURL,
+		BraveAPIKey:         cfg.braveAPIKey,
+		ExaAPIKey:           cfg.exaAPIKey,
+		WebSearchOff:        cfg.websearchOff,
+		ForkPreservedCap:    cfg.forkPreservedCap,
+		EnableTeams:         cfg.enableTeams,
+		MCPServers:          cfg.mcpServers.Servers(),
+		MCPProfileLoader:    cliconfig.NewMCPProfileResolver(cfg.mcpServers, os.LookupEnv),
+		// Route mcp.mode through the canonical authority resolver. Broker stays
+		// opt-in so an omitted mode and an empty MCP configuration retain the
+		// existing global/no-broker behavior.
+		MCPAuthorityLoader:       cliconfig.NewMCPProfileResolver(cfg.mcpServers, os.LookupEnv),
+		MCPAuthorityDefault:      mcpauthority.Global,
+		MCPBrokerSupported:       true,
 		ProviderCredentialLoader: cliconfig.NewProviderCredentialResolver(cfg.providerFlags, cfg.providerCredentials),
 		ProviderOverrides:        cfg.providerFlags.EndpointOverrides(),
 		MCPResourceTools:         cfg.mcpResourceTools,
@@ -1206,13 +1217,14 @@ func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, 
 		Interactive: !cfg.headless,
 		// Headless is explicit deployment identity. The posture ladder raises
 		// workspace trust only when this is false.
-		Headless:               cfg.headless,
-		Sink:                   sink,
-		ToolCallRecorder:       recorder,
-		MetricsRoleScoper:      roleScoper,
-		ScheduleMetricsEmitter: metrics.EmitSchedule,
-		LearningMetricsEmitter: metrics.EmitLearning,
-		Diagnostics:            diag,
+		Headless:                         cfg.headless,
+		Sink:                             sink,
+		ToolCallRecorder:                 recorder,
+		MetricsRoleScoper:                roleScoper,
+		ScheduleMetricsEmitter:           metrics.EmitSchedule,
+		SessionLoadFailureMetricsEmitter: metrics.EmitSessionLoadFailure,
+		LearningMetricsEmitter:           metrics.EmitLearning,
+		Diagnostics:                      diag,
 		// Plan-mode auto-approve (issue #206 Wave 6a): the OPT-IN operator flag.
 		PlanModeAutoApprove: cfg.planModeAutoApprove,
 		// Steer (steer-while-running, issue #512): the opt-OUT of the default-ON
@@ -1381,48 +1393,11 @@ func (c config) tcpGRPCConfigured() bool {
 	return c.cliExplicit["grpc-addr"] || c.grpcAddrFromFile
 }
 
-// workspaceAuthorityForListeners derives mecated's API workspace policy from both
-// API listeners. Any listener that is a network boundary wins over a local
-// sibling. An explicit operator selection wins over topology.
-//
-// "Network boundary" is listenerIsNetworkBoundary's decision, not a loopback
-// string test: a UNIX-socket gRPC listener and a DISABLED HTTP listener are both
-// strictly narrower than the loopback TCP bind that already grants
-// client-selected authority, so a gRPC-over-socket daemon keeps it. Reading an
-// empty --http-addr as "not loopback" would have demanded --workspace from
-// exactly the local spawned daemon that has no network surface at all.
-//
-// DISABLED is asserted here, per listener, and only for HTTP — serve() skips
-// that listener when --http-addr is empty. gRPC has no disable path, so an empty
-// --grpc-addr is a WILDCARD bind and stays a boundary. The two are not
-// interchangeable: treating an empty --grpc-addr as "no listener" would grant
-// client-selected root selection on an unauthenticated listener reachable from
-// every interface.
-func workspaceAuthorityForListeners(cfg config) (server.WorkspaceAuthority, error) {
-	switch strings.ToLower(strings.TrimSpace(cfg.workspaceAuthority)) {
-	case "":
-		grpcNetwork := listenerIsNetworkBoundary(cfg.grpcAddr, cfg.grpcUnixSocket != "")
-		httpNetwork := cfg.httpAddr != "" && listenerIsNetworkBoundary(cfg.httpAddr, false)
-		if !grpcNetwork && !httpNetwork {
-			return server.WorkspaceAuthorityClientSelected, nil
-		}
-		return server.WorkspaceAuthorityServerAssigned, nil
-	case "client-selected":
-		return server.WorkspaceAuthorityClientSelected, nil
-	case "server-assigned":
-		return server.WorkspaceAuthorityServerAssigned, nil
-	default:
-		return 0, fmt.Errorf("--workspace-authority %q: want client-selected or server-assigned", cfg.workspaceAuthority)
-	}
-}
-
 // clientMCPOnCreateForListeners derives whether this deployment accepts
 // CLIENT-PROVIDED MCP servers on a session-creating API request (issue #821).
 //
 // The rule is a UNIX-SOCKET gRPC listener WITH HTTP DISABLED, and nothing else.
-// That is deliberately STRICTER than workspaceAuthorityForListeners, which
-// accepts a loopback TCP bind. The two look like the same question about
-// different authority, and the difference between them is the whole point:
+// The rule is intentionally UDS-only; loopback TCP is still a network listener.
 //
 //   - A workspace path lends the daemon's FILESYSTEM authority over a root the
 //     operator already chose. Loopback is accepted there as ADR 0237's shipped
@@ -1465,40 +1440,6 @@ func clientMCPOnCreateForListeners(cfg config) bool {
 	return cfg.grpcUnixSocket != "" && cfg.httpAddr == ""
 }
 
-// mustWorkspaceAuthority is used only after validateEffectiveConfig has accepted
-// the command configuration. Keep the fallback server-assigned so a direct caller
-// that bypasses validation never accidentally grants client root selection.
-func mustWorkspaceAuthority(cfg config) server.WorkspaceAuthority {
-	authority, err := workspaceAuthorityForListeners(cfg)
-	if err != nil {
-		return server.WorkspaceAuthorityServerAssigned
-	}
-	return authority
-}
-
-// validateWorkspaceAuthority rejects a network filesystem deployment without a
-// configured root before app.Build or either API listener starts. The server keeps
-// an empty authoritative root valid for file-less deployments: a later composition
-// root (mecak8s) can select server-assigned authority plus no-FS without inventing
-// a container-root workspace.
-func validateWorkspaceAuthority(cfg config) error {
-	authority, err := workspaceAuthorityForListeners(cfg)
-	if err != nil {
-		return err
-	}
-	if authority == server.WorkspaceAuthorityServerAssigned && cfg.workspace == "" {
-		return errors.New("server-assigned filesystem deployment requires --workspace")
-	}
-	// Mirror NewService's authoritative-root rule at the flag layer so a relative or
-	// unclean --workspace on a network listener fails here with a flag-level message,
-	// not two layers down from app.Build. Matches mecak8s, which rejects the same.
-	if authority == server.WorkspaceAuthorityServerAssigned && cfg.workspace != "" &&
-		(!filepath.IsAbs(cfg.workspace) || filepath.Clean(cfg.workspace) != cfg.workspace) {
-		return fmt.Errorf("--workspace %q must be a clean absolute path for a server-assigned deployment", cfg.workspace)
-	}
-	return nil
-}
-
 // validateEffectiveConfig runs the EFFECTIVE-value cross-validation that must
 // see the post-merge config: the perf-MCP loopback/empty-metrics guard and the
 // rate-limit/rate-burst sanity bounds. It is a PURE helper (no I/O, no side
@@ -1507,27 +1448,37 @@ func validateWorkspaceAuthority(cfg config) error {
 // the earlier CLI-only guard is still caught (review fix #1). The rate_limit=0
 // and rate_burst=0 meanings (disable / derive) are preserved: only negative and
 // non-finite (NaN/Inf) values are rejected (review fix #5).
-// buildAPIHandler assembles the authenticated HTTP API handler, wrapping it in
-// the CORS policy when one is configured.
+// buildAPIHandler assembles the authenticated HTTP API handler, mounts the
+// anonymous RFC 9728 protected-resource metadata endpoint in front of it, and
+// wraps both in the CORS policy when one is configured.
 //
-// The ORDER IS LOAD-BEARING: CORS wraps OUTSIDE auth. A browser preflight is an
-// unauthenticated OPTIONS request — the CORS specification forbids sending
-// credentials on it — so a policy installed inside the auth middleware would 401
-// every preflight and cross-origin access would never work at all. Wrapping
-// outside is safe because a preflight is answered from headers alone: it never
-// reaches a handler, never touches a session, and never returns data. The real
-// request that follows still passes through auth normally.
+// The ORDER IS LOAD-BEARING: CORS wraps OUTSIDE auth AND the metadata mount. A
+// browser preflight is an unauthenticated OPTIONS request — the CORS
+// specification forbids sending credentials on it — so a policy installed
+// inside the auth middleware would 401 every preflight and cross-origin access
+// would never work at all. Wrapping outside is safe because a preflight is
+// answered from headers alone: it never reaches a handler, never touches a
+// session, and never returns data. The real request that follows still passes
+// through auth normally. The metadata endpoint is itself unauthenticated by
+// design (RFC 9728), so it must be reachable cross-origin too — a browser-based
+// OIDC client fetching it after a 401 needs the CORS headers on that response
+// as much as on the API's.
 //
-// A nil policy (no --cors-origins, the default) returns the authenticated
-// handler unchanged, so the default path is byte-identical.
-func buildAPIHandler(corsPolicy *server.CORSPolicy, auth *server.Authenticator, svc *server.Service) http.Handler {
-	return corsPolicy.Middleware(auth.Middleware(server.NewHTTPHandler(svc)))
+// A nil policy (no --cors-origins, the default) returns the handler
+// unchanged, so the default path is byte-identical.
+func buildAPIHandler(corsPolicy *server.CORSPolicy, auth *server.Authenticator, svc *server.Service, profile server.ProtectedResourceProfile) http.Handler {
+	return corsPolicy.Middleware(server.WithProtectedResourceMetadata(profile, auth.Middleware(server.NewHTTPHandler(svc))))
+}
+
+func protectedResourceProfile(c cliconfig.OIDCConfig) server.ProtectedResourceProfile {
+	projection, err := c.ProfileProjection()
+	if err != nil || !c.ProtectedResourceEnabled() {
+		return server.ProtectedResourceProfile{}
+	}
+	return projection.ProtectedResourceProfile()
 }
 
 func validateEffectiveConfig(cfg config) error {
-	if err := validateWorkspaceAuthority(cfg); err != nil {
-		return err
-	}
 	if err := validateDeploymentID(cfg.deploymentID); err != nil {
 		return err
 	}
@@ -1611,9 +1562,8 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 	fs.StringVar(&cfg.readyFile, "ready-file", "",
 		"absolute path to write a JSON readiness document to, ATOMICALLY (temp file + rename) and only AFTER composition and every listener are up, so a spawning parent can wait on the path instead of racing a connect loop. Carries the pid, the transport, the bound gRPC/HTTP addresses, and the non-secret compatibility descriptor — never a credential. Empty writes nothing")
 	fs.IntVar(&cfg.lifetimePipeFD, "lifetime-pipe-fd", 0,
-		"file descriptor of an INHERITED pipe whose read end this daemon watches: EOF means the spawning parent exited or crashed, and the daemon then stops through the ordinary graceful-shutdown path. The parent holds the write end and never writes to it — it has nothing to remember. 0 (default) disables; 0/1/2 are the standard streams and are rejected")
+		"file descriptor of an INHERITED pipe read end or connected UNIX-domain stream socketpair endpoint this daemon watches: EOF means the spawning parent exited or crashed, and the daemon then stops through the ordinary graceful-shutdown path. The parent holds the peer end and never writes to it — it has nothing to remember. 0 (default) disables; 1/2 are standard output/error and are rejected")
 	fs.StringVar(&cfg.workspace, "workspace", cwd, "default session workspace root")
-	fs.StringVar(&cfg.workspaceAuthority, "workspace-authority", "", "workspace authority: client-selected or server-assigned (default derives from gRPC + HTTP/SSE listener topology)")
 	fs.StringVar(&cfg.model, "model", "", "model identifier sent to the provider (empty: use the provider-appropriate default)")
 	fs.StringVar(&cfg.defaultProvider, "default-provider", "", "server-configured deployment-wide default provider id shared by every client (e.g. openai, openrouter, anthropic); overrides the built-in provider preference for zero-selector sessions while a client-side selector still wins. Validated FAIL-FAST at startup: an unknown or unavailable provider refuses to start")
 	fs.StringVar(&cfg.defaultModel, "default-model", "", "server-configured deployment-wide default model id for the default provider, shared by every client; sits BELOW client-side defaults and ABOVE the per-provider built-in default. Validated FAIL-FAST at startup: a model not catalogued for the default provider refuses to start (stricter than per-session selectors, which allow passthrough)")
@@ -1683,6 +1633,7 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 	fs.StringVar(&cfg.memoryStoreURL, "memory-store-url", "", "host:port of a remote memory-store gRPC driver (mecatl.driver.v1.MemoryStoreService); replaces the local flock store, so it is mutually exclusive with --memory-dir. Enables the Remember/Recall tools like --memory-dir does. Same auth/TLS posture as --session-store-url (equal URLs share one connection)")
 	fs.StringVar(&cfg.eventLogURL, "event-log-url", "", "host:port of a remote event-log gRPC driver (mecatl.driver.v1.EventLogService) for the durable per-session event timeline (reasoning, ask/verdict pairs, delegation lifecycle); INDEPENDENT of the session store. Empty keeps the local default (the --store-dir jsonl log, or in-memory). Append happens at the relay (a fault WARNs, never aborts the run); Read is server-streaming. Same auth/TLS posture as --session-store-url (equal URLs share one connection)")
 	fs.StringVar(&cfg.scheduleStoreURL, "schedule-store-url", "", "host:port of a remote schedule-store gRPC driver (mecatl.driver.v1.ScheduleStoreService + ScheduleOneShotReArmerService) for the durable schedule registry (scheduled tasks); INDEPENDENT of the session store — when set, replaces the ScheduleStore() discovery from the configured store. Empty keeps the byte-identical default (the configured store's own ScheduleStore() accessor, or no scheduling). The driver's Claim/ClaimNow/ReArmOneShot run the atomic advance server-side. Same auth/TLS posture as --session-store-url (equal URLs share one connection)")
+	fs.StringVar(&cfg.learningStoreURL, "learning-store-url", "", "host:port of one distributed learning gRPC driver providing AttemptRepositoryService, ProposalRepositoryService, and SkillRepositoryService. The complete set must be explicitly advertised at startup; a partial or legacy driver fails closed with no local-repository fallback. Repository partitions are opaque on this transport. Same auth/TLS posture as --session-store-url (equal URLs share one connection)")
 	fs.StringVar(&cfg.sessionLeaseURL, "session-lease-url", "", "host:port of a remote session-lease gRPC driver (mecatl.driver.v1.SessionLeaseService) for cross-process single-writer enforcement (cloud-native Phase 4, multi-replica). Empty = NO leasing (the byte-identical single-writer-by-affinity default: route every session to one replica). Mutually exclusive with --session-lease-dir / --session-lease-k8s-namespace. Same auth/TLS posture as --session-store-url (equal URLs share one connection)")
 	fs.StringVar(&cfg.sessionLeaseDir, "session-lease-dir", "", "directory for a SINGLE-HOST flock session lease (cross-process single-writer enforcement among processes on ONE machine; flock auto-releases on crash). NOT safe across hosts — use --session-lease-k8s-namespace or --session-lease-url for multi-host/multi-replica. Empty = no leasing")
 	fs.StringVar(&cfg.sessionLeaseK8sNamespace, "session-lease-k8s-namespace", "", "Kubernetes namespace for coordination.k8s.io Lease-backed session leasing (the in-cluster multi-replica path). Uses in-cluster config (or the default kubeconfig out-of-cluster); the ServiceAccount needs get,create,update,delete on leases in coordination.k8s.io for this namespace (never list/watch — see docs/usage.md). Empty = no leasing")
@@ -1993,6 +1944,50 @@ func readAskReviewerPolicy(path string) (string, error) {
 	return string(b), nil
 }
 
+// brokerControlAPIAuthenticated reports whether the normal session-scoped
+// authorization-control API verifies callers. Bearer and OIDC middleware do
+// not wrap the separately mounted OAuth protocol routes; those routes remain
+// public by protocol (discovery, authorize, token, callbacks, and token-secured
+// vMCP). Verified mTLS is transport-wide and therefore covers both surfaces.
+func brokerControlAPIAuthenticated(cfg config, tlsCfg *tls.Config) bool {
+	return cfg.authToken != "" || cfg.oidc.Enabled() ||
+		tlsCfg != nil && tlsCfg.ClientAuth == tls.RequireAndVerifyClientCert
+}
+
+// mountBrokerHandlers adds the broker's public OAuth protocol surface only
+// after the complete mecated mux exists. On non-loopback listeners the separate
+// session-scoped control API must be authenticated; this does not claim its
+// bearer/OIDC middleware authenticates browser or provider callbacks.
+func mountBrokerHandlers(mux *http.ServeMux, addr string, controlAPIAuthenticated bool, handlers mcpbroker.HandlerBundle, callbackPath string) error {
+	if handlers.Empty() {
+		return nil
+	}
+	if !controlAPIAuthenticated && !cliconfig.IsLoopbackAddr(addr) {
+		return errors.New("non-loopback MCP broker requires an authenticated authorization-control API; OAuth protocol routes remain public")
+	}
+	slog.Warn("vMCP broker mode is single-process/single-replica; a live session lease rejects non-holders without routing")
+	return handlers.Mount(mux, callbackPath)
+}
+
+// serve retains the established test and non-broker seam.
+func serve(ctx context.Context, cfg config, svc *server.Service, reg *prometheus.Registry, recorder *telemetry.FlightRecorder, slowTurns *telemetry.SlowTurnBuffer) error {
+	return serveWithBroker(ctx, cfg, svc, reg, recorder, slowTurns, false, mcpbroker.HandlerBundle{}, "")
+}
+
+// serveBuilt is the command-root handoff from app.Build to the network server.
+// Keeping the broker-selected bit separate from the HTTP bundle lets startup
+// reject an unreachable broker even when a custom broker has no handlers.
+func serveBuilt(ctx context.Context, cfg config, built *app.Built, reg *prometheus.Registry, recorder *telemetry.FlightRecorder, slowTurns *telemetry.SlowTurnBuffer) error {
+	return serveWithBroker(ctx, cfg, built.Service, reg, recorder, slowTurns, built.MCPBroker != nil, built.MCPBrokerHandlers, built.MCPBrokerCallbackPath)
+}
+
+func validateBrokerHosting(cfg config, brokerSelected bool) error {
+	if brokerSelected && (cfg.acp || cfg.httpAddr == "") {
+		return errors.New("MCP broker mode requires network serve mode with an enabled HTTP listener")
+	}
+	return nil
+}
+
 // serve starts the gRPC and HTTP servers (and, when --metrics-addr is set, the
 // loopback admin endpoint — /metrics plus the pprof/expvar/FlightRecorder
 // runtime-introspection surface — on its own listener) concurrently and blocks
@@ -2005,7 +2000,10 @@ func readAskReviewerPolicy(path string) (string, error) {
 // liveness/readiness probes are mounted OUTSIDE the auth/rate-limit layer so
 // orchestrators can probe without credentials. The gRPC health service shares
 // the server-wide interceptors and therefore requires credentials when auth is on.
-func serve(ctx context.Context, cfg config, svc *server.Service, reg *prometheus.Registry, recorder *telemetry.FlightRecorder, slowTurns *telemetry.SlowTurnBuffer) error {
+func serveWithBroker(ctx context.Context, cfg config, svc *server.Service, reg *prometheus.Registry, recorder *telemetry.FlightRecorder, slowTurns *telemetry.SlowTurnBuffer, brokerSelected bool, brokerHandlers mcpbroker.HandlerBundle, brokerCallbackPath string) error {
+	if err := validateBrokerHosting(cfg, brokerSelected); err != nil {
+		return err
+	}
 	tlsCfg, auth, corsPolicy, err := buildEdge(ctx, cfg)
 	if err != nil {
 		return err
@@ -2046,7 +2044,13 @@ func serve(ctx context.Context, cfg config, svc *server.Service, reg *prometheus
 	if cfg.httpAddr != "" {
 		httpMux := http.NewServeMux()
 		server.NewHealthHandler(func() bool { return true }).RegisterHealth(httpMux)
-		httpMux.Handle("/", buildAPIHandler(corsPolicy, auth, svc))
+		httpMux.Handle("/", buildAPIHandler(corsPolicy, auth, svc, protectedResourceProfile(cfg.oidc)))
+		// Mount last on the actual, fully-populated mux. HandlerBundle.Mount
+		// preflights every route before registration, so a callback or fixed-route
+		// collision fails startup without a partial broker surface.
+		if err := mountBrokerHandlers(httpMux, cfg.httpAddr, brokerControlAPIAuthenticated(cfg, tlsCfg), brokerHandlers, brokerCallbackPath); err != nil {
+			return fmt.Errorf("mount MCP broker handlers: %w", err)
+		}
 		httpSrv = &http.Server{
 			Addr:              cfg.httpAddr,
 			Handler:           httpMux,
@@ -2057,10 +2061,10 @@ func serve(ctx context.Context, cfg config, svc *server.Service, reg *prometheus
 
 	metricsSrv, adminPaths := buildAdminServer(cfg, reg, recorder, slowTurns)
 
-	// Caller identity counts as authentication: an OIDC deployment may carry no
-	// static token at all, and warning "NO authentication" there would be false.
-	authed := auth != nil && (cfg.authToken != "" || cfg.oidc.Enabled() || tlsCfg != nil)
-	logListenerPosture(cfg, authed)
+	// TLS encrypts the transport and authenticates the server; it does not
+	// authenticate callers unless mutual TLS requires a verified client cert.
+	callerAuthenticated := callerAuthenticationConfigured(cfg, tlsCfg)
+	logListenerPosture(cfg, callerAuthenticated)
 
 	// Every listener is bound BEFORE anything serves, so the ready file (written
 	// below) can honestly mean "reachable" — a bind failure is still a startup
@@ -2285,18 +2289,18 @@ func buildAdminServer(cfg config, reg *prometheus.Registry, recorder *telemetry.
 // and neither case is either. Calling it with an empty address would emit the
 // prominent unauthenticated-network WARNING for a listener that does not exist —
 // the kind of false alarm that teaches operators to ignore the real one.
-func logListenerPosture(cfg config, authed bool) {
+func logListenerPosture(cfg config, callerAuthenticated bool) {
 	if cfg.grpcUnixSocket != "" {
 		slog.Info("gRPC bound to a UNIX-domain socket (no TCP port); reachability is filesystem permission on the socket path",
-			"flag", "grpc-unix-socket", "socket", cfg.grpcUnixSocket, "authenticated", authed)
+			"flag", "grpc-unix-socket", "socket", cfg.grpcUnixSocket, "caller_authenticated", callerAuthenticated)
 	} else {
-		warnIfNonLoopback("grpc-addr", cfg.grpcAddr, authed)
+		warnIfNonLoopback("grpc-addr", cfg.grpcAddr, callerAuthenticated)
 	}
 	if cfg.httpAddr == "" {
 		slog.Info("HTTP/SSE listener not configured (--http-addr empty); no HTTP surface is exposed", "flag", "http-addr")
 		return
 	}
-	warnIfNonLoopback("http-addr", cfg.httpAddr, authed)
+	warnIfNonLoopback("http-addr", cfg.httpAddr, callerAuthenticated)
 }
 
 // publishReadyFile writes the readiness document when --ready-file is set
@@ -2377,24 +2381,29 @@ func buildEdge(ctx context.Context, cfg config) (*tls.Config, *server.Authentica
 	}), corsPolicy, nil
 }
 
+func callerAuthenticationConfigured(cfg config, tlsCfg *tls.Config) bool {
+	return cfg.authToken != "" || cfg.oidc.Enabled() || (tlsCfg != nil && tlsCfg.ClientAuth == tls.RequireAndVerifyClientCert)
+}
+
 // warnIfNonLoopback logs the API trust assumption for the given bind address.
-// Loopback binds are logged at info. A non-loopback bind WITH authentication
-// (bearer token and/or TLS, indicated by authed) is logged at info; a
-// non-loopback bind with NO authentication is logged as a prominent WARNING,
-// since it exposes command/file execution to the network. It never hard-fails:
-// an operator may legitimately front the server with a service mesh.
-func warnIfNonLoopback(flagName, addr string, authed bool) {
+// Loopback binds are logged at info. A non-loopback bind WITH caller
+// authentication (bearer, OIDC, or mTLS) is logged at info; a non-loopback bind
+// without it is logged as a prominent WARNING, since TLS alone does not identify
+// callers and the endpoint exposes command/file execution to anyone who can reach
+// it. It never hard-fails: an operator may deliberately make a private network or
+// service mesh the shared authority boundary.
+func warnIfNonLoopback(flagName, addr string, callerAuthenticated bool) {
 	if cliconfig.IsLoopbackAddr(addr) {
 		slog.Info("API bound to loopback (single-user localhost trust model)",
-			"flag", flagName, "addr", addr, "authenticated", authed)
+			"flag", flagName, "addr", addr, "caller_authenticated", callerAuthenticated)
 		return
 	}
-	if authed {
-		slog.Info("API bound to a non-loopback address WITH authentication (bearer token and/or TLS)",
+	if callerAuthenticated {
+		slog.Info("API bound to a non-loopback address WITH caller authentication (bearer, OIDC, or mTLS)",
 			"flag", flagName, "addr", addr)
 		return
 	}
-	slog.Warn("API bound to a NON-loopback address with NO authentication: it exposes UNAUTHENTICATED command/file execution to the network — set --auth-token / --tls-cert (or front it with a trusted mesh) before doing this",
+	slog.Warn("API bound to a NON-loopback address with NO caller authentication: it exposes UNAUTHENTICATED command/file execution to every network caller — configure --auth-token, OIDC, or --client-ca, or deliberately enforce shared authority at a trusted private-network/mesh boundary; TLS alone is not caller authentication",
 		"flag", flagName, "addr", addr)
 }
 

@@ -181,7 +181,7 @@ func RunModelRouter(ctx context.Context, engine *Engine, req ModelRouteRequest) 
 	sess := session.New(
 		session.SessionID(fmt.Sprintf("model-router-%d", childSerial.Add(1))),
 		session.ModeDefault,
-		"/",
+		judgeEnvironment.Ref(),
 		modelRouterLimits,
 		engine.now(),
 	)

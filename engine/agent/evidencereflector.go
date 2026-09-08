@@ -19,6 +19,10 @@ import (
 )
 
 const reflectionSystemPrompt = `You are a conservative evidence reflector. Return exactly one JSON object and no prose.
+Output only this strict wire shape: one root object with "kind" and "candidates". Use only the documented fields; do not add, rename, nest, or omit a field required by the selected shape.
+SHAPE-ONLY examples — replace every evidence handle with handles selected from the supplied input; examples do not authorize their literal values or handles:
+Abstention: {"kind":"abstained","candidates":[]}
+One procedure proposal: {"kind":"proposed","candidates":[{"kind":"procedure","name":"format-go","title":"Format Go","body":"Run gofmt before focused tests.","evidence":["m:0"]}]}
 Abstention is normal: use {"kind":"abstained","candidates":[]} whenever evidence is weak, transient, contradictory, or unnecessary.
 Only propose durable operator_fact, project_fact, or procedure candidates. Facts use kind, key, value, optional description, and evidence. Procedures use kind, a lowercase activation name, title, body, and evidence. Evidence is an array of exact supplied handles such as "m:12" or "e:7"; never invent or copy a handle from quoted content.
 Never propose issue or pull-request numbers, commit SHAs, branches, current-task details, temporary paths, secrets, directives, unsupported negative capability claims, or mandatory updates. Existing facts are comparison data and are never evidence.
@@ -131,6 +135,19 @@ func (r *EvidenceReflector) buildRequest(in learning.Input) (port.LLMRequest, er
 	if err != nil {
 		return port.LLMRequest{}, err
 	}
+	return r.buildProjectionRequest(projection)
+}
+
+func (r *EvidenceReflector) buildProjectionRequest(projection learning.Projection) (port.LLMRequest, error) {
+	if len(projection.Events) > r.limits.Events || len(projection.Existing) > r.limits.Existing {
+		return port.LLMRequest{}, fmt.Errorf("%w: input collection exceeds configured limit", ErrReflectionLimits)
+	}
+	if len(projection.Signals) == 0 {
+		return port.LLMRequest{}, nil
+	}
+	if _, err := canonicalProjectionInput(projection); err != nil {
+		return port.LLMRequest{}, err
+	}
 	payload, err := json.Marshal(projection)
 	if err != nil {
 		return port.LLMRequest{}, fmt.Errorf("%w: encode input: %v", ErrReflectionLimits, err)
@@ -163,6 +180,103 @@ func (r *EvidenceReflector) Reflect(ctx context.Context, in learning.Input) (lea
 		return learning.Outcome{}, err
 	}
 	return ParseReflectionOutcome(in, output, r.limits)
+}
+
+// ReflectProjection performs reflection across a restart-safe boundary that
+// accepts only the bounded canonical learning projection. It rejects projections
+// that are not reproducible from their own content-addressed evidence metadata.
+func (r *EvidenceReflector) ReflectProjection(ctx context.Context, projection learning.Projection) (learning.Outcome, error) {
+	if err := ctx.Err(); err != nil {
+		return learning.Outcome{}, err
+	}
+	in, err := canonicalProjectionInput(projection)
+	if err != nil {
+		return learning.Outcome{}, err
+	}
+	request, err := r.buildProjectionRequest(projection)
+	if err != nil {
+		return learning.Outcome{}, err
+	}
+	if len(request.Messages) == 0 {
+		return learning.Outcome{Kind: learning.OutcomeAbstained}, nil
+	}
+	output, err := r.callProvider(ctx, request)
+	if err != nil {
+		return learning.Outcome{}, err
+	}
+	return ParseReflectionOutcome(in, output, r.limits)
+}
+
+func canonicalProjectionInput(projection learning.Projection) (learning.Input, error) {
+	messages := make([]session.Message, len(projection.Messages))
+	for i, projected := range projection.Messages {
+		message := session.Message{Role: projected.Role, Text: projected.Text, Parts: projectionParts(projected.Parts)}
+		for _, call := range projected.ToolCalls {
+			message.ToolCalls = append(message.ToolCalls, session.ToolCall{ID: call.ID, Name: call.Name})
+		}
+		if projected.ToolResult != nil {
+			message.ToolResult = &session.ToolResult{CallID: projected.ToolResult.CallID, Content: projected.ToolResult.Content, IsError: projected.ToolResult.IsError, Parts: projectionParts(projected.ToolResult.Parts)}
+		}
+		messages[i] = message
+	}
+	events := make([]learning.EvidenceEventData, len(projection.Events))
+	for i, projected := range projection.Events {
+		events[i] = learning.EvidenceEventData{Type: projected.Type, Seq: projected.Seq, Turn: projected.Turn, Text: projected.Text, Stop: projected.Stop}
+		if projected.ToolCall != nil {
+			call := *projected.ToolCall
+			events[i].ToolCall = &call
+		}
+		if projected.ToolResult != nil {
+			result := *projected.ToolResult
+			result.Parts = append([]learning.PartProjection(nil), projected.ToolResult.Parts...)
+			events[i].ToolResult = &result
+		}
+	}
+	trajectory := learning.NewTrajectory(projection.SessionID, "", projection.Stop, session.Usage{}, messages)
+	in := learning.Input{Trajectory: trajectory, Events: events, Existing: append([]learning.ExistingFact(nil), projection.Existing...)}
+	for _, projected := range projection.Signals {
+		signal := learning.Signal{Kind: projected.Kind}
+		for _, handle := range projected.Evidence {
+			ref, err := learning.ResolveEvidenceHandle(in, handle)
+			if err != nil {
+				return learning.Input{}, fmt.Errorf("%w: projected signal evidence: %v", ErrReflectionLimits, err)
+			}
+			signal.Evidence = append(signal.Evidence, ref)
+		}
+		in.Signals = append(in.Signals, signal)
+	}
+	canonical, err := learning.ProjectInput(in)
+	if err != nil {
+		return learning.Input{}, err
+	}
+	// V1 event evidence uses the immutable source-stream ordinal rather than the
+	// selected event's semantic sequence. The projection is the source of that
+	// already-validated model-visible coordinate.
+	for i := range canonical.Events {
+		if canonical.Events[i].Evidence != nil && projection.Events[i].Evidence != nil {
+			canonical.Events[i].Evidence.EventSeq = projection.Events[i].Evidence.EventSeq
+		}
+	}
+	got, marshalErr := json.Marshal(canonical)
+	if marshalErr != nil {
+		return learning.Input{}, fmt.Errorf("%w: encode canonical projection", ErrReflectionLimits)
+	}
+	want, marshalErr := json.Marshal(projection)
+	if marshalErr != nil || !bytes.Equal(got, want) {
+		return learning.Input{}, fmt.Errorf("%w: projection is not canonical", ErrReflectionLimits)
+	}
+	return in, nil
+}
+
+func projectionParts(projected []learning.PartProjection) []session.Content {
+	parts := make([]session.Content, len(projected))
+	for i, part := range projected {
+		parts[i] = session.Content{BlockKind: session.BlockKind(part.Kind), MIMEType: part.MIMEType, Text: part.Text, Name: part.Name, Title: part.Title, Description: part.Description}
+		if part.Binary {
+			parts[i].Data = []byte{0}
+		}
+	}
+	return parts
 }
 
 func (r *EvidenceReflector) callProvider(ctx context.Context, request port.LLMRequest) ([]byte, error) {
@@ -212,8 +326,10 @@ func (r *EvidenceReflector) callProvider(ctx context.Context, request port.LLMRe
 				cancel()
 				return nil, fmt.Errorf("%w: output tokens exceed %d", ErrReflectionOutput, r.limits.Tokens)
 			}
+		case port.ChunkReasoning, port.ChunkReasoningItem, port.ChunkPhase, port.ChunkProviderRoute:
+			// Reflection output is text-only; provider metadata is harmless and ignored.
 		case port.ChunkDone:
-			if chunk.Stop != session.StopEndTurn && chunk.Stop != session.StopNone {
+			if !isBenignReflectionStop(chunk.Stop) {
 				cancel()
 				return nil, fmt.Errorf("%w: non-benign terminal stop %q", ErrReflectionProvider, chunk.Stop)
 			}
@@ -230,6 +346,10 @@ func (r *EvidenceReflector) callProvider(ctx context.Context, request port.LLMRe
 		return nil, fmt.Errorf("%w: provider stream ended without a terminal stop", ErrReflectionProvider)
 	}
 	return []byte(output.String()), nil
+}
+
+func isBenignReflectionStop(stop session.StopReason) bool {
+	return stop == session.StopEndTurn || stop == session.StopNone
 }
 
 type reflectionWireOutcome struct {

@@ -113,7 +113,7 @@ func TestSessionsCommand_EmbeddedAndConnectE2E(t *testing.T) {
 			chatID := seedStartupResumeSession(ctx, t, target, workspace)
 			if _, err := cl.CreateSchedule(ctx, client.ScheduleSpec{
 				Name: "sessions-command-inspect", Prompt: "scheduled inspection transcript",
-				Trigger: client.ScheduleTrigger{OneShot: time.Now().Add(time.Hour)}, Workspace: workspace, Mode: "plan",
+				Trigger: client.ScheduleTrigger{OneShot: time.Now().Add(time.Hour)}, Mode: "plan",
 			}); err != nil {
 				t.Fatalf("create schedule: %v", err)
 			}
@@ -132,7 +132,7 @@ func TestSessionsCommand_EmbeddedAndConnectE2E(t *testing.T) {
 			newBrowser := func() ui.Model {
 				lastClipboard = &e2eClipboard{}
 				return ui.New(ui.Deps{
-					Session: &sessionAdapter{cl: cl, workspace: workspace, mode: "default"},
+					Session: &sessionAdapter{cl: cl, mode: "default"},
 					Conv:    cl, Models: cl, Sessions: cl, SessionManagement: cl, Transcript: cl, Clipboard: lastClipboard,
 					BrowseSessions: true, Theme: theme.New("aztec", theme.AztecPalette()),
 					Workspace: workspace, Mode: "default", Model: "mock-model", Ctx: ctx, NoAltScreen: true, NoBanner: true,
@@ -255,7 +255,7 @@ func TestSessionsCommand_EmbeddedAndConnectE2E(t *testing.T) {
 					t.Fatalf("rename result = %+v, %v", renamed, err)
 				}
 
-				deleteID, _, _, err := cl.CreateSession(ctx, workspace, mecatlv1.PermissionMode_PERMISSION_MODE_DEFAULT, client.ModelSelection{})
+				deleteID, _, _, err := cl.CreateSession(ctx, mecatlv1.PermissionMode_PERMISSION_MODE_DEFAULT, client.ModelSelection{})
 				if err != nil {
 					t.Fatalf("create delete target: %v", err)
 				}
@@ -290,7 +290,7 @@ func TestSessionsCommand_EmbeddedAndConnectE2E(t *testing.T) {
 					t.Fatalf("current delete refusal removed session: %v", err)
 				}
 
-				failureID, _, _, err := cl.CreateSession(ctx, workspace, mecatlv1.PermissionMode_PERMISSION_MODE_DEFAULT, client.ModelSelection{})
+				failureID, _, _, err := cl.CreateSession(ctx, mecatlv1.PermissionMode_PERMISSION_MODE_DEFAULT, client.ModelSelection{})
 				if err != nil {
 					t.Fatalf("create stale fork target: %v", err)
 				}
@@ -419,7 +419,7 @@ func startStartupResumeConnect(t *testing.T, cfg app.Config) (string, func()) {
 	}
 }
 
-func seedStartupResumeSession(ctx context.Context, t *testing.T, target, workspace string) string {
+func seedStartupResumeSession(ctx context.Context, t *testing.T, target, _ string) string {
 	t.Helper()
 	conn, err := grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
@@ -427,7 +427,7 @@ func seedStartupResumeSession(ctx context.Context, t *testing.T, target, workspa
 	}
 	defer func() { _ = conn.Close() }()
 	svc := mecatlv1.NewHarnessServiceClient(conn)
-	created, err := svc.CreateSession(ctx, &mecatlv1.CreateSessionRequest{Workspace: workspace})
+	created, err := svc.CreateSession(ctx, &mecatlv1.CreateSessionRequest{})
 	if err != nil {
 		t.Fatalf("create seed session: %v", err)
 	}

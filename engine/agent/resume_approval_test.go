@@ -90,7 +90,7 @@ func resultsFor(evs []session.Event, callID session.ToolCallID) (nonError int, t
 // one non-error result, and drives to a clean StopEndTurn completion.
 func TestResumeApprovalExecutesPendingExactlyOnce(t *testing.T) {
 	policy := permpolicy.NewPolicy(nil, permstore.New()) // Write asks by default
-	sess := session.New("s-resume-once", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	sess := session.New("s-resume-once", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 
 	// Engine #1: emits a Write tool call (gated as Ask), parks awaiting.
 	write1 := &fakeTool{name: "Write", readOnly: false,
@@ -140,7 +140,7 @@ func TestResumeApprovalExecutesPendingExactlyOnce(t *testing.T) {
 // result for the pending call, NEVER executes the tool, and still completes.
 func TestResumeApprovalDenyDoesNotExecute(t *testing.T) {
 	policy := permpolicy.NewPolicy(nil, permstore.New())
-	sess := session.New("s-resume-deny", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	sess := session.New("s-resume-deny", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 
 	write1 := &fakeTool{name: "Write", readOnly: false,
 		exec: func(_ context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
@@ -187,7 +187,7 @@ func TestResumeApprovalDenyDoesNotExecute(t *testing.T) {
 // StopError (never a silent clean complete).
 func TestResumeApprovalNotAwaiting(t *testing.T) {
 	policy := permpolicy.NewPolicy(nil, permstore.New())
-	sess := session.New("s-not-awaiting", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	sess := session.New("s-not-awaiting", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	// A fresh idle session is NOT awaiting.
 	e := newEngine(agent.Deps{
 		LLM:     mockllm.New(mockllm.TextTurn("unreachable")),
@@ -209,7 +209,7 @@ func TestResumeApprovalNotAwaiting(t *testing.T) {
 // rejected (StopError) and executes nothing.
 func TestResumeApprovalWrongAskID(t *testing.T) {
 	policy := permpolicy.NewPolicy(nil, permstore.New())
-	sess := session.New("s-wrong-ask", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	sess := session.New("s-wrong-ask", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 
 	var ran atomic.Int64
 	write1 := &fakeTool{name: "Write", readOnly: false,
@@ -256,7 +256,7 @@ func TestResumeApprovalMultiToolSiblingCloseOut(t *testing.T) {
 		{Scope: governance.ScopeBuiltinDefault, Tool: "ReadA", Effect: governance.Allow},
 		{Scope: governance.ScopeBuiltinDefault, Tool: "ReadB", Effect: governance.Allow},
 	}, permstore.New())
-	sess := session.New("s-multi", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	sess := session.New("s-multi", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 
 	read := func(name string) *fakeTool {
 		return &fakeTool{name: name, readOnly: true,
@@ -367,7 +367,7 @@ func captureFirstAsk(t *testing.T, r *agent.Run) session.PendingAsk {
 // parsing the askID grammar.
 func TestPendingAskCarriesGatedCallID(t *testing.T) {
 	policy := permpolicy.NewPolicy(nil, permstore.New()) // Write asks by default
-	sess := session.New("s-ask-call", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	sess := session.New("s-ask-call", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	write := &fakeTool{name: "Write", readOnly: false,
 		exec: func(_ context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
 			return session.NewToolResult(in.ID, "wrote"), nil
@@ -388,7 +388,7 @@ func TestPendingAskCarriesGatedCallID(t *testing.T) {
 // trailing askID component, making the askID reconstructable across processes.
 func TestRunRequestAskIDDiscriminatorReplacesSerial(t *testing.T) {
 	policy := permpolicy.NewPolicy(nil, permstore.New())
-	sess := session.New("s-disc-ok", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	sess := session.New("s-disc-ok", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	write := &fakeTool{name: "Write", readOnly: false,
 		exec: func(_ context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
 			return session.NewToolResult(in.ID, "wrote"), nil
@@ -423,7 +423,7 @@ func TestAskIDDiscriminatorReconstructableAcrossRuns(t *testing.T) {
 	mint := func() string {
 		policy := permpolicy.NewPolicy(nil, permstore.New())
 		// Same session id across both runs (a different PROCESS loading the same id).
-		sess := session.New("s-reconstruct", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+		sess := session.New("s-reconstruct", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 		write := &fakeTool{name: "Write", readOnly: false,
 			exec: func(_ context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
 				return session.NewToolResult(in.ID, "wrote"), nil
@@ -453,7 +453,7 @@ func TestAskIDDiscriminatorReconstructableAcrossRuns(t *testing.T) {
 // component — the minted askID must NOT embed the rejected value.
 func TestRunRequestAskIDDiscriminatorColonFallsBack(t *testing.T) {
 	policy := permpolicy.NewPolicy(nil, permstore.New())
-	sess := session.New("s-disc-colon", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	sess := session.New("s-disc-colon", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	write := &fakeTool{name: "Write", readOnly: false,
 		exec: func(_ context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
 			return session.NewToolResult(in.ID, "wrote"), nil

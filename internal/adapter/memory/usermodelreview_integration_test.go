@@ -44,7 +44,7 @@ func (f *fakeReviewStore) Save(_ context.Context, s *session.Session) error {
 // short operator/agent transcript, mirroring a just-finished run the reviewer
 // re-loads.
 func completedSessionWithTranscript(id session.SessionID) *session.Session {
-	s := session.New(id, session.ModeDefault, "/proj", session.Limits{MaxTurns: 3}, time.Now())
+	s := session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/proj", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 3}, time.Now())
 	s.Conversation.Append(session.Message{Role: session.RoleUser, Text: "I prefer terse answers and I work in Go."})
 	s.Conversation.Append(session.Message{Role: session.RoleAssistant, Text: "Understood — terse it is."})
 	s.State = session.StateCompleted
@@ -153,7 +153,7 @@ func TestUserModelReviewerEmptyTranscriptIsNoOp(t *testing.T) {
 	childEngine := newEngine(agent.Deps{LLM: llm, Catalog: cat})
 
 	id := session.SessionID("empty-session")
-	empty := session.New(id, session.ModeDefault, "/proj", session.Limits{MaxTurns: 3}, time.Now())
+	empty := session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/proj", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 3}, time.Now())
 	empty.State = session.StateCompleted // no messages
 	fakeStore := &fakeReviewStore{sess: empty}
 

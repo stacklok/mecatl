@@ -30,6 +30,52 @@ an editor that spawned it.
 
 ---
 
+## OAuth protected-resource discovery
+
+`mecated` and `mecak8s` share the optional RFC 9728 profile flags
+`--oidc-resource`, `--oidc-client-id`, and `--oidc-scopes`. The resource must be
+an operator-supplied absolute HTTPS URL; Helm exposes the equivalent
+`oidc.resource`, `oidc.clientID`, and `oidc.scopes` values. Metadata advertises
+standard `resource`, `authorization_servers`, and `bearer_methods_supported: ["header"]`
+fields separately from mecatl's audience/client-id extensions. Every protected API
+route advertises the configured resource's metadata URL as its service-wide base;
+the server never derives it from a request Host or path. Anonymous metadata
+and OIDC discovery are bootstrap-only and remain separate from authenticated
+gRPC transport. ToolHive is implementation provenance for the remote client
+adapter, not a runtime engine dependency. Without the profile, explicit OIDC
+login and existing issuer/audience behavior are unchanged.
+
+## Managed temporary storage (Linux and macOS)
+
+By default Bash commands use a private managed temporary lease. The harness removes
+that lease after normal command completion and a bounded Build-owned maintenance
+worker recovers validated abandoned command/job leases after the configured TTL.
+The worker never scans arbitrary system temporary directories and does not delay a
+command allocation. This lifecycle is available on Linux and macOS; other
+platforms must use `mode: system`.
+
+To use the inherited or configured system temporary directory instead, an operator
+sets the user-global (not project) `settings.yaml` value below. System mode is the
+rollback switch: it stops new managed leases and reaping, and it leaves existing
+managed data untouched for manual inspection or removal.
+
+```yaml
+# ~/.config/mecatl/settings.yaml
+temporary_storage:
+  mode: system # managed is the Linux and macOS default
+```
+
+Managed mode accepts `managed_root`, `system_temp_dir`, `command_reap_after`,
+`reap_interval`, `reap_timeout` (default five minutes), and
+`shutdown_reap_timeout` (default one minute). Each workspace manifest also records
+its canonical current path for owner-only debugging; it is refreshed when that managed
+workspace key is opened from a new path. These are operator controls; project
+settings cannot redirect or weaken cleanup. A Bash call may request `temp_scope:
+system` only when ordinary Bash permission and the separate `BashSystemTemp`
+capability are both allowed. See [ADR 0281](adr/0281-managed-temporary-command-leases.md).
+
+---
+
 ## Build identity and safe diagnostics
 
 Every shipped executable accepts exact top-level `--version` and prints its build id without starting normal configuration or services. Ordinary `task build`, `task install`, and Taskfile-driven ko builds resolve their source identity at build time with `git describe --tags --match 'v[0-9]*' --always --dirty`: the most recent root release tag, commits since it, abbreviated SHA, and an optional dirty suffix (for example, `v0.0.22-28-g40a6b3fc6-dirty`). `BUILD_ID=<value>` preserves that explicit linker stamp verbatim, including `dev`. Direct Go or ko builds without a stamp do not invoke git at runtime; they fall back to embedded VCS metadata as `dev+<12-char-vcs-revision>[.dirty]`, or `dev` if metadata is unavailable or invalid. Authenticated clients can read the server build identity and sanitized diagnostic display endpoint projections through gRPC `GetServerInfo` or HTTP `GET /v1/info`; these are not connection configuration or instructions. The detailed transport contracts are in [the gRPC API](usage/grpc-api.md) and [the HTTP/SSE API](usage/http-sse-api.md). Mecatui's `/diagnostics` behavior is documented in [the TUI guide](tui.md).
@@ -81,6 +127,30 @@ step when it is still retry-pending. Mecatui automatically retries
 preserves the textarea and queued prompts, and reports a harmless status when no
 eligible failure exists. Historical transcript replay never triggers automatic retry.
 
+Inside the TUI, `/title <text>` renames the active session through the existing
+server rename operation; bare `/title` displays its title and provenance without a
+mutation. A manual title ends automatic generation for that session. Automatic titles
+are opt-in: configure a compatible explicit `models.slots.title` binding (see
+[model routing](usage/model-routing.md)); the server then schedules bounded work after
+a completed exchange is durably persisted, without delaying or changing the chat. On
+startup it recovers the bounded pre-submission gap for completed pending sessions with
+source prompts but no attempt; a crash-unknown claimed attempt is never retried. Its
+durable `session_title` token usage is separate from normal session/run usage.
+Operators can diagnose the server-owned lifecycle through session-correlated
+diagnostics: submission, admission/eligibility, claim, selected provider/model,
+completion outcome, token counts, and conditional-commit loss. Failed calls report
+only stable classifications (`deadline`, `cancelled`, `provider`, `invalid-output`, or
+`protocol`) and a stage; diagnostics never include source prompts, provider error
+text, credentials, or model output. Live title updates are best-effort, so reconnect
+and session reopen re-fetch the authoritative stored title.
+
+When a server advertises bundled protected workspace services, `/tools-connect`
+starts or rechecks their enrollment and `/tools-cancel` cancels the pending bundle.
+The prompt remains available while consent is pending; if the server rejects a
+prompt until enrollment completes, mecatui keeps it and submits it once after a
+connected control response. These commands are absent when the server does not
+advertise enrollment support.
+
 ## mecatui remote TLS
 
 `mecatui connect ADDRESS` resolves TLS after it has the target: omitted `--tls`
@@ -93,6 +163,64 @@ and `--insecure`, whose unverified TLS hides an MITM rather than a listener. A s
 connection always verifies the gRPC server TLS, and its issuer CA is never used
 as server trust; `connect --tls-ca` is the sole custom server-CA input.
 
+Authentication resolution is: explicit static token, explicit `--anonymous`, saved OIDC
+enrollment, then a credential-free attempt for any clean missing enrollment. A static token
+wins even when `--anonymous` is present; otherwise `--anonymous` bypasses saved credentials
+and has no environment equivalent. Only an actual `Unauthenticated` RPC offers OIDC/token
+recovery; corrupt or unreadable registry, keyring, or credential state fails closed. Login
+is persistent OIDC enrollment, not anonymous login.
+
+### Tailscale shared-authority deployment
+
+A credential-free Tailscale deployment makes tailnet ACLs the shared authority boundary; TLS
+is not caller authentication. Bind `mecated` to one concrete Tailscale address, never a
+wildcard or Funnel, use a dedicated low-privilege server workspace, and configure a
+restrictive rate limit. Use `--posture strict` (or `trusted` only for trusted project inputs):
+`auto` and `yolo` weaken the remaining approval boundary.
+
+```sh
+mecatui connect ozzllama:9080 --tls=false
+```
+
+Remote credential-free connections retain verified TLS by default; the separate plaintext
+flag explicitly relies on Tailscale transport. Do not infer anonymous safety from an address
+or hostname. For non-loopback connections the server owns the workspace.
+
+## Server-owned session placement
+
+Clients never send a filesystem path, cwd, exact environment reference, or general
+placement ID when creating or resuming a session. `CreateSession` binds the trusted
+deployment default when `profile` is omitted, or the filesystem-free environment when
+`profile` is `no-fs`. Local `--workspace` configures the embedded/daemon server privately;
+it is not a field sent by `mecatui connect`.
+
+Alternate worktrees are discovered from an owned source session. `ListWorktrees(session_id)`
+returns bounded display metadata and an opaque caller/source-scoped selector. The selector
+is accepted only by `ClearSession` or `ForkSession`, is never a path, and expires on server
+restart; relist before retrying. `/clear` is accepted while idle, running, or awaiting
+approval. It cancels the source run or durable approval, waits for that exact lifecycle to
+deregister, then creates a distinct empty-history successor that inherits the source's exact
+placement. Cancellation is irreversible: if placement, engine setup, or successor persistence
+then fails, no successor is published and Mecatui does not rebind, but the source may already
+be terminal-cancelled. Retry `/clear` after the local stream settles. Failures rejected during
+preflight, including an invalid explicit worktree selector, leave an awaiting source unchanged.
+Existing workspace/tool mutations are never rolled back. Mecatui keeps the source binding and
+transcript visible but blocks source input and approvals during the handoff; only a correlated
+successful response binds the successor. `/worktrees`, `/effort`, and inventory fork use the
+history-carrying successor operation. Failed relist and fork operations leave the currently
+selected session unchanged. Schedules resolve and store an exact
+private placement at creation, while delegation derives placement from its parent; neither
+models nor delegation/artifact handles can select a host path. For a configured
+local status command, the optional local session-context service may resolve an
+already-bound eligible local root asynchronously. Mecatui supplies that privileged
+value to its local direct command as `Workspace.Path` in raw command JSON and as the
+process CWD, and to status templates through their StatusML-escaped projection. It
+refreshes it whenever the active session is replaced or switched, discards stale
+responses, and otherwise uses the configured helper executable's cleaned absolute
+parent directory (then its launch working directory if that cannot be determined);
+the root is never exposed in command arguments, environment, ordinary UI state, or
+universal Harness/HTTP/event/placement projections.
+
 ## mecatui session identity
 
 The TUI header shows a compact short handle for the active session rather than a long
@@ -100,9 +228,9 @@ opaque ID. For a non-empty valid-UTF-8 ID, it renders safe `[A-Za-z0-9._-]` byte
 literally except that a leading `-` is encoded as `%2D`; every other UTF-8 byte is
 uppercase `%HH`. It takes the longest prefix of complete literal or `%HH` atoms that fits
 12 ASCII columns. The displayed literal has no leading `#` and can be passed unchanged to
-`mecatui debug`; type `/session` to
-inspect the safely quoted full ID, title, state, workspace, known timestamps, provider,
-and model, then press `c` in that overlay to copy the exact ID.
+`mecatui debug`; type `/session` to inspect the safely quoted full ID, title, state,
+bounded placement label, known timestamps, provider, and model, then press `c` in that
+overlay to copy the exact ID.
 Use `/sessions` separately to Continue a stored chat or Inspect scheduled, child, and
 unknown/other runs without changing the active chat. Its selected-row hints come from
 server capabilities: `y` copies the exact ID, `v` views without attaching, `f` forks an
@@ -301,10 +429,12 @@ in-chat `Schedule` tool, the REST/gRPC API):
 
 - A declaration with neither `cron` nor `oneShot`, or with both, is rejected by
   the create-seam (fail-closed).
-- **`workspace` is required** for a default-profile schedule (a fire mints a real
-  filesystem session), and must be OMITTED for a `no-fs`-profile schedule. The
-  create-seam validates this up front, so an empty-workspace default schedule is
-  rejected at create time rather than failing later at fire time.
+- **Placement is resolved at schedule creation.** The schedule inherits its source's
+  exact private `EnvironmentRef` or composition resolves the deployment default/no-FS
+  choice immediately. It persists that ref plus durable owner and trusted placement scope,
+  never a worktree selector or “follow current default” instruction. Every fire
+  reauthorizes and exactly reattaches before creating the fire session; drift records a
+  failure without filesystem access.
 - **`singleton` currently always effectively resolves to `true`.** The create-seam
   coerces `singleton: false` to `true` (overlap suppression) — a `false` value is
   accepted but silently overridden. Full opt-out support (allowing overlapping

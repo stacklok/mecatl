@@ -86,8 +86,13 @@ func TestAbsoluteInRootEditLedgerCrossForm(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadVersion(abs): %v", err)
 	}
-	ws.RecordRead(abs, absVer)
-	got, ok := ws.RecordedVersion(rel)
+	if err := testRecordRead(ctx, ws, abs, absVer); err != nil {
+		t.Fatalf("RecordRead(abs): %v", err)
+	}
+	got, ok, err := testRecordedVersion(ctx, ws, rel)
+	if err != nil {
+		t.Fatalf("RecordedVersion(rel): %v", err)
+	}
 	if !ok {
 		t.Fatalf("read abs / lookup rel: not recorded — cross-form ledger keying regressed")
 	}
@@ -110,8 +115,13 @@ func TestAbsoluteInRootEditLedgerCrossForm(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadVersion(rel): %v", err)
 	}
-	ws.RecordRead(rel, relVer)
-	got, ok = ws.RecordedVersion(abs)
+	if err := testRecordRead(ctx, ws, rel, relVer); err != nil {
+		t.Fatalf("RecordRead(rel): %v", err)
+	}
+	got, ok, err = testRecordedVersion(ctx, ws, abs)
+	if err != nil {
+		t.Fatalf("RecordedVersion(abs): %v", err)
+	}
 	if !ok {
 		t.Fatalf("read rel / lookup abs: not recorded — cross-form ledger keying regressed")
 	}

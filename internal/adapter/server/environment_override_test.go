@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
+	"github.com/stacklok/mecatl/engine/adapter/memledger"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -14,6 +15,16 @@ import (
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
+
+func newServerTestSubagent(engine *agent.Engine, opts ...agent.SubagentOption) tool.Tool {
+	opts = append(opts, agent.WithSubagentReadLedgerFactory(func() tool.ReadLedger { return memledger.New() }))
+	return agent.NewSubagentTool(engine, opts...)
+}
+
+func newServerTestTeamTool(factory agent.TeamMemberEngineFactory, opts ...agent.TeamOption) tool.Tool {
+	opts = append(opts, agent.WithTeamToolReadLedgerFactory(func() tool.ReadLedger { return memledger.New() }))
+	return agent.NewTeamTool(factory, opts...)
+}
 
 // TestSetSessionEnvironmentOverrideIsUsedVerbatim pins issue #462 phase-2
 // finding #2: a per-session Environment override registered via
@@ -29,13 +40,10 @@ func TestSetSessionEnvironmentOverrideIsUsedVerbatim(t *testing.T) {
 		Policy:  permpolicy.NewPolicy(nil, nil),
 		Model:   "test-model",
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine: shared,
 		Store:  memstore.New(),
-		Workspaces: func(root string) tool.Workspace {
-			t.Fatalf("shared Workspaces factory must not be consulted for an override session, got root %q", root)
-			return nil
-		},
+
 		DefaultLimits: session.Limits{MaxTurns: 5},
 		Now:           func() time.Time { return time.Unix(0, 0) },
 	})
@@ -43,8 +51,7 @@ func TestSetSessionEnvironmentOverrideIsUsedVerbatim(t *testing.T) {
 		t.Fatalf("NewService: %v", err)
 	}
 
-	cwd := t.TempDir()
-	sess, err := svc.CreateSession(context.Background(), cwd, session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -52,9 +59,9 @@ func TestSetSessionEnvironmentOverrideIsUsedVerbatim(t *testing.T) {
 	// Register a complete shell-less Environment with an ACCURATE local ref — the
 	// shape the ACP adapter installs (real FS workspace, no shell). The Service
 	// must use this verbatim: ref Kind local, ID the workspace root, no runner.
-	ws := memfs.NewWorkspace(cwd)
-	wantRef := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: cwd}
-	override := tool.MustEnvironment(wantRef, ws, nil)
+	ws := memfs.NewWorkspace(sess.EnvironmentRef.ID)
+	wantRef := sess.EnvironmentRef
+	override := tool.MustEnvironment(wantRef, ws, memledger.New(), nil)
 	svc.SetSessionEnvironment(sess.ID, override)
 
 	run, err := svc.StartRun(context.Background(), sess.ID, "hi")

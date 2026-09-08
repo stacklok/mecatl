@@ -148,16 +148,11 @@ func Run(t *testing.T, newWS func(t *testing.T) tool.Workspace) {
 		}
 	})
 
-	t.Run("read ledger records and looks up version", func(t *testing.T) {
+	t.Run("version-bearing reads are stable and content-sensitive", func(t *testing.T) {
 		ws := newWS(t)
 		if err := setFile(ctx, ws, "led.txt", []byte("original")); err != nil {
 			t.Fatalf("Write: %v", err)
 		}
-		// Never recorded -> ok=false (I/O-free lookup).
-		if _, ok := ws.RecordedVersion("led.txt"); ok {
-			t.Fatal("RecordedVersion before record unexpectedly reported ok=true")
-		}
-		// Read the version-bearing content and record the adapter-minted version.
 		data, ver, err := ws.ReadVersion(ctx, "led.txt")
 		if err != nil {
 			t.Fatalf("ReadVersion: %v", err)
@@ -170,26 +165,13 @@ func Run(t *testing.T, newWS func(t *testing.T) tool.Workspace) {
 		} else if !stable.Equal(ver) {
 			t.Fatal("unchanged file returned an unstable FileVersion")
 		}
-		ws.RecordRead("led.txt", ver)
-		if got, ok := ws.RecordedVersion("led.txt"); !ok || !got.Equal(ver) {
-			t.Fatalf("RecordedVersion after record did not return the recorded version (ok=%v)", ok)
-		}
-		// Change the file behind the ledger's back; RecordedVersion is I/O-free
-		// and still returns the RECORDED version (the point of the ledger). A
-		// caller detects the change by comparing RecordedVersion against a fresh
-		// ReadVersion, NOT by re-reading inside RecordedVersion.
 		if err := setFile(ctx, ws, "led.txt", []byte("modified content")); err != nil {
 			t.Fatalf("Write change: %v", err)
 		}
-		if got, ok := ws.RecordedVersion("led.txt"); !ok || !got.Equal(ver) {
-			t.Fatalf("RecordedVersion changed after a behind-the-back write (ok=%v); the lookup must be I/O-free", ok)
-		}
-		// A fresh ReadVersion now mints a DIFFERENT version, so the caller's
-		// recorded-vs-current comparison detects the change.
 		if _, cur, err := ws.ReadVersion(ctx, "led.txt"); err != nil {
 			t.Fatalf("ReadVersion after change: %v", err)
 		} else if cur.Equal(ver) {
-			t.Fatalf("current version still equals recorded version after a behind-the-back change")
+			t.Fatal("current version still equals prior version after a content change")
 		}
 	})
 

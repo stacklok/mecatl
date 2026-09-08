@@ -1,11 +1,12 @@
 ---
 sidebar_position: 3
 title: Run mecated standalone
+description: Run the standalone Mecatl server with providers, persistence, security, and observability.
 ---
 
 # Run mecated standalone
 
-`mecated` is the standalone composition root for mecatl: parse flags, delegate
+`mecated` is the standalone composition root for Mecatl: parse flags, delegate
 assembly to `internal/app.Build`, and serve the resulting `HarnessService` over
 gRPC and HTTP/SSE concurrently. Auth, TLS/mTLS, rate limiting, observability
 (Prometheus, pprof, OTel traces, the FlightRecorder), and graceful shutdown are
@@ -78,22 +79,25 @@ defence) on.
 Before binding a non-loopback address, add `--tls-cert` / `--tls-key` and
 `--auth-token` — see [the trust model](#the-trust-model) below.
 
-### Workspace authority follows listener topology
+### Server-owned session placement
 
-A loopback-only `mecated` (and embedded `mecatui`) lets a client choose an
-absolute workspace, which is the convenient local developer workflow. Any
-non-loopback, wildcard, or mixed `mecated` API listener instead uses a single
-**server-assigned** workspace. Configure that root with `--workspace`; clients
-must leave `CreateSession.workspace` empty. Empty means “use the server root,”
-not “use the client's current directory.”
+Every deployment owns session placement. `--workspace` configures the server's private
+local default; the public session API has no workspace, cwd, placement ID, or
+exact environment ref—even over loopback or an embedded UNIX socket. Omit `profile` to
+bind that default or request `profile:"no-fs"` to attenuate filesystem access.
 
-The server rejects any non-empty client workspace with `InvalidArgument` before
-it cleans or accesses that path, and refuses to start a server-assigned
-filesystem deployment without `--workspace`. If a reverse proxy makes a
-loopback listener remotely reachable, set `--workspace-authority=server-assigned`
-explicitly. This is one-root deployment authority, not remote multi-workspace
-authorization. A remote `mecatui` sends no local cwd and rejects an explicit
-workspace locally; other clients remain subject to server enforcement.
+`ListWorktrees(session_id)` discovers alternatives from an owned source session and
+returns safe labels plus a short-lived opaque selector. Only `ClearSession` and
+`ForkSession` accept it. `/clear` creates a non-destructive empty-history successor;
+Fork preserves valid history. Omitted selector inherits the source's exact placement.
+Selectors expire on restart, so clients relist; a failed relist or switch leaves their
+current session unchanged.
+
+The exact private `EnvironmentRef{kind,id,revision}` is persisted in snapshots and trusted
+driver storage and reattached at run entry. It is never exposed by public session/event
+projections. Schedules resolve and persist exact placement before firing, delegation
+derives it from the parent, and ACP cwd is only a local consistency assertion. See
+[ADR 0291](https://github.com/stacklok/mecatl/blob/main/docs/adr/0291-server-owned-session-placement.md).
 
 ## Operator-defined providers
 
@@ -148,7 +152,7 @@ loopback-only server. Flags not covered here are advanced operator tuning; run
 | `--metrics-addr` | `127.0.0.1:9090` | Prometheus + admin listener; empty disables it |
 | `--grpc-unix-socket` | `""` (off) | Serve gRPC on a UNIX-domain socket instead of a TCP port. Mutually exclusive with a configured `--grpc-addr`. See [Hosting a spawned daemon](#hosting-a-spawned-daemon) |
 | `--ready-file` | `""` (off) | Absolute path to write a JSON readiness document to, atomically, once every listener is up |
-| `--lifetime-pipe-fd` | `0` (off) | File descriptor of an inherited pipe; EOF on it stops the daemon gracefully (the parent-crash path) |
+| `--lifetime-pipe-fd` | `0` (off) | File descriptor of an inherited pipe read end or connected UNIX-domain stream socketpair endpoint; EOF on it stops the daemon gracefully (the parent-crash path) |
 | `--auth-token` | `""` (off) | Bearer token required on every request; also `MECATL_AUTH_TOKEN` |
 | `--tls-cert` | `""` | PEM server certificate; enables TLS on both listeners when paired with `--tls-key` |
 | `--tls-key` | `""` | PEM server private key |
@@ -178,7 +182,7 @@ session — per-caller access control is a separate, later piece of work. Do not
 deploy these flags as a tenancy boundary.
 
 The production OIDC/JWT validator is a delegated, actively-maintained library —
-mecatl never hand-rolls token verification. A bad OIDC
+Mecatl never hand-rolls token verification. A bad OIDC
 configuration, including an unreachable initial key fetch, fails closed at startup
 rather than falling back to unauthenticated traffic. After a successful fetch, the
 last good JWKS can cover a brief IdP outage. `--oidc-max-jwks-staleness=1h` bounds
@@ -250,6 +254,7 @@ secrets or raw file content. See [ADR 0088](https://github.com/stacklok/mecatl/b
 | `--scheduler-min-interval` | `1m` | Frequency floor enforced at schedule-create time (fail-closed, by both the in-chat `Schedule` tool and the REST/gRPC create). Defaults to `1m`; `0` disables the floor |
 | `--scheduler-max-concurrent-fires` | `4` | Max schedules fired in parallel per tick |
 | `--schedule-store-url` | `""` | gRPC driver endpoint (`ScheduleStoreService` + `ScheduleOneShotReArmerService`) for the durable schedule registry, **independent of the session store** — when set, replaces the `ScheduleStore()` discovery from the configured store. Empty keeps the default (the configured store's own `ScheduleStore()`, or no scheduling). The driver runs atomic fire advancement server-side, but current remote drivers do not expose atomic create-only publication; this option is therefore rejected when OIDC caller ownership is enabled |
+| `--learning-store-url` | `""` | One distributed-learning driver endpoint. Startup requires explicit capability advertisement of the complete Attempt/Proposal/Skill repository set and, when automatic learning is non-off, the automatic admission ledger; partial drivers fail instead of mixing remote and local persistence or accounting. The explicit flag still dials/probes/composes repositories in off mode for explicit reflection, learned-skill inspection, and recovery of already-admitted work; it does not enable automatic admission. Repository partitions are opaque on the wire. Current raw RPCs are permitted only as trusted single-tenant infrastructure with `OwnershipEnforced=false`; ownership-enforced/multi-tenant startup fails closed pending ADR-0213 workload-authenticated ownership |
 
 See [Scheduled tasks](/building/what-you-get/scheduled-tasks.md) for the in-chat `Schedule` tool and the gRPC/REST management surface.
 
@@ -324,10 +329,10 @@ ToolHive config detected by one operator's process shouldn't surprise another.
 There are two routing modes for how the `toolhive` provider reaches the gateway,
 selected by `--toolhive-llm-mode` (default `auto`):
 
-- **Proxy mode** (the original path): mecatl talks to a local reverse proxy
+- **Proxy mode** (the original path): Mecatl talks to a local reverse proxy
   (`thv llm proxy`, loopback `127.0.0.1:<port>/v1`) that holds the credential and
   forwards to the real `gateway_url`. The proxy must be running.
-- **Direct mode** (`auto` when configured, or `--toolhive-llm-mode direct`): mecatl
+- **Direct mode** (`auto` when configured, or `--toolhive-llm-mode direct`): Mecatl
   imports ToolHive as a library and talks DIRECTLY to the real `gateway_url` — no local
   proxy hop, no subprocess. The OIDC bearer token is minted and refreshed in-process
   by a per-request HTTP RoundTripper. Get the credential once with
@@ -404,7 +409,7 @@ a checked-in file weakening a security checker would be a downgrade.
 | `--toolhive` | `true` | Discover MCP servers from running ToolHive workloads (fails soft when no container runtime is reachable) |
 | `--toolhive-group` | `""` (default group) | ToolHive group to discover from |
 
-`--mcp-server` uses streaming-HTTP transport only. mecatl never speaks stdio MCP
+`--mcp-server` uses streaming-HTTP transport only. Mecatl never speaks stdio MCP
 directly; ToolHive stdio backends are HTTP-proxied and fine. A `mecatui connect … debug
 SESSION_ID --debug-mcp NAME` session can borrow only the named server's direct tools. The
 selection and exact direct tool set persist across restart; any addition, removal, or rename
@@ -448,25 +453,27 @@ paths, and goroutine stacks — never expose this listener off-loopback.
 
 ## The trust model
 
-mecatl exposes command and file execution. The security model has three layers:
+Mecatl exposes command and file execution. The security model has three layers:
 
 1. **Network binding.** Both listeners default to `127.0.0.1` — the loopback
    interface. No traffic crosses the machine.
 2. **Authentication.** Off by default for the loopback case. Enable a bearer token
-   (`--auth-token` / `MECATL_AUTH_TOKEN`) before binding a non-loopback address.
+   (`--auth-token` / `MECATL_AUTH_TOKEN`), OIDC, or mTLS before binding a non-loopback
+   address unless a deliberately controlled private network is the shared authority.
    [Caller identity](#caller-identity-oidc) is a separate, additive axis: a shared
    token is one credential with no subject behind it, while `--oidc-issuer` gives
    each caller a distinct identity. Identity records **who** acted; it does not
    yet decide **what** they may act on.
 3. **Transport.** Plaintext by default. Add `--tls-cert` + `--tls-key` for TLS;
-   add `--client-ca` to require and verify client certificates (mTLS).
+   add `--client-ca` to require and verify client certificates (mTLS). Ordinary TLS
+   encrypts traffic and authenticates the server, but does not authenticate callers.
 
 A non-loopback bind with no auth is **permitted** (a service mesh may legitimately
-front mecatl) but generates a prominent startup warning:
+front Mecatl) but generates a prominent startup warning:
 
 ```
-WARN  API bound to a NON-loopback address with NO authentication: it exposes
-      UNAUTHENTICATED command/file execution to the network
+WARN  API bound to a NON-loopback address with NO caller authentication: it exposes
+      UNAUTHENTICATED command/file execution to every network caller
 ```
 
 This is not a hard failure — if you see it intentionally, your mesh owns the auth
@@ -546,6 +553,26 @@ or a custom store behind the driver protocol, and is mutually exclusive with
 an OIDC/ownership-enforced server rejects `--session-store-url`; use the local JSONL
 backend (or mecak8s's directly wired Redis store) for multi-user deployments until
 the driver adds `port.SessionCreator` parity.
+
+For distributed learning persistence, `--learning-store-url` selects one driver
+for attempts, staged proposals, learned skills, and—when automatic learning is
+non-off—the automatic admission ledger. The target must implement
+`LearningRepositoryCapabilitiesService` and advertise all required repositories;
+startup rejects an old or partial driver rather than silently keeping any local
+repository or accounting authority. The automatic-ledger service includes bounded,
+backend-authoritative discovery of expired held reservations; replacement Builds use it to retain
+charges linked to an existing deterministic attempt or reclaim absent attempts without replaying
+admission. Equal driver targets reuse one Build-owned connection and shutdown
+path. Proposal and skill partition keys are opaque hashes on this wire, not raw
+workspace paths or identity claims. The current raw repository RPCs are trusted,
+single-tenant infrastructure only, and may be composed only with `OwnershipEnforced=false`.
+An ownership-enforced or multi-tenant deployment
+fails startup even if the driver self-advertises `enforced`; ADR-0213 workload-authenticated
+claims, a private durable owner registry, and separately authenticated maintenance RPCs
+must land before that posture is available. Selecting the flag remains an explicit
+repository opt-in in off mode: startup still dials, probes, composes, and inspects the
+remote set for explicit reflection, learned-skill publication, and recovery of work
+admitted by another process, but ordinary off-mode runs do not automatically admit attempts.
 
 ### Import from Codex or Claude Code
 
@@ -791,15 +818,17 @@ The file is **not removed on shutdown**: removing it on a graceful exit but not 
 a `SIGKILL` would be a guarantee you could not rely on, so treat it as possibly
 stale and check the `pid`. A restart over the same path overwrites it atomically.
 
-**`--lifetime-pipe-fd`** is the parent-crash path. Create a pipe, pass the read end
-to the child as a descriptor, and hold the write end without ever writing to it. If
-the parent exits — cleanly, or by `SIGKILL`, or by crashing — the kernel closes its
-descriptors, the daemon's read end sees EOF, and it shuts down through the same
-graceful path a `SIGTERM` takes, persisting session state on the way out. The parent
-has nothing to remember. Bytes on the pipe are read and discarded: it is a liveness
-signal, never a control channel. `0`, `1`, and `2` are rejected — treating stdin's
-EOF as "the parent died" would stop the daemon the moment you started it from a
-non-interactive shell.
+**`--lifetime-pipe-fd`** is the parent-crash path. Pass either a pipe's read end
+or one endpoint of a connected UNIX-domain stream socketpair to the child, and
+hold the other endpoint without ever writing to it. Node and Bun create this
+socketpair shape for `child_process` `stdio: "pipe"`. If the parent exits —
+cleanly, by `SIGKILL`, or by crashing — the kernel closes its descriptors, the
+daemon's endpoint sees EOF, and it shuts down through the same graceful path a
+`SIGTERM` takes, persisting session state on the way out. The parent has nothing
+to remember. Bytes are read and discarded: this is a liveness signal, never a
+control channel. Regular files, terminals, listening or network sockets, closed
+descriptors, and nonzero descriptors below 3 are rejected; `0` disables the
+watcher.
 
 All four flags are off by default, and a daemon that sets none of them behaves
 exactly as before.
@@ -865,7 +894,7 @@ to a host that was never vetted. Servers you configure yourself are unaffected.
 
 One rule holds regardless of topology: transport is streaming-HTTP only. A `stdio`
 entry — or an untyped one carrying a `command` — and an `sse` entry are rejected as
-malformed requests everywhere, because mecatl never spawns an MCP server process.
+malformed requests everywhere, because Mecatl never spawns an MCP server process.
 Header values are never written to logs, never carried in an event, and never
 echoed in an error.
 
@@ -918,4 +947,3 @@ unchanged.
 > backend-for-frontend in front of `mecated`: it holds the bearer token
 > server-side, enforces its own Origin/CSRF policy, and never ships a credential
 > to the browser. A token that reaches JavaScript is a token an XSS can take.
-

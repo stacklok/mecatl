@@ -51,7 +51,7 @@ func TestRunImportCreatesResumableSessionAndCopiesArtifacts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if got.State != session.StateIdle || got.Workspace != targetWorkspace || got.Title != "continue the migration" {
+	if got.State != session.StateIdle || got.EnvironmentRef.ID != targetWorkspace || got.Title != "continue the migration" {
 		t.Fatalf("imported session = %#v", got)
 	}
 	if len(got.Conversation.Messages) != 2 || got.Conversation.Messages[1].Text != "Ready." {

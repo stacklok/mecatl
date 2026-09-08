@@ -489,6 +489,13 @@ func buildProviderRegistry(cfg Config, detect envDetector) (*providerRegistry, e
 	return buildProviderRegistryContext(context.Background(), cfg, detect)
 }
 
+func mockDefaultModel(configured string) string {
+	if configured != "" {
+		return configured
+	}
+	return providerMock
+}
+
 func buildProviderRegistryContext(ctx context.Context, cfg Config, detect envDetector) (*providerRegistry, error) {
 	ctx = providerRegistryContext(ctx)
 	detect = providerRegistryDetector(detect)
@@ -504,14 +511,16 @@ func buildProviderRegistryContext(ctx context.Context, cfg Config, detect envDet
 			// scripted provider replaces the canned single text turn.
 			mock = cfg.MockProvider
 		}
+		defaultModel := mockDefaultModel(cfg.Model)
+
 		// The mock is intentionally left UNWRAPPED by resilience: it never fails over
 		// the network, so retries/breaker would be inert.
 		return &providerRegistry{
 			entries:   map[string]providerEntry{providerMock: {id: providerMock, provider: mock, available: true}},
 			defaultID: providerMock,
-			// The mock ignores the model entirely; carry cfg.Model so an explicit
-			// --model is still echoed (snapshots/capabilities) without inventing one.
-			defaultModel: cfg.Model,
+			// The mock ignores the model entirely; preserve an explicit --model and
+			// otherwise use its synthetic provider id as a stable non-empty default.
+			defaultModel: defaultModel,
 			// An EMPTY (non-nil) meta store: the mock has no lister and no catalog rows,
 			// so it stays empty, but an explicit store keeps the resolver helpers'
 			// invariant uniform (every production registry carries one) and future-proofs
@@ -1597,10 +1606,11 @@ var openAICodexStatusHints = map[string]string{
 	statusEmpty:        "the ChatGPT account lists no selectable Codex models; replace the manual token or check the subscription",
 }
 
-// statusHintFor returns provider-specific remediation only for providers whose
-// listing outcome is operator-actionable on provider_status. Ordinary provider
-// outages (for example OpenRouter) get "". Keep each vendor's copy in its own
-// table so gateway and manual-token remedies cannot cross-contaminate.
+// statusHintFor returns provider-specific remediation for ToolHive and Codex.
+// Custom-provider listing failures are also projected through provider_status,
+// but deliberately receive no endpoint-specific hint. Ordinary provider outages
+// (for example OpenRouter) get "". Keep each vendor's copy in its own table so
+// gateway and manual-token remedies cannot cross-contaminate.
 func statusHintFor(pid, state string) string {
 	switch pid {
 	case providerToolhive:

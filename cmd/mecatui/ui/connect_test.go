@@ -90,7 +90,7 @@ func TestConnectListFailureIsSanitized(t *testing.T) {
 	if strings.Contains(out, "secret") {
 		t.Fatal("raw list error leaked")
 	}
-	if strings.Contains(out, "Sign in to a new target") {
+	if strings.Contains(out, "OIDC sign-in for a new target") {
 		t.Fatalf("storage-unavailable panel offered enrollment: %s", out)
 	}
 	for range 2 {

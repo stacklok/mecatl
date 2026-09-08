@@ -15,6 +15,7 @@ import (
 	"github.com/stacklok/mecatl/engine/learning"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/internal/adapter/store/jsonlstore"
 )
 
 type stockSkillEvaluator struct {
@@ -48,7 +49,7 @@ func TestUsableAutoSkillsStockBuildPolicyMatrix(t *testing.T) {
 		{name: "explicit abstain", mode: learning.Auto, policy: learning.SkillActivationValidated, evaluator: stockSkillEvaluator{verdict: learning.EvaluationAbstain}, trustProject: true, wantState: learning.SkillActive, wantOperation: "activate_validated", wantActivity: learning.ActivitySkillActivatedValidated, wantPublished: true},
 		{name: "explicit pass", mode: learning.Auto, policy: learning.SkillActivationValidated, evaluator: stockSkillEvaluator{verdict: learning.EvaluationPass}, trustProject: true, wantState: learning.SkillActive, wantOperation: "activate", wantActivity: learning.ActivitySkillActivatedEvaluated, wantPublished: true},
 		{name: "explicit fail", mode: learning.Auto, policy: learning.SkillActivationValidated, evaluator: stockSkillEvaluator{verdict: learning.EvaluationFail}, trustProject: true, wantState: learning.SkillRejected, wantOperation: "record_evaluation", wantActivity: learning.ActivitySkillRejected},
-		{name: "evaluator error retry", mode: learning.Auto, policy: learning.SkillActivationValidated, evaluator: stockSkillEvaluator{err: secretErr}, trustProject: true, wantState: learning.SkillRejected, wantOperation: "record_evaluation", wantActivity: learning.ActivityFailed, wantActivityCount: 2},
+		{name: "evaluator error retry", mode: learning.Auto, policy: learning.SkillActivationValidated, evaluator: stockSkillEvaluator{err: secretErr}, trustProject: true, wantState: learning.SkillRejected, wantOperation: "record_evaluation", wantActivity: learning.ActivityFailed, wantActivityCount: 1},
 		{name: "explicit evaluated", mode: learning.Auto, policy: learning.SkillActivationEvaluated, trustProject: true, wantState: learning.SkillStaged, wantOperation: "stage", wantActivity: learning.ActivitySkillStaged},
 		{name: "review", mode: learning.Review, policy: learning.SkillActivationValidated, trustProject: true, wantState: learning.SkillStaged, wantOperation: "stage", wantActivity: learning.ActivitySkillStaged},
 		{name: "off", mode: learning.Off, trustProject: true},
@@ -60,7 +61,8 @@ func TestUsableAutoSkillsStockBuildPolicyMatrix(t *testing.T) {
 			if tc.projectPolicy {
 				t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 			}
-			workspace := t.TempDir()
+			workspace := osfsWSForTest(t, t.TempDir()).Root()
+			storeDir := t.TempDir()
 			if tc.projectPolicy {
 				if err := os.MkdirAll(filepath.Join(workspace, ".mecatl"), 0o700); err != nil {
 					t.Fatal(err)
@@ -84,7 +86,7 @@ func TestUsableAutoSkillsStockBuildPolicyMatrix(t *testing.T) {
 			built, err := Build(context.Background(), Config{
 				Model: "test-model", Workspace: workspace, TrustProject: tc.trustProject, Headless: !tc.trustProject, PermissionsConventional: tc.projectPolicy,
 				LearningMode: tc.mode, SkillActivationPolicy: tc.policy, SkillEvaluator: tc.evaluator,
-				UserModelDir: t.TempDir(), MemoryDir: t.TempDir(), Diagnostics: diag,
+				UserModelDir: t.TempDir(), MemoryDir: t.TempDir(), Diagnostics: diag, StoreDir: storeDir,
 				LearningMetricsEmitter: func(activity learning.Activity) {
 					metricsMu.Lock()
 					activities = append(activities, activity)
@@ -99,7 +101,7 @@ func TestUsableAutoSkillsStockBuildPolicyMatrix(t *testing.T) {
 			}
 			defer built.Close()
 			ctx := session.WithPrincipal(context.Background(), &session.Principal{Issuer: "test", Subject: "matrix", GrantType: session.GrantTypeUser})
-			sess, err := built.Service.CreateSession(ctx, workspace, session.ModeDefault, defaultLimits())
+			sess, err := built.Service.CreateSession(ctx, session.ModeDefault, defaultLimits())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -107,7 +109,14 @@ func TestUsableAutoSkillsStockBuildPolicyMatrix(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			log, err := jsonlstore.New(storeDir)
+			if err != nil {
+				t.Fatal(err)
+			}
 			for event := range run.Events() {
+				if err := log.Append(ctx, sess.ID, event); err != nil {
+					t.Fatal(err)
+				}
 				if event.Type == session.EvPermissionAsk && event.Ask != nil {
 					run.Approve(event.Ask.AskID, session.VerdictAllowOnce)
 				}
@@ -149,7 +158,7 @@ func TestUsableAutoSkillsStockBuildPolicyMatrix(t *testing.T) {
 					t.Fatalf("skill = %+v, want state=%s operation=%s", got, tc.wantState, tc.wantOperation)
 				}
 			}
-			second, err := built.Service.CreateSession(ctx, workspace, session.ModeDefault, defaultLimits())
+			second, err := built.Service.CreateSession(ctx, session.ModeDefault, defaultLimits())
 			if err != nil {
 				t.Fatal(err)
 			}

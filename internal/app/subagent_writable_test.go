@@ -120,7 +120,7 @@ func TestNoFSSubagentToolRejectsWritable(t *testing.T) {
 
 	res, err := task.Execute(context.Background(),
 		session.NewToolCall("c1", "Subagent", []byte(`{"prompt":"go","mode":"read-write"}`)),
-		tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: "test"}, nofs.New(), nil))
+		tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: "test"}, nofs.New(), testReadLedger(), nil))
 	if err != nil {
 		t.Fatalf("Subagent.Execute: %v", err)
 	}

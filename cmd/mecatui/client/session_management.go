@@ -13,8 +13,10 @@ import (
 // protobuf types to the UI.
 type SessionRenamedMsg struct {
 	SessionID       string
+	RequestToken    uint64
 	Title           string
 	TitleProvenance string
+	TitleRevision   uint64
 	Err             error
 }
 
@@ -43,7 +45,7 @@ type SessionManager interface {
 // RenameSession replaces a stored session title and returns the authoritative
 // server snapshot, including title provenance.
 func (c *Client) RenameSession(ctx context.Context, id, title string) (SessionSnapshot, error) {
-	resp, err := c.svc.RenameSession(ctx, &mecatlv1.RenameSessionRequest{SessionId: id, Title: title})
+	resp, err := c.svc.RenameSession(withSessionAffinity(ctx, id), &mecatlv1.RenameSessionRequest{SessionId: id, Title: title})
 	if err != nil {
 		return SessionSnapshot{}, fmt.Errorf("rename session: %w", err)
 	}
@@ -52,18 +54,18 @@ func (c *Client) RenameSession(ctx context.Context, id, title string) (SessionSn
 
 // DeleteSession permanently removes a stored session.
 func (c *Client) DeleteSession(ctx context.Context, id string) error {
-	_, err := c.svc.DeleteSession(ctx, &mecatlv1.DeleteSessionRequest{SessionId: id})
+	_, err := c.svc.DeleteSession(withSessionAffinity(ctx, id), &mecatlv1.DeleteSessionRequest{SessionId: id})
 	if err != nil {
 		return fmt.Errorf("delete session: %w", err)
 	}
 	return nil
 }
 
-// RenameSessionCmd performs RenameSession off the reducer goroutine.
-func RenameSessionCmd(ctx context.Context, r SessionRenamer, id, title string) tea.Cmd {
+// RenameSessionCmdWithToken correlates an asynchronous rename with a UI request.
+func RenameSessionCmdWithToken(ctx context.Context, r SessionRenamer, id, title string, requestToken uint64) tea.Cmd {
 	return func() tea.Msg {
 		snapshot, err := r.RenameSession(ctx, id, title)
-		return SessionRenamedMsg{SessionID: id, Title: snapshot.Title, TitleProvenance: snapshot.TitleProvenance, Err: err}
+		return SessionRenamedMsg{SessionID: id, RequestToken: requestToken, Title: snapshot.Title, TitleProvenance: snapshot.TitleProvenance, TitleRevision: snapshot.TitleRevision, Err: err}
 	}
 }
 

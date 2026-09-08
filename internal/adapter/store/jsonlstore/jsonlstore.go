@@ -164,16 +164,17 @@ type Store struct {
 	resolver sessionResolver
 	// mu is confined to the sibling schedule store. Session-family mutations
 	// coordinate by their stable cross-process flock identity instead.
-	mu                        sync.Mutex
-	inventoryMu               sync.Mutex
-	lineageMu                 sync.Mutex
-	snapshot                  snapshotOps
-	durability                SnapshotDurabilityCapability
-	tempOwner                 string
-	tempGeneration            atomic.Uint64
-	toolCallLockTimeout       time.Duration
-	inventoryWorkObserver     func(inventoryWorkKind)
-	snapshotFamilyLockBlocked func()
+	mu                            sync.Mutex
+	inventoryMu                   sync.Mutex
+	lineageMu                     sync.Mutex
+	snapshot                      snapshotOps
+	durability                    SnapshotDurabilityCapability
+	tempOwner                     string
+	tempGeneration                atomic.Uint64
+	toolCallLockTimeout           time.Duration
+	inventoryWorkObserver         func(inventoryWorkKind)
+	inventoryCatalogReadyObserver func()
+	snapshotFamilyLockBlocked     func()
 }
 
 // compile-time assertions that Store satisfies both ports plus the optional
@@ -728,9 +729,16 @@ func (st *Store) Load(ctx context.Context, id session.SessionID) (*session.Sessi
 		return err
 	})
 	if err != nil {
-		return nil, err
+		if errors.Is(err, port.ErrSessionNotFound) || errors.Is(err, port.ErrSessionLoadFailure) {
+			return nil, err
+		}
+		return nil, port.NewSessionLoadFailure(port.SessionLoadFailureStore, err)
 	}
-	return sessnap.Unmarshal(line)
+	sess, err := sessnap.Unmarshal(line)
+	if err != nil {
+		return nil, port.NewSessionLoadFailure(port.SessionLoadFailureSnapshot, err)
+	}
+	return sess, nil
 }
 
 // maxEventRecordSize is the largest newline-committed event-log record that

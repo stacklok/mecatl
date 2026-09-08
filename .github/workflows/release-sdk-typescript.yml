@@ -1,0 +1,304 @@
+# Builds one immutable npm tarball and publishes only that inspected artifact.
+name: Release TypeScript SDK
+
+on:
+  push:
+    tags:
+      - 'sdk/typescript/v*'
+  workflow_dispatch:
+
+# Verification cannot mint OIDC, package, or attestation authority. The publish
+# job is the only elevation.
+permissions:
+  contents: read
+
+concurrency:
+  # The exact per-ref group is an acceptance contract. Dry runs serialize so
+  # their verification evidence cannot interleave for one dispatched ref.
+  group: release-sdk-typescript-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Build and inspect npm artifact
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      integrity: ${{ steps.package.outputs.integrity }}
+      tarball: ${{ steps.package.outputs.tarball }}
+      version: ${{ steps.identity.outputs.version }}
+    steps:
+      # github.sha is immutable. Full history is required for the main-ancestry gate.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+
+      - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+        with:
+          version: 11.25.0
+          run_install: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.7.0'
+          cache: pnpm
+          cache-dependency-path: sdk/typescript/pnpm-lock.yaml
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: '1.4.1'
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            engine/go.sum
+
+      - uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99 # v1.50.0
+        with:
+          version: '1.72.0'
+
+      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+
+      # This is deliberately before dependency installation. Dispatch resolves the
+      # committed package version but has no release authority; tag pushes must be
+      # strict stable semver tags on an already-merged main commit.
+      - name: Validate immutable release identity
+        id: identity
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          manifest_version="$(node -p "require('./sdk/typescript/package.json').version")"
+          version="$manifest_version"
+
+          if [[ "$EVENT_NAME" == "push" ]]; then
+            release_tag="${GITHUB_REF#refs/tags/}"
+            if [[ ! "$release_tag" =~ ^sdk/typescript/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+              echo "release tag is not stable path-qualified semver: $release_tag" >&2
+              exit 1
+            fi
+            version="${release_tag#sdk/typescript/v}"
+            test "$release_tag" = "sdk/typescript/v${manifest_version}"
+            test "$(git rev-parse "${release_tag}^{commit}")" = "$GITHUB_SHA"
+            git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+          fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Install SDK dependencies from the frozen lockfile
+        run: task sdk:install
+
+      # Re-query advisories at tag time so a vulnerability disclosed after the
+      # release commit's CI run still blocks publication. This covers the full
+      # build closure, including the allowlisted esbuild lifecycle dependency.
+      - name: Audit SDK dependency closure
+        run: task sdk:audit
+
+      - name: Verify generated contracts and SDK lockfile are clean
+        run: |
+          set -euo pipefail
+          task generate
+          git diff --exit-code -- contracts/gen sdk/typescript/src/gen sdk/typescript/pnpm-lock.yaml
+          test -z "$(git status --porcelain --untracked-files=all -- contracts/gen sdk/typescript/src/gen sdk/typescript/pnpm-lock.yaml)"
+
+      - name: Lint and format-check SDK
+        run: task sdk:lint
+
+      - name: Type-check SDK source
+        run: task sdk:typecheck
+
+      - name: Run SDK unit suite
+        run: task sdk:test:release
+
+      - name: Compile declarations with TypeScript 5.7 and 6
+        run: task sdk:declarations
+
+      - name: Build SDK
+        run: task sdk:build
+
+      - name: Type-check published SDK examples
+        run: task sdk:examples:typecheck
+
+      - name: Run offline SDK e2e suite
+        run: task sdk:e2e
+
+      - name: Verify SDK API reports
+        run: task sdk:api:check
+
+      # Pack exactly once. The package oracle below consumes this path instead of
+      # invoking pack itself, so the inspected bytes are the publish operand.
+      - name: Pack SDK and record integrity
+        id: package
+        env:
+          VERSION: ${{ steps.identity.outputs.version }}
+        run: |
+          set -euo pipefail
+          task sdk:pack PACK_DESTINATION=.release
+          mapfile -t archives < <(find sdk/typescript/.release -maxdepth 1 -type f -name '*.tgz' -print)
+          if (( ${#archives[@]} != 1 )); then
+            echo "expected exactly one packed tarball, found ${#archives[@]}" >&2
+            exit 1
+          fi
+          tarball_path="${archives[0]}"
+          tarball="$(basename "$tarball_path")"
+          test "$tarball" = "stacklok-mecatl-sdk-${VERSION}.tgz"
+          integrity="$(node --input-type=module --eval "import { createHash } from 'node:crypto'; import { readFileSync } from 'node:fs'; process.stdout.write('sha512-' + createHash('sha512').update(readFileSync(process.argv[1])).digest('base64'))" "$tarball_path")"
+          {
+            echo "tarball=$tarball"
+            echo "integrity=$integrity"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "## TypeScript SDK artifact"
+            echo ""
+            echo "- Tarball: \`$tarball\`"
+            echo "- npm integrity: \`$integrity\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Inspect exact packed inventory and consumers
+        env:
+          MECATL_SDK_PACKED_TARBALL: ${{ github.workspace }}/sdk/typescript/.release/${{ steps.package.outputs.tarball }}
+        run: task sdk:package:check
+
+      - name: Verify packed manifest release metadata
+        env:
+          EXPECTED_VERSION: ${{ steps.identity.outputs.version }}
+          TARBALL: sdk/typescript/.release/${{ steps.package.outputs.tarball }}
+        run: |
+          set -euo pipefail
+          tar -xOf "$TARBALL" package/package.json > "$RUNNER_TEMP/packed-package.json"
+          PACKED_MANIFEST="$RUNNER_TEMP/packed-package.json" node --input-type=module <<'NODE'
+          import { readFileSync } from "node:fs";
+
+          const manifest = JSON.parse(readFileSync(process.env.PACKED_MANIFEST, "utf8"));
+          const expectedRepository = {
+            type: "git",
+            url: "https://github.com/stacklok/mecatl.git",
+            directory: "sdk/typescript",
+          };
+          const failures = [
+            ["version", manifest.version, process.env.EXPECTED_VERSION],
+            ["license", manifest.license, "Apache-2.0"],
+            ["repository", JSON.stringify(manifest.repository), JSON.stringify(expectedRepository)],
+            ["publishConfig.registry", manifest.publishConfig?.registry, "https://npm.pkg.github.com"],
+            ["publishConfig.access", manifest.publishConfig?.access, undefined],
+          ].filter(([, actual, expected]) => actual !== expected);
+          if (failures.length > 0) {
+            throw new Error(`packed manifest metadata mismatch: ${JSON.stringify(failures)}`);
+          }
+          NODE
+
+      # dist/ is compiled from sdk/typescript/src/, and dist/gen additionally
+      # derives from the public protos. Any non-Apache SPDX identifier in either
+      # provenance root blocks the artifact after inventory inspection.
+      - name: Verify packed license provenance
+        run: |
+          set -euo pipefail
+          non_apache="$(
+            git grep -n 'SPDX-License-Identifier:' -- contracts/proto/mecatl/v1 sdk/typescript/src \
+              | grep -v 'SPDX-License-Identifier: Apache-2.0' || true
+          )"
+          if [[ -n "$non_apache" ]]; then
+            echo "packed output derives from non-Apache-2.0 sources:" >&2
+            echo "$non_apache" >&2
+            exit 1
+          fi
+
+      - name: Upload inspected npm tarball
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: npm-package
+          path: sdk/typescript/.release/${{ steps.package.outputs.tarball }}
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Publish inspected artifact to GitHub Packages
+    needs: verify
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/sdk/typescript/v')
+    environment: github-packages-publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    env:
+      # The ephemeral token GitHub creates for this job, not a stored npm secret.
+      NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      # Node 24.7.0 bundles npm 11.5.1, so this exact distribution pin fixes
+      # both publishing tool versions without an install step.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.7.0'
+          registry-url: https://npm.pkg.github.com
+          scope: '@stacklok'
+
+      - name: Download inspected npm tarball
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: npm-package
+          path: .
+
+      - name: Assert GitHub Packages toolchain floors
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          const version = process.versions.node.split(".").map(Number);
+          const meetsFloor = version[0] > 22 ||
+            (version[0] === 22 && (version[1] > 14 ||
+              (version[1] === 14 && version[2] >= 0)));
+          if (!meetsFloor) throw new Error(`Node ${process.versions.node} is below 22.14.0`);
+          NODE
+          test "$(npm --version)" = "11.5.1"
+
+      - name: Re-verify downloaded tarball integrity
+        env:
+          EXPECTED_INTEGRITY: ${{ needs.verify.outputs.integrity }}
+          TARBALL: ${{ needs.verify.outputs.tarball }}
+        run: |
+          set -euo pipefail
+          actual_integrity="$(node --input-type=module --eval "import { createHash } from 'node:crypto'; import { readFileSync } from 'node:fs'; process.stdout.write('sha512-' + createHash('sha512').update(readFileSync(process.argv[1])).digest('base64'))" "$TARBALL")"
+          test "$actual_integrity" = "$EXPECTED_INTEGRITY"
+
+      - name: Attest downloaded tarball provenance
+        id: attestation
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ needs.verify.outputs.tarball }}
+
+      - name: Verify GitHub artifact attestation
+        env:
+          TARBALL: ${{ needs.verify.outputs.tarball }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh attestation verify "./${TARBALL}" --repo stacklok/mecatl
+
+      - name: Publish downloaded tarball
+        env:
+          TARBALL: ${{ needs.verify.outputs.tarball }}
+        run: npm publish "./${TARBALL}"
+
+      - name: Record published artifact evidence
+        env:
+          ATTESTATION_URL: ${{ steps.attestation.outputs.attestation-url }}
+          INTEGRITY: ${{ needs.verify.outputs.integrity }}
+          TARBALL: ${{ needs.verify.outputs.tarball }}
+        run: |
+          {
+            echo "## Published TypeScript SDK artifact"
+            echo ""
+            echo "- Tarball: \`$TARBALL\`"
+            echo "- npm integrity: \`$INTEGRITY\`"
+            echo "- GitHub attestation: $ATTESTATION_URL"
+          } >> "$GITHUB_STEP_SUMMARY"

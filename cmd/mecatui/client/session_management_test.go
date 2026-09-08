@@ -33,14 +33,14 @@ func (f *fakeSessionManagementClient) DeleteSession(_ context.Context, in *mecat
 }
 
 func TestRenameSessionWrapperAndCmd(t *testing.T) {
-	fake := &fakeSessionManagementClient{renameResp: &mecatlv1.RenameSessionResponse{Session: &mecatlv1.Session{Title: "server title", TitleProvenance: "operator"}}}
+	fake := &fakeSessionManagementClient{renameResp: &mecatlv1.RenameSessionResponse{Session: &mecatlv1.Session{TitleMetadata: &mecatlv1.SessionTitle{Title: "server title", Provenance: "operator", Revision: 7}}}}
 	cl := newFakeClient(fake)
-	msg := RenameSessionCmd(context.Background(), cl, "opaque\nID", "new title")()
+	msg := RenameSessionCmdWithToken(context.Background(), cl, "opaque\nID", "new title", 0)()
 	got, ok := msg.(SessionRenamedMsg)
 	if !ok {
 		t.Fatalf("message = %T", msg)
 	}
-	if got.Err != nil || got.SessionID != "opaque\nID" || got.Title != "server title" || got.TitleProvenance != "operator" {
+	if got.Err != nil || got.SessionID != "opaque\nID" || got.Title != "server title" || got.TitleProvenance != "operator" || got.TitleRevision != 7 {
 		t.Fatalf("message = %+v", got)
 	}
 	if fake.renameReq.GetSessionId() != "opaque\nID" || fake.renameReq.GetTitle() != "new title" {
@@ -50,7 +50,7 @@ func TestRenameSessionWrapperAndCmd(t *testing.T) {
 
 func TestRenameSessionCmdPreservesError(t *testing.T) {
 	fake := &fakeSessionManagementClient{renameErr: errors.New("ownership changed")}
-	msg := RenameSessionCmd(context.Background(), newFakeClient(fake), "s1", "title")().(SessionRenamedMsg)
+	msg := RenameSessionCmdWithToken(context.Background(), newFakeClient(fake), "s1", "title", 0)().(SessionRenamedMsg)
 	if msg.SessionID != "s1" || msg.Err == nil {
 		t.Fatalf("message = %+v", msg)
 	}

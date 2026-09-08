@@ -69,13 +69,14 @@ func Run(t *testing.T, newStore func(t *testing.T) port.ScheduleStore) {
 		s := newStore(t)
 		in := port.Schedule{
 			Spec: port.ScheduleSpec{
-				Name:      "conf-sched-rt",
-				Prompt:    "rotate the keys",
-				Profile:   "no-fs",
-				Workspace: "/srv",
-				MaxFires:  3,
-				Mutating:  true,
-				CreatedAt: time.Unix(1_700_000_000, 0),
+				Name:           "conf-sched-rt",
+				Prompt:         "rotate the keys",
+				Profile:        "no-fs",
+				EnvironmentRef: session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: "no-fs", Revision: "nofs-v1"},
+				PlacementScope: "tenant-a",
+				MaxFires:       3,
+				Mutating:       true,
+				CreatedAt:      time.Unix(1_700_000_000, 0),
 				// The captured owner (ADR 0204 decision 6) must survive the
 				// round-trip on EVERY transport — a schedule outlives its origin
 				// session, so the store is the only place the attribution lives.
@@ -1643,8 +1644,11 @@ func assertScheduleEqual(t *testing.T, label string, got, want port.Schedule) {
 	if got.Spec.Profile != want.Spec.Profile {
 		t.Errorf("%s: Spec.Profile = %q, want %q", label, got.Spec.Profile, want.Spec.Profile)
 	}
-	if got.Spec.Workspace != want.Spec.Workspace {
-		t.Errorf("%s: Spec.Workspace = %q, want %q", label, got.Spec.Workspace, want.Spec.Workspace)
+	if got.Spec.EnvironmentRef != want.Spec.EnvironmentRef {
+		t.Errorf("%s: Spec.EnvironmentRef = %+v, want %+v", label, got.Spec.EnvironmentRef, want.Spec.EnvironmentRef)
+	}
+	if got.Spec.PlacementScope != want.Spec.PlacementScope {
+		t.Errorf("%s: Spec.PlacementScope = %q, want %q", label, got.Spec.PlacementScope, want.Spec.PlacementScope)
 	}
 	if got.Spec.MaxFires != want.Spec.MaxFires {
 		t.Errorf("%s: Spec.MaxFires = %d, want %d", label, got.Spec.MaxFires, want.Spec.MaxFires)

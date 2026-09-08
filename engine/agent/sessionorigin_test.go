@@ -179,7 +179,7 @@ func TestFireDelivery_Scenario1_OriginIDNotModelVisible(t *testing.T) {
 		Policy:  permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil),
 	})
 
-	sess := session.New(originID, session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	sess := session.New(originID, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	// Run the engine to trigger the tool call and capture the system prompt.
 	run := eng.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "create a schedule"})
 	drain(run)
@@ -274,8 +274,8 @@ func TestScheduleTool_ConcurrentSharedEngineRunsDoNotCrossStamp(t *testing.T) {
 		Policy:  permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil),
 	})
 	ws := agent.MemEnv("/ws")
-	sessA := session.New("session-a", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
-	sessB := session.New("session-b", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	sessA := session.New("session-a", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
+	sessB := session.New("session-b", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 
 	runA := eng.Run(context.Background(), sessA, ws, agent.RunRequest{Text: "create a"})
 	select {

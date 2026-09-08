@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -10,6 +11,9 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"google.golang.org/protobuf/proto"
+
+	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
@@ -29,6 +33,19 @@ func customProviderConfig() Config {
 			},
 		},
 		CustomProviderAPIKeys: map[string]string{"gateway-responses": "gateway-key"},
+	}
+}
+
+func assertProtoHides(t *testing.T, message proto.Message, sensitive ...string) {
+	t.Helper()
+	payload, err := proto.Marshal(message)
+	if err != nil {
+		t.Fatalf("marshal client-visible protobuf: %v", err)
+	}
+	for _, value := range sensitive {
+		if bytes.Contains(payload, []byte(value)) {
+			t.Errorf("client-visible protobuf leaked %q", value)
+		}
 	}
 }
 
@@ -215,8 +232,62 @@ func TestInvariant_custom_provider_default_model_inventory_floor(t *testing.T) {
 }
 
 func TestOperatorDefinedLLMProviders_Scenario4_ListingFallback(t *testing.T) {
+	for _, tc := range []struct {
+		name, flavor, wantState string
+		code                    int
+	}{
+		{name: "responses/unreachable", flavor: "openai-responses", code: http.StatusBadGateway, wantState: statusUnreachable},
+		{name: "responses/unauthorized", flavor: "openai-responses", code: http.StatusUnauthorized, wantState: statusUnauthorized},
+		{name: "chat/unreachable", flavor: "openai-chat-completions", code: http.StatusBadGateway, wantState: statusUnreachable},
+		{name: "chat/unauthorized", flavor: "openai-chat-completions", code: http.StatusUnauthorized, wantState: statusUnauthorized},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			const sensitiveBody = "listing body must not reach the picker"
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				http.Error(w, sensitiveBody, tc.code)
+			}))
+			defer server.Close()
+
+			cfg := customProviderConfig()
+			definition := cfg.ProviderDefinitions["gateway-responses"]
+			definition.APIFlavor = tc.flavor
+			definition.BaseURL = server.URL + "/v1"
+			cfg.ProviderDefinitions[definition.ID] = definition
+			cfg.DefaultProvider = definition.ID
+			cfg.DefaultModel = definition.DefaultModel
+			reg, err := buildProviderRegistry(cfg, fakeEnv(nil))
+			if err != nil {
+				t.Fatalf("buildProviderRegistry: %v", err)
+			}
+			models := resolveProviderModels(context.Background(), port.NopDiagnostics{}, reg, definition.ID)
+			if len(models) != 1 || models[0].ID != definition.DefaultModel {
+				t.Errorf("fallback inventory = %v, want selectable configured default model %q", models, definition.DefaultModel)
+			}
+			if err := validateDefaultModel(cfg, reg); err != nil {
+				t.Fatalf("validateDefaultModel rejected configured default after listing failure: %v", err)
+			}
+
+			rows := providerStatusProto(reg)
+			if len(rows) != 1 {
+				t.Fatalf("provider_status = %+v, want one custom-provider row", rows)
+			}
+			row := rows[0]
+			if row.GetProviderId() != definition.ID || row.GetState() != tc.wantState {
+				t.Errorf("provider_status row = %+v, want provider=%q state=%q", row, definition.ID, tc.wantState)
+			}
+			if row.GetHint() != "" || row.GetAvailableNotDefault() || row.GetDefaultModelAutoSelected() || row.GetModelCount() != 0 {
+				t.Errorf("custom provider status = %+v, want only its safe failure state", row)
+			}
+			assertProtoHides(t, row, server.URL, sensitiveBody, cfg.CustomProviderAPIKeys[definition.ID])
+		})
+	}
+}
+
+func TestOperatorDefinedLLMProviders_EmptyListingPreservesFloorAndStatus(t *testing.T) {
+	const sensitiveBody = "custom listing response body"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		http.Error(w, "unavailable", http.StatusBadGateway)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[],"private":"custom listing response body"}`))
 	}))
 	defer server.Close()
 
@@ -229,8 +300,106 @@ func TestOperatorDefinedLLMProviders_Scenario4_ListingFallback(t *testing.T) {
 		t.Fatalf("buildProviderRegistry: %v", err)
 	}
 	models := resolveProviderModels(context.Background(), port.NopDiagnostics{}, reg, definition.ID)
-	if len(models) != 1 || models[0].ID != "gateway-default" {
-		t.Errorf("fallback inventory = %v, want configured default model", models)
+	if len(models) != 1 || models[0].ID != definition.DefaultModel {
+		t.Fatalf("empty listing inventory = %v, want configured floor %q", models, definition.DefaultModel)
+	}
+	rows := providerStatusProto(reg)
+	if len(rows) != 1 || rows[0].GetProviderId() != definition.ID || rows[0].GetState() != statusEmpty || rows[0].GetHint() != "" {
+		t.Fatalf("provider_status = %+v, want one safe custom empty row", rows)
+	}
+	assertProtoHides(t, rows[0], server.URL, sensitiveBody, cfg.CustomProviderAPIKeys[definition.ID])
+}
+
+func TestOperatorDefinedLLMProviders_AnthropicListingFailureStatus(t *testing.T) {
+	for _, tc := range []struct {
+		name, wantState string
+		code            int
+	}{
+		{name: "unauthorized", code: http.StatusUnauthorized, wantState: statusUnauthorized},
+		{name: "unreachable", code: http.StatusBadGateway, wantState: statusUnreachable},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			const sensitiveBody = "anthropic custom listing response body"
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				http.Error(w, sensitiveBody, tc.code)
+			}))
+			defer server.Close()
+
+			cfg := Config{
+				ProviderDefinitions: permconfig.ProviderDefinitions{"gateway-anthropic": {
+					ID: "gateway-anthropic", BaseURL: server.URL, DefaultModel: "gateway-default", APIFlavor: "anthropic-messages",
+					Auth: permconfig.ProviderAuth{Method: "api_key"},
+				}},
+				CustomProviderAPIKeys: map[string]string{"gateway-anthropic": "anthropic-gateway-secret"},
+				liveModelHTTPClient:   server.Client(),
+			}
+			reg, err := buildProviderRegistry(cfg, fakeEnv(nil))
+			if err != nil {
+				t.Fatalf("buildProviderRegistry: %v", err)
+			}
+			models := resolveProviderModels(context.Background(), port.NopDiagnostics{}, reg, "gateway-anthropic")
+			if len(models) != 1 || models[0].ID != "gateway-default" {
+				t.Fatalf("fallback inventory = %v, want custom default floor", models)
+			}
+			rows := providerStatusProto(reg)
+			if len(rows) != 1 || rows[0].GetState() != tc.wantState {
+				t.Fatalf("provider_status = %+v, want custom Anthropic %s", rows, tc.wantState)
+			}
+			assertProtoHides(t, rows[0], server.URL, sensitiveBody, "anthropic-gateway-secret")
+		})
+	}
+}
+
+func TestOperatorDefinedLLMProviders_ListingFailureProjectsOnListModelsWire(t *testing.T) {
+	for _, tc := range []struct {
+		name, wantState string
+		code            int
+	}{
+		{name: "unreachable", code: http.StatusBadGateway, wantState: statusUnreachable},
+		{name: "unauthorized", code: http.StatusUnauthorized, wantState: statusUnauthorized},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			const sensitiveBody = "custom listing response body"
+			modelServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				http.Error(w, sensitiveBody, tc.code)
+			}))
+			defer modelServer.Close()
+
+			workspace := t.TempDir()
+			operator := writeOperatorSettingsFile(t, "providers:\n  gateway:\n    base_url: "+modelServer.URL+"/v1\n    default_model: gateway-default\n    api_flavor: openai-responses\n    auth:\n      method: api_key\n")
+			built, err := Build(context.Background(), Config{
+				Workspace:               workspace,
+				NoSoul:                  true,
+				PermissionsConventional: true,
+				permConfigEnv:           isolatedPermConfigEnv(t),
+				PermissionConfigs:       []string{operator},
+				DefaultProvider:         "gateway",
+				DefaultModel:            "gateway-default",
+				CustomProviderAPIKeys:   map[string]string{"gateway": "gateway-secret"},
+				liveModelHTTPClient:     modelServer.Client(),
+				liveModelRefreshSync:    true,
+				providerConstructor: func(_ Config, _, _, _ string) port.LLMProvider {
+					return mockllm.New(mockllm.TextTurn("ok"))
+				},
+			})
+			if err != nil {
+				t.Fatalf("Build: %v", err)
+			}
+			defer built.Close()
+
+			resp, err := serveradapter.NewHarnessServer(built.Service).ListModels(context.Background(), &mecatlv1.ListModelsRequest{})
+			if err != nil {
+				t.Fatalf("ListModels: %v", err)
+			}
+			if models := resp.GetModels(); len(models) != 1 || models[0].GetProviderId() != "gateway" || models[0].GetId() != "gateway-default" {
+				t.Fatalf("models = %+v, want selectable gateway-default floor", models)
+			}
+			rows := resp.GetProviderStatus()
+			if len(rows) != 1 || rows[0].GetProviderId() != "gateway" || rows[0].GetState() != tc.wantState {
+				t.Fatalf("provider_status = %+v, want one safe gateway %s row", rows, tc.wantState)
+			}
+			assertProtoHides(t, resp, modelServer.URL, sensitiveBody, "gateway-secret")
+		})
 	}
 }
 
@@ -298,7 +467,7 @@ func TestInvariant_custom_provider_matching_live_model_replaces_floor_metadata(t
 		t.Fatalf("listed models = %v, want one gateway/%s row with context limit %d", models, model, contextWindow)
 	}
 
-	selected, err := built.Service.CreateSessionWithProvider(context.Background(), workspace, session.ModeDefault, defaultLimits(),
+	selected, err := built.Service.CreateSessionWithProvider(context.Background(), session.ModeDefault, defaultLimits(),
 		serveradapter.ProviderSelector{ProviderID: "gateway", ModelID: model})
 	if err != nil {
 		t.Fatalf("CreateSessionWithProvider: %v", err)

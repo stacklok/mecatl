@@ -71,10 +71,10 @@ service HarnessService {
   // clients that want "next prompt" semantics must defer and retry once idle.
   rpc SetMode(SetModeRequest) returns (SetModeResponse);
 
-  // CloseSession ends a session and releases its server-side resources (per-session
-  // learned permission rules, per-session engine/workspace). Idempotent: closing an
-  // unknown or already-closed session via the wire returns NotFound only for a
-  // never-created id; an already-released session succeeds.
+  // CloseSession ends a session and releases its server-side resources (learned
+  // permission rules, bound placement, and any per-session engine). Idempotent:
+  // closing an unknown or already-closed session via the wire returns NotFound only
+  // for a never-created id; an already-released session succeeds.
   rpc CloseSession(CloseSessionRequest) returns (CloseSessionResponse);
 
   // RenameSession explicitly replaces an idle main session's title.
@@ -87,26 +87,19 @@ service HarnessService {
   // session at a turn boundary. It creates no model turn.
   rpc CompactSession(CompactSessionRequest) returns (CompactSessionResponse);
 
-  // ForkSession creates a new peer session whose conversation history is a
-  // snapshot of an existing session's, inheriting the source's mode, workspace,
-  // limits, and provider/model/profile labels. Same provider and model only;
-  // the ONE permitted selector delta is an OPTIONAL reasoning-effort override
-  // (ADR 0068). The source must be at a turn boundary (idle/terminal); a
-  // running/awaiting source is rejected. No streaming.
+  // ClearSession creates a distinct empty-history successor that inherits the
+  // source session's placement unless a fresh source-scoped selector is supplied.
+  rpc ClearSession(ClearSessionRequest) returns (ClearSessionResponse);
+
+  // ForkSession creates a history-carrying successor with optional placement and
+  // model-routing overrides.
   rpc ForkSession(ForkSessionRequest) returns (ForkSessionResponse);
 
-  // PreflightSessionAdoption evaluates one authenticated caller-owned legacy
-  // source against explicit workspace/environment/provider/model bindings.
-  rpc PreflightSessionAdoption(PreflightSessionAdoptionRequest) returns (PreflightSessionAdoptionResponse);
-
-  // AdoptSession atomically publishes a new explicit-main copy of one eligible
-  // legacy source. Retries are caller+source-bound by idempotency_key.
-  rpc AdoptSession(AdoptSessionRequest) returns (AdoptSessionResponse);
-
-  // Converse drives one run. The first frame MUST be `prompt`; subsequent
-  // frames are zero or more `resume_approval` / `cancel` control frames. The
-  // server streams `Event` envelopes until the terminal `result` event, then
-  // closes the stream. A context cancel from the client aborts the run.
+  // Converse drives one run. The first frame MUST be `prompt` or `retry`; later
+  // frames may carry controls. A received second `prompt` or `retry` is rejected
+  // with INVALID_ARGUMENT. The server streams `Event` envelopes until the terminal
+  // `result` event, then closes the stream; controls still in transit may instead
+  // observe normal stream completion. A context cancel from the client aborts the run.
   rpc Converse(stream ConverseRequest) returns (stream ConverseResponse);
 
   // ListMcpResources returns the static resource snapshots advertised by the
@@ -144,22 +137,19 @@ service HarnessService {
   // Derived from the snapshot taken at startup; it performs no live discovery.
   rpc ListAgents(ListAgentsRequest) returns (ListAgentsResponse);
 
-  // ListCommands returns the available slash commands (name + short
-  // description) discovered under the configured command directories of the
-  // requested workspace. It powers the client's in-input command palette; it is
-  // DISCOVERY only — expanding a command remains a run-path concern (the server's
-  // CommandExpander handles it when a "/<cmd> args" prompt is submitted). An
-  // empty workspace, or a server with no command expander, returns an empty list.
+  // ListCommands returns slash commands discovered for one owned session's exact
+  // server-bound placement. It authorizes and reattaches that session before
+  // discovery and accepts no workspace/root input. It powers the client's command
+  // palette; command expansion remains a run-path concern. A no-FS session or a
+  // server with no command expander returns an empty list.
   rpc ListCommands(ListCommandsRequest) returns (ListCommandsResponse);
 
-  // ListWorktrees returns the git worktrees of the repo rooted at the requested
-  // workspace (issue #102). It powers the client's /worktrees overlay — the
-  // first-class operator workflow for binding a session to an EXISTING sibling
-  // worktree (a new session rooted there, not a live-session switch). It is
-  // DISCOVERY only, composition-injected (nil-safe: a no-FS/cloud server, or an
-  // untrusted workspace, returns an empty list); it never performs a live
-  // model/network call and never mutates anything. An empty workspace or a server
-  // with no worktree lister also returns an empty list.
+  // ListWorktrees discovers eligible alternatives for one owned source session's
+  // exactly reattached placement. Results carry bounded display metadata and an
+  // opaque source-scoped selector accepted only by ClearSession or ForkSession.
+  // The server re-enumerates and matches current choices on use; selectors are not
+  // paths, are not persisted, and expire on restart. A no-FS session or a server
+  // with no worktree lister returns an empty list.
   rpc ListWorktrees(ListWorktreesRequest) returns (ListWorktreesResponse);
 
   // StreamSessionEvents replays a session's durable event log as a server stream
@@ -282,6 +272,19 @@ service HarnessService {
   // from a position and being handed everything is a correctness problem dressed
   // as a performance one. Ownership is enforced exactly as on GetSession.
   rpc WatchSessionEvents(WatchSessionEventsRequest) returns (stream WatchSessionEventsResponse);
+  // GetMcpAuthorizationPresentation returns the live browser URL for one owned,
+  // still-pending authorization. The request carries correlation only; the URL
+  // is returned only by this live control and never enters an Event or snapshot.
+  rpc GetMcpAuthorizationPresentation(GetMcpAuthorizationPresentationRequest) returns (GetMcpAuthorizationPresentationResponse);
+
+  // RecheckMcpAuthorization is a bidirectional authorization-control stream.
+  // Its first frame MUST carry owned session/authorization correlation;
+  // subsequent frames may resolve permission asks or cancel the continuation.
+  rpc RecheckMcpAuthorization(stream RecheckMcpAuthorizationRequest) returns (stream RecheckMcpAuthorizationResponse);
+
+  // CancelMcpAuthorization is the cancellation counterpart with the same
+  // first-frame and continuation-control grammar.
+  rpc CancelMcpAuthorization(stream CancelMcpAuthorizationRequest) returns (stream CancelMcpAuthorizationResponse);
 
   // ListSessions returns the stored-session inventory — the picker metadata a
   // client renders to let an operator open an EXISTING session by id (issue #245
@@ -339,6 +342,15 @@ service HarnessService {
   // ReflectSession explicitly reflects one completed, caller-owned session. It
   // remains available when automatic learning is off if reflection is configured.
   rpc ReflectSession(ReflectSessionRequest) returns (ReflectSessionResponse);
+
+  // Learning attempts expose content-free lifecycle metadata from only the
+  // verified caller's private partition. Pagination cursors are opaque IDs.
+  rpc GetLearningAttempt(GetLearningAttemptRequest) returns (GetLearningAttemptResponse);
+  rpc ListLearningAttempts(ListLearningAttemptsRequest) returns (ListLearningAttemptsResponse);
+  // Retry and abandon are opaque-version CAS controls over only the attempt.
+  // Abandon is non-compensating and does not promise downstream rollback.
+  rpc RetryLearningAttempt(MutateLearningAttemptRequest) returns (MutateLearningAttemptResponse);
+  rpc AbandonLearningAttempt(MutateLearningAttemptRequest) returns (MutateLearningAttemptResponse);
 
   // GenerateDreamPlan creates a bounded-lifetime manual consolidation review for
   // one closed, deployment-owned target. The request carries no mutation material.
@@ -455,6 +467,12 @@ service HarnessService {
   // event of whichever run ran last (the continuation run on an allow path; the
   // resumed run on a deny path).
   rpc ApprovePlan(ApprovePlanRequest) returns (stream Event);
+
+  // Workspace enrollment is a client-owned pre-prompt bundle. These unary
+  // controls carry only whole-bundle correlation; no backend selector exists.
+  rpc ConnectWorkspaceServices(WorkspaceEnrollmentConnectRequest) returns (WorkspaceEnrollment);
+  rpc RetryWorkspaceEnrollment(WorkspaceEnrollmentControlRequest) returns (WorkspaceEnrollment);
+  rpc CancelWorkspaceEnrollment(WorkspaceEnrollmentControlRequest) returns (WorkspaceEnrollment);
 }
 
 // PermissionMode is the session-wide permission posture, mirroring
@@ -484,16 +502,8 @@ message Limits {
 
 // CreateSessionRequest opens a new session.
 message CreateSessionRequest {
-  // workspace is the absolute session root tools operate against.
-  //
-  // CROSS-FIELD RULE (profile-aware, enforced by the server — which is why this
-  // field no longer carries a wire-level min_len): the DEFAULT profile
-  // (profile == "") REQUIRES a non-empty workspace, exactly as before; the
-  // "no-fs" profile REQUIRES an EMPTY workspace — a no-fs request that also
-  // names a workspace is a loud InvalidArgument (the combination is
-  // contradictory: a no-FS session has no filesystem to root), never a silent
-  // drop of either field.
-  string workspace = 1;
+  reserved 1, 8;
+  reserved "workspace", "source_session_id";
   // mode is the permission posture; unspecified defaults to DEFAULT.
   PermissionMode mode = 2;
   // limits are the optional stop conditions.
@@ -516,19 +526,8 @@ message CreateSessionRequest {
   // InvalidArgument (a bare model on an env-derived default provider is ambiguous).
   string model_id = 5;
 
-  // profile selects the session's TOOL-SURFACE profile, enum-as-string (the
-  // Event.type / Result.stop idiom — no proto enum, additive values):
-  //
-  //   - "" (default): the full filesystem profile — today's behaviour,
-  //     byte-identical. REQUIRES a non-empty workspace.
-  //   - "no-fs": a session with NO filesystem at all — no workspace, no
-  //     Read/Edit/Write/Grep/Glob/Bash, no Parallel, no SkillDraft; the agent
-  //     works through MCP tools, memory, web fetch, Skill bodies, and
-  //     delegation (Subagent/Team with the same file-less surface). REQUIRES an
-  //     EMPTY workspace (see the workspace cross-field rule above).
-  //
-  // Any other value is a loud InvalidArgument, never a silent fallback to the
-  // default profile. The profile is FIXED for the session lifetime.
+  // profile selects the session's TOOL-SURFACE profile. Empty binds the
+  // deployment default; "no-fs" explicitly attenuates filesystem access.
   string profile = 6;
 
   // reasoning_effort sets this session's reasoning-effort tier, enum-as-string
@@ -547,25 +546,7 @@ message CreateSessionRequest {
   // EFFECTIVE resolved value is echoed back on resolved_model.reasoning_effort.
   string reasoning_effort = 7;
 
-  // source_session_id, when non-empty, seeds the NEW session's conversation
-  // history from the source session's (via session.ForkSnapshot + SeedHistory).
-  // Carryover is ALWAYS allowed across providers: a model switch must never
-  // drop the conversation. A SAME-provider carryover replays the history
-  // VERBATIM (provider-private replay blobs intact, warm cache); a
-  // CROSS-provider carryover seeds a PROVIDER-NEUTRAL copy — Reasoning /
-  // ProviderPhase / ToolCall.ItemID are stripped (session.StripProviderState),
-  // so the history replays safely to any provider (the new session's
-  // thinking/reasoning config is derived from the NEW model, not the history).
-  // The source must be at a turn boundary (idle/completed/cancelled/failed —
-  // the run-entry funnel recovers terminal states); a running/awaiting source
-  // is rejected with FailedPrecondition. Empty means no carryover
-  // (byte-identical default).
-  string source_session_id = 8;
-
-  // debug_target_session_id creates a separate diagnostic session bound to the
-  // named target. It requires profile "no-fs" and an empty workspace, cannot be
-  // combined with source_session_id, and never copies or mutates target history.
-  // Missing and foreign-owned targets are both reported as NotFound.
+  // debug_target_session_id creates a separate diagnostic no-FS session.
   string debug_target_session_id = 9;
 
   // debug_mcp_servers explicitly selects already-configured server-global
@@ -767,9 +748,8 @@ message ServerCapabilities {
   bool learning_proposals = 17;
   // learned_skills is true when the caller-partitioned lifecycle API is available.
   bool learned_skills = 18;
-  // legacy_adoption is true only when authenticated, caller-owned adoption with
-  // explicit engine bindings is available.
-  bool legacy_adoption = 20;
+  reserved 20;
+  reserved "legacy_adoption";
   // storage_migration is true only when the backend implements durable bounded
   // v1-to-v2 maintenance, a management authorizer is configured, and destructive
   // mutation has cross-process lease exclusion (or explicitly proven private
@@ -803,6 +783,9 @@ message ServerCapabilities {
   // debug_mcp is true when debug sessions may explicitly borrow selected direct
   // tools from configured server-global streaming-HTTP MCP servers.
   bool debug_mcp = 27;
+  // workspace_enrollment is true when protected workspace services must be
+  // admitted as one complete bundle before the first prompt.
+  bool workspace_enrollment = 28;
 }
 
 // CreateSessionResponse carries the newly-allocated session id.
@@ -836,6 +819,17 @@ message CreateSessionResponse {
   // GetSession after a mode change. Nil/absent from an older server → the client
   // falls back to today's behavior (no model segment in the header).
   ResolvedModel resolved_model = 4;
+  // placement is bounded display-only metadata, never reusable authority.
+  PlacementMetadata placement = 5;
+}
+
+// PlacementMetadata is safe display data. It never contains a filesystem path,
+// backend locator, exact EnvironmentRef, or reusable selector.
+message PlacementMetadata {
+  string kind = 1;
+  string label = 2;
+  string branch = 3;
+  string revision = 4;
 }
 
 // ResolvedModel is the per-session EFFECTIVE model: the provider+model id this
@@ -1049,11 +1043,8 @@ message SessionSummary {
   // created_at_unix is the creation timestamp in Unix seconds. Zero when the
   // snapshot could not be loaded.
   int64 created_at_unix = 6;
-  // title is the human-readable session label seeded from the first genuine user
-  // prompt (clamped to 120 runes). Empty for a session with no label (a client
-  // may derive a fallback). Populated from the snapshot Title (or the lazy
-  // fallback) by ListSessions.
-  string title = 7;
+  // title is the deprecated compatibility title; use title_metadata.title.
+  string title = 7 [deprecated = true];
   // owner is the verified caller the session is attributed to (ADR 0204), stamped
   // write-once at CreateSession from the validated token — never from the request
   // body. UNSET for an ownerless session (a no-auth deployment, or a session
@@ -1066,10 +1057,18 @@ message SessionSummary {
   SessionInventoryCapabilities capabilities = 11;
   // reason_code explains why a capability is unavailable. Empty means no denial.
   string reason_code = 12;
-  // workspace is the stored session root used for inventory search/display.
-  string workspace = 13;
-  // title_provenance is "first-prompt", "operator", or empty for legacy/unknown.
-  string title_provenance = 14;
+  reserved 13;
+  reserved "workspace";
+  // title_provenance is deprecated compatibility provenance; use title_metadata.provenance.
+  // Allowed values: "first-prompt", "operator", "generated", or empty for legacy/unknown.
+  string title_provenance = 14 [deprecated = true];
+  PlacementMetadata placement = 15;
+  // title_metadata is the canonical bounded, source-free title lifecycle projection.
+  SessionTitle title_metadata = 16;
+  // token_usage is the canonical durable session token accounting. Map keys identify
+  // usage types; `main` is ordinary main-session agent usage. Other keys are
+  // server-defined and are not enumerated here.
+  map<string, TokenUsage> token_usage = 17;
 }
 
 // SessionRelationship carries the validated links appropriate to a session kind.
@@ -1315,62 +1314,30 @@ message DeleteSessionRequest {
 
 message DeleteSessionResponse {}
 
+// ClearSessionRequest creates an empty-history successor.
+message ClearSessionRequest {
+  string source_session_id = 1 [(buf.validate.field).string.min_len = 1];
+  optional string worktree_selector = 2;
+}
+
+message ClearSessionResponse {
+  string session_id = 1;
+  PlacementMetadata placement = 2;
+}
+
 // ForkSessionRequest names the source session to fork from.
 message ForkSessionRequest {
-  // source_session_id is the session whose conversation history is snapshotted
-  // into the new peer session.
   string source_session_id = 1 [(buf.validate.field).string.min_len = 1];
-  // title is an OPTIONAL override for the forked session's title. Empty (the
-  // default) inherits the source's title verbatim; a non-empty value overrides
-  // it so the operator can distinguish "implement feature X" from "fix the bug
-  // first" in ListSessions without a separate rename RPC.
   string title = 2;
-  // reasoning_effort is an OPTIONAL override for the forked session's
-  // reasoning-effort tier (ADR 0068). Empty (the default) inherits the source's
-  // effort verbatim; provider and model ALWAYS inherit — the effort is the ONE
-  // selector delta a fork may carry.
   string reasoning_effort = 3;
+  optional string worktree_selector = 4;
+  string provider_id = 5;
+  string model_id = 6;
 }
 
-// ForkSessionResponse carries the new forked session's id.
 message ForkSessionResponse {
-  // session_id is the id of the newly-created forked session.
   string session_id = 1;
-}
-
-// AdoptionBindings are explicit; omitted fields never select a server default.
-message AdoptionBindings {
-  string workspace = 1;
-  string environment_kind = 2;
-  string environment_id = 3;
-  string provider_id = 4;
-  string model_id = 5;
-  string profile = 6;
-}
-
-message PreflightSessionAdoptionRequest {
-  string source_session_id = 1 [(buf.validate.field).string.min_len = 1];
-  AdoptionBindings bindings = 2;
-}
-
-message PreflightSessionAdoptionResponse {
-  bool eligible = 1;
-  string reason_code = 2;
-  AdoptionBindings bindings = 3;
-}
-
-message AdoptSessionRequest {
-  string source_session_id = 1 [(buf.validate.field).string.min_len = 1];
-  string idempotency_key = 2 [(buf.validate.field).string.min_len = 1];
-  AdoptionBindings bindings = 3;
-}
-
-message AdoptSessionResponse {
-  string session_id = 1;
-  string source_session_id = 2;
-  ServerCapabilities capabilities = 3;
-  SessionCapabilities session_capabilities = 4;
-  ResolvedModel resolved_model = 5;
+  PlacementMetadata placement = 2;
 }
 
 // Session is a snapshot of server-side session state.
@@ -1381,8 +1348,8 @@ message Session {
   string state = 2;
   // mode is the permission posture.
   PermissionMode mode = 3;
-  // workspace is the session root.
-  string workspace = 4;
+  reserved 4, 13;
+  reserved "workspace", "adoption_source_session_id";
   // limits are the configured stop conditions.
   Limits limits = 5;
   // turns is the number of model calls begun.
@@ -1399,23 +1366,19 @@ message Session {
   // place a client re-reads the model AFTER a mode change. Nil/absent from an older
   // server → client falls back to today's behavior.
   ResolvedModel resolved_model = 9;
-  // title is the human-readable session label seeded from the first genuine user
-  // prompt (clamped to 120 runes). Empty for a session with no label (a client
-  // may derive a fallback). Populated from the snapshot Title (or the lazy
-  // fallback in GetSession) — the loop seeds it once via session.SetTitle.
-  string title = 10;
-  // title_provenance is "first-prompt", "operator", or empty for legacy/unknown.
-  string title_provenance = 12;
+  // title is the deprecated compatibility title; use title_metadata.title.
+  string title = 10 [deprecated = true];
+  // title_provenance is deprecated compatibility provenance; use title_metadata.provenance.
+  // Allowed values: "first-prompt", "operator", "generated", or empty for legacy/unknown.
+  string title_provenance = 12 [deprecated = true];
   // capabilities is the server's feature-advertisement snapshot (the SAME value
   // CreateSessionResponse carries). It rides the Session snapshot so a client
-  // that re-hydrates a persisted session on restart or adopt (continue, /effort fork)
-  // can re-derive its affordances in ONE round-trip (GetSession) instead of needing a
-  // second CreateSession. An older server omits the field → client sees a zero value
+  // that reloads or switches to a persisted session (continue, /effort fork,
+  // /clear successor) can re-derive its affordances in ONE round-trip (GetSession)
+  // instead of creating another session. An older server omits the field, so the
+  // client sees a zero value
   // and keeps its current caps untouched (fail-conservative).
   ServerCapabilities capabilities = 11;
-  // adoption_source_session_id is the immutable audit relationship on a main
-  // session created by explicit legacy adoption.
-  string adoption_source_session_id = 13;
   // kind and relationship preserve the durable trusted-producer identity.
   string kind = 14;
   SessionRelationship relationship = 15;
@@ -1423,11 +1386,54 @@ message Session {
   // These contain no URLs, headers, credentials, or inline MCP configuration.
   repeated string debug_mcp_servers = 16;
   repeated string debug_mcp_tools = 17;
+  PlacementMetadata placement = 18;
+  // title_metadata is the canonical bounded, source-free title lifecycle projection.
+  SessionTitle title_metadata = 19;
+  // token_usage is the canonical durable session token accounting. Map keys identify
+  // usage types; `main` is ordinary main-session agent usage. Other keys are
+  // server-defined and are not enumerated here.
+  map<string, TokenUsage> token_usage = 20;
+}
+
+// SessionTitle is the canonical durable, source-free title lifecycle projection.
+// It never carries title-source prompts, provider error text, or token usage.
+message SessionTitle {
+  // title is the authoritative human-readable session label.
+  string title = 1;
+  // provenance is "first-prompt", "operator", "generated", or empty for legacy/unknown.
+  string provenance = 2;
+  // generation_state is "disabled", "pending", "generated", or "exhausted".
+  string generation_state = 3;
+  // latest_attempt is the latest durable attempt without provider error detail.
+  TitleAttemptSummary latest_attempt = 4;
+  // revision advances on each effective durable title metadata mutation; zero is legacy.
+  uint64 revision = 5;
+}
+
+// TitleAttemptSummary is the latest durable title attempt without provider error detail.
+message TitleAttemptSummary {
+  // id is a server-minted opaque attempt identifier.
+  string id = 1;
+  // outcome is "succeeded", "deferred", "failed", "interrupted", or empty while claimed.
+  string outcome = 2;
+  reserved 3;
+}
+
+// TokenUsage is one canonical usage bucket. models maps opaque server-produced
+// provider/model attribution strings (or "unknown" for legacy data) to Usage;
+// total always equals the element-wise sum of models. In token_usage, each bucket
+// is part of the durable session accounting, not a per-run or per-turn report.
+message TokenUsage {
+  Usage total = 1;
+  map<string, Usage> models = 2;
 }
 
 // ConverseRequest is a client-to-server frame on the Converse stream. The
-// first frame MUST be `prompt` or `retry`. Field numbers 1-9 are reserved for the
-// start family; 10+ for the gate/cancellation family.
+// first frame MUST be `prompt` or `retry`; later frames are controls. A received
+// second `prompt` or `retry` is rejected with INVALID_ARGUMENT, but controls in
+// transit when the server completes the run may observe normal stream completion.
+// Field numbers 1-9 are reserved for the start family; 10+ for the
+// gate/cancellation family.
 message ConverseRequest {
   oneof kind {
     // prompt starts a normal run with a new user message.
@@ -1732,6 +1738,67 @@ enum SteerOutcome {
   STEER_OUTCOME_TOO_LATE = 5;
 }
 
+// GetMcpAuthorizationPresentationRequest carries only owner-scoped correlation.
+// It has no status, OAuth code, credential, private binding, or tool arguments,
+// so a client cannot assert authorization success.
+message GetMcpAuthorizationPresentationRequest {
+  string session_id = 1 [(buf.validate.field).string.min_len = 1];
+  string authorization_id = 2 [(buf.validate.field).string.min_len = 1];
+}
+
+// GetMcpAuthorizationPresentationResponse exposes a live browser URL only as the
+// response to the owner-authorized presentation control. It is never an event
+// payload and must not be persisted in a session snapshot or event log.
+message GetMcpAuthorizationPresentationResponse {
+  string url = 1;
+}
+
+// RecheckMcpAuthorizationRequest is one client frame. The mandatory first
+// frame carries only owner-scoped correlation in session_id/authorization_id;
+// subsequent frames leave those fields empty and carry one control.
+message RecheckMcpAuthorizationRequest {
+  string session_id = 1;
+  string authorization_id = 2;
+  oneof control {
+    ResumeApproval resume_approval = 10;
+    Cancel cancel = 11;
+  }
+}
+
+// RecheckMcpAuthorizationResponse wraps one authoritative status or continuation event.
+message RecheckMcpAuthorizationResponse {
+  Event event = 1;
+}
+
+// CancelMcpAuthorizationRequest uses the same grammar while keeping the two RPC
+// request envelopes method-specific.
+message CancelMcpAuthorizationRequest {
+  string session_id = 1;
+  string authorization_id = 2;
+  oneof control {
+    ResumeApproval resume_approval = 10;
+    Cancel cancel = 11;
+  }
+}
+
+// CancelMcpAuthorizationResponse wraps one authoritative resolution or continuation event.
+message CancelMcpAuthorizationResponse {
+  Event event = 1;
+}
+
+// Authorization is the safe event projection of an external authorization
+// lifecycle. Status is a closed string passthrough: pending, granted, denied,
+// cancelled, expired, interrupted, failed, or closed. display_name is optional
+// bounded human-facing authority/service text. The payload deliberately has no
+// URL, OAuth code, credential, private binding, topology, or tool arguments.
+message Authorization {
+  string authorization_id = 1;
+  string call_id = 2;
+  google.protobuf.Timestamp expires_at = 3;
+  string status = 4;
+  string display_name = 5;
+}
+
 // Event mirrors the domain session.Event one-for-one. `type` is the string
 // event kind; the structured submessages are populated per kind.
 message Event {
@@ -1780,9 +1847,9 @@ message Event {
   // parallel.branch / parallel.end): a REDACTED, metadata-only projection of a
   // Parallel fork-join run. Like subagent it NEVER carries branch content (no
   // message text, tool args, or result bodies) — only ids, a goal label, tool
-  // names/counts, usage, stop, duration, the join strategy, the winner index, and
-  // the per-branch / winner fork-root PATHS (a handle already in the result text,
-  // not branch content). The branch summaries fold into the parent conversation
+  // names/counts, usage, stop, duration, the join strategy, and the winner index.
+  // Physical fork roots and reusable placement authority are never projected. The
+  // branch summaries fold into the parent conversation
   // only via the Parallel tool result.
   Parallel parallel = 14;
   // schedule.* — the scheduler lifecycle (EvScheduleFired/Skipped/Failed). For v1
@@ -1837,7 +1904,13 @@ message Event {
   // an exact match and so never sees them; a client showing a session timeline
   // includes them.
   string run_id = 22;
-
+  // title is set on session.title events. It is the authoritative, source-free
+  // title lifecycle projection after a persisted title state change.
+  SessionTitle title = 23;
+  // authorization is set on authorization.required and authorization.resolved
+  // events. It is safe durable correlation only; the live presentation URL and
+  // private continuation state never enter this payload.
+  Authorization authorization = 24;
 }
 
 // ModelRetry identifies the failed-step retry intent being driven.
@@ -2251,23 +2324,21 @@ message Team {
 // on branch_tool events — text is a rune-capped preview of the branch's message
 // text, detail a rune-capped preview of a branch tool call's args or result body —
 // so a client can render a Parallel fork-join run's activity (a join strategy, a
-// grouped roster of branches with tool traces, a winner highlight, and fork paths)
-// without ever seeing unbounded branch content, preserving context isolation. The
-// fork-root paths it carries are the no-auto-merge handles already surfaced in the
-// Parallel tool result, not branch content.
+// grouped roster of branches with tool traces and a winner highlight) without ever
+// seeing unbounded branch content, preserving context isolation. Physical fork roots,
+// exact environment refs, and reusable placement authority are never projected.
 //
 // Unlike the FLAT Subagent fleet, a Parallel run is a GROUP: N branches of ONE call
-// (keyed by parent_call_id) sharing a join strategy + a single winner + preserved
-// per-branch fork paths. Those are RUN-LEVEL facts on the start/end events; the
-// per-branch events carry per-branch metadata keyed by branch_index.
+// (keyed by parent_call_id) sharing a join strategy and a single winner. The
+// per-branch events carry metadata keyed by branch_index.
 //
 // Which fields are set depends on the event kind:
 //   - parallel.start:                  parent_call_id, join, branch_count.
 //   - parallel.branch (branch_start):  parent_call_id, kind, branch_index, branch_label, goal, routed_category, routed_model, model.
 //   - parallel.branch (branch_tool):   parent_call_id, kind, branch_index, tool_name, is_error, tool_count,
 //                                      and — when a preview is available — text / detail / inner_kind.
-//   - parallel.branch (branch_end):    parent_call_id, kind, branch_index, tool_count, stop, usage, duration_ms, failed, workspace.
-//   - parallel.end:                    parent_call_id, join, branch_count, winner, winner_workspace, usage (run total), stop.
+//   - parallel.branch (branch_end):    parent_call_id, kind, branch_index, tool_count, stop, usage, duration_ms, failed.
+//   - parallel.end:                    parent_call_id, join, branch_count, winner, usage (run total), stop.
 message Parallel {
   // parent_call_id is the parent's Parallel tool-call id and the GROUP key (one
   // Parallel call = one group); attributes the event to the originating card.
@@ -2302,9 +2373,8 @@ message Parallel {
   int32 tool_count = 10;
   // failed reports whether the branch's child run failed (branch_end).
   bool failed = 11;
-  // workspace is the branch's forked workspace ROOT path — the no-auto-merge handle
-  // (branch_end). Server-side path text, not branch content.
-  string workspace = 12;
+  reserved 12, 17;
+  reserved "workspace", "winner_workspace";
   // stop is the branch's terminal stop reason (branch_end) or the run-level stop
   // (parallel.end; the winner's stop for first/judge, empty for all).
   string stop = 13;
@@ -2316,9 +2386,6 @@ message Parallel {
   // winner is the branch index of the selected winner on parallel.end — a real
   // branch_index for first/judge, or -1 for all / none-succeeded.
   int32 winner = 16;
-  // winner_workspace is the PRESERVED winner fork root on parallel.end (the deliverable
-  // handle for first/judge); empty for all / none-succeeded.
-  string winner_workspace = 17;
   // child_id is the branch's child SESSION id ("parallel-<callID>-<i>") on
   // branch_start/branch_end — the CancelChild handle, carried explicitly so a
   // client never derives ids from the (internal) id grammar.
@@ -2436,7 +2503,8 @@ message Result {
   string stop = 1;
   // text is the final assistant text, if any.
   string text = 2;
-  // usage is the cumulative token accounting for the run.
+  // usage is the token accounting accumulated during THIS run; it is not the
+  // durable session total and is distinct from per-turn TurnEnd.usage.
   Usage usage = 3;
   // error carries the failure detail when stop is "error" (empty otherwise).
   string error = 4;
@@ -2456,7 +2524,8 @@ message Result {
 // own usage semantics and can grow (finish reason, model id, retries) without
 // overloading the shared Event fields.
 message TurnEnd {
-  // usage is THIS turn's model-call token accounting (not the run total).
+  // usage is THIS turn's model-call token accounting (not the run total or the
+  // durable session total).
   Usage usage = 1;
   // duration_ms is the elapsed milliseconds for the turn's model call; 0 when
   // the server had no clock.
@@ -2709,11 +2778,8 @@ message Command {
   string description = 2;
 }
 
-// ListCommandsRequest requests the available slash commands for a workspace.
 message ListCommandsRequest {
-  // workspace is the session root whose command directories are scanned. Empty
-  // returns an empty list (there is no workspace to discover commands under).
-  string workspace = 1;
+  string session_id = 1 [(buf.validate.field).string.min_len = 1];
 }
 
 // ListCommandsResponse carries the discovered slash commands.
@@ -2724,26 +2790,19 @@ message ListCommandsResponse {
 
 // --- Worktree discovery (issue #102) -----------------------------------------
 
-// Worktree is one discovered git worktree of a repo, mirroring a
-// `git worktree list --porcelain` record. Path is the absolute working-tree path
-// (the value handed to CreateSessionRequest.workspace to bind a session there);
-// branch is empty for a detached HEAD; head is the commit SHA the worktree is at.
+// Worktree is one display-safe eligible placement choice. Selector is opaque,
+// caller/source scoped, and accepted only by ClearSession or ForkSession.
 message Worktree {
-  // path is the absolute working-tree path; required.
-  string path = 1;
-  // branch is the checked-out ref name; empty for a detached HEAD.
-  string branch = 2;
-  // head is the commit SHA the worktree is at.
-  string head = 3;
-  // bare is true for a bare worktree.
-  bool bare = 4;
+  string selector = 1;
+  string kind = 2;
+  string label = 3;
+  string branch = 4;
+  string revision = 5;
+  bool bare = 6;
 }
 
-// ListWorktreesRequest names the workspace whose repo's worktrees are listed.
 message ListWorktreesRequest {
-  // workspace is the session root whose repo's worktrees are enumerated. Empty
-  // returns an empty list (there is no repo to enumerate).
-  string workspace = 1;
+  string session_id = 1 [(buf.validate.field).string.min_len = 1];
 }
 
 // ListWorktreesResponse carries the discovered worktrees.
@@ -2988,9 +3047,53 @@ message ReflectionReceipt {
   int32 staged = 5;
   int32 promoted = 6;
   int32 conflicted = 7;
+  // reason is one closed materialization reason when abstained is true.
+  string reason = 8;
+  // message is stable harness-authored display text for that closed reason.
+  string message = 9;
 }
 
 message ReflectSessionResponse { ReflectionReceipt receipt = 1; }
+
+// LearningAttempt is deliberately content-free. It contains only the closed
+// lifecycle vocabulary, opaque versions/identifiers, bounded generations, and
+// authorized proposal/skill links from the caller's private attempt partition.
+message LearningAttempt {
+  string id = 1;
+  string version = 2;
+  string state = 3;
+  string outcome = 4;
+  string failure_code = 5;
+  uint64 attempt_generation = 6;
+  uint64 claim_generation = 7;
+  google.protobuf.Timestamp claim_expires_at = 8;
+  string checkpoint_stage = 9;
+  string proposal_id = 10;
+  string skill_id = 11;
+  google.protobuf.Timestamp created_at = 12;
+  google.protobuf.Timestamp updated_at = 13;
+}
+
+message GetLearningAttemptRequest {
+  string id = 1 [(buf.validate.field).string.min_len = 1];
+}
+message GetLearningAttemptResponse { LearningAttempt attempt = 1; }
+
+message ListLearningAttemptsRequest {
+  string state = 1;
+  string cursor = 2;
+  int32 limit = 3;
+}
+message ListLearningAttemptsResponse {
+  repeated LearningAttempt attempts = 1;
+  string next_cursor = 2;
+}
+
+message MutateLearningAttemptRequest {
+  string id = 1 [(buf.validate.field).string.min_len = 1];
+  string expected_version = 2 [(buf.validate.field).string.min_len = 1];
+}
+message MutateLearningAttemptResponse { LearningAttempt attempt = 1; }
 
 message ListLearningProposalsRequest {
   string status = 1;
@@ -3206,11 +3309,9 @@ message ListSkillChangesResponse {
 
 // --- Agent team messages ----------------------------------------------------
 
-// CreateTeamRequest creates a new agent team over a base workspace, optionally
-// with an initial roster enrolled in the same atomic call.
+// CreateTeamRequest creates a team owned by an existing session.
 message CreateTeamRequest {
-  // workspace is the base workspace root the team operates against.
-  string workspace = 1 [(buf.validate.field).string.min_len = 1];
+  string session_id = 1 [(buf.validate.field).string.min_len = 1];
   // name is an optional human label; the server assigns the canonical id.
   string name = 2;
   // members is the optional initial roster, enrolled atomically: if any member
@@ -3548,4 +3649,25 @@ message CompactSessionRequest {
 // CompactSessionResponse reports whether the compactor reduced model history.
 message CompactSessionResponse {
   bool compacted = 1;
+}
+
+// WorkspaceEnrollmentConnectRequest starts or observes the caller-owned bundle.
+message WorkspaceEnrollmentConnectRequest {
+  string session_id = 1;
+}
+
+// WorkspaceEnrollmentControlRequest targets one exact whole-bundle correlation.
+// There is deliberately no backend/provider field.
+message WorkspaceEnrollmentControlRequest {
+  string session_id = 1;
+  string enrollment_id = 2;
+}
+
+// WorkspaceEnrollment is the safe bundle-level client projection. presentation_url
+// is an ephemeral launch value; clients must not render, persist, or log it.
+message WorkspaceEnrollment {
+  string enrollment_id = 1;
+  string status = 2;
+  uint32 required_services = 3;
+  string presentation_url = 4;
 }

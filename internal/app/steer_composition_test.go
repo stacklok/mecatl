@@ -69,7 +69,7 @@ func writeOperatorSteerFile(t *testing.T, value string) string {
 func steerCapsFromBuild(t *testing.T, built *Built) *mecatlv1.ServerCapabilities {
 	t.Helper()
 	resp, err := server.NewHarnessServer(built.Service).CreateSession(context.Background(),
-		&mecatlv1.CreateSessionRequest{Workspace: t.TempDir()})
+		&mecatlv1.CreateSessionRequest{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -125,7 +125,7 @@ func TestSteer_EnabledByDefaultEndToEnd(t *testing.T) {
 		t.Fatal("steer capability = false, want true (DEFAULT ON)")
 	}
 
-	sess, err := built.Service.CreateSession(ctx, t.TempDir(), session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -215,7 +215,7 @@ func TestSteer_DisabledCompositionInert(t *testing.T) {
 		t.Fatal("steer capability = true, want false (DisableSteer)")
 	}
 
-	sess, err := built.Service.CreateSession(ctx, t.TempDir(), session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

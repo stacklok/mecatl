@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -76,7 +75,7 @@ func TestCallerIdentity_Scenario3_OwnerRecordedAndListed(t *testing.T) {
 			store := mk(t)
 			svc := newServiceWithStore(t, store)
 
-			sess, err := svc.CreateSession(ctx, "/ws", session.ModeDefault, session.Limits{MaxTurns: 3})
+			sess, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{MaxTurns: 3})
 			if err != nil {
 				t.Fatalf("CreateSession: %v", err)
 			}
@@ -121,7 +120,7 @@ func TestCallerIdentity_Scenario3_OwnerSurvivesReopenRestart(t *testing.T) {
 	)
 	svc1 := selectorServiceOverStore(t, store, selectorRecordingFactory("PRE-RESTART", &gotSel, &calls), nil)
 
-	sess, err := svc1.CreateSessionWithProvider(ctx, "/work/owned", session.ModeDefault, session.Limits{}, sel)
+	sess, err := svc1.CreateSessionWithProvider(ctx, session.ModeDefault, session.Limits{}, sel)
 	if err != nil {
 		t.Fatalf("CreateSessionWithProvider: %v", err)
 	}
@@ -219,15 +218,14 @@ func TestCallerIdentity_Scenario3_ForkInheritsSourceOwner(t *testing.T) {
 	store := memstore.New()
 	svc := newServiceWithStore(t, store)
 
-	src, err := svc.CreateSession(session.WithPrincipal(context.Background(), alice), "/ws", session.ModeDefault, session.Limits{MaxTurns: 3})
+	src, err := svc.CreateSession(session.WithPrincipal(context.Background(), alice), session.ModeDefault, session.Limits{MaxTurns: 3})
 	if err != nil {
 		t.Fatalf("CreateSession (source): %v", err)
 	}
 
 	// Bob forks Alice's session. The fork must NOT be attributed to Bob.
 	forked, err := svc.CreateSessionWithProfile(
-		session.WithPrincipal(context.Background(), bob),
-		"/ws", session.ModeDefault, session.Limits{MaxTurns: 3},
+		session.WithPrincipal(context.Background(), bob), session.ModeDefault, session.Limits{MaxTurns: 3},
 		server.ProviderSelector{}, server.ProfileDefault,
 		server.WithSourceSession(src.ID),
 	)
@@ -247,7 +245,7 @@ func TestCallerIdentity_Scenario3_ForkInheritsSourceOwner(t *testing.T) {
 
 	// The explicit ForkSession seam is the other fork path — same rule: Bob
 	// forking Alice's session produces one owned by ALICE.
-	forkID, err := svc.ForkSession(session.WithPrincipal(context.Background(), bob), src.ID, "", "")
+	forkID, err := forkSession(svc, session.WithPrincipal(context.Background(), bob), src.ID, "", "")
 	if err != nil {
 		t.Fatalf("ForkSession: %v", err)
 	}
@@ -261,13 +259,12 @@ func TestCallerIdentity_Scenario3_ForkInheritsSourceOwner(t *testing.T) {
 
 	// An OWNERLESS source yields an ownerless fork — never the caller's, never a
 	// fabricated one (the no-auth path must stay byte-identical).
-	plain, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{MaxTurns: 3})
+	plain, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{MaxTurns: 3})
 	if err != nil {
 		t.Fatalf("CreateSession (ownerless source): %v", err)
 	}
 	forkedPlain, err := svc.CreateSessionWithProfile(
-		session.WithPrincipal(context.Background(), bob),
-		"/ws", session.ModeDefault, session.Limits{MaxTurns: 3},
+		session.WithPrincipal(context.Background(), bob), session.ModeDefault, session.Limits{MaxTurns: 3},
 		server.ProviderSelector{}, server.ProfileDefault,
 		server.WithSourceSession(plain.ID),
 	)
@@ -287,7 +284,7 @@ func TestCallerIdentity_Scenario3_WithOwnerBeatsContextPrincipal(t *testing.T) {
 	svc := newServiceWithStore(t, memstore.New())
 	ctx := session.WithPrincipal(context.Background(), bob)
 
-	sess, err := svc.CreateSessionWithProfile(ctx, "/ws", session.ModeDefault, session.Limits{},
+	sess, err := svc.CreateSessionWithProfile(ctx, session.ModeDefault, session.Limits{},
 		server.ProviderSelector{}, server.ProfileDefault, server.WithOwner(alice))
 	if err != nil {
 		t.Fatalf("CreateSessionWithProfile WithOwner: %v", err)
@@ -298,7 +295,7 @@ func TestCallerIdentity_Scenario3_WithOwnerBeatsContextPrincipal(t *testing.T) {
 
 	// WithOwner(nil) is the explicit ownerless injection: it must not fall back
 	// to the context principal (a system caller with no owner to capture).
-	none, err := svc.CreateSessionWithProfile(ctx, "/ws", session.ModeDefault, session.Limits{},
+	none, err := svc.CreateSessionWithProfile(ctx, session.ModeDefault, session.Limits{},
 		server.ProviderSelector{}, server.ProfileDefault, server.WithOwner(nil))
 	if err != nil {
 		t.Fatalf("CreateSessionWithProfile WithOwner(nil): %v", err)
@@ -318,7 +315,7 @@ func TestCallerIdentity_Scenario3_PreShipSessionNeverBackfilled(t *testing.T) {
 	svc := newServiceWithEngineOverStore(t, store, mockllm.New(mockllm.TextTurn("ok"), mockllm.TextTurn("ok")))
 
 	// "Pre-ship": created with NO principal in the context.
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{MaxTurns: 3})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{MaxTurns: 3})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -376,15 +373,15 @@ func TestCallerIdentity_Scenario3_ListRowOwnerIsDisplayOnly(t *testing.T) {
 			store := mk(t)
 			svc := newServiceWithStore(t, store)
 
-			aliceSess, err := svc.CreateSession(session.WithPrincipal(context.Background(), alice), "/ws", session.ModeDefault, session.Limits{})
+			aliceSess, err := svc.CreateSession(session.WithPrincipal(context.Background(), alice), session.ModeDefault, session.Limits{})
 			if err != nil {
 				t.Fatalf("CreateSession (alice): %v", err)
 			}
-			bobSess, err := svc.CreateSession(session.WithPrincipal(context.Background(), bob), "/ws", session.ModeDefault, session.Limits{})
+			bobSess, err := svc.CreateSession(session.WithPrincipal(context.Background(), bob), session.ModeDefault, session.Limits{})
 			if err != nil {
 				t.Fatalf("CreateSession (bob): %v", err)
 			}
-			unowned, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+			unowned, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 			if err != nil {
 				t.Fatalf("CreateSession (unowned): %v", err)
 			}
@@ -461,7 +458,7 @@ func TestListSessionsRowOwnerIsNotAliased(t *testing.T) {
 	store := &liveSessionStore{now: time.Unix(0, 0)}
 	svc := newServiceWithStore(t, store)
 
-	sess, err := svc.CreateSession(session.WithPrincipal(context.Background(), alice), "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(session.WithPrincipal(context.Background(), alice), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -538,11 +535,11 @@ func newServiceWithEngineOverStore(t *testing.T, store port.SessionStore, llm *m
 		Model:   "test-model",
 		Store:   store,
 	})
-	svc, err := server.NewService(server.Config{
-		Engine:     eng,
-		Store:      store,
-		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		Now:        func() time.Time { return time.Unix(0, 0) },
+	svc, err := newPlacementTestService(server.Config{
+		Engine: eng,
+		Store:  store,
+
+		Now: func() time.Time { return time.Unix(0, 0) },
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)

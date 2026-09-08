@@ -145,7 +145,7 @@ func TestCancelUnwedgesStalledTeamRun(t *testing.T) {
 		mockllm.TextTurn("parent done"),
 	)
 	e := NewEngine(Deps{LLM: parentLLM, Catalog: parentCat, Policy: allow, Model: "parent-model"})
-	sess := session.New("wedge-parent", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	sess := session.New("wedge-parent", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	ws := memfs.NewWorkspace("/ws")
 
 	// Construct the Run by hand (mirroring Engine.Run) so the events channel

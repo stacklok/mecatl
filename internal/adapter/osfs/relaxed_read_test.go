@@ -7,6 +7,8 @@ import (
 	"runtime"
 	"testing"
 
+	"github.com/stacklok/mecatl/engine/adapter/memledger"
+	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/osfs"
 )
 
@@ -301,14 +303,20 @@ func TestRelaxedWrites_LedgerKeysCleanAbsolute(t *testing.T) {
 	}
 	target := filepath.Join(outside, "out.txt")
 	alias := filepath.Join(outside, "deep", "..", "out.txt")
+	ledger := memledger.New()
 
 	// Read canonical (via ReadVersion), record, look up via the `..` alias.
 	_, targetVer, rerr := relaxed.ReadVersion(t.Context(), target)
 	if rerr != nil {
 		t.Fatalf("ReadVersion(target): %v", rerr)
 	}
-	relaxed.RecordRead(target, targetVer)
-	got, ok := relaxed.RecordedVersion(alias)
+	if err := ledger.RecordRead(t.Context(), tool.LedgerKey(relaxed.Root(), target), targetVer); err != nil {
+		t.Fatalf("RecordRead(target): %v", err)
+	}
+	got, ok, rverr := ledger.RecordedVersion(t.Context(), tool.LedgerKey(relaxed.Root(), alias))
+	if rverr != nil {
+		t.Fatalf("RecordedVersion(alias): %v", rverr)
+	}
 	if !ok {
 		t.Fatalf("RecordedVersion(alias) not recorded — out-of-root absolute keys must use lexical cleaning")
 	}
@@ -323,8 +331,13 @@ func TestRelaxedWrites_LedgerKeysCleanAbsolute(t *testing.T) {
 	if rerr != nil {
 		t.Fatalf("ReadVersion(otherAlias): %v", rerr)
 	}
-	relaxed.RecordRead(otherAlias, otherVer)
-	got, ok = relaxed.RecordedVersion(other)
+	if err := ledger.RecordRead(t.Context(), tool.LedgerKey(relaxed.Root(), otherAlias), otherVer); err != nil {
+		t.Fatalf("RecordRead(otherAlias): %v", err)
+	}
+	got, ok, rverr = ledger.RecordedVersion(t.Context(), tool.LedgerKey(relaxed.Root(), other))
+	if rverr != nil {
+		t.Fatalf("RecordedVersion(other): %v", rverr)
+	}
 	if !ok {
 		t.Fatalf("RecordedVersion(canonical) after RecordRead(alias) not recorded — cross-form must match in BOTH directions")
 	}
@@ -356,8 +369,13 @@ func TestRelaxedWrites_LedgerKeysCleanAbsolute(t *testing.T) {
 	if rerr != nil {
 		t.Fatalf("ReadVersion(inAbs): %v", rerr)
 	}
-	relaxed.RecordRead(inAbs, inVer)
-	got, ok = relaxed.RecordedVersion("in.txt")
+	if err := ledger.RecordRead(t.Context(), tool.LedgerKey(relaxed.Root(), inAbs), inVer); err != nil {
+		t.Fatalf("RecordRead(inAbs): %v", err)
+	}
+	got, ok, rverr = ledger.RecordedVersion(t.Context(), tool.LedgerKey(relaxed.Root(), "in.txt"))
+	if rverr != nil {
+		t.Fatalf("RecordedVersion(in.txt): %v", rverr)
+	}
 	if !ok {
 		t.Fatalf("in-root cross-form RecordedVersion not recorded — the canonical-absolute keying must not regress in-root matching")
 	}

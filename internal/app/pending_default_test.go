@@ -107,7 +107,7 @@ func TestSessionEngineFactory_HealAdoption(t *testing.T) {
 // independently of the provider value).
 func driveOneTurn(t *testing.T, eng *agent.Engine) string {
 	t.Helper()
-	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{MaxTurns: 5}, time.Now())
+	sess := session.New("s1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 5}, time.Now())
 	ws := memfs.NewWorkspace("/ws")
 	return drainRun(eng.Run(context.Background(), sess, testEnvironment(ws, nil), agent.RunRequest{Text: "hi", Parts: nil}))
 }
@@ -148,7 +148,7 @@ func TestToolhiveSole_ProbeDown_HealedDefaultReachesZeroSelectorSession(t *testi
 
 	// Pre-heal: a zero-selector session's resolved model is empty (the
 	// R1.4-broken state the review flagged).
-	preSess, err := built.Service.CreateSession(ctx, workspace, session.ModeDefault, session.Limits{})
+	preSess, err := built.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession (pre-heal): %v", err)
 	}
@@ -168,7 +168,7 @@ func TestToolhiveSole_ProbeDown_HealedDefaultReachesZeroSelectorSession(t *testi
 	// A FRESH zero-selector session, created AFTER the heal, must resolve to
 	// the healed model — proving the heal reaches session creation, not just
 	// the registry accessor / picker.
-	postSess, err := built.Service.CreateSession(ctx, workspace, session.ModeDefault, session.Limits{})
+	postSess, err := built.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession (post-heal): %v", err)
 	}

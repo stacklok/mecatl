@@ -58,6 +58,49 @@ func TestUsageAdd(t *testing.T) {
 	}
 }
 
+func TestRecordUsageCachesCanonicalAttribution(t *testing.T) {
+	s := newTestSession(Limits{})
+	mustOK(t, s.BeginTurn())
+	s.SetUsageAttribution(" openrouter\n", " model \t")
+	if got, want := s.usageAttribution, "openrouter/model"; got != want {
+		t.Fatalf("cached attribution = %q, want %q", got, want)
+	}
+	mustOK(t, s.RecordUsage(Usage{InputTokens: 1}))
+	if got := s.TokenUsageSnapshot()[UsageKindMain].Models["openrouter/model"]; got != (Usage{InputTokens: 1}) {
+		t.Fatalf("usage = %#v, want one attributed token", got)
+	}
+	if got := testing.AllocsPerRun(1_000, func() {
+		mustOK(t, s.RecordUsage(Usage{InputTokens: 1}))
+	}); got != 0 {
+		t.Fatalf("cached RecordUsage allocations = %v, want 0", got)
+	}
+}
+
+func TestRecordUsageLazilyCachesDurableAttributionFallback(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		provider string
+		model    string
+		want     string
+	}{
+		{"durable labels", " openrouter\n", " model \t", "openrouter/model"},
+		{"missing label", "openrouter", "", unknownModelAttribution},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newTestSession(Limits{})
+			s.ProviderID, s.ModelID = tc.provider, tc.model
+			mustOK(t, s.BeginTurn())
+			mustOK(t, s.RecordUsage(Usage{InputTokens: 1}))
+			if got := s.usageAttribution; got != tc.want {
+				t.Fatalf("cached attribution = %q, want %q", got, tc.want)
+			}
+			if got := s.TokenUsageSnapshot()[UsageKindMain].Models[tc.want]; got != (Usage{InputTokens: 1}) {
+				t.Fatalf("usage for %q = %#v, want one token", tc.want, got)
+			}
+		})
+	}
+}
+
 // TestReasoningSubsetOfOutput mirrors the CacheReadTokens ⊂ InputTokens
 // invariant: a Usage where ReasoningTokens EXCEEDS OutputTokens indicates an
 // adapter put reasoning OUTSIDE the inclusive output total (the providers bill

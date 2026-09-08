@@ -48,7 +48,7 @@ func startupResumeConfig(ctx context.Context, source startupResumeSource, cfg co
 		return nil, "", err
 	}
 	if resume != nil {
-		return resume, resume.Snapshot.Workspace, nil
+		return resume, cfg.workspace, nil
 	}
 	return nil, cfg.workspace, nil
 }
@@ -108,7 +108,7 @@ func loadExactStartupResume(ctx context.Context, source startupResumeSource, id 
 		return nil, &startupResumeError{Reason: client.CapabilityReasonTranscriptUnavailable, text: "the authoritative transcript is unavailable; retry or start without a resume flag", candidateFresh: true}
 	}
 	row := client.SessionListItem{
-		ID: id, State: snapshot.State, Workspace: snapshot.Workspace, CreatedAt: snapshot.CreatedAt,
+		ID: id, State: snapshot.State, Placement: snapshot.Placement, CreatedAt: snapshot.CreatedAt,
 		Title: snapshot.Title, Kind: transcript.Kind, Relationship: transcript.Relationship,
 		Capabilities: client.SessionInventoryCapabilities{
 			PublicChat: transcript.Kind == client.SessionKindMain && snapshot.State != "awaiting",
@@ -133,7 +133,7 @@ func startupResumeEligible(row client.SessionListItem, latest bool) bool {
 	if row.State == "awaiting" {
 		return false
 	}
-	// Exact adoption may display a crash-orphaned running transcript; only the
+	// Exact continuation may display a crash-orphaned running transcript; only the
 	// ordinary first-prompt funnel can prove it stale. Latest is conservative and
 	// never guesses among running rows.
 	return !latest || row.State != "running"
@@ -156,7 +156,7 @@ func loadStartupResume(ctx context.Context, source startupResumeSource, row clie
 		return nil, &startupResumeError{Reason: client.CapabilityReasonTranscriptUnavailable, text: "the authoritative session metadata is unavailable; retry or start without a resume flag"}
 	}
 	row.State = snapshot.State
-	row.Workspace = snapshot.Workspace
+	row.Placement = snapshot.Placement
 	row.CreatedAt = snapshot.CreatedAt
 	row.Title = snapshot.Title
 	return &client.ResumeSelection{Row: row, Transcript: transcript, Snapshot: snapshot}, nil

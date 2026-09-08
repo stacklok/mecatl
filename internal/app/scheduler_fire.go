@@ -82,15 +82,22 @@ func makeFireFunc(svc *server.Service, store port.ScheduleStore, defaultTimeout 
 			limits.MaxConsecutiveFailures = subagentDefaultMaxConsecFails
 		}
 
+		ownerCtx := schedulerOwnerContext(ctx, sched.Spec.Owner)
+		placement, err := svc.ReattachPlacementInScope(ownerCtx, sched.Spec.EnvironmentRef, sched.Spec.PlacementScope)
+		if err != nil {
+			return fireFailed(sched, now, "", err), err
+		}
+
 		// Pre-mint the fire id (ADR 0059 decision #7 Phase-2): a "sched--"-prefixed
 		// id that serves as BOTH the fire id AND the session id. Minting it here
 		// (before CreateSessionWithProfile) and passing it as the WithSessionID
 		// override means the fire's persisted session carries the sched-- family
 		// prefix the GC retention sweep (ScheduleFireRetention) partitions on.
 		fireID := newFireID(literalName, now)
-		sess, err := svc.CreateSessionWithProfile(ctx, sched.Spec.Workspace, mode, limits, sel, profile,
+		sess, err := svc.CreateSessionWithProfile(ownerCtx, mode, limits, sel, profile,
 			server.WithSessionID(session.SessionID(fireID)),
 			server.WithOwner(fireSessionOwner(sched.Spec.Owner)),
+			server.WithPlacementBinding(placement),
 			server.WithScheduledRelationship(literalName, sched.Spec.OriginSessionID))
 		if err != nil {
 			return fireFailed(sched, now, "", err), err
@@ -121,7 +128,6 @@ func makeFireFunc(svc *server.Service, store port.ScheduleStore, defaultTimeout 
 		// in the scheduler ignores CarryContext (the crashed fire's context is
 		// untrusted AND incomplete); this gate is on CarryContext + a real prior
 		// session id (not the pending sentinel, not empty).
-		ownerCtx := schedulerOwnerContext(ctx, sess.Owner)
 		prompt := carriedContextPrompt(ownerCtx, svc, sched)
 
 		// Issue #386 — the in-flight scheduled-fire state: RecordFireStart flips
@@ -196,6 +202,12 @@ func makeFireFunc(svc *server.Service, store port.ScheduleStore, defaultTimeout 
 		// and the durable log exists precisely to record that tail.
 		logCtx := context.WithoutCancel(ctx)
 		recorder := server.NewRunEventRecorder(logCtx, svc, sess.ID)
+		// Drain to channel CLOSE, never break on EvResult: close(r.events) only
+		// happens after the drive goroutine's terminate()->e.save() has returned
+		// (engine/agent loop.go), mirroring the gRPC/HTTP relays' drain-to-discard
+		// contract (grpc.go relayRun). Breaking early here let this fire body race
+		// the engine's own still-running save() against the store, which is the
+		// "TempDir RemoveAll: directory not empty" flake under test load.
 		for ev := range run.Events() {
 			// The fire loop is this run's only consumer, so it owns the durable
 			// projection the gRPC/HTTP relays record for a client-driven run. Actor
@@ -208,7 +220,6 @@ func makeFireFunc(svc *server.Service, store port.ScheduleStore, defaultTimeout 
 			if ev.Type == session.EvResult && ev.Result != nil {
 				stop = ev.Result.Stop
 				runErr = ev.Result.Error
-				break
 			}
 		}
 		recorder.Close()

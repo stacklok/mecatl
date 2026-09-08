@@ -28,7 +28,7 @@ import (
 // asymmetry is a genuine adapter difference, not a suite flaw.
 func TestRedisStoreSessionMigrationConformance(t *testing.T) {
 	const id session.SessionID = "conformance-legacy"
-	sess := session.New(id, session.ModeAccept, "/work", session.Limits{}, time.Unix(1, 0))
+	sess := session.New(id, session.ModeAccept, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/work", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 	blob, err := sessnap.Marshal(sess)
 	if err != nil {
 		t.Fatalf("sessnap.Marshal: %v", err)

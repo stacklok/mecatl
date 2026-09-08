@@ -145,7 +145,7 @@ func TestMCPTypedResultsPositiveE2E(t *testing.T) {
 	}
 	defer func() { _ = res.Close() }()
 
-	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{MaxTurns: 20}, time.Now())
+	sess := session.New("s1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 20}, time.Now())
 	run := res.Engine.Run(context.Background(), sess, memEnvironment("/ws"), agent.RunRequest{Text: "go", Parts: nil})
 
 	results := make(map[string]session.ToolResult)

@@ -15,8 +15,12 @@ import (
 	"flag"
 	"fmt"
 	"net/http"
+	"net/url"
+	"sort"
+	"strings"
 	"time"
 
+	"github.com/stacklok/mecatl/internal/adapter/resourceurl"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/syscaller"
 )
@@ -33,6 +37,18 @@ type OIDCConfig struct {
 	// Audience is the `aud` this deployment accepts. REQUIRED when Issuer is
 	// set: an audience-less verifier accepts tokens minted for other services.
 	Audience string
+
+	// Resource and ClientID form the optional RFC 9728 protected-resource
+	// profile. Issuer and Audience remain the sole authoritative identity values.
+	Resource    string
+	ClientID    string
+	resourceSet bool
+	clientIDSet bool
+	// ScopesCSV is the operator-facing CSV spelling. Scopes is the validated,
+	// deterministic metadata representation populated by ValidateOIDCProfile.
+	ScopesCSV string
+	Scopes    []string
+	scopesSet bool
 
 	// MaxJWKSStaleness bounds how long cached signing keys remain trusted when
 	// refresh cannot reach the IdP. Zero explicitly disables the upper bound.
@@ -110,12 +126,132 @@ func RegisterOIDCFlags(fs *flag.FlagSet, c *OIDCConfig) {
 		"PEM CA bundle for --oidc-allow-private-https-issuer; required when private HTTPS issuer admission is enabled")
 	fs.StringVar(&c.Audience, "oidc-audience", "",
 		"audience (`aud`) this deployment accepts, REQUIRED with --oidc-issuer: an audience-less verifier would accept tokens minted for a different service")
+	fs.Var(oidcStringValue{value: &c.Resource, set: &c.resourceSet}, "oidc-resource",
+		"canonical external HTTPS URL of the OAuth protected resource")
+	fs.Var(oidcStringValue{value: &c.ClientID, set: &c.clientIDSet}, "oidc-client-id",
+		"public mecatui OAuth client-registration identifier")
+	fs.Var(oidcScopesValue{config: c}, "oidc-scopes",
+		"optional comma-separated OAuth scopes to advertise in protected-resource metadata")
 	fs.DurationVar(&c.MaxJWKSStaleness, "oidc-max-jwks-staleness", DefaultMaxJWKSStaleness,
 		"maximum age of cached JWKS signing keys when refresh cannot reach the IdP; stale, unrefreshable keys yield 503 instead of validating tokens. 0 disables the upper bound; negative values are rejected")
 }
 
-// ErrOIDCMisconfigured is returned when caller identity is requested but cannot
-// be wired. It is fatal at startup by design.
+type oidcStringValue struct {
+	value *string
+	set   *bool
+}
+
+func (v oidcStringValue) String() string { return *v.value }
+func (v oidcStringValue) Set(raw string) error {
+	*v.value = raw
+	*v.set = true
+	return nil
+}
+
+type oidcScopesValue struct{ config *OIDCConfig }
+
+func (v oidcScopesValue) String() string { return v.config.ScopesCSV }
+func (v oidcScopesValue) Set(raw string) error {
+	v.config.scopesSet = true
+	v.config.ScopesCSV = raw
+	return nil
+}
+
+// OIDCProfileProjection is the validated, operator-controlled metadata input.
+// Issuer and Audience are copied from the same OIDCConfig used by the token
+// validator; there is no second issuer or audience policy.
+type OIDCProfileProjection struct {
+	Resource string
+	ClientID string
+	Issuer   string
+	Audience string
+	Scopes   []string
+}
+
+// ProtectedResourceProfile converts this validated projection to the public
+// metadata shape. It deliberately exposes only fields RFC 9728 permits here.
+func (p OIDCProfileProjection) ProtectedResourceProfile() server.ProtectedResourceProfile {
+	return server.ProtectedResourceProfile{
+		Resource: p.Resource,
+		Issuer:   p.Issuer,
+		Audience: p.Audience,
+		ClientID: p.ClientID,
+		Scopes:   append([]string(nil), p.Scopes...),
+	}
+}
+
+// ProtectedResourceEnabled reports whether both profile identity fields are
+// present. ValidateOIDCProfile must still be called before serving.
+func (c OIDCConfig) ProtectedResourceEnabled() bool {
+	return c.Resource != "" && c.ClientID != ""
+}
+
+// ParseOIDCScopes parses the shared CLI/Helm scope syntax.
+func ParseOIDCScopes(raw string) ([]string, error) {
+	if raw == "" {
+		return nil, nil
+	}
+	seen := make(map[string]struct{})
+	for _, part := range strings.Split(raw, ",") {
+		scope := strings.TrimSpace(part)
+		if scope == "" || !validOIDCScope(scope) {
+			return nil, fmt.Errorf("%w: invalid --oidc-scopes entry %q", ErrOIDCMisconfigured, scope)
+		}
+		seen[scope] = struct{}{}
+	}
+	out := make([]string, 0, len(seen))
+	for scope := range seen {
+		out = append(out, scope)
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+func validOIDCScope(scope string) bool {
+	return resourceurl.ValidScopeToken(scope)
+}
+
+// ValidateOIDCProfile validates the optional profile before listeners start.
+func (c *OIDCConfig) ValidateOIDCProfile() error { //nolint:gocyclo // validation keeps the mutually-exclusive configuration matrix explicit.
+	if c.Resource == "" && c.ClientID == "" && !c.resourceSet && !c.clientIDSet && c.ScopesCSV == "" && !c.scopesSet {
+		c.Scopes = nil
+		return nil
+	}
+	if !c.Enabled() {
+		return fmt.Errorf("%w: protected-resource profile requires --oidc-issuer", ErrOIDCMisconfigured)
+	}
+	if c.Resource == "" || c.ClientID == "" {
+		return fmt.Errorf("%w: --oidc-resource and --oidc-client-id must be provided together", ErrOIDCMisconfigured)
+	}
+	if !resourceurl.Safe(c.ClientID) {
+		return fmt.Errorf("%w: --oidc-client-id must be non-empty, at most 1024 bytes, and contain no control or Unicode format characters", ErrOIDCMisconfigured)
+	}
+	resource, err := resourceurl.Canonical(c.Resource)
+	if err != nil || resource == "" {
+		return fmt.Errorf("%w: --oidc-resource must be an absolute HTTPS URL without credentials, query, or fragment", ErrOIDCMisconfigured)
+	}
+	c.Resource = resource
+	issuer, err := url.Parse(c.Issuer)
+	if err != nil || issuer.Scheme != "https" || issuer.Host == "" {
+		return fmt.Errorf("%w: protected-resource profile requires an HTTPS --oidc-issuer", ErrOIDCMisconfigured)
+	}
+	if c.scopesSet && c.ScopesCSV == "" {
+		return fmt.Errorf("%w: --oidc-scopes must not be empty", ErrOIDCMisconfigured)
+	}
+	c.Scopes, err = ParseOIDCScopes(c.ScopesCSV)
+	return err
+}
+
+// ProfileProjection returns the validated metadata projection.
+func (c *OIDCConfig) ProfileProjection() (OIDCProfileProjection, error) {
+	if err := c.ValidateOIDCProfile(); err != nil {
+		return OIDCProfileProjection{}, err
+	}
+	return OIDCProfileProjection{Resource: c.Resource, ClientID: c.ClientID, Issuer: c.Issuer, Audience: c.Audience, Scopes: append([]string(nil), c.Scopes...)}, nil
+}
+
+// ErrOIDCMisconfigured is returned when caller identity or its protected
+// resource profile is requested but cannot be wired. It is fatal at startup by design.
 var ErrOIDCMisconfigured = errors.New("oidc: misconfigured")
 
 // ValidateOIDCAuthToken rejects two incompatible edge-authentication modes. An
@@ -141,6 +277,9 @@ func ValidateOIDCAuthToken(c OIDCConfig, authToken string) error {
 func OIDCValidator(ctx context.Context, c OIDCConfig) (server.PrincipalValidator, error) {
 	if c.MaxJWKSStaleness < 0 {
 		return nil, fmt.Errorf("%w: --oidc-max-jwks-staleness must not be negative: %s", ErrOIDCMisconfigured, c.MaxJWKSStaleness)
+	}
+	if err := c.ValidateOIDCProfile(); err != nil {
+		return nil, err
 	}
 	if !c.Enabled() {
 		return nil, nil

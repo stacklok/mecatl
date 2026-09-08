@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -23,10 +22,10 @@ func newLimitsService(t *testing.T, def session.Limits) *server.Service {
 		Policy:  permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil),
 		Model:   "test-model",
 	})
-	svc, err := server.NewService(server.Config{
-		Engine:        engine,
-		Store:         memstore.New(),
-		Workspaces:    func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+	svc, err := newPlacementTestService(server.Config{
+		Engine: engine,
+		Store:  memstore.New(),
+
 		DefaultLimits: def,
 	})
 	if err != nil {
@@ -41,7 +40,7 @@ func TestCreateSessionAppliesDefaultLimits(t *testing.T) {
 	def := session.Limits{MaxTurns: 50, MaxToolCalls: 200, MaxConsecutiveFailures: 5}
 	svc := newLimitsService(t, def)
 
-	sess, err := svc.CreateSession(context.Background(), "/ws", "", session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), "", session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -57,7 +56,7 @@ func TestCreateSessionKeepsFullyExplicitLimits(t *testing.T) {
 	svc := newLimitsService(t, def)
 
 	explicit := session.Limits{MaxTurns: 3, MaxToolCalls: 9, MaxConsecutiveFailures: 2}
-	sess, err := svc.CreateSession(context.Background(), "/ws", "", explicit)
+	sess, err := svc.CreateSession(context.Background(), "", explicit)
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -74,7 +73,7 @@ func TestCreateSessionPerFieldDefaultsPreserveOtherCaps(t *testing.T) {
 	def := session.Limits{MaxTurns: 50, MaxToolCalls: 200, MaxConsecutiveFailures: 5}
 	svc := newLimitsService(t, def)
 
-	sess, err := svc.CreateSession(context.Background(), "/ws", "", session.Limits{MaxTurns: 3})
+	sess, err := svc.CreateSession(context.Background(), "", session.Limits{MaxTurns: 3})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

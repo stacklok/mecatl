@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
+	"github.com/stacklok/mecatl/engine/adapter/memledger"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 )
@@ -17,6 +19,13 @@ import (
 // (engine/adapter/fstools). The real-osfs e2e of the FS tools lives in
 // abspath_tools_test.go / read_readroots_test.go (they need internal/adapter/osfs
 // and so cannot live in the engine module).
+
+var testLedgers sync.Map
+
+func testLedger(ws tool.Workspace) tool.ReadLedger {
+	ledger, _ := testLedgers.LoadOrStore(ws, memledger.New())
+	return ledger.(tool.ReadLedger)
+}
 
 // call builds a ToolCall with JSON args marshalled from m.
 func call(t *testing.T, name string, m map[string]any) session.ToolCall {
@@ -31,7 +40,7 @@ func call(t *testing.T, name string, m map[string]any) session.ToolCall {
 // exec runs a tool and fails the test on a harness-level (Go) error.
 func exec(t *testing.T, tl tool.Tool, in session.ToolCall, ws tool.Workspace) session.ToolResult {
 	t.Helper()
-	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: ws.Root()}, ws, nil)
+	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: ws.Root()}, ws, testLedger(ws), nil)
 	res, err := tl.Execute(context.Background(), in, env)
 	if err != nil {
 		t.Fatalf("%s: unexpected harness error: %v", tl.Spec().Name, err)

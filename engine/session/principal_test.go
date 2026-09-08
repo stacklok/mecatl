@@ -11,7 +11,7 @@ import (
 
 func newLabelSession(t *testing.T) *session.Session {
 	t.Helper()
-	return session.New("s1", session.ModeDefault, "/w", session.Limits{}, time.Unix(0, 0).UTC())
+	return session.New("s1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/w", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0).UTC())
 }
 
 // TestRestoreLabelsIsWriteOnce pins the write-once contract of the owner label

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
+	"github.com/stacklok/mecatl/engine/adapter/memledger"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
@@ -58,7 +59,7 @@ func TestLoopMidStreamStallTerminatesAsError(t *testing.T) {
 	defer cancel()
 
 	ws := memfs.NewWorkspace("/ws")
-	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws"}, ws, nil)
+	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws"}, ws, memledger.New(), nil)
 	r := e.Run(ctx, newSession(t, session.Limits{}), env, agent.RunRequest{Text: "go"})
 
 	type drained struct {

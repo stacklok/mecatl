@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/session"
@@ -98,31 +99,23 @@ func TestSubagentSalvageDoesNotClobberExistingSummary(t *testing.T) {
 	}
 }
 
-// TestSubagentBudgetStopSalvages proves StopBudget NOW triggers salvage: a child that
-// exhausts its token budget with no summary DOES get a wrap-up drive (one extra turn,
-// enabled by ResetUsage). The result carries the salvaged summary AND the honest
-// "[subagent stopped: reached its token budget]" note (never relabelled).
-//
-// Note: the operator-level engine budget (MaxRunTokens) is used here rather than a
-// per-call max_tokens override, because per-call values below agent.MinSubagentRunTokens
-// (25 000) are floored up to 25 000 — a 50-token per-call ceiling would be silently
-// raised and the child would never hit it with only 200 scripted tokens. The operator
-// budget bypasses the floor and stays authoritative at any value.
+// TestSubagentBudgetStopSalvages grants a budget-stopped free-text child exactly
+// one cleanup turn. Its baseline is non-mutating: the cleanup spend is added to
+// the existing lifetime main usage rather than replacing it.
 func TestSubagentBudgetStopSalvages(t *testing.T) {
-	// A child whose first turn calls a tool with usage that overshoots the OPERATOR budget
-	// (50 tokens); the boundary check trips StopBudget before turn 2, with an empty body.
-	// The second scripted turn is the salvage summary that MUST run after ResetUsage.
+	store := memstore.New()
 	childLLM := mockllm.New(
 		mockllm.ChunksTurn(
 			mockllm.ToolCallChunk(toolCall("k", "Read", `{"path":"a"}`)),
 			mockllm.UsageChunk(session.Usage{InputTokens: 100, OutputTokens: 100}),
 			mockllm.DoneChunk(session.StopEndTurn),
 		),
-		mockllm.TextTurn("SALVAGED BUDGET FINDINGS"),
+		mockllm.ChunksTurn(
+			mockllm.TextChunk("SALVAGED BUDGET FINDINGS"),
+			mockllm.UsageChunk(session.Usage{InputTokens: 7, OutputTokens: 3}),
+			mockllm.DoneChunk(session.StopEndTurn),
+		),
 	)
-	// Tight operator budget of 50 tokens; the first turn spends 200 (100 in + 100 out),
-	// tripping StopBudget — the salvage must then run after ResetUsage clears the
-	// cumulative spend.
 	childEngine := agent.NewEngine(agent.Deps{
 		LLM:          childLLM,
 		Catalog:      catalogWith(t, salvageReadTool()),
@@ -130,56 +123,54 @@ func TestSubagentBudgetStopSalvages(t *testing.T) {
 		Model:        "child-model",
 		MaxRunTokens: 50,
 	})
-	task := agent.NewSubagentTool(childEngine)
+	task := agent.NewSubagentTool(childEngine, agent.WithSubagentStore(store))
 
 	results, _ := subagentParentResults(t, task,
 		mockllm.ToolCallTurn(toolCall("p1", "Subagent", `{"prompt":"investigate"}`)),
 		mockllm.TextTurn("parent done"),
 	)
-	if len(results) != 1 {
-		t.Fatalf("want 1 result, got %d", len(results))
+	if len(results) != 1 || results[0].IsError {
+		t.Fatalf("want one clean salvaged result, got %+v", results)
 	}
-	if results[0].IsError {
-		t.Fatalf("salvaged budget stop is a success-with-note, got error: %+v", results[0])
+	if !strings.Contains(results[0].Content, "SALVAGED BUDGET FINDINGS") {
+		t.Fatalf("result must carry the cleanup summary, got %q", results[0].Content)
 	}
-	body := results[0].Content
-	if strings.Contains(body, "(subagent produced no summary)") {
-		t.Fatalf("salvage should have filled in a body, got the empty placeholder: %q", body)
+	if !strings.Contains(results[0].Content, "reached its token budget") {
+		t.Fatalf("result must retain the original budget stop, got %q", results[0].Content)
 	}
-	if !strings.Contains(body, "SALVAGED BUDGET FINDINGS") {
-		t.Fatalf("result must carry the salvaged summary, got: %q", body)
-	}
-	// The honest "[subagent stopped: reached its token budget]" note must survive — the
-	// salvage fills in the body but must never relabel the stop reason.
-	if !strings.Contains(body, "reached its token budget") {
-		t.Fatalf("result must keep the honest budget note, got: %q", body)
-	}
-	// Two model calls: one budget-tripping turn + one salvage wrap-up turn.
 	if got := childLLM.Calls(); got != 2 {
-		t.Fatalf("child made %d model calls, want 2 (budget turn + salvage turn)", got)
+		t.Fatalf("child made %d model calls, want initial turn plus one cleanup", got)
 	}
-	// The reported usage must include BOTH the original spend and the salvage turn's spend.
-	// The salvage turn adds at least some usage (even if 0 from the mock); the key check is
-	// that the first turn's 200 tokens are present (usage accumulation was preserved).
-	// (The mock TextTurn adds 0 extra tokens, so the floor is the original 200.)
+
+	child, err := store.Load(context.Background(), session.SessionID("subagent-s1-p1"))
+	if err != nil {
+		t.Fatalf("load persisted child: %v", err)
+	}
+	const wantLifetime = 210
+	if got := child.Usage.TotalTokens(); got != wantLifetime {
+		t.Fatalf("lifetime Session.Usage = %d, want initial 200 + cleanup 10 = %d", got, wantLifetime)
+	}
+	if got := child.TokenUsageSnapshot()[session.UsageKindMain].Total.TotalTokens(); got != wantLifetime {
+		t.Fatalf("lifetime token_usage[main] = %d, want %d", got, wantLifetime)
+	}
 }
 
-// TestSubagentBudgetStopSalvageNeedsUsageReset proves that the ResetUsage call is what
-// makes the salvage turn possible: without it the child's cumulative Usage (200 tokens,
-// exceeding the 50-token budget) would immediately re-trip the budget ceiling at the
-// next turn boundary, preventing the salvage. The test verifies the salvage still runs
-// to completion and returns non-empty text — which only works because ResetUsage cleared
-// the stale spend before the salvage drive.
-func TestSubagentBudgetStopSalvageNeedsUsageReset(t *testing.T) {
-	// Same setup as TestSubagentBudgetStopSalvages: a 50-token budget, a first turn that
-	// spends 200 tokens, and a salvage turn that must produce text.
+// TestSubagentBudgetStopCleanupHasOneTurn proves the cleanup's MaxTurns=1 pin
+// remains the hard brake even though its internal baseline makes one model turn
+// available. A cleanup tool call cannot consume a second turn.
+func TestSubagentBudgetStopCleanupHasOneTurn(t *testing.T) {
 	childLLM := mockllm.New(
 		mockllm.ChunksTurn(
-			mockllm.ToolCallChunk(toolCall("k", "Read", `{"path":"a"}`)),
+			mockllm.ToolCallChunk(toolCall("k1", "Read", `{"path":"a"}`)),
 			mockllm.UsageChunk(session.Usage{InputTokens: 100, OutputTokens: 100}),
 			mockllm.DoneChunk(session.StopEndTurn),
 		),
-		mockllm.TextTurn("RESET ENABLED THIS SALVAGE"),
+		mockllm.ChunksTurn(
+			mockllm.ToolCallChunk(toolCall("k2", "Read", `{"path":"b"}`)),
+			mockllm.UsageChunk(session.Usage{InputTokens: 1, OutputTokens: 1}),
+			mockllm.DoneChunk(session.StopEndTurn),
+		),
+		mockllm.TextTurn("MUST NOT RUN"),
 	)
 	childEngine := agent.NewEngine(agent.Deps{
 		LLM:          childLLM,
@@ -190,22 +181,11 @@ func TestSubagentBudgetStopSalvageNeedsUsageReset(t *testing.T) {
 	})
 	task := agent.NewSubagentTool(childEngine)
 
-	results, _ := subagentParentResults(t, task,
+	_, _ = subagentParentResults(t, task,
 		mockllm.ToolCallTurn(toolCall("p1", "Subagent", `{"prompt":"investigate"}`)),
 		mockllm.TextTurn("parent done"),
 	)
-	if len(results) != 1 {
-		t.Fatalf("want 1 result, got %d", len(results))
-	}
-	// The salvage ran to completion, which proves ResetUsage cleared the budget
-	// accumulator: without the reset the second turn boundary check would re-trip
-	// StopBudget immediately (200 tokens > 50-token budget) and the salvage would
-	// return empty text.
-	if !strings.Contains(results[0].Content, "RESET ENABLED THIS SALVAGE") {
-		t.Fatalf("salvage must produce non-empty text (proving ResetUsage worked), got: %q", results[0].Content)
-	}
-	// Two model calls: one budget-tripping turn + one salvage wrap-up turn.
 	if got := childLLM.Calls(); got != 2 {
-		t.Fatalf("child made %d model calls, want 2 (budget turn + salvage turn)", got)
+		t.Fatalf("child made %d model calls, want initial turn plus exactly one cleanup turn", got)
 	}
 }

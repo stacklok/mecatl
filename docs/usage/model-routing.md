@@ -103,6 +103,20 @@ models:
   (`cheap`/`fast`/`reasoning`) is the default a slot with no explicit binding falls
   through to — the internal-call slots default to `cheap`, while **`plan` defaults
   to `reasoning`** (a plan model is a strong-reasoning model, not a cheap one).
+
+#### Session title generation
+
+- **The `title` slot.** This explicit opt-in for automatic session-title generation
+  ([ADR 0308](../adr/0308-session-title-generation-and-auxiliary-usage.md)) has **no
+  tier or session-model fallback**: omit it and generation is disabled. On the fixed
+  compatible provider, the server makes one bounded tool-less call after a successful
+  exchange. Its usage is durable `session_title` accounting under
+  [ADR 0307](../adr/0307-canonical-durable-token-accounting.md), not `Session.Usage`,
+  the session/run budget, or normal result usage. The title model never changes the
+  session model.
+
+#### Other slots
+
 - **The `plan` slot (the opusplan workflow).** Bind `plan` to a strong-reasoning model
   and a session **automatically swaps to it while in plan mode** and back to the session
   model when executing — re-resolved **between turns** at the run-entry seam (never
@@ -217,12 +231,15 @@ models:
 - **Cost note (CWE-770):** an untrusted/peer-injected task prompt can **steer** the
   classifier toward your most-expensive category (the breaker only counts *misses*, not
   steered-but-valid classifications). It is **bounded** — the router can only pick from
-  *your* taxonomy, the provider is fixed, and **`--max-run-tokens`** (plus
-  `--max-team-tokens` and the per-call `max_run_tokens`) is the actual spend ceiling. The
+  *your* taxonomy, the provider is fixed, and each engine's **`--max-run-tokens`**
+  (plus the separate team-wide `--max-team-tokens` and a child per-call
+  `max_run_tokens` override) is its own spend ceiling. Parent usage does not include
+  child spend, although classifier calls still count against the parent engine's
+  ceiling; delegation-tree aggregate enforcement is deferred and out of scope. The
   budget caps a routed child regardless of the chosen model **and** (since #92) folds each
   classifier call's own token spend into the parent run's cumulative `--max-run-tokens`, so
   repeated classifications cannot run up unbounded classifier cost either. Keep the category
-  cost range modest and rely on the token budget as the hard ceiling.
+  cost range modest and rely on the per-engine token budget as that engine's hard ceiling.
 
 #### Authoring skills & agent definitions for model selection
 

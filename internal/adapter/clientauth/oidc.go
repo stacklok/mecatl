@@ -124,7 +124,7 @@ func Login(ctx context.Context, cfg LoginConfig) (Token, error) {
 	if err != nil {
 		return Token{}, ErrAuthorization
 	}
-	oc := oauth2.Config{ClientID: id.ClientID, RedirectURL: id.RedirectURI, Endpoint: oauth2.Endpoint{AuthURL: doc.AuthorizationEndpoint, TokenURL: doc.TokenEndpoint}, Scopes: id.Scopes}
+	oc := oauth2.Config{ClientID: id.ClientID, RedirectURL: id.RedirectURI, Endpoint: oauth2.Endpoint{AuthURL: doc.AuthorizationEndpoint, TokenURL: doc.TokenEndpoint, AuthStyle: oauth2.AuthStyleInParams}, Scopes: id.Scopes}
 	authURL := oc.AuthCodeURL(state, oauth2.AccessTypeOffline, oauth2.S256ChallengeOption(verifier))
 	result, err := cfg.Presenter.Present(ctx, authURL)
 	if err != nil {
@@ -154,7 +154,7 @@ func Login(ctx context.Context, cfg LoginConfig) (Token, error) {
 	}
 	validator, err := authoidc.NewValidator(ctx, authoidc.Config{Issuer: id.Issuer, JWKSURI: doc.JWKSURI, Audience: id.Audience, HTTPClient: client})
 	if err != nil {
-		return Token{}, ErrDiscovery
+		return Token{}, fmt.Errorf("%w: %w", ErrDiscovery, err)
 	}
 	defer func() { _ = validator.Close() }()
 	if _, err := validator.Validate(ctx, tok.AccessToken); err != nil {
@@ -210,11 +210,11 @@ func NewRefreshSource(ctx context.Context, creds *Credentials, cfg LoginConfig) 
 	}()
 	doc, err := fetchDiscovery(ctx, client, id)
 	if err != nil {
-		return nil, ErrDiscovery
+		return nil, fmt.Errorf("%w: %w", ErrDiscovery, err)
 	}
 	validator, err := authoidc.NewValidator(ctx, authoidc.Config{Issuer: id.Issuer, JWKSURI: doc.JWKSURI, Audience: id.Audience, HTTPClient: client})
 	if err != nil {
-		return nil, ErrDiscovery
+		return nil, fmt.Errorf("%w: %w", ErrDiscovery, err)
 	}
 	result := newRefreshSource(id, creds, cfg.Registry, client, doc.TokenEndpoint, validator, refreshPoll)
 	result.ownsClient = ownsClient
@@ -224,7 +224,7 @@ func NewRefreshSource(ctx context.Context, creds *Credentials, cfg LoginConfig) 
 
 func newRefreshSource(id Identity, creds *Credentials, registry *Registry, client *http.Client, tokenURL string, validator *authoidc.Validator, poll time.Duration) *RefreshSource {
 	ctx, cancel := context.WithCancel(context.Background())
-	s := &RefreshSource{identity: id, creds: creds, registry: registry, client: client, endpoint: oauth2.Endpoint{TokenURL: tokenURL}, validator: validator, ctx: ctx, cancel: cancel, done: make(chan struct{})}
+	s := &RefreshSource{identity: id, creds: creds, registry: registry, client: client, endpoint: oauth2.Endpoint{TokenURL: tokenURL, AuthStyle: oauth2.AuthStyleInParams}, validator: validator, ctx: ctx, cancel: cancel, done: make(chan struct{})}
 	go s.refreshLoop(poll)
 	return s
 }

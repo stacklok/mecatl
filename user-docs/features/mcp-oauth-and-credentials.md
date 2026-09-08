@@ -106,14 +106,46 @@ or resource — run login again. To roll back, replace the whole profile with
 ## Environment-backed credentials
 
 For Kubernetes and other managed deployments, use an environment-backed OAuth
-record. Provision the opaque record and its secret outside mecatl, inject it
+record. Provision the opaque record and its secret outside Mecatl, inject it
 into the process, and restart after rotation. The environment reader is
 read-only; `mecated mcp login` cannot populate or update it.
 
-`mecak8s` does not open a browser. Its OAuth credential is intended to come from
-a Kubernetes Secret, and agent-facing shells receive a scrubbed environment so
-MCP/provider credentials are not exposed through Bash. See the
-[Kubernetes deployment guide](/building/deployment/mecak8s.md) for the Secret wiring.
+For global OAuth profiles, `mecak8s` does not open a browser and uses a Kubernetes
+Secret-backed credential. Broker OAuth instead uses an external browser to complete a
+session enrollment; its preregistered client secret, when needed, is still a Kubernetes
+Secret. Agent-facing shells receive a scrubbed environment so MCP/provider credentials are
+not exposed through Bash. See the [Kubernetes deployment guide](/building/deployment/mecak8s.md)
+for the Secret wiring.
+
+## ToolHive broker OAuth
+
+For `mecak8s` broker mode, OAuth is not an environment-backed per-server credential.
+One session starts one opaque enrollment, and ToolHive drives the configured protected
+upstreams sequentially. ToolHive owns upstream callback state, code exchange, refresh, and
+provider-specific injection; a token for one backend is not used for another. Mecatl retains
+the session and pre-prompt enrollment boundary, then strictly discovers every protected backend
+and freezes the complete catalogue only after success. Static declarations are visible before connection: calling one starts the same opaque ToolHive
+bundle authorization and, after success, makes the declared tools usable in that session. This
+lazy path does not discover undeclared tools, including others on the same backend; use the
+pre-prompt enrollment flow to discover and freeze the complete protected catalogue. The generated client between mecatl and ToolHive is confidential: ToolHive stores
+only its hash, while mecatl uses the process-private raw secret solely for HTTP-Basic token
+exchange and refresh. It is never included in the browser flow, controls, logs, snapshots, or
+upstream calls. A failed enrollment exposes no partial protected catalogue.
+
+Mecatl controls reveal only the enrollment reference, aggregate state, configured-service count,
+and temporary presentation URL. They never reveal an upstream name, OAuth state/code, endpoint,
+or access/refresh token. The broker origin serves two callback roles: providers return to
+ToolHive's fixed `/v1/mcp/broker/oauth/callback` route, then ToolHive completes at the configured
+mecatl callback URL. Route the complete `/v1/mcp/broker/` prefix and the final callback path to
+the same listener. See the [Kubernetes deployment guide](/building/deployment/mecak8s.md) for
+Helm configuration.
+
+Broker session attachments and outer callback correlation remain process-local. ToolHive's
+configured Redis storage can preserve its inner upstream authorization/token records, but a
+mecatl restart cannot correlate a persisted pending aggregate back to that inner operation: it
+discards the old pending correlation and starts a fresh enrollment rather than recovering it.
+The mode is not safe behind the default multi-replica `mecak8s` Service until affinity or durable
+outer broker routing is available.
 
 The legacy bearer path is simpler for a server that does not need OAuth:
 
@@ -129,13 +161,16 @@ environment-variable name.
 
 ## Runtime behavior and limitations
 
-- Normal serving, ACP, `mecatequi`, and `mecak8s` never open a browser. Authorize
-  locally beforehand or provision an environment credential.
+- Global-profile serving, ACP, `mecatequi`, and `mecak8s` never open a browser.
+  Authorize global profiles locally beforehand or provision an environment credential.
+  A browser may instead complete an already-started ToolHive broker enrollment externally;
+  `mecak8s` does not launch that browser.
 - DCR and ACP cannot provide OAuth profiles or install/drive authorization. After
   an operator authorizes a global profile, ACP sessions may invoke its shared
   tools under ordinary permissions.
-- Per-session MCP, inline agent MCP servers, and discovered ToolHive servers do
-  not support OAuth profiles in the current deployment.
+- Client-provided per-session MCP and inline agent MCP servers cannot provide OAuth
+  profiles. The configured ToolHive broker is the exception: it owns its configured
+  multi-upstream OAuth chain, while mecatl exposes only the aggregate enrollment.
 - A configured profile that is unreachable or malformed is a deployment error;
   it does not silently become an unauthenticated server.
 - OAuth credentials authenticate the MCP connection. They do not grant the
@@ -150,7 +185,7 @@ environment-variable name.
 - A connection drop can trigger one bounded reconnect and retry. A server-declared
   tool failure is not replayed automatically because the call may have mutated
   remote state. The startup tool catalog is retained across reconnects; changed
-  remote tool lists take effect after the next mecatl process start.
+  remote tool lists take effect after the next Mecatl process start.
 - Treat the local credential store and configuration backups as sensitive. Keep
   roots owner-only and use your deployment's secret manager for rotation.
 

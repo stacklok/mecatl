@@ -111,7 +111,6 @@ func sampleProtoSchedule(name string) *mecatlv1.Schedule {
 			Trigger:   &mecatlv1.TriggerSpec{OneShot: timestamppb.New(oneShot)},
 			Selector:  &mecatlv1.ScheduleProviderSelector{ProviderId: "openai", ModelId: "gpt-5"},
 			Profile:   "default",
-			Workspace: "/repo",
 			Mode:      mecatlv1.PermissionMode_PERMISSION_MODE_DEFAULT,
 			Mutating:  true,
 			MaxFires:  3,

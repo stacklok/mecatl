@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -42,7 +41,7 @@ func selectorRecordingFactory(reply string, got *atomic.Value, calls *atomic.Int
 // the recorder lets a test assert the workspace path round-tripped.
 func selectorServiceOverStore(t *testing.T, store *memstore.Store, factory server.SessionEngineFactory, factoryRoots *[]string) *server.Service {
 	t.Helper()
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine: agent.NewEngine(agent.Deps{
 			LLM:     mockllm.New(mockllm.TextTurn("SHARED-ENGINE-REPLY")),
 			Catalog: tool.NewCatalog(),
@@ -50,17 +49,18 @@ func selectorServiceOverStore(t *testing.T, store *memstore.Store, factory serve
 			Model:   "test-model",
 		}),
 		Store: store,
-		Workspaces: func(root string) tool.Workspace {
-			if factoryRoots != nil {
-				*factoryRoots = append(*factoryRoots, root)
-			}
-			// A selector session uses a real workspace; an in-memory stand-in is
-			// enough for the seam under test (engine selection, not FS behaviour).
-			return memfs.NewWorkspace(root)
-		},
+
+		// A selector session uses a real workspace; an in-memory stand-in is
+		// enough for the seam under test (engine selection, not FS behaviour).
+
 		DefaultLimits: session.Limits{MaxTurns: 5},
 		Now:           func() time.Time { return time.Unix(0, 0) },
-		SessionEngine: factory,
+		SessionEngine: func(ctx context.Context, sel server.ProviderSelector, specs []mcp.ServerConfig, profile server.SessionProfile, workspace string, mode session.PermissionMode) (server.SessionEngineResult, error) {
+			if factoryRoots != nil {
+				*factoryRoots = append(*factoryRoots, workspace)
+			}
+			return factory(ctx, sel, specs, profile, workspace, mode)
+		},
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
@@ -80,7 +80,6 @@ func TestSelectorSessionRehydratesWithPersistedSelector(t *testing.T) {
 	ctx := context.Background()
 	store := memstore.New()
 
-	const wantWorkspace = "/work/selectorsess"
 	wantSel := server.ProviderSelector{ProviderID: "openrouter", ModelID: "anthropic/claude-3.5-sonnet"}
 
 	// "Before the restart": create the selector session over a real workspace.
@@ -89,7 +88,7 @@ func TestSelectorSessionRehydratesWithPersistedSelector(t *testing.T) {
 		calls  atomic.Int32
 	)
 	svc1 := selectorServiceOverStore(t, store, selectorRecordingFactory("PRE-RESTART", &gotSel, &calls), nil)
-	sess, err := svc1.CreateSessionWithProvider(ctx, wantWorkspace, session.ModeDefault, session.Limits{}, wantSel)
+	sess, err := svc1.CreateSessionWithProvider(ctx, session.ModeDefault, session.Limits{}, wantSel)
 	if err != nil {
 		t.Fatalf("CreateSessionWithProvider: %v", err)
 	}
@@ -130,16 +129,15 @@ func TestSelectorSessionRehydratesWithPersistedSelector(t *testing.T) {
 	if got := gotSel2.Load(); got != wantSel {
 		t.Fatalf("rehydration factory saw selector %v, want the persisted %v (a zero selector is the wrong-model bug)", got, wantSel)
 	}
-	// The persisted workspace round-tripped to the shared Workspaces factory (a
-	// selector session has a real workspace, unlike a no-fs one).
+	// The factory receives the private root resolved from the exact placement.
 	sawWorkspace := false
 	for _, r := range factoryRoots {
-		if r == wantWorkspace {
+		if r == "/ws" {
 			sawWorkspace = true
 		}
 	}
 	if !sawWorkspace {
-		t.Fatalf("the persisted workspace %q never reached the Workspaces factory (roots seen: %v)", wantWorkspace, factoryRoots)
+		t.Fatalf("the exact placement root never reached the engine factory (roots seen: %v)", factoryRoots)
 	}
 }
 
@@ -158,7 +156,7 @@ func TestDefaultFSSessionDoesNotRehydrate(t *testing.T) {
 		calls  atomic.Int32
 	)
 	svc1 := selectorServiceOverStore(t, store, selectorRecordingFactory("UNUSED", &gotSel, &calls), nil)
-	sess, err := svc1.CreateSession(ctx, "/work/plain", session.ModeDefault, session.Limits{})
+	sess, err := svc1.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

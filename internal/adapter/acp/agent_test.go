@@ -17,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
+	"github.com/stacklok/mecatl/engine/adapter/memledger"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -28,6 +28,7 @@ import (
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/acp"
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
+	"github.com/stacklok/mecatl/internal/adapter/osfs"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	toolsadapter "github.com/stacklok/mecatl/internal/adapter/tools"
 )
@@ -46,6 +47,77 @@ func (s *scriptTool) Spec() tool.ToolSpec {
 func (s *scriptTool) ReadOnly() bool { return s.readOnly }
 func (s *scriptTool) Execute(_ context.Context, in session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	return session.NewToolResult(in.ID, s.content), nil
+}
+
+type acpPlacementProvider struct {
+	root          string
+	ref           session.EnvironmentRef
+	bindCalls     *atomic.Int32
+	reattachCalls *atomic.Int32
+}
+
+func (p acpPlacementProvider) binding() server.PlacementBinding {
+	ws, err := osfs.NewWorkspace(p.root)
+	if err != nil {
+		panic(err)
+	}
+	env := tool.MustEnvironment(p.ref, ws, memledger.New(), nil)
+	return server.PlacementBinding{Environment: env, Ref: p.ref}
+}
+
+func (p acpPlacementProvider) Bind(_ context.Context, req server.PlacementBindRequest) (server.PlacementBinding, error) {
+	if p.bindCalls != nil {
+		p.bindCalls.Add(1)
+	}
+	if req.Scope != "acp-test" || req.Selector.Kind != server.PlacementSelectorDefault {
+		return server.PlacementBinding{}, server.ErrPlacementNotFound
+	}
+	return p.binding(), nil
+}
+
+func (p acpPlacementProvider) Reattach(_ context.Context, req server.PlacementReattachRequest) (server.PlacementBinding, error) {
+	if p.reattachCalls != nil {
+		p.reattachCalls.Add(1)
+	}
+	if req.Scope != "acp-test" || req.Ref != p.ref {
+		return server.PlacementBinding{}, server.ErrPlacementNotFound
+	}
+	return p.binding(), nil
+}
+
+func testCWD(t *testing.T) string {
+	t.Helper()
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	return cwd
+}
+
+// resolvedTempDir returns a fresh temp dir with symlinks evaluated, matching
+// what osfs.NewWorkspace stores as its Root() (macOS's /tmp is a symlink to
+// /private/tmp, so a raw t.TempDir() would fail assertACPPlacementCWD's exact
+// string comparison against the workspace's already-resolved root).
+func resolvedTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("resolve temp dir: %v", err)
+	}
+	return dir
+}
+
+type authorizationScriptTool struct {
+	scriptTool
+	requests int
+}
+
+func (s *authorizationScriptTool) RequestAuthorization(context.Context, session.ToolCall) (session.ExternalAuthorization, bool, error) {
+	s.requests++
+	return session.ExternalAuthorization{ID: "must-not-be-exposed", Binding: "private", ExpiresAt: time.Now().Add(time.Hour)}, true, nil
+}
+func (*authorizationScriptTool) AbortAuthorization(context.Context, session.ExternalAuthorization) error {
+	return nil
 }
 
 // newService wires a real *agent.Engine (mockllm + memfs + permpolicy) into a
@@ -70,16 +142,24 @@ func newServiceCfg(t *testing.T, llm *mockllm.Provider, rules []governance.Rule,
 		Policy:  permpolicy.NewPolicy(rules, nil),
 		Model:   "test-model",
 	})
+	root := testCWD(t)
+	ref := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "acp-test-placement", Revision: "v1"}
 	cfg := server.Config{
-		Engine:        engine,
-		Store:         memstore.New(),
-		Workspaces:    func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		DefaultLimits: session.Limits{MaxTurns: 10, MaxToolCalls: 20},
-		Now:           func() time.Time { return time.Unix(0, 0) },
+		Engine: engine,
+		Store:  memstore.New(),
+
+		SharedEngineRoot:  root,
+		PlacementProvider: acpPlacementProvider{root: root, ref: ref},
+		PlacementScope:    "acp-test",
+		DefaultLimits:     session.Limits{MaxTurns: 10, MaxToolCalls: 20},
+		Now:               func() time.Time { return time.Unix(0, 0) },
 		// The ACP gate reads ProviderCapabilities() = DefaultCapabilities (composition-
 		// computed), not the engine. In these tests there is no catalog/selector, so the
 		// intersection is the bare adapter caps — source them from the wired provider.
 		DefaultCapabilities: llm.Capabilities(),
+		SessionEngine: func(context.Context, server.ProviderSelector, []mcp.ServerConfig, server.SessionProfile, string, session.PermissionMode) (server.SessionEngineResult, error) {
+			return server.SessionEngineResult{Engine: engine, Capabilities: llm.Capabilities(), Close: func() error { return nil }}, nil
+		},
 	}
 	if configFn != nil {
 		configFn(&cfg)
@@ -260,7 +340,7 @@ func TestEndToEndPromptWithPermission(t *testing.T) {
 	)
 	// nil rules => default decision is Ask, so Write triggers a permission.ask.
 	svc := newService(t, llm, nil, write)
-	cwd := t.TempDir() // session/new now requires an existing absolute dir
+	cwd := testCWD(t) // session/new now requires an existing absolute dir
 
 	// Wire the agent over a pair of pipes: editorIn -> agent stdin,
 	// agent stdout -> editorOut.
@@ -430,6 +510,53 @@ func assertHasToolStatus(t *testing.T, updates []map[string]any, kind, status st
 	t.Fatalf("missing %s update with status %q in %v", kind, status, updates)
 }
 
+func TestACPProtectedAuthorizationFailsWithoutParkingAndSessionContinues(t *testing.T) {
+	protected := &authorizationScriptTool{scriptTool: scriptTool{name: "protected", content: "must not execute"}}
+	llm := mockllm.New(
+		mockllm.ToolCallTurn(call("c1", "protected", `{}`)),
+		mockllm.TextTurn("authorization unavailable"),
+		mockllm.TextTurn("second prompt works"),
+	)
+	svc := newService(t, llm, allowRules(), protected)
+	agentStdinR, editorToAgentW := io.Pipe()
+	agentStdoutR, agentStdoutW := io.Pipe()
+	a := acp.NewAgent(svc)
+	conn := acp.NewConn(agentStdinR, agentStdoutW, a.Handle)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	go func() { _ = a.Serve(ctx, conn) }()
+	e := &editor{t: t, toAgent: editorToAgentW, fromAgnt: bufio.NewReader(agentStdoutR), pend: map[int64]chan rpcMsg{}, notes: make(chan rpcMsg, 64), reqs: make(chan rpcMsg, 8)}
+	go e.readLoop()
+
+	res := e.call("session/new", map[string]any{"cwd": testCWD(t), "mcpServers": []any{}})
+	var ns struct {
+		SessionID string `json:"sessionId"`
+	}
+	if err := json.Unmarshal(res, &ns); err != nil {
+		t.Fatal(err)
+	}
+	prompt := func(text string) json.RawMessage {
+		return e.call("session/prompt", map[string]any{"sessionId": ns.SessionID, "prompt": []any{map[string]any{"type": "text", "text": text}}})
+	}
+	first := prompt("use protected")
+	updates := drainUpdates(e.notes)
+	updatesJSON, _ := json.Marshal(updates)
+	if strings.Contains(string(first), "must-not-be-exposed") || strings.Contains(string(updatesJSON), "must-not-be-exposed") || strings.Contains(string(updatesJSON), "https://") || protected.requests != 0 {
+		t.Fatalf("ACP obtained authorization identity/URL or invoked requester: response=%s updates=%s requests=%d", first, updatesJSON, protected.requests)
+	}
+	sess, err := svc.GetSession(t.Context(), session.SessionID(ns.SessionID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.State == session.StateAuthorizing {
+		t.Fatal("ACP session parked in authorizing state")
+	}
+	second := prompt("continue")
+	if strings.Contains(string(second), "error") {
+		t.Fatalf("second prompt unusable: %s", second)
+	}
+}
+
 // TestEndToEndEditDiffBlock drives a prompt whose model emits an Edit tool call
 // (auto-allowed), and asserts the streamed tool_call carries an ACP diff content
 // block synthesized from the Edit args (oldText/newText/path) so the editor can
@@ -454,7 +581,7 @@ func TestEndToEndEditDiffBlock(t *testing.T) {
 		pend: map[int64]chan rpcMsg{}, notes: make(chan rpcMsg, 64), reqs: make(chan rpcMsg, 8)}
 	go e.readLoop()
 
-	res := e.call("session/new", map[string]any{"cwd": t.TempDir(), "mcpServers": []any{}})
+	res := e.call("session/new", map[string]any{"cwd": testCWD(t), "mcpServers": []any{}})
 	var ns struct {
 		SessionID string `json:"sessionId"`
 	}
@@ -513,8 +640,11 @@ func TestEndToEndFSDelegation(t *testing.T) {
 			mockllm.ToolCallTurn(call("c2", "Edit", `{"path":"main.go","old_string":"var A = 1","new_string":"var A = 2"}`)),
 			mockllm.TextTurn("done"),
 		)
-		svc := newService(t, llm, allowRules(), toolsadapter.ReadTool{}, toolsadapter.EditTool{})
-		root = t.TempDir()
+		root = resolvedTempDir(t)
+		svc := newServiceCfg(t, llm, allowRules(), func(cfg *server.Config) {
+			cfg.SharedEngineRoot = root
+			cfg.PlacementProvider = acpPlacementProvider{root: root, ref: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "fs-test-placement", Revision: "v1"}}
+		}, toolsadapter.ReadTool{}, toolsadapter.EditTool{})
 		// Seed the file on DISK so that, in the caps-absent (osfs) scenario, Read+Edit
 		// have a real file to operate on. In the caps-present scenario the editor
 		// buffer (fsDefault) supplies the content and disk must stay as-is.
@@ -647,7 +777,7 @@ func TestSessionNewAcceptsHTTPMCP(t *testing.T) {
 
 	const acpHeaderCanary = "acp-header-secret-canary"
 	newResult := e.call("session/new", map[string]any{
-		"cwd": t.TempDir(),
+		"cwd": testCWD(t),
 		"mcpServers": []any{map[string]any{
 			"type": "http", "name": "docs", "url": oauthFixture.URL + "/mcp",
 			"headers": []any{map[string]any{"name": "Authorization", "value": "Bearer " + acpHeaderCanary}},
@@ -707,7 +837,7 @@ func TestSessionNewAcceptsHTTPMCP(t *testing.T) {
 func TestSessionNewRejectsStdioMCP(t *testing.T) {
 	svc := newService(t, mockllm.New(), nil)
 	a := acp.NewAgent(svc)
-	cwd := t.TempDir()
+	cwd := testCWD(t)
 	cases := []string{
 		// command-shaped, no type.
 		fmt.Sprintf(`{"cwd":%q,"mcpServers":[{"name":"local","command":"some-bin"}]}`, cwd),
@@ -727,7 +857,7 @@ func TestSessionNewRejectsStdioMCP(t *testing.T) {
 func TestSessionNewRejectsSSEMCP(t *testing.T) {
 	svc := newService(t, mockllm.New(), nil)
 	a := acp.NewAgent(svc)
-	params := fmt.Sprintf(`{"cwd":%q,"mcpServers":[{"name":"stream","type":"sse","url":"https://example.test/sse"}]}`, t.TempDir())
+	params := fmt.Sprintf(`{"cwd":%q,"mcpServers":[{"name":"stream","type":"sse","url":"https://example.test/sse"}]}`, testCWD(t))
 	_, err := a.Handle(context.Background(), "session/new", json.RawMessage(params), true)
 	if err == nil || !strings.Contains(err.Error(), "sse") {
 		t.Fatalf("expected sse rejection, got %v", err)
@@ -739,7 +869,7 @@ func TestSessionNewRejectsSSEMCP(t *testing.T) {
 func TestSessionNewRejectsBadScheme(t *testing.T) {
 	svc := newService(t, mockllm.New(), nil)
 	a := acp.NewAgent(svc)
-	params := fmt.Sprintf(`{"cwd":%q,"mcpServers":[{"name":"bad","type":"http","url":"file:///etc/passwd"}]}`, t.TempDir())
+	params := fmt.Sprintf(`{"cwd":%q,"mcpServers":[{"name":"bad","type":"http","url":"file:///etc/passwd"}]}`, testCWD(t))
 	_, err := a.Handle(context.Background(), "session/new", json.RawMessage(params), true)
 	if err == nil || !strings.Contains(err.Error(), "rejected") {
 		t.Fatalf("expected bad-scheme rejection, got %v", err)
@@ -760,7 +890,7 @@ func TestSessionNewRejectsTooManyMCP(t *testing.T) {
 	for i := 0; i < 9; i++ { // 9 > the cap of 8
 		entries = append(entries, fmt.Sprintf(`{"type":"http","name":"s%d","url":"https://s%d.test/mcp"}`, i, i))
 	}
-	params := fmt.Sprintf(`{"cwd":%q,"mcpServers":[%s]}`, t.TempDir(), strings.Join(entries, ","))
+	params := fmt.Sprintf(`{"cwd":%q,"mcpServers":[%s]}`, testCWD(t), strings.Join(entries, ","))
 	_, err := a.Handle(context.Background(), "session/new", json.RawMessage(params), true)
 	if err == nil || !strings.Contains(err.Error(), "too many MCP servers") {
 		t.Fatalf("expected too-many-servers rejection, got %v", err)
@@ -780,7 +910,7 @@ func TestSessionNewSetsClientMCPTimeout(t *testing.T) {
 	svc := newServiceCfg(t, mockllm.New(), nil, func(c *server.Config) { c.SessionEngine = fake.factory })
 	a := acp.NewAgent(svc)
 
-	params := fmt.Sprintf(`{"cwd":%q,"mcpServers":[{"type":"http","name":"docs","url":"https://example.test/mcp"}]}`, t.TempDir())
+	params := fmt.Sprintf(`{"cwd":%q,"mcpServers":[{"type":"http","name":"docs","url":"https://example.test/mcp"}]}`, testCWD(t))
 	if _, err := a.Handle(context.Background(), "session/new", json.RawMessage(params), true); err != nil {
 		t.Fatalf("session/new: %v", err)
 	}
@@ -820,6 +950,87 @@ func TestInitializeAdvertisesHTTPMCP(t *testing.T) {
 	}
 }
 
+func TestADR_0291_ACPBindAndLoadAssertConfiguredPlacement(t *testing.T) {
+	root := testCWD(t)
+	ref := session.EnvironmentRef{Kind: "remote", ID: "private-placement-id", Revision: "private-revision"}
+	var binds, reattaches atomic.Int32
+	llm := mockllm.New(mockllm.TextTurn("unused"))
+	svc := newServiceCfg(t, llm, allowRules(), func(cfg *server.Config) {
+		cfg.SharedEngineRoot = root
+		cfg.PlacementProvider = acpPlacementProvider{root: root, ref: ref, bindCalls: &binds, reattachCalls: &reattaches}
+	})
+	a := acp.NewAgent(svc, acp.WithResume(true))
+
+	createdAny, err := a.Handle(context.Background(), "session/new", json.RawMessage(fmt.Sprintf(`{"cwd":%q,"mcpServers":[]}`, root)), true)
+	if err != nil {
+		t.Fatalf("session/new: %v", err)
+	}
+	createdJSON, _ := json.Marshal(createdAny)
+	var created struct {
+		SessionID string `json:"sessionId"`
+	}
+	if err := json.Unmarshal(createdJSON, &created); err != nil || created.SessionID == "" {
+		t.Fatalf("decode session/new response: %s: %v", createdJSON, err)
+	}
+	stored, err := svc.GetSession(context.Background(), session.SessionID(created.SessionID))
+	if err != nil || stored == nil {
+		t.Fatalf("load persisted session: %v", err)
+	}
+	if stored.EnvironmentRef != ref {
+		t.Fatalf("persisted placement = %+v; want exact %+v", stored.EnvironmentRef, ref)
+	}
+	mismatch := filepath.Join(root, "other")
+	if _, err := a.Handle(context.Background(), "session/new", json.RawMessage(fmt.Sprintf(`{"cwd":%q,"mcpServers":[]}`, mismatch)), true); err == nil || !strings.Contains(err.Error(), "cwd does not match") {
+		t.Fatalf("session/new cwd mismatch = %v", err)
+	}
+	loadParams := json.RawMessage(fmt.Sprintf(`{"sessionId":%q,"cwd":%q,"mcpServers":[]}`, created.SessionID, root))
+	if _, err := a.Handle(context.Background(), "session/load", loadParams, true); err != nil {
+		t.Fatalf("session/load exact placement: %v", err)
+	}
+	badLoad := json.RawMessage(fmt.Sprintf(`{"sessionId":%q,"cwd":%q,"mcpServers":[]}`, created.SessionID, mismatch))
+	if _, err := a.Handle(context.Background(), "session/load", badLoad, true); err == nil || !strings.Contains(err.Error(), "cwd does not match") {
+		t.Fatalf("session/load cwd mismatch = %v", err)
+	}
+	if got := binds.Load(); got != 3 { // startup validation + both session/new calls
+		t.Fatalf("Bind calls = %d, want 3", got)
+	}
+	if got := reattaches.Load(); got != 4 { // create/load discovery plus both load attempts
+		t.Fatalf("Reattach calls = %d, want 4", got)
+	}
+}
+
+func TestServerOwnedSessionPlacement_Scenario7_ACPProjectsNoPhysicalPaths(t *testing.T) {
+	root := resolvedTempDir(t)
+	ref := session.EnvironmentRef{Kind: "remote", ID: "private-ref-id", Revision: "private-ref-revision"}
+	svc := newServiceCfg(t, mockllm.New(), nil, func(cfg *server.Config) {
+		cfg.SharedEngineRoot = root
+		cfg.PlacementProvider = acpPlacementProvider{root: root, ref: ref}
+	})
+	a := acp.NewAgent(svc, acp.WithResume(true))
+	created, err := a.Handle(context.Background(), "session/new", json.RawMessage(fmt.Sprintf(`{"cwd":%q,"mcpServers":[]}`, root)), true)
+	if err != nil {
+		t.Fatalf("session/new: %v", err)
+	}
+	createdJSON, _ := json.Marshal(created)
+	var envelope struct {
+		SessionID string `json:"sessionId"`
+	}
+	if err := json.Unmarshal(createdJSON, &envelope); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	loaded, err := a.Handle(context.Background(), "session/load", json.RawMessage(fmt.Sprintf(`{"sessionId":%q,"cwd":%q,"mcpServers":[]}`, envelope.SessionID, root)), true)
+	if err != nil {
+		t.Fatalf("session/load: %v", err)
+	}
+	loadedJSON, _ := json.Marshal(loaded)
+	projection := string(createdJSON) + string(loadedJSON)
+	for _, private := range []string{root, ref.ID, ref.Revision} {
+		if strings.Contains(projection, private) {
+			t.Fatalf("ACP projection exposed private placement data %q: %s", private, projection)
+		}
+	}
+}
+
 // TestSessionNewRejectsBadCwd asserts cwd validation: a relative path and a
 // nonexistent absolute path are both rejected (and no session is created).
 func TestSessionNewRejectsBadCwd(t *testing.T) {
@@ -832,8 +1043,8 @@ func TestSessionNewRejectsBadCwd(t *testing.T) {
 	}{
 		{"empty", "", "cwd is required"},
 		{"relative", "relative/dir", "must be an absolute path"},
-		{"nonexistent", filepath.Join(t.TempDir(), "does-not-exist"), "must be an existing directory"},
-		{"file not dir", writeTempFile(t), "must be an existing directory"},
+		{"nonexistent", filepath.Join(t.TempDir(), "does-not-exist"), "does not match the configured session placement"},
+		{"file not dir", writeTempFile(t), "does not match the configured session placement"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -877,7 +1088,7 @@ func TestSecondPromptRejected(t *testing.T) {
 		pend: map[int64]chan rpcMsg{}, notes: make(chan rpcMsg, 64), reqs: make(chan rpcMsg, 8)}
 	go e.readLoop()
 
-	res := e.call("session/new", map[string]any{"cwd": t.TempDir(), "mcpServers": []any{}})
+	res := e.call("session/new", map[string]any{"cwd": testCWD(t), "mcpServers": []any{}})
 	var ns struct {
 		SessionID string `json:"sessionId"`
 	}
@@ -942,7 +1153,7 @@ func TestSequentialPromptsNoRunLeak(t *testing.T) {
 		pend: map[int64]chan rpcMsg{}, notes: make(chan rpcMsg, 128), reqs: make(chan rpcMsg, 8)}
 	go e.readLoop()
 
-	res := e.call("session/new", map[string]any{"cwd": t.TempDir(), "mcpServers": []any{}})
+	res := e.call("session/new", map[string]any{"cwd": testCWD(t), "mcpServers": []any{}})
 	var ns struct {
 		SessionID string `json:"sessionId"`
 	}
@@ -1048,7 +1259,7 @@ func TestAvailableCommandsUpdateOnSessionNew(t *testing.T) {
 	e, cleanup := startAgent(t, svc)
 	defer cleanup()
 
-	res := e.call("session/new", map[string]any{"cwd": t.TempDir(), "mcpServers": []any{}})
+	res := e.call("session/new", map[string]any{"cwd": testCWD(t), "mcpServers": []any{}})
 	var ns struct {
 		SessionID string `json:"sessionId"`
 	}
@@ -1074,7 +1285,7 @@ func TestNoAvailableCommandsUpdateWhenEmpty(t *testing.T) {
 	e, cleanup := startAgent(t, svc)
 	defer cleanup()
 
-	_ = e.call("session/new", map[string]any{"cwd": t.TempDir(), "mcpServers": []any{}})
+	_ = e.call("session/new", map[string]any{"cwd": testCWD(t), "mcpServers": []any{}})
 
 	// Briefly drain: any available_commands_update within the window is a failure.
 	deadline := time.After(300 * time.Millisecond)
@@ -1105,7 +1316,7 @@ func TestSetModeAppliesAndEmitsCurrentModeUpdate(t *testing.T) {
 	e, cleanup := startAgent(t, svc)
 	defer cleanup()
 
-	res := e.call("session/new", map[string]any{"cwd": t.TempDir(), "mcpServers": []any{}})
+	res := e.call("session/new", map[string]any{"cwd": testCWD(t), "mcpServers": []any{}})
 	var ns struct {
 		SessionID string `json:"sessionId"`
 	}
@@ -1145,7 +1356,7 @@ func TestSetModeRejectsUnknownMode(t *testing.T) {
 // id (used by the direct-Handle tests that do not need the full pipe harness).
 func e2eSessionID(t *testing.T, a *acp.Agent) string {
 	t.Helper()
-	params := fmt.Sprintf(`{"cwd":%q,"mcpServers":[]}`, t.TempDir())
+	params := fmt.Sprintf(`{"cwd":%q,"mcpServers":[]}`, testCWD(t))
 	out, err := a.Handle(context.Background(), "session/new", json.RawMessage(params), true)
 	if err != nil {
 		t.Fatalf("session/new: %v", err)
@@ -1175,7 +1386,7 @@ func TestSessionLoadRestoresPersistedSession(t *testing.T) {
 
 	// Connection 1: create + run one prompt to completion, then disconnect.
 	e1, cleanup1 := startAgent(t, svc, acp.WithResume(true))
-	res := e1.call("session/new", map[string]any{"cwd": t.TempDir(), "mcpServers": []any{}})
+	res := e1.call("session/new", map[string]any{"cwd": testCWD(t), "mcpServers": []any{}})
 	var ns struct {
 		SessionID string `json:"sessionId"`
 	}
@@ -1193,7 +1404,7 @@ func TestSessionLoadRestoresPersistedSession(t *testing.T) {
 	// Connection 2: load the session, then continue with a second prompt.
 	e2, cleanup2 := startAgent(t, svc, acp.WithResume(true))
 	defer cleanup2()
-	loadRes := e2.call("session/load", map[string]any{"sessionId": ns.SessionID, "cwd": t.TempDir(), "mcpServers": []any{}})
+	loadRes := e2.call("session/load", map[string]any{"sessionId": ns.SessionID, "cwd": testCWD(t), "mcpServers": []any{}})
 	var lr struct {
 		Modes *struct {
 			CurrentModeID string `json:"currentModeId"`
@@ -1243,7 +1454,7 @@ func TestSessionLoadReplaysTranscript(t *testing.T) {
 	// Connection 1: create + run a prompt that produces a tool_call(c1) + result +
 	// final message, then disconnect.
 	e1, cleanup1 := startAgent(t, svc, acp.WithResume(true))
-	res := e1.call("session/new", map[string]any{"cwd": t.TempDir(), "mcpServers": []any{}})
+	res := e1.call("session/new", map[string]any{"cwd": testCWD(t), "mcpServers": []any{}})
 	var ns struct {
 		SessionID string `json:"sessionId"`
 	}
@@ -1262,7 +1473,7 @@ func TestSessionLoadReplaysTranscript(t *testing.T) {
 	// arrival order.
 	e2, cleanup2 := startAgent(t, svc, acp.WithResume(true))
 	defer cleanup2()
-	_ = e2.call("session/load", map[string]any{"sessionId": ns.SessionID, "cwd": t.TempDir(), "mcpServers": []any{}})
+	_ = e2.call("session/load", map[string]any{"sessionId": ns.SessionID, "cwd": testCWD(t), "mcpServers": []any{}})
 
 	updates := drainUpdates(e2.notes)
 
@@ -1327,7 +1538,7 @@ func TestSessionLoadDisabledWithoutStore(t *testing.T) {
 	e.pend[id] = ch
 	e.mu.Unlock()
 	e.writeFrame(map[string]any{"jsonrpc": "2.0", "id": id, "method": "session/load",
-		"params": map[string]any{"sessionId": "whatever", "cwd": t.TempDir(), "mcpServers": []any{}}})
+		"params": map[string]any{"sessionId": "whatever", "cwd": testCWD(t), "mcpServers": []any{}}})
 	select {
 	case m := <-ch:
 		if len(m.Error) == 0 {
@@ -1387,7 +1598,7 @@ func TestSessionLoadAcceptsHTTPMCP(t *testing.T) {
 	// Connection 1: create a session (no MCP) + run one prompt to completion so a
 	// persisted, resumable snapshot exists.
 	e1, cleanup1 := startAgent(t, svc, acp.WithResume(true))
-	res := e1.call("session/new", map[string]any{"cwd": t.TempDir(), "mcpServers": []any{}})
+	res := e1.call("session/new", map[string]any{"cwd": testCWD(t), "mcpServers": []any{}})
 	var ns struct {
 		SessionID string `json:"sessionId"`
 	}
@@ -1407,7 +1618,7 @@ func TestSessionLoadAcceptsHTTPMCP(t *testing.T) {
 	e2, cleanup2 := startAgent(t, svc, acp.WithResume(true))
 	loadRes := e2.call("session/load", map[string]any{
 		"sessionId": ns.SessionID,
-		"cwd":       t.TempDir(),
+		"cwd":       testCWD(t),
 		"mcpServers": []any{
 			map[string]any{"type": "http", "name": "docs", "url": "https://example.test/mcp"},
 		},
@@ -1451,7 +1662,7 @@ func TestSessionLoadAcceptsHTTPMCP(t *testing.T) {
 // guard session/new uses — now with the "session/load" error prefix.
 func TestSessionLoadRejectsStdioMCP(t *testing.T) {
 	a := acp.NewAgent(newService(t, mockllm.New(), nil), acp.WithResume(true))
-	cwd := t.TempDir()
+	cwd := testCWD(t)
 	cases := []string{
 		fmt.Sprintf(`{"sessionId":"s","cwd":%q,"mcpServers":[{"name":"local","command":"some-bin"}]}`, cwd),
 		fmt.Sprintf(`{"sessionId":"s","cwd":%q,"mcpServers":[{"name":"local","type":"stdio","command":"some-bin"}]}`, cwd),
@@ -1468,7 +1679,7 @@ func TestSessionLoadRejectsStdioMCP(t *testing.T) {
 // is rejected (streaming-HTTP only).
 func TestSessionLoadRejectsSSEMCP(t *testing.T) {
 	a := acp.NewAgent(newService(t, mockllm.New(), nil), acp.WithResume(true))
-	params := fmt.Sprintf(`{"sessionId":"s","cwd":%q,"mcpServers":[{"name":"stream","type":"sse","url":"https://example.test/sse"}]}`, t.TempDir())
+	params := fmt.Sprintf(`{"sessionId":"s","cwd":%q,"mcpServers":[{"name":"stream","type":"sse","url":"https://example.test/sse"}]}`, testCWD(t))
 	_, err := a.Handle(context.Background(), "session/load", json.RawMessage(params), true)
 	if err == nil || !strings.Contains(err.Error(), "sse") {
 		t.Fatalf("expected sse rejection, got %v", err)
@@ -1479,7 +1690,7 @@ func TestSessionLoadRejectsSSEMCP(t *testing.T) {
 // scheme on session/load is rejected by the SSRF scheme allowlist.
 func TestSessionLoadRejectsBadScheme(t *testing.T) {
 	a := acp.NewAgent(newService(t, mockllm.New(), nil), acp.WithResume(true))
-	params := fmt.Sprintf(`{"sessionId":"s","cwd":%q,"mcpServers":[{"name":"bad","type":"http","url":"file:///etc/passwd"}]}`, t.TempDir())
+	params := fmt.Sprintf(`{"sessionId":"s","cwd":%q,"mcpServers":[{"name":"bad","type":"http","url":"file:///etc/passwd"}]}`, testCWD(t))
 	_, err := a.Handle(context.Background(), "session/load", json.RawMessage(params), true)
 	if err == nil || !strings.Contains(err.Error(), "rejected") {
 		t.Fatalf("expected bad-scheme rejection, got %v", err)
@@ -1497,7 +1708,7 @@ func TestSessionLoadRejectsTooManyMCP(t *testing.T) {
 	for i := 0; i < 9; i++ { // 9 > the cap of 8
 		entries = append(entries, fmt.Sprintf(`{"type":"http","name":"s%d","url":"https://s%d.test/mcp"}`, i, i))
 	}
-	params := fmt.Sprintf(`{"sessionId":"s","cwd":%q,"mcpServers":[%s]}`, t.TempDir(), strings.Join(entries, ","))
+	params := fmt.Sprintf(`{"sessionId":"s","cwd":%q,"mcpServers":[%s]}`, testCWD(t), strings.Join(entries, ","))
 	_, err := a.Handle(context.Background(), "session/load", json.RawMessage(params), true)
 	if err == nil || !strings.Contains(err.Error(), "too many MCP servers") {
 		t.Fatalf("expected too-many-servers rejection, got %v", err)
@@ -1523,7 +1734,7 @@ func TestSessionLoadClientMCPTornDownOnDisconnect(t *testing.T) {
 
 	// Persist a resumable session.
 	e1, cleanup1 := startAgent(t, svc, acp.WithResume(true))
-	res := e1.call("session/new", map[string]any{"cwd": t.TempDir(), "mcpServers": []any{}})
+	res := e1.call("session/new", map[string]any{"cwd": testCWD(t), "mcpServers": []any{}})
 	var ns struct {
 		SessionID string `json:"sessionId"`
 	}
@@ -1542,7 +1753,7 @@ func TestSessionLoadClientMCPTornDownOnDisconnect(t *testing.T) {
 	e2, cleanup2 := startAgent(t, svc, acp.WithResume(true))
 	_ = e2.call("session/load", map[string]any{
 		"sessionId": ns.SessionID,
-		"cwd":       t.TempDir(),
+		"cwd":       testCWD(t),
 		"mcpServers": []any{
 			map[string]any{"type": "http", "name": "docs", "url": "https://example.test/mcp"},
 		},
@@ -1643,7 +1854,7 @@ func TestPromptImageWithImageCapableProvider(t *testing.T) {
 	e, cleanup := startAgent(t, svc)
 	defer cleanup()
 
-	res := e.call("session/new", map[string]any{"cwd": t.TempDir(), "mcpServers": []any{}})
+	res := e.call("session/new", map[string]any{"cwd": testCWD(t), "mcpServers": []any{}})
 	var ns struct {
 		SessionID string `json:"sessionId"`
 	}
@@ -1675,7 +1886,7 @@ func TestPromptImageWithTextOnlyProviderRejected(t *testing.T) {
 	e, cleanup := startAgent(t, svc)
 	defer cleanup()
 
-	res := e.call("session/new", map[string]any{"cwd": t.TempDir(), "mcpServers": []any{}})
+	res := e.call("session/new", map[string]any{"cwd": testCWD(t), "mcpServers": []any{}})
 	var ns struct {
 		SessionID string `json:"sessionId"`
 	}
@@ -1711,7 +1922,7 @@ func TestPromptAudioWithAudioIncapableProviderRejected(t *testing.T) {
 	e, cleanup := startAgent(t, svc)
 	defer cleanup()
 
-	res := e.call("session/new", map[string]any{"cwd": t.TempDir(), "mcpServers": []any{}})
+	res := e.call("session/new", map[string]any{"cwd": testCWD(t), "mcpServers": []any{}})
 	var ns struct {
 		SessionID string `json:"sessionId"`
 	}
@@ -1736,7 +1947,7 @@ func TestPromptAudioWithAudioIncapableProviderRejected(t *testing.T) {
 func TestSessionLoadUnknownSession(t *testing.T) {
 	svc := newService(t, mockllm.New(), nil)
 	a := acp.NewAgent(svc, acp.WithResume(true))
-	params := fmt.Sprintf(`{"sessionId":"nope","cwd":%q,"mcpServers":[]}`, t.TempDir())
+	params := fmt.Sprintf(`{"sessionId":"nope","cwd":%q,"mcpServers":[]}`, testCWD(t))
 	_, err := a.Handle(context.Background(), "session/load", json.RawMessage(params), true)
 	if err == nil {
 		t.Fatal("expected session/load error for unknown session")
@@ -1749,7 +1960,7 @@ func TestSessionLoadUnknownSession(t *testing.T) {
 func newSessionWithHTTPMCP(t *testing.T, e *editor) string {
 	t.Helper()
 	res := e.call("session/new", map[string]any{
-		"cwd": t.TempDir(),
+		"cwd": testCWD(t),
 		"mcpServers": []any{
 			map[string]any{"type": "http", "name": "docs", "url": "https://example.test/mcp"},
 		},

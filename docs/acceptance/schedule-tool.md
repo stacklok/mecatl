@@ -268,7 +268,7 @@ hard-deny vetoes the mutating create)
 - `docs/design/PRODUCTION-READINESS.md`: scheduled-tasks row status update.
 - `engine/api/*.txt` + `engine/CHANGELOG.md` if the tool/registration changes
   the engine's exported surface (`task api:update`).
-- `llms.txt` regen + the matlatl strict link gate (`task docs`).
+- configuration-reference regeneration + the matlatl strict link gate (`task docs`).
 
 ## Sequencing recommendation
 
@@ -306,7 +306,7 @@ replacement exists before the operator surfaces disappear. Scenario 4 (posture
 ## Definition of done
 
 1. `task lint` and `task test` pass (both modules, `-race`).
-2. `task docs` — `llms.txt` regenerated and the matlatl strict link gate green.
+2. `task docs` — configuration reference regenerated and the matlatl strict link gate green.
 3. `task api:check` passes (or `task api:update` was run and the
    `engine/CHANGELOG.md` note is present) — the `Schedule` tool touches the
    engine's exported surface.

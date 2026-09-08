@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stacklok/mecatl/engine/adapter/memfs"
+	"github.com/stacklok/mecatl/engine/adapter/memledger"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -14,6 +16,7 @@ import (
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/prompt"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/hookexec"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/adapter/store/jsonlstore"
@@ -177,7 +180,7 @@ func TestScheduleTool_EngineSystemPromptContainsScheduleContract(t *testing.T) {
 	defer func() { _ = res.Close() }()
 
 	// Drive a one-turn run to trigger buildRequest → prompt.Build → captured system.
-	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{MaxTurns: 1}, time.Now())
+	sess := session.New("s1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 1}, time.Now())
 	run := res.Engine.Run(ctx, sess, memEnvironment("/ws"), agent.RunRequest{Text: "hi", Parts: nil})
 	for range run.Events() {
 	}
@@ -215,7 +218,7 @@ func TestScheduleTool_EngineSystemPromptContainsScheduleContract(t *testing.T) {
 		t.Fatalf("factory (no Schedule): %v", err)
 	}
 	defer func() { _ = resNone.Close() }()
-	sessNone := session.New("s2", session.ModeDefault, "/ws", session.Limits{MaxTurns: 1}, time.Now())
+	sessNone := session.New("s2", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 1}, time.Now())
 	runNone := resNone.Engine.Run(ctx, sessNone, memEnvironment("/ws"), agent.RunRequest{Text: "hi", Parts: nil})
 	for range runNone.Events() {
 	}
@@ -267,7 +270,7 @@ func TestFireDelivery_ScheduleToolNoteLands(t *testing.T) {
 	}
 	defer func() { _ = res.Close() }()
 
-	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{MaxTurns: 1}, time.Now())
+	sess := session.New("s1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 1}, time.Now())
 	run := res.Engine.Run(ctx, sess, memEnvironment("/ws"), agent.RunRequest{Text: "hi", Parts: nil})
 	for range run.Events() {
 	}
@@ -312,10 +315,10 @@ func TestScheduleTool_MutatingCreateGatedByPlanMode(t *testing.T) {
 	},
 		// Turn 1: the model attempts a mutating create — plan mode must deny it.
 		mockllm.ToolCallTurn(session.NewToolCall("c1", agent.ScheduleToolName,
-			[]byte(`{"verb":"create","name":"mut","prompt":"p","cron":"@every 1h","workspace":"`+workspace+`","mutating":true}`))),
+			[]byte(`{"verb":"create","name":"mut","prompt":"p","cron":"@every 1h","mutating":true}`))),
 		// Turn 2: the model falls back to a read-leaning create — plan mode allows it.
 		mockllm.ToolCallTurn(session.NewToolCall("c2", agent.ScheduleToolName,
-			[]byte(`{"verb":"create","name":"ro","prompt":"p","cron":"@every 1h","workspace":"`+workspace+`"}`))),
+			[]byte(`{"verb":"create","name":"ro","prompt":"p","cron":"@every 1h"}`))),
 		// Turn 3: done.
 		mockllm.TextTurn("created the read-leaning schedule"),
 	)
@@ -333,13 +336,15 @@ func TestScheduleTool_MutatingCreateGatedByPlanMode(t *testing.T) {
 	}
 	defer func() { _ = res.Close() }()
 
-	sess := session.New("s1", session.ModePlan, "/ws", session.Limits{MaxTurns: 5}, time.Now())
+	ref := configuredLocalPlacementRef(workspace)
+	sess := session.New("s1", session.ModePlan, ref, session.Limits{MaxTurns: 5}, time.Now())
 	// Save the session to the store the schedule manager validates against, so
 	// OriginSessionID validation (which checks the session exists) passes.
 	if err := jstore.Save(ctx, sess); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	run := res.Engine.Run(ctx, sess, memEnvironment("/ws"), agent.RunRequest{Text: "schedule the work", Parts: nil})
+	runEnv := tool.MustEnvironment(ref, memfs.NewWorkspace(workspace), memledger.New(), nil)
+	run := res.Engine.Run(ctx, sess, runEnv, agent.RunRequest{Text: "schedule the work", Parts: nil})
 	var results []session.ToolResult
 	for ev := range run.Events() {
 		if ev.Type == session.EvToolResult && ev.ToolResult != nil {
@@ -412,7 +417,7 @@ func TestScheduleTool_Scenario4_FullInChatFlow(t *testing.T) {
 	provider := mockllm.New(
 		// Turn 1: create the schedule.
 		mockllm.ToolCallTurn(session.NewToolCall("c1", agent.ScheduleToolName,
-			[]byte(`{"verb":"create","name":"nightly","prompt":"check ci","cron":"@every 1m","workspace":"`+workspace+`"}`))),
+			[]byte(`{"verb":"create","name":"nightly","prompt":"check ci","cron":"@every 1m"}`))),
 		// Turn 2: list it (a READ-ONLY verb — on the ScheduleQuery tool after the
 		// AC1.4 split).
 		mockllm.ToolCallTurn(session.NewToolCall("c2", agent.ScheduleQueryToolName, []byte(`{"verb":"list"}`))),
@@ -434,13 +439,15 @@ func TestScheduleTool_Scenario4_FullInChatFlow(t *testing.T) {
 	}
 	defer func() { _ = res.Close() }()
 
-	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{MaxTurns: 6}, time.Now())
+	ref := configuredLocalPlacementRef(workspace)
+	sess := session.New("s1", session.ModeDefault, ref, session.Limits{MaxTurns: 6}, time.Now())
 	// Save the session to the store the schedule manager validates against, so
 	// OriginSessionID validation (which checks the session exists) passes.
 	if err := jstore.Save(ctx, sess); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	run := res.Engine.Run(ctx, sess, memEnvironment("/ws"), agent.RunRequest{Text: "schedule a nightly ci check and fire it once", Parts: nil})
+	runEnv := tool.MustEnvironment(ref, memfs.NewWorkspace(workspace), memledger.New(), nil)
+	run := res.Engine.Run(ctx, sess, runEnv, agent.RunRequest{Text: "schedule a nightly ci check and fire it once", Parts: nil})
 	var results []session.ToolResult
 	var stop session.StopReason
 	for ev := range run.Events() {

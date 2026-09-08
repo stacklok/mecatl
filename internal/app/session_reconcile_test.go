@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -25,7 +24,7 @@ import (
 // internal/adapter/server's own crashOrphanedSession fixture, issue #475).
 func crashOrphanedSessionFixture(t *testing.T, id session.SessionID, createdAt time.Time) *session.Session {
 	t.Helper()
-	sess := session.New(id, session.ModeDefault, "/tmp/ws", session.Limits{}, createdAt)
+	sess := session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/tmp/ws", Revision: "in-tree-v1"}, session.Limits{}, createdAt)
 	if err := sess.RecordUserPrompt("do the thing", nil); err != nil {
 		t.Fatalf("RecordUserPrompt: %v", err)
 	}
@@ -46,7 +45,7 @@ func crashOrphanedSessionFixture(t *testing.T, id session.SessionID, createdAt t
 // permission ask) — never a sweep candidate regardless of age.
 func awaitingSessionFixture(t *testing.T, id session.SessionID, createdAt time.Time) *session.Session {
 	t.Helper()
-	sess := session.New(id, session.ModeDefault, "/tmp/ws", session.Limits{}, createdAt)
+	sess := session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/tmp/ws", Revision: "in-tree-v1"}, session.Limits{}, createdAt)
 	if err := sess.RecordUserPrompt("do the thing", nil); err != nil {
 		t.Fatalf("RecordUserPrompt: %v", err)
 	}
@@ -125,10 +124,10 @@ func newReconcileFixtureWithLease(t *testing.T, lease port.SessionLease) *reconc
 		Policy:  permpolicy.NewPolicy(nil, permstore.New()),
 		Model:   "test-model",
 	})
-	svc, err := server.NewService(server.Config{
-		Engine:       engine,
-		Store:        f.lists,
-		Workspaces:   func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+	svc, err := newTestServerService(server.Config{
+		Engine: engine,
+		Store:  f.lists,
+
 		Now:          func() time.Time { return f.now },
 		SessionLease: lease,
 	})

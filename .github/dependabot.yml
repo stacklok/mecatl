@@ -1,6 +1,6 @@
 # Dependabot config (issue #118). Keeps every Go module's go.mod/go.sum and the
 # SHA-pinned GitHub Actions current — supply-chain hygiene for the root binary,
-# importable engine, reusable authn adapter, and opt-in providers.
+# importable engine, reusable authn adapter, opt-in providers, and TypeScript SDK.
 #
 # Dependabot processes each gomod directory INDEPENDENTLY, so every workspace
 # module gets its own update config. Minor+patch bumps are GROUPED into a single
@@ -118,6 +118,22 @@ updates:
       - dependencies
     groups:
       go-minor-patch:
+        update-types:
+          - minor
+          - patch
+
+  # Published TypeScript SDK package and its locked development toolchain.
+  - package-ecosystem: npm
+    directory: "/sdk/typescript"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "chore(deps)"
+    labels:
+      - dependencies
+    groups:
+      npm-minor-patch:
         update-types:
           - minor
           - patch

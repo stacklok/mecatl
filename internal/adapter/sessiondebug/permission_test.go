@@ -39,7 +39,7 @@ func (classifiedTool) Execute(context.Context, session.ToolCall, tool.Environmen
 
 func TestDebugMCPPermissionPolicy(t *testing.T) {
 	store := memstore.New()
-	target := session.New("target", session.ModeDefault, "/target", session.Limits{}, time.Now())
+	target := session.New("target", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/target", Revision: "in-tree-v1"}, session.Limits{}, time.Now())
 	if err := store.Save(t.Context(), target); err != nil {
 		t.Fatal(err)
 	}

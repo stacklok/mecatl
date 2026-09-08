@@ -102,7 +102,7 @@ func TestLearnedSkillDetailLabelsActivationAssurance(t *testing.T) {
 	th := theme.New("aztec", theme.AztecPalette())
 	for operation, want := range map[string]string{"activate_validated": "state: active(validated)", "activate": "state: active(evaluated)"} {
 		skill := client.LearnedSkill{Name: "learned", State: "active", Receipts: []client.SkillChange{{Operation: operation, ToState: "active"}}}
-		out := stripANSIstr(renderLearnedSkillDetail(th, skill, ""))
+		out := stripANSIstr(renderLearnedSkillDetail(th, skill, "", 100))
 		if !strings.Contains(out, want) {
 			t.Fatalf("operation %s missing %q:\n%s", operation, want, out)
 		}

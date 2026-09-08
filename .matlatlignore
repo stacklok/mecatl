@@ -57,7 +57,9 @@ CLAUDE.md
 # paths that matlatl doesn't understand anyway (no content-root aliasing).
 user-docs/
 
-# website/CLAUDE.md is agent guidance for the Docusaurus site, not product docs.
+# website/AGENTS.md is agent guidance for the Docusaurus site, not product docs.
+# website/CLAUDE.md is a compatibility symlink to that canonical file.
+website/AGENTS.md
 website/CLAUDE.md
 
 # API Extractor reports are review artifacts, not navigational documentation.

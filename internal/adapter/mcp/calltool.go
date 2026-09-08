@@ -78,8 +78,8 @@ func (s *Server) callTool(ctx context.Context, tool string, args json.RawMessage
 		// failure (errReconnectFailed) is a terminal "server unavailable" —
 		// surface the clear message, not the raw transport string. Any other
 		// fault is surfaced verbatim. (Mirrors remoteTool.Execute.)
-		if isConnectionDrop(callErr) || errors.Is(callErr, errReconnectFailed) {
-			return CallResult{}, fmt.Errorf("mcp call failed: MCP server %q unavailable after reconnect", s.name)
+		if message := unavailableMessage(callErr, "mcp call failed", s.name); message != "" {
+			return CallResult{}, errors.New(message)
 		}
 		return CallResult{}, fmt.Errorf("mcp call failed: %w", callErr)
 	}

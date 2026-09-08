@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
+	"github.com/stacklok/mecatl/engine/adapter/memledger"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/agent"
@@ -48,7 +49,7 @@ func toolCall(id, name string, args string) session.ToolCall {
 
 func newSession(t *testing.T, limits session.Limits) *session.Session {
 	t.Helper()
-	return session.New("s1", session.ModeDefault, "/ws", limits, time.Unix(0, 0))
+	return session.New("s1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws", Revision: "v1"}, limits, time.Unix(0, 0))
 }
 
 func catalogWith(t *testing.T, tools ...tool.Tool) *tool.Catalog {
@@ -104,7 +105,7 @@ func TestPreToolUseHookBlocks(t *testing.T) {
 	)
 	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t, write), Hooks: hooks})
 	ws := memfs.NewWorkspace("/ws")
-	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws"}, ws, nil)
+	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws", Revision: "v1"}, ws, memledger.New(), nil)
 	r := e.Run(context.Background(), newSession(t, session.Limits{}), env, agent.RunRequest{Text: "go"})
 
 	evs := drain(r)

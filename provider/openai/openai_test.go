@@ -111,7 +111,6 @@ func TestUsageCacheReadSubsetOfInput(t *testing.T) {
 		"error_event.sse":                true,
 		"response_failed.sse":            true,
 		"response_failed_rate_limit.sse": true,
-		"multi_text_part_turn.sse":       true,
 	}
 	paths, err := filepath.Glob(filepath.Join("testdata", "*.sse"))
 	if err != nil {
@@ -156,7 +155,6 @@ func TestUsageCacheWriteSubsetOfInput(t *testing.T) {
 		"error_event.sse":                true,
 		"response_failed.sse":            true,
 		"response_failed_rate_limit.sse": true,
-		"multi_text_part_turn.sse":       true,
 	}
 	paths, err := filepath.Glob(filepath.Join("testdata", "*.sse"))
 	if err != nil {
@@ -269,7 +267,6 @@ func TestUsageReasoningSubsetOfOutput(t *testing.T) {
 		"error_event.sse":                true,
 		"response_failed.sse":            true,
 		"response_failed_rate_limit.sse": true,
-		"multi_text_part_turn.sse":       true,
 	}
 	paths, err := filepath.Glob(filepath.Join("testdata", "*.sse"))
 	if err != nil {
@@ -370,13 +367,12 @@ func TestReasoningReplayUsesRealBlobNotSummary(t *testing.T) {
 
 // TestPhaseCapturedAndReplayed pins the issue-#46 round-trip: the OpenAI Responses
 // phase marker on an assistant message item is CAPTURED off response.output_item.done
-// (without disturbing the single-visible-text-part assembly) and REPLAYED verbatim on
-// the assistant message item, and an empty phase is wire-omitted (byte-stability).
+// (without disturbing visible-text projection) and REPLAYED verbatim on the
+// assistant message item, and an empty phase is wire-omitted (byte-stability).
 func TestPhaseCapturedAndReplayed(t *testing.T) {
 	// (1) Capture: the fixture's message item carries phase:"final_answer". A
 	// ChunkPhase with that opaque value must appear, AND the "Done." text chunk must
-	// still be present — the phase capture must not perturb the visible-text-part
-	// single-part assembly.
+	// still be present — phase capture must not perturb visible-text projection.
 	got := decodeFixture(t, "phase_turn.sse")
 	var phase, text string
 	for _, c := range got {
@@ -613,17 +609,50 @@ func TestTopLevelErrorDoesNotUseResponseIDFromUnknownEvent(t *testing.T) {
 	}
 }
 
+func TestStructuredHTTPErrorTextFallback(t *testing.T) {
+	for _, tc := range []struct {
+		name, code, kind, message, want string
+	}{
+		{"type fallback", "", "invalid_request_error", "invalid input", "invalid_request_error: invalid input"},
+		{"no envelope", "", "", "", "provider request failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := structuredHTTPErrorText(tc.code, tc.kind, tc.message); got != tc.want {
+				t.Errorf("structuredHTTPErrorText() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestInvalidEncryptedContentFallbackUsesUnwrapDiagnostic(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"error":{"detail":"encrypted content could not be verified"}}`)
+	}))
+	defer srv.Close()
+
+	err := collectStreamError(t, New(WithAPIKey("test-key"), WithBaseURL(srv.URL+"/v1"), WithRequestOption(option.WithMaxRetries(0))),
+		port.LLMRequest{Model: "gpt-test", Messages: []session.Message{session.NewUserMessage("hi")}})
+	if got, want := err.Error(), "provider request failed (target: "+srv.URL+"/v1/responses)"; got != want {
+		t.Fatalf("safe display error = %q, want %q", got, want)
+	}
+	if !isInvalidEncryptedContent(err) {
+		t.Fatal("raw SDK diagnostic did not retain the encrypted-content fallback")
+	}
+}
+
 func TestHTTPErrorMetadataPreservesSDKError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("X-Request-ID", "req_409")
 		w.Header().Set("X-Unrelated-Header", "must-not-leak")
 		w.WriteHeader(http.StatusBadRequest)
-		_, _ = io.WriteString(w, `{"error":{"code":"invalid_request_error","message":"prompt secret must-not-leak"}}`)
+		_, _ = io.WriteString(w, `{"error":{"code":"invalid_request_error","message":"invalid input","raw_secret":"must-not-leak"}}`)
 	}))
 	defer srv.Close()
 
-	err := collectStreamError(t, New(WithAPIKey("test-key"), WithBaseURL(srv.URL+"/v1"), WithRequestOption(option.WithMaxRetries(0))),
+	err := collectStreamError(t, New(WithAPIKey("test-key"), WithBaseURL(srv.URL+"/private/../v1?token=must-not-leak#fragment"), WithRequestOption(option.WithMaxRetries(0))),
 		port.LLMRequest{Model: "gpt-test", Messages: []session.Message{session.NewUserMessage("prompt secret must-not-leak")}})
 	if err == nil {
 		t.Fatal("expected HTTP error")
@@ -631,6 +660,12 @@ func TestHTTPErrorMetadataPreservesSDKError(t *testing.T) {
 	var apiErr *oai.Error
 	if !errors.As(err, &apiErr) {
 		t.Fatalf("error %T does not preserve the SDK error", err)
+	}
+	if got, want := err.Error(), "invalid_request_error: invalid input (target: "+srv.URL+"/v1/responses; request ID: req_409)"; got != want {
+		t.Errorf("Error() = %q, want %q", got, want)
+	}
+	if strings.Contains(err.Error(), "must-not-leak") {
+		t.Errorf("display error leaked request metadata or raw body: %q", err)
 	}
 	metadata := readProviderMetadata(t, err)
 	want := providerMetadataSnapshot{
@@ -642,8 +677,24 @@ func TestHTTPErrorMetadataPreservesSDKError(t *testing.T) {
 	if metadata != want {
 		t.Errorf("metadata = %+v, want %+v", metadata, want)
 	}
-	if got := metadata.correlationID; strings.Contains(got, "must-not-leak") {
-		t.Errorf("metadata leaked response data: %+v", metadata)
+}
+
+func TestHTTPErrorDisplayOmitsInvalidRequestID(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Request-ID", "invalid request id")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"error":{"code":"invalid_request_error","message":"invalid input"}}`)
+	}))
+	defer srv.Close()
+
+	err := collectStreamError(t, New(WithAPIKey("test-key"), WithBaseURL(srv.URL+"/v1"), WithRequestOption(option.WithMaxRetries(0))),
+		port.LLMRequest{Model: "gpt-test", Messages: []session.Message{session.NewUserMessage("hi")}})
+	if err == nil {
+		t.Fatal("expected SDK HTTP error")
+	}
+	if got, want := err.Error(), "invalid_request_error: invalid input (target: "+srv.URL+"/v1/responses)"; got != want {
+		t.Fatalf("Error() = %q, want %q", got, want)
 	}
 }
 
@@ -1011,38 +1062,10 @@ func TestTranslateIncompleteUnknownReason(t *testing.T) {
 	}
 }
 
-// TestTranslateMultipleTextPartsErrors verifies that a turn emitting a SECOND
-// distinct visible text part (here, a different content_index on the same
-// message item) is a loud error rather than a silent fusion into one buffer.
-// The first part's text must still be emitted as a chunk before the error.
-func TestTranslateMultipleTextPartsErrors(t *testing.T) {
-	chunks, err := decodeFixtureErr(t, "multi_text_part_turn.sse")
-	if err == nil {
-		t.Fatal("expected an error from the second distinct text part, got nil")
-	}
-	if !strings.Contains(err.Error(), "multiple assistant text parts") {
-		t.Errorf("error %q does not mention the multi-part condition", err.Error())
-	}
-	var sawPartOne bool
-	for _, c := range chunks {
-		if c.Kind == port.ChunkText && c.Text == "Part one" {
-			sawPartOne = true
-		}
-	}
-	if !sawPartOne {
-		t.Errorf("expected the first part %q among chunks before the error, got %+v", "Part one", chunks)
-	}
-}
-
-// TestTranslateMultipleReasoningSummariesNoError pins the reasoning EXEMPTION
-// from the single-visible-text-part guard: multiple reasoning_summary_text.delta
-// events with DIFFERING summary_index must NOT trip the multi-text-part guard —
-// reasoning is display-only and keyed by summary_index (not content_index), so
-// distinct summary parts legitimately concatenate. Structurally this holds today
-// because reasoning deltas route to the separate response.reasoning_summary_text.delta
-// case and never reach translateTextDelta; this test documents the exemption so a
-// future refactor that unified the text/reasoning delta handling can't silently
-// start erroring on multi-part reasoning.
+// TestTranslateMultipleReasoningSummariesNoError pins that multiple
+// reasoning_summary_text.delta events with differing summary_index remain
+// display-only ChunkReasoning values. Their identities are independent from the
+// visible output-text projection and the deltas concatenate in arrival order.
 func TestTranslateMultipleReasoningSummariesNoError(t *testing.T) {
 	got := decodeFixture(t, "multi_reasoning_summary.sse")
 	want := []port.Chunk{
@@ -1365,7 +1388,7 @@ func TestBuildToolsStrictOff(t *testing.T) {
 // function_call_output for every function_call — no orphan that OpenAI would
 // reject.
 func TestRequestNoOrphanedFunctionCallAfterInterrupt(t *testing.T) {
-	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	sess := &session.Session{ID: "s1", Mode: session.ModeDefault, State: session.StateIdle, Conversation: &session.Conversation{}}
 	if err := sess.RecordUserPrompt("read the file", nil); err != nil {
 		t.Fatalf("RecordUserPrompt: %v", err)
 	}
@@ -1489,7 +1512,10 @@ func TestStreamContextCancel(t *testing.T) {
 
 // TestStreamRecoversInvalidEncryptedContent pins the one-shot stateless replay
 // recovery: a pre-commit 400 naming an invalid encrypted reasoning item causes one
-// retry with only reasoning blobs removed. Visible/tool history and provider-assigned
+// retry with only reasoning blobs removed. Its first response deliberately uses a
+// non-standard envelope, so the safe display projection is generic while the
+// unwrap-visible SDK diagnostic still activates the narrow compatibility fallback.
+// Visible/tool history and provider-assigned
 // function-call item IDs remain intact so recovery does not create a second replay bug.
 func TestStreamRecoversInvalidEncryptedContent(t *testing.T) {
 	var (
@@ -1507,7 +1533,7 @@ func TestStreamRecoversInvalidEncryptedContent(t *testing.T) {
 		if len(bodies) == 1 {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
-			_, _ = w.Write([]byte(`{"error":{"message":"The encrypted content for item rs_bad could not be verified. Reason: Encrypted content could not be decrypted or parsed"}}`))
+			_, _ = w.Write([]byte(`{"error":{"detail":"The encrypted content for item rs_bad could not be verified. Reason: Encrypted content could not be decrypted or parsed"}}`))
 			return
 		}
 		w.Header().Set("Content-Type", "text/event-stream")

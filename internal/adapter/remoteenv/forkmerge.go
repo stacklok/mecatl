@@ -10,6 +10,7 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/stacklok/mecatl/engine/adapter/memledger"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 )
@@ -66,7 +67,7 @@ func (f *Forker) Fork(_ context.Context, base tool.Environment, label string) (t
 	f.backend.mu.Unlock()
 	ws := &workspace{ns: childNS}
 	runner := &runner{ns: childNS}
-	child, werr := tool.NewEnvironment(session.EnvironmentRef{Kind: Kind, ID: childID}, ws, runner)
+	child, werr := tool.NewEnvironment(session.EnvironmentRef{Kind: Kind, ID: childID, Revision: base.Ref().Revision}, ws, memledger.New(), runner)
 	if werr != nil {
 		return tool.Environment{}, nil, "", werr
 	}

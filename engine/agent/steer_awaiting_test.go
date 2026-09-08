@@ -202,7 +202,7 @@ func TestSteer_AwaitingAskIsHeld(t *testing.T) {
 func TestSteer_AwaitingResumeDrains(t *testing.T) {
 	const steerText = "steer: drained at the resumed run's first boundary"
 	policy := permpolicy.NewPolicy(nil, permstore.New()) // Write asks by default
-	sess := session.New("s-steer-resume", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	sess := session.New("s-steer-resume", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 
 	// Engine #1: emits a Write tool call (gated as Ask), parks awaiting, then
 	// "dies" (snapshot round-trip models the process death; the parked run and

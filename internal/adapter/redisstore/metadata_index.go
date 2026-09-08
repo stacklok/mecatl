@@ -181,7 +181,7 @@ func sessionMetadata(s *session.Session, modifiedAt time.Time, size int64) port.
 	return port.SessionDiscoveryMeta{
 		ID: s.ID, ModifiedAt: modifiedAt, State: s.State, Turns: s.Counters.Turns,
 		ModelID: s.ModelID, CreatedAt: s.CreatedAt, Title: s.Title,
-		TitleProvenance: s.TitleProvenance, Owner: s.Owner.Clone(), Workspace: s.Workspace,
+		TitleProvenance: s.TitleProvenance, Owner: s.Owner.Clone(), EnvironmentRef: s.EnvironmentRef,
 		Kind: s.Kind, Relationship: s.Relationship, EstimatedBytes: size,
 	}
 }
@@ -251,14 +251,14 @@ if lineage then
   end
   redis.call('HSET', KEYS[8], lineage_key, tombstone)
 end
-redis.call('DEL', KEYS[1], KEYS[4], KEYS[5], KEYS[7])
+redis.call('DEL', KEYS[1], KEYS[4], KEYS[5], KEYS[7], KEYS[9])
 redis.call('INCR', KEYS[6])
 return 1
 `)
 
 func deleteSessionAndMetadata(ctx context.Context, client redis.UniversalClient, id session.SessionID) error {
 	return deleteMetadataScript.Run(ctx, client,
-		[]string{sessionKey(id), metadataGlobalIndexKey, metadataGenerationKey, toolsKey(id), eventsKey(id), metadataRebuildGenerationKey, eventsGenerationKey(id), lineageHashKey},
+		[]string{sessionKey(id), metadataGlobalIndexKey, metadataGenerationKey, toolsKey(id), eventsKey(id), metadataRebuildGenerationKey, eventsGenerationKey(id), lineageHashKey, ledgerKey(id)},
 		metadataGlobalScope, metadataOwnerIndexBase, string(id), time.Now().UTC().Format(time.RFC3339Nano),
 	).Err()
 }
@@ -286,7 +286,7 @@ if lineage then
   end
   redis.call('HSET', KEYS[8], lineage_key, tombstone)
 end
-redis.call('DEL', KEYS[1], KEYS[4], KEYS[5], KEYS[7])
+redis.call('DEL', KEYS[1], KEYS[4], KEYS[5], KEYS[7], KEYS[9])
 redis.call('INCR', KEYS[6])
 return 1
 `)
@@ -297,7 +297,7 @@ func deleteSessionIfMetadataUnchanged(ctx context.Context, client redis.Universa
 		return false, err
 	}
 	result, err := conditionalDeleteMetadataScript.Run(ctx, client,
-		[]string{sessionKey(expected.ID), metadataGlobalIndexKey, metadataGenerationKey, toolsKey(expected.ID), eventsKey(expected.ID), metadataRebuildGenerationKey, eventsGenerationKey(expected.ID), lineageHashKey},
+		[]string{sessionKey(expected.ID), metadataGlobalIndexKey, metadataGenerationKey, toolsKey(expected.ID), eventsKey(expected.ID), metadataRebuildGenerationKey, eventsGenerationKey(expected.ID), lineageHashKey, ledgerKey(expected.ID)},
 		member, metadataGlobalScope, metadataOwnerIndexBase, string(expected.ID), time.Now().UTC().Format(time.RFC3339Nano),
 	).Int()
 	return result == 1, err

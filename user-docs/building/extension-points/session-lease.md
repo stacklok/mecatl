@@ -1,6 +1,7 @@
 ---
 sidebar_position: 4
 title: SessionLease
+description: Add cross-process session leases to prevent concurrent writers in multi-replica deployments.
 ---
 
 # SessionLease
@@ -11,7 +12,7 @@ title: SessionLease
 
 ## What it solves
 
-mecatl stores session state in a `SessionStore` (JSONL on disk, Redis, or an in-memory map). In a **single-replica deployment** with session affinity, this is safe — only one process ever touches a given session. In a **multi-replica deployment** without affinity routing (or after a replica restarts mid-run), two workers could acquire the same session snapshot, drive independent turns, and silently diverge. The conversation grows incoherent and neither writer can detect the collision.
+Mecatl stores session state in a `SessionStore` (JSONL on disk, Redis, or an in-memory map). In a **single-replica deployment** with session affinity, this is safe — only one process ever touches a given session. In a **multi-replica deployment** without affinity routing (or after a replica restarts mid-run), two workers could acquire the same session snapshot, drive independent turns, and silently diverge. The conversation grows incoherent and neither writer can detect the collision.
 
 `SessionLease` is the cross-process lock that closes this gap. Before a run starts, the service layer acquires a lease on the session id. A competing replica that arrives while the lease is live gets `ErrSessionLeasedElsewhere` (gRPC `FAILED_PRECONDITION` / HTTP 409) instead of a silently-diverged run. The in-process mutex stays in place too — the lease sits on top of it, not in place of it.
 

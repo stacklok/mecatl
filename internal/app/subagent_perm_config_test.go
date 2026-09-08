@@ -66,7 +66,7 @@ func runSubagentBash(t *testing.T, cfg Config, command string) session.ToolResul
 		}
 		return newHardenedRunnerForRoot(cfg, childRoot)
 	}))}
-	task := agent.NewSubagentTool(childEngine, agent.WithChildForker(rf))
+	task := agent.NewSubagentTool(childEngine, agent.WithChildForker(rf), agent.WithSubagentReadLedgerFactory(testReadLedger))
 
 	baseWS, err := osfs.NewWorkspace(cfg.Workspace)
 	if err != nil {

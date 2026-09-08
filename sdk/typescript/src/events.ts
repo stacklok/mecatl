@@ -8,6 +8,8 @@ import { getRawJson } from "./raw.js";
 /** Stable event kinds, kept in parity with the Go server vocabulary. @public */
 export const MECATL_EVENT_KINDS = [
   "approval",
+  "authorization.required",
+  "authorization.resolved",
   "compaction",
   "compaction.archive",
   "hook",
@@ -29,6 +31,7 @@ export const MECATL_EVENT_KINDS = [
   "schedule.fired",
   "schedule.skipped",
   "session.init",
+  "session.title",
   "steer",
   "steer.outcome",
   "subagent.end",
@@ -146,6 +149,15 @@ export interface ApprovalEventPayload {
   readonly verdict: string;
 }
 
+/** The safe correlation payload of an external-authorization lifecycle event. @public */
+export interface AuthorizationEventPayload {
+  readonly authorizationId: string;
+  readonly callId: string;
+  readonly displayName: string;
+  readonly expiresAt?: { readonly nanos: number; readonly seconds: bigint } | undefined;
+  readonly status: string;
+}
+
 /** One media part as represented on the protobuf event payloads. @public */
 export interface EventContent {
   readonly data: Uint8Array;
@@ -158,6 +170,21 @@ export interface EventContent {
 export interface UserPromptEventPayload {
   readonly parts: readonly EventContent[];
   readonly text: string;
+}
+
+/** One title-generation attempt projected by a `session.title` event. @public */
+export interface TitleAttemptEventPayload {
+  readonly id: string;
+  readonly outcome: string;
+}
+
+/** The source-free payload of a `session.title` event. @public */
+export interface SessionTitleEventPayload {
+  readonly generationState: string;
+  readonly latestAttempt?: TitleAttemptEventPayload | undefined;
+  readonly provenance: string;
+  readonly revision: bigint;
+  readonly title: string;
 }
 
 /** One conversation entry in a compaction archive. @public */
@@ -323,6 +350,8 @@ export interface EventCommon {
 /** Maps every known wire kind to its hand-crafted payload contract. @public */
 export interface EventPayloads {
   readonly approval: ApprovalEventPayload;
+  readonly "authorization.required": AuthorizationEventPayload;
+  readonly "authorization.resolved": AuthorizationEventPayload;
   readonly compaction: undefined;
   readonly "compaction.archive": CompactionArchiveEventPayload;
   readonly hook: HookEventPayload;
@@ -344,6 +373,7 @@ export interface EventPayloads {
   readonly "schedule.fired": ScheduleEventPayload;
   readonly "schedule.skipped": ScheduleEventPayload;
   readonly "session.init": undefined;
+  readonly "session.title": SessionTitleEventPayload;
   readonly steer: SteerEventPayload;
   readonly "steer.outcome": SteerOutcomeEventPayload;
   readonly "subagent.end": SubagentEventPayload;
@@ -444,6 +474,9 @@ function payload(
   switch (kind) {
     case "approval":
       return required(event.approval, kind, transport);
+    case "authorization.required":
+    case "authorization.resolved":
+      return required(event.authorization, kind, transport);
     case "compaction.archive":
       return required(event.compactionArchive, kind, transport);
     case "hook":
@@ -463,6 +496,8 @@ function payload(
     case "schedule.fired":
     case "schedule.skipped":
       return required(event.schedule, kind, transport);
+    case "session.title":
+      return required(event.title, kind, transport);
     case "steer":
       return required(event.steer, kind, transport);
     case "steer.outcome":

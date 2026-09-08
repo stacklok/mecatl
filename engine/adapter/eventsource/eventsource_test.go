@@ -27,11 +27,11 @@ func seq(evs []session.Event) iter.Seq2[session.Event, error] {
 
 func meta() eventsource.SessionMeta {
 	return eventsource.SessionMeta{
-		ID:        "s1",
-		Mode:      session.ModeDefault,
-		Limits:    session.Limits{},
-		Workspace: "/ws",
-		CreatedAt: time.Unix(0, 0),
+		ID:             "s1",
+		Mode:           session.ModeDefault,
+		Limits:         session.Limits{},
+		EnvironmentRef: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"},
+		CreatedAt:      time.Unix(0, 0),
 	}
 }
 
@@ -57,20 +57,6 @@ func TestADR_0233_AuthorityEvaluator_Scenario2_EventFoldRejectsEmptyAuthorityCla
 	}
 	if _, bound := legacy.BoundAuthority(); bound {
 		t.Fatal("authority-absent legacy fold restored as bound")
-	}
-}
-
-func TestFoldRestoresAdoptionMetadata(t *testing.T) {
-	m := meta()
-	m.AdoptionSourceID = "legacy-source"
-	m.AdoptionRequestDigest = "request-digest"
-
-	restored, err := eventsource.Fold(m, seq(nil))
-	if err != nil {
-		t.Fatalf("Fold: %v", err)
-	}
-	if got := restored.Adoption; got == nil || got.AdoptionSourceID != m.AdoptionSourceID || got.AdoptionRequestDigest != m.AdoptionRequestDigest {
-		t.Fatalf("Adoption = %+v, want source %q and digest %q", got, m.AdoptionSourceID, m.AdoptionRequestDigest)
 	}
 }
 
@@ -106,7 +92,7 @@ func assertRetryParity(t *testing.T, live, folded *session.Session) {
 }
 
 func TestFoldParityForCompleteErrorStop(t *testing.T) {
-	live := session.New("s1", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	live := session.New("s1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	if err := live.BeginTurn(); err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +127,7 @@ func TestFoldParityForCompleteErrorStop(t *testing.T) {
 }
 
 func TestFoldParityForIteratorError(t *testing.T) {
-	live := session.New("s1", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	live := session.New("s1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	if err := live.BeginTurn(); err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +204,7 @@ func TestFoldFailedStepRetrySnapshotParity(t *testing.T) {
 	}
 	newPrepared := func(t *testing.T) *session.Session {
 		t.Helper()
-		s := session.New("s1", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+		s := session.New("s1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 		if err := s.RecordUserPrompt("original", nil); err != nil {
 			t.Fatal(err)
 		}
@@ -534,14 +520,14 @@ func TestFoldStreamErrorPropagates(t *testing.T) {
 // applied to the reconstructed session.
 func TestFoldMetaIsApplied(t *testing.T) {
 	m := eventsource.SessionMeta{
-		ID:         "sess-42",
-		Mode:       session.ModePlan,
-		Limits:     session.Limits{MaxTurns: 9},
-		Workspace:  "/work/space",
-		Profile:    "no-fs",
-		ProviderID: "openrouter",
-		ModelID:    "anthropic/claude",
-		CreatedAt:  time.Unix(1700000000, 0),
+		ID:             "sess-42",
+		Mode:           session.ModePlan,
+		Limits:         session.Limits{MaxTurns: 9},
+		EnvironmentRef: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/work/space", Revision: "in-tree-v1"},
+		Profile:        "no-fs",
+		ProviderID:     "openrouter",
+		ModelID:        "anthropic/claude",
+		CreatedAt:      time.Unix(1700000000, 0),
 	}
 	evs := []session.Event{
 		{Type: session.EvTurnStart, Turn: 0},
@@ -552,7 +538,7 @@ func TestFoldMetaIsApplied(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Fold: %v", err)
 	}
-	if s.ID != "sess-42" || s.Mode != session.ModePlan || s.Workspace != "/work/space" ||
+	if s.ID != "sess-42" || s.Mode != session.ModePlan || s.EnvironmentRef != m.EnvironmentRef ||
 		s.Profile != "no-fs" || s.ProviderID != "openrouter" || s.ModelID != "anthropic/claude" ||
 		s.Limits.MaxTurns != 9 || !s.CreatedAt.Equal(time.Unix(1700000000, 0)) {
 		t.Fatalf("meta not applied: %+v", s)

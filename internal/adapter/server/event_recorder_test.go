@@ -97,6 +97,32 @@ func TestRunEventRecorderCoalescesDeltasInFirstObservedOrder(t *testing.T) {
 	}
 }
 
+func TestRunEventRecorderCoalescingRetainsFirstDeltaSequenceAcrossLaterRecordGap(t *testing.T) {
+	log := &countingEventLog{}
+	recorder := NewRunEventRecorder(context.Background(), recorderService(log, port.NopDiagnostics{}), "s1")
+
+	recorder.Observe(session.Event{Type: session.EvTurnStart, Turn: 0, Seq: 1})
+	recorder.Observe(session.Event{Type: session.EvMessageDelta, Turn: 0, Seq: 5, Text: "coalesced"})
+	recorder.Observe(session.Event{Type: session.EvProviderRoute, Turn: 0, Seq: 28, Text: "OpenRouter"})
+	recorder.Observe(session.Event{Type: session.EvResult, Turn: 0, Seq: 29, Result: &session.ResultPayload{Stop: session.StopEndTurn}})
+	recorder.Close()
+
+	if got, want := len(log.recorded), 4; got != want {
+		t.Fatalf("recorded events = %d, want %d: %+v", got, want, log.recorded)
+	}
+	for i, want := range []int64{1, 5, 28, 29} {
+		if got := log.recorded[i].Seq; got != want {
+			t.Fatalf("recorded[%d].Seq = %d, want %d", i, got, want)
+		}
+	}
+	if got := log.recorded[1]; got.Type != session.EvMessageDelta || got.Text != "coalesced" {
+		t.Fatalf("coalesced delta = %+v", got)
+	}
+	if got := log.recorded[2]; got.Type != session.EvProviderRoute || got.Text != "OpenRouter" {
+		t.Fatalf("later provider route = %+v", got)
+	}
+}
+
 func TestRunEventRecorderThresholdFlushPreservesFirstObservedKindOrder(t *testing.T) {
 	large := strings.Repeat("x", maxCoalescedTextBytes+1)
 	for _, tc := range []struct {
@@ -152,7 +178,7 @@ func TestRunEventRecorderThresholdFlushPreservesFirstObservedKindOrder(t *testin
 			}
 
 			folded, err := eventsource.Fold(eventsource.SessionMeta{
-				ID: "s1", Mode: session.ModeDefault, Workspace: ".", CreatedAt: time.Unix(1, 0),
+				ID: "s1", Mode: session.ModeDefault, EnvironmentRef: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: ".", Revision: "in-tree-v1"}, CreatedAt: time.Unix(1, 0),
 			}, log.Read(context.Background(), "s1"))
 			if err != nil {
 				t.Fatalf("Fold: %v", err)
@@ -207,7 +233,7 @@ func TestRunEventRecorderPostWriteErrorIsNotRetriedAndLaterEventsContinue(t *tes
 		}
 	}
 	folded, err := eventsource.Fold(eventsource.SessionMeta{
-		ID: "s1", Mode: session.ModeDefault, Workspace: ".", CreatedAt: time.Unix(1, 0),
+		ID: "s1", Mode: session.ModeDefault, EnvironmentRef: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: ".", Revision: "in-tree-v1"}, CreatedAt: time.Unix(1, 0),
 	}, log.Read(context.Background(), "s1"))
 	if err != nil {
 		t.Fatalf("Fold: %v", err)
@@ -275,7 +301,7 @@ func TestRunEventRecorderOversizedEscapedUTF8RoundTripsThroughJSONL(t *testing.T
 	}
 
 	folded, err := eventsource.Fold(eventsource.SessionMeta{
-		ID: "s1", Mode: session.ModeDefault, Workspace: ".", CreatedAt: time.Unix(1, 0),
+		ID: "s1", Mode: session.ModeDefault, EnvironmentRef: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: ".", Revision: "in-tree-v1"}, CreatedAt: time.Unix(1, 0),
 	}, log.Read(context.Background(), "s1"))
 	if err != nil {
 		t.Fatalf("Fold: %v", err)

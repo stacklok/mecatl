@@ -4,6 +4,9 @@ import { Code, ConnectError } from "@connectrpc/connect";
 /** Stable server error codes, kept in parity with the Go registry. @public */
 export const MECATL_ERROR_CODES = [
   "activity_gap",
+  "attempt_live_claim_conflict",
+  "attempt_terminal_conflict",
+  "attempt_version_conflict",
   "child_not_found",
   "cleanup_backend",
   "cleanup_plan_stale",
@@ -40,7 +43,17 @@ export const MECATL_ERROR_CODES = [
   "no_schedule_store",
   "not_awaiting_plan",
   "not_found",
+  "placement_binding_invalid",
+  "placement_changed",
+  "placement_selector_invalid",
+  "placement_selector_not_found",
+  "placement_selector_stale",
+  "placement_unavailable",
   "proposal_conflict",
+  "reflection_cancelled",
+  "reflection_deadline",
+  "reflection_failed",
+  "reflection_queue_full",
   "request_too_large",
   "resource_exhausted",
   "schedule_disabled",
@@ -73,11 +86,18 @@ export type ServerErrorCode = (typeof MECATL_ERROR_CODES)[number] | "unknown";
 /** @public */
 export type SDKErrorCode =
   | "authentication"
+  | "cursor_scope"
   | "incompatible_server"
   | "invalid_prompt"
   | "invalid_state"
+  | "no_runs"
+  | "plan_continuation_start"
   | "protocol"
+  | "readiness_timeout" // M3_LOCAL_ERROR_CODE
+  | "spawn_failed" // M3_LOCAL_ERROR_CODE
+  | "tool_registration" // M3_LOCAL_ERROR_CODE
   | "transport"
+  | "unsupported_platform" // M3_LOCAL_ERROR_CODE
   | "unsupported_feature";
 /** @public */
 export type MecatlErrorCode = ServerErrorCode | SDKErrorCode;
@@ -85,6 +105,35 @@ export type MecatlErrorCode = ServerErrorCode | SDKErrorCode;
 export type TransportKind = "grpc" | "http";
 /** The request transport, or `local` when validation failed before transport selection. @public */
 export type ErrorOrigin = TransportKind | "local";
+
+/** Severity attached to one SDK-local diagnostic record. @public */
+export type DiagnosticLevel = "debug" | "error" | "info" | "warn";
+
+/** Values carried by the structured fields of an SDK-local diagnostic. @public */
+export type DiagnosticFieldValue = boolean | number | string | null;
+
+/** A structured SDK-local observation that is separate from the server event stream. @public */
+export interface DiagnosticRecord {
+  /** The original failure value when the diagnostic observes a thrown cause. */
+  readonly cause?: unknown;
+  /** Stable machine-readable identifier for the observation. */
+  readonly code: string;
+  /** Typed context that is safe to expose to the application. */
+  readonly fields: Readonly<Record<string, DiagnosticFieldValue>>;
+  /** Diagnostic severity. */
+  readonly level: DiagnosticLevel;
+  /** Human-readable summary. */
+  readonly message: string;
+}
+
+/** Optional client-level receiver for SDK-local diagnostics. @public */
+export type DiagnosticsSink = (record: DiagnosticRecord) => void;
+
+/** Client-construction option shared by SDK entry points that emit local diagnostics. @public */
+export interface ClientDiagnosticsOptions {
+  /** Receives SDK-local diagnostics. Nothing is written to console by default. */
+  diagnostics?: DiagnosticsSink;
+}
 
 /** Stable reasons reported by PromptValidationError. @public */
 export type PromptValidationReason =
@@ -173,6 +222,47 @@ export class InvalidStateError extends MecatlError {
   }
 }
 
+/** Durable activity is known to contain a delivery gap. @public */
+export class ActivityGapError extends MecatlError {
+  constructor(
+    message = "The durable activity stream contains a known delivery gap",
+    options: Omit<MecatlErrorOptions, "code"> = { transport: "local" },
+  ) {
+    super(message, { ...options, code: "activity_gap" });
+  }
+}
+
+/** The server cursor belongs to a superseded event-log generation. @public */
+export class CursorExpiredError extends MecatlError {
+  constructor(message: string, options: Omit<MecatlErrorOptions, "code">) {
+    super(message, { ...options, code: "cursor_expired" });
+  }
+}
+
+/** An SDK cursor is not a structurally valid `sdkcur/1` envelope. @public */
+export class CursorMalformedError extends MecatlError {
+  constructor(
+    message = "The attachment cursor is malformed",
+    options: Omit<MecatlErrorOptions, "code"> = { transport: "local" },
+  ) {
+    super(message, { ...options, code: "cursor_malformed" });
+  }
+}
+
+/** An SDK cursor would widen the set of durable events delivered by its source view. @public */
+export class CursorScopeError extends MecatlError {
+  constructor(message = "The attachment cursor cannot resume the requested view") {
+    super(message, { code: "cursor_scope", transport: "local" });
+  }
+}
+
+/** The readable session log contains no event associated with a run. @public */
+export class NoRunsError extends MecatlError {
+  constructor() {
+    super("The session has no run-bearing events", { code: "no_runs", transport: "local" });
+  }
+}
+
 /** A structured prompt failed local validation before any request was sent. @public */
 export class PromptValidationError extends MecatlError {
   readonly reason: PromptValidationReason;
@@ -185,6 +275,22 @@ export class PromptValidationError extends MecatlError {
 
 /** A local run is already active on this Session handle. @public */
 export class SessionBusyError extends InvalidStateError {}
+
+/** query() plan mode was requested without its required plan-specific responder. @public */
+export class PlanApprovalRequiredError extends InvalidStateError {
+  constructor() {
+    super("query() plan mode requires onPlanApproval before starting", {
+      transport: "local",
+    });
+  }
+}
+
+/** The approved plan's continuation could not be admitted before it received a run ID. @public */
+export class PlanContinuationStartError extends MecatlError {
+  constructor(message: string, options: Omit<MecatlErrorOptions, "code">) {
+    super(message, { ...options, code: "plan_continuation_start" });
+  }
+}
 
 /** A permission ask is no longer pending on its originating run. @public */
 export class PermissionAskAlreadyResolvedError extends InvalidStateError {
@@ -213,6 +319,22 @@ export class ServerError extends MecatlError {
     options: Omit<MecatlErrorOptions, "code"> & { code: ServerErrorCode },
   ) {
     super(message, options);
+  }
+}
+
+function errorFromServer(
+  message: string,
+  options: Omit<MecatlErrorOptions, "code"> & { code: ServerErrorCode },
+): MecatlError {
+  switch (options.code) {
+    case "activity_gap":
+      return new ActivityGapError(message, options);
+    case "cursor_expired":
+      return new CursorExpiredError(message, options);
+    case "cursor_malformed":
+      return new CursorMalformedError(message, options);
+    default:
+      return new ServerError(message, options);
   }
 }
 
@@ -257,7 +379,7 @@ export function errorFromProblem(
       transport: "http",
     });
   }
-  return new ServerError(message, {
+  return errorFromServer(message, {
     cause: problem,
     code,
     requestId: safeRequestId,
@@ -370,7 +492,7 @@ export function normalizeError(reason: unknown, transport: TransportKind): Mecat
     });
   }
   if (info?.domain === "mecatl.stacklok.com") {
-    return new ServerError(reason.rawMessage, {
+    return errorFromServer(reason.rawMessage, {
       cause: reason,
       code: serverCode(info.reason),
       requestId,

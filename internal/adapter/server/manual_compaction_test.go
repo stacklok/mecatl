@@ -21,7 +21,6 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -110,10 +109,10 @@ func newCompactService(t *testing.T, store *compactTrackingStore, compactor agen
 		LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "test",
 		Compactor: compactor, TokenCounter: serviceCompactCounter{},
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine: eng, Store: store, EventLog: store,
-		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		Now:        time.Now, OwnershipEnforced: ownership, SessionLease: lease,
+
+		Now: time.Now, OwnershipEnforced: ownership, SessionLease: lease,
 		LeaseOwner: "compact", LeaseTTL: time.Hour, LeaseRenewInterval: time.Hour,
 		SessionEngine: factory,
 	})
@@ -128,7 +127,7 @@ func compactFixture(t *testing.T, state session.State) (*compactTrackingStore, *
 	t.Helper()
 	store := &compactTrackingStore{Store: memstore.New()}
 	owner := &session.Principal{Issuer: "issuer", Subject: "alice", GrantType: session.GrantTypeUser}
-	sess := session.New("compact-session", session.ModeDefault, "/ws", session.Limits{}, time.Unix(1, 0))
+	sess := session.New("compact-session", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 	if err := sess.RestoreLabels(owner, session.Authority{}); err != nil {
 		t.Fatalf("RestoreLabels: %v", err)
 	}
@@ -353,7 +352,7 @@ func TestCompactSessionWireSurfaces(t *testing.T) {
 func TestCompactSessionCapabilityAdvertised(t *testing.T) {
 	store, _, _ := compactFixture(t, session.StateIdle)
 	svc := newCompactService(t, store, serviceCompactCompactor{}, false, nil, nil)
-	resp, err := server.NewHarnessServer(svc).CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{Workspace: "/ws"})
+	resp, err := server.NewHarnessServer(svc).CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -361,7 +360,7 @@ func TestCompactSessionCapabilityAdvertised(t *testing.T) {
 		t.Fatal("manual_compaction capability is false on a service with an engine")
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/sessions", strings.NewReader(`{"workspace":"/ws"}`))
+	req := httptest.NewRequest(http.MethodPost, "/v1/sessions", strings.NewReader(`{}`))
 	rr := httptest.NewRecorder()
 	server.NewHTTPHandler(svc).ServeHTTP(rr, req)
 	var body struct {
@@ -499,8 +498,8 @@ func TestCompactSessionLeaseLossCancelsCompactorAndPreventsSave(t *testing.T) {
 	}}
 	compactor := &countingServiceCompactor{wait: true}
 	eng := agent.NewEngine(agent.Deps{Compactor: compactor, TokenCounter: serviceCompactCounter{}})
-	svc, err := server.NewService(server.Config{
-		Engine: eng, Store: store, EventLog: store, Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+	svc, err := newPlacementTestService(server.Config{
+		Engine: eng, Store: store, EventLog: store,
 		OwnershipEnforced: true, SessionLease: lease, LeaseOwner: "compact-loss", LeaseTTL: time.Hour, LeaseRenewInterval: 5 * time.Millisecond,
 	})
 	if err != nil {
@@ -528,9 +527,8 @@ func TestCompactSessionLeaseConflictAndNoFSRehydration(t *testing.T) {
 
 	t.Run("no-fs uses rehydrated engine", func(t *testing.T) {
 		store, sess, owner := compactFixture(t, session.StateIdle)
-		sess.Workspace = ""
 		sess.Profile = string(server.ProfileNoFS)
-		sess.EnvironmentRef = session.EnvironmentRef{Kind: session.EnvKindNoFS}
+		sess.EnvironmentRef = session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: "none", Revision: "in-tree-v1"}
 		if err := store.Store.Save(context.Background(), sess); err != nil {
 			t.Fatal(err)
 		}

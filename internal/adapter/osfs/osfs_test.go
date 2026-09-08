@@ -363,6 +363,92 @@ func TestGrep(t *testing.T) {
 	}
 }
 
+func TestGrepStopsAfterTruncationThreshold(t *testing.T) {
+	ctx := context.Background()
+	ws, err := osfs.NewWorkspace(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewWorkspace: %v", err)
+	}
+	if err := ws.Write(ctx, "a-many.txt", []byte(strings.Repeat("needle\n", 300))); err != nil {
+		t.Fatalf("Write a-many.txt: %v", err)
+	}
+	if err := ws.Write(ctx, "z-unrelated.txt", []byte("needle after threshold\n")); err != nil {
+		t.Fatalf("Write z-unrelated.txt: %v", err)
+	}
+
+	matches, err := ws.Grep(ctx, "needle", "")
+	if err != nil {
+		t.Fatalf("Grep: %v", err)
+	}
+	if len(matches) != 201 {
+		t.Fatalf("Grep returned %d matches, want 201 for the truncation sentinel", len(matches))
+	}
+	if matches[len(matches)-1].Path != "a-many.txt" {
+		t.Errorf("Grep scanned beyond the first file after reaching the match threshold: last match = %#v", matches[len(matches)-1])
+	}
+}
+
+func TestGrepSearchSafetyBudget(t *testing.T) {
+	tests := []struct {
+		name     string
+		pathGlob string
+	}{
+		{name: "unscoped", pathGlob: ""},
+		{name: "recursive glob", pathGlob: "**"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			root := t.TempDir()
+			ws, err := osfs.NewWorkspace(root)
+			if err != nil {
+				t.Fatalf("NewWorkspace: %v", err)
+			}
+			large := filepath.Join(root, "large.txt")
+			if err := os.WriteFile(large, nil, 0o600); err != nil {
+				t.Fatalf("create large file: %v", err)
+			}
+			if err := os.Truncate(large, 64<<20+1); err != nil {
+				t.Fatalf("make large sparse file: %v", err)
+			}
+
+			_, err = ws.Grep(ctx, "needle", test.pathGlob)
+			if err == nil || !strings.Contains(err.Error(), "grep search exceeds the workspace safety budget; narrow the path") {
+				t.Fatalf("Grep budget error = %v, want actionable safety-budget error", err)
+			}
+		})
+	}
+}
+
+func TestGrepSkipsDirectoriesAndHonorsCancellation(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	ws, err := osfs.NewWorkspace(root)
+	if err != nil {
+		t.Fatalf("NewWorkspace: %v", err)
+	}
+	if err := os.Mkdir(filepath.Join(root, "directory.txt"), 0o700); err != nil {
+		t.Fatalf("Mkdir: %v", err)
+	}
+	if err := ws.Write(ctx, "match.txt", []byte("needle\n")); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+
+	matches, err := ws.Grep(ctx, "needle", "*")
+	if err != nil {
+		t.Fatalf("Grep: %v", err)
+	}
+	if len(matches) != 1 || matches[0].Path != "match.txt" {
+		t.Errorf("Grep included a non-regular file: %#v", matches)
+	}
+
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err := ws.Grep(cancelled, "needle", ""); !errors.Is(err, context.Canceled) {
+		t.Errorf("cancelled Grep error = %v, want context.Canceled", err)
+	}
+}
+
 // TestGlobGlobstarRecurses asserts the "**" globstar crosses directory
 // separators, finding files at every depth. The old filepath.Glob delegation
 // could only match within a single path segment, so a recursive "**/*.go" found

@@ -67,7 +67,7 @@ func TestBuildMemberEngineReadOnlySpawnSucceeds(t *testing.T) {
 	svc := teamServiceWithFactory(t, memberFactoryForTest(cfg, provider, nil, agents.NewRegistry(nil), nil, nil, false, nil))
 
 	ctx := context.Background()
-	teamID, _, err := svc.CreateTeam(ctx, t.TempDir(), "test", "", 0, nil)
+	teamID, _, err := svc.CreateTeamOnDefaultPlacement(ctx, "test", "", 0, nil)
 	if err != nil {
 		t.Fatalf("CreateTeam: %v", err)
 	}
@@ -88,7 +88,7 @@ func TestBuildMemberEngineMutatingSpawnSucceeds(t *testing.T) {
 	svc := teamServiceWithFactory(t, memberFactoryForTest(cfg, provider, nil, agents.NewRegistry(nil), nil, nil, false, nil))
 
 	ctx := context.Background()
-	teamID, _, err := svc.CreateTeam(ctx, t.TempDir(), "test", "", 0, nil)
+	teamID, _, err := svc.CreateTeamOnDefaultPlacement(ctx, "test", "", 0, nil)
 	if err != nil {
 		t.Fatalf("CreateTeam: %v", err)
 	}
@@ -112,7 +112,7 @@ func TestTeamsEnabledEndToEnd(t *testing.T) {
 	ctx := context.Background()
 	// Atomic create+populate: the initial roster is enrolled by CreateTeam itself, so
 	// no separate SpawnTeammate call is needed before RunTeam.
-	teamID, enrolled, err := svc.CreateTeam(ctx, t.TempDir(), "test", "", 0,
+	teamID, enrolled, err := svc.CreateTeamOnDefaultPlacement(ctx, "test", "", 0,
 		[]agent.MemberSpec{{Name: "lead", Lead: true, InitialPrompt: "go"}})
 	if err != nil {
 		t.Fatalf("CreateTeam: %v", err)
@@ -175,28 +175,23 @@ func TestMaxTeamTokensPropagates(t *testing.T) {
 	// --- Half 2: the threaded budget actually trips a usage-bearing team -----
 	// Build a Service over the SAME svcCfg.MemberEngine + svcCfg.TeamTokenBudget
 	// applyTeamConfig produced, so the budget that trips is the one that propagated.
-	osfsWS := func(root string) tool.Workspace {
-		ws, werr := osfs.NewWorkspace(root)
-		if werr != nil {
-			t.Fatalf("osfs workspace %q: %v", root, werr)
-		}
-		return ws
-	}
-	svc, err := server.NewService(server.Config{
-		Engine:          noopEngine(),
-		Store:           memstore.New(),
-		Workspaces:      osfsWS,
-		Now:             func() time.Time { return time.Unix(0, 0) },
-		MemberEngine:    svcCfg.MemberEngine,
-		Forker:          forker.New(func(root string) (tool.Workspace, error) { return osfs.NewWorkspace(root) }),
-		ReadOnlyForker:  forker.New(func(root string) (tool.Workspace, error) { return osfs.NewWorkspace(root) }),
-		TeamTokenBudget: svcCfg.TeamTokenBudget,
+	root := t.TempDir()
+	svc, err := newTestServerService(server.Config{
+		Engine: noopEngine(),
+		Store:  memstore.New(),
+
+		SharedEngineRoot: root,
+		Now:              func() time.Time { return time.Unix(0, 0) },
+		MemberEngine:     svcCfg.MemberEngine,
+		Forker:           forker.New(func(root string) (tool.Workspace, error) { return osfs.NewWorkspace(root) }),
+		ReadOnlyForker:   forker.New(func(root string) (tool.Workspace, error) { return osfs.NewWorkspace(root) }),
+		TeamTokenBudget:  svcCfg.TeamTokenBudget,
 	})
 	if err != nil {
 		t.Fatalf("new service: %v", err)
 	}
 	ctx := context.Background()
-	teamID, _, err := svc.CreateTeam(ctx, t.TempDir(), "test", "do one round", 0,
+	teamID, _, err := svc.CreateTeamOnDefaultPlacement(ctx, "test", "do one round", 0,
 		[]agent.MemberSpec{{Name: "lead", Lead: true, InitialPrompt: "do the work then stop"}})
 	if err != nil {
 		t.Fatalf("CreateTeam: %v", err)
@@ -226,7 +221,7 @@ func TestTeamsDisabledWhenNoFactory(t *testing.T) {
 	}
 	defer built.Close()
 
-	_, _, err = built.Service.CreateTeam(context.Background(), "/ws", "test", "", 0, nil)
+	_, _, err = built.Service.CreateTeamOnDefaultPlacement(context.Background(), "test", "", 0, nil)
 	if !errors.Is(err, server.ErrTeamsDisabled) {
 		t.Fatalf("CreateTeam (teams off): err = %v, want ErrTeamsDisabled", err)
 	}
@@ -237,8 +232,9 @@ func TestTeamsDisabledWhenNoFactory(t *testing.T) {
 // and whose single-member team runs to quiescence — the flag really wires the
 // factory, forker, and team hooks into server.Config.
 func TestBuildEnableTeamsRunsTeam(t *testing.T) {
+	root := t.TempDir()
 	built, err := Build(context.Background(), Config{
-		Workspace:   t.TempDir(),
+		Workspace:   root,
 		Model:       "mock",
 		UseMock:     true,
 		EnableTeams: true,
@@ -249,7 +245,7 @@ func TestBuildEnableTeamsRunsTeam(t *testing.T) {
 	defer built.Close()
 
 	ctx := context.Background()
-	teamID, _, err := built.Service.CreateTeam(ctx, t.TempDir(), "test", "", 0, nil)
+	teamID, _, err := built.Service.CreateTeamOnDefaultPlacement(ctx, "test", "", 0, nil)
 	if errors.Is(err, server.ErrTeamsDisabled) {
 		t.Fatal("CreateTeam returned ErrTeamsDisabled with EnableTeams:true")
 	}
@@ -326,28 +322,22 @@ func TestReadOnlyMemberRunsGitInWorktreeEndToEnd(t *testing.T) {
 	)
 	factory := memberFactoryForTest(cfg, provider, nil, agents.NewRegistry(nil), nil, runner, true, nil)
 
-	osfsWS := func(root string) tool.Workspace {
-		ws, err := osfs.NewWorkspace(root)
-		if err != nil {
-			t.Fatalf("osfs workspace %q: %v", root, err)
-		}
-		return ws
-	}
-	svc, err := server.NewService(server.Config{
-		Engine:         noopEngine(),
-		Store:          memstore.New(),
-		Workspaces:     osfsWS,
-		Now:            func() time.Time { return time.Unix(0, 0) },
-		MemberEngine:   factory,
-		Forker:         mutatingFk,
-		ReadOnlyForker: roFk,
+	svc, err := newTestServerService(server.Config{
+		Engine: noopEngine(),
+		Store:  memstore.New(),
+
+		SharedEngineRoot: repo,
+		Now:              func() time.Time { return time.Unix(0, 0) },
+		MemberEngine:     factory,
+		Forker:           mutatingFk,
+		ReadOnlyForker:   roFk,
 	})
 	if err != nil {
 		t.Fatalf("new service: %v", err)
 	}
 
 	ctx := context.Background()
-	teamID, _, err := svc.CreateTeam(ctx, repo, "inspect", "", 0,
+	teamID, _, err := svc.CreateTeamOnDefaultPlacement(ctx, "inspect", "", 0,
 		[]agent.MemberSpec{{Name: "lead", Lead: true, InitialPrompt: "inspect the history"}})
 	if err != nil {
 		t.Fatalf("CreateTeam: %v", err)
@@ -443,20 +433,15 @@ func runGitTest(t *testing.T, dir string, args ...string) {
 // the forker copies the base tree off real disk for a Mutating member.
 func teamServiceWithFactory(t *testing.T, factory server.MemberEngineFactory) *server.Service {
 	t.Helper()
-	osfsWS := func(root string) tool.Workspace {
-		ws, err := osfs.NewWorkspace(root)
-		if err != nil {
-			t.Fatalf("osfs workspace %q: %v", root, err)
-		}
-		return ws
-	}
-	svc, err := server.NewService(server.Config{
-		Engine:       noopEngine(),
-		Store:        memstore.New(),
-		Workspaces:   osfsWS,
-		Now:          func() time.Time { return time.Unix(0, 0) },
-		MemberEngine: factory,
-		Forker:       forker.New(func(root string) (tool.Workspace, error) { return osfs.NewWorkspace(root) }),
+	root := t.TempDir()
+	svc, err := newTestServerService(server.Config{
+		Engine: noopEngine(),
+		Store:  memstore.New(),
+
+		SharedEngineRoot: root,
+		Now:              func() time.Time { return time.Unix(0, 0) },
+		MemberEngine:     factory,
+		Forker:           forker.New(func(root string) (tool.Workspace, error) { return osfs.NewWorkspace(root) }),
 	})
 	if err != nil {
 		t.Fatalf("new service: %v", err)
@@ -490,17 +475,10 @@ func TestTeamReturnsConsolidatedReportEndToEnd(t *testing.T) {
 	}
 	factory := scriptedMemberFactory(t, scripts)
 
-	osfsWS := func(root string) tool.Workspace {
-		ws, err := osfs.NewWorkspace(root)
-		if err != nil {
-			t.Fatalf("osfs workspace %q: %v", root, err)
-		}
-		return ws
-	}
-	svc, err := server.NewService(server.Config{
-		Engine:       noopEngine(),
-		Store:        store,
-		Workspaces:   osfsWS,
+	svc, err := newTestServerService(server.Config{
+		Engine: noopEngine(),
+		Store:  store,
+
 		Now:          func() time.Time { return time.Unix(0, 0) },
 		MemberEngine: factory,
 		Forker:       forker.New(func(root string) (tool.Workspace, error) { return osfs.NewWorkspace(root) }),
@@ -510,7 +488,7 @@ func TestTeamReturnsConsolidatedReportEndToEnd(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	teamID, _, err := svc.CreateTeam(ctx, t.TempDir(), "e2e", "find and fix the leak", 0,
+	teamID, _, err := svc.CreateTeamOnDefaultPlacement(ctx, "e2e", "find and fix the leak", 0,
 		[]agent.MemberSpec{
 			{Name: "lead", Lead: true, InitialPrompt: "coordinate"},
 			{Name: "worker", InitialPrompt: "investigate"},
@@ -559,17 +537,10 @@ func TestTeamRunTeamPathSurfacesTeamID(t *testing.T) {
 		"lead":   {mockllm.TextTurn("coordinating"), mockllm.TextTurn("REPORT")},
 		"worker": {mockllm.TextTurn("working"), mockllm.TextTurn("done")},
 	}
-	osfsWS := func(root string) tool.Workspace {
-		ws, err := osfs.NewWorkspace(root)
-		if err != nil {
-			t.Fatalf("osfs workspace %q: %v", root, err)
-		}
-		return ws
-	}
-	svc, err := server.NewService(server.Config{
-		Engine:       noopEngine(),
-		Store:        store,
-		Workspaces:   osfsWS,
+	svc, err := newTestServerService(server.Config{
+		Engine: noopEngine(),
+		Store:  store,
+
 		Now:          func() time.Time { return time.Unix(0, 0) },
 		MemberEngine: scriptedMemberFactory(t, scripts),
 		Forker:       forker.New(func(root string) (tool.Workspace, error) { return osfs.NewWorkspace(root) }),
@@ -579,7 +550,7 @@ func TestTeamRunTeamPathSurfacesTeamID(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	teamID, _, err := svc.CreateTeam(ctx, t.TempDir(), "e2e", "do it", 0,
+	teamID, _, err := svc.CreateTeamOnDefaultPlacement(ctx, "e2e", "do it", 0,
 		[]agent.MemberSpec{
 			{Name: "lead", Lead: true, InitialPrompt: "coordinate"},
 			{Name: "worker", InitialPrompt: "work"},
@@ -626,7 +597,7 @@ func TestAgencyDeltaReachesTeamMemberAndLead(t *testing.T) {
 		factory := memberFactoryForTest(cfg, prov, hookexec.New(nil), agents.NewRegistry(nil), nil, nil, false, nil)
 
 		tm := team.New("t")
-		sup := agent.NewSupervisor(tm, memEnvironment("/ws"),
+		sup := newTestSupervisor(tm, memEnvironment("/ws"),
 			func(spec agent.MemberSpec, routedModel string) agent.MemberBuild {
 				return factory(tm, spec, routedModel)
 			})

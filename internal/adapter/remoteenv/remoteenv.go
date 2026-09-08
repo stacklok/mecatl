@@ -39,6 +39,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/stacklok/mecatl/engine/adapter/memledger"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 )
@@ -48,7 +49,10 @@ import (
 // engine/session — the EnvironmentKind set is open, and a real remote transport
 // (or another out-of-tree backend) adds its own label without widening the
 // session package.
-const Kind session.EnvironmentKind = "remote-fake"
+const (
+	Kind     session.EnvironmentKind = "remote-fake"
+	revision string                  = "remote-fake-v1"
+)
 
 // ErrUnknownNamespace is returned by Resolve/NewEnvironment when the requested
 // namespace id does not exist in the Backend's registry. A non-in-tree ref
@@ -130,7 +134,7 @@ func (b *Backend) NewEnvironment(label string) (tool.Environment, error) {
 	ns := b.createNamespace(id)
 	ws := &workspace{ns: ns}
 	runner := &runner{ns: ns}
-	return tool.NewEnvironment(session.EnvironmentRef{Kind: Kind, ID: id}, ws, runner)
+	return tool.NewEnvironment(session.EnvironmentRef{Kind: Kind, ID: id, Revision: revision}, ws, memledger.New(), runner)
 }
 
 // Resolve reattaches a LIVE Environment to the namespace named by ref.ID,
@@ -148,7 +152,7 @@ func (b *Backend) Resolve(_ context.Context, ref session.EnvironmentRef) (tool.E
 	}
 	ws := &workspace{ns: ns}
 	runner := &runner{ns: ns}
-	return tool.NewEnvironment(ref, ws, runner)
+	return tool.NewEnvironment(ref, ws, memledger.New(), runner)
 }
 
 // mintID mints a fresh opaque namespace id. The label is folded in for
@@ -506,10 +510,27 @@ type runner struct {
 }
 
 // Compile-time assertion that runner satisfies the runner port.
-var _ tool.CommandRunner = (*runner)(nil)
+var (
+	_ tool.CommandRunner            = (*runner)(nil)
+	_ tool.CommandEnvironmentRunner = (*runner)(nil)
+)
+
+// BoundWorkspaceRoot reports the namespace identity shared with the workspace.
+func (r *runner) BoundWorkspaceRoot() string { return r.ns.id }
 
 // Run executes the tiny test protocol against the bound namespace.
 func (r *runner) Run(ctx context.Context, command string) (tool.CommandResult, error) {
+	return r.run(ctx, command)
+}
+
+// RunWithEnvironment accepts the trusted overlay for CommandRunner conformance.
+// The deterministic remote test protocol has no process environment, so it
+// deliberately leaves the command result unchanged.
+func (r *runner) RunWithEnvironment(ctx context.Context, command string, _ tool.CommandEnvironmentOverlay) (tool.CommandResult, error) {
+	return r.run(ctx, command)
+}
+
+func (r *runner) run(ctx context.Context, command string) (tool.CommandResult, error) {
 	if err := ctx.Err(); err != nil {
 		return tool.CommandResult{}, err
 	}

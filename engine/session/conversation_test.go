@@ -310,7 +310,7 @@ func TestForkMidToolCallRepairedNotOrphaned(t *testing.T) {
 		}
 	}
 	// SeedHistory (idle) must accept it — the real child-build path.
-	child := New("fork-child", ModeDefault, "/ws", Limits{}, time.Unix(0, 0))
+	child := New("fork-child", ModeDefault, EnvironmentRef{Kind: EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, Limits{}, time.Unix(0, 0))
 	if err := child.SeedHistory(snap); err != nil {
 		t.Fatalf("SeedHistory(mid-tool-call snapshot) rejected a repaired history: %v", err)
 	}
@@ -553,7 +553,7 @@ func TestForkEmptyParentConversation(t *testing.T) {
 	if err := ValidateToolPairing(snap); err != nil {
 		t.Fatalf("empty snapshot not pairing-valid: %v", err)
 	}
-	child := New("fork-child", ModeDefault, "/ws", Limits{}, time.Unix(0, 0))
+	child := New("fork-child", ModeDefault, EnvironmentRef{Kind: EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, Limits{}, time.Unix(0, 0))
 	if err := child.SeedHistory(snap); err != nil {
 		t.Fatalf("SeedHistory(empty snapshot) should succeed: %v", err)
 	}

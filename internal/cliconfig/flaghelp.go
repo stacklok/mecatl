@@ -19,21 +19,21 @@ import (
 // above 84 reclaim the indentation depth; below 60 just makes lines short.
 const helpWrapWidth = 84
 
-// PrintDefaultsExcluding writes a flag.FlagSet's defaults in the same format as
-// (*flag.FlagSet).PrintDefaults, skipping any flag whose name is in exclude.
-// It is the ONE filtered-defaults formatter shared by the cmd mains' progressive
-// help renderers, so there is no second hand-rolled PrintDefaults.
+// PrintDefaultsExcluding writes a flag.FlagSet's defaults, skipping any flag
+// whose name is in exclude. It is the ONE filtered-defaults formatter shared by
+// the cmd mains' progressive help renderers, so there is no second hand-rolled
+// PrintDefaults.
 //
 // It does NOT mutate, rebind, or copy the source FlagSet: it iterates the real
 // flags via VisitAll and formats each in place, so original flag.Value defaults
 // are untouched. A nil exclude set (or an empty map) renders every flag.
 //
-// The per-flag formatting mirrors flag.PrintDefaults: the back-quoted/type name
-// from flag.UnquoteUsage, the four-space+tab indent, the embedded-newline
-// rewrite, and the default-value annotation (omitted for zero values, %q for
-// string flags, %v otherwise) computed via the same reflect-based zero check
-// the standard library uses. Long usage strings are word-wrapped to
-// helpWrapWidth so narrow terminals never receive >80-col lines.
+// The per-flag formatting follows flag.PrintDefaults for the back-quoted/type
+// name from flag.UnquoteUsage, indentation, embedded-newline rewrite, and
+// default-value annotation. It deliberately displays multi-character names as
+// conventional long options (--name), while one-character names remain short
+// options (-n). Long usage strings are word-wrapped to helpWrapWidth so narrow
+// terminals never receive >80-col lines.
 func PrintDefaultsExcluding(w io.Writer, fs *flag.FlagSet, exclude map[string]bool) {
 	fs.VisitAll(func(f *flag.Flag) {
 		if exclude != nil && exclude[f.Name] {
@@ -41,6 +41,12 @@ func PrintDefaultsExcluding(w io.Writer, fs *flag.FlagSet, exclude map[string]bo
 		}
 		_, _ = fmt.Fprint(w, formatFlagDefault(f), "\n")
 	})
+}
+
+// PrintDefaults writes every flag using the conventional CLI spelling: --name
+// for multi-character names and -n for one-character aliases.
+func PrintDefaults(w io.Writer, fs *flag.FlagSet) {
+	PrintDefaultsExcluding(w, fs, nil)
 }
 
 // PrintFlagDefault writes a single flag's usage block in the format of
@@ -52,15 +58,19 @@ func PrintFlagDefault(w io.Writer, f *flag.Flag) {
 	_, _ = fmt.Fprint(w, formatFlagDefault(f), "\n")
 }
 
-// formatFlagDefault returns the single-flag usage string flag.PrintDefaults
-// builds internally (without the trailing newline). It starts as a faithful
-// reimplementation of the unexported per-flag body of (*FlagSet).PrintDefaults,
-// then word-wraps the rendered block over helpWrapWidth via wrapUsageLines so
-// the rendered block's longest line (header or continuation) stays within the
-// fixed budget that keeps narrow terminals readable.
+// formatFlagDefault returns the single-flag usage string derived from
+// flag.PrintDefaults (without the trailing newline). It retains the standard
+// library's layout and default annotations but presents long names with two
+// dashes. It then word-wraps the rendered block over helpWrapWidth via
+// wrapUsageLines so the rendered block's longest line (header or continuation)
+// stays within the fixed budget that keeps narrow terminals readable.
 func formatFlagDefault(f *flag.Flag) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "  -%s", f.Name)
+	prefix := "--"
+	if len(f.Name) == 1 {
+		prefix = "-"
+	}
+	fmt.Fprintf(&b, "  %s%s", prefix, f.Name)
 	name, usage := flag.UnquoteUsage(f)
 	if len(name) > 0 {
 		b.WriteString(" ")
@@ -94,16 +104,15 @@ func formatFlagDefault(f *flag.Flag) string {
 const continuationIndent = "    \t"
 
 // wrapUsageLines word-wraps long usage lines to helpWrapWidth. The flag header
-// line ("  -name …") is left alone; continuation lines (the indented usage
+// line ("  --name …" or "  -n …") is left alone; continuation lines (the indented usage
 // body flag.PrintDefaults places beneath the header) are re-wrapped so every
 // rendered continuation line stays within the width budget. Continuation
 // lines are identified by their leading continuationIndent and re-indented
 // after wrapping so the wrapped forms align under the header's continuation
 // column. When the usage body plus indent fits within helpWrapWidth, the block
-// is returned unchanged (byte-identical to the stdlib); multi-line usages
-// keep the same word sequence but are split across re-wrapped continuation
-// lines — the ONLY divergence from flag.PrintDefaults, introduced to keep
-// --help readable at narrow widths.
+// is returned unchanged; multi-line usages keep the same word sequence but are
+// split across re-wrapped continuation lines — the only change after the long-
+// option spelling applied by formatFlagDefault.
 func wrapUsageLines(block string) string {
 	lines := strings.Split(block, "\n")
 	if len(lines) < 2 {

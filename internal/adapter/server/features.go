@@ -74,9 +74,8 @@ const (
 //
 // One *Service backs both the gRPC and the HTTP listener, so this is decided
 // ONCE at startup from the deployment's listener topology (mecated's
-// clientMCPOnCreateForListeners) and handed in — the same shape as
-// Config.WorkspaceAuthority, and for the same reason: a per-connection answer
-// would be a different design needing its own ADR.
+// clientMCPOnCreateForListeners) and handed in. A per-connection answer would
+// be a different design needing its own ADR.
 type FeatureScope struct {
 	// ClientMCPOnCreate reports whether this deployment accepts
 	// CreateSessionRequest.mcp_servers.

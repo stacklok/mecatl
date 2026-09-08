@@ -49,6 +49,15 @@ func approvalSurfaceFor(m *Model) *approvalSurface {
 // current stream before returning the command, preserving the existing resolved
 // correlation and nil-stream behavior without exposing transport to the surface.
 func (m *Model) approvalSendCmd(askID string, verdict client.Verdict) tea.Cmd {
+	if authorizationStream := m.authorization.controlStream; authorizationStream != nil && m.authorization.runningControlGen == m.authorization.controlGen {
+		authorizationStream.MarkApprovalResolved(askID)
+		return func() tea.Msg {
+			if err := authorizationStream.SendApproval(askID, verdict); err != nil {
+				return client.StreamErrMsg{Err: err}
+			}
+			return nil
+		}
+	}
 	stream := m.stream
 	if stream == nil {
 		return nil
@@ -110,6 +119,9 @@ func (m Model) finishApprovalIntent(advance approvalAdvance, resume phase, cmd t
 // applyPermissionAsk reduces a PermissionAskMsg. The surface owns its FIFO and
 // ask state; Model owns the interrupted phase and visible run chrome.
 func (m Model) applyPermissionAsk(msg client.PermissionAskMsg) (tea.Model, tea.Cmd) {
+	if m.authorization.controlStream != nil && m.authorization.controlStream.ApprovalResolved(msg.AskID) {
+		return m.afterEvent()
+	}
 	if m.stream != nil && m.stream.ApprovalResolved(msg.AskID) {
 		return m.afterEvent()
 	}

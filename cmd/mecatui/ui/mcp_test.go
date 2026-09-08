@@ -592,6 +592,40 @@ func TestMCPPromptArgsGolden(t *testing.T) {
 	compareGolden(t, "mcp_prompt_args.golden", got)
 }
 
+// TestMCPPromptArgsOwnsShiftTab ensures the mode-switch default does not escape
+// an active MCP argument form, where Shift+Tab remains form navigation.
+func TestMCPPromptArgsOwnsShiftTab(t *testing.T) {
+	mcp := &fakeMCP{prompts: []client.MCPPrompt{{
+		Server: "review", Name: "code-review", Description: "review a file",
+		Arguments: []client.MCPPromptArgument{
+			{Name: "path", Required: true},
+			{Name: "focus", Required: true},
+		},
+	}}}
+	m := newMCPModel(t, aztec(), mcp)
+	m = openOverlay(t, m, ctrlKey('p'))
+	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = mm.(Model)
+	st := mcpActive(m)
+	if st == nil || st.view != mcpPromptArgs || len(st.argFields) != 2 {
+		t.Fatalf("two-field arg entry not entered: %#v", st)
+	}
+	st.focusArg(1)
+
+	mm, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
+	m = mm.(Model)
+	if cmd != nil {
+		t.Fatal("shift+tab in MCP prompt arguments should not issue SetMode")
+	}
+	if m.activeMode != "default" || m.pendingMode != "" {
+		t.Fatalf("active/pending mode = %q/%q, want default/empty", m.activeMode, m.pendingMode)
+	}
+	st = mcpActive(m)
+	if st == nil || st.view != mcpPromptArgs || st.argCursor != 0 {
+		t.Fatalf("shift+tab should move focus to the first MCP argument, got %#v", st)
+	}
+}
+
 // TestMCPPromptSendIntoInput asserts that getting a prompt drops the rendered
 // text into the prompt input and closes the surface, so the existing Converse
 // flow sends it on enter.

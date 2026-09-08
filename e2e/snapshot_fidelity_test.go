@@ -81,7 +81,7 @@ func snapshotFidelitySpecs() {
 				cli1 := local1.Client()
 				// Explicit haiku selector: the session persists this selector, and the
 				// restart leg must rebuild the SAME engine from it (rehydrateSession).
-				sessionID, _, resolved1, err := cli1.CreateSession(ctx, local1.Workspace(),
+				sessionID, _, resolved1, err := cli1.CreateSession(ctx,
 					client.ModeFromString("default"),
 					client.ModelSelection{ProviderID: harness.ProviderID, ModelID: haikuLane})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "create session on local #1")
@@ -101,9 +101,9 @@ func snapshotFidelitySpecs() {
 				const turn1Prompt = "Reply with exactly the single word: ok. Do not call any tools."
 				gomega.Expect(stream1.SendPrompt(sessionID, turn1Prompt, nil)).To(gomega.Succeed(), "send turn 1 on local #1")
 
-				res1, ok := driveToResult(ctx, stream1, 90*time.Second)
-				gomega.Expect(ok).To(gomega.BeTrue(),
-					"turn 1 on local #1 never reached a terminal result\n--- mecated log tail ---\n"+local1.LogTail(4096))
+				res1, driveErr := driveToResult(ctx, stream1, 90*time.Second)
+				gomega.Expect(driveErr).NotTo(gomega.HaveOccurred(),
+					"drive turn 1 on local #1 to a terminal result\n--- mecated log tail ---\n"+local1.LogTail(4096))
 				// Turn 1 completed cleanly (NOT budget) and recorded REAL provider usage —
 				// that real spend is what must persist and carry the budget across the
 				// restart. (end_turn is the benign clean terminal for a no-tool turn.)
@@ -136,9 +136,9 @@ func snapshotFidelitySpecs() {
 				const turn2Prompt = "Reply with exactly the single word: ok. Do not call any tools."
 				gomega.Expect(stream2.SendPrompt(sessionID, turn2Prompt, nil)).To(gomega.Succeed(), "resume + send turn 2 on local #2")
 
-				res2, ok := driveToResult(ctx, stream2, 90*time.Second)
-				gomega.Expect(ok).To(gomega.BeTrue(),
-					"turn 2 on local #2 never reached a terminal result\n--- mecated log tail ---\n"+local2.LogTail(4096))
+				res2, driveErr := driveToResult(ctx, stream2, 90*time.Second)
+				gomega.Expect(driveErr).NotTo(gomega.HaveOccurred(),
+					"drive turn 2 on local #2 to a terminal result\n--- mecated log tail ---\n"+local2.LogTail(4096))
 
 				// THE ORACLE: the resumed run ends with stop=budget. This holds ONLY if
 				// the rehydrated session carried turn 1's persisted cumulative usage (the

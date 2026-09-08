@@ -59,9 +59,9 @@ type keyMap struct {
 	ScrollTop    key.Binding
 	ScrollBottom key.Binding
 
-	// ModeSwitch (alt+m) cycles the session permission mode: default → plan →
-	// accept-edits → default. Alt-modified so it never collides with prose input;
-	// ctrl+m is avoided because terminals commonly encode it as Enter.
+	// ModeSwitch (shift+tab) cycles the session permission mode: default → plan →
+	// accept-edits → default. Unlike Alt+M, Shift+Tab does not depend on a terminal
+	// mapping macOS Option to Meta, and it never collides with prose input.
 	ModeSwitch key.Binding
 
 	// MCP overlay bindings. MCPPanel toggles the read-only inventory panel;
@@ -201,8 +201,13 @@ func defaultKeys() keyMap {
 			key.WithHelp("ctrl+g", "select all"),
 		),
 		CopySelection: key.NewBinding(
-			key.WithKeys("ctrl+shift+c"),
-			key.WithHelp("ctrl+shift+c", "copy selection"),
+			// ctrl+shift+c is unreachable in most terminals: classic Ctrl+<letter>
+			// control-code encoding has no separate bit for Shift, so many
+			// terminals (and tmux) cannot distinguish it from plain ctrl+c
+			// (Quit). ctrl+y (yank, the classic terminal/vim copy mnemonic) is
+			// a plain single-modifier chord every terminal can send.
+			key.WithKeys("ctrl+y"),
+			key.WithHelp("ctrl+y", "copy selection"),
 		),
 		Quit: key.NewBinding(
 			key.WithKeys("ctrl+c"),
@@ -247,12 +252,12 @@ func defaultKeys() keyMap {
 			key.WithKeys("end"),
 			key.WithHelp("end", "scroll to bottom"),
 		),
-		// alt+m: cycle permission mode. ctrl+m is indistinguishable from Enter
-		// on common terminals (both encode carriage return), so bind this to Alt+M
-		// instead: still modified, but it cannot be swallowed by the submit path.
+		// shift+tab: cycle permission mode. This conventional terminal chord avoids
+		// relying on macOS Option being configured as Meta, while remaining distinct
+		// from the submit path.
 		ModeSwitch: key.NewBinding(
-			key.WithKeys("alt+m"),
-			key.WithHelp("alt+m", "switch mode"),
+			key.WithKeys("shift+tab"),
+			key.WithHelp("shift+tab", "switch mode"),
 		),
 		// ctrl+o / ctrl+r / ctrl+p: control-modified so they never collide with
 		// the textarea's printable input (a bare letter must still type into the

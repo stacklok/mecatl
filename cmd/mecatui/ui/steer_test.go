@@ -39,6 +39,21 @@ func newSteerModel(t *testing.T, steerCap bool) (Model, *fakeConv) {
 	return m, conv
 }
 
+func TestDebugSteerTraceIsVisible(t *testing.T) {
+	m, _ := newSteerModel(t, true)
+	m.steer = &steerState{Sends: []steerQueuedSend{{ID: "steer-live"}}}
+	if got := stripANSIstr(m.steerTrace("ack", "steer-in", "accepted")); got != "" {
+		t.Fatalf("debug-off steer trace = %q, want empty", got)
+	}
+	m.deps.Debug = true
+	got := stripANSIstr(m.steerTrace("ack", "steer-in", "accepted"))
+	for _, want := range []string{"[steer]", "ack", "id=steer-in", "live=steer-live", "accepted"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("canonical debug steer trace %q missing %q", got, want)
+		}
+	}
+}
+
 // enqueueSteer types text and presses enter while running, then RUNS the returned
 // command so the steer frame's Send executes (sendSteer's send is a synchronous
 // tea.Cmd). Returns the updated model.
@@ -806,11 +821,8 @@ func TestSteer_RunningSlashCommandsInterceptLocalBuiltins(t *testing.T) {
 		runBatchLeaves(cmd)
 		m = mm.(Model)
 
-		if m.phase != phaseRunning || m.conv.isEmpty() {
-			t.Fatal("palette /clear must not disrupt a running conversation")
-		}
-		if !strings.Contains(stripANSIstr(m.statusMsg), "cannot clear while running") {
-			t.Fatalf("palette /clear status = %q, want running warning", m.statusMsg)
+		if m.phase != phaseConnecting || m.conv.isEmpty() || m.clearPending == nil {
+			t.Fatalf("palette /clear must preserve the source while its RPC is pending: phase=%v empty=%v pending=%v", m.phase, m.conv.isEmpty(), m.clearPending)
 		}
 		if m.palette.open || m.prompt.Value() != "" {
 			t.Fatalf("palette /clear must close the palette and clear input, open=%t input=%q", m.palette.open, m.prompt.Value())
@@ -826,11 +838,6 @@ func TestSteer_RunningSlashCommandsInterceptLocalBuiltins(t *testing.T) {
 		}
 		if got := steerCancelCount(conv.send); got != 0 {
 			t.Fatalf("palette /clear must not cancel the active steer, sent %d steer_cancel frames", got)
-		}
-
-		m = enqueueSteer(t, m, "second ordinary steer")
-		if got := steerTexts(conv.send); len(got) != 2 || got[1] != "second ordinary steer" {
-			t.Fatalf("run must accept another steer after palette /clear, got %v", got)
 		}
 	})
 

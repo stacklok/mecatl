@@ -3,9 +3,10 @@ package app
 import (
 	"context"
 	"os"
+	"sort"
 	"testing"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
+	"github.com/stacklok/mecatl/engine/adapter/localauthority"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/governance"
@@ -42,6 +43,47 @@ func TestADR_0233_AuthorityEvaluator_Scenario6_MintPopulatesEveryFieldExplicitly
 	}
 }
 
+func TestMintRootAuthorityAddsLatentTeamMemberCapabilities(t *testing.T) {
+	catalog := rootAuthorityCatalog(t)
+	catalog.MustRegister(rootAuthorityTestTool{name: "Team"})
+
+	root := mintRootAuthority(catalog, nil, session.SessionKindMain)
+	latent := root.CapabilitySet.Tools[len(catalog.Tools()):]
+	if !sort.StringsAreSorted(latent) {
+		t.Fatalf("latent member tools = %v, want sorted", latent)
+	}
+	child, err := governance.ConsumeDelegationHop(root.CapabilitySet)
+	if err != nil {
+		t.Fatalf("ConsumeDelegationHop(root): %v", err)
+	}
+	for name := range agent.MemberToolNames() {
+		if _, registered := catalog.Lookup(name); registered {
+			t.Fatalf("parent catalog unexpectedly contains latent member tool %q", name)
+		}
+		if !root.CapabilitySet.AllowsTool(name) || !child.AllowsTool(name) {
+			t.Fatalf("member tool %q was not carried through child derivation: root=%v child=%v", name, root.CapabilitySet.Tools, child.Tools)
+		}
+		decision, err := localauthority.New().AuthorizeTool(context.Background(), port.AuthorityRequest{
+			CapabilitySet: child,
+			ToolName:      name,
+			Action:        name,
+			Principal:     port.AuthorityPrincipal{Definition: root.DefinitionIdentity, Instance: "child"},
+		})
+		if err != nil || !decision.Allowed {
+			t.Fatalf("AuthorizeTool(%q) = (%+v, %v), want allowed", name, decision, err)
+		}
+	}
+}
+
+func TestMintRootAuthorityWithoutTeamExcludesMemberCapabilities(t *testing.T) {
+	root := mintRootAuthority(rootAuthorityCatalog(t), nil, session.SessionKindMain)
+	for name := range agent.MemberToolNames() {
+		if root.CapabilitySet.AllowsTool(name) {
+			t.Fatalf("member tool %q was minted without Team: %v", name, root.CapabilitySet.Tools)
+		}
+	}
+}
+
 func TestAgentDefinitionAuthorityCeilingUsesResolvedToolsAndMCP(t *testing.T) {
 	def := tool.AgentDef{Origin: tool.AgentOriginExplicit, DisallowedTools: []string{"Write"}}
 	got := agentDefinitionAuthorityCeiling(def, []string{"Read", "Write", "mcp__github__issues", "mcp__github__issues"}, []string{governance.MCPResourceCapability("github")}, false)
@@ -67,16 +109,16 @@ func TestADR_0233_AuthorityEvaluator_Scenario6_MintedRootCanDescend(t *testing.T
 
 func TestADR_0233_AuthorityEvaluator_Scenario6_NonSpawnDerivationPointsAreExplicit(t *testing.T) {
 	root := mintRootAuthority(rootAuthorityCatalog(t), nil, session.SessionKindMain)
-	svc, err := server.NewService(server.Config{
-		Engine:        agent.NewEngine(agent.Deps{Catalog: tool.NewCatalog()}),
-		Store:         memstore.New(),
-		Workspaces:    func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+	svc, err := newTestServerService(server.Config{
+		Engine: agent.NewEngine(agent.Deps{Catalog: tool.NewCatalog()}),
+		Store:  memstore.New(),
+
 		RootAuthority: func(session.SessionKind) session.Authority { return root },
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
 	}
-	main, err := svc.CreateSession(context.Background(), "/workspace", session.ModeDefault, session.Limits{})
+	main, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -84,7 +126,7 @@ func TestADR_0233_AuthorityEvaluator_Scenario6_NonSpawnDerivationPointsAreExplic
 	if !bound {
 		t.Fatal("ordinary root has no authority")
 	}
-	forkID, err := svc.ForkSession(context.Background(), main.ID, "", "")
+	forkID, err := svc.ForkSessionSuccessor(context.Background(), server.ForkSuccessorRequest{Source: main.ID})
 	if err != nil {
 		t.Fatalf("ForkSession: %v", err)
 	}
@@ -96,7 +138,7 @@ func TestADR_0233_AuthorityEvaluator_Scenario6_NonSpawnDerivationPointsAreExplic
 	if !bound || !forkAuthority.CapabilitySet.Contains(mainAuthority.CapabilitySet) || !mainAuthority.CapabilitySet.Contains(forkAuthority.CapabilitySet) || forkAuthority.Provenance != mainAuthority.Provenance {
 		t.Fatalf("fork authority = %+v bound=%t, want verbatim source authority %+v", forkAuthority, bound, mainAuthority)
 	}
-	scheduled, err := svc.CreateSessionWithProfile(context.Background(), "/workspace", session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault,
+	scheduled, err := svc.CreateSessionWithProfile(context.Background(), session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault,
 		server.WithScheduledRelationship("nightly", main.ID))
 	if err != nil {
 		t.Fatalf("CreateSessionWithProfile(scheduled): %v", err)

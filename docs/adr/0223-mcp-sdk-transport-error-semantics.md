@@ -4,7 +4,7 @@
 - Date: 2026-08-15
 - Scope: official MCP Go SDK version and streaming-HTTP reconnect boundary
 - Supersedes: none
-- Superseded by: none
+- Superseded by: ADR 0309
 
 ## Context
 

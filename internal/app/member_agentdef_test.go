@@ -39,7 +39,7 @@ func TestMemberMutatingDefKeepsEditWhenMutating(t *testing.T) {
 	tm := team.New("t")
 	factory := memberFactoryForTest(cfg, editCall(), hookexec.New(nil), regOf(def), nil, nil, false, nil)
 
-	sup := agent.NewSupervisor(tm, memEnvironment("/ws"),
+	sup := newTestSupervisor(tm, memEnvironment("/ws"),
 		func(spec agent.MemberSpec, routedModel string) agent.MemberBuild {
 			return factory(tm, spec, routedModel)
 		},
@@ -68,7 +68,7 @@ func TestMemberReadOnlyDefDropsMutating(t *testing.T) {
 	tm := team.New("t")
 	factory := memberFactoryForTest(cfg, editCall(), hookexec.New(nil), regOf(def), nil, nil, false, nil)
 
-	sup := agent.NewSupervisor(tm, memEnvironment("/ws"),
+	sup := newTestSupervisor(tm, memEnvironment("/ws"),
 		func(spec agent.MemberSpec, routedModel string) agent.MemberBuild {
 			return factory(tm, spec, routedModel)
 		})
@@ -145,7 +145,7 @@ func TestMemberReadOnlyAllowlistedToolDispatches(t *testing.T) {
 	)
 	factory := memberFactoryForTest(cfg, grepCall, hookexec.New(nil), regOf(def), nil, nil, false, nil)
 
-	sup := agent.NewSupervisor(tm, memEnvironment("/ws"),
+	sup := newTestSupervisor(tm, memEnvironment("/ws"),
 		func(spec agent.MemberSpec, routedModel string) agent.MemberBuild {
 			return factory(tm, spec, routedModel)
 		})
@@ -178,7 +178,7 @@ func TestMemberUnknownAgentTypeFallsBack(t *testing.T) {
 		t.Fatalf("unknown AgentType mode = %q, want empty (team default)", build.Mode)
 	}
 
-	sup := agent.NewSupervisor(tm, memEnvironment("/ws"),
+	sup := newTestSupervisor(tm, memEnvironment("/ws"),
 		func(spec agent.MemberSpec, routedModel string) agent.MemberBuild {
 			return factory(tm, spec, routedModel)
 		})

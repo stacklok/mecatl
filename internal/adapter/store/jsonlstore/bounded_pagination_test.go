@@ -129,7 +129,7 @@ func TestSessionStorageContinuity_Scenario2_AdapterOpaqueCursor(t *testing.T) {
 
 	mem := memstore.New(memstore.WithNow(func() time.Time { return time.Unix(1_800_000_000, 0).UTC() }))
 	for i := 0; i < 4; i++ {
-		sess := session.New(session.SessionID(fmt.Sprintf("memory-%04d", i)), session.ModeAccept, "", session.Limits{}, time.Unix(1_700_000_000, 0).UTC())
+		sess := session.New(session.SessionID(fmt.Sprintf("memory-%04d", i)), session.ModeAccept, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1_700_000_000, 0).UTC())
 		if err := sess.RestoreLabels(owner, session.Authority{}); err != nil {
 			t.Fatalf("label memory session: %v", err)
 		}

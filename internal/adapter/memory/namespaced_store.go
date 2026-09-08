@@ -236,6 +236,14 @@ func WithWorkspace(ctx context.Context, workspace string) context.Context {
 	return context.WithValue(ctx, memoryWorkspaceKey{}, workspace)
 }
 
+// WorkspaceFromContext returns the private runtime workspace root attached by
+// server composition. It is intentionally not derived from a durable
+// EnvironmentRef, whose ID is provider-opaque.
+func WorkspaceFromContext(ctx context.Context) string {
+	workspace, _ := ctx.Value(memoryWorkspaceKey{}).(string)
+	return workspace
+}
+
 var errCallerStoreIdentityRequired = errors.New("memory: verified caller is required")
 
 // CallerStore chooses a namespace from the verified caller on each operation.

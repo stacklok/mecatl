@@ -1,6 +1,7 @@
 ---
 sidebar_position: 2
 title: Embed the engine directly
+description: Embed the Mecatl engine in your Go service and wire its adapters in process.
 ---
 
 # Embed the engine directly
@@ -9,7 +10,7 @@ Start with [Build your first agent](/building/getting-started/first-agent.md) fo
 the shortest copyable path. This page is the detailed reference for embedders:
 You own the binary. The agent loop runs in-process, wired alongside your existing service code. No gRPC server, no separate process, no TLS handshake — just a Go `import` and a constructor call.
 
-This is the right choice when mecatl needs to live inside a larger service you already operate, when you want fine-grained control over every dependency in your build graph, or when the overhead of standing up a `mecated` process is more than you want to carry.
+This is the right choice when Mecatl needs to live inside a larger service you already operate, when you want fine-grained control over every dependency in your build graph, or when the overhead of standing up a `mecated` process is more than you want to carry.
 
 ---
 
@@ -39,7 +40,7 @@ The engine is a separate Go module: `github.com/stacklok/mecatl/engine`. Its run
 | `github.com/robfig/cron/v3` | Cron expression parsing in `engine/adapter/cronparse` |
 | `go.uber.org/goleak` | Test-only leaked-goroutine detection; never enters a production build |
 
-Nothing from mecatl's heavy require cone — no OpenAI/Anthropic SDKs, no gRPC, no Bubble Tea TUI, no `k8s.io/client-go` — enters your build graph. A `go get github.com/stacklok/mecatl/engine` does not transitively pull the root module.
+Nothing from Mecatl's heavy require cone — no OpenAI/Anthropic SDKs, no gRPC, no Bubble Tea TUI, no `k8s.io/client-go` — enters your build graph. A `go get github.com/stacklok/mecatl/engine` does not transitively pull the root module.
 
 ---
 
@@ -165,16 +166,38 @@ Optional fields with non-trivial defaults:
 | `TokenCounter` | `HeuristicTokenCounter` — character-based estimate. |
 | `ContextWindow` | nil → compaction disabled. Wire a closure that returns the model's window in tokens to enable it. |
 | `MaxNoProgressNudges` | `2` — the loop injects up to two continuation nudges when the model produces an empty/reasoning-only turn before terminating with `StopNoProgress`. |
-| `MaxRunTokens` | `0` — no per-run token budget. Set to a positive value to cap cumulative spend. |
+| `MaxRunTokens` | `0` — no per-engine token budget. Set a positive value to cap an engine session's cumulative spend. The same ceiling is inherited by subagents, Parallel branches, team members, and lead synthesis, but each engine enforces it against its own session usage; child spend is excluded from the parent, so a delegation tree can exceed it. |
 | `Instructions` | `prompt.RootAssembler` — looks for `AGENTS.md` / `CLAUDE.md` at the workspace root. |
+
+### Token budgets with delegation
+
+`Deps.MaxRunTokens` is an independently enforced ceiling for each engine, not a
+shared delegation-tree allowance. A main engine, Subagent, Parallel branch, team
+member, and lead synthesis inherit the configured value, while each checks only its
+own session usage. Child spend is excluded from parent usage, so a delegation tree
+can exceed that ceiling.
+
+For teams, `agent.WithTeamTokenBudget` configures the separate aggregate
+`MaxTeamTokens` equivalent on the `agent.Supervisor`. It is checked between rounds:
+when crossed, it prevents another round, while the current round and lead synthesis
+complete. It is distinct from and composes with `Deps.MaxRunTokens`; it does not
+provide a cross-tree aggregate outside that team.
 
 ---
 
 ## Optional evidence reflection
 
-Embedders can use `engine/learning` to construct an owned, bounded reflection input and
-run its compatibility structural signal detector or the current-span-scoped detector.
-`learning.ThresholdPolicy` is the pure standard admission policy over closed sensitivity,
+Embedders use `learning.MaterializeEvidence` as the storage-neutral selection boundary.
+A `learning.MaterializationRequest` carries the owned trajectory, eligible events, verified
+mandatory span, signals, and explicit limits. The selected result contains one bounded
+`learning.Input`, canonical bytes, and an immutable aggregate manifest; abstained or skipped
+results carry only a closed, content-free reason. Hosts persist the complete manifest with any
+staged proposal and re-materialize its exact original coordinates for detail or approval instead
+of rerunning ranking. New records use `reflection-evidence/v1`; historical input-local evidence
+ordinals remain explicitly `reflection-evidence/legacy-v0`.
+
+The compatibility structural signal detector and current-span-scoped detector operate on the
+bounded input. `learning.ThresholdPolicy` is the pure standard admission policy over closed sensitivity,
 class, reason, request, and decision contracts; `AlwaysPolicy` and `NeverPolicy` are simple
 host alternatives. `Trajectory` additively carries session kind, run counters, and a verified
 current message span. `learning.Activity` is the closed content-free metrics projection.
@@ -201,7 +224,7 @@ Evaluator FAIL remains deny-dominant. Evaluator infrastructure errors durably re
 ERROR verdict before the original error is returned; raw error detail is neither persisted nor logged.
 `engine/adapter/skillfs.AtomicCatalog`
 supplies a complete-generation live Skill tool while preserving existing snapshot sources. Standard
-mecatl composition wires these into its caller-partitioned gRPC/HTTP review surface; an embedder may
+Mecatl composition wires these into its caller-partitioned gRPC/HTTP review surface; an embedder may
 replace every seam.
 
 The engine library seam itself does not choose persistence, schedule jobs, or expose a transport. Hosts
@@ -232,7 +255,7 @@ If you need several of those capabilities, `mecated` (or the `internal/app` comp
 
 ## go.work for monorepo development
 
-The engine is a separate Go module inside the mecatl monorepo, connected via `go.work`. If you develop against a local checkout of mecatl rather than the published module, set up a `go.work` in your own repo's parent:
+The engine is a separate Go module inside the Mecatl monorepo, connected via `go.work`. If you develop against a local checkout of Mecatl rather than the published module, set up a `go.work` in your own repo's parent:
 
 ```sh
 # In your project root (where your go.mod lives):

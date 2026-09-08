@@ -340,6 +340,54 @@ func (f *fakeStreamSessionEventsClient) StreamSessionLive(_ context.Context, in 
 	return fakeServerStreamingClient{f.liveStream}, nil
 }
 
+type fakeAuthorizationClient struct {
+	mecatlv1.HarnessServiceClient
+	stream *fakeRecheckAuthorizationClient
+}
+
+func (f *fakeAuthorizationClient) RecheckMcpAuthorization(context.Context, ...grpc.CallOption) (grpc.BidiStreamingClient[mecatlv1.RecheckMcpAuthorizationRequest, mecatlv1.RecheckMcpAuthorizationResponse], error) {
+	return f.stream, nil
+}
+
+type fakeRecheckAuthorizationClient struct {
+	grpc.BidiStreamingClient[mecatlv1.RecheckMcpAuthorizationRequest, mecatlv1.RecheckMcpAuthorizationResponse]
+	mu   sync.Mutex
+	sent []*mecatlv1.RecheckMcpAuthorizationRequest
+}
+
+func (f *fakeRecheckAuthorizationClient) Send(req *mecatlv1.RecheckMcpAuthorizationRequest) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.sent = append(f.sent, req)
+	return nil
+}
+func (*fakeRecheckAuthorizationClient) Recv() (*mecatlv1.RecheckMcpAuthorizationResponse, error) {
+	return nil, io.EOF
+}
+
+func TestMCPAuthorizationClientSendsInitialThenContinuationApproval(t *testing.T) {
+	wire := &fakeRecheckAuthorizationClient{}
+	stream, err := newFakeClient(&fakeAuthorizationClient{stream: wire}).RecheckMCPAuthorization(t.Context(), "session-1", "authorization:1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stream.MarkApprovalResolved("ask-1")
+	if err := stream.SendApproval("ask-1", VerdictAllowOnce); err != nil {
+		t.Fatal(err)
+	}
+	wire.mu.Lock()
+	defer wire.mu.Unlock()
+	if len(wire.sent) != 2 || wire.sent[0].GetSessionId() != "session-1" || wire.sent[0].GetAuthorizationId() != "authorization:1" || wire.sent[0].GetControl() != nil {
+		t.Fatalf("initial authorization frame = %+v", wire.sent)
+	}
+	if got := wire.sent[1].GetResumeApproval(); got.GetAskId() != "ask-1" || got.GetVerdict() != mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ONCE {
+		t.Fatalf("continuation approval = %+v", got)
+	}
+	if !stream.ApprovalResolved("ask-1") {
+		t.Fatal("authorization stream lost approval dedupe state")
+	}
+}
+
 type liveCmdResult struct {
 	ch   chan tea.Msg
 	stop func()
@@ -490,6 +538,32 @@ func (f *fakeLiveStreamer) StreamSessionLive(_ context.Context, id string) (*Eve
 		return nil, f.err
 	}
 	return NewEventStream(f.stream), nil
+}
+
+// authenticatedLiveStreamerWithoutProvenance deliberately does not implement
+// liveAuthProvenance. LiveStreamCmd must preserve the authenticated provenance
+// already recorded on the returned stream.
+type authenticatedLiveStreamerWithoutProvenance struct{}
+
+func (authenticatedLiveStreamerWithoutProvenance) StreamSessionLive(context.Context, string) (*EventStream, error) {
+	return newAuthenticatedEventStream(funcEventRecver{err: status.Error(codes.Unauthenticated, "rejected")}, true), nil
+}
+
+func TestLiveStreamCmdPreservesReturnedAuthenticatedProvenance(t *testing.T) {
+	ch, stop := LiveStreamCmd(context.Background(), authenticatedLiveStreamerWithoutProvenance{}, "sess-live-auth")
+	defer stop()
+
+	msgs := drain(ch)
+	if len(msgs) != 1 {
+		t.Fatalf("got %d messages, want one StreamErrMsg: %#v", len(msgs), msgs)
+	}
+	got, ok := msgs[0].(StreamErrMsg)
+	if !ok {
+		t.Fatalf("message = %T, want StreamErrMsg", msgs[0])
+	}
+	if got.AuthReason != AuthRejected || got.Transient {
+		t.Errorf("auth error = %#v, want non-transient AuthRejected", got)
+	}
 }
 
 // TestLiveStreamCmd asserts the interface live wrapper routes to the

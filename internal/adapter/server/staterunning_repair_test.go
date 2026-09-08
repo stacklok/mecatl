@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -185,17 +184,17 @@ func TestStartRunContentLeavesLiveRunningSessionAlone(t *testing.T) {
 		Model:   "test-model",
 		Store:   cs,
 	})
-	svc, err := server.NewService(server.Config{
-		Engine:     engine,
-		Store:      cs,
-		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		Now:        func() time.Time { return time.Unix(0, 0) },
+	svc, err := newPlacementTestService(server.Config{
+		Engine: engine,
+		Store:  cs,
+
+		Now: func() time.Time { return time.Unix(0, 0) },
 	})
 	if err != nil {
 		t.Fatalf("new service: %v", err)
 	}
 
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -273,11 +272,11 @@ func TestStartRunContentRejectsDelegationChildSessionID(t *testing.T) {
 				Model:   "test-model",
 				Store:   cs,
 			})
-			svc, err := server.NewService(server.Config{
-				Engine:     engine,
-				Store:      cs,
-				Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-				Now:        func() time.Time { return time.Unix(0, 0) },
+			svc, err := newPlacementTestService(server.Config{
+				Engine: engine,
+				Store:  cs,
+
+				Now: func() time.Time { return time.Unix(0, 0) },
 			})
 			if err != nil {
 				t.Fatalf("new service: %v", err)

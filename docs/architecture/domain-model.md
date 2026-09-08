@@ -128,6 +128,43 @@ verbatim on the assistant message item, never displayed or interpreted (issue
   an error result is still fed back to the model so it can recover.
 - `Usage{InputTokens, OutputTokens, CacheReadTokens, CacheWriteTokens}`
   (`usage.go`) with `CacheHitRate()` and an immutable `Add(other) Usage`.
+- `TokenUsage` is the canonical durable aggregate for model work. It groups totals by
+  a closed usage kind and opaque server-selected provider/model entries; each total is
+  the sum of its entries. `Session.Usage` remains a deprecated lifetime compatibility
+  mirror of `TokenUsage[main]`; the run budget uses internal per-run state rather than
+  the mirror.
+
+### Session titles and durable token accounting
+
+A session starts with its first genuine prompt as a fallback title. An operator can
+replace an idle main-session title through `RenameSession`; that records `operator`
+provenance and permanently stops automatic generation. An explicit compatible
+`models.slots.title` binding records durable `pending` generation intent; no usable
+binding records `disabled`. The `title` slot deliberately has no fallback, so title
+calls are opt-in.
+
+At prompt ingress the aggregate retains only the first three genuine, non-empty
+principal text prompts. Every terminal relay persists a completed exchange before
+submitting bounded asynchronous title work. On startup, the coordinator makes one
+capped initial metadata-page scan for completed eligible sessions that have no
+attempt; it deliberately does not follow the cursor, so restart reconciliation is
+bounded best-effort rather than an inventory sweep. Generated input is fenced untrusted data;
+output is strict, valid UTF-8, normalized to one line, and capped at 80 runes. Title
+metadata has a durable, title-specific revision that advances with every effective
+mutation. Both live `session.title` events and session snapshots carry it; clients
+accept legacy revision `0` only until a positive revision has been observed for the
+active session, then retain only a strictly higher revision. This makes a snapshot
+followed by a delayed older live event converge on the snapshot rather than regress.
+
+A physical call records its input/output tokens only in `TokenUsage[session_title]`,
+attributed to the composition-selected opaque provider/model. It never changes
+`Session.Usage`, a main-run budget, `EvResult` usage, or the conversation. The Service
+emits session-correlated, diagnostics-only lifecycle records for submission, admission,
+claim, generator selection/completion, and conditional commit loss. Completion records
+only outcome, provider/model attribution, token counts, and on failure a stable class
+plus stage; it never records prompt sources, provider error text, credentials, or model
+output. See [ADR 0308](../adr/0308-session-title-generation-and-auxiliary-usage.md)
+and [ADR 0307](../adr/0307-canonical-durable-token-accounting.md).
 
 ### Event taxonomy (`engine/session/event.go`)
 
@@ -137,6 +174,7 @@ API. The real constants:
 | EventType value | Const | Emitted when |
 |---|---|---|
 | `session.init` | `EvSessionInit` | run starts — emitted exactly once, before the SessionStart hook and the first `turn.start` |
+| `session.title` | `EvSessionTitle` | a durable session-title lifecycle change — carries the source-free `TitlePayload` (`Title`, `Provenance`, `GenerationState`, `LatestAttempt`, and durable title `Revision`), never title-source prompts or provider error text |
 | `turn.start` | `EvTurnStart` | beginning of each turn |
 | `turn.end` | `EvTurnEnd` | closes a turn's model exchange, carrying the typed `TurnEndPayload` |
 | `message.delta` | `EvMessageDelta` | streamed assistant text delta |
@@ -157,8 +195,8 @@ API. The real constants:
 | `team.start/member/tasks/findings/end` | `EvTeam*` | an in-process `Team` run's BOUNDED projection (coordinating roster) |
 | `parallel.start/branch/end` | `EvParallel*` | a `Parallel` fork-join run's REDACTED, bounded-preview GROUP projection (join + winner + fork paths) |
 
-`Event` carries `Type, Seq, Turn, Text` plus optional pointers `ToolCall`,
-`ToolResult`, `Ask *PendingAsk`, `Result *ResultPayload`, `TurnEnd *TurnEndPayload`,
+`Event` carries `Type, Seq, Turn, Text` plus the optional `Title *TitlePayload` (set on
+`EvSessionTitle`) and other optional pointers `ToolCall`, `ToolResult`, `Ask *PendingAsk`, `Result *ResultPayload`, `TurnEnd *TurnEndPayload`,
 `Hook *HookPayload`, `Approval *ApprovalPayload`,
 `CompactionArchive *CompactionArchivePayload`, `UserPrompt *UserPromptPayload`,
 `Usage *Usage`, `Subagent`, `Team`, `Parallel` (each set only on its own event

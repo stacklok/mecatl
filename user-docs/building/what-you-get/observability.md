@@ -1,11 +1,12 @@
 ---
 sidebar_position: 7
 title: Observability & resilience
+description: Monitor Mecatl runs with metrics, traces, diagnostics, and resilient model calls.
 ---
 
 # Observability & resilience
 
-mecatl ships three distinct observability channels and a resilience decorator that wraps every LLM provider call. This doc describes what each one emits, what guarantees the LLM layer makes on failure, and which flags control the behavior.
+Mecatl ships three distinct observability channels and a resilience decorator that wraps every LLM provider call. This doc describes what each one emits, what guarantees the LLM layer makes on failure, and which flags control the behavior.
 
 ---
 
@@ -32,7 +33,7 @@ recorder and exporter.
 
 ### Series emitted
 
-All series carry a bounded `role` label (`main`, `subagent`, `member`, `parallel`, `usermodel`, `child`) so you can split per-engine-family without free-text cardinality leaking session ids or model names.
+Engine- and run-derived series carry a bounded `role` label (`main`, `subagent`, `member`, `parallel`, `usermodel`, `child`) so you can split per-engine-family without free-text cardinality leaking session ids or model names. The target-free `mecatl_session_load_failures_total` counter is the deliberate exception: it is emitted by the service load boundary rather than an engine run and carries only `class`.
 
 | Series | Type | Labels | What it measures |
 |---|---|---|---|
@@ -46,6 +47,7 @@ All series carry a bounded `role` label (`main`, `subagent`, `member`, `parallel
 | `mecatl_cache_hit_ratio` | gauge | `role` | Ratio of cache-read tokens to total input tokens |
 | `mecatl_active_runs` | gauge | `role` | Currently running Engine.Run goroutines |
 | `mecatl_permission_asks_total` | counter | `role` | Permission pause events |
+| `mecatl_session_load_failures_total` | counter | `class` | Ownership-concealed non-not-found session loads, classified as `store`, `snapshot`, or `unknown` |
 
 `turn_empty_total` counts `EvNoProgress` emissions — the loop emits one per advisory nudge and once on give-up (up to `MaxNoProgressNudges + 1` per stuck sequence), so `turn_empty_total / turns_total` gives the empty-turn share, not a disjoint count.
 
@@ -90,7 +92,7 @@ Tracing is enabled when `--otlp-endpoint` is non-empty. With an empty endpoint, 
 | `--otlp-protocol` | `grpc` | Transport: `grpc` or `http`. |
 | `--otlp-insecure` | `false` | Skip TLS — useful for a local collector. |
 
-When tracing is active, mecatl models a run/turn/tool span hierarchy. The `EventSink.Emit` call carries the run's context so telemetry can parent a run span to an inbound request span.
+When tracing is active, Mecatl models a run/turn/tool span hierarchy. The `EventSink.Emit` call carries the run's context so telemetry can parent a run span to an inbound request span.
 
 :::note[Concurrent-run span correlation]
 The current span model has a single root per sink. Concurrent runs in the same process do not produce independently correlated spans — all runs on the same sink share the same root. This is a documented limitation; per-run correlation is the planned direction.
@@ -197,6 +199,25 @@ corresponding `session.Event`; the invariant is that events own session facts an
 are not duplicated as log lines. Build-time composition facts are logged once by
 `app.Build`, while per-run diagnostics are session-correlated.
 
+Under caller-ownership enforcement, a storage or snapshot failure while loading a
+session is intentionally reported to the caller as the same NotFound outcome as a
+missing or foreign session. Operators receive one `session load failed` WARN carrying
+only `class=store|snapshot|unknown` and `ownership=enforced`; the companion counter is
+`mecatl_session_load_failures_total`. Neither signal includes the requested session,
+principal, storage key or path, raw error, snapshot content, or snapshot size. Genuine
+missing sessions and foreign-owner concealment remain silent.
+
+Use the bounded class to choose a target-free response:
+
+| Class | Meaning | Safe operator action |
+|---|---|---|
+| `store` | The store could not retrieve the snapshot, including transport failures. | Check backend health, connectivity, credentials, TLS, and timeouts; use backend-wide health signals rather than asking for or logging the requested session ID. |
+| `snapshot` | Bytes were retrieved but the snapshot format, decoding, persisted identity, or validation failed. | Check storage-integrity and mis-keying alerts, then follow the backend's documented backup or repair procedure without copying snapshot contents into logs. |
+| `unknown` | A custom store returned an untyped failure that Mecatl cannot classify safely. | Check the custom adapter's bounded health diagnostics and update it to wrap failures with the public `engine/port` classification contract; do not infer a class from error text. |
+
+The counter identifies a failure family, not a target. It deliberately cannot answer
+which session was requested; do not weaken ownership concealment to obtain that detail.
+
 `provider.route` is an event-stream fact rather than a diagnostic. When the
 serving provider is OpenRouter, it reports the downstream inference provider
 selected for a turn; it may be absent on a cache hit. Configure downstream routing
@@ -212,4 +233,4 @@ The `jsonlstore` backend (selected with `--store-dir`) implements `ToolCallRecor
 
 ## What's next
 
-To configure mecatl for production, see the deployment guide for how to wire an OTLP collector, configure the admin listener, and set up session persistence with `jsonlstore`.
+To configure Mecatl for production, see the deployment guide for how to wire an OTLP collector, configure the admin listener, and set up session persistence with `jsonlstore`.

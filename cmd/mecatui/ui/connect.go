@@ -34,6 +34,8 @@ type ConnectAction uint8
 // ConnectAction values are the closed set of operations main may perform after
 // the TUI exits.
 const (
+	connectCommand = "connect"
+
 	ConnectSaved ConnectAction = iota + 1
 	Reauthenticate
 	RetryAfterCleanup
@@ -175,11 +177,12 @@ func (m Model) updateConnectMsg(msg tea.Msg) (tea.Model, bool) {
 func (m Model) renderConnectOverlay(th theme.Theme) string {
 	var b strings.Builder
 	b.WriteString(th.Style("askTitle").Render("Connect to remote") + "\n\n")
+	budget := cardTextWidth(m.width)
 	if m.connect.err != "" {
-		b.WriteString(th.Style("warning").Render(sanitizeTerminal(m.connect.err)) + "\n\n")
+		b.WriteString(th.Style("warning").Render(wrapCardText(m.connect.err, budget)) + "\n\n")
 	}
 	if hint := connectAuthHint(m.connect.reason, m.connect.failedTarget); hint != "" {
-		b.WriteString(th.Style("muted").Render(hint) + "\n\n")
+		b.WriteString(th.Style("muted").Render(wrapCardText(hint, budget)) + "\n\n")
 	}
 	if m.connect.loading {
 		b.WriteString("Loading saved targets…")
@@ -190,8 +193,8 @@ func (m Model) renderConnectOverlay(th theme.Theme) string {
 		if i == m.connect.cursor {
 			prefix = "> "
 		}
-		b.WriteString(prefix + sanitizeTerminal(target.Target) + "\n")
-		b.WriteString("   " + sanitizeTerminal(target.Issuer) + " · " + sanitizeTerminal(target.ClientID) + " · " + sanitizeTerminal(target.Audience) + "\n")
+		b.WriteString(wrapCardText(prefix+target.Target, budget) + "\n")
+		b.WriteString(wrapCardText("   "+target.Issuer+" · "+target.ClientID+" · "+target.Audience, budget) + "\n")
 	}
 	if !m.connect.targetsUnavailable && m.connect.reason != client.AuthRejected {
 		newRow := len(m.connect.targets)
@@ -199,19 +202,19 @@ func (m Model) renderConnectOverlay(th theme.Theme) string {
 		if m.connect.cursor == newRow {
 			prefix = "> "
 		}
-		b.WriteString(prefix + "Sign in to a new target…\n")
+		b.WriteString(prefix + "OIDC sign-in for a new target…\n")
 	}
 	if m.connect.confirm {
 		label := "Connect to this saved target? Press enter to confirm."
 		sameTarget := m.connect.cursor < len(m.connect.targets) && m.connect.targets[m.connect.cursor].Target == m.connect.failedTarget
 		if m.connect.cursor == len(m.connect.targets) {
-			label = "Continue to add a new target? Press enter to confirm."
+			label = "Continue to OIDC enrollment for a new target? Press enter to confirm."
 		} else if sameTarget {
 			switch m.connect.reason {
 			case client.AuthCredentialCleanup, client.AuthStorageUnavailable:
 				label = "Retry connection without opening a browser? Press enter to confirm."
 			case client.AuthNotEnrolled, client.AuthSessionExpired, client.AuthCredentialUnusable, client.AuthTargetChanged:
-				label = "Sign in again and connect? Press enter to confirm."
+				label = "OIDC sign-in again and connect? Press enter to confirm."
 			}
 		}
 		b.WriteString("\n" + th.Style("warning").Render(label) + "\n")
@@ -222,15 +225,17 @@ func (m Model) renderConnectOverlay(th theme.Theme) string {
 }
 
 func connectAuthHint(reason client.AuthReason, target string) string {
-	if reason == client.AuthNeverEnrolled && target != "" {
-		return "No saved login for " + sanitizeTerminal(target) + ". Run mecatui login " + sanitizeTerminal(target) + " first, then reconnect."
-	}
 	if reason == client.AuthNotEnrolled && target != "" {
-		return "No saved login for " + sanitizeTerminal(target) + ". Select it to sign in, or choose another target."
+		return "The server requires caller authentication. Use --auth-token, or, if this server supports OIDC enrollment, run mecatui login " + sanitizeTerminal(target) + "."
+	}
+	if reason == client.AuthAnonymousRejected && target != "" {
+		return "The server rejected --anonymous because it requires caller authentication. Retry without --anonymous to use saved OIDC, use --auth-token, or, if supported, run mecatui login " + sanitizeTerminal(target) + "."
 	}
 	switch reason {
 	case client.AuthNotEnrolled:
-		return "No saved login for this target. Select it to sign in, or choose another target."
+		return "The server requires caller authentication. Use --auth-token or, if supported, enroll with OIDC."
+	case client.AuthAnonymousRejected:
+		return "The server rejected --anonymous because it requires caller authentication. Retry without --anonymous to use saved OIDC, use --auth-token, or, if supported, enroll with OIDC."
 	case client.AuthSessionExpired:
 		return "Your session expired. Sign in again to reconnect."
 	case client.AuthCredentialUnusable:

@@ -69,11 +69,10 @@ var flagMetaByFlag = map[string]flagMeta{
 	// Advanced — an operator running mecated by hand never sets them — and
 	// server-boundary, so absent from ACP help (a stdio ACP client already has
 	// its parent's lifetime and needs no socket or readiness barrier).
-	"grpc-unix-socket":    {group: groupServer, common: false, acp: acpExclude},
-	"ready-file":          {group: groupServer, common: false, acp: acpExclude},
-	"lifetime-pipe-fd":    {group: groupServer, common: false, acp: acpExclude},
-	"workspace-authority": {group: groupServer, common: false, acp: acpExclude},
-	"metrics-addr":        {group: groupServer, common: false, acp: acpExclude},
+	"grpc-unix-socket": {group: groupServer, common: false, acp: acpExclude},
+	"ready-file":       {group: groupServer, common: false, acp: acpExclude},
+	"lifetime-pipe-fd": {group: groupServer, common: false, acp: acpExclude},
+	"metrics-addr":     {group: groupServer, common: false, acp: acpExclude},
 
 	// ── Security (serve-only) ─────────────────────────────────────────────
 	"auth-token": {group: groupSecurity, common: true, acp: acpExclude},
@@ -87,6 +86,9 @@ var flagMetaByFlag = map[string]flagMeta{
 	"oidc-issuer":             {group: groupSecurity, common: false, acp: acpExclude},
 	"oidc-jwks-uri":           {group: groupSecurity, common: false, acp: acpExclude},
 	"oidc-audience":           {group: groupSecurity, common: false, acp: acpExclude},
+	"oidc-resource":           {group: groupSecurity, common: false, acp: acpExclude},
+	"oidc-client-id":          {group: groupSecurity, common: false, acp: acpExclude},
+	"oidc-scopes":             {group: groupSecurity, common: false, acp: acpExclude},
 	"oidc-max-jwks-staleness": {group: groupSecurity, common: false, acp: acpExclude},
 	// TEST-ONLY SSRF relaxation (see cliconfig.OIDCConfig): not common, and
 	// acpExclude like its siblings — an ACP client has no business setting it.
@@ -116,6 +118,7 @@ var flagMetaByFlag = map[string]flagMeta{
 	"memory-store-url":             {group: groupDriver, common: false, acp: acpExclude},
 	"event-log-url":                {group: groupDriver, common: false, acp: acpExclude},
 	"schedule-store-url":           {group: groupDriver, common: false, acp: acpExclude},
+	"learning-store-url":           {group: groupDriver, common: false, acp: acpExclude},
 	"skill-source-url":             {group: groupDriver, common: false, acp: acpExclude},
 	"soul-source-url":              {group: groupDriver, common: false, acp: acpExclude},
 	"agent-source-url":             {group: groupDriver, common: false, acp: acpExclude},
@@ -421,7 +424,7 @@ func renderGroupedCommon(out io.Writer, fs *flag.FlagSet, common map[string]bool
 }
 
 // writeServeHelpAll renders the exhaustive flag list for `mecated serve --help-all`.
-// It uses the single cliconfig formatter (byte-identical to flag.PrintDefaults).
+// It uses the single cliconfig formatter.
 func writeServeHelpAll(out io.Writer, fs *flag.FlagSet) {
 	_, _ = fmt.Fprintf(out, "Usage: mecated serve [flags]\n\nFlags:\n")
 	cliconfig.PrintDefaultsExcluding(out, fs, nil)

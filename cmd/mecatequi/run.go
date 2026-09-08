@@ -156,18 +156,14 @@ type runOutcome struct {
 // nil error, so the caller maps it via exitCode rather than treating it as a setup
 // failure.
 //
-// workspace is the session root passed to CreateSession (the default profile requires
-// a non-empty workspace). The architect's sketch took only (ctx, svc, prompt, w); the
-// workspace is threaded explicitly because the Service does not expose its configured
-// default and CreateSession needs a concrete root — this keeps run self-contained for
-// the adversarial tests (which pass a memfs root like "/ws").
+// run creates a session on the composition-configured placement and drives one prompt.
 //
 // limits is the per-session stop-limit override (from --max-turns). Any zero field is
 // filled from the Service's DefaultLimits inside CreateSession, so passing the zero
 // value preserves the deployment defaults, and passing only MaxTurns caps turns while
 // the tool-call / failure caps stay at their defaults (never silently disabled).
-func run(ctx context.Context, svc *server.Service, workspace string, limits session.Limits, prompt string, w io.Writer) (runOutcome, error) {
-	sess, err := svc.CreateSession(ctx, workspace, session.ModeDefault, limits)
+func run(ctx context.Context, svc *server.Service, limits session.Limits, prompt string, w io.Writer) (runOutcome, error) {
+	sess, err := svc.CreateSession(ctx, session.ModeDefault, limits)
 	if err != nil {
 		return runOutcome{}, fmt.Errorf("create session: %w", err)
 	}

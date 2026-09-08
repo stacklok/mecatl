@@ -17,7 +17,6 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -38,10 +37,10 @@ func compatibilityInfoService(t *testing.T, deployment string, caps port.Provide
 		Policy:  permpolicy.NewPolicy(nil, nil),
 		Model:   "test-model",
 	})
-	svc, err := server.NewService(server.Config{
-		Engine:              engine,
-		Store:               memstore.New(),
-		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+	svc, err := newPlacementTestService(server.Config{
+		Engine: engine,
+		Store:  memstore.New(),
+
 		Now:                 func() time.Time { return time.Unix(0, 0) },
 		DefaultCapabilities: caps,
 		DeploymentID:        deployment,
@@ -90,7 +89,7 @@ func TestSDKServerEnablers_Scenario1_CompatibilityInfoMatchesCapabilities(t *tes
 	// The capabilities half must be the SAME projection CreateSession echoes. A
 	// second projection would drift and let a server contradict itself about its
 	// own configuration.
-	cs, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{Workspace: "/ws"})
+	cs, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -292,7 +291,7 @@ func TestInvariant_capability_truth_single_intersection(t *testing.T) {
 	}
 
 	// The session echo is the authority and must agree with the one source.
-	cs, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{Workspace: "/ws"})
+	cs, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

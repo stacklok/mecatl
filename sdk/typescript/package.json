@@ -3,10 +3,22 @@
   "version": "0.0.0",
   "description": "TypeScript SDK for the mecatl agentic coding harness",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/stacklok/mecatl.git",
+    "directory": "sdk/typescript"
+  },
+  "homepage": "https://github.com/stacklok/mecatl/tree/main/sdk/typescript#readme",
+  "bugs": {
+    "url": "https://github.com/stacklok/mecatl/issues"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
   "type": "module",
   "sideEffects": false,
   "engines": {
-    "node": ">=24"
+    "node": ">=22"
   },
   "packageManager": "pnpm@11.25.0",
   "files": [
@@ -33,8 +45,11 @@
     "format": "biome check --write .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:browser": "playwright test --config e2e/browser/playwright.config.ts",
+    "test:macos-spawn": "vitest run --config vitest.e2e.config.ts e2e/macos-spawn.e2e.test.ts",
     "test:e2e": "vitest run --config vitest.e2e.config.ts",
     "build": "node --input-type=module --eval \"import { rmSync } from 'node:fs'; rmSync('dist', { recursive: true, force: true });\" && tsc -p tsconfig.build.json",
+    "examples:typecheck": "tsc -p examples/tsconfig.json",
     "api:check": "api-extractor run --config api-extractor.json && api-extractor run --config api-extractor.node.json",
     "api:update": "api-extractor run --local --config api-extractor.json && api-extractor run --local --config api-extractor.node.json",
     "prepack": "pnpm run build"
@@ -42,13 +57,19 @@
   "devDependencies": {
     "@biomejs/biome": "2.5.11",
     "@microsoft/api-extractor": "7.59.0",
+    "@playwright/test": "1.63.0",
     "@types/node": "24.13.3",
     "typescript": "6.0.3",
+    "typescript-5.7": "npm:typescript@5.7.3",
     "vitest": "4.1.11"
   },
   "dependencies": {
     "@bufbuild/protobuf": "2.14.0",
     "@connectrpc/connect": "2.1.2",
-    "@connectrpc/connect-node": "2.1.2"
+    "@connectrpc/connect-node": "2.1.2",
+    "ajv": "8.20.0"
+  },
+  "dependencyLicenses": {
+    "ajv": "MIT"
   }
 }

@@ -14,7 +14,6 @@ import (
 	"google.golang.org/grpc/status"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -130,10 +129,10 @@ func mcpService(t *testing.T, provider mcp.Provider, sources []source.SourceInfo
 		Policy:  permpolicy.NewPolicy(allowRules(), nil),
 		Model:   "test-model",
 	})
-	svc, err := server.NewService(server.Config{
-		Engine:      engine,
-		Store:       memstore.New(),
-		Workspaces:  func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+	svc, err := newPlacementTestService(server.Config{
+		Engine: engine,
+		Store:  memstore.New(),
+
 		Now:         func() time.Time { return time.Unix(0, 0) },
 		MCPProvider: provider,
 		MCPSources:  sources,
@@ -341,10 +340,10 @@ func TestServiceMcpSourceProberReflectsLiveStatus(t *testing.T) {
 		Policy:  permpolicy.NewPolicy(allowRules(), nil),
 		Model:   "test-model",
 	})
-	svc, err := server.NewService(server.Config{
-		Engine:     engine,
-		Store:      memstore.New(),
-		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+	svc, err := newPlacementTestService(server.Config{
+		Engine: engine,
+		Store:  memstore.New(),
+
 		Now:        func() time.Time { return time.Unix(0, 0) },
 		MCPSources: startup, // cached fallback
 		MCPSourceProber: func(_ context.Context) []source.SourceInfo {
@@ -381,10 +380,10 @@ func TestServiceMcpSourceProberFailSoft(t *testing.T) {
 		Policy:  permpolicy.NewPolicy(allowRules(), nil),
 		Model:   "test-model",
 	})
-	svc, err := server.NewService(server.Config{
-		Engine:          engine,
-		Store:           memstore.New(),
-		Workspaces:      func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+	svc, err := newPlacementTestService(server.Config{
+		Engine: engine,
+		Store:  memstore.New(),
+
 		Now:             func() time.Time { return time.Unix(0, 0) },
 		MCPSources:      cannedSources(),
 		MCPSourceProber: func(_ context.Context) []source.SourceInfo { return nil },

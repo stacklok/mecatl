@@ -1,6 +1,7 @@
 ---
 sidebar_position: 6
 title: PermissionPolicy
+description: Implement a permission policy for custom authorization and tool approval decisions.
 ---
 
 # PermissionPolicy

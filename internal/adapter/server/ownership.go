@@ -16,7 +16,8 @@ func (s *Service) ownsResource(ctx context.Context, owner *session.Principal) bo
 	if !s.cfg.OwnershipEnforced {
 		return true
 	}
-	return owner != nil && owner.SameIdentity(session.PrincipalFromContext(ctx))
+	caller := session.PrincipalFromContext(ctx)
+	return owner != nil && owner.SameIdentity(caller)
 }
 
 func (s *Service) authorizeSession(ctx context.Context, sess *session.Session) error {

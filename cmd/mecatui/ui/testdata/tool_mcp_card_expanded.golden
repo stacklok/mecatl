@@ -2,63 +2,62 @@
 │ … GitHub · Issue write                                                                        │
 │ mcp__github__issue_write                                                                      │
 │ {                                                                                             │
-│   "body": "## Context\nthis is line content padding to grow the body well past four           │
-│ kilobytes\nthis is line content padding to grow the body well past four kilobytes\nthis is    │
-│ line content padding to grow the body well past four kilobytes\nthis is line content padding  │
-│ to grow the body well past four kilobytes\nthis is line content padding to grow the body well │
-│ past four kilobytes\nthis is line content padding to grow the body well past four             │
-│ kilobytes\nthis is line content padding to grow the body well past four kilobytes\nthis is    │
-│ line content padding to grow the body well past four kilobytes\nthis is line content padding  │
-│ to grow the body well past four kilobytes\nthis is line content padding to grow the body well │
-│ past four kilobytes\nthis is line content padding to grow the body well past four             │
-│ kilobytes\nthis is line content padding to grow the body well past four kilobytes\nthis is    │
-│ line content padding to grow the body well past four kilobytes\nthis is line content padding  │
-│ to grow the body well past four kilobytes\nthis is line content padding to grow the body well │
-│ past four kilobytes\nthis is line content padding to grow the body well past four             │
-│ kilobytes\nthis is line content padding to grow the body well past four kilobytes\nthis is    │
-│ line content padding to grow the body well past four kilobytes\nthis is line content padding  │
-│ to grow the body well past four kilobytes\nthis is line content padding to grow the body well │
-│ past four kilobytes\nthis is line content padding to grow the body well past four             │
-│ kilobytes\nthis is line content padding to grow the body well past four kilobytes\nthis is    │
-│ line content padding to grow the body well past four kilobytes\nthis is line content padding  │
-│ to grow the body well past four kilobytes\nthis is line content padding to grow the body well │
-│ past four kilobytes\nthis is line content padding to grow the body well past four             │
-│ kilobytes\nthis is line content padding to grow the body well past four kilobytes\nthis is    │
-│ line content padding to grow the body well past four kilobytes\nthis is line content padding  │
-│ to grow the body well past four kilobytes\nthis is line content padding to grow the body well │
-│ past four kilobytes\nthis is line content padding to grow the body well past four             │
-│ kilobytes\nthis is line content padding to grow the body well past four kilobytes\nthis is    │
-│ line content padding to grow the body well past four kilobytes\nthis is line content padding  │
-│ to grow the body well past four kilobytes\nthis is line content padding to grow the body well │
-│ past four kilobytes\nthis is line content padding to grow the body well past four             │
-│ kilobytes\nthis is line content padding to grow the body well past four kilobytes\nthis is    │
-│ line content padding to grow the body well past four kilobytes\nthis is line content padding  │
-│ to grow the body well past four kilobytes\nthis is line content padding to grow the body well │
-│ past four kilobytes\nthis is line content padding to grow the body well past four             │
-│ kilobytes\nthis is line content padding to grow the body well past four kilobytes\nthis is    │
-│ line content padding to grow the body well past four kilobytes\nthis is line content padding  │
-│ to grow the body well past four kilobytes\nthis is line content padding to grow the body well │
-│ past four kilobytes\nthis is line content padding to grow the body well past four             │
-│ kilobytes\nthis is line content padding to grow the body well past four kilobytes\nthis is    │
-│ line content padding to grow the body well past four kilobytes\nthis is line content padding  │
-│ to grow the body well past four kilobytes\nthis is line content padding to grow the body well │
-│ past four kilobytes\nthis is line content padding to grow the body well past four             │
-│ kilobytes\nthis is line content padding to grow the body well past four kilobytes\nthis is    │
-│ line content padding to grow the body well past four kilobytes\nthis is line content padding  │
-│ to grow the body well past four kilobytes\nthis is line content padding to grow the body well │
-│ past four kilobytes\nthis is line content padding to grow the body well past four             │
-│ kilobytes\nthis is line content padding to grow the body well past four kilobytes\nthis is    │
-│ line content padding to grow the body well past four kilobytes\nthis is line content padding  │
-│ to grow the body well past four kilobytes\nthis is line content padding to grow the body well │
-│ past four kilobytes\nthis is line content padding to grow the body well past four             │
-│ kilobytes\nthis is line content padding to grow the body well past four kilobytes\nthis is    │
-│ line content padding to grow the body well past four kilobytes\nthis is line content padding  │
-│ to grow the body well past four kilobytes\nthis is line content padding to grow the body well │
-│ past four kilobytes\nthis is line content padding to grow the body well past four             │
-│ kilobytes\nthis is line content padding to grow the body well past four kilobytes\nthis is    │
-│ line content padding to grow the body well past four kilobytes\nthis is line content padding  │
-│ to grow the body well past four kilobytes\nthis is line content padding to grow the body well │
-│ past four kilobytes\nthis is line content padding to grow the body well past four kilobytes", │
+│   "body": "## Context\nthis is line content padding to grow the body well past four kilobytes │
+│ \nthis is line content padding to grow the body well past four kilobytes\nthis is line conten │
+│ t padding to grow the body well past four kilobytes\nthis is line content padding to grow the │
+│  body well past four kilobytes\nthis is line content padding to grow the body well past four  │
+│ kilobytes\nthis is line content padding to grow the body well past four kilobytes\nthis is li │
+│ ne content padding to grow the body well past four kilobytes\nthis is line content padding to │
+│  grow the body well past four kilobytes\nthis is line content padding to grow the body well p │
+│ ast four kilobytes\nthis is line content padding to grow the body well past four kilobytes\nt │
+│ his is line content padding to grow the body well past four kilobytes\nthis is line content p │
+│ adding to grow the body well past four kilobytes\nthis is line content padding to grow the bo │
+│ dy well past four kilobytes\nthis is line content padding to grow the body well past four kil │
+│ obytes\nthis is line content padding to grow the body well past four kilobytes\nthis is line  │
+│ content padding to grow the body well past four kilobytes\nthis is line content padding to gr │
+│ ow the body well past four kilobytes\nthis is line content padding to grow the body well past │
+│  four kilobytes\nthis is line content padding to grow the body well past four kilobytes\nthis │
+│  is line content padding to grow the body well past four kilobytes\nthis is line content padd │
+│ ing to grow the body well past four kilobytes\nthis is line content padding to grow the body  │
+│ well past four kilobytes\nthis is line content padding to grow the body well past four kiloby │
+│ tes\nthis is line content padding to grow the body well past four kilobytes\nthis is line con │
+│ tent padding to grow the body well past four kilobytes\nthis is line content padding to grow  │
+│ the body well past four kilobytes\nthis is line content padding to grow the body well past fo │
+│ ur kilobytes\nthis is line content padding to grow the body well past four kilobytes\nthis is │
+│  line content padding to grow the body well past four kilobytes\nthis is line content padding │
+│  to grow the body well past four kilobytes\nthis is line content padding to grow the body wel │
+│ l past four kilobytes\nthis is line content padding to grow the body well past four kilobytes │
+│ \nthis is line content padding to grow the body well past four kilobytes\nthis is line conten │
+│ t padding to grow the body well past four kilobytes\nthis is line content padding to grow the │
+│  body well past four kilobytes\nthis is line content padding to grow the body well past four  │
+│ kilobytes\nthis is line content padding to grow the body well past four kilobytes\nthis is li │
+│ ne content padding to grow the body well past four kilobytes\nthis is line content padding to │
+│  grow the body well past four kilobytes\nthis is line content padding to grow the body well p │
+│ ast four kilobytes\nthis is line content padding to grow the body well past four kilobytes\nt │
+│ his is line content padding to grow the body well past four kilobytes\nthis is line content p │
+│ adding to grow the body well past four kilobytes\nthis is line content padding to grow the bo │
+│ dy well past four kilobytes\nthis is line content padding to grow the body well past four kil │
+│ obytes\nthis is line content padding to grow the body well past four kilobytes\nthis is line  │
+│ content padding to grow the body well past four kilobytes\nthis is line content padding to gr │
+│ ow the body well past four kilobytes\nthis is line content padding to grow the body well past │
+│  four kilobytes\nthis is line content padding to grow the body well past four kilobytes\nthis │
+│  is line content padding to grow the body well past four kilobytes\nthis is line content padd │
+│ ing to grow the body well past four kilobytes\nthis is line content padding to grow the body  │
+│ well past four kilobytes\nthis is line content padding to grow the body well past four kiloby │
+│ tes\nthis is line content padding to grow the body well past four kilobytes\nthis is line con │
+│ tent padding to grow the body well past four kilobytes\nthis is line content padding to grow  │
+│ the body well past four kilobytes\nthis is line content padding to grow the body well past fo │
+│ ur kilobytes\nthis is line content padding to grow the body well past four kilobytes\nthis is │
+│  line content padding to grow the body well past four kilobytes\nthis is line content padding │
+│  to grow the body well past four kilobytes\nthis is line content padding to grow the body wel │
+│ l past four kilobytes\nthis is line content padding to grow the body well past four kilobytes │
+│ \nthis is line content padding to grow the body well past four kilobytes\nthis is line conten │
+│ t padding to grow the body well past four kilobytes\nthis is line content padding to grow the │
+│  body well past four kilobytes\nthis is line content padding to grow the body well past four  │
+│ kilobytes\nthis is line content padding to grow the body well past four kilobytes\nthis is li │
+│ ne content padding to grow the body well past four kilobytes\nthis is line content padding to │
+│  grow the body well past four kilobytes\nthis is line content padding to grow the body well p │
+│ ast four kilobytes",                                                                          │
 │   "labels": [                                                                                 │
 │     "enhancement"                                                                             │
 │   ],                                                                                          │

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft-07/schema#",
   "type": "object",
   "additionalProperties": false,
-  "required": ["image", "redis"],
+  "required": ["image", "redis", "learning"],
   "properties": {
     "image": {
       "type": "object",
@@ -18,13 +18,15 @@
     "redis": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["endpoint", "credentialsSecret", "passwordKey", "caKey", "usernameKey", "local"],
+      "required": ["endpoint", "credentialsSecret", "passwordKey", "caKey", "usernameKey", "filesystem", "readLedger", "local"],
       "properties": {
         "endpoint": {"type": "string"},
         "credentialsSecret": {"type": "string"},
         "passwordKey": {"type": "string"},
         "caKey": {"type": "string"},
         "usernameKey": {"type": "string"},
+        "filesystem": {"type": "object", "additionalProperties": false, "required": ["enabled"], "properties": {"enabled": {"type": "boolean"}}},
+        "readLedger": {"type": "object", "additionalProperties": false, "required": ["enabled"], "properties": {"enabled": {"type": "boolean"}}},
         "local": {"type": "object", "additionalProperties": false, "required": ["enabled"], "properties": {"enabled": {"type": "boolean"}}}
       }
     },
@@ -40,7 +42,10 @@
         "maxJWKSStaleness": {"type": "string"},
         "allowPrivateHTTPSIssuer": {"type": "boolean"},
         "caSecret": {"type": "string"},
-        "caKey": {"type": "string"}
+        "caKey": {"type": "string"},
+        "resource": {"type": "string"},
+        "clientID": {"type": "string"},
+        "scopes": {"type": "array", "items": {"type": "string"}}
       }
     },
     "tls": {
@@ -75,13 +80,22 @@
     },
     "maxRunTokens": {"type": ["integer", "null"], "minimum": 1},
     "maxTeamTokens": {"type": ["integer", "null"], "minimum": 1},
+    "terminationGracePeriodSeconds": {"type": "integer", "minimum": 1},
     "workspace": {"type": "string"},
     "imagePullSecrets": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["name"], "properties": {"name": {"type": "string", "minLength": 1}}}},
     "mcp": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["servers"],
+      "required": ["broker", "servers"],
       "properties": {
+        "broker": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["callbackURL"],
+          "properties": {
+            "callbackURL": {"type": "string", "anyOf": [{"const": ""}, {"pattern": "^https://[^@/\\s#]+(?:/[^\\s?#]*)?$"}]}
+          }
+        },
         "servers": {
           "type": "array",
           "items": {
@@ -105,11 +119,27 @@
                   },
                   "oauth": {
                     "type": "object", "additionalProperties": false,
-                    "required": ["profile", "principal", "issuer", "client", "scopes", "credentials", "network"],
+                    "required": ["client", "scopes", "network"],
                     "properties": {
-                      "profile": {"type": "string", "minLength": 1},
-                      "principal": {"type": "string", "minLength": 1},
                       "issuer": {"type": "string", "pattern": "^https://[^@/?#\\s]+(?::[0-9]+)?$"},
+                      "upstream": {
+                        "type": "object", "additionalProperties": false, "required": ["mode"],
+                        "properties": {
+                          "mode": {"type": "string", "enum": ["oidc", "oauth2"]},
+                          "oauth2": {
+                            "type": "object", "additionalProperties": false,
+                            "required": ["authorizationEndpoint", "tokenEndpoint"],
+                            "properties": {
+                              "authorizationEndpoint": {"type": "string", "pattern": "^https://[^@/?#\\s]+(?:/[^\\s#]*)?$"},
+                              "tokenEndpoint": {"type": "string", "pattern": "^https://[^@/?#\\s]+(?:/[^\\s#]*)?$"}
+                            }
+                          }
+                        },
+                        "oneOf": [
+                          {"properties": {"mode": {"const": "oidc"}}, "not": {"required": ["oauth2"]}},
+                          {"properties": {"mode": {"const": "oauth2"}}, "required": ["oauth2"]}
+                        ]
+                      },
                       "client": {
                         "type": "object", "additionalProperties": false, "required": ["mode"],
                         "properties": {
@@ -130,13 +160,6 @@
                       },
                       "scopes": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
                       "requestRefreshToken": {"type": "boolean", "default": false},
-                      "credentials": {
-                        "type": "object", "additionalProperties": false, "required": ["secretKeyRef"],
-                        "properties": {
-                          "secretKeyRef": {"$ref": "#/definitions/secretKeyRef"},
-                          "allowProcessLocalRefresh": {"type": "boolean", "default": false}
-                        }
-                      },
                       "network": {
                         "type": "object", "additionalProperties": false,
                         "required": ["additionalOrigins", "privateOrigins", "maxRedirects"],
@@ -145,8 +168,26 @@
                           "privateOrigins": {"type": "array", "items": {"type": "string", "pattern": "^https?://[^@/?#\\s]+(?::[0-9]+)?$"}},
                           "maxRedirects": {"type": "integer", "minimum": 0, "maximum": 5}
                         }
+                      },
+                      "tools": {
+                        "type": "array",
+                        "items": {
+                          "type": "object", "additionalProperties": false,
+                          "required": ["name", "description", "inputSchema"],
+                          "properties": {
+                            "name": {"type": "string", "minLength": 1},
+                            "description": {"type": "string", "minLength": 1},
+                            "inputSchema": {"type": "object"},
+                            "readOnly": {"type": "boolean", "default": false}
+                          }
+                        }
                       }
-                    }
+                    },
+                    "oneOf": [
+                      {"not": {"required": ["upstream"]}, "required": ["issuer"]},
+                      {"required": ["issuer", "upstream"], "properties": {"upstream": {"properties": {"mode": {"const": "oidc"}}}}},
+                      {"required": ["upstream"], "not": {"required": ["issuer"]}, "properties": {"upstream": {"properties": {"mode": {"const": "oauth2"}}}}}
+                    ]
                   }
                 },
                 "oneOf": [
@@ -154,6 +195,36 @@
                   {"properties": {"mode": {"const": "staticBearer"}}, "required": ["staticBearer"], "not": {"required": ["oauth"]}},
                   {"properties": {"mode": {"const": "oauth"}}, "required": ["oauth"], "not": {"required": ["staticBearer"]}}
                 ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "learning": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["store"],
+      "properties": {
+        "store": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["endpoint", "tokenSecret", "tokenKey", "tls"],
+          "properties": {
+            "endpoint": {"type": "string", "pattern": "^(|(?:[A-Za-z0-9.-]+|\\[[0-9A-Fa-f:]+\\]):[0-9]+)$"},
+            "tokenSecret": {"type": "string"},
+            "tokenKey": {"type": "string"},
+            "tls": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["enabled", "caSecret", "caKey", "mtlsSecret", "certKey", "keyKey"],
+              "properties": {
+                "enabled": {"type": "boolean"},
+                "caSecret": {"type": "string"},
+                "caKey": {"type": "string"},
+                "mtlsSecret": {"type": "string"},
+                "certKey": {"type": "string"},
+                "keyKey": {"type": "string"}
               }
             }
           }
@@ -253,6 +324,10 @@
   },
   "allOf": [
     {
+      "if": {"properties": {"redis": {"properties": {"filesystem": {"properties": {"enabled": {"const": true}}}}}}},
+      "then": {"properties": {"workspace": {"maxLength": 0}}}
+    },
+    {
       "if": {
         "required": ["mockProvider"],
         "properties": {"mockProvider": {"const": true}}
@@ -330,6 +405,54 @@
             "properties": {"type": {"const": "ClusterIP"}}
           }
         }
+      }
+    },
+    {
+      "if": {"properties": {"learning": {"properties": {"store": {"properties": {"tokenSecret": {"minLength": 1}}}}}}},
+      "then": {"properties": {"learning": {"properties": {"store": {"properties": {"tokenKey": {"minLength": 1}}}}}}}
+    },
+    {
+      "if": {"properties": {"learning": {"properties": {"store": {"properties": {"tokenKey": {"minLength": 1}}}}}}},
+      "then": {"properties": {"learning": {"properties": {"store": {"properties": {"tokenSecret": {"minLength": 1}}}}}}}
+    },
+    {
+      "if": {"properties": {"learning": {"properties": {"store": {"properties": {"tls": {"anyOf": [{"properties": {"caSecret": {"minLength": 1}}}, {"properties": {"caKey": {"minLength": 1}}}, {"properties": {"mtlsSecret": {"minLength": 1}}}, {"properties": {"certKey": {"minLength": 1}}}, {"properties": {"keyKey": {"minLength": 1}}}]}}}}}}},
+      "then": {"properties": {"learning": {"properties": {"store": {"properties": {"tls": {"properties": {"enabled": {"const": true}}}}}}}}}
+    },
+    {
+      "if": {"properties": {"learning": {"properties": {"store": {"properties": {"tls": {"anyOf": [{"properties": {"caSecret": {"minLength": 1}}}, {"properties": {"caKey": {"minLength": 1}}}]}}}}}}},
+      "then": {"properties": {"learning": {"properties": {"store": {"properties": {"tls": {"properties": {"caSecret": {"minLength": 1}, "caKey": {"minLength": 1}}}}}}}}}
+    },
+    {
+      "if": {"properties": {"learning": {"properties": {"store": {"properties": {"tls": {"anyOf": [{"properties": {"mtlsSecret": {"minLength": 1}}}, {"properties": {"certKey": {"minLength": 1}}}, {"properties": {"keyKey": {"minLength": 1}}}]}}}}}}},
+      "then": {"properties": {"learning": {"properties": {"store": {"properties": {"tls": {"properties": {"mtlsSecret": {"minLength": 1}, "certKey": {"minLength": 1}, "keyKey": {"minLength": 1}}}}}}}}}
+    },
+    {
+      "if": {"properties": {"learning": {"properties": {"store": {"properties": {"endpoint": {"minLength": 1}, "tokenSecret": {"minLength": 1}, "tokenKey": {"minLength": 1}, "tls": {"properties": {"enabled": {"const": false}}}}}}}}},
+      "then": {"properties": {"learning": {"properties": {"store": {"properties": {"endpoint": {"pattern": "^(localhost|127(\\.[0-9]{1,3}){3}|\\[::1\\]):[0-9]+$"}}}}}}}
+    },
+    {
+      "if": {"properties": {"oidc": {"properties": {"enabled": {"const": true}}}, "learning": {"properties": {"store": {"properties": {"endpoint": {"minLength": 1}}}}}}},
+      "then": false
+    },
+    {
+      "if": {
+        "required": ["mcp"],
+        "properties": {
+          "mcp": {
+            "required": ["broker"],
+            "properties": {
+              "broker": {
+                "required": ["callbackURL"],
+                "properties": {"callbackURL": {"minLength": 1}}
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "required": ["replicaCount"],
+        "properties": {"replicaCount": {"const": 1}}
       }
     }
   ],

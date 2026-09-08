@@ -146,8 +146,8 @@ func TestCallerSeparation_Scenario4_OwnerlessCutoverIsObservableAndSafe(t *testi
 	bob := &session.Principal{Issuer: alice.Issuer, Subject: "bob", GrantType: session.GrantTypeUser}
 	admin := &session.Principal{Issuer: alice.Issuer, Subject: "storage-admin", GrantType: session.GrantTypeUser}
 	created := time.Now().Add(-2 * time.Hour)
-	legacy := session.New("legacy-ownerless", session.ModeDefault, workspace, session.Limits{}, created)
-	owned := session.New("alice-owned", session.ModeDefault, workspace, session.Limits{}, created)
+	legacy := session.New("legacy-ownerless", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: workspace, Revision: "in-tree-v1"}, session.Limits{}, created)
+	owned := session.New("alice-owned", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: workspace, Revision: "in-tree-v1"}, session.Limits{}, created)
 	if err := owned.RestoreLabels(alice, session.Authority{}); err != nil {
 		t.Fatal(err)
 	}
@@ -164,7 +164,8 @@ func TestCallerSeparation_Scenario4_OwnerlessCutoverIsObservableAndSafe(t *testi
 	ownedSchedule := legacySchedule
 	ownedSchedule.Spec.Name = "alice-schedule"
 	ownedSchedule.Spec.Owner = alice.Clone()
-	ownedSchedule.Spec.Workspace = workspace
+	ownedSchedule.Spec.EnvironmentRef = session.EnvironmentRef{Kind: session.EnvKindLocal, ID: localDefaultPlacementID, Revision: localDefaultPlacementRevision}
+	ownedSchedule.Spec.PlacementScope = string(defaultPlacementScope)
 	for _, schedule := range []port.Schedule{legacySchedule, ownedSchedule} {
 		if err := scheduleStore.Save(ctx, schedule); err != nil {
 			t.Fatal(err)
@@ -281,7 +282,7 @@ func TestCallerSeparation_Scenario4_OwnerlessCutoverIsObservableAndSafe(t *testi
 	if err != nil {
 		t.Fatalf("ownerless session was mutated/deleted after cutover: %v", err)
 	}
-	if legacyAfter.Owner != nil || legacyAfter.State != legacy.State || legacyAfter.Workspace != legacy.Workspace {
+	if legacyAfter.Owner != nil || legacyAfter.State != legacy.State || legacyAfter.EnvironmentRef != legacy.EnvironmentRef {
 		t.Fatalf("ownerless session changed after cutover: %+v", legacyAfter)
 	}
 	if _, err := after.Load(ctx, owned.ID); !errors.Is(err, port.ErrSessionNotFound) {

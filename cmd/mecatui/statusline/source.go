@@ -18,6 +18,39 @@ type Source interface {
 	Close(context.Context) error
 }
 
+// CommandDiagnosticsSource is optionally implemented by command-backed sources.
+// Template and default sources intentionally expose no command diagnostics.
+type CommandDiagnosticsSource interface {
+	CommandDiagnostics() CommandDiagnostics
+}
+
+// CommandDiagnostics is the safe, coarse status of the latest completed command.
+// Its fields are closed vocabularies: Header/Footer are default, custom, or stale;
+// Error is none, unsupported, timeout, output_limit, invalid_statusml, exit, or failed.
+type CommandDiagnostics struct {
+	Header string
+	Footer string
+	Error  string
+}
+
+// CommandSurfaceDefault, CommandSurfaceCustom, and CommandSurfaceStale describe
+// whether the latest command result uses a shipped, custom, or stale surface.
+// CommandErrorNone, CommandErrorUnsupported, CommandErrorTimeout,
+// CommandErrorOutputLimit, CommandErrorInvalidStatusML, CommandErrorExit, and
+// CommandErrorFailed classify a command result without exposing failure details.
+const (
+	CommandSurfaceDefault       = "default"
+	CommandSurfaceCustom        = "custom"
+	CommandSurfaceStale         = "stale"
+	CommandErrorNone            = "none"
+	CommandErrorUnsupported     = "unsupported"
+	CommandErrorTimeout         = "timeout"
+	CommandErrorOutputLimit     = "output_limit"
+	CommandErrorInvalidStatusML = "invalid_statusml"
+	CommandErrorExit            = "exit"
+	CommandErrorFailed          = "failed"
+)
+
 // Result holds independently selected semantic surfaces. It never contains
 // terminal rendering or control sequences.
 type Result struct {
@@ -47,6 +80,8 @@ type renderedStatusLine struct {
 	headerSupplied bool
 	footerSupplied bool
 	err            error
+	command        bool
+	errorClass     string
 }
 
 type sourceRenderer func(context.Context, Input) renderedStatusLine
@@ -73,16 +108,17 @@ type statusLineSource struct {
 	newTimer   func(time.Duration) sourceTimer
 	now        func() time.Time
 
-	render            sourceRenderer
-	debounce          time.Duration
-	invocationTimeout time.Duration
-	workerCompleted   chan struct{}
-	renderCtx         context.Context
-	cancelRender      context.CancelFunc
-	lastGoodHeader    Surface
-	hasGoodHeader     bool
-	lastGoodFooter    Surface
-	hasGoodFooter     bool
+	render             sourceRenderer
+	debounce           time.Duration
+	invocationTimeout  time.Duration
+	workerCompleted    chan struct{}
+	renderCtx          context.Context
+	cancelRender       context.CancelFunc
+	lastGoodHeader     Surface
+	hasGoodHeader      bool
+	lastGoodFooter     Surface
+	hasGoodFooter      bool
+	commandDiagnostics CommandDiagnostics
 }
 
 func newSource(ticks <-chan time.Time, render func(context.Context, Input) Result) *statusLineSource {
@@ -282,6 +318,13 @@ func (s *statusLineSource) publish(completed statusLineResult) {
 			s.lastGoodFooter, s.hasGoodFooter = cloneNormalizedSurface(line.Footer), true
 		}
 	}
+	if completed.result.command {
+		s.commandDiagnostics = CommandDiagnostics{
+			Header: commandSurfaceState(completed.result.err != nil, s.hasGoodHeader, completed.result.headerSupplied),
+			Footer: commandSurfaceState(completed.result.err != nil, s.hasGoodFooter, completed.result.footerSupplied),
+			Error:  completed.result.errorClass,
+		}
+	}
 	line = cloneResult(line)
 	if reflect.DeepEqual(s.latest, line) {
 		return
@@ -291,6 +334,19 @@ func (s *statusLineSource) publish(completed statusLineResult) {
 	case s.changed <- struct{}{}:
 	default:
 	}
+}
+
+func commandSurfaceState(failed, hasGood, supplied bool) string {
+	if failed {
+		if hasGood {
+			return CommandSurfaceStale
+		}
+		return CommandSurfaceDefault
+	}
+	if supplied {
+		return CommandSurfaceCustom
+	}
+	return CommandSurfaceDefault
 }
 
 func staleSurface(surface Surface, width int) Surface {

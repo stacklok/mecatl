@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -30,7 +29,7 @@ func TestCreateSessionWithSessionIDOverride(t *testing.T) {
 
 	const want = "sched--nightly-20260713-010203-deadbeef"
 	sess, err := svc.CreateSessionWithProfile(
-		context.Background(), "/ws", session.ModeDefault, session.Limits{},
+		context.Background(), session.ModeDefault, session.Limits{},
 		server.ProviderSelector{}, server.ProfileDefault,
 		server.WithSessionID(session.SessionID(want)),
 	)
@@ -61,11 +60,11 @@ func TestCreateSessionWithSessionIDNoOverrideIsByteIdentical(t *testing.T) {
 		Policy:  permpolicy.NewPolicy(nil, nil),
 		Model:   "test-model",
 	})
-	svc, err := server.NewService(server.Config{
-		Engine:     shared,
-		Store:      memstore.New(),
-		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		Now:        func() time.Time { return time.Unix(0, 0) },
+	svc, err := newPlacementTestService(server.Config{
+		Engine: shared,
+		Store:  memstore.New(),
+
+		Now: func() time.Time { return time.Unix(0, 0) },
 		NewID: func() session.SessionID {
 			newIDCalls.Add(1)
 			return "generated-abc"
@@ -77,7 +76,7 @@ func TestCreateSessionWithSessionIDNoOverrideIsByteIdentical(t *testing.T) {
 	}
 
 	sess, err := svc.CreateSessionWithProfile(
-		context.Background(), "/ws", session.ModeDefault, session.Limits{},
+		context.Background(), session.ModeDefault, session.Limits{},
 		server.ProviderSelector{}, server.ProfileDefault,
 	)
 	if err != nil {
@@ -94,7 +93,7 @@ func TestCreateSessionWithSessionIDNoOverrideIsByteIdentical(t *testing.T) {
 func TestGeneratedSessionIDCollisionDoesNotOverwriteForeignSnapshot(t *testing.T) {
 	store := memstore.New()
 	bob := session.Principal{Issuer: "https://issuer.example", Subject: "bob"}
-	winner := session.New("forced-collision", session.ModeDefault, "/bob", session.Limits{}, time.Unix(1, 0))
+	winner := session.New("forced-collision", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/bob", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 	if err := winner.RestoreLabels(&bob, session.Authority{}); err != nil {
 		t.Fatalf("RestoreLabels(winner): %v", err)
 	}
@@ -109,16 +108,16 @@ func TestGeneratedSessionIDCollisionDoesNotOverwriteForeignSnapshot(t *testing.T
 		LLM: mockllm.New(mockllm.TextTurn("ok")), Catalog: tool.NewCatalog(),
 		Policy: permpolicy.NewPolicy(nil, nil), Model: "test-model",
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine: shared, Store: store, OwnershipEnforced: true,
-		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		Now:        func() time.Time { return time.Unix(2, 0) }, NewID: func() session.SessionID { return "forced-collision" },
+
+		Now: func() time.Time { return time.Unix(2, 0) }, NewID: func() session.SessionID { return "forced-collision" },
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
 	}
 	alice := session.Principal{Issuer: "https://issuer.example", Subject: "alice"}
-	_, err = svc.CreateSession(session.WithPrincipal(context.Background(), &alice), "/alice", session.ModeDefault, session.Limits{})
+	_, err = svc.CreateSession(session.WithPrincipal(context.Background(), &alice), session.ModeDefault, session.Limits{})
 	if !errors.Is(err, port.ErrSessionAlreadyExists) {
 		t.Fatalf("CreateSession(collision) = %v, want ErrSessionAlreadyExists", err)
 	}
@@ -126,8 +125,8 @@ func TestGeneratedSessionIDCollisionDoesNotOverwriteForeignSnapshot(t *testing.T
 	if err != nil {
 		t.Fatalf("Load(winner): %v", err)
 	}
-	if got.Owner == nil || !got.Owner.SameIdentity(&bob) || got.Workspace != "/bob" || len(got.Conversation.Messages) != 1 {
-		t.Fatalf("foreign winner was changed: owner=%+v workspace=%q history=%+v", got.Owner, got.Workspace, got.Conversation.Messages)
+	if got.Owner == nil || !got.Owner.SameIdentity(&bob) || got.EnvironmentRef.ID != "/bob" || len(got.Conversation.Messages) != 1 {
+		t.Fatalf("foreign winner was changed: owner=%+v workspace=%q history=%+v", got.Owner, got.EnvironmentRef.ID, got.Conversation.Messages)
 	}
 }
 
@@ -137,16 +136,16 @@ func TestOwnershipServiceCannotCreateWithoutAtomicStoreCapability(t *testing.T) 
 		LLM: mockllm.New(mockllm.TextTurn("ok")), Catalog: tool.NewCatalog(),
 		Policy: permpolicy.NewPolicy(nil, nil), Model: "test-model",
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine: shared, Store: legacy, OwnershipEnforced: true,
-		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		NewID:      func() session.SessionID { return "must-not-upsert" },
+
+		NewID: func() session.SessionID { return "must-not-upsert" },
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
 	}
 	alice := session.Principal{Issuer: "https://issuer.example", Subject: "alice"}
-	_, err = svc.CreateSession(session.WithPrincipal(context.Background(), &alice), "/ws", session.ModeDefault, session.Limits{})
+	_, err = svc.CreateSession(session.WithPrincipal(context.Background(), &alice), session.ModeDefault, session.Limits{})
 	if !errors.Is(err, server.ErrConfig) {
 		t.Fatalf("CreateSession(save-only ownership store) = %v, want ErrConfig", err)
 	}
@@ -159,11 +158,11 @@ func TestForkDestinationCollisionDoesNotOverwriteForeignSnapshot(t *testing.T) {
 	store := memstore.New()
 	alice := session.Principal{Issuer: "https://issuer.example", Subject: "alice"}
 	bob := session.Principal{Issuer: "https://issuer.example", Subject: "bob"}
-	source := session.New("source", session.ModeDefault, "/alice", session.Limits{}, time.Unix(1, 0))
+	source := session.New("source", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/alice", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 	if err := source.RestoreLabels(&alice, session.Authority{}); err != nil {
 		t.Fatalf("RestoreLabels(source): %v", err)
 	}
-	destination := session.New("forced-fork-destination", session.ModeDefault, "/bob", session.Limits{}, time.Unix(1, 0))
+	destination := session.New("forced-fork-destination", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/bob", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 	if err := destination.RestoreLabels(&bob, session.Authority{}); err != nil {
 		t.Fatalf("RestoreLabels(destination): %v", err)
 	}
@@ -181,23 +180,23 @@ func TestForkDestinationCollisionDoesNotOverwriteForeignSnapshot(t *testing.T) {
 		LLM: mockllm.New(mockllm.TextTurn("ok")), Catalog: tool.NewCatalog(),
 		Policy: permpolicy.NewPolicy(nil, nil), Model: "test-model",
 	})
-	svc, err := server.NewService(server.Config{
-		Engine: shared, Store: store, OwnershipEnforced: true,
-		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		Now:        func() time.Time { return time.Unix(2, 0) }, NewID: func() session.SessionID { return destination.ID },
+	svc, err := newPlacementTestService(server.Config{
+		Engine: shared, Store: store, OwnershipEnforced: true, SharedEngineRoot: "/alice",
+
+		Now: func() time.Time { return time.Unix(2, 0) }, NewID: func() session.SessionID { return destination.ID },
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
 	}
-	if _, err := svc.ForkSession(session.WithPrincipal(context.Background(), &alice), source.ID, "", ""); !errors.Is(err, port.ErrSessionAlreadyExists) {
+	if _, err := forkSession(svc, session.WithPrincipal(context.Background(), &alice), source.ID, "", ""); !errors.Is(err, port.ErrSessionAlreadyExists) {
 		t.Fatalf("ForkSession(collision) = %v, want ErrSessionAlreadyExists", err)
 	}
 	got, err := store.Load(context.Background(), destination.ID)
 	if err != nil {
 		t.Fatalf("Load(destination): %v", err)
 	}
-	if got.Owner == nil || !got.Owner.SameIdentity(&bob) || got.Workspace != "/bob" || !strings.Contains(got.Conversation.Messages[0].Text, "BOB_FORK_DESTINATION") {
-		t.Fatalf("foreign fork destination changed: owner=%+v workspace=%q history=%+v", got.Owner, got.Workspace, got.Conversation.Messages)
+	if got.Owner == nil || !got.Owner.SameIdentity(&bob) || got.EnvironmentRef.ID != "/bob" || !strings.Contains(got.Conversation.Messages[0].Text, "BOB_FORK_DESTINATION") {
+		t.Fatalf("foreign fork destination changed: owner=%+v workspace=%q history=%+v", got.Owner, got.EnvironmentRef.ID, got.Conversation.Messages)
 	}
 }
 
@@ -205,7 +204,7 @@ func TestExplicitCreateRetryRejectsDifferentSessionTaxonomy(t *testing.T) {
 	store := memstore.New()
 	alice := session.Principal{Issuer: "https://issuer.example", Subject: "alice"}
 	const id session.SessionID = "taxonomy-collision"
-	existing := session.New(id, session.ModeDefault, "/ws", session.Limits{}, time.Unix(1, 0))
+	existing := session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 	if err := existing.RestoreLabels(&alice, session.Authority{}); err != nil {
 		t.Fatalf("RestoreLabels(existing): %v", err)
 	}
@@ -220,14 +219,13 @@ func TestExplicitCreateRetryRejectsDifferentSessionTaxonomy(t *testing.T) {
 		LLM: mockllm.New(mockllm.TextTurn("ok")), Catalog: tool.NewCatalog(),
 		Policy: permpolicy.NewPolicy(nil, nil), Model: "test-model",
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine: shared, Store: store, OwnershipEnforced: true,
-		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
 	}
-	_, err = svc.CreateSessionWithProfile(session.WithPrincipal(context.Background(), &alice), "/ws", session.ModeDefault,
+	_, err = svc.CreateSessionWithProfile(session.WithPrincipal(context.Background(), &alice), session.ModeDefault,
 		session.Limits{}, server.ProviderSelector{}, server.ProfileDefault, server.WithSessionID(id))
 	if !errors.Is(err, server.ErrInvalidArgument) || !strings.Contains(err.Error(), "different request") {
 		t.Fatalf("main create over scheduled session = %v, want different-request refusal", err)
@@ -254,7 +252,7 @@ func TestCreateSessionWithSessionIDCollisionRejected(t *testing.T) {
 	// per-session engine in the sessionEngines map).
 	const live = "sched--live-1234"
 	first, err := svc.CreateSessionWithProfile(
-		context.Background(), "/ws", session.ModeDefault, session.Limits{},
+		context.Background(), session.ModeDefault, session.Limits{},
 		server.ProviderSelector{ProviderID: "openai", ModelID: "gpt-x"},
 		server.ProfileDefault,
 		server.WithSessionID(session.SessionID(live)),
@@ -271,7 +269,7 @@ func TestCreateSessionWithSessionIDCollisionRejected(t *testing.T) {
 	// collides). This is the shared-engine fast path (zero selector), which still
 	// consults the sessionEngines map for the collision check.
 	_, err = svc.CreateSessionWithProfile(
-		context.Background(), "/ws", session.ModeDefault, session.Limits{},
+		context.Background(), session.ModeDefault, session.Limits{},
 		server.ProviderSelector{},
 		server.ProfileDefault,
 		server.WithSessionID(session.SessionID(live)),
@@ -298,7 +296,7 @@ func TestCreateSessionWithSessionIDSharedEngineCollisionRejected(t *testing.T) {
 
 	const id = "sched--shared-5678"
 	first, err := svc.CreateSessionWithProfile(
-		context.Background(), "/ws", session.ModeDefault, session.Limits{},
+		context.Background(), session.ModeDefault, session.Limits{},
 		server.ProviderSelector{}, server.ProfileDefault,
 		server.WithSessionID(session.SessionID(id)),
 	)
@@ -313,7 +311,7 @@ func TestCreateSessionWithSessionIDSharedEngineCollisionRejected(t *testing.T) {
 	// the shared-engine fast path (never entered sessionEngines) but IS persisted,
 	// so the store probe detects the collision.
 	_, err = svc.CreateSessionWithProfile(
-		context.Background(), "/ws", session.ModeDefault, session.Limits{},
+		context.Background(), session.ModeDefault, session.Limits{},
 		server.ProviderSelector{}, server.ProfileDefault,
 		server.WithSessionID(session.SessionID(id)),
 	)
@@ -346,7 +344,7 @@ func TestCreateSessionWithSessionIDConcurrentTOCTOU(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			_, err := svc.CreateSessionWithProfile(
-				context.Background(), "/ws", session.ModeDefault, session.Limits{},
+				context.Background(), session.ModeDefault, session.Limits{},
 				server.ProviderSelector{}, server.ProfileDefault,
 				server.WithSessionID(session.SessionID(id)),
 			)
@@ -378,9 +376,8 @@ func TestCreateSessionWithSessionIDCrossServiceRetryIsIdempotent(t *testing.T) {
 		Policy: permpolicy.NewPolicy(nil, nil), Model: "test-model",
 	})
 	newSvc := func() *server.Service {
-		svc, err := server.NewService(server.Config{
+		svc, err := newPlacementTestService(server.Config{
 			Engine: shared, Store: store, OwnershipEnforced: true,
-			Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
 		})
 		if err != nil {
 			t.Fatalf("NewService: %v", err)
@@ -399,7 +396,7 @@ func TestCreateSessionWithSessionIDCrossServiceRetryIsIdempotent(t *testing.T) {
 	for i := range services {
 		go func(i int) {
 			defer wg.Done()
-			results[i], errs[i] = services[i].CreateSessionWithProfile(ctx, "/ws", session.ModeDefault, session.Limits{},
+			results[i], errs[i] = services[i].CreateSessionWithProfile(ctx, session.ModeDefault, session.Limits{},
 				server.ProviderSelector{}, server.ProfileDefault, server.WithSessionID(id))
 		}(i)
 	}
@@ -439,7 +436,7 @@ func (s *barrierCreateStore) Create(ctx context.Context, sess *session.Session) 
 func TestCreateSessionWithSessionIDEmptyRejected(t *testing.T) {
 	svc := newService(t, mockllm.New(mockllm.TextTurn("ok")), nil)
 	_, err := svc.CreateSessionWithProfile(
-		context.Background(), "/ws", session.ModeDefault, session.Limits{},
+		context.Background(), session.ModeDefault, session.Limits{},
 		server.ProviderSelector{}, server.ProfileDefault,
 		server.WithSessionID(""),
 	)
@@ -464,23 +461,19 @@ func (s *loadErrStore) Load(context.Context, session.SessionID) (*session.Sessio
 }
 
 // TestCreateSessionWithSessionIDLoadProbeInfraFault: when the store's Load
-// returns an infra fault (not ErrSessionNotFound) during the collision probe,
-// createSession PROPAGATES it — it must not be swallowed (a silent pass could
-// clobber a persisted session) nor mislabelled ErrInvalidArgument.
+// returns an infra fault during the collision probe, creation fails closed with a
+// content-free internal category rather than exposing backend details.
 func TestCreateSessionWithSessionIDLoadProbeInfraFault(t *testing.T) {
 	infra := errors.New("boom: store backend unreachable")
 	store := &loadErrStore{Store: memstore.New(), loadErr: infra}
 	svc := newServiceWithStore(t, store)
 
 	_, err := svc.CreateSessionWithProfile(
-		context.Background(), "/ws", session.ModeDefault, session.Limits{},
+		context.Background(), session.ModeDefault, session.Limits{},
 		server.ProviderSelector{}, server.ProfileDefault,
 		server.WithSessionID("sched--probe-1"),
 	)
-	if !errors.Is(err, infra) {
-		t.Fatalf("err = %v, want the infra fault propagated", err)
-	}
-	if errors.Is(err, server.ErrInvalidArgument) {
-		t.Errorf("infra fault must NOT be classified ErrInvalidArgument: %v", err)
+	if !errors.Is(err, server.ErrInternal) || strings.Contains(err.Error(), infra.Error()) {
+		t.Fatalf("err = %v, want content-free ErrInternal", err)
 	}
 }

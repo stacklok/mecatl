@@ -31,7 +31,7 @@ func TestSessionStorageContinuity_Scenario1_BoundedRepeatedSaves(t *testing.T) {
 
 	// A second family makes this assertion deliberately target-scoped: it must
 	// neither count nor disturb artifacts belonging to other sessions.
-	if err := st.Save(ctx, session.New("other-session", session.ModeDefault, "/other", session.Limits{}, time.Now())); err != nil {
+	if err := st.Save(ctx, session.New("other-session", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/other", Revision: "in-tree-v1"}, session.Limits{}, time.Now())); err != nil {
 		t.Fatalf("Save other session: %v", err)
 	}
 	for range 999 {
@@ -148,7 +148,7 @@ func TestSessionStorageContinuity_Scenario1_V1PromotionFidelity(t *testing.T) {
 	ctx := context.Background()
 	st, dir := newStore(t)
 	id := session.SessionID("parallel-fidelity")
-	want, err := session.NewParallelBranch(id, session.ModePlan, "/workspace", session.Limits{
+	want, err := session.NewParallelBranch(id, session.ModePlan, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{
 		MaxTurns: 9, MaxToolCalls: 13, MaxConsecutiveFailures: 3,
 	}, time.Unix(1700000000, 123).UTC(), "parent-1", session.NewIncarnationID(), "call-1", 2)
 	if err != nil {
@@ -158,7 +158,7 @@ func TestSessionStorageContinuity_Scenario1_V1PromotionFidelity(t *testing.T) {
 	want.ProviderID = "provider-x"
 	want.ModelID = "model-x"
 	want.ReasoningEffort = "high"
-	want.EnvironmentRef = session.EnvironmentRef{Kind: session.EnvironmentKind("remote"), ID: "worker-7"}
+	want.EnvironmentRef = session.EnvironmentRef{Kind: session.EnvironmentKind("remote"), ID: "worker-7", Revision: "inventory-v1"}
 	want.SetTitle("durable title")
 	owner := &session.Principal{Issuer: "https://issuer.example", Subject: "subject-7", Name: "Owner"}
 	if err := want.RestoreLabels(owner, session.Authority{}); err != nil {
@@ -232,7 +232,7 @@ func TestSessionStorageContinuity_Scenario1_V1PromotionFidelity(t *testing.T) {
 
 	// Once committed and verified, v2 remains authoritative even if a stale v1
 	// record coexists and is newer on disk.
-	stale := session.New(id, session.ModeDefault, "/stale", session.Limits{}, time.Unix(1, 0))
+	stale := session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/stale", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 	stale.SetTitle("stale-v1")
 	staleLine, _ := sessnap.Marshal(stale)
 	if err := os.WriteFile(v1Path, append(staleLine, '\n'), 0o600); err != nil {
@@ -245,7 +245,7 @@ func TestSessionStorageContinuity_Scenario1_V1PromotionFidelity(t *testing.T) {
 
 	// A pre-kind v1 record must remain fail-closed unknown after promotion.
 	unknownID := session.SessionID("legacy-unknown")
-	unknownJSON := []byte(`{"id":"legacy-unknown","state":"idle","mode":"default","limits":{},"counters":{},"workspace":"/legacy","created_at":"2023-11-14T22:13:20Z","messages":[]}`)
+	unknownJSON := []byte(`{"id":"legacy-unknown","state":"idle","mode":"default","limits":{},"counters":{},"environment_ref":{"Kind":"local","ID":"/legacy","Revision":"in-tree-v1"},"created_at":"2023-11-14T22:13:20Z","messages":[]}`)
 	if !json.Valid(unknownJSON) {
 		t.Fatal("invalid unknown-kind fixture")
 	}

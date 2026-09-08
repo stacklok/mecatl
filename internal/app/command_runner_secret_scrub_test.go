@@ -53,9 +53,8 @@ func TestMainCommandRunnerScrubsSecrets(t *testing.T) {
 	}
 }
 
-// TestCommandRunnerFactoryScrubsSecretsForAlternateRoot pins that the
-// CommandRunnerFactory path (a worktree-bound session runner built via
-// buildCommandRunnerForRoot with a root DISTINCT from cfg.Workspace) scrubs
+// TestPlacementRunnerScrubsSecretsForAlternateRoot pins that placement-provider
+// environment construction through buildCommandRunnerForRoot with a root DISTINCT from cfg.Workspace) scrubs
 // secrets identically to the main-session runner (buildCommandRunner). Both
 // route through the ONE buildCommandRunnerForRoot, so the secret-scrubbing
 // cannot drift between the default-root and alternate-root paths (security
@@ -66,7 +65,7 @@ func TestMainCommandRunnerScrubsSecrets(t *testing.T) {
 // MUTATION-TEST DISCIPLINE: if buildCommandRunnerForRoot is reverted to an
 // inline osfs.NewCommandRunnerShell(root, ...) WITHOUT envscrub.Scrub, this
 // test FAILS — it is not vacuous.
-func TestCommandRunnerFactoryScrubsSecretsForAlternateRoot(t *testing.T) {
+func TestPlacementRunnerScrubsSecretsForAlternateRoot(t *testing.T) {
 	t.Setenv("OPENROUTER_API_KEY", "sk-or-MUST-NOT-LEAK")
 	t.Setenv("OPENAI_API_KEY", "sk-oa-MUST-NOT-LEAK")
 	t.Setenv("ANTHROPIC_API_KEY", "sk-an-MUST-NOT-LEAK")
@@ -79,7 +78,7 @@ func TestCommandRunnerFactoryScrubsSecretsForAlternateRoot(t *testing.T) {
 	if altRoot == cfg.Workspace {
 		t.Fatal("precondition: alt root must differ from cfg.Workspace")
 	}
-	// The factory closure the Service holds (Config.CommandRunnerFactory).
+	// The private placement-provider construction closure.
 	factory := func(root string) tool.CommandRunner {
 		return buildCommandRunnerForRoot(cfg, root)
 	}

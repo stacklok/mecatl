@@ -51,5 +51,5 @@ HEAD (post task 10). Commit only this task's files. Do NOT push.
    for the queued-until-landed rendering and the cancel-then-recompose edit (`↑`
    pulls the whole not-yet-drained set back as one blob).
 
-Run `task docs` (llms.txt regen + matlatl strict) and `task site:build`. Report
+Run `task docs` (configuration-reference regeneration + matlatl strict) and `task site:build`. Report
 branch, git log, files changed, any item not done.

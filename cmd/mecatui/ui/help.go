@@ -1,9 +1,11 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 
 	"charm.land/bubbles/v2/key"
+	"charm.land/lipgloss/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
@@ -36,13 +38,49 @@ type helpRow struct {
 const helpKeyWidth = 22
 
 // renderHelpOverlay draws the "?" keys-&-features overlay centred over the
-// conversation region, reusing the askCard + lipgloss.Place treatment the MCP
-// and agents overlays use. Every availability decision reads the relayed caps
-// (not a ui-local guess), so the same overlay honestly reflects an embedded
-// default (mcp/commands/skills off) and an external mecated with everything on.
-// hk carries the LIVE key markings so a rebinding propagates here.
-func renderHelpOverlay(th theme.Theme, caps client.Capabilities, width, height int, hk helpKeys) string {
-	return centerCard(th, helpBody(th, caps, hk), width, height)
+// conversation region. When the body is taller than the offered height, it windows
+// complete ANSI lines and reserves a row for its scroll indicator.
+func renderHelpOverlay(th theme.Theme, caps client.Capabilities, width, height, scroll int, hk helpKeys) string {
+	body := helpBody(th, caps, hk)
+	if height <= 0 {
+		return centerCard(th, body, width, height)
+	}
+	lines := helpRenderedLines(body)
+	cardChrome := lipgloss.Height(th.Style("askCard").Render(""))
+	if height <= cardChrome {
+		// A card cannot fit in this exceptionally small viewport. Keep the overlay
+		// usable rather than overflowing the conversation region.
+		return lines[clampScroll(scroll, len(lines), 1)]
+	}
+	window := helpWindowHeight(th, height, len(lines))
+	scroll = clampScroll(scroll, len(lines), window)
+	body = strings.TrimSuffix(windowRenderedLinesWithIndicator(th, lines, scroll, window, func(start, end, total int) string {
+		return helpScrollIndicator(hk, start, end, total)
+	}), "\n")
+	return centerCard(th, body, width, height)
+}
+
+// helpScrollIndicator keeps the navigation affordances in every clipped frame,
+// including the initial top view where the help body's footer is not visible.
+func helpScrollIndicator(hk helpKeys, start, end, total int) string {
+	return fmt.Sprintf("lines %d–%d of %d · %s close · %s/%s scroll · %s page · %s jump", start+1, end, total, hk.close, hk.navUp, hk.navDown, hk.scroll, hk.jump)
+}
+
+// helpRenderedLines splits the help body into complete styled lines. helpBody
+// renders every line independently, so windowing cannot leave a terminal style open.
+func helpRenderedLines(body string) []string {
+	return strings.Split(body, "\n")
+}
+
+// helpWindowHeight accounts for the card chrome and its scroll indicator. The
+// indicator replaces one content row only when it is needed, keeping the card within
+// the actual conversation viewport.
+func helpWindowHeight(th theme.Theme, height, total int) int {
+	window := max(1, height-lipgloss.Height(th.Style("askCard").Render("")))
+	if total > window {
+		window = max(1, window-1)
+	}
+	return window
 }
 
 // helpBody builds the overlay's text: a title, grouped chord sections (each row
@@ -65,6 +103,9 @@ func helpBody(th theme.Theme, caps client.Capabilities, hk helpKeys) string {
 		{key: hk.selectAll, action: "select all prompt text"},
 		{key: hk.copySelection, action: "copy the active prompt or conversation selection"},
 		{key: hk.clearPrompt, action: "clear the unsent prompt"},
+		{key: "esc esc (physical)", action: "enhanced key-event support required; first press is silent; key release then press within 500ms; repeats cannot confirm"},
+		{key: "", action: "clears staged attachments, large-paste content, and pending media; owners take precedence"},
+		{key: "", action: "not remappable; universal alternative: ClearPrompt / " + hk.clearPrompt},
 		{key: hk.cancel, action: "cancel the running turn"},
 	})
 
@@ -105,7 +146,7 @@ func helpBody(th theme.Theme, caps client.Capabilities, hk helpKeys) string {
 		helpRow{key: "/session", action: "show active session details and copy its exact ID"},
 		helpRow{key: "/sessions", action: "continue, inspect, or manage stored sessions"},
 		helpRow{key: "/connect", action: "sign in and connect to a saved remote target"},
-		helpRow{key: hk.modeSwitch, action: "cycle permission mode (default / plan / accept-edits)"},
+		helpRow{key: hk.modeSwitch, action: "cycle permission mode (outside MCP prompt argument forms)"},
 		helpRow{key: hk.expandTools, action: "expand/collapse details"},
 	)
 	writeHelpRows(&b, th, inspectRows)
@@ -118,6 +159,7 @@ func helpBody(th theme.Theme, caps client.Capabilities, hk helpKeys) string {
 		{key: "drag", action: "select conversation text · drag to an edge auto-scrolls · copies on release · double-click word · triple-click line · right-click copies · " + hk.cancel + " clears"},
 		{key: "middle-click", action: "paste the primary selection into the prompt (X11/Wayland; shift+middle-click pastes via the terminal instead)"},
 		{key: hk.help, action: "this help (on an empty prompt)"},
+		{key: "/quit", action: "quit immediately (alias: /exit; cancels an active run)"},
 		{key: hk.suspend, action: "suspend to the shell — the engine keeps running; fg resumes"},
 		{key: hk.quit, action: "quit (press twice; first press clears the prompt or arms, again within 3s exits)"},
 		{key: hk.quitD, action: "quit (EOF habit; press twice on an empty prompt)"},
@@ -130,13 +172,13 @@ func helpBody(th theme.Theme, caps client.Capabilities, hk helpKeys) string {
 	// when skills are off (nothing to browse).
 	b.WriteString("\n")
 	if caps.Skills {
-		b.WriteString(muted.Render(
-			"Skills activate automatically when the model needs them; type /skills\n"+
-				"to browse the skills inventory.") + "\n")
+		writeHelpMutedLines(&b, th,
+			"Skills activate automatically when the model needs them; type /skills",
+			"to browse the skills inventory.")
 	} else {
-		b.WriteString(muted.Render(
-			"Skills run automatically when the model needs them — not a browsable\n"+
-				"list; watch the transcript for Skill tool calls.") + "\n")
+		writeHelpMutedLines(&b, th,
+			"Skills run automatically when the model needs them — not a browsable",
+			"list; watch the transcript for Skill tool calls.")
 	}
 	// Agent definitions, when served, are browsable via /agents (the inventory the
 	// Subagent tool routes delegations to). Distinct from caps.Teams / ctrl+a, which is
@@ -168,12 +210,18 @@ func helpBody(th theme.Theme, caps client.Capabilities, hk helpKeys) string {
 	b.WriteString("\n" + muted.Render("↑ input · ↓ output · ⊕ cache write") + "\n")
 	b.WriteString(muted.Render("cache N% — share of input tokens served from cache") + "\n")
 
-	// Close hint. Sourced LIVE from the Close/Help bindings (the two keys that
-	// actually dismiss this overlay — see the m.showHelp gate in update.go), NOT a
-	// hardcoded "esc or ?": an operator can remap either, and a stale hint would
-	// lie about how to close. With default keys it renders exactly "esc or ?".
-	b.WriteString("\n" + muted.Render(hk.close+" to close"))
+	// The navigation and close affordances use the LIVE bindings, so a keymap
+	// override never leaves an unusable scrollable overlay.
+	b.WriteString("\n" + muted.Render(hk.close+" close · "+hk.navUp+"/"+hk.navDown+" scroll · "+hk.scroll+" page · "+hk.jump+" jump"))
 	return b.String()
+}
+
+// writeHelpMutedLines renders each line independently so helpRenderedLines can
+// safely window the ANSI output without severing a style sequence.
+func writeHelpMutedLines(b *strings.Builder, th theme.Theme, lines ...string) {
+	for _, line := range lines {
+		b.WriteString(th.Style("muted").Render(line) + "\n")
+	}
 }
 
 // helpKeys is the set of pre-computed chord markings helpBody renders for the
@@ -311,7 +359,7 @@ func keyMarkingsWithScroll(km keyMap, defaultScrollMarking string) helpKeys {
 		submit:        firstKey(km.Submit, "enter"),
 		paste:         firstKey(km.Paste, "ctrl+v"),
 		selectAll:     firstKey(km.SelectAll, "ctrl+g"),
-		copySelection: firstKey(km.CopySelection, "ctrl+shift+c"),
+		copySelection: firstKey(km.CopySelection, "ctrl+y"),
 		clearPrompt:   firstKey(km.ClearPrompt, "ctrl+u"),
 		cancel:        firstKey(km.Cancel, "esc"),
 		editBack:      navGlyph(firstKey(km.EditBack, "up")),
@@ -324,7 +372,7 @@ func keyMarkingsWithScroll(km keyMap, defaultScrollMarking string) helpKeys {
 		prompts:       firstKey(km.Prompts, "ctrl+p"),
 		agents:        firstKey(km.Agents, "ctrl+a"),
 		effort:        firstKey(km.Effort, "ctrl+e"),
-		modeSwitch:    firstKey(km.ModeSwitch, "alt+m"),
+		modeSwitch:    firstKey(km.ModeSwitch, "shift+tab"),
 		expandTools:   firstKey(km.ExpandTools, "ctrl+t"),
 		scroll:        scrollMarking(km, defaultScrollMarking),
 		scrollUp:      firstKey(km.ScrollU, "pgup"),

@@ -31,10 +31,41 @@ extraEnv: []
 extraArgs: []
 
 # First-class remote Streamable HTTP MCP connections. Authentication is an
-# explicit union: none, staticBearer, or oauth. Secret values are always read
-# from same-namespace Kubernetes Secrets; they are never Helm values.
+# explicit union: none, staticBearer, or oauth. OAuth selects the session MCP
+# broker and requires its public callback URL below. Secret values are always
+# read from same-namespace Kubernetes Secrets; they are never Helm values.
+#
+# An oauth server's `upstream` is optional and defaults to OIDC discovery
+# against `issuer`. Set `upstream: {mode: oauth2, oauth2: {authorizationEndpoint,
+# tokenEndpoint}}` for a provider with no OIDC discovery endpoint (e.g. GitHub's
+# OAuth Apps) — `issuer` is then omitted. An oauth server's `tools` optionally
+# declares its protected tool catalogue statically (name/description/
+# inputSchema/readOnly per entry): declared tools are admitted into the
+# session's catalogue immediately, with the credential itself deferred to the
+# model's first attempt to call one — see docs/usage/mecak8s.md for a worked
+# GitHub example of both.
 mcp:
+  broker:
+    # Public HTTPS URL where the browser returns after OAuth. This exact URL
+    # must route to this service's HTTP listener through your ingress/gateway.
+    callbackURL: ""
   servers: []
+
+# Optional remote learning driver. A bearer token is optional; when both tokenSecret
+# and tokenKey are set, the chart projects it only as MECATL_DRIVER_AUTH_TOKEN. TLS
+# verifies the driver with the supplied CA, and mTLS is optional.
+learning:
+  store:
+    endpoint: ""
+    tokenSecret: ""
+    tokenKey: ""
+    tls:
+      enabled: false
+      caSecret: ""
+      caKey: ""
+      mtlsSecret: ""
+      certKey: ""
+      keyKey: ""
 
 # extraVolumes and extraVolumeMounts append restricted Kubernetes Volume and
 # VolumeMount entries. Keep configuration content read-only and immutable; XDG-
@@ -53,6 +84,13 @@ skills:
 # Run one pod for lower resource usage and simpler session routing, at the cost of
 # high availability. The PDB is omitted at this value, so voluntary eviction can
 # interrupt service. The default of two keeps the HA-oriented PDB protection.
+# REQUIRED to be 1 (schema-enforced) whenever mcp.broker.callbackURL is set: broker
+# sessions, OAuth grants, and in-flight authorization transactions are process-local
+# and unreplicated, so a second replica cannot serve a request bound to the first —
+# see mcp.broker.callbackURL above. The Deployment also renders strategy.type:
+# Recreate instead of RollingUpdate in that mode, so a rollout fully retires the
+# old incarnation before starting the new one (planned downtime, not zero-downtime
+# — see docs/usage/mecak8s.md).
 replicaCount: 2
 mockProvider: false
 
@@ -72,6 +110,10 @@ security:
   # operator owns gateway TLS, forwarding the original Authorization bearer, and
   # gateway/mesh-only plaintext backend reachability.
   tlsTerminatedUpstream: false
+
+# Full pod shutdown budget. This must exceed preStop (3s) plus the configured
+# mecak8s drain, gRPC, HTTP, resource-close, and telemetry bounds.
+terminationGracePeriodSeconds: 60
 
 # Optional Kubernetes scheduling controls. Empty values render no pod fields.
 topologySpreadConstraints: []
@@ -99,6 +141,12 @@ redis:
   # unless an ACL key is also set. Verification is never disabled either way.
   caKey: ca.pem
   usernameKey: ""
+  filesystem:
+    # Principal-scoped persistent virtual files. Shell and filesystem forks stay disabled.
+    enabled: false
+  readLedger:
+    # Persist each session's read-before-write evidence independently of file storage.
+    enabled: false
   local:
     enabled: false
 
@@ -120,6 +168,13 @@ oidc:
   # OIDC validator; they do not change process-wide TLS trust.
   caSecret: ""
   caKey: ""
+  # Optional RFC 9728 protected-resource profile for OAuth clients. Both
+  # resource and clientID are required together and imply oidc.enabled.
+  resource: ""
+  clientID: ""
+  # These entries are joined into the same comma-separated syntax accepted by
+  # --oidc-scopes and validated by cliconfig.ParseOIDCScopes.
+  scopes: []
 
 tls:
   # Server TLS is optional for mock and explicit unsafe-bypass profiles, but

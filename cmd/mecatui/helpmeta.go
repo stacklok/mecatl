@@ -60,11 +60,11 @@ const (
 // mode and vice versa.
 var flagApplicabilityByFlag = map[string]flagApplicability{
 	// ── Transport (remote-only) ───────────────────────────────────────────
-	"auth-token":    {group: groupTransport, common: true, local: false, connect: true},
-	"tls":           {group: groupTransport, common: true, local: false, connect: true},
-	"tls-ca":        {group: groupTransport, common: false, local: false, connect: true},
-	"insecure":      {group: groupTransport, common: false, local: false, connect: true},
-	"no-saved-auth": {group: groupTransport, common: false, local: false, connect: true},
+	"auth-token": {group: groupTransport, common: true, local: false, connect: true},
+	"anonymous":  {group: groupTransport, common: true, local: false, connect: true},
+	"tls":        {group: groupTransport, common: true, local: false, connect: true},
+	"tls-ca":     {group: groupTransport, common: false, local: false, connect: true},
+	"insecure":   {group: groupTransport, common: false, local: false, connect: true},
 
 	// ── Session (shared) ──────────────────────────────────────────────────
 	"workspace":     {group: groupSession, common: true, local: true, connect: true},
@@ -80,6 +80,7 @@ var flagApplicabilityByFlag = map[string]flagApplicability{
 	"theme":           {group: groupUI, common: true, local: true, connect: true},
 	"theme-dir":       {group: groupUI, common: false, local: true, connect: true},
 	"list-themes":     {group: groupUI, common: false, local: true, connect: true},
+	"debug":           {group: groupUI, common: true, local: true, connect: true},
 	"no-alt-screen":   {group: groupUI, common: true, local: true, connect: true},
 	"inline":          {group: groupUI, common: false, local: true, connect: true},
 	"no-mouse":        {group: groupUI, common: false, local: true, connect: true},
@@ -390,8 +391,7 @@ func writeSessionsHelpAll(out io.Writer, fs *flag.FlagSet, mode transportMode) {
 }
 
 // writeBareHelpAll renders the exhaustive flag list for the bare `mecatui
-// --help-all` (the embedded default). It uses the single cliconfig formatter
-// (byte-identical to flag.PrintDefaults).
+// --help-all` (the embedded default). It uses the single cliconfig formatter.
 func writeBareHelpAll(out io.Writer, fs *flag.FlagSet) {
 	_, _ = fmt.Fprintf(out, "Usage: mecatui [flags]\n\n")
 	writeCommandSummary(out)

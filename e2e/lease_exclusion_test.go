@@ -5,6 +5,7 @@ package e2e_test
 import (
 	"context"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/onsi/ginkgo/v2"
@@ -21,8 +22,8 @@ import (
 // Write ask, so it HOLDS the session lease. Replica B, live and sharing the same
 // store+lease dir, tries to start a run on the SAME session over HTTP and is
 // REFUSED with 409 Conflict (ErrSessionLeasedElsewhere) while A holds the lease.
-// After A is SIGKILLed, the flock auto-releases (the single-host crash-recovery
-// property), and B's run-start succeeds.
+// After A is SIGKILLed, the generation flock auto-releases (the single-host
+// crash-recovery property), and B resumes the parked run through the approval API.
 //
 // It is the live counterpart of the offline two-Build gate
 // TestCrossProcessLeaseExclusion (internal/app/), which exercises the identical
@@ -56,7 +57,9 @@ func leaseExclusionSpecs() {
 				leaseDir := bootstrap.StateDir(harness.StateLease)
 				_ = bootstrap.Close()
 
-				localA, err := harness.NewLocalSharingStore(bootstrap, "--session-lease-dir", leaseDir)
+				const leaseTTL = 5 * time.Minute
+				localA, err := harness.NewLocalSharingStore(bootstrap,
+					"--session-lease-dir", leaseDir, "--session-lease-ttl", leaseTTL.String())
 				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "spawn replica A with the shared lease dir")
 				killedA := false
 				defer func() {
@@ -66,7 +69,7 @@ func leaseExclusionSpecs() {
 				}()
 
 				cliA := localA.Client()
-				sessionID, _, _, err := cliA.CreateSession(ctx, localA.Workspace(),
+				sessionID, _, _, err := cliA.CreateSession(ctx,
 					client.ModeFromString("default"),
 					client.ModelSelection{ProviderID: harness.ProviderID, ModelID: haikuLane})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "create session on replica A")
@@ -80,13 +83,16 @@ func leaseExclusionSpecs() {
 
 				// Drive to the Write ask: the run parks AWAITING, so replica A holds the
 				// session lease for the duration. DO NOT approve.
-				askID, _ := driveToWriteAsk(ctx, streamA, 90*time.Second)
+				askID, _, driveErr := driveToWriteAsk(ctx, streamA, 90*time.Second)
+				gomega.Expect(driveErr).NotTo(gomega.HaveOccurred(),
+					"drive replica A to the Write permission ask\n--- mecated log tail ---\n"+localA.LogTail(4096))
 				expectNonEmpty(askID, "a Write permission ask on replica A", localA.LogTail(4096))
 
 				// --- Replica B: a SECOND live mecated sharing A's store + lease dir. ---
 				// (Two live processes over one store is normally a write-race; the lease
 				// is exactly what makes it safe — B is refused, never writes.)
-				localB, err := harness.NewLocalSharingStore(localA, "--session-lease-dir", leaseDir)
+				localB, err := harness.NewLocalSharingStore(localA,
+					"--session-lease-dir", leaseDir, "--session-lease-ttl", leaseTTL.String())
 				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "spawn replica B sharing A's store + lease")
 				defer func() { _ = localB.Close() }()
 
@@ -99,23 +105,30 @@ func leaseExclusionSpecs() {
 				gomega.Expect(status).To(gomega.Equal(http.StatusConflict),
 					"replica B run-start while A holds the lease = HTTP %d, want 409 Conflict\n--- body ---\n%s\n--- B log ---\n%s",
 					status, string(body), localB.LogTail(4096))
+				gomega.Expect(strings.Contains(string(body), "leased by another process")).To(gomega.BeTrue(),
+					"409 was not lease-specific\n--- body ---\n%s", string(body))
 
-				// --- Kill A: the flock auto-releases on process death (crash recovery). ---
+				// --- Kill A: the generation flock auto-releases on process death. ---
+				killedAt := time.Now()
 				gomega.Expect(localA.Kill()).To(gomega.Succeed(), "SIGKILL replica A")
 				killedA = true
 
-				// B can now take over the session: its run-start succeeds (rehydrate +
-				// drive). The flock A held is gone, so the lease is acquirable.
-				gomega.Eventually(func() int {
+				// B can now take over the parked session through the restart-safe approval
+				// path. Denial avoids mutating the workspace; a successful SSE drain proves
+				// the lease was acquired and the resumed run reached terminal state.
+				gomega.Eventually(func() bool {
 					takeoverCtx, c := context.WithTimeout(ctx, 30*time.Second)
 					defer c()
-					st, _, perr := harness.PromptOverHTTP(takeoverCtx, localB.HTTPAddr(), string(sessionID), "take over after A died")
-					if perr != nil {
-						return 0
+					stream, aerr := harness.ApproveOverHTTP(takeoverCtx, localB.HTTPAddr(), string(sessionID), askID, "deny")
+					if aerr != nil {
+						return false
 					}
-					return st
-				}, 30*time.Second, 1*time.Second).Should(gomega.Equal(http.StatusOK),
-					"replica B run-start after A died did not succeed (flock should auto-release on death)\n--- B log ---\n"+localB.LogTail(4096))
+					_, derr := harness.DrainSSE(stream)
+					return derr == nil
+				}, 30*time.Second, 1*time.Second).Should(gomega.BeTrue(),
+					"replica B could not resume the parked run after A died (generation flock should auto-release on death)\n--- B log ---\n"+localB.LogTail(4096))
+				gomega.Expect(time.Since(killedAt)).To(gomega.BeNumerically("<", leaseTTL/4),
+					"crash takeover did not occur materially before the configured lease TTL %s", leaseTTL)
 			})
 	})
 }

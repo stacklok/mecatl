@@ -39,17 +39,6 @@ type streamState struct {
 	// top-level error correlate with the response it terminated.
 	responseID string
 
-	// The identity (item_id, output_index, content_index) of the single visible
-	// assistant text part currently being assembled. The harness's domain
-	// Message.Text is one string, so a turn may carry exactly one visible text
-	// part; a second distinct text item/content part is a loud error rather than
-	// a silent fusion (see translate's "response.output_text.delta" case). These
-	// are per-stream only.
-	textItemID       string
-	textOutputIndex  int64
-	textContentIndex int64
-	textIndexSet     bool
-
 	// reasoning accumulates the turn's (id, encrypted_content) reasoning items in
 	// arrival order, packed into ONE ChunkReasoningItem at the terminal event.
 	// A turn may emit several — each blob is bound to its own item id and must be
@@ -119,18 +108,10 @@ var errTruncatedStream = fmt.Errorf("openai: responses stream ended without a te
 // response.completed (incomplete/failed/error/truncation) drops them, which
 // costs nothing: the engine discards the whole assistant message on those paths.
 //
-// Single visible text part assumption: the harness assembles exactly ONE visible
-// assistant text part per turn, because the domain Message.Text is a single
-// string with no boundary to separate distinct parts. The first output_text.delta
-// pins the part identity (item_id, output_index, content_index) into streamState;
-// any subsequent output_text.delta carrying a DIFFERENT identity (a second message
-// item, or a second output_text content part on the same item) is a LOUD error
-// rather than a silent fusion into one buffer. Ordering is not at risk — the SSE
-// stream is serial and sequence_number-monotonic — only part identity is; this
-// guard is a tripwire for a shape that essentially never occurs in current usage.
-// Reasoning summary deltas are EXEMPT: they are display-only, keyed by
-// summary_index (not content_index), and multiple summary parts legitimately
-// concatenate.
+// Visible output text is projected through the provider-neutral one-string seam:
+// every non-empty delta is emitted in serial SSE arrival order and provider item,
+// output, and content identities are deliberately discarded at this boundary.
+// Reasoning summary deltas remain display-only and independently concatenate.
 func translate(event responses.ResponseStreamEventUnion, st *streamState) ([]port.Chunk, error) {
 	// Response IDs only enter state from a known Responses lifecycle event's typed
 	// Response field; raw SSE fields and arbitrary metadata are never inspected.
@@ -140,7 +121,10 @@ func translate(event responses.ResponseStreamEventUnion, st *streamState) ([]por
 
 	switch event.Type {
 	case "response.output_text.delta":
-		return translateTextDelta(event, st)
+		if event.Delta == "" {
+			return nil, nil
+		}
+		return []port.Chunk{{Kind: port.ChunkText, Text: event.Delta}}, nil
 
 	case "response.reasoning_summary_text.delta", "response.reasoning_text.delta":
 		// Human-readable reasoning summary deltas: DISPLAY-only. They are NOT the
@@ -294,35 +278,6 @@ func translateCompleted(event responses.ResponseStreamEventUnion, st *streamStat
 	), nil
 }
 
-// translateTextDelta handles a response.output_text.delta event. It enforces the
-// single-visible-text-part assumption: the first delta pins the part identity
-// (item_id, output_index, content_index) into streamState; any later delta with a
-// DIFFERENT identity (a second message item, or a second output_text content part)
-// is a loud error rather than a silent fusion (the domain Message.Text is one
-// string and cannot represent two distinct visible parts). See translate's doc
-// comment.
-func translateTextDelta(event responses.ResponseStreamEventUnion, st *streamState) ([]port.Chunk, error) {
-	if event.Delta == "" {
-		return nil, nil
-	}
-	if !st.textIndexSet {
-		st.textItemID = event.ItemID
-		st.textOutputIndex = event.OutputIndex
-		st.textContentIndex = event.ContentIndex
-		st.textIndexSet = true
-	} else if event.ItemID != st.textItemID ||
-		event.OutputIndex != st.textOutputIndex ||
-		event.ContentIndex != st.textContentIndex {
-		return nil, fmt.Errorf(
-			"openai: multiple assistant text parts in one turn not supported "+
-				"(first item %q part out=%d/content=%d, then item %q part out=%d/content=%d); "+
-				"the harness models a single visible text part per turn",
-			st.textItemID, st.textOutputIndex, st.textContentIndex,
-			event.ItemID, event.OutputIndex, event.ContentIndex)
-	}
-	return []port.Chunk{{Kind: port.ChunkText, Text: event.Delta}}, nil
-}
-
 // responseErrorString renders a Responses ResponseError (on a failed response)
 // as "code: message", tolerating either part being absent.
 func responseErrorString(e responses.ResponseError) string {
@@ -387,8 +342,8 @@ func streamErrorString(event responses.ResponseStreamEventUnion) string {
 // llmresilience DefaultClassifier (which checks for interface{ StatusCode() int })
 // can classify transient codes (e.g. 429 rate-limit) as retryable.
 //
-// The human-readable Error() string is identical to what a plain fmt.Errorf
-// would have produced, so existing user-facing output is unchanged.
+// The human-readable Error() string retains the in-band event text. Structured
+// HTTP rejections add only the safe target/ID projection in httpMetadataError.
 type providerErrorMetadata struct {
 	httpStatus      int
 	inBandStatus    int
@@ -412,20 +367,39 @@ func (e *responseStreamError) ProviderErrorCorrelationKind() string {
 }
 func (e *responseStreamError) ProviderErrorCorrelationID() string { return e.metadata.correlationID }
 
-// httpMetadataError keeps the SDK error unwrap-visible while exposing only its
-// typed code, status, and the documented request correlation header.
+// httpMetadataError keeps the SDK error unwrap-visible while exposing a safe
+// display projection plus typed metadata for diagnostics.
 type httpMetadataError struct {
 	err      error
+	message  string
 	metadata providerErrorMetadata
 }
 
-func (e *httpMetadataError) Error() string                        { return e.err.Error() }
+func (e *httpMetadataError) Error() string                        { return e.message }
 func (e *httpMetadataError) Unwrap() error                        { return e.err }
 func (e *httpMetadataError) ProviderHTTPStatus() int              { return e.metadata.httpStatus }
 func (e *httpMetadataError) ProviderInBandStatus() int            { return e.metadata.inBandStatus }
 func (e *httpMetadataError) ProviderErrorCode() string            { return e.metadata.providerCode }
 func (e *httpMetadataError) ProviderErrorCorrelationKind() string { return e.metadata.correlationKind }
 func (e *httpMetadataError) ProviderErrorCorrelationID() string   { return e.metadata.correlationID }
+
+func structuredHTTPErrorText(code, kind, message string) string {
+	label := strings.TrimSpace(code)
+	if label == "" {
+		label = strings.TrimSpace(kind)
+	}
+	message = strings.TrimSpace(message)
+	switch {
+	case label != "" && message != "":
+		return label + ": " + message
+	case label != "":
+		return label
+	case message != "":
+		return message
+	default:
+		return "provider request failed"
+	}
+}
 
 func withHTTPErrorMetadata(err error) error {
 	var apiErr *oai.Error
@@ -436,13 +410,19 @@ func withHTTPErrorMetadata(err error) error {
 		httpStatus:   apiErr.StatusCode,
 		providerCode: apiErr.Code,
 	}
+	requestID := ""
 	if apiErr.Response != nil {
-		if requestID := apiErr.Response.Header.Get("X-Request-ID"); requestID != "" {
+		requestID = apiErr.Response.Header.Get("X-Request-ID")
+		if requestID != "" {
 			metadata.correlationKind = "request"
 			metadata.correlationID = requestID
 		}
 	}
-	return &httpMetadataError{err: err, metadata: metadata}
+	return &httpMetadataError{
+		err:      err,
+		message:  port.AppendHTTPErrorDisplay(structuredHTTPErrorText(apiErr.Code, apiErr.Type, apiErr.Message), apiErr.Request, requestID),
+		metadata: metadata,
+	}
 }
 
 // StatusCode returns the HTTP-status equivalent of the provider error code. The

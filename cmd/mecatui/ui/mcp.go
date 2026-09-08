@@ -91,6 +91,7 @@ type mcpState struct {
 
 	deps surfaceDeps // the shared ambient base (incl. ctx), set once at Open
 	mcp  client.MCP  // the surface-specific RPC client, set once at Open
+
 }
 
 // argField is one required-argument input in the prompt-args sub-state.
@@ -100,19 +101,19 @@ type argField struct {
 }
 
 // Render returns the MCP surface body; the parent centers it.
-func (s *mcpState) Render(_, _ int) (string, []ClickableRegion) {
+func (s *mcpState) Render(width, _ int) (string, []ClickableRegion) {
 	th := s.deps.theme
 	caps := s.deps.caps
 	hk := s.deps.marks
 	switch s.view {
 	case mcpPanel:
-		return renderMCPPanel(th, *s, caps, hk), nil
+		return renderMCPPanel(th, *s, caps, hk, width), nil
 	case mcpResources:
-		return renderResourceList(th, *s, caps, hk), nil
+		return renderResourceList(th, *s, caps, hk, width), nil
 	case mcpResourcePrev:
-		return renderResourcePreview(th, *s, hk), nil
+		return renderResourcePreview(th, *s, hk, width), nil
 	case mcpPrompts:
-		return renderPromptList(th, *s, caps, hk), nil
+		return renderPromptList(th, *s, caps, hk, width), nil
 	case mcpPromptArgs:
 		return renderPromptArgs(th, *s, hk), nil
 	default:
@@ -427,6 +428,9 @@ func (*mcpState) Close() {}
 
 // updateMCPMsg handles insertion messages that require Model-owned textarea mutation.
 func (m Model) updateMCPMsg(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
+	if model, cmd, handled := m.updateMCPAuthorizationMsg(msg); handled {
+		return model, cmd, true
+	}
 	switch msg := msg.(type) {
 	case client.MCPPromptGotMsg:
 		mm, cmd := m.insertIntoInput(joinPromptMessages(msg.Messages), "loaded prompt "+msg.Name)
@@ -515,9 +519,20 @@ func renderMCPListHeader(th theme.Theme, st mcpState, caps client.Capabilities, 
 	return b.String()
 }
 
+// renderMCPInventoryRow wraps raw inventory text before styling it. An omitted
+// width preserves the existing direct-render callers while the modal surface
+// passes its parent-derived content width.
+func renderMCPInventoryRow(style theme.Theme, styleName, text string, width int) string {
+	return renderToolCardText(style.Style(styleName), text, width)
+}
+
 // renderMCPPanel renders the read-only inventory: sources → servers → diagnostics.
 // It also carries the startup-snapshot caveat in its footer copy.
-func renderMCPPanel(th theme.Theme, st mcpState, caps client.Capabilities, hk helpKeys) string {
+func renderMCPPanel(th theme.Theme, st mcpState, caps client.Capabilities, hk helpKeys, widths ...int) string {
+	width := 0
+	if len(widths) > 0 {
+		width = widths[0]
+	}
 	var b strings.Builder
 	empty := !st.loading && len(st.sources) == 0 && st.errMsg == ""
 	b.WriteString(renderMCPListHeader(th, st, caps, "MCP inventory", empty, "No MCP sources configured on this server."))
@@ -531,17 +546,17 @@ func renderMCPPanel(th theme.Theme, st mcpState, caps client.Capabilities, hk he
 		if s.Group != "" {
 			head += "  group=" + sanitizeTerminal(s.Group)
 		}
-		b.WriteString(th.Style("toolName").Render(head) + "\n")
+		b.WriteString(renderMCPInventoryRow(th, "toolName", head, width) + "\n")
 		for _, srv := range s.Servers {
 			line := fmt.Sprintf("  • %s  %s  %s",
 				sanitizeTerminal(srv.Name), sanitizeTerminal(srv.Transport), sanitizeTerminal(srv.URL))
-			b.WriteString(th.Style("toolArgs").Render(line) + "\n")
+			b.WriteString(renderMCPInventoryRow(th, "toolArgs", line, width) + "\n")
 		}
 		for _, d := range s.Diagnostics {
-			b.WriteString(th.Style("errorText").Render("  ! "+sanitizeTerminal(d)) + "\n")
+			b.WriteString(renderMCPInventoryRow(th, "errorText", "  ! "+sanitizeTerminal(d), width) + "\n")
 		}
 	}
-	b.WriteString(renderGroupsLine(th, st))
+	b.WriteString(renderGroupsLine(th, st, width))
 	b.WriteString("\n" + th.Style("muted").Render(mcpPanelFooter(st, hk)))
 	return b.String()
 }
@@ -566,7 +581,11 @@ func mcpPanelFooter(st mcpState, hk helpKeys) string {
 
 // renderGroupsLine renders the best-effort ToolHive-groups line for the panel. It
 // degrades quietly on a fetch error (a muted note) and handles the empty case.
-func renderGroupsLine(th theme.Theme, st mcpState) string {
+func renderGroupsLine(th theme.Theme, st mcpState, widths ...int) string {
+	width := 0
+	if len(widths) > 0 {
+		width = widths[0]
+	}
 	if !st.groupsDone {
 		return ""
 	}
@@ -580,11 +599,15 @@ func renderGroupsLine(th theme.Theme, st mcpState) string {
 	for i, g := range st.groups {
 		clean[i] = sanitizeTerminal(g)
 	}
-	return "\n" + th.Style("toolName").Render("ToolHive groups: "+strings.Join(clean, ", ")) + "\n"
+	return "\n" + renderMCPInventoryRow(th, "toolName", "ToolHive groups: "+strings.Join(clean, ", "), width) + "\n"
 }
 
 // renderResourceList renders the scrollable resource picker.
-func renderResourceList(th theme.Theme, st mcpState, caps client.Capabilities, hk helpKeys) string {
+func renderResourceList(th theme.Theme, st mcpState, caps client.Capabilities, hk helpKeys, widths ...int) string {
+	width := 0
+	if len(widths) > 0 {
+		width = widths[0]
+	}
 	var b strings.Builder
 	empty := !st.loading && len(st.resources) == 0 && st.errMsg == ""
 	b.WriteString(renderMCPListHeader(th, st, caps, "MCP resources", empty, "No resources advertised by the connected MCP servers."))
@@ -594,26 +617,37 @@ func renderResourceList(th theme.Theme, st mcpState, caps client.Capabilities, h
 			label = r.URI
 		}
 		line := fmt.Sprintf("%s  %s", sanitizeTerminal(label), sanitizeTerminal(r.Server))
-		b.WriteString(renderRow(th, line, i == st.resCursor) + "\n")
+		b.WriteString(renderRow(th, line, i == st.resCursor, width) + "\n")
 	}
 	b.WriteString("\n" + th.Style("muted").Render(hk.navUp+"/"+hk.navDown+" move · "+hk.choose+" read · "+hk.closeOnly+" close"))
 	return b.String()
 }
 
-// renderResourcePreview renders a read resource's text in a preview pane.
+// renderResourcePreview renders a read resource's text in a preview pane. width
+// is the parent card body's effective width; the truncated source is wrapped
+// before the style can pad it.
 // hk carries the LIVE keyMap markings (issue #457): the ExpandTools chord for the
 // collapse marker when the preview exceeds the line cap, and the Choose/Close
 // chords for the insert/back footer.
-func renderResourcePreview(th theme.Theme, st mcpState, hk helpKeys) string {
+func renderResourcePreview(th theme.Theme, st mcpState, hk helpKeys, widths ...int) string {
+	width := 0
+	if len(widths) > 0 {
+		width = widths[0]
+	}
 	var b strings.Builder
 	b.WriteString(th.Style("askTitle").Render("resource preview") + "\n\n")
-	b.WriteString(th.Style("toolArgs").Render(truncateLinesTailMark(st.preview, maxToolResultLines, "", hk.expandTools)) + "\n")
+	preview := truncateLinesTailMark(st.preview, maxToolResultLines, "", hk.expandTools)
+	b.WriteString(renderToolCardText(th.Style("toolArgs"), preview, width) + "\n")
 	b.WriteString("\n" + th.Style("muted").Render(hk.choose+" insert into prompt · "+focusBackHint(hk)))
 	return b.String()
 }
 
 // renderPromptList renders the scrollable prompt picker.
-func renderPromptList(th theme.Theme, st mcpState, caps client.Capabilities, hk helpKeys) string {
+func renderPromptList(th theme.Theme, st mcpState, caps client.Capabilities, hk helpKeys, widths ...int) string {
+	width := 0
+	if len(widths) > 0 {
+		width = widths[0]
+	}
 	var b strings.Builder
 	empty := !st.loading && len(st.prompts) == 0 && st.errMsg == ""
 	b.WriteString(renderMCPListHeader(th, st, caps, "MCP prompts", empty, "No prompts advertised by the connected MCP servers."))
@@ -623,7 +657,7 @@ func renderPromptList(th theme.Theme, st mcpState, caps client.Capabilities, hk 
 			marker = "  (args)"
 		}
 		line := fmt.Sprintf("%s  %s%s", sanitizeTerminal(p.Name), sanitizeTerminal(p.Server), marker)
-		b.WriteString(renderRow(th, line, i == st.prCursor) + "\n")
+		b.WriteString(renderRow(th, line, i == st.prCursor, width) + "\n")
 	}
 	b.WriteString("\n" + th.Style("muted").Render(hk.navUp+"/"+hk.navDown+" move · "+hk.choose+" select · "+hk.closeOnly+" close"))
 	return b.String()
@@ -654,11 +688,19 @@ func renderPromptArgs(th theme.Theme, st mcpState, hk helpKeys) string {
 }
 
 // renderRow renders one selectable list row, highlighting the cursor row.
-func renderRow(th theme.Theme, text string, selected bool) string {
-	if selected {
-		return th.Style("askButtonActive").Render("› " + text)
+func renderRow(th theme.Theme, text string, selected bool, widths ...int) string {
+	width := 0
+	if len(widths) > 0 {
+		width = widths[0]
 	}
-	return th.Style("toolArgs").Render("  " + text)
+	prefix, style := "  ", th.Style("toolArgs")
+	if selected {
+		prefix, style = "› ", th.Style("askButtonActive")
+	}
+	if width > 0 {
+		width -= style.GetHorizontalFrameSize()
+	}
+	return renderToolCardText(style, prefix+text, width)
 }
 
 // mcpStatusLine renders the overlay's loading/error status: a classified error

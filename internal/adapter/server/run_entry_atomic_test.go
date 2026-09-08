@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
@@ -52,7 +51,7 @@ func (s *loadBarrierStore) Load(ctx context.Context, id session.SessionID) (*ses
 func TestADR_0108_RunEntryLocksLoadAuthorizePurposeAndReopen(t *testing.T) {
 	ctx := context.Background()
 	base := memstore.New()
-	sess := session.New("same-id", session.ModeDefault, "/workspace", session.Limits{}, time.Unix(1, 0))
+	sess := session.New("same-id", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 	if err := sess.Reopen(); err == nil {
 		t.Fatal("idle fixture unexpectedly reopened")
 	}
@@ -69,9 +68,8 @@ func TestADR_0108_RunEntryLocksLoadAuthorizePurposeAndReopen(t *testing.T) {
 		}, mockllm.TextTurn("first")),
 		Catalog: tool.NewCatalog(), Model: "test",
 	})
-	svc, err := server.NewService(server.Config{
-		Engine: eng, Store: store,
-		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+	svc, err := newPlacementTestService(server.Config{
+		Engine: eng, Store: store, SharedEngineRoot: "/workspace",
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
@@ -185,7 +183,7 @@ func TestCallerSeparation_ForeignPromptDoesNotContendOnOwnerRunEntry(t *testing.
 	t.Cleanup(cancelAlice)
 	aliceCtx := session.WithPrincipal(aliceBaseCtx, alice)
 	bobCtx := session.WithPrincipal(context.Background(), bob)
-	sess := session.New("alice-session", session.ModeDefault, "/workspace", session.Limits{}, time.Unix(1, 0))
+	sess := session.New("alice-session", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 	if err := sess.RestoreLabels(alice, session.Authority{}); err != nil {
 		t.Fatalf("RestoreLabels: %v", err)
 	}
@@ -203,9 +201,9 @@ func TestCallerSeparation_ForeignPromptDoesNotContendOnOwnerRunEntry(t *testing.
 		Catalog: tool.NewCatalog(),
 		Model:   "test",
 	})
-	svc, err := server.NewService(server.Config{
-		Engine: eng, Store: store,
-		Workspaces:         func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+	svc, err := newPlacementTestService(server.Config{
+		Engine: eng, Store: store, SharedEngineRoot: "/workspace",
+
 		OwnershipEnforced:  true,
 		SessionLease:       lease,
 		LeaseOwner:         "test-server",
@@ -297,7 +295,7 @@ func TestCallerSeparation_RunEntryReloadReauthorizesAfterPreflight(t *testing.T)
 		{
 			name: "owner replaced",
 			mutate: func(ctx context.Context, store *memstore.Store, id session.SessionID) error {
-				replacement := session.New(id, session.ModeDefault, "/workspace", session.Limits{}, time.Unix(2, 0))
+				replacement := session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(2, 0))
 				if err := replacement.RestoreLabels(bob, session.Authority{}); err != nil {
 					return err
 				}
@@ -309,7 +307,7 @@ func TestCallerSeparation_RunEntryReloadReauthorizesAfterPreflight(t *testing.T)
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			base := memstore.New()
-			sess := session.New("alice-session", session.ModeDefault, "/workspace", session.Limits{}, time.Unix(1, 0))
+			sess := session.New("alice-session", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 			if err := sess.RestoreLabels(alice, session.Authority{}); err != nil {
 				t.Fatalf("RestoreLabels: %v", err)
 			}
@@ -325,10 +323,11 @@ func TestCallerSeparation_RunEntryReloadReauthorizesAfterPreflight(t *testing.T)
 				return tt.mutate(ctx, base, sess.ID)
 			}
 			lease := &fakeLease{}
-			svc, err := server.NewService(server.Config{
-				Engine:             agent.NewEngine(agent.Deps{LLM: mockllm.New(mockllm.TextTurn("unexpected")), Catalog: tool.NewCatalog(), Model: "test"}),
-				Store:              store,
-				Workspaces:         func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+			svc, err := newPlacementTestService(server.Config{
+				Engine:           agent.NewEngine(agent.Deps{LLM: mockllm.New(mockllm.TextTurn("unexpected")), Catalog: tool.NewCatalog(), Model: "test"}),
+				Store:            store,
+				SharedEngineRoot: "/workspace",
+
 				OwnershipEnforced:  true,
 				SessionLease:       lease,
 				LeaseOwner:         "test-server",

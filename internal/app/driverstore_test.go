@@ -207,7 +207,7 @@ func TestBuildStoreRedisURL(t *testing.T) {
 	}
 	// A Save/Load round-trip through the composition-wired adapter proves it is
 	// the real store, not a nil stub.
-	s := session.New("redis-build-test", session.ModeAccept, "/work", session.Limits{}, time.Now())
+	s := session.New("redis-build-test", session.ModeAccept, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/work", Revision: "in-tree-v1"}, session.Limits{}, time.Now())
 	if err := st.Save(context.Background(), s); err != nil {
 		t.Fatalf("Save through composition-wired redisstore: %v", err)
 	}
@@ -264,6 +264,33 @@ func TestValidateDriverConfigRejectsMemoryDirectoryCollisions(t *testing.T) {
 	}
 	if err := validateDriverConfig(Config{MemoryDir: dir, UserModelDir: alias}); err == nil {
 		t.Fatal("symlink-aliased memory/user-model directory collision accepted")
+	}
+}
+
+// TestCanonicalConfiguredDirWalksMultipleMissingAncestors pins issue #830: on
+// a completely fresh install, neither the leaf nor its immediate parent
+// exists yet (e.g. "~/Library/Application Support/mecatui/memory/<project>"
+// with no piece of "mecatui/memory/<project>" created). canonicalConfiguredDir
+// must walk up past ALL missing ancestors, not just one, to find the nearest
+// existing directory to resolve symlinks against.
+func TestCanonicalConfiguredDirWalksMultipleMissingAncestors(t *testing.T) {
+	base := t.TempDir()
+	missing := filepath.Join(base, "mecatui", "memory", "some-project")
+	got, err := canonicalConfiguredDir(missing)
+	if err != nil {
+		t.Fatalf("canonicalConfiguredDir(%q) with no ancestor created: %v", missing, err)
+	}
+	want, err := filepath.EvalSymlinks(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want = filepath.Join(want, "mecatui", "memory", "some-project")
+	if got != want {
+		t.Fatalf("canonicalConfiguredDir(%q) = %q, want %q", missing, got, want)
+	}
+
+	if err := validateDriverConfig(Config{MemoryDir: missing, UserModelDir: filepath.Join(base, "other")}); err != nil {
+		t.Fatalf("validateDriverConfig with a multi-level-missing MemoryDir: %v", err)
 	}
 }
 

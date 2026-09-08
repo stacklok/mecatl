@@ -16,7 +16,6 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/agent"
@@ -341,7 +340,7 @@ func TestFireDelivery_Scenario6_TransportProjectionParity(t *testing.T) {
 func TestCallerSeparation_Scenario3_LiveSubscriptionIsOwnerCheckedOverGRPC(t *testing.T) {
 	svc := newLiveSubscriptionServiceOwnershipEnforced(t)
 	aliceCtx := session.WithPrincipal(context.Background(), &session.Principal{Issuer: "https://idp.example", Subject: "alice", GrantType: session.GrantTypeUser})
-	sess, err := svc.CreateSessionWithProfile(aliceCtx, "/tmp/live-sub-owner-test", session.ModeDefault, session.Limits{},
+	sess, err := svc.CreateSessionWithProfile(aliceCtx, session.ModeDefault, session.Limits{},
 		server.ProviderSelector{}, server.ProfileDefault)
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
@@ -449,10 +448,10 @@ func newLiveSubscriptionServiceOwnershipEnforced(t *testing.T, turns ...mockllm.
 		Model:   "test-model",
 		Store:   store,
 	})
-	svc, err := server.NewService(server.Config{
-		Engine:              engine,
-		Store:               store,
-		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+	svc, err := newPlacementTestService(server.Config{
+		Engine: engine,
+		Store:  store,
+
 		Now:                 time.Now,
 		DefaultCapabilities: llm.Capabilities(),
 		EventLog:            store,
@@ -506,7 +505,7 @@ func warmupLiveConn(t *testing.T, cl mecatlv1.HarnessServiceClient, id session.S
 // completed so a delivery run can deliver into it.
 func createLiveSubscriptionOrigin(t *testing.T, svc *server.Service) session.SessionID {
 	t.Helper()
-	sess, err := svc.CreateSessionWithProfile(context.Background(), "/tmp/live-sub-test", session.ModeDefault, session.Limits{},
+	sess, err := svc.CreateSessionWithProfile(context.Background(), session.ModeDefault, session.Limits{},
 		server.ProviderSelector{}, server.ProfileDefault)
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
@@ -678,10 +677,10 @@ func newLiveSubscriptionService(t *testing.T, turns ...mockllm.Turn) *server.Ser
 		Model:   "test-model",
 		Store:   store,
 	})
-	svc, err := server.NewService(server.Config{
-		Engine:              engine,
-		Store:               store,
-		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+	svc, err := newPlacementTestService(server.Config{
+		Engine: engine,
+		Store:  store,
+
 		Now:                 time.Now,
 		DefaultCapabilities: llm.Capabilities(),
 		EventLog:            store,

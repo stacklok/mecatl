@@ -89,6 +89,108 @@ func TestRenameTitle(t *testing.T) {
 	}
 }
 
+func TestTitleGenerationMutationBumpsRevisionOnce(t *testing.T) {
+	s := newTestSession(Limits{})
+	s.ApplyTitleGeneration(TitleGenerationPending, []TitleAttempt{{ID: "attempt", Outcome: TitleAttemptDeferred}})
+	if got := s.TitleRevision; got != 1 {
+		t.Fatalf("TitleRevision = %d, want 1", got)
+	}
+	s.ApplyTitleGeneration(TitleGenerationPending, []TitleAttempt{{ID: "attempt", Outcome: TitleAttemptDeferred}})
+	if got := s.TitleRevision; got != 1 {
+		t.Fatalf("no-op TitleRevision = %d, want 1", got)
+	}
+}
+
+func TestRestoreTitleMetadataRestoresAllMetadataAtomically(t *testing.T) {
+	s := newTestSession(Limits{})
+	s.SetTitle("old title")
+	s.SetTitleGeneration(TitleGenerationPending)
+	s.RecordTitleSourcePrompt("old source")
+	s.RecordTitleAttempt(TitleAttempt{ID: "old", Outcome: TitleAttemptDeferred})
+
+	attempts := []TitleAttempt{{ID: "attempt", Outcome: TitleAttemptInterrupted}}
+	s.RestoreTitleMetadata("restored title", TitleProvenanceGenerated, 7, TitleGenerationExhausted, []string{"source"}, attempts)
+
+	if got, want := s.Title, "restored title"; got != want {
+		t.Errorf("Title = %q, want %q", got, want)
+	}
+	if got, want := s.TitleProvenance, TitleProvenanceGenerated; got != want {
+		t.Errorf("TitleProvenance = %q, want %q", got, want)
+	}
+	if got, want := s.TitleRevision, uint64(7); got != want {
+		t.Errorf("TitleRevision = %d, want %d", got, want)
+	}
+	if got, want := s.TitleGeneration, TitleGenerationExhausted; got != want {
+		t.Errorf("TitleGeneration = %q, want %q", got, want)
+	}
+	if got, want := s.TitleSourcePrompts(), []string{"source"}; len(got) != len(want) || got[0] != want[0] {
+		t.Errorf("TitleSourcePrompts = %#v, want %#v", got, want)
+	}
+	if got := s.TitleAttempts(); !equalTitleAttempts(got, attempts) {
+		t.Errorf("TitleAttempts = %#v, want %#v", got, attempts)
+	}
+}
+
+func TestTitleRevisionNoOpsDoNotAdvance(t *testing.T) {
+	s := newTestSession(Limits{})
+	for range maxTitleSourcePrompts {
+		s.RecordTitleSourcePrompt("source")
+	}
+	before := s.TitleRevision
+	s.RecordTitleSourcePrompt("overflow")
+	if err := s.SetGeneratedTitle(" \t "); err == nil {
+		t.Fatal("blank generated title succeeded")
+	}
+	if got := s.TitleRevision; got != before {
+		t.Fatalf("no-op TitleRevision = %d, want %d", got, before)
+	}
+}
+
+func TestTitleRevisionSaturatesAtMax(t *testing.T) {
+	s := newTestSession(Limits{})
+	s.TitleRevision = ^uint64(0)
+	s.SetTitle("title")
+	if got := s.TitleRevision; got != ^uint64(0) {
+		t.Fatalf("TitleRevision = %d, want saturation", got)
+	}
+}
+
+func TestTitleRevisionAdvancesOnlyForEffectiveMetadataMutations(t *testing.T) {
+	s := newTestSession(Limits{})
+	if s.TitleRevision != 0 {
+		t.Fatalf("new session TitleRevision = %d, want 0", s.TitleRevision)
+	}
+
+	s.SetTitle("")
+	s.SetTitle("first")
+	s.SetTitle("second")
+	if got := s.TitleRevision; got != 1 {
+		t.Fatalf("SetTitle revision = %d, want 1", got)
+	}
+
+	if err := s.RenameTitle("first"); err != nil {
+		t.Fatalf("RenameTitle: %v", err)
+	}
+	if err := s.RenameTitle("first"); err != nil {
+		t.Fatalf("repeat RenameTitle: %v", err)
+	}
+	s.SetTitleGeneration(TitleGenerationDisabled)
+	s.SetTitleGeneration(TitleGenerationPending)
+	s.RecordTitleSourcePrompt("  ")
+	s.RecordTitleSourcePrompt("source")
+	s.RecordTitleAttempt(TitleAttempt{ID: "attempt", Outcome: TitleAttemptDeferred})
+	if err := s.SetGeneratedTitle("generated"); err != nil {
+		t.Fatalf("SetGeneratedTitle: %v", err)
+	}
+	if err := s.SetGeneratedTitle("generated"); err != nil {
+		t.Fatalf("repeat SetGeneratedTitle: %v", err)
+	}
+
+	if got := s.TitleRevision; got != 6 {
+		t.Fatalf("TitleRevision = %d, want 6", got)
+	}
+}
+
 func TestClampTitle(t *testing.T) {
 	tests := []struct {
 		name string

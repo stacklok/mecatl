@@ -149,21 +149,21 @@ func (st *SessionStore) Load(ctx context.Context, id session.SessionID) (*sessio
 		if status.Code(err) == codes.NotFound {
 			return nil, fmt.Errorf("%w: %q", ErrNotFound, id)
 		}
-		return nil, rpcErr(ctx, "load", err)
+		return nil, port.NewSessionLoadFailure(port.SessionLoadFailureStore, rpcErr(ctx, "load", err))
 	}
 	snap := resp.GetSnapshot()
 	if got := snap.GetFormat(); got != SnapshotFormat {
-		return nil, fmt.Errorf("grpcdriver: load %q: unknown snapshot format %q (this client speaks %q)", id, got, SnapshotFormat)
+		return nil, port.NewSessionLoadFailure(port.SessionLoadFailureSnapshot, fmt.Errorf("grpcdriver: load %q: unknown snapshot format %q (this client speaks %q)", id, got, SnapshotFormat))
 	}
 	sess, err := sessnap.Unmarshal(snap.GetPayload())
 	if err != nil {
-		return nil, fmt.Errorf("grpcdriver: load %q: %w", id, err)
+		return nil, port.NewSessionLoadFailure(port.SessionLoadFailureSnapshot, fmt.Errorf("grpcdriver: load %q: %w", id, err))
 	}
 	// Wrong-session guard: a driver that mis-keys its storage (or always
 	// returns "the" session) must surface as a loud infra failure here, never
 	// as a silently-adopted foreign session.
 	if sess.ID != id {
-		return nil, fmt.Errorf("grpcdriver: load %q: driver returned the snapshot of a DIFFERENT session %q (mis-keyed driver)", id, sess.ID)
+		return nil, port.NewSessionLoadFailure(port.SessionLoadFailureSnapshot, fmt.Errorf("grpcdriver: load %q: driver returned the snapshot of a DIFFERENT session %q (mis-keyed driver)", id, sess.ID))
 	}
 	return sess, nil
 }
@@ -439,7 +439,7 @@ func metadataFromProto(entry *driverv1.SessionMetadataEntry) port.SessionDiscove
 		ModelID:         entry.GetModelId(),
 		Title:           entry.GetTitle(),
 		TitleProvenance: session.TitleProvenance(entry.GetTitleProvenance()),
-		Workspace:       entry.GetWorkspace(),
+		EnvironmentRef:  environmentRefFromProto(entry.GetEnvironmentRef()),
 		Kind:            session.SessionKind(entry.GetKind()),
 		EstimatedBytes:  entry.GetEstimatedBytes(),
 		Relationship: session.SessionRelationship{
@@ -472,6 +472,13 @@ func metadataFromProto(entry *driverv1.SessionMetadataEntry) port.SessionDiscove
 		}
 	}
 	return meta
+}
+
+func environmentRefFromProto(ref *driverv1.StoredEnvironmentRef) session.EnvironmentRef {
+	if ref == nil {
+		return session.EnvironmentRef{}
+	}
+	return session.EnvironmentRef{Kind: session.EnvironmentKind(ref.GetKind()), ID: ref.GetId(), Revision: ref.GetRevision()}
 }
 
 // Delete removes the snapshot stored under id on the driver. It is idempotent

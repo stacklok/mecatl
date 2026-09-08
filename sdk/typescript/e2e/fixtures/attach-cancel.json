@@ -1,0 +1,6 @@
+{
+  "turns": [
+    { "delay_ms": 2000, "text": "this attached run should be cancelled" },
+    { "delay_ms": 600, "text": "the newer run survived the stale cancel" }
+  ]
+}

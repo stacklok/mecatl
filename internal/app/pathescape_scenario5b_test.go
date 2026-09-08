@@ -50,7 +50,7 @@ func TestPathEscapePosture_Scenario5_SharedWorkspaceChildNotRelaxed(t *testing.T
 				f := setupEscapeFS(t)
 				// NO git init: the whole point is the nil-forker path — with no
 				// sandboxed runner buildSubagentTool wires no forker, so the child
-				// runs against the parent's (relaxed) base workspace verbatim.
+				// runs against the parent's content backend through a confined child view.
 				target := mustJSONStr(t, f.target)
 				parentRead := session.NewToolCall("p1", "Read", json.RawMessage(`{"path":`+target+`}`))
 				delegate := session.NewToolCall("p2", "Subagent", json.RawMessage(`{"prompt":"read the file outside the workspace"}`))
@@ -73,7 +73,7 @@ func TestPathEscapePosture_Scenario5_SharedWorkspaceChildNotRelaxed(t *testing.T
 					t.Fatalf("Build: %v", err)
 				}
 				defer built.Close()
-				sess, err := built.Service.CreateSession(context.Background(), f.workspace, session.ModeDefault, session.Limits{})
+				sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 				if err != nil {
 					t.Fatalf("CreateSession: %v", err)
 				}
@@ -134,8 +134,8 @@ func TestPathEscapePosture_Scenario5_SharedWorkspaceChildNotRelaxed(t *testing.T
 
 // TestPathEscapePosture_Scenario5_SharedWorkspaceChildWriteDenied pins the
 // WRITE half of AC5.1b: a writable (mode:"read-write", direct-write, ADR 0041)
-// child — the OTHER base-sharing child path, which runs against the parent
-// workspace verbatim BY DESIGN — must NOT inherit the relaxed-WRITE reach
+// child — the OTHER base-sharing child path, which shares the parent content
+// backend through a confined child Workspace view — must NOT inherit the relaxed-WRITE reach
 // either. Its out-of-root Write is denied (the file never appears), while the
 // main session's own out-of-root Write still lands at yolo (the main session's
 // relaxed behaviour is unchanged). The child is given Bash (the forker-wired
@@ -170,7 +170,7 @@ func TestPathEscapePosture_Scenario5_SharedWorkspaceChildWriteDenied(t *testing.
 		t.Fatalf("Build: %v", err)
 	}
 	defer built.Close()
-	sess, err := built.Service.CreateSession(context.Background(), f.workspace, session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

@@ -42,7 +42,7 @@ func TestSubagentChildSessionIDsDoNotCollideAcrossOwnersWithEqualCallID(t *testi
 			mockllm.TextTurn("parent done"),
 		)
 		e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task)})
-		sess := session.New(parentSessionID, session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+		sess := session.New(parentSessionID, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 		r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 		evs := drain(r)
 		res := resultByCallID(evs)["p1"]
@@ -87,7 +87,7 @@ func TestSubagentCreateCollisionCannotOverwriteDurableChild(t *testing.T) {
 	store := memstore.New()
 	const childID session.SessionID = "subagent-parent-p1"
 	bob := session.Principal{Issuer: "https://issuer.example", Subject: "bob"}
-	winner := session.New(childID, session.ModeDefault, "/bob", session.Limits{}, time.Unix(0, 0))
+	winner := session.New(childID, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/bob", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	if err := winner.RestoreLabels(&bob, session.Authority{}); err != nil {
 		t.Fatalf("RestoreLabels(winner): %v", err)
 	}
@@ -105,7 +105,7 @@ func TestSubagentCreateCollisionCannotOverwriteDurableChild(t *testing.T) {
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task)})
-	parent := session.New("parent", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	parent := session.New("parent", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	alice := session.Principal{Issuer: "https://issuer.example", Subject: "alice"}
 	if err := parent.RestoreLabels(&alice, session.Authority{}); err != nil {
 		t.Fatalf("RestoreLabels(parent): %v", err)
@@ -132,7 +132,7 @@ func TestParallelCreateCollisionCannotOverwriteDurableBranch(t *testing.T) {
 	store := memstore.New()
 	const branchID session.SessionID = "parallel-parent-p1-0"
 	bob := session.Principal{Issuer: "https://issuer.example", Subject: "bob"}
-	winner := session.New(branchID, session.ModeDefault, "/bob", session.Limits{}, time.Unix(0, 0))
+	winner := session.New(branchID, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/bob", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	if err := winner.RestoreLabels(&bob, session.Authority{}); err != nil {
 		t.Fatalf("RestoreLabels(winner): %v", err)
 	}
@@ -152,7 +152,7 @@ func TestParallelCreateCollisionCannotOverwriteDurableBranch(t *testing.T) {
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, parallel)})
-	parent := session.New("parent", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	parent := session.New("parent", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	alice := session.Principal{Issuer: "https://issuer.example", Subject: "alice"}
 	if err := parent.RestoreLabels(&alice, session.Authority{}); err != nil {
 		t.Fatalf("RestoreLabels(parent): %v", err)
@@ -172,7 +172,7 @@ func TestTeamMemberCreateCollisionCannotOverwriteDurableMember(t *testing.T) {
 	store := memstore.New()
 	const memberID session.SessionID = "team-parent-p1-lead"
 	bob := session.Principal{Issuer: "https://issuer.example", Subject: "bob"}
-	winner := session.New(memberID, session.ModeDefault, "/bob", session.Limits{}, time.Unix(0, 0))
+	winner := session.New(memberID, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/bob", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	if err := winner.RestoreLabels(&bob, session.Authority{}); err != nil {
 		t.Fatalf("RestoreLabels(winner): %v", err)
 	}
@@ -190,7 +190,7 @@ func TestTeamMemberCreateCollisionCannotOverwriteDurableMember(t *testing.T) {
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, teamTool)})
-	parent := session.New("parent", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	parent := session.New("parent", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	alice := session.Principal{Issuer: "https://issuer.example", Subject: "alice"}
 	if err := parent.RestoreLabels(&alice, session.Authority{}); err != nil {
 		t.Fatalf("RestoreLabels(parent): %v", err)
@@ -221,7 +221,7 @@ func TestParallelBranchSessionIDsDoNotCollideAcrossOwnersWithEqualCallID(t *test
 			mockllm.TextTurn("parent done"),
 		)
 		e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, par)})
-		sess := session.New(parentSessionID, session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+		sess := session.New(parentSessionID, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 		r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 		evs := drain(r)
 		res := resultByCallID(evs)["p1"]
@@ -290,7 +290,7 @@ func TestTeamMemberSessionIDsDoNotCollideAcrossOwnersWithEqualCallID(t *testing.
 			mockllm.TextTurn("parent done"),
 		)
 		e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, teamTool)})
-		sess := session.New(parentSessionID, session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+		sess := session.New(parentSessionID, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 		r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "fix it"})
 		evs := drain(r)
 		res := resultByCallID(evs)["p1"]
@@ -413,7 +413,7 @@ func TestSubagentResumeDoesNotRepublishTheChild(t *testing.T) {
 				mockllm.TextTurn("parent done"),
 			)
 			seedParent := agent.NewEngine(agent.Deps{LLM: seedParentLLM, Catalog: catalogWith(t, task), Policy: allowAll(), Model: "parent-model"})
-			seedSess := session.New("republish-parent", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+			seedSess := session.New("republish-parent", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 			if err := seedSess.RestoreLabels(resumeOwnerAlice, session.Authority{}); err != nil {
 				t.Fatalf("RestoreLabels: %v", err)
 			}

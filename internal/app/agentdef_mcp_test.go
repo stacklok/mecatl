@@ -261,7 +261,7 @@ func TestMemberReadOnlyDefWithMCPAccepted(t *testing.T) {
 	prov := mockllm.New(mockllm.ToolCallTurn(mcpCall), mockllm.TextTurn("done"))
 	factory := memberFactoryForTest(cfg, prov, hookexec.New(nil), regOf(def), nil, nil, false, nil)
 
-	sup := agent.NewSupervisor(tm, memEnvironment("/ws"),
+	sup := newTestSupervisor(tm, memEnvironment("/ws"),
 		func(spec agent.MemberSpec, routedModel string) agent.MemberBuild {
 			return factory(tm, spec, routedModel)
 		})
@@ -300,7 +300,7 @@ func TestMemberReadOnlyDefWithEditStillRejected(t *testing.T) {
 	tm := team.New("t")
 	factory := memberFactoryForTest(cfg, editCall(), hookexec.New(nil), regOf(def), nil, nil, false, nil)
 
-	sup := agent.NewSupervisor(tm, memEnvironment("/ws"),
+	sup := newTestSupervisor(tm, memEnvironment("/ws"),
 		func(spec agent.MemberSpec, routedModel string) agent.MemberBuild {
 			return factory(tm, spec, routedModel)
 		})

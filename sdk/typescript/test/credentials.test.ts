@@ -38,7 +38,7 @@ describe("transport credentials", () => {
       },
     );
     const grpc = createRawClient({ transport: grpcTransport });
-    await grpc.unary(HarnessService.method.createSession, { workspace: scriptedState.workspace });
+    await grpc.unary(HarnessService.method.createSession, {});
     expect(grpcHeaders).toHaveLength(2);
     for (const headers of grpcHeaders) {
       expect(headers.get("authorization")).toBe(`Bearer ${secret}`);
@@ -55,7 +55,7 @@ describe("transport credentials", () => {
         headers: { "x-static": "static" },
       }),
     });
-    await http.unary(HarnessService.method.createSession, { workspace: scriptedState.workspace });
+    await http.unary(HarnessService.method.createSession, {});
     expect(requests).toHaveLength(2);
     for (const request of requests) {
       expect(request.headers.get("authorization")).toBe(`Bearer ${secret}`);
@@ -93,9 +93,7 @@ describe("transport credentials", () => {
       }),
     });
 
-    await client.unary(HarnessService.method.createSession, {
-      workspace: scriptedState.workspace,
-    });
+    await client.unary(HarnessService.method.createSession, {});
     expect(requests.map((request) => new URL(request.url).pathname)).toEqual([
       "/v1/compatibility",
       "/v1/sessions",

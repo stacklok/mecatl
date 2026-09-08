@@ -295,6 +295,24 @@ func retryableStatus(code int) bool {
 	return code == 408 || code == 429 || code >= 500
 }
 
+func structuredHTTPErrorText(code, kind, message string) string {
+	label := strings.TrimSpace(code)
+	if label == "" {
+		label = strings.TrimSpace(kind)
+	}
+	message = strings.TrimSpace(message)
+	switch {
+	case label != "" && message != "":
+		return label + ": " + message
+	case label != "":
+		return label
+	case message != "":
+		return message
+	default:
+		return "provider request failed"
+	}
+}
+
 // openaichatStreamErr wraps the given error as an openaichatStreamError while
 // retaining the SDK error in the chain and projecting only typed provider fields.
 func openaichatStreamErr(err error, msg, completionID string) *openaichatStreamError {
@@ -310,12 +328,15 @@ func openaichatStreamErr(err error, msg, completionID string) *openaichatStreamE
 			status = openaichatErrorCodeToStatus(sdkErr.Code)
 			metadata.inBandStatus = status
 		}
+		requestID := ""
 		if sdkErr.Response != nil {
-			if requestID := sdkErr.Response.Header.Get("X-Request-ID"); requestID != "" {
+			requestID = sdkErr.Response.Header.Get("X-Request-ID")
+			if requestID != "" {
 				metadata.correlationKind = "request"
 				metadata.correlationID = requestID
 			}
 		}
+		msg = port.AppendHTTPErrorDisplay(structuredHTTPErrorText(sdkErr.Code, sdkErr.Type, sdkErr.Message), sdkErr.Request, requestID)
 	}
 	if metadata.correlationID == "" && completionID != "" {
 		metadata.correlationKind = "completion"

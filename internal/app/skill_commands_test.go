@@ -249,8 +249,9 @@ func TestSkillCommandBridgeBuildWiresEndToEnd(t *testing.T) {
 	dir := t.TempDir()
 	writeSkill(t, dir, "deploy", "deploy the service", "Deploy the service to $ARGUMENTS.")
 
+	root := t.TempDir()
 	built, err := Build(context.Background(), Config{
-		Workspace:  t.TempDir(),
+		Workspace:  root,
 		Model:      "mock",
 		UseMock:    true,
 		SkillsDirs: []string{dir},
@@ -264,7 +265,11 @@ func TestSkillCommandBridgeBuildWiresEndToEnd(t *testing.T) {
 	// engineDepsForProvider → buildCommandExpander, which composed the
 	// SkillCommandSource over the stashed seam. The Service exposes the engine's
 	// expander indirectly; assert via the command lister RPC the skill is listed.
-	got, err := built.Service.ListCommands(context.Background(), t.TempDir())
+	created, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	got, err := built.Service.ListCommandsForSession(context.Background(), created.ID)
 	if err != nil {
 		t.Fatalf("ListCommands: %v", err)
 	}
@@ -314,7 +319,7 @@ func TestSkillCommandExpandsThroughEngineLoop(t *testing.T) {
 	}
 	defer built.Close()
 
-	sess, err := built.Service.CreateSession(context.Background(), t.TempDir(), session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

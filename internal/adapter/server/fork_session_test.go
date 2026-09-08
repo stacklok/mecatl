@@ -16,7 +16,6 @@ import (
 	"google.golang.org/grpc/status"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -51,7 +50,6 @@ func driveCompletedTurn(t *testing.T, svc *server.Service, id session.SessionID,
 func TestForkSessionInheritsHistoryAndLabels(t *testing.T) {
 	ctx := context.Background()
 
-	const wantWorkspace = "/work/forksrc"
 	wantSel := server.ProviderSelector{ProviderID: "openrouter", ModelID: "anthropic/claude-3.5-sonnet"}
 
 	var (
@@ -74,7 +72,7 @@ func TestForkSessionInheritsHistoryAndLabels(t *testing.T) {
 	}
 	svc, store := newMCPServiceStore(t, srcText, factory)
 
-	src, err := svc.CreateSessionWithProvider(ctx, wantWorkspace, session.ModeAccept, session.Limits{MaxTurns: 7}, wantSel)
+	src, err := svc.CreateSessionWithProvider(ctx, session.ModeAccept, session.Limits{MaxTurns: 7}, wantSel)
 	if err != nil {
 		t.Fatalf("CreateSessionWithProvider: %v", err)
 	}
@@ -91,7 +89,7 @@ func TestForkSessionInheritsHistoryAndLabels(t *testing.T) {
 	// Reset the factory recorder so the NEXT call is unambiguously the fork's.
 	calls.Store(0)
 	gotSel.Store(server.ProviderSelector{})
-	newID, err := svc.ForkSession(ctx, src.ID, "", "")
+	newID, err := forkSession(svc, ctx, src.ID, "", "")
 	if err != nil {
 		t.Fatalf("ForkSession: %v", err)
 	}
@@ -130,7 +128,7 @@ func TestForkSessionInheritsHistoryAndLabels(t *testing.T) {
 		t.Fatalf("forked history missing user/assistant text (user=%v assistant=%v)", sawUser, sawAssistant)
 	}
 	// Labels inherited.
-	if forked.Mode != srcSnap.Mode || forked.Workspace != srcSnap.Workspace ||
+	if forked.Mode != srcSnap.Mode || forked.EnvironmentRef.ID != srcSnap.EnvironmentRef.ID ||
 		forked.ProviderID != srcSnap.ProviderID || forked.ModelID != srcSnap.ModelID ||
 		forked.ReasoningEffort != srcSnap.ReasoningEffort || forked.Profile != srcSnap.Profile ||
 		forked.Title != srcSnap.Title {
@@ -190,7 +188,7 @@ func TestForkSessionEffortOverride(t *testing.T) {
 	}
 	svc, store := newMCPServiceStore(t, "shared", factory)
 
-	src, err := svc.CreateSessionWithProvider(ctx, "/work/forksrc", session.ModeDefault, session.Limits{}, wantSel)
+	src, err := svc.CreateSessionWithProvider(ctx, session.ModeDefault, session.Limits{}, wantSel)
 	if err != nil {
 		t.Fatalf("CreateSessionWithProvider: %v", err)
 	}
@@ -199,7 +197,7 @@ func TestForkSessionEffortOverride(t *testing.T) {
 	// Reset the factory recorder so the NEXT call is unambiguously the fork's.
 	calls.Store(0)
 	gotSel.Store(server.ProviderSelector{})
-	newID, err := svc.ForkSession(ctx, src.ID, "", "high")
+	newID, err := forkSession(svc, ctx, src.ID, "", "high")
 	if err != nil {
 		t.Fatalf("ForkSession: %v", err)
 	}
@@ -259,13 +257,13 @@ func TestForkSessionEmptyEffortInherits(t *testing.T) {
 	}
 	svc, store := newMCPServiceStore(t, "shared", factory)
 
-	src, err := svc.CreateSessionWithProvider(ctx, "/ws", session.ModeDefault, session.Limits{}, wantSel)
+	src, err := svc.CreateSessionWithProvider(ctx, session.ModeDefault, session.Limits{}, wantSel)
 	if err != nil {
 		t.Fatalf("CreateSessionWithProvider: %v", err)
 	}
 	driveCompletedTurn(t, svc, src.ID, "hi")
 
-	newID, err := svc.ForkSession(ctx, src.ID, "", "")
+	newID, err := forkSession(svc, ctx, src.ID, "", "")
 	if err != nil {
 		t.Fatalf("ForkSession empty effort: %v", err)
 	}
@@ -287,7 +285,7 @@ func TestForkSessionTitleOverride(t *testing.T) {
 	ctx := context.Background()
 	svc, store := newMCPServiceStore(t, "shared", nil)
 
-	src, err := svc.CreateSession(ctx, "/ws", session.ModeDefault, session.Limits{})
+	src, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -298,7 +296,7 @@ func TestForkSessionTitleOverride(t *testing.T) {
 	}
 
 	// Empty title → inherits source's.
-	inherited, err := svc.ForkSession(ctx, src.ID, "", "")
+	inherited, err := forkSession(svc, ctx, src.ID, "", "")
 	if err != nil {
 		t.Fatalf("ForkSession empty title: %v", err)
 	}
@@ -309,7 +307,7 @@ func TestForkSessionTitleOverride(t *testing.T) {
 
 	// Non-empty title → overrides.
 	override := "fix the bug first"
-	overridden, err := svc.ForkSession(ctx, src.ID, override, "")
+	overridden, err := forkSession(svc, ctx, src.ID, override, "")
 	if err != nil {
 		t.Fatalf("ForkSession override title: %v", err)
 	}
@@ -334,10 +332,10 @@ func TestForkSessionDefaultFSRidesSharedEngine(t *testing.T) {
 		Model:   "test-model",
 	})
 	store := memstore.New()
-	svc, err := server.NewService(server.Config{
-		Engine:        shared,
-		Store:         store,
-		Workspaces:    func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+	svc, err := newPlacementTestService(server.Config{
+		Engine: shared,
+		Store:  store,
+
 		DefaultLimits: session.Limits{MaxTurns: 10, MaxToolCalls: 20},
 		Now:           func() time.Time { return time.Unix(0, 0) },
 	})
@@ -345,13 +343,13 @@ func TestForkSessionDefaultFSRidesSharedEngine(t *testing.T) {
 		t.Fatalf("new service: %v", err)
 	}
 
-	src, err := svc.CreateSession(ctx, "/ws/default", session.ModeDefault, session.Limits{})
+	src, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
 	driveCompletedTurn(t, svc, src.ID, "hello")
 
-	newID, err := svc.ForkSession(ctx, src.ID, "", "")
+	newID, err := forkSession(svc, ctx, src.ID, "", "")
 	if err != nil {
 		t.Fatalf("ForkSession: %v", err)
 	}
@@ -375,7 +373,7 @@ func TestForkSessionRejectsRunningSource(t *testing.T) {
 	ctx := context.Background()
 	svc, store := newMCPServiceStore(t, "shared", nil)
 
-	sess, err := svc.CreateSession(ctx, "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -393,34 +391,33 @@ func TestForkSessionRejectsRunningSource(t *testing.T) {
 		t.Fatalf("Save running: %v", err)
 	}
 
-	_, ferr := svc.ForkSession(ctx, sess.ID, "", "")
+	_, ferr := forkSession(svc, ctx, sess.ID, "", "")
 	if !errors.Is(ferr, server.ErrFailedPrecondition) {
 		t.Fatalf("ForkSession on a running source: err = %v, want ErrFailedPrecondition", ferr)
 	}
 }
 
-// TestForkSessionCompletedSourceRecoversToIdle verifies loadAndReopen runs on the
-// source: a pre-persisted COMPLETED session is forkable, and the source's store
-// snapshot is recovered to idle (Reopen) by the fork's loadAndReopen.
-func TestForkSessionCompletedSourceRecoversToIdle(t *testing.T) {
+// TestForkSessionCompletedSourceStaysCompleted verifies canonical successor
+// creation is non-destructive: a completed source is forkable without recovery.
+func TestForkSessionCompletedSourceStaysCompleted(t *testing.T) {
 	ctx := context.Background()
 	svc, store := newMCPServiceStore(t, "shared", nil)
 	id := persistCompleted(t, store)
 
-	newID, err := svc.ForkSession(ctx, id, "", "")
+	newID, err := forkSession(svc, ctx, id, "", "")
 	if err != nil {
 		t.Fatalf("ForkSession on a completed source: %v", err)
 	}
 	if newID == "" || newID == id {
 		t.Fatalf("fork id = %q, want a new distinct id", newID)
 	}
-	// The source was recovered to idle by loadAndReopen and re-persisted.
+	// Canonical successor creation does not mutate the source.
 	src, err := store.Load(ctx, id)
 	if err != nil {
 		t.Fatalf("Load src: %v", err)
 	}
-	if src.State != session.StateIdle {
-		t.Fatalf("source state after fork = %q, want idle (recovered by loadAndReopen)", src.State)
+	if src.State != session.StateCompleted {
+		t.Fatalf("source state after fork = %q, want completed (non-destructive successor)", src.State)
 	}
 }
 
@@ -439,7 +436,7 @@ func TestGRPCForkSessionRoundTrip(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	cs, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{Workspace: "/ws/grpc"})
+	cs, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -475,8 +472,8 @@ func TestGRPCForkSessionRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSession on fork: %v", err)
 	}
-	if got.GetSession().GetWorkspace() != "/ws/grpc" {
-		t.Fatalf("fork workspace = %q, want source's /ws/grpc", got.GetSession().GetWorkspace())
+	if got.GetSession().GetPlacement().GetKind() == "" {
+		t.Fatal("fork placement metadata is missing")
 	}
 	if got.GetSession().GetState() != "idle" {
 		t.Fatalf("fork state = %q, want idle", got.GetSession().GetState())
@@ -551,22 +548,18 @@ func TestHTTPForkSessionRoundTrip(t *testing.T) {
 		t.Fatalf("fork id = %q, want a new distinct id", forkID)
 	}
 
-	// GET the fork: workspace + idle.
+	// GET the fork: public state omits private placement paths.
 	getResp, err := http.Get(srv.URL + "/v1/sessions/" + forkID)
 	if err != nil {
 		t.Fatalf("GET fork: %v", err)
 	}
 	defer getResp.Body.Close()
 	var sess struct {
-		Workspace string `json:"workspace"`
-		State     string `json:"state"`
-		Turns     int32  `json:"turns"`
+		State string `json:"state"`
+		Turns int32  `json:"turns"`
 	}
 	if err := json.NewDecoder(getResp.Body).Decode(&sess); err != nil {
 		t.Fatalf("decode fork session: %v", err)
-	}
-	if sess.Workspace != "/ws" {
-		t.Fatalf("fork workspace = %q, want /ws", sess.Workspace)
 	}
 	if sess.State != "idle" {
 		t.Fatalf("fork state = %q, want idle", sess.State)
@@ -608,7 +601,7 @@ func TestGRPCForkSessionEffortOverride(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	src, err := svc.CreateSessionWithProvider(ctx, "/ws/grpc", session.ModeDefault, session.Limits{},
+	src, err := svc.CreateSessionWithProvider(ctx, session.ModeDefault, session.Limits{},
 		server.ProviderSelector{ProviderID: "openrouter", ModelID: "m", ReasoningEffort: "low"})
 	if err != nil {
 		t.Fatalf("CreateSessionWithProvider: %v", err)
@@ -646,7 +639,7 @@ func TestHTTPForkSessionEffortOverride(t *testing.T) {
 	defer srv.Close()
 
 	ctx := context.Background()
-	src, err := svc.CreateSessionWithProvider(ctx, "/ws", session.ModeDefault, session.Limits{},
+	src, err := svc.CreateSessionWithProvider(ctx, session.ModeDefault, session.Limits{},
 		server.ProviderSelector{ProviderID: "openrouter", ModelID: "m", ReasoningEffort: "low"})
 	if err != nil {
 		t.Fatalf("CreateSessionWithProvider: %v", err)
@@ -682,7 +675,7 @@ func TestHTTPForkSessionEffortOverride(t *testing.T) {
 func TestForkSessionUnknownSourceNotFound(t *testing.T) {
 	t.Run("service", func(t *testing.T) {
 		svc := newMCPService(t, "shared", nil)
-		_, err := svc.ForkSession(context.Background(), "never-created", "", "")
+		_, err := forkSession(svc, context.Background(), "never-created", "", "")
 		if !errors.Is(err, server.ErrNotFound) {
 			t.Fatalf("ForkSession unknown id: err = %v, want ErrNotFound", err)
 		}
@@ -719,14 +712,14 @@ func TestForkSessionRespectsEngineCap(t *testing.T) {
 	var closed atomic.Int32
 	svc := cappedSelectorService(t, 1, &closed)
 
-	src, err := svc.CreateSessionWithProvider(ctx, "/ws", session.ModeDefault, session.Limits{},
+	src, err := svc.CreateSessionWithProvider(ctx, session.ModeDefault, session.Limits{},
 		server.ProviderSelector{ProviderID: "openrouter"})
 	if err != nil {
 		t.Fatalf("CreateSessionWithProvider: %v", err)
 	}
 	driveCompletedTurn(t, svc, src.ID, "hi")
 
-	_, ferr := svc.ForkSession(ctx, src.ID, "", "")
+	_, ferr := forkSession(svc, ctx, src.ID, "", "")
 	if !errors.Is(ferr, server.ErrTooManySessionEngines) {
 		t.Fatalf("ForkSession past cap: err = %v, want ErrTooManySessionEngines", ferr)
 	}

@@ -8,6 +8,8 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 )
@@ -92,6 +94,18 @@ func (f *fakeLiveStreamerReconnect) StreamSessionLive(_ context.Context, id stri
 	return NewEventStream(es), nil
 }
 
+// attemptTimingLiveStreamer signals the probe's opening for deterministic
+// attempt-two backoff coverage.
+type attemptTimingLiveStreamer struct {
+	opened chan struct{}
+	once   sync.Once
+}
+
+func (s *attemptTimingLiveStreamer) StreamSessionLive(_ context.Context, _ string) (*EventStream, error) {
+	s.once.Do(func() { close(s.opened) })
+	return NewEventStream(NewFakeEventStream()), nil
+}
+
 // drainRecon collects every msg off ch until it closes, with a per-msg timeout
 // so a stuck loop fails the test instead of hanging.
 func drainRecon(t *testing.T, ch <-chan tea.Msg) []tea.Msg {
@@ -120,12 +134,91 @@ func deliveryEvent(schedule, fire string) *mecatlv1.Event {
 	}
 }
 
+func authorizationEvent(typ, id, authStatus string) *mecatlv1.Event {
+	return &mecatlv1.Event{
+		Type: typ,
+		Authorization: &mecatlv1.Authorization{
+			AuthorizationId: id,
+			DisplayName:     "GitHub",
+			CallId:          "call-1",
+			Status:          authStatus,
+		},
+	}
+}
+
 // restoreBackoff saves the current backoff knobs and returns a restore func;
 // tests shrink the knobs (and set jitter to 0 for deterministic timing) and
 // defer the restore so the package-level vars are reset for the next test.
 func restoreBackoff(t *testing.T) func() {
 	t.Helper()
 	return RestoreBackoffForTest()
+}
+
+// TestADR_0096_AttemptTwoWaitsDeterministicBackoff proves the client loop, not
+// just delay helper math, requests the exact attempt-two delay and cannot open
+// the probe until the controlled waiter releases it.
+func TestADR_0096_AttemptTwoWaitsDeterministicBackoff(t *testing.T) {
+	restore := restoreBackoff(t)
+	defer restore()
+	liveReconnectBaseBackoff = 100 * time.Millisecond
+	liveReconnectMaxBackoff = time.Second
+	liveReconnectJitterFrac = 0
+
+	live := &attemptTimingLiveStreamer{opened: make(chan struct{})}
+	requested := make(chan time.Duration, 1)
+	release := make(chan struct{})
+	wait := func(ctx context.Context, d time.Duration) bool {
+		select {
+		case requested <- d:
+		case <-ctx.Done():
+			return false
+		}
+		select {
+		case <-release:
+			return true
+		case <-ctx.Done():
+			return false
+		}
+	}
+	out := make(chan tea.Msg, 2)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		reconnectLiveLoop(context.Background(), live, nil, "sess-attempt-two", out, 1, wait)
+	}()
+
+	select {
+	case got := <-requested:
+		if got != 200*time.Millisecond {
+			t.Fatalf("attempt-two delay = %v, want 200ms", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("attempt-two delay was not requested")
+	}
+	select {
+	case <-live.opened:
+		t.Fatal("attempt-two probe opened before its controlled backoff was released")
+	default:
+	}
+	close(release)
+	select {
+	case <-live.opened:
+	case <-time.After(2 * time.Second):
+		t.Fatal("attempt-two probe did not open after its controlled backoff was released")
+	}
+	<-done
+
+	msgs := drainRecon(t, out)
+	if len(msgs) != 2 {
+		t.Fatalf("messages = %#v, want reconnecting and reconnected", msgs)
+	}
+	marker, ok := msgs[0].(LiveReconnectingMsg)
+	if !ok || marker.Attempt != 2 {
+		t.Fatalf("first message = %#v, want LiveReconnectingMsg{Attempt: 2}", msgs[0])
+	}
+	if _, ok := msgs[1].(LiveReconnectedMsg); !ok {
+		t.Fatalf("second message = %#v, want LiveReconnectedMsg", msgs[1])
+	}
 }
 
 // TestReconnectLiveCmd_FiresOnCleanCloseAndError drives the reconnect loop with
@@ -300,6 +393,64 @@ func TestReconnectLiveCmd_StopsOnCtxCancel(t *testing.T) {
 		case <-time.After(2 * time.Second):
 			t.Fatal("channel did not close after ctx cancel")
 		}
+	}
+}
+
+func TestCatchUpReplayFoldsAuthorizationLifecycle(t *testing.T) {
+	tests := []struct {
+		name   string
+		events []*mecatlv1.Event
+		wantID string
+	}{
+		{
+			name: "latest unmatched pending is restored",
+			events: []*mecatlv1.Event{
+				authorizationEvent("authorization.required", "auth-old", "pending"),
+				authorizationEvent("authorization.resolved", "auth-old", "granted"),
+				authorizationEvent("authorization.required", "auth-current", "pending"),
+			},
+			wantID: "auth-current",
+		},
+		{
+			name: "matching terminal retains earlier unmatched pending",
+			events: []*mecatlv1.Event{
+				authorizationEvent("authorization.required", "auth-earlier", "pending"),
+				authorizationEvent("authorization.required", "auth-later", "pending"),
+				authorizationEvent("authorization.resolved", "auth-later", "cancelled"),
+			},
+			wantID: "auth-earlier",
+		},
+		{
+			name: "completed lifecycle stays cleared",
+			events: []*mecatlv1.Event{
+				authorizationEvent("authorization.required", "auth-complete", "pending"),
+				authorizationEvent("authorization.resolved", "auth-complete", "failed"),
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			out := make(chan tea.Msg, 4)
+			err := catchUpReplay(t.Context(), &fakeLiveReplayer{script: tc.events}, "session-1", out)
+			if err != nil {
+				t.Fatalf("catchUpReplay: %v", err)
+			}
+			var got []MCPAuthorizationMsg
+			for len(out) > 0 {
+				if msg, ok := (<-out).(MCPAuthorizationMsg); ok {
+					got = append(got, msg)
+				}
+			}
+			if tc.wantID == "" {
+				if len(got) != 0 {
+					t.Fatalf("completed lifecycle emitted authorization markers: %+v", got)
+				}
+				return
+			}
+			if len(got) != 1 || got[0].AuthorizationID != tc.wantID || got[0].Status != "pending" {
+				t.Fatalf("restored authorization = %+v, want one pending %q", got, tc.wantID)
+			}
+		})
 	}
 }
 
@@ -560,5 +711,47 @@ func TestReconnectLiveCmd_RegressionUnfencedPromptNotMisclassified(t *testing.T)
 	}
 	if userPrompt != 0 {
 		t.Errorf("un-fenced prompt re-rendered from catch-up (want it dropped): userPrompt=%d", userPrompt)
+	}
+}
+
+// rejectedReconnectLiveStreamer models a bearer-backed live subscription whose
+// reconnect probe is rejected before a stream is opened.
+type rejectedReconnectLiveStreamer struct{ opens int }
+
+func (s *rejectedReconnectLiveStreamer) StreamSessionLive(context.Context, string) (*EventStream, error) {
+	s.opens++
+	return nil, status.Error(codes.Unauthenticated, "rejected")
+}
+
+func (*rejectedReconnectLiveStreamer) BearerBackedStream() bool { return true }
+
+func TestADR_0096_ReconnectProbeOpenAuthRejectedStopsRetry(t *testing.T) {
+	defer restoreBackoff(t)()
+	liveReconnectBaseBackoff = time.Millisecond
+	liveReconnectJitterFrac = 0
+
+	live := &rejectedReconnectLiveStreamer{}
+	ch, stop := ReconnectLiveCmd(context.Background(), live, nil, "sess-rejected")
+	defer stop()
+	msgs := drainRecon(t, ch)
+
+	var reconnects int
+	var rejected []StreamErrMsg
+	for _, msg := range msgs {
+		switch msg := msg.(type) {
+		case LiveReconnectingMsg:
+			reconnects++
+		case StreamErrMsg:
+			rejected = append(rejected, msg)
+		}
+	}
+	if reconnects != 1 {
+		t.Fatalf("reconnect attempts = %d, want exactly one after bearer rejection: %#v", reconnects, msgs)
+	}
+	if live.opens != 1 {
+		t.Fatalf("probe opens = %d, want exactly one (authentication failures must not retry)", live.opens)
+	}
+	if len(rejected) != 1 || rejected[0].AuthReason != AuthRejected || rejected[0].Transient {
+		t.Fatalf("auth rejection = %#v, want one non-transient AuthRejected StreamErrMsg", rejected)
 	}
 }

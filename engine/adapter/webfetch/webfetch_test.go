@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
+	"github.com/stacklok/mecatl/engine/adapter/memledger"
 	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
@@ -22,6 +23,7 @@ import (
 var testEnv = tool.MustEnvironment(
 	session.EnvironmentRef{Kind: session.EnvKindMem, ID: "test"},
 	memfs.NewWorkspace("/"),
+	memledger.New(),
 	nil,
 )
 

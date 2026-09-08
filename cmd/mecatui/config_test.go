@@ -12,6 +12,7 @@ import (
 
 	"github.com/adrg/xdg"
 
+	"github.com/stacklok/mecatl/cmd/mecatui/ui"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/app"
 	"github.com/stacklok/mecatl/internal/buildinfo"
@@ -195,6 +196,113 @@ func TestParseFlagsDefaults(t *testing.T) {
 	}
 }
 
+func TestParseFlagsDebugResolution(t *testing.T) {
+	debugEnvs := []string{"MECATUI_DEBUG", "MECATUI_DEBUG_MOUSE", "MECATUI_DEBUG_STEER", "MECATUI_DEBUG_ASK", "MECATUI_DEBUG_KEYMAP"}
+	for _, key := range debugEnvs {
+		t.Setenv(key, "")
+	}
+
+	assertSurfaces := func(t *testing.T, cfg config, debug, mouse, steer, ask, keymap bool) {
+		t.Helper()
+		if cfg.debug != debug || cfg.debugMouse != mouse || cfg.debugSteer != steer || cfg.debugAsk != ask || cfg.debugKeymap != keymap {
+			t.Fatalf("debug surfaces = debug:%t mouse:%t steer:%t ask:%t keymap:%t, want debug:%t mouse:%t steer:%t ask:%t keymap:%t", cfg.debug, cfg.debugMouse, cfg.debugSteer, cfg.debugAsk, cfg.debugKeymap, debug, mouse, steer, ask, keymap)
+		}
+	}
+
+	cfg, err := parseFlags([]string{"--debug"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertSurfaces(t, cfg, true, true, true, true, true)
+
+	t.Setenv("MECATUI_DEBUG", "1")
+	cfg, err = parseFlags(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertSurfaces(t, cfg, true, true, true, true, true)
+
+	for _, key := range debugEnvs {
+		t.Setenv(key, "1")
+	}
+	cfg, err = parseFlags([]string{"--debug=false"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertSurfaces(t, cfg, false, false, false, false, false)
+}
+
+func TestExplicitDebugFalseDisablesEveryEnvAlias(t *testing.T) {
+	aliases := []string{"MECATUI_DEBUG", "MECATUI_DEBUG_MOUSE", "MECATUI_DEBUG_STEER", "MECATUI_DEBUG_ASK", "MECATUI_DEBUG_KEYMAP"}
+	cases := make([][]string, 0, len(aliases)+1)
+	for _, alias := range aliases {
+		cases = append(cases, []string{alias})
+	}
+	cases = append(cases, aliases)
+	for _, enabled := range cases {
+		t.Run(strings.Join(enabled, "+"), func(t *testing.T) {
+			for _, alias := range aliases {
+				t.Setenv(alias, "")
+			}
+			for _, alias := range enabled {
+				t.Setenv(alias, "1")
+			}
+			cfg, err := parseFlags([]string{"--debug=false"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.debug || cfg.debugMouse || cfg.debugSteer || cfg.debugAsk || cfg.debugKeymap {
+				t.Fatalf("--debug=false did not disable aliases %v: debug:%t mouse:%t steer:%t ask:%t keymap:%t", enabled, cfg.debug, cfg.debugMouse, cfg.debugSteer, cfg.debugAsk, cfg.debugKeymap)
+			}
+		})
+	}
+}
+
+func TestCanonicalDebugWiresEveryRuntimeSurface(t *testing.T) {
+	for _, key := range []string{"MECATUI_DEBUG", "MECATUI_DEBUG_MOUSE", "MECATUI_DEBUG_STEER", "MECATUI_DEBUG_ASK", "MECATUI_DEBUG_KEYMAP"} {
+		t.Setenv(key, "")
+	}
+	cfg, err := parseFlags([]string{"--debug"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var deps ui.Deps
+	applyDebugConfig(cfg, &deps)
+	if !deps.Debug || !deps.DebugMouse || !deps.DebugSteer || !deps.DebugAsk || !cfg.debugKeymap {
+		t.Fatalf("canonical debug wiring = Debug:%t mouse:%t steer:%t ask:%t keymap:%t", deps.Debug, deps.DebugMouse, deps.DebugSteer, deps.DebugAsk, cfg.debugKeymap)
+	}
+}
+
+func TestParseFlagsLegacyDebugAliasesStayNarrow(t *testing.T) {
+	debugEnvs := []string{"MECATUI_DEBUG", "MECATUI_DEBUG_MOUSE", "MECATUI_DEBUG_STEER", "MECATUI_DEBUG_ASK", "MECATUI_DEBUG_KEYMAP"}
+	for _, key := range debugEnvs {
+		t.Setenv(key, "")
+	}
+	for _, tc := range []struct {
+		env                       string
+		mouse, steer, ask, keymap bool
+	}{
+		{env: "MECATUI_DEBUG_MOUSE", mouse: true},
+		{env: "MECATUI_DEBUG_STEER", steer: true},
+		{env: "MECATUI_DEBUG_ASK", ask: true},
+		{env: "MECATUI_DEBUG_KEYMAP", keymap: true},
+	} {
+		t.Run(tc.env, func(t *testing.T) {
+			for _, key := range debugEnvs {
+				t.Setenv(key, "")
+			}
+			t.Setenv(tc.env, "1")
+			cfg, err := parseFlags(nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.debug || cfg.debugMouse != tc.mouse || cfg.debugSteer != tc.steer || cfg.debugAsk != tc.ask || cfg.debugKeymap != tc.keymap {
+				t.Fatalf("debug surfaces = debug:%t mouse:%t steer:%t ask:%t keymap:%t", cfg.debug, cfg.debugMouse, cfg.debugSteer, cfg.debugAsk, cfg.debugKeymap)
+			}
+		})
+	}
+}
+
 // TestListenerScopedWorkspaceAuthority_Scenario3_RemoteConnectSendsEmptyWorkspace pins the remote client privacy default: no client cwd reaches CreateSession.
 func TestListenerScopedWorkspaceAuthority_Scenario3_RemoteConnectSendsEmptyWorkspace(t *testing.T) {
 	cfg, err := parseRunConfig(invocationResolution{mode: modeConnect, address: "203.0.113.10:8080"})
@@ -206,30 +314,31 @@ func TestListenerScopedWorkspaceAuthority_Scenario3_RemoteConnectSendsEmptyWorks
 	}
 }
 
-// TestListenerScopedWorkspaceAuthority_Scenario3_LocalConnectPreservesWorkspaceDefault pins the embedded and loopback cwd default.
-func TestListenerScopedWorkspaceAuthority_Scenario3_LocalConnectPreservesWorkspaceDefault(t *testing.T) {
+// TestServerOwnedSessionPlacement_RemoteConnectNeverResolvesCWD pins that every
+// connect target, including loopback, leaves local placement to the server.
+func TestServerOwnedSessionPlacement_RemoteConnectNeverResolvesCWD(t *testing.T) {
+	for _, addr := range []string{"127.0.0.1:8080", "203.0.113.10:8080"} {
+		cfg, err := parseRunConfig(invocationResolution{mode: modeConnect, address: addr})
+		if err != nil {
+			t.Fatalf("parse connect %s: %v", addr, err)
+		}
+		if cfg.workspace != "" {
+			t.Fatalf("connect %s resolved local workspace %q", addr, cfg.workspace)
+		}
+	}
+}
+
+func TestServerOwnedSessionPlacement_EmbeddedWorkspaceConfiguresComposition(t *testing.T) {
 	want, err := os.Getwd()
 	if err != nil {
-		t.Fatalf("get cwd: %v", err)
+		t.Fatal(err)
 	}
-	for _, tc := range []struct {
-		name      string
-		mode      transportMode
-		addr      string
-		remaining []string
-	}{
-		{name: "embedded", mode: modeLocal, remaining: []string{"--mock"}},
-		{name: "loopback connect", mode: modeConnect, addr: "127.0.0.1:8080"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			cfg, err := parseRunConfig(invocationResolution{mode: tc.mode, address: tc.addr, remaining: tc.remaining})
-			if err != nil {
-				t.Fatalf("parse run config: %v", err)
-			}
-			if cfg.workspace != want || !filepath.IsAbs(cfg.workspace) {
-				t.Fatalf("local CreateSession workspace = %q, want absolute cwd %q", cfg.workspace, want)
-			}
-		})
+	cfg, err := parseRunConfig(invocationResolution{mode: modeLocal, remaining: []string{"--mock"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.workspace != want || !filepath.IsAbs(cfg.workspace) {
+		t.Fatalf("embedded workspace = %q, want %q", cfg.workspace, want)
 	}
 }
 
@@ -249,7 +358,7 @@ func TestListenerScopedWorkspaceAuthority_Scenario3_RemoteExplicitWorkspaceIsRej
 	})
 	if err == nil {
 		t.Fatal("remote explicit workspace was accepted")
-	} else if !strings.Contains(err.Error(), "--workspace") || !strings.Contains(err.Error(), "remote") {
+	} else if !strings.Contains(err.Error(), "--workspace") || !strings.Contains(err.Error(), "embedded") {
 		t.Fatalf("rejection = %q, want clear remote --workspace error", err)
 	}
 	if parsed.workspace != explicitWorkspace {
@@ -881,6 +990,34 @@ func TestParseFlagsAuthEnv(t *testing.T) {
 	}
 	if cfg.authToken != "tok-123" {
 		t.Errorf("authToken = %q, want tok-123", cfg.authToken)
+	}
+}
+
+func TestConnectStaticTokenOutranksAnonymous(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		env  string
+	}{
+		{name: "flag token", args: []string{"--anonymous", "--auth-token", "token"}},
+		{name: "environment token", args: []string{"--anonymous"}, env: "token"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("MECATL_AUTH_TOKEN", tc.env)
+			_, cfg, err := parseTransportFlags(modeConnect, &bytes.Buffer{}, tc.args)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			if cfg.authToken != "token" || cfg.anonymous {
+				t.Fatalf("config = authToken %q anonymous %v, want static token precedence", cfg.authToken, cfg.anonymous)
+			}
+		})
+	}
+
+	t.Setenv("MECATL_AUTH_TOKEN", "")
+	_, cfg, err := parseTransportFlags(modeConnect, &bytes.Buffer{}, []string{"--anonymous"})
+	if err != nil || !cfg.anonymous || cfg.authToken != "" {
+		t.Fatalf("parse --anonymous = (%+v, %v), want credential-free override", cfg, err)
 	}
 }
 

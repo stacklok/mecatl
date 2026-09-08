@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/agent"
@@ -79,10 +78,10 @@ func TestScheduleDeliveryAuthorizesOriginBeforeEnqueue(t *testing.T) {
 						Model:   "m",
 						Store:   store,
 					})
-					svc, err := server.NewService(server.Config{
-						Engine:              engine,
-						Store:               store,
-						Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+					svc, err := newTestServerService(server.Config{
+						Engine: engine,
+						Store:  store,
+
 						Now:                 time.Now,
 						DefaultCapabilities: mockllm.New().Capabilities(),
 						EventLog:            store,
@@ -95,7 +94,7 @@ func TestScheduleDeliveryAuthorizesOriginBeforeEnqueue(t *testing.T) {
 
 					originID := session.SessionID("origin-" + origin.name)
 					if origin.exists {
-						sess := session.New(originID, session.ModeDefault, t.TempDir(), session.Limits{}, time.Unix(0, 0))
+						sess := session.New(originID, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: t.TempDir(), Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 						sess.Owner = origin.owner.Clone()
 						if err := store.Save(context.Background(), sess); err != nil {
 							t.Fatalf("Save origin: %v", err)
@@ -177,9 +176,9 @@ func TestScheduleDeliveryMissingOriginPreservesNoVerifierCompatibility(t *testin
 				Policy: permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil), Model: "m", Store: store,
 			})
 			diag := &captureDiag{}
-			svc, err := server.NewService(server.Config{
+			svc, err := newTestServerService(server.Config{
 				Engine: engine, Store: store,
-				Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+
 				Now:                 time.Now,
 				DefaultCapabilities: provider.Capabilities(),
 				Diagnostics:         diag,
@@ -223,9 +222,9 @@ func TestScheduleDeliveryRejectsOwnerlessScheduleUnderSystemContext(t *testing.T
 				Policy: permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil), Model: "m", Store: store,
 			})
 			diag := &captureDiag{}
-			svc, err := server.NewService(server.Config{
+			svc, err := newTestServerService(server.Config{
 				Engine: engine, Store: store,
-				Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+
 				Now:                 time.Now,
 				DefaultCapabilities: provider.Capabilities(),
 				Diagnostics:         diag,
@@ -234,7 +233,7 @@ func TestScheduleDeliveryRejectsOwnerlessScheduleUnderSystemContext(t *testing.T
 			if err != nil {
 				t.Fatalf("NewService: %v", err)
 			}
-			origin := session.New("system-origin", session.ModeDefault, t.TempDir(), session.Limits{}, time.Unix(0, 0))
+			origin := session.New("system-origin", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: t.TempDir(), Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 			origin.Owner = session.PrincipalFromContext(syscaller.Context(context.Background(), syscaller.RootScheduler))
 			if err := store.Save(context.Background(), origin); err != nil {
 				t.Fatalf("Save origin: %v", err)
@@ -304,7 +303,7 @@ func TestScheduleDeliveryReauthorizesImmediatelyBeforeEnqueue(t *testing.T) {
 			if err != nil {
 				t.Fatalf("jsonlstore.New: %v", err)
 			}
-			origin := session.New("replaced-origin", session.ModeDefault, t.TempDir(), session.Limits{}, time.Unix(0, 0))
+			origin := session.New("replaced-origin", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: t.TempDir(), Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 			origin.Owner = alice.Clone()
 			if err := base.Save(context.Background(), origin); err != nil {
 				t.Fatalf("Save origin: %v", err)
@@ -316,9 +315,9 @@ func TestScheduleDeliveryReauthorizesImmediatelyBeforeEnqueue(t *testing.T) {
 				Policy: permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil), Model: "m", Store: store,
 			})
 			diag := &captureDiag{}
-			svc, err := server.NewService(server.Config{
+			svc, err := newTestServerService(server.Config{
 				Engine: engine, Store: store,
-				Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+
 				Now:                 time.Now,
 				DefaultCapabilities: provider.Capabilities(),
 				Diagnostics:         diag,
@@ -398,10 +397,10 @@ func newDeliveryTestEnv(t *testing.T, originTurns ...mockllm.Turn) *deliveryTest
 		Store:         store,
 		DeliveryQueue: queue,
 	})
-	svc, err := server.NewService(server.Config{
-		Engine:              engine,
-		Store:               store,
-		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+	svc, err := newTestServerService(server.Config{
+		Engine: engine,
+		Store:  store,
+
 		Now:                 time.Now,
 		DefaultCapabilities: originLLM.Capabilities(),
 		EventLog:            store,
@@ -426,7 +425,7 @@ func newDeliveryTestEnv(t *testing.T, originTurns ...mockllm.Turn) *deliveryTest
 // produce a completed state (the standard pre-delivery state), and returns it.
 func (e *deliveryTestEnv) createOrigin(t *testing.T, prompt string) session.SessionID {
 	t.Helper()
-	sess, err := e.svc.CreateSession(context.Background(), e.workspace, session.ModeDefault, session.Limits{})
+	sess, err := e.svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -619,9 +618,9 @@ func TestFireDelivery_Scenario3_DeliveryFailureNeverFailsFire(t *testing.T) {
 		Store:         store,
 		DeliveryQueue: queue,
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newTestServerService(server.Config{
 		Engine: engine, Store: store,
-		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+
 		Now:                 time.Now,
 		DefaultCapabilities: originLLM.Capabilities(),
 		EventLog:            store, Diagnostics: diag,
@@ -633,7 +632,7 @@ func TestFireDelivery_Scenario3_DeliveryFailureNeverFailsFire(t *testing.T) {
 	// The origin exists and is authorized; fail the queue operation itself so
 	// this test continues to cover an actionable delivery failure rather than an
 	// absent target (absence is deliberately silent at the ownership boundary).
-	origin, err := svc.CreateSession(context.Background(), t.TempDir(), session.ModeDefault, session.Limits{})
+	origin, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -773,7 +772,7 @@ func TestFireDelivery_Scenario3_DeliveryDoesNotLoosenOriginPosture(t *testing.T)
 	// it up. Create the fire session with the claim. The session must be in
 	// StateRunning for RecordAssistant (RecordUserPrompt → BeginTurn drives it
 	// to running, then RecordAssistant is legal).
-	fireSess := session.New(session.SessionID("sched--evil"), session.ModeDefault, "", session.Limits{}, time.Unix(0, 0))
+	fireSess := session.New(session.SessionID("sched--evil"), session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	if err := fireSess.RecordUserPrompt("run the task", nil); err != nil {
 		t.Fatalf("RecordUserPrompt: %v", err)
 	}
@@ -843,10 +842,10 @@ func TestFireDelivery_Scenario4_BusyOriginQueuesNotCollides(t *testing.T) {
 	})
 	// Replace the env's engine with this one by building a fresh service.
 	diag := &captureDiag{}
-	svc, err := server.NewService(server.Config{
+	svc, err := newTestServerService(server.Config{
 		Engine: engine, Store: env.store,
-		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		Now:        time.Now, DefaultCapabilities: env.originLLM.Capabilities(),
+
+		Now: time.Now, DefaultCapabilities: env.originLLM.Capabilities(),
 		EventLog: env.store, Diagnostics: diag,
 	})
 	if err != nil {
@@ -1037,10 +1036,10 @@ func TestFireDelivery_Scenario4_NonDeliverableChildOriginDropsWithWarn(t *testin
 				Policy: permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil),
 				Model:  "m", Store: store, DeliveryQueue: queue,
 			})
-			svc, err := server.NewService(server.Config{
+			svc, err := newTestServerService(server.Config{
 				Engine: engine, Store: store,
-				Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-				Now:        time.Now, DefaultCapabilities: mockllm.New().Capabilities(),
+
+				Now: time.Now, DefaultCapabilities: mockllm.New().Capabilities(),
 				EventLog: store, Diagnostics: diag,
 			})
 			if err != nil {
@@ -1048,7 +1047,7 @@ func TestFireDelivery_Scenario4_NonDeliverableChildOriginDropsWithWarn(t *testin
 			}
 			// The child/sched-- origin exists so authorization succeeds before
 			// the prefix check fires the WARN.
-			exist := session.New(session.SessionID(tc.origin), session.ModeDefault, "", session.Limits{}, time.Unix(0, 0))
+			exist := session.New(session.SessionID(tc.origin), session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 			if err := store.Save(context.Background(), exist); err != nil {
 				t.Fatalf("Save existing origin: %v", err)
 			}
@@ -1157,9 +1156,9 @@ func TestFireStarted_BusyOriginEnqueueOnly(t *testing.T) {
 		Store:         store,
 		DeliveryQueue: queue,
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newTestServerService(server.Config{
 		Engine: engine, Store: store,
-		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+
 		Now:                 time.Now,
 		DefaultCapabilities: mockllm.New().Capabilities(),
 		EventLog:            store, Diagnostics: diag,
@@ -1168,7 +1167,7 @@ func TestFireStarted_BusyOriginEnqueueOnly(t *testing.T) {
 		t.Fatalf("NewService: %v", err)
 	}
 	// Create an origin session and start a blocking run.
-	sess, err := svc.CreateSession(context.Background(), t.TempDir(), session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

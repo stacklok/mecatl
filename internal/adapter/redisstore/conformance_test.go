@@ -197,7 +197,7 @@ func TestRedisCreateCollisionLeavesSnapshotAndSidecarsUntouched(t *testing.T) {
 		t.Fatalf("List(tools): %v", err)
 	}
 
-	loser := session.New(id, session.ModeDefault, "/loser", session.Limits{MaxTurns: 9}, time.Unix(2, 0).UTC())
+	loser := session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/loser", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 9}, time.Unix(2, 0).UTC())
 	if err := second.Create(ctx, loser); !errors.Is(err, port.ErrSessionAlreadyExists) {
 		t.Fatalf("Create(collision) = %v, want ErrSessionAlreadyExists", err)
 	}
@@ -218,7 +218,7 @@ func TestRedisCreateCollisionLeavesSnapshotAndSidecarsUntouched(t *testing.T) {
 
 func newTestSession(t *testing.T, id session.SessionID) *session.Session {
 	t.Helper()
-	return session.New(id, session.ModeAccept, "/work", session.Limits{}, time.Now())
+	return session.New(id, session.ModeAccept, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/work", Revision: "in-tree-v1"}, session.Limits{}, time.Now())
 }
 
 func mustEvent() session.Event {

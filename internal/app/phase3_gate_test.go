@@ -89,7 +89,7 @@ func TestPhase3ReconstructFromStoreAndLog(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
-	sess, err := built.Service.CreateSession(ctx, workspace, session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		built.Close()
 		t.Fatalf("CreateSession: %v", err)
@@ -308,7 +308,7 @@ func TestPhase3LogNoChildLeak(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
-	sess, err := built.Service.CreateSession(ctx, workspace, session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		built.Close()
 		t.Fatalf("CreateSession: %v", err)

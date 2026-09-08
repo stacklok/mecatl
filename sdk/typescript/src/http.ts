@@ -19,6 +19,13 @@ import {
 } from "./errors.js";
 import type { ConverseRequest } from "./gen/mecatl/v1/harness_pb.js";
 import { registerRawJson, registerTransport } from "./raw.js";
+import {
+  type HTTPMethod,
+  type HTTPOnlyControlName,
+  type HTTPTransportClassification,
+  resolveHTTPOnlyControl,
+  resolveHTTPRoute,
+} from "./rpc-catalog.js";
 
 /** @public */
 export interface HttpTransportOptions extends CredentialOptions {
@@ -30,17 +37,12 @@ export interface HttpTransportOptions extends CredentialOptions {
 }
 
 type JsonRecord = Record<string, JsonValue>;
-type Route = { body: boolean; method: "DELETE" | "GET" | "POST"; path: string };
+type Route = { body: boolean; method: HTTPMethod; path: string };
 type SSEFrame = { data: string; event: string };
 
 function record(value: JsonValue): JsonRecord {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return {};
   return value as JsonRecord;
-}
-
-function stringField(value: JsonRecord, name: string): string {
-  const field = value[name];
-  return typeof field === "string" ? field : "";
 }
 
 function permissionMode(value: JsonValue | undefined): string {
@@ -90,54 +92,10 @@ function encodeInput(
   if (method.name === "CreateSession" || method.name === "SetMode") {
     json.mode = permissionMode(json.mode);
   }
-  return json;
-}
-
-function unaryRoute(name: string, input: JsonRecord): Route | undefined {
-  const sessionId = encodeURIComponent(stringField(input, "session_id"));
-  const sourceSessionId = encodeURIComponent(stringField(input, "source_session_id"));
-  switch (name) {
-    case "GetCompatibilityInfo":
-      return { body: false, method: "GET", path: "/v1/compatibility" };
-    case "GetServerInfo": {
-      const provider = stringField(input, "provider_id");
-      return {
-        body: false,
-        method: "GET",
-        path: provider === "" ? "/v1/info" : `/v1/info?provider_id=${encodeURIComponent(provider)}`,
-      };
-    }
-    case "CreateSession":
-      return { body: true, method: "POST", path: "/v1/sessions" };
-    case "GetSession":
-      return { body: false, method: "GET", path: `/v1/sessions/${sessionId}` };
-    case "SetMode":
-      return { body: true, method: "POST", path: `/v1/sessions/${sessionId}/mode` };
-    case "CloseSession":
-      return { body: false, method: "DELETE", path: `/v1/sessions/${sessionId}` };
-    case "RenameSession":
-      return { body: true, method: "POST", path: `/v1/sessions/${sessionId}/rename` };
-    case "DeleteSession":
-      return { body: false, method: "POST", path: `/v1/sessions/${sessionId}/delete` };
-    case "CompactSession":
-      return { body: false, method: "POST", path: `/v1/sessions/${sessionId}/compact` };
-    case "ForkSession":
-      return { body: true, method: "POST", path: `/v1/sessions/${sourceSessionId}/fork` };
-    case "ListSessions":
-      return { body: false, method: "GET", path: "/v1/sessions" };
-    case "ListModels":
-      return { body: false, method: "GET", path: "/v1/models" };
-    default:
-      return undefined;
+  if (method.name === "ApprovePlan" && json.target_mode !== undefined) {
+    json.target_mode = permissionMode(json.target_mode);
   }
-}
-
-function requestBody(name: string, input: JsonRecord): JsonRecord {
-  const body = { ...input };
-  delete body.session_id;
-  delete body.source_session_id;
-  if (name === "SetMode") body.mode = permissionMode(input.mode);
-  return body;
+  return json;
 }
 
 function normalizeSession(value: JsonValue): JsonValue {
@@ -159,15 +117,15 @@ function permissionModeTextToNumber(value: JsonValue | undefined): number {
   }
 }
 
-function normalizeUnaryResponse(name: string, raw: JsonValue): JsonValue {
-  switch (name) {
-    case "GetSession":
-    case "SetMode":
-    case "RenameSession":
-      return { session: normalizeSession(raw) };
-    default:
-      return raw;
+function normalizeUnaryResponse(
+  classification: HTTPTransportClassification,
+  raw: JsonValue,
+): JsonValue {
+  if (classification.responseField === "session") return { session: normalizeSession(raw) };
+  if (classification.responseField !== undefined) {
+    return { [classification.responseField]: raw };
   }
+  return raw;
 }
 
 function timeoutSignal(
@@ -177,6 +135,27 @@ function timeoutSignal(
   if (timeoutMs === undefined) return signal;
   const timeout = AbortSignal.timeout(timeoutMs);
   return signal === undefined ? timeout : AbortSignal.any([signal, timeout]);
+}
+
+function sessionControlRoute(name: HTTPOnlyControlName, sessionId: string): Route {
+  const control = resolveHTTPOnlyControl(name, { session_id: sessionId });
+  return {
+    body: control.requestBody !== "none",
+    method: control.method,
+    path: control.path,
+  };
+}
+
+// HTTP steer remains a feature-gated latent client capability until the server
+// routes from ADR 0252 join this branch. It is deliberately outside the current
+// route inventory, whose partition must equal the handlers registered today.
+function latentHTTPSteerRoute(kind: "steer" | "steerCancel", sessionId: string): Route {
+  const suffix = kind === "steer" ? "steer" : "cancel-steer";
+  return {
+    body: true,
+    method: "POST",
+    path: `/v1/sessions/${encodeURIComponent(sessionId)}/${suffix}`,
+  };
 }
 
 class HttpTransport implements Transport {
@@ -195,8 +174,14 @@ class HttpTransport implements Transport {
         ? {}
         : { credentialProvider: options.credentialProvider }),
     };
-    this.#fetch = options.fetch ?? globalThis.fetch;
-    if (this.#fetch === undefined) throw new TypeError("A fetch implementation is required");
+    const fetchImplementation = options.fetch ?? globalThis.fetch;
+    if (fetchImplementation === undefined)
+      throw new TypeError("A fetch implementation is required");
+    // A function stored in a private field is invoked with the containing object
+    // as its receiver. Chromium's native window.fetch rejects that receiver as an
+    // illegal invocation, so bind both the native and injected implementation to
+    // the runtime global before retaining it.
+    this.#fetch = fetchImplementation.bind(globalThis);
   }
 
   async #request(
@@ -247,13 +232,17 @@ class HttpTransport implements Transport {
     _contextValues?: ContextValues,
   ): Promise<UnaryResponse<I, O>> {
     const jsonInput = encodeInput(method, input);
-    const route = unaryRoute(method.name, jsonInput);
-    if (route === undefined) {
+    const resolved = resolveHTTPRoute(method, jsonInput);
+    if (resolved === undefined || resolved.classification.response !== "json") {
       throw new UnsupportedFeatureError(`http_${method.name}`, { transport: "http" });
     }
     const response = await this.#request(
-      route,
-      requestBody(method.name, jsonInput),
+      {
+        body: resolved.body !== undefined,
+        method: resolved.method,
+        path: resolved.path,
+      },
+      record(resolved.body ?? {}),
       timeoutSignal(signal, timeoutMs),
       header,
     );
@@ -270,7 +259,7 @@ class HttpTransport implements Transport {
         });
       }
     }
-    const normalized = normalizeUnaryResponse(method.name, raw);
+    const normalized = normalizeUnaryResponse(resolved.classification, raw);
     let message: MessageShape<O>;
     try {
       message = fromJson(method.output, normalized, { ignoreUnknownFields: true });
@@ -304,14 +293,14 @@ class HttpTransport implements Transport {
     sessionId: string,
     frame: ConverseRequest,
     signal: AbortSignal | undefined,
+    requestHeaders?: HeadersInit,
   ): Promise<void> {
-    const path = `/v1/sessions/${encodeURIComponent(sessionId)}`;
     const kind = frame.kind;
     let route: Route;
     let body: JsonRecord;
     switch (kind.case) {
       case "resumeApproval":
-        route = { body: true, method: "POST", path: `${path}/approve` };
+        route = sessionControlRoute("approve", sessionId);
         body = {
           allow: kind.value.allow,
           ask_id: kind.value.askId,
@@ -320,18 +309,17 @@ class HttpTransport implements Transport {
         };
         break;
       case "cancel":
-        route = { body: true, method: "POST", path: `${path}/cancel` };
-        body = { expected_run_id: kind.value.expectedRunId };
-        break;
+        await this.cancelRun(sessionId, kind.value.expectedRunId, signal, requestHeaders);
+        return;
       case "cancelChild":
-        route = { body: true, method: "POST", path: `${path}/cancel-child` };
+        route = sessionControlRoute("cancelChild", sessionId);
         body = { child_id: kind.value.childId };
         break;
       case "steer":
         if (!this.#features.has("http_steer")) {
           throw new UnsupportedFeatureError("http_steer", { transport: "http" });
         }
-        route = { body: true, method: "POST", path: `${path}/steer` };
+        route = latentHTTPSteerRoute("steer", sessionId);
         body = {
           expected_run_id: kind.value.expectedRunId,
           message_id: kind.value.messageId,
@@ -348,7 +336,7 @@ class HttpTransport implements Transport {
         if (!this.#features.has("http_steer")) {
           throw new UnsupportedFeatureError("http_steer", { transport: "http" });
         }
-        route = { body: true, method: "POST", path: `${path}/cancel-steer` };
+        route = latentHTTPSteerRoute("steerCancel", sessionId);
         body = {
           expected_run_id: kind.value.expectedRunId,
           message_id: kind.value.messageId,
@@ -359,7 +347,22 @@ class HttpTransport implements Transport {
           transport: "http",
         });
     }
-    const response = await this.#request(route, body, signal);
+    const response = await this.#request(route, body, signal, requestHeaders);
+    if (!response.ok) await this.#problem(response);
+  }
+
+  async cancelRun(
+    sessionId: string,
+    runId: string,
+    signal: AbortSignal | undefined,
+    requestHeaders?: HeadersInit,
+  ): Promise<void> {
+    const response = await this.#request(
+      sessionControlRoute("cancel", sessionId),
+      { expected_run_id: runId },
+      signal,
+      requestHeaders,
+    );
     if (!response.ok) await this.#problem(response);
   }
 
@@ -382,13 +385,7 @@ class HttpTransport implements Transport {
     let startControls: (() => Promise<never>) | undefined;
     let controlFailure: Promise<never> = new Promise(() => undefined);
 
-    if (method.name === "StreamSessionEvents") {
-      route = {
-        body: false,
-        method: "GET",
-        path: `/v1/sessions/${encodeURIComponent(stringField(jsonInput, "session_id"))}/events`,
-      };
-    } else if (method.name === "Converse") {
+    if (method.name === "Converse") {
       const frame = firstInput as unknown as ConverseRequest;
       const start = frame.kind;
       if (start.case !== "prompt" && start.case !== "retry") {
@@ -399,11 +396,7 @@ class HttpTransport implements Transport {
       const sessionId = start.value.sessionId;
       wrapEvent = true;
       if (start.case === "prompt") {
-        route = {
-          body: true,
-          method: "POST",
-          path: `/v1/sessions/${encodeURIComponent(sessionId)}/prompt`,
-        };
+        route = sessionControlRoute("prompt", sessionId);
         body = {
           parts: start.value.parts.map((part) => ({
             data: part.data.length === 0 ? undefined : bytesToBase64(part.data),
@@ -414,11 +407,7 @@ class HttpTransport implements Transport {
           text: start.value.text,
         };
       } else {
-        route = {
-          body: false,
-          method: "POST",
-          path: `/v1/sessions/${encodeURIComponent(sessionId)}/retry`,
-        };
+        route = sessionControlRoute("retry", sessionId);
       }
       startControls = async () => {
         for (;;) {
@@ -428,11 +417,21 @@ class HttpTransport implements Transport {
             sessionId,
             create(method.input, next.value) as unknown as ConverseRequest,
             effectiveSignal,
+            header,
           );
         }
       };
     } else {
-      throw new UnsupportedFeatureError(`http_${method.name}`, { transport: "http" });
+      const resolved = resolveHTTPRoute(method, jsonInput);
+      if (resolved === undefined || resolved.classification.response !== "sse") {
+        throw new UnsupportedFeatureError(`http_${method.name}`, { transport: "http" });
+      }
+      route = {
+        body: resolved.body !== undefined,
+        method: resolved.method,
+        path: resolved.path,
+      };
+      body = record(resolved.body ?? {});
     }
 
     const response = await this.#request(route, body, effectiveSignal, header);
@@ -484,6 +483,10 @@ class HttpTransport implements Transport {
         if (wrapEvent) {
           const event = (message as { readonly event?: object | undefined }).event;
           if (event !== undefined) registerRawJson(event, raw);
+        } else if (method.name === "WatchSessionEvents") {
+          const event = (message as { readonly event?: object | undefined }).event;
+          const rawEvent = record(raw).event;
+          if (event !== undefined && rawEvent !== undefined) registerRawJson(event, rawEvent);
         }
         yield message;
       }
@@ -559,5 +562,8 @@ async function* parseSSE(
 
 /** Creates the browser-safe mecated HTTP/JSON/SSE implementation of Connect Transport. @public */
 export function createHttpTransport(options: HttpTransportOptions): Transport {
-  return registerTransport(new HttpTransport(options), "http");
+  const transport = new HttpTransport(options);
+  return registerTransport(transport, "http", {
+    cancelRun: (sessionId, runId, signal) => transport.cancelRun(sessionId, runId, signal),
+  });
 }

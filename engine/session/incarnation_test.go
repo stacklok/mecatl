@@ -14,7 +14,7 @@ func TestSessionIncarnationIsRandomIdentityNotMetadata(t *testing.T) {
 	owner := &session.Principal{Issuer: "issuer", Subject: "subject", GrantType: session.GrantTypeUser}
 	seen := make(map[session.IncarnationID]struct{}, 256)
 	for range 256 {
-		s := session.New("same-id", session.ModeDefault, "/same", session.Limits{}, created)
+		s := session.New("same-id", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/same", Revision: "in-tree-v1"}, session.Limits{}, created)
 		if err := s.RestoreLabels(owner, session.Authority{}); err != nil {
 			t.Fatal(err)
 		}
@@ -47,7 +47,7 @@ func TestIncarnationIDValidRejectsNonCanonicalForms(t *testing.T) {
 func TestSessionIncarnationPersistsAndLegacyIsDisjoint(t *testing.T) {
 	created := time.Unix(1700000000, 123).UTC()
 	owner := &session.Principal{Issuer: "issuer", Subject: "subject", GrantType: session.GrantTypeUser}
-	s := session.New("same-id", session.ModeDefault, "/same", session.Limits{}, created)
+	s := session.New("same-id", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/same", Revision: "in-tree-v1"}, session.Limits{}, created)
 	if err := s.RestoreLabels(owner, session.Authority{}); err != nil {
 		t.Fatal(err)
 	}

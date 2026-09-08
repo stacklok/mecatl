@@ -12,6 +12,8 @@ import (
 // reflected fields. Tests can pass an empty Docs (the structure is still exercised).
 type Docs map[string]string
 
+const configDurationType = "duration"
+
 // BuildModel constructs the settings.yaml Model by REFLECTING over the permconfig
 // *Section structs (yaml tags + types, in declaration order) and attaching the
 // harvested doc-comments, the hand-pinned tier map, and the enable notes / examples.
@@ -29,6 +31,7 @@ func BuildModel(docs Docs) *Model {
 		providerOverridesSubtree(docs),
 		learningSubtree(docs),
 		retentionSubtree(docs),
+		temporaryStorageSubtree(docs),
 		storageManagementSubtree(docs),
 		steerSubtree(docs),
 		modelsSubtree(docs),
@@ -194,11 +197,33 @@ func retentionSubtree(docs Docs) *Subtree {
 		case "version":
 			f.Default, f.ExampleValue = "1", "1"
 		case "sweep_cadence":
-			f.Type, f.Default, f.ExampleValue = "duration", "1h", "1h"
+			f.Type, f.Default, f.ExampleValue = configDurationType, "1h", "1h"
 		}
 	}
 	return &Subtree{Key: "retention", Tier: TierOperator, CommentedOut: true,
 		Doc: "Versioned automatic session cleanup policy. Operator-tier only; project values are ignored. Zero disables each limit. Explicit compatibility flags outrank these values.", Fields: fields}
+}
+
+func temporaryStorageSubtree(docs Docs) *Subtree {
+	fields := fieldsOf("TemporaryStorageSection", permconfig.TemporaryStorageSection{}, docs)
+	for _, field := range fields {
+		switch field.Key {
+		case "mode":
+			field.Default, field.ExampleValue = "managed", "managed"
+		case "managed_root":
+			field.Default, field.ExampleValue = "mecatl", "mecatl"
+		case "system_temp_dir":
+			field.Default, field.ExampleValue = "inherited", ""
+		case "command_reap_after", "reap_interval":
+			field.Type, field.Default, field.ExampleValue = configDurationType, "1h", "1h"
+		case "reap_timeout":
+			field.Type, field.Default, field.ExampleValue = configDurationType, "5m", "5m"
+		case "shutdown_reap_timeout":
+			field.Type, field.Default, field.ExampleValue = configDurationType, "1m", "1m"
+		}
+	}
+	return &Subtree{Key: "temporary_storage", Tier: TierOperator, CommentedOut: true,
+		Doc: "Managed command temporary-storage policy. Read only from user-global settings.yaml; project and explicit CLI config values are ignored. Managed mode is Linux-only; system preserves inherited temporary-directory behavior.", Fields: fields}
 }
 
 func storageManagementSubtree(docs Docs) *Subtree {
@@ -232,7 +257,7 @@ func learningSubtree(docs Docs) *Subtree {
 	skills[0].Default = "validated when mode is explicitly auto; evaluated otherwise"
 	fields[2].Nested = skills
 	automatic := fieldsOf("LearningAutomaticSection", permconfig.LearningAutomaticSection{}, docs)
-	automatic[0].Type, automatic[1].Type = "duration", "duration"
+	automatic[0].Type, automatic[1].Type = configDurationType, configDurationType
 	defaults := []string{"10m", "1h", "8", "100000", "4", "50000"}
 	for i := range automatic {
 		automatic[i].ExampleValue, automatic[i].Default = defaults[i], defaults[i]
@@ -383,89 +408,98 @@ func docFor(docs Docs, key, fallback string) string {
 
 func mcpSubtree(docs Docs) *Subtree {
 	fields := fieldsOf("MCPSection", permconfig.MCPSection{}, docs)
-	servers := fields[0]
-	servers.SkeletonCollapse = true
-	servers.Nested = fieldsOf("MCPServerProfile", permconfig.MCPServerProfile{}, docs)
-	for _, serverField := range servers.Nested {
-		if serverField.Key != "auth" {
-			continue
+	var servers *Field
+	for _, field := range fields {
+		switch field.Key {
+		case "servers":
+			servers = field
+		case "broker":
+			field.Nested = fieldsOf("MCPBrokerProfile", permconfig.MCPBrokerProfile{}, docs)
 		}
-		serverField.Nested = fieldsOf("MCPAuthProfile", permconfig.MCPAuthProfile{}, docs)
-		for _, authField := range serverField.Nested {
-			switch authField.Key {
-			case "static_bearer":
-				authField.Nested = fieldsOf("MCPStaticBearerProfile", permconfig.MCPStaticBearerProfile{}, docs)
-			case "oauth":
-				authField.Nested = mcpOAuthFields(docs)
+	}
+	if servers != nil {
+		servers.SkeletonCollapse = true
+		servers.Nested = fieldsOf("MCPServerProfile", permconfig.MCPServerProfile{}, docs)
+		for _, serverField := range servers.Nested {
+			if serverField.Key != "auth" {
+				continue
+			}
+			serverField.Nested = fieldsOf("MCPAuthProfile", permconfig.MCPAuthProfile{}, docs)
+			for _, authField := range serverField.Nested {
+				switch authField.Key {
+				case "static_bearer":
+					authField.Nested = fieldsOf("MCPStaticBearerProfile", permconfig.MCPStaticBearerProfile{}, docs)
+				case "oauth":
+					authField.Nested = mcpOAuthFields(docs)
+				}
 			}
 		}
 	}
 	return &Subtree{
 		Key:          "mcp",
 		Tier:         TierOperator,
-		Doc:          "Strict OPERATOR-TIER named global Streamable HTTP MCP servers. Authentication is a closed none/static_bearer/oauth union; OAuth supports preregistered or CIMD clients and local or environment credentials. All secret-shaped values are MECATL_* environment references, never values in YAML. Project mcp blocks are ignored with a value-free warning.",
+		Doc:          "Strict OPERATOR-TIER Streamable HTTP MCP authority configuration. Mode selects one mutually exclusive global or session-broker authority; broker mode carries its callback configuration and neutral route declarations. Authentication is a closed none/static_bearer/oauth union. Broker OAuth may use trusted explicit OAuth2 endpoints; all secret-shaped values are MECATL_* environment references, never values in YAML. Project mcp blocks are ignored with a value-free warning.",
 		CommentedOut: true,
 		Fields:       fields,
 		Example: []string{
 			"mcp:",
+			"  mode: broker",
+			"  broker:",
+			"    callback_url: https://agent.example/v1/mcp/authorization/callback",
 			"  servers:",
-			"    - name: public",
-			"      url: https://mcp.example.com/public",
+			"    - name: docs",
+			"      url: https://modelcontextprotocol.io/mcp",
 			"      auth:",
 			"        mode: none",
-			"    - name: static_api",
-			"      url: https://mcp.example.com/static",
-			"      auth:",
-			"        mode: static_bearer",
-			"        static_bearer:",
-			"          token_env: MECATL_MCP_STATIC_TOKEN",
 			"    - name: github",
-			"      url: https://mcp.example.com/mcp",
+			"      url: https://api.githubcopilot.com/mcp/",
 			"      auth:",
 			"        mode: oauth",
 			"        oauth:",
-			"          profile: work",
-			"          principal: alice@example.com",
-			"          issuer: https://id.example.com",
+			"          upstream:",
+			"            mode: oauth2",
+			"            oauth2:",
+			"              authorization_endpoint: https://github.com/login/oauth/authorize",
+			"              token_endpoint: https://github.com/login/oauth/access_token",
 			"          client:",
 			"            mode: preregistered",
 			"            preregistered:",
-			"              id: mecatl-local",
-			"              secret_env: MECATL_MCP_GITHUB_CLIENT_SECRET",
-			"          scopes: [mcp.read, mcp.write]",
+			"              id: mecatl-github-mcp",
+			"              secret_env: MECATL_GITHUB_MCP_CLIENT_SECRET",
+			"          scopes: [repo]",
 			"          request_refresh_token: true",
-			"          credentials:",
-			"            mode: local",
-			"            local:",
-			"              root: /home/alice/.local/state/mecatl/credentials",
-			"              key_env: MECATL_MCP_CREDENTIAL_KEY",
-			"          network:",
-			"            additional_origins: []",
-			"            private_origins: []",
-			"            max_redirects: 0",
-			"    - name: cluster_tools",
-			"      url: https://tools.example.com/mcp",
-			"      auth:",
-			"        mode: oauth",
-			"        oauth:",
-			"          profile: cluster",
-			"          principal: service-account:mecatl",
-			"          issuer: https://issuer.example.com",
-			"          client:",
-			"            mode: cimd",
-			"            cimd:",
-			"              document_url: https://client.example.com/mecatl.json",
-			"          scopes: [mcp.read]",
-			"          request_refresh_token: false",
-			"          credentials:",
-			"            mode: environment",
-			"            environment:",
-			"              credential_env: MECATL_MCP_CLUSTER_CREDENTIAL",
-			"              allow_process_local_refresh: false",
-			"          network:",
-			"            additional_origins: [https://client.example.com]",
-			"            private_origins: []",
-			"            max_redirects: 0",
+			"          network: {}",
+			"          tools:",
+			"            - name: get_issue",
+			"              description: Read GitHub issue details",
+			"              input_schema:",
+			"                type: object",
+			"                properties:",
+			"                  number:",
+			"                    type: integer",
+			"                required: [number]",
+			"              read_only: true",
+			"  # Global mode additionally supports static_bearer and OIDC identity profiles:",
+			"  # static_bearer:",
+			"  #   token_env: MECATL_MCP_STATIC_TOKEN",
+			"  # profile: work",
+			"  # principal: alice@example.com",
+			"  # issuer: https://id.example.com",
+			"  # client:",
+			"  #   cimd:",
+			"  #     document_url: https://client.example.com/mecatl.json",
+			"  # credentials:",
+			"  #   mode: local",
+			"  #   local:",
+			"  #     root: /home/operator/.local/state/mecatl/credentials",
+			"  #     key_env: MECATL_MCP_CREDENTIAL_KEY",
+			"  #   environment:",
+			"  #     credential_env: MECATL_MCP_CREDENTIAL_RECORD",
+			"  #     allow_process_local_refresh: false",
+			"  # network:",
+			"  #   additional_origins: []",
+			"  #   private_origins: []",
+			"  #   max_redirects: 0",
 		},
 	}
 }
@@ -474,6 +508,13 @@ func mcpOAuthFields(docs Docs) []*Field {
 	fields := fieldsOf("MCPOAuthProfile", permconfig.MCPOAuthProfile{}, docs)
 	for _, field := range fields {
 		switch field.Key {
+		case "upstream":
+			field.Nested = fieldsOf("MCPOAuthUpstreamProfile", permconfig.MCPOAuthUpstreamProfile{}, docs)
+			for _, variant := range field.Nested {
+				if variant.Key == "oauth2" {
+					variant.Nested = fieldsOf("MCPOAuth2UpstreamProfile", permconfig.MCPOAuth2UpstreamProfile{}, docs)
+				}
+			}
 		case "client":
 			field.Nested = fieldsOf("MCPOAuthClientProfile", permconfig.MCPOAuthClientProfile{}, docs)
 			for _, variant := range field.Nested {
@@ -496,6 +537,8 @@ func mcpOAuthFields(docs Docs) []*Field {
 			}
 		case "network":
 			field.Nested = fieldsOf("MCPOAuthNetworkProfile", permconfig.MCPOAuthNetworkProfile{}, docs)
+		case "tools":
+			field.Nested = fieldsOf("MCPStaticToolProfile", permconfig.MCPStaticToolProfile{}, docs)
 		}
 	}
 	return fields

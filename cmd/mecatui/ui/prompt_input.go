@@ -79,6 +79,7 @@ func (m Model) copyActiveSelection() (tea.Model, tea.Cmd) {
 // remain untouched; this action is for abandoning the current composition.
 func (m Model) clearPrompt() (tea.Model, tea.Cmd) {
 	m.prompt.Reset()
+	m.promptRecovery = nil
 	m.stagedMedia = nil
 	m.stagedPastes = nil
 	// Marker counters remain monotonic: an outstanding steer can restore its staged

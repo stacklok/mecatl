@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/adapter/wallclock"
@@ -46,10 +45,10 @@ func newReconcileTestService(t *testing.T) (store *jsonlstore.Store, schedStore 
 		Model:   "test-model",
 		Store:   s,
 	})
-	sv, err := server.NewService(server.Config{
-		Engine:              engine,
-		Store:               s,
-		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+	sv, err := newTestServerService(server.Config{
+		Engine: engine,
+		Store:  s,
+
 		Now:                 time.Now,
 		DefaultCapabilities: llm.Capabilities(),
 		EventLog:            s,
@@ -185,8 +184,9 @@ func TestReconcileStaleFireAfterSessionSettles(t *testing.T) {
 	// in-flight run) + an in-flight fire record (RecordFireStart's write).
 	const sessID session.SessionID = "sched--crash-run-crashed"
 	if err := store.Save(ctx, &session.Session{
-		ID:    sessID,
-		State: session.StateRunning,
+		ID:             sessID,
+		State:          session.StateRunning,
+		EnvironmentRef: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: localDefaultPlacementID, Revision: localDefaultPlacementRevision},
 		Conversation: &session.Conversation{
 			Messages: []session.Message{session.NewUserMessage("crashed mid-run")},
 		},
@@ -290,8 +290,9 @@ func TestReconcileStaleFireIdempotentOnTerminal(t *testing.T) {
 	// loop's last-gasp save landed the terminal snapshot). The reconcile
 	// callback must NOT re-cancel a terminal session.
 	if err := store.Save(ctx, &session.Session{
-		ID:    sessID,
-		State: session.StateCancelled,
+		ID:             sessID,
+		State:          session.StateCancelled,
+		EnvironmentRef: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: localDefaultPlacementID, Revision: localDefaultPlacementRevision},
 		Conversation: &session.Conversation{
 			Messages: []session.Message{session.NewUserMessage("already settled")},
 		},
@@ -396,8 +397,9 @@ func TestReconcileStaleFireLiveNotReconciled(t *testing.T) {
 	// Persist a RUNNING session (the live fire's in-flight run) + an in-flight
 	// fire record.
 	if err := store.Save(ctx, &session.Session{
-		ID:    sessID,
-		State: session.StateRunning,
+		ID:             sessID,
+		State:          session.StateRunning,
+		EnvironmentRef: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: localDefaultPlacementID, Revision: localDefaultPlacementRevision},
 		Conversation: &session.Conversation{
 			Messages: []session.Message{session.NewUserMessage("still running")},
 		},

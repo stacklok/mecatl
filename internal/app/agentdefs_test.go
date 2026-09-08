@@ -334,7 +334,7 @@ func TestBuildAgentSubagentEnginesResolvedModelOnRequest(t *testing.T) {
 
 	// Run the named engine via Subagent and assert the recorded request model.
 	defaultEngine := agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Model: "parent-model"})
-	task := agent.NewSubagentTool(defaultEngine, agent.WithAgentEngines(engines, meta))
+	task := newTestSubagentTool(defaultEngine, agent.WithAgentEngines(engines, meta))
 
 	parentCat := tool.NewCatalog()
 	parentCat.MustRegister(task)
@@ -349,7 +349,7 @@ func TestBuildAgentSubagentEnginesResolvedModelOnRequest(t *testing.T) {
 		Model:   "parent-model",
 	})
 	r := e.Run(context.Background(),
-		session.New("s1", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0)),
+		session.New("s1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0)),
 		memEnvironment("/ws"), agent.RunRequest{Text: "go"})
 	for range r.Events() {
 	}

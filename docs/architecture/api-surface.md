@@ -19,26 +19,26 @@ reach the right run.
   OPTIONAL per-session `provider_id` / `model_id` selector (multi-provider Phase 0; see [multi-provider](providers.md))
   AND an OPTIONAL `profile` (enum-as-string: `""` = default, `"no-fs"`).
 
-  **Workspace authority is listener-scoped** ([ADR 0237](../adr/0237-listener-scoped-workspace-authority.md)). In a client-selected loopback or embedded deployment, a default filesystem session must carry an absolute workspace and a `"no-fs"` session must carry an empty one. In a server-assigned deployment, every filesystem request instead carries an empty workspace to request the operator-configured root; a non-empty client value is `InvalidArgument` before it is cleaned, compared, or used. The same policy validates stored roots at later run entry. `mecak8s` is always server-assigned but has no mounted root: an omitted or empty profile means `"no-fs"`, and any other profile is rejected. An empty wire field therefore has deployment-defined semantics; it never asks the server to infer a client path.
+  Placement is server-owned ([ADR 0291](../adr/0291-server-owned-session-placement.md)).
+  Create has no workspace/cwd/placement-id/selector field: omitted profile binds the
+  trusted deployment default and `"no-fs"` binds explicit attenuation. Every session
+  receives a valid exact `EnvironmentRef{Kind,ID,Revision}` before persistence. Public
+  responses and inventories carry bounded `PlacementMetadata`, never that private ref
+  or a filesystem path. Run entry exactly reattaches the persisted ref with no
+  current-default fallback.
 
-  **The filesystem is OPTIONAL per session** (the `"no-fs"` profile, issue #55):
-  the workspace requirement is profile-aware — default requires one, no-fs
-  requires an EMPTY one (the contradictory combination is a loud
-  `InvalidArgument`), and any unknown profile is rejected, never silently
-  defaulted. A no-fs session always routes through the per-session engine
-  factory (the shared engine has the FS tools baked in): its catalog is the
-  default set MINUS exactly {Read, Edit, Write, Grep, Glob, Bash, BashStatus,
-  Parallel, SkillDraft} (pinned by `TestNoFSCatalogProfile`), its workspace is the honest
-  `engine/adapter/nofs` Workspace (reads fail `fs.ErrNotExist`, searches are
-  empty, writes refuse loudly — deliberately NOT memfs, which would silently
-  absorb writes nobody can read back), registered as the per-session workspace
-  override AT CREATE TIME so the osfs factory never sees the empty root, and
-  its Subagent/Team children run the same file-less surface (memory six +
-  WebFetch + WebSearch + global MCP) with no forkers and no shell. The model is told via a
-  system-prompt posture note and an honest Subagent spec. A REMOTE filesystem
-  for such sessions is a future driver concern (`docs/adr/0005-driver-seams.md`), an
-  explicit non-goal of the profile itself.
-- `GetSession(GetSessionRequest) → GetSessionResponse`
+  The no-FS session always routes through the per-session engine factory. Its catalog is
+  default minus {Read, Edit, Write, Grep, Glob, Bash, BashStatus, Parallel, SkillDraft};
+  WebFetch/WebSearch, memory, MCP, and file-less delegation remain. Its Workspace is the
+  honest `engine/adapter/nofs` implementation and its valid no-FS ref survives restart.
+- `GetSession(GetSessionRequest) → GetSessionResponse` — path-free snapshot with
+  bounded placement metadata; exact private refs remain storage-only.
+- `ClearSession` creates a distinct empty-history successor; `ForkSession` creates a
+  history-carrying successor. Both inherit the source's exact placement unless given a
+  fresh caller/source-scoped worktree selector from `ListWorktrees(session_id)`. The
+  server reauthorizes, exactly reattaches, serializes/leasing the source, resolves
+  placement/model changes, then publishes atomically. Failure leaves the source and
+  client binding unchanged. Selectors expire on restart and are accepted nowhere else.
 - `CompactSession(CompactSessionRequest) → CompactSessionResponse` applies one
   configured compaction pass without creating a model turn. It accepts an owned
   main chat only at an idle or terminal boundary, serializes with run entry, rejects
@@ -65,12 +65,12 @@ reach the right run.
   secrets, (provider_id, id)-sorted. Gated by `ServerCapabilities.model_selection`
   (true iff ≥1 provider is available). See [multi-provider](providers.md).
 - `Converse(stream ConverseRequest) → stream ConverseResponse)` — bidirectional.
-  The first frame **must** be `prompt`; then zero or more `resume_approval` /
-  `cancel` / `cancel_child` control frames. `ConverseRequest` is a `oneof kind
-  { Prompt prompt=1; ResumeApproval resume_approval=10; Cancel cancel=11;
-  CancelChild cancel_child=12 }`. The server starts the
-  run, reads control frames on a side goroutine (`readControl`), and relays
-  `Event`s on the main goroutine until the channel closes.
+  The first frame **must** be `prompt` or `retry`; later frames may carry
+  `resume_approval`, `cancel`, `cancel_child`, `steer`, or `steer_cancel` controls.
+  A received second start frame is rejected with `InvalidArgument`. The server starts
+  the run, reads controls on a side goroutine (`readControl`), and relays `Event`s
+  until the terminal result closes the stream. A control still in transit at that
+  boundary may instead observe normal EOF.
 - The full service is wider than this core. Session lifecycle adds
   `CloseSession`; the read-only inventories are `ListAgents`, `ListCommands`,
   `ListSkills`, `GetSoul`, `GetUserModel`; MCP passthrough is
@@ -96,13 +96,13 @@ v1 enforces required checks in the Go server (protovalidate runtime is deferred)
 | `GET /v1/sessions/{id}` | `GetSession` | JSON snapshot |
 | `POST /v1/sessions/{id}/mode` | `SetMode` | change permission mode; mid-turn rejection is surfaced to the client |
 | `POST /v1/sessions/{id}/compact` | `CompactSession` | bodyless forced compaction at an idle/terminal boundary; `{"compacted":true}` when history changed, false for a no-op |
+| `POST /v1/sessions/{id}/clear` | `ClearSession` | empty-history successor; optional ephemeral `worktree_selector` |
+| `POST /v1/sessions/{id}/fork` | `ForkSession` | history-carrying successor; optional ephemeral worktree selector and model overrides |
 | `GET /v1/models` | `ListModels` | JSON selectable-model inventory (available providers only, secret-free) |
 | `POST /v1/sessions/{id}/prompt` | start a run | `text/event-stream`; each event is `data: <proto Event as JSON>` |
 | `POST /v1/sessions/{id}/approve` | `Run.Approve` | resolves the paused ask (verdict or legacy `allow`) |
 | `POST /v1/sessions/{id}/cancel` | `Run.Cancel` | cancels the in-flight run |
 | `POST /v1/sessions/{id}/cancel-child` | `Run.CancelChild` | cancels ONE child of the in-flight run |
-| `POST /v1/sessions/{id}/adoption:preflight` | `PreflightSessionAdoption` | caller-owned eligibility and explicit-binding preflight; no source mutation |
-| `POST /v1/sessions/{id}/adopt` | `AdoptSession` | idempotent atomic new-main copy; source remains inspect-only |
 | `DELETE /v1/sessions/{id}` | `CloseSession` | frees the per-session engine slot |
 | `GET /v1/agents` · `/v1/skills` · `/v1/commands` · `/v1/soul` · `/v1/usermodel` | the inventory RPCs | read-only snapshots |
 | `GET /v1/mcp/resources` · `/v1/mcp/resources/read` · `/v1/mcp/prompts` · `POST /v1/mcp/prompts/get` · `GET /v1/mcp/sources` · `/v1/mcp/toolhive/groups` | MCP passthrough | mirrors the gRPC MCP family |

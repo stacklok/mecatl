@@ -859,7 +859,7 @@ func TestCompactionThroughLoopNeverOrphans(t *testing.T) {
 		Diagnostics:     diag,
 	})
 
-	sess := session.New("s-compact", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	sess := session.New("s-compact", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "investigate the files"})
 
 	var sawCompaction bool
@@ -928,7 +928,7 @@ func TestCarryoverSeededCompactsOnTurn0(t *testing.T) {
 	// orphans — here none) then SeedHistory into a FRESH idle session. SeedHistory
 	// re-validates pairing, so the seeded history is provider-replayable.
 	snap := session.ForkSnapshot(conv)
-	sess := session.New("s-carry-compact", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	sess := session.New("s-carry-compact", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	if err := sess.SeedHistory(snap); err != nil {
 		t.Fatalf("SeedHistory: %v", err)
 	}
@@ -1026,7 +1026,7 @@ func TestNilContextWindowDisablesCompaction(t *testing.T) {
 	if got := e.ContextWindow(); got != 0 {
 		t.Fatalf("nil-resolver ContextWindow() = %d, want 0 (disabled)", got)
 	}
-	sess := session.New("s-nilwin", session.ModeDefault, "/ws", session.Limits{MaxTurns: 2}, time.Unix(0, 0))
+	sess := session.New("s-nilwin", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 2}, time.Unix(0, 0))
 	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "hi"})
 	for ev := range r.Events() {
 		if ev.Type == session.EvCompaction {
@@ -1074,7 +1074,7 @@ func TestCompactionEmitsNonDestructiveArchive(t *testing.T) {
 		PromptBuilder:   func(prompt.Config) prompt.Layered { return prompt.Layered{} },
 	})
 
-	sess := session.New("s-archive", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	sess := session.New("s-archive", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "investigate the files"})
 
 	compactions, archives := 0, 0
@@ -1227,7 +1227,7 @@ func TestCompactionThroughLoopAbortsToOriginal(t *testing.T) {
 				CompactionRatio: 0.8,
 			})
 
-			sess := session.New("s-abort", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+			sess := session.New("s-abort", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 			bigPrompt := strings.Repeat("word ", 200)
 			r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: bigPrompt})
 
@@ -1301,7 +1301,7 @@ func TestCompactionAccountsForCompleteRequest(t *testing.T) {
 	for _, component := range []string{"system", "fragments", "tool schema", "typed tool-result parts"} {
 		t.Run(component, func(t *testing.T) {
 			cat := tool.NewCatalog()
-			sess := session.New("accounting", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+			sess := session.New("accounting", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 			var assembler *countingAssembler
 			buildCalls := 0
 			deps := agent.Deps{
@@ -1397,7 +1397,7 @@ func TestCompactionAccountsForCompleteRequest(t *testing.T) {
 
 func TestAutomaticCompactionRejectsGrowingDefaultHeuristicCandidate(t *testing.T) {
 	const irreducible = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-	sess := session.New("short", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	sess := session.New("short", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	e := agent.NewEngine(agent.Deps{
 		LLM: mockllm.New(mockllm.TextTurn("done")), Catalog: catalogWith(t), Policy: allowAll(), Model: "m",
 		Compactor: agent.HeuristicCompactor{}, TokenCounter: agent.HeuristicTokenCounter{CharsPerToken: 1},
@@ -1430,7 +1430,7 @@ func TestAutomaticCascadeUsesLiveCompleteRequestBudget(t *testing.T) {
 	for i := 0; i < 6; i++ {
 		messages = append(messages, session.NewAssistantMessage("recent", "", nil))
 	}
-	sess := session.New("cascade-budget", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	sess := session.New("cascade-budget", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	if err := sess.SeedHistory(messages); err != nil {
 		t.Fatalf("SeedHistory: %v", err)
 	}
@@ -1467,7 +1467,7 @@ func TestCompactionTriggersAtThreshold(t *testing.T) {
 		CompactionRatio: 0.8,
 	})
 
-	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	sess := session.New("s1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	bigPrompt := strings.Repeat("word ", 200) // ~250 tokens >> threshold of 8
 	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: bigPrompt})
 
@@ -1516,7 +1516,7 @@ func TestCompactionTriggerUsesInjectedCounter(t *testing.T) {
 			ContextWindow:   func() int { return 100 },
 			CompactionRatio: 0.8, // threshold = 80
 		})
-		sess := session.New("s", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+		sess := session.New("s", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 		r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "hi"})
 		for range r.Events() {
 		}

@@ -52,7 +52,7 @@ func newGCFixture(t *testing.T, policy childGCPolicy) *gcFixture {
 // their intended family while making the stored metadata explicit.
 func (f *gcFixture) save(t *testing.T, id session.SessionID) {
 	t.Helper()
-	s := session.New(id, session.ModeDefault, "/ws", session.Limits{}, f.now)
+	s := session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, f.now)
 	var (
 		kind = session.SessionKindMain
 		rel  session.SessionRelationship
@@ -82,7 +82,7 @@ func (f *gcFixture) save(t *testing.T, id session.SessionID) {
 
 func (f *gcFixture) saveOwned(t *testing.T, id session.SessionID, owner *session.Principal) {
 	t.Helper()
-	s := session.New(id, session.ModeDefault, "/ws", session.Limits{}, f.now)
+	s := session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, f.now)
 	if err := s.RestoreLabels(owner, session.Authority{}); err != nil {
 		t.Fatalf("RestoreLabels(%q): %v", id, err)
 	}
@@ -93,7 +93,7 @@ func (f *gcFixture) saveOwned(t *testing.T, id session.SessionID, owner *session
 
 func (f *gcFixture) saveUnknown(t *testing.T, id session.SessionID) {
 	t.Helper()
-	s := session.New(id, session.ModeDefault, "/ws", session.Limits{}, f.now)
+	s := session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, f.now)
 	if err := s.RestoreSessionMetadata(session.SessionKindUnknown, session.SessionRelationship{}); err != nil {
 		t.Fatalf("RestoreSessionMetadata(%q): %v", id, err)
 	}
@@ -434,14 +434,14 @@ func TestChildGCUnknownAndActiveStatesAreProtected(t *testing.T) {
 		f.now = f.now.Add(time.Duration(i+1) * time.Minute)
 	}
 
-	running := session.New("main-running", session.ModeDefault, "/ws", session.Limits{}, f.now)
+	running := session.New("main-running", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, f.now)
 	if err := running.BeginTurn(); err != nil {
 		t.Fatalf("BeginTurn(running): %v", err)
 	}
 	if err := f.store.Save(context.Background(), running); err != nil {
 		t.Fatalf("Save(running): %v", err)
 	}
-	awaiting := session.New("main-awaiting", session.ModeDefault, "/ws", session.Limits{}, f.now)
+	awaiting := session.New("main-awaiting", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, f.now)
 	if err := awaiting.BeginTurn(); err != nil {
 		t.Fatalf("BeginTurn(awaiting): %v", err)
 	}
@@ -506,7 +506,7 @@ func TestChildGCCapPassOldestFirst(t *testing.T) {
 // from cap slots, and becomes eligible immediately after its lifecycle releases.
 func TestChildGCSkipsLiveEngineChildren(t *testing.T) {
 	f := newGCFixture(t, childGCPolicy{retention: 24 * time.Hour, maxPerFamily: 2})
-	live := newSessionLiveness(nil, "", 0, 0, nil)
+	live := newSessionLiveness(nil, "", 0, 0, nil, nil)
 	release, err := live.Register(context.Background(), "subagent-live-old", func() {})
 	if err != nil {
 		t.Fatalf("Register() error = %v", err)
@@ -911,7 +911,7 @@ func TestChildGCMaintenanceExclusionUnavailableNeverStartsOrSchedules(t *testing
 func TestChildGCRuntimeMaintenanceUnsupportedSettlesUnavailable(t *testing.T) {
 	now := time.Now()
 	store := &countingPrunable{Store: memstore.New(memstore.WithNow(func() time.Time { return now.Add(-2 * time.Hour) }))}
-	s := session.New("subagent-old", session.ModeDefault, "/ws", session.Limits{}, now.Add(-2*time.Hour))
+	s := session.New("subagent-old", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, now.Add(-2*time.Hour))
 	if err := s.RestoreSessionMetadata(session.SessionKindSubagent, session.SessionRelationship{ParentSessionID: "parent", CallID: "call"}); err != nil {
 		t.Fatal(err)
 	}
@@ -1102,7 +1102,7 @@ func TestChildGCFailedSweepSettlesHealth(t *testing.T) {
 func TestChildGCCleanupCancelsBlockedDelete(t *testing.T) {
 	now := time.Now()
 	store := &countingPrunable{Store: memstore.New(memstore.WithNow(func() time.Time { return now.Add(-2 * time.Hour) }))}
-	s := session.New("subagent-old", session.ModeDefault, "/ws", session.Limits{}, now.Add(-2*time.Hour))
+	s := session.New("subagent-old", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, now.Add(-2*time.Hour))
 	if err := s.RestoreSessionMetadata(session.SessionKindSubagent, session.SessionRelationship{ParentSessionID: "parent", CallID: "call"}); err != nil {
 		t.Fatal(err)
 	}
@@ -1220,14 +1220,14 @@ func TestBuildChildGCSweepsStaleJSONLChild(t *testing.T) {
 	}
 	bg := context.Background()
 	created := time.Now().Add(-48 * time.Hour)
-	child, err := session.NewSubagent("subagent-stale", session.ModeDefault, "/ws", session.Limits{}, created, "parent", session.NewIncarnationID(), "call")
+	child, err := session.NewSubagent("subagent-stale", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, created, "parent", session.NewIncarnationID(), "call")
 	if err != nil {
 		t.Fatalf("NewSubagent: %v", err)
 	}
 	if err := seed.Save(bg, child); err != nil {
 		t.Fatalf("seed Save(%q): %v", child.ID, err)
 	}
-	main := session.New("operator-main", session.ModeDefault, "/ws", session.Limits{}, created)
+	main := session.New("operator-main", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, created)
 	if err := seed.Save(bg, main); err != nil {
 		t.Fatalf("seed Save(%q): %v", main.ID, err)
 	}
@@ -1278,7 +1278,7 @@ func TestBuildAutomaticRetentionRespectsAnotherLocalInstance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("jsonlstore.New: %v", err)
 	}
-	child, err := session.NewSubagent("subagent-protected", session.ModeDefault, "/ws", session.Limits{}, time.Now().Add(-48*time.Hour), "parent", session.NewIncarnationID(), "call")
+	child, err := session.NewSubagent("subagent-protected", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Now().Add(-48*time.Hour), "parent", session.NewIncarnationID(), "call")
 	if err != nil {
 		t.Fatalf("NewSubagent: %v", err)
 	}

@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stacklok/mecatl/engine/adapter/memledger"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/adapter/permstore"
@@ -102,7 +103,7 @@ func TestPathEscapePosture_Scenario3_YoloWriteEscapeAllowed(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 	defer built.Close()
-	sess, err := built.Service.CreateSession(context.Background(), f.workspace, session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -160,7 +161,7 @@ func TestPathEscapePosture_Scenario3_AutoWriteEscapeAsks(t *testing.T) {
 			t.Fatalf("Build: %v", err)
 		}
 		defer built.Close()
-		sess, err := built.Service.CreateSession(context.Background(), f.workspace, session.ModeDefault, session.Limits{})
+		sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 		if err != nil {
 			t.Fatalf("CreateSession: %v", err)
 		}
@@ -202,7 +203,7 @@ func TestPathEscapePosture_Scenario3_AutoWriteEscapeAsks(t *testing.T) {
 			t.Fatalf("Build: %v", err)
 		}
 		defer built.Close()
-		sess, err := built.Service.CreateSession(context.Background(), f.workspace, session.ModeDefault, session.Limits{})
+		sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 		if err != nil {
 			t.Fatalf("CreateSession: %v", err)
 		}
@@ -347,7 +348,7 @@ func TestPathEscapePosture_Scenario3_EditLedgerOutOfRoot(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 	defer built.Close()
-	sess, err := built.Service.CreateSession(context.Background(), f.workspace, session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -370,7 +371,7 @@ func TestPathEscapePosture_Scenario3_EditLedgerOutOfRoot(t *testing.T) {
 		entered:   make(chan struct{}),
 		release:   make(chan struct{}),
 	}
-	env, err := tool.NewEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: f.workspace}, gate, nil)
+	env, err := tool.NewEnvironment(sess.EnvironmentRef, gate, memledger.New(), nil)
 	if err != nil {
 		t.Fatalf("NewEnvironment: %v", err)
 	}
@@ -530,7 +531,7 @@ func TestPathEscapePosture_Scenario3_WriteEscapeMutateSerial(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 	defer built.Close()
-	sess, err := built.Service.CreateSession(context.Background(), f.workspace, session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -538,8 +539,8 @@ func TestPathEscapePosture_Scenario3_WriteEscapeMutateSerial(t *testing.T) {
 	// reads its workspace at start). The 50ms entry pause makes a genuine
 	// overlap unmissable.
 	var inflight, maxSeen atomic.Int32
-	env, err := tool.NewEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: f.workspace},
-		newSerialProbeWorkspace(t, f.workspace, &inflight, &maxSeen, 50*time.Millisecond), nil)
+	env, err := tool.NewEnvironment(sess.EnvironmentRef,
+		newSerialProbeWorkspace(t, f.workspace, &inflight, &maxSeen, 50*time.Millisecond), memledger.New(), nil)
 	if err != nil {
 		t.Fatalf("NewEnvironment: %v", err)
 	}
@@ -609,7 +610,7 @@ func TestPathEscapePosture_Scenario3_WriteEscapeServedThroughOsRoot(t *testing.T
 		t.Fatalf("Build: %v", err)
 	}
 	defer built.Close()
-	sess, err := built.Service.CreateSession(context.Background(), f.workspace, session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

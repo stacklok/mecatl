@@ -115,18 +115,12 @@ func TestProviderErrorMetadataHTTPPreservesSDKError(t *testing.T) {
 		w.Header().Set("Request-ID", "req_http_409")
 		w.Header().Set("X-Secret", "must-not-leak")
 		w.WriteHeader(http.StatusUnauthorized)
-		_, _ = io.WriteString(w, `{"type":"error","error":{"type":"authentication_error","message":"body must-not-leak"}}`)
+		_, _ = io.WriteString(w, `{"type":"error","error":{"type":"authentication_error","message":"credentials are invalid"},"raw_secret":"must-not-leak"}`)
 	}))
 	defer srv.Close()
 
-	provider := New(
-		WithAPIKey("test-key"),
-		WithBaseURL(srv.URL),
-		WithRequestOption(option.WithMaxRetries(0)),
-	)
-	seq, err := provider.Stream(context.Background(), port.LLMRequest{
-		Model: "test-model", Messages: []session.Message{session.NewUserMessage("hi")},
-	})
+	provider := New(WithAPIKey("test-key"), WithBaseURL(srv.URL+"/private/..?token=must-not-leak#fragment"), WithRequestOption(option.WithMaxRetries(0)))
+	seq, err := provider.Stream(context.Background(), port.LLMRequest{Model: "test-model", Messages: []session.Message{session.NewUserMessage("hi")}})
 	if err != nil {
 		t.Fatalf("Stream: %v", err)
 	}
@@ -145,20 +139,47 @@ func TestProviderErrorMetadataHTTPPreservesSDKError(t *testing.T) {
 	if !errors.As(streamErr, &preserved) {
 		t.Fatal("errors.As did not preserve the original SDK error")
 	}
-	if streamErr.Error() != preserved.Error() {
-		t.Fatalf("Error() = %q, want unchanged SDK text %q", streamErr, preserved)
+	if got, want := streamErr.Error(), "authentication_error: credentials are invalid (target: "+srv.URL+"/v1/messages; request ID: req_http_409)"; got != want {
+		t.Fatalf("Error() = %q, want %q", got, want)
+	}
+	if strings.Contains(streamErr.Error(), "must-not-leak") {
+		t.Fatalf("display error leaked request metadata or raw body: %q", streamErr)
 	}
 	got := metadataOf(t, streamErr)
-	want := providerMetadata{
-		httpStatus:      http.StatusUnauthorized,
-		code:            "authentication_error",
-		correlationKind: "request",
-		correlationID:   "req_http_409",
-	}
+	want := providerMetadata{httpStatus: http.StatusUnauthorized, code: "authentication_error", correlationKind: "request", correlationID: "req_http_409"}
 	if got != want {
 		t.Fatalf("metadata = %+v, want %+v", got, want)
 	}
 	if strings.Contains(got.code, "must-not-leak") {
 		t.Fatal("metadata leaked SDK error body")
+	}
+}
+
+func TestProviderHTTPErrorOmitsInvalidRequestIDFromDisplay(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Request-ID", "invalid request id")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = io.WriteString(w, `{"type":"error","error":{"type":"authentication_error","message":"credentials are invalid"}}`)
+	}))
+	defer srv.Close()
+
+	provider := New(WithAPIKey("test-key"), WithBaseURL(srv.URL), WithRequestOption(option.WithMaxRetries(0)))
+	seq, err := provider.Stream(context.Background(), port.LLMRequest{Model: "test-model", Messages: []session.Message{session.NewUserMessage("hi")}})
+	if err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	var streamErr error
+	for _, err := range seq {
+		if err != nil {
+			streamErr = err
+			break
+		}
+	}
+	if streamErr == nil {
+		t.Fatal("expected SDK HTTP error")
+	}
+	if got, want := streamErr.Error(), "authentication_error: credentials are invalid (target: "+srv.URL+"/v1/messages)"; got != want {
+		t.Fatalf("Error() = %q, want %q", got, want)
 	}
 }

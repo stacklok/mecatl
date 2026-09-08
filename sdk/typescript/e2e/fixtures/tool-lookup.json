@@ -1,0 +1,14 @@
+{
+  "turns": [
+    {
+      "tool_calls": [
+        {
+          "id": "lookup-1",
+          "name": "mcp__sdk__lookup",
+          "args": { "query": "aztec calendar" }
+        }
+      ]
+    },
+    { "text": "the lookup result reached the model" }
+  ]
+}

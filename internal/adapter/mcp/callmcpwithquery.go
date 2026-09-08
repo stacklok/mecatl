@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strings"
 
@@ -122,9 +121,8 @@ func (t callMcpWithQueryTool) Execute(ctx context.Context, in session.ToolCall, 
 		// after the one reconnect attempt surfaces as the clear "unavailable
 		// after reconnect" message, never the raw transport string. Other
 		// faults stay verbatim so the model can self-correct.
-		if isConnectionDrop(err) || errors.Is(err, errReconnectFailed) {
-			return session.NewToolError(in.ID,
-				fmt.Sprintf("call MCP tool failed: MCP server %q unavailable after reconnect", server)), nil
+		if message := unavailableMessage(err, "call MCP tool failed", server); message != "" {
+			return session.NewToolError(in.ID, message), nil
 		}
 		return session.NewToolError(in.ID, fmt.Sprintf("call MCP tool failed: %v", err)), nil
 	}

@@ -18,12 +18,15 @@ import (
 // leaks past this file — the ui drains tea.Msgs from the returned channel, the
 // SAME fan-in (WaitForMsg) the live Converse stream uses.
 
-// EventStream wraps one open StreamSessionEvents replay: a receive side ONLY
-// (read-only, no Send side, unlike the bidi Converse Stream). The generated
-// grpc.ServerStreamingClient[mecatlv1.Event] satisfies the EventRecver in
-// production; tests supply a scripted fake.
+// EventStream wraps an Event receive side. Durable replay and live-subscription
+// streams are receive-only; authorization continuations additionally bind the
+// narrow AuthorizationControl send side so later permission and cancel controls
+// stay on the stream that owns the resumed run.
 type EventStream struct {
-	recv EventRecver
+	recv              EventRecver
+	control           AuthorizationControl
+	controlMu         sync.Mutex
+	resolvedApprovals map[string]struct{}
 	// bearerBacked is transport provenance, not credential material. Replay streams
 	// intentionally leave it false so replay failures can never open auth recovery.
 	bearerBacked bool
@@ -33,11 +36,68 @@ type EventStream struct {
 	classifyAuth bool
 }
 
+// AuthorizationControl is the writable side of an authorization continuation.
+// It intentionally exposes only the permission and cancellation vocabulary
+// accepted after the mandatory initial authorization-control frame.
+type AuthorizationControl interface {
+	SendApproval(string, Verdict) error
+	SendCancel() error
+}
+
+// MarkApprovalResolved and ApprovalResolved provide the same stream-scoped
+// duplicate suppression as Converse for permission asks emitted by an
+// authorization continuation.
+func (s *EventStream) MarkApprovalResolved(askID string) {
+	if s == nil || askID == "" {
+		return
+	}
+	s.controlMu.Lock()
+	defer s.controlMu.Unlock()
+	if s.resolvedApprovals == nil {
+		s.resolvedApprovals = make(map[string]struct{})
+	}
+	s.resolvedApprovals[askID] = struct{}{}
+}
+
+// ApprovalResolved reports whether askID was already resolved on this stream.
+func (s *EventStream) ApprovalResolved(askID string) bool {
+	if s == nil || askID == "" {
+		return false
+	}
+	s.controlMu.Lock()
+	defer s.controlMu.Unlock()
+	_, ok := s.resolvedApprovals[askID]
+	return ok
+}
+
+// SendApproval resolves one permission ask on a writable authorization stream.
+func (s *EventStream) SendApproval(askID string, verdict Verdict) error {
+	if s == nil || s.control == nil {
+		return fmt.Errorf("authorization control stream is not writable")
+	}
+	return s.control.SendApproval(askID, verdict)
+}
+
+// SendCancel cancels the run continued by a writable authorization stream.
+func (s *EventStream) SendCancel() error {
+	if s == nil || s.control == nil {
+		return fmt.Errorf("authorization control stream is not writable")
+	}
+	return s.control.SendCancel()
+}
+
 // NewEventStream wraps an EventRecver in an EventStream. Pass the generated
 // grpc.ServerStreamingClient[mecatlv1.Event] from StreamSessionEvents in
 // production; pass a fake EventRecver in tests.
 func NewEventStream(recv EventRecver) *EventStream {
 	return &EventStream{recv: recv}
+}
+
+// NewAuthorizationEventStream binds a continuation receiver to its writable
+// control side. It is primarily useful for alternative client implementations and
+// keeps protobuf request envelopes private to this package.
+func NewAuthorizationEventStream(recv EventRecver, control AuthorizationControl) *EventStream {
+	return &EventStream{recv: recv, control: control}
 }
 
 func newAuthenticatedEventStream(recv EventRecver, bearerBacked bool) *EventStream {
@@ -68,7 +128,7 @@ func (s *EventStream) ReadLoop(ctx context.Context, out chan<- tea.Msg) {
 // DeliveryNoteMsg. A server with no live subscription bridge returns gRPC
 // UNIMPLEMENTED → StreamErrMsg.
 func (c *Client) StreamSessionLive(ctx context.Context, id string) (*EventStream, error) {
-	stream, err := c.svc.StreamSessionLive(ctx, &mecatlv1.StreamSessionLiveRequest{SessionId: id})
+	stream, err := c.svc.StreamSessionLive(withSessionAffinity(ctx, id), &mecatlv1.StreamSessionLiveRequest{SessionId: id})
 	if err != nil {
 		return nil, fmt.Errorf("stream session live: %w", err)
 	}
@@ -95,6 +155,10 @@ func LiveStreamCmd(ctx context.Context, live LiveStreamer, id string) (ch chan t
 		}()
 		return ch, stop
 	}
+	if p, ok := live.(liveAuthProvenance); ok {
+		es.bearerBacked = p.BearerBackedStream()
+	}
+	es.classifyAuth = true
 	go es.ReadLoop(ctx, ch)
 	return ch, stop
 }
@@ -108,7 +172,7 @@ func LiveStreamCmd(ctx context.Context, live LiveStreamer, id string) (ch chan t
 // stream (absence is data) → a single StreamClosedMsg; a server with no durable
 // EventLog returns gRPC UNIMPLEMENTED → a StreamErrMsg.
 func (c *Client) StreamSessionEvents(ctx context.Context, id string) (*EventStream, error) {
-	stream, err := c.svc.StreamSessionEvents(ctx, &mecatlv1.StreamSessionEventsRequest{SessionId: id})
+	stream, err := c.svc.StreamSessionEvents(withSessionAffinity(ctx, id), &mecatlv1.StreamSessionEventsRequest{SessionId: id})
 	if err != nil {
 		return nil, fmt.Errorf("stream session events: %w", err)
 	}
@@ -129,18 +193,20 @@ func (c *Client) StreamSessionEvents(ctx context.Context, id string) (*EventStre
 // backoff.go (package-level vars so tests can shrink it).
 
 // catchUpReplay drains the durable-event-log replay ONCE for session id via
-// replayer. The durable log is consulted ONLY to recover DELIVERY NOTES emitted
-// during the gap — the visible conversation (user prompts, assistant text, tool
-// calls) is already on screen, so replaying those msg types into the live
-// conversation would re-append the whole prior transcript on every reconnect
-// (C1). Only DeliveryNoteMsg events are forwarded onto out (deduped by the ui's
-// seenFireIDs); every other projected event is dropped here. The replay's own
-// terminal StreamClosedMsg/StreamErrMsg is SWALLOWED — the reconnect loop owns
-// its lifecycle markers (LiveReconnectingMsg/LiveReconnectedMsg), so a catch-up
-// EOF must not be mistaken for the live feed closing. Returns the replay's
-// terminal error (nil = clean EOF) so the loop can surface a catch-up failure
-// distinctly from a live-reopen failure. Honours ctx: a cancelled ctx aborts
-// the in-flight ReadLoop (its emit honours ctx) and this drain.
+// replayer. The durable log is consulted to recover delivery notes and the latest
+// retry disposition emitted during the gap without replaying the visible
+// conversation (user prompts, assistant text, tool calls). MCP authorization
+// markers are folded across the complete history: only the latest pending marker
+// with no matching terminal marker is forwarded after a clean replay, restoring
+// an actionable card without transiently replaying completed lifecycles through
+// the live reducer. Authorization events carry correlation only; presentation
+// URLs remain available solely through the explicit presentation RPC. The
+// replay's terminal StreamClosedMsg/StreamErrMsg is SWALLOWED — the reconnect
+// loop owns its lifecycle markers (LiveReconnectingMsg/LiveReconnectedMsg), so a
+// catch-up EOF must not be mistaken for the live feed closing. Returns the
+// replay's terminal error (nil = clean EOF) so the loop can surface a catch-up
+// failure distinctly from a live-reopen failure. Honours ctx: a cancelled ctx
+// aborts the in-flight ReadLoop (its emit honours ctx) and this drain.
 func catchUpReplay(ctx context.Context, replayer SessionReplayer, id string, out chan<- tea.Msg) error {
 	es, err := replayer.StreamSessionEvents(ctx, id)
 	if err != nil {
@@ -148,47 +214,75 @@ func catchUpReplay(ctx context.Context, replayer SessionReplayer, id string, out
 	}
 	tmp := make(chan tea.Msg, 64)
 	go es.ReadLoop(ctx, tmp)
+	pending := make(map[string]struct{})
+	var pendingOrder []MCPAuthorizationMsg
 	for m := range tmp {
-		switch m.(type) {
-		case StreamClosedMsg, StreamErrMsg:
+		switch msg := m.(type) {
+		case StreamClosedMsg:
 			// Swallow the replay's terminal marker; the reconnect owns its own.
 			continue
+		case StreamErrMsg:
+			return msg.Err
+		case MCPAuthorizationMsg:
+			if msg.Status == "pending" {
+				pending[msg.AuthorizationID] = struct{}{}
+				pendingOrder = append(pendingOrder, msg)
+			} else {
+				delete(pending, msg.AuthorizationID)
+			}
 		case DeliveryNoteMsg, ResultMsg:
-			// Delivery notes recover gap output. ResultMsg is forwarded only so the UI
-			// can recover the latest durable failed-step retry eligibility; it must not replay
-			// transcript cards or trigger automatic retry.
+			// Preserve immediate forwarding for gap output and latest durable failed-step
+			// retry eligibility while the remainder of the replay is still draining.
 			if !emit(ctx, out, m) {
 				return ctx.Err()
 			}
 		default:
-			// Not a delivery note (a user prompt / assistant text / tool call /
-			// turn marker from the already-visible transcript): drop it so the
-			// full-log replay never re-appends the prior conversation.
+			// Drop the already-visible transcript so a full-log replay never appends it.
 			continue
 		}
+	}
+	for i := len(pendingOrder) - 1; i >= 0; i-- {
+		msg := pendingOrder[i]
+		if _, ok := pending[msg.AuthorizationID]; !ok {
+			continue
+		}
+		if !emit(ctx, out, msg) {
+			return ctx.Err()
+		}
+		break
 	}
 	return nil
 }
 
 type liveAuthProvenance interface {
-	bearerBackedStream() bool
+	BearerBackedStream() bool
 }
 
 func liveBearerBacked(live LiveStreamer) bool {
 	p, ok := live.(liveAuthProvenance)
-	return ok && p.bearerBackedStream()
+	return ok && p.BearerBackedStream()
 }
 
-func (s *EventStream) bearerBackedStream() bool {
-	return s != nil && s.bearerBacked
-}
-
-func (c *Client) bearerBackedStream() bool { return c != nil && c.bearerBacked }
+// BearerBackedStream reports whether this client sends bearer credentials.
+func (c *Client) BearerBackedStream() bool { return c != nil && c.bearerBacked }
 
 // liveReconnectAttemptTimeout bounds one StreamSessionLive reopening attempt. It
 // prevents a wedged gRPC transport from holding the reconnect loop forever. Tests
 // temporarily shrink it to exercise the timeout path.
 var liveReconnectAttemptTimeout = 10 * time.Second
+
+type reconnectDelayWait func(context.Context, time.Duration) bool
+
+func waitReconnectDelay(ctx context.Context, d time.Duration) bool {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
+}
 
 // reconnectLiveLoop is the body of ReconnectLiveCmd: the bounded-backoff
 // reconnect+catch-up loop. It emits LiveReconnectingMsg at the top of each
@@ -197,7 +291,7 @@ var liveReconnectAttemptTimeout = 10 * time.Second
 // it emits LiveReconnectedMsg and returns (the ui re-arms a FRESH live channel);
 // on failure it records the error and backs off. The probe stream's ctx is the
 // loop's ctx, so the ui's stop (cancel) cleans it up once the ui has re-armed.
-func reconnectLiveLoop(ctx context.Context, live LiveStreamer, replayer SessionReplayer, id string, out chan<- tea.Msg, priorAttempt int) {
+func reconnectLiveLoop(ctx context.Context, live LiveStreamer, replayer SessionReplayer, id string, out chan<- tea.Msg, priorAttempt int, wait reconnectDelayWait) {
 	defer close(out)
 	attempt := priorAttempt
 	var lastErr error
@@ -214,12 +308,8 @@ func reconnectLiveLoop(ctx context.Context, live LiveStreamer, replayer SessionR
 			if d <= 0 {
 				return
 			}
-			timer := time.NewTimer(d)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
+			if !wait(ctx, d) {
 				return
-			case <-timer.C:
 			}
 		}
 		if !emit(ctx, out, LiveReconnectingMsg{Attempt: attempt, Err: lastErr}) {
@@ -286,7 +376,7 @@ func reconnectLiveCmd(ctx context.Context, live LiveStreamer, replayer SessionRe
 	}
 	go func() {
 		defer close(done)
-		reconnectLiveLoop(ctx, live, replayer, id, ch, priorAttempt)
+		reconnectLiveLoop(ctx, live, replayer, id, ch, priorAttempt, waitReconnectDelay)
 	}()
 	return ch, stop
 }

@@ -437,22 +437,21 @@ func withoutEncryptedReasoning(req port.LLMRequest) (port.LLMRequest, bool) {
 // verification/decryption phrasing. A neighbouring 400 must not match.
 func isInvalidEncryptedContent(err error) bool {
 	var apiErr *oai.Error
-	if errors.As(err, &apiErr) {
-		if apiErr.StatusCode != http.StatusBadRequest {
-			return false
-		}
-		if apiErr.Code == "invalid_encrypted_content" {
-			return true
-		}
-		if hasInvalidEncryptedDetail(apiErr.Message) {
-			return true
-		}
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusBadRequest {
+		return false
+	}
+	if apiErr.Code == "invalid_encrypted_content" {
+		return true
+	}
+	if hasInvalidEncryptedDetail(apiErr.Message) {
+		return true
 	}
 
 	// Some Responses-compatible gateways return a non-standard root JSON object,
-	// leaving the SDK's typed Message/Code empty while retaining the body in Error().
-	msg := err.Error()
-	return strings.Contains(strings.ToLower(msg), "400 bad request") && hasInvalidEncryptedDetail(msg)
+	// leaving the SDK's typed Message/Code empty while retaining the body in the
+	// unwrap-visible SDK error. Do not inspect err.Error(): the adapter's safe
+	// display projection intentionally replaces it.
+	return hasInvalidEncryptedDetail(apiErr.RawJSON())
 }
 
 // hasInvalidEncryptedDetail matches the human-readable half of the rejection, for

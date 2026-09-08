@@ -209,16 +209,27 @@ func TestLedgerKeyIsLexicalAndIOFree(t *testing.T) {
 		t.Skipf("symlinks unsupported: %v", err)
 	}
 
+	ctx := context.Background()
 	version := tool.NewFileVersion("lexical")
-	ws.RecordRead("dir/../file.txt", version)
-	got, ok := ws.RecordedVersion(filepath.Join(ws.Root(), "file.txt"))
+	if err := testRecordRead(ctx, ws, "dir/../file.txt", version); err != nil {
+		t.Fatalf("RecordRead: %v", err)
+	}
+	got, ok, err := testRecordedVersion(ctx, ws, filepath.Join(ws.Root(), "file.txt"))
+	if err != nil {
+		t.Fatalf("RecordedVersion: %v", err)
+	}
 	if !ok || !got.Equal(version) {
 		t.Fatalf("ordinary absolute/relative ledger forms did not converge (ok=%v)", ok)
 	}
 
 	outsidePath := filepath.Join(outside, "dir", "..", "other.txt")
-	ws.RecordRead(outsidePath, version)
-	got, ok = ws.RecordedVersion(filepath.Clean(outsidePath))
+	if err := testRecordRead(ctx, ws, outsidePath, version); err != nil {
+		t.Fatalf("RecordRead(outsidePath): %v", err)
+	}
+	got, ok, err = testRecordedVersion(ctx, ws, filepath.Clean(outsidePath))
+	if err != nil {
+		t.Fatalf("RecordedVersion(outsidePath): %v", err)
+	}
 	if !ok || !got.Equal(version) {
 		t.Fatalf("cleaned out-of-root absolute ledger forms did not converge (ok=%v)", ok)
 	}

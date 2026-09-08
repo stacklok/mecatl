@@ -1,6 +1,7 @@
 ---
 sidebar_position: 8
 title: Themes
+description: Choose and configure mecatui's built-in terminal themes for light or dark displays.
 ---
 
 # Themes

@@ -2,10 +2,40 @@ package tool
 
 import (
 	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/session"
 )
+
+func TestPersistentReadLedgers_EnvironmentSeparatesWorkspaceAndLedger(t *testing.T) {
+	ref := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/repo"}
+	ws := stubWorkspace{}
+	ledger := &stubReadLedger{}
+	env, err := NewEnvironment(ref, ws, ledger, nil)
+	if err != nil {
+		t.Fatalf("NewEnvironment: %v", err)
+	}
+	if env.Workspace() != ws {
+		t.Fatal("Environment did not preserve the supplied Workspace")
+	}
+	if env.ReadLedger() != ledger {
+		t.Fatal("Environment did not preserve the independently supplied ReadLedger")
+	}
+	workspaceType := reflect.TypeOf((*Workspace)(nil)).Elem()
+	for _, obsolete := range []string{"RecordRead", "RecordedVersion"} {
+		if _, ok := workspaceType.MethodByName(obsolete); ok {
+			t.Fatalf("Workspace still exposes obsolete ledger method %s", obsolete)
+		}
+	}
+}
+
+func TestNewEnvironmentRejectsNilReadLedger(t *testing.T) {
+	_, err := NewEnvironment(session.EnvironmentRef{}, stubWorkspace{}, nil, nil)
+	if !errors.Is(err, ErrEnvironmentNoReadLedger) {
+		t.Fatalf("NewEnvironment(nil ledger) err = %v, want ErrEnvironmentNoReadLedger", err)
+	}
+}
 
 // TestNewEnvironmentRejectsNilWorkspace pins the one mandatory capability: a
 // nil Workspace is always rejected. Not every tool consumes the Workspace —
@@ -13,7 +43,7 @@ import (
 // capabilities — but the Environment itself must always carry a non-nil
 // Workspace for a coherent execution context.
 func TestNewEnvironmentRejectsNilWorkspace(t *testing.T) {
-	_, err := NewEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "x"}, nil, nil)
+	_, err := NewEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "x"}, nil, &stubReadLedger{}, nil)
 	if !errors.Is(err, ErrEnvironmentNoWorkspace) {
 		t.Fatalf("NewEnvironment(nil ws) err = %v, want ErrEnvironmentNoWorkspace", err)
 	}
@@ -27,7 +57,7 @@ func TestMustEnvironmentPanicsOnNilWorkspace(t *testing.T) {
 			t.Fatal("MustEnvironment(nil ws) must panic")
 		}
 	}()
-	_ = MustEnvironment(session.EnvironmentRef{}, nil, nil)
+	_ = MustEnvironment(session.EnvironmentRef{}, nil, &stubReadLedger{}, nil)
 }
 
 // TestZeroEnvironmentHasNilWorkspaceAndIsInvalid pins the doc contract: the
@@ -55,7 +85,7 @@ func TestZeroEnvironmentHasNilWorkspaceAndIsInvalid(t *testing.T) {
 func TestEnvironmentAccessors(t *testing.T) {
 	ref := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/repo"}
 	ws := stubWorkspace{}
-	env := MustEnvironment(ref, ws, nil)
+	env := MustEnvironment(ref, ws, &stubReadLedger{}, nil)
 	if env.Ref() != ref {
 		t.Errorf("Ref() = %+v, want %+v", env.Ref(), ref)
 	}

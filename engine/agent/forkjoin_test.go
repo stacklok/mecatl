@@ -265,11 +265,14 @@ func TestParallelJoinJudgeSelectsWinnerPreservesFork(t *testing.T) {
 	if !strings.Contains(res.Content, "beta is best") {
 		t.Fatalf("rationale not surfaced:\n%s", res.Content)
 	}
-	if !strings.Contains(res.Content, rf.root("branch-2")) {
-		t.Fatalf("winner workspace path not reported:\n%s", res.Content)
+	if strings.Contains(res.Content, rf.root("branch-2")) {
+		t.Fatalf("winner workspace path leaked:\n%s", res.Content)
 	}
-	if !strings.Contains(res.Content, "winner workspace (ephemeral") {
-		t.Fatalf("ephemeral workspace note missing:\n%s", res.Content)
+	if !strings.Contains(res.Content, "artifact-parallel-c1-1") {
+		t.Fatalf("opaque winner artifact missing:\n%s", res.Content)
+	}
+	if !strings.Contains(res.Content, "artifact retention is ephemeral") {
+		t.Fatalf("ephemeral artifact retention note missing:\n%s", res.Content)
 	}
 	// Winner preserved; losers cleaned.
 	if rf.wasCleaned("branch-2") {
@@ -474,8 +477,11 @@ func TestParallelJoinFirstReturnsFirstSuccessCancelsLosers(t *testing.T) {
 				t.Fatalf("loser %s fork LEAKED (forked but never cleaned)", loser)
 			}
 		}
-		if !strings.Contains(res.Content, rf.root("branch-2")) {
-			t.Fatalf("winner path not reported:\n%s", res.Content)
+		if strings.Contains(res.Content, rf.root("branch-2")) {
+			t.Fatalf("winner path leaked:\n%s", res.Content)
+		}
+		if !strings.Contains(res.Content, "winner artifact (PRESERVED):") {
+			t.Fatalf("winner artifact not reported:\n%s", res.Content)
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatalf("join=first hung — losers not cancelled after the winner finished")

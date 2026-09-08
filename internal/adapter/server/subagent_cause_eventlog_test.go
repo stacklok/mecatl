@@ -9,7 +9,6 @@ import (
 	"time"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/agent"
@@ -49,7 +48,7 @@ func TestEventLogRecordsSubagentFailureCause(t *testing.T) {
 		Model:   "child-model",
 	})
 	cat := tool.NewCatalog()
-	cat.MustRegister(agent.NewSubagentTool(childEngine))
+	cat.MustRegister(newServerTestSubagent(childEngine))
 	parentLLM := mockllm.New(
 		mockllm.ToolCallTurn(call("p1", "Subagent", `{"prompt":"investigate"}`)),
 		mockllm.TextTurn("parent done"),
@@ -60,10 +59,10 @@ func TestEventLogRecordsSubagentFailureCause(t *testing.T) {
 		Policy: permpolicy.NewPolicy([]governance.Rule{{Effect: governance.Allow}}, nil),
 		Model:  "test-model"})
 
-	svc, err := server.NewService(server.Config{
-		Engine:              engine,
-		Store:               store,
-		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+	svc, err := newPlacementTestService(server.Config{
+		Engine: engine,
+		Store:  store,
+
 		Now:                 func() time.Time { return time.Unix(0, 0) },
 		DefaultCapabilities: parentLLM.Capabilities(),
 		EventLog:            store,
@@ -71,7 +70,7 @@ func TestEventLogRecordsSubagentFailureCause(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new service: %v", err)
 	}
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

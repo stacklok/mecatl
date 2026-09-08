@@ -18,11 +18,71 @@ import {
 import type { GetCompatibilityInfoResponse } from "./gen/mecatl/v1/harness_pb.js";
 import { HarnessService } from "./gen/mecatl/v1/harness_pb.js";
 
+/** Canonical routing hint for session-bound mecatl requests. It grants no authority. @public */
+export const SESSION_ID_HEADER_NAME = "X-Mecatl-Session-ID";
+const MAX_SESSION_AFFINITY_BYTES = 256;
+
+function validSessionAffinity(value: string): boolean {
+  if (
+    value.length === 0 ||
+    value.length > MAX_SESSION_AFFINITY_BYTES ||
+    value.charCodeAt(0) === 0x20 ||
+    value.charCodeAt(value.length - 1) === 0x20
+  ) {
+    return false;
+  }
+  for (let i = 0; i < value.length; i += 1) {
+    const code = value.charCodeAt(i);
+    if (code < 0x20 || code > 0x7e) return false;
+  }
+  return true;
+}
+
+/**
+ * Returns call options bound to one explicit session without replacing caller headers.
+ * Throws synchronously when sessionId cannot be represented byte-exactly as the affinity header.
+ *
+ * The binding is a routing hint only; authentication and authorization remain independent.
+ * @public
+ */
+export function withSessionAffinity(sessionId: string, options: CallOptions = {}): CallOptions {
+  if (!validSessionAffinity(sessionId)) {
+    throw new RangeError(
+      "Invalid session affinity: expected 1-256 bytes of printable ASCII without boundary spaces",
+    );
+  }
+  const headers = new Headers(options.headers);
+  headers.set(SESSION_ID_HEADER_NAME, sessionId);
+  return { ...options, headers };
+}
+
+export function sessionAffinityIfRepresentable(
+  sessionId: string,
+  options?: CallOptions,
+): CallOptions | undefined {
+  return validSessionAffinity(sessionId)
+    ? withSessionAffinity(sessionId, options)
+    : withoutSessionAffinity(options);
+}
+
+function withoutSessionAffinity(options?: CallOptions): CallOptions | undefined {
+  if (options?.headers === undefined) return options;
+  const headers = new Headers(options.headers);
+  headers.delete(SESSION_ID_HEADER_NAME);
+  return { ...options, headers };
+}
+
 /** @public */
 export const SUPPORTED_API_MAJOR = 1;
 
 const transportKinds = new WeakMap<Transport, TransportKind>();
+const transportOperations = new WeakMap<Transport, TransportOperations>();
 const rawJsonValues = new WeakMap<object, JsonValue>();
+const compatibilityInvalidators = new WeakMap<RawClient, () => void>();
+
+interface TransportOperations {
+  cancelRun(sessionId: string, runId: string, signal: AbortSignal): Promise<void>;
+}
 
 interface CompatibilityResult {
   header: Headers;
@@ -30,9 +90,20 @@ interface CompatibilityResult {
   trailer: Headers;
 }
 
-export function registerTransport(transport: Transport, kind: TransportKind): Transport {
+export function registerTransport(
+  transport: Transport,
+  kind: TransportKind,
+  operations?: TransportOperations,
+): Transport {
   transportKinds.set(transport, kind);
+  if (operations !== undefined) transportOperations.set(transport, operations);
   return transport;
+}
+
+export function registeredTransportOperations(
+  transport: Transport,
+): TransportOperations | undefined {
+  return transportOperations.get(transport);
 }
 
 export function registerRawJson(message: object, value: JsonValue): void {
@@ -44,8 +115,15 @@ export function getRawJson(message: object): JsonValue | undefined {
   return rawJsonValues.get(message);
 }
 
+/** Clears one raw client's cached compatibility descriptor before a reconnect. */
+export function invalidateRawCompatibility(client: RawClient): void {
+  compatibilityInvalidators.get(client)?.();
+}
+
 /** Transport-neutral, descriptor-driven operations beneath Client/Session/Run. @public */
 export interface RawClient {
+  /** Returns the build features learned from the shared compatibility probe. */
+  features(options?: CallOptions): Promise<ReadonlySet<string>>;
   unary<I extends DescMessage, O extends DescMessage>(
     method: DescMethodUnary<I, O>,
     input: MessageInitShape<I>,
@@ -87,14 +165,15 @@ export function createRawClient(options: RawClientOptions): RawClient {
   let compatibility: Promise<CompatibilityResult> | undefined;
 
   const ensureCompatibility = (callOptions?: CallOptions): Promise<CompatibilityResult> => {
+    const probeOptions = withoutSessionAffinity(callOptions);
     compatibility ??= transport
       .unary(
         HarnessService.method.getCompatibilityInfo,
-        callOptions?.signal,
-        callOptions?.timeoutMs,
-        callOptions?.headers,
+        probeOptions?.signal,
+        probeOptions?.timeoutMs,
+        probeOptions?.headers,
         {},
-        callOptions?.contextValues,
+        probeOptions?.contextValues,
       )
       .then((response) => {
         const info = response.message;
@@ -120,7 +199,11 @@ export function createRawClient(options: RawClientOptions): RawClient {
     return compatibility;
   };
 
-  return {
+  const client: RawClient = {
+    async features(callOptions?: CallOptions): Promise<ReadonlySet<string>> {
+      const result = await ensureCompatibility(callOptions);
+      return new Set(result.message.features);
+    },
     async unary<I extends DescMessage, O extends DescMessage>(
       method: DescMethodUnary<I, O>,
       input: MessageInitShape<I>,
@@ -174,4 +257,8 @@ export function createRawClient(options: RawClientOptions): RawClient {
       })();
     },
   };
+  compatibilityInvalidators.set(client, () => {
+    compatibility = undefined;
+  });
+  return client;
 }

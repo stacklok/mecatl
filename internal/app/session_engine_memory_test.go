@@ -168,7 +168,7 @@ func TestSelectorSessionMemoryPromptHasMatchingTools(t *testing.T) {
 	}
 	defer func() { _ = res.Close() }()
 
-	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{MaxTurns: 3}, time.Now())
+	sess := session.New("s1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 3}, time.Now())
 	drainRun(res.Engine.Run(ctx, sess, memEnvironment("/ws"), agent.RunRequest{Text: "hi", Parts: nil}))
 
 	if len(captured) == 0 {

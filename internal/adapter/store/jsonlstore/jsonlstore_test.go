@@ -77,7 +77,7 @@ func TestCreateCollisionLeavesCurrentFamilyUntouched(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New(second): %v", err)
 	}
-	winner := session.New("create-collision", session.ModeDefault, "/winner", session.Limits{}, time.Unix(1, 0).UTC())
+	winner := session.New("create-collision", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/winner", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0).UTC())
 	if err := first.Save(ctx, winner); err != nil {
 		t.Fatalf("Save(winner): %v", err)
 	}
@@ -104,7 +104,7 @@ func TestCreateCollisionLeavesCurrentFamilyUntouched(t *testing.T) {
 		}
 	}
 
-	loser := session.New(winner.ID, session.ModeAccept, "/loser", session.Limits{MaxTurns: 9}, time.Unix(2, 0).UTC())
+	loser := session.New(winner.ID, session.ModeAccept, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/loser", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 9}, time.Unix(2, 0).UTC())
 	if err := second.Create(ctx, loser); !errors.Is(err, port.ErrSessionAlreadyExists) {
 		t.Fatalf("Create(collision) = %v, want ErrSessionAlreadyExists", err)
 	}
@@ -149,7 +149,7 @@ func TestNewCreatesDirAt0700(t *testing.T) {
 
 func driven(t *testing.T) *session.Session {
 	t.Helper()
-	s := session.New("sess-1", session.ModePlan, "/ws", session.Limits{
+	s := session.New("sess-1", session.ModePlan, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{
 		MaxTurns: 7, MaxToolCalls: 11, MaxConsecutiveFailures: 4,
 	}, time.Unix(1700000000, 0).UTC())
 	_ = s.BeginTurn()
@@ -296,7 +296,7 @@ func TestToolCallLogParseable(t *testing.T) {
 func TestSessionIDSanitizedToSafeFilename(t *testing.T) {
 	ctx := context.Background()
 	st, dir := newStore(t)
-	s := session.New("../escape/../x", session.ModeDefault, "/w", session.Limits{}, time.Unix(0, 0).UTC())
+	s := session.New("../escape/../x", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/w", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0).UTC())
 	if err := st.Save(ctx, s); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -349,7 +349,7 @@ func TestListDecodesRealIDAndMtime(t *testing.T) {
 	ctx := context.Background()
 	st, dir := newStore(t)
 	const id = session.SessionID("team-abc/lead") // sanitized on disk, real in the snapshot
-	s := session.New(id, session.ModeDefault, "/ws", session.Limits{}, time.Unix(1700000000, 0).UTC())
+	s := session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1700000000, 0).UTC())
 	if err := st.Save(ctx, s); err != nil {
 		t.Fatalf("Save: %v", err)
 	}

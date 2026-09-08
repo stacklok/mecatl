@@ -51,7 +51,7 @@ func newDebugPublishMCPServer(t *testing.T) (string, *int32) {
 func TestDebugSessionMCPPublishJourneyRequiresFreshApproval(t *testing.T) {
 	ctx := context.Background()
 	store := memstore.New()
-	target := session.New("target-publish", session.ModeDefault, "/target", session.Limits{}, time.Unix(1, 0))
+	target := session.New("target-publish", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/target", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 	if err := store.Save(ctx, target); err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func TestDebugSessionMCPPublishJourneyRequiresFreshApproval(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	debug, err := session.NewDebug("debug-publish", session.ModeDefault, session.Limits{}, time.Unix(2, 0), target.ID, target.Incarnation())
+	debug, err := session.NewDebug("debug-publish", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: "none", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(2, 0), target.ID, target.Incarnation())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +122,7 @@ func TestDebugSessionMCPPublishJourneyRequiresFreshApproval(t *testing.T) {
 func TestDebugSessionSelectedGlobalMCPIsExactAndBorrowed(t *testing.T) {
 	ctx := context.Background()
 	store := memstore.New()
-	target := session.New("target-mcp", session.ModeDefault, "/target", session.Limits{}, time.Unix(1, 0))
+	target := session.New("target-mcp", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/target", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 	if err := store.Save(ctx, target); err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +165,7 @@ func TestDebugSessionSelectedGlobalMCPIsExactAndBorrowed(t *testing.T) {
 
 func TestDebugSessionFactoryExactCatalogAndStablePrefix(t *testing.T) {
 	store := memstore.New()
-	target := session.New("target-exact", session.ModeDefault, "/target", session.Limits{}, time.Unix(1, 0))
+	target := session.New("target-exact", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/target", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 	if err := store.Save(context.Background(), target); err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +183,7 @@ func TestDebugSessionFactoryExactCatalogAndStablePrefix(t *testing.T) {
 	if err != nil {
 		t.Fatalf("debug factory: %v", err)
 	}
-	debug, err := session.NewDebug("debug", session.ModeDefault, session.Limits{}, time.Unix(2, 0), target.ID, target.Incarnation())
+	debug, err := session.NewDebug("debug", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: "none", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(2, 0), target.ID, target.Incarnation())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,8 +193,9 @@ func TestDebugSessionFactoryExactCatalogAndStablePrefix(t *testing.T) {
 	// the target-bound debug contract.
 	normalDeps := baseEngineDeps(cfg, reg, provider, store, nil, nil, nil, nil)
 	normalDeps.Catalog = tool.NewCatalog()
-	normal := session.New("normal", session.ModeDefault, "", session.Limits{}, time.Unix(3, 0))
-	drainRun(agent.NewEngine(normalDeps).Run(context.Background(), normal, testEnvironment(nofs.New(), nil), agent.RunRequest{Text: "hello"}))
+	normalEnv := testEnvironment(nofs.New(), nil)
+	normal := session.New("normal", session.ModeDefault, normalEnv.Ref(), session.Limits{}, time.Unix(3, 0))
+	drainRun(agent.NewEngine(normalDeps).Run(context.Background(), normal, normalEnv, agent.RunRequest{Text: "hello"}))
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -205,7 +206,7 @@ func TestDebugSessionFactoryExactCatalogAndStablePrefix(t *testing.T) {
 		t.Fatalf("debug tools = %+v, want exactly InspectSession", requests[0].Tools)
 	}
 	prefix := requests[0].System.StablePrefix
-	for _, want := range []string{"target-exact", "snapshot transcript is authoritative", "bounded event-log projections", "hostile untrusted data", "Never mutate, resume, approve, cancel, or steer"} {
+	for _, want := range []string{"target-exact", "Root/target views must omit scope_handle; only opaque handles returned by related evidence select descendants.", "snapshot transcript is authoritative", "bounded event-log projections", "hostile untrusted data", "Never mutate, resume, approve, cancel, or steer"} {
 		if !strings.Contains(prefix, want) {
 			t.Fatalf("debug StablePrefix missing %q:\n%s", want, prefix)
 		}
@@ -227,7 +228,7 @@ func TestDebugSessionFactoryPreservesBaseInspectPolicy(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
 			store := memstore.New()
-			target := session.New("target-policy", session.ModeDefault, "/target", session.Limits{}, time.Unix(1, 0))
+			target := session.New("target-policy", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/target", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 			if err := store.Save(ctx, target); err != nil {
 				t.Fatal(err)
 			}
@@ -242,7 +243,7 @@ func TestDebugSessionFactoryPreservesBaseInspectPolicy(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			debug, err := session.NewDebug("debug-policy", session.ModeDefault, session.Limits{}, time.Unix(2, 0), target.ID, target.Incarnation())
+			debug, err := session.NewDebug("debug-policy", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: "none", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(2, 0), target.ID, target.Incarnation())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -276,8 +277,8 @@ func TestDebugSessionRestartRehydratesBoundEngine(t *testing.T) {
 	factory := debugSessionEngineFactory(cfg, reg, provider, store, nil, nil, nil)
 	shared := agent.NewEngine(agent.Deps{LLM: provider, Catalog: tool.NewCatalog(), Model: cfg.Model})
 	newService := func() *server.Service {
-		svc, err := server.NewService(server.Config{
-			Engine: shared, Store: store, Workspaces: func(string) tool.Workspace { return nofs.New() },
+		svc, err := newTestServerService(server.Config{
+			Engine: shared, Store: store,
 			DebugSessionEngine: factory, Now: func() time.Time { return time.Unix(10, 0) },
 		})
 		if err != nil {
@@ -288,11 +289,11 @@ func TestDebugSessionRestartRehydratesBoundEngine(t *testing.T) {
 	svc1 := newService()
 	alice := session.WithPrincipal(ctx, &session.Principal{Issuer: "issuer", Subject: "alice", GrantType: session.GrantTypeUser})
 	bob := session.WithPrincipal(ctx, &session.Principal{Issuer: "issuer", Subject: "bob", GrantType: session.GrantTypeClientCredentials})
-	target, err := svc1.CreateSession(alice, "/target", session.ModeDefault, session.Limits{})
+	target, err := svc1.CreateSession(alice, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	debug, err := svc1.CreateSessionWithProfile(bob, "", session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileNoFS, server.WithDebugTarget(target.ID))
+	debug, err := svc1.CreateSessionWithProfile(bob, session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileNoFS, server.WithDebugTarget(target.ID))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -395,7 +396,7 @@ func TestDebugSessionConverseAdvertisesAndExecutesInspectSession(t *testing.T) {
 			defer conn.Close()
 			client := mecatlv1.NewHarnessServiceClient(conn)
 
-			target, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{Workspace: cfg.Workspace})
+			target, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{})
 			if err != nil {
 				t.Fatalf("create target: %v", err)
 			}

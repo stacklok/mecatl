@@ -184,10 +184,10 @@ func TestSteer_RecordedAndRehydrated(t *testing.T) {
 	}
 
 	folded, err := eventsource.Fold(eventsource.SessionMeta{
-		ID:        sess.ID,
-		Mode:      sess.Mode,
-		Limits:    sess.Limits,
-		Workspace: sess.Workspace,
+		ID:             sess.ID,
+		Mode:           sess.Mode,
+		Limits:         sess.Limits,
+		EnvironmentRef: sess.EnvironmentRef,
 	}, eventLog.Read(context.Background(), sess.ID))
 	if err != nil {
 		t.Fatalf("eventsource.Fold: %v", err)

@@ -889,11 +889,9 @@ func TestScheduleCreateFormTypesAndSubmits(t *testing.T) {
 		m = mm.(Model)
 	}
 
-	// Tab past workspace to the mutating toggle (focusIdx == scheduleFormFieldCount).
-	for i := 0; i < 2; i++ {
-		mm, _, _ = m.onScheduleKey(tea.KeyPressMsg{Code: tea.KeyTab, Text: "tab"})
-		m = mm.(Model)
-	}
+	// Tab to the mutating toggle (focusIdx == scheduleFormFieldCount).
+	mm, _, _ = m.onScheduleKey(tea.KeyPressMsg{Code: tea.KeyTab, Text: "tab"})
+	m = mm.(Model)
 	if m.schedule.form.focusIdx != scheduleFormFieldCount {
 		t.Fatalf("focusIdx = %d, want %d (mutating toggle)", m.schedule.form.focusIdx, scheduleFormFieldCount)
 	}
@@ -960,10 +958,8 @@ func TestScheduleCreateFormNLTrigger(t *testing.T) {
 	}
 
 	// Tab to mutating toggle and submit.
-	for i := 0; i < 2; i++ {
-		mm, _, _ = m.onScheduleKey(tea.KeyPressMsg{Code: tea.KeyTab, Text: "tab"})
-		m = mm.(Model)
-	}
+	mm, _, _ = m.onScheduleKey(tea.KeyPressMsg{Code: tea.KeyTab, Text: "tab"})
+	m = mm.(Model)
 	mm, cmd, _ := m.onScheduleKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)
 	if cmd == nil {

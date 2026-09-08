@@ -19,12 +19,12 @@ func TestSessionContinuityUX_Scenario5_DetailsSurface(t *testing.T) {
 	m.sessionState = "idle"
 	m.sessionCreatedAt = 1_700_000_000
 	m.sessionModifiedAt = 1_700_000_100
-	m.activeWorkspace = "/work/repo"
+	m.activePlacement = client.Placement{Kind: "git", Label: "repo"}
 	m.resolvedSessionModel = client.ResolvedModel{ProviderID: "openrouter", ModelID: "openai/gpt-5"}
 
 	got := stripANSIstr(renderSessionDetails(m.deps.Theme, m.sessionDetails(), helpKeys{closeOnly: "esc"}, 100, 30))
 	for _, want := range []string{
-		strconv.QuoteToASCII(m.sessionID), "Current chat", "idle", "/work/repo",
+		strconv.QuoteToASCII(m.sessionID), "Current chat", "idle", "repo",
 		"2023-11-14", "openrouter", "openai/gpt-5", "c: copy exact ID",
 	} {
 		if !strings.Contains(got, want) {
@@ -139,7 +139,7 @@ func driveSessionRebindJourney(t *testing.T, journey string, cb client.Clipboard
 		return m, conv.forkedID
 	case "worktree switch":
 		conv.createCount = 1
-		mm, cmd, handled := m.switchToWorktree(client.Worktree{Path: "/workspace/feature", Branch: "feature"})
+		mm, cmd, handled := m.switchToWorktree(client.Worktree{Selector: testWorktreeSelector("opaque-feature"), Label: "feature", Branch: "feature"})
 		if !handled || cmd == nil {
 			t.Fatal("worktree switch did not issue its create command")
 		}

@@ -13,6 +13,7 @@ import (
 
 	"github.com/stacklok/mecatl/internal/adapter/credentialstore"
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
+	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 )
 
@@ -83,6 +84,15 @@ func (r *MCPProfileResolver) Load(operator *permconfig.MCPSection) ([]mcp.Server
 		return nil, nil, err
 	}
 	return profiles.Servers, profiles, nil
+}
+
+// LoadAuthority resolves exactly one authority path without reparsing settings
+// or constructing broker runtime resources.
+func (r *MCPProfileResolver) LoadAuthority(operator *permconfig.MCPSection, defaultMode mcpauthority.Mode, brokerSupported bool) (*mcpauthority.Result, error) {
+	return ResolveMCPAuthority(MCPAuthorityOptions{
+		Operator: operator, Legacy: r.legacy, LookupEnv: r.lookup,
+		DefaultMode: defaultMode, BrokerSupported: brokerSupported,
+	})
 }
 
 // MCPProfiles owns the credential stores/readers backing Servers. Close it only

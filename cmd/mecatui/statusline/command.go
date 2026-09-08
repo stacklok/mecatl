@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/stacklok/mecatl/internal/adapter/procgroup"
@@ -19,7 +20,11 @@ import (
 
 const maxCommandOutputBytes = 4 << 10
 
-var errCommandOutputLimit = errors.New("status command output limit exceeded")
+var (
+	errCommandOutputLimit = errors.New("status command output limit exceeded")
+	errCommandUnsupported = errors.New("status command process trees unsupported")
+	errInvalidStatusML    = errors.New("invalid status command output")
+)
 
 // PassthroughEnvError reports an invalid passthrough environment name. ReservedName
 // is empty when the value does not match the supported environment-name grammar.
@@ -47,6 +52,62 @@ type Command struct {
 	// RefreshInterval optionally refreshes an otherwise idle command. Values below
 	// one second are disabled; input changes still use the command debounce.
 	RefreshInterval time.Duration
+	cwd             *commandCWDState
+}
+
+type commandCWDState struct {
+	mu  sync.RWMutex
+	cwd string
+}
+
+func (s *commandCWDState) get(launchDir string) string {
+	if s == nil {
+		return launchDir
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.cwd != "" {
+		return s.cwd
+	}
+	return launchDir
+}
+
+func (s *commandCWDState) set(cwd string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.cwd = cwd
+}
+
+func (s *commandCWDState) clear() { s.set("") }
+
+type commandSource struct {
+	Source
+	status *statusLineSource
+	cwd    *commandCWDState
+}
+
+func (s commandSource) setCommandCWD(cwd string) { s.cwd.set(cwd) }
+func (s commandSource) clearCommandCWD()         { s.cwd.clear() }
+func (s commandSource) CommandDiagnostics() CommandDiagnostics {
+	s.status.mu.Lock()
+	defer s.status.mu.Unlock()
+	return s.status.commandDiagnostics
+}
+
+// SetCommandCWD updates the private process working directory for a direct
+// command source. The directory is never part of Input or status rendering.
+func SetCommandCWD(source Source, cwd string) {
+	if command, ok := source.(commandSource); ok {
+		command.setCommandCWD(cwd)
+	}
+}
+
+// ClearCommandCWD clears the direct command's local-session CWD so it falls
+// back to the configured helper directory until a lookup supplies a new root.
+func ClearCommandCWD(source Source) {
+	if command, ok := source.(commandSource); ok {
+		command.clearCommandCWD()
+	}
 }
 
 // Valid reports whether command specifies an absolute executable and literal args.
@@ -109,6 +170,7 @@ func validCommandPart(value string) bool {
 // raw Input JSON on stdin and never exposes command failures or captured output
 // to the generated status line.
 func NewCommandSource(command Command) Source {
+	command.cwd = &commandCWDState{}
 	header := compileVariants(SurfaceTemplates{}, defaultHeaderTemplates())
 	footer := compileVariants(SurfaceTemplates{}, defaultFooterTemplates())
 	var ticks <-chan time.Time
@@ -120,17 +182,17 @@ func NewCommandSource(command Command) Source {
 	source := newSourceWithOptions(ticks, func(ctx context.Context, input Input) renderedStatusLine {
 		fallback := renderTemplates(ctx, header, footer, input)
 		if !procgroup.Supported() {
-			return renderedStatusLine{line: fallback, err: errors.New("status command process trees unsupported")}
+			return renderedStatusLine{line: fallback, err: errCommandUnsupported, command: true, errorClass: CommandErrorUnsupported}
 		}
 		output, err := runCommand(ctx, command, input)
 		if err != nil {
-			return renderedStatusLine{line: fallback, err: err}
+			return renderedStatusLine{line: fallback, err: err, command: true, errorClass: commandErrorClass(ctx, err)}
 		}
 		doc, ok := parse(strings.Trim(string(output), " \t\n\r\v\f"))
 		if !ok {
-			return renderedStatusLine{line: fallback, err: errors.New("invalid status command output")}
+			return renderedStatusLine{line: fallback, err: errInvalidStatusML, command: true, errorClass: CommandErrorInvalidStatusML}
 		}
-		result := renderedStatusLine{line: fallback, headerSupplied: doc.Header.Present, footerSupplied: doc.Footer.Present}
+		result := renderedStatusLine{line: fallback, headerSupplied: doc.Header.Present, footerSupplied: doc.Footer.Present, command: true, errorClass: CommandErrorNone}
 		if result.headerSupplied {
 			result.line.Header = doc.Header
 		}
@@ -139,10 +201,25 @@ func NewCommandSource(command Command) Source {
 		}
 		return result
 	}, false, commandDebounce, commandDeadline)
+	source.commandDiagnostics = CommandDiagnostics{Header: CommandSurfaceDefault, Footer: CommandSurfaceDefault, Error: CommandErrorNone}
 	if ticker != nil {
 		source.stopTicker = ticker.Stop
 	}
-	return source
+	return commandSource{Source: source, status: source, cwd: command.cwd}
+}
+
+func commandErrorClass(ctx context.Context, err error) string {
+	switch {
+	case errors.Is(ctx.Err(), context.DeadlineExceeded), errors.Is(err, context.DeadlineExceeded):
+		return CommandErrorTimeout
+	case errors.Is(err, errCommandOutputLimit):
+		return CommandErrorOutputLimit
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return CommandErrorExit
+	}
+	return CommandErrorFailed
 }
 
 func runCommand(ctx context.Context, command Command, input Input) ([]byte, error) {
@@ -171,11 +248,14 @@ func runCommand(ctx context.Context, command Command, input Input) ([]byte, erro
 	return output.bytes(), nil
 }
 
-func commandCWD(command Command, input Input) string {
-	if input.Workspace.Location == "local" && input.Workspace.Path != "" {
-		return input.Workspace.Path
+func commandCWD(command Command, _ Input) string {
+	fallback := command.LaunchDir
+	if filepath.IsAbs(command.Path) {
+		if parent := filepath.Dir(filepath.Clean(command.Path)); parent != "" {
+			fallback = parent
+		}
 	}
-	return command.LaunchDir
+	return command.cwd.get(fallback)
 }
 
 func commandEnv(command Command, input Input) []string {

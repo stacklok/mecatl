@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"testing"
 
+	"github.com/stacklok/mecatl/engine/adapter/memledger"
 	"github.com/stacklok/mecatl/engine/adapter/memskill"
 	"github.com/stacklok/mecatl/engine/learning"
 	"github.com/stacklok/mecatl/engine/session"
@@ -25,7 +26,7 @@ func TestLifecycleDraftToolDerivesCallerAndExactWorkspace(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: root}, workspace, nil)
+		env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: root}, workspace, memledger.New(), nil)
 		ctx := session.WithPrincipal(context.Background(), &session.Principal{Issuer: issuer, Subject: subject})
 		result, err := draftTool.Execute(ctx, session.NewToolCall(session.ToolCallID(id), DraftToolName, args), env)
 		if err != nil || result.IsError {
@@ -59,7 +60,7 @@ func TestLifecycleDraftToolDerivesCallerAndExactWorkspace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: rootA}, workspace, nil)
+	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: rootA}, workspace, memledger.New(), nil)
 	result, err := draftTool.Execute(context.Background(), session.NewToolCall("missing", DraftToolName, args), env)
 	if err != nil || !result.IsError {
 		t.Fatalf("identity-free draft result=%#v err=%v", result, err)

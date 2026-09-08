@@ -35,7 +35,7 @@ type metaSnapshot struct {
 	TitleProvenance session.TitleProvenance     `json:"title_provenance,omitempty"`
 	Kind            session.SessionKind         `json:"kind,omitempty"`
 	Relationship    session.SessionRelationship `json:"relationship,omitzero"`
-	Workspace       string                      `json:"workspace"`
+	EnvironmentRef  session.EnvironmentRef      `json:"environment_ref,omitzero"`
 	CreatedAt       time.Time                   `json:"created_at"`
 	// Owner is the session's verified owner (ADR 0204). Decoding it here is
 	// what keeps the cheap fast path's row IDENTICAL to the Load-per-row
@@ -122,7 +122,7 @@ func metaSnapshotFromSession(s *session.Session) metaSnapshot {
 	return metaSnapshot{
 		ID: s.ID, State: s.State, Counters: s.Counters, ModelID: s.ModelID,
 		Title: s.Title, TitleProvenance: s.TitleProvenance, Kind: s.Kind,
-		Relationship: s.Relationship, Workspace: s.Workspace, CreatedAt: s.CreatedAt,
+		Relationship: s.Relationship, EnvironmentRef: s.EnvironmentRef, CreatedAt: s.CreatedAt,
 		Owner: s.Owner,
 	}
 }
@@ -214,7 +214,7 @@ func (st *Store) rebuildInventoryRows() ([]port.SessionDiscoveryMeta, error) {
 				meta.ModelID = m.ModelID
 				meta.Title = m.Title
 				meta.TitleProvenance = m.TitleProvenance
-				meta.Workspace = m.Workspace
+				meta.EnvironmentRef = m.EnvironmentRef
 				meta.Kind = kind
 				meta.Relationship = m.Relationship
 				meta.Owner = m.Owner
@@ -279,28 +279,35 @@ func (st *Store) pageSessionMetadataLocked(ctx context.Context, request port.Ses
 }
 
 func (st *Store) readyInventoryCatalog(ctx context.Context, cursor *port.SessionMetadataCursor) (inventoryCatalog, error) {
-	fingerprint, err := st.inventoryFingerprint()
-	if err != nil {
-		return inventoryCatalog{}, err
+	for attempt := 0; attempt < 3; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return inventoryCatalog{}, err
+		}
+		fingerprint, err := st.inventoryFingerprint()
+		if err != nil {
+			return inventoryCatalog{}, err
+		}
+		if catalog, ready := st.readInventoryManifest(fingerprint); ready {
+			return catalog, nil
+		}
+		if cursor != nil {
+			return inventoryCatalog{}, port.ErrSessionMetadataCursorRestart
+		}
+		if _, err := st.discoveryMetaListLocked(ctx); err != nil {
+			return inventoryCatalog{}, err
+		}
+		if st.inventoryCatalogReadyObserver != nil {
+			st.inventoryCatalogReadyObserver()
+		}
+		fingerprint, err = st.inventoryFingerprint()
+		if err != nil {
+			return inventoryCatalog{}, err
+		}
+		if catalog, ready := st.readInventoryManifest(fingerprint); ready {
+			return catalog, nil
+		}
 	}
-	if catalog, ready := st.readInventoryManifest(fingerprint); ready {
-		return catalog, nil
-	}
-	if cursor != nil {
-		return inventoryCatalog{}, port.ErrSessionMetadataCursorRestart
-	}
-	if _, err := st.discoveryMetaListLocked(ctx); err != nil {
-		return inventoryCatalog{}, err
-	}
-	fingerprint, err = st.inventoryFingerprint()
-	if err != nil {
-		return inventoryCatalog{}, err
-	}
-	catalog, ready := st.readInventoryManifest(fingerprint)
-	if !ready {
-		return inventoryCatalog{}, fmt.Errorf("jsonlstore: rebuilt inventory catalog is not ready")
-	}
-	return catalog, nil
+	return inventoryCatalog{}, fmt.Errorf("jsonlstore: inventory changed repeatedly while preparing catalog")
 }
 
 const inventoryContinuationPrefix = "jsonl-v1."

@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -55,7 +54,7 @@ func modeRecordingFactory(sessionModel, planModel string, modes *[]session.Permi
 // needsEngine nil ⇒ the byte-identical (no-promotion) deployment.
 func modeServiceOverStore(t *testing.T, store *memstore.Store, factory server.SessionEngineFactory, needsEngine func(session.PermissionMode) bool) *server.Service {
 	t.Helper()
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine: agent.NewEngine(agent.Deps{
 			// Script several identical turns so a multi-turn shared-engine session does
 			// not exhaust the mock (the byte-identical test runs two turns on it).
@@ -64,8 +63,8 @@ func modeServiceOverStore(t *testing.T, store *memstore.Store, factory server.Se
 			Policy:  permpolicy.NewPolicy(nil, nil),
 			Model:   "shared-model",
 		}),
-		Store:           store,
-		Workspaces:      func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Store: store,
+
 		DefaultLimits:   session.Limits{MaxTurns: 5},
 		Now:             func() time.Time { return time.Unix(0, 0) },
 		SessionEngine:   factory,
@@ -96,7 +95,7 @@ func TestModeFlipRebuildsOnPlanSlot(t *testing.T) {
 	needsEngine := func(m session.PermissionMode) bool { return m == session.ModePlan }
 	svc := modeServiceOverStore(t, store, modeRecordingFactory(sessionModel, planModel, &modes, &calls), needsEngine)
 
-	sess, err := svc.CreateSession(ctx, "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -151,7 +150,7 @@ func TestModeRebuildReEmitsCapabilities(t *testing.T) {
 		return server.SessionEngineResult{Engine: eng, ModelID: model, ProviderID: "openai", Capabilities: caps, BuiltForMode: mode, Close: func() error { return nil }}, nil
 	}
 	svc := modeServiceOverStore(t, store, factory, func(m session.PermissionMode) bool { return m == session.ModePlan })
-	sess, err := svc.CreateSessionWithProvider(ctx, "/ws", session.ModeDefault, session.Limits{},
+	sess, err := svc.CreateSessionWithProvider(ctx, session.ModeDefault, session.Limits{},
 		server.ProviderSelector{ProviderID: "openai", ModelID: "gpt-5"})
 	if err != nil {
 		t.Fatalf("CreateSessionWithProvider: %v", err)
@@ -185,7 +184,7 @@ func TestModeFlipRebuildsBackToExecute(t *testing.T) {
 		func(m session.PermissionMode) bool { return m == session.ModePlan })
 
 	// A selector session: always per-session, created in plan mode.
-	sess, err := svc.CreateSessionWithProvider(ctx, "/ws", session.ModePlan, session.Limits{},
+	sess, err := svc.CreateSessionWithProvider(ctx, session.ModePlan, session.Limits{},
 		server.ProviderSelector{ProviderID: "openai", ModelID: "gpt-5"})
 	if err != nil {
 		t.Fatalf("CreateSessionWithProvider: %v", err)
@@ -231,7 +230,7 @@ func TestModeFlipByteIdenticalWithoutPlanSlot(t *testing.T) {
 	// needsEngine NIL ⇒ no promotion.
 	svc := modeServiceOverStore(t, store, modeRecordingFactory("gpt-5", "opus-plan", &modes, &calls), nil)
 
-	sess, err := svc.CreateSession(ctx, "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -274,7 +273,7 @@ func TestSetModeRejectedMidTurn(t *testing.T) {
 	}
 	svc := modeServiceOverStore(t, store, blocking, func(m session.PermissionMode) bool { return m == session.ModePlan })
 
-	sess, err := svc.CreateSessionWithProvider(ctx, "/ws", session.ModeDefault, session.Limits{},
+	sess, err := svc.CreateSessionWithProvider(ctx, session.ModeDefault, session.Limits{},
 		server.ProviderSelector{ProviderID: "openai", ModelID: "gpt-5"})
 	if err != nil {
 		t.Fatalf("CreateSessionWithProvider: %v", err)
@@ -319,7 +318,7 @@ func TestPlanModeSessionRehydratesOnPlanModel(t *testing.T) {
 	var calls1 atomic.Int32
 	svc1 := modeServiceOverStore(t, store, modeRecordingFactory(sessionModel, planModel, &modes1, &calls1),
 		func(m session.PermissionMode) bool { return m == session.ModePlan })
-	sess, err := svc1.CreateSessionWithProvider(ctx, "/ws", session.ModePlan, session.Limits{},
+	sess, err := svc1.CreateSessionWithProvider(ctx, session.ModePlan, session.Limits{},
 		server.ProviderSelector{ProviderID: "openai", ModelID: "gpt-5"})
 	if err != nil {
 		t.Fatalf("CreateSessionWithProvider: %v", err)
@@ -378,7 +377,7 @@ func TestModeFlipEndToEndModelObserved(t *testing.T) {
 	// flip); ModeNeedsEngine active.
 	svc := modeServiceOverStore(t, store, factory, func(m session.PermissionMode) bool { return m == session.ModePlan })
 
-	sess, err := svc.CreateSessionWithProvider(ctx, "/ws", session.ModeDefault, session.Limits{},
+	sess, err := svc.CreateSessionWithProvider(ctx, session.ModeDefault, session.Limits{},
 		server.ProviderSelector{ProviderID: "openai", ModelID: "gpt-5"})
 	if err != nil {
 		t.Fatalf("CreateSessionWithProvider: %v", err)
@@ -431,7 +430,7 @@ func TestPreP3FactoryBuiltForModeEmptyNoRebuild(t *testing.T) {
 	// ModeNeedsEngine active (a plan slot exists), so only the `!= ""` skip prevents a rebuild.
 	svc := modeServiceOverStore(t, store, preP3, func(m session.PermissionMode) bool { return m == session.ModePlan })
 
-	sess, err := svc.CreateSessionWithProvider(ctx, "/ws", session.ModeDefault, session.Limits{},
+	sess, err := svc.CreateSessionWithProvider(ctx, session.ModeDefault, session.Limits{},
 		server.ProviderSelector{ProviderID: "openai", ModelID: "gpt-5"})
 	if err != nil {
 		t.Fatalf("CreateSessionWithProvider: %v", err)
@@ -463,13 +462,13 @@ func TestModePromotionUnderFullCap(t *testing.T) {
 	var modes []session.PermissionMode
 	var calls atomic.Int32
 	// Build a Service with MaxSessionEngines = 1 (so one selector session saturates it).
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine: agent.NewEngine(agent.Deps{
 			LLM:     mockllm.New(mockllm.TextTurn("SHARED"), mockllm.TextTurn("SHARED")),
 			Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "shared-model",
 		}),
-		Store:             store,
-		Workspaces:        func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Store: store,
+
 		DefaultLimits:     session.Limits{MaxTurns: 5},
 		Now:               func() time.Time { return time.Unix(0, 0) },
 		SessionEngine:     modeRecordingFactory(sessionModel, planModel, &modes, &calls),
@@ -481,13 +480,13 @@ func TestModePromotionUnderFullCap(t *testing.T) {
 	}
 
 	// Saturate the cap with a selector session (one per-session engine registered).
-	if _, err := svc.CreateSessionWithProvider(ctx, "/hog", session.ModeDefault, session.Limits{},
+	if _, err := svc.CreateSessionWithProvider(ctx, session.ModeDefault, session.Limits{},
 		server.ProviderSelector{ProviderID: "openai", ModelID: "gpt-5"}); err != nil {
 		t.Fatalf("CreateSessionWithProvider (cap hog): %v", err)
 	}
 
 	// A default-FS session (shared engine, no per-session slot used at create).
-	planSess, err := svc.CreateSession(ctx, "/ws", session.ModePlan, session.Limits{})
+	planSess, err := svc.CreateSession(ctx, session.ModePlan, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession (default-FS plan): %v", err)
 	}
@@ -532,7 +531,7 @@ func TestNoFSModeRebuildKeepsProfile(t *testing.T) {
 	svc := modeServiceOverStore(t, store, factory, func(m session.PermissionMode) bool { return m == session.ModePlan })
 
 	// A no-fs session is created with an EMPTY workspace + the no-fs profile.
-	sess, err := svc.CreateSessionWithProfile(ctx, "", session.ModeDefault, session.Limits{},
+	sess, err := svc.CreateSessionWithProfile(ctx, session.ModeDefault, session.Limits{},
 		server.ProviderSelector{}, server.ProfileNoFS)
 	if err != nil {
 		t.Fatalf("CreateSessionWithProfile(no-fs): %v", err)
@@ -593,7 +592,7 @@ func TestModeRebuildSerializedByRunEntryMu(t *testing.T) {
 	}
 	svc := modeServiceOverStore(t, store, factory, func(m session.PermissionMode) bool { return m == session.ModePlan })
 
-	sess, err := svc.CreateSessionWithProvider(ctx, "/ws", session.ModeDefault, session.Limits{},
+	sess, err := svc.CreateSessionWithProvider(ctx, session.ModeDefault, session.Limits{},
 		server.ProviderSelector{ProviderID: "openai", ModelID: "gpt-5"})
 	if err != nil {
 		t.Fatalf("CreateSessionWithProvider: %v", err)
@@ -672,7 +671,7 @@ func TestModeRebuildCrossSessionConcurrentNoRace(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			sess, err := svc.CreateSessionWithProvider(ctx, "/ws", session.ModeDefault, session.Limits{},
+			sess, err := svc.CreateSessionWithProvider(ctx, session.ModeDefault, session.Limits{},
 				server.ProviderSelector{ProviderID: "openai", ModelID: "gpt-5"})
 			if err != nil {
 				t.Errorf("CreateSessionWithProvider: %v", err)
@@ -753,7 +752,7 @@ func TestEngineAndWorkspaceForResolutionMatrix(t *testing.T) {
 				svc := modeServiceOverStore(t, store,
 					modeRecordingFactory("gpt-5", "opus-plan", &modes, &calls),
 					func(m session.PermissionMode) bool { return m == session.ModePlan })
-				sess, err := svc.CreateSessionWithProvider(ctx, "/ws", session.ModePlan, session.Limits{},
+				sess, err := svc.CreateSessionWithProvider(ctx, session.ModePlan, session.Limits{},
 					server.ProviderSelector{ProviderID: "openai", ModelID: "gpt-5"})
 				if err != nil {
 					t.Fatalf("CreateSession: %v", err)
@@ -796,7 +795,7 @@ func TestEngineAndWorkspaceForResolutionMatrix(t *testing.T) {
 				}
 				svc := modeServiceOverStore(t, store, preP3,
 					func(m session.PermissionMode) bool { return m == session.ModePlan })
-				sess, err := svc.CreateSessionWithProvider(ctx, "/ws", session.ModeDefault, session.Limits{},
+				sess, err := svc.CreateSessionWithProvider(ctx, session.ModeDefault, session.Limits{},
 					server.ProviderSelector{ProviderID: "openai", ModelID: "gpt-5"})
 				if err != nil {
 					t.Fatalf("CreateSession: %v", err)
@@ -828,7 +827,7 @@ func TestEngineAndWorkspaceForResolutionMatrix(t *testing.T) {
 				svc := modeServiceOverStore(t, store,
 					modeRecordingFactory("gpt-5", "opus-plan", &modes, &calls),
 					func(m session.PermissionMode) bool { return m == session.ModePlan })
-				sess, err := svc.CreateSessionWithProvider(ctx, "/ws", session.ModeDefault, session.Limits{},
+				sess, err := svc.CreateSessionWithProvider(ctx, session.ModeDefault, session.Limits{},
 					server.ProviderSelector{ProviderID: "openai", ModelID: "gpt-5"})
 				if err != nil {
 					t.Fatalf("CreateSession: %v", err)
@@ -871,7 +870,7 @@ func TestEngineAndWorkspaceForResolutionMatrix(t *testing.T) {
 					func(m session.PermissionMode) bool { return m == session.ModePlan })
 
 				// Selector session: has a per-session engine with builtForMode=ModeDefault.
-				sess, err := svc.CreateSessionWithProvider(ctx, "/ws", session.ModeDefault, session.Limits{},
+				sess, err := svc.CreateSessionWithProvider(ctx, session.ModeDefault, session.Limits{},
 					server.ProviderSelector{ProviderID: "openai", ModelID: "gpt-5"})
 				if err != nil {
 					t.Fatalf("CreateSessionWithProvider: %v", err)
@@ -934,7 +933,7 @@ func TestEngineAndWorkspaceForResolutionMatrix(t *testing.T) {
 					modeRecordingFactory("gpt-5", "opus-plan", &modes, &calls),
 					func(m session.PermissionMode) bool { return m == session.ModePlan })
 				// Default-FS (no selector) but plan mode.
-				sess, err := svc.CreateSession(ctx, "/ws", session.ModePlan, session.Limits{})
+				sess, err := svc.CreateSession(ctx, session.ModePlan, session.Limits{})
 				if err != nil {
 					t.Fatalf("CreateSession: %v", err)
 				}
@@ -972,13 +971,13 @@ func TestEngineAndWorkspaceForResolutionMatrix(t *testing.T) {
 				var modes []session.PermissionMode
 				var calls atomic.Int32
 				// MaxSessionEngines = 1: one selector session saturates the cap.
-				svc, err := server.NewService(server.Config{
+				svc, err := newPlacementTestService(server.Config{
 					Engine: agent.NewEngine(agent.Deps{
 						LLM:     mockllm.New(mockllm.TextTurn("SHARED"), mockllm.TextTurn("SHARED")),
 						Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "shared-model",
 					}),
-					Store:             store,
-					Workspaces:        func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+					Store: store,
+
 					DefaultLimits:     session.Limits{MaxTurns: 5},
 					Now:               func() time.Time { return time.Unix(0, 0) },
 					SessionEngine:     modeRecordingFactory("gpt-5", "opus-plan", &modes, &calls),
@@ -992,12 +991,12 @@ func TestEngineAndWorkspaceForResolutionMatrix(t *testing.T) {
 					t.Fatalf("NewService: %v", err)
 				}
 				// Saturate the cap.
-				if _, err := svc.CreateSessionWithProvider(ctx, "/hog", session.ModeDefault, session.Limits{},
+				if _, err := svc.CreateSessionWithProvider(ctx, session.ModeDefault, session.Limits{},
 					server.ProviderSelector{ProviderID: "openai", ModelID: "gpt-5"}); err != nil {
 					t.Fatalf("CreateSessionWithProvider (cap hog): %v", err)
 				}
 				// Default-FS plan session would PROMOTE but cap is full.
-				planSess, err := svc.CreateSession(ctx, "/ws", session.ModePlan, session.Limits{})
+				planSess, err := svc.CreateSession(ctx, session.ModePlan, session.Limits{})
 				if err != nil {
 					t.Fatalf("CreateSession (default-FS plan): %v", err)
 				}
@@ -1025,7 +1024,7 @@ func TestEngineAndWorkspaceForResolutionMatrix(t *testing.T) {
 				svc1 := modeServiceOverStore(t, store,
 					modeRecordingFactory(sessionModel, planModel, &modes1, &calls1),
 					func(m session.PermissionMode) bool { return m == session.ModePlan })
-				sess, err := svc1.CreateSessionWithProvider(ctx, "/ws", session.ModeDefault, session.Limits{},
+				sess, err := svc1.CreateSessionWithProvider(ctx, session.ModeDefault, session.Limits{},
 					server.ProviderSelector{ProviderID: "openai", ModelID: sessionModel})
 				if err != nil {
 					t.Fatalf("CreateSessionWithProvider: %v", err)
@@ -1077,7 +1076,7 @@ func TestEngineAndWorkspaceForResolutionMatrix(t *testing.T) {
 					return server.SessionEngineResult{Engine: eng, ModelID: "nofs-model", ProviderID: "openai", BuiltForMode: mode, Close: func() error { return nil }}, nil
 				}
 				svc1 := modeServiceOverStore(t, store, pfactory1, nil /* no plan slot */)
-				sess, err := svc1.CreateSessionWithProfile(ctx, "", session.ModeDefault, session.Limits{},
+				sess, err := svc1.CreateSessionWithProfile(ctx, session.ModeDefault, session.Limits{},
 					server.ProviderSelector{}, server.ProfileNoFS)
 				if err != nil {
 					t.Fatalf("CreateSessionWithProfile: %v", err)
@@ -1131,7 +1130,7 @@ func TestEngineAndWorkspaceForResolutionMatrix(t *testing.T) {
 				var calls atomic.Int32
 				// needsEngine=nil ⇒ CASE 2 never fires.
 				svc := modeServiceOverStore(t, store, modeRecordingFactory("gpt-5", "opus-plan", &modes, &calls), nil)
-				sess, err := svc.CreateSession(ctx, "/ws", session.ModeDefault, session.Limits{})
+				sess, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{})
 				if err != nil {
 					t.Fatalf("CreateSession: %v", err)
 				}
@@ -1163,7 +1162,7 @@ func TestEngineAndWorkspaceForResolutionMatrix(t *testing.T) {
 				var modes []session.PermissionMode
 				var calls atomic.Int32
 				svc := modeServiceOverStore(t, store, modeRecordingFactory("gpt-5", "opus-plan", &modes, &calls), nil)
-				sess, err := svc.CreateSession(ctx, "/ws", session.ModeDefault, session.Limits{})
+				sess, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{})
 				if err != nil {
 					t.Fatalf("CreateSession: %v", err)
 				}
@@ -1251,7 +1250,7 @@ func TestEngineAndWorkspaceForResolutionMatrix(t *testing.T) {
 						mockllm.New(mockllm.ToolCallTurn(session.NewToolCall("w1", "Write", json.RawMessage(`{"path":"a.go"}`)))),
 						nil, &calls1),
 					nil /* no plan slot — REHYDRATE, not PROMOTE */)
-				sess, err := svc1.CreateSessionWithProvider(ctx, "/ws", session.ModeDefault, session.Limits{}, sel)
+				sess, err := svc1.CreateSessionWithProvider(ctx, session.ModeDefault, session.Limits{}, sel)
 				if err != nil {
 					t.Fatalf("CreateSessionWithProvider: %v", err)
 				}

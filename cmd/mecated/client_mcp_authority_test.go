@@ -1,10 +1,6 @@
 package main
 
-import (
-	"testing"
-
-	"github.com/stacklok/mecatl/internal/adapter/server"
-)
+import "testing"
 
 // TestSDKServerEnablers_Scenario9_ClientMCPPolicyFollowsListenerTopology pins the
 // DEPLOYMENT-SCOPED reading of AC9.2/AC9.3 (issue #821, ADR 0237) and the
@@ -82,42 +78,16 @@ func TestSDKServerEnablers_Scenario9_ClientMCPPolicyFollowsListenerTopology(t *t
 	}
 }
 
-// TestSDKServerEnablers_Scenario9_ClientMCPIsStricterThanWorkspaceAuthority pins
-// the DIVERGENCE between the two listener-derived policies as a deliberate
-// property rather than an accident of two similar-looking functions.
-//
-// Both answer "may an API caller direct the daemon's ambient authority?", and
-// they answer differently on purpose: a workspace path selects among roots the
-// operator already owns (loopback accepted, ADR 0237's shipped precedent), while
-// an MCP endpoint plus caller-supplied credentials points the daemon at a host of
-// the caller's choosing. If someone later "unifies" these two derivations for
-// tidiness, this test fails and says which direction is safe to unify in.
-func TestSDKServerEnablers_Scenario9_ClientMCPIsStricterThanWorkspaceAuthority(t *testing.T) {
-	// Loopback TCP: workspace authority is client-selected, client MCP is refused.
+// TestSDKServerEnablers_Scenario9_ClientMCPRemainsUDSOnly pins the
+// listener-derived MCP policy independently of server-owned placement.
+func TestSDKServerEnablers_Scenario9_ClientMCPRemainsUDSOnly(t *testing.T) {
 	loopback := config{grpcAddr: "127.0.0.1:8080", httpAddr: "127.0.0.1:8081"}
-	authority, err := workspaceAuthorityForListeners(loopback)
-	if err != nil {
-		t.Fatalf("workspaceAuthorityForListeners: %v", err)
-	}
-	if authority != server.WorkspaceAuthorityClientSelected {
-		t.Fatalf("loopback workspace authority = %v, want client-selected (the 0237 precedent this test contrasts with)", authority)
-	}
 	if clientMCPOnCreateForListeners(loopback) {
-		t.Fatal("loopback TCP must NOT permit client MCP: it is strictly the larger grant, and AC9.2 refuses any TCP listener")
+		t.Fatal("loopback TCP must not permit client MCP")
 	}
-
-	// The UDS daemon: both are granted, so the difference is a threshold on the
-	// same axis, not one policy being off.
 	uds := config{grpcUnixSocket: "/run/mecatl.sock"}
 	if !clientMCPOnCreateForListeners(uds) {
-		t.Fatal("uds daemon with http disabled must permit client MCP")
-	}
-	udsAuthority, err := workspaceAuthorityForListeners(uds)
-	if err != nil {
-		t.Fatalf("workspaceAuthorityForListeners(uds): %v", err)
-	}
-	if udsAuthority != server.WorkspaceAuthorityClientSelected {
-		t.Fatalf("uds workspace authority = %v, want client-selected", udsAuthority)
+		t.Fatal("UDS daemon with HTTP disabled must permit client MCP")
 	}
 }
 

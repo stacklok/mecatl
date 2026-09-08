@@ -1,70 +1,118 @@
 # Development process
 
-mecatl's larger work is built by a mostly-autonomous spine encoded as agent
-skills under `.claude/`. The human settles the design; agents write the
-contract, decompose it, implement it test-first in parallel, gate it, review
-it, and open one PR. The single human checkpoint is merging that PR.
+mecatl separates human approval of behavior and interfaces from autonomous implementation.
+The durable contract is `docs/acceptance/<slug>.md`; implementation follows that approved
+contract with isolated TDD workers and ends at a second human merge gate.
 
+```text
+design → plan/interface PR → human contract merge → autonomous TDD implementation → gates + panel → implementation PR → human code merge
 ```
-design → /to-acceptance-plan → /plan-orchestrate → (waves of tdd-workers) → aggregate gate → ac-trace → panel-review → PR ─▶ human merge
-```
 
-For issue-scale work (a bug, a focused feature with an issue as the spec),
-the lightweight [`/dev-pipeline`](../.claude/skills/dev-pipeline/SKILL.md)
-loop is the right track — the spine earns its keep on capability-scale work
-that wants a design contract.
+Substantive interface-bearing work uses two PRs by default. Combined delivery is a narrow
+exception for a compact one-task plan with exactly one `### Scenario`, where gRPC/protobuf,
+exported Go APIs/interfaces, tool schemas, CLI/config, events/persistence, and
+security/authority each begin `None — <rationale>`. Compatibility/migration may describe
+workflow migration, and splitting must add no review value. A workflow-only meta-change may
+treat process documents and skills as the interface reviewed in the same PR. Trivial or mechanical changes may bypass the spine while still
+running applicable gates.
 
-## The steps
+## Durable plan contract
 
-1. **Design — `/to-acceptance-plan`.**
-   Synthesises a settled design into `docs/acceptance/<plan>.md`: scenario-first,
-   numbered acceptance criteria, each with a `verify:` line naming its proof.
-   An advisory `devils-advocate` pass and a light specialist spot-check surface
-   material gaps; low-severity findings are folded in automatically. No separate
-   PR — the plan rides the accumulator.
+A plan moves `draft → proposed → approved → in-progress → landed`:
 
-2. **Orchestrate — `/plan-orchestrate`.**
-   Decomposes the plan into tasks under `.claude/plans/<plan>/tasks/`, then
-   dispatches **waves** of parallel `tdd-worker` agents — one task per worker,
-   each in an isolated worktree, each doing strict red-green TDD (via the
-   `/test-writer` skill) against the hexagonal ports and the AGENTS.md
-   invariants. Successful branches funnel into one **accumulator** branch.
+- `draft`: human judgments about material behavior or interfaces may still be open and are
+  listed as unchecked items under `## Human decisions`.
+- `proposed`: every human decision needed to implement the contract is resolved and recorded;
+  the plan is validated and ready for human plan/interface review.
+- `approved`: the plan PR was human-reviewed and merged; this is not shipped status.
+- `in-progress`: implementation is underway against the recorded approved commit.
+- `landed`: after every gate passes, the implementation/Combined candidate carries this
+  proposed transition in its PR diff; it becomes authoritative only when that PR merges.
+  Before merge, the target branch remains `approved` or `in-progress`.
 
-3. **Gate + review (automatic).** On the assembled accumulator the orchestrator
-   runs the aggregate gate (`task lint && task test && task docs`), flips the
-   plan to `landed`, runs `ac-trace --strict` (every `verify:` proof must
-   resolve), then runs `/panel-review` as the final gate. Panel ship-blockers
-   spawn an automatic repair wave (budget 2). When the assembled branch is
-   clean it opens **one PR** (plan + code, panel report inline, `Closes` the
-   epic + task issues).
+Every new plan and every materially amended legacy plan contains exact
+`**Contract:** human-reviewed/v1` metadata, numbered behavioral acceptance criteria with
+non-empty `verify:` lines, a mandatory `## Human decisions` section, and a mandatory
+`## Interface contract`. Human
+decisions are either `None — <rationale>` or checklist items; unchecked items require
+`draft`, while checked items record `— Decision: ...`. The interface contract gives exact
+proposed surfaces for gRPC/protobuf, exported Go APIs, tool schemas, CLI/config,
+events/persistence,
+security/authority boundaries, and compatibility/migration. `None` requires a rationale.
+Material public decisions cannot be postponed until code exists. New plans and materially amended
+legacy plans after ADR 0306 must adopt the current template and exact
+`**Contract:** human-reviewed/v1` metadata; unmarked historical plans are grandfathered until
+materially amended and need not be bulk-migrated.
 
-4. **Merge (the one human gate).** A human reviews and merges the PR. The
-   orchestrator never merges to `main` and never runs beyond the PR. (mecatl
-   convention is **PR-only** — never commit to `main` directly.)
+## Split path: the default
 
-## Verification, tracked
+1. **Plan — `/to-acceptance-plan`.** Create a dedicated plan branch/worktree, draft the
+   acceptance plan and any decision/living docs, run the bundled checker and `task docs`,
+   run advisory design reviews, open a **Plan / Interface** PR, and stop. Its issue text is
+   non-closing: `Relates to #N` or `Tracking: #N`.
+2. **Contract review — human.** Review behavior and exact interfaces. Mark the plan
+   `approved` before merging. The merged plan commit is the implementation baseline.
+3. **Implement — `/plan-orchestrate`.** Confirm the approved plan is merged, record its PR
+   and commit under `.scratch/orchestrate/<slug>/`, decompose run-locally, and dispatch
+   isolated `tdd-worker` attempts. A worker that discovers a missing human decision reports
+   contract drift instead of making it; any material drift stops the run for a
+   human-reviewed plan amendment.
+4. **Gate and review — automatic.** On the assembled implementation branch run `task lint`,
+   `task test`, `task docs`, the offline demo, `task ac-trace-strict`, and `/panel-review`.
+   The implementation PR links the approved baseline and reports interface conformance or
+   an approved amendment.
+5. **Code review — human.** Review and merge the implementation PR. Only a PR that fully
+   completes an issue uses `Closes #N`/`Fixes #N`; partial work remains non-closing.
 
-Acceptance criteria are the contract *and* the tracker. Each carries a
-`verify:` line; [`ac-trace`](https://github.com/stacklok/ac-trace) checks
-every named proof resolves (`TestInvariant_<id>` for an invariant,
-`TestADR_NNNN_*` for an ADR rule, `Test<Plan>_Scenario<N>_*` for a scenario,
-or a descriptive test name). `task ac-trace` reports coverage;
-`task ac-trace-strict` gates a `landed` plan. See
-[the acceptance README](acceptance/README.md).
+## Combined path: narrow exception
 
-## The quality gates a plan must clear
+A compact one-task plan may choose `Combined` only under the eligibility rule above. It
+must carry exact `**Expected tasks:** 1` metadata and a non-placeholder
+`**Combined rationale:**` explaining why separate plan review adds no value.
+`/to-acceptance-plan` prepares the proposed plan on the eventual combined implementation
+branch and stops without opening a separate plan PR. A separately and explicitly invoked
+`/plan-orchestrate` adds implementation on that branch, runs all gates, and opens the sole
+Combined PR. Human merge remains mandatory.
+
+## Contract amendments
+
+Material drift stops dispatch with `blocked-contract-drift`; the orchestrator cannot draft,
+commit, push, or open an amendment. A separately and explicitly authorized
+`/to-acceptance-plan` amendment mode uses the Split Plan / Interface PR flow, including
+checker and docs verification, human review/merge, and plan status `approved`. If no attempt
+has integrated, the accumulator may fast-forward or rebase onto the newly approved amendment
+baseline. Once any attempt has integrated, merge the approved amendment commit into the
+accumulator; never rebase or rewrite integrated commits. In either case the amendment commit
+must be an ancestor afterward. Record the amendment PR and full merged commit in `run.md`,
+invalidate and regenerate pending briefs/decomposition, and revalidate integrated work
+against every amended AC and interface clause.
+
+## Operational state and cleanup
+
+Durable specs stay in `docs/acceptance/`; new decisions stay in ADRs. Task decomposition,
+inlined worker briefs, attempt/worktree/branch/retry state, and repair records are local
+under ignored `.scratch/orchestrate/<slug>/`, with git ancestry authoritative for integrated
+commits. `run.md` records each integration/plan/attempt worktree's path, owner classification
+(`harness-owned-native`, `orchestrator-created-disposable`, or `primary-current` where
+applicable), branch, creation baseline, and cleanup eligibility; resume verifies it against
+`git worktree list`. Do not create new committed `.claude/plans/<slug>/tasks/*.md` state and
+do not delete historical tracked plans.
+
+The implementation owns tracked feature-scoped cleanup. There is no cleanup or status-only
+PR. Only explicitly orchestrator-created successful worktrees are eligible for removal;
+failed, harness-owned, primary, and ambiguous worktrees are retained.
+
+## Verification gates
 
 | Gate | What it pins |
 |---|---|
-| `task lint` | golangci-lint v2 + go vet, both modules — incl. the depguard allowlist (layering) |
-| `task test` | full offline suite, `-race`, both modules + the engine-standalone proof |
-| `task api:check` | the engine's exported surface vs `engine/api/*.txt` |
-| `task docs` | `llms.txt` regen + the matlatl strict link gate |
-| `task ac-trace-strict` | every landed AC's `verify:` proof resolves |
-| `/panel-review` | Spec / Standards / Domain (incl. the default-on duplication + library-reuse pair) |
+| bundled acceptance-plan checker | plan shape, human-decision/status consistency, interface declaration, AC proofs, citations, scope |
+| `task lint` | lint, vet, layering rules |
+| `task test` | full offline suite and engine standalone proof |
+| `task api:check` | guarded engine API compatibility |
+| `task docs` | generated docs and strict links |
+| `task ac-trace-strict` | every landed AC proof resolves |
+| `/panel-review` | independent Spec / Standards / Test adequacy / Domain review |
 
-## See also
-
-- [Architecture guide](architecture.md) · [Usage & operator guide](usage.md)
-  · [ADRs](adr/) · [Implementation notes](design/IMPLEMENTATION-NOTES.md)
-  · [Acceptance plans](acceptance/README.md)
+See [the acceptance-plan guide](acceptance/README.md) and
+[ADR 0306](adr/0306-human-reviewed-development-contracts.md).

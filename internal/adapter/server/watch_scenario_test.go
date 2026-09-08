@@ -19,7 +19,6 @@ import (
 	"google.golang.org/grpc/status"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -42,13 +41,13 @@ func watchService(t *testing.T, log port.EventLog, ownership bool) *server.Servi
 		mockllm.ChunksTurn(mockllm.TextChunk("again"), mockllm.DoneChunk(session.StopEndTurn)),
 		mockllm.ChunksTurn(mockllm.TextChunk("third"), mockllm.DoneChunk(session.StopEndTurn)),
 	)
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine: agent.NewEngine(agent.Deps{
 			LLM: llm, Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "test-model",
 		}),
-		Store:               memstore.New(),
-		EventLog:            log,
-		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Store:    memstore.New(),
+		EventLog: log,
+
 		Now:                 func() time.Time { return time.Unix(0, 0) },
 		DefaultCapabilities: llm.Capabilities(),
 		OwnershipEnforced:   ownership,
@@ -132,7 +131,7 @@ func watchedRun(t *testing.T, log port.EventLog) (*server.Service, mecatlv1.Harn
 	svc := watchService(t, log, false)
 	client, cleanup := dialGRPC(t, svc)
 	t.Cleanup(cleanup)
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -474,7 +473,7 @@ func TestSDKServerEnablers_Scenario7_WatchTransportParity(t *testing.T) {
 // nothing.
 func TestSDKServerEnablers_Scenario7_WatchUnsupportedIsHonest(t *testing.T) {
 	svc := watchService(t, plainEventLog{inner: memstore.NewEventLog()}, false)
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -493,7 +492,7 @@ func TestSDKServerEnablers_Scenario7_WatchUnsupportedIsHonest(t *testing.T) {
 	}
 
 	noLog := watchService(t, nil, false)
-	sess2, err := noLog.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	sess2, err := noLog.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -518,7 +517,7 @@ func TestSDKServerEnablers_Scenario7_WatchOwnershipEnforced(t *testing.T) {
 	bob := session.WithPrincipal(context.Background(), &session.Principal{
 		Issuer: "https://issuer.example", Subject: "bob", GrantType: session.GrantTypeUser,
 	})
-	sess, err := svc.CreateSession(alice, "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(alice, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -1273,7 +1272,7 @@ func TestSDKServerEnablers_Scenario7_TerminalErrorIsValidSSE(t *testing.T) {
 
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
-		sess, err := svc.CreateSession(ctx, "/ws", session.ModeDefault, session.Limits{})
+		sess, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{})
 		if err != nil {
 			t.Fatalf("CreateSession: %v", err)
 		}

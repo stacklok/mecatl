@@ -5,10 +5,14 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
+	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
+	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/governance"
+	"github.com/stacklok/mecatl/engine/learning"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
@@ -129,5 +133,89 @@ func TestDirsOverlap(t *testing.T) {
 		if got := dirsOverlap(tc.a, tc.b); got != tc.want {
 			t.Errorf("dirsOverlap(%q,%q) = %v, want %v", tc.a, tc.b, got, tc.want)
 		}
+	}
+}
+
+func TestCloudNativeLearning_Scenario1_DirectSkillDraftRemainsInactive(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		prompt   string
+		admitted bool
+	}{
+		{name: "admitted procedure request", prompt: "create a skill from this procedure", admitted: true},
+		{name: "rejected procedure request", prompt: "do not create a skill from this procedure", admitted: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			workspace := osfsWSForTest(t, t.TempDir()).Root()
+			var activitiesMu sync.Mutex
+			var activities []learning.Activity
+			turns := []mockllm.Turn{
+				mockllm.ToolCallTurn(session.NewToolCall("draft", skills.DraftToolName, []byte(`{"name":"direct-procedure","description":"Use this procedure when testing direct drafts.","body":"1. Run the procedure.\nDone when: complete."}`))),
+				mockllm.TextTurn("Draft complete."),
+			}
+			if tc.admitted {
+				turns = append(turns, mockllm.TextTurn(`{"kind":"abstained","candidates":[]}`))
+			}
+			provider := mockllm.New(turns...)
+			built, err := Build(context.Background(), Config{
+				Model: "test-model", Workspace: workspace, TrustProject: true, NoSoul: true,
+				SkillsDraftDir: t.TempDir(), LearningMode: learning.Review,
+				UserModelDir: t.TempDir(), MemoryDir: t.TempDir(),
+				LearningMetricsEmitter: func(activity learning.Activity) {
+					activitiesMu.Lock()
+					defer activitiesMu.Unlock()
+					activities = append(activities, activity)
+				},
+				envDetector:         fakeEnv(map[string]string{"OPENAI_API_KEY": "test-key"}),
+				liveModelHTTPClient: offlineHTTPClient(),
+				providerConstructor: func(Config, string, string, string) port.LLMProvider { return provider },
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer built.Close()
+
+			ctx := session.WithPrincipal(context.Background(), &session.Principal{Issuer: "test", Subject: "alice", GrantType: session.GrantTypeUser})
+			sess, err := built.Service.CreateSession(ctx, session.ModeDefault, defaultLimits())
+			if err != nil {
+				t.Fatal(err)
+			}
+			run, err := built.Service.StartRun(ctx, sess.ID, tc.prompt)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for event := range run.Events() {
+				if event.Type == session.EvPermissionAsk && event.Ask != nil {
+					run.Approve(event.Ask.AskID, session.VerdictAllowOnce)
+				}
+				if event.Type == session.EvResult && event.Result != nil && event.Result.Stop == session.StopError {
+					t.Fatalf("run failed: %s", event.Result.Error)
+				}
+			}
+
+			listed, err := built.Service.ListLearnedSkills(ctx, &mecatlv1.ListLearnedSkillsRequest{Project: workspace})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(listed.GetSkills()) != 1 {
+				t.Fatalf("direct draft count = %d, want 1: %+v", len(listed.GetSkills()), listed.GetSkills())
+			}
+			if got := learning.SkillState(listed.GetSkills()[0].GetState()); got != learning.SkillDraft {
+				t.Fatalf("direct draft state = %q, want inactive draft", got)
+			}
+
+			activitiesMu.Lock()
+			defer activitiesMu.Unlock()
+			wantKind, wantReason := learning.ActivitySkipped, learning.ReasonBelowThreshold
+			if tc.admitted {
+				wantKind, wantReason = learning.ActivityAdmitted, learning.ReasonHardTrigger
+			}
+			for _, activity := range activities {
+				if activity.Kind == wantKind && activity.Reason == wantReason {
+					return
+				}
+			}
+			t.Fatalf("activities = %+v, want %s/%s", activities, wantKind, wantReason)
+		})
 	}
 }

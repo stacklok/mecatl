@@ -77,29 +77,27 @@ trusted source, the same way you would point `mecated serve --skills-dir` at a
 trusted directory. Start `mecated serve` with the same `--store-dir`, and
 explicitly enable the imported skills directory.
 
-### Workspace authority
+### Server-owned session placement
 
-`--workspace-authority` controls who may select the workspace for a filesystem
-session. The topology-derived default is `client-selected` only when both API
-listeners are loopback; any non-loopback, wildcard, or mixed listener defaults
-to `server-assigned`. Set `--workspace-authority=server-assigned` explicitly
-when a reverse proxy makes a loopback listener remotely reachable.
+`--workspace` is trusted composition configuration for the deployment's default local
+placement. It is never a client argument over Harness/HTTP, and listener topology does
+not change that rule: embedded, loopback, remote, and cloud-native clients all create
+sessions by omitting placement or requesting `profile:"no-fs"`. Composition validates
+and binds the default before listeners serve.
 
-In a server-assigned filesystem deployment, configure the one authoritative root
-with `--workspace` and have every client send an **empty** `workspace` field in
-its `CreateSession` request. The empty value means “use the server's configured
-root”; it never means “use my local cwd.” A non-empty client path is rejected as
-`InvalidArgument` before the service cleans it, touches the filesystem, evaluates
-trust, or creates an environment. The server also fails before opening listeners
-if server-assigned filesystem authority has no `--workspace`. This policy remains
-in force when a session is rehydrated or resumed, when a schedule fires, and for
-legacy adoption; stale or non-canonical stored roots fail closed.
+Alternate local worktrees are discovered from an owned source session. The server returns
+bounded display metadata plus an opaque caller/source-scoped selector accepted only by
+ClearSession or ForkSession. Selectors are HMAC-SHA256 values over current provider-private
+identity, are not decoded or persisted, and expire on restart; clients relist. Clear creates
+a distinct empty-history successor and Fork creates a history-carrying successor; omitted
+selector inherits the exact source placement. Every session persists only its exact private
+`EnvironmentRef{Kind,ID,Revision}`. Trusted driver storage may transport that ref; public
+clients never receive it or a physical path.
 
-Loopback-only and embedded deployments retain local developer behavior: clients
-may select an absolute checkout or sibling worktree. This is not an
-authorization scheme for a remote multi-workspace service. Use one deployment
-root, or wait for a future opaque scoped-grant design. See [ADR
-0237](../adr/0237-listener-scoped-workspace-authority.md).
+Schedules persist an already-resolved exact ref, owner, and placement scope and reauthorize
+and reattach at fire. Delegation derives/forks the parent Environment; artifact and child
+handles cannot act as selectors. ACP uses cwd only as a local assertion against this trusted
+configuration. See [ADR 0291](../adr/0291-server-owned-session-placement.md).
 
 ### Flags
 
@@ -109,9 +107,8 @@ root, or wait for a future opaque scoped-grant design. See [ADR
 | `--http-addr` | `127.0.0.1:8081` | HTTP/SSE listen address (loopback; **unauthenticated unless** the security & transport flags below are set). **EMPTY DISABLES** the HTTP/SSE listener **and the `--metrics-addr` admin listener together** — see the spawned-daemon-hosting note below. |
 | `--grpc-unix-socket` | `""` (off) | absolute path of a UNIX-domain socket to serve gRPC on **instead of a TCP port**; opens **no TCP port**. **Mutually exclusive** with a *configured* `--grpc-addr` (explicit flag or config-file `grpc_addr`) — rejected at startup. The socket is created **owner-only** inside an owner-only (`0700`) directory mecated creates when missing; a **stale** socket from a dead process is removed, one a **live** process is accepting on **refuses the start**. Path length is validated against `sockaddr_un.sun_path` (103 usable bytes on Darwin, 107 on Linux). **See the spawned-daemon-hosting note below.** |
 | `--ready-file` | `""` (off) | absolute path to write a JSON readiness document to, **atomically** (temp file + rename) and only **after** composition and every listener are up — so a spawning parent waits on a path instead of racing a connect loop. Carries pid, transport, bound gRPC/HTTP addresses, and the non-secret compatibility descriptor (`api_major`/`features`/`deployment`) — **never** a credential, TLS detail, or capability set. **See the spawned-daemon-hosting note below.** |
-| `--lifetime-pipe-fd` | `0` (off) | file descriptor of an **inherited** pipe whose read end mecated watches: **EOF means the spawning parent exited or crashed**, and the daemon stops through the ordinary graceful-shutdown path. The parent holds the write end and never writes. `0` disables; `0`/`1`/`2` are the standard streams and are **rejected**. **See the spawned-daemon-hosting note below.** |
-| `--workspace` | current working dir | default session workspace root |
-| `--workspace-authority` | topology-derived | `client-selected` or `server-assigned`. Loopback-only gRPC + HTTP/SSE keeps local client workspace/worktree selection; any public, wildcard, or mixed listener assigns `--workspace` server-side and requires filesystem requests to leave `workspace` empty. Set `server-assigned` explicitly behind a reverse proxy. A network filesystem deployment without `--workspace` fails before listeners start. |
+| `--lifetime-pipe-fd` | `0` (off) | file descriptor of an **inherited** pipe read end or connected UNIX-domain stream socketpair endpoint that mecated watches: **EOF means the spawning parent exited or crashed**, and the daemon stops through the ordinary graceful-shutdown path. The parent holds the peer end and never writes. `0` disables; `1`/`2` are standard output/error and are **rejected**. **See the spawned-daemon-hosting note below.** |
+| `--workspace` | current working dir | trusted server-side default local root; embedded/operator configuration only, never accepted from CreateSession clients |
 | `--model` | `""` | model identifier sent to the provider. Empty → the server-configured default (`--default-model`, when set), else the selected provider's built-in default: `gpt-5` (OpenAI), `openai/gpt-5` (OpenRouter), `claude-sonnet-4-6` (Anthropic). |
 | `--default-provider` | `""` | server-configured **deployment-wide default provider** id shared by every client (also on `mecatui`'s embedded server); overrides the built-in provider preference for zero-selector sessions, while a client-side selector still wins. **Fail-fast:** an unknown or unavailable provider refuses startup. |
 | `--default-model` | `""` | server-configured **deployment-wide default model** for the default provider (also on `mecatui`'s embedded server); sits below client-side defaults and above the per-provider built-in. **Fail-fast:** a model not catalogued for the default provider refuses startup (stricter than per-session selectors, which allow passthrough). |
@@ -134,6 +131,7 @@ root, or wait for a future opaque scoped-grant design. See [ADR
 | `--memory-store-url` | `""` | `host:port` of a remote **memory-store gRPC driver** (`mecatl.driver.v1.MemoryStoreService`); replaces the local flock store — mutually exclusive with `--memory-dir`, enables the memory tools like `--memory-dir` does. |
 | `--event-log-url` | `""` | `host:port` of a remote **event-log gRPC driver** (`mecatl.driver.v1.EventLogService`) for the durable per-session event timeline (reasoning, ask/verdict pairs, delegation lifecycle); **INDEPENDENT of the session store** (not mutually exclusive with `--store-dir`). Empty keeps the local default (the `--store-dir` JSONL log, or in-memory). Append happens at the relay (a fault WARNs, never aborts the run); Read is server-streaming. Same auth/TLS posture as `--session-store-url` (equal URLs share one connection). **See the store-driver note below.** |
 | `--schedule-store-url` | `""` | `host:port` of a remote **schedule-store gRPC driver** (`mecatl.driver.v1.ScheduleStoreService` + `ScheduleOneShotReArmerService`) for the durable schedule registry (scheduled tasks); **INDEPENDENT of the session store** — when set, replaces the `ScheduleStore()` discovery from the configured store. Empty keeps the byte-identical default (the configured store's own `ScheduleStore()` accessor, or no scheduling). The driver's `Claim`/`ClaimNow`/`ReArmOneShot` run the atomic advance server-side. Current remote drivers do not expose atomic create-only publication, so this option is rejected when OIDC caller ownership is enabled; use the local JSONL/Redis schedule store in that posture. |
+| `--learning-store-url` | `""` | `host:port` of one distributed-learning gRPC driver. Startup capability negotiation requires the complete `AttemptRepositoryService` + `ProposalRepositoryService` + `SkillRepositoryService` set and, for non-off automatic learning, `AutomaticAdmissionLedgerService`; a partial or legacy driver fails startup instead of silently mixing remote and local repositories or accounting. The explicit flag dials/probes/composes the repository set even when learning is off, for explicit reflection, learned-skill inspection, and recovery of already-admitted attempts; it does not enable automatic admission. Principal/project repository partitions are opaque hashes on this transport. Current raw repository RPCs are trusted single-tenant infrastructure only and are permitted only when `OwnershipEnforced=false`; ownership-enforced/multi-tenant startup fails closed until ADR-0213 workload-authenticated claims, private owner registry, and separate maintenance RPCs land. |
 | `--child-retention` | `168h` | how long persisted **child** session snapshots (`subagent-*`/`parallel-*`/`team-*` ids — the `InspectSubagent`/`resume:` handles) are retained before the GC sweep deletes them. **Main sessions are governed by `--main-retention` instead** (default off). Durable-store-only in effect (`--store-dir` or a prunable `--session-store-url` driver; the in-memory default never accumulates across restarts). `0` disables the age pass. |
 | `--child-retention-max-per-family` | `500` | max persisted child snapshots kept **per delegation family** (subagent/parallel/team); the oldest beyond the cap are deleted, skipping in-flight runs. `0` disables the cap. |
 | `--main-retention` | `0` | how long persisted **main** (top-level operator/service) session snapshots are retained before the GC sweep deletes them; child sessions use `--child-retention` instead. `0` disables it. Enabling requires explicit acknowledgement. |
@@ -174,7 +172,7 @@ root, or wait for a future opaque scoped-grant design. See [ADR
 | `--user-model-dir` | `""` | directory for the user-scoped, **cross-project** user-model store of durable FACTS about the operator (empty → the conventional `$XDG_CONFIG_HOME/mecatl/usermodel`, fallback `~/.config/mecatl/usermodel`). Exposes the user memory tools and the live bounded operator profile in the volatile system suffix. **See the user-model note below.** |
 | `--no-user-model` | `false` | disable the user model entirely (explicit tools and live operator profile). |
 | `--user-model-review` | `false` | deprecated compatibility alias for operator `learning.mode: auto`; runs the synchronous completed-trajectory user-model reviewer after eligible clean completions and never reopens the user session. |
-| `--user-model-review-interval` | `1` | deprecated post-threshold downsampler for weighted automatic admission. `0`/`1` are inert; hard genuine-current-prompt triggers bypass it. Use `learning.automatic` for process-local budgets. |
+| `--user-model-review-interval` | `1` | deprecated post-threshold downsampler for weighted automatic admission. `0`/`1` are inert; hard genuine-current-prompt triggers bypass it. Use `learning.automatic` for durable global/principal budgets in standard non-off composition. |
 | `--user-model-consolidate-interval` | `0` | independently authorize automatic consolidation of the cross-project user-model store's `user/` namespace; `0` disables. It is exact-duplicate-only and separate from manual `/dream`; a project `learning.mode: off` cannot suppress a positive operator schedule. |
 | `--permissions-conventional` | `true` | auto-discover the per-project permission config (`<workspace>/.mecatl/settings.yaml`, and with `--import-claude-permissions` also `<workspace>/.claude/settings.json`) plus the user-global file. **Re-resolved per session** against each session's workspace root. ON and inert until such a file exists. **See the permission-config note below.** |
 | `--import-claude-permissions` | `false` | also import Claude-Code `settings.json` permissions (project + user). **Lossy** (fail-safe): see the table below. |
@@ -207,7 +205,7 @@ mailbox). See the delegation-capabilities note below.
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
-| `--max-run-tokens` | `0` (**unlimited**) | **Default: unlimited** (`0` disables the brake). Maximum **cumulative input + output tokens per agent run**. A run that crosses it ends cleanly with `stop=budget` (terminal `StopBudget`). The budget is **inherited by every Subagent / Parallel branch / team member**, so a delegation fan-out cannot blow past it. Resuming a Subagent resets its turn and tool-call counters but preserves its cumulative token usage, so `resume` does not replenish this budget. Opt in by passing a positive value. |
+| `--max-run-tokens` | `0` (**unlimited**) | **Default: unlimited** (`0` disables the brake). Maximum **cumulative input + output tokens for each engine's own session**. A run that crosses it ends cleanly with `stop=budget` (terminal `StopBudget`). The configured value is **inherited independently by every Subagent / Parallel branch / team member / lead synthesis**; parent usage and `EvResult` do not include child spend, so a delegation tree can exceed `--max-run-tokens`. Cross-tree aggregate observability and enforcement are deferred and out of scope. Resuming a Subagent resets its turn and tool-call counters but preserves its cumulative token usage, so `resume` does not replenish that child's budget. Opt in by passing a positive value. |
 | `--max-team-tokens` | `0` (**unlimited**) | **Default: unlimited** (`0` disables the brake). Maximum **cumulative input + output tokens per team run**, summed across **all members and rounds**. When crossed the team stops scheduling new rounds — the **in-flight round and the lead's synthesis still complete**, and the report states the budget stop. Applies to the `Team` tool and gRPC `CreateTeam`; a per-call Team `max_team_tokens` may only **tighten** it, and so may the wire `CreateTeamRequest.max_team_tokens` (HTTP: `"max_team_tokens"` in the create body). The outcome (incl. `budget_exhausted` and the `"budget"` stop) rides the **terminal `TeamEvent.outcome` frame** both `RunTeam` surfaces (gRPC stream + HTTP SSE) end with. **Orthogonal** to `--max-run-tokens` (per-run; both compose). |
 | `--enable-parallel` | `true` | register the **Parallel** fan-out tool (N parallel isolated child branches). On by default; `=false` disables it. *(Renamed from the former `--enable-fork`.)* |
 | `--websearch` | `""` (on) | **WebSearch** **master switch**: web search is **ON by default** (the Exa anonymous tier — no key, no config). Pass `--websearch=off` to **disable** it entirely (the kill switch — no outbound search calls; the tool reports it is disabled). Any value other than `off` (or unset) leaves web search enabled. Mirrors `--guardrails`. |
@@ -229,7 +227,7 @@ mailbox). See the delegation-capabilities note below.
 | `--agents-dir` | `""` | directory of named **agent definitions** (`<name>.md` + YAML frontmatter — `name`/`description`/`tools`/`model`/`provider`/`permissionMode`/`maxTurns`/`maxToolCalls`/`color`/`skills`/`mcpServers`/`hooks`/`memory`; full reference in `docs/adr/0013-agent-definitions.md`), reusable as a `Subagent(agent=<name>)` delegate and as a team-member role (repeatable; highest precedence). **TRUST BOUNDARY:** a def body steers the model like `AGENTS.md`/`CLAUDE.md`. A `memory: user\|project` field injects a per-agent `MEMORY.md` head into the def's prompt at startup (READ-ONLY in v1); the **project** tier is **`--trust-project`-gated** (it points into the attacker-controllable workspace). |
 | `--agents-conventional` | `true` | also discover agent defs from the conventional locations (`<workspace>/.mecatl/agents`, `<workspace>/.claude/agents`, `$XDG_CONFIG_HOME/mecatl/agents`, `~/.claude/agents`; lower precedence than `--agents-dir`). ON and **inert** until such a dir exists. Project-tier defs are **trust-gated** (`--trust-project`). |
 | `--model-alias` | `""` | model alias mapping `name=model-id` (repeatable), resolved only in composition — an agent def's `model: <alias>`, a `--model-slot` selector, and `--subagent-model` all resolve through this map (then the built-in sonnet/opus/haiku aliases). |
-| `--model-slot` | `""` | **PER-SLOT MODELS** ([ADR 0030](../adr/0030-model-selection-heuristics.md)): bind an internal lightweight LLM call to its own model as `slot=selector` (**repeatable**), e.g. `--model-slot compaction=cheap --model-alias cheap=gpt-4o-mini`. The routed slots are `compaction` (the compaction summary call), `ask-reviewer` (the headless child-ask reviewer), `guardrail` (the content checker), `plan` (plan-mode → model re-resolution, the opusplan pattern, [ADR 0030](../adr/0030-model-selection-heuristics.md) Layer 3), and `router` (the subagent model-router classifier, [ADR 0031](../adr/0031-subagent-model-router.md)); a **tier** key (`cheap`/`fast`/`reasoning`) gives a default a slot falls through to (the four internal-call slots — including `router` — default to `cheap`, but **`plan` defaults to `reasoning`**). The selector is a `--model-alias` or a concrete id, resolved on the **session's provider**. Empty (no `--model-slot`) keeps every call on the **session model** (**byte-identical default**). **Fail-soft**: a typo'd slot or an alias meaning *inherit* WARNs and keeps the session model — it never wedges the call. For `ask-reviewer` the slot **supersedes the model** of `--subagent-ask-reviewer` but does **not** enable it (that flag stays the on/off gate); for `guardrail` the slot **supersedes the model** of `--guardrails-model` AND **enables** guardrails (ADR 0046 — configure = enable). The YAML twin is the `settings.yaml` `models.slots:` subtree: operator-tier by default, and project-overridable **within an operator `models.allowlist`** on a trusted repo (ADR 0030 — see the per-slot models section); with no allowlist a project `models:` block is ignored with a WARN. `mecatui` accepts the same flag (and `--model-alias`) for its embedded server. |
+| `--model-slot` | `""` | **PER-SLOT MODELS** ([ADR 0030](../adr/0030-model-selection-heuristics.md)): bind an internal lightweight LLM call to its own model as `slot=selector` (**repeatable**), e.g. `--model-slot compaction=cheap --model-alias cheap=gpt-4o-mini`. The routed slots are `compaction` (the compaction summary call), `ask-reviewer` (the headless child-ask reviewer), `guardrail` (the content checker), `plan` (plan-mode → model re-resolution, the opusplan pattern, [ADR 0030](../adr/0030-model-selection-heuristics.md) Layer 3), and `router` (the subagent model-router classifier, [ADR 0031](../adr/0031-subagent-model-router.md)), and `title` (the opt-in asynchronous session-title generator, [ADR 0308](../adr/0308-session-title-generation-and-auxiliary-usage.md); accounting follows [ADR 0307](../adr/0307-canonical-durable-token-accounting.md)). Unlike the other slots, **`title` has no tier/default/session-model fallback**: it must be explicitly bound and resolve on the session's fixed provider or generation is disabled without a provider call. A successful exchange submits bounded Service-owned work without delaying or changing chat; its `session_title` token usage is outside `Session.Usage` and `--max-run-tokens`. A **tier** key (`cheap`/`fast`/`reasoning`) gives a default a slot falls through to (the four internal-call slots — including `router` — default to `cheap`, but **`plan` defaults to `reasoning`**). The selector is a `--model-alias` or a concrete id, resolved on the **session's provider**. Empty (no `--model-slot`) keeps every call on the **session model** (**byte-identical default**). **Fail-soft**: a typo'd slot or an alias meaning *inherit* WARNs and keeps the session model — it never wedges the call. For `ask-reviewer` the slot **supersedes the model** of `--subagent-ask-reviewer` but does **not** enable it (that flag stays the on/off gate); for `guardrail` the slot **supersedes the model** of `--guardrails-model` AND **enables** guardrails (ADR 0046 — configure = enable). The YAML twin is the `settings.yaml` `models.slots:` subtree: operator-tier by default, and project-overridable **within an operator `models.allowlist`** on a trusted repo (ADR 0030 — see the per-slot models section); with no allowlist a project `models:` block is ignored with a WARN. `mecatui` accepts the same flag (and `--model-alias`) for its embedded server. |
 | `--guardrails-model` | `""` | **GUARDRAILS**: model id / `--model-alias` of a tool-less checker that inspects **outbound** tool-call args (`PreToolUse`, exfil) and **inbound** tool results (`PostToolUse`, prompt injection) and enforces a verdict. Configuring a model here OR via a bound **`guardrail` model slot** (`--model-slot guardrail=…` / `models.slots.guardrail`) **ENABLES** guardrails (configure = enable, [ADR 0046](../adr/0046-guardrails-slot-enable.md) — the [ADR 0042](../adr/0042-taxonomy-gated-model-router.md) router-parity model); empty + no slot **disables** them. An unusable model id **fails startup**. Configuring a model is the **opt-in to spend** — with **no rule list** it takes the **default block rule set** (WebSearch/WebFetch/mcp__\*/Bash, enforcing — [ADR 0060](../adr/0060-guardrails-bash-default.md); downgrade via `defaultMode: advisory`). A bound `guardrail` **model slot supersedes** the checker model (this flag then supplies only the enable gate). The optional **rule list** + cost knobs live in the **user-global** `settings.yaml` `guardrails:` subtree (operator-tier **only** — a project repo cannot configure or weaken a checker; a project-tier block is ignored with a WARN); an explicit rule list replaces the defaults. `--guardrails-model` overrides the YAML model. Fires on the main loop regardless of `--headless`. Build prints one `guardrails: ON\|OFF …` posture line (resolved model + provenance). **See the guardrails section below + `docs/adr/0021-guardrails.md` + `docs/adr/0046-guardrails-slot-enable.md`.** |
 | `--guardrails` | `""` | guardrails **kill-switch only**: pass `--guardrails=off` to force the checker **off** regardless of `--guardrails-model` / the `guardrail` slot / the `guardrails:` YAML. The **positive enable path** is configuring a checker model (`--guardrails-model` OR the `guardrail` slot), NOT this flag. **Only `off` is accepted** — any other value (e.g. `--guardrails=on`, which does NOT enable) **fails startup** rather than silently doing nothing. |
 
@@ -258,7 +256,8 @@ mailbox). See the delegation-capabilities note below.
 > over a dedicated `parallel.*` event family, and its result carries the preserved
 > fork-workspace paths. A **Team** additionally honours a **team-wide token budget**
 > (`--max-team-tokens`, **default: unlimited**, tightenable per call) checked at the round boundary — orthogonal
-> to the per-run `--max-run-tokens`, which still bounds each member drive. Team stream
+> to the per-engine `--max-run-tokens`, which still bounds each member session's own cumulative
+> usage. Team stream
 > events are intentionally watchable but bounded: member previews/tasks/findings are
 > capped, permission asks are never forwarded, and `team.end` includes closed-enum
 > member dispositions. (The `mecatui` `ctrl+a` overlay surfaces all three under
@@ -453,7 +452,7 @@ restart. Serving, ACP, mecatequi, and mecak8s never install a browser presenter.
 local credential degrades safely and prints the login command; an environment-backed
 profile is read-only and must be provisioned externally. Rolling back to `none` or
 `static_bearer` is a whole-profile settings change followed by restart. See
-[configuration](configuration.md#global-mcp-authentication-profiles) and
+[configuration](configuration.md#mcp-authentication-profiles) and
 [ADR 0113](../adr/0113-operator-mcp-auth-profiles.md).
 
 #### Security & transport (auth, TLS, rate limiting)
@@ -555,10 +554,9 @@ permission on one path.
   path, its length, and the limit, instead of surfacing `bind`'s bare `EINVAL`. On
   macOS the default `TMPDIR` (`/var/folders/xy/…/T/`) already consumes about half
   the budget, so this fires in practice.
-- **Workspace authority.** A UNIX socket is **not** a network boundary
-  ([ADR 0237](../adr/0237-listener-scoped-workspace-authority.md)), so a
-  socket-only daemon keeps `client-selected` authority and does **not** require
-  `--workspace`.
+- **Workspace placement.** Socket topology does not grant path authority. The daemon
+  binds its private operator-configured `--workspace` default, and every client uses the
+  same path-free CreateSession contract.
 
 **An empty `--http-addr`** disables the HTTP/SSE listener **and the admin/metrics
 listener**. The coupling is deliberate: both are TCP listeners the operator never
@@ -614,27 +612,32 @@ There is deliberately **no** `features` identifier for daemon hosting: a client
 cannot query the server before spawning it, and one that has read the ready file
 has already proved the build supports it.
 
-**`--lifetime-pipe-fd`** is the parent-crash path. The parent creates a pipe,
-passes the **read end** to the child as an inherited descriptor, and holds the
-write end **without ever writing to it**. If the parent exits — cleanly, by
-`SIGKILL`, or by crashing — the kernel closes its descriptors, the read end sees
-EOF, and mecated stops through the **same graceful shutdown** a `SIGTERM` takes,
-persisting session state on the way out. The parent has nothing to remember, which
-is what makes it survive a crash rather than only a clean exit.
+**`--lifetime-pipe-fd`** is the parent-crash path. The parent either creates a
+pipe and passes its **read end**, or passes one endpoint of a connected
+UNIX-domain stream socketpair (the shape Node and Bun create for
+`child_process` `stdio: "pipe"`). The child inherits that descriptor while the
+parent holds the other endpoint **without ever writing to it**. If the parent
+exits — cleanly, by `SIGKILL`, or by crashing — the kernel closes its descriptors,
+the child endpoint sees EOF, and mecated stops through the **same graceful
+shutdown** a `SIGTERM` takes, persisting session state on the way out. The parent
+has nothing to remember, which is what makes it survive a crash rather than only
+a clean exit.
 
-Bytes on the pipe are read and **discarded**: this is a liveness signal, never a
-control channel — interpreting bytes on it would hand an unauthenticated local
-writer a way to steer the daemon. A parent that does send a heartbeat is therefore
-tolerated rather than mistaken for a dead one. `0` means "not configured", and
-`0`/`1`/`2` are **rejected**: treating stdin's EOF as "the parent died" would stop
-the daemon the moment it was started from any non-interactive shell.
+Bytes on the descriptor are read and **discarded**: this is a liveness signal,
+never a control channel — interpreting bytes on it would hand an unauthenticated
+local writer a way to steer the daemon. A parent that does send a heartbeat is
+therefore tolerated rather than mistaken for a dead one. `0` means "not
+configured"; `1`/`2` are **rejected** so stdout or stderr cannot be mistaken for
+a parent-liveness descriptor.
 
-The descriptor is also checked to be **open** and to be an actual **pipe**, both as
-startup errors. Either mistake would otherwise read as EOF or `ENOTCONN`, which the
-watcher reports as "the parent exited" — so the daemon would start, publish its
-ready file, and vanish milliseconds later. A refusal naming the flag is much easier
-to diagnose. The check is a bare `fstat` that takes no ownership of the descriptor,
-so a rejected fd is left exactly as the caller passed it.
+The descriptor is also checked to be **open** and either a FIFO or a connected
+UNIX-domain stream socketpair endpoint. Regular files, terminals, listening
+sockets, network sockets, and closed descriptors remain startup errors. Those
+mistakes would otherwise read as EOF or `ENOTCONN`, which the watcher reports as
+"the parent exited" — so the daemon would start, publish its ready file, and
+vanish milliseconds later. A refusal naming the flag is much easier to diagnose.
+The check takes no ownership of the descriptor, so a rejected fd is left exactly
+as the caller passed it.
 
 ### Observability (the loopback admin listener)
 
@@ -1101,21 +1104,23 @@ the rejected model, never a silent downgrade; the state file is not rewritten.
 ### The loopback / unauthenticated trust note
 
 On startup `mecated` logs the trust posture for each listen address (the
-`authenticated` field reflects whether a bearer token and/or TLS is configured):
+`caller_authenticated` field reflects only a static bearer, OIDC, or verified mTLS
+client certificate; ordinary server TLS encrypts transport but does not authenticate the
+caller):
 
 ```
-level=INFO msg="API bound to loopback (single-user localhost trust model)" flag=grpc-addr addr=127.0.0.1:8080 authenticated=false
-level=INFO msg="API bound to loopback (single-user localhost trust model)" flag=http-addr addr=127.0.0.1:8081 authenticated=false
+level=INFO msg="API bound to loopback (single-user localhost trust model)" flag=grpc-addr addr=127.0.0.1:8080 caller_authenticated=false
+level=INFO msg="API bound to loopback (single-user localhost trust model)" flag=http-addr addr=127.0.0.1:8081 caller_authenticated=false
 ```
 
-A **non-loopback** address bound **with** authentication (`--auth-token` and/or
-TLS) logs at INFO (`API bound to a non-loopback address WITH authentication
-(bearer token and/or TLS)`). Binding one with **no** authentication gets a
-prominent warning instead — it never hard-fails, since an operator may
-legitimately front the server with a service mesh:
+A **non-loopback** address bound **with caller authentication** (`--auth-token`,
+OIDC, or mTLS) logs at INFO. Binding one without caller authentication gets a
+prominent warning even when ordinary TLS is enabled — TLS authenticates the server, not
+the caller. It never hard-fails, since an operator may deliberately make a private network
+or service mesh the shared authority boundary:
 
 ```
-level=WARN msg="API bound to a NON-loopback address with NO authentication: it exposes UNAUTHENTICATED command/file execution to the network — set --auth-token / --tls-cert (or front it with a trusted mesh) before doing this" flag=http-addr addr=0.0.0.0:8081
+level=WARN msg="API bound to a NON-loopback address with NO caller authentication: it exposes UNAUTHENTICATED command/file execution to every network caller — configure --auth-token, OIDC, or --client-ca, or deliberately enforce shared authority at a trusted private-network/mesh boundary; TLS alone is not caller authentication" flag=http-addr addr=0.0.0.0:8081
 ```
 
 ### The skills directory trust note

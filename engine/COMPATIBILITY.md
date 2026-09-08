@@ -129,6 +129,16 @@ its event stream into a `*session.Session`. The reference implementation is
 records the decision. This section is the field-by-field contract such a backend must
 honour.
 
+### Load-failure classification
+
+Snapshot-backed implementations should wrap retrieval or transport failures with
+`port.NewSessionLoadFailure(port.SessionLoadFailureStore, err)` and snapshot decode,
+format, identity, or validation failures with `port.SessionLoadFailureSnapshot`. Genuine
+absence continues to wrap `port.ErrSessionNotFound` and must not be reclassified.
+Consumers inspect the typed `port.SessionLoadFailureError` through `errors.Is`/`errors.As`
+or `port.ClassifySessionLoadFailure`; error text is not a classification contract.
+Unknown custom-store failures intentionally remain `port.SessionLoadFailureUnknown`.
+
 ### What a folded `Load` MUST populate vs. what is safe to lose
 
 | Field on the reconstructed `*session.Session` | Round-trip obligation | Source |
@@ -138,15 +148,16 @@ honour.
 | recorded stop reason (`RecordedStopReason`) | **MUST** | `EvResult.Stop` |
 | pending ask (`PendingAsk`, when awaiting) | **MUST** | the trailing `EvPermissionAsk` with no following `EvApproval`/`EvResult` |
 | cumulative `Usage` | **MUST** | the **SUM** of every per-run `EvResult.Usage` (each `EvResult.Usage` is PER-RUN; the budget brake reads the cumulative aggregate) |
-| `Title` and `TitleProvenance` | **MUST** | authoritative values supplied out-of-band via `eventsource.SessionMeta`; for legacy metadata with an empty title, `Title` is seeded from the FIRST genuine `EvUserPrompt` via `session.SetTitle` (set-once + clamped), which also records `first-prompt` provenance. A synthesised-summary `EvUserPrompt` does not seed. For a compacted session the opener's `EvUserPrompt` was emitted before the compaction, so the fallback survives compaction. An operator-authored title cannot be reconstructed from events and therefore must be supplied. |
-| creation metadata: id, mode, limits, workspace, profile, provider/model selector, reasoning-effort, debug selected-global-MCP names and exact direct-tool ceiling, **session kind and relationship**, adoption source/request digest, createdAt | **MUST** (supplied out-of-band) | **NOT in any event** — provided by the caller via `eventsource.SessionMeta`; an absent legacy kind restores as fail-closed `unknown` |
-| identity labels: `Owner` (the verified caller), `Authority` (Track C, inert), `EnvironmentRef` (ADR 0214) | **not event-carried** — safe to lose on a pure fold | the snapshot (`sessnap`, restored by direct assignment / the write-once `Session.RestoreLabels`). Per [ADR 0204](../docs/adr/0204-caller-identity-threading.md) / [ADR 0214](../docs/adr/0214-environment-persistence.md) the event annotation is log-only and the fold neither requires nor re-derives any of them, so a fold-rebuilt session keeps whatever the snapshot restored — an ownerless one stays ownerless, a zero ref stays zero (composition stamps it from the first resolved live Environment on the next run) (**never** fabricated or backfilled). |
+| `Title`, `TitleProvenance`, `TitleGeneration`, and `TitleRevision` | **MUST** | authoritative values supplied out-of-band via `eventsource.SessionMeta`; for legacy metadata with an empty title, `Title` is seeded from the FIRST genuine `EvUserPrompt` via `session.SetTitle` (set-once + clamped), which also records `first-prompt` provenance. `TitleRevision` is a title-specific durable revision; a missing legacy value remains zero. The bounded title-source prompts, attempts, and auxiliary-usage ledger are likewise supplied via `SessionMeta`, never derived from history or normal `EvResult.Usage`. A synthesised-summary `EvUserPrompt` does not seed. For a compacted session the opener's `EvUserPrompt` was emitted before the compaction, so the fallback survives compaction. An operator-authored title cannot be reconstructed from events and therefore must be supplied. |
+| creation metadata: id, mode, limits, exact `EnvironmentRef`, safe placement metadata, profile, provider/model selector, reasoning-effort, debug selected-global-MCP names and exact direct-tool ceiling, **session kind and relationship**, createdAt | **MUST** (supplied out-of-band) | **NOT in any event** — provided by the caller via `eventsource.SessionMeta`; an absent legacy kind restores as fail-closed `unknown` |
+| identity labels: `Owner` (the verified caller) and `Authority` (Track C, inert) | **MUST** (supplied out-of-band) | provided by `eventsource.SessionMeta`; neither is inferred from event content |
+| identity label: `ExternalBinding` (opaque host runtime binding) | **MUST** (supplied out-of-band) when exact external-runtime reattachment is required; otherwise safe to omit on a pure fold | provided by `eventsource.SessionMeta.ExternalBinding`, restored by direct assignment exactly as `sessnap` does; the event annotation is log-only and the fold neither requires nor re-derives it, so an omitted field simply stays the zero value (**never** fabricated or backfilled) |
 | `Counters` (turns / tool calls / consecutive failures) | run-scoped — reflects the **latest run segment** (they reset on `Reopen`), derived from the latest run's events | `EvTurnStart` (turns), `EvToolResult` (tool calls / consecutive failures) |
 | run plumbing (diagnostics binding, askID serials, ctx) | safe to lose — rebuilt fresh | n/a |
 
 **Creation metadata is not in events.** No event carries the session id, mode, limits,
-workspace, profile, provider/model selector, reasoning-effort, debug selected-global-MCP names and exact tool ceiling, authoritative title/provenance,
-session kind/relationship, adoption source/request digest, or createdAt. The caller — who created or discovered the session —
+exact environment identity, safe placement metadata, profile, provider/model selector, reasoning-effort, debug selected-global-MCP names and exact tool ceiling, authoritative title/provenance,
+session kind/relationship, owner/authority, or createdAt. The caller — who created or discovered the session —
 supplies them alongside the stream (there is deliberately no `EvSessionCreated`; ADR 0038
 notes it as a possible future). `eventsource.SessionMeta` is the reference shape.
 Kind/relationship combinations are validated during folding; missing legacy kind metadata

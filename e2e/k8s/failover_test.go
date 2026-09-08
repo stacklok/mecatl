@@ -19,7 +19,8 @@ import (
 //     k8s Lease object is DELETED immediately, so a survivor acquires the
 //     session's lease on its FIRST run-entry — well inside the 30s TTL.
 //
-//   - FORCE (control): `kubectl delete pod --force` → NO graceful shutdown →
+//   - FORCE (control): hard-stop pod-B's application container through the
+//     kind node CRI, then force-delete its Pod object → NO graceful shutdown →
 //     NO releaseLease. The k8s Lease object REMAINS (holder = dead pod's owner)
 //     until its TTL lapses. A survivor's run-entry is REFUSED with 409
 //     immediately after the replacement is Ready, proving the LEASE (not mere
@@ -50,9 +51,10 @@ func failoverSpecs() {
 				gracefulSession := createSessionOverHTTP(cCtx, addrA)
 				cCancel()
 				rCtx, rCancel := shortCtx(60 * time.Second)
-				gomega.Expect(drainRun(rCtx, addrA, gracefulSession, "graceful-case holder")).
-					To(gomega.Equal(http.StatusOK), "pod-A run-start (graceful case)")
+				status, drainErr := drainRun(rCtx, addrA, gracefulSession, "graceful-case holder")
 				rCancel()
+				gomega.Expect(drainErr).NotTo(gomega.HaveOccurred(), "drain pod-A run (graceful case)")
+				gomega.Expect(status).To(gomega.Equal(http.StatusOK), "pod-A run-start (graceful case)")
 
 				ginkgo.By("gracefully deleting pod-A (preStop /drain + SIGTERM → releaseLease)")
 				// Snapshot the pod roster BEFORE the delete so waitReplacementReady
@@ -70,8 +72,9 @@ func failoverSpecs() {
 				// (well under the 30s TTL). A wall-clock bound proves "before TTL".
 				start := time.Now()
 				takeCtx, takeCancel := shortCtx(60 * time.Second)
-				takeStatus := drainRun(takeCtx, addrB, gracefulSession, "graceful takeover")
+				takeStatus, drainErr := drainRun(takeCtx, addrB, gracefulSession, "graceful takeover")
 				takeCancel()
+				gomega.Expect(drainErr).NotTo(gomega.HaveOccurred(), "drain pod-B graceful takeover")
 				took := time.Since(start)
 				gomega.Expect(takeStatus).To(gomega.Equal(http.StatusOK),
 					"pod-B run-start after graceful pod-A delete = HTTP %d, want 200 (lease should be released)\n--- took %s ---",
@@ -86,9 +89,10 @@ func failoverSpecs() {
 				forceSession := createSessionOverHTTP(c2Ctx, addrB)
 				c2Cancel()
 				r2Ctx, r2Cancel := shortCtx(60 * time.Second)
-				gomega.Expect(drainRun(r2Ctx, addrB, forceSession, "force-case holder")).
-					To(gomega.Equal(http.StatusOK), "pod-B run-start (force case)")
+				status, drainErr = drainRun(r2Ctx, addrB, forceSession, "force-case holder")
 				r2Cancel()
+				gomega.Expect(drainErr).NotTo(gomega.HaveOccurred(), "drain pod-B run (force case)")
+				gomega.Expect(status).To(gomega.Equal(http.StatusOK), "pod-B run-start (force case)")
 				// acquiredAt is the moment pod-B's holding run completed with the
 				// lease held. The force-delete control case must observe its 409
 				// BEFORE the lease TTL lapses (the k8s Lease object expires at

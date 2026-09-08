@@ -83,10 +83,11 @@ func TestCloseShutdownBoundedWithBlockedScheduledFire(t *testing.T) {
 	due := time.Now().Add(50 * time.Millisecond)
 	if err := schedStore.Save(ctx, port.Schedule{
 		Spec: port.ScheduleSpec{
-			Name:      schedName,
-			Prompt:    "say hello from a blocking fire",
-			Workspace: workspace,
-			Trigger:   port.TriggerSpec{OneShot: due},
+			Name:           schedName,
+			Prompt:         "say hello from a blocking fire",
+			Trigger:        port.TriggerSpec{OneShot: due},
+			EnvironmentRef: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: workspace, Revision: "configured-v1"},
+			PlacementScope: "deployment",
 		},
 		State: port.ScheduleState{NextFireAt: due, Enabled: true},
 	}); err != nil {

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"syscall"
@@ -82,6 +83,10 @@ var (
 	_ port.Diagnostics = (*recordingDiag)(nil)
 	_ port.Diagnostics = (*boundDiag)(nil)
 )
+
+type reconnectRoundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f reconnectRoundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
 
 // ---- restartable MCP test server ----
 
@@ -392,7 +397,15 @@ func TestIsConnectionDropClassifier(t *testing.T) {
 		{"client is closing string", errors.New("client is closing"), true},
 		{"connection closed string", errors.New("connection closed by remote"), true},
 		{"connection refused string", errors.New("dial tcp: connection refused"), true},
-		{"closed idle HTTP connection", errors.New("Post http://x/mcp: http: server closed idle connection"), true},
+		{"closed idle HTTP connection", errors.New("Post http://x/mcp: http: server closed idle connection"), false},
+		{
+			"rejected wrapper with closed idle HTTP connection",
+			errors.Join(
+				&jsonrpc.Error{Code: -32005, Message: "rejected by transport"},
+				&url.Error{Op: "Post", URL: "http://x/mcp", Err: errors.New("http: server closed idle connection")},
+			),
+			false,
+		},
 		{
 			"wrapped JSON-RPC error containing closed idle HTTP connection",
 			fmt.Errorf("transport rejected response: %w", &jsonrpc.Error{Code: -32000, Message: "http: server closed idle connection"}),
@@ -415,6 +428,20 @@ func TestIsConnectionDropClassifier(t *testing.T) {
 				t.Errorf("isConnectionDrop(%v) = %v, want %v", tc.err, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestIsAmbiguousTransportFailure(t *testing.T) {
+	transportErr := errors.Join(
+		&jsonrpc.Error{Code: -32005, Message: "rejected by transport"},
+		&url.Error{Op: "Post", URL: "http://x/mcp", Err: errors.New("http: server closed idle connection")},
+	)
+	if !isAmbiguousTransportFailure(transportErr) {
+		t.Fatal("SDK-wrapped closed idle HTTP connection was not classified as ambiguous")
+	}
+	peerErr := fmt.Errorf("transport rejected response: %w", &jsonrpc.Error{Code: -32000, Message: "http: server closed idle connection"})
+	if isAmbiguousTransportFailure(peerErr) {
+		t.Fatal("peer-controlled JSON-RPC message was classified as an ambiguous transport failure")
 	}
 }
 
@@ -465,48 +492,31 @@ func TestCallAfterCloseDoesNotDial(t *testing.T) {
 	}
 }
 
-// ---- Fix 2: genuinely-down server surfaces a clear error ----
-
-// TestPermanentlyDownServerDialFailureClearError: when the server endpoint is
-// GENUINELY down (listener closed → a concrete local Go transport failure such
-// as "connection refused", EOF, or "http: server closed idle connection", NOT
-// a 404 "session not found" drop), an echo call still surfaces the clear
-// "unavailable after reconnect" message — never the raw transport text. The
-// path: connect (live session), restart (drop the live session), then stop (close
-// the listener so the reconnect DIAL fails). The first post-restart call
-// classifies the local transport failure as a drop → triggers reconnect → the
-// reconnect dial fails → errReconnectFailed → tool.go maps to the clear message.
-func TestPermanentlyDownServerDialFailureClearError(t *testing.T) {
+// TestClosedIdleConnectionDoesNotReplay verifies the ambiguous POST failure is
+// normalized without reconnecting or replaying the call. net/http keeps the
+// concrete sentinel unexported, so the fixture returns its documented text from
+// the client's transport; http.Client wraps it in *url.Error and the SDK wraps
+// that in ErrRejected, matching the production error shape.
+func TestClosedIdleConnectionDoesNotReplay(t *testing.T) {
 	diag := &recordingDiag{}
 	rs := newRestartableServer(t)
 	s := connectRestartable(t, rs, diag)
-
-	// Baseline sanity.
-	_ = callEcho(context.Background(), t, s, "ok")
-
-	// Drop the live session (restart → 404), then kill the listener so the
-	// reconnect DIAL fails with "connection refused".
-	rs.restart()
-	rs.stop()
+	s.httpClient.Transport = reconnectRoundTripFunc(func(*http.Request) (*http.Response, error) {
+		return nil, errors.New("http: server closed idle connection")
+	})
 
 	res := callEcho(context.Background(), t, s, "after")
 	if !res.IsError {
 		t.Fatalf("expected a tool-error result, got %+v", res)
 	}
-	if !strings.Contains(res.Content, "unavailable after reconnect") {
-		t.Errorf("error content = %q, want it to contain \"unavailable after reconnect\"", res.Content)
+	if !strings.Contains(res.Content, "unavailable; request outcome is unknown") {
+		t.Errorf("error content = %q, want ambiguous-outcome message", res.Content)
 	}
-	// The raw transport strings must NOT leak to the model-facing message.
-	for _, leak := range []string{"connection refused", "dial tcp", "session not found", "server closed idle connection"} {
-		if strings.Contains(res.Content, leak) {
-			t.Errorf("error content leaked raw transport string %q: %s", leak, res.Content)
-		}
+	if strings.Contains(res.Content, "server closed idle connection") {
+		t.Errorf("error content leaked raw transport string: %s", res.Content)
 	}
-	if got := diag.count("mcp server reconnecting"); got != 1 {
-		t.Errorf("reconnecting lines = %d, want 1 (the local transport failure must trigger reconnect)", got)
-	}
-	if got := diag.count("mcp server reconnect failed"); got != 1 {
-		t.Errorf("reconnect-failed lines = %d, want 1", got)
+	if got := diag.count("mcp server reconnecting"); got != 0 {
+		t.Errorf("reconnecting lines = %d, want 0 (ambiguous delivery must not replay)", got)
 	}
 }
 

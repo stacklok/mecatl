@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/adapter/wallclock"
@@ -80,11 +79,12 @@ func TestFireStartPersistsInFlightRecord(t *testing.T) {
 	const schedName = "inflight-record"
 	if err := schedStore.Save(ctx, port.Schedule{
 		Spec: port.ScheduleSpec{
-			Name:        schedName,
-			Prompt:      "say hello",
-			Workspace:   workspace,
-			FireTimeout: 5 * time.Minute, // a non-zero deadline so Deadline is stamped
-			Trigger:     port.TriggerSpec{OneShot: time.Now().Add(-1 * time.Second)},
+			Name:           schedName,
+			Prompt:         "say hello",
+			EnvironmentRef: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: workspace, Revision: "in-tree-v1"},
+			PlacementScope: "legacy-local",
+			FireTimeout:    5 * time.Minute, // a non-zero deadline so Deadline is stamped
+			Trigger:        port.TriggerSpec{OneShot: time.Now().Add(-1 * time.Second)},
 		},
 		State: port.ScheduleState{
 			NextFireAt: time.Now().Add(-1 * time.Second),
@@ -102,10 +102,10 @@ func TestFireStartPersistsInFlightRecord(t *testing.T) {
 		Model:   "test-model",
 		Store:   store,
 	})
-	svc, err := server.NewService(server.Config{
-		Engine:              engine,
-		Store:               store,
-		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+	svc, err := newTestServerService(server.Config{
+		Engine: engine,
+		Store:  store,
+
 		Now:                 time.Now,
 		DefaultCapabilities: llm.Capabilities(),
 		EventLog:            store,
@@ -202,9 +202,10 @@ func TestFireWallClockDeadlineTerminatesWithStopTimeout(t *testing.T) {
 	const schedName = "fire-timeout"
 	if err := schedStore.Save(ctx, port.Schedule{
 		Spec: port.ScheduleSpec{
-			Name:      schedName,
-			Prompt:    "run until the deadline fires",
-			Workspace: workspace,
+			Name:           schedName,
+			Prompt:         "run until the deadline fires",
+			EnvironmentRef: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: workspace, Revision: "in-tree-v1"},
+			PlacementScope: "legacy-local",
 			// FireTimeout is zero here — the test exercises the DEFAULT timeout
 			// path (the package var), which it overrides below to a small value.
 			Trigger: port.TriggerSpec{OneShot: time.Now().Add(-1 * time.Second)},
@@ -232,10 +233,10 @@ func TestFireWallClockDeadlineTerminatesWithStopTimeout(t *testing.T) {
 		Model:   "test-model",
 		Store:   store,
 	})
-	svc, err := server.NewService(server.Config{
-		Engine:              engine,
-		Store:               store,
-		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+	svc, err := newTestServerService(server.Config{
+		Engine: engine,
+		Store:  store,
+
 		Now:                 time.Now,
 		DefaultCapabilities: llm.Capabilities(),
 		EventLog:            store,
@@ -316,9 +317,10 @@ func TestFireProgressAdvancesOnTurnBoundaries(t *testing.T) {
 	const schedName = "fire-progress"
 	if err := schedStore.Save(ctx, port.Schedule{
 		Spec: port.ScheduleSpec{
-			Name:      schedName,
-			Prompt:    "turn then block",
-			Workspace: workspace,
+			Name:           schedName,
+			Prompt:         "turn then block",
+			EnvironmentRef: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: workspace, Revision: "in-tree-v1"},
+			PlacementScope: "legacy-local",
 			// No FireTimeout: the default (30m) keeps the watchdog from cancelling
 			// the blocking second turn before the test reads the in-flight state.
 			Trigger: port.TriggerSpec{OneShot: time.Now().Add(-1 * time.Second)},
@@ -344,10 +346,10 @@ func TestFireProgressAdvancesOnTurnBoundaries(t *testing.T) {
 		Model:   "test-model",
 		Store:   store,
 	})
-	svc, err := server.NewService(server.Config{
-		Engine:              engine,
-		Store:               store,
-		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+	svc, err := newTestServerService(server.Config{
+		Engine: engine,
+		Store:  store,
+
 		Now:                 time.Now,
 		DefaultCapabilities: llm.Capabilities(),
 		EventLog:            store,
@@ -456,9 +458,10 @@ func TestFireCreateFailureRecordsTerminalFire(t *testing.T) {
 			// A selector with ModelID but no ProviderID is rejected by
 			// CreateSessionWithProfile (ErrInvalidArgument) — a create-time
 			// failure AFTER Claim.
-			Selector:  port.ScheduleProviderSelector{ModelID: "bogus"},
-			Workspace: workspace,
-			Trigger:   port.TriggerSpec{OneShot: time.Now().Add(-1 * time.Second)},
+			Selector:       port.ScheduleProviderSelector{ModelID: "bogus"},
+			EnvironmentRef: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: workspace, Revision: "in-tree-v1"},
+			PlacementScope: "legacy-local",
+			Trigger:        port.TriggerSpec{OneShot: time.Now().Add(-1 * time.Second)},
 		},
 		State: port.ScheduleState{
 			NextFireAt: time.Now().Add(-1 * time.Second),
@@ -476,10 +479,10 @@ func TestFireCreateFailureRecordsTerminalFire(t *testing.T) {
 		Model:   "test-model",
 		Store:   store,
 	})
-	svc, err := server.NewService(server.Config{
-		Engine:              engine,
-		Store:               store,
-		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+	svc, err := newTestServerService(server.Config{
+		Engine: engine,
+		Store:  store,
+
 		Now:                 time.Now,
 		DefaultCapabilities: llm.Capabilities(),
 		EventLog:            store,

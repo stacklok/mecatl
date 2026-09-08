@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 	"testing"
-	"time"
 
 	sdk "github.com/anthropics/anthropic-sdk-go"
 
@@ -478,7 +477,7 @@ func TestBuildMessagesUserTextFastPath(t *testing.T) {
 // closes out the orphan), and asserts the built request has a matching
 // tool_result for every tool_use — no orphan that Anthropic would 400 on.
 func TestRequestNoOrphanedToolUseAfterInterrupt(t *testing.T) {
-	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	sess := &session.Session{ID: "s1", Mode: session.ModeDefault, State: session.StateIdle, Conversation: &session.Conversation{}}
 	if err := sess.RecordUserPrompt("read the file", nil); err != nil {
 		t.Fatalf("RecordUserPrompt: %v", err)
 	}

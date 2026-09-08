@@ -150,8 +150,8 @@ func testPredictableSessionHandle(t *testing.T, checks predictableSessionHandleC
 		m := newTestModelFromDeps(Deps{Theme: testTheme(), Ctx: context.Background()})
 		m.sessionID = id
 		input := m.statusLineInput(time.Unix(1, 0))
-		if input.Version != 2 || input.Session.Handle != want {
-			t.Fatalf("status protocol = v%d handle %q, want v2 %q", input.Version, input.Session.Handle, want)
+		if input.Version != 3 || input.Session.Handle != want {
+			t.Fatalf("status protocol = v%d handle %q, want v3 %q", input.Version, input.Session.Handle, want)
 		}
 		if _, exists := reflect.TypeFor[statusline.Session]().FieldByName("Digest"); exists {
 			t.Fatal("status protocol retains removed Session.Digest alias")

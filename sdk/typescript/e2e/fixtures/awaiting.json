@@ -1,0 +1,13 @@
+{
+  "turns": [
+    {
+      "tool_calls": [
+        {
+          "id": "restart-write",
+          "name": "Write",
+          "args": { "path": "restart-approved.txt", "content": "approved after restart\n" }
+        }
+      ]
+    }
+  ]
+}

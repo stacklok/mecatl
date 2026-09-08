@@ -1,24 +1,10 @@
 // Package session — EnvironmentRef.
 //
-// This file is part of issue #462 (ADR 0211): the in-process
-// Environment seam. EnvironmentRef is the small, cycle-safe, stdlib-only
-// identity value a tool.Environment carries. It names the backend FAMILY a
-// Workspace/CommandRunner pair was minted against (local, mem, nofs, later
-// remote) plus an opaque backend identity string, WITHOUT pulling any tool
-// type into the session package. It is intentionally a plain struct (not a
-// pointer) so it is comparable and never escapes to the heap on the hot
-// dispatch path.
-//
-// PHASE 3 (ADR 0214): EnvironmentRef is now a snapshot field. It persists
-// across a process restart as an inert exported field on session.Session
-// (sessnap.Snapshot.EnvironmentRef), round-tripped through Of/Restore. A
-// restored session with a non-zero ref reattaches a live Environment through
-// composition's server.Config.EnvironmentResolver for a non-in-tree Kind;
-// local/mem/nofs resolve through the existing factories. Legacy snapshots
-// without the field restore the zero ref and remain backward-compatible
-// (Workspace-derived local/nofs resolution stamps a fresh ref on the next
-// save). Remote transport itself remains deferred — the ref is durable
-// identity, not a transport contract.
+// EnvironmentRef is the sole durable identity of a session's execution
+// environment. It names a provider family, an opaque provider-owned ID, and
+// the exact provider revision required for reattachment. Live workspaces and
+// command runners remain runtime capabilities in tool.Environment and are
+// never persisted here.
 package session
 
 // EnvironmentKind names the backend family an EnvironmentRef was minted
@@ -45,29 +31,21 @@ const (
 )
 
 // EnvironmentRef is the cycle-safe identity value an Environment carries. It
-// names the backend family (Kind) and an opaque backend identity (ID) the
-// adapter that minted the Environment owns. The session package owns it (not
-// the tool package) so it CAN ride the session snapshot and event log without
-// pulling tool types in — it is the identity half of the Environment seam,
-// kept separate from the capability half (tool.Environment).
-//
-// PHASE 3 (ADR 0214): this is a DURABLE identity. It persists on the snapshot
-// (sessnap.Snapshot.EnvironmentRef) so a restarted process can reattach a live
-// Environment to the SAME backend. The session package interprets NEITHER
-// field — it only stores and carries them. A zero ref restored from a legacy
-// snapshot is stamped from the first successfully resolved live Environment so
-// the next ordinary save persists it (no migration sweep).
-//
-// Kind is a backend FAMILY label (see EnvironmentKind); ID is opaque backend
-// identity (a workspace root, a remote container id, …). Both are compared by
-// plain equality; the session package interprets NEITHER — it only stores and
-// carries them. The zero value {Kind:"", ID:""} is the "unspecified" ref and
-// never names a real backend; it is what an Environment built without a ref
-// (legacy/test paths) carries.
+// is the complete durable placement identity: all three fields are required
+// and compared exactly during reattachment. The session package stores but
+// never interprets the values.
 type EnvironmentRef struct {
 	// Kind names the backend family (local / mem / nofs / …).
 	Kind EnvironmentKind
 	// ID is the opaque backend identity the adapter that minted the
 	// Environment owns. It is never parsed by the session package.
 	ID string
+	// Revision pins the exact provider inventory generation.
+	Revision string
+}
+
+// Valid reports whether every component required for exact reattachment is
+// present. The session domain deliberately does not interpret any component.
+func (r EnvironmentRef) Valid() bool {
+	return r.Kind != "" && r.ID != "" && r.Revision != ""
 }

@@ -1,6 +1,6 @@
 # ADR 0288 — TypeScript SDK durable attachment: the watch envelope union, attach/activity semantics, and reconnect authority
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-09-02
 - Scope: `sdk/typescript/src/` — the `WatchSessionEvents` envelope union, `SessionActivity` / `AttachedRun`, `session.attach()` / `session.activity()`, cursor encoding and checkpointing, the reconnect authority, the attachment error vocabulary, and the connection-status monitor. Client-side only.
 

@@ -323,7 +323,7 @@ func TestInspectSubagentForgedIDCleanError(t *testing.T) {
 	store := memstore.New()
 	// Seed a TEAM MEMBER session under its real id: the gate must keep InspectSubagent
 	// from reading it even though it EXISTS in the shared store.
-	member := session.New("team-p1-worker", session.ModeDefault, "/ws", session.Limits{}, time.Now())
+	member := session.New("team-p1-worker", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Now())
 	if err := store.Save(context.Background(), member); err != nil {
 		t.Fatalf("seeding member session: %v", err)
 	}

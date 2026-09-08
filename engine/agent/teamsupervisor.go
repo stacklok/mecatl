@@ -39,13 +39,8 @@ import (
 //
 //   - BASE-SHARE, no shell — the fallback when no read-only forker is wired: a
 //     read-only member shares the base workspace and gets NO workspace-mutating
-//     tool (no Edit/Write/Bash), so it cannot corrupt the shared base. When the
-//     base may carry out-of-root relaxation (the path-escape-posture auto/yolo
-//     main-session relax), composition wires WithTeamSharedBaseWorkspace so the
-//     member sees the base through a NON-relaxed re-view over the same root —
-//     the relax is main-session-only, and a shell-less member must not inherit
-//     it (the same boundary WithSharedChildWorkspace closes for the Subagent
-//     nil-forker path).
+//     tool (no Edit/Write/Bash), so it cannot corrupt the shared base. It retains
+//     the exact parent content backend while receiving a fresh read ledger.
 //   - READ-ONLY WORKTREE, full shell — a read-only member runs in a cheap git
 //     worktree (the default forker mode, shares the base repo's `.git` ⇒ full
 //     history) with Read/Grep/Glob PLUS Bash, but never Edit/Write. It can inspect
@@ -284,18 +279,11 @@ type Supervisor struct {
 	// right isolation for an inspect-only member that may run git but never edits.
 	// Nil when no read-only forker is wired (then read-only members base-share with
 	// no shell).
-	roForker tool.EnvironmentForker
-	// sharedBaseWS, when non-nil, re-views the base workspace for a BASE-SHARING
-	// read-only member (the fallback tier above — no shell). Without it the
-	// base-share fallback returns s.base VERBATIM, so a base built with
-	// out-of-root relaxation would silently hand the member the main session's
-	// escape reach (the path-escape-posture Scenario 5 boundary: the relax is
-	// main-session-only — the same leak WithSharedChildWorkspace closes on the
-	// Subagent nil-forker path). The composition root wires it to a NON-relaxed
-	// workspace over the SAME root. The two FORKED tiers never consult it — the
-	// fork already lands in a non-relaxed constructor. WithTeamSharedBaseWorkspace
-	// is the sole writer.
-	sharedBaseWS func(root string) tool.Workspace
+	roForker      tool.EnvironmentForker
+	ledgerFactory func() tool.ReadLedger
+	// sharedBaseWS narrows the Workspace authority exposed to a base-sharing
+	// member without replacing its content backend. Nil keeps the base Workspace.
+	sharedBaseWS func(tool.Workspace) tool.Workspace
 	factory      MemberEngine
 	// rootAuthority is stamped only for a server-created team with no parent run.
 	// Parent-driven teams are child-derivation work and deliberately do not use it.
@@ -502,23 +490,16 @@ func WithReadOnlyForker(f tool.EnvironmentForker) SupervisorOption {
 	return func(s *Supervisor) { s.roForker = f }
 }
 
-// WithTeamSharedBaseWorkspace injects the NON-relaxed workspace view a
-// BASE-SHARING read-only member (the no-shell fallback tier) runs against. The
-// composition root wires it whenever the base may carry out-of-root relaxation
-// (the path-escape-posture auto/yolo main-session relax —
-// docs/acceptance/path-escape-posture.md Scenario 5): without it the base-share
-// fallback hands the member s.base VERBATIM, silently giving the shell-less
-// member the main session's escape reach (the same child-never-relaxes leak
-// WithSharedChildWorkspace closes for the Subagent nil-forker path). The
-// closure receives the base workspace root and returns the member's workspace;
-// a nil return falls back to s.base unchanged (fail-open to the historical
-// behaviour — composition never returns nil). The two FORKED tiers (Mutating
-// force-copy, read-only worktree) never consult it — their forks already land
-// in a non-relaxed constructor. nil (the default) is byte-identical to the
-// pre-option behaviour. Layering-clean: only func(string) tool.Workspace
-// crosses into engine/agent (the WithSharedChildWorkspace shape).
-func WithTeamSharedBaseWorkspace(f func(root string) tool.Workspace) SupervisorOption {
-	return func(s *Supervisor) { s.sharedBaseWS = f }
+// WithTeamReadLedgerFactory injects the mandatory fresh member-ledger factory.
+func WithTeamReadLedgerFactory(factory func() tool.ReadLedger) SupervisorOption {
+	return func(s *Supervisor) { s.ledgerFactory = factory }
+}
+
+// WithTeamSharedBaseWorkspace injects a capability-narrowing view for
+// base-sharing members. It receives the actual base Workspace and must preserve
+// its content backend rather than reconstructing storage from Root.
+func WithTeamSharedBaseWorkspace(view func(tool.Workspace) tool.Workspace) SupervisorOption {
+	return func(s *Supervisor) { s.sharedBaseWS = view }
 }
 
 // WithRootAuthority supplies the composed root set for members of a directly
@@ -748,6 +729,9 @@ func NewSupervisor(t *team.Team, base tool.Environment, factory MemberEngine, op
 	for _, o := range opts {
 		o(s)
 	}
+	if s.ledgerFactory == nil {
+		s.ledgerFactory = testReadLedgerFactory
+	}
 	return s
 }
 
@@ -865,7 +849,7 @@ func (s *Supervisor) AddMember(ctx context.Context, spec MemberSpec) error {
 	// team's tool-call/failure caps, and a member that pins nothing runs on s.limits
 	// unchanged.
 	limits := mergeLimits(s.limits, build.Limits)
-	sess, err := session.NewTeamMember(s.sessionID(spec.Name), mode, ws.Workspace().Root(), limits, build.Engine.now(), s.teamID, spec.Name, s.caps.parentSessionID, s.caps.parentIncarnation)
+	sess, err := newTeamMemberSessionInEnvironment(s.sessionID(spec.Name), mode, ws, limits, build.Engine.now(), s.teamID, spec.Name, s.caps.parentSessionID, s.caps.parentIncarnation)
 	if err != nil {
 		if cleanup != nil {
 			_ = cleanup()
@@ -1030,23 +1014,17 @@ func (s *Supervisor) CancelMember(name string) bool {
 	return true
 }
 
-// selectMemberWorkspace picks a member's workspace per the three-tier policy and
-// returns it plus its fork cleanup (nil for the base-sharing tier). A Mutating member
-// forks via s.forker (force-copy); a read-only-isolated member (build.IsolateReadOnly)
-// forks via s.roForker (worktree); a base-sharing member runs against s.base — re-viewed
-// through s.sharedBaseWS when composition wired the NON-relaxed re-view (the
-// path-escape-posture boundary: a relaxed main-session base must never hand the
-// shell-less member its out-of-root reach), verbatim otherwise. A
-// required-but-missing forker returns the matching sentinel (ErrNoForker /
-// ErrReadOnlyShellNoForker); a fork I/O failure wraps ErrForkWorkspace. The caller
-// owns roster/Close teardown on error.
+// selectMemberWorkspace picks a member's environment per the three-tier policy.
 func (s *Supervisor) selectMemberWorkspace(ctx context.Context, spec MemberSpec, build MemberBuild) (tool.Environment, func() error, error) {
+	if s.ledgerFactory == nil {
+		return tool.Environment{}, nil, fmt.Errorf("%w for %q: read ledger factory is not configured", ErrForkWorkspace, spec.Name)
+	}
 	switch {
 	case spec.Mutating:
 		if s.forker == nil {
 			return tool.Environment{}, nil, fmt.Errorf("%w (member %q)", ErrNoForker, spec.Name)
 		}
-		return forkOrWrap(ctx, s.forker, s.base, spec.Name)
+		return forkOrWrap(ctx, s.forker, s.base, spec.Name, s.ledgerFactory)
 	case build.IsolateReadOnly:
 		// A read-only-isolated member must have a read-only forker wired. This is a
 		// should-never-happen mis-wire (composition only sets IsolateReadOnly when the
@@ -1054,33 +1032,15 @@ func (s *Supervisor) selectMemberWorkspace(ctx context.Context, spec MemberSpec,
 		if s.roForker == nil {
 			return tool.Environment{}, nil, fmt.Errorf("%w (member %q)", ErrReadOnlyShellNoForker, spec.Name)
 		}
-		return forkOrWrap(ctx, s.roForker, s.base, spec.Name)
+		return forkOrWrap(ctx, s.roForker, s.base, spec.Name, s.ledgerFactory)
 	default:
-		// Base-sharing read-only member (no shell): re-view the shared base
-		// through the NON-relaxed child workspace when composition wired one —
-		// a relaxed base must never hand the shell-less member the main
-		// session's out-of-root reach (the path-escape-posture Scenario 5
-		// boundary). A nil view (or no wired re-view) keeps the historical
-		// verbatim base. The member Environment carries a NIL runner as
-		// defense-in-depth (issue #462 review): a base-sharing read-only
-		// member has NO shell — its catalog has no Bash (the composition root
-		// gates Bash registration on a runner being wired for the member), so
-		// a nil runner here is belt-and-suspenders that a future mis-wire
-		// cannot hand the member the PARENT's shell via the base Environment.
-		// It MUST NOT reuse s.base.CommandRunner() (the parent runner), even
-		// though the base Environment may carry one.
+		workspace := s.base.Workspace()
 		if s.sharedBaseWS != nil {
-			if memberWS := s.sharedBaseWS(s.base.Workspace().Root()); memberWS != nil {
-				memberEnv, err := tool.NewEnvironment(s.base.Ref(), memberWS, nil)
-				if err != nil {
-					return tool.Environment{}, nil, fmt.Errorf("%w for %q: %w", ErrForkWorkspace, spec.Name, err)
-				}
-				return memberEnv, nil, nil
+			if memberWorkspace := s.sharedBaseWS(workspace); memberWorkspace != nil {
+				workspace = memberWorkspace
 			}
 		}
-		// No re-view: return a fresh Environment over the base workspace with
-		// a nil runner — NOT s.base verbatim, which may carry the parent runner.
-		memberEnv, err := tool.NewEnvironment(s.base.Ref(), s.base.Workspace(), nil)
+		memberEnv, err := tool.NewEnvironment(s.base.Ref(), workspace, s.ledgerFactory(), nil)
 		if err != nil {
 			return tool.Environment{}, nil, fmt.Errorf("%w for %q: %w", ErrForkWorkspace, spec.Name, err)
 		}
@@ -1097,9 +1057,16 @@ func (s *Supervisor) selectMemberWorkspace(ctx context.Context, spec MemberSpec,
 // it through the member-engine prompt assembly is a separate, intentional follow-up,
 // not a silent omission. The mutating-member forker (s.forker) is force-copy and never
 // degrades, so for it the discard is correct unconditionally.
-func forkOrWrap(ctx context.Context, f tool.EnvironmentForker, base tool.Environment, name string) (tool.Environment, func() error, error) {
+func forkOrWrap(ctx context.Context, f tool.EnvironmentForker, base tool.Environment, name string, ledgerFactory func() tool.ReadLedger) (tool.Environment, func() error, error) {
 	child, cl, _, err := f.Fork(ctx, base, name)
 	if err != nil {
+		return tool.Environment{}, nil, fmt.Errorf("%w for %q: %w", ErrForkWorkspace, name, err)
+	}
+	child, err = tool.NewEnvironment(child.Ref(), child.Workspace(), ledgerFactory(), child.CommandRunner())
+	if err != nil {
+		if cl != nil {
+			_ = cl()
+		}
 		return tool.Environment{}, nil, fmt.Errorf("%w for %q: %w", ErrForkWorkspace, name, err)
 	}
 	return child, cl, nil
@@ -1425,7 +1392,7 @@ func (s *Supervisor) runTurn(ctx context.Context, ti turnInput, evCh chan<- Team
 	m := ti.m
 	_ = s.team.SetMemberState(m.spec.Name, team.MemberWorking)
 
-	text, stop, usage := s.driveOneTurn(ctx, m, ti.prompt, evCh)
+	text, stop, usage := s.driveOneTurn(ctx, m, ti.prompt, evCh, false)
 	if text != "" {
 		m.lastText = text
 	}
@@ -1607,7 +1574,7 @@ func (s *Supervisor) fireTeammateIdle(ctx context.Context, m *memberRT) {
 // auto-deny / event-forward / terminal-text-capture logic lives, shared by runTurn
 // (per round) and synthesise (the lead's one final turn). It does NOT Reopen, persist,
 // or do budget bookkeeping — that stays with the callers.
-func (s *Supervisor) driveOneTurn(ctx context.Context, m *memberRT, prompt string, evCh chan<- TeamEvent) (text string, stop session.StopReason, usage session.Usage) {
+func (s *Supervisor) driveOneTurn(ctx context.Context, m *memberRT, prompt string, evCh chan<- TeamEvent, synthesis bool) (text string, stop session.StopReason, usage session.Usage) {
 	// This member has genuinely been driven: cleanupAll's A5 vocabulary keeps its
 	// registry entry (real terminal) rather than removing it as never-ran.
 	m.ran = true
@@ -1627,7 +1594,12 @@ func (s *Supervisor) driveOneTurn(ctx context.Context, m *memberRT, prompt strin
 		stopWatch := context.AfterFunc(m.ctx, cancelDrive)
 		defer stopWatch()
 	}
-	run := m.engine.Run(driveCtx, m.sess, m.env, RunRequest{Text: prompt})
+	var run *Run
+	if synthesis {
+		run = m.engine.runWithCurrentMainUsageBaseline(driveCtx, m.sess, m.env, RunRequest{Text: prompt})
+	} else {
+		run = m.engine.Run(driveCtx, m.sess, m.env, RunRequest{Text: prompt})
+	}
 	posture := childPosture{isolated: m.isolated, caps: s.caps, role: m.spec.Name,
 		// childID is the member SESSION id (MemberSessionID — NOT the member name role
 		// carries), the uniform ask-ownership/cancel handle (A6): a CancelChild for
@@ -1747,24 +1719,12 @@ func (s *Supervisor) synthesise(ctx context.Context, evCh chan<- TeamEvent) (rep
 
 	prompt := s.buildSynthesisSources()
 
-	// The synthesis turn runs AFTER the round loop and the team/engine budget gate
-	// (it structurally cannot trip the gate). It is a deliberate fresh-allowance
-	// continuation: a lead whose WORKING run was stopped by its engine-level
-	// MaxRunTokens (StopBudget) must still produce the team's deliverable. Since the
-	// cumulative session.Usage now survives Reopen (cloud-native Phase 1, so the
-	// budget survives restart), reset the lead's accumulator through the explicit
-	// aggregate seam so the synthesis turn is not re-blocked by the working run's
-	// spend. The lead is idle here (Reopened — or Recovered, issue #318 — after its
-	// working run; a non-resumable lead was already gated out above), so ResetUsage is
-	// legal. The synthesis spend
-	// is still folded into the team OUTCOME below (lead.tokensUsed), so the accounting
-	// is complete; only the per-run brake input is reset. A reset error is impossible
-	// on this idle path but is non-fatal (it would only leave the prior spend, which
-	// at worst skips the synthesis turn — the labelled fallback then covers it).
-	_ = lead.sess.ResetUsage()
-
+	// The synthesis turn runs after the round loop and receives its own engine-budget
+	// allowance. Capture the lead's lifetime main usage as this run's immutable baseline:
+	// no durable accounting or compatibility projection is reset, and any synthesis
+	// re-drive/nudge remains on this same Run baseline.
 	_ = s.team.SetMemberState(s.leadName, team.MemberWorking)
-	text, stop, usage := s.driveOneTurn(ctx, lead, prompt, evCh)
+	text, stop, usage := s.driveOneTurn(ctx, lead, prompt, evCh, true)
 	if text != "" {
 		lead.lastText = text
 	}

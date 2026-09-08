@@ -17,6 +17,20 @@ import (
 // msgs that don't originate from the stream. These are plain data — no proto,
 // no grpc — so ui can switch over them freely.
 
+// SessionTitleMsg carries the authoritative, source-free title lifecycle update.
+type SessionTitleMsg struct {
+	Title           string
+	Provenance      string
+	Revision        uint64
+	GenerationState string
+	LatestAttempt   TitleAttemptSummary
+}
+
+// TitleAttemptSummary is the latest durable title attempt projection.
+type TitleAttemptSummary struct {
+	ID string
+}
+
 // SessionInitMsg marks the run stream as live (proto type "session.init").
 type SessionInitMsg struct{ Seq int64 }
 
@@ -118,6 +132,16 @@ const (
 // never persisted and never enters the conversation transcript.
 type ToolProgressMsg struct {
 	Text string
+}
+
+// MCPAuthorizationMsg is a broker authorization status marker. It deliberately
+// carries only safe correlation and status; presentation URLs and effective tool
+// arguments never cross the event stream.
+type MCPAuthorizationMsg struct {
+	AuthorizationID string
+	DisplayName     string
+	CallID          string
+	Status          string
 }
 
 // PermissionAskMsg opens the approval modal; AskID is the exact correlation key
@@ -387,19 +411,18 @@ const (
 	ParallelBranchStart ParallelKind = "branch_start"
 	// ParallelBranchTool marks one branch's child tool resolving (ToolName/IsError/ToolCount set).
 	ParallelBranchTool ParallelKind = "branch_tool"
-	// ParallelBranchEnd marks one branch finishing (Stop/Usage/DurationMs/Failed/Workspace set).
+	// ParallelBranchEnd marks one branch finishing (Stop/Usage/DurationMs/Failed set).
 	ParallelBranchEnd ParallelKind = "branch_end"
-	// ParallelEnd marks a Parallel run finishing (Join/Winner/WinnerWorkspace/Usage/Stop set).
+	// ParallelEnd marks a Parallel run finishing (Join/Winner/Usage/Stop set).
 	ParallelEnd ParallelKind = "end"
 )
 
 // ParallelMsg is the BOUNDED projection of a Parallel fork-join run, as plain data
 // the ui renders in the ctrl+a Parallel tab. Unlike the FLAT SubagentMsg, a
 // Parallel run is a GROUP: N branches of ONE call (keyed by ParentCallID) sharing a
-// join strategy + a single winner + preserved per-branch fork paths. It carries ids,
-// a goal label, child tool names/counts, usage, stop, duration, the join strategy,
-// the winner index, the fork-root PATHS (handles already in the result text, not
-// branch content) — plus the BOUNDED content previews the server clamp-scrubs per
+// join strategy and a single winner. It carries ids, a goal label, child tool
+// names/counts, usage, stop, duration, the join strategy, and the winner index —
+// plus the BOUNDED content previews the server clamp-scrubs per
 // ADR 0079 (InnerKind/Text/Detail on a branch_tool event), bounded, scrubbed, and
 // client-only (never entering the parent conversation — gauntlet #7).
 // ParentCallID is the group key.
@@ -445,19 +468,17 @@ type ParallelMsg struct {
 	Text      string
 	Detail    string
 	ToolCount int
-	// Failed / Workspace are set on ParallelBranchEnd (Workspace is the branch's fork root).
-	Failed    bool
-	Workspace string
+	// Failed is set on ParallelBranchEnd.
+	Failed bool
 	// Stop is the branch terminal (branch_end) or the run-level stop (end).
 	Stop string
 	// Usage is the branch's cumulative usage (branch_end) or the run total (end).
 	Usage Usage
 	// DurationMs is the branch's wall-clock duration (branch_end).
 	DurationMs int64
-	// Winner / WinnerWorkspace are set on ParallelEnd: the real winning branch index
-	// (-1 for join=all / none-succeeded) and its preserved fork root.
-	Winner          int
-	WinnerWorkspace string
+	// Winner is set on ParallelEnd: the real winning branch index
+	// (-1 for join=all / none-succeeded).
+	Winner int
 }
 
 // ModelRetryMsg is the durable, client-visible failed-step retry lifecycle notice.
@@ -928,31 +949,29 @@ func subagentMsg(kind SubagentKind, s *mecatlv1.Subagent) SubagentMsg {
 // single translation point for the parallel.* event family.
 func parallelMsg(kind ParallelKind, p *mecatlv1.Parallel) ParallelMsg {
 	return ParallelMsg{
-		Kind:            kind,
-		ParentCallID:    p.GetParentCallId(),
-		Join:            p.GetJoin(),
-		BranchCount:     int(p.GetBranchCount()),
-		BranchIndex:     int(p.GetBranchIndex()),
-		ChildID:         p.GetChildId(),
-		BranchLabel:     p.GetBranchLabel(),
-		Goal:            p.GetGoal(),
-		RoutedCategory:  p.GetRoutedCategory(),
-		RoutedModel:     p.GetRoutedModel(),
-		RoutingReason:   p.GetRoutingReason(),
-		Model:           p.GetModel(),
-		ToolName:        p.GetToolName(),
-		IsError:         p.GetIsError(),
-		InnerKind:       p.GetInnerKind(),
-		Text:            p.GetText(),
-		Detail:          p.GetDetail(),
-		ToolCount:       int(p.GetToolCount()),
-		Failed:          p.GetFailed(),
-		Workspace:       p.GetWorkspace(),
-		Stop:            p.GetStop(),
-		Usage:           usageFrom(p.GetUsage()),
-		DurationMs:      p.GetDurationMs(),
-		Winner:          int(p.GetWinner()),
-		WinnerWorkspace: p.GetWinnerWorkspace(),
+		Kind:           kind,
+		ParentCallID:   p.GetParentCallId(),
+		Join:           p.GetJoin(),
+		BranchCount:    int(p.GetBranchCount()),
+		BranchIndex:    int(p.GetBranchIndex()),
+		ChildID:        p.GetChildId(),
+		BranchLabel:    p.GetBranchLabel(),
+		Goal:           p.GetGoal(),
+		RoutedCategory: p.GetRoutedCategory(),
+		RoutedModel:    p.GetRoutedModel(),
+		RoutingReason:  p.GetRoutingReason(),
+		Model:          p.GetModel(),
+		ToolName:       p.GetToolName(),
+		IsError:        p.GetIsError(),
+		InnerKind:      p.GetInnerKind(),
+		Text:           p.GetText(),
+		Detail:         p.GetDetail(),
+		ToolCount:      int(p.GetToolCount()),
+		Failed:         p.GetFailed(),
+		Stop:           p.GetStop(),
+		Usage:          usageFrom(p.GetUsage()),
+		DurationMs:     p.GetDurationMs(),
+		Winner:         int(p.GetWinner()),
 	}
 }
 
@@ -1070,6 +1089,8 @@ func EventToMsg(ev *mecatlv1.Event) tea.Msg {
 	switch ev.GetType() {
 	case "session.init":
 		return SessionInitMsg{Seq: ev.GetSeq()}
+	case "session.title":
+		return sessionTitleMsg(ev.GetTitle())
 	case "turn.start":
 		return TurnStartMsg{Turn: ev.GetTurn()}
 	case "turn.end":
@@ -1127,14 +1148,14 @@ func EventToMsg(ev *mecatlv1.Event) tea.Msg {
 	case "compaction.archive":
 		return compactionArchiveMsg(ev.GetCompactionArchive())
 	default:
-		// The text-only advisory notices (compaction / no_progress / provider.route)
-		// are mapped by advisoryEventToMsg and the subagent.* / team.* delegation
-		// projections by delegationEventToMsg (two split-out switches) to keep this
-		// dispatcher under the cyclomatic-complexity bound. The switches are total
-		// over the documented type strings ONLY together: a new advisory case goes to
-		// advisoryEventToMsg, a new delegation case to delegationEventToMsg, not here.
-		// An unknown/empty type returns nil so future event kinds are ignored,
-		// not fatal.
+		// The text-only advisory notices (compaction / no_progress / provider.route),
+		// MCP authorization lifecycle events, and the subagent.* / team.* delegation
+		// projections are mapped by advisoryEventToMsg and delegationEventToMsg (two
+		// split-out switches) to keep this dispatcher under the cyclomatic-complexity
+		// bound. The switches are total over the documented type strings ONLY
+		// together: a new advisory or authorization case goes to advisoryEventToMsg,
+		// a new delegation case to delegationEventToMsg, not here. An unknown/empty
+		// type returns nil so future event kinds are ignored, not fatal.
 		if msg := advisoryEventToMsg(ev); msg != nil {
 			return msg
 		}
@@ -1142,11 +1163,23 @@ func EventToMsg(ev *mecatlv1.Event) tea.Msg {
 	}
 }
 
+func sessionTitleMsg(title *mecatlv1.SessionTitle) SessionTitleMsg {
+	if title == nil {
+		return SessionTitleMsg{}
+	}
+	attempt := title.GetLatestAttempt()
+	return SessionTitleMsg{
+		Title: title.GetTitle(), Provenance: title.GetProvenance(), Revision: title.GetRevision(), GenerationState: title.GetGenerationState(),
+		LatestAttempt: TitleAttemptSummary{ID: attempt.GetId()},
+	}
+}
+
 // advisoryEventToMsg maps the text-only advisory event types (compaction,
-// no_progress, provider.route) to their tea.Msg. It is split out of EventToMsg
-// only so neither dispatcher grows past the cyclomatic-complexity bound (the
-// delegationEventToMsg precedent). An unmatched type returns nil so the caller
-// falls through to the delegation switch.
+// no_progress, provider.route), the steer echo/outcome, and the MCP
+// authorization lifecycle events to their tea.Msg. It is split out of
+// EventToMsg only so neither dispatcher grows past the cyclomatic-complexity
+// bound (the delegationEventToMsg precedent). An unmatched type returns nil so
+// the caller falls through to the delegation switch.
 func advisoryEventToMsg(ev *mecatlv1.Event) tea.Msg {
 	switch ev.GetType() {
 	case "model.retry":
@@ -1164,6 +1197,9 @@ func advisoryEventToMsg(ev *mecatlv1.Event) tea.Msg {
 		return SteerEchoMsg{Text: ev.GetSteer().GetText(), Parts: contentPartsFromProto(ev.GetSteer().GetParts()), MessageID: ev.GetSteer().GetMessageId()}
 	case "steer.outcome":
 		return steerOutcomeMsg(ev.GetSteerOutcome())
+	case "authorization.required", "authorization.resolved":
+		a := ev.GetAuthorization()
+		return MCPAuthorizationMsg{AuthorizationID: a.GetAuthorizationId(), DisplayName: a.GetDisplayName(), CallID: a.GetCallId(), Status: a.GetStatus()}
 	default:
 		return nil
 	}

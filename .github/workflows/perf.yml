@@ -57,9 +57,25 @@
 name: perf
 
 on:
+  # Keep this allowlist aligned with .github/scripts/docs-only-changes.sh.
+  # GitHub skips the workflow only when every changed path is documentation-only.
   push:
     branches: [main]
+    paths-ignore:
+      - README.md
+      - 'docs/**/*.md'
+      - 'user-docs/**/*.md'
+      - 'user-docs/**/*.mdx'
+      - 'user-docs/_category_.json'
+      - 'user-docs/**/_category_.json'
   pull_request:
+    paths-ignore:
+      - README.md
+      - 'docs/**/*.md'
+      - 'user-docs/**/*.md'
+      - 'user-docs/**/*.mdx'
+      - 'user-docs/_category_.json'
+      - 'user-docs/**/_category_.json'
 
 # Least-privilege default; each job narrows or widens as needed.
 permissions:

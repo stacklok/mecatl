@@ -8,6 +8,7 @@ import (
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
@@ -117,7 +118,7 @@ func (s *skillsState) Render(width, _ int) (string, []ClickableRegion) {
 		return "", nil
 	}
 	if s.view == skillsDetail && s.detail != nil {
-		body := renderLearnedSkillDetail(s.deps.theme, *s.detail, s.diff)
+		body := renderLearnedSkillDetail(s.deps.theme, *s.detail, s.diff, width)
 		if s.err != nil {
 			body += "\n\n" + s.deps.theme.Style("errorText").Render(sanitizeTerminal(s.err.Error())) + "\npress esc, then enter to refresh"
 		}
@@ -392,7 +393,7 @@ func cloneSkillGenerations(in map[string]uint64) map[string]uint64 {
 	return out
 }
 
-func renderLearnedSkillDetail(th theme.Theme, skill client.LearnedSkill, diff string) string {
+func renderLearnedSkillDetail(th theme.Theme, skill client.LearnedSkill, diff string, width int) string {
 	var b strings.Builder
 	b.WriteString(th.Style("askTitle").Render("Learned skill") + "\n\n")
 	state := skill.State
@@ -412,25 +413,27 @@ func renderLearnedSkillDetail(th theme.Theme, skill client.LearnedSkill, diff st
 			}
 		}
 	}
+	budget := cardTextWidth(width)
+	write := func(line string) { b.WriteString(wrapCardText(line, budget) + "\n") }
 	for _, line := range []string{"name: " + skill.Name, "owner: " + skill.OwnerAgent, "state: " + state, "version: " + skill.Version, "revision: " + skill.Revision, "evidence: " + strconv.Itoa(skill.EvidenceCount), "description: " + skill.Description, "body: " + skill.Body} {
-		b.WriteString(sanitizeTerminal(line) + "\n")
+		write(line)
 	}
 	if len(skill.Evaluations) > 0 {
 		e := skill.Evaluations[len(skill.Evaluations)-1]
-		b.WriteString("evaluation: " + sanitizeTerminal(e.Verdict) + " fixtures=" + sanitizeTerminal(strings.Join(e.FixtureIDs, ",")) + "\n")
+		write("evaluation: " + e.Verdict + " fixtures=" + strings.Join(e.FixtureIDs, ","))
 		if e.Baseline != "" {
-			b.WriteString("baseline: " + sanitizeTerminal(e.Baseline) + "\n")
+			write("baseline: " + e.Baseline)
 		}
 		if e.Treatment != "" {
-			b.WriteString("treatment: " + sanitizeTerminal(e.Treatment) + "\n")
+			write("treatment: " + e.Treatment)
 		}
 	}
-	b.WriteString("history receipts: " + strconv.Itoa(len(skill.Receipts)) + "\n")
+	write("history receipts: " + strconv.Itoa(len(skill.Receipts)))
 	for _, receipt := range skill.Receipts {
-		b.WriteString("  " + sanitizeTerminal(receipt.Operation) + " " + sanitizeTerminal(receipt.FromState) + " → " + sanitizeTerminal(receipt.ToState) + "\n")
+		write("  " + receipt.Operation + " " + receipt.FromState + " → " + receipt.ToState)
 	}
 	if diff != "" {
-		b.WriteString("\nversion diff:\n" + sanitizeTerminal(diff) + "\n")
+		b.WriteString("\nversion diff:\n" + wrapCardText(diff, budget) + "\n")
 	}
 	b.WriteString("\nesc back   v diff   a activate   x reject   d archive   r rollback")
 	return b.String()
@@ -460,6 +463,59 @@ func cardTextWidth(width int) int {
 	return w
 }
 
+// wrapCardText sanitizes a server-derived plain-text row before wrapping it to
+// the offered card-body budget. Callers apply styles only after this step;
+// assistant Markdown remains on its separate glamour rendering path.
+func wrapCardText(text string, budget int) string {
+	text = sanitizeTerminal(text)
+	if budget > 0 {
+		return ansi.Wrap(text, budget, "")
+	}
+	return text
+}
+
+// focusCardTextWidth returns the usable card body width for a focus overlay. Unlike
+// cardTextWidth, a known positive viewport must never disable trace wrapping: even
+// a viewport narrower than the card chrome gets a one-cell budget so a long token
+// cannot make the centred card wider.
+func focusCardTextWidth(width int) int {
+	if budget := cardTextWidth(width); budget > 0 || width <= 0 {
+		return budget
+	}
+	return max(1, width-6) // askCard border (2) + horizontal padding (2*2)
+}
+
+// wrapFocusMetadataAtWidth wraps a complete focus-card row to its supplied body budget.
+// A zero budget remains deliberately unbounded, matching the other overlays.
+func wrapFocusMetadataAtWidth(s string, budget int) string {
+	if budget > 0 {
+		return ansi.Wrap(s, budget, "")
+	}
+	return s
+}
+
+// hangingIndentWrap wraps a detail row to the text budget while indenting continuation
+// rows deeper than its parent lane. It applies the continuation's narrower width to every
+// line, which guarantees both indentation forms fit the card without dropping content.
+func hangingIndentWrap(s, firstIndent, continuationIndent string, budget int) string {
+	if budget <= 0 {
+		return firstIndent + s
+	}
+	continuationWidth := lipgloss.Width(continuationIndent)
+	if continuationWidth >= budget {
+		return ansi.Wrap(s, budget, "")
+	}
+	lines := strings.Split(ansi.Wrap(s, budget-continuationWidth, ""), "\n")
+	for i, line := range lines {
+		if i == 0 {
+			lines[i] = firstIndent + line
+		} else {
+			lines[i] = continuationIndent + line
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
 // indentWrap word-wraps s to the text budget and indents every resulting line by
 // two spaces (the inventory's description indent) so continuation lines align
 // under the first. A budget <= 0 falls back to a single indented line (unknown
@@ -469,6 +525,9 @@ func indentWrap(s string, budget int) string {
 	const indent = "  "
 	if budget <= 0 {
 		return indent + s
+	}
+	if budget <= len(indent) {
+		return ansi.Wrap(s, budget, "")
 	}
 	wrapped := ansi.Wrap(s, budget-len(indent), "")
 	lines := strings.Split(wrapped, "\n")
@@ -508,7 +567,7 @@ func skillsRowLines(th theme.Theme, skills []client.Skill, budget int) []string 
 		if s.AgentOwned {
 			name += "  [agent-owned · active " + sanitizeTerminal(s.ActiveVersion) + " · " + sanitizeTerminal(s.OwnerAgent) + "]"
 		}
-		lines = append(lines, th.Style("toolName").Render(name))
+		lines = append(lines, renderToolCardText(th.Style("toolName"), name, budget))
 		if s.Description != "" {
 			desc := th.Style("toolArgs").Render(indentWrap(sanitizeTerminal(s.Description), budget))
 			lines = append(lines, strings.Split(desc, "\n")...)
@@ -557,7 +616,7 @@ func renderSkillsPanel(th theme.Theme, st skillsState, caps client.Capabilities,
 			if i == st.cursor {
 				mark = "> "
 			}
-			b.WriteString(mark + th.Style("toolName").Render(sanitizeTerminal(skill.Name)) + " [" + sanitizeTerminal(skill.State) + " · " + sanitizeTerminal(skill.OwnerAgent) + "]\n")
+			b.WriteString(renderToolCardText(th.Style("toolName"), mark+skill.Name+" ["+skill.State+" · "+skill.OwnerAgent+"]", budget) + "\n")
 		}
 	}
 

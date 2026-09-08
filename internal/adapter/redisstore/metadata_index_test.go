@@ -67,7 +67,7 @@ func TestPageSessionMetadataSeparatesOwnerScopesAndRejectsCursorReuse(t *testing
 		{id: "bob-b", owner: bob},
 		{id: "alice-c", owner: alice},
 	} {
-		s := session.New(fixture.id, session.ModeAccept, "/work", session.Limits{}, time.Now().UTC())
+		s := session.New(fixture.id, session.ModeAccept, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/work", Revision: "in-tree-v1"}, session.Limits{}, time.Now().UTC())
 		if err := s.RestoreLabels(fixture.owner, session.Authority{}); err != nil {
 			t.Fatalf("RestoreLabels(%q): %v", fixture.id, err)
 		}
@@ -112,7 +112,7 @@ func TestPageSessionMetadataUsesOneBoundedMetadataRangePerPage(t *testing.T) {
 	ctx := context.Background()
 	alice := &session.Principal{Issuer: "https://issuer.example", Subject: "alice"}
 	for _, id := range []session.SessionID{"alice-a", "alice-b", "alice-c", "alice-d"} {
-		s := session.New(id, session.ModeAccept, "/work", session.Limits{}, time.Now().UTC())
+		s := session.New(id, session.ModeAccept, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/work", Revision: "in-tree-v1"}, session.Limits{}, time.Now().UTC())
 		if err := s.RestoreLabels(alice, session.Authority{}); err != nil {
 			t.Fatalf("RestoreLabels(%q): %v", id, err)
 		}
@@ -160,7 +160,7 @@ func TestPageSessionMetadataWorkIsBoundedAndDoesNotLoadSnapshots(t *testing.T) {
 	ctx := context.Background()
 	owner := &session.Principal{Issuer: "https://issuer.example", Subject: "alice"}
 	for i := range 8 {
-		s := session.New(session.SessionID("session-"+string(rune('a'+i))), session.ModeAccept, "/work", session.Limits{}, time.Now().UTC())
+		s := session.New(session.SessionID("session-"+string(rune('a'+i))), session.ModeAccept, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/work", Revision: "in-tree-v1"}, session.Limits{}, time.Now().UTC())
 		if err := s.RestoreLabels(owner, session.Authority{}); err != nil {
 			t.Fatalf("RestoreLabels: %v", err)
 		}
@@ -237,7 +237,7 @@ func TestSaveAndDeleteAdvanceGenerationAndInvalidateCursors(t *testing.T) {
 	alice := &session.Principal{Issuer: "https://issuer.example", Subject: "alice"}
 	sessions := make(map[session.SessionID]*session.Session)
 	for _, id := range []session.SessionID{"alice-a", "alice-b"} {
-		s := session.New(id, session.ModeAccept, "/work", session.Limits{}, time.Now().UTC())
+		s := session.New(id, session.ModeAccept, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/work", Revision: "in-tree-v1"}, session.Limits{}, time.Now().UTC())
 		if err := s.RestoreLabels(alice, session.Authority{}); err != nil {
 			t.Fatalf("RestoreLabels(%q): %v", id, err)
 		}
@@ -298,7 +298,7 @@ func TestDeleteRemovesMetadataAndInvalidatesCursor(t *testing.T) {
 	st, _ := newMetadataTestStore(t)
 	ctx := context.Background()
 	for _, id := range []session.SessionID{"delete-a", "delete-b"} {
-		if err := st.Save(ctx, session.New(id, session.ModeAccept, "/work", session.Limits{}, time.Now().UTC())); err != nil {
+		if err := st.Save(ctx, session.New(id, session.ModeAccept, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/work", Revision: "in-tree-v1"}, session.Limits{}, time.Now().UTC())); err != nil {
 			t.Fatalf("Save(%q): %v", id, err)
 		}
 	}
@@ -327,7 +327,7 @@ func TestMetadataRebuildRejectsStaleGenerationBeforeAtomicPublication(t *testing
 		t.Fatal(err)
 	}
 	t.Cleanup(mr.Close)
-	legacy := session.New("legacy", session.ModeAccept, "/work", session.Limits{}, time.Now().UTC())
+	legacy := session.New("legacy", session.ModeAccept, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/work", Revision: "in-tree-v1"}, session.Limits{}, time.Now().UTC())
 	blob, err := sessnap.Marshal(legacy)
 	if err != nil {
 		t.Fatal(err)
@@ -351,7 +351,7 @@ func TestMetadataRebuildRejectsStaleGenerationBeforeAtomicPublication(t *testing
 	if reason, err := st.MigrateSessionFamily(ctx, inspection.Families[0]); err != nil || reason != "" {
 		t.Fatalf("adopt row = %q, %v", reason, err)
 	}
-	if err := st.Save(ctx, session.New("concurrent", session.ModeAccept, "/work", session.Limits{}, time.Now().UTC())); err != nil {
+	if err := st.Save(ctx, session.New("concurrent", session.ModeAccept, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/work", Revision: "in-tree-v1"}, session.Limits{}, time.Now().UTC())); err != nil {
 		t.Fatal(err)
 	}
 	published, err := st.FinalizeSessionMigrationCoverage(ctx, inspection.Generation, inspection.V1Families+inspection.V2Families+inspection.InvalidFamilies)

@@ -21,10 +21,13 @@ copy is ignored with a WARN — honouring it would be a security downgrade);
 `operator + project` subtrees may also be set per-project (within the
 operator's cap / trust gate).
 
-The **Default** column is the value the harness uses when the key is ABSENT
-(`(empty)` for an unset string, `(absent)` for an unset
-map/list/sub-block). The example values in the `config init` skeleton are
-ILLUSTRATIVE, not defaults — an absent key falls back to the Default shown here.
+The **Default** column describes the `settings.yaml` schema/resolver fallback when
+an applicable key is ABSENT (`(empty)` for an unset string, `(absent)` for an unset
+map/list/sub-block). It is not a universal process-runtime default: command roots
+and modes can supply their own defaults, disable a feature, or reject a setting.
+The example values in the `config init` skeleton are ILLUSTRATIVE, not defaults.
+For the configuration planes and intentional per-mode differences, see
+https://mecatl.dev/building/deployment/settings.
 
 ## `permissions`
 
@@ -133,11 +136,11 @@ Optional completed-trajectory observation policy. Off means no automatic complet
 | `learning.sensitivity` | `string` | `balanced` | Sensitivity controls weighted automatic admission. Empty means balanced. |
 | `learning.skills` | `learningskillssection` | `(absent)` | Skills controls learned-skill lifecycle policy. |
 | `learning.skills.activation` | `string` | `validated when mode is explicitly auto; evaluated otherwise` | Activation is validated (default for Auto) or evaluated. Project settings may only tighten validated to evaluated. |
-| `learning.automatic` | `learningautomaticsection` | `(absent)` | Automatic is operator-only process-local rate policy. |
+| `learning.automatic` | `learningautomaticsection` | `(absent)` | Automatic is operator-only admission policy. Standard non-off composition applies it through a durable ledger, making count/token windows, cooldown, and deduplication deployment-wide across cooperating processes. |
 | `learning.automatic.cooldown` | `duration` | `10m` | Cooldown is the per-principal weighted-admission cooldown; zero disables it. |
 | `learning.automatic.window` | `duration` | `1h` | Window is the sliding count/token window, strictly 1m..24h. |
-| `learning.automatic.max_reflections` | `int` | `8` | MaxReflections is the process-wide count cap; zero disables automatic reflection. |
-| `learning.automatic.max_tokens` | `int` | `100000` | MaxTokens is the process-wide reserved-token cap; zero disables automatic reflection. |
+| `learning.automatic.max_reflections` | `int` | `8` | MaxReflections is the global count cap; zero disables automatic reflection. |
+| `learning.automatic.max_tokens` | `int` | `100000` | MaxTokens is the global reserved-token cap; zero disables automatic reflection. |
 | `learning.automatic.max_reflections_per_principal` | `int` | `4` | MaxReflectionsPerPrincipal is the per-principal count cap; zero disables automatic reflection. |
 | `learning.automatic.max_tokens_per_principal` | `int` | `50000` | MaxTokensPerPrincipal is the per-principal reserved-token cap; zero disables automatic reflection. |
 
@@ -161,6 +164,22 @@ Versioned automatic session cleanup policy. Operator-tier only; project values a
 | `retention.scheduled.max_count` | `int` | `0` | MaxCount keeps the newest eligible rows up to this count; 0 disables the count limit. |
 | `retention.sweep_cadence` | `duration` | `1h` | SweepCadence is the repeat interval; 0 disables repeats while retaining the compatibility startup sweep. |
 | `retention.acknowledge_main_deletion` | `bool` | `false` | AcknowledgeMainDeletion explicitly consents to destructive main-session cleanup. |
+
+## `temporary_storage`
+
+Tier: **operator**
+
+Managed command temporary-storage policy. Read only from user-global settings.yaml; project and explicit CLI config values are ignored. Managed mode is Linux-only; system preserves inherited temporary-directory behavior.
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `temporary_storage.mode` | `string` | `managed` |  |
+| `temporary_storage.managed_root` | `string` | `mecatl` |  |
+| `temporary_storage.system_temp_dir` | `string` | `inherited` |  |
+| `temporary_storage.command_reap_after` | `duration` | `1h` |  |
+| `temporary_storage.reap_interval` | `duration` | `1h` |  |
+| `temporary_storage.reap_timeout` | `duration` | `5m` |  |
+| `temporary_storage.shutdown_reap_timeout` | `duration` | `1m` |  |
 
 ## `storage_management`
 
@@ -225,11 +244,14 @@ OPERATOR-TIER OpenRouter downstream-provider routing (issue #480): a per-model p
 
 Tier: **operator**
 
-Strict OPERATOR-TIER named global Streamable HTTP MCP servers. Authentication is a closed none/static_bearer/oauth union; OAuth supports preregistered or CIMD clients and local or environment credentials. All secret-shaped values are MECATL_* environment references, never values in YAML. Project mcp blocks are ignored with a value-free warning.
+Strict OPERATOR-TIER Streamable HTTP MCP authority configuration. Mode selects one mutually exclusive global or session-broker authority; broker mode carries its callback configuration and neutral route declarations. Authentication is a closed none/static_bearer/oauth union. Broker OAuth may use trusted explicit OAuth2 endpoints; all secret-shaped values are MECATL_* environment references, never values in YAML. Project mcp blocks are ignored with a value-free warning.
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
-| `mcp.servers` | `[]mcpserverprofile` | `(absent)` | Servers is the ordered list of named global Streamable HTTP servers. |
+| `mcp.mode` | `string` | `(empty)` | Mode selects global or broker authority. Empty uses the command-root default. |
+| `mcp.broker` | `mcpbrokerprofile` | `(absent)` | Broker contains options meaningful only in broker mode. |
+| `mcp.broker.callback_url` | `string` | `(empty)` | CallbackURL is required exactly when broker mode contains an OAuth route. It must be an absolute HTTPS URL without userinfo, query, or fragment; an omitted path or / is normalized to /. |
+| `mcp.servers` | `[]mcpserverprofile` | `(absent)` | Servers is the ordered list of neutral Streamable HTTP route declarations. |
 | `mcp.servers[].name` | `string` | `(empty)` | Name is an ASCII [A-Za-z0-9_]+ identifier, unique case-insensitively. |
 | `mcp.servers[].url` | `string` | `(empty)` | URL is an absolute HTTP(S) endpoint without userinfo or a fragment. |
 | `mcp.servers[].auth` | `mcpauthprofile` | `(absent)` | Auth selects exactly one of none, static_bearer, or oauth. |
@@ -237,9 +259,14 @@ Strict OPERATOR-TIER named global Streamable HTTP MCP servers. Authentication is
 | `mcp.servers[].auth.static_bearer` | `mcpstaticbearerprofile` | `(absent)` | StaticBearer names the bearer-token environment reference. |
 | `mcp.servers[].auth.static_bearer.token_env` | `string` | `(empty)` | TokenEnv is a MECATL_* environment variable name containing the opaque token. |
 | `mcp.servers[].auth.oauth` | `mcpoauthprofile` | `(absent)` | OAuth declares the OAuth identity, client, credentials, scopes, and network policy. |
-| `mcp.servers[].auth.oauth.profile` | `string` | `(empty)` | Profile is the required operator-defined credential identity profile. |
-| `mcp.servers[].auth.oauth.principal` | `string` | `(empty)` | Principal is the required operator-defined credential identity principal. |
-| `mcp.servers[].auth.oauth.issuer` | `string` | `(empty)` | Issuer is the required canonical exact HTTP(S) origin of the authorization server. |
+| `mcp.servers[].auth.oauth.profile` | `string` | `(empty)` | Profile is the required global-mode credential identity profile and is forbidden in broker mode. |
+| `mcp.servers[].auth.oauth.principal` | `string` | `(empty)` | Principal is the required global-mode credential identity principal and is forbidden in broker mode. |
+| `mcp.servers[].auth.oauth.issuer` | `string` | `(empty)` | Issuer is the canonical exact origin used by OIDC discovery. It is forbidden when Upstream explicitly selects generic OAuth2. |
+| `mcp.servers[].auth.oauth.upstream` | `mcpoauthupstreamprofile` | `(absent)` | Upstream optionally selects OIDC discovery or explicit generic OAuth2. Omitted defaults to OIDC. |
+| `mcp.servers[].auth.oauth.upstream.mode` | `string` | `(empty)` |  |
+| `mcp.servers[].auth.oauth.upstream.oauth2` | `mcpoauth2upstreamprofile` | `(absent)` |  |
+| `mcp.servers[].auth.oauth.upstream.oauth2.authorization_endpoint` | `string` | `(empty)` |  |
+| `mcp.servers[].auth.oauth.upstream.oauth2.token_endpoint` | `string` | `(empty)` | TokenEndpoint is a canonical HTTPS URL with no query string or fragment: the hardened runtime token client pins the exact origin and controls the request query itself. |
 | `mcp.servers[].auth.oauth.client` | `mcpoauthclientprofile` | `(absent)` | Client selects exactly one preregistered or CIMD client declaration. |
 | `mcp.servers[].auth.oauth.client.mode` | `string` | `(empty)` | Mode is exactly preregistered or cimd. |
 | `mcp.servers[].auth.oauth.client.preregistered` | `mcppreregisteredclientprofile` | `(absent)` | Preregistered declares a confidential client registered with the issuer. |
@@ -249,7 +276,7 @@ Strict OPERATOR-TIER named global Streamable HTTP MCP servers. Authentication is
 | `mcp.servers[].auth.oauth.client.cimd.document_url` | `string` | `(empty)` | DocumentURL is the required HTTPS metadata-document URL. |
 | `mcp.servers[].auth.oauth.scopes` | `[]string` | `(absent)` | Scopes is the non-empty allowlist of OAuth scopes the client may request. |
 | `mcp.servers[].auth.oauth.request_refresh_token` | `bool` | `false` | RequestRefreshToken asks the authorization server for refresh capability. |
-| `mcp.servers[].auth.oauth.credentials` | `mcpoauthcredentialprofile` | `(absent)` | Credentials selects exactly one local or environment credential source. |
+| `mcp.servers[].auth.oauth.credentials` | `mcpoauthcredentialprofile` | `(absent)` | Credentials selects one global-mode local or environment credential source and is forbidden in broker mode. |
 | `mcp.servers[].auth.oauth.credentials.mode` | `string` | `(empty)` | Mode is exactly local or environment. |
 | `mcp.servers[].auth.oauth.credentials.local` | `mcplocalcredentialprofile` | `(absent)` | Local declares encrypted mutable credentials rooted at an absolute path. |
 | `mcp.servers[].auth.oauth.credentials.local.root` | `string` | `(empty)` | Root is the required absolute credential-store root. |
@@ -257,10 +284,15 @@ Strict OPERATOR-TIER named global Streamable HTTP MCP servers. Authentication is
 | `mcp.servers[].auth.oauth.credentials.environment` | `mcpenvironmentcredentialprofile` | `(absent)` | Environment declares one externally provisioned read-only credential record. |
 | `mcp.servers[].auth.oauth.credentials.environment.credential_env` | `string` | `(empty)` | CredentialEnv is a MECATL_* environment variable containing the opaque credential record. |
 | `mcp.servers[].auth.oauth.credentials.environment.allow_process_local_refresh` | `bool` | `false` | AllowProcessLocalRefresh permits refreshed credentials to live only in this process. |
-| `mcp.servers[].auth.oauth.network` | `mcpoauthnetworkprofile` | `(absent)` | Network is required and declares immutable exact-origin egress policy. |
+| `mcp.servers[].auth.oauth.network` | `mcpoauthnetworkprofile` | `(absent)` | Network is required. Global profiles enforce its exact-origin egress policy; broker OAuth accepts only an explicit empty mapping until ToolHive can enforce it equivalently. |
 | `mcp.servers[].auth.oauth.network.additional_origins` | `[]string` | `(absent)` | AdditionalOrigins lists canonical exact origins additionally allowed for OAuth traffic. |
 | `mcp.servers[].auth.oauth.network.private_origins` | `[]string` | `(absent)` | PrivateOrigins lists allowed origins that may resolve only to RFC1918 IPv4 or ULA IPv6 addresses. Loopback, link-local, metadata, unspecified, multicast, mapped, public, and other special addresses remain denied. |
 | `mcp.servers[].auth.oauth.network.max_redirects` | `int` | `0` | MaxRedirects is the redirect bound, from zero through five. |
+| `mcp.servers[].auth.oauth.tools` | `[]mcpstatictoolprofile` | `(absent)` | Tools optionally declares this protected backend's tool catalogue statically. Declarations are visible before connection; the first call starts ToolHive's aggregate authorization for every protected backend. The granted bundle unlocks the declared surface only. Omitted, the backend remains discoverable only through pre-prompt workspace enrollment. |
+| `mcp.servers[].auth.oauth.tools[].name` | `string` | `(empty)` |  |
+| `mcp.servers[].auth.oauth.tools[].description` | `string` | `(empty)` |  |
+| `mcp.servers[].auth.oauth.tools[].input_schema` | `[]uint8` | `(absent)` |  |
+| `mcp.servers[].auth.oauth.tools[].read_only` | `bool` | `false` |  |
 
 ## Flag- / file-configured features (NOT in `settings.yaml`)
 

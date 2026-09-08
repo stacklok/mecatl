@@ -74,7 +74,7 @@ func TestOperatorProfileSourceIsCallerScoped(t *testing.T) {
 	provider := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) { requests = append(requests, req) })}, mockllm.TextTurn("done"), mockllm.TextTurn("done"))
 	eng := agent.NewEngine(agent.Deps{LLM: provider, Catalog: tool.NewCatalog(), OperatorProfileSource: store})
 	for i, ctx := range []context.Context{alice, bob} {
-		sess := session.New(session.SessionID(fmt.Sprintf("profile-%d", i)), session.ModeDefault, "/ws", session.Limits{MaxTurns: 2}, time.Unix(0, 0))
+		sess := session.New(session.SessionID(fmt.Sprintf("profile-%d", i)), session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 2}, time.Unix(0, 0))
 		for range eng.Run(ctx, sess, memEnvironment("/ws"), agent.RunRequest{Text: "hello"}).Events() {
 		}
 	}
@@ -86,7 +86,7 @@ func TestOperatorProfileSourceIsCallerScoped(t *testing.T) {
 
 func runChildProfileTurn(t *testing.T, eng *agent.Engine, id, text string) {
 	t.Helper()
-	sess := session.New(session.SessionID(id), session.ModeDefault, "/ws", session.Limits{MaxTurns: 2}, time.Unix(0, 0))
+	sess := session.New(session.SessionID(id), session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 2}, time.Unix(0, 0))
 	run := eng.Run(context.Background(), sess, memEnvironment("/ws"), agent.RunRequest{Text: text})
 	for range run.Events() {
 	}

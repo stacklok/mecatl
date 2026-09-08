@@ -59,7 +59,7 @@ func TestBuildRequestThreadsVolatileEnvAndPlanReminder(t *testing.T) {
 	})
 
 	// A session in PLAN mode so buildRequest appends the plan-mode reminder.
-	sess := session.New("s1", session.ModePlan, "/ws", session.Limits{}, time.Unix(0, 0))
+	sess := session.New("s1", session.ModePlan, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "make a plan"})
 	drain(r)
 

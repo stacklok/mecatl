@@ -3,7 +3,6 @@ package mcp
 import (
 	"cmp"
 	"context"
-	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -167,9 +166,8 @@ func (t readResourceTool) Execute(ctx context.Context, in session.ToolCall, _ to
 		// ReadResource routes through Server.readResource → withSession, so the
 		// error can be either. Unknown server / unknown URI / other faults stay
 		// verbatim so the model can self-correct, never a hard Go error.
-		if isConnectionDrop(err) || errors.Is(err, errReconnectFailed) {
-			return session.NewToolError(in.ID,
-				fmt.Sprintf("read MCP resource failed: MCP server %q unavailable after reconnect", server)), nil
+		if message := unavailableMessage(err, "read MCP resource failed", server); message != "" {
+			return session.NewToolError(in.ID, message), nil
 		}
 		return session.NewToolError(in.ID, fmt.Sprintf("read MCP resource failed: %v", err)), nil
 	}

@@ -38,7 +38,7 @@ func RunGuardrailCheck(ctx context.Context, engine *Engine, prompt string) (stri
 	sess := session.New(
 		session.SessionID(fmt.Sprintf("guardrail-checker-%d", childSerial.Add(1))),
 		session.ModeDefault,
-		"/",
+		judgeEnvironment.Ref(),
 		guardrailCheckLimits,
 		engine.now(),
 	)

@@ -23,6 +23,8 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/welcome"
 )
 
+const unknownLabel = "unknown"
+
 // SessionCreator creates a server-side session and returns its id together with
 // the server's advertised capabilities. *client.Client satisfies it (via the
 // sessionAdapter); tests supply a fake. Keeping it an interface lets the ui be
@@ -34,24 +36,12 @@ import (
 // segment).
 type SessionCreator interface {
 	CreateSession(ctx context.Context, sel client.ModelSelection, mode string) (string, client.Capabilities, client.ResolvedModel, error)
-	// CreateSessionInWorkspace creates a session bound to an explicit workspace
-	// root (the /worktrees switch path, issue #102). CreateSession (above)
-	// delegates to this with the launch workspace, so the /models restart + the
-	// connect paths are byte-identical and only the /worktrees switch passes a
-	// different root. The workspace becomes the session's tool root (Read/Edit/
-	// Write/Grep/Glob/Bash cwd all resolve there); osfs confinement is unchanged.
-	CreateSessionInWorkspace(ctx context.Context, workspace string, sel client.ModelSelection, mode string) (string, client.Capabilities, client.ResolvedModel, error)
-	// CreateSessionWithCarryover is CreateSession seeded with sourceSessionID's
-	// conversation history (issue #20, model-switch carryover): it restarts on a
-	// picked model AND carries the current session's transcript onto the new
-	// session. The server is the authority on same-vs-cross (a same-provider
-	// carryover replays verbatim; a cross-provider carryover strips the prior
-	// provider's replay blobs) and a turn-boundary source; the ui offers the
-	// switch unconditionally when a live session exists. The caller owns closing
-	// the source session AFTER the new one is ready (the server snapshotted it
-	// at create time). Same return shape as CreateSession so the
-	// footer/effective-model heal path is shared.
-	CreateSessionWithCarryover(ctx context.Context, sourceSessionID string, sel client.ModelSelection, mode string) (string, client.Capabilities, client.ResolvedModel, error)
+	// CreateSessionWithCarryover forks the current transcript with optional model
+	// overrides; placement and omitted settings are inherited by the server.
+	CreateSessionWithCarryover(ctx context.Context, sourceSessionID string, sel client.ModelSelection) (string, client.Capabilities, client.ResolvedModel, error)
+	// ClearSession creates an empty-history successor. selector is nil for ordinary
+	// /clear and points only to an opaque ListWorktrees result for a worktree switch.
+	ClearSession(ctx context.Context, sourceSessionID string, selector *client.WorktreeSelector) (string, client.SessionSnapshot, error)
 	// CloseSession ends a server-side session by id. The /models restart-now handoff
 	// closes the OLD session before creating the new one so a model switch leaves no
 	// orphaned server-side session. Best-effort: the caller proceeds with the new
@@ -93,11 +83,15 @@ type SelectionStore interface {
 	SaveGlobalDefault(sel client.ModelSelection) error
 }
 
-// Converser opens one Converse run as a *client.Stream. *client.Client satisfies
-// it (its OpenConverse, wrapped to fix the mode/ctx); tests supply a fake that
-// returns a Stream over a scripted Recver.
+// Converser preserves the original extension seam for raw and test clients.
 type Converser interface {
 	OpenConverse(ctx context.Context) (*client.Stream, error)
+}
+
+// SessionBoundConverser is an optional additive capability implemented by the
+// official client to bind affinity metadata before the first frame.
+type SessionBoundConverser interface {
+	OpenConverseForSession(ctx context.Context, sessionID string) (*client.Stream, error)
 }
 
 // LearningSettings atomically advances the operator's completed-trajectory learning
@@ -153,9 +147,6 @@ type Deps struct {
 	// SessionManagement mutates stored main-chat metadata. nil leaves rename/delete
 	// undiscoverable even if a custom lister advertises those capabilities.
 	SessionManagement client.SessionManager
-	// Adoption is the authenticated legacy-copy surface. Eligibility is always
-	// taken from its source-correlated preflight, never inferred from row IDs.
-	Adoption client.SessionAdopter
 	// Transcript is the authoritative snapshot-derived conversation surface used
 	// by /sessions for both continuation and read-only inspection. Event replay is
 	// optional activity and never substitutes for this seam.
@@ -169,6 +160,14 @@ type Deps struct {
 	// tests. nil disables the live bridge (the ui still renders deliveries via the
 	// replay on a session switch/reload, just not live). *Client satisfies it.
 	LiveStream client.LiveStreamer
+	// MCPAuthorization is the distinct browser authorization surface. It never
+	// shares the permission-approval stream or controls.
+	MCPAuthorization client.MCPAuthorizationController
+	// WorkspaceEnrollment is the distinct pre-prompt whole-bundle control.
+	WorkspaceEnrollment client.WorkspaceEnrollmentController
+	// OpenURL opens a presentation URL obtained only through MCPAuthorization.
+	// Composition owns the OS integration; nil leaves the action unavailable.
+	OpenURL func(context.Context, string) error
 	// SelectionStore persists the picked model (last-used). nil disables persistence
 	// (the pick still applies to the next create this run, just isn't remembered).
 	SelectionStore SelectionStore
@@ -223,6 +222,9 @@ type Deps struct {
 	// StatusSource is composed outside ui. The UI only submits display facts and
 	// consumes semantic snapshots through one Bubble Tea listener.
 	StatusSource statusline.Source
+	// LocalSessionContext optionally resolves ADR 0296's privileged local root.
+	// The root is used only as a direct status-command CWD, never UI state.
+	LocalSessionContext client.LocalSessionContextGetter
 
 	// Presentation capability probes are package-private test seams. New replaces
 	// nil values with the production environment detectors.
@@ -299,27 +301,20 @@ type Deps struct {
 	// the per-phase churn is unwanted).
 	NoWindowTitle bool
 
-	// DebugMouse turns on a footer diagnostic overlay (env MECATUI_DEBUG_MOUSE=1):
-	// on every mouse press/motion the footer-left is overridden with the raw mouse
-	// coordinates and their content mapping (top=convTopRow, yoff, viewport height,
-	// and the screenToContent result) — the durable instrument for diagnosing
-	// selection/coordinate issues (it is what surfaced the highlight-on-wrong-line
-	// bug). Default OFF (zero cost when unset); main.go reads the env var.
+	// Debug enables every client-side diagnostic surface. DebugMouse, DebugSteer,
+	// and DebugAsk remain narrow compatibility aliases for their original surfaces.
+	Debug bool
+
+	// DebugMouse turns on a footer diagnostic overlay when Debug is false: on every
+	// mouse press/motion the footer-left is overridden with raw coordinates and
+	// their content mapping.
 	DebugMouse bool
 
-	// DebugSteer turns on a steer correlation trace in the status line (env
-	// MECATUI_DEBUG_STEER=1): each steer ack/echo logs the incoming message_id,
-	// the live bundle's id, and the match/burn/drop decision, so a stuck or
-	// mis-correlated steer lifecycle is visible in the TUI rather than opaque.
-	// Default OFF (zero cost when unset); main.go reads the env var.
+	// DebugSteer traces steer correlation in the status line when Debug is false.
 	DebugSteer bool
 
-	// DebugAsk registers the /debug-ask built-in (env MECATUI_DEBUG_ASK=1): it
-	// injects a fake permission ask with long Bash args through the REAL ask
-	// reducer, so the modal's wrap/scroll/full-screen-args behaviour (issue #488)
-	// can be exercised by hand without driving a live run. Default OFF (the
-	// built-in is absent); main.go reads the env var — deliberately never a flag,
-	// so it stays out of --help.
+	// DebugAsk registers /debug-ask when Debug is false. The command injects a fake
+	// long-args permission ask through the real reducer.
 	DebugAsk bool
 
 	// KeyOverrides maps a keyMap field name (e.g. "Agents") to its replacement chord(s).
@@ -439,6 +434,7 @@ const (
 	phaseIdle                          // ready for a prompt
 	phaseRunning                       // a Converse run is streaming
 	phaseAwaitingApproval              // a permission modal is open
+	phaseAuthorizing                   // an MCP browser authorization is pending
 	phaseFatal                         // connect/fatal error; input disabled
 	phaseReplay                        // a stored-session transcript replay is open (read-only; issue #245)
 )
@@ -451,6 +447,15 @@ const (
 // rendered by sessionsState; it does not depend on the Model spinner.
 func (m Model) spinnerVisible() bool {
 	return m.phase == phaseRunning || m.phase == phaseConnecting
+}
+
+// promptRecovery is a text-only prompt that can safely be restored after a run
+// transport outcome. It is tied to the source session and stream generation.
+type promptRecovery struct {
+	text       string
+	sessionID  string
+	streamGen  uint64
+	autoReplay bool
 }
 
 // Model is the root Elm model. It owns the conversation, the bubbles widgets, the
@@ -494,13 +499,22 @@ type Model struct {
 	// already set a title this client never saw. Cleared by resetSession (a
 	// /clear wipes the session-derived state, including the label). The render
 	// path clamps + sanitizes it; this field holds the raw adopted title.
-	sessionTitle        string
-	statusMsg           string
-	generatedStatusLine statusline.Result
-	fatalErr            string
+	sessionTitle            string
+	sessionTitleProvenance  string
+	sessionTitleRevision    uint64
+	titleRenameRequestToken uint64
+	titleFailedAttemptID    string
+	statusMsg               string
+	generatedStatusLine     statusline.Result
+	fatalErr                string
 
 	compactPending      bool
 	compactRequestToken uint64
+	// clearPending is the single in-flight ClearSession handoff. The source stays
+	// bound until the correlated response succeeds; the token makes delayed
+	// responses from an earlier attempt inert.
+	clearPending      *clearHandoff
+	clearRequestToken uint64
 
 	width  int
 	height int
@@ -508,7 +522,15 @@ type Model struct {
 	conv conversation
 	vp   viewport.Model
 
-	// approval state is dynamic: the surface owns it only while an ask is open.
+	// authorization is separate from permission approval: MCP browser authorization
+	// has no allow/always/deny verdict and never carries tool arguments or a URL.
+	authorization mcpAuthorizationState
+	// enrollment is a separate pre-prompt bundle gate. It never enters the
+	// permission approval queue or per-tool authorization stream.
+	enrollment workspaceEnrollmentState
+	// authorizationEvents is the active recheck/cancel stream. It is distinct
+	// from the converse stream so browser controls cannot consume approval frames.
+	authorizationEvents <-chan tea.Msg
 	// debugAskCycle rotates the /debug-ask built-in (Deps.DebugAsk) through its
 	// canned long-args payloads so repeated invocations exercise the different
 	// wrap shapes (one long line, a compound pipeline, a heredoc).
@@ -608,13 +630,12 @@ type Model struct {
 	// strips the metadata), and for any non-routed provider — the header then shows
 	// the bare model segment, never a stale or fabricated suffix.
 	providerRoute string
-	// activeWorkspace is the workspace root the CURRENT session is bound to. Seeded
-	// from Deps.Workspace at construction (the launch root) and updated by
-	// switchToWorktree (issue #102) to the chosen worktree path. Shown in the header
-	// when it differs from the launch workspace (Deps.Workspace), so the user can
-	// tell at a glance that the session is rooted at a sibling worktree rather than
-	// the launch directory. Empty = connecting (not yet bound).
-	activeWorkspace string
+	// statusContextRoot is the active session's privileged local-context result.
+	// It is supplied only to a direct command input and never reaches rendered UI state.
+	statusContextRoot string
+	// activePlacement is bounded server-authored display metadata for the current
+	// session. It is never interpreted as a path or sent back as authority.
+	activePlacement client.Placement
 	// pickedThisSession is the (provider, model) the user EXPLICITLY chose via the
 	// /models picker's restart-now confirm during THIS process — set when a restart-now
 	// handoff rebinds the session to a picked model. It is the provenance signal that
@@ -622,6 +643,7 @@ type Model struct {
 	// workspace/global default). Zero until a restart-now pick. Display-only.
 	pickedThisSession client.ModelSelection
 	showHelp          bool           // the "?" keys-&-features overlay is open (caps-driven; see help.go)
+	helpScroll        int            // first visible complete help-body line while the overlay is open
 	stream            *client.Stream // current run's stream
 	cancelRun         context.CancelFunc
 
@@ -634,6 +656,16 @@ type Model struct {
 	// quit guard is transport/compose state, not session-derived transcript state.
 	quitArmed  bool
 	quitArmGen int
+
+	// keyboardEventTypes is true only after Bubble Tea reports support for key
+	// repeat/release event types. The destructive physical gesture fails closed
+	// while false. doubleEscapeReleased records the release boundary for the
+	// current arm; doubleEscapeTimer is the deterministic scheduling test seam.
+	keyboardEventTypes   bool
+	doubleEscapeArmed    bool
+	doubleEscapeReleased bool
+	doubleEscapeGen      int
+	doubleEscapeTimer    doubleEscapeTimerFunc
 
 	// suspendedFrom records the phase the model was in when a ctrl+z suspend fired
 	// (issue #504) plus the session id captured at that instant (the session could
@@ -752,6 +784,13 @@ type Model struct {
 	// applySessionReady but the field is already empty, so the seed never
 	// re-fires. Empty = no seed (the default; today's behavior).
 	pendingInitialPrompt string
+
+	// promptRecovery retains a text-only prompt across a transport outcome. It is
+	// bound to the source session and stream generation so a stale failure cannot
+	// restore or replay text into a successor session. autoReplay is reserved for
+	// the authoritative workspace-enrollment pre-commit rejection; ordinary
+	// transport failures restore a draft and clear the record instead.
+	promptRecovery *promptRecovery
 
 	// Startup-adopted chats remain protected until their first prompt reaches the
 	// server stream. A pre-SessionInit failure restores the authoritative transcript
@@ -922,6 +961,10 @@ type Model struct {
 	// ONCE per process even across repeated ModelsMsg landings (a re-open, a live
 	// refresh). Survives the dismissal of gatewayNotice (which only clears the text).
 	gatewayNoticeShown bool
+
+	// workspaceEnrollmentNotice persists while protected workspace services are
+	// unavailable; activity does not dismiss a fact that remains true.
+	workspaceEnrollmentNotice string
 }
 
 // New builds the root model from deps. It wires the widgets but does not connect;
@@ -987,7 +1030,6 @@ func New(deps Deps) Model {
 		createModelSelection: deps.InitialModel,
 		activeMode:           client.ModeString(client.ModeFromString(deps.Mode)),
 		modelCatalog:         modelCatalog{active: deps.InitialModel, globalDefault: deps.GlobalDefault},
-		activeWorkspace:      deps.Workspace,
 		// Seed the CLI-supplied seed prompt (-p/--prompt + --prompt-file) for
 		// one-shot auto-submit on the FIRST session ready.
 		pendingInitialPrompt: deps.InitialPrompt,
@@ -1025,10 +1067,12 @@ func New(deps Deps) Model {
 		m.phase = phaseIdle
 		m.sessionID = resume.Row.ID
 		m.sessionTitle = resume.Row.Title
+		m.sessionTitleProvenance = resume.Row.TitleProvenance
+		m.sessionTitleRevision = resume.Snapshot.TitleRevision
 		m.sessionState = resume.Snapshot.State
 		m.sessionCreatedAt = resume.Snapshot.CreatedAt
 		m.sessionModifiedAt = resume.Row.ModifiedAt
-		m.activeWorkspace = resume.Snapshot.Workspace
+		m.activePlacement = resume.Snapshot.Placement
 		m.activeMode = client.ModeString(client.ModeFromString(resume.Snapshot.Mode))
 		(&m).setResolvedSessionModel(resume.Snapshot.ResolvedModel)
 		m.caps = resume.Snapshot.Capabilities
@@ -1083,11 +1127,33 @@ func (m Model) resetSessionDerived() Model {
 	m.contextTokens = 0
 	m.activeTool = ""
 	m.toolProgress = ""
+	if m.authorization.controlCancel != nil {
+		m.authorization.controlCancel()
+	}
+	if m.authorization.presentationCancel != nil {
+		m.authorization.presentationCancel()
+	}
+	m.authorization = mcpAuthorizationState{}
+	m.authorizationEvents = nil
+	if m.enrollment.controlCancel != nil {
+		m.enrollment.controlCancel()
+	}
+	if m.enrollment.presentationCancel != nil {
+		m.enrollment.presentationCancel()
+	}
+	m.enrollment = workspaceEnrollmentState{}
+	m.workspaceEnrollmentNotice = ""
+	m.promptRecovery = nil
 	m.providerRoute = ""
+	m.statusContextRoot = ""
 	// Drop the session title: it is session-derived (seeded from the first prompt
 	// / adopted from the stored session), so a /clear or fresh /models restart
 	// must not leave a stale label on its new session.
 	m.sessionTitle = ""
+	m.sessionTitleProvenance = ""
+	m.sessionTitleRevision = 0
+	m.titleRenameRequestToken = 0
+	m.titleFailedAttemptID = ""
 	// Drop any pending permission modal — and the FIFO queue behind it plus the
 	// answered-set dedupe: an ask is session-derived in-flight state (its AskID
 	// correlates to a run on the OLD session), so a reset must not leave a stale

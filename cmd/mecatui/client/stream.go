@@ -220,12 +220,9 @@ const (
 	VerdictDeny
 )
 
-// SendApproval resolves a paused permission.ask. askID is the exact value from
-// the PermissionAskMsg. It sets BOTH the legacy allow bool (so an older server
-// that ignores the verdict enum still gets the right allow/deny) AND the verdict
-// enum (so a newer server can learn the always-allow rule); the server's mapper
-// prefers the verdict and falls back to the bool for UNSPECIFIED.
-func (s *Stream) SendApproval(askID string, v Verdict) error {
+// resumeApproval builds the shared wire payload used by Converse and both
+// authorization-control request envelopes.
+func resumeApproval(askID string, v Verdict) *mecatlv1.ResumeApproval {
 	allow := v == VerdictAllowOnce || v == VerdictAllowAlways
 	var verdict mecatlv1.ApprovalVerdict
 	switch v {
@@ -236,9 +233,15 @@ func (s *Stream) SendApproval(askID string, v Verdict) error {
 	case VerdictDeny:
 		verdict = mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_DENY
 	}
+	return &mecatlv1.ResumeApproval{AskId: askID, Allow: allow, Verdict: verdict}
+}
+
+// SendApproval resolves a paused permission.ask. The server prefers the
+// three-way verdict and retains the legacy allow bool as fallback.
+func (s *Stream) SendApproval(askID string, v Verdict) error {
 	return s.sendFrame(&mecatlv1.ConverseRequest{
 		Kind: &mecatlv1.ConverseRequest_ResumeApproval{
-			ResumeApproval: &mecatlv1.ResumeApproval{AskId: askID, Allow: allow, Verdict: verdict},
+			ResumeApproval: resumeApproval(askID, v),
 		},
 	})
 }

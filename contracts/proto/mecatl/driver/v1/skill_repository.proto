@@ -1,0 +1,165 @@
+// SPDX-FileCopyrightText: Copyright 2026 Stacklok, Inc.
+// SPDX-License-Identifier: LicenseRef-Stacklok-Proprietary
+
+// mecatl driver API: remote learned-skill repository lifecycle.
+syntax = "proto3";
+
+package mecatl.driver.v1;
+
+import "buf/validate/validate.proto";
+import "google/protobuf/timestamp.proto";
+
+service SkillRepositoryService {
+  rpc CreateSkillDraft(CreateSkillDraftRequest) returns (SkillVersionResponse);
+  rpc GetSkillVersion(GetSkillVersionRequest) returns (GetSkillVersionResponse);
+  rpc ListSkillVersions(ListSkillVersionsRequest) returns (ListSkillVersionsResponse);
+  rpc RecordSkillEvaluation(RecordSkillEvaluationRequest) returns (SkillVersionResponse);
+  rpc StageSkill(SkillMutationRequest) returns (SkillVersionResponse);
+  rpc ActivateSkill(SkillMutationRequest) returns (SkillVersionResponse);
+  rpc ActivateValidatedSkill(SkillMutationRequest) returns (SkillVersionResponse);
+  rpc RejectSkill(SkillMutationRequest) returns (SkillVersionResponse);
+  rpc ArchiveSkill(SkillMutationRequest) returns (SkillVersionResponse);
+  rpc RollbackSkill(RollbackSkillRequest) returns (SkillVersionResponse);
+}
+
+enum SkillRepositoryErrorCode {
+  SKILL_REPOSITORY_ERROR_CODE_UNSPECIFIED = 0;
+  SKILL_REPOSITORY_ERROR_CODE_INVALID = 1;
+  SKILL_REPOSITORY_ERROR_CODE_NOT_FOUND = 2;
+  SKILL_REPOSITORY_ERROR_CODE_CONFLICT = 3;
+  SKILL_REPOSITORY_ERROR_CODE_TRANSITION = 4;
+  SKILL_REPOSITORY_ERROR_CODE_LIMIT = 5;
+  SKILL_REPOSITORY_ERROR_CODE_OWNER_MISMATCH = 6;
+  SKILL_REPOSITORY_ERROR_CODE_NAME_COLLISION = 7;
+  SKILL_REPOSITORY_ERROR_CODE_CURSOR = 8;
+}
+
+message SkillRepositoryErrorDetail {
+  SkillRepositoryErrorCode code = 1;
+}
+
+message LearnedSkillPartition {
+  string principal = 1 [(buf.validate.field).string.max_len = 1024];
+  string project = 2 [(buf.validate.field).string.max_len = 4096];
+}
+
+message LearnedSkillBundle {
+  string name = 1 [(buf.validate.field).string.max_len = 64];
+  string description = 2 [(buf.validate.field).string.max_len = 1024];
+  string body = 3 [(buf.validate.field).string.max_len = 32768];
+}
+
+message LearnedSkillEvidenceRef {
+  string session_id = 1 [(buf.validate.field).string.max_len = 256];
+  string locator = 2 [(buf.validate.field).string.max_len = 16];
+  int32 ordinal = 3;
+  optional int64 event_seq = 4;
+  string tool_call_id = 5 [(buf.validate.field).string.max_len = 256];
+  string digest = 6 [(buf.validate.field).string.max_len = 128];
+}
+
+message LearnedSkillSignal {
+  string kind = 1 [(buf.validate.field).string.max_len = 32];
+  repeated LearnedSkillEvidenceRef evidence = 2;
+}
+
+message LearnedSkillProvenance {
+  string origin = 1 [(buf.validate.field).string.max_len = 32];
+  string validation_disposition = 2 [(buf.validate.field).string.max_len = 32];
+  repeated string proposal_ids = 3;
+  repeated LearnedSkillEvidenceRef evidence_refs = 4;
+  repeated LearnedSkillSignal signals = 5;
+}
+
+message LearnedSkillEvaluation {
+  string verdict = 1 [(buf.validate.field).string.max_len = 16];
+  repeated string fixture_ids = 2;
+  string baseline = 3 [(buf.validate.field).string.max_len = 4096];
+  string treatment = 4 [(buf.validate.field).string.max_len = 4096];
+  string reason = 5 [(buf.validate.field).string.max_len = 4096];
+  google.protobuf.Timestamp at = 6;
+}
+
+message LearnedSkillReceipt {
+  string operation = 1 [(buf.validate.field).string.max_len = 64];
+  string from = 2 [(buf.validate.field).string.max_len = 16];
+  string to = 3 [(buf.validate.field).string.max_len = 16];
+  string version = 4 [(buf.validate.field).string.max_len = 128];
+  google.protobuf.Timestamp at = 5;
+}
+
+message LearnedSkillVersion {
+  string id = 1 [(buf.validate.field).string.max_len = 128];
+  string version = 2 [(buf.validate.field).string.max_len = 128];
+  string revision = 3 [(buf.validate.field).string.max_len = 128];
+  string state = 4 [(buf.validate.field).string.max_len = 16];
+  string owner_agent = 5 [(buf.validate.field).string.max_len = 256];
+  LearnedSkillPartition partition = 6 [(buf.validate.field).required = true];
+  LearnedSkillBundle bundle = 7 [(buf.validate.field).required = true];
+  LearnedSkillProvenance provenance = 8 [(buf.validate.field).required = true];
+  string disposition = 9 [(buf.validate.field).string.max_len = 32];
+  repeated LearnedSkillEvaluation evaluations = 10;
+  repeated LearnedSkillReceipt receipts = 11;
+  string supersedes = 12 [(buf.validate.field).string.max_len = 128];
+  google.protobuf.Timestamp created_at = 13 [(buf.validate.field).required = true];
+  google.protobuf.Timestamp updated_at = 14 [(buf.validate.field).required = true];
+}
+
+message CreateSkillDraftRequest {
+  LearnedSkillPartition partition = 1 [(buf.validate.field).required = true];
+  string owner_agent = 2 [(buf.validate.field).string.max_len = 256];
+  LearnedSkillBundle bundle = 3 [(buf.validate.field).required = true];
+  LearnedSkillProvenance provenance = 4 [(buf.validate.field).required = true];
+}
+
+message GetSkillVersionRequest {
+  LearnedSkillPartition partition = 1 [(buf.validate.field).required = true];
+  string owner_agent = 2 [(buf.validate.field).string.max_len = 256];
+  string id = 3 [(buf.validate.field).string.max_len = 128];
+  string version = 4 [(buf.validate.field).string.max_len = 128];
+}
+
+message GetSkillVersionResponse {
+  bool found = 1;
+  LearnedSkillVersion version = 2;
+}
+
+message ListSkillVersionsRequest {
+  LearnedSkillPartition partition = 1 [(buf.validate.field).required = true];
+  string after = 2 [(buf.validate.field).string.max_len = 128];
+  int32 limit = 3;
+  string name = 4 [(buf.validate.field).string.max_len = 64];
+  string state = 5 [(buf.validate.field).string.max_len = 16];
+  string owner_agent = 6 [(buf.validate.field).string.max_len = 256];
+}
+
+message ListSkillVersionsResponse {
+  repeated LearnedSkillVersion versions = 1;
+  string next = 2 [(buf.validate.field).string.max_len = 128];
+  uint64 generation = 3;
+}
+
+message SkillMutationRequest {
+  LearnedSkillPartition partition = 1 [(buf.validate.field).required = true];
+  string owner_agent = 2 [(buf.validate.field).string.max_len = 256];
+  string id = 3 [(buf.validate.field).string.max_len = 128];
+  string version = 4 [(buf.validate.field).string.max_len = 128];
+  string expected_revision = 5 [(buf.validate.field).string.max_len = 128];
+}
+
+message RecordSkillEvaluationRequest {
+  SkillMutationRequest mutation = 1 [(buf.validate.field).required = true];
+  LearnedSkillEvaluation evaluation = 2 [(buf.validate.field).required = true];
+}
+
+message RollbackSkillRequest {
+  LearnedSkillPartition partition = 1 [(buf.validate.field).required = true];
+  string owner_agent = 2 [(buf.validate.field).string.max_len = 256];
+  string id = 3 [(buf.validate.field).string.max_len = 128];
+  string expected_revision = 4 [(buf.validate.field).string.max_len = 128];
+  string target_version = 5 [(buf.validate.field).string.max_len = 128];
+}
+
+message SkillVersionResponse {
+  LearnedSkillVersion version = 1 [(buf.validate.field).required = true];
+}

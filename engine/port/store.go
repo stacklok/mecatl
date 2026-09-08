@@ -46,10 +46,11 @@ var (
 //     permanently-failed session reconstructs with FailurePermanence()==true and the
 //     recover advisory fires), cumulative Usage (the SUM of every per-run EvResult.Usage
 //     — the budget brake reads it), and the metadata the events do not carry (id, mode,
-//     limits, workspace, profile, provider/model selector, reasoning effort,
-//     authoritative title/provenance, session kind/relationship, adoption source/request
-//     digest, createdAt — supplied out-of-band, e.g. eventsource.SessionMeta). A legacy empty title/provenance may be
-//     derived from the first genuine EvUserPrompt.
+//     limits, exact EnvironmentRef, display-only placement metadata, profile,
+//     provider/model selector, reasoning effort, authoritative title/provenance,
+//     session kind/relationship, and createdAt — supplied out-of-band, e.g.
+//     eventsource.SessionMeta). An empty title/provenance may be derived from the
+//     first genuine EvUserPrompt.
 //   - Run-scoped: Counters reflect only the LATEST run segment (they reset on Reopen);
 //     the run plumbing (diagnostics binding, askID serials) is rebuilt fresh.
 //
@@ -65,6 +66,10 @@ type SessionStore interface {
 	Save(ctx context.Context, s *session.Session) error
 	// Load retrieves the session with the given id. The not-found case MUST wrap
 	// port.ErrSessionNotFound; any other error is an infrastructure failure.
+	// Snapshot-backed adapters SHOULD wrap retrieval/transport failures with
+	// NewSessionLoadFailure(SessionLoadFailureStore, err) and decode/validation
+	// failures with SessionLoadFailureSnapshot so ownership-concealing hosts can
+	// emit bounded observability without inspecting error text.
 	Load(ctx context.Context, id session.SessionID) (*session.Session, error)
 }
 
@@ -144,8 +149,8 @@ type SessionMeta struct {
 }
 
 // SessionDiscoveryMeta is the additive bounded-inventory projection. It keeps
-// SessionMeta source-compatible while carrying the trusted taxonomy and workspace
-// needed by discovery clients.
+// SessionMeta source-compatible while carrying the trusted taxonomy and exact
+// private placement identity needed by storage/discovery consumers.
 type SessionDiscoveryMeta struct {
 	ID              session.SessionID
 	ModifiedAt      time.Time
@@ -156,7 +161,7 @@ type SessionDiscoveryMeta struct {
 	Title           string
 	TitleProvenance session.TitleProvenance
 	Owner           *session.Principal
-	Workspace       string
+	EnvironmentRef  session.EnvironmentRef
 	Kind            session.SessionKind
 	Relationship    session.SessionRelationship
 	// EstimatedBytes is a content-free backend estimate of bytes reclaimed by

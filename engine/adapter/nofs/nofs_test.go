@@ -47,9 +47,7 @@ func TestNoFSWorkspaceContract(t *testing.T) {
 		t.Error("ErrNoFilesystem must be a non-empty, model-readable refusal")
 	}
 
-	// The version-bearing reads and the explicit mutations are inert too: a
-	// read fails as not-exist, create/replace fail loudly, and the read-ledger
-	// surface (RecordRead/RecordedVersion) records nothing and looks up nothing.
+	// Version-bearing reads and explicit mutations are inert too.
 	if _, _, err := ws.ReadVersion(ctx, "a.txt"); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("ReadVersion error = %v, want errors.Is(_, fs.ErrNotExist)", err)
 	}
@@ -58,10 +56,6 @@ func TestNoFSWorkspaceContract(t *testing.T) {
 	}
 	if _, err := ws.ReplaceFile(ctx, "a.txt", tool.FileVersion{}, []byte("data")); !errors.Is(err, nofs.ErrNoFilesystem) {
 		t.Errorf("ReplaceFile error = %v, want ErrNoFilesystem", err)
-	}
-	ws.RecordRead("a.txt", tool.NewFileVersion("v1"))
-	if _, ok := ws.RecordedVersion("a.txt"); ok {
-		t.Error("RecordedVersion reported ok=true; the ledger must be inert in a no-FS session")
 	}
 }
 

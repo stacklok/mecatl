@@ -199,10 +199,33 @@ linters:
           allow:
             - $gostd
             - github.com/stacklok/mecatl/engine/tool
+            - github.com/stacklok/mecatl/engine/adapter/memledger
             - github.com/bmatcuk/doublestar/v4
           deny:
             - pkg: os
               desc: 'memfs is the in-memory FileSystem fake; it must not touch the real OS'
+        engine-adapter-memledger:
+          list-mode: strict
+          files:
+            - '**/engine/adapter/memledger/**.go'
+            - '!$test'
+          allow:
+            - $gostd
+            - github.com/stacklok/mecatl/engine/tool
+          deny:
+            - pkg: os
+              desc: 'memledger is the in-memory reference tool.ReadLedger; it must not touch the real OS'
+        engine-adapter-ledgerconformance:
+          list-mode: strict
+          files:
+            - '**/engine/adapter/ledgerconformance/**.go'
+            - '!$test'
+          allow:
+            - $gostd
+            - github.com/stacklok/mecatl/engine/tool
+          deny:
+            - pkg: os
+              desc: 'ledgerconformance drives the abstract ReadLedger contract; it must not touch the real OS'
         engine-adapter-memmemory:
           list-mode: strict
           files:
@@ -214,6 +237,18 @@ linters:
           deny:
             - pkg: os
               desc: 'memmemory is process-local reference memory; it must not touch the real OS'
+        engine-adapter-memattempt:
+          list-mode: strict
+          files:
+            - '**/engine/adapter/memattempt/**.go'
+            - '!$test'
+          allow:
+            - $gostd
+            - github.com/stacklok/mecatl/engine/learning
+            - github.com/stacklok/mecatl/engine/port
+          deny:
+            - pkg: os
+              desc: 'memattempt is the process-local attempt reference store; it must not touch the real OS'
         engine-adapter-memproposal:
           list-mode: strict
           files:
@@ -680,7 +715,8 @@ linters:
           deny:
             - pkg: os
               desc: 'credentialstore conformance drives the abstract Store contract without host I/O'
-        # learning: reflection domain; reuses tool's canonical memory security helpers.
+        # learning: reflection domain; reuses governance's canonical untrusted
+        # framing and tool's canonical memory security helpers.
         core-learning:
           list-mode: strict
           files:
@@ -688,6 +724,7 @@ linters:
             - '!$test'
           allow:
             - $gostd
+            - github.com/stacklok/mecatl/engine/governance
             - github.com/stacklok/mecatl/engine/session
             - github.com/stacklok/mecatl/engine/tool
           deny:
@@ -903,6 +940,13 @@ linters:
           - goconst
           - unparam
         path: engine/adapter/fsconformance/
+      - linters:
+          - gocyclo
+          - errcheck
+          - gosec
+          - goconst
+          - unparam
+        path: engine/adapter/ledgerconformance/
       - linters:
           - gocyclo
           - errcheck

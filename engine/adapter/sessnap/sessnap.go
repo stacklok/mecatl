@@ -2,13 +2,19 @@
 // of a session.Session that the store adapters (memstore, jsonlstore) share.
 //
 // The Session aggregate exposes its lifecycle data through exported fields
-// (ID, State, Mode, Conversation, Limits, Counters, Workspace, CreatedAt) and
-// through the PendingAsk accessor. Two pieces of its state are unexported and
-// not directly addressable from outside the session package:
+// (ID, State, Mode, Conversation, Limits, Counters, EnvironmentRef, CreatedAt) and
+// through the PendingAsk, PendingAuthorization, and PendingWorkspaceEnrollment
+// accessors. Four pieces of its state are unexported and not directly
+// addressable from outside the session package:
 //
 //   - pending *PendingAsk — readable via Session.PendingAsk() (only while
 //     StateAwaiting) and restorable via Session.PauseForApproval() (only from
 //     StateRunning). The snapshot round-trips it for the awaiting case.
+//   - pendingAuthorization *PendingAuthorization — readable through a deep-copy
+//     accessor while StateAuthorizing and restored through PauseForAuthorization.
+//     Its private DTO preserves effective tool-argument bytes exactly.
+//   - pendingWorkspaceEnrollment *PendingWorkspaceEnrollment — safe pre-prompt
+//     correlation restored through BeginWorkspaceEnrollment.
 //   - stop StopReason — the recorded terminal stop reason. It is captured
 //     faithfully via Session.RecordedStopReason() (which performs no limit
 //     derivation) and restored via the matching terminal transition
@@ -31,17 +37,23 @@ import (
 // struct with JSON tags so it serializes deterministically regardless of the
 // (untagged) layout of the domain types.
 type Snapshot struct {
-	ID          session.SessionID      `json:"id"`
-	State       session.State          `json:"state"`
-	Mode        session.PermissionMode `json:"mode"`
-	Limits      session.Limits         `json:"limits"`
-	Counters    session.Counters       `json:"counters"`
-	Workspace   string                 `json:"workspace"`
-	CreatedAt   time.Time              `json:"created_at"`
-	Incarnation session.IncarnationID  `json:"incarnation,omitempty"`
-	Messages    []messageDTO           `json:"messages"`
-	Pending     *session.PendingAsk    `json:"pending,omitempty"`
-	StopReason  session.StopReason     `json:"stop_reason,omitempty"`
+	ID              session.SessionID       `json:"id"`
+	State           session.State           `json:"state"`
+	Mode            session.PermissionMode  `json:"mode"`
+	Limits          session.Limits          `json:"limits"`
+	Counters        session.Counters        `json:"counters"`
+	ExternalBinding session.ExternalBinding `json:"external_binding,omitempty"`
+	CreatedAt       time.Time               `json:"created_at"`
+	Incarnation     session.IncarnationID   `json:"incarnation,omitempty"`
+	Messages        []messageDTO            `json:"messages"`
+	Pending         *session.PendingAsk     `json:"pending,omitempty"`
+	// PendingAuthorization is present exactly while StateAuthorizing. Its private
+	// DTO base64-encodes tool arguments so JSON normalization cannot change bytes.
+	PendingAuthorization *pendingAuthorizationDTO `json:"pending_authorization,omitempty"`
+	// PendingWorkspaceEnrollment contains only safe enrollment correlation; no
+	// endpoint, credential, callback, or discovered-service state is persisted.
+	PendingWorkspaceEnrollment *session.PendingWorkspaceEnrollment `json:"pending_workspace_enrollment,omitempty"`
+	StopReason                 session.StopReason                  `json:"stop_reason,omitempty"`
 	// Kind and Relationship are the validated producer taxonomy from ADR 0217.
 	// A missing kind is legacy data and restores as unknown (fail-closed).
 	Kind         session.SessionKind         `json:"kind,omitempty"`
@@ -49,7 +61,7 @@ type Snapshot struct {
 	// Profile is the session's opaque tool-surface profile label. omitempty keeps a
 	// v1 snapshot with no "profile" key decoding to "" (the default profile) —
 	// purely additive, no format-tag bump (the same precedent as ProviderPhase /
-	// Parts). The empty-workspace inference stays as the second defense on restore.
+	// Parts).
 	Profile string `json:"profile,omitempty"`
 	// ProviderID and ModelID are the session's opaque neutral provider+model
 	// selector pair. omitempty keeps a v1 snapshot with no key decoding to the empty
@@ -77,7 +89,17 @@ type Snapshot struct {
 	// Profile), restored by direct assignment, NOT a state transition.
 	Title           string                  `json:"title,omitempty"`
 	TitleProvenance session.TitleProvenance `json:"title_provenance,omitempty"`
-	// Usage is the cumulative run-token accounting, a POINTER for true omitempty
+	// TitleRevision is the title-specific durable metadata revision. omitempty
+	// preserves the zero value for legacy snapshots.
+	TitleRevision uint64 `json:"title_revision,omitempty"`
+	// TitleGeneration metadata is distinct from main Usage and conversation.
+	TitleGeneration    session.TitleGenerationState `json:"title_generation,omitempty"`
+	TitleSourcePrompts []string                     `json:"title_source_prompts,omitempty"`
+	TitleAttempts      []session.TitleAttempt       `json:"title_attempts,omitempty"`
+	// TokenUsage is the canonical durable usage ledger. A missing map is legacy;
+	// restore derives honest unknown attribution from deprecated projections.
+	TokenUsage map[session.UsageKind]session.TokenUsage `json:"token_usage,omitempty"`
+	// Usage is the deprecated cumulative run-token accounting, a POINTER for true omitempty
 	// (matching the Pending precedent): a zero Usage marshals nothing and a v1
 	// snapshot with no "usage" key decodes to a nil pointer => the zero Usage on
 	// restore. It is what the MaxRunTokens budget brake is evaluated against, so
@@ -130,21 +152,11 @@ type Snapshot struct {
 	// genuinely pre-feature legacy record; a present payload must decode to the
 	// one governance.CapabilitySet representation or restore fails closed.
 	Authority *session.Authority `json:"authority,omitempty"`
-	// EnvironmentRef is the resolved execution-environment identity this session
-	// runs against (ADR 0214, issue #462 phase 3). The ref is a value type
-	// (EnvironmentKind + opaque ID); a zero ref {Kind:"", ID:""} is the
-	// "unspecified" value. It uses Go 1.26's `omitzero` (NOT `omitempty`, which
-	// never omits a non-empty struct) so a default/local session with no remote
-	// ref stays byte-identical to a pre-phase-3 snapshot — purely additive, no
-	// format-tag bump. A legacy snapshot with no "environment_ref" key decodes to
-	// the zero ref. Persisting it lets a restarted process reattach a live
-	// Environment to the SAME backend for a non-in-tree Kind via
-	// server.Config.EnvironmentResolver; local/mem/nofs resolve through the
-	// existing factories.
-	EnvironmentRef session.EnvironmentRef `json:"environment_ref,omitzero"`
-	// AdoptionMetadata is embedded so its rare pointer does not inflate every
-	// Snapshot, while its existing v2 fields remain flat on the JSON wire.
-	*session.AdoptionMetadata
+	// EnvironmentRef is the sole durable execution-environment identity. It is
+	// required and must contain the exact provider revision used for reattachment.
+	EnvironmentRef session.EnvironmentRef `json:"environment_ref"`
+	// Placement is safe display-only metadata and is never used for reattachment.
+	Placement session.PlacementMetadata `json:"placement,omitempty"`
 }
 
 // messageDTO mirrors session.Message with JSON tags. session.Message is
@@ -182,6 +194,85 @@ type contentDTO struct {
 	URL      string            `json:"url,omitempty"`
 }
 
+// pendingAuthorizationDTO keeps the private continuation's effective argument
+// bytes out of json.RawMessage encoding, which may normalize JSON whitespace.
+// []byte uses encoding/json's base64 representation and therefore round-trips
+// the exact bytes.
+type pendingAuthorizationDTO struct {
+	Authorization externalAuthorizationDTO `json:"authorization"`
+	Call          authorizationCallDTO     `json:"call"`
+	Deferred      []authorizationCallDTO   `json:"deferred,omitempty"`
+}
+
+type externalAuthorizationDTO struct {
+	ID          string                       `json:"id"`
+	DisplayName string                       `json:"display_name,omitempty"`
+	Binding     session.AuthorizationBinding `json:"binding"`
+	ExpiresAt   time.Time                    `json:"expires_at"`
+}
+
+type authorizationCallDTO struct {
+	ID     session.ToolCallID `json:"id"`
+	Name   string             `json:"name"`
+	Args   []byte             `json:"args,omitempty"`
+	ItemID string             `json:"item_id,omitempty"`
+}
+
+func toPendingAuthorizationDTO(p session.PendingAuthorization) *pendingAuthorizationDTO {
+	dto := &pendingAuthorizationDTO{
+		Authorization: externalAuthorizationDTO{
+			ID:          p.Authorization.ID,
+			DisplayName: p.Authorization.DisplayName,
+			Binding:     p.Authorization.Binding,
+			ExpiresAt:   p.Authorization.ExpiresAt,
+		},
+		Call: toAuthorizationCallDTO(p.Call),
+	}
+	dto.Deferred = make([]authorizationCallDTO, len(p.Deferred))
+	for i, call := range p.Deferred {
+		dto.Deferred[i] = toAuthorizationCallDTO(call)
+	}
+	return dto
+}
+
+func toAuthorizationCallDTO(call session.ToolCall) authorizationCallDTO {
+	return authorizationCallDTO{
+		ID:     call.ID,
+		Name:   call.Name,
+		Args:   append([]byte(nil), call.Args...),
+		ItemID: call.ItemID,
+	}
+}
+
+func fromPendingAuthorizationDTO(dto *pendingAuthorizationDTO) *session.PendingAuthorization {
+	if dto == nil {
+		return nil
+	}
+	pending := &session.PendingAuthorization{
+		Authorization: session.ExternalAuthorization{
+			ID:          dto.Authorization.ID,
+			DisplayName: dto.Authorization.DisplayName,
+			Binding:     dto.Authorization.Binding,
+			ExpiresAt:   dto.Authorization.ExpiresAt,
+		},
+		Call: fromAuthorizationCallDTO(dto.Call),
+	}
+	pending.Deferred = make([]session.ToolCall, len(dto.Deferred))
+	for i, call := range dto.Deferred {
+		pending.Deferred[i] = fromAuthorizationCallDTO(call)
+	}
+	return pending
+}
+
+func fromAuthorizationCallDTO(dto authorizationCallDTO) session.ToolCall {
+	return session.ToolCall{
+		ID:     dto.ID,
+		Name:   dto.Name,
+		Args:   append([]byte(nil), dto.Args...),
+		ItemID: dto.ItemID,
+	}
+}
+
 // ErrNilSession is returned by Of when given a nil session.
 var ErrNilSession = errors.New("sessnap: nil session")
 
@@ -190,6 +281,9 @@ var ErrNilSession = errors.New("sessnap: nil session")
 func Of(s *session.Session) (Snapshot, error) {
 	if s == nil {
 		return Snapshot{}, ErrNilSession
+	}
+	if err := s.ValidateAuthorizationState(); err != nil {
+		return Snapshot{}, fmt.Errorf("sessnap: validate authorization state: %w", err)
 	}
 	relationship := s.Relationship
 	if relationship.BranchIndex != nil {
@@ -202,8 +296,9 @@ func Of(s *session.Session) (Snapshot, error) {
 		Mode:                   s.Mode,
 		Limits:                 s.Limits,
 		Counters:               s.Counters,
-		Workspace:              s.Workspace,
+		ExternalBinding:        s.ExternalBinding,
 		EnvironmentRef:         s.EnvironmentRef,
+		Placement:              s.Placement,
 		Profile:                s.Profile,
 		ProviderID:             s.ProviderID,
 		ModelID:                s.ModelID,
@@ -213,14 +308,18 @@ func Of(s *session.Session) (Snapshot, error) {
 		DebugTargetFingerprint: s.DebugTargetFingerprint,
 		Title:                  s.Title,
 		TitleProvenance:        s.TitleProvenance,
+		TitleRevision:          s.TitleRevision,
+		TitleGeneration:        s.TitleGeneration,
+		TitleSourcePrompts:     s.TitleSourcePrompts(),
+		TitleAttempts:          s.TitleAttempts(),
+		TokenUsage:             s.TokenUsageSnapshot(),
 		Kind:                   s.Kind,
 		Relationship:           relationship,
 		CreatedAt:              s.CreatedAt,
 		Incarnation:            s.Incarnation(),
 		// Owner is a pointer for true omitempty; Clone so the snapshot cannot
 		// alias (and later mutate) the aggregate's own principal.
-		Owner:            s.Owner.Clone(),
-		AdoptionMetadata: s.Adoption.Clone(),
+		Owner: s.Owner.Clone(),
 	}
 	if authority, ok := s.BoundAuthority(); ok {
 		snap.Authority = &authority
@@ -241,6 +340,13 @@ func Of(s *session.Session) (Snapshot, error) {
 		a := ask
 		snap.Pending = &a
 	}
+	if pending, ok := s.PendingAuthorization(); ok {
+		snap.PendingAuthorization = toPendingAuthorizationDTO(pending)
+	}
+	if pending, ok := s.PendingWorkspaceEnrollment(); ok {
+		p := pending
+		snap.PendingWorkspaceEnrollment = &p
+	}
 	// Capture the recorded terminal reason faithfully (no limit derivation) so a
 	// terminal session round-trips through the matching transition on restore.
 	if r, ok := s.RecordedStopReason(); ok {
@@ -258,7 +364,10 @@ func Of(s *session.Session) (Snapshot, error) {
 // machine through its public constructors and transitions, so all invariants
 // hold on the rebuilt aggregate.
 func (snap Snapshot) Restore() (*session.Session, error) {
-	s := session.New(snap.ID, snap.Mode, snap.Workspace, snap.Limits, snap.CreatedAt)
+	if !snap.EnvironmentRef.Valid() {
+		return nil, errors.New("sessnap: missing or invalid environment_ref")
+	}
+	s := session.New(snap.ID, snap.Mode, snap.EnvironmentRef, snap.Limits, snap.CreatedAt)
 	if err := s.RestoreSessionMetadata(snap.Kind, snap.Relationship); err != nil {
 		return nil, fmt.Errorf("sessnap: restore session metadata: %w", err)
 	}
@@ -271,24 +380,22 @@ func (snap Snapshot) Restore() (*session.Session, error) {
 	for _, dto := range snap.Messages {
 		s.Conversation.Append(fromDTO(dto))
 	}
-	// Restore the inert creation labels by direct assignment — exported authoritative
-	// values, with no state transition. Profile / ProviderID / ModelID /
-	// ReasoningEffort / EnvironmentRef are opaque to the domain.
+	// Restore opaque creation labels by direct assignment. Title-specific metadata
+	// restores atomically through RestoreTitleMetadata below.
 	s.Profile = snap.Profile
 	s.ProviderID = snap.ProviderID
 	s.ModelID = snap.ModelID
 	s.ReasoningEffort = snap.ReasoningEffort
+	s.Placement = snap.Placement
 	s.DebugMCPServers = append([]string(nil), snap.DebugMCPServers...)
 	s.DebugMCPTools = append([]string(nil), snap.DebugMCPTools...)
 	s.DebugTargetFingerprint = snap.DebugTargetFingerprint
-	s.EnvironmentRef = snap.EnvironmentRef
-	s.Adoption = snap.Clone()
+	s.ExternalBinding = snap.ExternalBinding
 	// RunID restores by direct assignment, like Profile/Title above: it is an
 	// inert stored label, not lifecycle state, so it does not belong in
 	// RestoreState's state-machine parameter list.
 	s.BeginRun(snap.RunID)
-	s.Title = snap.Title
-	s.TitleProvenance = snap.TitleProvenance
+	s.RestoreTitleMetadata(snap.Title, snap.TitleProvenance, snap.TitleRevision, snap.TitleGeneration, snap.TitleSourcePrompts, snap.TitleAttempts)
 	// The identity labels go through the WRITE-ONCE aggregate method rather than a
 	// field poke (Session is an aggregate) and rather than a RestoreState
 	// parameter (that widening is Changed/breaking; this stays Added/minor).
@@ -310,8 +417,18 @@ func (snap Snapshot) Restore() (*session.Session, error) {
 
 	// Drive the state machine to the recorded lifecycle state, seed the running
 	// totals + cumulative usage. New() lands in StateIdle; RestoreState advances.
-	if err := RestoreState(s, snap.State, snap.StopReason, snap.Pending, snap.Counters, usage, snap.Permanent, snap.LastError); err != nil {
+	pendingAuthorization := fromPendingAuthorizationDTO(snap.PendingAuthorization)
+	if err := restoreState(s, snap.State, snap.StopReason, snap.Pending, pendingAuthorization, snap.Counters, usage, snap.Permanent, snap.LastError); err != nil {
 		return nil, err
+	}
+	// Canonical token usage wins whenever it is present; legacy snapshots derive the
+	// main bucket from their deprecated compatibility projection.
+	if snap.TokenUsage != nil {
+		s.RestoreTokenUsage(snap.TokenUsage)
+	} else if usage != (session.Usage{}) {
+		s.RestoreTokenUsage(map[session.UsageKind]session.TokenUsage{
+			session.UsageKindMain: {Total: usage, Models: map[string]session.Usage{"unknown": usage}},
+		})
 	}
 	if snap.State == session.StateFailed {
 		disposition := snap.RetryDisposition
@@ -325,6 +442,11 @@ func (snap Snapshot) Restore() (*session.Session, error) {
 	if snap.RetryPending {
 		if err := s.RestoreFailedStepRetryPending(snap.RetryPendingDisposition, snap.RetryPendingProgress); err != nil {
 			return nil, fmt.Errorf("sessnap: restore failed-step retry intent: %w", err)
+		}
+	}
+	if snap.PendingWorkspaceEnrollment != nil {
+		if err := s.BeginWorkspaceEnrollment(*snap.PendingWorkspaceEnrollment); err != nil {
+			return nil, fmt.Errorf("sessnap: restore workspace enrollment: %w", err)
 		}
 	}
 	return s, nil
@@ -388,6 +510,28 @@ func RestoreState(
 	permanent bool,
 	lastError string,
 ) error {
+	return restoreState(s, state, stop, pending, nil, counters, usage, permanent, lastError)
+}
+
+// restoreState is the snapshot-only extension of RestoreState for additive
+// external-authorization continuation state. Keeping it private preserves the
+// existing public restore API.
+//
+//nolint:gocyclo // The switch mirrors the complete session lifecycle state machine.
+func restoreState(
+	s *session.Session,
+	state session.State,
+	stop session.StopReason,
+	pending *session.PendingAsk,
+	pendingAuthorization *session.PendingAuthorization,
+	counters session.Counters,
+	usage session.Usage,
+	permanent bool,
+	lastError string,
+) error {
+	if err := validateRestorePendingState(s, state, pending, pendingAuthorization); err != nil {
+		return err
+	}
 	// Restore running totals directly; these are exported and authoritative.
 	s.Counters = counters
 	// Usage seeds the budget so it survives restart.
@@ -404,12 +548,15 @@ func RestoreState(
 		if err := beginTurnPreservingCounters(s, counters); err != nil {
 			return err
 		}
-		ask := session.PendingAsk{}
-		if pending != nil {
-			ask = *pending
-		}
-		if err := s.PauseForApproval(ask); err != nil {
+		if err := s.PauseForApproval(*pending); err != nil {
 			return fmt.Errorf("sessnap: restore awaiting: %w", err)
+		}
+	case session.StateAuthorizing:
+		if err := beginTurnPreservingCounters(s, counters); err != nil {
+			return err
+		}
+		if err := s.PauseForAuthorization(*pendingAuthorization); err != nil {
+			return fmt.Errorf("sessnap: restore authorizing: %w", err)
 		}
 	case session.StateCompleted:
 		// Stop(reason) records the exact captured reason; Complete is the special
@@ -436,6 +583,33 @@ func RestoreState(
 		}
 	default:
 		return fmt.Errorf("sessnap: unknown state %q", state)
+	}
+	return nil
+}
+
+func validateRestorePendingState(s *session.Session, state session.State, pending *session.PendingAsk, pendingAuthorization *session.PendingAuthorization) error {
+	switch state {
+	case session.StateAwaiting:
+		if pending == nil || pendingAuthorization != nil {
+			return fmt.Errorf("sessnap: awaiting state/pending mismatch")
+		}
+	case session.StateAuthorizing:
+		if pending != nil || pendingAuthorization == nil {
+			return fmt.Errorf("sessnap: authorizing state/pending mismatch")
+		}
+		// Validate against the exact restored history without mutating s.
+		probe := session.New(s.ID, s.Mode, s.EnvironmentRef, s.Limits, s.CreatedAt)
+		probe.Conversation = s.Conversation
+		if err := probe.BeginTurn(); err != nil {
+			return fmt.Errorf("sessnap: validate authorizing: %w", err)
+		}
+		if err := probe.PauseForAuthorization(*pendingAuthorization); err != nil {
+			return fmt.Errorf("sessnap: authorizing state/pending mismatch: %w", err)
+		}
+	default:
+		if pending != nil || pendingAuthorization != nil {
+			return fmt.Errorf("sessnap: pending value outside matching state")
+		}
 	}
 	return nil
 }
@@ -479,6 +653,15 @@ func Marshal(s *session.Session) ([]byte, error) {
 
 // Unmarshal decodes a JSON snapshot line and restores it into a Session.
 func Unmarshal(line []byte) (*session.Session, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(line, &fields); err != nil {
+		return nil, fmt.Errorf("sessnap: decode snapshot: %w", err)
+	}
+	for _, legacy := range []string{"workspace", "adoption_source_id", "adoption_request_digest"} {
+		if _, ok := fields[legacy]; ok {
+			return nil, fmt.Errorf("sessnap: unsupported legacy duplicate placement field %q", legacy)
+		}
+	}
 	var wire struct {
 		Authority json.RawMessage `json:"authority"`
 	}

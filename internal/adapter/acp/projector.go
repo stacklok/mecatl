@@ -86,6 +86,20 @@ func projectUpdate(ev session.Event) (any, bool) {
 			Content: diffContentFor(ev.ToolCall.Name, ev.ToolCall.Args),
 		}, true
 
+	case session.EvAuthorizationRequired:
+		if ev.Authorization == nil {
+			return nil, false
+		}
+		text := "MCP authorization" + authorizationDisplayTarget(ev.Authorization) + " is unavailable for ACP sessions"
+		return toolCallUpdate{SessionUpdate: updateToolCallUpdate, ToolCallID: string(ev.Authorization.Call), Status: toolStatusFailed, Content: textToolContent(text)}, true
+
+	case session.EvAuthorizationResolved:
+		if ev.Authorization == nil {
+			return nil, false
+		}
+		text := "MCP authorization" + authorizationDisplayTarget(ev.Authorization) + " status: " + string(ev.Authorization.Status)
+		return chunkUpdate{SessionUpdate: updateAgentThoughtChunk, Content: textBlock(text)}, true
+
 	case session.EvToolResult:
 		if ev.ToolResult == nil {
 			return nil, false
@@ -117,6 +131,13 @@ func projectUpdate(ev session.Event) (any, bool) {
 		// line; tool.progress is a transient advisory drop, never an error.)
 		return nil, false
 	}
+}
+
+func authorizationDisplayTarget(p *session.AuthorizationPayload) string {
+	if p == nil || p.DisplayName == "" || !p.Valid() {
+		return ""
+	}
+	return " for " + p.DisplayName
 }
 
 // editArgs / writeArgs mirror the JSON arg shapes of internal/adapter/tools'

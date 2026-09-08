@@ -264,7 +264,7 @@ func contextPressure(percent int) (token, fill string) {
 	}
 }
 
-type templateWorkspace struct{ Location, Path, Basename templateText }
+type templateWorkspace struct{ Location, Name, Path templateText }
 type templateMainAgent struct{ State, Activity, Approval templateText }
 type templateClock struct{ Now templateTime }
 type templateTime struct{ now time.Time }
@@ -281,7 +281,7 @@ func newTemplateInput(input Input) templateInput {
 		Model:      templateModel{escapeTemplateText(input.Model.ProviderID), escapeTemplateText(input.Model.ID), escapeTemplateText(input.Model.DisplayName), escapeTemplateText(input.Model.Route), templateContextAtom{input.Model.ContextWindow.Raw, escapeTemplateText(input.Model.ContextWindow.Human)}},
 		Usage:      templateUsage{templateUsageAtom{input.Usage.Input.Raw, escapeTemplateText(input.Usage.Input.Human)}, templateUsageAtom{input.Usage.Output.Raw, escapeTemplateText(input.Usage.Output.Human)}, templateUsageAtom{input.Usage.CacheRead.Raw, escapeTemplateText(input.Usage.CacheRead.Human)}, templateUsageAtom{input.Usage.CacheWrite.Raw, escapeTemplateText(input.Usage.CacheWrite.Human)}, input.Usage.CacheReadPercent},
 		Context:    templateContext{templateContextAtom{input.Context.Used.Raw, escapeTemplateText(input.Context.Used.Human)}, templateContextAtom{input.Context.Window.Raw, escapeTemplateText(input.Context.Window.Human)}, input.Context.Percent},
-		Workspace:  templateWorkspace{escapeTemplateText(input.Workspace.Location), escapeTemplateText(input.Workspace.Path), escapeTemplateText(input.Workspace.Basename)},
+		Workspace:  templateWorkspace{escapeTemplateText(input.Workspace.Location), escapeTemplateText(input.Workspace.Name), escapeTemplateText(input.Workspace.Path)},
 		Terminal:   input.Terminal,
 		MainAgent:  templateMainAgent{escapeTemplateText(input.MainAgent.State), escapeTemplateText(input.MainAgent.Activity), escapeTemplateText(input.MainAgent.Approval)},
 		Delegation: templateDelegation{Subagents: templateDelegationSummary{input.Delegation.Subagents.Running, input.Delegation.Subagents.Finished}, Parallel: templateDelegationSummary{input.Delegation.Parallel.Running, input.Delegation.Parallel.Finished}, Team: templateLiveTeam{ID: escapeTemplateText(input.Delegation.Team.ID), Working: input.Delegation.Team.Working, Total: input.Delegation.Team.Total}},

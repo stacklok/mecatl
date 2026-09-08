@@ -344,12 +344,12 @@ func TestCreateSessionNoFSProfileNoWorkspace(t *testing.T) {
 	defer built.Close()
 	svc := built.Service
 
-	sess, err := svc.CreateSessionWithProfile(ctx, "", session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileNoFS)
+	sess, err := svc.CreateSessionWithProfile(ctx, session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileNoFS)
 	if err != nil {
 		t.Fatalf("CreateSessionWithProfile(no-fs, empty workspace): %v", err)
 	}
-	if sess.Workspace != "" {
-		t.Fatalf("no-fs session persisted Workspace = %q, want \"\"", sess.Workspace)
+	if sess.EnvironmentRef.Kind != session.EnvKindNoFS {
+		t.Fatalf("no-fs session persisted EnvironmentRef = %+v, want nofs", sess.EnvironmentRef)
 	}
 
 	run, err := svc.StartRun(ctx, sess.ID, "do a file-free check")
@@ -414,26 +414,14 @@ func TestCreateSessionNoFSProfileNoWorkspace(t *testing.T) {
 	}
 }
 
-// TestCreateSessionNoFSRejectsWorkspace: the contradictory no-fs + workspace
-// combination is rejected loudly (never resolved by dropping either field).
-func TestCreateSessionNoFSRejectsWorkspace(t *testing.T) {
+// TestCreateSessionDefaultProfileUsesServerPlacement proves an omitted workspace
+// binds the provider-owned default.
+func TestCreateSessionDefaultProfileUsesServerPlacement(t *testing.T) {
 	svc := nofsRejectionService(t)
-	_, err := svc.CreateSessionWithProfile(context.Background(), "/some/where", session.ModeDefault, session.Limits{},
-		server.ProviderSelector{}, server.ProfileNoFS)
-	if err == nil || !strings.Contains(err.Error(), "must not carry a workspace") {
-		t.Fatalf("no-fs + workspace must be rejected loudly, got: %v", err)
-	}
-}
-
-// TestCreateSessionDefaultProfileRequiresWorkspace: today's behaviour is
-// preserved byte-for-byte for the default profile — an empty workspace is still
-// rejected.
-func TestCreateSessionDefaultProfileRequiresWorkspace(t *testing.T) {
-	svc := nofsRejectionService(t)
-	_, err := svc.CreateSessionWithProfile(context.Background(), "", session.ModeDefault, session.Limits{},
+	sess, err := svc.CreateSessionWithProfile(context.Background(), session.ModeDefault, session.Limits{},
 		server.ProviderSelector{}, server.ProfileDefault)
-	if err == nil || !strings.Contains(err.Error(), "workspace is required") {
-		t.Fatalf("default profile + empty workspace must be rejected, got: %v", err)
+	if err != nil || !sess.EnvironmentRef.Valid() {
+		t.Fatalf("default profile server placement = %+v, %v", sess, err)
 	}
 }
 
@@ -441,7 +429,7 @@ func TestCreateSessionDefaultProfileRequiresWorkspace(t *testing.T) {
 // invalid-argument, never a silent fallback to the default profile.
 func TestCreateSessionUnknownProfileRejected(t *testing.T) {
 	svc := nofsRejectionService(t)
-	_, err := svc.CreateSessionWithProfile(context.Background(), "", session.ModeDefault, session.Limits{},
+	_, err := svc.CreateSessionWithProfile(context.Background(), session.ModeDefault, session.Limits{},
 		server.ProviderSelector{}, server.SessionProfile("ram-only"))
 	if err == nil || !strings.Contains(err.Error(), "unknown session profile") {
 		t.Fatalf("unknown profile must be rejected loudly, got: %v", err)
@@ -458,10 +446,9 @@ func nofsRejectionService(t *testing.T) *server.Service {
 		Policy:  permpolicy.NewPolicy(defaultRules(), nil),
 		Hooks:   hookexec.New(nil),
 	})
-	svc, err := server.NewService(server.Config{
-		Engine:     eng,
-		Store:      memstore.New(),
-		Workspaces: func(string) tool.Workspace { return nofs.New() },
+	svc, err := newTestServerService(server.Config{
+		Engine: eng,
+		Store:  memstore.New(),
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
@@ -507,7 +494,7 @@ func TestNoFSSessionSurvivesRestartE2E(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Build #1: %v", err)
 	}
-	sess, err := built1.Service.CreateSessionWithProfile(ctx, "", session.ModeDefault, session.Limits{},
+	sess, err := built1.Service.CreateSessionWithProfile(ctx, session.ModeDefault, session.Limits{},
 		server.ProviderSelector{}, server.ProfileNoFS)
 	if err != nil {
 		built1.Close()
@@ -756,7 +743,7 @@ func TestSelectorSessionSurvivesRestartE2E(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Build #1: %v", err)
 	}
-	sess, err := built1.Service.CreateSessionWithProfile(ctx, "", session.ModeDefault, session.Limits{},
+	sess, err := built1.Service.CreateSessionWithProfile(ctx, session.ModeDefault, session.Limits{},
 		server.ProviderSelector{ProviderID: providerOpenRouter, ModelID: selectorModel}, server.ProfileNoFS)
 	if err != nil {
 		built1.Close()

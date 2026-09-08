@@ -58,7 +58,7 @@ func liveSpecs() {
 
 				ginkgo.By("creating a session on pod-A")
 				cCtx, cCancel := shortCtx(30 * time.Second)
-				sessionID := createSessionOverHTTP(cCtx, addrA)
+				sessionID := createLiveSessionOverHTTP(cCtx, addrA)
 				cCancel()
 
 				ginkgo.By("driving a real one-turn prompt and parsing the result event")
@@ -71,7 +71,7 @@ func liveSpecs() {
 					"live run-start = HTTP %d, want 200", status)
 				gomega.Expect(res).NotTo(gomega.BeNil(), "no result event parsed from the live stream")
 				gomega.Expect(res.Stop).To(gomega.Equal("end_turn"),
-					"live run stop = %q, want end_turn", res.Stop)
+					"live run stop = %q, want end_turn\nSSE diagnostic: %s", res.Stop, res.diagnostic())
 				gomega.Expect(res.Input).To(gomega.BeNumerically(">", 0),
 					"live run input_tokens = %d, want > 0 (a real model call)", res.Input)
 				gomega.Expect(res.Output).To(gomega.BeNumerically(">", 0),
@@ -115,7 +115,7 @@ func liveSpecs() {
 
 				ginkgo.By("creating a session on pod-A (persisted to Redis)")
 				sessCtx, sessCancel := shortCtx(30 * time.Second)
-				sessionID := createSessionOverHTTP(sessCtx, addrA)
+				sessionID := createLiveSessionOverHTTP(sessCtx, addrA)
 				sessCancel()
 
 				// Drive a real turn to terminal BUT keep pod-A's run in flight to
@@ -134,7 +134,7 @@ func liveSpecs() {
 					"pod-A live run = HTTP %d, want 200", status)
 				gomega.Expect(res).NotTo(gomega.BeNil())
 				gomega.Expect(res.Stop).To(gomega.Equal("end_turn"),
-					"pod-A live run stop = %q, want end_turn", res.Stop)
+					"pod-A live run stop = %q, want end_turn\nSSE diagnostic: %s", res.Stop, res.diagnostic())
 
 				ginkgo.By("posting the SAME session to pod-B while A holds the lease → 409")
 				probeCtx, probeCancel := shortCtx(30 * time.Second)
@@ -159,7 +159,7 @@ func liveSpecs() {
 						"pod-B takeover after release = HTTP %d, want 200", st)
 					g.Expect(res).NotTo(gomega.BeNil(), "pod-B takeover produced no result event")
 					g.Expect(res.Stop).To(gomega.Equal("end_turn"),
-						"pod-B takeover stop = %q, want end_turn", res.Stop)
+						"pod-B takeover stop = %q, want end_turn\nSSE diagnostic: %s", res.Stop, res.diagnostic())
 				}, 200*time.Second, 2*time.Second).Should(gomega.Succeed(),
 					"pod-B takeover after pod-A released the lease did not complete a real turn")
 			})
@@ -185,7 +185,7 @@ func liveSpecs() {
 
 				ginkgo.By("creating a session + driving a real turn on pod-A to terminal")
 				cCtx, cCancel := shortCtx(30 * time.Second)
-				sessionID := createSessionOverHTTP(cCtx, addrA)
+				sessionID := createLiveSessionOverHTTP(cCtx, addrA)
 				cCancel()
 				rCtx, rCancel := shortCtx(180 * time.Second)
 				status, res, err := drainRunSSE(rCtx, addrA, sessionID, promptLiveProviderSm)
@@ -195,7 +195,7 @@ func liveSpecs() {
 					"pod-A live run = HTTP %d, want 200", status)
 				gomega.Expect(res).NotTo(gomega.BeNil())
 				gomega.Expect(res.Stop).To(gomega.Equal("end_turn"),
-					"pod-A live run stop = %q, want end_turn", res.Stop)
+					"pod-A live run stop = %q, want end_turn\nSSE diagnostic: %s", res.Stop, res.diagnostic())
 				gomega.Expect(res.Output).To(gomega.BeNumerically(">", 0),
 					"pod-A live run output_tokens = %d, want > 0 (real model output to persist)", res.Output)
 
@@ -257,7 +257,7 @@ func liveSpecs() {
 					"pod-B follow-up after restart = HTTP %d, want 200 (Reopen + lease acquire)", resumeStatus)
 				gomega.Expect(resumeRes).NotTo(gomega.BeNil())
 				gomega.Expect(resumeRes.Stop).To(gomega.Equal("end_turn"),
-					"pod-B resume stop = %q, want end_turn", resumeRes.Stop)
+					"pod-B resume stop = %q, want end_turn\nSSE diagnostic: %s", resumeRes.Stop, resumeRes.diagnostic())
 			})
 	})
 }

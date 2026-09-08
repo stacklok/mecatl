@@ -84,7 +84,9 @@ per-session), never in child catalogs. Tests offline: mockllm + memfs / memstore
 - AC4.3: Multiple fires completing during one origin run accumulate; each pending
   note is drained (no coalescing).
   - verify: `TestFireDelivery_Scenario4_MultiplePendingAllDrained`
-- AC4.4: A fire whose origin is deleted / a collected child / a `sched--` session
-  drops the delivery with a WARN, never fails the fire, never delivers into
-  another fire's chat; the result stays pull-able.
-  - verify: `TestFireDelivery_Scenario4_NonDeliverableOriginDropsWithWarn`
+- AC4.4: A missing origin remains ownership-safe and preserves no-verifier
+  compatibility. A child/fire-family non-deliverable origin drops the delivery
+  with a WARN, never fails the fire, never delivers into another fire's chat;
+  the result stays pull-able.
+  - verify: `TestScheduleDeliveryMissingOriginPreservesNoVerifierCompatibility`
+  - verify: `TestFireDelivery_Scenario4_NonDeliverableChildOriginDropsWithWarn`

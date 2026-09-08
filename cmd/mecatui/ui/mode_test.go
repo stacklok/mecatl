@@ -28,6 +28,10 @@ func modeTestModel(t *testing.T, conv *fakeConv) Model {
 }
 
 func modeKey() tea.KeyPressMsg {
+	return tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift}
+}
+
+func altModeKey() tea.KeyPressMsg {
 	return tea.KeyPressMsg{Code: 'm', Mod: tea.ModAlt}
 }
 
@@ -35,10 +39,14 @@ func TestModeSwitchUpdatesServerAndHeader(t *testing.T) {
 	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}, mode: "default"}
 	m := modeTestModel(t, conv)
 
+	m.prompt.Rewrite("keep this draft")
 	mm, cmd := m.Update(modeKey())
 	m = mm.(Model)
+	if got := m.prompt.Value(); got != "keep this draft" {
+		t.Fatalf("shift+tab changed prompt text to %q", got)
+	}
 	if cmd == nil {
-		t.Fatal("alt+m should issue SetMode command")
+		t.Fatal("shift+tab should issue SetMode command")
 	}
 	m = applyAll(m, cmd())
 
@@ -53,6 +61,35 @@ func TestModeSwitchUpdatesServerAndHeader(t *testing.T) {
 	}
 }
 
+func TestModeSwitchOverrideRemainsLive(t *testing.T) {
+	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}, mode: "default"}
+	m := modeTestModel(t, conv)
+	m.keys = applyKeyOverrides(m.keys, map[string][]string{"ModeSwitch": {"alt+m"}})
+
+	m.prompt.Rewrite("keep this draft")
+	mm, cmd := m.Update(modeKey())
+	m = mm.(Model)
+	if cmd != nil {
+		t.Fatal("shift+tab must not switch mode after ModeSwitch is overridden")
+	}
+	if got := conv.setModes(); len(got) != 0 {
+		t.Fatalf("shift+tab SetMode calls = %v, want none", got)
+	}
+	if got := m.prompt.Value(); got != "keep this draft" {
+		t.Fatalf("shift+tab changed prompt text to %q", got)
+	}
+
+	mm, cmd = m.Update(altModeKey())
+	m = mm.(Model)
+	if cmd == nil {
+		t.Fatal("overridden alt+m should issue SetMode command")
+	}
+	m = applyAll(m, cmd())
+	if got := conv.setModes(); len(got) != 1 || got[0] != "plan" {
+		t.Fatalf("SetMode calls = %v, want [plan]", got)
+	}
+}
+
 func TestModeSwitchFailureDefersToNextPrompt(t *testing.T) {
 	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}, mode: "default", setModeErr: errors.New("illegal transition")}
 	m := modeTestModel(t, conv)
@@ -61,7 +98,7 @@ func TestModeSwitchFailureDefersToNextPrompt(t *testing.T) {
 	mm, cmd := m.Update(modeKey())
 	m = mm.(Model)
 	if cmd == nil {
-		t.Fatal("alt+m while running should attempt SetMode")
+		t.Fatal("shift+tab while running should attempt SetMode")
 	}
 	m = applyAll(m, cmd())
 

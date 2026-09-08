@@ -1,10 +1,10 @@
 # TypeScript SDK durable attachment (M2) — acceptance plan
 
 **Phase:** capability — `@stacklok/mecatl-sdk` M2: durable attachment and connection authority
-**Status:** draft, 2026-09-02. Synthesised from [#821](https://github.com/stacklok/mecatl/issues/821)'s settled "Attachment and reconnection" contract plus the client-side decisions ADR 0279 deferred to this milestone.
+**Status:** landed, 2026-09-03. Stack PRs: [#999](https://github.com/stacklok/mecatl/pull/999), [#1013](https://github.com/stacklok/mecatl/pull/1013), [#1017](https://github.com/stacklok/mecatl/pull/1017), [#1021](https://github.com/stacklok/mecatl/pull/1021), [#1031](https://github.com/stacklok/mecatl/pull/1031), [#1035](https://github.com/stacklok/mecatl/pull/1035), [#1038](https://github.com/stacklok/mecatl/pull/1038), [#1040](https://github.com/stacklok/mecatl/pull/1040), [#1042](https://github.com/stacklok/mecatl/pull/1042), and [#1044](https://github.com/stacklok/mecatl/pull/1044). Synthesised from [#821](https://github.com/stacklok/mecatl/issues/821)'s settled "Attachment and reconnection" contract plus the client-side decisions ADR 0279 deferred to this milestone.
 **Issue:** [stacklok/mecatl#821](https://github.com/stacklok/mecatl/issues/821) (parent: [#761](https://github.com/stacklok/mecatl/issues/761)).
 **ADR:** [ADR-0288](../adr/0288-typescript-sdk-durable-attachment.md) — the envelope union, `attach`/`activity` semantics, the serializable run-and-filter-scoped cursor, the reconnect authority, the HTTP-only attached `cancel` (approval deferred), and the status arbitration rule.
-**Accumulator branch:** `acc/sdk-typescript-attach` (off `main`).
+**Accumulator / stack:** `sdk/21-envelope` is the stack root off `main`; subsequent layers are `sdk/22-attach` … `sdk/30-e2e` (linear, one PR per scenario).
 
 The smallest set of work that lets a TypeScript client rejoin a running
 mecatl session across a reload, a network drop, or a daemon restart, losing no
@@ -798,7 +798,7 @@ brings a second one up on the same durable store directory.
   subsystem — the checkpoint's consumption-time advancement, the
   consume-but-do-not-yield split, the cursor envelope, the derived filter set,
   and the three-arm reconnect classification.
-- `task docs` regeneration (`llms.txt`) with every Markdown change.
+- `task docs` configuration-reference regeneration with every Markdown change.
 - No `engine/` API change is expected — the cursor port already landed. If one
   appears, `task api:check` / `task api:update` plus the `engine/CHANGELOG.md`
   note per the standing rule.
@@ -834,7 +834,7 @@ suites under `sdk/typescript/`, cited per AC.
 1. `task lint` and `task test` pass (both Go modules, `-race`), plus
    `task sdk:lint`, `task sdk:typecheck`, `task sdk:test`, `task sdk:e2e`, and
    `task sdk:api:check`.
-2. `task docs` — `llms.txt` regenerated and the matlatl strict link gate green.
+2. `task docs` — configuration reference regenerated and the matlatl strict link gate green.
 3. `task generate` reproduces both generated trees byte-identically —
    `WatchSessionEvents` descriptors come from the existing committed output, so
    this should be a no-op.

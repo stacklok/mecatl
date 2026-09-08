@@ -79,7 +79,7 @@ func approveAfterKillSpecs() {
 
 				cli1 := local1.Client()
 				// ModeDefault: the Write tool resolves to Ask, so the run parks.
-				sessionID, _, _, err := cli1.CreateSession(ctx, local1.Workspace(),
+				sessionID, _, _, err := cli1.CreateSession(ctx,
 					client.ModeFromString("default"),
 					client.ModelSelection{ProviderID: harness.ProviderID, ModelID: haikuLane})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "create session on local #1")
@@ -99,7 +99,9 @@ func approveAfterKillSpecs() {
 				// it does not depend on the resumed SSE replaying the pre-restart call.
 				// DO NOT approve — the run stays parked awaiting; the live gRPC relay
 				// persists a durable awaiting snapshot on the ask (Persist-on-ask).
-				askID, writeCallID := driveToWriteAsk(ctx, stream1, 90*time.Second)
+				askID, writeCallID, driveErr := driveToWriteAsk(ctx, stream1, 90*time.Second)
+				gomega.Expect(driveErr).NotTo(gomega.HaveOccurred(),
+					"drive local #1 to the Write permission ask\n--- mecated log tail ---\n"+local1.LogTail(4096))
 				expectNonEmpty(askID, "a Write permission ask on local #1", local1.LogTail(4096))
 				expectNonEmpty(writeCallID, "a Write tool.call on local #1 (card-before-the-gate)", local1.LogTail(4096))
 

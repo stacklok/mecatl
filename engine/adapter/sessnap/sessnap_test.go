@@ -15,7 +15,7 @@ import (
 // counters and limits, used by several round-trip tests.
 func runningSession(t *testing.T) *session.Session {
 	t.Helper()
-	s := session.New("s1", session.ModePlan, "/ws", session.Limits{
+	s := session.New("s1", session.ModePlan, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{
 		MaxTurns: 10, MaxToolCalls: 20, MaxConsecutiveFailures: 3,
 	}, time.Unix(1700000000, 0).UTC())
 	// Phase 1 inert labels + cumulative usage: exercised by every round-trip test
@@ -27,7 +27,7 @@ func runningSession(t *testing.T) *session.Session {
 	s.DebugMCPServers = []string{"github"}
 	s.DebugMCPTools = []string{"mcp__github__get_issue"}
 	s.DebugTargetFingerprint = "internal-incarnation-token"
-	s.EnvironmentRef = session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws"}
+	s.EnvironmentRef = session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}
 	s.SetTitle("Fix the flaky CI job")
 	if err := s.BeginTurn(); err != nil {
 		t.Fatalf("BeginTurn: %v", err)
@@ -62,9 +62,6 @@ func assertEquivalent(t *testing.T, got, want *session.Session) {
 	}
 	if got.Mode != want.Mode {
 		t.Errorf("Mode = %q, want %q", got.Mode, want.Mode)
-	}
-	if got.Workspace != want.Workspace {
-		t.Errorf("Workspace = %q, want %q", got.Workspace, want.Workspace)
 	}
 	if !got.CreatedAt.Equal(want.CreatedAt) {
 		t.Errorf("CreatedAt = %v, want %v", got.CreatedAt, want.CreatedAt)
@@ -192,7 +189,7 @@ func TestRoundTripTerminalStates(t *testing.T) {
 // driven so its Limits would derive a DIFFERENT reason than the one recorded, so
 // a faithful round-trip can only come from RecordedStopReason.
 func TestRoundTripRecordedStopReason(t *testing.T) {
-	want := session.New("rec1", session.ModeDefault, "/ws", session.Limits{
+	want := session.New("rec1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{
 		// MaxTurns: 1 would derive StopMaxTurns once a turn begins...
 		MaxTurns: 1,
 	}, time.Unix(1700000000, 0).UTC())
@@ -223,7 +220,7 @@ func TestRoundTripRecordedStopReason(t *testing.T) {
 }
 
 func TestRoundTripIdle(t *testing.T) {
-	want := session.New("idle1", session.ModeDefault, "/w", session.Limits{}, time.Unix(0, 0).UTC())
+	want := session.New("idle1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/w", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0).UTC())
 	got, err := sessnap.Unmarshal(mustMarshal(t, want))
 	if err != nil {
 		t.Fatalf("Unmarshal: %v", err)
@@ -243,7 +240,7 @@ func mustMarshal(t *testing.T, s *session.Session) []byte {
 // TestRoundTripWithParts asserts a user message carrying image+audio media parts
 // survives a Marshal→Unmarshal round-trip (bytes are base64 in JSON).
 func TestRoundTripWithParts(t *testing.T) {
-	s := session.New("m1", session.ModeDefault, "/ws", session.Limits{}, time.Unix(1700000000, 0).UTC())
+	s := session.New("m1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1700000000, 0).UTC())
 	parts := []session.Content{
 		{Kind: session.MediaImage, MIMEType: "image/png", Data: []byte{0x89, 0x50, 0x4e, 0x47}},
 		{Kind: session.MediaAudio, MIMEType: "audio/wav", URL: "https://example.com/a.wav"},
@@ -277,7 +274,7 @@ func TestRoundTripWithParts(t *testing.T) {
 // branches on the value, so a novel phase round-trips verbatim.
 func TestSnapshotRoundTripsPhase(t *testing.T) {
 	const novel = "some_future_phase_v2"
-	s := session.New("p1", session.ModeDefault, "/ws", session.Limits{}, time.Unix(1700000000, 0).UTC())
+	s := session.New("p1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1700000000, 0).UTC())
 	if err := s.BeginTurn(); err != nil {
 		t.Fatalf("BeginTurn: %v", err)
 	}
@@ -304,7 +301,7 @@ func TestSnapshotRoundTripsPhase(t *testing.T) {
 	}
 
 	// An empty-phase assistant message must wire-omit the key (additive, no bump).
-	s2 := session.New("p2", session.ModeDefault, "/ws", session.Limits{}, time.Unix(1700000000, 0).UTC())
+	s2 := session.New("p2", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1700000000, 0).UTC())
 	if err := s2.BeginTurn(); err != nil {
 		t.Fatalf("BeginTurn: %v", err)
 	}
@@ -328,7 +325,7 @@ func TestSnapshotRoundTripsPhase(t *testing.T) {
 // decodes. Mirrors TestSnapshotRoundTripsPhase's shape.
 func TestSnapshotRoundTripsReasoningItemID(t *testing.T) {
 	const id = "rs_x"
-	s := session.New("rid1", session.ModeDefault, "/ws", session.Limits{}, time.Unix(1700000000, 0).UTC())
+	s := session.New("rid1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1700000000, 0).UTC())
 	if err := s.BeginTurn(); err != nil {
 		t.Fatalf("BeginTurn: %v", err)
 	}
@@ -355,7 +352,7 @@ func TestSnapshotRoundTripsReasoningItemID(t *testing.T) {
 	}
 
 	// An empty ReasoningItemID assistant message must wire-omit the key (additive, no bump).
-	s2 := session.New("rid2", session.ModeDefault, "/ws", session.Limits{}, time.Unix(1700000000, 0).UTC())
+	s2 := session.New("rid2", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1700000000, 0).UTC())
 	if err := s2.BeginTurn(); err != nil {
 		t.Fatalf("BeginTurn: %v", err)
 	}
@@ -383,7 +380,7 @@ func TestSnapshotRoundTripsReasoningItemID(t *testing.T) {
 // replay — safe, non-OpenAI providers / pre-fix captures stay unchanged).
 func TestSnapshotRoundTripsItemID(t *testing.T) {
 	const itemID = "fc_7"
-	s := session.New("itm1", session.ModeDefault, "/ws", session.Limits{}, time.Unix(1700000000, 0).UTC())
+	s := session.New("itm1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1700000000, 0).UTC())
 	if err := s.BeginTurn(); err != nil {
 		t.Fatalf("BeginTurn: %v", err)
 	}
@@ -433,7 +430,7 @@ func TestSnapshotRoundTripsItemID(t *testing.T) {
 	// Backward-compat: an old snapshot without an "item_id" key decodes with
 	// ItemID == "" (wire-omit safe — replaying without an id is the pre-fix behavior).
 	oldSnap := `{"id":"old2","state":"idle","mode":"default","limits":{},"counters":{},` +
-		`"workspace":"/ws","created_at":"2023-11-14T22:13:20Z",` +
+		`"environment_ref":{"Kind":"local","ID":"/ws","Revision":"in-tree-v1"},"created_at":"2023-11-14T22:13:20Z",` +
 		`"messages":[{"role":"assistant","tool_calls":[{"ID":"call_x","Name":"read_file","Args":{"path":"z.go"}}]}]}`
 	got2, err := sessnap.Unmarshal([]byte(oldSnap))
 	if err != nil {
@@ -453,7 +450,7 @@ func TestSnapshotRoundTripsItemID(t *testing.T) {
 // field is back-compatible.
 func TestLoadV1SnapshotNoPartsIsTextOnly(t *testing.T) {
 	v1 := `{"id":"old","state":"idle","mode":"default","limits":{},"counters":{},` +
-		`"workspace":"/ws","created_at":"2023-11-14T22:13:20Z",` +
+		`"environment_ref":{"Kind":"local","ID":"/ws","Revision":"in-tree-v1"},"created_at":"2023-11-14T22:13:20Z",` +
 		`"messages":[{"role":"user","text":"hello there"}]}`
 	got, err := sessnap.Unmarshal([]byte(v1))
 	if err != nil {
@@ -508,7 +505,7 @@ func TestSnapshotRoundTripsPhase1Fields(t *testing.T) {
 // label keys, so a default session's snapshot stays byte-compatible with a
 // pre-Phase-1 one.
 func TestZeroUsageOmittedFromSnapshot(t *testing.T) {
-	s := session.New("z", session.ModeDefault, "/ws", session.Limits{}, time.Unix(1700000000, 0).UTC())
+	s := session.New("z", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1700000000, 0).UTC())
 	line := mustMarshal(t, s)
 	for _, key := range []string{`"usage"`, `"profile"`, `"provider_id"`, `"model_id"`} {
 		if strings.Contains(string(line), key) {
@@ -518,13 +515,12 @@ func TestZeroUsageOmittedFromSnapshot(t *testing.T) {
 }
 
 // TestLoadV1SnapshotMissingPhase1FieldsLoads is the downgrade/adversarial guard:
-// a v1 snapshot with NONE of the Phase 1 keys still loads, with the profile
-// empty (the empty-workspace inference in composition is the second defense), an
-// empty selector, and a zero Usage (a nil usage pointer => the zero value, so the
-// budget brake simply starts fresh — no crash, no spurious budget).
+// a snapshot with none of the Phase 1 keys still loads with an empty profile,
+// empty selector, and zero Usage. Its exact EnvironmentRef remains authoritative;
+// composition does not infer placement from a duplicate workspace field.
 func TestLoadV1SnapshotMissingPhase1FieldsLoads(t *testing.T) {
 	v1 := `{"id":"old","state":"idle","mode":"default","limits":{},"counters":{},` +
-		`"workspace":"/ws","created_at":"2023-11-14T22:13:20Z",` +
+		`"environment_ref":{"Kind":"local","ID":"/ws","Revision":"in-tree-v1"},"created_at":"2023-11-14T22:13:20Z",` +
 		`"messages":[{"role":"user","text":"hello there"}]}`
 	got, err := sessnap.Unmarshal([]byte(v1))
 	if err != nil {
@@ -548,7 +544,7 @@ func TestLoadV1SnapshotMissingPhase1FieldsLoads(t *testing.T) {
 // lazy deriveTitle fallback applies on read.
 func TestLoadV1SnapshotMissingTitleKeyLoads(t *testing.T) {
 	v1 := `{"id":"old","state":"idle","mode":"default","limits":{},"counters":{},` +
-		`"workspace":"/ws","created_at":"2023-11-14T22:13:20Z",` +
+		`"environment_ref":{"Kind":"local","ID":"/ws","Revision":"in-tree-v1"},"created_at":"2023-11-14T22:13:20Z",` +
 		`"messages":[{"role":"user","text":"hello there"}]}`
 	got, err := sessnap.Unmarshal([]byte(v1))
 	if err != nil {
@@ -578,7 +574,7 @@ func TestRoundTripTitlePreserved(t *testing.T) {
 // TestRoundTripEmptyTitleOmitsKey asserts an empty Title marshals to no title
 // key (byte-identical to a pre-Title snapshot) — the omitempty contract.
 func TestRoundTripEmptyTitleOmitsKey(t *testing.T) {
-	s := session.New("s2", session.ModeDefault, "/ws", session.Limits{}, time.Unix(1700000000, 0).UTC())
+	s := session.New("s2", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1700000000, 0).UTC())
 	line := mustMarshal(t, s)
 	if strings.Contains(string(line), `"title"`) {
 		t.Fatalf("empty-Title snapshot unexpectedly carries a title key:\n%s", line)
@@ -596,7 +592,7 @@ func TestRoundTripEmptyTitleOmitsKey(t *testing.T) {
 // true through Marshal/Unmarshal: the permanence flag on the session survives
 // serialisation.
 func TestSnapshotRoundTripsPermanentFailed(t *testing.T) {
-	s := session.New("perm1", session.ModeDefault, "/ws", session.Limits{}, time.Unix(1700000000, 0).UTC())
+	s := session.New("perm1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1700000000, 0).UTC())
 	if err := s.RecordUserPrompt("do stuff", nil); err != nil {
 		t.Fatalf("RecordUserPrompt: %v", err)
 	}
@@ -631,7 +627,7 @@ func TestSnapshotRoundTripsPermanentFailed(t *testing.T) {
 // TestSnapshotFailedWithoutPermanentFlagRoundTripsFalse asserts a failed session with
 // NO permanence stamp round-trips with FailurePermanence()==false.
 func TestSnapshotFailedWithoutPermanentFlagRoundTripsFalse(t *testing.T) {
-	s := session.New("perm2", session.ModeDefault, "/ws", session.Limits{}, time.Unix(1700000000, 0).UTC())
+	s := session.New("perm2", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1700000000, 0).UTC())
 	if err := s.RecordUserPrompt("do stuff", nil); err != nil {
 		t.Fatalf("RecordUserPrompt: %v", err)
 	}
@@ -666,7 +662,7 @@ func TestSnapshotFailedWithoutPermanentFlagRoundTripsFalse(t *testing.T) {
 // omitempty zero value). This is the downgrade/adversarial guard.
 func TestLoadV1SnapshotMissingPermanentKeyLoadsFalse(t *testing.T) {
 	v1 := `{"id":"old","state":"failed","mode":"default","limits":{},"counters":{},` +
-		`"workspace":"/ws","created_at":"2023-11-14T22:13:20Z",` +
+		`"environment_ref":{"Kind":"local","ID":"/ws","Revision":"in-tree-v1"},"created_at":"2023-11-14T22:13:20Z",` +
 		`"messages":[{"role":"user","text":"hello there"}],` +
 		`"stop_reason":"error"}`
 	got, err := sessnap.Unmarshal([]byte(v1))
@@ -686,7 +682,7 @@ func TestLoadV1SnapshotMissingPermanentKeyLoadsFalse(t *testing.T) {
 // session survives serialisation (issue #332 — the snapshot is the durable cause
 // source, so the marshal path must carry it).
 func TestSnapshotRoundTripsLastErrorFailed(t *testing.T) {
-	s := session.New("le1", session.ModeDefault, "/ws", session.Limits{}, time.Unix(1700000000, 0).UTC())
+	s := session.New("le1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1700000000, 0).UTC())
 	if err := s.RecordUserPrompt("do stuff", nil); err != nil {
 		t.Fatalf("RecordUserPrompt: %v", err)
 	}
@@ -722,7 +718,7 @@ func TestSnapshotRoundTripsLastErrorFailed(t *testing.T) {
 // cause stamp round-trips with LastError()=="" (omitempty on the empty string keeps
 // the key off the wire).
 func TestSnapshotFailedWithoutLastErrorRoundTripsEmpty(t *testing.T) {
-	s := session.New("le2", session.ModeDefault, "/ws", session.Limits{}, time.Unix(1700000000, 0).UTC())
+	s := session.New("le2", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1700000000, 0).UTC())
 	if err := s.RecordUserPrompt("do stuff", nil); err != nil {
 		t.Fatalf("RecordUserPrompt: %v", err)
 	}
@@ -757,7 +753,7 @@ func TestSnapshotFailedWithoutLastErrorRoundTripsEmpty(t *testing.T) {
 // zero value). This is the downgrade/adversarial guard (issue #332).
 func TestLoadV1SnapshotMissingLastErrorKeyLoadsEmpty(t *testing.T) {
 	v1 := `{"id":"old","state":"failed","mode":"default","limits":{},"counters":{},` +
-		`"workspace":"/ws","created_at":"2023-11-14T22:13:20Z",` +
+		`"environment_ref":{"Kind":"local","ID":"/ws","Revision":"in-tree-v1"},"created_at":"2023-11-14T22:13:20Z",` +
 		`"messages":[{"role":"user","text":"hello there"}],` +
 		`"stop_reason":"error"}`
 	got, err := sessnap.Unmarshal([]byte(v1))
@@ -775,8 +771,8 @@ func TestLoadV1SnapshotMissingLastErrorKeyLoadsEmpty(t *testing.T) {
 // TestSnapshotEnvironmentRefRoundTrip proves a non-zero EnvironmentRef survives
 // Marshal→Unmarshal (ADR 0214, issue #462 phase 3).
 func TestSnapshotEnvironmentRefRoundTrip(t *testing.T) {
-	s := session.New("s1", session.ModeDefault, "/ws", session.Limits{MaxTurns: 1}, time.Unix(1700000000, 0).UTC())
-	s.EnvironmentRef = session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws"}
+	s := session.New("s1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 1}, time.Unix(1700000000, 0).UTC())
+	s.EnvironmentRef = session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "inventory-v3"}
 	got, err := sessnap.Unmarshal(mustMarshal(t, s))
 	if err != nil {
 		t.Fatalf("Unmarshal: %v", err)
@@ -786,100 +782,32 @@ func TestSnapshotEnvironmentRefRoundTrip(t *testing.T) {
 	}
 }
 
-// TestSnapshotEnvironmentRefOmitZero proves a zero EnvironmentRef is wire-omitted
-// (a default/local session with no remote ref stays byte-identical to a
-// pre-phase-3 snapshot — purely additive, no format-tag bump).
-func TestSnapshotEnvironmentRefOmitZero(t *testing.T) {
-	s := session.New("s1", session.ModeDefault, "/ws", session.Limits{MaxTurns: 1}, time.Unix(1700000000, 0).UTC())
-	line, err := sessnap.Marshal(s)
-	if err != nil {
-		t.Fatalf("Marshal: %v", err)
-	}
-	if strings.Contains(string(line), "environment_ref") {
-		t.Fatalf("zero EnvironmentRef must be wire-omitted; got %s", line)
-	}
-}
-
-// TestSnapshotEnvironmentRefLegacyDecodesZero proves a legacy snapshot with no
-// "environment_ref" key decodes to the zero ref (backward-compatible restore).
-func TestSnapshotEnvironmentRefLegacyDecodesZero(t *testing.T) {
+func TestSnapshotEnvironmentRefIsRequired(t *testing.T) {
 	v1 := `{"id":"old","state":"idle","mode":"default","limits":{},"counters":{},` +
-		`"workspace":"/ws","created_at":"2023-11-14T22:13:20Z","messages":[]}`
-	got, err := sessnap.Unmarshal([]byte(v1))
-	if err != nil {
-		t.Fatalf("Unmarshal legacy: %v", err)
-	}
-	if got.EnvironmentRef != (session.EnvironmentRef{}) {
-		t.Fatalf("legacy EnvironmentRef = %+v, want zero", got.EnvironmentRef)
+		`"created_at":"2023-11-14T22:13:20Z","messages":[]}`
+	if _, err := sessnap.Unmarshal([]byte(v1)); err == nil {
+		t.Fatal("snapshot without environment_ref restored successfully")
 	}
 }
 
 // TestSnapshotEnvironmentRefForwardCompat proves an unknown extra key in a
-// future snapshot does not break decode (forward-compatible — encoding/json
-// ignores unknown fields, so a future format-tag-free addition stays additive).
+// future snapshot does not break decode.
 func TestSnapshotEnvironmentRefForwardCompat(t *testing.T) {
 	v1 := `{"id":"new","state":"idle","mode":"default","limits":{},"counters":{},` +
-		`"workspace":"/ws","created_at":"2023-11-14T22:13:20Z","messages":[],` +
-		`"environment_ref":{"kind":"local","id":"/ws"},"future_key":123}`
+		`"environment_ref":{"Kind":"local","ID":"/ws","Revision":"in-tree-v1"},"created_at":"2023-11-14T22:13:20Z","messages":[],` +
+		`"future_key":123}`
 	got, err := sessnap.Unmarshal([]byte(v1))
 	if err != nil {
 		t.Fatalf("Unmarshal forward: %v", err)
 	}
-	if got.EnvironmentRef != (session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws"}) {
-		t.Fatalf("forward EnvironmentRef = %+v, want local /ws", got.EnvironmentRef)
-	}
-}
-
-func TestSnapshotAdoptionMetadataStaysFlatAndOptional(t *testing.T) {
-	ordinary := session.New("ordinary", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0).UTC())
-	ordinaryJSON := mustMarshal(t, ordinary)
-	if strings.Contains(string(ordinaryJSON), "adoption_") {
-		t.Fatalf("ordinary snapshot contains adoption metadata: %s", ordinaryJSON)
-	}
-
-	adopted := session.New("adopted", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0).UTC())
-	adopted.Adoption = &session.AdoptionMetadata{
-		AdoptionSourceID:      "legacy-source",
-		AdoptionRequestDigest: "request-digest",
-	}
-	line := mustMarshal(t, adopted)
-	var wire map[string]json.RawMessage
-	if err := json.Unmarshal(line, &wire); err != nil {
-		t.Fatal(err)
-	}
-	if string(wire["adoption_source_id"]) != `"legacy-source"` || string(wire["adoption_request_digest"]) != `"request-digest"` {
-		t.Fatalf("flat adoption fields missing from %s", line)
-	}
-	if _, nested := wire["adoption"]; nested {
-		t.Fatalf("adoption metadata became nested: %s", line)
-	}
-
-	restored, err := sessnap.Unmarshal(line)
-	if err != nil {
-		t.Fatal(err)
-	}
-	metadata := restored.Adoption
-	if metadata == nil || metadata.AdoptionSourceID != "legacy-source" || metadata.AdoptionRequestDigest != "request-digest" {
-		t.Fatalf("restored adoption metadata = %+v", metadata)
-	}
-}
-
-func TestSnapshotAdoptionMetadataDecodesExistingV2Fields(t *testing.T) {
-	v2 := `{"id":"adopted","state":"idle","mode":"default","limits":{},"counters":{},` +
-		`"workspace":"/ws","created_at":"2023-11-14T22:13:20Z","messages":[],` +
-		`"adoption_source_id":"legacy-source","adoption_request_digest":"request-digest","future_key":123}`
-	got, err := sessnap.Unmarshal([]byte(v2))
-	if err != nil {
-		t.Fatal(err)
-	}
-	metadata := got.Adoption
-	if metadata == nil || metadata.AdoptionSourceID != "legacy-source" || metadata.AdoptionRequestDigest != "request-digest" {
-		t.Fatalf("existing v2 adoption metadata = %+v", metadata)
+	want := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}
+	if got.EnvironmentRef != want {
+		t.Fatalf("forward EnvironmentRef = %+v, want %+v", got.EnvironmentRef, want)
 	}
 }
 
 func BenchmarkSnapshotOrdinarySession(b *testing.B) {
-	s := session.New("ordinary", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0).UTC())
+	s := session.New("ordinary", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0).UTC())
 	b.ReportAllocs()
 	for b.Loop() {
 		if _, err := sessnap.Of(s); err != nil {

@@ -466,15 +466,9 @@ func TestUnauthenticatedProbeFloodDoesNotAbortValidCallback(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		// Raw TCP accepts and requests without the random callback capability are
-		// untrusted ambient loopback traffic, not authorization attempts.
+		// Requests without the random callback capability are untrusted ambient
+		// loopback traffic, not authorization attempts.
 		for range 2 * maxRequestAttempts {
-			conn, dialErr := net.Dial("tcp4", parsed.Host)
-			if dialErr != nil {
-				return dialErr
-			}
-			_ = conn.Close()
-
 			wrongPath, _ := http.NewRequest(http.MethodGet, "http://"+parsed.Host+"/probe", nil)
 			if got := request(t, wrongPath).status; got != http.StatusNotFound {
 				t.Fatalf("wrong-path status = %d", got)

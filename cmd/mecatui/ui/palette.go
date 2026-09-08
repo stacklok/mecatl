@@ -99,19 +99,26 @@ func mergeCommands(builtins, discovered []client.Command) []client.Command {
 	seen := make(map[string]struct{}, len(builtins)+len(discovered))
 	out := make([]client.Command, 0, len(builtins)+len(discovered))
 	for _, b := range builtins {
-		if _, ok := seen[b.Name]; ok {
+		key := canonicalBuiltinName(strings.ToLower(b.Name))
+		if _, ok := seen[key]; ok {
 			continue
 		}
-		seen[b.Name] = struct{}{}
+		seen[key] = struct{}{}
 		out = append(out, b)
 	}
 	for _, d := range discovered {
-		if _, ok := seen[d.Name]; ok {
+		key := canonicalBuiltinName(strings.ToLower(d.Name))
+		if key != strings.ToLower(d.Name) {
+			// Dispatch-only aliases are deliberately not palette rows: selecting one
+			// would promise a workspace command that local dispatch will intercept.
+			continue
+		}
+		if _, ok := seen[key]; ok {
 			// Either a built-in already owns this name (built-in wins) or it is a
 			// duplicate discovered row; drop it.
 			continue
 		}
-		seen[d.Name] = struct{}{}
+		seen[key] = struct{}{}
 		out = append(out, d)
 	}
 	return out
@@ -144,7 +151,7 @@ func (m Model) syncPalette() (Model, tea.Cmd) {
 		// CommandsMsg and re-syncs the palette. Only when a Commander is wired —
 		// built-ins need no fetch.
 		m.palette.fetched = true
-		fetch = client.ListCommandsCmd(m.deps.Ctx, m.deps.Cmds, m.deps.Workspace)
+		fetch = client.ListCommandsCmd(m.deps.Ctx, m.deps.Cmds, m.sessionID)
 	}
 
 	if m.palette.dismissed {

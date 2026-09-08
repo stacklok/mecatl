@@ -24,6 +24,7 @@ import (
 	"github.com/zalando/go-keyring"
 
 	"github.com/stacklok/mecatl/internal/adapter/credentialstore"
+	"github.com/stacklok/mecatl/internal/adapter/resourceurl"
 )
 
 // #nosec G101 -- this is a namespace identifier, not a credential.
@@ -72,12 +73,12 @@ func (i Identity) Canonical() (Identity, error) {
 	if err != nil {
 		return Identity{}, fmt.Errorf("%w: redirect URI", ErrInvalidIdentity)
 	}
-	if !safe(i.ClientID) || !safe(i.Audience) || len(i.Scopes) == 0 {
+	if !safe(i.ClientID) || !safe(i.Audience) {
 		return Identity{}, ErrInvalidIdentity
 	}
 	i.Scopes = slices.Clone(i.Scopes)
 	for n, scope := range i.Scopes {
-		if !safe(scope) {
+		if !resourceurl.ValidScopeToken(scope) {
 			return Identity{}, fmt.Errorf("%w: scope %d", ErrInvalidIdentity, n)
 		}
 	}
@@ -85,9 +86,11 @@ func (i Identity) Canonical() (Identity, error) {
 	i.Scopes = slices.Compact(i.Scopes)
 	return i, nil
 }
-func safe(v string) bool { return v != "" && len(v) <= 1024 && !strings.ContainsAny(v, "\x00\r\n") }
+func safe(v string) bool {
+	return resourceurl.Safe(v)
+}
 func canonicalTarget(raw string) (string, error) {
-	if strings.Contains(raw, "://") || strings.ContainsAny(raw, "/?#@") {
+	if !safe(raw) || strings.Contains(raw, "://") || strings.ContainsAny(raw, "/?#@") {
 		return "", errors.New("invalid target")
 	}
 	host, port, err := net.SplitHostPort(raw)
@@ -104,17 +107,26 @@ func canonicalTarget(raw string) (string, error) {
 	}
 	return net.JoinHostPort(host, strconv.FormatUint(p, 10)), nil
 }
+
+var canonicalResourceURL = resourceurl.Canonical
+
 func canonicalIssuerURL(raw string) (string, error) {
-	u, err := url.Parse(raw)
-	if err != nil || u.Scheme != httpsScheme || u.Hostname() == "" || u.User != nil || u.Fragment != "" || u.RawQuery != "" {
+	if !safe(raw) {
 		return "", errors.New("invalid issuer URL")
 	}
-	u.Scheme, u.Host, u.User, u.Fragment = httpsScheme, strings.ToLower(u.Host), nil, ""
-	u.RawPath = ""
-	return u.String(), nil
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != httpsScheme || u.Hostname() == "" || u.User != nil || u.Opaque != "" || u.Fragment != "" || u.RawQuery != "" || u.ForceQuery {
+		return "", errors.New("invalid issuer URL")
+	}
+	// RFC 8414 issuer identifiers compare as exact strings. Do not rewrite their
+	// host, port, path, or escaping while making a credential identity.
+	return raw, nil
 }
 
 func canonicalRedirectURI(raw string) (string, error) {
+	if !safe(raw) {
+		return "", errors.New("invalid redirect URI")
+	}
 	u, err := url.Parse(raw)
 	if err != nil || (u.Scheme != httpsScheme && u.Scheme != "http") || u.Hostname() == "" || u.User != nil || u.Fragment != "" {
 		return "", errors.New("invalid redirect URI")
@@ -645,7 +657,11 @@ func (p IssuerAddressPolicy) valid() bool {
 // for OIDC discovery, JWKS, refresh, and revocation; it is not server transport
 // trust. UnmarshalJSON accepts the legacy tls_ca_file name for registry compatibility.
 type Connection struct {
-	Identity            Identity            `json:"identity"`
+	Identity Identity `json:"identity"`
+	// ResourceURL is the optional canonical HTTPS protected-resource identity.
+	// It deliberately remains outside Identity so existing credential record keys
+	// stay stable across this additive registry metadata change.
+	ResourceURL         string              `json:"resource_url,omitempty"`
 	IssuerCAFile        string              `json:"issuer_ca_file,omitempty"`
 	IssuerAddressPolicy IssuerAddressPolicy `json:"issuer_address_policy,omitempty"`
 }
@@ -655,6 +671,7 @@ type Connection struct {
 func (c *Connection) UnmarshalJSON(data []byte) error {
 	var wire struct {
 		Identity     Identity        `json:"identity"`
+		ResourceURL  string          `json:"resource_url"`
 		IssuerCAFile *string         `json:"issuer_ca_file"`
 		LegacyCAFile string          `json:"tls_ca_file"`
 		Policy       json.RawMessage `json:"issuer_address_policy"`
@@ -663,6 +680,7 @@ func (c *Connection) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	c.Identity = wire.Identity
+	c.ResourceURL = wire.ResourceURL
 	if wire.IssuerCAFile != nil {
 		c.IssuerCAFile = *wire.IssuerCAFile
 	} else {
@@ -789,7 +807,7 @@ func (r *Registry) readRows() ([]registryRow, error) {
 		valid := json.Unmarshal(raw, &fields) == nil && fields != nil && json.Unmarshal(raw, &conn) == nil
 		if valid {
 			for key := range fields {
-				if key != "identity" && key != "issuer_ca_file" && key != "tls_ca_file" && key != "issuer_address_policy" {
+				if key != "identity" && key != "resource_url" && key != "issuer_ca_file" && key != "tls_ca_file" && key != "issuer_address_policy" {
 					valid = false
 					break
 				}
@@ -797,9 +815,11 @@ func (r *Registry) readRows() ([]registryRow, error) {
 		}
 		if valid {
 			canonical, canonicalErr := conn.Identity.Canonical()
-			valid = canonicalErr == nil && validIssuerCAFile(conn.IssuerCAFile) && conn.IssuerAddressPolicy.valid()
+			resource, resourceErr := canonicalResourceURL(conn.ResourceURL)
+			valid = canonicalErr == nil && resourceErr == nil && validIssuerCAFile(conn.IssuerCAFile) && conn.IssuerAddressPolicy.valid()
 			if valid {
 				conn.Identity = canonical
+				conn.ResourceURL = resource
 			}
 		}
 		rows = append(rows, registryRow{connection: conn, raw: raw, valid: valid})
@@ -807,15 +827,97 @@ func (r *Registry) readRows() ([]registryRow, error) {
 	return rows, nil
 }
 
-// FindTarget returns the saved connection for target.
-func (r *Registry) FindTarget(target string) (Connection, error) {
-	id, err := (Identity{Target: target, Issuer: "https://invalid.example", ClientID: "x", Audience: "x", RedirectURI: "http://127.0.0.1/", Scopes: []string{"x"}}).Canonical()
-	if err != nil {
-		return Connection{}, err
+// Find returns the one saved connection addressed by an exact canonical resource
+// URL or target. Resource and target aliases are intentionally resolved through
+// the same ambiguity check; a legacy row without ResourceURL is target-only. An
+// alias outside every recognized grammar (including a legacy `scheme://host:port`
+// gRPC target such as `unix://...`, which predates canonicalTarget's own stricter
+// grammar) cannot name a saved row and reports credentialstore.ErrNotFound rather
+// than ErrInvalidIdentity, mirroring FindTarget's leniency: both real callers
+// (cmd/mecatui's connect and resolveTransport) treat "not enrolled" as the
+// ordinary, idempotent miss and anything else as a hard local-storage failure.
+func (r *Registry) Find(alias string) (Connection, error) {
+	var (
+		match func(Connection) bool
+		err   error
+	)
+	if strings.Contains(alias, "://") {
+		resource, resourceErr := canonicalResourceURL(alias)
+		if resourceErr != nil {
+			return Connection{}, credentialstore.ErrNotFound
+		}
+		match = func(conn Connection) bool { return conn.ResourceURL != "" && conn.ResourceURL == resource }
+	} else if target, targetErr := canonicalTarget(alias); targetErr == nil {
+		match = func(conn Connection) bool { return conn.Identity.Target == target }
+	} else {
+		if strings.ContainsAny(alias, "/?#@") {
+			return Connection{}, credentialstore.ErrNotFound
+		}
+		resource, resourceErr := canonicalResourceURL("https://" + alias)
+		if resourceErr != nil {
+			return Connection{}, credentialstore.ErrNotFound
+		}
+		match = func(conn Connection) bool { return conn.ResourceURL != "" && conn.ResourceURL == resource }
 	}
 	all, err := r.List()
 	if err != nil {
 		return Connection{}, err
+	}
+	found := make([]Connection, 0, 1)
+	for _, conn := range all {
+		if match(conn) {
+			found = append(found, conn)
+		}
+	}
+	if len(found) == 0 {
+		return Connection{}, credentialstore.ErrNotFound
+	}
+	if len(found) != 1 {
+		return Connection{}, ErrCorrupt
+	}
+	return found[0], nil
+}
+
+func (r *Registry) targetForAlias(alias string) (string, error) {
+	if target, err := canonicalTarget(alias); err == nil {
+		return target, nil
+	}
+	conn, err := r.Find(alias)
+	if err != nil {
+		return "", err
+	}
+	return conn.Identity.Target, nil
+}
+
+// resourceForAlias identifies a resource alias without consulting registry
+// state. It lets logout take the same resource-before-target lock order as
+// enrollment, so a resource cannot move targets between resolution and delete.
+func resourceForAlias(alias string) (string, bool, error) {
+	if strings.Contains(alias, "://") {
+		resource, err := canonicalResourceURL(alias)
+		return resource, true, err
+	}
+	if _, err := canonicalTarget(alias); err == nil {
+		return "", false, nil
+	}
+	if strings.ContainsAny(alias, "/?#@") {
+		return "", false, ErrInvalidIdentity
+	}
+	resource, err := canonicalResourceURL("https://" + alias)
+	return resource, true, err
+}
+
+// FindTarget returns the saved connection for target. Registry read failures take
+// precedence; a target outside the enrollment grammar cannot name a saved row and
+// returns credentialstore.ErrNotFound after a clean read.
+func (r *Registry) FindTarget(target string) (Connection, error) {
+	all, err := r.List()
+	if err != nil {
+		return Connection{}, err
+	}
+	id, err := (Identity{Target: target, Issuer: "https://invalid.example", ClientID: "x", Audience: "x", RedirectURI: "http://127.0.0.1/", Scopes: []string{"x"}}).Canonical()
+	if err != nil {
+		return Connection{}, credentialstore.ErrNotFound
 	}
 	var found []Connection
 	for _, conn := range all {
@@ -849,6 +951,11 @@ func normalizeConnection(conn Connection) (Connection, error) {
 		return Connection{}, err
 	}
 	conn.Identity = id
+	resource, err := canonicalResourceURL(conn.ResourceURL)
+	if err != nil {
+		return Connection{}, errors.New("clientauth: resource URL must be canonical HTTPS")
+	}
+	conn.ResourceURL = resource
 	if !validIssuerCAFile(conn.IssuerCAFile) {
 		return Connection{}, errors.New("clientauth: issuer CA path must be absolute and clean")
 	}
@@ -872,6 +979,14 @@ func (r *Registry) Upsert(conn Connection) ([]Identity, error) {
 		return nil, err
 	}
 	id := conn.Identity
+	var unlockResource func()
+	if conn.ResourceURL != "" {
+		unlockResource, err = r.lockTarget(context.Background(), "resource:"+conn.ResourceURL)
+		if err != nil {
+			return nil, err
+		}
+		defer unlockResource()
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if err := r.lock.Lock(); err != nil {
@@ -893,7 +1008,7 @@ func (r *Registry) Upsert(conn Connection) ([]Identity, error) {
 			continue
 		}
 		existing := row.connection
-		if existing.Identity.Target != id.Target {
+		if existing.Identity.Target != id.Target && (conn.ResourceURL == "" || existing.ResourceURL != conn.ResourceURL) {
 			kept = append(kept, registryRow{connection: existing, valid: true})
 			continue
 		}
@@ -901,7 +1016,7 @@ func (r *Registry) Upsert(conn Connection) ([]Identity, error) {
 			displaced = append(displaced, existing.Identity)
 		}
 	}
-	kept = append(kept, registryRow{connection: Connection{Identity: id, IssuerCAFile: conn.IssuerCAFile, IssuerAddressPolicy: conn.IssuerAddressPolicy}, valid: true})
+	kept = append(kept, registryRow{connection: Connection{Identity: id, ResourceURL: conn.ResourceURL, IssuerCAFile: conn.IssuerCAFile, IssuerAddressPolicy: conn.IssuerAddressPolicy}, valid: true})
 	if err := r.writeRows(kept); err != nil {
 		return nil, err
 	}
@@ -965,7 +1080,7 @@ func sameConnections(a, b []Connection) bool {
 		if right == "" {
 			right = IssuerAddressPolicyPrivate
 		}
-		if conn.IssuerCAFile != b[i].IssuerCAFile || left != right || !conn.Identity.Equal(b[i].Identity) {
+		if conn.ResourceURL != b[i].ResourceURL || conn.IssuerCAFile != b[i].IssuerCAFile || left != right || !conn.Identity.Equal(b[i].Identity) {
 			return false
 		}
 	}
@@ -980,6 +1095,23 @@ func (r *Registry) targetSnapshot(target string) ([]Connection, error) {
 	var entries []Connection
 	for _, conn := range all {
 		if conn.Identity.Target == target {
+			entries = append(entries, conn)
+		}
+	}
+	return entries, nil
+}
+
+// enrollmentSnapshot returns only entries displaced by replaceEnrollment: entries
+// for the target, plus competing entries for the same canonical resource. In
+// particular, unrelated registry credentials must never be snapshotted or deleted.
+func (r *Registry) enrollmentSnapshot(target, resource string) ([]Connection, error) {
+	all, err := r.List()
+	if err != nil {
+		return nil, err
+	}
+	entries := make([]Connection, 0, len(all))
+	for _, conn := range all {
+		if conn.Identity.Target == target || (resource != "" && conn.ResourceURL == resource) {
 			entries = append(entries, conn)
 		}
 	}
@@ -1012,6 +1144,43 @@ func (r *Registry) replaceTarget(target string, expected, desired []Connection) 
 		} else {
 			kept = append(kept, registryRow{connection: conn, valid: true})
 		}
+	}
+	if !sameConnections(current, expected) {
+		return credentialstore.ErrConflict
+	}
+	for _, conn := range desired {
+		kept = append(kept, registryRow{connection: conn, valid: true})
+	}
+	return r.writeRows(kept)
+}
+
+// replaceEnrollment conditionally replaces the target and removes any competing
+// row for the same canonical resource. The caller holds the resource lock, so
+// this is the single atomic resource-to-target enrollment transition.
+func (r *Registry) replaceEnrollment(target, resource string, expected, desired []Connection) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err := r.lock.Lock(); err != nil {
+		return err
+	}
+	defer func() { _ = r.lock.Unlock() }()
+	rows, err := r.readRows()
+	if err != nil {
+		return err
+	}
+	current := make([]Connection, 0, len(expected))
+	kept := make([]registryRow, 0, len(rows)+len(desired))
+	for _, row := range rows {
+		if !row.valid {
+			kept = append(kept, row)
+			continue
+		}
+		conn := row.connection
+		if conn.Identity.Target == target || (resource != "" && conn.ResourceURL == resource) {
+			current = append(current, conn)
+			continue
+		}
+		kept = append(kept, registryRow{connection: conn, valid: true})
 	}
 	if !sameConnections(current, expected) {
 		return credentialstore.ErrConflict

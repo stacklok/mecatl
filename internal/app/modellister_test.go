@@ -915,9 +915,9 @@ func TestResolveProviderModels_OpenRouterRegressionPin(t *testing.T) {
 // cleanup pin (statusHintFor scoping): a non-toolhive provider's (openrouter)
 // lister failure records state=unreachable but hint=="" — the ToolHive
 // remediation copy ("start it with `thv llm proxy start`") must never leak
-// onto a different vendor's outage, even though it is currently filtered off
-// the wire anyway (providerStatusProto is intentDriven-scoped) — this pins
-// the recorded state itself, the earlier layer, not just the wire filter.
+// onto a different vendor's outage. OpenRouter remains filtered off the wire;
+// this pins the recorded state itself, the earlier layer, not just the wire
+// filter.
 func TestResolveProviderModels_OpenRouterFailure_NoToolhiveHintLeak(t *testing.T) {
 	lister := &fakeLister{err: errors.New("boom")}
 	reg := regWithLister(lister)

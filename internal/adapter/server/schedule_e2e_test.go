@@ -15,7 +15,6 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/adapter/wallclock"
@@ -40,7 +39,6 @@ import (
 func TestScheduleE2E(t *testing.T) {
 	ctx := context.Background()
 	storeDir := t.TempDir()
-	workspace := t.TempDir()
 
 	llm := mockllm.New(mockllm.TextTurn("scheduled fire result"))
 
@@ -52,11 +50,10 @@ func TestScheduleE2E(t *testing.T) {
 	// --- CreateSchedule (cron): Enabled + NextFireAt computed -----------------
 	cronResp, err := srv.CreateSchedule(ctx, &mecatlv1.CreateScheduleRequest{
 		Spec: &mecatlv1.ScheduleSpec{
-			Name:      "e2e-cron",
-			Prompt:    "cron hello",
-			Workspace: workspace,
-			Mode:      mecatlv1.PermissionMode_PERMISSION_MODE_PLAN,
-			Trigger:   &mecatlv1.TriggerSpec{Cron: "@every 1m"},
+			Name:    "e2e-cron",
+			Prompt:  "cron hello",
+			Mode:    mecatlv1.PermissionMode_PERMISSION_MODE_PLAN,
+			Trigger: &mecatlv1.TriggerSpec{Cron: "@every 1m"},
 		},
 	})
 	if err != nil {
@@ -74,11 +71,10 @@ func TestScheduleE2E(t *testing.T) {
 	oneShotAt := time.Now().Add(1 * time.Hour)
 	osResp, err := srv.CreateSchedule(ctx, &mecatlv1.CreateScheduleRequest{
 		Spec: &mecatlv1.ScheduleSpec{
-			Name:      "e2e-oneshot",
-			Prompt:    "oneshot hello",
-			Workspace: workspace,
-			Mode:      mecatlv1.PermissionMode_PERMISSION_MODE_PLAN,
-			Trigger:   &mecatlv1.TriggerSpec{OneShot: timestamppb.New(oneShotAt)},
+			Name:    "e2e-oneshot",
+			Prompt:  "oneshot hello",
+			Mode:    mecatlv1.PermissionMode_PERMISSION_MODE_PLAN,
+			Trigger: &mecatlv1.TriggerSpec{OneShot: timestamppb.New(oneShotAt)},
 		},
 	})
 	if err != nil {
@@ -91,11 +87,10 @@ func TestScheduleE2E(t *testing.T) {
 	// --- CreateSchedule (bad cron): InvalidArgument --------------------------
 	if _, err := srv.CreateSchedule(ctx, &mecatlv1.CreateScheduleRequest{
 		Spec: &mecatlv1.ScheduleSpec{
-			Name:      "e2e-bad-cron",
-			Prompt:    "x",
-			Workspace: workspace,
-			Mode:      mecatlv1.PermissionMode_PERMISSION_MODE_PLAN,
-			Trigger:   &mecatlv1.TriggerSpec{Cron: "not a real cron"},
+			Name:    "e2e-bad-cron",
+			Prompt:  "x",
+			Mode:    mecatlv1.PermissionMode_PERMISSION_MODE_PLAN,
+			Trigger: &mecatlv1.TriggerSpec{Cron: "not a real cron"},
 		},
 	}); err == nil || status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("bad cron: err=%v, want InvalidArgument", err)
@@ -104,11 +99,10 @@ func TestScheduleE2E(t *testing.T) {
 	// --- CreateSchedule (past one-shot): InvalidArgument ---------------------
 	if _, err := srv.CreateSchedule(ctx, &mecatlv1.CreateScheduleRequest{
 		Spec: &mecatlv1.ScheduleSpec{
-			Name:      "e2e-past",
-			Prompt:    "x",
-			Workspace: workspace,
-			Mode:      mecatlv1.PermissionMode_PERMISSION_MODE_PLAN,
-			Trigger:   &mecatlv1.TriggerSpec{OneShot: timestamppb.New(time.Now().Add(-1 * time.Hour))},
+			Name:    "e2e-past",
+			Prompt:  "x",
+			Mode:    mecatlv1.PermissionMode_PERMISSION_MODE_PLAN,
+			Trigger: &mecatlv1.TriggerSpec{OneShot: timestamppb.New(time.Now().Add(-1 * time.Hour))},
 		},
 	}); err == nil || status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("past one-shot: err=%v, want InvalidArgument", err)
@@ -251,7 +245,6 @@ func TestScheduleE2E(t *testing.T) {
 func TestScheduleFireNowOneShotExhaustedWireMapping(t *testing.T) {
 	ctx := context.Background()
 	storeDir := t.TempDir()
-	workspace := t.TempDir()
 
 	llm := mockllm.New(mockllm.TextTurn("scheduled fire result"))
 	svc, _, store, cleanup := buildScheduleService(t, storeDir, llm)
@@ -263,11 +256,10 @@ func TestScheduleFireNowOneShotExhaustedWireMapping(t *testing.T) {
 	oneShotAt := time.Now().Add(1 * time.Hour)
 	if _, err := srv.CreateSchedule(ctx, &mecatlv1.CreateScheduleRequest{
 		Spec: &mecatlv1.ScheduleSpec{
-			Name:      "exhausted-oneshot",
-			Prompt:    "oneshot hello",
-			Workspace: workspace,
-			Mode:      mecatlv1.PermissionMode_PERMISSION_MODE_PLAN,
-			Trigger:   &mecatlv1.TriggerSpec{OneShot: timestamppb.New(oneShotAt)},
+			Name:    "exhausted-oneshot",
+			Prompt:  "oneshot hello",
+			Mode:    mecatlv1.PermissionMode_PERMISSION_MODE_PLAN,
+			Trigger: &mecatlv1.TriggerSpec{OneShot: timestamppb.New(oneShotAt)},
 		},
 	}); err != nil {
 		t.Fatalf("CreateSchedule one-shot: %v", err)
@@ -305,7 +297,6 @@ func TestScheduleFireNowOneShotExhaustedWireMapping(t *testing.T) {
 func TestScheduleEventLogContainsEvScheduleFired(t *testing.T) {
 	ctx := context.Background()
 	storeDir := t.TempDir()
-	workspace := t.TempDir()
 
 	llm := mockllm.New(mockllm.TextTurn("scheduled fire result"))
 	svc, _, store, cleanup := buildScheduleService(t, storeDir, llm)
@@ -314,11 +305,10 @@ func TestScheduleEventLogContainsEvScheduleFired(t *testing.T) {
 
 	if _, err := srv.CreateSchedule(ctx, &mecatlv1.CreateScheduleRequest{
 		Spec: &mecatlv1.ScheduleSpec{
-			Name:      "eventlog-cron",
-			Prompt:    "cron hello",
-			Workspace: workspace,
-			Mode:      mecatlv1.PermissionMode_PERMISSION_MODE_PLAN,
-			Trigger:   &mecatlv1.TriggerSpec{Cron: "@every 1m"},
+			Name:    "eventlog-cron",
+			Prompt:  "cron hello",
+			Mode:    mecatlv1.PermissionMode_PERMISSION_MODE_PLAN,
+			Trigger: &mecatlv1.TriggerSpec{Cron: "@every 1m"},
 		},
 	}); err != nil {
 		t.Fatalf("CreateSchedule: %v", err)
@@ -369,11 +359,10 @@ func TestScheduleNoSchedulerVariants(t *testing.T) {
 	// CreateSchedule → Unimplemented (memstore exposes no ScheduleStore).
 	if _, err := srv.CreateSchedule(ctx, &mecatlv1.CreateScheduleRequest{
 		Spec: &mecatlv1.ScheduleSpec{
-			Name:      "no-sched-store",
-			Prompt:    "x",
-			Workspace: "/ws",
-			Mode:      mecatlv1.PermissionMode_PERMISSION_MODE_PLAN,
-			Trigger:   &mecatlv1.TriggerSpec{Cron: "@every 1m"},
+			Name:    "no-sched-store",
+			Prompt:  "x",
+			Mode:    mecatlv1.PermissionMode_PERMISSION_MODE_PLAN,
+			Trigger: &mecatlv1.TriggerSpec{Cron: "@every 1m"},
 		},
 	}); err == nil || status.Code(err) != codes.Unimplemented {
 		t.Fatalf("CreateSchedule without ScheduleStore: err=%v, want Unimplemented", err)
@@ -420,10 +409,11 @@ func buildScheduleService(t *testing.T, storeDir string, llm *mockllm.Provider) 
 		// session is durable as completed for the pull-only GetSession assertion.
 		Store: store,
 	})
-	svc, err := server.NewService(server.Config{
-		Engine:              engine,
-		Store:               store,
-		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+	svc, err := newPlacementTestService(server.Config{
+		Engine:           engine,
+		Store:            store,
+		SharedEngineRoot: "/workspace",
+
 		Now:                 time.Now,
 		DefaultCapabilities: llm.Capabilities(),
 		EventLog:            store, // jsonlstore implements EventLog
@@ -455,8 +445,8 @@ func buildScheduleService(t *testing.T, storeDir string, llm *mockllm.Provider) 
 }
 
 // fireFuncForTest mirrors internal/app.makeFireFunc over the *Service: it mints
-// a fresh "sched--"-prefixed session (default profile, so Workspace must be set
-// — the schedule's own workspace) via the WithSessionID override, drives it to
+// a fresh "sched--"-prefixed session reattached to the schedule's exact
+// placement via the WithSessionID override, drives it to
 // the terminal EvResult via StartScheduledRunContent, and returns the fire record. The
 // fire id IS the session id (ADR 0059 decision #7 Phase-2). Read-leaning
 // schedules run in plan mode (a read-only toolset).
@@ -480,8 +470,13 @@ func fireFuncForTest(svc *server.Service) scheduler.FireFunc {
 			limits.MaxConsecutiveFailures = 5
 		}
 		fireID := newFireIDForTest(sched.Spec.Name, now)
-		sess, err := svc.CreateSessionWithProfile(ctx, sched.Spec.Workspace, mode, limits, server.ProviderSelector{}, server.ProfileDefault,
+		placement, err := svc.ReattachPlacementInScope(ctx, sched.Spec.EnvironmentRef, sched.Spec.PlacementScope)
+		if err != nil {
+			return port.ScheduleFire{ID: fireID, ScheduleName: sched.Spec.Name, FiredAt: now, Stop: session.StopError, Err: err.Error()}, err
+		}
+		sess, err := svc.CreateSessionWithProfile(ctx, mode, limits, server.ProviderSelector{}, server.ProfileDefault,
 			server.WithSessionID(session.SessionID(fireID)),
+			server.WithPlacementBinding(placement),
 			server.WithScheduledRelationship(sched.Spec.Name, sched.Spec.OriginSessionID))
 		if err != nil {
 			return port.ScheduleFire{

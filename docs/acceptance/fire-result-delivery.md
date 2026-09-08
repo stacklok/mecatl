@@ -285,10 +285,11 @@ result stays pull-able.
   backlog cap drops the oldest with a WARN rather than growing unboundedly on an
   overloaded origin.
   - verify: `TestFireDelivery_Scenario4_MultiplePendingAllDrained`
-- AC4.4: A fire whose origin session was deleted, OR whose origin is a collected
-  child/`sched--` session, drops the delivery with a WARN and never fails the
-  fire nor delivers into another fire's chat; the result remains pull-able via
-  `ListFires`.
+- AC4.4: A missing or deleted origin remains ownership-safe and preserves
+  no-verifier compatibility. A child/`sched--`-family non-deliverable origin drops
+  the delivery with a WARN and never fails the fire nor delivers into another
+  fire's chat; the result remains pull-able via `ListFires`.
+  - verify: `TestScheduleDeliveryMissingOriginPreservesNoVerifierCompatibility`
   - verify: `TestFireDelivery_Scenario4_NonDeliverableChildOriginDropsWithWarn`
 - AC4.5: The pending-delivery queue is durable: a process restart with notes
   still pending drains them on the origin's next run-entry (the
@@ -445,7 +446,7 @@ is a proto + wire change, so it lands `task generate` and the contract regen.
   ([ADR-0070](../adr/0070-model-visible-affordance-gate.md) — a model-facing
   affordance needs a prompt-layer instruction + a test proving it lands).
 - `docs/architecture.md` + `docs/design/IMPLEMENTATION-NOTES.md` (scheduled-tasks
-  section) updated for the delivery channel; `task docs` regenerates `llms.txt`.
+  section) updated for the delivery channel; `task docs` regenerates the configuration reference.
 - The outlives-a-call resource inventory ([ADR-0027](../adr/0027-cloud-native.md)
   **List 1**) gains the durable per-session pending-delivery queue row, and
   **List 2** (rehydrate-fidelity ledger) records its **persist-in-snapshot**
@@ -486,7 +487,7 @@ ADR-0070 prompt-land test `TestFireDelivery_ScheduleToolNoteLands`.
 ## Definition of done
 
 1. `task lint` and `task test` pass (both modules, `-race`).
-2. `task docs` — `llms.txt` regenerated and the matlatl strict link gate green.
+2. `task docs` — configuration reference regenerated and the matlatl strict link gate green.
 3. `task api:check` passes (or `task api:update` was run and the
    `engine/CHANGELOG.md` note is present) — this plan adds `ScheduleSpec.OriginSessionID`.
 4. `task ac-trace-strict` — every AC's `verify:` proof resolves (this plan is `landed`).

@@ -780,7 +780,9 @@ func runSubagentOnce(t *testing.T, task tool.Tool, parentWS tool.Workspace, prom
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task)})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.EnvForWS(parentWS, nil), agent.RunRequest{Text: "go"})
+	env := agent.EnvForWS(parentWS, nil)
+	sess := session.New("s1", session.ModeDefault, env.Ref(), session.Limits{}, time.Unix(0, 0))
+	r := e.Run(context.Background(), sess, env, agent.RunRequest{Text: "go"})
 	evs := drain(r)
 	var got *session.ToolResult
 	for _, ev := range evs {

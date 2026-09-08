@@ -78,6 +78,10 @@ func TestEffortE2EForkPreservesTranscript(t *testing.T) {
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	prog.waitRunComplete(t, 1, 5*time.Second)
 	prog.wait(t, phaseIdle, 5*time.Second)
+	// The fake completes by closing without a ResultMsg. That outcome is
+	// intentionally ambiguous, so M-K11 restores the typed prompt; clear that
+	// recovered draft before entering the next independent local command.
+	tm.Send(tea.KeyPressMsg{Code: 'u', Mod: tea.ModCtrl})
 
 	// Drive /effort via the slash-command submit path, then enter on the current row.
 	for _, r := range "/effort" {

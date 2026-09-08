@@ -1,16 +1,16 @@
 ---
 sidebar_position: 3
 title: Choose models and providers
-description: Select the provider, model, and reasoning effort for a mecatl session.
+description: Select the provider, model, and reasoning effort for a Mecatl session.
 ---
 
 # Choose models and providers
 
-A mecatl session runs with a provider and a base model selected by the server
+A Mecatl session runs with a provider and a base model selected by the server
 and, optionally, by the client. The server returns the effective selection and
 input capabilities when the session is created.
 
-The choice depends on how you use mecatl, so this page separates three
+The choice depends on how you use Mecatl, so this page separates three
 journeys:
 
 - the **mecatui journey** for interactive selection;
@@ -97,7 +97,10 @@ An operator can declare a named HTTPS gateway in the user-global `settings.yaml`
 gateways use the matching provider ID in the operator-local `auth.yaml`; credentials are
 never read from a project file or supplied by `mecatui connect`. The server snapshots these
 settings and credentials once while it starts, so changing either file requires a restart.
-Built-in `--*-base-url` flags still take precedence over eligible built-in endpoint overrides.
+When a custom provider's live model listing is unreachable, unauthorized, or empty,
+`/models` keeps its configured default model selectable and displays only a safe
+provider status; endpoints, credentials, and raw listing errors or response bodies
+are never published to clients. Built-in `--*-base-url` flags still take precedence over eligible built-in endpoint overrides.
 See the [provider configuration reference](https://github.com/stacklok/mecatl/blob/main/docs/configuration-reference.md#providers) for the accepted flavors and fields.
 
 ### Configure aliases, slots, and task routing
@@ -121,6 +124,7 @@ models:
     guardrail: coder
     plan: planner
     router: coder
+    title: quick
   router:
     default-category: medium
     categories:
@@ -145,6 +149,15 @@ These mechanisms are independent:
   `guardrail`, `plan`, and `router` do not replace the session model. The `plan`
   slot can use a stronger model while a plan is being written; compaction and
   checker slots can use cheaper models.
+- **`title` is an explicit opt-in slot** for automatic session-title generation. It
+  has no fallback at all: if the binding is absent, or if it is present but cannot
+  be resolved for the session's fixed provider, generation is disabled and the
+  server makes no title-provider call. This differs from other invalid slot or
+  route targets, which may warn and fall back to the session model. With a
+  compatible `title` binding, the server generates a title asynchronously from up
+  to three early genuine prompts; it never delays or changes the chat. Its token
+  usage is stored separately as `session_title`, not charged to the chat's
+  displayed usage or run budget.
 - **Router categories** select a model for a plain delegated Subagent, an unpinned
   named specialist (including `mode: "read-write"`), a Parallel branch, or an undefined
   team member from the task description. A taxonomy enables the router; with no taxonomy,
@@ -159,14 +172,17 @@ small  → quick  → gemini-3.5-flash
 image  → image  → gpt-5.6-terra
 ```
 
-Resolution is fail-soft: an invalid alias, slot, or route target warns and falls
-back to the session model. Explicit per-call models, model-pinned named agents, fork or
-resume choices, and other higher-precedence selectors are not overridden by the router. A
-named definition with no `model:` is routable; `model: inherit` is an explicit pin. Writable
-named routing keeps the specialist's direct-write scope, while explicit
-`read-write`+`agent`+`model` remains invalid. Model slots and router taxonomies are operator decisions; project model
-settings are ignored unless the operator explicitly allows the relevant model
-set on a trusted project.
+Resolution is fail-soft for slots and routes other than `title`: an invalid alias,
+slot, or route target warns and falls back to the session model. The `title` slot is
+  the exception described above; an absent or unresolvable title binding disables
+  generation rather than falling back or making a provider call. Explicit per-call
+  models, model-pinned named agents, fork or resume choices, and other higher-
+  precedence selectors are not overridden by the router. A named definition with no
+  `model:` is routable; `model: inherit` is an explicit pin. Writable named routing
+ keeps the specialist's direct-write scope, while explicit `read-write`+`agent`+`model`
+ remains invalid. Model slots and router taxonomies are operator decisions; project
+ model settings are ignored unless the operator explicitly allows the relevant model
+ set on a trusted project.
 
 This configuration belongs in the operator-global settings file, not a checked-in
 project file. For the complete precedence rules and CLI equivalents, see the
@@ -261,6 +277,14 @@ They do not expose API keys or provider-private credentials. The inventory is
 server-specific and can differ according to the providers and credentials
 configured at startup. A provider's live model catalog may refresh while the
 server is running.
+
+Models whose catalog includes it can call the read-only `DiscoverModels` tool to
+inspect this same resolved inventory. Results contain the exact `provider_id` plus
+`model_id` selection handle and the same safe metadata as `ListModels`; equal model
+IDs under different providers remain separate. Exact provider/model filters are
+supported. Output defaults to 20 entries and is capped at 50 entries and 32 KiB.
+The tool does not probe providers, accept endpoints or credentials, or change the
+current session, and remains available in no-filesystem sessions.
 
 For a known model, the session's effective capabilities combine the model's
 metadata with the selected adapter's transport capabilities. For an uncatalogued

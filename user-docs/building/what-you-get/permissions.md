@@ -1,6 +1,7 @@
 ---
 sidebar_position: 3
 title: Permissions & guardrails
+description: Understand Mecatl permissions, approvals, trust, and guardrails for agent actions.
 ---
 
 # Permissions & guardrails
@@ -9,7 +10,7 @@ This is the builder-facing reference for permission evaluation, delegated author
 and custom policy integration. For operator choices, configuration, and posture
 selection, see [Permissions and posture](/features/permissions-and-posture.md).
 
-mecatl gates tool execution with **two independent layers**. Layer 1 is a
+Mecatl gates tool execution with **two independent layers**. Layer 1 is a
 rule-based permission engine that fires on **every** tool call before execution
 and resolves to allow / ask / deny. Layer 2 is an optional model-backed guardrail
 checker that inspects tool input and output on **operator-configured matchers** —
@@ -42,7 +43,7 @@ parent authority
 For example, a root with `Read`, `Grep`, and `Write` can delegate a read-only
 reviewer that receives only `Read` and `Grep`. That reviewer can use those tools,
 but it cannot regain `Write` or delegate another child after its hop is spent.
-The child's set persists with its session. On resume, mecatl checks that its
+The child's set persists with its session. On resume, Mecatl checks that its
 persisted set still fits the current parent set; a child created before the parent
 was narrowed is refused rather than regaining the removed capability.
 
@@ -76,7 +77,7 @@ project or user locations, or from a driver, still scope their specialist engine
 but do not establish an independent authority ceiling. This prevents a project
 repository or remote definition source from becoming a new authority grant.
 
-Derivation happens before mecatl creates the child engine, workspace, runner, or
+Derivation happens before Mecatl creates the child engine, workspace, runner, or
 worktree. If the requested child would exceed the parent, the request is refused
 without acquiring those runtime resources.
 
@@ -448,7 +449,7 @@ Configure trust three ways:
     - /home/me/work/known-good-repo
   ```
 
-  This is read-only — mecatl only reads it, never writes it. Paths are compared on
+  This is read-only — Mecatl only reads it, never writes it. Paths are compared on
   their cleaned, absolute, symlink-resolved form, so a moved or symlinked path
   cannot forge another workspace's trust.
 

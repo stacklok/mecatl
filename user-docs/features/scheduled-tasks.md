@@ -1,7 +1,7 @@
 ---
 sidebar_position: 9
 title: Scheduled tasks
-description: Schedule recurring and one-shot mecatl runs with durable delivery and recovery.
+description: Schedule recurring and one-shot Mecatl runs with durable delivery and recovery.
 ---
 
 # Scheduled tasks
