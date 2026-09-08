@@ -16,6 +16,7 @@ import (
 const (
 	defaultMaxCallbackBodyBytes = int64(64 << 10)
 	defaultMaxPublicHeaderBytes = 32 << 10
+	publicListenerExecuteMargin = 5 * time.Second
 )
 
 // PublicListenerConfig contains the finite production bounds for the multiplexed
@@ -28,24 +29,30 @@ type PublicListenerConfig struct {
 	CallbackTimeout   time.Duration
 	MaxHeaderBytes    int
 	MaxCallbackBytes  int64
+	ExecuteDeadline   time.Duration
 }
 
 // DefaultPublicListenerConfig returns the production public-listener bounds.
 func DefaultPublicListenerConfig() PublicListenerConfig {
 	return PublicListenerConfig{
 		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       2 * time.Minute,
-		WriteTimeout:      2 * time.Minute,
+		ReadTimeout:       2*time.Minute + publicListenerExecuteMargin,
+		WriteTimeout:      2*time.Minute + publicListenerExecuteMargin,
 		IdleTimeout:       time.Minute,
 		CallbackTimeout:   30 * time.Second,
 		MaxHeaderBytes:    defaultMaxPublicHeaderBytes,
 		MaxCallbackBytes:  defaultMaxCallbackBodyBytes,
+		ExecuteDeadline:   0,
 	}
 }
 
 func (c PublicListenerConfig) valid() bool {
-	return c.ReadHeaderTimeout > 0 && c.ReadTimeout > 0 && c.WriteTimeout > 0 && c.IdleTimeout > 0 &&
+	return c.ExecuteDeadline > 0 && c.ReadHeaderTimeout > 0 && c.ReadTimeout > 0 && c.WriteTimeout > 0 && c.IdleTimeout > 0 &&
 		c.CallbackTimeout > 0 && c.MaxHeaderBytes > 0 && c.MaxCallbackBytes > 0
+}
+
+func (c PublicListenerConfig) validForExecute() bool {
+	return c.ReadTimeout > c.ExecuteDeadline+publicListenerExecuteMargin && c.WriteTimeout > c.ExecuteDeadline+publicListenerExecuteMargin
 }
 
 // PublicListener owns the exact production public HTTP/TLS server. Broker.Close
@@ -63,8 +70,12 @@ func NewPublicListener(listener net.Listener, broker *Server, tlsConfig *tls.Con
 	if listener == nil || broker == nil {
 		return nil, errors.New("mcpbrokerserver: public listener and broker are required")
 	}
-	if !cfg.valid() {
-		return nil, errors.New("mcpbrokerserver: public listener bounds must be positive")
+	configuredExecuteDeadline := cfg.ExecuteDeadline > 0
+	if cfg.ExecuteDeadline == 0 {
+		cfg.ExecuteDeadline = broker.ExecuteDeadline()
+	}
+	if !cfg.valid() || (configuredExecuteDeadline && !cfg.validForExecute()) {
+		return nil, errors.New("mcpbrokerserver: public listener bounds must be positive and exceed ExecuteDeadline by the required margin")
 	}
 	if err := ValidateTransport(listener.Addr().String(), tlsConfig); err != nil {
 		return nil, err

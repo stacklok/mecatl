@@ -129,6 +129,7 @@ type sessionOwner struct {
 	principal session.Principal
 	pending   int
 	handles   int
+	expiresAt time.Time
 }
 
 type serverAttachment struct {
@@ -183,6 +184,9 @@ func NewServerWithConfig(service mcpbroker.Service, cfg Config) (*Server, error)
 	return s, nil
 }
 
+// ExecuteDeadline returns the server-side upper bound used for Execute calls.
+func (s *Server) ExecuteDeadline() time.Duration { return s.cfg.ExecuteDeadline }
+
 // RegisterServer registers an explicitly owned server so its cleanup can be joined.
 func RegisterServer(reg grpc.ServiceRegistrar, server *Server) {
 	brokerv1.RegisterBrokerServiceServer(reg, server)
@@ -197,6 +201,9 @@ func (s *Server) bounded(ctx context.Context, execute bool) (context.Context, co
 }
 
 func (s *Server) bindSession(ctx context.Context, id session.SessionID) (*session.Principal, error) {
+	if !mcpbroker.ValidLogicalSessionID(id) {
+		return nil, invalid("session_id is invalid")
+	}
 	principal := session.PrincipalFromContext(ctx)
 	if principal == nil {
 		return nil, nil // Direct adapter calls are test-only; the network boundary always installs a principal.
@@ -208,7 +215,7 @@ func (s *Server) bindSession(ctx context.Context, id session.SessionID) (*sessio
 		return nil, status.Error(codes.PermissionDenied, "broker session is not available")
 	}
 	if owner == nil {
-		owner = &sessionOwner{principal: *principal}
+		owner = &sessionOwner{principal: *principal, expiresAt: time.Now().Add(s.cfg.HandleIdleTimeout)}
 		s.owners[id] = owner
 	}
 	owner.pending++
@@ -229,6 +236,10 @@ func (s *Server) authorizeSession(ctx context.Context, id session.SessionID) err
 	return nil
 }
 
+func (s *Server) removeOwnerLocked(id session.SessionID) {
+	delete(s.owners, id)
+}
+
 func (s *Server) finishSessionBind(id session.SessionID, attached bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -240,9 +251,8 @@ func (s *Server) finishSessionBind(id session.SessionID, attached bool) {
 	if attached {
 		owner.handles++
 	}
-	if owner.pending == 0 && owner.handles == 0 {
-		delete(s.owners, id)
-	}
+	// Ownership is deliberately retained after the last handle closes. The
+	// logical session's absolute retention, delete, or shutdown reclaims it.
 }
 
 func authorizeHandle(ctx context.Context, attachment *serverAttachment) error {
@@ -267,6 +277,9 @@ func (s *Server) Attach(ctx context.Context, req *brokerv1.AttachRequest) (*brok
 		return nil, err
 	}
 	logicalID := session.SessionID(req.GetSessionId())
+	if !mcpbroker.ValidLogicalSessionID(logicalID) {
+		return nil, invalid("session_id is invalid")
+	}
 	principal, err := s.bindSession(ctx, logicalID)
 	if err != nil {
 		return nil, err
@@ -404,8 +417,19 @@ func (s *Server) beginLifecycle(ctx context.Context, incarnation, handle string,
 	}
 }
 
+func (s *Server) releaseOwnerHandleLocked(id session.SessionID) {
+	owner := s.owners[id]
+	if owner == nil || owner.handles == 0 {
+		return
+	}
+	owner.handles--
+}
+
 func (s *Server) finishLifecycle(a *serverAttachment, operation lifecycleOperation, outcome mcpbroker.CloseOutcome, terminal bool) {
 	s.mu.Lock()
+	if terminal {
+		s.releaseOwnerHandleLocked(a.logicalID)
+	}
 	a.active--
 	if terminal {
 		a.terminal = operation
@@ -437,8 +461,14 @@ func (s *Server) sweep() {
 				if attachment.active == 0 && !now.Before(attachment.expiresAt) {
 					delete(s.handles, handle)
 					if attachment.terminal == lifecycleNone {
+						s.releaseOwnerHandleLocked(attachment.logicalID)
 						expired = append(expired, attachment)
 					}
+				}
+			}
+			for id, owner := range s.owners {
+				if owner.pending == 0 && owner.handles == 0 && !now.Before(owner.expiresAt) {
+					s.removeOwnerLocked(id)
 				}
 			}
 			s.mu.Unlock()
@@ -471,6 +501,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 			attachments = append(attachments, attachment)
 		}
 	}
+	clear(s.owners)
 	s.mu.Unlock()
 	s.executeStop()
 	executeDone := make(chan struct{})
@@ -560,6 +591,9 @@ func (s *Server) Delete(ctx context.Context, req *brokerv1.DeleteRequest) (*brok
 	if req.GetSessionId() == "" {
 		return nil, invalid("session_id is required")
 	}
+	if !mcpbroker.ValidLogicalSessionID(session.SessionID(req.GetSessionId())) {
+		return nil, invalid("session_id is invalid")
+	}
 	if req.GetBinding() == "" {
 		return nil, invalid("binding is required")
 	}
@@ -577,6 +611,9 @@ func (s *Server) Delete(ctx context.Context, req *brokerv1.DeleteRequest) (*brok
 	if err != nil {
 		return nil, brokerStatus(err)
 	}
+	s.mu.Lock()
+	s.removeOwnerLocked(session.SessionID(req.GetSessionId()))
+	s.mu.Unlock()
 	return &brokerv1.DeleteResponse{Outcome: string(out)}, nil
 }
 

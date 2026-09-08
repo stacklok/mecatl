@@ -94,6 +94,9 @@ type Server struct {
 	closeErr   error
 }
 
+// ExecuteDeadline returns the configured broker execution bound for listener validation.
+func (s *Server) ExecuteDeadline() time.Duration { return s.rpc.ExecuteDeadline() }
+
 // New validates production identity policy before constructing any RPC state.
 //
 //nolint:gocyclo // one ordered transaction validates identity before construction and rolls resources back in reverse order.

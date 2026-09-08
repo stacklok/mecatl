@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"reflect"
 	"time"
+	"unicode/utf8"
 
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
@@ -30,6 +31,23 @@ var (
 	// into a safe, internally consistent snapshot.
 	ErrInvalidWorkspaceCatalogue = errors.New("mcp broker invalid workspace catalogue")
 )
+
+const MaxLogicalSessionIDBytes = 256
+
+// ValidLogicalSessionID is the shared bounded identifier contract. It is called
+// before either an adapter or transport owner registry is consulted.
+func ValidLogicalSessionID(id session.SessionID) bool {
+	value := string(id)
+	if value == "" || len(value) > MaxLogicalSessionIDBytes || !utf8.ValidString(value) {
+		return false
+	}
+	for _, r := range value {
+		if r < 0x20 || r == 0x7f {
+			return false
+		}
+	}
+	return true
+}
 
 // AttachOutcome is the closed result vocabulary for AttachSession.
 type AttachOutcome string

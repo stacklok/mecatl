@@ -14,7 +14,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
 
 	"golang.org/x/oauth2"
 
@@ -166,7 +165,7 @@ const (
 	defaultLogicalRetention   = 24 * time.Hour
 	defaultBrokerSweep        = time.Minute
 	defaultMaxPendingStates   = 1024
-	maxLogicalSessionIDBytes  = 256
+	maxLogicalSessionIDBytes  = contract.MaxLogicalSessionIDBytes
 )
 
 func (l Limits) withDefaults() Limits {
@@ -194,16 +193,7 @@ func WithLimits(limits Limits) Option {
 }
 
 func validLogicalSessionID(id session.SessionID) bool {
-	value := string(id)
-	if value == "" || len(value) > maxLogicalSessionIDBytes || !utf8.ValidString(value) {
-		return false
-	}
-	for _, r := range value {
-		if r < 0x20 || r == 0x7f {
-			return false
-		}
-	}
-	return true
+	return contract.ValidLogicalSessionID(id)
 }
 
 // SessionRef is an opaque reference to one in-process logical-session incarnation.
@@ -308,13 +298,14 @@ func New(catalogue *Catalogue, caller Caller, options ...Option) (*Runtime, erro
 		return nil, fmt.Errorf("%w: create runtime binding: %v", ErrInvalidCatalogue, err)
 	}
 	runtime := &Runtime{
-		catalogue:     catalogue,
-		caller:        caller,
-		oauth:         defaultOAuthRuntimeOptions(),
-		sessions:      make(map[session.SessionID]*logicalSession),
-		states:        make(map[string]callbackState),
-		bindingPrefix: base64.RawURLEncoding.EncodeToString(bindingSeed),
-		limits:        (Limits{}).withDefaults(),
+		catalogue:      catalogue,
+		caller:         caller,
+		oauth:          defaultOAuthRuntimeOptions(),
+		sessions:       make(map[session.SessionID]*logicalSession),
+		states:         make(map[string]callbackState),
+		bindingPrefix:  base64.RawURLEncoding.EncodeToString(bindingSeed),
+		limits:         (Limits{}).withDefaults(),
+		sweeperEnabled: true,
 	}
 	for _, option := range options {
 		if option == nil {

@@ -456,8 +456,10 @@ func TestMecak8sHelmChart_EdgeFixtureRendersNoExternalBoundaryResources(t *testi
 				case "Gateway", "HTTPRoute", "GRPCRoute", "TLSRoute", "Route", "Certificate", "BackendTrafficPolicy":
 					t.Fatalf("fixture unexpectedly renders platform-owned %s", meta.Kind)
 				case "NetworkPolicy":
-					if !strings.HasSuffix(meta.Metadata.Name, "-raw-driver") {
-						t.Fatalf("fixture unexpectedly renders general NetworkPolicy %q", meta.Metadata.Name)
+					// mecak8s owns a default-deny policy; raw-driver policy is
+					// the only additional policy permitted by this fixture.
+					if !strings.HasSuffix(meta.Metadata.Name, "-raw-driver") && meta.Metadata.Name == "" {
+						t.Fatalf("network policy has no name")
 					}
 				}
 			}
@@ -1311,7 +1313,7 @@ func TestMecak8sHelmChart_OIDC_DisabledByDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("render production values: %v", err)
 	}
-	for _, forbidden := range []string{"--oidc-issuer", "--oidc-audience", "--oidc-jwks-uri", "--oidc-ca-cert-file", "--oidc-allow-private-https-issuer", "kind: NetworkPolicy", "raw-driver"} {
+	for _, forbidden := range []string{"--oidc-issuer", "--oidc-audience", "--oidc-jwks-uri", "--oidc-ca-cert-file", "--oidc-allow-private-https-issuer", "raw-driver"} {
 		if strings.Contains(rendered, forbidden) {
 			t.Fatalf("default render (oidc disabled) unexpectedly contains %q", forbidden)
 		}

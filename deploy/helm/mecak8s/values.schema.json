@@ -335,7 +335,16 @@
     "service": {"type": "object", "additionalProperties": false, "required": ["type", "grpcPort", "httpPort", "nodePorts"], "properties": {"type": {"type": "string", "enum": ["ClusterIP", "NodePort", "LoadBalancer"]}, "grpcPort": {"type": "integer", "minimum": 1, "maximum": 65535}, "httpPort": {"type": "integer", "minimum": 1, "maximum": 65535}, "nodePorts": {"type": "object", "additionalProperties": false, "properties": {"grpc": {"type": "integer", "minimum": 30000, "maximum": 32767}, "http": {"type": "integer", "minimum": 30000, "maximum": 32767}}}}},
     "nameOverride": {"type": "string"},
     "fullnameOverride": {"type": "string"},
-    "podAnnotations": {"type": "object"}
+    "podAnnotations": {"type": "object"},
+    "networkPolicy": {
+      "type": "object", "additionalProperties": false,
+      "required": ["enabled", "publicFrom", "operatorEgress"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "publicFrom": {"type": "array", "items": {"type": "object"}},
+        "operatorEgress": {"type": "array", "items": {"type": "object"}}
+      }
+    }
   },
   "allOf": [
     {

@@ -124,8 +124,14 @@ security:
 # mecak8s drain, gRPC, HTTP, resource-close, and telemetry bounds.
 terminationGracePeriodSeconds: 60
 
-# Optional Kubernetes scheduling controls. Empty values render no pod fields.
-topologySpreadConstraints: []
+# NetworkPolicy is default-deny. publicFrom and operatorEgress are standard
+# Kubernetes peers; supply ingress from the configured gateway/workloads and
+# egress for cluster DNS, Redis, the selected provider, and remoteBroker when used.
+networkPolicy:
+  enabled: true
+  publicFrom: []
+  operatorEgress: []
+
 affinity: {}
 nodeSelector: {}
 tolerations: []

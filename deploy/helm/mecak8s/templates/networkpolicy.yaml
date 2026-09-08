@@ -1,0 +1,31 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "mecak8s.fullname" . }}
+  labels: {{- include "mecak8s.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: {{- include "mecak8s.selectorLabels" . | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  # The public service multiplexes gRPC and HTTP; route separation is not
+  # expressible in vanilla NetworkPolicy. Operators must list its peers.
+  ingress:
+{{- if .Values.networkPolicy.publicFrom }}
+    - from:
+{{ toYaml .Values.networkPolicy.publicFrom | indent 8 }}
+      ports:
+        - {protocol: TCP, port: grpc}
+        - {protocol: TCP, port: http}
+{{- else }}
+    []
+{{- end }}
+  # Supply DNS plus concrete Redis/provider/remote-broker peers. Empty is
+  # intentional default-deny, never an implicit allow-all fallback.
+  egress:
+{{- if .Values.networkPolicy.operatorEgress }}
+{{ toYaml .Values.networkPolicy.operatorEgress | indent 4 }}
+{{- else }}
+    []
+{{- end }}
+{{- end }}

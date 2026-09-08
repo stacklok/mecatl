@@ -17,13 +17,13 @@ app.kubernetes.io/component: agent
 {{- define "mecak8s.validateImage" -}}
 {{- $_ := required "image.repository is required" .Values.image.repository -}}
 {{- if and .Values.image.digest .Values.image.tag -}}{{ fail "set at most one of image.digest or image.tag" }}{{- end -}}
-{{- if and (not .Values.mockProvider) (not .Values.security.allowUnsafeRealProvider) -}}
-{{- if not .Values.image.digest -}}{{ fail "secure production images require image.digest" }}{{- end -}}
-{{- if .Values.image.tag -}}{{ fail "secure production images do not permit image.tag; use image.digest" }}{{- end -}}
+{{- if or (and (not .Values.mockProvider) (not .Values.security.allowUnsafeRealProvider)) .Values.remoteBroker.address -}}
+{{- if not .Values.image.digest -}}{{ fail "secure production or remote-broker images require image.digest" }}{{- end -}}
+{{- if .Values.image.tag -}}{{ fail "secure production or remote-broker images do not permit image.tag; use image.digest" }}{{- end -}}
 {{- end -}}
 {{- if and .Values.image.digest (not (regexMatch "^sha256:[0-9a-f]{64}$" .Values.image.digest)) -}}{{ fail "image.digest must be a lowercase sha256 digest" }}{{- end -}}
-
 {{- end -}}
+
 {{- define "mecak8s.redisPort" -}}
 {{- $match := regexFind ":[0-9]+$" .Values.redis.endpoint -}}
 {{- if eq $match "" -}}

@@ -257,7 +257,7 @@ Set an external Redis endpoint.
 Set a credentials Secret reference when a configured key needs reading.
 The image defaults to `v<chart-version>`.
 This default keeps ranged Helm upgrades aligned with released images.
-Set a signed release tag or digest only to override the default.
+Secure production profiles require a lowercase `sha256:` image digest; the explicit unsafe development posture may use a tag, except that any configured `remoteBroker` still requires a digest.
 A real-provider deployment (`mockProvider: false`) has three explicit postures.
 In-pod TLS with OIDC.
 Edge-terminated TLS with `security.tlsTerminatedUpstream=true`, OIDC, and `tls.enabled=false` for a `ClusterIP` plaintext h2c backend.
@@ -268,16 +268,13 @@ The bypass annotates the pod as unsafe; a secure upstream attestation is annotat
 Understand what edge mode costs before choosing it.
 On an h2c backend the caller's `Authorization: Bearer` token crosses the pod network in cleartext.
 Any workload that can reach the Service ClusterIP can read that token and replay it as the caller.
-The chart ships no NetworkPolicy, so by default every pod in the cluster can reach it.
-Admitting only the gateway's pods — by NetworkPolicy or an mTLS mesh — is the load-bearing control here, not optional hardening.
+The chart renders a default-deny ingress and egress NetworkPolicy. Configure `networkPolicy.publicFrom` for the gateway/workload peers that may use the Service, and `networkPolicy.operatorEgress` with standard Kubernetes peers for cluster DNS plus the external Redis, provider, MCP, and `remoteBroker` destinations. Empty lists remain deny-all; the chart cannot infer dynamic external endpoints. The explicit unsafe posture is still a development/trusted-mesh exception, not a bypass of digest enforcement when `remoteBroker` is configured.
 The upstream value is an attestation, not chart enforcement: nothing in the chart verifies gateway TLS, reachability, or token forwarding.
 The gateway must forward the original bearer token rather than use forwarded-identity authentication, and publish a `GRPCRoute` only—never public-route `/drain`, `/healthz`, or `/readyz`.
 The chart creates no Gateway, Route, or Certificate either; use an operator-owned `BackendTLSPolicy` or in-pod TLS for gateway-to-pod re-encryption.
 Change an existing pod-TLS release to h2c through a blue-green or maintenance cutover, not an assumed-safe rolling update.
 The chart retains two replicas, a PDB, rolling updates, restricted pod security, bounded resources, dynamic probes, and namespaced Lease RBAC.
-The chart creates no agent PVC and ships no general NetworkPolicy.
-The cluster must provide network isolation because agent egress depends on operator-selected endpoints.
-The `oidc.*` values add a narrow raw-driver NetworkPolicy when caller identity is enabled.
+The chart creates no agent PVC. Its general NetworkPolicy is default-deny and must be configured with the operator's concrete ingress and egress peers. The `oidc.*` values add a narrow raw-driver NetworkPolicy when caller identity is enabled.
 
 ### Session affinity is an infrastructure contract
 
@@ -433,8 +430,7 @@ affinity or durable-broker decision lands.
 See the [operator guide](https://github.com/stacklok/mecatl/blob/main/docs/usage/mecak8s.md#configuring-mcp-servers-with-helm)
 for the complete OAuth values shape.
 
-Keep MCP and OAuth endpoints on HTTPS and provide pod egress through your
-NetworkPolicy or mesh; this chart has no general NetworkPolicy. The explicit
+Keep MCP and OAuth endpoints on HTTPS and configure the chart's default-deny `networkPolicy.operatorEgress` (or a mesh) for them. The explicit
 `insecureHTTP: true` acknowledgement is accepted by the runtime only for
 non-loopback, non-OAuth plain-HTTP servers and means a bearer may cross the pod
 network in cleartext. Loopback HTTP is already accepted; a stale acknowledgement
@@ -687,14 +683,11 @@ production install:
 | `deployment.yaml` | Agent Deployment — `replicas: 2` by default (one is supported), no PVC, storage-free |
 | `service.yaml` | ClusterIP Service exposing gRPC (8080) and HTTP/SSE (8081) |
 | `pdb.yaml` | PodDisruptionBudget (`minAvailable: 1`) when `replicaCount >= 2`; omitted for one replica |
+| `networkpolicy.yaml` | Default-deny ingress and egress; operators provide Service peers plus DNS, Redis/provider/MCP, and remote-broker egress peers |
 | `raw-driver-networkpolicy.yaml` | Rendered only when `oidc.enabled` — scopes ingress on `app.kubernetes.io/component: raw-driver` pods to the agent pod only |
 | `redis-local.yaml` | Rendered only under the disposable `values-kind.yaml` profile (`redis.local.enabled`) — an in-cluster Redis StatefulSet + Service for Kind/offline use, never for production |
 
-The chart intentionally creates no namespace and no general NetworkPolicy: the
-namespace is a `helm --create-namespace` (or pre-existing) concern, and network
-isolation belongs to the cluster's own policy layer — the agent's egress set
-depends on your provider, MCP, and API-server endpoints, which the chart cannot
-know.
+The chart renders `networkpolicy.yaml` as default-deny; it intentionally does not infer a namespace, provider, Redis, MCP, or remote-broker endpoint. Configure its standard peer entries in `networkPolicy.publicFrom` and `networkPolicy.operatorEgress`.
 
 Key details from `deployment.yaml`:
 
@@ -975,11 +968,7 @@ keep it off any Service, Ingress, or tenant-facing NetworkPolicy. A tenant
 workload must reach mecak8s through the authenticated public Service, never a
 raw driver endpoint directly.
 
-The chart ships no general NetworkPolicy at all (see [The Helm chart's
-topology](#the-helm-charts-topology) above), so enabling caller identity
-against an external or in-cluster IdP needs no egress rule added on your
-side — network isolation, if you want it, is entirely your cluster's own
-policy layer's job.
+The chart's general NetworkPolicy is default-deny. Configure `networkPolicy.operatorEgress` for the IdP/JWKS, Redis, provider/MCP, and remote-broker peers actually used by the deployment; enabling caller identity does not create an implicit egress allow.
 
 ### Use it from the TUI
 
