@@ -1,20 +1,39 @@
-# TypeScript SDK public surface and v0.1.0 release (M4) — acceptance plan
+# TypeScript SDK public surface and v0.0.1 GitHub Packages release (M4) — acceptance plan
 
-**Phase:** capability — `@stacklok/mecatl-sdk` M4: complete public surface, platform contract, documentation, and first npm release
-**Status:** draft
+**Phase:** capability — `@stacklok/mecatl-sdk` M4: complete public surface, platform contract, documentation, and first GitHub Packages release
+**Contract:** human-reviewed/v1
+**Status:** proposed
+**Delivery:** Split
 **Issue:** [stacklok/mecatl#821](https://github.com/stacklok/mecatl/issues/821) (parent: [#761](https://github.com/stacklok/mecatl/issues/761)).
-**ADR:** [ADR-0304](../adr/0304-typescript-sdk-public-surface-and-release.md) — descriptor-to-transport parity, the one thin-namespace rule, ergonomic teams, streaming `PlanResolution`, the compatibility and browser matrices, executable examples, path-qualified trusted publishing, and v0.1.0's human gate.
-**Delivery shape:** a **linear stack**, one PR per scenario — `sdk/41-rpc-catalog` is the stack root off `main`; subsequent layers are `sdk/42-http-routes`, `sdk/43-namespaces-core`, `sdk/44-namespaces-ops`, `sdk/45-teams`, `sdk/46-plan-resolution`, `sdk/47-compat-matrix`, `sdk/48-browser-chromium`, `sdk/49-browser-platforms`, `sdk/50-docs-examples`, `sdk/51-release-workflow`, and `sdk/52-publish-v0.1.0`. This is **not** an accumulator: each PR targets its predecessor and is reviewed and merged on its own, exactly as M3's `sdk/31`…`sdk/40` stack was.
+**ADR:** [ADR-0304](../adr/0304-typescript-sdk-public-surface-and-release.md) and [ADR-0313](../adr/0313-interim-github-packages-typescript-sdk.md) — descriptor-to-transport parity, the one thin-namespace rule, ergonomic teams, streaming `PlanResolution`, the compatibility and browser matrices, executable examples, path-qualified GitHub Packages publication, and `v0.0.1`'s human gate. This plan exits on the verified `v0.0.1` GitHub Packages release; npmjs `v0.1.0` remains a follow-up checklist under #821.
+**Delivery shape:** a **linear stack**, one PR per scenario — `sdk/41-rpc-catalog` is the stack root off `main`; subsequent layers are `sdk/42-http-routes`, `sdk/43-namespaces-core`, `sdk/44-namespaces-ops`, `sdk/45-teams`, `sdk/46-plan-resolution`, `sdk/47-compat-matrix`, `sdk/48-browser-chromium`, `sdk/49-browser-platforms`, `sdk/50-docs-examples`, `sdk/51-release-workflow`, and `sdk/52-publish-v0.0.1`. This is **not** an accumulator: each PR targets its predecessor and is reviewed and merged on its own, exactly as M3's `sdk/31`…`sdk/40` stack was.
 
 The smallest complete stack that makes every public HarnessService and
 ScheduleService operation reachable, adds ergonomics only where a lifecycle
 requires them, proves the supported runtime and browser claims, documents the
-package, and publishes the reviewed artifact as `v0.1.0`. It is the final
-milestone of [#821](https://github.com/stacklok/mecatl/issues/821), not a new
+package, and publishes the reviewed artifact as `v0.0.1` to GitHub Packages.
+It is the final implementation milestone of [#821](https://github.com/stacklok/mecatl/issues/821), not a new
 application protocol or an opportunity to redesign the Go server.
 
 The doc is organized scenario-first because acceptance is about what the SDK
 against the running harness can demonstrate, not which TypeScript files exist.
+
+## Human decisions
+
+- [x] Choose the interim package identity and registry. — Decision: Keep `@stacklok/mecatl-sdk` and publish the `0.0.x` preview line to GitHub Packages.
+- [x] Choose interim publish authority and provenance. — Decision: Use only the publish job's ephemeral `GITHUB_TOKEN` and GitHub artifact attestations over the exact tarball.
+- [x] Choose the first interim and npmjs versions. — Decision: Release GitHub Packages `0.0.1` first and reserve a fresh `0.1.0` for npmjs cutover.
+- [x] Choose whether npmjs cutover dual-publishes. — Decision: Flip the one canonical registry at `0.1.0`; never promote or republish a GitHub Packages `0.0.x` version.
+
+## Interface contract
+
+- **gRPC / protobuf:** None — this plan classifies and wraps existing descriptors without changing the wire contract.
+- **Exported Go APIs / interfaces:** None — only root-module parity guards inspect Go sources; no exported Go API changes.
+- **Tool schemas:** None — the SDK release and distribution path changes no model-visible tool.
+- **CLI / config:** The interim consumer configures `@stacklok:registry=https://npm.pkg.github.com` and authenticates with a `read:packages` PAT; the package declares that registry in `publishConfig`.
+- **Events / persistence:** None — release metadata and attestations do not alter harness events or persisted session state.
+- **Security / authority:** `verify` remains read-only; only the tag-gated, environment-protected `publish` job receives ephemeral package, OIDC, and attestation authority.
+- **Compatibility / migration:** GitHub Packages owns only deletable `0.0.x` previews; npmjs begins from a fresh, permanent `0.1.0` line after an explicit one-registry cutover.
 
 ## Why these scope cuts
 
@@ -45,10 +64,10 @@ against the running harness can demonstrate, not which TypeScript files exist.
   flow once; Firefox and WebKit prove import/connect/run/attach. One
   worker-scoped same-checkout daemon, strict timeouts, failure-only traces, and
   no blanket retry bound time and make deterministic failures visible.
-- **Trusted publishing is exercised before it is trusted.** A manual dry run
+- **The publication path is exercised before it receives authority.** A manual dry run
   reaches pack and exact inventory inspection but has no publish authority.
-  Only the path-qualified tag reaches `npm publish`; the npm-side trust setup is
-  a named human prerequisite, not a secret added to GitHub.
+  Only the path-qualified tag reaches `npm publish`; GitHub Packages settings
+  are a named human prerequisite, and no long-lived npm credential is added.
 - **Verify names follow M1–M3's convention.** Go proofs are
   `TestSDKTypescriptRelease_ScenarioN_*`; Node-side TypeScript proofs use the
   strict `vitest:<path>#<base64url-title>` resolver form, while real-browser
@@ -454,26 +473,29 @@ package/PlanResolution wording.
 
 ---
 
-### Scenario 11 — Dry-runnable trusted-publishing workflow and tag isolation
+### Scenario 11 — Dry-runnable GitHub Packages workflow and tag isolation
 
 A dedicated SHA-pinned workflow builds and inspects the exact npm artifact;
 only a matching path-qualified tag can publish it
-([ADR-0304](../adr/0304-typescript-sdk-public-surface-and-release.md) Decision 8;
+([ADR-0304](../adr/0304-typescript-sdk-public-surface-and-release.md) Decision 8,
+as superseded in part by [ADR-0313](../adr/0313-interim-github-packages-typescript-sdk.md);
 [ADR-0093](../adr/0093-provider-modules.md)'s tag discipline).
 
 **Work:** SDK release workflow, dry-run dispatch, version/tag validation,
 frozen install, generation cleanliness, all SDK gates, exact pack inspection,
-OIDC publication, `publishConfig`, and two-workflow trigger parity.
+ephemeral-token GitHub Packages publication, GitHub artifact attestation,
+`publishConfig`, and two-workflow trigger parity.
 
 **Acceptance:**
 - AC11.1: The workflow is two jobs. `verify` holds `permissions: {contents:
   read}` with no `id-token`, runs checkout through exact tarball inspection, and
   uploads that tarball as the sole build artifact. `publish` declares `needs:
-  verify`, `environment: npm-publish`, `permissions: {contents: read, id-token:
-  write}`, and `if: github.event_name == 'push' && startsWith(github.ref,
+  verify`, `environment: github-packages-publish`, `permissions: {contents:
+  read, packages: write, id-token: write, attestations: write}`, and `if:
+  github.event_name == 'push' && startsWith(github.ref,
   'refs/tags/sdk/typescript/v')`; it installs nothing and runs no third-party
   lifecycle script. A `workflow_dispatch` run therefore never instantiates the
-  only job able to mint an OIDC token.
+  only job able to mint an OIDC token or write a package or attestation.
   - verify: TestADR_0304_ManualDispatchIsDryRunOnly
 - AC11.2: The tag must match
   `^sdk/typescript/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$` — no
@@ -487,10 +509,11 @@ OIDC publication, `publishConfig`, and two-workflow trigger parity.
   `onlyBuiltDependencies` allowlist, runs `task generate`, and rejects a dirty
   generated tree or SDK lockfile before build/pack. It also rejects the release
   unless the **packed** `package.json` declares `repository: {type: "git", url:
-  "git+https://github.com/stacklok/mecatl.git", directory: "sdk/typescript"}`,
-  `license: "Apache-2.0"`, `publishConfig.access: "public"`, and a `version`
-  equal to the tag's version — asserted on the packed manifest so `prepack`
-  cannot alter it unobserved.
+  "https://github.com/stacklok/mecatl.git", directory: "sdk/typescript"}`,
+  `license: "Apache-2.0"`, `publishConfig.registry:
+  "https://npm.pkg.github.com"`, no `publishConfig.access`, and a `version` equal
+  to the tag's version — asserted on the packed manifest so `prepack` cannot
+  alter it unobserved.
   - verify: TestSDKTypescriptRelease_Scenario11_GenerationCleanlinessGate
 - AC11.4: Release runs SDK lint, both declaration compilers, unit/e2e/build/API
   gates, packs once, and applies the existing exact-inventory oracle — an exact
@@ -500,21 +523,29 @@ OIDC publication, `publishConfig`, and two-workflow trigger parity.
   `$GITHUB_STEP_SUMMARY`.
   - verify: vitest:sdk/typescript/test/package.test.ts#cGFja2VkIHRhcmJhbGwgY2FycmllcyBkaXN0IGFuZCBsaWNlbnNlIG9ubHk — `sdk/typescript/test/package.test.ts :: "packed tarball carries dist and license only"`
 - AC11.5: A tag push publishes the **downloaded artifact by path** (`npm publish
-  ./<name>-<version>.tgz --access public`), never the package directory, so no
+  ./<name>-<version>.tgz`) to `https://npm.pkg.github.com`, never the package directory, so no
   `prepack`/`prepublishOnly`/`prepare` script runs at publish time; it
   re-verifies the tarball `sha512` against AC11.4's recorded value first. The
-  workflow declares `permissions: {contents: read}` at top level, `id-token:
-  write` in exactly one job, and never `contents: write`, `packages:`,
-  `attestations:`, `pull-requests:`, or `issues:`. It references no `secrets.*`
-  context and contains no `NPM_TOKEN`, `NODE_AUTH_TOKEN`, `_authToken`,
-  `npm_config_*` auth variable, `actions/setup-node` `registry-url:` input, or
-  committed `.npmrc`. The publish job runs Node >= 22.14.0 with a pinned npm >=
-  11.5.1 and asserts that floor before publishing.
-  - verify: TestADR_0304_TrustedPublishingOnly
+  workflow declares `permissions: {contents: read}` at top level, and only the
+  publish job declares exactly `contents: read`, `packages: write`, `id-token:
+  write`, and `attestations: write`; no job declares `contents: write`,
+  `pull-requests:`, or `issues:`. The publish job configures
+  `actions/setup-node` for `https://npm.pkg.github.com` and scope `@stacklok`,
+  and its only `secrets.*` reference is `NODE_AUTH_TOKEN: ${{
+  secrets.GITHUB_TOKEN }}`, the ephemeral job token rather than a stored
+  secret. The workflow contains no `NPM_TOKEN`, `_authToken`, or `npm_config_*`
+  auth variable and commits no `.npmrc`. A SHA-pinned
+  `actions/attest-build-provenance` step attests the exact tarball before
+  publication, `gh attestation verify <tgz> --repo stacklok/mecatl` verifies it,
+  and the publish summary records the tarball `sha512` plus attestation URL;
+  npm-native `dist.attestations` does not exist on GitHub Packages. The publish
+  job runs Node >= 22.14.0 with a pinned npm >= 11.5.1 and asserts that floor
+  before publishing. No `--access` flag is used.
+  - verify: TestADR_0313_EphemeralJobTokenOnly
 - AC11.6: The SDK workflow's `push.tags` is exactly `['sdk/typescript/v*']` and
   the root workflow's is exactly `['v*']`; neither uses `**`. A documented
   matcher implementing GitHub's rule that `*` does not match `/` yields this
-  exact selection matrix: `sdk/typescript/v0.1.0` -> SDK only; `v0.1.0` -> root
+  exact selection matrix: `sdk/typescript/v0.0.1` -> SDK only; `v0.0.1` -> root
   only; `sdk/typescript/v9.9.9` -> SDK only; `v1.2.3` -> root only. Any change
   to either pattern list fails the test rather than being silently
   re-evaluated. Push isolation is therefore mechanical; **dispatch** isolation
@@ -538,61 +569,70 @@ OIDC publication, `publishConfig`, and two-workflow trigger parity.
 
 ---
 
-### Scenario 12 — Human-gated `v0.1.0` publication
+### Scenario 12 — Human-gated `v0.0.1` GitHub Packages publication
 
 The final scenario is an inspection checklist executed only after Scenarios
-1–11 land and npm-side authority exists
-([ADR-0304](../adr/0304-typescript-sdk-public-surface-and-release.md) Decisions
-8–9; [#821](https://github.com/stacklok/mecatl/issues/821) M4 item 4 and AC13).
+1–11 land and GitHub Packages authority exists
+([ADR-0313](../adr/0313-interim-github-packages-typescript-sdk.md) Decisions
+1–5; [#821](https://github.com/stacklok/mecatl/issues/821) M4 item 4 and AC13).
 
 **Work:** release PR version bump, human prerequisite confirmation, reviewed tag
-creation, workflow observation, npm metadata/provenance inspection, and issue
-status reconciliation without closing #821 from an implementation PR.
+creation, workflow observation, GitHub attestation and package metadata
+inspection, and issue status reconciliation without closing #821 from an
+implementation PR.
 
 **Acceptance:**
-- AC12.1: The release PR changes package version `0.0.0` to `0.1.0`, sets
-  `publishConfig.access` to `public`, updates the lockfile/API reports where
-  required, and contains no release tag.
+- AC12.1: The release PR changes package version `0.0.0` to `0.0.1`, keeps
+  `publishConfig.registry: "https://npm.pkg.github.com"`, keeps
+  `publishConfig.access` absent, updates the lockfile/API reports where
+  required, uses no `--access` flag, and contains no release tag.
   - verify: inspection — review the release PR diff and its green required checks before merge
-- AC12.2: Before tagging, the release checklist records **five** prerequisites:
-  npm `@stacklok` organization ownership/package rights; a trusted-publisher
-  record naming `stacklok/mecatl`, the exact SDK workflow filename, and the
-  `npm-publish` environment; a named maintainer accepting responsibility for
-  the tag; confirmation that `stacklok/mecatl` is a **public** repository at tag
-  time (npm generates no provenance for private repositories even when the
-  package is public, and it fails *silently* — the repository is
-  `INTERNAL` today, so this is a live blocker, not a formality); and
-  confirmation that no `NPM_TOKEN`-shaped secret exists at repository,
-  environment, **or organization** scope. Authorized relicensing of the
-  proprietary-headed generated sources (AC11.8) is a sixth gate.
-  - verify: inspection — release checklist records all named prerequisites, the responsible maintainer, and the repository-visibility and licence clearances
-- AC12.3: The annotated or lightweight `sdk/typescript/v0.1.0` tag points
-  exactly at the reviewed release commit on `main`, and no root `v0.1.0` tag is
+- AC12.2: Before tagging, the release checklist records four prerequisites: a
+  named maintainer accepting responsibility for the tag; confirmation that no
+  `NPM_TOKEN`-shaped secret exists at repository, environment, or organization
+  scope; authorized relicensing of the proprietary-headed generated sources
+  required by AC11.8; and confirmation that organization/repository package
+  settings permit the repository-scoped ephemeral `GITHUB_TOKEN` to publish.
+  - verify: inspection — release checklist records the responsible maintainer, absence of long-lived npm credentials, licence clearance, and package-settings clearance
+- AC12.3: The annotated or lightweight `sdk/typescript/v0.0.1` tag points
+  exactly at the reviewed release commit on `main`, and no root `v0.0.1` tag is
   created as part of the SDK release.
-  - verify: inspection — compare `git rev-parse sdk/typescript/v0.1.0`, the merged release commit, and the Actions trigger run
-- AC12.4: `npm view @stacklok/mecatl-sdk@0.1.0 --json dist.attestations` returns
-  a non-empty provenance predicate whose
-  `buildDefinition.externalParameters.workflow` names `stacklok/mecatl`,
-  `.github/workflows/release-sdk-typescript.yml`, ref
-  `refs/tags/sdk/typescript/v0.1.0`, and the reviewed commit SHA;
-  `npm audit signatures` passes in a clean install of the published version.
-  After the publish, the package's npm Publishing access is set to require 2FA
-  and disallow tokens, and any pre-existing `@stacklok` automation token is
-  revoked.
-  - verify: inspection — run the named npm commands and record their output in the release checklist
-- AC12.5: `npm view @stacklok/mecatl-sdk@0.1.0 --json dist.integrity` equals the
-  `sha512` recorded in the release run's job summary (AC11.4), the extracted
-  published tarball's file list equals the AC11.4 inventory, and no root image
-  release job ran for the SDK tag.
-  - verify: inspection — compare the recorded `sha512` and inventory against the published artifact, and inspect the Actions runs for the tag
+  - verify: inspection — compare `git rev-parse sdk/typescript/v0.0.1`, the merged release commit, and the Actions trigger run
+- AC12.4: `gh attestation verify <downloaded-tarball> --repo stacklok/mecatl`
+  succeeds for the exact release artifact, and `npm view
+  @stacklok/mecatl-sdk@0.0.1 --registry=https://npm.pkg.github.com --json
+  dist.integrity` returns its registry integrity.
+  - verify: inspection — run the named GitHub and npm commands and record their output in the release checklist
+- AC12.5: The GitHub Packages `dist.integrity` equals the `sha512` recorded in
+  the release run's job summary (AC11.4), the extracted published tarball's file
+  list equals the AC11.4 inventory, and no root image release job ran for the
+  SDK tag.
+  - verify: inspection — compare the recorded `sha512` and inventory against the GitHub Packages artifact, and inspect the Actions runs for the tag
+
+**Follow-up checklist — npmjs cutover (`v0.1.0`, tracked under #821):**
+
+- [ ] Make `stacklok/mecatl` public; npmjs does not emit provenance for a
+      private source repository.
+- [ ] Confirm `@stacklok` npm organization ownership and package publish rights.
+- [ ] Configure npm trusted publishing for `stacklok/mecatl`, the exact
+      `.github/workflows/release-sdk-typescript.yml` filename, and its release
+      environment.
+- [ ] Flip the one canonical publish target from GitHub Packages to npmjs for a
+      fresh `0.1.0` release; do not dual-publish or promote a `0.0.x` tarball.
+- [ ] Cut a fresh `sdk/typescript/v0.1.0` tag only after the release PR is on
+      `main`, then verify npm-native provenance and integrity.
+
+This checklist implements [ADR-0313](../adr/0313-interim-github-packages-typescript-sdk.md)
+Decision 6. It is a follow-up under #821, not an exit condition for this plan.
 
 ---
 
 ## Cross-cutting deliverables
 
-- [ADR-0304](../adr/0304-typescript-sdk-public-surface-and-release.md), authored
-  with this plan and Accepted when the documentation PR lands; ADR 0292 moves
-  from Proposed to Accepted in the same PR.
+- [ADR-0304](../adr/0304-typescript-sdk-public-surface-and-release.md), which
+  defines the M4 surface, and [ADR-0313](../adr/0313-interim-github-packages-typescript-sdk.md),
+  Proposed for workflow implementation and changed to Accepted only by the
+  verified `v0.0.1` release close-out.
 - API Extractor reports for `.` and `./node` regenerated intentionally as
   public namespaces, `Team`, and `PlanResolution` land. `./gen` remains
   codegen-governed per [ADR-0279](../adr/0279-typescript-sdk-architecture.md).
@@ -605,9 +645,10 @@ status reconciliation without closing #821 from an implementation PR.
   published entrypoints.
 - `user-docs/`, `docs/architecture.md`,
   `docs/design/IMPLEMENTATION-NOTES.md`, and relevant cloud inventories updated
-  for complete v0.1 behavior; `task docs` and `task site:build` green.
-- `sdk/typescript/package.json` declares Node `>=22`, version `0.1.0` in the
-  release PR, and `publishConfig.access: public`; `website/` remains npm-based.
+  for the complete M4 preview surface; `task docs` and `task site:build` green.
+- `sdk/typescript/package.json` declares Node `>=22`, version `0.0.1` in the
+  release PR, and `publishConfig.registry: https://npm.pkg.github.com` without
+  `publishConfig.access`; `website/` remains npm-based.
 - A `package-ecosystem: npm` Dependabot entry for `/sdk/typescript` (grouped
   minor+patch, matching the seven existing `gomod` entries) and a vulnerability
   gate over the SDK's production closure (`pnpm audit --prod` or
@@ -652,15 +693,16 @@ the only external state in the stack.
 - `TestADR_0304_ManualDispatchIsDryRunOnly`
 - `TestSDKTypescriptRelease_Scenario11_TagVersionParity`
 - `TestSDKTypescriptRelease_Scenario11_GenerationCleanlinessGate`
-- `TestADR_0304_TrustedPublishingOnly`
+- `TestADR_0313_EphemeralJobTokenOnly`
 - `TestADR_0304_TagTriggerIsolation`
 - `TestSDKTypescriptRelease_Scenario11_WorkflowBounding`
 - `TestSDKTypescriptRelease_Scenario11_PackedLicenseProvenance`
 
-Two naming families are deliberate: `TestADR_0304_*` pins a costly-to-reverse
-ADR 0304 decision as a durable invariant (the exact gRPC-only set, the
-plan-approval contract, and the three release-authority properties), following
-the repository's existing `TestADR_NNNN_*` convention; the
+Two naming families are deliberate: `TestADR_0304_*` and `TestADR_0313_*` pin
+costly-to-reverse ADR decisions as durable invariants (the exact gRPC-only set,
+the plan-approval contract, tag/dispatch isolation, and ephemeral GitHub
+Packages authority), following the repository's existing `TestADR_NNNN_*`
+convention; the
 `TestSDKTypescriptRelease_Scenario*` names are scenario parity guards that may
 be renamed with their scenario.
 
@@ -686,19 +728,27 @@ exact title.
    pages; the npm-managed `website/` tree is unchanged as a package manager.
 5. `task ac-trace-strict` resolves every exact Go/Vitest proof after this plan
    becomes `landed`.
-6. `go run ./cmd/mecademo` still prints a complete offline session.
+6. The Taskfile-built `./bin/mecademo` still prints a complete offline session.
 7. `contracts/proto/`, production `internal/adapter/server/`, and
    `cmd/mecated/` are byte-unchanged across Scenarios 1–11; only root-module Go
    tests inspect those contracts.
 8. The release workflow's manual dry run succeeds before the release PR is
    tagged, and no path from manual dispatch can publish.
-9. All three human prerequisites are checked before `sdk/typescript/v0.1.0` is
-   created; the published package, provenance, and inventory pass Scenario 12.
+9. All four human prerequisites are checked before `sdk/typescript/v0.0.1` is
+   created; the GitHub Packages artifact, attestation, integrity, and inventory
+   pass Scenario 12.
 10. No test reaches a live model, npm publish endpoint, or external service
     before the human-gated tag scenario.
 
 ## Deferred decisions and known risks
 
+- **The npmjs `v0.1.0` cutover is deferred under #821.** `0.1.0` is reserved as
+  the first npmjs version and no GitHub Packages `0.0.x` version is promoted or
+  reused there. Cutover requires a public `stacklok/mecatl` repository,
+  confirmed `@stacklok` npm organization publish rights, and an npm
+  trusted-publisher record for the exact SDK workflow filename and release
+  environment. Per ADR 0313 Decision 6, the workflow flips its one canonical
+  target rather than dual-publishing.
 - **The gRPC-only set can grow only through a visible decision.** The parity
   gate deliberately rejects a convenient `unsupported` bucket and asserts the
   exact `{StreamSessionLive}` set. A future genuinely gRPC-only RPC needs an ADR
@@ -733,56 +783,56 @@ exact title.
   Playwright versions are pinned, browser cache keys include the lockfile, jobs
   are time-bounded, and only Chromium runs the full flow. A flaky network install
   is infrastructure failure; retries are not added around product tests.
-- **Trusted publishing cannot be proven end-to-end before the real tag.** Manual
+- **Package authority cannot be proven end-to-end before the real tag.** Manual
   dispatch proves everything through the exact tarball and is structurally
-  publish-disabled. npm organization ownership and the trusted-publisher record
-  remain human inspections; a staging token would defeat the chosen security
-  model and is not introduced.
+  publish-disabled. GitHub organization/repository package settings and the
+  release environment remain human inspections; a staging token would defeat
+  the chosen security model and is not introduced.
 - **Tag isolation is a push-trigger property, not a manual-dispatch one.** The
   root release workflow's `workflow_dispatch` takes a *required free-text* `tag`
   input (`Existing v* tag to (re)publish`) that it never validates against
-  `v*`. An `sdk/typescript/v0.1.0` push therefore cannot fire the root image
+  `v*`. An `sdk/typescript/v0.0.1` push therefore cannot fire the root image
   release — which is exactly what AC11.6 proves — but a maintainer could still
   hand that tag to a manual root dispatch. M4 does not edit the root workflow
   (out of the client-side scope), so this stays a release-checklist note and the
   AC12.5 inspection rather than an unstated assumption.
 
-- **The first publish is externally irreversible.** A bad `0.1.0` cannot be
-  overwritten on npm. Scenario 12 therefore checks commit, version, inventory,
-  provenance, and root-workflow isolation before and after the tag rather than
-  treating publication as another automated worker task.
+- **The interim and permanent registries have different deletion semantics.**
+  GitHub Packages versions are deletable, so `0.0.x` experimentation stays
+  there. npmjs's 72-hour unpublish rule does not permit version reuse, so the
+  deferred `0.1.0` cutover is treated as permanent. Scenario 12 still checks
+  commit, version, inventory, attestation, and root-workflow isolation before
+  and after the interim tag.
 - **The “latest two stable browsers” policy moves over time.** The pinned
   Playwright revision makes CI reproducible but inevitably lags some release
   windows. Dependency update PRs carry the ordinary compatibility refresh; the
-  v0.1 release records the exact tested revisions.
+  `v0.0.1` release records the exact tested revisions.
 - **The plan-approval public-API decision is closed.** The three audited
   options are resolved in ADR 0304: stream the existing shape; do not add a
   server pre-PR; do not defer the ergonomic method.
-- **Two release blockers are external and cannot be closed by this plan.**
-  (1) `stacklok/mecatl` is `INTERNAL` today and npm emits **no** provenance for
-  a private repository even when the package is public — and it degrades
-  silently, so AC11.5/AC12.4 are unsatisfiable until the repository is public.
-  (2) The protos and their generated TypeScript carry
+- **The licence release blocker is external and cannot be closed by this plan.**
+  The protos and their generated TypeScript carry
   `LicenseRef-Stacklok-Proprietary` while the package declares `Apache-2.0`;
-  AC11.8 fails closed until an authorized relicense lands. Both are human
-  gates, and the first irreversible publish must not proceed past either.
+  AC11.8 fails closed until an authorized relicense lands. The repository may
+  remain internal for the GitHub Packages release; its package settings are a
+  separate human precondition in AC12.2.
 - **The browser suite runs under `@playwright/test`.** Its worker-scoped
   fixtures, per-project browsers, failure-only traces, and `retries: 0` map
   directly onto AC9.4. Scenario 8/9 proofs therefore use the strict sibling
   `playwright:` resolver rather than being mislabeled as Vitest proofs.
 - **Proto breaking-change detection does not exist yet.** `buf.yaml` declares a
   `breaking` stanza but no workflow invokes `buf breaking --against`. AC7.4 now
-  claims only generation freshness. Deciding whether `v0.1.0`'s "real
-  compatibility line" requires the gate — and adding it — is deferred.
+  claims only generation freshness. Deciding whether npmjs `v0.1.0`'s "real
+  compatibility line" requires the gate — and adding it — belongs to the
+  cutover checklist.
 - **`LocalSessionContextService` is published in `./gen` today.** It is
   generated, re-exported from `src/gen/index.ts`, and packed. AC1.1 pins it as
   an excluded literal so the gate cannot silently shrink, but whether an
   operator-enabled, local-trust-scoped service belongs in a public `./gen` at
-  all should be decided before `v0.1.0` freezes that surface.
-- **The trusted-publisher workflow filename is load-bearing.** npm binds the
-  record to the exact filename, so renaming `release-sdk-typescript.yml` breaks
-  publishing silently at the *next* release, long after the rename merged.
-  Nothing in the repository would catch it.
+  all should be decided before npmjs `v0.1.0` freezes that surface.
+- **The npmjs trusted-publisher workflow filename will be load-bearing.** At
+  cutover, npm binds the record to the exact filename, so the #821 follow-up
+  checklist must configure and preserve `release-sdk-typescript.yml`.
 - **Prerelease dist-tag policy is deferred.** AC11.2's strict `vX.Y.Z` grammar
   keeps the implicit `latest` correct; the first `-rc` tag needs a decision
   rather than an accident.
@@ -800,14 +850,16 @@ exact title.
   so a maintainer could dispatch the **root** image release with an SDK tag.
   Scenario 11 does not introduce it but makes it reachable; a `^v` guard step in
   the root workflow is the smallest fix and is outside this client-side scope.
-- **Operational handoff questions:** the npm organization owner, the exact
-  trusted-publisher administrator, the named tag cutter, whether a
+- **Operational handoff questions:** the GitHub Packages settings
+  administrator, the named tag cutter, whether a
   `sdk/typescript/**` tag ruleset should restrict tag creators, and whether
-  release engineering wants a manual Safari spot-check alongside WebKit.
+  release engineering wants a manual Safari spot-check alongside WebKit. npm
+  organization ownership and trusted-publisher administration are explicitly
+  deferred to the `v0.1.0` cutover checklist.
 
 ## Exit criteria
 
 When every point under *Definition of done* holds across the merged stack and
-the human-gated Scenario 12 inspection records the public package, this plan is
-satisfied and [#821](https://github.com/stacklok/mecatl/issues/821) can be closed
-by the maintainer responsible for the parent issue.
+the human-gated Scenario 12 inspection records the authenticated GitHub
+Packages artifact, this plan is satisfied. [#821](https://github.com/stacklok/mecatl/issues/821)
+remains open to track the npmjs `v0.1.0` cutover checklist.

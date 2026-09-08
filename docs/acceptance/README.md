@@ -247,12 +247,12 @@ PR after verification. There is no cleanup or status-only PR.
   ownership matrix, `query()`'s one-shot lifecycle, callback `tool()` with local
   schema validation and two-layer collision refusal, the hand-written loopback
   streaming-HTTP MCP host, and the offline Node/Bun e2e. Status: draft.
-- [TypeScript SDK public surface and v0.1.0 release (M4)](sdk-typescript-release.md) —
+- [TypeScript SDK public surface and v0.0.1 GitHub Packages release (M4)](sdk-typescript-release.md) —
   `@stacklok/mecatl-sdk` M4: the descriptor-to-transport parity gate for all 77
   public RPCs, thin typed namespaces, ergonomic teams, streaming plan
   resolution, TypeScript/Node/browser/macOS compatibility matrices, executable
-  examples and public docs, path-qualified npm trusted publishing, and the
-  human-gated `v0.1.0` cut. Status: draft.
+  examples and public docs, path-qualified GitHub Packages publication, and the
+  human-gated `v0.0.1` cut; npmjs `v0.1.0` remains a #821 follow-up. Status: draft.
 
 ## See also
 
