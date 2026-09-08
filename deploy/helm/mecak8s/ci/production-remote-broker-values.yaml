@@ -16,7 +16,7 @@ tls:
   enabled: true
   secretName: mecak8s-tls
 remoteBroker:
-  address: mecabroker.mecatl.svc:9080
+  address: mecabroker.mecatl.svc:8443
   caSecret: mecabroker-ca
   caKey: ca.pem
   serverName: mecabroker.mecatl.svc

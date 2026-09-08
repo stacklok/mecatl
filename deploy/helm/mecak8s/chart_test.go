@@ -120,7 +120,7 @@ func pdbFromRender(t *testing.T, rendered string) *policyv1.PodDisruptionBudget 
 }
 
 func TestSingletonBrokerRemediation_Scenario4_Mecak8sRemoteBrokerProjection(t *testing.T) {
-	rendered, err := helm(t, "template", "production", ".", "-f", "ci/production-values.yaml", "--set", "remoteBroker.address=mecabroker.mecatl.svc:9080,remoteBroker.caSecret=mecabroker-ca,remoteBroker.caKey=ca.pem,remoteBroker.serverName=mecabroker.mecatl.svc,remoteBroker.tokenAudience=mecabroker,remoteBroker.tokenLifetimeSeconds=600")
+	rendered, err := helm(t, "template", "production", ".", "-f", "ci/production-values.yaml", "--set", "remoteBroker.address=mecabroker.mecatl.svc:8443,remoteBroker.caSecret=mecabroker-ca,remoteBroker.caKey=ca.pem,remoteBroker.serverName=mecabroker.mecatl.svc,remoteBroker.tokenAudience=mecabroker,remoteBroker.tokenLifetimeSeconds=600")
 	if err != nil {
 		t.Fatal(err, rendered)
 	}
@@ -129,7 +129,7 @@ func TestSingletonBrokerRemediation_Scenario4_Mecak8sRemoteBrokerProjection(t *t
 		t.Fatal("remote broker must retain the dedicated Kubernetes API service-account credential for SessionLease")
 	}
 	args := d.Spec.Template.Spec.Containers[0].Args
-	for _, want := range []string{"--mcp-broker-address=mecabroker.mecatl.svc:9080", "--mcp-broker-token-file=/var/run/secrets/mecatl-broker/token", "--mcp-broker-tls-ca=/var/run/secrets/mecatl-broker/ca.pem", "--mcp-broker-server-name=mecabroker.mecatl.svc"} {
+	for _, want := range []string{"--mcp-broker-address=mecabroker.mecatl.svc:8443", "--mcp-broker-token-file=/var/run/secrets/mecatl-broker/token", "--mcp-broker-tls-ca=/var/run/secrets/mecatl-broker/ca.pem", "--mcp-broker-server-name=mecabroker.mecatl.svc"} {
 		if !slices.Contains(args, want) {
 			t.Fatalf("remote broker args missing %q: %q", want, args)
 		}

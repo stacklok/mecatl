@@ -33,6 +33,8 @@ import (
 
 const (
 	defaultMaxHandles         = 128
+	defaultMaxActiveExecutes  = 64
+	maxTerminalReceiptBytes   = 1024
 	ambiguousOutcomeMessage   = "remote tool outcome is unknown because the broker response was lost; the operation may already have completed. Do not automatically repeat it. Reconcile through a safe status/read path first; if unavailable, report the uncertainty and seek operator direction."
 	sessionUnavailableMessage = "tool temporarily unavailable"
 )
@@ -50,6 +52,7 @@ type Config struct {
 	MaxReceipts        int
 	MaxReceiptBytes    int
 	MaxPendingControls int
+	MaxActiveExecutes  int
 }
 
 // DefaultConfig returns finite production defaults for the initial single-process broker.
@@ -58,14 +61,14 @@ func DefaultConfig() Config {
 		DialTimeout: 5 * time.Second, RPCDeadline: 10 * time.Second,
 		ExecuteDeadline: 2 * time.Minute, HandleIdleTimeout: 5 * time.Minute,
 		SweepInterval: 30 * time.Second, CleanupTimeout: 10 * time.Second,
-		MaxHandles: defaultMaxHandles, MaxOwners: defaultMaxHandles, MaxReceipts: 4096, MaxReceiptBytes: 8 << 20, MaxPendingControls: 1024,
+		MaxHandles: defaultMaxHandles, MaxOwners: defaultMaxHandles, MaxReceipts: 4096, MaxReceiptBytes: 8 << 20, MaxPendingControls: 1024, MaxActiveExecutes: defaultMaxActiveExecutes,
 	}
 }
 
 func (c Config) valid() bool {
 	return c.DialTimeout > 0 && c.RPCDeadline > 0 && c.ExecuteDeadline > 0 &&
 		c.HandleIdleTimeout > 0 && c.SweepInterval > 0 && c.CleanupTimeout > 0 && c.MaxHandles > 0 && c.MaxOwners > 0 &&
-		c.MaxReceipts > 0 && c.MaxReceiptBytes > 0 && c.MaxPendingControls > 0
+		c.MaxReceipts > 0 && c.MaxReceiptBytes > 0 && c.MaxPendingControls > 0 && c.MaxActiveExecutes > 0
 }
 
 // Dial establishes a connection within Config.DialTimeout and returns a bounded client.
@@ -111,6 +114,7 @@ type Server struct {
 	executeCtx      context.Context
 	executeStop     context.CancelFunc
 	executeWG       sync.WaitGroup
+	activeExecutes  int
 	pendingControls int
 }
 type lifecycleOperation uint8
@@ -167,7 +171,7 @@ func NewServerWithConfig(service mcpbroker.Service, cfg Config) (*Server, error)
 	if service == nil {
 		return nil, errors.New("mcpbrokergrpc: service is required")
 	}
-	if cfg.MaxReceipts < 0 || cfg.MaxReceiptBytes < 0 || cfg.MaxPendingControls < 0 || cfg.MaxOwners < 0 {
+	if cfg.MaxReceipts < 0 || cfg.MaxReceiptBytes < 0 || cfg.MaxPendingControls < 0 || cfg.MaxOwners < 0 || cfg.MaxActiveExecutes < 0 {
 		return nil, errors.New("mcpbrokergrpc: capacities must not be negative")
 	}
 	defaults := DefaultConfig()
@@ -182,6 +186,9 @@ func NewServerWithConfig(service mcpbroker.Service, cfg Config) (*Server, error)
 	}
 	if cfg.MaxPendingControls == 0 {
 		cfg.MaxPendingControls = defaults.MaxPendingControls
+	}
+	if cfg.MaxActiveExecutes == 0 {
+		cfg.MaxActiveExecutes = defaults.MaxActiveExecutes
 	}
 	if !cfg.valid() {
 		return nil, errors.New("mcpbrokergrpc: all deadlines and capacities must be positive")
@@ -716,6 +723,12 @@ func (s *Server) Execute(ctx context.Context, req *brokerv1.ExecuteRequest) (*br
 		a.receipts[call.ID] = receipt
 		a.receiptBytes += receipt.bytes
 	}
+	if s.activeExecutes >= s.cfg.MaxActiveExecutes {
+		s.finishExecuteLocked(a, receipt, call, nil, executeCapacityError(), false)
+		s.mu.Unlock()
+		return waitExecuteReceipt(ctx, receipt)
+	}
+	s.activeExecutes++
 	a.active++
 	signalAttachment(a)
 	s.executeWG.Add(1)
@@ -732,7 +745,11 @@ func invocationReceiptBytes(call session.ToolCall) int {
 // receiptReservationBytes guarantees that an executed invocation can retain a
 // deterministic terminal result even when the tool's successful response is too large.
 func receiptReservationBytes(call session.ToolCall) int {
-	return invocationReceiptBytes(call) + proto.Size(receiptOversizeResponse(call))
+	return invocationReceiptBytes(call) + maxTerminalReceiptBytes
+}
+
+func executeCapacityError() error {
+	return reasonStatus(codes.ResourceExhausted, "broker Execute capacity reached", brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_CAPACITY_REACHED, executeMethod)
 }
 
 func receiptOversizeResponse(call session.ToolCall) *brokerv1.ExecuteResponse {
@@ -758,25 +775,39 @@ func invocationDigest(call session.ToolCall) [sha256.Size]byte {
 
 func (s *Server) executeOwner(a *serverAttachment, receipt *executeReceipt, target tool.Tool, call session.ToolCall) {
 	defer s.executeWG.Done()
-	ctx, cancel := context.WithTimeout(s.executeCtx, s.cfg.ExecuteDeadline)
-	defer cancel()
-	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: string(a.logicalID), Revision: s.incarnation}, nofs.New(), memledger.New(), nil)
-	result, err := target.Execute(ctx, call, env)
 	var response *brokerv1.ExecuteResponse
-	if err != nil {
-		err = brokerStatus(err)
-	} else if result.CallID != call.ID {
-		err = status.Error(codes.Internal, "tool result call_id mismatch")
-	} else {
-		var wire *brokerv1.ToolResult
-		wire, err = resultToWire(result)
-		if err != nil {
-			err = status.Error(codes.Internal, "malformed tool result")
-		} else {
+	var executeErr error
+	func() {
+		defer func() {
+			if recover() != nil {
+				executeErr = status.Error(codes.Internal, "tool execution panicked")
+			}
+		}()
+		ctx, cancel := context.WithTimeout(s.executeCtx, s.cfg.ExecuteDeadline)
+		defer cancel()
+		env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: string(a.logicalID), Revision: s.incarnation}, nofs.New(), memledger.New(), nil)
+		result, err := target.Execute(ctx, call, env)
+		switch {
+		case err != nil:
+			executeErr = brokerStatus(err)
+		case result.CallID != call.ID:
+			executeErr = status.Error(codes.Internal, "tool result call_id mismatch")
+		default:
+			wire, err := resultToWire(result)
+			if err != nil {
+				executeErr = status.Error(codes.Internal, "malformed tool result")
+				return
+			}
 			response = &brokerv1.ExecuteResponse{Result: wire}
 		}
-	}
+	}()
+
 	s.mu.Lock()
+	s.finishExecuteLocked(a, receipt, call, response, executeErr, true)
+	s.mu.Unlock()
+}
+
+func (s *Server) finishExecuteLocked(a *serverAttachment, receipt *executeReceipt, call session.ToolCall, response *brokerv1.ExecuteResponse, err error, dispatched bool) {
 	bytes := invocationReceiptBytes(call)
 	switch {
 	case response != nil:
@@ -787,17 +818,19 @@ func (s *Server) executeOwner(a *serverAttachment, receipt *executeReceipt, targ
 	if a.receiptBytes-receipt.bytes+bytes > s.cfg.MaxReceiptBytes {
 		response = receiptOversizeResponse(call)
 		err = nil
-		bytes = receiptReservationBytes(call)
+		bytes = invocationReceiptBytes(call) + proto.Size(response)
 	}
 	a.receiptBytes += bytes - receipt.bytes
 	receipt.bytes = bytes
 	receipt.response = response
 	receipt.err = err
 	close(receipt.done)
-	a.active--
+	if dispatched {
+		s.activeExecutes--
+		a.active--
+	}
 	s.releaseClosedReceiptsLocked(a)
 	signalAttachment(a)
-	s.mu.Unlock()
 }
 
 func waitExecuteReceipt(ctx context.Context, receipt *executeReceipt) (*brokerv1.ExecuteResponse, error) {

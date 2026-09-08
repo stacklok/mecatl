@@ -35,7 +35,7 @@ spec:
           image: {{ if .Values.image.digest }}{{ .Values.image.repository }}@{{ .Values.image.digest }}{{ else }}{{ .Values.image.repository }}:{{ default (printf "v%s" .Chart.Version) .Values.image.tag }}{{ end }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args:
-            - --listen-addr=0.0.0.0:9080
+            - --listen-addr=0.0.0.0:8443
             - --admin-addr=127.0.0.1:8081
             - --tls-cert=/var/run/secrets/tls/{{ .Values.tls.certKey }}
             - --tls-key=/var/run/secrets/tls/{{ .Values.tls.keyKey }}
@@ -62,11 +62,12 @@ spec:
             - --broker-max-receipts={{ .Values.transport.maxReceipts }}
             - --broker-max-receipt-bytes={{ .Values.transport.maxReceiptBytes }}
             - --broker-max-pending-controls={{ .Values.transport.maxPendingControls }}
+            - --broker-max-active-executes={{ .Values.transport.maxActiveExecutes }}
           {{- with .Values.extraEnv }}
           env: {{- toYaml . | nindent 12 }}
           {{- end }}
           ports:
-            - {name: public, containerPort: 9080}
+            - {name: public, containerPort: 8443}
             - {name: admin, containerPort: 8081}
           startupProbe:
             exec: {command: ["/ko-app/mecabroker", "ready"]}

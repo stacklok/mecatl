@@ -76,11 +76,7 @@ func TestReceiptAggregateByteCapacityRejectsBeforeRetention(t *testing.T) {
 
 func TestReceiptReservationAdmissionBoundary(t *testing.T) {
 	request := &brokerv1.ExecuteRequest{CallId: "reservation-boundary", Name: "exact", Args: []byte(`{"value":"` + strings.Repeat("x", 4096) + `"}`)}
-	reservation := invocationBytes(request) + proto.Size(&brokerv1.ExecuteResponse{Result: &brokerv1.ToolResult{
-		CallId:  request.GetCallId(),
-		Content: "tool completed, but its result exceeded the broker retained-receipt limit; do not retry this call",
-		IsError: true,
-	}})
+	reservation := invocationBytes(request) + 1024
 	for _, test := range []struct {
 		name    string
 		limit   int

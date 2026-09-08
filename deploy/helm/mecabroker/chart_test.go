@@ -106,6 +106,7 @@ func TestSingletonBrokerRemediation_Scenario4_DigestRequired(t *testing.T) {
 func TestSingletonBrokerRemediation_Scenario4_SingletonTopologyAndExposure(t *testing.T) {
 	rendered := renderChart(t, "template", "production", ".", "-f", "ci/production-values.yaml")
 	var deployment appsv1.Deployment
+	var service corev1.Service
 	var deployments, services, highAvailability int
 	for _, document := range strings.Split(rendered, "\n---") {
 		var meta struct {
@@ -124,13 +125,6 @@ func TestSingletonBrokerRemediation_Scenario4_SingletonTopologyAndExposure(t *te
 			}
 			deployments++
 		case "Service":
-			var service struct {
-				Spec struct {
-					Ports []struct {
-						Name string `yaml:"name"`
-					} `yaml:"ports"`
-				} `yaml:"spec"`
-			}
 			if err := yaml.Unmarshal([]byte(document), &service); err != nil {
 				t.Fatal(err)
 			}
@@ -147,11 +141,17 @@ func TestSingletonBrokerRemediation_Scenario4_SingletonTopologyAndExposure(t *te
 	if deployments != 1 || services != 1 || highAvailability != 0 {
 		t.Fatalf("topology objects deployment=%d service=%d HA=%d", deployments, services, highAvailability)
 	}
+	if len(service.Spec.Ports) != 1 || service.Spec.Ports[0].Name != "public" || service.Spec.Ports[0].Port != 8443 || service.Spec.Ports[0].TargetPort.StrVal != "public" {
+		t.Fatalf("public Service port = %#v, want 8443 -> named public container port", service.Spec.Ports)
+	}
 	pod := deployment.Spec.Template.Spec
 	if len(pod.Containers) != 1 {
 		t.Fatalf("broker containers = %d, want 1", len(pod.Containers))
 	}
 	container := pod.Containers[0]
+	if !slices.Contains(container.Args, "--listen-addr=0.0.0.0:8443") || len(container.Ports) < 1 || container.Ports[0].Name != "public" || container.Ports[0].ContainerPort != 8443 {
+		t.Fatalf("public listener/container port is not 8443: args=%q ports=%#v", container.Args, container.Ports)
+	}
 	if !slices.Contains(container.Args, "--admin-addr=127.0.0.1:8081") {
 		t.Fatalf("administration listener does not match local subcommand address: %q", container.Args)
 	}
@@ -380,6 +380,9 @@ func TestMecabrokerChart_DeploymentSecurityAndShutdownBudget(t *testing.T) {
 		t.Fatalf("pod security context = %#v", pod.SecurityContext)
 	}
 	container := pod.Containers[0]
+	if !slices.Contains(container.Args, "--listen-addr=0.0.0.0:8443") || len(container.Ports) < 1 || container.Ports[0].Name != "public" || container.Ports[0].ContainerPort != 8443 {
+		t.Fatalf("public listener/container port is not 8443: args=%q ports=%#v", container.Args, container.Ports)
+	}
 	if !slices.Contains(container.Args, "--admin-addr=127.0.0.1:8081") {
 		t.Fatalf("admin listener does not use local command endpoint: %q", container.Args)
 	}
@@ -416,7 +419,7 @@ func TestMecabrokerChart_DeploymentSecurityAndShutdownBudget(t *testing.T) {
 	if pod.TerminationGracePeriodSeconds == nil || *pod.TerminationGracePeriodSeconds <= 62 {
 		t.Fatalf("grace = %v, want > 62", pod.TerminationGracePeriodSeconds)
 	}
-	for _, want := range []string{"--broker-dial-timeout=5s", "--broker-max-handles=128", "--broker-max-receipts=4096", "--broker-max-logical-sessions=1024", "--broker-logical-retention=86400s", "--broker-max-pending-auth-states=1024"} {
+	for _, want := range []string{"--broker-dial-timeout=5s", "--broker-max-handles=128", "--broker-max-receipts=4096", "--broker-max-active-executes=64", "--broker-max-logical-sessions=1024", "--broker-logical-retention=86400s", "--broker-max-pending-auth-states=1024"} {
 		if !strings.Contains(strings.Join(container.Args, "\n"), want) {
 			t.Fatalf("missing runtime bound %q", want)
 		}

@@ -57,7 +57,9 @@ The chart exposes separate bounded `transport` and `runtime` settings. In partic
 `runtime.maxLogicalSessions`, `runtime.logicalRetentionSeconds`, and
 `runtime.maxPendingAuthStates` limit the underlying ToolHive logical-session and pending-
 authorization state; `transport.maxOwners` limits authenticated owners retained by the gRPC
-front end.
+front end, and `transport.maxActiveExecutes` bounds process-wide upstream tool execution (64 by
+default). Capacity rejections are retained as immutable receipts, so replaying the same call ID
+cannot dispatch it later after capacity recovers.
 
 ## Network policy
 

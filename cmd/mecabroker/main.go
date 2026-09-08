@@ -151,6 +151,7 @@ func parseFlags() config {
 	flag.IntVar(&cfg.transport.MaxReceipts, "broker-max-receipts", cfg.transport.MaxReceipts, "maximum retained Execute receipts per attachment")
 	flag.IntVar(&cfg.transport.MaxReceiptBytes, "broker-max-receipt-bytes", cfg.transport.MaxReceiptBytes, "maximum aggregate retained Execute receipt bytes per attachment")
 	flag.IntVar(&cfg.transport.MaxPendingControls, "broker-max-pending-controls", cfg.transport.MaxPendingControls, "maximum concurrent broker lifecycle controls")
+	flag.IntVar(&cfg.transport.MaxActiveExecutes, "broker-max-active-executes", cfg.transport.MaxActiveExecutes, "maximum concurrent upstream tool executions")
 	flag.Parse()
 	return cfg
 }

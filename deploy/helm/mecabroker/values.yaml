@@ -37,7 +37,7 @@ resources:
 
 # The public listener multiplexes TLS gRPC and browser callback routes.
 service:
-  port: 9080
+  port: 8443
 
 terminationGracePeriodSeconds: 70
 # Numeric seconds let the chart prove that Kubernetes has enough time for the
@@ -60,6 +60,7 @@ transport:
   maxReceipts: 4096
   maxReceiptBytes: 8388608
   maxPendingControls: 1024
+  maxActiveExecutes: 64
 
 # Runtime ownership is distinct from transport handles/owners. It bounds
 # ToolHive logical sessions and their pending authorization state.

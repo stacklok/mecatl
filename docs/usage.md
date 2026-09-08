@@ -524,7 +524,8 @@ then cancels remaining work before teardown; the chart reserves 70s total. The b
 strict positive transport and retention controls (`--broker-dial-timeout`, `--broker-rpc-deadline`,
 `--broker-execute-deadline`, `--broker-handle-idle-timeout`, `--broker-sweep-interval`,
 `--broker-cleanup-timeout`, `--broker-max-handles`, `--broker-max-owners`,
-`--broker-max-receipts`, `--broker-max-receipt-bytes`, and `--broker-max-pending-controls`) plus
+`--broker-max-receipts`, `--broker-max-receipt-bytes`, `--broker-max-pending-controls`, and
+`--broker-max-active-executes`) plus
 underlying runtime controls (`--broker-max-logical-sessions`, `--broker-logical-retention`, and
 `--broker-max-pending-auth-states`); their finite defaults are used when no flags are supplied.
 

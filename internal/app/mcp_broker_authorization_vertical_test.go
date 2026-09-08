@@ -882,9 +882,14 @@ type brokerAuthorizationFixture struct {
 	invalidGrantResponses atomic.Int32
 	rejectRefresh         atomic.Bool
 	requestMu             sync.Mutex
-	tokenBasicPasswords   []string
-	tokenBodies           []string
+	tokenRequests         []tokenRequestObservation
 	nonTokenRequests      []string
+}
+
+type tokenRequestObservation struct {
+	basicOK  bool
+	password string
+	body     string
 }
 
 func newBrokerAuthorizationFixture(t *testing.T, callbackURL string) *brokerAuthorizationFixture {
@@ -924,10 +929,9 @@ func newBrokerAuthorizationFixture(t *testing.T, callbackURL string) *brokerAuth
 			return
 		}
 		r.Body = io.NopCloser(strings.NewReader(string(rawBody)))
-		_, password, _ := r.BasicAuth()
+		_, password, basicOK := r.BasicAuth()
 		fixture.requestMu.Lock()
-		fixture.tokenBasicPasswords = append(fixture.tokenBasicPasswords, password)
-		fixture.tokenBodies = append(fixture.tokenBodies, string(rawBody))
+		fixture.tokenRequests = append(fixture.tokenRequests, tokenRequestObservation{basicOK: basicOK, password: password, body: string(rawBody)})
 		fixture.requestMu.Unlock()
 		if err := r.ParseForm(); err != nil {
 			http.Error(w, "bad form", http.StatusBadRequest)
@@ -956,11 +960,7 @@ func newBrokerAuthorizationFixture(t *testing.T, callbackURL string) *brokerAuth
 
 func (f *brokerAuthorizationFixture) recordOutboundRequest(request *http.Request) {
 	if strings.HasSuffix(request.URL.Path, "/token") {
-		_, password, _ := request.BasicAuth()
-		f.requestMu.Lock()
-		f.tokenBasicPasswords = append(f.tokenBasicPasswords, password)
-		f.requestMu.Unlock()
-		return
+		return // The endpoint records the exact received Basic auth and form body once.
 	}
 	f.recordNonTokenRequest(request.URL.String() + " " + request.Header.Get("Authorization"))
 }
@@ -975,31 +975,59 @@ func (f *brokerAuthorizationFixture) assertHTTPSecretCustody(t *testing.T, secre
 	t.Helper()
 	f.requestMu.Lock()
 	defer f.requestMu.Unlock()
-	if len(f.tokenBasicPasswords) == 0 {
+	if len(f.tokenRequests) == 0 {
 		t.Fatal("no OAuth token request observed")
 	}
-	for _, password := range f.tokenBasicPasswords {
-		if password != "" && password != secret {
-			t.Fatalf("unexpected token-request Basic credential: %q", password)
-		}
-	}
-	for _, body := range f.tokenBodies {
-		form, err := url.ParseQuery(body)
-		if err != nil {
-			t.Fatalf("parse token request: %v", err)
-		}
-		if bodySecret := form.Get("client_secret"); bodySecret != "" && bodySecret != secret {
-			t.Fatalf("unexpected token-request form credential: %q", bodySecret)
-		}
-		form.Del("client_secret")
-		if strings.Contains(form.Encode(), secret) {
-			t.Fatal("client secret escaped its token-endpoint authentication field")
+	for i, request := range f.tokenRequests {
+		if err := validateTokenSecretCustody(request, secret); err != nil {
+			t.Fatalf("token request %d: %v", i, err)
 		}
 	}
 	for _, value := range f.nonTokenRequests {
 		if strings.Contains(value, secret) {
 			t.Fatalf("client secret escaped token authentication into an observable HTTP surface: %q", value)
 		}
+	}
+}
+
+func validateTokenSecretCustody(request tokenRequestObservation, secret string) error {
+	if !request.basicOK || request.password != secret {
+		return fmt.Errorf("Basic password does not exactly match expected credential (present=%t, got_length=%d, want_length=%d)", request.basicOK, len(request.password), len(secret))
+	}
+	form, err := url.ParseQuery(request.body)
+	if err != nil {
+		return fmt.Errorf("parse token request: %w", err)
+	}
+	if form.Get("client_secret") != "" {
+		return errors.New("client_secret must be absent or empty")
+	}
+	form.Del("client_secret")
+	if strings.Contains(form.Encode(), secret) {
+		return errors.New("client secret escaped its token-endpoint authentication field")
+	}
+	return nil
+}
+
+func TestTokenSecretCustodyValidationFailsClosed(t *testing.T) {
+	tests := []struct {
+		name    string
+		request tokenRequestObservation
+		wantErr bool
+	}{
+		{name: "exact Basic and absent form secret", request: tokenRequestObservation{basicOK: true, password: "expected", body: "grant_type=authorization_code"}},
+		{name: "exact Basic and empty form secret", request: tokenRequestObservation{basicOK: true, password: "expected", body: "client_secret=&grant_type=refresh_token"}},
+		{name: "missing Basic", request: tokenRequestObservation{password: "expected", body: "grant_type=authorization_code"}, wantErr: true},
+		{name: "empty Basic password", request: tokenRequestObservation{basicOK: true, body: "grant_type=authorization_code"}, wantErr: true},
+		{name: "wrong Basic password", request: tokenRequestObservation{basicOK: true, password: "wrong", body: "grant_type=authorization_code"}, wantErr: true},
+		{name: "planted form secret", request: tokenRequestObservation{basicOK: true, password: "expected", body: "client_secret=expected&grant_type=authorization_code"}, wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := validateTokenSecretCustody(test.request, "expected")
+			if (err != nil) != test.wantErr {
+				t.Fatalf("validateTokenSecretCustody() error = %v, wantErr %v", err, test.wantErr)
+			}
+		})
 	}
 }
 

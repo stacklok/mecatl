@@ -1,21 +1,26 @@
 package mcpbroker
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"slices"
 	"strings"
 	"sync"
 
 	"github.com/stacklok/toolhive/pkg/auth/upstreamtoken"
 	"github.com/stacklok/toolhive/pkg/authserver"
-	"github.com/stacklok/toolhive/pkg/authserver/runner"
+	"github.com/stacklok/toolhive/pkg/authserver/server/handlers"
+	"github.com/stacklok/toolhive/pkg/authserver/server/keys"
 	"github.com/stacklok/toolhive/pkg/authserver/server/registration"
 	"github.com/stacklok/toolhive/pkg/authserver/storage"
+	"github.com/stacklok/toolhive/pkg/authserver/upstream"
+	"github.com/stacklok/toolhive/pkg/bodylimit"
 	"github.com/stacklok/toolhive/pkg/oauthproto"
 	"github.com/stacklok/toolhive/pkg/vmcp"
 	"github.com/stacklok/toolhive/pkg/vmcp/aggregator"
@@ -175,7 +180,8 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 		}
 	}
 
-	var auth *runner.EmbeddedAuthServer
+	var auth authserver.Server
+	var authKeyProvider keys.KeyProvider
 	var incoming func(http.Handler) http.Handler
 	var authInfo http.Handler
 	if len(construction.upstreams) != 0 {
@@ -211,9 +217,10 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 		if err := authStore.RegisterClient(processCtx, client); err != nil {
 			return rollback(fmt.Errorf("mcpbroker: register embedded authorization client: %w", err))
 		}
-		auth, err = runner.NewEmbeddedAuthServerWithStorage(processCtx, &authserver.RunConfig{
-			SchemaVersion: "v1", Issuer: issuer, AllowedAudiences: []string{issuer}, Upstreams: construction.upstreams,
-		}, authStore)
+		// TODO: Replace this narrow constructor with
+		// runner.NewEmbeddedAuthServerWithStorage once ToolHive releases support
+		// for propagating the configured token-endpoint authentication method.
+		auth, authKeyProvider, err = newToolHiveAuthServer(processCtx, issuer, construction.upstreams, authStore)
 		if err != nil {
 			return rollback(fmt.Errorf("mcpbroker: create embedded auth server: %w", err))
 		}
@@ -221,7 +228,7 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 		reader := upstreamtoken.NewInProcessService(auth.IDPTokenStorage(), auth.UpstreamTokenRefresher())
 		incoming, _, authInfo, err = factory.NewIncomingAuthMiddleware(processCtx, &vmcpconfig.IncomingAuthConfig{
 			Type: "oidc", OIDC: &vmcpconfig.OIDCConfig{Issuer: issuer, Audience: issuer, Resource: issuer, JWKSURL: issuer + "/.well-known/jwks.json"},
-		}, "mecatl-broker", nil, reader, auth.KeyProvider())
+		}, "mecatl-broker", nil, reader, authKeyProvider)
 		if err != nil {
 			return rollback(fmt.Errorf("mcpbroker: create incoming auth: %w", err))
 		}
@@ -238,7 +245,7 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 	}
 	capabilityAggregator := aggregator.NewDefaultAggregator(backendClient, resolver, aggregationConfig, nil)
 	serverConfig := &vmcpserver.Config{Name: "mecatl-broker", Version: "v1", EndpointPath: toolHiveMCPPath,
-		AuthMiddleware: incoming, AuthInfoHandler: authInfo, AuthServer: auth,
+		AuthMiddleware: incoming, AuthInfoHandler: authInfo,
 		Aggregator: capabilityAggregator, SessionFactory: vmcpsession.NewSessionFactory(outgoing),
 	}
 	backendRegistry := vmcp.NewImmutableRegistry(construction.backends)
@@ -266,7 +273,7 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 		process.Handlers.VMCP = vmcpHandler
 	}
 	if auth != nil {
-		embedded := http.StripPrefix(toolHiveBasePath, auth.Handler())
+		embedded := http.StripPrefix(toolHiveBasePath, bodylimit.Middleware(handlers.MaxDCRBodySize)(auth.Handler()))
 		process.Handlers.Authorization = embedded
 		process.Handlers.Token = embedded
 		process.Handlers.UpstreamCallback = embedded
@@ -282,6 +289,114 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 		process.Handlers.Callback = callbackHandlers.Callback
 	}
 	return process, nil
+}
+
+func newToolHiveAuthServer(
+	ctx context.Context,
+	issuer string,
+	runConfigs []authserver.UpstreamRunConfig,
+	stor storage.Storage,
+) (server authserver.Server, keyProvider keys.KeyProvider, retErr error) {
+	defer func() {
+		if retErr != nil {
+			if closeErr := stor.Close(); closeErr != nil {
+				retErr = errors.Join(retErr, fmt.Errorf("close auth storage: %w", closeErr))
+			}
+		}
+	}()
+
+	resolved, err := resolveToolHiveUpstreams(runConfigs)
+	if err != nil {
+		return nil, nil, err
+	}
+	keyProvider = keys.NewGeneratingProvider(keys.DefaultAlgorithm)
+	server, err = authserver.New(ctx, authserver.Config{
+		Issuer:           issuer,
+		KeyProvider:      keyProvider,
+		Upstreams:        resolved,
+		AllowedAudiences: []string{issuer},
+	}, stor)
+	if err != nil {
+		return nil, nil, err
+	}
+	return server, keyProvider, nil
+}
+
+// resolveToolHiveUpstreams translates only the narrow RunConfig subset emitted
+// by toolHiveUpstream. Keeping this local avoids copying ToolHive's generic
+// runner while its static OAuth2 configuration cannot express an auth method.
+func resolveToolHiveUpstreams(runConfigs []authserver.UpstreamRunConfig) ([]authserver.UpstreamConfig, error) {
+	upstream.RegisterModifiers()
+	resolved := make([]authserver.UpstreamConfig, 0, len(runConfigs))
+	for _, runConfig := range runConfigs {
+		config := authserver.UpstreamConfig{Name: runConfig.Name, Type: runConfig.Type}
+		switch runConfig.Type {
+		case authserver.UpstreamProviderTypeOAuth2:
+			if runConfig.OAuth2Config == nil {
+				return nil, errors.New("oauth2_config required for OAuth2 provider")
+			}
+			runOAuth := runConfig.OAuth2Config
+			secret, err := resolveToolHiveSecret(runOAuth.ClientSecretFile, runOAuth.ClientSecretEnvVar)
+			if err != nil {
+				return nil, fmt.Errorf("upstream %q: resolve OAuth2 client secret: %w", runConfig.Name, err)
+			}
+			authMethod := ""
+			if secret != "" {
+				authMethod = oauthproto.TokenEndpointAuthMethodClientSecretBasic
+			}
+			config.OAuth2Config = &upstream.OAuth2Config{
+				CommonOAuthConfig: upstream.CommonOAuthConfig{
+					ClientID: runOAuth.ClientID, ClientSecret: secret, RedirectURI: runOAuth.RedirectURI,
+					Scopes: slices.Clone(runOAuth.Scopes), AdditionalAuthorizationParams: runOAuth.AdditionalAuthorizationParams,
+				},
+				AuthorizationEndpoint:   runOAuth.AuthorizationEndpoint,
+				TokenEndpoint:           runOAuth.TokenEndpoint,
+				TokenEndpointAuthMethod: authMethod,
+			}
+		case authserver.UpstreamProviderTypeOIDC:
+			if runConfig.OIDCConfig == nil {
+				return nil, errors.New("oidc_config required for OIDC provider")
+			}
+			runOIDC := runConfig.OIDCConfig
+			secret, err := resolveToolHiveSecret(runOIDC.ClientSecretFile, runOIDC.ClientSecretEnvVar)
+			if err != nil {
+				return nil, fmt.Errorf("upstream %q: resolve OIDC client secret: %w", runConfig.Name, err)
+			}
+			scopes := slices.Clone(runOIDC.Scopes)
+			if len(scopes) == 0 {
+				scopes = []string{"openid", "offline_access"}
+			}
+			config.OIDCConfig = &upstream.OIDCConfig{
+				CommonOAuthConfig: upstream.CommonOAuthConfig{
+					ClientID: runOIDC.ClientID, ClientSecret: secret, RedirectURI: runOIDC.RedirectURI,
+					Scopes: scopes, AdditionalAuthorizationParams: runOIDC.AdditionalAuthorizationParams,
+				},
+				Issuer: runOIDC.IssuerURL,
+			}
+		default:
+			return nil, fmt.Errorf("unsupported upstream provider type %q", runConfig.Type)
+		}
+		resolved = append(resolved, config)
+	}
+	return resolved, nil
+}
+
+func resolveToolHiveSecret(file, envVar string) (string, error) {
+	if file != "" {
+		data, err := os.ReadFile(file) // #nosec G304 -- trusted operator configuration.
+		if err != nil {
+			return "", fmt.Errorf("read secret file %q: %w", file, err)
+		}
+		return string(bytes.TrimSpace(data)), nil
+	}
+	if envVar == "" {
+		return "", nil
+	}
+	secret := os.Getenv(envVar)
+	if secret == "" {
+		return "", fmt.Errorf("environment variable %q is not set", envVar)
+	}
+	return secret, nil
 }
 
 func discoverAnonymous(ctx context.Context, profiles []ToolHiveProfile, occupied []string) ([]route, error) {
