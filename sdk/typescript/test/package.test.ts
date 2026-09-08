@@ -10,18 +10,25 @@ import {
 } from "node:fs";
 import { builtinModules } from "node:module";
 import { tmpdir } from "node:os";
-import { dirname, join, normalize } from "node:path";
+import { dirname, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gunzipSync } from "node:zlib";
 import { afterAll, beforeAll, expect, test } from "vitest";
 
 type PackageJson = {
+  bugs: { url: string };
   dependencies: Record<string, string>;
   dependencyLicenses: Record<string, string>;
+  engines: { node: string };
   exports: Record<"." | "./gen" | "./node", { import: string; types: string }>;
+  homepage: string;
   license: string;
   name: string;
+  packageManager: string;
+  publishConfig: { access: string };
+  repository: { directory: string; type: string; url: string };
   type: string;
+  version: string;
 };
 
 const packageRoot = fileURLToPath(new URL("../", import.meta.url));
@@ -87,21 +94,28 @@ function browserEntrypointGraph(): ReadonlySet<string> {
 
 beforeAll(() => {
   fixtureRoot = mkdtempSync(join(tmpdir(), "mecatl-sdk-package-"));
-  execFileSync("pnpm", ["pack", "--pack-destination", fixtureRoot], {
-    cwd: packageRoot,
-    env: { ...process.env, NO_COLOR: "1" },
-    stdio: "pipe",
-  });
+  const suppliedArchive = process.env.MECATL_SDK_PACKED_TARBALL;
+  let archivePath: string;
+  if (suppliedArchive === undefined) {
+    execFileSync("pnpm", ["pack", "--pack-destination", fixtureRoot], {
+      cwd: packageRoot,
+      env: { ...process.env, NO_COLOR: "1" },
+      stdio: "pipe",
+    });
 
-  const [archive, ...extraArchives] = readdirSync(fixtureRoot).filter((name) =>
-    name.endsWith(".tgz"),
-  );
-  expect(archive).toBeDefined();
-  expect(extraArchives).toHaveLength(0);
-  if (archive === undefined) {
-    throw new Error("pnpm pack did not create an archive");
+    const [archive, ...extraArchives] = readdirSync(fixtureRoot).filter((name) =>
+      name.endsWith(".tgz"),
+    );
+    expect(archive).toBeDefined();
+    expect(extraArchives).toHaveLength(0);
+    if (archive === undefined) {
+      throw new Error("pnpm pack did not create an archive");
+    }
+    archivePath = join(fixtureRoot, archive);
+  } else {
+    archivePath = resolve(packageRoot, suppliedArchive);
   }
-  packedFiles = readPackedFiles(join(fixtureRoot, archive));
+  packedFiles = readPackedFiles(archivePath);
 
   consumerRoot = join(fixtureRoot, "consumer");
   const installedRoot = join(consumerRoot, "node_modules", "@stacklok", "mecatl-sdk");
@@ -163,6 +177,9 @@ test("exports map exposes exactly ., ./node, ./gen", () => {
 });
 
 test("packed tarball carries dist and license only", () => {
+  expect(packageJson.engines).toEqual({ node: ">=22" });
+  expect(packageJson.packageManager).toBe("pnpm@11.25.0");
+
   const expectedFiles = [
     "package/LICENSE",
     "package/README.md",
@@ -286,7 +303,21 @@ test("packed tarball carries dist and license only", () => {
     packedFiles.get("package/package.json")?.toString("utf8") ?? "{}",
   ) as PackageJson;
   expect(packedPackageJson.name).toBe("@stacklok/mecatl-sdk");
+  expect(packedPackageJson.version).toBe("0.0.0");
   expect(packedPackageJson.license).toBe("Apache-2.0");
+  expect(packedPackageJson.repository).toEqual({
+    directory: "sdk/typescript",
+    type: "git",
+    url: "git+https://github.com/stacklok/mecatl.git",
+  });
+  expect(packedPackageJson.homepage).toBe(
+    "https://github.com/stacklok/mecatl/tree/main/sdk/typescript#readme",
+  );
+  expect(packedPackageJson.bugs).toEqual({
+    url: "https://github.com/stacklok/mecatl/issues",
+  });
+  expect(packedPackageJson.publishConfig).toEqual({ access: "public" });
+  expect(packedPackageJson.engines).toEqual({ node: ">=22" });
   expect(packedPackageJson.dependencies).toEqual({
     "@bufbuild/protobuf": "2.14.0",
     "@connectrpc/connect": "2.1.2",

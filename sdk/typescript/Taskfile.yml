@@ -35,6 +35,30 @@ tasks:
     cmds:
       - pnpm run test
 
+  test:release:
+    desc: Run release unit tests; declaration and packed-artifact gates run separately
+    deps: [install]
+    cmds:
+      - pnpm exec vitest run --exclude test/declarations.test.ts --exclude test/package.test.ts
+
+  declarations:
+    desc: Compile the published declarations with both supported TypeScript compilers
+    deps: [install]
+    cmds:
+      - pnpm exec vitest run test/declarations.test.ts
+
+  package:check:
+    desc: Apply the exact package inventory and consumer checks to one packed tarball
+    deps: [install]
+    cmds:
+      - pnpm exec vitest run test/package.test.ts
+
+  audit:prod:
+    desc: Gate the production dependency closure on the pnpm vulnerability advisory database
+    deps: [install]
+    cmds:
+      - pnpm audit --prod
+
   e2e:
     desc: Build the SDK and same-checkout mecated, then run the Node/Bun offline wire suite
     deps: [build]
@@ -100,5 +124,7 @@ tasks:
   pack:
     desc: Build and pack the TypeScript SDK into the ignored temporary directory
     deps: [install]
+    vars:
+      PACK_DESTINATION: '{{default ".api-extractor-temp" .PACK_DESTINATION}}'
     cmds:
-      - pnpm pack --pack-destination .api-extractor-temp
+      - pnpm pack --pack-destination "{{.PACK_DESTINATION}}"
