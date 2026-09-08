@@ -265,6 +265,106 @@ func TestLeaseHeldElsewhereRefusesRun(t *testing.T) {
 	}
 }
 
+// TestCloseSessionClearsLostOwnershipAndReacquires: once this process's renewer
+// definitively loses a lease (ErrLeaseHeld on Renew), CloseSession is the
+// documented recovery path (docs/adr/0027-cloud-native.md List 1 row 27) — it
+// must actually clear the lostOwnership tombstone instead of deferring forever
+// (the pre-fix bug: closeSessionAuthorized tried to reaffirm the already-lost
+// lease first, which failed the same way every time, so closeSessionLocal —
+// the only place that deletes lostOwnership — was never reached). A run started
+// on the SAME Service afterwards must succeed via a fresh Acquire.
+func TestCloseSessionClearsLostOwnershipAndReacquires(t *testing.T) {
+	lease := &fakeLease{}
+	svc := newLeasedService(t, lease, mockllm.New(mockllm.TextTurn("first"), mockllm.TextTurn("second")))
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	run, err := svc.StartRun(context.Background(), sess.ID, "go")
+	if err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+	for range run.Events() {
+	}
+	svc.FinishRun(sess.ID, run)
+
+	// The run has already completed, so failing the NEXT background renew tick
+	// loses the lease with no live run for onLeaseLost to cancel — it still must
+	// tombstone the id via lostOwnership.
+	var lost atomic.Bool
+	lease.mu.Lock()
+	lease.renewHook = func(port.Lease) (port.Lease, error) {
+		lost.Store(true)
+		return port.Lease{}, port.ErrLeaseHeld // we lost it.
+	}
+	lease.mu.Unlock()
+	deadline := time.Now().Add(2 * time.Second)
+	for !lost.Load() && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if !lost.Load() {
+		t.Fatal("the renewer never attempted a Renew after arming renewHook")
+	}
+
+	// The lease is now genuinely free (fakeLease has no acquireErr), but before the
+	// fix a re-entry on this same Service would keep failing with
+	// ErrSessionLeasedElsewhere forever because closeSessionAuthorized could never
+	// reach closeSessionLocal to clear lostOwnership.
+	acquiresBeforeClose := func() int {
+		lease.mu.Lock()
+		defer lease.mu.Unlock()
+		return lease.acquires
+	}()
+	svc.CloseSession(sess.ID)
+
+	lease.mu.Lock()
+	lease.renewHook = nil // stop failing renews for the reacquired run.
+	lease.mu.Unlock()
+	run2, err := svc.StartRun(context.Background(), sess.ID, "go")
+	if err != nil {
+		t.Fatalf("StartRun after CloseSession following a lost lease = %v, want success (tombstone should be cleared)", err)
+	}
+	for range run2.Events() {
+	}
+	svc.FinishRun(sess.ID, run2)
+
+	lease.mu.Lock()
+	acquiresAfter := lease.acquires
+	lease.mu.Unlock()
+	if acquiresAfter <= acquiresBeforeClose {
+		t.Fatalf("Acquire count after CloseSession = %d, want > %d (a fresh Acquire proves the tombstone was cleared, not bypassed)", acquiresAfter, acquiresBeforeClose)
+	}
+}
+
+// TestCloseSessionStillRefusedWhileLeaseHeldElsewhere is the regression guard for
+// the safety property CloseSessionClearsLostOwnershipAndReacquires must not
+// widen: a session this process never held (lostOwnership never set, because it
+// never successfully acquired in the first place) must still defer CloseSession
+// when the backend reports the lease held elsewhere — it must NOT fall into the
+// "already lost, skip reaffirm" branch and tear down local state regardless.
+func TestCloseSessionStillRefusedWhileLeaseHeldElsewhere(t *testing.T) {
+	lease := &fakeLease{acquireErr: port.ErrLeaseHeld}
+	svc := newLeasedService(t, lease, mockllm.New(mockllm.TextTurn("never runs")))
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	_, err = svc.StartRun(context.Background(), sess.ID, "go")
+	if !errors.Is(err, server.ErrSessionLeasedElsewhere) {
+		t.Fatalf("StartRun with a held lease = %v, want ErrSessionLeasedElsewhere", err)
+	}
+
+	svc.CloseSession(sess.ID) // must defer, not tear down local state, and not panic.
+
+	if got := lease.releaseCount(); got != 0 {
+		t.Fatalf("lease released %d times for a lease this process never held, want 0", got)
+	}
+	_, err = svc.StartRun(context.Background(), sess.ID, "go")
+	if !errors.Is(err, server.ErrSessionLeasedElsewhere) {
+		t.Fatalf("StartRun after a deferred CloseSession = %v, want still ErrSessionLeasedElsewhere", err)
+	}
+}
+
 // TestLeaseRenewedWhileRunLive proves the renewer keeps the hold alive during a
 // long run AND that the refreshed lease (not the original) is the one handed to
 // Release — i.e. the h.lease refresh under s.mu is load-bearing, not dead code.

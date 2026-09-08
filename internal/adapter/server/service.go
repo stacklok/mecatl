@@ -2713,14 +2713,31 @@ func (s *Service) CloseSession(id session.SessionID) {
 // for direct callers (e.g. the ACP disconnect path), while EndSession already
 // holds it across its live-run precondition check and calls this directly to
 // avoid re-locking the non-reentrant per-id mutex.
+//
+// A session this process already definitively lost (lostOwnership[id] set by
+// onLeaseLost) skips the reaffirm/settle step: a fresh acquireLease would only
+// hit the SAME tombstone check and fail every time, so CloseSession — the
+// documented recovery path (docs/adr/0027-cloud-native.md List 1 row 27) — could
+// never reach closeSessionLocal, the only place that clears the tombstone. There
+// is nothing to settle either: settleAuthorizationLocked is a no-op unless this
+// process is mid external-authorization, which it cannot be once it has lost the
+// lease. closeSessionLocal itself is already safe to call in this state —
+// releaseLease guards on lease validity and never re-releases a hold onLeaseLost
+// already invalidated.
 func (s *Service) closeSessionAuthorized(id session.SessionID) {
-	if err := s.acquireLease(context.Background(), id); err != nil {
-		s.cfg.Diagnostics.Log(context.Background(), port.LevelWarn, "session close authorization settlement deferred",
-			"session", string(id), "err", err.Error())
-		return
-	}
-	if err := s.settleAuthorizationLocked(context.Background(), id); err != nil {
-		return // settlement logged the persistence/authority failure; retain attachment + lease for retry.
+	s.mu.Lock()
+	_, alreadyLost := s.lostOwnership[id]
+	s.mu.Unlock()
+
+	if !alreadyLost {
+		if err := s.acquireLease(context.Background(), id); err != nil {
+			s.cfg.Diagnostics.Log(context.Background(), port.LevelWarn, "session close authorization settlement deferred",
+				"session", string(id), "err", err.Error())
+			return
+		}
+		if err := s.settleAuthorizationLocked(context.Background(), id); err != nil {
+			return // settlement logged the persistence/authority failure; retain attachment + lease for retry.
+		}
 	}
 	s.stopAuthorizationExpiry(id)
 	unlockBroker := s.brokerMu.lock(id)

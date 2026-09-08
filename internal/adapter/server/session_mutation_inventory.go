@@ -87,7 +87,7 @@ var sessionMutationInventory = map[string]SessionMutationEntry{
 	"SetModelsRefresher":                   {SessionMutationComposition, "installs a process-wide callback and touches no durable session family"},
 	"SetSessionEnvironment":                {SessionMutationComposition, "registers only a process-local environment override and touches no durable session family"},
 	"CloseSession":                         {SessionMutationLeaseProven, "tears down process-local session ownership and releases its lease without changing durable session bytes"},
-	"closeSessionLocal":                    {SessionMutationLeaseProven, "shared teardown body for CloseSession and the delete paths, which already hold brokerMu for the id before calling it"},
+	"closeSessionLocal":                    {SessionMutationLeaseProven, "shared teardown body for CloseSession and the delete paths, which already hold brokerMu for the id before calling it; also reached directly from closeSessionAuthorized when lostOwnership[id] is already set, since a fresh reaffirm/settle is impossible there and touches no durable session bytes either way"},
 	"continueGrantedAuthorizationLocked":   {SessionMutationLeaseProven, "called only from RecheckMCPAuthorization/resolveAuthorizationLocked callers that already hold runEntryMu and the acquired session lease"},
 	"interruptRestoredAuthorizationLocked": {SessionMutationLeaseProven, "called only from startRunContent after runEntryMu.lock and the real acquireLease have both succeeded"},
 	"repairAuthorizationRegistration":      {SessionMutationLeaseProven, "recovery path invoked only after the caller's runEntryMu + session lease acquisition, to settle a continuation that failed to register"},
