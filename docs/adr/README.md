@@ -179,6 +179,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0310 — Lazy ToolHive authorization for statically declared protected tools](./0310-lazy-toolhive-static-tools.md)
 - [0311 — Per-upstream MCP broker OAuth grants](./0311-per-upstream-mcp-broker-oauth-grants.md) *(static-tool admission superseded by 0310)*
 - [0312 — Confidential ToolHive broker client credentials](./0312-confidential-toolhive-broker-client.md)
+- [0314 — Dynamic Client Registration for MCP broker upstreams](./0314-mcp-broker-dcr-client.md)
 
 ### Performance & diagnostics
 - [0018 — Perf observability](./0018-perf-observability.md)
