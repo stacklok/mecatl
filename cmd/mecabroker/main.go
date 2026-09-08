@@ -11,7 +11,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -21,6 +20,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/adapter/mcpbroker"
+	"github.com/stacklok/mecatl/internal/adapter/mcpbrokergrpc"
 	"github.com/stacklok/mecatl/internal/adapter/mcpbrokerserver"
 	"github.com/stacklok/mecatl/internal/adapter/slogdiag"
 )
@@ -29,11 +29,8 @@ const (
 	shutdownTimeout        = 5 * time.Second
 	defaultPropagationWait = 2 * time.Second
 	defaultDrainTimeout    = 55 * time.Second
-	maxCallbackBodyBytes   = 64 << 10
-	maxPublicHeaderBytes   = 32 << 10
-	publicReadTimeout      = 2 * time.Minute
-	publicWriteTimeout     = 2 * time.Minute
-	publicIdleTimeout      = 60 * time.Second
+	defaultPublicAddress   = ":8443"
+	defaultAdminAddress    = "127.0.0.1:8081"
 )
 
 type config struct {
@@ -50,6 +47,7 @@ type config struct {
 	brokerConfigFile string
 	propagationWait  time.Duration
 	drainTimeout     time.Duration
+	transport        mcpbrokergrpc.Config
 }
 
 type fileConfig struct {
@@ -115,8 +113,9 @@ func main() {
 
 func parseFlags() config {
 	var cfg config
-	flag.StringVar(&cfg.publicAddress, "listen-addr", "127.0.0.1:9080", "TLS gRPC and browser callback listen address")
-	flag.StringVar(&cfg.adminAddress, "admin-addr", "127.0.0.1:9082", "loopback-only health, readiness, and drain listen address")
+	cfg.transport = mcpbrokergrpc.DefaultConfig()
+	flag.StringVar(&cfg.publicAddress, "listen-addr", defaultPublicAddress, "TLS gRPC and browser callback listen address")
+	flag.StringVar(&cfg.adminAddress, "admin-addr", defaultAdminAddress, "loopback-only health, readiness, and drain listen address")
 	flag.StringVar(&cfg.tlsCertFile, "tls-cert", "", "PEM public listener server certificate (required)")
 	flag.StringVar(&cfg.tlsKeyFile, "tls-key", "", "PEM server private key")
 	flag.StringVar(&cfg.oidcIssuer, "oidc-issuer", "", "exact HTTPS workload-token issuer")
@@ -128,6 +127,17 @@ func parseFlags() config {
 	flag.StringVar(&cfg.brokerConfigFile, "config", "", "strict JSON ToolHive broker configuration")
 	flag.DurationVar(&cfg.propagationWait, "drain-propagation-delay", defaultPropagationWait, "delay after closing admission before waiting for active work")
 	flag.DurationVar(&cfg.drainTimeout, "drain-timeout", defaultDrainTimeout, "finite deadline for active broker work during shutdown")
+	flag.DurationVar(&cfg.transport.DialTimeout, "broker-dial-timeout", cfg.transport.DialTimeout, "finite broker client connection deadline")
+	flag.DurationVar(&cfg.transport.RPCDeadline, "broker-rpc-deadline", cfg.transport.RPCDeadline, "finite non-Execute broker RPC deadline")
+	flag.DurationVar(&cfg.transport.ExecuteDeadline, "broker-execute-deadline", cfg.transport.ExecuteDeadline, "finite broker Execute deadline")
+	flag.DurationVar(&cfg.transport.HandleIdleTimeout, "broker-handle-idle-timeout", cfg.transport.HandleIdleTimeout, "absolute idle lease for broker handles and logical-session ownership")
+	flag.DurationVar(&cfg.transport.SweepInterval, "broker-sweep-interval", cfg.transport.SweepInterval, "broker retention sweep interval")
+	flag.DurationVar(&cfg.transport.CleanupTimeout, "broker-cleanup-timeout", cfg.transport.CleanupTimeout, "bounded broker attachment cleanup deadline")
+	flag.IntVar(&cfg.transport.MaxHandles, "broker-max-handles", cfg.transport.MaxHandles, "maximum retained broker attachment handles")
+	flag.IntVar(&cfg.transport.MaxOwners, "broker-max-logical-sessions", cfg.transport.MaxOwners, "maximum retained logical broker sessions")
+	flag.IntVar(&cfg.transport.MaxReceipts, "broker-max-receipts", cfg.transport.MaxReceipts, "maximum retained Execute receipts per attachment")
+	flag.IntVar(&cfg.transport.MaxReceiptBytes, "broker-max-receipt-bytes", cfg.transport.MaxReceiptBytes, "maximum aggregate retained Execute receipt bytes per attachment")
+	flag.IntVar(&cfg.transport.MaxPendingControls, "broker-max-pending-controls", cfg.transport.MaxPendingControls, "maximum concurrent broker lifecycle controls")
 	flag.Parse()
 	return cfg
 }
@@ -159,17 +169,12 @@ func run(ctx context.Context, cfg config, diagnostics port.Diagnostics) error {
 		return err
 	}
 	bounds := mcpbrokerserver.DefaultPublicListenerConfig()
-	bounds.MaxCallbackBytes = maxCallbackBodyBytes
-	bounds.MaxHeaderBytes = maxPublicHeaderBytes
-	bounds.ReadTimeout = publicReadTimeout
-	bounds.WriteTimeout = publicWriteTimeout
-	bounds.IdleTimeout = publicIdleTimeout
 	lifecycle, err := mcpbrokerserver.NewProduction(ctx, mcpbrokerserver.ProductionConfig{
 		PublicAddress: cfg.publicAddress, AdminAddress: cfg.adminAddress,
 		TLSConfig: &tls.Config{Certificates: []tls.Certificate{certificate}, MinVersion: tls.VersionTLS12},
 		OIDC:      mcpbrokerserver.OIDCConfig{Issuer: cfg.oidcIssuer, JWKSURI: cfg.oidcJWKSURI, Audience: cfg.oidcAudience, AllowedSubjects: []string{cfg.oidcSubject}, TrustedCAPEM: caPEM, MaxJWKSStaleness: cfg.maxJWKSStaleness},
 		ToolHive:  declaration.toolHive(), Diagnostics: diagnostics, PropagationWait: cfg.propagationWait,
-		DrainTimeout: cfg.drainTimeout, ShutdownTimeout: shutdownTimeout, PublicBounds: bounds,
+		DrainTimeout: cfg.drainTimeout, ShutdownTimeout: shutdownTimeout, PublicBounds: bounds, Transport: cfg.transport,
 	})
 	if err != nil {
 		return err
@@ -192,52 +197,9 @@ func run(ctx context.Context, cfg config, diagnostics port.Diagnostics) error {
 	}
 }
 
-func validateAdminAddress(address string) error {
-	host, _, err := net.SplitHostPort(address)
-	if err != nil {
-		return errors.New("broker admin listen address is invalid")
-	}
-	if strings.EqualFold(host, "localhost") {
-		return nil
-	}
-	ip := net.ParseIP(host)
-	if ip == nil || !ip.IsLoopback() {
-		return errors.New("broker admin listener must bind to loopback")
-	}
-	return nil
-}
-
-func publicHandler(grpcHandler, callbackHandler http.Handler) http.Handler {
-	cfg := mcpbrokerserver.DefaultPublicListenerConfig()
-	cfg.MaxCallbackBytes = maxCallbackBodyBytes
-	return mcpbrokerserver.PublicHandler(grpcHandler, callbackHandler, cfg)
-}
-
-func adminHandler(ready func(context.Context) bool, beginDrain func(), propagated <-chan struct{}) http.Handler {
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
-	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
-		if !ready(r.Context()) {
-			http.Error(w, "not ready", http.StatusServiceUnavailable)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-	})
-	mux.HandleFunc("GET /drain", func(w http.ResponseWriter, r *http.Request) {
-		beginDrain()
-		select {
-		case <-propagated:
-			w.WriteHeader(http.StatusOK)
-		case <-r.Context().Done():
-			http.Error(w, "drain propagation incomplete", http.StatusServiceUnavailable)
-		}
-	})
-	return mux
-}
-
 func requestLocalAdmin(method, path string, timeout time.Duration) error {
 	client := &http.Client{Timeout: timeout}
-	req, err := http.NewRequest(method, "http://127.0.0.1:9082"+path, nil)
+	req, err := http.NewRequest(method, "http://"+defaultAdminAddress+path, nil)
 	if err != nil {
 		return err
 	}

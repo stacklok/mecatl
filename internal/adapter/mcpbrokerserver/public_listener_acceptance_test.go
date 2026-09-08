@@ -66,8 +66,8 @@ func TestSingletonBrokerRemediation_Scenario3_PublicListenerBoundsRejectBeforeCa
 	}
 	bounds := DefaultPublicListenerConfig()
 	bounds.ReadHeaderTimeout = 100 * time.Millisecond
-	bounds.ReadTimeout = 100 * time.Millisecond
-	bounds.WriteTimeout = 500 * time.Millisecond
+	bounds.ReadTimeout = 6 * time.Second
+	bounds.WriteTimeout = 6 * time.Second
 	bounds.IdleTimeout = 100 * time.Millisecond
 	bounds.CallbackTimeout = 80 * time.Millisecond
 	bounds.MaxHeaderBytes = 1024

@@ -13,6 +13,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/adapter/mcpbroker"
+	"github.com/stacklok/mecatl/internal/adapter/mcpbrokergrpc"
 	contract "github.com/stacklok/mecatl/internal/mcpbroker"
 )
 
@@ -34,6 +35,7 @@ type ProductionConfig struct {
 	DrainTimeout    time.Duration
 	ShutdownTimeout time.Duration
 	PublicBounds    PublicListenerConfig
+	Transport       mcpbrokergrpc.Config
 }
 
 // Lifecycle is the production broker process lifecycle. Start serves the public
@@ -72,7 +74,7 @@ func NewProduction(ctx context.Context, cfg ProductionConfig) (*Lifecycle, error
 		return nil, err
 	}
 	broker, err := New(ctx, Config{
-		OIDC: cfg.OIDC, Diagnostics: cfg.Diagnostics,
+		OIDC: cfg.OIDC, Diagnostics: cfg.Diagnostics, Transport: cfg.Transport,
 		Factory: func(factoryCtx context.Context) (contract.Service, mcpbroker.HandlerBundle, string, func() error, error) {
 			process, processErr := mcpbroker.NewToolHiveProcess(factoryCtx, cfg.ToolHive, cfg.ToolHiveOptions...)
 			if processErr != nil {

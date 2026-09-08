@@ -39,9 +39,11 @@ approval gate, and a later new invocation can still duplicate an external effect
 
 ## Probes and drain
 
-Only TLS gRPC and browser callbacks are published by the Service. The admin listener is
-loopback-only; shell-free exec probes call the binary's fixed `health`, `ready`, and
-`drain` operations. Readiness checks validated TLS identity, bounded OIDC verifier
+Only TLS gRPC and browser callbacks are published by the Service. The public listener defaults
+to `:8443`; the admin listener defaults to loopback-only `127.0.0.1:8081`, and shell-free exec
+probes call the binary's fixed `health`, `ready`, and `drain` operations. The public boundary
+rejects unsupported methods/content types and oversized, incomplete, or overdue OAuth, callback,
+and MCP bodies before ToolHive consumes state. Readiness checks validated TLS identity, bounded OIDC verifier
 initialization, route/profile configuration, ToolHive construction, anonymous discovery,
 and protected-route declarations. It never performs login or tool execution and is not
 an ownership fence.

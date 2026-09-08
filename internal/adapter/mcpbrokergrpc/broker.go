@@ -24,6 +24,8 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	brokerv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/broker/v1"
+	"github.com/stacklok/mecatl/engine/adapter/memledger"
+	"github.com/stacklok/mecatl/engine/adapter/nofs"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/mcpbroker"
@@ -44,7 +46,9 @@ type Config struct {
 	SweepInterval      time.Duration
 	CleanupTimeout     time.Duration
 	MaxHandles         int
+	MaxOwners          int
 	MaxReceipts        int
+	MaxReceiptBytes    int
 	MaxPendingControls int
 }
 
@@ -54,14 +58,14 @@ func DefaultConfig() Config {
 		DialTimeout: 5 * time.Second, RPCDeadline: 10 * time.Second,
 		ExecuteDeadline: 2 * time.Minute, HandleIdleTimeout: 5 * time.Minute,
 		SweepInterval: 30 * time.Second, CleanupTimeout: 10 * time.Second,
-		MaxHandles: defaultMaxHandles, MaxReceipts: 4096, MaxPendingControls: 1024,
+		MaxHandles: defaultMaxHandles, MaxOwners: defaultMaxHandles, MaxReceipts: 4096, MaxReceiptBytes: 8 << 20, MaxPendingControls: 1024,
 	}
 }
 
 func (c Config) valid() bool {
 	return c.DialTimeout > 0 && c.RPCDeadline > 0 && c.ExecuteDeadline > 0 &&
-		c.HandleIdleTimeout > 0 && c.SweepInterval > 0 && c.CleanupTimeout > 0 && c.MaxHandles > 0 &&
-		c.MaxReceipts > 0 && c.MaxPendingControls > 0
+		c.HandleIdleTimeout > 0 && c.SweepInterval > 0 && c.CleanupTimeout > 0 && c.MaxHandles > 0 && c.MaxOwners > 0 &&
+		c.MaxReceipts > 0 && c.MaxReceiptBytes > 0 && c.MaxPendingControls > 0
 }
 
 // Dial establishes a connection within Config.DialTimeout and returns a bounded client.
@@ -119,6 +123,7 @@ const (
 
 type executeReceipt struct {
 	digest   [sha256.Size]byte
+	bytes    int
 	started  bool
 	done     chan struct{}
 	response *brokerv1.ExecuteResponse
@@ -141,6 +146,7 @@ type serverAttachment struct {
 	expiresAt       time.Time
 	changed         chan struct{}
 	receipts        map[session.ToolCallID]*executeReceipt
+	receiptBytes    int
 	running         lifecycleOperation
 	runningDone     chan struct{}
 	terminal        lifecycleOperation
@@ -161,12 +167,18 @@ func NewServerWithConfig(service mcpbroker.Service, cfg Config) (*Server, error)
 	if service == nil {
 		return nil, errors.New("mcpbrokergrpc: service is required")
 	}
-	if cfg.MaxReceipts < 0 || cfg.MaxPendingControls < 0 {
+	if cfg.MaxReceipts < 0 || cfg.MaxReceiptBytes < 0 || cfg.MaxPendingControls < 0 || cfg.MaxOwners < 0 {
 		return nil, errors.New("mcpbrokergrpc: capacities must not be negative")
 	}
 	defaults := DefaultConfig()
+	if cfg.MaxOwners == 0 {
+		cfg.MaxOwners = defaults.MaxOwners
+	}
 	if cfg.MaxReceipts == 0 {
 		cfg.MaxReceipts = defaults.MaxReceipts
+	}
+	if cfg.MaxReceiptBytes == 0 {
+		cfg.MaxReceiptBytes = defaults.MaxReceiptBytes
 	}
 	if cfg.MaxPendingControls == 0 {
 		cfg.MaxPendingControls = defaults.MaxPendingControls
@@ -200,26 +212,31 @@ func (s *Server) bounded(ctx context.Context, execute bool) (context.Context, co
 	return context.WithTimeout(ctx, d)
 }
 
-func (s *Server) bindSession(ctx context.Context, id session.SessionID) (*session.Principal, error) {
+func (s *Server) bindSession(ctx context.Context, id session.SessionID) (*session.Principal, bool, error) {
 	if !mcpbroker.ValidLogicalSessionID(id) {
-		return nil, invalid("session_id is invalid")
+		return nil, false, invalid("session_id is invalid")
 	}
 	principal := session.PrincipalFromContext(ctx)
 	if principal == nil {
-		return nil, nil // Direct adapter calls are test-only; the network boundary always installs a principal.
+		return nil, false, nil // Direct adapter calls are test-only; the network boundary always installs a principal.
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	owner := s.owners[id]
 	if owner != nil && !principal.SameIdentity(&owner.principal) {
-		return nil, status.Error(codes.PermissionDenied, "broker session is not available")
+		return nil, false, status.Error(codes.PermissionDenied, "broker session is not available")
 	}
+	created := false
 	if owner == nil {
+		if len(s.owners) >= s.cfg.MaxOwners {
+			return nil, false, reasonStatus(codes.ResourceExhausted, "broker session capacity reached", brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_CAPACITY_REACHED, "")
+		}
 		owner = &sessionOwner{principal: *principal, expiresAt: time.Now().Add(s.cfg.HandleIdleTimeout)}
 		s.owners[id] = owner
+		created = true
 	}
 	owner.pending++
-	return principal.Clone(), nil
+	return principal.Clone(), created, nil
 }
 
 func (s *Server) authorizeSession(ctx context.Context, id session.SessionID) error {
@@ -240,7 +257,7 @@ func (s *Server) removeOwnerLocked(id session.SessionID) {
 	delete(s.owners, id)
 }
 
-func (s *Server) finishSessionBind(id session.SessionID, attached bool) {
+func (s *Server) finishSessionBind(id session.SessionID, attached, newlyCreated bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	owner := s.owners[id]
@@ -250,6 +267,9 @@ func (s *Server) finishSessionBind(id session.SessionID, attached bool) {
 	owner.pending--
 	if attached {
 		owner.handles++
+	}
+	if newlyCreated && !attached && owner.pending == 0 && owner.handles == 0 {
+		s.removeOwnerLocked(id)
 	}
 	// Ownership is deliberately retained after the last handle closes. The
 	// logical session's absolute retention, delete, or shutdown reclaims it.
@@ -280,12 +300,12 @@ func (s *Server) Attach(ctx context.Context, req *brokerv1.AttachRequest) (*brok
 	if !mcpbroker.ValidLogicalSessionID(logicalID) {
 		return nil, invalid("session_id is invalid")
 	}
-	principal, err := s.bindSession(ctx, logicalID)
+	principal, newlyCreated, err := s.bindSession(ctx, logicalID)
 	if err != nil {
 		return nil, err
 	}
 	attached := false
-	defer func() { s.finishSessionBind(logicalID, attached) }()
+	defer func() { s.finishSessionBind(logicalID, attached, newlyCreated) }()
 	a, outcome, err := s.service.AttachSession(ctx, logicalID)
 	if err != nil {
 		return nil, brokerStatus(err)
@@ -667,12 +687,13 @@ func (s *Server) Execute(ctx context.Context, req *brokerv1.ExecuteRequest) (*br
 		}
 		receipt.started = true
 	} else {
-		if len(a.receipts) >= s.cfg.MaxReceipts {
+		if len(a.receipts) >= s.cfg.MaxReceipts || a.receiptBytes+invocationReceiptBytes(call) > s.cfg.MaxReceiptBytes {
 			s.mu.Unlock()
 			return nil, reasonStatus(codes.ResourceExhausted, "broker receipt capacity reached", brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_CAPACITY_REACHED, "")
 		}
-		receipt = &executeReceipt{digest: digest, started: true, done: make(chan struct{})}
+		receipt = &executeReceipt{digest: digest, bytes: invocationReceiptBytes(call), started: true, done: make(chan struct{})}
 		a.receipts[call.ID] = receipt
+		a.receiptBytes += receipt.bytes
 	}
 	a.active++
 	signalAttachment(a)
@@ -681,6 +702,10 @@ func (s *Server) Execute(ctx context.Context, req *brokerv1.ExecuteRequest) (*br
 
 	go s.executeOwner(a, receipt, target, call)
 	return waitExecuteReceipt(ctx, receipt)
+}
+
+func invocationReceiptBytes(call session.ToolCall) int {
+	return len(call.Name) + len(call.ID) + len(call.ItemID) + len(call.Args)
 }
 
 func invocationDigest(call session.ToolCall) [sha256.Size]byte {
@@ -700,7 +725,8 @@ func (s *Server) executeOwner(a *serverAttachment, receipt *executeReceipt, targ
 	defer s.executeWG.Done()
 	ctx, cancel := context.WithTimeout(s.executeCtx, s.cfg.ExecuteDeadline)
 	defer cancel()
-	result, err := target.Execute(ctx, call, tool.Environment{})
+	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: string(a.logicalID), Revision: s.incarnation}, nofs.New(), memledger.New(), nil)
+	result, err := target.Execute(ctx, call, env)
 	var response *brokerv1.ExecuteResponse
 	if err != nil {
 		err = brokerStatus(err)
@@ -761,11 +787,13 @@ func (s *Server) RequestAuthorization(ctx context.Context, req *brokerv1.Request
 		return nil, invalid("call_id was reused with different invocation content")
 	}
 	if receipt == nil {
-		if len(a.receipts) >= s.cfg.MaxReceipts {
+		if len(a.receipts) >= s.cfg.MaxReceipts || a.receiptBytes+invocationReceiptBytes(call) > s.cfg.MaxReceiptBytes {
 			s.mu.Unlock()
 			return nil, reasonStatus(codes.ResourceExhausted, "broker receipt capacity reached", brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_CAPACITY_REACHED, "")
 		}
-		a.receipts[call.ID] = &executeReceipt{digest: digest, done: make(chan struct{})}
+		receipt := &executeReceipt{digest: digest, bytes: invocationReceiptBytes(call), done: make(chan struct{})}
+		a.receipts[call.ID] = receipt
+		a.receiptBytes += receipt.bytes
 	}
 	s.mu.Unlock()
 	auth, required, e := target.RequestAuthorization(ctx, call)
@@ -1406,11 +1434,35 @@ func clientError(err error) error {
 		return errors.New("mcpbrokergrpc: unknown broker error reason")
 	}
 }
+
+const (
+	maxInvocationCallIDBytes = 256
+	maxInvocationNameBytes   = 256
+	maxInvocationItemIDBytes = 1024
+	maxInvocationArgsBytes   = 256 << 10
+)
+
 func callFrom(name, id string, args []byte, item string) (session.ToolCall, error) {
-	if name == "" || id == "" || !utf8.ValidString(name) || !utf8.ValidString(id) || !utf8.ValidString(item) || !json.Valid(args) {
+	if !validInvocationText(name, maxInvocationNameBytes) || !validInvocationText(id, maxInvocationCallIDBytes) || (item != "" && !validInvocationText(item, maxInvocationItemIDBytes)) || len(args) == 0 || len(args) > maxInvocationArgsBytes || !json.Valid(args) {
+		return session.ToolCall{}, errors.New("mcpbrokergrpc: malformed invocation")
+	}
+	var object map[string]json.RawMessage
+	if json.Unmarshal(args, &object) != nil {
 		return session.ToolCall{}, errors.New("mcpbrokergrpc: malformed invocation")
 	}
 	return session.ToolCall{ID: session.ToolCallID(id), Name: name, Args: append([]byte(nil), args...), ItemID: item}, nil
+}
+
+func validInvocationText(value string, maximum int) bool {
+	if value == "" || len(value) > maximum || !utf8.ValidString(value) {
+		return false
+	}
+	for _, r := range value {
+		if r < 0x20 || r == 0x7f {
+			return false
+		}
+	}
+	return true
 }
 func resultToWire(r session.ToolResult) (*brokerv1.ToolResult, error) {
 	if r.CallID == "" || !utf8.ValidString(string(r.CallID)) || !utf8.ValidString(r.Content) || !validParts(r.Parts) {

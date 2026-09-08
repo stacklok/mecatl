@@ -52,7 +52,7 @@ func (c PublicListenerConfig) valid() bool {
 }
 
 func (c PublicListenerConfig) validForExecute() bool {
-	return c.ReadTimeout > c.ExecuteDeadline+publicListenerExecuteMargin && c.WriteTimeout > c.ExecuteDeadline+publicListenerExecuteMargin
+	return c.ReadTimeout >= c.ExecuteDeadline+publicListenerExecuteMargin && c.WriteTimeout >= c.ExecuteDeadline+publicListenerExecuteMargin
 }
 
 // PublicListener owns the exact production public HTTP/TLS server. Broker.Close
@@ -70,12 +70,11 @@ func NewPublicListener(listener net.Listener, broker *Server, tlsConfig *tls.Con
 	if listener == nil || broker == nil {
 		return nil, errors.New("mcpbrokerserver: public listener and broker are required")
 	}
-	configuredExecuteDeadline := cfg.ExecuteDeadline > 0
 	if cfg.ExecuteDeadline == 0 {
 		cfg.ExecuteDeadline = broker.ExecuteDeadline()
 	}
-	if !cfg.valid() || (configuredExecuteDeadline && !cfg.validForExecute()) {
-		return nil, errors.New("mcpbrokerserver: public listener bounds must be positive and exceed ExecuteDeadline by the required margin")
+	if !cfg.valid() || !cfg.validForExecute() {
+		return nil, errors.New("mcpbrokerserver: public listener bounds must be positive and cover ExecuteDeadline plus the required margin")
 	}
 	if err := ValidateTransport(listener.Addr().String(), tlsConfig); err != nil {
 		return nil, err
@@ -115,11 +114,7 @@ func PublicHandler(grpcHandler, callbackHandler http.Handler, cfg PublicListener
 		ctx, cancel := context.WithTimeout(r.Context(), cfg.CallbackTimeout)
 		defer cancel()
 		r = r.WithContext(ctx)
-		if strings.HasPrefix(r.URL.Path, "/v1/mcp/broker/") {
-			callbackHandler.ServeHTTP(w, r)
-			return
-		}
-		if status, message := validateBoundedCallback(w, r, cfg.MaxCallbackBytes); status != 0 {
+		if status, message := validateBoundedPublicRoute(w, r, cfg.MaxCallbackBytes); status != 0 {
 			http.Error(w, message, status)
 			return
 		}
@@ -127,18 +122,12 @@ func PublicHandler(grpcHandler, callbackHandler http.Handler, cfg PublicListener
 	})
 }
 
-func validateBoundedCallback(w http.ResponseWriter, r *http.Request, maximum int64) (int, string) {
-	if r.Method != http.MethodGet && r.Method != http.MethodPost {
-		return http.StatusMethodNotAllowed, "callback method is not supported"
-	}
-	if r.Method == http.MethodPost {
-		contentType := strings.ToLower(strings.TrimSpace(strings.SplitN(r.Header.Get("Content-Type"), ";", 2)[0]))
-		if contentType != "application/x-www-form-urlencoded" && contentType != "multipart/form-data" {
-			return http.StatusUnsupportedMediaType, "callback content type is not supported"
-		}
+func validateBoundedPublicRoute(w http.ResponseWriter, r *http.Request, maximum int64) (int, string) {
+	if status, message := validatePublicRouteMethod(r); status != 0 {
+		return status, message
 	}
 	if r.ContentLength > maximum {
-		return http.StatusRequestEntityTooLarge, "callback body is too large"
+		return http.StatusRequestEntityTooLarge, "public route body is too large"
 	}
 	if r.Body == nil {
 		return 0, ""
@@ -148,17 +137,49 @@ func validateBoundedCallback(w http.ResponseWriter, r *http.Request, maximum int
 	_ = r.Body.Close()
 	if err != nil {
 		if errors.Is(r.Context().Err(), context.DeadlineExceeded) {
-			return http.StatusRequestTimeout, "callback request deadline exceeded"
+			return http.StatusRequestTimeout, "public request deadline exceeded"
 		}
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) {
-			return http.StatusRequestEntityTooLarge, "callback body is too large"
+			return http.StatusRequestEntityTooLarge, "public route body is too large"
 		}
-		return http.StatusBadRequest, "callback body is unreadable"
+		return http.StatusBadRequest, "public route body is unreadable"
 	}
 	if r.ContentLength >= 0 && int64(len(body)) != r.ContentLength {
-		return http.StatusBadRequest, "callback body is incomplete"
+		return http.StatusBadRequest, "public route body is incomplete"
 	}
 	r.Body = io.NopCloser(bytes.NewReader(body))
+	return 0, ""
+}
+
+func validatePublicRouteMethod(r *http.Request) (int, string) {
+	contentType := strings.ToLower(strings.TrimSpace(strings.SplitN(r.Header.Get("Content-Type"), ";", 2)[0]))
+	switch {
+	case strings.HasPrefix(r.URL.Path, "/v1/mcp/broker/"):
+		if r.Method != http.MethodGet && r.Method != http.MethodPost {
+			return http.StatusMethodNotAllowed, "MCP route method is not supported"
+		}
+		if r.Method == http.MethodPost && contentType != "application/json" && !strings.HasSuffix(contentType, "+json") {
+			return http.StatusUnsupportedMediaType, "MCP route content type is not supported"
+		}
+	case strings.Contains(r.URL.Path, "/authorize"):
+		if r.Method != http.MethodGet {
+			return http.StatusMethodNotAllowed, "OAuth authorize route requires GET"
+		}
+	case strings.Contains(r.URL.Path, "/token"):
+		if r.Method != http.MethodPost {
+			return http.StatusMethodNotAllowed, "OAuth token route requires POST"
+		}
+		if contentType != "application/x-www-form-urlencoded" {
+			return http.StatusUnsupportedMediaType, "OAuth token route requires form content"
+		}
+	default:
+		if r.Method != http.MethodGet && r.Method != http.MethodPost {
+			return http.StatusMethodNotAllowed, "public route method is not supported"
+		}
+		if r.Method == http.MethodPost && contentType != "application/x-www-form-urlencoded" && contentType != "multipart/form-data" {
+			return http.StatusUnsupportedMediaType, "public route content type is not supported"
+		}
+	}
 	return 0, ""
 }

@@ -514,12 +514,18 @@ outcome, report the uncertainty and obtain an explicit recovery decision. Mecatl
 procedure in the broker-enabled model prompt, but does not enforce it as a reconciliation or
 approval gate and cannot prevent duplicate external effects from a later new invocation.
 
-The Service publishes only TLS gRPC and browser callback ports. Health, readiness, and
-pre-stop drain use a loopback-only admin listener through fixed self-probe commands in the
-shell-less image. Readiness validates the finite TLS/OIDC/profile/ToolHive/discovery/static-
+The Service publishes only TLS gRPC and browser callback ports. By default the public listener is
+`:8443`; health, readiness, and pre-stop drain use the loopback-only `127.0.0.1:8081`
+admin listener. The public route validator rejects unsupported methods/content types and oversized,
+incomplete, or overdue bodies before ToolHive receives callback, OAuth, or MCP input. Readiness validates the finite TLS/OIDC/profile/ToolHive/discovery/static-
 route prerequisites without logging in a user or executing a tool. Drain rejects new gRPC
 and callbacks before the 2s propagation wait, gives active work a finite 55s deadline, and
-then cancels remaining work before teardown; the chart reserves 70s total.
+then cancels remaining work before teardown; the chart reserves 70s total. The binary exposes
+strict positive transport and retention controls (`--broker-dial-timeout`, `--broker-rpc-deadline`,
+`--broker-execute-deadline`, `--broker-handle-idle-timeout`, `--broker-sweep-interval`,
+`--broker-cleanup-timeout`, `--broker-max-handles`, `--broker-max-logical-sessions`,
+`--broker-max-receipts`, `--broker-max-receipt-bytes`, and `--broker-max-pending-controls`); their finite defaults are used
+when no flags are supplied.
 
 Set `networkPolicy.publicFrom` to the single union of exact namespace, pod, and CIDR peers that may reach the multiplexed public listener. The same NetworkPolicy port carries gRPC and browser callbacks; vanilla NetworkPolicy cannot provide route-level separation, so `mecak8sFrom` and `browserCallbackFrom` are not valid settings.
 
