@@ -142,8 +142,8 @@ jobs:
       - name: Install SDK dependencies (frozen)
         run: task sdk:install
 
-      - name: Audit SDK production dependency closure
-        run: task sdk:audit:prod
+      - name: Audit SDK dependency closure
+        run: task sdk:audit
 
       - name: Lint and format-check SDK
         run: task sdk:lint

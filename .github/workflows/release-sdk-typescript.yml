@@ -13,6 +13,8 @@ permissions:
   contents: read
 
 concurrency:
+  # The exact per-ref group is an acceptance contract. Dry runs serialize so
+  # their verification evidence cannot interleave for one dispatched ref.
   group: release-sdk-typescript-${{ github.ref }}
   cancel-in-progress: false
 
@@ -93,6 +95,12 @@ jobs:
 
       - name: Install SDK dependencies from the frozen lockfile
         run: task sdk:install
+
+      # Re-query advisories at tag time so a vulnerability disclosed after the
+      # release commit's CI run still blocks publication. This covers the full
+      # build closure, including the allowlisted esbuild lifecycle dependency.
+      - name: Audit SDK dependency closure
+        run: task sdk:audit
 
       - name: Verify generated contracts and SDK lockfile are clean
         run: |

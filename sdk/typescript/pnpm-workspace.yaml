@@ -1,4 +1,7 @@
+# pnpm 11's enforced build-script policy.
 allowBuilds:
   esbuild: true
+# Retained as the Scenario 11 acceptance-contract spelling; pnpm 11 replaced
+# this setting with allowBuilds, so both must remain aligned.
 onlyBuiltDependencies:
   - esbuild

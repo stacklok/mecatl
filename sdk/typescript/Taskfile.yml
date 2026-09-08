@@ -53,11 +53,11 @@ tasks:
     cmds:
       - pnpm exec vitest run test/package.test.ts
 
-  audit:prod:
-    desc: Gate the production dependency closure on the pnpm vulnerability advisory database
+  audit:
+    desc: Gate the complete dependency closure on the pnpm vulnerability advisory database
     deps: [install]
     cmds:
-      - pnpm audit --prod
+      - pnpm audit
 
   e2e:
     desc: Build the SDK and same-checkout mecated, then run the Node/Bun offline wire suite

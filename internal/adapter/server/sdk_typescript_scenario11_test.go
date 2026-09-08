@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"reflect"
@@ -145,6 +146,98 @@ func TestSDKTypescriptRelease_Scenario11_TagVersionParity(t *testing.T) {
 			t.Errorf("identity gate is missing %q", proof)
 		}
 	}
+	exerciseSDKScenario11IdentityGate(t, identity)
+}
+
+func exerciseSDKScenario11IdentityGate(t *testing.T, script string) {
+	t.Helper()
+
+	repo := t.TempDir()
+	runGit := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repo
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, output)
+		}
+		return strings.TrimSpace(string(output))
+	}
+	runGit("init", "--initial-branch=main")
+	runGit("config", "user.name", "Scenario 11 fixture")
+	runGit("config", "user.email", "scenario11@example.invalid")
+	manifestPath := filepath.Join(repo, "sdk", "typescript", "package.json")
+	if err := os.MkdirAll(filepath.Dir(manifestPath), 0o755); err != nil {
+		t.Fatalf("create fixture package directory: %v", err)
+	}
+	writeManifest := func(version string) {
+		t.Helper()
+		contents := []byte(`{"version":"` + version + `"}` + "\n")
+		if err := os.WriteFile(manifestPath, contents, 0o644); err != nil {
+			t.Fatalf("write fixture manifest: %v", err)
+		}
+	}
+	writeManifest("0.0.1")
+	runGit("add", "sdk/typescript/package.json")
+	runGit("commit", "-m", "fixture main")
+	mainSHA := runGit("rev-parse", "HEAD")
+	runGit("update-ref", "refs/remotes/origin/main", mainSHA)
+	runGit("tag", "sdk/typescript/v0.0.1", mainSHA)
+	runGit("tag", "sdk/typescript/v0.0.9", mainSHA)
+
+	binDir := filepath.Join(t.TempDir(), "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatalf("create fixture bin directory: %v", err)
+	}
+	fakeNode := filepath.Join(binDir, "node")
+	if err := os.WriteFile(fakeNode, []byte("#!/bin/sh\nprintf '%s\\n' \"$NODE_MANIFEST_VERSION\"\n"), 0o755); err != nil {
+		t.Fatalf("write fake node: %v", err)
+	}
+
+	runIdentity := func(name, eventName, ref, sha, manifestVersion string, wantSuccess bool) {
+		t.Helper()
+		outputFile := filepath.Join(t.TempDir(), "github-output")
+		cmd := exec.Command("bash", "-c", script)
+		cmd.Dir = repo
+		cmd.Env = append(os.Environ(),
+			"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+			"EVENT_NAME="+eventName,
+			"GITHUB_REF="+ref,
+			"GITHUB_SHA="+sha,
+			"GITHUB_OUTPUT="+outputFile,
+			"NODE_MANIFEST_VERSION="+manifestVersion,
+		)
+		output, err := cmd.CombinedOutput()
+		if wantSuccess && err != nil {
+			t.Fatalf("%s: identity gate failed: %v\n%s", name, err, output)
+		}
+		if !wantSuccess && err == nil {
+			t.Fatalf("%s: identity gate unexpectedly succeeded\n%s", name, output)
+		}
+		if !wantSuccess {
+			return
+		}
+		got := strings.TrimSpace(string(readSDKScenario11File(t, outputFile)))
+		if want := "version=" + manifestVersion; got != want {
+			t.Fatalf("%s: identity output = %q, want %q", name, got, want)
+		}
+	}
+
+	runIdentity("valid release", "push", "refs/tags/sdk/typescript/v0.0.1", mainSHA, "0.0.1", true)
+	runIdentity("prerelease tag", "push", "refs/tags/sdk/typescript/v0.0.1-rc.1", mainSHA, "0.0.1", false)
+	runIdentity("tag/version mismatch", "push", "refs/tags/sdk/typescript/v0.0.9", mainSHA, "0.0.1", false)
+
+	writeManifest("0.0.2")
+	runGit("add", "sdk/typescript/package.json")
+	runGit("commit", "-m", "fixture unmerged release")
+	unmergedSHA := runGit("rev-parse", "HEAD")
+	runGit("tag", "sdk/typescript/v0.0.2", unmergedSHA)
+	runIdentity("checkout SHA mismatch", "workflow_dispatch", "refs/heads/fixture", mainSHA, "0.0.1", false)
+	runGit("checkout", "--detach", mainSHA)
+	runIdentity("tag commit mismatch", "push", "refs/tags/sdk/typescript/v0.0.2", mainSHA, "0.0.2", false)
+	runGit("checkout", "--detach", unmergedSHA)
+	runIdentity("unmerged release", "push", "refs/tags/sdk/typescript/v0.0.2", unmergedSHA, "0.0.2", false)
+	runIdentity("manual dry run", "workflow_dispatch", "refs/heads/fixture", unmergedSHA, "0.0.2", true)
 }
 
 func TestSDKTypescriptRelease_Scenario11_GenerationCleanlinessGate(t *testing.T) {
@@ -170,9 +263,13 @@ func TestSDKTypescriptRelease_Scenario11_GenerationCleanlinessGate(t *testing.T)
 	}
 
 	var workspace struct {
-		OnlyBuiltDependencies []string `yaml:"onlyBuiltDependencies"`
+		AllowBuilds           map[string]bool `yaml:"allowBuilds"`
+		OnlyBuiltDependencies []string        `yaml:"onlyBuiltDependencies"`
 	}
 	readSDKScenario11YAML(t, filepath.Join(root, "sdk", "typescript", "pnpm-workspace.yaml"), &workspace)
+	if !reflect.DeepEqual(workspace.AllowBuilds, map[string]bool{"esbuild": true}) {
+		t.Errorf("allowBuilds = %v, want exact esbuild allowlist", workspace.AllowBuilds)
+	}
 	if !reflect.DeepEqual(workspace.OnlyBuiltDependencies, []string{"esbuild"}) {
 		t.Errorf("onlyBuiltDependencies = %v, want exact esbuild allowlist", workspace.OnlyBuiltDependencies)
 	}
@@ -209,8 +306,11 @@ func TestSDKTypescriptRelease_Scenario11_GenerationCleanlinessGate(t *testing.T)
 	}
 
 	ciWorkflow := string(readSDKScenario11File(t, filepath.Join(root, ".github", "workflows", "ci.yml")))
-	if !strings.Contains(ciWorkflow, "run: task sdk:audit:prod") {
-		t.Error("SDK CI job lacks the production-closure vulnerability gate")
+	if !strings.Contains(ciWorkflow, "run: task sdk:audit") {
+		t.Error("SDK CI job lacks the complete dependency-closure vulnerability gate")
+	}
+	if sdkScenario11RunContaining(verify, "task sdk:audit") < 0 {
+		t.Error("release verification does not re-run the dependency vulnerability gate")
 	}
 }
 
