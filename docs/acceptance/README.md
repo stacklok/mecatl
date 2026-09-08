@@ -169,6 +169,7 @@ PR after verification. There is no cleanup or status-only PR.
   bounded previews for Subagent/Parallel, converging the delegation observability
   surface on two tiers (Team-unique structures stay Team-only). Status: landed.
 - [OAuth protected-resource discovery](oauth-protected-resource-discovery.md) — RFC 9728 metadata from mecated/mecak8s and mecatui shorthand enrollment with issuer/audience/client hints. Status: draft.
+- [Mecatui server-owned discovery scopes](mecatui-server-owned-discovery-scopes.md) — server-authoritative discovery scope selection: advertised sets are requested exactly, omitted metadata selects the fixed OIDC baseline, and discovery-mode `--scopes` is rejected. Status: proposed.
 - [Caller identity](caller-identity.md) — completed acceptance record for optional
   OIDC caller attribution: a verified principal, durable session/schedule ownership,
   and log-only event actors; no authorization. Status: landed.
