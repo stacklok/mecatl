@@ -151,6 +151,31 @@ func assertToolHiveProtectedClientIsConfidential(t *testing.T) {
 	if oauthConfig.Endpoint.AuthStyle != oauth2.AuthStyleInHeader || oauthConfig.ClientSecret != secret {
 		t.Fatalf("broker exchange config = %#v, want private secret with HTTP Basic", oauthConfig)
 	}
+	var wireCalls int
+	tokenEndpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		wireCalls++
+		if err := request.ParseForm(); err != nil {
+			t.Error(err)
+			return
+		}
+		user, password, ok := request.BasicAuth()
+		if !ok || user != oauthConfig.ClientID || password != secret {
+			t.Errorf("generated broker credential BasicAuth = (%q, %q, %v)", user, password, ok)
+		}
+		if value := request.Form.Get("client_secret"); value != "" {
+			t.Errorf("generated broker credential escaped into form body: %q", value)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"broker-token","token_type":"Bearer","expires_in":3600}`))
+	}))
+	defer tokenEndpoint.Close()
+	oauthConfig.Endpoint.TokenURL = tokenEndpoint.URL
+	if _, err := oauthConfig.Exchange(t.Context(), "one-time-code"); err != nil {
+		t.Fatalf("generated broker credential exchange: %v", err)
+	}
+	if wireCalls != 1 {
+		t.Fatalf("generated broker credential token requests = %d, want 1", wireCalls)
+	}
 }
 
 func TestADR_0299_BrokerClientSecretNeverCrossesPublicBoundary(t *testing.T) {

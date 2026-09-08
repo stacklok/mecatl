@@ -37,6 +37,10 @@ func TestPublicHandlerBoundsEveryToolHiveRouteBeforeDelegation(t *testing.T) {
 		{"MCP too large", http.MethodPost, "/v1/mcp/broker/mcp", "application/json", strings.Repeat("x", int(defaultMaxCallbackBodyBytes)+1), http.StatusRequestEntityTooLarge},
 		{"MCP unsupported type", http.MethodPost, "/v1/mcp/broker/mcp", "text/plain", "x", http.StatusUnsupportedMediaType},
 		{"MCP unsupported method", http.MethodPut, "/v1/mcp/broker/mcp", "", "", http.StatusMethodNotAllowed},
+		{"ToolHive token form allowed", http.MethodPost, "/v1/mcp/broker/oauth/token", "application/x-www-form-urlencoded", "code=x", http.StatusNoContent},
+		{"ToolHive token JSON rejected", http.MethodPost, "/v1/mcp/broker/oauth/token", "application/json", `{}`, http.StatusUnsupportedMediaType},
+		{"ToolHive callback GET allowed", http.MethodGet, "/v1/mcp/broker/oauth/callback?code=x&state=y", "", "", http.StatusNoContent},
+		{"ToolHive callback POST rejected", http.MethodPost, "/v1/mcp/broker/oauth/callback", "application/x-www-form-urlencoded", "code=x", http.StatusMethodNotAllowed},
 		{"token form allowed", http.MethodPost, "/oauth/token", "application/x-www-form-urlencoded", "code=x", http.StatusNoContent},
 		{"authorize GET allowed", http.MethodGet, "/oauth/authorize", "", "", http.StatusNoContent},
 	} {
@@ -52,8 +56,8 @@ func TestPublicHandlerBoundsEveryToolHiveRouteBeforeDelegation(t *testing.T) {
 			}
 		})
 	}
-	if calls != 2 {
-		t.Fatalf("delegated calls = %d, want 2", calls)
+	if calls != 4 {
+		t.Fatalf("delegated calls = %d, want 4", calls)
 	}
 }
 

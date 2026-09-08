@@ -154,13 +154,16 @@ func validateBoundedPublicRoute(w http.ResponseWriter, r *http.Request, maximum 
 
 func validatePublicRouteMethod(r *http.Request) (int, string) {
 	contentType := strings.ToLower(strings.TrimSpace(strings.SplitN(r.Header.Get("Content-Type"), ";", 2)[0]))
+	if status, message, matched := validateFixedToolHiveRoute(r, contentType); matched {
+		return status, message
+	}
 	switch {
 	case strings.HasPrefix(r.URL.Path, "/v1/mcp/broker/"):
 		if r.Method != http.MethodGet && r.Method != http.MethodPost {
-			return http.StatusMethodNotAllowed, "MCP route method is not supported"
+			return http.StatusMethodNotAllowed, "ToolHive route method is not supported"
 		}
 		if r.Method == http.MethodPost && contentType != "application/json" && !strings.HasSuffix(contentType, "+json") {
-			return http.StatusUnsupportedMediaType, "MCP route content type is not supported"
+			return http.StatusUnsupportedMediaType, "ToolHive route content type is not supported"
 		}
 	case strings.Contains(r.URL.Path, "/authorize"):
 		if r.Method != http.MethodGet {
@@ -182,4 +185,37 @@ func validatePublicRouteMethod(r *http.Request) (int, string) {
 		}
 	}
 	return 0, ""
+}
+
+func validateFixedToolHiveRoute(r *http.Request, contentType string) (int, string, bool) {
+	switch r.URL.Path {
+	case "/v1/mcp/broker/oauth/authorize":
+		if r.Method != http.MethodGet {
+			return http.StatusMethodNotAllowed, "OAuth authorize route requires GET", true
+		}
+	case "/v1/mcp/broker/oauth/token":
+		if r.Method != http.MethodPost {
+			return http.StatusMethodNotAllowed, "OAuth token route requires POST", true
+		}
+		if contentType != "application/x-www-form-urlencoded" {
+			return http.StatusUnsupportedMediaType, "OAuth token route requires form content", true
+		}
+	case "/v1/mcp/broker/oauth/callback",
+		"/v1/mcp/broker/.well-known/openid-configuration",
+		"/v1/mcp/broker/.well-known/jwks.json",
+		"/v1/mcp/broker/.well-known/oauth-protected-resource":
+		if r.Method != http.MethodGet {
+			return http.StatusMethodNotAllowed, "OAuth metadata and callback routes require GET", true
+		}
+	case "/v1/mcp/broker/mcp":
+		if r.Method != http.MethodGet && r.Method != http.MethodPost {
+			return http.StatusMethodNotAllowed, "MCP route method is not supported", true
+		}
+		if r.Method == http.MethodPost && contentType != "application/json" && !strings.HasSuffix(contentType, "+json") {
+			return http.StatusUnsupportedMediaType, "MCP route content type is not supported", true
+		}
+	default:
+		return 0, "", false
+	}
+	return 0, "", true
 }

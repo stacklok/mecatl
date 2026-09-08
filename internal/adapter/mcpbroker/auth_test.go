@@ -15,6 +15,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
 	"golang.org/x/oauth2"
 
 	"github.com/stacklok/mecatl/engine/session"
@@ -400,6 +402,109 @@ func TestADR_0302_SingletonBrokerConfidentialClientCustody(t *testing.T) {
 	}
 	if _, err := toolByName(t, attachment, call.Name).Execute(t.Context(), call, tool.Environment{}); err == nil || !strings.Contains(err.Error(), "replay refused") {
 		t.Fatalf("ambiguous replay error = %v", err)
+	}
+	assertToolHiveRedisPreservesOnlyInnerPendingState(t)
+}
+
+func assertToolHiveRedisPreservesOnlyInnerPendingState(t *testing.T) {
+	t.Helper()
+	redisServer := miniredis.RunT(t)
+	redisClient := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
+
+	var tokenRequests atomic.Int32
+	tokenServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		tokenRequests.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"inner-access","token_type":"Bearer","expires_in":3600}`))
+	}))
+	t.Cleanup(tokenServer.Close)
+	roots := x509.NewCertPool()
+	roots.AddCert(tokenServer.Certificate())
+	t.Setenv("MECATL_REDIS_CUSTODY_SECRET", "upstream-secret")
+	config := ToolHiveConfig{
+		CallbackURL: "https://broker.example/oauth/callback", AuthRedisClient: redisClient,
+		Profiles: []ToolHiveProfile{{Name: "github", URL: "https://mcp.example/mcp", Auth: "oauth", OAuth: &ToolHiveOAuth{
+			AuthorizationEndpoint: "https://identity.example/authorize", TokenEndpoint: tokenServer.URL + "/token",
+			ClientID: "redis-custody", ClientSecretEnv: "MECATL_REDIS_CUSTODY_SECRET", Scopes: []string{"read"},
+		}, Static: []StaticTool{{Name: "create", Schema: json.RawMessage(`{"type":"object"}`), ReadOnly: true}}}},
+	}
+	options := []Option{WithOAuthLoopbackForTest(t, roots), WithOAuthSecretResolver(func(context.Context, string) (string, error) { return "upstream-secret", nil })}
+	first, err := NewToolHiveProcess(t.Context(), config, options...)
+	if err != nil {
+		t.Fatalf("construct Redis-backed ToolHive process: %v", err)
+	}
+	attachment, _, err := first.Runtime.AttachSession(t.Context(), "redis-custody")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := attachment.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	requester := attachment.Tools()[0].(tool.AuthorizationRequester)
+	authorization, required, err := requester.RequestAuthorization(t.Context(), session.NewToolCall("redis-call", "mcp__github__create", json.RawMessage(`{}`)))
+	if err != nil || !required {
+		t.Fatalf("outer authorization = (%+v, %v, %v)", authorization, required, err)
+	}
+	presentation, err := attachment.PresentAuthorization(t.Context(), authorization)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outerURL, err := url.Parse(presentation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outerState := outerURL.Query().Get("state")
+	mux := http.NewServeMux()
+	if err := first.Handlers.Mount(mux, "/oauth/callback"); err != nil {
+		t.Fatal(err)
+	}
+	start := httptest.NewRecorder()
+	mux.ServeHTTP(start, httptest.NewRequest(http.MethodGet, outerURL.RequestURI(), nil))
+	if start.Code != http.StatusFound {
+		t.Fatalf("embedded authorize status = %d body=%q", start.Code, start.Body.String())
+	}
+	upstream, err := url.Parse(start.Header().Get("Location"))
+	if err != nil || upstream.Query().Get("state") == "" {
+		t.Fatalf("upstream redirect = %q, %v", start.Header().Get("Location"), err)
+	}
+	innerState := upstream.Query().Get("state")
+	pendingKey := toolHiveAuthStoragePrefix + "pending:" + strings.ToUpper(innerState)
+	if !redisServer.Exists(pendingKey) {
+		t.Fatalf("ToolHive pending state was not stored in Redis: %q", pendingKey)
+	}
+	if dump := redisServer.Dump(); strings.Contains(dump, "upstream-secret") || strings.Contains(dump, outerState) {
+		t.Fatalf("Redis crossed the custody boundary with an outer credential or callback state: %s", dump)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	config.AuthRedisClient = redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
+	replacement, err := NewToolHiveProcess(t.Context(), config, options...)
+	if err != nil {
+		t.Fatalf("replace Redis-backed ToolHive process: %v", err)
+	}
+	defer replacement.Close()
+	replacementMux := http.NewServeMux()
+	if err := replacement.Handlers.Mount(replacementMux, "/oauth/callback"); err != nil {
+		t.Fatal(err)
+	}
+	outer := httptest.NewRecorder()
+	replacementMux.ServeHTTP(outer, httptest.NewRequest(http.MethodGet, "/oauth/callback?"+url.Values{"code": {"old-code"}, "state": {outerState}}.Encode(), nil))
+	if outer.Code != http.StatusBadRequest || outer.Body.String() != "invalid OAuth callback\n" {
+		t.Fatalf("restarted outer callback = (%d, %q)", outer.Code, outer.Body.String())
+	}
+	if tokenRequests.Load() != 0 {
+		t.Fatal("lost outer state reached an upstream token endpoint")
+	}
+
+	inner := httptest.NewRecorder()
+	replacementMux.ServeHTTP(inner, httptest.NewRequest(http.MethodGet, "/v1/mcp/broker/oauth/callback?"+url.Values{"code": {"invalid-code"}, "state": {innerState}}.Encode(), nil))
+	if inner.Code == http.StatusBadRequest && strings.Contains(inner.Body.String(), "not found or expired") {
+		t.Fatalf("Redis-backed inner state was lost across restart: %q", inner.Body.String())
+	}
+	if redisServer.Exists(pendingKey) {
+		t.Fatal("ToolHive replay state remained after restarted callback consumption")
 	}
 }
 
