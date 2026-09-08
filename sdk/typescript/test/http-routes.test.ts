@@ -300,6 +300,14 @@ describe("complete HTTP route transport", () => {
   });
 
   it("raw operations reach every classified RPC on both transports", async () => {
+    const sseRoutePatterns = Object.values(RPC_CATALOG)
+      .filter((entry) => entry.http.kind === "http" && entry.http.response === "sse")
+      .map(
+        (entry) =>
+          new RegExp(
+            `^${(entry.http as { pathTemplate: string }).pathTemplate.replace(/\{[^}]+\}/g, "[^/]+")}$`,
+          ),
+      );
     const grpcTransport = new RecordingTransport();
     const grpc = browserEntry.createRawClient({ transport: grpcTransport });
     const httpRequests: Array<{ headers: Headers; method: string; path: string; signal: boolean }> =
@@ -313,12 +321,7 @@ describe("complete HTTP route transport", () => {
         signal: init?.signal !== undefined && init.signal !== null,
       });
       if (url.pathname === "/v1/compatibility") return Response.json({ api_major: 1 });
-      if (
-        url.pathname.endsWith("/run") ||
-        url.pathname.endsWith("/plan:approve") ||
-        url.pathname.endsWith("/events") ||
-        url.pathname.endsWith("/watch")
-      ) {
+      if (sseRoutePatterns.some((pattern) => pattern.test(url.pathname))) {
         return new Response("data: {}\n\n", {
           headers: { "content-type": "text/event-stream" },
           status: 200,

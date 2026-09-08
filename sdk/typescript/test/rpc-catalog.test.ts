@@ -68,7 +68,7 @@ async function* singleValue<T>(value: T): AsyncIterable<T> {
 }
 
 describe("RPC transport catalog", () => {
-  it("all 77 raw RPCs are callable through the public raw seam", async () => {
+  it("all 83 raw RPCs are callable through the public raw seam", async () => {
     const transport = new CatalogTransport();
     const raw = createRawClient({ transport });
 
@@ -86,7 +86,7 @@ describe("RPC transport catalog", () => {
       }
     }
 
-    expect(transport.calls).toHaveLength(77);
+    expect(transport.calls).toHaveLength(83);
     expect(transport.calls.sort()).toEqual(
       Object.values(RPC_CATALOG)
         .map(({ method }) => method)
