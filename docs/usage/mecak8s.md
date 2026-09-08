@@ -213,7 +213,8 @@ enforce egress with NetworkPolicy or a mesh—the chart intentionally ships no
 general NetworkPolicy. OAuth always requires HTTPS and cannot use this escape
 hatch.
 
-OAuth supports either a preregistered confidential client or a CIMD client. This
+OAuth supports a preregistered confidential client, a CIMD client, or a
+DCR-registered client. This
 Helm surface does **not** accept the global-mode `profile`, `principal`, or
 `credentials.environment` fields and does not project an OAuth credential record.
 The browser starts one opaque broker enrollment for the session. ToolHive drives every
@@ -249,7 +250,25 @@ replicaCount: 1
 ```
 
 For CIMD, set `client.mode: cimd` and replace `preregistered` with
-`cimd: {documentURL: https://client.example/mecatl.json}`. The callback URL must
+`cimd: {documentURL: https://client.example/mecatl.json}`. For Dynamic Client
+Registration (DCR), use an OAuth2 upstream and an HTTPS RFC 8414 discovery
+document; DCR mints and caches a public client identity in ToolHive's broker
+storage, so it has no Kubernetes Secret reference:
+
+```yaml
+client:
+  mode: dcr
+  dcr:
+    discoveryURL: https://auth.example/.well-known/oauth-authorization-server
+upstream:
+  mode: oauth2
+  oauth2:
+    authorizationEndpoint: https://auth.example/authorize
+    tokenEndpoint: https://auth.example/token
+```
+
+DCR cannot use `issuer` or `upstream.mode: oidc`, and the discovery URL must be
+HTTPS. The callback URL must
 be an absolute public HTTPS URL with no query or fragment. It is ToolHive's final redirect
 to mecatl; separately, upstream providers return through ToolHive's fixed
 `/v1/mcp/broker/oauth/callback` route. Your ingress or gateway must route the complete

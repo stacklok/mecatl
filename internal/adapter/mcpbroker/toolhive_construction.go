@@ -68,6 +68,8 @@ type ToolHiveOAuth struct {
 	ClientSecretEnv       string
 	Scopes                []string
 	RequestRefreshToken   bool
+	// DCRDiscoveryURL enables RFC 7591 registration through RFC 8414 metadata.
+	DCRDiscoveryURL string
 }
 
 // StaticTool is one trusted protected tool declaration. Its schema is copied
@@ -158,32 +160,49 @@ func toolHiveProviderKey(name string) (string, error) {
 
 func toolHiveUpstream(profile ToolHiveProfile, provider, issuer string) (authserver.UpstreamRunConfig, error) {
 	oauth := profile.OAuth
+	if oauth.DCRDiscoveryURL != "" {
+		if oauth.ClientID != "" || oauth.ClientSecretEnv != "" {
+			return authserver.UpstreamRunConfig{}, fmt.Errorf("%w: protected upstream %q combines DCR with a client identity", ErrInvalidCatalogue, profile.Name)
+		}
+		if oauth.AuthorizationEndpoint == "" || oauth.TokenEndpoint == "" {
+			return authserver.UpstreamRunConfig{}, fmt.Errorf("%w: protected upstream %q DCR requires OAuth2 endpoints", ErrInvalidCatalogue, profile.Name)
+		}
+		return toolHiveOAuth2Upstream(profile, provider, issuer, &authserver.DCRUpstreamConfig{DiscoveryURL: oauth.DCRDiscoveryURL})
+	}
 	if oauth.ClientID == "" {
 		return authserver.UpstreamRunConfig{}, fmt.Errorf("%w: protected upstream %q is missing client identity", ErrInvalidCatalogue, profile.Name)
 	}
-	redirect := issuer + "/oauth/callback"
-	var additionalAuthorizationParams map[string]string
-	if oauth.RequestRefreshToken {
-		additionalAuthorizationParams = map[string]string{"access_type": "offline"}
-	}
 	if oauth.AuthorizationEndpoint != "" || oauth.TokenEndpoint != "" {
-		if oauth.AuthorizationEndpoint == "" || oauth.TokenEndpoint == "" {
-			return authserver.UpstreamRunConfig{}, fmt.Errorf("%w: protected upstream %q has partial OAuth2 endpoints", ErrInvalidCatalogue, profile.Name)
-		}
-		return authserver.UpstreamRunConfig{Name: provider, Type: authserver.UpstreamProviderTypeOAuth2, OAuth2Config: &authserver.OAuth2UpstreamRunConfig{
-			AuthorizationEndpoint: oauth.AuthorizationEndpoint, TokenEndpoint: oauth.TokenEndpoint, ClientID: oauth.ClientID,
-			ClientSecretEnvVar: oauth.ClientSecretEnv, RedirectURI: redirect, Scopes: append([]string(nil), oauth.Scopes...),
-			AdditionalAuthorizationParams: additionalAuthorizationParams,
-		}}, nil
+		return toolHiveOAuth2Upstream(profile, provider, issuer, nil)
 	}
 	if oauth.Issuer == "" {
 		return authserver.UpstreamRunConfig{}, fmt.Errorf("%w: protected upstream %q is missing an issuer", ErrInvalidCatalogue, profile.Name)
 	}
+	redirect := issuer + "/oauth/callback"
 	return authserver.UpstreamRunConfig{Name: provider, Type: authserver.UpstreamProviderTypeOIDC, OIDCConfig: &authserver.OIDCUpstreamRunConfig{
 		IssuerURL: oauth.Issuer, ClientID: oauth.ClientID, ClientSecretEnvVar: oauth.ClientSecretEnv,
 		RedirectURI: redirect, Scopes: append([]string(nil), oauth.Scopes...),
-		AdditionalAuthorizationParams: additionalAuthorizationParams,
+		AdditionalAuthorizationParams: toolHiveAdditionalAuthorizationParams(oauth),
 	}}, nil
+}
+
+func toolHiveOAuth2Upstream(profile ToolHiveProfile, provider, issuer string, dcr *authserver.DCRUpstreamConfig) (authserver.UpstreamRunConfig, error) {
+	oauth := profile.OAuth
+	if oauth.AuthorizationEndpoint == "" || oauth.TokenEndpoint == "" {
+		return authserver.UpstreamRunConfig{}, fmt.Errorf("%w: protected upstream %q has partial OAuth2 endpoints", ErrInvalidCatalogue, profile.Name)
+	}
+	return authserver.UpstreamRunConfig{Name: provider, Type: authserver.UpstreamProviderTypeOAuth2, OAuth2Config: &authserver.OAuth2UpstreamRunConfig{
+		AuthorizationEndpoint: oauth.AuthorizationEndpoint, TokenEndpoint: oauth.TokenEndpoint, ClientID: oauth.ClientID,
+		ClientSecretEnvVar: oauth.ClientSecretEnv, RedirectURI: issuer + "/oauth/callback", Scopes: append([]string(nil), oauth.Scopes...),
+		AdditionalAuthorizationParams: toolHiveAdditionalAuthorizationParams(oauth), DCRConfig: dcr,
+	}}, nil
+}
+
+func toolHiveAdditionalAuthorizationParams(oauth *ToolHiveOAuth) map[string]string {
+	if oauth.RequestRefreshToken {
+		return map[string]string{"access_type": "offline"}
+	}
+	return nil
 }
 
 func cloneToolHiveProfile(in ToolHiveProfile) ToolHiveProfile {

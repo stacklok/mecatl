@@ -267,13 +267,15 @@ Strict OPERATOR-TIER Streamable HTTP MCP authority configuration. Mode selects o
 | `mcp.servers[].auth.oauth.upstream.oauth2` | `mcpoauth2upstreamprofile` | `(absent)` |  |
 | `mcp.servers[].auth.oauth.upstream.oauth2.authorization_endpoint` | `string` | `(empty)` |  |
 | `mcp.servers[].auth.oauth.upstream.oauth2.token_endpoint` | `string` | `(empty)` | TokenEndpoint is a canonical HTTPS URL with no query string or fragment: the hardened runtime token client pins the exact origin and controls the request query itself. |
-| `mcp.servers[].auth.oauth.client` | `mcpoauthclientprofile` | `(absent)` | Client selects exactly one preregistered or CIMD client declaration. |
-| `mcp.servers[].auth.oauth.client.mode` | `string` | `(empty)` | Mode is exactly preregistered or cimd. |
+| `mcp.servers[].auth.oauth.client` | `mcpoauthclientprofile` | `(absent)` | Client selects exactly one preregistered, CIMD, or DCR client declaration. |
+| `mcp.servers[].auth.oauth.client.mode` | `string` | `(empty)` | Mode is exactly preregistered, cimd, or dcr. |
 | `mcp.servers[].auth.oauth.client.preregistered` | `mcppreregisteredclientprofile` | `(absent)` | Preregistered declares a confidential client registered with the issuer. |
 | `mcp.servers[].auth.oauth.client.preregistered.id` | `string` | `(empty)` | ID is the required preregistered OAuth client identifier. |
 | `mcp.servers[].auth.oauth.client.preregistered.secret_env` | `string` | `(empty)` | SecretEnv is a MECATL_* environment variable name containing the client secret. |
 | `mcp.servers[].auth.oauth.client.cimd` | `mcpcimdclientprofile` | `(absent)` | CIMD declares an HTTPS client-id metadata document URL. |
 | `mcp.servers[].auth.oauth.client.cimd.document_url` | `string` | `(empty)` | DocumentURL is the required HTTPS metadata-document URL. |
+| `mcp.servers[].auth.oauth.client.dcr` | `mcpdcrclientprofile` | `(absent)` | DCR declares an RFC 8414 metadata URL for RFC 7591 registration. |
+| `mcp.servers[].auth.oauth.client.dcr.discovery_url` | `string` | `(empty)` | DiscoveryURL is the required HTTPS authorization-server metadata URL. |
 | `mcp.servers[].auth.oauth.scopes` | `[]string` | `(absent)` | Scopes is the non-empty allowlist of OAuth scopes the client may request. |
 | `mcp.servers[].auth.oauth.request_refresh_token` | `bool` | `false` | RequestRefreshToken asks the authorization server for refresh capability. |
 | `mcp.servers[].auth.oauth.credentials` | `mcpoauthcredentialprofile` | `(absent)` | Credentials selects one global-mode local or environment credential source and is forbidden in broker mode. |

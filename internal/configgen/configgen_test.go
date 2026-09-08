@@ -62,6 +62,7 @@ func authoritativeKeys() []string {
 	collect("mcp.servers.auth.oauth.client", permconfig.MCPOAuthClientProfile{})
 	collect("mcp.servers.auth.oauth.client.preregistered", permconfig.MCPPreregisteredClientProfile{})
 	collect("mcp.servers.auth.oauth.client.cimd", permconfig.MCPCIMDClientProfile{})
+	collect("mcp.servers.auth.oauth.client.dcr", permconfig.MCPDCRClientProfile{})
 	collect("mcp.servers.auth.oauth.credentials", permconfig.MCPOAuthCredentialProfile{})
 	collect("mcp.servers.auth.oauth.credentials.local", permconfig.MCPLocalCredentialProfile{})
 	collect("mcp.servers.auth.oauth.credentials.environment", permconfig.MCPEnvironmentCredentialProfile{})

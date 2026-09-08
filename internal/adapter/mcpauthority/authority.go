@@ -147,6 +147,10 @@ func cloneRoutes(in []permconfig.MCPServerProfile) []permconfig.MCPServerProfile
 			value := *oauth.Client.CIMD
 			oauth.Client.CIMD = &value
 		}
+		if oauth.Client.DCR != nil {
+			value := *oauth.Client.DCR
+			oauth.Client.DCR = &value
+		}
 		if oauth.Credentials.Local != nil {
 			value := *oauth.Credentials.Local
 			oauth.Credentials.Local = &value

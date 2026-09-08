@@ -2018,6 +2018,82 @@ mcp:
 	}
 }
 
+func TestMecak8sHelmChart_MCPOAuthDCRClientRendersExplicitOAuth2(t *testing.T) {
+	rendered, err := renderOAuthMCPValues(t, `
+mcp:
+  broker:
+    callbackURL: https://agent.example/mcp/authorization/callback
+  servers:
+    - name: dcr_upstream
+      url: https://mcp.example/mcp
+      auth:
+        mode: oauth
+        oauth:
+          upstream:
+            mode: oauth2
+            oauth2:
+              authorizationEndpoint: https://auth.example/authorize
+              tokenEndpoint: https://auth.example/token
+          client:
+            mode: dcr
+            dcr:
+              discoveryURL: https://auth.example/.well-known/oauth-authorization-server
+          scopes: [mcp.read]
+          network: {additionalOrigins: [], privateOrigins: [], maxRedirects: 0}
+`)
+	if err != nil {
+		t.Fatalf("render DCR MCP values: %v", err)
+	}
+	profile := configMapFromRender(t, rendered, "production-mecak8s-mcp").Data["settings.yaml"]
+	for _, want := range []string{"mode: dcr", "discovery_url: \"https://auth.example/.well-known/oauth-authorization-server\"", "mode: oauth2"} {
+		if !strings.Contains(profile, want) {
+			t.Fatalf("DCR profile missing %q:\n%s", want, profile)
+		}
+	}
+	if strings.Contains(rendered, "MECATL_MCP_DCR_UPSTREAM_CLIENT_SECRET") {
+		t.Fatalf("DCR must not render a client secret environment variable:\n%s", rendered)
+	}
+	_ = runtimeMCPAuthorityFromConfigMap(t, profile)
+}
+
+func TestMecak8sHelmChart_MCPOAuthDCRClientRejectsInvalidValues(t *testing.T) {
+	const valid = `
+mcp:
+  broker:
+    callbackURL: https://agent.example/mcp/authorization/callback
+  servers:
+    - name: dcr_upstream
+      url: https://mcp.example/mcp
+      auth:
+        mode: oauth
+        oauth:
+          upstream:
+            mode: oauth2
+            oauth2:
+              authorizationEndpoint: https://auth.example/authorize
+              tokenEndpoint: https://auth.example/token
+          client:
+            mode: dcr
+            dcr:
+              discoveryURL: https://auth.example/.well-known/oauth-authorization-server
+          scopes: [mcp.read]
+          network: {additionalOrigins: [], privateOrigins: [], maxRedirects: 0}
+`
+	for name, values := range map[string]string{
+		"missing discovery URL":              strings.Replace(valid, "              discoveryURL: https://auth.example/.well-known/oauth-authorization-server\n", "", 1),
+		"non HTTPS discovery URL":            strings.Replace(valid, "https://auth.example/.well-known/oauth-authorization-server", "http://auth.example/.well-known/oauth-authorization-server", 1),
+		"mixed preregistered client payload": strings.Replace(valid, "            dcr:\n", "            preregistered: {id: client, secretKeyRef: {name: client, key: secret}}\n            dcr:\n", 1),
+		"mixed CIMD client payload":          strings.Replace(valid, "            dcr:\n", "            cimd: {documentURL: https://client.example/mecatl.json}\n            dcr:\n", 1),
+		"OIDC upstream":                      strings.Replace(valid, "            mode: oauth2\n            oauth2:\n              authorizationEndpoint: https://auth.example/authorize\n              tokenEndpoint: https://auth.example/token", "            mode: oidc", 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if output, err := renderOAuthMCPValues(t, values); err == nil {
+				t.Fatalf("malformed DCR values rendered successfully:\n%s", output)
+			}
+		})
+	}
+}
+
 func TestMecak8sHelmChart_MCPOAuthUpstreamOAuth2OmitsIssuerAndRendersEndpoints(t *testing.T) {
 	rendered, err := renderOAuthMCPValues(t, `
 mcp:

@@ -488,6 +488,11 @@ func mcpSubtree(docs Docs) *Subtree {
 			"  # client:",
 			"  #   cimd:",
 			"  #     document_url: https://client.example.com/mecatl.json",
+			"  # DCR is broker-only and requires the explicit oauth2 upstream above:",
+			"  # client:",
+			"  #   mode: dcr",
+			"  #   dcr:",
+			"  #     discovery_url: https://auth.example.com/.well-known/oauth-authorization-server",
 			"  # credentials:",
 			"  #   mode: local",
 			"  #   local:",
@@ -523,6 +528,8 @@ func mcpOAuthFields(docs Docs) []*Field {
 					variant.Nested = fieldsOf("MCPPreregisteredClientProfile", permconfig.MCPPreregisteredClientProfile{}, docs)
 				case "cimd":
 					variant.Nested = fieldsOf("MCPCIMDClientProfile", permconfig.MCPCIMDClientProfile{}, docs)
+				case "dcr":
+					variant.Nested = fieldsOf("MCPDCRClientProfile", permconfig.MCPDCRClientProfile{}, docs)
 				}
 			}
 		case "credentials":

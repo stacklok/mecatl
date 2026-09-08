@@ -221,9 +221,12 @@ mcp:
             preregistered:
               id: {{ $server.auth.oauth.client.preregistered.id | quote }}
               secret_env: {{ printf "MECATL_MCP_%s_CLIENT_SECRET" (upper $server.name) }}
-{{- else }}
+{{- else if eq $server.auth.oauth.client.mode "cimd" }}
             cimd:
               document_url: {{ $server.auth.oauth.client.cimd.documentURL | quote }}
+{{- else }}
+            dcr:
+              discovery_url: {{ $server.auth.oauth.client.dcr.discoveryURL | quote }}
 {{- end }}
           scopes: {{ toJson $server.auth.oauth.scopes }}
           request_refresh_token: {{ default false $server.auth.oauth.requestRefreshToken }}

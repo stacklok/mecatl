@@ -73,21 +73,24 @@ func TestResultOwnsImmutableCopies(t *testing.T) {
 			AuthorizationEndpoint: "https://auth.example/authorize", TokenEndpoint: "https://auth.example/token",
 		}},
 		Network: &permconfig.MCPOAuthNetworkProfile{AdditionalOrigins: []string{"https://issuer.example"}},
+		Client:  permconfig.MCPOAuthClientProfile{Mode: "dcr", DCR: &permconfig.MCPDCRClientProfile{DiscoveryURL: "https://issuer.example/.well-known/oauth-authorization-server"}},
 	}}}}
 	broker := NewBroker(BrokerConfig{Routes: routes, CallbackURL: "https://agent.example/callback"})
 	routes[0].Name = "mutated"
+	routes[0].Auth.OAuth.Client.DCR.DiscoveryURL = "https://mutated.example/discovery"
 	routes[0].Auth.OAuth.Scopes[0] = "mutated"
 	routes[0].Auth.OAuth.Tools[0].Name = "mutated"
 	routes[0].Auth.OAuth.Tools[0].InputSchema[0] = '['
 	got, ok := broker.Broker()
-	if !ok || got.Routes[0].Name != "broker" || got.Routes[0].Auth.OAuth.Scopes[0] != "read" || got.Routes[0].Auth.OAuth.Tools[0].Name != "reviewed" || string(got.Routes[0].Auth.OAuth.Tools[0].InputSchema) != `{"type":"object","properties":{"title":{"type":"string"}}}` {
+	if !ok || got.Routes[0].Name != "broker" || got.Routes[0].Auth.OAuth.Scopes[0] != "read" || got.Routes[0].Auth.OAuth.Tools[0].Name != "reviewed" || string(got.Routes[0].Auth.OAuth.Tools[0].InputSchema) != `{"type":"object","properties":{"title":{"type":"string"}}}` || got.Routes[0].Auth.OAuth.Client.DCR.DiscoveryURL != "https://issuer.example/.well-known/oauth-authorization-server" {
 		t.Fatalf("broker aliases input: %#v", got)
 	}
 	got.Routes[0].Auth.OAuth.Upstream.OAuth2.TokenEndpoint = "https://mutated.example/token"
+	got.Routes[0].Auth.OAuth.Client.DCR.DiscoveryURL = "https://mutated.example/discovery"
 	got.Routes[0].Auth.OAuth.Tools[0].Name = "returned mutation"
 	got.Routes[0].Auth.OAuth.Tools[0].InputSchema[0] = '['
 	again, _ := broker.Broker()
-	if again.Routes[0].Auth.OAuth.Upstream.OAuth2.TokenEndpoint != "https://auth.example/token" || again.Routes[0].Auth.OAuth.Tools[0].Name != "reviewed" || string(again.Routes[0].Auth.OAuth.Tools[0].InputSchema) != `{"type":"object","properties":{"title":{"type":"string"}}}` {
+	if again.Routes[0].Auth.OAuth.Upstream.OAuth2.TokenEndpoint != "https://auth.example/token" || again.Routes[0].Auth.OAuth.Client.DCR.DiscoveryURL != "https://issuer.example/.well-known/oauth-authorization-server" || again.Routes[0].Auth.OAuth.Tools[0].Name != "reviewed" || string(again.Routes[0].Auth.OAuth.Tools[0].InputSchema) != `{"type":"object","properties":{"title":{"type":"string"}}}` {
 		t.Fatalf("broker aliases accessor result: %#v", again)
 	}
 }

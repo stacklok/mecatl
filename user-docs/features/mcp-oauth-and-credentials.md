@@ -132,6 +132,16 @@ only its hash, while mecatl uses the process-private raw secret solely for HTTP-
 exchange and refresh. It is never included in the browser flow, controls, logs, snapshots, or
 upstream calls. A failed enrollment exposes no partial protected catalogue.
 
+A protected broker upstream may instead use `client.mode: dcr`. This asks
+ToolHive to dynamically register the upstream client from the configured HTTPS
+RFC 8414 discovery document, so no preregistered client secret or client-ID
+metadata document is needed. The upstream authorization server mints that
+client identity and ToolHive persists its registration state in the broker
+store. DCR requires an explicit OAuth2 upstream, remains operator-only
+configuration, and does not permit an insecure-HTTP or private-IP override.
+See the [mecak8s deployment guide](/building/deployment/mecak8s.md) for the
+Helm value shape.
+
 Mecatl controls reveal only the enrollment reference, aggregate state, configured-service count,
 and temporary presentation URL. They never reveal an upstream name, OAuth state/code, endpoint,
 or access/refresh token. The broker origin serves two callback roles: providers return to

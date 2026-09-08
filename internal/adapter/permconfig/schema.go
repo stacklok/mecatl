@@ -426,7 +426,7 @@ type MCPOAuthProfile struct {
 	// Upstream optionally selects OIDC discovery or explicit generic OAuth2.
 	// Omitted defaults to OIDC.
 	Upstream *MCPOAuthUpstreamProfile `yaml:"upstream"`
-	// Client selects exactly one preregistered or CIMD client declaration.
+	// Client selects exactly one preregistered, CIMD, or DCR client declaration.
 	Client MCPOAuthClientProfile `yaml:"client"`
 	// Scopes is the non-empty allowlist of OAuth scopes the client may request.
 	Scopes []string `yaml:"scopes"`
@@ -493,14 +493,16 @@ type MCPOAuth2UpstreamProfile struct {
 	TokenEndpoint string `yaml:"token_endpoint"`
 }
 
-// MCPOAuthClientProfile is a closed preregistered/CIMD tagged union. DCR is unsupported.
+// MCPOAuthClientProfile is a closed preregistered/CIMD/DCR tagged union.
 type MCPOAuthClientProfile struct {
-	// Mode is exactly preregistered or cimd.
+	// Mode is exactly preregistered, cimd, or dcr.
 	Mode string `yaml:"mode"`
 	// Preregistered declares a confidential client registered with the issuer.
 	Preregistered *MCPPreregisteredClientProfile `yaml:"preregistered"`
 	// CIMD declares an HTTPS client-id metadata document URL.
 	CIMD *MCPCIMDClientProfile `yaml:"cimd"`
+	// DCR declares an RFC 8414 metadata URL for RFC 7591 registration.
+	DCR *MCPDCRClientProfile `yaml:"dcr"`
 }
 
 // MCPPreregisteredClientProfile contains client identity metadata and a secret reference.
@@ -515,6 +517,12 @@ type MCPPreregisteredClientProfile struct {
 type MCPCIMDClientProfile struct {
 	// DocumentURL is the required HTTPS metadata-document URL.
 	DocumentURL string `yaml:"document_url"`
+}
+
+// MCPDCRClientProfile contains the HTTPS RFC 8414 discovery document URL.
+type MCPDCRClientProfile struct {
+	// DiscoveryURL is the required HTTPS authorization-server metadata URL.
+	DiscoveryURL string `yaml:"discovery_url"`
 }
 
 // MCPOAuthCredentialProfile is a closed local/environment tagged union.
@@ -558,7 +566,10 @@ var (
 	mecatlSecretReference = regexp.MustCompile(`^MECATL_[A-Z0-9_]+$`)
 )
 
-const modeKey = "mode"
+const (
+	modeKey       = "mode"
+	mcpOAuth2Mode = "oauth2"
+)
 
 func (s *MCPSection) strictFields() map[string]any {
 	return map[string]any{modeKey: &s.Mode, "broker": &s.Broker, "servers": &s.Servers}
@@ -626,6 +637,12 @@ func (s *MCPServerProfile) UnmarshalYAML(node ast.Node) error {
 				return errors.New("mcp.servers[].auth.oauth.client.cimd.document_url origin must match the issuer or resource origin, or appear in mcp.servers[].auth.oauth.network.additional_origins")
 			}
 		}
+		if client := s.Auth.OAuth.Client.DCR; client != nil {
+			discovery, _ := url.Parse(client.DiscoveryURL)
+			if _, ok := allowed[mcpURLOrigin(discovery)]; !ok {
+				return errors.New("mcp.servers[].auth.oauth.client.dcr.discovery_url origin must match the issuer or resource origin, or appear in mcp.servers[].auth.oauth.network.additional_origins")
+			}
+		}
 		for _, origin := range s.Auth.OAuth.Network.PrivateOrigins {
 			if _, ok := allowed[origin]; !ok {
 				return errors.New("mcp.servers[].auth.oauth.network.private_origins[] must also be an issuer, resource, or additional origin")
@@ -688,8 +705,11 @@ func (o *MCPOAuthProfile) UnmarshalYAML(node ast.Node) error {
 	if !mappingHasKey(node, "client") {
 		return errors.New("mcp.servers[].auth.oauth.client is required")
 	}
-	if o.Upstream != nil && o.Upstream.Mode == "oauth2" && mappingHasKey(node, "issuer") {
+	if o.Upstream != nil && o.Upstream.Mode == mcpOAuth2Mode && mappingHasKey(node, "issuer") {
 		return errors.New("mcp.servers[].auth.oauth.issuer is forbidden for oauth2 upstream")
+	}
+	if err := o.validateDCRUpstream(node); err != nil {
+		return err
 	}
 	if o.Profile != "" {
 		if err := validateMCPSafeValue("mcp.servers[].auth.oauth.profile", o.Profile); err != nil {
@@ -720,8 +740,21 @@ func (o *MCPOAuthProfile) UnmarshalYAML(node ast.Node) error {
 	return nil
 }
 
+func (o *MCPOAuthProfile) validateDCRUpstream(node ast.Node) error {
+	if o.Client.Mode != "dcr" {
+		return nil
+	}
+	if o.Upstream == nil || o.Upstream.Mode != mcpOAuth2Mode || o.Upstream.OAuth2 == nil {
+		return errors.New("mcp.servers[].auth.oauth.client.dcr requires an explicit oauth2 upstream")
+	}
+	if mappingHasKey(node, "issuer") {
+		return errors.New("mcp.servers[].auth.oauth.issuer is forbidden for dcr client")
+	}
+	return nil
+}
+
 func (o *MCPOAuthProfile) upstreamOrigins() []string {
-	if o.Upstream != nil && o.Upstream.Mode == "oauth2" && o.Upstream.OAuth2 != nil {
+	if o.Upstream != nil && o.Upstream.Mode == mcpOAuth2Mode && o.Upstream.OAuth2 != nil {
 		authorize, _ := url.Parse(o.Upstream.OAuth2.AuthorizationEndpoint)
 		token, _ := url.Parse(o.Upstream.OAuth2.TokenEndpoint)
 		return []string{mcpURLOrigin(authorize), mcpURLOrigin(token)}
@@ -781,25 +814,29 @@ func (u *MCPOAuth2UpstreamProfile) UnmarshalYAML(node ast.Node) error {
 }
 
 func (c *MCPOAuthClientProfile) strictFields() map[string]any {
-	return map[string]any{modeKey: &c.Mode, "preregistered": newPermconfigNodePointer(&c.Preregistered), "cimd": newPermconfigNodePointer(&c.CIMD)}
+	return map[string]any{modeKey: &c.Mode, "preregistered": newPermconfigNodePointer(&c.Preregistered), "cimd": newPermconfigNodePointer(&c.CIMD), "dcr": newPermconfigNodePointer(&c.DCR)}
 }
 
-// UnmarshalYAML strictly decodes the closed preregistered/CIMD client union.
+// UnmarshalYAML strictly decodes the closed preregistered/CIMD/DCR client union.
 func (c *MCPOAuthClientProfile) UnmarshalYAML(node ast.Node) error {
 	if err := decodeStrictMapping(node, "mcp.servers[].auth.oauth.client", c.strictFields()); err != nil {
 		return err
 	}
 	switch c.Mode {
 	case "preregistered":
-		if c.Preregistered == nil || mappingHasKey(node, "cimd") {
+		if c.Preregistered == nil || mappingHasKey(node, "cimd") || mappingHasKey(node, "dcr") {
 			return errors.New("mcp.servers[].auth.oauth.client: preregistered requires only preregistered payload")
 		}
 	case "cimd":
-		if c.CIMD == nil || mappingHasKey(node, "preregistered") {
+		if c.CIMD == nil || mappingHasKey(node, "preregistered") || mappingHasKey(node, "dcr") {
 			return errors.New("mcp.servers[].auth.oauth.client: cimd requires only cimd payload")
 		}
+	case "dcr":
+		if c.DCR == nil || mappingHasKey(node, "preregistered") || mappingHasKey(node, "cimd") {
+			return errors.New("mcp.servers[].auth.oauth.client: dcr requires only dcr payload")
+		}
 	default:
-		return errors.New("mcp.servers[].auth.oauth.client.mode must be exactly preregistered or cimd")
+		return errors.New("mcp.servers[].auth.oauth.client.mode must be exactly preregistered, cimd, or dcr")
 	}
 	return nil
 }
@@ -834,6 +871,25 @@ func (c *MCPCIMDClientProfile) UnmarshalYAML(node ast.Node) error {
 	}
 	if u.Path == "" || u.Path == "/" {
 		return errors.New("mcp.servers[].auth.oauth.client.cimd.document_url must include a document path")
+	}
+	return nil
+}
+
+func (c *MCPDCRClientProfile) strictFields() map[string]any {
+	return map[string]any{"discovery_url": &c.DiscoveryURL}
+}
+
+// UnmarshalYAML strictly decodes an HTTPS RFC 8414 discovery document URL.
+func (c *MCPDCRClientProfile) UnmarshalYAML(node ast.Node) error {
+	if err := decodeStrictMapping(node, "mcp.servers[].auth.oauth.client.dcr", c.strictFields()); err != nil {
+		return err
+	}
+	u, err := validateMCPHTTPURL("mcp.servers[].auth.oauth.client.dcr.discovery_url", c.DiscoveryURL, true)
+	if err != nil {
+		return err
+	}
+	if u.Path == "" || u.Path == "/" {
+		return errors.New("mcp.servers[].auth.oauth.client.dcr.discovery_url must include a discovery document path")
 	}
 	return nil
 }

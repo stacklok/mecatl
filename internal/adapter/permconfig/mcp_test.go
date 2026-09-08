@@ -94,6 +94,49 @@ func TestMCPValidTaggedUnionVariants(t *testing.T) {
 	}
 }
 
+func TestMcpBrokerDCRClient_Scenario1_PermConfigClosedUnion(t *testing.T) {
+	const dcr = `mcp:
+  servers:
+    - name: protected
+      url: https://mcp.example/mcp
+      auth:
+        mode: oauth
+        oauth:
+          upstream:
+            mode: oauth2
+            oauth2:
+              authorization_endpoint: https://auth.example/authorize
+              token_endpoint: https://auth.example/token
+          client:
+            mode: dcr
+            dcr:
+              discovery_url: https://auth.example/.well-known/oauth-authorization-server
+          scopes: [read]
+          network: {additional_origins: [], private_origins: [], max_redirects: 0}
+`
+	cfg, err := parseYAML([]byte(dcr))
+	if err != nil {
+		t.Fatalf("parse DCR settings: %v", err)
+	}
+	if got := cfg.MCP.Servers[0].Auth.OAuth.Client.DCR.DiscoveryURL; got != "https://auth.example/.well-known/oauth-authorization-server" {
+		t.Fatalf("DCR discovery URL = %q", got)
+	}
+	for name, body := range map[string]string{
+		"non HTTPS":                          strings.Replace(dcr, "https://auth.example/.well-known", "http://auth.example/.well-known", 1),
+		"missing discovery":                  strings.Replace(dcr, "              discovery_url: https://auth.example/.well-known/oauth-authorization-server\n", "", 1),
+		"mixed preregistered client variant": strings.Replace(dcr, "            dcr:\n", "            preregistered: {id: client, secret_env: MECATL_SECRET}\n            dcr:\n", 1),
+		"mixed CIMD client variant":          strings.Replace(dcr, "            dcr:\n", "            cimd: {document_url: https://client.example/mecatl.json}\n            dcr:\n", 1),
+		"OIDC upstream":                      strings.Replace(dcr, "mode: oauth2\n            oauth2:\n              authorization_endpoint: https://auth.example/authorize\n              token_endpoint: https://auth.example/token", "mode: oidc", 1),
+		"missing upstream":                   strings.Replace(dcr, "          upstream:\n            mode: oauth2\n            oauth2:\n              authorization_endpoint: https://auth.example/authorize\n              token_endpoint: https://auth.example/token\n", "", 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := parseYAML([]byte(body)); err == nil {
+				t.Fatal("invalid DCR declaration parsed successfully")
+			}
+		})
+	}
+}
+
 func TestMCPStaticProtectedToolsAreStrictTrustedDeclarations(t *testing.T) {
 	const config = `mcp:
   servers:
@@ -237,7 +280,7 @@ mcp:
 		"none with null payload":             `mcp: {servers: [{name: svc, url: https://mcp.example/mcp, auth: {mode: none, oauth: null}}]}`,
 		"unknown oauth key":                  replace("          profile:", "          profil:"),
 		"client mapping omitted":             replace("          client:\n            mode: preregistered\n            preregistered: {id: client, secret_env: MECATL_CLIENT_SECRET}\n", ""),
-		"dcr client":                         replace("mode: preregistered", "mode: dcr"),
+		"dcr client":                         replace("mode: preregistered", "mode: unsupported"),
 		"cross client variant":               replace("            preregistered:", "            cimd: {document_url: https://client.example/cimd.json}\n            preregistered:"),
 		"client with null cross variant":     replace("            preregistered:", "            cimd: null\n            preregistered:"),
 		"unknown credentials":                replace("mode: local", "mode: vault"),

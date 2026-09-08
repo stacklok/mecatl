@@ -69,8 +69,9 @@ type Process struct {
 }
 
 type toolHiveProcessOptions struct {
-	runtimeOptions   []Option
-	brokerHTTPClient *http.Client
+	runtimeOptions                []Option
+	brokerHTTPClient              *http.Client
+	allowLoopbackUpstreamsForTest bool
 }
 
 // NewToolHiveProcess discovers anonymous upstreams, constructs one ordered
@@ -92,6 +93,14 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 	construction, err := compileToolHiveConstruction(config.Profiles, issuer)
 	if err != nil {
 		return nil, err
+	}
+	if options.allowLoopbackUpstreamsForTest {
+		for i := range construction.upstreams {
+			if oauth := construction.upstreams[i].OAuth2Config; oauth != nil {
+				oauth.AllowPrivateIPs = true
+				oauth.InsecureAllowHTTP = true
+			}
+		}
 	}
 	routes, err := discoverAnonymous(ctx, construction.anonymous, config.Occupied)
 	if err != nil {

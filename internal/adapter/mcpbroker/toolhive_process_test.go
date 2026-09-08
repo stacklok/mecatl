@@ -15,13 +15,16 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
 	jwt "github.com/golang-jwt/jwt/v5"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/ory/fosite"
+	"github.com/redis/go-redis/v9"
 	"github.com/stacklok/toolhive/pkg/authserver/server/registration"
 	"github.com/stacklok/toolhive/pkg/authserver/storage"
 	"github.com/stacklok/toolhive/pkg/oauthproto"
@@ -1221,6 +1224,298 @@ func toolHiveOIDCIssuer(t *testing.T) *httptest.Server {
 	t.Cleanup(server.Close)
 	return server
 }
+
+func TestADR_0313_ToolHiveConstructionCarriesDCRConfig(t *testing.T) {
+	profile := protectedToolHiveProfile("private")
+	profile.OAuth.ClientID = ""
+	profile.OAuth.ClientSecretEnv = ""
+	profile.OAuth.DCRDiscoveryURL = "https://auth.example/.well-known/oauth-authorization-server"
+	construction, err := compileToolHiveConstruction([]ToolHiveProfile{profile}, "https://broker.example")
+	if err != nil {
+		t.Fatalf("compile DCR profile: %v", err)
+	}
+	upstream := construction.upstreams[0].OAuth2Config
+	if upstream == nil || upstream.ClientID != "" || upstream.DCRConfig == nil || upstream.DCRConfig.DiscoveryURL != profile.OAuth.DCRDiscoveryURL || upstream.AllowPrivateIPs || upstream.InsecureAllowHTTP {
+		t.Fatalf("DCR upstream = %#v", upstream)
+	}
+}
+
+func TestADR_0313_DCRRequiresExplicitOAuth2Upstream(t *testing.T) {
+	profile := protectedToolHiveProfile("private")
+	profile.OAuth.ClientID = ""
+	profile.OAuth.ClientSecretEnv = ""
+	profile.OAuth.AuthorizationEndpoint = ""
+	profile.OAuth.TokenEndpoint = ""
+	profile.OAuth.DCRDiscoveryURL = "https://auth.example/discovery"
+	if _, err := compileToolHiveConstruction([]ToolHiveProfile{profile}, "https://broker.example"); err == nil {
+		t.Fatal("DCR without explicit OAuth2 endpoints compiled successfully")
+	}
+}
+
+func TestMcpBrokerDCRClient_Scenario2_RegistersAndEnrolls(t *testing.T) {
+	fixture := newToolHiveDCRFixture(t, false)
+	process := fixture.newProcess(t)
+	t.Cleanup(func() { _ = process.Close() })
+
+	if fixture.metadataRequests.Load() != 1 || fixture.registrationRequests.Load() != 1 {
+		t.Fatalf("DCR requests: metadata=%d registrations=%d, want 1 each", fixture.metadataRequests.Load(), fixture.registrationRequests.Load())
+	}
+	fixture.assertRegistration(t)
+	fixture.enrollAndCall(t, process, "dcr-first")
+}
+
+func TestMcpBrokerDCRClient_Scenario2_ReusesCachedRegistration(t *testing.T) {
+	fixture := newToolHiveDCRFixture(t, false)
+	redisServer := miniredis.RunT(t)
+	newRedisClient := func() *redis.Client {
+		return redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
+	}
+	firstClient, secondClient := newRedisClient(), newRedisClient()
+
+	newRedisProcess := func(client *redis.Client) *Process {
+		t.Helper()
+		config := fixture.config()
+		config.AuthStorage = nil
+		config.AuthRedisClient = client
+		process, err := newToolHiveProcess(t.Context(), config, fixture.options())
+		if err != nil {
+			t.Fatalf("newToolHiveProcess: %v", err)
+		}
+		fixture.handlers.Store(process.Handlers)
+		return process
+	}
+
+	first := newRedisProcess(firstClient)
+	fixture.enrollAndCall(t, first, "dcr-first")
+	if err := first.Close(); err != nil {
+		t.Fatalf("close first Process: %v", err)
+	}
+	if fixture.metadataRequests.Load() != 1 || fixture.registrationRequests.Load() != 1 {
+		t.Fatalf("DCR requests after first Process close: metadata=%d registrations=%d, want 1 each", fixture.metadataRequests.Load(), fixture.registrationRequests.Load())
+	}
+
+	second := newRedisProcess(secondClient)
+	t.Cleanup(func() { _ = second.Close() })
+	fixture.enrollAndCall(t, second, "dcr-second")
+	if fixture.metadataRequests.Load() != 1 || fixture.registrationRequests.Load() != 1 {
+		t.Fatalf("DCR requests after second Process: metadata=%d registrations=%d, want 1 each", fixture.metadataRequests.Load(), fixture.registrationRequests.Load())
+	}
+	if fixture.protectedCalls.Load() != 2 {
+		t.Fatalf("protected calls = %d, want 2", fixture.protectedCalls.Load())
+	}
+}
+
+func TestADR_0313_RegistrationFailureNeverFallsBackUnauthenticated(t *testing.T) {
+	fixture := newToolHiveDCRFixture(t, true)
+	process, err := newToolHiveProcess(t.Context(), fixture.config(), fixture.options())
+	if err == nil {
+		if process != nil {
+			_ = process.Close()
+		}
+		t.Fatal("Process constructed after DCR registration rejection")
+	}
+	if process != nil {
+		t.Fatalf("failed DCR construction returned Process %#v", process)
+	}
+	if fixture.registrationRequests.Load() != 1 {
+		t.Fatalf("DCR registrations = %d, want 1", fixture.registrationRequests.Load())
+	}
+	if fixture.protectedCalls.Load() != 0 {
+		t.Fatalf("protected upstream received %d unauthenticated fallback calls", fixture.protectedCalls.Load())
+	}
+}
+
+type toolHiveDCRFixture struct {
+	t                    *testing.T
+	oauth                *httptest.Server
+	protected            *httptest.Server
+	gatewayMux           *http.ServeMux
+	gateway              *httptest.Server
+	storage              *nonClosingMemoryStorage
+	metadataRequests     atomic.Int32
+	registrationRequests atomic.Int32
+	protectedCalls       atomic.Int32
+	handlers             atomic.Value
+	registration         struct {
+		sync.Mutex
+		redirectURIs  []string
+		grantTypes    []string
+		responseTypes []string
+		authMethod    string
+	}
+	rejectRegistration bool
+}
+
+func newToolHiveDCRFixture(t *testing.T, rejectRegistration bool) *toolHiveDCRFixture {
+	t.Helper()
+	fixture := &toolHiveDCRFixture{t: t, rejectRegistration: rejectRegistration, storage: &nonClosingMemoryStorage{MemoryStorage: storage.NewMemoryStorage()}, gatewayMux: http.NewServeMux()}
+	fixture.gatewayMux.HandleFunc("/", fixture.serveGateway)
+	fixture.gateway = httptest.NewUnstartedServer(fixture.gatewayMux)
+	fixture.gateway.StartTLS()
+	t.Cleanup(fixture.gateway.Close)
+	t.Cleanup(func() { _ = fixture.storage.MemoryStorage.Close() })
+
+	fixture.oauth = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/.well-known/oauth-authorization-server":
+			fixture.metadataRequests.Add(1)
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"issuer": fixture.oauth.URL, "authorization_endpoint": fixture.oauth.URL + "/authorize", "token_endpoint": fixture.oauth.URL + "/token", "registration_endpoint": fixture.oauth.URL + "/register", "token_endpoint_auth_methods_supported": []string{"client_secret_basic"}})
+		case "/register":
+			fixture.registrationRequests.Add(1)
+			var body struct {
+				RedirectURIs  []string `json:"redirect_uris"`
+				GrantTypes    []string `json:"grant_types"`
+				ResponseTypes []string `json:"response_types"`
+				AuthMethod    string   `json:"token_endpoint_auth_method"`
+			}
+			if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			fixture.registration.Lock()
+			fixture.registration.redirectURIs, fixture.registration.grantTypes, fixture.registration.responseTypes, fixture.registration.authMethod = body.RedirectURIs, body.GrantTypes, body.ResponseTypes, body.AuthMethod
+			fixture.registration.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			if fixture.rejectRegistration {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"error":"invalid_client_metadata"}`))
+				return
+			}
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]any{"client_id": "dcr-client", "client_secret": "dcr-secret", "token_endpoint_auth_method": "client_secret_basic"})
+		case "/authorize":
+			redirect := request.URL.Query().Get("redirect_uri")
+			state := request.URL.Query().Get("state")
+			http.Redirect(w, request, redirect+"?"+url.Values{"code": {"upstream-code"}, "state": {state}}.Encode(), http.StatusFound)
+		case "/token":
+			w.Header().Set("Content-Type", "application/json")
+			clientID, secret, ok := request.BasicAuth()
+			if !ok || clientID != "dcr-client" || secret != "dcr-secret" {
+				http.Error(w, "invalid DCR client authentication", http.StatusUnauthorized)
+				return
+			}
+			_, _ = w.Write([]byte(`{"access_token":"dcr-upstream-token","token_type":"Bearer","expires_in":3600}`))
+		default:
+			http.NotFound(w, request)
+		}
+	}))
+	t.Cleanup(fixture.oauth.Close)
+
+	upstream := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "protected", Version: "v1"}, nil)
+	mcpsdk.AddTool(upstream, &mcpsdk.Tool{Name: "create"}, func(_ context.Context, _ *mcpsdk.CallToolRequest, input struct {
+		Title string `json:"title"`
+	}) (*mcpsdk.CallToolResult, any, error) {
+		fixture.protectedCalls.Add(1)
+		return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "created:" + input.Title}}}, nil, nil
+	})
+	handler := mcpsdk.NewStreamableHTTPHandler(func(*http.Request) *mcpsdk.Server { return upstream }, &mcpsdk.StreamableHTTPOptions{Stateless: true, JSONResponse: true})
+	fixture.protected = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if request.Header.Get("Authorization") != "Bearer dcr-upstream-token" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		handler.ServeHTTP(w, request)
+	}))
+	t.Cleanup(fixture.protected.Close)
+	return fixture
+}
+
+func (f *toolHiveDCRFixture) config() ToolHiveConfig {
+	return ToolHiveConfig{CallbackURL: f.gateway.URL + "/callback", AuthStorage: f.storage, Profiles: []ToolHiveProfile{{Name: "private", URL: f.protected.URL, Auth: authOAuth, OAuth: &ToolHiveOAuth{AuthorizationEndpoint: f.oauth.URL + "/authorize", TokenEndpoint: f.oauth.URL + "/token", DCRDiscoveryURL: f.oauth.URL + "/.well-known/oauth-authorization-server", Scopes: []string{"read"}}, Static: []StaticTool{{Name: "create", Schema: json.RawMessage(`{"type":"object"}`)}}}}}
+}
+
+func (f *toolHiveDCRFixture) options() toolHiveProcessOptions {
+	roots := x509.NewCertPool()
+	roots.AddCert(f.gateway.Certificate())
+	return toolHiveProcessOptions{runtimeOptions: []Option{WithOAuthLoopbackForTest(f.t, roots)}, brokerHTTPClient: f.gateway.Client(), allowLoopbackUpstreamsForTest: true}
+}
+
+func (f *toolHiveDCRFixture) newProcess(t *testing.T) *Process {
+	t.Helper()
+	process, err := newToolHiveProcess(t.Context(), f.config(), f.options())
+	if err != nil {
+		t.Fatalf("newToolHiveProcess: %v", err)
+	}
+	f.handlers.Store(process.Handlers)
+	return process
+}
+
+func (f *toolHiveDCRFixture) serveGateway(w http.ResponseWriter, request *http.Request) {
+	value := f.handlers.Load()
+	if value == nil {
+		http.NotFound(w, request)
+		return
+	}
+	handlers := value.(HandlerBundle)
+	var handler http.Handler
+	switch request.URL.Path {
+	case toolHiveBasePath + "/oauth/authorize":
+		handler = handlers.Authorization
+	case toolHiveBasePath + "/oauth/token":
+		handler = handlers.Token
+	case toolHiveBasePath + "/oauth/callback":
+		handler = handlers.UpstreamCallback
+	case toolHiveMCPPath:
+		handler = handlers.VMCP
+	case "/callback":
+		handler = handlers.Callback
+	}
+	if handler == nil {
+		http.NotFound(w, request)
+		return
+	}
+	handler.ServeHTTP(w, request)
+}
+
+func (f *toolHiveDCRFixture) assertRegistration(t *testing.T) {
+	t.Helper()
+	f.registration.Lock()
+	defer f.registration.Unlock()
+	if !reflect.DeepEqual(f.registration.redirectURIs, []string{f.gateway.URL + toolHiveBasePath + "/oauth/callback"}) || !reflect.DeepEqual(f.registration.grantTypes, []string{"authorization_code", "refresh_token"}) || !reflect.DeepEqual(f.registration.responseTypes, []string{"code"}) || f.registration.authMethod != "client_secret_basic" {
+		t.Fatalf("DCR registration = redirect=%v grants=%v response_types=%v auth_method=%q", f.registration.redirectURIs, f.registration.grantTypes, f.registration.responseTypes, f.registration.authMethod)
+	}
+}
+
+func (f *toolHiveDCRFixture) enrollAndCall(t *testing.T, process *Process, id session.SessionID) {
+	t.Helper()
+	attached, _, err := process.Runtime.AttachSession(t.Context(), id)
+	if err != nil {
+		t.Fatalf("AttachSession: %v", err)
+	}
+	t.Cleanup(func() { _, _ = attached.Close(context.Background()) })
+	enroller := attached.(contract.WorkspaceEnrollmentAttachment)
+	presentation, err := enroller.BeginWorkspaceEnrollment(t.Context())
+	if err != nil || !presentation.Valid() {
+		t.Fatalf("BeginWorkspaceEnrollment = (%+v, %v)", presentation, err)
+	}
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, presentation.URL, nil)
+	if err != nil {
+		t.Fatalf("build authorization request: %v", err)
+	}
+	response, err := f.gateway.Client().Do(request)
+	if err != nil {
+		t.Fatalf("complete authorization: %v", err)
+	}
+	body, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("callback status = %d url=%s body=%s", response.StatusCode, response.Request.URL, body)
+	}
+	connected, err := enroller.ObserveWorkspaceEnrollment(t.Context(), presentation.Ref)
+	if err != nil || connected.Status != contract.WorkspaceEnrollmentConnected {
+		t.Fatalf("ObserveWorkspaceEnrollment = (%+v, %v)", connected, err)
+	}
+	wrapped := toolByName(t, attached.(*Attachment), "mcp__private__create")
+	result, err := wrapped.Execute(t.Context(), session.NewToolCall(session.ToolCallID("call-"+string(id)), wrapped.Spec().Name, json.RawMessage(`{"title":"one"}`)), tool.Environment{})
+	if err != nil || result.IsError || !strings.HasPrefix(result.Content, "created:one") {
+		t.Fatalf("protected result = (%+v, %v)", result, err)
+	}
+}
+
+type nonClosingMemoryStorage struct{ *storage.MemoryStorage }
+
+func (*nonClosingMemoryStorage) Close() error { return nil }
 
 func protectedToolHiveProfile(name string) ToolHiveProfile {
 	return ToolHiveProfile{Name: name, URL: "https://" + strings.ToLower(strings.Trim(name, "_")) + ".example/mcp", Auth: authOAuth, OAuth: &ToolHiveOAuth{

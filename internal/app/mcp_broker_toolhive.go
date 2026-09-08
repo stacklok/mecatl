@@ -68,6 +68,8 @@ func toolHiveBrokerConfig(routes []permconfig.MCPServerProfile, callbackURL stri
 				converted.ClientSecretEnv = oauth.Client.Preregistered.SecretEnv
 			} else if oauth.Client.CIMD != nil {
 				converted.ClientID = oauth.Client.CIMD.DocumentURL
+			} else if oauth.Client.DCR != nil {
+				converted.DCRDiscoveryURL = oauth.Client.DCR.DiscoveryURL
 			}
 			profile.OAuth = converted
 			profile.Static = make([]mcpbroker.StaticTool, len(oauth.Tools))

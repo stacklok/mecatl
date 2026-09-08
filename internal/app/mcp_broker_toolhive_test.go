@@ -54,6 +54,24 @@ func TestToolHiveBrokerConfigPreservesStaticOIDCClientVariants(t *testing.T) {
 	}
 }
 
+func TestADR_0313_ToolHiveConversionCarriesDCRConfig(t *testing.T) {
+	routes := []permconfig.MCPServerProfile{{Name: "protected", URL: "https://mcp.example/mcp", Auth: permconfig.MCPAuthProfile{Mode: "oauth", OAuth: &permconfig.MCPOAuthProfile{
+		Upstream: &permconfig.MCPOAuthUpstreamProfile{Mode: "oauth2", OAuth2: &permconfig.MCPOAuth2UpstreamProfile{AuthorizationEndpoint: "https://auth.example/authorize", TokenEndpoint: "https://auth.example/token"}},
+		Client:   permconfig.MCPOAuthClientProfile{Mode: "dcr", DCR: &permconfig.MCPDCRClientProfile{DiscoveryURL: "https://auth.example/.well-known/oauth-authorization-server"}}, Scopes: []string{"read"},
+	}}}}
+	profile := toolHiveBrokerConfig(routes, "https://broker.example", nil, nil).Profiles[0]
+	if profile.OAuth.ClientID != "" || profile.OAuth.DCRDiscoveryURL != "https://auth.example/.well-known/oauth-authorization-server" {
+		t.Fatalf("DCR adapter profile = %#v", profile.OAuth)
+	}
+}
+
+func TestADR_0313_DCRRequiresExplicitOAuth2Upstream(t *testing.T) {
+	_, err := mcpbroker.NewToolHiveProcess(t.Context(), mcpbroker.ToolHiveConfig{CallbackURL: "https://broker.example", Profiles: []mcpbroker.ToolHiveProfile{{Name: "protected", URL: "https://mcp.example/mcp", Auth: "oauth", OAuth: &mcpbroker.ToolHiveOAuth{DCRDiscoveryURL: "https://auth.example/discovery"}}}})
+	if err == nil {
+		t.Fatal("DCR without explicit OAuth2 endpoints constructed successfully")
+	}
+}
+
 func TestToolHiveBrokerConfigProjectsRefreshTokenRequest(t *testing.T) {
 	for _, requestRefreshToken := range []bool{true, false} {
 		t.Run("request_refresh_token="+strconv.FormatBool(requestRefreshToken), func(t *testing.T) {
