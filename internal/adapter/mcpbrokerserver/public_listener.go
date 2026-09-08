@@ -115,6 +115,10 @@ func PublicHandler(grpcHandler, callbackHandler http.Handler, cfg PublicListener
 		ctx, cancel := context.WithTimeout(r.Context(), cfg.CallbackTimeout)
 		defer cancel()
 		r = r.WithContext(ctx)
+		if strings.HasPrefix(r.URL.Path, "/v1/mcp/broker/") {
+			callbackHandler.ServeHTTP(w, r)
+			return
+		}
 		if status, message := validateBoundedCallback(w, r, cfg.MaxCallbackBytes); status != 0 {
 			http.Error(w, message, status)
 			return

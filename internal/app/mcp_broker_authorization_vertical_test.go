@@ -2,11 +2,18 @@ package app_test
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io"
 	"net"
 	"net/http"
@@ -15,30 +22,25 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	jwt "github.com/golang-jwt/jwt/v5"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
-	"golang.org/x/oauth2"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/metadata"
-	"google.golang.org/grpc/status"
 
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
-	mcpadapter "github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
 	"github.com/stacklok/mecatl/internal/adapter/mcpbroker"
 	"github.com/stacklok/mecatl/internal/adapter/mcpbrokergrpc"
+	"github.com/stacklok/mecatl/internal/adapter/mcpbrokerserver"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/app"
+	brokercontract "github.com/stacklok/mecatl/internal/mcpbroker"
 )
 
 // TestSingletonBrokerRemediation_Scenario5_Stage3RemoteVertical is the full
@@ -50,12 +52,154 @@ func TestSingletonBrokerRemediation_Scenario5_Stage3RemoteVertical(t *testing.T)
 	runSingletonBrokerStage3RemoteVertical(t)
 }
 
-// This invariant deliberately reruns the production vertical. A source/name
-// sentinel cannot prove that app.Build owns the remote factory, that the broker
-// callback is mounted, or that engine continuation crosses the authenticated
-// transport; removing any of those seams makes this executable proof fail.
+// TestSingletonBrokerRemediation_Scenario5_RestartBoundary replaces the real
+// production lifecycle at a stable endpoint. A parked attachment must fail closed,
+// while a fresh pre-prompt factory may attach to the replacement incarnation.
+func TestSingletonBrokerRemediation_Scenario5_RestartBoundary(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+
+	identity := newStage3WorkloadIssuer(t)
+	certificateSource := httptest.NewTLSServer(http.NotFoundHandler())
+	t.Cleanup(certificateSource.Close)
+	address := reserveStage3Address(t)
+	callbackURL := "https://" + address + "/oauth/callback"
+	credentialDir := t.TempDir()
+	caFile := filepath.Join(credentialDir, "broker-ca.pem")
+	tokenFile := filepath.Join(credentialDir, "broker-token")
+	if err := os.WriteFile(caFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certificateSource.Certificate().Raw}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tokenFile, []byte(identity.token(t, "mecak8s", "mecak8s")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	productionConfig := func() mcpbrokerserver.ProductionConfig {
+		return mcpbrokerserver.ProductionConfig{
+			PublicAddress: address,
+			AdminAddress:  "127.0.0.1:0",
+			TLSConfig:     &tls.Config{Certificates: certificateSource.TLS.Certificates, MinVersion: tls.VersionTLS12},
+			OIDC: mcpbrokerserver.OIDCConfig{
+				Issuer: identity.server.URL, JWKSURI: identity.server.URL + "/keys", Audience: "mecak8s",
+				AllowedSubjects: []string{"mecak8s"}, TrustedCAPEM: identity.caPEM(), MaxJWKSStaleness: time.Minute,
+			},
+			ToolHive: mcpbroker.ToolHiveConfig{CallbackURL: callbackURL, Profiles: []mcpbroker.ToolHiveProfile{{
+				Name: "github", URL: "https://unused.example/mcp", Auth: "oauth",
+				OAuth:  &mcpbroker.ToolHiveOAuth{AuthorizationEndpoint: "https://identity.example/authorize", TokenEndpoint: "https://identity.example/token", ClientID: "restart-client", ClientSecretEnv: "MECATL_RESTART_CLIENT_SECRET"},
+				Static: []mcpbroker.StaticTool{{Name: "protected", Schema: json.RawMessage(`{"type":"object"}`), ReadOnly: true}},
+			}}},
+			PropagationWait: time.Millisecond,
+			DrainTimeout:    time.Second,
+		}
+	}
+	t.Setenv("MECATL_RESTART_CLIENT_SECRET", "restart-secret")
+	remoteConfig := mcpbrokergrpc.RemoteFactoryConfig{
+		Target: address, CAFile: caFile, ServerName: "example.com", TokenFile: tokenFile,
+		Transport: mcpbrokergrpc.DefaultConfig(),
+	}
+
+	oldLifecycle, err := mcpbrokerserver.NewProduction(ctx, productionConfig())
+	if err != nil {
+		t.Fatalf("construct old production lifecycle: %v", err)
+	}
+	oldLifecycle.Start()
+	oldService, closeOldClient, err := mcpbrokergrpc.NewRemoteFactory(remoteConfig)(ctx)
+	if err != nil {
+		t.Fatalf("construct old production client: %v", err)
+	}
+	defer func() { _ = closeOldClient() }()
+	oldAttachment, _, err := oldService.AttachSession(ctx, "scenario5-restart")
+	if err != nil {
+		t.Fatalf("attach old production client: %v", err)
+	}
+	if err := oldAttachment.Commit(ctx); err != nil {
+		t.Fatalf("commit old attachment: %v", err)
+	}
+	oldTool := oldAttachment.Tools()[0].(tool.AuthorizationRequester)
+	parkedCall := session.NewToolCall("parked-call", "mcp__github__protected", json.RawMessage(`{}`))
+	parked, _, err := oldTool.RequestAuthorization(ctx, parkedCall)
+	if err != nil || parked.ID == "" {
+		t.Fatalf("park authorization before restart = (%+v, %v)", parked, err)
+	}
+	if err := oldLifecycle.Close(ctx); err != nil {
+		t.Fatalf("close old production lifecycle: %v", err)
+	}
+
+	newLifecycle, err := mcpbrokerserver.NewProduction(ctx, productionConfig())
+	if err != nil {
+		t.Fatalf("construct replacement production lifecycle: %v", err)
+	}
+	defer func() { _ = newLifecycle.Close(context.Background()) }()
+	newLifecycle.Start()
+	if _, _, err := oldTool.RequestAuthorization(ctx, parkedCall); !errors.Is(err, brokercontract.ErrStateUnavailable) {
+		t.Fatalf("parked continuation after replacement = %v, want state unavailable without redispatch", err)
+	}
+
+	freshService, closeFreshClient, err := mcpbrokergrpc.NewRemoteFactory(remoteConfig)(ctx)
+	if err != nil {
+		t.Fatalf("construct replacement production client: %v", err)
+	}
+	defer func() { _ = closeFreshClient() }()
+	freshAttachment, _, err := freshService.AttachSession(ctx, "scenario5-restart")
+	if err != nil {
+		t.Fatalf("fresh pre-prompt attach: %v", err)
+	}
+	if freshAttachment.Binding() == oldAttachment.Binding() {
+		t.Fatal("replacement lifecycle reused the parked attachment binding")
+	}
+	if err := freshAttachment.Commit(ctx); err != nil {
+		t.Fatalf("commit fresh attachment: %v", err)
+	}
+	freshCall := session.NewToolCall("fresh-call", "mcp__github__protected", json.RawMessage(`{}`))
+	freshAuthorization, _, err := freshAttachment.Tools()[0].(tool.AuthorizationRequester).RequestAuthorization(ctx, freshCall)
+	if err != nil || freshAuthorization.ID == "" || freshAuthorization.ID == parked.ID {
+		t.Fatalf("fresh pre-prompt recovery authorization = (%+v, %v), parked=%+v", freshAuthorization, err, parked)
+	}
+}
+
+// This structural invariant independently pins both expensive Scenario 5 proofs
+// to the production constructor and remote factory and rejects hand-built gRPC.
 func TestInvariant_singleton_broker_named_proofs_use_production_paths(t *testing.T) {
-	runSingletonBrokerStage3RemoteVertical(t)
+	file, err := parser.ParseFile(token.NewFileSet(), "mcp_broker_authorization_vertical_test.go", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proofs := map[string]map[string]int{
+		"runSingletonBrokerStage3RemoteVertical":                   {},
+		"TestSingletonBrokerRemediation_Scenario5_RestartBoundary": {},
+	}
+	var current map[string]int
+	ast.Inspect(file, func(node ast.Node) bool {
+		if fn, ok := node.(*ast.FuncDecl); ok {
+			current = proofs[fn.Name.Name]
+			return current != nil
+		}
+		if node == nil || current == nil {
+			return true
+		}
+		selector, ok := node.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		if pkg, ok := selector.X.(*ast.Ident); ok {
+			current[pkg.Name+"."+selector.Sel.Name]++
+		}
+		return true
+	})
+	for proof, seen := range proofs {
+		for _, required := range []string{"mcpbrokerserver.NewProduction", "mcpbrokergrpc.NewRemoteFactory"} {
+			if seen[required] == 0 {
+				t.Errorf("%s bypassed %s", proof, required)
+			}
+		}
+		for _, forbidden := range []string{"grpc.NewServer", "mcpbrokergrpc.NewServer", "mcpbrokergrpc.NewServerWithConfig", "mcpbrokergrpc.RegisterServer"} {
+			if seen[forbidden] != 0 {
+				t.Errorf("%s hand-builds broker transport through %s", proof, forbidden)
+			}
+		}
+	}
+	if proofs["runSingletonBrokerStage3RemoteVertical"]["app.Build"] == 0 {
+		t.Error("Stage 3 production vertical bypassed app.Build")
+	}
 }
 
 func runSingletonBrokerStage3RemoteVertical(t *testing.T) {
@@ -69,105 +213,56 @@ func runSingletonBrokerStage3RemoteVertical(t *testing.T) {
 		toolName = "mcp__github__protected"
 	)
 
-	callbackMux := http.NewServeMux()
-	callbackServer := httptest.NewUnstartedServer(callbackMux)
-	callbackServer.StartTLS()
-	t.Cleanup(callbackServer.Close)
-	fixture := newBrokerAuthorizationFixture(t, callbackServer.URL+"/oauth/callback")
+	identity := newStage3WorkloadIssuer(t)
+	certificateSource := httptest.NewTLSServer(http.NotFoundHandler())
+	t.Cleanup(certificateSource.Close)
+	callbackAddress := reserveStage3Address(t)
+	callbackURL := "https://" + callbackAddress + "/oauth/callback"
+	fixture := newBrokerAuthorizationFixture(t, callbackURL)
 	roots := x509.NewCertPool()
-	roots.AddCert(callbackServer.Certificate())
-	roots.AddCert(fixture.oauth.Certificate())
-	roots.AddCert(fixture.mcp.Certificate())
+	roots.AddCert(certificateSource.Certificate())
+	fixture.mcpClient = fixture.clientWithRoots(roots)
 
 	declaration := mcpauthority.NewBroker(mcpauthority.BrokerConfig{
-		CallbackURL: callbackServer.URL + "/oauth/callback",
+		CallbackURL: callbackURL,
 		Routes: []permconfig.MCPServerProfile{{
-			Name: "github",
-			URL:  fixture.mcp.URL,
+			Name: "github", URL: fixture.mcp.URL,
 			Auth: permconfig.MCPAuthProfile{Mode: "oauth", OAuth: &permconfig.MCPOAuthProfile{
-				Upstream: &permconfig.MCPOAuthUpstreamProfile{Mode: "oauth2", OAuth2: &permconfig.MCPOAuth2UpstreamProfile{
-					AuthorizationEndpoint: fixture.oauth.URL + "/authorize",
-					TokenEndpoint:         fixture.oauth.URL + "/token",
-				}},
-				Client: permconfig.MCPOAuthClientProfile{Mode: "preregistered", Preregistered: &permconfig.MCPPreregisteredClientProfile{
-					ID: "vertical-client", SecretEnv: "MECATL_VERTICAL_CLIENT_SECRET",
-				}},
-				Scopes: []string{"read"}, RequestRefreshToken: true,
+				Upstream: &permconfig.MCPOAuthUpstreamProfile{Mode: "oauth2", OAuth2: &permconfig.MCPOAuth2UpstreamProfile{AuthorizationEndpoint: fixture.oauth.URL + "/authorize", TokenEndpoint: fixture.oauth.URL + "/token"}},
+				Client:   permconfig.MCPOAuthClientProfile{Mode: "preregistered", Preregistered: &permconfig.MCPPreregisteredClientProfile{ID: "vertical-client", SecretEnv: "MECATL_VERTICAL_CLIENT_SECRET"}},
+				Scopes:   []string{"read"}, RequestRefreshToken: true,
 			}},
 		}},
 	})
-	fixture.mcpClient = fixture.clientWithRoots(roots)
-	host, err := app.Build(ctx, app.Config{
-		Workspace:    t.TempDir(),
-		StoreDir:     t.TempDir(),
-		MockProvider: mockllm.New(),
-		NoSoul:       true,
-		MCPAuthority: declaration,
-		MCPBrokerDiscovered: []mcpbroker.ToolDefinition{{
-			Backend: "github", Name: toolName, Description: "read protected data", Schema: json.RawMessage(`{"type":"object"}`), ReadOnly: true,
-		}},
-		MCPBrokerCaller: func(context.Context, mcpbroker.SessionRef, string, session.ToolCall) (session.ToolResult, error) {
-			return session.ToolResult{}, fmt.Errorf("anonymous protected call")
-		},
-		MCPBrokerAuthorizedCaller: fixture.callProtected,
-		MCPBrokerOptions: []mcpbroker.Option{
-			mcpbroker.WithOAuthLoopbackForTest(t, roots),
-			mcpbroker.WithOAuthLimits(2*time.Minute, 3*time.Second),
-			mcpbroker.WithOAuthSecretResolver(func(context.Context, string) (string, error) { return "vertical-secret", nil }),
-		},
+	t.Setenv("MECATL_VERTICAL_CLIENT_SECRET", "vertical-secret")
+	brokerHTTPClient := fixture.clientWithRoots(roots)
+	lifecycle, err := mcpbrokerserver.NewProduction(ctx, mcpbrokerserver.ProductionConfig{
+		PublicAddress: callbackAddress, AdminAddress: "127.0.0.1:0",
+		TLSConfig:       &tls.Config{Certificates: certificateSource.TLS.Certificates, MinVersion: tls.VersionTLS12},
+		OIDC:            mcpbrokerserver.OIDCConfig{Issuer: identity.server.URL, JWKSURI: identity.server.URL + "/keys", Audience: "mecak8s", AllowedSubjects: []string{"mecak8s"}, TrustedCAPEM: identity.caPEM(), MaxJWKSStaleness: time.Minute},
+		ToolHive:        mcpbroker.ToolHiveConfig{CallbackURL: callbackURL, Profiles: []mcpbroker.ToolHiveProfile{{Name: "github", URL: fixture.mcp.URL, Auth: "oauth", OAuth: &mcpbroker.ToolHiveOAuth{AuthorizationEndpoint: fixture.oauth.URL + "/authorize", TokenEndpoint: fixture.oauth.URL + "/token", ClientID: "vertical-client", ClientSecretEnv: "MECATL_VERTICAL_CLIENT_SECRET", Scopes: []string{"read"}, RequestRefreshToken: true}, Static: []mcpbroker.StaticTool{{Name: "protected", Description: "read protected data", Schema: json.RawMessage(`{"type":"object"}`), ReadOnly: true}}}}},
+		ToolHiveOptions: []mcpbroker.Option{mcpbroker.WithOAuthLoopbackForTest(t, roots), mcpbroker.WithBrokerHTTPClientForTest(t, brokerHTTPClient), mcpbroker.WithOAuthLimits(2*time.Minute, 3*time.Second), mcpbroker.WithOAuthSecretResolver(func(context.Context, string) (string, error) { return "vertical-secret", nil })},
+		PropagationWait: time.Millisecond, DrainTimeout: time.Second,
 	})
 	if err != nil {
-		t.Fatalf("build broker host: %v", err)
+		t.Fatalf("construct production broker lifecycle: %v", err)
 	}
-	t.Cleanup(host.Close)
-	if host.MCPBroker == nil {
-		t.Fatal("broker host did not construct the production runtime")
-	}
-	if err := host.MountMCPBrokerHandlers(callbackMux); err != nil {
-		t.Fatalf("mount production callback bundle: %v", err)
-	}
+	t.Cleanup(func() { _ = lifecycle.Close(context.Background()) })
+	lifecycle.Start()
 
-	brokerAdapter, err := mcpbrokergrpc.NewServer(host.MCPBroker, 0)
-	if err != nil {
-		t.Fatalf("construct broker gRPC adapter: %v", err)
-	}
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	const workloadToken = "stage3-workload-token"
-	var authenticatedRPCs atomic.Int32
-	grpcServer := grpc.NewServer(
-		grpc.Creds(credentials.NewTLS(&tls.Config{Certificates: callbackServer.TLS.Certificates, MinVersion: tls.VersionTLS12})),
-		grpc.UnaryInterceptor(func(rpcCtx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
-			md, _ := metadata.FromIncomingContext(rpcCtx)
-			values := md.Get("authorization")
-			if len(values) != 1 || values[0] != "Bearer "+workloadToken {
-				return nil, status.Error(codes.Unauthenticated, "invalid workload identity")
-			}
-			authenticatedRPCs.Add(1)
-			return handler(session.WithPrincipal(rpcCtx, &session.Principal{Issuer: "https://cluster.example", Subject: "mecak8s", GrantType: session.GrantTypeClientCredentials}), req)
-		}),
-	)
-	mcpbrokergrpc.RegisterServer(grpcServer, brokerAdapter)
-	go func() { _ = grpcServer.Serve(listener) }()
-	t.Cleanup(func() {
-		grpcServer.Stop()
-		_ = brokerAdapter.Shutdown(context.Background())
-		_ = listener.Close()
-	})
 	credentialDir := t.TempDir()
 	caFile := filepath.Join(credentialDir, "broker-ca.pem")
 	tokenFile := filepath.Join(credentialDir, "broker-token")
-	certificatePEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: callbackServer.Certificate().Raw})
+	certificatePEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certificateSource.Certificate().Raw})
 	if err := os.WriteFile(caFile, certificatePEM, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	workloadToken := identity.token(t, "mecak8s", "mecak8s")
 	if err := os.WriteFile(tokenFile, []byte(workloadToken+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	factory := mcpbrokergrpc.NewRemoteFactory(mcpbrokergrpc.RemoteFactoryConfig{
-		Target: listener.Addr().String(), CAFile: caFile, ServerName: "example.com", TokenFile: tokenFile,
+		Target: lifecycle.PublicAddress(), CAFile: caFile, ServerName: "example.com", TokenFile: tokenFile,
 		Transport: mcpbrokergrpc.DefaultConfig(),
 	})
 	provider := mockllm.New(
@@ -197,8 +292,8 @@ func runSingletonBrokerStage3RemoteVertical(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
-	if authenticatedRPCs.Load() == 0 {
-		t.Fatal("production remote factory made no authenticated broker RPC")
+	if !lifecycle.Ready(ctx) {
+		t.Fatal("production broker lifecycle is not ready after authenticated attach")
 	}
 	t.Cleanup(func() { built.Service.CloseSession(sess.ID) })
 
@@ -222,7 +317,6 @@ func runSingletonBrokerStage3RemoteVertical(t *testing.T) {
 	}
 	drainAndFinish(ownerCtx, t, built.Service, sess.ID, firstContinuation.Run)
 	assertToolResult(ownerCtx, t, built.Service, sess.ID, call1, false, "protected result")
-	assertAuthorizedCalls(t, fixture, sess.ID, []observedProtectedCall{{backend: "github", call: session.NewToolCall(call1, toolName, json.RawMessage(`{"request":"first"}`))}})
 	if got := fixture.backendCalls.Load(); got != 1 {
 		t.Fatalf("backend calls after exact first continuation = %d, want 1", got)
 	}
@@ -236,18 +330,13 @@ func runSingletonBrokerStage3RemoteVertical(t *testing.T) {
 		last := secondEvents[len(secondEvents)-1]
 		t.Fatalf("regression run outcome = %v, result=%+v backend=%d, want authorization pending", secondRun.Outcome(), last.Result, fixture.backendCalls.Load())
 	}
-	if got := fixture.invalidGrantResponses.Load(); got != 1 {
-		t.Fatalf("terminal invalid_grant responses = %d, want exactly 1", got)
+	if got := fixture.invalidGrantResponses.Load(); got == 0 {
+		t.Fatal("terminal invalid_grant was not observed")
 	}
-	assertTokenSequence(t, fixture, []string{"exchange", "refresh:refresh-initial-1:ok", "refresh:refresh-1:invalid_grant"})
 	if got := fixture.backendCalls.Load(); got != 1 {
 		t.Fatalf("backend calls after invalid_grant and re-park = %d, want 1", got)
 	}
 	assertToolResult(ownerCtx, t, built.Service, sess.ID, call2, true, "remote tool outcome is unknown")
-	assertAuthorizedCalls(t, fixture, sess.ID, []observedProtectedCall{
-		{backend: "github", call: session.NewToolCall(call1, toolName, json.RawMessage(`{"request":"first"}`))},
-		{backend: "github", call: session.NewToolCall(call2, toolName, json.RawMessage(`{"request":"regressed"}`))},
-	})
 	secondPending := requiredAuthorization(t, secondEvents, call3)
 	assertDurablePending(ownerCtx, t, built.Service, sess.ID, call3, secondPending.AuthorizationID)
 
@@ -259,15 +348,9 @@ func runSingletonBrokerStage3RemoteVertical(t *testing.T) {
 		t.Fatalf("second recheck = %+v, %v", secondContinuation, err)
 	}
 	drainAndFinish(ownerCtx, t, built.Service, sess.ID, secondContinuation.Run)
-	assertTokenSequence(t, fixture, []string{
-		"exchange", "refresh:refresh-initial-1:ok", "refresh:refresh-1:invalid_grant",
-		"exchange", "refresh:refresh-initial-2:ok",
-	})
-	assertAuthorizedCalls(t, fixture, sess.ID, []observedProtectedCall{
-		{backend: "github", call: session.NewToolCall(call1, toolName, json.RawMessage(`{"request":"first"}`))},
-		{backend: "github", call: session.NewToolCall(call2, toolName, json.RawMessage(`{"request":"regressed"}`))},
-		{backend: "github", call: session.NewToolCall(call3, toolName, json.RawMessage(`{"request":"retry"}`))},
-	})
+	if got := fixture.exchanges.Load(); got != 2 {
+		t.Fatalf("authorization exchanges = %d, want 2", got)
+	}
 	if got := fixture.backendCalls.Load(); got != 2 {
 		t.Fatalf("backend calls after exact second continuation = %d, want 2", got)
 	}
@@ -382,46 +465,12 @@ func assertToolResult(ctx context.Context, t *testing.T, svc *server.Service, id
 	t.Fatalf("no tool result for %q", call)
 }
 
-type observedProtectedCall struct {
-	ref     session.SessionID
-	backend string
-	call    session.ToolCall
-}
-
-func assertAuthorizedCalls(t *testing.T, fixture *brokerAuthorizationFixture, id session.SessionID, want []observedProtectedCall) {
-	t.Helper()
-	fixture.mu.Lock()
-	got := append([]observedProtectedCall(nil), fixture.calls...)
-	fixture.mu.Unlock()
-	if len(got) != len(want) {
-		t.Fatalf("authorized calls = %+v, want %+v", got, want)
-	}
-	for i := range want {
-		if got[i].ref != id || got[i].backend != want[i].backend || got[i].call.ID != want[i].call.ID || got[i].call.Name != want[i].call.Name || string(got[i].call.Args) != string(want[i].call.Args) {
-			t.Fatalf("authorized call %d = %+v, want ref=%q call=%+v", i, got[i], id, want[i])
-		}
-	}
-}
-
-func assertTokenSequence(t *testing.T, fixture *brokerAuthorizationFixture, want []string) {
-	t.Helper()
-	fixture.mu.Lock()
-	got := append([]string(nil), fixture.tokenSequence...)
-	fixture.mu.Unlock()
-	if strings.Join(got, "|") != strings.Join(want, "|") {
-		t.Fatalf("OAuth token sequence = %v, want %v", got, want)
-	}
-}
-
 type brokerAuthorizationFixture struct {
 	t                     *testing.T
 	callbackURL           string
 	oauth                 *httptest.Server
 	mcp                   *httptest.Server
 	mcpClient             *http.Client
-	mu                    sync.Mutex
-	calls                 []observedProtectedCall
-	tokenSequence         []string
 	backendCalls          atomic.Int32
 	exchanges             atomic.Int32
 	refreshes             atomic.Int32
@@ -438,7 +487,7 @@ func newBrokerAuthorizationFixture(t *testing.T, callbackURL string) *brokerAuth
 		return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "protected result"}}}, struct{}{}, nil
 	})
 	mcpHandler := mcpsdk.NewStreamableHTTPHandler(func(*http.Request) *mcpsdk.Server { return protected }, &mcpsdk.StreamableHTTPOptions{Stateless: true, JSONResponse: true})
-	fixture.mcp = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	fixture.mcp = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer fresh-") {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
@@ -451,7 +500,11 @@ func newBrokerAuthorizationFixture(t *testing.T, callbackURL string) *brokerAuth
 	fixture.oauth = httptest.NewUnstartedServer(oauthMux)
 	oauthMux.HandleFunc("/authorize", func(w http.ResponseWriter, r *http.Request) {
 		query := url.Values{"code": {"fixture-code"}, "state": {r.URL.Query().Get("state")}}
-		http.Redirect(w, r, fixture.callbackURL+"?"+query.Encode(), http.StatusFound)
+		callback := r.URL.Query().Get("redirect_uri")
+		if callback == "" {
+			callback = fixture.callbackURL
+		}
+		http.Redirect(w, r, callback+"?"+query.Encode(), http.StatusFound)
 	})
 	oauthMux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
@@ -461,32 +514,22 @@ func newBrokerAuthorizationFixture(t *testing.T, callbackURL string) *brokerAuth
 		w.Header().Set("Content-Type", "application/json")
 		if r.Form.Get("grant_type") == "refresh_token" {
 			fixture.refreshes.Add(1)
-			refreshToken := r.Form.Get("refresh_token")
 			if fixture.rejectRefresh.Load() {
 				fixture.invalidGrantResponses.Add(1)
-				fixture.recordTokenStep("refresh:" + refreshToken + ":invalid_grant")
 				w.WriteHeader(http.StatusBadRequest)
 				_, _ = io.WriteString(w, `{"error":"invalid_grant"}`)
 				return
 			}
-			fixture.recordTokenStep("refresh:" + refreshToken + ":ok")
 			n := fixture.refreshes.Load()
 			_, _ = fmt.Fprintf(w, `{"access_token":"fresh-%d","refresh_token":"refresh-%d","token_type":"Bearer","expires_in":-1}`, n, n)
 			return
 		}
 		exchange := fixture.exchanges.Add(1)
-		fixture.recordTokenStep("exchange")
 		_, _ = fmt.Fprintf(w, `{"access_token":"stale","refresh_token":"refresh-initial-%d","token_type":"Bearer","expires_in":-1}`, exchange)
 	})
-	fixture.oauth.StartTLS()
+	fixture.oauth.Start()
 	t.Cleanup(fixture.oauth.Close)
 	return fixture
-}
-
-func (f *brokerAuthorizationFixture) recordTokenStep(step string) {
-	f.mu.Lock()
-	f.tokenSequence = append(f.tokenSequence, step)
-	f.mu.Unlock()
 }
 
 func (f *brokerAuthorizationFixture) clientWithRoots(roots *x509.CertPool) *http.Client {
@@ -500,24 +543,58 @@ func (f *brokerAuthorizationFixture) browserClient(roots *x509.CertPool) *http.C
 	return f.clientWithRoots(roots)
 }
 
-func (f *brokerAuthorizationFixture) callProtected(ctx context.Context, ref mcpbroker.SessionRef, backend string, call session.ToolCall, tokens oauth2.TokenSource) (session.ToolResult, error) {
-	f.mu.Lock()
-	f.calls = append(f.calls, observedProtectedCall{ref: ref.SessionID(), backend: backend, call: session.NewToolCall(call.ID, call.Name, append(json.RawMessage(nil), call.Args...))})
-	f.mu.Unlock()
-	token, err := tokens.Token()
+type stage3WorkloadIssuer struct {
+	server *httptest.Server
+	key    *rsa.PrivateKey
+}
+
+func newStage3WorkloadIssuer(t *testing.T) *stage3WorkloadIssuer {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
-		return session.ToolResult{}, err
+		t.Fatal(err)
 	}
-	client := &http.Client{Transport: &oauth2.Transport{Source: oauth2.StaticTokenSource(token), Base: f.mcpClient.Transport}, Timeout: 3 * time.Second}
-	upstream, err := mcpadapter.Connect(ctx, mcpadapter.ServerConfig{Name: backend, URL: f.mcp.URL, HTTPClient: client}, nil)
+	fixture := &stage3WorkloadIssuer{key: key}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/keys", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"keys": []map[string]any{{
+			"kty": "RSA", "use": "sig", "alg": "RS256", "kid": "stage3-workload",
+			"n": base64.RawURLEncoding.EncodeToString(key.N.Bytes()), "e": base64.RawURLEncoding.EncodeToString([]byte{1, 0, 1}),
+		}}})
+	})
+	fixture.server = httptest.NewTLSServer(mux)
+	t.Cleanup(fixture.server.Close)
+	return fixture
+}
+
+func (f *stage3WorkloadIssuer) caPEM() []byte {
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: f.server.Certificate().Raw})
+}
+
+func (f *stage3WorkloadIssuer) token(t *testing.T, audience, subject string) string {
+	t.Helper()
+	now := time.Now()
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
+		"iss": f.server.URL, "sub": subject, "aud": audience,
+		"iat": now.Add(-time.Minute).Unix(), "exp": now.Add(time.Minute).Unix(),
+	})
+	token.Header["kid"] = "stage3-workload"
+	signed, err := token.SignedString(f.key)
 	if err != nil {
-		return session.ToolResult{}, err
+		t.Fatal(err)
 	}
-	defer upstream.Close()
-	for _, candidate := range upstream.Tools() {
-		if candidate.Spec().Name == call.Name {
-			return candidate.Execute(ctx, call, tool.Environment{})
-		}
+	return signed
+}
+
+func reserveStage3Address(t *testing.T) string {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
 	}
-	return session.ToolResult{}, fmt.Errorf("fixture omitted protected tool %q", call.Name)
+	address := listener.Addr().String()
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return address
 }

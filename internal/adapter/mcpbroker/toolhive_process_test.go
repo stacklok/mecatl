@@ -1125,7 +1125,7 @@ func TestToolHiveProtectedCallerRejectsCrossBackendCapabilityDrift(t *testing.T)
 	if err != nil || wanted != "github_enterprise.create_issue" {
 		t.Fatalf("protected advertised name = %q, %v", wanted, err)
 	}
-	caller := toolHiveProtectedCaller(httpServer.URL, nil)
+	caller := toolHiveProtectedCaller(httpServer.URL, nil, nil)
 	_, err = caller(t.Context(), SessionRef{}, "github_enterprise",
 		session.NewToolCall("call-1", "mcp__github_enterprise__create_issue", json.RawMessage(`{}`)),
 		oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "session-bearer", TokenType: "Bearer"}))
@@ -1154,7 +1154,7 @@ func TestToolHiveProtectedCallerInjectsSessionBearer(t *testing.T) {
 	}))
 	t.Cleanup(httpServer.Close)
 
-	caller := toolHiveProtectedCaller(httpServer.URL, nil)
+	caller := toolHiveProtectedCaller(httpServer.URL, nil, nil)
 	result, err := caller(t.Context(), SessionRef{}, "private", session.NewToolCall("call-1", "mcp__private__echo", json.RawMessage(`{"text":"hello"}`)), oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "session-bearer", TokenType: "Bearer"}))
 	if err != nil {
 		t.Fatalf("protected caller: %v", err)

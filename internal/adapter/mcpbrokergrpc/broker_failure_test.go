@@ -134,7 +134,7 @@ func TestSingletonBrokerRemediation_Scenario2_ProtectedContinuationNeverRebinds(
 	}
 }
 
-func TestSingletonBrokerRemediation_Scenario5_RestartBoundary(t *testing.T) {
+func TestRemoteBrokerTransport_RestartBoundaryStateLoss(t *testing.T) {
 	oldBroker := newFailureBroker()
 	oldConn, oldStop := failureBufServer(t, oldBroker, nil)
 	defer oldStop()
