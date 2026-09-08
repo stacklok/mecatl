@@ -209,15 +209,23 @@ func (hostilePeerConn) NewStream(context.Context, *grpc.StreamDesc, string, ...g
 
 func TestInitialProductionMCPBroker_RejectsNonObjectToolSchema(t *testing.T) {
 	t.Run("server", func(t *testing.T) {
-		remote := newRemote(t, invalidDescriptorBroker{})
+		broker := &invalidDescriptorBroker{}
+		remote := newRemote(t, broker)
 		if _, _, err := remote.AttachSession(t.Context(), "invalid-schema"); err == nil || status.Code(err) != codes.InvalidArgument {
 			t.Fatalf("AttachSession with boolean schema = %v, want invalid descriptor rejection", err)
 		}
+		if broker.attachment == nil || !broker.attachment.aborted {
+			t.Fatal("created logical attachment was not aborted after descriptor rejection")
+		}
 	})
 	t.Run("client", func(t *testing.T) {
-		client := mcpbrokergrpc.NewClient(malformedAttachConn{})
+		aborts := 0
+		client := mcpbrokergrpc.NewClient(malformedAttachConn{aborts: &aborts})
 		if _, _, err := client.AttachSession(t.Context(), "invalid-schema"); err == nil || !strings.Contains(err.Error(), "malformed tool descriptor") {
 			t.Fatalf("AttachSession with peer boolean schema = %v, want client descriptor rejection", err)
+		}
+		if aborts != 1 {
+			t.Fatalf("malformed created attachment aborts = %d, want 1", aborts)
 		}
 	})
 }
@@ -258,9 +266,16 @@ func goListDeps(t *testing.T, pkg string) string {
 	return string(output)
 }
 
-type malformedAttachConn struct{}
+type malformedAttachConn struct{ aborts *int }
 
-func (malformedAttachConn) Invoke(_ context.Context, _ string, _, reply any, _ ...grpc.CallOption) error {
+func (c malformedAttachConn) Invoke(_ context.Context, method string, _, reply any, _ ...grpc.CallOption) error {
+	if strings.HasSuffix(method, "/Abort") {
+		if c.aborts != nil {
+			*c.aborts++
+		}
+		*reply.(*brokerv1.AbortResponse) = brokerv1.AbortResponse{}
+		return nil
+	}
 	response := reply.(*brokerv1.AttachResponse)
 	*response = brokerv1.AttachResponse{
 		Handle:            "handle",
@@ -277,18 +292,27 @@ func (malformedAttachConn) NewStream(context.Context, *grpc.StreamDesc, string, 
 	return nil, errors.New("unexpected stream")
 }
 
-type invalidDescriptorBroker struct{}
+type invalidDescriptorBroker struct{ attachment *invalidDescriptorAttachment }
 
-func (invalidDescriptorBroker) AttachSession(context.Context, session.SessionID) (mcpbroker.Attachment, mcpbroker.AttachOutcome, error) {
-	return &invalidDescriptorAttachment{}, mcpbroker.AttachCreated, nil
+func (b *invalidDescriptorBroker) AttachSession(context.Context, session.SessionID) (mcpbroker.Attachment, mcpbroker.AttachOutcome, error) {
+	b.attachment = &invalidDescriptorAttachment{}
+	return b.attachment, mcpbroker.AttachCreated, nil
 }
-func (invalidDescriptorBroker) DeleteSession(context.Context, session.SessionID) (mcpbroker.DeleteOutcome, error) {
+func (*invalidDescriptorBroker) DeleteSession(context.Context, session.SessionID) (mcpbroker.DeleteOutcome, error) {
 	return mcpbroker.DeleteNotFound, nil
 }
 
-type invalidDescriptorAttachment struct{ attachment }
+type invalidDescriptorAttachment struct {
+	attachment
+	aborted bool
+}
 
-func (invalidDescriptorAttachment) Tools() []tool.Tool { return []tool.Tool{invalidSchemaTool{}} }
+func (a *invalidDescriptorAttachment) Abort(ctx context.Context) error {
+	a.aborted = true
+	return a.attachment.Abort(ctx)
+}
+
+func (*invalidDescriptorAttachment) Tools() []tool.Tool { return []tool.Tool{invalidSchemaTool{}} }
 
 type invalidSchemaTool struct{ serialTool }
 

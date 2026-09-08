@@ -21,16 +21,35 @@ var ErrBrokerBindingMismatch = errors.New("MCP broker binding mismatch")
 
 type localBrokerAttachment struct {
 	attachment brokercontract.Attachment
+	generation uint64
 	owned      bool
 }
 
-func (s *Service) brokerService() brokercontract.Service {
+func initialBrokerGeneration(broker brokercontract.Service) uint64 {
+	if broker == nil {
+		return 0
+	}
+	return 1
+}
+
+func (s *Service) brokerSnapshot() (brokercontract.Service, uint64) {
 	s.brokerGenerationMu.RLock()
 	defer s.brokerGenerationMu.RUnlock()
-	return s.brokerCurrent
+	return s.brokerCurrent, s.brokerGeneration
+}
+
+func (s *Service) brokerService() brokercontract.Service {
+	broker, _ := s.brokerSnapshot()
+	return broker
 }
 
 func (s *Service) brokerConfigured() bool { return s.brokerService() != nil }
+
+func (s *Service) brokerAttachmentGenerationFor(id session.SessionID) uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.brokerAttachmentGeneration[id]
+}
 
 func brokerTools(local *localBrokerAttachment) []tool.Tool {
 	if local == nil {
@@ -64,23 +83,41 @@ func (s *Service) openBrokerAttachment(ctx context.Context, id session.SessionID
 	}
 	s.mu.Lock()
 	existing := s.brokerAttachments[id]
+	existingGeneration := s.brokerAttachmentGeneration[id]
 	s.mu.Unlock()
 	if existing != nil {
 		if expectedBinding != "" && existing.Binding() != expectedBinding {
 			return nil, fmt.Errorf("%w: %w: %w for session %q", ErrFailedPrecondition, brokercontract.ErrStateUnavailable, ErrBrokerBindingMismatch, id)
 		}
-		return &localBrokerAttachment{attachment: existing}, nil
+		return &localBrokerAttachment{attachment: existing, generation: existingGeneration}, nil
 	}
 	attachment, _, err := broker.AttachSession(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("attach MCP broker session %q: %w", id, err)
 	}
-	local := &localBrokerAttachment{attachment: attachment, owned: true}
+	local := &localBrokerAttachment{attachment: attachment, generation: s.brokerGeneration, owned: true}
 	if expectedBinding == "" || attachment.Binding() == expectedBinding {
 		return local, nil
 	}
 	s.rollbackBrokerAttachment(context.Background(), local)
 	return nil, fmt.Errorf("%w: %w: %w for session %q", ErrFailedPrecondition, brokercontract.ErrStateUnavailable, ErrBrokerBindingMismatch, id)
+}
+
+func (s *Service) retireBrokerAttachment(id session.SessionID) {
+	s.mu.Lock()
+	attachment := s.brokerAttachments[id]
+	delete(s.brokerAttachments, id)
+	delete(s.brokerAttachmentGeneration, id)
+	s.mu.Unlock()
+	if attachment == nil {
+		return
+	}
+	closeCtx, cancel := context.WithTimeout(context.Background(), engineCloseTimeout)
+	_, err := attachment.Close(closeCtx)
+	cancel()
+	if err != nil && !errors.Is(err, brokercontract.ErrStateUnavailable) {
+		s.cfg.Diagnostics.Log(context.Background(), port.LevelWarn, "MCP broker attachment retirement failed")
+	}
 }
 
 // rebindBrokerAttachment adopts the live broker incarnation for a session whose
@@ -93,37 +130,54 @@ func (s *Service) openBrokerAttachment(ctx context.Context, id session.SessionID
 // is dropped here because its broker-side transaction died with the incarnation
 // that issued it. Live authorization control paths deliberately do NOT rebind:
 // they must hard-fail on a mismatch rather than resolve against fresh state.
-func (s *Service) rebindBrokerAttachment(ctx context.Context, sess *session.Session) (*localBrokerAttachment, error) {
-	if s.cfg.MCPBrokerFactory != nil {
-		s.brokerReplacementMu.Lock()
-		defer s.brokerReplacementMu.Unlock()
-		fresh, closeFresh, err := s.cfg.MCPBrokerFactory(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("%w: replace MCP broker client: %v", ErrInternal, err)
-		}
-		if fresh == nil || closeFresh == nil {
-			if closeFresh != nil {
-				_ = closeFresh()
+func (s *Service) rebindBrokerAttachment(ctx context.Context, sess *session.Session, failedGeneration uint64, replaceGeneration bool) (*localBrokerAttachment, error) {
+	s.brokerReplacementMu.Lock()
+	defer s.brokerReplacementMu.Unlock()
+	if s.brokerClosed {
+		return nil, fmt.Errorf("%w: MCP broker is closed", ErrUnavailable)
+	}
+	// A cached attachment belongs to the lost client generation. Remove it before
+	// publishing a replacement, or openBrokerAttachment would return the stale
+	// handle without touching the fresh broker.
+	s.retireBrokerAttachment(sess.ID)
+	if replaceGeneration && s.cfg.MCPBrokerFactory != nil {
+		_, currentGeneration := s.brokerSnapshot()
+		if currentGeneration == failedGeneration {
+			fresh, closeFresh, err := s.cfg.MCPBrokerFactory(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("%w: replace MCP broker client: %v", ErrInternal, err)
 			}
-			return nil, fmt.Errorf("%w: replacement MCP broker factory returned incomplete service", ErrInternal)
+			if fresh == nil || closeFresh == nil {
+				if closeFresh != nil {
+					_ = closeFresh()
+				}
+				return nil, fmt.Errorf("%w: replacement MCP broker factory returned incomplete service", ErrInternal)
+			}
+			s.brokerGenerationMu.Lock()
+			oldClose := s.brokerFactoryClose
+			if oldClose != nil {
+				_ = oldClose()
+			}
+			// brokerCurrent is published only after the old owner has closed, making
+			// the handoff atomic to all attachment readers.
+			s.brokerCurrent = fresh
+			s.brokerFactoryClose = closeFresh
+			s.brokerGeneration++
+			s.brokerGenerationMu.Unlock()
 		}
-		s.brokerGenerationMu.Lock()
-		oldClose := s.brokerFactoryClose
-		if oldClose != nil {
-			_ = oldClose()
-		}
-		// brokerCurrent is published only after the old owner has closed, making
-		// the handoff atomic to all attachment readers.
-		s.brokerCurrent = fresh
-		s.brokerFactoryClose = closeFresh
-		s.brokerGenerationMu.Unlock()
 	}
 	local, err := s.openBrokerAttachment(ctx, sess.ID, "", false)
 	if err != nil {
 		return nil, err
 	}
 	committed := false
-	defer s.finalizeBrokerAttachment(local, &committed)
+	persisted := false
+	defer func() {
+		s.finalizeBrokerAttachment(local, &committed)
+		if committed && !persisted {
+			s.retireBrokerAttachment(sess.ID)
+		}
+	}()
 	commitCtx, cancelCommit := context.WithTimeout(context.WithoutCancel(ctx), engineCloseTimeout)
 	commitErr := s.commitBrokerAttachment(commitCtx, sess.ID, local)
 	cancelCommit()
@@ -140,6 +194,7 @@ func (s *Service) rebindBrokerAttachment(ctx context.Context, sess *session.Sess
 	if err := s.saveSession(ctx, sess); err != nil {
 		return nil, fmt.Errorf("%w: persist rebound MCP broker attachment", ErrInternal)
 	}
+	persisted = true
 	return local, nil
 }
 
@@ -152,6 +207,7 @@ func (s *Service) commitBrokerAttachment(ctx context.Context, id session.Session
 	}
 	s.mu.Lock()
 	s.brokerAttachments[id] = local.attachment
+	s.brokerAttachmentGeneration[id] = local.generation
 	s.mu.Unlock()
 	local.owned = false
 	return nil

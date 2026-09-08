@@ -140,7 +140,7 @@ func parseFlags() config {
 	flag.DurationVar(&cfg.transport.DialTimeout, "broker-dial-timeout", cfg.transport.DialTimeout, "finite broker client connection deadline")
 	flag.DurationVar(&cfg.transport.RPCDeadline, "broker-rpc-deadline", cfg.transport.RPCDeadline, "finite non-Execute broker RPC deadline")
 	flag.DurationVar(&cfg.transport.ExecuteDeadline, "broker-execute-deadline", cfg.transport.ExecuteDeadline, "finite broker Execute deadline")
-	flag.DurationVar(&cfg.transport.HandleIdleTimeout, "broker-handle-idle-timeout", cfg.transport.HandleIdleTimeout, "absolute idle lease for broker handles and logical-session ownership")
+	flag.DurationVar(&cfg.transport.HandleIdleTimeout, "broker-handle-idle-timeout", cfg.transport.HandleIdleTimeout, "absolute idle lease for broker attachment handles")
 	flag.DurationVar(&cfg.transport.SweepInterval, "broker-sweep-interval", cfg.transport.SweepInterval, "broker retention sweep interval")
 	flag.DurationVar(&cfg.transport.CleanupTimeout, "broker-cleanup-timeout", cfg.transport.CleanupTimeout, "bounded broker attachment cleanup deadline")
 	flag.IntVar(&cfg.transport.MaxHandles, "broker-max-handles", cfg.transport.MaxHandles, "maximum retained broker attachment handles")
@@ -206,11 +206,7 @@ func run(ctx context.Context, cfg config, diagnostics port.Diagnostics) error {
 	select {
 	case <-ctx.Done():
 		return lifecycle.Close(context.Background())
-	case serveErr := <-errs:
-		if errors.Is(serveErr, http.ErrServerClosed) {
-			return nil
-		}
-		_ = lifecycle.Close(context.Background())
+	case <-errs:
 		return errors.New("broker listener stopped")
 	}
 }

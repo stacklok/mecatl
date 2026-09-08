@@ -45,6 +45,7 @@ type Config struct {
 	RPCDeadline        time.Duration
 	ExecuteDeadline    time.Duration
 	HandleIdleTimeout  time.Duration
+	OwnerRetention     time.Duration
 	SweepInterval      time.Duration
 	CleanupTimeout     time.Duration
 	MaxHandles         int
@@ -60,14 +61,14 @@ func DefaultConfig() Config {
 	return Config{
 		DialTimeout: 5 * time.Second, RPCDeadline: 10 * time.Second,
 		ExecuteDeadline: 2 * time.Minute, HandleIdleTimeout: 5 * time.Minute,
-		SweepInterval: 30 * time.Second, CleanupTimeout: 10 * time.Second,
+		OwnerRetention: 24 * time.Hour, SweepInterval: 30 * time.Second, CleanupTimeout: 10 * time.Second,
 		MaxHandles: defaultMaxHandles, MaxOwners: defaultMaxHandles, MaxReceipts: 4096, MaxReceiptBytes: 8 << 20, MaxPendingControls: 1024, MaxActiveExecutes: defaultMaxActiveExecutes,
 	}
 }
 
 func (c Config) valid() bool {
 	return c.DialTimeout > 0 && c.RPCDeadline > 0 && c.ExecuteDeadline > 0 &&
-		c.HandleIdleTimeout > 0 && c.SweepInterval > 0 && c.CleanupTimeout > 0 && c.MaxHandles > 0 && c.MaxOwners > 0 &&
+		c.HandleIdleTimeout > 0 && c.OwnerRetention > 0 && c.SweepInterval > 0 && c.CleanupTimeout > 0 && c.MaxHandles > 0 && c.MaxOwners > 0 &&
 		c.MaxReceipts > 0 && c.MaxReceiptBytes > 0 && c.MaxPendingControls > 0 && c.MaxActiveExecutes > 0
 }
 
@@ -139,6 +140,7 @@ type sessionOwner struct {
 	pending   int
 	handles   int
 	expiresAt time.Time
+	retiring  bool
 }
 
 type serverAttachment struct {
@@ -230,6 +232,9 @@ func (s *Server) bindSession(ctx context.Context, id session.SessionID) (*sessio
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	owner := s.owners[id]
+	if owner != nil && owner.retiring {
+		return nil, false, reasonStatus(codes.Unavailable, "broker session is being retired", brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_STATE_UNAVAILABLE, "")
+	}
 	if owner != nil && !principal.SameIdentity(&owner.principal) {
 		return nil, false, status.Error(codes.PermissionDenied, "broker session is not available")
 	}
@@ -238,7 +243,7 @@ func (s *Server) bindSession(ctx context.Context, id session.SessionID) (*sessio
 		if len(s.owners) >= s.cfg.MaxOwners {
 			return nil, false, reasonStatus(codes.ResourceExhausted, "broker session capacity reached", brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_CAPACITY_REACHED, "")
 		}
-		owner = &sessionOwner{principal: *principal, expiresAt: time.Now().Add(s.cfg.HandleIdleTimeout)}
+		owner = &sessionOwner{principal: *principal, expiresAt: time.Now().Add(s.cfg.OwnerRetention)}
 		s.owners[id] = owner
 		created = true
 	}
@@ -319,22 +324,22 @@ func (s *Server) Attach(ctx context.Context, req *brokerv1.AttachRequest) (*brok
 	}
 	desc, tools, err := descriptors(a.Tools())
 	if err != nil {
-		_, _ = a.Close(context.Background())
+		s.discardUnpublishedAttachment(a, outcome)
 		return nil, invalid(err.Error())
 	}
 	h, err := newHandle()
 	if err != nil {
-		_, _ = a.Close(context.Background())
+		s.discardUnpublishedAttachment(a, outcome)
 		return nil, status.Error(codes.Internal, "mint attachment handle")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		_, _ = a.Close(context.Background())
+		s.discardUnpublishedAttachment(a, outcome)
 		return nil, reasonStatus(codes.Unavailable, "broker state unavailable", brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_STATE_UNAVAILABLE, "")
 	}
 	if len(s.handles) >= s.maxHandles {
-		_, _ = a.Close(context.Background())
+		s.discardUnpublishedAttachment(a, outcome)
 		return nil, reasonStatus(codes.ResourceExhausted, "attachment handle capacity reached", brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_CAPACITY_REACHED, "")
 	}
 	_, enrollment := a.(mcpbroker.WorkspaceEnrollmentAttachment)
@@ -342,6 +347,16 @@ func (s *Server) Attach(ctx context.Context, req *brokerv1.AttachRequest) (*brok
 	s.handles[h] = &serverAttachment{attachment: a, principal: principal, logicalID: logicalID, tools: tools, expiresAt: now.Add(s.cfg.HandleIdleTimeout), changed: make(chan struct{}), receipts: make(map[session.ToolCallID]*executeReceipt)}
 	attached = true
 	return &brokerv1.AttachResponse{Binding: string(a.Binding()), Handle: h, Outcome: string(outcome), Tools: desc, BrokerIncarnation: s.incarnation, WorkspaceEnrollment: enrollment}, nil
+}
+
+func (s *Server) discardUnpublishedAttachment(attachment mcpbroker.Attachment, outcome mcpbroker.AttachOutcome) {
+	ctx, cancel := context.WithTimeout(context.Background(), s.cfg.CleanupTimeout)
+	defer cancel()
+	if outcome == mcpbroker.AttachCreated {
+		_ = attachment.Abort(ctx)
+		return
+	}
+	_, _ = attachment.Close(ctx)
 }
 
 func (s *Server) checkIncarnation(got string, allowEmpty bool) error {
@@ -355,7 +370,7 @@ func (s *Server) checkIncarnation(got string, allowEmpty bool) error {
 		return nil
 	}
 	if got == "" || got != s.incarnation {
-		return reasonStatus(codes.FailedPrecondition, "broker incarnation mismatch", brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_STATE_UNAVAILABLE, "")
+		return reasonStatus(codes.FailedPrecondition, "broker incarnation mismatch", brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_INCARNATION_LOST, "")
 	}
 	return nil
 }
@@ -497,6 +512,11 @@ func (s *Server) sweep() {
 		case now := <-ticker.C:
 			s.mu.Lock()
 			var expired []*serverAttachment
+			type ownerRetirement struct {
+				id    session.SessionID
+				owner *sessionOwner
+			}
+			var retirements []ownerRetirement
 			for handle, attachment := range s.handles {
 				if attachment.active == 0 && !now.Before(attachment.expiresAt) {
 					releaseReceiptsLocked(attachment)
@@ -508,16 +528,37 @@ func (s *Server) sweep() {
 				}
 			}
 			for id, owner := range s.owners {
-				if owner.pending == 0 && owner.handles == 0 && !now.Before(owner.expiresAt) {
-					s.removeOwnerLocked(id)
+				if owner.pending == 0 && owner.handles == 0 && !owner.retiring && !now.Before(owner.expiresAt) {
+					owner.retiring = true
+					retirements = append(retirements, ownerRetirement{id: id, owner: owner})
 				}
 			}
 			s.mu.Unlock()
 			for _, attachment := range expired {
 				s.closeAttachment(attachment)
 			}
+			for _, retirement := range retirements {
+				s.retireOwner(retirement.id, retirement.owner)
+			}
 		}
 	}
+}
+
+func (s *Server) retireOwner(id session.SessionID, owner *sessionOwner) {
+	ctx, cancel := context.WithTimeout(context.Background(), s.cfg.CleanupTimeout)
+	_, err := s.service.DeleteSession(ctx, id)
+	cancel()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.owners[id] != owner {
+		return
+	}
+	if err == nil {
+		s.removeOwnerLocked(id)
+		return
+	}
+	owner.retiring = false
+	owner.expiresAt = time.Now().Add(s.cfg.SweepInterval)
 }
 
 func (s *Server) closeAttachment(attachment *serverAttachment) {
@@ -717,7 +758,7 @@ func (s *Server) Execute(ctx context.Context, req *brokerv1.ExecuteRequest) (*br
 	} else {
 		if len(a.receipts) >= s.cfg.MaxReceipts || a.receiptBytes+receiptReservationBytes(call) > s.cfg.MaxReceiptBytes {
 			s.mu.Unlock()
-			return nil, reasonStatus(codes.ResourceExhausted, "broker receipt capacity reached", brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_CAPACITY_REACHED, "")
+			return nil, reasonStatus(codes.ResourceExhausted, "broker receipt capacity reached", brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_CAPACITY_REACHED, executeMethod)
 		}
 		receipt = &executeReceipt{digest: digest, bytes: receiptReservationBytes(call), started: true, done: make(chan struct{})}
 		a.receipts[call.ID] = receipt
@@ -1180,22 +1221,39 @@ func (c *Client) AttachSession(ctx context.Context, id session.SessionID) (mcpbr
 	if r.GetHandle() == "" || r.GetBinding() == "" || r.GetBrokerIncarnation() == "" || !validAttachOutcome(r.GetOutcome()) {
 		return nil, "", errors.New("mcpbrokergrpc: malformed attach response")
 	}
-	c.mu.Lock()
-	if c.incarnation != "" && c.incarnation != r.GetBrokerIncarnation() {
-		c.mu.Unlock()
-		return nil, "", mcpbroker.ErrStateUnavailable
-	}
-	c.incarnation = r.GetBrokerIncarnation()
-	c.mu.Unlock()
 	tools, e := remoteTools(c, r)
 	if e != nil {
+		c.discardAttachResponse(r)
 		return nil, "", e
 	}
 	base := &clientAttachment{client: c, handle: r.GetHandle(), binding: session.ExternalBinding(r.GetBinding()), incarnation: r.GetBrokerIncarnation(), tools: tools}
+	c.mu.Lock()
+	if c.incarnation != "" && c.incarnation != r.GetBrokerIncarnation() {
+		c.mu.Unlock()
+		c.discardAttachResponse(r)
+		return nil, "", errors.Join(mcpbroker.ErrStateUnavailable, mcpbroker.ErrBrokerIncarnationLost)
+	}
+	c.incarnation = r.GetBrokerIncarnation()
+	c.mu.Unlock()
 	if r.GetWorkspaceEnrollment() {
 		return &clientEnrollmentAttachment{clientAttachment: base}, mcpbroker.AttachOutcome(r.GetOutcome()), nil
 	}
 	return base, mcpbroker.AttachOutcome(r.GetOutcome()), nil
+}
+
+func (c *Client) discardAttachResponse(response *brokerv1.AttachResponse) {
+	attachment := &clientAttachment{
+		client:      c,
+		handle:      response.GetHandle(),
+		incarnation: response.GetBrokerIncarnation(),
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), c.cfg.RPCDeadline)
+	defer cancel()
+	if response.GetOutcome() == string(mcpbroker.AttachCreated) {
+		_ = attachment.Abort(ctx)
+		return
+	}
+	_, _ = attachment.Close(ctx)
 }
 
 // DeleteSession is unavailable remotely because remote deletion requires an exact
@@ -1468,10 +1526,15 @@ func brokerReason(err error) (brokerv1.BrokerErrorReason, string, bool, error) {
 	}
 	switch found.GetReason() {
 	case brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_STATE_UNAVAILABLE,
+		brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_INCARNATION_LOST,
 		brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_ATTACHMENT_CLOSED,
 		brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_AUTHORIZATION_NOT_FOUND:
 		if found.GetDispatchMethod() != "" {
 			return 0, "", false, errors.New("mcpbrokergrpc: malformed broker error reason")
+		}
+	case brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_CAPACITY_REACHED:
+		if found.GetDispatchMethod() != "" && found.GetDispatchMethod() != executeMethod {
+			return 0, "", false, errors.New("mcpbrokergrpc: malformed capacity reason")
 		}
 	case brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_DISPATCH_NOT_STARTED:
 		if found.GetDispatchMethod() != executeMethod {
@@ -1485,12 +1548,14 @@ func brokerReason(err error) (brokerv1.BrokerErrorReason, string, bool, error) {
 
 func dispatchNotStarted(err error) bool {
 	reason, method, ok, protocolErr := brokerReason(err)
-	return protocolErr == nil && ok && reason == brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_DISPATCH_NOT_STARTED && method == executeMethod
+	return protocolErr == nil && ok && method == executeMethod &&
+		(reason == brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_DISPATCH_NOT_STARTED ||
+			reason == brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_CAPACITY_REACHED)
 }
 
 func isDefinitiveSessionLoss(err error) bool {
 	reason, _, ok, protocolErr := brokerReason(err)
-	return protocolErr == nil && ok && reason == brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_STATE_UNAVAILABLE
+	return protocolErr == nil && ok && (reason == brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_STATE_UNAVAILABLE || reason == brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_INCARNATION_LOST)
 }
 
 func clientError(err error) error {
@@ -1507,10 +1572,14 @@ func clientError(err error) error {
 	switch reason {
 	case brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_STATE_UNAVAILABLE:
 		return mcpbroker.ErrStateUnavailable
+	case brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_INCARNATION_LOST:
+		return errors.Join(mcpbroker.ErrStateUnavailable, mcpbroker.ErrBrokerIncarnationLost)
 	case brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_ATTACHMENT_CLOSED:
 		return mcpbroker.ErrAttachmentClosed
 	case brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_AUTHORIZATION_NOT_FOUND:
 		return mcpbroker.ErrAuthorizationNotFound
+	case brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_CAPACITY_REACHED:
+		return mcpbroker.ErrCapacity
 	case brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_DISPATCH_NOT_STARTED:
 		return err
 	default:

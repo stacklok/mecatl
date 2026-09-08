@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -35,6 +37,84 @@ func TestServerLogicalOwnerCapacityRefusesWithoutTakeover(t *testing.T) {
 	}
 	if _, err := server.Attach(ctx, &brokerv1.AttachRequest{SessionId: "owner-one"}); err != nil {
 		t.Fatalf("same owner reattach: %v", err)
+	}
+}
+
+func TestHandleCapacityAbortsRejectedCreatedLogicalSession(t *testing.T) {
+	cfg := mcpbrokergrpc.DefaultConfig()
+	cfg.MaxHandles = 1
+	broker := &abortCountingBroker{}
+	server, err := mcpbrokergrpc.NewServerWithConfig(broker, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = server.Shutdown(context.Background()) })
+	ctx := session.WithPrincipal(t.Context(), &session.Principal{Subject: "owner-a"})
+	if _, err := server.Attach(ctx, &brokerv1.AttachRequest{SessionId: "accepted"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := server.Attach(ctx, &brokerv1.AttachRequest{SessionId: "rejected"}); status.Code(err) != codes.ResourceExhausted {
+		t.Fatalf("second attach = %v, want ResourceExhausted", err)
+	}
+	if got := broker.aborted.Load(); got != 1 {
+		t.Fatalf("rejected created attachments aborted = %d, want 1", got)
+	}
+}
+
+type abortCountingBroker struct{ aborted atomic.Int32 }
+
+func (b *abortCountingBroker) AttachSession(context.Context, session.SessionID) (mcpbroker.Attachment, mcpbroker.AttachOutcome, error) {
+	return &abortCountingAttachment{owner: b}, mcpbroker.AttachCreated, nil
+}
+
+func (*abortCountingBroker) DeleteSession(context.Context, session.SessionID) (mcpbroker.DeleteOutcome, error) {
+	return mcpbroker.DeleteNotFound, nil
+}
+
+type abortCountingAttachment struct {
+	attachment
+	owner *abortCountingBroker
+}
+
+func (a *abortCountingAttachment) Abort(ctx context.Context) error {
+	a.owner.aborted.Add(1)
+	return a.attachment.Abort(ctx)
+}
+
+func TestRetiredLogicalOwnerReleasesCapacityForDifferentSession(t *testing.T) {
+	cfg := mcpbrokergrpc.DefaultConfig()
+	cfg.MaxOwners = 1
+	cfg.HandleIdleTimeout = 15 * time.Millisecond
+	cfg.OwnerRetention = 30 * time.Millisecond
+	cfg.SweepInterval = 5 * time.Millisecond
+	server, err := mcpbrokergrpc.NewServerWithConfig(newBroker(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = server.Shutdown(context.Background()) })
+	ctx := session.WithPrincipal(t.Context(), &session.Principal{Subject: "owner-a"})
+	if _, err := server.Attach(ctx, &brokerv1.AttachRequest{SessionId: "retiring-owner"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := server.Attach(ctx, &brokerv1.AttachRequest{SessionId: "replacement-owner"}); status.Code(err) != codes.ResourceExhausted {
+		t.Fatalf("capacity before retirement = %v, want ResourceExhausted", err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		attached, attachErr := server.Attach(ctx, &brokerv1.AttachRequest{SessionId: "replacement-owner"})
+		if attachErr == nil {
+			if attached.GetOutcome() != string(mcpbroker.AttachCreated) {
+				t.Fatalf("replacement attach outcome = %q", attached.GetOutcome())
+			}
+			break
+		}
+		if status.Code(attachErr) != codes.ResourceExhausted {
+			t.Fatalf("capacity while retirement pending = %v", attachErr)
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("retired logical owner did not release capacity")
+		}
+		time.Sleep(cfg.SweepInterval)
 	}
 }
 

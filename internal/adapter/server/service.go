@@ -856,7 +856,11 @@ type Service struct {
 	cfg                 Config
 	brokerFactoryClose  func() error
 	brokerCurrent       brokercontract.Service
+	brokerGeneration    uint64
 	brokerReplacementMu sync.Mutex
+	// brokerClosed is protected by brokerReplacementMu and permanently fences
+	// client replacement once Service shutdown starts.
+	brokerClosed bool
 	// brokerGenerationMu protects the published broker client generation. Readers
 	// hold it while attaching or deleting so replacement cannot close a generation
 	// underneath an in-flight operation.
@@ -919,8 +923,9 @@ type Service struct {
 	// local detach, and permanent logical deletion for one canonical session ID;
 	// it is separate from runEntryMu because engine rebuilds may already hold that
 	// run-entry lock.
-	brokerAttachments map[session.SessionID]brokercontract.Attachment
-	brokerMu          keyedMutex
+	brokerAttachments          map[session.SessionID]brokercontract.Attachment
+	brokerAttachmentGeneration map[session.SessionID]uint64
+	brokerMu                   keyedMutex
 	// authorizationExpiry is Service-owned and guarded by mu.
 	authorizationExpiry map[session.SessionID]*authorizationExpiry
 	// beforeAuthorizationContinuationStart is an inert test synchronization seam.
@@ -1376,27 +1381,29 @@ func NewServiceContext(ctx context.Context, cfg Config) (*Service, error) {
 	}
 	_, shutdownCancel := context.WithCancel(context.Background())
 	svc := &Service{
-		cfg:                 cfg,
-		brokerFactoryClose:  cfg.MCPBrokerClose,
-		brokerCurrent:       cfg.MCPBroker,
-		placementBinder:     placementBinder,
-		shutdownCancel:      shutdownCancel,
-		runs:                make(map[session.SessionID]*runState),
-		teams:               make(map[string]*teamState),
-		sessionEngines:      make(map[session.SessionID]*sessionEngine),
-		brokerAttachments:   make(map[session.SessionID]brokercontract.Attachment),
-		authorizationExpiry: make(map[session.SessionID]*authorizationExpiry),
-		sessionEnvironments: make(map[session.SessionID]tool.Environment),
-		reservedIDs:         make(map[session.SessionID]struct{}),
-		runEntryGenerations: make(map[session.SessionID]uint64),
-		replayedApprovals:   make(map[session.SessionID]struct{}),
-		steerMsgIDs:         make(map[session.SessionID][]steerMsgID),
-		heldLeases:          make(map[session.SessionID]*heldLease),
-		lostOwnership:       make(map[session.SessionID]struct{}),
-		cleanupTokenKey:     cleanupTokenKey,
-		cleanupPlans:        make(map[string]cleanupTokenPayload),
-		cleanupJobs:         make(map[string]cleanupJobRecord),
-		subscriptions:       make(map[session.SessionID]map[int64]chan session.Event),
+		cfg:                        cfg,
+		brokerFactoryClose:         cfg.MCPBrokerClose,
+		brokerCurrent:              cfg.MCPBroker,
+		brokerGeneration:           initialBrokerGeneration(cfg.MCPBroker),
+		placementBinder:            placementBinder,
+		shutdownCancel:             shutdownCancel,
+		runs:                       make(map[session.SessionID]*runState),
+		teams:                      make(map[string]*teamState),
+		sessionEngines:             make(map[session.SessionID]*sessionEngine),
+		brokerAttachments:          make(map[session.SessionID]brokercontract.Attachment),
+		brokerAttachmentGeneration: make(map[session.SessionID]uint64),
+		authorizationExpiry:        make(map[session.SessionID]*authorizationExpiry),
+		sessionEnvironments:        make(map[session.SessionID]tool.Environment),
+		reservedIDs:                make(map[session.SessionID]struct{}),
+		runEntryGenerations:        make(map[session.SessionID]uint64),
+		replayedApprovals:          make(map[session.SessionID]struct{}),
+		steerMsgIDs:                make(map[session.SessionID][]steerMsgID),
+		heldLeases:                 make(map[session.SessionID]*heldLease),
+		lostOwnership:              make(map[session.SessionID]struct{}),
+		cleanupTokenKey:            cleanupTokenKey,
+		cleanupPlans:               make(map[string]cleanupTokenPayload),
+		cleanupJobs:                make(map[string]cleanupJobRecord),
+		subscriptions:              make(map[session.SessionID]map[int64]chan session.Event),
 	}
 	svc.titleCoordinator = buildTitleCoordinator(svc, cfg)
 	// Narrow the durable log to the cursor seam once (ADR 0250). A backend that
@@ -2779,6 +2786,7 @@ func (s *Service) closeSessionLocal(id session.SessionID) {
 	}
 	brokerAttachment := s.brokerAttachments[id]
 	delete(s.brokerAttachments, id)
+	delete(s.brokerAttachmentGeneration, id)
 	// Drop any per-session environment override too: it closes over the (now
 	// disconnecting) connection, so it must not outlive the session.
 	delete(s.sessionEnvironments, id)
@@ -2874,6 +2882,7 @@ func (s *Service) Close() {
 	// and before engine-close so runs unblock promptly rather than waiting on
 	// the full shutdown sequence.
 	s.shutdownCancel()
+	s.closeBrokerAdmission()
 
 	s.prepareAuthorizationClose()
 
@@ -2941,6 +2950,7 @@ func (s *Service) Close() {
 	s.sessionEngines = make(map[session.SessionID]*sessionEngine)
 	brokerAttachments := s.brokerAttachments
 	s.brokerAttachments = make(map[session.SessionID]brokercontract.Attachment)
+	s.brokerAttachmentGeneration = make(map[session.SessionID]uint64)
 	// Drop all per-session environment overrides on shutdown; they hold no resources
 	// of their own (the underlying connection is closed separately) but must not
 	// linger past the Service.
@@ -3047,9 +3057,16 @@ func (s *Service) Drain() {
 	}
 }
 
+func (s *Service) closeBrokerAdmission() {
+	s.brokerReplacementMu.Lock()
+	s.brokerClosed = true
+	s.brokerReplacementMu.Unlock()
+}
+
 func (s *Service) closeBrokerGeneration() {
 	s.brokerReplacementMu.Lock()
 	defer s.brokerReplacementMu.Unlock()
+	s.brokerClosed = true
 	s.brokerGenerationMu.Lock()
 	defer s.brokerGenerationMu.Unlock()
 	if s.brokerFactoryClose != nil {

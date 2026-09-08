@@ -10,9 +10,11 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -137,6 +139,58 @@ func TestSingletonBrokerRemediation_Scenario3_PublicListenerBoundsRejectBeforeCa
 	if err != nil || result.Content != "ok" || executes.Load() != 1 {
 		t.Fatalf("bounded gRPC Execute = %#v, %v; dispatches=%d", result, err, executes.Load())
 	}
+}
+
+func TestPublicHandlerRejectsBodyCompletingAfterCallbackDeadline(t *testing.T) {
+	var callbacks atomic.Int32
+	handler := PublicHandler(http.NotFoundHandler(), http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		callbacks.Add(1)
+		w.WriteHeader(http.StatusNoContent)
+	}), PublicListenerConfig{CallbackTimeout: 20 * time.Millisecond, MaxCallbackBytes: 1024})
+
+	body := &delayedCompleteBody{data: []byte("code=late"), release: make(chan struct{})}
+	request := httptest.NewRequest(http.MethodPost, "https://example.com/callback", body)
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.ContentLength = int64(len(body.data))
+	recorder := httptest.NewRecorder()
+	started := time.Now()
+	handler.ServeHTTP(recorder, request)
+	if elapsed := time.Since(started); elapsed >= 100*time.Millisecond {
+		t.Fatalf("deadline response took %v, want prompt rejection", elapsed)
+	}
+	if recorder.Code != http.StatusRequestTimeout {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusRequestTimeout)
+	}
+	if !body.closed.Load() {
+		t.Fatal("deadline did not close the in-flight callback body")
+	}
+	if callbacks.Load() != 0 {
+		t.Fatalf("late body reached callback handler %d times", callbacks.Load())
+	}
+}
+
+type delayedCompleteBody struct {
+	data    []byte
+	release chan struct{}
+	once    sync.Once
+	closed  atomic.Bool
+	sent    atomic.Bool
+}
+
+func (b *delayedCompleteBody) Read(dst []byte) (int, error) {
+	if b.sent.Swap(true) {
+		return 0, io.EOF
+	}
+	<-b.release
+	return copy(dst, b.data), nil
+}
+
+func (b *delayedCompleteBody) Close() error {
+	b.once.Do(func() {
+		b.closed.Store(true)
+		close(b.release)
+	})
+	return nil
 }
 
 func assertSlowOrIncompleteRejected(t *testing.T, address string, roots *x509.CertPool, slow bool) {

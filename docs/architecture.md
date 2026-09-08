@@ -206,8 +206,12 @@ completed, forbids an automatic repeat, and directs it to reconcile through a kn
 status/read path before seeking explicit operator direction when the outcome cannot be established.
 Both broker-enabled main and per-session engine factories carry this instruction; disabled
 engines do not. Explicit close and idle reclamation close only the attachment, not its
-logical broker session. A fresh client may start a new pre-prompt enrollment after restart,
-but a live protected-call authorization never rebinds. This is a single-process failure
+logical broker session. Workload ownership is retained for that logical state's full retention
+window; retirement deletes the logical state before releasing its owner slot, so a different
+workload cannot inherit retained grants through session-ID reuse. Concurrent pre-prompt
+recovery attempts coalesce on the first confirmed client-generation replacement rather than
+closing a replacement that another session has already adopted. A fresh client may start a new
+pre-prompt enrollment after restart, but a live protected-call authorization never rebinds. This is a single-process failure
 boundary, not replica interchangeability, restart durability, callback failover,
 exactly-once effects, or HA ([ADR 0313](adr/0313-process-bound-remote-mcp-broker.md),
 [ADR 0315](adr/0315-bounded-singleton-mcp-broker-correctness.md)).

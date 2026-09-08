@@ -70,6 +70,14 @@ func NewProduction(ctx context.Context, cfg ProductionConfig) (*Lifecycle, error
 	if err := ValidateTransport(cfg.PublicAddress, cfg.TLSConfig); err != nil {
 		return nil, err
 	}
+	transport := cfg.Transport
+	if transport == (mcpbrokergrpc.Config{}) {
+		transport = mcpbrokergrpc.DefaultConfig()
+	}
+	if cfg.RuntimeLimits.LogicalRetention > 0 {
+		transport.OwnerRetention = cfg.RuntimeLimits.LogicalRetention
+	}
+	cfg.Transport = transport
 	callbackPath, err := callbackPath(cfg.ToolHive.CallbackURL)
 	if err != nil {
 		return nil, err

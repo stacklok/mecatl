@@ -699,11 +699,24 @@ func TestSingletonBrokerRemediation_Scenario1_DispatchClassificationIsConservati
 			}
 		})
 	}
+	client := mcpbrokergrpc.NewClient(dispatchProofConn{method: brokerv1.BrokerService_Execute_FullMethodName, reason: brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_CAPACITY_REACHED})
+	attached, _, err := client.AttachSession(t.Context(), "capacity-proof")
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := session.NewToolCall("capacity-call", "read", []byte(`{}`))
+	result, err := attached.Tools()[0].Execute(t.Context(), call, tool.Environment{})
+	if !errors.Is(err, mcpbroker.ErrCapacity) || result.CallID != "" {
+		t.Fatalf("pre-dispatch capacity = %#v, %v, want ordinary capacity error", result, err)
+	}
 }
 
 const ambiguousOutcomeText = "remote tool outcome is unknown because the broker response was lost; the operation may already have completed. Do not automatically repeat it. Reconcile through a safe status/read path first; if unavailable, report the uncertainty and seek operator direction."
 
-type dispatchProofConn struct{ method string }
+type dispatchProofConn struct {
+	method string
+	reason brokerv1.BrokerErrorReason
+}
 
 func (c dispatchProofConn) Invoke(_ context.Context, method string, _, reply any, _ ...grpc.CallOption) error {
 	if strings.HasSuffix(method, "/Attach") {
@@ -714,7 +727,11 @@ func (c dispatchProofConn) Invoke(_ context.Context, method string, _, reply any
 	if c.method == "" {
 		return st.Err()
 	}
-	withDetail, err := st.WithDetails(&brokerv1.BrokerErrorDetail{Reason: brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_DISPATCH_NOT_STARTED, DispatchMethod: c.method})
+	reason := c.reason
+	if reason == brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_UNSPECIFIED {
+		reason = brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_DISPATCH_NOT_STARTED
+	}
+	withDetail, err := st.WithDetails(&brokerv1.BrokerErrorDetail{Reason: reason, DispatchMethod: c.method})
 	if err != nil {
 		return err
 	}
@@ -809,6 +826,106 @@ func TestSingletonBrokerRemediation_Scenario2_BoundedAdmissionAcrossBrokerRegist
 			t.Fatalf("first lifecycle control: %v", err)
 		}
 	})
+}
+
+func TestSingletonBrokerRemediation_OwnershipOutlivesExpiredHandles(t *testing.T) {
+	cfg := shortConfig()
+	cfg.HandleIdleTimeout = 20 * time.Millisecond
+	cfg.OwnerRetention = 100 * time.Millisecond
+	cfg.SweepInterval = 5 * time.Millisecond
+	local := newFailureBroker()
+	server, err := mcpbrokergrpc.NewServerWithConfig(local, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = server.Shutdown(context.Background()) })
+
+	ownerCtx := session.WithPrincipal(t.Context(), &session.Principal{Subject: "workload-a"})
+	first, err := server.Attach(ownerCtx, &brokerv1.AttachRequest{SessionId: "retained-owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-local.closedFor(session.ExternalBinding(first.GetBinding())):
+	case <-time.After(testWait):
+		t.Fatal("idle attachment was not reclaimed")
+	}
+
+	otherCtx := session.WithPrincipal(t.Context(), &session.Principal{Subject: "workload-b"})
+	if _, err := server.Attach(otherCtx, &brokerv1.AttachRequest{SessionId: "retained-owner"}); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("other workload attach after handle expiry = %v, want PermissionDenied", err)
+	}
+	deadline := time.Now().Add(testWait)
+	for {
+		reattached, attachErr := server.Attach(otherCtx, &brokerv1.AttachRequest{SessionId: "retained-owner"})
+		if attachErr == nil {
+			if reattached.GetBinding() == first.GetBinding() || reattached.GetOutcome() != string(mcpbroker.AttachCreated) {
+				t.Fatalf("post-retention attach = binding %q outcome %q, want fresh logical state", reattached.GetBinding(), reattached.GetOutcome())
+			}
+			break
+		}
+		if status.Code(attachErr) != codes.PermissionDenied && status.Code(attachErr) != codes.Unavailable {
+			t.Fatalf("post-retention attach = %v", attachErr)
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("retired logical state did not release workload ownership")
+		}
+		time.Sleep(cfg.SweepInterval)
+	}
+}
+
+func TestOwnerRetirementRetriesDeletionBeforeReleasingCapacity(t *testing.T) {
+	cfg := shortConfig()
+	cfg.MaxOwners = 1
+	cfg.HandleIdleTimeout = 15 * time.Millisecond
+	cfg.OwnerRetention = 25 * time.Millisecond
+	cfg.SweepInterval = 5 * time.Millisecond
+	local := newFailureBroker()
+	local.deleteFails.Store(true)
+	server, err := mcpbrokergrpc.NewServerWithConfig(local, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = server.Shutdown(context.Background()) })
+	ownerCtx := session.WithPrincipal(t.Context(), &session.Principal{Subject: "owner-a"})
+	if _, err := server.Attach(ownerCtx, &brokerv1.AttachRequest{SessionId: "retirement-retry"}); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(testWait)
+	for local.deleteCalls.Load() == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("owner retirement deletion was not attempted")
+		}
+		time.Sleep(cfg.SweepInterval)
+	}
+	if _, err := server.Attach(ownerCtx, &brokerv1.AttachRequest{SessionId: "capacity-waiter"}); status.Code(err) != codes.ResourceExhausted {
+		t.Fatalf("capacity during failed retirement = %v, want ResourceExhausted", err)
+	}
+	otherCtx := session.WithPrincipal(t.Context(), &session.Principal{Subject: "owner-b"})
+	if _, err := server.Attach(otherCtx, &brokerv1.AttachRequest{SessionId: "retirement-retry"}); status.Code(err) != codes.PermissionDenied && status.Code(err) != codes.Unavailable {
+		t.Fatalf("takeover during failed retirement = %v", err)
+	}
+	failedAttempts := local.deleteCalls.Load()
+	local.deleteFails.Store(false)
+	for {
+		attached, attachErr := server.Attach(ownerCtx, &brokerv1.AttachRequest{SessionId: "capacity-waiter"})
+		if attachErr == nil {
+			if attached.GetOutcome() != string(mcpbroker.AttachCreated) {
+				t.Fatalf("capacity waiter outcome = %q", attached.GetOutcome())
+			}
+			break
+		}
+		if status.Code(attachErr) != codes.ResourceExhausted {
+			t.Fatalf("capacity retry = %v", attachErr)
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("successful deletion did not release capacity")
+		}
+		time.Sleep(cfg.SweepInterval)
+	}
+	if local.deleteCalls.Load() <= failedAttempts {
+		t.Fatal("owner retirement was not retried after deletion failure")
+	}
 }
 
 func TestSingletonBrokerRemediation_Scenario2_RetentionAndOwnership(t *testing.T) {
@@ -982,6 +1099,8 @@ type failureBroker struct {
 	executeExited chan struct{}
 	blockClose    chan struct{}
 	closeEntered  chan struct{}
+	deleteCalls   atomic.Int32
+	deleteFails   atomic.Bool
 }
 
 func newFailureBroker() *failureBroker {
@@ -1004,6 +1123,10 @@ func (b *failureBroker) AttachSession(_ context.Context, id session.SessionID) (
 	return a.peer(), mcpbroker.AttachCreated, nil
 }
 func (b *failureBroker) DeleteSession(_ context.Context, id session.SessionID) (mcpbroker.DeleteOutcome, error) {
+	b.deleteCalls.Add(1)
+	if b.deleteFails.Load() {
+		return "", errors.New("delete unavailable")
+	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.sessions[id] == nil {

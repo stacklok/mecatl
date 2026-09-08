@@ -20,6 +20,11 @@ var (
 	// state cannot be recovered. Callers should resolve a parked authorization
 	// deterministically rather than silently creating a replacement transaction.
 	ErrStateUnavailable = errors.New("mcp broker state unavailable")
+	// ErrBrokerIncarnationLost marks structured proof from a remote broker that
+	// the client's pinned process incarnation no longer serves the request. It is
+	// always returned together with ErrStateUnavailable; generic transport loss
+	// must never satisfy this marker.
+	ErrBrokerIncarnationLost = errors.New("mcp broker incarnation lost")
 	// ErrCapacity means admission was refused without evicting existing authority.
 	ErrCapacity = errors.New("mcp broker capacity reached")
 	// ErrAttachmentClosed means an operation used a locally closed attachment.

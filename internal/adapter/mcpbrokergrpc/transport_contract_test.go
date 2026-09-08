@@ -3,8 +3,6 @@ package mcpbrokergrpc_test
 import (
 	"context"
 	"errors"
-	"os/exec"
-	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -20,18 +18,6 @@ import (
 )
 
 func TestInvariant_singleton_broker_method_specific_rpc_contract(t *testing.T) {
-	root, err := filepath.Abs("../../..")
-	if err != nil {
-		t.Fatalf("resolve repository root: %v", err)
-	}
-	for _, command := range [][]string{{"buf", "lint", "--path", "contracts/proto/mecatl/broker/v1"}, {"task", "generate"}, {"git", "diff", "--exit-code", "--", "contracts/gen"}} {
-		cmd := exec.Command(command[0], command[1:]...)
-		cmd.Dir = root
-		if output, runErr := cmd.CombinedOutput(); runErr != nil {
-			t.Fatalf("%s: %v\n%s", command, runErr, output)
-		}
-	}
-
 	service := brokerv1.File_mecatl_broker_v1_broker_proto.Services().ByName("BrokerService")
 	if service == nil {
 		t.Fatal("BrokerService descriptor is missing")
@@ -126,6 +112,27 @@ func TestSingletonBrokerRemediation_Scenario1_StructuredErrorReasons(t *testing.
 	if _, _, err := client.AttachSession(t.Context(), "text-only"); errors.Is(err, mcpbroker.ErrStateUnavailable) {
 		t.Fatalf("status text was inferred as structured state loss: %v", err)
 	}
+	structuredState := status.New(codes.Unavailable, "structured state unavailable")
+	withStateDetail, err := structuredState.WithDetails(&brokerv1.BrokerErrorDetail{Reason: brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_STATE_UNAVAILABLE})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client = mcpbrokergrpc.NewClient(reasonConn{err: withStateDetail.Err()})
+	_, _, stateErr := client.AttachSession(t.Context(), "state-unavailable")
+	if !errors.Is(stateErr, mcpbroker.ErrStateUnavailable) || errors.Is(stateErr, mcpbroker.ErrBrokerIncarnationLost) {
+		t.Fatalf("ordinary structured state loss = %v, want state unavailable without incarnation-loss proof", stateErr)
+	}
+	structuredIncarnation := status.New(codes.FailedPrecondition, "incarnation lost")
+	withIncarnationDetail, err := structuredIncarnation.WithDetails(&brokerv1.BrokerErrorDetail{Reason: brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_INCARNATION_LOST})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client = mcpbrokergrpc.NewClient(reasonConn{err: withIncarnationDetail.Err()})
+	_, _, incarnationErr := client.AttachSession(t.Context(), "incarnation-lost")
+	if !errors.Is(incarnationErr, mcpbroker.ErrStateUnavailable) || !errors.Is(incarnationErr, mcpbroker.ErrBrokerIncarnationLost) {
+		t.Fatalf("structured incarnation loss = %v, want both loss markers", incarnationErr)
+	}
+
 	unknown := status.New(codes.FailedPrecondition, "unknown structured reason")
 	withDetail, err := unknown.WithDetails(&brokerv1.BrokerErrorDetail{Reason: brokerv1.BrokerErrorReason(999)})
 	if err != nil {

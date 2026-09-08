@@ -133,12 +133,14 @@ func validateBoundedPublicRoute(w http.ResponseWriter, r *http.Request, maximum 
 		return 0, ""
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maximum)
+	stopClose := context.AfterFunc(r.Context(), func() { _ = r.Body.Close() })
 	body, err := io.ReadAll(r.Body)
+	stopClose()
 	_ = r.Body.Close()
+	if errors.Is(r.Context().Err(), context.DeadlineExceeded) {
+		return http.StatusRequestTimeout, "public request deadline exceeded"
+	}
 	if err != nil {
-		if errors.Is(r.Context().Err(), context.DeadlineExceeded) {
-			return http.StatusRequestTimeout, "public request deadline exceeded"
-		}
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) {
 			return http.StatusRequestEntityTooLarge, "public route body is too large"

@@ -5853,11 +5853,20 @@ ordinary-RPC, Execute, idle-retention, sweep, cleanup, and receipt bounds. The p
 surface uses a distinct request and response type per RPC plus `BrokerErrorDetail`'s closed
 reason vocabulary. The client rejects unknown reasons, malformed shapes, invalid UTF-8,
 malformed schemas, unknown outcomes, and response call-ID mismatches before session mutation;
-allowed argument, schema, text, binary, and MIME bytes otherwise survive exactly. Every
-method carries and checks the incarnation before broker state access.
+allowed argument, schema, text, binary, and MIME bytes otherwise survive exactly. Every method carries and checks the incarnation before broker state access. Incarnation mismatch
+has its own authenticated protocol reason, distinct from generic `state_unavailable`; only that
+proof lets the pre-prompt enrollment seam replace a pinned remote client. Cached attachments are
+retired before the replacement is published, while protected-call continuations never enter this
+recovery path.
 
 The server's lifecycle and Execute registries are bounded by capacity and absolute leases;
-observing a receipt never renews it. Abort/Close duplicates and Execute duplicates keyed by
+observing a receipt never renews it. Authenticated workload ownership is independent of the
+shorter attachment-handle lease: it remains bound through the logical session's configured
+absolute retention. When that retention expires with no pending attach or live handle, the gRPC
+sweeper retires the logical state before releasing the owner slot, so a second workload can never
+inherit retained grants and abandoned owners cannot exhaust capacity permanently. Production
+assembly derives this owner-retention bound from the runtime's `LogicalRetention` value.
+Abort/Close duplicates and Execute duplicates keyed by
 incarnation, handle, call ID, tool, item ID, and the argument digest atomically join or replay
 one immutable result, so the underlying operation runs once. Reclaimed identities return
 structured `state_unavailable` and cannot dispatch again. Only a recognized
@@ -5877,7 +5886,10 @@ classification contract is [ADR 0315](../adr/0315-bounded-singleton-mcp-broker-c
 `cmd/mecabroker` is the sole remote ToolHive composition root. Its dedicated chart is
 one-replica `Recreate` with no PDB, autoscaler, or outer-broker Redis. The public TLS
 listeners carry workload-authenticated gRPC and browser callbacks; a fixed loopback admin
-listener carries only health, readiness, and drain. `internal/adapter/mcpbrokerserver/coordinator.go`
+listener carries only health, readiness, and drain. Browser-route body reads arm the callback
+context to close the body at its shorter deadline and re-check expiry before dispatch, so a body
+that completes during cancellation never reaches ToolHive; HTTP/2 gRPC Execute bypasses that
+callback-body path and retains its longer transport deadline. `internal/adapter/mcpbrokerserver/coordinator.go`
 (`Coordinator`) is the process-local shared admission gate and active-operation cancellation
 registry for both public transports. Readiness checks run under one finite timeout and are
 traffic signals only. Drain closes admission first, waits endpoint propagation, bounds active

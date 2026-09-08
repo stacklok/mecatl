@@ -36,23 +36,34 @@ func (s *Service) ConnectWorkspaceServices(ctx context.Context, id session.Sessi
 	pending, exists := sess.PendingWorkspaceEnrollment()
 	if !exists {
 		presentation, beginErr := enroller.BeginWorkspaceEnrollment(ctx)
-		if beginErr != nil || !presentation.Valid() {
-			return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: begin workspace enrollment", ErrFailedPrecondition)
+		if errors.Is(beginErr, brokercontract.ErrBrokerIncarnationLost) {
+			local, rebindErr := s.rebindBrokerAttachment(ctx, sess, s.brokerAttachmentGenerationFor(sess.ID), true)
+			if rebindErr != nil {
+				return WorkspaceEnrollmentProjection{}, rebindErr
+			}
+			enroller, exists = local.attachment.(brokercontract.WorkspaceEnrollmentAttachment)
+			if !exists {
+				return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: workspace services are not configured", ErrFailedPrecondition)
+			}
+			presentation, beginErr = enroller.BeginWorkspaceEnrollment(ctx)
 		}
-		pending = pendingEnrollment(presentation.Ref)
-		if err := sess.BeginWorkspaceEnrollment(pending); err != nil {
-			cancelWorkspaceEnrollmentDetached(ctx, enroller, presentation.Ref)
-			return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: record workspace enrollment", ErrFailedPrecondition)
-		}
-		if err := s.saveSession(ctx, sess); err != nil {
-			cancelWorkspaceEnrollmentDetached(ctx, enroller, presentation.Ref)
-			return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: persist workspace enrollment", ErrInternal)
-		}
-		return WorkspaceEnrollmentProjection{Ref: presentation.Ref, Status: brokercontract.WorkspaceEnrollmentPending, URL: presentation.URL}, nil
+		return s.recordNewWorkspaceEnrollment(ctx, sess, enroller, presentation, beginErr)
 	}
 
 	expectedRef := enrollmentRef(pending)
 	result, err := enroller.ObserveWorkspaceEnrollment(ctx, expectedRef)
+	if errors.Is(err, brokercontract.ErrBrokerIncarnationLost) {
+		local, rebindErr := s.rebindBrokerAttachment(ctx, sess, s.brokerAttachmentGenerationFor(sess.ID), true)
+		if rebindErr != nil {
+			return WorkspaceEnrollmentProjection{}, rebindErr
+		}
+		freshEnroller, ok := local.attachment.(brokercontract.WorkspaceEnrollmentAttachment)
+		if !ok {
+			return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: workspace services are not configured", ErrFailedPrecondition)
+		}
+		presentation, beginErr := freshEnroller.BeginWorkspaceEnrollment(ctx)
+		return s.recordNewWorkspaceEnrollment(ctx, sess, freshEnroller, presentation, beginErr)
+	}
 	if err != nil || !result.Valid() || !sameWorkspaceEnrollmentRef(result.Ref, expectedRef) {
 		return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: observe workspace enrollment", ErrFailedPrecondition)
 	}
@@ -80,6 +91,22 @@ func (s *Service) ConnectWorkspaceServices(ctx context.Context, id session.Sessi
 		return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: persist workspace enrollment completion", ErrInternal)
 	}
 	return WorkspaceEnrollmentProjection{Ref: result.Ref, Status: result.Status}, nil
+}
+
+func (s *Service) recordNewWorkspaceEnrollment(ctx context.Context, sess *session.Session, enroller brokercontract.WorkspaceEnrollmentAttachment, presentation brokercontract.WorkspaceEnrollmentPresentation, beginErr error) (WorkspaceEnrollmentProjection, error) {
+	if beginErr != nil || !presentation.Valid() {
+		return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: begin workspace enrollment", ErrFailedPrecondition)
+	}
+	pending := pendingEnrollment(presentation.Ref)
+	if err := sess.BeginWorkspaceEnrollment(pending); err != nil {
+		cancelWorkspaceEnrollmentDetached(ctx, enroller, presentation.Ref)
+		return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: record workspace enrollment", ErrFailedPrecondition)
+	}
+	if err := s.saveSession(ctx, sess); err != nil {
+		cancelWorkspaceEnrollmentDetached(ctx, enroller, presentation.Ref)
+		return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: persist workspace enrollment", ErrInternal)
+	}
+	return WorkspaceEnrollmentProjection{Ref: presentation.Ref, Status: brokercontract.WorkspaceEnrollmentPending, URL: presentation.URL}, nil
 }
 
 func (s *Service) recordObservedWorkspaceEnrollment(ctx context.Context, sess *session.Session, pending session.PendingWorkspaceEnrollment, result brokercontract.WorkspaceEnrollmentResult) (WorkspaceEnrollmentProjection, error) {
@@ -184,16 +211,21 @@ func (s *Service) workspaceEnrollmentTarget(ctx context.Context, id session.Sess
 		return nil, nil, nil, fmt.Errorf("%w: session has an active run", ErrFailedPrecondition)
 	}
 	brokerUnlock := s.brokerMu.lock(id)
+	_, attemptedGeneration := s.brokerSnapshot()
 	local, err := s.openBrokerAttachment(ctx, id, sess.ExternalBinding, true)
 	if err != nil {
-		if !errors.Is(err, ErrBrokerBindingMismatch) {
+		if !errors.Is(err, ErrBrokerBindingMismatch) && !errors.Is(err, brokercontract.ErrBrokerIncarnationLost) {
 			brokerUnlock()
 			return sess, nil, nil, err
 		}
 		// This seam is pre-prompt by construction, so a lost incarnation costs the
 		// session nothing durable: adopt the live one rather than strand it behind
 		// a binding no restarted process can ever match.
-		if local, err = s.rebindBrokerAttachment(ctx, sess); err != nil {
+		failedGeneration := s.brokerAttachmentGenerationFor(id)
+		if failedGeneration == 0 {
+			failedGeneration = attemptedGeneration
+		}
+		if local, err = s.rebindBrokerAttachment(ctx, sess, failedGeneration, errors.Is(err, brokercontract.ErrBrokerIncarnationLost)); err != nil {
 			brokerUnlock()
 			return sess, nil, nil, err
 		}

@@ -63,8 +63,8 @@ func TestRunTranslatesStrictFileAndOwnsProductionLifecycle(t *testing.T) {
 		propagationWait: time.Second, drainTimeout: time.Minute,
 		transport: mcpbrokergrpc.DefaultConfig(), runtimeLimits: limits,
 	}
-	if err := run(t.Context(), cfg, nil); err != nil {
-		t.Fatalf("run: %v", err)
+	if err := run(t.Context(), cfg, nil); err == nil {
+		t.Fatal("run accepted an unexpected listener stop")
 	}
 	if lifecycle.starts != 1 || lifecycle.closes != 1 {
 		t.Fatalf("lifecycle start/close = %d/%d, want 1/1", lifecycle.starts, lifecycle.closes)
