@@ -680,6 +680,55 @@ func TestSessionManagementRejectsKindAwaitingAndLive(t *testing.T) {
 	svc.FinishRun(live.ID, run)
 }
 
+// TestSessionManagementDeleteAwaitsTerminalRunDrain pins the fix for a real
+// race an SDK client can lose: a run's liveness registration (s.runs[id])
+// deliberately outlives its terminal event so the relay can finish draining
+// (the same tolerance promotedSteerRun's awaitRunDeregister already gives
+// steer promotion). A caller — any SDK's session.delete() called right after
+// run.result() resolves, for example — that reacts to the terminal event the
+// instant it arrives can otherwise hit managementTarget's single immediate
+// IsLive check and get a spurious ErrFailedPrecondition even though the
+// session's durable state is already correctly terminal. DeleteSession must
+// instead await the registry clearing (bounded) and succeed once FinishRun
+// runs, not reject a session whose only fault is a still-draining relay.
+func TestSessionManagementDeleteAwaitsTerminalRunDrain(t *testing.T) {
+	svc, _ := newSessionManagementService(t, false, nil, mockllm.New(mockllm.TextTurn("done")))
+	ctx := context.Background()
+
+	sess, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	run, err := svc.StartRun(ctx, sess.ID, "go")
+	if err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+	// Drain to the terminal result but deliberately skip FinishRun — the run
+	// stays registered in s.runs[id], simulating a slow wire-drain that has
+	// not yet deregistered even though the session is already StateCompleted.
+	drainServerRun(run)
+
+	done := make(chan error, 1)
+	go func() { done <- svc.DeleteSession(ctx, sess.ID) }()
+
+	// Simulate the relay's deferred cleanup completing shortly after — well
+	// within the grace DeleteSession now tolerates.
+	time.Sleep(20 * time.Millisecond)
+	svc.FinishRun(sess.ID, run)
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("DeleteSession after terminal-but-still-registered drain = %v, want success", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("DeleteSession did not return within the drain grace")
+	}
+	if _, err := svc.GetSession(ctx, sess.ID); !errors.Is(err, server.ErrNotFound) {
+		t.Fatalf("GetSession after delete = %v, want ErrNotFound", err)
+	}
+}
+
 func TestSessionManagementRejectsLeaseHeldElsewhere(t *testing.T) {
 	lease := &fakeLease{acquireErr: port.ErrLeaseHeld}
 	svc, _ := newSessionManagementService(t, false, lease, nil)
