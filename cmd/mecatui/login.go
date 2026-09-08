@@ -76,7 +76,7 @@ func runRemoteLogin(address string, args []string) error {
 	fs.StringVar(&tlsCA, "tls-ca", "", "path to a PEM CA bundle for issuer verification (replaces system roots in public mode)")
 	fs.StringVar(&grpcTarget, "grpc-target", "", "gRPC transport target for protected-resource discovery")
 	fs.BoolVar(&privateIssuer, "private-issuer", false, "allow only private issuer addresses; requires --tls-ca")
-	fs.StringVar(&scopes, "scopes", defaultOIDCScopes, "comma-separated OIDC scopes to request; overrides advertised profile scopes")
+	fs.StringVar(&scopes, "scopes", defaultOIDCScopes, "comma-separated OIDC scopes to request (explicit identity login only)")
 	fs.BoolVar(&noBrowser, "no-browser", false, "print the OIDC authorization URL instead of opening a browser, then wait for the loopback callback (headless/SSH use)")
 	fs.DurationVar(&timeout, "callback-timeout", 5*time.Minute, "maximum time to wait for the loopback OAuth callback")
 	fs.Usage = func() {
@@ -101,7 +101,7 @@ func runRemoteLogin(address string, args []string) error {
 		if tlsCA != "" || privateIssuer {
 			return errors.New("login: --tls-ca and --private-issuer require explicit --issuer, --client-id, and --audience")
 		}
-		return runDiscoveredRemoteLogin(address, grpcTarget, scopes, flagWasSet(fs, "scopes"), noBrowser, timeout)
+		return runDiscoveredRemoteLogin(address, grpcTarget, flagWasSet(fs, "scopes"), noBrowser, timeout)
 	}
 	if issuer == "" || clientID == "" || audience == "" {
 		return errors.New("login: --issuer, --client-id, and --audience are required together")
@@ -141,7 +141,10 @@ func runRemoteLogin(address string, args []string) error {
 	return nil
 }
 
-func runDiscoveredRemoteLogin(address, grpcTarget, scopes string, scopesExplicit, noBrowser bool, timeout time.Duration) error {
+func runDiscoveredRemoteLogin(address, grpcTarget string, scopesExplicit, noBrowser bool, timeout time.Duration) error {
+	if scopesExplicit {
+		return errors.New("login: --scopes is only valid with explicit --issuer, --client-id, and --audience")
+	}
 	resource, err := parseProtectedResource(address)
 	if err != nil {
 		return errors.New("login: --issuer, --client-id, and --audience are required for a non-resource address")
@@ -154,11 +157,11 @@ func runDiscoveredRemoteLogin(address, grpcTarget, scopes string, scopesExplicit
 	if err != nil {
 		return errors.New("login: protected-resource discovery failed")
 	}
-	selectedScopes, err := discoveredScopes(discovered, scopes, scopesExplicit)
+	selectedScopes, err := discoveredScopes(discovered, scopesExplicit)
 	if err != nil {
 		return errors.New("login: invalid --scopes")
 	}
-	enrollment, err := discoveredEnrollmentFrom(discovered, grpcTarget, strings.Join(selectedScopes, ","))
+	enrollment, err := discoveredEnrollmentFrom(discovered, grpcTarget, selectedScopes)
 	if err != nil {
 		return errors.New("login: protected-resource discovery returned an invalid enrollment profile")
 	}
@@ -192,48 +195,32 @@ func flagWasSet(fs *flag.FlagSet, name string) bool {
 	return set
 }
 
-func discoveredScopes(discovered discoveredResource, explicit string, explicitSet bool) ([]string, error) {
-	confirmed := make(map[string]bool, len(discovered.Scopes))
-	for _, scope := range discovered.Scopes {
-		if !validScope(scope) || confirmed[scope] {
-			return nil, errDiscoveryRejected
-		}
-		confirmed[scope] = true
-	}
-	requested := discovered.Scopes
+func discoveredScopes(discovered discoveredResource, explicitSet bool) ([]string, error) {
 	if explicitSet {
-		requested = splitScopes(explicit)
-		if len(requested) == 0 {
-			return nil, errDiscoveryRejected
-		}
+		return nil, errDiscoveryRejected
 	}
-	selected := make(map[string]bool, len(requested))
-	for _, scope := range requested {
-		if !confirmed[scope] {
-			return nil, errDiscoveryRejected
-		}
-		if !validScope(scope) {
-			return nil, errDiscoveryRejected
-		}
-		selected[scope] = true
+	if !discovered.ScopesPresent {
+		return splitScopes(defaultOIDCScopes), nil
 	}
-	result := make([]string, 0, len(selected))
-	for scope := range selected {
-		result = append(result, scope)
+	if len(discovered.Scopes) == 0 {
+		return nil, errDiscoveryRejected
 	}
+	result := slices.Clone(discovered.Scopes)
 	slices.Sort(result)
+	for n, scope := range result {
+		if !validScope(scope) || n > 0 && scope == result[n-1] {
+			return nil, errDiscoveryRejected
+		}
+	}
 	return result, nil
 }
 
-func discoveredEnrollmentFrom(discovered discoveredResource, grpcTarget, scopes string) (discoveredEnrollment, error) {
+func discoveredEnrollmentFrom(discovered discoveredResource, grpcTarget string, scopes []string) (discoveredEnrollment, error) {
 	target := discovered.GRPCTarget
 	if grpcTarget != "" {
 		target = grpcTarget
 	}
-	if scopes == "" {
-		scopes = strings.Join(discovered.Scopes, ",")
-	}
-	identity := clientauth.Identity{Target: target, Issuer: discovered.Issuer, ClientID: discovered.ClientID, Audience: discovered.Audience, RedirectURI: oauthlogin.ExactRedirectURL, Scopes: splitScopes(scopes)}
+	identity := clientauth.Identity{Target: target, Issuer: discovered.Issuer, ClientID: discovered.ClientID, Audience: discovered.Audience, RedirectURI: oauthlogin.ExactRedirectURL, Scopes: slices.Clone(scopes)}
 	identity, err := identity.Canonical()
 	if err != nil {
 		return discoveredEnrollment{}, err

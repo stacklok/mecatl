@@ -40,10 +40,11 @@ type protectedResource struct {
 
 type discoveredResource struct {
 	protectedResource
-	Issuer   string
-	Audience string
-	ClientID string
-	Scopes   []string
+	Issuer        string
+	Audience      string
+	ClientID      string
+	Scopes        []string
+	ScopesPresent bool
 }
 
 func parseProtectedResource(raw string) (protectedResource, error) {
@@ -218,7 +219,7 @@ func discoverProtectedResource(ctx context.Context, resource protectedResource, 
 	if err != nil || validateIssuerDocument(profile.Issuer, issuerBody) != nil {
 		return discoveredResource{}, errDiscoveryRejected
 	}
-	return discoveredResource{protectedResource: resource, Issuer: profile.Issuer, Audience: profile.Audience, ClientID: profile.ClientID, Scopes: profile.Scopes}, nil
+	return discoveredResource{protectedResource: resource, Issuer: profile.Issuer, Audience: profile.Audience, ClientID: profile.ClientID, Scopes: profile.Scopes, ScopesPresent: profile.ScopesPresent}, nil
 }
 
 func fetchDiscoveryJSON(ctx context.Context, client *http.Client, endpoint string) ([]byte, error) {
@@ -262,16 +263,18 @@ func readJSONBody(body io.Reader) ([]byte, error) {
 }
 
 type profileDocument struct {
-	Issuer   string
-	Audience string
-	ClientID string
-	Scopes   []string
+	Issuer        string
+	Audience      string
+	ClientID      string
+	Scopes        []string
+	ScopesPresent bool
 }
 
 func parseProfileDocument(resource protectedResource, body []byte) (profileDocument, error) {
 	if hasDuplicateSecurityFields(body, map[string]bool{"resource": true, "authorization_servers": true, "com.stacklok.mecatl.audience": true, "com.stacklok.mecatl.client_id": true, "scopes_supported": true}) {
 		return profileDocument{}, errDiscoveryRejected
 	}
+	var fields map[string]json.RawMessage
 	var doc struct {
 		Resource             string   `json:"resource"`
 		AuthorizationServers []string `json:"authorization_servers"`
@@ -279,7 +282,11 @@ func parseProfileDocument(resource protectedResource, body []byte) (profileDocum
 		ClientID             string   `json:"com.stacklok.mecatl.client_id"`
 		Scopes               []string `json:"scopes_supported"`
 	}
-	if json.Unmarshal(body, &doc) != nil || !resourceMatches(resource, doc.Resource) || len(doc.AuthorizationServers) != 1 || !safeProfileValue(doc.Audience) || !safeProfileValue(doc.ClientID) {
+	if json.Unmarshal(body, &fields) != nil || json.Unmarshal(body, &doc) != nil || !resourceMatches(resource, doc.Resource) || len(doc.AuthorizationServers) != 1 || !safeProfileValue(doc.Audience) || !safeProfileValue(doc.ClientID) {
+		return profileDocument{}, errDiscoveryRejected
+	}
+	_, scopesPresent := fields["scopes_supported"]
+	if scopesPresent && len(doc.Scopes) == 0 {
 		return profileDocument{}, errDiscoveryRejected
 	}
 	issuer, err := parseIssuer(doc.AuthorizationServers[0])
@@ -293,7 +300,7 @@ func parseProfileDocument(resource protectedResource, body []byte) (profileDocum
 		}
 		scopes[scope] = true
 	}
-	return profileDocument{Issuer: issuer, Audience: doc.Audience, ClientID: doc.ClientID, Scopes: append([]string(nil), doc.Scopes...)}, nil
+	return profileDocument{Issuer: issuer, Audience: doc.Audience, ClientID: doc.ClientID, Scopes: append([]string(nil), doc.Scopes...), ScopesPresent: scopesPresent}, nil
 }
 
 func validateIssuerDocument(expected string, body []byte) error {
