@@ -14,7 +14,7 @@ accumulator: acc/initial-production-mcp-broker
 
 # Task brief
 
-Build the broker-side authenticated transport and service boundary, retaining ToolHive ownership exclusively in `mecabroker`. Reuse the OIDC validator with strict HTTPS issuer, audience, nonzero bounded JWKS staleness, verified TLS, closed-operation diagnostics, and admission before state touch. Mount ToolHive's entire fixed route bundle plus final callback through a shared lifecycle. Callback OAuth is state-bound and unauthenticated; it must not become a client authority channel. Pin confidential broker-client handling under ADR 0302. Add local `httptest` issuer/upstream coverage; no external network.
+Build the broker-side authenticated transport and service boundary, retaining ToolHive ownership exclusively in `mecabroker`. Reuse the OIDC validator with strict HTTPS issuer, audience, nonzero bounded JWKS staleness, verified TLS, closed-operation diagnostics, and admission before state touch. Mount ToolHive's entire fixed route bundle plus final callback through a shared lifecycle. Callback OAuth is state-bound and unauthenticated; it must not become a client authority channel. Pin confidential broker-client handling under ADR 0312. Add local `httptest` issuer/upstream coverage; no external network.
 
 ## Acceptance criteria
 
@@ -29,4 +29,4 @@ Build the broker-side authenticated transport and service boundary, retaining To
 - AC2.5: Production OIDC verification uses HTTPS with explicit trust, exact issuer and audience, and a non-zero bounded JWKS-staleness policy; once that bound is exceeded, key-source outage returns unavailable and never authenticates from indefinitely stale keys or downgrades to anonymous access.
   - verify: `TestInitialProductionMCPBroker_Scenario2_JWKSFailureIsBounded`
 - AC2.6: The embedded ToolHive client remains confidential: registration persists only its hash with `client_secret_basic`; code exchange and refresh use HTTP Basic and omit `client_secret` from form bodies; the raw secret appears in no gRPC message/metadata, snapshot, event, diagnostic, metric, profile, or upstream request and is intentionally lost on broker restart.
-  - verify: `TestADR_0302_RemoteBrokerPreservesConfidentialClient`
+  - verify: `TestADR_0312_RemoteBrokerPreservesConfidentialClient`

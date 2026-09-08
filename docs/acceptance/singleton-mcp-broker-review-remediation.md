@@ -2,7 +2,7 @@
 
 **Phase:** production broker correctness closure
 **Status:** landed, 2026-09-08. Converts the completed implementation self-review into executable acceptance proof.
-**ADR:** [ADR 0306](../adr/0306-bounded-singleton-mcp-broker-correctness.md) — bounded receipts, admission, readiness, and deployment truth.
+**ADR:** [ADR 0315](../adr/0315-bounded-singleton-mcp-broker-correctness.md) — bounded receipts, admission, readiness, and deployment truth.
 **Accumulator branch:** `acc/singleton-mcp-broker-review-remediation` (off `acc/initial-production-mcp-broker`).
 
 The smallest set of work that closes every blocker, important finding, and test gap from the
@@ -12,9 +12,9 @@ proxies.
 
 ## Why these scope cuts
 
-- [ADR 0306](../adr/0306-bounded-singleton-mcp-broker-correctness.md) keeps correctness process-local and bounded while closing ADR 0304's incomplete receipt contract.
-- [ADR 0305](../adr/0305-single-replica-mcp-broker-topology.md) remains the one-replica `Recreate` topology; this work makes its readiness, drain, and deployment claims true.
-- [ADR 0301](../adr/0301-per-upstream-mcp-broker-oauth-grants.md) and [ADR 0302](../adr/0302-confidential-toolhive-broker-client.md) continue to own multi-upstream authorization and confidential credential custody.
+- [ADR 0315](../adr/0315-bounded-singleton-mcp-broker-correctness.md) keeps correctness process-local and bounded while closing ADR 0313's incomplete receipt contract.
+- [ADR 0314](../adr/0314-single-replica-mcp-broker-topology.md) remains the one-replica `Recreate` topology; this work makes its readiness, drain, and deployment claims true.
+- [ADR 0311](../adr/0311-per-upstream-mcp-broker-oauth-grants.md) and [ADR 0312](../adr/0312-confidential-toolhive-broker-client.md) continue to own multi-upstream authorization and confidential credential custody.
 
 ## In scope — 5 scenarios, in implementation order
 
@@ -23,7 +23,7 @@ proxies.
 A hostile transport client repeats lifecycle and Execute RPCs after losing responses. The
 broker returns immutable bounded receipts, validates request identity and response correlation,
 and classifies uncertainty without relying on human-readable status text. This closes the
-remote-adapter contract in [ADR 0306](../adr/0306-bounded-singleton-mcp-broker-correctness.md)
+remote-adapter contract in [ADR 0315](../adr/0315-bounded-singleton-mcp-broker-correctness.md)
 and preserves the session pairing and valid-UTF-8 invariants in [AGENTS.md](../../AGENTS.md).
 
 **Work:**
@@ -62,7 +62,7 @@ After confirmed broker-process loss, composition discards the pinned remote clie
 one new owned connection for pre-prompt enrollment. A parked protected call never rebinds.
 Logical sessions and request receipts remain finite without evicting active authority. This is
 the recovery boundary described by [`IMPLEMENTATION-NOTES.md`](../design/IMPLEMENTATION-NOTES.md)
-and tightened by [ADR 0306](../adr/0306-bounded-singleton-mcp-broker-correctness.md).
+and tightened by [ADR 0315](../adr/0315-bounded-singleton-mcp-broker-correctness.md).
 
 **Acceptance:**
 - AC2.1: Confirmed state loss before a prompt closes the stale remote client, obtains a fresh composition-owned client, and can enroll against a replacement incarnation.
@@ -82,7 +82,7 @@ A production-configured broker becomes ready only after its actual TLS, verifier
 ToolHive discovery, and protected-route dependencies are usable. Later verifier/JWKS failure
 removes readiness within a finite bound without user login or tool execution. Public HTTP
 traffic is bounded without truncating valid configured Execute calls. The production boundary
-is anchored by [ADR 0305](../adr/0305-single-replica-mcp-broker-topology.md) and the diagnostics
+is anchored by [ADR 0314](../adr/0314-single-replica-mcp-broker-topology.md) and the diagnostics
 and resource rules in [AGENTS.md](../../AGENTS.md).
 
 **Acceptance:**
@@ -108,8 +108,8 @@ and resource rules in [AGENTS.md](../../AGENTS.md).
 Rendering both charts with production values yields the exact ingress identities, remote-client
 credentials, immutable image reference, and shutdown budget the running binaries require.
 Release jobs use pinned tools and never interpolate registry credentials into shell source.
-This makes the deployment consequences of [ADR 0305](../adr/0305-single-replica-mcp-broker-topology.md)
-and [ADR 0306](../adr/0306-bounded-singleton-mcp-broker-correctness.md) executable.
+This makes the deployment consequences of [ADR 0314](../adr/0314-single-replica-mcp-broker-topology.md)
+and [ADR 0315](../adr/0315-bounded-singleton-mcp-broker-correctness.md) executable.
 
 **Acceptance:**
 - AC4.1: The mecabroker chart schema accepts one honest `networkPolicy.publicFrom` peer union for the multiplexed public port, rejects the ineffective `mecak8sFrom` and `browserCallbackFrom` keys, and documents that vanilla NetworkPolicy cannot provide route-level separation between gRPC and browser callbacks.
@@ -124,7 +124,7 @@ and [ADR 0306](../adr/0306-bounded-singleton-mcp-broker-correctness.md) executab
   - verify: `TestInvariant_singleton_broker_release_supply_chain_hardening`
 - AC4.6: A required CI deployment job installs pinned Helm and kubeconform, runs `task deploy:check`, renders every production fixture including remote-broker mecak8s, and runs both semantic chart-test packages in a mode where a missing Helm executable fails rather than skips.
   - verify: `TestSingletonBrokerRemediation_Scenario4_DeploymentGateIsExecutable`
-- AC4.7: The ADR 0306 resource-ledger amendment inventories the drain coordinator and propagation waiter, active operations, attachment/lifecycle and Execute receipts, logical-session retention, every sweeper/timer, verifier/readiness resources, ToolHive process, and replacement remote clients, with owner, capacity/retention, close/join order, and restart disposition tied to their constructors and shutdown paths.
+- AC4.7: The ADR 0315 resource-ledger amendment inventories the drain coordinator and propagation waiter, active operations, attachment/lifecycle and Execute receipts, logical-session retention, every sweeper/timer, verifier/readiness resources, ToolHive process, and replacement remote clients, with owner, capacity/retention, close/join order, and restart disposition tied to their constructors and shutdown paths.
   - verify: inspection — resource-inventory completeness requires constructor/shutdown review plus the docs gate
 - AC4.8: Complete production chart rendering preserves exactly one `Recreate` broker replica, no PDB/autoscaler/HA surface, a loopback-only administration listener absent from public Services, restrictive workload security, and default-deny ingress/egress with explicit operator egress.
   - verify: `TestSingletonBrokerRemediation_Scenario4_SingletonTopologyAndExposure`
@@ -145,8 +145,8 @@ and the repository's offline-test rule in [AGENTS.md](../../AGENTS.md).
   - verify: `TestSingletonBrokerRemediation_Scenario5_Stage3RemoteVertical`
 - AC5.2: The real fixed ToolHive callback bundle and final callback accept success only through opaque high-entropy broker-created state bound to one enrollment and expiry, consume it once, and never trust browser-supplied session, owner, backend, route, or principal selectors. Missing, malformed, expired, duplicate, replayed, and cross-enrollment state gets the same generic public rejection before exchange or unrelated mutation, with no state, code, token, enrollment, or upstream identity in responses or diagnostics.
   - verify: `TestSingletonBrokerRemediation_Scenario5_CallbackCorrelationReplayAndNonDisclosure`
-- AC5.3: The production-equivalent callback and refresh flow preserves ADR 0302 custody: the generated broker-client secret is high-entropy, process-memory-only, stored by ToolHive only as its required hash, used only as `client_secret_basic`, and absent from form bodies, protobuf/metadata, snapshots/events, callbacks, diagnostics, metrics, rendered configuration, and upstream MCP requests.
-  - verify: `TestADR_0302_SingletonBrokerConfidentialClientCustody`
+- AC5.3: The production-equivalent callback and refresh flow preserves ADR 0312 custody: the generated broker-client secret is high-entropy, process-memory-only, stored by ToolHive only as its required hash, used only as `client_secret_basic`, and absent from form bodies, protobuf/metadata, snapshots/events, callbacks, diagnostics, metrics, rendered configuration, and upstream MCP requests.
+  - verify: `TestADR_0312_SingletonBrokerConfidentialClientCustody`
 - AC5.4: Killing and replacing the broker during pre-prompt enrollment proves fresh-client recovery, while replacement during the parked continuation proves deterministic interruption with no redispatch.
   - verify: `TestSingletonBrokerRemediation_Scenario5_RestartBoundary`
 - AC5.5: The required build gate creates an executable `mecabroker` binary and the deployment gate renders and validates complete production fixtures rather than asserting source substrings.
@@ -158,8 +158,8 @@ and the repository's offline-test rule in [AGENTS.md](../../AGENTS.md).
 
 | Item | Defer-to | ADR / decision |
 |---|---|---|
-| Cross-process durable Execute receipts or exactly-once upstream effects | distributed broker phase | [ADR 0306](../adr/0306-bounded-singleton-mcp-broker-correctness.md) explicitly bounds receipts to one incarnation |
-| Interchangeable replicas, callback failover, and shared outer authority | distributed broker phase | [ADR 0305](../adr/0305-single-replica-mcp-broker-topology.md) remains single-replica `Recreate` |
+| Cross-process durable Execute receipts or exactly-once upstream effects | distributed broker phase | [ADR 0315](../adr/0315-bounded-singleton-mcp-broker-correctness.md) explicitly bounds receipts to one incarnation |
+| Interchangeable replicas, callback failover, and shared outer authority | distributed broker phase | [ADR 0314](../adr/0314-single-replica-mcp-broker-topology.md) remains single-replica `Recreate` |
 | Sessionless Modern MCP data plane | B2 qualification | Original plan deferral remains unchanged |
 | KMS-backed key custody | later production-hardening decision | No signing/key-custody surface changes here |
 

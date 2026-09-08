@@ -127,7 +127,7 @@ closes, bound-deletes, executes transient invocations, and uses authorization an
 enrollment operations without exposing ToolHive types or moving a pending call from its
 mecatl session.
 
-**Design anchors:** [ADR 0302](../adr/0302-confidential-toolhive-broker-client.md)
+**Design anchors:** [ADR 0312](../adr/0312-confidential-toolhive-broker-client.md)
 keeps the ToolHive client confidential; the [architecture guide](../architecture.md)
 documents the current session-scoped broker boundary that this adapter preserves.
 
@@ -214,7 +214,7 @@ remain outside `engine/`.
 - AC2.5: Production OIDC verification uses HTTPS with explicit trust, exact issuer and audience, and a non-zero bounded JWKS-staleness policy; once that bound is exceeded, key-source outage returns unavailable and never authenticates from indefinitely stale keys or downgrades to anonymous access.
   - verify: `TestInitialProductionMCPBroker_Scenario2_JWKSFailureIsBounded`
 - AC2.6: The embedded ToolHive client remains confidential: registration persists only its hash with `client_secret_basic`; code exchange and refresh use HTTP Basic and omit `client_secret` from form bodies; the raw secret appears in no gRPC message/metadata, snapshot, event, diagnostic, metric, profile, or upstream request and is intentionally lost on broker restart.
-  - verify: `TestADR_0302_RemoteBrokerPreservesConfidentialClient`
+  - verify: `TestADR_0312_RemoteBrokerPreservesConfidentialClient`
 
 ## Scenario 3 — A protected tool call authorizes and continues through the remote broker
 
@@ -222,7 +222,7 @@ A remote-attached mecak8s protected tool call still parks and resumes through th
 Stage 3 continuation. ToolHive owns browser authorization; mecatl owns the exact parked
 call and its one dispatch attempt.
 
-**Design anchors:** [ADR 0301](../adr/0301-per-upstream-mcp-broker-oauth-grants.md)
+**Design anchors:** [ADR 0311](../adr/0311-per-upstream-mcp-broker-oauth-grants.md)
 and the [architecture guide](../architecture.md) define the current broker grant and
 pre-prompt enrollment boundary.
 

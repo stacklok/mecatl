@@ -1,4 +1,4 @@
-# ADR 0305 — Single-replica production topology for the MCP broker
+# ADR 0314 — Single-replica production topology for the MCP broker
 
 - Status: Accepted
 - Date: 2026-09-07
@@ -8,7 +8,7 @@
 
 ## Context
 
-The process-bound remote broker in ADR 0304 has in-memory attachment handles and
+The process-bound remote broker in ADR 0313 has in-memory attachment handles and
 outer OAuth callback correlation. A second replica cannot serve work admitted by
 the first, and a replacement process cannot reconstruct that authority. Shipping a
 normal rolling Deployment, a disruption budget, or an autoscaling control would
@@ -76,7 +76,7 @@ while concrete egress maintenance stays an operator responsibility.
 ## See also
 
 - [ADR 0027 — Cloud-native deployment](./0027-cloud-native.md)
-- [ADR 0301 — ToolHive-owned multi-upstream MCP broker OAuth](./0301-per-upstream-mcp-broker-oauth-grants.md)
-- [ADR 0304 — Process-bound remote MCP broker attachments](./0304-process-bound-remote-mcp-broker.md)
+- [ADR 0311 — ToolHive-owned multi-upstream MCP broker OAuth](./0311-per-upstream-mcp-broker-oauth-grants.md)
+- [ADR 0313 — Process-bound remote MCP broker attachments](./0313-process-bound-remote-mcp-broker.md)
 - [Architecture guide](../architecture.md)
 - [Usage guide](../usage.md)

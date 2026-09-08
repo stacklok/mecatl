@@ -332,7 +332,7 @@ func TestSingletonBrokerRemediation_Scenario5_CallbackCorrelationReplayAndNonDis
 	}
 }
 
-func TestADR_0302_SingletonBrokerConfidentialClientCustody(t *testing.T) {
+func TestADR_0312_SingletonBrokerConfidentialClientCustody(t *testing.T) {
 	assertToolHiveProtectedClientIsConfidential(t)
 
 	var exchanges, refreshes int

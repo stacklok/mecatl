@@ -67,4 +67,4 @@ Set `networkPolicy.publicFrom` to one union of exact namespace, pod, and CIDR pe
 
 For the complete configuration and resource-lifecycle boundary, see the
 [usage guide](https://github.com/stacklok/mecatl/blob/main/docs/usage.md#standalone-mcp-broker-on-kubernetes)
-and [ADR 0305](https://github.com/stacklok/mecatl/blob/main/docs/adr/0305-single-replica-mcp-broker-topology.md).
+and [ADR 0314](https://github.com/stacklok/mecatl/blob/main/docs/adr/0314-single-replica-mcp-broker-topology.md).

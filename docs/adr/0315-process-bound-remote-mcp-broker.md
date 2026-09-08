@@ -1,10 +1,10 @@
-# ADR 0304 — Process-bound remote MCP broker attachments
+# ADR 0313 — Process-bound remote MCP broker attachments
 
 - Status: Proposed
 - Date: 2026-09-06
 - Scope: initial remote MCP broker transport, attachment handles, and failure semantics
 - Supersedes: None
-- Superseded by: ADR 0306
+- Superseded by: ADR 0315
 
 ## Context
 
@@ -58,6 +58,6 @@ high availability.
 ## See also
 
 - [ADR 0027 — Cloud-native deployment](./0027-cloud-native.md)
-- [ADR 0301 — ToolHive-owned multi-upstream MCP broker OAuth](./0301-per-upstream-mcp-broker-oauth-grants.md)
+- [ADR 0311 — ToolHive-owned multi-upstream MCP broker OAuth](./0311-per-upstream-mcp-broker-oauth-grants.md)
 - [Initial production MCP broker acceptance plan](../acceptance/initial-production-mcp-broker.md)
 - [Architecture guide](../architecture.md)

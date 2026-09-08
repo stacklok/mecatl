@@ -15,7 +15,7 @@ accumulator: acc/singleton-mcp-broker-review-remediation
 # Task brief
 
 Make both charts, required CI deployment validation, release workflow, public docs, and the
-ADR 0306 resource ledger reflect the real singleton broker. Use one public peer union because
+ADR 0315 resource ledger reflect the real singleton broker. Use one public peer union because
 vanilla NetworkPolicy cannot distinguish routes on the shared port.
 
 ## Acceptance criteria
@@ -32,7 +32,7 @@ vanilla NetworkPolicy cannot distinguish routes on the shared port.
   - verify: `TestInvariant_singleton_broker_release_supply_chain_hardening`
 - AC4.6: A required CI deployment job installs pinned Helm and kubeconform, runs `task deploy:check`, renders every production fixture including remote-broker mecak8s, and runs both semantic chart-test packages in a mode where a missing Helm executable fails rather than skips.
   - verify: `TestSingletonBrokerRemediation_Scenario4_DeploymentGateIsExecutable`
-- AC4.7: The ADR 0306 resource-ledger amendment inventories the drain coordinator and propagation waiter, active operations, attachment/lifecycle and Execute receipts, logical-session retention, every sweeper/timer, verifier/readiness resources, ToolHive process, and replacement remote clients, with owner, capacity/retention, close/join order, and restart disposition tied to their constructors and shutdown paths.
+- AC4.7: The ADR 0315 resource-ledger amendment inventories the drain coordinator and propagation waiter, active operations, attachment/lifecycle and Execute receipts, logical-session retention, every sweeper/timer, verifier/readiness resources, ToolHive process, and replacement remote clients, with owner, capacity/retention, close/join order, and restart disposition tied to their constructors and shutdown paths.
   - verify: inspection — resource-inventory completeness requires constructor/shutdown review plus the docs gate
 - AC4.8: Complete production chart rendering preserves exactly one `Recreate` broker replica, no PDB/autoscaler/HA surface, a loopback-only administration listener absent from public Services, restrictive workload security, and default-deny ingress/egress with explicit operator egress.
   - verify: `TestSingletonBrokerRemediation_Scenario4_SingletonTopologyAndExposure`

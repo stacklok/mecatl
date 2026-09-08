@@ -55,7 +55,7 @@ func TestSingletonBrokerRemediation_Scenario5_Stage3RemoteVertical(t *testing.T)
 	_ = runSingletonBrokerStage3RemoteVertical(t)
 }
 
-func TestADR_0302_SingletonBrokerConfidentialClientCustody(t *testing.T) {
+func TestADR_0312_SingletonBrokerConfidentialClientCustody(t *testing.T) {
 	evidence := runSingletonBrokerStage3RemoteVertical(t)
 	evidence.assertSecretAbsent(t, "vertical-secret")
 }
