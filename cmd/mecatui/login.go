@@ -294,25 +294,36 @@ type preparedSavedLogin struct {
 	expectedCredential *clientauth.ExpectedCredentialState
 }
 
+func storageUnavailable(stage client.AuthStorageStage) error {
+	return &client.AuthError{Reason: client.AuthStorageUnavailable, StorageStage: stage}
+}
+
+func credentialStorageUnavailable(err error) error {
+	if errors.Is(err, clientauth.ErrKeyUnavailable) && !errors.Is(err, credentialstore.ErrUnavailable) {
+		return storageUnavailable(client.AuthStorageKeyring)
+	}
+	return storageUnavailable(client.AuthStorageCredentialStore)
+}
+
 func prepareSavedRemoteLogin(ctx context.Context, conn clientauth.Connection) (preparedSavedLogin, error) {
 	root := filepath.Join(xdg.ConfigHome, "mecatl")
 	registry, err := clientauth.OpenRegistry(root)
 	if err != nil {
-		return preparedSavedLogin{}, &client.AuthError{Reason: client.AuthStorageUnavailable}
+		return preparedSavedLogin{}, storageUnavailable(client.AuthStorageConfigDirectory)
 	}
 	keys, err := clientauth.NewKeyringProvider(root)
 	if err != nil {
-		return preparedSavedLogin{}, &client.AuthError{Reason: client.AuthStorageUnavailable}
+		return preparedSavedLogin{}, storageUnavailable(client.AuthStorageConfigDirectory)
 	}
 	store, err := clientauth.OpenStore(ctx, root, keys)
 	if err != nil {
-		return preparedSavedLogin{}, &client.AuthError{Reason: client.AuthStorageUnavailable}
+		return preparedSavedLogin{}, credentialStorageUnavailable(err)
 	}
 	closeStore := func() { _ = store.Close() }
 	creds, err := clientauth.NewCredentials(store)
 	if err != nil {
 		closeStore()
-		return preparedSavedLogin{}, &client.AuthError{Reason: client.AuthStorageUnavailable}
+		return preparedSavedLogin{}, storageUnavailable(client.AuthStorageCredentialStore)
 	}
 	// Snapshot the target/credential state now, BEFORE the caller's interactive
 	// browser wait: this route serves both a fresh enrollment (nothing to
@@ -348,11 +359,11 @@ func snapshotSavedLoginState(ctx context.Context, conn clientauth.Connection, re
 		// this stale sign-in must not overwrite that.
 		expectedCredential = &clientauth.ExpectedCredentialState{Corrupt: true}
 	default:
-		return nil, nil, &client.AuthError{Reason: client.AuthStorageUnavailable}
+		return nil, nil, storageUnavailable(client.AuthStorageCredentialStore)
 	}
 	all, err := registry.List()
 	if err != nil {
-		return nil, nil, &client.AuthError{Reason: client.AuthStorageUnavailable}
+		return nil, nil, storageUnavailable(client.AuthStorageRegistry)
 	}
 	var expected []clientauth.Connection
 	// Canonicalize defensively (matching Enroll's own discipline) rather than
@@ -378,21 +389,21 @@ func prepareExistingSavedRemoteLogin(ctx context.Context, conn clientauth.Connec
 	root := filepath.Join(xdg.ConfigHome, "mecatl")
 	registry, err := clientauth.OpenExistingRegistry(root)
 	if err != nil {
-		return preparedSavedLogin{}, &client.AuthError{Reason: client.AuthStorageUnavailable}
+		return preparedSavedLogin{}, storageUnavailable(client.AuthStorageConfigDirectory)
 	}
 	keys, err := clientauth.NewExistingKeyringProvider(root)
 	if err != nil {
-		return preparedSavedLogin{}, &client.AuthError{Reason: client.AuthStorageUnavailable}
+		return preparedSavedLogin{}, storageUnavailable(client.AuthStorageConfigDirectory)
 	}
 	store, err := clientauth.OpenExistingStore(ctx, root, keys)
 	if err != nil {
-		return preparedSavedLogin{}, &client.AuthError{Reason: client.AuthStorageUnavailable}
+		return preparedSavedLogin{}, credentialStorageUnavailable(err)
 	}
 	closeStore := func() { _ = store.Close() }
 	creds, err := clientauth.NewCredentials(store)
 	if err != nil {
 		closeStore()
-		return preparedSavedLogin{}, &client.AuthError{Reason: client.AuthStorageUnavailable}
+		return preparedSavedLogin{}, storageUnavailable(client.AuthStorageCredentialStore)
 	}
 	expectedTarget, expectedCredential, err := snapshotSavedLoginState(ctx, conn, registry, creds)
 	if err != nil {
@@ -421,7 +432,7 @@ func runSavedRemoteLoginWith(ctx context.Context, conn clientauth.Connection, no
 		var err error
 		ca, err = os.ReadFile(conn.IssuerCAFile)
 		if err != nil {
-			return &client.AuthError{Reason: client.AuthStorageUnavailable}
+			return storageUnavailable(client.AuthStorageTLSCA)
 		}
 	}
 	prepared, err := prepare(ctx, conn)
@@ -456,7 +467,7 @@ func runSavedRemoteLoginWith(ctx context.Context, conn clientauth.Connection, no
 		if errors.Is(err, clientauth.ErrTargetChanged) {
 			return &client.AuthError{Reason: client.AuthTargetChanged}
 		}
-		return &client.AuthError{Reason: client.AuthStorageUnavailable}
+		return storageUnavailable(client.AuthStorageCredentialStore)
 	}
 	return nil
 }

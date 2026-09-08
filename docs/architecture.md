@@ -858,7 +858,10 @@ refresh. This prevents a background refresh loop from sustaining itself; provide
 browser-SSO and refresh-token lifetimes remain provider-specific. Only an OAuth
 `RetrieveError` whose exact structured `ErrorCode` is `invalid_grant` triggers
 credential cleanup; provider prose never does. Local login-required errors retain the `ErrLoginRequired` sentinel and safe typed causes,
-which composition translates into the client's closed auth-reason contract; repairable
+which composition translates into the client's closed auth-reason contract. Login-local
+`storage_unavailable` errors additionally carry one closed stage whose static message
+distinguishes CA-file reads, config-directory/registry access, OS keyring access, and
+encrypted-store access; raw adapter errors and paths remain hidden. Repairable
 credential corruption is distinct from unavailable local storage or issuer trust, which
 must not be overwritten and instead require remediation or a browser-free retry. Unknown
 adapter and transport failures remain unclassified. A server `Unauthenticated` verdict

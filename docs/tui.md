@@ -230,6 +230,12 @@ server is authoritative.
   This is Authorization Code + PKCE, not device flow. `connect` does **not** implicitly
   open a browser: an unenrolled target returns guidance to run this command.
 
+  A local preflight failure keeps the closed `storage_unavailable` classification
+  but also identifies a bounded stage and remediation. It distinguishes an unreadable
+  issuer CA file, an unavailable OS keyring, an unavailable encrypted credential
+  store, and registry/config-directory permission failures without printing the
+  underlying OS error, path, or secret material.
+
   A rejected callback reports a closed validation rule that failed — for example
   `callback state did not match the authorization request` — rather than echoing
   hostile callback values. Provider-returned OAuth `error` and `error_description`
