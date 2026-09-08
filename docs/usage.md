@@ -523,9 +523,10 @@ and callbacks before the 2s propagation wait, gives active work a finite 55s dea
 then cancels remaining work before teardown; the chart reserves 70s total. The binary exposes
 strict positive transport and retention controls (`--broker-dial-timeout`, `--broker-rpc-deadline`,
 `--broker-execute-deadline`, `--broker-handle-idle-timeout`, `--broker-sweep-interval`,
-`--broker-cleanup-timeout`, `--broker-max-handles`, `--broker-max-logical-sessions`,
-`--broker-max-receipts`, `--broker-max-receipt-bytes`, and `--broker-max-pending-controls`); their finite defaults are used
-when no flags are supplied.
+`--broker-cleanup-timeout`, `--broker-max-handles`, `--broker-max-owners`,
+`--broker-max-receipts`, `--broker-max-receipt-bytes`, and `--broker-max-pending-controls`) plus
+underlying runtime controls (`--broker-max-logical-sessions`, `--broker-logical-retention`, and
+`--broker-max-pending-auth-states`); their finite defaults are used when no flags are supplied.
 
 Set `networkPolicy.publicFrom` to the single union of exact namespace, pod, and CIDR peers that may reach the multiplexed public listener. The same NetworkPolicy port carries gRPC and browser callbacks; vanilla NetworkPolicy cannot provide route-level separation, so `mecak8sFrom` and `browserCallbackFrom` are not valid settings.
 

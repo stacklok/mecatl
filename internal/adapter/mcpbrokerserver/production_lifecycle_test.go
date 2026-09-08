@@ -7,6 +7,11 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
+	brokerv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/broker/v1"
+	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/mcpbroker"
 )
 
@@ -23,6 +28,7 @@ func TestSingletonBrokerRemediation_Scenario5_ProductionLifecycleUsesSharedFacto
 			Static: []mcpbroker.StaticTool{{Name: "read", Schema: json.RawMessage(`{"type":"object"}`), ReadOnly: true}},
 		}}},
 		PropagationWait: time.Millisecond, DrainTimeout: time.Second,
+		RuntimeLimits: mcpbroker.Limits{MaxLogicalSessions: 1, LogicalRetention: time.Hour, SweepInterval: time.Minute, MaxPendingStates: 1},
 	})
 	if err != nil {
 		t.Fatalf("NewProduction: %v", err)
@@ -30,6 +36,13 @@ func TestSingletonBrokerRemediation_Scenario5_ProductionLifecycleUsesSharedFacto
 	lifecycle.Start()
 	if !lifecycle.Ready(t.Context()) {
 		t.Fatal("shared production lifecycle never became ready")
+	}
+	principalCtx := session.WithPrincipal(t.Context(), &session.Principal{Subject: "runtime-limit-test"})
+	if _, err := lifecycle.broker.rpc.Attach(principalCtx, &brokerv1.AttachRequest{SessionId: "runtime-one"}); err != nil {
+		t.Fatalf("first runtime attach: %v", err)
+	}
+	if _, err := lifecycle.broker.rpc.Attach(principalCtx, &brokerv1.AttachRequest{SessionId: "runtime-two"}); status.Code(err) != codes.ResourceExhausted {
+		t.Fatalf("second runtime attach = %v, want underlying runtime capacity rejection", err)
 	}
 	closeCtx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()

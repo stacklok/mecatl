@@ -53,6 +53,12 @@ propagation, permits existing work until the finite 55-second deadline, then can
 remainder and closes listeners and local ToolHive resources. The pod's 70-second
 termination grace contains that budget.
 
+The chart exposes separate bounded `transport` and `runtime` settings. In particular,
+`runtime.maxLogicalSessions`, `runtime.logicalRetentionSeconds`, and
+`runtime.maxPendingAuthStates` limit the underlying ToolHive logical-session and pending-
+authorization state; `transport.maxOwners` limits authenticated owners retained by the gRPC
+front end.
+
 ## Network policy
 
 Set `networkPolicy.publicFrom` to one union of exact namespace, pod, and CIDR peers for the multiplexed public listener. Vanilla NetworkPolicy cannot distinguish gRPC from browser callbacks on the shared port. Set `operatorEgress` to cluster DNS plus concrete destination rules for OIDC/JWKS, upstream OAuth, and MCP; external DNS names are not enforced.

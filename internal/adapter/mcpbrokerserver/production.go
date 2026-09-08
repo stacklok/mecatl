@@ -36,6 +36,7 @@ type ProductionConfig struct {
 	ShutdownTimeout time.Duration
 	PublicBounds    PublicListenerConfig
 	Transport       mcpbrokergrpc.Config
+	RuntimeLimits   mcpbroker.Limits
 }
 
 // Lifecycle is the production broker process lifecycle. Start serves the public
@@ -76,7 +77,9 @@ func NewProduction(ctx context.Context, cfg ProductionConfig) (*Lifecycle, error
 	broker, err := New(ctx, Config{
 		OIDC: cfg.OIDC, Diagnostics: cfg.Diagnostics, Transport: cfg.Transport,
 		Factory: func(factoryCtx context.Context) (contract.Service, mcpbroker.HandlerBundle, string, func() error, error) {
-			process, processErr := mcpbroker.NewToolHiveProcess(factoryCtx, cfg.ToolHive, cfg.ToolHiveOptions...)
+			options := append([]mcpbroker.Option(nil), cfg.ToolHiveOptions...)
+			options = append(options, mcpbroker.WithLimits(cfg.RuntimeLimits))
+			process, processErr := mcpbroker.NewToolHiveProcess(factoryCtx, cfg.ToolHive, options...)
 			if processErr != nil {
 				return nil, mcpbroker.HandlerBundle{}, "", nil, processErr
 			}

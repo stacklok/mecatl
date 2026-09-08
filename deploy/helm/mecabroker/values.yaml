@@ -56,10 +56,17 @@ transport:
   sweepIntervalSeconds: 30
   cleanupTimeoutSeconds: 10
   maxHandles: 128
-  maxLogicalSessions: 128
+  maxOwners: 128
   maxReceipts: 4096
   maxReceiptBytes: 8388608
   maxPendingControls: 1024
+
+# Runtime ownership is distinct from transport handles/owners. It bounds
+# ToolHive logical sessions and their pending authorization state.
+runtime:
+  maxLogicalSessions: 1024
+  logicalRetentionSeconds: 86400
+  maxPendingAuthStates: 1024
 
 networkPolicy:
   enabled: true

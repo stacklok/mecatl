@@ -33,6 +33,15 @@ const (
 	defaultAdminAddress    = "127.0.0.1:8081"
 )
 
+type brokerLifecycle interface {
+	Start() <-chan error
+	Close(context.Context) error
+}
+
+var newProduction = func(ctx context.Context, cfg mcpbrokerserver.ProductionConfig) (brokerLifecycle, error) {
+	return mcpbrokerserver.NewProduction(ctx, cfg)
+}
+
 type config struct {
 	publicAddress    string
 	adminAddress     string
@@ -48,6 +57,7 @@ type config struct {
 	propagationWait  time.Duration
 	drainTimeout     time.Duration
 	transport        mcpbrokergrpc.Config
+	runtimeLimits    mcpbroker.Limits
 }
 
 type fileConfig struct {
@@ -134,7 +144,10 @@ func parseFlags() config {
 	flag.DurationVar(&cfg.transport.SweepInterval, "broker-sweep-interval", cfg.transport.SweepInterval, "broker retention sweep interval")
 	flag.DurationVar(&cfg.transport.CleanupTimeout, "broker-cleanup-timeout", cfg.transport.CleanupTimeout, "bounded broker attachment cleanup deadline")
 	flag.IntVar(&cfg.transport.MaxHandles, "broker-max-handles", cfg.transport.MaxHandles, "maximum retained broker attachment handles")
-	flag.IntVar(&cfg.transport.MaxOwners, "broker-max-logical-sessions", cfg.transport.MaxOwners, "maximum retained logical broker sessions")
+	flag.IntVar(&cfg.transport.MaxOwners, "broker-max-owners", cfg.transport.MaxOwners, "maximum retained authenticated logical-session owners")
+	flag.IntVar(&cfg.runtimeLimits.MaxLogicalSessions, "broker-max-logical-sessions", 1024, "maximum broker runtime logical sessions")
+	flag.DurationVar(&cfg.runtimeLimits.LogicalRetention, "broker-logical-retention", 24*time.Hour, "idle retention for broker runtime logical sessions")
+	flag.IntVar(&cfg.runtimeLimits.MaxPendingStates, "broker-max-pending-auth-states", 1024, "maximum pending broker runtime authorization states")
 	flag.IntVar(&cfg.transport.MaxReceipts, "broker-max-receipts", cfg.transport.MaxReceipts, "maximum retained Execute receipts per attachment")
 	flag.IntVar(&cfg.transport.MaxReceiptBytes, "broker-max-receipt-bytes", cfg.transport.MaxReceiptBytes, "maximum aggregate retained Execute receipt bytes per attachment")
 	flag.IntVar(&cfg.transport.MaxPendingControls, "broker-max-pending-controls", cfg.transport.MaxPendingControls, "maximum concurrent broker lifecycle controls")
@@ -149,6 +162,9 @@ func run(ctx context.Context, cfg config, diagnostics port.Diagnostics) error {
 	}
 	if cfg.propagationWait < 0 || cfg.drainTimeout <= 0 {
 		return errors.New("broker drain bounds are invalid")
+	}
+	if cfg.runtimeLimits.MaxLogicalSessions <= 0 || cfg.runtimeLimits.LogicalRetention <= 0 || cfg.runtimeLimits.MaxPendingStates <= 0 {
+		return errors.New("broker runtime limits are invalid")
 	}
 	if (cfg.tlsCertFile == "") != (cfg.tlsKeyFile == "") {
 		return errors.New("TLS certificate and key must be configured together")
@@ -169,12 +185,13 @@ func run(ctx context.Context, cfg config, diagnostics port.Diagnostics) error {
 		return err
 	}
 	bounds := mcpbrokerserver.DefaultPublicListenerConfig()
-	lifecycle, err := mcpbrokerserver.NewProduction(ctx, mcpbrokerserver.ProductionConfig{
+	lifecycle, err := newProduction(ctx, mcpbrokerserver.ProductionConfig{
 		PublicAddress: cfg.publicAddress, AdminAddress: cfg.adminAddress,
 		TLSConfig: &tls.Config{Certificates: []tls.Certificate{certificate}, MinVersion: tls.VersionTLS12},
 		OIDC:      mcpbrokerserver.OIDCConfig{Issuer: cfg.oidcIssuer, JWKSURI: cfg.oidcJWKSURI, Audience: cfg.oidcAudience, AllowedSubjects: []string{cfg.oidcSubject}, TrustedCAPEM: caPEM, MaxJWKSStaleness: cfg.maxJWKSStaleness},
 		ToolHive:  declaration.toolHive(), Diagnostics: diagnostics, PropagationWait: cfg.propagationWait,
 		DrainTimeout: cfg.drainTimeout, ShutdownTimeout: shutdownTimeout, PublicBounds: bounds, Transport: cfg.transport,
+		RuntimeLimits: cfg.runtimeLimits,
 	})
 	if err != nil {
 		return err

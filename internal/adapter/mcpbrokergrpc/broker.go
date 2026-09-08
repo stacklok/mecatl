@@ -381,6 +381,7 @@ func (s *Server) get(ctx context.Context, incarnation, handle string) (*serverAt
 	return a, func() {
 		s.mu.Lock()
 		a.active--
+		s.releaseClosedReceiptsLocked(a)
 		signalAttachment(a)
 		s.mu.Unlock()
 	}, nil
@@ -445,12 +446,24 @@ func (s *Server) releaseOwnerHandleLocked(id session.SessionID) {
 	owner.handles--
 }
 
+func releaseReceiptsLocked(attachment *serverAttachment) {
+	clear(attachment.receipts)
+	attachment.receiptBytes = 0
+}
+
+func (s *Server) releaseClosedReceiptsLocked(attachment *serverAttachment) {
+	if s.closed && attachment.active == 0 {
+		releaseReceiptsLocked(attachment)
+	}
+}
+
 func (s *Server) finishLifecycle(a *serverAttachment, operation lifecycleOperation, outcome mcpbroker.CloseOutcome, terminal bool) {
 	s.mu.Lock()
 	if terminal {
 		s.releaseOwnerHandleLocked(a.logicalID)
 	}
 	a.active--
+	s.releaseClosedReceiptsLocked(a)
 	if terminal {
 		a.terminal = operation
 		a.terminalOutcome = outcome
@@ -479,6 +492,7 @@ func (s *Server) sweep() {
 			var expired []*serverAttachment
 			for handle, attachment := range s.handles {
 				if attachment.active == 0 && !now.Before(attachment.expiresAt) {
+					releaseReceiptsLocked(attachment)
 					delete(s.handles, handle)
 					if attachment.terminal == lifecycleNone {
 						s.releaseOwnerHandleLocked(attachment.logicalID)
@@ -515,10 +529,12 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	s.closed = true
 	close(s.stop)
 	attachments := make([]*serverAttachment, 0, len(s.handles))
+	toClose := make([]*serverAttachment, 0, len(s.handles))
 	for handle, attachment := range s.handles {
 		delete(s.handles, handle)
+		attachments = append(attachments, attachment)
 		if attachment.terminal == lifecycleNone {
-			attachments = append(attachments, attachment)
+			toClose = append(toClose, attachment)
 		}
 	}
 	clear(s.owners)
@@ -531,10 +547,15 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	}()
 	select {
 	case <-executeDone:
+		s.mu.Lock()
+		for _, attachment := range attachments {
+			releaseReceiptsLocked(attachment)
+		}
+		s.mu.Unlock()
 	case <-ctx.Done():
 		return ctx.Err()
 	}
-	for _, attachment := range attachments {
+	for _, attachment := range toClose {
 		closeCtx, cancel := context.WithTimeout(ctx, s.cfg.CleanupTimeout)
 		_, err := attachment.attachment.Close(closeCtx)
 		cancel()
@@ -687,11 +708,11 @@ func (s *Server) Execute(ctx context.Context, req *brokerv1.ExecuteRequest) (*br
 		}
 		receipt.started = true
 	} else {
-		if len(a.receipts) >= s.cfg.MaxReceipts || a.receiptBytes+invocationReceiptBytes(call) > s.cfg.MaxReceiptBytes {
+		if len(a.receipts) >= s.cfg.MaxReceipts || a.receiptBytes+receiptReservationBytes(call) > s.cfg.MaxReceiptBytes {
 			s.mu.Unlock()
 			return nil, reasonStatus(codes.ResourceExhausted, "broker receipt capacity reached", brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_CAPACITY_REACHED, "")
 		}
-		receipt = &executeReceipt{digest: digest, bytes: invocationReceiptBytes(call), started: true, done: make(chan struct{})}
+		receipt = &executeReceipt{digest: digest, bytes: receiptReservationBytes(call), started: true, done: make(chan struct{})}
 		a.receipts[call.ID] = receipt
 		a.receiptBytes += receipt.bytes
 	}
@@ -706,6 +727,20 @@ func (s *Server) Execute(ctx context.Context, req *brokerv1.ExecuteRequest) (*br
 
 func invocationReceiptBytes(call session.ToolCall) int {
 	return len(call.Name) + len(call.ID) + len(call.ItemID) + len(call.Args)
+}
+
+// receiptReservationBytes guarantees that an executed invocation can retain a
+// deterministic terminal result even when the tool's successful response is too large.
+func receiptReservationBytes(call session.ToolCall) int {
+	return invocationReceiptBytes(call) + proto.Size(receiptOversizeResponse(call))
+}
+
+func receiptOversizeResponse(call session.ToolCall) *brokerv1.ExecuteResponse {
+	return &brokerv1.ExecuteResponse{Result: &brokerv1.ToolResult{
+		CallId:  string(call.ID),
+		Content: "tool completed, but its result exceeded the broker retained-receipt limit; do not retry this call",
+		IsError: true,
+	}}
 }
 
 func invocationDigest(call session.ToolCall) [sha256.Size]byte {
@@ -742,10 +777,25 @@ func (s *Server) executeOwner(a *serverAttachment, receipt *executeReceipt, targ
 		}
 	}
 	s.mu.Lock()
+	bytes := invocationReceiptBytes(call)
+	switch {
+	case response != nil:
+		bytes += proto.Size(response)
+	case err != nil:
+		bytes += proto.Size(status.Convert(err).Proto())
+	}
+	if a.receiptBytes-receipt.bytes+bytes > s.cfg.MaxReceiptBytes {
+		response = receiptOversizeResponse(call)
+		err = nil
+		bytes = receiptReservationBytes(call)
+	}
+	a.receiptBytes += bytes - receipt.bytes
+	receipt.bytes = bytes
 	receipt.response = response
 	receipt.err = err
 	close(receipt.done)
 	a.active--
+	s.releaseClosedReceiptsLocked(a)
 	signalAttachment(a)
 	s.mu.Unlock()
 }
@@ -787,11 +837,11 @@ func (s *Server) RequestAuthorization(ctx context.Context, req *brokerv1.Request
 		return nil, invalid("call_id was reused with different invocation content")
 	}
 	if receipt == nil {
-		if len(a.receipts) >= s.cfg.MaxReceipts || a.receiptBytes+invocationReceiptBytes(call) > s.cfg.MaxReceiptBytes {
+		if len(a.receipts) >= s.cfg.MaxReceipts || a.receiptBytes+receiptReservationBytes(call) > s.cfg.MaxReceiptBytes {
 			s.mu.Unlock()
 			return nil, reasonStatus(codes.ResourceExhausted, "broker receipt capacity reached", brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_CAPACITY_REACHED, "")
 		}
-		receipt := &executeReceipt{digest: digest, bytes: invocationReceiptBytes(call), done: make(chan struct{})}
+		receipt := &executeReceipt{digest: digest, bytes: receiptReservationBytes(call), done: make(chan struct{})}
 		a.receipts[call.ID] = receipt
 		a.receiptBytes += receipt.bytes
 	}

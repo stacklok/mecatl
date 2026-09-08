@@ -341,12 +341,8 @@ func TestADR_0302_SingletonBrokerConfidentialClientCustody(t *testing.T) {
 			t.Error(err)
 			return
 		}
-		user, password, ok := request.BasicAuth()
-		if !ok || user != "client-id" || password != "client-secret" {
-			t.Errorf("BasicAuth = (%q, %q, %v)", user, password, ok)
-		}
-		if secret := request.Form.Get("client_secret"); secret != "" {
-			t.Errorf("client_secret form value = %q", secret)
+		if !validConfidentialTokenRequest(request, "client-id", "client-secret") {
+			t.Errorf("token request violates confidential-client custody")
 		}
 		w.Header().Set("Content-Type", "application/json")
 		switch request.Form.Get("grant_type") {
@@ -404,6 +400,28 @@ func TestADR_0302_SingletonBrokerConfidentialClientCustody(t *testing.T) {
 		t.Fatalf("ambiguous replay error = %v", err)
 	}
 	assertToolHiveRedisPreservesOnlyInnerPendingState(t)
+}
+
+func validConfidentialTokenRequest(request *http.Request, clientID, secret string) bool {
+	user, password, ok := request.BasicAuth()
+	return ok && user == clientID && password == secret && request.Form.Get("client_secret") == ""
+}
+
+func TestConfidentialTokenCustodyOracleRejectsPlantedViolations(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "https://issuer.example/token", strings.NewReader("client_secret=planted"))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.SetBasicAuth("client-id", "client-secret")
+	if err := request.ParseForm(); err != nil {
+		t.Fatal(err)
+	}
+	if validConfidentialTokenRequest(request, "client-id", "client-secret") {
+		t.Fatal("custody oracle accepted a planted form secret")
+	}
+	request = httptest.NewRequest(http.MethodPost, "https://issuer.example/token", nil)
+	request.SetBasicAuth("client-id", "wrong-secret")
+	if validConfidentialTokenRequest(request, "client-id", "client-secret") {
+		t.Fatal("custody oracle accepted a planted Basic password")
+	}
 }
 
 func assertToolHiveRedisPreservesOnlyInnerPendingState(t *testing.T) {

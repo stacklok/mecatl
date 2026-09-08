@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	"sigs.k8s.io/yaml"
 )
@@ -151,8 +152,8 @@ func TestSingletonBrokerRemediation_Scenario4_SingletonTopologyAndExposure(t *te
 		t.Fatalf("broker containers = %d, want 1", len(pod.Containers))
 	}
 	container := pod.Containers[0]
-	if !strings.Contains(strings.Join(container.Args, "\n"), "--admin-addr=127.0.0.1:") {
-		t.Fatalf("administration listener is not loopback-only: %q", container.Args)
+	if !slices.Contains(container.Args, "--admin-addr=127.0.0.1:8081") {
+		t.Fatalf("administration listener does not match local subcommand address: %q", container.Args)
 	}
 	if pod.AutomountServiceAccountToken == nil || *pod.AutomountServiceAccountToken || pod.SecurityContext == nil || pod.SecurityContext.RunAsNonRoot == nil || !*pod.SecurityContext.RunAsNonRoot || pod.SecurityContext.SeccompProfile == nil {
 		t.Fatalf("restrictive pod security = token:%v context:%#v", pod.AutomountServiceAccountToken, pod.SecurityContext)
@@ -274,29 +275,83 @@ func TestInvariant_singleton_broker_release_supply_chain_hardening(t *testing.T)
 	}
 }
 
-func TestReleaseWorkflow_BrokerChartUsesPublishedDigestAndTagSerialization(t *testing.T) {
+func TestReleaseWorkflow_BrokerDigestFlowsToEveryPublishedArtifact(t *testing.T) {
 	body, err := os.ReadFile("../../../.github/workflows/release.yml")
 	if err != nil {
 		t.Fatal(err)
 	}
-	text := string(body)
-	for _, required := range []string{
-		"group: release-${{ inputs.tag || github.ref_name }}",
-		"image_ref: ${{ steps.build.outputs.digest }}",
-		"image_digest: ${{ steps.build.outputs.image_digest }}",
-		"IMAGE_REF: ${{ needs.publish-mecabroker.outputs.image_ref }}",
-		"IMAGE_DIGEST: ${{ needs.publish-mecabroker.outputs.image_digest }}",
-		"--app-version \"${VERSION}\"",
-		"digest: ${IMAGE_DIGEST}",
-		"cosign sign --yes \"${IMAGE}\"",
-		"subject-digest: ${{ steps.build.outputs.image_digest }}",
-	} {
-		if !strings.Contains(text, required) {
-			t.Fatalf("release workflow omits %q", required)
+	type job struct {
+		Needs   any              `yaml:"needs"`
+		Outputs map[string]any   `yaml:"outputs"`
+		Env     map[string]any   `yaml:"env"`
+		Steps   []map[string]any `yaml:"steps"`
+	}
+	var workflow struct {
+		Concurrency map[string]any `yaml:"concurrency"`
+		Jobs        map[string]job `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal(body, &workflow); err != nil {
+		t.Fatalf("parse release workflow: %v", err)
+	}
+	if workflow.Concurrency["group"] != "release-${{ inputs.tag || github.ref_name }}" {
+		t.Fatalf("release concurrency group = %#v", workflow.Concurrency)
+	}
+	publisher, ok := workflow.Jobs["publish-mecabroker"]
+	if !ok {
+		t.Fatal("release workflow has no mecabroker publisher")
+	}
+	if publisher.Outputs["image_ref"] != "${{ steps.build.outputs.digest }}" || publisher.Outputs["image_digest"] != "${{ steps.build.outputs.image_digest }}" {
+		t.Fatalf("publisher outputs do not expose build digest: %#v", publisher.Outputs)
+	}
+	steps := map[string]map[string]any{}
+	for _, step := range publisher.Steps {
+		if name, _ := step["name"].(string); name != "" {
+			steps[name] = step
 		}
 	}
-	if strings.Contains(text, "group: release-${{ inputs.tag || github.ref }}") {
-		t.Fatal("tag push and manual release do not serialize on the same tag")
+	for _, name := range []string{"Sign image (keyless)", "Generate SBOM file", "Attest SBOM (keyless)", "Attest build provenance"} {
+		step, ok := steps[name]
+		if !ok {
+			t.Fatalf("publisher is missing %q", name)
+		}
+		if name == "Attest build provenance" {
+			with, _ := step["with"].(map[string]any)
+			if with["subject-digest"] != "${{ steps.build.outputs.image_digest }}" {
+				t.Fatalf("provenance does not use build digest: %#v", with)
+			}
+			continue
+		}
+		if name == "Generate SBOM file" {
+			with, _ := step["with"].(map[string]any)
+			if with["image"] != "${{ steps.build.outputs.digest }}" {
+				t.Fatalf("SBOM does not use build digest: %#v", with)
+			}
+			continue
+		}
+		env, _ := step["env"].(map[string]any)
+		if env["IMAGE"] != "${{ steps.build.outputs.digest }}" {
+			t.Fatalf("%s does not use build digest: %#v", name, env)
+		}
+	}
+	chart, ok := workflow.Jobs["publish-mecabroker-helm-chart"]
+	needsPublisher := false
+	if needs, ok := chart.Needs.([]any); ok {
+		for _, need := range needs {
+			needsPublisher = needsPublisher || need == "publish-mecabroker"
+		}
+	}
+	if !ok || !needsPublisher || chart.Env["IMAGE_REF"] != "${{ needs.publish-mecabroker.outputs.image_ref }}" || chart.Env["IMAGE_DIGEST"] != "${{ needs.publish-mecabroker.outputs.image_digest }}" {
+		t.Fatalf("chart publisher is not fed by the image publisher: %#v", chart)
+	}
+	var packaged bool
+	for _, step := range chart.Steps {
+		if step["name"] == "helm package" {
+			run, _ := step["run"].(string)
+			packaged = strings.Contains(run, "digest: ${IMAGE_DIGEST}") && strings.Contains(run, "--app-version \"${VERSION}\"")
+		}
+	}
+	if !packaged {
+		t.Fatal("chart package step does not inject the published image digest")
 	}
 }
 
@@ -321,15 +376,39 @@ func TestMecabrokerChart_DeploymentSecurityAndShutdownBudget(t *testing.T) {
 	if pod.AutomountServiceAccountToken == nil || *pod.AutomountServiceAccountToken {
 		t.Fatal("broker service account token must be isolated")
 	}
-	if pod.SecurityContext == nil || pod.SecurityContext.RunAsNonRoot == nil || !*pod.SecurityContext.RunAsNonRoot || pod.SecurityContext.SeccompProfile == nil {
+	if pod.SecurityContext == nil || pod.SecurityContext.RunAsNonRoot == nil || !*pod.SecurityContext.RunAsNonRoot || pod.SecurityContext.SeccompProfile == nil || pod.SecurityContext.SeccompProfile.Type != "RuntimeDefault" || pod.SecurityContext.SeccompProfile.LocalhostProfile != nil {
 		t.Fatalf("pod security context = %#v", pod.SecurityContext)
 	}
 	container := pod.Containers[0]
-	if container.SecurityContext == nil || container.SecurityContext.ReadOnlyRootFilesystem == nil || !*container.SecurityContext.ReadOnlyRootFilesystem || container.SecurityContext.AllowPrivilegeEscalation == nil || *container.SecurityContext.AllowPrivilegeEscalation || len(container.SecurityContext.Capabilities.Drop) == 0 {
+	if !slices.Contains(container.Args, "--admin-addr=127.0.0.1:8081") {
+		t.Fatalf("admin listener does not use local command endpoint: %q", container.Args)
+	}
+	for name, probe := range map[string]*corev1.Probe{
+		"startup":   container.StartupProbe,
+		"readiness": container.ReadinessProbe,
+		"liveness":  container.LivenessProbe,
+	} {
+		if probe == nil || probe.Exec == nil || !slices.Equal(probe.Exec.Command, []string{"/ko-app/mecabroker", map[string]string{"startup": "ready", "readiness": "ready", "liveness": "health"}[name]}) {
+			t.Fatalf("%s probe does not invoke the running local admin endpoint: %#v", name, probe)
+		}
+	}
+	if container.Lifecycle == nil || container.Lifecycle.PreStop == nil || container.Lifecycle.PreStop.Exec == nil || !slices.Equal(container.Lifecycle.PreStop.Exec.Command, []string{"/ko-app/mecabroker", "drain"}) {
+		t.Fatalf("preStop does not invoke the running local admin endpoint: %#v", container.Lifecycle)
+	}
+	if container.SecurityContext == nil || container.SecurityContext.ReadOnlyRootFilesystem == nil || !*container.SecurityContext.ReadOnlyRootFilesystem || container.SecurityContext.AllowPrivilegeEscalation == nil || *container.SecurityContext.AllowPrivilegeEscalation || !slices.Equal(container.SecurityContext.Capabilities.Drop, []corev1.Capability{"ALL"}) || container.SecurityContext.SeccompProfile == nil || container.SecurityContext.SeccompProfile.Type != "RuntimeDefault" || container.SecurityContext.SeccompProfile.LocalhostProfile != nil {
 		t.Fatalf("container security context = %#v", container.SecurityContext)
 	}
-	if container.Resources.Requests.Cpu().IsZero() || container.Resources.Limits.Memory().IsZero() {
-		t.Fatalf("resources = %#v", container.Resources)
+	if got := container.Resources.Requests.Cpu().String(); got != "100m" {
+		t.Fatalf("cpu request = %q, want 100m", got)
+	}
+	if got := container.Resources.Requests.Memory().String(); got != "128Mi" {
+		t.Fatalf("memory request = %q, want 128Mi", got)
+	}
+	if got := container.Resources.Limits.Cpu().String(); got != "1" {
+		t.Fatalf("cpu limit = %q, want 1", got)
+	}
+	if got := container.Resources.Limits.Memory().String(); got != "512Mi" {
+		t.Fatalf("memory limit = %q, want 512Mi", got)
 	}
 	if container.Lifecycle == nil || container.Lifecycle.PreStop == nil || container.Lifecycle.PreStop.Exec == nil {
 		t.Fatal("missing drain preStop")
@@ -337,7 +416,7 @@ func TestMecabrokerChart_DeploymentSecurityAndShutdownBudget(t *testing.T) {
 	if pod.TerminationGracePeriodSeconds == nil || *pod.TerminationGracePeriodSeconds <= 62 {
 		t.Fatalf("grace = %v, want > 62", pod.TerminationGracePeriodSeconds)
 	}
-	for _, want := range []string{"--broker-dial-timeout=5s", "--broker-max-handles=128", "--broker-max-receipts=4096"} {
+	for _, want := range []string{"--broker-dial-timeout=5s", "--broker-max-handles=128", "--broker-max-receipts=4096", "--broker-max-logical-sessions=1024", "--broker-logical-retention=86400s", "--broker-max-pending-auth-states=1024"} {
 		if !strings.Contains(strings.Join(container.Args, "\n"), want) {
 			t.Fatalf("missing runtime bound %q", want)
 		}

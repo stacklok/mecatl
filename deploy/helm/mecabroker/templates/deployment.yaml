@@ -36,7 +36,7 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args:
             - --listen-addr=0.0.0.0:9080
-            - --admin-addr=127.0.0.1:9082
+            - --admin-addr=127.0.0.1:8081
             - --tls-cert=/var/run/secrets/tls/{{ .Values.tls.certKey }}
             - --tls-key=/var/run/secrets/tls/{{ .Values.tls.keyKey }}
             - --oidc-issuer={{ required "workloadIdentity.issuer is required" .Values.workloadIdentity.issuer }}
@@ -55,7 +55,10 @@ spec:
             - --broker-sweep-interval={{ .Values.transport.sweepIntervalSeconds }}s
             - --broker-cleanup-timeout={{ .Values.transport.cleanupTimeoutSeconds }}s
             - --broker-max-handles={{ .Values.transport.maxHandles }}
-            - --broker-max-logical-sessions={{ .Values.transport.maxLogicalSessions }}
+            - --broker-max-owners={{ .Values.transport.maxOwners }}
+            - --broker-max-logical-sessions={{ .Values.runtime.maxLogicalSessions }}
+            - --broker-logical-retention={{ .Values.runtime.logicalRetentionSeconds }}s
+            - --broker-max-pending-auth-states={{ .Values.runtime.maxPendingAuthStates }}
             - --broker-max-receipts={{ .Values.transport.maxReceipts }}
             - --broker-max-receipt-bytes={{ .Values.transport.maxReceiptBytes }}
             - --broker-max-pending-controls={{ .Values.transport.maxPendingControls }}
@@ -64,7 +67,7 @@ spec:
           {{- end }}
           ports:
             - {name: public, containerPort: 9080}
-            - {name: admin, containerPort: 9082}
+            - {name: admin, containerPort: 8081}
           startupProbe:
             exec: {command: ["/ko-app/mecabroker", "ready"]}
             periodSeconds: 2
