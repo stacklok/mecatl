@@ -274,8 +274,7 @@ jobs:
           path: ~/.cache/ms-playwright
           key: playwright-${{ matrix.runner }}-${{ runner.arch }}-${{ matrix.browser }}-${{ steps.playwright-version.outputs.version }}
 
-      - name: Install pinned Playwright browser and host dependencies
-        if: steps.playwright-cache.outputs.cache-hit != 'true'
+      - name: Ensure pinned Playwright browser and host dependencies
         working-directory: sdk/typescript
         run: pnpm exec playwright install --with-deps ${{ matrix.browser }}
 
