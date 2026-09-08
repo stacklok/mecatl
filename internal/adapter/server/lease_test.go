@@ -181,8 +181,12 @@ func TestLeaseRenewLossCancelsRun(t *testing.T) {
 	if !sawCancel {
 		t.Fatal("the run was not cancelled after the lease loss (renewer→LookupRun→Cancel did not fire)")
 	}
-	if got := lease.releaseCount(); got != 1 {
-		t.Fatalf("lease Release calls after definitive renewal loss = %d, want 1", got)
+	// run.Cancel() only signals cancellation; it does not block until the
+	// renewer's own goroutine reaches its subsequent Release call, and the run's
+	// events channel can close (ending the drain above) before that happens. So
+	// wait for the Release rather than asserting on it immediately.
+	if !eventually(time.Second, func() bool { return lease.releaseCount() == 1 }) {
+		t.Fatalf("lease Release calls after definitive renewal loss = %d, want 1", lease.releaseCount())
 	}
 	if err := lease.lastReleaseContextError(); err != nil {
 		t.Fatalf("lease-loss Release context = %v, want cancel-detached live context", err)
