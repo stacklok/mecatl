@@ -77,7 +77,10 @@ func TestExpiredCallbackStatesReleaseCapacityBeforeLogicalRetention(t *testing.T
 		}
 		time.Sleep(time.Millisecond)
 	}
-	if transaction.clientSecret != "" || transaction.verifier != "" || transaction.state != "" {
+	localAttachment.logical.mu.Lock()
+	retainedSecret := transaction.clientSecret != "" || transaction.verifier != "" || transaction.state != ""
+	localAttachment.logical.mu.Unlock()
+	if retainedSecret {
 		t.Fatal("expired transaction retained secret callback material")
 	}
 	second, required, err := requester.RequestAuthorization(t.Context(), session.ToolCall{ID: "second", Name: "mcp__github__create", Args: []byte(`{}`)})

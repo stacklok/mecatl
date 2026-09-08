@@ -245,7 +245,7 @@ func (s *Server) finishSessionBind(id session.SessionID, attached bool) {
 	}
 }
 
-func (s *Server) authorizeHandle(ctx context.Context, attachment *serverAttachment) error {
+func authorizeHandle(ctx context.Context, attachment *serverAttachment) error {
 	if attachment == nil || attachment.principal == nil {
 		return nil
 	}
@@ -256,6 +256,7 @@ func (s *Server) authorizeHandle(ctx context.Context, attachment *serverAttachme
 	return nil
 }
 
+// Attach binds an authenticated workload to a logical broker session.
 func (s *Server) Attach(ctx context.Context, req *brokerv1.AttachRequest) (*brokerv1.AttachResponse, error) {
 	ctx, cancel := s.bounded(ctx, false)
 	defer cancel()
@@ -333,7 +334,7 @@ func (s *Server) get(ctx context.Context, incarnation, handle string) (*serverAt
 	}
 	s.mu.Lock()
 	a := s.handles[handle]
-	if err := s.authorizeHandle(ctx, a); err != nil {
+	if err := authorizeHandle(ctx, a); err != nil {
 		s.mu.Unlock()
 		return nil, nil, err
 	}
@@ -362,7 +363,7 @@ func (s *Server) beginLifecycle(ctx context.Context, incarnation, handle string,
 	for {
 		s.mu.Lock()
 		a := s.handles[handle]
-		if err := s.authorizeHandle(ctx, a); err != nil {
+		if err := authorizeHandle(ctx, a); err != nil {
 			s.mu.Unlock()
 			return nil, "", false, err
 		}
@@ -604,7 +605,7 @@ func (s *Server) Execute(ctx context.Context, req *brokerv1.ExecuteRequest) (*br
 
 	s.mu.Lock()
 	a := s.handles[req.GetHandle()]
-	if err := s.authorizeHandle(ctx, a); err != nil {
+	if err := authorizeHandle(ctx, a); err != nil {
 		s.mu.Unlock()
 		return nil, err
 	}

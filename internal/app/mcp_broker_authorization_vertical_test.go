@@ -382,23 +382,6 @@ func assertToolResult(ctx context.Context, t *testing.T, svc *server.Service, id
 	t.Fatalf("no tool result for %q", call)
 }
 
-func assertExactToolResult(ctx context.Context, t *testing.T, svc *server.Service, id session.SessionID, call session.ToolCallID, wantError bool, content string) {
-	t.Helper()
-	loaded, err := svc.GetSession(ctx, id)
-	if err != nil {
-		t.Fatalf("load session for exact result: %v", err)
-	}
-	for _, message := range loaded.Conversation.Messages {
-		if message.ToolResult != nil && message.ToolResult.CallID == call {
-			if message.ToolResult.IsError != wantError || message.ToolResult.Content != content {
-				t.Fatalf("tool result for %q = %+v, want error=%v content=%q", call, message.ToolResult, wantError, content)
-			}
-			return
-		}
-	}
-	t.Fatalf("no tool result for %q", call)
-}
-
 type observedProtectedCall struct {
 	ref     session.SessionID
 	backend string

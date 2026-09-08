@@ -64,6 +64,7 @@ func NewRemoteFactory(cfg RemoteFactoryConfig) func(context.Context) (contract.S
 // every RPC and requires transport security.
 type ProjectedTokenCredentials struct{ Path string }
 
+// GetRequestMetadata returns a fresh bearer read from the projected token file.
 func (c ProjectedTokenCredentials) GetRequestMetadata(context.Context, ...string) (map[string]string, error) {
 	// #nosec G703 -- this is a trusted operator-configured projected-token path.
 	file, err := os.Open(c.Path)
@@ -86,4 +87,5 @@ func (c ProjectedTokenCredentials) GetRequestMetadata(context.Context, ...string
 	return map[string]string{"authorization": "Bearer " + token}, nil
 }
 
+// RequireTransportSecurity prevents projected credentials from crossing plaintext transport.
 func (ProjectedTokenCredentials) RequireTransportSecurity() bool { return true }
