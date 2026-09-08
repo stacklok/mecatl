@@ -106,6 +106,34 @@ func TestInitialProductionMCPBroker_Scenario4_TransientReconnect(t *testing.T) {
 	}
 }
 
+func TestSingletonBrokerRemediation_Scenario2_ProtectedContinuationNeverRebinds(t *testing.T) {
+	oldBroker := newFailureBroker()
+	oldConn, oldStop := failureBufServer(t, oldBroker, nil)
+	defer oldStop()
+	freshBroker := newFailureBroker()
+	freshConn, freshStop := failureBufServer(t, freshBroker, nil)
+	defer freshStop()
+
+	switcher := &switchConn{current: oldConn}
+	client, err := mcpbrokergrpc.NewClientWithConfig(switcher, shortConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	attachment, _, err := client.AttachSession(t.Context(), "parked-continuation")
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding := attachment.Binding()
+	switcher.set(freshConn)
+	protected := attachment.Tools()[1].(tool.AuthorizationRequester)
+	if _, _, err := protected.RequestAuthorization(t.Context(), session.NewToolCall("parked", "protected", []byte(`{}`))); !errors.Is(err, mcpbroker.ErrStateUnavailable) {
+		t.Fatalf("protected continuation after replacement = %v, want state unavailable", err)
+	}
+	if attachment.Binding() != binding || freshBroker.authCalls.Load() != 0 || freshBroker.executeCalls.Load() != 0 {
+		t.Fatalf("parked continuation rebound on replacement: binding=%q auth=%d execute=%d", attachment.Binding(), freshBroker.authCalls.Load(), freshBroker.executeCalls.Load())
+	}
+}
+
 func TestSingletonBrokerRemediation_Scenario5_RestartBoundary(t *testing.T) {
 	oldBroker := newFailureBroker()
 	oldConn, oldStop := failureBufServer(t, oldBroker, nil)
@@ -697,7 +725,7 @@ func (dispatchProofConn) NewStream(context.Context, *grpc.StreamDesc, string, ..
 	return nil, errors.New("unexpected stream")
 }
 
-func TestInitialProductionMCPBroker_Scenario4_PrePromptReenrollmentOnly(t *testing.T) {
+func TestSingletonBrokerRemediation_Scenario2_FreshClientPrePromptRecovery(t *testing.T) {
 	oldConn, oldStop := failureBufServer(t, newFailureBroker(), nil)
 	defer oldStop()
 	fresh := newFailureBroker()

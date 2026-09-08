@@ -3,6 +3,8 @@ package mcpbrokergrpc_test
 import (
 	"context"
 	"errors"
+	"os/exec"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -18,6 +20,18 @@ import (
 )
 
 func TestInvariant_singleton_broker_method_specific_rpc_contract(t *testing.T) {
+	root, err := filepath.Abs("../../..")
+	if err != nil {
+		t.Fatalf("resolve repository root: %v", err)
+	}
+	for _, command := range [][]string{{"buf", "lint", "--path", "contracts/proto/mecatl/broker/v1"}, {"task", "generate"}, {"git", "diff", "--exit-code", "--", "contracts/gen"}} {
+		cmd := exec.Command(command[0], command[1:]...)
+		cmd.Dir = root
+		if output, runErr := cmd.CombinedOutput(); runErr != nil {
+			t.Fatalf("%s: %v\n%s", command, runErr, output)
+		}
+	}
+
 	service := brokerv1.File_mecatl_broker_v1_broker_proto.Services().ByName("BrokerService")
 	if service == nil {
 		t.Fatal("BrokerService descriptor is missing")

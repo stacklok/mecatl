@@ -147,6 +147,42 @@ func TestSingletonBrokerRemediation_Scenario4_DeploymentGateIsExecutable(t *test
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("task deploy:check: %v\n%s", err, output)
 	}
+
+	workflowBody, err := os.ReadFile("../../../.github/workflows/ci.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var workflow struct {
+		Jobs map[string]struct {
+			Needs any              `yaml:"needs"`
+			Steps []map[string]any `yaml:"steps"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal(workflowBody, &workflow); err != nil {
+		t.Fatalf("parse CI workflow: %v", err)
+	}
+	deployment, ok := workflow.Jobs["deployment"]
+	if !ok {
+		t.Fatal("CI has no required deployment job")
+	}
+	if deployment.Needs == nil {
+		t.Fatal("deployment job is not connected to CI prerequisites")
+	}
+	runs := map[string]bool{}
+	for _, step := range deployment.Steps {
+		if run, ok := step["run"].(string); ok {
+			runs[strings.TrimSpace(run)] = true
+		}
+	}
+	for _, required := range []string{
+		"task deploy:check",
+		"go test ./deploy/helm/mecak8s -count=1",
+		"go test ./deploy/helm/mecabroker -count=1",
+	} {
+		if !runs[required] {
+			t.Fatalf("deployment job omits required semantic invocation %q", required)
+		}
+	}
 }
 func TestInvariant_singleton_broker_release_supply_chain_hardening(t *testing.T) {
 	body, err := os.ReadFile("../../../.github/workflows/release.yml")

@@ -382,7 +382,7 @@ func TestRuntimeCloseAndDrainUsesOneProcessDeadline(t *testing.T) {
 	}
 }
 
-func TestRuntimeBoundedAdmissionAndRetention(t *testing.T) {
+func TestSingletonBrokerRemediation_Scenario2_BoundedAdmissionAcrossBrokerRegistries(t *testing.T) {
 	catalogue, err := Compile(anonymousConfig(), discoveredTools(), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -423,4 +423,46 @@ func TestRuntimeBoundedAdmissionAndRetention(t *testing.T) {
 		t.Fatalf("retained logical session was not reclaimed: %v", err)
 	}
 	_, _ = second.Close(context.Background())
+}
+
+func TestSingletonBrokerRemediation_Scenario2_RetentionAndOwnership(t *testing.T) {
+	catalogue, err := Compile(anonymousConfig(), discoveredTools(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := New(catalogue, func(context.Context, SessionRef, string, session.ToolCall) (session.ToolResult, error) {
+		return session.ToolResult{}, nil
+	}, WithLimits(Limits{MaxLogicalSessions: 1, LogicalRetention: 15 * time.Millisecond, SweepInterval: time.Millisecond}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	active, _, err := runtime.AttachSession(t.Context(), "active")
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(3 * runtime.limits.LogicalRetention)
+	if _, _, err := runtime.AttachSession(t.Context(), "new"); !errors.Is(err, contract.ErrCapacity) {
+		t.Fatalf("active logical session was evicted by retention: %v", err)
+	}
+	if _, err := active.Close(t.Context()); err != nil {
+		t.Fatalf("close active attachment: %v", err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for {
+		candidate, _, attachErr := runtime.AttachSession(t.Context(), "new")
+		if attachErr == nil {
+			_, _ = candidate.Close(t.Context())
+			break
+		}
+		if !errors.Is(attachErr, contract.ErrCapacity) || time.Now().After(deadline) {
+			t.Fatalf("unattached logical session was not reclaimed: %v", attachErr)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if err := runtime.Close(); err != nil {
+		t.Fatalf("close runtime: %v", err)
+	}
+	if _, _, err := runtime.AttachSession(t.Context(), "after-close"); err == nil {
+		t.Fatal("closed runtime admitted a new attachment")
+	}
 }
