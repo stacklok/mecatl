@@ -8233,7 +8233,7 @@ and rejects cleartext except for an exact private-origin opt-in; an allowlist en
 never grants credential egress. Static `Authorization` and OAuth are mutually exclusive.
 This controller supports preregistered confidential and CIMD clients only; DCR
 remains blocked here on ADR 0219's official-SDK hooks. The separately configured
-ToolHive MCP broker supports its own durable DCR resolver under ADR 0313. The
+ToolHive MCP broker supports its own durable DCR resolver under ADR 0314. The
 root module pins `github.com/modelcontextprotocol/go-sdk` at
 `v1.7.1-0.20260825151509-2732839dbadd`; the controller enables the SDK's
 `AcceptUnadvertisedIss` compatibility path, leaving authorization-server discovery and

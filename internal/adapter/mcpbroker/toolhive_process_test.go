@@ -1225,7 +1225,7 @@ func toolHiveOIDCIssuer(t *testing.T) *httptest.Server {
 	return server
 }
 
-func TestADR_0313_ToolHiveConstructionCarriesDCRConfig(t *testing.T) {
+func TestADR_0314_ToolHiveConstructionCarriesDCRConfig(t *testing.T) {
 	profile := protectedToolHiveProfile("private")
 	profile.OAuth.ClientID = ""
 	profile.OAuth.ClientSecretEnv = ""
@@ -1240,7 +1240,7 @@ func TestADR_0313_ToolHiveConstructionCarriesDCRConfig(t *testing.T) {
 	}
 }
 
-func TestADR_0313_DCRRequiresExplicitOAuth2Upstream(t *testing.T) {
+func TestADR_0314_DCRRequiresExplicitOAuth2Upstream(t *testing.T) {
 	profile := protectedToolHiveProfile("private")
 	profile.OAuth.ClientID = ""
 	profile.OAuth.ClientSecretEnv = ""
@@ -1305,7 +1305,7 @@ func TestMcpBrokerDCRClient_Scenario2_ReusesCachedRegistration(t *testing.T) {
 	}
 }
 
-func TestADR_0313_RegistrationFailureNeverFallsBackUnauthenticated(t *testing.T) {
+func TestADR_0314_RegistrationFailureNeverFallsBackUnauthenticated(t *testing.T) {
 	fixture := newToolHiveDCRFixture(t, true)
 	process, err := newToolHiveProcess(t.Context(), fixture.config(), fixture.options())
 	if err == nil {
