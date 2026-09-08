@@ -13,7 +13,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -292,20 +291,6 @@ func readConfig(path string) (fileConfig, error) {
 		}
 	}
 	return cfg, nil
-}
-
-func exactCallbackPath(raw string) (string, error) {
-	if err := mcpbroker.ValidateProtectedURL(raw, "broker callback"); err != nil {
-		return "", err
-	}
-	parsed, err := url.Parse(raw)
-	if err != nil {
-		return "", errors.New("broker callback must be an exact HTTPS URL")
-	}
-	if parsed.Path == "" {
-		return "/", nil
-	}
-	return parsed.Path, nil
 }
 
 func (cfg fileConfig) toolHive() mcpbroker.ToolHiveConfig {

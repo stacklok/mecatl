@@ -49,7 +49,8 @@ func helmTemplate(t *testing.T, extraSet ...string) []byte {
 // AC4.5's deployment control until ADR 0213 carries caller claims to remote
 // drivers: rendered with oidc.enabled=true, the mecak8s Helm chart produces a
 // NetworkPolicy admitting only the agent workload to a raw driver, on one port,
-// and the default (oidc disabled) render carries no such policy at all.
+// and the default (oidc disabled) render carries no raw-driver policy. The chart's
+// general default-deny policy remains enabled in both renders.
 //
 // This asserts the rendered MANIFEST, not runtime behaviour. It cannot prove a
 // peer is blocked — that needs a live cluster with a policy-enforcing CNI — and
@@ -59,7 +60,7 @@ func helmTemplate(t *testing.T, extraSet ...string) []byte {
 // ingress rule, the port, and the chart wiring cannot drift unnoticed.
 func TestCallerSeparation_Scenario4_RawDriverIngressIsRestrictedToTheAgent(t *testing.T) {
 	defaultRendered := helmTemplate(t)
-	if bytesContainsNetworkPolicy(defaultRendered) {
+	if bytesContainsRawDriverNetworkPolicy(defaultRendered) {
 		t.Fatal("default (oidc disabled) chart render unexpectedly contains a raw-driver NetworkPolicy")
 	}
 
@@ -82,15 +83,13 @@ func TestCallerSeparation_Scenario4_RawDriverIngressIsRestrictedToTheAgent(t *te
 	}
 }
 
-// bytesContainsNetworkPolicy reports whether any rendered document is a
-// NetworkPolicy — used to assert the default (oidc disabled) chart render
-// carries none at all (the chart ships no general NetworkPolicy by design).
-func bytesContainsNetworkPolicy(rendered []byte) bool {
+// bytesContainsRawDriverNetworkPolicy reports whether the rendered manifests
+// include the optional raw-driver ingress policy, independent of the chart's
+// always-on workload default-deny policy.
+func bytesContainsRawDriverNetworkPolicy(rendered []byte) bool {
 	for _, doc := range bytes.Split(rendered, []byte("\n---\n")) {
-		var probe struct {
-			Kind string `json:"kind"`
-		}
-		if err := yaml.Unmarshal(doc, &probe); err == nil && probe.Kind == "NetworkPolicy" {
+		var policy networkingv1.NetworkPolicy
+		if err := yaml.Unmarshal(doc, &policy); err == nil && policy.Kind == "NetworkPolicy" && policy.Spec.PodSelector.MatchLabels["app.kubernetes.io/component"] == "raw-driver" {
 			return true
 		}
 	}
@@ -106,7 +105,7 @@ func decodeRawDriverPolicy(t *testing.T, rendered []byte) networkingv1.NetworkPo
 		if err := yaml.Unmarshal(doc, &policy); err != nil {
 			continue
 		}
-		if policy.Kind == "NetworkPolicy" {
+		if policy.Kind == "NetworkPolicy" && policy.Spec.PodSelector.MatchLabels["app.kubernetes.io/component"] == "raw-driver" {
 			return policy
 		}
 	}

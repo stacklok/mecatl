@@ -32,6 +32,7 @@ var (
 	ErrInvalidWorkspaceCatalogue = errors.New("mcp broker invalid workspace catalogue")
 )
 
+// MaxLogicalSessionIDBytes bounds logical session identifiers before registry access.
 const MaxLogicalSessionIDBytes = 256
 
 // ValidLogicalSessionID is the shared bounded identifier contract. It is called

@@ -40,6 +40,7 @@ func testBrokerRuntime(t *testing.T) *adapterbroker.Runtime {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = runtime.Close() })
 	return runtime
 }
 

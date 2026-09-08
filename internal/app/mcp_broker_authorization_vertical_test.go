@@ -574,12 +574,12 @@ func (f *stage3WorkloadIssuer) caPEM() []byte {
 func (f *stage3WorkloadIssuer) token(t *testing.T, audience, subject string) string {
 	t.Helper()
 	now := time.Now()
-	token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
+	signedToken := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
 		"iss": f.server.URL, "sub": subject, "aud": audience,
 		"iat": now.Add(-time.Minute).Unix(), "exp": now.Add(time.Minute).Unix(),
 	})
-	token.Header["kid"] = "stage3-workload"
-	signed, err := token.SignedString(f.key)
+	signedToken.Header["kid"] = "stage3-workload"
+	signed, err := signedToken.SignedString(f.key)
 	if err != nil {
 		t.Fatal(err)
 	}
