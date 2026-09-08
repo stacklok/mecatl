@@ -3,8 +3,8 @@ module github.com/stacklok/mecatl/provider/anthropic
 go 1.26.6
 
 require (
-	github.com/anthropics/anthropic-sdk-go v1.70.1
-	github.com/stacklok/mecatl/engine v0.13.0
+	github.com/anthropics/anthropic-sdk-go v1.71.0
+	github.com/stacklok/mecatl/engine v0.14.0
 	go.uber.org/goleak v1.3.0
 )
 
