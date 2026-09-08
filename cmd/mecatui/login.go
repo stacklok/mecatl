@@ -67,7 +67,7 @@ func newSavedLoginContextWithNotifier(timeout time.Duration, notify notifyContex
 func runRemoteLogin(address string, args []string) error {
 	fs := flag.NewFlagSet("mecatui login", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	var issuer, clientID, audience, tlsCA, grpcTarget string
+	var issuer, clientID, audience, tlsCA, serverTLSCA, grpcTarget string
 	var privateIssuer bool
 	var noBrowser bool
 	var scopes, credentialStore string
@@ -77,13 +77,14 @@ func runRemoteLogin(address string, args []string) error {
 	fs.StringVar(&clientID, "client-id", "", "public OIDC client ID")
 	fs.StringVar(&audience, "audience", "", "OIDC token audience")
 	fs.StringVar(&tlsCA, "tls-ca", "", "path to a PEM CA bundle for issuer verification (replaces system roots in public mode)")
+	fs.StringVar(&serverTLSCA, "server-tls-ca", "", "path to a PEM CA bundle for saved gRPC server verification")
 	fs.StringVar(&grpcTarget, "grpc-target", "", "gRPC transport target for protected-resource discovery")
 	fs.BoolVar(&privateIssuer, "private-issuer", false, "allow only private issuer addresses; requires --tls-ca")
 	fs.StringVar(&scopes, "scopes", defaultOIDCScopes, "comma-separated OIDC scopes to request (explicit identity login only)")
 	fs.BoolVar(&noBrowser, "no-browser", false, "print the OIDC authorization URL instead of opening a browser, then wait for the loopback callback (headless/SSH use)")
 	fs.DurationVar(&timeout, "callback-timeout", 5*time.Minute, "maximum time to wait for the loopback OAuth callback")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "Usage: mecatui login ADDRESS [--issuer HTTPS_URL --client-id ID --audience AUDIENCE] [--grpc-target HOST:PORT]")
+		fmt.Fprintln(os.Stderr, "Usage: mecatui login ADDRESS [--issuer HTTPS_URL --client-id ID --audience AUDIENCE] [--grpc-target HOST:PORT] [--server-tls-ca PEM]")
 		flaghelp.PrintDefaults(fs.Output(), fs)
 	}
 	if err := fs.Parse(args); err != nil {
@@ -93,6 +94,10 @@ func runRemoteLogin(address string, args []string) error {
 		return err
 	}
 	storeMode := clientauth.CredentialStoreMode(credentialStore)
+	serverCAFile, err := resolveCAFlag("server-tls-ca", serverTLSCA)
+	if err != nil {
+		return err
+	}
 	explicitIssuer := flagWasSet(fs, "issuer")
 	explicitClientID := flagWasSet(fs, "client-id")
 	explicitAudience := flagWasSet(fs, "audience")
@@ -101,7 +106,7 @@ func runRemoteLogin(address string, args []string) error {
 		if tlsCA != "" || privateIssuer {
 			return errors.New("login: --tls-ca and --private-issuer require explicit --issuer, --client-id, and --audience")
 		}
-		return runDiscoveredRemoteLogin(address, grpcTarget, flagWasSet(fs, "scopes"), noBrowser, timeout, storeMode)
+		return runDiscoveredRemoteLogin(address, grpcTarget, serverCAFile, flagWasSet(fs, "scopes"), noBrowser, timeout, storeMode)
 	}
 	if issuer == "" || clientID == "" || audience == "" {
 		return errors.New("login: --issuer, --client-id, and --audience are required together")
@@ -112,14 +117,9 @@ func runRemoteLogin(address string, args []string) error {
 	if privateIssuer && tlsCA == "" {
 		return errors.New("login: --private-issuer requires --tls-ca")
 	}
-	issuerCAFile := ""
-	if tlsCA != "" {
-		var err error
-		issuerCAFile, err = filepath.Abs(tlsCA)
-		if err != nil {
-			return fmt.Errorf("login: resolve --tls-ca: %w", err)
-		}
-		issuerCAFile = filepath.Clean(issuerCAFile)
+	issuerCAFile, err := resolveCAFlag("tls-ca", tlsCA)
+	if err != nil {
+		return err
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -129,7 +129,7 @@ func runRemoteLogin(address string, args []string) error {
 	if privateIssuer {
 		policy = clientauth.IssuerAddressPolicyPrivate
 	}
-	conn := clientauth.Connection{Identity: clientauth.Identity{Target: address, Issuer: issuer, ClientID: clientID, Audience: audience, RedirectURI: oauthlogin.ExactRedirectURL, Scopes: splitScopes(scopes)}, IssuerCAFile: issuerCAFile, IssuerAddressPolicy: policy}
+	conn := clientauth.Connection{Identity: clientauth.Identity{Target: address, Issuer: issuer, ClientID: clientID, Audience: audience, RedirectURI: oauthlogin.ExactRedirectURL, Scopes: splitScopes(scopes)}, IssuerCAFile: issuerCAFile, ServerCAFile: serverCAFile, IssuerAddressPolicy: policy}
 	if err := executeRemoteLogin(ctx, conn, noBrowser, storeMode); err != nil {
 		if errors.Is(err, context.Canceled) {
 			fmt.Fprintln(os.Stderr, "login cancelled")
@@ -154,7 +154,18 @@ func validateRemoteLoginOptions(extra int, timeout time.Duration, credentialStor
 	return nil
 }
 
-func runDiscoveredRemoteLogin(address, grpcTarget string, scopesExplicit, noBrowser bool, timeout time.Duration, storeMode clientauth.CredentialStoreMode) error {
+func resolveCAFlag(name, path string) (string, error) {
+	if path == "" {
+		return "", nil
+	}
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("login: resolve --%s: %w", name, err)
+	}
+	return filepath.Clean(absolute), nil
+}
+
+func runDiscoveredRemoteLogin(address, grpcTarget, serverCAFile string, scopesExplicit, noBrowser bool, timeout time.Duration, storeMode clientauth.CredentialStoreMode) error {
 	if scopesExplicit {
 		return errors.New("login: --scopes is only valid with explicit --issuer, --client-id, and --audience")
 	}
@@ -264,7 +275,15 @@ func confirmDiscoveredLogin(in io.Reader, out io.Writer, enrollment discoveredEn
 	if !safeDiscoveredEnrollment(enrollment) {
 		return false, errDiscoveryRejected
 	}
-	if _, err := fmt.Fprintf(out, "Discovered protected resource:\n  resource: %s\n  metadata: %s\n  issuer: %s\n  audience: %s\n  client ID: %s\n  scopes: %s\n  gRPC target: %s\nContinue with browser login? [y/N]: ", enrollment.Resource, enrollment.MetadataURL, enrollment.Connection.Identity.Issuer, enrollment.Connection.Identity.Audience, enrollment.Connection.Identity.ClientID, strings.Join(enrollment.Connection.Identity.Scopes, ","), enrollment.Connection.Identity.Target); err != nil {
+	if _, err := fmt.Fprintf(out, "Discovered protected resource:\n  resource: %s\n  metadata: %s\n  issuer: %s\n  audience: %s\n  client ID: %s\n  scopes: %s\n  gRPC target: %s\n", enrollment.Resource, enrollment.MetadataURL, enrollment.Connection.Identity.Issuer, enrollment.Connection.Identity.Audience, enrollment.Connection.Identity.ClientID, strings.Join(enrollment.Connection.Identity.Scopes, ","), enrollment.Connection.Identity.Target); err != nil {
+		return false, err
+	}
+	if enrollment.Connection.ServerCAFile != "" {
+		if _, err := fmt.Fprintf(out, "  server TLS CA: %s\n", enrollment.Connection.ServerCAFile); err != nil {
+			return false, err
+		}
+	}
+	if _, err := fmt.Fprint(out, "Continue with browser login? [y/N]: "); err != nil {
 		return false, err
 	}
 	answer, err := bufio.NewReader(in).ReadString('\n')
@@ -284,6 +303,9 @@ func safeDiscoveredEnrollment(enrollment discoveredEnrollment) bool {
 		enrollment.Connection.Identity.ClientID,
 		enrollment.Connection.Identity.Target,
 		strings.Join(enrollment.Connection.Identity.Scopes, ","),
+	}
+	if enrollment.Connection.ServerCAFile != "" {
+		values = append(values, enrollment.Connection.ServerCAFile)
 	}
 	for _, value := range values {
 		if !safeDisplayValue(value) {

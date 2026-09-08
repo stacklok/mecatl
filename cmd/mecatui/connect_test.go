@@ -416,7 +416,7 @@ func TestRemoteAnonymousProductionPathResolvesTLSAndPlaintext(t *testing.T) {
 	}
 }
 
-func TestExplicitStaticTokenBypassesSavedEnrollmentLookup(t *testing.T) {
+func TestCredentialIndependentModesIgnoreSavedEnrollmentLookupFailures(t *testing.T) {
 	oldConfigHome := xdg.ConfigHome
 	xdg.ConfigHome = t.TempDir()
 	t.Cleanup(func() { xdg.ConfigHome = oldConfigHome })
@@ -428,15 +428,27 @@ func TestExplicitStaticTokenBypassesSavedEnrollmentLookup(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	target, dial, cleanup, err := resolveTransport(t.Context(), config{
-		transportMode:  modeConnect,
-		connectAddress: "remote.example:443",
-		authToken:      "explicit-token",
-		useTLS:         true,
-	})
-	defer cleanup()
-	if err != nil || target != "remote.example:443" || dial.AuthToken != "explicit-token" || dial.TokenSource != nil || dial.ExplicitAnonymous {
-		t.Fatalf("target=%q dial=%#v err=%v, want explicit token without registry access", target, dial, err)
+	for _, tc := range []struct {
+		name      string
+		authToken string
+		anonymous bool
+	}{
+		{name: "static bearer", authToken: "explicit-token"},
+		{name: "anonymous", anonymous: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			target, dial, cleanup, err := resolveTransport(t.Context(), config{
+				transportMode:  modeConnect,
+				connectAddress: "remote.example:443",
+				authToken:      tc.authToken,
+				anonymous:      tc.anonymous,
+				useTLS:         true,
+			})
+			defer cleanup()
+			if err != nil || target != "remote.example:443" || dial.AuthToken != tc.authToken || dial.TokenSource != nil || dial.ExplicitAnonymous != tc.anonymous {
+				t.Fatalf("target=%q dial=%#v err=%v, want credential-independent mode despite corrupt registry", target, dial, err)
+			}
+		})
 	}
 }
 
@@ -575,19 +587,26 @@ func TestResolveTransportUsesPersistedServerCAWithExplicitOverride(t *testing.T)
 	}
 
 	for _, tc := range []struct {
-		name string
-		ca   string
-		want string
+		name            string
+		ca              string
+		authToken       string
+		anonymous       bool
+		want            string
+		wantTokenSource bool
 	}{
-		{name: "saved CA is the default", want: serverCA},
-		{name: "explicit connect CA overrides saved CA", ca: explicitCA, want: explicitCA},
+		{name: "saved CA is the managed OIDC default", want: serverCA, wantTokenSource: true},
+		{name: "explicit connect CA overrides saved CA", ca: explicitCA, want: explicitCA, wantTokenSource: true},
+		{name: "saved CA is independent of static bearer selection", authToken: "static-token", want: serverCA},
+		{name: "explicit connect CA overrides saved CA with static bearer", ca: explicitCA, authToken: "static-token", want: explicitCA},
+		{name: "saved CA is independent of anonymous selection", anonymous: true, want: serverCA},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			target, dial, cleanup, err := resolveTransport(t.Context(), config{
 				transportMode: modeConnect, connectAddress: id.Target, useTLS: true, tlsCA: tc.ca,
+				authToken: tc.authToken, anonymous: tc.anonymous,
 			})
 			defer cleanup()
-			if err != nil || target != id.Target || dial.Server != id.Target || !dial.UseTLS || dial.Insecure || dial.TLSCAFile != tc.want || dial.TokenSource == nil {
+			if err != nil || target != id.Target || dial.Server != id.Target || !dial.UseTLS || dial.Insecure || dial.TLSCAFile != tc.want || (dial.TokenSource != nil) != tc.wantTokenSource || dial.AuthToken != tc.authToken || dial.ExplicitAnonymous != tc.anonymous {
 				t.Fatalf("target=%q dial=%#v err=%v, want saved verified transport with CA %q", target, dial, err, tc.want)
 			}
 		})

@@ -92,6 +92,20 @@ func TestRemoteLoginExplicitEmptyIdentityDoesNotFallBackToDiscovery(t *testing.T
 	}
 }
 
+func TestRemoteLoginDiscoveryRejectsExplicitIssuerTrustFlags(t *testing.T) {
+	original := discoverRemoteResource
+	t.Cleanup(func() { discoverRemoteResource = original })
+	discoverRemoteResource = func(context.Context, protectedResource) (discoveredResource, error) {
+		t.Fatal("protected-resource discovery was attempted with explicit issuer trust flags")
+		return discoveredResource{}, nil
+	}
+	for _, args := range [][]string{{"--tls-ca", "issuer-ca.pem"}, {"--private-issuer"}} {
+		if err := runRemoteLogin("https://resource.example", args); err == nil || !strings.Contains(err.Error(), "require explicit --issuer") {
+			t.Fatalf("runRemoteLogin(%q) error = %v, want explicit identity requirement", args, err)
+		}
+	}
+}
+
 func TestRemoteLoginAllowsSystemIssuerRoots(t *testing.T) {
 	original := executeRemoteLogin
 	t.Cleanup(func() { executeRemoteLogin = original })
@@ -346,11 +360,28 @@ func TestDiscoveredLoginPropagatesServerCA(t *testing.T) {
 func TestConfirmDiscoveredLoginRejectsTerminalControls(t *testing.T) {
 	base := discoveredEnrollment{Resource: "https://api.example", MetadataURL: "https://api.example/.well-known/oauth-protected-resource", Connection: clientauth.Connection{Identity: clientauth.Identity{Issuer: "https://issuer.example", ClientID: "client", Audience: "audience", Target: "api.example:443", Scopes: []string{"openid"}}}}
 	for _, value := range []string{"line\nfeed", "line\u2028separator", "line\u2029separator", "\x1b[2J"} {
-		candidate := base
-		candidate.Connection.Identity.Audience = value
-		if _, err := confirmDiscoveredLogin(strings.NewReader("y\n"), io.Discard, candidate); !errors.Is(err, errDiscoveryRejected) {
-			t.Errorf("confirmation accepted unsafe metadata value %q: %v", value, err)
+		for _, setUnsafe := range []func(*discoveredEnrollment){
+			func(candidate *discoveredEnrollment) { candidate.Connection.Identity.Audience = value },
+			func(candidate *discoveredEnrollment) { candidate.Connection.ServerCAFile = value },
+		} {
+			candidate := base
+			setUnsafe(&candidate)
+			if _, err := confirmDiscoveredLogin(strings.NewReader("y\n"), io.Discard, candidate); !errors.Is(err, errDiscoveryRejected) {
+				t.Errorf("confirmation accepted unsafe metadata value %q: %v", value, err)
+			}
 		}
+	}
+}
+
+func TestConfirmDiscoveredLoginShowsServerCA(t *testing.T) {
+	enrollment := discoveredEnrollment{Resource: "https://api.example", MetadataURL: "https://api.example/.well-known/oauth-protected-resource", Connection: clientauth.Connection{Identity: clientauth.Identity{Issuer: "https://issuer.example", ClientID: "client", Audience: "audience", Target: "api.example:443", Scopes: []string{"openid"}}, ServerCAFile: "/server-ca.pem"}}
+	var out strings.Builder
+	confirmed, err := confirmDiscoveredLogin(strings.NewReader("y\n"), &out, enrollment)
+	if err != nil || !confirmed {
+		t.Fatalf("confirmDiscoveredLogin = %v, %v", confirmed, err)
+	}
+	if !strings.Contains(out.String(), "  server TLS CA: /server-ca.pem\n") {
+		t.Fatalf("confirmation output does not disclose server CA: %q", out.String())
 	}
 }
 

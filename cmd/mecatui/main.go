@@ -1161,6 +1161,12 @@ func shutdownProductMetrics(pm cliconfig.ProductMetricsHandles) {
 func resolveRemoteTransport(ctx context.Context, cfg config, noop func()) (target string, dial client.DialConfig, cleanup func(), err error) {
 	dial = client.DialConfig{Server: cfg.connectAddress, AuthToken: cfg.authToken, ExplicitAnonymous: cfg.anonymous, UseTLS: cfg.useTLS, TLSCAFile: cfg.tlsCA, Insecure: cfg.insecure, RemotePlaintextAllowed: cfg.tlsExplicit && !cfg.useTLS}
 	if cfg.authToken != "" || cfg.anonymous {
+		registry, regErr := clientauth.OpenExistingRegistry(filepath.Join(xdg.ConfigHome, "mecatl"))
+		if regErr == nil {
+			if conn, findErr := registry.Find(cfg.connectAddress); findErr == nil {
+				applySavedServerCA(cfg, conn, &dial)
+			}
+		}
 		return cfg.connectAddress, dial, noop, nil
 	}
 

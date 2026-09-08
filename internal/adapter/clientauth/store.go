@@ -820,7 +820,7 @@ func (r *Registry) readRows() ([]registryRow, error) {
 		if valid {
 			canonical, canonicalErr := conn.Identity.Canonical()
 			resource, resourceErr := canonicalResourceURL(conn.ResourceURL)
-			valid = canonicalErr == nil && resourceErr == nil && validIssuerCAFile(conn.IssuerCAFile) && validCAFile(conn.ServerCAFile) && conn.IssuerAddressPolicy.valid()
+			valid = canonicalErr == nil && resourceErr == nil && validCAFile(conn.IssuerCAFile) && validCAFile(conn.ServerCAFile) && conn.IssuerAddressPolicy.valid()
 			if valid {
 				conn.Identity = canonical
 				conn.ResourceURL = resource
@@ -976,7 +976,7 @@ func normalizeConnection(conn Connection) (Connection, error) {
 		return Connection{}, errors.New("clientauth: resource URL must be canonical HTTPS")
 	}
 	conn.ResourceURL = resource
-	if !validIssuerCAFile(conn.IssuerCAFile) {
+	if !validCAFile(conn.IssuerCAFile) {
 		return Connection{}, errors.New("clientauth: issuer CA path must be absolute and clean")
 	}
 	if !validCAFile(conn.ServerCAFile) {
@@ -986,10 +986,6 @@ func normalizeConnection(conn Connection) (Connection, error) {
 		return Connection{}, errors.New("clientauth: invalid issuer connection policy")
 	}
 	return conn, nil
-}
-
-func validIssuerCAFile(path string) bool {
-	return validCAFile(path)
 }
 
 func validCAFile(path string) bool {
@@ -1043,7 +1039,7 @@ func (r *Registry) Upsert(conn Connection) ([]Identity, error) {
 			displaced = append(displaced, existing.Identity)
 		}
 	}
-	kept = append(kept, registryRow{connection: Connection{Identity: id, ResourceURL: conn.ResourceURL, IssuerCAFile: conn.IssuerCAFile, ServerCAFile: conn.ServerCAFile, IssuerAddressPolicy: conn.IssuerAddressPolicy}, valid: true})
+	kept = append(kept, registryRow{connection: conn, valid: true})
 	if err := r.writeRows(kept); err != nil {
 		return nil, err
 	}
