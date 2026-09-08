@@ -238,17 +238,17 @@ type oauthGrant struct {
 	executed     map[session.ToolCallID][32]byte
 }
 
-func (r *Runtime) registerCallbackState(state string, logical *logicalSession, transaction *authorizationTransaction) bool {
+func (r *Runtime) registerCallbackState(state string, logical *logicalSession, transaction *authorizationTransaction) error {
 	r.stateMu.Lock()
 	defer r.stateMu.Unlock()
 	if len(r.states) >= r.limits.MaxPendingStates {
-		return false
+		return contract.ErrCapacity
 	}
 	if _, exists := r.states[state]; exists {
-		return false
+		return errors.New("create unique callback state")
 	}
 	r.states[state] = callbackState{logical: logical, transaction: transaction}
-	return true
+	return nil
 }
 
 func (r *Runtime) claimCallbackState(state string) (callbackState, bool) {
@@ -394,12 +394,12 @@ func (t *protectedSessionTool) RequestAuthorization(ctx context.Context, call se
 		transaction.bundleBackends = append([]string(nil), t.attachment.runtime.process.construction.protectedBackends...)
 	}
 	logical.authorizations[transaction.identity] = transaction
-	if !t.attachment.runtime.registerCallbackState(state, logical, transaction) {
+	if err := t.attachment.runtime.registerCallbackState(state, logical, transaction); err != nil {
 		delete(logical.authorizations, transaction.identity)
 		transaction.clientSecret = ""
 		transaction.verifier = ""
 		transaction.state = ""
-		return session.ExternalAuthorization{}, false, errors.New("create unique callback state")
+		return session.ExternalAuthorization{}, false, err
 	}
 	return transaction.external(), true, nil
 }

@@ -102,7 +102,7 @@ func TestSingletonBrokerRemediation_Scenario4_ProjectedTokenRotation(t *testing.
 		}
 	}
 	write("first")
-	projectedCredentials := projectedBrokerCredentials{path: path}
+	projectedCredentials := mcpbrokergrpc.ProjectedTokenCredentials{Path: path}
 	first, err := projectedCredentials.GetRequestMetadata(context.Background())
 	if err != nil {
 		t.Fatal(err)

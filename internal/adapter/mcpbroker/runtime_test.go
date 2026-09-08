@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/oauth2"
+
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
@@ -423,6 +425,39 @@ func TestSingletonBrokerRemediation_Scenario2_BoundedAdmissionAcrossBrokerRegist
 		t.Fatalf("retained logical session was not reclaimed: %v", err)
 	}
 	_, _ = second.Close(context.Background())
+
+	protectedCatalogue, err := Compile(protectedConfig("https://accounts.example/token"), []ToolDefinition{{Backend: "github", Name: "mcp__github__create", Schema: json.RawMessage(`{"type":"object"}`)}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	protectedRuntime, err := New(protectedCatalogue, func(context.Context, SessionRef, string, session.ToolCall) (session.ToolResult, error) {
+		return session.ToolResult{}, nil
+	},
+		WithAuthorizedCaller(func(context.Context, SessionRef, string, session.ToolCall, oauth2.TokenSource) (session.ToolResult, error) {
+			return session.ToolResult{}, nil
+		}),
+		WithLimits(Limits{MaxLogicalSessions: 2, LogicalRetention: time.Hour, SweepInterval: time.Hour, MaxPendingStates: 1}),
+		WithOAuthSecretResolver(func(context.Context, string) (string, error) { return "secret", nil }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer protectedRuntime.Close()
+	one, _, err := protectedRuntime.AttachSession(t.Context(), "pending-one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	two, _, err := protectedRuntime.AttachSession(t.Context(), "pending-two")
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstProtected := one.Tools()[0].(tool.AuthorizationRequester)
+	if _, required, requestErr := firstProtected.RequestAuthorization(t.Context(), session.NewToolCall("pending-1", "mcp__github__create", json.RawMessage(`{}`))); requestErr != nil || !required {
+		t.Fatalf("first pending authorization = required:%v err:%v", required, requestErr)
+	}
+	secondProtected := two.Tools()[0].(tool.AuthorizationRequester)
+	if _, _, requestErr := secondProtected.RequestAuthorization(t.Context(), session.NewToolCall("pending-2", "mcp__github__create", json.RawMessage(`{}`))); !errors.Is(requestErr, contract.ErrCapacity) {
+		t.Fatalf("pending-state capacity error = %v, want structured capacity", requestErr)
+	}
 }
 
 func TestSingletonBrokerRemediation_Scenario2_RetentionAndOwnership(t *testing.T) {

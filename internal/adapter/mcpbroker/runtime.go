@@ -274,6 +274,26 @@ type Runtime struct {
 var _ contract.Service = (*Runtime)(nil)
 var _ contract.BindingSessionDeleter = (*Runtime)(nil)
 
+// Ready verifies the process-local runtime without attaching a session or
+// executing upstream work.
+func (r *Runtime) Ready(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if r == nil {
+		return errors.New("mcpbroker: runtime is unavailable")
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if r.closed || r.catalogue == nil || r.caller == nil {
+		return errors.New("mcpbroker: runtime is unavailable")
+	}
+	if r.process != nil {
+		return r.process.ready(ctx)
+	}
+	return nil
+}
+
 // New constructs an in-process broker. OAuth options are required only when the
 // catalogue contains protected routes.
 func New(catalogue *Catalogue, caller Caller, options ...Option) (*Runtime, error) {

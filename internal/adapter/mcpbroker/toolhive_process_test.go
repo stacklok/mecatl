@@ -72,7 +72,7 @@ func TestNewToolHiveProcessUsesConfiguredAuthStorage(t *testing.T) {
 	}
 }
 
-func TestInvariant_singleton_broker_named_proofs_use_production_paths(t *testing.T) {
+func TestToolHiveProductionHandlerAndAttachmentPath(t *testing.T) {
 	t.Setenv("MECATL_TEST_CLIENT_SECRET", "construction-only-secret")
 	profile := protectedToolHiveProfile("proof")
 	profile.Static = []StaticTool{{Name: "echo", Schema: json.RawMessage(`{"type":"object"}`)}}

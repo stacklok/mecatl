@@ -2,6 +2,7 @@ package mcpbrokerserver
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -12,74 +13,114 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	"github.com/stacklok/mecatl/internal/adapter/mcpbroker"
+	contract "github.com/stacklok/mecatl/internal/mcpbroker"
 )
 
 func TestSingletonBrokerRemediation_Scenario3_ProductionReadinessUsesRealDependencies(t *testing.T) {
-	var failed atomic.Int32
-	calls := make([]atomic.Int32, 6)
-	checks := make([]ReadinessCheck, len(calls))
-	for i := range checks {
-		index := int32(i)
-		checks[i] = func(context.Context) error {
-			calls[index].Add(1)
-			if failed.Load() == index+1 {
-				return errors.New("prerequisite unavailable")
+	issuer := newIdentityFixture(t)
+	t.Setenv("MECATL_READINESS_SECRET", "offline-secret")
+	var process *mcpbroker.Process
+	srv, err := New(t.Context(), Config{
+		OIDC: productionOIDC(issuer, time.Minute),
+		Factory: func(ctx context.Context) (contract.Service, mcpbroker.HandlerBundle, string, func() error, error) {
+			var buildErr error
+			process, buildErr = mcpbroker.NewToolHiveProcess(ctx, mcpbroker.ToolHiveConfig{
+				CallbackURL: "https://broker.example/callback",
+				Profiles: []mcpbroker.ToolHiveProfile{{
+					Name: "github", URL: "https://mcp.example/mcp", Auth: "oauth",
+					OAuth: &mcpbroker.ToolHiveOAuth{
+						AuthorizationEndpoint: "https://identity.example/authorize", TokenEndpoint: "https://identity.example/token",
+						ClientID: "readiness-client", ClientSecretEnv: "MECATL_READINESS_SECRET",
+					},
+					Static: []mcpbroker.StaticTool{{Name: "mcp__github__read", Schema: json.RawMessage(`{"type":"object"}`), ReadOnly: true}},
+				}},
+			})
+			if buildErr != nil {
+				return nil, mcpbroker.HandlerBundle{}, "", nil, buildErr
 			}
-			return nil
-		}
-	}
-	coordinator, err := NewCoordinator(50*time.Millisecond, checks...)
+			return process.Runtime, process.Handlers, "/callback", process.Close, nil
+		},
+		ReadinessTimeout: time.Second,
+	})
 	if err != nil {
-		t.Fatalf("NewCoordinator: %v", err)
+		t.Fatalf("production New: %v", err)
 	}
-	if coordinator.Ready(t.Context()) {
-		t.Fatal("readiness opened before construction completed")
+	defer func() { _ = srv.Close(context.Background()) }()
+	if process == nil || !srv.Ready(t.Context()) {
+		t.Fatal("production OIDC and ToolHive dependencies did not open readiness")
 	}
-	coordinator.Open()
-	if !coordinator.Ready(t.Context()) {
-		t.Fatal("all healthy prerequisites did not open readiness")
+	if err := process.Close(); err != nil {
+		t.Fatalf("close ToolHive dependency: %v", err)
 	}
-	for i := int32(1); i <= int32(len(checks)); i++ {
-		failed.Store(i)
-		if coordinator.Ready(t.Context()) {
-			t.Fatalf("readiness stayed true with prerequisite %d failed", i)
-		}
+	if srv.Ready(t.Context()) {
+		t.Fatal("readiness stayed open after the production ToolHive process failed")
 	}
-	for i := range calls {
-		if calls[i].Load() == 0 {
-			t.Fatalf("readiness prerequisite %d was never checked", i+1)
-		}
-	}
-	coordinator.BeginDrain()
-	failed.Store(0)
-	if coordinator.Ready(t.Context()) {
-		t.Fatal("readiness stayed true after admission closed")
+	srv.BeginDrain()
+	if srv.Ready(t.Context()) {
+		t.Fatal("readiness stayed open after admission closed")
 	}
 }
 
 func TestSingletonBrokerRemediation_Scenario3_ProductionDrainAndCleanup(t *testing.T) {
-	coordinator, err := NewCoordinator(time.Second)
-	if err != nil {
-		t.Fatal(err)
-	}
-	coordinator.Open()
+	issuer := newIdentityFixture(t)
+	t.Setenv("MECATL_DRAIN_SECRET", "offline-secret")
 	entered := make(chan struct{})
 	operationDone := make(chan struct{})
-	handler := coordinator.HTTP(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-		close(entered)
-		<-r.Context().Done()
-		close(operationDone)
-	}))
-	go handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/v1/mcp/broker/oauth/callback", nil))
+	var processClosed atomic.Bool
+	srv, err := New(t.Context(), Config{
+		OIDC: productionOIDC(issuer, time.Minute),
+		Factory: func(ctx context.Context) (contract.Service, mcpbroker.HandlerBundle, string, func() error, error) {
+			process, buildErr := mcpbroker.NewToolHiveProcess(ctx, mcpbroker.ToolHiveConfig{
+				CallbackURL: "https://broker.example/callback",
+				Profiles: []mcpbroker.ToolHiveProfile{{
+					Name: "github", URL: "https://mcp.example/mcp", Auth: "oauth",
+					OAuth:  &mcpbroker.ToolHiveOAuth{AuthorizationEndpoint: "https://identity.example/authorize", TokenEndpoint: "https://identity.example/token", ClientID: "drain-client", ClientSecretEnv: "MECATL_DRAIN_SECRET"},
+					Static: []mcpbroker.StaticTool{{Name: "mcp__github__read", Schema: json.RawMessage(`{"type":"object"}`), ReadOnly: true}},
+				}},
+			})
+			if buildErr != nil {
+				return nil, mcpbroker.HandlerBundle{}, "", nil, buildErr
+			}
+			handlers := process.Handlers
+			realCallback := handlers.Callback
+			handlers.Callback = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				close(entered)
+				<-r.Context().Done()
+				close(operationDone)
+				realCallback.ServeHTTP(w, r)
+			})
+			closeProcess := func() error {
+				select {
+				case <-operationDone:
+				default:
+					t.Error("ToolHive process closed before admitted callback joined")
+				}
+				processClosed.Store(true)
+				return process.Close()
+			}
+			return process.Runtime, handlers, "/callback", closeProcess, nil
+		},
+		ReadinessTimeout: time.Second,
+	})
+	if err != nil {
+		t.Fatalf("production New: %v", err)
+	}
+	callbackDone := make(chan struct{})
+	go func() {
+		defer close(callbackDone)
+		srv.HTTPHandler().ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/callback", nil))
+	}()
 	<-entered
 
-	coordinator.BeginDrain()
+	srv.BeginDrain()
 	late := httptest.NewRecorder()
-	handler.ServeHTTP(late, httptest.NewRequest(http.MethodPost, "/callback", nil))
+	srv.HTTPHandler().ServeHTTP(late, httptest.NewRequest(http.MethodGet, "/callback", nil))
 	if late.Code != http.StatusServiceUnavailable {
 		t.Fatalf("new callback after drain = %d, want 503", late.Code)
 	}
-	_, grpcErr := coordinator.UnaryInterceptor(t.Context(), nil, &grpc.UnaryServerInfo{}, func(context.Context, any) (any, error) {
+	_, grpcErr := srv.coordinator.UnaryInterceptor(t.Context(), nil, &grpc.UnaryServerInfo{}, func(context.Context, any) (any, error) {
 		t.Fatal("new gRPC work reached handler after drain")
 		return nil, nil
 	})
@@ -87,17 +128,23 @@ func TestSingletonBrokerRemediation_Scenario3_ProductionDrainAndCleanup(t *testi
 		t.Fatalf("new gRPC work after drain = %v, want unavailable", grpcErr)
 	}
 
-	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Millisecond)
-	defer cancel()
-	if err := coordinator.Drain(ctx, 0); !errors.Is(err, context.DeadlineExceeded) {
+	drainCtx, cancel := context.WithTimeout(t.Context(), 30*time.Millisecond)
+	if err := srv.Drain(drainCtx, 0); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("Drain with active work = %v, want deadline exceeded", err)
 	}
+	cancel()
 	select {
-	case <-operationDone:
+	case <-callbackDone:
 	case <-time.After(time.Second):
-		t.Fatal("drain deadline did not cancel active operation")
+		t.Fatal("drain deadline did not cancel and join admitted callback")
 	}
-	if err := coordinator.Drain(t.Context(), -time.Second); err == nil {
-		t.Fatal("negative endpoint propagation interval was accepted")
+	if processClosed.Load() {
+		t.Fatal("drain closed ToolHive before lifecycle shutdown")
+	}
+	if err := srv.Close(t.Context()); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if !processClosed.Load() {
+		t.Fatal("production shutdown did not close ToolHive process")
 	}
 }

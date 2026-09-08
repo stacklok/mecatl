@@ -725,6 +725,138 @@ func (dispatchProofConn) NewStream(context.Context, *grpc.StreamDesc, string, ..
 	return nil, errors.New("unexpected stream")
 }
 
+func TestSingletonBrokerRemediation_Scenario2_BoundedAdmissionAcrossBrokerRegistries(t *testing.T) {
+	t.Run("attachment handles", func(t *testing.T) {
+		cfg := shortConfig()
+		cfg.MaxHandles = 1
+		server, err := mcpbrokergrpc.NewServerWithConfig(newFailureBroker(), cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer server.Shutdown(context.Background())
+		if _, err := server.Attach(t.Context(), &brokerv1.AttachRequest{SessionId: "handle-one"}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := server.Attach(t.Context(), &brokerv1.AttachRequest{SessionId: "handle-two"}); status.Code(err) != codes.ResourceExhausted || !hasBrokerReason(err, brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_CAPACITY_REACHED) {
+			t.Fatalf("handle capacity = %v, want structured capacity", err)
+		}
+	})
+
+	t.Run("execute receipts", func(t *testing.T) {
+		cfg := shortConfig()
+		cfg.MaxReceipts = 1
+		local := newFailureBroker()
+		server, err := mcpbrokergrpc.NewServerWithConfig(local, cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer server.Shutdown(context.Background())
+		attached, err := server.Attach(t.Context(), &brokerv1.AttachRequest{SessionId: "receipt-bound"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		execute := func(call string) error {
+			_, executeErr := server.Execute(t.Context(), &brokerv1.ExecuteRequest{Handle: attached.GetHandle(), BrokerIncarnation: attached.GetBrokerIncarnation(), Name: "read", CallId: call, Args: []byte(`{}`)})
+			return executeErr
+		}
+		if err := execute("first"); err != nil {
+			t.Fatal(err)
+		}
+		if err := execute("second"); status.Code(err) != codes.ResourceExhausted || !hasBrokerReason(err, brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_CAPACITY_REACHED) {
+			t.Fatalf("receipt capacity = %v, want structured capacity", err)
+		}
+		if local.executeCalls.Load() != 1 {
+			t.Fatalf("receipt rejection dispatched %d calls, want 1", local.executeCalls.Load())
+		}
+	})
+
+	t.Run("pending lifecycle controls", func(t *testing.T) {
+		cfg := shortConfig()
+		cfg.MaxPendingControls = 1
+		cfg.RPCDeadline = time.Second
+		local := newFailureBroker()
+		local.blockClose = make(chan struct{})
+		local.closeEntered = make(chan struct{}, 1)
+		server, err := mcpbrokergrpc.NewServerWithConfig(local, cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer server.Shutdown(context.Background())
+		first, err := server.Attach(t.Context(), &brokerv1.AttachRequest{SessionId: "control-one"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		second, err := server.Attach(t.Context(), &brokerv1.AttachRequest{SessionId: "control-two"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		firstDone := make(chan error, 1)
+		go func() {
+			_, closeErr := server.Close(context.Background(), &brokerv1.CloseRequest{Handle: first.GetHandle(), BrokerIncarnation: first.GetBrokerIncarnation()})
+			firstDone <- closeErr
+		}()
+		select {
+		case <-local.closeEntered:
+		case <-time.After(time.Second):
+			t.Fatal("first lifecycle control did not enter")
+		}
+		_, err = server.Close(t.Context(), &brokerv1.CloseRequest{Handle: second.GetHandle(), BrokerIncarnation: second.GetBrokerIncarnation()})
+		if status.Code(err) != codes.ResourceExhausted || !hasBrokerReason(err, brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_CAPACITY_REACHED) {
+			t.Fatalf("control capacity = %v, want structured capacity", err)
+		}
+		close(local.blockClose)
+		if err := <-firstDone; err != nil {
+			t.Fatalf("first lifecycle control: %v", err)
+		}
+	})
+}
+
+func TestSingletonBrokerRemediation_Scenario2_RetentionAndOwnership(t *testing.T) {
+	cfg := shortConfig()
+	cfg.HandleIdleTimeout = 25 * time.Millisecond
+	cfg.SweepInterval = 5 * time.Millisecond
+	cfg.CleanupTimeout = time.Second
+	local := newFailureBroker()
+	local.blockExecute = make(chan struct{})
+	server, err := mcpbrokergrpc.NewServerWithConfig(local, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attached, err := server.Attach(t.Context(), &brokerv1.AttachRequest{SessionId: "owned-active"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	executeDone := make(chan error, 1)
+	go func() {
+		_, executeErr := server.Execute(context.Background(), &brokerv1.ExecuteRequest{Handle: attached.GetHandle(), BrokerIncarnation: attached.GetBrokerIncarnation(), Name: "read", CallId: "active", Args: []byte(`{}`)})
+		executeDone <- executeErr
+	}()
+	deadline := time.Now().Add(time.Second)
+	for local.executeCalls.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if local.executeCalls.Load() != 1 {
+		t.Fatal("active Execute did not start")
+	}
+	// Absolute idle retention must not reclaim active authority.
+	time.Sleep(2 * cfg.HandleIdleTimeout)
+	if local.closeCalls.Load() != 0 {
+		t.Fatal("active attachment was reclaimed by idle retention")
+	}
+	if err := server.Shutdown(t.Context()); err != nil {
+		t.Fatalf("Shutdown: %v", err)
+	}
+	if err := <-executeDone; status.Code(err) != codes.Canceled {
+		t.Fatalf("joined Execute = %v, want cancellation", err)
+	}
+	if local.closeCalls.Load() != 1 {
+		t.Fatalf("owned attachment closes = %d, want exactly 1", local.closeCalls.Load())
+	}
+	if err := server.Shutdown(t.Context()); err != nil || local.closeCalls.Load() != 1 {
+		t.Fatalf("idempotent shutdown = %v, closes=%d", err, local.closeCalls.Load())
+	}
+}
+
 func TestSingletonBrokerRemediation_Scenario2_FreshClientPrePromptRecovery(t *testing.T) {
 	oldConn, oldStop := failureBufServer(t, newFailureBroker(), nil)
 	defer oldStop()
@@ -848,6 +980,8 @@ type failureBroker struct {
 	closeErr      error
 	blockExecute  chan struct{}
 	executeExited chan struct{}
+	blockClose    chan struct{}
+	closeEntered  chan struct{}
 }
 
 func newFailureBroker() *failureBroker {
@@ -931,8 +1065,21 @@ func (a *failureAttachment) Abort(ctx context.Context) error {
 	_, err := a.Close(ctx)
 	return err
 }
-func (a *failureAttachment) Close(context.Context) (mcpbroker.CloseOutcome, error) {
+func (a *failureAttachment) Close(ctx context.Context) (mcpbroker.CloseOutcome, error) {
 	a.broker.closeCalls.Add(1)
+	if a.broker.blockClose != nil {
+		if a.broker.closeEntered != nil {
+			select {
+			case a.broker.closeEntered <- struct{}{}:
+			default:
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-a.broker.blockClose:
+		}
+	}
 	closed := false
 	a.closeOnce.Do(func() { close(a.closed); closed = true })
 	if a.broker.closeOutcome != "" {

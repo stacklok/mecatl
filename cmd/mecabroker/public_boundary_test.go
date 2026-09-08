@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestSingletonBrokerRemediation_Scenario3_PublicListenerBoundsRejectBeforeCallbackSideEffects(t *testing.T) {
+func TestPublicHandlerBoundsRejectBeforeCallbackSideEffects(t *testing.T) {
 	var calls int
 	handler := publicHandler(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}), http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		calls++

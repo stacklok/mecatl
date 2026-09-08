@@ -72,6 +72,10 @@ type readyTokenValidator interface {
 	Ready(context.Context) error
 }
 
+type readyBrokerService interface {
+	Ready(context.Context) error
+}
+
 // Server owns the validator, RPC adapter, mounted browser routes, and optional
 // ToolHive process closer supplied by cmd/mecabroker.
 type Server struct {
@@ -140,7 +144,10 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 	}
 	checks := append([]ReadinessCheck(nil), cfg.ReadinessChecks...)
 	if readyValidator, ok := validator.(readyTokenValidator); ok {
-		checks = append([]ReadinessCheck{readyValidator.Ready}, checks...)
+		checks = append(checks, readyValidator.Ready)
+	}
+	if readyService, ok := cfg.Service.(readyBrokerService); ok {
+		checks = append(checks, readyService.Ready)
 	}
 	coordinator, err := NewCoordinator(readyTimeout, checks...)
 	if err != nil {

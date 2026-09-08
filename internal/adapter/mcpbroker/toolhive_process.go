@@ -511,6 +511,40 @@ func (p *Process) closeResources() error {
 	return result
 }
 
+// Ready verifies every process-owned serving prerequisite without attaching a
+// session, minting credentials, running discovery, or invoking an upstream tool.
+func (p *Process) Ready(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return p.ready(ctx)
+}
+
+func (p *Process) ready(context.Context) error {
+	if p == nil {
+		return errors.New("mcpbroker: ToolHive process is unavailable")
+	}
+	p.lifecycleMu.Lock()
+	defer p.lifecycleMu.Unlock()
+	if p.closed || p.Runtime == nil || p.cancel == nil {
+		return errors.New("mcpbroker: ToolHive process is unavailable")
+	}
+	if len(p.construction.anonymous)+len(p.construction.upstreams) == 0 {
+		return errors.New("mcpbroker: no ToolHive profiles are configured")
+	}
+	if len(p.construction.upstreams) != 0 {
+		if p.Handlers.VMCP == nil || p.protectedTarget == nil || p.Handlers.Authorization == nil || p.Handlers.Token == nil ||
+			p.Handlers.UpstreamCallback == nil || p.Handlers.Discovery == nil || p.Handlers.JWKS == nil ||
+			p.Handlers.ProtectedResource == nil || p.Handlers.Callback == nil {
+			return errors.New("mcpbroker: protected ToolHive route is unavailable")
+		}
+		if len(p.construction.protectedBackends) != 0 && p.discovery == nil {
+			return errors.New("mcpbroker: authenticated ToolHive discovery is unavailable")
+		}
+	}
+	return nil
+}
+
 // WorkspaceEnrollmentRequired reports whether at least one configured
 // protected upstream has no trusted static tool declaration, so its complete
 // tool catalogue can only be learned by authenticating first and then running

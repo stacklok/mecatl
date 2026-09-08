@@ -294,7 +294,7 @@ func (s *Server) Attach(ctx context.Context, req *brokerv1.AttachRequest) (*brok
 	}
 	if len(s.handles) >= s.maxHandles {
 		_, _ = a.Close(context.Background())
-		return nil, status.Error(codes.ResourceExhausted, "attachment handle capacity reached")
+		return nil, reasonStatus(codes.ResourceExhausted, "attachment handle capacity reached", brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_CAPACITY_REACHED, "")
 	}
 	_, enrollment := a.(mcpbroker.WorkspaceEnrollmentAttachment)
 	now := time.Now()
@@ -734,7 +734,10 @@ func (s *Server) RequestAuthorization(ctx context.Context, req *brokerv1.Request
 	if e != nil {
 		return nil, brokerStatus(e)
 	}
-	return &brokerv1.RequestAuthorizationResponse{Authorization: authToWire(auth), Required: required}, nil
+	if !required {
+		return &brokerv1.RequestAuthorizationResponse{}, nil
+	}
+	return &brokerv1.RequestAuthorizationResponse{Authorization: authToWire(auth), Required: true}, nil
 }
 
 // AbortAuthorization aborts one exact tool authorization.
@@ -1253,8 +1256,14 @@ func (t *remoteAuthorizationTool) RequestAuthorization(ctx context.Context, call
 	if e != nil {
 		return session.ExternalAuthorization{}, false, clientError(e)
 	}
+	if !r.GetRequired() {
+		if r.GetAuthorization() != nil {
+			return session.ExternalAuthorization{}, false, errors.New("mcpbrokergrpc: unexpected authorization")
+		}
+		return session.ExternalAuthorization{}, false, nil
+	}
 	a, e := authFromWire(r.GetAuthorization())
-	return a, r.GetRequired(), e
+	return a, true, e
 }
 func (t *remoteAuthorizationTool) AbortAuthorization(ctx context.Context, a session.ExternalAuthorization) error {
 	rpcCtx, cancel := t.client.bounded(ctx, false)

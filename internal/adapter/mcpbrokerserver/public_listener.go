@@ -1,0 +1,149 @@
+package mcpbrokerserver
+
+import (
+	"bytes"
+	"context"
+	"crypto/tls"
+	"errors"
+	"io"
+	"net"
+	"net/http"
+	"strings"
+	"sync"
+	"time"
+)
+
+const (
+	defaultMaxCallbackBodyBytes = int64(64 << 10)
+	defaultMaxPublicHeaderBytes = 32 << 10
+)
+
+// PublicListenerConfig contains the finite production bounds for the multiplexed
+// TLS HTTP/2 gRPC and browser callback listener.
+type PublicListenerConfig struct {
+	ReadHeaderTimeout time.Duration
+	ReadTimeout       time.Duration
+	WriteTimeout      time.Duration
+	IdleTimeout       time.Duration
+	CallbackTimeout   time.Duration
+	MaxHeaderBytes    int
+	MaxCallbackBytes  int64
+}
+
+// DefaultPublicListenerConfig returns the production public-listener bounds.
+func DefaultPublicListenerConfig() PublicListenerConfig {
+	return PublicListenerConfig{
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       2 * time.Minute,
+		WriteTimeout:      2 * time.Minute,
+		IdleTimeout:       time.Minute,
+		CallbackTimeout:   30 * time.Second,
+		MaxHeaderBytes:    defaultMaxPublicHeaderBytes,
+		MaxCallbackBytes:  defaultMaxCallbackBodyBytes,
+	}
+}
+
+func (c PublicListenerConfig) valid() bool {
+	return c.ReadHeaderTimeout > 0 && c.ReadTimeout > 0 && c.WriteTimeout > 0 && c.IdleTimeout > 0 &&
+		c.CallbackTimeout > 0 && c.MaxHeaderBytes > 0 && c.MaxCallbackBytes > 0
+}
+
+// PublicListener owns the exact production public HTTP/TLS server. Broker.Close
+// remains a separate ordered lifecycle step after Shutdown and Drain.
+type PublicListener struct {
+	server   *http.Server
+	listener net.Listener
+	serve    sync.Once
+	errCh    chan error
+}
+
+// NewPublicListener assembles the authenticated broker RPC server and mounted
+// callback handler behind one bounded TLS/HTTP2 listener.
+func NewPublicListener(listener net.Listener, broker *Server, tlsConfig *tls.Config, cfg PublicListenerConfig) (*PublicListener, error) {
+	if listener == nil || broker == nil {
+		return nil, errors.New("mcpbrokerserver: public listener and broker are required")
+	}
+	if !cfg.valid() {
+		return nil, errors.New("mcpbrokerserver: public listener bounds must be positive")
+	}
+	if err := ValidateTransport(listener.Addr().String(), tlsConfig); err != nil {
+		return nil, err
+	}
+	grpcServer, err := broker.NewGRPCServer(nil)
+	if err != nil {
+		return nil, err
+	}
+	secure := tlsConfig.Clone()
+	secure.NextProtos = []string{"h2", "http/1.1"}
+	handler := PublicHandler(grpcServer, broker.HTTPHandler(), cfg)
+	return &PublicListener{server: &http.Server{
+		Addr: listener.Addr().String(), Handler: handler, TLSConfig: secure,
+		ReadHeaderTimeout: cfg.ReadHeaderTimeout, ReadTimeout: cfg.ReadTimeout,
+		WriteTimeout: cfg.WriteTimeout, IdleTimeout: cfg.IdleTimeout, MaxHeaderBytes: cfg.MaxHeaderBytes,
+	}, listener: listener, errCh: make(chan error, 1)}, nil
+}
+
+// Serve starts serving once and returns a channel containing the terminal error.
+func (p *PublicListener) Serve() <-chan error {
+	p.serve.Do(func() {
+		go func() { p.errCh <- p.server.ServeTLS(p.listener, "", "") }()
+	})
+	return p.errCh
+}
+
+// Shutdown stops the HTTP listener after admission/drain handling by its owner.
+func (p *PublicListener) Shutdown(ctx context.Context) error { return p.server.Shutdown(ctx) }
+
+// PublicHandler multiplexes authenticated gRPC and bounded browser routes.
+func PublicHandler(grpcHandler, callbackHandler http.Handler, cfg PublicListenerConfig) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.ProtoMajor == 2 && strings.HasPrefix(r.Header.Get("Content-Type"), "application/grpc") {
+			grpcHandler.ServeHTTP(w, r)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), cfg.CallbackTimeout)
+		defer cancel()
+		r = r.WithContext(ctx)
+		if status, message := validateBoundedCallback(w, r, cfg.MaxCallbackBytes); status != 0 {
+			http.Error(w, message, status)
+			return
+		}
+		callbackHandler.ServeHTTP(w, r)
+	})
+}
+
+func validateBoundedCallback(w http.ResponseWriter, r *http.Request, maximum int64) (int, string) {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		return http.StatusMethodNotAllowed, "callback method is not supported"
+	}
+	if r.Method == http.MethodPost {
+		contentType := strings.ToLower(strings.TrimSpace(strings.SplitN(r.Header.Get("Content-Type"), ";", 2)[0]))
+		if contentType != "application/x-www-form-urlencoded" && contentType != "multipart/form-data" {
+			return http.StatusUnsupportedMediaType, "callback content type is not supported"
+		}
+	}
+	if r.ContentLength > maximum {
+		return http.StatusRequestEntityTooLarge, "callback body is too large"
+	}
+	if r.Body == nil {
+		return 0, ""
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maximum)
+	body, err := io.ReadAll(r.Body)
+	_ = r.Body.Close()
+	if err != nil {
+		if errors.Is(r.Context().Err(), context.DeadlineExceeded) {
+			return http.StatusRequestTimeout, "callback request deadline exceeded"
+		}
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			return http.StatusRequestEntityTooLarge, "callback body is too large"
+		}
+		return http.StatusBadRequest, "callback body is unreadable"
+	}
+	if r.ContentLength >= 0 && int64(len(body)) != r.ContentLength {
+		return http.StatusBadRequest, "callback body is incomplete"
+	}
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	return 0, ""
+}

@@ -2999,6 +2999,7 @@ func (s *Service) Close() {
 	}
 	attachmentWG.Wait()
 	cancelAttachments()
+	s.closeBrokerGeneration()
 
 	// Stop every renewer and release every held cross-process lease on shutdown
 	// (cloud-native Phase 4), so a restarted process can take the sessions over
@@ -3044,15 +3045,18 @@ func (s *Service) Drain() {
 			sch.Drain()
 		}
 	}
+}
+
+func (s *Service) closeBrokerGeneration() {
 	s.brokerReplacementMu.Lock()
+	defer s.brokerReplacementMu.Unlock()
 	s.brokerGenerationMu.Lock()
+	defer s.brokerGenerationMu.Unlock()
 	if s.brokerFactoryClose != nil {
 		_ = s.brokerFactoryClose()
 		s.brokerFactoryClose = nil
 	}
 	s.brokerCurrent = nil
-	s.brokerGenerationMu.Unlock()
-	s.brokerReplacementMu.Unlock()
 }
 
 func (s *Service) snapshotDrainState() (map[session.SessionID]*runState, []session.SessionID) {

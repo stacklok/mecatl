@@ -141,9 +141,9 @@ func (a *Attachment) BeginWorkspaceEnrollment(ctx context.Context) (contract.Wor
 		status:         session.AuthorizationPending,
 	}
 	logical.authorizations[transaction.identity] = transaction
-	if !a.runtime.registerCallbackState(state, logical, transaction) {
+	if err := a.runtime.registerCallbackState(state, logical, transaction); err != nil {
 		delete(logical.authorizations, transaction.identity)
-		return contract.WorkspaceEnrollmentPresentation{}, errors.New("mcpbroker: create unique callback state")
+		return contract.WorkspaceEnrollmentPresentation{}, err
 	}
 	url := presentWorkspaceTransaction(transaction)
 	return contract.WorkspaceEnrollmentPresentation{Ref: workspaceEnrollmentRef(transaction), URL: url}, nil

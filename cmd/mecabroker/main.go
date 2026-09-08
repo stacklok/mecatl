@@ -4,7 +4,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -208,23 +207,16 @@ func run(ctx context.Context, cfg config, diagnostics port.Diagnostics) error {
 	}
 	defer func() { _ = adminListener.Close() }()
 
-	// TLS terminates at net/http, which dispatches HTTP/2 gRPC requests to the
-	// gRPC server and fixed browser routes to ToolHive's HTTP handler.
-	grpcServer, err := server.NewGRPCServer(nil)
+	publicBounds := mcpbrokerserver.DefaultPublicListenerConfig()
+	publicBounds.MaxCallbackBytes = maxCallbackBodyBytes
+	publicBounds.MaxHeaderBytes = maxPublicHeaderBytes
+	publicBounds.ReadTimeout = publicReadTimeout
+	publicBounds.WriteTimeout = publicWriteTimeout
+	publicBounds.IdleTimeout = publicIdleTimeout
+	publicServer, err := mcpbrokerserver.NewPublicListener(publicListener, server, tlsConfig, publicBounds)
 	if err != nil {
 		return err
 	}
-	publicServer := &http.Server{
-		Addr:              cfg.publicAddress,
-		Handler:           publicHandler(grpcServer, server.HTTPHandler()),
-		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       publicReadTimeout,
-		WriteTimeout:      publicWriteTimeout,
-		IdleTimeout:       publicIdleTimeout,
-		MaxHeaderBytes:    maxPublicHeaderBytes,
-		TLSConfig:         tlsConfig.Clone(),
-	}
-	publicServer.TLSConfig.NextProtos = []string{"h2", "http/1.1"}
 	adminServer := &http.Server{Addr: cfg.adminAddress, ReadHeaderTimeout: 2 * time.Second, ReadTimeout: 5 * time.Second, WriteTimeout: 5 * time.Second, IdleTimeout: 10 * time.Second, MaxHeaderBytes: maxPublicHeaderBytes}
 
 	var admissionOnce sync.Once
@@ -262,7 +254,7 @@ func run(ctx context.Context, cfg config, diagnostics port.Diagnostics) error {
 	}
 
 	errCh := make(chan error, 2)
-	go func() { errCh <- publicServer.ServeTLS(publicListener, "", "") }()
+	go func() { errCh <- <-publicServer.Serve() }()
 	go func() { errCh <- adminServer.Serve(adminListener) }()
 
 	var result error
@@ -299,57 +291,9 @@ func validateAdminAddress(address string) error {
 }
 
 func publicHandler(grpcHandler, callbackHandler http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.ProtoMajor == 2 && strings.HasPrefix(r.Header.Get("Content-Type"), "application/grpc") {
-			grpcHandler.ServeHTTP(w, r)
-			return
-		}
-		if err := validateCallbackRequest(r); err != nil {
-			requestErr, ok := err.(*callbackRequestError)
-			if !ok {
-				http.Error(w, "invalid callback request", http.StatusBadRequest)
-				return
-			}
-			http.Error(w, requestErr.Error(), requestErr.status)
-			return
-		}
-		callbackHandler.ServeHTTP(w, r)
-	})
-}
-
-type callbackRequestError struct {
-	status int
-	text   string
-}
-
-func (e callbackRequestError) Error() string { return e.text }
-
-func validateCallbackRequest(r *http.Request) error {
-	if r.Method != http.MethodGet && r.Method != http.MethodPost {
-		return &callbackRequestError{http.StatusMethodNotAllowed, "callback method is not supported"}
-	}
-	if r.Method == http.MethodPost {
-		contentType := strings.ToLower(strings.TrimSpace(strings.SplitN(r.Header.Get("Content-Type"), ";", 2)[0]))
-		if contentType != "application/x-www-form-urlencoded" && contentType != "multipart/form-data" {
-			return &callbackRequestError{http.StatusUnsupportedMediaType, "callback content type is not supported"}
-		}
-	}
-	if r.ContentLength > maxCallbackBodyBytes {
-		return &callbackRequestError{http.StatusRequestEntityTooLarge, "callback body is too large"}
-	}
-	if r.Body == nil {
-		return nil
-	}
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxCallbackBodyBytes+1))
-	_ = r.Body.Close()
-	if err != nil {
-		return &callbackRequestError{http.StatusBadRequest, "callback body is unreadable"}
-	}
-	if len(body) > maxCallbackBodyBytes {
-		return &callbackRequestError{http.StatusRequestEntityTooLarge, "callback body is too large"}
-	}
-	r.Body = io.NopCloser(bytes.NewReader(body))
-	return nil
+	cfg := mcpbrokerserver.DefaultPublicListenerConfig()
+	cfg.MaxCallbackBytes = maxCallbackBodyBytes
+	return mcpbrokerserver.PublicHandler(grpcHandler, callbackHandler, cfg)
 }
 
 func adminHandler(ready func(context.Context) bool, beginDrain func(), propagated <-chan struct{}) http.Handler {

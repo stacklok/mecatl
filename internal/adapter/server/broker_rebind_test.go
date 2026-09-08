@@ -20,6 +20,65 @@ import (
 // every attach reported a mismatch, which surfaced as the misleading "workspace
 // enrollment is not pending" and left the session unable to ever connect
 // workspace services again.
+func TestSingletonBrokerRemediation_Scenario2_FreshClientPrePromptRecovery(t *testing.T) {
+	store := memstore.New()
+	firstRuntime := testBrokerRuntime(t)
+	secondRuntime := testBrokerRuntime(t)
+	firstBroker := &enrollmentBroker{Service: firstRuntime}
+	secondBroker := &enrollmentBroker{Service: secondRuntime}
+	var factoryCalls, firstCloses, secondCloses int
+	svc, err := NewService(Config{
+		Engine: brokerEngineResult().Engine, Store: store,
+		PlacementProvider: brokerPlacementProvider{}, PlacementScope: "test",
+		NewID:     func() session.SessionID { return "factory-recovery" },
+		MCPBroker: firstBroker, MCPBrokerClose: func() error { firstCloses++; return firstRuntime.Close() },
+		MCPBrokerFactory: func(context.Context) (brokercontract.Service, func() error, error) {
+			factoryCalls++
+			return secondBroker, func() error { secondCloses++; return secondRuntime.Close() }, nil
+		},
+		WorkspaceEnrollment: true,
+		RootAuthority: func(session.SessionKind) session.Authority {
+			return session.Authority{CapabilitySet: governance.CapabilitySet{Tools: []string{"mcp__calendar__list"}}, Provenance: "test"}
+		},
+		SessionEngineWithTools: func(context.Context, ProviderSelector, []mcp.ServerConfig, SessionProfile, string, session.PermissionMode, []tool.Tool) (SessionEngineResult, error) {
+			return brokerEngineResult(), nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := svc.CreateSession(t.Context(), session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	staleBinding := created.ExternalBinding
+	if _, err := svc.ConnectWorkspaceServices(t.Context(), created.ID); err != nil {
+		t.Fatalf("begin pre-restart enrollment: %v", err)
+	}
+	svc.closeSessionLocal(created.ID)
+	// The long-lived client has reconnected to a replacement broker process. Its
+	// fresh binding proves confirmed state loss; only then may Service invoke the
+	// composition-owned factory and retire that stale client generation.
+	firstBroker.Service = secondRuntime
+	firstBroker.attachment = nil
+	projection, err := svc.ConnectWorkspaceServices(t.Context(), created.ID)
+	if err != nil || projection.Status != brokercontract.WorkspaceEnrollmentPending {
+		t.Fatalf("pre-prompt recovery = %+v, %v", projection, err)
+	}
+	reloaded, err := store.Load(t.Context(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if factoryCalls != 1 || firstCloses != 1 || reloaded.ExternalBinding == staleBinding {
+		t.Fatalf("factory calls=%d stale closes=%d binding=%q, want one replacement and a fresh binding", factoryCalls, firstCloses, reloaded.ExternalBinding)
+	}
+	svc.Drain()
+	svc.Close()
+	if secondCloses != 1 {
+		t.Fatalf("replacement client closes = %d, want exactly 1", secondCloses)
+	}
+}
+
 func TestWorkspaceEnrollmentRebindsAfterBrokerRestart(t *testing.T) {
 	newService := func(t *testing.T, store *memstore.Store, broker brokercontract.Service) *Service {
 		t.Helper()
