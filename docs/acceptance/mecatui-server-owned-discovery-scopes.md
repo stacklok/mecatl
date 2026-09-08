@@ -2,12 +2,12 @@
 
 **Contract:** human-reviewed/v1
 **Phase:** Remote mecatui OAuth bootstrap correction
-**Status:** proposed, 2026-09-08. Planned from [stacklok/mecatl#1261](https://github.com/stacklok/mecatl/issues/1261).
+**Status:** approved, 2026-09-08. Planned from [stacklok/mecatl#1261](https://github.com/stacklok/mecatl/issues/1261).
 **Delivery:** Split. The change resolves a discovered-login CLI contract and OAuth consent/authority policy before implementation.
 **Expected tasks:** 2
 **Issue:** [stacklok/mecatl#1261](https://github.com/stacklok/mecatl/issues/1261).
-**Plan PR:** absent until opened
-**Approved baseline:** absent until approved
+**Plan PR:** [stacklok/mecatl#1263](https://github.com/stacklok/mecatl/pull/1263)
+**Approved baseline:** `8bb32f113` (merged Plan / Interface commit)
 
 Protected-resource discovery makes the remote server, not a mecatui user flag, the authority for the requested scope set. A server that publishes `scopes_supported` supplies the exact set requested by discovered login. A server that deliberately omits it selects the existing fixed compatibility baseline, `openid,profile,offline_access`, so the first-use confirmation remains safe and enrollment proceeds.
 
