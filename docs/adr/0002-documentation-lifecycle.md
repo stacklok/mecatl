@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-06-17
+- Superseded by: ADR 0321 for user-facing usage and reference ownership
 - Scope: the whole `docs/` tree — `README.md`, `docs/architecture.md`,
   `docs/usage.md`, `docs/tui.md`, `docs/design/*`, `docs/adr/*`, and `CLAUDE.md`'s
   guidance about them.

@@ -1,6 +1,6 @@
 # ADR 0321 — Canonical user documentation ownership
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-09-09
 - Scope: user-facing guides, operator reference, API reference, and contributor guidance
 - Supersedes: ADR 0002's assignment of user-facing usage truth to `docs/usage.md`
@@ -27,7 +27,7 @@ material. Organize content by reader need:
 - task and concept guidance stays in `mecatui/`, `building/`, and `features/`;
 - exact configuration and client API contracts live in `reference/`;
 - the configuration generator writes directly to
-  `user-docs/reference/configuration.md`; <!-- lint:not-a-citation: target path for this proposed decision, not yet created -->
+  `user-docs/reference/configuration.md`;
 - gRPC and HTTP/SSE references render from `user-docs/reference/` and link to
   the task-oriented transport guide.
 

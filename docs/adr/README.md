@@ -24,9 +24,9 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 ## Index
 
 ### Process & conventions
-- [0002 — Documentation lifecycle](./0002-documentation-lifecycle.md)
+- [0002 — Documentation lifecycle](./0002-documentation-lifecycle.md) *(user-facing ownership superseded by 0321)*
 - [0003 — Consolidate design records as ADRs](./0003-consolidate-design-records-as-adrs.md)
-- [0321 — Canonical user documentation ownership](./0321-canonical-user-documentation-ownership.md) *(proposed)*
+- [0321 — Canonical user documentation ownership](./0321-canonical-user-documentation-ownership.md)
 - [0072 — The acceptance-plan spine](./0072-acceptance-plan-spine.md) *(superseded by 0295)*
 - [0295 — One scaled acceptance-plan spine for substantive work](./0295-unified-development-spine.md) *(single-PR decision superseded by 0306)*
 - [0306 — Human-reviewed development contracts before implementation](./0306-human-reviewed-development-contracts.md)
