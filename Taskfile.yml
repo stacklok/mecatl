@@ -840,13 +840,14 @@ tasks:
       Lint all GitHub Actions workflows with actionlint (pinned via `go run`, so no
       preinstalled binary is needed). Catches expression-context errors, bad `uses:`
       refs, and shell issues in `run:` blocks. Runs the reusable-pins check AND the
-      empty-expression template guard too, so a single `task lint:actions` covers the
-      whole Actions surface.
+      empty-expression template guard, and Deslop advisory-workflow contract test too, so a
+      single `task lint:actions` covers the whole Actions surface.
     cmds:
       - go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
       - task: lint:reusable-pins
       - task: lint:action-templates
       - bash .github/scripts/lint-vet-workflow_test.sh
+      - bash .github/scripts/deslop-workflow_test.sh
 
   lint:reusable-pins:
     desc: |

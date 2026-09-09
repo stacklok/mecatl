@@ -1,0 +1,67 @@
+# Advisory duplicate-code analysis. Findings do not block pull requests.
+name: Deslop
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deslop-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deslop:
+    name: Deslop duplicate analysis (advisory)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download and verify Deslop
+        shell: bash
+        run: |
+          set -euo pipefail
+          tool_dir="$RUNNER_TEMP/deslop-v0.34.0"
+          archive="$tool_dir/deslop-0.34.0-linux-x64.tar.gz"
+          mkdir -p "$tool_dir"
+          curl --fail --location --silent --show-error \
+            https://github.com/Nimblesite/Deslop/releases/download/v0.34.0/deslop-0.34.0-linux-x64.tar.gz \
+            --output "$archive"
+          (
+            cd "$tool_dir"
+            sha256sum --check "$GITHUB_WORKSPACE/.github/deslop/deslop-v0.34.0-linux-x64.sha256"
+          )
+          tar --extract --gzip --file "$archive" --directory "$tool_dir" --strip-components=1
+
+      - name: Run Deslop
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/deslop-v0.34.0/deslop" . \
+            --config "$GITHUB_WORKSPACE/.github/deslop/deslop.toml" \
+            --embeddings off \
+            --no-incremental \
+            --no-fail-over \
+            --min-nodes 100 \
+            --nohtml \
+            --log-to-console \
+            --output "$RUNNER_TEMP/deslop-v0.34.0/deslop-report"
+
+      - name: Summarize Deslop report
+        shell: bash
+        run: |
+          set -euo pipefail
+          jq -r '
+            "## Deslop advisory duplicate analysis",
+            "",
+            if (.metrics.duplication_percent? | type) == "number" then
+              "Duplication: \(.metrics.duplication_percent)%"
+            else
+              "Deslop completed; see the job log for findings."
+            end
+          ' "$RUNNER_TEMP/deslop-v0.34.0/deslop-report.json" >> "$GITHUB_STEP_SUMMARY"

@@ -6,6 +6,7 @@ release behavior. This page is only a stable index to operational guidance.
 - [CI race-shard maintenance](../scripts/root-race-packages.sh)
 - [Live end-to-end testing](../../e2e/README.md)
 - [Performance tracking rationale](../../docs/adr/0019-perf-tracking.md)
+- [Deslop advisory duplication analysis](deslop.yml) (not a required CI gate)
 - [Mecatequi CI adoption](https://mecatl.dev/docs/building/deployment/mecatequi) and its
   [design rationale](../../docs/adr/0028-mecatequi.md)
 

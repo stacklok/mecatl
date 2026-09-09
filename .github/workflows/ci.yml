@@ -569,6 +569,7 @@ jobs:
           bash .github/scripts/race-aggregate-workflow_test.sh
           bash .github/scripts/docs-only-changes_test.sh
           bash .github/scripts/docs-only-workflow_test.sh
+          bash .github/scripts/deslop-workflow_test.sh
       - name: go test -race (root-a and modules)
         env:
           RACE_TIMING: ${{ github.event_name == 'workflow_dispatch' && inputs.race_timing }}

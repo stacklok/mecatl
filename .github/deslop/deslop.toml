@@ -1,0 +1,8 @@
+[defaults]
+exclude = [
+  ".scratch/**",
+  "contracts/gen/**",
+  "**/*_test.go",
+  "**/testdata/**",
+  "**/node_modules/**",
+]
