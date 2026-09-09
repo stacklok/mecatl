@@ -50,6 +50,8 @@ cd engine && go test ./agent/ -run TestFullCycle   # a single engine test (engin
 go run ./cmd/mecademo    # end-to-end demo, fully offline (mock provider)
 ```
 
+> **Timeouts:** `task test` and `task lint` are full-repository gates and can run well beyond two minutes. When invoking them through an agent or other timeout-bound runner, start with a **600-second timeout**; the default 120 seconds will almost certainly time out.
+
 > `engine/` is its **own Go module** (`github.com/stacklok/mecatl/engine`), kept in
 > this repo as a MONOREPO via the committed `go.work` (`use ./` + `use ./engine`).
 > The root module consumes it via `require …/engine` + `replace …/engine => ./engine`.
