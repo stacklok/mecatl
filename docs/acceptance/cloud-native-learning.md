@@ -142,7 +142,7 @@ Land Scenario 1 alone first. Scenarios 2 and 3 form the first durable vertical s
 
 1. All six scenarios' acceptance criteria and named tests are green, including cross-Build/cross-replica offline proofs.
 2. `task lint`, `task test`, `task api:check`, and `go run ./cmd/mecademo` pass; if an engine export changes, `task api:update` and the classified `engine/CHANGELOG.md` entry are committed.
-3. `task docs` and `task site:build` pass; `docs/architecture.md`, `docs/design/IMPLEMENTATION-NOTES.md`, the ADR 0027 durable automatic-admission ledger, durable learning-attempt repository, learning-attempt discovery/recovery worker, and corresponding restart-fidelity entries, `docs/usage.md`, and relevant `user-docs/` material describe landed behavior.
+3. `task docs` and `task site:build` pass; `docs/architecture.md`, `docs/design/IMPLEMENTATION-NOTES.md`, the ADR 0027 durable automatic-admission ledger, durable learning-attempt repository, learning-attempt discovery/recovery worker, and corresponding restart-fidelity entries, and relevant `user-docs/` material describe landed behavior.
 4. `task ac-trace-strict` passes when this plan becomes `landed`.
 5. Every new outlives-call resource and restart-lost state has an explicit ADR 0027 resource-inventory and rehydrate-fidelity decision, named by the resource rather than a positional table row, and every attempt record/API projection passes the content-free structural guards.
 6. The unwired default/off configuration is demonstrated byte-identical; explicitly configuring a remote repository is documented as a connection/inspection/recovery opt-in rather than automatic admission, and no stage claims distributed automatic bounds before Scenario 6.

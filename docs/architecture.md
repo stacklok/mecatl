@@ -1183,7 +1183,7 @@ HTTP successor routes.
 
 ## See also
 
-- [Usage & operator guide](usage.md) — building, running `mecated`, every flag, and the gRPC + HTTP/SSE APIs that drive this design.
+- [User documentation](https://mecatl.dev/docs/) — guides for building and operating Mecatl, plus rendered gRPC and HTTP/SSE reference material.
 - [mecatui terminal UI](tui.md) — the gRPC client that renders the event stream described above.
 - [ADR 0001 — the ACP adapter](adr/0001-acp-adapter.md) — the decisions behind the third (editor) wire surface.
 - [Go performance measurement & observability survey](perf-measurement-survey.md) — the technique reference behind [observability & persistence](architecture/observability.md).

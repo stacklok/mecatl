@@ -1,4 +1,4 @@
-# Reusable mecatequi workflow. See docs/usage/mecatequi-ci.md for setup and
+# Reusable mecatequi workflow. See user-docs/building/deployment/mecatequi.md for setup and
 # docs/adr/0028-mecatequi.md for the split-privilege design.
 #
 # Sibling actions require full repository paths because local paths resolve in the

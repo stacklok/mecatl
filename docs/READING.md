@@ -54,10 +54,10 @@ is listed, and its follow-on reading is noted. Read any that cover your area.
 | Step | Page |
 | --- | --- |
 | 1 | [Project README](../README.md) — feature overview and quick start |
-| 2 | [Install](usage/install.md) |
-| 3 | [Quickstart](usage/quickstart.md) — the 60-second demo |
-| 4 | [Running `mecated`](usage/mecated.md) — the server |
-| Then | Any topic branch from the [usage guide](usage.md): guardrails, model routing, workspace trust, skills/soul/user-model, mecak8s, configuration, permissions, hooks, mecatequi CI, the gRPC/HTTP APIs, troubleshooting |
+| 2 | [Build your first agent](https://mecatl.dev/docs/building/getting-started/first-agent) |
+| 3 | [See Mecatl in 60 seconds](https://mecatl.dev/docs/building/getting-started/demo) |
+| 4 | [Run `mecated` standalone](https://mecatl.dev/docs/building/deployment/mecated) |
+| Then | Choose a task, feature, deployment, or reference from the [public documentation](https://mecatl.dev/docs/) |
 
 ---
 

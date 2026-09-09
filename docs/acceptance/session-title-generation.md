@@ -214,7 +214,7 @@ no per-attempt usage ledger. `token_usage[main]` is canonical for main work; dep
 
 ## Cross-cutting deliverables
 
-- Update `docs/architecture.md`, `docs/usage.md`, and relevant `user-docs/` coverage for `/title`,
+- Update `docs/architecture.md` and relevant `user-docs/` coverage for `/title`,
   explicit title-slot enablement, automatic lifecycle, live reconciliation, and token usage.
 - Add the `title` slot to validation/configuration/help while preserving provider-neutral
   `port.LLMRequest`.

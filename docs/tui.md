@@ -120,7 +120,7 @@ The token is not public API credit and the private backend is not a supported
 third-party contract. mecatui reads one immutable snapshot before hosting its
 embedded server: after replacing an expired/rejected token, quit and relaunch.
 There is no login or refresh. See the [exact schema and plaintext same-UID Bash
-boundary](usage/mecated.md#openai-codex-subscription-manual-token-experimental).
+boundary](https://mecatl.dev/docs/building/deployment/settings#configure-provider-credentials).
 `mecatui connect` never reads the local file; configure the external `mecated`
 instead.
 
@@ -152,7 +152,7 @@ Run `mecatui --help`, `mecatui -h`, or `mecatui help` for the concise top-level 
 
 The transport is exactly what the invocation says — there is no implicit probe
 or fallback. For the local-versus-remote configuration ownership and intentional
-default differences, see the [settings guide](https://mecatl.dev/building/deployment/settings):
+default differences, see the [settings guide](https://mecatl.dev/docs/building/deployment/settings):
 bare mode owns an embedded server, while connect mode is client-only and the remote
 server is authoritative.
 
@@ -317,7 +317,7 @@ and `--tls-ca` also select verified TLS. `--tls=false` is the explicit plaintext
 downgrade, and a bearer is refused on that remote plaintext transport. Use
 `connect --tls-ca` when the server uses a private CA. The remote server owns
 placement: mecatui sends no local cwd, and `--workspace` is rejected in every connect
-form rather than being treated as a path inside an agent pod. See [Security & transport](usage/mecated.md#security--transport-auth-tls-rate-limiting) for the attribution model and its non-tenancy limits.
+form rather than being treated as a path inside an agent pod. See [Run mecated standalone](https://mecatl.dev/docs/building/deployment/mecated) for the attribution model and its non-tenancy limits.
 
 On later `connect`, a saved target supplies a managed dynamic bearer source: each RPC
 asks for a currently validated access token. Application token demand, rather than RPC
@@ -523,7 +523,7 @@ a short directive with a longer brief. The seed fires ONCE: a `/models` restart 
 | `--anthropic-base-url` | – | native Anthropic API base URL override for the **embedded** server (compatible/proxy endpoints; key from `ANTHROPIC_API_KEY`) |
 | `--openai-base-url` | – | OpenAI base URL override for the **embedded** server |
 | `--openrouter-base-url` | – | OpenRouter base URL override for the **embedded** server (default `https://openrouter.ai/api/v1`) |
-| `--auth-file` | – (auto) | **embedded** server: path to the YAML credentials file (`providers.<name>.api_key`, or the experimental `providers.openai-codex.oauth` snapshot); overrides `$XDG_CONFIG_HOME/mecatl/auth.yaml`. Environment wins for API-key providers; Codex has no env alias. See [the exact schema](usage/mecated.md#credentials-file-authyaml) |
+| `--auth-file` | – (auto) | **embedded** server: path to the YAML credentials file (`providers.<name>.api_key`, or the experimental `providers.openai-codex.oauth` snapshot); overrides `$XDG_CONFIG_HOME/mecatl/auth.yaml`. Environment wins for API-key providers; Codex has no env alias. See [the exact schema](https://mecatl.dev/docs/building/deployment/settings#configure-provider-credentials) |
 | `--mock` | off | **embedded** server: use the offline mock provider (no network) |
 | `--no-bash` | off | **embedded** server: disable the Bash tool (shell-less) |
 | `--memory-dir` | – (auto) | **embedded** server: per-project memory store dir; empty = a default under `$XDG_DATA_HOME/mecatui/memory` |
@@ -742,7 +742,7 @@ repo (`--trust-project`, `trustedWorkspaces:`, or a remembered + undrifted entry
 prompt — it proceeds **untrusted** for that run and never blocks. The echoed path is
 terminal-escape-sanitized (CWE-150). The prompt lives in the `mecatui` composition
 root, not the render layer — no proto event, no change to `ui`/`theme`/`client`. See
-`docs/usage.md` for the full semantics; `mecated` itself never prompts (declarative).
+`user-docs/` for the full semantics; `mecated` itself never prompts (declarative).
 
 **Built-in client-side slash commands always appear.** Typing `/` opens the
 palette with a set of commands the TUI itself ships — independent of workspace
@@ -2243,7 +2243,7 @@ task test:golden     # go test ./cmd/mecatui/ui -update, then re-run
 
 ## See also
 
-- [Usage & operator guide](usage.md) — the `mecated` server `mecatui` dials (or embeds), and every server flag.
+- [User documentation](https://mecatl.dev/docs/) — the `mecated` deployment guide, settings, and client reference.
 - [Architecture guide](architecture.md) — the event stream and gRPC `Converse` surface this client renders.
 - [UX discoverability design](adr/0025-ux-discoverability.md) — the rationale behind the capability-wiring approach this UI takes.
 - [Clipboard image paste design](adr/0026-clipboard-image-paste.md) — the non-obvious decisions behind `ctrl+v`.

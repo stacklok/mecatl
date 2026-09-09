@@ -36,8 +36,9 @@ e2e/fixtures/
 # sample). They carry no doc links — a token like `[Workflow run]({{run_url}})`
 # only LOOKS like a markdown link, and the files are navigationally isolated — so
 # leaving them in the corpus only adds a spurious broken-link + orphan that block
-# `check --strict`. The operator-facing prose lives in docs/usage.md +
-# docs/adr/0028-mecatequi.md, which DO stay in the corpus.
+# `check --strict`. The operator-facing prose lives in
+# user-docs/building/deployment/mecatequi.md; the design rationale stays in
+# docs/adr/0028-mecatequi.md.
 .github/mecatequi/
 
 # GitHub issue and pull-request templates are rendered by GitHub rather than read
@@ -51,8 +52,8 @@ e2e/fixtures/
 # compatibility. It is not a separate corpus document.
 CLAUDE.md
 
-# user-docs/ is the mecatl.dev Docusaurus site content — user-facing docs
-# derived from the internal architecture and usage docs. Excluded until the
+# user-docs/ is the mecatl.dev Docusaurus site content and canonical user-facing
+# documentation. Excluded until the
 # content is reviewed and stable; links use Docusaurus content-root-relative
 # paths that matlatl doesn't understand anyway (no content-root aliasing).
 user-docs/

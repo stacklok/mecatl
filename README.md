@@ -39,7 +39,7 @@ Read the [Mecatl documentation](https://mecatl.dev/docs/intro) to get started.
 
 | Goal | Start with |
 | --- | --- |
-| Run an agent service | [`mecated`](./cmd/mecated) and the [operator guide](./docs/usage.md) |
+| Run an agent service | [`mecated`](./cmd/mecated) and the [deployment guide](https://mecatl.dev/docs/building/deployment/mecated) |
 | Run agents on Kubernetes | [`mecak8s`](./cmd/mecak8s) and the [Kubernetes deployment guide](https://mecatl.dev/docs/building/deployment/mecak8s) |
 | Use an agent locally | [Run the offline demo](#try-it-locally), then use [`mecatui`](./cmd/mecatui) |
 | Connect an application | The [gRPC and HTTP/SSE integration guide](https://mecatl.dev/docs/building/deployment/grpc-http) |
@@ -110,7 +110,7 @@ For an embedded deployment, see the
 
 > **Security:** `mecated` is unauthenticated by default and intended for
 > loopback, single-user use. Configure authentication and transport protection
-> before binding it off-loopback. The [operator guide](./docs/usage.md) covers
+> before binding it off-loopback. The [deployment guide](https://mecatl.dev/docs/building/deployment/mecated) covers
 > bearer auth, TLS/mTLS, OIDC, rate limits, and deployment posture.
 
 ## User documentation
@@ -124,7 +124,7 @@ For an embedded deployment, see the
 
 - [Repository documentation index](./docs/README.md)
 - [Architecture guide](./docs/architecture.md)
-- [Usage and operator guide](./docs/usage.md)
+- [User documentation](https://mecatl.dev/docs/)
 - [Production-readiness tracker](./docs/design/PRODUCTION-READINESS.md)
 - [Engine compatibility contract](./engine/COMPATIBILITY.md)
 

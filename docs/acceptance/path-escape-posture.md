@@ -319,7 +319,7 @@ root — [ADR-0047](../adr/0047-absolute-path-resolution.md) point 5).
   composition, consulted in `Evaluate` before the tool body.
 - `docs/design/IMPLEMENTATION-NOTES.md` — a "Path-escape posture" section.
 - `user-docs/` — a short note that FS tools can reach outside the workspace at
-  `auto`/`yolo` (with the operator consent model), linking to `docs/usage/`.
+  `auto`/`yolo` (with the operator consent model), linking to `user-docs/`.
 
 ## Sequencing recommendation
 

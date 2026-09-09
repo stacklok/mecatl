@@ -19,13 +19,6 @@ func TestADR_0294_DocumentationContract(t *testing.T) {
 			"already-started storage call may still complete",
 			"modeled tests do not prove Gateway",
 		},
-		"docs/usage/configuration.md": {
-			"missing header remains compatible",
-			"invalid session affinity metadata",
-			"CloseSession",
-			"GracefulDrain",
-			"client retry",
-		},
 		"docs/design/IMPLEMENTATION-NOTES.md": {
 			"SessionMutationCapability",
 			"provider ID comes from the run context",
@@ -33,6 +26,11 @@ func TestADR_0294_DocumentationContract(t *testing.T) {
 			"durable `PendingAsk`",
 		},
 		"user-docs/building/deployment/mecak8s.md": {
+			"Existing clients may omit it",
+			"Duplicate, malformed",
+			"Closing a live running or awaiting session",
+			"During shutdown",
+			"client retries",
 			"authenticated admission",
 			"request and header-size bounds",
 			"client, IP, and principal rate limits",

@@ -163,7 +163,7 @@ in [`AGENTS.md`](../../AGENTS.md) requires both living docs and `user-docs/` cov
   copied full exact ID through the same command, describe zero-match/inventory fallthrough, and
   show no alternate mode or leading `#` marker.
   - verify: `TestPredictableSessionHandles_Scenario3_CommandHelpUsesOneTargetFlow`
-- AC3.2: `docs/tui.md`, `docs/usage.md`, the relevant `user-docs/` session/debug guides, and the
+- AC3.2: `docs/tui.md`, the relevant `user-docs/` session/debug guides, and the
   status-line input reference use the handle term, explain leading-hyphen encoding and the fixed
   escaped-prefix projection, preserve `/session` exact-copy guidance, and document both embedded
   and connected one-`TARGET` examples. They document the `Session.Digest` → `Session.Handle` schema

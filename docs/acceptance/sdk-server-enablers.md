@@ -230,7 +230,7 @@ What a spawned local daemon needs. No proto change; `cmd/mecated` only.
 
 **Work:**
 - `cmd/mecated`: `--grpc-unix-socket` (mutually exclusive with TCP gRPC listen), empty HTTP address to disable HTTP, `--ready-file`, an inherited lifetime pipe, stale-socket cleanup, socket permissions, Darwin path-length handling.
-- `docs/usage/` + `user-docs/`: every new flag.
+- `user-docs/`: every new flag on its owning deployment page.
 
 **Acceptance:**
 - AC8.1: `--grpc-unix-socket` serves gRPC on the socket and opens **no** TCP port; combining it with TCP gRPC configuration is rejected at startup.

@@ -73,7 +73,7 @@ opt-in `e2e:k8s` live variant. The fixture remains an ADR 0048 disposable
 Redis-backed deployment, rather than a new provider runtime
 ([ADR-0048](../adr/0048-mecak8s.md)). The chart's raw `EnvVar` projection is the
 existing deployment seam; credential values are never chart values or command
-arguments ([`docs/usage/mecak8s.md`](../usage/mecak8s.md)).
+arguments ([`user-docs/building/deployment/mecak8s.md`](https://mecatl.dev/docs/building/deployment/mecak8s)).
 
 **Acceptance:**
 - AC2.1: Without `OPENROUTER_API_KEY`, `mecak8s:kind-setup` renders the canned
@@ -175,7 +175,7 @@ and the bounded signing-key availability policy
   delegation report under their existing names.
 - Remove the old `mecak8s:vmcp-*` ownership of baseline lifecycle targets: this
   is a clean break, with no compatibility aliases.
-- Update `docs/usage/mecak8s.md`, `deploy/README.md`, and
+- Update `user-docs/building/deployment/mecak8s.md`, `deploy/README.md`, and
   `user-docs/building/deployment/mecak8s.md` with links and scope distinctions;
   regenerate the configuration reference through `task docs`.
 - Keep all new code/configuration tests offline. A Kind journey is an opt-in

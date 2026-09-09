@@ -5,7 +5,7 @@ about: Issues or feature requests relating to mecak8s, Kubernetes manifests, or 
 
 ## Kubernetes context
 Describe the deployment, manifests, or Kubernetes behavior involved. Consult the
-[mecak8s operator guide](https://github.com/stacklok/mecatl/blob/main/docs/usage/mecak8s.md) first for supported
+[mecak8s deployment guide](https://mecatl.dev/docs/building/deployment/mecak8s) first for supported
 configuration and deployment details.
 
 ## Problem or feature request

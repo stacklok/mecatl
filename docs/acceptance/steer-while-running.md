@@ -172,7 +172,7 @@ The client-side merge and the engine-side slot are **distinct mechanisms that mu
 ## Cross-cutting deliverables
 
 - **ADR-0228** landing with this plan — the steer contract **as shipped** (rounds 2–3 rework applied): engine append-default single-slot inbox, watermark `message_id` correlation, the auto-promote-on-terminal-race rule + sequential active-run handoff, the clean-exit continue-run rule, the queue-only awaiting behaviour, and the gRPC-only-v1 / HTTP-deferred scope cut. Copy `docs/adr/template.md`.
-- **`docs/usage/http-sse-api.md`** — a note that steer is gRPC-only in v1 (the HTTP run path has no mid-run client→server channel).
+- **`user-docs/reference/http-sse-api.md`** — a note that steer is gRPC-only in v1 (the HTTP run path has no mid-run client→server channel).
 - **`docs/tui.md`** — the steer-mode queue card (pending / sent / promoted) and the capability-driven flip vs the local queue.
 - **`docs/architecture.md`** — the steer inbox + Step 2a seam under the loop section (living "how it works").
 - **`engine/CHANGELOG.md` + `engine/api/*.txt`** — the `Run.EnqueueSteer(text, parts)` signature and `EvSteer` media payload are exported engine-module surface, so `task api:update` is **required**, with a breaking Changed note in `engine/CHANGELOG.md`.

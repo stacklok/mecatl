@@ -1081,7 +1081,7 @@ jobs:
     # pulled a fixed docker/docker, clearing GO-2026-4887/4883/5617/5668/5746.
     # Re-add a dated entry here ONLY if a new reachable vuln has no upstream fix.
     # ENGINE: STRICT — no allowlist; it is clean and must stay clean.
-    # See docs/usage.md (supply-chain) + issue #118.
+    # See the allowlist rationale below + issue #118.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1207,11 +1207,11 @@ jobs:
           if ! diff -u internal/configgen/settings.skeleton.yaml "${RUNNER_TEMP}/settings.skeleton.yaml"; then
             stale=1
           fi
-          if ! diff -u docs/configuration-reference.md "${RUNNER_TEMP}/configuration-reference.md"; then
+          if ! diff -u user-docs/reference/configuration.md "${RUNNER_TEMP}/configuration-reference.md"; then
             stale=1
           fi
           if [ "$stale" -ne 0 ]; then
-            echo "::error file=docs/configuration-reference.md::config reference / settings skeleton is out of date — run 'task docs:configref' and commit the result."
+            echo "::error file=user-docs/reference/configuration.md::config reference / settings skeleton is out of date — run 'task docs:configref' and commit the result."
             exit 1
           fi
 

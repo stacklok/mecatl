@@ -31,23 +31,23 @@ run_raw() {
 }
 
 # Ordinary documentation content is the only positive case.
-run "documentation content passes" true docs/usage.md user-docs/getting-started/demo.md user-docs/_category_.json user-docs/deployment/_category_.json README.md
+run "documentation content passes" true user-docs/intro.md user-docs/building/getting-started/demo.md user-docs/building/_category_.json user-docs/building/deployment/_category_.json README.md
 
 # Fail closed rather than treating no paths or an unterminated record as harmless.
 run_raw "empty input fails closed" false ''
-run_raw "unterminated input fails closed" false 'docs/usage.md'
+run_raw "unterminated input fails closed" false 'user-docs/intro.md'
 run "empty NUL record fails closed" false ''
 
 # Any source/build/configuration path makes the whole change full validation.
-run "mixed documentation and Go fails closed" false docs/usage.md engine/agent/loop.go
-run "workflow and configuration paths fail closed" false docs/usage.md .github/workflows/ci.yml Taskfile.yml .matlatl.yml website/package-lock.json
+run "mixed documentation and Go fails closed" false user-docs/intro.md engine/agent/loop.go
+run "workflow and configuration paths fail closed" false user-docs/intro.md .github/workflows/ci.yml Taskfile.yml .matlatl.yml website/package-lock.json
 run "docs implementation files fail closed" false docs/lint/citations.go docs/architecture/mecatl.modelith.yaml
-run "unknown paths fail closed" false docs/usage.md notes.txt AGENTS.md CLAUDE.md
+run "unknown paths fail closed" false user-docs/intro.md notes.txt AGENTS.md CLAUDE.md
 
 # CI disables rename detection before piping paths here, so both sides of a
 # rename are classified. A rename crossing the allowlist boundary is full.
-run "rename out of docs fails closed" false docs/usage.md internal/usage.go
-run "rename into docs fails closed" false internal/usage.go docs/usage.md
+run "rename out of docs fails closed" false user-docs/intro.md internal/usage.go
+run "rename into docs fails closed" false internal/usage.go user-docs/intro.md
 
 # Paths are records, never shell fragments: spaces, newlines, and metacharacters
 # remain one NUL-delimited Markdown filename and cannot execute anything.

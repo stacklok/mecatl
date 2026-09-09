@@ -56,7 +56,7 @@ A custom `api_key` provider reads exactly its same-ID API-key record from the
 operator-local strict `auth.yaml`; a no-auth provider needs no record. Environment
 fallbacks, OAuth, arbitrary headers, and n:n credential references remain absent. This
 extends the existing auth-file separation described in
-[`docs/usage/mecated.md`](../usage/mecated.md#credentials-file-authyaml) without placing
+[provider credential documentation](https://mecatl.dev/docs/building/deployment/settings#configure-provider-credentials) without placing
 secrets in settings, following the value-free credential boundary in
 [ADR 0238](../adr/0238-operator-defined-llm-providers.md).
 
@@ -145,7 +145,7 @@ Mecated and embedded mecatui use the operator definition and its auth-file key; 
 connect mode remains a pure client of the remote server. Mecatequi and mecak8s receive the
 same custom-provider configuration through shared command wiring where their existing
 provider policy permits it. The default-provider semantics remain server-owned, as
-specified by [`docs/configuration-reference.md`](../configuration-reference.md#models)
+specified by [`user-docs/reference/configuration.md`](https://mecatl.dev/docs/reference/configuration#models)
 and [ADR 0238](../adr/0238-operator-defined-llm-providers.md).
 
 **Acceptance:**

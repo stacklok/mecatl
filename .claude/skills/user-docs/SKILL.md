@@ -18,8 +18,10 @@ architecture records, ADRs, or implementation plans.
 2. Decide whether the change belongs in `user-docs/`, then find the existing page
    that answers the reader's question. Extend that page before adding a new one.
 3. Verify every behavioral claim against the shipped code and public configuration.
-   Read the relevant `docs/architecture/`, `docs/usage/`, and `docs/adr/` material
-   named by the contract. A port or a constructor does not establish availability.
+   Read the relevant `docs/architecture/` and `docs/adr/` material named by the
+   contract, then verify the deployed surface. `docs/usage/` contains historical
+   compatibility pointers and is not a source. A port or constructor does not
+   establish availability.
 4. Follow the contract for placement, front matter, links, prose, and deployment
    boundaries. If the shared `tech-writer` skill is available, it can provide
    additional editorial guidance, but it is not required.
