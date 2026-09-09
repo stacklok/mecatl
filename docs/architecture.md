@@ -192,7 +192,7 @@ affinity or durable-broker decision is made; the chart does not silently change 
 behavior.
 
 **Proposed, not shipped:** the [broker MCP status plan](acceptance/broker-mcp-status.md)
-and [ADR 0321](adr/0321-broker-mcp-status.md) describe an owner-scoped, local-only
+and [ADR 0322](adr/0322-broker-mcp-status.md) describe an owner-scoped, local-only
 connector inventory behind mecatui `/mcp`. It would report enrollment and catalogue
 facts without enabling direct resources/prompts, probing upstreams, or introducing
 persistence. Exact interface and disclosure choices remain under human review;

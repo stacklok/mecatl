@@ -1,4 +1,4 @@
-# ADR 0321 — Session-owned broker connector inspection
+# ADR 0322 — Session-owned broker connector inspection
 
 - Status: Proposed
 - Date: 2026-09-09

@@ -11,7 +11,7 @@
 
 Make mecatui `/mcp` useful against broker-only mecak8s: list configured connector names and show the owned session's enrollment and catalogue status without contacting upstreams. Preserve direct MCP resources/prompts and the existing enrollment controls. Inventory is not a connection test or a claim of current authorization validity.
 
-This is a proposed contract, not shipped behavior. [ADR 0321](../adr/0321-broker-mcp-status.md) explains the separate session-scoped read boundary.
+This is a proposed contract, not shipped behavior. [ADR 0322](../adr/0322-broker-mcp-status.md) explains the separate session-scoped read boundary.
 
 ## Human decisions
 
@@ -75,7 +75,7 @@ The current [broker composition](../architecture.md) keeps global MCP separate. 
 
 ### Scenario 2 — Ownership, restart and transport boundaries remain honest
 
-The existing binding lifecycle is in `internal/adapter/server/mcp_broker.go`; owner concealment is in `internal/adapter/server/ownership.go`. Status reads must not reuse the mutating rebind path, preserving the exact-binding boundary of [ADR 0321](../adr/0321-broker-mcp-status.md).
+The existing binding lifecycle is in `internal/adapter/server/mcp_broker.go`; owner concealment is in `internal/adapter/server/ownership.go`. Status reads must not reuse the mutating rebind path, preserving the exact-binding boundary of [ADR 0322](../adr/0322-broker-mcp-status.md).
 
 **Acceptance:**
 - AC2.1: gRPC and HTTP enforce the ownership-enabled prerequisite and verified principal before disclosure; cover ownership-disabled, missing-principal, ownerless, matching-owner, foreign and absent cases with the exact errors above and zero inspector calls on rejection. Capability tests cover the same deployment/principal matrix. Listener policy and descriptor-based gRPC affinity matrix coverage include the new method; HTTP affinity covers the new session route. Invalid, unsupported and unexpected-error mappings follow the interface contract; HTTP responses are not cacheable.
@@ -119,4 +119,4 @@ Extend the existing panel at `cmd/mecatui/ui/mcp.go` and capability gates at `cm
 
 ## Deferred decisions and known risks
 
-No material choice is delegated to implementation: the unchecked Human decisions cover the candidate contract. The new inspection method must not call the existing observe-enrollment helper because that helper triggers authenticated discovery. Existing living documentation about pre-enrollment static-tool invisibility predates ADR 0310; implementation must correct those statements rather than copy them. Protobuf field 29 and ADR 0321 are free at the authoring baseline and must be checked again before delivery. No new resource owner is intended; any implementation that needs one is contract drift, not permission to add a cache.
+No material choice is delegated to implementation: the unchecked Human decisions cover the candidate contract. The new inspection method must not call the existing observe-enrollment helper because that helper triggers authenticated discovery. Existing living documentation about pre-enrollment static-tool invisibility predates ADR 0310; implementation must correct those statements rather than copy them. Protobuf field 29 is free at the authoring baseline and must be checked again before delivery; ADR 0322 is reserved by this plan. No new resource owner is intended; any implementation that needs one is contract drift, not permission to add a cache.
