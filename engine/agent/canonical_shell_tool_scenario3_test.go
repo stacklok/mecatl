@@ -79,6 +79,22 @@ func TestCanonicalShellTool_Scenario3_BashAndUnknownShellPassThrough(t *testing.
 	}
 }
 
+func TestCanonicalShellTool_Scenario3_PipefailPassesThroughShDashDiagnostic(t *testing.T) {
+	const command = "set -o pipefail; printf x"
+	for _, shell := range []string{"/bin/sh", "/bin/dash"} {
+		t.Run(shell, func(t *testing.T) {
+			runner := &fakeShellRunner{res: tool.CommandResult{Stdout: "ok"}, shell: shell}
+			result, err := NewShellTool().Execute(context.Background(), bashCall("pipefail", command, 0, false), bashEnvRunner(runner))
+			if err != nil || result.IsError {
+				t.Fatalf("result = %+v, err = %v; want pass-through", result, err)
+			}
+			if runner.command != command {
+				t.Fatalf("runner command = %q, want %q", runner.command, command)
+			}
+		})
+	}
+}
+
 func TestCanonicalShellTool_Scenario3_SyntaxContextAndParseFailure(t *testing.T) {
 	for _, command := range []string{
 		"printf '%s' '[[ x ]] <(x) a=(x) $'\"'",
@@ -100,6 +116,17 @@ func TestCanonicalShellTool_Scenario3_SyntaxContextAndParseFailure(t *testing.T)
 
 func TestCanonicalShellTool_Scenario3_EffectiveCommandBytePreservation(t *testing.T) {
 	const command = "printf '  exact\\n' # preserve whitespace"
+
+	t.Run("foreground", func(t *testing.T) {
+		runner := &fakeShellRunner{res: tool.CommandResult{Stdout: "ok"}, shell: "/bin/sh"}
+		result := runEffectiveShellCommand(t, bashCall("foreground", "ignored", 0, false), runner, command)
+		if result.IsError {
+			t.Fatalf("result = %+v, want success", result)
+		}
+		if runner.command != command {
+			t.Fatalf("foreground runner command = %q, want post-hook bytes %q", runner.command, command)
+		}
+	})
 
 	t.Run("temporary scope", func(t *testing.T) {
 		runner := &fakeShellRunner{res: tool.CommandResult{Stdout: "ok"}, shell: "/bin/sh"}

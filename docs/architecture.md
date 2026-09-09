@@ -602,7 +602,7 @@ flowchart LR
     oai["openai · mockllm"]
     fs["osfs (+CommandRunner) · memfs"]
     st["memstore · jsonlstore · redisstore · sessnap"]
-    tools["tools (Read/ListDir/Edit/Write/Copy/Move/Remove/Grep/Glob/WebFetch/WebSearch + optional Bash)"]
+    tools["tools (Read/ListDir/Edit/Write/Copy/Move/Remove/Grep/Glob/WebFetch/WebSearch + optional Shell)"]
     pp["permpolicy · hookexec · modelhook"]
     tel["telemetry (OTel metrics+spans · Prometheus exporter · OTLP)"]
     ext["mcp (streaming-HTTP)\nmemory · dream · soul · forker · tokenizer"]
@@ -1071,7 +1071,7 @@ Two deliberate cycle-breaks worth noting, documented in code:
   a `port↔tool` cycle. See the package note in `engine/tool/tool.go`.
   `Environment` bundles a `Workspace`, an optional bound `CommandRunner`, and an
   exact backend identity `EnvironmentRef{Kind, ID, Revision}`. FS tools obtain
-  `env.Workspace()`; Bash obtains `env.CommandRunner()`. Workspace content mutation remains
+  `env.Workspace()`; Shell obtains `env.CommandRunner()`. Workspace content mutation remains
   version-aware: Read records an opaque `FileVersion`, new-file Write is create-only,
   and Edit/existing-file Write conditionally replace. The optional additive
   `WorkspaceNamespace` capability supplies `ReadDir`, non-recursive `Remove`,
@@ -1123,7 +1123,7 @@ last-good snapshot, and never persists it into conversation history. The stable 
 is unchanged, and the legacy value-omitting `UserModelAssembler` remains the standard
 composition path for now.
 
-**Skills as slash commands.** The resolved, admitted skills inventory also exposes each skill as a `/<skill-name>` command. A syntactically valid name expands only when it is in that inventory; it then loads the instruction body and the same bounded logical asset inventory as the `Skill` tool. Asset names are appended after ordinary command parsing and placeholder substitution so metadata stays literal. A slash command does not fetch asset content: when the instructions need a textual asset, the model calls `Skill` with `{name, asset}`. It gains no base directory and makes no claim about `Read` or `Bash`. In the command chain, file-backed commands take precedence over skills, skills over driver commands, and driver commands over MCP prompts; the first matching source wins. See `engine/adapter/skillfs/commandsource.go`, `engine/adapter/skillfs/tool.go`, `engine/prompt/commandsource.go`, and `internal/app/build.go` (`buildCommandExpander`).
+**Skills as slash commands.** The resolved, admitted skills inventory also exposes each skill as a `/<skill-name>` command. A syntactically valid name expands only when it is in that inventory; it then loads the instruction body and the same bounded logical asset inventory as the `Skill` tool. Asset names are appended after ordinary command parsing and placeholder substitution so metadata stays literal. A slash command does not fetch asset content: when the instructions need a textual asset, the model calls `Skill` with `{name, asset}`. It gains no base directory and makes no claim about `Read` or `Shell`. In the command chain, file-backed commands take precedence over skills, skills over driver commands, and driver commands over MCP prompts; the first matching source wins. See `engine/adapter/skillfs/commandsource.go`, `engine/adapter/skillfs/tool.go`, `engine/prompt/commandsource.go`, and `internal/app/build.go` (`buildCommandExpander`).
 
 **Typed tool results.** A `session.ToolResult` may carry typed content blocks on
 `ToolResult.Parts` (`[]session.Content`, additive — a zero-value `Parts` is the
