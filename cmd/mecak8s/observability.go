@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"time"
 
 	"github.com/stacklok/mecatl/engine/port"
@@ -43,6 +44,15 @@ type observability struct {
 // with no baked ingest key) is NEVER fatal — product metrics are best-effort —
 // so it degrades to a no-op Shutdown rather than failing this function's error
 // return (which stays meaningful for the OTLP half only).
+//
+// The first-run disclosure notice is printed HERE, at setup time — NOT in
+// flushTelemetry — because mecak8s is a long-running daemon (unlike
+// mecatequi's single-shot process, where setup and flush are seconds apart):
+// printing only at shutdown would leave the notice invisible for as long as
+// the process runs (potentially days/weeks) and never printed at all on a
+// SIGKILL/OOM-kill with no graceful shutdown path. This mirrors
+// cmd/mecated/main.go's setupProductMetrics, which prints at setup for the
+// same reason.
 func buildObservability(ctx context.Context, cfg config, diag port.Diagnostics) (observability, error) {
 	h, err := cliconfig.HeadlessTelemetry(ctx, cliconfig.HeadlessTelemetryConfig{
 		ServiceName:         "mecak8s",
@@ -87,6 +97,13 @@ func buildObservability(ctx context.Context, cfg config, diag port.Diagnostics) 
 		diag.Log(ctx, port.LevelWarn, "product metrics disabled: setup failed", "err", pmErr)
 		pm = cliconfig.ProductMetricsHandles{Shutdown: func(context.Context) error { return nil }}
 	}
+	if pm.FirstRun {
+		// stderr, not diag: mecak8s already writes plain informational lines to
+		// stderr elsewhere (e.g. boundedClose's timeout line in main.go), and the
+		// disclosure banner is a one-time, human-facing notice rather than a
+		// structured operational log line.
+		_, _ = fmt.Fprint(os.Stderr, cliconfig.ProductMetricsDisclosureNotice)
+	}
 
 	return observability{HeadlessTelemetryHandles: h, productMetrics: pm}, nil
 }
@@ -95,9 +112,8 @@ func buildObservability(ctx context.Context, cfg config, diag port.Diagnostics) 
 // bounded ctx so a dead collector cannot hang SIGTERM shutdown. Safe on a zero
 // observability (both Shutdowns are no-ops when telemetry is disabled). A
 // flush failure is logged and never aborts — telemetry is best-effort at
-// shutdown. The product-metrics first-run disclosure notice is printed to
-// stderr here too (mecak8s already writes plain informational lines to
-// stderr in main.go's fmt.Fprintf calls; slog goes to the structured logger).
+// shutdown. (The first-run disclosure notice is printed at buildObservability
+// setup time, not here — see that function's doc comment.)
 func flushTelemetry(stderr io.Writer, obs observability, timeout time.Duration) {
 	ctx := context.Background()
 	if timeout > 0 {
@@ -114,9 +130,6 @@ func flushTelemetry(stderr io.Writer, obs observability, timeout time.Duration) 
 		if err := obs.productMetrics.Shutdown(ctx); err != nil {
 			_, _ = fmt.Fprintf(stderr, "mecak8s: product metrics flush: %v\n", err)
 		}
-	}
-	if obs.productMetrics.FirstRun {
-		_, _ = fmt.Fprint(stderr, cliconfig.ProductMetricsDisclosureNotice)
 	}
 }
 
