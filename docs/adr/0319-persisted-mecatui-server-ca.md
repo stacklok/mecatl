@@ -1,4 +1,4 @@
-# ADR 0318 — Persist saved mecatui gRPC server CA references
+# ADR 0319 — Persist saved mecatui gRPC server CA references
 
 - Status: Accepted
 - Date: 2026-09-08
