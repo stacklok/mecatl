@@ -593,7 +593,7 @@ func TestToolHiveStaticToolAuthorizationStartsBundle(t *testing.T) {
 	}
 }
 
-func TestADR_0298_StaticProtectedToolsAreVisibleBeforeEnrollment(t *testing.T) {
+func TestADR_0310_StaticProtectedToolIsVisibleBeforeEnrollment(t *testing.T) {
 	t.Setenv("MECATL_TEST_CLIENT_SECRET", "construction-only-secret")
 	var anonymousRequests, protectedRequests atomic.Int32
 	anonymous := toolHiveDiscoveryServer(t, "status", &anonymousRequests)

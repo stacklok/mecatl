@@ -2,12 +2,12 @@
 
 **Contract:** human-reviewed/v1
 **Phase:** Session-scoped MCP broker protected-tool admission
-**Status:** proposed, 2026-09-09. All post-enrollment precedence and lifetime decisions are resolved below.
+**Status:** landed candidate, 2026-09-09. Local implementation and verification are complete; authoritative only when these changes merge.
 **Delivery:** Split. This changes the ADR-governed model-visible protected-tool catalogue and its authority-sensitive read-only classification, so it requires Plan / Interface review before implementation.
 **Expected tasks:** 2
 **Issue:** none yet — discovered during manual connector-gateway broker verification.
 **Plan PR:** <added when opened>
-**Approved baseline:** <merged plan commit; absent until approved>
+**Approved baseline:** `17ff18154` (local plan commit explicitly approved for execution in this workspace; no remote Plan PR requested)
 
 Static protected-tool declarations make an operator-selected initial surface available before ToolHive authorization. After successful pre-prompt enrollment, [ADR 0310](../adr/0310-lazy-toolhive-static-tools.md) says the complete authenticated catalogue replaces those visible stand-ins. Today, `stageAuthenticatedRoutes` removes a live definition whose name collides with a declaration and reinstates the declaration's description, schema, and read-only classification. It also retains a declared tool that authenticated discovery no longer returns. Consequently, each session discards its own authenticated metadata and membership for declared names.
 

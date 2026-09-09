@@ -118,6 +118,48 @@ func callback(t *testing.T, runtime *Runtime, code, state string) *httptest.Resp
 	return recorder
 }
 
+func TestADR_0310_LazyAuthorizationDoesNotDiscoverUndeclaredTools(t *testing.T) {
+	tokenServer := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("requesting lazy authorization must not contact discovery or token endpoints")
+	}))
+	t.Cleanup(tokenServer.Close)
+	harness := newProtectedHarness(t, tokenServer)
+	attachment, _ := attach(t, harness.runtime, "lazy-static-session")
+	before := toolNames(attachment.Tools())
+	wrapped := toolByName(t, attachment, "mcp__github__create")
+	protected, ok := wrapped.(*protectedSessionTool)
+	if !ok {
+		t.Fatal("static protected tool lacks protected wrapper")
+	}
+	queries := &orderedCapabilityQueries{responses: map[string]AuthenticatedCapabilities{"github": {
+		Backend: "github", Tools: []ToolDefinition{{Backend: "github", Name: "mcp__github__undeclared", Description: "live", Schema: json.RawMessage(`{"type":"object"}`)}},
+	}}}
+	harness.runtime.process = &Process{
+		Runtime:            harness.runtime,
+		construction:       toolHiveConstruction{protectedBackends: []string{"github"}},
+		protectedTarget:    protected.route.oauth,
+		queryAuthenticated: queries.query,
+	}
+	requester, ok := wrapped.(tool.AuthorizationRequester)
+	if !ok {
+		t.Fatal("static protected tool lacks lazy authorization")
+	}
+	call := session.NewToolCall("lazy-call", wrapped.Spec().Name, json.RawMessage(`{}`))
+	if _, required, err := requester.RequestAuthorization(t.Context(), call); err != nil || !required {
+		t.Fatalf("RequestAuthorization = required %v, err %v", required, err)
+	}
+	after := toolNames(attachment.Tools())
+	if queries.calls != 0 {
+		t.Fatalf("lazy authorization performed %d authenticated discovery queries", queries.calls)
+	}
+	if _, ok := attachment.lookupRoute("mcp__github__undeclared"); ok {
+		t.Fatal("lazy authorization published an undeclared authenticated tool")
+	}
+	if len(after) != len(before) || len(after) != 1 || after[0] != before[0] {
+		t.Fatalf("lazy authorization changed catalogue from %v to %v", before, after)
+	}
+}
+
 func TestProtectedCallCallbackSingleUseAndRefreshCustody(t *testing.T) {
 	var exchanges, refreshes int
 	tokenServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {

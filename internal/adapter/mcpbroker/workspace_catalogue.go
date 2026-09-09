@@ -232,24 +232,7 @@ func stageAuthenticatedRoutes(ctx context.Context, process *Process, brokerCrede
 			return nil, ErrAuthenticatedDiscovery
 		}
 		process.diagnostics().Log(ctx, port.LevelInfo, "mcp broker authenticated catalogue backend", "event", diagnosticEventAuthenticatedCatalogueBackend, "reason", diagnosticReasonDiscovered, "backend_index", backendIndex, "tools", len(capabilities.Tools))
-		declaredTools := process.construction.staticByBackend[backend]
-		declaredNames := make(map[string]struct{}, len(declaredTools))
-		for _, declared := range declaredTools {
-			declaredNames["mcp__"+backend+"__"+declared.Name] = struct{}{}
-		}
-		definitions := make([]ToolDefinition, 0, len(capabilities.Tools)+len(declaredTools))
-		for _, discovered := range capabilities.Tools {
-			if _, staticallyDeclared := declaredNames[discovered.Name]; !staticallyDeclared {
-				definitions = append(definitions, discovered)
-			}
-		}
-		for _, declared := range declaredTools {
-			definitions = append(definitions, ToolDefinition{
-				Backend: backend, Name: "mcp__" + backend + "__" + declared.Name,
-				Description: declared.Description, Schema: append(json.RawMessage(nil), declared.Schema...), ReadOnly: declared.ReadOnly,
-			})
-		}
-		for _, definition := range definitions {
+		for _, definition := range capabilities.Tools {
 			route, err := validateAuthenticatedRoute(backend, definition, seen)
 			if err != nil {
 				return nil, err
