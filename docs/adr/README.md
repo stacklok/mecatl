@@ -189,6 +189,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0020 — Diagnostics](./0020-diagnostics.md)
 - [0045 — Explicit-bucket latency histograms (zero-config quantiles on `/metrics`)](./0045-explicit-bucket-latency-histograms.md)
 - [0098 — Telemetry for the headless binaries (mecatequi, mecak8s)](./0098-headless-telemetry.md)
+- [0317 — Product (adoption) metrics over OTLP](./0317-product-metrics.md)
 
 ### Governance & trust
 - [0241 — Canonical untrusted-content fences live in governance](./0241-governance-fence-ownership.md)
