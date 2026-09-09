@@ -81,15 +81,19 @@ func BuildProductMetrics(
 		return ProductMetricsHandles{Sink: rec, ToolCallRecorder: rec, Shutdown: noop}, nil
 	}
 
-	installID, firstRun, err := productmetrics.LoadOrCreateInstallIDDefault()
+	// LoadOrCreateInstallIDDefault still runs (and persists its file) purely
+	// to detect first-run for the disclosure notice below — the returned id
+	// value itself is deliberately discarded, never threaded to NewProvider:
+	// see provider.go's doc comment on why a per-install identifier must
+	// never become a Prometheus-remote-write label.
+	_, firstRun, err := productmetrics.LoadOrCreateInstallIDDefault()
 	if err != nil {
 		return ProductMetricsHandles{Shutdown: noop}, fmt.Errorf("product metrics: install id: %w", err)
 	}
 
 	provider, err := productmetrics.NewProvider(ctx, productmetrics.Config{
-		Binary:    binary,
-		Version:   version,
-		InstallID: installID,
+		Binary:  binary,
+		Version: version,
 	})
 	if err != nil {
 		return ProductMetricsHandles{Shutdown: noop}, fmt.Errorf("product metrics: provider: %w", err)

@@ -52,6 +52,16 @@ func NewProvider(ctx context.Context, cfg Config) (*Provider, error) {
 	// pointed at an httptest.Server) must explicitly opt into WithInsecure,
 	// or the exporter tries TLS against a plaintext listener and every
 	// export fails. The real production endpoint is always https://.
+	//
+	// Deliberately NOT included: any per-install identifier. This pipeline's
+	// destination is a Prometheus-remote-write backend (stacklok/infra#5604),
+	// where every resource attribute becomes a permanent label on EVERY
+	// instrument's time series — attaching a random per-install value here
+	// would multiply active-series count by (installs × instrument count),
+	// an unbounded-cardinality cost with no bound as adoption grows. Only
+	// mecatl.binary (a small closed enum) is attached; unique-install
+	// counting is approximated from heartbeat volume instead (see
+	// installid.go's doc comment).
 	composite, err := providers.NewCompositeProvider(ctx,
 		providers.WithServiceName("mecatl"),
 		providers.WithServiceVersion(cfg.Version),
@@ -60,8 +70,7 @@ func NewProvider(ctx context.Context, cfg Config) (*Provider, error) {
 		providers.WithInsecure(strings.HasPrefix(endpoint, "http://")),
 		providers.WithHeaders(map[string]string{headerKeyName: bakedKey}),
 		providers.WithCustomAttributes(map[string]string{
-			"mecatl.install.id": cfg.InstallID,
-			"mecatl.binary":     string(cfg.Binary),
+			"mecatl.binary": string(cfg.Binary),
 		}),
 	)
 	if err != nil {

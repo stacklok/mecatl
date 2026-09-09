@@ -87,6 +87,4 @@ type Config struct {
 	Binary Binary
 	// Version is the mecatl build version (resource attribute service.version).
 	Version string
-	// InstallID is this process's persisted anonymous install identifier.
-	InstallID string
 }

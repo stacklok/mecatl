@@ -12,7 +12,7 @@ import (
 )
 
 // doNotTrackOptOut reports whether a DO_NOT_TRACK env value means "opt out",
-// per the consoledonottrack.com convention: unset/empty and the conventional
+// per the donottrack.sh convention: unset/empty and the conventional
 // "off" spellings ("0", "false", case-insensitive) are NOT an opt-out; any
 // other value is.
 func doNotTrackOptOut(v string) bool {
@@ -26,7 +26,7 @@ func doNotTrackOptOut(v string) bool {
 
 // ProductMetricsPrecedence carries the opt-out inputs
 // ResolveProductMetricsEnabled folds, highest precedence first: an explicit
-// CLI flag, then the DO_NOT_TRACK env var convention (consoledonottrack.com),
+// CLI flag, then the DO_NOT_TRACK env var convention (donottrack.sh),
 // then the operator settings.yaml value, then default-enabled.
 type ProductMetricsPrecedence struct {
 	// FlagSet/FlagValue report whether --product-metrics was explicitly

@@ -66,7 +66,8 @@ Zero import relationship with `internal/adapter/telemetry`. It owns:
   (`interval<=0`) plus flush-before-exit for the short-lived `mecatequi`,
   mirroring the OTLP-push-with-flush precedent ADR 0098 already established
   for that binary's shape.
-- Its own install-identity file (`installid.go`).
+- Its own local install-identity file (`installid.go`) — a first-run marker
+  only, deliberately never exported (see the cardinality note below).
 
 Composition combines the two independent sinks with a trivial fan-out helper
 in `internal/cliconfig` (`BuildProductMetrics`, `TeeToolCallRecorder`) — the
@@ -96,8 +97,20 @@ looking at either series family can mistake one for the other.
 
 **Resource attributes** (set once per process via `productmetrics.Config`,
 not per-metric labels): `service.name=mecatl`, `service.version`,
-`mecatl.install.id` (a random v4 UUID), `mecatl.binary` (one of the closed
-`Binary` set: `mecated`/`mecatui`/`mecatequi`/`mecak8s`).
+`mecatl.binary` (one of the closed `Binary` set:
+`mecated`/`mecatui`/`mecatequi`/`mecak8s`).
+
+**No per-install identifier is attached, deliberately.** This pipeline's
+destination is a Prometheus-remote-write backend (`stacklok/infra#5604`),
+where every resource attribute becomes a permanent label on *every*
+instrument's time series. A random per-install UUID would multiply active
+series by (installs × instrument count) with no bound as adoption grows —
+an unbounded-cardinality cost for a precision (exact unique-install counts)
+the design never actually required. `installid.go` still persists a local
+UUID, but purely as a first-run marker for the disclosure notice (§ below)
+— its value is never read back by `NewProvider` or attached to anything
+exported. Unique-install counts are approximated from heartbeat volume/
+cadence instead of counted exactly.
 
 **Heartbeat** (`metrics.go`/`heartbeat.go` — on start, then every ~24h for
 long-running processes; single fire for `mecatequi`):
@@ -151,12 +164,13 @@ Product metrics are **enabled by default** (opt-out). `internal/cliconfig.Resolv
 (`productmetrics_config.go`) folds four inputs, highest precedence first:
 
 1. An explicit CLI flag: `--product-metrics=false` (all four binaries).
-2. The `DO_NOT_TRACK` environment variable (any non-empty value) — the
-   cross-ecosystem convention (consoledonottrack.com), so the one env var
-   that already opts CI fleets and dev machines out of *other* tools'
-   telemetry covers mecatl too, with no mecatl-specific variable to
-   remember. (A dedicated `MECATL_PRODUCT_METRICS=0` was deliberately not
-   added on top of it — one standard signal beats two overlapping ones.)
+2. The `DO_NOT_TRACK` environment variable set to a truthy value (`""`/`"0"`/
+   `"false"`, case-insensitive, are NOT an opt-out) — the cross-ecosystem
+   convention (donottrack.sh), so the one env var that already opts CI
+   fleets and dev machines out of *other* tools' telemetry covers mecatl
+   too, with no mecatl-specific variable to remember. (A dedicated
+   `MECATL_PRODUCT_METRICS=0` was deliberately not added on top of it — one
+   standard signal beats two overlapping ones.)
 3. `telemetry.productMetrics.enabled: false` in the **operator-tier**
    settings file (`~/.config/mecatl/settings.yaml` + CLI-loaded equivalents)
    — `permconfig.Resolver.OperatorProductMetricsEnabled()`.
@@ -259,7 +273,8 @@ one and the balance shifts back toward requiring opt-in:
   `go test`/CI build can never phone home regardless of flag state.
 - A new small persisted file per install
   (`$XDG_STATE_HOME/mecatl/telemetry-id`, a bare random v4 UUID) — trivially
-  reset by deleting it, and carrying no machine or user information.
+  reset by deleting it, carrying no machine or user information, and never
+  read back for export: it exists purely as a local first-run marker.
 - ADR-0027 List-1 (resource inventory) is NOT extended: the heartbeat
   ticker's lifetime matches the process (owned by the caller's
   `heartbeatCtx`, cancelled on shutdown alongside the rest of composition's
