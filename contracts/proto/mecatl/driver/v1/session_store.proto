@@ -243,6 +243,10 @@ message ReadSessionLineageRequest {
   string root_session_id = 1 [(buf.validate.field).string.min_len = 1];
   int32 limit = 2;
   string root_incarnation = 3 [(buf.validate.field).string.min_len = 1];
+  // Optional exact-record selector. Both fields must be set together; a selected
+  // direct edge is read without returning sibling records.
+  string record_session_id = 4;
+  string record_incarnation = 5;
 }
 
 // SessionLineageEntry is content-free durable relationship metadata. It must

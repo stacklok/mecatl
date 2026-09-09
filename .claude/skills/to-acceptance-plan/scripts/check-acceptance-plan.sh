@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # check-acceptance-plan.sh — validate a docs/acceptance/<plan>.md against the
-# acceptance-plan contract: exact `**Contract:** human-reviewed/v1` metadata, at
-# least one scenario, numbered acceptance criteria, a non-empty human-decisions section consistent with status, a non-empty interface
-# contract, >=1 ADR / architecture / AGENTS.md citation per scenario, and an
-# out-of-scope section.
+# acceptance-plan contract. Legacy `human-reviewed/v1` plans retain their original
+# shape. `human-reviewed/v2` additionally requires a Bounded or Architectural work
+# classification and a matching decision-record outcome. Both versions require at
+# least one scenario, numbered acceptance criteria, a non-empty human-decisions
+# section consistent with status, a non-empty interface contract, >=1 repository
+# citation per scenario, and an out-of-scope section.
 #
 # This is the authoring-time check for /to-acceptance-plan. The runtime gate on
 # a landed plan's verify: contract is `task ac-trace-strict` (the ac-trace tool;
@@ -38,14 +40,63 @@ warn=0
 note_fail() { printf 'FAIL: %s\n' "$1" >&2; fail=1; }
 note_warn() { printf 'WARN: %s\n' "$1" >&2; warn=1; }
 
-# The marker opts a plan into the current human-reviewed contract without
-# retroactively bulk-migrating the historical catalogue.
+# The marker opts a plan into a versioned contract without retroactively
+# bulk-migrating the historical catalogue.
 contract_count=$(grep -cE '^\*\*Contract:\*\*' "$plan" || true)
-contract_exact=$(grep -cFx '**Contract:** human-reviewed/v1' "$plan" || true)
-if [[ "$contract_count" -eq 1 && "$contract_exact" -eq 1 ]]; then
-  printf 'ok: human-reviewed/v1 contract metadata\n'
+contract_v1=$(grep -cFx '**Contract:** human-reviewed/v1' "$plan" || true)
+contract_v2=$(grep -cFx '**Contract:** human-reviewed/v2' "$plan" || true)
+contract_version=''
+if [[ "$contract_count" -eq 1 && "$contract_v1" -eq 1 ]]; then
+  contract_version='v1'
+  printf 'ok: legacy human-reviewed/v1 contract metadata\n'
+elif [[ "$contract_count" -eq 1 && "$contract_v2" -eq 1 ]]; then
+  contract_version='v2'
+  printf 'ok: human-reviewed/v2 contract metadata\n'
 else
-  note_fail 'expected exactly one exact "**Contract:** human-reviewed/v1" declaration.'
+  note_fail 'expected exactly one supported "**Contract:** human-reviewed/v1|v2" declaration.'
+fi
+
+# v2 makes routing and durable-rationale ownership observable. Spike and Routine
+# bypass acceptance planning, so a v2 plan may classify only Bounded or Architectural.
+if [[ "$contract_version" == v2 ]]; then
+  classification_count=$(grep -cE '^\*\*Work classification:\*\*' "$plan" || true)
+  classification_line=$(grep -E '^\*\*Work classification:\*\*' "$plan" || true)
+  classification=''
+  if [[ "$classification_count" -eq 1 && "$classification_line" =~ ^\*\*Work[[:space:]]classification:\*\*[[:space:]]+(Bounded|Architectural)[[:space:]]+(-|–|—)[[:space:]]+[^[:space:]].*$ ]]; then
+    classification=${BASH_REMATCH[1]}
+    if printf '%s\n' "$classification_line" | grep -qiE '(^|[^[:alnum:]_])(TBD|TODO|PLACEHOLDER|REPLACE ME)([^[:alnum:]_]|$)|<[^>]+>'; then
+      note_fail '"**Work classification:**" contains placeholder content.'
+    else
+      printf 'ok: %s work classification\n' "$classification"
+    fi
+  else
+    note_fail 'v2 requires exactly one "**Work classification:** Bounded|Architectural — <rationale>" declaration.'
+  fi
+
+  decision_count=$(grep -cE '^\*\*Decision record:\*\*' "$plan" || true)
+  decision_line=$(grep -E '^\*\*Decision record:\*\*' "$plan" || true)
+  if [[ "$decision_count" -ne 1 ]] || printf '%s\n' "$decision_line" | grep -qiE '(^|[^[:alnum:]_])(TBD|TODO|PLACEHOLDER|REPLACE ME)([^[:alnum:]_]|$)|<[^>]+>'; then
+    note_fail 'v2 requires exactly one non-placeholder "**Decision record:**" outcome.'
+  elif [[ "$classification" == Bounded ]]; then
+    if [[ "$decision_line" =~ ^\*\*Decision[[:space:]]record:\*\*[[:space:]]+None[[:space:]]+—[[:space:]]+[^[:space:]].*$ ]]; then
+      printf 'ok: Bounded work creates no decision record\n'
+    else
+      note_fail 'Bounded work requires exactly "**Decision record:** None — <substantive rationale>".'
+    fi
+  elif [[ "$classification" == Architectural ]]; then
+    if [[ "$decision_line" =~ ^\*\*Decision[[:space:]]record:\*\*[[:space:]]+\[ADR[[:space:]][0-9]{4}\]\((\.\./adr/[0-9]{4}-[^/\)]*\.md)\)$ ]]; then
+      adr_target=${BASH_REMATCH[1]}
+      plan_dir=$(cd "$(dirname "$plan")" && pwd)
+      adr_path="$plan_dir/$adr_target"
+      if [[ -f "$adr_path" ]]; then
+        printf 'ok: Architectural work identifies an ADR\n'
+      else
+        note_fail "Architectural decision-record ADR target is not an existing regular file: $adr_target"
+      fi
+    else
+      note_fail 'Architectural work requires exactly "**Decision record:** [ADR NNNN](../adr/NNNN-*.md)".'
+    fi
+  fi
 fi
 
 # A citation is a markdown link into ../adr/**, ../architecture*,

@@ -565,21 +565,22 @@ func (e branchEmitter) start(join string, branchCount int) {
 // the concrete MODEL id this branch ACTUALLY runs on (issue #112, ADR 0035), independent
 // of whether the router fired — inherited default or routed. When routed,
 // model == routedModel.
-func (e branchEmitter) branchStart(i int, goal, routedCategory, routedModel, routingReason, model string) {
+func (e branchEmitter) branchStart(i int, incarnation session.IncarnationID, goal, routedCategory, routedModel, routingReason, model string) {
 	if !e.active() {
 		return
 	}
 	e.emit(session.Event{Type: session.EvParallelBranch, Parallel: &session.ParallelPayload{
-		ParentCallID:   e.parentCallID,
-		Kind:           session.ParallelBranchStart,
-		BranchIndex:    i,
-		ChildID:        e.branchChildID(i),
-		BranchLabel:    branchLabel(i),
-		Goal:           truncateGoal(strings.TrimSpace(goal)),
-		RoutedCategory: routedCategory,
-		RoutedModel:    routedModel,
-		RoutingReason:  routingReasonPayload(routingReason),
-		Model:          model,
+		ParentCallID:     e.parentCallID,
+		Kind:             session.ParallelBranchStart,
+		BranchIndex:      i,
+		ChildID:          e.branchChildID(i),
+		ChildIncarnation: incarnation,
+		BranchLabel:      branchLabel(i),
+		Goal:             truncateGoal(strings.TrimSpace(goal)),
+		RoutedCategory:   routedCategory,
+		RoutedModel:      routedModel,
+		RoutingReason:    routingReasonPayload(routingReason),
+		Model:            model,
 	}})
 }
 
@@ -921,7 +922,7 @@ func cancelledBeforeStart(i int, be branchEmitter, clientCancelled bool) branchR
 	// A branch cancelled before it ever started was never routed, so the routed metadata
 	// is empty and RoutingReason is "aborted" (issue #397 — it ran on nothing, like the
 	// dispatch hardAbort skip): the wire now distinguishes it from a classifier miss.
-	be.branchStart(i, "", "", "", session.RoutingReasonAborted, "")
+	be.branchStart(i, "", "", "", "", session.RoutingReasonAborted, "")
 	be.branchEnd(res, session.StopCancelled, session.Usage{}, 0, 0)
 	return res
 }
@@ -1042,7 +1043,8 @@ func (t *ParallelTool) runBranch(ctx context.Context, callID session.ToolCallID,
 	// routing reason, issue #397); branch_end (below) carries the redacted terminal
 	// metadata. A fork-failed branch still gets its branch_end so EVERY branch is
 	// represented (no missing event).
-	be.branchStart(i, prompt, routedCategory, routedModel, routingReason, branchEngine.Model())
+	childIncarnation := session.NewIncarnationID()
+	be.branchStart(i, childIncarnation, prompt, routedCategory, routedModel, routingReason, branchEngine.Model())
 	start := branchEngine.now()
 
 	// The Parallel branch forker is force-copy (copyTree carries the parent's dirty
@@ -1084,6 +1086,12 @@ func (t *ParallelTool) runBranch(ctx context.Context, callID session.ToolCallID,
 	if err != nil {
 		res.failed = true
 		res.failReason = fmt.Sprintf("invalid branch relationship metadata: %v", err)
+		be.branchEnd(res, session.StopError, session.Usage{}, 0, branchEngine.now().Sub(start))
+		return res, session.StopError
+	}
+	if err := childSess.RestoreIncarnation(childIncarnation); err != nil {
+		res.failed = true
+		res.failReason = fmt.Sprintf("invalid branch incarnation: %v", err)
 		be.branchEnd(res, session.StopError, session.Usage{}, 0, branchEngine.now().Sub(start))
 		return res, session.StopError
 	}

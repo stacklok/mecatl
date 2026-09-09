@@ -116,7 +116,10 @@ redis.call('HSET', KEYS[1],
   'mtime', ARGV[2],
   'metadata_entry', ARGV[3],
   'metadata_owner', ARGV[5],
-  'lineage_key', ARGV[8])
+  'lineage_key', ARGV[8],
+  'lineage_edge_key', ARGV[10],
+  'lineage_root_order', ARGV[11],
+  'lineage_edge_order', ARGV[12])
 redis.call('ZADD', KEYS[2], 0, ARGV[3])
 if ARGV[5] ~= '' then
   redis.call('ZADD', ARGV[7] .. ARGV[5], 0, ARGV[3])
@@ -126,6 +129,12 @@ if ARGV[5] ~= '' then
   redis.call('HINCRBY', KEYS[3], ARGV[5], 1)
 end
 redis.call('HSET', KEYS[5], ARGV[8], ARGV[9])
+redis.call('HSET', KEYS[6], ARGV[8], ARGV[9])
+redis.call('ZADD', KEYS[7], 0, ARGV[11])
+if ARGV[10] ~= '' then
+  redis.call('HSET', ARGV[10], ARGV[8], ARGV[9])
+  redis.call('ZADD', ARGV[10] .. ':order', 0, ARGV[12])
+end
 redis.call('INCR', KEYS[4])
 return 1
 `)
@@ -134,6 +143,9 @@ var saveMetadataScript = redis.NewScript(`
 local old_member = redis.call('HGET', KEYS[1], 'metadata_entry')
 local old_scope = redis.call('HGET', KEYS[1], 'metadata_owner') or ''
 local old_lineage_key = redis.call('HGET', KEYS[1], 'lineage_key')
+local old_lineage_edge_key = redis.call('HGET', KEYS[1], 'lineage_edge_key') or ''
+local old_lineage_root_order = redis.call('HGET', KEYS[1], 'lineage_root_order') or ''
+local old_lineage_edge_order = redis.call('HGET', KEYS[1], 'lineage_edge_order') or ''
 if not old_lineage_key and old_member then
   old_lineage_key = ARGV[11]
 end
@@ -147,6 +159,24 @@ if old_lineage_key and old_lineage_key ~= ARGV[8] then
       return redis.error_reply('invalid lineage record')
     end
     redis.call('HSET', KEYS[5], old_lineage_key, tombstone)
+    redis.call('HSET', KEYS[6], old_lineage_key, tombstone)
+    if old_lineage_root_order ~= '' then
+      redis.call('ZREM', KEYS[7], old_lineage_root_order)
+      redis.call('ZADD', KEYS[7], 0, '1' .. string.sub(old_lineage_root_order, 2))
+    end
+    if old_lineage_edge_key ~= '' then
+      redis.call('HSET', old_lineage_edge_key, old_lineage_key, tombstone)
+      if old_lineage_edge_order ~= '' then
+        local sep = string.find(old_lineage_edge_order, '\0', 1, true)
+        redis.call('ZREM', old_lineage_edge_key .. ':order', old_lineage_edge_order)
+        redis.call('ZADD', old_lineage_edge_key .. ':order', 0, string.sub(old_lineage_edge_order, 1, sep) .. '1' .. string.sub(old_lineage_edge_order, sep + 2))
+      end
+    end
+  end
+elseif old_lineage_key and old_lineage_edge_key ~= ARGV[12] and old_lineage_edge_key ~= '' then
+  redis.call('HDEL', old_lineage_edge_key, old_lineage_key)
+  if old_lineage_edge_order ~= '' then
+    redis.call('ZREM', old_lineage_edge_key .. ':order', old_lineage_edge_order)
   end
 end
 if old_member then
@@ -160,7 +190,10 @@ redis.call('HSET', KEYS[1],
   'mtime', ARGV[2],
   'metadata_entry', ARGV[3],
   'metadata_owner', ARGV[5],
-  'lineage_key', ARGV[8])
+  'lineage_key', ARGV[8],
+  'lineage_edge_key', ARGV[12],
+  'lineage_root_order', ARGV[13],
+  'lineage_edge_order', ARGV[14])
 redis.call('ZADD', KEYS[2], 0, ARGV[3])
 if ARGV[5] ~= '' then
   redis.call('ZADD', ARGV[7] .. ARGV[5], 0, ARGV[3])
@@ -173,6 +206,12 @@ if ARGV[5] ~= '' then
   redis.call('HINCRBY', KEYS[3], ARGV[5], 1)
 end
 redis.call('HSET', KEYS[5], ARGV[8], ARGV[9])
+redis.call('HSET', KEYS[6], ARGV[8], ARGV[9])
+redis.call('ZADD', KEYS[7], 0, ARGV[13])
+if ARGV[12] ~= '' then
+  redis.call('HSET', ARGV[12], ARGV[8], ARGV[9])
+  redis.call('ZADD', ARGV[12] .. ':order', 0, ARGV[14])
+end
 redis.call('INCR', KEYS[4])
 return 1
 `)
@@ -196,14 +235,16 @@ func saveSnapshotAndMetadata(ctx context.Context, client redis.UniversalClient, 
 	if s.Owner != nil {
 		ownerScope = metadataOwnerScope(s.Owner)
 	}
-	lineage, err := json.Marshal(redisLineageRecord(s))
+	record := redisLineageRecord(s)
+	lineage, err := json.Marshal(record)
 	if err != nil {
 		return err
 	}
 	return saveMetadataScript.Run(ctx, client,
-		[]string{sessionKey(s.ID), metadataGlobalIndexKey, metadataGenerationKey, metadataRebuildGenerationKey, lineageHashKey},
+		[]string{sessionKey(s.ID), metadataGlobalIndexKey, metadataGenerationKey, metadataRebuildGenerationKey, redisLineageRecordPartition(s.ID), redisLineageRecordPartition(s.ID), redisLineageOrderPartition(redisLineageRecordPartition(s.ID))},
 		blob, modifiedAt.UnixNano(), member, metadataGlobalScope, ownerScope, metadataIndexStateKey,
-		metadataOwnerIndexBase, redisLineageKey(s.ID, string(s.Incarnation())), lineage, time.Now().UTC().Format(time.RFC3339Nano), string(s.ID),
+		metadataOwnerIndexBase, redisLineageKey(s.ID, string(s.Incarnation())), lineage, time.Now().UTC().Format(time.RFC3339Nano), string(s.ID), redisLineageParentPartition(record),
+		redisLineageOrderMember(record, false), redisLineageOrderMember(record, true),
 	).Err()
 }
 
@@ -217,14 +258,16 @@ func createSnapshotAndMetadata(ctx context.Context, client redis.UniversalClient
 	if s.Owner != nil {
 		ownerScope = metadataOwnerScope(s.Owner)
 	}
-	lineage, err := json.Marshal(redisLineageRecord(s))
+	record := redisLineageRecord(s)
+	lineage, err := json.Marshal(record)
 	if err != nil {
 		return false, err
 	}
 	created, err := createMetadataScript.Run(ctx, client,
-		[]string{sessionKey(s.ID), metadataGlobalIndexKey, metadataGenerationKey, metadataRebuildGenerationKey, lineageHashKey},
+		[]string{sessionKey(s.ID), metadataGlobalIndexKey, metadataGenerationKey, metadataRebuildGenerationKey, redisLineageRecordPartition(s.ID), redisLineageRecordPartition(s.ID), redisLineageOrderPartition(redisLineageRecordPartition(s.ID))},
 		blob, modifiedAt.UnixNano(), member, metadataGlobalScope, ownerScope, metadataIndexStateKey,
-		metadataOwnerIndexBase, redisLineageKey(s.ID, string(s.Incarnation())), lineage,
+		metadataOwnerIndexBase, redisLineageKey(s.ID, string(s.Incarnation())), lineage, redisLineageParentPartition(record),
+		redisLineageOrderMember(record, false), redisLineageOrderMember(record, true),
 	).Int()
 	return created == 1, err
 }
@@ -241,6 +284,9 @@ if member then
   end
 end
 local lineage_key = redis.call('HGET', KEYS[1], 'lineage_key') or ARGV[3]
+local lineage_edge_key = redis.call('HGET', KEYS[1], 'lineage_edge_key') or ''
+local lineage_root_order = redis.call('HGET', KEYS[1], 'lineage_root_order') or ''
+local lineage_edge_order = redis.call('HGET', KEYS[1], 'lineage_edge_order') or ''
 local lineage = redis.call('HGET', KEYS[8], lineage_key)
 if lineage then
   local tombstone, count = string.gsub(lineage, '"State":"retained"', '"State":"pruned"')
@@ -250,15 +296,28 @@ if lineage then
     return redis.error_reply('invalid lineage record')
   end
   redis.call('HSET', KEYS[8], lineage_key, tombstone)
+  redis.call('HSET', KEYS[9], lineage_key, tombstone)
+  if lineage_root_order ~= '' then
+    redis.call('ZREM', KEYS[10], lineage_root_order)
+    redis.call('ZADD', KEYS[10], 0, '1' .. string.sub(lineage_root_order, 2))
+  end
+  if lineage_edge_key ~= '' then
+    redis.call('HSET', lineage_edge_key, lineage_key, tombstone)
+    if lineage_edge_order ~= '' then
+      local sep = string.find(lineage_edge_order, '\0', 1, true)
+      redis.call('ZREM', lineage_edge_key .. ':order', lineage_edge_order)
+      redis.call('ZADD', lineage_edge_key .. ':order', 0, string.sub(lineage_edge_order, 1, sep) .. '1' .. string.sub(lineage_edge_order, sep + 2))
+    end
+  end
 end
-redis.call('DEL', KEYS[1], KEYS[4], KEYS[5], KEYS[7], KEYS[9])
+redis.call('DEL', KEYS[1], KEYS[4], KEYS[5], KEYS[7], KEYS[11])
 redis.call('INCR', KEYS[6])
 return 1
 `)
 
 func deleteSessionAndMetadata(ctx context.Context, client redis.UniversalClient, id session.SessionID) error {
 	return deleteMetadataScript.Run(ctx, client,
-		[]string{sessionKey(id), metadataGlobalIndexKey, metadataGenerationKey, toolsKey(id), eventsKey(id), metadataRebuildGenerationKey, eventsGenerationKey(id), lineageHashKey, ledgerKey(id)},
+		[]string{sessionKey(id), metadataGlobalIndexKey, metadataGenerationKey, toolsKey(id), eventsKey(id), metadataRebuildGenerationKey, eventsGenerationKey(id), redisLineageRecordPartition(id), redisLineageRecordPartition(id), redisLineageOrderPartition(redisLineageRecordPartition(id)), ledgerKey(id)},
 		metadataGlobalScope, metadataOwnerIndexBase, string(id), time.Now().UTC().Format(time.RFC3339Nano),
 	).Err()
 }
@@ -276,6 +335,9 @@ if owner_scope ~= '' then
   redis.call('HINCRBY', KEYS[3], owner_scope, 1)
 end
 local lineage_key = redis.call('HGET', KEYS[1], 'lineage_key') or ARGV[4]
+local lineage_edge_key = redis.call('HGET', KEYS[1], 'lineage_edge_key') or ''
+local lineage_root_order = redis.call('HGET', KEYS[1], 'lineage_root_order') or ''
+local lineage_edge_order = redis.call('HGET', KEYS[1], 'lineage_edge_order') or ''
 local lineage = redis.call('HGET', KEYS[8], lineage_key)
 if lineage then
   local tombstone, count = string.gsub(lineage, '"State":"retained"', '"State":"pruned"')
@@ -285,8 +347,21 @@ if lineage then
     return redis.error_reply('invalid lineage record')
   end
   redis.call('HSET', KEYS[8], lineage_key, tombstone)
+  redis.call('HSET', KEYS[9], lineage_key, tombstone)
+  if lineage_root_order ~= '' then
+    redis.call('ZREM', KEYS[10], lineage_root_order)
+    redis.call('ZADD', KEYS[10], 0, '1' .. string.sub(lineage_root_order, 2))
+  end
+  if lineage_edge_key ~= '' then
+    redis.call('HSET', lineage_edge_key, lineage_key, tombstone)
+    if lineage_edge_order ~= '' then
+      local sep = string.find(lineage_edge_order, '\0', 1, true)
+      redis.call('ZREM', lineage_edge_key .. ':order', lineage_edge_order)
+      redis.call('ZADD', lineage_edge_key .. ':order', 0, string.sub(lineage_edge_order, 1, sep) .. '1' .. string.sub(lineage_edge_order, sep + 2))
+    end
+  end
 end
-redis.call('DEL', KEYS[1], KEYS[4], KEYS[5], KEYS[7], KEYS[9])
+redis.call('DEL', KEYS[1], KEYS[4], KEYS[5], KEYS[7], KEYS[11])
 redis.call('INCR', KEYS[6])
 return 1
 `)
@@ -297,7 +372,7 @@ func deleteSessionIfMetadataUnchanged(ctx context.Context, client redis.Universa
 		return false, err
 	}
 	result, err := conditionalDeleteMetadataScript.Run(ctx, client,
-		[]string{sessionKey(expected.ID), metadataGlobalIndexKey, metadataGenerationKey, toolsKey(expected.ID), eventsKey(expected.ID), metadataRebuildGenerationKey, eventsGenerationKey(expected.ID), lineageHashKey, ledgerKey(expected.ID)},
+		[]string{sessionKey(expected.ID), metadataGlobalIndexKey, metadataGenerationKey, toolsKey(expected.ID), eventsKey(expected.ID), metadataRebuildGenerationKey, eventsGenerationKey(expected.ID), redisLineageRecordPartition(expected.ID), redisLineageRecordPartition(expected.ID), redisLineageOrderPartition(redisLineageRecordPartition(expected.ID)), ledgerKey(expected.ID)},
 		member, metadataGlobalScope, metadataOwnerIndexBase, string(expected.ID), time.Now().UTC().Format(time.RFC3339Nano),
 	).Int()
 	return result == 1, err

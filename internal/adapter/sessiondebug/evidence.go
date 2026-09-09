@@ -3,6 +3,7 @@ package sessiondebug
 import (
 	"context"
 
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 )
 
@@ -59,15 +60,20 @@ type teamFindingEvidence struct {
 
 func (t *inspectTool) delegationView(ctx context.Context, s *session.Session, graph lineageGraph, offset, requested int) delegationEvidence {
 	limit := boundedLimit(requested, maxDelegationRows)
-	out := delegationEvidence{View: "delegation", Authoritative: true, Source: "typed event payloads and current parent snapshot", ProjectionComplete: true, ScanComplete: t.log != nil, RetentionComplete: false, Offset: offset, Limit: limit, Rows: []delegationRow{}}
+	out := delegationEvidence{
+		View: "delegation", Authoritative: true, Source: "typed root events joined to direct lineage records",
+		ProjectionComplete: true, ScanComplete: t.log != nil && graph.ScanComplete,
+		RetentionComplete: graph.Supported && graph.ScanComplete && !graph.Truncated,
+		Offset:            offset, Limit: limit, Rows: []delegationRow{}, Error: graph.Error,
+	}
 	if t.log == nil {
 		out.Error = errLogNotConfigured
 		out.Authoritative = false
 		return out
 	}
-	byID := map[string]lineageNode{}
+	byLifetime := map[string]lineageNode{}
 	for _, n := range graph.Nodes {
-		byID[string(n.ID)] = n
+		byLifetime[lineageLifetimeKey(string(n.ID), session.IncarnationID(n.Incarnation))] = n
 	}
 	results := parentResults(s)
 	matched := 0
@@ -85,7 +91,7 @@ func (t *inspectTool) delegationView(ctx context.Context, s *session.Session, gr
 			break
 		}
 		scanned++
-		rows := projectDelegationEvent(ev, byID, results)
+		rows := projectDelegationEvent(ev, byLifetime, results, s)
 		for _, row := range rows {
 			if matched >= offset && len(out.Rows) < limit {
 				pageEnd = matched + 1
@@ -114,12 +120,19 @@ func parentResults(s *session.Session) map[string]bool {
 	return out
 }
 
-func childFields(id string, nodes map[string]lineageNode) (string, string) {
-	n, ok := nodes[id]
-	if !ok {
-		return "", "not_retained"
+func lineageLifetimeKey(id string, incarnation session.IncarnationID) string {
+	return id + "\x00" + string(incarnation)
+}
+
+func childFields(id string, incarnation session.IncarnationID, nodes map[string]lineageNode, root *session.Session) (lineageNode, bool) {
+	if id == "" || !incarnation.Valid() {
+		return lineageNode{}, false
 	}
-	return n.Handle, n.State
+	n, ok := nodes[lineageLifetimeKey(id, incarnation)]
+	if !ok || n.Incarnation != string(incarnation) || n.Handle == "" || n.State != string(port.SessionLineageRetained) || n.OwnerScope != session.PrincipalScopeHash(root.Owner) {
+		return lineageNode{}, false
+	}
+	return n, true
 }
 func conclusion(call string, results map[string]bool) (string, *bool) {
 	failed, ok := results[call]
@@ -133,11 +146,16 @@ func conclusion(call string, results map[string]bool) (string, *bool) {
 	return "tool_result", &v
 }
 
-func projectDelegationEvent(ev session.Event, nodes map[string]lineageNode, results map[string]bool) []delegationRow {
+//nolint:gocyclo // Each delegation family keeps its fail-closed typed-edge checks local.
+func projectDelegationEvent(ev session.Event, nodes map[string]lineageNode, results map[string]bool, root *session.Session) []delegationRow {
 	if p := ev.Subagent; p != nil {
-		h, ret := childFields(p.ChildID, nodes)
+		n, proven := childFields(p.ChildID, p.ChildIncarnation, nodes, root)
+		validEvent := ev.Type == session.EvSubagentStart || ev.Type == session.EvSubagentTool || ev.Type == session.EvSubagentEnd
+		if !proven || !validEvent || n.Kind != session.SessionKindSubagent || n.Edge != "subagent" || string(n.Relationship.CallID) != p.ParentCallID {
+			return nil
+		}
 		c, e := conclusion(p.ParentCallID, results)
-		r := delegationRow{Type: "subagent", Event: ev.Type, CallID: safeLine(p.ParentCallID), ScopeHandle: h, Retention: ret, Conclusion: c, ParentResultError: e, Stop: p.Stop, Cause: safeLine(p.Cause)}
+		r := delegationRow{Type: "subagent", Event: ev.Type, CallID: safeLine(p.ParentCallID), ScopeHandle: n.Handle, Retention: n.State, Conclusion: c, ParentResultError: e, Stop: p.Stop, Cause: safeLine(p.Cause)}
 		if ev.Type == session.EvSubagentStart {
 			b := p.Background
 			r.Background = &b
@@ -148,9 +166,12 @@ func projectDelegationEvent(ev session.Event, nodes map[string]lineageNode, resu
 		return []delegationRow{r}
 	}
 	if p := ev.Parallel; p != nil {
-		h, ret := childFields(p.ChildID, nodes)
+		n, proven := childFields(p.ChildID, p.ChildIncarnation, nodes, root)
+		if !proven || ev.Type != session.EvParallelBranch || n.Kind != session.SessionKindParallelBranch || n.Edge != "parallel" || string(n.Relationship.CallID) != p.ParentCallID || n.Relationship.BranchIndex == nil || *n.Relationship.BranchIndex != p.BranchIndex {
+			return nil
+		}
 		c, e := conclusion(p.ParentCallID, results)
-		r := delegationRow{Type: "parallel", Event: ev.Type, CallID: safeLine(p.ParentCallID), ScopeHandle: h, Retention: ret, Conclusion: c, ParentResultError: e, Join: safeLine(p.Join), Stop: p.Stop}
+		r := delegationRow{Type: "parallel", Event: ev.Type, CallID: safeLine(p.ParentCallID), ScopeHandle: n.Handle, Retention: n.State, Conclusion: c, ParentResultError: e, Join: safeLine(p.Join), Stop: p.Stop}
 		if ev.Type == session.EvParallelBranch {
 			i := p.BranchIndex
 			r.BranchIndex = &i
@@ -162,9 +183,12 @@ func projectDelegationEvent(ev session.Event, nodes map[string]lineageNode, resu
 		return []delegationRow{r}
 	}
 	if p := ev.Team; p != nil {
-		h, ret := childFields(p.MemberSessionID, nodes)
+		n, proven := childFields(p.MemberSessionID, p.MemberIncarnation, nodes, root)
+		if !proven || ev.Type != session.EvTeamMember || n.Kind != session.SessionKindTeamMember || n.Edge != "team" || n.Relationship.TeamID != p.TeamID || n.Relationship.MemberName != p.Member {
+			return nil
+		}
 		c, e := conclusion(p.ParentCallID, results)
-		base := delegationRow{Type: "team", Event: ev.Type, CallID: safeLine(p.ParentCallID), ScopeHandle: h, Retention: ret, Conclusion: c, ParentResultError: e, Member: safeLine(p.Member), Stop: p.Stop, Cause: safeLine(p.Cause)}
+		base := delegationRow{Type: "team", Event: ev.Type, CallID: safeLine(p.ParentCallID), ScopeHandle: n.Handle, Retention: n.State, Conclusion: c, ParentResultError: e, Member: safeLine(p.Member), Stop: p.Stop, Cause: safeLine(p.Cause)}
 		for _, task := range p.Tasks {
 			base.Tasks = append(base.Tasks, teamTaskEvidence{safeLine(task.ID), safeLine(task.Description), safeLine(task.State), safeLine(task.Assignee), safeLines(task.Deps)})
 		}
@@ -196,9 +220,6 @@ func projectDelegationEvent(ev session.Event, nodes map[string]lineageNode, resu
 			return rows
 		}
 		return []delegationRow{base}
-	}
-	if p := ev.Schedule; p != nil {
-		return []delegationRow{{Type: "schedule", Event: ev.Type, ScheduleName: safeLine(p.ScheduleName), ScheduleKind: safeLine(p.Kind), Stop: p.Stop, Cause: safeLine(p.Err)}}
 	}
 	return nil
 }

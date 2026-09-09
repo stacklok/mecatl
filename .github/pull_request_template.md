@@ -8,13 +8,14 @@
 
 <!-- REQUIRED. Check exactly one. -->
 
-- [ ] **Plan / Interface** — behavioral and exact-interface contract; no implementation
+- [ ] **Plan / Interface** — Bounded/Architectural behavioral and exact-interface contract; no implementation
 - [ ] **Implementation** — based on an approved, merged Plan / Interface PR
-- [ ] **Combined** — compact one-task exception; no separate plan PR, and the in-PR plan
-      declares `**Expected tasks:** 1`, a non-placeholder `**Combined rationale:**`, and no
-      runtime/public/operator/persistence/trust-boundary interface change (`None — rationale`;
-      workflow-only meta-changes may review process docs/skills here)
-- [ ] **Trivial / mechanical** — acceptance-plan spine exempt
+- [ ] **Combined** — compact one-task Bounded/Architectural exception; no separate plan PR,
+      and the in-PR plan declares `**Expected tasks:** 1`, a non-placeholder
+      `**Combined rationale:**`, and no runtime/public/operator/persistence/trust-boundary
+      interface change (`None — rationale`; workflow-only meta-changes may review process
+      docs/skills here)
+- [ ] **Spike / Routine** — acceptance-plan spine exempt; Spike evidence does not ship as-is
 
 ### Contract linkage
 
@@ -24,9 +25,14 @@ marking it proposed, and write the non-closing issue reference.
 Implementation: link the Plan / Interface PR and full approved commit.
 Combined: link the in-PR plan, confirm there was no separate plan PR, quote its narrow
 one-task eligibility rationale, and confirm Human decisions contain no unchecked item.
-Trivial/mechanical: write N/A with rationale.
+Spike/Routine: state the class and observable rationale; a Spike PR may contain evidence only,
+not the spike implementation as shipping code.
 -->
 
+- Work classification: Spike / Routine / Bounded / Architectural
+- Classification rationale:
+- Decision record: ADR link / None with rationale
+- Human waiver of spine: No / Yes — <directing-human authorization and named work>
 - Acceptance plan:
 - Human decisions resolved and recorded: Yes / N/A with rationale
 - Plan / Interface PR:

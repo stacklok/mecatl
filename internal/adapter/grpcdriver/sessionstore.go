@@ -207,11 +207,14 @@ func (st *SessionStore) ReadSessionLineage(ctx context.Context, query port.Sessi
 	if !st.lineage {
 		return port.SessionLineageResult{}, fmt.Errorf("grpcdriver: lineage: %w", port.ErrSessionLineageUnsupported)
 	}
-	resp, err := st.client.ReadLineage(ctx, &driverv1.ReadSessionLineageRequest{RootSessionId: string(query.RootID), RootIncarnation: string(query.RootIncarnation), Limit: int32(query.Limit)}) // #nosec G115 -- bounded to 256
+	resp, err := st.client.ReadLineage(ctx, &driverv1.ReadSessionLineageRequest{
+		RootSessionId: string(query.RootID), RootIncarnation: string(query.RootIncarnation), Limit: int32(query.Limit), // #nosec G115 -- bounded to 256
+		RecordSessionId: string(query.RecordID), RecordIncarnation: string(query.RecordIncarnation),
+	})
 	if err != nil {
 		return port.SessionLineageResult{}, rpcErr(ctx, "read lineage", err)
 	}
-	if len(resp.GetRecords()) > query.Limit {
+	if len(resp.GetRecords()) > query.Limit || query.RecordID != "" && (len(resp.GetRecords()) > 1 || resp.GetTruncated()) {
 		return port.SessionLineageResult{}, fmt.Errorf("grpcdriver: lineage response exceeds requested limit")
 	}
 	result := port.SessionLineageResult{Truncated: resp.GetTruncated(), Records: make([]port.SessionLineageRecord, 0, len(resp.GetRecords()))}
@@ -219,6 +222,9 @@ func (st *SessionStore) ReadSessionLineage(ctx context.Context, query port.Sessi
 		row, err := lineageRecordFromProto(entry)
 		if err != nil {
 			return port.SessionLineageResult{}, err
+		}
+		if query.RecordID != "" && (row.ID != query.RecordID || row.Incarnation != string(query.RecordIncarnation)) {
+			return port.SessionLineageResult{}, fmt.Errorf("grpcdriver: lineage response did not match exact record")
 		}
 		if row.ID != query.RootID && !lineageRecordDirectlyRelated(row, query) {
 			return port.SessionLineageResult{}, fmt.Errorf("grpcdriver: lineage response escaped requested incarnation")

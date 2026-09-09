@@ -22,19 +22,26 @@ a PR. Without that request, stop before the first such side effect.
 ## Entry gate
 
 Read `docs/acceptance/<slug>.md` and the documents it cites. Run its bundled acceptance-plan
-checker before delivery-specific validation; any failure blocks entry. Require exact
-`**Contract:** human-reviewed/v1` metadata and confirm the `## Human decisions` section has no unchecked item: implementation never begins while human
-judgment remains.
+checker before delivery-specific validation; any failure blocks entry. Accept supported
+`**Contract:** human-reviewed/v1|v2` metadata. For v2, require Bounded or Architectural work
+classification and its matching decision-record outcome; do not downgrade it during
+decomposition. Confirm the `## Human decisions` section has no unchecked item:
+implementation never begins while human judgment remains.
 
 ### Split (default)
 
 Require all of these or stop:
 
-- the plan status is `approved`;
 - the Plan / Interface PR is merged into the target base;
-- the approved plan file is present at that merged commit; and
-- the implementation branch starts from that exact approved commit (or a descendant that
-  has not changed the contract).
+- the plan file, unchanged since that PR, is present at a commit reachable from the target
+  base (`git merge-base --is-ancestor <plan-commit> <target-base>` — this ancestry is the
+  approval proof; the `**Status:**` word is not a precondition); and
+- the implementation branch starts from that exact commit (or a descendant that has not
+  changed the contract).
+
+If the merged plan still reads `**Status:** proposed`, correct it to `approved` as part of
+the first commit on the accumulator (same timing as the `in-progress` bump below); do not
+stop for a human to have made this edit.
 
 Record the Plan / Interface PR URL/number and full approved commit in
 `.scratch/orchestrate/<slug>/run.md` before decomposition.
@@ -127,11 +134,13 @@ Stop all dispatch and return
 `blocked-contract-drift`. Orchestration must not draft, open, commit, or push an amendment,
 and the blocked run cannot authorize one. Resumption requires a separately and explicitly
 authorized `/to-acceptance-plan` amendment-mode invocation using the **Split** Plan /
-Interface PR flow, including checker and task-doc verification, human review and merge, and
-plan status `approved`. Before resuming, record that amendment PR and its full merged commit
+Interface PR flow, including checker and task-doc verification, human review and merge. Merging is
+the approval event; no separate status edit is required. Orchestration proves approval by git
+ancestry and may correct a lagging `proposed` label to `approved` on entry. Before resuming,
+record that amendment PR and its full merged commit
 in `run.md`. If no attempt has integrated, the accumulator may fast-forward or rebase onto
-the newly approved amendment baseline. Once any attempt has integrated, merge the approved
-amendment commit into the accumulator; never rebase or rewrite integrated commits. In either
+the newly merged amendment baseline. Once any attempt has integrated, merge the amendment
+commit into the accumulator; never rebase or rewrite integrated commits. In either
 case, the amendment commit must be an ancestor afterward. Invalidate and regenerate all
 pending briefs and decomposition, and revalidate already integrated work against every
 amended acceptance criterion and interface clause before dispatch continues.

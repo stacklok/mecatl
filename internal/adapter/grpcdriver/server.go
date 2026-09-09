@@ -176,7 +176,10 @@ func (s *sessionStoreServer) ReadLineage(ctx context.Context, req *driverv1.Read
 	if !ok {
 		return nil, status.Error(codes.Unimplemented, "the wrapped session store does not support lineage")
 	}
-	query := port.SessionLineageQuery{RootID: session.SessionID(req.GetRootSessionId()), RootIncarnation: session.IncarnationID(req.GetRootIncarnation()), Limit: int(req.GetLimit())}
+	query := port.SessionLineageQuery{
+		RootID: session.SessionID(req.GetRootSessionId()), RootIncarnation: session.IncarnationID(req.GetRootIncarnation()),
+		RecordID: session.SessionID(req.GetRecordSessionId()), RecordIncarnation: session.IncarnationID(req.GetRecordIncarnation()), Limit: int(req.GetLimit()),
+	}
 	if err := port.ValidateSessionLineageQuery(query); err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
@@ -184,8 +187,12 @@ func (s *sessionStoreServer) ReadLineage(ctx context.Context, req *driverv1.Read
 	if err != nil {
 		return nil, storeStatus(err)
 	}
-	if len(result.Records) > query.Limit {
+	if len(result.Records) > query.Limit || query.RecordID != "" && (len(result.Records) > 1 || result.Truncated) {
 		return nil, status.Error(codes.Internal, "lineage reader exceeded requested limit")
+	}
+	if query.RecordID != "" && len(result.Records) == 1 &&
+		(result.Records[0].ID != query.RecordID || result.Records[0].Incarnation != string(query.RecordIncarnation)) {
+		return nil, status.Error(codes.Internal, "lineage reader returned the wrong exact record")
 	}
 	resp := &driverv1.ReadSessionLineageResponse{Truncated: result.Truncated, Records: make([]*driverv1.SessionLineageEntry, 0, len(result.Records))}
 	for _, row := range result.Records {

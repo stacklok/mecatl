@@ -9,17 +9,14 @@ loop, ~7 tools, permissions, hooks, and subagents behind a provider-agnostic por
 Driven over gRPC + HTTP; an optional Bubble Tea TUI (`mecatui`) is a client.
 
 > **Documentation lifecycle (ADR 0002 + ADR 0003):**
-> `docs/architecture.md` is the LIVING "how it works" — update it when behaviour
-> changes; `docs/usage.md` is how to run it; the *why* of every feature is a **frozen
-> ADR** in `docs/adr/` (the former `docs/design/*` records were consolidated there by
-> ADR 0003 — each carries a `- Status:` + `- Date:` header, gated by `docs/lint`); a
-> shipped/deferred-status tracker lives ONLY in `docs/design/PRODUCTION-READINESS.md`
-> and the dense per-subsystem reference in `docs/design/IMPLEMENTATION-NOTES.md`.
-> **New** decisions are a new `docs/adr/` entry (copy `docs/adr/template.md`),
-> superseded by another ADR, never edited in place.
-> `docs/design/IMPLEMENTATION-NOTES.md` is the dense living per-subsystem companion to
-> architecture.md. **Prefer adding design detail to those docs, not here** — this file is a
-> lean correction file, not documentation.
+> `docs/architecture.md` is the LIVING "how it works"; `docs/usage.md` is how to
+> run it; `docs/design/PRODUCTION-READINESS.md` is the ONLY shipped/deferred tracker; and
+> `docs/design/IMPLEMENTATION-NOTES.md` is the dense living subsystem reference. A frozen ADR
+> records only a genuinely durable Architectural decision (see
+> `docs/development-process.md`), not every feature or Bounded change. Supersede accepted ADRs
+> with a new ADR; never edit their decision text. Keep local rationale in the issue, PR, or
+> acceptance plan and repeatable procedure in skills. Prefer living design detail outside this
+> lean correction file.
 
 ## Operating as an agent in this repository
 
@@ -166,7 +163,7 @@ print a full offline session (turn → tool.call → permission.ask + approval �
 
 ## Workflow
 
-- Substantive interface-bearing work uses the human-reviewed acceptance-plan spine (ADR 0306). Every new or materially amended plan has a machine-readable `## Human decisions`: unchecked judgments require `draft`; `proposed` means every human decision needed for implementation is resolved and recorded. Split delivery: `/to-acceptance-plan` opens a Plan / Interface PR and stops; after that contract is approved and merged, `/plan-orchestrate` implements it and opens the Implementation PR. Combined is a compact one-task exception where every runtime/public/operator/persistence/trust-boundary category is `None — rationale` and splitting adds no review value (a workflow-only meta-change may review its process-doc/skill interface in that PR): the plan is prepared on the eventual combined branch without a separate plan PR, then explicit `/plan-orchestrate` invocation adds implementation and opens the sole Combined PR. A worker finding a missing human decision reports contract drift rather than deciding it. Trivial or mechanical edits remain exempt. Humans merge every PR; agents never merge to `main`. Future task/attempt state stays ignored under `.scratch/orchestrate/<slug>/`, never new committed `.claude/plans/**` files. End commit messages with the `Co-Authored-By` trailer.
+- Route workflow through `docs/development-process.md`: Spike/Routine bypass the spine; Bounded/Architectural use it. Escalate uncertainty; only a human may authorize a Spike or waive the spine, and Spike work never ships as-is. Plan-PR merge is approval; contract drift stops; humans alone merge PRs. Keep run state under ignored `.scratch/orchestrate/<slug>/`; end commits with `Co-Authored-By`.
 - Never `git add -A` — stage explicit paths.
 - For smoke tests / scratch files, use the repo-local `.scratch/` dir (gitignored) — **not** `/tmp` or `mktemp`.
 - **Changed a core `engine/` exported API?** The `api-compat` gate will fail until you run `task api:update`, commit the changed `engine/api/*.txt`, and note the change in `engine/CHANGELOG.md` classified per `engine/COMPATIBILITY.md` (Added = minor, Changed/Removed = breaking). See ADR 0037.

@@ -52,7 +52,11 @@ each setting instead of pasting the manifest):
    private channels.
 5. **Features → Event Subscriptions → Subscribe to bot events**: add
    `app_home_opened`, `message.im`, `app_mention`, `message.channels`,
-   `message.groups`.
+   `message.groups`, `agent_session_stopped` (Slack's native stop button —
+   without this subscription, `agents.sessions.setStatus` returns
+   `missing_agent_session_stopped_event_subscription` and users see a
+   non-interactive loading indicator instead of a stop button; see
+   [Slack's event reference](https://docs.slack.dev/reference/events/agent_session_stopped)).
    **Do not add `assistant_thread_started`/`assistant_thread_context_changed`**
    — those belong to Slack's *older* Assistant experience, not the
    `agent_view` feature this app uses; a manifest editor warning will tell
@@ -190,8 +194,9 @@ the event even arrived before the bridge runs anything. Run with
   the Slack API docs + the DM fix's lesson (don't trust docs/tutorials
   without live-testing), but not yet confirmed against a real workspace the
   way the DM path was. See `DESIGN.md`.
-- No streaming yet (one final message per prompt), no native stop button,
-  no approval UI. See `DESIGN.md` for why and what's next.
+- Real token streaming (`chat.startStream`/`appendStream`/`stopStream`) and
+  Slack's native stop button (`agent_session_stopped` → `run.cancel()`) are
+  both wired now. No approval UI yet. See `DESIGN.md` for why and what's next.
 - Built on raw Slack event handlers, not bolt-js's `Assistant` class — that
   class wraps a different, older Slack feature that never fires for this
   app's configuration. See `DESIGN.md` for the full story.
@@ -202,7 +207,11 @@ Runs both `mecated` and the bot together, wired on an internal Docker
 network — no separately-installed Go or Node toolchain needed.
 
 ```sh
-cp .env.example .env    # fill in SLACK_BOT_TOKEN, SLACK_APP_TOKEN, a provider key
+cp .env.example .env    # fill in SLACK_BOT_TOKEN, SLACK_APP_TOKEN, a provider key,
+                         # and GH_PACKAGES_TOKEN (a GitHub PAT with read:packages —
+                         # needed to install @stacklok/mecatl-sdk during the image
+                         # build; see .env.example. TODO: goes away once the SDK is
+                         # on public npm)
 docker compose up --build
 ```
 
@@ -226,8 +235,13 @@ Notes:
 
 ## Development
 
+`@stacklok/mecatl-sdk` installs from GitHub Packages (no public npm registry
+yet — TODO: this requirement goes away once there is one), so `install`
+needs a `read:packages`-scoped token: `NODE_AUTH_TOKEN=$(gh auth token) task
+slack-bot:install` (works as long as your `gh` login has that scope).
+
 ```sh
-task slack-bot:install     # pnpm install (builds the linked SDK first)
+task slack-bot:install     # pnpm install — see the token note above
 task slack-bot:lint
 task slack-bot:typecheck
 task slack-bot:test        # offline; spawns a real mecated --mock, no Slack needed

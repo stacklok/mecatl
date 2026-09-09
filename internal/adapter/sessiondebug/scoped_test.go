@@ -54,7 +54,7 @@ func TestScopedHandlesAreStableBoundAndRevalidated(t *testing.T) {
 	ownedCtx := session.WithPrincipal(ctx, owner)
 	tool1 := NewBound(root.ID, session.DebugTargetFingerprint(root), owner, true, store, nil).(*inspectTool)
 	g := tool1.scanLineage(ctx, root)
-	if len(g.Nodes) != 2 || !g.Nodes[0].Inspectable || !g.Nodes[1].Inspectable || g.Nodes[1].Depth != 2 {
+	if len(g.Nodes) != 1 || !g.Nodes[0].Inspectable || g.Nodes[0].Depth != 1 {
 		t.Fatalf("graph=%+v", g)
 	}
 	handle := g.Nodes[0].Handle
@@ -272,19 +272,12 @@ func TestDelegationHistoryManifestAndLifetimeEvidence(t *testing.T) {
 		}
 	}
 	delegation := execute(t, New(root.ID, store, log), `{"view":"delegation"}`)
-	for _, want := range []string{`"parent_conclusion":"tool_result"`, `"description":"work"`, `"body":"found"`, `"error_rounds":1`, `"background":true`, `"collection":"not recorded durably"`, `"join":"first"`} {
-		if !strings.Contains(delegation.Content, want) {
-			t.Fatalf("delegation missing %s: %s", want, delegation.Content)
-		}
-	}
-	if strings.Contains(delegation.Content, "background-child-secret") || strings.Contains(delegation.Content, "parallel-child-secret") {
-		t.Fatalf("delegation leaked child id: %s", delegation.Content)
+	if !strings.Contains(delegation.Content, `"rows":[]`) || strings.Contains(delegation.Content, "background-child-secret") || strings.Contains(delegation.Content, "parallel-child-secret") || strings.Contains(delegation.Content, "nightly") {
+		t.Fatalf("delegation used unproven event fallback: %s", delegation.Content)
 	}
 	related := execute(t, New(root.ID, store, log), `{"view":"related"}`)
-	for _, want := range []string{`"status":"not_retained"`, `"status":"never_produced"`, `"status":"absent"`} {
-		if !strings.Contains(related.Content, want) {
-			t.Fatalf("related missing %s: %s", want, related.Content)
-		}
+	if !strings.Contains(related.Content, `"rows":[]`) || !strings.Contains(related.Content, `"retention_complete":true`) {
+		t.Fatalf("related used event fallback: %s", related.Content)
 	}
 	manifest := execute(t, New(root.ID, store, log), `{"view":"manifest"}`)
 	if !strings.Contains(manifest.Content, `"tools":["Read","Team"]`) || !strings.Contains(manifest.Content, `"provider":"mock"`) || !strings.Contains(manifest.Content, `"context_window":8192`) || strings.Contains(manifest.Content, "digest") {

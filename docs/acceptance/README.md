@@ -1,17 +1,22 @@
 # Acceptance plans
 
-Each document here is an acceptance plan or completed acceptance record: the
-smallest set of work that makes one substantive issue or capability demonstrable
-on the running harness. They are organized scenario-first — acceptance is about what the
+Each document here is an acceptance plan or completed acceptance record: the smallest set of
+work that makes one **Bounded** or **Architectural** issue/capability demonstrable on the
+running harness. The classifier and routing rules are canonical in
+[`docs/development-process.md`](../development-process.md). Spike and Routine work do not
+create plans. Classification follows the decision and blast radius, not diff size, and
+workers escalate uncertainty rather than silently downgrading. Plans are organized scenario-first — acceptance is about what the
 harness can show, not which packages exist on disk. A focused issue may use one
 scenario and one orchestration task; plans must not manufacture complexity. Each
-document names its scope and cites the ADRs / [architecture](../architecture.md) /
-[AGENTS.md](../../AGENTS.md) invariants that pin its decisions.
+document names its scope and cites relevant ADRs / [architecture](../architecture.md) /
+[AGENTS.md](../../AGENTS.md) invariants. Bounded plans do not create ADRs merely to narrate a
+change; Architectural plans identify the new or superseding record for the durable decision.
 
 Plans are authored by `/to-acceptance-plan`, human-reviewed as behavioral and
 interface contracts, and implemented by `/plan-orchestrate` only after the applicable
 checkpoint. New plans must be linked from this README; the matlatl gate (`task docs`)
-fails on an unreachable doc.
+fails on an unreachable doc. Human-authorized Spike work and any named explicit spine waiver
+retain the carve-outs in the development process; neither is inferred by a worker.
 
 ## The verification contract
 
@@ -51,14 +56,15 @@ Every plan has one non-empty `## Human decisions` section with exactly one shape
 
 Place every material behavior/interface choice there, not under deferred decisions. The
 bundled checker rejects missing, empty, placeholder, or malformed sections and ties unchecked
-items mechanically to `draft` status. New plans and materially amended legacy plans after ADR 0306
-must declare exact `**Contract:** human-reviewed/v1` metadata; unmarked historical plans are
-grandfathered until materially amended and are not bulk-migrated.
+items mechanically to `draft` status. New and materially amended plans use exact
+`**Contract:** human-reviewed/v2` metadata plus a Bounded or Architectural classification and
+matching decision-record outcome. Existing `human-reviewed/v1` plans remain valid and are not
+bulk-migrated.
 
 ## Interface contract
 
-Every new plan has exact `**Contract:** human-reviewed/v1` metadata and a `## Interface contract` section with all seven exact canonical
-category labels: gRPC/protobuf, exported Go APIs/interfaces, tool schemas, CLI/config,
+Every new plan has exact `**Contract:** human-reviewed/v2` metadata and a `## Interface
+contract` section with all seven exact canonical category labels: gRPC/protobuf, exported Go APIs/interfaces, tool schemas, CLI/config,
 events/persistence, security/authority, and compatibility/migration. Every category needs
 non-placeholder content. `None` is valid only as `None — <rationale>` (hyphen, en dash, or
 em dash); bare `None`, `TBD`, and `<...>` placeholders fail the bundled checker. The checker
@@ -89,7 +95,10 @@ A plan moves `draft → proposed → approved → in-progress → landed`:
 - `draft`: material behavior or interface judgments may remain as unchecked Human decisions.
 - `proposed`: every human decision needed to implement the contract is resolved and recorded;
   the plan is validated and ready for human plan/interface review.
-- `approved`: the human-reviewed plan PR was merged; the contract is approved, not shipped.
+- `approved`: the plan PR merged into the target branch — merging is the approval
+  event; the contract is approved, not shipped. `/plan-orchestrate` proves this by git
+  ancestry, not by the literal status word, and corrects the label to `approved` on entry if
+  a merged plan still reads `proposed`.
 - `in-progress`: autonomous implementation is underway against the recorded baseline.
 - `landed`: after all verification passes, the implementation/Combined candidate carries
   the proposed transition in its PR diff; it becomes authoritative only when that PR
@@ -102,6 +111,10 @@ PR after verification. There is no cleanup or status-only PR.
 
 ## Plans
 
+- [Development-spine work classification](adr-scope-classification.md) — routes Spike,
+  Routine, Bounded, and Architectural work; keeps acceptance planning for substantive work
+  while reserving ADRs for genuinely durable architecture decisions. Status: landed in this
+  Combined candidate; authoritative on merge.
 - [Human-reviewed development contracts](human-reviewed-development-contracts.md) —
   plan/interface review before autonomous implementation, with exact interface
   declarations, run-local orchestration state, and a final human code-review gate.
@@ -220,6 +233,9 @@ PR after verification. There is no cleanup or status-only PR.
   filesystem-path authority: composition binds default/no-FS/remote environments;
   alternate worktrees use fresh source-scoped opaque selectors only on clear/fork.
   Status: landed.
+- [InspectSession scoped read isolation](inspect-session-read-isolation.md) — proposed
+  bounded direct-edge lineage reads, self-routing opaque handles, and targeted maintenance that
+  keep debugger inspection from blocking unrelated session operations. Status: in-progress.
 - [Listener-scoped workspace authority](listener-scoped-workspace-authority.md) — historical
   draft superseded by ADR 0291's path-free contract; retained for context and excluded from
   strict traceability. Status: draft.

@@ -208,14 +208,21 @@
 
 .projectCallout h3 { margin: 0 0 0.25rem; border: none; color: var(--mec-text) !important; font-family: 'Space Grotesk', sans-serif; }
 .projectCallout p:not(.projectLabel) { margin: 0; color: var(--mec-text-muted); }
-.projectCallout .ctaSecondary { flex-shrink: 0; white-space: nowrap; }
-.projectActions { display: flex; flex-direction: column; align-items: center; gap: 0.75rem; }
-.toolHiveLogo { width: 72px; height: auto; }
+.projectCallout .ctaPrimary { flex-shrink: 0; white-space: nowrap; }
+.projectContent { display: flex; align-items: flex-start; gap: 0.75rem; }
+.toolHiveLogo { width: 48px; height: auto; }
+
+@media (max-width: 1080px) {
+  .outcomes .featureGrid, .deployGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .capabilityGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 
 @media (max-width: 768px) {
   .heroInner { flex-direction: column-reverse; gap: 2rem; }
   .heroMascot { width: 260px; }
   .pronunciationInner, .projectCallout { flex-direction: column; text-align: center; }
+  .projectContent { justify-content: center; text-align: left; }
   .sectionInner { padding: 0 1.25rem; }
   .capabilityGrid { grid-template-columns: 1fr; }
+  .outcomes .featureGrid, .deployGrid { grid-template-columns: 1fr; }
 }

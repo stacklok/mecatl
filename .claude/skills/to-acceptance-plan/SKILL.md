@@ -2,10 +2,10 @@
 name: to-acceptance-plan
 disable-model-invocation: true
 description: >-
-  Turn settled substantive work into a scenario-first acceptance plan with exact
-  interfaces, validate and review it, then hand off: Split opens a human Plan / Interface
-  PR; Combined prepares the plan on the eventual implementation branch without a separate
-  PR. Stops before implementation or orchestration. NOT for task decomposition.
+  Turn Bounded or Architectural work into a concise scenario-first acceptance plan with
+  exact interfaces and a decision-record outcome, then hand off at the selected Split or
+  Combined checkpoint. Stops before implementation or orchestration. NOT for Spike,
+  Routine, or task decomposition.
 ---
 
 # to-acceptance-plan
@@ -21,14 +21,23 @@ host. It does not protect mecatl or any other harness. Another harness must requ
 explicit user request before creating a worktree or branch, committing, pushing, or opening
 a PR. Without that request, draft and report only; do not perform those side effects.
 
+- Before classification or drafting, load
+  [`references/WORK-CLASSIFICATION.md`](references/WORK-CLASSIFICATION.md). Spike and Routine
+  bypass this skill. Continue only for Bounded or Architectural work; if evidence is
+  insufficient, escalate or stop for human-authorized Spike work rather than silently
+  downgrading.
 - Use the eventual delivery branch in exactly one validated writable worktree. Split uses a
   dedicated `plan/<slug>` branch; Combined uses the eventual combined implementation branch.
   Never write in the primary checkout when operating from an isolated worktree.
-- Start at `draft`; include exact `**Contract:** human-reviewed/v1` metadata. New plans and
-  materially amended legacy plans after ADR 0306 must use the current template and marker;
-  unmarked historical plans are grandfathered until materially amended. Unresolved human
-  judgments about material behavior or interfaces are unchecked items in `## Human decisions`
-  and keep the plan draft.
+- Start at `draft`; new and materially amended plans use exact
+  `**Contract:** human-reviewed/v2` metadata plus a concise
+  `**Work classification:** Bounded|Architectural — <rationale>`. Existing v1 plans remain
+  valid until materially amended. A Bounded plan records
+  `**Decision record:** None — <substantive rationale>`; an Architectural plan links the new
+  or superseding ADR for its genuinely durable decision. Existing ADRs may still be cited.
+  Never create an ADR merely to narrate Routine or Bounded work. Unresolved human judgments
+  about material behavior or interfaces are unchecked items in `## Human decisions` and keep
+  the plan draft.
 - Set `proposed` only when `## Human decisions` declares `None — <rationale>` or every
   decision is checked and records `— Decision: ...`; record whether the path is `Split` or
   `Combined`.
@@ -63,8 +72,9 @@ a PR. Without that request, draft and report only; do not perform those side eff
    events/persistence, security/authority, and compatibility/migration. Every category
    needs non-placeholder content; use `None — <rationale>` only when genuinely absent.
    Public or material decisions may not be deferred to implementation.
-5. Add a new ADR for a costly-to-reverse decision; update living docs where behavior will
-   change. Add the plan to `docs/acceptance/README.md`.
+5. Apply the declared decision-record outcome. Create a new ADR only for the
+   Architectural decision named by the plan; update living docs where behavior changes. Add
+   the plan to `docs/acceptance/README.md`.
 6. Run:
 
    ```sh
@@ -85,10 +95,11 @@ Use amendment mode only after a `blocked-contract-drift` handoff and a separate,
 user authorization to invoke `/to-acceptance-plan` for that amendment. The orchestrator
 cannot authorize or perform it. Amend the durable plan and related decision/task docs using
 the **Split** Plan / Interface PR flow regardless of the original delivery mode: run the
-checker and docs gates, open the amendment PR, then stop for human review. A human must mark
-the plan `approved` and merge it. Report the amendment PR and full merged commit so
-`/plan-orchestrate` can record both in `run.md`, establish the required ancestry, regenerate
-decomposition and briefs, and only then resume dispatch. The normal side-effect authority
+checker and docs gates, open the amendment PR, then stop for human review. Merging the amended
+Plan / Interface PR is the approval event; no separate status-line edit is required. Report the
+amendment PR and full merged commit so `/plan-orchestrate` can prove approval by git ancestry,
+correct a lagging `proposed` label if needed, record both in `run.md`, establish the required
+ancestry, regenerate decomposition and briefs, and only then resume dispatch. The normal side-effect authority
 rules above still apply; amendment mode does not imply permission to branch, commit, push,
 or open a PR.
 
@@ -108,8 +119,9 @@ For **Split**, explicitly stage only the plan/interface docs and generated docs,
 `plan/<slug>`, push that branch, and open a PR with stage **Plan / Interface**. Use
 `Relates to #N` or `Tracking: #N` as ordinary text. GitHub has no `Related-to` keyword: do
 not use closing keywords or sidebar-link this PR as the issue-closing PR. Report the PR
-URL, branch, worktree, checker result, and docs result, then **STOP**. Human review marks
-the plan `approved` before merge; `approved` means contract-reviewed, not shipped.
+URL, branch, worktree, checker result, and docs result, then **STOP**. Merging the PR is the
+approval event — no separate status-line edit is required before merge;
+`/plan-orchestrate` proves approval by git ancestry and corrects the label if it lags.
 
 For **Combined**, prepare the proposed plan on the eventual combined implementation branch
 and **STOP without pushing or opening a separate plan PR**. If the explicit user request
