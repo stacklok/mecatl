@@ -124,8 +124,13 @@ verbatim on the assistant message item, never displayed or interpreted (issue
 
 - `ToolCall{ID, Name, Args json.RawMessage}` (`toolcall.go`) — produced by the
   LLM, consumed by tool + governance; `NewToolCall`.
-- `ToolResult{CallID, Content, IsError}` — `NewToolResult` / `NewToolError`;
-  an error result is still fed back to the model so it can recover.
+- `ToolResult{CallID, Content, IsError, Parts}` — `NewToolResult` /
+  `NewToolError` retain the legacy text-only shape; `NewToolResultWithParts`
+  adds typed result blocks. Consumers prefer non-empty `Parts`, while `Content`
+  remains the fallback when a provider cannot consume a block's modality. For
+  example, `Read` returns detected PNG, JPEG, GIF, and WebP files as
+  `BlockImage` content with a textual fallback. An error result is still fed
+  back to the model so it can recover.
 - `Usage{InputTokens, OutputTokens, CacheReadTokens, CacheWriteTokens}`
   (`usage.go`) with `CacheHitRate()` and an immutable `Add(other) Usage`.
 - `TokenUsage` is the canonical durable aggregate for model work. It groups totals by
