@@ -126,9 +126,10 @@ provider-specific injection; a token for one backend is not used for another. Me
 the session and pre-prompt enrollment boundary, then strictly discovers every protected backend
 and freezes the complete catalogue only after success. Static declarations are visible before
 connection as pre-authentication placeholders: calling one starts the same opaque ToolHive bundle
-authorization and, after success, makes the declared tools usable in that session. This lazy path
-does not discover undeclared tools, including others on the same backend. Successful pre-prompt
-enrollment instead replaces every placeholder with that session's complete authenticated
+authorization and, after success, performs authenticated discovery before retrying the parked call.
+The live metadata replaces or removes declared placeholders, while undeclared tools—including others
+on the same backend—stay hidden on this lazy path. Successful pre-prompt enrollment instead replaces
+every placeholder with that session's complete authenticated
 catalogue: live discovery controls membership, descriptions, input schemas, and read-only hints,
 so an omitted declaration disappears and a newly discovered tool appears. That catalogue remains
 fixed for the session; start a fresh session to discover changed metadata. The generated client

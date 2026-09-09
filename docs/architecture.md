@@ -151,10 +151,10 @@ before constructing MCP, broker-process, or Redis resources. It accepts multiple
 OAuth upstreams. ToolHive owns their ordered browser flow, callback state, PKCE/code exchange,
 refresh, and provider-specific backend token injection. A protected backend with static `tools:`
 declarations is visible immediately; those declarations are pre-authentication placeholders only,
-and a first call starts that same opaque ToolHive bundle authorization. The grant unlocks only the
-declared tools during the active run. An undeclared backend, and undeclared tools on a declared
-backend, still require pre-prompt enrollment for authenticated discovery and the complete frozen
-catalogue. Each protected ToolHive process generates one
+and a first call starts that same opaque ToolHive bundle authorization. After the grant, authenticated
+discovery replaces or removes the declared placeholders before the parked call resumes; definitions
+without declarations remain hidden. Pre-prompt enrollment remains the path for the complete frozen
+catalogue, including undeclared backends and tools. Each protected ToolHive process generates one
 confidential broker client; ToolHive persists only its hash, and mecatl retains the
 raw secret only in private process memory for HTTP-Basic code exchange and refresh
 ([ADR 0312](adr/0312-confidential-toolhive-broker-client.md)). Public enrollment controls carry aggregate status, a

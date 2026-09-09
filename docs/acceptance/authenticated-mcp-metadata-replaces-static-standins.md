@@ -11,19 +11,19 @@
 
 Static protected-tool declarations make an operator-selected initial surface available before ToolHive authorization. After successful pre-prompt enrollment, [ADR 0310](../adr/0310-lazy-toolhive-static-tools.md) says the complete authenticated catalogue replaces those visible stand-ins. Today, `stageAuthenticatedRoutes` removes a live definition whose name collides with a declaration and reinstates the declaration's description, schema, and read-only classification. It also retains a declared tool that authenticated discovery no longer returns. Consequently, each session discards its own authenticated metadata and membership for declared names.
 
-The approved contract makes static declarations pre-authentication placeholders only. Successful pre-prompt enrollment atomically replaces them with that session's complete authenticated catalogue, including its descriptions, schemas, and read-only hints. The catalogue then remains immutable for that session. Implementation must retain the authenticated-metadata admission boundary and the distinction between model-visible metadata and execution: protected calls continue through ToolHive with the live authenticated backend.
+The approved contract makes static declarations pre-authentication placeholders only. Successful pre-prompt enrollment atomically replaces them with that session's complete authenticated catalogue, including its descriptions, schemas, and read-only hints. A successful lazy bundle grant also replaces declared placeholders with their authenticated metadata, but does not publish undeclared tools. Both paths retain the authenticated-metadata admission boundary and the distinction between model-visible metadata and execution: protected calls continue through ToolHive with the live authenticated backend.
 
 ## Human decisions
 
 - [x] For a name present in both a static protected-tool declaration and authenticated discovery, should authenticated metadata replace the declaration after successful enrollment, should the declaration remain an operator override, or should a field-level hybrid apply? — Decision: authenticated discovery controls post-enrollment tool membership, description, and schema. Static declarations are pre-authentication placeholders only. A declared tool absent from authenticated discovery disappears from the enrolled catalogue.
-- [x] If authenticated metadata wins, is replacement limited to the existing first successful, immutable per-session catalogue freeze, or must an existing session refresh it on a specified trigger/cadence? — Decision: successful pre-prompt enrollment performs authenticated discovery once and atomically freezes that session's catalogue. Later runs and ToolHive token refreshes do not refresh it. A fresh session performs fresh authenticated discovery; no refresh control, timer, generation, or invalidation path is added.
+- [x] If authenticated metadata wins, which successful authorization paths replace placeholders, and must an existing session refresh on another trigger or cadence? — Decision: successful pre-prompt enrollment performs authenticated discovery once and atomically freezes the complete session catalogue. A successful lazy bundle grant performs one all-backend discovery and atomically replaces or removes declared placeholders only; undeclared tools remain hidden. Later runs and ToolHive token refreshes do not refresh either result. A fresh session performs fresh authenticated discovery; no refresh control, timer, generation, or invalidation path is added.
 - [x] Does `ReadOnly` have a distinct operator-trust purpose that requires static precedence, or is ToolHive's authenticated `ReadOnly` hint the post-enrollment input? — Decision: authenticated discovery controls `ReadOnly` after enrollment, matching ordinary MCP tools. An absent live hint defaults conservatively to `false`. Static `ReadOnly` applies only to the pre-authentication stand-in. Existing permission rules remain independent and deny-dominant; the hint controls plan-mode visibility and read-parallel versus mutate-serial dispatch.
 
 ## Interface contract
 
 - **gRPC / protobuf:** None — session catalogue changes remain internal; the existing public enrollment controls and tool-call wire shapes do not gain fields.
-- **Exported Go APIs / interfaces:** None — the change stays within `internal/adapter/mcpbroker` staging and tests; no `engine/` public API or interface changes.
-- **Tool schemas:** Before enrollment, each declared qualified MCP tool uses its configured static input schema. After successful enrollment, the same name uses the authenticated schema, and a declaration absent from authenticated discovery is absent from the frozen catalogue. No tool name changes and lazy authorization adds no undeclared tools.
+- **Exported Go APIs / interfaces:** The internal `internal/mcpbroker.Attachment` boundary gains `RefreshGrantedAuthorizationCatalogue(context.Context, session.ExternalAuthorization) ([]tool.Tool, error)` so the server can request an exact granted-bundle refresh and rebuild from the returned snapshot. No importable `engine/` API changes.
+- **Tool schemas:** Before authorization, each declared qualified MCP tool uses its configured static input schema. After either successful authorization path, the same declared name uses the authenticated schema and a declaration absent from authenticated discovery disappears. Pre-prompt enrollment additionally admits authenticated tools that were not declared; lazy authorization does not.
 - **CLI / config:** None — no flag or key changes. Existing `mcp.servers[].auth.oauth.tools` declarations retain their initial pre-authentication role and are not post-authentication overrides.
 - **Events / persistence:** None — the frozen catalogue remains attachment/session-runtime state. The existing exact opaque broker-incarnation reload boundary remains unchanged; no metadata cache, refresh generation, credential, or new record is persisted.
 - **Security / authority:** Every authenticated definition continues through the shared qualified-name, UTF-8, size, JSON-object-schema, private-material, and collision checks before all-or-nothing publication. After enrollment, an authenticated `ReadOnly` hint controls plan-mode visibility and dispatch batching exactly as it does for ordinary MCP tools; an absent hint is `false`. Static metadata cannot create a direct upstream path, bypass configured permissions, survive omission from authenticated discovery, or cause undeclared tools to appear through lazy authorization.
@@ -59,17 +59,19 @@ Two fresh attachments discover different valid descriptions and schemas for the 
 - AC2.4: A live `ReadOnly: true` tool is available in plan mode and read-batchable; a live false or absent hint is unavailable in plan mode and mutate-serial, regardless of the static placeholder's former value.
   - verify: `TestADR_0310_AuthenticatedReadOnlyHintReplacesStaticHint`
 
-### Scenario 3 — The authenticated catalogue remains immutable for the session
+### Scenario 3 — Lazy authorization refreshes declarations without widening membership
 
-Successful pre-prompt enrollment freezes one complete authenticated catalogue for the attachment. Later runs, repeated completion calls, and ToolHive token refreshes do not rediscover or replace it. A fresh session performs its own authenticated discovery. Lazy authorization remains narrower: authorizing a declared tool does not itself publish undeclared discovered tools. See [ADR 0310](../adr/0310-lazy-toolhive-static-tools.md).
+A successful declared-tool call authorizes the configured ToolHive bundle. Before resuming that parked call, the broker queries every protected backend and atomically replaces declared placeholders with admitted live metadata. Declared tools omitted by discovery disappear, while undeclared tools remain hidden. The session engine is rebuilt from that exact snapshot; later runs and token refreshes do not rediscover it. Successful pre-prompt enrollment remains the complete-catalogue path. See [ADR 0310](../adr/0310-lazy-toolhive-static-tools.md).
 
 **Acceptance:**
-- AC3.1: Repeated freeze/completion for the same enrollment reference returns the existing catalogue without another authenticated query, while a conflicting reference or unavailable process fails closed.
-  - verify: `TestFreezeAuthenticatedCatalogueConcurrentFreezeHasOneCatalogue`
-- AC3.2: A new attachment performs a new authenticated query and may freeze changed metadata; it does not inherit another attachment's frozen definitions.
-  - verify: `TestADR_0310_FreshSessionPerformsFreshAuthenticatedDiscovery`
-- AC3.3: A lazy authorization initiated by a declared tool does not publish undeclared authenticated tools or replace static placeholders; only successful pre-prompt enrollment freezes the authenticated catalogue.
-  - verify: `TestADR_0310_LazyAuthorizationDoesNotDiscoverUndeclaredTools`
+- AC3.1: The exact granted bundle authorization queries every configured protected backend; matching declared tools use live description, schema, and `ReadOnly`, and omitted declarations disappear.
+  - verify: `TestADR_0319_LazyGrantReplacesDeclaredMetadata`
+- AC3.2: Undeclared authenticated tools remain hidden after lazy authorization, while pre-prompt enrollment continues to admit the complete authenticated catalogue.
+  - verify: `TestADR_0319_LazyGrantReplacesDeclaredMetadata`, `TestADR_0310_AuthenticatedCatalogueReplacesDeclaredMembership`
+- AC3.3: A backend query, metadata validation, lifecycle race, or forged authorization publishes no partial catalogue and leaves the prior declarations authoritative.
+  - verify: `TestADR_0319_LazyGrantRefreshFailureIsAtomic`, `TestADR_0319_LazyGrantReplacesDeclaredMetadata`
+- AC3.4: The parked authorization continuation rebuilds its session engine from the exact refreshed tool snapshot before resuming the granted call.
+  - verify: `TestAuthenticatedMCPMetadataReplacement_Scenario2_RebuildsParkedContinuation`, `TestAuthenticatedMCPMetadataReplacement_Scenario2_ReplacesJustParkedRun`
 
 ## Out of scope
 
@@ -88,12 +90,12 @@ Successful pre-prompt enrollment freezes one complete authenticated catalogue fo
 2. `task ac-trace-strict` resolves every named proof when the plan becomes `landed`.
 3. Acceptance tests are offline and use authenticated-discovery fakes or the existing real broker fixture; they call no live ToolHive deployment, OAuth provider, or model.
 4. `go run ./cmd/mecademo` remains green for runtime changes.
-5. Living architecture and implementation notes describe static declarations as pre-authentication placeholders and the authenticated catalogue as immutable per session.
+5. Living architecture and implementation notes describe static declarations as pre-authentication placeholders, lazy replacement as declared-only, and pre-prompt enrollment as the complete-catalogue freeze.
 6. The implementation PR links the approved Plan / Interface PR and commit and reports interface conformance.
 7. `/panel-review` reports no ship blockers or unwaived reviewer failures.
 
 ## Deferred decisions and known risks
 
-- A long-lived session can retain stale authenticated metadata. Refresh requires a separate lifecycle, concurrency, persistence, and in-flight-call contract; starting a fresh session is the v1 update path.
+- A long-lived session can retain stale authenticated metadata after either successful discovery path. Refresh requires a separate lifecycle, concurrency, persistence, and in-flight-call contract; starting a fresh session is the v1 update path.
 - Like ordinary MCP tools, the broker accepts the authenticated server's read-only hint. A dishonest `true` can make a remote operation plan-visible and read-parallel; configured permission Deny/Ask rules remain independent, and broader MCP hint attestation is a separate security design.
-- The existing accepted ADR already states replacement semantics, so this behavior correction requires living-document updates rather than a superseding ADR.
+- ADR 0319 supersedes ADR 0310's pre-prompt-only discovery clause while preserving lazy authorization's declared-only membership boundary.
