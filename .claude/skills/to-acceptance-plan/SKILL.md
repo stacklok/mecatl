@@ -21,10 +21,11 @@ host. It does not protect mecatl or any other harness. Another harness must requ
 explicit user request before creating a worktree or branch, committing, pushing, or opening
 a PR. Without that request, draft and report only; do not perform those side effects.
 
-- First apply the classifier in [`docs/development-process.md`](../../../docs/development-process.md).
-  Spike and Routine bypass this skill. Continue only for Bounded or Architectural work; if
-  evidence is insufficient, escalate or stop for human-authorized Spike work rather than
-  silently downgrading.
+- Before classification or drafting, load
+  [`references/WORK-CLASSIFICATION.md`](references/WORK-CLASSIFICATION.md). Spike and Routine
+  bypass this skill. Continue only for Bounded or Architectural work; if evidence is
+  insufficient, escalate or stop for human-authorized Spike work rather than silently
+  downgrading.
 - Use the eventual delivery branch in exactly one validated writable worktree. Split uses a
   dedicated `plan/<slug>` branch; Combined uses the eventual combined implementation branch.
   Never write in the primary checkout when operating from an isolated worktree.

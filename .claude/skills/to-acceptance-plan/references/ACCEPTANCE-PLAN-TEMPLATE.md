@@ -1,7 +1,8 @@
 # Acceptance-plan template
 
 Copy the skeleton into `docs/acceptance/<slug>.md` only for Bounded or Architectural work as
-classified by [`docs/development-process.md`](../../../../docs/development-process.md). Keep
+classified by the sibling bundled
+[`WORK-CLASSIFICATION.md`](WORK-CLASSIFICATION.md). Keep
 focused plans compact. New and materially amended plans use exact
 `**Contract:** human-reviewed/v2` metadata. Existing v1 plans remain valid until materially
 amended. The checker requires a matching work-classification and decision-record outcome,

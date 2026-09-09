@@ -8,13 +8,25 @@ description: >-
 
 # onboarding
 
-Read `AGENTS.md`, `docs/architecture.md`, relevant `docs/adr/` records, and
-`docs/development-process.md` before changing the repository.
+Read `AGENTS.md`, `docs/architecture.md`, and relevant `docs/adr/` records before changing the
+repository.
 
 ## Route by work class
 
-Use the canonical classifier in `docs/development-process.md`: Spike/Routine bypass acceptance
-planning; Bounded/Architectural use the spine. Escalate uncertainty; never silently downgrade.
+Classify by decision and blast radius, never diff size:
+
+- **Spike:** explicit-question evidence gathering that is not shipped as-is. It bypasses the
+  spine only with explicit human authorization and must be reclassified before shipping.
+- **Routine:** an established or mechanical, reversible change with no new durable decision or
+  durable-contract change; it bypasses acceptance planning regardless of file count.
+- **Bounded:** substantive contract work with no durable architecture decision; use the spine.
+- **Architectural:** a durable public/API, persistence/data ownership, security/trust,
+  deployment/operator, module/system-boundary, or cross-subsystem-invariant decision; use the
+  spine and a new or superseding ADR.
+
+If the lower class is not supported by evidence, escalate rather than silently downgrade. Choose
+Split or Combined only after classification: it is a delivery choice, not a work class. For
+classification detail and plan drafting, use `/to-acceptance-plan`.
 
 ## The spine
 
@@ -69,5 +81,5 @@ PR for human approval and merge before work resumes.
 - `/perf-optimization` and `/perf-mcp-interpretation` — performance work.
 - `/mecatl-model-router-config` — model-routing configuration.
 
-This skill only routes. See `docs/development-process.md` and
-`docs/acceptance/README.md` for the complete contract.
+This skill only routes. Use `/to-acceptance-plan` for classification detail and acceptance-plan
+authoring, and `docs/acceptance/README.md` for acceptance-plan repository navigation.

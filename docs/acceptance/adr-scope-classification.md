@@ -31,13 +31,16 @@ None — the agreed four classes, workflow mapping, ADR threshold, legacy compat
 
 ### Scenario 1 — Contributors route work without manufacturing ADRs
 
-The canonical [development process](../development-process.md) defines Spike, Routine,
-Bounded, and Architectural work, while the concise [agent contract](../../AGENTS.md) routes to
-that source instead of duplicating policy.
+The bundled work-classification reference
+`.claude/skills/to-acceptance-plan/references/WORK-CLASSIFICATION.md` is the operational source
+for `/to-acceptance-plan`; the [agent contract](../../AGENTS.md) sets repository constraints,
+while the human-facing canonical [development process](../development-process.md) remains the
+living explanation. The onboarding router keeps the observable routing criteria inline and directs
+detailed planning to the skill, so execution does not depend on repository process documentation.
 
 **Acceptance:**
-- AC1.1: Spike and Routine bypass acceptance planning; Bounded and Architectural use it, and uncertainty never silently downgrades the class. Routine means no new durable decision plus an established/mechanical reversible transformation, regardless of locality or file count; a repository-wide mechanical rename remains Routine when it changes no durable contract.
-  - verify: inspection — compare the development process, onboarding, and both spine skills.
+- AC1.1: Spike and Routine bypass acceptance planning; Bounded and Architectural use it, and uncertainty never silently downgrades the class. Routine means no new durable decision plus an established/mechanical reversible transformation, regardless of locality or file count; a repository-wide mechanical rename remains Routine when it changes no durable contract. `/to-acceptance-plan` loads its directly linked bundled classifier reference before drafting, and onboarding remains a self-contained router that sends detailed planning there rather than relying on `docs/development-process.md`.
+  - verify: inspection — compare the bundled classifier, plan-authoring skill/template, onboarding router, and human-facing development process.
 - AC1.2: New and materially amended plans use v2 classification and decision-record metadata, while valid legacy v1 plans continue to pass.
   - verify: `.claude/skills/to-acceptance-plan/scripts/check-acceptance-plan-test.sh`
 - AC1.3: Deterministic fixtures accept valid Bounded and Architectural outcomes and reject missing, placeholder, or mismatched classification/decision-record fields.
