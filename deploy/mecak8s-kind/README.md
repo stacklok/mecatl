@@ -176,37 +176,25 @@ below does not rely on discovery; keep every parameter:
 ```sh
 install -d -m 0700 "$PWD/.scratch/kind/mecatl-dev/client-xdg"
 XDG_CONFIG_HOME="$PWD/.scratch/kind/mecatl-dev/client-xdg" ./bin/mecatui login mecak8s-mecak8s.mecatl.svc.cluster.local:18080 --credential-store=file --issuer https://keycloak.mecatl.svc.cluster.local:8443/realms/mecatl --client-id mecatui-kind --audience mecak8s --tls-ca .scratch/kind/mecatl-dev/fixture-ca.crt --private-issuer --scopes openid,profile,mecak8s:access,offline_access
-task mecak8s:kind-credential-storage-check CHECK=post-login ROOT="$PWD/.scratch/kind/mecatl-dev/client-xdg/mecatl" TARGET=mecak8s-mecak8s.mecatl.svc.cluster.local:18080
 XDG_CONFIG_HOME="$PWD/.scratch/kind/mecatl-dev/client-xdg" ./bin/mecatui connect mecak8s-mecak8s.mecatl.svc.cluster.local:18080 sessions --tls --tls-ca .scratch/kind/mecatl-dev/fixture-ca.crt
 ```
 
 The first login prints `Using file-backed credential storage (owner-only permissions).`
-once before OAuth. The separate-process inventory must authenticate without another
-login or notice. After natural expiry enters the 30-second refresh window:
-
-```sh
-task mecak8s:kind-credential-storage-check CHECK=refresh ROOT="$PWD/.scratch/kind/mecatl-dev/client-xdg/mecatl" TARGET=mecak8s-mecak8s.mecatl.svc.cluster.local:18080
-```
-
-The checker makes one normal token demand and reloads through the store API. It
-requires the persisted access token to equal the returned token and differ from the
-prior token, with a changed future expiry. It reports only `refresh-persisted` and
-`refresh-token=rotated|retained`; rotation is not required of Keycloak. Repeat the
-separate-process inventory command to prove the refreshed credential reaches the
-server. Repeat login with `--credential-store=keyring`: it must reject the conflicting
-pin without opening keyring or changing credentials.
+once before OAuth. After the original access token naturally enters the 30-second refresh
+window (about 870 seconds after issue), run the authenticated `connect` command again.
+Then start a new `mecatui` process and run it once more; both must authenticate without
+another login or notice. Finally, log out and verify that an authenticated connect fails
+with login required without silently starting OAuth:
 
 ```sh
 XDG_CONFIG_HOME="$PWD/.scratch/kind/mecatl-dev/client-xdg" ./bin/mecatui logout mecak8s-mecak8s.mecatl.svc.cluster.local:18080
-task mecak8s:kind-credential-storage-check CHECK=post-logout ROOT="$PWD/.scratch/kind/mecatl-dev/client-xdg/mecatl" TARGET=mecak8s-mecak8s.mecatl.svc.cluster.local:18080
+XDG_CONFIG_HOME="$PWD/.scratch/kind/mecatl-dev/client-xdg" ./bin/mecatui connect mecak8s-mecak8s.mecatl.svc.cluster.local:18080 sessions --tls --tls-ca .scratch/kind/mecatl-dev/fixture-ca.crt
 ```
 
-Repeat inventory: it must fail with login required, never silently start OAuth.
-Repeat the original login omitting `--credential-store`; it must reuse the file pin
-without the first-selection notice. Logout again. The checker emits closed statuses
-only: backend, private modes, registry/credential presence, and semantic refresh
-persistence. Never read token files, export bearers, or record tokens, hashes,
-record identities, authorization URLs, or provider bodies as evidence.
+This manual journey is intentionally weaker evidence: it has no field-by-field semantic
+persistence oracle and makes no claim that helper checks remain. Automated hermetic tests
+retain persistence, private-permission, and conflicting-selector coverage. Do not inspect
+token files, export bearers, or place token material in shell history or evidence.
 
 On an actual headless Linux host with no running session bus/Secret Service, create
 a different root (merely unsetting `DBUS_SESSION_BUS_ADDRESS` is not qualification):
@@ -216,22 +204,18 @@ install -d -m 0700 "$PWD/.scratch/kind/mecatl-dev/client-xdg-linux"
 XDG_CONFIG_HOME="$PWD/.scratch/kind/mecatl-dev/client-xdg-linux" ./bin/mecatui login mecak8s-mecak8s.mecatl.svc.cluster.local:18080 --no-browser --issuer https://keycloak.mecatl.svc.cluster.local:8443/realms/mecatl --client-id mecatui-kind --audience mecak8s --tls-ca .scratch/kind/mecatl-dev/fixture-ca.crt --private-issuer --scopes openid,profile,mecak8s:access,offline_access
 ```
 
-Repeat all checks above using `client-xdg-linux`. This is Authorization Code + PKCE,
+Repeat the same login → connect → natural-refresh connect → new-process connect → logout
+→ failed-connect journey using `client-xdg-linux`. This is Authorization Code + PKCE,
 not device login: `--no-browser` still needs `http://127.0.0.1:18473/oauth/callback`.
-Before login, arrange browser-side hostname resolution and callback connectivity;
-for SSH, forward browser-side ports 8443 and 18473 to those ports on the Linux host
-and resolve the Keycloak hostname to browser-side loopback. Without that prerequisite,
-record Linux qualification blocked; do not substitute a password or device grant.
-
-For the negative permission check, use another disposable root whose existing
-`mecatl` directory is mode `0755`: explicit-file login must fail before OAuth and
-leave no marker, registry, or credential. Explicit-keyring-unavailable tests are
-hermetic only; never lock, delete, or perturb a real keyring for qualification.
+Before login, arrange browser-side hostname resolution and callback connectivity; for SSH,
+forward browser-side ports 8443 and 18473 to those ports on the Linux host and resolve the
+Keycloak hostname to browser-side loopback. Without that prerequisite, record Linux
+qualification blocked; do not substitute a password or device grant.
 
 Always **logout before cleanup**, then `task mecak8s:kind-hosts-remove`. Preserve the
 shared cluster by default. Run `task mecak8s:kind-destroy` only with explicit operator
-intent to remove that disposable cluster. Record each platform's actual closed-status
-results separately; do not claim full E2E until both journeys pass.
+intent to remove that disposable cluster. Record each platform's actual journey separately;
+do not claim full E2E until both journeys pass.
 
 ## Boundary
 
