@@ -293,7 +293,7 @@ step 3, then verify per step 4 above.
 
 Notes:
 - `docker/bot.Dockerfile` is also the source of the official
-  `ghcr.io/stacklok/mecatl/slack-bot` release image. It builds the linked SDK
+  `ghcr.io/stacklok/mecatl/slack-bot` release image. It builds the in-tree SDK
   and bot in a digest-pinned Chainguard development stage, then runs the
   compiled bot as non-root on a production-only, shell-less Chainguard stage.
   `docker/mecated.Dockerfile` remains a local dev/demo image; official mecatl
