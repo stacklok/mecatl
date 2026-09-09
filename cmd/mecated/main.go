@@ -927,7 +927,6 @@ func run(mode commandMode, remaining []string) error {
 	// lint gate; the helper owns the resolve/build/disclosure branches and
 	// logs its own failure, so run() only threads the resulting handles.
 	pm, cancelHeartbeat, _ := setupProductMetrics(ctx, cfg, diag)
-	defer cancelHeartbeat()
 	defer func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -935,6 +934,7 @@ func run(mode commandMode, remaining []string) error {
 			slog.Warn("product metrics shutdown", "err", serr)
 		}
 	}()
+	defer cancelHeartbeat()
 
 	tracing := telemetry.NewTracing(otel.GetTracerProvider())
 
@@ -1091,6 +1091,10 @@ func setupObservability(ctx context.Context, cfg config, diag port.Diagnostics) 
 // metrics heartbeat reports, from fields already resolved on cfg — never a
 // model id/alias, only whether each feature is configured at all.
 func productMetricsSnapshot(cfg config) productmetrics.FeatureSnapshot {
+	mode := productmetrics.ModeInteractive
+	if cfg.headless {
+		mode = productmetrics.ModeHeadless
+	}
 	provider := productmetrics.ProviderOther
 	switch {
 	case cfg.useOpenAI:
@@ -1108,7 +1112,7 @@ func productMetricsSnapshot(cfg config) productmetrics.FeatureSnapshot {
 		MCP:        cfg.mcpServers != nil && len(cfg.mcpServers.Servers()) > 0,
 		Scheduling: !cfg.noScheduler,
 		Provider:   provider,
-		Mode:       productmetrics.ModeInteractive,
+		Mode:       mode,
 	}
 }
 

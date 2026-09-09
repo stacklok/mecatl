@@ -137,3 +137,39 @@ func TestRecorderEmitSubagentAndTeamUsed(t *testing.T) {
 		t.Errorf("team_used = %d, want 1", got)
 	}
 }
+
+// TestRecorderSubagentUsedCountsOncePerRun pins the documented "at least
+// once per run" semantics: a run fanning out several concurrent Subagent
+// calls (explicitly supported, e.g. the child concurrency gate) must count
+// once, not once per EvSubagentStart.
+func TestRecorderSubagentUsedCountsOncePerRun(t *testing.T) {
+	r, reader := newTestRecorder(t)
+	r.Emit(context.Background(), session.Event{Type: session.EvSubagentStart, RunID: "run-1"})
+	r.Emit(context.Background(), session.Event{Type: session.EvSubagentStart, RunID: "run-1"})
+	r.Emit(context.Background(), session.Event{Type: session.EvSubagentStart, RunID: "run-1"})
+
+	if got := sumValue(t, collect(t, reader)["mecatl.adoption.subagent_used"]); got != 1 {
+		t.Errorf("subagent_used = %d, want 1 (deduped within one run)", got)
+	}
+}
+
+// TestRecorderSubagentUsedCountsEachDistinctRun proves the dedup is scoped
+// to a run, not global: two separate runs each using Subagent count twice,
+// and a run's dedup state is dropped on EvResult so a later run with the
+// same RunID (unlikely in practice, but bounds correctness) still counts.
+func TestRecorderSubagentUsedCountsEachDistinctRun(t *testing.T) {
+	r, reader := newTestRecorder(t)
+	r.Emit(context.Background(), session.Event{Type: session.EvSubagentStart, RunID: "run-1"})
+	r.Emit(context.Background(), session.Event{Type: session.EvSubagentStart, RunID: "run-2"})
+
+	if got := sumValue(t, collect(t, reader)["mecatl.adoption.subagent_used"]); got != 2 {
+		t.Errorf("subagent_used = %d, want 2 (two distinct runs)", got)
+	}
+
+	r.Emit(context.Background(), session.Event{Type: session.EvResult, RunID: "run-1", Result: &session.ResultPayload{Stop: session.StopEndTurn}})
+	r.Emit(context.Background(), session.Event{Type: session.EvSubagentStart, RunID: "run-1"})
+
+	if got := sumValue(t, collect(t, reader)["mecatl.adoption.subagent_used"]); got != 3 {
+		t.Errorf("subagent_used = %d, want 3 (run-1's dedup entry cleared on its EvResult)", got)
+	}
+}

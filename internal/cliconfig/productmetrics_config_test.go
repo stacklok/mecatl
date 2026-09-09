@@ -24,6 +24,9 @@ func TestResolveProductMetricsEnabledPrecedence(t *testing.T) {
 		{"DO_NOT_TRACK disables when no flag", ProductMetricsPrecedence{Getenv: getenvSet, SettingsEnabled: boolPtr(true)}, false},
 		{"settings.yaml honoured when no flag/env", ProductMetricsPrecedence{Getenv: getenvUnset, SettingsEnabled: boolPtr(false)}, false},
 		{"default enabled when nothing set", ProductMetricsPrecedence{Getenv: getenvUnset, SettingsEnabled: nil}, true},
+		{"DO_NOT_TRACK=0 is not an opt-out", ProductMetricsPrecedence{Getenv: func(string) string { return "0" }, SettingsEnabled: boolPtr(true)}, true},
+		{"DO_NOT_TRACK=false is not an opt-out", ProductMetricsPrecedence{Getenv: func(string) string { return "false" }, SettingsEnabled: boolPtr(true)}, true},
+		{"DO_NOT_TRACK=true disables", ProductMetricsPrecedence{Getenv: func(string) string { return "true" }, SettingsEnabled: boolPtr(true)}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

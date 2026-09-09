@@ -4,11 +4,25 @@ package cliconfig
 
 import (
 	"os"
+	"strings"
 	"time"
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 )
+
+// doNotTrackOptOut reports whether a DO_NOT_TRACK env value means "opt out",
+// per the consoledonottrack.com convention: unset/empty and the conventional
+// "off" spellings ("0", "false", case-insensitive) are NOT an opt-out; any
+// other value is.
+func doNotTrackOptOut(v string) bool {
+	switch strings.ToLower(v) {
+	case "", "0", "false":
+		return false
+	default:
+		return true
+	}
+}
 
 // ProductMetricsPrecedence carries the opt-out inputs
 // ResolveProductMetricsEnabled folds, highest precedence first: an explicit
@@ -38,7 +52,7 @@ func ResolveProductMetricsEnabled(p ProductMetricsPrecedence) bool {
 	if getenv == nil {
 		getenv = os.Getenv
 	}
-	if getenv("DO_NOT_TRACK") != "" {
+	if doNotTrackOptOut(getenv("DO_NOT_TRACK")) {
 		return false
 	}
 	if p.SettingsEnabled != nil {

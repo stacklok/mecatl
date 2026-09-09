@@ -3,6 +3,7 @@ package productmetrics
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
@@ -41,6 +42,24 @@ type Recorder struct {
 	tokens          metric.Int64Counter
 	subagentUsed    metric.Int64Counter
 	teamUsed        metric.Int64Counter
+
+	// runFamiliesUsed dedups subagentUsed/teamUsed to their documented
+	// "at least once per run" semantics: a run's first EvSubagentStart or
+	// EvTeamStart increments the counter, later ones in the SAME run (e.g. a
+	// fan-out of concurrent Subagent calls) do not. Keyed by the loop-stamped
+	// session.Event.RunID (opaque, not a session id) — never a tool name,
+	// session id, or free-text field, preserving this package's no-PII
+	// invariant. Bounded to concurrently-live runs: each run's entry is
+	// cleared on its EvResult.
+	mu              sync.Mutex
+	runFamiliesUsed map[string]usedFamilies
+}
+
+// usedFamilies tracks, per live run, which delegation families have already
+// been counted at least once.
+type usedFamilies struct {
+	subagent bool
+	team     bool
 }
 
 // Compile-time interface checks.
@@ -54,7 +73,7 @@ var (
 // is fallible.
 func NewRecorder(mp metric.MeterProvider) (*Recorder, error) {
 	meter := mp.Meter(meterName)
-	r := &Recorder{}
+	r := &Recorder{runFamiliesUsed: make(map[string]usedFamilies)}
 	var err error
 
 	if r.heartbeat, err = meter.Int64Counter("mecatl.adoption.heartbeat",
@@ -102,20 +121,73 @@ func NewRecorder(mp metric.MeterProvider) (*Recorder, error) {
 }
 
 // Emit derives coarse, bounded counts from a single domain Event. It reads
-// ONLY ev.Type, ev.Result.Stop, and ev.Result.Usage — never a session id,
-// model id/alias, tool name, or any free-text field (ev.Result.Text/Error
-// are never touched).
+// ONLY ev.Type, ev.RunID, ev.Result.Stop, and ev.Result.Usage — never a
+// session id, model id/alias, tool name, or any free-text field
+// (ev.Result.Text/Error are never touched). ev.RunID is an opaque per-run
+// correlation id (ADR 0249), not a session id, and is used ONLY to dedup
+// subagentUsed/teamUsed to one count per run (see firstInRun); it never
+// becomes an attribute value.
 func (r *Recorder) Emit(ctx context.Context, ev session.Event) {
 	switch ev.Type {
 	case session.EvSessionInit:
 		r.sessionsStarted.Add(ctx, 1)
 	case session.EvResult:
 		r.recordResult(ctx, ev.Result)
+		r.clearRun(ev.RunID)
 	case session.EvSubagentStart:
-		r.subagentUsed.Add(ctx, 1)
+		if r.firstInRun(ev.RunID, familySubagent) {
+			r.subagentUsed.Add(ctx, 1)
+		}
 	case session.EvTeamStart:
-		r.teamUsed.Add(ctx, 1)
+		if r.firstInRun(ev.RunID, familyTeam) {
+			r.teamUsed.Add(ctx, 1)
+		}
 	}
+}
+
+// delegationFamily is the closed set of families dedup'd per run.
+type delegationFamily int
+
+const (
+	familySubagent delegationFamily = iota
+	familyTeam
+)
+
+// firstInRun reports whether this is the first time, within the run
+// identified by runID, that family has been observed — marking it seen as a
+// side effect. An empty runID (no run context to dedup against) always
+// counts, matching the pre-dedup behavior.
+func (r *Recorder) firstInRun(runID string, family delegationFamily) bool {
+	if runID == "" {
+		return true
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	u := r.runFamiliesUsed[runID]
+	var seen *bool
+	switch family {
+	case familySubagent:
+		seen = &u.subagent
+	case familyTeam:
+		seen = &u.team
+	}
+	if *seen {
+		return false
+	}
+	*seen = true
+	r.runFamiliesUsed[runID] = u
+	return true
+}
+
+// clearRun drops the run's dedup entry once it has ended (EvResult), so
+// runFamiliesUsed stays bounded to concurrently-live runs.
+func (r *Recorder) clearRun(runID string) {
+	if runID == "" {
+		return
+	}
+	r.mu.Lock()
+	delete(r.runFamiliesUsed, runID)
+	r.mu.Unlock()
 }
 
 func (r *Recorder) recordResult(ctx context.Context, res *session.ResultPayload) {
