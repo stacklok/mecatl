@@ -136,7 +136,7 @@ func TestTelemetryDefaultIsNil(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseFlags: %v", err)
 	}
-	obs, err := buildObservability(context.Background(), cfg)
+	obs, err := buildObservability(context.Background(), cfg, port.NopDiagnostics{})
 	if err != nil {
 		t.Fatalf("buildObservability: %v", err)
 	}
@@ -191,7 +191,7 @@ func TestTelemetryMetricsAddrServesPrometheus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseFlags: %v", err)
 	}
-	obs, err := buildObservability(context.Background(), cfg)
+	obs, err := buildObservability(context.Background(), cfg, port.NopDiagnostics{})
 	if err != nil {
 		t.Fatalf("buildObservability: %v", err)
 	}
@@ -305,7 +305,7 @@ func TestTelemetryPushesRunMetricsOnExit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseFlags: %v", err)
 	}
-	obs, err := buildObservability(context.Background(), cfg)
+	obs, err := buildObservability(context.Background(), cfg, port.NopDiagnostics{})
 	if err != nil {
 		t.Fatalf("buildObservability: %v", err)
 	}

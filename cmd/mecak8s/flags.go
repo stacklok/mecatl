@@ -294,6 +294,13 @@ type config struct {
 	otlpMetricsEndpoint string
 	otlpMetricsProtocol string
 	otlpShutdownTimeout time.Duration
+
+	// productMetrics reports anonymous product-adoption metrics to Stacklok.
+	// OPT-OUT: ON by default. See the --product-metrics flag help text.
+	productMetrics bool
+	// productMetricsSet records whether --product-metrics was explicitly passed,
+	// so ResolveProductMetricsEnabled can let CLI out-rank DO_NOT_TRACK/settings.
+	productMetricsSet bool
 }
 
 // stringList is a repeatable string flag.Value, preserving order across
@@ -468,6 +475,9 @@ func parseFlags(argv []string) (config, error) {
 	fs.StringVar(&cfg.otlpMetricsProtocol, "otlp-metrics-protocol", "grpc", "OTLP transport for metrics: \"grpc\" (default) or \"http\"")
 	fs.DurationVar(&cfg.otlpShutdownTimeout, "otlp-shutdown-timeout", 5*time.Second, "bound on the telemetry flush at SIGTERM (so a dead collector cannot hang shutdown). 0 disables the bound")
 
+	fs.BoolVar(&cfg.productMetrics, "product-metrics", true,
+		"report anonymous product-adoption metrics to Stacklok (version, OS/arch, enabled features, coarse session/run/tool-call counts — never a prompt, file path, tool name, or model id). ON by default; opt out with --product-metrics=false, DO_NOT_TRACK=1, or telemetry.productMetrics.enabled: false in settings.yaml")
+
 	fs.Usage = func() {
 		_, _ = fmt.Fprint(fs.Output(), "Usage: mecak8s [flags]\n\n")
 		cliconfig.PrintDefaults(fs.Output(), fs)
@@ -500,6 +510,8 @@ func parseFlags(argv []string) (config, error) {
 			cfg.reasoningEffortFlagSet = true
 		case "subagent-model-router":
 			cfg.subagentModelRouterSet = true
+		case "product-metrics":
+			cfg.productMetricsSet = true
 		}
 		markRetentionCLIFlag(&cfg.retentionCLISet, fl.Name)
 		if fl.Name == "schedule-fire-retention" {
@@ -715,8 +727,11 @@ func appConfig(cfg config, diag port.Diagnostics, obs observability) app.Config 
 		Diagnostics: diag,
 		// Observability (issue #343, ADR 0098): OPT-IN. With no --otlp-* flags the
 		// handles are zero-valued (nil) — the byte-identical no-metrics posture.
-		Sink:                             obs.Sink,
-		ToolCallRecorder:                 obs.ToolCallRecorder,
+		// The opt-out product-metrics Sink/ToolCallRecorder are folded in
+		// alongside (nil-guarded fan-out): both nil reproduces the
+		// byte-identical no-telemetry posture exactly.
+		Sink:                             productMetricsSink(obs),
+		ToolCallRecorder:                 productMetricsRecorder(obs),
 		MetricsRoleScoper:                obs.MetricsRoleScoper,
 		SessionLoadFailureMetricsEmitter: obs.SessionLoadFailureMetricsEmitter,
 	}

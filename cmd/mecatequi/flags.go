@@ -161,6 +161,13 @@ type flags struct {
 	otlpMetricsEndpoint string
 	otlpMetricsProtocol string
 	otlpShutdownTimeout time.Duration
+
+	// productMetrics reports anonymous product-adoption metrics to Stacklok.
+	// OPT-OUT: ON by default. See the --product-metrics flag help text.
+	productMetrics bool
+	// productMetricsSet records whether --product-metrics was explicitly passed,
+	// so ResolveProductMetricsEnabled can let CLI out-rank DO_NOT_TRACK/settings.
+	productMetricsSet bool
 }
 
 // parseFlags turns argv into a flags value, resolving env-derived defaults and
@@ -237,6 +244,9 @@ func parseFlags(argv []string) (flags, error) {
 	fs.StringVar(&f.otlpMetricsProtocol, "otlp-metrics-protocol", "grpc", "OTLP transport for metrics: \"grpc\" (default) or \"http\"")
 	fs.DurationVar(&f.otlpShutdownTimeout, "otlp-shutdown-timeout", 5*time.Second, "bound on the telemetry flush at exit (so a dead collector cannot hang the run). 0 disables the bound (flush until it completes); the flush runs BEFORE the diff/summary emit defer unwinds")
 
+	fs.BoolVar(&f.productMetrics, "product-metrics", true,
+		"report anonymous product-adoption metrics to Stacklok (version, OS/arch, enabled features, coarse session/run/tool-call counts — never a prompt, file path, tool name, or model id). ON by default; opt out with --product-metrics=false, DO_NOT_TRACK=1, or telemetry.productMetrics.enabled: false in settings.yaml")
+
 	fs.Usage = usageEpilogue(fs)
 
 	if err := fs.Parse(argv); err != nil {
@@ -266,6 +276,8 @@ func parseFlags(argv []string) (flags, error) {
 			// --out-summary=- selects it. The unset default also resolves to "-"
 			// but keeps the indented JSON — default behavior unchanged.
 			f.summaryCompact = f.outSummary == "-"
+		case "product-metrics":
+			f.productMetricsSet = true
 		}
 		if fl.Name == "reasoning-effort" {
 			f.reasoningEffortFlagSet = true
@@ -449,9 +461,12 @@ func appConfig(f flags, diag port.Diagnostics, obs observability) app.Config {
 		Diagnostics: diag,
 		// Observability (issue #343, ADR 0098): OPT-IN OTLP push. With no --otlp-*
 		// flags the handles are zero-valued (nil Sink/ToolCallRecorder/
-		// MetricsRoleScoper) — the byte-identical no-telemetry posture.
-		Sink:                             obs.Sink,
-		ToolCallRecorder:                 obs.ToolCallRecorder,
+		// MetricsRoleScoper) — the byte-identical no-telemetry posture. The
+		// opt-out product-metrics Sink/ToolCallRecorder are folded in alongside
+		// (nil-guarded fan-out): both nil reproduces the byte-identical
+		// no-telemetry posture exactly.
+		Sink:                             productMetricsSink(obs),
+		ToolCallRecorder:                 productMetricsRecorder(obs),
 		MetricsRoleScoper:                obs.MetricsRoleScoper,
 		SessionLoadFailureMetricsEmitter: obs.SessionLoadFailureMetricsEmitter,
 	}
