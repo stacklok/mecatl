@@ -1095,6 +1095,22 @@ func New(deps Deps) Model {
 	return m
 }
 
+// resetDocumentProjection drops state tied to the current conversation document.
+// Rebuilt transcripts reuse block indexes and identities, so this must run before a
+// replacement is rendered rather than relying on cache keys or anchor fallback.
+func (m Model) resetDocumentProjection() Model {
+	m.rend.resetBlockCaches()
+	m.conversationView = conversationView{mode: followTail}
+	m.sel = selection{}
+	m.selBase = ""
+	// Advance the generation instead of resetting it: an already-scheduled disarm
+	// must not match the first click in the replacement document.
+	m.clickCount = 0
+	m.clickL, m.clickC = 0, 0
+	m.clickGen++
+	return m
+}
+
 // resetSession is the single seam that owns "the session-derived state of the
 // Model": the conversation transcript plus everything accumulated FROM the stream
 // over a session (changed-files set, cumulative usage, current context size, and
@@ -1108,10 +1124,7 @@ func (m Model) resetSession() Model {
 }
 
 func (m Model) resetSessionDerived() Model {
-	// Drop renderer caches before installing the target's authoritative transcript.
-	m.rend.resetBlockCaches()
-	// Reset auto-follow and document-local anchor state for the next session.
-	m.conversationView = conversationView{mode: followTail}
+	m = m.resetDocumentProjection()
 	m.usage = client.Usage{}
 	m.contextTokens = 0
 	m.activeTool = ""
@@ -1169,13 +1182,6 @@ func (m Model) resetSessionDerived() Model {
 	// would silently re-attach old pastes to a future marker collision).
 	m.stagedPastes = nil
 	m.nextPasteN = 0
-	// Drop any active text selection: /clear rebuilds the transcript, so a selection
-	// anchored into the old content is stale. The caller's refreshView re-renders
-	// without re-applying it (sel is now inactive), clearing the highlight too.
-	m.sel = selection{}
-	m.selBase = ""
-	// Drop any pending multi-click sequence: it is anchored into the old content.
-	m.clickCount = 0
 	// Disarm the live feed: a /clear or session switch rebuilds the session, so
 	// the old live subscription (bound to the old/cleared session id or opened
 	// while the stale session was active) must not route delivery events into the

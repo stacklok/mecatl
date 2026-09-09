@@ -3123,6 +3123,7 @@ var errStartupRunEntry = &sessionTranscriptError{"the chat could not be attached
 
 func (m Model) failStartupRunEntry() Model {
 	m = m.endRun("")
+	m = m.resetDocumentProjection()
 	m.conv = conversationFromTranscript(m.deps.Resume.Transcript.Messages)
 	m.modal = &sessionsState{
 		selected:        m.deps.Resume.Row,

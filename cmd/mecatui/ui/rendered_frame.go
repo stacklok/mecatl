@@ -62,6 +62,9 @@ type renderedRow struct {
 	// canonical source offset, leading semantic grapheme, and visible span.
 	leading int
 	span    int
+	// separator identifies a derived blank line between conversation blocks. It has
+	// no logical position of its own; observing it anchors to an adjacent block.
+	separator bool
 }
 
 // renderedFrame keeps the renderer's existing lines and their lockstep row
@@ -106,6 +109,27 @@ func (f renderedFrame) anchorForRow(row int) (readingAnchor, bool) {
 		blockID: p.blockID, region: p.region, sourceOffset: p.sourceOffset,
 		row: p.row, text: p.text,
 	}, true
+}
+
+// observedAnchorForRow translates a derived inter-block separator to its adjacent
+// logical content. The terminal blank row remains its own ordinary chrome anchor.
+func (f renderedFrame) observedAnchorForRow(row int, bias edgeBias) (readingAnchor, bool) {
+	if row < 0 || row >= len(f.provenance) {
+		return readingAnchor{}, false
+	}
+	if !f.provenance[row].separator {
+		return f.anchorForRow(row)
+	}
+	start, end, step := row-1, -1, -1
+	if bias == towardEnd {
+		start, end, step = row+1, len(f.provenance), 1
+	}
+	for i := start; i != end; i += step {
+		if f.provenance[i].blockID != 0 {
+			return f.anchorForRow(i)
+		}
+	}
+	return readingAnchor{}, false
 }
 
 func (f renderedFrame) rowForAnchor(anchor readingAnchor) (int, bool) {
@@ -184,7 +208,7 @@ func (r *renderer) appendFrameSegment(frame *renderedFrame, c *conversation, ren
 	if index > 0 {
 		for n := 0; n < blockBlankLinesAfter(c.blocks, index); n++ {
 			frame.lines = append(frame.lines, "")
-			frame.provenance = append(frame.provenance, renderedRow{region: conversationRegionChrome})
+			frame.provenance = append(frame.provenance, renderedRow{region: conversationRegionChrome, separator: true})
 		}
 	}
 	rendered := renderedBlocks[index]

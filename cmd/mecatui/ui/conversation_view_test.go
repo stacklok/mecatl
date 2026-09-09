@@ -177,3 +177,56 @@ func TestADR_0301_BottomAlignedAnchorPromotesTailFollow(t *testing.T) {
 		t.Errorf("scrolling above bottom mode = %v, want anchored", view.mode)
 	}
 }
+
+func TestADR_0301_InterBlockSeparatorAnchorsAdjacentContent(t *testing.T) {
+	m := newCoalesceModel(t)
+	m.conv.addUser("first")
+	m.conv.addUser(strings.Repeat("middle content ", 12))
+	m.conv.addUser("third")
+	m.refreshView()
+
+	wantID := m.conv.blocks[1].id
+	separator := -1
+	for i, row := range m.conversationView.frame.provenance {
+		if !row.separator {
+			continue
+		}
+		for j := i - 1; j >= 0; j-- {
+			if m.conversationView.frame.provenance[j].blockID != 0 {
+				if m.conversationView.frame.provenance[j].blockID == wantID {
+					separator = i
+				}
+				break
+			}
+		}
+	}
+	if separator < 0 {
+		t.Fatal("frame has no later inter-block separator")
+	}
+	m.vp.SetHeight(1)
+	m.vp.SetYOffset(separator)
+	m.conversationView.mode = anchored
+
+	// A width reflow and a block mutation must retain the adjacent logical block,
+	// rather than restoring the indistinguishable first zero-ID separator.
+	m.rend.setWidth(40)
+	m.conv.blocks[2].raw = strings.Repeat("third content ", 12)
+	m.conv.blocks[2].rev++
+	m.refreshView()
+
+	if got := m.conversationView.anchor.blockID; got != wantID {
+		t.Fatalf("separator observation anchor block ID = %d, want adjacent block %d", got, wantID)
+	}
+	if got := m.conversationView.frame.provenance[m.vp.YOffset()].blockID; got != wantID {
+		t.Fatalf("reflowed separator restoration block ID = %d, want adjacent block %d", got, wantID)
+	}
+
+	terminal := len(m.conversationView.frame.provenance) - 1
+	if m.conversationView.frame.provenance[terminal].separator {
+		t.Fatal("terminal blank row must not be an inter-block separator")
+	}
+	anchor, ok := m.conversationView.frame.observedAnchorForRow(terminal, towardStart)
+	if !ok || anchor.blockID != 0 || anchor.region != conversationRegionChrome || anchor.row != 0 {
+		t.Fatalf("terminal blank anchor = %#v, ok=%t; want ordinary chrome anchor", anchor, ok)
+	}
+}
