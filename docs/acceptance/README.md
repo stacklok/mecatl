@@ -89,7 +89,10 @@ A plan moves `draft → proposed → approved → in-progress → landed`:
 - `draft`: material behavior or interface judgments may remain as unchecked Human decisions.
 - `proposed`: every human decision needed to implement the contract is resolved and recorded;
   the plan is validated and ready for human plan/interface review.
-- `approved`: the human-reviewed plan PR was merged; the contract is approved, not shipped.
+- `approved`: the plan PR merged into the target branch (ADR 0319 — merging is the approval
+  event); the contract is approved, not shipped. `/plan-orchestrate` proves this by git
+  ancestry, not by the literal status word, and corrects the label to `approved` on entry if
+  a merged plan still reads `proposed`.
 - `in-progress`: autonomous implementation is underway against the recorded baseline.
 - `landed`: after all verification passes, the implementation/Combined candidate carries
   the proposed transition in its PR diff; it becomes authoritative only when that PR

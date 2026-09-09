@@ -20,8 +20,9 @@ Substantive interface-bearing work uses two human checkpoints:
    machine-readable `## Human decisions` section.
    Unchecked decisions keep it `draft`; `proposed` means every human decision needed for
    implementation is resolved and recorded. It opens a **Plan / Interface** PR, then stops.
-2. **Human contract review** marks the plan `approved` and merges it. Approved means
-   reviewed, not shipped.
+2. **Human contract review** merges the plan PR. Merging is the approval event (ADR 0319);
+   no separate status-line edit is required. `/plan-orchestrate` proves approval by git
+   ancestry and corrects a lagging `proposed` label on entry.
 3. **`/plan-orchestrate <slug>`** starts from the merged approved commit, uses run-local
    `.scratch/orchestrate/<slug>/` state and isolated TDD workers, gates and panel-reviews
    the implementation, then opens only the **Implementation** PR.

@@ -30,11 +30,16 @@ judgment remains.
 
 Require all of these or stop:
 
-- the plan status is `approved`;
 - the Plan / Interface PR is merged into the target base;
-- the approved plan file is present at that merged commit; and
-- the implementation branch starts from that exact approved commit (or a descendant that
-  has not changed the contract).
+- the plan file, unchanged since that PR, is present at a commit reachable from the target
+  base (`git merge-base --is-ancestor <plan-commit> <target-base>` — this ancestry is the
+  approval proof, ADR 0319; the `**Status:**` word is not a precondition); and
+- the implementation branch starts from that exact commit (or a descendant that has not
+  changed the contract).
+
+If the merged plan still reads `**Status:** proposed`, correct it to `approved` as part of
+the first commit on the accumulator (same timing as the `in-progress` bump below); do not
+stop for a human to have made this edit.
 
 Record the Plan / Interface PR URL/number and full approved commit in
 `.scratch/orchestrate/<slug>/run.md` before decomposition.
