@@ -15,6 +15,7 @@ package productmetrics
 // heartbeat time. Never a def/model/tool name — only these four values.
 type Feature string
 
+// The four closed Feature values.
 const (
 	FeatureMemory     Feature = "memory"
 	FeatureGuardrails Feature = "guardrails"
@@ -26,6 +27,7 @@ const (
 // Never a model id or alias.
 type ProviderFamily string
 
+// The four closed ProviderFamily values.
 const (
 	ProviderAnthropic  ProviderFamily = "anthropic"
 	ProviderOpenAI     ProviderFamily = "openai"
@@ -36,6 +38,7 @@ const (
 // DeploymentMode is the closed set of process shapes.
 type DeploymentMode string
 
+// The three closed DeploymentMode values.
 const (
 	ModeInteractive DeploymentMode = "interactive"
 	ModeHeadless    DeploymentMode = "headless"
@@ -45,6 +48,7 @@ const (
 // Binary is the closed set of the four mecatl entry points.
 type Binary string
 
+// The four closed Binary values.
 const (
 	BinaryMecated   Binary = "mecated"
 	BinaryMecatui   Binary = "mecatui"
