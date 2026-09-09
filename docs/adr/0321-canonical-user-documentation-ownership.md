@@ -27,7 +27,7 @@ material. Organize content by reader need:
 - task and concept guidance stays in `mecatui/`, `building/`, and `features/`;
 - exact configuration and client API contracts live in `reference/`;
 - the configuration generator writes directly to
-  `user-docs/reference/configuration.md`;
+  `user-docs/reference/configuration.md`; <!-- lint:not-a-citation: target path for this proposed decision, not yet created -->
 - gRPC and HTTP/SSE references render from `user-docs/reference/` and link to
   the task-oriented transport guide.
 
