@@ -2,7 +2,7 @@
 
 **Contract:** human-reviewed/v1
 **Phase:** Remote mecatui credential-storage portability
-**Status:** in-progress, 2026-09-09. User approval is recorded via merged PR1281; implementation and verification are incomplete, not shipped.
+**Status:** in-progress, 2026-09-09. User approval is recorded via merged PR1281; implementation is landed in PR1291. Scenario 5's manual Kind/Keycloak qualification (macOS explicit-file and Linux headless-auto journeys) passed on 2026-09-09; remaining verification is the baseline-checks list in Definition of done item 4.
 **Delivery:** Split. This changes local CLI behavior, durable credential routing, and the confidentiality boundary, so implementation proceeds through a separate implementation PR against this approved contract.
 **Expected tasks:** deferred to orchestration
 
@@ -142,6 +142,7 @@ Preserve the shared cluster after qualification by default: logout first, then r
   - verify: documentation review and hermetic fixture tests
 - AC5.2: Before the implementation PR claims full E2E, operator evidence records successful macOS explicit-file and genuinely headless Linux default-auto journeys through login, authenticated connect, natural refresh on a later connect, a new-process authenticated connect, logout, and failed post-logout authentication. This is weaker manual evidence: it has no field-by-field semantic persistence oracle and makes no claim that helper checks remain.
   - verify: operator-run because Kind, PKCE, platform selection, and natural expiry are intentionally non-hermetic
+  - **evidence: passed 2026-09-09.** Both the macOS explicit-file journey and the Linux headless-auto journey completed against the `deploy/mecak8s-kind` Keycloak/TLS fixture: login, authenticated connect, natural refresh on a later connect, a new-process authenticated connect, logout, and a failed post-logout authenticated connect all behaved as specified.
 - AC5.3: Hermetic tests retain unsafe-permission pre-OAuth failure, explicit keyring unavailability, persistence, and conflicting-selector coverage without touching a live keyring.
   - verify: `TestHeadlessCredentialStorage_Scenario2_BackendLifecycleMatrix`, `TestHeadlessCredentialStorage_Scenario3_PrivateFilesystemBoundary`, and `TestHeadlessCredentialStorage_Scenario3_PlainFileConformance`
 
