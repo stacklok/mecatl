@@ -1,4 +1,5 @@
 import type { App, SayFn } from "@slack/bolt";
+import { ServerError } from "@stacklok/mecatl-sdk";
 
 import type { MecatlBridge } from "./bridge.js";
 import type { BotConfig } from "./env.js";
@@ -6,6 +7,8 @@ import { SlidingWindowRateLimiter } from "./rateLimit.js";
 
 const FAILURE_MESSAGE =
   "Something went wrong running that against mecatl. Check the bot's logs for details.";
+const EXTERNAL_AUTH_MESSAGE =
+  "This needs a connector to be authorized by an administrator before it can be used here.";
 const GREETING = "Tag me with a prompt and I'll run it against mecatl.";
 const NOT_AUTHORIZED_MESSAGE =
   "You're not authorized to use this bot. Ask the operator to add your Slack user ID to SLACK_ALLOWED_USER_IDS.";
@@ -175,10 +178,33 @@ async function runPrompt(
     await say(replyThreadTs === undefined ? reply : { text: reply, thread_ts: replyThreadTs });
   } catch (error) {
     app.logger.error("mecatl prompt failed", error);
-    await notifyError(FAILURE_MESSAGE);
+    if (isStuckExternalAuthorization(error)) {
+      bridge.evictSession(threadKey);
+      await notifyError(EXTERNAL_AUTH_MESSAGE);
+    } else {
+      await notifyError(FAILURE_MESSAGE);
+    }
   } finally {
     await setSessionStatus(app, channelId, statusThreadTs, "active");
   }
+}
+
+/**
+ * Detects the "session has a live external authorization" failed-precondition
+ * error (#1283): a first-use ToolHive connector needs an interactive OAuth
+ * consent this bot can never complete, which otherwise wedges the thread's
+ * cached session forever. There's no dedicated stable error code for this
+ * (it shares the generic `failed_precondition` bucket — see
+ * `sdk/typescript/src/errors.ts`), so detection has to match the free-text
+ * message the server actually emits
+ * (`internal/adapter/server/mcp_authorization.go`).
+ */
+function isStuckExternalAuthorization(error: unknown): boolean {
+  return (
+    error instanceof ServerError &&
+    error.code === "failed_precondition" &&
+    error.message.includes("has a live external authorization")
+  );
 }
 
 /** Best-effort: a session-status hiccup on this still-settling API must never block a reply. */

@@ -1,4 +1,5 @@
 import type { App } from "@slack/bolt";
+import { ServerError } from "@stacklok/mecatl-sdk";
 import { describe, expect, it, vi } from "vitest";
 
 import { registerAgentSessions } from "../src/agentSessions.js";
@@ -10,6 +11,8 @@ const NOT_AUTHORIZED_MESSAGE =
 const RATE_LIMITED_MESSAGE = "Rate limit exceeded — try again in a bit.";
 const FAILURE_MESSAGE =
   "Something went wrong running that against mecatl. Check the bot's logs for details.";
+const EXTERNAL_AUTH_MESSAGE =
+  "This needs a connector to be authorized by an administrator before it can be used here.";
 
 // biome-ignore lint/suspicious/noExplicitAny: bolt's own event/message payload types aren't the point under test — a fake App only needs the shape agentSessions.ts actually uses.
 type AnyHandler = (args: any) => Promise<void>;
@@ -60,8 +63,11 @@ function setUp(bridge: MecatlBridge, config: BotConfig): FakeApp {
   };
 }
 
-function fakeBridge(handlePrompt: MecatlBridge["handlePrompt"]): MecatlBridge {
-  return { handlePrompt } as unknown as MecatlBridge;
+function fakeBridge(
+  handlePrompt: MecatlBridge["handlePrompt"],
+  evictSession: MecatlBridge["evictSession"] = vi.fn(),
+): MecatlBridge {
+  return { evictSession, handlePrompt } as unknown as MecatlBridge;
 }
 
 function fakeConfig(overrides: Partial<BotConfig> = {}): BotConfig {
@@ -127,7 +133,8 @@ describe("registerAgentSessions", () => {
   });
 
   it("reports a failed prompt in a channel thread as an ephemeral reply", async () => {
-    const bridge = fakeBridge(vi.fn().mockRejectedValue(new Error("boom")));
+    const evictSession = vi.fn();
+    const bridge = fakeBridge(vi.fn().mockRejectedValue(new Error("boom")), evictSession);
     const fake = setUp(bridge, fakeConfig());
 
     await fake.appMention({
@@ -146,6 +153,43 @@ describe("registerAgentSessions", () => {
     expect(fake.postEphemeral).toHaveBeenCalledWith(
       expect.objectContaining({ text: FAILURE_MESSAGE, user: "allowed-user" }),
     );
+    expect(evictSession).not.toHaveBeenCalled();
+  });
+
+  it("reports a stuck external-authorization session with an actionable message and evicts it (#1283)", async () => {
+    const evictSession = vi.fn();
+    const bridge = fakeBridge(
+      vi.fn().mockRejectedValue(
+        new ServerError(
+          'server: failed precondition: session "s1" has a live external authorization',
+          {
+            code: "failed_precondition",
+            status: 9,
+            transport: "grpc",
+          },
+        ),
+      ),
+      evictSession,
+    );
+    const fake = setUp(bridge, fakeConfig());
+
+    await fake.appMention({
+      event: {
+        bot_id: undefined,
+        channel: "C1",
+        text: "<@BOT> hi",
+        ts: "100.001",
+        type: "app_mention",
+        user: "allowed-user",
+      },
+      say: fake.say,
+    });
+
+    expect(fake.say).not.toHaveBeenCalled();
+    expect(fake.postEphemeral).toHaveBeenCalledWith(
+      expect.objectContaining({ text: EXTERNAL_AUTH_MESSAGE, user: "allowed-user" }),
+    );
+    expect(evictSession).toHaveBeenCalledWith("C1:100.001");
   });
 
   it("still replies to a successful prompt with a regular, thread-visible say", async () => {

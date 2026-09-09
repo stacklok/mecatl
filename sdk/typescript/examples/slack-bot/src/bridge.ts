@@ -61,6 +61,11 @@ export class MecatlBridge {
     await this.#client.close();
   }
 
+  /** Drops the cached session for a thread so the next prompt starts fresh. */
+  evictSession(threadKey: string): void {
+    this.#sessions.delete(threadKey);
+  }
+
   async #runPrompt(threadKey: string, text: string): Promise<PromptOutcome> {
     const session = await this.#sessionFor(threadKey);
     const run = await session.run(text, { onPermissionAsk: () => "allow_once" });
