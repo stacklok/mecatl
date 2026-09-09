@@ -107,6 +107,7 @@ var flagMetaByFlag = map[string]flagMeta{
 	"perf-mcp":                 {group: groupObservability, common: false, acp: acpExclude},
 	"goroutine-warn-threshold": {group: groupObservability, common: false, acp: acpExclude},
 	"goroutine-warn-interval":  {group: groupObservability, common: false, acp: acpExclude},
+	"product-metrics":          {group: groupObservability, common: true, acp: acpInclude},
 
 	// ── Driver connectivity (serve-only) ──────────────────────────────────
 	"driver-auth-token":            {group: groupDriver, common: false, acp: acpExclude},
