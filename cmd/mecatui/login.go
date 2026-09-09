@@ -165,12 +165,14 @@ func runDiscoveredRemoteLogin(address, grpcTarget string, scopesExplicit, noBrow
 	if err != nil {
 		return errors.New("login: protected-resource discovery returned an invalid enrollment profile")
 	}
-	confirmed, err := confirmDiscoveredEnrollment(os.Stdin, os.Stderr, enrollment)
-	if err != nil {
-		return fmt.Errorf("login: confirmation failed: %w", err)
-	}
-	if !confirmed {
-		return errors.New("login: discovered enrollment was not confirmed")
+	if !savedDiscoveredEnrollmentMatches(enrollment) {
+		confirmed, err := confirmDiscoveredEnrollment(os.Stdin, os.Stderr, enrollment)
+		if err != nil {
+			return fmt.Errorf("login: confirmation failed: %w", err)
+		}
+		if !confirmed {
+			return errors.New("login: discovered enrollment was not confirmed")
+		}
 	}
 	loginCtx, cancelLogin := context.WithTimeout(ctx, timeout)
 	defer cancelLogin()
@@ -183,6 +185,22 @@ func runDiscoveredRemoteLogin(address, grpcTarget string, scopesExplicit, noBrow
 	}
 	fmt.Fprintln(os.Stderr, "login successful")
 	return nil
+}
+
+func savedDiscoveredEnrollmentMatches(enrollment discoveredEnrollment) bool {
+	registry, err := clientauth.OpenExistingRegistry(filepath.Join(xdg.ConfigHome, "mecatl"))
+	if err != nil {
+		return false
+	}
+	saved, err := registry.Find(enrollment.Resource)
+	if err != nil {
+		return false
+	}
+	conn := enrollment.Connection
+	return saved.Identity.Equal(conn.Identity) &&
+		saved.ResourceURL == conn.ResourceURL &&
+		saved.IssuerCAFile == conn.IssuerCAFile &&
+		saved.IssuerAddressPolicy == conn.IssuerAddressPolicy
 }
 
 func discoverWithPublicBootstrap(ctx context.Context, resource protectedResource) (discoveredResource, error) {

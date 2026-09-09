@@ -92,6 +92,7 @@ func (m Model) bindSessionID(id string) Model {
 		if m.authorization.controlCancel != nil {
 			m.authorization.controlCancel()
 		}
+		m.authorization.stopFirstEventTimer()
 		m.authorization = mcpAuthorizationState{}
 		m.authorizationEvents = nil
 	}

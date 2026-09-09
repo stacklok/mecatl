@@ -115,6 +115,10 @@ PR after verification. There is no cleanup or status-only PR.
   that wraps raw dynamic rows before styling, preventing Lipgloss alignment
   padding from becoming vertical whitespace while retaining intentional
   Markdown and input-rail exceptions. Status: draft.
+- [Headless mecatui credential storage](headless-client-credential-storage.md) —
+  Linux-first, read-only Secret Service detection for a root-pinned keyring or
+  owner-only plaintext local credential backend; selection and upgrade-only
+  compatibility decisions are settled. Status: proposed.
 - [Persistent read-before-write ledgers](persistent-read-before-write-ledgers.md) —
   storage-independent, session-scoped read evidence with an in-memory default,
   a durable Redis contract proof, and fail-closed file-tool behavior. Status: draft.

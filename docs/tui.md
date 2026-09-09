@@ -210,7 +210,11 @@ server is authoritative.
 
 - **`mecatui login ADDRESS`** — enrolls a remote server. With a bare DNS hostname
   or HTTPS resource URL, it first performs anonymous RFC 9728 protected-resource
-  discovery and requires confirmation of the discovered values. For legacy or
+  discovery. The first enrollment displays the full discovered values and requires
+  default-deny confirmation. A later login skips both only when the newly discovered
+  canonical resource, complete identity (including scopes), issuer CA, and issuer-address
+  policy exactly match the saved registry connection for that resource; any changed value
+  is treated as a new enrollment and requires the full confirmation again. For legacy or
   private deployments without that profile, provide `--issuer`, `--client-id`, and
   `--audience` explicitly. It then performs Authorization Code + PKCE login and
   records target metadata and an encrypted, target-bound credential. It defaults to

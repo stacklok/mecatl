@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -133,6 +134,75 @@ func TestMCPAuthorizationPollIgnoresStaleAndCancelledControls(t *testing.T) {
 	}
 }
 
+// TestMCPAuthorizationPollSelfHealsAfterLostStreamSignal reproduces a live
+// stall: a poll's recheck opens a stream that never delivers an event and
+// never closes (a dropped stream-close frame over a flaky tunnel is
+// indistinguishable from this at the client). Without a bounded wait for the
+// first event, pollBusy stays true forever and applyMCPAuthorizationPollTick's
+// early-return path never reschedules — polling dies silently until something
+// unrelated happens to reset state. The first-event watchdog must cancel the
+// call, which surfaces as an ordinary stream error that resets pollBusy and
+// reschedules the next tick.
+func TestMCPAuthorizationPollSelfHealsAfterLostStreamSignal(t *testing.T) {
+	orig := mcpAuthorizationFirstEventTimeout
+	mcpAuthorizationFirstEventTimeout = 20 * time.Millisecond
+	t.Cleanup(func() { mcpAuthorizationFirstEventTimeout = orig })
+
+	control := &mcpAuthorizationControllerFake{blockOnCtx: true}
+	m := New(Deps{Ctx: context.Background(), MCPAuthorization: control})
+	m.sessionID = "session-1"
+	m = applyAll(m, client.MCPAuthorizationMsg{AuthorizationID: "auth-1", Status: mcpAuthorizationStatusPending})
+	gen := m.authorization.controlGen
+	m = applyAll(m, mcpAuthorizationActionMsg{sessionID: "session-1", authorizationID: "auth-1", gen: gen, text: "authorization page opened"})
+
+	mm, cmd := m.applyMCPAuthorizationPollTick(mcpAuthorizationPollTickMsg{sessionID: "session-1", authorizationID: "auth-1", gen: gen})
+	m = mm.(Model)
+	if !m.authorization.pollBusy || m.authorization.firstEventTimer == nil {
+		t.Fatal("poll tick did not mark busy and arm the first-event watchdog")
+	}
+
+	// Run only the control-start leaf of the batch — the other leaf is the
+	// self-perpetuating 3s reschedule tick, which must not fire here.
+	batch, ok := cmd().(tea.BatchMsg)
+	if !ok || len(batch) == 0 {
+		t.Fatal("poll tick did not return a batched command")
+	}
+	streamMsg, ok := batch[0]().(mcpAuthorizationStreamMsg)
+	if !ok {
+		t.Fatal("control leaf did not open a stream")
+	}
+	m = applyAll(m, streamMsg)
+	if m.authorizationEvents == nil {
+		t.Fatal("stream open did not arm event reading")
+	}
+
+	waitCmd := m.waitMCPAuthorizationEvent(m.sessionID, m.authorization.authorizationID, m.authorization.controlGen)
+	gotMsg := make(chan tea.Msg, 1)
+	go func() { gotMsg <- waitCmd() }()
+
+	var msg tea.Msg
+	select {
+	case msg = <-gotMsg:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first-event watchdog never unblocked the stalled stream")
+	}
+
+	mm2, cmd2, handled := m.updateMCPAuthorizationMsg(msg)
+	m = mm2.(Model)
+	if !handled {
+		t.Fatal("watchdog-triggered stream error was not handled")
+	}
+	if m.authorization.pollBusy {
+		t.Fatal("pollBusy was not reset after the watchdog fired")
+	}
+	if m.authorization.firstEventTimer != nil {
+		t.Fatal("first-event watchdog was not cleared once it fired")
+	}
+	if cmd2 == nil {
+		t.Fatal("watchdog recovery did not reschedule the next poll tick")
+	}
+}
+
 func TestMCPAuthorizationOpeningOrCopyingStartsPolling(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -218,6 +288,7 @@ type mcpAuthorizationControllerFake struct {
 	presentation, recheck, cancel int
 	presentationErr, recheckErr   error
 	controlStream                 *client.EventStream
+	blockOnCtx                    bool // ignore controlStream; return a stream whose Recv blocks until ctx is cancelled.
 }
 
 func (f *mcpAuthorizationControllerFake) MCPAuthorizationPresentation(context.Context, string, string) (string, error) {
@@ -225,8 +296,11 @@ func (f *mcpAuthorizationControllerFake) MCPAuthorizationPresentation(context.Co
 	return "https://authorization.example/", f.presentationErr
 }
 
-func (f *mcpAuthorizationControllerFake) RecheckMCPAuthorization(context.Context, string, string) (*client.EventStream, error) {
+func (f *mcpAuthorizationControllerFake) RecheckMCPAuthorization(ctx context.Context, _, _ string) (*client.EventStream, error) {
 	f.recheck++
+	if f.blockOnCtx {
+		return client.NewBlockedEventStream(ctx), nil
+	}
 	return f.controlStream, f.recheckErr
 }
 

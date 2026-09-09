@@ -3,6 +3,7 @@ package fstools
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strings"
 
 	"github.com/stacklok/mecatl/engine/session"
@@ -16,6 +17,10 @@ When to use:
 - Before editing any file. The Edit and Write tools require that a file was read
   this session and is unchanged; reading first satisfies that invariant.
 - To inspect source, config, or data files.
+
+Supported images:
+- PNG, JPEG, GIF, and WebP files return one typed image block. Image reads do
+  not support offset or limit.
 
 When NOT to use:
 - To find files by name (use Glob) or to search file contents (use Grep).
@@ -97,6 +102,10 @@ func (ReadTool) Execute(ctx context.Context, in session.ToolCall, env tool.Envir
 		return session.NewToolError(in.ID, fmt.Sprintf("cannot read %q: %v", args.Path, err)), nil
 	}
 
+	if result, isImage := readImage(ctx, in, env, args, data, ver); isImage {
+		return result, nil
+	}
+
 	// Record the read with the ADAPTER-MINTED authoritative version (ReadVersion
 	// returned it) in the Environment's selected ledger (ADR 0281). It performs
 	// NO file-content I/O; it stores this exact token so a later Edit/Write can
@@ -149,4 +158,26 @@ func (ReadTool) Execute(ctx context.Context, in session.ToolCall, env tool.Envir
 		out = "(file is empty)"
 	}
 	return session.NewToolResult(in.ID, truncateBytes(out)), nil
+}
+
+func readImage(ctx context.Context, in session.ToolCall, env tool.Environment, args readArgs, data []byte, ver tool.FileVersion) (session.ToolResult, bool) {
+	mime := http.DetectContentType(data)
+	if mime != "image/png" && mime != "image/jpeg" && mime != "image/gif" && mime != "image/webp" {
+		return session.ToolResult{}, false
+	}
+	if args.Offset != 0 || args.Limit != 0 {
+		return session.NewToolError(in.ID, "image reads do not support \"offset\" or \"limit\""), true
+	}
+	if len(data) > session.MaxMediaBytes {
+		return session.NewToolError(in.ID, fmt.Sprintf("image %q is %d bytes, which exceeds the %d-byte limit", args.Path, len(data), session.MaxMediaBytes)), true
+	}
+	image, err := session.NewImageContent(mime, data)
+	if err != nil {
+		return session.NewToolError(in.ID, fmt.Sprintf("cannot represent image %q: %v", args.Path, err)), true
+	}
+	image.BlockKind = session.BlockImage
+	if err := env.ReadLedger().RecordRead(ctx, tool.LedgerKey(env.Workspace().Root(), args.Path), ver); err != nil {
+		return session.NewToolError(in.ID, fmt.Sprintf("read %q, but failed to retain new read evidence: %v. Any earlier evidence remains usable only if it still matches the current file version.", args.Path, err)), true
+	}
+	return session.NewToolResultWithParts(in.ID, fmt.Sprintf("[image content: %s, %d bytes]", mime, len(data)), []session.Content{image}), true
 }

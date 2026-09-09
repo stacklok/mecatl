@@ -23,7 +23,7 @@ These tools are always present in a default session (no extra configuration requ
 
 | Catalog name | Purpose | Read-only? |
 |---|---|---|
-| `Read` | Read a file from the workspace by path. The primary way the model loads source code, config, and data files. | Yes |
+| `Read` | Read a file from the workspace by path. The primary way the model loads source code, config, and data files; detected PNG, JPEG, GIF, and WebP files return typed image content when the selected model supports images. | Yes |
 | `ListDir` | List one directory's immediate children. Results are sorted and directories carry a trailing `/`; virtual workspaces may derive directories from file paths and omit empty directories. | Yes |
 | `Write` | Create a missing file or conditionally replace an existing file in the workspace. A replacement requires a prior Read and an unchanged version; concurrent changes and creations surface as model-visible conflicts rather than being silently clobbered. | No |
 | `Edit` | Apply an exact-string replacement to a file. Enforces read-before-edit, exact match, and uniqueness (or `replace_all`). The file must be unchanged since it was read; a concurrent change or deletion since the read surfaces as a model-visible refusal to re-read and retry. Safer than Write for targeted changes. | No |
@@ -38,6 +38,10 @@ These tools are always present in a default session (no extra configuration requ
 | `WebFetch` | Fetch readable text from a public HTTP(S) URL. Present in both default and no-filesystem session profiles. | Yes |
 | `WebSearch` | Run a web search and return results. Present in both default and no-filesystem session profiles. | Yes |
 | `ToolSearch` | Search the catalog for hidden (progressively-disclosed) tools by keyword and hydrate them into the session. Only registered when progressive tool disclosure is enabled. | Yes |
+
+`Read` detects image content from its bytes rather than its filename. Image reads
+do not support `offset` or `limit`, are capped at 10 MiB, and retain a concise
+text fallback when the selected model cannot consume image blocks.
 
 ### Fetching a page without MCP
 

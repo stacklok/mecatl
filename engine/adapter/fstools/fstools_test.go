@@ -1,6 +1,7 @@
 package fstools
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memledger"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 )
@@ -201,6 +203,86 @@ func TestReadRecordsReadForEdit(t *testing.T) {
 		t.Fatalf("ReadVersion: %v", err)
 	} else if !cur.Equal(ver) {
 		t.Error("recorded version differed from current version after an unchanged Read")
+	}
+}
+
+func TestReadImageContent(t *testing.T) {
+	tests := []struct {
+		name, mime string
+		data       []byte
+	}{
+		{"png", "image/png", []byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR")},
+		{"jpeg", "image/jpeg", []byte("\xff\xd8\xff\xe0\x00\x10JFIF\x00")},
+		{"gif", "image/gif", []byte("GIF89a\x01\x00\x01\x00")},
+		{"webp", "image/webp", []byte("RIFF\x00\x00\x00\x00WEBPVP8 ")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ws := memfs.NewWorkspace("/")
+			ledger := memledger.New()
+			seed(t, ws, "image.txt", string(tt.data))
+
+			res := execWithLedger(t, ReadTool{}, call(t, "Read", map[string]any{"path": "image.txt"}), ws, ledger)
+			if res.IsError {
+				t.Fatalf("Read errored: %s", res.Content)
+			}
+			if res.Content != fmt.Sprintf("[image content: %s, %d bytes]", tt.mime, len(tt.data)) {
+				t.Errorf("fallback = %q", res.Content)
+			}
+			if len(res.Parts) != 1 {
+				t.Fatalf("parts = %d, want 1", len(res.Parts))
+			}
+			part := res.Parts[0]
+			if part.BlockKind != session.BlockImage || part.Kind != session.MediaImage || part.MIMEType != tt.mime || !bytes.Equal(part.Data, tt.data) {
+				t.Errorf("image part = %#v", part)
+			}
+			if got := port.RouteToolResultParts(res, port.ProviderCapabilities{}); got != nil {
+				t.Errorf("text-only projection = %#v, want nil", got)
+			}
+			ver, ok, err := ledger.RecordedVersion(context.Background(), tool.LedgerKey(ws.Root(), "image.txt"))
+			if err != nil || !ok {
+				t.Fatalf("RecordedVersion = %v, %v", ver, err)
+			}
+			_, current, err := ws.ReadVersion(context.Background(), "image.txt")
+			if err != nil || !current.Equal(ver) {
+				t.Errorf("recorded version differs from current: %v", err)
+			}
+		})
+	}
+
+	ws := memfs.NewWorkspace("/")
+	seed(t, ws, "not-an-image.png", "plain text\n")
+	res := exec(t, ReadTool{}, call(t, "Read", map[string]any{"path": "not-an-image.png"}), ws)
+	if res.IsError || len(res.Parts) != 0 || res.Content != "     1\tplain text\n" {
+		t.Errorf("non-image PNG result = %#v, want line-prefixed text without parts", res)
+	}
+}
+
+func TestReadImageRejectsRangesAndOversizeWithoutLedgerEvidence(t *testing.T) {
+	png := []byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR")
+	tests := []struct {
+		name string
+		args map[string]any
+		data []byte
+	}{
+		{"offset", map[string]any{"path": "image.png", "offset": 1}, png},
+		{"limit", map[string]any{"path": "image.png", "limit": 1}, png},
+		{"oversize", map[string]any{"path": "image.png"}, append(png, make([]byte, session.MaxMediaBytes+1-len(png))...)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ws := memfs.NewWorkspace("/")
+			ledger := memledger.New()
+			seed(t, ws, "image.png", string(tt.data))
+			res := execWithLedger(t, ReadTool{}, call(t, "Read", tt.args), ws, ledger)
+			if !res.IsError || len(res.Parts) != 0 {
+				t.Fatalf("result = %#v, want an error without parts", res)
+			}
+			_, ok, err := ledger.RecordedVersion(context.Background(), tool.LedgerKey(ws.Root(), "image.png"))
+			if err != nil || ok {
+				t.Errorf("rejected read ledger evidence = %v, %v", ok, err)
+			}
+		})
 	}
 }
 
