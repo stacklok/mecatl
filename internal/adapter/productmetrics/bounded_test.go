@@ -65,6 +65,14 @@ func TestRecorderNeverAttachesUnboundedAttributesOrSensitiveContent(t *testing.T
 		t.Fatalf("Collect: %v", err)
 	}
 
+	totalMetrics := 0
+	for _, sm := range rm.ScopeMetrics {
+		totalMetrics += len(sm.Metrics)
+	}
+	if totalMetrics < 10 {
+		t.Fatalf("collected only %d metrics, want at least 10 (the full mecatl.adoption.* instrument set) — the walk below would otherwise pass vacuously", totalMetrics)
+	}
+
 	for _, sm := range rm.ScopeMetrics {
 		for _, md := range sm.Metrics {
 			assertNoSensitiveSubstring(t, md.Name)
