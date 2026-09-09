@@ -158,10 +158,37 @@ func (c *titleCoordinator) drive(id session.SessionID) {
 	c.commit(id, attemptID, result)
 }
 
+// lockWithoutActiveRun waits for the current run lifecycle to settle, then returns
+// with runEntryMu still held. That closes both sides of the race: an existing run
+// cannot save over title metadata, and a new run cannot start between the title
+// coordinator's Load and Save. Waiting without runEntryMu lets terminal relay
+// cleanup deregister the run and close settled.
+func (c *titleCoordinator) lockWithoutActiveRun(id session.SessionID) (func(), bool) {
+	for {
+		unlock := c.svc.runEntryMu.lock(id)
+		c.svc.mu.Lock()
+		active := c.svc.runs[id]
+		c.svc.mu.Unlock()
+		if active == nil {
+			return unlock, true
+		}
+		settled := active.settled
+		unlock()
+		select {
+		case <-settled:
+		case <-c.ctx.Done():
+			return func() {}, false
+		}
+	}
+}
+
 // claim persists an incomplete attempt before provider I/O. Thus a process death
 // after the save has an explicit unknown outcome rather than risking rebilling it.
 func (c *titleCoordinator) claim(id session.SessionID) ([]string, string, ProviderSelector, bool, string) {
-	unlock := c.svc.runEntryMu.lock(id)
+	unlock, ok := c.lockWithoutActiveRun(id)
+	if !ok {
+		return nil, "", ProviderSelector{}, false, "coordinator_stopped"
+	}
 	defer unlock()
 	release, err := c.svc.acquireMutationLease(c.ctx, id)
 	if err != nil {
@@ -240,7 +267,10 @@ func (c *titleCoordinator) logCompletion(id session.SessionID, attemptID string,
 }
 
 func (c *titleCoordinator) commit(id session.SessionID, attemptID string, result TitleGenerationResult) {
-	unlock := c.svc.runEntryMu.lock(id)
+	unlock, ok := c.lockWithoutActiveRun(id)
+	if !ok {
+		return
+	}
 	defer unlock()
 	release, err := c.svc.acquireMutationLease(c.ctx, id)
 	if err != nil {

@@ -26,6 +26,138 @@ func (f titleGeneratorFunc) Generate(ctx context.Context, sources []string) Titl
 	return f(ctx, sources)
 }
 
+func TestTitleCoordinatorCommitDoesNotOverwriteConversationSavedByActiveRun(t *testing.T) {
+	base := memstore.New()
+	store := &titleCommitBarrierStore{
+		Store:   base,
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	providerStarted := make(chan struct{})
+	releaseProvider := make(chan struct{})
+	var requestsMu sync.Mutex
+	var requests []port.LLMRequest
+	provider := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) {
+		requestsMu.Lock()
+		requests = append(requests, req)
+		firstRequest := len(requests) == 1
+		requestsMu.Unlock()
+		if firstRequest {
+			close(providerStarted)
+			<-releaseProvider
+		}
+	})}, mockllm.TextTurn("done"), mockllm.TextTurn("done"))
+	engine := agent.NewEngine(agent.Deps{
+		LLM: provider, Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Store: store,
+	})
+	svc, err := NewService(Config{
+		Engine: engine, Store: store, SharedEngineRoot: "/ws", PlacementProvider: titlePlacementProvider{}, PlacementScope: "test",
+		TitleGenerator: titleGeneratorFunc(func(context.Context, []string) TitleGenerationResult { return TitleGenerationResult{} }),
+		Now:            func() time.Time { return time.Unix(1, 0) },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(svc.Close)
+	sess := pendingTitleSession(t, store, "title-chat-save-race")
+
+	_, attemptID, _, claimed, _ := svc.titleCoordinator.claim(sess.ID)
+	if !claimed {
+		t.Fatal("title attempt was not claimed")
+	}
+
+	const latestPrompt = "context written by the active chat run"
+	run, err := svc.StartRun(context.Background(), sess.ID, latestPrompt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-providerStarted:
+	case <-time.After(time.Second):
+		t.Fatal("chat run did not reach the provider")
+	}
+
+	commitDone := make(chan struct{})
+	go func() {
+		defer close(commitDone)
+		svc.titleCoordinator.commit(sess.ID, attemptID, TitleGenerationResult{
+			Title:   "Generated title",
+			Outcome: session.TitleAttemptSucceeded,
+		})
+	}()
+
+	close(releaseProvider)
+	for range run.Events() {
+	}
+	svc.FinishRun(sess.ID, run)
+
+	select {
+	case <-store.entered:
+	case <-time.After(time.Second):
+		t.Fatal("title commit did not reach its snapshot save")
+	}
+	close(store.release)
+	select {
+	case <-commitDone:
+	case <-time.After(time.Second):
+		t.Fatal("title commit did not finish")
+	}
+
+	got, err := base.Load(context.Background(), sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, message := range got.Conversation.Messages {
+		if message.Text == latestPrompt {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("title commit overwrote the newer chat snapshot: conversation = %#v", got.Conversation.Messages)
+	}
+
+	followUp, err := svc.StartRun(context.Background(), sess.ID, "does the model receive prior context?")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range followUp.Events() {
+	}
+	svc.FinishRun(sess.ID, followUp)
+
+	requestsMu.Lock()
+	defer requestsMu.Unlock()
+	if len(requests) != 2 {
+		t.Fatalf("provider requests = %d, want 2", len(requests))
+	}
+	for _, message := range requests[1].Messages {
+		if message.Text == latestPrompt {
+			return
+		}
+	}
+	t.Fatalf("follow-up request lost prior prompt: messages = %#v", requests[1].Messages)
+}
+
+type titleCommitBarrierStore struct {
+	*memstore.Store
+	entered chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (s *titleCommitBarrierStore) Save(ctx context.Context, sess *session.Session) error {
+	if sess.TitleGeneration == session.TitleGenerationGenerated {
+		s.once.Do(func() { close(s.entered) })
+		select {
+		case <-s.release:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return s.Store.Save(ctx, sess)
+}
+
 func TestTitleCoordinatorLifecycleUpdatesAdvanceRevision(t *testing.T) {
 	store := memstore.New()
 	svc := titleCoordinatorService(t, store, titleGeneratorFunc(func(context.Context, []string) TitleGenerationResult { return TitleGenerationResult{} }))
