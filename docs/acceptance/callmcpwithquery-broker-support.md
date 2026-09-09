@@ -2,11 +2,11 @@
 
 **Contract:** human-reviewed/v1
 **Phase:** broker-backed MCP result narrowing
-**Status:** proposed, 2026-09-09. Implementation exists locally under the directing user's explicit workflow waiver; no approval, merge, push, or PR is claimed.
-**Delivery:** Split. The directing user explicitly waived the plan spine for this local implementation; this is not a claim of plan approval or merge.
-**Expected tasks:** implementation and aggregate verification completed locally under the explicit waiver; no PR or merge is claimed.
-**Issue:** None — no tracking issue was supplied.
-**Plan PR:** absent — no push or PR is authorized.
+**Status:** proposed, 2026-09-09. Implementation exists locally under the directing user's explicit workflow waiver, live-verified against a real broker-backed deployment (see "Implementation evidence" below); the directing user has now explicitly requested a PR be opened. No merge is claimed — human review and merge remain required.
+**Delivery:** Split. The directing user explicitly waived the plan spine for this local implementation; this is not a claim of plan approval.
+**Expected tasks:** implementation, aggregate verification, and live end-to-end verification completed locally under the explicit waiver; no merge is claimed.
+**Issue:** [stacklok/mecatl#1304](https://github.com/stacklok/mecatl/issues/1304).
+**Plan PR:** this PR.
 **Approved baseline:** absent; implementation was explicitly authorized without one.
 
 `CallMcpWithQuery` remains the existing single model-facing `{server, tool, args?, jq_filter}` tool. Direct-manager calls keep their current path. For a broker-backed tool, it invokes only through the current session's already attached broker wrapper, then returns only the bounded jq projection; it never bypasses the attachment with a harness-owned upstream connection or records a successful raw response. This does not prohibit the concrete broker transport's existing connections: anonymous routes still connect to the configured `profile.URL`, as the baseline `anonymousCaller` does; protected routes still use the broker endpoint. The query transport preserves those destinations and filters before returning across the attachment boundary.
@@ -122,7 +122,34 @@ important findings; one advisory remains to link existing direct-manager
 connectivity proofs alongside AC2.1. This evidence does not claim approval,
 merge, or landed status.
 
+**Live end-to-end verification** (real kind cluster, Keycloak, and the
+connector-gateway.stacklok.dev fixture backend, mecak8s broker-only mode — no
+direct/global MCP manager configured): confirmed `CallMcpWithQuery` is
+registered in a broker-only session (previously absent entirely, per the
+tracked gap in issue #1304); confirmed it routes through the session's
+existing broker attachment and its normal lazy per-tool authorization (the
+same grant machinery, server debug logs, and continuation path as an ordinary
+protected tool call — no separate/bypass authorization surfaced); confirmed a
+direct call to the same tool legitimately exceeds mecatl's 25000-byte output
+cap, and confirmed `CallMcpWithQuery` with a genuinely narrowing jq filter
+(`keys`) successfully returns the bounded projection where the direct call
+cannot. A non-narrowing filter (`.`) correctly hits the query wrapper's own
+oversized-output rejection rather than the raw payload — expected per AC1.3,
+though its error message is generic rather than actionable; tracked as a
+known, non-blocking follow-up (see "Deferred decisions and known risks").
+
 ## Deferred decisions and known risks
 
 - The implementation may place the bounded projection in the attachment or its concrete broker adapter, but it must preserve the fixed behavior above and reuse the registered wrapper's route/authorization path.
 - A remote operation can succeed before jq evaluation reports an error; the result must say so without replaying the call.
+- `attachmentQueryTool.Execute` (`internal/adapter/mcpbroker/query.go`) currently
+  flattens every failure from the underlying tool's `Execute` (a pre-transport
+  replay-ledger rejection, a genuine transport failure, and an oversized-output
+  rejection after a successful call) into one generic message ("target may have
+  succeeded; automatic replay refused..."). Live-verified this is misleading in
+  the oversized-output case specifically: the direct-call path already gives
+  actionable guidance ("narrow your filter, e.g. try a specific field"), and
+  the query wrapper should too rather than reusing wording meant for a
+  genuinely ambiguous transport outcome. Non-blocking for this PR (the
+  underlying behavior is correct — outputs are never silently truncated or
+  replayed), but worth a small follow-up to distinguish the failure reasons.
