@@ -5,7 +5,7 @@
 **Accumulator branch:** `acc/path-escape-posture` (off `main`).
 
 The smallest set of work that turns the osfs out-of-root rejection from a silent
-dead-end (`ErrPathEscape`, which today only forces the model into a Bash
+dead-end (`ErrPathEscape`, which today only forces the model into a Shell
 workaround that loses the FS tools' invariants and audit shape) into a
 **posture-appropriate decision** — allow at `yolo`/`auto`, ask at
 `strict`/`trusted` — while keeping the untrusted-read-only-child population's
@@ -34,9 +34,9 @@ harness can demonstrate, not which packages exist on disk.
 - **Pseudo-filesystems are never relaxed.** `Read`/`Stat` of a path under `/proc`,
   `/sys`, or `/dev` stays a hard deny at every posture: an in-process FS read of
   `/proc/self/environ` returns the *server's* raw, unscrubbed environment, whereas
-  the Bash parity channel (`cat /proc/self/environ`) reads the child shell's
+  the Shell parity channel (`cat /proc/self/environ`) reads the child shell's
   `envscrub.Scrub`-scrubbed env ([`AGENTS.md` — the env-scrub gotcha](../../AGENTS.md)).
-  Relaxing pseudo-fs would open a NEW secret-exfiltration channel Bash does not
+  Relaxing pseudo-fs would open a NEW secret-exfiltration channel Shell does not
   provide, breaking the parity premise.
 
 ### The posture → escape-decision table
@@ -51,13 +51,13 @@ harness can demonstrate, not which packages exist on disk.
 | any child engine (Subagent / member / branch) | **hard deny, every posture** | **hard deny, every posture** |
 
 `auto` without the escape guardrail knob configured defaults to **allow-read /
-ask-write** (Bash parity for reads; never silent un-asked mutation below `yolo`).
+ask-write** (Shell parity for reads; never silent un-asked mutation below `yolo`).
 The guardrail-gated clause is the v2-deferred route, not v1 behaviour.
 
 > **The child row is about engine scope, not workspace trust.** There is no
 > "untrusted child FS" concept: a child's osfs workspace is built by the SAME
 > `newForkWorkspace` helper as every fork family and has the same containment as
-> the main session's. The issue-#40 trust gate nils a read-only child's *Bash
+> the main session's. The issue-#40 trust gate nils a read-only child's *Shell
 > shell* on an untrusted repo — it never touches the FS tools. So the child
 > boundary the relax must respect is simply that the relaxed construction options
 > are wired into the MAIN session's workspace only, never into `newForkWorkspace`
@@ -110,11 +110,11 @@ category (see the scope cuts).
 
 ---
 
-### Scenario 2 — `yolo` and `auto` allow reads (and `auto` reads stay Bash-parity)
+### Scenario 2 — `yolo` and `auto` allow reads (and `auto` reads stay Shell-parity)
 
 Under posture `yolo` and `auto`, an out-of-root absolute-path `Read`/`Stat`
 succeeds through the FS tool instead of failing with `ErrPathEscape`. This is
-the honesty fix: at those postures Bash already reads the same bytes
+the honesty fix: at those postures Shell already reads the same bytes
 unconditionally (posture `auto`/`yolo` derives `AllowAllTools` —
 [`internal/app/posture.go`](../../internal/app/posture.go) `applyPosture`), so
 the FS read boundary was cosmetic and only pushed the model to a worse-audited
@@ -144,7 +144,7 @@ lifecycle. Plan mode still permits the read (reads are not mutations).
   file's contents (no `ErrPathEscape`).
   - verify: `TestPathEscapePosture_Scenario2_YoloReadEscapeAllowed`
 - AC2.2: at posture `auto` with no escape guardrail knob, `Read` of an
-  out-of-root absolute path succeeds (Bash parity).
+  out-of-root absolute path succeeds (Shell parity).
   - verify: `TestPathEscapePosture_Scenario2_AutoReadEscapeAllowed`
 - AC2.3: an allowed read escape records the call verbatim in the
   `ToolCallRecorder` and emits `EvToolResult`, exactly as an in-root read.
@@ -224,7 +224,7 @@ physical symlink aliases may conservatively miss and require another Read.
 
 At `strict` and `trusted`, an out-of-root read or write resolves **Ask** rather
 than today's hard `ErrPathEscape`. This is the real UX win: the operator already
-gets an ask in these modes today, but it arrives as an opaque Bash `cat /path`
+gets an ask in these modes today, but it arrives as an opaque Shell `cat /path`
 after the model's FS attempt dead-ends; moving the ask onto the FS tool makes it
 legible and keeps the FS tools' invariants in play. Plan mode still hard-denies
 a write escape first (plan-mode deny precedes any rule —
@@ -270,7 +270,7 @@ child engine (Subagent / team member / Parallel branch) builds its FS workspace
 through the SAME shared `newForkWorkspace` helper as every fork family
 ([`internal/app/build.go`](../../internal/app/build.go) `newForkWorkspace`), and
 that helper must never receive the relaxed options — otherwise a read-only
-explorer child (which has Read/Grep/Glob even where its Bash shell is gated)
+explorer child (which has Read/Grep/Glob even where its Shell shell is gated)
 would silently gain the main session's escape reach. This is a scope boundary,
 not a trust boundary: it holds at every posture, for trusted and untrusted
 workspaces alike. Glob/Grep stay workspace-confined in **every** posture

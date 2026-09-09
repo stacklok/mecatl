@@ -35,7 +35,7 @@ running client renders, not which helpers exist on disk.
 
 ### Scenario 1 — bounded main-conversation tool cards
 
-A user sees a Bash, Grep, Subagent, or file-edit tool card in the main
+A user sees a Shell, Grep, Subagent, or file-edit tool card in the main
 conversation. Tool output is server-derived and cards are themed Lipgloss
 containers, as described by [`docs/tui.md`](../tui.md). The tool-card renderer
 must derive the final body width before layout and never hard-wrap a multiline
@@ -48,7 +48,7 @@ minimal-change rules in [`AGENTS.md`](../../AGENTS.md).
   subsequent source rows does not gain blank display rows from renderer padding,
   and its visible content fits the card body.
   - verify: `TestMecatuiCardLayout_Scenario1_ResultRowsWrapBeforeStyle`
-- AC1.2: Collapsed Bash, Grep, Subagent, large-JSON, and typed-artifact results
+- AC1.2: Collapsed Shell, Grep, Subagent, large-JSON, and typed-artifact results
   use their shared display-row budget without hiding meaningful rows behind
   padding-derived rows; Ctrl+t-expanded results retain the complete source
   content and intentional blank paragraphs.

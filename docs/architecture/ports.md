@@ -170,7 +170,7 @@ affordance must register under the gated name or extend the gate. A background
 call returns immediately with a `bashcmd-<callID>` job id and runs detached in
 the REAL workspace (no isolation — its effects may interleave with the model's
 own edits, and the description says so); the read-only **`ShellStatus`** tool
-(`engine/agent/bashstatus.go`, registered iff Shell is, never in child catalogs)
+(`engine/agent/bashstatus.go`, registered iff Shell is, so Shell-enabled child catalogs include `ShellStatus`)
 is the sole status/collect/cancel channel — no args → the run's job roster (ids
 + state + stop only), `job_id` → the command + retained output tail (live) or
 the exactly-once collected result (done), `wait_ms` (≤120s) parks, `cancel`

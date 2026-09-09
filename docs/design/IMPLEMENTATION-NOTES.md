@@ -2412,8 +2412,8 @@ other Shell construction to the agent tool — the read-only explorer catalog
 (`readOnlyExplorerCatalog`), per-def scoped catalogs (`buildAgentDefEngine`,
 `baseSubagentTools`), and team members (`buildMemberEngine` /
 `registerDefaultMemberTools`) — so a CHILD backgrounds a command against its OWN
-run's registry (run-scoped, drained at the child's run end) but gets NO ShellStatus
-(the collection channel stays main-catalog-only, mirroring the SubagentStatus rule).
+run's registry (run-scoped, drained at the child's run end); Shell-enabled child catalogs
+include **`ShellStatus`** for that child run's status/collection channel.
 The no-fs profile's excluded set gained `ShellStatus` (no Shell ⇒ no jobs to status;
 `noFSExcludedTools` in `internal/app/nofs_profile_test.go`). **Permissions (D5) are
 identical to foreground Shell:** the start is the ONE main-run ask when policy says
