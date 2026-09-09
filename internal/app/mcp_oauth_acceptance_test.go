@@ -214,7 +214,7 @@ func TestMCPOAuthHermeticAcceptance(t *testing.T) {
 			t.Fatal("process D close did not close its refreshed MCP session")
 		}
 
-		reference, err := os.ReadFile(filepath.Join("..", "..", "docs", "configuration-reference.md"))
+		reference, err := os.ReadFile(filepath.Join("..", "..", "user-docs", "reference", "configuration.md"))
 		collectError(&surfaces, err)
 		if err == nil {
 			surfaces = append(surfaces, string(reference))

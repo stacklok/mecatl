@@ -53,7 +53,7 @@ const maxTokenPrefix = 40
 // anyway and merely needs to confirm the stem belongs to it — re-encoding
 // forward proves that exactly as well, which is why decodeSessionToken is gone
 // along with the non-canonical-alias hazard that a reversible codec creates.
-// The operator workflow in docs/usage/troubleshooting.md already recovers ids
+// The operator workflow in user-docs/mecatui/sessions.md already recovers ids
 // from file contents and explicitly warns against inferring them from names.
 //
 // A collision would mean two sessions sharing one family. At 128 bits that is

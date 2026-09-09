@@ -533,7 +533,7 @@ type Config struct {
 	//     multi-host / multi-replica path; shares the Driver* auth/TLS + connection
 	//     cache).
 	//   - SessionLeaseK8sNamespace: a coordination.k8s.io Lease per session in that
-	//     namespace (the in-cluster multi-replica path; needs RBAC — see usage.md).
+	//     namespace (the in-cluster multi-replica path; needs RBAC; see the mecated deployment guide).
 	//   - SessionLeaseDir: a single-host flock lease under that directory (one
 	//     machine, several processes; flock auto-releases on crash).
 	// All empty = no explicit override → local StoreDir gets an automatic flock

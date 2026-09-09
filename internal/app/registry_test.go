@@ -141,7 +141,7 @@ func TestRegistryZeroKeys(t *testing.T) {
 	for _, want := range []string{
 		"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "OPENCODE_API_KEY",
 		"--openai-base-url", "--anthropic-base-url", "--openrouter-base-url", "--opencode-base-url",
-		"--mock", "docs/usage.md",
+		"--mock", "https://mecatl.dev/docs/features/choose-models",
 	} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("error message %q does not mention %q", msg, want)

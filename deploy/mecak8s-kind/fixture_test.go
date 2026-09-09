@@ -440,8 +440,8 @@ func TestMecak8sKindFixture_Scenario3_LoopbackReachability(t *testing.T) {
 
 func TestMecak8sKindFixture_Scenario3_LoginDocumentation(t *testing.T) {
 	for _, path := range []string{
-		"README.md", "../mecak8s-vmcp/README.md", "../../docs/usage/mecak8s.md",
-		"../README.md", "../../user-docs/building/deployment/mecak8s.md",
+		"README.md", "../mecak8s-vmcp/README.md", "../README.md",
+		"../../user-docs/building/deployment/mecak8s.md",
 	} {
 		body, err := os.ReadFile(path)
 		if err != nil {

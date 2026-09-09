@@ -474,7 +474,7 @@ var errNoProvider = errors.New(
 		"or OPENCODE_API_KEY (OpenCode Go) " +
 		"in the environment; for an OpenAI- or Anthropic-compatible/proxy endpoint pass the matching key " +
 		"plus --openai-base-url / --anthropic-base-url / --openrouter-base-url / --opencode-base-url; to try mecatl offline with " +
-		"no key run with --mock; see docs/usage.md for provider setup")
+		"no key run with --mock; see https://mecatl.dev/docs/features/choose-models for provider setup")
 
 // buildProviderRegistry constructs the registry from cfg and the injected env
 // detector. It builds (and resilience-wraps) ONLY the available providers — there
@@ -1588,7 +1588,7 @@ const (
 
 // toolhiveStatusHints is the ONE place the remediation-hint copy lives,
 // shared by the Build-time probe diagnostics, the v1 provider_status
-// projection (providerStatusProto), and (verbatim) docs/usage.md's
+// projection (providerStatusProto), and the public model-selection guide's
 // troubleshooting table — so the three surfaces cannot drift on wording.
 var toolhiveStatusHints = map[string]string{
 	statusUnreachable:  "start it with `thv llm proxy start`",
