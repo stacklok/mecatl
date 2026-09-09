@@ -103,6 +103,88 @@ func (c *attachmentCatalogue) Tools() []tool.Tool {
 	return append([]tool.Tool(nil), c.tools...)
 }
 
+// grantedBundle is the exact bundle authorization state read from the logical
+// session's locked fields, snapshotted for use after the lock is released.
+type grantedBundle struct {
+	transaction *authorizationTransaction
+	backends    []string
+	grant       *oauthGrant
+}
+
+// resolveGrantedBundle looks up the exact granted authorization and returns
+// its bundle backends and broker credential under the logical session lock.
+// unchanged reports a valid non-bundle grant, for which the caller must
+// return the existing catalogue without staging anything.
+func resolveGrantedBundle(logical *logicalSession, authorization session.ExternalAuthorization) (bundle grantedBundle, unchanged bool, err error) {
+	logical.mu.Lock()
+	defer logical.mu.Unlock()
+	transaction, err := lookupAuthorization(logical, authorization)
+	if err != nil || transaction.status != session.AuthorizationGranted {
+		return grantedBundle{}, false, contract.ErrAuthorizationNotFound
+	}
+	if transaction.bundleBackends == nil {
+		return grantedBundle{}, true, nil
+	}
+	grant := logical.brokerCredential
+	if grant == nil {
+		return grantedBundle{}, false, contract.ErrAuthorizationNotFound
+	}
+	return grantedBundle{
+		transaction: transaction,
+		backends:    append([]string(nil), transaction.bundleBackends...),
+		grant:       grant,
+	}, false, nil
+}
+
+// buildRefreshedCatalogue stages every configured backend's live metadata and
+// assembles the candidate attachment catalogue that replaces the static
+// declarations, without publishing it.
+func (a *Attachment) buildRefreshedCatalogue(ctx context.Context, logical *logicalSession, process *Process, backends []string) (*attachmentCatalogue, error) {
+	stagedRoutes, err := stageAuthenticatedDeclaredRoutes(ctx, process, &brokerTokenSource{runtime: a.runtime, logical: logical, ctx: ctx}, backends, a.catalogue, process.occupied)
+	if err != nil {
+		return nil, err
+	}
+	allRoutes := make([]route, 0, len(a.catalogue.routes)+len(stagedRoutes))
+	for _, route := range a.catalogue.routes {
+		// Static protected routes are replaced; prior broker routes are likewise
+		// replaced if this exact operation is retried after publication.
+		if route.oauth == nil && !route.broker {
+			allRoutes = append(allRoutes, route)
+		}
+	}
+	allRoutes = append(allRoutes, stagedRoutes...)
+	sortRoutes(allRoutes)
+	allTools := make([]tool.Tool, 0, len(allRoutes))
+	for _, route := range allRoutes {
+		base := &sessionTool{attachment: a, route: route}
+		if route.oauth != nil {
+			allTools = append(allTools, &protectedSessionTool{sessionTool: base})
+		} else {
+			allTools = append(allTools, base)
+		}
+	}
+	return newAttachmentCatalogue(allRoutes, allTools, nil), nil
+}
+
+// publishRefreshedCatalogue installs candidate only if the granting
+// authorization, broker credential, and process/attachment lifecycle are all
+// still exactly what they were when candidate was built. Holding the grant
+// and process lifecycle locks through the assignment gives close/deletion and
+// publication one winner.
+func (a *Attachment) publishRefreshedCatalogue(logical *logicalSession, process *Process, bundle grantedBundle, candidate *attachmentCatalogue) bool {
+	logical.mu.Lock()
+	defer logical.mu.Unlock()
+	process.lifecycleMu.Lock()
+	defer process.lifecycleMu.Unlock()
+	valid := !logical.deleted && logical.authorizations[bundle.transaction.identity] == bundle.transaction &&
+		bundle.transaction.status == session.AuthorizationGranted && logical.brokerCredential == bundle.grant &&
+		!process.closed && process.Runtime == a.runtime && !a.closed
+	if valid {
+		a.catalogue = candidate
+	}
+	return valid
+}
+
 // RefreshGrantedAuthorizationCatalogue replaces the static protected declarations
 // with admitted live metadata after the exact lazy bundle authorization succeeds.
 // A valid non-bundle grant returns the unchanged catalogue. Bundle publication
@@ -133,71 +215,28 @@ func (a *Attachment) RefreshGrantedAuthorizationCatalogue(ctx context.Context, a
 		return nil, ErrAuthenticatedDiscovery
 	}
 	logical := a.logical
-	logical.mu.Lock()
-	transaction, err := lookupAuthorization(logical, authorization)
-	if err != nil || transaction.status != session.AuthorizationGranted {
-		logical.mu.Unlock()
-		return nil, contract.ErrAuthorizationNotFound
+	bundle, unchanged, err := resolveGrantedBundle(logical, authorization)
+	if err != nil {
+		return nil, err
 	}
-	if transaction.bundleBackends == nil {
-		logical.mu.Unlock()
+	if unchanged {
 		return a.catalogue.Tools(), nil
-	}
-	bundleBackends := append([]string(nil), transaction.bundleBackends...)
-	grant := logical.brokerCredential
-	logical.mu.Unlock()
-	if grant == nil {
-		return nil, contract.ErrAuthorizationNotFound
 	}
 
 	process := a.runtime.process
 	backends, _, ok := process.catalogueInputs(a.runtime)
-	if !ok || len(backends) == 0 || !slices.Equal(bundleBackends, backends) {
+	if !ok || len(backends) == 0 || !slices.Equal(bundle.backends, backends) {
 		return nil, ErrAuthenticatedDiscovery
 	}
 	if a.catalogue.frozen != nil {
 		return a.catalogue.Tools(), nil
 	}
 
-	stagedRoutes, err := stageAuthenticatedDeclaredRoutes(opCtx, process, &brokerTokenSource{runtime: a.runtime, logical: logical, ctx: opCtx}, backends, a.catalogue, process.occupied)
+	candidate, err := a.buildRefreshedCatalogue(opCtx, logical, process, backends)
 	if err != nil {
 		return nil, err
 	}
-	allRoutes := make([]route, 0, len(a.catalogue.routes)+len(stagedRoutes))
-	for _, route := range a.catalogue.routes {
-		// Static protected routes are replaced; prior broker routes are likewise
-		// replaced if this exact operation is retried after publication.
-		if route.oauth == nil && !route.broker {
-			allRoutes = append(allRoutes, route)
-		}
-	}
-	allRoutes = append(allRoutes, stagedRoutes...)
-	sortRoutes(allRoutes)
-	allTools := make([]tool.Tool, 0, len(allRoutes))
-	for _, route := range allRoutes {
-		base := &sessionTool{attachment: a, route: route}
-		if route.oauth != nil {
-			allTools = append(allTools, &protectedSessionTool{sessionTool: base})
-		} else {
-			allTools = append(allTools, base)
-		}
-	}
-	candidate := newAttachmentCatalogue(allRoutes, allTools, nil)
-
-	// Publish only after every configured backend passed the existing validation
-	// boundary. Hold the grant and process lifecycle locks through the assignment
-	// so close/deletion and publication have one winner.
-	logical.mu.Lock()
-	process.lifecycleMu.Lock()
-	valid := !logical.deleted && logical.authorizations[transaction.identity] == transaction &&
-		transaction.status == session.AuthorizationGranted && logical.brokerCredential == grant &&
-		!process.closed && process.Runtime == a.runtime && !a.closed
-	if valid {
-		a.catalogue = candidate
-	}
-	process.lifecycleMu.Unlock()
-	logical.mu.Unlock()
-	if !valid {
+	if !a.publishRefreshedCatalogue(logical, process, bundle, candidate) {
 		return nil, ErrAuthenticatedDiscovery
 	}
 	return candidate.Tools(), nil

@@ -363,6 +363,9 @@ func (s *Service) continueGrantedAuthorizationLocked(ctx context.Context, sess *
 		return MCPAuthorizationResult{}, fmt.Errorf("%w: continuation attachment", ErrInternal)
 	}
 	exactTools, refreshErr := attachment.RefreshGrantedAuthorizationCatalogue(ctx, claimed.Authorization)
+	if refreshErr == nil {
+		exactTools = withAttachmentQueryTool(attachment, exactTools)
+	}
 	release()
 	if refreshErr != nil {
 		if restoreErr := s.restoreAuthorizationClaimOrSettle(ctx, sess.ID, sess, claimed); restoreErr != nil {
