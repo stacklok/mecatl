@@ -233,13 +233,18 @@ func TestSessionAffinityAndHandoff_Scenario7_ClientTransportProviderBytes(t *tes
 	}
 
 	badCases := []struct {
-		name               string
-		ctx                func(string) context.Context
-		allowsPreStatusEOF bool
+		name                    string
+		ctx                     func(string) context.Context
+		requiresInvalidArgument bool
+		allowsPreStatusEOF      bool
 	}{
 		{
-			name:               "duplicate",
-			allowsPreStatusEOF: true,
+			// The server rejects duplicate affinity values with InvalidArgument, but
+			// on this bidi stream it can close before Send observes those trailers.
+			// In that pre-status transport race, gRPC reports io.EOF instead.
+			name:                    "duplicate",
+			requiresInvalidArgument: true,
+			allowsPreStatusEOF:      true,
 			ctx: func(id string) context.Context {
 				return metadata.NewOutgoingContext(context.Background(), metadata.Pairs(
 					sessionaffinity.HeaderName, id,
@@ -248,13 +253,17 @@ func TestSessionAffinityAndHandoff_Scenario7_ClientTransportProviderBytes(t *tes
 			},
 		},
 		{
+			// gRPC may reject leading whitespace while encoding metadata, before the
+			// server can return its ordinary InvalidArgument response. This case only
+			// requires rejection.
 			name: "illegal",
 			ctx: func(id string) context.Context {
 				return metadata.NewOutgoingContext(context.Background(), metadata.Pairs(sessionaffinity.HeaderName, " "+id))
 			},
 		},
 		{
-			name: "mismatch",
+			name:                    "mismatch",
+			requiresInvalidArgument: true,
 			ctx: func(string) context.Context {
 				return metadata.NewOutgoingContext(context.Background(), metadata.Pairs(sessionaffinity.HeaderName, "different-session"))
 			},
@@ -268,10 +277,7 @@ func TestSessionAffinityAndHandoff_Scenario7_ClientTransportProviderBytes(t *tes
 			if err == nil {
 				t.Fatal("illegal affinity was accepted")
 			}
-			// The server rejects duplicate affinity values with InvalidArgument, but
-			// on this bidi stream it can close before Send observes those trailers.
-			// In that pre-status transport race, gRPC reports io.EOF instead.
-			if status.Code(err) != codes.InvalidArgument && (!tc.allowsPreStatusEOF || !errors.Is(err, io.EOF)) {
+			if tc.requiresInvalidArgument && status.Code(err) != codes.InvalidArgument && (!tc.allowsPreStatusEOF || !errors.Is(err, io.EOF)) {
 				t.Fatalf("status = %v (%v), want InvalidArgument or documented pre-status EOF", status.Code(err), err)
 			}
 			if after := len(fixture.provider.captured()); after != before {
