@@ -198,11 +198,16 @@ func TestCanonicalShellTool_Scenario2_LegacyConfigPreservesDeny(t *testing.T) {
 	cfg, err := parseYAML([]byte(`
 permissions:
   allow: ["Bash(go test:*)"]
-  deny: ["Bash(go test:*)"]
+  deny: ["Bash(go test:*)", "BashSystemTemp"]
 guardrails:
   model: checker
   rules:
     - match: Bash
+    - match: Bash*
+    - match: BashStatus
+    - match: BashStatus*
+    - match: BashSystemTemp
+    - match: BashSystemTemp*
 `))
 	if err != nil {
 		t.Fatalf("parseYAML: %v", err)
@@ -214,11 +219,17 @@ guardrails:
 	if decision.Effect != governance.Deny {
 		t.Fatalf("legacy Bash rules decision = %q, want deny", decision.Effect)
 	}
+	tempDecision := permpolicy.NewPolicy(rules, nil).Evaluate(context.Background(), "legacy", session.ModeDefault, session.NewToolCall("temp", "ShellSystemTemp", nil), nil)
+	if tempDecision.Effect != governance.Deny {
+		t.Fatalf("legacy BashSystemTemp rule decision = %q, want deny", tempDecision.Effect)
+	}
 	guardrails := cfg.Guardrails
-	if guardrails == nil || len(guardrails.Rules) != 1 {
+	if guardrails == nil || len(guardrails.Rules) != 6 {
 		t.Fatalf("guardrails = %#v", guardrails)
 	}
-	if guardrails.Rules[0].Match != tool.ShellToolName {
-		t.Fatalf("legacy guardrail match = %q, want %q", guardrails.Rules[0].Match, tool.ShellToolName)
+	for i, want := range []string{tool.ShellToolName, "Shell*", "ShellStatus", "ShellStatus*", "ShellSystemTemp", "ShellSystemTemp*"} {
+		if got := guardrails.Rules[i].Match; got != want {
+			t.Errorf("legacy guardrail match = %q, want %q", got, want)
+		}
 	}
 }

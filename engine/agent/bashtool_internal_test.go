@@ -54,6 +54,9 @@ type fakeStreamingRunner struct {
 	exitCode  int
 	err       error
 	shell     string
+	mu        sync.Mutex
+	command   string
+	scope     tool.TemporaryScope
 	run       chan struct{} // closed by the test to release RunStreaming
 	started   chan struct{} // closed (at most once) when RunStreaming begins
 	sawCancel chan struct{} // closed when ctx dies while blocked
@@ -69,7 +72,10 @@ func (*fakeStreamingRunner) Run(context.Context, string) (tool.CommandResult, er
 	return tool.CommandResult{}, errors.New("fakeStreamingRunner: foreground Run not expected")
 }
 
-func (f *fakeStreamingRunner) RunStreaming(ctx context.Context, _ string, out io.Writer) (int, error) {
+func (f *fakeStreamingRunner) RunStreaming(ctx context.Context, command string, out io.Writer) (int, error) {
+	f.mu.Lock()
+	f.command = command
+	f.mu.Unlock()
 	if f.started != nil {
 		// Close at most once: a table row may reuse one runner for the call,
 		// and a started channel shared across rows must never double-close.
@@ -102,7 +108,10 @@ func (f *fakeStreamingRunner) RunStreamingWithEnvironment(ctx context.Context, c
 	return f.RunStreaming(ctx, command, out)
 }
 
-func (f *fakeStreamingRunner) RunStreamingWithTemporaryScope(ctx context.Context, command string, _ tool.TemporaryScope, out io.Writer) (int, error) {
+func (f *fakeStreamingRunner) RunStreamingWithTemporaryScope(ctx context.Context, command string, scope tool.TemporaryScope, out io.Writer) (int, error) {
+	f.mu.Lock()
+	f.scope = scope
+	f.mu.Unlock()
 	return f.RunStreaming(ctx, command, out)
 }
 
@@ -489,8 +498,16 @@ func TestShellToolBackgroundTerminalClassification(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			reg := newChildRunRegistry()
 			caps := parentCaps{children: reg}
-			runner := *tc.runner
-			runner.started = make(chan struct{})
+			runner := &fakeStreamingRunner{
+				out:       tc.runner.out,
+				exitCode:  tc.runner.exitCode,
+				err:       tc.runner.err,
+				shell:     tc.runner.shell,
+				run:       tc.runner.run,
+				started:   make(chan struct{}),
+				sawCancel: tc.runner.sawCancel,
+				streamErr: tc.runner.streamErr,
+			}
 			bt := NewShellTool().(childCapableTool)
 
 			ctx := context.Background()
@@ -503,7 +520,7 @@ func TestShellToolBackgroundTerminalClassification(t *testing.T) {
 				ctx = cancelCtx
 			}
 
-			res, _ := bt.ExecuteWithParent(ctx, bashCall("bg1", "cmd", timeoutMS, true), bashEnvRunner(&runner), nil, caps)
+			res, _ := bt.ExecuteWithParent(ctx, bashCall("bg1", "cmd", timeoutMS, true), bashEnvRunner(runner), nil, caps)
 			if res.IsError {
 				t.Fatalf("start failed: %q", res.Content)
 			}

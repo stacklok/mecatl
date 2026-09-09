@@ -2,7 +2,7 @@
 
 **Contract:** human-reviewed/v1
 **Phase:** command-tool identity and POSIX compatibility
-**Status:** in-progress, 2026-09-09. The approved implementation has begun on its implementation branch; `landed` remains proposed until its implementation PR merges.
+**Status:** landed, 2026-09-09. The implementation candidate passed its required gates; `landed` becomes authoritative when its implementation PR merges.
 **Delivery:** Split. This changes model-facing tool schemas, compatibility behavior, operator configuration, durable awaiting-call handling, and an engine-module dependency; those interfaces require a Plan / Interface checkpoint before implementation.
 **Expected tasks:** deferred to orchestration
 **Issue:** [stacklok/mecatl#1109](https://github.com/stacklok/mecatl/issues/1109).

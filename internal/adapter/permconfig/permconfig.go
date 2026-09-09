@@ -355,8 +355,24 @@ func lostRuleCounts(data []byte) (deny, ask, allow int, ok bool) {
 }
 
 func canonicalLegacyToolName(name string) string {
-	if name == "Bash" {
-		return "Shell"
+	if strings.HasSuffix(name, "*") {
+		switch strings.TrimSuffix(name, "*") {
+		case "Bash":
+			return "Shell*"
+		case "BashStatus":
+			return "ShellStatus*"
+		case "BashSystemTemp":
+			return "ShellSystemTemp*"
+		}
 	}
-	return name
+	switch name {
+	case "Bash":
+		return "Shell"
+	case "BashStatus":
+		return "ShellStatus"
+	case "BashSystemTemp":
+		return "ShellSystemTemp"
+	default:
+		return name
+	}
 }

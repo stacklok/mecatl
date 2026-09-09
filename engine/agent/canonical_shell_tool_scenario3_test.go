@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"encoding/json"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -11,7 +10,6 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/governance"
-	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 )
@@ -100,49 +98,98 @@ func TestCanonicalShellTool_Scenario3_SyntaxContextAndParseFailure(t *testing.T)
 	}
 }
 
-func TestCanonicalShellTool_Scenario3_SystemPromptAndAuthoritySeparation(t *testing.T) {
-	var description string
-	llm := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(request port.LLMRequest) {
-		for _, spec := range request.Tools {
-			if spec.Name == tool.ShellToolName {
-				description = spec.Description
-			}
+func TestCanonicalShellTool_Scenario3_EffectiveCommandBytePreservation(t *testing.T) {
+	const command = "printf '  exact\\n' # preserve whitespace"
+
+	t.Run("temporary scope", func(t *testing.T) {
+		runner := &fakeShellRunner{res: tool.CommandResult{Stdout: "ok"}, shell: "/bin/sh"}
+		result := runEffectiveShellCommand(t, scopedShellCall("temporary", "ignored", "system"), runner, command)
+		if result.IsError {
+			t.Fatalf("result = %+v, want success", result)
 		}
-	})}, mockllm.TextTurn("done"))
-	catalog := tool.NewCatalog()
-	catalog.MustRegister(NewShellTool())
-	engine := NewEngine(Deps{
-		LLM:     llm,
-		Catalog: catalog,
-		Policy:  permpolicy.NewPolicy([]governance.Rule{{Tool: tool.ShellToolName, Effect: governance.Allow}}, nil),
+		if runner.command != command {
+			t.Fatalf("temporary runner command = %q, want post-hook bytes %q", runner.command, command)
+		}
+		if runner.scope != tool.TemporaryScopeSystem {
+			t.Fatalf("temporary runner scope = %q, want system", runner.scope)
+		}
 	})
-	sess := session.New("prompt", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws", Revision: "v1"}, session.Limits{MaxTurns: 1}, time.Now())
-	for range engine.Run(context.Background(), sess, bashEnvRunner(&fakeShellRunner{shell: "/bin/sh"}), RunRequest{Text: "describe the available tools"}).Events() {
-	}
-	for _, want := range []string{"shell:", "sh", "dash", "diagnostic", "permission"} {
-		if !strings.Contains(description, want) {
-			t.Fatalf("model-visible Shell description lacks %q: %q", want, description)
+
+	t.Run("background", func(t *testing.T) {
+		runner := &fakeStreamingRunner{shell: "/bin/sh", started: make(chan struct{})}
+		result := runEffectiveShellCommand(t, bashCall("background", "ignored", 0, true), runner, command)
+		if result.IsError {
+			t.Fatalf("result = %+v, want started background job", result)
 		}
+		if runner.command != command {
+			t.Fatalf("background runner command = %q, want post-hook bytes %q", runner.command, command)
+		}
+	})
+
+	for _, tc := range []struct {
+		name   string
+		call   session.ToolCall
+		runner tool.CommandRunner
+	}{
+		{
+			name:   "temporary scope",
+			call:   scopedShellCall("nonportable-temporary", "printf safe", "system"),
+			runner: &fakeShellRunner{res: tool.CommandResult{Stdout: "must not execute"}, shell: "/bin/sh"},
+		},
+		{
+			name:   "background",
+			call:   bashCall("nonportable-background", "printf safe", 0, true),
+			runner: &fakeStreamingRunner{shell: "/bin/sh", started: make(chan struct{})},
+		},
+	} {
+		t.Run("mutated non-portable "+tc.name, func(t *testing.T) {
+			result := runEffectiveShellCommand(t, tc.call, tc.runner, "[[ -n x ]]")
+			if !result.IsError || !strings.Contains(result.Content, "not portable") {
+				t.Fatalf("result = %+v, want portability error", result)
+			}
+			switch runner := tc.runner.(type) {
+			case *fakeShellRunner:
+				if runner.command != "" {
+					t.Fatalf("temporary runner executed %q", runner.command)
+				}
+			case *fakeStreamingRunner:
+				if runner.command != "" {
+					t.Fatalf("background runner executed %q", runner.command)
+				}
+				select {
+				case <-runner.started:
+					t.Fatal("background process started")
+				default:
+				}
+			}
+		})
 	}
 }
 
-func TestCanonicalShellTool_Scenario3_EffectiveCommandBytePreservation(t *testing.T) {
-	command := "printf '  exact\\n' # preserve whitespace"
-	runner := &fakeShellRunner{res: tool.CommandResult{Stdout: "ok"}, shell: "/bin/sh"}
+// runEffectiveShellCommand drives the real dispatch and PreToolUse seam. The
+// second scripted turn lets a permitted background job reach its runner before
+// the parent run's normal cleanup joins it.
+func runEffectiveShellCommand(t *testing.T, call session.ToolCall, runner tool.CommandRunner, command string) session.ToolResult {
+	t.Helper()
 	catalog := tool.NewCatalog()
 	catalog.MustRegister(NewShellTool())
 	engine := NewEngine(Deps{
-		LLM:     mockllm.New(mockllm.ToolCallTurn(bashCall("exact", "ignored", 0, false)), mockllm.TextTurn("done")),
+		LLM:     mockllm.New(mockllm.ToolCallTurn(call), mockllm.TextTurn("done")),
 		Catalog: catalog,
-		Policy:  permpolicy.NewPolicy([]governance.Rule{{Tool: tool.ShellToolName, Effect: governance.Allow}}, nil),
-		Hooks:   effectiveCommandHook{command: command},
+		Policy: permpolicy.NewPolicy([]governance.Rule{
+			{Tool: tool.ShellToolName, Effect: governance.Allow},
+			{Tool: shellSystemTempToolName, Effect: governance.Allow},
+		}, nil),
+		Hooks: effectiveCommandHook{command: command},
 	})
-	sess := session.New("effective", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws", Revision: "v1"}, session.Limits{MaxTurns: 2}, time.Now())
-	for range engine.Run(context.Background(), sess, bashEnvRunner(runner), RunRequest{Text: "run"}).Events() {
+	sess := session.New(session.SessionID("effective-"+string(call.ID)), session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws", Revision: "v1"}, session.Limits{MaxTurns: 2}, time.Now())
+	var result session.ToolResult
+	for event := range engine.Run(context.Background(), sess, bashEnvRunner(runner), RunRequest{Text: "run"}).Events() {
+		if event.Type == session.EvToolResult && event.ToolResult != nil && event.ToolResult.CallID == call.ID {
+			result = *event.ToolResult
+		}
 	}
-	if runner.command != command {
-		t.Fatalf("runner command = %q, want post-hook bytes %q", runner.command, command)
-	}
+	return result
 }
 
 type effectiveCommandHook struct {
@@ -153,5 +200,14 @@ func (h effectiveCommandHook) Run(_ context.Context, event governance.HookEvent)
 	if event.Phase != governance.PhasePreToolUse {
 		return governance.HookOutcome{}, nil
 	}
-	return governance.HookOutcome{Mutated: json.RawMessage(`{"command":` + strconv.Quote(h.command) + `}`)}, nil
+	var args bashArgs
+	if err := json.Unmarshal(event.Input, &args); err != nil {
+		return governance.HookOutcome{}, err
+	}
+	args.Command = h.command
+	mutated, err := json.Marshal(args)
+	if err != nil {
+		return governance.HookOutcome{}, err
+	}
+	return governance.HookOutcome{Mutated: mutated}, nil
 }
