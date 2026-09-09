@@ -208,11 +208,12 @@ func TestInspectSessionLineageIsolation_Scenario1_LegacyHandleMigration(t *testi
 		}
 	}
 	handle := firstHandle(t, inspect(t, inspector, `{"view":"related"}`))
-	last := byte('A')
-	if handle[len(handle)-1] == last {
-		last = 'B'
+	index := len("v2.")
+	replacement := byte('A')
+	if handle[index] == replacement {
+		replacement = 'B'
 	}
-	tampered := handle[:len(handle)-1] + string(last)
+	tampered := handle[:index] + string(replacement) + handle[index+1:]
 	store.loads, store.queries = nil, nil
 	result := inspect(t, inspector, `{"view":"status","scope_handle":"`+tampered+`"}`)
 	if !result.IsError || len(store.loads) != 0 || len(store.queries) != 0 {
