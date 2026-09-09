@@ -20,10 +20,13 @@ type fakeShellRunner struct {
 	res tool.CommandResult
 	err error
 
+	shell   string
 	mu      sync.Mutex
 	command string
 	scope   tool.TemporaryScope
 }
+
+func (f *fakeShellRunner) ShellPath() string { return f.shell }
 
 func (f *fakeShellRunner) Run(_ context.Context, command string) (tool.CommandResult, error) {
 	f.mu.Lock()
@@ -50,6 +53,7 @@ type fakeStreamingRunner struct {
 	out       string // written to the stream before returning
 	exitCode  int
 	err       error
+	shell     string
 	run       chan struct{} // closed by the test to release RunStreaming
 	started   chan struct{} // closed (at most once) when RunStreaming begins
 	sawCancel chan struct{} // closed when ctx dies while blocked
@@ -58,6 +62,8 @@ type fakeStreamingRunner struct {
 }
 
 var _ tool.CommandStreamer = (*fakeStreamingRunner)(nil)
+
+func (f *fakeStreamingRunner) ShellPath() string { return f.shell }
 
 func (*fakeStreamingRunner) Run(context.Context, string) (tool.CommandResult, error) {
 	return tool.CommandResult{}, errors.New("fakeStreamingRunner: foreground Run not expected")

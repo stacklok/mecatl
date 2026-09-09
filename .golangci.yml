@@ -114,6 +114,7 @@ linters:
             - '!$test'
           allow:
             - $gostd
+            - mvdan.cc/sh/v3/syntax
           deny:
             - pkg: os
               desc: 'core domain must not import os (CLAUDE.md layering rule); side effects belong in adapters/composition'
@@ -353,6 +354,7 @@ linters:
             - $gostd
             - github.com/stacklok/mecatl/engine/session
             - github.com/stacklok/mecatl/engine/tool
+            - github.com/stacklok/mecatl/engine/governance
           deny:
             - pkg: os
               desc: 'fstools are the core FS tool bodies over the injected tool.Workspace/CommandRunner; they must not touch the real OS'

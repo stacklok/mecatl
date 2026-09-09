@@ -13,6 +13,8 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Added
 
+- **`governance.ShellCompatibilityError`** ([ADR 0317](../docs/adr/0317-canonical-shell-command-tool.md)) — returns bounded, diagnostic-only portable-POSIX feedback for a model-facing command when a trusted configured shell path has basename `sh` or `dash`. Its private parser classification recognizes only the approved Bash AST forms and never supplies reconstructed command text to a runner. Added (minor).
+
 - **Session-load failure classification** — adds `port.SessionLoadFailureClass`,
   `SessionLoadFailureError`, `ErrSessionLoadFailure`, `NewSessionLoadFailure`, and
   `ClassifySessionLoadFailure`. Snapshot-backed stores can distinguish bounded

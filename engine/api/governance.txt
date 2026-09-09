@@ -39,6 +39,7 @@ func NeutraliseFraming(s string) string
 func NewEvaluator(rules []Rule, opts ...EvaluatorOption) *Evaluator
 func ReadOnlyShell(cmd string) bool
 func ShellCommandFromArgs(args json.RawMessage) (string, bool)
+func ShellCompatibilityError(shellPath string, command string) error
 func SplitCommands(cmd string) []string
 func SubstitutionReadOnly(seg string) bool
 func WithAudience(a Audience) EvaluatorOption

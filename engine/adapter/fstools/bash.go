@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 )
@@ -36,6 +37,10 @@ Behavior:
 - Despite its name, Shell does not necessarily run Shell: it invokes "shell -c command"
   with the shell reported by "shell:" in the system prompt's <env> block (for
   example, "/bin/sh").
+- When the configured shell path basename is sh or dash, Shell provides a limited
+  compatibility diagnostic for [[ ... ]], process substitution, array expressions,
+  and ANSI-C quotes before execution. This is feedback only: permission, guardrail,
+  trust, and secret-scrubbing controls remain independent.
 - The shell is non-interactive: it has no terminal or user input. Do not run
   interactive commands such as "git rebase -i", editors, pagers, or REPLs.
 - Under a subagent (a forked branch or an isolated team member) the working
@@ -158,6 +163,10 @@ func (ShellTool) Execute(ctx context.Context, in session.ToolCall, env tool.Envi
 		return session.NewToolError(in.ID, bashErrorMessage("", tool.ErrNoShell, 0)), nil
 	}
 
+	if err := shellCompatibilityDiagnostic(runner, args.Command); err != nil {
+		return session.NewToolError(in.ID, err.Error()), nil
+	}
+
 	if args.TimeoutMS > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, time.Duration(args.TimeoutMS)*time.Millisecond)
@@ -183,6 +192,14 @@ func (ShellTool) Execute(ctx context.Context, in session.ToolCall, env tool.Envi
 		return session.NewToolError(in.ID, out), nil
 	}
 	return session.NewToolResult(in.ID, out), nil
+}
+
+func shellCompatibilityDiagnostic(runner tool.CommandRunner, command string) error {
+	provider, ok := runner.(interface{ ShellPath() string })
+	if !ok {
+		return nil
+	}
+	return governance.ShellCompatibilityError(provider.ShellPath(), command)
 }
 
 func fstoolsTemporaryScope(scope string) tool.TemporaryScope {

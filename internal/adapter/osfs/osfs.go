@@ -1314,6 +1314,11 @@ type CommandRunner struct {
 // binding uses it to prove that a returned runner and Workspace share one root.
 func (r *CommandRunner) BoundWorkspaceRoot() string { return r.root }
 
+// ShellPath reports the configured shell path without resolving symlinks. The
+// Shell tool uses its basename only for the bounded POSIX compatibility
+// diagnostic; execution continues to use this runner's exact configured path.
+func (r *CommandRunner) ShellPath() string { return r.shell }
+
 // CommandRunnerOption configures a CommandRunner at construction.
 type CommandRunnerOption func(*CommandRunner)
 

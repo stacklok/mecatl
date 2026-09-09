@@ -84,9 +84,10 @@ var coreImportRules = []coreImportRule{
 		desc: "session may import governance's capability value + stdlib; governance stays session-free",
 	},
 	{
-		pkg:         modulePrefix + "engine/governance",
-		allowedCore: map[string]bool{},
-		desc:        "governance is the session-free domain leaf: it may import only stdlib (zero internal imports)",
+		pkg:             modulePrefix + "engine/governance",
+		allowedCore:     map[string]bool{},
+		allowedExternal: map[string]bool{"mvdan.cc/sh/v3/syntax": true},
+		desc:            "governance is the session-free domain leaf: it may import stdlib plus mvdan.cc/sh/v3/syntax for private Shell compatibility classification",
 	},
 	{
 		pkg: modulePrefix + "engine/learning",

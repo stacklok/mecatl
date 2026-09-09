@@ -233,7 +233,7 @@ consumers — while the heavy adapters and the composition layer stay under
 `internal/`. `engine/` **is its own Go module**
 (`github.com/stacklok/mecatl/engine`), kept in this repo as a monorepo via a
 committed `go.work`; its standalone dependency closure is just `doublestar` +
-`robfig/cron` + `github.com/goccy/go-yaml` + `x/net/html` + `x/sync` (+ test-only `goleak`), so an external consumer importing `engine/agent`
+`robfig/cron` + `github.com/goccy/go-yaml` + `mvdan.cc/sh/v3/syntax` + `x/net/html` + `x/sync` (+ test-only `goleak`), so an external consumer importing `engine/agent`
 pulls in that small set rather than mecatl's full require cone (see
 [ADR 0036](adr/0036-engine-module.md)). The exported identifiers of the **eight
 core packages** (`session`, `governance`, `learning`, `tool`, `prompt`, `port`, `team`,
