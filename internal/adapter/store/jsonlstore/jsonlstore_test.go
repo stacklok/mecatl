@@ -188,7 +188,7 @@ func TestCurrentSnapshotLatestWins(t *testing.T) {
 		t.Fatalf("Save#1: %v", err)
 	}
 	// Advance the session and save again.
-	_ = s.PauseForApproval(session.PendingAsk{AskID: "a1", Tool: "Bash", Reason: "approve"})
+	_ = s.PauseForApproval(session.PendingAsk{AskID: "a1", Tool: "Shell", Reason: "approve"})
 	if err := st.Save(ctx, s); err != nil {
 		t.Fatalf("Save#2: %v", err)
 	}
@@ -249,7 +249,7 @@ func TestLoadNotFound(t *testing.T) {
 
 func TestToolCallLogParseable(t *testing.T) {
 	st, dir := newStore(t)
-	call := session.NewToolCall("call-7", "Bash", json.RawMessage(`{"cmd":"ls"}`))
+	call := session.NewToolCall("call-7", "Shell", json.RawMessage(`{"cmd":"ls"}`))
 	res := session.NewToolResult("call-7", "file.txt")
 	st.ToolCall("sess-1", call, res, 800*time.Microsecond, 1500*time.Microsecond)
 	st.ToolCall("sess-1", session.NewToolCall("call-8", "Read", nil),
@@ -268,8 +268,8 @@ func TestToolCallLogParseable(t *testing.T) {
 	if rec["type"] != "tool_call" {
 		t.Errorf("type = %v, want tool_call", rec["type"])
 	}
-	if rec["tool"] != "Bash" {
-		t.Errorf("tool = %v, want Bash", rec["tool"])
+	if rec["tool"] != "Shell" {
+		t.Errorf("tool = %v, want Shell", rec["tool"])
 	}
 	if rec["call_id"] != "call-7" {
 		t.Errorf("call_id = %v, want call-7", rec["call_id"])
@@ -497,8 +497,8 @@ func TestEventLogAppendReadCumulative(t *testing.T) {
 	st, dir := newStore(t)
 	want := []session.Event{
 		{Type: session.EvToolCall, Seq: 1, ToolCall: &session.ToolCall{ID: "c1", Name: "Read"}},
-		{Type: session.EvPermissionAsk, Seq: 2, Ask: &session.PendingAsk{AskID: "a1", Tool: "Bash"}},
-		{Type: session.EvApproval, Seq: 3, Approval: &session.ApprovalPayload{AskID: "a1", Verdict: session.VerdictStringAllowAlways, Tool: "Bash", AllowAlways: true}},
+		{Type: session.EvPermissionAsk, Seq: 2, Ask: &session.PendingAsk{AskID: "a1", Tool: "Shell"}},
+		{Type: session.EvApproval, Seq: 3, Approval: &session.ApprovalPayload{AskID: "a1", Verdict: session.VerdictStringAllowAlways, Tool: "Shell", AllowAlways: true}},
 		{Type: session.EvResult, Seq: 4, Result: &session.ResultPayload{Stop: session.StopEndTurn}},
 	}
 	for _, ev := range want {

@@ -25,7 +25,7 @@ func TestMutatedPath(t *testing.T) {
 		{"write", "Write", `{"path":"b/c.txt","content":"hi"}`, "b/c.txt", true},
 		{"read is not mutating", "Read", `{"path":"a.go"}`, "", false},
 		{"grep is not mutating", "Grep", `{"path":"."}`, "", false},
-		{"bash is not mutating", "Bash", `{"command":"rm x"}`, "", false},
+		{"bash is not mutating", "Shell", `{"command":"rm x"}`, "", false},
 		{"edit malformed args", "Edit", "not json", "", false},
 		{"edit empty path", "Edit", `{"path":"","old_string":"x","new_string":"y"}`, "", false},
 		{"write no path", "Write", `{"content":"x"}`, "", false},

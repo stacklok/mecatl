@@ -45,8 +45,8 @@ func TestIsPlanAsk(t *testing.T) {
 	if !isPlanAsk("PresentPlan") {
 		t.Error("isPlanAsk(PresentPlan) = false, want true")
 	}
-	if isPlanAsk("Bash") {
-		t.Error("isPlanAsk(Bash) = true, want false")
+	if isPlanAsk("Shell") {
+		t.Error("isPlanAsk(Shell) = true, want false")
 	}
 	if isPlanAsk("Write") {
 		t.Error("isPlanAsk(Write) = true, want false")
@@ -210,7 +210,7 @@ func TestStopPlanApprovedReachesFooter(t *testing.T) {
 func TestPlanAskQueueBadge(t *testing.T) {
 	m := planAskModel(t, true)
 	// Enqueue a second ask — the plan ask is the head, the queue has one entry.
-	approvalSurfaceOf(t, m).queue = append(approvalSurfaceOf(t, m).queue, pendingAsk{AskID: "sess-test-0001:2:c2", Tool: "Bash"})
+	approvalSurfaceOf(t, m).queue = append(approvalSurfaceOf(t, m).queue, pendingAsk{AskID: "sess-test-0001:2:c2", Tool: "Shell"})
 	// Re-populate the plan-review viewport so the title badge reflects the queue
 	// (planAskModel populated it with queued=0; the badge lives in planVP's
 	// header, which View renders from planVP.View()).
@@ -232,7 +232,7 @@ func TestGenericAskFooterIsUnchanged(t *testing.T) {
 	m.sessionID = "sess-test-0001"
 	m.stream = client.NewStream(&fakeRecver{}, &fakeSender{})
 	m.phase = phaseAwaitingApproval
-	openApprovalSurface(&m).ask = pendingAsk{AskID: "sess-test-0001:1:c1", Tool: "Bash", Reason: "Bash requires approval"}
+	openApprovalSurface(&m).ask = pendingAsk{AskID: "sess-test-0001:1:c1", Tool: "Shell", Reason: "Shell requires approval"}
 	got := stripANSIstr(m.renderFooter())
 	if !strings.Contains(got, "awaiting approval") {
 		t.Errorf("generic ask footer must show 'awaiting approval', got %q", got)
@@ -563,7 +563,7 @@ func TestPlanAskMarkdownRendersWrapped(t *testing.T) {
 }
 
 // TestGenericAskStillUsesCenteredModal pins that a NON-plan permission ask
-// (e.g. Bash/Write) KEEPS the centered card modal + its diff collapse — the
+// (e.g. Shell/Write) KEEPS the centered card modal + its diff collapse — the
 // full-screen scrollable plan-review view is ONLY for plan asks. This is the
 // "generic permission modal unchanged" contract from the design.
 func TestGenericAskStillUsesCenteredModal(t *testing.T) {
@@ -574,9 +574,9 @@ func TestGenericAskStillUsesCenteredModal(t *testing.T) {
 	m.phase = phaseAwaitingApproval
 	openApprovalSurface(&m).ask = pendingAsk{
 		AskID:       "sess-test-0001:1:c1",
-		Tool:        "Bash",
+		Tool:        "Shell",
 		Args:        `{"command":"echo hi"}`,
-		Reason:      "Bash requires approval",
+		Reason:      "Shell requires approval",
 		offerAlways: true,
 	}
 	got := stripANSIstr(m.View().Content)
@@ -917,7 +917,7 @@ func TestPlanIterateResultMsgDoesNotFireProceed(t *testing.T) {
 	}
 }
 
-// TestNonPlanAskResultDoesNotFireProceed: a NON-plan ask (e.g. Bash) approved
+// TestNonPlanAskResultDoesNotFireProceed: a NON-plan ask (e.g. Shell) approved
 // does NOT fire the proceed prompt — the gate is the plan_approved stop reason,
 // which a regular tool-approval run never emits (it ends end_turn).
 func TestNonPlanAskResultDoesNotFireProceed(t *testing.T) {
@@ -926,13 +926,13 @@ func TestNonPlanAskResultDoesNotFireProceed(t *testing.T) {
 	// is still wired so submitProceedPrompt COULD fire if the gate were wrong —
 	// proving the gate (the stop reason), not the wiring, suppresses it.
 	approvalSurfaceOf(t, m).ask = pendingAsk{
-		AskID: "sess-test-0001:1:bash-1", Tool: "Bash",
-		Args: `{"command":"ls"}`, Reason: "Bash requires approval", offerAlways: true,
+		AskID: "sess-test-0001:1:bash-1", Tool: "Shell",
+		Args: `{"command":"ls"}`, Reason: "Shell requires approval", offerAlways: true,
 	}
 	m.phase = phaseAwaitingApproval
 	m.refreshView()
 
-	// Approve the Bash ask.
+	// Approve the Shell ask.
 	m, cmd := pressKey(m, tea.KeyPressMsg{Code: 'a', Text: "a"})
 	runBatchLeaves(cmd)
 	if len(approvalFrames(send)) != 1 {
@@ -1102,10 +1102,10 @@ func TestPlanIterateDoesNotFireModeModelRefresh(t *testing.T) {
 func TestNonPlanResultDoesNotFireModeModelRefresh(t *testing.T) {
 	m, conv, _ := planProceedModel(t, true)
 
-	// Replace the plan ask with a non-plan Bash ask.
+	// Replace the plan ask with a non-plan Shell ask.
 	approvalSurfaceOf(t, m).ask = pendingAsk{
-		AskID: "sess-test-0001:1:bash-1", Tool: "Bash",
-		Args: `{"command":"ls"}`, Reason: "Bash requires approval", offerAlways: true,
+		AskID: "sess-test-0001:1:bash-1", Tool: "Shell",
+		Args: `{"command":"ls"}`, Reason: "Shell requires approval", offerAlways: true,
 	}
 	m.phase = phaseAwaitingApproval
 	m.refreshView()

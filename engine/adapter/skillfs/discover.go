@@ -47,8 +47,8 @@ const maxDescriptionBytes = MaxDescriptionBytes
 // ignored so the format can grow without breaking discovery.
 //
 // AllowedTools is the agentskills.io Experimental `allowed-tools` field. The
-// spec form is a SPACE-SEPARATED STRING (e.g. `allowed-tools: "Bash Read Grep"`),
-// parsed by splitting on whitespace; a YAML LIST form (`[Bash, Read]`) is
+// spec form is a SPACE-SEPARATED STRING (e.g. `allowed-tools: "Shell Read Grep"`),
+// parsed by splitting on whitespace; a YAML LIST form (`[Shell, Read]`) is
 // accepted too (the parser unifies into a []string here) but the string form is
 // canonical. It is ADVISORY ONLY — surfaced as a note on activation, never a
 // permission grant.

@@ -381,7 +381,7 @@ func toolKindFor(name string) string {
 		return "edit"
 	case "Grep", "Glob":
 		return "search"
-	case "Bash":
+	case "Shell":
 		return "execute"
 	case "WebFetch":
 		return "fetch"

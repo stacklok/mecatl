@@ -98,7 +98,7 @@ type keyMap struct {
 	Findings key.Binding
 
 	// RawArgs toggles the full-screen ask-args view between the pretty tier (a
-	// decoded Bash command / pretty-printed JSON) and the raw JSON tier. It is a
+	// decoded Shell command / pretty-printed JSON) and the raw JSON tier. It is a
 	// BARE 'r' consulted ONLY inside the full-screen ask-args view (onApprovalKey's
 	// argsViewOpen branch intercepts before the verdict keys), so it never collides
 	// with the textarea (blurred while the modal is open) nor with any global

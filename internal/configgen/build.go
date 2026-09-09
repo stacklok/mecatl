@@ -119,9 +119,9 @@ func permissionsSubtree(docs Docs) *Subtree {
 		Example: []string{
 			"permissions:",
 			"  allow:",
-			`    - "Bash(go test*)"`,
+			`    - "Shell(go test*)"`,
 			"  ask:",
-			`    - "Bash(git push*)"`,
+			`    - "Shell(git push*)"`,
 			"  deny:",
 			`    - "Read(./.git/**)"`,
 		},
@@ -135,7 +135,7 @@ func guardrailsSubtree(docs Docs) *Subtree {
 		case "model":
 			f.EnableNote = "Setting a model here ENABLES guardrails (the guardrails-parity " +
 				"enable model). A configured model with no rules runs the default BLOCK set " +
-				"(WebSearch/WebFetch/mcp__*/Bash, enforcing; downgrade via defaultMode: advisory). " +
+				"(WebSearch/WebFetch/mcp__*/Shell, enforcing; downgrade via defaultMode: advisory). " +
 				"Leave empty (and pass no --guardrails-model) to keep guardrails OFF."
 			f.ExampleValue = "claude-haiku-4-6"
 		case "rules":

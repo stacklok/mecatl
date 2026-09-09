@@ -17,7 +17,7 @@ import (
 // remote tool, so they use plain Claude-Code-style names rather than the
 // mcp__<server>__<tool> namespace used for proxied remote tools. The plain names
 // are fixed and known not to collide with the built-in catalog (Read, Edit,
-// Write, Grep, Glob, Bash, Subagent, Skill, ...).
+// Write, Grep, Glob, Shell, Subagent, Skill, ...).
 const (
 	listResourcesToolName = "ListMcpResources"
 	readResourceToolName  = "ReadMcpResource"

@@ -50,14 +50,14 @@ type RuleSpec struct {
 	// this rule (vs the YAML default false). When false, the global onCheckerDown
 	// posture fills in; when true, the per-rule value wins over the global.
 	FailClosedSet bool
-	// SkipReadOnlyBash, when set, makes a Pre-phase Bash call whose command is
+	// SkipReadOnlyShell, when set, makes a Pre-phase Shell call whose command is
 	// CONFIDENTLY read-only skip the checker entirely — a zero-LLM-call cost guard
 	// so a configured guardrail can cover the local-shell blast radius (a mutating /
 	// outward command like `gh pr merge`) without inspecting every `ls`. It is
 	// FAIL-SAFE: an ambiguous / substitution-bearing command that cannot be proven
-	// read-only is still inspected. Honored ONLY for tool=="Bash" && phase==pre; it
+	// read-only is still inspected. Honored ONLY for tool=="Shell" && phase==pre; it
 	// is inert on any other tool or on the post phase.
-	SkipReadOnlyBash bool
+	SkipReadOnlyShell bool
 	// Order is the rule's index in the configured list (the equal-specificity tiebreak).
 	Order int
 }
@@ -80,15 +80,15 @@ func CompileRule(spec RuleSpec) (CompiledRule, bool) {
 		return CompiledRule{}, false
 	}
 	return CompiledRule{
-		match:            match,
-		pre:              pre,
-		post:             post,
-		mode:             mode,
-		prompt:           spec.Prompt,
-		failClosed:       spec.FailClosed,
-		failClosedSet:    spec.FailClosedSet,
-		skipReadOnlyBash: spec.SkipReadOnlyBash,
-		order:            spec.Order,
+		match:             match,
+		pre:               pre,
+		post:              post,
+		mode:              mode,
+		prompt:            spec.Prompt,
+		failClosed:        spec.FailClosed,
+		failClosedSet:     spec.FailClosedSet,
+		skipReadOnlyShell: spec.SkipReadOnlyShell,
+		order:             spec.Order,
 	}, true
 }
 
@@ -152,11 +152,11 @@ type CompiledRule struct {
 	// rule. When false, the global onCheckerDown posture fills in; when true, the
 	// per-rule value wins over the global.
 	failClosedSet bool
-	// skipReadOnlyBash, when set, lets a Pre-phase Bash call whose command is
+	// skipReadOnlyShell, when set, lets a Pre-phase Shell call whose command is
 	// confidently read-only bypass the checker entirely (a zero-cost pre-filter for
-	// the default Bash rule). FAIL-SAFE: an ambiguous/substitution command is still
-	// inspected. Honored only for tool=="Bash" && phase==pre.
-	skipReadOnlyBash bool
+	// the default Shell rule). FAIL-SAFE: an ambiguous/substitution command is still
+	// inspected. Honored only for tool=="Shell" && phase==pre.
+	skipReadOnlyShell bool
 	// order is the rule's index in the configured list, the deterministic tiebreak
 	// when two rules match with equal specificity.
 	order int

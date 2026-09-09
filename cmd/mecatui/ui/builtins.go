@@ -542,7 +542,7 @@ func (m Model) runPosture() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// debugAskPayloads are the three canned long-args Bash commands /debug-ask
+// debugAskPayloads are the three canned long-args Shell commands /debug-ask
 // rotates through (issue #488): (a) one very long single-line pipeline, (b) a
 // compound &&/||/; command with pipes and redirections, (c) a heredoc carrying
 // real newlines. Each is injected JSON-encoded as {"command": …} so the modal's
@@ -553,7 +553,7 @@ var debugAskPayloads = []string{
 	"cat <<'EOF' > /tmp/report.md\n# Nightly report\n\n## Summary\n\n- total: 42\n- failed: 3\n- skipped: 1\n\n## Failures\n\n- pkg/foo: TestBar — timeout after 30s waiting on the fixture server\n- pkg/baz: TestQux — golden mismatch (see .scratch/qux.diff)\n- pkg/quux: TestCorge — nil dereference on empty input\n\n## Environment\n\nRun at $(date -u +%FT%TZ) against the staging workspace (us-east-1).\nRunner: nightly-04 · image sha256:9f86d08…\n\n## Next steps\n\nRe-run the three failing tests with -count=1 -v and attach the artifacts bundle to the tracker issue.\nEOF\nprintf 'wrote %s (%d bytes)\\n' /tmp/report.md \"$(wc -c < /tmp/report.md)\"",
 }
 
-// runDebugAsk injects a FAKE permission ask with long Bash args through the SAME
+// runDebugAsk injects a FAKE permission ask with long Shell args through the SAME
 // reducer the wire drives (applyPermissionAsk over a client.PermissionAskMsg), so
 // queueing, dedupe, focus, the (1 of N) badge, and the click geometry all
 // exercise for real. Registered only in client debug mode. Each invocation
@@ -576,7 +576,7 @@ func (m Model) runDebugAsk() (tea.Model, tea.Cmd) {
 	// always button is offered — the modal shows all three buttons).
 	return m.applyPermissionAsk(client.PermissionAskMsg{
 		AskID:  fmt.Sprintf("sess-debug-ask-%d", n),
-		Tool:   "Bash",
+		Tool:   "Shell",
 		Args:   string(args),
 		Reason: "debug ask (client debug mode) — not from the model",
 	})

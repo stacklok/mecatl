@@ -142,7 +142,7 @@ func TestPathEscapePosture_Scenario4_StrictReadEscapeAsks(t *testing.T) {
 		if ev.Type == session.EvPermissionAsk && ev.Ask != nil {
 			askSeen = true
 			if ev.Ask.Tool != "Read" {
-				t.Fatalf("ask surfaced for tool %q, want the Read escape (the ask must name the FS tool, not a Bash workaround)", ev.Ask.Tool)
+				t.Fatalf("ask surfaced for tool %q, want the Read escape (the ask must name the FS tool, not a Shell workaround)", ev.Ask.Tool)
 			}
 			if !strings.Contains(ev.Ask.Reason, f.target) || !strings.Contains(ev.Ask.Reason, "outside the workspace") {
 				t.Fatalf("escape ask reason = %q, want it to name the path and that it lies outside the workspace", ev.Ask.Reason)

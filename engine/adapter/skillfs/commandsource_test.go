@@ -40,7 +40,7 @@ func TestSkillCommandSourceExpansionIsLogicalAndPathFree(t *testing.T) {
 	if err != nil || !expanded {
 		t.Fatalf("Expand = (%q, %v, %v)", out, expanded, err)
 	}
-	for _, forbidden := range []string{"Base directory", "/opt/", "Read tool", "Bash"} {
+	for _, forbidden := range []string{"Base directory", "/opt/", "Read tool", "Shell"} {
 		if strings.Contains(out, forbidden) {
 			t.Errorf("expansion contains forbidden %q: %q", forbidden, out)
 		}

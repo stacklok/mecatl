@@ -15,7 +15,7 @@ import (
 
 // pathescape_scenario5b_test.go pins AC5.1b/AC5.1c
 // (docs/acceptance/path-escape-posture.md Scenario 5): the base-SHARING
-// (nil-forker) read-only Subagent child — wired whenever Bash is disabled
+// (nil-forker) read-only Subagent child — wired whenever Shell is disabled
 // (--no-bash / an empty shell / the issue-#40 untrusted-workspace gate nils the
 // sandboxed runner) — must NOT inherit the main session's relaxed workspace.
 // Before the fix the child ran against the parent's escapeWorkspace verbatim
@@ -38,7 +38,7 @@ func TestPathEscapePosture_Scenario5_SharedWorkspaceChildNotRelaxed(t *testing.T
 		t.Skip("POSIX path fixtures")
 	}
 	triggers := map[string]func(cfg *Config){
-		"no-bash":   func(cfg *Config) { cfg.NoBash = true },
+		"no-bash":   func(cfg *Config) { cfg.NoShell = true },
 		"untrusted": func(cfg *Config) { cfg.TrustProject = false },
 	}
 	for _, posture := range []Posture{PostureYolo, PostureAuto} {
@@ -138,8 +138,8 @@ func TestPathEscapePosture_Scenario5_SharedWorkspaceChildNotRelaxed(t *testing.T
 // backend through a confined child Workspace view — must NOT inherit the relaxed-WRITE reach
 // either. Its out-of-root Write is denied (the file never appears), while the
 // main session's own out-of-root Write still lands at yolo (the main session's
-// relaxed behaviour is unchanged). The child is given Bash (the forker-wired
-// shape) so validateMode accepts read-write, but Bash is never scripted.
+// relaxed behaviour is unchanged). The child is given Shell (the forker-wired
+// shape) so validateMode accepts read-write, but Shell is never scripted.
 func TestPathEscapePosture_Scenario5_SharedWorkspaceChildWriteDenied(t *testing.T) {
 	t.Parallel()
 	if runtime.GOOS == "windows" {
@@ -163,7 +163,7 @@ func TestPathEscapePosture_Scenario5_SharedWorkspaceChildWriteDenied(t *testing.
 		mockllm.TextTurn("parent done"),
 	)
 	// A real shell so the writable path is wired (validateMode rejects
-	// read-write when no writable engine is wired); Bash is never scripted.
+	// read-write when no writable engine is wired); Shell is never scripted.
 	cfg.Shell = "/bin/sh"
 	built, err := Build(context.Background(), cfg)
 	if err != nil {

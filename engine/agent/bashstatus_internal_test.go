@@ -11,7 +11,7 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
-// bashStatusCall builds a BashStatus tool call with the given JSON args.
+// bashStatusCall builds a ShellStatus tool call with the given JSON args.
 func bashStatusCall(id string, args map[string]any) session.ToolCall {
 	raw, err := json.Marshal(args)
 	if err != nil {
@@ -20,10 +20,10 @@ func bashStatusCall(id string, args map[string]any) session.ToolCall {
 	return session.ToolCall{ID: session.ToolCallID(id), Name: bashStatusToolName, Args: raw}
 }
 
-// execBashStatus drives BashStatus through the childCapableTool seam against reg.
-func execBashStatus(t *testing.T, reg *childRunRegistry, id string, args map[string]any) session.ToolResult {
+// execShellStatus drives ShellStatus through the childCapableTool seam against reg.
+func execShellStatus(t *testing.T, reg *childRunRegistry, id string, args map[string]any) session.ToolResult {
 	t.Helper()
-	res, err := NewBashStatusTool().(childCapableTool).ExecuteWithParent(
+	res, err := NewShellStatusTool().(childCapableTool).ExecuteWithParent(
 		context.Background(), bashStatusCall(id, args), bashEnv, nil, parentCaps{children: reg})
 	if err != nil {
 		t.Fatalf("ExecuteWithParent err = %v", err)
@@ -31,17 +31,17 @@ func execBashStatus(t *testing.T, reg *childRunRegistry, id string, args map[str
 	return res
 }
 
-// TestBashStatusCapsLessError pins the honest no-registry error on the plain
+// TestShellStatusCapsLessError pins the honest no-registry error on the plain
 // Execute path (and on ExecuteWithParent with a nil registry).
-func TestBashStatusCapsLessError(t *testing.T) {
-	res, err := NewBashStatusTool().Execute(context.Background(), bashStatusCall("s1", nil), bashEnv)
+func TestShellStatusCapsLessError(t *testing.T) {
+	res, err := NewShellStatusTool().Execute(context.Background(), bashStatusCall("s1", nil), bashEnv)
 	if err != nil {
 		t.Fatalf("Execute err = %v", err)
 	}
 	if !res.IsError || !strings.Contains(res.Content, "no live registry is available on this run") {
 		t.Fatalf("res = %+v, want the no-registry error", res)
 	}
-	res, err = NewBashStatusTool().(childCapableTool).ExecuteWithParent(
+	res, err = NewShellStatusTool().(childCapableTool).ExecuteWithParent(
 		context.Background(), bashStatusCall("s2", nil), bashEnv, nil, parentCaps{})
 	if err != nil {
 		t.Fatalf("ExecuteWithParent err = %v", err)
@@ -51,32 +51,32 @@ func TestBashStatusCapsLessError(t *testing.T) {
 	}
 }
 
-// TestBashStatusRosterBashOnly pins the disjoint projection: the BashStatus
+// TestShellStatusRosterShellOnly pins the disjoint projection: the ShellStatus
 // roster lists ONLY bash-cmd entries (a delegation child is invisible to it),
 // renders ids + state + stop labels, and NEVER leaks the command text (the
 // model-authored goal stays out of the bulk roster).
-func TestBashStatusRosterBashOnly(t *testing.T) {
+func TestShellStatusRosterShellOnly(t *testing.T) {
 	reg := newChildRunRegistry()
 	noCancel := func() {}
 
 	// A delegation child and a still-running bash job.
 	reg.register("subagent-a", childFamilySubagent, "explore things", noCancel, true)
-	reg.register("bashcmd-live", childFamilyBashCmd, "make serve", noCancel, true)
+	reg.register("bashcmd-live", childFamilyShellCmd, "make serve", noCancel, true)
 	reg.markRunning("bashcmd-live")
 	// A done bash job with an uncollected result.
 	done := session.NewToolResult("d", "tail body\n[exit code: 0]")
-	reg.register("bashcmd-done", childFamilyBashCmd, "npm run build", noCancel, true)
+	reg.register("bashcmd-done", childFamilyShellCmd, "npm run build", noCancel, true)
 	reg.markDoneResult("bashcmd-done", session.StopEndTurn, &done)
 
 	// Empty projection for a registry holding ONLY delegation children.
 	onlySub := newChildRunRegistry()
 	onlySub.register("subagent-a", childFamilySubagent, "g", noCancel, true)
-	if res := execBashStatus(t, onlySub, "s1", nil); res.IsError ||
+	if res := execShellStatus(t, onlySub, "s1", nil); res.IsError ||
 		!strings.Contains(res.Content, "No background commands have been started in this run.") {
 		t.Fatalf("delegation-only registry must render the empty roster, got %+v", res)
 	}
 
-	res := execBashStatus(t, reg, "s2", nil)
+	res := execShellStatus(t, reg, "s2", nil)
 	if res.IsError {
 		t.Fatalf("roster is an error: %q", res.Content)
 	}
@@ -99,14 +99,14 @@ func TestBashStatusRosterBashOnly(t *testing.T) {
 	}
 }
 
-// TestBashStatusLiveJobDetail pins the per-job LIVE view: state + the command
+// TestShellStatusLiveJobDetail pins the per-job LIVE view: state + the command
 // (the deliberate single-job inspection) + the CURRENT tail snapshot — a peek
 // that does NOT mark the stored result delivered (a later collect still
 // delivers exactly once).
-func TestBashStatusLiveJobDetail(t *testing.T) {
+func TestShellStatusLiveJobDetail(t *testing.T) {
 	reg := newChildRunRegistry()
 	noCancel := func() {}
-	reg.register("bashcmd-x", childFamilyBashCmd, "make serve", noCancel, true)
+	reg.register("bashcmd-x", childFamilyShellCmd, "make serve", noCancel, true)
 	reg.markRunning("bashcmd-x")
 	tail := newTailBuffer(1024)
 	reg.attachOutputTail("bashcmd-x", tail)
@@ -114,7 +114,7 @@ func TestBashStatusLiveJobDetail(t *testing.T) {
 		t.Fatalf("tail write: %v", err)
 	}
 
-	res := execBashStatus(t, reg, "s1", map[string]any{"job_id": "bashcmd-x"})
+	res := execShellStatus(t, reg, "s1", map[string]any{"job_id": "bashcmd-x"})
 	if res.IsError {
 		t.Fatalf("live detail is an error: %q", res.Content)
 	}
@@ -140,58 +140,58 @@ func TestBashStatusLiveJobDetail(t *testing.T) {
 	}
 }
 
-// TestBashStatusLiveJobDetailNoOutputYet covers the live job whose tail is
+// TestShellStatusLiveJobDetailNoOutputYet covers the live job whose tail is
 // still empty (and the never-attached tail): an honest "(no output yet)".
-func TestBashStatusLiveJobDetailNoOutputYet(t *testing.T) {
+func TestShellStatusLiveJobDetailNoOutputYet(t *testing.T) {
 	reg := newChildRunRegistry()
 	noCancel := func() {}
-	reg.register("bashcmd-quiet", childFamilyBashCmd, "sleep 5", noCancel, true)
+	reg.register("bashcmd-quiet", childFamilyShellCmd, "sleep 5", noCancel, true)
 	reg.markRunning("bashcmd-quiet")
 	reg.attachOutputTail("bashcmd-quiet", newTailBuffer(64))
-	reg.register("bashcmd-notail", childFamilyBashCmd, "sleep 6", noCancel, true)
+	reg.register("bashcmd-notail", childFamilyShellCmd, "sleep 6", noCancel, true)
 	reg.markRunning("bashcmd-notail")
 
 	for _, id := range []string{"bashcmd-quiet", "bashcmd-notail"} {
-		res := execBashStatus(t, reg, "s-"+id, map[string]any{"job_id": id})
+		res := execShellStatus(t, reg, "s-"+id, map[string]any{"job_id": id})
 		if res.IsError || !strings.Contains(res.Content, "(no output yet)") {
 			t.Fatalf("%s detail = %+v, want the no-output-yet view", id, res)
 		}
 	}
 }
 
-// TestBashStatusDoneCollectExactlyOnce pins the terminal collection: the first
+// TestShellStatusDoneCollectExactlyOnce pins the terminal collection: the first
 // job_id read of a done job delivers the stored result body (the error bit
 // rides along), the second reports already-delivered, and a delegation id
-// routed to BashStatus is the SAME miss as an unknown id (disjoint doors).
-func TestBashStatusDoneCollectExactlyOnce(t *testing.T) {
+// routed to ShellStatus is the SAME miss as an unknown id (disjoint doors).
+func TestShellStatusDoneCollectExactlyOnce(t *testing.T) {
 	reg := newChildRunRegistry()
 	noCancel := func() {}
 
 	ok := session.NewToolResult("bashcmd-ok", "build ok\n[exit code: 0]")
-	reg.register("bashcmd-ok", childFamilyBashCmd, "make build", noCancel, true)
+	reg.register("bashcmd-ok", childFamilyShellCmd, "make build", noCancel, true)
 	reg.markDoneResult("bashcmd-ok", session.StopEndTurn, &ok)
 
 	failed := session.NewToolResult("bashcmd-bad", "boom\n[exit code: 2]")
 	failed.IsError = true
-	reg.register("bashcmd-bad", childFamilyBashCmd, "make deploy", noCancel, true)
+	reg.register("bashcmd-bad", childFamilyShellCmd, "make deploy", noCancel, true)
 	reg.markDoneResult("bashcmd-bad", session.StopError, &failed)
 
 	// First collect delivers the body verbatim.
-	res := execBashStatus(t, reg, "s1", map[string]any{"job_id": "bashcmd-ok"})
+	res := execShellStatus(t, reg, "s1", map[string]any{"job_id": "bashcmd-ok"})
 	if res.IsError || res.Content != "build ok\n[exit code: 0]" {
 		t.Fatalf("first collect = %+v, want the stored body", res)
 	}
 	// Second collect reports the delivery.
-	res = execBashStatus(t, reg, "s2", map[string]any{"job_id": "bashcmd-ok"})
+	res = execShellStatus(t, reg, "s2", map[string]any{"job_id": "bashcmd-ok"})
 	if res.IsError || !strings.Contains(res.Content, "background command bashcmd-ok (end_turn): result already delivered.") {
 		t.Fatalf("second collect = %+v, want already-delivered", res)
 	}
 	// A stored error body surfaces as an error tool result, still exactly once.
-	res = execBashStatus(t, reg, "s3", map[string]any{"job_id": "bashcmd-bad"})
+	res = execShellStatus(t, reg, "s3", map[string]any{"job_id": "bashcmd-bad"})
 	if !res.IsError || res.Content != "boom\n[exit code: 2]" {
 		t.Fatalf("failed-job collect = %+v, want the stored error body", res)
 	}
-	res = execBashStatus(t, reg, "s4", map[string]any{"job_id": "bashcmd-bad"})
+	res = execShellStatus(t, reg, "s4", map[string]any{"job_id": "bashcmd-bad"})
 	if res.IsError || !strings.Contains(res.Content, "result already delivered") {
 		t.Fatalf("failed-job second collect = %+v, want already-delivered", res)
 	}
@@ -199,38 +199,38 @@ func TestBashStatusDoneCollectExactlyOnce(t *testing.T) {
 	// Disjoint projection: a delegation id is the same miss as an unknown id.
 	reg.register("subagent-a", childFamilySubagent, "g", noCancel, true)
 	reg.markDone("subagent-a", session.StopEndTurn)
-	res = execBashStatus(t, reg, "s5", map[string]any{"job_id": "subagent-a"})
+	res = execShellStatus(t, reg, "s5", map[string]any{"job_id": "subagent-a"})
 	if !res.IsError || !strings.Contains(res.Content, `no background command "subagent-a" in this run`) {
-		t.Fatalf("delegation id through BashStatus = %+v, want the unknown-job error", res)
+		t.Fatalf("delegation id through ShellStatus = %+v, want the unknown-job error", res)
 	}
 }
 
-// TestBashStatusUnknownID pins the model-addressable miss for a job_id this
+// TestShellStatusUnknownID pins the model-addressable miss for a job_id this
 // run never started (roster hint included), and for the wait-targeted miss.
-func TestBashStatusUnknownID(t *testing.T) {
+func TestShellStatusUnknownID(t *testing.T) {
 	reg := newChildRunRegistry()
-	res := execBashStatus(t, reg, "s1", map[string]any{"job_id": "bashcmd-nope"})
+	res := execShellStatus(t, reg, "s1", map[string]any{"job_id": "bashcmd-nope"})
 	if !res.IsError ||
-		!strings.Contains(res.Content, `BashStatus: no background command "bashcmd-nope" in this run`) ||
-		!strings.Contains(res.Content, "call BashStatus with no arguments for the roster") {
+		!strings.Contains(res.Content, `ShellStatus: no background command "bashcmd-nope" in this run`) ||
+		!strings.Contains(res.Content, "call ShellStatus with no arguments for the roster") {
 		t.Fatalf("res = %+v, want the unknown-job error with the roster hint", res)
 	}
 	wait := 1000
-	res = execBashStatus(t, reg, "s2", map[string]any{"job_id": "bashcmd-nope", "wait_ms": wait})
+	res = execShellStatus(t, reg, "s2", map[string]any{"job_id": "bashcmd-nope", "wait_ms": wait})
 	if !res.IsError || !strings.Contains(res.Content, "no background command") {
 		t.Fatalf("wait on an unknown id must fail before parking, got %+v", res)
 	}
 }
 
-// TestBashStatusWaitMsParkWake pins the wait_ms discipline: the call parks on
+// TestShellStatusWaitMsParkWake pins the wait_ms discipline: the call parks on
 // the job's doneCh and wakes the moment the job lands its terminal (long
 // before the cap), then reports the now-collectible state; a wait that
 // outlasts its cap just reports whatever is then true.
-func TestBashStatusWaitMsParkWake(t *testing.T) {
+func TestShellStatusWaitMsParkWake(t *testing.T) {
 	r := &fakeStreamingRunner{out: "woke\n", exitCode: 0, run: make(chan struct{}), started: make(chan struct{})}
 	reg := newChildRunRegistry()
 	caps := parentCaps{children: reg}
-	if _, err := NewBashTool().(childCapableTool).ExecuteWithParent(
+	if _, err := NewShellTool().(childCapableTool).ExecuteWithParent(
 		context.Background(), bashCall("w1", "block", 0, true), bashEnvRunner(r), nil, caps); err != nil {
 		t.Fatalf("start err = %v", err)
 	}
@@ -243,7 +243,7 @@ func TestBashStatusWaitMsParkWake(t *testing.T) {
 	type outcome struct{ res session.ToolResult }
 	done := make(chan outcome, 1)
 	go func() {
-		res, err := NewBashStatusTool().(childCapableTool).ExecuteWithParent(
+		res, err := NewShellStatusTool().(childCapableTool).ExecuteWithParent(
 			context.Background(), bashStatusCall("s1", map[string]any{"job_id": "bashcmd-w1", "wait_ms": 30000}), bashEnv, nil, caps)
 		if err != nil {
 			t.Errorf("wait call err = %v", err)
@@ -272,13 +272,13 @@ func TestBashStatusWaitMsParkWake(t *testing.T) {
 	// A capped wait on a job that stays live reports the running state at the cap.
 	r2 := &fakeStreamingRunner{run: make(chan struct{}), started: make(chan struct{})}
 	defer close(r2.run)
-	if _, err := NewBashTool().(childCapableTool).ExecuteWithParent(
+	if _, err := NewShellTool().(childCapableTool).ExecuteWithParent(
 		context.Background(), bashCall("w2", "block", 0, true), bashEnvRunner(r2), nil, caps); err != nil {
 		t.Fatalf("start w2 err = %v", err)
 	}
 	<-r2.started
 	start := time.Now()
-	res := execBashStatus(t, reg, "s2", map[string]any{"job_id": "bashcmd-w2", "wait_ms": 60})
+	res := execShellStatus(t, reg, "s2", map[string]any{"job_id": "bashcmd-w2", "wait_ms": 60})
 	if res.IsError || !strings.Contains(res.Content, "background command bashcmd-w2 is running.") {
 		t.Fatalf("capped wait = %+v, want the running report", res)
 	}
@@ -287,12 +287,12 @@ func TestBashStatusWaitMsParkWake(t *testing.T) {
 	}
 }
 
-// TestBashStatusWaitAnyJob pins the job-less wait: nothing live → no park; a
+// TestShellStatusWaitAnyJob pins the job-less wait: nothing live → no park; a
 // live job → park until the NEXT registry terminal, then the roster renders.
-func TestBashStatusWaitAnyJob(t *testing.T) {
+func TestShellStatusWaitAnyJob(t *testing.T) {
 	reg := newChildRunRegistry()
 	start := time.Now()
-	res := execBashStatus(t, reg, "s1", map[string]any{"wait_ms": 5000})
+	res := execShellStatus(t, reg, "s1", map[string]any{"wait_ms": 5000})
 	if time.Since(start) > time.Second {
 		t.Fatalf("an any-wait with nothing live must return promptly, took %v", time.Since(start))
 	}
@@ -302,14 +302,14 @@ func TestBashStatusWaitAnyJob(t *testing.T) {
 
 	r := &fakeStreamingRunner{out: "later\n", exitCode: 0, run: make(chan struct{}), started: make(chan struct{})}
 	caps := parentCaps{children: reg}
-	if _, err := NewBashTool().(childCapableTool).ExecuteWithParent(
+	if _, err := NewShellTool().(childCapableTool).ExecuteWithParent(
 		context.Background(), bashCall("any1", "block", 0, true), bashEnvRunner(r), nil, caps); err != nil {
 		t.Fatalf("start err = %v", err)
 	}
 	<-r.started
 	done := make(chan session.ToolResult, 1)
 	go func() {
-		res, _ := NewBashStatusTool().(childCapableTool).ExecuteWithParent(
+		res, _ := NewShellStatusTool().(childCapableTool).ExecuteWithParent(
 			context.Background(), bashStatusCall("s2", map[string]any{"wait_ms": 30000}), bashEnv, nil, caps)
 		done <- res
 	}()
@@ -325,14 +325,14 @@ func TestBashStatusWaitAnyJob(t *testing.T) {
 	}
 }
 
-// TestBashStatusCancel pins the cancel verb: it signals the job's per-call
+// TestShellStatusCancel pins the cancel verb: it signals the job's per-call
 // context (the drive unwinds to StopCancelled), the confirmation is immediate
 // (no terminal wait), and unknown / already-done / non-bash ids fail honestly.
-func TestBashStatusCancel(t *testing.T) {
+func TestShellStatusCancel(t *testing.T) {
 	r := &fakeStreamingRunner{run: make(chan struct{}), started: make(chan struct{}), sawCancel: make(chan struct{})}
 	reg := newChildRunRegistry()
 	caps := parentCaps{children: reg}
-	if _, err := NewBashTool().(childCapableTool).ExecuteWithParent(
+	if _, err := NewShellTool().(childCapableTool).ExecuteWithParent(
 		context.Background(), bashCall("c1", "sleep 100", 0, true), bashEnvRunner(r), nil, caps); err != nil {
 		t.Fatalf("start err = %v", err)
 	}
@@ -342,7 +342,7 @@ func TestBashStatusCancel(t *testing.T) {
 		t.Fatal("streaming drive never started")
 	}
 
-	res := execBashStatus(t, reg, "s1", map[string]any{"cancel": "bashcmd-c1"})
+	res := execShellStatus(t, reg, "s1", map[string]any{"cancel": "bashcmd-c1"})
 	if res.IsError || !strings.Contains(res.Content, "background command bashcmd-c1: cancellation requested.") {
 		t.Fatalf("cancel confirmation = %+v", res)
 	}
@@ -359,13 +359,13 @@ func TestBashStatusCancel(t *testing.T) {
 	if len(snap) != 1 || snap[0].stop != session.StopCancelled {
 		t.Fatalf("snapshot = %+v, want the one job at StopCancelled", snap)
 	}
-	res = execBashStatus(t, reg, "s2", map[string]any{"job_id": "bashcmd-c1"})
+	res = execShellStatus(t, reg, "s2", map[string]any{"job_id": "bashcmd-c1"})
 	if res.IsError || !strings.Contains(res.Content, "[command was canceled; output above is partial]") {
 		t.Fatalf("cancelled collect = %+v, want the cancelled trailer", res)
 	}
 
 	// Cancelling a DONE job is an honest nothing-to-cancel, not an error.
-	res = execBashStatus(t, reg, "s3", map[string]any{"cancel": "bashcmd-c1"})
+	res = execShellStatus(t, reg, "s3", map[string]any{"cancel": "bashcmd-c1"})
 	if res.IsError || !strings.Contains(res.Content, "background command bashcmd-c1 is already done; there is nothing to cancel.") {
 		t.Fatalf("done cancel = %+v", res)
 	}
@@ -373,7 +373,7 @@ func TestBashStatusCancel(t *testing.T) {
 	// Unknown ids and non-bash ids are the same miss.
 	reg.register("subagent-a", childFamilySubagent, "g", func() {}, true)
 	for _, id := range []string{"bashcmd-nope", "subagent-a"} {
-		res = execBashStatus(t, reg, "s4-"+id, map[string]any{"cancel": id})
+		res = execShellStatus(t, reg, "s4-"+id, map[string]any{"cancel": id})
 		if !res.IsError || !strings.Contains(res.Content, "no background command") {
 			t.Fatalf("cancel %q = %+v, want the unknown-job error", id, res)
 		}
@@ -382,7 +382,7 @@ func TestBashStatusCancel(t *testing.T) {
 
 // TestBackgroundPendingNudgeTextFamilies pins the nudge's family partition:
 // the subagent clause keeps its byte-stable wording; a bash clause naming
-// BashStatus is appended only for live bash jobs; a bash-only pending set
+// ShellStatus is appended only for live bash jobs; a bash-only pending set
 // renders no subagent clause.
 func TestBackgroundPendingNudgeTextFamilies(t *testing.T) {
 	if got := backgroundPendingNudgeText([]string{"subagent-p1"}); got !=
@@ -396,13 +396,13 @@ func TestBackgroundPendingNudgeTextFamilies(t *testing.T) {
 			"Collect or wait for them with SubagentStatus, cancel them, or finish — "+
 			"anything still running when you finish will be cancelled.]"+
 			"[harness note: 1 background command(s) still running: bashcmd-b1. "+
-			"Collect or wait for them with BashStatus, cancel them, or finish — "+
+			"Collect or wait for them with ShellStatus, cancel them, or finish — "+
 			"anything still running when you finish will be cancelled.]" {
 		t.Fatalf("mixed nudge mismatch: %q", got)
 	}
 	if got := backgroundPendingNudgeText([]string{"bashcmd-b2"}); got !=
 		"[harness note: 1 background command(s) still running: bashcmd-b2. "+
-			"Collect or wait for them with BashStatus, cancel them, or finish — "+
+			"Collect or wait for them with ShellStatus, cancel them, or finish — "+
 			"anything still running when you finish will be cancelled.]" {
 		t.Fatalf("bash-only nudge mismatch: %q", got)
 	}
@@ -415,7 +415,7 @@ func TestBackgroundPendingNudgeTextFamilies(t *testing.T) {
 func TestLiveBackgroundIDsMatching(t *testing.T) {
 	reg := newChildRunRegistry()
 	noCancel := func() {}
-	reg.register("bashcmd-b", childFamilyBashCmd, "g", noCancel, true)
+	reg.register("bashcmd-b", childFamilyShellCmd, "g", noCancel, true)
 	reg.register("subagent-s", childFamilySubagent, "g", noCancel, true)
 	reg.register("subagent-done", childFamilySubagent, "g", noCancel, true)
 	reg.markDone("subagent-done", session.StopEndTurn)

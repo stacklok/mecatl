@@ -9,7 +9,7 @@ import (
 // is DISABLED on the deployment — the operator-set kill switch (--websearch=off),
 // for which no backend is wired at all. The WebSearch tool surfaces it to the
 // model as an honest "disabled on this deployment" message rather than aborting
-// the harness — mirroring the ErrNoShell precedent the Bash tool uses for a
+// the harness — mirroring the ErrNoShell precedent the Shell tool uses for a
 // shell-less CommandRunner. It is DISTINCT from ErrSearchBackendDown: this means
 // "intentionally off", that means "a configured/default backend tried and failed".
 var ErrSearchUnavailable = errors.New("tool: no search provider configured")
@@ -24,7 +24,7 @@ var ErrSearchUnavailable = errors.New("tool: no search provider configured")
 var ErrSearchBackendDown = errors.New("tool: search backend unavailable")
 
 // SearchProvider is the outbound web-search seam the WebSearch tool depends on,
-// the way the Bash tool depends on CommandRunner. It lives here in engine/tool,
+// the way the Shell tool depends on CommandRunner. It lives here in engine/tool,
 // NOT engine/port, for the same layering reason FileSystem/Workspace/CommandRunner
 // do: it is a TOOL collaborator injected at execution, never a loop port the
 // agent.Engine references. The agent loop never names this type — only the

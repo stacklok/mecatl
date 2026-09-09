@@ -88,7 +88,7 @@ func scenario3Call(id, name string, argMap map[string]string) session.ToolCall {
 // TestPathEscapePosture_Scenario3_YoloWriteEscapeAllowed pins AC3.1: at
 // posture yolo, Write to an out-of-root absolute path creates the file (and a
 // second Write replaces it) — the relax flows through the ordinary FS tool,
-// never a Bash workaround, and never surfaces an ask at yolo.
+// never a Shell workaround, and never surfaces an ask at yolo.
 func TestPathEscapePosture_Scenario3_YoloWriteEscapeAllowed(t *testing.T) {
 	t.Parallel()
 	f := setupWriteFS(t)

@@ -20,7 +20,7 @@ import (
 )
 
 // bashWriteProvider is a STATELESS scripted LLM (safe for the concurrent child
-// runs Fork fans out): on the first turn of a branch it calls Bash to write a
+// runs Fork fans out): on the first turn of a branch it calls Shell to write a
 // relative-path marker file; once a tool result is present it ends the turn with a
 // summary. It decides from the request's own history, not a shared cursor.
 type bashWriteProvider struct {
@@ -48,7 +48,7 @@ func (p *bashWriteProvider) Stream(ctx context.Context, req port.LLMRequest) (it
 			{Kind: port.ChunkDone, Stop: session.StopEndTurn},
 		}
 	} else {
-		call := session.NewToolCall("bash1", "Bash", json.RawMessage(`{"command":`+strconvQuote(p.command)+`}`))
+		call := session.NewToolCall("bash1", "Shell", json.RawMessage(`{"command":`+strconvQuote(p.command)+`}`))
 		chunks = []port.Chunk{
 			{Kind: port.ChunkToolCall, ToolCall: &call},
 			{Kind: port.ChunkUsage, Usage: &session.Usage{}},
@@ -101,13 +101,13 @@ func (rf *recordingForker) roots() []string {
 	return out
 }
 
-// TestForkBashWritesIntoForkNotBase is the end-to-end isolation proof: a Fork
-// MUTATING branch whose scripted turn runs Bash (`echo hi > marker.txt`) lands the
+// TestForkShellWritesIntoForkNotBase is the end-to-end isolation proof: a Fork
+// MUTATING branch whose scripted turn runs Shell (`echo hi > marker.txt`) lands the
 // marker in the branch's ISOLATED fork — NOT in the shared parent base. This is the
-// behavior the workspace-aware-Bash fix exists for; before the fix the Bash runner
+// behavior the workspace-aware-Shell fix exists for; before the fix the Shell runner
 // was rooted at the parent base and the marker would have appeared THERE (the
-// assertion at the end would fail if Bash were pointed back at the base).
-func TestForkBashWritesIntoForkNotBase(t *testing.T) {
+// assertion at the end would fail if Shell were pointed back at the base).
+func TestForkShellWritesIntoForkNotBase(t *testing.T) {
 	base := t.TempDir()
 	cfg := Config{Workspace: base, Model: "mock", Shell: "/bin/sh"}
 
@@ -160,20 +160,20 @@ func TestForkBashWritesIntoForkNotBase(t *testing.T) {
 	// The marker MUST be in the fork.
 	forkMarker := filepath.Join(forkRoot, "marker.txt")
 	if _, err := os.Stat(forkMarker); err != nil {
-		t.Errorf("marker.txt NOT found in the branch fork %q: %v (Bash did not run in the fork)", forkRoot, err)
+		t.Errorf("marker.txt NOT found in the branch fork %q: %v (Shell did not run in the fork)", forkRoot, err)
 	}
 
 	// The marker MUST be ABSENT from the shared parent base — this is the isolation
-	// guarantee. (If Bash were rooted at the base, this is exactly where it would
+	// guarantee. (If Shell were rooted at the base, this is exactly where it would
 	// have landed, and this assertion would FAIL.)
 	baseMarker := filepath.Join(base, "marker.txt")
 	if _, err := os.Stat(baseMarker); !os.IsNotExist(err) {
-		t.Errorf("marker.txt LEAKED into the shared parent base %q (Bash escaped the fork)", base)
+		t.Errorf("marker.txt LEAKED into the shared parent base %q (Shell escaped the fork)", base)
 	}
 }
 
 // TestForkGitCommitDoesNotTouchBaseRepo is the end-to-end git-isolation proof: a
-// Fork MUTATING branch whose scripted turn runs `git commit` via Bash lands the
+// Fork MUTATING branch whose scripted turn runs `git commit` via Shell lands the
 // commit in the branch's ISOLATED fork's OWN .git — NOT the shared base repo. This
 // is the gap WithForceCopy closes: with the old worktree path the commit object/ref
 // would have written into the base's shared .git. The composition root wires the
@@ -290,7 +290,7 @@ func gitOut(t *testing.T, dir string, args ...string) string {
 }
 
 // TestParallelBranchRunnerIsHardened pins the issue-#40 registerParallelTool wiring:
-// the Parallel branch Bash must run through the HARDENED, env-scrubbed
+// the Parallel branch Shell must run through the HARDENED, env-scrubbed
 // buildForceCopyRunner (the same construction Mutating members use) — NEVER the
 // unhardened buildCommandRunner. The fork copies a possibly-untrusted base `.git`
 // VERBATIM, so the branch's run-time git needs the scrubbed env (fixed keys pinned).
@@ -333,12 +333,12 @@ func TestParallelBranchRunnerIsHardened(t *testing.T) {
 
 	dump, err := os.ReadFile(envFile)
 	if err != nil {
-		t.Fatalf("the branch never ran its Bash (no env dump): %v", err)
+		t.Fatalf("the branch never ran its Shell (no env dump): %v", err)
 	}
 	// Deliberately do NOT print the dump on failure: an unscrubbed env is the
 	// OPERATOR'S real environment, secrets included.
 	if !strings.Contains(string(dump), "GIT_CONFIG_NOSYSTEM=1") {
-		t.Fatal("Parallel branch Bash ran with an UNSCRUBBED env (no GIT_CONFIG_NOSYSTEM=1): " +
+		t.Fatal("Parallel branch Shell ran with an UNSCRUBBED env (no GIT_CONFIG_NOSYSTEM=1): " +
 			"registerParallelTool must wire buildForceCopyRunner, not buildCommandRunner")
 	}
 }

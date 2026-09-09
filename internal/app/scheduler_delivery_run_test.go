@@ -671,7 +671,7 @@ func TestFireDelivery_Scenario3_AwaitingOriginQueuedNotBypassed(t *testing.T) {
 		t.Fatalf("Reopen: %v", err)
 	}
 	originSess.State = session.StateRunning // legal: Reopen→idle, then Running
-	ask := session.PendingAsk{AskID: "test-ask", Tool: "Bash"}
+	ask := session.PendingAsk{AskID: "test-ask", Tool: "Shell"}
 	if err := originSess.PauseForApproval(ask); err != nil {
 		t.Fatalf("PauseForApproval: %v", err)
 	}

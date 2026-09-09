@@ -17,8 +17,8 @@
 //
 // The fake runner implements a deliberately tiny, documented TEST protocol
 // (`cat <path>` and `write <path> <content>`); it does not hand-roll a general
-// shell. The file API write/read and the fake Bash runner observe the SAME
-// namespace in both directions, so a forked child's Bash observes the same
+// shell. The file API write/read and the fake Shell runner observe the SAME
+// namespace in both directions, so a forked child's Shell observes the same
 // namespace its Read/Write do.
 //
 // The fake's EnvironmentKind label is `remote-fake` (a package-level const in
@@ -662,7 +662,7 @@ func (w *workspace) forceApplyFiles(changes map[string][]byte) []string {
 
 // runner is the bound tool.CommandRunner for a namespace. It implements a tiny
 // documented TEST protocol so the contract proof can show the file API and the
-// fake Bash runner observe the SAME namespace in both directions:
+// fake Shell runner observe the SAME namespace in both directions:
 //
 //	cat <path>           — print the file's contents to stdout
 //	write <path> <text>  — set the file's contents (create or replace)

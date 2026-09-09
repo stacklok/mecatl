@@ -93,7 +93,7 @@ func RunScenario(ctx context.Context, provider port.LLMProvider, model string) (
 
 // buildEngine assembles the agent.Engine for the demo with the always-available
 // tool catalog (the demo exercises only Read/Write, so it runs shell-less: no
-// Bash tool is registered), the default deny/ask/allow policy (Read auto-allowed,
+// Shell tool is registered), the default deny/ask/allow policy (Read auto-allowed,
 // Write asks), no hooks, an in-memory store, and a deterministic prompt config.
 func buildEngine(provider port.LLMProvider, model string) *agent.Engine {
 	cat := tool.NewCatalog()

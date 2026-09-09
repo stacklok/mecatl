@@ -31,7 +31,7 @@ func TestPlanReviewNoOpRepopulationPreservesOffset(t *testing.T) {
 	if got := s.planVP.YOffset(); got != before {
 		t.Errorf("rendering the same plan moved YOffset: got %d, want %d", got, before)
 	}
-	m = applyAll(m, client.PermissionAskMsg{AskID: "sess-test-0001:2:queued", Tool: "Bash"})
+	m = applyAll(m, client.PermissionAskMsg{AskID: "sess-test-0001:2:queued", Tool: "Shell"})
 	if got := stripANSIstr(m.View().Content); !strings.Contains(got, "Plan ready for review (1 of 2)") {
 		t.Errorf("queue update did not refresh the plan frame: %q", got)
 	}
@@ -42,7 +42,7 @@ func TestPlanReviewNoOpRepopulationPreservesOffset(t *testing.T) {
 // RE-populates (the raw tier appears) — and the offset is preserved across the
 // re-population, not yanked to the top.
 func TestArgsViewRawToggleRepopulates(t *testing.T) {
-	m := openArgsView(t, bashAskModel(t, longBashArgs))
+	m := openArgsView(t, bashAskModel(t, longShellArgs))
 	before := approvalSurfaceOf(t, m).argsVP.YOffset()
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: 'r', Text: "r"})
 	raw := stripANSIstr(m.View().Content)
@@ -64,7 +64,7 @@ func TestDebugAskResolveNilStreamNoPanic(t *testing.T) {
 	m.sessionID = "sess-debug-nil"
 	m.stream = nil // a /debug-ask from phaseIdle has no live run stream
 	m.phase = phaseIdle
-	m = applyAll(m, client.PermissionAskMsg{AskID: "sess-debug-nil:1:dbg", Tool: "Bash", Args: `{"command":"ls"}`})
+	m = applyAll(m, client.PermissionAskMsg{AskID: "sess-debug-nil:1:dbg", Tool: "Shell", Args: `{"command":"ls"}`})
 	m, cmd := pressKey(m, tea.KeyPressMsg{Code: 'a', Text: "a"})
 	// Execute the returned send cmd: must not panic on the nil stream.
 	if cmd != nil {
@@ -92,11 +92,11 @@ func TestPhaseAskIDBiconditional(t *testing.T) {
 	}
 
 	// OPEN: an ask opens → phase awaiting, ask set.
-	m := approvalModel(t, pendingAsk{AskID: askA, Tool: "Bash", Args: `{"command":"ls"}`})
-	mm, _ := m.applyPermissionAsk(client.PermissionAskMsg{AskID: askB, Tool: "Bash", Args: `{"command":"pwd"}`})
+	m := approvalModel(t, pendingAsk{AskID: askA, Tool: "Shell", Args: `{"command":"ls"}`})
+	mm, _ := m.applyPermissionAsk(client.PermissionAskMsg{AskID: askB, Tool: "Shell", Args: `{"command":"pwd"}`})
 	m = mm.(Model)
 	check(m, "after applyPermissionAsk open")
-	mm, _ = m.applyPermissionAsk(client.PermissionAskMsg{AskID: askC, Tool: "Bash", Args: `{"command":"date"}`})
+	mm, _ = m.applyPermissionAsk(client.PermissionAskMsg{AskID: askC, Tool: "Shell", Args: `{"command":"date"}`})
 	m = mm.(Model)
 	check(m, "after enqueue (second ask)")
 

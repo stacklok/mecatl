@@ -8,7 +8,7 @@
 // it exits — defeating the caller's timeout/cancel. Configure(cmd) installs
 // Setpgid plus a Cancel that signals the negative PID, delivering SIGKILL to
 // every process in the group so the pipes close promptly and Run honours its
-// deadline. Shared by the hook runner (hookexec) and the Bash command runner
+// deadline. Shared by the hook runner (hookexec) and the Shell command runner
 // (osfs).
 package procgroup
 

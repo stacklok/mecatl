@@ -326,16 +326,16 @@ func TestSubagentWritableWithOutputSchemaComposes(t *testing.T) {
 
 // TestSubagentWritableNotIsolatedSkipsA2 is the BEHAVIORAL isolated:false guard,
 // driving the REAL run() posture (not a hand-built childPosture): a writable child
-// issuing an isolation-APPROVABLE Bash substitution (`go test $(echo ./...)`) under a
+// issuing an isolation-APPROVABLE Shell substitution (`go test $(echo ./...)`) under a
 // HEADLESS parent must AUTO-DENY it — because a direct-write child is isolated:false
 // (ADR 0041), so the A2 isolation auto-approve (which only fires when isolated) does
 // NOT apply. If run()'s posture were `isolated: true || ...` (the pre-0041 bug) the A2
-// path would auto-APPROVE and the Bash would RUN — so this test FAILS under that
+// path would auto-APPROVE and the Shell would RUN — so this test FAILS under that
 // mutation. The read-only forker is a failingForker to also prove no fork happens.
 func TestSubagentWritableNotIsolatedSkipsA2(t *testing.T) {
-	bash := &fakeBash{}
+	bash := &fakeShell{}
 	childLLM := mockllm.New(
-		mockllm.ToolCallTurn(toolCall("k1", "Bash", `{"command":"go test $(echo ./...)"}`)),
+		mockllm.ToolCallTurn(toolCall("k1", "Shell", `{"command":"go test $(echo ./...)"}`)),
 		mockllm.TextTurn("child: adapted after the denied command"),
 	)
 	writable := bashChildEngine(childLLM, bash)
@@ -351,7 +351,7 @@ func TestSubagentWritableNotIsolatedSkipsA2(t *testing.T) {
 	drainWithTimeout(t, r)
 
 	if got := bash.ran(); len(got) != 0 {
-		t.Fatalf("a NON-isolated (direct-write) writable child's isolation-approvable Bash must NOT be "+
+		t.Fatalf("a NON-isolated (direct-write) writable child's isolation-approvable Shell must NOT be "+
 			"A2 auto-approved under a headless parent — it must auto-deny; but the command ran: %v", got)
 	}
 }

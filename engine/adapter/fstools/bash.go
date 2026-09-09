@@ -11,16 +11,16 @@ import (
 	"github.com/stacklok/mecatl/engine/tool"
 )
 
-// BashToolName aliases tool.BashToolName, the single authority for the name the
-// Bash tool registers under (the permission evaluator special-cases the literal,
+// ShellToolName aliases tool.ShellToolName, the single authority for the name the
+// Shell tool registers under (the permission evaluator special-cases the literal,
 // so the constant lives in the port package where every implementation — this
-// adapter's AND engine/agent's background-capable BashTool — can import it).
+// adapter's AND engine/agent's background-capable ShellTool — can import it).
 // Callers probe the catalog for bash enablement by referencing the constant
 // rather than a local literal that could drift on a rename (see
 // internal/adapter/server.Service.capabilities).
-const BashToolName = tool.BashToolName
+const ShellToolName = tool.ShellToolName
 
-// bashDescription is the model-facing documentation for the Bash tool.
+// bashDescription is the model-facing documentation for the Shell tool.
 const bashDescription = `Run a shell command in the workspace root and return its combined output and exit code.
 
 When to use:
@@ -33,7 +33,7 @@ When NOT to use:
 
 Behavior:
 - The command runs with the workspace root as its working directory.
-- Despite its name, Bash does not necessarily run Bash: it invokes "shell -c command"
+- Despite its name, Shell does not necessarily run Shell: it invokes "shell -c command"
   with the shell reported by "shell:" in the system prompt's <env> block (for
   example, "/bin/sh").
 - The shell is non-interactive: it has no terminal or user input. Do not run
@@ -67,7 +67,7 @@ Limits:
   Prefer a direct command for inspection (run the inner command first, then use its
   output) when a substitution is not essential.`
 
-// BashTool runs a shell command via the CommandRunner bound to the
+// ShellTool runs a shell command via the CommandRunner bound to the
 // tool.Environment it executes against (issue #462). It is statically
 // classified as non-read-only: deciding whether a specific command is
 // read-only is governance's job, not this tool's.
@@ -78,39 +78,39 @@ Limits:
 // the command's cwd always matches the workspace the tool executes against,
 // never a stale shared parent base. A namespace with no shell (env.CommandRunner
 // == nil) surfaces ErrNoShell honestly rather than aborting. The composition
-// root decides whether to REGISTER a Bash tool at all based on runner
-// availability; a shell-less catalog simply omits Bash.
+// root decides whether to REGISTER a Shell tool at all based on runner
+// availability; a shell-less catalog simply omits Shell.
 //
-// Residual: this fixes the runner's working DIRECTORY, not Bash's trust model.
-// Unlike path-scoped Edit/Write (confined by os.Root), Bash can still escape its
+// Residual: this fixes the runner's working DIRECTORY, not Shell's trust model.
+// Unlike path-scoped Edit/Write (confined by os.Root), Shell can still escape its
 // cwd via absolute paths or `cd` — that is inherent to running a shell, the same
 // as in the main session. The fix removes the ACCIDENTAL shared-base mutation
-// (a fork branch's relative-path Bash landing in the parent base), which is what
+// (a fork branch's relative-path Shell landing in the parent base), which is what
 // ParallelTool.ReadOnly() / the read-only-share / mutating-fork isolation needs.
-type BashTool struct{}
+type ShellTool struct{}
 
-// NewBashTool constructs the Bash tool. The runner is NOT captured here — it is
+// NewShellTool constructs the Shell tool. The runner is NOT captured here — it is
 // read off the tool.Environment at Execute time (issue #462). The composition
 // root registers the returned tool ONLY when a runner is available for the
-// namespace; without one, the catalog has no Bash and the agent runs shell-less.
-func NewBashTool() tool.Tool {
-	return BashTool{}
+// namespace; without one, the catalog has no Shell and the agent runs shell-less.
+func NewShellTool() tool.Tool {
+	return ShellTool{}
 }
 
-// Compile-time assertion that BashTool implements tool.Tool.
-var _ tool.Tool = BashTool{}
+// Compile-time assertion that ShellTool implements tool.Tool.
+var _ tool.Tool = ShellTool{}
 
-// bashArgs is the JSON argument shape for the Bash tool.
+// bashArgs is the JSON argument shape for the Shell tool.
 type bashArgs struct {
 	Command   string `json:"command"`
 	TimeoutMS int    `json:"timeout_ms"`
 	TempScope string `json:"temp_scope"`
 }
 
-// Spec returns the model-facing specification of the Bash tool.
-func (BashTool) Spec() tool.ToolSpec {
+// Spec returns the model-facing specification of the Shell tool.
+func (ShellTool) Spec() tool.ToolSpec {
 	return tool.ToolSpec{
-		Name:        BashToolName,
+		Name:        ShellToolName,
 		Description: bashDescription,
 		Schema: schema(`{
   "type": "object",
@@ -129,13 +129,13 @@ func (BashTool) Spec() tool.ToolSpec {
 	}
 }
 
-// ReadOnly reports that Bash is statically treated as mutating.
-func (BashTool) ReadOnly() bool { return false }
+// ReadOnly reports that Shell is statically treated as mutating.
+func (ShellTool) ReadOnly() bool { return false }
 
 // Execute runs the command, honoring an optional timeout, and returns combined
 // output with the exit code. The runner is read off env; a shell-less namespace
 // (nil runner) surfaces ErrNoShell.
-func (BashTool) Execute(ctx context.Context, in session.ToolCall, env tool.Environment) (session.ToolResult, error) {
+func (ShellTool) Execute(ctx context.Context, in session.ToolCall, env tool.Environment) (session.ToolResult, error) {
 	var args bashArgs
 	if msg, ok := parseArgs(in, &args); !ok {
 		return session.NewToolError(in.ID, msg), nil

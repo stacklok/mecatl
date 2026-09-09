@@ -104,7 +104,7 @@ var oracleSteps = []struct {
 	// above sits after it) and a fresh tail resolve.
 	{"resolveTool", func(c *conversation) {
 		c.resolveTool("call-1", "package main\n", false) // NON-tail
-		c.addTool("call-2", "Bash", `{"command":"go vet ./..."}`)
+		c.addTool("call-2", "Shell", `{"command":"go vet ./..."}`)
 		c.resolveTool("call-2", "ok", false) // tail
 	}},
 	{"setSubagentStart", func(c *conversation) {
@@ -185,7 +185,7 @@ var oracleSteps = []struct {
 	}},
 	{"parallelBranchTool", func(c *conversation) {
 		c.parallelBranchTool(client.ParallelMsg{
-			Kind: client.ParallelBranchTool, ParentCallID: "call-par", BranchIndex: 0, ToolName: "Bash", ToolCount: 1,
+			Kind: client.ParallelBranchTool, ParentCallID: "call-par", BranchIndex: 0, ToolName: "Shell", ToolCount: 1,
 		})
 	}},
 	{"parallelBranchEnd", func(c *conversation) {
@@ -193,7 +193,7 @@ var oracleSteps = []struct {
 			client.Usage{InputTokens: 500, OutputTokens: 90}, 2, "end_turn", false, 900)
 	}},
 	{"parallelEnd", func(c *conversation) { c.parallelEnd("call-par", "first", 2, 0, "end_turn") }},
-	{"addHook", func(c *conversation) { c.addHook("blocked by PreToolUse hook", "PreToolUse", "Bash", "blocked") }},
+	{"addHook", func(c *conversation) { c.addHook("blocked by PreToolUse hook", "PreToolUse", "Shell", "blocked") }},
 	{"addError", func(c *conversation) { c.addError("stream failed: boom") }},
 	{"addPermanentError", func(c *conversation) { c.addPermanentError("permanent provider error: auth failed") }},
 	{"addRecoverNotice", func(c *conversation) { c.addRecoverNotice("permanent failure recovered; start a new session") }},
@@ -334,7 +334,7 @@ func TestSettledBlocksRenderOnceDuringStreaming(t *testing.T) {
 	m.conv.addTool("call-1", "Read", `{"path":"main.go"}`)
 	m.conv.resolveTool("call-1", "package main\n", false)
 	m.conv.addNotice("context compacted")
-	m.conv.addHook("hook note", "PreToolUse", "Bash", "info")
+	m.conv.addHook("hook note", "PreToolUse", "Shell", "info")
 	m.conv.addTurnStat("turn 1 · 1.2s")
 	m.conv.addError("transient error")
 	m.conv.startAssistant()
@@ -428,7 +428,7 @@ func TestBlockCacheInvalidatesOnExpandToggle(t *testing.T) {
 // ONLY that block, and the output matches a fresh render.
 func TestNonTailMutationInvalidatesOnlyThatBlock(t *testing.T) {
 	c := &conversation{}
-	c.addTool("call-1", "Bash", `{"command":"go test ./..."}`)
+	c.addTool("call-1", "Shell", `{"command":"go test ./..."}`)
 	c.addUser("a later block")
 	c.addNotice("an even later block")
 	r := newCacheRenderer()
@@ -461,7 +461,7 @@ func TestNonTailMutationInvalidatesOnlyThatBlock(t *testing.T) {
 // block that is subsequently mutated non-tail.
 func TestNonTailResolveRendersThroughUpdateFlow(t *testing.T) {
 	m := newCoalesceModel(t)
-	m = applyAll(m, client.ToolCallMsg{ID: "call-1", Name: "Bash", Args: `{"command":"go test ./..."}`})
+	m = applyAll(m, client.ToolCallMsg{ID: "call-1", Name: "Shell", Args: `{"command":"go test ./..."}`})
 	// A later block after the call (resolveTool will scan backwards past it).
 	m.conv.addUser("a later prompt")
 	m.refreshView() // warm the cache: unresolved card + the later block
@@ -579,7 +579,7 @@ func TestIncrementalJoinTailChangesMidScrollback(t *testing.T) {
 	for i := 0; i < 30; i++ {
 		c.addUser("early " + strconv.Itoa(i))
 	}
-	c.addTool("mid-call", "Bash", `{"command":"go test ./..."}`)
+	c.addTool("mid-call", "Shell", `{"command":"go test ./..."}`)
 	// Later blocks AFTER the tool call, so resolveTool hits a NON-tail block.
 	for i := 0; i < 10; i++ {
 		c.addNotice("later " + strconv.Itoa(i))
@@ -841,7 +841,7 @@ func TestPathSwitchStalePrefix(t *testing.T) {
 	for i := 0; i < 20; i++ {
 		c.addUser("early " + strconv.Itoa(i))
 	}
-	c.addTool("mid-call", "Bash", `{"command":"go test ./..."}`)
+	c.addTool("mid-call", "Shell", `{"command":"go test ./..."}`)
 	for i := 0; i < 10; i++ {
 		c.addNotice("later " + strconv.Itoa(i))
 	}

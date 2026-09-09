@@ -6,11 +6,11 @@
 ┃                                                                                                  ┃
 ┃  Permission required                                                                             ┃
 ┃                                                                                                  ┃
-┃  Bash                                                                                            ┃
+┃  Shell                                                                                           ┃
 ┃  │ find . -name '*.go' -not -path './vendor/*' -print0 | xargs -0 grep -nH 'func Test' | awk  ↩  ┃
 ┃                                                                                                  ┃
 ┃  … pgup/pgdn scroll · ctrl+t full args                                                           ┃
-┃  Bash requires approval                                                                          ┃
+┃  Shell requires approval                                                                         ┃
 ┃                                                                                                  ┃
 ┃  ╭───────────╮  ╭────────────╮  ╭──────────╮                                                     ┃
 ┃  │  [A]llow  │  │  Al[w]ays  │  │  [D]eny  │                                                     ┃

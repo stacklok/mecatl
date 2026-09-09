@@ -2,15 +2,15 @@ package agent
 
 import "sync"
 
-// maxBashJobTailBytes is the per-background-bash-job retained output tail.
+// maxShellJobTailBytes is the per-background-bash-job retained output tail.
 // The per-read render cap is fstools.MaxOutputBytes (25_000); retention
-// exceeds it so BashStatus can show more context than a single render.
+// exceeds it so ShellStatus can show more context than a single render.
 // 8 concurrent jobs ≈ 512 KiB worst case — bounded.
-const maxBashJobTailBytes = 64 << 10
+const maxShellJobTailBytes = 64 << 10
 
 // tailBuffer is a mutex-guarded bounded byte sink (an io.Writer) that retains
 // the LAST capacity bytes written to it (a live-growing stdout+stderr tail) —
-// the sink a tool.CommandStreamer streams a background-Bash job's output into.
+// the sink a tool.CommandStreamer streams a background-Shell job's output into.
 //
 // Implementation: a sliding window over a 2*capacity scratch — Write appends
 // after the live window and slides the window forward (dropping the head),

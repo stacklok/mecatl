@@ -88,7 +88,7 @@ const maxCommandOutput = 1 << 20 // 1 MiB
 // Every file operation goes through an *os.Root opened on the workspace root,
 // which refuses both lexical ".." escapes and symlink traversal that would leave
 // the root. This closes the gap a purely lexical cleanPath left open: the model
-// can create a symlink inside the workspace (via Bash `ln -s /etc/passwd evil`),
+// can create a symlink inside the workspace (via Shell `ln -s /etc/passwd evil`),
 // and both resolveInRoot (for absolute addresses) and os.Root (for all
 // in-root paths) refuse to follow it out of the root.
 type FileSystem struct {
@@ -117,7 +117,7 @@ type fsOptions struct {
 // EXPLICIT construction option, DEFAULT OFF: the zero-value workspace keeps the
 // canonicalize-then-reject behaviour (ErrPathEscape). The composition layer
 // enables it for the MAIN session's workspace only, at the yolo/auto operator
-// postures where Bash already reads the same bytes (the honesty fix —
+// postures where Shell already reads the same bytes (the honesty fix —
 // docs/acceptance/path-escape-posture.md Scenario 2), and always pairs it
 // with the root-aware wrapping permission policy that refuses pseudo-fs
 // (/proc, /sys, /dev) before the tool body: this option exists for THAT
@@ -1342,7 +1342,7 @@ func WithManagedTemporaryWorkspace(workspace *managedtemp.Workspace) CommandRunn
 }
 
 // WithSystemTemporaryDirectory sets the configured/inherited system temporary
-// directory used for explicit system-scope Bash calls.
+// directory used for explicit system-scope Shell calls.
 func WithSystemTemporaryDirectory(dir string) CommandRunnerOption {
 	return func(r *CommandRunner) { r.systemTempDir = dir }
 }
@@ -1364,14 +1364,14 @@ func WithCommandWaitDelay(d time.Duration) CommandRunnerOption {
 // /bin/sh -c, rooted at dir as the working directory. dir is resolved to an
 // absolute, symlink-evaluated path so the runner's cwd matches the Workspace
 // root. Use this from the composition root only when a shell is desired; omit it
-// (and the Bash tool) to run shell-less.
+// (and the Shell tool) to run shell-less.
 func NewCommandRunner(dir string) (tool.CommandRunner, error) {
 	return NewCommandRunnerShell(dir, "/bin/sh")
 }
 
 // NewCommandRunnerShell is like NewCommandRunner but lets the caller pick the
 // shell binary (e.g. "/bin/bash"). An empty shell is rejected: a shell-less
-// deployment must omit the runner (and the Bash tool) entirely rather than
+// deployment must omit the runner (and the Shell tool) entirely rather than
 // construct a runner with no shell.
 func NewCommandRunnerShell(dir, shell string, opts ...CommandRunnerOption) (tool.CommandRunner, error) {
 	if shell == "" {

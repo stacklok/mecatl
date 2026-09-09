@@ -2,7 +2,7 @@ package governance
 
 import "strings"
 
-// SplitCommands splits a compound Bash command line into its individual simple
+// SplitCommands splits a compound Shell command line into its individual simple
 // commands, breaking on the shell operators "&&", "||", ";", "|", a single
 // unquoted "&" (background), and newlines, while respecting single and double
 // quotes (operators inside quotes are literal).
@@ -79,7 +79,7 @@ func SplitCommands(cmd string) []string {
 	return out
 }
 
-// HasSubstitutionOrGrouping reports whether a Bash segment contains command or
+// HasSubstitutionOrGrouping reports whether a Shell segment contains command or
 // process substitution, or subshell/group-command grouping, in unquoted text:
 // `$(...)`, a backtick, `<(...)`/`>(...)`, an opening "(" or "{" used as
 // grouping. These constructs can hide an arbitrary inner command that the
@@ -152,7 +152,7 @@ func hasSubstitutionTrigger(c, next rune) bool {
 const substitutionPlaceholder = "MECATL_SUBST"
 
 // extractSubstitutions returns the inner command text of EVERY command/process
-// substitution or subshell/group-command grouping in a single Bash segment, scanned
+// substitution or subshell/group-command grouping in a single Shell segment, scanned
 // quote-aware and RECURSIVELY (a nested `$( … $(…) … )` contributes both the inner
 // and the outer inner-text). It is the read-only-aware companion to
 // HasSubstitutionOrGrouping: where that only reports presence, this extracts the
@@ -377,7 +377,7 @@ func outerWithSubstitutionsBlanked(seg string) (string, bool) {
 	return b.String(), true
 }
 
-// shellControlKeywords are the Bash compound-command / control-flow keywords that
+// shellControlKeywords are the Shell compound-command / control-flow keywords that
 // PREFIX a real command inside a loop/conditional segment (after SplitCommands breaks
 // on `;`/newlines). They are not programs; stripping them exposes the actual command
 // to classify. `in` and the loop variable in `for VAR in LIST` are handled by
@@ -468,9 +468,9 @@ func outerReadOnlyAfterBlanking(seg, blanked string) bool {
 	return simpleReadOnly(residual)
 }
 
-// SubstitutionReadOnly reports whether a single Bash SEGMENT that contains command/
+// SubstitutionReadOnly reports whether a single Shell SEGMENT that contains command/
 // process substitution or subshell grouping is nonetheless safe to treat as read-only:
-// every extracted inner command is ReadOnlyBash-true AND the outer command (with each
+// every extracted inner command is ReadOnlyShell-true AND the outer command (with each
 // substitution blanked to an inert placeholder) is simpleReadOnly-true. It is the
 // SEPARATE read-only-aware classifier (A1) the evaluator consults to AVOID flooring a
 // fully-read-only substitution (e.g. `cat $(ls)`, `echo $(git rev-parse HEAD)`) at Ask.
@@ -479,7 +479,7 @@ func outerReadOnlyAfterBlanking(seg, blanked string) bool {
 // directly — there is nothing for this classifier to do), any extraction ambiguity
 // (extractSubstitutions ok=false / the blank ok=false), any inner command that is not
 // read-only, or an outer that is not read-only once blanked. It NEVER widens
-// ReadOnlyBash/simpleReadOnly/plan-mode — those stay byte-for-byte unchanged; this is
+// ReadOnlyShell/simpleReadOnly/plan-mode — those stay byte-for-byte unchanged; this is
 // an ADDITIONAL allow path, consulted only where the substitution floor would otherwise
 // apply.
 func SubstitutionReadOnly(seg string) bool {
@@ -496,7 +496,7 @@ func SubstitutionReadOnly(seg string) bool {
 	for _, in := range inner {
 		// An inner may itself be a substitution-bearing read-only command (a nested
 		// `cat $(ls)`), so accept either plain read-only OR a read-only substitution.
-		if !ReadOnlyBash(in) && !SubstitutionReadOnly(in) {
+		if !ReadOnlyShell(in) && !SubstitutionReadOnly(in) {
 			return false
 		}
 	}
@@ -688,7 +688,7 @@ func segmentIsolationApprovable(orig, classifyText string) bool {
 	return false
 }
 
-// flooredAllowSafe reports whether a substitution-floored Bash SEGMENT that a
+// flooredAllowSafe reports whether a substitution-floored Shell SEGMENT that a
 // CONFIGURED Allow covers may resolve WITHOUT surfacing — the bound behind
 // PermissionDecision.FlooredConfiguredAllow (issue #32). The configured Allow
 // vouches ONLY for the OUTER command (the literal the operator wrote a rule
@@ -696,7 +696,7 @@ func segmentIsolationApprovable(orig, classifyText string) bool {
 //
 //   - every recursively-extracted INNER must independently classify POSITIVELY
 //     read-only — the SAME inner contract SubstitutionReadOnly (A1) applies:
-//     plain ReadOnlyBash, or itself a read-only substitution. An unknown or
+//     plain ReadOnlyShell, or itself a read-only substitution. An unknown or
 //     mutating inner (`$(zap)`, `$(touch x)`) fails — the substitution floor's
 //     charter ("an allow rule for the outer literal can never silently approve
 //     a hidden command") holds;
@@ -710,7 +710,7 @@ func segmentIsolationApprovable(orig, classifyText string) bool {
 //     `go test $(git rev-parse HEAD)` clears; `go test $(zap)` surfaces.
 //
 // Fail-safe false on any extraction/blanking ambiguity. It is a sibling
-// classifier: ReadOnlyBash/SubstitutionReadOnly/IsolationApprovable/plan-mode
+// classifier: ReadOnlyShell/SubstitutionReadOnly/IsolationApprovable/plan-mode
 // stay byte-for-byte unchanged. Positive soundness is fuzzed by
 // FuzzFlooredConfiguredAllow.
 func flooredAllowSafe(seg string) bool {
@@ -733,7 +733,7 @@ func flooredAllowSafe(seg string) bool {
 		// The A1 inner contract: plain read-only, or itself a read-only
 		// substitution (nested inners are separate entries in the recursive
 		// extraction, so each level is independently checked).
-		if !ReadOnlyBash(in) && !SubstitutionReadOnly(in) {
+		if !ReadOnlyShell(in) && !SubstitutionReadOnly(in) {
 			return false
 		}
 	}
@@ -789,7 +789,7 @@ func escapeRejectionsFree(text string) bool {
 	return true
 }
 
-// IsolationApprovable reports whether a (possibly compound) Bash command line is safe
+// IsolationApprovable reports whether a (possibly compound) Shell command line is safe
 // to AUTO-APPROVE for an ISOLATED (forked-worktree / force-copy) subagent that would
 // otherwise hit the permission Ask floor (A2). It is a strict superset of
 // SubstitutionReadOnly: every command — each SplitCommands segment AND every
@@ -869,7 +869,7 @@ var strippableWrappers = map[string]bool{
 	"ionice":  true,
 }
 
-// Canonicalize strips leading transparent process wrappers from a single Bash
+// Canonicalize strips leading transparent process wrappers from a single Shell
 // command so that permission matching sees the real program being run. Only the
 // closed strippableWrappers set is removed (`timeout`, `time`, `nice`, `env`,
 // `stdbuf`, `ionice`), together with their leading option flags and any values
@@ -997,7 +997,7 @@ var writeIndicators = map[string]bool{
 	"ln": true, "truncate": true, "install": true,
 }
 
-// ReadOnlyBash reports whether a Bash command line is read-only, i.e. safe to
+// ReadOnlyShell reports whether a Shell command line is read-only, i.e. safe to
 // run under plan mode. It is a conservative heuristic: it returns true only when
 // EVERY simple command in a (possibly compound) line is recognised read-only,
 // and false the moment it sees output redirection, a destructive verb, or an
@@ -1006,7 +1006,7 @@ var writeIndicators = map[string]bool{
 // Examples that are read-only: `ls`, `cat f`, `grep x f`, `git status`,
 // `git log`, `git diff`. Examples that are NOT: anything containing `>`, `>>`,
 // `rm`, `mv`, `mkdir`, `git commit`, or an unknown command.
-func ReadOnlyBash(cmd string) bool {
+func ReadOnlyShell(cmd string) bool {
 	parts := SplitCommands(cmd)
 	if len(parts) == 0 {
 		return false

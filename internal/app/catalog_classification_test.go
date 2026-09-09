@@ -47,7 +47,7 @@ func TestCallerSeparation_ClassificationKindsMatchRealRegistrationContext(t *tes
 		"Subagent":        server.KindCallerOwned,
 		"InspectSubagent": server.KindCallerOwned,
 		"InspectMember":   server.KindCallerOwned,
-		"BashStatus":      server.KindDerived,
+		"ShellStatus":     server.KindDerived,
 		"SubagentStatus":  server.KindDerived,
 		"Parallel":        server.KindDerived,
 		"Team":            server.KindDerived,

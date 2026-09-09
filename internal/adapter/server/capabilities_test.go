@@ -20,11 +20,11 @@ import (
 )
 
 // noopRunner is a do-nothing tool.CommandRunner used only to construct a real
-// Bash tool (NewBashTool panics on a nil runner). The test never executes it; it
+// Shell tool (NewShellTool panics on a nil runner). The test never executes it; it
 // only needs the tool registered under its real catalog name so capabilities()
 // reports bash=true. Driving caps from the REAL tool constructors (rather than a
-// stub named "Bash") is what makes TestCapabilities a rename-drift backstop.
-// (The runner is bound to the Environment at Execute time, so NewBashTool takes
+// stub named "Shell") is what makes TestCapabilities a rename-drift backstop.
+// (The runner is bound to the Environment at Execute time, so NewShellTool takes
 // no runner now — issue #462.)
 
 // noopMemStore is a do-nothing tool.MemoryStore used only to construct the real
@@ -199,10 +199,10 @@ func TestCapabilitiesAgentsFromSnapshot(t *testing.T) {
 // the tool caps are driven by the REAL tool constructors, so it fails if a tool
 // is ever renamed (the spelling the Service probes would drift from the
 // registration), and the seam caps flip with the nil-checks the feature RPCs use.
-func TestCapabilities(t *testing.T) {
+func TestCanonicalShellTool_Scenario1_CapabilityCompatibility(t *testing.T) {
 	remember := memory.NewRememberTool(noopMemStore{})
 	skill := skills.NewTool(nil, nil)
-	bash := tools.NewBashTool()
+	bash := tools.NewShellTool()
 
 	tests := []struct {
 		name  string

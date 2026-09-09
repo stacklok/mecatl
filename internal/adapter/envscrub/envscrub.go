@@ -4,7 +4,7 @@
 // under the git-neutralising gitenv.Scrub without creating an adapter→adapter
 // edge.
 //
-// The threat it addresses (security review "Finding B"): the Bash tool runs a
+// The threat it addresses (security review "Finding B"): the Shell tool runs a
 // child shell, and under posture `auto`/`yolo` (allow-all) the model can run
 // `echo $OPENROUTER_API_KEY` or `cat /proc/self/environ` and exfiltrate the
 // provider/auth credentials the harness was started with via a tool result or a

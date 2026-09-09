@@ -1179,7 +1179,7 @@ func TestSelectionClearedOnReflowAboveIt(t *testing.T) {
 	// A tool block whose body is long enough that ctrl+t (full vs line-capped) changes
 	// its rendered height, followed by a UNIQUE assistant marker line BELOW it.
 	m.conv.addUser("req")
-	m.conv.addTool("t1", "Bash", `{"cmd":"seq 40"}`)
+	m.conv.addTool("t1", "Shell", `{"cmd":"seq 40"}`)
 	m.conv.resolveTool("t1", strings.TrimRight(strings.Repeat("toolbodyline\n", 40), "\n"), false)
 	const marker = "UNIQUEMARKERZZZ"
 	m.conv.appendAssistant(marker + " trailing words here")

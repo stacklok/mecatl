@@ -23,12 +23,12 @@ import (
 // (fatal on overlap — an overlapping quarantine would let a draft masquerade as a
 // promoted, trusted skill).
 //
-// NOTE on Bash: absent the deferred OS-level sandbox, the Bash tool can write to
+// NOTE on Shell: absent the deferred OS-level sandbox, the Shell tool can write to
 // ANY absolute path and so can reach any quarantine/skills dir regardless of
 // location. The structural boundary therefore covers Write/Edit only; the residual
-// Bash path is the same big-hammer capability Bash already grants (it can write any
+// Shell path is the same big-hammer capability Shell already grants (it can write any
 // file), gated by Ask, and is the wrap point for the deferred sandbox.
-// warnSkillDraftResiduals logs a loud warning when SkillDraft and Bash are enabled
+// warnSkillDraftResiduals logs a loud warning when SkillDraft and Shell are enabled
 // together so the operator knows the boundary is fully structural only shell-less
 // or sandboxed.
 func validateSkillDraftConfig(cfg Config) error {
@@ -72,7 +72,7 @@ func validateSkillDraftConfig(cfg Config) error {
 // trust boundary so an operator deploys it knowingly. It is advisory only —
 // validateSkillDraftConfig has already enforced the structural invariants. Two
 // residuals exist because mecatl has no OS-level sandbox yet:
-//   - Bash (when enabled) can write to ANY absolute path, so it can reach the
+//   - Shell (when enabled) can write to ANY absolute path, so it can reach the
 //     quarantine or active catalog regardless of location — the structural boundary
 //     covers Write/Edit only.
 //   - An active skills dir INSIDE the workspace is reachable by the model's
@@ -83,8 +83,8 @@ func warnSkillDraftResiduals(cfg Config) {
 	if cfg.SkillsDraftDir == "" {
 		return
 	}
-	if !cfg.NoBash && cfg.Shell != "" {
-		cfg.diag().Log(context.Background(), port.LevelWarn, "SkillDraft trust boundary is structural for Write/Edit only: Bash is enabled and (absent an OS sandbox) can write to any path, so it can reach the skills trees. For a fully structural boundary, run shell-less (no bash) or under an OS sandbox.")
+	if !cfg.NoShell && cfg.Shell != "" {
+		cfg.diag().Log(context.Background(), port.LevelWarn, "SkillDraft trust boundary is structural for Write/Edit only: Shell is enabled and (absent an OS sandbox) can write to any path, so it can reach the skills trees. For a fully structural boundary, run shell-less (no bash) or under an OS sandbox.")
 	}
 	workspace, err := osfs.ResolveRoot(cfg.Workspace)
 	if err != nil {

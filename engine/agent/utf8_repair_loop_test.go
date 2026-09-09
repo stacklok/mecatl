@@ -31,7 +31,7 @@ const invalidUTF8 = "\xe2M-^@M-^T"
 // with codes.Internal; this test pins the domain-side fix that keeps every
 // view consistent.
 func TestLoopRepairsInvalidUTF8ToolResult(t *testing.T) {
-	bad := &fakeTool{name: "Bash", readOnly: true,
+	bad := &fakeTool{name: "Shell", readOnly: true,
 		exec: func(_ context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
 			return session.NewToolResult(in.ID, "out "+invalidUTF8+" end"), nil
 		}}
@@ -48,7 +48,7 @@ func TestLoopRepairsInvalidUTF8ToolResult(t *testing.T) {
 			mu.Unlock()
 		})},
 		mockllm.ChunksTurn(
-			mockllm.ToolCallChunk(toolCall("c1", "Bash", `{"command":"x"}`)),
+			mockllm.ToolCallChunk(toolCall("c1", "Shell", `{"command":"x"}`)),
 			mockllm.UsageChunk(session.Usage{}),
 			mockllm.DoneChunk(session.StopEndTurn),
 		),

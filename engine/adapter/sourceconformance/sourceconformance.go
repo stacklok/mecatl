@@ -90,7 +90,7 @@ var Fixture = []FixtureSkill{
 			"author":  "stacklok",
 			"version": "1",
 		},
-		AllowedTools: []string{"Read", "Grep", "Bash"},
+		AllowedTools: []string{"Read", "Grep", "Shell"},
 		Assets: []FixtureAsset{
 			{Name: "references/checklist.md", Content: "- correctness first\n- style second\n"},
 			{Name: "scripts/lint.sh", Content: "#!/bin/sh\necho lint\n", Executable: true},

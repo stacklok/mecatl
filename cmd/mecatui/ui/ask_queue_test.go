@@ -32,7 +32,7 @@ const (
 // queued behind it, its stream's sends recorded by the returned fakeSender.
 func queuedAskModel(t *testing.T) (Model, *fakeSender) {
 	t.Helper()
-	m := approvalModel(t, pendingAsk{AskID: askA, Tool: "Bash"})
+	m := approvalModel(t, pendingAsk{AskID: askA, Tool: "Shell"})
 	send := &fakeSender{}
 	m.stream = client.NewStream(&fakeRecver{}, send)
 	m = applyAll(m, client.PermissionAskMsg{AskID: askB, Tool: "Write"})
@@ -108,7 +108,7 @@ func TestResolveAskAdvancesQueueNoSpinnerRearm(t *testing.T) {
 // the LAST answer.
 func TestResolveAskFIFOOrderTwoDeep(t *testing.T) {
 	m, send := queuedAskModel(t) // A visible, B queued
-	m = applyAll(m, client.PermissionAskMsg{AskID: askC, Tool: "Bash"})
+	m = applyAll(m, client.PermissionAskMsg{AskID: askC, Tool: "Shell"})
 	if len(approvalSurfaceOf(t, m).queue) != 2 {
 		t.Fatalf("precondition: want a 2-deep queue, got %+v", approvalSurfaceOf(t, m).queue)
 	}
@@ -159,7 +159,7 @@ func TestResolveAskFIFOOrderTwoDeep(t *testing.T) {
 // modal, returns to running, and re-arms the spinner tick — the be8fa37
 // regression pin, now framed explicitly as the empty-queue path.
 func TestResolveLastAskRearmsSpinner(t *testing.T) {
-	m := approvalModel(t, pendingAsk{AskID: askA, Tool: "Bash"})
+	m := approvalModel(t, pendingAsk{AskID: askA, Tool: "Shell"})
 	m, cmd := pressKey(m, tea.KeyPressMsg{Code: 'a', Text: "a"})
 	if m.phase != phaseRunning {
 		t.Fatalf("answering the last ask must return to running, got %v", m.phase)
@@ -197,7 +197,7 @@ func TestRetractVisibleAdvancesQueue(t *testing.T) {
 // queue is the pre-queue path verbatim — modal closes, back to running, spinner
 // re-armed.
 func TestRetractVisibleLastGoesRunning(t *testing.T) {
-	m := approvalModel(t, pendingAsk{AskID: askA, Tool: "Bash"})
+	m := approvalModel(t, pendingAsk{AskID: askA, Tool: "Shell"})
 	mm, cmd := m.Update(client.PermissionRetractMsg{AskID: askA})
 	m = mm.(Model)
 	if m.phase != phaseRunning {
@@ -269,7 +269,7 @@ func TestEndRunClearsAskQueue(t *testing.T) {
 			// third — the terminal msg must clear visible + queue + answered-set.
 			m = applyAll(m,
 				client.PermissionRetractMsg{AskID: askB},
-				client.PermissionAskMsg{AskID: askC, Tool: "Bash"},
+				client.PermissionAskMsg{AskID: askC, Tool: "Shell"},
 			)
 			if approvalSurfaceOf(t, m).resolvedAsks == nil || len(approvalSurfaceOf(t, m).queue) != 1 {
 				t.Fatalf("precondition: want a non-nil answered-set and one queued ask, got %v / %+v", approvalSurfaceOf(t, m).resolvedAsks, approvalSurfaceOf(t, m).queue)
@@ -286,7 +286,7 @@ func TestEndRunClearsAskQueue(t *testing.T) {
 			// retracted above). A new run's askIDs carry a fresh run-serial in
 			// production, but even a recycled-looking id must open cleanly — the
 			// answered-set died with the run.
-			m = applyAll(m, client.PermissionAskMsg{AskID: askB, Tool: "Bash"})
+			m = applyAll(m, client.PermissionAskMsg{AskID: askB, Tool: "Shell"})
 			if m.phase != phaseAwaitingApproval || approvalSurfaceOf(t, m).ask.AskID != askB {
 				t.Fatalf("a fresh ask after run end must open the modal (not be swallowed by a stale answered-set), got phase=%v ask=%+v", m.phase, approvalSurfaceOf(t, m).ask)
 			}
@@ -313,12 +313,12 @@ func TestResetSessionDropsAskQueue(t *testing.T) {
 	}
 }
 
-// TestAskQueueBadgeWithLongArgsHeadAsk: a long-args Bash head ask with a queued
+// TestAskQueueBadgeWithLongArgsHeadAsk: a long-args Shell head ask with a queued
 // successor carries the (1 of 2) badge in BOTH the modal title and the args
 // view title — the wrap/cap work must not eat the badge.
 func TestAskQueueBadgeWithLongArgsHeadAsk(t *testing.T) {
-	m, _ := queuedAskModel(t) // A (Bash) visible, B (Write) queued
-	approvalSurfaceOf(t, m).ask.Args = longBashArgs
+	m, _ := queuedAskModel(t) // A (Shell) visible, B (Write) queued
+	approvalSurfaceOf(t, m).ask.Args = longShellArgs
 	if footer := stripANSIstr(m.renderFooter()); !strings.Contains(footer, "(1 of 2)") {
 		t.Errorf("footer must carry the queue badge, got %q", footer)
 	}
@@ -329,7 +329,7 @@ func TestAskQueueBadgeWithLongArgsHeadAsk(t *testing.T) {
 	// Open the args view: the badge rides its title too.
 	m = openArgsView(t, m)
 	view := stripANSIstr(m.renderBody())
-	if !strings.Contains(view, "Ask args: Bash (1 of 2)") {
+	if !strings.Contains(view, "Ask args: Shell (1 of 2)") {
 		t.Errorf("the args view title must carry the queue badge, got %q", view)
 	}
 }
@@ -337,10 +337,10 @@ func TestAskQueueBadgeWithLongArgsHeadAsk(t *testing.T) {
 // TestAskIDDedupe: a re-delivered PermissionAskMsg whose askID is already visible
 // or queued is dropped — one visible + one queued, never duplicated.
 func TestAskIDDedupe(t *testing.T) {
-	m := approvalModel(t, pendingAsk{AskID: askA, Tool: "Bash"})
+	m := approvalModel(t, pendingAsk{AskID: askA, Tool: "Shell"})
 	m = applyAll(m,
-		client.PermissionAskMsg{AskID: askA, Tool: "Bash"},
-		client.PermissionAskMsg{AskID: askA, Tool: "Bash"},
+		client.PermissionAskMsg{AskID: askA, Tool: "Shell"},
+		client.PermissionAskMsg{AskID: askA, Tool: "Shell"},
 		client.PermissionAskMsg{AskID: askB, Tool: "Write"},
 		client.PermissionAskMsg{AskID: askB, Tool: "Write"},
 	)
@@ -355,12 +355,12 @@ func TestAskIDDedupe(t *testing.T) {
 // TestLateDuplicateOfAnsweredAskIgnored: a late re-delivery of an ALREADY-ANSWERED
 // askID (same stream) must not re-open the modal — the resolvedAsks dedupe.
 func TestLateDuplicateOfAnsweredAskIgnored(t *testing.T) {
-	m := approvalModel(t, pendingAsk{AskID: askA, Tool: "Bash"})
+	m := approvalModel(t, pendingAsk{AskID: askA, Tool: "Shell"})
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: 'a', Text: "a"}) // answer → running
 	if m.phase != phaseRunning {
 		t.Fatalf("precondition: answering must return to running, got %v", m.phase)
 	}
-	m = applyAll(m, client.PermissionAskMsg{AskID: askA, Tool: "Bash"})
+	m = applyAll(m, client.PermissionAskMsg{AskID: askA, Tool: "Shell"})
 	if m.phase != phaseRunning {
 		t.Fatalf("a late duplicate of an answered ask must not re-open the modal, got %v", m.phase)
 	}
@@ -387,10 +387,10 @@ func TestConcurrentAsksWireRoundTrip(t *testing.T) {
 		ev(&mecatlv1.Event{Type: "session.init", Seq: 1}),
 		ev(&mecatlv1.Event{Type: "turn.start", Seq: 2, Turn: 1}),
 		ev(&mecatlv1.Event{Type: "permission.ask", Seq: 3, Turn: 1, Ask: &mecatlv1.PermissionAsk{
-			AskId: askA, Tool: "Bash", Args: `{"command":"cat a"}`, Reason: "subagent request",
+			AskId: askA, Tool: "Shell", Args: `{"command":"cat a"}`, Reason: "subagent request",
 		}}),
 		ev(&mecatlv1.Event{Type: "permission.ask", Seq: 4, Turn: 1, Ask: &mecatlv1.PermissionAsk{
-			AskId: askB, Tool: "Bash", Args: `{"command":"cat b"}`, Reason: "subagent request",
+			AskId: askB, Tool: "Shell", Args: `{"command":"cat b"}`, Reason: "subagent request",
 		}}),
 		ev(&mecatlv1.Event{Type: "result", Seq: 5, Turn: 1, Result: &mecatlv1.Result{Stop: "end_turn", Text: "done"}}),
 	}

@@ -235,7 +235,7 @@ const (
 //   - Mutating is the explicit write opt-in. The DEFAULT is false (read-leaning): a
 //     schedule that does not opt in is treated as read-only for posture purposes,
 //     the same conservative default as a subagent. A schedule that will write
-//     (Edit/Write/Bash mutations) MUST set this true; composition's posture ladder
+//     (Edit/Write/Shell mutations) MUST set this true; composition's posture ladder
 //     applies.
 //   - MaxFires bounds the TOTAL number of fires for a cron schedule (0 = forever).
 //     It is cron-only: a one-shot fires once by definition and MaxFires is ignored

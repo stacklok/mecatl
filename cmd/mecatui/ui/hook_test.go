@@ -27,11 +27,11 @@ func renderHookBlock(r *renderer, text, phase, tool, decision string) string {
 // and a custom reason rides as a trailing tail (not a benign "•").
 func TestRenderHookBlocked(t *testing.T) {
 	r := newTestRenderer()
-	out := stripANSIstr(renderHookBlock(r, "secrets in the diff", "PreToolUse", "Bash", string(client.HookBlocked)))
+	out := stripANSIstr(renderHookBlock(r, "secrets in the diff", "PreToolUse", "Shell", string(client.HookBlocked)))
 	if !strings.Contains(out, "✗") {
 		t.Errorf("blocked hook should carry the error glyph, got %q", out)
 	}
-	if !strings.Contains(out, "hook PreToolUse") || !strings.Contains(out, "Bash") {
+	if !strings.Contains(out, "hook PreToolUse") || !strings.Contains(out, "Shell") {
 		t.Errorf("blocked hook should label phase + tool, got %q", out)
 	}
 	if !strings.Contains(out, ": blocked") {
@@ -51,11 +51,11 @@ func TestRenderHookBlocked(t *testing.T) {
 // "PreToolUse … PreToolUse" doubling.
 func TestRenderHookBlockedDeDupesPhaseEcho(t *testing.T) {
 	r := newTestRenderer()
-	out := stripANSIstr(renderHookBlock(r, "blocked by PreToolUse hook", "PreToolUse", "Bash", string(client.HookBlocked)))
+	out := stripANSIstr(renderHookBlock(r, "blocked by PreToolUse hook", "PreToolUse", "Shell", string(client.HookBlocked)))
 	if strings.Count(out, "PreToolUse") != 1 {
 		t.Errorf("phase should appear exactly once, got %q", out)
 	}
-	if !strings.Contains(out, "✗ hook PreToolUse · Bash: blocked") {
+	if !strings.Contains(out, "✗ hook PreToolUse · Shell: blocked") {
 		t.Errorf("expected de-duplicated blocked render, got %q", out)
 	}
 	// The boilerplate echo must NOT survive as a trailing reason.
@@ -85,7 +85,7 @@ func TestRenderHookInfo(t *testing.T) {
 // a phase-free reason tail (phase shown exactly once on the label).
 func TestRenderHookModified(t *testing.T) {
 	r := newTestRenderer()
-	out := stripANSIstr(renderHookBlock(r, "PreToolUse hook rewrote tool arguments for Bash", "PreToolUse", "Bash", string(client.HookModified)))
+	out := stripANSIstr(renderHookBlock(r, "PreToolUse hook rewrote tool arguments for Shell", "PreToolUse", "Shell", string(client.HookModified)))
 	if !strings.Contains(out, "✎") {
 		t.Errorf("modified hook should carry the ✎ glyph, got %q", out)
 	}
@@ -98,7 +98,7 @@ func TestRenderHookModified(t *testing.T) {
 	if strings.Count(out, "PreToolUse") != 1 {
 		t.Errorf("phase should appear exactly once, got %q", out)
 	}
-	if !strings.Contains(out, "— rewrote tool arguments for Bash") {
+	if !strings.Contains(out, "— rewrote tool arguments for Shell") {
 		t.Errorf("modified reason should survive (phase-stripped), got %q", out)
 	}
 }
@@ -129,8 +129,8 @@ func TestRenderHookAdvisory(t *testing.T) {
 // an error).
 func TestAdvisoryVsBlockedDifferStyling(t *testing.T) {
 	r := newTestRenderer()
-	advisory := renderHookBlock(r, "same text", "PreToolUse", "Bash", string(client.HookAdvisory))
-	blocked := renderHookBlock(r, "same text", "PreToolUse", "Bash", string(client.HookBlocked))
+	advisory := renderHookBlock(r, "same text", "PreToolUse", "Shell", string(client.HookAdvisory))
+	blocked := renderHookBlock(r, "same text", "PreToolUse", "Shell", string(client.HookBlocked))
 	if advisory == blocked {
 		t.Error("advisory and blocked hooks must render distinctly (warning vs error)")
 	}
@@ -140,8 +140,8 @@ func TestAdvisoryVsBlockedDifferStyling(t *testing.T) {
 // same prose render to DIFFERENT styled output (the whole point of the feature).
 func TestBlockedVsInfoHookDifferStyling(t *testing.T) {
 	r := newTestRenderer()
-	blocked := renderHookBlock(r, "same text", "PostToolUse", "Bash", string(client.HookBlocked))
-	info := renderHookBlock(r, "same text", "PostToolUse", "Bash", string(client.HookInfo))
+	blocked := renderHookBlock(r, "same text", "PostToolUse", "Shell", string(client.HookBlocked))
+	info := renderHookBlock(r, "same text", "PostToolUse", "Shell", string(client.HookInfo))
 	if blocked == info {
 		t.Error("blocked and info hooks must render distinctly")
 	}
@@ -164,7 +164,7 @@ func TestHookMsgRoutesToHookBlock(t *testing.T) {
 	m, _, _ := newTestModel(t, theme.New("aztec", theme.AztecPalette()))
 	m.phase = phaseRunning
 	m = applyAll(m, client.HookMsg{
-		Text: "blocked by policy", Phase: "PreToolUse", Tool: "Bash", Decision: client.HookBlocked,
+		Text: "blocked by policy", Phase: "PreToolUse", Tool: "Shell", Decision: client.HookBlocked,
 	})
 	var found *block
 	for i := range m.conv.blocks {
@@ -176,7 +176,7 @@ func TestHookMsgRoutesToHookBlock(t *testing.T) {
 		t.Fatal("HookMsg did not produce a blockHook")
 		return
 	}
-	if found.hookPhase != "PreToolUse" || found.hookTool != "Bash" || found.hookDecision != "blocked" {
+	if found.hookPhase != "PreToolUse" || found.hookTool != "Shell" || found.hookDecision != "blocked" {
 		t.Errorf("hook block fields = %+v", found)
 	}
 }

@@ -209,10 +209,10 @@ func TestConfiguredDenyOverridesSoulApply(t *testing.T) {
 }
 
 // TestMemoryAllowDoesNotAffectOtherTools proves the floor-scoped, tool-name-exact
-// memory/soul allows change resolution ONLY for those keys: Edit/Write/Bash stay
+// memory/soul allows change resolution ONLY for those keys: Edit/Write/Shell stay
 // Ask. This pins the "no other tool's Ask is loosened" invariant.
 func TestMemoryAllowDoesNotAffectOtherTools(t *testing.T) {
-	for _, name := range []string{"Edit", "Write", "Bash"} {
+	for _, name := range []string{"Edit", "Write", "Shell"} {
 		if got := evalDefault(t, name); got != governance.Ask {
 			t.Errorf("%s must stay Ask (memory/soul allows must not loosen it), got %v", name, got)
 		}

@@ -77,9 +77,9 @@ func TestChildRegistryCollectOutcomes(t *testing.T) {
 }
 
 // TestStatusToolsDisjointProjections pins the shared-registry / disjoint-
-// projections contract: a background-Bash (bash-cmd) entry is ABSENT from the
+// projections contract: a background-Shell (bash-cmd) entry is ABSENT from the
 // SubagentStatus roster and an unknown-id miss to its collect path, while the
-// SAME registry hands it to BashStatus — and a delegation child is the mirror
+// SAME registry hands it to ShellStatus — and a delegation child is the mirror
 // miss there.
 func TestStatusToolsDisjointProjections(t *testing.T) {
 	reg := newChildRunRegistry()
@@ -89,7 +89,7 @@ func TestStatusToolsDisjointProjections(t *testing.T) {
 	reg.register("subagent-a", childFamilySubagent, "explore", noCancel, true)
 	reg.markDoneResult("subagent-a", session.StopEndTurn, &body)
 	job := session.NewToolResult("bashcmd-j", "tail\n[exit code: 0]")
-	reg.register("bashcmd-j", childFamilyBashCmd, "make serve", noCancel, true)
+	reg.register("bashcmd-j", childFamilyShellCmd, "make serve", noCancel, true)
 	reg.markDoneResult("bashcmd-j", session.StopEndTurn, &job)
 
 	// SubagentStatus roster: the subagent, never the bash job.
@@ -115,19 +115,19 @@ func TestStatusToolsDisjointProjections(t *testing.T) {
 		t.Fatalf("SubagentStatus collect of a bash job = %+v, want the unknown-id miss", res)
 	}
 
-	// BashStatus sees the job; its collect delivers the stored body once.
-	res = execBashStatus(t, reg, "s3", map[string]any{"job_id": "bashcmd-j"})
+	// ShellStatus sees the job; its collect delivers the stored body once.
+	res = execShellStatus(t, reg, "s3", map[string]any{"job_id": "bashcmd-j"})
 	if res.IsError || res.Content != "tail\n[exit code: 0]" {
-		t.Fatalf("BashStatus collect = %+v, want the stored body", res)
+		t.Fatalf("ShellStatus collect = %+v, want the stored body", res)
 	}
-	res = execBashStatus(t, reg, "s4", nil)
+	res = execShellStatus(t, reg, "s4", nil)
 	if !strings.Contains(res.Content, "bashcmd-j") || strings.Contains(res.Content, "subagent-a") {
-		t.Fatalf("BashStatus roster = %q, want the bash job only", res.Content)
+		t.Fatalf("ShellStatus roster = %q, want the bash job only", res.Content)
 	}
 
 	// childKindLabel renders the bash family as a background command, never a
 	// "background subagent".
-	if got := childKindLabel(childStatus{id: "bashcmd-j", family: childFamilyBashCmd, background: true}); got != "background command" {
+	if got := childKindLabel(childStatus{id: "bashcmd-j", family: childFamilyShellCmd, background: true}); got != "background command" {
 		t.Fatalf("childKindLabel(bash-cmd) = %q, want %q", got, "background command")
 	}
 }

@@ -171,7 +171,7 @@ func TestMecatuiCardLayout_Scenario2_ApprovalRowsWrapBeforeStyle(t *testing.T) {
 	longArg := "argument-row-" + strings.Repeat("x", argsWidth+17)
 	longReason := "reason-row-" + strings.Repeat("y", contentWidth+17)
 	ask := pendingAsk{
-		Tool:   "Bash",
+		Tool:   "Shell",
 		Args:   `{"command":"` + longArg + `"}`,
 		Reason: longReason,
 	}

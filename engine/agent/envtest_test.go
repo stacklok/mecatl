@@ -52,8 +52,8 @@ func memEnvRunner(root string, runner tool.CommandRunner) tool.Environment {
 
 // MemEnvRunner is the exported form of memEnvRunner for the external agent_test
 // package (issue #462): an in-memory Environment rooted at root with a bound
-// command runner, so a test's Bash observes the runner the way a real session's
-// Bash reads it off the Environment.
+// command runner, so a test's Shell observes the runner the way a real session's
+// Shell reads it off the Environment.
 func MemEnvRunner(root string, runner tool.CommandRunner) tool.Environment {
 	return memEnvRunner(root, runner)
 }

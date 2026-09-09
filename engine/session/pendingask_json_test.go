@@ -13,7 +13,7 @@ import (
 
 // HookOriginated must survive a marshal+unmarshal round-trip as true.
 func TestPendingAskHookOriginatedRoundTrips(t *testing.T) {
-	in := PendingAsk{AskID: "a1", Tool: "Bash", Call: "c1", HookOriginated: true}
+	in := PendingAsk{AskID: "a1", Tool: "Shell", Call: "c1", HookOriginated: true}
 	b, err := json.Marshal(in)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
@@ -30,7 +30,7 @@ func TestPendingAskHookOriginatedRoundTrips(t *testing.T) {
 // omitempty must keep the field ABSENT from the JSON when false, so an old record (or a
 // policy ask) deserializes HookOriginated=false without the key being present.
 func TestPendingAskHookOriginatedOmitemptyWhenFalse(t *testing.T) {
-	b, err := json.Marshal(PendingAsk{AskID: "a1", Tool: "Bash"})
+	b, err := json.Marshal(PendingAsk{AskID: "a1", Tool: "Shell"})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
@@ -39,7 +39,7 @@ func TestPendingAskHookOriginatedOmitemptyWhenFalse(t *testing.T) {
 	}
 	// And a record with no key deserializes to false.
 	var out PendingAsk
-	if err := json.Unmarshal([]byte(`{"AskID":"a1","Tool":"Bash"}`), &out); err != nil {
+	if err := json.Unmarshal([]byte(`{"AskID":"a1","Tool":"Shell"}`), &out); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	if out.HookOriginated {
@@ -71,7 +71,7 @@ func TestPendingAskPlanOriginatedRoundTrips(t *testing.T) {
 // omitempty must keep the field ABSENT from the JSON when false, so an old record (or a
 // policy/hook ask) deserializes PlanOriginated=false without the key being present.
 func TestPendingAskPlanOriginatedOmitemptyWhenFalse(t *testing.T) {
-	b, err := json.Marshal(PendingAsk{AskID: "a1", Tool: "Bash"})
+	b, err := json.Marshal(PendingAsk{AskID: "a1", Tool: "Shell"})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
@@ -80,7 +80,7 @@ func TestPendingAskPlanOriginatedOmitemptyWhenFalse(t *testing.T) {
 	}
 	// And a record with no key deserializes to false.
 	var out PendingAsk
-	if err := json.Unmarshal([]byte(`{"AskID":"a1","Tool":"Bash"}`), &out); err != nil {
+	if err := json.Unmarshal([]byte(`{"AskID":"a1","Tool":"Shell"}`), &out); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	if out.PlanOriginated {
@@ -96,10 +96,10 @@ func TestPendingAskOriginAccessor(t *testing.T) {
 		ask  PendingAsk
 		want AskOrigin
 	}{
-		{"none when neither bit set", PendingAsk{Tool: "Bash"}, AskOriginNone},
-		{"hook when HookOriginated set", PendingAsk{Tool: "Bash", HookOriginated: true}, AskOriginHook},
+		{"none when neither bit set", PendingAsk{Tool: "Shell"}, AskOriginNone},
+		{"hook when HookOriginated set", PendingAsk{Tool: "Shell", HookOriginated: true}, AskOriginHook},
 		{"plan when PlanOriginated set", PendingAsk{Tool: "PresentPlan", PlanOriginated: true}, AskOriginPlan},
-		{"hook wins when both set (tie-break)", PendingAsk{Tool: "Bash", HookOriginated: true, PlanOriginated: true}, AskOriginHook},
+		{"hook wins when both set (tie-break)", PendingAsk{Tool: "Shell", HookOriginated: true, PlanOriginated: true}, AskOriginHook},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -97,7 +97,7 @@ type flags struct {
 	useMock           bool
 	storeDir          string
 	shell             string
-	noBash            bool
+	noShell           bool
 	maxRunTokens      int
 	maxTeamTokens     int
 	// maxTurns caps the session's model calls (the StopMaxTurns terminal). 0
@@ -207,8 +207,8 @@ func parseFlags(argv []string) (flags, error) {
 	fs.Var(&f.permissionConfigs, "permission-config", "explicit operator settings YAML (repeatable); uses the same precedence and strict parser as conventional settings")
 	fs.BoolVar(&f.useMock, "mock", false, "use a canned offline mock provider (no network; smoke tests only)")
 	fs.StringVar(&f.storeDir, "store-dir", "", "directory for the JSONL session store (empty -> in-memory store)")
-	fs.StringVar(&f.shell, "shell", "/bin/sh", "shell used to execute Bash-tool commands; empty disables Bash")
-	fs.BoolVar(&f.noBash, "no-bash", false, "disable the Bash tool entirely (shell-less mode); overrides --shell")
+	fs.StringVar(&f.shell, "shell", "/bin/sh", "shell used to execute Shell-tool commands; empty disables Shell")
+	fs.BoolVar(&f.noShell, "no-bash", false, "disable the Shell tool entirely (shell-less mode); overrides --shell")
 	fs.IntVar(&f.maxRunTokens, "max-run-tokens", 0, "max cumulative input+output tokens per run; a run that crosses it ends cleanly with stop=budget. 0 = unlimited")
 	fs.IntVar(&f.maxTeamTokens, "max-team-tokens", 0, "max cumulative input+output tokens per team run; 0 = unlimited")
 	fs.IntVar(&f.maxTurns, "max-turns", 0, "max model calls (turns) for the run; a run that crosses it ends cleanly with stop=max_turns. 0 (default) uses the deployment default; a positive value caps this single-shot run. Orthogonal to --max-run-tokens (turns vs tokens; both compose)")
@@ -398,7 +398,7 @@ func appConfig(f flags, diag port.Diagnostics, obs observability) app.Config {
 		UseMock:                f.useMock,
 		StoreDir:               f.storeDir,
 		Shell:                  f.shell,
-		NoBash:                 f.noBash,
+		NoShell:                f.noShell,
 		MaxRunTokens:           f.maxRunTokens,
 		MaxTeamTokens:          f.maxTeamTokens,
 		// Remote MCP servers (issue #341): the static name=URL entries (with any

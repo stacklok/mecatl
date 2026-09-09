@@ -9,7 +9,7 @@ import (
 )
 
 // TestMainCommandRunnerScrubsSecrets is the security oracle for "Finding B": the
-// MAIN-session Bash runner — the one posture `auto`/`yolo` exposes to the model —
+// MAIN-session Shell runner — the one posture `auto`/`yolo` exposes to the model —
 // MUST NOT let a child shell read the harness's provider/auth credentials out of
 // the process environment, while the toolchain vars (PATH/HOME) MUST survive so
 // builds still work.

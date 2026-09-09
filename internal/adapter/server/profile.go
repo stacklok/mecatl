@@ -16,7 +16,7 @@ const (
 	// server-owned deployment default before constructing this tool surface.
 	ProfileDefault SessionProfile = ""
 	// ProfileNoFS is the NO-FILESYSTEM profile (issue #55): no workspace, no
-	// file tools (Read/ListDir/Edit/Write/Copy/Move/Remove/Grep/Glob), no Bash, no Parallel, no
+	// file tools (Read/ListDir/Edit/Write/Copy/Move/Remove/Grep/Glob), no Shell, no Parallel, no
 	// SkillDraft — the agent works through MCP tools, memory, web fetch, Skill
 	// bodies, and file-less delegation. It binds an exact no-FS EnvironmentRef and
 	// requires a per-session engine because the shared engine has FS tools.

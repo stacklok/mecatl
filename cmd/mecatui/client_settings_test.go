@@ -211,7 +211,7 @@ func TestReadClientKeymapRejectsMultiDocument(t *testing.T) {
 
 func TestReadLegacyKeymapToleratesServerSiblingKeys(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	writeSettings(t, "mecatl", "permissions:\n  allow:\n    - Bash(git status)\nguardrails:\n  defaultMode: advisory\nkeymap:\n  Agents: ctrl+f12\n")
+	writeSettings(t, "mecatl", "permissions:\n  allow:\n    - Shell(git status)\nguardrails:\n  defaultMode: advisory\nkeymap:\n  Agents: ctrl+f12\n")
 	got, set, err := readLegacyKeymap()
 	if err != nil {
 		t.Fatalf("legacy file with server sibling keys must parse: %v", err)
@@ -362,7 +362,7 @@ func TestCanonicalDebugPrintsKeymapDiagnostics(t *testing.T) {
 func TestKeymapDeprecationWarnSilentWithoutLegacyKeymap(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	// A legacy file with server keys but NO keymap: contributes nothing.
-	writeSettings(t, "mecatl", "permissions:\n  allow:\n    - Bash(git status)\n")
+	writeSettings(t, "mecatl", "permissions:\n  allow:\n    - Shell(git status)\n")
 	writeSettings(t, "mecatui", "keymap:\n  Agents: ctrl+f3\n")
 	var deps ui.Deps
 	out := captureStderr(t, func() {

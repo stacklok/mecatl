@@ -23,7 +23,7 @@ func benchToolSpecs() []tool.ToolSpec {
 			`{"type":"object","properties":{"path":{"type":"string"},"offset":{"type":"integer"},"limit":{"type":"integer"}},"required":["path"]}`)},
 		{Name: "Edit", Description: "Edit a file.", Schema: json.RawMessage(
 			`{"type":"object","properties":{"path":{"type":"string"},"old":{"type":"string"},"new":{"type":"string"},"replace_all":{"type":"boolean"}},"required":["path","old","new"]}`)},
-		{Name: "Bash", Description: "Run a shell command.", Schema: json.RawMessage(
+		{Name: "Shell", Description: "Run a shell command.", Schema: json.RawMessage(
 			`{"type":"object","properties":{"command":{"type":"string"},"timeout_ms":{"type":"integer"}},"required":["command"]}`)},
 	}
 }

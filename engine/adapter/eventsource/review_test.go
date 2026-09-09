@@ -33,8 +33,8 @@ import (
 // RecordAssistant in reconstructAwaiting makes this test fail (message count drops to
 // 1 and the final message is the user prompt, not the assistant turn).
 func TestFoldAwaitingPreservesTrailingAssistantTurn(t *testing.T) {
-	call := toolCall("c1", "Bash", `{"command":"ls"}`)
-	ask := session.PendingAsk{AskID: "s1:0:c1:r0", Tool: "Bash", Reason: "needs approval"}
+	call := toolCall("c1", "Shell", `{"command":"ls"}`)
+	ask := session.PendingAsk{AskID: "s1:0:c1:r0", Tool: "Shell", Reason: "needs approval"}
 	evs := []session.Event{
 		{Type: session.EvUserPrompt, Turn: 0, UserPrompt: &session.UserPromptPayload{Text: "run ls"}},
 		{Type: session.EvTurnStart, Turn: 0},
@@ -305,7 +305,7 @@ func keys(m map[string]struct{}) []string {
 // clean — the folded session's latest-segment ConsecutiveFailures must be 0 (the
 // counter is per-run; a terminal EvResult resets the segment).
 func TestFoldMultiRunResetsConsecutiveFailures(t *testing.T) {
-	failCall := toolCall("c1", "Bash", `{}`)
+	failCall := toolCall("c1", "Shell", `{}`)
 	evs := []session.Event{
 		// Run 1: a tool failure, then terminal.
 		{Type: session.EvUserPrompt, Turn: 0, UserPrompt: &session.UserPromptPayload{Text: "first"}},

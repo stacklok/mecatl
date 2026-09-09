@@ -48,7 +48,7 @@ func (s *stubClassifier) Classify(_ context.Context, _ session.ToolCall) (Verdic
 
 func bashCall(cmd string) session.ToolCall {
 	args, _ := json.Marshal(map[string]string{"command": cmd})
-	return session.NewToolCall("c1", "Bash", args)
+	return session.NewToolCall("c1", "Shell", args)
 }
 
 // --- pass-through: model is never consulted off the classified effect -------
@@ -180,12 +180,12 @@ func TestClassifierNeverRelaxesInnerDeny(t *testing.T) {
 	}
 }
 
-// --- Bash command-string classification end-to-end through a scripted LLM ----
+// --- Shell command-string classification end-to-end through a scripted LLM ----
 
-// TestBashCommandStringClassifiedViaLLM exercises the real llmClassifier path
+// TestShellCommandStringClassifiedViaLLM exercises the real llmClassifier path
 // (renderCall → prompt → parseVerdict) using mockllm as the port.LLMProvider,
 // fully offline.
-func TestBashCommandStringClassifiedViaLLM(t *testing.T) {
+func TestShellCommandStringClassifiedViaLLM(t *testing.T) {
 	inner := &stubPolicy{decision: governance.PermissionDecision{Effect: governance.Ask, Reason: "needs review"}}
 	// Scripted model answers with the structured DANGEROUS verdict for the
 	// destructive command.
@@ -194,21 +194,21 @@ func TestBashCommandStringClassifiedViaLLM(t *testing.T) {
 
 	got := p.Evaluate(context.Background(), "s1", session.ModeDefault, bashCall("rm -rf / --no-preserve-root"), nil)
 	if got.Effect != governance.Deny {
-		t.Fatalf("dangerous Bash via LLM: want Deny, got %v", got.Effect)
+		t.Fatalf("dangerous Shell via LLM: want Deny, got %v", got.Effect)
 	}
 	if llm.Calls() != 1 {
 		t.Fatalf("expected exactly 1 model call, got %d", llm.Calls())
 	}
 }
 
-func TestBashSafeCommandStringClassifiedViaLLM(t *testing.T) {
+func TestShellSafeCommandStringClassifiedViaLLM(t *testing.T) {
 	inner := &stubPolicy{decision: governance.PermissionDecision{Effect: governance.Ask}}
 	llm := mockllm.New(mockllm.TextTurn(`{"verdict":"SAFE"}`))
 	p := Wrap(inner, llm, Config{})
 
 	got := p.Evaluate(context.Background(), "s1", session.ModeDefault, bashCall("git status"), nil)
 	if got.Effect != governance.Allow {
-		t.Fatalf("safe Bash via LLM: want Allow, got %v", got.Effect)
+		t.Fatalf("safe Shell via LLM: want Allow, got %v", got.Effect)
 	}
 }
 
@@ -229,17 +229,17 @@ func TestSkipReadOnlyBypassesModel(t *testing.T) {
 	}
 }
 
-func TestSkipReadOnlyDoesNotSkipBash(t *testing.T) {
+func TestSkipReadOnlyDoesNotSkipShell(t *testing.T) {
 	inner := &stubPolicy{decision: governance.PermissionDecision{Effect: governance.Ask}}
 	clf := &stubClassifier{verdict: VerdictDangerous}
 	p := wrapWithClassifier(inner, clf, Config{SkipReadOnly: true})
 
 	got := p.Evaluate(context.Background(), "s1", session.ModeDefault, bashCall("rm -rf /"), nil)
 	if got.Effect != governance.Deny {
-		t.Fatalf("Bash must still be classified under SkipReadOnly: want Deny, got %v", got.Effect)
+		t.Fatalf("Shell must still be classified under SkipReadOnly: want Deny, got %v", got.Effect)
 	}
 	if !clf.called {
-		t.Fatal("Bash must always be classified, even with SkipReadOnly")
+		t.Fatal("Shell must always be classified, even with SkipReadOnly")
 	}
 }
 

@@ -30,7 +30,7 @@ func reviewerEngine(llm port.LLMProvider) *Engine {
 func bashAsk(cmd string) session.PendingAsk {
 	return session.PendingAsk{
 		AskID:  "ask-1",
-		Tool:   "Bash",
+		Tool:   "Shell",
 		Args:   json.RawMessage(`{"command":` + mustJSONString(cmd) + `}`),
 		Reason: "command substitution requires approval",
 	}
@@ -224,7 +224,7 @@ func TestAskReviewPromptReachesProviderShaped(t *testing.T) {
 	}
 	fenceIdx := blockIdx + strings.Index(block, governance.UntrustedFence)
 	// Policy header + tool line are TRUSTED: rendered BEFORE the fence opens.
-	for _, trusted := range []string{"CUSTOM-RUBRIC: read-only only.", "Tool: Bash", "command substitution requires approval"} {
+	for _, trusted := range []string{"CUSTOM-RUBRIC: read-only only.", "Tool: Shell", "command substitution requires approval"} {
 		idx := strings.Index(prompt, trusted)
 		if idx < 0 || idx > fenceIdx {
 			t.Fatalf("trusted line %q must appear before the fence (idx=%d, fence=%d)", trusted, idx, fenceIdx)
@@ -288,9 +288,9 @@ func TestAskReviewPromptInjectionDefanged(t *testing.T) {
 	}
 }
 
-// TestAskReviewSubjectNonBash asserts a non-Bash ask reviews its Reason (the
+// TestAskReviewSubjectNonShell asserts a non-Shell ask reviews its Reason (the
 // surfacedCommandPreview mirror), not empty text.
-func TestAskReviewSubjectNonBash(t *testing.T) {
+func TestAskReviewSubjectNonShell(t *testing.T) {
 	ask := session.PendingAsk{Tool: "Edit", Reason: "mutating tool requires approval"}
 	if got := askReviewSubject(ask); got != "mutating tool requires approval" {
 		t.Fatalf("askReviewSubject = %q", got)

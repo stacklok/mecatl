@@ -205,7 +205,7 @@ func TestSpinnerRearmedOnEveryVisibleTransition(t *testing.T) {
 		m.streamCh = make(chan tea.Msg, 1)
 		m.streamCh <- client.StreamClosedMsg{} // park a msg so afterEvent's reader leaf resolves
 		m.phase = phaseRunning
-		m = applyAll(m, client.PermissionAskMsg{AskID: "ask-1", Tool: "Bash"})
+		m = applyAll(m, client.PermissionAskMsg{AskID: "ask-1", Tool: "Shell"})
 
 		mm, cmd := m.Update(client.PermissionRetractMsg{AskID: "ask-1"})
 		got := mm.(Model)

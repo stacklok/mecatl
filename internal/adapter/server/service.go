@@ -185,7 +185,7 @@ type ResolvedModel struct {
 // profile is the session's tool-surface profile (issue #55), flowing exactly as
 // the selector does: ProfileDefault keeps today's catalog byte-identical;
 // ProfileNoFS makes the factory assemble the NO-FILESYSTEM catalog (no file
-// tools, no Bash, no Parallel, no SkillDraft; file-less Subagent/Team children)
+// tools, no Shell, no Parallel, no SkillDraft; file-less Subagent/Team children)
 // and apply the no-FS prompt posture. A no-FS session ALWAYS routes through this
 // factory — the shared engine has the FS tools baked in.
 //
@@ -2470,8 +2470,8 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 // Engine.HasTool, which is nil-safe (a nil engine/catalog yields the tool caps as
 // false). The names are referenced from each owning package's exported constant
 // — memory.RememberToolName (internal/adapter/memory.NewRememberTool),
-// skills.ToolName (internal/adapter/skills.NewTool), tools.BashToolName
-// (internal/adapter/tools.NewBashTool) — so the cap links to the registered name
+// skills.ToolName (internal/adapter/skills.NewTool), tools.ShellToolName
+// (internal/adapter/tools.NewShellTool) — so the cap links to the registered name
 // at COMPILE time and cannot drift on a rename.
 func (s *Service) capabilities() *mecatlv1.ServerCapabilities {
 	has := func(name string) bool {
@@ -2506,7 +2506,7 @@ func (s *Service) capabilities() *mecatlv1.ServerCapabilities {
 		ModelSelection:    len(s.currentModels()) > 0 || s.modelsRefresher.Load() != nil,
 		Memory:            has(memory.RememberToolName),
 		Skills:            has(skills.ToolName),
-		Bash:              has(tools.BashToolName),
+		Bash:              has(tools.ShellToolName),
 		Image:             pcaps.Image,
 		Audio:             pcaps.Audio,
 		Posture:           s.cfg.Posture,

@@ -99,14 +99,14 @@ func TestAnchorHashIgnoresSettingsYAML(t *testing.T) {
 	ws := realDir(t, t.TempDir(), "repo")
 	writeFile(t, ws, ".mecatl/soul.md", "persona")
 	writeFile(t, ws, ".mecatl/agents/a.md", "agent")
-	writeFile(t, ws, ".mecatl/settings.yaml", "permissions:\n  allow:\n    - Bash(go test*)\n")
+	writeFile(t, ws, ".mecatl/settings.yaml", "permissions:\n  allow:\n    - Shell(go test*)\n")
 	r := New()
 	before := r.AnchorHash(ws)
 
 	// Edit settings.yaml (and the project's settings.local.yaml) — a routine
 	// permission change on a real commit. The anchor MUST be unchanged.
-	writeFile(t, ws, ".mecatl/settings.yaml", "permissions:\n  allow:\n    - Bash(go build*)\n    - Bash(go vet*)\n")
-	writeFile(t, ws, ".mecatl/settings.local.yaml", "permissions:\n  allow:\n    - Bash(rm*)\n")
+	writeFile(t, ws, ".mecatl/settings.yaml", "permissions:\n  allow:\n    - Shell(go build*)\n    - Shell(go vet*)\n")
+	writeFile(t, ws, ".mecatl/settings.local.yaml", "permissions:\n  allow:\n    - Shell(rm*)\n")
 	if after := r.AnchorHash(ws); after != before {
 		t.Fatal("editing settings.yaml changed the identity anchor — would nag-fatigue the operator (MUST-FIX 1 violated)")
 	}

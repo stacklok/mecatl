@@ -133,7 +133,7 @@ func TestFramingSurfaceTagsArePinned(t *testing.T) {
 		"recorded findings:",
 		"messages sent to you:",
 		"policy:",
-		"tool: Bash",
+		"tool: Shell",
 		"requested command:",
 		"categories:",
 		"task to classify:",

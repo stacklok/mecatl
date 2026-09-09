@@ -408,7 +408,7 @@ func TestAppConfigMapping(t *testing.T) {
 		if cfg.MaxRunTokens != 1234 || cfg.MaxTeamTokens != 5678 {
 			t.Errorf("budgets not mapped: run=%d team=%d", cfg.MaxRunTokens, cfg.MaxTeamTokens)
 		}
-		if !cfg.NoBash {
+		if !cfg.NoShell {
 			t.Error("--no-bash not mapped")
 		}
 		if cfg.Posture != app.PostureAuto {

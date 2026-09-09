@@ -123,7 +123,7 @@ func TestForkReturnsEnvironmentWithBoundRunner(t *testing.T) {
 // from ws.Root() — the copy root — never from the discarded reservation. This
 // test forces the fallback by injecting a runGit that always fails the worktree
 // add, then asserts: Ref.ID == Workspace.Root, Ref.Kind == local, a relative
-// Bash write lands in the copy root, cleanup removes it, and no stray extra
+// Shell write lands in the copy root, cleanup removes it, and no stray extra
 // child directory remains in the temp base.
 func TestForkFallbackCopyAffinity(t *testing.T) {
 	base := t.TempDir()
@@ -204,7 +204,7 @@ func TestForkFallbackCopyAffinity(t *testing.T) {
 	if runnerRoots[0] != childRoot {
 		t.Errorf("runner bound to %q, want copy root %q", runnerRoots[0], childRoot)
 	}
-	// A relative Bash write through the child runner lands in the copy root.
+	// A relative Shell write through the child runner lands in the copy root.
 	if _, err := child.CommandRunner().Run(ctx, "echo forked > child.txt"); err != nil {
 		t.Fatalf("child runner Run: %v", err)
 	}
@@ -237,7 +237,7 @@ func TestForkFallbackCopyAffinity(t *testing.T) {
 }
 
 // TestForkWithoutRunnerIsShellLess proves a forker constructed without WithRunner
-// mints shell-less children (the child's Bash surfaces ErrNoShell honestly).
+// mints shell-less children (the child's Shell surfaces ErrNoShell honestly).
 func TestForkWithoutRunnerIsShellLess(t *testing.T) {
 	base := t.TempDir()
 	baseWS, err := osfs.NewWorkspace(base)

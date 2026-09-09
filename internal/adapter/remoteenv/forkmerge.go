@@ -19,7 +19,7 @@ import (
 // child Environment with a FRESH opaque child id, seeded from a DEEP COPY of the
 // parent namespace's file map, so the child starts from the parent's contents
 // and the two then diverge independently. The child's Workspace and runner share
-// the child's namespace, so the child's Bash observes the SAME namespace its
+// the child's namespace, so the child's Shell observes the SAME namespace its
 // Read/Write do — never the parent's. cleanup is a no-op (the namespace is
 // in-memory; a real transport would tear down the remote workspace here).
 type Forker struct {

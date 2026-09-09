@@ -276,7 +276,7 @@ func parseSpec(spec string, scope governance.Scope, effect governance.Effect) (g
 //
 //   - The Claude-Code convention "<prefix>:*" (and the bare "<prefix>:") means a
 //     prefix match: "go test:*" → "go test*", "git push:" → "git push*". This is
-//     applied to ANY tool (Claude uses it for Bash; harmless elsewhere since the
+//     applied to ANY tool (Claude uses it for Shell; harmless elsewhere since the
 //     ":" form is Claude-specific).
 //   - An empty pattern stays empty (tool-wide).
 //   - Everything else passes through unchanged (it is already a mecatl glob, e.g.

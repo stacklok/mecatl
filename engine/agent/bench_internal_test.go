@@ -128,7 +128,7 @@ func benchCompactionConversation() *session.Conversation {
 // generation run over a representative set.
 func benchInternalCatalog() *tool.Catalog {
 	c := tool.NewCatalog()
-	for _, name := range []string{"Read", "Edit", "Write", "Glob", "Grep", "Bash"} {
+	for _, name := range []string{"Read", "Edit", "Write", "Glob", "Grep", "Shell"} {
 		c.MustRegister(&benchTool{name: name})
 	}
 	return c

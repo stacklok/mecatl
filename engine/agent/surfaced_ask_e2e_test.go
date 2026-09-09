@@ -16,15 +16,15 @@ import (
 
 // TestE2E_SurfacedAskAllowed drives a REAL interactive parent Engine whose Subagent child
 // (isolated, but with a substitution that is NOT worktree-auto-approvable) surfaces a
-// Bash ask. A scripted approver goroutine reads the parent stream and APPROVES via the
+// Shell ask. A scripted approver goroutine reads the parent stream and APPROVES via the
 // surfaced (child) askID; the child then executes the command and the parent run
 // completes cleanly.
 func TestE2E_SurfacedAskAllowed(t *testing.T) {
-	bash := &fakeBash{}
+	bash := &fakeShell{}
 	// `cat $(zap)`: substitution with a non-read-only inner stand-in → NOT
 	// IsolationApprovable → surfaces even though the child is isolated.
 	childLLM := mockllm.New(
-		mockllm.ToolCallTurn(toolCall("k1", "Bash", `{"command":"cat $(zap)"}`)),
+		mockllm.ToolCallTurn(toolCall("k1", "Shell", `{"command":"cat $(zap)"}`)),
 		mockllm.TextTurn("child: command output processed"),
 	)
 	childEngine := bashChildEngine(childLLM, bash)
@@ -64,9 +64,9 @@ func TestE2E_SurfacedAskAllowed(t *testing.T) {
 // engine's own authorize populated it, and the surfacing closure forwards it), so
 // a host sees the same opaque correlation id on a surfaced ask as on a direct one.
 func TestE2E_SurfacedChildAskCarriesChildGatedCallID(t *testing.T) {
-	bash := &fakeBash{}
+	bash := &fakeShell{}
 	childLLM := mockllm.New(
-		mockllm.ToolCallTurn(toolCall("k1", "Bash", `{"command":"cat $(zap)"}`)),
+		mockllm.ToolCallTurn(toolCall("k1", "Shell", `{"command":"cat $(zap)"}`)),
 		mockllm.TextTurn("child: command output processed"),
 	)
 	childEngine := bashChildEngine(childLLM, bash)
@@ -98,9 +98,9 @@ func TestE2E_SurfacedChildAskCarriesChildGatedCallID(t *testing.T) {
 // DENIES. The child gets a denied tool result and degrades gracefully — the run still
 // terminates with a deliverable, never hangs.
 func TestE2E_SurfacedAskDenied(t *testing.T) {
-	bash := &fakeBash{}
+	bash := &fakeShell{}
 	childLLM := mockllm.New(
-		mockllm.ToolCallTurn(toolCall("k1", "Bash", `{"command":"cat $(zap)"}`)),
+		mockllm.ToolCallTurn(toolCall("k1", "Shell", `{"command":"cat $(zap)"}`)),
 		mockllm.TextTurn("child: proceeding without that command"),
 	)
 	childEngine := bashChildEngine(childLLM, bash)
@@ -131,9 +131,9 @@ func TestE2E_SurfacedAskDenied(t *testing.T) {
 // surfaced-class ask is auto-denied with the accurate "non-interactive subagent shell"
 // operator diagnostic, the child does not execute it, and the run does not hang.
 func TestE2E_HeadlessAutoDeny(t *testing.T) {
-	bash := &fakeBash{}
+	bash := &fakeShell{}
 	childLLM := mockllm.New(
-		mockllm.ToolCallTurn(toolCall("k1", "Bash", `{"command":"cat $(zap)"}`)),
+		mockllm.ToolCallTurn(toolCall("k1", "Shell", `{"command":"cat $(zap)"}`)),
 		mockllm.TextTurn("child: adapted"),
 	)
 	childEngine := bashChildEngine(childLLM, bash)
@@ -168,11 +168,11 @@ func TestE2E_HeadlessAutoDeny(t *testing.T) {
 // (no surface), it auto-denies; the child never runs the command. We assert on the
 // EFFECT (the command did not run), never on a destructive literal.
 func TestE2E_AdversarialSubstitutionHidesDestructiveStillDenied(t *testing.T) {
-	bash := &fakeBash{}
+	bash := &fakeShell{}
 	// A worktree-safe-LOOKING outer (`go test`) hiding a non-read-only inner via
 	// substitution — must NOT auto-approve under A2.
 	childLLM := mockllm.New(
-		mockllm.ToolCallTurn(toolCall("k1", "Bash", `{"command":"go test $(zap)"}`)),
+		mockllm.ToolCallTurn(toolCall("k1", "Shell", `{"command":"go test $(zap)"}`)),
 		mockllm.TextTurn("child: adapted"),
 	)
 	childEngine := bashChildEngine(childLLM, bash)
@@ -193,12 +193,12 @@ func TestE2E_AdversarialSubstitutionHidesDestructiveStillDenied(t *testing.T) {
 }
 
 // TestE2E_SurfacedTeamMemberAskDoesNotBlockPeers drives a REAL team via the Team tool
-// with an interactive parent: the lead surfaces a Bash ask and parks; a read-only
+// with an interactive parent: the lead surfaces a Shell ask and parks; a read-only
 // worker keeps running and finishes; the scripted approver answers the lead's surfaced
 // ask; the team converges. It proves a parked member does not block its peers (the
 // supervisor drains members on independent errgroup goroutines).
 func TestE2E_SurfacedTeamMemberAskDoesNotBlockPeers(t *testing.T) {
-	leadBash := &fakeBash{}
+	leadShell := &fakeShell{}
 	allow := permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil)
 
 	factory := func(tm *team.Team, spec agent.MemberSpec, _ string) agent.MemberBuild {
@@ -208,10 +208,10 @@ func TestE2E_SurfacedTeamMemberAskDoesNotBlockPeers(t *testing.T) {
 		}
 		switch spec.Name {
 		case "lead":
-			cat.MustRegister(leadBash)
+			cat.MustRegister(leadShell)
 			llm := mockllm.New(
-				// Round 0: surface a Bash ask (non-isolation-approvable substitution).
-				mockllm.ToolCallTurn(toolCall("a1", "Bash", `{"command":"cat $(zap)"}`)),
+				// Round 0: surface a Shell ask (non-isolation-approvable substitution).
+				mockllm.ToolCallTurn(toolCall("a1", "Shell", `{"command":"cat $(zap)"}`)),
 				mockllm.TextTurn("lead: command done"),
 				// Synthesis turn.
 				mockllm.TextTurn("CONSOLIDATED: worker reported, command run"),
@@ -263,7 +263,7 @@ func TestE2E_SurfacedTeamMemberAskDoesNotBlockPeers(t *testing.T) {
 	if !workerEmittedBeforeApproval {
 		t.Fatalf("concurrency not pinned: the worker did not emit an event before the lead's ask was approved (a sequential drain would have)")
 	}
-	if got := leadBash.ran(); len(got) != 1 {
+	if got := leadShell.ran(); len(got) != 1 {
 		t.Fatalf("lead's surfaced ask should be approved and run once; ran=%v", got)
 	}
 	res := lastResult(t, evs)
@@ -330,7 +330,7 @@ func drainTeamPinningConcurrency(t *testing.T, r *agent.Run, decide func(ev sess
 }
 
 // TestE2E_TwoConcurrentSurfacedAsksBothResolved drives a REAL team via the Team tool
-// with an interactive parent where TWO members (alpha = lead, beta) each surface a Bash
+// with an interactive parent where TWO members (alpha = lead, beta) each surface a Shell
 // ask in round 0 (substitutions — not isolation-approvable). Both asks are HELD until
 // both have been observed in flight SIMULTANEOUSLY (pinning that concurrent members
 // really do surface concurrent asks — the situation the client-side FIFO ask queue
@@ -342,8 +342,8 @@ func drainTeamPinningConcurrency(t *testing.T, r *agent.Run, decide func(ev sess
 // of concurrent surfaced asks, which already worked); the client-side single-slot
 // clobber bug itself is pinned by the reducer tests in cmd/mecatui/ui/ask_queue_test.go.
 func TestE2E_TwoConcurrentSurfacedAsksBothResolved(t *testing.T) {
-	alphaBash := &fakeBash{}
-	betaBash := &fakeBash{}
+	alphaShell := &fakeShell{}
+	betaShell := &fakeShell{}
 	allow := permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil)
 
 	factory := func(tm *team.Team, spec agent.MemberSpec, _ string) agent.MemberBuild {
@@ -353,9 +353,9 @@ func TestE2E_TwoConcurrentSurfacedAsksBothResolved(t *testing.T) {
 		}
 		switch spec.Name {
 		case "alpha": // the lead (first member): surfaces an ask, then synthesises.
-			cat.MustRegister(alphaBash)
+			cat.MustRegister(alphaShell)
 			llm := mockllm.New(
-				mockllm.ToolCallTurn(toolCall("a1", "Bash", `{"command":"cat $(zap-a)"}`)),
+				mockllm.ToolCallTurn(toolCall("a1", "Shell", `{"command":"cat $(zap-a)"}`)),
 				mockllm.TextTurn("alpha: command done"),
 				// Synthesis turn.
 				mockllm.TextTurn("CONSOLIDATED: both commands ran"),
@@ -363,9 +363,9 @@ func TestE2E_TwoConcurrentSurfacedAsksBothResolved(t *testing.T) {
 			eng := agent.NewEngine(agent.Deps{LLM: llm, Catalog: cat, Policy: allow, Hooks: noopHooks{}, Model: "m"})
 			return agent.MemberBuild{Engine: eng, IsolateReadOnly: true}
 		default: // beta: surfaces its own ask concurrently.
-			cat.MustRegister(betaBash)
+			cat.MustRegister(betaShell)
 			llm := mockllm.New(
-				mockllm.ToolCallTurn(toolCall("b1", "Bash", `{"command":"cat $(zap-b)"}`)),
+				mockllm.ToolCallTurn(toolCall("b1", "Shell", `{"command":"cat $(zap-b)"}`)),
 				mockllm.TextTurn("beta: command done"),
 			)
 			eng := agent.NewEngine(agent.Deps{LLM: llm, Catalog: cat, Policy: allow, Hooks: noopHooks{}, Model: "m"})
@@ -404,10 +404,10 @@ func TestE2E_TwoConcurrentSurfacedAsksBothResolved(t *testing.T) {
 	if !bothHeldInFlight {
 		t.Fatalf("concurrency not pinned: both members' asks were never in flight simultaneously (asks seen: %d)", len(seen))
 	}
-	if got := alphaBash.ran(); len(got) != 1 {
+	if got := alphaShell.ran(); len(got) != 1 {
 		t.Fatalf("alpha's surfaced ask should be approved and run exactly once; ran=%v", got)
 	}
-	if got := betaBash.ran(); len(got) != 1 {
+	if got := betaShell.ran(); len(got) != 1 {
 		t.Fatalf("beta's surfaced ask should be approved and run exactly once; ran=%v", got)
 	}
 	res := lastResult(t, evs)
@@ -420,22 +420,22 @@ func TestE2E_TwoConcurrentSurfacedAsksBothResolved(t *testing.T) {
 }
 
 // TestE2E_HeadlessTeamMemberDeniedResultIsAccurate proves the MODEL-facing message of a
-// headless auto-denied subagent Bash ask is the ACCURATE "non-interactive subagent
+// headless auto-denied subagent Shell ask is the ACCURATE "non-interactive subagent
 // shell" text, not the misleading "denied by user". A team member's denied tool RESULT
 // is forwarded on the team.member stream (clamped), so the parent stream carries it and
 // the test can assert on it. The parent is headless (Interactive=false) so the member's
 // substitution ask auto-denies.
 func TestE2E_HeadlessTeamMemberDeniedResultIsAccurate(t *testing.T) {
-	leadBash := &fakeBash{}
+	leadShell := &fakeShell{}
 	allow := permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil)
 	factory := func(tm *team.Team, spec agent.MemberSpec, _ string) agent.MemberBuild {
 		cat := tool.NewCatalog()
 		for _, tl := range agent.MemberTools(tm, spec.Name, nil) {
 			cat.MustRegister(tl)
 		}
-		cat.MustRegister(leadBash)
+		cat.MustRegister(leadShell)
 		llm := mockllm.New(
-			mockllm.ToolCallTurn(toolCall("a1", "Bash", `{"command":"cat $(zap)"}`)),
+			mockllm.ToolCallTurn(toolCall("a1", "Shell", `{"command":"cat $(zap)"}`)),
 			mockllm.TextTurn("member: adapted after denial"),
 			mockllm.TextTurn("CONSOLIDATED: done"),
 		)
@@ -467,7 +467,7 @@ func TestE2E_HeadlessTeamMemberDeniedResultIsAccurate(t *testing.T) {
 		}
 	}
 	if !sawAccurate {
-		t.Fatalf("headless member's denied Bash result must carry the accurate 'non-interactive subagent shell' message")
+		t.Fatalf("headless member's denied Shell result must carry the accurate 'non-interactive subagent shell' message")
 	}
 	if sawMisleading {
 		t.Fatalf("headless auto-deny must NOT use the misleading 'denied by user' message")

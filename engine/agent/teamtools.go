@@ -48,7 +48,7 @@ func MemberTools(t *team.Team, self string, hooks port.HookRunner) []tool.Tool {
 // mutate TEAM state, but they NEVER touch the workspace, so they are safe for a
 // read-only (base-sharing) member. The supervisor uses this set to distinguish a
 // member's coordination tools from genuine WORKSPACE-mutating tools (Edit / Write /
-// non-read-only Bash) when it enforces the read-only-member invariant in AddMember.
+// non-read-only Shell) when it enforces the read-only-member invariant in AddMember.
 // It is kept in lock-step with MemberTools by construction: it derives the names
 // from MemberTools over a throwaway team.
 func MemberToolNames() map[string]struct{} {

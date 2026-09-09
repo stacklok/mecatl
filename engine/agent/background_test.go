@@ -380,9 +380,9 @@ func TestBackgroundChildCancelledAtRunEnd(t *testing.T) {
 // human's approval routes back to the child, the command runs, and the result is
 // collected normally.
 func TestBackgroundChildSurfacedAskAnsweredMidRun(t *testing.T) {
-	bash := &fakeBash{}
+	bash := &fakeShell{}
 	childLLM := mockllm.New(
-		mockllm.ToolCallTurn(toolCall("k1", "Bash", `{"command":"cat $(zap)"}`)),
+		mockllm.ToolCallTurn(toolCall("k1", "Shell", `{"command":"cat $(zap)"}`)),
 		mockllm.TextTurn("child: bash done"),
 	)
 	task := agent.NewSubagentTool(bashChildEngine(childLLM, bash),
@@ -423,11 +423,11 @@ func TestBackgroundChildSurfacedAskAnsweredMidRun(t *testing.T) {
 // the CANCELLED-BY-USER result is still COLLECTIBLE — partial work + the
 // resumable trailer, exactly the foreground rendering.
 func TestBackgroundChildCancelledWhileParkedOnAsk(t *testing.T) {
-	bash := &fakeBash{}
+	bash := &fakeShell{}
 	childLLM := mockllm.New(
 		mockllm.ChunksTurn(
 			mockllm.TextChunk("partial findings"),
-			mockllm.ToolCallChunk(toolCall("k1", "Bash", `{"command":"cat $(zap)"}`)),
+			mockllm.ToolCallChunk(toolCall("k1", "Shell", `{"command":"cat $(zap)"}`)),
 			mockllm.DoneChunk(session.StopEndTurn),
 		),
 		mockllm.TextTurn("child: never reached"),
@@ -481,9 +481,9 @@ func TestBackgroundChildCancelledWhileParkedOnAsk(t *testing.T) {
 // retract — fail-safe), and the cancelled child is persisted + resumable.
 func TestRunEndDrainRetractsParkedAsk(t *testing.T) {
 	store := memstore.New()
-	bash := &fakeBash{}
+	bash := &fakeShell{}
 	childLLM := mockllm.New(
-		mockllm.ToolCallTurn(toolCall("k1", "Bash", `{"command":"cat $(zap)"}`)),
+		mockllm.ToolCallTurn(toolCall("k1", "Shell", `{"command":"cat $(zap)"}`)),
 		mockllm.TextTurn("child resumed fine"),
 	)
 	task := agent.NewSubagentTool(bashChildEngine(childLLM, bash),

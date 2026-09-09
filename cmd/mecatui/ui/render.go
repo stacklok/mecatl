@@ -2763,7 +2763,7 @@ func humanizeBytes(n int64) string {
 // parseMCPName splits an MCP tool name "mcp__<server>__<tool>" into its server
 // and tool parts (the tool half may itself contain "__", so the split is on the
 // FIRST "__" after the prefix). It returns ok=false for any non-MCP name, so a
-// core tool (Read, Bash, …) keeps its plain head.
+// core tool (Read, Shell, …) keeps its plain head.
 func parseMCPName(name string) (server, tool string, ok bool) {
 	const prefix = "mcp__"
 	if !strings.HasPrefix(name, prefix) {

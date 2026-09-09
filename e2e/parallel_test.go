@@ -135,12 +135,12 @@ When InspectSubagent returns, reply with the single word done.`)
 				}
 
 				// One branch, join=first: the auto-merge eligibility condition.
-				// The branch writes the sentinel file via Bash, then the Parallel
+				// The branch writes the sentinel file via Shell, then the Parallel
 				// call returns and the auto-merge applies the fork's diff back.
 				res, err := driver.Run(ctx, harness.RunOpts{
 					Scenario: "parallel-auto-merge", Timeout: 6 * time.Minute,
 					ApproveTools: []string{"Parallel"}, // backup; the CLI config allows it
-				}, `Use the tool named "Parallel" — not the Subagent tool — exactly once, with these arguments: tasks = ["Use the Bash tool to create a file named `+sentinelFile+` containing exactly the text `+sentinelBody+` (no trailing newline beyond the one in that text). Call no other tool. After the file is written, reply with the single word done."] and join = "first". Never call Subagent and call no other tool. When the Parallel tool returns, reply with the single word done.`)
+				}, `Use the tool named "Parallel" — not the Subagent tool — exactly once, with these arguments: tasks = ["Use the Shell tool to create a file named `+sentinelFile+` containing exactly the text `+sentinelBody+` (no trailing newline beyond the one in that text). Call no other tool. After the file is written, reply with the single word done."] and join = "first". Never call Subagent and call no other tool. When the Parallel tool returns, reply with the single word done.`)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred(), report(res, err))
 				gomega.Expect(res).NotTo(gomega.BeNil(), report(res, err))
 

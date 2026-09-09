@@ -655,7 +655,7 @@ func (e *Engine) runOne(ctx context.Context, r *Run, sess *session.Session, env 
 	}
 
 	// A PreToolUse hook is trusted to rewrite ordinary arguments, but it cannot
-	// silently turn a managed Bash call into the separately-authorized system scope.
+	// silently turn a managed Shell call into the separately-authorized system scope.
 	if decision, cancelled := e.authorizeMutatedSystemScope(ctx, r, sess, env, turnIdx, c, pre.effective, false); cancelled {
 		return session.ToolResult{}, nil, true
 	} else if decision.Effect == governance.Deny {
@@ -752,15 +752,15 @@ func (e *Engine) surfaceAsk(ctx context.Context, r *Run, sess *session.Session, 
 	return verdictResult, true, true
 }
 
-// permissionDecision evaluates normal Bash authority and, only for the declared
+// permissionDecision evaluates normal Shell authority and, only for the declared
 // system temporary scope, the independent tool-wide escape capability. The
 // synthetic capability is never dispatched or registered as a tool.
 func (e *Engine) permissionDecision(ctx context.Context, sess *session.Session, env tool.Environment, c session.ToolCall) governance.PermissionDecision {
 	ordinary := e.deps.Policy.Evaluate(ctx, sess.ID, sess.Mode, c, env.Workspace())
-	if !bashSystemScope(c) || ordinary.Effect == governance.Deny {
+	if !shellSystemScope(c) || ordinary.Effect == governance.Deny {
 		return ordinary
 	}
-	system := e.deps.Policy.Evaluate(ctx, sess.ID, sess.Mode, session.ToolCall{Name: bashSystemTempToolName}, env.Workspace())
+	system := e.deps.Policy.Evaluate(ctx, sess.ID, sess.Mode, session.ToolCall{Name: shellSystemTempToolName}, env.Workspace())
 	if system.Effect == governance.Deny {
 		return system
 	}
@@ -771,10 +771,10 @@ func (e *Engine) permissionDecision(ctx context.Context, sess *session.Session, 
 }
 
 func (e *Engine) authorizeMutatedSystemScope(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, original, effective session.ToolCall, resuming bool) (governance.PermissionDecision, bool) {
-	if bashSystemScope(original) || !bashSystemScope(effective) {
+	if shellSystemScope(original) || !shellSystemScope(effective) {
 		return governance.PermissionDecision{Effect: governance.Allow}, false
 	}
-	decision := e.deps.Policy.Evaluate(ctx, sess.ID, sess.Mode, session.ToolCall{Name: bashSystemTempToolName}, env.Workspace())
+	decision := e.deps.Policy.Evaluate(ctx, sess.ID, sess.Mode, session.ToolCall{Name: shellSystemTempToolName}, env.Workspace())
 	if decision.Effect == governance.Deny {
 		return decision, false
 	}
@@ -798,22 +798,22 @@ func (e *Engine) authorizeMutatedSystemScope(ctx context.Context, r *Run, sess *
 	return governance.PermissionDecision{Effect: governance.Deny, Reason: "denied by user: " + decision.Reason}, false
 }
 
-func bashSystemScope(c session.ToolCall) bool {
-	if c.Name != tool.BashToolName {
+func shellSystemScope(c session.ToolCall) bool {
+	if c.Name != tool.ShellToolName {
 		return false
 	}
-	args, _, ok := parseBashArgs(c)
+	args, _, ok := parseShellArgs(c)
 	return ok && bashScope(args) == tool.TemporaryScopeSystem
 }
 
 // systemScopeApprovalArgs projects only the requested scope and a command verb.
 // It must never include a runner-owned temporary path or environment value.
 func systemScopeApprovalArgs(c session.ToolCall) []byte {
-	args, _, ok := parseBashArgs(c)
+	args, _, ok := parseShellArgs(c)
 	if !ok {
-		return []byte(`{"temp_scope":"system","command_summary":"Bash command"}`)
+		return []byte(`{"temp_scope":"system","command_summary":"Shell command"}`)
 	}
-	summary := "Bash command"
+	summary := "Shell command"
 	if fields := strings.Fields(args.Command); len(fields) > 0 {
 		summary = fields[0]
 		if len(fields) > 1 {
@@ -825,7 +825,7 @@ func systemScopeApprovalArgs(c session.ToolCall) []byte {
 		Summary   string `json:"command_summary"`
 	}{TempScope: "system", Summary: summary})
 	if err != nil {
-		return []byte(`{"temp_scope":"system","command_summary":"Bash command"}`)
+		return []byte(`{"temp_scope":"system","command_summary":"Shell command"}`)
 	}
 	return out
 }
@@ -852,7 +852,7 @@ func (e *Engine) authorize(ctx context.Context, r *Run, sess *session.Session, e
 
 	askID := newAskID(sess.ID, sess.Counters.ToolCalls, c.ID, r.askDiscriminator)
 	args := c.Args
-	if bashSystemScope(c) {
+	if shellSystemScope(c) {
 		args = systemScopeApprovalArgs(c)
 	}
 	ask := session.PendingAsk{
@@ -883,7 +883,7 @@ func (e *Engine) authorize(ctx context.Context, r *Run, sess *session.Session, e
 		// Learn a per-session allow rule for this exact tool+pattern as a SIDE
 		// EFFECT — it governs FUTURE calls only and never blocks or re-evaluates the
 		// current one (which proceeds one-shot via the Allow below). Learn is itself
-		// a no-op when the call is not safely learnable (compound/substituted Bash,
+		// a no-op when the call is not safely learnable (compound/substituted Shell,
 		// no targetable pattern). It can NEVER override a deny or bypass plan mode:
 		// the rule is consulted by Evaluate at the lowest scope, behind the
 		// deny-dominant fold and the plan-mode gate.
@@ -1707,7 +1707,7 @@ func (e *Engine) parentCaps(r *Run, sess *session.Session, turnIdx int) parentCa
 				requester = clampPreview(requesterLabel)
 			}
 			// The policy REASON is harness/policy-authored metadata (e.g. "approval
-			// required by rule for Bash (go test*)" for a configured subagent: ask,
+			// required by rule for Shell (go test*)" for a configured subagent: ask,
 			// vs the substitution-floor message) — NOT peer/transcript content, so
 			// it is safe to surface (clamped). Appending it lets the operator tell
 			// WHY the ask surfaced: their own configured rule vs the substitution
@@ -1721,7 +1721,7 @@ func (e *Engine) parentCaps(r *Run, sess *session.Session, turnIdx int) parentCa
 				// carries the same opaque correlation id (no new leak — see
 				// PendingAsk.Call).
 				Call: ask.Call,
-				// Clamp/redact the command: a subagent's Bash args can contain peer-injected
+				// Clamp/redact the command: a subagent's Shell args can contain peer-injected
 				// untrusted text. Frame it explicitly as a quoted subagent REQUEST so the
 				// human reads it as "the subagent wants to run X", never as a trusted
 				// instruction. The original args are NOT forwarded.
@@ -1853,11 +1853,11 @@ func logRouterMissReason(ctx context.Context, diag port.Diagnostics, missReason 
 }
 
 // surfacedCommandPreview returns the human-facing preview of a surfaced child ask: for
-// a Bash ask, the command string; otherwise the ask reason (already policy-authored, not
+// a Shell ask, the command string; otherwise the ask reason (already policy-authored, not
 // peer content). It is the single text that rides the surfaced EvPermissionAsk and is
 // always clampPreview'd by the caller before emission.
 func surfacedCommandPreview(ask session.PendingAsk) string {
-	if ask.Tool == "Bash" {
+	if ask.Tool == "Shell" {
 		if cmd := bashCmdFromArgs(ask.Args); cmd != "" {
 			return cmd
 		}

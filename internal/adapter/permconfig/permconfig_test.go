@@ -13,12 +13,12 @@ func TestParseYAMLLoad(t *testing.T) {
 	data := []byte(`
 permissions:
   allow:
-    - "Bash(go test:*)"
+    - "Shell(go test:*)"
     - "Read"
   ask:
-    - "Bash(git push:*)"
+    - "Shell(git push:*)"
   deny:
-    - "Bash(rm:*)"
+    - "Shell(rm:*)"
 `)
 	cfg, err := parseYAML(data)
 	if err != nil {
@@ -39,7 +39,7 @@ permissions:
 	// The Claude-style "go test:*" must normalise to the glob "go test*".
 	var found bool
 	for _, r := range rules {
-		if r.Tool == "Bash" && r.Effect == governance.Allow {
+		if r.Tool == "Shell" && r.Effect == governance.Allow {
 			if r.Pattern != "go test*" {
 				t.Fatalf("expected normalised pattern %q, got %q", "go test*", r.Pattern)
 			}
@@ -53,7 +53,7 @@ permissions:
 		}
 	}
 	if !found {
-		t.Fatal("did not find the normalised Bash allow rule")
+		t.Fatal("did not find the normalised Shell allow rule")
 	}
 }
 
@@ -149,12 +149,12 @@ func TestParseSpec(t *testing.T) {
 		wantPattern string
 	}{
 		{"Read", true, "Read", ""},
-		{"Bash(go test:*)", true, "Bash", "go test*"},
-		{"Bash(git push:)", true, "Bash", "git push*"},
-		{"Bash(rm -rf *)", true, "Bash", "rm -rf *"},
+		{"Shell(go test:*)", true, "Shell", "go test*"},
+		{"Shell(git push:)", true, "Shell", "git push*"},
+		{"Shell(rm -rf *)", true, "Shell", "rm -rf *"},
 		{"Edit(src/**)", true, "Edit", "src/**"},
 		{"", false, "", ""},
-		{"Bash(unterminated", false, "", ""},
+		{"Shell(unterminated", false, "", ""},
 		{"(noTool)", false, "", ""},
 	}
 	for _, c := range cases {

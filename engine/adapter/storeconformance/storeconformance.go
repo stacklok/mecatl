@@ -130,7 +130,7 @@ func Run(t *testing.T, newStore func(t *testing.T) port.SessionStore) {
 			mustOK(t, "BeginTurn", s.BeginTurn())
 			ask := session.PendingAsk{
 				AskID:  "ask-1",
-				Tool:   "Bash",
+				Tool:   "Shell",
 				Args:   json.RawMessage(`{"command":"true"}`),
 				Reason: "mutating command",
 			}

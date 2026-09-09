@@ -36,14 +36,14 @@ func TestCompileRuleValidation(t *testing.T) {
 	if _, ok := CompileRule(RuleSpec{Match: ""}); ok {
 		t.Fatal("empty match must not compile")
 	}
-	if _, ok := CompileRule(RuleSpec{Match: "Bash", Mode: "bogus"}); ok {
+	if _, ok := CompileRule(RuleSpec{Match: "Shell", Mode: "bogus"}); ok {
 		t.Fatal("unknown mode must not compile")
 	}
-	if _, ok := CompileRule(RuleSpec{Match: "Bash", Phases: []string{"sideways"}}); ok {
+	if _, ok := CompileRule(RuleSpec{Match: "Shell", Phases: []string{"sideways"}}); ok {
 		t.Fatal("unknown phase must not compile")
 	}
 	// Empty mode defaults to block; empty phases cover both.
-	r, ok := CompileRule(RuleSpec{Match: "Bash"})
+	r, ok := CompileRule(RuleSpec{Match: "Shell"})
 	if !ok {
 		t.Fatal("a bare match must compile")
 	}

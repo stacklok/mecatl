@@ -19,7 +19,7 @@ var _ port.PermissionPolicy = (*permpolicy.Policy)(nil)
 
 func bashCall(cmd string) session.ToolCall {
 	args, _ := json.Marshal(map[string]string{"command": cmd})
-	return session.NewToolCall("c1", "Bash", args)
+	return session.NewToolCall("c1", "Shell", args)
 }
 
 func fileCall(toolName, p string) session.ToolCall {
@@ -32,8 +32,8 @@ const sid = session.SessionID("s1")
 // gauntlet #8 end-to-end through the port: deny beats allow across scopes.
 func TestPolicyDenyBeatsAllow(t *testing.T) {
 	p := permpolicy.NewPolicy([]governance.Rule{
-		{Scope: governance.ScopeManaged, Tool: "Bash", Pattern: "rm *", Effect: governance.Allow},
-		{Scope: governance.ScopeUser, Tool: "Bash", Pattern: "rm *", Effect: governance.Deny},
+		{Scope: governance.ScopeManaged, Tool: "Shell", Pattern: "rm *", Effect: governance.Allow},
+		{Scope: governance.ScopeUser, Tool: "Shell", Pattern: "rm *", Effect: governance.Deny},
 	}, nil)
 	got := p.Evaluate(context.Background(), sid, session.ModeDefault, bashCall("rm x"), nil)
 	if got.Effect != governance.Deny {
@@ -80,9 +80,9 @@ func TestPolicyAcceptEditsAutoAllowsEditWrite(t *testing.T) {
 	if got := p.Evaluate(context.Background(), sid, session.ModeAccept, fileCall("Edit", "/y"), nil); got.Effect != governance.Allow {
 		t.Fatalf("accept-edits mode second Edit: expected Allow, got %v", got.Effect)
 	}
-	// Bash is untouched: accept-edits auto-accepts file edits only.
+	// Shell is untouched: accept-edits auto-accepts file edits only.
 	if got := p.Evaluate(context.Background(), sid, session.ModeAccept, bashCall("rm x"), nil); got.Effect != governance.Ask {
-		t.Fatalf("accept-edits mode Bash: expected Ask (unaffected), got %v", got.Effect)
+		t.Fatalf("accept-edits mode Shell: expected Ask (unaffected), got %v", got.Effect)
 	}
 }
 
@@ -121,7 +121,7 @@ func TestPolicyLearnThenAllow(t *testing.T) {
 // A learned allow NEVER overrides a static deny.
 func TestPolicyLearnedAllowCannotOverrideDeny(t *testing.T) {
 	p := permpolicy.NewPolicy([]governance.Rule{
-		{Scope: governance.ScopeManaged, Tool: "Bash", Pattern: "git status", Effect: governance.Deny},
+		{Scope: governance.ScopeManaged, Tool: "Shell", Pattern: "git status", Effect: governance.Deny},
 	}, permstore.New())
 	p.Learn(sid, bashCall("git status"))
 	if got := p.Evaluate(context.Background(), sid, session.ModeDefault, bashCall("git status"), nil); got.Effect != governance.Deny {
@@ -150,7 +150,7 @@ func TestPolicyLearnedRuleSessionIsolation(t *testing.T) {
 	}
 }
 
-// A compound Bash command is refused by Learn (no-op): nothing is recorded, so a
+// A compound Shell command is refused by Learn (no-op): nothing is recorded, so a
 // later single `git status` still asks (the compound's first segment was NOT
 // silently learned as a tool+pattern allow).
 func TestPolicyLearnRefusesCompound(t *testing.T) {
@@ -189,12 +189,12 @@ func (f fakeResolver) Resolve(_ context.Context, ws tool.WorkspaceReader) []gove
 // at the policy level: the workspace, not the session, selects the config.
 func TestPolicyResolverPerWorkspace(t *testing.T) {
 	resolver := fakeResolver{byRoot: map[string][]governance.Rule{
-		"/ws-a": {{Scope: governance.ScopeSharedProject, Tool: "Bash", Pattern: "go test*", Effect: governance.Allow}},
-		"/ws-b": {{Scope: governance.ScopeSharedProject, Tool: "Bash", Pattern: "go test*", Effect: governance.Deny}},
+		"/ws-a": {{Scope: governance.ScopeSharedProject, Tool: "Shell", Pattern: "go test*", Effect: governance.Allow}},
+		"/ws-b": {{Scope: governance.ScopeSharedProject, Tool: "Shell", Pattern: "go test*", Effect: governance.Deny}},
 	}}
-	// Built-in floor: Bash asks. A config allow loosens it; a config deny tightens.
+	// Built-in floor: Shell asks. A config allow loosens it; a config deny tightens.
 	p := permpolicy.NewPolicyWithResolver(
-		[]governance.Rule{{Scope: governance.ScopeBuiltinDefault, Tool: "Bash", Effect: governance.Ask}},
+		[]governance.Rule{{Scope: governance.ScopeBuiltinDefault, Tool: "Shell", Effect: governance.Ask}},
 		nil, resolver)
 
 	wsA := memfs.NewWorkspace("/ws-a")
@@ -217,7 +217,7 @@ func TestPolicyResolverPerWorkspace(t *testing.T) {
 // ride the same lowest-scope extra channel, and the fold is deny-dominant.
 func TestPolicyResolverDenyBeatsLearnedAllow(t *testing.T) {
 	resolver := fakeResolver{byRoot: map[string][]governance.Rule{
-		"/ws": {{Scope: governance.ScopeSharedProject, Tool: "Bash", Pattern: "git status", Effect: governance.Deny}},
+		"/ws": {{Scope: governance.ScopeSharedProject, Tool: "Shell", Pattern: "git status", Effect: governance.Deny}},
 	}}
 	p := permpolicy.NewPolicyWithResolver(nil, permstore.New(), resolver)
 	p.Learn(sid, bashCall("git status")) // learn an allow for the very same call
@@ -231,12 +231,12 @@ func TestPolicyResolverDenyBeatsLearnedAllow(t *testing.T) {
 // built-in ScopeBuiltinDefault Ask floor for mutating tools (the operator
 // allow-all posture). See docs/adr/0022-allow-all-posture.md.
 func TestPolicyAllowAllLoosensBuiltinFloor(t *testing.T) {
-	pBash := permpolicy.NewPolicy([]governance.Rule{
-		{Scope: governance.ScopeBuiltinDefault, Tool: "Bash", Effect: governance.Ask},
+	pShell := permpolicy.NewPolicy([]governance.Rule{
+		{Scope: governance.ScopeBuiltinDefault, Tool: "Shell", Effect: governance.Ask},
 		{Scope: governance.ScopeCLI, Effect: governance.Allow},
 	}, nil)
-	if got := pBash.Evaluate(context.Background(), sid, session.ModeDefault, bashCall("ls"), nil); got.Effect != governance.Allow {
-		t.Fatalf("allow-all should loosen the built-in Bash Ask floor, got %v", got.Effect)
+	if got := pShell.Evaluate(context.Background(), sid, session.ModeDefault, bashCall("ls"), nil); got.Effect != governance.Allow {
+		t.Fatalf("allow-all should loosen the built-in Shell Ask floor, got %v", got.Effect)
 	}
 
 	pEdit := permpolicy.NewPolicy([]governance.Rule{
@@ -252,9 +252,9 @@ func TestPolicyAllowAllLoosensBuiltinFloor(t *testing.T) {
 // ScopeManaged Deny beats the ScopeCLI allow-all rule.
 func TestPolicyAllowAllLosesToManagedDeny(t *testing.T) {
 	p := permpolicy.NewPolicy([]governance.Rule{
-		{Scope: governance.ScopeBuiltinDefault, Tool: "Bash", Effect: governance.Ask},
+		{Scope: governance.ScopeBuiltinDefault, Tool: "Shell", Effect: governance.Ask},
 		{Scope: governance.ScopeCLI, Effect: governance.Allow},
-		{Scope: governance.ScopeManaged, Tool: "Bash", Pattern: "rm *", Effect: governance.Deny},
+		{Scope: governance.ScopeManaged, Tool: "Shell", Pattern: "rm *", Effect: governance.Deny},
 	}, nil)
 	if got := p.Evaluate(context.Background(), sid, session.ModeDefault, bashCall("rm x"), nil); got.Effect != governance.Deny {
 		t.Fatalf("a managed Deny must beat allow-all, got %v", got.Effect)
@@ -265,23 +265,23 @@ func TestPolicyAllowAllLosesToManagedDeny(t *testing.T) {
 // Ask still asks under allow-all — the posture only loosens the built-in floor.
 func TestPolicyAllowAllDefersToConfiguredAsk(t *testing.T) {
 	p := permpolicy.NewPolicy([]governance.Rule{
-		{Scope: governance.ScopeBuiltinDefault, Tool: "Bash", Effect: governance.Ask},
+		{Scope: governance.ScopeBuiltinDefault, Tool: "Shell", Effect: governance.Ask},
 		{Scope: governance.ScopeCLI, Effect: governance.Allow},
-		{Scope: governance.ScopeUser, Tool: "Bash", Pattern: "git push*", Effect: governance.Ask},
+		{Scope: governance.ScopeUser, Tool: "Shell", Pattern: "git push*", Effect: governance.Ask},
 	}, nil)
 	if got := p.Evaluate(context.Background(), sid, session.ModeDefault, bashCall("git push origin"), nil); got.Effect != governance.Ask {
 		t.Fatalf("allow-all must defer to a configured Ask, got %v", got.Effect)
 	}
 }
 
-// TestPolicyAllowAllCompoundBashDenyWins: the substitution/newline-aware bash gate
+// TestPolicyAllowAllCompoundShellDenyWins: the substitution/newline-aware bash gate
 // still wins under allow-all — a configured Deny matching one segment of a compound
 // command denies the whole command.
-func TestPolicyAllowAllCompoundBashDenyWins(t *testing.T) {
+func TestPolicyAllowAllCompoundShellDenyWins(t *testing.T) {
 	p := permpolicy.NewPolicy([]governance.Rule{
-		{Scope: governance.ScopeBuiltinDefault, Tool: "Bash", Effect: governance.Ask},
+		{Scope: governance.ScopeBuiltinDefault, Tool: "Shell", Effect: governance.Ask},
 		{Scope: governance.ScopeCLI, Effect: governance.Allow},
-		{Scope: governance.ScopeUser, Tool: "Bash", Pattern: "rm *", Effect: governance.Deny},
+		{Scope: governance.ScopeUser, Tool: "Shell", Pattern: "rm *", Effect: governance.Deny},
 	}, nil)
 	if got := p.Evaluate(context.Background(), sid, session.ModeDefault, bashCall("ls && rm x"), nil); got.Effect != governance.Deny {
 		t.Fatalf("compound-bash deny must win under allow-all, got %v", got.Effect)
@@ -298,11 +298,11 @@ func TestPolicyAllowAllCompoundBashDenyWins(t *testing.T) {
 func TestPolicyAudienceOptionForwarded(t *testing.T) {
 	resolver := fakeResolver{byRoot: map[string][]governance.Rule{
 		"/ws": {
-			{Scope: governance.ScopeSharedProject, Tool: "Bash", Pattern: "go test*", Effect: governance.Allow, Audience: governance.AudienceSubagent},
-			{Scope: governance.ScopeSharedProject, Tool: "Bash", Pattern: "go vet*", Effect: governance.Allow, Audience: governance.AudienceMain},
+			{Scope: governance.ScopeSharedProject, Tool: "Shell", Pattern: "go test*", Effect: governance.Allow, Audience: governance.AudienceSubagent},
+			{Scope: governance.ScopeSharedProject, Tool: "Shell", Pattern: "go vet*", Effect: governance.Allow, Audience: governance.AudienceMain},
 		},
 	}}
-	floor := []governance.Rule{{Scope: governance.ScopeBuiltinDefault, Tool: "Bash", Effect: governance.Ask}}
+	floor := []governance.Rule{{Scope: governance.ScopeBuiltinDefault, Tool: "Shell", Effect: governance.Ask}}
 	ws := memfs.NewWorkspace("/ws")
 
 	subPolicy := permpolicy.NewPolicyWithResolver(floor, nil, resolver,

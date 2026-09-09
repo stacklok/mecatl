@@ -148,8 +148,8 @@ func TestFoldTitleClampsLongPrompt(t *testing.T) {
 // TestFoldTitleAwaiting asserts the title is seeded even for an awaiting
 // reconstruction (the reconstructAwaiting path calls SetTitle too).
 func TestFoldTitleAwaiting(t *testing.T) {
-	call := toolCall("c1", "Bash", `{"command":"ls"}`)
-	ask := session.PendingAsk{AskID: "s1:0:c1:r0", Tool: "Bash"}
+	call := toolCall("c1", "Shell", `{"command":"ls"}`)
+	ask := session.PendingAsk{AskID: "s1:0:c1:r0", Tool: "Shell"}
 	evs := []session.Event{
 		{Type: session.EvUserPrompt, Turn: 0, UserPrompt: &session.UserPromptPayload{Text: "run ls please"}},
 		{Type: session.EvTurnStart, Turn: 0},

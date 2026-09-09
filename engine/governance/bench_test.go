@@ -11,8 +11,8 @@ var (
 )
 
 // BenchmarkSplitCommands measures the substitution/newline-aware command splitter
-// — the security-critical first stage of every Bash permission decision. It is hot
-// (runs on every Bash call) and its allocation profile drives the gated KPI.
+// — the security-critical first stage of every Shell permission decision. It is hot
+// (runs on every Shell call) and its allocation profile drives the gated KPI.
 func BenchmarkSplitCommands(b *testing.B) {
 	const cmd = `cat a.go && grep -n TODO *.go | sort -u; echo done && git status`
 	b.ReportAllocs()
@@ -21,13 +21,13 @@ func BenchmarkSplitCommands(b *testing.B) {
 	}
 }
 
-// BenchmarkReadOnlyBash measures the read-only classification of a compound command
-// — the path the dispatcher uses to decide read-parallel vs mutate-serial for Bash.
-func BenchmarkReadOnlyBash(b *testing.B) {
+// BenchmarkReadOnlyShell measures the read-only classification of a compound command
+// — the path the dispatcher uses to decide read-parallel vs mutate-serial for Shell.
+func BenchmarkReadOnlyShell(b *testing.B) {
 	const cmd = `git status && grep -rn TODO . | head -n 20 && go vet ./...`
 	b.ReportAllocs()
 	for b.Loop() {
-		sinkBool = ReadOnlyBash(cmd)
+		sinkBool = ReadOnlyShell(cmd)
 	}
 }
 
@@ -55,18 +55,18 @@ func BenchmarkIsolationApprovable(b *testing.B) {
 
 // BenchmarkEvaluatorEvaluate measures Evaluator.Evaluate over a realistic
 // deny+ask+allow rule set across the three input shapes the dispatcher hits: a
-// simple read-only tool (no Bash splitting), a plain single Bash command, and a
-// compound Bash command (exercises resolveBash's per-segment fold). The rule set
+// simple read-only tool (no Shell splitting), a plain single Shell command, and a
+// compound Shell command (exercises resolveShell's per-segment fold). The rule set
 // mirrors a configured policy so the deny-dominant / scope-precedence resolution
 // runs for real, not against an empty rule slice.
 func BenchmarkEvaluatorEvaluate(b *testing.B) {
 	rules := []Rule{
-		{Scope: ScopeManaged, Tool: "Bash", Pattern: "rm *", Effect: Deny},
-		{Scope: ScopeSharedProject, Tool: "Bash", Pattern: "git push *", Effect: Ask},
-		{Scope: ScopeUser, Tool: "Bash", Pattern: "git *", Effect: Allow},
+		{Scope: ScopeManaged, Tool: "Shell", Pattern: "rm *", Effect: Deny},
+		{Scope: ScopeSharedProject, Tool: "Shell", Pattern: "git push *", Effect: Ask},
+		{Scope: ScopeUser, Tool: "Shell", Pattern: "git *", Effect: Allow},
 		{Scope: ScopeUser, Tool: "Read", Effect: Allow},
 		{Scope: ScopeSharedProject, Tool: "Write", Effect: Ask},
-		{Scope: ScopeBuiltinDefault, Tool: "Bash", Effect: Ask},
+		{Scope: ScopeBuiltinDefault, Tool: "Shell", Effect: Ask},
 	}
 	e := NewEvaluator(rules)
 
@@ -82,7 +82,7 @@ func BenchmarkEvaluatorEvaluate(b *testing.B) {
 		args := bashArgs("git status")
 		b.ReportAllocs()
 		for b.Loop() {
-			sinkDecision = e.Evaluate("Bash", args, false)
+			sinkDecision = e.Evaluate("Shell", args, false)
 		}
 	})
 
@@ -90,7 +90,7 @@ func BenchmarkEvaluatorEvaluate(b *testing.B) {
 		args := bashArgs("git status && git log --oneline | head -n 5")
 		b.ReportAllocs()
 		for b.Loop() {
-			sinkDecision = e.Evaluate("Bash", args, false)
+			sinkDecision = e.Evaluate("Shell", args, false)
 		}
 	})
 }

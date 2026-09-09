@@ -836,7 +836,7 @@ func TestTeamToolMutatingMemberNoForker(t *testing.T) {
 // supervisor directly; here it is proven through the TeamTool wiring.
 func TestTeamToolReadOnlyMemberForksViaReadOnlyForker(t *testing.T) {
 	allow := permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil)
-	// A factory that grants the member a (mutating) Bash stand-in and marks it
+	// A factory that grants the member a (mutating) Shell stand-in and marks it
 	// IsolateReadOnly — the composition-layer signal that it was granted a shell and
 	// must run in an isolated worktree via the read-only forker.
 	factory := func(tm *team.Team, spec agent.MemberSpec, _ string) agent.MemberBuild {
@@ -844,7 +844,7 @@ func TestTeamToolReadOnlyMemberForksViaReadOnlyForker(t *testing.T) {
 		for _, tl := range agent.MemberTools(tm, spec.Name, nil) {
 			cat.MustRegister(tl)
 		}
-		cat.MustRegister(fakeMutatingTool{name: "Bash"})
+		cat.MustRegister(fakeMutatingTool{name: "Shell"})
 		eng := agent.NewEngine(agent.Deps{
 			LLM:     mockllm.New(mockllm.TextTurn("inspection done")),
 			Catalog: cat,

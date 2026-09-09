@@ -10,7 +10,7 @@ import (
 // TestWritableChildPostureNotIsolated pins the ADR 0041 security-relevant change: a
 // direct-write (mode:"read-write") child is NOT isolated (it shares the REAL parent
 // tree), so the A2 isolation auto-approve (governance.IsolationApprovable) must NOT
-// fire for its Bash. The test drives resolveChildAsk with an isolation-APPROVABLE Bash
+// fire for its Shell. The test drives resolveChildAsk with an isolation-APPROVABLE Shell
 // substitution under both postures:
 //   - isolated:true  → A2 auto-approves (the read-only worktree path).
 //   - isolated:false → A2 is skipped; a headless child falls through to auto-deny.
@@ -24,9 +24,9 @@ func TestWritableChildPostureNotIsolated(t *testing.T) {
 	mkAsk := func(askID string) session.PendingAsk {
 		return session.PendingAsk{
 			AskID:  askID,
-			Tool:   "Bash",
+			Tool:   "Shell",
 			Args:   json.RawMessage(cmd),
-			Reason: "approval required for Bash",
+			Reason: "approval required for Shell",
 		}
 	}
 
@@ -37,7 +37,7 @@ func TestWritableChildPostureNotIsolated(t *testing.T) {
 		select {
 		case a := <-ch:
 			if a.verdict != session.VerdictAllowOnce {
-				t.Fatalf("isolated child's isolation-approvable Bash must A2 auto-approve, got %v", a.verdict)
+				t.Fatalf("isolated child's isolation-approvable Shell must A2 auto-approve, got %v", a.verdict)
 			}
 		default:
 			t.Fatal("isolated child ask did not resolve (expected A2 auto-approve)")
@@ -53,7 +53,7 @@ func TestWritableChildPostureNotIsolated(t *testing.T) {
 		select {
 		case a := <-ch:
 			if a.verdict != session.VerdictDeny {
-				t.Fatalf("a NON-isolated (direct-write) child's Bash must NOT A2 auto-approve; "+
+				t.Fatalf("a NON-isolated (direct-write) child's Shell must NOT A2 auto-approve; "+
 					"a headless child must auto-deny, got %v", a.verdict)
 			}
 		default:

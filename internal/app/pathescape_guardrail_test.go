@@ -139,7 +139,7 @@ func TestPathEscapePosture_GuardrailRoutedEscape(t *testing.T) {
 
 	t.Run("no knob configured leaves the auto row untouched", func(t *testing.T) {
 		t.Parallel()
-		// Without the escape knob the auto read row is a plain Allow (Bash
+		// Without the escape knob the auto read row is a plain Allow (Shell
 		// parity) with NO checker call — the route is strictly opt-in.
 		p := newEscapePolicy(permpolicy.NewPolicy(defaultRules(), nil), PostureAuto)
 		d := evalEscapeAtAuto(t, p, f.workspace, call)
@@ -198,7 +198,7 @@ func TestPathEscapePosture_GuardrailRoutedEscape(t *testing.T) {
 	t.Run("no knob at Build leaves the auto row byte-identical", func(t *testing.T) {
 		t.Parallel()
 		// Guardrails configured (the model IS the opt-in to spend) but the
-		// escape knob OFF: the auto read escape stays a plain Bash-parity
+		// escape knob OFF: the auto read escape stays a plain Shell-parity
 		// Allow — the route is opt-in, never implied by guardrails alone.
 		f := setupEscapeFS(t)
 		bcfg := escapeCfg(t, f, PostureAuto, readEscapeTurns(f.target)...)

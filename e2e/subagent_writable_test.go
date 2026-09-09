@@ -49,12 +49,12 @@ func subagentWritableSpecs() {
 				}
 
 				// One writable Subagent call: the child writes the sentinel via
-				// Bash/Write DIRECTLY into the real parent workspace (no fork, no
+				// Shell/Write DIRECTLY into the real parent workspace (no fork, no
 				// merge — ADR 0041).
 				res, err := driver.Run(ctx, harness.RunOpts{
 					Scenario: "subagent-writable", Timeout: 6 * time.Minute,
 					ApproveTools: []string{"Subagent"}, // backup; the CLI config allows it
-				}, `Use the tool named "Subagent" exactly once, with these arguments: mode = "read-write" and prompt = "Use the Write tool (or Bash) to create a file named `+sentinelFile+` containing exactly the text `+sentinelBody+`. Then reply with the single word done." Call no other tool yourself. When the Subagent tool returns, reply with the single word done.`)
+				}, `Use the tool named "Subagent" exactly once, with these arguments: mode = "read-write" and prompt = "Use the Write tool (or Shell) to create a file named `+sentinelFile+` containing exactly the text `+sentinelBody+`. Then reply with the single word done." Call no other tool yourself. When the Subagent tool returns, reply with the single word done.`)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred(), report(res, err))
 				gomega.Expect(res).NotTo(gomega.BeNil(), report(res, err))
 

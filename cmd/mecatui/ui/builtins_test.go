@@ -258,8 +258,8 @@ func TestDebugAskInjectsFakeAsk(t *testing.T) {
 		if m.phase != phaseAwaitingApproval {
 			t.Fatalf("invocation %d: /debug-ask must open the modal (even at idle), got phase %v", i, m.phase)
 		}
-		if approvalSurfaceOf(t, m).ask.Tool != "Bash" {
-			t.Errorf("invocation %d: the fake ask must be a Bash ask, got %q", i, approvalSurfaceOf(t, m).ask.Tool)
+		if approvalSurfaceOf(t, m).ask.Tool != "Shell" {
+			t.Errorf("invocation %d: the fake ask must be a Shell ask, got %q", i, approvalSurfaceOf(t, m).ask.Tool)
 		}
 		seenArgs[approvalSurfaceOf(t, m).ask.Args] = true
 		// Resolve it (allow once) so the next invocation's ask opens fresh.

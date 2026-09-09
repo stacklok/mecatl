@@ -391,7 +391,7 @@ type ApprovalPayload struct {
 	// precedent — no proto enum). It is the human/policy decision, never tool
 	// content.
 	Verdict string
-	// Tool is the NAME of the tool the ask gated (e.g. "Bash"). It is the tool
+	// Tool is the NAME of the tool the ask gated (e.g. "Shell"). It is the tool
 	// name ALONE — never the call's args.
 	Tool string
 	// Call is the id of the gated ToolCall. It is an OPAQUE identifier, NOT secret
@@ -404,7 +404,7 @@ type ApprovalPayload struct {
 	// AllowAlways mirrors (Verdict == VerdictStringAllowAlways): the verdict ASKED
 	// the harness to learn a per-session allow rule. It is deliberately NOT named
 	// "Learned": Policy.Learn no-ops on an unlearnable call (compound/substituted
-	// Bash with no targetable pattern), so an allow-always verdict can set this
+	// Shell with no targetable pattern), so an allow-always verdict can set this
 	// true even when NO rule was actually recorded. It honestly reflects the
 	// VERDICT, not the policy outcome. A 3b permstore-replay consumer filtering on
 	// this must re-derive the real rule from the conversation (the metadata-only

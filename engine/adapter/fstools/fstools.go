@@ -1,8 +1,8 @@
 // Package fstools implements the correctness- and security-critical filesystem
 // tool bodies of the mecatl kit — Read, ListDir, Edit, Write, Copy, Move,
 // Remove, Grep, Glob, and an OPTIONAL
-// Bash — as tool.Tool values executing against an injected tool.Workspace (and,
-// for Bash, an injected tool.CommandRunner). It travels WITH the importable
+// Shell — as tool.Tool values executing against an injected tool.Workspace (and,
+// for Shell, an injected tool.CommandRunner). It travels WITH the importable
 // engine module so an external consumer of engine/agent gets these tools — and
 // their enforced invariants — by import, not by re-deriving them:
 //
@@ -10,12 +10,12 @@
 //     and uniqueness-unless-replace_all.
 //   - Write's read-before-overwrite (Edit invariant #1 for existing files).
 //   - Read/Grep/Glob output caps with clear truncation markers.
-//   - Bash's partial-output-preserving timeout/cancel handling and the trailer
+//   - Shell's partial-output-preserving timeout/cancel handling and the trailer
 //     that always survives the output cap.
 //
 // These bodies depend only on engine/session + engine/tool (+ stdlib). They never
 // touch the real OS: the filesystem tools go through the tool.Workspace and
-// optional tool.WorkspaceNamespace seams, and Bash goes through the injected
+// optional tool.WorkspaceNamespace seams, and Shell goes through the injected
 // tool.CommandRunner — so a consumer picks the
 // FileSystem/Workspace and shell backend. The reference in-memory Workspace is
 // engine/adapter/memfs; the honest no-op is engine/adapter/nofs.
@@ -25,13 +25,13 @@
 // The catalog is composed, not fixed. A consumer may:
 //   - take everything: register All() (Read/ListDir/Edit/Write/Copy/Move/Remove/
 //     Grep/Glob) via Register,
-//     then add NewBashTool() only when a shell is configured;
+//     then add NewShellTool() only when a shell is configured;
 //   - take a subset: register only the tool values it wants;
 //   - swap a tool by name: register its own Tool under the same Spec().Name in
 //     place of one of these;
 //   - ignore the package entirely and supply its own tools.
 //
-// Bash is deliberately NOT in All(): it needs a tool.CommandRunner and command
+// Shell is deliberately NOT in All(): it needs a tool.CommandRunner and command
 // execution is optional. A deployment with no shell simply never constructs one.
 //
 // # Recoverable vs harness errors
@@ -87,13 +87,13 @@ const MaxOutputBytes = 25_000
 
 // TruncationMarker is the suffix truncate appends when it trims a body to the
 // byte cap. It is exported so a caller that must reserve room for content AFTER a
-// truncated body (Bash's timeout/cancel trailer, which must survive the cap) can
+// truncated body (Shell's timeout/cancel trailer, which must survive the cap) can
 // account for the marker's length without hard-coding the literal.
 const TruncationMarker = "\n... [output truncated: exceeded 25000 bytes]"
 
 // All returns the always-available filesystem tools as a fresh slice, in the
-// canonical catalog order. Bash is NOT included: it requires a tool.CommandRunner
-// and is optional — add it separately via NewBashTool when a runner is configured.
+// canonical catalog order. Shell is NOT included: it requires a tool.CommandRunner
+// and is optional — add it separately via NewShellTool when a runner is configured.
 func All() []tool.Tool {
 	return []tool.Tool{
 		ReadTool{},
@@ -109,10 +109,10 @@ func All() []tool.Tool {
 }
 
 // Register adds the always-available filesystem tools (everything in All(), i.e.
-// NOT Bash) to cat. It returns the first registration error (e.g. a name
+// NOT Shell) to cat. It returns the first registration error (e.g. a name
 // collision) encountered, or nil on success. To enable command execution,
-// additionally register NewBashTool(), e.g.
-// cat.MustRegister(fstools.NewBashTool()).
+// additionally register NewShellTool(), e.g.
+// cat.MustRegister(fstools.NewShellTool()).
 func Register(cat *tool.Catalog) error {
 	for _, t := range All() {
 		if err := cat.Register(t); err != nil {

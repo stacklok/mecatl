@@ -192,21 +192,21 @@ func TestNoticeFinishedBackgroundSemantics(t *testing.T) {
 	}
 
 	// FAMILY-AWARE rendering (bash-cmd jobs): a finished bash job joins the
-	// notice under its own clause naming BashStatus; the subagent clause keeps
+	// notice under its own clause naming ShellStatus; the subagent clause keeps
 	// its byte-stable wording; a bash-only notice has no subagent clause at all.
 	mixed := append(append([]childStatus(nil), first...),
-		childStatus{id: "bashcmd-b1", family: childFamilyBashCmd, background: true, state: childDone, stop: session.StopEndTurn})
+		childStatus{id: "bashcmd-b1", family: childFamilyShellCmd, background: true, state: childDone, stop: session.StopEndTurn})
 	if got := backgroundNoticeText(mixed); got !=
 		"[harness note: 2 background subagent(s) finished: subagent-a (end_turn), subagent-b (budget). "+
 			"Collect each result with SubagentStatus before relying on it.]"+
 			"[harness note: 1 background command(s) finished: bashcmd-b1 (end_turn). "+
-			"Collect each output with BashStatus before relying on it.]" {
+			"Collect each output with ShellStatus before relying on it.]" {
 		t.Fatalf("mixed-family notice mismatch: %q", got)
 	}
-	bashOnly := []childStatus{{id: "bashcmd-b2", family: childFamilyBashCmd, background: true, state: childDone, stop: session.StopError}}
+	bashOnly := []childStatus{{id: "bashcmd-b2", family: childFamilyShellCmd, background: true, state: childDone, stop: session.StopError}}
 	if got := backgroundNoticeText(bashOnly); got !=
 		"[harness note: 1 background command(s) finished: bashcmd-b2 (error). "+
-			"Collect each output with BashStatus before relying on it.]" {
+			"Collect each output with ShellStatus before relying on it.]" {
 		t.Fatalf("bash-only notice mismatch: %q", got)
 	}
 

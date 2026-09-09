@@ -181,7 +181,7 @@ func TestRemoteSkillSourceDefaultAndNoFSLogicalAssetWiring(t *testing.T) {
 				t.Errorf("%s Skill description missing %q: %q", profile, want, spec.Description)
 			}
 		}
-		for _, forbidden := range []string{"path", "Read", "Bash", "base director"} {
+		for _, forbidden := range []string{"path", "Read", "Shell", "base director"} {
 			if strings.Contains(spec.Description, forbidden) {
 				t.Errorf("%s Skill description contains retired guidance %q: %q", profile, forbidden, spec.Description)
 			}
@@ -200,7 +200,7 @@ func TestRemoteSkillSourceDefaultAndNoFSLogicalAssetWiring(t *testing.T) {
 		provider: provider, providerID: providerMock, model: cfg.Model, noFS: true,
 	})
 	defer func() { _ = noFSClose() }()
-	for _, name := range []string{"Read", "Bash"} {
+	for _, name := range []string{"Read", "Shell"} {
 		if _, ok := noFSCat.Lookup(name); ok {
 			t.Fatalf("no-fs catalog contains %s", name)
 		}
@@ -229,7 +229,7 @@ func TestRemoteSkillSourceDefaultAndNoFSLogicalAssetWiring(t *testing.T) {
 			if got := source.assetReads.Load(); got != before {
 				t.Fatalf("activation called ReadSkillAsset %d times, want zero", got-before)
 			}
-			for _, forbidden := range []string{"Base directory", "absolute path", "Read tool", "via Bash"} {
+			for _, forbidden := range []string{"Base directory", "absolute path", "Read tool", "via Shell"} {
 				if strings.Contains(activated.Content, forbidden) {
 					t.Errorf("activation leaked path-based guidance %q: %q", forbidden, activated.Content)
 				}
@@ -351,7 +351,7 @@ func TestRemoteSkillSourceBuildRunDefaultAndNoFS(t *testing.T) {
 						t.Errorf("request %d Skill description missing %q: %q", i, want, skillSpec.Description)
 					}
 				}
-				for _, forbidden := range []string{"path", "Read", "Bash"} {
+				for _, forbidden := range []string{"path", "Read", "Shell"} {
 					if strings.Contains(skillSpec.Description, forbidden) {
 						t.Errorf("request %d Skill description contains retired %q guidance: %q", i, forbidden, skillSpec.Description)
 					}

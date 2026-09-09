@@ -67,9 +67,9 @@ func fakeEnv() xdgconfig.ResolveEnv {
 const trustedAllowYAML = `
 permissions:
   allow:
-    - "Bash(go test:*)"
+    - "Shell(go test:*)"
   deny:
-    - "Bash(rm:*)"
+    - "Shell(rm:*)"
 `
 
 // A trusted project's allow + deny both resolve; the cache reads the file once per
@@ -82,10 +82,10 @@ func TestResolveTrustedProjectAndCache(t *testing.T) {
 	ws := newProjectWS(t, "/repo", trustedAllowYAML)
 
 	rules := r.Resolve(context.Background(), ws)
-	if findRule(rules, "Bash", "go test*") == nil {
+	if findRule(rules, "Shell", "go test*") == nil {
 		t.Fatalf("trusted project allow should resolve: %+v", rules)
 	}
-	if findRule(rules, "Bash", "rm*") == nil {
+	if findRule(rules, "Shell", "rm*") == nil {
 		t.Fatalf("project deny should resolve: %+v", rules)
 	}
 	readsAfterFirst := ws.readCount()
@@ -106,10 +106,10 @@ func TestResolveUntrustedProjectDropsAllowKeepsDeny(t *testing.T) {
 	ws := newProjectWS(t, "/repo", trustedAllowYAML)
 
 	rules := r.Resolve(context.Background(), ws)
-	if findRule(rules, "Bash", "go test*") != nil {
+	if findRule(rules, "Shell", "go test*") != nil {
 		t.Fatalf("untrusted project allow must be DROPPED: %+v", rules)
 	}
-	if findRule(rules, "Bash", "rm*") == nil {
+	if findRule(rules, "Shell", "rm*") == nil {
 		t.Fatalf("project deny must be kept even when untrusted: %+v", rules)
 	}
 }
@@ -117,15 +117,15 @@ func TestResolveUntrustedProjectDropsAllowKeepsDeny(t *testing.T) {
 // Two different roots resolve independently (different files → different rules).
 func TestResolvePerRootIndependent(t *testing.T) {
 	r := newWithEnv(Options{Conventional: true, TrustProject: true}, fakeEnv())
-	wsA := newProjectWS(t, "/a", "permissions:\n  allow:\n    - \"Bash(go test:*)\"\n")
-	wsB := newProjectWS(t, "/b", "permissions:\n  deny:\n    - \"Bash(go test:*)\"\n")
+	wsA := newProjectWS(t, "/a", "permissions:\n  allow:\n    - \"Shell(go test:*)\"\n")
+	wsB := newProjectWS(t, "/b", "permissions:\n  deny:\n    - \"Shell(go test:*)\"\n")
 
 	ra := r.Resolve(context.Background(), wsA)
 	rb := r.Resolve(context.Background(), wsB)
-	if got := findRule(ra, "Bash", "go test*"); got == nil || got.Effect != governance.Allow {
+	if got := findRule(ra, "Shell", "go test*"); got == nil || got.Effect != governance.Allow {
 		t.Fatalf("/a should resolve an allow, got %+v", ra)
 	}
-	if got := findRule(rb, "Bash", "go test*"); got == nil || got.Effect != governance.Deny {
+	if got := findRule(rb, "Shell", "go test*"); got == nil || got.Effect != governance.Deny {
 		t.Fatalf("/b should resolve a deny, got %+v", rb)
 	}
 }
@@ -142,14 +142,14 @@ func TestResolveConventionalOffYieldsNilResolver(t *testing.T) {
 func TestResolveNilWorkspace(t *testing.T) {
 	env := fakeEnv()
 	env.ReadFile = func(_ string) ([]byte, error) {
-		return []byte("permissions:\n  deny:\n    - \"Bash(curl:*)\"\n"), nil
+		return []byte("permissions:\n  deny:\n    - \"Shell(curl:*)\"\n"), nil
 	}
 	r := newWithEnv(Options{ExplicitFiles: []string{"/etc/mecatl/perms.yaml"}}, env)
 	if r == nil {
 		t.Fatal("explicit files should produce a non-nil resolver")
 	}
 	rules := r.Resolve(context.Background(), nil)
-	if got := findRule(rules, "Bash", "curl*"); got == nil || got.Scope != governance.ScopeCLI {
+	if got := findRule(rules, "Shell", "curl*"); got == nil || got.Scope != governance.ScopeCLI {
 		t.Fatalf("explicit-file rule should resolve at ScopeCLI even with a nil ws: %+v", rules)
 	}
 }
@@ -160,24 +160,24 @@ func TestResolveNilWorkspace(t *testing.T) {
 func TestResolveScopeAssignmentPerTier(t *testing.T) {
 	env := fakeEnv()
 	env.ReadFile = func(_ string) ([]byte, error) {
-		return []byte("permissions:\n  deny:\n    - \"Bash(curl:*)\"\n"), nil
+		return []byte("permissions:\n  deny:\n    - \"Shell(curl:*)\"\n"), nil
 	}
 	r := newWithEnv(Options{
 		Conventional:  true,
 		TrustProject:  true,
 		ExplicitFiles: []string{"/etc/mecatl/perms.yaml"},
 	}, env)
-	ws := newProjectWS(t, "/repo", "permissions:\n  deny:\n    - \"Bash(rm:*)\"\n")
-	ws.seed(t, projectFileMecatlLocal, "permissions:\n  deny:\n    - \"Bash(sudo:*)\"\n")
+	ws := newProjectWS(t, "/repo", "permissions:\n  deny:\n    - \"Shell(rm:*)\"\n")
+	ws.seed(t, projectFileMecatlLocal, "permissions:\n  deny:\n    - \"Shell(sudo:*)\"\n")
 
 	rules := r.Resolve(context.Background(), ws)
-	if got := findRule(rules, "Bash", "rm*"); got == nil || got.Scope != governance.ScopeSharedProject {
+	if got := findRule(rules, "Shell", "rm*"); got == nil || got.Scope != governance.ScopeSharedProject {
 		t.Fatalf("shared project rule should be ScopeSharedProject: %+v", rules)
 	}
-	if got := findRule(rules, "Bash", "sudo*"); got == nil || got.Scope != governance.ScopeLocalProject {
+	if got := findRule(rules, "Shell", "sudo*"); got == nil || got.Scope != governance.ScopeLocalProject {
 		t.Fatalf("local project rule should be ScopeLocalProject: %+v", rules)
 	}
-	if got := findRule(rules, "Bash", "curl*"); got == nil || got.Scope != governance.ScopeCLI {
+	if got := findRule(rules, "Shell", "curl*"); got == nil || got.Scope != governance.ScopeCLI {
 		t.Fatalf("explicit (CLI) rule should be ScopeCLI: %+v", rules)
 	}
 }
@@ -187,18 +187,18 @@ func TestResolveScopeAssignmentPerTier(t *testing.T) {
 // file's mtime/size change, not held until restart.
 func TestResolveCacheRevalidatesOnEdit(t *testing.T) {
 	r := newWithEnv(Options{Conventional: true, TrustProject: true}, fakeEnv())
-	ws := newProjectWS(t, "/repo", "permissions:\n  allow:\n    - \"Bash(go test:*)\"\n")
+	ws := newProjectWS(t, "/repo", "permissions:\n  allow:\n    - \"Shell(go test:*)\"\n")
 
 	first := r.Resolve(context.Background(), ws)
-	if findRule(first, "Bash", "rm*") != nil {
+	if findRule(first, "Shell", "rm*") != nil {
 		t.Fatalf("rm deny should not exist yet: %+v", first)
 	}
 	// Edit the config: add a deny. memfs stamps a fresh modTime + a new size on
 	// Write, so the cached entry's fingerprint no longer matches.
-	ws.seed(t, projectFileMecatl, "permissions:\n  allow:\n    - \"Bash(go test:*)\"\n  deny:\n    - \"Bash(rm:*)\"\n")
+	ws.seed(t, projectFileMecatl, "permissions:\n  allow:\n    - \"Shell(go test:*)\"\n  deny:\n    - \"Shell(rm:*)\"\n")
 
 	second := r.Resolve(context.Background(), ws)
-	if findRule(second, "Bash", "rm*") == nil {
+	if findRule(second, "Shell", "rm*") == nil {
 		t.Fatalf("the newly-added deny must take effect on the next Resolve (cache went stale): %+v", second)
 	}
 }
@@ -207,8 +207,8 @@ func TestResolveCacheRevalidatesOnEdit(t *testing.T) {
 // that collapsed the cache key to a constant would skip this and fail).
 func TestResolveCacheMissOnDistinctRoot(t *testing.T) {
 	r := newWithEnv(Options{Conventional: true, TrustProject: true}, fakeEnv())
-	wsA := newProjectWS(t, "/a", "permissions:\n  deny:\n    - \"Bash(a:*)\"\n")
-	wsB := newProjectWS(t, "/b", "permissions:\n  deny:\n    - \"Bash(b:*)\"\n")
+	wsA := newProjectWS(t, "/a", "permissions:\n  deny:\n    - \"Shell(a:*)\"\n")
+	wsB := newProjectWS(t, "/b", "permissions:\n  deny:\n    - \"Shell(b:*)\"\n")
 
 	_ = r.Resolve(context.Background(), wsA)
 	if wsB.readCount() != 0 {
@@ -225,8 +225,8 @@ func TestResolveCacheMissOnDistinctRoot(t *testing.T) {
 // caught by the race detector here.
 func TestResolveConcurrent(t *testing.T) {
 	r := newWithEnv(Options{Conventional: true, TrustProject: true}, fakeEnv())
-	wsA := newProjectWS(t, "/a", "permissions:\n  deny:\n    - \"Bash(a:*)\"\n")
-	wsB := newProjectWS(t, "/b", "permissions:\n  deny:\n    - \"Bash(b:*)\"\n")
+	wsA := newProjectWS(t, "/a", "permissions:\n  deny:\n    - \"Shell(a:*)\"\n")
+	wsB := newProjectWS(t, "/b", "permissions:\n  deny:\n    - \"Shell(b:*)\"\n")
 
 	var wg sync.WaitGroup
 	for i := 0; i < 64; i++ {
@@ -239,7 +239,7 @@ func TestResolveConcurrent(t *testing.T) {
 				ws, want = wsB, "b*"
 			}
 			rules := r.Resolve(context.Background(), ws)
-			if findRule(rules, "Bash", want) == nil {
+			if findRule(rules, "Shell", want) == nil {
 				t.Errorf("concurrent Resolve missing rule %q: %+v", want, rules)
 			}
 		}(i)
@@ -253,10 +253,10 @@ func TestResolveConcurrent(t *testing.T) {
 func TestResolvePartialMalformedFailSoft(t *testing.T) {
 	r := newWithEnv(Options{Conventional: true, ImportClaude: true, TrustProject: true}, fakeEnv())
 	ws := newProjectWS(t, "/repo", "permissions: [this is: not: valid")
-	ws.seed(t, projectFileClaude, `{"permissions":{"deny":["Bash(rm:*)"]}}`)
+	ws.seed(t, projectFileClaude, `{"permissions":{"deny":["Shell(rm:*)"]}}`)
 
 	rules := r.Resolve(context.Background(), ws)
-	if findRule(rules, "Bash", "rm*") == nil {
+	if findRule(rules, "Shell", "rm*") == nil {
 		t.Fatalf("the good Claude file must still load despite the bad YAML sibling: %+v", rules)
 	}
 }
@@ -294,7 +294,7 @@ func TestGoccyYAMLMigration_Scenario5_PermissionReloadFailsSafeWithoutPartialPol
 	diag := slogdiag.New(&buf, false, port.LevelInfo)
 	r := newWithEnv(Options{Conventional: true, TrustProject: true, Diagnostics: diag}, fakeEnv())
 	const secret = "attacker-controlled-secret-should-not-leak"
-	ws := newProjectWS(t, "/repo", "permissions:\n  deny: [Bash(rm:*)]\n  "+secret+": [credential-shaped-value]\n")
+	ws := newProjectWS(t, "/repo", "permissions:\n  deny: [Shell(rm:*)]\n  "+secret+": [credential-shaped-value]\n")
 
 	if rules := r.Resolve(context.Background(), ws); len(rules) != 0 {
 		t.Fatalf("strict-invalid config applied partial policy: %+v", rules)
@@ -315,7 +315,7 @@ func TestGoccyYAMLMigration_Scenario6_SourceMatrixSafeErrorsAndLogAttributes(t *
 	const yamlSecret = "yaml-content-secret-should-not-leak"
 	const explicitPath = "/operator/token=path-identifier-is-permitted.yaml"
 	const userConfigDir = "/user/token=path-identifier-is-permitted"
-	config := "permissions:\n  deny: [Read]\n  allow: [\"Bash(" + yamlSecret + "\"]\nposture: " + yamlSecret + "\n"
+	config := "permissions:\n  deny: [Read]\n  allow: [\"Shell(" + yamlSecret + "\"]\nposture: " + yamlSecret + "\n"
 
 	for _, tc := range []struct {
 		name      string
@@ -395,17 +395,17 @@ func TestGoccyYAMLMigration_Scenario6_SourceTierTrustAndOperatorOnlyMatrix(t *te
 	env.ReadFile = func(path string) ([]byte, error) {
 		switch path {
 		case explicitPath:
-			return []byte("permissions:\n  deny: [Bash(cli-deny:*)]\n  allow: [Read]\nposture: strict\n"), nil
+			return []byte("permissions:\n  deny: [Shell(cli-deny:*)]\n  allow: [Read]\nposture: strict\n"), nil
 		case userPath:
-			return []byte("permissions:\n  deny: [Bash(user-deny:*)]\n  allow: [Grep]\nposture: yolo\n"), nil
+			return []byte("permissions:\n  deny: [Shell(user-deny:*)]\n  allow: [Grep]\nposture: yolo\n"), nil
 		default:
 			return nil, errors.New("not found")
 		}
 	}
 
 	r := newWithEnv(Options{Conventional: true, ExplicitFiles: []string{explicitPath}}, env)
-	ws := newProjectWS(t, "/repo", "permissions:\n  deny: [Bash(shared-deny:*)]\n  allow: [Write]\nposture: yolo\n")
-	ws.seed(t, projectFileMecatlLocal, "permissions:\n  deny: [Bash(local-deny:*)]\n  allow: [Edit]\nposture: yolo\n")
+	ws := newProjectWS(t, "/repo", "permissions:\n  deny: [Shell(shared-deny:*)]\n  allow: [Write]\nposture: yolo\n")
+	ws.seed(t, projectFileMecatlLocal, "permissions:\n  deny: [Shell(local-deny:*)]\n  allow: [Edit]\nposture: yolo\n")
 
 	rules := r.Resolve(context.Background(), ws)
 	for _, want := range []struct {
@@ -413,10 +413,10 @@ func TestGoccyYAMLMigration_Scenario6_SourceTierTrustAndOperatorOnlyMatrix(t *te
 		pattern string
 		scope   governance.Scope
 	}{
-		{"Bash", "cli-deny*", governance.ScopeCLI},
-		{"Bash", "user-deny*", governance.ScopeUser},
-		{"Bash", "shared-deny*", governance.ScopeSharedProject},
-		{"Bash", "local-deny*", governance.ScopeLocalProject},
+		{"Shell", "cli-deny*", governance.ScopeCLI},
+		{"Shell", "user-deny*", governance.ScopeUser},
+		{"Shell", "shared-deny*", governance.ScopeSharedProject},
+		{"Shell", "local-deny*", governance.ScopeLocalProject},
 	} {
 		got := findRule(rules, want.tool, want.pattern)
 		if got == nil || got.Effect != governance.Deny || got.Scope != want.scope {

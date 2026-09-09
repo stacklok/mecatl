@@ -21,7 +21,7 @@ func TestMecatuiCardLayout_Scenario1_ResultRowsWrapBeforeStyle(t *testing.T) {
 	b := &block{
 		kind:       blockTool,
 		toolID:     "result-row-order",
-		toolName:   "Bash",
+		toolName:   "Shell",
 		toolArgs:   `{"command":"printf output"}`,
 		resolved:   true,
 		resultBody: long + "\nshort\x1b[2J-row\n   \nfinal-row",
@@ -116,7 +116,7 @@ func TestMecatuiCardLayout_Scenario1_CollapsedResultRows(t *testing.T) {
 	for i := range rows {
 		rows[i] = "result-row-" + strconv.Itoa(i)
 	}
-	for _, name := range []string{"Bash", "Grep", "Subagent"} {
+	for _, name := range []string{"Shell", "Grep", "Subagent"} {
 		t.Run(name, func(t *testing.T) {
 			b := &block{kind: blockTool, toolID: name, toolName: name, resolved: true, resultBody: strings.Join(rows, "\n")}
 			collapsed := stripANSIstr(r.renderTool(b, false))
@@ -222,7 +222,7 @@ func TestToolCardWidthCap(t *testing.T) {
 }
 
 // TestToolCardWidthHardWrapsKnownRenderer covers the normal known-width card path:
-// a collapsed Bash result's unbreakable divider must not escape the capped card.
+// a collapsed Shell result's unbreakable divider must not escape the capped card.
 func TestToolCardWidthHardWrapsKnownRenderer(t *testing.T) {
 	r := newTestRenderer()
 	r.setWidth(185)
@@ -234,7 +234,7 @@ func TestToolCardWidthHardWrapsKnownRenderer(t *testing.T) {
 	b := &block{
 		kind:       blockTool,
 		toolID:     "bash-1",
-		toolName:   "Bash",
+		toolName:   "Shell",
 		toolArgs:   mustJSON(t, map[string]string{"command": strings.Repeat("x", toolCardMaxWidth+1)}),
 		resolved:   true,
 		resultBody: strings.Join(resultLines, "\n"),
@@ -243,7 +243,7 @@ func TestToolCardWidthHardWrapsKnownRenderer(t *testing.T) {
 	out := r.renderTool(b, false)
 	plain := stripANSIstr(out)
 	if !strings.Contains(plain, "+29 more lines · ctrl+t expand") {
-		t.Fatalf("collapsed Bash card lost its expansion marker:\n%s", plain)
+		t.Fatalf("collapsed Shell card lost its expansion marker:\n%s", plain)
 	}
 	if got := strings.Count(plain, "-"); got != 220 {
 		t.Errorf("divider lost content while wrapping: got %d dashes, want 220", got)
@@ -263,10 +263,10 @@ func TestToolCardWidthHardWrapsKnownRenderer(t *testing.T) {
 	}
 }
 
-// TestCollapsedBashResultCapsVisualRows wraps multiline, indented Bash output
+// TestCollapsedShellResultCapsVisualRows wraps multiline, indented Shell output
 // before applying the inline cap. Capping logical source lines instead would let
 // the final card wrap turn the retained rows into a taller collapsed card.
-func TestCollapsedBashResultCapsVisualRows(t *testing.T) {
+func TestCollapsedShellResultCapsVisualRows(t *testing.T) {
 	r := newTestRenderer()
 	r.setWidth(toolCardMaxWidth + 2 + defaultBlockIndent)
 
@@ -277,7 +277,7 @@ func TestCollapsedBashResultCapsVisualRows(t *testing.T) {
 	b := &block{
 		kind:       blockTool,
 		toolID:     "bash-visual-rows",
-		toolName:   "Bash",
+		toolName:   "Shell",
 		toolArgs:   `{"command":"printf output"}`,
 		resolved:   true,
 		resultBody: strings.Join(resultLines, "\n"),
@@ -286,7 +286,7 @@ func TestCollapsedBashResultCapsVisualRows(t *testing.T) {
 	_, _, bodyWidth := r.toolCardLayout()
 	expectedOverflow := len(strings.Split(ansi.Hardwrap(strings.Join(resultLines, "\n"), bodyWidth, true), "\n")) - maxToolResultLines
 	if expectedOverflow <= 0 {
-		t.Fatalf("precondition: Bash result must overflow the visual-row cap, got %d rows", expectedOverflow+maxToolResultLines)
+		t.Fatalf("precondition: Shell result must overflow the visual-row cap, got %d rows", expectedOverflow+maxToolResultLines)
 	}
 	collapsed := r.renderTool(b, false)
 	plain := stripANSIstr(collapsed)
@@ -302,7 +302,7 @@ func TestCollapsedBashResultCapsVisualRows(t *testing.T) {
 		}
 	}
 	if firstResultRow < 0 || markerRow < 0 {
-		t.Fatalf("collapsed Bash card must retain result output and an expansion affordance:\n%s", plain)
+		t.Fatalf("collapsed Shell card must retain result output and an expansion affordance:\n%s", plain)
 	}
 	if rows := markerRow - firstResultRow; rows != maxToolResultLines {
 		t.Errorf("collapsed result has %d visual rows before its affordance, want %d:\n%s", rows, maxToolResultLines, plain)
@@ -329,9 +329,9 @@ func TestCollapsedBashResultCapsVisualRows(t *testing.T) {
 	}
 }
 
-// TestCollapsedBashResultSkipsIndentOnlyWrapRows verifies oversized indentation
+// TestCollapsedShellResultSkipsIndentOnlyWrapRows verifies oversized indentation
 // cannot consume the collapsed result budget or appear as blank vertical gaps.
-func TestCollapsedBashResultSkipsIndentOnlyWrapRows(t *testing.T) {
+func TestCollapsedShellResultSkipsIndentOnlyWrapRows(t *testing.T) {
 	r := newTestRenderer()
 	r.setWidth(toolCardMaxWidth + 2 + defaultBlockIndent)
 	_, _, bodyWidth := r.toolCardLayout()
@@ -342,7 +342,7 @@ func TestCollapsedBashResultSkipsIndentOnlyWrapRows(t *testing.T) {
 	b := &block{
 		kind:       blockTool,
 		toolID:     "bash-indent-rows",
-		toolName:   "Bash",
+		toolName:   "Shell",
 		toolArgs:   `{"command":"printf output"}`,
 		resolved:   true,
 		resultBody: strings.Join(resultLines, "\n"),
@@ -621,10 +621,10 @@ func TestCollapsedToolResultCapsArtifacts(t *testing.T) {
 	}
 }
 
-// TestResolvedBashToolCardFitsViewport renders the normal transcript path, including
-// the conversation indent, for a resolved Bash call whose command and result have no
+// TestResolvedShellToolCardFitsViewport renders the normal transcript path, including
+// the conversation indent, for a resolved Shell call whose command and result have no
 // natural break points. Both views must remain within a narrow terminal.
-func TestResolvedBashToolCardFitsViewport(t *testing.T) {
+func TestResolvedShellToolCardFitsViewport(t *testing.T) {
 	const viewportWidth = 6
 	command := strings.Repeat("x", 200)
 	result := strings.Repeat("y", 200)
@@ -634,9 +634,9 @@ func TestResolvedBashToolCardFitsViewport(t *testing.T) {
 			r := newTestRenderer()
 			r.setWidth(viewportWidth)
 			c := &conversation{}
-			c.addTool("bash-1", "Bash", mustJSON(t, map[string]string{"command": command}))
+			c.addTool("bash-1", "Shell", mustJSON(t, map[string]string{"command": command}))
 			if !c.resolveTool("bash-1", result, false) {
-				t.Fatal("resolve Bash tool")
+				t.Fatal("resolve Shell tool")
 			}
 
 			out := r.renderConversation(c, expand)
@@ -651,7 +651,7 @@ func TestResolvedBashToolCardFitsViewport(t *testing.T) {
 
 // TestTranscriptReflowsOnWidthOnlyResize covers the line-slice SetContentLines
 // handoff used by the normal transcript. A narrow resize with unchanged body height
-// must replace, rather than retain, a wide Bash card render.
+// must replace, rather than retain, a wide Shell card render.
 func TestTranscriptReflowsOnWidthOnlyResize(t *testing.T) {
 	const (
 		wideWidth   = 160
@@ -662,7 +662,7 @@ func TestTranscriptReflowsOnWidthOnlyResize(t *testing.T) {
 	m := newMCPModel(t, aztec(), nil)
 	m = applyAll(m,
 		tea.WindowSizeMsg{Width: wideWidth, Height: height},
-		client.ToolCallMsg{ID: "bash-1", Name: "Bash", Args: mustJSON(t, map[string]string{"command": command})},
+		client.ToolCallMsg{ID: "bash-1", Name: "Shell", Args: mustJSON(t, map[string]string{"command": command})},
 		client.ToolResultMsg{CallID: "bash-1", Content: "docs and site passed\n M cmd/mecatui/ui/update.go"},
 	)
 	if m.sel.active || m.expandTools {
@@ -718,15 +718,15 @@ func TestTranscriptWidthOnlyResizeResticksAndFollowsTranscript(t *testing.T) {
 	}
 }
 
-// TestResolvedBashToolCardFitsOneColumnViewport ensures the transcript indent is
+// TestResolvedShellToolCardFitsOneColumnViewport ensures the transcript indent is
 // suppressed when it would otherwise make a frameless, one-column card overflow.
-func TestResolvedBashToolCardFitsOneColumnViewport(t *testing.T) {
+func TestResolvedShellToolCardFitsOneColumnViewport(t *testing.T) {
 	r := newTestRenderer()
 	r.setWidth(1)
 	c := &conversation{}
-	c.addTool("bash-1", "Bash", mustJSON(t, map[string]string{"command": strings.Repeat("x", 200)}))
+	c.addTool("bash-1", "Shell", mustJSON(t, map[string]string{"command": strings.Repeat("x", 200)}))
 	if !c.resolveTool("bash-1", strings.Repeat("y", 200), false) {
-		t.Fatal("resolve Bash tool")
+		t.Fatal("resolve Shell tool")
 	}
 
 	for i, line := range strings.Split(r.renderConversation(c, false), "\n") {
@@ -736,9 +736,9 @@ func TestResolvedBashToolCardFitsOneColumnViewport(t *testing.T) {
 	}
 }
 
-// TestResolvedBashToolCardFitsFrameTransition verifies the first width that can
+// TestResolvedShellToolCardFitsFrameTransition verifies the first width that can
 // render the normal card frame while retaining the existing 2-cell right inset.
-func TestResolvedBashToolCardFitsFrameTransition(t *testing.T) {
+func TestResolvedShellToolCardFitsFrameTransition(t *testing.T) {
 	command := strings.Repeat("x", 200)
 	result := strings.Repeat("y", 200)
 
@@ -747,9 +747,9 @@ func TestResolvedBashToolCardFitsFrameTransition(t *testing.T) {
 			r := newTestRenderer()
 			r.setWidth(defaultBlockIndent + r.th.Style("toolCard").GetHorizontalFrameSize() + 2)
 			c := &conversation{}
-			c.addTool("bash-1", "Bash", mustJSON(t, map[string]string{"command": command}))
+			c.addTool("bash-1", "Shell", mustJSON(t, map[string]string{"command": command}))
 			if !c.resolveTool("bash-1", result, false) {
-				t.Fatal("resolve Bash tool")
+				t.Fatal("resolve Shell tool")
 			}
 
 			for i, line := range strings.Split(r.renderConversation(c, expand), "\n") {

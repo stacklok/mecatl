@@ -12,7 +12,7 @@ import (
 
 // grepInMemory scans the namespace's files for a regex, optionally filtered by
 // a path glob. It mirrors the memfs in-memory grep so the contract proof shows
-// the fake's Grep observes the same namespace as Read/Write/Bash.
+// the fake's Grep observes the same namespace as Read/Write/Shell.
 func grepInMemory(ctx context.Context, n *namespace, pattern, pathGlob string) ([]tool.GrepMatch, error) {
 	re, err := regexp.Compile(pattern)
 	if err != nil {

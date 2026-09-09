@@ -104,7 +104,7 @@ func TestGuardrailsCLIOutranksUser(t *testing.T) {
 guardrails:
   model: "cli-model"
   rules:
-    - match: "Bash"
+    - match: "Shell"
 `
 	const userYAML = `
 guardrails:

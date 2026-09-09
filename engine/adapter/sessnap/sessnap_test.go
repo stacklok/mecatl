@@ -125,7 +125,7 @@ func TestRoundTripAwaitingPreservesPendingAsk(t *testing.T) {
 	want := runningSession(t)
 	ask := session.PendingAsk{
 		AskID:  "ask-1",
-		Tool:   "Bash",
+		Tool:   "Shell",
 		Args:   json.RawMessage(`{"cmd":"rm -rf /"}`),
 		Reason: "destructive",
 		Call:   "call-1",

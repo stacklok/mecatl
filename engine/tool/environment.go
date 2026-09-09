@@ -17,7 +17,7 @@ import (
 //     independently selected from the Workspace content backend;
 //   - an OPTIONAL bound CommandRunner (present when the host has a shell for
 //     this namespace — the main session, a worktree or force-copy fork child;
-//     absent for a file-less / in-memory / shell-less namespace). The Bash
+//     absent for a file-less / in-memory / shell-less namespace). The Shell
 //     tool reads it off the Environment; a nil runner surfaces ErrNoShell.
 //
 // It is NOT a service locator: it carries no policy, hooks, MCP, memory,
@@ -94,5 +94,5 @@ func (e Environment) Workspace() Workspace { return e.workspace }
 func (e Environment) ReadLedger() ReadLedger { return e.readLedger }
 
 // CommandRunner returns the bound command runner, or nil when the namespace
-// has no shell. The Bash tool surfaces nil as ErrNoShell.
+// has no shell. The Shell tool surfaces nil as ErrNoShell.
 func (e Environment) CommandRunner() CommandRunner { return e.runner }

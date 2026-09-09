@@ -96,7 +96,7 @@ func TestSubagentFocusCancelKeySendsFrame(t *testing.T) {
 // pending modal dismisses it (back to running, with a notice); the run keeps
 // streaming.
 func TestPermissionRetractDismissesMatchingModal(t *testing.T) {
-	m := approvalModel(t, pendingAsk{AskID: "subagent-p1:1:k1", Tool: "Bash", Reason: "subagent request"})
+	m := approvalModel(t, pendingAsk{AskID: "subagent-p1:1:k1", Tool: "Shell", Reason: "subagent request"})
 	m = applyAll(m, client.PermissionRetractMsg{AskID: "subagent-p1:1:k1"})
 	if m.phase != phaseRunning {
 		t.Fatalf("matching retract must dismiss the modal back to running, got phase %v", m.phase)
@@ -114,7 +114,7 @@ func TestPermissionRetractDismissesMatchingModal(t *testing.T) {
 // queued-match lookup misses too) — leaves the open modal untouched (idempotent
 // stale-retract handling).
 func TestPermissionRetractNonMatchingIgnored(t *testing.T) {
-	m := approvalModel(t, pendingAsk{AskID: "subagent-p1:1:k1", Tool: "Bash"})
+	m := approvalModel(t, pendingAsk{AskID: "subagent-p1:1:k1", Tool: "Shell"})
 	m = applyAll(m, client.PermissionRetractMsg{AskID: "subagent-OTHER:9:z9"})
 	if m.phase != phaseAwaitingApproval {
 		t.Fatalf("non-matching retract must not dismiss the modal, got phase %v", m.phase)

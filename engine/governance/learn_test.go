@@ -17,16 +17,16 @@ func editArgs(p string) json.RawMessage {
 // matches (the default would otherwise be Ask).
 func TestEvaluateWithLearnedAllowMatches(t *testing.T) {
 	e := NewEvaluator(nil) // no static rules → bare call is Ask
-	learned, ok := e.LearnableRule("Bash", bashArgs("git status"))
+	learned, ok := e.LearnableRule("Shell", bashArgs("git status"))
 	if !ok {
 		t.Fatalf("expected git status to be learnable")
 	}
-	got := e.EvaluateWith("Bash", bashArgs("git status"), false, []Rule{learned})
+	got := e.EvaluateWith("Shell", bashArgs("git status"), false, []Rule{learned})
 	if got.Effect != Allow {
 		t.Fatalf("expected Allow from learned rule, got %v (%s)", got.Effect, got.Reason)
 	}
 	// And without the extra it stays Ask — the learned rule never mutates the Evaluator.
-	if got := e.Evaluate("Bash", bashArgs("git status"), false); got.Effect != Ask {
+	if got := e.Evaluate("Shell", bashArgs("git status"), false); got.Effect != Ask {
 		t.Fatalf("expected Ask without learned rule (immutability), got %v", got.Effect)
 	}
 }
@@ -34,10 +34,10 @@ func TestEvaluateWithLearnedAllowMatches(t *testing.T) {
 // (b) A static Deny beats a learned Allow for the same tool+pattern.
 func TestEvaluateWithStaticDenyBeatsLearnedAllow(t *testing.T) {
 	e := NewEvaluator([]Rule{
-		{Scope: ScopeManaged, Tool: "Bash", Pattern: "git status", Effect: Deny},
+		{Scope: ScopeManaged, Tool: "Shell", Pattern: "git status", Effect: Deny},
 	})
-	learned := Rule{Scope: ScopeUser, Tool: "Bash", Pattern: "git status", Effect: Allow, Exact: true}
-	if got := e.EvaluateWith("Bash", bashArgs("git status"), false, []Rule{learned}); got.Effect != Deny {
+	learned := Rule{Scope: ScopeUser, Tool: "Shell", Pattern: "git status", Effect: Allow, Exact: true}
+	if got := e.EvaluateWith("Shell", bashArgs("git status"), false, []Rule{learned}); got.Effect != Deny {
 		t.Fatalf("expected Deny to beat learned Allow, got %v", got.Effect)
 	}
 }
@@ -45,10 +45,10 @@ func TestEvaluateWithStaticDenyBeatsLearnedAllow(t *testing.T) {
 // (c) A static Ask beats a learned Allow for the same tool+pattern.
 func TestEvaluateWithStaticAskBeatsLearnedAllow(t *testing.T) {
 	e := NewEvaluator([]Rule{
-		{Scope: ScopeManaged, Tool: "Bash", Pattern: "git status", Effect: Ask},
+		{Scope: ScopeManaged, Tool: "Shell", Pattern: "git status", Effect: Ask},
 	})
-	learned := Rule{Scope: ScopeUser, Tool: "Bash", Pattern: "git status", Effect: Allow, Exact: true}
-	if got := e.EvaluateWith("Bash", bashArgs("git status"), false, []Rule{learned}); got.Effect != Ask {
+	learned := Rule{Scope: ScopeUser, Tool: "Shell", Pattern: "git status", Effect: Allow, Exact: true}
+	if got := e.EvaluateWith("Shell", bashArgs("git status"), false, []Rule{learned}); got.Effect != Ask {
 		t.Fatalf("expected Ask to beat learned Allow, got %v", got.Effect)
 	}
 }
@@ -68,27 +68,27 @@ func TestEvaluateWithPlanModeDeniesMutatingDespiteLearnedAllow(t *testing.T) {
 func TestEvaluateWithLearnedExactNoGlob(t *testing.T) {
 	e := NewEvaluator(nil)
 	// A pattern containing a glob metachar, stored Exact: it must match literally.
-	learned := Rule{Scope: ScopeUser, Tool: "Bash", Pattern: "git*", Effect: Allow, Exact: true}
+	learned := Rule{Scope: ScopeUser, Tool: "Shell", Pattern: "git*", Effect: Allow, Exact: true}
 	// The literal "git*" command matches.
-	if got := e.EvaluateWith("Bash", bashArgs("git*"), false, []Rule{learned}); got.Effect != Allow {
+	if got := e.EvaluateWith("Shell", bashArgs("git*"), false, []Rule{learned}); got.Effect != Allow {
 		t.Fatalf("expected Allow for the literal learned pattern, got %v", got.Effect)
 	}
 	// A DIFFERENT command must NOT be approved by glob expansion of "git*".
-	if got := e.EvaluateWith("Bash", bashArgs("git push"), false, []Rule{learned}); got.Effect != Ask {
+	if got := e.EvaluateWith("Shell", bashArgs("git push"), false, []Rule{learned}); got.Effect != Ask {
 		t.Fatalf("expected Ask (no glob escalation) for a different command, got %v", got.Effect)
 	}
 }
 
 // --- LearnableRule: which calls are learnable, and the pattern derived ---
 
-func TestLearnableRuleSingleBashCommand(t *testing.T) {
+func TestLearnableRuleSingleShellCommand(t *testing.T) {
 	e := NewEvaluator(nil)
-	r, ok := e.LearnableRule("Bash", bashArgs("git   status"))
+	r, ok := e.LearnableRule("Shell", bashArgs("git   status"))
 	if !ok {
 		t.Fatalf("expected single bash command to be learnable")
 	}
-	if r.Tool != "Bash" {
-		t.Fatalf("expected Tool=Bash, got %q", r.Tool)
+	if r.Tool != "Shell" {
+		t.Fatalf("expected Tool=Shell, got %q", r.Tool)
 	}
 	if r.Effect != Allow || !r.Exact || r.Scope != ScopeUser {
 		t.Fatalf("expected {Allow, Exact, ScopeUser}, got %+v", r)
@@ -110,7 +110,7 @@ func TestLearnableRuleRefusesCompoundAndSubstituted(t *testing.T) {
 		"(rm -rf /)",             // subshell grouping
 		"",                       // empty
 	} {
-		if _, ok := e.LearnableRule("Bash", bashArgs(cmd)); ok {
+		if _, ok := e.LearnableRule("Shell", bashArgs(cmd)); ok {
 			t.Fatalf("expected %q NOT to be learnable", cmd)
 		}
 	}

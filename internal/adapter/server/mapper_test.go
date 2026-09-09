@@ -151,13 +151,13 @@ func TestToProtoTable(t *testing.T) {
 		{
 			name: "hook",
 			in: session.Event{Type: session.EvHook, Seq: 7, Turn: 1, Text: "blocked-by-policy",
-				Hook: &session.HookPayload{Phase: "PreToolUse", Tool: "Bash", Decision: session.HookBlocked, CallID: "call-7"}},
+				Hook: &session.HookPayload{Phase: "PreToolUse", Tool: "Shell", Decision: session.HookBlocked, CallID: "call-7"}},
 			assert: func(t *testing.T, got *mecatlv1.Event) {
 				if got.GetType() != "hook" || got.GetText() != "blocked-by-policy" {
 					t.Fatalf("got %+v", got)
 				}
 				h := got.GetHook()
-				if h == nil || h.GetPhase() != "PreToolUse" || h.GetTool() != "Bash" ||
+				if h == nil || h.GetPhase() != "PreToolUse" || h.GetTool() != "Shell" ||
 					h.GetDecision() != mecatlv1.HookDecision_HOOK_DECISION_BLOCKED ||
 					h.GetCallId() != "call-7" {
 					t.Fatalf("hook payload mismatch: %+v", h)
@@ -831,7 +831,7 @@ func TestToProtoLogOnlyPayloads(t *testing.T) {
 		Approval: &session.ApprovalPayload{
 			AskID:       "s1:1:c1:r0",
 			Verdict:     session.VerdictStringAllowAlways,
-			Tool:        "Bash",
+			Tool:        "Shell",
 			Call:        session.ToolCallID("c1"),
 			AllowAlways: true,
 		},
@@ -840,7 +840,7 @@ func TestToProtoLogOnlyPayloads(t *testing.T) {
 		t.Fatal("approval submessage not projected")
 	}
 	if apr.GetAskId() != "s1:1:c1:r0" || apr.GetVerdict() != session.VerdictStringAllowAlways ||
-		apr.GetTool() != "Bash" || apr.GetCallId() != "c1" || !apr.GetAllowAlways() {
+		apr.GetTool() != "Shell" || apr.GetCallId() != "c1" || !apr.GetAllowAlways() {
 		t.Fatalf("approval projected wrong: %+v", apr)
 	}
 
@@ -868,7 +868,7 @@ func TestToProtoLogOnlyPayloads(t *testing.T) {
 	// w/ result, user w/ media).
 	tr := session.NewToolResult("c1", "ok")
 	assistantMsg := session.NewAssistantMessage("calling", "reason", []session.ToolCall{
-		session.NewToolCall("c1", "Bash", json.RawMessage(`{"cmd":"ls"}`)),
+		session.NewToolCall("c1", "Shell", json.RawMessage(`{"cmd":"ls"}`)),
 	})
 	assistantMsg.ReasoningItemID = "rs_1"
 	arch := toProto(session.Event{
@@ -900,7 +900,7 @@ func TestToProtoLogOnlyPayloads(t *testing.T) {
 		t.Errorf("replaced[1].ReasoningItemId = %q, want rs_1 (the reasoning-item id must project alongside Reasoning/ProviderPhase)", arch.GetReplaced()[1].GetReasoningItemId())
 	}
 	if len(arch.GetReplaced()[1].GetToolCalls()) != 1 ||
-		arch.GetReplaced()[1].GetToolCalls()[0].GetName() != "Bash" {
+		arch.GetReplaced()[1].GetToolCalls()[0].GetName() != "Shell" {
 		t.Errorf("replaced[1].ToolCalls wrong: %+v", arch.GetReplaced()[1].GetToolCalls())
 	}
 	if arch.GetReplaced()[2].GetRole() != "tool" || arch.GetReplaced()[2].GetToolResult() == nil ||
@@ -1339,7 +1339,7 @@ func TestToProtoNeverFailsMarshalOnInvalidUTF8(t *testing.T) {
 		Text:          "txt " + badUTF8,
 		Reasoning:     "reason " + badUTF8,
 		ProviderPhase: "phase " + badUTF8,
-		ToolCalls:     []session.ToolCall{session.NewToolCall("c1", "Bash", json.RawMessage(`{"cmd":"`+badUTF8+`"}`))},
+		ToolCalls:     []session.ToolCall{session.NewToolCall("c1", "Shell", json.RawMessage(`{"cmd":"`+badUTF8+`"}`))},
 	}
 	emb := mustEmbedded(t, "https://x/"+badUTF8, "application/octet-stream", "", []byte{0xff, 0xfe}, []string{badUTF8})
 	parts := []session.Content{
@@ -1355,12 +1355,12 @@ func TestToProtoNeverFailsMarshalOnInvalidUTF8(t *testing.T) {
 			CallID: "c1", Content: "out " + badUTF8, Parts: parts,
 		}},
 		"permission.ask": {Type: session.EvPermissionAsk, Ask: &session.PendingAsk{
-			AskID: "a1", Tool: "Bash" + badUTF8, Args: json.RawMessage(`{"x":"` + badUTF8 + `"}`), Reason: "why " + badUTF8,
+			AskID: "a1", Tool: "Shell" + badUTF8, Args: json.RawMessage(`{"x":"` + badUTF8 + `"}`), Reason: "why " + badUTF8,
 		}},
 		"result": {Type: session.EvResult, Result: &session.ResultPayload{Stop: session.StopEndTurn, Text: "final " + badUTF8, Error: "err " + badUTF8}},
-		"hook":   {Type: session.EvHook, Hook: &session.HookPayload{Phase: "PreToolUse", Tool: "Bash" + badUTF8}},
+		"hook":   {Type: session.EvHook, Hook: &session.HookPayload{Phase: "PreToolUse", Tool: "Shell" + badUTF8}},
 		"approval": {Type: session.EvApproval, Approval: &session.ApprovalPayload{
-			AskID: "a1", Verdict: session.VerdictStringAllowOnce, Tool: "Bash" + badUTF8, Call: "c1",
+			AskID: "a1", Verdict: session.VerdictStringAllowOnce, Tool: "Shell" + badUTF8, Call: "c1",
 		}},
 		"user_prompt": {Type: session.EvUserPrompt, UserPrompt: &session.UserPromptPayload{Text: "ask " + badUTF8}},
 		"compaction.archive": {Type: session.EvCompactionArchive, CompactionArchive: &session.CompactionArchivePayload{

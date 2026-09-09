@@ -40,8 +40,8 @@ const maxTeamPreview = 200
 // composition root supplies it; it is expected to capture nothing (the team is
 // passed per-call) and to shape the member's catalog per the three-tier workspace
 // policy (a base-sharing read-only member must NOT be handed workspace-mutating
-// tools; a read-only-isolated member may have Bash and sets IsolateReadOnly; a
-// Mutating member may have Edit/Write/Bash) plus the team coordination tools
+// tools; a read-only-isolated member may have Shell and sets IsolateReadOnly; a
+// Mutating member may have Edit/Write/Shell) plus the team coordination tools
 // (MemberTools). Returning a MemberBuild (rather than a bare *Engine) is how a
 // member's agent-definition permissionMode reaches the supervisor's per-member
 // session — it is the exact shape server.MemberEngineFactory has, so one factory
@@ -63,7 +63,7 @@ type TeamMemberArg struct {
 	// the member's InitialPrompt.
 	Role string `json:"role"`
 	// Mutating requests a self-contained copied workspace (own `.git`) with
-	// edit/write/shell tools (Edit/Write/Bash). A read-only member (the default,
+	// edit/write/shell tools (Edit/Write/Shell). A read-only member (the default,
 	// false) runs in an isolated throwaway git worktree with full shell for
 	// INSPECTION (git log/show, cat, build, test) but no Edit/Write. Neither tier is
 	// merged back into the base.

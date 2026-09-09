@@ -131,7 +131,7 @@ func (j *engineJudge) Judge(ctx context.Context, candidates []BranchSummary, cri
 
 	run := j.engine.Run(ctx, sess, judgeEnvironment, RunRequest{Text: buildJudgePrompt(candidates, criteria)})
 	// The judge child is tool-less and non-interactive; the zero childPosture (headless
-	// auto-deny) is correct — it can never raise a Bash ask.
+	// auto-deny) is correct — it can never raise a Shell ask.
 	final, stop := drainChild(run, childPosture{role: "judge"})
 	if stop == session.StopError || stop == session.StopCancelled {
 		return 0, "judge run did not complete; selected the first successful branch", nil

@@ -57,7 +57,7 @@ func TestPathEscapePosture_Scenario5_BaseSharingMemberNotRelaxed(t *testing.T) {
 			t.Parallel()
 			f := setupEscapeFS(t)
 
-			// A shell-less Build: NoBash nils the sandboxed runner, so the member
+			// A shell-less Build: NoShell nils the sandboxed runner, so the member
 			// factory cannot isolate a read-only member (IsolateReadOnly stays
 			// false) and the member base-shares. Member turn 1 attempts the
 			// out-of-root Read, turn 2 reports; turn 3 is the lead's synthesis
@@ -68,7 +68,7 @@ func TestPathEscapePosture_Scenario5_BaseSharingMemberNotRelaxed(t *testing.T) {
 				mockllm.TextTurn("member done"),
 				mockllm.TextTurn("team report"),
 			)
-			cfg.NoBash = true
+			cfg.NoShell = true
 			cfg.EnableTeams = true
 			built, err := Build(context.Background(), cfg)
 			if err != nil {

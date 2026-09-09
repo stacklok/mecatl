@@ -257,7 +257,7 @@ func (c parentCaps) finishChildRunResult(childID session.SessionID, stop session
 	}
 }
 
-// attachChildOutputTail is the nil-safe background-Bash tail attach (see
+// attachChildOutputTail is the nil-safe background-Shell tail attach (see
 // childRunRegistry.attachOutputTail): no-op without a threaded registry.
 func (c parentCaps) attachChildOutputTail(childID session.SessionID, buf *tailBuffer) {
 	if c.children != nil {
@@ -265,7 +265,7 @@ func (c parentCaps) attachChildOutputTail(childID session.SessionID, buf *tailBu
 	}
 }
 
-// setChildExitCode is the nil-safe background-Bash exit-code record (see
+// setChildExitCode is the nil-safe background-Shell exit-code record (see
 // childRunRegistry.setExitCode): no-op without a threaded registry.
 func (c parentCaps) setChildExitCode(childID session.SessionID, code int) {
 	if c.children != nil {
@@ -443,7 +443,7 @@ type subagentArgs struct {
 	// runs the historical read-only explorer (no Edit/Write; a shell-bearing child's
 	// worktree is discarded after the run). "read-write" runs a WRITABLE explorer
 	// with Edit/Write in its catalog that runs DIRECTLY against the PARENT workspace
-	// (no fork, no copy, no merge-back) — its Edit/Write/Bash mutate the real tree in
+	// (no fork, no copy, no merge-back) — its Edit/Write/Shell mutate the real tree in
 	// place, exactly as the main agent does, so its edits land immediately. There is
 	// no isolation; git is the rollback layer (a crashed/cancelled child can leave
 	// partial edits behind, recoverable via git diff/checkout/stash — ADR 0077).
@@ -613,11 +613,11 @@ var subagentSchema = json.RawMessage(`{
 // string as a single ToolResult.
 //
 // Workspace: when a child forker is wired (WithChildForker — the composition root
-// wires it iff the child catalog includes Bash), each child runs in its OWN isolated
+// wires it iff the child catalog includes Shell), each child runs in its OWN isolated
 // git WORKTREE (shares the base repo's `.git` ⇒ full history) so the explorer's shell
 // can inspect (git log/show, cat, build, test) without its writes touching the shared
 // parent workspace; the worktree is torn down after the child drains. Without a
-// forker the child has no Bash and runs against the parent workspace, exactly as it
+// forker the child has no Shell and runs against the parent workspace, exactly as it
 // originally did. Either way Subagent stays read-parallel-safe (see ReadOnly).
 //
 // Context isolation is the whole point: the parent never observes the child's
@@ -686,12 +686,12 @@ type SubagentTool struct {
 	// childForker, when non-nil, isolates each child run in its OWN forked workspace
 	// (a cheap git WORKTREE — shares the base repo's `.git` ⇒ full history) instead of
 	// running against the shared parent workspace. The composition root wires it ONLY
-	// when the child catalog includes Bash, so a shell-bearing read-only explorer runs
-	// its (mutating-classified) Bash in a throwaway worktree, never the shared base —
+	// when the child catalog includes Shell, so a shell-bearing read-only explorer runs
+	// its (mutating-classified) Shell in a throwaway worktree, never the shared base —
 	// which is what keeps Subagent read-parallel-safe (see ReadOnly). When nil, the child
 	// runs against the parent ws exactly as before (no shell wired). A fork FAILURE on
 	// this path is a tool error, NOT a silent fallback to the shared ws: the child's
-	// catalog has Bash precisely because isolation was available, so running it in the
+	// catalog has Shell precisely because isolation was available, so running it in the
 	// shared base would be the exact hazard isolation exists to prevent.
 	childForker tool.EnvironmentForker
 
@@ -778,7 +778,7 @@ type SubagentTool struct {
 	// mode:"read-write"+`agent` call: the named specialist's scoped engine
 	// (catalog/prompt/hooks/memory) is REBUILT with allowMutating=true so Edit/Write
 	// survive scoping, using the MAIN session's command runner (direct-write parity,
-	// ADR 0077 — no fork, no copy, no merge-back); its Edit/Write/Bash mutate the real
+	// ADR 0077 — no fork, no copy, no merge-back); its Edit/Write/Shell mutate the real
 	// parent tree in place, exactly as the main agent does, and git is the rollback
 	// layer. It is a composition-supplied closure mirroring WithAgentModelEngineFactory
 	// (it closes over the agent-def registry + the provider registry + the MAIN runner),
@@ -802,7 +802,7 @@ type SubagentTool struct {
 	// is SEPARATE from childEngine (the read-only explorer): a read-write call selects
 	// this engine instead, so the read-only fan-out path is byte-identical when
 	// read-write is never used. A read-write child runs DIRECTLY against the parent
-	// workspace — no fork, no copy, no merge-back (ADR 0077) — so its Edit/Write/Bash
+	// workspace — no fork, no copy, no merge-back (ADR 0077) — so its Edit/Write/Shell
 	// mutate the real tree in place, exactly as the main agent does, and git is the
 	// rollback layer. nil (the default, and ALWAYS on the no-FS path) means writable
 	// subagents are not wired — a read-write arg then surfaces a model-addressable
@@ -813,7 +813,7 @@ type SubagentTool struct {
 	// per-call OVERRIDE model for a mode:"read-write" call with NO `agent` (issue #285):
 	// the generic writable explorer catalog (read-only explorer + Edit + Write) rebuilt on
 	// the requested model, using the MAIN session's command runner (direct-write parity,
-	// ADR 0077 — no fork, no copy, no merge-back); its Edit/Write/Bash mutate the real
+	// ADR 0077 — no fork, no copy, no merge-back); its Edit/Write/Shell mutate the real
 	// parent tree in place, exactly as the main agent does, and git is the rollback layer.
 	// It is a composition-supplied closure mirroring writableChildEngine's build recipe
 	// (it closes over the provider registry + the MAIN runner), re-deriving the
@@ -955,7 +955,7 @@ const resumeStalenessNote = "[harness note: your conversation has been resumed, 
 // It is selected by prepareChildSession's editsSurvived, NOT by the current call's
 // `writable` flag: `mode` may CHANGE across a resume, so a previously READ-ONLY child
 // resumed with mode:"read-write" would otherwise be told its edits survived when its
-// worktree was torn down (a read-only child has no Edit/Write but DOES have Bash in that
+// worktree was torn down (a read-only child has no Edit/Write but DOES have Shell in that
 // worktree, so it may really have applied edits). The INVERSE falsehood is worse than the
 // one this note fixes — a child that trusts absent edits builds on nothing — so the
 // selection is keyed on the persisted workspace path, and the conservative staleness note
@@ -1068,8 +1068,8 @@ func WithChildSessionPrefix(p string) SubagentOption {
 }
 
 // WithChildForker injects the workspace-isolation seam each child run forks before
-// executing. The composition root wires it ONLY when the child catalog includes Bash
-// (the read-only explorer's shell), so the child's mutating-classified Bash lands in
+// executing. The composition root wires it ONLY when the child catalog includes Shell
+// (the read-only explorer's shell), so the child's mutating-classified Shell lands in
 // a throwaway git worktree, never the shared parent base — preserving Subagent's
 // read-parallel safety (see ReadOnly). It should be the forker's DEFAULT mode (git
 // worktree: shares the base repo's `.git` ⇒ full history for git log/show). When the
@@ -1197,7 +1197,7 @@ func WithAgentModelEngineFactory(f func(agentName, model string) (*Engine, bool)
 // engines use (buildAgentDefEngine → newChildEngineForProvider re-derives
 // Compactor/TokenCounter/Env.Model/ContextWindow), using the MAIN session's command
 // runner (direct-write parity, ADR 0077 — no fork, no copy, no merge-back); its
-// Edit/Write/Bash mutate the REAL parent workspace in place, exactly as the main
+// Edit/Write/Shell mutate the REAL parent workspace in place, exactly as the main
 // agent does, and git is the rollback layer. The pre-built agentEngines map is NEVER
 // mutated (a fresh engine is minted per call). It returns (engine, true) for a known
 // reference-only-MCP def and (nil, false) for an unknown agent or a def with INLINE
@@ -1247,7 +1247,7 @@ func WithWritableChildEngine(e *Engine) SubagentOption {
 // id it REBUILDS the generic writable explorer engine (read-only explorer catalog + Edit +
 // Write) on that model through the SAME contamination-safe per-provider path
 // writableChildEngine uses, using the MAIN session's command runner (direct-write parity,
-// ADR 0077 — no fork, no copy, no merge-back); its Edit/Write/Bash mutate the REAL parent
+// ADR 0077 — no fork, no copy, no merge-back); its Edit/Write/Shell mutate the REAL parent
 // workspace in place, and git is the rollback layer. It re-derives the provider-closing
 // Deps (Compactor/TokenCounter/Env.Model/ContextWindow) for the override model — NEVER a
 // clone-and-swap. It returns (engine, true) for a routable model and (nil, false) for an
@@ -1375,7 +1375,7 @@ func WithPinnedAgents(names []string) SubagentOption {
 //
 //   - Catalog: a read-only explorer set — Read, Grep, Glob ONLY. It MUST NOT
 //     contain the Subagent tool (otherwise a subagent could spawn subagents — infinite
-//     recursion) and SHOULD NOT contain mutating tools (Edit/Write/non-RO Bash):
+//     recursion) and SHOULD NOT contain mutating tools (Edit/Write/non-RO Shell):
 //     the default explorer subagent cannot mutate the workspace.
 //   - Policy: allow-all over those read-only tools (e.g.
 //     permpolicy.NewPolicy([]governance.Rule{{Effect: governance.Allow}})), so the
@@ -1544,9 +1544,9 @@ func (t *SubagentTool) agentEnumeration() string {
 // Workspace (read-parallel / mutate-serial; see dispatch.go).
 //
 // INVARIANT — what keeps this safe is WORKSPACE ISOLATION, not catalog
-// read-only-ness. A Subagent child may now WRITE via Bash (the read-only explorer's
+// read-only-ness. A Subagent child may now WRITE via Shell (the read-only explorer's
 // shell — git, build, test, cat), but when a child forker is wired (childForker !=
-// nil — the composition root wires it iff the child catalog has Bash) the child runs
+// nil — the composition root wires it iff the child catalog has Shell) the child runs
 // in an ISOLATED git WORKTREE, so its writes land in a throwaway checkout and NEVER
 // touch the shared parent workspace the parent's other read-only calls race over.
 // The read-parallel guarantee therefore holds exactly as before: no two concurrent
@@ -1560,7 +1560,7 @@ func (t *SubagentTool) agentEnumeration() string {
 // silent fallback to the shared ws (which WOULD break this), so the invariant cannot
 // be violated by a degraded fork.
 //
-// When NO forker is wired the child has no Bash (the catalog stays a pure read-only
+// When NO forker is wired the child has no Shell (the catalog stays a pure read-only
 // explorer) and runs against the shared ws — also safe, by catalog read-only-ness,
 // exactly as it always was. Either way Subagent is read-parallel-safe and ReadOnly()
 // honestly returns true.
@@ -1576,7 +1576,7 @@ func (*SubagentTool) ReadOnly() bool { return true }
 // whether THIS specific call will mutate the PARENT workspace. ReadOnly() stays true
 // so read-only Subagent fan-out keeps batching in parallel; a call for which this
 // returns true is excluded from the concurrent read batch (dispatch-serial, flushed
-// alone via runOne) so the writable child's IN-PLACE Edit/Write/Bash against the real
+// alone via runOne) so the writable child's IN-PLACE Edit/Write/Shell against the real
 // tree never overlaps a sibling parent Read/Grep/Glob — a torn read. This is the
 // LOAD-BEARING correctness fix for direct-write (ADR 0077): a mode:"read-write" child
 // mutates the real workspace DURING its run (no fork, no merge), so the dispatcher
@@ -1630,7 +1630,7 @@ func (t *SubagentTool) ExecuteObserved(ctx context.Context, call session.ToolCal
 
 // ExecuteWithParent is the childCapableTool seam: it runs the subagent like
 // ExecuteObserved but threads the PARENT's capabilities (interactivity + the surface
-// back-channel) into the child posture, so a child Bash ask that A1/A2 did not
+// back-channel) into the child posture, so a child Shell ask that A1/A2 did not
 // auto-resolve is SURFACED to the human (interactive) or auto-denied with the accurate
 // message + operator diagnostic (headless).
 func (t *SubagentTool) ExecuteWithParent(ctx context.Context, call session.ToolCall, env tool.Environment, emit func(session.Event), caps parentCaps) (session.ToolResult, error) {
@@ -2052,7 +2052,7 @@ const (
 // read-write + agent ALONE is ALLOWED when the deployment wires the writable-
 // specialist factory (WithAgentWritableEngineFactory — a writable specialist, ADR
 // 0058): the named specialist's scoped engine is rebuilt with allowMutating=true on
-// the def's resolved model and runs Edit/Write/Bash against the real parent workspace
+// the def's resolved model and runs Edit/Write/Shell against the real parent workspace
 // (direct-write parity, ADR 0077). read-write COMPOSES with fork/resume/output_schema/
 // timeout_ms/limits (no guard here for those). It is a method only to read
 // t.writableChildEngine and t.agentWritableFactory.
@@ -2285,7 +2285,7 @@ func (t *SubagentTool) prepareChildSession(ctx context.Context, call session.Too
 		priorRef = loaded.EnvironmentRef
 	}
 	// A mode:"read-write" child runs DIRECTLY against the parent workspace (no fork —
-	// ADR 0077): its Edit/Write/Bash mutate the real tree in place, exactly as the
+	// ADR 0077): its Edit/Write/Shell mutate the real tree in place, exactly as the
 	// main agent does, and git is the rollback layer. So a writable call passes NO
 	// forker (nil) — forkChildEnvironment then shares the parent content backend
 	// through any composition-supplied authority-narrowing Workspace view. A
@@ -2305,7 +2305,7 @@ func (t *SubagentTool) prepareChildSession(ctx context.Context, call session.Too
 	// deliberately lets `mode` CHANGE across a resume, so resuming a previously
 	// READ-ONLY child with mode:"read-write" would otherwise be handed
 	// resumeWritableNote ("the file edits you already made are STILL IN PLACE") when its
-	// worktree was torn down. A read-only child has no Edit/Write but DOES have Bash in
+	// worktree was torn down. A read-only child has no Edit/Write but DOES have Shell in
 	// that worktree, so it may genuinely have applied edits that are now GONE: telling it
 	// otherwise is the exact falsehood resumeWritableNote exists to prevent, inverted.
 	// The path comparison is the honest test and needs no new persisted field.
@@ -2590,13 +2590,13 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, env tool.
 		resumePosture{writable: writable, editsSurvived: editsSurvived}, forkAdvisory)
 
 	// A read-only child forking a worktree (childForker wired) runs ISOLATED, so its
-	// Bash asks are eligible for the A2 worktree-safe auto-approve; a forker-less
+	// Shell asks are eligible for the A2 worktree-safe auto-approve; a forker-less
 	// read-only child is base-sharing (no auto-approve). A WRITABLE (direct-write)
 	// child is NEVER isolated — it shares the REAL parent tree (ADR 0077, it forked
-	// nothing) REGARDLESS of whether the read-only childForker is wired — so its Bash
+	// nothing) REGARDLESS of whether the read-only childForker is wired — so its Shell
 	// resolves at MAIN-SESSION PARITY through the child policy/posture under the
 	// operator's posture (the A2 isolation auto-approve correctly does NOT apply: its
-	// Bash now hits the real repo). Hence the `!writable` guard: in production BOTH the
+	// Shell now hits the real repo). Hence the `!writable` guard: in production BOTH the
 	// read-only childForker and the writable engine are wired, so keying isolation on
 	// `t.childForker != nil` alone would WRONGLY mark a direct-write child isolated. The
 	// parent caps carry interactivity + the surface back-channel for an interactive
@@ -4046,10 +4046,10 @@ func (t *SubagentTool) resolveResumeSession(ctx context.Context, callID session.
 // supplied forker (the caller passes t.childForker for a read-only child — a git
 // worktree — or nil for a mode:"read-write" child, which runs DIRECTLY against the
 // parent workspace, ADR 0077). When the forker is wired (a read-only child catalog
-// has Bash), the child gets its OWN isolated checkout so its writes never touch the
+// has Shell), the child gets its OWN isolated checkout so its writes never touch the
 // shared parent base — what keeps read-only Subagent read-parallel-safe (see
 // ReadOnly). A fork FAILURE is a tool error (ok=false), NOT a silent fallback to the
-// shared ws: the child has Bash precisely because isolation was available, so running
+// shared ws: the child has Shell precisely because isolation was available, so running
 // it shared would be the exact hazard. With a nil forker the child runs against the
 // parent content backend through any configured authority-narrowing Workspace
 // view (the read-only no-shell path AND the writable direct-write path). The returned cleanup is ALWAYS non-nil (a no-op when nothing was forked) so
@@ -4341,7 +4341,7 @@ func drainChild(run *Run, posture childPosture) (finalText string, stop session.
 // isolated=true; an interactive parent supplies caps with a non-nil surfaceAsk.
 type childPosture struct {
 	// isolated reports that the child runs in an ISOLATED workspace (a git worktree or a
-	// force-copy fork) — so an IsolationApprovable Bash ask (read-only ∪ worktree-safe
+	// force-copy fork) — so an IsolationApprovable Shell ask (read-only ∪ worktree-safe
 	// go verbs) auto-APPROVES (A2). false for a base-sharing child (no auto-approve).
 	isolated bool
 	// caps carries the parent's interactivity + surface back-channel (zero value =
@@ -4486,8 +4486,8 @@ func resolveChildAsk(run *Run, ask session.PendingAsk, posture childPosture) {
 	} else if ask.FlooredConfiguredAllow {
 		run.Approve(ask.AskID, session.VerdictAllowOnce)
 		return
-	} else if posture.isolated && ask.Tool == "Bash" && governance.IsolationApprovable(bashCmdFromArgs(ask.Args)) {
-		// Step A2: isolated child + isolation-approvable Bash → auto-approve.
+	} else if posture.isolated && ask.Tool == "Shell" && governance.IsolationApprovable(bashCmdFromArgs(ask.Args)) {
+		// Step A2: isolated child + isolation-approvable Shell → auto-approve.
 		run.Approve(ask.AskID, session.VerdictAllowOnce)
 		return
 	}
@@ -4574,12 +4574,12 @@ func resolveChildAsk(run *Run, ask session.PendingAsk, posture childPosture) {
 	run.autoDenyChildAsk(ask.AskID, childAutoDenyMessage(ask.Reason, ask.ConfiguredAsk))
 }
 
-// bashCmdFromArgs extracts the Bash command string from a pending ask's raw args,
+// bashCmdFromArgs extracts the Shell command string from a pending ask's raw args,
 // delegating to the shared governance extractor (the single source of truth for the
-// Bash tool-call args schema). Empty on a parse failure (then
+// Shell tool-call args schema). Empty on a parse failure (then
 // IsolationApprovable("") is false — fail safe).
 func bashCmdFromArgs(args json.RawMessage) string {
-	cmd, _ := governance.BashCommandFromArgs(args)
+	cmd, _ := governance.ShellCommandFromArgs(args)
 	return cmd
 }
 

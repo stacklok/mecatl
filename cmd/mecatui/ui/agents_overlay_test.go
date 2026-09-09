@@ -913,7 +913,7 @@ func goldenFleet(m Model) Model {
 		startSub("p1", "explorer-b2e2", "find dead code"),
 		toolSub("p1", "explorer-b2e2", "Read", false, 4),
 		startSub("p1", "explorer-c1d3", "trace config loading"),
-		toolSub("p1", "explorer-c1d3", "Bash", false, 11),
+		toolSub("p1", "explorer-c1d3", "Shell", false, 11),
 		startSub("p1", "explorer-d0c4", "map test coverage"),
 		toolSub("p1", "explorer-d0c4", "Glob", false, 9),
 		endSub("p1", "explorer-d0c4", 15000, 4000, 9, "end_turn"),
@@ -1088,7 +1088,7 @@ func TestSubagentFocusGolden(t *testing.T) {
 func goldenBackgroundFleet(m Model) Model {
 	m = seedSubagents(m, "p1",
 		startBgSub("p1", "explorer-f8a6", "background deep audit"),
-		toolSub("p1", "explorer-f8a6", "Bash", false, 3),
+		toolSub("p1", "explorer-f8a6", "Shell", false, 3),
 	)
 	m = goldenFleet(m)
 	return seedSubagents(m, "p2",
@@ -1259,7 +1259,7 @@ func goldenParallel(m Model) Model {
 		branchToolPar("par-1", 1, "Edit", false, 3),
 		branchToolParPreview("par-1", 1, "tool.call", "Edit", "file: svc.go", 3),
 		branchToolParPreview("par-1", 1, "message.delta", "", "slice approach is cleaner", 3),
-		branchToolPar("par-1", 2, "Bash", true, 1),
+		branchToolPar("par-1", 2, "Shell", true, 1),
 		branchEndPar("par-1", 0, 12000, 3000, 2, "end_turn", false, "/fork/branch-1"),
 		branchEndPar("par-1", 1, 15000, 4200, 3, "end_turn", false, "/fork/branch-2"),
 		branchEndPar("par-1", 2, 4000, 600, 1, "error", true, "/fork/branch-3"),

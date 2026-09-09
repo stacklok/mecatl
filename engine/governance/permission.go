@@ -39,9 +39,9 @@ type PermissionDecision struct {
 	// Mutually exclusive with FlooredConfiguredAllow.
 	ConfiguredAsk bool
 	// FlooredConfiguredAllow reports that the decision is an Ask ONLY because of
-	// the built-in substitution floor (the Evaluator escalates a Bash segment
+	// the built-in substitution floor (the Evaluator escalates a Shell segment
 	// containing command/process substitution or subshell grouping to Ask). It
-	// is set when, on a (possibly compound) Bash line: the floor-free fold is
+	// is set when, on a (possibly compound) Shell line: the floor-free fold is
 	// Allow; at least one segment was floor-escalated DESPITE a configured
 	// (above-floor) Allow matching it; AND that segment is provably safe to
 	// auto-approve under the floor — the configured Allow vouches for the OUTER
@@ -120,7 +120,7 @@ type Rule struct {
 	// Tool is the tool name this rule applies to (empty matches any tool).
 	Tool string
 	// Pattern is the matcher against the tool's arguments (tool-specific
-	// syntax, e.g. a Bash command glob); empty matches any arguments.
+	// syntax, e.g. a Shell command glob); empty matches any arguments.
 	Pattern string
 	// Effect is the effect this rule yields on a match.
 	Effect Effect

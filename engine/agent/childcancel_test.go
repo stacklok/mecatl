@@ -145,15 +145,15 @@ func TestCancelChildMidDrive(t *testing.T) {
 }
 
 // TestCancelChildWhileParkedOnAsk is the full parked-ask unwind e2e: the child
-// surfaces a Bash ask to the interactive parent and parks; CancelChild then (1)
+// surfaces a Shell ask to the interactive parent and parks; CancelChild then (1)
 // unwinds the child to a cancelled-by-user note result, (2) emits a
 // permission.retract for the surfaced askID on the parent stream, and (3) makes a
 // LATE approval a no-op (the router entry was unregistered BEFORE the retract was
 // emitted — fail-safe ordering), so the command NEVER executes.
 func TestCancelChildWhileParkedOnAsk(t *testing.T) {
-	bash := &fakeBash{}
+	bash := &fakeShell{}
 	childLLM := mockllm.New(
-		mockllm.ToolCallTurn(toolCall("k1", "Bash", `{"command":"cat $(zap)"}`)),
+		mockllm.ToolCallTurn(toolCall("k1", "Shell", `{"command":"cat $(zap)"}`)),
 		mockllm.TextTurn("child: never reached"),
 	)
 	childEngine := bashChildEngine(childLLM, bash)
@@ -230,9 +230,9 @@ func TestCancelChildWhileParkedOnAsk(t *testing.T) {
 // before the terminal EvResult), a late verdict is a no-op, and the run
 // completes normally with the time-budget error as the model-visible outcome.
 func TestChildTimeoutRetractsSurfacedAskMidRun(t *testing.T) {
-	bash := &fakeBash{}
+	bash := &fakeShell{}
 	childLLM := mockllm.New(
-		mockllm.ToolCallTurn(toolCall("k1", "Bash", `{"command":"cat $(zap)"}`)),
+		mockllm.ToolCallTurn(toolCall("k1", "Shell", `{"command":"cat $(zap)"}`)),
 		mockllm.TextTurn("child: never reached"),
 	)
 	task := agent.NewSubagentTool(bashChildEngine(childLLM, bash),
@@ -578,12 +578,12 @@ func TestResumeWithinRunReRegistersAndIsCancellable(t *testing.T) {
 // the run converges only when the NEW askID is answered.
 func TestStaleVerdictAfterCancelResumeDoesNotResolveNewAsk(t *testing.T) {
 	store := memstore.New()
-	bash := &fakeBash{}
+	bash := &fakeShell{}
 	childLLM := mockllm.New(
 		// Run 1: parks on the surfaced substitution ask, then is cancelled.
-		mockllm.ToolCallTurn(toolCall("k1", "Bash", `{"command":"cat $(zap)"}`)),
+		mockllm.ToolCallTurn(toolCall("k1", "Shell", `{"command":"cat $(zap)"}`)),
 		// Resume: the provider re-mints the SAME call id for the same intent.
-		mockllm.ToolCallTurn(toolCall("k1", "Bash", `{"command":"cat $(zap)"}`)),
+		mockllm.ToolCallTurn(toolCall("k1", "Shell", `{"command":"cat $(zap)"}`)),
 		mockllm.TextTurn("child: adapted after denial"),
 	)
 	childEngine := bashChildEngine(childLLM, bash)

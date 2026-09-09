@@ -150,7 +150,7 @@ type config struct {
 	anthropicKey         string
 	openCodeKey          string
 	mock                 bool
-	noBash               bool
+	noShell              bool
 	// noSteer disables the mid-run steer inbox (steer-while-running, issue #512) on
 	// the embedded server — the opt-OUT of a DEFAULT-ON knob. noSteerFlagSet records
 	// an explicit --no-steer so CLI out-ranks the settings.yaml steer: key.
@@ -418,7 +418,7 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string, brows
 		Mode:    "embedded server only: " + cliconfig.DefaultToolhiveLLMFlagHelp.Mode,
 	})
 	fs.BoolVar(&cfg.mock, "mock", false, "embedded server only: use the canned offline mock provider instead of OpenAI (no network)")
-	fs.BoolVar(&cfg.noBash, "no-bash", false, "embedded server only: disable the Bash tool (shell-less mode)")
+	fs.BoolVar(&cfg.noShell, "no-bash", false, "embedded server only: disable the Shell tool (shell-less mode)")
 	fs.BoolVar(&cfg.noSteer, "no-steer", false, "embedded server only: disable the mid-run steer inbox (steer-while-running, issue #512): `enter` mid-run then falls back to the client-side terminal merge-queue and ServerCapabilities.steer reads false. Steer is ON by default; this is the opt-OUT. The operator-tier settings.yaml `steer: false` scalar is the YAML twin (CLI out-ranks YAML; a project-tier steer: key is ignored)")
 	fs.DurationVar(&cfg.llmPerAttemptTimeout, "llm-per-attempt-timeout", 300*time.Second, "embedded server only: per-attempt timeout for ESTABLISHING an LLM stream (connect + first chunk only; never cuts an actively-streaming turn). 0 disables; large-context reasoning models can take a long time to first token")
 	fs.DurationVar(&cfg.llmStreamIdleTimeout, "llm-stream-idle-timeout", 180*time.Second, "embedded server only: max idle gap between LLM stream chunks after the first chunk; a longer stall terminates the turn (0 disables)")

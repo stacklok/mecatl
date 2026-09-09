@@ -146,7 +146,7 @@ type config struct {
 	mockScript   string
 	mockProvider port.LLMProvider
 	shell        string
-	noBash       bool
+	noShell      bool
 
 	// Storage-free state (ADR 0048): --redis-url points the session store +
 	// durable event log at a Redis managed service. Credentials are read from
@@ -358,8 +358,8 @@ func parseFlags(argv []string) (config, error) {
 	cfg.mcpServers = cliconfig.RegisterMCPServerFlag(fs, "")
 	fs.BoolVar(&cfg.useMock, "mock", false, "use a canned offline mock provider (no network, no API key; for the e2e / smoke tests)")
 	fs.StringVar(&cfg.mockScript, "mock-script", "", "path to a JSON mockllm script (offline; implies --mock and supports text, tool-call, and delayed turns)")
-	fs.StringVar(&cfg.shell, "shell", "/bin/sh", "shell used to execute Bash-tool commands; empty disables Bash (shell-less mode)")
-	fs.BoolVar(&cfg.noBash, "no-bash", false, "disable the Bash tool entirely (shell-less mode); overrides --shell")
+	fs.StringVar(&cfg.shell, "shell", "/bin/sh", "shell used to execute Shell-tool commands; empty disables Shell (shell-less mode)")
+	fs.BoolVar(&cfg.noShell, "no-bash", false, "disable the Shell tool entirely (shell-less mode); overrides --shell")
 
 	// Storage-free state (ADR 0048): --redis-url is the session store + durable
 	// event log. NO --store-dir (mutually exclusive, rejected at Build).
@@ -628,7 +628,7 @@ func appConfig(cfg config, diag port.Diagnostics, obs observability) app.Config 
 		UseMock:                cfg.useMock,
 		MockProvider:           cfg.mockProvider,
 		Shell:                  cfg.shell,
-		NoBash:                 cfg.noBash || cfg.redisFilesystem,
+		NoShell:                cfg.noShell || cfg.redisFilesystem,
 		RedisURL:               cfg.redisURL,
 		RedisFilesystem:        cfg.redisFilesystem,
 		RedisReadLedger:        cfg.redisReadLedger,

@@ -28,9 +28,9 @@ func TestAudienceMatchMatrix(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			// A single Deny rule with the case's audience: when it matches, the
 			// decision is Deny; when filtered, the no-match default Ask stands.
-			rules := []Rule{{Scope: ScopeSharedProject, Tool: "Bash", Pattern: "rm *", Effect: Deny, Audience: tc.rule}}
+			rules := []Rule{{Scope: ScopeSharedProject, Tool: "Shell", Pattern: "rm *", Effect: Deny, Audience: tc.rule}}
 			e := NewEvaluator(rules, WithAudience(tc.evaluator))
-			got := e.Evaluate("Bash", bashArgs("rm x"), false)
+			got := e.Evaluate("Shell", bashArgs("rm x"), false)
 			if tc.matches && got.Effect != Deny {
 				t.Fatalf("rule audience %v should bind evaluator audience %v; got %v", tc.rule, tc.evaluator, got.Effect)
 			}
@@ -46,15 +46,15 @@ func TestAudienceMatchMatrix(t *testing.T) {
 // Allow must not loosen a subagent evaluator (each falls back to the builtin
 // mutate-ask floor / the no-match default).
 func TestSubagentRuleInvisibleToMainAndViceVersa(t *testing.T) {
-	subAllow := Rule{Scope: ScopeSharedProject, Tool: "Bash", Pattern: "rm *", Effect: Allow, Audience: AudienceSubagent}
-	mainAllow := Rule{Scope: ScopeSharedProject, Tool: "Bash", Pattern: "rm *", Effect: Allow, Audience: AudienceMain}
+	subAllow := Rule{Scope: ScopeSharedProject, Tool: "Shell", Pattern: "rm *", Effect: Allow, Audience: AudienceSubagent}
+	mainAllow := Rule{Scope: ScopeSharedProject, Tool: "Shell", Pattern: "rm *", Effect: Allow, Audience: AudienceMain}
 
 	mainEval := NewEvaluator([]Rule{subAllow}, WithAudience(AudienceMain))
-	if got := mainEval.Evaluate("Bash", bashArgs("rm x"), false); got.Effect != Ask {
+	if got := mainEval.Evaluate("Shell", bashArgs("rm x"), false); got.Effect != Ask {
 		t.Fatalf("subagent allow must be invisible to the main evaluator (default Ask), got %v", got.Effect)
 	}
 	subEval := NewEvaluator([]Rule{mainAllow}, WithAudience(AudienceSubagent))
-	if got := subEval.Evaluate("Bash", bashArgs("rm x"), false); got.Effect != Ask {
+	if got := subEval.Evaluate("Shell", bashArgs("rm x"), false); got.Effect != Ask {
 		t.Fatalf("main allow must be invisible to a subagent evaluator (default Ask), got %v", got.Effect)
 	}
 }
@@ -64,21 +64,21 @@ func TestSubagentRuleInvisibleToMainAndViceVersa(t *testing.T) {
 // deny still binds a subagent evaluator over an all-audience allow.
 func TestDenyDominantWithMixedAudiences(t *testing.T) {
 	rules := []Rule{
-		{Scope: ScopeUser, Tool: "Bash", Pattern: "rm *", Effect: Allow, Audience: AudienceSubagent},
-		{Scope: ScopeSharedProject, Tool: "Bash", Pattern: "rm *", Effect: Deny, Audience: AudienceAll},
+		{Scope: ScopeUser, Tool: "Shell", Pattern: "rm *", Effect: Allow, Audience: AudienceSubagent},
+		{Scope: ScopeSharedProject, Tool: "Shell", Pattern: "rm *", Effect: Deny, Audience: AudienceAll},
 	}
 	for _, aud := range []Audience{AudienceMain, AudienceSubagent, AudienceAll} {
 		e := NewEvaluator(rules, WithAudience(aud))
-		if got := e.Evaluate("Bash", bashArgs("rm x"), false); got.Effect != Deny {
+		if got := e.Evaluate("Shell", bashArgs("rm x"), false); got.Effect != Deny {
 			t.Fatalf("AudienceAll deny must dominate for evaluator audience %v; got %v", aud, got.Effect)
 		}
 	}
 	subRules := []Rule{
-		{Scope: ScopeUser, Tool: "Bash", Pattern: "rm *", Effect: Allow, Audience: AudienceAll},
-		{Scope: ScopeSharedProject, Tool: "Bash", Pattern: "rm *", Effect: Deny, Audience: AudienceSubagent},
+		{Scope: ScopeUser, Tool: "Shell", Pattern: "rm *", Effect: Allow, Audience: AudienceAll},
+		{Scope: ScopeSharedProject, Tool: "Shell", Pattern: "rm *", Effect: Deny, Audience: AudienceSubagent},
 	}
 	e := NewEvaluator(subRules, WithAudience(AudienceSubagent))
-	if got := e.Evaluate("Bash", bashArgs("rm x"), false); got.Effect != Deny {
+	if got := e.Evaluate("Shell", bashArgs("rm x"), false); got.Effect != Deny {
 		t.Fatalf("subagent deny must dominate the all-audience allow on a subagent evaluator; got %v", got.Effect)
 	}
 }
@@ -86,9 +86,9 @@ func TestDenyDominantWithMixedAudiences(t *testing.T) {
 // TestAudienceDefaultIsAllBackCompat pins back-compat: an evaluator built
 // WITHOUT WithAudience matches every rule regardless of its tag.
 func TestAudienceDefaultIsAllBackCompat(t *testing.T) {
-	rules := []Rule{{Scope: ScopeSharedProject, Tool: "Bash", Pattern: "ls*", Effect: Allow, Audience: AudienceSubagent}}
+	rules := []Rule{{Scope: ScopeSharedProject, Tool: "Shell", Pattern: "ls*", Effect: Allow, Audience: AudienceSubagent}}
 	e := NewEvaluator(rules)
-	if got := e.Evaluate("Bash", bashArgs("ls"), false); got.Effect != Allow {
+	if got := e.Evaluate("Shell", bashArgs("ls"), false); got.Effect != Allow {
 		t.Fatalf("default (AudienceAll) evaluator must match a tagged rule; got %v", got.Effect)
 	}
 }
@@ -110,14 +110,14 @@ func TestConfiguredAskTruthTable(t *testing.T) {
 	}{
 		{
 			name:        "configured ask wins → ConfiguredAsk",
-			rules:       []Rule{floorAllow, {Scope: ScopeSharedProject, Tool: "Bash", Pattern: "go test*", Effect: Ask}},
+			rules:       []Rule{floorAllow, {Scope: ScopeSharedProject, Tool: "Shell", Pattern: "go test*", Effect: Ask}},
 			cmd:         "go test ./...",
 			wantEffect:  Ask,
 			wantConfAsk: true,
 		},
 		{
 			name:        "builtin-floor ask → NOT configured",
-			rules:       []Rule{{Scope: ScopeBuiltinDefault, Tool: "Bash", Pattern: "go test*", Effect: Ask}},
+			rules:       []Rule{{Scope: ScopeBuiltinDefault, Tool: "Shell", Pattern: "go test*", Effect: Ask}},
 			cmd:         "go test ./...",
 			wantEffect:  Ask,
 			wantConfAsk: false,
@@ -145,7 +145,7 @@ func TestConfiguredAskTruthTable(t *testing.T) {
 		},
 		{
 			name:        "deny decision → bits zero",
-			rules:       []Rule{floorAllow, {Scope: ScopeSharedProject, Tool: "Bash", Pattern: "rm *", Effect: Deny}},
+			rules:       []Rule{floorAllow, {Scope: ScopeSharedProject, Tool: "Shell", Pattern: "rm *", Effect: Deny}},
 			cmd:         "rm x",
 			wantEffect:  Deny,
 			wantConfAsk: false,
@@ -154,7 +154,7 @@ func TestConfiguredAskTruthTable(t *testing.T) {
 			name: "configured ask on one segment gates the compound",
 			rules: []Rule{
 				floorAllow,
-				{Scope: ScopeUser, Tool: "Bash", Pattern: "go vet*", Effect: Ask},
+				{Scope: ScopeUser, Tool: "Shell", Pattern: "go vet*", Effect: Ask},
 			},
 			cmd:         "ls && go vet ./...",
 			wantEffect:  Ask,
@@ -164,7 +164,7 @@ func TestConfiguredAskTruthTable(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			e := NewEvaluator(tc.rules)
-			got := e.Evaluate("Bash", bashArgs(tc.cmd), false)
+			got := e.Evaluate("Shell", bashArgs(tc.cmd), false)
 			if got.Effect != tc.wantEffect {
 				t.Fatalf("effect = %v, want %v (%s)", got.Effect, tc.wantEffect, got.Reason)
 			}
@@ -181,13 +181,13 @@ func TestConfiguredAskTruthTable(t *testing.T) {
 	}
 }
 
-// TestConfiguredAskNonBash pins the bit on the simple (non-Bash) path too.
-func TestConfiguredAskNonBash(t *testing.T) {
+// TestConfiguredAskNonShell pins the bit on the simple (non-Shell) path too.
+func TestConfiguredAskNonShell(t *testing.T) {
 	rules := []Rule{{Scope: ScopeLocalProject, Tool: "Write", Effect: Ask}}
 	e := NewEvaluator(rules)
 	got := e.Evaluate("Write", fileArgs("/x"), false)
 	if got.Effect != Ask || !got.ConfiguredAsk {
-		t.Fatalf("configured non-Bash Ask must set ConfiguredAsk; got %+v", got)
+		t.Fatalf("configured non-Shell Ask must set ConfiguredAsk; got %+v", got)
 	}
 }
 
@@ -202,8 +202,8 @@ func TestConfiguredAskNonBash(t *testing.T) {
 // flags / go -exec must NEVER qualify).
 func TestFlooredConfiguredAllow(t *testing.T) {
 	floorAllow := Rule{Scope: ScopeBuiltinDefault, Effect: Allow}
-	goTestAllow := Rule{Scope: ScopeSharedProject, Tool: "Bash", Pattern: "go test*", Effect: Allow}
-	echoAllow := Rule{Scope: ScopeSharedProject, Tool: "Bash", Pattern: "echo *", Effect: Allow}
+	goTestAllow := Rule{Scope: ScopeSharedProject, Tool: "Shell", Pattern: "go test*", Effect: Allow}
+	echoAllow := Rule{Scope: ScopeSharedProject, Tool: "Shell", Pattern: "echo *", Effect: Allow}
 	cases := []struct {
 		name       string
 		rules      []Rule
@@ -256,7 +256,7 @@ func TestFlooredConfiguredAllow(t *testing.T) {
 		{
 			name: "compound mix: floored configured-allow + plain allow segment",
 			rules: []Rule{floorAllow, goTestAllow,
-				{Scope: ScopeSharedProject, Tool: "Bash", Pattern: "go vet*", Effect: Allow}},
+				{Scope: ScopeSharedProject, Tool: "Shell", Pattern: "go vet*", Effect: Allow}},
 			cmd:        "go test $(git rev-parse HEAD) && go vet ./...",
 			wantEffect: Ask,
 			want:       true,
@@ -271,28 +271,28 @@ func TestFlooredConfiguredAllow(t *testing.T) {
 		{
 			name: "compound mix kills !flooredBad: one safe floored + one unsafe floored segment",
 			rules: []Rule{floorAllow, goTestAllow,
-				{Scope: ScopeSharedProject, Tool: "Bash", Pattern: "git push*", Effect: Allow}},
+				{Scope: ScopeSharedProject, Tool: "Shell", Pattern: "git push*", Effect: Allow}},
 			cmd:        "go test $(git rev-parse HEAD) && git push $(x)",
 			wantEffect: Ask,
 			want:       false,
 		},
 		{
 			name:       "compound mix: another segment asks → floor-free fold not Allow",
-			rules:      []Rule{floorAllow, goTestAllow, {Scope: ScopeSharedProject, Tool: "Bash", Pattern: "go vet*", Effect: Ask}},
+			rules:      []Rule{floorAllow, goTestAllow, {Scope: ScopeSharedProject, Tool: "Shell", Pattern: "go vet*", Effect: Ask}},
 			cmd:        "go test $(git rev-parse HEAD) && go vet ./...",
 			wantEffect: Ask,
 			want:       false,
 		},
 		{
 			name:       "escape bound: git push under a configured allow",
-			rules:      []Rule{floorAllow, {Scope: ScopeSharedProject, Tool: "Bash", Pattern: "git push*", Effect: Allow}},
+			rules:      []Rule{floorAllow, {Scope: ScopeSharedProject, Tool: "Shell", Pattern: "git push*", Effect: Allow}},
 			cmd:        "git push $(git rev-parse HEAD)",
 			wantEffect: Ask,
 			want:       false,
 		},
 		{
 			name:       "escape bound: path-bearing git -C under a configured allow",
-			rules:      []Rule{floorAllow, {Scope: ScopeSharedProject, Tool: "Bash", Pattern: "git *", Effect: Allow}},
+			rules:      []Rule{floorAllow, {Scope: ScopeSharedProject, Tool: "Shell", Pattern: "git *", Effect: Allow}},
 			cmd:        "git -C /outside $(ls) log",
 			wantEffect: Ask,
 			want:       false,
@@ -315,7 +315,7 @@ func TestFlooredConfiguredAllow(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			e := NewEvaluator(tc.rules)
-			got := e.Evaluate("Bash", bashArgs(tc.cmd), false)
+			got := e.Evaluate("Shell", bashArgs(tc.cmd), false)
 			if got.Effect != tc.wantEffect {
 				t.Fatalf("effect = %v, want %v (%s)", got.Effect, tc.wantEffect, got.Reason)
 			}
@@ -335,11 +335,11 @@ func TestFlooredConfiguredAllow(t *testing.T) {
 func TestFlooredConfiguredAllowNeverOnDeny(t *testing.T) {
 	rules := []Rule{
 		{Scope: ScopeBuiltinDefault, Effect: Allow},
-		{Scope: ScopeSharedProject, Tool: "Bash", Pattern: "cat *", Effect: Allow},
-		{Scope: ScopeSharedProject, Tool: "Bash", Pattern: "go vet*", Effect: Deny},
+		{Scope: ScopeSharedProject, Tool: "Shell", Pattern: "cat *", Effect: Allow},
+		{Scope: ScopeSharedProject, Tool: "Shell", Pattern: "go vet*", Effect: Deny},
 	}
 	e := NewEvaluator(rules)
-	got := e.Evaluate("Bash", bashArgs("cat $(zap) && go vet ./..."), false)
+	got := e.Evaluate("Shell", bashArgs("cat $(zap) && go vet ./..."), false)
 	if got.Effect != Deny {
 		t.Fatalf("expected Deny, got %v", got.Effect)
 	}
@@ -437,11 +437,11 @@ func TestFlooredAllowSafeNoSubstitutionFailsSafe(t *testing.T) {
 // work must not have widened or narrowed the pre-existing classifiers. A small
 // canary set per classifier (the full tables live in their own test files).
 func TestExistingClassifiersUntouchedByAudienceWork(t *testing.T) {
-	if !ReadOnlyBash("git status && ls") {
-		t.Fatal("ReadOnlyBash regressed: read-only compound must stay true")
+	if !ReadOnlyShell("git status && ls") {
+		t.Fatal("ReadOnlyShell regressed: read-only compound must stay true")
 	}
-	if ReadOnlyBash("cat $(ls)") {
-		t.Fatal("ReadOnlyBash regressed: substitution must stay fail-safe false")
+	if ReadOnlyShell("cat $(ls)") {
+		t.Fatal("ReadOnlyShell regressed: substitution must stay fail-safe false")
 	}
 	if !SubstitutionReadOnly("cat $(ls)") {
 		t.Fatal("SubstitutionReadOnly regressed: read-only substitution must stay true")

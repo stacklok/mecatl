@@ -4,10 +4,6 @@
     ifacemethod func (PreservedForkStore).Preserve(handle ArtifactHandle, cleanup func() error)
     ifacemethod func (TokenCounter).Count(text string) int
     ifacemethod func (TokenCounter).CountMessages(msgs []session.Message) int
-    method func (*BashStatusTool).Execute(_ context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error)
-    method func (*BashStatusTool).ExecuteWithParent(ctx context.Context, call session.ToolCall, env tool.Environment, _ func(session.Event), caps parentCaps) (session.ToolResult, error)
-    method func (*BashStatusTool).ReadOnly() bool
-    method func (*BashStatusTool).Spec() tool.ToolSpec
     method func (*Engine).Capabilities() port.ProviderCapabilities
     method func (*Engine).CompactSession(ctx context.Context, sess *session.Session) (ManualCompactionResult, error)
     method func (*Engine).ContextWindow() int
@@ -55,6 +51,10 @@
     method func (*ScheduleTool).Execute(ctx context.Context, call session.ToolCall, env tool.Environment) (session.ToolResult, error)
     method func (*ScheduleTool).ReadOnly() bool
     method func (*ScheduleTool).Spec() tool.ToolSpec
+    method func (*ShellStatusTool).Execute(_ context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error)
+    method func (*ShellStatusTool).ExecuteWithParent(ctx context.Context, call session.ToolCall, env tool.Environment, _ func(session.Event), caps parentCaps) (session.ToolResult, error)
+    method func (*ShellStatusTool).ReadOnly() bool
+    method func (*ShellStatusTool).Spec() tool.ToolSpec
     method func (*SubagentStatusTool).Execute(_ context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error)
     method func (*SubagentStatusTool).ExecuteWithParent(ctx context.Context, call session.ToolCall, env tool.Environment, _ func(session.Event), caps parentCaps) (session.ToolResult, error)
     method func (*SubagentStatusTool).ReadOnly() bool
@@ -77,15 +77,14 @@
     method func (*TeamTool).Spec() tool.ToolSpec
     method func (*UserModelReviewer).Observe(ctx context.Context, tr learning.Trajectory) error
     method func (*UserModelReviewer).Review(ctx context.Context, sessionID string) error
-    method func (BashTool).Execute(ctx context.Context, in session.ToolCall, env tool.Environment) (session.ToolResult, error)
-    method func (BashTool).ExecuteWithParent(ctx context.Context, in session.ToolCall, env tool.Environment, _ func(session.Event), caps parentCaps) (session.ToolResult, error)
-    method func (BashTool).ReadOnly() bool
-    method func (BashTool).Spec() tool.ToolSpec
     method func (CascadeCompactor).Compact(ctx context.Context, conv *session.Conversation) ([]session.Message, string, error)
     method func (HeuristicCompactor).Compact(_ context.Context, conv *session.Conversation) ([]session.Message, string, error)
     method func (HeuristicTokenCounter).Count(text string) int
     method func (HeuristicTokenCounter).CountMessages(msgs []session.Message) int
-const BashCmdJobPrefix untyped string = "bashcmd-"
+    method func (ShellTool).Execute(ctx context.Context, in session.ToolCall, env tool.Environment) (session.ToolResult, error)
+    method func (ShellTool).ExecuteWithParent(ctx context.Context, in session.ToolCall, env tool.Environment, _ func(session.Event), caps parentCaps) (session.ToolResult, error)
+    method func (ShellTool).ReadOnly() bool
+    method func (ShellTool).Spec() tool.ToolSpec
 const DefaultAskReviewMaxDenies untyped int = 3
 const DefaultPreservedForkCap untyped int = 8
 const DispositionDone MemberDisposition = "done"
@@ -109,6 +108,7 @@ const RunOutcomeCompleted RunOutcome = 1
 const RunOutcomeUnknown RunOutcome = 0
 const ScheduleQueryToolName untyped string = "ScheduleQuery"
 const ScheduleToolName untyped string = "Schedule"
+const ShellCmdJobPrefix untyped string = "bashcmd-"
 const SteerAccepted SteerOutcome = "accepted"
 const SteerAppended SteerOutcome = "appended"
 const SteerNonePending SteerOutcome = "none_pending"
@@ -123,8 +123,6 @@ func DefaultChildLimits() session.Limits
 func MemberSessionID(teamID string, member string) session.SessionID
 func MemberToolNames() map[string]struct{}
 func MemberTools(t *team.Team, self string, hooks port.HookRunner) []tool.Tool
-func NewBashStatusTool() tool.Tool
-func NewBashTool() tool.Tool
 func NewEngine(deps Deps) *Engine
 func NewEngineAskReviewer(engine *Engine, opts ...EngineAskReviewerOption) ChildAskReviewer
 func NewEngineJudge(engine *Engine, opts ...EngineJudgeOption) BranchJudge
@@ -139,6 +137,8 @@ func NewPlanAwareScheduleTool(base tool.Tool, mgr port.ScheduleManager) tool.Too
 func NewPresentPlanTool() tool.Tool
 func NewScheduleQueryTool(mgr port.ScheduleManager) tool.Tool
 func NewScheduleTool(mgr port.ScheduleManager) tool.Tool
+func NewShellStatusTool() tool.Tool
+func NewShellTool() tool.Tool
 func NewSubagentStatusTool() tool.Tool
 func NewSubagentTool(childEngine *Engine, opts ...SubagentOption) tool.Tool
 func NewSupervisor(t *team.Team, base tool.Environment, factory MemberEngine, opts ...SupervisorOption) *Supervisor
@@ -214,8 +214,6 @@ func WithWritableChildEngine(e *Engine) SubagentOption
 func WithWritableEngineFactory(f func(model string) (*Engine, bool)) SubagentOption
 type AgentMeta struct{Name string; Description string; Limits session.Limits; AuthorityCeiling governance.CapabilitySet; WritableAuthorityCeiling governance.CapabilitySet; Managed bool}
 type ArtifactHandle string
-type BashStatusTool struct{}
-type BashTool struct{}
 type BranchJudge interface{Judge(ctx context.Context, candidates []BranchSummary, criteria string) (winner int, rationale string, err error)}
 type BranchSummary struct{Label string; Summary string; Failed bool}
 type CascadeCompactor struct{Counter TokenCounter; BudgetTokens int; KeepLastTurns int; StripToolBodyChars int; MaxCollapseChars int; LLM port.LLMProvider; Model string; SummaryMaxTokens int}
@@ -255,6 +253,8 @@ type RunOutcome int32
 type RunRequest struct{Text string; Parts []session.Content; CanPresentAuthorization bool; MaxRunTokensOverride int; ExtraTools []tool.Tool; RunID string; AskIDDiscriminator string}
 type ScheduleQueryTool struct{}
 type ScheduleTool struct{}
+type ShellStatusTool struct{}
+type ShellTool struct{}
 type SteerOutcome string
 type SubagentOption func(*SubagentTool)
 type SubagentStatusTool struct{}

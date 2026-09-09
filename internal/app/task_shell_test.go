@@ -24,13 +24,13 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/tools"
 )
 
-// These tests cover Phase 2 — the Subagent tool (read-only explorer) gets full Bash
+// These tests cover Phase 2 — the Subagent tool (read-only explorer) gets full Shell
 // inside an isolated git worktree, mirroring the Phase 1 team-member treatment.
 
-// TestBuildChildEngineWithRunnerHasBash proves the default Subagent explorer's catalog
-// gains Bash when a runner is configured (the worktree-isolation path), while still
+// TestBuildChildEngineWithRunnerHasShell proves the default Subagent explorer's catalog
+// gains Shell when a runner is configured (the worktree-isolation path), while still
 // excluding Edit (a read-only explorer cannot edit the project).
-func TestBuildChildEngineWithRunnerHasBash(t *testing.T) {
+func TestBuildChildEngineWithRunnerHasShell(t *testing.T) {
 	cfg := teamCfg(t)
 	runner := buildSandboxedCommandRunner(cfg)
 	if runner == nil {
@@ -40,26 +40,26 @@ func TestBuildChildEngineWithRunnerHasBash(t *testing.T) {
 
 	events := drainEngine(t, eng)
 	if unknownToolResult(events, "b1") {
-		t.Error("Subagent child did NOT have Bash; the worktree-isolated explorer must get a shell")
+		t.Error("Subagent child did NOT have Shell; the worktree-isolated explorer must get a shell")
 	}
 	if !sawDispatchedTool(events, "b1") {
-		t.Error("Subagent child did not dispatch Bash; it must be present in the catalog")
+		t.Error("Subagent child did not dispatch Shell; it must be present in the catalog")
 	}
 	if !unknownToolResult(events, "e1") {
 		t.Error("Subagent child got Edit; a read-only explorer must NOT be able to edit the project")
 	}
 }
 
-// TestBuildChildEngineNoRunnerHasNoBash proves a shell-less deployment (nil runner)
-// keeps the original Bash-less read-only explorer, so the no-forker / no-shell path is
+// TestBuildChildEngineNoRunnerHasNoShell proves a shell-less deployment (nil runner)
+// keeps the original Shell-less read-only explorer, so the no-forker / no-shell path is
 // unchanged.
-func TestBuildChildEngineNoRunnerHasNoBash(t *testing.T) {
+func TestBuildChildEngineNoRunnerHasNoShell(t *testing.T) {
 	cfg := teamCfg(t)
 	eng := buildChildEngine(cfg, nil, bashThenEdit(), "", cfg.Model, nil)
 
 	events := drainEngine(t, eng)
 	if !unknownToolResult(events, "b1") {
-		t.Error("Subagent child with a nil runner dispatched Bash; without a runner there must be no shell")
+		t.Error("Subagent child with a nil runner dispatched Shell; without a runner there must be no shell")
 	}
 	if !unknownToolResult(events, "e1") {
 		t.Error("Subagent child got Edit; a read-only explorer must never have Edit")
@@ -67,7 +67,7 @@ func TestBuildChildEngineNoRunnerHasNoBash(t *testing.T) {
 }
 
 // TestBuildSubagentToolWiresForkerWhenShell proves buildSubagentTool wires a child forker iff
-// Bash is configured: with a shell the Subagent tool isolates each child in a real git
+// Shell is configured: with a shell the Subagent tool isolates each child in a real git
 // worktree (the child's working dir is NOT the parent repo root); with no shell no
 // forker is wired (the child shares the parent base). The proof uses a real git repo
 // and a real `pwd` so it cannot be faked by the scripted summary.
@@ -83,11 +83,11 @@ func TestBuildSubagentToolWiresForkerWhenShell(t *testing.T) {
 	cfg := teamCfg(t)
 	cfg.Workspace = repo
 
-	// Child runs `pwd`; a recording logger captures the REAL Bash output so the
+	// Child runs `pwd`; a recording logger captures the REAL Shell output so the
 	// assertion is on what git/the shell actually printed, not the scripted summary.
 	rec := &recordingToolLogger{}
 	childProvider := mockllm.New(
-		mockllm.ToolCallTurn(session.ToolCall{ID: "p1", Name: "Bash", Args: gitArgs("pwd")}),
+		mockllm.ToolCallTurn(session.ToolCall{ID: "p1", Name: "Shell", Args: gitArgs("pwd")}),
 		mockllm.TextTurn("done"),
 	)
 	taskWS := t.TempDir() // known worktree base for the cleanup assertion
@@ -106,7 +106,7 @@ func TestBuildSubagentToolWiresForkerWhenShell(t *testing.T) {
 
 	pwd := strings.TrimSpace(rec.contentForCall("p1"))
 	if pwd == "" {
-		t.Fatal("child Bash produced no pwd output")
+		t.Fatal("child Shell produced no pwd output")
 	}
 	// The child ran in an ISOLATED worktree under taskWS, not the parent repo root.
 	if pwd == repo {
@@ -124,21 +124,21 @@ func TestBuildSubagentToolWiresForkerWhenShell(t *testing.T) {
 	}
 }
 
-// TestBuildAgentSubagentEnginesWithRunnerKeepsBashDropsEdit proves a per-def Subagent engine
-// that scopes Bash keeps it (registered with the hardened runner) when a runner is
-// wired, while Edit/Write stay dropped (read-only explorer). Without a runner, Bash is
+// TestBuildAgentSubagentEnginesWithRunnerKeepsShellDropsEdit proves a per-def Subagent engine
+// that scopes Shell keeps it (registered with the hardened runner) when a runner is
+// wired, while Edit/Write stay dropped (read-only explorer). Without a runner, Shell is
 // dropped too.
-func TestBuildAgentSubagentEnginesWithRunnerKeepsBashDropsEdit(t *testing.T) {
+func TestBuildAgentSubagentEnginesWithRunnerKeepsShellDropsEdit(t *testing.T) {
 	cfg := teamCfg(t)
 	runner := buildSandboxedCommandRunner(cfg)
 	if runner == nil {
 		t.Fatal("precondition: expected a non-nil sandboxed runner")
 	}
 	reg := regOf(agents.AgentDef{
-		Name: "inspector", Description: "i", Tools: []string{"Read", "Edit", "Bash"},
+		Name: "inspector", Description: "i", Tools: []string{"Read", "Edit", "Shell"},
 	})
 
-	// With a runner: Bash kept, Edit dropped.
+	// With a runner: Shell kept, Edit dropped.
 	engines, _, _ := agentSubagentEnginesForTest(context.Background(), cfg, bashThenEdit(), reg, nil, hookexec.New(nil), runner, nil)
 	eng := engines["inspector"]
 	if eng == nil {
@@ -146,16 +146,16 @@ func TestBuildAgentSubagentEnginesWithRunnerKeepsBashDropsEdit(t *testing.T) {
 	}
 	events := drainEngine(t, eng)
 	if unknownToolResult(events, "b1") {
-		t.Error("per-def Subagent engine scoping Bash did NOT get Bash; it must keep it for worktree-isolated inspection")
+		t.Error("per-def Subagent engine scoping Shell did NOT get Shell; it must keep it for worktree-isolated inspection")
 	}
 	if !sawDispatchedTool(events, "b1") {
-		t.Error("per-def Subagent engine did not dispatch Bash; a def listing Bash must yield it")
+		t.Error("per-def Subagent engine did not dispatch Shell; a def listing Shell must yield it")
 	}
 	if !unknownToolResult(events, "e1") {
 		t.Error("per-def Subagent engine got Edit; Edit/Write must be dropped for a read-only explorer")
 	}
 
-	// Without a runner: Bash dropped too (no shell, no isolation).
+	// Without a runner: Shell dropped too (no shell, no isolation).
 	enginesNoShell, _, _ := agentSubagentEnginesForTest(context.Background(), cfg, bashThenEdit(), reg, nil, hookexec.New(nil), nil, nil)
 	engNoShell := enginesNoShell["inspector"]
 	if engNoShell == nil {
@@ -163,7 +163,7 @@ func TestBuildAgentSubagentEnginesWithRunnerKeepsBashDropsEdit(t *testing.T) {
 	}
 	eventsNoShell := drainEngine(t, engNoShell)
 	if !unknownToolResult(eventsNoShell, "b1") {
-		t.Error("per-def Subagent engine kept Bash with a nil runner; without isolation there must be no shell")
+		t.Error("per-def Subagent engine kept Shell with a nil runner; without isolation there must be no shell")
 	}
 }
 
@@ -195,9 +195,9 @@ func TestSubagentRunsGitInWorktreeEndToEnd(t *testing.T) {
 	// the workspace .git (worktree pointer is a FILE; a force-copy would be a DIR).
 	rec := &recordingToolLogger{}
 	childProvider := mockllm.New(
-		mockllm.ToolCallTurn(session.ToolCall{ID: "g1", Name: "Bash", Args: gitArgs("git log --oneline")}),
-		mockllm.ToolCallTurn(session.ToolCall{ID: "g2", Name: "Bash", Args: gitArgs("git show --stat HEAD")}),
-		mockllm.ToolCallTurn(session.ToolCall{ID: "g3", Name: "Bash", Args: gitArgs("if [ -f .git ]; then echo DOTGIT_IS_FILE; elif [ -d .git ]; then echo DOTGIT_IS_DIR; else echo DOTGIT_MISSING; fi")}),
+		mockllm.ToolCallTurn(session.ToolCall{ID: "g1", Name: "Shell", Args: gitArgs("git log --oneline")}),
+		mockllm.ToolCallTurn(session.ToolCall{ID: "g2", Name: "Shell", Args: gitArgs("git show --stat HEAD")}),
+		mockllm.ToolCallTurn(session.ToolCall{ID: "g3", Name: "Shell", Args: gitArgs("if [ -f .git ]; then echo DOTGIT_IS_FILE; elif [ -d .git ]; then echo DOTGIT_IS_DIR; else echo DOTGIT_MISSING; fi")}),
 		mockllm.TextTurn("inspection complete"),
 	)
 
@@ -231,7 +231,7 @@ func TestSubagentRunsGitInWorktreeEndToEnd(t *testing.T) {
 		t.Fatal("parent never observed the Subagent tool result")
 	}
 
-	// The REAL git output (captured from the child's Bash tool results) must reflect the
+	// The REAL git output (captured from the child's Shell tool results) must reflect the
 	// repo history — proving a Subagent tool ran git in its worktree.
 	gitLog := rec.contentForCall("g1")
 	gitShow := rec.contentForCall("g2")
@@ -266,14 +266,14 @@ func TestSubagentRunsGitInWorktreeEndToEnd(t *testing.T) {
 
 // TestBuildSubagentToolRealWiringForksChildShellWhenShell drives the REAL buildSubagentTool
 // (the live Phase 2 composition seam) — NOT the hand-wired newSubagentToolForTest helper —
-// to prove the Bash⟺forker coupling at the composition layer. With a shell-configured
+// to prove the Shell⟺forker coupling at the composition layer. With a shell-configured
 // cfg over a real git repo, the resulting Subagent tool, when invoked, must run the child's
-// Bash in an ISOLATED git WORKTREE: the child's pwd is NOT the parent repo root and its
+// Shell in an ISOLATED git WORKTREE: the child's pwd is NOT the parent repo root and its
 // `.git` is a worktree POINTER FILE (a force-copy would be a directory). The child has
 // no recording logger we can inject (buildSubagentTool builds an opaque child engine), so
-// the child's Bash writes its pwd + `.git` status into an EXTERNAL probe file we read
+// the child's Shell writes its pwd + `.git` status into an EXTERNAL probe file we read
 // back — the same proof the E2E uses, routed through the real builder. A regression that
-// wired the forker unconditionally OR never (a Bash child in the SHARED base) would
+// wired the forker unconditionally OR never (a Shell child in the SHARED base) would
 // surface here: the probe would show the parent repo root / a `.git` directory.
 func TestBuildSubagentToolRealWiringForksChildShellWhenShell(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
@@ -284,7 +284,7 @@ func TestBuildSubagentToolRealWiringForksChildShellWhenShell(t *testing.T) {
 	writeRepoFile(t, repo, "alpha.txt", "alpha\n")
 	gitCommitTest(t, repo, "add alpha")
 
-	// The child's Bash writes its pwd and `.git` kind to this EXTERNAL probe file,
+	// The child's Shell writes its pwd and `.git` kind to this EXTERNAL probe file,
 	// outside any workspace, so we can read what the shell actually saw. Separate
 	// statements (pwd>file; then echo>>file) rather than a `{ ...; }` brace group —
 	// a leading-brace command does not survive the bash gate's canonicalization.
@@ -298,11 +298,11 @@ func TestBuildSubagentToolRealWiringForksChildShellWhenShell(t *testing.T) {
 	cfg := teamCfg(t)
 	cfg.Workspace = repo
 
-	// The child provider drives the Subagent child engine buildSubagentTool builds: one Bash
+	// The child provider drives the Subagent child engine buildSubagentTool builds: one Shell
 	// call (the probe) then a summary. The parent provider is SEPARATE so the two
 	// engines never share a mockllm cursor (the E2E does the same).
 	childProvider := mockllm.New(
-		mockllm.ToolCallTurn(session.ToolCall{ID: "p1", Name: "Bash", Args: gitArgs(probeCmd)}),
+		mockllm.ToolCallTurn(session.ToolCall{ID: "p1", Name: "Shell", Args: gitArgs(probeCmd)}),
 		mockllm.TextTurn("probed"),
 	)
 
@@ -330,7 +330,7 @@ func TestBuildSubagentToolRealWiringForksChildShellWhenShell(t *testing.T) {
 
 	out, err := os.ReadFile(probeFile)
 	if err != nil {
-		t.Fatalf("child Bash never wrote the probe file (the forker was not wired, so the child had no shell): %v", err)
+		t.Fatalf("child Shell never wrote the probe file (the forker was not wired, so the child had no shell): %v", err)
 	}
 	probe := string(out)
 	lines := strings.SplitN(strings.TrimSpace(probe), "\n", 2)
@@ -352,8 +352,8 @@ func TestBuildSubagentToolRealWiringForksChildShellWhenShell(t *testing.T) {
 }
 
 // TestBuildSubagentToolRealWiringNoShellNoForker drives the REAL buildSubagentTool with a
-// nil-runner cfg (NoBash) and proves the other side of the coupling: the resulting Subagent
-// child has NO Bash and NO forker, so it cannot run a shell at all. The child's Bash
+// nil-runner cfg (NoShell) and proves the other side of the coupling: the resulting Subagent
+// child has NO Shell and NO forker, so it cannot run a shell at all. The child's Shell
 // call returns an unknown-tool result (the tool is absent from the catalog) and the
 // external probe file is NEVER written (no worktree, no shell). This locks the
 // "no shell ⇒ no forker" half of the composition coupling.
@@ -366,15 +366,15 @@ func TestBuildSubagentToolRealWiringNoShellNoForker(t *testing.T) {
 
 	cfg := teamCfg(t)
 	cfg.Workspace = repo
-	cfg.NoBash = true // nil runner ⇒ no Bash, no forker
+	cfg.NoShell = true // nil runner ⇒ no Shell, no forker
 
 	if buildSandboxedCommandRunner(cfg) != nil {
-		t.Fatal("precondition: expected a nil sandboxed runner with NoBash set")
+		t.Fatal("precondition: expected a nil sandboxed runner with NoShell set")
 	}
 
 	childProvider := mockllm.New(
-		// Child turn: attempt Bash (must be unknown — no Bash in the catalog), then summarize.
-		mockllm.ToolCallTurn(session.ToolCall{ID: "p1", Name: "Bash", Args: gitArgs(probeCmd)}),
+		// Child turn: attempt Shell (must be unknown — no Shell in the catalog), then summarize.
+		mockllm.ToolCallTurn(session.ToolCall{ID: "p1", Name: "Shell", Args: gitArgs(probeCmd)}),
 		mockllm.TextTurn("could not run a shell"),
 	)
 
@@ -395,11 +395,11 @@ func TestBuildSubagentToolRealWiringNoShellNoForker(t *testing.T) {
 	sess := session.New("parent", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: repo, Revision: "in-tree-v1"}, session.Limits{MaxTurns: 5}, time.Now())
 	run := parentEng.Run(context.Background(), sess, parentEnv, agent.RunRequest{Text: "go"})
 	for ev := range run.Events() {
-		_ = ev // drain to completion; the child's lack of Bash is asserted via the probe
+		_ = ev // drain to completion; the child's lack of Shell is asserted via the probe
 	}
 
 	if _, err := os.Stat(probeFile); err == nil {
-		t.Fatalf("probe file was written; the child must have NO shell when NoBash is set (no Bash, no forker)")
+		t.Fatalf("probe file was written; the child must have NO shell when NoShell is set (no Shell, no forker)")
 	} else if !os.IsNotExist(err) {
 		t.Fatalf("unexpected error stating probe file: %v", err)
 	}
@@ -429,9 +429,9 @@ func TestSubagentSeesDirtyWorkspaceEndToEnd(t *testing.T) {
 
 	rec := &recordingToolLogger{}
 	childProvider := mockllm.New(
-		mockllm.ToolCallTurn(session.ToolCall{ID: "s1", Name: "Bash", Args: gitArgs("git status --porcelain")}),
-		mockllm.ToolCallTurn(session.ToolCall{ID: "d1", Name: "Bash", Args: gitArgs("git --no-pager diff --no-ext-diff")}),
-		mockllm.ToolCallTurn(session.ToolCall{ID: "c1", Name: "Bash", Args: gitArgs("cat scratch.txt")}),
+		mockllm.ToolCallTurn(session.ToolCall{ID: "s1", Name: "Shell", Args: gitArgs("git status --porcelain")}),
+		mockllm.ToolCallTurn(session.ToolCall{ID: "d1", Name: "Shell", Args: gitArgs("git --no-pager diff --no-ext-diff")}),
+		mockllm.ToolCallTurn(session.ToolCall{ID: "c1", Name: "Shell", Args: gitArgs("cat scratch.txt")}),
 		mockllm.TextTurn("the workspace has uncommitted changes"),
 	)
 
@@ -479,7 +479,7 @@ func TestSubagentSeesDirtyWorkspaceEndToEnd(t *testing.T) {
 // newSubagentToolForTest builds a Subagent tool wired exactly like buildSubagentTool's shell path
 // — a sandboxed command runner + a worktree forker (rooted under worktreeBase for the
 // cleanup assertion) — but with a child engine carrying the given recording logger so a
-// test can read the child's REAL Bash output. It mirrors the composition wiring without
+// test can read the child's REAL Shell output. It mirrors the composition wiring without
 // going through buildSubagentTool (which builds an opaque child engine).
 func newSubagentToolForTest(t *testing.T, cfg Config, childProvider *mockllm.Provider, logger *recordingToolLogger, worktreeBase string) tool.Tool {
 	t.Helper()
@@ -504,10 +504,10 @@ func newSubagentToolForTestOpts(t *testing.T, cfg Config, childProvider *mockllm
 	childCat.MustRegister(tools.ReadTool{})
 	childCat.MustRegister(tools.GrepTool{})
 	childCat.MustRegister(tools.GlobTool{})
-	// agent.NewBashTool, mirroring the production child construction
-	// (readOnlyExplorerCatalog), so the test child exercises the same Bash the
+	// agent.NewShellTool, mirroring the production child construction
+	// (readOnlyExplorerCatalog), so the test child exercises the same Shell the
 	// composition root hands real children.
-	childCat.MustRegister(agent.NewBashTool())
+	childCat.MustRegister(agent.NewShellTool())
 	childEng := agent.NewEngine(agent.Deps{
 		LLM:              childProvider,
 		Catalog:          childCat,
@@ -518,14 +518,14 @@ func newSubagentToolForTestOpts(t *testing.T, cfg Config, childProvider *mockllm
 	})
 	opts := append([]forker.Option{forker.WithTempBase(worktreeBase)}, forkOpts...)
 	// WithRunner (issue #462): the forker mints a BOUND runner for each child
-	// worktree so the forked subagent's Bash observes its OWN namespace. The
+	// worktree so the forked subagent's Shell observes its OWN namespace. The
 	// builder applies the SAME trust-gated hardening buildSandboxedCommandRunner
 	// does (runner != nil above already proves the gate passed at build time).
 	roFk := forker.New(func(root string) (tool.Workspace, error) {
 		return osfs.NewWorkspace(root)
 	},
 		append(opts, forker.WithRunner(func(childRoot string) tool.CommandRunner {
-			if cfg.NoBash || cfg.Shell == "" || !cfg.TrustProject {
+			if cfg.NoShell || cfg.Shell == "" || !cfg.TrustProject {
 				return nil
 			}
 			return newHardenedRunnerForRoot(cfg, childRoot)
@@ -544,7 +544,7 @@ func osfsWSForTest(t *testing.T, dir string) tool.Workspace {
 }
 
 // recordingToolLogger is a port.ToolCallRecorder that records each tool call's result content by
-// call ID, so a test can read the REAL output a child's Bash produced. It is
+// call ID, so a test can read the REAL output a child's Shell produced. It is
 // concurrency-safe (the loop logs from its own goroutine).
 type recordingToolLogger struct {
 	mu       sync.Mutex

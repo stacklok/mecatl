@@ -20,10 +20,10 @@ var inspectToolNames = []string{
 	"InspectSubagent",
 	"InspectMember",
 	"SubagentStatus",
-	// BashStatus joins them: the same read-only registry-pull class (the
-	// background-Bash jobs' status/collect/cancel channel), floor-scoped
+	// ShellStatus joins them: the same read-only registry-pull class (the
+	// background-Shell jobs' status/collect/cancel channel), floor-scoped
 	// alongside SubagentStatus in defaultRules().
-	"BashStatus",
+	"ShellStatus",
 }
 
 // TestInspectToolsDefaultExplicitAllow proves all three child-observability tools
@@ -82,6 +82,6 @@ func TestConfiguredDenyOverridesInspectAllow(t *testing.T) {
 
 // No separate TestInspectAllowDoesNotAffectOtherTools: the inspect allows are
 // floor-scoped + tool-name-exact, exactly like the memory/soul allows, and
-// TestMemoryAllowDoesNotAffectOtherTools already pins that Edit/Write/Bash stay
+// TestMemoryAllowDoesNotAffectOtherTools already pins that Edit/Write/Shell stay
 // Ask against the FULL defaultRules() slice — which now includes the inspect
 // entries — so the "no other tool's Ask is loosened" invariant covers them for free.

@@ -224,7 +224,7 @@ func TestSkillSourceOptionalFrontmatterRoundTrip(t *testing.T) {
 	if !reflect.DeepEqual(review.Metadata, wantMeta) {
 		t.Errorf("review Metadata = %v, want %v", review.Metadata, wantMeta)
 	}
-	wantTools := []string{"Read", "Grep", "Bash"}
+	wantTools := []string{"Read", "Grep", "Shell"}
 	if !reflect.DeepEqual(review.AllowedTools, wantTools) {
 		t.Errorf("review AllowedTools = %v, want %v", review.AllowedTools, wantTools)
 	}

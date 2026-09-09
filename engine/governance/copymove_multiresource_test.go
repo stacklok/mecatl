@@ -7,12 +7,12 @@ import "testing"
 // path-scoped rule matching only ONE of the two operands (source or
 // destination) must never be treated as authoritative for the whole call.
 // Source and destination are evaluated independently against the rule set and
-// the WORST effect wins — mirroring the existing Bash compound-command fold
+// the WORST effect wins — mirroring the existing Shell compound-command fold
 // (doc 08 gauntlet #10: a deny on any segment denies the whole command).
 //
 // MUTATION-VERIFY: resolvePatterns is the only code path that evaluates the
-// "source"/"destination" keys; nonBashPattern's single-field probe never sees
-// either. Route Copy/Move through nonBashPattern instead (e.g. delete the
+// "source"/"destination" keys; nonShellPattern's single-field probe never sees
+// either. Route Copy/Move through nonShellPattern instead (e.g. delete the
 // resolvePatterns branch in resolve) and every sub-test below except
 // AllowOnBothOperandsApprovesWhole goes red, since the derived pattern falls
 // back to "" (tool-wide) and cannot distinguish source from destination.

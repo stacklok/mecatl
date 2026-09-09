@@ -108,7 +108,7 @@ func TestIsDeclaredMissingKey(t *testing.T) {
 	base := t.TempDir()
 	ws := realDir(t, base, "repo")
 	cfg := t.TempDir()
-	settings := []byte("permissions:\n  allow:\n    - \"Bash(go test*)\"\n")
+	settings := []byte("permissions:\n  allow:\n    - \"Shell(go test*)\"\n")
 
 	r := NewWithEnv(envWithSettings(cfg, settings))
 	if r.IsDeclared(ws) {

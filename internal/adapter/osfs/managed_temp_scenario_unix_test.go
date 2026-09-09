@@ -20,7 +20,7 @@ import (
 )
 
 // TestManagedTemporaryCommandLeases_Scenario4_EndToEnd exercises the offline
-// local Bash path: normal completion deletes its exact lease, while a simulated
+// local Shell path: normal completion deletes its exact lease, while a simulated
 // crash residue remains until an eligible deterministic sweep owns its removal.
 
 // TestADR_0281_ForegroundLeaseOverlayAndMetadataPrivacy pins the foreground
@@ -147,13 +147,13 @@ func TestManagedTemporaryCommandLeases_Scenario4_EndToEnd(t *testing.T) {
 	}
 	result, err := runner.(tool.CommandTemporaryScopeRunner).RunWithTemporaryScope(context.Background(), "printf '%s' \"$TMPDIR\"", tool.TemporaryScopeManaged)
 	if err != nil {
-		t.Fatalf("managed Bash: %v", err)
+		t.Fatalf("managed Shell: %v", err)
 	}
 	if result.ExitCode != 0 {
-		t.Fatalf("managed Bash exit = %d", result.ExitCode)
+		t.Fatalf("managed Shell exit = %d", result.ExitCode)
 	}
 	if !strings.Contains(result.Stdout, "/commands/cmd-") {
-		t.Fatalf("managed Bash did not receive a private command lease: %q", result.Stdout)
+		t.Fatalf("managed Shell did not receive a private command lease: %q", result.Stdout)
 	}
 	paths, err := filepath.Glob(filepath.Join(workspace.Path(), "commands", "cmd-*"))
 	if err != nil {

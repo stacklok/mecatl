@@ -59,25 +59,25 @@ func deny(reason string) adjOutcome {
 	return adjOutcome{review: agent.ChildAskReview{Allowed: false, Reason: reason}}
 }
 
-// substitutionAskTurns scripts a child that issues n substitution-floored Bash
+// substitutionAskTurns scripts a child that issues n substitution-floored Shell
 // calls (`cat $(zap)` — read-only outer, unknown inner, so neither A1 nor A2 nor
 // any configured rule resolves it) and then finishes.
 func substitutionAskTurns(n int) []mockllm.Turn {
 	turns := make([]mockllm.Turn, 0, n+1)
 	for i := 0; i < n; i++ {
-		turns = append(turns, mockllm.ToolCallTurn(toolCall("k"+string(rune('1'+i)), "Bash", `{"command":"cat $(zap)"}`)))
+		turns = append(turns, mockllm.ToolCallTurn(toolCall("k"+string(rune('1'+i)), "Shell", `{"command":"cat $(zap)"}`)))
 	}
 	return append(turns, mockllm.TextTurn("child done"))
 }
 
 // TestAdjudicatorAllowRunsHeadlessSubagentCommand: a HEADLESS parent with the
-// reviewer wired — the child's substitution-floored Bash ask is adjudicated
+// reviewer wired — the child's substitution-floored Shell ask is adjudicated
 // ALLOW and EXECUTES, with NOTHING learned: a second identical command asks (and
 // is adjudicated) again, proving the verdict was AllowOnce, never a learned
 // rule. The allow rides the child-ask diagnostic chokepoint as a correlated
 // INFO with the decision/verdict fields.
 func TestAdjudicatorAllowRunsHeadlessSubagentCommand(t *testing.T) {
-	bash := &fakeBash{}
+	bash := &fakeShell{}
 	child := bashChildEngine(mockllm.New(substitutionAskTurns(2)...), bash)
 	task := agent.NewSubagentTool(child)
 
@@ -119,7 +119,7 @@ func TestAdjudicatorAllowRunsHeadlessSubagentCommand(t *testing.T) {
 // substitution-floored ask routes through the SAME resolveChildAsk chokepoint,
 // so the headless reviewer adjudicates it identically.
 func TestAdjudicatorAllowRunsTeamMemberCommand(t *testing.T) {
-	leadBash := &fakeBash{}
+	leadShell := &fakeShell{}
 	memberPolicy := permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil,
 		governance.WithAudience(governance.AudienceSubagent))
 
@@ -128,15 +128,15 @@ func TestAdjudicatorAllowRunsTeamMemberCommand(t *testing.T) {
 		for _, tl := range agent.MemberTools(tm, spec.Name, nil) {
 			cat.MustRegister(tl)
 		}
-		cat.MustRegister(leadBash)
+		cat.MustRegister(leadShell)
 		llm := mockllm.New(
-			mockllm.ToolCallTurn(toolCall("a1", "Bash", `{"command":"cat $(zap)"}`)),
+			mockllm.ToolCallTurn(toolCall("a1", "Shell", `{"command":"cat $(zap)"}`)),
 			mockllm.TextTurn("lead: inspected"),
 			mockllm.TextTurn("CONSOLIDATED: done"),
 		)
 		eng := agent.NewEngine(agent.Deps{LLM: llm, Catalog: cat, Policy: memberPolicy, Hooks: noopHooks{}, Model: "m"})
 		// IsolateReadOnly + forker: the read-only-member mutating-tool backstop
-		// otherwise strips the (non-read-only) fakeBash. `cat $(zap)` is NOT
+		// otherwise strips the (non-read-only) fakeShell. `cat $(zap)` is NOT
 		// IsolationApprovable (unknown inner), so the ask still reaches the reviewer.
 		return agent.MemberBuild{Engine: eng, IsolateReadOnly: true}
 	}
@@ -152,7 +152,7 @@ func TestAdjudicatorAllowRunsTeamMemberCommand(t *testing.T) {
 	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	evs := drainWithTimeout(t, r)
 
-	if got := leadBash.ran(); len(got) != 1 || !strings.Contains(got[0], "cat $(zap)") {
+	if got := leadShell.ran(); len(got) != 1 || !strings.Contains(got[0], "cat $(zap)") {
 		t.Fatalf("the member's adjudicated allow must execute; ran=%v", got)
 	}
 	if stub.count() != 1 {
@@ -168,7 +168,7 @@ func TestAdjudicatorAllowRunsTeamMemberCommand(t *testing.T) {
 // carrying its CLAMPED rationale (control bytes scrubbed) — never "denied by
 // user" and never the substitution-rephrase advice of the not-reviewed path.
 func TestAdjudicatorDenyCarriesReviewedMessage(t *testing.T) {
-	bash := &fakeBash{}
+	bash := &fakeShell{}
 	rec := &requestRecorder{}
 	childLLM := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(rec.observe)},
 		substitutionAskTurns(1)...)
@@ -222,7 +222,7 @@ func TestAdjudicatorDenyCarriesReviewedMessage(t *testing.T) {
 // verdict — the ask falls through to the EXISTING childAutoDenyMessage, with no
 // false "reviewer declined" claim.
 func TestAdjudicatorErrorFallsBackToPlainAutoDeny(t *testing.T) {
-	bash := &fakeBash{}
+	bash := &fakeShell{}
 	rec := &requestRecorder{}
 	childLLM := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(rec.observe)},
 		substitutionAskTurns(1)...)
@@ -273,7 +273,7 @@ func TestAdjudicatorErrorFallsBackToPlainAutoDeny(t *testing.T) {
 // stays 2 — and falls through to the plain auto-deny. The child gets relaxed
 // failure limits so the run, not the child's failure cap, is what bounds it.
 func TestAdjudicatorBreakerOpensAfterConsecutiveDenies(t *testing.T) {
-	bash := &fakeBash{}
+	bash := &fakeShell{}
 	child := bashChildEngine(mockllm.New(substitutionAskTurns(4)...), bash)
 	task := agent.NewSubagentTool(child, agent.WithChildLimits(session.Limits{
 		MaxTurns: 50, MaxToolCalls: 200, MaxConsecutiveFailures: 10,
@@ -315,7 +315,7 @@ func TestAdjudicatorBreakerOpensAfterConsecutiveDenies(t *testing.T) {
 // rest. Contrast TestAdjudicatorBreakerOpensAfterConsecutiveDenies (real denies
 // DO open it). Nothing executes either way.
 func TestAdjudicatorAbstainDoesNotCountTowardBreaker(t *testing.T) {
-	bash := &fakeBash{}
+	bash := &fakeShell{}
 	child := bashChildEngine(mockllm.New(substitutionAskTurns(4)...), bash)
 	task := agent.NewSubagentTool(child, agent.WithChildLimits(session.Limits{
 		MaxTurns: 50, MaxToolCalls: 200, MaxConsecutiveFailures: 10,
@@ -345,7 +345,7 @@ func TestAdjudicatorAbstainDoesNotCountTowardBreaker(t *testing.T) {
 // TestAdjudicatorAllowResetsBreaker: an ALLOW resets the consecutive-deny count,
 // so the breaker opens only after MaxDenies denies in a row.
 func TestAdjudicatorAllowResetsBreaker(t *testing.T) {
-	bash := &fakeBash{}
+	bash := &fakeShell{}
 	child := bashChildEngine(mockllm.New(substitutionAskTurns(5)...), bash)
 	task := agent.NewSubagentTool(child, agent.WithChildLimits(session.Limits{
 		MaxTurns: 50, MaxToolCalls: 200, MaxConsecutiveFailures: 10,
@@ -384,14 +384,14 @@ func TestAdjudicatorConfiguredRulesStillWin(t *testing.T) {
 	}
 
 	t.Run("configured Ask: rule-oriented deny, stub uncalled", func(t *testing.T) {
-		bash := &fakeBash{}
+		bash := &fakeShell{}
 		rec := &requestRecorder{}
 		childLLM := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(rec.observe)},
-			mockllm.ToolCallTurn(toolCall("k1", "Bash", `{"command":"go test ./..."}`)),
+			mockllm.ToolCallTurn(toolCall("k1", "Shell", `{"command":"go test ./..."}`)),
 			mockllm.TextTurn("child adapted"),
 		)
 		child := configChildEngine(childLLM, bash,
-			governance.Rule{Scope: governance.ScopeSharedProject, Tool: "Bash", Pattern: "go test*", Effect: governance.Ask, Audience: governance.AudienceSubagent})
+			governance.Rule{Scope: governance.ScopeSharedProject, Tool: "Shell", Pattern: "go test*", Effect: governance.Ask, Audience: governance.AudienceSubagent})
 		task := agent.NewSubagentTool(child, agent.WithChildForker(&recordingSubagentForker{}))
 		stub := &scriptedAdjudicator{script: []adjOutcome{allow("would have allowed")}}
 		e := newEngine(agent.Deps{LLM: mockllm.New(parentTurns()...), Catalog: catalogWith(t, task), ChildAskReviewer: stub})
@@ -416,13 +416,13 @@ func TestAdjudicatorConfiguredRulesStillWin(t *testing.T) {
 	})
 
 	t.Run("configured Deny: resolves in the fold, no ask, stub uncalled", func(t *testing.T) {
-		bash := &fakeBash{}
+		bash := &fakeShell{}
 		childLLM := mockllm.New(
-			mockllm.ToolCallTurn(toolCall("k1", "Bash", `{"command":"go test ./..."}`)),
+			mockllm.ToolCallTurn(toolCall("k1", "Shell", `{"command":"go test ./..."}`)),
 			mockllm.TextTurn("child adapted"),
 		)
 		child := configChildEngine(childLLM, bash,
-			governance.Rule{Scope: governance.ScopeSharedProject, Tool: "Bash", Pattern: "go test*", Effect: governance.Deny, Audience: governance.AudienceSubagent})
+			governance.Rule{Scope: governance.ScopeSharedProject, Tool: "Shell", Pattern: "go test*", Effect: governance.Deny, Audience: governance.AudienceSubagent})
 		task := agent.NewSubagentTool(child)
 		stub := &scriptedAdjudicator{}
 		e := newEngine(agent.Deps{LLM: mockllm.New(parentTurns()...), Catalog: catalogWith(t, task), ChildAskReviewer: stub})
@@ -435,13 +435,13 @@ func TestAdjudicatorConfiguredRulesStillWin(t *testing.T) {
 	})
 
 	t.Run("FlooredConfiguredAllow: auto-approves upstream, stub uncalled", func(t *testing.T) {
-		bash := &fakeBash{}
+		bash := &fakeShell{}
 		childLLM := mockllm.New(
-			mockllm.ToolCallTurn(toolCall("k1", "Bash", `{"command":"go generate $(ls)"}`)),
+			mockllm.ToolCallTurn(toolCall("k1", "Shell", `{"command":"go generate $(ls)"}`)),
 			mockllm.TextTurn("child done"),
 		)
 		child := configChildEngine(childLLM, bash,
-			governance.Rule{Scope: governance.ScopeSharedProject, Tool: "Bash", Pattern: "go generate*", Effect: governance.Allow, Audience: governance.AudienceSubagent})
+			governance.Rule{Scope: governance.ScopeSharedProject, Tool: "Shell", Pattern: "go generate*", Effect: governance.Allow, Audience: governance.AudienceSubagent})
 		task := agent.NewSubagentTool(child)
 		stub := &scriptedAdjudicator{}
 		e := newEngine(agent.Deps{LLM: mockllm.New(parentTurns()...), Catalog: catalogWith(t, task), ChildAskReviewer: stub})
@@ -457,9 +457,9 @@ func TestAdjudicatorConfiguredRulesStillWin(t *testing.T) {
 	})
 
 	t.Run("A2 isolation auto-approve: resolves upstream, stub uncalled", func(t *testing.T) {
-		bash := &fakeBash{}
+		bash := &fakeShell{}
 		childLLM := mockllm.New(
-			mockllm.ToolCallTurn(toolCall("k1", "Bash", `{"command":"go test ./..."}`)),
+			mockllm.ToolCallTurn(toolCall("k1", "Shell", `{"command":"go test ./..."}`)),
 			mockllm.TextTurn("child done"),
 		)
 		child := bashChildEngine(childLLM, bash)
@@ -481,7 +481,7 @@ func TestAdjudicatorConfiguredRulesStillWin(t *testing.T) {
 // TestAdjudicatorNotConsultedWhenInteractive: an INTERACTIVE parent surfaces the
 // ask to the human; the reviewer is never consulted (surface wins).
 func TestAdjudicatorNotConsultedWhenInteractive(t *testing.T) {
-	bash := &fakeBash{}
+	bash := &fakeShell{}
 	child := bashChildEngine(mockllm.New(substitutionAskTurns(1)...), bash)
 	task := agent.NewSubagentTool(child)
 
@@ -516,7 +516,7 @@ func TestAdjudicatorNotConsultedWhenInteractive(t *testing.T) {
 func TestAdjudicatorIsolationBitThreaded(t *testing.T) {
 	run := func(t *testing.T, forked bool) bool {
 		t.Helper()
-		bash := &fakeBash{}
+		bash := &fakeShell{}
 		child := bashChildEngine(mockllm.New(substitutionAskTurns(1)...), bash)
 		opts := []agent.SubagentOption{}
 		if forked {

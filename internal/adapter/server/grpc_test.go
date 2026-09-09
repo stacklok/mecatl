@@ -198,9 +198,9 @@ func TestGRPCConverseFullCycle(t *testing.T) {
 // a terminal result here proves the stream survived; we additionally assert the
 // result text was repaired to U+FFFD.
 func TestGRPCConverseInvalidUTF8ToolResult(t *testing.T) {
-	bad := &scriptTool{name: "Bash", readOnly: true, content: "out \xe2M-^@M-^T end"}
+	bad := &scriptTool{name: "Shell", readOnly: true, content: "out \xe2M-^@M-^T end"}
 	llm := mockllm.New(
-		mockllm.ToolCallTurn(call("c1", "Bash", `{"command":"sed -n 1p x | cat -t"}`)),
+		mockllm.ToolCallTurn(call("c1", "Shell", `{"command":"sed -n 1p x | cat -t"}`)),
 		mockllm.TextTurn("all done"),
 	)
 	svc := newService(t, llm, allowRules(), bad)

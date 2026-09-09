@@ -34,7 +34,7 @@ type escapeFixture struct {
 }
 
 // setupEscapeFS builds workspace + an out-of-root file with distinctive
-// content (so a Bash `cat` substitution or an in-root fixture file cannot
+// content (so a Shell `cat` substitution or an in-root fixture file cannot
 // satisfy the assertion by accident).
 func setupEscapeFS(t *testing.T) escapeFixture {
 	t.Helper()
@@ -123,7 +123,7 @@ func readEscapeTurns(target string) []mockllm.Turn {
 
 // TestPathEscapePosture_Scenario2_YoloReadEscapeAllowed pins AC2.1: at posture
 // yolo, Read of an out-of-root absolute path returns the file's contents (no
-// ErrPathEscape) — the relax flows through the ordinary FS tool, not a Bash
+// ErrPathEscape) — the relax flows through the ordinary FS tool, not a Shell
 // workaround.
 func TestPathEscapePosture_Scenario2_YoloReadEscapeAllowed(t *testing.T) {
 	t.Parallel()
@@ -154,7 +154,7 @@ func TestPathEscapePosture_Scenario2_YoloReadEscapeAllowed(t *testing.T) {
 
 // TestPathEscapePosture_Scenario2_AutoReadEscapeAllowed pins AC2.2: at posture
 // auto with no escape guardrail knob, Read of an out-of-root absolute path
-// succeeds (Bash parity — at auto Bash already reads the same bytes).
+// succeeds (Shell parity — at auto Shell already reads the same bytes).
 func TestPathEscapePosture_Scenario2_AutoReadEscapeAllowed(t *testing.T) {
 	t.Parallel()
 	f := setupEscapeFS(t)
@@ -172,7 +172,7 @@ func TestPathEscapePosture_Scenario2_AutoReadEscapeAllowed(t *testing.T) {
 		t.Fatal("no EvToolResult emitted for the Read call")
 	}
 	if result.IsError {
-		t.Fatalf("auto Read escape errored: %q (want Bash-parity read success)", result.Content)
+		t.Fatalf("auto Read escape errored: %q (want Shell-parity read success)", result.Content)
 	}
 	if !strings.Contains(result.Content, f.content) {
 		t.Fatalf("auto Read escape content = %q, want it to contain %q", result.Content, f.content)
@@ -288,7 +288,7 @@ func TestPathEscapePosture_Scenario2_StrictReadUnchanged(t *testing.T) {
 // TestPathEscapePosture_Scenario2_ProcEnvironNotExposed pins AC2.5: at yolo,
 // Read /proc/self/environ does NOT return the raw server environment — the
 // pseudo-fs hard-deny holds even at the most relaxed posture, because an
-// in-process read would leak the SERVER's env (Bash reads the envscrub-
+// in-process read would leak the SERVER's env (Shell reads the envscrub-
 // scrubbed child env; the FS read must never be a new exfiltration channel).
 func TestPathEscapePosture_Scenario2_ProcEnvironNotExposed(t *testing.T) {
 	t.Parallel()

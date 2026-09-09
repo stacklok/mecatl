@@ -642,7 +642,7 @@ func (s *approvalSurface) miniScroll(step, maxOff int) {
 	s.askVPOffset = max(0, min(maxOff, s.askVPOffset+step))
 }
 
-// bashAskArgs mirrors the Bash tool's args JSON shape for the ask-args pretty
+// bashAskArgs mirrors the Shell tool's args JSON shape for the ask-args pretty
 // tier (mirroring mutatedPath's editDiffArgs/writeDiffArgs precedent). The
 // envelope can also carry timeout_ms (engine's bashArgs shape); the ui layer
 // knows it as a JSON field NAME, not an import.
@@ -658,11 +658,11 @@ type bashAskArgs struct {
 // The RAW tier is the VERBATIM wire args text — sanitizeTerminal(ask.Args),
 // nothing else (no prettyJSON, no re-indent): raw is the escape hatch that can
 // never lie, "exactly what am I approving". The PRETTY tier is the readable
-// decode: a Bash ask's {"command": …} decodes into the command TEXT (real
+// decode: a Shell ask's {"command": …} decodes into the command TEXT (real
 // newlines, terminal-sanitized) so a long pipeline reads as shell, not escaped
 // JSON, and a non-zero timeout_ms appends a muted "timeout_ms: N" annotation
 // line (th styles it) so the pretty tier loses nothing the envelope carries;
-// every other tool/shape falls back to prettyJSON. The tiers differ for Bash
+// every other tool/shape falls back to prettyJSON. The tiers differ for Shell
 // and for any multi-line-tool args, so the raw/pretty toggle is honest on
 // those asks; a single short line identical in both tiers (empty, or non-JSON
 // passthrough) hides the hint.
@@ -672,7 +672,7 @@ func askArgsContent(th theme.Theme, ask pendingAsk) (pretty string, raw string, 
 	}
 	raw = sanitizeTerminal(strings.TrimSpace(ask.Args))
 	pretty = prettyJSON(ask.Args)
-	if ask.Tool == "Bash" {
+	if ask.Tool == "Shell" {
 		var args bashAskArgs
 		if err := json.Unmarshal([]byte(strings.TrimSpace(ask.Args)), &args); err == nil && args.Command != "" {
 			pretty = sanitizeTerminal(args.Command)
@@ -685,7 +685,7 @@ func askArgsContent(th theme.Theme, ask pendingAsk) (pretty string, raw string, 
 }
 
 // askArgsTiersDiffer reports whether the raw tier adds anything over the pretty
-// tier — true whenever the two tiers genuinely differ (a decoded Bash command,
+// tier — true whenever the two tiers genuinely differ (a decoded Shell command,
 // a timeout_ms annotation, or any args whose pretty tier re-indents). The
 // toggle hint renders only then; for an ask whose tiers are byte-identical
 // (empty args, or a non-JSON single-line passthrough) a "raw" toggle would be
@@ -842,7 +842,7 @@ func (s *approvalSurface) permissionModalBodyParts(width, height int) (body stri
 		}
 	} else if pretty, _, ok := askArgsContent(th, ask); ok && pretty != "" {
 		// Non-diff ask: the args region is a height-capped mini-viewport of the
-		// WRAPPED pretty tier (a Bash ask's decoded command text, else pretty
+		// WRAPPED pretty tier (a Shell ask's decoded command text, else pretty
 		// JSON). The region declares min(natural, cap, region-budget) rows and
 		// scrolls via argsOffset; hidden rows append a hint line advertising the
 		// scroll keys and the ctrl+t full-args view. A pathological no-args ask

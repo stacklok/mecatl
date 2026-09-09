@@ -16,7 +16,7 @@ import (
 )
 
 // dirtyForkSpecs is the live proof for ADR 0033: a read-only Subagent runs its
-// Bash in an isolated git worktree forked from the session workspace, and the
+// Shell in an isolated git worktree forked from the session workspace, and the
 // dirty-overlay (forker.WithDirtyOverlay) mirrors the operator's UNCOMMITTED
 // working-tree state into that worktree. Before the fix the worktree was a clean
 // `git worktree add HEAD` checkout, so a child asked to review the diff saw an
@@ -39,7 +39,7 @@ func dirtyForkSpecs() {
 			func(ctx ginkgo.SpecContext) {
 				// A dedicated mecated over its OWN scratch tree: the harness
 				// git-inits the workspace and commits the fixtures (clean HEAD),
-				// and --trust-project gives the read-only Subagent its Bash +
+				// and --trust-project gives the read-only Subagent its Shell +
 				// worktree forker. We own Close.
 				loc, err := harness.NewLocalWith()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "spawning the dirty-fork mecated failed")
@@ -68,7 +68,7 @@ func dirtyForkSpecs() {
 				}
 
 				res, err := driver.Run(ctx, harness.RunOpts{Scenario: "dirty-fork", Timeout: 6 * time.Minute},
-					`Call the Subagent tool exactly once. Set its goal to: "Use the Bash tool to run `+"`git status --short`"+`, then print the contents of FRUIT.txt and `+untrackedName+` using `+"`cat`"+`. Reply with the exact lines you observed, copying any unusual tokens verbatim." Place no other tool call. After the Subagent result returns, reply with the single word done.`)
+					`Call the Subagent tool exactly once. Set its goal to: "Use the Shell tool to run `+"`git status --short`"+`, then print the contents of FRUIT.txt and `+untrackedName+` using `+"`cat`"+`. Reply with the exact lines you observed, copying any unusual tokens verbatim." Place no other tool call. After the Subagent result returns, reply with the single word done.`)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred(), report(res, err))
 				gomega.Expect(res).NotTo(gomega.BeNil(), report(res, err))
 

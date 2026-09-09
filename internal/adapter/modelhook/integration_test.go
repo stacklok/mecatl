@@ -83,15 +83,15 @@ func block(t *testing.T, match string, phases ...string) modelhook.CompiledRule 
 	return r
 }
 
-// bashDefaultRule is the default-shaped Bash guardrail: pre/block with the read-only
+// bashDefaultRule is the default-shaped Shell guardrail: pre/block with the read-only
 // pre-filter on (ADR 0060) — what an operator gets out of the box when guardrails are
-// configured with no explicit rule list. It carries the Bash-specific rubric, exactly as
+// configured with no explicit rule list. It carries the Shell-specific rubric, exactly as
 // the composition's defaultGuardrailSpecs wires it.
 func bashDefaultRule(t *testing.T) modelhook.CompiledRule {
 	t.Helper()
 	r, ok := modelhook.CompileRule(modelhook.RuleSpec{
-		Match: "Bash", Phases: []string{"pre"}, Mode: string(modelhook.ModeBlock),
-		SkipReadOnlyBash: true, Prompt: modelhook.DefaultBashPrePrompt,
+		Match: "Shell", Phases: []string{"pre"}, Mode: string(modelhook.ModeBlock),
+		SkipReadOnlyShell: true, Prompt: modelhook.DefaultShellPrePrompt,
 	})
 	if !ok {
 		t.Fatal("bashDefaultRule must compile")
@@ -100,7 +100,7 @@ func bashDefaultRule(t *testing.T) modelhook.CompiledRule {
 }
 
 // capturingChecker records the assembled CheckRequest.Prompt the Runner built, so a
-// routing test can assert WHICH rubric the model would see for a Bash pre-check. It
+// routing test can assert WHICH rubric the model would see for a Shell pre-check. It
 // returns safe so the call passes through.
 type capturingChecker struct{ prompt string }
 
@@ -109,12 +109,12 @@ func (c *capturingChecker) Check(_ context.Context, req modelhook.CheckRequest) 
 	return modelhook.Verdict{Safe: boolp(true)}, nil
 }
 
-// TestBashDefaultRuleModelSeesLocalWriteSafeRubric drives the real loop: a representative
-// local write command on the default Bash rule, and asserts the rubric the model (the
+// TestShellDefaultRuleModelSeesLocalWriteSafeRubric drives the real loop: a representative
+// local write command on the default Shell rule, and asserts the rubric the model (the
 // checker) is given is the local-write-is-safe one — NOT the generic exfiltration rubric
 // that false-positived on a sibling-repo write. This is the model-facing proof of the
 // false-positive fix.
-func TestBashDefaultRuleModelSeesLocalWriteSafeRubric(t *testing.T) {
+func TestShellDefaultRuleModelSeesLocalWriteSafeRubric(t *testing.T) {
 	chk := &capturingChecker{}
 	bt := bashTool(new(bool))
 	hooks := modelhook.New(hookexec.New(nil), modelhook.Options{
@@ -132,13 +132,13 @@ func TestBashDefaultRuleModelSeesLocalWriteSafeRubric(t *testing.T) {
 	drain(e.Run(context.Background(), session.New("s1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws", Revision: "v1"}, session.Limits{}, time.Unix(0, 0)), env, agent.RunRequest{Text: "go"}))
 
 	if chk.prompt == "" {
-		t.Fatal("the mutating Bash write must have reached the checker")
+		t.Fatal("the mutating Shell write must have reached the checker")
 	}
 	if !strings.Contains(chk.prompt, "is NOT exfiltration") {
-		t.Fatalf("the model must see the local-write-is-safe Bash rubric; got:\n%s", chk.prompt)
+		t.Fatalf("the model must see the local-write-is-safe Shell rubric; got:\n%s", chk.prompt)
 	}
 	if strings.Contains(chk.prompt, "If you are uncertain, judge unsafe") {
-		t.Fatal("the Bash rubric must not carry the generic blanket-unsafe clause that caused the false positive")
+		t.Fatal("the Shell rubric must not carry the generic blanket-unsafe clause that caused the false positive")
 	}
 }
 
@@ -158,10 +158,10 @@ func (e checkerErr) Error() string { return string(e) }
 
 const errCheckerUnavailable = checkerErr("checker unavailable / verdict unparseable")
 
-// bashTool is a fakeTool whose Execute records whether it ran (the Bash blast-radius
-// surface under test). It is NOT read-only (a Bash call may mutate).
+// bashTool is a fakeTool whose Execute records whether it ran (the Shell blast-radius
+// surface under test). It is NOT read-only (a Shell call may mutate).
 func bashTool(ran *bool) *fakeTool {
-	return &fakeTool{name: "Bash", readOnly: false, exec: func(in session.ToolCall) session.ToolResult {
+	return &fakeTool{name: "Shell", readOnly: false, exec: func(in session.ToolCall) session.ToolResult {
 		*ran = true
 		return session.NewToolResult(in.ID, "command output")
 	}}
@@ -169,7 +169,7 @@ func bashTool(ran *bool) *fakeTool {
 
 func bashCall(id, cmd string) session.ToolCall {
 	args, _ := json.Marshal(map[string]string{"command": cmd})
-	return session.NewToolCall(session.ToolCallID(id), "Bash", args)
+	return session.NewToolCall(session.ToolCallID(id), "Shell", args)
 }
 
 // warnCapturingDiag captures diagnostic messages + their key/value fields so a WARN's
@@ -199,9 +199,9 @@ func (d *warnCapturingDiag) has(sub string) bool {
 	return false
 }
 
-// runBashGuardrail drives the real loop with the given checker + Bash rule against one
-// Bash command, returning whether the tool ran and the drained events.
-func runBashGuardrail(t *testing.T, chk modelhook.VerdictChecker, rule modelhook.CompiledRule, cmd string, deps agent.Deps) (bool, []session.Event) {
+// runShellGuardrail drives the real loop with the given checker + Shell rule against one
+// Shell command, returning whether the tool ran and the drained events.
+func runShellGuardrail(t *testing.T, chk modelhook.VerdictChecker, rule modelhook.CompiledRule, cmd string, deps agent.Deps) (bool, []session.Event) {
 	t.Helper()
 	ran := false
 	bt := bashTool(&ran)
@@ -232,13 +232,13 @@ func sawBlockedToolResult(evs []session.Event) bool {
 	return false
 }
 
-// a MUTATING Bash call + block-verdict checker on the default Bash rule: the tool NEVER
+// a MUTATING Shell call + block-verdict checker on the default Shell rule: the tool NEVER
 // executes (Pre veto) and the model gets the block error result.
-func TestGuardrailBashMutatingBlockedInLoop(t *testing.T) {
+func TestGuardrailShellMutatingBlockedInLoop(t *testing.T) {
 	chk := &scriptedChecker{verdict: modelhook.Verdict{Safe: boolp(false), Reason: "merges a PR unattended"}}
-	ran, evs := runBashGuardrail(t, chk, bashDefaultRule(t), "git commit -m x", agent.Deps{})
+	ran, evs := runShellGuardrail(t, chk, bashDefaultRule(t), "git commit -m x", agent.Deps{})
 	if ran {
-		t.Fatal("a Pre-blocked mutating Bash command must NOT execute")
+		t.Fatal("a Pre-blocked mutating Shell command must NOT execute")
 	}
 	if chk.calls != 1 {
 		t.Fatalf("a mutating command must reach the checker; calls=%d", chk.calls)
@@ -248,13 +248,13 @@ func TestGuardrailBashMutatingBlockedInLoop(t *testing.T) {
 	}
 }
 
-// a READ-ONLY Bash call on the default Bash rule: the tool RUNS and the checker is
+// a READ-ONLY Shell call on the default Shell rule: the tool RUNS and the checker is
 // NEVER called (the read-only pre-filter, ADR 0060 — zero LLM calls).
-func TestGuardrailBashReadOnlySkipsCheckerInLoop(t *testing.T) {
+func TestGuardrailShellReadOnlySkipsCheckerInLoop(t *testing.T) {
 	chk := &scriptedChecker{verdict: modelhook.Verdict{Safe: boolp(false)}} // would block if consulted
-	ran, evs := runBashGuardrail(t, chk, bashDefaultRule(t), "git status", agent.Deps{})
+	ran, evs := runShellGuardrail(t, chk, bashDefaultRule(t), "git status", agent.Deps{})
 	if !ran {
-		t.Fatal("a read-only Bash command must execute (the pre-filter skips the checker)")
+		t.Fatal("a read-only Shell command must execute (the pre-filter skips the checker)")
 	}
 	if chk.calls != 0 {
 		t.Fatalf("a read-only command must NOT reach the checker; calls=%d", chk.calls)
@@ -266,7 +266,7 @@ func TestGuardrailBashReadOnlySkipsCheckerInLoop(t *testing.T) {
 
 // adversarial / uncooperative checker (errors / unparseable verdict): the DEFAULT
 // fail-OPEN posture proceeds (the tool runs) and a WARN is logged.
-func TestGuardrailBashCheckerErrorFailsOpen(t *testing.T) {
+func TestGuardrailShellCheckerErrorFailsOpen(t *testing.T) {
 	chk := &erroringChecker{}
 	diag := &warnCapturingDiag{}
 	// The Runner takes its own Diagnostics (the loop's deps.Diagnostics is separate),
@@ -296,13 +296,13 @@ func TestGuardrailBashCheckerErrorFailsOpen(t *testing.T) {
 
 // adversarial checker (errors), but a FAIL-CLOSED rule: the tool is BLOCKED (treat
 // content as unsafe).
-func TestGuardrailBashCheckerErrorFailsClosed(t *testing.T) {
+func TestGuardrailShellCheckerErrorFailsClosed(t *testing.T) {
 	chk := &erroringChecker{}
 	rule, _ := modelhook.CompileRule(modelhook.RuleSpec{
-		Match: "Bash", Phases: []string{"pre"}, Mode: string(modelhook.ModeBlock),
-		SkipReadOnlyBash: true, FailClosed: true, FailClosedSet: true,
+		Match: "Shell", Phases: []string{"pre"}, Mode: string(modelhook.ModeBlock),
+		SkipReadOnlyShell: true, FailClosed: true, FailClosedSet: true,
 	})
-	ran, evs := runBashGuardrail(t, chk, rule, "git commit -m x", agent.Deps{})
+	ran, evs := runShellGuardrail(t, chk, rule, "git commit -m x", agent.Deps{})
 	if ran {
 		t.Fatal("fail-closed: a checker error must BLOCK the tool")
 	}
@@ -311,15 +311,15 @@ func TestGuardrailBashCheckerErrorFailsClosed(t *testing.T) {
 	}
 }
 
-// YOLO-posture (allow-all permission policy) + a block verdict on a mutating Bash call:
+// YOLO-posture (allow-all permission policy) + a block verdict on a mutating Shell call:
 // the hook veto is INDEPENDENT of permission auto-approve — the tool is STILL vetoed.
 // This is the headline criterion: a permission allow-all (yolo) does not waive the
 // guardrail. newEngine's default Policy is already an allow-all rule; this test makes
 // the allow-all EXPLICIT and asserts the veto survives it.
-func TestGuardrailBashVetoSurvivesYolo(t *testing.T) {
+func TestGuardrailShellVetoSurvivesYolo(t *testing.T) {
 	allowAll := permpolicy.NewPolicy([]governance.Rule{{Effect: governance.Allow}}, nil)
 	chk := &scriptedChecker{verdict: modelhook.Verdict{Safe: boolp(false), Reason: "outward action under yolo"}}
-	ran, evs := runBashGuardrail(t, chk, bashDefaultRule(t), "git commit -m x", agent.Deps{Policy: allowAll})
+	ran, evs := runShellGuardrail(t, chk, bashDefaultRule(t), "git commit -m x", agent.Deps{Policy: allowAll})
 	if ran {
 		t.Fatal("the guardrail veto must survive an allow-all (yolo) permission policy — the tool must NOT execute")
 	}
@@ -444,11 +444,11 @@ func TestGuardrailSafeContentUnchanged(t *testing.T) {
 
 // ===== ADR 0062 approve-once + waiver matrix (driven through the real loop) =====
 
-// runBashGuardrailInteractive drives the real loop for ONE mutating Bash call under
-// the default Bash block rule with an INTERACTIVE engine (Deps.Interactive=true) and a
+// runShellGuardrailInteractive drives the real loop for ONE mutating Shell call under
+// the default Shell block rule with an INTERACTIVE engine (Deps.Interactive=true) and a
 // shared waiver holder. It answers the FIRST surfaced permission ask with verdict. It
 // returns whether the tool ran, whether a HookOriginated ask surfaced, and the events.
-func runBashGuardrailInteractive(t *testing.T, waiver *modelhook.WaiverHolder, diag port.Diagnostics, sessionID, cmd string, verdict session.ApprovalVerdict) (ran, asked bool, evs []session.Event) {
+func runShellGuardrailInteractive(t *testing.T, waiver *modelhook.WaiverHolder, diag port.Diagnostics, sessionID, cmd string, verdict session.ApprovalVerdict) (ran, asked bool, evs []session.Event) {
 	t.Helper()
 	bt := bashTool(&ran)
 	chk := &scriptedChecker{verdict: modelhook.Verdict{Safe: boolp(false), Reason: "mutating shell action"}}
@@ -480,7 +480,7 @@ func runBashGuardrailInteractive(t *testing.T, waiver *modelhook.WaiverHolder, d
 // PreToolUse-only scope of the approve-once refinement.
 func TestPreBlockSetsAskApproval(t *testing.T) {
 	chk := &scriptedChecker{verdict: modelhook.Verdict{Safe: boolp(false), Reason: "unsafe"}}
-	// Pre on WebSearch (a non-Bash tool so no read-only pre-filter interferes).
+	// Pre on WebSearch (a non-Shell tool so no read-only pre-filter interferes).
 	preRunner := modelhook.New(hookexec.New(nil), modelhook.Options{
 		Rules: []modelhook.CompiledRule{block(t, "WebSearch", "pre")}, Checker: chk,
 	})
@@ -512,7 +512,7 @@ func TestPreBlockSetsAskApproval(t *testing.T) {
 
 // Interactive Allow once: the surfaced ask is answered AllowOnce and the tool runs.
 func TestGuardrailApproveOnceRunsInLoop(t *testing.T) {
-	ran, asked, _ := runBashGuardrailInteractive(t, nil, nil, "s1", "gh pr merge 12 --squash", session.VerdictAllowOnce)
+	ran, asked, _ := runShellGuardrailInteractive(t, nil, nil, "s1", "gh pr merge 12 --squash", session.VerdictAllowOnce)
 	if !asked {
 		t.Fatal("an interactive guardrail block must surface a permission ask")
 	}
@@ -523,7 +523,7 @@ func TestGuardrailApproveOnceRunsInLoop(t *testing.T) {
 
 // Interactive Deny: the ask is denied and the tool stays blocked.
 func TestGuardrailDenyBlocksInLoop(t *testing.T) {
-	ran, asked, evs := runBashGuardrailInteractive(t, nil, nil, "s1", "gh pr merge 12", session.VerdictDeny)
+	ran, asked, evs := runShellGuardrailInteractive(t, nil, nil, "s1", "gh pr merge 12", session.VerdictDeny)
 	if !asked {
 		t.Fatal("the block must surface an ask before the deny")
 	}
@@ -543,13 +543,13 @@ func TestGuardrailWaiverAllowAlwaysInLoop(t *testing.T) {
 	diag := &warnCapturingDiag{}
 
 	// First block on `gh pr merge`: AllowAlways → runs + arms the waiver.
-	ran1, asked1, _ := runBashGuardrailInteractive(t, waiver, diag, "s1", "gh pr merge 7", session.VerdictAllowAlways)
+	ran1, asked1, _ := runShellGuardrailInteractive(t, waiver, diag, "s1", "gh pr merge 7", session.VerdictAllowAlways)
 	if !asked1 || !ran1 {
 		t.Fatalf("first matching block must ask AND run on AllowAlways; asked=%v ran=%v", asked1, ran1)
 	}
 
 	// Second matching `gh pr merge` in the SAME session: NO ask, runs (waiver).
-	ran2, asked2, _ := runBashGuardrailInteractive(t, waiver, diag, "s1", "gh pr merge 7", session.VerdictDeny /*never consulted*/)
+	ran2, asked2, _ := runShellGuardrailInteractive(t, waiver, diag, "s1", "gh pr merge 7", session.VerdictDeny /*never consulted*/)
 	if asked2 {
 		t.Fatal("a waived command must NOT re-ask in the same session")
 	}
@@ -562,7 +562,7 @@ func TestGuardrailWaiverAllowAlwaysInLoop(t *testing.T) {
 
 	// A NON-matching command (`gh release create`) in the same session still asks (the
 	// waiver is scoped to the gh-pr-merge command substring, not blanket).
-	_, asked3, _ := runBashGuardrailInteractive(t, waiver, diag, "s1", "gh release create v1", session.VerdictDeny)
+	_, asked3, _ := runShellGuardrailInteractive(t, waiver, diag, "s1", "gh release create v1", session.VerdictDeny)
 	if !asked3 {
 		t.Fatal("a non-matching command must still surface an ask (the waiver is scoped, not blanket)")
 	}
@@ -572,11 +572,11 @@ func TestGuardrailWaiverAllowAlwaysInLoop(t *testing.T) {
 // a DIFFERENT (child) session id.
 func TestGuardrailWaiverChildIsolationInLoop(t *testing.T) {
 	waiver := modelhook.NewWaiverHolder()
-	if _, asked, _ := runBashGuardrailInteractive(t, waiver, nil, "parent", "gh pr merge 1", session.VerdictAllowAlways); !asked {
+	if _, asked, _ := runShellGuardrailInteractive(t, waiver, nil, "parent", "gh pr merge 1", session.VerdictAllowAlways); !asked {
 		t.Fatal("parent must ask the first time")
 	}
 	// The child session id never matches the parent's waiver: it must still ask.
-	if _, asked, _ := runBashGuardrailInteractive(t, waiver, nil, "child", "gh pr merge 1", session.VerdictDeny); !asked {
+	if _, asked, _ := runShellGuardrailInteractive(t, waiver, nil, "child", "gh pr merge 1", session.VerdictDeny); !asked {
 		t.Fatal("a child session must not inherit the parent's waiver — it must ask")
 	}
 }
