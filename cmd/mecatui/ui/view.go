@@ -436,7 +436,7 @@ func (m Model) headerNextBadge() string {
 // scrollIndicator returns the muted "↑ NN%" header cue shown only when the view
 // is anchored rather than following the tail.
 func (m Model) scrollIndicator() string {
-	if m.view.mode == followTail {
+	if m.conversationView.mode == followTail {
 		return ""
 	}
 	return fmt.Sprintf("↑ %d%%", int(m.vp.ScrollPercent()*100))

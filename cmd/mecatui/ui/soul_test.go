@@ -261,7 +261,7 @@ func TestSoulWheelConsumedWhileOpen(t *testing.T) {
 	m.conv.addUser("show me a long answer")
 	m.conv.appendAssistant(strings.Repeat("line of streamed output\n", 120))
 	m.phase = phaseIdle
-	m.view.mode = followTail
+	m.conversationView.mode = followTail
 	m.refreshView()
 	if !m.vp.AtBottom() {
 		t.Fatal("precondition: viewport should start at the bottom")
@@ -280,7 +280,7 @@ func TestSoulWheelConsumedWhileOpen(t *testing.T) {
 	if soulActive(m) == nil {
 		t.Fatal("a consumed wheel must not close the soul panel")
 	}
-	if m.view.mode != followTail {
+	if m.conversationView.mode != followTail {
 		t.Error("a consumed wheel-up must NOT unstick the view (the modal eats it)")
 	}
 	if !m.vp.AtBottom() {

@@ -700,15 +700,15 @@ func TestTranscriptWidthOnlyResizeResticksAndFollowsTranscript(t *testing.T) {
 	)
 
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyPgUp})
-	if m.view.mode == followTail || m.vp.AtBottom() {
-		t.Fatalf("precondition: pgup should leave the narrow viewport unstuck (stuck=%v atBottom=%v)", m.view.mode == followTail, m.vp.AtBottom())
+	if m.conversationView.mode == followTail || m.vp.AtBottom() {
+		t.Fatalf("precondition: pgup should leave the narrow viewport unstuck (stuck=%v atBottom=%v)", m.conversationView.mode == followTail, m.vp.AtBottom())
 	}
 
 	m = applyAll(m, tea.WindowSizeMsg{Width: wideWidth, Height: height})
-	if m.view.mode == followTail != m.vp.AtBottom() {
-		t.Fatalf("width-only resize must synchronize stuck: stuck=%v atBottom=%v", m.view.mode == followTail, m.vp.AtBottom())
+	if m.conversationView.mode == followTail != m.vp.AtBottom() {
+		t.Fatalf("width-only resize must synchronize stuck: stuck=%v atBottom=%v", m.conversationView.mode == followTail, m.vp.AtBottom())
 	}
-	if m.view.mode != followTail {
+	if m.conversationView.mode != followTail {
 		t.Fatal("precondition: wider reflow should leave the viewport at bottom")
 	}
 

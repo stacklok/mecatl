@@ -389,13 +389,13 @@ func TestRelayoutKeepsSelectionAcrossHeightChange(t *testing.T) {
 func TestRelayoutSyncStuckAfterTransientShrink(t *testing.T) {
 	m, _ := selModel(t) // selModel sets stuck=true over 120 content lines
 	m.relayout()
-	if m.view.mode != followTail || !m.vp.AtBottom() {
-		t.Fatalf("precondition: view should start stuck at the bottom (stuck=%v atBottom=%v)", m.view.mode == followTail, m.vp.AtBottom())
+	if m.conversationView.mode != followTail || !m.vp.AtBottom() {
+		t.Fatalf("precondition: view should start stuck at the bottom (stuck=%v atBottom=%v)", m.conversationView.mode == followTail, m.vp.AtBottom())
 	}
 
 	m = withQueue(t, m, 4) // shrink the viewport
 
-	if m.view.mode != followTail {
+	if m.conversationView.mode != followTail {
 		t.Error("stuck must be preserved (still auto-following) after the shrink")
 	}
 	if !m.vp.AtBottom() {
@@ -414,11 +414,11 @@ func TestRelayoutNoOpWhenHeightUnchanged(t *testing.T) {
 
 	// Scroll up so we're NOT stuck and YOffset > 0 — a no-op relayout must leave both.
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyPgUp})
-	if m.view.mode == followTail {
+	if m.conversationView.mode == followTail {
 		t.Fatalf("precondition: pgup should unstick the view")
 	}
 	beforeOff := m.vp.YOffset()
-	beforeMode := m.view.mode
+	beforeMode := m.conversationView.mode
 	beforeH := m.vp.Height()
 
 	// No transient toggled, no resize: bodyHeight == vp.Height(), so relayout early-returns.
@@ -430,8 +430,8 @@ func TestRelayoutNoOpWhenHeightUnchanged(t *testing.T) {
 	if m.vp.YOffset() != beforeOff {
 		t.Errorf("no-op relayout moved YOffset %d → %d (stray re-pin/clamp)", beforeOff, m.vp.YOffset())
 	}
-	if m.view.mode != beforeMode {
-		t.Errorf("no-op relayout changed stuck %v → %v (stray syncStuck)", beforeMode, m.view.mode)
+	if m.conversationView.mode != beforeMode {
+		t.Errorf("no-op relayout changed stuck %v → %v (stray syncStuck)", beforeMode, m.conversationView.mode)
 	}
 }
 

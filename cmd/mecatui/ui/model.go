@@ -25,6 +25,27 @@ import (
 
 const unknownLabel = "unknown"
 
+// SelectionTrace receives opt-in, content-free selection and viewport diagnostics.
+// It is injected by the composition root so ui neither owns a log sink nor performs
+// I/O on its update goroutine when tracing is disabled.
+type SelectionTrace func(SelectionTraceRecord)
+
+// SelectionTraceRecord describes a selection/viewport transition without retaining
+// conversation text or content-derived fingerprints.
+type SelectionTraceRecord struct {
+	Event                    string
+	ViewDirty                bool
+	SelectionActive          bool
+	AnchorLine, AnchorColumn int
+	HeadLine, HeadColumn     int
+	Follow                   bool
+	YOffset                  int
+	AtBottom                 bool
+	ViewportBytes            int
+	FrameLines               int
+	SelectionBaseBytes       int
+}
+
 // SessionCreator creates a server-side session and returns its id together with
 // the server's advertised capabilities. *client.Client satisfies it (via the
 // sessionAdapter); tests supply a fake. Keeping it an interface lets the ui be
@@ -219,6 +240,9 @@ type Deps struct {
 	// theme; a dark or absent response keeps Theme as given. Explicit theme
 	// selection always wins — this field is simply never set true then.
 	ThemeAutoDetect bool
+	// SelectionTrace receives opt-in content-free viewport diagnostics. nil is the
+	// disabled default and keeps the update/render path allocation-free.
+	SelectionTrace SelectionTrace
 	// StatusSource is composed outside ui. The UI only submits display facts and
 	// consumes semantic snapshots through one Bubble Tea listener.
 	StatusSource statusline.Source
@@ -519,9 +543,9 @@ type Model struct {
 	width  int
 	height int
 
-	conv conversation
-	vp   viewport.Model
-	view conversationView
+	conv             conversation
+	vp               viewport.Model
+	conversationView conversationView
 
 	// authorization is separate from permission approval: MCP browser authorization
 	// has no allow/always/deny verdict and never carries tool arguments or a URL.
@@ -992,16 +1016,16 @@ func New(deps Deps) Model {
 	// themes alike — styleSelection reads it via m.deps.Theme.Style("selection").
 
 	m := Model{
-		deps:    deps,
-		keys:    keys,
-		rend:    newRenderer(th, hk),
-		hits:    &hitRegions{},
-		metrics: &renderedSurfaceMetrics{},
-		phase:   phaseConnecting,
-		prompt:  prompt,
-		sp:      sp,
-		vp:      vp,
-		view:    conversationView{mode: followTail},
+		deps:             deps,
+		keys:             keys,
+		rend:             newRenderer(th, hk),
+		hits:             &hitRegions{},
+		metrics:          &renderedSurfaceMetrics{},
+		phase:            phaseConnecting,
+		prompt:           prompt,
+		sp:               sp,
+		vp:               vp,
+		conversationView: conversationView{mode: followTail},
 		// Armed exactly when Init will actually request the background colour
 		// (see ThemeAutoDetect); onBackgroundColor disarms it on the first
 		// response so a late/duplicate one is a no-op.
@@ -1087,7 +1111,7 @@ func (m Model) resetSessionDerived() Model {
 	// Drop renderer caches before installing the target's authoritative transcript.
 	m.rend.resetBlockCaches()
 	// Reset auto-follow and document-local anchor state for the next session.
-	m.view = conversationView{mode: followTail}
+	m.conversationView = conversationView{mode: followTail}
 	m.usage = client.Usage{}
 	m.contextTokens = 0
 	m.activeTool = ""

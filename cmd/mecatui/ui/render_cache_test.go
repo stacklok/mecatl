@@ -36,6 +36,20 @@ func newCacheRenderer() *renderer {
 	return r
 }
 
+// renderConversation is the legacy whole-string renderer retained only as an
+// independent test oracle and allocation benchmark for the production frame path.
+func (r *renderer) renderConversation(c *conversation, expand bool) string {
+	var b strings.Builder
+	for i := range c.blocks {
+		if i > 0 {
+			b.WriteString(blockSepAfter(c.blocks, i-1))
+		}
+		b.WriteString(r.renderBlock(i, &c.blocks[i], expand))
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
 // assertCacheMatchesFresh asserts a persistent cached renderer's
 // renderConversation output at ONE fixed expand state is byte-identical to a
 // brand-new renderer's (same theme, same width) — the cache must be
@@ -507,160 +521,6 @@ func TestResetSessionDropsRenderCaches(t *testing.T) {
 	}
 }
 
-// Tests for the whole-conversation JOIN cache (renderer.joinCache/joinValid/joinKey),
-// the outer memo layer above blockCache: a frame that re-renders no block reuses the
-// previous joined string verbatim instead of rebuilding the Builder, and any change
-// (width, expand, block append, live-block mutation) invalidates it and produces a
-// fresh, correct join. The byte-identical guarantee is the same as blockCache — the
-// fresh-renderer ORACLE asserts it; these tests assert the cache is actually USED and
-// correctly INVALIDATED.
-
-// TestJoinCacheReusedWhenNothingChanged: a second render with no intervening
-// conversation mutation must hit the join fast path — joinValid stays true, the
-// signature is unchanged, and the result is byte-identical to the first render (and
-// to a fresh renderer's).
-func TestJoinCacheReusedWhenNothingChanged(t *testing.T) {
-	c := cacheTestConversation()
-	r := newCacheRenderer()
-	first := r.renderConversation(c, false)
-	if !r.joinValid {
-		t.Fatal("joinValid should be set after the first render")
-	}
-	keyAfterFirst := r.joinKey
-	base := r.blockRenders
-
-	second := r.renderConversation(c, false)
-	if r.blockRenders != base {
-		t.Fatalf("unchanged re-render must re-render no block, got %d extra", r.blockRenders-base)
-	}
-	if r.joinKey != keyAfterFirst {
-		t.Errorf("join key should be unchanged on a fast-path hit: was %+v, now %+v", keyAfterFirst, r.joinKey)
-	}
-	if second != first {
-		t.Errorf("join fast path must return the identical string:\n got %q\nwant %q",
-			stripANSIstr(second), stripANSIstr(first))
-	}
-	// And it equals a fresh renderer's (the byte-identical guarantee).
-	fresh := newRenderer(r.th, defaultHelpKeys())
-	fresh.setWidth(r.width)
-	if want := fresh.renderConversation(c, false); second != want {
-		t.Errorf("join-cached render diverged from fresh:\n got %q\nwant %q",
-			stripANSIstr(second), stripANSIstr(want))
-	}
-}
-
-// TestJoinCacheReuseHasNoScrollbackAllocs proves the WIN at the cache level: a
-// fast-path hit on a large settled scrollback performs near-zero allocations (it
-// returns the cached string), whereas the building frame allocates the full join.
-// We assert the hit allocates dramatically less than a fresh full join of the same
-// conversation — the observable that a stale-serve mutation (always rebuilding, or
-// never caching) would erase.
-func TestJoinCacheReuseHasNoScrollbackAllocs(t *testing.T) {
-	c := &conversation{}
-	for i := 0; i < 80; i++ {
-		c.addUser("question " + strconv.Itoa(i))
-		c.addNotice("notice " + strconv.Itoa(i))
-	}
-	r := newCacheRenderer()
-	r.renderConversation(c, false) // warm both caches and the join
-
-	// Reference: the SAME renderer forced to rebuild the join each iteration (the
-	// block caches stay warm, so this isolates the join Builder cost). It must
-	// allocate substantially more than the fast-path hit below.
-	ref := newCacheRenderer()
-	ref.renderConversation(c, false) // warm block caches
-	fullJoin := testing.AllocsPerRun(20, func() {
-		ref.joinValid = false // force the rebuild path; block caches still hit
-		ref.renderConversation(c, false)
-	})
-
-	hit := testing.AllocsPerRun(20, func() { r.renderConversation(c, false) })
-	if hit >= fullJoin {
-		t.Fatalf("join fast-path hit (%v allocs) should allocate far less than a forced rebuild (%v allocs) — cache not used?", hit, fullJoin)
-	}
-	if hit > 4 {
-		t.Errorf("join fast-path hit should allocate ~0 (returns the cached string), got %v allocs/op", hit)
-	}
-}
-
-// TestJoinCacheInvalidatesOnWidthChange: a width change must rebuild the join and
-// produce a fresh, correct result.
-func TestJoinCacheInvalidatesOnWidthChange(t *testing.T) {
-	c := cacheTestConversation()
-	r := newCacheRenderer()
-	r.renderConversation(c, false)
-
-	r.setWidth(80)
-	got := r.renderConversation(c, false)
-	fresh := newRenderer(r.th, defaultHelpKeys())
-	fresh.setWidth(80)
-	if want := fresh.renderConversation(c, false); got != want {
-		t.Errorf("post-width-change join diverged from fresh:\n got %q\nwant %q",
-			stripANSIstr(got), stripANSIstr(want))
-	}
-}
-
-// TestJoinCacheInvalidatesOnExpandToggle: flipping the expand toggle must rebuild
-// the join (the key carries expand) and produce a fresh, correct result.
-func TestJoinCacheInvalidatesOnExpandToggle(t *testing.T) {
-	c := cacheTestConversation()
-	r := newCacheRenderer()
-	r.renderConversation(c, false)
-
-	got := r.renderConversation(c, true)
-	fresh := newRenderer(r.th, defaultHelpKeys())
-	fresh.setWidth(r.width)
-	if want := fresh.renderConversation(c, true); got != want {
-		t.Errorf("post-expand-toggle join diverged from fresh:\n got %q\nwant %q",
-			stripANSIstr(got), stripANSIstr(want))
-	}
-}
-
-// TestJoinCacheInvalidatesOnBlockAppend: appending a block (nBlocks changes, and the
-// new tail block re-renders bumping blockRenders) must rebuild the join with the new
-// block included.
-func TestJoinCacheInvalidatesOnBlockAppend(t *testing.T) {
-	c := cacheTestConversation()
-	r := newCacheRenderer()
-	r.renderConversation(c, false)
-
-	c.addUser("a freshly appended prompt")
-	got := r.renderConversation(c, false)
-	if !strings.Contains(stripANSIstr(got), "a freshly appended prompt") {
-		t.Error("join after append must include the new block (stale join served?)")
-	}
-	fresh := newRenderer(r.th, defaultHelpKeys())
-	fresh.setWidth(r.width)
-	if want := fresh.renderConversation(c, false); got != want {
-		t.Errorf("post-append join diverged from fresh:\n got %q\nwant %q",
-			stripANSIstr(got), stripANSIstr(want))
-	}
-}
-
-// TestJoinCacheInvalidatesOnLiveBlockMutation: mutating an EXISTING block (the live
-// streaming case — block count unchanged, but a block.rev bump re-renders it and
-// bumps blockRenders) must rebuild the join with the mutated content.
-func TestJoinCacheInvalidatesOnLiveBlockMutation(t *testing.T) {
-	c := &conversation{}
-	c.addUser("a prompt")
-	c.startAssistant()
-	c.appendAssistant("first fragment")
-	r := newCacheRenderer()
-	r.renderConversation(c, false)
-
-	c.appendAssistant(" — second fragment")
-	got := r.renderConversation(c, false)
-	if !strings.Contains(stripANSIstr(got), "second fragment") {
-		t.Error("join after a live-block mutation must include the new content (stale join served?)")
-	}
-	fresh := newRenderer(r.th, defaultHelpKeys())
-	fresh.setWidth(r.width)
-	if want := fresh.renderConversation(c, false); got != want {
-		t.Errorf("post-live-mutation join diverged from fresh:\n got %q\nwant %q",
-			stripANSIstr(got), stripANSIstr(want))
-	}
-}
-
 // Tests for the INCREMENTAL-join line-slice path (renderer.renderConversationLines
 // + joinPrefixLines/joinPrefixN/joinPrefixKey), the streaming fast path that reuses
 // the cached prefix of settled blocks and rebuilds only the changed suffix. The
@@ -933,7 +793,7 @@ func TestIncrementalJoinAllocatesOnlySuffix(t *testing.T) {
 		r := newCacheRenderer()
 		// Two stable renders: frame 1 all-miss (cold cache, no prefix), frame 2 caches
 		// the full prefix over the settled blocks. No live block / no glamour churn, so
-		// the per-frame cost below is purely the join (the cost this change targets).
+		// the per-frame cost below is purely the line assembly.
 		r.renderConversationLines(c, false)
 		r.renderConversationLines(c, false)
 		return r, c
@@ -941,13 +801,10 @@ func TestIncrementalJoinAllocatesOnlySuffix(t *testing.T) {
 
 	const iterations = 25
 
-	// Reference: the OLD string-join path builds the whole scrollback into a fresh
-	// strings.Builder every frame (the block caches stay warm, so this isolates the
-	// Builder copy this change removes). joinValid is forced false so the whole-join
-	// memo cannot short-circuit it.
+	// Reference: the test-only legacy whole-string path builds the complete
+	// scrollback into a fresh strings.Builder every frame.
 	ref, refConv := build()
 	full := allocatedBytesPerIteration(iterations, func() {
-		ref.joinValid = false
 		ref.renderConversation(refConv, false)
 	})
 

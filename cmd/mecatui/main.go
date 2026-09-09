@@ -337,11 +337,12 @@ func runWithOptions(argv []string, options runOptions) error {
 		// live/config-first server-side — never recomputed by the client. Embedded mode's
 		// --context-window-override and an external mecated's flag both move the engine
 		// trigger and this echoed denominator.
-		Model:     cfg.model,
-		Workspace: uiWorkspace,
-		Mode:      cfg.mode,
-		Resume:    resume,
-		Ctx:       ctx,
+		Model:          cfg.model,
+		Workspace:      uiWorkspace,
+		Mode:           cfg.mode,
+		Resume:         resume,
+		Ctx:            ctx,
+		SelectionTrace: newSelectionTrace(slog.Default(), selectionTraceEnabled(os.Getenv)),
 		// Build identity for the welcome splash (explicit linker stamp, or a
 		// VCS-derived source-build ID when embedded metadata is available).
 		Version: buildinfo.BuildID,

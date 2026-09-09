@@ -159,13 +159,13 @@ func TestMecatuiCardLayout_Scenario1_NoStyledBodyWrap(t *testing.T) {
 	if !ok {
 		t.Fatal("locate test source")
 	}
-	source, err := os.ReadFile(filepath.Join(filepath.Dir(testFile), "render.go"))
+	source, err := os.ReadFile(filepath.Join(filepath.Dir(testFile), "tool_block.go"))
 	if err != nil {
-		t.Fatalf("read render.go: %v", err)
+		t.Fatalf("read tool_block.go: %v", err)
 	}
-	start := strings.Index(string(source), "func (r *renderer) renderTool(")
-	end := strings.Index(string(source), "\nfunc (r *renderer) toolCardLayout")
-	if start < 0 || end < 0 || end <= start {
+	start := strings.Index(string(source), "func (r *renderer) prepareToolCard(")
+	end := len(source)
+	if start < 0 {
 		t.Fatal("locate renderTool")
 	}
 	body := string(source)[start:end]
@@ -181,11 +181,12 @@ func TestMecatuiCardLayout_Scenario1_NoStyledBodyWrap(t *testing.T) {
 		}
 	}
 	for _, required := range []string{
+		"return r.prepareToolCard(b, expand).render()",
 		"head := renderToolHeader(glyph, glyphText, headLabel, r.th.Style(\"toolName\"), bodyWidth)",
 		"renderToolCardText(r.th.Style(\"muted\"), sanitizeTerminal(b.toolName), bodyWidth)",
 		"r.renderToolArgs(b, expand, bodyWidth)",
 		"r.renderToolResult(b, expand, bodyWidth)",
-		"return card.Render(head)",
+		"sections = append(sections, preparedToolSection",
 	} {
 		if !strings.Contains(body, required) {
 			t.Errorf("renderTool no longer prepares a card region before final framing: missing %s", required)

@@ -160,11 +160,15 @@ type renderer struct {
 	mdRenders int
 
 	// blockRenders counts REAL whole-block renders (blockCache misses) — incremented
-	// only when renderBlock falls through to renderBlockFresh, never on a cache hit.
-	// It is the test seam proving settled blocks join from cache: a flushed frame of
-	// a streaming turn bumps it by exactly one (the live block), regardless of how
+	// only when renderBlock has a cache miss, never on a cache hit. It is the test
+	// seam proving settled blocks join from cache: a flushed frame of a streaming turn bumps it by exactly one (the live block), regardless of how
 	// long the scrollback is. Touched only on the update goroutine.
 	blockRenders int
+
+	// toolCardPrepares counts tool-card preparations. A fresh tool block prepares
+	// once for both its rendered output and frame provenance; the prepared card is
+	// retained in the matching blockCache entry. Touched only on the update goroutine.
+	toolCardPrepares int
 
 	// inputKey/inputView/inputValid memoize the rendered INPUT region (the bubbles
 	// textarea) — the input-side sibling of blockCache. textarea.View() re-wraps
@@ -187,33 +191,12 @@ type renderer struct {
 	inputView  string
 	inputValid bool
 
-	// joinCache/joinValid/joinKey memoize the WHOLE joined conversation string —
-	// the OUTERMOST of the render memo layers, above blockCache. renderConversation
-	// is called once per flushed frame and, even when every block hits blockCache,
-	// re-joins all cached block strings into a fresh strings.Builder every time —
-	// O(scrollback) byte copying that profiling showed dominated the per-frame cost
-	// on a long scrollback (the per-block cache had already eliminated the styling
-	// cost). This memo skips the rebuild entirely when nothing changed since the
-	// last frame: the join is reused verbatim. Validity rests on the SAME purity
-	// argument as blockCache — the joined string is a pure function of the per-block
-	// renders, which are themselves keyed on (rev, width, expand) — so the key is a
-	// signature that a frame leaving blockRenders untouched (no block re-rendered)
-	// at the same (block count, width, expand) produced byte-identical block
-	// strings and therefore a byte-identical join. Update-goroutine-only, like the
-	// block caches; dropped by resetBlockCaches (the block-index reuse that invalidates
-	// blockCache equally invalidates a join built over it).
-	joinCache string
-	joinValid bool
-	joinKey   joinRenderKey
-
-	// joinScratch is the per-frame buffer of per-block render strings, REUSED across
-	// frames (truncated to [:0] and re-appended each call) so the block walk adds no
-	// per-frame allocation on the steady-state join hit. The strings it holds are the
-	// same ones blockCache already retains, so it pins nothing extra.
-	joinScratch []string
+	// renderedBlocksScratch is renderer-owned allocation reuse for one block-render
+	// pass. Consumers receive the returned slice from walkBlocks explicitly.
+	renderedBlocksScratch []string
 
 	// vpViewCache/vpViewValid memoize the rendered VIEWPORT OUTPUT — the OUTERMOST
-	// render layer, above blockCache and joinCache. View() calls vp.View() which runs
+	// render layer, above blockCache. View() calls vp.View() which runs
 	// lipgloss's per-line grapheme-width pad on the full visible window (~40 lines at
 	// a time). On a spinner-only frame (no content/scroll/geometry change) this work
 	// is pure waste: the viewport output is identical to the previous frame. The memo
@@ -231,18 +214,12 @@ type renderer struct {
 	vpViewCache string
 	vpViewValid bool
 
-	// joinPrefixLines / joinPrefixN / joinPrefixKey are the INCREMENTAL-join state
-	// powering renderConversationLines: the streaming-frame fast path that skips the
-	// O(scrollback) rejoin the whole-join memo (joinCache, above) cannot help with —
-	// during streaming the live tail block re-renders every token, so blockRenders
-	// bumps every frame and the joinCache fast path always misses, forcing a full
-	// Builder copy of the entire scrollback per frame.
+	// joinPrefixLines / joinPrefixN / joinPrefixKey cache the unchanged prefix for
+	// the incremental frame assembly. A live tail re-render only rebuilds the suffix.
 	//
 	// The canonical per-block segment framing is: block i contributes
-	// sep(i) + scratch[i] + "\n", where sep(0)="" and sep(i>0)="\n". The full join is
-	// the concatenation of all segments, byte-for-byte identical to the monolithic
-	// loop below — so the PREFIX (segments [0, joinPrefixN)) plus a freshly built
-	// SUFFIX (segments [joinPrefixN, n)) is exactly today's output.
+	// sep(i) + renderedBlocks[i] + "\n", where sep(0)="" and sep(i>0)="\n".
+	// The cached prefix plus its freshly built suffix is byte-identical output.
 	//
 	// joinPrefixLines holds the prefix ALREADY SPLIT into single (newline-free) lines,
 	// so renderConversationLines can hand it straight to vp.SetContentLines (no Split,
@@ -274,20 +251,6 @@ type renderer struct {
 type joinPrefixState struct {
 	width  int
 	expand bool
-}
-
-// joinRenderKey is the validity key of the memoized conversation join. blockRenders
-// is the cache-miss counter captured AFTER the per-block walk: if it is unchanged
-// between two frames AND the block count / width / expand all match, no block
-// re-rendered, every block string is byte-identical to last frame, and the joined
-// string can be reused verbatim. (blockRenders is monotonic and only ever bumped on
-// a real renderBlockFresh, so an equal value across frames is a sound "nothing
-// changed" signal.)
-type joinRenderKey struct {
-	blockRenders int
-	nBlocks      int
-	width        int
-	expand       bool
 }
 
 // inputRenderKey is the validity key of the memoized input render: the complete
@@ -323,12 +286,14 @@ type mdEntry struct {
 
 // blockEntry is one memoized whole-block render: the block revision, wrap width,
 // and expand state it was produced under (the validity key) plus the rendered
-// ANSI output.
+// ANSI output. Tool entries retain the exact prepared card used to produce out,
+// so frame provenance does not prepare the same card again.
 type blockEntry struct {
-	rev    int
-	width  int
-	expand bool
-	out    string
+	rev      int
+	width    int
+	expand   bool
+	out      string
+	toolCard *preparedToolCard
 }
 
 // defaultBlockIndent is the left margin (cells) every conversation block is indented
@@ -421,13 +386,8 @@ func (r *renderer) resetBlockCaches() {
 	r.blockCache = map[int]blockEntry{}
 	r.blockMD = map[int]mdEntry{}
 	r.blockFrameCache = map[int]frameBlockEntry{}
-	// Drop the whole-conversation join memo too: it is built over blockCache, so the
-	// index reuse that aliases a stale block entry would equally alias a stale join.
-	r.joinValid = false
-	r.joinKey = joinRenderKey{}
-	// And the incremental-join prefix, for the same index-reuse reason: the prefix is
-	// the cached render of blocks [0, joinPrefixN), so a rebuilt conversation reusing
-	// those indices would otherwise serve a stale prefix.
+	// Drop the incremental-join prefix too: a rebuilt conversation reusing those
+	// indices would otherwise serve stale cached block renders.
 	r.joinPrefixLines = r.joinPrefixLines[:0]
 	r.joinPrefixProvenance = r.joinPrefixProvenance[:0]
 	r.joinPrefixN = 0
@@ -722,95 +682,27 @@ func stripVS16(s string) string {
 	}, s)
 }
 
-// renderConversation joins every block into the viewport content string. expand
-// is the global tool-output toggle (ctrl+t): when true, tool result bodies and
-// Edit/Write diffs render in full instead of line-capped.
-//
-// It is called on every flushed frame (frame-coalesced during streaming; see
-// update.go's renderTickMsg). TWO memo layers keep the per-frame cost off the
-// scrollback length: each SETTLED block joins from the per-block cache via
-// renderBlock (only blocks whose (rev, width, expand) changed render fresh), and
-// the WHOLE joined string is itself memoized in joinCache. A frame that re-renders
-// no block (blockRenders unchanged) at the same block count / width / expand
-// reuses the previous join verbatim, skipping the O(scrollback) Builder copy that
-// profiling showed dominated the per-frame cost on a long scrollback. The block
-// walk below still runs every frame (cheap on cache hits) so the live tail block
-// re-renders and bumps blockRenders — the signal that drives join invalidation.
-// (The viewport's SetContent line split is a separate, smaller cost, out of scope
-// here.)
-func (r *renderer) renderConversation(c *conversation, expand bool) string {
-	before := r.blockRenders
-	r.walkBlocks(c, expand)
-
-	// Fast path: no block re-rendered this frame and the join signature is
-	// unchanged, so the previously joined string is still byte-identical — reuse it
-	// without rebuilding the Builder.
-	//
-	// `r.blockRenders == before` is THE load-bearing invalidation signal: every
-	// render-visible mutation bumps the block's rev → blockCache miss →
-	// renderBlockFresh → blockRenders++, so any change to a block's output during
-	// this frame's walk trips this check (the cache-invalidation tests all exercise
-	// it). The joinKey {nBlocks, width, expand} fields are belt-and-suspenders, NOT
-	// dead code: they guard a future change that could alter the JOINED output
-	// WITHOUT re-rendering any block — e.g. a width- or expand-dependent join
-	// separator, or a block-count-dependent header — a case today's tests cannot
-	// reach (so they prove blockRenders, not the key). Keep them.
-	if r.joinValid && r.blockRenders == before &&
-		r.joinKey == (joinRenderKey{blockRenders: before, nBlocks: len(c.blocks), width: r.width, expand: expand}) {
-		return r.joinCache
-	}
-
-	var b strings.Builder
-	for i, s := range r.joinScratch {
-		if i > 0 {
-			b.WriteString(blockSepAfter(c.blocks, i-1))
-		}
-		b.WriteString(s)
-		b.WriteString("\n")
-	}
-	result := b.String()
-	// Record the POST-walk blockRenders so the NEXT frame compares against the value
-	// this join was built at: an intervening re-render bumps blockRenders past it and
-	// correctly misses the fast path.
-	r.joinCache = result
-	r.joinValid = true
-	r.joinKey = joinRenderKey{blockRenders: r.blockRenders, nBlocks: len(c.blocks), width: r.width, expand: expand}
-	return result
-}
-
-// walkBlocks renders every block (warming the per-block cache, re-rendering the
-// live tail) into the reused joinScratch buffer and returns firstChanged: the
-// LOWEST block index that re-rendered this frame (sentinel len(c.blocks) = nothing
-// changed). It detects a re-render by comparing blockRenders before/after each
-// renderBlock call — the same monotonic cache-miss counter the join memo keys on —
-// so it stays decoupled from renderBlock itself. firstChanged is the truncation
-// point the incremental-join prefix relies on: every block below it hit the cache
-// and is byte-identical to last frame, so the prefix [0, firstChanged) is reusable;
-// a NON-TAIL mutation lowers firstChanged to the mutated index, truncating the
-// prefix before it.
-func (r *renderer) walkBlocks(c *conversation, expand bool) (firstChanged int) {
-	firstChanged = len(c.blocks)
-	r.joinScratch = r.joinScratch[:0]
+// walkBlocks renders every block using the renderer-owned reusable backing slice.
+// It returns that render-pass output explicitly with the lowest changed block index.
+func (r *renderer) walkBlocks(c *conversation, expand bool) ([]string, int) {
+	firstChanged := len(c.blocks)
+	r.renderedBlocksScratch = r.renderedBlocksScratch[:0]
 	for i := range c.blocks {
 		before := r.blockRenders
-		r.joinScratch = append(r.joinScratch, r.renderBlock(i, &c.blocks[i], expand))
+		r.renderedBlocksScratch = append(r.renderedBlocksScratch, r.renderBlock(i, &c.blocks[i], expand))
 		if r.blockRenders != before && i < firstChanged {
 			firstChanged = i
 		}
 	}
-	return firstChanged
+	return r.renderedBlocksScratch, firstChanged
 }
 
-// renderConversationLines is the line-slice sibling of renderConversation: it
-// returns the conversation as a slice of single (newline-free) lines ready for
-// vp.SetContentLines, REUSING the cached prefix of settled blocks and only building
-// the changed suffix fresh each frame. This is the streaming-frame fast path — the
-// live tail re-renders every token, so the whole-join memo (joinCache) always
-// misses during streaming and a full O(scrollback) Builder copy fires every frame;
-// here only the (small) suffix is rebuilt.
+// renderConversationLines returns the conversation as single newline-free lines
+// ready for vp.SetContentLines. It reuses the cached prefix of settled blocks and
+// builds only the changed suffix.
 //
-// Canonical segment framing (identical to renderConversation's monolithic loop):
-// block i contributes sep(i) + scratch[i] + "\n" with sep(0)="" and sep(i>0)="\n".
+// Canonical segment framing: block i contributes sep(i) + renderedBlocks[i] +
+// "\n", where sep(0)="" and sep(i>0)="\n".
 // The prefix is the line-split of segments [0, prefixN); the suffix is the
 // line-split of segments [prefixN, n). prefixN = min(firstChanged, n): blocks below
 // firstChanged did NOT re-render, so they are byte-identical to last frame.
@@ -821,13 +713,8 @@ func (r *renderer) walkBlocks(c *conversation, expand bool) (firstChanged int) {
 // load-bearing guard: a NON-TAIL mutation lowers firstChanged (→ prefixN), a block
 // count shrink lowers prefixN, and a width/expand change re-renders EVERY block so
 // firstChanged drops to 0 (→ prefixN 0) — all three move prefixN away from the cached
-// joinPrefixN and force a rebuild. The joinPrefixKey (width, expand) compare is
-// therefore belt-and-suspenders, NOT separately load-bearing — exactly like the
-// joinKey {width, expand} fields on the whole-join memo: it guards a hypothetical
-// future where the prefix could change WITHOUT firstChanged dropping to 0 (e.g. a
-// width-dependent inter-block separator), a case today's render cannot reach. Keep
-// it for the same reason joinKey keeps its fields; removing it is not observable
-// because firstChanged already subsumes it (see the report's mutation note).
+// joinPrefixN and joinPrefixKey must both match: the former catches changed
+// blocks or length, while the latter guards width- and expand-dependent framing.
 //
 // The returned slice is freshly allocated EACH call (prefix lines appended into a
 // new backing array, then suffix lines), so vp.SetContentLines — which retains and
@@ -898,9 +785,8 @@ func blockBlankLinesAfter(blocks []block, i int) int {
 
 // renderBlock is the CACHED per-block entry point: it returns the memoized
 // render when the block's revision, the wrap width, and the expand toggle all
-// match the cached entry, and otherwise renders fresh via renderBlockFresh,
-// stores the result, and bumps blockRenders (the cache-miss test seam). idx is
-// the block's stable conversation index (blocks are append-only within a
+// match the cached entry, and otherwise renders fresh, stores the result, and
+// bumps blockRenders (the cache-miss test seam). idx is the block's stable conversation index (blocks are append-only within a
 // conversation; resetBlockCaches handles index reuse across rebuilds).
 // Correctness rests on the block.rev discipline: every post-append mutation of a
 // render-visible field bumps rev through a conversation gateway, so a cache hit
@@ -909,7 +795,17 @@ func (r *renderer) renderBlock(idx int, b *block, expand bool) string {
 	if e, ok := r.blockCache[idx]; ok && e.rev == b.rev && e.width == r.width && e.expand == expand {
 		return e.out
 	}
-	out := r.renderBlockFresh(idx, b, expand)
+	var (
+		out      string
+		toolCard *preparedToolCard
+	)
+	if b.kind == blockTool {
+		prepared := r.prepareToolCard(b, expand)
+		toolCard = &prepared
+		out = prepared.render()
+	} else {
+		out = r.renderBlockFresh(idx, b, expand)
+	}
 	// contentWidth preserves a positive width for a tiny renderer. A tool card uses
 	// that cell for its frameless fallback, so it cannot also carry the usual indent.
 	if b.kind != blockTool || r.width > r.indent {
@@ -926,7 +822,7 @@ func (r *renderer) renderBlock(idx int, b *block, expand bool) string {
 		// blocks through here.
 		r.blockCache = map[int]blockEntry{}
 	}
-	r.blockCache[idx] = blockEntry{rev: b.rev, width: r.width, expand: expand, out: out}
+	r.blockCache[idx] = blockEntry{rev: b.rev, width: r.width, expand: expand, out: out, toolCard: toolCard}
 	r.blockRenders++
 	// CORRECTNESS CHOKEPOINT (shared by BOTH render paths): a fresh render of a block
 	// inside the cached incremental-join prefix invalidates that prefix. The prefix
@@ -1372,62 +1268,6 @@ func deliveryBodyForDisplay(raw string) string {
 		s = s[nl+1:]
 	}
 	return s
-}
-
-// renderTool renders a tool-call card: status glyph + name + body, and, once
-// resolved, a truncated result body beneath it. For Edit/Write the args are
-// shown as a colourised diff instead of raw JSON (falling back to pretty JSON if
-// the args don't parse as the expected shape). expand removes the line cap on
-// the result body and the diff.
-func (r *renderer) renderTool(b *block, expand bool) string {
-	card, head, args, result := r.toolCardContent(b, expand)
-	if args != "" {
-		head += "\n" + args
-	}
-	if result != "" {
-		head += "\n" + result
-	}
-	return card.Render(head)
-}
-
-// toolCardContent prepares each semantic section before the card frame is
-// applied. The same sections drive both rendering and row provenance.
-func (r *renderer) toolCardContent(b *block, expand bool) (lipgloss.Style, string, string, string) {
-	card, _, bodyWidth := r.toolCardLayout()
-
-	var glyph, glyphText string
-	switch {
-	case !b.resolved:
-		glyphText = "…"
-		glyph = r.th.Style("toolName").Render(glyphText)
-	case b.resultError:
-		glyphText = "✗"
-		glyph = r.th.Style("toolErr").Render(glyphText)
-	default:
-		glyphText = "✓"
-		glyph = r.th.Style("toolOk").Render(glyphText)
-	}
-
-	// An MCP tool name (mcp__<server>__<tool>) renders a friendly "<Server> · <Tool>"
-	// head instead of the raw, noisy identifier (issue #24); the raw name is never
-	// lost — it reappears as a muted line when the card is expanded (ctrl+t), so the
-	// exact tool is always recoverable. A non-MCP/core tool keeps its plain head.
-	mcpName, isMCP := mcpTitle(b.toolName)
-	headLabel := sanitizeTerminal(b.toolName)
-	if isMCP {
-		headLabel = mcpName
-	}
-	head := renderToolHeader(glyph, glyphText, headLabel, r.th.Style("toolName"), bodyWidth)
-	if isMCP && expand {
-		head += "\n" + renderToolCardText(r.th.Style("muted"), sanitizeTerminal(b.toolName), bodyWidth)
-	}
-
-	args := r.renderToolArgs(b, expand, bodyWidth)
-	result := ""
-	if b.resolved {
-		result = r.renderToolResult(b, expand, bodyWidth)
-	}
-	return card, head, args, result
 }
 
 // toolCardLayout returns the styled card, its outer width, and its usable body

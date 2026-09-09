@@ -203,7 +203,7 @@ func BenchmarkScrollbackViewSteady(b *testing.B) {
 func BenchmarkSpinnerTickVPView(b *testing.B) {
 	m := buildScrollbackModel(b)
 	m.phase = phaseRunning
-	// Warm the render caches: refreshView populates blockCache/joinCache AND calls
+	// Warm the render caches: refreshView populates blockCache and calls
 	// invalidateVPView (the next vpView call re-caches). Then call View() to warm
 	// vpViewCache itself.
 	m.refreshView()

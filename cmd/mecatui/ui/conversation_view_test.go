@@ -20,19 +20,19 @@ func TestADR_0301_AnchorFallbackIsDeterministic(t *testing.T) {
 	m.conv.addUser("third")
 	m.refreshView()
 	priorID := m.conv.blocks[0].id
-	priorRow := m.view.frame.firstRegionRow(priorID, conversationRegionBody)
+	priorRow := m.conversationView.frame.firstRegionRow(priorID, conversationRegionBody)
 	if priorRow < 0 {
 		t.Fatal("first block has no body row")
 	}
 	m.vp.SetHeight(1)
 	m.vp.SetYOffset(priorRow)
-	m.view.mode = anchored
+	m.conversationView.mode = anchored
 	// Simulate a reconstructed document rendered through the same scratch-backed
 	// renderer while the prior viewport is still visible.
 	m.conv.blocks[0].id = 99
 	m.conv.blocks[0].rev++
 	m.refreshView()
-	if got := m.view.anchor.blockID; got != priorID {
+	if got := m.conversationView.anchor.blockID; got != priorID {
 		t.Fatalf("captured anchor block ID = %d, want prior viewport block ID %d", got, priorID)
 	}
 

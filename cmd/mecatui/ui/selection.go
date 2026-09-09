@@ -33,7 +33,7 @@ const (
 
 type selectionPoint struct {
 	blockID      uint64
-	region       regionID
+	region       regionKind
 	sourceOffset int
 	before       string
 	after        string
@@ -332,17 +332,28 @@ func selectedText(content string, sel selection) string {
 
 const selectionContextGraphemes = 16
 
-func selectionRowText(row renderedRow, line string) (text string, leading int) {
+func toolCardRowText(card *preparedToolCard, row renderedRow) string {
+	if card == nil {
+		return ""
+	}
+	rows := card.sectionRows(row.section)
+	if row.sectionRow < 0 || row.sectionRow >= len(rows) {
+		return ""
+	}
+	return rows[row.sectionRow]
+}
+
+func selectionRowText(frame renderedFrame, row renderedRow, line string) (text string, leading int) {
+	if row.kind == blockTool {
+		return toolCardRowText(frame.toolCards[row.blockID], row), row.leading
+	}
 	plain := ansi.Strip(line)
 	withoutIndent := plain
 	if row.indent > 0 {
 		withoutIndent = strings.TrimPrefix(withoutIndent, strings.Repeat(" ", row.indent))
 	}
 	withoutPresentation := withoutIndent
-	switch row.kind {
-	case blockTool:
-		withoutPresentation = strings.TrimPrefix(withoutPresentation, "│ ")
-	case blockAssistant:
+	if row.kind == blockAssistant {
 		withoutPresentation = strings.TrimPrefix(withoutPresentation, strings.Repeat(" ", assistantBodyHang))
 	}
 	leading = graphemeCount(plain) - graphemeCount(withoutPresentation)
@@ -357,7 +368,7 @@ func selectionPointFor(frame renderedFrame, line, col int) (selectionPoint, bool
 	if !row.text || row.blockID == 0 {
 		return selectionPoint{}, false
 	}
-	lineText, leading := selectionRowText(row, frame.lines[line])
+	lineText, leading := selectionRowText(frame, row, frame.lines[line])
 	offset := col - leading
 	if offset < 0 || offset > graphemeCount(lineText) {
 		return selectionPoint{}, false
@@ -398,7 +409,7 @@ func resolveSelectionPoint(frame renderedFrame, point selectionPoint) (int, int,
 		if row.blockID != point.blockID || row.region != point.region || !row.text {
 			continue
 		}
-		text, leading := selectionRowText(row, frame.lines[i])
+		text, leading := selectionRowText(frame, row, frame.lines[i])
 		for offset := 0; offset <= graphemeCount(text); offset++ {
 			if row.sourceOffset+offset != point.sourceOffset {
 				continue

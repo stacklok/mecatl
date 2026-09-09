@@ -69,9 +69,10 @@ mecatui's client-only rendering boundary in [`docs/tui.md`](../tui.md).
 - AC1.7: A selection records logical endpoints, copied ANSI-free text, and up
   to sixteen grapheme clusters of endpoint context. It survives a reflow or live
   append when the contexts resolve and copied text is unchanged, and clears
-  rather than copying altered text when they do not. A pending streamed delta
-  followed by selection and copy uses current conversation content rather than a
-  stale pre-flush frame.
+  rather than copying altered text when they do not. During a pending streamed
+  delta, selection and copy use the visible displayed frame, not newer hidden
+  conversation content; the next ordinary render applies the same logical proof
+  to preserve or clear the selection.
   - verify: `TestADR_0301_SelectionPreservesLiveStableText`
 - AC1.8: The normal inactive-selection, collapsed-card path retains cached
   prefix reuse and frame coalescing without a second rendered transcript.

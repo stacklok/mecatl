@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -51,6 +53,173 @@ func TestADR_0301_RenderedFrameProvenanceMatchesLines(t *testing.T) {
 	}
 	if frame.appendixID != c.changedFilesAppendixID {
 		t.Fatalf("expanded appendix ID = %d, want %d", frame.appendixID, c.changedFilesAppendixID)
+	}
+}
+
+// TestExpandedReasoningProvenanceUsesWrappedRows pins the narrow-width path where
+// the caveat and reasoning body wrap into more rows than the unwrapped source.
+func TestExpandedReasoningProvenanceUsesWrappedRows(t *testing.T) {
+	c := &conversation{}
+	c.startAssistant()
+	c.appendReasoning("first deliberately long reasoning sentence wraps across several visible rows")
+	c.appendAssistant("BODY-START appears only after the reasoning summary")
+
+	r := newCacheRenderer()
+	r.setWidth(24)
+	frame := r.renderConversationFrame(c, true)
+	if got, want := len(frame.provenance), len(frame.lines); got != want {
+		t.Fatalf("provenance rows = %d, rendered lines = %d", got, want)
+	}
+
+	assistant := &c.blocks[0]
+	wantReasoningRows := len(strings.Split(r.renderReasoning(assistant, true), "\n"))
+	if wantReasoningRows <= 3 {
+		t.Fatalf("narrow reasoning render has %d rows, want wrapping beyond the unwrapped rows", wantReasoningRows)
+	}
+	firstReasoning := frame.firstRegionRow(assistant.id, conversationRegionReasoning)
+	if firstReasoning < 0 {
+		t.Fatal("expanded reasoning rows missing from provenance")
+	}
+	for i := 0; i < wantReasoningRows; i++ {
+		if got := frame.provenance[firstReasoning+i].region; got != conversationRegionReasoning {
+			t.Fatalf("reasoning render row %d has region %v, want reasoning", i, got)
+		}
+	}
+	firstBody := firstReasoning + wantReasoningRows
+	if got := frame.provenance[firstBody].region; got != conversationRegionBody {
+		t.Fatalf("row after all %d rendered reasoning rows has region %v, want body", wantReasoningRows, got)
+	}
+	if got := stripANSIstr(frame.lines[firstBody]); !strings.Contains(got, "BODY-START") {
+		t.Fatalf("first body row = %q, want BODY-START", got)
+	}
+}
+
+// TestToolCardPreparationIsSharedWithFrameProvenance pins phase 1 of the tool-card
+// repair: a matching block cache entry owns the one prepared card used for both
+// its rendered output and frame provenance. The same cache axes must invalidate it.
+func TestToolCardPreparationIsSharedWithFrameProvenance(t *testing.T) {
+	c := &conversation{}
+	c.addTool("call", "Read", `{"path":"main.go"}`)
+	r := newCacheRenderer()
+
+	assertFrame := func(step string, wantPrepares int) {
+		t.Helper()
+		got := r.renderConversationFrame(c, false)
+		if r.toolCardPrepares != wantPrepares {
+			t.Fatalf("%s: prepareToolCard calls = %d, want %d", step, r.toolCardPrepares, wantPrepares)
+		}
+		entry, ok := r.blockCache[0]
+		if !ok || entry.toolCard == nil {
+			t.Fatalf("%s: matching tool block cache entry did not retain its prepared card", step)
+		}
+
+		fresh := newCacheRenderer()
+		fresh.setWidth(r.width)
+		want := fresh.renderConversationFrame(c, false)
+		if strings.Join(got.lines, "\n") != strings.Join(want.lines, "\n") {
+			t.Fatalf("%s: cached frame lines diverged from fresh render", step)
+		}
+		if !slices.Equal(got.provenance, want.provenance) {
+			t.Fatalf("%s: cached frame provenance diverged from fresh render", step)
+		}
+	}
+
+	assertFrame("fresh", 1)
+	assertFrame("steady cache hit", 1)
+	if !c.resolveTool("call", "package main", false) {
+		t.Fatal("resolveTool failed")
+	}
+	assertFrame("tool mutation", 2)
+	r.setWidth(48)
+	assertFrame("resize", 3)
+	// render at the changed expand axis directly so it covers the block-cache key.
+	frame := r.renderConversationFrame(c, true)
+	if r.toolCardPrepares != 4 {
+		t.Fatalf("expand change: prepareToolCard calls = %d, want 4", r.toolCardPrepares)
+	}
+	fresh := newCacheRenderer()
+	fresh.setWidth(r.width)
+	want := fresh.renderConversationFrame(c, true)
+	if strings.Join(frame.lines, "\n") != strings.Join(want.lines, "\n") || !slices.Equal(frame.provenance, want.provenance) {
+		t.Fatal("expand change: cached frame diverged from fresh render")
+	}
+}
+
+// TestToolCardPreparedSectionsDriveFrameProvenanceAndSelection pins that tool
+// arguments/results retain only references into the prepared card. Canonical text
+// is resolved from the frame-pinned card, so decoration is never parsed and a
+// later render cannot change an already-visible frame's provenance source.
+func TestToolCardPreparedSectionsDriveFrameProvenanceAndSelection(t *testing.T) {
+	c := &conversation{}
+	c.addTool("call", "Read", `{"path":"TOOLARGMARKER deliberately wraps across the card"}`)
+	c.resolveTool("call", "TOOLRESULTMARKER deliberately wraps across the card", false)
+	r := newCacheRenderer()
+	r.setWidth(32)
+	narrow := r.renderConversationFrame(c, true)
+
+	for i := 0; i < reflect.TypeOf(renderedRow{}).NumField(); i++ {
+		field := reflect.TypeOf(renderedRow{}).Field(i)
+		if field.Type.Kind() == reflect.String {
+			t.Fatalf("provenance retains text field %q", field.Name)
+		}
+	}
+
+	var points []selectionPoint
+	for _, tc := range []struct {
+		region regionKind
+		marker string
+	}{
+		{conversationRegionArguments, "TOOLARGMARKER"},
+		{conversationRegionResult, "TOOLRESULTMARKER"},
+	} {
+		found := false
+		for i, row := range narrow.provenance {
+			if row.region != tc.region {
+				continue
+			}
+			text := toolCardRowText(narrow.toolCards[row.blockID], row)
+			if !strings.Contains(text, tc.marker) {
+				continue
+			}
+			if row.section < 0 || row.sectionRow < 0 {
+				t.Fatalf("%s row lacks structural prepared-card reference: %#v", tc.marker, row)
+			}
+			offset := strings.Index(text, tc.marker) + len("TOOL")
+			point, ok := selectionPointFor(narrow, i, row.leading+offset)
+			if !ok {
+				t.Fatalf("%s selection point was rejected", tc.marker)
+			}
+			if point.region != tc.region || point.sourceOffset != row.sourceOffset+offset || point.before == "" || point.after == "" {
+				t.Fatalf("%s point = %#v, row = %#v", tc.marker, point, row)
+			}
+			points = append(points, point)
+			found = true
+			break
+		}
+		if !found {
+			t.Fatalf("%s row missing from frame", tc.marker)
+		}
+	}
+
+	// This mirrors conversationView's visible-frame ownership: provenance rows are
+	// copied out of render scratch while cards remain shared immutable cache values.
+	visible := narrow
+	visible.provenance = append([]renderedRow(nil), narrow.provenance...)
+
+	// Replacing the renderer cache at a different width must not affect the
+	// canonical source used by the still-visible narrow frame.
+	r.setWidth(64)
+	wide := r.renderConversationFrame(c, true)
+	if visible.toolCards[c.blocks[0].id] == wide.toolCards[c.blocks[0].id] {
+		t.Fatal("resize did not replace the cached prepared card")
+	}
+	for _, point := range points {
+		if _, _, ok := resolveSelectionPoint(visible, point); !ok {
+			t.Fatalf("narrow frame lost exact prepared-card source for %#v", point)
+		}
+		if _, _, ok := resolveSelectionPoint(wide, point); !ok {
+			t.Fatalf("wrapped point did not resolve after reflow: %#v", point)
+		}
 	}
 }
 
@@ -141,7 +310,116 @@ func TestADR_0301_ScrollbackFrameRetainsLinearMetadataOnly(t *testing.T) {
 	if got := m.rend.blockRenders - before; got != 1 {
 		t.Fatalf("coalesced frame re-rendered %d blocks, want 1", got)
 	}
-	if got, want := len(m.view.frame.provenance), len(m.view.frame.lines); got != want {
+	if got, want := len(m.conversationView.frame.provenance), len(m.conversationView.frame.lines); got != want {
 		t.Fatalf("normal-path provenance rows = %d, lines = %d", got, want)
+	}
+}
+
+// TestToolCardFrameHardwrapsLongCollapsedArgumentRowsRegression pins the
+// review-batch-shaped collapsed card that previously left an unbroken argument
+// row for lipgloss to wrap during decoration. That yielded more visible card
+// rows than prepared provenance rows and panicked frame assembly.
+func TestToolCardFrameHardwrapsLongCollapsedArgumentRowsRegression(t *testing.T) {
+	const argument = "review_batch_5d3f2bc9d6204a508d6b79a8b2e3f1c4"
+
+	c := &conversation{}
+	c.addTool("review-batch", "review-batch", `{"`+argument+`":"ready"}`)
+	r := newCacheRenderer()
+	r.setWidth(24)
+
+	frame := r.renderConversationFrame(c, false)
+	if got, want := len(frame.provenance), len(frame.lines); got != want {
+		t.Fatalf("provenance rows = %d, rendered lines = %d", got, want)
+	}
+
+	offset := 0
+	argumentRows := 0
+	for _, row := range frame.provenance {
+		if row.region != conversationRegionArguments {
+			continue
+		}
+		if !row.text {
+			t.Fatal("argument row is not semantic text")
+		}
+		text := toolCardRowText(frame.toolCards[row.blockID], row)
+		if row.sourceOffset != offset {
+			t.Fatalf("argument source offset = %d, want %d for %q", row.sourceOffset, offset, text)
+		}
+		offset += graphemeCount(text)
+		argumentRows++
+	}
+	if argumentRows < 2 {
+		t.Fatalf("long collapsed argument rendered in %d rows, want hard-wrapped rows", argumentRows)
+	}
+}
+
+// TestToolCardFrameProvenanceSurvivesNarrowResizeRegression covers the narrow
+// card path where lipgloss reflows ANSI-styled card sections while applying the
+// frame. Resizing through every practical terminal width must retain one semantic
+// row per rendered line for both unresolved arguments and resolved card results.
+func TestToolCardFrameProvenanceSurvivesNarrowResizeRegression(t *testing.T) {
+	const (
+		green = "\x1b[38;5;42m"
+		blue  = "\x1b[38;5;39m"
+		reset = "\x1b[0m"
+	)
+
+	c := &conversation{}
+	c.addTool("unresolved", "Read", `{"path":"`+green+`UNRESOLVED-`+strings.Repeat("argument-", 12)+reset+`"}`)
+	c.addTool("resolved", "Read", `{"path":"`+blue+`RESOLVED-`+strings.Repeat("argument-", 12)+reset+`"}`)
+	c.resolveTool("resolved", blue+`RESOLVED-`+strings.Repeat("result ", 24)+reset, false)
+	r := newCacheRenderer()
+
+	widths := make([]int, 0, 124)
+	for width := 1; width <= 120; width++ {
+		widths = append(widths, width)
+	}
+	// Revisit both extremes after the contiguous sweep: cache reuse across repeated
+	// narrow/wide transitions is the resize path that previously lost row metadata.
+	widths = append(widths, 1, 120, 1, 120)
+	for _, width := range widths {
+		r.setWidth(width)
+		frame := r.renderConversationFrame(c, false)
+		if got, want := len(frame.provenance), len(frame.lines); got != want {
+			t.Fatalf("width %d: provenance rows = %d, rendered lines = %d", width, got, want)
+		}
+
+		want := make([]string, 0, len(frame.lines))
+		for i := range c.blocks {
+			if i > 0 {
+				for range blockBlankLinesAfter(c.blocks, i) {
+					want = append(want, "")
+				}
+			}
+			want = append(want, strings.Split(r.renderBlock(i, &c.blocks[i], false), "\n")...)
+		}
+		want = append(want, "")
+		if !slices.Equal(frame.lines, want) {
+			t.Fatalf("width %d: frame changed rendered bytes\n got: %q\nwant: %q", width, frame.lines, want)
+		}
+
+		seen := map[uint64]map[regionKind]bool{}
+		for row, provenance := range frame.provenance {
+			if provenance.region == conversationRegionUnknown {
+				t.Fatalf("width %d: line %d has no provenance", width, row)
+			}
+			if seen[provenance.blockID] == nil {
+				seen[provenance.blockID] = map[regionKind]bool{}
+			}
+			seen[provenance.blockID][provenance.region] = true
+		}
+		for _, tc := range []struct {
+			blockID uint64
+			region  regionKind
+			name    string
+		}{
+			{c.blocks[0].id, conversationRegionArguments, "unresolved arguments"},
+			{c.blocks[1].id, conversationRegionArguments, "resolved arguments"},
+			{c.blocks[1].id, conversationRegionResult, "resolved result"},
+		} {
+			if !seen[tc.blockID][tc.region] {
+				t.Fatalf("width %d: %s has no provenance row", width, tc.name)
+			}
+		}
 	}
 }
