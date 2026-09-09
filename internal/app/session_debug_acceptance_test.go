@@ -226,8 +226,8 @@ func TestSessionDebuggerCrossBoundaryAcceptance(t *testing.T) {
 	debugID := created.GetSessionId()
 	root, _ := converseDebugAcceptance(t, client, debugID, "Diagnose and draft a GitHub issue; do not publish it.", mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_UNSPECIFIED)
 	for call, wants := range map[string][]string{
-		"status":     {`"latest_run_counters"`, `"lifetime_event_log"`},
-		"related":    {`"subagent"`, `"parallel"`, `"team"`, `"schedule"`, `"pruned"`},
+		"status":  {`"latest_run_counters"`, `"lifetime_event_log"`},
+		"related": {`"subagent"`, `"parallel"`, `"team"`, `"schedule"`, `"pruned"`},
 		// delegation rows are proof-gated to currently-RETAINED direct lineage
 		// (ADR 0299): the pruned parallel branch and the schedule kind (not yet
 		// wired to a lineage-provable join) are correctly absent here, unlike
