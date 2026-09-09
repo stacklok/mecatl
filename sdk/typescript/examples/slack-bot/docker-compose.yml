@@ -39,8 +39,14 @@ services:
 
   slack-bot:
     build:
-      context: ../..
-      dockerfile: examples/slack-bot/docker/bot.Dockerfile
+      context: .
+      dockerfile: docker/bot.Dockerfile
+      # @stacklok/mecatl-sdk installs from GitHub Packages during the build
+      # (see the Dockerfile's own header comment) — needs a read:packages
+      # token. Passed as a build secret, never a build arg/env (those leak
+      # into image layer history).
+      secrets:
+        - npm_token
     depends_on:
       mecated:
         condition: service_healthy
@@ -57,3 +63,9 @@ services:
 
 volumes:
   mecatl-workspace:
+
+secrets:
+  # TODO: once @stacklok/mecatl-sdk is on public npm, this secret and its
+  # GH_PACKAGES_TOKEN source (see .env.example) stop being needed entirely.
+  npm_token:
+    environment: GH_PACKAGES_TOKEN

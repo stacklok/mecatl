@@ -136,10 +136,20 @@ class approach looked correct on paper and silently didn't work. Treat it
 as unproven until someone actually tags the bot in a real channel and
 confirms both the initial reply and the no-re-mention thread continuation.
 
+**`chat.startStream`/`appendStream`/`stopStream` real token streaming and
+`agent_session_stopped` → `run.cancel()` are now implemented** (`src/bridge.ts`,
+`src/agentSessions.ts`). Streaming passes `recipient_user_id`/`recipient_team_id`
+best-effort on `chat.startStream` to address the community-reported
+`missing_recipient_team_id` channel gap named above — **still unverified live**,
+same "built from docs, not yet tested against a real workspace" caveat as
+channel support generally. Any streaming failure (that one included) is
+treated as non-fatal: `SlackTextStream` falls back to a single final `say()`
+with the run's full text, exactly as this section's original plan describes,
+rather than failing the whole prompt. Verify both the happy path and the
+fallback against a real channel before trusting this fully.
+
 Not yet implemented — additive later, not a rewrite:
 
-- `chat.startStream`/`appendStream`/`stopStream` real token streaming.
-- `agent_session_stopped` → `run.cancel()` (Slack's native stop button).
 - `suspended` status + Block Kit approve/deny UI for manual permission
   review.
 - Per-run token/spend budget — the TypeScript SDK (M1) doesn't yet expose a
@@ -193,8 +203,9 @@ and several smaller gaps; addressed in the same change:
   section — the docs alone got the DM path wrong once already. Don't
   advertise channel support as working until it's actually been tested
   live.
-- The manual-approval experiment, native streaming, and stop-button wiring
-  may simply not ship — unchanged from the original plan.
+- The manual-approval experiment may simply not ship — unchanged from the
+  original plan. Native streaming and stop-button wiring did ship, but
+  streaming's channel behavior is unverified live — see the note above.
 
 ## See also
 

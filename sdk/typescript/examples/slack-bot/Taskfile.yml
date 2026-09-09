@@ -1,21 +1,14 @@
 version: '3'
 
 tasks:
-  build-sdk:
-    desc: Build the local @stacklok/mecatl-sdk dist this example links against
-    dir: ../..
-    sources:
-      - src/**/*.ts
-      - package.json
-      - tsconfig*.json
-    generates:
-      - dist/**/*
-    cmds:
-      - task build
-
   install:
-    desc: Install the Slack bot example's dependencies from the frozen pnpm lockfile
-    deps: [build-sdk]
+    desc: |
+      Install the Slack bot example's dependencies from the frozen pnpm lockfile.
+      @stacklok/mecatl-sdk installs from GitHub Packages (no public npm registry
+      yet — TODO: drop the auth requirement below once it has one), so this
+      needs a read:packages-scoped token. Set NODE_AUTH_TOKEN before running:
+        NODE_AUTH_TOKEN=$(gh auth token) task install
+      CI supplies it from the job's own GITHUB_TOKEN (see ci.yml).
     sources:
       - package.json
       - pnpm-lock.yaml
