@@ -65,7 +65,7 @@ For example, `/etc/mecatl/agents/code-reviewer.md` can contain:
 name: code-reviewer
 description: Reviews source code without changing it.
 tools: [Read, Grep]
-disallowedTools: [Write, Bash]
+disallowedTools: [Write, Shell]
 ---
 Review the requested code and return findings with file and line references.
 ```
@@ -177,7 +177,7 @@ A decision resolves in this order:
 
 There is **one narrow exception** to "ask beats allow": a higher-scope configured
 **Allow** may loosen *only* the built-in `BuiltinDefault` Ask floor (for example,
-allowing `Bash(go test:*)` relaxes the built-in Bash ask). It can **never** suppress
+allowing `Shell(go test:*)` relaxes the built-in Shell ask). It can **never** suppress
 a *configured* Ask, and it can never out-rank a deny in any scope.
 
 A `deny` or `ask` carries a human-readable reason: surfaced to the model on a deny
@@ -210,7 +210,7 @@ mutate:
 | Tool | Default effect |
 |---|---|
 | `Read`, `ListDir`, `Grep`, `Glob`, `WebFetch`, `WebSearch`, `Subagent` | `allow` |
-| `Bash`, `Edit`, `Write`, `Copy`, `Move`, `Remove`, `Team`, `SkillDraft` | `ask` |
+| `Shell`, `Edit`, `Write`, `Copy`, `Move`, `Remove`, `Team`, `SkillDraft` | `ask` |
 
 (The memory tools, the synthetic `soul:apply` action, and the read-only child
 observability tools are also floor-scoped allows — pre-approved but overridable by
@@ -233,9 +233,9 @@ permission policy's `Learn` path, which derives a per-session rule so the same c
 is not re-asked. A learned allow is consulted at the **lowest** scope only — it can
 never override a deny or a configured ask.
 
-### Compound Bash and substitution safety
+### Compound Shell and substitution safety
 
-For `Bash`, the evaluator splits a compound command line (`&&`, `||`, `;`, `|`, a
+For `Shell`, the evaluator splits a compound command line (`&&`, `||`, `;`, `|`, a
 bare `&`, newlines, honouring quotes) and requires **every** sub-command to pass;
 the **worst** outcome wins. So `git status && rm -rf /` inherits the deny/ask from
 the `rm` segment even if `git status` alone would be allowed.
@@ -249,8 +249,8 @@ by posture — see below — but only for read-only inners.)
 ### Plan mode
 
 When a session is in `plan` mode, the evaluator gates *before* the rule engine:
-`Edit` and `Write` are unconditionally **denied**, and any non-read-only `Bash`
-command is **denied**. Read-only tools and read-only Bash fall through to the rules.
+`Edit` and `Write` are unconditionally **denied**, and any non-read-only `Shell`
+command is **denied**. Read-only tools and read-only Shell fall through to the rules.
 The deny reason tells the model to present a plan and exit plan mode first.
 
 **Getting out of plan mode.** Once the model has a complete plan, it calls the
@@ -281,18 +281,18 @@ reference](/reference/http-sse-api.md) for wire behavior.
 ```yaml
 permissions:
   allow:
-    - "Bash(go test:*)"   # the "prefix:*" form, normalised to the glob "go test*"
-    - "Bash(go build*)"   # native glob form
+    - "Shell(go test:*)"   # the "prefix:*" form, normalised to the glob "go test*"
+    - "Shell(go build*)"   # native glob form
     - "Read"              # bare tool name = tool-wide
   ask:
-    - "Bash(git push:*)"
+    - "Shell(git push:*)"
   deny:
-    - "Bash(rm:*)"        # deny wins absolutely, in any scope — binds children too
+    - "Shell(rm:*)"        # deny wins absolutely, in any scope — binds children too
   subagent:
     deny:
-      - "Bash(gh pr merge:*)"   # tighten a child's Bash beyond the main rules
+      - "Shell(gh pr merge:*)"   # tighten a child's Shell beyond the main rules
     allow:
-      - "Bash(go vet:*)"        # clears this from a child's substitution-floored ask
+      - "Shell(go vet:*)"        # clears this from a child's substitution-floored ask
 ```
 
 Each entry is a rule spec `Tool(pattern)` or a bare `Tool`. Config rules use **glob**
@@ -374,7 +374,7 @@ cannot `echo $OPENROUTER_API_KEY` or `cat /proc/self/environ` to read a provider
 
 The FS tools (`Read`/`Write`/`Edit`) are rooted at the session workspace; a path that
 resolves outside it used to be a dead end — the call failed with a path-escape error and
-the model fell back to an opaque Bash `cat /path`, losing the FS tools' invariants and
+the model fell back to an opaque Shell `cat /path`, losing the FS tools' invariants and
 audit shape. The posture now decides what an out-of-workspace escape does instead:
 
 | Posture | Read escape | Write escape |
@@ -388,12 +388,12 @@ audit shape. The posture now decides what an out-of-workspace escape does instea
   out-of-workspace call never learns a rule that pre-approves the next one. A configured
   `deny` or configured `ask` always wins over the posture row (deny-dominance and the
   configured-Ask floor are untouched), and **plan mode still hard-denies writes first**.
-- **Bash parity.** At `auto`/`yolo` a Bash `cat /outside` already reads the same bytes,
+- **Shell parity.** At `auto`/`yolo` a Shell `cat /outside` already reads the same bytes,
   so an un-asked read boundary on the FS tools was cosmetic; writes are never silent
   below `yolo`.
 - **Never relaxed, at any posture:** paths under `/proc`, `/sys`, or `/dev` are a hard
   deny everywhere. An in-process Read of `/proc/self/environ` would expose the *server's*
-  raw, unscrubbed environment — a channel the env-scrubbed Bash parity path does not
+  raw, unscrubbed environment — a channel the env-scrubbed Shell parity path does not
   provide — so the parity premise does not extend there. **Child agents** (subagents,
   team members, parallel branches) also never get the relax at any posture: only the
   main session's workspace carries it, and a child that shares the parent's workspace is
@@ -540,7 +540,7 @@ three verdicts:
 - **Allow once** — the call runs, this time only.
 - **Allow & don't ask again** — the call runs, and the harness arms a **session-scoped
   waiver**: a later call matching the *exact* tool and the *exact* normalized command
-  (`Bash`) or arguments (any other tool) skips the checker for the rest of the
+  (`Shell`) or arguments (any other tool) skips the checker for the rest of the
   session. Matching is exact — never a substring, never a blanket per-tool bypass —
   so approving one `gh pr merge` call never waves through an unrelated one. The
   waiver is in-memory only and does not survive a process restart.
@@ -568,28 +568,28 @@ and no explicit rule list, guardrails are on with the **default block ruleset**:
 | `WebSearch` | pre + post | block |
 | `WebFetch` | post | block |
 | `mcp__*` (all MCP tools) | pre + post | block |
-| `Bash` | pre | block (read-only commands skip the checker) |
+| `Shell` | pre | block (read-only commands skip the checker) |
 
 The other local tools (`Read`/`Edit`/`Write`/`Grep`/`Glob`) are deliberately not
 matched — they have no outward reach, and `Edit`/`Write` are workspace mutations git
-already covers as the rollback layer. `Bash` **is** matched, because the shell is an
+already covers as the rollback layer. `Shell` **is** matched, because the shell is an
 agent's single largest blast radius: it can push, merge, delete, or exfiltrate, and a
 guardrail that ignores it misses exactly that surface (the motivating incident was an
-agent running `gh pr merge --squash` as a `Bash` call and merging its own PR
+agent running `gh pr merge --squash` as a `Shell` call and merging its own PR
 unattended, with guardrails never seeing it).
 
 Inspecting every shell command would be an unacceptable latency/cost tax on the `ls` /
-`grep` / `git status` traffic that dominates a session, so the default `Bash` rule
+`grep` / `git status` traffic that dominates a session, so the default `Shell` rule
 carries a **read-only pre-filter**: a command that is confidently read-only (the same
 classifiers Layer 1's rule engine uses) skips the checker entirely — zero LLM calls.
 Anything else — a mutating or outward command, an unrecognized verb, or a substitution
 it can't prove read-only — falls through to inspection; ambiguity always fails toward
 inspecting, never skipping.
 
-The default `Bash` rule also swaps in a **Bash-specific rubric** in place of the
+The default `Shell` rule also swaps in a **Shell-specific rubric** in place of the
 generic exfiltration prompt used for the network/MCP rules — the generic rubric's
 "if uncertain, judge unsafe" false-positives badly on ordinary shell work (a write to
-a sibling repo never leaves the machine, so it isn't exfiltration). The Bash rubric
+a sibling repo never leaves the machine, so it isn't exfiltration). The Shell rubric
 instead judges a command **safe unless it names one of five concrete danger
 categories**: (1) sending data off the machine to a network destination, especially
 secrets; (2) fetching and executing remote code (`curl … | sh`); (3) an irreversible
@@ -617,7 +617,7 @@ guardrails:
       mode: block
     - match: "mcp__*"        # all MCP tools, both directions
       mode: advisory         # observe first, tune later
-    - match: "Bash"          # outbound exfil in shell args
+    - match: "Shell"          # outbound exfil in shell args
       phases: ["pre"]
       mode: sanitize         # trusts the checker's rewrite — use only with a trusted checker
       failClosed: true       # a checker outage treats the content as UNSAFE (default is fail-OPEN)
@@ -663,7 +663,7 @@ restart, the harness re-enters the loop at the pending ask when the verdict arri
 
 In `mecatui` the approval modal shows the args up front: the command renders in
 bright text with a left accent bar so it reads distinct from the surrounding
-metadata, long args **wrap** (a `Bash` ask decodes to the command text, never a
+metadata, long args **wrap** (a `Shell` ask decodes to the command text, never a
 raw JSON blob) and **scroll** inside the card, and `ctrl+t` opens a full-screen
 scrollable view of the whole arguments with the verdict buttons pinned at the
 bottom.

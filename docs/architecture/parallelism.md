@@ -50,14 +50,14 @@ read-parallel / mutate-serial is unaffected.
 
 The same seam serves **agent teams** (`agent.Supervisor`/`TeamTool`) with a
 **three-tier** member workspace policy. A Mutating member forks **force-copy** (own
-`.git`, via `forker.WithForceCopy`) and gets Edit/Write/Bash; a read-only member the
+`.git`, via `forker.WithForceCopy`) and gets Edit/Write/Shell; a read-only member the
 factory marks `MemberBuild.IsolateReadOnly` forks **worktree** (the forker DEFAULT —
 shares the base repo's `.git`, so it sees full history) and gets Read/Grep/Glob +
-Bash but never Edit/Write, so it can `git log`/`git show`/build/test confined to a
+Shell but never Edit/Write, so it can `git log`/`git show`/build/test confined to a
 throwaway checkout; a base-sharing read-only member (no forker wired) gets NO shell.
 The Supervisor holds two forkers (`s.forker` force-copy, `s.roForker` worktree); the
 mutating-tool backstop gates on base-sharing, exempting any isolated member. A
-read-only member's Bash runs through a **sandboxed** runner
+read-only member's Shell runs through a **sandboxed** runner
 (`buildSandboxedCommandRunner`) that neutralises git config-driven code execution in
 the shared `.git`. The single neutralizing env lives in the stdlib-only leaf
 `internal/adapter/gitenv` (`Scrub`) so the **forker's own git** (whose `git worktree
@@ -66,7 +66,7 @@ member runner share it and can't drift: `Scrub` drops inherited `GIT_*` danger
 (`GIT_EXTERNAL_DIFF`/`GIT_SSH_COMMAND`/…) and forces `core.hooksPath=/dev/null`,
 `core.pager=cat`, `core.fsmonitor=false`, empty `diff.external`, `GIT_PAGER`/`PAGER=cat`,
 `GIT_CONFIG_NOSYSTEM`. The main session keeps its unhardened runner. **The Subagent
-subagent ([subagents & teams](subagents-and-teams.md)) shares this exact treatment**: when Bash is configured `SubagentTool` holds
+subagent ([subagents & teams](subagents-and-teams.md)) shares this exact treatment**: when Shell is configured `SubagentTool` holds
 its own worktree forker (`WithChildForker`) and forks each child into a throwaway
 worktree, with the SAME `buildSandboxedCommandRunner` + `gitenv` hardening and the
 SAME untrusted-`.gitattributes` residual; the workspace-trust gate (issue #40,

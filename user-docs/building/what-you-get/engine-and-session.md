@@ -75,14 +75,14 @@ for ev := range run.Events() {
 | What | Type | What it does |
 |---|---|---|
 | **Environment** | `tool.Environment` | Binds the non-nil filesystem workspace, optional command runner, and environment identity for this run. |
-| **Catalog** | `*tool.Catalog` (on `Deps`) | The tool registry. Holds `Read`, `Write`, `Edit`, `Bash`, MCP servers, and any custom tools you register. The engine reads `Specs(mode)` to tell the model what it can do. |
+| **Catalog** | `*tool.Catalog` (on `Deps`) | The tool registry. Holds `Read`, `Write`, `Edit`, `Shell`, MCP servers, and any custom tools you register. The engine reads `Specs(mode)` to tell the model what it can do. |
 | **LLMProvider** | `port.LLMProvider` (on `Deps`) | The model backend. The engine calls `Stream(ctx, LLMRequest)` and receives a neutral chunk stream. The OpenAI and Anthropic adapters ship out of the box; implement this interface to bring your own. |
 
 ---
 
 ## What "subagent" and "team" mean
 
-Neither is a new object type. A **subagent** gets its own pre-built child `Engine` — wired at composition time with a scoped-down catalog (read-only tools by default, no Bash), its own permission policy, and optionally a different model. The parent holds a handle to the child's run through the `SubagentStatus` tool. A **team** is a `Supervisor` coordinating a set of member engines, each similarly pre-built with its own scoped engine. In all cases the individual unit of work is still `Engine.Run(session)` — the structure is the same, but each child runs through its own engine, not the parent's.
+Neither is a new object type. A **subagent** gets its own pre-built child `Engine` — wired at composition time with a scoped-down catalog (read-only tools by default, no Shell), its own permission policy, and optionally a different model. The parent holds a handle to the child's run through the `SubagentStatus` tool. A **team** is a `Supervisor` coordinating a set of member engines, each similarly pre-built with its own scoped engine. In all cases the individual unit of work is still `Engine.Run(session)` — the structure is the same, but each child runs through its own engine, not the parent's.
 
 ---
 

@@ -1,12 +1,16 @@
 package permconfig
 
 import (
+	"context"
 	"os"
 	"testing"
 
 	"github.com/goccy/go-yaml"
 
+	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/governance"
+	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/engine/tool"
 )
 
 func TestParseYAMLLoad(t *testing.T) {
@@ -187,5 +191,34 @@ func TestNormalizeGlob(t *testing.T) {
 		if got := normalizeGlob(in); got != want {
 			t.Fatalf("normalizeGlob(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestCanonicalShellTool_Scenario2_LegacyConfigPreservesDeny(t *testing.T) {
+	cfg, err := parseYAML([]byte(`
+permissions:
+  allow: ["Bash(go test:*)"]
+  deny: ["Bash(go test:*)"]
+guardrails:
+  model: checker
+  rules:
+    - match: Bash
+`))
+	if err != nil {
+		t.Fatalf("parseYAML: %v", err)
+	}
+
+	var report Report
+	rules := rulesFromConfig(cfg, governance.ScopeSharedProject, &report)
+	decision := permpolicy.NewPolicy(rules, nil).Evaluate(context.Background(), "legacy", session.ModeDefault, session.NewToolCall("shell", tool.ShellToolName, []byte(`{"command":"go test ./..."}`)), nil)
+	if decision.Effect != governance.Deny {
+		t.Fatalf("legacy Bash rules decision = %q, want deny", decision.Effect)
+	}
+	guardrails := cfg.Guardrails
+	if guardrails == nil || len(guardrails.Rules) != 1 {
+		t.Fatalf("guardrails = %#v", guardrails)
+	}
+	if guardrails.Rules[0].Match != tool.ShellToolName {
+		t.Fatalf("legacy guardrail match = %q, want %q", guardrails.Rules[0].Match, tool.ShellToolName)
 	}
 }

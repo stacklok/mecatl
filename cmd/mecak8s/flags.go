@@ -359,7 +359,7 @@ func parseFlags(argv []string) (config, error) {
 	fs.BoolVar(&cfg.useMock, "mock", false, "use a canned offline mock provider (no network, no API key; for the e2e / smoke tests)")
 	fs.StringVar(&cfg.mockScript, "mock-script", "", "path to a JSON mockllm script (offline; implies --mock and supports text, tool-call, and delayed turns)")
 	fs.StringVar(&cfg.shell, "shell", "/bin/sh", "shell used to execute Shell-tool commands; empty disables Shell (shell-less mode)")
-	fs.BoolVar(&cfg.noShell, "no-bash", false, "disable the Shell tool entirely (shell-less mode); overrides --shell")
+	fs.BoolVar(&cfg.noShell, "no-shell", false, "disable the Shell tool entirely (shell-less mode); overrides --shell")
 
 	// Storage-free state (ADR 0048): --redis-url is the session store + durable
 	// event log. NO --store-dir (mutually exclusive, rejected at Build).
@@ -481,7 +481,7 @@ func parseFlags(argv []string) (config, error) {
 		_, _ = fmt.Fprintln(fs.Output(), "\nVersion: mecak8s --version prints the build version and exits.")
 	}
 
-	if err := fs.Parse(argv); err != nil {
+	if err := fs.Parse(cliconfig.NormalizeLegacyNoBash(argv)); err != nil {
 		return config{}, err
 	}
 

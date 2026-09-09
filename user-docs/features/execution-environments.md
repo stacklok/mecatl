@@ -27,7 +27,7 @@ filesystem.
 ## Default workspace
 
 Create a default session with a workspace root. `Read`, `ListDir`, `Write`,
-`Edit`, `Copy`, `Move`, `Remove`, `Grep`, `Glob`, and `Bash` all use that root.
+`Edit`, `Copy`, `Move`, `Remove`, `Grep`, `Glob`, and `Shell` all use that root.
 The workspace enforces the file-operation safety protocol: existing files must
 be read before overwrite, edits use exact and unique matches, and writes use
 version-aware conditional replacement so a concurrent change is never silently
@@ -49,7 +49,7 @@ curl -s -X POST http://127.0.0.1:8081/v1/sessions \
 
 The profile requires an empty `workspace`. Any other profile value is rejected;
 there is no silent fallback. A no-FS catalog removes `Read`, `ListDir`,
-`Write`, `Edit`, `Copy`, `Move`, `Remove`, `Grep`, `Glob`, `Bash`, `BashStatus`,
+`Write`, `Edit`, `Copy`, `Move`, `Remove`, `Grep`, `Glob`, `Shell`, `ShellStatus`,
 `Parallel`, and `SkillDraft`. It retains
 web tools, memory, MCP tools, skills, `Subagent`, and `Team`; children use the
 same file-less surface and cannot create a shell or fork a workspace.
@@ -104,7 +104,7 @@ and runner.
 
 ## Next steps
 
-- [Background Bash](/building/what-you-get/core-tools.md#background-commands)
+- [Background Shell](/building/what-you-get/core-tools.md#background-commands)
 - [Subagents, teams, and parallel](/building/what-you-get/subagents-teams-parallel.md)
 - [Workspace trust](/features/permissions-and-posture.md)
 - [Capability and deployment matrix](./capability-matrix.md)

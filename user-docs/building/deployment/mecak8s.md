@@ -96,7 +96,7 @@ To give sessions a real filesystem, mount a volume into the pod and point
 `--workspace` at it (for example a PVC mounted at `/workspace`). A configured
 root turns mecak8s into a **server-assigned filesystem deployment** rooted
 there: every session is assigned that single root, the filesystem tools and
-Bash operate on it, and clients have no field with which to select another root.
+Shell operate on it, and clients have no field with which to select another root.
 The path must be absolute and clean; a relative value is refused at startup.
 
 This does not change mecak8s's storage-free posture: harness and session state
@@ -117,7 +117,7 @@ namespace. The persisted placement is revalidated on every run. Redis failures,
 missing namespace markers, and corrupt records fail closed rather than appearing
 as an empty filesystem.
 
-This mode is deliberately file-lite: it has no Bash, executable-file semantics,
+This mode is deliberately file-lite: it has no Shell, executable-file semantics,
 git worktrees, or filesystem branch/merge workflow. It is mutually exclusive with
 `workspace`. Set `redis.readLedger.enabled=true` independently to persist each
 session's read-before-write evidence; deleting a session deletes that ledger but

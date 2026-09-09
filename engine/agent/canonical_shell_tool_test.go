@@ -87,3 +87,35 @@ func TestCanonicalShellTool_Scenario1_CommandPolicyCoverage(t *testing.T) {
 		t.Fatalf("system Shell call = result:%+v command:%q scope:%q, want independently authorized execution", result, runner.command, runner.scope)
 	}
 }
+
+func TestCanonicalShellTool_Scenario2_LegacyPendingCallRejected(t *testing.T) {
+	runner := &fakeShellRunner{res: tool.CommandResult{Stdout: "executed"}}
+	legacy := session.NewToolCall("legacy", "Bash", []byte(`{"command":"echo should-not-run"}`))
+	sess := session.New("legacy-pending", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws", Revision: "v1"}, session.Limits{MaxTurns: 3}, time.Now())
+	if err := sess.BeginTurn(); err != nil {
+		t.Fatalf("BeginTurn: %v", err)
+	}
+	if err := sess.RecordAssistant(session.NewAssistantMessage("", "", []session.ToolCall{legacy})); err != nil {
+		t.Fatalf("RecordAssistant: %v", err)
+	}
+	const askID = "legacy-pending:0:legacy:r1"
+	if err := sess.PauseForApproval(session.PendingAsk{AskID: askID, Call: legacy.ID, Tool: legacy.Name, Args: legacy.Args}); err != nil {
+		t.Fatalf("PauseForApproval: %v", err)
+	}
+	catalog := tool.NewCatalog()
+	catalog.MustRegister(NewShellTool())
+	eng := NewEngine(Deps{LLM: mockllm.New(mockllm.TextTurn("done")), Catalog: catalog, Policy: permpolicy.NewPolicy([]governance.Rule{{Tool: tool.ShellToolName, Effect: governance.Allow}}, nil)})
+	run := eng.ResumeApproval(context.Background(), sess, bashEnvRunner(runner), askID, session.VerdictAllowOnce)
+	var result session.ToolResult
+	for event := range run.Events() {
+		if event.Type == session.EvToolResult && event.ToolResult != nil {
+			result = *event.ToolResult
+		}
+	}
+	if !result.IsError || !strings.Contains(result.Content, "unknown tool") {
+		t.Fatalf("legacy pending result = %+v, want unknown-tool error", result)
+	}
+	if runner.command != "" {
+		t.Fatalf("restored legacy Bash call executed command %q", runner.command)
+	}
+}

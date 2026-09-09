@@ -452,3 +452,15 @@ func TestAppConfigMapping(t *testing.T) {
 		}
 	})
 }
+
+func TestCanonicalShellTool_Scenario2_LegacyNoBashFlag(t *testing.T) {
+	for _, name := range []string{"--no-shell", "--no-bash"} {
+		f, err := parseFlags([]string{"--prompt", "x", name})
+		if err != nil {
+			t.Fatalf("parseFlags(%s): %v", name, err)
+		}
+		if !f.noShell {
+			t.Fatalf("%s did not disable Shell", name)
+		}
+	}
+}

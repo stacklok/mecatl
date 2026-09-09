@@ -596,7 +596,7 @@ func TestMecatuiConventionalMissingAuthFileWarnsWithoutProvider(t *testing.T) {
 // embedded-only flags rejected in connect mode.
 func TestRejectEmbeddedOnlyFlagsInConnect(t *testing.T) {
 	embeddedOnly := []string{
-		"mock", "no-bash", "trust-project", "yolo", "posture",
+		"mock", "no-shell", "trust-project", "yolo", "posture",
 		"openai-base-url", "openrouter-base-url", "anthropic-base-url", "opencode-base-url", "auth-file",
 		"toolhive-llm", "toolhive-llm-base-url",
 		"model", "default-provider", "default-model", "subagent-model",
@@ -662,7 +662,7 @@ func TestSharedFlagsValidInBothModes(t *testing.T) {
 // harness. Booleans take no value; the others take a placeholder.
 func flagValueForTest(name string) string {
 	switch name {
-	case "mock", "no-bash", "trust-project", "yolo", "no-memory", "no-store",
+	case "mock", "no-shell", "trust-project", "yolo", "no-memory", "no-store",
 		"no-soul", "approve-soul", "soul-strict", "no-user-model", "user-model-review",
 		"no-commands", "no-skills", "perf", "perf-mcp", "tls", "insecure", "anonymous",
 		"no-alt-screen", "inline", "no-mouse", "no-banner", "list-themes",

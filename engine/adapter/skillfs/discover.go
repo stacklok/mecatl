@@ -369,7 +369,7 @@ func ParseSkill(raw []byte, path string) (Skill, string, []string) {
 		compat = TruncateRunes(compat, MaxCompatibilityBytes)
 	}
 	meta := clampMetadata(fm.Metadata, &notes)
-	allowed := clampAllowedTools(fm.AllowedTools, &notes)
+	allowed := canonicalAllowedTools(clampAllowedTools(fm.AllowedTools, &notes))
 
 	return Skill{
 		Name:          name,
@@ -456,4 +456,13 @@ func clampAllowedTools(in []string, notes *[]string) []string {
 		return nil
 	}
 	return out
+}
+
+func canonicalAllowedTools(names []string) []string {
+	for i := range names {
+		if names[i] == "Bash" {
+			names[i] = tool.ShellToolName
+		}
+	}
+	return names
 }

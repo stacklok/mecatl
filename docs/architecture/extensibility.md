@@ -11,7 +11,7 @@
 The `tool.Catalog` is the single registration seam, so every tool — core, remote,
 or generated — is one uniform `tool.Tool`.
 
-**Managed Bash temporary storage (Linux and macOS).** The default operator-managed Bash scope
+**Managed Shell temporary storage (Linux and macOS).** The default operator-managed Shell scope
 allocates one private command/job lease and supplies only its `tmp/` child as
 `TMPDIR`/`GOTMPDIR`. Ordinary completion removes the exact lease; a Build-owned,
 interval-gated worker later reclaims only validated, unlocked abandoned leases after
@@ -140,7 +140,7 @@ textual reference, the model calls the same tool again with
 `Execute({name, asset})`; the tool validates the advertised logical name, fetches
 only that payload through `tool.SkillSource`, enforces its size cap, and rejects
 invalid UTF-8 or NUL-containing content. No base directory crosses the seam, no
-asset is materialized or added to the workspace, and `Read`/`Bash` gain no implicit
+asset is materialized or added to the workspace, and `Read`/`Shell` gain no implicit
 access. A workflow that genuinely needs a file must create or obtain it explicitly
 inside the workspace under ordinary permissions. Because the tool is read-only it
 is also available in plan and no-filesystem sessions. The tool is registered **only
@@ -208,8 +208,8 @@ never enter the live catalog or perturb the byte-stable prompt prefix (it is bui
 once at startup from operator-trusted sources only). `SkillDraft` is opt-in via
 `--skills-draft-dir` (empty ⇒ tool not registered, like `--memory-dir` gating
 Remember). **Residual** (documented, not hidden): absent the deferred OS sandbox the
-`Bash` tool can write to any path, so the structural boundary covers `Write`/`Edit`
-only — `mecated` warns when `SkillDraft` and `Bash` are enabled together; the fully
+`Shell` tool can write to any path, so the structural boundary covers `Write`/`Edit`
+only — `mecated` warns when `SkillDraft` and `Shell` are enabled together; the fully
 structural deployment is shell-less or sandboxed. `SkillDraft` itself defaults to **ask** so a
 human reviews authorship, and being mutating it is filtered out of plan mode.
 

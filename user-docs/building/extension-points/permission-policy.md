@@ -94,7 +94,7 @@ Matching is symmetric-permissive: a rule binds an evaluator when either side is 
 
 `governance.Evaluator` folds rules with this precedence, executed in order:
 
-1. **Plan-mode gate (first, before rules).** If `mode == session.ModePlan`, `Edit` and `Write` are unconditionally denied. Any non-read-only `Bash` command is unconditionally denied. Read-only tools and read-only Bash fall through to the rule engine.
+1. **Plan-mode gate (first, before rules).** If `mode == session.ModePlan`, `Edit` and `Write` are unconditionally denied. Any non-read-only `Shell` command is unconditionally denied. Read-only tools and read-only Shell fall through to the rule engine.
 2. **Deny wins absolutely.** A `Deny` in any scope beats any `Allow` or `Ask` in any scope — there are no exceptions.
 3. **Ask beats Allow** across scopes, with one narrow exception: a higher-scope `Allow` may loosen only a `ScopeBuiltinDefault` Ask (the harness's own floor). A configured `Ask` (any scope above `ScopeBuiltinDefault`) is never suppressible by any `Allow`.
 4. **Same-effect ties:** the highest-precedence scope wins.
@@ -182,8 +182,8 @@ Because `extra` is appended after the static rules, the deny-dominant fold appli
 
 `Policy.Learn` calls `governance.Evaluator.LearnableRule(c.Name, c.Args)`. The evaluator derives a narrow `{Tool, Pattern, Effect: Allow, Exact: true, Scope: ScopeUser}` rule and returns `(rule, true)` when the call is safely learnable. Not learnable:
 
-- Compound Bash (`a && b`, pipelines, semicolons) — a single learned literal could green-light a hidden command in another segment.
-- Bash with command/process substitution or subshell grouping — the hidden inner cannot be soundly extracted.
+- Compound Shell (`a && b`, pipelines, semicolons) — a single learned literal could green-light a hidden command in another segment.
+- Shell with command/process substitution or subshell grouping — the hidden inner cannot be soundly extracted.
 - Any call whose derived pattern is empty — an empty pattern would match tool-wide, which is broader than the conservative intent.
 
 `Exact: true` means the rule matches literally, never via glob expansion, so a learned pattern that happens to contain `*` or `?` cannot widen into a glob that approves commands the user never saw.
@@ -226,9 +226,9 @@ These are not advisory — tests in `engine/` fail if you regress them, and the 
 
 1. **Deny-dominant.** A `Deny` in any scope must be absolute. No `Allow` or learned rule can override it.
 2. **Configured-Ask is never suppressible.** If a rule with `Scope` above `ScopeBuiltinDefault` resolves to `Ask`, no `Allow` at any scope may suppress it. Set `ConfiguredAsk: true` on the decision when the winning Ask came from a configured rule.
-3. **Plan mode gates first.** When `mode == session.ModePlan`, `Edit` and `Write` must be denied, and non-read-only `Bash` must be denied, before any rule is consulted.
+3. **Plan mode gates first.** When `mode == session.ModePlan`, `Edit` and `Write` must be denied, and non-read-only `Shell` must be denied, before any rule is consulted.
 4. **Learned allows are lowest-scope only.** A `Learn` call may record a session-scoped rule, but that rule must never be able to override a deny or a configured ask.
-5. **`Learn` must never learn compound or substituted Bash.** See the learnable-rule semantics above. A no-op on an unlearnable call is the correct behaviour.
+5. **`Learn` must never learn compound or substituted Shell.** See the learnable-rule semantics above. A no-op on an unlearnable call is the correct behaviour.
 
 ---
 

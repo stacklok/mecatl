@@ -76,6 +76,11 @@ func parseYAML(data []byte) (Config, error) {
 	if err := cfg.UnmarshalYAML(root); err != nil {
 		return Config{}, safePermconfigSchemaError(err)
 	}
+	if cfg.Guardrails != nil {
+		for i := range cfg.Guardrails.Rules {
+			cfg.Guardrails.Rules[i].Match = canonicalLegacyToolName(cfg.Guardrails.Rules[i].Match)
+		}
+	}
 	return cfg, nil
 }
 
@@ -254,12 +259,12 @@ func parseSpec(spec string, scope governance.Scope, effect governance.Effect) (g
 	open := strings.IndexByte(s, '(')
 	if open < 0 {
 		// Bare tool name, tool-wide rule (empty pattern matches any args).
-		return governance.Rule{Scope: scope, Tool: s, Effect: effect}, true
+		return governance.Rule{Scope: scope, Tool: canonicalLegacyToolName(s), Effect: effect}, true
 	}
 	if !strings.HasSuffix(s, ")") {
 		return governance.Rule{}, false
 	}
-	toolName := strings.TrimSpace(s[:open])
+	toolName := canonicalLegacyToolName(strings.TrimSpace(s[:open]))
 	if toolName == "" {
 		return governance.Rule{}, false
 	}
@@ -347,4 +352,11 @@ func lostRuleCounts(data []byte) (deny, ask, allow int, ok bool) {
 			true
 	}
 	return 0, 0, 0, true
+}
+
+func canonicalLegacyToolName(name string) string {
+	if name == "Bash" {
+		return "Shell"
+	}
+	return name
 }

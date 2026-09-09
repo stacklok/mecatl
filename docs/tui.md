@@ -119,7 +119,7 @@ bin/mecatui --workspace "$PWD" \
 The token is not public API credit and the private backend is not a supported
 third-party contract. mecatui reads one immutable snapshot before hosting its
 embedded server: after replacing an expired/rejected token, quit and relaunch.
-There is no login or refresh. See the [exact schema and plaintext same-UID Bash
+There is no login or refresh. See the [exact schema and plaintext same-UID Shell
 boundary](https://mecatl.dev/docs/building/deployment/settings#configure-provider-credentials).
 `mecatui connect` never reads the local file; configure the external `mecated`
 instead.
@@ -525,7 +525,7 @@ a short directive with a longer brief. The seed fires ONCE: a `/models` restart 
 | `--openrouter-base-url` | – | OpenRouter base URL override for the **embedded** server (default `https://openrouter.ai/api/v1`) |
 | `--auth-file` | – (auto) | **embedded** server: path to the YAML credentials file (`providers.<name>.api_key`, or the experimental `providers.openai-codex.oauth` snapshot); overrides `$XDG_CONFIG_HOME/mecatl/auth.yaml`. Environment wins for API-key providers; Codex has no env alias. See [the exact schema](https://mecatl.dev/docs/building/deployment/settings#configure-provider-credentials) |
 | `--mock` | off | **embedded** server: use the offline mock provider (no network) |
-| `--no-bash` | off | **embedded** server: disable the Bash tool (shell-less) |
+| `--no-shell` | off | **embedded** server: disable the Shell tool (shell-less) |
 | `--memory-dir` | – (auto) | **embedded** server: per-project memory store dir; empty = a default under `$XDG_DATA_HOME/mecatui/memory` |
 | `--no-memory` | off | **embedded** server: disable cross-session memory (Remember/Recall) |
 | `--store-dir` | – (auto) | **embedded** server: durable JSONL session/event store dir; empty = a per-workspace default under `$XDG_STATE_HOME/mecatui/sessions`, so sessions survive restart. **Privacy:** stores the raw conversation (prompts, model output, tool args/results) in **plaintext**; the dir is created mode `0700` (owner-only) |
@@ -1236,7 +1236,7 @@ show the plain prompt-hint card.
 | in the permission modal: `←`/`→`/`tab` | cycle the focused button; `enter` activates it |
 | in the permission modal (non-diff ask): `pgup`/`pgdn`, `↑`/`↓` | scroll the modal's in-card args region when rows are hidden (long args wrap; the `… · ctrl+t full args` hint shows when anything is hidden) |
 | in the permission modal (non-diff ask): `ctrl+t` | open the **full-screen ask-args view** (see below); plan asks and Edit/Write asks keep the in-modal expand behaviour instead |
-| in the full-screen ask-args view: `r` | toggle the args between the pretty tier (a Bash `{"command": …}` decodes to the command text, with a muted `timeout_ms: N` annotation when the envelope carries one) and the **verbatim wire args string** (rebindable via `RawArgs`; shown only when the tiers genuinely differ, hidden when they are byte-identical) |
+| in the full-screen ask-args view: `r` | toggle the args between the pretty tier (a Shell `{"command": …}` decodes to the command text, with a muted `timeout_ms: N` annotation when the envelope carries one) and the **verbatim wire args string** (rebindable via `RawArgs`; shown only when the tiers genuinely differ, hidden when they are byte-identical) |
 | in the full-screen ask-args view: `esc` / `ctrl+t` | back to the modal |
 | in the permission modal / plan-review bar / ask-args view: left-click a button | activate it (same as its chord — **alt screen only**). Clicking anywhere else in the modal does nothing (it is a gate, not a form) |
 | `pgup` / `pgdn` | scroll the conversation up / down |
@@ -1276,7 +1276,7 @@ modal opens immediately); a cancelled child's queued ask is withdrawn in place (
 notice, since the count badge advertised it); any asks still queued when the run ends are
 dropped. The keys are unchanged — you only ever answer one modal at a time.
 
-**Long args wrap, scroll, and open full-screen.** A non-diff ask's args (a Bash
+**Long args wrap, scroll, and open full-screen.** A non-diff ask's args (a Shell
 `{"command": …}` decodes to the command text; anything else renders as pretty
 JSON) **wrap** inside the card — no more single unreadable line running off the
 edge. The command renders in the bright `askArgs` style with a tool-coloured
@@ -1294,7 +1294,7 @@ pin to the bottom bar, and
 `r` toggles between the pretty tier and the **raw tier — the VERBATIM wire args
 string**, sanitized but otherwise untouched (the escape hatch that can never
 lie: "exactly what am I approving"). The toggle is offered whenever the tiers
-genuinely differ (any Bash ask, or an ask whose pretty tier re-indents the
+genuinely differ (any Shell ask, or an ask whose pretty tier re-indents the
 verbatim raw); an ask whose tiers are byte-identical (empty args, a non-JSON
 single-line passthrough) shows no toggle hint. `esc` or
 `ctrl+t` returns to the modal; the verdict keys work from inside the view.

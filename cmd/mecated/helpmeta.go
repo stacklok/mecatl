@@ -175,8 +175,8 @@ var flagMetaByFlag = map[string]flagMeta{
 	"context-window-override": {group: groupContext, common: false, acp: acpInclude},
 
 	// ── Tools (both) ─────────────────────────────────────────────────────
-	"shell":   {group: groupTools, common: true, acp: acpInclude},
-	"no-bash": {group: groupTools, common: true, acp: acpInclude},
+	"shell":    {group: groupTools, common: true, acp: acpInclude},
+	"no-shell": {group: groupTools, common: true, acp: acpInclude},
 
 	// ── Posture & permissions (both) ─────────────────────────────────────
 	"posture":                   {group: groupPermissions, common: true, acp: acpInclude},

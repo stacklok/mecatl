@@ -114,7 +114,7 @@ For global OAuth profiles, `mecak8s` does not open a browser and uses a Kubernet
 Secret-backed credential. Broker OAuth instead uses an external browser to complete a
 session enrollment; its preregistered client secret, when needed, is still a Kubernetes
 Secret. Agent-facing shells receive a scrubbed environment so MCP/provider credentials are
-not exposed through Bash. See the [Kubernetes deployment guide](/building/deployment/mecak8s.md)
+not exposed through Shell. See the [Kubernetes deployment guide](/building/deployment/mecak8s.md)
 for the Secret wiring.
 
 ## ToolHive broker OAuth

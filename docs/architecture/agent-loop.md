@@ -43,7 +43,7 @@ immediately and drives the loop in a background goroutine; the `Run` exposes:
    final user text through the aggregate root.
 3. **Pre-turn stop guard**: announce any newly-finished background children
    (one harness-note user message, ids + stop labels only, family-aware across
-   the delegation families and background-Bash jobs; [subagents & teams](subagents-and-teams.md));
+   the delegation families and background-Shell jobs; [subagents & teams](subagents-and-teams.md));
    drain the fire-result delivery queue (ADR 0075) and the **steer inbox**
    (below) — the Step 2a boundary injections,
    `engine/agent/loop.go` (`runBoundaryInjections`); then, if

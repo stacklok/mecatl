@@ -793,3 +793,13 @@ review the change`), "review/SKILL.md")
 		t.Fatalf("malformed frontmatter reason leaked YAML source: %q", reason)
 	}
 }
+
+func TestLegacyBashAllowedToolsNormalizesToShell(t *testing.T) {
+	skill, reason, _ := ParseSkill([]byte("---\nname: legacy\ndescription: legacy tools\nallowed-tools: \"Bash Read\"\n---\nbody\n"), "legacy/SKILL.md")
+	if reason != "" {
+		t.Fatalf("ParseSkill reason = %q", reason)
+	}
+	if got, want := strings.Join(skill.AllowedTools, ","), "Shell,Read"; got != want {
+		t.Fatalf("allowed tools = %q, want %q", got, want)
+	}
+}

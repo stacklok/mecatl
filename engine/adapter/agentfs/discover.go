@@ -477,8 +477,8 @@ func parseAgentDef(raw []byte, _ string) (AgentDef, string, []string) {
 	return AgentDef{
 		Name:            name,
 		Description:     desc,
-		Tools:           []string(fm.Tools),
-		DisallowedTools: []string(fm.DisallowedTools),
+		Tools:           canonicalToolNames(fm.Tools),
+		DisallowedTools: canonicalToolNames(fm.DisallowedTools),
 		Model:           strings.TrimSpace(fm.Model),
 		Provider:        strings.TrimSpace(fm.Provider),
 		PermissionMode:  strings.TrimSpace(fm.PermissionMode),
@@ -515,6 +515,16 @@ func NormalizeHooks(in map[string]string) map[string]string {
 	}
 	if len(out) == 0 {
 		return nil
+	}
+	return out
+}
+
+func canonicalToolNames(names []string) []string {
+	out := append([]string(nil), names...)
+	for i := range out {
+		if out[i] == "Bash" {
+			out[i] = tool.ShellToolName
+		}
 	}
 	return out
 }

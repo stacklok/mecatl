@@ -200,7 +200,7 @@ entities:
   Tool:
     definition: >
       A capability the model can invoke by name — Read, ListDir, Edit, Write, Copy,
-      Move, Remove, Grep, Glob, Bash, and opt-in tools like memory, skills, and
+      Move, Remove, Grep, Glob, Shell, and opt-in tools like memory, skills, and
       delegation. A `Tool` is either read-only (may run concurrently) or mutating
       (never concurrent). It
       defines a name and an argument schema; a `ToolCall` is one invocation of it.

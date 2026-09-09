@@ -597,7 +597,7 @@ func runConfigInit(argv []string, out io.Writer) error {
 	var printOnly, force bool
 	fs.BoolVar(&printOnly, "print", false, "print the skeleton to stdout and write NO file (a paste-ready reference)")
 	fs.BoolVar(&force, "force", false, "overwrite an existing settings.yaml (default: refuse, naming the path)")
-	if err := fs.Parse(argv); err != nil {
+	if err := fs.Parse(cliconfig.NormalizeLegacyNoBash(argv)); err != nil {
 		return err
 	}
 
@@ -648,7 +648,7 @@ func runConfigDaemonInit(argv []string, out io.Writer) error {
 	var printOnly, force bool
 	fs.BoolVar(&printOnly, "print", false, "print the daemon.yaml skeleton to stdout and write NO file (a paste-ready reference)")
 	fs.BoolVar(&force, "force", false, "overwrite an existing daemon.yaml (default: refuse, naming the path)")
-	if err := fs.Parse(argv); err != nil {
+	if err := fs.Parse(cliconfig.NormalizeLegacyNoBash(argv)); err != nil {
 		return err
 	}
 
@@ -699,7 +699,7 @@ func runConfigDaemonValidate(argv []string, out io.Writer) error {
 	fs.SetOutput(out)
 	var file string
 	fs.StringVar(&file, "file", "", "path to the daemon.yaml to validate (default: the conventional $XDG_CONFIG_HOME/mecatl/daemon.yaml)")
-	if err := fs.Parse(argv); err != nil {
+	if err := fs.Parse(cliconfig.NormalizeLegacyNoBash(argv)); err != nil {
 		return err
 	}
 
@@ -741,7 +741,7 @@ func runSkillsPromote(argv []string, in io.Reader, out io.Writer) error {
 	fs.StringVar(&quarantine, "skills-draft-dir", "", "the QUARANTINE directory the candidate was drafted into")
 	fs.StringVar(&active, "skills-dir", "", "the ACTIVE skills directory to promote the candidate into")
 	fs.BoolVar(&assumeYes, "yes", false, "skip the interactive content review and promote without confirmation (scripted/CI use only)")
-	if err := fs.Parse(argv); err != nil {
+	if err := fs.Parse(cliconfig.NormalizeLegacyNoBash(argv)); err != nil {
 		return err
 	}
 	name := fs.Arg(0)
@@ -788,7 +788,7 @@ func runPerfMCPPrintConfig(argv []string, out io.Writer) error {
 	fs.SetOutput(out)
 	var addr string
 	fs.StringVar(&addr, "metrics-addr", defaultMetricsAddr, "the loopback admin listen address the perf MCP server is mounted on (host:port); sets the host:port in the printed URL")
-	if err := fs.Parse(argv); err != nil {
+	if err := fs.Parse(cliconfig.NormalizeLegacyNoBash(argv)); err != nil {
 		return err
 	}
 
@@ -1592,7 +1592,7 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 	fs.StringVar(&cfg.shell, "shell", "/bin/sh", "shell used to execute Shell-tool commands; empty disables Shell (shell-less mode)")
 	fs.StringVar(&cfg.authorityEvaluator, "authority-evaluator", "local", "authority evaluator: local (default), noop, or cedar; cedar requires --cedar-authority-policy")
 	fs.StringVar(&cfg.cedarAuthorityPolicy, "cedar-authority-policy", "", "path to the static operator Cedar authority policy; read once at startup when --authority-evaluator=cedar")
-	fs.BoolVar(&cfg.noShell, "no-bash", false, "disable the Shell tool entirely (shell-less mode); overrides --shell")
+	fs.BoolVar(&cfg.noShell, "no-shell", false, "disable the Shell tool entirely (shell-less mode); overrides --shell")
 
 	fs.StringVar(&cfg.compaction, "compaction", "heuristic", "compaction strategy: \"heuristic\" (default, single-summary) or \"cascade\" (tiered snip→strip→collapse→summarize)")
 	fs.StringVar(&cfg.tokenizer, "tokenizer", "heuristic", "token counter for the compaction trigger: \"heuristic\" (default, dependency-free) or \"tiktoken\" (offline tiktoken vocab)")
@@ -1757,7 +1757,7 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 		writeServeCommonHelp(out, fs)
 	}
 
-	if err := fs.Parse(argv); err != nil {
+	if err := fs.Parse(cliconfig.NormalizeLegacyNoBash(argv)); err != nil {
 		// Return the fully-registered FlagSet even on a parse/help error so the
 		// progressive-help completeness invariant (validateFlagMeta) can run over
 		// the full real registration path via the --help-triggered ErrHelp path.

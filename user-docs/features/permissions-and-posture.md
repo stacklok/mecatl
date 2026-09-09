@@ -72,7 +72,7 @@ operations that can mutate state:
 | Default effect | Tools |
 | --- | --- |
 | Allow | `Read`, `Grep`, `Glob`, `WebFetch`, `WebSearch`, and read-only `Subagent` exploration |
-| Ask | `Bash`, `Edit`, `Write`, `Team`, and `SkillDraft` |
+| Ask | `Shell`, `Edit`, `Write`, `Team`, and `SkillDraft` |
 
 A matching `deny` always wins. Otherwise an `ask` wins over an `allow`, and
 higher configuration scopes break ties. A configured allow can loosen only the
@@ -92,7 +92,7 @@ posture before starting work.
 
 ### Plan mode
 
-Plan mode denies `Edit`, `Write`, and mutating Bash commands. Read-only
+Plan mode denies `Edit`, `Write`, and mutating Shell commands. Read-only
 exploration remains available so the model can inspect the workspace and prepare
 a plan. In an interactive client, the model presents the completed plan for
 review before leaving plan mode. Headless plan approval is denied by default;
@@ -108,16 +108,16 @@ section:
 permissions:
   allow:
     - "Read"
-    - "Bash(go test:*)"
+    - "Shell(go test:*)"
   ask:
-    - "Bash(git push:*)"
+    - "Shell(git push:*)"
   deny:
-    - "Bash(rm:*)"
+    - "Shell(rm:*)"
   subagent:
     deny:
-      - "Bash(gh pr merge:*)"
+      - "Shell(gh pr merge:*)"
     allow:
-      - "Bash(go vet:*)"
+      - "Shell(go vet:*)"
 ```
 
 Rules use `Tool(pattern)` syntax. A bare tool name applies to the whole tool;

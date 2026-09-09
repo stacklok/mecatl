@@ -208,7 +208,7 @@ func parseFlags(argv []string) (flags, error) {
 	fs.BoolVar(&f.useMock, "mock", false, "use a canned offline mock provider (no network; smoke tests only)")
 	fs.StringVar(&f.storeDir, "store-dir", "", "directory for the JSONL session store (empty -> in-memory store)")
 	fs.StringVar(&f.shell, "shell", "/bin/sh", "shell used to execute Shell-tool commands; empty disables Shell")
-	fs.BoolVar(&f.noShell, "no-bash", false, "disable the Shell tool entirely (shell-less mode); overrides --shell")
+	fs.BoolVar(&f.noShell, "no-shell", false, "disable the Shell tool entirely (shell-less mode); overrides --shell")
 	fs.IntVar(&f.maxRunTokens, "max-run-tokens", 0, "max cumulative input+output tokens per run; a run that crosses it ends cleanly with stop=budget. 0 = unlimited")
 	fs.IntVar(&f.maxTeamTokens, "max-team-tokens", 0, "max cumulative input+output tokens per team run; 0 = unlimited")
 	fs.IntVar(&f.maxTurns, "max-turns", 0, "max model calls (turns) for the run; a run that crosses it ends cleanly with stop=max_turns. 0 (default) uses the deployment default; a positive value caps this single-shot run. Orthogonal to --max-run-tokens (turns vs tokens; both compose)")
@@ -240,7 +240,7 @@ func parseFlags(argv []string) (flags, error) {
 
 	fs.Usage = usageEpilogue(fs)
 
-	if err := fs.Parse(argv); err != nil {
+	if err := fs.Parse(cliconfig.NormalizeLegacyNoBash(argv)); err != nil {
 		return flags{}, err
 	}
 

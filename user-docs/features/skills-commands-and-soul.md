@@ -41,7 +41,7 @@ license: Apache-2.0
 compatibility: mecatl >= 0.1
 metadata:
   owner: platform
-allowed-tools: "Read Grep Bash"
+allowed-tools: "Read Grep Shell"
 ---
 
 # Deploy
