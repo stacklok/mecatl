@@ -326,7 +326,7 @@ func TestBaseSubagentToolsUntrustedExcludesShell(t *testing.T) {
 
 // TestShellScopeMissReasonPreciseCause pins the per-cause attribution of the per-def
 // Shell-miss diagnostic (issue #40 follow-up): each disable cause
-// names ITSELF — in particular, --no-bash or an empty shell must NOT suggest
+// names ITSELF — in particular, --no-shell or an empty shell must NOT suggest
 // --trust-project (there is no trust problem to fix), and only the untrusted
 // cause carries the --trust-project remedy.
 func TestShellScopeMissReasonPreciseCause(t *testing.T) {
@@ -334,13 +334,13 @@ func TestShellScopeMissReasonPreciseCause(t *testing.T) {
 		mutate       func(*Config)
 		want, reject string
 	}{
-		"no-bash (trusted)":     {func(c *Config) { c.NoShell = true }, "--no-bash", "--trust-project"},
-		"no-bash untrusted":     {func(c *Config) { c.NoShell = true; c.TrustProject = false }, "--no-bash", "--trust-project"},
+		"no-shell (trusted)":    {func(c *Config) { c.NoShell = true }, "--no-shell", "--trust-project"},
+		"no-shell untrusted":    {func(c *Config) { c.NoShell = true; c.TrustProject = false }, "--no-shell", "--trust-project"},
 		"empty-shell (trusted)": {func(c *Config) { c.Shell = "" }, "no shell configured", "--trust-project"},
 		"empty-shell untrusted": {func(c *Config) { c.Shell = ""; c.TrustProject = false }, "no shell configured", "--trust-project"},
 		// The trust axis: an untrusted workspace withholds the shell; the remedy
 		// is --trust-project.
-		"untrusted": {func(c *Config) { c.TrustProject = false }, "--trust-project", "--no-bash"},
+		"untrusted": {func(c *Config) { c.TrustProject = false }, "--trust-project", "--no-shell"},
 	} {
 		cfg := teamCfg(t)
 		tc.mutate(&cfg)
