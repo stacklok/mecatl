@@ -485,6 +485,90 @@ func TestStaleSessionSweepRecoversAfterSelfInflictedLeaseLoss(t *testing.T) {
 	svc.FinishRun(sess.ID, run2)
 }
 
+// TestStaleSessionSweepRefusesWhenGenuinelyHeldElsewhere is
+// TestStaleSessionSweepRecoversAfterSelfInflictedLeaseLoss's negative
+// counterpart: the sweep's bypass of the lostOwnership tombstone must still
+// correctly refuse when a REAL competitor (not this same process) currently
+// holds the lease, and must leave the durable snapshot untouched.
+func TestStaleSessionSweepRefusesWhenGenuinelyHeldElsewhere(t *testing.T) {
+	lease := &fakeLease{}
+	store := memstore.New()
+	ps := permstore.New()
+	cat := tool.NewCatalog()
+	engine := agent.NewEngine(agent.Deps{
+		LLM:     mockllm.New(mockllm.TextTurn("first")),
+		Catalog: cat,
+		Policy:  permpolicy.NewPolicy(nil, ps),
+		Model:   "test-model",
+	})
+	svc, err := newPlacementTestService(server.Config{
+		Engine:             engine,
+		Store:              store,
+		SessionLease:       lease,
+		LeaseOwner:         "owner-test",
+		LeaseTTL:           90 * time.Millisecond,
+		LeaseRenewInterval: 15 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	t.Cleanup(svc.Close)
+
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	run, err := svc.StartRun(context.Background(), sess.ID, "go")
+	if err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+	for range run.Events() {
+	}
+	svc.FinishRun(sess.ID, run)
+
+	var lost atomic.Bool
+	lease.mu.Lock()
+	lease.renewHook = func(port.Lease) (port.Lease, error) {
+		lost.Store(true)
+		return port.Lease{}, port.ErrLeaseHeld
+	}
+	lease.mu.Unlock()
+	deadline := time.Now().Add(2 * time.Second)
+	for !lost.Load() && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if !lost.Load() {
+		t.Fatal("the renewer never attempted a Renew after arming renewHook")
+	}
+
+	if err := store.Save(context.Background(), crashOrphanedSession(t, sess.ID)); err != nil {
+		t.Fatalf("overwrite Save: %v", err)
+	}
+
+	// Unlike the recovery test, a REAL competitor now genuinely holds the lease
+	// — the sweep's own re-Acquire attempt must see that, not merely "expired".
+	lease.mu.Lock()
+	lease.acquireErr = port.ErrLeaseHeld
+	lease.mu.Unlock()
+
+	staleCtx := syscaller.Context(context.Background(), syscaller.RootStaleSessionReconcile)
+	settled, err := svc.SettleIfStale(staleCtx, sess.ID)
+	if !errors.Is(err, server.ErrSessionLeasedElsewhere) {
+		t.Fatalf("SettleIfStale while genuinely held elsewhere = (%v, %v), want (false, ErrSessionLeasedElsewhere)", settled, err)
+	}
+	if settled {
+		t.Fatal("SettleIfStale while genuinely held elsewhere = true, want false")
+	}
+
+	reloaded, err := store.Load(context.Background(), sess.ID)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if reloaded.State != session.StateRunning {
+		t.Fatalf("reloaded state = %q, want running (no write should have happened while genuinely held elsewhere)", reloaded.State)
+	}
+}
+
 // TestLeaseRenewedWhileRunLive proves the renewer keeps the hold alive during a
 // long run AND that the refreshed lease (not the original) is the one handed to
 // Release — i.e. the h.lease refresh under s.mu is load-bearing, not dead code.
