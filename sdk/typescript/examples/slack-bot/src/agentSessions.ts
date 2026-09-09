@@ -70,10 +70,14 @@ export function registerAgentSessions(app: App, bridge: MecatlBridge, config: Bo
 
   app.event("app_mention", async ({ event, say }) => {
     if (event.bot_id !== undefined) return;
+    if (event.user === undefined) {
+      app.logger.warn("app_mention has no user id — ignoring (can't scope a reply to nobody)");
+      return;
+    }
     const threadTs = event.thread_ts ?? event.ts;
-    const notify = privateNotifier(app, say, event.channel, event.user, threadTs);
+    const notify = ephemeralNotifier(app, event.channel, event.user, threadTs);
     if (!isAllowed(config, event.user)) return void notify(NOT_AUTHORIZED_MESSAGE);
-    if (!rateLimiter.allow(event.user ?? event.channel)) return void notify(RATE_LIMITED_MESSAGE);
+    if (!rateLimiter.allow(event.user)) return void notify(RATE_LIMITED_MESSAGE);
     const threadKey = `${event.channel}:${threadTs}`;
     activeChannelThreads.add(threadKey);
     const text = event.text.replace(MENTION_PREFIX, "");
@@ -106,9 +110,13 @@ export function registerAgentSessions(app: App, bridge: MecatlBridge, config: Bo
     const threadKey = `${channelId}:${threadTs}`;
     if (!activeChannelThreads.has(threadKey)) return;
     if (context.botUserId !== undefined && text.includes(`<@${context.botUserId}>`)) return;
-    const notify = privateNotifier(app, say, channelId, userId, threadTs);
+    if (userId === undefined) {
+      app.logger.warn("channel message has no user id — ignoring (can't scope a reply to nobody)");
+      return;
+    }
+    const notify = ephemeralNotifier(app, channelId, userId, threadTs);
     if (!isAllowed(config, userId)) return void notify(NOT_AUTHORIZED_MESSAGE);
-    if (!rateLimiter.allow(userId ?? channelId)) return void notify(RATE_LIMITED_MESSAGE);
+    if (!rateLimiter.allow(userId)) return void notify(RATE_LIMITED_MESSAGE);
     await runPrompt(app, bridge, channelId, threadTs, threadTs, threadKey, text, say, notify);
   });
 }
@@ -129,18 +137,17 @@ function sayNotifier(say: SayFn, threadTs: string | undefined): Notifier {
  * Auth-rejection, rate-limit, and operational-failure replies must stay scoped to the person
  * who triggered them — broadcasting e.g. "you're not authorized" to the whole channel outs
  * that person to everyone else in it (#1242). `chat.postEphemeral` is Slack's mechanism for
- * that: visible only to `user`, never persisted as a regular thread message. Falls back to a
- * plain (still-visible) `say` if the triggering user id is unknown — better than losing the
- * reply outright, and Slack always supplies a user id on a real mention/message in practice.
+ * that: visible only to `user`, never persisted as a regular thread message. There is
+ * deliberately no channel-visible fallback for an unknown `user` (PR #1245 review) — a caller
+ * with no user id to scope the reply to must ignore the event instead of calling this at all,
+ * or the fallback would recreate the exact leak this exists to close.
  */
-function privateNotifier(
+function ephemeralNotifier(
   app: App,
-  say: SayFn,
   channel: string,
-  user: string | undefined,
+  user: string,
   threadTs: string | undefined,
 ): Notifier {
-  if (user === undefined) return sayNotifier(say, threadTs);
   return (text) =>
     app.client.chat.postEphemeral({
       channel,

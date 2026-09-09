@@ -18,6 +18,7 @@ interface FakeApp {
   app: App;
   say: ReturnType<typeof vi.fn>;
   postEphemeral: ReturnType<typeof vi.fn>;
+  warn: ReturnType<typeof vi.fn>;
   appMention: AnyHandler;
   message: AnyHandler;
 }
@@ -27,6 +28,7 @@ interface FakeApp {
 function setUp(bridge: MecatlBridge, config: BotConfig): FakeApp {
   const say = vi.fn().mockResolvedValue(undefined);
   const postEphemeral = vi.fn().mockResolvedValue(undefined);
+  const warn = vi.fn();
   const handlers: { appMention?: AnyHandler; message?: AnyHandler } = {};
 
   const app = {
@@ -37,7 +39,7 @@ function setUp(bridge: MecatlBridge, config: BotConfig): FakeApp {
     event: (eventName: string, handler: AnyHandler) => {
       if (eventName === "app_mention") handlers.appMention = handler;
     },
-    logger: { debug: vi.fn(), error: vi.fn(), info: vi.fn(), warn: vi.fn() },
+    logger: { debug: vi.fn(), error: vi.fn(), info: vi.fn(), warn },
     message: (handler: AnyHandler) => {
       handlers.message = handler;
     },
@@ -48,7 +50,14 @@ function setUp(bridge: MecatlBridge, config: BotConfig): FakeApp {
   if (handlers.appMention === undefined || handlers.message === undefined) {
     throw new Error("registerAgentSessions did not register the expected handlers");
   }
-  return { app, appMention: handlers.appMention, message: handlers.message, postEphemeral, say };
+  return {
+    app,
+    appMention: handlers.appMention,
+    message: handlers.message,
+    postEphemeral,
+    say,
+    warn,
+  };
 }
 
 function fakeBridge(handlePrompt: MecatlBridge["handlePrompt"]): MecatlBridge {
@@ -224,5 +233,62 @@ describe("registerAgentSessions", () => {
         user: "blocked-user",
       }),
     );
+  });
+
+  it("ignores an app_mention with no user id instead of falling back to a channel-visible reply", async () => {
+    const fake = setUp(fakeBridge(vi.fn()), fakeConfig());
+
+    await fake.appMention({
+      event: {
+        bot_id: undefined,
+        channel: "C1",
+        text: "<@BOT> hi",
+        ts: "100.001",
+        type: "app_mention",
+        user: undefined,
+      },
+      say: fake.say,
+    });
+
+    expect(fake.say).not.toHaveBeenCalled();
+    expect(fake.postEphemeral).not.toHaveBeenCalled();
+    expect(fake.warn).toHaveBeenCalled();
+  });
+
+  it("ignores a channel-thread message with no user id instead of falling back to a channel-visible reply", async () => {
+    const fake = setUp(fakeBridge(vi.fn()), fakeConfig());
+
+    await fake.appMention({
+      event: {
+        bot_id: undefined,
+        channel: "C1",
+        text: "<@BOT> hi",
+        ts: "100.001",
+        type: "app_mention",
+        user: "allowed-user",
+      },
+      say: fake.say,
+    });
+    fake.say.mockClear();
+    fake.postEphemeral.mockClear();
+
+    await fake.message({
+      context: { botUserId: "BOT" },
+      message: {
+        bot_id: undefined,
+        channel: "C1",
+        channel_type: "channel",
+        subtype: undefined,
+        text: "another go",
+        thread_ts: "100.001",
+        ts: "100.002",
+        user: undefined,
+      },
+      say: fake.say,
+    });
+
+    expect(fake.say).not.toHaveBeenCalled();
+    expect(fake.postEphemeral).not.toHaveBeenCalled();
+    expect(fake.warn).toHaveBeenCalled();
   });
 });
