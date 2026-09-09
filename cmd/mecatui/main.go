@@ -1164,10 +1164,11 @@ func resolveRemoteTransport(ctx context.Context, cfg config, noop func()) (targe
 		registry, regErr := clientauth.OpenExistingRegistry(filepath.Join(xdg.ConfigHome, "mecatl"))
 		if regErr == nil {
 			if conn, findErr := registry.Find(cfg.connectAddress); findErr == nil {
+				// Explicit bearer and anonymous connects may reuse only the
+				// target's saved server trust. Their transport policy remains
+				// entirely caller-controlled; the managed-OIDC guarantee above
+				// must not be inherited with this metadata.
 				applySavedServerCA(cfg, conn, &dial)
-				if err := applySavedRemoteTLSPolicy(cfg, &dial); err != nil {
-					return cfg.connectAddress, client.DialConfig{}, noop, err
-				}
 			}
 		}
 		return cfg.connectAddress, dial, noop, nil
