@@ -813,6 +813,11 @@ type RunRequest struct {
 	// read-parallel path); a structured-output SubmitResult records into a per-run sink
 	// and performs no workspace mutation, so it is read-only.
 	ExtraTools []tool.Tool
+	// extraToolOptions is engine-owned authority metadata for a run-scoped overlay.
+	// Its zero value is restrictive: every extra tool remains subject to delegated
+	// authority unless the runtime explicitly records an exemption. It stays private so
+	// callers cannot use RunRequest to create an authority-bypassing tool.
+	extraToolOptions map[string]extraToolOptions
 	// RunID is the opaque, host-minted identity of THIS run (ADR 0249).
 	//
 	// It does two things and nothing else. Every event this run emits is stamped
@@ -860,6 +865,23 @@ type RunRequest struct {
 	// r.req.AskIDDiscriminator, which may be empty or colon-bearing and would
 	// bypass the colon/empty fallback.
 	AskIDDiscriminator string
+}
+
+// extraToolOptions records runtime-owned restrictions for an ExtraTools overlay.
+// AuthorityExempt is false by default so new overlays cannot bypass delegated
+// authority accidentally.
+type extraToolOptions struct {
+	AuthorityExempt bool
+}
+
+func (r RunRequest) extraToolAuthorityExempt(name string) bool {
+	for _, extra := range r.ExtraTools {
+		if extra.Spec().Name != name {
+			continue
+		}
+		return r.extraToolOptions[name].AuthorityExempt
+	}
+	return false
 }
 
 // RunID reports the opaque, host-minted identity of this run (ADR 0249), or ""

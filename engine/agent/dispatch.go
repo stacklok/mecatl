@@ -1254,7 +1254,7 @@ func (e *Engine) execute(ctx context.Context, r *Run, sess *session.Session, env
 	}
 
 	var authorityResult *session.ToolResult
-	if result, checked := e.authorizeExecution(ctx, r, sess, env, turnIdx, c, t); checked {
+	if result, checked := e.authorizeExecution(ctx, r, sess, env, turnIdx, c); checked {
 		authorityResult = &result
 	}
 
@@ -1302,16 +1302,14 @@ const callMcpWithQueryToolName = "CallMcpWithQuery"
 // authorizeExecution is the single authority-enforcement boundary. Permission
 // and hook gates decide whether a call may reach execution; a bound session's
 // carried authority independently decides which exact tool it may execute.
-func (e *Engine) authorizeExecution(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, call session.ToolCall, targetTool tool.Tool) (session.ToolResult, bool) {
+func (e *Engine) authorizeExecution(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, call session.ToolCall) (session.ToolResult, bool) {
 	authority, bound := sess.BoundAuthority()
 	if !bound {
 		return session.ToolResult{}, false
 	}
-	// SubmitResult is an engine-private, run-scoped result sink. It performs no
-	// external action and cannot be supplied through a catalog or a delegated
-	// capability set, so it must not be denied merely because its synthetic name
-	// is absent from the child's attenuated authority.
-	if _, ok := targetTool.(*submitResultTool); ok {
+	// A run-scoped tool can bypass delegated authority only through private
+	// runtime metadata. The zero value is restrictive, and callers cannot set it.
+	if r.req.extraToolAuthorityExempt(call.Name) {
 		return session.ToolResult{}, false
 	}
 	if e.deps.AuthorityEvaluator == nil {

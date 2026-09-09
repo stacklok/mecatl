@@ -415,6 +415,20 @@ func TestSubmitResultOverlayWinsAndIsAdvertised(t *testing.T) {
 	}
 }
 
+func TestExtraToolAuthorityExemptionDefaultsToRestricted(t *testing.T) {
+	extra := &fakeOverlayTool{name: "RunControl", schema: json.RawMessage(`{"type":"object"}`)}
+	req := RunRequest{ExtraTools: []tool.Tool{extra}}
+	if req.extraToolAuthorityExempt(extra.Spec().Name) {
+		t.Fatal("an extra tool must require delegated authority by default")
+	}
+	req.extraToolOptions = map[string]extraToolOptions{
+		extra.Spec().Name: {AuthorityExempt: true},
+	}
+	if !req.extraToolAuthorityExempt(extra.Spec().Name) {
+		t.Fatal("runtime-provided authority exemption was not applied")
+	}
+}
+
 // fakeOverlayTool is a trivial read-only tool with a controllable name + schema, used to
 // stand in as a catalog tool whose name collides with a run-scoped ExtraTool.
 type fakeOverlayTool struct {

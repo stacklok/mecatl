@@ -1934,6 +1934,9 @@ func buildSubagentRunRequest(args subagentArgs, resuming bool, posture resumePos
 	if len(args.OutputSchema) > 0 && strings.TrimSpace(string(args.OutputSchema)) != "" {
 		submit = newSubmitResultTool(args.OutputSchema)
 		runReq.ExtraTools = []tool.Tool{submit}
+		runReq.extraToolOptions = map[string]extraToolOptions{
+			submitResultToolName: {AuthorityExempt: true},
+		}
 		// Wrap the (possibly staleness-noted) prompt so a resumed structured-output child
 		// still sees the staleness note inside the structured-output instruction.
 		prompt = structuredOutputPrompt(prompt, args.OutputSchema)
