@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 )
 
@@ -67,7 +68,7 @@ func TestPlainFileStrictRecordsAndVersions(t *testing.T) {
 }
 
 func TestHeadlessCredentialStorage_Scenario3_PrivateFilesystemBoundary(t *testing.T) {
-	for _, kind := range []string{"unsafe-root", "symlink-root", "unsafe-namespace", "symlink-namespace", "hardlink-record", "symlink-record", "unsafe-record", "unsafe-lock"} {
+	for _, kind := range []string{"unsafe-root", "symlink-root", "unsafe-namespace", "symlink-namespace", "hardlink-record", "symlink-record", "unsafe-record", "unsafe-lock", "fifo-record", "hardlink-lock", "symlink-lock"} {
 		t.Run(kind, func(t *testing.T) {
 			parent := t.TempDir()
 			root := filepath.Join(parent, "store")
@@ -120,6 +121,18 @@ func TestHeadlessCredentialStorage_Scenario3_PrivateFilesystemBoundary(t *testin
 				if err = os.Rename(name, old); err == nil {
 					err = os.Symlink(old, name)
 				}
+			case "fifo-record":
+				if err = os.Rename(name, filepath.Join(parent, "saved-record")); err == nil {
+					err = syscall.Mkfifo(name, 0600)
+				}
+			case "hardlink-lock":
+				err = os.Link(filepath.Join(s.nsPath, s.recordNames(key).lock), filepath.Join(parent, "lock-alias"))
+			case "symlink-lock":
+				lock := filepath.Join(s.nsPath, s.recordNames(key).lock)
+				saved := filepath.Join(parent, "saved-lock")
+				if err = os.Rename(lock, saved); err == nil {
+					err = os.Symlink(saved, lock)
+				}
 			case "unsafe-record":
 				err = os.Chmod(name, 0644)
 			case "unsafe-lock":
@@ -138,6 +151,43 @@ func TestHeadlessCredentialStorage_Scenario3_PrivateFilesystemBoundary(t *testin
 				t.Fatal("unsafe delete accepted")
 			}
 		})
+	}
+}
+
+type plainOwnerInfo struct {
+	os.FileInfo
+	stat syscall.Stat_t
+}
+
+func (i plainOwnerInfo) Sys() any { return &i.stat }
+
+func TestPlainFileRejectsForeignOwner(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "root")
+	store, err := NewPlainFile(root, "plain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+	key := []byte("key")
+	if _, err := store.Put(t.Context(), key, []byte("fixture"), nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{root, store.nsPath, filepath.Join(store.nsPath, store.recordNames(key).data), filepath.Join(store.nsPath, store.recordNames(key).lock)} {
+		info, err := os.Lstat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		stat := *info.Sys().(*syscall.Stat_t)
+		stat.Uid++
+		foreign := plainOwnerInfo{info, stat}
+		if info.IsDir() {
+			err = validatePrivateDirInfo(foreign)
+		} else {
+			err = validatePrivateFileInfo(foreign)
+		}
+		if err == nil {
+			t.Fatal("foreign owner admitted")
+		}
 	}
 }
 

@@ -205,6 +205,7 @@ func newExistingKeyringProvider(root string, backend keyringBackend) (*KeyringPr
 	if root == "" || !filepath.IsAbs(root) || filepath.Clean(root) != root || backend == nil {
 		return nil, errors.New("clientauth: existing store root is invalid")
 	}
+	// #nosec G703 -- root is the caller-selected absolute storage authority, validated above and canonicalized below, not a credential-derived relative path.
 	info, err := os.Stat(root)
 	if err != nil {
 		return nil, fmt.Errorf("clientauth: existing store root: %w", err)

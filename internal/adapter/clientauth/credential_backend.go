@@ -238,11 +238,14 @@ func privateBackendRoot(root string, create bool) (string, error) {
 	if root == "" || !filepath.IsAbs(root) || filepath.Clean(root) != root {
 		return "", errBackendState
 	}
+	// #nosec G703 -- root is the explicitly supplied storage authority, not a path relative to another authority; Clean/Abs is checked above, ownership/type/mode below.
 	info, err := os.Lstat(root)
 	if errors.Is(err, os.ErrNotExist) && create {
+		// #nosec G703 -- creation is intentionally at the caller-selected absolute storage root; no client or credential identity contributes path components.
 		if err := os.MkdirAll(root, 0700); err != nil {
 			return "", errBackendState
 		}
+		// #nosec G703 -- validate the newly created authority before admitting it.
 		info, err = os.Lstat(root)
 	}
 	if err != nil {
