@@ -131,7 +131,7 @@ PR after verification. There is no cleanup or status-only PR.
 - [Headless mecatui credential storage](headless-client-credential-storage.md) —
   Linux-first, read-only Secret Service detection for a root-pinned keyring or
   owner-only plaintext local credential backend; selection and upgrade-only
-  compatibility decisions are settled. Status: proposed.
+  compatibility decisions are settled. Status: approved.
 - [Persistent read-before-write ledgers](persistent-read-before-write-ledgers.md) —
   storage-independent, session-scoped read evidence with an in-memory default,
   a durable Redis contract proof, and fail-closed file-tool behavior. Status: draft.

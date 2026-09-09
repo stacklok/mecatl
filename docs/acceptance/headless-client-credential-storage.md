@@ -2,8 +2,8 @@
 
 **Contract:** human-reviewed/v1
 **Phase:** Remote mecatui credential-storage portability
-**Status:** proposed, 2026-09-09. All human decisions are resolved and recorded below; pending Plan / Interface review and approval, not implementation.
-**Delivery:** Split. This changes local CLI behavior, durable credential routing, and the confidentiality boundary, so it requires a separate Plan / Interface review before implementation.
+**Status:** approved, 2026-09-09. User approval is recorded via merged PR1281; approved for implementation, not shipped.
+**Delivery:** Split. This changes local CLI behavior, durable credential routing, and the confidentiality boundary, so implementation proceeds through a separate implementation PR against this approved contract.
 **Expected tasks:** deferred to orchestration
 
 Remote `mecatui` currently always creates a keyring-wrapped encrypted credential store. This plan adds a deliberately weaker owner-only plaintext backend for headless Linux first use. It does not make normal keyring initialization noninteractive: Linux `auto` performs only a read-only Secret Service *detection* before choosing keyring; once the service is present, ordinary keyring initialization may prompt or require an unlocked desktop keyring. macOS keeps the current keyring-default behavior. Explicit `file` is supported on both platforms; automatic headless detection is Linux-only in v1.
@@ -154,11 +154,11 @@ The implementation adds only a fixture-local checker behind `task mecak8s:kind-c
 | Password-derived encryption, environment keys, cloud secret managers, TPM/HSM, or a privileged broker | Future credential-backend work | v1 supplies only keyring and owner-only plaintext file. |
 | Protection from root, same-account processes, memory inspection, rollback, backups, or snapshots | None — documented protection limit | File permissions are not encryption. |
 | Cross-host/network-filesystem atomicity | None — existing local guarantee | Cooperating-process flock/rename guarantees remain local only. |
-| Acceptance of the storage policy ADR | [ADR 0318](../adr/0318-headless-mecatui-credential-backend-selection.md) | The proposed ADR records the settled policy; Plan / Interface review must accept it before implementation. |
+| Acceptance of the storage policy ADR | [ADR 0318](../adr/0318-headless-mecatui-credential-backend-selection.md) | The accepted ADR records the settled policy; implementation proceeds against the approved contract. |
 
 ## Definition of done
 
-1. This proposed Split plan is human-approved through Plan / Interface review, and [ADR 0318](../adr/0318-headless-mecatui-credential-backend-selection.md) is accepted before implementation ships.
+1. This approved Split plan is human-approved through Plan / Interface review, and [ADR 0318](../adr/0318-headless-mecatui-credential-backend-selection.md) is accepted before implementation ships.
 2. Hermetic unit and subprocess tests prove the read-only D-Bus detector, absent/timeout routing, pinned no-fallback lifecycle, pre-OAuth persistence, plaintext conformance, legacy routing, unconditional refresh-token rotation handling, logout races, the unsafe-permission pre-OAuth failure, and the Kind qualification contract without a live keyring or network. Normal `task test` remains hermetic and never waits for token expiry or starts Kind.
 3. Before the implementation PR claims full E2E, Scenario 5's operator-run evidence is complete for both macOS explicit-file and genuinely headless Linux default-auto roots against the Kind/Keycloak fixture. It proves separate-process authenticated use, natural refresh response and semantic persistence, unchanged state on selector conflict, logout removal with pin retention, failed post-logout authentication, and silent pin reuse; evidence contains only the checker's closed statuses and no secrets or hashes.
 4. `bash .claude/skills/to-acceptance-plan/scripts/check-acceptance-plan.sh docs/acceptance/headless-client-credential-storage.md`, `bash .claude/skills/to-acceptance-plan/scripts/check-acceptance-plan-test.sh`, `task lint`, `task test`, `task api:check`, `task docs`, and `task site:build` pass; `go run ./cmd/mecademo` remains green.
