@@ -140,7 +140,10 @@ func requireFilePin(root string) error {
 }
 
 func validateFixtureRoot(root string) (string, error) {
-	cwd, err := filepath.EvalSymlinks(".")
+	cwd, err := os.Getwd()
+	if err == nil {
+		cwd, err = filepath.EvalSymlinks(cwd)
+	}
 	if err != nil {
 		return "", errCheck
 	}
