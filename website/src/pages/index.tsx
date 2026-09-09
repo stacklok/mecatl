@@ -61,7 +61,7 @@ function DeploymentOptions() {
 }
 
 function Stacklok() {
-  return <section className={styles.stacklok}><div className={styles.sectionInner}><h2 className={styles.sectionTitle}>Mecatl is part of Stacklok&apos;s commitment to building a more open alternative to vertically integrated agent stacks.</h2><div className={styles.projectCallout}><div><p className={styles.projectLabel}>Featured project</p><h3>ToolHive</h3><p>The open-source MCP platform trusted by enterprises. With 10M tool calls secured every month.</p></div><div className={styles.projectActions}><img className={styles.toolHiveLogo} src="/img/toolhive-logo.svg" alt="ToolHive" /><Link className={styles.ctaSecondary} to="https://github.com/stacklok/toolhive">View on GitHub</Link></div></div></div></section>;
+  return <section className={styles.stacklok}><div className={styles.sectionInner}><h2 className={styles.sectionTitle}>Mecatl is part of Stacklok&apos;s commitment to building a more open alternative to vertically integrated agent stacks.</h2><div className={styles.projectCallout}><div><p className={styles.projectLabel}>Featured project</p><div className={styles.projectContent}><img className={styles.toolHiveLogo} src="/img/toolhive-logo.svg" alt="" /><div><h3>ToolHive</h3><p>The open source MCP platform trusted by enterprises, securing 10M tool calls each month.</p></div></div></div><Link className={styles.ctaPrimary} to="https://github.com/stacklok/toolhive">View on GitHub</Link></div></div></section>;
 }
 
 export default function Home(): React.ReactElement {
