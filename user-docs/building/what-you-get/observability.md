@@ -221,7 +221,8 @@ which session was requested; do not weaken ownership concealment to obtain that 
 `provider.route` is an event-stream fact rather than a diagnostic. When the
 serving provider is OpenRouter, it reports the downstream inference provider
 selected for a turn; it may be absent on a cache hit. Configure downstream routing
-in the operator-tier OpenRouter settings. See the [model-routing guide](https://github.com/stacklok/mecatl/blob/main/docs/usage/model-routing.md#5b-openrouter-downstream-provider-routing-openrouter-issue-480).
+in the operator-tier OpenRouter settings. See [Route OpenRouter models through
+preferred downstreams](/features/choose-models.md#route-openrouter-models-through-preferred-downstreams).
 
 ## Tool call audit
 

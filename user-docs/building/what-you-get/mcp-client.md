@@ -47,7 +47,7 @@ refreshes lazily, persists refresh-token rotation, and remains warm after restar
 and ACP never open a browser. Environment-backed profiles are read-only and require an
 external Secret update plus process restart. Keep `static_bearer` as a rollback profile when
 the server supports it. See the
-[operator configuration guide](https://github.com/stacklok/mecatl/blob/main/docs/usage/configuration.md#global-mcp-authentication-profiles).
+[MCP OAuth and credentials](/features/mcp-oauth-and-credentials.md#configure-a-profile).
 
 **ToolHive discovery.** If you run MCP servers via [ToolHive](https://toolhive.io), Mecatl discovers them automatically from the running workloads — no `--mcp-server` flag needed. ToolHive proxy URLs are HTTP, so the streaming-HTTP constraint is met transparently. Discovery is controlled by `--toolhive` (default `true`; pass `--toolhive=false` to disable) and `--toolhive-group` (default group when empty).
 

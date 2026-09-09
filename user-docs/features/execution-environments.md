@@ -106,5 +106,5 @@ and runner.
 
 - [Background Bash](/building/what-you-get/core-tools.md#background-commands)
 - [Subagents, teams, and parallel](/building/what-you-get/subagents-teams-parallel.md)
-- [Workspace trust](https://github.com/stacklok/mecatl/blob/main/docs/usage/workspace-trust.md)
+- [Workspace trust](/features/permissions-and-posture.md)
 - [Capability and deployment matrix](./capability-matrix.md)

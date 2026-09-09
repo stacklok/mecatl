@@ -7,14 +7,14 @@
 #|
 #| NOTE: the values shown below (e.g. default: sonnet, posture: trusted) are
 #| ILLUSTRATIVE EXAMPLES, not the built-in defaults. An ABSENT key uses the
-#| schema/resolver fallback documented in docs/configuration-reference.md; it
+#| schema/resolver fallback documented at mecatl.dev/docs/reference/configuration; it
 #| is not a universal process-runtime default. Command roots and modes can
 #| supply their own defaults, disable a feature, or reject a setting. See the
-#| configuration-plane guide at https://mecatl.dev/building/deployment/settings.
+#| configuration-plane guide at https://mecatl.dev/docs/building/deployment/settings.
 #|
 #| This skeleton is GENERATED from the permconfig YAML schema (the single source of
 #| truth). Do not hand-edit the committed copy — run 'task docs:configref'. See
-#| docs/configuration-reference.md for the exhaustive key/type/default/tier table.
+#| mecatl.dev/docs/reference/configuration for the exhaustive key/type/default/tier table.
 
 #| === permissions === (tier: operator + project)
 #| Allow/ask/deny rule-spec lists. Each entry is "Tool(pattern)" or a bare "Tool". Deny

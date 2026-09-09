@@ -50,7 +50,7 @@ mcp:
             key_env: MECATL_MCP_CREDENTIAL_KEY
 ```
 
-Use the generated [configuration reference](https://github.com/stacklok/mecatl/blob/main/docs/configuration-reference.md)
+Use the generated [configuration reference](/reference/configuration.md)
 for the complete strict schema and exact field names. Keep the settings file
 owner-only and validate it before serving:
 
@@ -201,7 +201,7 @@ environment-variable name.
 
 For MCP tool discovery, namespacing, permissions, reconnect behavior, resources,
 and prompts, see [MCP client](/building/what-you-get/mcp-client.md). For the complete
-operator profile rules, see the [global MCP authentication reference](https://github.com/stacklok/mecatl/blob/main/docs/usage/configuration.md#global-mcp-authentication-profiles).
+operator profile rules, see the [configuration reference](/reference/configuration.md#mcp).
 
 ## Next steps
 

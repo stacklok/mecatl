@@ -269,9 +269,9 @@ default the ask is auto-denied and the model just keeps iterating. The opt-in
 auto-approves a parked plan ask. This is a deliberate autonomous-approval
 capability for the operator, not a safety mechanism: the engine still requires
 `PresentPlan` to reach this ask in the first place — the flag only decides who
-resolves it once parked, human or auto-approve. See [Plan
-approval](https://github.com/stacklok/mecatl/blob/main/docs/usage.md#plan-approval)
-for the full gRPC/HTTP/ACP wire reference.
+resolves it once parked, human or auto-approve. See the [gRPC API
+reference](/reference/grpc-api.md) and [HTTP and SSE API
+reference](/reference/http-sse-api.md) for wire behavior.
 
 ### Configuring rules
 
@@ -407,8 +407,7 @@ audit shape. The posture now decides what an out-of-workspace escape does instea
   first: unsafe → deny; a checker error fails closed to the write-escape ask. Default is
   off — the plain table above. See
   [ADR 0080](https://github.com/stacklok/mecatl/blob/main/docs/adr/0080-guardrail-routed-escape-checking.md)
-  and the full operator reference in
-  [`docs/usage.md`](https://github.com/stacklok/mecatl/blob/main/docs/usage.md).
+  and the [configuration reference](/reference/configuration.md#guardrails).
 
 ### Workspace trust
 
@@ -474,8 +473,7 @@ A corrupt or unparseable `settings.yaml` or `trust.yaml` always resolves to
 On a **headless** root (`--headless`), posture never raises `TrustProject`. Explicit
 `--trust-project`, `trustedWorkspaces:`, or undrifted remembered trust admits BOTH repo steering and
 the read-only child shell. Without any trust source, `mecatequi --posture auto` keeps allow-all
-approvals but gets neither because `.git` is not vouched. See the
-[workspace trust reference](https://github.com/stacklok/mecatl/blob/main/docs/usage/workspace-trust.md#project-tier-ingestion-on-headless-roots-the-opt-in-design).
+approvals but gets neither because `.git` is not vouched.
 
 ---
 

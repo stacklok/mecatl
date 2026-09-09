@@ -193,12 +193,12 @@ manual ChatGPT Codex OAuth snapshot in owner-only `auth.yaml`, pass
 `--auth-file PATH --default-provider openai-codex`, and replace the token plus
 restart the job when it expires or is rejected. It is a separate billing
 identity from public OpenAI API credit and uses an undocumented private backend;
-there is no login or refresh. See the [exact schema and security
-boundary](https://github.com/stacklok/mecatl/blob/main/docs/usage/mecated.md#openai-codex-subscription-manual-token-experimental).
+there is no login or refresh. See [Configure provider
+credentials](./settings.md#configure-provider-credentials).
 
 ### Telemetry (OPT-IN OTLP push)
 
-mecatequi is single-shot and short-lived, so a Prometheus scrape does not fit it. Instead it PUSHES metrics + traces to an OTLP collector when the flags are set, and flushes before exit. Both endpoints empty (the default) leaves the pipeline off — the byte-identical no-telemetry posture. See [ADR 0098](https://github.com/stacklok/mecatl/blob/main/docs/adr/0098-headless-telemetry.md) and the [`mecatequi` flag reference](https://github.com/stacklok/mecatl/blob/main/docs/usage/mecatequi-ci.md).
+mecatequi is single-shot and short-lived, so a Prometheus scrape does not fit it. Instead it PUSHES metrics + traces to an OTLP collector when the flags are set, and flushes before exit. Both endpoints empty (the default) leaves the pipeline off. See [ADR 0098](https://github.com/stacklok/mecatl/blob/main/docs/adr/0098-headless-telemetry.md) and [Key flags](#key-flags).
 
 | Flag | Default | Notes |
 |---|---|---|

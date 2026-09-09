@@ -79,7 +79,7 @@ Use HTTP/SSE when the client is a browser or another language with an HTTP
 library rather than generated gRPC bindings. The HTTP and gRPC surfaces share
 the same session lifecycle, authorization, approval behavior, and event model.
 See [Drive via gRPC / HTTP](/building/deployment/grpc-http.md) and the [HTTP/SSE API
-reference](https://github.com/stacklok/mecatl/blob/main/docs/usage/http-sse-api.md)
+reference](/reference/http-sse-api.md)
 for endpoint details.
 
 ## Session states and continuation

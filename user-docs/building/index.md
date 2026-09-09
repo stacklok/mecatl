@@ -80,3 +80,11 @@ _From smallest to largest._
 | Doc | What it covers |
 |-----|----------------|
 | [What's stable and what's not](/building/api-stability.md) | The seven stable packages, the compat gate, what `engine/adapter/` does NOT promise |
+
+### Reference
+
+| Doc | What it covers |
+|-----|----------------|
+| [Configuration reference](/reference/configuration.md) | Generated operator `settings.yaml` keys, defaults, and allowed tiers |
+| [gRPC API reference](/reference/grpc-api.md) | Services, methods, stream control frames, and response behavior |
+| [HTTP and SSE API reference](/reference/http-sse-api.md) | Routes, request bodies, status codes, and streamed events |

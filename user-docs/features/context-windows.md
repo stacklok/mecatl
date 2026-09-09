@@ -102,8 +102,8 @@ The configured strategy still applies. A cascade pass that reaches its summary t
 can make a compaction-model call, so the operation may cost tokens even though it
 creates no chat turn. Active runs and pending approvals must finish first. Older
 servers hide the command. API clients can use gRPC `CompactSession` or bodyless
-`POST /v1/sessions/{id}/compact`; see the [gRPC](https://github.com/stacklok/mecatl/blob/main/docs/usage/grpc-api.md)
-and [HTTP](https://github.com/stacklok/mecatl/blob/main/docs/usage/http-sse-api.md)
+`POST /v1/sessions/{id}/compact`; see the [gRPC](/reference/grpc-api.md)
+and [HTTP](/reference/http-sse-api.md)
 operator references for state, ownership, lease, and response details.
 
 ## Context and cost limits

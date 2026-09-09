@@ -182,7 +182,7 @@ weaken or disable the operator's checker. A checker failure follows the
 configured fail-open/fail-closed behavior, and unsafe or malformed sanitized
 content is not silently accepted.
 
-See the [guardrails reference](https://github.com/stacklok/mecatl/blob/main/docs/usage/guardrails.md)
+See the [guardrails reference](/building/what-you-get/permissions.md)
 for matchers, modes, and checker failure handling.
 
 ## Limitations

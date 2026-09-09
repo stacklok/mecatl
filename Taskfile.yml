@@ -830,7 +830,7 @@ tasks:
       - task: docs:configref
 
   docs:configref:
-    desc: Regenerate the committed config-init skeleton + configuration-reference.md from the permconfig schema
+    desc: Regenerate the committed config-init skeleton + rendered configuration reference from the permconfig schema
     cmds:
       # The generator harvests the permconfig schema's field doc-comments (go/ast) and
       # reflects over the *Section structs, emitting the TWO committed artifacts both
@@ -838,7 +838,7 @@ tasks:
       # build-time program — the shipped mecated binary embeds the skeleton. The CI
       # docs job diffs the regenerated artifacts against these committed files and
       # fails on drift. Never hand-edit either output.
-      - go run ./internal/configgen/cmd/configref --skeleton internal/configgen/settings.skeleton.yaml --reference docs/configuration-reference.md
+      - go run ./internal/configgen/cmd/configref --skeleton internal/configgen/settings.skeleton.yaml --reference user-docs/reference/configuration.md
 
   docs:check:
     desc: Gate acceptance-plan checker fixtures, ADR-number uniqueness and stale moved paths, then doc link health with matlatl (strict — broken links/anchors, orphans, unreachable)

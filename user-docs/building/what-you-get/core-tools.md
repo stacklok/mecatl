@@ -51,6 +51,25 @@ The fetcher does not use browser cookies, proxy settings, custom headers, or cre
 
 Fetched text is external input. Mecatl strips active HTML elements, converts the remaining page to text, repairs invalid UTF-8, and wraps the result in the same untrusted-content fence used by WebSearch. If you enable model-backed guardrails, their default rules inspect `WebFetch` results before the model sees them.
 
+### Configure web search
+
+`WebSearch` is enabled by default and uses Exa's public MCP endpoint anonymously.
+Set `EXA_API_KEY` to use Exa's paid tier, `BRAVE_API_KEY` to use Brave Search,
+or `SEARXNG_URL` to use a self-hosted SearXNG `/search` endpoint. SearXNG must
+enable JSON output because Mecatl requests `format=json`.
+
+For another HTTP JSON search service, pass `--websearch-url` and put its secret
+in `WEBSEARCH_API_KEY`. The adapter sends the query as URL or form parameters
+and accepts a `results` array with `title`, `url`, and a text field named
+`snippet`, `content`, or `description`. Use `--websearch-auth-header` when the
+service expects a raw-key header instead of the default bearer authorization,
+and `--websearch-query-param` when it does not use `q`.
+
+Pass `--websearch=off` to remove outbound search calls. Search queries are sent
+verbatim, results are fenced as untrusted content, redirects are refused, and
+each call has a bounded timeout and concurrency limit. Configure permission
+rules or guardrails when queries need an additional exfiltration control.
+
 :::note[Bash is mutating]
 
 `Bash` is always classified as mutating regardless of what the command does. If you need the model to run read-only shell commands concurrently, use `ListDir`, `Grep`, and `Glob` instead — they are purpose-built read-only tools that run in parallel.
@@ -141,7 +160,7 @@ parallel](subagents-teams-parallel.md).
 
 **Skills.** Skills are not tools in the traditional sense — they are progressive-disclosure instruction bundles. A single `Skill` tool exposes a catalog of `SKILL.md` files; the model calls it with a skill name to load that skill's full instructions into context. Each discovered skill is **also invocable as a slash command**: `/<skill-name>` injects the skill body directly as the expanded prompt (Claude-Code skill-as-command semantics). Skills are opt-in (`--skills-dir` or `--skills-conventional`). See [Extension points: tool catalog](/building/extension-points/tool-catalog.md) for details on wiring skills.
 
-**Skills can be learned, under lifecycle control.** Direct `SkillDraft` derives the verified caller and exact workspace and creates only an inactive legacy draft; it is never an automatic-activation shortcut. Completed-trajectory reflection can evaluate evidence-backed procedures: review mode stages PASS/ABSTAIN and rejects FAIL. In Auto, PASS activates; the stock `validated` policy may also activate a structurally accepted, evidence-backed ABSTAIN, while `activation: evaluated` retains PASS-only assurance. Similar candidates, external collisions, and unpublishable caller/project partitions remain staged; evaluator infrastructure failures persist only a generic ERROR verdict and remain rejected. Publication is recoverable and reports pending status instead of hiding a committed change. Activation changes only the body returned by the existing `Skill` tool: learned skills cannot add tools, assets, scripts, paths, permissions, or workspace roots. Operator/project/user/driver skills keep precedence and remain immutable. See the [skills and learning guide](https://github.com/stacklok/mecatl/blob/main/docs/usage/skills-soul-usermodel.md). The old quarantine plus `mecated skills promote` workflow remains a deprecated compatibility path.
+**Skills can be learned, under lifecycle control.** Direct `SkillDraft` derives the verified caller and exact workspace and creates only an inactive legacy draft; it is never an automatic-activation shortcut. Completed-trajectory reflection can evaluate evidence-backed procedures: review mode stages PASS/ABSTAIN and rejects FAIL. In Auto, PASS activates; the stock `validated` policy may also activate a structurally accepted, evidence-backed ABSTAIN, while `activation: evaluated` retains PASS-only assurance. Similar candidates, external collisions, and unpublishable caller/project partitions remain staged; evaluator infrastructure failures persist only a generic ERROR verdict and remain rejected. Publication is recoverable and reports pending status instead of hiding a committed change. Activation changes only the body returned by the existing `Skill` tool: learned skills cannot add tools, assets, scripts, paths, permissions, or workspace roots. Operator/project/user/driver skills keep precedence and remain immutable. See the [skills and learning guide](/features/skills-commands-and-soul.md). The old quarantine plus `mecated skills promote` workflow remains a deprecated compatibility path.
 
 **Slash commands.** These aren't tools either — they're your own reusable prompt templates. Drop a `<name>.md` file in `.mecatl/commands/` (or `.claude/commands/`, if you're used to that convention) and typing `/<name>` expands it into the prompt before it's sent, no network or trust cost involved since it never leaves your machine. `mecatui`'s embedded server picks these up automatically (opt out with `--no-commands`); a standalone `mecated` needs `--enable-commands` (or `--commands-dir` for a non-conventional location). `mecatui` merges these into its command palette alongside the built-ins, with a built-in winning any name collision.
 

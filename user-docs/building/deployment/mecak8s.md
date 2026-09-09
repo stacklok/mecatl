@@ -416,8 +416,31 @@ Broker sessions and OAuth state are process-local. The chart schema now enforces
 high availability or zero-downtime rollout for OAuth broker mode until an
 affinity or durable-broker decision lands.
 :::
-See the [operator guide](https://github.com/stacklok/mecatl/blob/main/docs/usage/mecak8s.md#configuring-mcp-servers-with-helm)
-for the complete OAuth values shape.
+
+For a preregistered OAuth client, add this shape to the server entry:
+
+```yaml
+auth:
+  mode: oauth
+  oauth:
+    issuer: https://issuer.example
+    client:
+      mode: preregistered
+      preregistered:
+        id: mecak8s
+        secretKeyRef: {name: mecak8s-mcp-oauth, key: client-secret}
+    scopes: [mcp.read]
+    requestRefreshToken: true
+    network:
+      additionalOrigins: []
+      privateOrigins: []
+      maxRedirects: 0
+```
+
+Set `client.mode: cimd` with `cimd.documentURL` for client ID metadata, or
+`client.mode: dcr` with an HTTPS RFC 8414 discovery URL for dynamic client
+registration. A plain OAuth2 upstream uses explicit `authorizationEndpoint`
+and `tokenEndpoint` values instead of `issuer`.
 
 Keep MCP and OAuth endpoints on HTTPS and provide pod egress through your
 NetworkPolicy or mesh; this chart has no general NetworkPolicy. The explicit
@@ -541,9 +564,35 @@ only that mecak8s discovered the artifact metadata. Drive a real coding session
 with `/oci-skill-demo` and check the SSE stream instead. A complete proof shows
 the `Skill` tool returning instructions from the artifact, the agent using
 `Write` to make the skill's uniquely named file, `Read` returning its unique
-marker, and a clean terminal result reporting the verified path. The full
-command sequence and expected events are in the
-[`mecak8s` operator guide](https://github.com/stacklok/mecatl/blob/main/docs/usage/mecak8s.md#prove-the-skill-in-a-coding-run).
+marker, and a clean terminal result reporting the verified path.
+
+For example, package an `oci-skill-demo/SKILL.md` file with these instructions:
+
+```markdown
+---
+name: oci-skill-demo
+description: Creates and verifies a proof file from an OCI-mounted skill.
+---
+
+Use Write to create `oci-skill-proof.txt` containing `OCI_SKILL_MOUNT_OK`.
+Use Read to verify the file, then report the verified path and marker.
+```
+
+After starting `mecak8s` with a real provider, create a session and invoke the
+mounted skill through the HTTP API:
+
+```sh
+session_id=$(curl -fsS -X POST http://127.0.0.1:8081/v1/sessions \
+  -H 'Content-Type: application/json' -d '{}' | jq -r .session_id)
+
+curl -fsS -N -X POST \
+  "http://127.0.0.1:8081/v1/sessions/${session_id}/prompt" \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"/oci-skill-demo Execute the mounted skill and verify the resulting file."}'
+```
+
+The stream must show `Skill`, `Write`, and `Read` tool calls in that order,
+followed by a clean terminal result containing the verified marker.
 
 Use Helm 3.16 or newer when adding an image volume to an existing release.
 Older clients can render the YAML but may not know the `image` field when they
@@ -1139,7 +1188,11 @@ Codex OAuth entry and assume the binary will accept it. See [ADR
 | JSONL on-disk session store | Yes (`--store-dir`) | No — Redis only |
 | Single-replica without external state | Yes (in-memory or JSONL) | No — Redis is required |
 
-If you need the `perf-mcp` diagnostics subcommand, the `skills promote` / `config` subcommands, or an interactive TUI client, run `mecated` instead. `mecak8s` now offers OPT-IN telemetry (`--metrics-addr` loopback scrape + `--otlp-*` push, see [ADR 0098](https://github.com/stacklok/mecatl/blob/main/docs/adr/0098-headless-telemetry.md) and the [`mecak8s` flag reference](https://github.com/stacklok/mecatl/blob/main/docs/usage/mecak8s.md)); for multi-replica deployments with `mecated` and Redis-backed state you would need to wire `--redis-url` — but that flag does not exist on `mecated`. `mecak8s` is the only binary that exposes it.
+If you need the `perf-mcp` diagnostics subcommand, the `skills promote` or
+`config` subcommands, or an interactive TUI client, run `mecated` instead.
+`mecak8s` exposes opt-in telemetry through `--metrics-addr` and `--otlp-*`; see
+[Observability and resilience](/building/what-you-get/observability.md). It is
+also the only binary that exposes `--redis-url` for Redis-backed state.
 
 ---
 

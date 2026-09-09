@@ -87,7 +87,7 @@ model.
 
 `mecatui` accepts these flags for its embedded server. They do not reconfigure a
 server used through `mecatui connect`. `mecak8s` exposes the corresponding server
-configuration. See the [operator provider and model reference](https://github.com/stacklok/mecatl/blob/main/docs/usage/mecated.md#provider-selection)
+configuration. See the [operator provider and model reference](/building/deployment/mecated.md#provider-and-model)
 for credential sources and deployment options.
 
 ### Operator-defined gateways
@@ -101,7 +101,7 @@ When a custom provider's live model listing is unreachable, unauthorized, or emp
 `/models` keeps its configured default model selectable and displays only a safe
 provider status; endpoints, credentials, and raw listing errors or response bodies
 are never published to clients. Built-in `--*-base-url` flags still take precedence over eligible built-in endpoint overrides.
-See the [provider configuration reference](https://github.com/stacklok/mecatl/blob/main/docs/configuration-reference.md#providers) for the accepted flavors and fields.
+See the [provider configuration reference](/reference/configuration.md#providers) for the accepted flavors and fields.
 
 ### Configure aliases, slots, and task routing
 
@@ -185,8 +185,42 @@ slot, or route target warns and falls back to the session model. The `title` slo
  set on a trusted project.
 
 This configuration belongs in the operator-global settings file, not a checked-in
-project file. For the complete precedence rules and CLI equivalents, see the
-[model-routing guide](https://github.com/stacklok/mecatl/blob/main/docs/usage/model-routing.md).
+project file. See the [configuration reference](/reference/configuration.md#models)
+for the complete field schema and defaults.
+
+### Route OpenRouter models through preferred downstreams
+
+OpenRouter can serve one model through several downstream inference providers. By
+default, it balances among them by price. An operator can instead set a preferred
+order for each model in the operator-tier `settings.yaml`:
+
+```yaml
+openrouter:
+  models:
+    "anthropic/claude-sonnet-4-6":
+      order: ["anthropic", "google-vertex"]
+      allow_fallbacks: false
+    "openai/gpt-5":
+      order: ["deepinfra/turbo"]
+```
+
+`order` accepts lowercase-kebab downstream slugs and disables OpenRouter's default
+price balancing. An absent `allow_fallbacks` keeps OpenRouter's default (`true`), so
+it may try other downstreams after exhausting the list. Setting it to `false` pins
+the request to the listed downstreams and can fail the turn when none are available.
+
+This configuration is operator-tier only because it controls spend, compliance,
+and capabilities. Mecatl ignores a project-tier `openrouter` block with a warning.
+Invalid slugs and empty orders are also dropped with a warning.
+
+For each OpenRouter turn, Mecatl reports the selected downstream as a
+`provider.route` event when OpenRouter supplies that metadata. The value may be
+absent on a cache hit. It is OpenRouter's display name, such as `Google`, not the
+configuration slug such as `google-vertex`, so treat it as human-readable status
+rather than a round-trippable identifier.
+
+See the [configuration reference](/reference/configuration.md#openrouter) for the
+full field schema.
 
 ### Run one shot with mecatequi
 
@@ -217,7 +251,7 @@ the selected provider and known model capabilities.
 
 The effective result is returned in `resolved_model.reasoning_effort`, so clients
 can display what the server actually applied. Provider-specific effort mapping
-belongs in the [operator reference](https://github.com/stacklok/mecatl/blob/main/docs/usage/guardrails.md#the-operator-global-reasoning-effort-setting),
+belongs in the [configuration reference](/reference/configuration.md#reasoning-effort),
 not in the selection workflow.
 
 ## API journey
@@ -260,7 +294,7 @@ to an unknown or unavailable provider. The API returns the new session ID and
 resolved model information after successful creation.
 
 See [Drive via gRPC / HTTP](/building/deployment/grpc-http.md) for the shared session
-lifecycle and [the HTTP/SSE API reference](https://github.com/stacklok/mecatl/blob/main/docs/usage/http-sse-api.md)
+lifecycle and [the HTTP/SSE API reference](/reference/http-sse-api.md)
 for endpoint details.
 
 ## Model inventory and capabilities

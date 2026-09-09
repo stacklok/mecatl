@@ -16,8 +16,8 @@ For the user-facing explanation of project content and trust admission, see
 
 Rules are the pattern-2 instance of scoped context assembly: the same trust class
 as `AGENTS.md`/`CLAUDE.md` and the soul/persona. See
-[`docs/usage/skills-soul-usermodel.md`](https://github.com/stacklok/mecatl/blob/main/docs/usage/skills-soul-usermodel.md#project-rules-claude-rules)
-for the full locations, trust gate, caps, and `paths:` semantics, and
+[Skills, commands, and soul](/features/skills-commands-and-soul.md)
+for the user-facing discovery and trust behavior, and
 [ADR 0081](https://github.com/stacklok/mecatl/blob/main/docs/adr/0081-rules-source-port.md) for the design.
 
 ## Discovery

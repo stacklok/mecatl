@@ -56,7 +56,7 @@ curl http://localhost:8080/v1/schedules/nightly-report/fires/<fire-id>
 ```
 
 The REST routes are under `/v1/schedules`. The gRPC service is
-`mecatl.v1.ScheduleService`. See the [gRPC API reference](https://github.com/stacklok/mecatl/blob/main/docs/usage/grpc-api.md)
+`mecatl.v1.ScheduleService`. See the [gRPC API reference](/reference/grpc-api.md)
 and the [schedule proto](https://github.com/stacklok/mecatl/blob/main/contracts/proto/mecatl/v1/schedule.proto)
 for exact request and response fields.
 
@@ -115,5 +115,5 @@ and shutdown details, see [Scheduled tasks for builders](/building/what-you-get/
 
 - [Session continuity](./session-continuity.md)
 - [Mecatl deployment choices](/building/getting-started/deployment-decision.md)
-- [Scheduled task API reference](https://github.com/stacklok/mecatl/blob/main/docs/usage/grpc-api.md)
+- [Scheduled task API reference](/reference/grpc-api.md)
 - [Capability and deployment matrix](./capability-matrix.md)

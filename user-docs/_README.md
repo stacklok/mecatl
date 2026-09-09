@@ -19,6 +19,7 @@ do not create a manual sidebar to express this structure.
 | `building/extension-points/` | Developers integrating with Mecatl's public seams, ports, and APIs. | How to operate a supplied deployment or use an existing feature. |
 | `building/deployment/` | Operators and platform builders deploying, securing, and maintaining a specific Mecatl delivery shape. | Client workflows and shared feature behavior except where a deployment changes availability or operation. |
 | `features/` | Users and operators enabling or understanding a capability of the shared agent and server core. Each feature page states availability and links to shape-specific deployment instructions. | Terminal-client controls, embedding APIs, and deployment runbooks. |
+| `reference/` | Readers looking up generated configuration fields or exact gRPC and HTTP/SSE contracts. | Tutorials, deployment workflows, and conceptual background. Link to the owning guide. |
 
 `building/` is the builder and operator umbrella. Its `index.md` routes readers to
 the appropriate subsection; it does not own a second copy of their material.
@@ -41,6 +42,18 @@ when that is the reader's task; it must not repeat the canonical feature guide.
 | Using the terminal client | `mecatui/` | `features/use-mecatui.md` is a feature-level entry point and links to the client guides for controls and workflows. |
 | Scheduled tasks | `features/scheduled-tasks.md` | `building/what-you-get/scheduled-tasks.md` describes the builder-facing storage, claiming, and recovery model. |
 | Permissions and posture | `features/permissions-and-posture.md` | `building/what-you-get/permissions.md` describes evaluator, delegated-authority, and custom-policy integration. |
+| Install and first run | `building/getting-started/first-agent.md` and `building/getting-started/demo.md` | Deployment pages cover their own prerequisites only. |
+| `mecated` operation and flags | `building/deployment/mecated.md` | Feature pages explain shared behavior and link to the deployment guide for flags. |
+| `mecak8s` operation and Helm values | `building/deployment/mecak8s.md` | Feature pages describe shared behavior without restating chart values. |
+| `mecatequi` and GitHub Actions | `building/deployment/mecatequi.md` | Workflow maintainers keep implementation notes in `.github/workflows/README.md`. |
+| Provider and model selection | `features/choose-models.md` | `building/deployment/mecated.md` owns daemon-specific credential and flag details. |
+| Workspace trust | `features/permissions-and-posture.md` | `features/project-instructions-and-rules.md` describes the project-content consequence. |
+| Skills, commands, soul, and user model | `features/skills-commands-and-soul.md` and `building/what-you-get/memory.md` | Extension-point pages document the importable interfaces. |
+| Hooks | `building/what-you-get/hooks.md` | `building/extension-points/hook-runner.md` owns host-integration details. |
+| Configuration schema | `reference/configuration.md` | `building/deployment/settings.md` explains which configuration plane to use. |
+| gRPC API | `reference/grpc-api.md` | `building/deployment/grpc-http.md` explains client integration and transport choice. |
+| HTTP and SSE API | `reference/http-sse-api.md` | `building/deployment/grpc-http.md` explains client integration and transport choice. |
+| Troubleshooting | The troubleshooting section nearest the affected workflow | Do not create a second catch-all list when the owning page can provide the remedy. |
 
 When adding a page that appears to overlap an existing page, identify its canonical
 page in the pull request description. If the two pages need the same complete
@@ -97,11 +110,18 @@ For a sibling in the same directory, use a relative `.md` path. Do not use a
 
 ## Verify behavior
 
-Start with the applicable source material:
+Start with the applicable implementation source:
 
 - `docs/architecture/*.md` for subsystem behavior
-- `docs/usage/*.md` for flags, configuration, and examples
 - `docs/adr/*.md` for the design rationale
+- `contracts/proto/` for gRPC messages and services
+- command flag registration, configuration schemas, handlers, and adapters for
+  deployed behavior
+
+The files under `docs/usage/` are compatibility pointers for historical links,
+not an authoring surface. Update the owning `user-docs/` page instead. The
+generated `reference/configuration.md` page is the exception to direct editing:
+change the configuration schema or generator, then run `task docs:configref`.
 
 Confirm availability and defaults against the shipped public surface: flags or
 configuration, composition, capability advertisement, handlers, and deployed

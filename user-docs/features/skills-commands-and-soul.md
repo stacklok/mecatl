@@ -169,7 +169,7 @@ A remote skill source replaces local skill discovery and is snapshotted at
 startup. A remote soul source occupies the user soul slot and is revalidated
 locally. A remote command source composes with local commands and is consulted
 live. Configure driver TLS and authentication as described in the
-[configuration guide](https://github.com/stacklok/mecatl/blob/main/docs/usage/configuration.md); use only drivers you
+[settings guide](/building/deployment/settings.md); use only drivers you
 trust.
 
 The legacy `SkillDraft`/`mecated skills promote` path is a quarantine workflow,
@@ -183,5 +183,5 @@ and separate from active skill directories.
 - [Project instructions and rules](./project-instructions-and-rules.md)
 - [Named agents](./named-agents.md)
 - [Permissions and posture](./permissions-and-posture.md)
-- [Usage: skills, soul, and user model](https://github.com/stacklok/mecatl/blob/main/docs/usage/skills-soul-usermodel.md)
-- [Usage: workspace trust](https://github.com/stacklok/mecatl/blob/main/docs/usage/workspace-trust.md)
+- [Memory and knowledge](/building/what-you-get/memory.md)
+- [Permissions and posture](./permissions-and-posture.md#project-trust)

@@ -53,8 +53,8 @@ token, but the shipped brood-box manifest does not mount that secret or allow
 pass `--auth-file` and `--default-provider openai-codex`, and permit HTTPS to
 `chatgpt.com`. This is not public OpenAI API credit: it uses an undocumented
 private backend, has no refresh flow, and requires relaunch after token
-replacement. Read the [exact operator setup and same-UID plaintext
-boundary](https://github.com/stacklok/mecatl/blob/main/docs/usage/mecated.md#openai-codex-subscription-manual-token-experimental)
+replacement. Read the [operator setup and same-UID plaintext
+boundary](./settings.md#configure-provider-credentials)
 before adding the mount.
 
 ## Runtime and sensitive local administration

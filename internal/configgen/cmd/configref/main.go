@@ -2,7 +2,7 @@
 // committed configuration artifacts from the permconfig YAML schema:
 //
 //   - the commented settings.yaml skeleton (--skeleton), embedded by `config init`, and
-//   - the Markdown configuration reference (--reference), linked from usage.md.
+//   - the rendered Markdown configuration reference (--reference).
 //
 // It is the ONLY place go/ast is used to harvest the schema's field doc-comments;
 // the shipped mecated binary never imports go/ast (it embeds the skeleton this
