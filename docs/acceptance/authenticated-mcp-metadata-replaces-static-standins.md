@@ -5,7 +5,7 @@
 **Status:** landed candidate, 2026-09-09. Local implementation and verification are complete; authoritative only when these changes merge.
 **Delivery:** Split. This changes the ADR-governed model-visible protected-tool catalogue and its authority-sensitive read-only classification, so it requires Plan / Interface review before implementation.
 **Expected tasks:** 2
-**Issue:** none yet — discovered during manual connector-gateway broker verification.
+**Issue:** [#1319](https://github.com/stacklok/mecatl/issues/1319)
 **Plan PR:** <added when opened>
 **Approved baseline:** `17ff18154` (local plan commit explicitly approved for execution in this workspace; no remote Plan PR requested)
 
