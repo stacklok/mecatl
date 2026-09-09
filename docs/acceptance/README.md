@@ -155,6 +155,10 @@ PR after verification. There is no cleanup or status-only PR.
 - [Operator-defined LLM providers](operator-defined-llm-providers.md) — operator-local,
   truthfully named gateway providers over the existing Responses, Chat Completions, and
   Anthropic Messages adapters, plus persistent built-in endpoint overrides. Status: draft.
+- [Native LLM-gateway OIDC login](native-llm-gateway-login.md) — mecatl-owned login,
+  protected refresh/logout lifecycle, and direct bearer injection for organizational gateways,
+  with ToolHive retained only as explicit optional proxy compatibility and no cross-store secret
+  migration. Status: proposed.
 - [Surface approval migration](surface-approval-migration.md) — final Phase-2 migration of the mecatui approval UI onto the dynamic surface contract, including ephemeral render-frame hit dispatch. Status: landed.
 - [Spine convergence](spine-convergence.md) — bring the
   to-acceptance-plan / plan-orchestrate / test-writer spine + ac-trace into
