@@ -316,16 +316,11 @@ func TestPresentPlanInSharedAndPerSessionCatalogs(t *testing.T) {
 // TestBackgroundShellCatalogWiring pins the background-Shell composition contract
 // (the agent ShellTool + its ShellStatus companion) on the REAL assembly paths:
 //
-//   - the fully-loaded SHARED catalog holds Shell as the AGENT ShellTool (the
-//     childCapableTool seam, so `background: true` can reach the run's child
-//     registry) AND ShellStatus — registerCoreTools registers the pair under one
-//     shell gate, so they cannot drift apart;
-//   - EVERY child surface (the read-only explorer catalog a default Subagent
-//     child gets, and an agent-def's scoped child catalog — Shell allowed and
-//     scoped in) has Shell as the SAME agent ShellTool construction but NEVER
-//     ShellStatus: the collection channel stays main-catalog-only, mirroring the
-//     SubagentStatus rule ("registered wherever Subagent is, never in child
-//     catalogs").
+//   - the fully-loaded SHARED catalog holds the canonical Shell and ShellStatus pair;
+//   - EVERY child surface that enables Shell registers the same pair, while a
+//     shell-less surface registers neither. ShellStatus is a companion capability,
+//     not an allowlist entry, so scoped agent definitions retain their requested
+//     tool scope.
 func TestCanonicalShellTool_Scenario1_CatalogNames(t *testing.T) {
 	ctx := context.Background()
 	url := newMCPTestServerWithResource(t)
@@ -363,9 +358,12 @@ func TestCanonicalShellTool_Scenario1_CatalogNames(t *testing.T) {
 	if _, isShellStatus := bashStatus.(*agent.ShellStatusTool); !isShellStatus {
 		t.Fatalf("shared catalog ShellStatus is %T, want *agent.ShellStatusTool", bashStatus)
 	}
+	if _, ok := sharedCat.Lookup("Bash"); ok {
+		t.Fatal("shared catalog must not register legacy Bash")
+	}
 
 	// The read-only explorer surface (the default Subagent child's catalog):
-	// Shell present as the agent tool, ShellStatus absent.
+	// canonical Shell and ShellStatus are both present.
 	runner := buildSandboxedCommandRunner(cfg)
 	if runner == nil {
 		t.Fatal("precondition: fully-loaded config yields a sandboxed runner")
@@ -378,12 +376,19 @@ func TestCanonicalShellTool_Scenario1_CatalogNames(t *testing.T) {
 	if _, isAgent := childShell.(agent.ShellTool); !isAgent {
 		t.Fatalf("child Shell is %T, want agent.ShellTool (child background parity)", childShell)
 	}
-	if _, ok := explorer.Lookup("ShellStatus"); ok {
-		t.Fatal("read-only explorer catalog must NOT contain ShellStatus (main-catalog-only channel)")
+	childStatus, ok := explorer.Lookup("ShellStatus")
+	if !ok {
+		t.Fatal("read-only explorer catalog lost ShellStatus")
+	}
+	if _, isShellStatus := childStatus.(*agent.ShellStatusTool); !isShellStatus {
+		t.Fatalf("child ShellStatus is %T, want *agent.ShellStatusTool", childStatus)
+	}
+	if _, ok := explorer.Lookup("Bash"); ok {
+		t.Fatal("read-only explorer catalog must not register legacy Bash")
 	}
 
 	// The agent-def scoped path (the REAL buildAgentDefEngine): a def allow-listing
-	// Shell keeps it as the agent tool and its catalog still gains NO ShellStatus.
+	// Shell keeps the canonical Shell/ShellStatus pair.
 	def := agents.AgentDef{Name: "scoped-explorer", Tools: []string{"Read", "Shell"}}
 	base := baseSubagentTools(cfg)
 	defEng, defClose, defNames, _, _ := buildAgentDefEngine(ctx, cfg, def, "task:"+def.Name, "test",
@@ -400,16 +405,18 @@ func TestCanonicalShellTool_Scenario1_CatalogNames(t *testing.T) {
 	if !foundShell {
 		t.Fatalf("def-scoped names %v lost Shell (allowShell keeps it)", defNames)
 	}
-	// The built engine HOLDS Shell (HasTool is the engine's catalog read) and the
-	// base tool registered for it is the agent construction; the engine's catalog
-	// never gains ShellStatus.
+	// The built engine holds the canonical Shell/ShellStatus pair; the requested
+	// scoped names retain only the explicit Shell allowlist entry.
 	if !defEng.HasTool(tools.ShellToolName) {
 		t.Fatal("def-scoped engine lost Shell")
 	}
+	if !defEng.HasTool("ShellStatus") {
+		t.Fatal("def-scoped engine lost ShellStatus")
+	}
+	if defEng.HasTool("Bash") {
+		t.Fatal("def-scoped engine must not contain legacy Bash")
+	}
 	if _, isAgent := base[tools.ShellToolName].(agent.ShellTool); !isAgent {
 		t.Fatalf("base Shell is %T, want agent.ShellTool (child background parity)", base[tools.ShellToolName])
-	}
-	if defEng.HasTool("ShellStatus") {
-		t.Fatal("def-scoped engine must NOT contain ShellStatus (main-catalog-only channel)")
 	}
 }

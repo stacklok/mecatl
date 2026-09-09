@@ -6643,10 +6643,9 @@ func readOnlyExplorerCatalog(runner tool.CommandRunner) *tool.Catalog {
 		// agent.NewShellTool, NOT the fstools one: the child's Shell reaches its
 		// OWN run's child registry through the dispatch seam, so `background:
 		// true` works inside a child against that registry (run-scoped, drained
-		// at the child's run end). The child deliberately gets NO ShellStatus —
-		// the collection channel stays main-catalog-only, mirroring the
-		// SubagentStatus rule (never in child catalogs).
+		// at the child's run end).
 		classified.mustRegister(agent.NewShellTool(), workspace)
+		classified.mustRegister(agent.NewShellStatusTool(), workspace)
 	}
 	mustValidateClassifiedCatalog(classified, "read-only explorer tool catalog")
 	return cat
@@ -6661,6 +6660,7 @@ func writableExplorerCatalog(runner tool.CommandRunner, surface string) *tool.Ca
 	}
 	if runner != nil {
 		classified.mustRegister(agent.NewShellTool(), workspace)
+		classified.mustRegister(agent.NewShellStatusTool(), workspace)
 	}
 	classified.mustRegister(tools.EditTool{}, workspace)
 	classified.mustRegister(tools.WriteTool{}, workspace)
@@ -7895,6 +7895,12 @@ func registerScopedMemberTool(classified *classifiedCatalog, name string, base m
 			return
 		}
 		registered = agent.NewShellTool()
+		entry, _ := coreToolClassification(registered)
+		classified.mustRegister(registered, &entry)
+		status := agent.NewShellStatusTool()
+		entry, _ = coreToolClassification(status)
+		classified.mustRegister(status, &entry)
+		return
 	}
 	entry, ok := coreToolClassification(registered)
 	if !ok {
@@ -7930,6 +7936,7 @@ func registerDefaultMemberTools(classified *classifiedCatalog, spec agent.Member
 	}
 	if memberShell := memberShellRunner(spec.Mutating, runner, mutatingRunner); memberShell != nil && (spec.Mutating || roIsolationAvailable) {
 		classified.mustRegister(agent.NewShellTool(), workspace)
+		classified.mustRegister(agent.NewShellStatusTool(), workspace)
 		isolateReadOnly = !spec.Mutating && roIsolationAvailable
 	}
 	return isolateReadOnly

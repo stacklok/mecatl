@@ -85,6 +85,19 @@ func drainEngine(t *testing.T, eng *agent.Engine) []session.Event {
 	return events
 }
 
+func assertCanonicalShellCatalog(t *testing.T, eng *agent.Engine, enabled bool) {
+	t.Helper()
+	if got := eng.HasTool("Shell"); got != enabled {
+		t.Fatalf("Shell present = %v, want %v", got, enabled)
+	}
+	if got := eng.HasTool("ShellStatus"); got != enabled {
+		t.Fatalf("ShellStatus present = %v, want %v", got, enabled)
+	}
+	if eng.HasTool("Bash") {
+		t.Fatal("catalog must not register legacy Bash")
+	}
+}
+
 // TestForkChildEngineHasShellAndEdit proves buildParallelChildEngine's catalog now
 // contains BOTH Edit and Shell when a runner is configured — Shell is workspace-aware
 // and runs in the branch's fork, so it is safe to re-enable.
@@ -95,6 +108,7 @@ func TestForkChildEngineHasShellAndEdit(t *testing.T) {
 		t.Fatal("precondition: expected a non-nil command runner with Shell set")
 	}
 	eng := buildParallelChildEngine(cfg, nil, bashThenEdit(), "", cfg.Model, runner)
+	assertCanonicalShellCatalog(t, eng, true)
 
 	events := drainEngine(t, eng)
 
@@ -115,6 +129,7 @@ func TestForkChildEngineHasShellAndEdit(t *testing.T) {
 func TestForkChildEngineNoRunnerHasNoShell(t *testing.T) {
 	cfg := teamCfg(t)
 	eng := buildParallelChildEngine(cfg, nil, bashThenEdit(), "", cfg.Model, nil)
+	assertCanonicalShellCatalog(t, eng, false)
 
 	events := drainEngine(t, eng)
 
@@ -141,6 +156,7 @@ func TestMutatingMemberHasShellAndEdit(t *testing.T) {
 	if build.Engine == nil {
 		t.Fatal("factory returned a nil engine")
 	}
+	assertCanonicalShellCatalog(t, build.Engine, true)
 
 	events := drainEngine(t, build.Engine)
 
@@ -167,6 +183,7 @@ func TestReadOnlyMemberHasNoShellOrEdit(t *testing.T) {
 	if build.Engine == nil {
 		t.Fatal("factory returned a nil engine")
 	}
+	assertCanonicalShellCatalog(t, build.Engine, false)
 
 	events := drainEngine(t, build.Engine)
 
@@ -197,6 +214,7 @@ func TestReadOnlyIsolatedMemberHasShellNotEdit(t *testing.T) {
 	if !build.IsolateReadOnly {
 		t.Error("read-only member with Shell should set IsolateReadOnly so the supervisor isolates it in a worktree")
 	}
+	assertCanonicalShellCatalog(t, build.Engine, true)
 
 	events := drainEngine(t, build.Engine)
 
@@ -227,6 +245,7 @@ func TestReadOnlyMemberNoRunnerNoShellNotIsolated(t *testing.T) {
 	if build.IsolateReadOnly {
 		t.Error("read-only member with no runner must NOT be IsolateReadOnly (no shell => base-share)")
 	}
+	assertCanonicalShellCatalog(t, build.Engine, false)
 
 	events := drainEngine(t, build.Engine)
 	if !unknownToolResult(events, "b1") {
@@ -250,6 +269,7 @@ func TestReadOnlyIsolatedMemberDefKeepsShellDropsEdit(t *testing.T) {
 	if !build.IsolateReadOnly {
 		t.Error("read-only def-member that kept Shell should set IsolateReadOnly")
 	}
+	assertCanonicalShellCatalog(t, build.Engine, true)
 
 	events := drainEngine(t, build.Engine)
 	if unknownToolResult(events, "b1") {
@@ -273,6 +293,7 @@ func TestMutatingMemberDefCanScopeInShell(t *testing.T) {
 	if build.Engine == nil {
 		t.Fatal("factory returned a nil engine")
 	}
+	assertCanonicalShellCatalog(t, build.Engine, true)
 
 	events := drainEngine(t, build.Engine)
 
@@ -300,6 +321,7 @@ func TestReadOnlyMemberDefCannotScopeInShell(t *testing.T) {
 	if build.Engine == nil {
 		t.Fatal("factory returned a nil engine")
 	}
+	assertCanonicalShellCatalog(t, build.Engine, false)
 
 	events := drainEngine(t, build.Engine)
 

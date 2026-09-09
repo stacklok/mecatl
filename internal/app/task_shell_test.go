@@ -508,6 +508,7 @@ func newSubagentToolForTestOpts(t *testing.T, cfg Config, childProvider *mockllm
 	// (readOnlyExplorerCatalog), so the test child exercises the same Shell the
 	// composition root hands real children.
 	childCat.MustRegister(agent.NewShellTool())
+	childCat.MustRegister(agent.NewShellStatusTool())
 	childEng := agent.NewEngine(agent.Deps{
 		LLM:              childProvider,
 		Catalog:          childCat,

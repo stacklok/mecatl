@@ -895,6 +895,11 @@ func buildAgentDefEngine(ctx context.Context, cfg Config, def agents.AgentDef, r
 		}
 		classified.mustRegister(registered, &entry)
 	}
+	if _, ok := cat.Lookup(tools.ShellToolName); ok {
+		status := agent.NewShellStatusTool()
+		entry, _ := coreToolClassification(status)
+		classified.mustRegister(status, &entry)
+	}
 
 	// Per-agent MCP: a def's mcpServers add the referenced/inline servers' tools to
 	// THIS def's catalog (not the main conversation's). The inline managers' Close is
