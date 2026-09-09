@@ -2,7 +2,7 @@
 
 **Contract:** human-reviewed/v1
 **Phase:** Broker-only mecak8s connector observability
-**Status:** approved, 2026-09-09. User explicitly approved all three previously unchecked recommendations unchanged and waived a separate amendment PR/merge; this local decision record will be included in the eventual implementation PR.
+**Status:** in-progress, 2026-09-09. T01 broker inspection is integrated; service/API and client/UI tasks remain. User approved all decisions and waived a separate amendment PR/merge; the local decision record travels with the implementation PR.
 **Delivery:** Split. Original Plan / Interface PR #1305 merged; the directing human authorized a local-amendment exception for recording these decisions, without a separate amendment PR/merge.
 **Expected tasks:** deferred to orchestration
 **Issue:** None assigned.
