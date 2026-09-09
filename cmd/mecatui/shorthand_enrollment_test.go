@@ -6,9 +6,13 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/adrg/xdg"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/internal/adapter/clientauth"
@@ -47,6 +51,194 @@ func TestOAuthProtectedResource_Scenario4_ShorthandEnrollment(t *testing.T) {
 	if gotScopes := strings.Join(got.Identity.Scopes, ","); gotScopes != "api.read" {
 		t.Fatalf("shorthand scopes = %q", gotScopes)
 	}
+}
+
+func TestDiscoveredLoginFirstEnrollmentConfirmsWithoutCreatingRegistry(t *testing.T) {
+	oldConfigHome := xdg.ConfigHome
+	xdg.ConfigHome = t.TempDir()
+	t.Cleanup(func() { xdg.ConfigHome = oldConfigHome })
+	originalDiscover, originalConfirm, originalLogin := discoverRemoteResource, confirmDiscoveredEnrollment, executeRemoteLogin
+	t.Cleanup(func() {
+		discoverRemoteResource, confirmDiscoveredEnrollment, executeRemoteLogin = originalDiscover, originalConfirm, originalLogin
+	})
+	discoverRemoteResource = func(context.Context, protectedResource) (discoveredResource, error) {
+		return discoveredLoginFixture(), nil
+	}
+	confirmed := false
+	confirmDiscoveredEnrollment = func(io.Reader, io.Writer, discoveredEnrollment) (bool, error) {
+		confirmed = true
+		if _, err := os.Stat(filepath.Join(xdg.ConfigHome, "mecatl")); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("registry lookup created local state before confirmation: %v", err)
+		}
+		return true, nil
+	}
+	loggedIn := false
+	executeRemoteLogin = func(context.Context, clientauth.Connection, bool) error { loggedIn = true; return nil }
+
+	if err := runRemoteLogin("api.example.com", nil); err != nil {
+		t.Fatal(err)
+	}
+	if !confirmed || !loggedIn {
+		t.Fatalf("first enrollment = confirmed:%v logged in:%v", confirmed, loggedIn)
+	}
+}
+
+func TestDiscoveredLoginExistingEmptyRegistryConfirmsWithoutWriting(t *testing.T) {
+	oldConfigHome := xdg.ConfigHome
+	xdg.ConfigHome = t.TempDir()
+	t.Cleanup(func() { xdg.ConfigHome = oldConfigHome })
+	root := filepath.Join(xdg.ConfigHome, "mecatl")
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	originalDiscover, originalConfirm, originalLogin := discoverRemoteResource, confirmDiscoveredEnrollment, executeRemoteLogin
+	t.Cleanup(func() {
+		discoverRemoteResource, confirmDiscoveredEnrollment, executeRemoteLogin = originalDiscover, originalConfirm, originalLogin
+	})
+	discoverRemoteResource = func(context.Context, protectedResource) (discoveredResource, error) {
+		return discoveredLoginFixture(), nil
+	}
+	confirmDiscoveredEnrollment = func(io.Reader, io.Writer, discoveredEnrollment) (bool, error) {
+		entries, err := os.ReadDir(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(entries) != 0 {
+			t.Fatalf("registry lookup wrote local state before confirmation: %#v", entries)
+		}
+		return true, nil
+	}
+	executeRemoteLogin = func(context.Context, clientauth.Connection, bool) error { return nil }
+
+	if err := runRemoteLogin("api.example.com", nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDiscoveredLoginCorruptRegistryConfirms(t *testing.T) {
+	oldConfigHome := xdg.ConfigHome
+	xdg.ConfigHome = t.TempDir()
+	t.Cleanup(func() { xdg.ConfigHome = oldConfigHome })
+	root := filepath.Join(xdg.ConfigHome, "mecatl")
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "clientauth-connections.json"), []byte("corrupt"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	originalDiscover, originalConfirm, originalLogin := discoverRemoteResource, confirmDiscoveredEnrollment, executeRemoteLogin
+	t.Cleanup(func() {
+		discoverRemoteResource, confirmDiscoveredEnrollment, executeRemoteLogin = originalDiscover, originalConfirm, originalLogin
+	})
+	discoverRemoteResource = func(context.Context, protectedResource) (discoveredResource, error) {
+		return discoveredLoginFixture(), nil
+	}
+	confirmed := false
+	confirmDiscoveredEnrollment = func(io.Reader, io.Writer, discoveredEnrollment) (bool, error) {
+		confirmed = true
+		return true, nil
+	}
+	loggedIn := false
+	executeRemoteLogin = func(context.Context, clientauth.Connection, bool) error { loggedIn = true; return nil }
+
+	if err := runRemoteLogin("api.example.com", nil); err != nil {
+		t.Fatal(err)
+	}
+	if !confirmed || !loggedIn {
+		t.Fatalf("corrupt registry = confirmed:%v logged in:%v", confirmed, loggedIn)
+	}
+}
+
+func TestDiscoveredLoginMatchingSavedEnrollmentSkipsConfirmation(t *testing.T) {
+	oldConfigHome := xdg.ConfigHome
+	xdg.ConfigHome = t.TempDir()
+	t.Cleanup(func() { xdg.ConfigHome = oldConfigHome })
+	originalDiscover, originalConfirm, originalLogin := discoverRemoteResource, confirmDiscoveredEnrollment, executeRemoteLogin
+	t.Cleanup(func() {
+		discoverRemoteResource, confirmDiscoveredEnrollment, executeRemoteLogin = originalDiscover, originalConfirm, originalLogin
+	})
+	discovered := discoveredLoginFixture()
+	enrollment, err := discoveredEnrollmentFrom(discovered, "", []string{"api.read"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry, err := clientauth.OpenRegistry(filepath.Join(xdg.ConfigHome, "mecatl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := registry.Upsert(enrollment.Connection); err != nil {
+		t.Fatal(err)
+	}
+	discoverRemoteResource = func(context.Context, protectedResource) (discoveredResource, error) { return discovered, nil }
+	confirmDiscoveredEnrollment = func(io.Reader, io.Writer, discoveredEnrollment) (bool, error) {
+		t.Fatal("matching saved discovery requested confirmation")
+		return false, nil
+	}
+	loggedIn := false
+	executeRemoteLogin = func(context.Context, clientauth.Connection, bool) error { loggedIn = true; return nil }
+
+	if err := runRemoteLogin("api.example.com", nil); err != nil {
+		t.Fatal(err)
+	}
+	if !loggedIn {
+		t.Fatal("matching saved discovery did not continue to login")
+	}
+}
+
+func TestDiscoveredLoginChangedEnrollmentConfirms(t *testing.T) {
+	mutations := map[string]func(*clientauth.Connection){
+		"resource":              func(c *clientauth.Connection) { c.ResourceURL = "https://other.example.com" },
+		"target":                func(c *clientauth.Connection) { c.Identity.Target = "other.example.com:443" },
+		"issuer":                func(c *clientauth.Connection) { c.Identity.Issuer = "https://other-issuer.example.com" },
+		"client ID":             func(c *clientauth.Connection) { c.Identity.ClientID = "other-client" },
+		"audience":              func(c *clientauth.Connection) { c.Identity.Audience = "other-audience" },
+		"redirect URI":          func(c *clientauth.Connection) { c.Identity.RedirectURI = "http://127.0.0.1:18473/other" },
+		"scopes":                func(c *clientauth.Connection) { c.Identity.Scopes = []string{"other.read"} },
+		"issuer CA":             func(c *clientauth.Connection) { c.IssuerCAFile = filepath.Join(xdg.ConfigHome, "issuer-ca.pem") },
+		"issuer address policy": func(c *clientauth.Connection) { c.IssuerAddressPolicy = clientauth.IssuerAddressPolicyPrivate },
+	}
+	for name, mutate := range mutations {
+		t.Run(name, func(t *testing.T) {
+			oldConfigHome := xdg.ConfigHome
+			xdg.ConfigHome = t.TempDir()
+			t.Cleanup(func() { xdg.ConfigHome = oldConfigHome })
+			discovered := discoveredLoginFixture()
+			enrollment, err := discoveredEnrollmentFrom(discovered, "", []string{"api.read"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			saved := enrollment.Connection
+			mutate(&saved)
+			registry, err := clientauth.OpenRegistry(filepath.Join(xdg.ConfigHome, "mecatl"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := registry.Upsert(saved); err != nil {
+				t.Fatal(err)
+			}
+			originalDiscover, originalConfirm, originalLogin := discoverRemoteResource, confirmDiscoveredEnrollment, executeRemoteLogin
+			t.Cleanup(func() {
+				discoverRemoteResource, confirmDiscoveredEnrollment, executeRemoteLogin = originalDiscover, originalConfirm, originalLogin
+			})
+			discoverRemoteResource = func(context.Context, protectedResource) (discoveredResource, error) { return discovered, nil }
+			confirmed := false
+			confirmDiscoveredEnrollment = func(io.Reader, io.Writer, discoveredEnrollment) (bool, error) {
+				confirmed = true
+				return true, nil
+			}
+			executeRemoteLogin = func(context.Context, clientauth.Connection, bool) error { return nil }
+			if err := runRemoteLogin("api.example.com", nil); err != nil {
+				t.Fatal(err)
+			}
+			if !confirmed {
+				t.Fatalf("changed %s did not request confirmation", name)
+			}
+		})
+	}
+}
+
+func discoveredLoginFixture() discoveredResource {
+	return discoveredResource{protectedResource: protectedResource{Resource: "https://api.example.com", MetadataURL: "https://api.example.com/.well-known/oauth-protected-resource", GRPCTarget: "api.example.com:443"}, Issuer: "https://issuer.example.com", Audience: "api", ClientID: "client", Scopes: []string{"api.read"}, ScopesPresent: true}
 }
 
 func TestADR_0305_ResourceTargetSeparation(t *testing.T) {

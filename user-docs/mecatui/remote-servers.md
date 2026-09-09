@@ -89,7 +89,12 @@ Caller identity is attribution, not tenant isolation: authenticated callers can 
 
 When the server publishes the optional RFC 9728 profile, `mecatui login` can
 accept a bare host or canonical HTTPS resource URL and discover the issuer,
-audience, public client hint, and scopes before confirmation. It requests an
+audience, public client hint, and scopes. The first enrollment displays the full
+protected-resource details and asks for default-deny confirmation. A subsequent
+login skips both only when fresh discovery exactly matches the saved canonical
+connection for that resource, including resource, complete identity and scopes,
+issuer CA, and issuer-address policy. Any changed value is treated as a new
+enrollment and displays the details for confirmation again. It requests an
 advertised `scopes_supported` list exactly, or the fixed
 `openid,profile,offline_access` baseline when the member is omitted. Discovery rejects
 `--scopes`; administrators configure `oidc.scopes` for other scopes. Metadata and issuer

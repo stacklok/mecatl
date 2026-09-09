@@ -829,6 +829,10 @@ operator-configured requested scopes from the resource metadata. When metadata a
 `scopes_supported`, mecatui requests that confirmed set exactly; when it omits the
 member, it requests the fixed `openid,profile,offline_access` baseline. Discovery
 rejects `--scopes`, so administrators configure `oidc.scopes` for other scopes.
+First enrollment displays the discovered values and requires default-deny confirmation;
+later login skips confirmation only when fresh discovery exactly matches the saved
+canonical resource, complete identity (including scopes), issuer CA, and issuer-address
+policy for that resource. Any mismatch or registry lookup failure requires confirmation.
 Legacy/private deployments without that profile require those values explicitly and
 retain the explicit-login `--scopes` override. Login defaults to public, globally routable issuer
 addresses verified against the system trust store; optional `--tls-ca` replaces those
