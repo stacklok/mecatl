@@ -11,7 +11,9 @@ document names its scope and cites the ADRs / [architecture](../architecture.md)
 Plans are authored by `/to-acceptance-plan`, human-reviewed as behavioral and
 interface contracts, and implemented by `/plan-orchestrate` only after the applicable
 checkpoint. New plans must be linked from this README; the matlatl gate (`task docs`)
-fails on an unreachable doc.
+fails on an unreachable doc. Explicitly requested exploratory/spike work, and any request the
+directing human explicitly waives the spine for, need none of this — see
+[ADR 0320](../adr/0320-exploratory-work-and-spine-waiver.md).
 
 ## The verification contract
 

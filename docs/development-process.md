@@ -16,6 +16,15 @@ workflow migration, and splitting must add no review value. A workflow-only meta
 treat process documents and skills as the interface reviewed in the same PR. Trivial or mechanical changes may bypass the spine while still
 running applicable gates.
 
+Two further carve-outs (ADR 0320) put discretion with the human, not the agent: explicitly
+requested **exploratory/spike work** may be built locally with no plan, no Plan/Interface PR,
+and no orchestration — it is never merged to `main` as-is, and shipping it for real means
+re-entering the spine normally. Separately, the directing human may **explicitly waive the
+spine** for a named piece of work ("skip the spine for this"); the waiver lifts only the
+plan/interface ceremony, never the layering rules, the AGENTS.md invariants, or the
+human-merge requirement. Neither carve-out is inferred by the agent — both require the human
+to say so.
+
 ## Durable plan contract
 
 A plan moves `draft → proposed → approved → in-progress → landed`:
@@ -118,5 +127,6 @@ failed, harness-owned, primary, and ambiguous worktrees are retained.
 | `/panel-review` | independent Spec / Standards / Test adequacy / Domain review |
 
 See [the acceptance-plan guide](acceptance/README.md),
-[ADR 0306](adr/0306-human-reviewed-development-contracts.md), and
-[ADR 0319](adr/0319-merge-is-plan-approval.md).
+[ADR 0306](adr/0306-human-reviewed-development-contracts.md),
+[ADR 0319](adr/0319-merge-is-plan-approval.md), and
+[ADR 0320](adr/0320-exploratory-work-and-spine-waiver.md).
