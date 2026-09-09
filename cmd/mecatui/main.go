@@ -46,6 +46,8 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/clientauth"
 	"github.com/stacklok/mecatl/internal/adapter/credentialstore"
 	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
+	"github.com/stacklok/mecatl/internal/adapter/permconfig"
+	"github.com/stacklok/mecatl/internal/adapter/productmetrics"
 	"github.com/stacklok/mecatl/internal/adapter/slogdiag"
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
 	"github.com/stacklok/mecatl/internal/app"
@@ -939,10 +941,27 @@ func resolveTransport(ctx context.Context, cfg config) (target string, dial clie
 	cfg = applyTrustPrompt(cfg, diag)
 
 	composition := embeddedConfig(cfg, diag)
+	// Product metrics (opt-out, Task 12, mirroring mecated's Task 11 wiring):
+	// resolve the effective enabled value and build the pipeline BEFORE
+	// embed.Start, so setupPerf/wirePerfSinks (perf is OFF by default) can see
+	// composition.Sink/ToolCallRecorder already populated and fold them in
+	// rather than overwrite them when perf IS also enabled.
+	pm, cancelHeartbeat := setupProductMetrics(ctx, cfg, diag)
+	if pm.Sink != nil {
+		composition.Sink = pm.Sink
+	}
+	composition.ToolCallRecorder = pm.ToolCallRecorder
 	srv, err := embed.Start(ctx, composition, perfConfig(cfg, perfLogger))
 	if err != nil {
+		cancelHeartbeat()
+		shutdownProductMetrics(pm)
 		_ = diagCloser.Close()
 		return target, client.DialConfig{}, noop, fmt.Errorf("start embedded server: %w", err)
+	}
+	if pm.FirstRun {
+		// Through diag, never stderr: stderr would corrupt the Bubble Tea
+		// alt-screen once the TUI program starts.
+		diag.Log(ctx, port.LevelInfo, cliconfig.ProductMetricsDisclosureNotice)
 	}
 	if toFile {
 		// One line, written to the FILE sink (never the TUI), so an operator can find
@@ -967,12 +986,72 @@ func resolveTransport(ctx context.Context, cfg config) (target string, dial clie
 	}
 	// The embedded server has no auth/TLS — it is a private UNIX socket dialled
 	// plaintext, the same single-user loopback trust model mecated uses. Cleanup
-	// closes the server AND the diagnostics log file (a no-op closer for the
-	// discard/quiet paths), so a clean exit leaks no fd.
+	// closes the server, stops the product-metrics heartbeat/pipeline, AND closes
+	// the diagnostics log file (a no-op closer for the discard/quiet paths), so a
+	// clean exit leaks no fd/goroutine.
 	return srv.Target(), client.DialConfig{Server: srv.Target()}, func() {
 		_ = srv.Close()
+		cancelHeartbeat()
+		shutdownProductMetrics(pm)
 		_ = diagCloser.Close()
 	}, nil
+}
+
+// productMetricsSnapshot derives the closed-set FeatureSnapshot the product-
+// metrics heartbeat reports for the embedded server. mecatui's feature-flag
+// detection is out of scope for this task (the same simplification mecated's
+// Task 11 made): only Mode is populated here; Memory/Guardrails/MCP/Scheduling
+// stay false and Provider stays the zero value.
+func productMetricsSnapshot() productmetrics.FeatureSnapshot {
+	return productmetrics.FeatureSnapshot{Mode: productmetrics.ModeInteractive}
+}
+
+// setupProductMetrics resolves the opt-out product-metrics precedence and builds
+// the pipeline (Task 12, mirroring mecated's Task 11 setupProductMetrics) for the
+// EMBEDDED server only — `mecatui connect` hosts no local engine and never calls
+// this. It reads the operator's telemetry.productMetrics.enabled setting via a
+// THROWAWAY resolver mirroring embeddedConfig's own hardcoded discovery posture
+// (Conventional/ImportClaude: true, no explicit files, no project trust —
+// app.Build's own resolver is internal and never exposed back to main.go, the
+// same mecated mcplogin.go precedent). settings.yaml is parsed twice at boot
+// (once here, once inside app.Build via embed.Start → app.Build); an accepted,
+// negligible boot-time cost.
+//
+// It logs its own build failure via diag (NEVER stderr — stderr would corrupt
+// the Bubble Tea alt-screen) and does NOT print the disclosure notice itself;
+// the caller prints cliconfig.ProductMetricsDisclosureNotice through diag.Log
+// when the returned handles' FirstRun is true, after the embedded server has
+// started successfully. The returned cancel func must be called/deferred
+// unconditionally by the caller (Shutdown on the handles is always a safe
+// no-op when disabled/errored).
+func setupProductMetrics(ctx context.Context, cfg config, diag port.Diagnostics) (cliconfig.ProductMetricsHandles, func()) {
+	permResolver := permconfig.NewWithEnv(permconfig.Options{
+		Conventional: true,
+		ImportClaude: true,
+		Diagnostics:  diag,
+	}, xdgconfig.OSEnv)
+	productMetricsEnabled := cliconfig.ResolveProductMetricsEnabled(cliconfig.ProductMetricsPrecedence{
+		FlagSet:         cfg.productMetricsFlagSet,
+		FlagValue:       cfg.productMetrics,
+		SettingsEnabled: permResolver.OperatorProductMetricsEnabled(),
+	})
+	heartbeatCtx, cancelHeartbeat := context.WithCancel(context.Background())
+	pm, err := cliconfig.BuildProductMetrics(ctx, heartbeatCtx, productMetricsEnabled,
+		productmetrics.BinaryMecatui, buildinfo.BuildID, productmetrics.DefaultHeartbeatInterval,
+		productMetricsSnapshot())
+	if err != nil {
+		diag.Log(ctx, port.LevelWarn, "mecatui: product metrics disabled: setup failed", "err", err.Error())
+	}
+	return pm, cancelHeartbeat
+}
+
+// shutdownProductMetrics bounds pm.Shutdown the same way mecated's run() bounds
+// its own product-metrics Shutdown defer (5s), for use on every path
+// resolveTransport returns (the error path and the success cleanup closure).
+func shutdownProductMetrics(pm cliconfig.ProductMetricsHandles) {
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = pm.Shutdown(shutdownCtx)
 }
 
 // applyTrustPrompt runs the pre-TUI first-encounter workspace-trust gate

@@ -39,6 +39,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/slogdiag"
 	"github.com/stacklok/mecatl/internal/adapter/telemetry"
 	"github.com/stacklok/mecatl/internal/app"
+	"github.com/stacklok/mecatl/internal/cliconfig"
 )
 
 // socketName is the fixed socket filename inside the per-process temp directory.
@@ -547,9 +548,21 @@ func setupPerf(ctx context.Context, perf PerfConfig, cfg *app.Config, runtimeDir
 // It returns the slow-turn buffer (nil when the perf MCP server is off) for the
 // mcpperf Deps wiring.
 func wirePerfSinks(cfg *app.Config, metrics *telemetry.Metrics, tracing port.EventSink, mountMCP bool) *telemetry.SlowTurnBuffer {
+	// Capture whatever cfg.Sink/cfg.ToolCallRecorder ALREADY held before either
+	// field is reassigned below — the product-metrics tap main.go wired onto
+	// composition BEFORE Start (and thus before setupPerf/wirePerfSinks ran),
+	// when perf is also enabled. Folding it in here (rather than overwriting)
+	// keeps the tap alive alongside the perf metrics; a nil oldSink/
+	// oldToolCallRecorder (perf-only, no product metrics) is the byte-identical
+	// prior behaviour.
+	oldSink := cfg.Sink
+	oldToolCallRecorder := cfg.ToolCallRecorder
 	mainScoped := metrics.WithRole(telemetry.RoleMain)
 	var slowTurns *telemetry.SlowTurnBuffer
 	sinks := []port.EventSink{mainScoped, tracing}
+	if oldSink != nil {
+		sinks = append(sinks, oldSink)
+	}
 	if mountMCP {
 		// The ring stores scalars only (redaction by shape) and spawns no
 		// goroutine — goleak-clean. Built only when the MCP server will read it.
@@ -557,7 +570,7 @@ func wirePerfSinks(cfg *app.Config, metrics *telemetry.Metrics, tracing port.Eve
 		sinks = append(sinks, slowTurns.WithRole(telemetry.RoleMain))
 	}
 	cfg.Sink = telemetry.NewSink(sinks...)
-	cfg.ToolCallRecorder = mainScoped
+	cfg.ToolCallRecorder = cliconfig.TeeToolCallRecorder(mainScoped, oldToolCallRecorder)
 	// Schedule metrics (issue #233, Phase 2b): wire the metrics callback over the
 	// telemetry adapter's EmitSchedule, mirroring MetricsRoleScoper. Schedule
 	// metrics are NOT a role-family; this is a separate schedule-lifecycle
