@@ -63,6 +63,7 @@ This page is the overview and router; the big picture and the layering rule are 
 - **[Providers — OpenAI adapter & multi-provider](architecture/providers.md)**
 - **[The API surface](architecture/api-surface.md)**
 - **[Observability, persistence & reliability](architecture/observability.md)**
+- **[Local microVM execution environments](architecture/microvm-environments.md)** — opt-in runtime boundary, path model, artifact/network trust, lifecycle, and operations.
 - **[Context management & the compaction cascade](architecture/context-and-compaction.md)** — token counting, compaction, and the shared configured/live/catalog context-window resolver.
 - **[Memory — cross-session recall & consolidation](architecture/memory.md)**
 - **[Parallelism — fork-join](architecture/parallelism.md)**
@@ -1176,6 +1177,35 @@ or selector. Local embedded and daemon deployments configure their root privatel
 `--workspace`; remote/cloud-native providers may bind another backend without widening
 the public API. ACP's required cwd is only checked against the trusted local binding and
 cannot select authority.
+
+A microVM placement keeps tools and shell in guest `/workspace` while host-owned settings,
+soul, memory, MCP, hooks, identity, provider credentials, and the TUI remain outside the
+guest. Sessions persist only exact private `EnvironmentRef` identity; unknown, disabled,
+mismatched, or unavailable generations fail without host-local fallback. Lifecycle
+composition reattaches the exact generation and explicitly detaches or deletes it without
+exposing source, worktree, endpoint, or guest paths on public APIs.
+
+The user-local manager surface is `mecatui microvm doctor|status|delete`; daily use selects
+`mecatui --default-placement microvm-local`. The shared provisioning boundary performs
+idempotent readiness immediately before the first provision attempt. The live
+`microvm-local` support boundary is the signed Linux-amd64 `mecatui` release binary:
+ordinary source builds have no authenticated release defaults and fail closed. For source
+development only, [ADR 0326](adr/0326-microvm-execution-environments.md#6-keep-source-build-release-activation-developer-only) defines a
+separately tagged `microvm_dev` binary whose local composition roots require explicit
+acknowledgement and a strict owner-only local release descriptor. Untagged and published
+binaries do not expose this path; release verification and daemon-policy checks remain.
+Readiness
+preflights Git, Python 3, KVM access, and an actual ephemeral unprivileged user-namespace
+creation before downloading or provisioning repository state. Readiness and doctor
+authenticate the daemon serving the owner-only socket and require its protocol,
+release/binary, loaded-config, policy, profile-set, and socket identities to match.
+A stale daemon is signaled only after its persisted PID, process-start token, binary,
+arguments, and socket identify the exact managed process; otherwise the alias remains
+disabled with user-service-manager guidance. It supports local single-user Git sessions on
+Linux amd64 with KVM. Linux arm64 and Apple Silicon macOS have compile/static coverage only;
+live support is deferred. Schedules, remote placement, multi-user enforcement, non-Git
+sources, and unified host+guest egress policy remain out of scope. See the [microVM architecture](architecture/microvm-environments.md) and
+[operator guide](usage/microvm-environments.md) (ADR 0108).
 
 Discovery is source-session scoped. `ListCommands(session_id)` and
 `ListWorktrees(session_id)` first authorize the owner and exactly reattach that source.

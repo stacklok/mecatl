@@ -86,9 +86,40 @@ jobs:
           fi
           echo "$(git rev-parse HEAD) is on main"
 
-  publish:
+  validate-release-ref:
     needs: guard
+    name: Validate immutable release tag ref
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ inputs.tag || github.ref_name }}
+    outputs:
+      signing_ref: ${{ steps.validate.outputs.signing_ref }}
+    steps:
+      - name: Require the run itself to use the requested tag ref
+        id: validate
+        run: |
+          set -euo pipefail
+          case "${VERSION}" in v*) ;; *) echo "release version must name a v* tag: ${VERSION}" >&2; exit 1 ;; esac
+          signing_ref="refs/tags/${VERSION}"
+          if [ "${GITHUB_REF}" != "${signing_ref}" ]; then
+            echo "release ref mismatch: got ${GITHUB_REF}, want ${signing_ref}" >&2
+            exit 1
+          fi
+          echo "signing_ref=${signing_ref}" >> "${GITHUB_OUTPUT}"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+          ref: ${{ github.sha }}
+      - name: Assert checkout is the immutable run commit
+        run: test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+
+  publish:
     name: Build, publish, sign, attest
+    needs: validate-release-ref
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -109,7 +140,10 @@ jobs:
           persist-credentials: false
           # ko reads the base image digest from .ko.yaml; no deep history needed.
           fetch-depth: 1
-          ref: ${{ env.VERSION }}
+          ref: ${{ github.sha }}
+
+      - name: Assert checkout is the immutable run commit
+        run: test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -121,6 +155,7 @@ jobs:
             go.sum
             engine/go.sum
             authn/oidc/go.sum
+            environment/microvm/go.sum
 
       - uses: ko-build/setup-ko@61b4d1d396f5b2e7d6bb6fefdce3dc38d1a13445 # v0.10
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
@@ -216,11 +251,373 @@ jobs:
           # silently failing at it.
           create-storage-record: false
 
+  create-release:
+    name: Create GitHub Release
+    needs: validate-release-ref
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ inputs.tag || github.ref_name }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Create release before asset uploads
+        run: gh release view "${VERSION}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1 || gh release create "${VERSION}" --repo "${GITHUB_REPOSITORY}" --verify-tag --generate-notes
+
+  # The opt-in nested module ships host microvmd and Linux guest-agent payloads
+  # separately from the standard container images. Every published byte is
+  # digest-addressed, signed, SBOM-described, and provenance-attested.
+  publish-microvm:
+    name: Publish microVM artifacts (${{ matrix.platform }})
+    needs: [validate-release-ref, create-release, endorse-brood-resolution]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write # upload immutable release assets
+      id-token: write # keyless Sigstore evidence
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [linux-amd64, linux-arm64, darwin-arm64]
+    env:
+      VERSION: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+          ref: ${{ github.sha }}
+
+      - name: Assert checkout is the immutable run commit
+        run: test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: environment/microvm/go.mod
+          cache: true
+          cache-dependency-path: |
+            engine/go.sum
+            environment/microvm/go.sum
+
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Download controlled Brood platform resolution
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: brood-endorsed-platforms
+          path: dist/brood
+
+      - name: Verify endorsed Brood index and platform resolution
+        run: .github/scripts/verify-brood-resolution.sh dist/brood/brood-base-index.json dist/brood/brood-platforms.json
+
+      - name: Reuse a complete immutable platform asset set
+        id: existing-assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PLATFORM: ${{ matrix.platform }}
+        run: .github/scripts/reuse-platform-release-assets.sh "${VERSION}" microvm "${PLATFORM}" "${VERSION}" "dist/${PLATFORM}"
+
+      - name: Build deterministic microvmd and guest payloads
+        if: steps.existing-assets.outputs.reused != 'true'
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          case "${PLATFORM}" in
+            linux-amd64) guest_arch=amd64 ;;
+            linux-arm64|darwin-arm64) guest_arch=arm64 ;;
+            *) echo "unsupported platform ${PLATFORM}" >&2; exit 2 ;;
+          esac
+          export MICROVM_RELEASE_EXECUTION_IMAGE_REF
+          export MICROVM_RELEASE_EXECUTION_IMAGE_MANIFEST_DIGEST
+          export MICROVM_RELEASE_EXECUTION_IMAGE_TREE_DIGEST
+          export MICROVM_RELEASE_EXECUTION_IMAGE_DISCOVERY_REFERENCE
+          export MICROVM_RELEASE_EXECUTION_IMAGE_RESOLUTION_EVIDENCE
+          export MICROVM_RELEASE_EXECUTION_IMAGE_PLATFORM
+          MICROVM_RELEASE_EXECUTION_IMAGE_REF="$(jq -er --arg arch "${guest_arch}" '.[$arch].reference' dist/brood/brood-platforms.json)"
+          MICROVM_RELEASE_EXECUTION_IMAGE_MANIFEST_DIGEST="$(jq -er --arg arch "${guest_arch}" '.[$arch].manifest_digest' dist/brood/brood-platforms.json)"
+          MICROVM_RELEASE_EXECUTION_IMAGE_TREE_DIGEST="$(jq -er --arg arch "${guest_arch}" '.[$arch].tree_digest' dist/brood/brood-platforms.json)"
+          MICROVM_RELEASE_EXECUTION_IMAGE_DISCOVERY_REFERENCE="$(jq -er --arg arch "${guest_arch}" '.[$arch].discovery_reference' dist/brood/brood-platforms.json)"
+          MICROVM_RELEASE_EXECUTION_IMAGE_RESOLUTION_EVIDENCE="$(jq -er --arg arch "${guest_arch}" '.[$arch].resolution_evidence' dist/brood/brood-platforms.json)"
+          MICROVM_RELEASE_EXECUTION_IMAGE_PLATFORM="$(jq -er --arg arch "${guest_arch}" '.[$arch].platform' dist/brood/brood-platforms.json)"
+          .github/scripts/package-microvm-release.sh "dist/${PLATFORM}" "${PLATFORM}" "${VERSION}"
+
+      - name: Generate microvmd dependency SBOM
+        if: steps.existing-assets.outputs.reused != 'true'
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          path: dist/${{ matrix.platform }}/mecatl-microvmd-${{ matrix.platform }}
+          format: spdx-json
+          output-file: dist/${{ matrix.platform }}/mecatl-microvmd-${{ matrix.platform }}.spdx.json
+          upload-artifact: false
+
+      - name: Generate guest-agent dependency SBOM
+        if: steps.existing-assets.outputs.reused != 'true'
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          path: dist/${{ matrix.platform }}/mecatl-guest-agent-${{ matrix.platform }}
+          format: spdx-json
+          output-file: dist/${{ matrix.platform }}/mecatl-guest-agent-${{ matrix.platform }}.spdx.json
+          upload-artifact: false
+
+      - name: Generate artifact-digest dependency SBOM
+        if: steps.existing-assets.outputs.reused != 'true'
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          path: dist/${{ matrix.platform }}/mecatl-artifact-digest-${{ matrix.platform }}
+          format: spdx-json
+          output-file: dist/${{ matrix.platform }}/mecatl-artifact-digest-${{ matrix.platform }}.spdx.json
+          upload-artifact: false
+
+      - name: Sign provenance statements (keyless Sigstore)
+        if: steps.existing-assets.outputs.reused != 'true'
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: .github/scripts/sign-microvm-release-evidence.sh "dist/${PLATFORM}"
+
+      - name: Assemble versioned platform bootstrap bundle
+        if: steps.existing-assets.outputs.reused != 'true'
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          bundle="mecatl-microvm-${VERSION}-${PLATFORM}.tar.gz"
+          tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner \
+            --exclude="${bundle}" -C "dist/${PLATFORM}" -cf - . | gzip -n > "dist/${PLATFORM}/${bundle}"
+          sha="$(sha256sum "dist/${PLATFORM}/${bundle}" | cut -d' ' -f1)"
+          signing_ref="${{ needs.validate-release-ref.outputs.signing_ref }}"
+          signing_ref="$(.github/scripts/validate-release-ref.sh "${VERSION}" "${signing_ref}")"
+          identity="https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release.yml@${signing_ref}"
+          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${VERSION}/${bundle}"
+          jq -n --arg version "${VERSION}" --arg platform "${PLATFORM}" --arg url "${url}" --arg sha256 "${sha}" \
+            --arg policy_revision "release-${VERSION}" --arg certificate_identity "${identity}" \
+            --arg oidc_issuer 'https://token.actions.githubusercontent.com' \
+            '{version:$version,platform:$platform,url:$url,sha256:$sha256,policy_revision:$policy_revision,certificate_identity:$certificate_identity,oidc_issuer:$oidc_issuer}' \
+            > "dist/${PLATFORM}/microvm-default-${PLATFORM}.json"
+
+      - name: Upload microVM default metadata for mecatui packaging
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: microvm-default-${{ matrix.platform }}
+          path: dist/${{ matrix.platform }}/microvm-default-${{ matrix.platform }}.json
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Upload microVM release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          assets=()
+          for asset in dist/"${PLATFORM}"/*; do
+            if [ "${PLATFORM}" != linux-amd64 ] && [ "$(basename "${asset}")" = install-microvm-release.sh ]; then
+              continue
+            fi
+            assets+=("${asset}")
+          done
+          .github/scripts/upload-release-assets.sh "${VERSION}" "${assets[@]}"
+
+  resolve-brood-base:
+    name: Resolve and freeze Brood Box platform bytes
+    needs: [validate-release-ref, create-release]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ inputs.tag || github.ref_name }}
+      GH_TOKEN: ${{ github.token }}
+      BROOD_DISCOVERY_REFERENCE: ghcr.io/stacklok/brood-box/base:latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+          ref: ${{ github.sha }}
+      - name: Assert checkout is the immutable run commit
+        run: test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: environment/microvm/go.mod
+      - name: Reuse the tag's frozen resolution or resolve it once
+        run: |
+          set -euo pipefail
+          assets="$(gh release view "${VERSION}" --repo "${GITHUB_REPOSITORY}" --json assets --jq '.assets[].name')"
+          has_index=false
+          has_platforms=false
+          printf '%s\n' "${assets}" | grep -Fx brood-base-index.json >/dev/null && has_index=true
+          printf '%s\n' "${assets}" | grep -Fx brood-platforms.json >/dev/null && has_platforms=true
+          if ${has_index} && ${has_platforms}; then
+            gh release download "${VERSION}" --repo "${GITHUB_REPOSITORY}" --pattern brood-base-index.json --pattern brood-platforms.json
+          elif ${has_index} || ${has_platforms}; then
+            echo 'release contains an incomplete frozen Brood resolution' >&2
+            exit 1
+          else
+            docker buildx imagetools inspect "${BROOD_DISCOVERY_REFERENCE}" --raw > brood-base-index.json
+            resolution_evidence="sha256:$(sha256sum brood-base-index.json | cut -d' ' -f1)"
+            mkdir -p brood-tree
+            for arch in amd64 arm64; do
+              manifest="$(jq -er --arg arch "${arch}" '[.manifests[] | select(.platform.os == "linux" and .platform.architecture == $arch) | .digest] | if length == 1 then .[0] else error("expected exactly one linux/" + $arch + " manifest") end' brood-base-index.json)"
+              reference="ghcr.io/stacklok/brood-box/base@${manifest}"
+              CGO_ENABLED=0 GOOS=linux GOARCH="${arch}" GOWORK=off go build -trimpath -buildvcs=false -ldflags='-buildid=' -o "brood-tree/digest-${arch}" ./environment/microvm/cmd/mecatl-oci-tree-digest
+              mkdir -p "brood-tree/cache-${arch}"
+              tree="$(docker run --rm --platform "linux/${arch}" -v "${PWD}/brood-tree:/release" 'docker.io/library/alpine@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce' "/release/digest-${arch}" "${reference}" "/release/cache-${arch}")"
+              jq -n --arg reference "${reference}" --arg manifest_digest "${manifest}" --arg tree_digest "${tree}" \
+                --arg discovery_reference "${BROOD_DISCOVERY_REFERENCE}" --arg resolution_evidence "${resolution_evidence}" --arg platform "linux/${arch}" \
+                '{reference:$reference,manifest_digest:$manifest_digest,tree_digest:$tree_digest,discovery_reference:$discovery_reference,resolution_evidence:$resolution_evidence,platform:$platform}' > "brood-${arch}.json"
+            done
+            jq -s '{amd64:.[0],arm64:.[1]}' brood-amd64.json brood-arm64.json > brood-platforms.json
+          fi
+          .github/scripts/verify-brood-resolution.sh brood-base-index.json brood-platforms.json
+          .github/scripts/upload-release-assets.sh "${VERSION}" brood-base-index.json brood-platforms.json
+      - name: Upload frozen Brood resolution handoff
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: brood-platforms
+          path: |
+            brood-base-index.json
+            brood-platforms.json
+          if-no-files-found: error
+          retention-days: 1
+
+  endorse-brood-resolution:
+    name: Verify Brood resolution for downstream endorsement
+    needs: [validate-release-ref, resolve-brood-base]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+          ref: ${{ github.sha }}
+      - name: Assert checkout is the immutable run commit
+        run: test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: brood-platforms
+          path: dist/brood
+      - name: Verify raw index evidence and platform cardinality
+        run: .github/scripts/verify-brood-resolution.sh dist/brood/brood-base-index.json dist/brood/brood-platforms.json
+      - name: Forward verified resolution to platform release jobs
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: brood-endorsed-platforms
+          path: |
+            dist/brood/brood-base-index.json
+            dist/brood/brood-platforms.json
+          if-no-files-found: error
+          retention-days: 1
+
+  # Release-stamped host binaries are the first-run bootstrap. Each platform
+  # binary embeds only the matching digest-bound microVM bundle defaults and is
+  # published as a signed/provenanced release asset. mecated is the canonical
+  # operator surface; mecatui carries the same defaults for compatibility and
+  # embedded-server use. This is deliberately separate from the optional OCI
+  # images below.
+  publish-mecatui-host:
+    name: Publish host ${{ matrix.binary }} (${{ matrix.platform }})
+    needs: [validate-release-ref, publish-microvm]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [linux-amd64, linux-arm64, darwin-arm64]
+        binary: [mecated, mecatui]
+    env:
+      VERSION: ${{ inputs.tag || github.ref_name }}
+      SIGNING_REF: ${{ needs.validate-release-ref.outputs.signing_ref }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+          ref: ${{ github.sha }}
+      - name: Assert checkout is the immutable run commit
+        run: test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            engine/go.sum
+            environment/microvm/go.sum
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Download matching microVM bootstrap defaults
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: microvm-default-${{ matrix.platform }}
+          path: microvm-default
+      - name: Reuse a complete immutable host asset set
+        id: existing-assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: .github/scripts/reuse-platform-release-assets.sh "${VERSION}" "${{ matrix.binary }}" "${{ matrix.platform }}" "${VERSION}" dist
+      - name: Build host binary with matching bootstrap defaults
+        if: steps.existing-assets.outputs.reused != 'true'
+        run: |
+          set -euo pipefail
+          platform='${{ matrix.platform }}'
+          binary_name='${{ matrix.binary }}'
+          case "${platform}" in
+            linux-amd64) goos=linux; goarch=amd64 ;;
+            linux-arm64) goos=linux; goarch=arm64 ;;
+            darwin-arm64) goos=darwin; goarch=arm64 ;;
+            *) echo "unsupported platform ${platform}" >&2; exit 2 ;;
+          esac
+          case "${binary_name}" in
+            mecated) version_symbol=main.microVMReleaseVersion ;;
+            mecatui) version_symbol=main.version ;;
+            *) echo "unsupported host binary ${binary_name}" >&2; exit 2 ;;
+          esac
+          MICROVM_RELEASE_DEFAULTS_B64="$(jq -c --arg platform "${platform}" '{($platform):.}' "microvm-default/microvm-default-${platform}.json" | base64 -w0)"
+          binary="dist/${binary_name}-${VERSION}-${platform}"
+          mkdir -p dist
+          CGO_ENABLED=0 GOOS="${goos}" GOARCH="${goarch}" go build -trimpath -buildvcs=false \
+            -ldflags="-s -w -X ${version_symbol}=${VERSION} -X main.microVMReleaseDefaultsB64=${MICROVM_RELEASE_DEFAULTS_B64} -X main.microVMReleaseStampRequired=release" \
+            -o "${binary}" "./cmd/${binary_name}"
+          digest="$(sha256sum "${binary}" | cut -d' ' -f1)"
+          printf '%s  %s\n' "${digest}" "$(basename "${binary}")" > "${binary}.sha256"
+      - name: Generate host binary SBOM
+        if: steps.existing-assets.outputs.reused != 'true'
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          path: dist/${{ matrix.binary }}-${{ env.VERSION }}-${{ matrix.platform }}
+          format: spdx-json
+          output-file: dist/${{ matrix.binary }}-${{ env.VERSION }}-${{ matrix.platform }}.spdx.json
+          upload-artifact: false
+      - name: Sign host binary (keyless Sigstore)
+        if: steps.existing-assets.outputs.reused != 'true'
+        run: |
+          binary="dist/${{ matrix.binary }}-${VERSION}-${{ matrix.platform }}"
+          cosign sign-blob --yes --bundle "${binary}.sigstore.json" "${binary}"
+      - name: Attest host binary provenance
+        if: steps.existing-assets.outputs.reused != 'true'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/${{ matrix.binary }}-${{ env.VERSION }}-${{ matrix.platform }}
+      - name: Upload host binary release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prefix="dist/${{ matrix.binary }}-${VERSION}-${{ matrix.platform }}"
+          .github/scripts/upload-release-assets.sh "${VERSION}" "${prefix}"*
+
   # The mecatui image carries cmd/mecatui/kodata/agent.yaml through ko's kodata
   # support and identifies it with the org.stacklok.broodbox.agent OCI label.
   publish-mecatui:
-    needs: guard
     name: Build, publish, sign, attest mecatui
+    needs: publish-microvm
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -242,7 +639,23 @@ jobs:
           persist-credentials: false
           # ko reads the base image digest from .ko.yaml; no deep history needed.
           fetch-depth: 1
-          ref: ${{ env.VERSION }}
+          ref: ${{ github.sha }}
+
+      - name: Assert checkout is the immutable run commit
+        run: test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+
+      - name: Download versioned microVM platform defaults
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: microvm-default-*
+          path: microvm-defaults
+          merge-multiple: true
+
+      - name: Stamp strict microVM release defaults
+        run: |
+          set -euo pipefail
+          jq -s 'map({key:.platform,value:.}) | from_entries' microvm-defaults/microvm-default-*.json > microvm-defaults.json
+          echo "MICROVM_RELEASE_DEFAULTS_B64=$(base64 -w0 microvm-defaults.json)" >> "$GITHUB_ENV"
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -254,6 +667,7 @@ jobs:
             go.sum
             engine/go.sum
             authn/oidc/go.sum
+            environment/microvm/go.sum
 
       - uses: ko-build/setup-ko@61b4d1d396f5b2e7d6bb6fefdce3dc38d1a13445 # v0.10
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
@@ -352,8 +766,8 @@ jobs:
           create-storage-record: false
 
   publish-mecak8s:
-    needs: guard
     name: Build, publish, sign, attest mecak8s
+    needs: validate-release-ref
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -375,7 +789,11 @@ jobs:
           persist-credentials: false
           # ko reads the base image digest from .ko.yaml; no deep history needed.
           fetch-depth: 1
-          ref: ${{ env.VERSION }}
+          # Bind every publishing job to the immutable commit validated above.
+          ref: ${{ github.sha }}
+
+      - name: Assert checkout is the immutable run commit
+        run: test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -507,7 +925,9 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 1
-          ref: ${{ env.VERSION }}
+          ref: ${{ github.sha }}
+      - name: Assert checked-out immutable release commit
+        run: test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
 
       - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
@@ -601,7 +1021,11 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 1
-          ref: ${{ env.VERSION }}
+          # Bind every publishing job to the immutable commit validated above.
+          ref: ${{ github.sha }}
+
+      - name: Assert checkout is the immutable run commit
+        run: test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
 
       - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:

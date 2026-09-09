@@ -67,14 +67,17 @@ var flagApplicabilityByFlag = map[string]flagApplicability{
 	"insecure":   {group: groupTransport, common: false, local: false, connect: true},
 
 	// ── Session (shared) ──────────────────────────────────────────────────
-	"workspace":     {group: groupSession, common: true, local: true, connect: true},
-	"mode":          {group: groupSession, common: true, local: true, connect: true},
-	"debug-mcp":     {group: groupSession, common: true, local: true, connect: true},
-	"resume":        {group: groupSession, common: true, local: true, connect: true},
-	"resume-latest": {group: groupSession, common: true, local: true, connect: true},
-	"prompt":        {group: groupSession, common: true, local: true, connect: true},
-	"p":             {group: groupSession, common: false, local: true, connect: true}, // alias for --prompt
-	"prompt-file":   {group: groupSession, common: true, local: true, connect: true},
+	"workspace":            {group: groupSession, common: true, local: true, connect: true},
+	"default-placement":    {group: groupSession, common: true, local: true, connect: false},
+	"microvm-guest-egress": {group: groupSession, common: false, local: true, connect: false},
+	"microvm-guest-allow":  {group: groupSession, common: false, local: true, connect: false},
+	"mode":                 {group: groupSession, common: true, local: true, connect: true},
+	"debug-mcp":            {group: groupSession, common: true, local: true, connect: true},
+	"resume":               {group: groupSession, common: true, local: true, connect: true},
+	"resume-latest":        {group: groupSession, common: true, local: true, connect: true},
+	"prompt":               {group: groupSession, common: true, local: true, connect: true},
+	"p":                    {group: groupSession, common: false, local: true, connect: true}, // alias for --prompt
+	"prompt-file":          {group: groupSession, common: true, local: true, connect: true},
 
 	// ── UI (shared) ───────────────────────────────────────────────────────
 	"theme":           {group: groupUI, common: true, local: true, connect: true},

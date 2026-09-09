@@ -1,0 +1,164 @@
+name: MicroVM E2E
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: microvm-e2e-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GOTOOLCHAIN: local
+  GOFLAGS: -mod=readonly
+
+jobs:
+  live-hypervisor:
+    name: ${{ matrix.name }}
+    runs-on: ${{ fromJSON(matrix.runner) }}
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux amd64 (KVM)
+            runner: '["ubuntu-24.04"]'
+            hypervisor: kvm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: environment/microvm/go.mod
+          cache: true
+          cache-dependency-path: |
+            engine/go.sum
+            environment/microvm/go.sum
+
+      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Explicit artifact preparation preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker info >/dev/null
+          test -c /dev/kvm
+
+      - name: Prepare packaged microVM artifacts
+        shell: bash
+        env:
+          HYPERVISOR: ${{ matrix.hypervisor }}
+        run: |
+          set -euo pipefail
+          if [[ "${HYPERVISOR}" == "kvm" ]]; then
+            echo "::group::KVM state before artifact preparation"
+            stat --printf='inode=%i owner=%U(%u) group=%G(%g) mode=%a type=%F\n' /dev/kvm
+            getfacl --absolute-names /dev/kvm
+            echo "::endgroup::"
+          fi
+          ./environment/microvm/e2e/prepare.sh
+          if [[ "${HYPERVISOR}" == "kvm" ]]; then
+            echo "::group::KVM state after artifact preparation"
+            stat --printf='inode=%i owner=%U(%u) group=%G(%g) mode=%a type=%F\n' /dev/kvm
+            getfacl --absolute-names /dev/kvm
+            echo "::endgroup::"
+          fi
+
+      - name: Refresh KVM access after artifact preparation
+        if: matrix.hypervisor == 'kvm'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "::group::KVM state before UID ACL refresh"
+          stat --printf='inode=%i owner=%U(%u) group=%G(%g) mode=%a type=%F\n' /dev/kvm
+          getfacl --absolute-names /dev/kvm
+          echo "::endgroup::"
+          echo "KVM authorization target: user=$(id -un) uid=$(id -u) euid=$(id -u)"
+          sudo usermod --append --groups kvm "$(id -un)"
+          sudo setfacl --modify "user:$(id -u):rw" /dev/kvm
+          echo "::group::KVM state after UID ACL refresh"
+          stat --printf='inode=%i owner=%U(%u) group=%G(%g) mode=%a type=%F\n' /dev/kvm
+          getfacl --absolute-names /dev/kvm
+          echo "::endgroup::"
+          python3 - <<'PY'
+          import os
+          fd = os.open("/dev/kvm", os.O_RDWR | os.O_CLOEXEC)
+          os.close(fd)
+          PY
+
+      - name: Reclaim preparation-only disk
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo rm -rf -- \
+            .scratch/microvm-e2e/linux-amd64/rootfs \
+            .scratch/microvm-e2e/linux-amd64/oci/resolver-cache
+          docker builder prune --all --force
+          docker image prune --all --force
+
+      - name: Run pinned v0.0.40 real-hypervisor journey
+        env:
+          MECATL_MICROVM_E2E_PREPARED: "1"
+          MECATL_MICROVM_E2E_REFRESH_KVM_ACL: "1"
+          MECATL_MICROVM_E2E_WRONG_PEER_UID: "65534"
+        run: |
+          set -euo pipefail
+          MECATL_MICROVM_E2E_KVM_GID="$(getent group kvm | cut -d: -f3)"
+          export MECATL_MICROVM_E2E_KVM_GID
+          sg kvm -c "echo \"E2E host identity: uid=\$(id -u) euid=\$(id -u) gid=\$(id -g) expected_kvm_gid=${MECATL_MICROVM_E2E_KVM_GID}\"; test \"\$(id -g)\" = \"${MECATL_MICROVM_E2E_KVM_GID}\"; task e2e:microvm"
+
+  linux-arm64-compile-static:
+    name: Linux arm64 compile/static coverage
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: environment/microvm/go.mod
+          cache: true
+          cache-dependency-path: |
+            engine/go.sum
+            environment/microvm/go.sum
+      - name: Compile runtime, production daemon, and tagged E2E
+        run: |
+          cd environment/microvm
+          GOWORK=off go test ./...
+          cd ../..
+          go test -tags=microvm_e2e ./internal/adapter/microvm -run '^$'
+
+  macos-compile-static:
+    name: macOS 15 arm64 compile/static coverage
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: environment/microvm/go.mod
+          cache: true
+          cache-dependency-path: |
+            engine/go.sum
+            environment/microvm/go.sum
+      - name: Compile production daemon and tagged E2E
+        run: |
+          cd environment/microvm
+          GOWORK=off go test ./cmd/mecatl-microvmd
+          GOWORK=off go build ./cmd/mecatl-microvmd
+          cd ../..
+          go test -tags=microvm_e2e ./internal/adapter/microvm -run '^$'

@@ -2,12 +2,14 @@ package agent_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"sync/atomic"
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
+	"github.com/stacklok/mecatl/engine/adapter/memledger"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
@@ -683,4 +685,58 @@ func TestStorelessWritableSubagentFailureKeepsPlainPartialNote(t *testing.T) {
 	if strings.Contains(body, "Do not do both") {
 		t.Fatalf("the combined resume-or-discard decision must not appear where resume is unsupported, got:\n%s", body)
 	}
+}
+
+func TestMicroVMEnvironments_Scenario7_DirectWriteUsesParentEnvironment(t *testing.T) {
+	parentWS := memfs.NewWorkspace("/workspace")
+	parentRef := session.EnvironmentRef{Kind: "microvm", ID: "parent", Revision: "7"}
+	parentEnv := tool.MustEnvironment(parentRef, parentWS, memledger.New(), microVMMutationRunner{ws: parentWS})
+	var seenRef session.EnvironmentRef
+	bash := &environmentProbeTool{run: func(ctx context.Context, call session.ToolCall, env tool.Environment) (session.ToolResult, error) {
+		seenRef = env.Ref()
+		if _, err := env.CommandRunner().Run(ctx, "write"); err != nil {
+			return session.NewToolError(call.ID, err.Error()), nil
+		}
+		return session.NewToolResult(call.ID, "wrote through parent runner"), nil
+	}}
+	writable := childEngineWith(mockllm.New(
+		mockllm.ToolCallTurn(toolCall("w1", "Bash", `{}`)),
+		mockllm.TextTurn("done"),
+	), catalogWith(t, bash))
+	task := newWritableSubagent(t, writable, agent.WithChildForker(&failingForker{t}))
+
+	call := toolCall("p1", "Subagent", `{"prompt":"implement","mode":"read-write"}`)
+	mutator, ok := task.(interface{ MutatesParent(session.ToolCall) bool })
+	if !ok || !mutator.MutatesParent(call) {
+		t.Fatal("direct-write microVM Subagent must be parent-mutate-serial")
+	}
+	result, err := task.Execute(context.Background(), call, parentEnv)
+	if err != nil || result.IsError {
+		t.Fatalf("direct-write Execute: result=%+v err=%v", result, err)
+	}
+	if seenRef != parentRef {
+		t.Fatalf("child EnvironmentRef = %+v, want parent %+v", seenRef, parentRef)
+	}
+	if got, err := parentWS.Read(context.Background(), "direct-write.txt"); err != nil || string(got) != "parent mutation" {
+		t.Fatalf("parent mutation = %q, %v", got, err)
+	}
+}
+
+type microVMMutationRunner struct{ ws tool.Workspace }
+
+func (r microVMMutationRunner) Run(ctx context.Context, _ string) (tool.CommandResult, error) {
+	_, err := r.ws.CreateFile(ctx, "direct-write.txt", []byte("parent mutation"))
+	return tool.CommandResult{}, err
+}
+
+type environmentProbeTool struct {
+	run func(context.Context, session.ToolCall, tool.Environment) (session.ToolResult, error)
+}
+
+func (*environmentProbeTool) Spec() tool.ToolSpec {
+	return tool.ToolSpec{Name: "Bash", Description: "test", Schema: json.RawMessage(`{"type":"object"}`)}
+}
+func (*environmentProbeTool) ReadOnly() bool { return false }
+func (t *environmentProbeTool) Execute(ctx context.Context, call session.ToolCall, env tool.Environment) (session.ToolResult, error) {
+	return t.run(ctx, call, env)
 }

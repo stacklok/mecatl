@@ -813,11 +813,9 @@ const recoverNoticeText = "this session's last turn failed on a permanent provid
 // ErrConfig is returned by NewService when a required dependency is missing.
 var ErrConfig = errors.New("server: invalid config")
 
-// engineCloseTimeout bounds how long Close waits for all per-session engine close
-// calls to complete before proceeding. It is a `var` (not a const) so a test can
-// shrink it to assert Close is bounded; production keeps the conservative default.
-// A wedged engine close that ignores its deadline is abandoned (best-effort), never
-// allowed to stall shutdown unboundedly.
+// engineCloseTimeout bounds aggregate shutdown work that may call external
+// adapters. It is a `var` so tests can shrink it; one deadline covers every
+// concurrent detachment rather than multiplying by the attachment count.
 var engineCloseTimeout = 10 * time.Second
 
 // Service is the surface-agnostic application service shared by the gRPC and

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -13,6 +14,8 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	microvmadapter "github.com/stacklok/mecatl/internal/adapter/microvm"
+	"github.com/stacklok/mecatl/internal/adapter/microvmmanager"
 	"github.com/stacklok/mecatl/internal/app"
 	"github.com/stacklok/mecatl/internal/cliconfig"
 )
@@ -43,17 +46,27 @@ type config struct {
 	workspace string
 	// workspaceExplicit distinguishes an operator-supplied --workspace from the
 	// empty default. Remote connect rejects the former without resolving it.
-	workspaceExplicit bool
-	mode              string
-	theme             string
-	themeDir          string
-	authToken         string
-	anonymous         bool
-	useTLS            bool
-	tlsExplicit       bool
-	tlsCA             string
-	insecure          bool
-	listThemes        bool
+	workspaceExplicit     bool
+	defaultPlacement      string
+	microVMGuestEgress    microvmmanager.GuestEgressSelection
+	microVMEgressSet      bool
+	microVMDevRelease     string
+	microVMDevAcknowledge bool
+	// microVMEndpoint and microVMReadiness configure the embedded server's
+	// trusted default placement provider.
+	microVMEndpoint  string
+	microVMReadiness func(context.Context) error
+	microVMProvider  *microvmadapter.Client
+	mode             string
+	theme            string
+	themeDir         string
+	authToken        string
+	anonymous        bool
+	useTLS           bool
+	tlsExplicit      bool
+	tlsCA            string
+	insecure         bool
+	listThemes       bool
 	// debug enables mecatui's client-side diagnostic surfaces. An explicit
 	// --debug value outranks MECATUI_DEBUG and the legacy per-surface aliases.
 	debug        bool
@@ -359,11 +372,16 @@ func parseFlags(args []string) (config, error) {
 // local/connect, the command word / ADDRESS — resolveInvocation strips them).
 func parseTransportFlags(mode transportMode, out io.Writer, args []string, browseSessions ...bool) (*flag.FlagSet, config, error) {
 	var cfg config
+	cfg.microVMGuestEgress = microvmmanager.NewGuestEgressSelection()
 	cfg.transportMode = mode
 	cfg.browseSessions = len(browseSessions) > 0 && browseSessions[0]
 	fs := flag.NewFlagSet("mecatui", flag.ContinueOnError)
 	fs.SetOutput(out)
 	fs.StringVar(&cfg.workspace, "workspace", "", "embedded server only: absolute deployment workspace root (default: cwd); not accepted by connect")
+	fs.StringVar(&cfg.defaultPlacement, "default-placement", "", "embedded deployment default placement (microvm-local: managed local microVM; empty: host-local)")
+	fs.Var(cfg.microVMGuestEgress.ModeValue(), "microvm-guest-egress", "microvm-local guest egress: permissive, deny-all, or allowlist; omitted preserves an existing local policy (first use: permissive); local embedded mode only")
+	fs.Var(cfg.microVMGuestEgress.AllowValue(), "microvm-guest-allow", "allow one microvm-local guest destination as HOST:PORT/tcp|udp (repeatable; requires allowlist; hostnames only, no IP literals or wildcards)")
+	registerMicroVMDevelopmentFlags(fs, &cfg.microVMDevRelease, &cfg.microVMDevAcknowledge)
 	fs.StringVar(&cfg.mode, "mode", "default", "permission mode: default | plan | accept-edits")
 	fs.Func("debug-mcp", "debug sessions only: select one already-configured server-global streaming-HTTP MCP server by name (repeatable)", func(value string) error {
 		cfg.debugMCP = append(cfg.debugMCP, value)
@@ -478,29 +496,8 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string, brows
 		return fs, config{}, err
 	}
 
-	// --help-flags is the bare/local common flag reference.
-	if cfg.helpFlags {
-		if mode != modeLocal || cfg.browseSessions {
-			return fs, config{}, errors.New("--help-flags is available only as bare 'mecatui --help-flags'")
-		}
-		writeBareCommonHelp(fs.Output(), fs)
-		return nil, config{}, flag.ErrHelp
-	}
-
-	// --help-all was parsed as a normal flag; render and return ErrHelp (exit 0).
-	if cfg.helpAll {
-		out := fs.Output()
-		if cfg.browseSessions {
-			writeSessionsHelpAll(out, fs, mode)
-		} else {
-			switch mode {
-			case modeConnect:
-				writeConnectHelpAll(out, fs)
-			default:
-				writeBareHelpAll(out, fs)
-			}
-		}
-		return nil, config{}, flag.ErrHelp
+	if helpFS, handled, err := handleTransportHelp(fs, cfg, mode); handled {
+		return helpFS, config{}, err
 	}
 
 	// By-name applicability rejection (ADR 0087): connect rejects embedded-only
@@ -513,6 +510,9 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string, brows
 	}
 
 	if err := finalizeParsedConfig(fs, &cfg); err != nil {
+		return fs, config{}, err
+	}
+	if err := validateMicroVMFlags(mode, cfg); err != nil {
 		return fs, config{}, err
 	}
 	if err := validateResumeSelectors(cfg); err != nil {
@@ -529,6 +529,50 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string, brows
 		cfg.promptFileBody = string(body)
 	}
 	return fs, cfg, nil
+}
+
+func handleTransportHelp(fs *flag.FlagSet, cfg config, mode transportMode) (*flag.FlagSet, bool, error) {
+	if cfg.helpFlags {
+		if mode != modeLocal || cfg.browseSessions {
+			return fs, true, errors.New("--help-flags is available only as bare 'mecatui --help-flags'")
+		}
+		writeBareCommonHelp(fs.Output(), fs)
+		return nil, true, flag.ErrHelp
+	}
+	if !cfg.helpAll {
+		return fs, false, nil
+	}
+
+	out := fs.Output()
+	if cfg.browseSessions {
+		writeSessionsHelpAll(out, fs, mode)
+	} else if mode == modeConnect {
+		writeConnectHelpAll(out, fs)
+	} else {
+		writeBareHelpAll(out, fs)
+	}
+	return nil, true, flag.ErrHelp
+}
+
+func validateMicroVMFlags(mode transportMode, cfg config) error {
+	if cfg.microVMEgressSet && cfg.defaultPlacement != microvmmanager.Alias {
+		return errors.New("microVM guest egress flags require --default-placement microvm-local in local embedded mode")
+	}
+	if err := cfg.microVMGuestEgress.Validate(); err != nil {
+		return err
+	}
+	if cfg.microVMDevRelease == "" && !cfg.microVMDevAcknowledge {
+		return nil
+	}
+	if mode != modeLocal || cfg.defaultPlacement != microvmmanager.Alias {
+		return errors.New("microVM development release flags require local embedded mode with --default-placement microvm-local")
+	}
+	var egress []microvmmanager.GuestEgressSelection
+	if cfg.microVMEgressSet {
+		egress = append(egress, cfg.microVMGuestEgress)
+	}
+	_, _, err := microVMDevelopmentReadyRequest(cfg.microVMDevRelease, cfg.microVMDevAcknowledge, version, microVMReleaseStampRequired != "" || microVMReleaseDefaultsB64 != "", egress...)
+	return err
 }
 
 // resolveRemoteTLSPolicy applies the connect transport policy only after the
@@ -652,6 +696,8 @@ func recordExplicitFlag(f *flag.Flag, cfg *config) {
 		cfg.terminalTitleFlagSet = true
 	case "workspace":
 		cfg.workspaceExplicit = true
+	case "microvm-guest-egress", "microvm-guest-allow":
+		cfg.microVMEgressSet = true
 	}
 	markRetentionCLIFlag(&cfg.retentionCLISet, f.Name)
 }

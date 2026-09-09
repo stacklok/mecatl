@@ -6,6 +6,8 @@ use ./engine
 
 use ./authn/oidc
 
+use ./environment/microvm
+
 use ./provider/anthropic
 
 use ./provider/openai

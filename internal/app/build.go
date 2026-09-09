@@ -151,9 +151,18 @@ type Config struct {
 	// deployment policy the cmd/ main decides from its listener topology and Build passes through verbatim; the zero value fails
 	// closed, so a composition root that never sets it refuses the field.
 	ClientMCPOnCreate bool
-	Model             string
-	UseOpenAI         bool
-	OpenAIKey         string
+	// EnvironmentForkers routes isolated delegation children by the parent
+	// EnvironmentRef kind. External backends (for example microVM) register their
+	// complete child-environment forker here; local/memory parents retain the
+	// ordinary host forker. An unregistered external kind fails closed rather than
+	// creating a host-local child under a remote parent.
+	EnvironmentForkers map[session.EnvironmentKind]tool.EnvironmentForker
+	// EnvironmentMergers routes merge-back through the same backend kind as the
+	// parent; external children must never fall through to the host Git merger.
+	EnvironmentMergers map[session.EnvironmentKind]tool.EnvironmentMerger
+	Model              string
+	UseOpenAI          bool
+	OpenAIKey          string
 	// OpenAIBearerTokenFile is a rotating credential source for only the OpenAI
 	// registry entry. The adapter reads it for every request.
 	OpenAIBearerTokenFile string
@@ -1953,6 +1962,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// The local capability is shared by Service lease ownership, delegation-child
 	// liveness, and the engine's persistence/audit adapters.
 	mutationCapability := server.NewSessionMutationCapability(sessionLease != nil)
+
 	// One process-wide liveness registry bridges engine-owned delegation children
 	// to Service/retention without introducing an engine→server dependency. When
 	// leasing is configured it owns distributed child holds as well.
@@ -5539,7 +5549,8 @@ func buildCatalog(ctx context.Context, cfg Config, reg *providerRegistry, provid
 	// consumer.
 	var autoMerger tool.EnvironmentMerger
 	if cfg.EnableParallel {
-		autoMerger = forker.NewSerializingMerger(forker.NewMerger())
+		localMerger := forker.NewMerger()
+		autoMerger = forker.NewSerializingMerger(forker.NewKindMergerRouter(localMerger, cfg.EnvironmentMergers))
 	}
 
 	assets := catalogAssets{
@@ -7180,13 +7191,13 @@ func buildSubagentTool(ctx context.Context, cfg Config, provReg *providerRegistr
 		// buildSandboxedCommandRunner does (sandboxedRunner != nil already proves the
 		// gate passed at build time; the per-child builder re-checks it so a future
 		// per-session trust change cannot hand a shell to an untrusted child).
-		taskForker := forker.New(newForkWorkspace(), forker.WithDirtyOverlay(),
+		taskForker := routeChildForker(cfg, forker.New(newForkWorkspace(), forker.WithDirtyOverlay(),
 			forker.WithRunner(func(childRoot string) tool.CommandRunner {
 				if !sandboxedShellAvailable(cfg) {
 					return nil
 				}
 				return newHardenedRunnerForRoot(cfg, childRoot)
-			}))
+			})))
 		opts = append(opts, agent.WithChildForker(taskForker))
 	}
 	// Base-sharing children retain the parent content backend but receive a
@@ -7506,6 +7517,10 @@ func buildAgentWritableEngineFactory(ctx context.Context, cfg Config, provReg *p
 	return ordinary
 }
 
+func routeChildForker(cfg Config, local tool.EnvironmentForker) tool.EnvironmentForker {
+	return forker.NewKindRouter(local, cfg.EnvironmentForkers)
+}
+
 // buildTeamWiring constructs the agent-team dependencies — the unified per-member
 // engine factory, the TWO workspace forkers (force-copy for mutating members,
 // worktree for read-only-isolated members), and the shared team hooks runner — that
@@ -7605,11 +7620,11 @@ func buildTeamWiring(_ context.Context, cfg Config, provReg *providerRegistry, p
 		}
 		return newHardenedRunnerForRoot(cfg, childRoot)
 	}
-	fk := forker.New(newForkWorkspace(), forker.WithForceCopy(), forker.WithRunner(fkRunnerBuilder))
-	roFk := forker.New(newForkWorkspace(), forker.WithDirtyOverlay(), forker.WithRunner(roRunnerBuilder))
+	fk := routeChildForker(cfg, forker.New(newForkWorkspace(), forker.WithForceCopy(), forker.WithRunner(fkRunnerBuilder)))
+	roFk := routeChildForker(cfg, forker.New(newForkWorkspace(), forker.WithDirtyOverlay(), forker.WithRunner(roRunnerBuilder)))
 	memberRunner := buildSandboxedCommandRunner(cfg)
 	mutatingRunner := buildForceCopyRunner(cfg)
-	roIsolationAvailable := memberRunner != nil && roFk != nil
+	roIsolationAvailable := memberRunner != nil
 	factory := buildMemberEngine(cfg, provReg, provider, parentProviderID, parentModel, teamHooks, agentReg, skillIdx, memberRunner, mutatingRunner, roIsolationAvailable, mainMgr, a, false)
 	return factory, fk, roFk, childWorkspaceView, teamHooks
 }

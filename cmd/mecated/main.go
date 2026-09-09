@@ -45,11 +45,15 @@ import (
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/agents"
 	"github.com/stacklok/mecatl/internal/adapter/daemonconfig"
 	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
 	"github.com/stacklok/mecatl/internal/adapter/mcpbroker"
 	"github.com/stacklok/mecatl/internal/adapter/mcpperf"
+	microvmadapter "github.com/stacklok/mecatl/internal/adapter/microvm"
+	"github.com/stacklok/mecatl/internal/adapter/microvmmanager"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/adapter/skills"
 	"github.com/stacklok/mecatl/internal/adapter/slogdiag"
@@ -59,6 +63,12 @@ import (
 	"github.com/stacklok/mecatl/internal/buildinfo"
 	"github.com/stacklok/mecatl/internal/cliconfig"
 	"github.com/stacklok/mecatl/internal/configgen"
+)
+
+var (
+	microVMReleaseVersion       = "dev"
+	microVMReleaseDefaultsB64   string
+	microVMReleaseStampRequired string
 )
 
 // TRUST MODEL (security): the mecated API exposes command and file execution
@@ -122,15 +132,19 @@ type config struct {
 	// toolhiveLLMFlags holds --toolhive-llm / --toolhive-llm-base-url (issue
 	// #262: auto-detecting the ToolHive LLM gateway proxy), applied onto
 	// app.Config in appConfig alongside providerFlags.
-	toolhiveLLMFlags     *cliconfig.ToolhiveLLMFlags
-	useMock              bool
-	mockScript           string
-	mockProvider         port.LLMProvider
-	storeDir             string
-	shell                string
-	noShell              bool
-	authorityEvaluator   string
-	cedarAuthorityPolicy string
+	toolhiveLLMFlags      *cliconfig.ToolhiveLLMFlags
+	useMock               bool
+	mockScript            string
+	mockProvider          port.LLMProvider
+	storeDir              string
+	shell                 string
+	noShell               bool
+	authorityEvaluator    string
+	cedarAuthorityPolicy  string
+	defaultPlacement      string
+	microVMGuestEgress    microvmmanager.GuestEgressSelection
+	microVMDevRelease     string
+	microVMDevAcknowledge bool
 
 	// Context management: the compaction strategy and the token counter. Both
 	// default to the current behaviour exactly (heuristic compactor + heuristic
@@ -956,6 +970,9 @@ func run(mode commandMode, remaining []string) error {
 	}
 
 	composition := appConfig(cfg, sink, mainScoped, roleScoper, obs.metrics, diag)
+	if err := configureDefaultPlacement(&composition, cfg, diag); err != nil {
+		return err
+	}
 	built, err := app.Build(ctx, composition)
 	if err != nil {
 		return err
@@ -1073,6 +1090,97 @@ const mecatedServerImplementation = "mecated"
 
 // appConfig constructs the command root's declarative app.Config. app.Build loads the
 // injected provider credential after resolving operator definitions.
+func configureDefaultPlacement(cfg *app.Config, command config, diag port.Diagnostics) error {
+	if command.defaultPlacement != microvmmanager.Alias {
+		return nil
+	}
+	var egress []microvmmanager.GuestEgressSelection
+	if command.cliExplicit["microvm-guest-egress"] || command.cliExplicit["microvm-guest-allow"] {
+		egress = append(egress, command.microVMGuestEgress)
+	}
+	return configureMicroVMLocalProfile(cfg, diag, command.microVMDevRelease, command.microVMDevAcknowledge, egress...)
+}
+
+func microVMReadyRequestWithDevelopment(descriptor string, acknowledge bool, egress ...microvmmanager.GuestEgressSelection) (microvmmanager.ReadyRequest, error) {
+	request, enabled, err := microVMDevelopmentReadyRequest(descriptor, acknowledge, buildinfo.BuildID, microVMReleaseStampRequired != "" || microVMReleaseDefaultsB64 != "", egress...)
+	if enabled || err != nil {
+		return request, err
+	}
+	return microVMReadyRequest(egress...)
+}
+
+func microVMReadyRequest(egress ...microvmmanager.GuestEgressSelection) (microvmmanager.ReadyRequest, error) {
+	return microvmmanager.ReadyRequestFromDefaults(microVMReleaseDefaultsB64, microVMReleaseVersion, egress...)
+}
+
+func withMicroVMReadinessDiagnostics(ctx context.Context, diag port.Diagnostics) context.Context {
+	return microvmmanager.WithReadinessObserver(ctx, func(stage microvmmanager.ReadinessStage, message string) {
+		if diag != nil {
+			diag.Log(ctx, port.LevelInfo, "microvm-local readiness", "stage", string(stage), "status", message)
+		}
+	})
+}
+
+type microVMReadyManager interface {
+	EnsureReady(context.Context, microvmmanager.ReadyRequest) (string, error)
+}
+
+func configureMicroVMLocalProfile(cfg *app.Config, diag port.Diagnostics, developmentDescriptor string, developmentAcknowledge bool, egress ...microvmmanager.GuestEgressSelection) error {
+	if developmentDescriptor != "" || developmentAcknowledge {
+		if _, err := microVMReadyRequestWithDevelopment(developmentDescriptor, developmentAcknowledge, egress...); err != nil {
+			return err
+		}
+		if diag != nil {
+			diag.Log(context.Background(), port.LevelInfo, "microvm-local development release enabled", "support", "unsupported", "trust", "local-artifacts")
+		}
+	}
+	manager, endpoint, err := microvmmanager.DefaultLocal()
+	if err != nil {
+		return err
+	}
+	return configureMicroVMLocalProfileWithManager(cfg, diag, manager, endpoint, developmentDescriptor, developmentAcknowledge, egress...)
+}
+
+func configureMicroVMLocalProfileWithManager(cfg *app.Config, diag port.Diagnostics, manager microVMReadyManager, endpoint, developmentDescriptor string, developmentAcknowledge bool, egress ...microvmmanager.GuestEgressSelection) error {
+	if manager == nil || endpoint == "" {
+		return errors.New("microvm-local readiness manager and endpoint are required")
+	}
+	if len(egress) > 1 {
+		return errors.New("multiple guest egress selections supplied")
+	}
+	readiness := func(ctx context.Context) error {
+		request, requestErr := microVMReadyRequestWithDevelopment(developmentDescriptor, developmentAcknowledge, egress...)
+		if requestErr != nil {
+			return requestErr
+		}
+		ctx = withMicroVMReadinessDiagnostics(ctx, diag)
+		readyEndpoint, readyErr := manager.EnsureReady(ctx, request)
+		if readyErr != nil {
+			return readyErr
+		}
+		if readyEndpoint != endpoint {
+			return fmt.Errorf("microvm-local readiness returned unexpected endpoint %q", readyEndpoint)
+		}
+		return nil
+	}
+	const scope server.PlacementScope = "deployment"
+	provider, err := microvmadapter.NewPlacementProvider(endpoint, cfg.Workspace, microvmmanager.Alias, scope, readiness)
+	if err != nil {
+		return err
+	}
+	cfg.PlacementProvider = provider
+	cfg.PlacementScope = scope
+	if cfg.EnvironmentForkers == nil {
+		cfg.EnvironmentForkers = make(map[session.EnvironmentKind]tool.EnvironmentForker)
+	}
+	if cfg.EnvironmentMergers == nil {
+		cfg.EnvironmentMergers = make(map[session.EnvironmentKind]tool.EnvironmentMerger)
+	}
+	cfg.EnvironmentForkers[session.EnvironmentKind("microvm")] = provider
+	cfg.EnvironmentMergers[session.EnvironmentKind("microvm")] = provider
+	return nil
+}
+
 func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, roleScoper func(string) (port.EventSink, port.ToolCallRecorder), metrics *telemetry.Metrics, diag port.Diagnostics) app.Config {
 	nativeEndpointLoader := &cliconfig.NativeEndpointLoader{}
 	out := app.Config{
@@ -1560,6 +1668,7 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 	fs := flag.NewFlagSet("mecated", flag.ContinueOnError)
 	fs.SetOutput(out)
 	var cfg config
+	cfg.microVMGuestEgress = microvmmanager.NewGuestEgressSelection()
 
 	cwd, _ := os.Getwd()
 
@@ -1601,6 +1710,10 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 	fs.StringVar(&cfg.authorityEvaluator, "authority-evaluator", "local", "authority evaluator: local (default), noop, or cedar; cedar requires --cedar-authority-policy")
 	fs.StringVar(&cfg.cedarAuthorityPolicy, "cedar-authority-policy", "", "path to the static operator Cedar authority policy; read once at startup when --authority-evaluator=cedar")
 	fs.BoolVar(&cfg.noShell, "no-shell", false, "disable the Shell tool entirely (shell-less mode); overrides --shell")
+	fs.StringVar(&cfg.defaultPlacement, "default-placement", "", "deployment default placement provider (microvm-local or empty for host-local)")
+	fs.Var(cfg.microVMGuestEgress.ModeValue(), "microvm-guest-egress", "microvm-local guest egress: permissive, deny-all, or allowlist; omitted preserves an existing local policy (first use: permissive); host-operator policy, never client-selectable")
+	fs.Var(cfg.microVMGuestEgress.AllowValue(), "microvm-guest-allow", "allow one microvm-local guest destination as HOST:PORT/tcp|udp (repeatable; requires --microvm-guest-egress=allowlist; hostnames only, no IP literals or wildcards)")
+	registerMicroVMDevelopmentFlags(fs, &cfg.microVMDevRelease, &cfg.microVMDevAcknowledge)
 
 	fs.StringVar(&cfg.compaction, "compaction", "heuristic", "compaction strategy: \"heuristic\" (default, single-summary) or \"cascade\" (tiered snip→strip→collapse→summarize)")
 	fs.StringVar(&cfg.tokenizer, "tokenizer", "heuristic", "token counter for the compaction trigger: \"heuristic\" (default, dependency-free) or \"tiktoken\" (offline tiktoken vocab)")
@@ -1804,6 +1917,12 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 	// composition can let CLI out-rank the operator-global settings.yaml posture: key
 	// and WARN if an alias raised above an explicit lower --posture.
 	recordExplicitFlags(fs, &cfg)
+	if err := validateMicroVMPlacementFlags(mode, cfg); err != nil {
+		return fs, config{}, err
+	}
+	if err := cfg.microVMGuestEgress.Validate(); err != nil {
+		return fs, config{}, err
+	}
 
 	// Default the schedule-fire retention to 7d when the operator did not set it
 	// explicitly (ADR 0059 decision #7 Phase-2, ADR 0073): the scheduler is ON by
@@ -1926,6 +2045,33 @@ func recordExplicitFlags(fs *flag.FlagSet, cfg *config) {
 			cfg.defaultProviderFlagSet = true
 		}
 	})
+}
+
+func validateMicroVMPlacementFlags(mode commandMode, cfg config) error {
+	if cfg.defaultPlacement != "" && cfg.defaultPlacement != microvmmanager.Alias {
+		return fmt.Errorf("unsupported --default-placement %q (supported: %s)", cfg.defaultPlacement, microvmmanager.Alias)
+	}
+	egressSet := cfg.cliExplicit["microvm-guest-egress"] || cfg.cliExplicit["microvm-guest-allow"]
+	if egressSet && cfg.defaultPlacement != microvmmanager.Alias {
+		return errors.New("microVM guest egress flags require --default-placement microvm-local")
+	}
+	if mode == modeACP && egressSet {
+		return errors.New("microVM guest egress flags are supported only by 'mecated serve'")
+	}
+	return validateMicroVMDevelopmentFlags(mode, cfg)
+}
+
+func validateMicroVMDevelopmentFlags(mode commandMode, cfg config) error {
+	if mode != modeServe && (cfg.microVMDevRelease != "" || cfg.microVMDevAcknowledge) {
+		return errors.New("microVM development release flags are supported only by 'mecated serve'")
+	}
+	if (cfg.microVMDevRelease == "") != !cfg.microVMDevAcknowledge {
+		return errors.New("--microvm-dev-release and --microvm-dev-acknowledge-untrusted-local-artifacts are required together")
+	}
+	if cfg.microVMDevRelease != "" && cfg.defaultPlacement != microvmmanager.Alias {
+		return errors.New("microVM development release flags require --default-placement microvm-local")
+	}
+	return nil
 }
 
 // applyScheduleFireRetentionDefault sets the schedule-fire retention to 7 days

@@ -43,9 +43,13 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui"
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/clientauth"
 	"github.com/stacklok/mecatl/internal/adapter/credentialstore"
 	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
+	"github.com/stacklok/mecatl/internal/adapter/microvmmanager"
+	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/adapter/slogdiag"
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
 	"github.com/stacklok/mecatl/internal/app"
@@ -178,10 +182,32 @@ func runWithOptions(argv []string, options runOptions) error {
 	if handled, err := runSpecialMode(res); handled {
 		return err
 	}
+	if res.mode == modeMicroVM {
+		if err := validateMicroVMReleaseStamp(); err != nil {
+			return err
+		}
+		manager, err := defaultMicroVMManager()
+		if err != nil {
+			return err
+		}
+		interactive := term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
+		return runMicroVMCommand(context.Background(), res.remaining, os.Stdin, os.Stdout, manager, interactive)
+	}
 
 	cfg, err := parseRunConfig(res)
 	if err != nil {
 		return err
+	}
+	if cfg.transportMode == modeLocal && cfg.defaultPlacement == microvmmanager.Alias {
+		endpoint, endpointErr := defaultMicroVMEndpoint()
+		if endpointErr != nil {
+			return endpointErr
+		}
+		if err := configureSelectedEnvironmentReadiness(&cfg, endpoint, func() (microVMReadyManager, error) {
+			return defaultMicroVMManager()
+		}); err != nil {
+			return err
+		}
 	}
 	if cfg.providerKeys.AuthFileWarning != "" {
 		fmt.Fprintln(os.Stderr, "mecatui: WARNING: "+wrapAuthFileWarning(cfg.providerKeys.AuthFileWarning))
@@ -223,8 +249,8 @@ func runWithOptions(argv []string, options runOptions) error {
 	// Bubble Tea quits); second signal during cleanup = immediate hard os.Exit(130).
 	ctx, forceExit := setupSignalHandler()
 
-	// Resolve where to connect: an explicit external server, a server already
-	// running on the loopback default, or an embedded server we host in-process.
+	// Resolve where to connect before any potentially mutating readiness work. Resume
+	// placement is authoritative and must reject a mismatched profile first.
 	target, dial, transCleanup, err := resolveTransport(ctx, cfg)
 	if err != nil {
 		if reason, ok := client.AuthFailure(err, cfg.authToken != ""); ok {
@@ -255,7 +281,7 @@ func runWithOptions(argv []string, options runOptions) error {
 		resumeCfg.resumeID = options.connectResumeSessionID
 		resumeCfg.resumeLatest = false
 	}
-	resume, uiWorkspace, err := startupResumeConfig(ctx, cl, resumeCfg)
+	resume, uiWorkspace, err := startupResumeAndReadiness(ctx, cl, resumeCfg, os.Stderr)
 	if options.connectResumeSessionID != "" {
 		// An auth-recovery candidate is opportunistic. Only a verified terminal
 		// boundary is adopted; every other state and every ambiguous verification
@@ -1219,6 +1245,13 @@ func embeddedConfig(cfg config, diag port.Diagnostics) app.Config {
 	keys := cfg.providerKeys
 	if !cfg.providerKeysResolved {
 		keys = cfg.providerFlags.Resolve()
+	}
+	if cfg.microVMProvider != nil {
+		const scope server.PlacementScope = "deployment"
+		out.PlacementProvider = cfg.microVMProvider
+		out.PlacementScope = scope
+		out.EnvironmentForkers = map[session.EnvironmentKind]tool.EnvironmentForker{session.EnvironmentKind("microvm"): cfg.microVMProvider}
+		out.EnvironmentMergers = map[session.EnvironmentKind]tool.EnvironmentMerger{session.EnvironmentKind("microvm"): cfg.microVMProvider}
 	}
 	cfg.providerFlags.ApplyResolved(&out, keys)
 	out.UseOpenAI = keys.OpenAI != ""

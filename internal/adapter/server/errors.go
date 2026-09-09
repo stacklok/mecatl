@@ -79,6 +79,10 @@ var (
 	// the read-only-share invariant). Adapters map it to FailedPrecondition /
 	// HTTP 412, distinguishing it from a bad request (ErrInvalidArgument).
 	ErrFailedPrecondition = errors.New("server: failed precondition")
+	// ErrEnvironmentLogicalRootUnavailable reports that the authenticated guest
+	// could not attach the prepared repository worktree. The fixed wording is safe
+	// for client transports and deliberately excludes daemon/backend detail.
+	ErrEnvironmentLogicalRootUnavailable = fmt.Errorf("%w: Guest could not attach the prepared repository worktree", ErrFailedPrecondition)
 	// ErrLearningUnavailable means reflection/proposal persistence is not wired.
 	ErrLearningUnavailable = errors.New("server: learning proposals are not configured")
 	// ErrAttemptVersionConflict reports an opaque expected-version CAS mismatch.

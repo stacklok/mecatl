@@ -36,6 +36,8 @@ builds:
     ldflags:
       - -s -w
       - '{{with index .Env "VERSION"}}-X github.com/stacklok/mecatl/internal/buildinfo.BuildID={{.}}{{end}}'
+      - -X main.microVMReleaseVersion={{.Env.VERSION}}
+      - -X main.microVMReleaseDefaultsB64={{.Env.MICROVM_RELEASE_DEFAULTS_B64}}
   # mecak8s (ADR 0048): the storage-free k8s-native agent binary. Same distroless
   # base + build flags as mecated — it is a thin peer of mecated that composes
   # app.Build with k8s-native defaults (Redis store + k8s lease + drain gate).
@@ -62,3 +64,5 @@ builds:
     ldflags:
       - -s -w
       - '{{with index .Env "VERSION"}}-X github.com/stacklok/mecatl/internal/buildinfo.BuildID={{.}}{{end}}'
+      - -X main.version={{.Env.VERSION}}
+      - -X main.microVMReleaseDefaultsB64={{.Env.MICROVM_RELEASE_DEFAULTS_B64}}
