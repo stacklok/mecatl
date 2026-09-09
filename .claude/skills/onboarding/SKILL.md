@@ -11,13 +11,19 @@ description: >-
 Read `AGENTS.md`, `docs/architecture.md`, relevant `docs/adr/` records, and
 `docs/development-process.md` before changing the repository.
 
+## Route by work class
+
+Use the canonical classifier in `docs/development-process.md`: Spike/Routine bypass acceptance
+planning; Bounded/Architectural use the spine. Escalate uncertainty; never silently downgrade.
+
 ## The spine
 
-Substantive interface-bearing work uses two human checkpoints:
+Bounded and Architectural work use two human checkpoints:
 
 1. **`/to-acceptance-plan`** writes `docs/acceptance/<slug>.md`, including exact
-   `**Contract:** human-reviewed/v1` metadata, interfaces, verifiable behavior, and a
-   machine-readable `## Human decisions` section.
+   `**Contract:** human-reviewed/v2` metadata, a Bounded/Architectural classification with
+   matching decision-record outcome, interfaces, verifiable behavior, and a machine-readable
+   `## Human decisions` section.
    Unchecked decisions keep it `draft`; `proposed` means every human decision needed for
    implementation is resolved and recorded. It opens a **Plan / Interface** PR, then stops.
 2. **Human contract review** merges the plan PR. Merging is the approval event;
@@ -38,7 +44,7 @@ value. A workflow-only meta-change may review its process-document/skill interfa
 same PR. `/to-acceptance-plan` prepares
 the plan on the eventual combined branch and stops without opening a plan PR; only an
 explicit `/plan-orchestrate` invocation adds implementation and opens the sole Combined PR.
-Trivial/mechanical edits remain exempt. Every path preserves human merge authority.
+Routine work remains exempt. Every path preserves human merge authority.
 
 Two carve-outs put discretion with the human, never the agent: explicitly
 requested **exploratory/spike work** skips the plan and orchestration entirely — build it

@@ -1,26 +1,30 @@
 # Acceptance-plan template
 
-Copy the skeleton into `docs/acceptance/<slug>.md`. Keep focused plans compact. New plans and
-materially amended legacy plans after ADR 0306 must use this current template, including exact
-`**Contract:** human-reviewed/v1` metadata; unmarked historical plans are grandfathered until
-materially amended. The bundled checker requires exact `**Contract:** human-reviewed/v1` metadata, a scenario, numbered ACs with `verify:` lines, citations, an
-out-of-scope section, an allowed status, a non-empty `## Human decisions` section, a
-Split/Combined declaration, and all seven exact interface-category labels with
-non-placeholder content. Human decisions use either `None — <rationale>` or checklist items;
-unchecked items require `draft`, while every later status requires checked items ending
-`— Decision: <decision>`. Combined is a compact one-task,
-exactly-one-`### Scenario` exception and must declare the parseable metadata
+Copy the skeleton into `docs/acceptance/<slug>.md` only for Bounded or Architectural work as
+classified by [`docs/development-process.md`](../../../../docs/development-process.md). Keep
+focused plans compact. New and materially amended plans use exact
+`**Contract:** human-reviewed/v2` metadata. Existing v1 plans remain valid until materially
+amended. The checker requires a matching work-classification and decision-record outcome,
+a scenario, numbered ACs with `verify:` lines, citations, an out-of-scope section, an allowed
+status, a non-empty `## Human decisions` section, a Split/Combined declaration, and all seven
+interface-category labels with non-placeholder content. Bounded plans create no ADR merely
+to describe the change; Architectural plans link the new or superseding durable decision.
+Existing ADRs may be cited by either class. Human decisions use either `None — <rationale>` or
+checklist items; unchecked items require `draft`, while every later status requires checked
+items ending `— Decision: <decision>`. Combined eligibility is orthogonal to classification:
+it is a compact one-task, exactly-one-`### Scenario` exception and must declare parseable
 `**Expected tasks:** 1` plus a non-placeholder `**Combined rationale:**` explaining why
-separate plan review adds no value. gRPC/protobuf, exported Go APIs/interfaces, tool
-schemas, CLI/config, events/persistence, and security/authority must each begin
-`None — <rationale>`; compatibility/migration may describe workflow migration. A
-workflow-only meta-change may instead review process documents and skills as its interface
-in the same PR.
+separate plan review adds no value. gRPC/protobuf, exported Go APIs/interfaces, tool schemas,
+CLI/config, events/persistence, and security/authority must each begin
+`None — <rationale>`; compatibility/migration may describe workflow migration. A workflow-only
+meta-change may instead review process documents and skills as its interface in the same PR.
 
 ```markdown
 # <Name> — acceptance plan
 
-**Contract:** human-reviewed/v1
+**Contract:** human-reviewed/v2
+**Work classification:** <Bounded|Architectural> — <decision/blast-radius rationale>
+**Decision record:** <For Bounded: None — substantive rationale; for Architectural: linked new or superseding ADR>
 **Phase:** <capability / milestone>
 **Status:** draft, <YYYY-MM-DD>. <provenance>
 **Delivery:** Split. <why the default two-PR path applies>
@@ -95,7 +99,9 @@ Lifecycle: `draft → proposed → approved → in-progress → landed`. `draft`
 human decisions. `proposed` means the section declares `None — <rationale>` or every decision
 needed to implement the contract is checked and records its outcome; it is then ready for
 review. Split plans are marked
-`proposed` for the plan PR and `approved` before it merges. `approved` is not shipped. For
+`proposed` for the plan PR; merging the PR is the approval event, with no separate status-line
+edit required. Orchestration proves approval by git ancestry and may correct a lagging
+`proposed` label to `approved` on entry. `approved` is not shipped. For
 Combined, `/to-acceptance-plan` prepares this plan on the eventual implementation branch
 without opening a plan PR; explicit `/plan-orchestrate` invocation adds the one-task
 implementation and opens the sole Combined PR. After every gate passes, the completing

@@ -1,9 +1,17 @@
 # Architecture Decision Records
 
-This folder holds mecatl's **decision and design records** as numbered ADRs. Each
-records *why* a thing is shaped the way it is, captured at a point in time and then
-**frozen** — to change a decision, write a new ADR with a `Supersedes:` line and
-record the supersession in this living index; never edit the landed record. Copy [`template.md`](./template.md) to start one. Number monotonically.
+This folder holds mecatl's **durable architecture decisions** as numbered ADRs. Create one
+only when Architectural work introduces or supersedes a durable public/API compatibility,
+persistence/data-ownership, security/trust, deployment/operator, module/system-boundary, or
+cross-subsystem-invariant decision. Classification follows the decision and blast radius, not
+diff size; see the canonical [development process](../development-process.md). Routine and
+Bounded changes do not get ADRs merely to narrate the work, though they may cite existing
+records.
+
+Each ADR records *why* a thing is shaped the way it is at a point in time and is then
+**frozen** — to change a decision, write a new ADR with a `Supersedes:` line and record the
+supersession in this living index; never edit the landed record. Copy
+[`template.md`](./template.md) to start one. Number monotonically.
 
 Current behaviour lives in [`docs/architecture.md`](../architecture.md) (the living
 reference); shipped/deferred status lives in
