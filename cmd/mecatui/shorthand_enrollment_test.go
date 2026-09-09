@@ -37,7 +37,10 @@ func TestOAuthProtectedResource_Scenario4_ShorthandEnrollment(t *testing.T) {
 		return true, nil
 	}
 	var got clientauth.Connection
-	executeRemoteLogin = func(_ context.Context, conn clientauth.Connection, _ bool) error { got = conn; return nil }
+	executeRemoteLogin = func(_ context.Context, conn clientauth.Connection, _ bool, _ clientauth.CredentialStoreMode) error {
+		got = conn
+		return nil
+	}
 
 	if err := runRemoteLogin("api.example.com", nil); err != nil {
 		t.Fatal(err)
@@ -73,7 +76,10 @@ func TestDiscoveredLoginFirstEnrollmentConfirmsWithoutCreatingRegistry(t *testin
 		return true, nil
 	}
 	loggedIn := false
-	executeRemoteLogin = func(context.Context, clientauth.Connection, bool) error { loggedIn = true; return nil }
+	executeRemoteLogin = func(context.Context, clientauth.Connection, bool, clientauth.CredentialStoreMode) error {
+		loggedIn = true
+		return nil
+	}
 
 	if err := runRemoteLogin("api.example.com", nil); err != nil {
 		t.Fatal(err)
@@ -108,7 +114,7 @@ func TestDiscoveredLoginExistingEmptyRegistryConfirmsWithoutWriting(t *testing.T
 		}
 		return true, nil
 	}
-	executeRemoteLogin = func(context.Context, clientauth.Connection, bool) error { return nil }
+	executeRemoteLogin = func(context.Context, clientauth.Connection, bool, clientauth.CredentialStoreMode) error { return nil }
 
 	if err := runRemoteLogin("api.example.com", nil); err != nil {
 		t.Fatal(err)
@@ -139,7 +145,10 @@ func TestDiscoveredLoginCorruptRegistryConfirms(t *testing.T) {
 		return true, nil
 	}
 	loggedIn := false
-	executeRemoteLogin = func(context.Context, clientauth.Connection, bool) error { loggedIn = true; return nil }
+	executeRemoteLogin = func(context.Context, clientauth.Connection, bool, clientauth.CredentialStoreMode) error {
+		loggedIn = true
+		return nil
+	}
 
 	if err := runRemoteLogin("api.example.com", nil); err != nil {
 		t.Fatal(err)
@@ -175,7 +184,10 @@ func TestDiscoveredLoginMatchingSavedEnrollmentSkipsConfirmation(t *testing.T) {
 		return false, nil
 	}
 	loggedIn := false
-	executeRemoteLogin = func(context.Context, clientauth.Connection, bool) error { loggedIn = true; return nil }
+	executeRemoteLogin = func(context.Context, clientauth.Connection, bool, clientauth.CredentialStoreMode) error {
+		loggedIn = true
+		return nil
+	}
 
 	if err := runRemoteLogin("api.example.com", nil); err != nil {
 		t.Fatal(err)
@@ -226,7 +238,7 @@ func TestDiscoveredLoginChangedEnrollmentConfirms(t *testing.T) {
 				confirmed = true
 				return true, nil
 			}
-			executeRemoteLogin = func(context.Context, clientauth.Connection, bool) error { return nil }
+			executeRemoteLogin = func(context.Context, clientauth.Connection, bool, clientauth.CredentialStoreMode) error { return nil }
 			if err := runRemoteLogin("api.example.com", nil); err != nil {
 				t.Fatal(err)
 			}
@@ -290,7 +302,10 @@ func TestADR_0305_DiscoveredIdentityConfirmation(t *testing.T) {
 		return false, nil
 	}
 	called := false
-	executeRemoteLogin = func(context.Context, clientauth.Connection, bool) error { called = true; return nil }
+	executeRemoteLogin = func(context.Context, clientauth.Connection, bool, clientauth.CredentialStoreMode) error {
+		called = true
+		return nil
+	}
 	if err := runRemoteLogin("api.example.com", nil); err == nil || called {
 		t.Fatalf("rejected confirmation = err %v, login called %v", err, called)
 	}
@@ -313,7 +328,7 @@ func TestADR_0305_DiscoveredIdentityConfirmation(t *testing.T) {
 	confirmed := enrollment
 	discoveryCalls = 0
 	confirmDiscoveredEnrollment = func(io.Reader, io.Writer, discoveredEnrollment) (bool, error) { return true, nil }
-	executeRemoteLogin = func(_ context.Context, conn clientauth.Connection, _ bool) error {
+	executeRemoteLogin = func(_ context.Context, conn clientauth.Connection, _ bool, _ clientauth.CredentialStoreMode) error {
 		if discoveryCalls != 1 {
 			t.Fatalf("discovery calls before authorization = %d, want one", discoveryCalls)
 		}
@@ -354,7 +369,7 @@ func TestMecatuiServerOwnedDiscoveryScopes_Scenario1_OmittedMetadataUsesBaseline
 		confirmed = enrollment.Connection
 		return true, nil
 	}
-	executeRemoteLogin = func(_ context.Context, conn clientauth.Connection, _ bool) error {
+	executeRemoteLogin = func(_ context.Context, conn clientauth.Connection, _ bool, _ clientauth.CredentialStoreMode) error {
 		loggedIn = conn
 		return nil
 	}
@@ -384,7 +399,10 @@ func TestMecatuiServerOwnedDiscoveryScopes_Scenario1_RejectsDiscoveryScopesFlag(
 	confirmed := false
 	confirmDiscoveredEnrollment = func(io.Reader, io.Writer, discoveredEnrollment) (bool, error) { confirmed = true; return true, nil }
 	loggedIn := false
-	executeRemoteLogin = func(context.Context, clientauth.Connection, bool) error { loggedIn = true; return nil }
+	executeRemoteLogin = func(context.Context, clientauth.Connection, bool, clientauth.CredentialStoreMode) error {
+		loggedIn = true
+		return nil
+	}
 
 	err := runRemoteLogin("api.example.com", []string{"--scopes", "api.read"})
 	if err == nil || !strings.Contains(err.Error(), "--scopes is only valid with explicit") {
@@ -410,7 +428,7 @@ func TestADR_0277_ExplicitEnrollmentCompatibility(t *testing.T) {
 	original := executeRemoteLogin
 	t.Cleanup(func() { executeRemoteLogin = original })
 	marker := errors.New("captured")
-	executeRemoteLogin = func(_ context.Context, conn clientauth.Connection, _ bool) error {
+	executeRemoteLogin = func(_ context.Context, conn clientauth.Connection, _ bool, _ clientauth.CredentialStoreMode) error {
 		if conn.Identity.Target != "remote.example:443" || conn.IssuerAddressPolicy != clientauth.IssuerAddressPolicyPrivate || conn.Identity.Scopes[0] != "custom" {
 			t.Fatalf("explicit enrollment changed: %#v", conn)
 		}
@@ -442,7 +460,7 @@ func TestOAuthProtectedResource_Scenario6_EndToEnd(t *testing.T) {
 	confirmed := false
 	confirmDiscoveredEnrollment = func(io.Reader, io.Writer, discoveredEnrollment) (bool, error) { confirmed = true; return true, nil }
 	var received clientauth.Connection
-	executeRemoteLogin = func(_ context.Context, conn clientauth.Connection, _ bool) error {
+	executeRemoteLogin = func(_ context.Context, conn clientauth.Connection, _ bool, _ clientauth.CredentialStoreMode) error {
 		received = conn
 		return nil
 	}

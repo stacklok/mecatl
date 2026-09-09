@@ -14,6 +14,17 @@ vars:
   PROVIDER_SECRET: mecak8s-openrouter
 
 tasks:
+  kind-credential-storage-check:
+    desc: Check only an existing disposable fixture credential root (no cluster changes)
+    requires:
+      vars: [CHECK, ROOT, TARGET]
+    env:
+      CHECK: '{{.CHECK}}'
+      ROOT: '{{.ROOT}}'
+      TARGET: '{{.TARGET}}'
+    cmds:
+      - go run ./deploy/mecak8s-kind/credentialcheck
+
   kind-setup:
     desc: Recreate the local mecak8s Kind baseline with local Redis
     cmds:

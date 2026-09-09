@@ -286,7 +286,20 @@ PKCE, and the resulting token. A public issuer uses system trust roots; private 
 requires an explicit issuer CA bundle path. The registry saves an explicit path/reference
 only—not CA contents—for issuer discovery, token, JWKS, refresh, and revocation;
 `connect --tls-ca` independently verifies the gRPC server. The connection registry
-contains public metadata only; credentials are encrypted on disk using a canonical-
+contains public metadata only. Login alone accepts `--credential-store=auto|keyring|file`:
+fresh Linux auto performs a bounded read-only Secret Service detection (absence or
+joined timeout selects file); macOS auto uses keyring. Explicit file never opens
+keyring. The backend is pinned before OAuth in `clientauth-credential-backend.json`
+under the canonical config root, even if login is cancelled. Connect, refresh,
+reauthentication, and logout reuse that pin; conflicts and failures never fall back
+or migrate. File records in `clientauth-plaintext/` are plaintext at rest: 0700
+directories and 0600 files do not protect against same-account access. The first file
+selection prints `Using file-backed credential storage (owner-only permissions).`
+once; connect and refresh do not repeat it. Upgrade all clients sharing the root
+before selecting file. See the [manual Kind journey](../deploy/mecak8s-kind/README.md#stored-credential-qualification-manual)
+for separate macOS/Linux qualification, not a claim of completed live evidence.
+Valid legacy registry evidence pins keyring without reading secrets; malformed evidence
+fails closed. On the keyring route, credentials are encrypted using a canonical-
 root-scoped key held by the OS keyring. Under a root lock, an old unsuffixed keyring key
 is copied only when the encrypted namespace contains an actual credential record; merely
 opening an empty namespace does not trigger migration. Legacy credentials enrolled with a zero-padded target port need

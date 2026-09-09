@@ -8,6 +8,33 @@ description: Connect mecatui to a remote Mecatl server and understand which sett
 
 `mecatui` is always a client, but it can supply its own local server or dial one that an operator already runs.
 
+## Credential storage on desktop and headless hosts
+
+Only `mecatui login` accepts `--credential-store=auto|keyring|file` (default `auto`).
+On a fresh Linux configuration root, a read-only, no-autostart Secret Service check
+has a 500 ms joined deadline: absence or that timeout selects file; a present service
+uses normal keyring initialization. Keyring errors never trigger fallback. macOS
+`auto` uses keyring; explicit `--credential-store=file` bypasses it on either platform.
+
+Selection is pinned before OAuth in non-secret `clientauth-credential-backend.json`
+under `$XDG_CONFIG_HOME/mecatl`, even if login is cancelled. Later login, connect,
+refresh, reauthentication, and logout reuse that backend. A conflicting selector
+fails rather than switching or migrating. Existing valid legacy enrollments pin
+keyring; corrupt state fails closed.
+
+File credentials in `clientauth-plaintext/` are **plaintext at rest**, with 0700
+directories and 0600 files. These permissions do not protect against another process
+running as your account, root, backups, or snapshots. The first file selection prints
+`Using file-backed credential storage (owner-only permissions).` once before OAuth;
+connect and refresh do not repeat it. Upgrade **all clients sharing the root** before
+using file storage; concurrent older clients are unsupported.
+
+The [Kind qualification guide](https://github.com/stacklok/mecatl/blob/main/deploy/mecak8s-kind/README.md#stored-credential-qualification-manual)
+provides isolated-root macOS explicit-file and genuinely headless Linux default-auto
+journeys. Those manual login/refresh/logout checks are not part of offline tests and
+must be recorded before claiming full E2E qualification. `--no-browser` still uses
+PKCE and needs browser connectivity to the loopback callback; it is not device login.
+
 ## Choose the connection shape
 
 **Embedded mode** is bare `mecatui`. It starts a private `mecated` in the same process and connects over a private UNIX socket. The TUI process owns the local workspace, provider credentials, session storage, and policy configuration used by that embedded server.

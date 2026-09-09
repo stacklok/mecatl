@@ -123,6 +123,20 @@ It defaults to public issuer address admission with system roots; optional `--tl
 replaces those roots, while `--private-issuer` requires `--tls-ca` and admits private
 addresses only.
 
+Login alone accepts `--credential-store=auto|keyring|file` (default `auto`). On a
+fresh Linux root, read-only Secret Service detection selects file only on absence
+or its joined 500 ms timeout; macOS auto uses keyring. Explicit file bypasses keyring.
+A strict non-secret `clientauth-credential-backend.json` pin under
+`$XDG_CONFIG_HOME/mecatl` is written before OAuth and survives cancellation. All later
+login/connect/refresh/reauthentication/logout operations obey it, with no fallback
+or migration. Valid legacy registry evidence pins keyring; malformed state fails closed.
+The first file selection prints `Using file-backed credential storage (owner-only permissions).`
+once, never repeated on connect/refresh. `clientauth-plaintext/` contains plaintext
+credentials (0700 directories, 0600 files), not protection from same-account access,
+root, backups, or snapshots. Upgrade every client sharing that root before using file.
+See the [manual Kind qualification](../deploy/mecak8s-kind/README.md#stored-credential-qualification-manual)
+for isolated-root macOS and headless Linux journeys; live evidence remains required.
+
 Inside the TUI, `/retry` manually repeats the last typed `retryable` failed model
 step when it is still retry-pending. Mecatui automatically retries
 `retryable + precommit` only once; a second precommit failure or any

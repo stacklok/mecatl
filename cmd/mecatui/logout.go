@@ -15,7 +15,6 @@ import (
 	"github.com/adrg/xdg"
 
 	"github.com/stacklok/mecatl/internal/adapter/clientauth"
-	"github.com/stacklok/mecatl/internal/adapter/credentialstore"
 )
 
 func runRemoteLogout(address string, args []string) error {
@@ -40,14 +39,7 @@ func runRemoteLogout(address string, args []string) error {
 	}
 
 	var creds *clientauth.Credentials
-	keys, keyErr := clientauth.NewExistingKeyringProvider(root)
-	var store *credentialstore.EncryptedFileStore
-	var storeErr error
-	if keyErr == nil {
-		store, storeErr = clientauth.OpenExistingStore(ctx, root, keys)
-	} else {
-		storeErr = keyErr
-	}
+	store, _, storeErr := clientauth.OpenExistingCredentialStore(ctx, root)
 	if storeErr == nil {
 		defer func() { _ = store.Close() }()
 		creds, _ = clientauth.NewCredentials(store)

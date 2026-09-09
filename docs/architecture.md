@@ -860,8 +860,20 @@ explicit `--tls=false`; no private IP, DNS name, or Tailscale-like target weaken
 In a credential-free Tailscale deployment, tailnet membership and ACLs are the shared
 authority and all admitted peers share the server's unauthenticated caller posture. A saved credential forces verified TLS for the gRPC server,
 even on loopback; its saved issuer CA remains issuer-only, while `connect --tls-ca`
-is the only custom server-CA input. An enrolled target uses a root-scoped OS-keyring key and a
-keyring-wrapped encrypted credential store; under the root lock, the legacy unsuffixed
+is the only custom server-CA input. Login pins one backend per canonical clientauth
+root before OAuth ([ADR 0318](adr/0318-headless-mecatui-credential-backend-selection.md)).
+`--credential-store=auto|keyring|file` is login-only. Fresh Linux auto uses a read-only,
+no-autostart same-executable D-Bus helper with a 500 ms joined deadline; only absence
+or its own timeout selects file. macOS auto selects keyring. Explicit file bypasses
+keyring; pinned routes never detect, fall back, or migrate. A cancelled login retains
+the strict non-secret `clientauth-credential-backend.json` pin. File records below
+`clientauth-plaintext/` are plaintext at rest with 0700 directories and 0600 files,
+full-record versioned CAS, stable locks, sync, and atomic mutations. They do not
+protect against same-account access. File selection emits its neutral notice once,
+not on connect or refresh; upgrade all clients sharing a file root. Valid legacy
+registry evidence pins keyring before secret access; invalid evidence fails closed.
+The keyring route uses a root-scoped OS-keyring key and encrypted store; under the
+root lock, the legacy unsuffixed
 keyring key is copied only when that encrypted namespace contains an actual credential
 record—opening an empty namespace is not migration evidence. Credentials are bound to
 the canonical target and a confirmed RFC 9728 resource URL when enrolled through discovery; resource

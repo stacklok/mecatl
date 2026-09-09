@@ -3640,7 +3640,20 @@ or failed session may be adopted.
 The credential record is keyed by the canonical target and complete public OIDC
 identity. Numeric ports canonicalize to ordinary decimal spelling, so a legacy
 credential identity containing a zero-padded port needs one login after upgrade. The
-host-internal credential store is encrypted by a root-scoped OS-keyring account. A
+host-internal credential store is selected by `internal/adapter/clientauth/credential_backend.go`
+(`ResolveCredentialStore`) and pinned before OAuth in strict non-secret metadata.
+Login-only `auto|keyring|file` uses the read-only 500 ms helper on fresh Linux auto;
+macOS auto uses keyring. Only absent/joined detection timeout permits file selection;
+parent cancellation and other failures fail closed. Pinned lifecycle paths use
+`OpenExistingCredentialStore`, never detection or migration. The file substrate in
+`internal/adapter/credentialstore/plain_file.go` shares the encrypted store's local
+CAS/lock/atomic-sync protections, with fresh generations and complete-record versions,
+but records are plaintext at rest under `clientauth-plaintext/`. Directories are 0700,
+files 0600; same-account access is outside confidentiality guarantees. The initial
+file notice is emitted once before OAuth. All clients sharing a file root must be
+upgraded. Valid legacy registry evidence pins keyring before secret access; corrupt
+metadata or registry evidence fails closed. On the keyring route, encryption uses a
+root-scoped OS-keyring account. A
 stable root-local flock serializes first creation and copies the old unsuffixed keyring
 entry into that account without deleting it only when the encrypted namespace contains
 an actual credential record; an empty namespace created by opening the old store is not

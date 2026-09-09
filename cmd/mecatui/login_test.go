@@ -38,7 +38,7 @@ func TestRemoteLoginStoresAbsoluteIssuerCAReferenceAcrossCWDChanges(t *testing.T
 	}
 	original := executeRemoteLogin
 	t.Cleanup(func() { executeRemoteLogin = original })
-	executeRemoteLogin = func(_ context.Context, conn clientauth.Connection, _ bool) error {
+	executeRemoteLogin = func(_ context.Context, conn clientauth.Connection, _ bool, _ clientauth.CredentialStoreMode) error {
 		registry, openErr := clientauth.OpenRegistry(filepath.Join(xdg.ConfigHome, "mecatl"))
 		if openErr != nil {
 			return openErr
@@ -87,7 +87,7 @@ func TestRemoteLoginAllowsSystemIssuerRoots(t *testing.T) {
 	original := executeRemoteLogin
 	t.Cleanup(func() { executeRemoteLogin = original })
 	marker := errors.New("stop after connection capture")
-	executeRemoteLogin = func(_ context.Context, conn clientauth.Connection, _ bool) error {
+	executeRemoteLogin = func(_ context.Context, conn clientauth.Connection, _ bool, _ clientauth.CredentialStoreMode) error {
 		if conn.IssuerCAFile != "" {
 			t.Fatalf("issuer CA = %q, want system roots", conn.IssuerCAFile)
 		}
@@ -107,7 +107,7 @@ func TestRemoteLoginWiresExactRedirectURL(t *testing.T) {
 		original := executeRemoteLogin
 		t.Cleanup(func() { executeRemoteLogin = original })
 		marker := errors.New("stop after option capture")
-		executeRemoteLogin = func(_ context.Context, conn clientauth.Connection, _ bool) error {
+		executeRemoteLogin = func(_ context.Context, conn clientauth.Connection, _ bool, _ clientauth.CredentialStoreMode) error {
 			if conn.Identity.RedirectURI != oauthlogin.ExactRedirectURL {
 				t.Fatalf("redirect URI = %q, want exact callback", conn.Identity.RedirectURI)
 			}
@@ -281,7 +281,10 @@ func TestRemoteLoginIssuerPolicyFlags(t *testing.T) {
 	original := executeRemoteLogin
 	t.Cleanup(func() { executeRemoteLogin = original })
 	var got clientauth.Connection
-	executeRemoteLogin = func(_ context.Context, conn clientauth.Connection, _ bool) error { got = conn; return nil }
+	executeRemoteLogin = func(_ context.Context, conn clientauth.Connection, _ bool, _ clientauth.CredentialStoreMode) error {
+		got = conn
+		return nil
+	}
 	args := []string{"--issuer", "https://issuer.example", "--client-id", "client", "--audience", "audience"}
 	if err := runRemoteLogin("remote.example:443", args); err != nil {
 		t.Fatal(err)

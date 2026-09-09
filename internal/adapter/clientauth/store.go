@@ -471,10 +471,14 @@ type CredentialRecord struct {
 	Version credentialstore.Version
 }
 
+type corruptCredentialReplacer interface {
+	ReplaceCorrupt(context.Context, []byte, []byte) (credentialstore.Record, error)
+}
+
 // Credentials is a target-bound, CAS-safe credential repository.
 type Credentials struct {
 	store     credentialstore.Store
-	fileStore *credentialstore.EncryptedFileStore
+	fileStore corruptCredentialReplacer
 }
 
 // NewCredentials creates a credential repository backed by store.
@@ -482,7 +486,7 @@ func NewCredentials(store credentialstore.Store) (*Credentials, error) {
 	if store == nil {
 		return nil, errors.New("clientauth: credential store is required")
 	}
-	fileStore, _ := store.(*credentialstore.EncryptedFileStore)
+	fileStore, _ := store.(corruptCredentialReplacer)
 	return &Credentials{store: store, fileStore: fileStore}, nil
 }
 

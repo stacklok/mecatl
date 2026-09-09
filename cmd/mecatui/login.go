@@ -29,7 +29,7 @@ import (
 const savedLoginCallbackTimeout = 5 * time.Minute
 
 var (
-	executeRemoteLogin          = runSavedRemoteLogin
+	executeRemoteLogin          = runSelectedRemoteLogin
 	newRemoteLoginRuntime       = oauthlogin.New
 	prepareSavedLogin           = prepareSavedRemoteLogin
 	prepareExistingSavedLogin   = prepareExistingSavedRemoteLogin
@@ -68,8 +68,9 @@ func runRemoteLogin(address string, args []string) error {
 	var issuer, clientID, audience, tlsCA, grpcTarget string
 	var privateIssuer bool
 	var noBrowser bool
-	var scopes string
+	var scopes, credentialStore string
 	var timeout time.Duration
+	fs.StringVar(&credentialStore, "credential-store", "auto", "credential backend: auto, keyring, or file (pinned per local store root)")
 	fs.StringVar(&issuer, "issuer", "", "HTTPS OIDC issuer")
 	fs.StringVar(&clientID, "client-id", "", "public OIDC client ID")
 	fs.StringVar(&audience, "audience", "", "OIDC token audience")
@@ -86,13 +87,10 @@ func runRemoteLogin(address string, args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if fs.NArg() != 0 {
-		return fmt.Errorf("login: unexpected arguments after ADDRESS; usage: mecatui login ADDRESS")
+	if err := validateRemoteLoginOptions(fs.NArg(), timeout, credentialStore); err != nil {
+		return err
 	}
-	if timeout <= 0 {
-		return errors.New("login: a positive --callback-timeout is required")
-	}
-
+	storeMode := clientauth.CredentialStoreMode(credentialStore)
 	explicitIssuer := flagWasSet(fs, "issuer")
 	explicitClientID := flagWasSet(fs, "client-id")
 	explicitAudience := flagWasSet(fs, "audience")
@@ -101,7 +99,7 @@ func runRemoteLogin(address string, args []string) error {
 		if tlsCA != "" || privateIssuer {
 			return errors.New("login: --tls-ca and --private-issuer require explicit --issuer, --client-id, and --audience")
 		}
-		return runDiscoveredRemoteLogin(address, grpcTarget, flagWasSet(fs, "scopes"), noBrowser, timeout)
+		return runDiscoveredRemoteLogin(address, grpcTarget, flagWasSet(fs, "scopes"), noBrowser, timeout, storeMode)
 	}
 	if issuer == "" || clientID == "" || audience == "" {
 		return errors.New("login: --issuer, --client-id, and --audience are required together")
@@ -130,7 +128,7 @@ func runRemoteLogin(address string, args []string) error {
 		policy = clientauth.IssuerAddressPolicyPrivate
 	}
 	conn := clientauth.Connection{Identity: clientauth.Identity{Target: address, Issuer: issuer, ClientID: clientID, Audience: audience, RedirectURI: oauthlogin.ExactRedirectURL, Scopes: splitScopes(scopes)}, IssuerCAFile: issuerCAFile, IssuerAddressPolicy: policy}
-	if err := executeRemoteLogin(ctx, conn, noBrowser); err != nil {
+	if err := executeRemoteLogin(ctx, conn, noBrowser, storeMode); err != nil {
 		if errors.Is(err, context.Canceled) {
 			fmt.Fprintln(os.Stderr, "login cancelled")
 			return nil
@@ -141,7 +139,20 @@ func runRemoteLogin(address string, args []string) error {
 	return nil
 }
 
-func runDiscoveredRemoteLogin(address, grpcTarget string, scopesExplicit, noBrowser bool, timeout time.Duration) error {
+func validateRemoteLoginOptions(extra int, timeout time.Duration, credentialStore string) error {
+	if extra != 0 {
+		return errors.New("login: unexpected arguments after ADDRESS; usage: mecatui login ADDRESS")
+	}
+	if timeout <= 0 {
+		return errors.New("login: a positive --callback-timeout is required")
+	}
+	if credentialStore != "auto" && credentialStore != "keyring" && credentialStore != "file" {
+		return errors.New("login: --credential-store must be auto, keyring, or file")
+	}
+	return nil
+}
+
+func runDiscoveredRemoteLogin(address, grpcTarget string, scopesExplicit, noBrowser bool, timeout time.Duration, storeMode clientauth.CredentialStoreMode) error {
 	if scopesExplicit {
 		return errors.New("login: --scopes is only valid with explicit --issuer, --client-id, and --audience")
 	}
@@ -176,7 +187,7 @@ func runDiscoveredRemoteLogin(address, grpcTarget string, scopesExplicit, noBrow
 	}
 	loginCtx, cancelLogin := context.WithTimeout(ctx, timeout)
 	defer cancelLogin()
-	if err := executeRemoteLogin(loginCtx, enrollment.Connection, noBrowser); err != nil {
+	if err := executeRemoteLogin(loginCtx, enrollment.Connection, noBrowser, storeMode); err != nil {
 		if errors.Is(err, context.Canceled) {
 			fmt.Fprintln(os.Stderr, "login cancelled")
 			return nil
@@ -311,16 +322,23 @@ func credentialStorageUnavailable(err error) error {
 }
 
 func prepareSavedRemoteLogin(ctx context.Context, conn clientauth.Connection) (preparedSavedLogin, error) {
+	return prepareSelectedRemoteLogin(ctx, conn, clientauth.CredentialStoreAuto)
+}
+
+func prepareSelectedRemoteLogin(ctx context.Context, conn clientauth.Connection, mode clientauth.CredentialStoreMode) (preparedSavedLogin, error) {
 	root := filepath.Join(xdg.ConfigHome, "mecatl")
+	selection, err := clientauth.ResolveCredentialStore(ctx, root, mode)
+	if err != nil {
+		return preparedSavedLogin{}, err
+	}
+	if selection.NewlyPinned && selection.Backend == clientauth.CredentialBackendFile {
+		fmt.Fprintln(os.Stderr, "Using file-backed credential storage (owner-only permissions).")
+	}
 	registry, err := clientauth.OpenRegistry(root)
 	if err != nil {
 		return preparedSavedLogin{}, storageUnavailable(client.AuthStorageConfigDirectory)
 	}
-	keys, err := clientauth.NewKeyringProvider(root)
-	if err != nil {
-		return preparedSavedLogin{}, storageUnavailable(client.AuthStorageConfigDirectory)
-	}
-	store, err := clientauth.OpenStore(ctx, root, keys)
+	store, err := clientauth.OpenCredentialStore(ctx, root, selection.Backend)
 	if err != nil {
 		return preparedSavedLogin{}, credentialStorageUnavailable(err)
 	}
@@ -396,11 +414,7 @@ func prepareExistingSavedRemoteLogin(ctx context.Context, conn clientauth.Connec
 	if err != nil {
 		return preparedSavedLogin{}, storageUnavailable(client.AuthStorageConfigDirectory)
 	}
-	keys, err := clientauth.NewExistingKeyringProvider(root)
-	if err != nil {
-		return preparedSavedLogin{}, storageUnavailable(client.AuthStorageConfigDirectory)
-	}
-	store, err := clientauth.OpenExistingStore(ctx, root, keys)
+	store, _, err := clientauth.OpenExistingCredentialStore(ctx, root)
 	if err != nil {
 		return preparedSavedLogin{}, credentialStorageUnavailable(err)
 	}
@@ -421,6 +435,12 @@ func prepareExistingSavedRemoteLogin(ctx context.Context, conn clientauth.Connec
 // runSavedRemoteLogin performs the ordinary OIDC flow for an already-saved public
 // target. It runs only after Bubble Tea has exited; neither the UI nor its restart
 // intent receives OAuth material.
+func runSelectedRemoteLogin(ctx context.Context, conn clientauth.Connection, noBrowser bool, mode clientauth.CredentialStoreMode) error {
+	return runSavedRemoteLoginWith(ctx, conn, noBrowser, func(ctx context.Context, conn clientauth.Connection) (preparedSavedLogin, error) {
+		return prepareSelectedRemoteLogin(ctx, conn, mode)
+	})
+}
+
 func runSavedRemoteLogin(ctx context.Context, conn clientauth.Connection, noBrowser bool) error {
 	return runSavedRemoteLoginWith(ctx, conn, noBrowser, prepareSavedLogin)
 }

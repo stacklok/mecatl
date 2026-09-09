@@ -844,11 +844,7 @@ func resolveTransport(ctx context.Context, cfg config) (target string, dial clie
 				if readErr != nil {
 					return target, client.DialConfig{}, noop, &client.AuthError{Reason: client.AuthStorageUnavailable}
 				}
-				keys, keyErr := clientauth.NewExistingKeyringProvider(root)
-				if keyErr != nil {
-					return target, client.DialConfig{}, noop, &client.AuthError{Reason: client.AuthStorageUnavailable}
-				}
-				store, storeErr := clientauth.OpenExistingStore(ctx, root, keys)
+				store, _, storeErr := clientauth.OpenExistingCredentialStore(ctx, root)
 				if storeErr != nil {
 					return target, client.DialConfig{}, noop, &client.AuthError{Reason: client.AuthStorageUnavailable}
 				}
