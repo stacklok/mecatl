@@ -182,7 +182,12 @@ slot, or route target warns and falls back to the session model. The `title` slo
  keeps the specialist's direct-write scope, while explicit `read-write`+`agent`+`model`
  remains invalid. Model slots and router taxonomies are operator decisions; project
  model settings are ignored unless the operator explicitly allows the relevant model
- set on a trusted project.
+ set on a trusted project via `models.allowlist`.
+
+An allowlisted model is not scoped to a particular use: a trusted project can bind any
+allowlisted model to any slot, including the `guardrail` and `ask-reviewer` safety
+checkers, not just the session default. Do not allowlist a model you would be
+unwilling to see used as a safety checker.
 
 This configuration belongs in the operator-global settings file, not a checked-in
 project file. See the [configuration reference](/reference/configuration.md#models)

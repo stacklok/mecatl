@@ -181,10 +181,19 @@ Optional fields:
 ```
 
 `mode` accepts `default`, `plan`, `acceptedits` (also `accept_edits` / `accept`);
-unknown/empty falls back to the server default (`default`). A `limits` object
-with all-zero (or omitted) fields gets the server's non-zero defaults
-substituted (see §11). The deployment default is selected by omission. A
-`workspace`, `cwd`, placement ID, or exact environment ref is an unknown field
+unknown/empty falls back to the server default (`default`). Each omitted or zero
+`limits` field inherits its deployment default:
+
+| Limit | Deployment default |
+| --- | --- |
+| `max_turns` | `2000` |
+| `max_tool_calls` | `8000` |
+| `max_consecutive_failures` | `5` |
+
+A non-zero field overrides only that limit; other zero fields still inherit their
+defaults.
+
+A `workspace`, `cwd`, placement ID, or exact environment ref is an unknown field
 and the strict decoder returns `400`; configure local `--workspace` on the server.
 
 ### Create a no-filesystem session (`profile: "no-fs"`)

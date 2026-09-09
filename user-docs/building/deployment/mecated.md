@@ -112,6 +112,17 @@ loudly instead of selecting another provider. Built-in endpoint settings belong 
 [configuration reference](/reference/configuration.md)
 for the strict schema.
 
+Self-hosted `openai-responses` endpoints, including vLLM, llama.cpp, and LiteLLM
+proxies, vary in their `/v1/responses` support. An endpoint can omit hosted tools,
+automatic prompt caching, encrypted reasoning content or summaries, strict mode, or
+`parallel_tool_calls`. If the endpoint does not support the Responses API features you
+need, use the `openai-chat-completions` flavor, which works with more self-hosted
+endpoints.
+
+The built-in `openai` and `openrouter` providers send prompt-cache hints only through
+their canonical base URLs. A base URL override disables these hints so a compatible
+endpoint cannot reject an unsupported cache field.
+
 ---
 
 ## Architecture
@@ -302,6 +313,16 @@ keep the file owner-only, select `--default-provider openai-codex` (or an
 explicit session selector), and restart after replacing the token. `0600` does
 not stop same-UID Bash from reading a known plaintext file. See
 [Configure provider credentials](./settings.md#configure-provider-credentials).
+
+### Bash tool
+
+| Flag | Default | Notes |
+|---|---|---|
+| `--shell` | `/bin/sh` | Shell used to execute `Bash`-tool commands. Empty disables `Bash` (shell-less mode). |
+| `--no-bash` | `false` | Disable the `Bash` tool entirely; overrides `--shell`. |
+
+Use either flag to remove shell access for the deployment. This operator-controlled
+setting is stronger than the optional per-session `no-fs` profile.
 
 #### Offline mock providers (no credentials)
 

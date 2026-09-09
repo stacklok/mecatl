@@ -147,6 +147,22 @@ The `publish` job resolves its write token in precedence order:
 2. **Pre-minted token** (`publish-token` secret, form 2).
 3. **Standing `GITHUB_TOKEN`** grant (form 3, zero-config, emits a `::warning::` nudging you toward form 1 or 2).
 
+### Customize the PR description
+
+By default, `publish` writes a PR body with the agent's summary, changed files, run link,
+and `Closes #<n>`. To customize it without changing the workflow, add a template at
+`.github/mecatequi/pr-body.md`. Use the `pr-body-template` input to select a different
+path.
+
+The publish step always prepends its agent-authored-content warning. Do not repeat that
+warning in your template. A custom template also owns its issue relationship, so include
+`Closes {{issue_ref}}` or `Refs {{issue_ref}}` as appropriate.
+
+The optional `pr-title-template` input overrides the default `<ISSUE_TITLE> (#<ISSUE_NUMBER>)` title.
+Use short placeholders such as `{{issue_ref}}`, `{{issue_title}}`, `{{stop_reason}}`, or
+`{{branch}}` in titles. Prose placeholders such as `{{what_agent_did}}` produce unwieldy
+single-line titles.
+
 ---
 
 ## Key flags

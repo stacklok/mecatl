@@ -330,6 +330,12 @@ validation retries. A plan-approval allow emits `plan_approved` — the clean
 terminal ([ADR 0069](https://github.com/stacklok/mecatl/blob/main/docs/adr/0069-plan-approval-gate.md)) that flips the session
 out of plan mode at the terminal boundary.
 
+`error` includes an upstream provider content filter blocking a response. Some routes,
+including Azure OpenAI upstreams, can moderate benign security or credentials wording.
+Mecatl treats this as a terminal stop and does not retry the same input. Retype or resend
+the triggering message. Repeated blocks on legitimate input require a provider-side
+moderation change.
+
 ### Go client snippet
 
 `mecated` does **not** register gRPC server reflection, so `grpcurl` must be
