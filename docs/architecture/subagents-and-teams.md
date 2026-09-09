@@ -149,15 +149,15 @@ session/engine, no `subagent.*` events, no InspectSubagent/resume), returns the
 job id immediately, and detaches the drive; the run-scoped cancel-at-end drain,
 the turn-boundary notice, and the background-pending nudge all cover it (the
 notice/nudge are family-aware: the subagent clause keeps its exact wording and a
-"background command(s) …" clause naming `ShellStatus` is appended only when bash
+"background command(s) …" clause naming `ShellStatus` is appended only when shell
 jobs are among the finished/live). The registry is SHARED but the two status
 tools project it DISJOINTLY: `SubagentStatus` filters bash-cmd entries out, the
-read-only **`ShellStatus`** tool (registered iff Shell is, never in child
+read-only **`ShellStatus`** tool (registered iff Shell is, including in child
 catalogs) serves ONLY bash-cmd jobs — roster (ids+state+stop only), per-job
 command + retained 64 KiB output tail (live) or exactly-once collected result
 (done), `wait_ms` park, `cancel` verb. A child (Subagent/explorer/team member)
-gets the same background-capable `Shell` against its OWN run's registry, but
-never `ShellStatus`. See [ports](ports.md) for the tool/streaming seam.
+gets the same background-capable `Shell` and its paired `ShellStatus` against its
+OWN run's registry, but never `SubagentStatus`. See [ports](ports.md) for the tool/streaming seam.
 
 The child is a **read-only explorer with a shell** by default — capability flows down
 from the parent (which has Shell); isolation, not catalog read-only-ness, is the

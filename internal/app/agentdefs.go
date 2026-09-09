@@ -406,14 +406,14 @@ func scopedToolNames(def agents.AgentDef, available map[string]tool.Tool, bashMi
 // bashScopeMissReason returns the PRECISE def-scoping diagnostic for a Shell
 // allowlist entry that misses the AVAILABLE base set. Shell is a core tool, so the
 // miss is never a typo — it means NO shell exists at this call site, and the
-// diagnostic must name the ACTUAL cause: a --no-bash operator on a TRUSTED
+// diagnostic must name the ACTUAL cause: a --no-shell operator on a TRUSTED
 // workspace must not be told to --trust-project. The untrusted wording reuses
 // subagentShellUntrustedReason — the single wording source — so this diagnostic
 // and the Subagent Spec note cannot drift.
 func bashScopeMissReason(cfg Config) string {
 	switch {
 	case cfg.NoShell:
-		return "shell unavailable (Shell disabled via --no-bash); dropped"
+		return "shell unavailable (Shell disabled via --no-shell); dropped"
 	case cfg.Shell == "":
 		return "shell unavailable (no shell configured); dropped"
 	case !cfg.TrustProject:
@@ -490,10 +490,10 @@ func scopedToolNamesMode(def agents.AgentDef, available map[string]tool.Tool, al
 		if !ok {
 			if name == tools.ShellToolName {
 				// Shell is a core tool, so a base-set miss is never a typo: it means NO
-				// shell is available at this call site — --no-bash, an empty shell, or
+				// shell is available at this call site — --no-shell, an empty shell, or
 				// (issue #40) an untrusted workspace withholding the subagent shell.
 				// bashMissReason names the PRECISE cause (computed by the caller via
-				// bashScopeMissReason from its cfg, so a --no-bash operator on a
+				// bashScopeMissReason from its cfg, so a --no-shell operator on a
 				// TRUSTED workspace is never told to --trust-project) — distinct from
 				// the generic unknown-tool diagnostic either way.
 				reason := bashMissReason

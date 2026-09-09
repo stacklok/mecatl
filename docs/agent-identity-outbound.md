@@ -299,7 +299,7 @@ for the next call.
 
 **mecatl holds no key whose signature carries authority.** In a single-call design mecatl signs
 the actor assertion itself, so the strength of the actor claim equals the isolation of mecatl's
-signing key. There is no such isolation asserted or tested: the Bash tool an injected model
+signing key. There is no such isolation asserted or tested: the Shell tool an injected model
 drives runs in the same pod. An injected model would sign an assertion naming any agent, and
 every rule keyed on `act.sub` becomes bypassable. Here mecatl signs nothing and the AS decides.
 
@@ -379,7 +379,7 @@ session.
 Both child surfaces run in the same process under the same pod certificate, so the credential
 is identical. What differs is which component issues the call.
 
-The default Subagent explorer's catalog is Read, Grep, Glob and a sandboxed Bash, with no MCP
+The default Subagent explorer's catalog is Read, Grep, Glob and a sandboxed Shell, with no MCP
 tool, so it asks its parent and the parent makes the call. The no-FS child catalog registers
 the global MCP tools, so it calls the gateway itself. Either way the leg-2 token presented
 names the *child* in `act`, so the narrowing from call 2 is what gets enforced.

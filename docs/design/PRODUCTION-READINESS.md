@@ -21,7 +21,7 @@ record; current behaviour is in the linked [architecture](../architecture.md) do
 | Agent definitions (Tier-1 specialists) | ✅ shipped · ⛔ per-agent memory write path · ⛔ `local` tier | [AGENT-DEFINITIONS.md](../adr/0013-agent-definitions.md) | [subagents & teams](../architecture/subagents-and-teams.md) |
 | Agent teams (kernel, supervisor, coordination) | ✅ shipped (substrate) · ⛔ mutating-fork join strategies · ⛔ `TeamStore` restart durability | [AGENT-TEAMS-SPIKE.md](../adr/0014-agent-teams.md) | [subagents & teams](../architecture/subagents-and-teams.md) |
 | Background subagents + per-child cancel | ✅ shipped · ⛔ session-scoped detach (v2) | [BACKGROUND-SUBAGENTS.md](../adr/0015-background-subagents.md) | [subagents & teams](../architecture/subagents-and-teams.md) |
-| Background Bash commands (issue #23 commands half) | ✅ shipped (`background: true` on Bash + `BashStatus`, run-scoped) · ⛔ foreground→background mid-flight (Ctrl+B, v2) · ⛔ session-scoped detach (v2) · ⛔ `bashcmd.*` wire events / TUI fleet pane (v2) · ⛔ output paging (v2) | [0201-background-bash.md](../adr/0201-background-bash.md) | [ports](../architecture/ports.md) · [subagents & teams](../architecture/subagents-and-teams.md) |
+| Background Shell commands (issue #23 commands half) | ✅ shipped (`background: true` on Shell + `ShellStatus`, run-scoped) · ⛔ foreground→background mid-flight (Ctrl+B, v2) · ⛔ session-scoped detach (v2) · ⛔ `bashcmd.*` wire events / TUI fleet pane (v2) · ⛔ output paging (v2) | [0201-background-bash.md](../adr/0201-background-bash.md) | [ports](../architecture/ports.md) · [subagents & teams](../architecture/subagents-and-teams.md) |
 | Parallelism — fork-join | ✅ shipped · ✅ dirty-aware read-only fork (uncommitted-state overlay) · ⛔ submodule-pointer overlay (best-effort) | [dirty-aware-readonly-fork.md](../adr/0033-dirty-aware-readonly-fork.md) | [parallelism](../architecture/parallelism.md) |
 | Worktree binding (mecatui) | ✅ shipped · ⛔ per-worktree trust re-prompt | [worktree-binding.md](../adr/0032-worktree-binding.md) | [parallelism](../architecture/parallelism.md) |
 | Memory defaults (on-by-default) | ✅ shipped | [MEMORY-DEFAULTS.md](../adr/0008-memory-on-by-default.md) | [memory](../architecture/memory.md) |
@@ -54,13 +54,13 @@ record; current behaviour is in the linked [architecture](../architecture.md) do
 | Item | Status | Notes / definition of done |
 |---|---|---|
 | Permission gate (deny→ask→allow, scopes, compound-bash, plan mode) | ✅ | `governance` + `permpolicy`, tested |
-| Bash gate substitution/newline-safe | ✅ | hardened post-review |
+| Shell gate substitution/newline-safe | ✅ | hardened post-review |
 | Workspace path-escape containment | ✅ | `osfs` via `os.Root` |
 | Model-based layer-2 risk classifier | ✅ | `permclassify` (opt-in, monotonic, fail-safe) |
 | Hooks (full lifecycle fired, exit 0/2) | ✅ | all 6 phases fire |
 | **API authentication + rate limiting** | ✅ | bearer (`--auth-token`/`MECATL_AUTH_TOKEN`, constant-time) + optional TLS/mTLS (`--tls-cert`/`--tls-key`/`--client-ca`) gRPC interceptors + HTTP middleware; per-client + global token-bucket rate limit (`--rate-limit`/`--rate-burst`, bounded/idle-evicting); off-loopback-no-auth WARNING (`internal/adapter/server/authn.go`) |
 | **OIDC caller identity** | ✅ attribution via shipped `toolhive-core/authn` v0.0.39; ✅ default 1h JWKS-staleness bound (503 after an unavailable refresh); ⛔ per-caller authorization/isolation (#368); ⛔ per-token revocation | `--oidc-max-jwks-staleness=0` deliberately restores unbounded cached-key availability; JWKS cache is process-local and reconstructible, never persisted. |
-| OS-level sandbox (process trust) | ⏸️ Deferred | Explicitly deferred (2026-05-29). The `CommandRunner` port is the seam; a Landlock(+seccomp) wrapper drops in later without touching the loop. Bash is also fully optional (shell-less deploys avoid the surface entirely), so this is not a blocker for those. |
+| OS-level sandbox (process trust) | ⏸️ Deferred | Explicitly deferred (2026-05-29). The `CommandRunner` port is the seam; a Landlock(+seccomp) wrapper drops in later without touching the loop. Shell is also fully optional (shell-less deploys avoid the surface entirely), so this is not a blocker for those. |
 | Secrets handling (no key logging) | ✅ | key via env, never logged |
 | MCP transport restriction (no stdio) | ✅ | streaming-HTTP only; standalone SSE GET enabled for server-initiated notifications (ADR 0057) |
 | Supply-chain hygiene (per-module vuln scan, dependabot, SHA-pinned actions) | ✅ | per-module `govulncheck` (engine STRICT, no allowlist / root fail-closed reachable-vuln gate via `.github/scripts/govulncheck-gate.go` + a documented 2-CVE docker allowlist reachable only through `internal/` ToolHive); `.github/dependabot.yml` for both modules + github-actions; every action SHA-pinned. Issue #118 |
@@ -131,7 +131,7 @@ record; current behaviour is in the linked [architecture](../architecture.md) do
 All waves bar #2 are complete; #2 (OS sandbox) is the one deliberately-deferred item.
 
 1. ✅ **Server hardening** — auth + rate limit + health endpoints + auto-resume.
-2. ⏸️ **OS sandbox** — Landlock(+seccomp) `CommandRunner` adapter. *(deferred — the `CommandRunner` seam is in place; Bash is also fully optional.)*
+2. ⏸️ **OS sandbox** — Landlock(+seccomp) `CommandRunner` adapter. *(deferred — the `CommandRunner` seam is in place; Shell is also fully optional.)*
 3. ✅ **Context** — tokenizer + compaction cascade.
 4. ✅ **Observability** — OTLP exporter wiring; **fuzz** the parsers.
 5. ✅ **Patterns** — fork-join (8); tiered memory (3) [+ optional dream (4)].

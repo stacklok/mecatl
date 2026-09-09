@@ -50,7 +50,7 @@ In particular, it does not:
   behavior; this proposal changes ownership and wiring only;
 - add POSIX-like filesystem operations such as rename, remove, mkdir, or chmod;
   that is an orthogonal filesystem-interface effort;
-- change Bash behavior or require Bash writes to participate in the ledger;
+- change Shell behavior or require Shell writes to participate in the ledger;
 - define the scoped-resource-grant wire protocol;
 - make the session ledger a distributed lock or replace filesystem CAS; or
 - require every session-state backend to use the same physical representation.
@@ -392,22 +392,22 @@ retain observations once reported, without prescribing the grant wire shape.
 ### What exactly is protected by the ledger?
 
 Today the structured Edit and existing-file Write tools enforce read-before-write.
-Bash operates through `CommandRunner` and may modify the same filesystem without
+Shell operates through `CommandRunner` and may modify the same filesystem without
 consulting the ledger. A subsequent structured mutation can detect that change
-because the authoritative file version changed, but the Bash mutation itself is
+because the authoritative file version changed, but the Shell mutation itself is
 not protected by the prior-read rule.
 
 It is not yet clear whether this is the desired long-term boundary:
 
 - **Structured-tool protection only:** the ledger protects operations where the
-  harness can provide precise semantics; Bash remains an explicitly broader
+  harness can provide precise semantics; Shell remains an explicitly broader
   capability governed by permissions and sandboxing.
 - **All mutation protection:** every filesystem mutation, including shell
   writes, would need mediation through the same version-aware service or a much
   stronger execution substrate.
 
 Changing this behavior is out of scope. This proposal preserves the current
-boundary and records the question rather than silently claiming Bash participates.
+boundary and records the question rather than silently claiming Shell participates.
 
 ## Sequencing
 
