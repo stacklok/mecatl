@@ -214,6 +214,7 @@
 
 @media (max-width: 1080px) {
   .outcomes .featureGrid, .deployGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .capabilityGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 768px) {
