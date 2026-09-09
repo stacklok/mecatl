@@ -4,9 +4,6 @@
 - Date: 2026-09-06
 - Scope: acceptance planning, interface review, autonomous implementation, and pull-request boundaries
 - Supersedes: ADR 0295 where it requires one plan-and-code PR and one human checkpoint
-- Superseded by: ADR 0319 where it requires a manual status-line edit as the mark of approval;
-  ADR 0320 where it states unqualified that all substantive interface-bearing work uses
-  the spine
 
 ## Context
 

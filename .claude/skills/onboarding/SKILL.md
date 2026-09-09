@@ -20,7 +20,7 @@ Substantive interface-bearing work uses two human checkpoints:
    machine-readable `## Human decisions` section.
    Unchecked decisions keep it `draft`; `proposed` means every human decision needed for
    implementation is resolved and recorded. It opens a **Plan / Interface** PR, then stops.
-2. **Human contract review** merges the plan PR. Merging is the approval event (ADR 0319);
+2. **Human contract review** merges the plan PR. Merging is the approval event;
    no separate status-line edit is required. `/plan-orchestrate` proves approval by git
    ancestry and corrects a lagging `proposed` label on entry.
 3. **`/plan-orchestrate <slug>`** starts from the merged approved commit, uses run-local
@@ -40,7 +40,7 @@ the plan on the eventual combined branch and stops without opening a plan PR; on
 explicit `/plan-orchestrate` invocation adds implementation and opens the sole Combined PR.
 Trivial/mechanical edits remain exempt. Every path preserves human merge authority.
 
-Two carve-outs (ADR 0320) put discretion with the human, never the agent: explicitly
+Two carve-outs put discretion with the human, never the agent: explicitly
 requested **exploratory/spike work** skips the plan and orchestration entirely — build it
 locally, never merge it to `main` as-is, and re-enter the spine normally if it's worth
 shipping. Separately, the directing human may **explicitly waive the spine** for a named

@@ -33,7 +33,7 @@ Require all of these or stop:
 - the Plan / Interface PR is merged into the target base;
 - the plan file, unchanged since that PR, is present at a commit reachable from the target
   base (`git merge-base --is-ancestor <plan-commit> <target-base>` — this ancestry is the
-  approval proof, ADR 0319; the `**Status:**` word is not a precondition); and
+  approval proof; the `**Status:**` word is not a precondition); and
 - the implementation branch starts from that exact commit (or a descendant that has not
   changed the contract).
 

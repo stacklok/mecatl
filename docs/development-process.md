@@ -16,7 +16,7 @@ workflow migration, and splitting must add no review value. A workflow-only meta
 treat process documents and skills as the interface reviewed in the same PR. Trivial or mechanical changes may bypass the spine while still
 running applicable gates.
 
-Two further carve-outs (ADR 0320) put discretion with the human, not the agent: explicitly
+Two further carve-outs put discretion with the human, not the agent: explicitly
 requested **exploratory/spike work** may be built locally with no plan, no Plan/Interface PR,
 and no orchestration — it is never merged to `main` as-is, and shipping it for real means
 re-entering the spine normally. Separately, the directing human may **explicitly waive the
@@ -33,8 +33,8 @@ A plan moves `draft → proposed → approved → in-progress → landed`:
   listed as unchecked items under `## Human decisions`.
 - `proposed`: every human decision needed to implement the contract is resolved and recorded;
   the plan is validated and ready for human plan/interface review.
-- `approved`: the plan PR merged into the target branch (ADR 0319: merging is the approval
-  event, proved by git ancestry, not a required status-line edit); this is not shipped status.
+- `approved`: the plan PR merged into the target branch — merging is the approval event,
+  proved by git ancestry, not a required status-line edit; this is not shipped status.
 - `in-progress`: implementation is underway against the recorded approved commit.
 - `landed`: after every gate passes, the implementation/Combined candidate carries this
   proposed transition in its PR diff; it becomes authoritative only when that PR merges.
@@ -61,7 +61,7 @@ materially amended and need not be bulk-migrated.
    run advisory design reviews, open a **Plan / Interface** PR, and stop. Its issue text is
    non-closing: `Relates to #N` or `Tracking: #N`.
 2. **Contract review — human.** Review behavior and exact interfaces, then merge the PR.
-   Merging is the approval event (ADR 0319); no separate status edit is required. The merged
+   Merging is the approval event; no separate status edit is required. The merged
    plan commit is the implementation baseline.
 3. **Implement — `/plan-orchestrate`.** Confirm the approved plan is merged (by git ancestry;
    correct a lagging `proposed` label to `approved` on entry), record its PR and commit under
@@ -126,7 +126,5 @@ failed, harness-owned, primary, and ambiguous worktrees are retained.
 | `task ac-trace-strict` | every landed AC proof resolves |
 | `/panel-review` | independent Spec / Standards / Test adequacy / Domain review |
 
-See [the acceptance-plan guide](acceptance/README.md),
-[ADR 0306](adr/0306-human-reviewed-development-contracts.md),
-[ADR 0319](adr/0319-merge-is-plan-approval.md), and
-[ADR 0320](adr/0320-exploratory-work-and-spine-waiver.md).
+See [the acceptance-plan guide](acceptance/README.md) and
+[ADR 0306](adr/0306-human-reviewed-development-contracts.md).

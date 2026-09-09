@@ -109,7 +109,7 @@ For **Split**, explicitly stage only the plan/interface docs and generated docs,
 `Relates to #N` or `Tracking: #N` as ordinary text. GitHub has no `Related-to` keyword: do
 not use closing keywords or sidebar-link this PR as the issue-closing PR. Report the PR
 URL, branch, worktree, checker result, and docs result, then **STOP**. Merging the PR is the
-approval event (ADR 0319) — no separate status-line edit is required before merge;
+approval event — no separate status-line edit is required before merge;
 `/plan-orchestrate` proves approval by git ancestry and corrects the label if it lags.
 
 For **Combined**, prepare the proposed plan on the eventual combined implementation branch
