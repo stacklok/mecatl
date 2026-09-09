@@ -17,9 +17,14 @@ export interface BotConfig {
   slackBotToken: string;
   slackAppToken: string;
   mecatlTarget: MecatlTarget;
-  /** Slack user IDs allowed to trigger a prompt. `undefined` = unrestricted (see README's
-   * security note — inviting the bot to a channel then extends this to everyone in it). */
-  allowedUserIds: Set<string> | undefined;
+  /** Verified emails allowed to trigger a prompt (lowercased). `undefined` = no per-email
+   * allow configured — see `allowedEmailDomains` and README's security note. */
+  allowedEmails: Set<string> | undefined;
+  /** Verified-email domains (e.g. "example.com", lowercased, no leading "@") whose members
+   * are all allowed. `undefined` alongside `allowedEmails` also unset = unrestricted, except
+   * guests/deactivated/Slack-Connect-strangers, who are never allowed regardless (see
+   * `EmailAllowlistResolver`). */
+  allowedEmailDomains: Set<string> | undefined;
   rateLimit: RateLimitConfig;
 }
 
@@ -40,19 +45,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BotConfig {
   }
   const mecatlTarget = mecatlTargetFor(env, grpcAddress, socketPath);
 
-  const allowList = env.SLACK_ALLOWED_USER_IDS;
-  const allowedUserIds =
-    allowList === undefined || allowList.trim() === ""
-      ? undefined
-      : new Set(
-          allowList
-            .split(",")
-            .map((id) => id.trim())
-            .filter((id) => id.length > 0),
-        );
+  const allowedEmails = parseCommaListLower(env.SLACK_ALLOWED_EMAILS);
+  const allowedEmailDomains = parseCommaListLower(env.SLACK_ALLOWED_EMAIL_DOMAINS);
 
   return {
-    allowedUserIds,
+    allowedEmailDomains,
+    allowedEmails,
     mecatlTarget,
     rateLimit: {
       max: positiveIntOr(env.SLACK_RATE_LIMIT_MAX, DEFAULT_RATE_LIMIT_MAX),
@@ -89,6 +87,16 @@ function mecatlTargetFor(
     tokenUrl: required(env, "MECAK8S_OIDC_TOKEN_URL"),
   });
   return { baseUrl: `https://${grpcAddress}`, credentialProvider: tokenProvider.headers };
+}
+
+function parseCommaListLower(value: string | undefined): Set<string> | undefined {
+  if (value === undefined || value.trim() === "") return undefined;
+  return new Set(
+    value
+      .split(",")
+      .map((entry) => entry.trim().toLowerCase())
+      .filter((entry) => entry.length > 0),
+  );
 }
 
 function required(env: NodeJS.ProcessEnv, name: string): string {

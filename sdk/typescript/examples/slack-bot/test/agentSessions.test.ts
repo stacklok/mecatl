@@ -2,6 +2,7 @@ import type { App } from "@slack/bolt";
 import { ServerError } from "@stacklok/mecatl-sdk";
 import { describe, expect, it, vi } from "vitest";
 
+import type { AccessResolver } from "../src/access.js";
 import { registerAgentSessions } from "../src/agentSessions.js";
 import type { MecatlBridge } from "../src/bridge.js";
 import type { BotConfig } from "../src/env.js";
@@ -9,7 +10,8 @@ import type { BotConfig } from "../src/env.js";
 const EXTERNAL_AUTH_MESSAGE =
   "This needs a connector to be authorized by an administrator before it can be used here.";
 const NOT_AUTHORIZED_MESSAGE =
-  "You're not authorized to use this bot. Ask the operator to add your Slack user ID to SLACK_ALLOWED_USER_IDS.";
+  "You're not authorized to use this bot. Ask the operator to add your email to " +
+  "SLACK_ALLOWED_EMAILS or your domain to SLACK_ALLOWED_EMAIL_DOMAINS.";
 const RATE_LIMITED_MESSAGE = "Rate limit exceeded — try again in a bit.";
 const FAILURE_MESSAGE =
   "Something went wrong running that against mecatl. Check the bot's logs for details.";
@@ -32,7 +34,11 @@ interface FakeApp {
 
 /** Builds a fake bolt `App` and registers `registerAgentSessions` against it, capturing the
  * handlers it installs so a test can invoke them directly with a synthetic event/message. */
-function setUp(bridge: MecatlBridge, config: BotConfig): FakeApp {
+function setUp(
+  bridge: MecatlBridge,
+  config: BotConfig,
+  resolver: AccessResolver = fakeResolver(new Set(["allowed-user"])),
+): FakeApp {
   const say = vi.fn().mockResolvedValue(undefined);
   const postEphemeral = vi.fn().mockResolvedValue(undefined);
   const startStream = vi.fn().mockResolvedValue({ ts: "stream-ts" });
@@ -60,7 +66,7 @@ function setUp(bridge: MecatlBridge, config: BotConfig): FakeApp {
     },
   } as unknown as App;
 
-  registerAgentSessions(app, bridge, config);
+  registerAgentSessions(app, bridge, config, resolver);
 
   if (
     handlers.appMention === undefined ||
@@ -90,9 +96,23 @@ function fakeBridge(
   return { cancel, handlePrompt } as unknown as MecatlBridge;
 }
 
+/** A trivial `AccessResolver` for tests that only care about allow/deny, not `EmailAllowlistResolver`'s
+ * own `users.info` logic (that gets its own dedicated test file, `access.test.ts`). */
+function fakeResolver(allowedSlackUserIds: Set<string>): AccessResolver {
+  return {
+    resolve: (ctx) =>
+      Promise.resolve(
+        allowedSlackUserIds.has(ctx.slackUserId)
+          ? { allowed: true, principal: ctx.slackUserId }
+          : { allowed: false },
+      ),
+  };
+}
+
 function fakeConfig(overrides: Partial<BotConfig> = {}): BotConfig {
   return {
-    allowedUserIds: new Set(["allowed-user"]),
+    allowedEmailDomains: undefined,
+    allowedEmails: new Set(["allowed@example.com"]),
     mecatlTarget: { baseUrl: "http://unused" },
     rateLimit: { max: 100, windowMs: 60_000 },
     slackAppToken: "xapp-test",

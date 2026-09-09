@@ -1,5 +1,6 @@
 import type { App, SayFn } from "@slack/bolt";
 
+import type { AccessResolver } from "./access.js";
 import { isStuckExternalAuthorization, type MecatlBridge } from "./bridge.js";
 import type { BotConfig } from "./env.js";
 import { SlidingWindowRateLimiter } from "./rateLimit.js";
@@ -10,7 +11,8 @@ const FAILURE_MESSAGE =
   "Something went wrong running that against mecatl. Check the bot's logs for details.";
 const GREETING = "Tag me with a prompt and I'll run it against mecatl.";
 const NOT_AUTHORIZED_MESSAGE =
-  "You're not authorized to use this bot. Ask the operator to add your Slack user ID to SLACK_ALLOWED_USER_IDS.";
+  "You're not authorized to use this bot. Ask the operator to add your email to " +
+  "SLACK_ALLOWED_EMAILS or your domain to SLACK_ALLOWED_EMAIL_DOMAINS.";
 const RATE_LIMITED_MESSAGE = "Rate limit exceeded — try again in a bit.";
 const MENTION_PREFIX = /^<@[^>]+>\s*/;
 
@@ -60,17 +62,23 @@ const MENTION_PREFIX = /^<@[^>]+>\s*/;
  * - `suspended` status + Block Kit approve/deny UI for manual permission
  *   review.
  */
-export function registerAgentSessions(app: App, bridge: MecatlBridge, config: BotConfig): void {
+export function registerAgentSessions(
+  app: App,
+  bridge: MecatlBridge,
+  config: BotConfig,
+  resolver: AccessResolver,
+): void {
   const greetedDm = new Set<string>();
   const dmStatusAnchor = new Map<string, string>();
   const activeChannelThreads = new Set<string>();
   const rateLimiter = new SlidingWindowRateLimiter(config.rateLimit.max, config.rateLimit.windowMs);
 
-  if (config.allowedUserIds === undefined) {
+  if (config.allowedEmails === undefined && config.allowedEmailDomains === undefined) {
     app.logger.warn(
-      "SLACK_ALLOWED_USER_IDS is not set — every workspace member who can reach this bot " +
-        "(DM it, or share a channel it's invited to) has unattended command-execution access " +
-        "to mecated. Set SLACK_ALLOWED_USER_IDS to restrict who can trigger a prompt.",
+      "SLACK_ALLOWED_EMAILS/SLACK_ALLOWED_EMAIL_DOMAINS are not set — every verified, " +
+        "non-guest workspace member who can reach this bot (DM it, or share a channel it's " +
+        "invited to) has unattended command-execution access to mecated. Set one of them to " +
+        "restrict who can trigger a prompt.",
     );
   }
 
@@ -108,7 +116,8 @@ export function registerAgentSessions(app: App, bridge: MecatlBridge, config: Bo
     }
     const threadTs = event.thread_ts ?? event.ts;
     const notify = ephemeralNotifier(app, event.channel, event.user, threadTs);
-    if (!isAllowed(config, event.user)) return void notify(NOT_AUTHORIZED_MESSAGE);
+    const decision = await resolver.resolve({ channelId: event.channel, slackUserId: event.user });
+    if (!decision.allowed) return void notify(NOT_AUTHORIZED_MESSAGE);
     if (!rateLimiter.allow(event.user)) return void notify(RATE_LIMITED_MESSAGE);
     const threadKey = `${event.channel}:${threadTs}`;
     activeChannelThreads.add(threadKey);
@@ -141,8 +150,13 @@ export function registerAgentSessions(app: App, bridge: MecatlBridge, config: Bo
       // A DM channel is already just the bot and this one person, so plain `say` has no
       // visibility problem here — unlike the channel/group branch below.
       const notify = sayNotifier(say, undefined);
-      if (!isAllowed(config, userId)) return void notify(NOT_AUTHORIZED_MESSAGE);
-      if (!rateLimiter.allow(userId ?? channelId)) return void notify(RATE_LIMITED_MESSAGE);
+      if (userId === undefined) {
+        app.logger.warn("DM message has no user id — ignoring (can't resolve access for nobody)");
+        return;
+      }
+      const decision = await resolver.resolve({ channelId, slackUserId: userId });
+      if (!decision.allowed) return void notify(NOT_AUTHORIZED_MESSAGE);
+      if (!rateLimiter.allow(userId)) return void notify(RATE_LIMITED_MESSAGE);
       const anchor = dmStatusAnchor.get(channelId) ?? message.ts;
       if (!dmStatusAnchor.has(channelId)) dmStatusAnchor.set(channelId, anchor);
       await runPrompt(
@@ -171,7 +185,8 @@ export function registerAgentSessions(app: App, bridge: MecatlBridge, config: Bo
       return;
     }
     const notify = ephemeralNotifier(app, channelId, userId, threadTs);
-    if (!isAllowed(config, userId)) return void notify(NOT_AUTHORIZED_MESSAGE);
+    const decision = await resolver.resolve({ channelId, slackUserId: userId });
+    if (!decision.allowed) return void notify(NOT_AUTHORIZED_MESSAGE);
     if (!rateLimiter.allow(userId)) return void notify(RATE_LIMITED_MESSAGE);
     await runPrompt(
       app,
@@ -187,11 +202,6 @@ export function registerAgentSessions(app: App, bridge: MecatlBridge, config: Bo
       notify,
     );
   });
-}
-
-function isAllowed(config: BotConfig, userId: string | undefined): boolean {
-  if (config.allowedUserIds === undefined) return true;
-  return userId !== undefined && config.allowedUserIds.has(userId);
 }
 
 /** A reply channel scoped to the requesting user only — never visible to the rest of a thread. */

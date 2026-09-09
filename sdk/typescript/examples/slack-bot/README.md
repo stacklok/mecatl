@@ -49,7 +49,9 @@ each setting instead of pasting the manifest):
 4. **OAuth & Permissions → Scopes → Bot Token Scopes**: add `chat:write`,
    `app_mentions:read`, `channels:history`, `groups:history` (and
    `assistant:write` if not already present) — `groups:history` covers
-   private channels.
+   private channels. Also add `users:read` **and** `users:read.email`
+   together — Slack requires both to return the `email` field from
+   `users.info`, which the access-control check below depends on.
 5. **Features → Event Subscriptions → Subscribe to bot events**: add
    `app_home_opened`, `message.im`, `app_mention`, `message.channels`,
    `message.groups`, `agent_session_stopped` (Slack's native stop button —
@@ -91,7 +93,8 @@ export MECATL_GRPC_ADDRESS=127.0.0.1:50051   # or MECATL_SOCKET_PATH=/path/to/me
 # New sessions use the server-owned placement configured by mecated --workspace.
 
 # Strongly recommended — see "Security" below:
-export SLACK_ALLOWED_USER_IDS=U0123ABCDEF,U0456GHIJKL   # comma-separated Slack user IDs
+export SLACK_ALLOWED_EMAILS=alice@example.com,bob@example.com   # comma-separated verified emails
+export SLACK_ALLOWED_EMAIL_DOMAINS=example.com                  # comma-separated domains, no "@"
 
 task slack-bot:dev
 ```
@@ -118,8 +121,9 @@ Session placement is server-owned regardless of target (see above) — nothing
 extra to set here for that.
 
 Wait for `mecatl Slack bot is running (Socket Mode)` in the log before
-testing — that's the bot's own readiness signal. If `SLACK_ALLOWED_USER_IDS`
-is unset, the log will warn once that every reachable workspace member has
+testing — that's the bot's own readiness signal. If neither
+`SLACK_ALLOWED_EMAILS` nor `SLACK_ALLOWED_EMAIL_DOMAINS` is set, the log
+will warn once that every verified, non-guest workspace member has
 command-execution access — see below.
 
 ## Security
@@ -134,13 +138,37 @@ commands unsupervised** — and "reach the bot" is broader than "the person
 who set it up": anyone who can DM it, or who shares a channel it's invited
 into, qualifies.
 
-Two independent mitigations, both off by default (so the bot still runs
-without them — but you should set the first one):
+Three independent mitigations:
 
-- **`SLACK_ALLOWED_USER_IDS`** (comma-separated Slack user IDs) — gates who
-  can trigger a prompt at all. Unset means unrestricted, with a startup log
-  warning saying so. Find a user's ID via their Slack profile → "Copy
-  member ID".
+- **Access control** (`src/access.ts`) — every message resolves the
+  sender's Slack identity via `users.info` before it reaches the bridge,
+  through a small pluggable `AccessResolver` seam. The default
+  `EmailAllowlistResolver` **always** rejects, regardless of the
+  allowlist config below, a deactivated account, a workspace guest
+  (multi- or single-channel), and a Slack Connect member of a different
+  company entirely — these aren't policy, they're identity-integrity
+  checks `SLACK_ALLOWED_USER_IDS` had no way to express. Once identity is
+  verified, it applies whichever of these you've configured (both are
+  optional and additive; unset means every verified, non-guest member is
+  allowed, with a startup log warning saying so):
+  - **`SLACK_ALLOWED_EMAILS`** — comma-separated exact verified emails.
+  - **`SLACK_ALLOWED_EMAIL_DOMAINS`** — comma-separated email domains (no
+    `@`), for "everyone at this company" without hand-maintaining a list —
+    someone who leaves is already excluded once their Slack account is
+    deactivated, no list edit needed.
+
+  An org-specific identity backend (an Okta-roster-backed resolver, a
+  directory-service/channel-group-backed one) is a separate adapter
+  implementing the same `AccessResolver` interface, injected at the
+  consuming deployment's level — not something that belongs in this
+  reference bot.
+
+  **Migrating from `SLACK_ALLOWED_USER_IDS`:** that variable is gone.
+  Slack user IDs (`U0123ABCDEF`) aren't emails, so there's no automatic
+  translation — replace your list with the equivalent verified emails (or,
+  usually simpler, a domain) in `SLACK_ALLOWED_EMAILS`/
+  `SLACK_ALLOWED_EMAIL_DOMAINS`, and add the `users:read` +
+  `users:read.email` bot scopes (see step 1 above) before redeploying.
 - **`SLACK_RATE_LIMIT_MAX`** / **`SLACK_RATE_LIMIT_WINDOW_MS`** (defaults:
   20 prompts per 10 minutes, per Slack user) — bounds spend/abuse from a
   single reachable user. This is a request-count limit, not a token/spend
@@ -148,10 +176,10 @@ without them — but you should set the first one):
   TypeScript SDK doesn't expose it as a per-call option yet (see the
   `TODO` in `src/bridge.ts`).
 
-Neither mitigation touches the auto-approve design itself — that trade-off
-stands as documented above and in `DESIGN.md`. They're independent
-controls: *who* can reach the bot, versus *what* mecatl will do once
-reached.
+None of these mitigations touch the auto-approve design itself — that
+trade-off stands as documented above and in `DESIGN.md`. They're
+independent controls: *who* can reach the bot, versus *what* mecatl will
+do once reached.
 
 ## 4. Verify it end to end
 

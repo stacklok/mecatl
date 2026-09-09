@@ -1,5 +1,5 @@
 import { App, LogLevel } from "@slack/bolt";
-
+import { EmailAllowlistResolver } from "./access.js";
 import { registerAgentSessions } from "./agentSessions.js";
 import { MecatlBridge } from "./bridge.js";
 import { loadConfig } from "./env.js";
@@ -15,7 +15,12 @@ async function main(): Promise<void> {
   });
 
   const bridge = new MecatlBridge(config.mecatlTarget);
-  registerAgentSessions(app, bridge, config);
+  const resolver = new EmailAllowlistResolver(
+    app.client,
+    { allowedEmailDomains: config.allowedEmailDomains, allowedEmails: config.allowedEmails },
+    app.logger,
+  );
+  registerAgentSessions(app, bridge, config, resolver);
 
   let shuttingDown = false;
   const shutdown = async (): Promise<void> => {

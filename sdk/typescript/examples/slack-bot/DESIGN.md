@@ -165,10 +165,40 @@ A `/panel-review` after the initial v1 landed found one real ship-blocker
 and several smaller gaps; addressed in the same change:
 
 - **Authorization.** `SLACK_ALLOWED_USER_IDS` (comma-separated Slack user
-  IDs) gates who can trigger a prompt at all — previously anyone reachable
-  by the bot (DM, or a shared channel) got unattended command execution.
-  Unset keeps the old (unrestricted) behavior but logs a startup warning.
-  See README.md "Security".
+  IDs) gated who could trigger a prompt at all — previously anyone
+  reachable by the bot (DM, or a shared channel) got unattended command
+  execution. Unset kept the old (unrestricted) behavior but logged a
+  startup warning. **Superseded by the email-based `AccessResolver` seam
+  below (#1241).** See README.md "Security".
+
+## Email-based `AccessResolver` (#1241 follow-up)
+
+`SLACK_ALLOWED_USER_IDS` had three structural gaps: it's a hand-maintained
+list of opaque IDs nothing removes someone from automatically, it can't
+distinguish real members from guests, and not every Slack account maps to
+an identity provider at all (guests never go through one). Replaced with:
+
+- **`src/access.ts`**'s `AccessResolver` interface — Slack-native only
+  (`slackUserId`/`channelId`, never email/Okta/directory concepts) — plus
+  this repo's default, generic implementation, `EmailAllowlistResolver`.
+  It resolves the sender's verified email via `users.info` (needs
+  `users:read` + `users:read.email`) and **always** rejects a deactivated
+  account, a workspace guest (`is_restricted`/`is_ultra_restricted`), a
+  Slack Connect member of a different company (`is_stranger`), or an
+  explicitly unconfirmed email (`is_email_confirmed === false`) —
+  identity-integrity checks, not configurable policy. Once identity is
+  verified, `SLACK_ALLOWED_EMAILS` (exact match) and/or
+  `SLACK_ALLOWED_EMAIL_DOMAINS` (domain match, for "everyone at this
+  company" without a hand-maintained list) gate the rest; unset means
+  unrestricted among verified, non-guest members.
+- **Org-specific identity backends stay out of this repo.** An
+  Okta-roster-backed resolver, or a directory-service/channel-group-backed
+  one for group-scoped access, is a separate adapter implementing the same
+  `AccessResolver` interface, injected at the consuming deployment's level
+  — tracked separately, not blocked on this.
+- `registerAgentSessions` now takes the resolver as an explicit dependency
+  (not read off `BotConfig` directly), so swapping it in a deployment's
+  own `index.ts` needs no change to `agentSessions.ts` itself.
 - **Rate limiting.** `SLACK_RATE_LIMIT_MAX` / `SLACK_RATE_LIMIT_WINDOW_MS`
   (`src/rateLimit.ts`, an in-memory sliding window keyed by Slack user ID)
   bound request volume per user — a mitigation for abuse/spend, not a
