@@ -43,7 +43,8 @@ vars:
       else
         git describe --tags --match 'v[0-9]*' --always --dirty 2>/dev/null || printf %s dev
       fi
-  BUILD_LDFLAGS: '-X github.com/stacklok/mecatl/internal/buildinfo.BuildID={{.BUILD_ID}}'
+  MECATL_METRICS_KEY: '{{.MECATL_METRICS_KEY | default ""}}'
+  BUILD_LDFLAGS: '-X github.com/stacklok/mecatl/internal/buildinfo.BuildID={{.BUILD_ID}} -X github.com/stacklok/mecatl/internal/adapter/productmetrics.bakedKey={{.MECATL_METRICS_KEY}}'
 
 tasks:
   default:
