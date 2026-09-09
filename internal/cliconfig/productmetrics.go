@@ -27,7 +27,7 @@ never a prompt, file path, tool name, or model id) to help Stacklok understand
 community adoption. This is on by default. To opt out: pass
 --product-metrics=false, set DO_NOT_TRACK=1, or set
 telemetry.productMetrics.enabled: false in your settings.yaml. Details:
-see docs/adr/0317-product-metrics.md.
+see docs/adr/0319-product-metrics.md.
 `
 
 // ProductMetricsHandles bundles the handles a cmd main threads into its

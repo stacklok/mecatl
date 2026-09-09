@@ -1,4 +1,4 @@
-# ADR 0317 — Product (adoption) metrics over OTLP
+# ADR 0319 — Product (adoption) metrics over OTLP
 
 - Status: Accepted
 - Date: 2026-09-09
