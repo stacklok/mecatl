@@ -52,7 +52,11 @@ each setting instead of pasting the manifest):
    private channels.
 5. **Features → Event Subscriptions → Subscribe to bot events**: add
    `app_home_opened`, `message.im`, `app_mention`, `message.channels`,
-   `message.groups`.
+   `message.groups`, `agent_session_stopped` (Slack's native stop button —
+   without this subscription, `agents.sessions.setStatus` returns
+   `missing_agent_session_stopped_event_subscription` and users see a
+   non-interactive loading indicator instead of a stop button; see
+   [Slack's event reference](https://docs.slack.dev/reference/events/agent_session_stopped)).
    **Do not add `assistant_thread_started`/`assistant_thread_context_changed`**
    — those belong to Slack's *older* Assistant experience, not the
    `agent_view` feature this app uses; a manifest editor warning will tell

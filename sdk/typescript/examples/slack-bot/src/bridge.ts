@@ -111,9 +111,15 @@ export class MecatlBridge {
     onDelta: DeltaHandler | undefined,
   ): Promise<PromptOutcome> {
     const session = await this.#sessionFor(threadKey);
-    const run = await session.run(text, { onPermissionAsk: () => "allow_once" });
-    this.#runs.set(threadKey, run);
     try {
+      // session.run() itself — not just the run's event stream — must be inside
+      // this try (#1289 review, samuv): the server can reject a session with a
+      // live external authorization at RUN ADMISSION, before the SDK's run()
+      // ever resolves (it waits for the first run-ID-bearing event), so that
+      // rejection previously escaped this catch entirely and the stuck session
+      // was never evicted.
+      const run = await session.run(text, { onPermissionAsk: () => "allow_once" });
+      this.#runs.set(threadKey, run);
       for await (const event of run) {
         if (event.kind === "message.delta") {
           if (event.text.length > 0) await onDelta?.(event.text);

@@ -433,6 +433,38 @@ describe("registerAgentSessions", () => {
     expect(fake.warn).toHaveBeenCalled();
   });
 
+  it("delivers the full answer via say() when an established stream breaks mid-run (#1289)", async () => {
+    const bridge = fakeBridge(
+      vi.fn().mockImplementation(async (_threadKey, _text, onDelta) => {
+        await onDelta("Hello");
+        // This second delta's underlying appendStream call is the one that fails below.
+        await onDelta(" world!");
+        return { sessionId: "s1", stopReason: "end_turn", text: "Hello world!" };
+      }),
+    );
+    const fake = setUp(bridge, fakeConfig());
+    fake.appendStream.mockRejectedValueOnce(new Error("stream broke"));
+
+    await fake.appMention({
+      event: {
+        bot_id: undefined,
+        channel: "C1",
+        text: "<@BOT> hi",
+        ts: "100.001",
+        type: "app_mention",
+        user: "allowed-user",
+      },
+      context: { teamId: "T1" },
+      say: fake.say,
+    });
+
+    expect(fake.stopStream).toHaveBeenCalledWith(
+      expect.objectContaining({ channel: "C1", ts: "stream-ts" }),
+    );
+    // The real, complete answer — not just the "Hello" that streamed before the break.
+    expect(fake.say).toHaveBeenCalledWith({ text: "Hello world!", thread_ts: "100.001" });
+  });
+
   it("cancels the bridge run for a channel-thread agent_session_stopped", async () => {
     const cancel = vi.fn().mockResolvedValue(undefined);
     const fake = setUp(fakeBridge(vi.fn(), cancel), fakeConfig());

@@ -251,9 +251,12 @@ async function runPrompt(
   );
   try {
     const outcome = await bridge.handlePrompt(threadKey, text, (delta) => stream.append(delta));
-    if (stream.started) {
-      await stream.stop();
-    } else {
+    if (stream.started) await stream.stop();
+    // `!stream.started` (never streamed at all) and `stream.failed` (streamed
+    // partially, then an append broke mid-run — #1289 review, samuv: without
+    // this, the user silently gets only the partial text that streamed before
+    // the failure, never the real final answer) both need the full-text say().
+    if (!stream.started || stream.failed) {
       const reply = outcome.text.length > 0 ? outcome.text : `(${outcome.stopReason}: no text)`;
       await say(replyThreadTs === undefined ? reply : { text: reply, thread_ts: replyThreadTs });
     }
@@ -286,8 +289,11 @@ async function runPrompt(
  * A failure at any point (the documented `missing_recipient_team_id` channel gap
  * included — see this file's own doc comment) is treated as "streaming isn't available
  * here," never as a reason to fail the whole prompt: `#failed` latches so every later
- * `append` becomes a no-op, and `runPrompt`'s `!stream.started` branch falls back to a
- * single final `say()` with the run's full text once the run itself resolves.
+ * `append` becomes a no-op. `started` and `failed` are DELIBERATELY separate signals
+ * (#1289 review, samuv): `started` alone can't tell "never streamed" apart from
+ * "streamed some chunks, then broke" — collapsing them made `runPrompt` treat a
+ * mid-stream failure as done, silently truncating the reply to whatever streamed
+ * before the break and never delivering the run's real, complete text.
  */
 class SlackTextStream {
   #ts: string | undefined;
@@ -303,6 +309,10 @@ class SlackTextStream {
 
   get started(): boolean {
     return this.#ts !== undefined;
+  }
+
+  get failed(): boolean {
+    return this.#failed;
   }
 
   async append(delta: string): Promise<void> {

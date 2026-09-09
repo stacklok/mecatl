@@ -38,7 +38,8 @@
         "message.im",
         "app_mention",
         "message.channels",
-        "message.groups"
+        "message.groups",
+        "agent_session_stopped"
       ]
     },
     "interactivity": {
