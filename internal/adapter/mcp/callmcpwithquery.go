@@ -31,6 +31,11 @@ type callMcpWithQueryTool struct {
 var _ tool.Tool = callMcpWithQueryTool{}
 
 func (callMcpWithQueryTool) Spec() tool.ToolSpec {
+	return CallMcpWithQuerySpec()
+}
+
+// CallMcpWithQuerySpec returns the shared model-facing schema and instruction.
+func CallMcpWithQuerySpec() tool.ToolSpec {
 	return tool.ToolSpec{
 		Name: callMcpWithQueryToolName,
 		Description: "Call an MCP tool and filter its JSON result through a jq expression before it " +
@@ -107,7 +112,7 @@ func (t callMcpWithQueryTool) Execute(ctx context.Context, in session.ToolCall, 
 	// error naming the exact expected shape — instead of a remote 400 the model
 	// can't act on. It is safe to coerce here (unlike the direct namespaced tool
 	// path) because THIS parameter is contractually an object.
-	remoteArgs, msg := normalizeRemoteArgs(args.Args)
+	remoteArgs, msg := NormalizeRemoteArgs(args.Args)
 	if msg != "" {
 		return session.NewToolError(in.ID, msg), nil
 	}
@@ -127,6 +132,13 @@ func (t callMcpWithQueryTool) Execute(ctx context.Context, in session.ToolCall, 
 		return session.NewToolError(in.ID, fmt.Sprintf("call MCP tool failed: %v", err)), nil
 	}
 
+	return FilterCallResult(ctx, in.ID, server, toolName, jqFilter, result)
+}
+
+// FilterCallResult is the shared structured-content-first bounded jq projection.
+// Error text may contain remote values; custody boundaries must sanitize errors.
+func FilterCallResult(ctx context.Context, id session.ToolCallID, server, toolName, jqFilter string, result CallResult) (session.ToolResult, error) {
+	in := session.ToolCall{ID: id}
 	// A remote tool-level error: surface the remote error text (truncated)
 	// without running jq — the model asked to filter a failed call; tell it
 	// the call failed.
@@ -190,7 +202,7 @@ func (t callMcpWithQueryTool) Execute(ctx context.Context, in session.ToolCall, 
 	return session.NewToolResult(in.ID, filtered), nil
 }
 
-// normalizeRemoteArgs coerces the model-supplied "args" value into the JSON
+// NormalizeRemoteArgs coerces the model-supplied "args" value into the JSON
 // object the remote MCP tool expects, or returns a model-facing correction
 // message (the second return; empty means success):
 //
@@ -209,7 +221,7 @@ func (t callMcpWithQueryTool) Execute(ctx context.Context, in session.ToolCall, 
 // provider-agnostic MCP layer to one model's wire format. Unrecoverable shapes
 // become a clear correction naming the exact expected object, so the model retries
 // instead of hitting an opaque remote "cannot unmarshal string into map" 400.
-func normalizeRemoteArgs(raw json.RawMessage) (json.RawMessage, string) {
+func NormalizeRemoteArgs(raw json.RawMessage) (json.RawMessage, string) {
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 || string(trimmed) == "null" {
 		return nil, ""

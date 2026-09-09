@@ -6,9 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"golang.org/x/oauth2"
 
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
@@ -121,7 +124,9 @@ func newTestRuntime(t *testing.T) (*Runtime, *callRecorder) {
 		t.Fatal(err)
 	}
 	recorder := &callRecorder{}
-	runtime, err := New(catalogue, recorder.call)
+	runtime, err := New(catalogue, recorder.call, WithQueryCaller(func(context.Context, SessionRef, string, session.ToolCall, oauth2.TokenSource, string) (session.ToolResult, error) {
+		return session.ToolResult{}, errors.New("unexpected query invocation")
+	}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,6 +155,174 @@ func toolByName(t *testing.T, attachment *Attachment, name string) tool.Tool {
 	}
 	t.Fatalf("tool %q not found", name)
 	return nil
+}
+
+func TestCallMcpWithQueryBrokerSupport_Scenario1_BoundedAttachmentProjection(t *testing.T) {
+	catalogue, err := Compile(anonymousConfig(), discoveredTools(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var calls int
+	runtime, err := New(catalogue, func(_ context.Context, _ SessionRef, backend string, call session.ToolCall) (session.ToolResult, error) {
+		t.Fatalf("raw caller must not receive a query: backend=%q call=%+v", backend, call)
+		return session.ToolResult{}, nil
+	}, WithQueryCaller(func(_ context.Context, _ SessionRef, backend string, call session.ToolCall, _ oauth2.TokenSource, filter string) (session.ToolResult, error) {
+		calls++
+		if backend != "search" || call.Name != "mcp__search__query" || string(call.Args) != `{"query":"needle"}` || filter != ".keep" {
+			t.Fatalf("native query = backend=%q filter=%q call=%+v", backend, filter, call)
+		}
+		return session.NewToolResult(call.ID, `"yes"`), nil
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	attachment, _ := attach(t, runtime, "query-session")
+	query := attachment.CallMcpWithQueryTool()
+	if query == nil {
+		t.Fatal("attachment did not expose CallMcpWithQuery")
+	}
+	result, err := query.Execute(t.Context(), session.NewToolCall("query-call", "CallMcpWithQuery", json.RawMessage(`{"server":"search","tool":"query","args":{"query":"needle"},"jq_filter":".keep"}`)), tool.Environment{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.IsError || result.Content != `"yes"` {
+		t.Fatalf("filtered result = %+v", result)
+	}
+	if strings.Contains(result.Content, "raw_canary") || calls != 1 {
+		t.Fatalf("raw result leaked or query replayed: result=%q calls=%d", result.Content, calls)
+	}
+}
+
+func TestCallMcpWithQueryBrokerSupport_Scenario1_AttachmentIsolationAndAuthorization(t *testing.T) {
+	catalogue, err := Compile(anonymousConfig(), discoveredTools(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var calls int
+	runtime, err := New(catalogue, func(context.Context, SessionRef, string, session.ToolCall) (session.ToolResult, error) {
+		t.Fatal("query must not use the ordinary caller")
+		return session.ToolResult{}, nil
+	}, WithQueryCaller(func(context.Context, SessionRef, string, session.ToolCall, oauth2.TokenSource, string) (session.ToolResult, error) {
+		calls++
+		return session.NewToolResult("unexpected", `"unexpected"`), nil
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer runtime.Close()
+	first, _ := attach(t, runtime, "first-query-session")
+	second, _ := attach(t, runtime, "second-query-session")
+
+	foreign := session.NewToolCall("foreign", "CallMcpWithQuery", json.RawMessage(`{"server":"calendar","tool":"missing","jq_filter":"."}`))
+	result, err := first.CallMcpWithQueryTool().Execute(t.Context(), foreign, tool.Environment{})
+	if err != nil || !result.IsError || calls != 0 {
+		t.Fatalf("foreign target = (%+v, %v), calls=%d", result, err, calls)
+	}
+	if _, err := second.Close(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	closedResult, err := second.CallMcpWithQueryTool().Execute(t.Context(), session.NewToolCall("closed", "CallMcpWithQuery", json.RawMessage(`{"server":"search","tool":"query","jq_filter":"."}`)), tool.Environment{})
+	if err != nil || !closedResult.IsError || !strings.Contains(closedResult.Content, "automatic replay refused") {
+		t.Fatalf("closed attachment query = (%+v, %v)", closedResult, err)
+	}
+	stale := first.CallMcpWithQueryTool()
+	if _, err := runtime.DeleteSession(t.Context(), "first-query-session"); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = attach(t, runtime, "first-query-session")
+	staleResult, err := stale.Execute(t.Context(), session.NewToolCall("stale", "CallMcpWithQuery", json.RawMessage(`{"server":"search","tool":"query","jq_filter":"."}`)), tool.Environment{})
+	if err != nil || !staleResult.IsError {
+		t.Fatalf("stale query = %+v, %v", staleResult, err)
+	}
+	if calls != 0 {
+		t.Fatalf("unavailable route invoked %d time(s)", calls)
+	}
+}
+
+func TestInvariant_call_mcp_with_query_broker_at_most_once_no_raw_result(t *testing.T) {
+	runtime, recorder := newTestRuntime(t)
+	attachment, _ := attach(t, runtime, "invalid-query")
+	result, err := attachment.CallMcpWithQueryTool().Execute(t.Context(), session.NewToolCall("query-call", "CallMcpWithQuery", json.RawMessage(`{"server":"search","tool":"query","jq_filter":"["}`)), tool.Environment{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.IsError || !strings.Contains(result.Content, "jq parse error") {
+		t.Fatalf("invalid filter result = %+v", result)
+	}
+	recorder.mu.Lock()
+	defer recorder.mu.Unlock()
+	if len(recorder.calls) != 0 {
+		t.Fatalf("invalid jq invoked native target %d time(s)", len(recorder.calls))
+	}
+}
+
+func TestCallMcpWithQueryBrokerSupport_PostDeliveryFailureIsBoundedAndNotReplayed(t *testing.T) {
+	catalogue, err := Compile(anonymousConfig(), discoveredTools(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var calls int
+	runtime, err := New(catalogue, func(context.Context, SessionRef, string, session.ToolCall) (session.ToolResult, error) {
+		t.Fatal("query must not use the ordinary caller")
+		return session.ToolResult{}, nil
+	}, WithQueryCaller(func(context.Context, SessionRef, string, session.ToolCall, oauth2.TokenSource, string) (session.ToolResult, error) {
+		calls++
+		return session.ToolResult{}, errors.New("projection failed after raw_canary delivery")
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer runtime.Close()
+	attachment, _ := attach(t, runtime, "post-delivery-query")
+	result, err := attachment.CallMcpWithQueryTool().Execute(t.Context(), session.NewToolCall("query-call", "CallMcpWithQuery", json.RawMessage(`{"server":"search","tool":"query","jq_filter":"."}`)), tool.Environment{})
+	if err != nil || !result.IsError || calls != 1 || strings.Contains(result.Content, "raw_canary") || !strings.Contains(result.Content, "automatic replay refused") {
+		t.Fatalf("post-delivery query = (%+v, %v), calls=%d", result, err, calls)
+	}
+}
+
+func TestCallMcpWithQueryBrokerSupport_Scenario1_AuthorizationDelegatesExactNativeCall(t *testing.T) {
+	catalogue, err := Compile(protectedConfig("https://accounts.example/token"), []ToolDefinition{{Backend: "github", Name: "mcp__github__list", Schema: json.RawMessage(`{"type":"object"}`), ReadOnly: true}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := New(catalogue, func(context.Context, SessionRef, string, session.ToolCall) (session.ToolResult, error) {
+		return session.ToolResult{}, errors.New("must not execute before authorization")
+	}, WithQueryCaller(func(context.Context, SessionRef, string, session.ToolCall, oauth2.TokenSource, string) (session.ToolResult, error) {
+		return session.ToolResult{}, errors.New("must not execute before authorization")
+	}), WithAuthorizedCaller(func(context.Context, SessionRef, string, session.ToolCall, oauth2.TokenSource) (session.ToolResult, error) {
+		return session.ToolResult{}, errors.New("must not execute before authorization")
+	}), WithOAuthSecretResolver(func(context.Context, string) (string, error) { return "secret", nil }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	attachment, _ := attach(t, runtime, "protected-query")
+	query := attachment.CallMcpWithQueryTool()
+	requester, ok := query.(tool.AuthorizationRequester)
+	if !ok {
+		t.Fatal("query wrapper does not request authorization")
+	}
+	call := session.NewToolCall("query-call", "CallMcpWithQuery", json.RawMessage(`{"server":"github","tool":"list","args":{"page":1},"jq_filter":".items"}`))
+	authorization, required, err := requester.RequestAuthorization(t.Context(), call)
+	if err != nil || !required {
+		t.Fatalf("RequestAuthorization = (%+v, %t, %v)", authorization, required, err)
+	}
+	attachment.logical.mu.Lock()
+	transaction, err := lookupAuthorization(attachment.logical, authorization)
+	attachment.logical.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := session.NewToolCall("query-call", "mcp__github__list", json.RawMessage(`{"page":1}`))
+	if transaction.callID != expected.ID || transaction.callHash != callHash(expected) {
+		t.Fatalf("authorization did not bind exact native call: %+v", transaction)
+	}
+	if err := requester.AbortAuthorization(t.Context(), authorization); err != nil {
+		t.Fatal(err)
+	}
+	status, err := attachment.AuthorizationStatus(t.Context(), authorization)
+	if err != nil || status != session.AuthorizationCancelled {
+		t.Fatalf("aborted authorization status = %q, %v", status, err)
+	}
 }
 
 func TestWrappersBindCanonicalSessionAndPrivateRoute(t *testing.T) {

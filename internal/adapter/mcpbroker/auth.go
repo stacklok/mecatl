@@ -148,6 +148,12 @@ func WithAuthorizedCaller(caller AuthorizedCaller) Option {
 	return func(runtime *Runtime) { runtime.authorizedCaller = caller }
 }
 
+// WithQueryCaller installs the broker transport that projects an MCP result
+// before it crosses the attachment boundary.
+func WithQueryCaller(caller QueryCaller) Option {
+	return func(runtime *Runtime) { runtime.queryCaller = caller }
+}
+
 // WithOAuthLoopbackForTest enables only an in-process TLS test token endpoint.
 // No production configuration surface can relax the hardened client's IP policy.
 func WithOAuthLoopbackForTest(t interface{ Helper() }, roots *x509.CertPool) Option {
@@ -948,7 +954,7 @@ func (t *sessionTool) executeProtected(ctx context.Context, call session.ToolCal
 		return session.ToolResult{}, err
 	}
 	logical.mu.Unlock()
-	result, err := t.attachment.runtime.authorizedCaller(ctx, logical.ref, t.route.backend, call, &scopedTokenSource{runtime: t.attachment.runtime, logical: logical, backend: t.route.backend, ctx: ctx})
+	result, err := t.invoke(ctx, call, &scopedTokenSource{runtime: t.attachment.runtime, logical: logical, backend: t.route.backend, ctx: ctx})
 	result.CallID = call.ID
 	return result, err
 }
@@ -967,7 +973,7 @@ func (t *sessionTool) executeBroker(ctx context.Context, call session.ToolCall) 
 		return session.ToolResult{}, err
 	}
 	logical.mu.Unlock()
-	result, err := t.attachment.runtime.authorizedCaller(ctx, logical.ref, t.route.backend, call, &brokerTokenSource{runtime: t.attachment.runtime, logical: logical, ctx: ctx})
+	result, err := t.invoke(ctx, call, &brokerTokenSource{runtime: t.attachment.runtime, logical: logical, ctx: ctx})
 	result.CallID = call.ID
 	return result, err
 }

@@ -2,14 +2,14 @@
 
 **Contract:** human-reviewed/v1
 **Phase:** broker-backed MCP result narrowing
-**Status:** proposed, 2026-09-09. The material scope and behavior are resolved for review.
-**Delivery:** Split. A bounded operation crosses the internal broker attachment boundary.
-**Expected tasks:** deferred to orchestration after this contract is approved and merged.
+**Status:** proposed, 2026-09-09. Implementation exists locally under the directing user's explicit workflow waiver; no approval, merge, push, or PR is claimed.
+**Delivery:** Split. The directing user explicitly waived the plan spine for this local implementation; this is not a claim of plan approval or merge.
+**Expected tasks:** implementation and aggregate verification completed locally under the explicit waiver; no PR or merge is claimed.
 **Issue:** None — no tracking issue was supplied.
-**Plan PR:** absent — the plan exists in local branch history on `plan/callmcpwithquery-broker-support`; these scope amendments are uncommitted working-tree edits. No push or PR is authorized.
-**Approved baseline:** absent until human approval and merge.
+**Plan PR:** absent — no push or PR is authorized.
+**Approved baseline:** absent; implementation was explicitly authorized without one.
 
-`CallMcpWithQuery` remains the existing single model-facing `{server, tool, args?, jq_filter}` tool. Direct-manager calls keep their current path. For a broker-backed tool, it invokes only through the current session's already attached broker wrapper, then returns only the bounded jq projection; it never opens a direct connection to the broker-owned upstream or records a successful raw response.
+`CallMcpWithQuery` remains the existing single model-facing `{server, tool, args?, jq_filter}` tool. Direct-manager calls keep their current path. For a broker-backed tool, it invokes only through the current session's already attached broker wrapper, then returns only the bounded jq projection; it never bypasses the attachment with a harness-owned upstream connection or records a successful raw response. This does not prohibit the concrete broker transport's existing connections: anonymous routes still connect to the configured `profile.URL`, as the baseline `anonymousCaller` does; protected routes still use the broker endpoint. The query transport preserves those destinations and filters before returning across the attachment boundary.
 
 **Implementation steer:** Individual implementation workers must not run full-repository `task test` or `task lint`; run only task-scoped tests and lint/build checks. The accumulator/final verification stage owns full-repository gates once after integration.
 
@@ -43,7 +43,7 @@ The broker already exposes attachment-bound frozen wrappers whose `Execute` acqu
 - AC1.3: Invalid jq fails before invocation; after delivery may have occurred, filter or transport failure is bounded and does not retry, rebind, hedge, or replay the upstream call.
   - verify: `TestInvariant_call_mcp_with_query_broker_at_most_once_no_raw_result`
 - AC1.4: The real broker-only session factory (`globalMgr == nil`) registers exactly one query wrapper for eligible attachment targets, with the unchanged schema and existing model-visible usage instruction; no eligible targets means no broker query registration.
-  - verify: `TestCallMcpWithQueryBrokerSupport_Scenario1_BrokerOnlyFactory`
+  - verify: `TestCallMcpWithQueryBrokerSupport_Scenario1_BrokerOnlyFactory`, `TestCallMcpWithQueryBrokerSupport_BrokerOnlyServiceRegistration`
 - AC1.5: A protected query without a grant parks through the catalogued requester. Grant resumes through the query envelope with filtered output; deny/cancel executes nothing. Live and restarted host continuation preserve the exact native call/hash and jq; lost broker state fails closed. Abort uses the exact authorization reference, never another session's transaction.
   - verify: `TestCallMcpWithQueryBrokerSupport_Scenario1_AuthorizationContinuation`
 
@@ -63,7 +63,7 @@ The existing direct implementation owns structured-content-first selection and b
 |---|---|---|
 | Target-aware engine dispatcher or permission migration | Separate proposal | This broker-support fix does not alter engine lifecycle semantics. |
 | `PendingAuthorization`/snapshot/API changes | Separate proposal | No new parked-call representation is needed. |
-| Client MCP, inline/specialist MCP, remote broker transport, or direct broker-upstream connections | Later scoped plan | The current session attachment is the sole broker authority. |
+| Client MCP, inline/specialist MCP, remote broker transport, or harness connections bypassing the broker attachment | Later scoped plan | The current session attachment is the sole broker authority; existing concrete broker transport connections are unchanged. |
 | Raw-result persistence or a general JSON-query facility | Not planned | ADR 0063 keeps filtering bounded and in memory. |
 
 ## Definition of done
@@ -73,6 +73,54 @@ The existing direct implementation owns structured-content-first selection and b
 3. The implementation PR links this approved Plan / Interface PR and reports internal-seam and compatibility conformance.
 4. Update living architecture and public `user-docs/` for shipped broker query support in the implementation PR; run `task site:build`.
 5. `/panel-review` reports no ship blockers or unwaived reviewer failures.
+
+## Implementation evidence (workflow waiver)
+
+The directing user explicitly waived the acceptance-plan spine and requested this
+local implementation without approval, merge, push, or PR. The following focused
+proofs ran in this workspace:
+
+- `TestCallMcpWithQueryBrokerSupport_Scenario1_BoundedAttachmentProjection` — the
+  attachment invokes the dedicated bounded-query transport exactly once; the
+  ordinary/raw caller is a test failure and only the projection is returned.
+- `TestCallMcpWithQueryBrokerSupport_Scenario1_AttachmentIsolationAndAuthorization`
+  — unknown and closed attachment targets fail before the query transport.
+- `TestInvariant_call_mcp_with_query_broker_at_most_once_no_raw_result` — invalid
+  jq is rejected before target invocation.
+- `TestCallMcpWithQueryBrokerSupport_PostDeliveryFailureIsBoundedAndNotReplayed`
+  — a query-transport/projection failure after delivery is rendered without its
+  raw canary and is not replayed.
+- `TestCallMcpWithQueryBrokerSupport_Scenario1_AuthorizationDelegatesExactNativeCall`
+  — request and abort use the normalized native target/call identity.
+- `TestCallMcpWithQueryBrokerSupport_Scenario1_BrokerOnlyFactory` — the real
+  broker-only factory emits exactly one query specification to the model, with
+  byte-identical schema and description; no targets means no query tool.
+- `TestCallMcpWithQueryBrokerSupport_Scenario1_AuthorizationContinuation` — a real
+  query envelope parks through the Service and broker requester. Both the live
+  host and a reconstructed host over the saved snapshot resume grants to the
+  projection only; deny/cancel execute nothing. The broker transaction binds the
+  exact normalized native hash, foreign abort/use fails, repeated execution is
+  refused, and lost state cannot adopt a new binding. Restart simulates a host
+  crash with broker state surviving, not graceful shutdown (which cancels asks).
+- `TestCallMcpWithQueryBrokerSupport_BundledToolHiveProjection` — the bundled
+  process's anonymous transport calls an offline Streamable HTTP MCP server once
+  per query, selects structured content over contradictory text, narrows an
+  over-25KB result, and returns bounded errors for jq failure/oversized output.
+- `TestCallMcpWithQueryBrokerSupport_UnenrolledTargetDoesNotInvoke` — an unenrolled
+  protected process advertises no query tool and refuses a forged wrapper target.
+- `TestCallMcpWithQueryBrokerSupport_Scenario2_DirectCompatibility` — direct
+  structured/text precedence, error behavior and output cap remain unchanged.
+- `TestADR_0234_CallMcpWithQueryBrokerSupport_AuthorityUnchanged` — the real broker
+  query wrapper spends its addressed native capability; another reachable MCP
+  capability cannot authorize the query.
+
+Focused broker, direct-query, factory, and Service-registration proofs passed with
+`-race`. Final integration passed `task lint`, `task test` (including standalone
+module checks), `task docs`, `task api:check`, `task site:build`, and the full
+offline `go run ./cmd/mecademo` session. Review found no remaining blockers or
+important findings; one advisory remains to link existing direct-manager
+connectivity proofs alongside AC2.1. This evidence does not claim approval,
+merge, or landed status.
 
 ## Deferred decisions and known risks
 

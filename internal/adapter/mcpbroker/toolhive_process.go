@@ -133,7 +133,10 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 	catalogue := &Catalogue{routes: routes}
 	caller := anonymousCaller(construction.anonymous)
 	runtimeOptions := append([]Option(nil), options.runtimeOptions...)
-	runtimeOptions = append(runtimeOptions, WithAuthorizedCaller(toolHiveProtectedCaller(issuer+"/mcp", options.brokerHTTPClient, diag)))
+	runtimeOptions = append(runtimeOptions,
+		WithAuthorizedCaller(toolHiveProtectedCaller(issuer+"/mcp", options.brokerHTTPClient, diag)),
+		WithQueryCaller(toolHiveQueryCaller(construction.anonymous, issuer+"/mcp", options.brokerHTTPClient)),
+	)
 	if protectedTarget != nil {
 		// Every configured protected upstream may lack a static tool
 		// declaration (workspace enrollment only), in which case the compiled
@@ -154,6 +157,7 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 			client = runtime.oauth.httpClient
 		}
 		runtime.authorizedCaller = toolHiveProtectedCaller(issuer+"/mcp", client, diag)
+		runtime.queryCaller = toolHiveQueryCaller(construction.anonymous, issuer+"/mcp", client)
 	}
 
 	processCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
@@ -454,6 +458,33 @@ func toolHiveProtectedCaller(endpoint string, client *http.Client, diag port.Dia
 			return result, executeErr
 		}
 		return session.ToolResult{}, fmt.Errorf("mcpbroker: protected ToolHive target omitted tool %q", call.Name)
+	}
+}
+
+func toolHiveQueryCaller(anonymous []ToolHiveProfile, protectedEndpoint string, client *http.Client) QueryCaller {
+	servers := make(map[string]mcpadapter.ServerConfig, len(anonymous))
+	for _, profile := range anonymous {
+		servers[profile.Name] = mcpadapter.ServerConfig{Name: profile.Name, URL: profile.URL}
+	}
+	return func(ctx context.Context, _ SessionRef, backend string, call session.ToolCall, tokens oauth2.TokenSource, filter string) (session.ToolResult, error) {
+		config, anonymousRoute := servers[backend]
+		if !anonymousRoute {
+			if protectedEndpoint == "" || tokens == nil {
+				return session.ToolResult{}, fmt.Errorf("%w: broker query target is not configured", ErrInvalidCatalogue)
+			}
+			advertisedName, err := toolHiveAdvertisedToolName(backend, call.Name)
+			if err != nil {
+				return session.ToolResult{}, err
+			}
+			config = mcpadapter.ServerConfig{Name: "broker", URL: protectedEndpoint, TokenSource: tokens, HTTPClient: client}
+			call.Name = "mcp__broker__" + advertisedName
+		}
+		upstream, err := mcpadapter.Connect(ctx, config, nil)
+		if err != nil {
+			return session.ToolResult{}, fmt.Errorf("mcpbroker: connect query target: %w", err)
+		}
+		defer func() { _ = upstream.Close() }()
+		return upstream.QueryToolOnce(ctx, call, filter)
 	}
 }
 
