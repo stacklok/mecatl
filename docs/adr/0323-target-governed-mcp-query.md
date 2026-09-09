@@ -1,4 +1,4 @@
-# ADR 0319 — Broker-attached MCP query projection
+# ADR 0323 — Broker-attached MCP query projection
 
 - Status: Proposed
 - Date: 2026-09-09
