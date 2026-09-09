@@ -3434,7 +3434,7 @@ func (s *Service) DeleteSession(ctx context.Context, id session.SessionID) error
 	}
 	unlock := s.runEntryMu.lock(id)
 	defer unlock()
-	_, absent, err = s.managementTarget(ctx, id, true)
+	_, absent, err = s.managementTargetAwaitingDrain(ctx, id, true)
 	if err != nil || absent {
 		return err
 	}
@@ -3447,7 +3447,7 @@ func (s *Service) DeleteSession(ctx context.Context, id session.SessionID) error
 		return err
 	}
 	defer release()
-	sess, absent, err := s.managementTarget(ctx, id, true)
+	sess, absent, err := s.managementTargetAwaitingDrain(ctx, id, true)
 	if err != nil || absent {
 		return err
 	}
@@ -3676,6 +3676,14 @@ func (s *Service) managementSession(ctx context.Context, id session.SessionID, c
 	return sess, false, nil
 }
 
+// errSessionActiveOrAwaiting is managementTarget's specific liveness-conflict
+// sentinel, distinct from managementSession's other ErrFailedPrecondition
+// causes (e.g. "session is not a main session") — callers that want to await
+// the same terminal-but-draining grace promotedSteerRun already tolerates
+// (see awaitRunDeregister) match on this exact sentinel via errors.Is, never
+// the error's rendered text.
+var errSessionActiveOrAwaiting = fmt.Errorf("%w: session is active or awaiting approval", ErrFailedPrecondition)
+
 // managementTarget adds the generic idle-only eligibility gate used by
 // management operations other than ClearSession. The caller must hold
 // runEntryMu for id.
@@ -3685,9 +3693,35 @@ func (s *Service) managementTarget(ctx context.Context, id session.SessionID, co
 		return nil, absent, err
 	}
 	if sess.State == session.StateRunning || sess.State == session.StateAwaiting || sess.State == session.StateAuthorizing || s.IsLive(id) {
-		return nil, false, fmt.Errorf("%w: session is active or awaiting approval", ErrFailedPrecondition)
+		return nil, false, errSessionActiveOrAwaiting
 	}
 	return sess, false, nil
+}
+
+// managementTargetAwaitingDrain wraps managementTarget with the same
+// terminal-but-still-draining tolerance promotedSteerRun already gives steer
+// promotion (see awaitRunDeregister): a run's liveness registration
+// deliberately outlives its terminal event by design (the relay needs to
+// finish draining), so a caller that reacts to a terminal result the instant
+// it observes one — any SDK client calling DeleteSession right after
+// run.result() resolves, for example — can otherwise lose this race against
+// managementTarget's single immediate IsLive check even though the session's
+// durable state is already correctly terminal (terminateComplete saves
+// before it emits). On the specific errSessionActiveOrAwaiting conflict,
+// await the registry clearing (bounded by steerPromoteGrace) and retry once;
+// any other error, or a conflict that does not clear within the grace, is
+// surfaced unchanged — a genuinely in-flight session is not delayed beyond
+// the same bound the existing steer-promotion path already accepts. The
+// caller must hold runEntryMu for id, matching managementTarget's contract.
+func (s *Service) managementTargetAwaitingDrain(ctx context.Context, id session.SessionID, concealAbsence bool) (*session.Session, bool, error) {
+	sess, absent, err := s.managementTarget(ctx, id, concealAbsence)
+	if !errors.Is(err, errSessionActiveOrAwaiting) {
+		return sess, absent, err
+	}
+	if !s.awaitRunDeregister(ctx, id, steerPromoteGrace) {
+		return nil, false, err
+	}
+	return s.managementTarget(ctx, id, concealAbsence)
 }
 
 // SetMode changes the permission posture of the session under id and persists

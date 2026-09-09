@@ -89,7 +89,15 @@ Caller identity is attribution, not tenant isolation: authenticated callers can 
 
 When the server publishes the optional RFC 9728 profile, `mecatui login` can
 accept a bare host or canonical HTTPS resource URL and discover the issuer,
-audience, public client hint, and scopes before confirmation. Metadata and issuer
+audience, public client hint, and scopes. The first enrollment displays the full
+protected-resource details and asks for default-deny confirmation. A subsequent
+login skips both only when fresh discovery exactly matches the saved canonical
+connection for that resource, including resource, complete identity and scopes,
+issuer CA, and issuer-address policy. Any changed value is treated as a new
+enrollment and displays the details for confirmation again. It requests an
+advertised `scopes_supported` list exactly, or the fixed
+`openid,profile,offline_access` baseline when the member is omitted. Discovery rejects
+`--scopes`; administrators configure `oidc.scopes` for other scopes. Metadata and issuer
 lookup use anonymous verified HTTPS bootstrap; the resulting authenticated gRPC
 connection is a separate transport decision. The configured resource is the
 service-wide protected-resource base, so every protected API route advertises
@@ -162,9 +170,12 @@ CAS. Only an exact structured `invalid_grant` code removes a rejected credential
 provider prose does not. The default login request includes `offline_access`, but the
 issuer must offer and grant that scope before it can return a refresh token. Without a
 refresh token, the initial login can still succeed, but a later access-token expiry
-requires `mecatui login ADDRESS` again. Omit `offline_access` explicitly with
-`--scopes` only when that re-login behavior is intended. This managed OIDC mode is
-refreshed by mecatui; a static `--auth-token` remains caller-managed and is never
+requires `mecatui login ADDRESS` again. A discovered-login caller cannot omit
+`offline_access` with `--scopes`; the server controls the advertised set or omission
+baseline. Administrators configure `oidc.scopes` when a different discovered-login
+profile is intended. Legacy explicit identity login retains `--scopes`, including an
+intentional omission of `offline_access`. This managed OIDC mode is refreshed by
+mecatui; a static `--auth-token` remains caller-managed and is never
 refreshed. The bearer is not placed in UI state, logs, or command arguments.
 
 Remove an enrollment with:

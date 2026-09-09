@@ -194,6 +194,37 @@ func TestSavedPublicLoginDoesNotReadEmptyCAPath(t *testing.T) {
 	}
 }
 
+func TestSavedRemoteLoginUnreadableCAIsActionable(t *testing.T) {
+	err := runSavedRemoteLogin(t.Context(), clientauth.Connection{IssuerCAFile: filepath.Join(t.TempDir(), "missing-ca.pem")}, false)
+	want := "authentication unavailable: storage_unavailable: TLS CA file could not be read; check the --tls-ca path and file permissions"
+	if err == nil || err.Error() != want {
+		t.Fatalf("unreadable CA error = %v, want %q", err, want)
+	}
+	var authErr *client.AuthError
+	if !errors.As(err, &authErr) || authErr.StorageStage != client.AuthStorageTLSCA {
+		t.Fatalf("unreadable CA error = %#v, want TLS CA storage stage", err)
+	}
+}
+
+func TestCredentialStorageUnavailableDistinguishesKeyringAndEncryptedStore(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		cause error
+		stage client.AuthStorageStage
+	}{
+		{"keyring", clientauth.ErrKeyUnavailable, client.AuthStorageKeyring},
+		{"encrypted store", credentialstore.ErrUnavailable, client.AuthStorageCredentialStore},
+		{"wrapped encrypted store", fmt.Errorf("%w: %w", clientauth.ErrKeyUnavailable, credentialstore.ErrUnavailable), client.AuthStorageCredentialStore},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var authErr *client.AuthError
+			if err := credentialStorageUnavailable(tc.cause); !errors.As(err, &authErr) || authErr.StorageStage != tc.stage {
+				t.Fatalf("credentialStorageUnavailable() = %#v, want stage %q", err, tc.stage)
+			}
+		})
+	}
+}
+
 func TestExistingSavedRemoteLoginMissingStoreDoesNotLaunchBrowserOrCreateState(t *testing.T) {
 	oldConfigHome := xdg.ConfigHome
 	xdg.ConfigHome = t.TempDir()

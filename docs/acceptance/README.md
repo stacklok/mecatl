@@ -115,6 +115,10 @@ PR after verification. There is no cleanup or status-only PR.
   that wraps raw dynamic rows before styling, preventing Lipgloss alignment
   padding from becoming vertical whitespace while retaining intentional
   Markdown and input-rail exceptions. Status: draft.
+- [Headless mecatui credential storage](headless-client-credential-storage.md) —
+  Linux-first, read-only Secret Service detection for a root-pinned keyring or
+  owner-only plaintext local credential backend; selection and upgrade-only
+  compatibility decisions are settled. Status: proposed.
 - [Persistent read-before-write ledgers](persistent-read-before-write-ledgers.md) —
   storage-independent, session-scoped read evidence with an in-memory default,
   a durable Redis contract proof, and fail-closed file-tool behavior. Status: draft.
@@ -255,6 +259,10 @@ PR after verification. There is no cleanup or status-only PR.
   resolution, TypeScript/Node/browser/macOS compatibility matrices, executable
   examples and public docs, path-qualified GitHub Packages publication, and the
   human-gated `v0.0.1` cut; npmjs `v0.1.0` remains a #821 follow-up. Status: draft.
+
+- [Canonical Shell command tool](canonical-shell-command-tool.md) — canonical `Shell`
+  and `ShellStatus` model-facing names, safe legacy `Bash` input normalization, and
+  parser-backed portable-POSIX feedback for model-facing shell commands. Status: proposed.
 
 ## See also
 

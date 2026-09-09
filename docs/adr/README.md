@@ -74,7 +74,8 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0233 — Secure external Redis on the shared connection layer](./0233-secure-external-redis.md)
 - [0237 — Listener-scoped workspace authority](./0237-listener-scoped-workspace-authority.md)
 - [0286 — Public and private OIDC issuers are two transports, not one policy](./0286-issuer-transport-split.md) *(supersedes ADR 0284's implicit CA-presence mode selection, and ADR 0277's private-only transport clauses)*
-- [0277 — Remote mecatui OIDC client authentication](./0277-remote-mecatui-oidc.md) *(supersedes 0270–0273)*
+- [0277 — Remote mecatui OIDC client authentication](./0277-remote-mecatui-oidc.md) *(supersedes 0270–0273; keyring-only credential backend selection proposed to be superseded by 0318)*
+- [0318 — Headless mecatui credential backend selection](./0318-headless-mecatui-credential-backend-selection.md) *(proposed; supersedes ADR 0277's keyring-only credential-backend selection clauses)*
 - [0305 — OAuth protected-resource discovery for remote mecatui](./0305-oauth-protected-resource-discovery.md) *(scope-selection clarification proposed in 0316)*
 - [0316 — Server-owned scopes for discovered mecatui login](./0316-server-owned-discovered-oidc-scopes.md) *(proposed; supersedes ADR 0305's scope-selection clauses only)*
 - [0284 — Optional system trust for remote mecatui OIDC issuers](./0284-optional-system-trust-remote-oidc.md) *(supersedes ADR 0277's mandatory issuer-CA requirement only; mode selection superseded by 0286)*
@@ -121,6 +122,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0281 — Managed temporary command leases and deterministic reaping](./0281-managed-temporary-command-leases.md) *(proposed)*
 - [0282 — Managed workspace scratch cache](./0282-managed-workspace-scratch-cache.md) *(proposed; depends on 0281)*
 - [0201 — Background Bash commands](./0201-background-bash.md)
+- [0317 — Canonical Shell command tool](./0317-canonical-shell-command-tool.md) *(supersedes ADR 0201 decision D1 only)*
 - [0208 — Execution environments and version-aware file mutation](./0208-execution-environment.md) *(runtime-seam deferral superseded by 0211; version protocol authoritative)*
 - [0211 — Execution-environment runtime seam](./0211-execution-environment-runtime-seam.md) *(supersedes 0208 decisions 1–3; phase-3 persistence deferral superseded by 0214)*
 - [0214 — Execution-environment persistence and reattachment](./0214-environment-persistence.md) *(supersedes 0211 decision 6 only)*

@@ -1130,6 +1130,7 @@ func (m Model) resetSessionDerived() Model {
 	if m.authorization.controlCancel != nil {
 		m.authorization.controlCancel()
 	}
+	m.authorization.stopFirstEventTimer()
 	if m.authorization.presentationCancel != nil {
 		m.authorization.presentationCancel()
 	}

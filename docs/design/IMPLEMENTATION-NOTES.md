@@ -118,10 +118,12 @@ root resources with or without a trailing slash derive the same metadata URL. A
 saved root-resource hostname and its full resource URL are aliases; legacy
 `host:port` targets remain supported and ambiguity fails closed. `scopes_supported`
 is a narrow operator-configured public-client request allowlist, not authorization
-policy: discovered login requests exactly the confirmed set or an explicit subset and
-never expands a saved enrollment from later metadata. API 401s on subordinate routes
-remain generic `Bearer`; only the direct configured well-known route serves metadata.
-Explicit `mecatui login --scopes` may select only a configured scope. Public-client
+policy: discovered login requests an advertised `scopes_supported` set exactly, while
+an omitted member selects the fixed `openid,profile,offline_access` baseline. Discovery
+rejects `--scopes`; administrators configure `oidc.scopes` for other scopes. It never
+expands a saved enrollment from later metadata. Explicit identity login retains its
+`--scopes` override. API 401s on subordinate routes remain generic `Bearer`; only the
+direct configured well-known route serves metadata. Public-client
 token exchange and refresh use `client_id` parameters, never HTTP Basic. ToolHive/
 ToolHive-Core are recorded
 as implementation provenance for the client path, not imported by the engine.

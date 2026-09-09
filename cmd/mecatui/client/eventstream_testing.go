@@ -1,6 +1,7 @@
 package client
 
 import (
+	"context"
 	"io"
 	"sync"
 
@@ -67,3 +68,25 @@ func (f *FakeEventStream) Recv() (*mecatlv1.Event, error) {
 }
 
 var _ EventRecver = (*FakeEventStream)(nil)
+
+// ctxBlockedRecver models a stalled real transport that never delivers an
+// event and never closes on its own — e.g. a dropped stream-close frame over
+// a flaky tunnel/port-forward. Unlike FakeEventStream (whose Recv returns
+// io.EOF immediately once its script drains and so cannot model a hang), Recv
+// here blocks until ctx is done, mirroring how a real gRPC stream's Recv is
+// bound to its call context.
+type ctxBlockedRecver struct{ ctx context.Context }
+
+func (r ctxBlockedRecver) Recv() (*mecatlv1.Event, error) {
+	<-r.ctx.Done()
+	return nil, r.ctx.Err()
+}
+
+var _ EventRecver = ctxBlockedRecver{}
+
+// NewBlockedEventStream returns an EventStream whose Recv blocks until ctx is
+// cancelled, for tests exercising a caller's OWN timeout/watchdog over a
+// stalled stream (see ctxBlockedRecver).
+func NewBlockedEventStream(ctx context.Context) *EventStream {
+	return NewEventStream(ctxBlockedRecver{ctx: ctx})
+}

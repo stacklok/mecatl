@@ -1,4 +1,5 @@
 import type { App, SayFn } from "@slack/bolt";
+import { ServerError } from "@stacklok/mecatl-sdk";
 
 import type { MecatlBridge } from "./bridge.js";
 import type { BotConfig } from "./env.js";
@@ -6,6 +7,8 @@ import { SlidingWindowRateLimiter } from "./rateLimit.js";
 
 const FAILURE_MESSAGE =
   "Something went wrong running that against mecatl. Check the bot's logs for details.";
+const EXTERNAL_AUTH_MESSAGE =
+  "This needs a connector to be authorized by an administrator before it can be used here.";
 const GREETING = "Tag me with a prompt and I'll run it against mecatl.";
 const NOT_AUTHORIZED_MESSAGE =
   "You're not authorized to use this bot. Ask the operator to add your Slack user ID to SLACK_ALLOWED_USER_IDS.";
@@ -70,13 +73,18 @@ export function registerAgentSessions(app: App, bridge: MecatlBridge, config: Bo
 
   app.event("app_mention", async ({ event, say }) => {
     if (event.bot_id !== undefined) return;
-    if (!isAllowed(config, event.user)) return void say(NOT_AUTHORIZED_MESSAGE);
-    if (!rateLimiter.allow(event.user ?? event.channel)) return void say(RATE_LIMITED_MESSAGE);
+    if (event.user === undefined) {
+      app.logger.warn("app_mention has no user id — ignoring (can't scope a reply to nobody)");
+      return;
+    }
     const threadTs = event.thread_ts ?? event.ts;
+    const notify = ephemeralNotifier(app, event.channel, event.user, threadTs);
+    if (!isAllowed(config, event.user)) return void notify(NOT_AUTHORIZED_MESSAGE);
+    if (!rateLimiter.allow(event.user)) return void notify(RATE_LIMITED_MESSAGE);
     const threadKey = `${event.channel}:${threadTs}`;
     activeChannelThreads.add(threadKey);
     const text = event.text.replace(MENTION_PREFIX, "");
-    await runPrompt(app, bridge, event.channel, threadTs, threadTs, threadKey, text, say);
+    await runPrompt(app, bridge, event.channel, threadTs, threadTs, threadKey, text, say, notify);
   });
 
   app.message(async ({ message, context, say }) => {
@@ -89,11 +97,14 @@ export function registerAgentSessions(app: App, bridge: MecatlBridge, config: Bo
     const threadTs = message.thread_ts;
 
     if (message.channel_type === "im") {
-      if (!isAllowed(config, userId)) return void say(NOT_AUTHORIZED_MESSAGE);
-      if (!rateLimiter.allow(userId ?? channelId)) return void say(RATE_LIMITED_MESSAGE);
+      // A DM channel is already just the bot and this one person, so plain `say` has no
+      // visibility problem here — unlike the channel/group branch below.
+      const notify = sayNotifier(say, undefined);
+      if (!isAllowed(config, userId)) return void notify(NOT_AUTHORIZED_MESSAGE);
+      if (!rateLimiter.allow(userId ?? channelId)) return void notify(RATE_LIMITED_MESSAGE);
       const anchor = dmStatusAnchor.get(channelId) ?? message.ts;
       if (!dmStatusAnchor.has(channelId)) dmStatusAnchor.set(channelId, anchor);
-      await runPrompt(app, bridge, channelId, anchor, undefined, channelId, text, say);
+      await runPrompt(app, bridge, channelId, anchor, undefined, channelId, text, say, notify);
       return;
     }
 
@@ -102,15 +113,51 @@ export function registerAgentSessions(app: App, bridge: MecatlBridge, config: Bo
     const threadKey = `${channelId}:${threadTs}`;
     if (!activeChannelThreads.has(threadKey)) return;
     if (context.botUserId !== undefined && text.includes(`<@${context.botUserId}>`)) return;
-    if (!isAllowed(config, userId)) return void say(NOT_AUTHORIZED_MESSAGE);
-    if (!rateLimiter.allow(userId ?? channelId)) return void say(RATE_LIMITED_MESSAGE);
-    await runPrompt(app, bridge, channelId, threadTs, threadTs, threadKey, text, say);
+    if (userId === undefined) {
+      app.logger.warn("channel message has no user id — ignoring (can't scope a reply to nobody)");
+      return;
+    }
+    const notify = ephemeralNotifier(app, channelId, userId, threadTs);
+    if (!isAllowed(config, userId)) return void notify(NOT_AUTHORIZED_MESSAGE);
+    if (!rateLimiter.allow(userId)) return void notify(RATE_LIMITED_MESSAGE);
+    await runPrompt(app, bridge, channelId, threadTs, threadTs, threadKey, text, say, notify);
   });
 }
 
 function isAllowed(config: BotConfig, userId: string | undefined): boolean {
   if (config.allowedUserIds === undefined) return true;
   return userId !== undefined && config.allowedUserIds.has(userId);
+}
+
+/** A reply channel scoped to the requesting user only — never visible to the rest of a thread. */
+type Notifier = (text: string) => Promise<unknown>;
+
+function sayNotifier(say: SayFn, threadTs: string | undefined): Notifier {
+  return (text) => say(threadTs === undefined ? text : { text, thread_ts: threadTs });
+}
+
+/**
+ * Auth-rejection, rate-limit, and operational-failure replies must stay scoped to the person
+ * who triggered them — broadcasting e.g. "you're not authorized" to the whole channel outs
+ * that person to everyone else in it (#1242). `chat.postEphemeral` is Slack's mechanism for
+ * that: visible only to `user`, never persisted as a regular thread message. There is
+ * deliberately no channel-visible fallback for an unknown `user` (PR #1245 review) — a caller
+ * with no user id to scope the reply to must ignore the event instead of calling this at all,
+ * or the fallback would recreate the exact leak this exists to close.
+ */
+function ephemeralNotifier(
+  app: App,
+  channel: string,
+  user: string,
+  threadTs: string | undefined,
+): Notifier {
+  return (text) =>
+    app.client.chat.postEphemeral({
+      channel,
+      text,
+      user,
+      ...(threadTs === undefined ? {} : { thread_ts: threadTs }),
+    });
 }
 
 async function runPrompt(
@@ -122,6 +169,7 @@ async function runPrompt(
   threadKey: string,
   text: string,
   say: SayFn,
+  notifyError: Notifier,
 ): Promise<void> {
   await setSessionStatus(app, channelId, statusThreadTs, "processing");
   try {
@@ -130,14 +178,33 @@ async function runPrompt(
     await say(replyThreadTs === undefined ? reply : { text: reply, thread_ts: replyThreadTs });
   } catch (error) {
     app.logger.error("mecatl prompt failed", error);
-    await say(
-      replyThreadTs === undefined
-        ? FAILURE_MESSAGE
-        : { text: FAILURE_MESSAGE, thread_ts: replyThreadTs },
-    );
+    if (isStuckExternalAuthorization(error)) {
+      bridge.evictSession(threadKey);
+      await notifyError(EXTERNAL_AUTH_MESSAGE);
+    } else {
+      await notifyError(FAILURE_MESSAGE);
+    }
   } finally {
     await setSessionStatus(app, channelId, statusThreadTs, "active");
   }
+}
+
+/**
+ * Detects the "session has a live external authorization" failed-precondition
+ * error (#1283): a first-use ToolHive connector needs an interactive OAuth
+ * consent this bot can never complete, which otherwise wedges the thread's
+ * cached session forever. There's no dedicated stable error code for this
+ * (it shares the generic `failed_precondition` bucket — see
+ * `sdk/typescript/src/errors.ts`), so detection has to match the free-text
+ * message the server actually emits
+ * (`internal/adapter/server/mcp_authorization.go`).
+ */
+function isStuckExternalAuthorization(error: unknown): boolean {
+  return (
+    error instanceof ServerError &&
+    error.code === "failed_precondition" &&
+    error.message.includes("has a live external authorization")
+  );
 }
 
 /** Best-effort: a session-status hiccup on this still-settling API must never block a reply. */

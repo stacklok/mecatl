@@ -303,7 +303,7 @@ test("packed tarball carries dist and license only", () => {
     packedFiles.get("package/package.json")?.toString("utf8") ?? "{}",
   ) as PackageJson;
   expect(packedPackageJson.name).toBe("@stacklok/mecatl-sdk");
-  expect(packedPackageJson.version).toBe("0.0.0");
+  expect(packedPackageJson.version).toBe("0.0.1");
   expect(packedPackageJson.license).toBe("Apache-2.0");
   expect(packedPackageJson.repository).toEqual({
     directory: "sdk/typescript",
@@ -320,12 +320,7 @@ test("packed tarball carries dist and license only", () => {
     registry: "https://npm.pkg.github.com",
   });
   expect(packedPackageJson.engines).toEqual({ node: ">=22" });
-  expect(packedPackageJson.dependencies).toEqual({
-    "@bufbuild/protobuf": "2.14.0",
-    "@connectrpc/connect": "2.1.2",
-    "@connectrpc/connect-node": "2.1.2",
-    ajv: "8.20.0",
-  });
+  expect(packedPackageJson.dependencies).toEqual(packageJson.dependencies);
   expect(packedPackageJson.dependencyLicenses).toEqual({ ajv: "MIT" });
   expect(packedFiles.get("package/LICENSE")?.toString("utf8")).toContain(
     "Apache License\n                           Version 2.0",

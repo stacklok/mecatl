@@ -83,7 +83,7 @@ The essential server settings are:
 | `--oidc-max-jwks-staleness` | Maximum age of a last-good signing-key cache during an IdP outage. `0` deliberately removes the bound. |
 | `--oidc-resource` | Optional canonical external HTTPS protected-resource URL (RFC 9728). |
 | `--oidc-client-id` | Optional public mecatui client-registration hint; a mecatl extension, not an RFC 9728 field. |
-| `--oidc-scopes` | Optional CSV scope list advertised as `scopes_supported`. It is a narrow operator-configured public-client request allowlist, not server authorization policy; discovered login requests exactly the confirmed set or an explicit subset. |
+| `--oidc-scopes` | Optional CSV scope list advertised as `scopes_supported`. It is a narrow operator-configured public-client request allowlist, not server authorization policy. Discovered login requests an advertised list exactly; when omitted, it requests the fixed `openid,profile,offline_access` baseline. |
 
 
 A typical configuration uses the issuer and audience together:
@@ -120,9 +120,12 @@ separate from authenticated gRPC transport; it never inherits private-issuer CA
 exceptions. ToolHive's metadata/networking code is provenance for the client
 implementation, not a runtime dependency of the engine. `scopes_supported` is a
 narrow operator-configured public-client request allowlist, not server authorization
-policy: discovered login requests exactly the confirmed configured set (or an explicit
-subset) and never expands a saved enrollment from later metadata. The direct configured
-well-known endpoint serves metadata; subordinate API 401 responses remain generic
+policy: discovered login requests an advertised `scopes_supported` set exactly, or the
+fixed `openid,profile,offline_access` baseline when the member is omitted, and never
+expands a saved enrollment from later metadata. Discovery rejects `--scopes`;
+administrators configure `oidc.scopes` for other scopes. Explicit identity login retains
+its `--scopes` override. The direct configured well-known endpoint serves metadata;
+subordinate API 401 responses remain generic
 `Bearer` because their route and untrusted Host cannot prove the configured resource
 identity. With a published profile, `mecatui login ADDRESS` discovers and
 confirms the public tuple from a hostname or HTTPS resource URL. The explicit

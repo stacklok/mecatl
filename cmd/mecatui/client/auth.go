@@ -41,12 +41,55 @@ const (
 	AuthRejected AuthReason = "rejected"
 )
 
+// AuthStorageStage is a closed, secret-free local storage failure stage. It is
+// used only to make AuthStorageUnavailable actionable without exposing wrapped
+// OS, keyring, registry, or credential errors.
+type AuthStorageStage string
+
+const (
+	// AuthStorageTLSCA identifies the issuer CA-file read preflight.
+	AuthStorageTLSCA AuthStorageStage = "tls_ca"
+	// AuthStorageConfigDirectory identifies authentication-root access or setup.
+	AuthStorageConfigDirectory AuthStorageStage = "config_directory"
+	// AuthStorageKeyring identifies encryption-key access through the OS keyring.
+	AuthStorageKeyring AuthStorageStage = "keyring"
+	// AuthStorageCredentialStore identifies encrypted credential-file access.
+	AuthStorageCredentialStore AuthStorageStage = "credential_store" // #nosec G101 -- closed diagnostic label, not a credential.
+	// AuthStorageRegistry identifies connection-registry access.
+	AuthStorageRegistry AuthStorageStage = "registry"
+)
+
 // AuthError retains an exact local authentication cause across the per-RPC
 // credential boundary. Callers must classify it with AuthFailure; no error-text
-// parsing is used for local credential failures.
-type AuthError struct{ Reason AuthReason }
+// parsing is used for local credential failures. StorageStage is an optional
+// closed diagnostic that never contains an underlying error or path.
+type AuthError struct {
+	Reason       AuthReason
+	StorageStage AuthStorageStage
+}
 
-func (e *AuthError) Error() string { return "authentication unavailable: " + string(e.Reason) }
+func (e *AuthError) Error() string {
+	base := "authentication unavailable: " + string(e.Reason)
+	if e.Reason != AuthStorageUnavailable {
+		return base
+	}
+	var detail string
+	switch e.StorageStage {
+	case AuthStorageTLSCA:
+		detail = "TLS CA file could not be read; check the --tls-ca path and file permissions"
+	case AuthStorageConfigDirectory:
+		detail = "authentication config directory is unavailable; check its ownership and permissions"
+	case AuthStorageKeyring:
+		detail = "OS keyring is unavailable; unlock or enable the keyring, then retry"
+	case AuthStorageCredentialStore:
+		detail = "encrypted credential store is unavailable; check the authentication config directory ownership and permissions"
+	case AuthStorageRegistry:
+		detail = "login registry is unavailable; check the authentication config directory ownership and permissions"
+	default:
+		return base
+	}
+	return base + ": " + detail
+}
 
 // AuthFailure returns a safe recovery reason. Composition-mapped local credential
 // failures retain their closed AuthError reason. A server Unauthenticated is

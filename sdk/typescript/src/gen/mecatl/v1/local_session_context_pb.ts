@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: Copyright 2026 Stacklok, Inc.
-// SPDX-License-Identifier: LicenseRef-Stacklok-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 // Privileged local-client workspace-context API (ADR 0296).
 //

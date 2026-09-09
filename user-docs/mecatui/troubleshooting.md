@@ -33,6 +33,14 @@ A bearer is allowed over plaintext loopback, but mecatui refuses it over explici
 non-loopback plaintext. Saved OIDC authentication always uses verified TLS, even
 for loopback. See [Connect to a server](./remote-servers.md) and the operator [server flag reference](/building/deployment/mecated.md#flag-reference).
 
+If `mecatui login` reports `storage_unavailable`, follow the stage-specific action
+in the same message. An issuer CA read failure means checking the login
+`--tls-ca` path and file permissions. A keyring failure means unlocking or enabling
+the OS keyring. Registry, encrypted-store, or config-directory failures mean
+checking the ownership and permissions of the Mecatl authentication directory
+under your XDG config home. The message deliberately omits raw OS errors, local
+paths, and credential material.
+
 ## The workspace is missing or unexpected
 
 For an embedded session, `--workspace` is the local checkout. For a connected server, it is an absolute path in the server's filesystem. Ask the operator which paths are mounted or permitted; do not assume your local path exists in a container, pod, or remote host. See [Connect to a server](./remote-servers.md#choose-the-connection-shape).

@@ -210,7 +210,11 @@ server is authoritative.
 
 - **`mecatui login ADDRESS`** — enrolls a remote server. With a bare DNS hostname
   or HTTPS resource URL, it first performs anonymous RFC 9728 protected-resource
-  discovery and requires confirmation of the discovered values. For legacy or
+  discovery. The first enrollment displays the full discovered values and requires
+  default-deny confirmation. A later login skips both only when the newly discovered
+  canonical resource, complete identity (including scopes), issuer CA, and issuer-address
+  policy exactly match the saved registry connection for that resource; any changed value
+  is treated as a new enrollment and requires the full confirmation again. For legacy or
   private deployments without that profile, provide `--issuer`, `--client-id`, and
   `--audience` explicitly. It then performs Authorization Code + PKCE login and
   records target metadata and an encrypted, target-bound credential. It defaults to
@@ -229,6 +233,12 @@ server is authoritative.
 
   This is Authorization Code + PKCE, not device flow. `connect` does **not** implicitly
   open a browser: an unenrolled target returns guidance to run this command.
+
+  A local preflight failure keeps the closed `storage_unavailable` classification
+  but also identifies a bounded stage and remediation. It distinguishes an unreadable
+  issuer CA file, an unavailable OS keyring, an unavailable encrypted credential
+  store, and registry/config-directory permission failures without printing the
+  underlying OS error, path, or secret material.
 
   A rejected callback reports a closed validation rule that failed — for example
   `callback state did not match the authorization request` — rather than echoing
@@ -263,8 +273,12 @@ server is authoritative.
 
 `mecatui login ADDRESS` is the enrollment path for a remote `mecated`/`mecak8s`
 caller-identity deployment. A bare DNS hostname or HTTPS resource URL discovers the
-issuer, public client, audience, and scopes from RFC 9728 metadata before confirmation;
-legacy/private deployments without a profile require them explicitly. The gRPC target
+issuer, public client, audience, and scopes from RFC 9728 metadata before confirmation.
+It requests an advertised `scopes_supported` list exactly, or the fixed
+`openid,profile,offline_access` baseline when the member is omitted. Discovery rejects
+`--scopes`; administrators configure `oidc.scopes` for other scopes. Legacy/private
+deployments without a profile require those values explicitly and retain the explicit
+login `--scopes` override. The gRPC target
 and confirmed canonical resource remain separate identities: credentials stay keyed by
 the canonical `host:port` target, while a discovery enrollment also saves the resource
 as an exact registry alias. Login validates discovery,

@@ -30,6 +30,20 @@ describe("MecatlBridge", () => {
     });
   });
 
+  it("starts a fresh session for a thread key after evictSession", async () => {
+    await withMockDaemon(async ({ baseUrl }) => {
+      const bridge = new MecatlBridge({ baseUrl });
+      try {
+        const first = await bridge.handlePrompt("channel:thread-1", "first");
+        bridge.evictSession("channel:thread-1");
+        const second = await bridge.handlePrompt("channel:thread-1", "second");
+        expect(second.sessionId).not.toBe(first.sessionId);
+      } finally {
+        await bridge.close();
+      }
+    });
+  });
+
   it("creates a separate mecatl session for a different thread key", async () => {
     await withMockDaemon(async ({ baseUrl }) => {
       const bridge = new MecatlBridge({ baseUrl });

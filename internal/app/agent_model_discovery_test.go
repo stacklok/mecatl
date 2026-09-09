@@ -166,13 +166,45 @@ func TestAgentModelDiscovery_Scenario2_SafeFiltersOnly(t *testing.T) {
 	}
 }
 
+func TestAgentModelDiscovery_Scenario2_EmptyFiltersAreOmitted(t *testing.T) {
+	inventory := newResolvedModelInventory(fixtureModels())
+	for _, tc := range []struct {
+		name string
+		args string
+		want int
+	}{
+		{name: "both empty", args: `{"provider_id":"","model_id":""}`, want: 3},
+		{name: "provider only", args: `{"provider_id":"alpha","model_id":""}`, want: 1},
+		{name: "model only", args: `{"provider_id":"","model_id":"unique"}`, want: 1},
+		{name: "exact non-empty", args: `{"provider_id":"beta","model_id":"shared-model"}`, want: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			result, got := executeDiscovery(t, inventory, tc.args)
+			if result.IsError || len(got.Models) != tc.want || got.Available != tc.want {
+				t.Fatalf("discovery %s = result=%+v output=%+v, want %d matches", tc.args, result, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestAgentModelDiscovery_Scenario2_EmptyFiltersRejectInvalidForms(t *testing.T) {
+	inventory := newResolvedModelInventory(fixtureModels())
+	invalidUTF8 := "{\"provider_id\":\"bad" + string([]byte{0xff}) + "\"}"
+	for _, args := range []string{`{"provider_id":" "}`, `{"model_id":"\t"}`, `{"provider_id":null}`, `{"model_id":null}`, invalidUTF8} {
+		result, _ := executeDiscovery(t, inventory, args)
+		if !result.IsError {
+			t.Errorf("invalid filter %s was accepted: %s", args, result.Content)
+		}
+	}
+}
+
 func TestAgentModelDiscovery_Scenario2_InvalidFiltersDoNotProbeOrSelect(t *testing.T) {
 	inventory := newResolvedModelInventory(fixtureModels())
 	unknown, got := executeDiscovery(t, inventory, `{"provider_id":"unavailable"}`)
 	if unknown.IsError || len(got.Models) != 0 || got.Available != 0 {
 		t.Fatalf("unknown provider must return an honest empty result without fallback: result=%+v body=%+v", unknown, got)
 	}
-	for _, args := range []string{`{"provider_id":" bad "}`, `{"model_id":""}`, fmt.Sprintf(`{"limit":%d}`, maxAgentModelDiscoveryLimit+1)} {
+	for _, args := range []string{`{"provider_id":" bad "}`, fmt.Sprintf(`{"limit":%d}`, maxAgentModelDiscoveryLimit+1)} {
 		result, _ := executeDiscovery(t, inventory, args)
 		if !result.IsError {
 			t.Errorf("malformed/over-bound filter %s was accepted: %s", args, result.Content)

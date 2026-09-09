@@ -20,6 +20,7 @@ const (
 	maxAgentModelDiscoveryLimit       = 50
 	maxAgentModelDiscoveryOutputBytes = 32 << 10
 	maxAgentModelDiscoveryErrorBytes  = 256
+	agentModelDiscoveryInvalidArgs    = "invalid model discovery arguments; use only provider_id, model_id, and limit"
 )
 
 // resolvedModelInventory is the composition-owned resolved inventory shared by
@@ -97,8 +98,8 @@ func (agentModelDiscoveryTool) Spec() tool.ToolSpec {
 		Schema: json.RawMessage(`{
   "type": "object",
   "properties": {
-    "provider_id": {"type": "string", "description": "Exact provider id to retain."},
-    "model_id": {"type": "string", "description": "Exact model id to retain; never implies a provider."},
+    "provider_id": {"type": "string", "description": "Optional exact provider id to retain; omit or use an empty string for no provider filter."},
+    "model_id": {"type": "string", "description": "Optional exact model id to retain; omit or use an empty string for no model filter; never implies a provider."},
     "limit": {"type": "integer", "minimum": 1, "maximum": 50, "description": "Maximum entries to return (default 20, maximum 50)."}
   },
   "additionalProperties": false
@@ -162,31 +163,31 @@ func parseAgentModelDiscoveryArgs(raw json.RawMessage) (agentModelDiscoveryArgs,
 	}
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 || trimmed[0] != '{' {
-		return agentModelDiscoveryArgs{}, "invalid model discovery arguments; use only provider_id, model_id, and limit"
+		return agentModelDiscoveryArgs{}, agentModelDiscoveryInvalidArgs
 	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&args); err != nil {
-		return agentModelDiscoveryArgs{}, "invalid model discovery arguments; use only provider_id, model_id, and limit"
+		return agentModelDiscoveryArgs{}, agentModelDiscoveryInvalidArgs
 	}
 	var trailing any
 	if err := decoder.Decode(&trailing); err != io.EOF {
-		return agentModelDiscoveryArgs{}, "invalid model discovery arguments; use only provider_id, model_id, and limit"
+		return agentModelDiscoveryArgs{}, agentModelDiscoveryInvalidArgs
 	}
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &fields); err != nil {
-		return agentModelDiscoveryArgs{}, "invalid model discovery arguments; use only provider_id, model_id, and limit"
+	if errMessage := validateAgentModelDiscoveryRawFields(raw); errMessage != "" {
+		return agentModelDiscoveryArgs{}, errMessage
 	}
-	for _, name := range []string{"provider_id", "model_id", "limit"} {
-		if value, ok := fields[name]; ok && bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
-			return agentModelDiscoveryArgs{}, "invalid model discovery arguments; filter values cannot be null"
-		}
+	if args.ProviderID != nil && *args.ProviderID == "" {
+		args.ProviderID = nil
+	}
+	if args.ModelID != nil && *args.ModelID == "" {
+		args.ModelID = nil
 	}
 	if args.ProviderID != nil && !validDiscoveryFilter(*args.ProviderID) {
-		return agentModelDiscoveryArgs{}, "provider_id must be a non-empty, bounded exact value without surrounding or control whitespace"
+		return agentModelDiscoveryArgs{}, "provider_id must be a bounded exact value without surrounding or control whitespace"
 	}
 	if args.ModelID != nil && !validDiscoveryFilter(*args.ModelID) {
-		return agentModelDiscoveryArgs{}, "model_id must be a non-empty, bounded exact value without surrounding or control whitespace"
+		return agentModelDiscoveryArgs{}, "model_id must be a bounded exact value without surrounding or control whitespace"
 	}
 	if args.Limit != nil && (*args.Limit < 1 || *args.Limit > maxAgentModelDiscoveryLimit) {
 		return agentModelDiscoveryArgs{}, "limit must be between 1 and 50"
@@ -194,8 +195,28 @@ func parseAgentModelDiscoveryArgs(raw json.RawMessage) (agentModelDiscoveryArgs,
 	return args, ""
 }
 
+func validateAgentModelDiscoveryRawFields(raw json.RawMessage) string {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return agentModelDiscoveryInvalidArgs
+	}
+	for _, name := range []string{"provider_id", "model_id", "limit"} {
+		value, ok := fields[name]
+		if !ok {
+			continue
+		}
+		if !utf8.Valid(value) {
+			return agentModelDiscoveryInvalidArgs
+		}
+		if bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+			return "invalid model discovery arguments; filter values cannot be null"
+		}
+	}
+	return ""
+}
+
 func validDiscoveryFilter(value string) bool {
-	if value == "" || len(value) > 512 || !utf8.ValidString(value) || strings.TrimSpace(value) != value {
+	if len(value) > 512 || !utf8.ValidString(value) || strings.TrimSpace(value) != value {
 		return false
 	}
 	for _, r := range value {
