@@ -36,6 +36,7 @@ func BuildModel(docs Docs) *Model {
 		steerSubtree(docs),
 		modelsSubtree(docs),
 		openRouterSubtree(docs),
+		telemetrySubtree(docs),
 		mcpSubtree(docs),
 	}}
 }
@@ -395,6 +396,31 @@ func modelsSubtree(docs Docs) *Subtree {
 			"allowlist on a trusted workspace (router/allowlist are operator-only).",
 		CommentedOut: true,
 		Fields:       fields,
+	}
+}
+
+func telemetrySubtree(docs Docs) *Subtree {
+	fields := fieldsOf("TelemetrySection", permconfig.TelemetrySection{}, docs)
+	for _, f := range fields {
+		if f.Key == "productMetrics" {
+			f.Nested = fieldsOf("ProductMetricsSection", permconfig.ProductMetricsSection{}, docs)
+		}
+	}
+	return &Subtree{
+		Key:  "telemetry",
+		Tier: TierOperator,
+		Doc: "OPERATOR-TIER opt-out product/adoption metrics (telemetry.productMetrics). " +
+			"Honoured ONLY from the user-global + CLI tiers; a project-tier telemetry: block " +
+			"is IGNORED with a WARN (a project repo cannot flip a user's own telemetry choice " +
+			"in either direction). Omit entirely to fall through to the DO_NOT_TRACK env var " +
+			"and finally the enabled-by-default posture.",
+		CommentedOut: true,
+		Fields:       fields,
+		Example: []string{
+			"telemetry:",
+			"  productMetrics:",
+			"    enabled: false",
+		},
 	}
 }
 

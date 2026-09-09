@@ -358,6 +358,25 @@
 #|         order: ["anthropic", "google-vertex"]
 #|         allow_fallbacks: false
 
+#| === telemetry === (tier: operator)
+#| OPERATOR-TIER opt-out product/adoption metrics (telemetry.productMetrics). Honoured
+#| ONLY from the user-global + CLI tiers; a project-tier telemetry: block is IGNORED
+#| with a WARN (a project repo cannot flip a user's own telemetry choice in either
+#| direction). Omit entirely to fall through to the DO_NOT_TRACK env var and finally the
+#| enabled-by-default posture.
+# telemetry:
+#   # ProductMetrics is the opt-out product/adoption metrics config.
+#   productMetrics:
+#     # Enabled is a *bool so ABSENT (nil) is distinguishable from an explicit false: nil
+#     # = absent (composition falls through to DO_NOT_TRACK then the enabled-by-default
+#     # posture); a non-nil value is honoured exactly.
+#     enabled: false
+#|
+#| Example:
+#|   telemetry:
+#|     productMetrics:
+#|       enabled: false
+
 #| === mcp === (tier: operator)
 #| Strict OPERATOR-TIER Streamable HTTP MCP authority configuration. Mode selects one
 #| mutually exclusive global or session-broker authority; broker mode carries its
