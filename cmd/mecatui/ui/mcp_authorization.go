@@ -16,6 +16,24 @@ const mcpAuthorizationStatusPending = "pending"
 
 const mcpAuthorizationPollInterval = 3 * time.Second
 
+// mcpAuthorizationFirstEventTimeout bounds how long a control (recheck/cancel)
+// waits for its FIRST stream event. A recheck/cancel call normally completes in
+// well under a second (the server processes it synchronously and closes the
+// stream right after, unless it started a granted continuation). If the
+// underlying transport silently drops the stream's data or close frame — a
+// stalled port-forward or ngrok hop, observed live — this call would otherwise
+// hang forever: startMCPAuthorizationControl's context has no deadline, and
+// applyMCPAuthorizationPollTick's tick handler does not reschedule itself while
+// authorization.pollBusy is true, so a single lost signal permanently kills
+// polling until the user does something unrelated that happens to reset state.
+// This timer cancels the call's context if no event arrives in time, which
+// surfaces as an ordinary stream error (mcpAuthorizationErrorMsg) — a path that
+// already resets pollBusy and reschedules the next tick. It is stopped as soon
+// as the first event/error/close is observed, so it never bounds the drain of
+// a genuinely long-running granted continuation. A var, not a const, so tests
+// can shrink it rather than waiting out the real duration.
+var mcpAuthorizationFirstEventTimeout = 10 * time.Second
+
 // mcpAuthorizationPollTickMsg is bound to the authorization control generation.
 // It cannot recheck a replacement authorization or resurrect a cancelled control.
 type mcpAuthorizationPollTickMsg struct {
@@ -52,15 +70,25 @@ type mcpAuthorizationState struct {
 	controlCancel      context.CancelFunc
 	presentationCancel context.CancelFunc
 	controlStream      *client.EventStream
+	firstEventTimer    *time.Timer // bounds the wait for a control's first event; see mcpAuthorizationFirstEventTimeout.
 	runningControlGen  uint64
 	polling            bool // browser presentation succeeded; background observations are active
 	pollBusy           bool // a poll control request is in flight
+}
+
+// stopFirstEventTimer cancels any outstanding first-event watchdog. Idempotent.
+func (a *mcpAuthorizationState) stopFirstEventTimer() {
+	if a.firstEventTimer != nil {
+		a.firstEventTimer.Stop()
+		a.firstEventTimer = nil
+	}
 }
 
 func (m Model) applyMCPAuthorization(msg client.MCPAuthorizationMsg) (tea.Model, tea.Cmd) {
 	if msg.Status != mcpAuthorizationStatusPending {
 		reenteredRunning := false
 		if m.authorization.authorizationID == msg.AuthorizationID {
+			m.authorization.stopFirstEventTimer()
 			if m.authorization.presentationCancel != nil {
 				m.authorization.presentationCancel()
 				m.authorization.presentationCancel = nil
@@ -83,6 +111,7 @@ func (m Model) applyMCPAuthorization(msg client.MCPAuthorizationMsg) (tea.Model,
 	if m.authorization.controlCancel != nil {
 		m.authorization.controlCancel()
 	}
+	m.authorization.stopFirstEventTimer()
 	if m.authorization.presentationCancel != nil {
 		m.authorization.presentationCancel()
 	}
@@ -168,6 +197,7 @@ func (m Model) startMCPAuthorizationControl(cancelAuthorization bool) (tea.Model
 	if m.authorization.controlCancel != nil {
 		m.authorization.controlCancel()
 	}
+	m.authorization.stopFirstEventTimer()
 	if m.authorization.presentationCancel != nil {
 		m.authorization.presentationCancel()
 		m.authorization.presentationCancel = nil
@@ -176,6 +206,7 @@ func (m Model) startMCPAuthorizationControl(cancelAuthorization bool) (tea.Model
 	gen := m.authorization.controlGen
 	ctx, cancel := context.WithCancel(m.deps.Ctx)
 	m.authorization.controlCancel = cancel
+	m.authorization.firstEventTimer = time.AfterFunc(mcpAuthorizationFirstEventTimeout, cancel)
 	m.authorization.errorText = ""
 	m.authorizationEvents = nil
 	return m, controlMCPAuthorizationCmd(ctx, m.deps.MCPAuthorization, m.sessionID, m.authorization.authorizationID, gen, cancelAuthorization)
@@ -242,6 +273,7 @@ func (m Model) updateMCPAuthorizationMsg(message tea.Msg) (tea.Model, tea.Cmd, b
 			return m, nil, true
 		}
 		m.authorizationEvents = nil
+		m.authorization.stopFirstEventTimer()
 		if m.authorization.controlCancel != nil {
 			m.authorization.controlCancel()
 		}
@@ -265,6 +297,7 @@ func (m Model) updateMCPAuthorizationMsg(message tea.Msg) (tea.Model, tea.Cmd, b
 			return m, nil, true
 		}
 		m.authorizationEvents = nil
+		m.authorization.stopFirstEventTimer()
 		if m.authorization.controlCancel != nil {
 			m.authorization.controlCancel()
 		}
@@ -316,6 +349,12 @@ func (m Model) updateMCPAuthorizationEvent(msg mcpAuthorizationEventMsg) (tea.Mo
 	if !m.currentAuthorizationMessage(msg.sessionID, msg.authorizationID, msg.gen) {
 		return m, nil, true
 	}
+	// Any message on this stream — error or genuine event — proves the call is
+	// alive, so the first-event watchdog has done its job. Stopping it here
+	// (rather than only in the mcpAuthorizationErrorMsg/StreamClosedMsg cases)
+	// also covers a granted continuation's subsequent, potentially long-running
+	// run events, which must never be bounded by this timeout.
+	m.authorization.stopFirstEventTimer()
 	if streamErr, ok := msg.msg.(client.StreamErrMsg); ok {
 		errText := oneLine(sanitizeTerminal(streamErr.Err.Error()))
 		m.authorizationEvents = nil

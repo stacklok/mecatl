@@ -101,26 +101,41 @@ func (s *Service) MCPAuthorizationPresentation(ctx context.Context, id session.S
 // RecheckMCPAuthorization observes the exact broker transaction. Pending is
 // inert; granted and terminal outcomes have exactly one continuation winner.
 func (s *Service) RecheckMCPAuthorization(ctx context.Context, id session.SessionID, control MCPAuthorizationControl) (MCPAuthorizationResult, error) {
+	recheckStart := time.Now()
 	if _, err := s.GetSession(ctx, id); err != nil { // owner check before lock
 		return MCPAuthorizationResult{}, errAuthorizationSessionUnavailable
 	}
+	lockWaitStart := time.Now()
 	unlock := s.runEntryMu.lock(id)
 	defer unlock()
+	s.cfg.Diagnostics.Log(ctx, port.LevelDebug, "MCP authorization recheck: lock acquired",
+		"session", string(id), "authorization", control.AuthorizationID, "lock_wait", time.Since(lockWaitStart).String())
 	if err := s.acquireLease(ctx, id); err != nil {
 		return MCPAuthorizationResult{}, err
 	}
 	sess, pending, err := s.loadMatchingAuthorization(ctx, id, control)
 	if err != nil {
+		s.cfg.Diagnostics.Log(ctx, port.LevelDebug, "MCP authorization recheck: no matching pending authorization",
+			"session", string(id), "authorization", control.AuthorizationID, "err", err.Error())
 		return MCPAuthorizationResult{}, err
 	}
+	s.cfg.Diagnostics.Log(ctx, port.LevelDebug, "MCP authorization recheck: pending authorization loaded",
+		"session", string(id), "authorization", pending.Authorization.ID, "call", string(pending.Call.ID),
+		"expires_at", pending.Authorization.ExpiresAt.String())
 	attachment, release, err := s.authorizationAttachment(ctx, sess)
 	if err != nil {
+		s.cfg.Diagnostics.Log(ctx, port.LevelDebug, "MCP authorization recheck: attachment unavailable",
+			"session", string(id), "authorization", pending.Authorization.ID, "err", err.Error(), "broker_state_lost", brokerStateLost(err))
 		if brokerStateLost(err) {
 			return s.resolveAuthorizationLocked(ctx, sess, pending, session.AuthorizationInterrupted)
 		}
 		return MCPAuthorizationResult{}, err
 	}
+	statusCallStart := time.Now()
 	status, statusErr := attachment.AuthorizationStatus(ctx, pending.Authorization)
+	s.cfg.Diagnostics.Log(ctx, port.LevelDebug, "MCP authorization recheck: broker status observed",
+		"session", string(id), "authorization", pending.Authorization.ID, "status", string(status),
+		"broker_call_elapsed", time.Since(statusCallStart).String(), "err", errString(statusErr))
 	if statusErr != nil {
 		release()
 		if brokerStateLost(statusErr) {
@@ -129,6 +144,8 @@ func (s *Service) RecheckMCPAuthorization(ctx context.Context, id session.Sessio
 		return MCPAuthorizationResult{}, statusErr
 	}
 	if status == session.AuthorizationPending && !pending.Authorization.ExpiresAt.After(s.cfg.Now()) {
+		s.cfg.Diagnostics.Log(ctx, port.LevelDebug, "MCP authorization recheck: pending authorization expired locally, cancelling",
+			"session", string(id), "authorization", pending.Authorization.ID)
 		outcome, cancelErr := attachment.CancelAuthorization(ctx, pending.Authorization)
 		if cancelErr != nil {
 			release()
@@ -140,7 +157,19 @@ func (s *Service) RecheckMCPAuthorization(ctx context.Context, id session.Sessio
 	if statusErr != nil {
 		return MCPAuthorizationResult{}, statusErr
 	}
-	return s.applyAuthorizationStatusLocked(ctx, sess, pending, status)
+	result, err := s.applyAuthorizationStatusLocked(ctx, sess, pending, status)
+	s.cfg.Diagnostics.Log(ctx, port.LevelDebug, "MCP authorization recheck: complete",
+		"session", string(id), "authorization", pending.Authorization.ID, "final_status", string(status),
+		"total_elapsed", time.Since(recheckStart).String(), "err", errString(err))
+	return result, err
+}
+
+// errString renders err as a string for structured debug logging, "" for nil.
+func errString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
 
 // CancelMCPAuthorization precisely cancels and resolves one pending control.
@@ -218,6 +247,9 @@ func (s *Service) loadMatchingAuthorization(ctx context.Context, id session.Sess
 	}
 	pending, ok := sess.PendingAuthorization()
 	if !ok || control.SessionID != id || pending.Authorization.ID != control.AuthorizationID {
+		s.cfg.Diagnostics.Log(ctx, port.LevelDebug, "MCP authorization: control does not match session's pending authorization",
+			"session", string(id), "control_session", string(control.SessionID), "control_authorization", control.AuthorizationID,
+			"session_state", string(sess.State), "has_pending", ok, "pending_authorization", pending.Authorization.ID)
 		return nil, session.PendingAuthorization{}, errAuthorizationNoPending
 	}
 	return sess, pending, nil
@@ -294,6 +326,7 @@ func (s *Service) authorizationAttachment(ctx context.Context, sess *session.Ses
 }
 
 func (s *Service) continueGrantedAuthorizationLocked(ctx context.Context, sess *session.Session) (MCPAuthorizationResult, error) {
+	s.cfg.Diagnostics.Log(ctx, port.LevelDebug, "MCP authorization: granted, starting continuation", "session", string(sess.ID), "state", string(sess.State))
 	engine, env, err := s.engineAndEnvironmentFor(ctx, sess)
 	if err != nil {
 		return MCPAuthorizationResult{}, fmt.Errorf("%w: continuation engine: %v", ErrFailedPrecondition, err)
@@ -313,6 +346,7 @@ func (s *Service) continueGrantedAuthorizationLocked(ctx context.Context, sess *
 	}
 	claimed, err := sess.ClaimAuthorization()
 	if err != nil {
+		s.cfg.Diagnostics.Log(ctx, port.LevelDebug, "MCP authorization: claim failed", "session", string(sess.ID), "state", string(sess.State), "err", err.Error())
 		return MCPAuthorizationResult{}, errAuthorizationUnclaimable
 	}
 	if err := s.saveSession(ctx, sess); err != nil {
@@ -362,6 +396,8 @@ func (s *Service) registerAndStartGrantedAuthorization(ctx context.Context, sess
 	}
 	if !s.registerPrepared(sess.ID, prepared.Run(), sess) {
 		waitForCancellation()
+		s.cfg.Diagnostics.Log(ctx, port.LevelDebug, "MCP authorization: granted continuation registration lost (an active run already owns the session)",
+			"session", string(sess.ID))
 		if err := s.restoreAuthorizationClaimOrSettle(context.WithoutCancel(ctx), sess.ID, sess, claimed); err != nil {
 			return fmt.Errorf("%w: restore unregistered authorization claim: %v", ErrInternal, err)
 		}
@@ -377,6 +413,8 @@ func (s *Service) registerAndStartGrantedAuthorization(ctx context.Context, sess
 		handoff.Lock()
 		handoff.Unlock() //nolint:staticcheck // deliberate empty critical section: wait for the AfterFunc callback's own lock/unlock to complete
 		s.deregister(sess.ID, prepared.Run())
+		s.cfg.Diagnostics.Log(ctx, port.LevelDebug, "MCP authorization: granted continuation aborted by caller cancellation before start",
+			"session", string(sess.ID))
 		if restoreErr := s.restoreAuthorizationClaimOrSettle(context.WithoutCancel(ctx), sess.ID, sess, claimed); restoreErr != nil {
 			return fmt.Errorf("%w: restore cancelled authorization claim: %v", ErrInternal, restoreErr)
 		}
@@ -387,13 +425,18 @@ func (s *Service) registerAndStartGrantedAuthorization(ctx context.Context, sess
 	if transition != agent.PreparedRunStarted {
 		s.deregister(sess.ID, prepared.Run())
 		s.repairAuthorizationRegistration(ctx, sess)
+		s.cfg.Diagnostics.Log(ctx, port.LevelDebug, "MCP authorization: granted continuation failed to start",
+			"session", string(sess.ID), "transition", string(transition))
 		return fmt.Errorf("%w: start authorization continuation: %s", ErrInternal, transition)
 	}
 	s.stopAuthorizationExpiry(sess.ID)
+	s.cfg.Diagnostics.Log(ctx, port.LevelDebug, "MCP authorization: granted continuation started", "session", string(sess.ID))
 	return nil
 }
 
 func (s *Service) resolveAuthorizationLocked(ctx context.Context, sess *session.Session, pending session.PendingAuthorization, status session.AuthorizationStatus) (MCPAuthorizationResult, error) {
+	s.cfg.Diagnostics.Log(ctx, port.LevelDebug, "MCP authorization: resolving to terminal status",
+		"session", string(sess.ID), "authorization", pending.Authorization.ID, "status", string(status), "state", string(sess.State))
 	reason := string(status)
 	if status == session.AuthorizationClosed {
 		reason = string(session.AuthorizationInterrupted)
