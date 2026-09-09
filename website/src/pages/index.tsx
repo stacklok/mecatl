@@ -31,7 +31,7 @@ function CardGrid({cards, className = ''}: {cards: Card[]; className?: string}) 
 }
 
 function Hero() {
-  return <section className={styles.hero}><div className={styles.heroInner}><div className={styles.heroText}><h1 className={styles.heroTitle}>The open cloud-native harness for developers who are building platforms</h1><p className={styles.heroSubtitle}>We blew up the harness and then put it back together: more secure, more scalable, more extensible.</p><div className={styles.heroCtas}><Link className={styles.ctaPrimary} to="https://github.com/stacklok/mecatl">Start building with Mecatl</Link><Link className={styles.ctaSecondary} to="/docs/intro">Explore the docs</Link><Link className={styles.ctaSecondary} to="https://discord.gg/stacklok">Engage via Discord</Link></div></div><div className={styles.heroMascot}><img src="/img/mecatito.png" alt="Mecatito, the Mecatl mascot, a Xoloitzcuintli puppy wearing a teal rope collar with Mesoamerican markings" className={styles.mascotImg} /></div></div></section>;
+  return <section className={styles.hero}><div className={styles.heroInner}><div className={styles.heroText}><h1 className={styles.heroTitle}>The open cloud-native harness for developers who are building platforms</h1><p className={styles.heroSubtitle}>We blew up the harness and then put it back together: more secure, more scalable, more extensible.</p><div className={styles.heroCtas}><Link className={styles.ctaPrimary} to="https://github.com/stacklok/mecatl">Start building with Mecatl</Link><Link className={styles.ctaSecondary} to="/docs/intro">Explore the docs</Link><Link className={styles.ctaSecondary} to="https://discord.gg/stacklok">Join our Discord</Link></div></div><div className={styles.heroMascot}><img src="/img/mecatito.png" alt="Mecatito, the Mecatl mascot, a Xoloitzcuintli puppy wearing a teal rope collar with Mesoamerican markings" className={styles.mascotImg} /></div></div></section>;
 }
 
 function CloudNativeStatement() {
@@ -57,7 +57,7 @@ function DeploymentOptions() {
     {label: 'CI', desc: <>Use <code>mecatequi</code> to turn one prompt into a patch and a pass/fail result for your pipeline.</>, link: '/docs/building/deployment/mecatequi'},
     {label: 'Embed', desc: 'Import the engine directly into your Go project.', link: '/docs/building/deployment/embed-engine'},
   ];
-  return <section className={styles.deploySection}><div className={styles.sectionInner}><h2 className={styles.sectionTitle}>Four deployment options to get you started</h2><div className={styles.deployGrid}>{options.map((option) => <Link key={option.label} className={styles.deployCard} to={option.link}><span className={styles.deployLabel}>{option.label}</span><span className={styles.deployDesc}>{option.desc}</span></Link>)}</div></div></section>;
+  return <section className={styles.deploySection}><div className={styles.sectionInner}><h2 className={styles.sectionTitle}>Four deployment options to get you started</h2><div className={styles.deployGrid}>{options.map((option) => <Link key={option.label} className={styles.deployCard} to={option.link} target="_blank" rel="noopener noreferrer"><span className={styles.deployLabel}>{option.label}</span><span className={styles.deployDesc}>{option.desc}</span></Link>)}</div></div></section>;
 }
 
 function Stacklok() {
