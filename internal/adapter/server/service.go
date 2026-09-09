@@ -6361,6 +6361,86 @@ func (s *Service) acquireMutationLease(ctx context.Context, id session.SessionID
 	return func() { s.releaseLease(id) }, nil
 }
 
+// acquireMutationLeaseForStaleSettle is acquireMutationLease's counterpart for
+// SettleIfStale ONLY (the composition-level stale-session reconcile sweep,
+// issue #475). Every OTHER caller of acquireLease/acquireMutationLease
+// deliberately fails fast forever once lostOwnership[id] is set — once this
+// process has been told it lost a session's lease, it must never quietly
+// resume acting as owner without an explicit CloseSession, even if the
+// backend would technically permit a fresh Acquire (TestADR_0294_
+// AwaitingLeaseLossRetractsLocalAskPreservesSnapshot and the Scenario5/7
+// session-affinity-and-handoff tests pin this: a stale owner must stay
+// refused even when no successor ever actually took the lease over).
+//
+// SettleIfStale is different: its caller is authorized as the system
+// stale-reconciler (staleReconcileAuthorized) and has already independently
+// verified, via SessionStale's age-horizon-first test plus a local IsLive
+// check, that id is a genuine crash orphan — never a live handoff in
+// progress. For exactly that narrow, pre-verified case a real re-Acquire is
+// safe: flocklease.Renew's ErrLeaseHeld does not distinguish "a real
+// competitor took it" from "this record simply expired because a renew
+// landed late" (a missed tick, GC pause, backend blip), so once real time has
+// passed the record may simply be free again — and that is the only way a
+// session recovered by the sweep (never closed, so closeSessionLocal's
+// tombstone-clear is never reached) becomes re-acquirable short of a process
+// restart. A genuine live successor still correctly refuses this via
+// ErrLeaseHeld below, so this narrows the fail-fast; it does not weaken the
+// exclusion.
+func (s *Service) acquireMutationLeaseForStaleSettle(ctx context.Context, id session.SessionID) (func(), error) {
+	if s.cfg.SessionLease == nil {
+		return func() {}, nil
+	}
+	s.mu.Lock()
+	if s.leaseDisabled {
+		s.mu.Unlock()
+		return func() {}, nil
+	}
+	if h, held := s.heldLeases[id]; held && h.valid {
+		s.mu.Unlock()
+		return func() {}, nil // already ours; nothing newly acquired to release.
+	}
+	s.mu.Unlock()
+
+	acqCtx, acqCancel := context.WithTimeout(ctx, leaseAcquireTimeout)
+	lease, err := s.cfg.SessionLease.Acquire(acqCtx, id, s.cfg.LeaseOwner)
+	acqCancel()
+	switch {
+	case errors.Is(err, port.ErrLeaseHeld):
+		return func() {}, fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, id)
+	case errors.Is(err, port.ErrLeaseUnsupported):
+		s.mu.Lock()
+		firstTime := !s.leaseDisabled
+		s.leaseDisabled = true
+		s.mu.Unlock()
+		s.cfg.MutationCapability.Disable()
+		if firstTime {
+			s.cfg.Diagnostics.Log(ctx, port.LevelInfo, "session leasing unsupported by backend; disabling (running without cross-process exclusion)",
+				"owner", s.cfg.LeaseOwner)
+		}
+		return func() {}, nil
+	case err != nil:
+		return func() {}, fmt.Errorf("server: acquire session lease %q: %w", id, err)
+	}
+
+	renewCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	s.mu.Lock()
+	// The backend just proved id is free/ours again — any earlier
+	// definitive-loss tombstone no longer applies to this now-verified-orphaned
+	// session.
+	delete(s.lostOwnership, id)
+	if _, dup := s.heldLeases[id]; dup {
+		s.mu.Unlock()
+		cancel()
+		return func() {}, nil
+	}
+	h := &heldLease{lease: lease, ctx: renewCtx, cancel: cancel, valid: true}
+	s.cfg.MutationCapability.Grant(id)
+	s.heldLeases[id] = h
+	s.mu.Unlock()
+	go s.renewLoop(renewCtx, id, h)
+	return func() { s.releaseLease(id) }, nil
+}
+
 func (s *Service) mutationLeaseHeld(id session.SessionID) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -6866,7 +6946,7 @@ func (s *Service) SettleIfStale(ctx context.Context, id session.SessionID) (bool
 	if s.IsLive(id) {
 		return false, nil
 	}
-	release, err := s.acquireMutationLease(ctx, id)
+	release, err := s.acquireMutationLeaseForStaleSettle(ctx, id)
 	if err != nil {
 		return false, err
 	}
