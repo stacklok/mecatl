@@ -45,23 +45,29 @@ func defaultFileOps() fileOps {
 	}
 }
 
-// EncryptedFileStore is an encrypted, namespace-bound local-file credential
-// store. Its cross-process CAS guarantee applies only to cooperating processes
-// on one supported local host/filesystem.
-type EncryptedFileStore struct {
+// localFileStore supplies the shared owner-only, locked, atomic CAS substrate.
+type localFileStore struct {
 	mu        sync.RWMutex
 	closed    bool
 	key       []byte
+	plain     bool
 	namespace []byte
 	nsPath    string
 	nsRoot    *os.Root
 	ops       fileOps
 }
 
+// EncryptedFileStore is an encrypted local-file credential store.
+type EncryptedFileStore struct{ *localFileStore }
+
+// PlainFileStore is an owner-only plaintext local-file credential store.
+type PlainFileStore struct{ *localFileStore }
+
 var (
 	_ Reader            = (*EncryptedFileStore)(nil)
 	_ ConditionalWriter = (*EncryptedFileStore)(nil)
 	_ Store             = (*EncryptedFileStore)(nil)
+	_ Store             = (*PlainFileStore)(nil)
 )
 
 // NewEncryptedFile constructs a local encrypted-file store. root must be an
@@ -109,13 +115,13 @@ func NewEncryptedFile(root, namespace string, key []byte) (*EncryptedFileStore, 
 	if err != nil {
 		return nil, unavailable("open credential namespace", err)
 	}
-	store := &EncryptedFileStore{
+	store := &EncryptedFileStore{localFileStore: &localFileStore{
 		key:       ownedKey,
 		namespace: []byte(namespace),
 		nsPath:    nsPath,
 		nsRoot:    nsRoot,
 		ops:       defaultFileOps(),
-	}
+	}}
 	ok = true
 	return store, nil
 }
@@ -163,19 +169,75 @@ func OpenExistingEncryptedFile(root, namespace string, key []byte) (*EncryptedFi
 	if err != nil {
 		return nil, unavailable("open credential namespace", err)
 	}
-	store := &EncryptedFileStore{
+	store := &EncryptedFileStore{localFileStore: &localFileStore{
 		key:       ownedKey,
 		namespace: []byte(namespace),
 		nsPath:    filepath.Join(root, nsName),
 		nsRoot:    nsRoot,
 		ops:       defaultFileOps(),
-	}
+	}}
 	ok = true
 	return store, nil
 }
 
+// NewPlainFile constructs an owner-only plaintext store below the dedicated
+// clientauth-plaintext directory. It shares the encrypted store's local CAS and
+// filesystem-safety substrate but performs no encryption.
+func NewPlainFile(root, namespace string) (*PlainFileStore, error) {
+	return openPlainFile(root, namespace, false)
+}
+
+// OpenExistingPlainFile opens an existing plaintext store without creating or
+// changing the root or namespace.
+func OpenExistingPlainFile(root, namespace string) (*PlainFileStore, error) {
+	return openPlainFile(root, namespace, true)
+}
+
+func openPlainFile(root, namespace string, existing bool) (*PlainFileStore, error) {
+	if err := validateNamespace(namespace); err != nil {
+		return nil, fmt.Errorf("open plaintext credential store: %w", err)
+	}
+	if root == "" || !filepath.IsAbs(root) {
+		return nil, fmt.Errorf("open plaintext credential store: %w", ErrUnavailable)
+	}
+	root = filepath.Clean(root)
+	canonicalRoot, err := canonicalPrivateRoot(root)
+	if err != nil {
+		return nil, fmt.Errorf("open plaintext credential store: %w", err)
+	}
+	root = canonicalRoot
+	if existing {
+		err = validateExistingPrivateRoot(root)
+	} else {
+		err = ensurePrivateRoot(root, syncDirectory)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("open plaintext credential store: %w", err)
+	}
+	rootHandle, err := os.OpenRoot(root)
+	if err != nil {
+		return nil, unavailable("open credential root", err)
+	}
+	defer func() { _ = rootHandle.Close() }()
+	if existing {
+		err = validateExistingPrivateDir(rootHandle, plainDirectory)
+	} else {
+		err = ensurePrivateDir(rootHandle, plainDirectory, syncDirectory)
+	}
+	if err != nil {
+		return nil, err
+	}
+	nsRoot, err := rootHandle.OpenRoot(plainDirectory)
+	if err != nil {
+		return nil, unavailable("open plaintext credential namespace", err)
+	}
+	return &PlainFileStore{localFileStore: &localFileStore{
+		plain: true, namespace: []byte(namespace), nsPath: filepath.Join(root, plainDirectory), nsRoot: nsRoot, ops: defaultFileOps(),
+	}}, nil
+}
+
 // Get returns the authenticated current record.
-func (s *EncryptedFileStore) Get(ctx context.Context, key []byte) (Record, error) {
+func (s *localFileStore) Get(ctx context.Context, key []byte) (Record, error) {
 	if err := validateRecordKey(key); err != nil {
 		return Record{}, err
 	}
@@ -195,7 +257,7 @@ func (s *EncryptedFileStore) Get(ctx context.Context, key []byte) (Record, error
 }
 
 // Put creates or conditionally replaces an encrypted record.
-func (s *EncryptedFileStore) Put(ctx context.Context, key, value []byte, expected *Version) (Record, error) {
+func (s *localFileStore) Put(ctx context.Context, key, value []byte, expected *Version) (Record, error) {
 	if err := validateRecordKey(key); err != nil {
 		return Record{}, err
 	}
@@ -216,7 +278,7 @@ func (s *EncryptedFileStore) Put(ctx context.Context, key, value []byte, expecte
 		case expected != nil && (!expected.valid || !current.Equal(*expected)):
 			return ErrConflict
 		}
-		envelope, version, err := sealEnvelope(s.key, s.namespace, key, value, s.ops.random)
+		envelope, version, err := s.sealRecord(key, value)
 		if err != nil {
 			return err
 		}
@@ -232,7 +294,7 @@ func (s *EncryptedFileStore) Put(ctx context.Context, key, value []byte, expecte
 // ReplaceCorrupt atomically replaces a record only while it remains unreadable
 // as an authenticated envelope. Valid, missing, and operationally unreadable
 // records are never overwritten.
-func (s *EncryptedFileStore) ReplaceCorrupt(ctx context.Context, key, value []byte) (Record, error) {
+func (s *localFileStore) ReplaceCorrupt(ctx context.Context, key, value []byte) (Record, error) {
 	if err := validateRecordKey(key); err != nil {
 		return Record{}, err
 	}
@@ -251,7 +313,7 @@ func (s *EncryptedFileStore) ReplaceCorrupt(ctx context.Context, key, value []by
 			}
 			return ErrConflict
 		}
-		envelope, version, err := sealEnvelope(s.key, s.namespace, key, value, s.ops.random)
+		envelope, version, err := s.sealRecord(key, value)
 		if err != nil {
 			return err
 		}
@@ -265,7 +327,7 @@ func (s *EncryptedFileStore) ReplaceCorrupt(ctx context.Context, key, value []by
 }
 
 // Delete conditionally removes an authenticated record.
-func (s *EncryptedFileStore) Delete(ctx context.Context, key []byte, expected Version) error {
+func (s *localFileStore) Delete(ctx context.Context, key []byte, expected Version) error {
 	if err := validateRecordKey(key); err != nil {
 		return err
 	}
@@ -291,13 +353,13 @@ func (s *EncryptedFileStore) Delete(ctx context.Context, key []byte, expected Ve
 }
 
 // Capabilities reports durable, cooperating-process local CAS.
-func (*EncryptedFileStore) Capabilities() Capabilities {
+func (*localFileStore) Capabilities() Capabilities {
 	return Capabilities{Persistent: true, CrossProcessCAS: true}
 }
 
 // Close waits for operations, closes the rooted handle, and clears the
 // store-owned long-lived key copy. It is safe for concurrent use and idempotent.
-func (s *EncryptedFileStore) Close() error {
+func (s *localFileStore) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
@@ -315,7 +377,7 @@ type recordNames struct {
 	data string
 }
 
-func (s *EncryptedFileStore) withRecordLock(ctx context.Context, key []byte, fn func(recordNames) error) error {
+func (s *localFileStore) withRecordLock(ctx context.Context, key []byte, fn func(recordNames) error) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -354,7 +416,7 @@ func (s *EncryptedFileStore) withRecordLock(ctx context.Context, key []byte, fn 
 	return fn(names)
 }
 
-func (s *EncryptedFileStore) checkLockedSentinel(fl *flock.Flock, name string) error {
+func (s *localFileStore) checkLockedSentinel(fl *flock.Flock, name string) error {
 	lockedInfo, err := fl.Stat()
 	if err != nil {
 		return unavailable("inspect locked credential sentinel", err)
@@ -375,7 +437,7 @@ func (s *EncryptedFileStore) checkLockedSentinel(fl *flock.Flock, name string) e
 	return nil
 }
 
-func (s *EncryptedFileStore) readCurrent(name string, recordKey []byte) ([]byte, Version, bool, error) {
+func (s *localFileStore) readCurrent(name string, recordKey []byte) ([]byte, Version, bool, error) {
 	info, err := s.nsRoot.Lstat(name)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, Version{}, false, nil
@@ -402,14 +464,28 @@ func (s *EncryptedFileStore) readCurrent(name string, recordKey []byte) ([]byte,
 	if err != nil {
 		return nil, Version{}, false, err
 	}
-	value, version, err := openEnvelope(s.key, s.namespace, recordKey, envelope)
+	value, version, err := s.openRecord(recordKey, envelope)
 	if err != nil {
 		return nil, Version{}, false, ErrCorrupt
 	}
 	return value, version, true, nil
 }
 
-func (s *EncryptedFileStore) commitEnvelope(ctx context.Context, names recordNames, envelope []byte) error {
+func (s *localFileStore) sealRecord(key, value []byte) ([]byte, Version, error) {
+	if s.plain {
+		return sealPlainRecord(s.namespace, key, value, s.ops.random)
+	}
+	return sealEnvelope(s.key, s.namespace, key, value, s.ops.random)
+}
+
+func (s *localFileStore) openRecord(key, record []byte) ([]byte, Version, error) {
+	if s.plain {
+		return openPlainRecord(s.namespace, key, record)
+	}
+	return openEnvelope(s.key, s.namespace, key, record)
+}
+
+func (s *localFileStore) commitEnvelope(ctx context.Context, names recordNames, envelope []byte) error {
 	var randomName [16]byte
 	if _, err := io.ReadFull(s.ops.random, randomName[:]); err != nil {
 		return unavailable("create credential temporary name", err)
@@ -455,7 +531,7 @@ func (s *EncryptedFileStore) commitEnvelope(ctx context.Context, names recordNam
 	return s.syncNamespace()
 }
 
-func (s *EncryptedFileStore) syncNamespace() error {
+func (s *localFileStore) syncNamespace() error {
 	dir, err := s.nsRoot.Open(".")
 	if err != nil {
 		return unavailable("open credential namespace for sync", err)
@@ -467,7 +543,7 @@ func (s *EncryptedFileStore) syncNamespace() error {
 	return nil
 }
 
-func (s *EncryptedFileStore) recordNames(key []byte) recordNames {
+func (s *localFileStore) recordNames(key []byte) recordNames {
 	digest := sha256.Sum256(frameFields(recordDomain, s.namespace, key))
 	stem := "rec-v1-" + hex.EncodeToString(digest[:])
 	return recordNames{stem: stem, lock: stem + ".lock", data: stem + ".cred"}
