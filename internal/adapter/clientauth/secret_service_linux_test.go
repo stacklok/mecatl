@@ -14,7 +14,33 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/godbus/dbus/v5"
 )
+
+// TEMPORARY CI diagnostic: dump what the chrooted child actually saw before
+// exiting, so we can see why it isn't reaching the expected 81 (absent) exit
+// on the GH-hosted runner. Remove once the CI failure is understood.
+func debugDiscoveryChild() {
+	f, err := os.Create("/debug.log")
+	if err != nil {
+		return
+	}
+	defer func() { _ = f.Close() }()
+	fmt.Fprintf(f, "uid=%d gid=%d\n", os.Getuid(), os.Getgid())
+	entries, lsErr := os.ReadDir("/run/user/0")
+	fmt.Fprintf(f, "ls /run/user/0 err=%v\n", lsErr)
+	for _, e := range entries {
+		fi, _ := e.Info()
+		fmt.Fprintf(f, "  entry=%q mode=%v\n", e.Name(), fi.Mode())
+	}
+	fmt.Fprintf(f, "DBUS_SESSION_BUS_ADDRESS=%q\n", os.Getenv("DBUS_SESSION_BUS_ADDRESS"))
+	conn, dialErr := dbus.SessionBusPrivateNoAutoStartup()
+	fmt.Fprintf(f, "dial err=%v (%T)\n", dialErr, dialErr)
+	if dialErr == nil {
+		_ = conn.Close()
+	}
+}
 
 func detectorNamespace() *syscall.SysProcAttr {
 	return &syscall.SysProcAttr{Cloneflags: syscall.CLONE_NEWUSER | syscall.CLONE_NEWNS, UidMappings: []syscall.SysProcIDMap{{ContainerID: 0, HostID: os.Getuid(), Size: 1}}, GidMappings: []syscall.SysProcIDMap{{ContainerID: 0, HostID: os.Getgid(), Size: 1}}, GidMappingsEnableSetgroups: false}
@@ -25,14 +51,28 @@ func TestSecretServiceDiscoveryChild(_ *testing.T) {
 	if root == "" {
 		return
 	}
+	debugf := func(format string, args ...any) {
+		f, err := os.OpenFile(filepath.Join(root, "debug.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+		if err != nil {
+			return
+		}
+		defer func() { _ = f.Close() }()
+		fmt.Fprintf(f, format, args...)
+	}
 	// godbus discovers /run/user/<uid>, ignoring XDG_RUNTIME_DIR. Isolate that
 	// actual path rather than accidentally inspecting the operator's session bus.
-	if _, err := user.Current(); err != nil {
+	u, err := user.Current()
+	debugf("user.Current()=%+v err=%v\n", u, err)
+	if err != nil {
 		os.Exit(82)
 	}
-	if syscall.Chroot(root) != nil || os.Chdir("/") != nil {
+	chrootErr := syscall.Chroot(root)
+	chdirErr := os.Chdir("/")
+	debugf("chroot(%q)=%v chdir(/)=%v\n", root, chrootErr, chdirErr)
+	if chrootErr != nil || chdirErr != nil {
 		os.Exit(82)
 	}
+	debugDiscoveryChild()
 	os.Exit(secretServiceHelper(context.Background()))
 }
 
@@ -77,6 +117,11 @@ func TestHeadlessCredentialStorage_Scenario1_LinuxDiscoveryBudget(t *testing.T) 
 				return cmd
 			})
 			if err != nil || state != secretServiceAbsent || cmd.ProcessState == nil {
+				if b, rErr := os.ReadFile(filepath.Join(root, "debug.log")); rErr == nil {
+					t.Logf("child debug.log:\n%s", b)
+				} else {
+					t.Logf("no child debug.log: %v", rErr)
+				}
 				t.Fatalf("discovery state=%v err=%v", state, err)
 			}
 			status := cmd.ProcessState.Sys().(syscall.WaitStatus)
