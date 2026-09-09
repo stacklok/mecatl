@@ -109,8 +109,8 @@ func TestToolCardPreparationIsSharedWithFrameProvenance(t *testing.T) {
 			t.Fatalf("%s: prepareToolCard calls = %d, want %d", step, r.toolCardPrepares, wantPrepares)
 		}
 		entry, ok := r.blockCache[0]
-		if !ok || entry.toolCard == nil {
-			t.Fatalf("%s: matching tool block cache entry did not retain its prepared card", step)
+		if !ok || len(entry.rows) == 0 {
+			t.Fatalf("%s: matching tool block cache entry did not retain structural rows", step)
 		}
 
 		fresh := newCacheRenderer()
@@ -145,18 +145,25 @@ func TestToolCardPreparationIsSharedWithFrameProvenance(t *testing.T) {
 	}
 }
 
-// TestToolCardPreparedSectionsDriveFrameProvenanceAndSelection pins that tool
-// arguments/results retain only references into the prepared card. Canonical text
-// is resolved from the frame-pinned card, so decoration is never parsed and a
-// later render cannot change an already-visible frame's provenance source.
-func TestToolCardPreparedSectionsDriveFrameProvenanceAndSelection(t *testing.T) {
+// TestToolCardStructuralProvenanceSurvivesCacheReplacementAndReflow pins that tool
+// rows retain only structural spans. Canonical text is recovered from the existing
+// rendered line, never by parsing card decoration or retaining prepared sections.
+func TestToolCardStructuralProvenanceSurvivesCacheReplacementAndReflow(t *testing.T) {
 	c := &conversation{}
 	c.addTool("call", "Read", `{"path":"TOOLARGMARKER deliberately wraps across the card"}`)
-	c.resolveTool("call", "TOOLRESULTMARKER deliberately wraps across the card", false)
+	c.resolveTool("call", "TOOLRESULTMARKER deliberately wraps across the card   ", false)
 	r := newCacheRenderer()
 	r.setWidth(32)
 	narrow := r.renderConversationFrame(c, true)
 
+	for _, typ := range []reflect.Type{reflect.TypeOf(renderedRow{}), reflect.TypeOf(blockEntry{}), reflect.TypeOf(renderedFrame{})} {
+		for i := 0; i < typ.NumField(); i++ {
+			field := typ.Field(i)
+			if field.Type == reflect.TypeOf((*preparedToolCard)(nil)) || field.Type == reflect.TypeOf(preparedToolCard{}) {
+				t.Fatalf("%s retains prepared tool-card text through %q", typ.Name(), field.Name)
+			}
+		}
+	}
 	for i := 0; i < reflect.TypeOf(renderedRow{}).NumField(); i++ {
 		field := reflect.TypeOf(renderedRow{}).Field(i)
 		if field.Type.Kind() == reflect.String {
@@ -177,15 +184,15 @@ func TestToolCardPreparedSectionsDriveFrameProvenanceAndSelection(t *testing.T) 
 			if row.region != tc.region {
 				continue
 			}
-			text := toolCardRowText(narrow.toolCards[row.blockID], row)
+			text, leading := selectionRowText(narrow, row, narrow.lines[i])
 			if !strings.Contains(text, tc.marker) {
 				continue
 			}
-			if row.section < 0 || row.sectionRow < 0 {
-				t.Fatalf("%s row lacks structural prepared-card reference: %#v", tc.marker, row)
+			if row.span != graphemeCount(text) || row.span == 0 {
+				t.Fatalf("%s row lacks structural span: %#v", tc.marker, row)
 			}
 			offset := strings.Index(text, tc.marker) + len("TOOL")
-			point, ok := selectionPointFor(narrow, i, row.leading+offset)
+			point, ok := selectionPointFor(narrow, i, leading+offset)
 			if !ok {
 				t.Fatalf("%s selection point was rejected", tc.marker)
 			}
@@ -201,21 +208,32 @@ func TestToolCardPreparedSectionsDriveFrameProvenanceAndSelection(t *testing.T) 
 		}
 	}
 
-	// This mirrors conversationView's visible-frame ownership: provenance rows are
-	// copied out of render scratch while cards remain shared immutable cache values.
+	if len(points) != 2 {
+		t.Fatalf("selection points = %d, want 2", len(points))
+	}
+	trailingSpacesRetained := false
+	for i, row := range narrow.provenance {
+		if row.region != conversationRegionResult {
+			continue
+		}
+		text, _ := selectionRowText(narrow, row, narrow.lines[i])
+		trailingSpacesRetained = trailingSpacesRetained || strings.HasSuffix(text, "   ")
+	}
+	if !trailingSpacesRetained {
+		t.Fatal("tool result provenance lost trailing semantic spaces to card padding")
+	}
+
+	// This mirrors conversationView's visible-frame ownership: its copied rows and
+	// existing rendered lines remain enough after the renderer cache is replaced.
 	visible := narrow
 	visible.provenance = append([]renderedRow(nil), narrow.provenance...)
+	visible.lines = append([]string(nil), narrow.lines...)
 
-	// Replacing the renderer cache at a different width must not affect the
-	// canonical source used by the still-visible narrow frame.
 	r.setWidth(64)
 	wide := r.renderConversationFrame(c, true)
-	if visible.toolCards[c.blocks[0].id] == wide.toolCards[c.blocks[0].id] {
-		t.Fatal("resize did not replace the cached prepared card")
-	}
 	for _, point := range points {
 		if _, _, ok := resolveSelectionPoint(visible, point); !ok {
-			t.Fatalf("narrow frame lost exact prepared-card source for %#v", point)
+			t.Fatalf("old frame lost exact structural source for %#v", point)
 		}
 		if _, _, ok := resolveSelectionPoint(wide, point); !ok {
 			t.Fatalf("wrapped point did not resolve after reflow: %#v", point)
@@ -334,14 +352,14 @@ func TestToolCardFrameHardwrapsLongCollapsedArgumentRowsRegression(t *testing.T)
 
 	offset := 0
 	argumentRows := 0
-	for _, row := range frame.provenance {
+	for i, row := range frame.provenance {
 		if row.region != conversationRegionArguments {
 			continue
 		}
 		if !row.text {
 			t.Fatal("argument row is not semantic text")
 		}
-		text := toolCardRowText(frame.toolCards[row.blockID], row)
+		text, _ := selectionRowText(frame, row, frame.lines[i])
 		if row.sourceOffset != offset {
 			t.Fatalf("argument source offset = %d, want %d for %q", row.sourceOffset, offset, text)
 		}

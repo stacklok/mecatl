@@ -332,22 +332,11 @@ func selectedText(content string, sel selection) string {
 
 const selectionContextGraphemes = 16
 
-func toolCardRowText(card *preparedToolCard, row renderedRow) string {
-	if card == nil {
-		return ""
-	}
-	rows := card.sectionRows(row.section)
-	if row.sectionRow < 0 || row.sectionRow >= len(rows) {
-		return ""
-	}
-	return rows[row.sectionRow]
-}
-
-func selectionRowText(frame renderedFrame, row renderedRow, line string) (text string, leading int) {
-	if row.kind == blockTool {
-		return toolCardRowText(frame.toolCards[row.blockID], row), row.leading
-	}
+func selectionRowText(_ renderedFrame, row renderedRow, line string) (text string, leading int) {
 	plain := ansi.Strip(line)
+	if row.kind == blockTool {
+		return graphemeSlice(plain, row.leading, row.leading+row.span), row.leading
+	}
 	withoutIndent := plain
 	if row.indent > 0 {
 		withoutIndent = strings.TrimPrefix(withoutIndent, strings.Repeat(" ", row.indent))

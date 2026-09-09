@@ -58,12 +58,10 @@ type renderedRow struct {
 	text         bool
 	kind         blockKind
 	indent       int
-	// Tool-card rows retain only their location in the shared prepared card. The
-	// card itself is held by renderedFrame, so provenance never retains a second
-	// canonical-text transcript.
-	section    int
-	sectionRow int
-	leading    int
+	// Tool-card rows retain only their structural location in the rendered line:
+	// canonical source offset, leading semantic grapheme, and visible span.
+	leading int
+	span    int
 }
 
 // renderedFrame keeps the renderer's existing lines and their lockstep row
@@ -72,12 +70,8 @@ type renderedRow struct {
 type renderedFrame struct {
 	lines      []string
 	provenance []renderedRow
-	// toolCards pins each tool row's shared prepared card for this frame. Cache
-	// entries may be replaced by a later render, but an already-visible frame must
-	// continue to resolve its provenance against the card that produced its lines.
-	toolCards map[uint64]*preparedToolCard
-	// appendixID is present only while the expanded changed-files appendix is
-	// eligible. It carries document identity without materialising another text copy.
+	// Tool-card provenance is structural only; prepared semantic sections are
+	// discarded at the cache boundary.
 	appendixID uint64
 }
 
@@ -160,22 +154,9 @@ func (r *renderer) renderConversationFrame(c *conversation, expand bool) rendere
 		// The viewport never retains provenance, so the renderer can reuse this
 		// frame-local backing array after the caller projects the current frame.
 		provenance: r.frameProvenanceScratch[:0],
-		toolCards:  make(map[uint64]*preparedToolCard),
 	}
 	if expand && len(c.filesChanged) > 0 {
 		frame.appendixID = c.changedFilesAppendixID
-	}
-	// Pin the exact prepared cards whose structural row references are present in
-	// this frame. A later cache miss may replace an entry while this frame is still
-	// visible.
-	for i := range c.blocks {
-		b := &c.blocks[i]
-		if b.kind != blockTool {
-			continue
-		}
-		if entry, ok := r.blockCache[i]; ok && entry.rev == b.rev && entry.width == r.width && entry.expand == expand && entry.toolCard != nil {
-			frame.toolCards[b.id] = entry.toolCard
-		}
 	}
 	frame.lines = append(frame.lines, r.joinPrefixLines...)
 	frame.provenance = append(frame.provenance, r.joinPrefixProvenance...)
@@ -218,15 +199,12 @@ func (r *renderer) blockFrameRows(index int, b *block, rendered string, expand b
 	if entry, ok := r.blockFrameCache[index]; ok && entry.rev == b.rev && entry.width == r.width && entry.expand == expand {
 		return entry.rows
 	}
-	var toolCard *preparedToolCard
 	if b.kind == blockTool {
-		// walkBlocks has just rendered this block, so the matching entry contains
-		// the card that produced rendered. Keep the fallback for direct callers.
 		if entry, ok := r.blockCache[index]; ok && entry.rev == b.rev && entry.width == r.width && entry.expand == expand {
-			toolCard = entry.toolCard
+			return entry.rows
 		}
 	}
-	rows := r.provenanceRows(b, rendered, expand, toolCard)
+	rows := r.provenanceRows(b, rendered, expand, nil)
 	if r.blockFrameCache == nil {
 		r.blockFrameCache = map[int]frameBlockEntry{}
 	}
@@ -242,7 +220,6 @@ func (r *renderer) provenanceRows(b *block, rendered string, expand bool, toolCa
 			toolCard = &prepared
 		}
 		rows := toolCard.provenanceRows(b.id, r.indent, r.width)
-		r.assignVisibleOffsets(b, rows, lines, toolCard)
 		for i := range rows {
 			rows[i].kind = b.kind
 			rows[i].indent = r.indent
@@ -277,7 +254,7 @@ func (r *renderer) provenanceRows(b *block, rendered string, expand bool, toolCa
 			rows[i].region = region
 		}
 	}
-	r.assignVisibleOffsets(b, rows, lines, nil)
+	r.assignVisibleOffsets(b, rows, lines)
 	for i := range rows {
 		rows[i].kind = b.kind
 		rows[i].indent = r.indent
@@ -288,7 +265,7 @@ func (r *renderer) provenanceRows(b *block, rendered string, expand bool, toolCa
 // assignVisibleOffsets maps rows to canonical semantic text, not the final panel
 // strings. Indentation, hanging assistant layout, and card framing are presentation
 // only; counting them would make the same text acquire a different offset on reflow.
-func (r *renderer) assignVisibleOffsets(b *block, rows []renderedRow, lines []string, toolCard *preparedToolCard) {
+func (r *renderer) assignVisibleOffsets(b *block, rows []renderedRow, lines []string) {
 	offsets := map[regionKind]int{}
 	for i := range rows {
 		if rows[i].blockID == 0 || rows[i].region == conversationRegionChrome || rows[i].region == conversationRegionAppendix {
@@ -296,12 +273,7 @@ func (r *renderer) assignVisibleOffsets(b *block, rows []renderedRow, lines []st
 		}
 		rows[i].text = true
 		rows[i].sourceOffset = offsets[rows[i].region]
-		plain := ansi.Strip(lines[i])
-		if b.kind == blockTool {
-			plain = toolCardRowText(toolCard, rows[i])
-		} else {
-			plain = canonicalRowText(b.kind, plain, r.indent)
-		}
+		plain := canonicalRowText(b.kind, ansi.Strip(lines[i]), r.indent)
 		offsets[rows[i].region] += graphemeCount(plain)
 	}
 }

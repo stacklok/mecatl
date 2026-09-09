@@ -166,8 +166,8 @@ type renderer struct {
 	blockRenders int
 
 	// toolCardPrepares counts tool-card preparations. A fresh tool block prepares
-	// once for both its rendered output and frame provenance; the prepared card is
-	// retained in the matching blockCache entry. Touched only on the update goroutine.
+	// once for both its rendered output and structural frame provenance; semantic
+	// sections are discarded before the cache entry is retained.
 	toolCardPrepares int
 
 	// inputKey/inputView/inputValid memoize the rendered INPUT region (the bubbles
@@ -286,14 +286,14 @@ type mdEntry struct {
 
 // blockEntry is one memoized whole-block render: the block revision, wrap width,
 // and expand state it was produced under (the validity key) plus the rendered
-// ANSI output. Tool entries retain the exact prepared card used to produce out,
-// so frame provenance does not prepare the same card again.
+// ANSI output. Tool entries retain only per-row structural provenance; the
+// prepared card's semantic strings are discarded after producing both outputs.
 type blockEntry struct {
-	rev      int
-	width    int
-	expand   bool
-	out      string
-	toolCard *preparedToolCard
+	rev    int
+	width  int
+	expand bool
+	out    string
+	rows   []renderedRow
 }
 
 // defaultBlockIndent is the left margin (cells) every conversation block is indented
@@ -796,13 +796,19 @@ func (r *renderer) renderBlock(idx int, b *block, expand bool) string {
 		return e.out
 	}
 	var (
-		out      string
-		toolCard *preparedToolCard
+		out  string
+		rows []renderedRow
 	)
 	if b.kind == blockTool {
 		prepared := r.prepareToolCard(b, expand)
-		toolCard = &prepared
 		out = prepared.render()
+		// Derive structural selection provenance while the semantic card exists.
+		// The cache retains rows, never the prepared semantic sections.
+		rows = prepared.provenanceRows(b.id, r.indent, r.width)
+		for i := range rows {
+			rows[i].kind = b.kind
+			rows[i].indent = r.indent
+		}
 	} else {
 		out = r.renderBlockFresh(idx, b, expand)
 	}
@@ -822,7 +828,7 @@ func (r *renderer) renderBlock(idx int, b *block, expand bool) string {
 		// blocks through here.
 		r.blockCache = map[int]blockEntry{}
 	}
-	r.blockCache[idx] = blockEntry{rev: b.rev, width: r.width, expand: expand, out: out, toolCard: toolCard}
+	r.blockCache[idx] = blockEntry{rev: b.rev, width: r.width, expand: expand, out: out, rows: rows}
 	r.blockRenders++
 	// CORRECTNESS CHOKEPOINT (shared by BOTH render paths): a fresh render of a block
 	// inside the cached incremental-join prefix invalidates that prefix. The prefix

@@ -271,7 +271,7 @@ func TestSelectionReleaseAndReplacementKeepTheCompleteViewport(t *testing.T) {
 		t.Fatalf("replacement release replaced the displayed frame:\n got %q\nwant %q", got, initial)
 	}
 	m = applyAll(m, renderTickMsg{})
-	_, expected := m.conversationFrame()
+	expected := m.conversationContent()
 	if got := ansi.Strip(m.vp.GetContent()); got != ansi.Strip(expected) {
 		t.Fatalf("streamed refresh installed incomplete viewport:\n got %q\nwant %q", got, ansi.Strip(expected))
 	}
@@ -312,7 +312,7 @@ func TestEmptyReleaseDropsSelectionBaseBeforeTheNextProjection(t *testing.T) {
 
 	m.conv.appendAssistant("\n" + liveTail)
 	m.refreshView()
-	_, want := m.conversationFrame()
+	want := m.conversationContent()
 	if got := m.vp.GetContent(); got != want {
 		t.Fatalf("precondition: current viewport content differs from its full projection")
 	}

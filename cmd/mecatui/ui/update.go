@@ -4406,18 +4406,17 @@ func (m Model) onScrollKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-// conversationFrame produces the complete current projection, including the expanded
+// conversationContent produces the complete current projection, including the expanded
 // changed-files appendix which is outside the conversation renderer's block rows.
-func (m *Model) conversationFrame() (renderedFrame, string) {
+func (m *Model) conversationContent() string {
 	frame := m.rend.renderConversationFrame(&m.conv, m.expandTools)
 	content := strings.Join(frame.lines, "\n")
 	if m.expandTools {
 		if list := m.rend.renderChangedFiles(m.conv.filesChanged); list != "" {
 			content += "\n" + list
-			frame = frameWithAppendix(frame, content, m.conv.changedFilesAppendixID)
 		}
 	}
-	return frame, content
+	return content
 }
 
 // refreshView re-renders the conversation into the viewport, keeping the view
@@ -4439,7 +4438,7 @@ func (m *Model) refreshView() {
 	// invalidated — the caller may be a spinner-only frame that skips refreshView
 	// entirely, in which case the vpView cache correctly serves the prior content.
 	m.rend.invalidateVPView()
-	frame, content := m.conversationFrame()
+	frame := m.rend.renderConversationFrame(&m.conv, m.expandTools)
 	// FAST PATH: the line-slice handoff. When no selection is active AND the
 	// changed-files footer is not in play (it renders only under the global expand
 	// toggle), feed vp.SetContentLines directly with the incrementally-joined line
@@ -4453,6 +4452,13 @@ func (m *Model) refreshView() {
 		m.conversationView.replace(&m.vp, frame)
 		m.traceSelection("viewport.content_replace")
 		return
+	}
+	content := strings.Join(frame.lines, "\n")
+	if m.expandTools {
+		if list := m.rend.renderChangedFiles(m.conv.filesChanged); list != "" {
+			content += "\n" + list
+			frame = frameWithAppendix(frame, content, m.conv.changedFilesAppendixID)
+		}
 	}
 	// An active text selection is now rendered by US (styleSelection splices the
 	// selection style into the content lines) rather than the viewport's native
