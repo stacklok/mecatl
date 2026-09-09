@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -188,8 +189,12 @@ func TestHeadlessCredentialStorage_Scenario1_WholeDetectionBudget(t *testing.T) 
 			if fixtureErr := <-done; fixtureErr != nil {
 				t.Fatal(fixtureErr)
 			}
-			if err != nil || state != secretServiceAbsent || cmd.ProcessState == nil || cmd.ProcessState.Success() {
+			if err != nil || state != secretServiceAbsent || cmd.ProcessState == nil {
 				t.Fatalf("stall not killed and joined: state=%v err=%v", state, err)
+			}
+			status, ok := cmd.ProcessState.Sys().(syscall.WaitStatus)
+			if !ok || !status.Signaled() || status.Signal() != syscall.SIGKILL {
+				t.Fatal("stall did not terminate with joined SIGKILL")
 			}
 		})
 	}

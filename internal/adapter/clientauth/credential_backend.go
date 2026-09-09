@@ -198,6 +198,8 @@ func OpenExistingCredentialStore(ctx context.Context, root string) (credentialst
 	return store, selection.Backend, err
 }
 
+var credentialKeyringBackend keyringBackend = osKeyringBackend{}
+
 func openSelectedCredentialStore(ctx context.Context, root string, backend CredentialBackend, existing bool) (credentialstore.Store, error) {
 	if backend == CredentialBackendFile {
 		var store *credentialstore.PlainFileStore
@@ -215,9 +217,9 @@ func openSelectedCredentialStore(ctx context.Context, root string, backend Crede
 	var keys *KeyringProvider
 	var err error
 	if existing {
-		keys, err = NewExistingKeyringProvider(root)
+		keys, err = newExistingKeyringProvider(root, credentialKeyringBackend)
 	} else {
-		keys, err = NewKeyringProvider(root)
+		keys, err = newKeyringProvider(root, credentialKeyringBackend)
 	}
 	if err != nil {
 		return nil, err

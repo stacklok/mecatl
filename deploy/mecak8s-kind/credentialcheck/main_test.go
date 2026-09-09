@@ -2,8 +2,11 @@ package main
 
 import (
 	"os"
+	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/goccy/go-yaml"
 )
 
 func TestHeadlessCredentialStorage_Scenario5_KindQualificationContract(t *testing.T) {
@@ -19,6 +22,56 @@ func TestHeadlessCredentialStorage_Scenario5_KindQualificationContract(t *testin
 		if !strings.Contains(string(data), want) {
 			t.Errorf("missing qualification contract %q", want)
 		}
+	}
+}
+
+func TestQualificationTaskWiring(t *testing.T) {
+	data, err := os.ReadFile("../Taskfile.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var file struct {
+		Tasks map[string]map[string]any `yaml:"tasks"`
+	}
+	if err := yaml.Unmarshal(data, &file); err != nil {
+		t.Fatal(err)
+	}
+	task := file.Tasks["kind-credential-storage-check"]
+	if task == nil {
+		t.Fatal("qualification task missing")
+	}
+	delete(task, "desc")
+	var want map[string]any
+	if err := yaml.Unmarshal([]byte(`requires:
+  vars: [CHECK, ROOT, TARGET]
+env:
+  CHECK: '{{.CHECK}}'
+  ROOT: '{{.ROOT}}'
+  TARGET: '{{.TARGET}}'
+cmds:
+  - go run ./deploy/mecak8s-kind/credentialcheck
+`), &want); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(task, want) {
+		t.Fatal("qualification task changed required inputs, env-only passing, command, or added orchestration")
+	}
+	data, err = os.ReadFile("../../../Taskfile.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var root struct {
+		Includes map[string]any `yaml:"includes"`
+	}
+	if err := yaml.Unmarshal(data, &root); err != nil {
+		t.Fatal(err)
+	}
+	var include any
+	if err := yaml.Unmarshal([]byte("taskfile: deploy/mecak8s-kind/Taskfile.yml\ndir: .\n"), &include); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(root.Includes["mecak8s"], include) {
+		t.Fatal("qualification task not exposed from repository root as mecak8s")
 	}
 }
 
