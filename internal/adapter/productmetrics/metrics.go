@@ -27,9 +27,9 @@ const (
 )
 
 // Recorder is the product-metrics adapter: it implements port.EventSink
-// (this file) and will implement port.ToolCallRecorder (a later task's
-// toolcall.go), deriving ONLY the bounded counts in the design's catalog. It
-// never reads a tool name, session id, model id, or any free-text field.
+// (this file) and port.ToolCallRecorder (toolcall.go), deriving ONLY the
+// bounded counts in the design's catalog. It never reads a tool name,
+// session id, model id, or any free-text field.
 type Recorder struct {
 	heartbeat       metric.Int64Counter
 	featureEnabled  metric.Int64Counter
@@ -43,9 +43,11 @@ type Recorder struct {
 	teamUsed        metric.Int64Counter
 }
 
-// Compile-time interface check. port.ToolCallRecorder is satisfied once a
-// later task adds Recorder.ToolCall; asserting it here would fail to build.
-var _ port.EventSink = (*Recorder)(nil)
+// Compile-time interface checks.
+var (
+	_ port.EventSink        = (*Recorder)(nil)
+	_ port.ToolCallRecorder = (*Recorder)(nil)
+)
 
 // NewRecorder constructs every instrument from the given MeterProvider. It
 // returns an error if any instrument fails to construct — the OTel meter API
