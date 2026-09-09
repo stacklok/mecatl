@@ -5226,8 +5226,13 @@ func (s *Service) buildAndRegisterSessionEngineWithBrokerTools(ctx context.Conte
 		// (and its client MCP transport). Closing it now would tear that transport out
 		// from under the in-flight run. A provisional entry owned by the serialized
 		// run admission is not live yet and is exactly what this rebuild prepares.
+		// A run PARKED for authorization (RunOutcomeAuthorizationPending) is the one
+		// deliberate exception, mirroring registerPrepared's own carve-out: nothing
+		// reads the engine while parked, and continueGrantedAuthorizationLocked needs
+		// exactly this rebuild — with the freshly authenticated tool catalogue —
+		// before it resumes that same parked call.
 		st := s.runs[id]
-		if st != nil && st.run != nil {
+		if st != nil && st.run != nil && st.run.Outcome() != agent.RunOutcomeAuthorizationPending {
 			s.mu.Unlock()
 			if se.close != nil {
 				_ = se.close()

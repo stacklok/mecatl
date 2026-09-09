@@ -333,6 +333,11 @@ type Attachment interface {
 	Binding() session.ExternalBinding
 	// Tools returns independently owned wrappers bound to this attachment.
 	Tools() []tool.Tool
+	// RefreshGrantedAuthorizationCatalogue atomically replaces static protected
+	// declarations with authenticated metadata after the exact bundle grant. A
+	// valid non-bundle grant returns the unchanged catalogue. The returned snapshot
+	// is independently owned for the host's model-visible catalog.
+	RefreshGrantedAuthorizationCatalogue(context.Context, session.ExternalAuthorization) ([]tool.Tool, error)
 	// PresentAuthorization returns the live presentation URL for the exact
 	// authorization. The URL is deliberately an ephemeral return value: it is not
 	// part of ExternalAuthorization or any broker reference intended for storage.

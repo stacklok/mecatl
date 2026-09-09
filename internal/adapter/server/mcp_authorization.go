@@ -328,10 +328,6 @@ func (s *Service) authorizationAttachment(ctx context.Context, sess *session.Ses
 
 func (s *Service) continueGrantedAuthorizationLocked(ctx context.Context, sess *session.Session) (MCPAuthorizationResult, error) {
 	s.cfg.Diagnostics.Log(ctx, port.LevelDebug, "MCP authorization: granted, starting continuation", "session", string(sess.ID), "state", string(sess.State))
-	engine, env, err := s.engineAndEnvironmentFor(ctx, sess)
-	if err != nil {
-		return MCPAuthorizationResult{}, fmt.Errorf("%w: continuation engine: %v", ErrFailedPrecondition, err)
-	}
 	resolution, err := session.NewAuthorizationResolution(session.AuthorizationGranted)
 	if err != nil {
 		return MCPAuthorizationResult{}, fmt.Errorf("%w: construct granted authorization resolution", ErrInternal)
@@ -355,6 +351,48 @@ func (s *Service) continueGrantedAuthorizationLocked(ctx context.Context, sess *
 		return MCPAuthorizationResult{}, fmt.Errorf("%w: persist authorization claim", ErrInternal)
 	}
 	s.stopAuthorizationExpiry(sess.ID)
+	// A lazy bundle grant changes the attachment's model-visible metadata, but the
+	// parked session engine still owns its pre-authorization catalog. Publish the
+	// declared-only authenticated snapshot and rebuild from that exact snapshot
+	// before resuming the parked call.
+	attachment, release, err := s.authorizationAttachment(ctx, sess)
+	if err != nil {
+		if restoreErr := s.restoreAuthorizationClaimOrSettle(ctx, sess.ID, sess, claimed); restoreErr != nil {
+			return MCPAuthorizationResult{}, fmt.Errorf("%w: continuation attachment: %v; restore claim: %v", ErrInternal, err, restoreErr)
+		}
+		return MCPAuthorizationResult{}, fmt.Errorf("%w: continuation attachment", ErrInternal)
+	}
+	exactTools, refreshErr := attachment.RefreshGrantedAuthorizationCatalogue(ctx, claimed.Authorization)
+	release()
+	if refreshErr != nil {
+		if restoreErr := s.restoreAuthorizationClaimOrSettle(ctx, sess.ID, sess, claimed); restoreErr != nil {
+			return MCPAuthorizationResult{}, fmt.Errorf("%w: refresh granted authorization catalogue: %v; restore claim: %v", ErrInternal, refreshErr, restoreErr)
+		}
+		return MCPAuthorizationResult{}, fmt.Errorf("%w: refresh granted authorization catalogue", ErrInternal)
+	}
+	sel := ProviderSelector{ProviderID: sess.ProviderID, ModelID: sess.ModelID, ReasoningEffort: sess.ReasoningEffort}
+	if _, err := s.buildAndRegisterSessionEngineWithBrokerTools(ctx, sess, sel, profileForSession(sess), sess.Mode, true, exactTools, true); err != nil {
+		if errors.Is(err, ErrInvalidArgument) {
+			// Some OTHER run raced onto this session's slot between the parked run's
+			// admission and this rebuild — the same race registerAndStartGrantedAuthorization
+			// handles below via registerPrepared. Compensate identically.
+			if restoreErr := s.restoreAuthorizationClaimOrSettle(ctx, sess.ID, sess, claimed); restoreErr != nil {
+				return MCPAuthorizationResult{}, fmt.Errorf("%w: restore unregistered authorization claim: %v", ErrInternal, restoreErr)
+			}
+			return MCPAuthorizationResult{}, ErrNoActiveRun
+		}
+		if restoreErr := s.restoreAuthorizationClaimOrSettle(ctx, sess.ID, sess, claimed); restoreErr != nil {
+			return MCPAuthorizationResult{}, fmt.Errorf("%w: rebuild session engine with authenticated tools: %v; restore claim: %v", ErrInternal, err, restoreErr)
+		}
+		return MCPAuthorizationResult{}, fmt.Errorf("%w: rebuild session engine with authenticated tools", ErrInternal)
+	}
+	engine, env, err := s.engineAndEnvironmentFor(ctx, sess)
+	if err != nil {
+		if restoreErr := s.restoreAuthorizationClaimOrSettle(ctx, sess.ID, sess, claimed); restoreErr != nil {
+			return MCPAuthorizationResult{}, fmt.Errorf("%w: continuation engine: %v; restore claim: %v", ErrInternal, err, restoreErr)
+		}
+		return MCPAuthorizationResult{}, fmt.Errorf("%w: continuation engine", ErrInternal)
+	}
 	prepared, err := engine.PrepareAuthorizationContinuation(memory.WithWorkspace(ctx, env.Workspace().Root()), sess, env, claimed, resolution)
 	if err != nil {
 		if restoreErr := s.restoreAuthorizationClaimOrSettle(ctx, sess.ID, sess, claimed); restoreErr != nil {

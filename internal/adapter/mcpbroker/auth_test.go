@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -158,6 +159,170 @@ func TestADR_0310_LazyAuthorizationDoesNotDiscoverUndeclaredTools(t *testing.T) 
 	if len(after) != len(before) || len(after) != 1 || after[0] != before[0] {
 		t.Fatalf("lazy authorization changed catalogue from %v to %v", before, after)
 	}
+}
+
+func TestADR_0319_LazyGrantReplacesDeclaredMetadata(t *testing.T) {
+	tokenServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"broker-token","token_type":"Bearer","expires_in":3600}`))
+	}))
+	defer tokenServer.Close()
+	harness := newProtectedHarness(t, tokenServer)
+	harness.runtime.catalogue.routes[0].broker = true
+	declared := harness.runtime.catalogue.routes[0]
+	declared.spec.Description = "static"
+	harness.runtime.catalogue.routes[0] = declared
+	absent := declared
+	absent.spec = tool.ToolSpec{Name: "mcp__github__absent", Description: "static absent", Schema: json.RawMessage(`{"type":"object"}`)}
+	slack := declared
+	slack.backend = "slack"
+	slack.spec = tool.ToolSpec{Name: "mcp__slack__list", Description: "static slack", Schema: json.RawMessage(`{"type":"object"}`)}
+	harness.runtime.catalogue.routes = append(harness.runtime.catalogue.routes, absent, slack)
+	attachment, _ := attach(t, harness.runtime, "lazy-refresh")
+	protected := toolByName(t, attachment, "mcp__github__create").(*protectedSessionTool)
+	queries := &orderedCapabilityQueries{responses: map[string]AuthenticatedCapabilities{
+		"github": {
+			Backend: "github", Tools: []ToolDefinition{
+				{Backend: "github", Name: "mcp__github__create", Description: "live", Schema: json.RawMessage(`{"type":"object","properties":{"live":{"type":"boolean"}}}`), ReadOnly: true},
+				{Backend: "github", Name: "mcp__github__undeclared", Description: "hidden", Schema: json.RawMessage(`{"type":"object"}`)},
+			},
+		},
+		"slack": {
+			Backend: "slack", Tools: []ToolDefinition{
+				{Backend: "slack", Name: "mcp__slack__list", Description: "live slack", Schema: json.RawMessage(`{"type":"object"}`), ReadOnly: true},
+			},
+		},
+	}}
+	harness.runtime.process = &Process{Runtime: harness.runtime, construction: toolHiveConstruction{protectedBackends: []string{"github", "slack"}}, protectedTarget: protected.route.oauth, queryAuthenticated: queries.query}
+	authorization, state := requestProtected(t, attachment, session.NewToolCall("lazy-refresh", protected.Spec().Name, json.RawMessage(`{}`)))
+	if got := callback(t, harness.runtime, "code", state).Code; got != http.StatusOK {
+		t.Fatalf("callback status = %d", got)
+	}
+	forged := authorization
+	forged.Binding = "forged-binding"
+	if _, err := attachment.RefreshGrantedAuthorizationCatalogue(t.Context(), forged); !errors.Is(err, contract.ErrAuthorizationNotFound) {
+		t.Fatalf("forged authorization refresh error = %v", err)
+	}
+	if got := toolByName(t, attachment, "mcp__github__create").Spec().Description; got != "static" {
+		t.Fatalf("forged authorization changed description to %q", got)
+	}
+	tools, err := attachment.RefreshGrantedAuthorizationCatalogue(t.Context(), authorization)
+	if err != nil {
+		t.Fatalf("RefreshGrantedAuthorizationCatalogue: %v", err)
+	}
+	if got := toolNames(tools); !reflect.DeepEqual(got, []string{"mcp__github__create", "mcp__slack__list"}) {
+		t.Fatalf("refreshed tools = %v, want declared live tools only", got)
+	}
+	if !reflect.DeepEqual(queries.order, []string{"github", "slack"}) {
+		t.Fatalf("authenticated queries = %v, want complete configured bundle", queries.order)
+	}
+	live := toolByName(t, attachment, "mcp__github__create")
+	if spec := live.Spec(); spec.Description != "live" || !live.ReadOnly() || !strings.Contains(string(spec.Schema), "live") {
+		t.Fatalf("live metadata = %+v readOnly=%v", spec, live.ReadOnly())
+	}
+	if got := toolByName(t, attachment, "mcp__slack__list").Spec().Description; got != "live slack" {
+		t.Fatalf("second backend description = %q, want live slack", got)
+	}
+	if _, ok := attachment.lookupRoute("mcp__github__absent"); ok {
+		t.Fatal("absent declared tool remained published")
+	}
+	if _, ok := attachment.lookupRoute("mcp__github__undeclared"); ok {
+		t.Fatal("undeclared authenticated tool was published")
+	}
+}
+
+func TestADR_0319_LazyGrantRefreshFailureIsAtomic(t *testing.T) {
+	tokenServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"broker-token","token_type":"Bearer","expires_in":3600}`))
+	}))
+	defer tokenServer.Close()
+	harness := newProtectedHarness(t, tokenServer)
+	harness.runtime.catalogue.routes[0].broker = true
+	declared := harness.runtime.catalogue.routes[0]
+	slack := declared
+	slack.backend = "slack"
+	slack.spec.Name = "mcp__slack__list"
+	harness.runtime.catalogue.routes = append(harness.runtime.catalogue.routes, slack)
+	attachment, _ := attach(t, harness.runtime, "lazy-refresh-failure")
+	protected := toolByName(t, attachment, "mcp__github__create").(*protectedSessionTool)
+	queries := &orderedCapabilityQueries{
+		responses: map[string]AuthenticatedCapabilities{"github": {
+			Backend: "github", Tools: []ToolDefinition{{Backend: "github", Name: "mcp__github__create", Description: "live", Schema: json.RawMessage(`{"type":"object"}`)}},
+		}},
+		fail: "slack",
+	}
+	process := &Process{Runtime: harness.runtime, construction: toolHiveConstruction{protectedBackends: []string{"github", "slack"}}, protectedTarget: protected.route.oauth, queryAuthenticated: queries.query}
+	harness.runtime.process = process
+	authorization, state := requestProtected(t, attachment, session.NewToolCall("lazy-refresh-failure", protected.Spec().Name, json.RawMessage(`{}`)))
+	if got := callback(t, harness.runtime, "code", state).Code; got != http.StatusOK {
+		t.Fatalf("callback status = %d", got)
+	}
+	assertStatic := func(label string) {
+		t.Helper()
+		if got := toolNames(attachment.Tools()); !reflect.DeepEqual(got, []string{"mcp__github__create", "mcp__slack__list"}) {
+			t.Fatalf("%s published tools: %v", label, got)
+		}
+	}
+	if _, err := attachment.RefreshGrantedAuthorizationCatalogue(t.Context(), authorization); !errors.Is(err, ErrAuthenticatedDiscovery) {
+		t.Fatalf("RefreshGrantedAuthorizationCatalogue query error = %v", err)
+	}
+	assertStatic("failed backend query")
+
+	queries.mu.Lock()
+	queries.fail = ""
+	queries.responses["github"] = AuthenticatedCapabilities{Backend: "github", Tools: []ToolDefinition{{
+		Backend: "github", Name: "mcp__github__create", Description: "live", Schema: json.RawMessage(`[]`),
+	}}}
+	queries.responses["slack"] = AuthenticatedCapabilities{Backend: "slack"}
+	queries.mu.Unlock()
+	if _, err := attachment.RefreshGrantedAuthorizationCatalogue(t.Context(), authorization); !errors.Is(err, ErrInvalidCatalogue) {
+		t.Fatalf("RefreshGrantedAuthorizationCatalogue validation error = %v", err)
+	}
+	assertStatic("invalid metadata")
+
+	queries.mu.Lock()
+	queries.responses["github"] = AuthenticatedCapabilities{Backend: "github", Tools: []ToolDefinition{{
+		Backend: "github", Name: "mcp__github__create", Description: "live", Schema: json.RawMessage(`{"type":"object"}`),
+	}}}
+	queries.responses["slack"] = AuthenticatedCapabilities{Backend: "slack", Tools: []ToolDefinition{{
+		Backend: "slack", Name: "mcp__slack__list", Description: "live", Schema: json.RawMessage(`{"type":"object"}`),
+	}}}
+	queries.started = make(chan struct{})
+	queries.startedOnce = sync.Once{}
+	queries.release = make(chan struct{})
+	started := queries.started
+	release := queries.release
+	queries.mu.Unlock()
+	refreshDone := make(chan error, 1)
+	go func() {
+		_, err := attachment.RefreshGrantedAuthorizationCatalogue(t.Context(), authorization)
+		refreshDone <- err
+	}()
+	<-started
+	closeDone := make(chan error, 1)
+	go func() { closeDone <- process.Close() }()
+	deadline := time.Now().Add(time.Second)
+	for {
+		process.lifecycleMu.Lock()
+		closed := process.closed
+		process.lifecycleMu.Unlock()
+		if closed {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("process close did not enter lifecycle race")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	close(release)
+	if err := <-refreshDone; err == nil {
+		t.Fatal("process-close race published a catalogue")
+	}
+	if err := <-closeDone; err != nil {
+		t.Fatalf("Process.Close: %v", err)
+	}
+	assertStatic("process-close race")
 }
 
 func TestProtectedCallCallbackSingleUseAndRefreshCustody(t *testing.T) {

@@ -345,13 +345,14 @@ func TestFreezeAuthenticatedCatalogueConcurrentFreezeHasOneCatalogue(t *testing.
 }
 
 type orderedCapabilityQueries struct {
-	mu        sync.Mutex
-	responses map[string]AuthenticatedCapabilities
-	order     []string
-	calls     int
-	fail      string
-	started   chan struct{}
-	release   chan struct{}
+	mu          sync.Mutex
+	responses   map[string]AuthenticatedCapabilities
+	order       []string
+	calls       int
+	fail        string
+	started     chan struct{}
+	startedOnce sync.Once
+	release     chan struct{}
 }
 
 func (q *orderedCapabilityQueries) query(ctx context.Context, _ oauth2.TokenSource, backend string) (AuthenticatedCapabilities, error) {
@@ -364,7 +365,7 @@ func (q *orderedCapabilityQueries) query(ctx context.Context, _ oauth2.TokenSour
 	release := q.release
 	q.mu.Unlock()
 	if started != nil {
-		close(started)
+		q.startedOnce.Do(func() { close(started) })
 	}
 	if release != nil {
 		select {

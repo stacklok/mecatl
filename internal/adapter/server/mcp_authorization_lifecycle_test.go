@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"iter"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -50,6 +51,16 @@ func (t *lifecycleTool) Execute(ctx context.Context, call session.ToolCall, _ to
 	return session.NewToolResult(call.ID, "protected mutation complete"), nil
 }
 
+type lifecycleMarkerTool struct{ name string }
+
+func (t lifecycleMarkerTool) Spec() tool.ToolSpec {
+	return tool.ToolSpec{Name: t.name, Schema: json.RawMessage(`{"type":"object"}`)}
+}
+func (lifecycleMarkerTool) ReadOnly() bool { return true }
+func (t lifecycleMarkerTool) Execute(_ context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
+	return session.NewToolResult(call.ID, t.name), nil
+}
+
 type lifecycleParkingTool struct {
 	*lifecycleTool
 	authorization session.ExternalAuthorization
@@ -80,6 +91,8 @@ type lifecycleAttachment struct {
 	statusHook         func()
 	honorStatusContext bool
 	cancelOutcome      brokercontract.CancelOutcome
+	refreshTools       []tool.Tool
+	refreshCalls       int
 }
 
 func (*lifecycleAttachment) Commit(context.Context) error { return nil }
@@ -88,6 +101,15 @@ func (a *lifecycleAttachment) Binding() session.ExternalBinding {
 	return session.ExternalBinding(a.binding)
 }
 func (a *lifecycleAttachment) Tools() []tool.Tool { return []tool.Tool{a.tool} }
+func (a *lifecycleAttachment) RefreshGrantedAuthorizationCatalogue(context.Context, session.ExternalAuthorization) ([]tool.Tool, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.refreshCalls++
+	if a.refreshTools != nil {
+		return append([]tool.Tool(nil), a.refreshTools...), nil
+	}
+	return []tool.Tool{a.tool}, nil
+}
 func (a *lifecycleAttachment) PresentAuthorization(context.Context, session.ExternalAuthorization) (string, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -144,11 +166,12 @@ func (*lifecycleBroker) DeleteSession(context.Context, session.SessionID) (broke
 }
 
 type lifecycleFixture struct {
-	svc     *Service
-	store   *memstore.Store
-	broker  *lifecycleBroker
-	attach  *lifecycleAttachment
-	pending session.PendingAuthorization
+	svc        *Service
+	store      *memstore.Store
+	broker     *lifecycleBroker
+	attach     *lifecycleAttachment
+	pending    session.PendingAuthorization
+	builtTools *[][]string
 }
 
 // lifecyclePlacementProvider reattaches only the local ref the fixture binds
@@ -241,6 +264,7 @@ func newLifecycleFixtureWithTurns(t *testing.T, status session.AuthorizationStat
 		return agent.NewEngine(agent.Deps{LLM: mockllm.New(turns...), Catalog: catalog, Policy: permpolicy.NewPolicy(nil, nil), Store: store, Model: "mock"})
 	}
 	shared := buildEngine(nil)
+	var builtTools [][]string
 	cfg := Config{
 		Engine: shared, Store: store, PlacementProvider: lifecyclePlacementProvider{}, PlacementScope: "test",
 		MCPBroker: broker, Now: now, AuthorizationTimer: timer,
@@ -251,6 +275,11 @@ func newLifecycleFixtureWithTurns(t *testing.T, status session.AuthorizationStat
 		return SessionEngineResult{Engine: buildEngine(nil), BuiltForMode: mode, Close: func() error { return nil }}, nil
 	}
 	cfg.SessionEngineWithTools = func(_ context.Context, _ ProviderSelector, _ []mcp.ServerConfig, _ SessionProfile, _ string, mode session.PermissionMode, tools []tool.Tool) (SessionEngineResult, error) {
+		names := make([]string, 0, len(tools))
+		for _, candidate := range tools {
+			names = append(names, candidate.Spec().Name)
+		}
+		builtTools = append(builtTools, names)
 		return SessionEngineResult{Engine: buildEngine(tools), BuiltForMode: mode, Close: func() error { return nil }}, nil
 	}
 	svc, err := NewService(cfg)
@@ -274,7 +303,7 @@ func newLifecycleFixtureWithTurns(t *testing.T, status session.AuthorizationStat
 	if err := store.Save(t.Context(), sess); err != nil {
 		t.Fatal(err)
 	}
-	return lifecycleFixture{svc: svc, store: store, broker: broker, attach: attachment, pending: pending}
+	return lifecycleFixture{svc: svc, store: store, broker: broker, attach: attachment, pending: pending, builtTools: &builtTools}
 }
 
 func drainLifecycleRun(t *testing.T, svc *Service, result MCPAuthorizationResult) []session.Event {
@@ -386,7 +415,24 @@ func TestMCPAuthorizationCompetingGrantedControlsHaveOneWinner(t *testing.T) {
 	}
 }
 
-func TestMCPAuthorizationContinuationReplacesJustParkedRun(t *testing.T) {
+func TestAuthenticatedMCPMetadataReplacement_Scenario2_RebuildsParkedContinuation(t *testing.T) {
+	f := newLifecycleFixture(t, session.AuthorizationGranted, nil, time.Now, nil)
+	f.attach.refreshTools = []tool.Tool{f.attach.tool, lifecycleMarkerTool{name: "refreshed"}}
+	control := MCPAuthorizationControl{SessionID: "authorization-session", AuthorizationID: f.pending.Authorization.ID}
+	result, err := f.svc.RecheckMCPAuthorization(t.Context(), control.SessionID, control)
+	if err != nil || result.Run == nil {
+		t.Fatalf("RecheckMCPAuthorization = (%+v, %v)", result, err)
+	}
+	if f.attach.refreshCalls != 1 {
+		t.Fatalf("refreshed catalogue calls = %d, want 1", f.attach.refreshCalls)
+	}
+	if got := *f.builtTools; len(got) == 0 || !slices.Contains(got[len(got)-1], "refreshed") {
+		t.Fatalf("continuation engine tools = %v, want refreshed snapshot", got)
+	}
+	drainLifecycleRun(t, f.svc, result)
+}
+
+func TestAuthenticatedMCPMetadataReplacement_Scenario2_ReplacesJustParkedRun(t *testing.T) {
 	f := newLifecycleFixture(t, session.AuthorizationGranted, nil, time.Now, nil)
 	parkingTool := &lifecycleParkingTool{lifecycleTool: &lifecycleTool{}, authorization: f.pending.Authorization}
 	catalog := tool.NewCatalog()
