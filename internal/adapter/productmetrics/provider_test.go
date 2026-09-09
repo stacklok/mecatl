@@ -45,7 +45,7 @@ func TestNewProviderExportsToConfiguredEndpoint(t *testing.T) {
 	defer p.Shutdown(context.Background())
 
 	meter := p.Meter().Meter("test")
-	counter, cerr := meter.Int64Counter("mecatl.adoption.test")
+	counter, cerr := meter.Int64Counter("mecatl.product.test")
 	if cerr != nil {
 		t.Fatalf("Int64Counter: %v", cerr)
 	}

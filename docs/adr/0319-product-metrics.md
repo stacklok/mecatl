@@ -87,9 +87,9 @@ registry, or destination — only the same two read-only observation points
 every consumer of those ports already receives independently, per
 composition's existing fan-out discipline.
 
-### The shipped `mecatl.adoption.*` catalog
+### The shipped `mecatl.product.*` catalog
 
-All instrument names are namespaced under `mecatl.adoption.*` — passes the
+All instrument names are namespaced under `mecatl.product.*` — passes the
 collector's `^mecatl\..*` filter, and is visually/query-wise distinct from
 the operator-facing `mecatl.tool.*`/`mecatl.runs`/etc. family, so nobody
 looking at either series family can mistake one for the other.
@@ -104,10 +104,10 @@ long-running processes; single fire for `mecatequi`):
 
 | Instrument | Kind | Attributes | Notes |
 |---|---|---|---|
-| `mecatl.adoption.heartbeat` | counter, +1 per fire | none | install/liveness signal |
-| `mecatl.adoption.feature_enabled` | counter, +1 per enabled feature per heartbeat | `feature` | closed `Feature` set — see refinement below |
-| `mecatl.adoption.provider_configured` | counter | `family` | closed `ProviderFamily`: `anthropic`/`openai`/`openrouter`/`other` — never a model id/alias |
-| `mecatl.adoption.deployment_mode` | counter | `mode` | closed `DeploymentMode`: `interactive`/`headless`/`k8s` |
+| `mecatl.product.heartbeat` | counter, +1 per fire | none | install/liveness signal |
+| `mecatl.product.feature_enabled` | counter, +1 per enabled feature per heartbeat | `feature` | closed `Feature` set — see refinement below |
+| `mecatl.product.provider_configured` | counter | `family` | closed `ProviderFamily`: `anthropic`/`openai`/`openrouter`/`other` — never a model id/alias |
+| `mecatl.product.deployment_mode` | counter | `mode` | closed `DeploymentMode`: `interactive`/`headless`/`k8s` |
 
 **Coarse usage** (`metrics.go`/`toolcall.go` — derived from the
 `port.EventSink`/`port.ToolCallRecorder` tap, exported on the provider's
@@ -115,12 +115,12 @@ normal periodic-reader cadence since these are cumulative counters):
 
 | Instrument | Kind | Attributes | Fires on |
 |---|---|---|---|
-| `mecatl.adoption.sessions_started` | counter | none | `EvSessionInit` |
-| `mecatl.adoption.runs_completed` | counter | `stop` (reuses `session.StopReason`) | `EvResult` |
-| `mecatl.adoption.tool_calls` | counter | none — **no tool/MCP-server name label at all** | every `ToolCallRecorder.ToolCall` |
-| `mecatl.adoption.tokens` | counter | `kind` (`input`/`output`/`cache_read`/`cache_write`/`reasoning`) | `EvResult`'s `Usage` |
-| `mecatl.adoption.subagent_used` | counter | none | `EvSubagentStart` |
-| `mecatl.adoption.team_used` | counter | none | `EvTeamStart` |
+| `mecatl.product.sessions_started` | counter | none | `EvSessionInit` |
+| `mecatl.product.runs_completed` | counter | `stop` (reuses `session.StopReason`) | `EvResult` |
+| `mecatl.product.tool_calls` | counter | none — **no tool/MCP-server name label at all** | every `ToolCallRecorder.ToolCall` |
+| `mecatl.product.tokens` | counter | `kind` (`input`/`output`/`cache_read`/`cache_write`/`reasoning`) | `EvResult`'s `Usage` |
+| `mecatl.product.subagent_used` | counter | none | `EvSubagentStart` |
+| `mecatl.product.team_used` | counter | none | `EvTeamStart` |
 
 **Deliberate scope refinement from the original design spec.** The spec's
 illustrative heartbeat catalog listed `teams`/`subagents`/`learning` as
@@ -134,7 +134,7 @@ fire (uninformative) or require inventing a proxy signal (dishonest). The
 shipped `productmetrics.Feature` closed set is exactly four values:
 `memory`, `guardrails`, `mcp`, `scheduling` (`config.go`). Team/Subagent
 adoption is instead captured honestly via the coarse-usage event tap —
-`mecatl.adoption.subagent_used`/`team_used` fire once per run the first time
+`mecatl.product.subagent_used`/`team_used` fire once per run the first time
 that delegation family is actually invoked — which is a truer adoption
 signal than a static capability flag. This ADR records the *shipped* set;
 readers should treat the design spec (`docs/superpowers/specs/2026-09-08-product-metrics-otel-design.md`)

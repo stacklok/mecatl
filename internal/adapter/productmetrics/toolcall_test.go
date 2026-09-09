@@ -17,7 +17,7 @@ func TestRecorderToolCallCountsWithoutIdentity(t *testing.T) {
 	)
 	r.ToolCall(session.SessionID("other"), session.ToolCall{Name: "another_tool"}, session.ToolResult{}, 0, 0)
 
-	agg := collect(t, reader)["mecatl.adoption.tool_calls"]
+	agg := collect(t, reader)["mecatl.product.tool_calls"]
 	if got := sumValue(t, agg); got != 2 {
 		t.Errorf("tool_calls = %d, want 2", got)
 	}

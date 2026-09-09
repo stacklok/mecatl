@@ -76,44 +76,44 @@ func NewRecorder(mp metric.MeterProvider) (*Recorder, error) {
 	r := &Recorder{runFamiliesUsed: make(map[string]usedFamilies)}
 	var err error
 
-	if r.heartbeat, err = meter.Int64Counter("mecatl.adoption.heartbeat",
+	if r.heartbeat, err = meter.Int64Counter("mecatl.product.heartbeat",
 		metric.WithDescription("Process liveness heartbeat.")); err != nil {
 		return nil, fmt.Errorf("productmetrics: heartbeat counter: %w", err)
 	}
-	if r.featureEnabled, err = meter.Int64Counter("mecatl.adoption.feature_enabled",
+	if r.featureEnabled, err = meter.Int64Counter("mecatl.product.feature_enabled",
 		metric.WithDescription("Major feature enabled, by closed feature name, per heartbeat.")); err != nil {
 		return nil, fmt.Errorf("productmetrics: feature_enabled counter: %w", err)
 	}
-	if r.providerConfig, err = meter.Int64Counter("mecatl.adoption.provider_configured",
+	if r.providerConfig, err = meter.Int64Counter("mecatl.product.provider_configured",
 		metric.WithDescription("Configured LLM provider family, by closed family name, per heartbeat.")); err != nil {
 		return nil, fmt.Errorf("productmetrics: provider_configured counter: %w", err)
 	}
-	if r.deploymentMode, err = meter.Int64Counter("mecatl.adoption.deployment_mode",
+	if r.deploymentMode, err = meter.Int64Counter("mecatl.product.deployment_mode",
 		metric.WithDescription("Process deployment mode, by closed mode name, per heartbeat.")); err != nil {
 		return nil, fmt.Errorf("productmetrics: deployment_mode counter: %w", err)
 	}
-	if r.sessionsStarted, err = meter.Int64Counter("mecatl.adoption.sessions_started",
+	if r.sessionsStarted, err = meter.Int64Counter("mecatl.product.sessions_started",
 		metric.WithDescription("Total sessions started.")); err != nil {
 		return nil, fmt.Errorf("productmetrics: sessions_started counter: %w", err)
 	}
-	if r.runsCompleted, err = meter.Int64Counter("mecatl.adoption.runs_completed",
+	if r.runsCompleted, err = meter.Int64Counter("mecatl.product.runs_completed",
 		metric.WithDescription("Total runs completed, by bounded stop reason.")); err != nil {
 		return nil, fmt.Errorf("productmetrics: runs_completed counter: %w", err)
 	}
-	if r.toolCalls, err = meter.Int64Counter("mecatl.adoption.tool_calls",
+	if r.toolCalls, err = meter.Int64Counter("mecatl.product.tool_calls",
 		metric.WithDescription("Total tool calls executed (no tool identity attached).")); err != nil {
 		return nil, fmt.Errorf("productmetrics: tool_calls counter: %w", err)
 	}
-	if r.tokens, err = meter.Int64Counter("mecatl.adoption.tokens",
+	if r.tokens, err = meter.Int64Counter("mecatl.product.tokens",
 		metric.WithDescription("Total tokens accounted, by bounded kind."),
 		metric.WithUnit("{token}")); err != nil {
 		return nil, fmt.Errorf("productmetrics: tokens counter: %w", err)
 	}
-	if r.subagentUsed, err = meter.Int64Counter("mecatl.adoption.subagent_used",
+	if r.subagentUsed, err = meter.Int64Counter("mecatl.product.subagent_used",
 		metric.WithDescription("Runs that used the Subagent delegation family at least once.")); err != nil {
 		return nil, fmt.Errorf("productmetrics: subagent_used counter: %w", err)
 	}
-	if r.teamUsed, err = meter.Int64Counter("mecatl.adoption.team_used",
+	if r.teamUsed, err = meter.Int64Counter("mecatl.product.team_used",
 		metric.WithDescription("Runs that used the Team delegation family at least once.")); err != nil {
 		return nil, fmt.Errorf("productmetrics: team_used counter: %w", err)
 	}

@@ -14,10 +14,10 @@ func TestRecorderHeartbeatRecordsClosedLabelsOnly(t *testing.T) {
 	})
 
 	collected := collect(t, reader)
-	if got := sumValue(t, collected["mecatl.adoption.heartbeat"]); got != 1 {
+	if got := sumValue(t, collected["mecatl.product.heartbeat"]); got != 1 {
 		t.Errorf("heartbeat = %d, want 1", got)
 	}
-	featureAgg := collected["mecatl.adoption.feature_enabled"]
+	featureAgg := collected["mecatl.product.feature_enabled"]
 	if got := sumPoint(t, featureAgg, "feature", "memory"); got != 1 {
 		t.Errorf("feature_enabled{feature=memory} = %d, want 1", got)
 	}
@@ -27,10 +27,10 @@ func TestRecorderHeartbeatRecordsClosedLabelsOnly(t *testing.T) {
 	// guardrails/scheduling were false in the snapshot: TestRecorderNeverAttachesUnboundedAttributesOrSensitiveContent
 	// (Task 6) is the exhaustive "no other data point" check; this test
 	// only asserts the enabled ones are present with the right value.
-	if got := sumPoint(t, collected["mecatl.adoption.provider_configured"], "family", "anthropic"); got != 1 {
+	if got := sumPoint(t, collected["mecatl.product.provider_configured"], "family", "anthropic"); got != 1 {
 		t.Errorf("provider_configured{family=anthropic} = %d, want 1", got)
 	}
-	if got := sumPoint(t, collected["mecatl.adoption.deployment_mode"], "mode", "interactive"); got != 1 {
+	if got := sumPoint(t, collected["mecatl.product.deployment_mode"], "mode", "interactive"); got != 1 {
 		t.Errorf("deployment_mode{mode=interactive} = %d, want 1", got)
 	}
 }
@@ -42,7 +42,7 @@ func TestRunHeartbeatFiresImmediatelyThenStopsOnCtxDone(t *testing.T) {
 
 	RunHeartbeat(ctx, r, time.Hour, FeatureSnapshot{Mode: ModeHeadless})
 
-	if got := sumValue(t, collect(t, reader)["mecatl.adoption.heartbeat"]); got != 1 {
+	if got := sumValue(t, collect(t, reader)["mecatl.product.heartbeat"]); got != 1 {
 		t.Errorf("heartbeat = %d, want exactly 1 (immediate fire only)", got)
 	}
 }

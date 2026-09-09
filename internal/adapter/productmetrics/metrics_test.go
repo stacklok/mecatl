@@ -70,9 +70,9 @@ func TestRecorderEmitSessionsStarted(t *testing.T) {
 	r.Emit(context.Background(), session.Event{Type: session.EvSessionInit})
 	r.Emit(context.Background(), session.Event{Type: session.EvSessionInit})
 
-	agg, ok := collect(t, reader)["mecatl.adoption.sessions_started"]
+	agg, ok := collect(t, reader)["mecatl.product.sessions_started"]
 	if !ok {
-		t.Fatal("mecatl.adoption.sessions_started missing")
+		t.Fatal("mecatl.product.sessions_started missing")
 	}
 	if got := sumValue(t, agg); got != 2 {
 		t.Errorf("sessions_started = %d, want 2", got)
@@ -90,7 +90,7 @@ func TestRecorderEmitRunsCompletedByStopReason(t *testing.T) {
 		Result: &session.ResultPayload{Stop: session.StopError},
 	})
 
-	agg := collect(t, reader)["mecatl.adoption.runs_completed"]
+	agg := collect(t, reader)["mecatl.product.runs_completed"]
 	if got := sumPoint(t, agg, "stop", "end_turn"); got != 1 {
 		t.Errorf("runs_completed{stop=end_turn} = %d, want 1", got)
 	}
@@ -115,7 +115,7 @@ func TestRecorderEmitTokensByKind(t *testing.T) {
 		},
 	})
 
-	agg := collect(t, reader)["mecatl.adoption.tokens"]
+	agg := collect(t, reader)["mecatl.product.tokens"]
 	cases := map[string]int64{"input": 100, "output": 50, "cache_read": 20, "cache_write": 5, "reasoning": 10}
 	for kind, want := range cases {
 		if got := sumPoint(t, agg, "kind", kind); got != want {
@@ -130,10 +130,10 @@ func TestRecorderEmitSubagentAndTeamUsed(t *testing.T) {
 	r.Emit(context.Background(), session.Event{Type: session.EvTeamStart})
 
 	collected := collect(t, reader)
-	if got := sumValue(t, collected["mecatl.adoption.subagent_used"]); got != 1 {
+	if got := sumValue(t, collected["mecatl.product.subagent_used"]); got != 1 {
 		t.Errorf("subagent_used = %d, want 1", got)
 	}
-	if got := sumValue(t, collected["mecatl.adoption.team_used"]); got != 1 {
+	if got := sumValue(t, collected["mecatl.product.team_used"]); got != 1 {
 		t.Errorf("team_used = %d, want 1", got)
 	}
 }
@@ -148,7 +148,7 @@ func TestRecorderSubagentUsedCountsOncePerRun(t *testing.T) {
 	r.Emit(context.Background(), session.Event{Type: session.EvSubagentStart, RunID: "run-1"})
 	r.Emit(context.Background(), session.Event{Type: session.EvSubagentStart, RunID: "run-1"})
 
-	if got := sumValue(t, collect(t, reader)["mecatl.adoption.subagent_used"]); got != 1 {
+	if got := sumValue(t, collect(t, reader)["mecatl.product.subagent_used"]); got != 1 {
 		t.Errorf("subagent_used = %d, want 1 (deduped within one run)", got)
 	}
 }
@@ -162,14 +162,14 @@ func TestRecorderSubagentUsedCountsEachDistinctRun(t *testing.T) {
 	r.Emit(context.Background(), session.Event{Type: session.EvSubagentStart, RunID: "run-1"})
 	r.Emit(context.Background(), session.Event{Type: session.EvSubagentStart, RunID: "run-2"})
 
-	if got := sumValue(t, collect(t, reader)["mecatl.adoption.subagent_used"]); got != 2 {
+	if got := sumValue(t, collect(t, reader)["mecatl.product.subagent_used"]); got != 2 {
 		t.Errorf("subagent_used = %d, want 2 (two distinct runs)", got)
 	}
 
 	r.Emit(context.Background(), session.Event{Type: session.EvResult, RunID: "run-1", Result: &session.ResultPayload{Stop: session.StopEndTurn}})
 	r.Emit(context.Background(), session.Event{Type: session.EvSubagentStart, RunID: "run-1"})
 
-	if got := sumValue(t, collect(t, reader)["mecatl.adoption.subagent_used"]); got != 3 {
+	if got := sumValue(t, collect(t, reader)["mecatl.product.subagent_used"]); got != 3 {
 		t.Errorf("subagent_used = %d, want 3 (run-1's dedup entry cleared on its EvResult)", got)
 	}
 }

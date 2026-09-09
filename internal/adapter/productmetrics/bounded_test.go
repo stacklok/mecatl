@@ -70,7 +70,7 @@ func TestRecorderNeverAttachesUnboundedAttributesOrSensitiveContent(t *testing.T
 		totalMetrics += len(sm.Metrics)
 	}
 	if totalMetrics < 10 {
-		t.Fatalf("collected only %d metrics, want at least 10 (the full mecatl.adoption.* instrument set) — the walk below would otherwise pass vacuously", totalMetrics)
+		t.Fatalf("collected only %d metrics, want at least 10 (the full mecatl.product.* instrument set) — the walk below would otherwise pass vacuously", totalMetrics)
 	}
 
 	for _, sm := range rm.ScopeMetrics {
@@ -91,12 +91,12 @@ func TestRecorderNeverAttachesUnboundedAttributesOrSensitiveContent(t *testing.T
 					assertNoSensitiveSubstring(t, kv.Value.AsString())
 				}
 			}
-			// mecatl.adoption.tool_calls carries NO attributes at all — the
+			// mecatl.product.tool_calls carries NO attributes at all — the
 			// strongest form of "no tool identity ever attaches."
-			if md.Name == "mecatl.adoption.tool_calls" {
+			if md.Name == "mecatl.product.tool_calls" {
 				for _, dp := range sum.DataPoints {
 					if dp.Attributes.Len() != 0 {
-						t.Errorf("mecatl.adoption.tool_calls data point carries %d attributes, want 0: %v",
+						t.Errorf("mecatl.product.tool_calls data point carries %d attributes, want 0: %v",
 							dp.Attributes.Len(), dp.Attributes)
 					}
 				}
