@@ -87,9 +87,9 @@ func buildObservability(ctx context.Context, cfg config, diag port.Diagnostics) 
 		FlagValue:       cfg.productMetrics,
 		SettingsEnabled: permResolver.OperatorProductMetricsEnabled(),
 	})
-	pm, pmErr := cliconfig.BuildProductMetrics(ctx, ctx, enabled,
+	pm, pmErr := cliconfig.BuildProductMetrics(ctx, ctx, enabled, cfg.productMetricsDryRun,
 		productmetrics.BinaryMecak8s, buildinfo.BuildID, productmetrics.DefaultHeartbeatInterval,
-		productmetrics.FeatureSnapshot{Mode: productmetrics.ModeK8s})
+		productmetrics.FeatureSnapshot{Mode: productmetrics.ModeK8s}, diag)
 	if pmErr != nil {
 		// Mirror the existing telemetry-setup-failure posture: a warning, never
 		// a fatal error — product metrics are best-effort and must not block

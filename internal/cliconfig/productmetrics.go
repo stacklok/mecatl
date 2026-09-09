@@ -52,17 +52,33 @@ type ProductMetricsHandles struct {
 // for a single-fire-only short-lived process (mecatequi). heartbeatCtx is
 // cancelled by the caller on shutdown to stop the periodic ticker goroutine
 // this starts.
+//
+// When dryRun is true (and enabled is also true), this builds a
+// productmetrics.DryRunRecorder over diag instead of the real OTLP
+// pipeline — the --product-metrics-dry-run audit path: no install-id
+// read/write, no real provider, no real heartbeat ticker. It fires exactly
+// ONE representative Heartbeat call in its own goroutine (a dry run only
+// needs to show one sample, not simulate the full cadence) and returns
+// handles wrapping the DryRunRecorder as both Sink and ToolCallRecorder.
 func BuildProductMetrics(
 	ctx, heartbeatCtx context.Context,
-	enabled bool,
+	enabled, dryRun bool,
 	binary productmetrics.Binary,
 	version string,
 	heartbeatInterval time.Duration,
 	snap productmetrics.FeatureSnapshot,
+	diag port.Diagnostics,
 ) (ProductMetricsHandles, error) {
 	noop := func(context.Context) error { return nil }
 	if !enabled {
 		return ProductMetricsHandles{Shutdown: noop}, nil
+	}
+	if dryRun {
+		rec := productmetrics.NewDryRunRecorder(diag)
+		go func() {
+			rec.Heartbeat(snap)
+		}()
+		return ProductMetricsHandles{Sink: rec, ToolCallRecorder: rec, Shutdown: noop}, nil
 	}
 
 	installID, firstRun, err := productmetrics.LoadOrCreateInstallIDDefault()

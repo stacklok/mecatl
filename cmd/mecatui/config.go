@@ -166,6 +166,10 @@ type config struct {
 	// noSteerFlagSet).
 	productMetrics        bool
 	productMetricsFlagSet bool
+	// productMetricsDryRun logs every would-be product-metrics observation
+	// via diag instead of exporting it over OTLP — an audit mode to verify
+	// the no-PII claim before trusting --product-metrics for real.
+	productMetricsDryRun bool
 
 	// resumeID and resumeLatest select an existing owned main chat for static
 	// startup adoption. They are shared by embedded and connect modes and mutually
@@ -472,6 +476,8 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string, brows
 	fs.BoolVar(&cfg.noSkills, "no-skills", false, "embedded server only: disable skill discovery (the Skill tool) entirely")
 	fs.BoolVar(&cfg.productMetrics, "product-metrics", true,
 		"report anonymous product-adoption metrics to Stacklok (version, OS/arch, enabled features, coarse session/run/tool-call counts — never a prompt, file path, tool name, or model id). ON by default; opt out with --product-metrics=false, DO_NOT_TRACK=1, or telemetry.productMetrics.enabled: false in settings.yaml")
+	fs.BoolVar(&cfg.productMetricsDryRun, "product-metrics-dry-run", false,
+		"print every product-metrics observation to stderr instead of sending it — verify the no-PII claim yourself before enabling --product-metrics for real")
 
 	fs.BoolVar(&cfg.perf, "perf", false, "embedded server only: expose the private perf-observability admin surface (/metrics, /debug/pprof, /debug/vars, /debug/flightrecorder) and wire domain metrics into the engine. OFF by default. Empty --perf-addr uses a per-instance UNIX socket. SECURITY: UNAUTHENTICATED — its output can embed prompt text/file paths/goroutine stacks")
 	fs.StringVar(&cfg.perfAddr, "perf-addr", "", "embedded server only: explicit loopback host:port for the --perf admin surface (empty = private per-instance UNIX socket, or ephemeral 127.0.0.1 TCP with --perf-mcp). Use 127.0.0.1:0 for explicit ephemeral TCP. Non-loopback addresses are refused. Only consulted with --perf")

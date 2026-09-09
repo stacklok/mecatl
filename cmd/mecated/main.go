@@ -183,6 +183,10 @@ type config struct {
 	// productMetrics reports anonymous product-adoption metrics to Stacklok.
 	// OPT-OUT: ON by default. See the --product-metrics flag help text.
 	productMetrics bool
+	// productMetricsDryRun logs every would-be product-metrics observation
+	// via diag instead of exporting it over OTLP — an audit mode to verify
+	// the no-PII claim before trusting --product-metrics for real.
+	productMetricsDryRun bool
 
 	// Runtime-introspection admin surface (loopback only, on the --metrics-addr
 	// listener): pprof + expvar + a runtime/metrics snapshot + a FlightRecorder.
@@ -1135,9 +1139,9 @@ func setupProductMetrics(ctx context.Context, cfg config, diag port.Diagnostics)
 		SettingsEnabled: permResolver.OperatorProductMetricsEnabled(),
 	})
 	heartbeatCtx, cancelHeartbeat := context.WithCancel(context.Background())
-	pm, err := cliconfig.BuildProductMetrics(ctx, heartbeatCtx, productMetricsEnabled,
+	pm, err := cliconfig.BuildProductMetrics(ctx, heartbeatCtx, productMetricsEnabled, cfg.productMetricsDryRun,
 		productmetrics.BinaryMecated, buildinfo.BuildID, productmetrics.DefaultHeartbeatInterval,
-		productMetricsSnapshot(cfg))
+		productMetricsSnapshot(cfg), diag)
 	if err != nil {
 		slog.Warn("product metrics disabled: setup failed", "err", err)
 	}
@@ -1701,6 +1705,8 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 
 	fs.BoolVar(&cfg.productMetrics, "product-metrics", true,
 		"report anonymous product-adoption metrics to Stacklok (version, OS/arch, enabled features, coarse session/run/tool-call counts — never a prompt, file path, tool name, or model id). ON by default; opt out with --product-metrics=false, DO_NOT_TRACK=1, or telemetry.productMetrics.enabled: false in settings.yaml")
+	fs.BoolVar(&cfg.productMetricsDryRun, "product-metrics-dry-run", false,
+		"print every product-metrics observation to stderr instead of sending it — verify the no-PII claim yourself before enabling --product-metrics for real")
 
 	fs.IntVar(&cfg.mutexProfileFraction, "mutex-profile-fraction", 0, "runtime.SetMutexProfileFraction: report 1/N mutex contention events for /debug/pprof/mutex. 0 (default) disables it. Adds per-contention sampling overhead; enable only when investigating lock contention")
 	fs.IntVar(&cfg.blockProfileRate, "block-profile-rate", 0, "runtime.SetBlockProfileRate in nanoseconds: sample one blocking event per N ns blocked for /debug/pprof/block. 0 (default) disables it. Adds per-block-event overhead; enable only when investigating blocking")

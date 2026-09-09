@@ -165,6 +165,7 @@ var flagApplicabilityByFlag = map[string]flagApplicability{
 	"perf-goroutine-warn-threshold": {group: groupObservability, common: false, local: true, connect: false},
 	"perf-mcp":                      {group: groupObservability, common: false, local: true, connect: false},
 	"product-metrics":               {group: groupObservability, common: true, local: true, connect: false},
+	"product-metrics-dry-run":       {group: groupObservability, common: false, local: true, connect: false},
 
 	// ── Info (meta-flags) ───────────────────────────────────────────────────
 	"help-all":   {group: groupInfo, common: false, local: true, connect: true},

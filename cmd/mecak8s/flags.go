@@ -301,6 +301,10 @@ type config struct {
 	// productMetricsSet records whether --product-metrics was explicitly passed,
 	// so ResolveProductMetricsEnabled can let CLI out-rank DO_NOT_TRACK/settings.
 	productMetricsSet bool
+	// productMetricsDryRun logs every would-be product-metrics observation
+	// via diag instead of exporting it over OTLP — an audit mode to verify
+	// the no-PII claim before trusting --product-metrics for real.
+	productMetricsDryRun bool
 }
 
 // stringList is a repeatable string flag.Value, preserving order across
@@ -477,6 +481,8 @@ func parseFlags(argv []string) (config, error) {
 
 	fs.BoolVar(&cfg.productMetrics, "product-metrics", true,
 		"report anonymous product-adoption metrics to Stacklok (version, OS/arch, enabled features, coarse session/run/tool-call counts — never a prompt, file path, tool name, or model id). ON by default; opt out with --product-metrics=false, DO_NOT_TRACK=1, or telemetry.productMetrics.enabled: false in settings.yaml")
+	fs.BoolVar(&cfg.productMetricsDryRun, "product-metrics-dry-run", false,
+		"print every product-metrics observation to stderr instead of sending it — verify the no-PII claim yourself before enabling --product-metrics for real")
 
 	fs.Usage = func() {
 		_, _ = fmt.Fprint(fs.Output(), "Usage: mecak8s [flags]\n\n")

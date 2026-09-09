@@ -1036,9 +1036,9 @@ func setupProductMetrics(ctx context.Context, cfg config, diag port.Diagnostics)
 		SettingsEnabled: permResolver.OperatorProductMetricsEnabled(),
 	})
 	heartbeatCtx, cancelHeartbeat := context.WithCancel(context.Background())
-	pm, err := cliconfig.BuildProductMetrics(ctx, heartbeatCtx, productMetricsEnabled,
+	pm, err := cliconfig.BuildProductMetrics(ctx, heartbeatCtx, productMetricsEnabled, cfg.productMetricsDryRun,
 		productmetrics.BinaryMecatui, buildinfo.BuildID, productmetrics.DefaultHeartbeatInterval,
-		productMetricsSnapshot())
+		productMetricsSnapshot(), diag)
 	if err != nil {
 		diag.Log(ctx, port.LevelWarn, "mecatui: product metrics disabled: setup failed", "err", err.Error())
 	}
