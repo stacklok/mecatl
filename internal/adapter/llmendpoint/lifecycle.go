@@ -261,6 +261,80 @@ type Lifecycle struct {
 	AfterCommit func()
 }
 
+// Status is the closed, value-free local credential state vocabulary.
+type Status string
+
+const (
+	// StatusUsable means the local record is currently usable.
+	StatusUsable Status = "usable"
+	// StatusNotEnrolled means no exact-identity record exists.
+	StatusNotEnrolled Status = "not-enrolled"
+	// StatusExpired means the local record has expired.
+	StatusExpired Status = "expired"
+	// StatusCorrupt means protected local state failed validation.
+	StatusCorrupt Status = "corrupt"
+	// StatusStorageUnavailable means local protected storage cannot be read.
+	StatusStorageUnavailable Status = "storage-unavailable"
+	// StatusRejected means the provider rejected the retained credential.
+	StatusRejected Status = "rejected"
+)
+
+// Status inspects only the local record. It never authorizes, refreshes, or
+// performs provider communication.
+func (l Lifecycle) Status(ctx context.Context, id CredentialIdentity, now time.Time) Status {
+	if l.Repository == nil || l.Locker == nil {
+		return StatusStorageUnavailable
+	}
+	var rec CredentialRecord
+	err := l.Locker.With(ctx, id, func(ctx context.Context) error {
+		var err error
+		rec, err = l.Repository.Load(ctx, id)
+		return err
+	})
+	switch {
+	case err == nil && !rec.Token.Expiry.After(now):
+		return StatusExpired
+	case err == nil:
+		return StatusUsable
+	case errors.Is(err, credentialstore.ErrCorrupt):
+		return StatusCorrupt
+	case errors.Is(err, credentialstore.ErrUnavailable), errors.Is(err, credentialstore.ErrClosed), errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		return StatusStorageUnavailable
+	default:
+		return StatusNotEnrolled
+	}
+}
+
+// Logout makes exact-version local deletion authoritative before making one
+// bounded best-effort revocation call with the retained in-memory material.
+func (l Lifecycle) Logout(ctx context.Context, id CredentialIdentity, revoke func(context.Context, Token) error) error {
+	if l.Repository == nil || l.Locker == nil {
+		return ErrNotEnrolled
+	}
+	var retained Token
+	err := l.Locker.With(ctx, id, func(ctx context.Context) error {
+		rec, err := l.Repository.Load(ctx, id)
+		if errors.Is(err, credentialstore.ErrNotFound) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if err := l.Repository.Delete(ctx, id, rec.Version); err != nil {
+			return err
+		}
+		retained = rec.Token
+		return nil
+	})
+	if err != nil || retained.RefreshToken == "" || revoke == nil {
+		return err
+	}
+	revokeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	_ = revoke(revokeCtx, retained)
+	return nil
+}
+
 // Enroll serializes authorization-code exchange and first credential commit.
 func (l Lifecycle) Enroll(ctx context.Context, id CredentialIdentity) error {
 	if l.Repository == nil || l.Locker == nil || l.Authorize == nil {

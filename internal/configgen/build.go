@@ -12,7 +12,11 @@ import (
 // reflected fields. Tests can pass an empty Docs (the structure is still exercised).
 type Docs map[string]string
 
-const configDurationType = "duration"
+const (
+	configDurationType = "duration"
+	configAbsent       = "(absent)"
+	configRequired     = "(required)"
+)
 
 // BuildModel constructs the settings.yaml Model by REFLECTING over the permconfig
 // *Section structs (yaml tags + types, in declaration order) and attaching the
@@ -28,6 +32,7 @@ func BuildModel(docs Docs) *Model {
 		reasoningEffortSubtree(docs),
 		planModeAutoApproveSubtree(docs),
 		providersSubtree(docs),
+		llmSubtree(docs),
 		providerOverridesSubtree(docs),
 		learningSubtree(docs),
 		retentionSubtree(docs),
@@ -78,7 +83,7 @@ func zeroDefault(t reflect.Type) string {
 		return "0"
 	default:
 		// nil map/slice/pointer and a zero nested struct all mean "not configured".
-		return "(absent)"
+		return configAbsent
 	}
 }
 
@@ -163,14 +168,42 @@ func providersSubtree(_ Docs) *Subtree {
 		CommentedOut: true,
 		Doc:          "Strict operator-defined LLM providers. Project-tier definitions are ignored. Provider URLs must be HTTPS without userinfo, query, or fragment; credentials belong only in auth.yaml.",
 		Fields: []*Field{{
-			Key: "team-gateway", Type: "providerdefinition", Default: "(absent)", ExampleMapKey: "team-gateway",
+			Key: "team-gateway", Type: "providerdefinition", Default: configAbsent, ExampleMapKey: "team-gateway",
 			Nested: []*Field{
-				{Key: "base_url", Type: configStringType, Default: "(required)", ExampleValue: "https://gateway.example/v1"},
-				{Key: "default_model", Type: configStringType, Default: "(required)", ExampleValue: "team-chat"},
-				{Key: "api_flavor", Type: configStringType, Default: "(required)", ExampleValue: "openai-responses"},
-				{Key: "auth", Type: "providerauth", Default: "(absent)", Nested: []*Field{{Key: "method", Type: configStringType, Default: "none", ExampleValue: "api_key"}}},
+				{Key: "base_url", Type: configStringType, Default: configRequired, ExampleValue: "https://gateway.example/v1"},
+				{Key: "default_model", Type: configStringType, Default: configRequired, ExampleValue: "team-chat"},
+				{Key: "api_flavor", Type: configStringType, Default: configRequired, ExampleValue: "openai-responses"},
+				{Key: "auth", Type: "providerauth", Default: configAbsent, Nested: []*Field{{Key: "method", Type: configStringType, Default: "none", ExampleValue: "api_key"}}},
 			},
 		}},
+	}
+}
+
+func llmSubtree(_ Docs) *Subtree {
+	trust := func(example string) *Field {
+		return &Field{Key: example, Type: "nativetrust", Default: configRequired, Nested: []*Field{
+			{Key: "policy", Type: configStringType, Default: configRequired, ExampleValue: "public"},
+			{Key: "ca_bundle", Type: configStringType, Default: "(forbidden for public)", ExampleValue: ""},
+		}}
+	}
+	return &Subtree{
+		Key: "llm", Tier: TierOperator, CommentedOut: true,
+		Doc: "Strict operator-tier native LLM endpoints and their explicit protected credential home. Project values are ignored. Lifecycle commands use exact endpoint IDs and never change provider selection.",
+		Fields: []*Field{
+			{Key: "credential_home", Type: configStringType, Default: "(required with endpoints)", ExampleValue: "/var/lib/mecatl/provider-oidc"},
+			{Key: "endpoints", Type: "map[string]nativeendpoint", Default: configAbsent, ExampleMapKey: "corp-gateway", Nested: []*Field{
+				{Key: "protocol", Type: configStringType, Default: configRequired, ExampleValue: "openai-responses"},
+				{Key: "url", Type: configStringType, Default: configRequired, ExampleValue: "https://gateway.example/v1"},
+				{Key: "default_model", Type: configStringType, Default: configRequired, ExampleValue: "corp-model"},
+				{Key: "oidc", Type: "nativeoidc", Default: configRequired, Nested: []*Field{
+					{Key: "issuer", Type: configStringType, Default: configRequired, ExampleValue: "https://issuer.example"},
+					{Key: "client_id", Type: configStringType, Default: configRequired, ExampleValue: "mecatl"},
+					{Key: "resource_audience", Type: configStringType, Default: configRequired, ExampleValue: "https://gateway.example"},
+					{Key: "scopes", Type: "[]string", Default: configRequired, ExampleValue: "[models.read, offline_access]"},
+				}},
+				trust("issuer_trust"), trust("gateway_trust"),
+			}},
+		},
 	}
 }
 
@@ -181,8 +214,8 @@ func providerOverridesSubtree(_ Docs) *Subtree {
 		CommentedOut: true,
 		Doc:          "Strict endpoint overrides for built-in openai, openrouter, anthropic, and opencode only. Codex and ToolHive policies cannot be overridden here.",
 		Fields: []*Field{{
-			Key: "openai", Type: "provideroverride", Default: "(absent)", ExampleMapKey: "openai",
-			Nested: []*Field{{Key: "base_url", Type: configStringType, Default: "(required)", ExampleValue: "https://proxy.example/v1"}},
+			Key: "openai", Type: "provideroverride", Default: configAbsent, ExampleMapKey: "openai",
+			Nested: []*Field{{Key: "base_url", Type: configStringType, Default: configRequired, ExampleValue: "https://proxy.example/v1"}},
 		}},
 	}
 }

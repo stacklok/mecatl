@@ -20,6 +20,17 @@ a separate server.
   `mecak8s` server. The server controls the workspace, model credentials,
   storage, and permissions.
 - Run `mecatui sessions` to browse stored sessions before opening one.
+- Run `mecatui login ADDRESS` to enroll with a remote server's OIDC issuer.
+  This is separate from local LLM endpoint authentication.
+
+Manage credentials for a locally configured native LLM endpoint with
+`mecatui llm login ENDPOINT`, inspect them with `mecatui llm status [ENDPOINT]`,
+and remove them with `mecatui llm logout ENDPOINT`. ToolHive remains compatible
+through the reserved `toolhive` endpoint. Only `mecatui llm login toolhive`
+supports `--skip-browser`; the one-release bare `mecatui llm login` alias warns
+and remains ToolHive-only. Login confirmations go to stderr, and Mecatl never
+prints a gateway token; stdout consumers must use ToolHive's explicit
+`thv llm token` tooling.
 
 Follow [Connect to a server](./remote-servers.md) when you are ready to move the
 server out of your local process.

@@ -21,6 +21,7 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/internal/adapter/clientauth"
 	"github.com/stacklok/mecatl/internal/adapter/credentialstore"
+	"github.com/stacklok/mecatl/internal/adapter/llmendpoint"
 	"github.com/stacklok/mecatl/internal/adapter/toolhivellm"
 	"github.com/stacklok/mecatl/internal/flaghelp"
 	"github.com/stacklok/mecatl/mcp/oauthlogin"
@@ -527,20 +528,94 @@ func signinError(err error) error {
 	return errors.New("remote sign-in failed")
 }
 
-func runLogin(args []string) error {
-	fs := flag.NewFlagSet("mecatui llm login", flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
-	var skipBrowser bool
-	fs.BoolVar(&skipBrowser, "skip-browser", false, "print the OIDC authorization URL instead of opening a browser, then wait for the callback (headless/SSH/CI use)")
-	if err := fs.Parse(args); err != nil {
+type nativeLLMHost interface {
+	EndpointIDs() []string
+	Login(context.Context, string) error
+	Status(context.Context, string) llmendpoint.Status
+	Logout(context.Context, string) error
+	Close() error
+}
+
+var (
+	executeToolHiveLogin = func(ctx context.Context, skipBrowser bool) error {
+		return toolhivellm.RunInteractiveLogin(ctx, "", skipBrowser, nil)
+	}
+	openNativeLLMHost = newNativeLLMHost
+)
+
+func runLLMCommand(res invocationResolution) error {
+	if len(res.remaining) == 1 && isHelpMetaFlag(res.remaining[0]) {
+		fmt.Fprintln(os.Stderr, "Usage: mecatui llm login ENDPOINT | mecatui llm status [ENDPOINT] | mecatui llm logout ENDPOINT")
+		return flag.ErrHelp
+	}
+	if res.llmDeprecatedAlias {
+		fmt.Fprintln(os.Stderr, "WARNING: bare `mecatui llm login` is deprecated; use `mecatui llm login toolhive`")
+	}
+	skipBrowser := len(res.remaining) == 1 && res.remaining[0] == "--skip-browser"
+	if res.llmEndpoint == toolHiveEndpointID {
+		return runNativeLLMCommand(context.Background(), res.llmAction, res.llmEndpoint, skipBrowser, nil, os.Stdout, os.Stderr)
+	}
+	host, err := openNativeLLMHost(context.Background())
+	if err != nil {
+		return errors.New("native LLM endpoint lifecycle is unavailable")
+	}
+	defer func() { _ = host.Close() }()
+	return runNativeLLMCommand(context.Background(), res.llmAction, res.llmEndpoint, false, host, os.Stdout, os.Stderr)
+}
+
+func runNativeLLMCommand(ctx context.Context, action, endpoint string, skipBrowser bool, host nativeLLMHost, stdout, stderr io.Writer) error {
+	if endpoint == toolHiveEndpointID {
+		switch action {
+		case llmActionLogin:
+			if err := executeToolHiveLogin(ctx, skipBrowser); err != nil {
+				return errors.New("ToolHive LLM gateway login failed")
+			}
+			_, err := fmt.Fprintln(stderr, "ToolHive LLM gateway login successful")
+			return err
+		case llmActionStatus, llmActionLogout:
+			return errors.New("ToolHive owns this LLM gateway lifecycle; use `thv llm` tooling")
+		}
+	}
+	if host == nil {
+		return errors.New("native LLM endpoint lifecycle is unavailable")
+	}
+	ids := host.EndpointIDs()
+	slices.Sort(ids)
+	configured := slices.Contains(ids, endpoint)
+	switch action {
+	case llmActionLogin:
+		if endpoint == "" || !configured {
+			return errors.New("unknown native LLM endpoint")
+		}
+		if err := host.Login(ctx, endpoint); err != nil {
+			return errors.New("native LLM endpoint login failed")
+		}
+		_, err := fmt.Fprintln(stderr, "LLM endpoint login successful")
 		return err
-	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	err := toolhivellm.RunInteractiveLogin(ctx, "", skipBrowser, nil)
-	if errors.Is(err, context.Canceled) {
-		fmt.Fprintln(os.Stderr, "login cancelled")
+	case llmActionStatus:
+		if endpoint != "" {
+			if !configured {
+				return errors.New("unknown native LLM endpoint")
+			}
+			_, err := fmt.Fprintf(stdout, "%s\t%s\n", endpoint, host.Status(ctx, endpoint))
+			return err
+		}
+		for _, id := range ids {
+			if _, err := fmt.Fprintf(stdout, "%s\t%s\n", id, host.Status(ctx, id)); err != nil {
+				return err
+			}
+		}
 		return nil
+	case llmActionLogout:
+		if endpoint == "" || !configured {
+			return errors.New("unknown native LLM endpoint")
+		}
+		if err := host.Logout(ctx, endpoint); err != nil {
+			return errors.New("native LLM endpoint logout failed")
+		}
+		_, err := fmt.Fprintln(stderr, "LLM endpoint logout successful")
+		return err
+	default:
+		return errors.New("unknown native LLM endpoint lifecycle action")
 	}
-	return err
 }

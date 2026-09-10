@@ -31,8 +31,12 @@ import (
 type transportMode string
 
 const (
-	modeLocal   transportMode = "local"
-	modeConnect transportMode = "connect"
+	modeLocal          transportMode = "local"
+	modeConnect        transportMode = "connect"
+	llmActionLogin                   = "login"
+	llmActionStatus                  = "status"
+	llmActionLogout                  = "logout"
+	toolHiveEndpointID               = "toolhive"
 	// modeLogin is the CLI-only `mecatui llm login` subcommand.
 	modeLogin transportMode = "llm-login"
 	// modeRemoteLogout removes one saved remote enrolment without starting a transport.
@@ -77,7 +81,7 @@ var topLevelCommands = []topLevelCommand{
 		resolve:  resolveConnectCommand,
 	},
 	{
-		name:     "login",
+		name:     llmActionLogin,
 		synopsis: "login ADDRESS",
 		purpose:  "log in to a remote mecated at ADDRESS using OIDC",
 		resolve:  resolveRemoteLoginCommand,
@@ -102,14 +106,17 @@ var topLevelCommands = []topLevelCommand{
 // is the connect or remote-login target ("" for bare/local or login help). run
 // preparation handles the help output and error wrapping after this resolver returns.
 type invocationResolution struct {
-	mode           transportMode
-	address        string // connect or remote-login target; empty for local/login help
-	browseSessions bool   // launch directly into the shared stored-session inventory
-	debugTarget    string // immutable target for a dedicated no-filesystem debug session
-	debugHelp      bool   // render dedicated debug help instead of transport flag help
-	helpIndex      bool   // render the top-level command index
-	remaining      []string
-	err            error
+	mode               transportMode
+	address            string // connect or remote-login target; empty for local/login help
+	browseSessions     bool   // launch directly into the shared stored-session inventory
+	debugTarget        string // immutable target for a dedicated no-filesystem debug session
+	debugHelp          bool   // render dedicated debug help instead of transport flag help
+	helpIndex          bool   // render the top-level command index
+	remaining          []string
+	llmAction          string
+	llmEndpoint        string
+	llmDeprecatedAlias bool
+	err                error
 }
 
 // resolveInvocation classifies argv (the FULL arg vector, argv[0] included as
@@ -204,7 +211,7 @@ func hasUnexpectedHelpOperands(command string, args []string) bool {
 	if command == "connect" && len(args) > 2 && isHelpMetaFlag(args[1]) {
 		return true
 	}
-	if command == "llm" && len(args) == 2 && args[0] == "login" && isHelpMetaFlag(args[1]) {
+	if command == "llm" && len(args) == 2 && args[0] == llmActionLogin && isHelpMetaFlag(args[1]) {
 		return false
 	}
 	return len(args) > 1 && isHelpMetaFlag(args[0])
@@ -236,14 +243,51 @@ func resolveRemoteLogoutCommand(args []string) invocationResolution {
 	return invocationResolution{mode: modeRemoteLogout, address: args[0], remaining: args[1:]}
 }
 
+//nolint:gocyclo // Exact command grammar keeps each accepted form explicit.
 func resolveLLMCommand(args []string) invocationResolution {
+	const usage = "llm: usage: mecatui llm login ENDPOINT | mecatui llm status [ENDPOINT] | mecatui llm logout ENDPOINT"
 	if len(args) == 1 && isHelpMetaFlag(args[0]) {
 		return invocationResolution{mode: modeLogin, remaining: args}
 	}
-	if len(args) == 0 || args[0] != "login" {
-		return invocationResolution{err: errors.New("llm: usage: mecatui llm login [--skip-browser]")}
+	if len(args) == 0 {
+		return invocationResolution{err: errors.New(usage)}
 	}
-	return invocationResolution{mode: modeLogin, remaining: args[1:]}
+	action := args[0]
+	switch action {
+	case llmActionLogin:
+		if len(args) == 1 {
+			return invocationResolution{mode: modeLogin, llmAction: action, llmEndpoint: toolHiveEndpointID, llmDeprecatedAlias: true}
+		}
+		if len(args) == 2 && args[1] == "--skip-browser" {
+			return invocationResolution{mode: modeLogin, llmAction: action, llmEndpoint: toolHiveEndpointID, llmDeprecatedAlias: true, remaining: args[1:]}
+		}
+		if len(args) >= 2 && args[1] == toolHiveEndpointID {
+			if len(args) > 3 || len(args) == 3 && args[2] != "--skip-browser" {
+				return invocationResolution{err: errors.New(usage)}
+			}
+			return invocationResolution{mode: modeLogin, llmAction: action, llmEndpoint: args[1], remaining: args[2:]}
+		}
+		if len(args) != 2 || strings.HasPrefix(args[1], "-") {
+			return invocationResolution{err: errors.New(usage)}
+		}
+		return invocationResolution{mode: modeLogin, llmAction: action, llmEndpoint: args[1]}
+	case llmActionStatus:
+		if len(args) > 2 || len(args) == 2 && strings.HasPrefix(args[1], "-") {
+			return invocationResolution{err: errors.New(usage)}
+		}
+		endpoint := ""
+		if len(args) == 2 {
+			endpoint = args[1]
+		}
+		return invocationResolution{mode: modeLogin, llmAction: action, llmEndpoint: endpoint}
+	case llmActionLogout:
+		if len(args) != 2 || strings.HasPrefix(args[1], "-") {
+			return invocationResolution{err: errors.New(usage)}
+		}
+		return invocationResolution{mode: modeLogin, llmAction: action, llmEndpoint: args[1]}
+	default:
+		return invocationResolution{err: errors.New(usage)}
+	}
 }
 
 // resolveConnectCommand preserves connect's special grammar: ADDRESS must
@@ -341,6 +385,8 @@ func writeTopLevelHelp(out io.Writer) {
 	_, _ = fmt.Fprintln(out, "Bare 'mecatui [flags]' hosts an embedded mecated server in-process (no loopback probe).")
 	_, _ = fmt.Fprintln(out)
 	writeCommandSummary(out)
+	_, _ = fmt.Fprintln(out, "\nNative LLM endpoints: mecatui llm login ENDPOINT | mecatui llm status [ENDPOINT] | mecatui llm logout ENDPOINT")
+	_, _ = fmt.Fprintln(out, "Remote mecatui uses `mecatui login ADDRESS`; ToolHive MCP discovery and manual openai-codex authentication are separate.")
 	_, _ = fmt.Fprintln(out, "\nHelp: mecatui --help, mecatui -h, or mecatui help")
 	_, _ = fmt.Fprintln(out, "      mecatui help <command> aliases mecatui <command> --help")
 	_, _ = fmt.Fprintln(out, "      mecatui --version prints the build version and exits")

@@ -266,6 +266,8 @@ type Config struct {
 	NativeEndpointCredentialLoader interface {
 		Load(context.Context, permconfig.ProviderDefinition) (llmendpoint.BearerSource, error)
 	}
+	// NativeEndpointCredentialLifecycle owns loader-opened keyring/store handles.
+	NativeEndpointCredentialLifecycle interface{ Close() error }
 	// nativeEndpointTransport is the hermetic transport seam used by tests.
 	nativeEndpointTransport http.RoundTripper
 	// ProviderOverrides is the effective built-in endpoint source. Command-root CLI
@@ -1434,11 +1436,20 @@ func validateMCPAuthority(cfg Config) error {
 func Build(ctx context.Context, cfg Config) (*Built, error) {
 	mcpProfileLifecycle := cfg.MCPProfileLifecycle
 	providerCredentialLifecycle := cfg.ProviderCredentialLifecycle
+	nativeEndpointCredentialLifecycle := cfg.NativeEndpointCredentialLifecycle
+	if nativeEndpointCredentialLifecycle == nil {
+		if lifecycle, ok := cfg.NativeEndpointCredentialLoader.(interface{ Close() error }); ok {
+			nativeEndpointCredentialLifecycle = lifecycle
+		}
+	}
 	closeProfiles := sync.OnceFunc(func() {
 		cfg.MCPProfileLifecycle = mcpProfileLifecycle
 		closeMCPProfileLifecycle(ctx, cfg)
 		if providerCredentialLifecycle != nil {
 			_ = providerCredentialLifecycle.Close()
+		}
+		if nativeEndpointCredentialLifecycle != nil {
+			_ = nativeEndpointCredentialLifecycle.Close()
 		}
 	})
 	profilesTransferred := false

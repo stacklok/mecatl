@@ -129,6 +129,29 @@
 #     auth:
 #       method: api_key
 
+#| === llm === (tier: operator)
+#| Strict operator-tier native LLM endpoints and their explicit protected credential
+#| home. Project values are ignored. Lifecycle commands use exact endpoint IDs and never
+#| change provider selection.
+# llm:
+#   credential_home: /var/lib/mecatl/provider-oidc
+#   endpoints:
+#     corp-gateway:
+#       protocol: openai-responses
+#       url: https://gateway.example/v1
+#       default_model: corp-model
+#       oidc:
+#         issuer: https://issuer.example
+#         client_id: mecatl
+#         resource_audience: https://gateway.example
+#         scopes: [models.read, offline_access]
+#       issuer_trust:
+#         policy: public
+#         ca_bundle: ""
+#       gateway_trust:
+#         policy: public
+#         ca_bundle: ""
+
 #| === provider_overrides === (tier: operator)
 #| Strict endpoint overrides for built-in openai, openrouter, anthropic, and opencode
 #| only. Codex and ToolHive policies cannot be overridden here.

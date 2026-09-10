@@ -49,6 +49,7 @@ type discovery struct {
 	AuthorizationEndpoint    string   `json:"authorization_endpoint"`
 	TokenEndpoint            string   `json:"token_endpoint"`
 	JWKSURI                  string   `json:"jwks_uri"`
+	RevocationEndpoint       string   `json:"revocation_endpoint"`
 	CodeChallengeMethods     []string `json:"code_challenge_methods_supported"`
 	IssuerParameterSupported bool     `json:"authorization_response_iss_parameter_supported"`
 }
@@ -105,6 +106,60 @@ func AuthorizationCode(ctx context.Context, cfg Config) (Token, error) {
 		return Token{}, ErrToken
 	}
 	return Token{AccessToken: tok.AccessToken, RefreshToken: tok.RefreshToken, TokenType: tok.TokenType, Expiry: tok.Expiry}, nil
+}
+
+// Refresh exchanges one retained refresh token through exact-issuer discovery.
+// Provider-controlled errors are collapsed to ErrToken.
+func Refresh(ctx context.Context, cfg Config, refreshToken string) (Token, error) {
+	if refreshToken == "" || cfg.HTTPClient == nil || !secureIssuer(cfg.Issuer) || cfg.ClientID == "" {
+		return Token{}, ErrToken
+	}
+	doc, err := discover(ctx, cfg.HTTPClient, cfg.Issuer)
+	if err != nil || doc.Issuer != cfg.Issuer {
+		return Token{}, ErrDiscovery
+	}
+	validate, closeValidator, err := accessValidator(ctx, cfg, doc)
+	if err != nil {
+		return Token{}, ErrDiscovery
+	}
+	defer closeValidator()
+	oc := oauth2.Config{ClientID: cfg.ClientID, Endpoint: oauth2.Endpoint{TokenURL: doc.TokenEndpoint, AuthStyle: oauth2.AuthStyleInParams}, Scopes: append([]string(nil), cfg.Scopes...)}
+	tokenCtx := context.WithValue(ctx, oauth2.HTTPClient, cfg.HTTPClient)
+	tok, err := oc.TokenSource(tokenCtx, &oauth2.Token{RefreshToken: refreshToken}).Token()
+	if err != nil || tok.AccessToken == "" || tok.TokenType != "Bearer" {
+		return Token{}, ErrToken
+	}
+	if err := validate(ctx, tok.AccessToken); err != nil {
+		return Token{}, ErrToken
+	}
+	return Token{AccessToken: tok.AccessToken, RefreshToken: tok.RefreshToken, TokenType: tok.TokenType, Expiry: tok.Expiry}, nil
+}
+
+// Revoke makes one RFC 7009 request. It never includes provider response text in
+// its returned error.
+func Revoke(ctx context.Context, cfg Config, token, hint string) error {
+	if token == "" || cfg.HTTPClient == nil || !secureIssuer(cfg.Issuer) || cfg.ClientID == "" {
+		return ErrToken
+	}
+	doc, err := discover(ctx, cfg.HTTPClient, cfg.Issuer)
+	if err != nil || doc.Issuer != cfg.Issuer || !secureEndpoint(doc.RevocationEndpoint) {
+		return ErrDiscovery
+	}
+	form := url.Values{"token": {token}, "token_type_hint": {hint}, "client_id": {cfg.ClientID}}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, doc.RevocationEndpoint, strings.NewReader(form.Encode()))
+	if err != nil {
+		return ErrToken
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	res, err := cfg.HTTPClient.Do(req)
+	if err != nil {
+		return ErrToken
+	}
+	defer func() { _ = res.Body.Close() }()
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return ErrToken
+	}
+	return nil
 }
 
 func validConfig(ctx context.Context, cfg Config) bool {

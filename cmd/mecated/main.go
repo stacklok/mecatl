@@ -1074,6 +1074,7 @@ const mecatedServerImplementation = "mecated"
 // appConfig constructs the command root's declarative app.Config. app.Build loads the
 // injected provider credential after resolving operator definitions.
 func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, roleScoper func(string) (port.EventSink, port.ToolCallRecorder), metrics *telemetry.Metrics, diag port.Diagnostics) app.Config {
+	nativeEndpointLoader := &cliconfig.NativeEndpointLoader{}
 	out := app.Config{
 		Workspace:                     cfg.workspace,
 		ClientMCPOnCreate:             clientMCPOnCreateForListeners(cfg),
@@ -1188,20 +1189,22 @@ func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, 
 		// Route mcp.mode through the canonical authority resolver. Broker stays
 		// opt-in so an omitted mode and an empty MCP configuration retain the
 		// existing global/no-broker behavior.
-		MCPAuthorityLoader:       cliconfig.NewMCPProfileResolver(cfg.mcpServers, os.LookupEnv),
-		MCPAuthorityDefault:      mcpauthority.Global,
-		MCPBrokerSupported:       true,
-		ProviderCredentialLoader: cliconfig.NewProviderCredentialResolver(cfg.providerFlags, cfg.providerCredentials),
-		ProviderOverrides:        cfg.providerFlags.EndpointOverrides(),
-		MCPResourceTools:         cfg.mcpResourceTools,
-		MCPPrompts:               cfg.mcpPrompts,
-		ToolHiveEnabled:          cfg.toolHiveEnabled,
-		ToolHiveGroup:            cfg.toolHiveGroup,
-		PermissionsConventional:  cfg.permissionsConventional,
-		ImportClaudePermissions:  cfg.importClaudePermissions,
-		TrustProject:             cfg.trustProject,
-		PermissionConfigs:        cfg.permissionConfigs,
-		AllowAllTools:            cfg.allowAllTools,
+		MCPAuthorityLoader:                cliconfig.NewMCPProfileResolver(cfg.mcpServers, os.LookupEnv),
+		MCPAuthorityDefault:               mcpauthority.Global,
+		MCPBrokerSupported:                true,
+		ProviderCredentialLoader:          cliconfig.NewProviderCredentialResolver(cfg.providerFlags, cfg.providerCredentials),
+		NativeEndpointCredentialLoader:    nativeEndpointLoader,
+		NativeEndpointCredentialLifecycle: nativeEndpointLoader,
+		ProviderOverrides:                 cfg.providerFlags.EndpointOverrides(),
+		MCPResourceTools:                  cfg.mcpResourceTools,
+		MCPPrompts:                        cfg.mcpPrompts,
+		ToolHiveEnabled:                   cfg.toolHiveEnabled,
+		ToolHiveGroup:                     cfg.toolHiveGroup,
+		PermissionsConventional:           cfg.permissionsConventional,
+		ImportClaudePermissions:           cfg.importClaudePermissions,
+		TrustProject:                      cfg.trustProject,
+		PermissionConfigs:                 cfg.permissionConfigs,
+		AllowAllTools:                     cfg.allowAllTools,
 		// Posture ladder: --posture sets the tier directly; --yolo/--trust-project are
 		// aliases composition folds MAX-tier (resolvePosture). postureFlagSet lets CLI
 		// out-rank the operator-global settings.yaml posture: key. Privileged is the

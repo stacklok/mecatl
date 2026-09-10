@@ -111,6 +111,19 @@ mecatui login mecated.example.com:443 \
 Run `mecatui logout mecated.example.com:443` to remove the saved enrollment.
 Use `/connect` inside the TUI to choose another saved server.
 
+## Manage local LLM endpoint credentials
+
+Remote enrollment and local LLM endpoint authentication are separate actions.
+`mecatui login ADDRESS` authenticates the client to a remote `mecated` server;
+`mecatui llm login ENDPOINT` authenticates a locally configured native LLM
+endpoint and never authenticates to remote `mecated`.
+
+Inspect local endpoint status with `mecatui llm status [ENDPOINT]` and remove its
+credential with `mecatui llm logout ENDPOINT`. The reserved
+`mecatui llm login toolhive` form remains compatible with ToolHive's LLM gateway.
+ToolHive MCP discovery and manual OpenAI Codex authentication are separate
+workflows.
+
 ## Next steps
 
 - [Try Mecatl on Kubernetes](/building/getting-started/kubernetes.md) to connect

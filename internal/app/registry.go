@@ -810,7 +810,13 @@ func addCustomProviderEntries(ctx context.Context, entries map[string]providerEn
 }
 
 func newNativeProviderEntry(cfg Config, definition permconfig.ProviderDefinition, source llmendpoint.BearerSource) (providerEntry, error) {
-	client, err := llmendpoint.NewGatewayHTTPClient(definition.BaseURL, source, cfg.nativeEndpointTransport)
+	transport := cfg.nativeEndpointTransport
+	if transport == nil {
+		if bound, ok := source.(interface{ GatewayTransport() http.RoundTripper }); ok {
+			transport = bound.GatewayTransport()
+		}
+	}
+	client, err := llmendpoint.NewGatewayHTTPClient(definition.BaseURL, source, transport)
 	if err != nil {
 		return providerEntry{}, fmt.Errorf("configure native LLM endpoint %q: %w", definition.ID, err)
 	}
