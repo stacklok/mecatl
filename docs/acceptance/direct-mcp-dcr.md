@@ -6,7 +6,7 @@
 **Delivery:** Split. This changes an operator-facing OAuth client union, durable credential identity, registration lifecycle, and the local interactive authorization boundary.
 **Expected tasks:** deferred to orchestration
 **Issue:** none — scope supplied for acceptance-contract review.
-**Plan PR:** <added when opened>
+**Plan PR:** https://github.com/stacklok/mecatl/pull/1331
 **Approved baseline:** <merged plan commit; absent until approved>
 
 Enable a local mecatui direct (non-broker) MCP profile to use RFC 7591 Dynamic Client Registration (DCR), then the existing authorization-code/PKCE login path, against `https://connector-gateway.stacklok.dev/gw/mcp`. The durable registration and resulting grant must survive a local restart and permit a harmless discovered read tool. This does not change remote mecatui OIDC, the MCP broker, or `CallMcpWithQuery`.
