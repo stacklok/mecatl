@@ -279,6 +279,36 @@ The chart creates no agent PVC and ships no general NetworkPolicy.
 The cluster must provide network isolation because agent egress depends on operator-selected endpoints.
 The `oidc.*` values add a narrow raw-driver NetworkPolicy when caller identity is enabled.
 
+For an OpenAI-compatible gateway that trusts Kubernetes workload identity, use the
+chart's existing `extraArgs`, `extraVolumes`, and `extraVolumeMounts` to project a
+ServiceAccount token and pass an explicit gateway base URL with the bearer file:
+
+```yaml
+extraArgs:
+  - --openai-base-url=https://llm-gateway.stacklok.dev/v1
+  - --openai-bearer-token-file=/var/run/secrets/llm-gateway/token
+extraVolumes:
+  - name: llm-gateway-token
+    projected:
+      sources:
+        - serviceAccountToken:
+            path: token
+            audience: api://mecak8s-llm-gateway
+            expirationSeconds: 600
+extraVolumeMounts:
+  - name: llm-gateway-token
+    mountPath: /var/run/secrets/llm-gateway
+    readOnly: true
+```
+
+Mecak8s reads the file on
+every OpenAI request, so token rotation is automatic. Bearer-file mode never defaults
+to api.openai.com. Choose the gateway's exact
+audience—not the default Kubernetes API audience—and configure the gateway to trust
+the cluster issuer, that audience, and the exact
+`system:serviceaccount:<namespace>:<serviceaccount>` subject. See the
+[`mecak8s` operator guide](https://github.com/stacklok/mecatl/blob/main/docs/usage/mecak8s.md) for the complete values example and transport restrictions.
+
 ### Session affinity is an infrastructure contract
 
 Official clients attach the exact `X-Mecatl-Session-ID` field to session-bound gRPC and

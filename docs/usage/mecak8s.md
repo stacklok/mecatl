@@ -45,6 +45,39 @@ in snapshots and every run revalidates them against the caller before reattachme
 $ go run ./cmd/mecak8s --redis-url redis:6379 --redis-allow-plaintext --session-lease-k8s-namespace mecatl --openai
 ```
 
+For an OpenAI-compatible gateway that accepts Kubernetes workload identity, mount a
+projected ServiceAccount token and pass its file path. The token file is read before
+every outbound OpenAI request, so Kubernetes rotation is picked up without restarting
+the pod:
+
+```yaml
+extraArgs:
+  - --openai-base-url=https://llm-gateway.stacklok.dev/v1
+  - --openai-bearer-token-file=/var/run/secrets/llm-gateway/token
+extraVolumes:
+  - name: llm-gateway-token
+    projected:
+      sources:
+        - serviceAccountToken:
+            path: token
+            audience: api://mecak8s-llm-gateway
+            expirationSeconds: 600
+extraVolumeMounts:
+  - name: llm-gateway-token
+    mountPath: /var/run/secrets/llm-gateway
+    readOnly: true
+```
+
+Set `audience` to the exact value expected by the gateway. Do not use the pod's
+default Kubernetes API token: its default audience is normally the Kubernetes API,
+not the gateway. The gateway must trust the cluster's ServiceAccount token issuer,
+validate that exact audience, and authorize the exact subject
+`system:serviceaccount:<namespace>:<serviceaccount>`. The token is sent only to the
+configured explicit OpenAI base-URL origin; bearer-file mode requires
+`--openai-base-url` and never defaults to `api.openai.com`. HTTPS is required except for intentional loopback
+development, and redirects are refused. `--openai-bearer-token-file` is mutually
+exclusive with `OPENAI_API_KEY`.
+
 #### Flags
 
 `mecak8s` reuses `mecated`'s provider/model/permission/skills flags via the shared CLI config wiring
@@ -68,6 +101,7 @@ $ go run ./cmd/mecak8s --redis-url redis:6379 --redis-allow-plaintext --session-
 | `--reasoning-effort` | `auto` | operator reasoning-effort tier ([ADR 0055](../adr/0055-reasoning-effort.md)): `auto` (unset, provider default) or `low`/`medium`/`high`/`xhigh`/`max` (OpenAI clamps `xhigh`/`max` → `high`). Empty honours the operator-global `reasoning-effort:` setting; a per-session `CreateSession.reasoning_effort` out-ranks it. Operator-tier only. CLI out-ranks the YAML key. |
 | `--no-prompt-cache` | `false` | disable provider-side prompt caching ([ADR 0100](../adr/0100-provider-prompt-caching.md)), which is ON by default: every adapter's cache dialect degrades to `None`, reproducing the pre-caching wire exactly. |
 | `--anthropic-cache-ttl` | `""` (API default, `5m`) | TTL stamped on every Anthropic ephemeral `cache_control` breakpoint: `5m` or `1h`. Empty omits the `ttl` field; any other value is ignored with a `WARN`. |
+| `--openai-bearer-token-file` | `""` | Path to a projected, rotating ServiceAccount bearer token for the OpenAI provider. Read and trimmed for every request; mutually exclusive with `OPENAI_API_KEY` and requires an explicit nonempty `--openai-base-url`. |
 | `--mock` | `false` | canned offline mock provider (no network, no API key) — used by the kind e2e. |
 | `--grpc-addr` | `0.0.0.0:8080` | gRPC listen address (a pod binds `0.0.0.0`, unlike `mecated`'s loopback). |
 | `--http-addr` | `0.0.0.0:8081` | HTTP/SSE listen address (carries `/healthz` and `/readyz` outside auth; the API mux inside auth). |

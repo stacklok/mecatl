@@ -153,6 +153,9 @@ type Config struct {
 	Model             string
 	UseOpenAI         bool
 	OpenAIKey         string
+	// OpenAIBearerTokenFile is a rotating credential source for only the OpenAI
+	// registry entry. The adapter reads it for every request.
+	OpenAIBearerTokenFile string
 	// OpenAICodexCredential is the validated, immutable manual ChatGPT token
 	// snapshot consumed only by the distinct openai-codex registry entry.
 	OpenAICodexCredential openaicodex.Credential

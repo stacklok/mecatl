@@ -120,6 +120,7 @@ type config struct {
 	defaultModel           string
 	defaultProviderFlagSet bool
 	useOpenAI              bool
+	openAIBearerTokenFile  string
 	// providerFlags holds shared provider flag bindings; providerCredentials is
 	// the once-resolved snapshot projected by appConfig without further I/O.
 	providerFlags       *cliconfig.ProviderFlags
@@ -334,7 +335,8 @@ func parseFlags(argv []string) (config, error) {
 	fs.StringVar(&cfg.model, "model", "", "model identifier sent to the provider (empty: provider-appropriate default)")
 	fs.StringVar(&cfg.defaultProvider, "default-provider", "", "server-configured deployment-wide default provider id (e.g. openai, openrouter, anthropic); validated FAIL-FAST at startup")
 	fs.StringVar(&cfg.defaultModel, "default-model", "", "server-configured deployment-wide default model id for the default provider; validated FAIL-FAST at startup")
-	fs.BoolVar(&cfg.useOpenAI, "openai", false, "use the OpenAI Responses provider (key from OPENAI_API_KEY)")
+	fs.BoolVar(&cfg.useOpenAI, "openai", false, "use the OpenAI Responses provider (key from OPENAI_API_KEY or --openai-bearer-token-file)")
+	fs.StringVar(&cfg.openAIBearerTokenFile, "openai-bearer-token-file", "", "path to a rotating OpenAI bearer token (mecak8s only; requires --openai-base-url and is mutually exclusive with OPENAI_API_KEY)")
 	// Shared provider base-URL flags + credential reads (cliconfig): registers
 	// --openai-base-url / --openrouter-base-url / --anthropic-base-url and reads
 	// OPENAI/OPENROUTER/ANTHROPIC_API_KEY — the SAME helper mecated/mecatequi
@@ -610,6 +612,7 @@ func appConfig(cfg config, diag port.Diagnostics, obs observability) app.Config 
 		DefaultModel:           cfg.defaultModel,
 		DefaultProviderFlagSet: cfg.defaultProviderFlagSet,
 		UseOpenAI:              cfg.useOpenAI,
+		OpenAIBearerTokenFile:  cfg.openAIBearerTokenFile,
 		UseMock:                cfg.useMock,
 		MockProvider:           cfg.mockProvider,
 		Shell:                  cfg.shell,
