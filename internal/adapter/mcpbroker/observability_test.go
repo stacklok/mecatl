@@ -58,7 +58,7 @@ func TestBrokerRefreshDiagnosticsUseClosedValuesAndRedact(t *testing.T) {
 	}
 
 	logs := diag.String()
-	for _, want := range []string{"componentmcpbroker", "eventtoken_refresh", "credentialroute", "reasonsucceeded", "reasonfailed", "reasonreauth_required"} {
+	for _, want := range []string{"componentmcpbroker", "eventtoken_refresh", "credentialroute", "sessiondiagnostic-session", "reasonsucceeded", "reasonfailed", "reasonreauth_required"} {
 		if !strings.Contains(logs, want) {
 			t.Errorf("diagnostics missing %q: %s", want, logs)
 		}

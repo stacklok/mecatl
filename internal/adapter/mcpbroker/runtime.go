@@ -640,7 +640,7 @@ func (t *sessionTool) Execute(ctx context.Context, call session.ToolCall, _ tool
 	}
 	resolved, ok := t.attachment.lookupRoute(call.Name)
 	if !ok || resolved.backend != t.route.backend {
-		t.attachment.runtime.logRouteUnavailable(ctx, diagnosticRouteSurfaceNative)
+		t.attachment.runtime.logRouteUnavailable(ctx, t.attachment.logical.ref.SessionID(), diagnosticRouteSurfaceNative)
 		return session.NewToolError(call.ID, "broker tool route is unavailable"), nil
 	}
 	if err := opCtx.Err(); err != nil {
@@ -672,8 +672,11 @@ func (t *sessionTool) invoke(ctx context.Context, call session.ToolCall, tokens 
 	return r.caller(ctx, t.attachment.logical.ref, t.route.backend, call)
 }
 
-func (r *Runtime) logAuthorization(ctx context.Context, event, reason string, level port.Level, surface string, extra ...any) {
+func (r *Runtime) logAuthorization(ctx context.Context, sessionID session.SessionID, event, reason string, level port.Level, surface string, extra ...any) {
 	args := []any{"event", event, "reason", reason}
+	if sessionID != "" {
+		args = append(args, "session", string(sessionID))
+	}
 	if surface != "" {
 		args = append(args, "surface", surface)
 	}
@@ -700,8 +703,8 @@ func authorizationLookupReason(err error) string {
 	return diagnosticReasonAuthorizationLookupFailed
 }
 
-func (r *Runtime) logTokenRefresh(ctx context.Context, credential, reason string) {
-	r.diag.Log(ctx, levelForTokenRefresh(reason), "mcp broker token refresh", "event", diagnosticEventTokenRefresh, "credential", credential, "reason", reason)
+func (r *Runtime) logTokenRefresh(ctx context.Context, sessionID session.SessionID, credential, reason string) {
+	r.diag.Log(ctx, levelForTokenRefresh(reason), "mcp broker token refresh", "event", diagnosticEventTokenRefresh, "credential", credential, "reason", reason, "session", string(sessionID))
 }
 
 func levelForTokenRefresh(reason string) port.Level {
@@ -711,8 +714,8 @@ func levelForTokenRefresh(reason string) port.Level {
 	return port.LevelWarn
 }
 
-func (r *Runtime) logRouteUnavailable(ctx context.Context, surface string) {
-	r.diag.Log(ctx, port.LevelWarn, "mcp broker route unavailable", "event", diagnosticEventRouteUnavailable, "surface", surface)
+func (r *Runtime) logRouteUnavailable(ctx context.Context, sessionID session.SessionID, surface string) {
+	r.diag.Log(ctx, port.LevelWarn, "mcp broker route unavailable", "event", diagnosticEventRouteUnavailable, "surface", surface, "session", string(sessionID))
 }
 
 func (r *Runtime) logSessionAttach(ctx context.Context, id session.SessionID, outcome contract.AttachOutcome) {

@@ -56,7 +56,7 @@ func (*attachmentQueryTool) target(call session.ToolCall) (session.ToolCall, str
 func (t *attachmentQueryTool) native(ctx context.Context, call session.ToolCall, filter string) (tool.Tool, error) {
 	route, ok := t.attachment.lookupRoute(call.Name)
 	if !ok {
-		t.attachment.runtime.logRouteUnavailable(ctx, diagnosticRouteSurfaceQuery)
+		t.attachment.runtime.logRouteUnavailable(ctx, t.attachment.logical.ref.SessionID(), diagnosticRouteSurfaceQuery)
 		return nil, errors.New("broker tool route is unavailable")
 	}
 	base := &sessionTool{attachment: t.attachment, route: route, queryFilter: filter}
