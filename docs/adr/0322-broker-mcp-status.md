@@ -1,6 +1,6 @@
 # ADR 0322 — Session-owned broker connector inspection
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-09-09
 - Scope: broker connector inventory in mecak8s and mecatui
 - Supersedes: None
@@ -24,7 +24,7 @@ not a read-only status API.
 
 ## Decision
 
-Propose a separate owner-authorized `ListSessionMcpConnectors` API and independent
+Adopt a separate owner-authorized `ListSessionMcpConnectors` API and independent
 `mcp_connector_status` capability, rendered through the existing `/mcp` command.
 Keep the old `mcp` capability and all direct provider operations unchanged.
 Require `OwnershipEnforced=true` and a verified principal for the new capability
@@ -34,7 +34,7 @@ permits access when ownership enforcement is disabled. Keep that compatibility
 behavior unchanged for other operations. Extend the descriptor-based session-affinity
 matrix and HTTP session-route tests for the new operation.
 
-These are proposed disclosure prerequisites, not yet human-approved decisions.
+These are accepted disclosure prerequisites. Existing transport authentication applies; no separate listener toggle exists.
 
 Expose bounded connector display names, per-connector catalogue states and counts,
 and aggregate enrollment state. Inspect existing process-local broker state under
@@ -54,10 +54,11 @@ must not settle that gate. The panel explicitly says session installation, persi
 and prompt readiness are not verified. Offline tests inject post-discovery build/Save
 failures and expired/terminal attempts with still-pending aggregates.
 
-This ADR is proposed, not implementation authorization. The exact candidate fields,
-status vocabulary, disclosure policy and bounds are in the
-[acceptance plan](../acceptance/broker-mcp-status.md), whose open human decisions must
-be resolved before orchestration.
+This ADR records the approved implementation boundary. The exact fields, status
+vocabulary, disclosure policy and bounds are in the
+[acceptance plan](../acceptance/broker-mcp-status.md); broker and direct MCP are
+mutually exclusive supported compositions, so the broker panel never exposes
+resources, prompts, or groups.
 
 ## Consequences
 

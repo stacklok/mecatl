@@ -2,7 +2,7 @@
 
 **Contract:** human-reviewed/v1
 **Phase:** Broker-only mecak8s connector observability
-**Status:** in-progress, 2026-09-09. T01 broker inspection is integrated; service/API and client/UI tasks remain. User approved all decisions and waived a separate amendment PR/merge; the local decision record travels with the implementation PR.
+**Status:** integrated, not landed, 2026-09-10. T01 broker inspection, T02 service/API/composition, and T03 client/UI/docs are integrated on the implementation accumulator; delivery remains pending final parent review and aggregate gates.
 **Delivery:** Split. Original Plan / Interface PR #1305 merged; the directing human authorized a local-amendment exception for recording these decisions, without a separate amendment PR/merge.
 **Expected tasks:** deferred to orchestration
 **Issue:** None assigned.
@@ -16,7 +16,7 @@ This is an approved contract, not shipped behavior. [ADR 0322](../adr/0322-broke
 ## Human decisions
 
 - [x] Delivery and feature scope — Decision: user approved broker connector inventory plus enrollment/catalogue status, with no probes or new persistence, followed by a Plan / Interface PR; no runtime implementation in that PR.
-- [x] Preserve direct MCP semantics — Decision: use a separate broker inspection capability behind the same `/mcp` command; do not enable direct resources/prompts or switch deployment modes as a workaround, as recommended in the accepted exploration.
+- [x] Preserve direct MCP semantics — Decision: use a separate broker inspection capability behind the same `/mcp` command; do not enable direct resources/prompts or switch deployment modes as a workaround. Broker and direct MCP are mutually exclusive supported compositions, so the conditional dual-capability blocker is dismissed; no mixed-mode UI or precedence rule is authorized.
 - [x] Exact wire/internal contract — Decision: user explicitly approved the specified contract unchanged, including count-only rows, the 256-row response bound, omission of auth class/credential state, and aggregate enrollment states rather than per-connector “connected”.
 - [x] Disclosure of configured connector display names before enrollment and unavailable-state behavior after restart — Decision: user explicitly approved requiring `OwnershipEnforced=true` and a verified principal for capability/API availability, then a nonnil matching persisted session owner before disclosure; transport authentication alone is insufficient. Ownerless/foreign/absent sessions remain indistinguishable. Show no historical success or unconditional reconnect instruction when live state is lost.
 - [x] Broker-local published catalogue semantics, rather than installed or durable session authority — Decision: user explicitly approved reporting broker publication even if subsequent server engine rebuild or aggregate Save fails; explicitly disclaim session installation, persistence, prompt readiness and current authorization. Reads never repair those failures or settle a persisted pending prompt gate.

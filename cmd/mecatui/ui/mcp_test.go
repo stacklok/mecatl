@@ -35,7 +35,7 @@ func newMCPModel(t *testing.T, th theme.Theme, mcp client.MCP) Model {
 	})
 	m = applyAll(m,
 		tea.WindowSizeMsg{Width: 100, Height: 30},
-		client.SessionReadyMsg{SessionID: "sess-test-0001"},
+		client.SessionReadyMsg{SessionID: "sess-test-0001", Capabilities: client.Capabilities{MCP: true}},
 	)
 	return m
 }

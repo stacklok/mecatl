@@ -95,6 +95,8 @@ func TestBuiltinCommandsCapsFilter(t *testing.T) {
 		{"mcp cap but not wired", client.Capabilities{MCP: true}, wiredCollaborators{}, []string{"clear", "help"}},
 		{"mcp wired but no cap", client.Capabilities{}, wiredCollaborators{MCP: true}, []string{"clear", "help"}},
 		{"mcp cap and wired", client.Capabilities{MCP: true}, wiredCollaborators{MCP: true}, []string{"clear", "help", "mcp"}},
+		{"broker cap needs broker reader", client.Capabilities{MCPConnectorStatus: true}, wiredCollaborators{MCP: true}, []string{"clear", "help"}},
+		{"broker cap and reader", client.Capabilities{MCPConnectorStatus: true}, wiredCollaborators{MCPConnector: true}, []string{"clear", "help", "mcp"}},
 		{"agents cap but not wired", client.Capabilities{Agents: true}, wiredCollaborators{}, []string{"clear", "help"}},
 		{"agents wired but no cap", client.Capabilities{}, wiredCollaborators{Agents: true}, []string{"clear", "help"}},
 		{"agents cap and wired", client.Capabilities{Agents: true}, wiredCollaborators{Agents: true}, []string{"clear", "help", "agents"}},

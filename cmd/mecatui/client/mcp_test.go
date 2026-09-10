@@ -324,4 +324,13 @@ func TestBrokerMCPStatus_Scenario3_Compatibility(t *testing.T) {
 	if got.SessionID != "session-1" || got.Generation != 3 || len(got.Inventory.Connectors) != 1 || got.Inventory.Connectors[0].ToolCount != 2 {
 		t.Fatalf("broker status = %#v", got)
 	}
+
+	errMsg := ListMCPConnectorsCmd(context.Background(), newFakeClient(&fakeHarnessClient{err: errors.New("broker unavailable")}), "session-2", 4)()
+	brokerErr, ok := errMsg.(MCPConnectorErrMsg)
+	if !ok {
+		t.Fatalf("error msg = %T, want MCPConnectorErrMsg", errMsg)
+	}
+	if brokerErr.SessionID != "session-2" || brokerErr.Generation != 4 {
+		t.Fatalf("broker error lost correlation: %#v", brokerErr)
+	}
 }

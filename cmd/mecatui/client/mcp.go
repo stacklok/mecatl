@@ -193,6 +193,20 @@ type MCPConnectorStatusMsg struct {
 	Inventory  MCPConnectorInventory
 }
 
+// MCPConnectorErrMsg is a classified broker-inventory failure correlated to the
+// session and refresh generation that issued it, so stale errors cannot replace
+// a newer panel state.
+type MCPConnectorErrMsg struct {
+	SessionID  string
+	Generation uint64
+	Class      MCPErrorClass
+	Err        error
+}
+
+func (e MCPConnectorErrMsg) Error() string {
+	return fmt.Sprintf("list broker catalogue: %s: %v", e.Class, e.Err)
+}
+
 // MCPErrMsg is the classified failure msg shared by all MCP RPCs. Op names the
 // action ("list resources", "read resource", …) for the ui; Class drives the
 // distinct rendering (input vs server vs not-configured); Err is the raw error
@@ -468,7 +482,7 @@ func ListMCPConnectorsCmd(ctx context.Context, m MCPConnectorReader, sessionID s
 	return func() tea.Msg {
 		inventory, err := m.ListMCPConnectors(ctx, sessionID)
 		if err != nil {
-			return MCPErrMsg{Op: "list broker catalogue", Class: classifyMCPErr(err), Err: err}
+			return MCPConnectorErrMsg{SessionID: sessionID, Generation: generation, Class: classifyMCPErr(err), Err: err}
 		}
 		return MCPConnectorStatusMsg{SessionID: sessionID, Generation: generation, Inventory: inventory}
 	}

@@ -436,7 +436,7 @@ refresh credentials, or enroll connectors. Declared static tools and lazily
 discovered enrolled tools are distinct states. The display is not a health check
 or proof that the server installed or persisted the catalogue, or that a prompt
 is ready. A restarted pod can report broker state unavailable; do not switch to
-global MCP as a workaround.
+global MCP as a workaround. The panel requires the existing authenticated verified principal and a matching owned session; it has no separate listener toggle. Broker and direct MCP are mutually exclusive supported compositions, so broker-only sessions do not offer direct resources, prompts, or groups.
 
 Keep MCP and OAuth endpoints on HTTPS and provide pod egress through your
 NetworkPolicy or mesh; this chart has no general NetworkPolicy. The explicit

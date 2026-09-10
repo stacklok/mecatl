@@ -18,7 +18,7 @@ func (m Model) runMCPPrompts() (tea.Model, tea.Cmd)   { return m.openMCP(mcpProm
 
 // openMCP opens the selected MCP surface and starts its initial RPC.
 func (m Model) openMCP(v mcpView) (tea.Model, tea.Cmd) {
-	if m.phase != phaseIdle || m.deps.MCP == nil {
+	if m.phase != phaseIdle || m.deps.MCP == nil || (v != mcpPanel && !m.caps.MCP) {
 		return m, nil
 	}
 	m.prompt.Blur() // modal owns the keyboard while open
@@ -397,6 +397,15 @@ func (s *mcpState) HandleMsg(msg tea.Msg) (cmd tea.Cmd, handled bool, closed boo
 		s.refreshed = true
 		s.inventory = msg.Inventory
 		return nil, true, false
+	case client.MCPConnectorErrMsg:
+		if !s.brokerMode || msg.SessionID != s.sessionID || msg.Generation != s.brokerGeneration {
+			return nil, true, false
+		}
+		s.loading = false
+		s.refreshing = false
+		s.errCls = msg.Class
+		s.errMsg = "list broker catalogue: " + msg.Err.Error()
+		return nil, true, false
 	case client.MCPSourcesMsg:
 		s.loading = false
 		if s.refreshing {
@@ -608,8 +617,12 @@ func renderBrokerMCPPanel(th theme.Theme, st mcpState, hk helpKeys, width int) s
 	if line := mcpStatusLine(th, st); line != "" {
 		b.WriteString(line + "\n")
 	}
-	if !st.loading && st.inventory.Availability == unavailableText {
-		b.WriteString(th.Style("muted").Render("Broker state unavailable") + "\n")
+	if !st.loading && st.inventory.Availability != "available" {
+		state := "unknown"
+		if st.inventory.Availability == unavailableText {
+			state = "unavailable"
+		}
+		b.WriteString(th.Style("muted").Render("Broker state "+state) + "\n")
 	} else if !st.loading {
 		state := st.inventory.EnrollmentState
 		if state != "not_required" && state != "not_started" && state != "pending" && state != "completed" {

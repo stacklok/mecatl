@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 )
@@ -41,5 +42,22 @@ func TestBrokerMCPStatus_Scenario1_Capabilities(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+func TestBrokerMCPStatus_Scenario1_DirectComposition(t *testing.T) {
+	mcpURL, _ := authorityVerticalMCPServer(t)
+	built, err := Build(t.Context(), Config{
+		Workspace: t.TempDir(), StoreDir: t.TempDir(), NoSoul: true, UseMock: true,
+		MCPServers: []mcp.ServerConfig{{Name: "direct", URL: mcpURL}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(built.Close)
+
+	caps := built.Service.CompatibilityInfo(t.Context()).GetCapabilities()
+	if !caps.GetMcp() || caps.GetMcpConnectorStatus() {
+		t.Fatalf("direct composition capabilities = mcp=%v broker=%v, want direct only", caps.GetMcp(), caps.GetMcpConnectorStatus())
 	}
 }

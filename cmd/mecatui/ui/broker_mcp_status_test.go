@@ -1,11 +1,52 @@
 package ui
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
+
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 )
+
+// countingBrokerMCP proves broker-only paths never fall through to the direct
+// MCP interface, even when a collaborator happens to implement both interfaces.
+type countingBrokerMCP struct {
+	directCalls int
+	inventory   client.MCPConnectorInventory
+	err         error
+}
+
+func (f *countingBrokerMCP) ListMCPConnectors(context.Context, string) (client.MCPConnectorInventory, error) {
+	return f.inventory, f.err
+}
+
+func (f *countingBrokerMCP) ListMCPResources(context.Context, string) ([]client.MCPResource, error) {
+	f.directCalls++
+	return nil, errors.New("direct MCP must not be called")
+}
+func (f *countingBrokerMCP) ReadMCPResource(context.Context, string, string) ([]client.MCPResourceContents, error) {
+	f.directCalls++
+	return nil, errors.New("direct MCP must not be called")
+}
+func (f *countingBrokerMCP) ListMCPPrompts(context.Context, string) ([]client.MCPPrompt, error) {
+	f.directCalls++
+	return nil, errors.New("direct MCP must not be called")
+}
+func (f *countingBrokerMCP) GetMCPPrompt(context.Context, string, string, map[string]string) (string, []client.MCPPromptMessage, error) {
+	f.directCalls++
+	return "", nil, errors.New("direct MCP must not be called")
+}
+func (f *countingBrokerMCP) ListMCPSources(context.Context) ([]client.MCPSource, error) {
+	f.directCalls++
+	return nil, errors.New("direct MCP must not be called")
+}
+func (f *countingBrokerMCP) ListToolHiveGroups(context.Context) ([]string, error) {
+	f.directCalls++
+	return nil, errors.New("direct MCP must not be called")
+}
 
 func TestMCPBrokerPanelGolden(t *testing.T) {
 	st := mcpState{brokerMode: true, inventory: client.MCPConnectorInventory{
@@ -43,5 +84,63 @@ func TestBrokerMCPStatus_Scenario3_StaleResponses(t *testing.T) {
 	}
 	if !strings.Contains(renderBrokerMCPPanel(aztec(), st, helpKeys{}, 100), "Broker state unavailable") {
 		t.Fatal("unavailable state was not rendered")
+	}
+
+	st = mcpState{brokerMode: true, sessionID: "current", brokerGeneration: 4, loading: true}
+	st.HandleMsg(client.MCPConnectorErrMsg{SessionID: "old", Generation: 3, Err: errors.New("stale")})
+	if st.errMsg != "" || !st.loading {
+		t.Fatalf("stale broker error changed state: %#v", st)
+	}
+	st.HandleMsg(client.MCPConnectorErrMsg{SessionID: "current", Generation: 4, Err: errors.New("current")})
+	if st.loading || !strings.Contains(st.errMsg, "current") {
+		t.Fatalf("current broker error not applied: %#v", st)
+	}
+}
+
+func TestBrokerMCPStatus_Scenario3_UnknownAvailability(t *testing.T) {
+	st := mcpState{brokerMode: true, inventory: client.MCPConnectorInventory{Availability: "future"}}
+	view := renderBrokerMCPPanel(aztec(), st, helpKeys{}, 100)
+	if !strings.Contains(view, "Broker state unknown") {
+		t.Fatalf("future availability looked available:\n%s", view)
+	}
+}
+func TestBrokerMCPStatus_Scenario3_BuiltinCapabilityAndCollaborator(t *testing.T) {
+	oldServer := newMCPModel(t, aztec(), &fakeMCP{})
+	oldServer.caps = client.Capabilities{MCPConnectorStatus: true}
+	if _, ok := builtinByName(oldServer.caps, oldServer.wiredCollaborators(), "mcp"); ok {
+		t.Fatal("broker capability without connector reader registered /mcp")
+	}
+
+	broker := newMCPModel(t, aztec(), &countingBrokerMCP{})
+	broker.caps = client.Capabilities{MCPConnectorStatus: true}
+	if _, ok := builtinByName(broker.caps, broker.wiredCollaborators(), "mcp"); !ok {
+		t.Fatal("broker capability with connector reader did not register /mcp")
+	}
+}
+
+func TestBrokerMCPStatus_Scenario3_BrokerOnlyInteractions(t *testing.T) {
+	broker := &countingBrokerMCP{inventory: client.MCPConnectorInventory{Availability: "available", EnrollmentState: "not_started"}}
+	m := newMCPModel(t, aztec(), broker)
+	m.caps = client.Capabilities{MCPConnectorStatus: true}
+
+	m = openOverlay(t, m, ctrlKey('o'))
+	if st := mcpActive(m); st == nil || !st.brokerMode {
+		t.Fatalf("broker /mcp did not open the broker panel: %#v", st)
+	}
+	if broker.directCalls != 0 {
+		t.Fatalf("broker /mcp issued %d direct calls", broker.directCalls)
+	}
+
+	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	m = mm.(Model)
+	for _, key := range []tea.KeyPressMsg{ctrlKey('r'), ctrlKey('p')} {
+		mm, cmd := m.Update(key)
+		m = mm.(Model)
+		if cmd != nil || mcpActive(m) != nil {
+			t.Fatalf("broker-only shortcut %q opened a direct surface", key.String())
+		}
+	}
+	if broker.directCalls != 0 {
+		t.Fatalf("broker-only shortcuts issued %d direct calls", broker.directCalls)
 	}
 }
