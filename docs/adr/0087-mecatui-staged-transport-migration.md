@@ -70,7 +70,7 @@ until a later phase removes it.
    `local` works offline with `--mock`.
 
 7. Add concise mode-specific help derived from the real FlagSet and the
-   applicability metadata, reusing `internal/cliconfig/flaghelp.go` formatting
+   applicability metadata, reusing `internal/flaghelp/flaghelp.go` formatting
    (no second `flag.PrintDefaults` implementation). Top-level help is
    command-oriented. The deprecated `--output-economy` compatibility flag stays
    hidden from all help.
