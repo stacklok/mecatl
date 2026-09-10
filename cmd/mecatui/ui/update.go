@@ -462,10 +462,18 @@ func (m Model) finishStartupResume() (tea.Model, tea.Cmd) {
 // server-rejected-selection fallback, issue #41) can reuse it before layering its
 // warning on top.
 func (m Model) applySessionReady(msg client.SessionReadyMsg) (tea.Model, tea.Cmd, bool) {
+	// Only the process's initial create is known to be a fresh pre-prompt
+	// session. Rebinds are conservatively ineligible; /clear sets its known-new
+	// successor after this shared path returns.
+	freshBinding := m.sessionID == "" && !m.restartedThisRun && !m.startupAdopted
 	// A ready message establishes (or re-establishes) the authoritative session
 	// binding. A recovery from any prior binding must never cross it.
 	m.promptRecovery = nil
 	m = m.bindSessionID(msg.SessionID)
+	m.freshSessionBinding = freshBinding
+	if freshBinding {
+		m.sessionState = "idle"
+	}
 	m = m.syncDebugTarget()
 	m.failedStepRetryTried = false
 	m.browsingStartupSessions = false
@@ -700,6 +708,8 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		m.activePlacement = msg.placement
 		mm, bindCmd, handled := m.applySessionReady(msg.ready)
 		m = mm.(Model)
+		m.freshSessionBinding = true
+		m.sessionState = "idle"
 		// The replacement was created with desiredMode, so its ready echo confirms
 		// that any deferred old-session mode switch is now settled. Leaving it set
 		// would make onIdleSubmit keep deferring every future prompt.
@@ -965,7 +975,9 @@ func (m Model) onResolvedModelMsg(msg client.ResolvedModelMsg) (Model, tea.Cmd, 
 	if msg.Mode != "" {
 		m.activeMode = client.ModeString(client.ModeFromString(msg.Mode))
 	}
-	m.sessionState = msg.State
+	if msg.State != "" {
+		m.sessionState = msg.State
+	}
 	m.sessionCreatedAt = msg.CreatedAt
 	m.activePlacement = msg.Placement
 	if (&m).setResolvedSessionModel(msg.Resolved) {

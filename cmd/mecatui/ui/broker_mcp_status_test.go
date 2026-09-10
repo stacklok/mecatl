@@ -154,12 +154,16 @@ func TestBrokerMCPStatus_FriendlyStatusLabels(t *testing.T) {
 }
 
 func TestBrokerMCPStatus_Scenario3_StaleResponses(t *testing.T) {
-	st := mcpState{brokerMode: true, sessionID: "current", brokerGeneration: 2, loading: true}
-	st.HandleMsg(client.MCPConnectorStatusMsg{SessionID: "old", Generation: 1, Inventory: client.MCPConnectorInventory{Availability: "available"}})
+	st := mcpState{brokerMode: true, sessionID: "current", requestToken: 9, brokerGeneration: 2, loading: true}
+	st.HandleMsg(client.MCPConnectorStatusMsg{RequestToken: 8, SessionID: "current", Generation: 2, Inventory: client.MCPConnectorInventory{Availability: "available"}})
+	if st.inventory.Availability != "" || !st.loading {
+		t.Fatalf("old panel response changed state: %#v", st)
+	}
+	st.HandleMsg(client.MCPConnectorStatusMsg{RequestToken: 9, SessionID: "old", Generation: 1, Inventory: client.MCPConnectorInventory{Availability: "available"}})
 	if st.inventory.Availability != "" || !st.loading {
 		t.Fatalf("stale response changed state: %#v", st)
 	}
-	st.HandleMsg(client.MCPConnectorStatusMsg{SessionID: "current", Generation: 2, Inventory: client.MCPConnectorInventory{Availability: "unavailable"}})
+	st.HandleMsg(client.MCPConnectorStatusMsg{RequestToken: 9, SessionID: "current", Generation: 2, Inventory: client.MCPConnectorInventory{Availability: "unavailable"}})
 	if st.loading || st.inventory.Availability != "unavailable" {
 		t.Fatalf("current response not applied: %#v", st)
 	}
@@ -167,14 +171,40 @@ func TestBrokerMCPStatus_Scenario3_StaleResponses(t *testing.T) {
 		t.Fatal("unavailable state was not rendered")
 	}
 
-	st = mcpState{brokerMode: true, sessionID: "current", brokerGeneration: 4, loading: true}
-	st.HandleMsg(client.MCPConnectorErrMsg{SessionID: "old", Generation: 3, Err: errors.New("stale")})
+	st = mcpState{brokerMode: true, sessionID: "current", requestToken: 9, brokerGeneration: 4, loading: true}
+	st.HandleMsg(client.MCPConnectorErrMsg{RequestToken: 8, SessionID: "current", Generation: 4, Err: errors.New("stale")})
+	if st.errMsg != "" || !st.loading {
+		t.Fatalf("old panel error changed state: %#v", st)
+	}
+	st.HandleMsg(client.MCPConnectorErrMsg{RequestToken: 9, SessionID: "old", Generation: 3, Err: errors.New("stale")})
 	if st.errMsg != "" || !st.loading {
 		t.Fatalf("stale broker error changed state: %#v", st)
 	}
-	st.HandleMsg(client.MCPConnectorErrMsg{SessionID: "current", Generation: 4, Err: errors.New("current")})
+	st.HandleMsg(client.MCPConnectorErrMsg{RequestToken: 9, SessionID: "current", Generation: 4, Err: errors.New("current")})
 	if st.loading || !strings.Contains(st.errMsg, "current") {
 		t.Fatalf("current broker error not applied: %#v", st)
+	}
+}
+
+func TestBrokerMCPStatus_Scenario3_ReopenRejectsOldPanelResponses(t *testing.T) {
+	m, _ := setupPanelModel(t)
+	m = openOverlay(t, m, ctrlKey('o'))
+	old := mcpActive(m)
+	if old == nil {
+		t.Fatal("initial panel did not open")
+	}
+	oldSuccess := client.MCPConnectorStatusMsg{RequestToken: old.requestToken, SessionID: old.sessionID, Generation: old.brokerGeneration, Inventory: client.MCPConnectorInventory{Availability: "unavailable"}}
+	oldErr := client.MCPConnectorErrMsg{RequestToken: old.requestToken, SessionID: old.sessionID, Generation: old.brokerGeneration, Err: errors.New("old panel")}
+	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	m = openOverlay(t, mm.(Model), ctrlKey('o'))
+	current := mcpActive(m)
+	if current == nil || current.requestToken == old.requestToken {
+		t.Fatalf("reopened panel did not receive a new identity: old=%#v new=%#v", old, current)
+	}
+	m = applyAll(m, oldSuccess, oldErr)
+	current = mcpActive(m)
+	if current.inventory.Availability != "available" || current.errMsg != "" {
+		t.Fatalf("old panel result overwrote reopened panel: %#v", current)
 	}
 }
 

@@ -316,21 +316,21 @@ func TestBrokerMCPStatus_Scenario3_Compatibility(t *testing.T) {
 		Availability: "available", EnrollmentState: "completed", TotalConnectors: 1,
 		Connectors: []*mecatlv1.McpConnectorStatus{{Name: "github", CatalogueState: "discovered", ToolCount: 2}},
 	}})
-	msg := ListMCPConnectorsCmd(context.Background(), cl, "session-1", 3)()
+	msg := ListMCPConnectorsCmd(context.Background(), cl, "session-1", 7, 3)()
 	got, ok := msg.(MCPConnectorStatusMsg)
 	if !ok {
 		t.Fatalf("msg = %T, want MCPConnectorStatusMsg", msg)
 	}
-	if got.SessionID != "session-1" || got.Generation != 3 || len(got.Inventory.Connectors) != 1 || got.Inventory.Connectors[0].ToolCount != 2 {
+	if got.RequestToken != 7 || got.SessionID != "session-1" || got.Generation != 3 || len(got.Inventory.Connectors) != 1 || got.Inventory.Connectors[0].ToolCount != 2 {
 		t.Fatalf("broker status = %#v", got)
 	}
 
-	errMsg := ListMCPConnectorsCmd(context.Background(), newFakeClient(&fakeHarnessClient{err: errors.New("broker unavailable")}), "session-2", 4)()
+	errMsg := ListMCPConnectorsCmd(context.Background(), newFakeClient(&fakeHarnessClient{err: errors.New("broker unavailable")}), "session-2", 8, 4)()
 	brokerErr, ok := errMsg.(MCPConnectorErrMsg)
 	if !ok {
 		t.Fatalf("error msg = %T, want MCPConnectorErrMsg", errMsg)
 	}
-	if brokerErr.SessionID != "session-2" || brokerErr.Generation != 4 {
+	if brokerErr.RequestToken != 8 || brokerErr.SessionID != "session-2" || brokerErr.Generation != 4 {
 		t.Fatalf("broker error lost correlation: %#v", brokerErr)
 	}
 }

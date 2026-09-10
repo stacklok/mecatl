@@ -185,22 +185,24 @@ type MCPConnectorInventory struct {
 	Truncated       bool
 }
 
-// MCPConnectorStatusMsg binds a broker response to the requesting UI session and
-// refresh generation so a late command cannot overwrite newer state.
+// MCPConnectorStatusMsg binds a broker response to one panel lifetime, UI session,
+// and refresh generation so a late command cannot overwrite newer state.
 type MCPConnectorStatusMsg struct {
-	SessionID  string
-	Generation uint64
-	Inventory  MCPConnectorInventory
+	RequestToken uint64
+	SessionID    string
+	Generation   uint64
+	Inventory    MCPConnectorInventory
 }
 
-// MCPConnectorErrMsg is a classified broker-inventory failure correlated to the
-// session and refresh generation that issued it, so stale errors cannot replace
-// a newer panel state.
+// MCPConnectorErrMsg is a classified broker-inventory failure correlated to one
+// panel lifetime, UI session, and refresh generation, so stale errors cannot
+// replace newer panel state.
 type MCPConnectorErrMsg struct {
-	SessionID  string
-	Generation uint64
-	Class      MCPErrorClass
-	Err        error
+	RequestToken uint64
+	SessionID    string
+	Generation   uint64
+	Class        MCPErrorClass
+	Err          error
 }
 
 func (e MCPConnectorErrMsg) Error() string {
@@ -478,12 +480,12 @@ func ListToolHiveGroupsCmd(ctx context.Context, m MCP) tea.Cmd {
 
 // ListMCPConnectorsCmd reads broker-local inventory. The identity fields are
 // echoed even on failure by the UI-owned command generation, never the server.
-func ListMCPConnectorsCmd(ctx context.Context, m MCPConnectorReader, sessionID string, generation uint64) tea.Cmd {
+func ListMCPConnectorsCmd(ctx context.Context, m MCPConnectorReader, sessionID string, requestToken, generation uint64) tea.Cmd {
 	return func() tea.Msg {
 		inventory, err := m.ListMCPConnectors(ctx, sessionID)
 		if err != nil {
-			return MCPConnectorErrMsg{SessionID: sessionID, Generation: generation, Class: classifyMCPErr(err), Err: err}
+			return MCPConnectorErrMsg{RequestToken: requestToken, SessionID: sessionID, Generation: generation, Class: classifyMCPErr(err), Err: err}
 		}
-		return MCPConnectorStatusMsg{SessionID: sessionID, Generation: generation, Inventory: inventory}
+		return MCPConnectorStatusMsg{RequestToken: requestToken, SessionID: sessionID, Generation: generation, Inventory: inventory}
 	}
 }

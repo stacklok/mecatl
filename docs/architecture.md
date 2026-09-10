@@ -195,9 +195,10 @@ affinity or durable-broker decision is made; the chart does not silently change 
 behavior.
 
 The owner-scoped broker connector inventory is available to authenticated mecatui
-sessions through `/mcp` when the server advertises its broker-status capability. It
-reports only local broker publication and enrollment facts; it neither enables
-direct resources/prompts nor probes upstreams or persists a status cache. Its
+sessions through `/mcp` when the server advertises its broker-status capability. The
+panel intentionally stays concise: enrollment and declared/discovered connector rows are
+broker-local publication facts, not a connection test. It neither enables direct
+resources/prompts nor probes upstreams or persists a status cache. Its
 panel explicitly distinguishes that publication from session installation,
 persistence, prompt readiness, current authorization, and live health.
 

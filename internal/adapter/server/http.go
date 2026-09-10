@@ -158,6 +158,14 @@ func NewHTTPHandler(svc *Service) *HTTPHandler {
 
 // ServeHTTP routes to the registered handlers.
 func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// ServeMux canonicalizes the doubled separator in this one session-scoped
+	// route before matching, which would turn an empty id into a redirect. Keep
+	// the REST contract aligned with gRPC: it is an invalid request, never a
+	// cacheable redirect.
+	if r.Method == http.MethodGet && r.URL.Path == "/v1/sessions//mcp/connectors" {
+		requireSessionAffinity(h.listSessionMcpConnectors)(w, r)
+		return
+	}
 	h.mux.ServeHTTP(w, r)
 }
 

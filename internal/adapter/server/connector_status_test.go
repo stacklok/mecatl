@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -25,6 +26,18 @@ type connectorInspectorSpy struct {
 	binding session.ExternalBinding
 	result  brokercontract.ConnectorInventory
 	err     error
+}
+
+type blockingConnectorInspector struct {
+	connectorInspectorSpy
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (s *blockingConnectorInspector) InspectConnectors(ctx context.Context, id session.SessionID, binding session.ExternalBinding) (brokercontract.ConnectorInventory, error) {
+	close(s.entered)
+	<-s.release
+	return s.connectorInspectorSpy.InspectConnectors(ctx, id, binding)
 }
 
 func (s *connectorInspectorSpy) InspectConnectors(_ context.Context, id session.SessionID, binding session.ExternalBinding) (brokercontract.ConnectorInventory, error) {
@@ -120,6 +133,11 @@ func TestBrokerMCPStatus_Scenario2_TransportAuthority(t *testing.T) {
 			if status.Code(err) != codes.InvalidArgument {
 				t.Fatalf("invalid id accepted: %v", err)
 			}
+			rec := httptest.NewRecorder()
+			NewHTTPHandler(svc).ServeHTTP(rec, httptest.NewRequestWithContext(ctx, http.MethodGet, "/v1/sessions/"+url.PathEscape(id)+"/mcp/connectors", nil))
+			if rec.Code != http.StatusBadRequest || rec.Header().Get("Cache-Control") != "no-store" {
+				t.Fatalf("invalid HTTP id %q = %d, cache-control=%q", id, rec.Code, rec.Header().Get("Cache-Control"))
+			}
 		}
 		sess, err := svc.cfg.Store.Load(ctx, "connector-session")
 		if err != nil {
@@ -134,6 +152,52 @@ func TestBrokerMCPStatus_Scenario2_TransportAuthority(t *testing.T) {
 			t.Fatalf("non broker: %v, calls %d", err, spy.calls)
 		}
 	})
+}
+
+func TestBrokerMCPStatus_Scenario2_InspectionSerializesCloseAndDelete(t *testing.T) {
+	for _, operation := range []struct {
+		name string
+		run  func(*Service, context.Context, session.SessionID) error
+	}{
+		{name: "close", run: func(s *Service, _ context.Context, id session.SessionID) error { s.CloseSession(id); return nil }},
+		{name: "delete", run: func(s *Service, ctx context.Context, id session.SessionID) error { return s.DeleteSession(ctx, id) }},
+	} {
+		t.Run(operation.name, func(t *testing.T) {
+			svc, spy := connectorService(t, connectorOwner())
+			blocker := &blockingConnectorInspector{connectorInspectorSpy: *spy, entered: make(chan struct{}), release: make(chan struct{})}
+			svc.cfg.MCPConnectorInspector = blocker
+			ctx := session.WithPrincipal(t.Context(), connectorOwner())
+			inspected := make(chan error, 1)
+			go func() {
+				_, err := svc.ListSessionMcpConnectors(ctx, "connector-session")
+				inspected <- err
+			}()
+			select {
+			case <-blocker.entered:
+			case <-time.After(time.Second):
+				t.Fatal("inspection did not reach deterministic barrier")
+			}
+			finished := make(chan error, 1)
+			started := make(chan struct{})
+			go func() {
+				close(started)
+				finished <- operation.run(svc, ctx, "connector-session")
+			}()
+			<-started
+			select {
+			case err := <-finished:
+				t.Fatalf("%s completed while inspection held broker lock: %v", operation.name, err)
+			default:
+			}
+			close(blocker.release)
+			if err := <-inspected; err != nil {
+				t.Fatalf("inspection: %v", err)
+			}
+			if err := <-finished; err != nil {
+				t.Fatalf("%s: %v", operation.name, err)
+			}
+		})
+	}
 }
 
 func TestBrokerMCPStatus_Scenario1_Capabilities(t *testing.T) {

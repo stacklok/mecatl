@@ -30,10 +30,12 @@ func setupPanelView(m Model) string {
 }
 
 func TestBrokerMCPStatus_Scenario3_SetupEligibility(t *testing.T) {
-	for _, name := range []string{"fresh", "used", "active", "snapshot-running", "resumed", "completed", "busy", "unwired"} {
+	for _, name := range []string{"fresh", "unknown", "used", "active", "snapshot-running", "resumed", "completed", "busy", "unwired"} {
 		t.Run(name, func(t *testing.T) {
 			m, control := setupPanelModel(t)
 			switch name {
+			case "unknown":
+				m.sessionState = ""
 			case "used":
 				m.conv.addUser("already sent")
 			case "active":
@@ -74,6 +76,20 @@ func TestBrokerMCPStatus_Scenario3_SetupEligibility(t *testing.T) {
 				t.Fatal("fresh connect did not reach controller")
 			}
 		})
+	}
+}
+
+func TestBrokerMCPStatus_Scenario3_ClearSuccessorCanConnect(t *testing.T) {
+	m, _ := setupPanelModel(t)
+	m.deps.Session.(*fakeConv).caps = m.caps
+	mm, clear := m.runClear()
+	if clear == nil {
+		t.Fatal("clear did not start successor creation")
+	}
+	m = feedCmd(t, mm.(Model), clear)
+	m = openOverlay(t, m, ctrlKey('o'))
+	if !strings.Contains(setupPanelView(m), "c connect tools") {
+		t.Fatalf("fresh clear successor was not eligible: fresh=%t state=%q caps=%+v view=%s", m.freshSessionBinding, m.sessionState, m.caps, setupPanelView(m))
 	}
 }
 
@@ -158,6 +174,22 @@ func TestBrokerMCPStatus_Scenario3_StaleSetupActions(t *testing.T) {
 				t.Fatal("stale action reached controller")
 			}
 		})
+	}
+}
+
+func TestBrokerMCPStatus_Scenario3_ClosedPanelActionIsInert(t *testing.T) {
+	m, control := setupPanelModel(t)
+	m = openOverlay(t, m, ctrlKey('o'))
+	mm, action := m.Update(tea.KeyPressMsg{Code: 'c', Text: "c"})
+	if action == nil {
+		t.Fatal("eligible panel did not queue connect")
+	}
+	m = mm.(Model)
+	queued := action()
+	mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	m = openOverlay(t, mm.(Model), ctrlKey('o'))
+	if _, cmd := m.Update(queued); cmd != nil || control.connectCalls != 0 {
+		t.Fatal("queued action from closed panel reached controller")
 	}
 }
 

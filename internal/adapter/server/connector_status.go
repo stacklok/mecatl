@@ -42,6 +42,8 @@ func (s *Service) ListSessionMcpConnectors(ctx context.Context, id session.Sessi
 	if s.cfg.MCPConnectorInspector == nil || sess.ExternalBinding == "" {
 		return brokercontract.ConnectorInventory{}, errConnectorUnavailable
 	}
+	unlockBroker := s.brokerMu.lock(id)
+	defer unlockBroker()
 	result, err := s.cfg.MCPConnectorInspector.InspectConnectors(ctx, id, sess.ExternalBinding)
 	if err != nil {
 		return brokercontract.ConnectorInventory{}, ErrInternal

@@ -84,6 +84,7 @@ func sessionsSurface(m *Model) *sessionsState {
 
 func (m Model) bindSessionID(id string) Model {
 	if id != m.sessionID {
+		m.freshSessionBinding = false
 		m.compactPending = false
 		m.compactRequestToken++
 		if m.clearPending != nil && m.clearPending.sourceID != id {
@@ -278,6 +279,7 @@ func (m Model) adoptAuthoritativeTranscript(row client.SessionListItem, loaded c
 	m = m.endRun("")
 	m = m.resetSession()
 	m = m.bindSessionID(row.ID)
+	m.freshSessionBinding = false
 	m.sessionTitle = row.Title
 	m.sessionTitleProvenance = row.TitleProvenance
 	m.sessionTitleRevision = row.TitleRevision

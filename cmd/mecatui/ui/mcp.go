@@ -22,7 +22,8 @@ func (m Model) openMCP(v mcpView) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.prompt.Blur() // modal owns the keyboard while open
-	state := &mcpState{view: v, loading: true, deps: (&m).surfaceDeps(), mcp: m.deps.MCP, sessionID: m.sessionID}
+	m.mcpRequestToken++
+	state := &mcpState{view: v, loading: true, deps: (&m).surfaceDeps(), mcp: m.deps.MCP, sessionID: m.sessionID, requestToken: m.mcpRequestToken}
 	if v == mcpPanel {
 		state.setup = m.brokerMCPSetupState()
 	}
@@ -40,7 +41,7 @@ func (m Model) openMCP(v mcpView) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			state.brokerGeneration++
-			return m, client.ListMCPConnectorsCmd(m.deps.Ctx, state.broker, state.sessionID, state.brokerGeneration)
+			return m, client.ListMCPConnectorsCmd(m.deps.Ctx, state.broker, state.sessionID, state.requestToken, state.brokerGeneration)
 		}
 		// Fetch the inventory and the ToolHive groups in parallel; groups are
 		// best-effort (rendered alongside the sources, degraded on failure).
@@ -89,6 +90,7 @@ type mcpState struct {
 	// broker capability must never trigger direct source/resource/prompt/group RPCs.
 	broker           client.MCPConnectorReader
 	sessionID        string
+	requestToken     uint64
 	brokerGeneration uint64
 	inventory        client.MCPConnectorInventory
 	brokerMode       bool
@@ -140,8 +142,8 @@ type brokerMCPSetupState struct {
 func (m Model) brokerMCPSetupState() brokerMCPSetupState {
 	return brokerMCPSetupState{
 		eligible: m.caps.WorkspaceEnrollment && m.deps.WorkspaceEnrollment != nil && m.sessionID != "" &&
-			m.phase == phaseIdle && !m.restartedThisRun && m.conv.isEmpty() &&
-			(m.sessionState == "" || m.sessionState == "idle") && m.enrollment.Status != client.WorkspaceEnrollmentConnected,
+			m.phase == phaseIdle && m.freshSessionBinding && m.conv.isEmpty() &&
+			m.sessionState == "idle" && m.enrollment.Status != client.WorkspaceEnrollmentConnected,
 		pending: m.enrollment.ID != "" && m.enrollment.Status == client.WorkspaceEnrollmentPending,
 		busy:    m.enrollment.busy,
 		gen:     m.enrollment.controlGen,
@@ -239,7 +241,7 @@ func (s *mcpState) refreshPanel() tea.Cmd {
 	s.errMsg = ""
 	if s.brokerMode && s.broker != nil {
 		s.brokerGeneration++
-		return client.ListMCPConnectorsCmd(s.deps.ctx, s.broker, s.sessionID, s.brokerGeneration)
+		return client.ListMCPConnectorsCmd(s.deps.ctx, s.broker, s.sessionID, s.requestToken, s.brokerGeneration)
 	}
 	s.groupsDone = false
 	s.groupsErr = false
@@ -447,7 +449,7 @@ func (*mcpState) HandleWheel(tea.MouseWheelMsg) (cmd tea.Cmd, handled bool) {
 func (s *mcpState) HandleMsg(msg tea.Msg) (cmd tea.Cmd, handled bool, closed bool) {
 	switch msg := msg.(type) {
 	case client.MCPConnectorStatusMsg:
-		if !s.brokerMode || msg.SessionID != s.sessionID || msg.Generation != s.brokerGeneration {
+		if !s.brokerMode || msg.RequestToken != s.requestToken || msg.SessionID != s.sessionID || msg.Generation != s.brokerGeneration {
 			return nil, true, false
 		}
 		s.loading = false
@@ -456,7 +458,7 @@ func (s *mcpState) HandleMsg(msg tea.Msg) (cmd tea.Cmd, handled bool, closed boo
 		s.inventory = msg.Inventory
 		return nil, true, false
 	case client.MCPConnectorErrMsg:
-		if !s.brokerMode || msg.SessionID != s.sessionID || msg.Generation != s.brokerGeneration {
+		if !s.brokerMode || msg.RequestToken != s.requestToken || msg.SessionID != s.sessionID || msg.Generation != s.brokerGeneration {
 			return nil, true, false
 		}
 		s.loading = false
