@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
