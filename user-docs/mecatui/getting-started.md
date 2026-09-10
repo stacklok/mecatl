@@ -52,8 +52,8 @@ The welcome screen shows your workspace and active model. To use a different
 model, enter `/models`, select one, and press `enter`. A small, low-cost model is
 enough for this tutorial.
 
-The header also shows `default`, the active permission mode. With the default
-permission policy, read-only tools can run without approval and actions that
+The header also shows `mode default`, identifying the active permission mode. With the
+default permission policy, read-only tools can run without approval and actions that
 change the workspace ask first.
 
 ## Inspect the project

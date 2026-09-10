@@ -129,6 +129,24 @@ func TestStatusLine_Scenario2_TemplateEscapesValues(t *testing.T) {
 		}
 	}
 }
+func TestStatusLine_CompactHeaderLabelsPermissionMode(t *testing.T) {
+	s := NewDefaultSource(0)
+	t.Cleanup(func() { _ = s.Close(context.Background()) })
+	s.Submit(Input{
+		Session:  Session{Handle: "deadbeef", Mode: "accept-edits"},
+		Model:    Model{DisplayName: "GPT-5"},
+		Terminal: Terminal{HeaderAvailCols: 50, FooterAvailCols: 80},
+	})
+	select {
+	case <-s.Changed():
+	case <-time.After(time.Second):
+		t.Fatal("shipped source did not publish")
+	}
+	if got, want := statusSurfaceText(s.Latest().Header), "mecatui · deadbeef · GPT-5 · mode accept-edits"; got != want {
+		t.Fatalf("compact header = %q, want %q", got, want)
+	}
+}
+
 func TestStatusCustomization_Scenario2_ReservedLanesAndResponsiveSelection(t *testing.T) {
 	s := NewTemplateSource(TemplateSet{
 		Header: SurfaceTemplates{

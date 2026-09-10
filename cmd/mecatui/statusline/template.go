@@ -121,7 +121,7 @@ func statusSurfaceText(surface Surface) string {
 func defaultHeaderTemplates() SurfaceTemplates {
 	return SurfaceTemplates{
 		Full:    `<header><primary>mecatui · session {{.Session.Handle}} · {{if .Model.ProviderID}}{{.Model.ProviderID}}/{{end}}{{.Model.DisplayName}}{{if .Model.Route}}/{{.Model.Route}}{{end}}</primary>{{if .Session.Mode}}<warning> · mode {{.Session.Mode}}</warning>{{end}}{{if .Server.DisplayTarget}}<text> · {{.Server.DisplayTarget}}</text>{{end}}</header>`,
-		Compact: `<header><primary>mecatui · {{.Session.Handle}} · {{.Model.DisplayName}}</primary>{{if .Session.Mode}}<warning> · {{.Session.Mode}}</warning>{{end}}</header>`,
+		Compact: `<header><primary>mecatui · {{.Session.Handle}} · {{.Model.DisplayName}}</primary>{{if .Session.Mode}}<warning> · mode {{.Session.Mode}}</warning>{{end}}</header>`,
 		Minimal: `<header><primary>mecatui</primary></header>`,
 	}
 }
