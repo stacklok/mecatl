@@ -16,6 +16,42 @@ func keyMapFieldNames() []string {
 	return names
 }
 
+// TestDefaultOverlayFunctionKeyBindings pins the replacement defaults and the
+// matching labels used by the help overlay and inline affordances.
+func TestDefaultOverlayFunctionKeyBindings(t *testing.T) {
+	km := defaultKeys()
+	agentsHelp := km.Agents.Help()
+	effortHelp := km.Effort.Help()
+	promptsHelp := km.Prompts.Help()
+	marks := keyMarkings(km)
+
+	for _, tc := range []struct {
+		name     string
+		keys     []string
+		helpKey  string
+		helpDesc string
+		marking  string
+		wantKey  string
+		wantDesc string
+	}{
+		{name: "Agents", keys: km.Agents.Keys(), helpKey: agentsHelp.Key, helpDesc: agentsHelp.Desc, marking: marks.agents, wantKey: "f6", wantDesc: "agents (subagents / parallel / teams)"},
+		{name: "Effort", keys: km.Effort.Keys(), helpKey: effortHelp.Key, helpDesc: effortHelp.Desc, marking: marks.effort, wantKey: "f7", wantDesc: "reasoning-effort picker"},
+		{name: "Prompts", keys: km.Prompts.Keys(), helpKey: promptsHelp.Key, helpDesc: promptsHelp.Desc, marking: marks.prompts, wantKey: "f8", wantDesc: "MCP prompts"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if len(tc.keys) != 1 || tc.keys[0] != tc.wantKey {
+				t.Errorf("default keys = %v, want [%s]", tc.keys, tc.wantKey)
+			}
+			if tc.helpKey != tc.wantKey || tc.helpDesc != tc.wantDesc {
+				t.Errorf("default help = {%s %s}, want {%s %s}", tc.helpKey, tc.helpDesc, tc.wantKey, tc.wantDesc)
+			}
+			if tc.marking != tc.wantKey {
+				t.Errorf("help marking = %q, want %q", tc.marking, tc.wantKey)
+			}
+		})
+	}
+}
+
 // TestDefaultRawArgsBinding pins the RawArgs default: a bare "r" (consulted
 // ONLY inside the full-screen ask-args view) with the "raw args" help text.
 func TestDefaultRawArgsBinding(t *testing.T) {

@@ -109,7 +109,7 @@ type teamLane struct {
 	// (D16). Empty until the member produces an event (or from an older server); the
 	// x cancel key no-ops then.
 	sessionID string
-	role      string // the member's roster role (e.g. "researcher"); shown in the ctrl+a overlay roster, omitted from the calm inline card
+	role      string // the member's roster role (e.g. "researcher"); shown in the f6 overlay roster, omitted from the calm inline card
 	mutating  bool
 	lead      bool
 	// routedCategory/routedModel are the opt-in model router's bare metadata for this
@@ -160,7 +160,7 @@ type teamLane struct {
 	// prior cause does not render it (it recovered).
 	cause string
 
-	// ctxUsed / ctxWindow back the per-member context meter in the ctrl+a agents
+	// ctxUsed / ctxWindow back the per-member context meter in the f6 agents
 	// overlay. ctxUsed is the CURRENT context occupancy — the most recent turn's
 	// input-token count (ASSIGNED, not summed, each turn.end, mirroring the main
 	// meter's m.contextTokens = turn input tokens) — and ctxWindow is the member
@@ -171,7 +171,7 @@ type teamLane struct {
 }
 
 // teamTask is the ui-local projection of one entry in the team's shared task list,
-// rendered by the ctrl+a agents task sub-view. It mirrors client.TeamTask; it holds
+// rendered by the f6 agents task sub-view. It mirrors client.TeamTask; it holds
 // only task metadata (id / state / assignee / deps), never member content.
 type teamTask struct {
 	id       string
@@ -182,7 +182,7 @@ type teamTask struct {
 }
 
 // teamFinding is the ui-local projection of one entry in the team's shared findings
-// ledger, rendered by the ctrl+a agents findings view. It mirrors client.TeamFinding;
+// ledger, rendered by the f6 agents findings view. It mirrors client.TeamFinding;
 // it holds only the recording member's name and a bounded body preview.
 type teamFinding struct {
 	member string
@@ -318,8 +318,8 @@ type block struct {
 	team         bool
 	teamID       string // the team's stable id (e.g. "team-p1"), shown in the live footer summary segment
 	teamLanes    []teamLane
-	teamTasks    []teamTask    // the team's shared task list (ctrl+a task sub-view)
-	teamFindings []teamFinding // the team's shared findings ledger (ctrl+a findings view)
+	teamTasks    []teamTask    // the team's shared task list (f6 task sub-view)
+	teamFindings []teamFinding // the team's shared findings ledger (f6 findings view)
 	teamRounds   int
 	teamStop     string
 	teamUsage    client.Usage
@@ -336,7 +336,7 @@ type block struct {
 // subagentLane is the flat, fleet-level projection of ONE Subagent child run, keyed by
 // ChildID. It mirrors the per-Subagent-block subagent fields (subGoal/subTrace/…) but is
 // collected ACROSS all Subagent cards into conversation.subagentFleet, so the footer
-// segment can show aggregate running/done counts and the ctrl+a Subagents tab can
+// segment can show aggregate running/done counts and the f6 Subagents tab can
 // list one row per child regardless of where its inline card sits in scrollback. It
 // carries the BOUNDED previews the subagent.* events forward (ADR 0079) — bounded,
 // scrubbed, client-only (gauntlet #7 is about the conversation, not the client).
@@ -380,7 +380,7 @@ type subagentLane struct {
 // subagentFleet is the flat, insertion-ordered collection of Subagent child lanes keyed
 // by ChildID (see subagentLane). It is fed alongside the inline-card routing by
 // applySubagent/upsertSubagentLane, and read by the fleet footer segment and the
-// ctrl+a Subagents tab. It is part of the conversation so a /clear (which rebuilds
+// f6 Subagents tab. It is part of the conversation so a /clear (which rebuilds
 // the conversation) drops it too.
 type conversation struct {
 	blocks      []block
@@ -771,7 +771,7 @@ func (c *conversation) subagentFleetCounts() (running, done int) {
 }
 
 // hasSubagents reports whether ≥1 subagent has started this session — the gate for
-// showing the fleet footer segment and enabling the ctrl+a Subagents tab. The
+// showing the fleet footer segment and enabling the f6 Subagents tab. The
 // context-sensitive default tab (preferredAgentsTab) keys off this plus liveTeamBlock:
 // it prefers Subagents whenever ANY subagent ran (running OR done, so a finished fleet
 // is still reviewable, mirroring how the Teams tab reviews a finished team), unless a
@@ -959,7 +959,7 @@ func (c *conversation) parallelGroupCounts() (running, done int) {
 }
 
 // hasParallel reports whether ≥1 Parallel run has started this session — the gate for the
-// fleet footer segment and the ctrl+a Parallel tab (mirroring hasSubagents).
+// fleet footer segment and the f6 Parallel tab (mirroring hasSubagents).
 func (c *conversation) hasParallel() bool { return len(c.parallelGroups) > 0 }
 
 // liveParallel reports whether any Parallel group is still RUNNING (no parallel.end yet) —
@@ -983,7 +983,7 @@ func (c *conversation) liveParallel() bool {
 // gateway for the five team mutators (setTeamStart / addTeamMember / setTeamEnd /
 // setTeamTasks / setTeamFindings) — note setTeamTasks/setTeamFindings flip the
 // render-visible b.team flag even though tasks/findings themselves render only in
-// the ctrl+a overlay, so they invalidate too. latestTeamBlock/liveTeamBlock (the
+// the f6 overlay, so they invalidate too. latestTeamBlock/liveTeamBlock (the
 // overlay READ path) deliberately do NOT bump.
 func (c *conversation) teamBlock(parentCallID string) *block {
 	for i := len(c.blocks) - 1; i >= 0; i-- {
@@ -1196,7 +1196,7 @@ func (c *conversation) setTeamFindings(parentCallID string, findings []client.Te
 // latestTeamBlock returns the most-recent tool block that carries team lanes (a
 // Team card with at least one member lane), or nil if no team has been seen this
 // session. It scans from the end so a fresh team supersedes an earlier one — the
-// ctrl+a overlay always reflects the latest team. The block is returned by
+// f6 overlay always reflects the latest team. The block is returned by
 // pointer so the overlay reads the live, accumulating lane state (it never
 // mutates it). A team card with no lanes yet (team.start not seen, or empty
 // roster) is skipped so the overlay never opens onto an empty roster.
@@ -1212,7 +1212,7 @@ func (c *conversation) latestTeamBlock() *block {
 
 // liveTeamBlock returns the latest team block that is still RUNNING (not
 // teamDone) — the footer's live-activity signal. Distinct from latestTeamBlock,
-// which returns the most-recent team done-or-not so the ctrl+a overlay can still
+// which returns the most-recent team done-or-not so the f6 overlay can still
 // review a finished roster.
 func (c *conversation) liveTeamBlock() *block {
 	b := c.latestTeamBlock()

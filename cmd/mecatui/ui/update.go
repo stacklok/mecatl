@@ -1594,7 +1594,7 @@ func applySubagentTo(c *conversation, msg client.SubagentMsg) {
 
 // applyParallel routes a BOUNDED Parallel fork-join projection into the GROUPED
 // parallelGroups state (keyed by ParentCallID), which backs the fleet footer segment and
-// the ctrl+a Parallel tab. Unlike Subagent it has no second inline-card destination: a
+// the f6 Parallel tab. Unlike Subagent it has no second inline-card destination: a
 // Parallel run's deliverable (the winner summary + opaque artifact handle) rides
 // the tool RESULT text the model reads; these events are the client observability channel only. The previews
 // are bounded/scrubbed/client-only (gauntlet #7).
@@ -2620,7 +2620,7 @@ func (m Model) onRunningKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		// the running turn without changing the queue.
 		return m.editBackQueue()
 	case key.Matches(msg, m.keys.Agents):
-		// ctrl+a opens the unified agents overlay MID-RUN (Gap B): the deep view is
+		// f6 opens the unified agents overlay MID-RUN (Gap B): the deep view is
 		// most useful while agents stream. openAgents permits phaseRunning, reads the
 		// live lanes/fleet, and picks the context-sensitive default tab; pre-empt the
 		// textarea default so the keypress drives the overlay, never the input.
@@ -2940,7 +2940,7 @@ func (m Model) onIdleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Agents):
 		return m.openAgents()
 	case key.Matches(msg, m.keys.Effort) && m.deps.DebugTarget == "":
-		// ctrl+e opens the /effort reasoning-effort picker — the same surface the
+		// f7 opens the /effort reasoning-effort picker — the same surface the
 		// /effort command opens (runEffort → openEffort). openEffort self-gates on
 		// idle + caps.ModelSelection, so when model selection is unavailable this
 		// returns the model unchanged and the key never opens an empty picker.

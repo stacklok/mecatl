@@ -120,7 +120,7 @@ var oracleSteps = []struct {
 		c.setSubagentEnd("call-sub", client.Usage{InputTokens: 1200, OutputTokens: 340}, 3, "end_turn", 4200)
 	}},
 	// The fleet accumulators mutate conversation state OFF the blocks (footer /
-	// ctrl+a roster); they must leave the block render untouched.
+	// f6 roster); they must leave the block render untouched.
 	{"fleetStart", func(c *conversation) { c.fleetStart("child-1", "dig into the code", "", "", "", "", false) }},
 	{"fleetTool", func(c *conversation) {
 		c.fleetTool(client.SubagentMsg{
@@ -178,7 +178,7 @@ var oracleSteps = []struct {
 			client.Usage{InputTokens: 2000, OutputTokens: 600},
 			[]client.TeamMemberDisposition{{Name: "beta", Stopped: true, Reason: "budget"}})
 	}},
-	// The parallel accumulators likewise live off the blocks (ctrl+a Parallel tab).
+	// The parallel accumulators likewise live off the blocks (f6 Parallel tab).
 	{"parallelStart", func(c *conversation) { c.parallelStart("call-par", "first", 2) }},
 	{"parallelBranchStart", func(c *conversation) {
 		c.parallelBranchStart("call-par", 0, "parallel-call-par-0", "fast", "try the fast path", "", "", "", "")

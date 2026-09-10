@@ -21,7 +21,10 @@ Press `?` on an empty prompt to open the live help overlay. It shows the active 
 | `ctrl+t` | Expand a focused tool card or approval details. For a collapsed tool card, the expanded view shows the complete tool arguments and result; press it again to return to the width-bounded preview. |
 | `shift+tab` | Cycle the current session permission mode: **default → plan → accept-edits → default**. In an MCP prompt argument form, it instead moves to the previous required field. |
 | `ctrl+g` | Select all prompt text. |
-| `ctrl+shift+c` | Copy the active prompt or conversation selection; no selection is a no-op. |
+| `ctrl+a` / `ctrl+e` | Move to the start / end of the current prompt line. |
+| `ctrl+p` | Move to the previous prompt line. |
+| `ctrl+y` | Copy the active prompt or conversation selection; no selection is a no-op. |
+| `f6` / `f7` / `f8` | Open Agents / Effort / MCP Prompts. |
 | `pgup` / `pgdn` | Scroll the conversation. |
 | `home` / `end` | Jump to the top or bottom; `end` resumes auto-follow. |
 | `/` | Open the slash-command palette. |
@@ -50,10 +53,11 @@ Put client-owned bindings in `$XDG_CONFIG_HOME/mecatui/settings.yaml` (normally 
 
 ```yaml
 keymap:
-  Agents: ctrl+f12
-  Effort: ctrl+f5,ctrl+f6
+  Agents: f6
+  Effort: f7
+  Prompts: f8
   SelectAll: ctrl+g
-  CopySelection: ctrl+shift+c
+  CopySelection: ctrl+y
   ClearPrompt: ctrl+u
   ModeSwitch: alt+m # optional override for the default shift+tab
   Allow: y
@@ -63,7 +67,7 @@ keymap:
 Or override an action for one launch:
 
 ```sh
-mecatui --keymap Agents=ctrl+f12 --keymap Effort=ctrl+f5
+bin/mecatui --keymap Agents=f10 --keymap Effort=f11 --keymap Prompts=f12
 ```
 
 Bindings resolve per action: the deprecated legacy `$XDG_CONFIG_HOME/mecatl/settings.yaml` keymap is lowest precedence, the client file overrides it, and `--keymap` wins for the named action. Settings are read at startup, so restart after changing them.
@@ -72,6 +76,6 @@ Action names are exact. Global actions need a modified or special chord so norma
 
 ### Input editing caveat
 
-The prompt textarea has its own editing keys and they are not remappable through `--keymap`, apart from the client-owned `SelectAll`, `CopySelection`, and `ClearPrompt` actions. `ClearPrompt` defaults to `ctrl+u` and clears the entire unsent draft, including staged attachments and large-paste placeholders. For example, `ctrl+b`/`ctrl+f` move by character, `ctrl+w` deletes a word, and `ctrl+k` kills to the end of a line. It supports upstream keyboard selection, including `shift+arrow`; typing, text paste, newline insertion, and deletion act on an active selection. On the alternate screen, drag over prompt text to select it visibly. Starting a prompt selection clears a conversation selection and vice versa. Prompt mouse release does not copy; use `ctrl+shift+c` or right-click to copy the active prompt or conversation selection through Mecatl's clipboard transport. Prompt selection survives permission prompts, overlays, and other non-content changes, and clears when the prompt changes or another surface starts a selection. With `--no-mouse`, mouse gestures are disabled so the terminal retains native selection, while keyboard prompt selection remains available. Some defaults intentionally take precedence: `ctrl+a` opens Agents, `ctrl+e` opens Effort, `ctrl+t` expands details, and `ctrl+v` handles paste. `ctrl+g` selects all only in the prompt; it remains `SetGlobalDefault` in the models picker. Remapping an action away frees its chord for the textarea.
+The prompt textarea has its own editing keys and they are not remappable through `--keymap`, apart from the client-owned `SelectAll`, `CopySelection`, and `ClearPrompt` actions. `ClearPrompt` defaults to `ctrl+u` and clears the entire unsent draft, including staged attachments and large-paste placeholders. For example, `ctrl+a`/`ctrl+e` move to the start/end of the current line, `ctrl+p` moves to the previous line, `ctrl+b`/`ctrl+f` move by character, `ctrl+w` deletes a word, and `ctrl+k` kills to the end of a line. It supports upstream keyboard selection, including `shift+arrow`; typing, text paste, newline insertion, and deletion act on an active selection. On the alternate screen, drag over prompt text to select it visibly. Starting a prompt selection clears a conversation selection and vice versa. Prompt mouse release does not copy; use `ctrl+y` or right-click to copy the active prompt or conversation selection through Mecatl's clipboard transport. Prompt selection survives permission prompts, overlays, and other non-content changes, and clears when the prompt changes or another surface starts a selection. With `--no-mouse`, mouse gestures are disabled so the terminal retains native selection, while keyboard prompt selection remains available. Some client-owned defaults intentionally take precedence: `ctrl+t` expands details and `ctrl+v` handles paste. `ctrl+g` selects all only in the prompt; it remains `SetGlobalDefault` in the models picker. Remapping an action onto a textarea chord makes the client-owned action take precedence.
 
 For every action name, editing chord, overlay key, mouse behavior, and validation rule, see the [exhaustive `docs/tui.md` key reference](https://github.com/stacklok/mecatl/blob/main/docs/tui.md#keys).

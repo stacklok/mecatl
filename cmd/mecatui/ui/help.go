@@ -181,7 +181,7 @@ func helpBody(th theme.Theme, caps client.Capabilities, hk helpKeys) string {
 			"list; watch the transcript for Skill tool calls.")
 	}
 	// Agent definitions, when served, are browsable via /agents (the inventory the
-	// Subagent tool routes delegations to). Distinct from caps.Teams / ctrl+a, which is
+	// Subagent tool routes delegations to). Distinct from caps.Teams / f6, which is
 	// the live overlay of a team that has actually run.
 	if caps.Agents {
 		b.WriteString(muted.Render("Type /agents to browse the agent-definition inventory.") + "\n")
@@ -369,9 +369,9 @@ func keyMarkingsWithScroll(km keyMap, defaultScrollMarking string) helpKeys {
 		help:          firstKey(km.Help, "?"),
 		mcpPanel:      firstKey(km.MCPPanel, "ctrl+o"),
 		resources:     firstKey(km.Resources, "ctrl+r"),
-		prompts:       firstKey(km.Prompts, "ctrl+p"),
-		agents:        firstKey(km.Agents, "ctrl+a"),
-		effort:        firstKey(km.Effort, "ctrl+e"),
+		prompts:       firstKey(km.Prompts, "f8"),
+		agents:        firstKey(km.Agents, "f6"),
+		effort:        firstKey(km.Effort, "f7"),
 		modeSwitch:    firstKey(km.ModeSwitch, "shift+tab"),
 		expandTools:   firstKey(km.ExpandTools, "ctrl+t"),
 		scroll:        scrollMarking(km, defaultScrollMarking),
@@ -540,7 +540,7 @@ func (m Model) zeroStateModelName() string {
 // zeroStateRows is the affordance list on the welcome card. Every row is
 // UNCONDITIONAL — "/" (built-in commands always exist) plus the help / agents /
 // details rows, whose keys come from hk so a rebinding propagates here (with
-// DEFAULT keys each resolves to exactly the historical literal — "?", "ctrl+a",
+// DEFAULT keys each resolves to exactly its default literal — "?", "f6",
 // "ctrl+t" — so the zerostate goldens stay byte-identical). It takes no caps
 // argument; the caps-conditional welcome content (the memory note) lives in
 // renderZeroState. Rows are rendered ungated (no [not enabled] tags on the

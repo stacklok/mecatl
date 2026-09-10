@@ -3,7 +3,7 @@ package ui
 // Tests for issue #319's TUI half: a FAILED delegation must be able to tell the operator
 // WHY. The inline Subagent card already surfaces the cause through the tool result the
 // agent received (that is the server's model-facing body — see TestSubagentErrorCardShows
-// ProviderCause below), but the ctrl+a fleet pane has no result body at all: a roster row
+// ProviderCause below), but the f6 fleet pane has no result body at all: a roster row
 // shows only "stop:error", and a BACKGROUND child's failure never reaches an inline card
 // because its Subagent call already returned the started-result. subagent.end's Cause is
 // the only channel there.
@@ -26,11 +26,11 @@ func endSubFailed(parent, child, cause string) client.SubagentMsg {
 	}
 }
 
-// focusFirstChild opens the ctrl+a overlay and focuses the first fleet row, returning the
+// focusFirstChild opens the f6 overlay and focuses the first fleet row, returning the
 // stripped focus-pane render.
 func focusFirstChild(t *testing.T, m Model) string {
 	t.Helper()
-	mm, _ := m.Update(ctrlKey('a'))
+	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
 	if m.agentsTab != tabSubagents {
 		t.Fatalf("expected the Subagents tab, got %v", m.agentsTab)
@@ -44,7 +44,7 @@ func focusFirstChild(t *testing.T, m Model) string {
 }
 
 // TestSubagentFocusPaneShowsFailureCause is the fleet-pane half: an errored child's focus
-// pane names the failure, so ctrl+a answers "why did it fail" instead of only "it did".
+// pane names the failure, so f6 answers "why did it fail" instead of only "it did".
 func TestSubagentFocusPaneShowsFailureCause(t *testing.T) {
 	const cause = "upstream 503: model overloaded"
 	m := newMCPModel(t, aztec(), nil)
@@ -135,7 +135,7 @@ func TestSubagentFailureLineIsBoundedAndWrapped(t *testing.T) {
 }
 
 // TestSubagentFocusPaneWithLongCauseFitsViewport is the REAL-RENDER guard for the same
-// property, and the one that would have caught the overflow: it drives the whole ctrl+a
+// property, and the one that would have caught the overflow: it drives the whole f6
 // focus pane through View() with a realistic long provider error and asserts no rendered
 // line exceeds the viewport. Asserting the bound on subagentFailureLine in isolation is
 // not enough — the helper cannot see the card's border and padding, and centerCard cannot

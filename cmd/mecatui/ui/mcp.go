@@ -142,7 +142,7 @@ func (s *mcpState) HandleKey(msg tea.KeyPressMsg) (cmd tea.Cmd, handled bool, cl
 
 // handlePanelKey drives the read-only inventory panel: esc closes it, r
 // re-probes LIVE source status. r is a bare key safe here because the open
-// surface intercepts keys before the global ctrl+o/ctrl+r/ctrl+p open bindings
+// surface intercepts keys before the global ctrl+o/ctrl+r/f8 open bindings
 // (see keyMap.Refresh).
 func (s *mcpState) handlePanelKey(msg tea.KeyPressMsg) (cmd tea.Cmd, handled bool, closed bool) {
 	switch {

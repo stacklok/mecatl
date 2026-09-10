@@ -7,6 +7,66 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
+func TestReadlineCursorKeysEditPrompt(t *testing.T) {
+	t.Run("ctrl+a moves to line start", func(t *testing.T) {
+		m, _ := newQueueModel(t)
+		m.prompt.Rewrite("alpha\nbravo")
+
+		mm, _ := m.Update(ctrlKey('a'))
+		m = mm.(Model)
+		if m.prompt.Line() != 1 || m.prompt.Column() != 0 {
+			t.Fatalf("cursor = (%d,%d), want second line start", m.prompt.Line(), m.prompt.Column())
+		}
+	})
+
+	t.Run("ctrl+e moves to line end", func(t *testing.T) {
+		m, _ := newQueueModel(t)
+		m.prompt.Rewrite("alpha\nbravo")
+		m = applyAll(m,
+			tea.KeyPressMsg{Code: tea.KeyLeft},
+			tea.KeyPressMsg{Code: tea.KeyLeft},
+		)
+		if m.prompt.Column() != 3 {
+			t.Fatalf("test setup cursor column = %d, want 3", m.prompt.Column())
+		}
+
+		mm, _ := m.Update(ctrlKey('e'))
+		m = mm.(Model)
+		if m.prompt.Line() != 1 || m.prompt.Column() != 5 {
+			t.Fatalf("cursor = (%d,%d), want second line end", m.prompt.Line(), m.prompt.Column())
+		}
+	})
+
+	t.Run("ctrl+p moves to previous line", func(t *testing.T) {
+		m, _ := newQueueModel(t)
+		m.prompt.Rewrite("alpha\nbravo")
+
+		mm, _ := m.Update(ctrlKey('p'))
+		m = mm.(Model)
+		if m.prompt.Line() != 0 || m.prompt.Column() != 5 {
+			t.Fatalf("cursor = (%d,%d), want previous line at column 5", m.prompt.Line(), m.prompt.Column())
+		}
+	})
+}
+
+func TestCtrlAMovesPromptCursorWhileRunning(t *testing.T) {
+	m, _ := newQueueModel(t)
+	m = startRunning(t, m, "first")
+	m.prompt.Rewrite("queued draft")
+
+	mm, _ := m.Update(ctrlKey('a'))
+	m = mm.(Model)
+	if m.phase != phaseRunning {
+		t.Fatalf("phase = %v, want phaseRunning", m.phase)
+	}
+	if m.team.view != teamNone {
+		t.Fatalf("ctrl+a opened the agents overlay while running: view=%v", m.team.view)
+	}
+	if m.prompt.Line() != 0 || m.prompt.Column() != 0 {
+		t.Fatalf("cursor = (%d,%d), want prompt start", m.prompt.Line(), m.prompt.Column())
+	}
+}
+
 func TestNewlineActionsKeepCaretVisiblePastDynamicCap(t *testing.T) {
 	for _, tc := range []struct {
 		name string

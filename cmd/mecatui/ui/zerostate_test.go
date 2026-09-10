@@ -41,7 +41,7 @@ func zeroStateModel(t *testing.T, caps client.Capabilities) Model {
 }
 
 // TestZeroStateEmbeddedGolden locks the welcome card under embedded defaults: it
-// offers "?", "/" (built-ins always exist), "ctrl+a" (teams on) and "ctrl+t",
+// offers "?", "/" (built-ins always exist), "f6" (teams on) and "ctrl+t",
 // and notes that memory is on.
 func TestZeroStateEmbeddedGolden(t *testing.T) {
 	m := zeroStateModel(t, embeddedCaps())
@@ -78,7 +78,7 @@ func TestZeroStateVanishesAfterPrompt(t *testing.T) {
 
 // TestZeroStateCapsTailoring asserts the affordance list tracks caps WITHOUT
 // pinning layout: "/" ALWAYS appears (built-in slash commands always exist),
-// "ctrl+a" ALWAYS appears (the unified agents overlay — subagents are always
+// "f6" ALWAYS appears (the unified agents overlay — subagents are always
 // available via Subagent, so it is no longer gated on the teams cap), and notes only
 // when their cap is on.
 func TestZeroStateCapsTailoring(t *testing.T) {
@@ -93,9 +93,9 @@ func TestZeroStateCapsTailoring(t *testing.T) {
 	if !strings.Contains(allOn, "slash commands") {
 		t.Errorf("all-on zero-state should advertise / slash commands:\n%s", allOn)
 	}
-	// ctrl+a is the unified agents overlay (subagents + teams) — always advertised.
+	// f6 is the unified agents overlay (subagents + teams) — always advertised.
 	if !strings.Contains(embedded, "agents") {
-		t.Errorf("embedded zero-state should advertise ctrl+a agents:\n%s", embedded)
+		t.Errorf("embedded zero-state should advertise f6 agents:\n%s", embedded)
 	}
 	// memory note gated on caps.Memory (on in both).
 	if !strings.Contains(embedded, "memory is on") {
@@ -103,13 +103,13 @@ func TestZeroStateCapsTailoring(t *testing.T) {
 	}
 
 	// A bare-bones server (everything off) still shows "/" (built-ins) + "?" +
-	// "ctrl+a" (agents — always available) + "ctrl+t", but no memory affordance.
+	// "f6" (agents — always available) + "ctrl+t", but no memory affordance.
 	bare := stripANSIstr(zeroStateModel(t, client.Capabilities{}).renderZeroState())
 	if !strings.Contains(bare, "slash commands") {
 		t.Errorf("bare zero-state should still advertise / (built-ins always exist):\n%s", bare)
 	}
 	if !strings.Contains(bare, "agents") {
-		t.Errorf("bare zero-state should still advertise ctrl+a agents (subagents always available):\n%s", bare)
+		t.Errorf("bare zero-state should still advertise f6 agents (subagents always available):\n%s", bare)
 	}
 	if strings.Contains(bare, "memory is on") {
 		t.Errorf("bare zero-state should not advertise memory:\n%s", bare)

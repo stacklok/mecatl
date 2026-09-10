@@ -327,9 +327,9 @@ func TestHelpReflectsKeyOverride(t *testing.T) {
 		{name: "Cancel running", match: "cancel run", want: "ctrl+f4", absent: "esc", occurs: 1},
 		{name: "MCPPanel", match: "MCP inventory", want: "ctrl+f6", absent: "ctrl+o", occurs: 1},
 		{name: "Resources", match: "MCP resources", want: "ctrl+f7", absent: "ctrl+r", occurs: 1},
-		{name: "Prompts", match: "MCP prompts", want: "ctrl+f8", absent: "ctrl+p", occurs: 1},
-		{name: "Agents", match: "agents overlay", want: "ctrl+f9", absent: "ctrl+a", occurs: 1},
-		{name: "Effort", match: "reasoning-effort picker", want: "ctrl+f5", absent: "ctrl+e", occurs: 1},
+		{name: "Prompts", match: "MCP prompts", want: "ctrl+f8", absent: "", occurs: 1},
+		{name: "Agents", match: "agents overlay", want: "ctrl+f9", absent: "f6", occurs: 1},
+		{name: "Effort", match: "reasoning-effort picker", want: "ctrl+f5", absent: "f7", occurs: 1},
 		{name: "ModeSwitch", match: "cycle permission mode", want: "ctrl+f10", absent: "shift+tab", occurs: 1},
 		{name: "ExpandTools", match: "expand/collapse details", want: "ctrl+f11", absent: "ctrl+t", occurs: 1},
 		{name: "Help", match: "this help (on an empty prompt)", want: "ctrl+f12", absent: "?", occurs: 1},
@@ -350,7 +350,7 @@ func TestHelpReflectsKeyOverride(t *testing.T) {
 				if !strings.HasPrefix(trim, row.want) {
 					t.Errorf("%s row should lead with the overridden %q chord: %q", row.name, row.want, trim)
 				}
-				if strings.Contains(trim, row.absent) {
+				if row.absent != "" && strings.Contains(trim, row.absent) {
 					t.Errorf("%s row still shows the default %q after override: %q", row.name, row.absent, trim)
 				}
 			}
@@ -410,8 +410,8 @@ func TestHelpKeyOverrideEndToEnd(t *testing.T) {
 	if !strings.Contains(effortRow, "ctrl+f5") {
 		t.Errorf("effort row should carry the overridden ctrl+f5 via Deps.KeyOverrides: %q", effortRow)
 	}
-	if strings.Contains(effortRow, "ctrl+e") {
-		t.Errorf("effort row still shows the default ctrl+e: %q", effortRow)
+	if strings.Contains(effortRow, "f7") {
+		t.Errorf("effort row still shows the default f7: %q", effortRow)
 	}
 	if !strings.Contains(mcpRow, "ctrl+f6") {
 		t.Errorf("MCP-inventory row should carry the overridden ctrl+f6 via Deps.KeyOverrides: %q", mcpRow)

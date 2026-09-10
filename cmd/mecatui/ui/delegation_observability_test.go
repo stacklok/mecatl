@@ -105,7 +105,7 @@ func TestDelegationObservability_Scenario3_ExpandedCardShowsBoundedPreviews(t *t
 }
 
 // TestDelegationObservability_Scenario3_ParallelViewsShowBoundedPreviews pins AC3.3:
-// the Parallel ctrl+a group focus renders each branch's interleaved trace (tool
+// the Parallel f6 group focus renders each branch's interleaved trace (tool
 // chips with bounded previews + capped message lines) below its roster line, in
 // the Team focus format — not just flat roster rows.
 func TestDelegationObservability_Scenario3_ParallelViewsShowBoundedPreviews(t *testing.T) {
@@ -122,7 +122,7 @@ func TestDelegationObservability_Scenario3_ParallelViewsShowBoundedPreviews(t *t
 			InnerKind: "message.delta", Text: "branch note", ToolCount: 1,
 		},
 	)
-	mm, _ := m.Update(ctrlKey('a'))
+	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
 	mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)
@@ -170,7 +170,7 @@ func TestDelegationObservability_Scenario3_HonestyNoteIsBoundedPreviews(t *testi
 		startSub("p1", "c1", "audit auth"),
 		toolSub("p1", "c1", "Grep", false, 1),
 	)
-	mm, _ := m.Update(ctrlKey('a'))
+	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
 	mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)
@@ -186,7 +186,7 @@ func TestDelegationObservability_Scenario3_HonestyNoteIsBoundedPreviews(t *testi
 		branchStartPar("p1", 0, "branch-1", "explore"),
 		branchToolPar("p1", 0, "Grep", false, 1),
 	)
-	mm, _ = mp.Update(ctrlKey('a'))
+	mm, _ = mp.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	mp = mm.(Model)
 	mm, _ = mp.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	mp = mm.(Model)
@@ -206,7 +206,7 @@ func TestDelegationObservability_Scenario3_TeamUniqueStructuresStayTeamOnly(t *t
 	// broken seeds.
 	tm := newMCPModel(t, aztec(), nil)
 	tm = seedTeam(tm, agentsGoldenTeam)
-	mm, _ := tm.Update(ctrlKey('a'))
+	mm, _ := tm.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	tm = mm.(Model)
 	for i := 0; i < 3 && tm.agentsTab != tabTeams; i++ {
 		mm, _ = tm.Update(tea.KeyPressMsg{Code: tea.KeyTab})
@@ -272,7 +272,7 @@ func TestDelegationObservability_Scenario3_TeamUniqueStructuresStayTeamOnly(t *t
 		branchEndPar("p1", 1, 120, 25, 3, "end_turn", false, "/fork/branch-2"),
 		endPar("p1", "judge", 2, 1, "/fork/branch-2", "end_turn"),
 	)
-	mm, _ = pm.Update(ctrlKey('a'))
+	mm, _ = pm.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	pm = mm.(Model)
 	for i := 0; i < 3 && pm.agentsTab != tabParallel; i++ {
 		mm, _ = pm.Update(tea.KeyPressMsg{Code: tea.KeyTab})

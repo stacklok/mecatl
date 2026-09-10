@@ -356,7 +356,7 @@ func renderUsageFacets(u client.Usage) string {
 // It reuses the EXACT same !ln.idle predicate that teamLaneState uses for the
 // non-terminal roster glyph (◆ working / ○ idle / ✓ done — the last being terminal,
 // overlay-only), so the footer's "k/N working" can never disagree with the live
-// glyphs in the ctrl+a panel. The footer segment is only rendered for a LIVE team
+// glyphs in the f6 panel. The footer segment is only rendered for a LIVE team
 // (liveTeamBlock returns nil once b.teamDone), so the terminal case never reaches
 // here — excluding idle is sufficient.
 func teamWorkingCounts(lanes []teamLane) (working, total int) {

@@ -570,7 +570,7 @@ type Model struct {
 	failedStepRetryTried         bool               // one-shot guard for automatic typed precommit retry; reset by a genuine prompt or session replacement
 	failedStepRetryRun           bool               // current Converse stream was opened with RetryStart
 	failedStepRetryAuthoritative bool               // current retry emitted turn.start and therefore called the model
-	team                         teamState          // unified ctrl+a agents overlay: container open flag + Teams-tab state (view==teamNone when closed)
+	team                         teamState          // unified f6 agents overlay: container open flag + Teams-tab state (view==teamNone when closed)
 	agentsTab                    agentsTab          // active tab in the unified agents overlay (Subagents | Parallel | Teams)
 	subagents                    subagentState      // Subagents-tab state of the unified agents overlay (roster | focus)
 	parallel                     parallelState      // Parallel-tab state of the unified agents overlay (roster | group focus)

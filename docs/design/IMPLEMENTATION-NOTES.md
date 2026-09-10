@@ -1518,7 +1518,7 @@ surface end-to-end on the proto/client wire, NOT session-struct-only: `routed_ca
 `Parallel` message (branch_start, fields 19/20). `toProtoTeam`/`toProtoParallel` populate
 them from the payload (both relays flow through the one mapper), the mecatui client structs
 (`client.TeamMemberSpec`, `client.ParallelMsg`) carry them via the generated getters, and
-mecatui renders a muted `routed: <category> → <model>` cue on the ctrl+a Teams roster row
+mecatui renders a muted `routed: <category> → <model>` cue on the f6 Teams roster row
 (`teamRosterLine`) and the Parallel group-focus branch row (`parallelBranchLine`) — reusing
 the Subagent router's `subagentRoutedLabel` helper, absent when unrouted. Bare metadata only
 (gauntlet #7). The LIVE e2e specs (`team_router_test.go` / `parallel_router_test.go`) assert
@@ -1617,7 +1617,7 @@ the mecatui fleet lane, and the SAME payload field is appended to the ACP `subag
 `ParallelPayload` deliberately gains NO proto field: a branch failure already
 reaches the model through the `Parallel` ToolResult text, which is what `failReason` feeds. In
 mecatui the inline Subagent card needs no new slot (the server-composed error body already carries
-the cause and the card renders it in its result slot); the ctrl+a fleet FOCUS pane gains a
+the cause and the card renders it in its result slot); the f6 fleet FOCUS pane gains a
 `failed: <cause>` block (`subagentFailureLine`) — rune-clamped for HEIGHT and word-wrapped to
 `cardTextWidth(width)` via the same `indentWrap` pair the /skills + /agents inventory panels use, because
 `renderSubagentFocus`'s widest line directly sets the overlay card's width and `centerCard`/
@@ -2042,7 +2042,7 @@ worded FAMILY-NEUTRALLY ("child agent …") so it stays truthful when team/paral
 store fallback ErrNotFound/ErrNoActiveRun) backs HTTP `POST /v1/sessions/{id}/cancel-child`. The
 SAME regen landed the three DORMANT fields for the next iterations (A10): `Subagent.background=10`
 (now written by the mapper since I3a), `Parallel.child_id=18`, `Team.member_session_id=18` (17 is
-taken by dispositions — A1; both written since I2). mecatui: the ctrl+a Subagents tab gains an `x` cancel key (roster + focus pane,
+taken by dispositions — A1; both written since I2). mecatui: the f6 Subagents tab gains an `x` cancel key (roster + focus pane,
 non-terminal lanes only, confirm-less — recoverable) sending `client.Stream.SendCancelChild`;
 `permission.retract` maps to `PermissionRetractMsg`; mecatui keeps a FIFO ask queue behind the
 visible modal (`m.ask` is always the head — concurrent subagents surface asks concurrently), so a
@@ -8142,7 +8142,7 @@ m.deps.Models != nil` (same mechanism as `/soul`/`/usermodel`); palette-only ope
 it collides with enter); fixed builtin order now `clear, help, mcp, agents, team, skills, soul,
 usermodel, models`.
 
-**Unified `ctrl+a` agents overlay + fleet footer** (Subagent delegation-tool watchability, Package C) is
+**Unified `f6` agents overlay + fleet footer** (Subagent delegation-tool watchability, Package C) is
 CLIENT-ONLY — built purely from the relayed `subagent.*`/`team.*` projection, NO new server
 event/field (the F2 finding: the three `subagent.*` events already carry ChildID/goal/tool
 name/error/count/usage/stop/duration). Two pieces:
@@ -8152,10 +8152,10 @@ name/error/count/usage/stop/duration). Two pieces:
   Part of the conversation, so `/clear` drops it. `subagentFleetCounts`/`hasSubagents` drive the
   footer + the Subagents tab.
 - **Fleet footer segment** (`footer.go` `subagentFooter{Full,Medium,Compact}`, mirroring the team
-  segment): `⛭ subagents N◐ M✓ · ctrl+a`, shown once ≥1 subagent started; `view.go` `fitFooter`
+  segment): `⛭ subagents N◐ M✓ · f6`, shown once ≥1 subagent started; `view.go` `fitFooter`
   composes it into an "agents prefix" (team segment + fleet segment via `joinSeg`) that sheds
   before the ctx meter. No-subagent footer is byte-identical to before.
-- **Unified overlay** (`agents_overlay.go`): ONE `ctrl+a` surface with two tabs (`agentsTab`
+- **Unified overlay** (`agents_overlay.go`): ONE `f6` surface with two tabs (`agentsTab`
   Subagents|Teams). The container open flag + Teams-tab state STILL live on `m.team` (teamState) —
   the existing team overlay became the Teams tab verbatim (`renderTeamsTab` dispatches to the
   unchanged `renderTeamRoster`/`Focus`/`Tasks`/`Findings`; the standalone `renderTeamOverlay` is
@@ -8167,7 +8167,7 @@ name/error/count/usage/stop/duration). Two pieces:
   Teams when a team is LIVE, else Subagents when subagents ran, else the available tab. The newer
   Subagent/Team terminal stop reasons (`budget`/`structured_output`/`no_progress`/`max_*`) ride the
   string `stop` field and map to compact labels in `subagentStopLabel` (+ a ✓/✗ glyph split in
-  `subagentLaneGlyph`: cap-family ✓, error/cancel-family ✗). Help/zero-state `ctrl+a` row is no
+  `subagentLaneGlyph`: cap-family ✓, error/cancel-family ✗). Help/zero-state `f6` row is no
   longer teams-gated (subagents are always available via Subagent). Gauntlet #7 holds: the focus pane
   shows redacted chips only, never child content.
 
@@ -8216,7 +8216,7 @@ to extract a shared `ChildActivity` value object — not before** (recorded in t
   (a fork-failed branch still emits a coherent `branch_end` with `Failed=true`).
 - **Client/UI** (`cmd/mecatui`): `client.ParallelMsg`/`ParallelKind` + `applyParallel` build GROUPED
   `parallelGroup`/`parallelBranch` state (deterministic, insertion-ordered, no map-iteration flake);
-  a third `Parallel` tab in the unified `ctrl+a` overlay (`Subagents | Parallel | Teams`) renders the
+  a third `Parallel` tab in the unified `f6` overlay (`Subagents | Parallel | Teams`) renders the
   grouped roster (join + branch counts + winner) → ONE-level group focus (branches inline with chip
   traces carrying bounded previews, the winner highlighted, the preserved fork path, a "bounded
   previews" honesty note). It folds into the fleet

@@ -451,7 +451,7 @@ func (m Model) runAgentsInv() (tea.Model, tea.Cmd) {
 	return m.openAgentsInv()
 }
 
-// runTeam opens the live agent-team overlay — the same surface ctrl+a opens.
+// runTeam opens the live agent-team overlay — the same surface f6 opens.
 // Only registered when caps.Teams.
 func (m Model) runTeam() (tea.Model, tea.Cmd) {
 	return m.openTeam()

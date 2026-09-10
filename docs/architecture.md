@@ -800,7 +800,13 @@ from proto `Event`s** and are bound by the inward-only layering rule. The
 `contracts/gen` + grpc + `internal/app` surface lives only in `cmd/mecatui/client`,
 `cmd/mecatui/embed`, and the `cmd/mecatui` main; the `ui` (Bubble Tea
 model/update/view) and `theme` (pure styling) packages import no `engine/...` or `internal/...`
-package and no proto directly. Its local status customization is a separate
+package and no proto directly. Prompt key events are owned by this client process:
+the terminal transports the events, the client routes its action map first, and
+unclaimed events reach the Bubbles textarea. The default action map therefore leaves
+`ctrl+a`, `ctrl+e`, and `ctrl+p` to the textarea for line start, line end, and
+previous line; Agents, Effort, and MCP Prompts use `f6`, `f7`, and `f8`.
+
+Its local status customization is a separate
 client-owned seam: `cmd/mecatui/statusline.Source` receives display-safe `Input`
 snapshots from the UI and publishes latest semantic `Result` spans. It owns
 responsive template evaluation or a direct local executable, refresh and

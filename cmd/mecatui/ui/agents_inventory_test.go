@@ -16,7 +16,7 @@ import (
 // Tests for the /agents agent-definition INVENTORY panel: a read-only, idle-only
 // overlay that fires ListAgents and renders the resolved registry the Subagent tool
 // routes delegations to (name + description + model/perm/tools metadata).
-// Distinct from the live-team overlay (/team, ctrl+a) in team_overlay_test.go.
+// Distinct from the live-team overlay (/team, f6) in team_overlay_test.go.
 
 // newAgentsInvModel builds an idle, sized Model wired to the given fakeAgents and
 // caps, ready to open the /agents panel. It mirrors newSkillsModel.

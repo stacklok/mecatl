@@ -769,7 +769,7 @@ These commands are *always* available because they are client-owned commands (wi
 history compaction pass), `/mcp` (browse
 the MCP inventory), `/agents` (browse the agent-definition inventory — the
 resolved registry the `Subagent` tool routes delegations to), `/team` (the unified
-agents overlay pinned to the Teams tab — same surface as `ctrl+a`, which picks a
+agents overlay pinned to the Teams tab — same surface as `f6`, which picks a
 context-sensitive default tab), `/skills` (browse the skills inventory),
 `/soul` (inspect the persona — read-only), `/usermodel` (inspect the user
 model and its proposal linkage — read-only), `/reflections` (review bounded pending/recent
@@ -1165,7 +1165,7 @@ only `theme` + the charm libraries + stdlib — never `client`/`ui`):
   poorer color profile it collapses cleanly to the single accent color (never unstyled,
   never a banded blend).
 - **Info block** — workspace path, active model, build version, a tagline, the
-  caps-tailored affordance rows (`?` / `/` / `ctrl+a` / `ctrl+t`), and a "memory is on"
+  caps-tailored affordance rows (`?` / `/` / `f6` / `ctrl+t`), and a "memory is on"
   note when cross-session memory is enabled.
 
 A **tiny terminal** (very narrow or very short) degrades to a minimal hint (title +
@@ -1245,14 +1245,18 @@ show the plain prompt-hint card.
 | mouse click (prompt text) | place the prompt caret; drag from it to select prompt text (**alt screen only**; see below) |
 | mouse drag (left) | select text in the prompt or conversation — dragging in the conversation to an edge auto-scrolls; prompt release does **not** copy (alt screen only; see below) |
 | double / triple-click (left) | select word / whole line in the conversation (copies; alt screen only) |
-| `ctrl+shift+c` | copy the active prompt or conversation selection; no selection is a no-op |
+| `ctrl+y` | copy the active prompt or conversation selection; no selection is a no-op |
 | right-click | copy the active prompt or conversation selection; no selection is a no-op |
 | middle-click | **paste the primary selection** (X11/Wayland select-to-copy buffer) into the prompt — read via the shell backend (`wl-paste --primary` / `xclip -selection primary -o`), falling back to an OSC52 primary read; routed through the same pipeline as a bracketed paste, so a large selection stages as `[Pasted text #N]`. `shift+middle-click` always performs the terminal-native paste instead. |
 | `esc` (with an active selection) | **clear the selection** first — before any other `esc` meaning |
 | `?` | help overlay (on an empty prompt) |
 | `/` | slash-command palette (built-in `/clear`, `/help`, `/quit`, `/session`, `/retry`; capability-gated `/compact`, `/mcp`, `/agents`, `/team`, `/skills`, `/soul`, `/usermodel`, `/reflections`, `/reflect`, `/dream`, `/models`, `/effort`, `/worktrees`, `/schedule`; operator-setting `/learning`; plus workspace commands) |
 | `shift+tab` | cycle the current session permission mode outside an MCP prompt argument form: **default → plan → accept-edits → default**. In that form, it moves focus to the previous required argument instead. The server/session is authoritative; if the aggregate rejects the switch because a turn is running or awaiting approval, mecatui shows a notice and retries the selected mode at the next prompt boundary. |
-| `ctrl+a` | open the **unified agents overlay** — ONE surface with three tabs: **Subagents** (the flat Subagent-child fleet), **Parallel** (the fork-join GROUP roster — join mode, branches, winner, fork paths), and **Teams** (the full roster + per-member focus of the most-recent team). `tab` cycles tabs, `enter` focuses a row/group, `esc` steps back / closes. The default tab is **context-sensitive** (team live → parallel live → subagents → parallel → team). Works **while idle and mid-run**; inert under a permission modal. `/team` opens it pinned to the Teams tab. |
+| `ctrl+a` / `ctrl+e` | move to the start / end of the current prompt line |
+| `ctrl+p` | move to the previous prompt line |
+| `f6` | open the **unified agents overlay** — ONE surface with three tabs: **Subagents** (the flat Subagent-child fleet), **Parallel** (the fork-join GROUP roster — join mode, branches, winner, fork paths), and **Teams** (the full roster + per-member focus of the most-recent team). `tab` cycles tabs, `enter` focuses a row/group, `esc` steps back / closes. The default tab is **context-sensitive** (team live → parallel live → subagents → parallel → team). Works **while idle and mid-run**; inert under a permission modal. `/team` opens it pinned to the Teams tab. |
+| `f7` | open the reasoning-effort picker |
+| `f8` | open the MCP prompts picker |
 | `ctrl+g` | select all prompt text (rebindable as `SelectAll`; inside the `/models` picker, the existing `SetGlobalDefault` binding is used instead) |
 | `x` (agents overlay, on a **running** lane) | **cancel that child agent** (sends `CancelChild` with the lane's child id; the run itself keeps streaming). Works on all three tabs: a **Subagents** lane (roster or focus pane), a **Parallel branch** (inside a focused group — `↑/↓` selects the branch), and a **team member** (Teams roster or focus pane; mid-drive OR idle between rounds — the member is de-scheduled and its claimed tasks released). Confirm-less, because it is recoverable: the child is persisted (a subagent stays **resumable** by its `agentId`; a cancelled branch reads `[FAILED] cancelled by user`; a cancelled member shows `stopped — cancelled`). Inert on a done lane. If the child was parked on a surfaced permission ask, the server retracts it (`permission.retract`) and the approval modal dismisses itself. |
 | `@` | file-mention menu — complete a workspace path, then attach it on submit (see below) |
@@ -1309,7 +1313,7 @@ is absent from the normal palette and help when debug mode is off. The legacy
 `MECATUI_DEBUG_ASK=1` alias enables only this built-in.
 
 The `?` overlay enumerates the rest of the chords — `ctrl+v` (paste a clipboard
-image), `ctrl+o`/`ctrl+r`/`ctrl+p` (MCP inventory / resources / prompts), `ctrl+a`
+image), `ctrl+o`/`ctrl+r` (MCP inventory / resources), `f8` (MCP prompts), `f6`
 (the unified agents overlay — three tabs, available idle **and** mid-run; see the
 keys table above), `ctrl+t`
 (expand/collapse details), and the scroll keys (`pgup`/`pgdn`, `home`/`end`, mouse
@@ -1331,8 +1335,9 @@ the actions it names. Precedence, lowest to highest: the legacy server file
 
   ```yaml
   keymap:
-    Agents: ctrl+f12
-    Effort: ctrl+f5,ctrl+f6
+    Agents: f10
+    Effort: f11
+    Prompts: f12
   ```
 
 - **`--keymap Action=chord[,chord2]`** — repeatable CLI flag; each occurrence
@@ -1362,7 +1367,7 @@ safe there). Actions marked *(approval)* are the permission-modal keys.
 | `EditBack` | `up` | global | pull the queued follow-ups back into the input (empty input only) |
 | `Paste` | `ctrl+v` | global | paste a clipboard image as an attachment, else clipboard text |
 | `SelectAll` | `ctrl+g` | global | select all prompt text; the `/models` picker keeps its `SetGlobalDefault` binding |
-| `CopySelection` | `ctrl+shift+c` | global | copy the active prompt or conversation selection; no selection is a no-op |
+| `CopySelection` | `ctrl+y` | global | copy the active prompt or conversation selection; no selection is a no-op |
 | `Quit` | `ctrl+c` | global | graceful quit (double-press; first press clears the input or arms) |
 | `QuitD` | `ctrl+d` | global | EOF-habit quit (double-press, empty prompt only; independent of `Quit`) |
 | `Suspend` | `ctrl+z` | global | suspend the TUI to the shell (`fg` resumes; the engine keeps running) |
@@ -1376,11 +1381,11 @@ safe there). Actions marked *(approval)* are the permission-modal keys.
 | `ModeSwitch` | `shift+tab` | idle/running² | cycle permission mode (default / plan / accept-edits); MCP prompt argument forms keep `shift+tab` for previous-field navigation |
 | `MCPPanel` | `ctrl+o` | global | MCP inventory panel |
 | `Resources` | `ctrl+r` | global | MCP resources picker |
-| `Prompts` | `ctrl+p` | global | MCP prompts picker |
-| `Agents` | `ctrl+a` | global | unified agents overlay (subagents / parallel / teams) |
+| `Prompts` | `f8` | global | MCP prompts picker |
+| `Agents` | `f6` | global | unified agents overlay (subagents / parallel / teams) |
 | `ExpandTools` | `ctrl+t` | global | expand/collapse tool-card details & reasoning summaries; in the permission modal, opens the full-screen args view for non-diff asks (in-modal diff expand for Edit/Write; untouched for plan asks) |
 | `Help` | `?` | global | this help overlay (on an empty prompt) |
-| `Effort` | `ctrl+e` | global | reasoning-effort picker |
+| `Effort` | `f7` | global | reasoning-effort picker |
 | `Up` | `up`, `k` | overlay | move the cursor up |
 | `Down` | `down`, `j` | overlay | move the cursor down |
 | `Choose` | `enter` | overlay | select the cursor row |
@@ -1434,12 +1439,14 @@ selection, are not remappable through `--keymap`; the client-owned exceptions ar
 | `alt+c`, `alt+l`, `alt+u` | capitalize / lowercase / uppercase word forward |
 | `ctrl+t` | transpose characters (mecatui intercepts `ctrl+t` as ExpandTools first) |
 
-The important interaction: **remapping a mecatui action off a chord frees that
-chord to reach the textarea.** With the defaults, `ctrl+a` opens the agents
-overlay and `ctrl+e` opens the effort picker — so the readline line-start /
-line-end chords never reach the input. Rebind the actions away
-(`keymap: {Agents: ctrl+f12, Effort: ctrl+f5}`) and `ctrl+a` / `ctrl+e` start
-jumping the cursor to the line start / end instead. The `?` help overlay, the
+The textarea has no prompt-undo model. `ctrl+_`, `ctrl+-`, `ctrl+shift+-`, and
+`ctrl+shift+_` therefore remain unbound.
+
+The important interaction: **a mecatui action bound to an editing chord takes
+precedence over the textarea.** The defaults keep `ctrl+a`, `ctrl+e`, and
+`ctrl+p` free for line start, line end, and previous line. Agents, Effort, and
+MCP Prompts use `f6`, `f7`, and `f8`. If an override assigns a client action to
+one of the editing chords, that action receives the key instead. The `?` help overlay, the
 welcome card, the footer help/approval lines, the inline-card affordances
 (reasoning/subagent/team trace headers, collapse roll-ups, the team `+N more`
 advertisement), the generic permission-modal buttons, AND every overlay's
@@ -1782,7 +1789,7 @@ rate is material, ≥10%) a `· N% cached` facet so the per-turn caching payoff 
 turn it lands. The `?` keys-&-features overlay carries a usage **legend** decoding the arrows
 (`↑ input · ↓ output · ⊕ cache write`) so the footer/turn-stat token glyphs are self-explanatory.
 
-### Watching subagents, parallel runs, and teams — the fleet footer + the unified `ctrl+a` overlay
+### Watching subagents, parallel runs, and teams — the fleet footer + the unified `f6` overlay
 
 Three surfaces watch concurrent **Subagent children**, **Parallel fork-join runs**, and
 **agent teams**, all built purely from the relayed `subagent.*` / `parallel.*` / `team.*`
@@ -1790,16 +1797,16 @@ event projection (REDACTED — bounded previews only, ADR 0079; full child/branc
 stays context-isolated):
 
 - **Fleet status footer segments.** Once **≥1 subagent has started** this session the
-  footer carries a peripheral cue — **`⛭ subagents 3◐ 1✓ · ctrl+a`** (N running ◐ / M
-  done ✓). A **Parallel** run adds its own segment — **`⑂ parallel 1◐ 2✓ · ctrl+a`** —
+  footer carries a peripheral cue — **`⛭ subagents 3◐ 1✓ · f6`** (N running ◐ / M
+  done ✓). A **Parallel** run adds its own segment — **`⑂ parallel 1◐ 2✓ · f6`** —
   once **≥1 Parallel run has started**, so the fan-out is discoverable without opening
   anything. Both are built from collections fed alongside the inline tool-card routing and
-  shed before the context meter as width tightens (full → `⑂ 1◐ 2✓ · ctrl+a` → `⑂ 1◐ 2✓`
+  shed before the context meter as width tightens (full → `⑂ 1◐ 2✓ · f6` → `⑂ 1◐ 2✓`
   → dropped), exactly like the live-team segment; all three coexist when a session runs
   them. With no agent activity the footer is byte-identical to before. (Glyphs: `⛭`
   subagents, `⑂` parallel, `⟳` live team — distinct so they never collide.)
 
-- **Unified `ctrl+a` agents overlay.** ONE surface with **three tabs — Subagents |
+- **Unified `f6` agents overlay.** ONE surface with **three tabs — Subagents |
   Parallel | Teams**:
   - **Subagents** — one row per Subagent child: a state glyph (**◐** running / **✓** done /
     **✗** error), the goal label, a short `#<hash>` of the `ChildID` (so two similar
@@ -1916,7 +1923,7 @@ while a run streams, a permission ask is open, or the client is connecting. A **
 the **word** under the cursor (a maximal run of word characters, whitespace, or
 punctuation) and a **triple-click** selects the **whole logical line** — both
 highlight and copy immediately, just like copy-on-select; a fourth click at the same
-spot cycles back to a plain anchor. A **right-click** or **`ctrl+shift+c`** copies
+spot cycles back to a plain anchor. A **right-click** or **`ctrl+y`** copies
 the active prompt or conversation selection; with no selection either action is a
 no-op. Conversation selection still copies on release; prompt selection does not.
 **`esc`** clears an active selection **before** its other

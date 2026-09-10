@@ -77,20 +77,20 @@ type keyMap struct {
 	Close     key.Binding
 	// Refresh re-issues the active overlay's primary fetch. It is a BARE 'r'
 	// (not control-modified): it is only consulted while an overlay owns the
-	// keyboard (onMCPKey intercepts before the idle ctrl+o/ctrl+r/ctrl+p open
+	// keyboard (onMCPKey intercepts before the idle ctrl+o/ctrl+r/f8 open
 	// keys), so it never collides with the global ctrl+r resources binding nor
 	// with the textarea (blurred while an overlay is open). Used by the inventory
 	// panel to re-probe LIVE MCP source status.
 	Refresh key.Binding
 
-	// Tasks flips the ctrl+a team overlay from the roster to the shared team task
+	// Tasks flips the f6 team overlay from the roster to the shared team task
 	// sub-view (and back). Like Refresh it is a BARE 't' consulted ONLY inside the
 	// overlay (onTeamRosterKey / the teamTasks branch intercept before any idle
 	// open key), so it never collides with the textarea (blurred while the overlay
 	// is open) nor with any global control binding.
 	Tasks key.Binding
 
-	// Findings flips the ctrl+a team overlay from the roster to the shared team
+	// Findings flips the f6 team overlay from the roster to the shared team
 	// findings-ledger sub-view (and back). Like Tasks it is a BARE 'f' consulted
 	// ONLY inside the overlay (onTeamRosterKey / the teamFindings branch intercept
 	// before any idle open key), so it never collides with the blurred textarea nor
@@ -115,7 +115,7 @@ type keyMap struct {
 	JumpTop key.Binding
 	JumpEnd key.Binding
 
-	// Agents (ctrl+a) opens the unified live agents overlay: ONE surface with three
+	// Agents (f6) opens the unified live agents overlay: ONE surface with three
 	// tabs — Subagents (the flat Subagent-child fleet), Parallel (the fan-out groups),
 	// and Teams (the agent-team roster with per-member focus). The default tab is
 	// context-sensitive (a live team, else a live parallel run, else whichever
@@ -132,7 +132,7 @@ type keyMap struct {
 	// never collides with the blurred textarea nor any global control binding.
 	NextTab key.Binding
 
-	// CancelChild (x) cancels the selected/focused subagent lane inside the ctrl+a
+	// CancelChild (x) cancels the selected/focused subagent lane inside the f6
 	// agents overlay (non-terminal lanes only). Like Tasks/Findings it is a BARE
 	// key consulted ONLY inside the overlay, so it never collides with the blurred
 	// textarea nor any global control binding. Confirm-less single keypress —
@@ -152,11 +152,11 @@ type keyMap struct {
 	// overlay.
 	Help key.Binding
 
-	// Effort (ctrl+e) opens the /effort reasoning-effort picker (ADR 0055) — the
+	// Effort (f7) opens the /effort reasoning-effort picker (ADR 0055) — the
 	// same surface the /effort command opens. Control-modified so it never collides
 	// with textarea input. Like the /effort command it is idle-only and gated on
 	// caps.ModelSelection: openEffort returns the model unchanged (the key falls
-	// through inert) when model selection is unavailable, so ctrl+e never opens an
+	// through inert) when model selection is unavailable, so f7 never opens an
 	// empty picker. esc dismisses it via the shared onEffortKey overlay route.
 	Effort key.Binding
 
@@ -259,9 +259,9 @@ func defaultKeys() keyMap {
 			key.WithKeys("shift+tab"),
 			key.WithHelp("shift+tab", "switch mode"),
 		),
-		// ctrl+o / ctrl+r / ctrl+p: control-modified so they never collide with
+		// ctrl+o / ctrl+r / f8: modified or special keys so they never collide with
 		// the textarea's printable input (a bare letter must still type into the
-		// prompt). 'o' = inventOry overview, 'r' = Resources, 'p' = Prompts.
+		// prompt). f8 frees the textarea's readline-style ctrl+p previous-line key.
 		MCPPanel: key.NewBinding(
 			key.WithKeys("ctrl+o"),
 			key.WithHelp("ctrl+o", "MCP inventory"),
@@ -271,20 +271,21 @@ func defaultKeys() keyMap {
 			key.WithHelp("ctrl+r", "MCP resources"),
 		),
 		Prompts: key.NewBinding(
-			key.WithKeys("ctrl+p"),
-			key.WithHelp("ctrl+p", "MCP prompts"),
+			key.WithKeys("f8"),
+			key.WithHelp("f8", "MCP prompts"),
 		),
-		// ctrl+a: the unified agents overlay (Subagents + Teams tabs).
+		// f6: the unified agents overlay (Subagents + Parallel + Teams tabs). A
+		// function key keeps ctrl+a available for the textarea's line-start action.
 		Agents: key.NewBinding(
-			key.WithKeys("ctrl+a"),
-			key.WithHelp("ctrl+a", "agents (subagents / teams)"),
+			key.WithKeys("f6"),
+			key.WithHelp("f6", "agents (subagents / parallel / teams)"),
 		),
-		// ctrl+e: open the /effort reasoning-effort picker (ADR 0055). Control-modified
-		// so a bare 'e' still types into the prompt; idle-only + caps-gated inside
-		// openEffort, mirroring the /effort command.
+		// f7: open the /effort reasoning-effort picker (ADR 0055). A function key
+		// keeps ctrl+e available for the textarea's line-end action; the picker stays
+		// idle-only and caps-gated inside openEffort, mirroring the /effort command.
 		Effort: key.NewBinding(
-			key.WithKeys("ctrl+e"),
-			key.WithHelp("ctrl+e", "reasoning-effort picker"),
+			key.WithKeys("f7"),
+			key.WithHelp("f7", "reasoning-effort picker"),
 		),
 		// tab: switch tabs inside the agents overlay. Consulted only while the overlay
 		// owns the keyboard.

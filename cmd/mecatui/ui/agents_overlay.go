@@ -13,7 +13,7 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
 
-// agentsTab selects which body the unified ctrl+a "agents" overlay renders. The
+// agentsTab selects which body the unified f6 "agents" overlay renders. The
 // overlay is ONE surface with two tabs — Subagents (the flat Subagent-child fleet) and
 // Teams (the in-process agent-team roster) — matching the field's "one consolidated
 // agents window" convergence (Cursor's Agents Window, Claude Code's Agent View). The
@@ -77,7 +77,7 @@ type subagentState struct {
 	child  string // the focused child's ChildID (subagentFocus)
 }
 
-// openAgents opens the unified ctrl+a agents overlay. It picks the CONTEXT-SENSITIVE
+// openAgents opens the unified f6 agents overlay. It picks the CONTEXT-SENSITIVE
 // default tab: Teams when a team is live (the team is the richer, watch-worthy
 // surface), else Subagents when ≥1 subagent has run, else falls back to the team
 // overlay's honest empty-state hint (so "teams not enabled" vs "nothing running yet"

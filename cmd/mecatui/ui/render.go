@@ -95,7 +95,7 @@ type renderer struct {
 	// construction (keyMarkings). The inline-card affordances that reference
 	// rebindable actions — the ExpandTools chord ("ctrl+t" by default) in the
 	// reasoning/subagent/team headers and the collapse/rollup markers, and the
-	// Agents chord ("ctrl+a") in the team "+N more" roll-up — read them off
+	// Agents chord ("f6") in the team "+N more" roll-up — read them off
 	// here so an override propagates to those affordances (issue #457, the
 	// #455 liveness pattern extended to inline cards). Set once at construction
 	// from keyMarkings; a bare &renderer{th: th} (the width-0 team/fleet focus
@@ -1801,7 +1801,7 @@ const (
 // roster collapses the overflow into a "· +K more" roll-up line so a big team can
 // never grow the card without limit (a DoS-by-output guard) and stays legible.
 // The remaining members are not lost — they live in the conversation block and a
-// future ctrl+a overlay can surface them all.
+// future f6 overlay can surface them all.
 const maxTeamLanes = 6
 
 // maxTeamNameWidth caps the column width member names are padded to for the

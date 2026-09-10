@@ -292,7 +292,7 @@ func TestSubagentModelMetadataSurfaced(t *testing.T) {
 }
 
 // TestSubagentFleetRoutedMetadata asserts the routed metadata surfaces on a fleet
-// roster row (the ctrl+a Subagents tab), so a routed delegation is identifiable
+// roster row (the f6 Subagents tab), so a routed delegation is identifiable
 // there too — not only on the inline card.
 func TestSubagentFleetRoutedMetadata(t *testing.T) {
 	c := &conversation{}

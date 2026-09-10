@@ -123,7 +123,7 @@ func TestPromptSelectionSurvivesOverlayAndStopsStaleDrag(t *testing.T) {
 	}
 
 	m.conv.fleetStart("child", "goal", "", "", "", "", false)
-	mm, _ := m.Update(tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
+	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
 	if !m.prompt.HasSelection() || m.prompt.SelectedText() != "hello" {
 		t.Fatalf("overlay cleared completed prompt selection: %q", m.prompt.SelectedText())

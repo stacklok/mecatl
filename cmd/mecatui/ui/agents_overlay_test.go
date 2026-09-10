@@ -1,6 +1,6 @@
 package ui
 
-// Tests for the unified ctrl+a "agents" overlay (Package C, iteration 7) and the
+// Tests for the unified f6 "agents" overlay (Package C, iteration 7) and the
 // fleet status footer segment (iteration 6). The overlay is ONE surface with two
 // tabs — Subagents (the flat Subagent-child fleet) and Teams (the former team overlay,
 // reused verbatim). `tab` switches tabs, `enter` focuses a row, `esc` steps back /
@@ -206,7 +206,7 @@ func TestFooterHiddenWithoutSubagents(t *testing.T) {
 }
 
 // TestFooterShowsRunningAndDone asserts the footer fleet segment shows the
-// running/done counts and the ctrl+a cue once subagents have run (mixed live+done).
+// running/done counts and the f6 cue once subagents have run (mixed live+done).
 func TestFooterShowsRunningAndDone(t *testing.T) {
 	m := newMCPModel(t, aztec(), nil)
 	m = seedSubagents(m, "p1",
@@ -224,8 +224,8 @@ func TestFooterShowsRunningAndDone(t *testing.T) {
 	if !strings.Contains(out, "2"+subagentRunGlyph) || !strings.Contains(out, "1"+subagentDoneGlyph) {
 		t.Errorf("footer should show 2 running / 1 done, got %q", out)
 	}
-	if !strings.Contains(out, "ctrl+a") {
-		t.Errorf("footer fleet segment should advertise ctrl+a, got %q", out)
+	if !strings.Contains(out, "f6") {
+		t.Errorf("footer fleet segment should advertise f6, got %q", out)
 	}
 }
 
@@ -242,11 +242,11 @@ func TestFooterFleetTiers(t *testing.T) {
 	if strings.Contains(medium, "subagents") {
 		t.Errorf("medium tier should drop the word 'subagents', got %q", medium)
 	}
-	if !strings.Contains(medium, "ctrl+a") {
-		t.Errorf("medium tier should keep the ctrl+a cue, got %q", medium)
+	if !strings.Contains(medium, "f6") {
+		t.Errorf("medium tier should keep the f6 cue, got %q", medium)
 	}
-	if strings.Contains(compact, "ctrl+a") {
-		t.Errorf("compact tier should drop the ctrl+a cue, got %q", compact)
+	if strings.Contains(compact, "f6") {
+		t.Errorf("compact tier should drop the f6 cue, got %q", compact)
 	}
 	for _, s := range []string{full, medium, compact} {
 		if !strings.Contains(s, "3"+subagentRunGlyph) || !strings.Contains(s, "1"+subagentDoneGlyph) {
@@ -256,8 +256,8 @@ func TestFooterFleetTiers(t *testing.T) {
 }
 
 // TestFooterFleetTierSelection proves the SELECTION wiring (not just the builders):
-// fitFooter picks the medium tier (drops the "subagents" word, keeps "ctrl+a") when the
-// full tier won't fit, and the compact tier (drops "ctrl+a") when even medium won't fit.
+// fitFooter picks the medium tier (drops the "subagents" word, keeps "f6") when the
+// full tier won't fit, and the compact tier (drops "f6") when even medium won't fit.
 //
 // The candidate widths are reconstructed EXACTLY as fitFooter builds them (agents prefix
 // + sep + the matching ctx-meter tier), so the chosen test widths are deterministic
@@ -296,20 +296,20 @@ func TestFooterFleetTierSelection(t *testing.T) {
 	}
 
 	// At a width that fits cand2 (medium tier) but NOT cand1 (full tier): medium chosen —
-	// the "subagents" word is dropped, the ctrl+a cue survives.
+	// the "subagents" word is dropped, the f6 cue survives.
 	out := stripANSIstr(m.fitFooter(left, w(cand2)))
 	if strings.Contains(out, "subagents") {
 		t.Errorf("medium-width footer should drop the 'subagents' word, got %q", out)
 	}
-	if !strings.Contains(out, "ctrl+a") {
-		t.Errorf("medium-width footer should keep the ctrl+a cue, got %q", out)
+	if !strings.Contains(out, "f6") {
+		t.Errorf("medium-width footer should keep the f6 cue, got %q", out)
 	}
 
 	// At a width that fits cand3 (compact tier) but NOT cand2 (medium tier): compact
-	// chosen — the ctrl+a cue is dropped, the counts survive.
+	// chosen — the f6 cue is dropped, the counts survive.
 	out = stripANSIstr(m.fitFooter(left, w(cand3)))
-	if strings.Contains(out, "ctrl+a") {
-		t.Errorf("compact-width footer should drop the ctrl+a cue, got %q", out)
+	if strings.Contains(out, "f6") {
+		t.Errorf("compact-width footer should drop the f6 cue, got %q", out)
 	}
 	if !strings.Contains(out, "3"+subagentRunGlyph) {
 		t.Errorf("compact-width footer should still render the counts, got %q", out)
@@ -337,18 +337,18 @@ func TestFooterFleetAndTeamCoexist(t *testing.T) {
 
 // --- iteration 7: unified tabbed overlay ----------------------------------
 
-// TestCtrlAOpensSubagentsTabWhenNoTeam asserts the context-sensitive default: with
-// subagents running and no team, ctrl+a opens the overlay on the Subagents tab.
-func TestCtrlAOpensSubagentsTabWhenNoTeam(t *testing.T) {
+// TestF6OpensSubagentsTabWhenNoTeam asserts the context-sensitive default: with
+// subagents running and no team, f6 opens the overlay on the Subagents tab.
+func TestF6OpensSubagentsTabWhenNoTeam(t *testing.T) {
 	m := newMCPModel(t, aztec(), nil)
 	m = seedSubagents(m, "p1",
 		startSub("p1", "c1", "audit auth"),
 		toolSub("p1", "c1", "Grep", false, 1),
 	)
-	mm, _ := m.Update(ctrlKey('a'))
+	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
 	if m.team.view == teamNone {
-		t.Fatal("ctrl+a should open the agents overlay")
+		t.Fatal("f6 should open the agents overlay")
 	}
 	if m.agentsTab != tabSubagents {
 		t.Errorf("default tab = %v, want tabSubagents (subagents live, no team)", m.agentsTab)
@@ -362,16 +362,16 @@ func TestCtrlAOpensSubagentsTabWhenNoTeam(t *testing.T) {
 	}
 }
 
-// TestCtrlAOpensTeamsTabWhenTeamLive asserts the context-sensitive default: with a
-// LIVE team, ctrl+a opens on the Teams tab even if subagents also ran.
-func TestCtrlAOpensTeamsTabWhenTeamLive(t *testing.T) {
+// TestF6OpensTeamsTabWhenTeamLive asserts the context-sensitive default: with a
+// LIVE team, f6 opens on the Teams tab even if subagents also ran.
+func TestF6OpensTeamsTabWhenTeamLive(t *testing.T) {
 	m := newMCPModel(t, aztec(), nil)
 	m = seedTeam(m, func(c *conversation) {
 		c.setTeamStart("t1", "team-x", roster())
 		c.addTeamMember(member("scout", "tool.call", client.TeamMsg{ToolName: "Grep"}))
 	})
 	m = seedSubagents(m, "p1", startSub("p1", "c1", "audit auth"))
-	mm, _ := m.Update(ctrlKey('a'))
+	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
 	if m.agentsTab != tabTeams {
 		t.Errorf("default tab = %v, want tabTeams (team live)", m.agentsTab)
@@ -420,7 +420,7 @@ func TestTabSwitchesSubagentsToTeams(t *testing.T) {
 	})
 	m = seedSubagents(m, "p1", startSub("p1", "c1", "audit auth"))
 	// Open: team live → Teams tab.
-	mm, _ := m.Update(ctrlKey('a'))
+	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
 	if m.agentsTab != tabTeams {
 		t.Fatalf("expected Teams tab on open, got %v", m.agentsTab)
@@ -457,7 +457,7 @@ func TestEnterFocusesSubagentChild(t *testing.T) {
 		toolSub("p1", "c1", "Grep", false, 1),
 		toolSub("p1", "c1", "Read", true, 2),
 	)
-	mm, _ := m.Update(ctrlKey('a'))
+	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
 	if m.agentsTab != tabSubagents {
 		t.Fatalf("expected Subagents tab, got %v", m.agentsTab)
@@ -493,7 +493,7 @@ func TestEnterFocusesSubagentChild(t *testing.T) {
 func TestEscClosesSubagentOverlay(t *testing.T) {
 	m := newMCPModel(t, aztec(), nil)
 	m = seedSubagents(m, "p1", startSub("p1", "c1", "audit auth"))
-	mm, _ := m.Update(ctrlKey('a'))
+	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
 	mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	m = mm.(Model)
@@ -535,7 +535,7 @@ func TestSubagentOverlayBoundsChildContent(t *testing.T) {
 
 	// Roster: the goal + tool-derived state are sanitized — no raw ESC, and the sentinel
 	// only ever appears as inert text (never as a control sequence).
-	mm, _ := m.Update(ctrlKey('a'))
+	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
 	roster := stripANSIstr(m.View().Content)
 	if strings.ContainsRune(roster, 0x1b) {
@@ -581,7 +581,7 @@ func TestSubagentFocusDisambiguatesByHash(t *testing.T) {
 		startSub("p1", "explorer-aaa111", "audit auth"),
 		startSub("p1", "explorer-bbb222", "audit auth"),
 	)
-	mm, _ := m.Update(ctrlKey('a'))
+	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
 	out := stripANSIstr(m.View().Content)
 	if !strings.Contains(out, "#aaa111") || !strings.Contains(out, "#bbb222") {
@@ -644,7 +644,7 @@ func TestSubagentBudgetStopThroughWire(t *testing.T) {
 	if ln.stop != "budget" {
 		t.Fatalf("fleetEnd did not thread the stop reason: lane.stop = %q, want \"budget\"", ln.stop)
 	}
-	mm, _ := m.Update(ctrlKey('a'))
+	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
 	out := stripANSIstr(m.View().Content)
 	if !strings.Contains(out, "audit auth") || !strings.Contains(out, "budget") {
@@ -672,7 +672,7 @@ func TestSubagentRosterWindowed(t *testing.T) {
 		msgs = append(msgs, startSub("p1", child, "explore "+child))
 	}
 	m = seedSubagents(m, "p1", msgs...)
-	mm, _ := m.Update(ctrlKey('a'))
+	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
 	if m.agentsTab != tabSubagents {
 		t.Fatalf("expected Subagents tab, got %v", m.agentsTab)
@@ -781,7 +781,7 @@ func TestRosterRouteNavigation(t *testing.T) {
 		t.Run(tc.name+" custom down", func(t *testing.T) {
 			m := tc.seed(newMCPModel(t, aztec(), nil))
 			m.keys = applyKeyOverrides(m.keys, map[string][]string{"Down": {"n"}})
-			mm, _ := m.Update(ctrlKey('a'))
+			mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 			m = mm.(Model)
 			if m.agentsTab != tc.wantTab {
 				t.Fatalf("tab = %v, want %v", m.agentsTab, tc.wantTab)
@@ -819,7 +819,7 @@ func TestRosterRouteNavigation(t *testing.T) {
 				}
 				m = seedParallel(m, "p1", msgs...)
 			}
-			mm, _ := m.Update(ctrlKey('a'))
+			mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 			m = mm.(Model)
 			page := teamRosterRows(m.vp.Height())
 			if page >= n {
@@ -1052,7 +1052,7 @@ func TestDelegationFocusLongToolDataFitsViewport(t *testing.T) {
 func TestSubagentRosterGolden(t *testing.T) {
 	m := newMCPModel(t, aztec(), nil)
 	m = goldenFleet(m)
-	mm, _ := m.Update(ctrlKey('a'))
+	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
 	if m.agentsTab != tabSubagents {
 		t.Fatalf("expected Subagents tab, got %v", m.agentsTab)
@@ -1067,7 +1067,7 @@ func TestSubagentRosterGolden(t *testing.T) {
 func TestSubagentFocusGolden(t *testing.T) {
 	m := newMCPModel(t, aztec(), nil)
 	m = goldenFleet(m)
-	mm, _ := m.Update(ctrlKey('a'))
+	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
 	mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)
@@ -1104,7 +1104,7 @@ func goldenBackgroundFleet(m Model) Model {
 func TestSubagentRosterBackgroundGolden(t *testing.T) {
 	m := newMCPModel(t, aztec(), nil)
 	m = goldenBackgroundFleet(m)
-	mm, _ := m.Update(ctrlKey('a'))
+	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
 	if m.agentsTab != tabSubagents {
 		t.Fatalf("expected Subagents tab, got %v", m.agentsTab)
@@ -1120,7 +1120,7 @@ func TestSubagentRosterBackgroundGolden(t *testing.T) {
 func TestSubagentFocusBackgroundGolden(t *testing.T) {
 	m := newMCPModel(t, aztec(), nil)
 	m = goldenBackgroundFleet(m)
-	mm, _ := m.Update(ctrlKey('a'))
+	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
 	mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter}) // cursor 0 = the running background lane
 	m = mm.(Model)
@@ -1138,7 +1138,7 @@ func TestSubagentFocusBackgroundGolden(t *testing.T) {
 func TestSubagentFocusBoundedPreviewsNoteHangsInFinalCard(t *testing.T) {
 	m := newMCPModel(t, aztec(), nil)
 	m = goldenBackgroundFleet(m)
-	mm, _ := m.Update(ctrlKey('a'))
+	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
 	mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)
@@ -1176,7 +1176,7 @@ func TestSubagentFocusBackgroundNoteHangsInFinalCard(t *testing.T) {
 	m := newMCPModel(t, aztec(), nil)
 	m = goldenBackgroundFleet(m)
 	m = applyAll(m, tea.WindowSizeMsg{Width: 52, Height: 30})
-	mm, _ := m.Update(ctrlKey('a'))
+	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
 	mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)
@@ -1230,7 +1230,7 @@ func TestAgentsTeamsTabGolden(t *testing.T) {
 	m := newMCPModel(t, aztec(), nil)
 	m = seedTeam(m, agentsGoldenTeam)
 	m = seedSubagents(m, "p1", startSub("p1", "explorer-a3f1", "audit auth flow"))
-	mm, _ := m.Update(ctrlKey('a'))
+	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
 	// The team is not live in this seed; cycle `tab` (now Subagents→Parallel→Teams) until
 	// the Teams tab is active to lock its golden regardless of default.
@@ -1271,7 +1271,7 @@ func goldenParallel(m Model) Model {
 func TestParallelRosterGolden(t *testing.T) {
 	m := newMCPModel(t, aztec(), nil)
 	m = goldenParallel(m)
-	mm, _ := m.Update(ctrlKey('a'))
+	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
 	if m.agentsTab != tabParallel {
 		t.Fatalf("expected Parallel tab, got %v", m.agentsTab)
@@ -1286,7 +1286,7 @@ func TestParallelRosterGolden(t *testing.T) {
 func TestParallelRosterFooterPacksSemanticSegmentsInFinalCard(t *testing.T) {
 	m := newMCPModel(t, aztec(), nil)
 	m = goldenParallel(m)
-	mm, _ := m.Update(ctrlKey('a'))
+	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
 	out := stripANSIstr(m.View().Content)
 	assertFitsViewport(t, []byte(out), m.width)
@@ -1326,7 +1326,7 @@ func TestParallelRosterFooterLongReboundLabelsInFinalCard(t *testing.T) {
 func TestParallelGroupFocusGolden(t *testing.T) {
 	m := newMCPModel(t, aztec(), nil)
 	m = goldenParallel(m)
-	mm, _ := m.Update(ctrlKey('a'))
+	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
 	mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)
@@ -1364,28 +1364,28 @@ func TestParallelFooterTiers(t *testing.T) {
 	full := stripANSIstr(parallelFooterFull(th, 1, 2, defaultHelpKeys().agents))
 	medium := stripANSIstr(parallelFooterMedium(1, 2, defaultHelpKeys().agents))
 	compact := stripANSIstr(parallelFooterCompact(1, 2))
-	if !strings.Contains(full, "parallel") || !strings.Contains(full, "ctrl+a") {
-		t.Errorf("full tier should name parallel + ctrl+a: %q", full)
+	if !strings.Contains(full, "parallel") || !strings.Contains(full, "f6") {
+		t.Errorf("full tier should name parallel + f6: %q", full)
 	}
 	for _, s := range []string{full, medium, compact} {
 		if !strings.Contains(s, "1◐") || !strings.Contains(s, "2✓") {
 			t.Errorf("tier missing running/done counts: %q", s)
 		}
 	}
-	if strings.Contains(compact, "ctrl+a") {
-		t.Errorf("compact tier should drop ctrl+a: %q", compact)
+	if strings.Contains(compact, "f6") {
+		t.Errorf("compact tier should drop f6: %q", compact)
 	}
 }
 
-// TestAgentsOverlayNothingRanHint asserts ctrl+a with neither a team nor subagents
+// TestAgentsOverlayNothingRanHint asserts f6 with neither a team nor subagents
 // surfaces the honest "nothing ran" hint and does NOT open the overlay.
 func TestAgentsOverlayNothingRanHint(t *testing.T) {
 	m := newMCPModel(t, aztec(), nil)
 	m.caps.Teams = true
-	mm, _ := m.Update(ctrlKey('a'))
+	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
 	if m.team.view != teamNone {
-		t.Errorf("ctrl+a with nothing running should not open the overlay, view = %v", m.team.view)
+		t.Errorf("f6 with nothing running should not open the overlay, view = %v", m.team.view)
 	}
 	if !strings.Contains(m.statusMsg, "no team, subagent, or parallel run has run yet") {
 		t.Errorf("expected the nothing-ran hint, got %q", m.statusMsg)
