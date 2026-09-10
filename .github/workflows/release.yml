@@ -162,6 +162,17 @@ jobs:
           subject-name: ${{ steps.build.outputs.image_name }}
           subject-digest: ${{ steps.build.outputs.image_digest }}
           push-to-registry: true
+          # attest-build-provenance defaults create-storage-record to true whenever
+          # push-to-registry is set, which then needs an `artifact-metadata: write`
+          # permission and emits two warnings per job when it is absent (8 per
+          # release, present since at least v0.0.29). We do not consume GitHub's
+          # artifact-metadata index — the attestation itself is what
+          # `gh attestation verify` / `cosign verify-attestation` read, and it
+          # succeeds regardless. Granting the permission is not currently an option:
+          # actionlint v1.7.7 rejects `artifact-metadata` as an unknown scope, so it
+          # would fail `task lint:actions`. Declare the feature off instead of
+          # silently failing at it.
+          create-storage-record: false
 
   # The mecatui image carries cmd/mecatui/kodata/agent.yaml through ko's kodata
   # support and identifies it with the org.stacklok.broodbox.agent OCI label.
@@ -285,6 +296,17 @@ jobs:
           subject-name: ${{ steps.build.outputs.image_name }}
           subject-digest: ${{ steps.build.outputs.image_digest }}
           push-to-registry: true
+          # attest-build-provenance defaults create-storage-record to true whenever
+          # push-to-registry is set, which then needs an `artifact-metadata: write`
+          # permission and emits two warnings per job when it is absent (8 per
+          # release, present since at least v0.0.29). We do not consume GitHub's
+          # artifact-metadata index — the attestation itself is what
+          # `gh attestation verify` / `cosign verify-attestation` read, and it
+          # succeeds regardless. Granting the permission is not currently an option:
+          # actionlint v1.7.7 rejects `artifact-metadata` as an unknown scope, so it
+          # would fail `task lint:actions`. Declare the feature off instead of
+          # silently failing at it.
+          create-storage-record: false
 
   publish-mecak8s:
     name: Build, publish, sign, attest mecak8s
@@ -403,6 +425,17 @@ jobs:
           subject-name: ${{ steps.build.outputs.image_name }}
           subject-digest: ${{ steps.build.outputs.image_digest }}
           push-to-registry: true
+          # attest-build-provenance defaults create-storage-record to true whenever
+          # push-to-registry is set, which then needs an `artifact-metadata: write`
+          # permission and emits two warnings per job when it is absent (8 per
+          # release, present since at least v0.0.29). We do not consume GitHub's
+          # artifact-metadata index — the attestation itself is what
+          # `gh attestation verify` / `cosign verify-attestation` read, and it
+          # succeeds regardless. Granting the permission is not currently an option:
+          # actionlint v1.7.7 rejects `artifact-metadata` as an unknown scope, so it
+          # would fail `task lint:actions`. Declare the feature off instead of
+          # silently failing at it.
+          create-storage-record: false
 
   # Not a Go binary, so this doesn't go through ko like the jobs above — a
   # plain docker/build-push-action build of the existing dev/Compose
@@ -501,6 +534,17 @@ jobs:
           subject-name: ${{ env.IMAGE }}
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
+          # attest-build-provenance defaults create-storage-record to true whenever
+          # push-to-registry is set, which then needs an `artifact-metadata: write`
+          # permission and emits two warnings per job when it is absent (8 per
+          # release, present since at least v0.0.29). We do not consume GitHub's
+          # artifact-metadata index — the attestation itself is what
+          # `gh attestation verify` / `cosign verify-attestation` read, and it
+          # succeeds regardless. Granting the permission is not currently an option:
+          # actionlint v1.7.7 rejects `artifact-metadata` as an unknown scope, so it
+          # would fail `task lint:actions`. Declare the feature off instead of
+          # silently failing at it.
+          create-storage-record: false
 
   # Publish the chart only after its default image tag exists.
   publish-helm-chart:
