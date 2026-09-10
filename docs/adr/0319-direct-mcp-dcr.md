@@ -20,10 +20,14 @@ authorization-code and refresh grants, S256, and `none`. An explicitly authorize
 Python probe registered one public client and completed two browser authorizations/code
 exchanges on the same random callback path with two ports, both different from the registered
 port. It requested only `openid` and `authorization_code`, used S256 and no secret, and
-discarded tokens. This establishes deployed port variation, **not** SDK integration, refresh,
-durable restart, wrong-path rejection, or MCP invocation. No credential/authorization URL is
-recorded here. Further live qualification is human-run, not CI or implied authorization for
-an implementing agent to contact the gateway.
+discarded tokens. A subsequent operator-driven Go spike used `mecated mcp login` and local
+mecatui against the deployed gateway, discovered the real connector tool catalog, invoked the
+harmless Excalidraw `read_me` tool, restarted mecatui without another registration, and invoked
+it again using the restored encrypted credential. This establishes the selected
+SDK/DCR/PKCE/login/persistence/MCP invocation happy path and deployed loopback-port variation,
+but not refresh, wrong-path rejection, concurrency, or uncertain-outcome recovery. No
+credential/authorization URL is recorded here. Further live qualification remains human-run,
+not CI or implied authorization for an implementing agent to contact the gateway.
 
 Broker DCR is a separate ToolHive-owned authority with explicit OAuth2 `upstream` and
 `discovery_url`. Neither that lifecycle, `CallMcpWithQuery`, nor remote mecatui OIDC/keyring
@@ -48,8 +52,7 @@ document is approved or landed. The following observable policies have explicit 
 5. Bind a stable random callback path to the registration and a fresh ephemeral IPv4 loopback
    port to each authorization. State and PKCE stay fresh; exact path/Host/state validation and
    bounded listener lifetime remain mandatory.
-6. Request `openid` plus explicitly `offline_access` when refresh is enabled, never implicit
-   `profile`/`email`. Refresh issuance is required only for the selected refresh-enabled profile.
+6. Default direct DCR to durable authorization: omitted `request_refresh_token` resolves to true and omitted scopes to `[openid, offline_access]`. Explicit false derives `[openid]` when scopes are omitted; explicit scopes must match the effective setting. Never add implicit `profile`/`email`. These defaults do not change preregistered, CIMD, or broker profiles, and refresh issuance is required only for an effective refresh-enabled profile.
 7. An unknown registration POST outcome is recovery-required, with durable evidence and no
    automatic retry. A new POST requires explicit operator retry acknowledging possible orphans.
 8. `--reset-dcr-registration` applies only to a valid registration and its grant, while
@@ -101,13 +104,7 @@ may weaken those bindings. HTTPS registration/authorization/token endpoints stay
 issuer origin, with existing DNS pinning, no proxy, TLS, bounds, and redacted errors.
 Registration POST has no redirect or automatic retry and no initial access credential.
 
-The explicit scope allowlist in the proposed config is `[openid]` or
-`[openid, offline_access]`, matching `request_refresh_token`. PRM and AS must advertise
-`openid`; only AS advertisement is required for `offline_access`. ScopeFilter alone is not
-a final security gate: the SDK adds offline access and unions step-up scopes afterwards.
-The final authorization request must still match the admitted set, and authorization,
-code exchange, and refresh must bind exactly the canonical resource. Missing requested
-refresh issuance never reports durable-refresh success.
+The effective direct-DCR scope allowlist is `[openid, offline_access]` by default: omitted `request_refresh_token` resolves to true and omitted scopes derive from that setting. Explicit false derives `[openid]` when scopes are omitted; explicit scopes must match the effective setting. Profile decoding therefore preserves refresh-field presence before resolving the existing runtime boolean. These defaults are DCR-only. PRM and AS must advertise `openid`; only AS advertisement is required for `offline_access`. ScopeFilter alone is not a final security gate: the SDK adds offline access and unions step-up scopes afterwards. The final authorization request must still match the admitted set, and authorization, code exchange, and refresh must bind exactly the canonical resource. Missing requested refresh issuance never reports durable-refresh success.
 
 ### Proposed bounded CAS lifecycle, not an exactly-once lock
 
