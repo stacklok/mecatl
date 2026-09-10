@@ -87,16 +87,11 @@ func validateGlobalOAuth(route permconfig.MCPServerProfile) error {
 	if oauth.Credentials.Mode != "local" || oauth.Credentials.Local == nil || oauth.Credentials.Environment != nil {
 		return fmt.Errorf("%w: MCP server %q: direct DCR requires mutable local credentials", ErrMCPProfileInvalid, route.Name)
 	}
-	refresh := true
-	if oauth.RequestRefreshTokenSet {
-		refresh = oauth.RequestRefreshToken
+	if oauth.RequestRefreshToken {
+		return fmt.Errorf("%w: MCP server %q: direct DCR does not support refresh tokens", ErrMCPProfileInvalid, route.Name)
 	}
-	want := []string{"openid"}
-	if refresh {
-		want = append(want, "offline_access")
-	}
-	if len(oauth.Scopes) != 0 && !sameStringSet(oauth.Scopes, want) {
-		return fmt.Errorf("%w: MCP server %q: direct DCR scopes do not match refresh selection", ErrMCPProfileInvalid, route.Name)
+	if len(oauth.Scopes) != 0 && !sameStringSet(oauth.Scopes, []string{"openid"}) {
+		return fmt.Errorf("%w: MCP server %q: direct DCR scopes must contain only openid", ErrMCPProfileInvalid, route.Name)
 	}
 	return nil
 }

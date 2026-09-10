@@ -304,17 +304,8 @@ func loadOAuthProfile(profile permconfig.MCPServerProfile, lookup func(string) (
 	}
 	requestRefresh := decl.RequestRefreshToken
 	allowedScopes := append([]string(nil), decl.Scopes...)
-	if decl.Client.Mode == "dcr" {
-		requestRefresh = true
-		if decl.RequestRefreshTokenSet {
-			requestRefresh = decl.RequestRefreshToken
-		}
-		if len(allowedScopes) == 0 {
-			allowedScopes = []string{"openid"}
-			if requestRefresh {
-				allowedScopes = append(allowedScopes, "offline_access")
-			}
-		}
+	if decl.Client.Mode == "dcr" && len(allowedScopes) == 0 {
+		allowedScopes = []string{"openid"}
 	}
 	opts := &mcp.OAuthOptions{
 		Subject:       mcp.OAuthSubject{Profile: decl.Profile, Principal: decl.Principal},

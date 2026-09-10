@@ -93,7 +93,7 @@ func (f *dcrMetadataFixture) options(t *testing.T, store credentialstore.Store) 
 	opts := OAuthOptions{
 		Subject: OAuthSubject{Profile: "connector", Principal: "local-user"}, Issuer: f.server.URL,
 		Client: OAuthClientConfig{DCR: &OAuthDCRConfig{}}, CredentialStore: store,
-		RequestRefreshToken: true, AllowedScopes: []string{"openid", "offline_access"},
+		AllowedScopes: []string{"openid"},
 	}
 	AllowOAuthLoopbackForTest(t, &opts)
 	return opts

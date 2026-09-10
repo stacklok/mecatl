@@ -47,11 +47,9 @@ func TestDirectMCPDCR_Scenario1_AuthoritySeparatedProfile(t *testing.T) {
 
 	for _, tc := range []struct {
 		name, refresh string
-		wantRefresh   bool
-		wantScopes    string
 	}{
-		{name: "durable defaults", wantRefresh: true, wantScopes: "openid,offline_access"},
-		{name: "explicit no refresh", refresh: "request_refresh_token: false", wantScopes: "openid"},
+		{name: "no-refresh defaults"},
+		{name: "explicit no refresh", refresh: "request_refresh_token: false"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := ResolveMCPAuthority(MCPAuthorityOptions{Operator: parse(t, "global", tc.refresh), DefaultMode: mcpauthority.Global, LookupEnv: lookup})
@@ -67,8 +65,8 @@ func TestDirectMCPDCR_Scenario1_AuthoritySeparatedProfile(t *testing.T) {
 			if oauth.Client.DCR == nil || oauth.Client.Preregistered != nil || oauth.Client.ClientIDMetadataDocumentURL != "" {
 				t.Fatalf("resolved client = %#v, want DCR only", oauth.Client)
 			}
-			if oauth.RequestRefreshToken != tc.wantRefresh || strings.Join(oauth.AllowedScopes, ",") != tc.wantScopes {
-				t.Fatalf("refresh/scopes = %t/%v, want %t/%s", oauth.RequestRefreshToken, oauth.AllowedScopes, tc.wantRefresh, tc.wantScopes)
+			if oauth.RequestRefreshToken || strings.Join(oauth.AllowedScopes, ",") != "openid" {
+				t.Fatalf("refresh/scopes = %t/%v, want false/[openid]", oauth.RequestRefreshToken, oauth.AllowedScopes)
 			}
 		})
 	}
@@ -80,7 +78,8 @@ func TestDirectMCPDCR_Scenario1_AuthoritySeparatedProfile(t *testing.T) {
 		{name: "mixed client forms", mode: "global", replacement: "client: {mode: dcr, dcr: {}, cimd: {document_url: https://client.example/metadata.json}}"},
 		{name: "static credential payload", mode: "global", replacement: "static_bearer: {token_env: MECATL_TOKEN}"},
 		{name: "environment credentials", mode: "global", replacement: "credentials: {mode: environment, environment: {credential_env: MECATL_CREDENTIAL}}"},
-		{name: "inconsistent scopes", mode: "global", replacement: "request_refresh_token: false\n          scopes: [openid, offline_access]"},
+		{name: "refresh requested", mode: "global", replacement: "request_refresh_token: true"},
+		{name: "unsupported scopes", mode: "global", replacement: "scopes: [openid, offline_access]"},
 	} {
 		t.Run("reject "+tc.name, func(t *testing.T) {
 			root := filepath.Join(t.TempDir(), "credentials")
@@ -97,7 +96,7 @@ func TestDirectMCPDCR_Scenario1_AuthoritySeparatedProfile(t *testing.T) {
 					body = strings.Replace(body, "        oauth:\n", "        "+tc.replacement+"\n        oauth:\n", 1)
 				case "environment credentials":
 					body = strings.Replace(body, "credentials:\n            mode: local\n            local: {root: "+fmt.Sprintf("%q", root)+", key_env: MECATL_MCP_CREDENTIAL_KEY}", tc.replacement, 1)
-				case "inconsistent scopes":
+				case "refresh requested", "unsupported scopes":
 					body = strings.Replace(body, "          \n", "          "+tc.replacement+"\n", 1)
 				}
 			}

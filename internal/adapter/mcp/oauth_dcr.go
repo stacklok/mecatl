@@ -268,17 +268,7 @@ func discoverDCRMetadata(ctx context.Context, resource string, opts OAuthOptions
 	if !slices.Contains(as.CodeChallengeMethodsSupported, "S256") || !slices.Contains(as.ResponseTypesSupported, "code") || !slices.Contains(as.GrantTypesSupported, "authorization_code") || !slices.Contains(as.TokenEndpointAuthMethodsSupported, "none") || !slices.Contains(as.ScopesSupported, "openid") {
 		return oauthDCRMetadata{}, "", errors.New("OAuth DCR public authorization-code metadata is unsupported")
 	}
-	if opts.RequestRefreshToken && (!slices.Contains(as.GrantTypesSupported, "refresh_token") || !slices.Contains(as.ScopesSupported, "offline_access")) {
-		return oauthDCRMetadata{}, "", errors.New("OAuth DCR refresh metadata is unsupported")
-	}
-	scopes := append([]string(nil), opts.AllowedScopes...)
-	sort.Strings(scopes)
-	scopes = compactStrings(scopes)
-	grants := []string{"authorization_code"}
-	if opts.RequestRefreshToken {
-		grants = append(grants, "refresh_token")
-	}
-	return oauthDCRMetadata{Issuer: opts.Issuer, Resource: resource, RedirectPolicy: oauthDCRRedirectPolicy, TokenEndpointAuthMethod: "none", GrantTypes: grants, ResponseTypes: []string{"code"}, Scopes: scopes}, as.RegistrationEndpoint, nil
+	return oauthDCRMetadata{Issuer: opts.Issuer, Resource: resource, RedirectPolicy: oauthDCRRedirectPolicy, TokenEndpointAuthMethod: "none", GrantTypes: []string{"authorization_code"}, ResponseTypes: []string{"code"}, Scopes: []string{"openid"}}, as.RegistrationEndpoint, nil
 }
 
 func resolvePreparedDCR(ctx context.Context, resource string, opts OAuthOptions, client *http.Client) (OAuthOptions, error) {
@@ -549,19 +539,11 @@ func validateOAuthDCRRecord(record oauthDCRRecord, expected oauthDCRIdentity) er
 }
 
 func validDCRMetadata(meta oauthDCRMetadata, identity oauthDCRIdentity) bool {
-	if meta.Issuer != identity.Issuer || meta.Resource != identity.Resource || meta.RedirectPolicy != oauthDCRRedirectPolicy || !validDCRCallbackPath(meta.RedirectPath) || meta.TokenEndpointAuthMethod != "none" || !slices.Equal(meta.ResponseTypes, []string{"code"}) {
-		return false
-	}
-	withoutRefresh := slices.Equal(meta.GrantTypes, []string{"authorization_code"}) && slices.Equal(meta.Scopes, []string{"openid"})
-	withRefresh := slices.Equal(meta.GrantTypes, []string{"authorization_code", "refresh_token"}) && slices.Equal(meta.Scopes, []string{"offline_access", "openid"})
-	return withoutRefresh || withRefresh
+	return meta.Issuer == identity.Issuer && meta.Resource == identity.Resource && meta.RedirectPolicy == oauthDCRRedirectPolicy && validDCRCallbackPath(meta.RedirectPath) && meta.TokenEndpointAuthMethod == "none" && slices.Equal(meta.GrantTypes, []string{"authorization_code"}) && slices.Equal(meta.ResponseTypes, []string{"code"}) && slices.Equal(meta.Scopes, []string{"openid"})
 }
 
 func validDCRRequestedScopes(opts OAuthOptions) bool {
-	if opts.RequestRefreshToken {
-		return len(opts.AllowedScopes) == 2 && slices.Contains(opts.AllowedScopes, "openid") && slices.Contains(opts.AllowedScopes, "offline_access")
-	}
-	return len(opts.AllowedScopes) == 1 && opts.AllowedScopes[0] == "openid"
+	return !opts.RequestRefreshToken && len(opts.AllowedScopes) == 1 && opts.AllowedScopes[0] == "openid"
 }
 
 func validDCRRedirectPort(port string) bool {
