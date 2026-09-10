@@ -98,9 +98,34 @@ local store so the next restart remains warm.
 A named direct/global profile can use `client: {mode: dcr, dcr: {}}` when no
 client was preregistered. It requires exact `scopes: [openid]` (or omission),
 `request_refresh_token: false` (or omission), and a mutable local credential
-store. Login dynamically registers a public client and then uses the same
-browser/PKCE flow. The durable registration and generation-bound access grant
-are separate; no client secret or refresh token is requested or accepted.
+store:
+
+```yaml
+mcp:
+  mode: global
+  servers:
+    - name: connector
+      url: https://connector-gateway.stacklok.dev/gw/mcp
+      auth:
+        mode: oauth
+        oauth:
+          profile: connector
+          principal: local-user
+          issuer: https://connector-gateway.stacklok.dev
+          client: {mode: dcr, dcr: {}}
+          scopes: [openid]
+          request_refresh_token: false
+          credentials:
+            mode: local
+            local:
+              root: /absolute/owner-only/credentials
+              key_env: MECATL_MCP_CREDENTIAL_KEY
+          network: {additional_origins: [], private_origins: [], max_redirects: 0}
+```
+
+Login dynamically registers a public client and then uses the same browser/PKCE
+flow. The durable registration and generation-bound access grant are separate;
+no client secret or refresh token is requested or accepted.
 
 Ordinary startup reuses the unexpired grant and never launches a browser. On
 expiry it returns login-required without attempting refresh. Run
@@ -109,14 +134,51 @@ the valid registration. If registration itself was interrupted, use
 `--retry-dcr-registration`; to deliberately replace a valid ready registration
 and its grant, use `--reset-dcr-registration`. The flags are mutually exclusive,
 valid only for DCR, and fail closed on corrupt or mismatched persisted state.
-They do not revoke an upstream registration.
-
-Complete public-client refresh remains deferred to
+They do not revoke an upstream registration. Complete public-client refresh
+remains deferred to
 [issue #1355](https://github.com/stacklok/mecatl/issues/1355).
 
-If the profile's issuer, client, principal, scopes, or resource changes, run
-login again. To roll back, replace the whole profile with `static_bearer` or
-`none` and restart.
+#### Manual local-mecatui qualification
+
+Run this live procedure only with explicit authorization and an isolated owner-only config
+and credential root. Do not paste command output into an issue or PR.
+
+1. Configure the DCR profile above and export its 32-byte padded-base64 credential key.
+2. Run `mecated mcp login connector`; record whether explicit consent appeared, but never
+   record the URL, code, state, registration response, client ID, or token.
+3. Start local `mecatui` with the same settings and key. Invoke only one harmless discovered
+   read-only tool and record its name and safe success category.
+4. Restart `mecatui` before access-token expiry and invoke the same tool without another login.
+5. After expiry, reconnect and confirm login-required, no refresh request, and no browser launch.
+6. Run `mecated mcp login connector` explicitly, confirm registration reuse, restart `mecatui`,
+   and invoke the same harmless tool once more.
+
+Record only:
+
+```text
+canonical_resource: <origin/path, no query>
+issuer_origin: <origin only>
+explicit_consent: true|false
+harmless_tool_name: <name only>
+initial_result: success|failure:<safe-category>
+restart_reuse_before_expiry: true|false
+expiry_result: login-required|failure:<safe-category>
+refresh_attempted: false
+browser_launched_on_startup_or_expiry: false
+explicit_relogin_reused_registration: true|false
+relogin_result: success|failure:<safe-category>
+```
+
+Exclude OAuth and registration secrets, authorization URLs, callback values, raw provider
+errors, headers, credential-store contents, and screenshots containing any of them.
+
+If a valid ready DCR profile's intentional registration binding changes — for example its
+issuer, principal, scopes, or resource — run `mecated mcp login SERVER
+--reset-dcr-registration`; plain login cannot replace that registration. Corrupt,
+unsupported, or identity-mismatched persisted registration or grant state is not bypassable
+with reset or retry and requires separate operator repair. For non-DCR profiles, run login
+again after intentional identity changes. To roll back, replace the whole profile with
+`static_bearer` or `none` and restart.
 
 ## Environment-backed credentials
 

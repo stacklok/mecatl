@@ -137,8 +137,8 @@ func validateOAuthDCRGrant(grant oauthDCRGrantEnvelope, expected oauthCredential
 	}
 	auth := grant.Authorization
 	tokenURL, err := validateHTTPURL("OAuth DCR token URL", auth.TokenURL, false)
-	if err != nil {
-		return err
+	if err != nil || tokenURL.RawQuery != "" || tokenURL.Fragment != "" {
+		return errors.New("OAuth DCR token authorization is invalid")
 	}
 	if _, ok := origins[urlOrigin(tokenURL)]; !ok || oauth2.AuthStyle(auth.AuthStyle) != oauth2.AuthStyleInParams {
 		return errors.New("OAuth DCR token authorization is invalid")

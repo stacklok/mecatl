@@ -1,7 +1,9 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -179,6 +181,116 @@ func TestValidateDCRAuthorizationURL(t *testing.T) {
 			err := ValidateDCRAuthorizationURL(tc.raw, resource)
 			if (err == nil) != tc.ok {
 				t.Fatalf("ValidateDCRAuthorizationURL() error = %v, want success %t", err, tc.ok)
+			}
+		})
+	}
+}
+
+func TestADR_0325_DCRPersistedFormatsRejectMalformedRecords(t *testing.T) {
+	generation := base64.RawURLEncoding.EncodeToString(make([]byte, 32))
+	path := oauthDCRCallbackPrefix + base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{1}, 32))
+	identity := oauthDCRIdentity{Profile: "connector", Principal: "local-user", Resource: "https://connector.example/gw/mcp", Issuer: "https://issuer.example"}
+	metadata := oauthDCRMetadata{
+		Issuer: identity.Issuer, Resource: identity.Resource, RedirectPolicy: oauthDCRRedirectPolicy,
+		RedirectPath: path, TokenEndpointAuthMethod: "none", GrantTypes: []string{"authorization_code"},
+		ResponseTypes: []string{"code"}, Scopes: []string{"openid"},
+	}
+	registration := oauthDCRRecord{
+		Schema: oauthDCRRegistrationSchema, Version: oauthDCRRegistrationVersion, Identity: identity,
+		Generation: generation, State: oauthDCRStateReady, AttemptStartedAt: "2026-09-10T10:00:00Z",
+		Metadata: metadata, MetadataFingerprint: fingerprintDCRMetadata(metadata),
+		Registration: &oauthDCRRegistration{ClientID: "public-client", RegisteredRedirectURI: "http://127.0.0.1:49152" + path},
+	}
+	validRegistration, err := json.Marshal(registration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registrationJSON := func(mutate func(*oauthDCRRecord)) []byte {
+		candidate := registration
+		candidate.Metadata = registration.Metadata
+		candidate.Registration = &oauthDCRRegistration{ClientID: registration.Registration.ClientID, RegisteredRedirectURI: registration.Registration.RegisteredRedirectURI}
+		mutate(&candidate)
+		value, marshalErr := json.Marshal(candidate)
+		if marshalErr != nil {
+			t.Fatal(marshalErr)
+		}
+		return value
+	}
+	registrationCases := map[string][]byte{
+		"duplicate key":        append([]byte(`{"version":1,`), validRegistration[1:]...),
+		"unknown key":          append(validRegistration[:len(validRegistration)-1], []byte(`,"unknown":true}`)...),
+		"trailing JSON":        append(append([]byte(nil), validRegistration...), []byte(` {}`)...),
+		"oversized value":      bytes.Repeat([]byte{'x'}, credentialstore.MaxValueBytes+1),
+		"malformed generation": registrationJSON(func(record *oauthDCRRecord) { record.Generation = "not-base64url" }),
+		"malformed callback path": registrationJSON(func(record *oauthDCRRecord) {
+			record.Metadata.RedirectPath = "/oauth/callback/not-base64url"
+			record.MetadataFingerprint = fingerprintDCRMetadata(record.Metadata)
+			record.Registration.RegisteredRedirectURI = "http://127.0.0.1:49152" + record.Metadata.RedirectPath
+		}),
+		"non-UTC timestamp":             registrationJSON(func(record *oauthDCRRecord) { record.AttemptStartedAt = "2026-09-10T12:00:00+02:00" }),
+		"unsupported state":             registrationJSON(func(record *oauthDCRRecord) { record.State = "retired" }),
+		"unsupported version":           registrationJSON(func(record *oauthDCRRecord) { record.Version++ }),
+		"metadata fingerprint mismatch": registrationJSON(func(record *oauthDCRRecord) { record.MetadataFingerprint = strings.Repeat("0", 64) }),
+		"metadata identity mismatch": registrationJSON(func(record *oauthDCRRecord) {
+			record.Metadata.Issuer = "https://other.example"
+			record.MetadataFingerprint = fingerprintDCRMetadata(record.Metadata)
+		}),
+		"record identity mismatch": registrationJSON(func(record *oauthDCRRecord) { record.Identity.Principal = "other-user" }),
+	}
+	for name, value := range registrationCases {
+		t.Run("registration/"+name, func(t *testing.T) {
+			if _, decodeErr := decodeOAuthDCRRecord(value, identity); decodeErr == nil {
+				t.Fatal("invalid registration record was accepted")
+			}
+		})
+	}
+
+	grantIdentity := oauthCredentialIdentity{
+		Profile: identity.Profile, Principal: identity.Principal, Resource: identity.Resource,
+		Issuer: identity.Issuer, ClientKind: oauthDCRClientKind, ClientID: "public-client",
+	}
+	config := &oauth2.Config{Endpoint: oauth2.Endpoint{TokenURL: identity.Issuer + "/oauth/token"}, RedirectURL: registration.Registration.RegisteredRedirectURI}
+	grant := newOAuthDCRActiveGrant(grantIdentity, generation, config, &oauth2.Token{AccessToken: "access", TokenType: "Bearer", Expiry: time.Date(2026, 9, 10, 11, 0, 0, 0, time.UTC)})
+	validGrant, err := json.Marshal(grant)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grantJSON := func(mutate func(*oauthDCRGrantEnvelope)) []byte {
+		candidate := grant
+		token, authorization := *grant.Token, *grant.Authorization
+		candidate.Token, candidate.Authorization = &token, &authorization
+		mutate(&candidate)
+		value, marshalErr := json.Marshal(candidate)
+		if marshalErr != nil {
+			t.Fatal(marshalErr)
+		}
+		return value
+	}
+	origins := map[string]struct{}{identity.Issuer: {}}
+	grantCases := map[string][]byte{
+		"duplicate key":        append([]byte(`{"version":2,`), validGrant[1:]...),
+		"unknown key":          append(validGrant[:len(validGrant)-1], []byte(`,"unknown":true}`)...),
+		"trailing JSON":        append(append([]byte(nil), validGrant...), []byte(` []`)...),
+		"oversized value":      bytes.Repeat([]byte{'x'}, credentialstore.MaxValueBytes+1),
+		"malformed generation": grantJSON(func(record *oauthDCRGrantEnvelope) { record.RegistrationGeneration = "not-base64url" }),
+		"malformed timestamp":  grantJSON(func(record *oauthDCRGrantEnvelope) { record.Token.Expiry = "tomorrow" }),
+		"unsupported state":    grantJSON(func(record *oauthDCRGrantEnvelope) { record.State = "expired" }),
+		"unsupported version":  grantJSON(func(record *oauthDCRGrantEnvelope) { record.Version++ }),
+		"identity mismatch":    grantJSON(func(record *oauthDCRGrantEnvelope) { record.Identity.ClientID = "other-client" }),
+		"generation mismatch": grantJSON(func(record *oauthDCRGrantEnvelope) {
+			record.RegistrationGeneration = base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{2}, 32))
+		}),
+		"off-origin token endpoint": grantJSON(func(record *oauthDCRGrantEnvelope) {
+			record.Authorization.TokenURL = "https://evil.example/oauth/token"
+		}),
+		"invalid token endpoint": grantJSON(func(record *oauthDCRGrantEnvelope) {
+			record.Authorization.TokenURL = "https://issuer.example/oauth/token?secret=value"
+		}),
+	}
+	for name, value := range grantCases {
+		t.Run("grant/"+name, func(t *testing.T) {
+			if _, decodeErr := decodeOAuthDCRGrant(value, grantIdentity, generation, origins); decodeErr == nil {
+				t.Fatal("invalid grant record was accepted")
 			}
 		})
 	}

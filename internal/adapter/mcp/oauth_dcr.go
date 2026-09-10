@@ -186,6 +186,9 @@ func PrepareOAuthDCRLogin(ctx context.Context, resource string, opts OAuthOption
 			if stored.State != oauthDCRStateReady || stored.MetadataFingerprint != fingerprintDCRMetadata(meta) || !equalDCRMetadata(stored.Metadata, meta) {
 				return OAuthOptions{}, "", ErrOAuthDCRRecoveryRequired
 			}
+			if err := prepareDCRGrantForExplicitLogin(ctx, opts.CredentialStore, stored, transport.issuerOrigin); err != nil {
+				return OAuthOptions{}, "", err
+			}
 			return withResolvedDCR(opts, stored), stored.Metadata.RedirectPath, nil
 		}
 		if action == OAuthDCRLoginResetRegistration && stored.State != oauthDCRStateReady || action == OAuthDCRLoginRetryRegistration && stored.State != oauthDCRStatePending {
@@ -260,6 +263,48 @@ func PrepareOAuthDCRLogin(ctx context.Context, resource string, opts OAuthOption
 	}
 	opts.dcrTicket = &oauthDCRTicket{key: append([]byte(nil), key...), version: created.Version, record: pending, registrationEndpoint: endpoint}
 	return opts, pending.Metadata.RedirectPath, nil
+}
+
+func prepareDCRGrantForExplicitLogin(ctx context.Context, store credentialstore.Store, registration oauthDCRRecord, issuerOrigin string) error {
+	identity := oauthCredentialIdentity{
+		Profile: registration.Identity.Profile, Principal: registration.Identity.Principal,
+		Resource: registration.Identity.Resource, Issuer: registration.Identity.Issuer,
+		ClientKind: oauthDCRClientKind, ClientID: registration.Registration.ClientID,
+	}
+	key, err := oauthDCRCredentialKey(identity, registration.Generation)
+	if err != nil {
+		return ErrOAuthDCRRecoveryRequired
+	}
+	record, err := store.Get(ctx, key)
+	if errors.Is(err, credentialstore.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return ErrOAuthDCRRecoveryRequired
+	}
+	grant, err := decodeOAuthDCRGrant(record.Value, identity, registration.Generation, map[string]struct{}{issuerOrigin: {}})
+	if err != nil {
+		return ErrOAuthDCRRecoveryRequired
+	}
+	if grant.State == "reset" {
+		return nil
+	}
+	token, err := oauthDCRGrantToken(grant)
+	if err != nil {
+		return ErrOAuthDCRRecoveryRequired
+	}
+	if token.Valid() {
+		return nil
+	}
+	reset := newOAuthDCRResetGrant(identity, registration.Generation)
+	value, err := encodeOAuthDCRGrant(reset, identity, registration.Generation, map[string]struct{}{issuerOrigin: {}})
+	if err != nil {
+		return ErrOAuthDCRRecoveryRequired
+	}
+	if _, err := store.Put(ctx, key, value, &record.Version); err != nil {
+		return ErrOAuthDCRRecoveryRequired
+	}
+	return nil
 }
 
 func newOAuthDCRPending(identity oauthDCRIdentity, meta oauthDCRMetadata, previous oauthDCRRecord, reason string) (oauthDCRRecord, error) {
@@ -603,7 +648,8 @@ func validateOAuthDCRRecord(record oauthDCRRecord, expected oauthDCRIdentity) er
 	if !validDCRRandom(record.Generation) || record.AttemptStartedAt == "" {
 		return errors.New("OAuth DCR registration attempt is invalid")
 	}
-	if _, err := time.Parse(time.RFC3339Nano, record.AttemptStartedAt); err != nil {
+	parsedAttempt, err := time.Parse(time.RFC3339Nano, record.AttemptStartedAt)
+	if err != nil || !strings.HasSuffix(record.AttemptStartedAt, "Z") || parsedAttempt.Format(time.RFC3339Nano) != record.AttemptStartedAt {
 		return errors.New("OAuth DCR registration attempt is invalid")
 	}
 	if record.MetadataFingerprint != fingerprintDCRMetadata(record.Metadata) || !validDCRMetadata(record.Metadata, expected) {
@@ -614,7 +660,8 @@ func validateOAuthDCRRecord(record oauthDCRRecord, expected oauthDCRIdentity) er
 		if !validDCRRandom(previous.Generation) || previous.AttemptStartedAt == "" || previous.Reason != "explicit_retry" && previous.Reason != "explicit_reset" {
 			return errors.New("OAuth DCR previous registration attempt is invalid")
 		}
-		if _, err := time.Parse(time.RFC3339Nano, previous.AttemptStartedAt); err != nil {
+		parsedPrevious, err := time.Parse(time.RFC3339Nano, previous.AttemptStartedAt)
+		if err != nil || !strings.HasSuffix(previous.AttemptStartedAt, "Z") || parsedPrevious.Format(time.RFC3339Nano) != previous.AttemptStartedAt {
 			return errors.New("OAuth DCR previous registration attempt is invalid")
 		}
 	}

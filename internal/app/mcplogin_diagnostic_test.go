@@ -10,7 +10,7 @@ import (
 	"github.com/stacklok/mecatl/mcp/oauthlogin"
 )
 
-func TestDirectMCPDCR_Scenario2_ReauthorizationRedirectAndScopeBinding(t *testing.T) {
+func TestDCRLoginPresenterRejectsScopeAndResourceDrift(t *testing.T) {
 	const resource = "https://connector.example/gw/mcp"
 	presented := 0
 	presenter := dcrOAuthLoginPresenter(resource, func(context.Context, string) (oauthlogin.Result, error) {

@@ -112,6 +112,108 @@ func TestDirectMCPDCR_Scenario2_RegistersAuthorizesAndLists(t *testing.T) {
 	}
 }
 
+func TestDirectMCPDCR_Scenario2_ReauthorizationRedirectAndScopeBinding(t *testing.T) {
+	fixture := newDCRLoginFixture(t)
+	root := filepath.Join(t.TempDir(), "credentials")
+	settings, lookup := writeDCRSettings(t, fixture, root)
+	browser := &loginBrowser{client: fixture.server.Client()}
+	runtime, err := oauthlogin.New(oauthlogin.Options{Launcher: browser})
+	if err != nil {
+		t.Fatal(err)
+	}
+	loginDCRProfile(t, fixture, settings, lookup, runtime)
+
+	resolver := permconfig.New(permconfig.Options{ExplicitFiles: []string{settings}})
+	profiles, err := loadAcceptanceMCPProfiles(t, resolver.OperatorMCP(), lookup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, ok := profiles.OAuthServer("protected")
+	if !ok {
+		t.Fatal("DCR profile was not resolved")
+	}
+	mcp.TrustOAuthCertificateForTest(t, cfg.OAuth, fixture.server.Certificate())
+	resolved, callbackPath, err := mcp.PrepareOAuthDCRLogin(context.Background(), cfg.URL, *cfg.OAuth, mcp.OAuthDCRLoginReuse)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.OAuth = &resolved
+	if err := profiles.Close(); err != nil {
+		t.Fatal(err)
+	}
+	expireAcceptanceCredential(t, root, base64.StdEncoding.EncodeToString([]byte("dcr-acceptance-encryption-key-32")), cfg)
+
+	fixture.mu.Lock()
+	fixture.dcrAccessToken = "replacement-dcr-access"
+	beforeRegister, beforeToken, beforeRefresh := fixture.register, fixture.token, fixture.refresh
+	firstRegisteredURI := fixture.registeredURI
+	fixture.mu.Unlock()
+	loginDCRProfile(t, fixture, settings, lookup, runtime)
+
+	browser.mu.Lock()
+	presented := append([]string(nil), browser.urls...)
+	browser.mu.Unlock()
+	if len(presented) != 2 {
+		t.Fatalf("explicit authorization presentations = %d, want 2", len(presented))
+	}
+	first, err := url.Parse(presented[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := url.Parse(presented[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstRedirect, err := url.Parse(first.Query().Get("redirect_uri"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondRedirect, err := url.Parse(second.Query().Get("redirect_uri"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	registeredRedirect, err := url.Parse(firstRegisteredURI)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if registeredRedirect.Path != callbackPath || firstRedirect.Path != callbackPath || secondRedirect.Path != callbackPath || firstRedirect.Port() == secondRedirect.Port() {
+		t.Fatalf("registration callback binding changed: registered=%q first=%q second=%q", firstRegisteredURI, firstRedirect, secondRedirect)
+	}
+	if first.Query().Get("state") == second.Query().Get("state") || first.Query().Get("code_challenge") == second.Query().Get("code_challenge") {
+		t.Fatal("explicit re-login reused state or PKCE challenge")
+	}
+	for _, authorization := range []*url.URL{first, second} {
+		if authorization.Query().Get("scope") != "openid" || authorization.Query().Get("resource") != fixture.resource() {
+			t.Fatalf("authorization scope/resource drift: %v", authorization.Query())
+		}
+	}
+	fixture.mu.Lock()
+	registers, tokens, refreshes := fixture.register, fixture.token, fixture.refresh
+	fixture.mu.Unlock()
+	if registers != beforeRegister || tokens != beforeToken+1 || refreshes != beforeRefresh {
+		t.Fatalf("explicit re-login register=%d token=%d refresh=%d; before=%d/%d/%d", registers, tokens, refreshes, beforeRegister, beforeToken, beforeRefresh)
+	}
+
+	diag := &acceptanceDiag{}
+	built, err := buildDCRAcceptanceMCP(t, fixture, settings, lookup, diag, mockllm.New(mockllm.ToolCallTurn(session.NewToolCall("reauthorized", "mcp__protected__ready", []byte(`{}`))), mockllm.TextTurn("complete")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer built.Close()
+	surfaces, err := runAcceptanceTool(built, "use the harmless read tool after explicit re-login")
+	if err != nil {
+		t.Fatalf("run: %v diagnostics=%v", err, diagnosticSurfaces(diag))
+	}
+	if !strings.Contains(strings.Join(surfaces, "\n"), "fixture-ready") {
+		t.Fatalf("replacement grant did not authorize harmless tool use: %v", surfaces)
+	}
+	fixture.mu.Lock()
+	defer fixture.mu.Unlock()
+	if fixture.register != registers || fixture.token != tokens || fixture.refresh != refreshes || fixture.toolCalls == 0 {
+		t.Fatalf("post-login use register=%d token=%d refresh=%d tools=%d", fixture.register, fixture.token, fixture.refresh, fixture.toolCalls)
+	}
+}
+
 func TestDirectMCPDCR_Scenario2_HostOnlyAuthorizationPresentation(t *testing.T) {
 	fixture := newDCRLoginFixture(t)
 	root := filepath.Join(t.TempDir(), "credentials")
