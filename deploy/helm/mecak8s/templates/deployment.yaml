@@ -202,7 +202,7 @@ spec:
             - name: MECATL_INSTALLATION_ID
               valueFrom:
                 configMapKeyRef:
-                  name: {{ printf "%s-telemetry" (include "mecak8s.fullname" .) }}
+                  name: {{ include "mecak8s.telemetryConfigMapName" . }}
                   key: installation-id
             {{- if $learningStoreTokenConfigured }}
             - name: MECATL_DRIVER_AUTH_TOKEN

@@ -4,6 +4,9 @@
 {{- define "mecak8s.fullname" -}}
 {{- if .Values.fullnameOverride }}{{ .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}{{ else }}{{ printf "%s-%s" .Release.Name (include "mecak8s.name" .) | trunc 63 | trimSuffix "-" }}{{ end }}
 {{- end }}
+{{- define "mecak8s.telemetryConfigMapName" -}}
+{{- printf "%s-telemetry" (include "mecak8s.fullname" . | trunc 53 | trimSuffix "-") | trunc 63 | trimSuffix "-" -}}
+{{- end }}
 {{- define "mecak8s.labels" -}}
 app.kubernetes.io/name: {{ include "mecak8s.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
@@ -128,6 +131,7 @@ mounted
 {{- fail "oidc.enabled cannot be combined with learning.store: ownership-enforced remote learning is unsupported" -}}
 {{- end -}}
 {{- range $env := .Values.extraEnv -}}
+{{- if and (hasKey $env "name") (eq $env.name "MECATL_INSTALLATION_ID") -}}{{ fail "extraEnv name \"MECATL_INSTALLATION_ID\" collides with the installation identity environment variable owned by the chart" }}{{- end -}}
 {{- if and (hasKey $env "name") (eq $env.name "MECATL_DRIVER_AUTH_TOKEN") -}}{{ fail "extraEnv name \"MECATL_DRIVER_AUTH_TOKEN\" collides with the learning store token environment variable owned by the chart" }}{{- end -}}
 {{- end -}}
 {{- end -}}

@@ -115,8 +115,15 @@ func TestMecak8sHelmChart_InstallationID(t *testing.T) {
 		t.Fatalf("render defaults: %v\n%s", err, rendered)
 	}
 	cm := configMapFromRender(t, rendered, "production-mecak8s-telemetry")
-	if got := cm.Data["installation-id"]; !canonicalUUIDPattern.MatchString(got) {
-		t.Fatalf("generated installation-id = %q, want canonical UUID", got)
+	generated := cm.Data["installation-id"]
+	if !canonicalUUIDPattern.MatchString(generated) {
+		t.Fatalf("generated installation-id = %q, want canonical UUID", generated)
+	}
+	if generated[14] != '4' {
+		t.Fatalf("generated installation-id = %q, want RFC 4122 version 4", generated)
+	}
+	if !strings.ContainsRune("89ab", rune(generated[19])) {
+		t.Fatalf("generated installation-id = %q, want RFC 4122 variant", generated)
 	}
 	deployment := deploymentFromRender(t, rendered)
 	env := deployment.Spec.Template.Spec.Containers[0].Env
@@ -143,6 +150,37 @@ func TestMecak8sHelmChart_InstallationID(t *testing.T) {
 
 	if rendered, err = helm(t, append(productionArgs(), "--set", "telemetry.installationID=not-a-uuid")...); err == nil {
 		t.Fatalf("invalid installation ID passed schema validation:\n%s", rendered)
+	}
+}
+
+func TestMecak8sHelmChart_TelemetryConfigMapNameReservesSuffix(t *testing.T) {
+	fullname := strings.Repeat("a", 63)
+	rendered, err := helm(t, append(productionArgs(), "--set", "fullnameOverride="+fullname)...)
+	if err != nil {
+		t.Fatalf("render max-length fullname: %v\n%s", err, rendered)
+	}
+
+	want := strings.Repeat("a", 53) + "-telemetry"
+	if len(want) != 63 {
+		t.Fatalf("test telemetry ConfigMap name length = %d, want 63", len(want))
+	}
+	configMapFromRender(t, rendered, want)
+	env := deploymentFromRender(t, rendered).Spec.Template.Spec.Containers[0].Env
+	installationEnv := slices.IndexFunc(env, func(v corev1.EnvVar) bool { return v.Name == "MECATL_INSTALLATION_ID" })
+	if installationEnv < 0 || env[installationEnv].ValueFrom == nil || env[installationEnv].ValueFrom.ConfigMapKeyRef == nil ||
+		env[installationEnv].ValueFrom.ConfigMapKeyRef.Name != want {
+		t.Fatalf("MECATL_INSTALLATION_ID environment = %#v, want ConfigMap %q", env, want)
+	}
+}
+
+func TestMecak8sHelmChart_InstallationIDExtraEnvIsReserved(t *testing.T) {
+	args := append(productionArgs(), "--set", "extraEnv[0].name=MECATL_INSTALLATION_ID", "--set", "extraEnv[0].value=forbidden")
+	rendered, err := helm(t, args...)
+	if err == nil {
+		t.Fatalf("reserved installation ID environment rendered successfully:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, `extraEnv name "MECATL_INSTALLATION_ID" collides`) {
+		t.Fatalf("render failure did not identify reserved environment name: %v\n%s", err, rendered)
 	}
 }
 
