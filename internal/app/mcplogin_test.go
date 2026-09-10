@@ -672,6 +672,9 @@ func TestLoginMCPRejectsInvalidShapesBeforeRuntime(t *testing.T) {
 			}
 		})
 	}
+	if err := app.LoginMCPWithOptions(context.Background(), base, runtime, app.MCPLoginOptions{DCRAction: mcp.OAuthDCRLoginRetryRegistration}); !errors.Is(err, app.ErrMCPLoginConfig) {
+		t.Fatalf("non-DCR recovery action error = %v", err)
+	}
 	if browser.calls.Load() != 0 {
 		t.Fatalf("invalid config launched browser %d times", browser.calls.Load())
 	}
