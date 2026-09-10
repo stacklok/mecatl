@@ -608,7 +608,7 @@ func renderBrokerMCPPanel(th theme.Theme, st mcpState, hk helpKeys, width int) s
 	if line := mcpStatusLine(th, st); line != "" {
 		b.WriteString(line + "\n")
 	}
-	if !st.loading && st.inventory.Availability == "unavailable" {
+	if !st.loading && st.inventory.Availability == unavailableText {
 		b.WriteString(th.Style("muted").Render("Broker state unavailable") + "\n")
 	} else if !st.loading {
 		state := st.inventory.EnrollmentState
