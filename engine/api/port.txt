@@ -31,6 +31,7 @@
     ifacemethod func (PrunableStore).Delete(ctx context.Context, id session.SessionID) error
     ifacemethod func (PrunableStore).List(ctx context.Context) ([]StoredSession, error)
     ifacemethod func (RetryDispositionError).RetryDisposition() session.RetryDisposition
+    ifacemethod func (RunAwareToolCallRecorder).ToolCallForRun(runID string, id session.SessionID, call session.ToolCall, result session.ToolResult, queued time.Duration, took time.Duration)
     ifacemethod func (ScheduleCreator).Create(ctx context.Context, s Schedule) error
     ifacemethod func (ScheduleManager).CreateSchedule(ctx context.Context, spec ScheduleSpec) (Schedule, error)
     ifacemethod func (ScheduleManager).DeleteSchedule(ctx context.Context, name string) error
@@ -189,6 +190,7 @@ type PrunableStore interface{Delete(ctx context.Context, id session.SessionID) e
 type ReadOptions struct{Limit int; Follow bool}
 type RetryDisposition = session.RetryDisposition
 type RetryDispositionError interface{RetryDisposition() session.RetryDisposition; error}
+type RunAwareToolCallRecorder interface{ToolCallForRun(runID string, id session.SessionID, call session.ToolCall, result session.ToolResult, queued time.Duration, took time.Duration)}
 type Schedule struct{Spec ScheduleSpec; State ScheduleState}
 type ScheduleCreator interface{Create(ctx context.Context, s Schedule) error}
 type ScheduleFire struct{ID string; ScheduleName string; SessionID session.SessionID; FiredAt time.Time; StartedAt time.Time; ProgressAt time.Time; Deadline time.Time; Stop session.StopReason; Err string}

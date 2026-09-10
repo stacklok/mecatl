@@ -28,6 +28,11 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 - **Session placement authority repair** — removes the orphan exported `session.PlacementSelector` protocol, adds persisted display-only `session.PlacementMetadata`, requires a valid `EnvironmentRef` at aggregate construction, and rejects direct engine runs whose live environment does not match the session identity. Changed (breaking, pre-v1 minor).
 
+- `port.RunAwareToolCallRecorder`: an optional `ToolCallRecorder` extension
+  that additionally receives the calling run's `RunID`, letting a consumer
+  correlate a tool call to the run that made it. Purely additive — no
+  existing `ToolCallRecorder` implementer is affected. Added (minor).
+
 - **Delegation artifact boundary (ADR 0288)** — adds the distinct `agent.ArtifactHandle` type, changes `agent.PreservedForkStore.Preserve` to key retained forks by that opaque handle rather than a physical root, and removes `Workspace`/`WinnerWorkspace` from `session.ParallelPayload`. Parallel results now expose an opaque preserved-artifact handle while physical fork roots remain private orchestration state. Changed (breaking, pre-v1 minor).
 
 - **Unified environment and placement identity** — adds `Revision` and `Valid` to `session.EnvironmentRef`, makes that exact `{Kind, ID, Revision}` value the runtime and durable placement identity, and removes the short-lived duplicate `session.PlacementRef`/`PlacementKind` types. Engine-created Subagent, Parallel, and Team child sessions now persist the identity carried by their `tool.Environment`; `port.ScheduleSpec` and `port.SessionDiscoveryMeta` replace workspace paths with the exact private environment identity, with schedules also retaining their trusted placement scope. Changed (breaking, pre-v1 minor).

@@ -39,3 +39,24 @@ type ToolCallRecorder interface {
 	// Clock is injected.
 	ToolCall(id session.SessionID, call session.ToolCall, result session.ToolResult, queued, took time.Duration)
 }
+
+// RunAwareToolCallRecorder is an OPTIONAL capability a ToolCallRecorder may
+// ALSO implement to additionally receive the RunID of the run that made the
+// call (the same opaque per-run correlation id carried on session.Event.RunID,
+// ADR 0249) — the one thing ToolCall's signature cannot express, since a
+// SessionID can span many sequential runs over a session's lifetime and
+// ToolCall alone gives no way to tell which run a given call belongs to.
+//
+// The engine TYPE-ASSERTS this interface on Deps.ToolCallRecorder and calls
+// ToolCallForRun INSTEAD OF ToolCall (never both) when implemented — so a
+// recorder that implements only the base ToolCallRecorder is wholly
+// unaffected (no method added to ToolCallRecorder: that would be a breaking
+// change, mirroring the HookApprovalLearner precedent in hookrunner.go).
+type RunAwareToolCallRecorder interface {
+	// ToolCallForRun is ToolCall's signature plus the leading runID — the
+	// same value the enclosing Run stamps onto every session.Event.RunID it
+	// emits. Consumers that need to correlate a tool call to the run that
+	// made it (e.g. "did this run have at least one successful tool call")
+	// use this instead of ToolCall.
+	ToolCallForRun(runID string, id session.SessionID, call session.ToolCall, result session.ToolResult, queued, took time.Duration)
+}
