@@ -358,7 +358,7 @@ is ordinary JSON. Turns are consumed in order across model calls:
 
 #### The ToolHive LLM gateway (no API key needed)
 
-If you have [ToolHive](https://toolhive.dev)'s local LLM proxy running, `--toolhive-llm`
+If you have [ToolHive](https://docs.stacklok.com/toolhive/)'s local LLM proxy running, `--toolhive-llm`
 (on by default) auto-detects it and registers it as provider id `toolhive` — no API key
 required, since ToolHive holds the credential. `/models` (or the mecatui welcome splash)
 tells you when it's available but not your default, so you can opt in with `/models` or

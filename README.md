@@ -20,7 +20,7 @@ with the model provider, state store, filesystem, and UI that fit your
 workflow. These concerns connect through explicit interfaces, so changing one
 does not require replacing the agent loop.
 
-Read the [Mecatl documentation](https://mecatl.dev/docs/intro) to get started.
+Read the [Mecatl documentation](https://mecatl.dev/docs) to get started.
 
 ## What it provides
 

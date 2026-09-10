@@ -41,125 +41,15 @@ has no drain route. The Service intentionally exposes only gRPC and HTTP, not po
 operators must restrict direct access to port 8082 with NetworkPolicy, mesh policy, or
 equivalent controls.
 
-## Try mecak8s locally with Kind
+## Try mecak8s locally
 
-Mecatl includes a disposable Kind fixture for local exploration of mecak8s. It is
-intended for local use, not production deployment. The fixture recreates a disposable
-cluster and uses a fixture-specific kubeconfig; it does not use your ambient
-kubeconfig. Do not run it against a cluster containing work you want to keep.
+The repository includes a disposable local Kind environment with Redis and two
+`mecak8s` replicas. Follow
+[Try Mecatl on Kubernetes](/building/getting-started/kubernetes.md) to create the
+cluster and connect with `mecatui`.
 
-### Prerequisites
-
-Install these tools and ensure they are on `PATH`:
-
-- [Kind](https://kind.sigs.k8s.io/), `kubectl`, and [Helm](https://helm.sh/);
-- [Task](https://taskfile.dev/); and
-- [ko](https://ko.build/) plus Docker or Podman, for building and loading the local
-  mecak8s image.
-
-The fixture uses the mock provider by default, so it does not make provider requests
-or use provider credentials.
-
-### Basic local fixture
-
-From a clone of the Mecatl repository:
-
-```sh
-task mecak8s:kind-setup
-task mecak8s:kind-status
-```
-
-Setup creates the `mecatl-dev` Kind cluster, builds and loads `mecak8s`, installs the
-local chart and Redis, and selects the mock provider. Kind's static
-`extraPortMappings` expose fixture NodePorts directly on loopback: gRPC is at
-`127.0.0.1:18080` and HTTP is at `http://127.0.0.1:18081`. Keycloak, when enabled,
-is at `127.0.0.1:8443`. These host mappings are installed only at cluster creation;
-the shared `values-kind.yaml` and bare chart defaults remain `ClusterIP`, while
-`kind-nodeports.yaml` supplies the fixture-only NodePort values. Only the host
-binding is loopback-only: the NodePorts are also open on the Kind node itself,
-reachable from the Docker network. That is fine for a disposable local cluster
-and is not a production isolation claim. Use the normal
-gRPC/HTTP clients described in [Drive via gRPC / HTTP](grpc-http.md) to send a
-request.
-
-When finished, remove the cluster and fixture-owned local state:
-
-```sh
-task mecak8s:kind-destroy
-```
-
-To make one intentional, billable OpenRouter request, export `OPENROUTER_API_KEY`
-only for setup:
-
-```sh
-OPENROUTER_API_KEY='...' task mecak8s:kind-setup
-```
-
-The task sends the value to `kubectl` over standard input and projects it through a
-fixture-owned Secret; it is not placed in Helm values or command-line arguments.
-Running setup without the variable returns the fixture to mock mode and removes that
-Secret. Treat this as a real provider deployment: choose the client request
-intentionally and never commit or log the key.
-
-### Optional local Keycloak layer
-
-To try authenticated mecak8s requests, recreate the basic fixture with its optional
-private Keycloak and TLS layer:
-
-```sh
-task mecak8s:kind-keycloak-setup
-task mecak8s:kind-hosts-add
-```
-
-For the recommended quickstart, run the readiness and CA-export helper:
-
-```sh
-task mecak8s:kind-keycloak-demo
-```
-
-It waits for the direct loopback mappings (8443, 18080, and 18081), writes the fixture CA under `.scratch/`, and prints ready-to-copy `mecatui login` and `mecatui connect` commands. It deliberately does not rerun setup or invoke `sudo`; it exits after readiness checks.
-
-The Keycloak issuer is available at `https://keycloak.mecatl.svc.cluster.local:8443`;
-the mecak8s API remains at `https://localhost:18081` (gRPC at `localhost:18080`).
-Keep TLS verification enabled and trust the fixture CA; do not disable certificate
-verification. The normal login flow is Authorization Code + PKCE with the public
-`mecatui-kind` client. Request the optional `mecak8s:access` scope for an audience
-that includes `mecak8s`, and request optional `offline_access` deliberately when
-refresh-token qualification is needed. The fixture's password grant users are only a
-test helper for non-browser validation.
-
-Remove the temporary hostname entry after the journey, then destroy the fixture:
-
-```sh
-task mecak8s:kind-hosts-remove
-task mecak8s:kind-destroy
-```
-
----
-
-## Local ToolHive-free Kind profile
-
-For a disposable Kind-only mecak8s baseline, use `task mecak8s:kind-setup`. It installs the local Helm chart with the explicit `values-kind.yaml` profile, which is the sole profile permitted to use the locally loaded `ko.local` image and plaintext fixture Redis. It does **not** install ToolHive, create integration resources, resolve releases, or contact GitHub. Setup recreates the named `mecatl-dev` cluster and its `.scratch/kind/mecatl-dev` state. Status uses only the dedicated kubeconfig/context, never the ambient kubeconfig. Host access is through Kind `extraPortMappings`, which bind the fixture NodePorts to `127.0.0.1` only (18080/18081; Keycloak 8443). The local workflow above is the recommended user path; it makes no production network-isolation claim and has no general NetworkPolicy.
-
-### Optional local Keycloak validation
-
-`task mecak8s:kind-keycloak-setup` adds the fixture's private Keycloak and TLS
-layer to that base. The fixture-only NodePort overlay is mapped by Kind to loopback;
-the shared `values-kind.yaml` profile and bare chart defaults remain `ClusterIP`.
-The authenticated workflow above covers the issuer mapping, hostname mapping, PKCE
-client, and TLS requirements.
-
-For an interactive remote client after setup, add the fixture host aliases, run
-`mecatui login ADDRESS … --tls-ca ISSUER_CA --private-issuer --scopes openid,profile,mecak8s:access,offline_access`,
-then run `mecatui connect ADDRESS --tls --tls-ca SERVER_CA`. Supply `--tls` in
-these mecak8s connection commands even though a non-loopback target would select
-verified TLS automatically: the explicit flag documents the required secure
-fixture transport. The fixture may publish
-the same public CA bundle for both roles, but they remain separate trust inputs. The
-client uses the `mecatui-kind` public OIDC client; there is no implicit browser flow in
-`connect`. This host-alias flow is available for live qualification, but is not part of
-ordinary offline tests. See the [fixture's setup and CA instructions](https://github.com/stacklok/mecatl/blob/main/deploy/mecak8s-kind/README.md).
-
+For the optional Keycloak qualification flow and implementation details, see the
+[local Kind README](https://github.com/stacklok/mecatl/blob/main/deploy/mecak8s-kind/README.md).
 
 ---
 

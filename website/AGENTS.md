@@ -78,11 +78,10 @@ When a URL change is necessary, the pull request must either preserve the old UR
 with a redirect or explain why no redirect is needed, such as when the page was
 never published.
 
-The site does not keep a redirect registry or dependency before it has a real
-redirect to serve. When the first redirect is needed, add the smallest Docusaurus
-or equivalent mechanism with its declarations in `website/`, verify the old URL,
-and document its maintenance rule here. Do not rely on an undocumented hosting or
-CloudFront change.
+URL redirects use `@docusaurus/plugin-client-redirects`. Declare them in the
+`plugins` section of `docusaurus.config.ts`, verify both the old and canonical
+URLs, and keep the old path while published inbound links may still use it. Do
+not rely on an undocumented hosting or CloudFront change.
 
 ---
 

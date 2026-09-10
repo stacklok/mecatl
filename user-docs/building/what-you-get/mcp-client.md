@@ -49,7 +49,12 @@ external Secret update plus process restart. Keep `static_bearer` as a rollback 
 the server supports it. See the
 [MCP OAuth and credentials](/features/mcp-oauth-and-credentials.md#configure-a-profile).
 
-**ToolHive discovery.** If you run MCP servers via [ToolHive](https://toolhive.io), Mecatl discovers them automatically from the running workloads — no `--mcp-server` flag needed. ToolHive proxy URLs are HTTP, so the streaming-HTTP constraint is met transparently. Discovery is controlled by `--toolhive` (default `true`; pass `--toolhive=false` to disable) and `--toolhive-group` (default group when empty).
+**ToolHive discovery.** If you run MCP servers with
+[ToolHive](https://docs.stacklok.com/toolhive/), Mecatl discovers the running
+servers automatically. You do not need the `--mcp-server` flag. ToolHive proxy
+URLs use HTTP, which satisfies the streaming-HTTP requirement. Control discovery
+with `--toolhive` (default `true`) and `--toolhive-group` (the default group when
+empty).
 
 ---
 
