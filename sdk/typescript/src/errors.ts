@@ -37,6 +37,7 @@ export const MECATL_ERROR_CODES = [
   "migration_backend",
   "migration_conflict",
   "migration_unsupported",
+  "mcp_authorization_pending",
   "no_active_run",
   "no_event_log",
   "no_mcp_provider",

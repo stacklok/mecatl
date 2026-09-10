@@ -247,7 +247,7 @@ func TestReconnectUI_ReplayedAuthorizationRestoresActionableCard(t *testing.T) {
 		t.Fatalf("reconnect reducer did not restore authorization card: phase=%v state=%+v", m.phase, m.authorization)
 	}
 	view := stripANSIstr(m.View().Content)
-	for _, action := range []string{"Open Browser", "Copy Link", "checked automatically", "Cancel"} {
+	for _, action := range []string{"Complete connection", "Copy Link", "checked automatically", "Cancel"} {
 		if !strings.Contains(view, action) {
 			t.Fatalf("replayed authorization card missing %q: %s", action, view)
 		}

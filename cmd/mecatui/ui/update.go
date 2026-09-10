@@ -794,6 +794,14 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		m.refreshView()
 		return m, nil, true
 	case client.StreamErrMsg:
+		if m.phase == phaseAuthorizing && m.authorization.authorizationID != "" && client.IsMCPAuthorizationPending(msg.Err) {
+			// The parked authorization remains authoritative. The original Converse
+			// stream is done, but its card and automatic polling remain active.
+			m.stream = nil
+			m.streamCh = nil
+			m.streamGen++
+			return m, nil, true
+		}
 		if m.clearPending != nil {
 			// The old stream failed while Clear owns the handoff. Preserve the fact,
 			// settle the reader, and suppress every recovery path that could reopen or

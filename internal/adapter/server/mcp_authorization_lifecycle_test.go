@@ -6,10 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"google.golang.org/grpc/codes"
 
 	"github.com/stacklok/mecatl/engine/adapter/eventsource"
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
@@ -1891,6 +1895,73 @@ func TestMCPAuthorizationServiceCloseCompletesDespiteSaveFailure(t *testing.T) {
 	}
 	if persisted.State != session.StateAuthorizing {
 		t.Fatalf("state after second Close = %q, want unchanged StateAuthorizing (Close is not retryable)", persisted.State)
+	}
+}
+
+func TestStartRunRejectsLiveRestoredAuthorizationAsPending(t *testing.T) {
+	f := newLifecycleFixture(t, session.AuthorizationPending, nil, time.Now, nil)
+
+	_, err := f.svc.StartRunContent(t.Context(), "authorization-session", "another message", nil)
+	if !errors.Is(err, errMCPAuthorizationPending) {
+		t.Fatalf("StartRunContent error = %v, want MCP authorization pending", err)
+	}
+	if !strings.Contains(err.Error(), "complete the browser authorization or cancel it before sending another message") {
+		t.Fatalf("pending error detail = %q", err)
+	}
+	entry := classifyError(err)
+	if entry.Code != "mcp_authorization_pending" || entry.GRPC != codes.FailedPrecondition || entry.HTTPStatus != http.StatusConflict {
+		t.Fatalf("pending authorization classification = %+v", entry)
+	}
+	loaded, loadErr := f.store.Load(t.Context(), "authorization-session")
+	if loadErr != nil {
+		t.Fatal(loadErr)
+	}
+	if loaded.State != session.StateAuthorizing {
+		t.Fatalf("state = %q, want authorizing", loaded.State)
+	}
+	pending, ok := loaded.PendingAuthorization()
+	if !ok || pending.Authorization.ID != f.pending.Authorization.ID {
+		t.Fatalf("pending authorization = %+v, want %q", pending, f.pending.Authorization.ID)
+	}
+	if got := f.attach.tool.calls.Load(); got != 0 {
+		t.Fatalf("protected tool executions = %d, want 0", got)
+	}
+	if _, active := f.svc.LookupRun(loaded.ID); active {
+		t.Fatal("rejected prompt registered a replacement run")
+	}
+}
+
+// A parked authorization has no live agent run to drain. An unqualified steer
+// therefore cannot promote a new run and must surface the same actionable
+// pending-authorization condition without disturbing the parked request.
+func TestSteerRejectsLiveAuthorizationAsPending(t *testing.T) {
+	f := newLifecycleFixture(t, session.AuthorizationPending, nil, time.Now, nil)
+
+	outcome, promoted, run, err := f.svc.Steer(t.Context(), "authorization-session", "another message", nil, "", "")
+	if !errors.Is(err, errMCPAuthorizationPending) {
+		t.Fatalf("Steer error = %v, want MCP authorization pending", err)
+	}
+	// This is not a liveness conflict: a parked authorization owns no Run for
+	// promotedSteerRun to await. Keep it outside the generic precondition family
+	// so Steer returns it directly instead of retrying the run-entry funnel.
+	if errors.Is(err, ErrFailedPrecondition) {
+		t.Fatalf("Steer error = %v, unexpectedly classified as a liveness conflict", err)
+	}
+	if outcome != agent.SteerTooLate || promoted || run != nil {
+		t.Fatalf("Steer outcome = (%q, promoted=%t, run=%v), want too_late without promotion", outcome, promoted, run)
+	}
+	loaded, loadErr := f.store.Load(t.Context(), "authorization-session")
+	if loadErr != nil {
+		t.Fatal(loadErr)
+	}
+	if loaded.State != session.StateAuthorizing {
+		t.Fatalf("state = %q, want authorizing", loaded.State)
+	}
+	if got := f.attach.tool.calls.Load(); got != 0 {
+		t.Fatalf("protected tool executions = %d, want 0", got)
+	}
+	if _, active := f.svc.LookupRun(loaded.ID); active {
+		t.Fatal("rejected steer registered a replacement run")
 	}
 }
 

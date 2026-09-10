@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -278,5 +279,26 @@ func TestMCPCmdsSuccess(t *testing.T) {
 	}
 	if len(sm.Sources) != 1 || sm.Sources[0].Name != "s" {
 		t.Errorf("sources = %#v", sm.Sources)
+	}
+}
+
+func TestIsMCPAuthorizationPendingUsesStatusAndApplicationCode(t *testing.T) {
+	pending, err := status.New(codes.FailedPrecondition, "unrelated wording").WithDetails(&errdetails.ErrorInfo{
+		Reason: MCPAuthorizationPendingCode,
+		Domain: "mecatl.stacklok.com",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !IsMCPAuthorizationPending(pending.Err()) {
+		t.Fatal("matching status and application code was not recognized")
+	}
+	for _, err := range []error{
+		status.Error(codes.FailedPrecondition, "mcp_authorization_pending"),
+		status.Error(codes.Aborted, "mcp_authorization_pending"),
+	} {
+		if IsMCPAuthorizationPending(err) {
+			t.Fatalf("untyped or wrong-status error classified as pending: %v", err)
+		}
 	}
 }

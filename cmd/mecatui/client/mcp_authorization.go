@@ -6,8 +6,32 @@ import (
 	"net/url"
 	"sync"
 
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 )
+
+// MCPAuthorizationPendingCode is the stable server application code returned
+// while a parked MCP authorization remains live.
+const MCPAuthorizationPendingCode = "mcp_authorization_pending"
+
+// IsMCPAuthorizationPending reports the exact gRPC application condition. It
+// deliberately ignores status text so server wording cannot change the UI flow.
+func IsMCPAuthorizationPending(err error) bool {
+	st, ok := status.FromError(err)
+	if !ok || st.Code() != codes.FailedPrecondition {
+		return false
+	}
+	for _, detail := range st.Details() {
+		info, ok := detail.(*errdetails.ErrorInfo)
+		if ok && info.GetDomain() == "mecatl.stacklok.com" && info.GetReason() == MCPAuthorizationPendingCode {
+			return true
+		}
+	}
+	return false
+}
 
 // MCPAuthorizationController opens the separate browser-authorization control
 // surface. The client cannot assert OAuth success; an opened continuation stream

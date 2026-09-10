@@ -9,6 +9,9 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
@@ -26,7 +29,7 @@ func TestInvariant_mecatui_mcp_authorization_is_not_permission_approval(t *testi
 			t.Fatalf("authorization view exposed permission action %q: %s", forbidden, view)
 		}
 	}
-	for _, required := range []string{"Open Browser", "Copy Link", "checked automatically", "Cancel"} {
+	for _, required := range []string{"Complete connection", "Copy Link", "checked automatically", "Cancel"} {
 		if !strings.Contains(view, required) {
 			t.Fatalf("authorization view missing %q: %s", required, view)
 		}
@@ -672,5 +675,58 @@ func TestSessionMCPAuthorization_Scenario9_MecatuiCommandsAndNoReplayOpen(t *tes
 	}
 	if controller.presentation != 2 || opened != 1 {
 		t.Fatalf("copy calls presentation/open = %d/%d, want 2/1", controller.presentation, opened)
+	}
+}
+
+func pendingMCPAuthorizationStatusError(t *testing.T) error {
+	t.Helper()
+	st, err := status.New(codes.FailedPrecondition, "server wording is not a classifier").WithDetails(&errdetails.ErrorInfo{
+		Reason: client.MCPAuthorizationPendingCode,
+		Domain: "mecatl.stacklok.com",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return st.Err()
+}
+
+func TestMCPAuthorizationPendingStreamErrorKeepsCorrelatedCard(t *testing.T) {
+	m := New(Deps{Theme: theme.New("aztec", theme.AztecPalette())})
+	m.sessionID = "session-1"
+	m = applyAll(m, client.MCPAuthorizationMsg{AuthorizationID: "auth-1", Status: mcpAuthorizationStatusPending})
+	m.queued = []string{"later"}
+	m.prompt.Rewrite("draft")
+	m.streamGen = 7
+	m.streamCh = make(chan tea.Msg)
+	blocks := len(m.conv.blocks)
+
+	// Converse ReadLoop delivers the error through the generation-tagged stream
+	// fan-in, rather than directly to updateLifecycle.
+	mm, _ := m.Update(streamMsg{gen: 7, msg: client.StreamErrMsg{Err: pendingMCPAuthorizationStatusError(t)}})
+	m = mm.(Model)
+	if m.phase != phaseAuthorizing || m.authorization.authorizationID != "auth-1" {
+		t.Fatalf("pending authorization was replaced: phase=%v authorization=%q", m.phase, m.authorization.authorizationID)
+	}
+	if m.streamCh != nil || m.streamGen != 8 {
+		t.Fatalf("parked Converse source was not invalidated: channel=%v generation=%d", m.streamCh, m.streamGen)
+	}
+	if len(m.conv.blocks) != blocks || len(m.queued) != 1 || m.prompt.Value() != "draft" {
+		t.Fatalf("pending status polluted generic error or prompt state: blocks=%d queued=%v prompt=%q", len(m.conv.blocks), m.queued, m.prompt.Value())
+	}
+}
+
+func TestMCPAuthorizationPendingStreamErrorWithoutCardUsesGenericFailure(t *testing.T) {
+	m := New(Deps{Theme: theme.New("aztec", theme.AztecPalette())})
+	m.sessionID = "session-1"
+	m.phase = phaseRunning
+	blocks := len(m.conv.blocks)
+
+	mm, _ := m.Update(client.StreamErrMsg{Err: pendingMCPAuthorizationStatusError(t)})
+	m = mm.(Model)
+	if m.phase == phaseAuthorizing {
+		t.Fatal("uncorrelated pending status created an authorization card")
+	}
+	if len(m.conv.blocks) <= blocks {
+		t.Fatal("uncorrelated pending status did not use generic stream failure")
 	}
 }
