@@ -4,7 +4,7 @@
 **Work classification:** Bounded — two client-local broker control loops can lose progress without changing public protocols, durable state, authority, or subsystem ownership.
 **Decision record:** None — this restores the existing automatic-observation contract using the current client contexts and generation guards; it introduces no durable architecture decision.
 **Phase:** mecatui broker authorization reliability
-**Status:** in-progress, 2026-09-10. The single Combined implementation task is integrated; aggregate gates and final review are pending.
+**Status:** landed, 2026-09-10. Candidate transition after all seven acceptance proofs, aggregate gates, documentation checks, API compatibility, and the offline demo passed; authoritative only when the Combined PR merges.
 **Delivery:** Combined. This is one compact mecatui reliability change with no public or durable interface changes.
 **Expected tasks:** 1
 **Combined rationale:** Both failures are private Bubble Tea command-handoff/liveness defects in the same broker-consent UI boundary. One worker can pin both state-machine regressions, make the minimal client-local fix, update the user wording, and run the same gates; a separate plan PR would not expose an additional interface or useful review boundary.
