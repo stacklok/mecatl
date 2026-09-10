@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-09-09
-- Scope: `internal/adapter/productmetrics` (new), `internal/cliconfig`, `internal/adapter/permconfig` (new `telemetry:` operator section), `cmd/mecated`, `cmd/mecatui`, `cmd/mecatequi`, `cmd/mecak8s`
+- Scope: `internal/adapter/productmetrics` (new), `internal/cliconfig`, `internal/adapter/permconfig` (new `telemetry:` operator section), `engine/port` (new `RunAwareToolCallRecorder`), `engine/agent` (dispatch wiring), `cmd/mecated`, `cmd/mecatui`, `cmd/mecatequi`, `cmd/mecak8s`, `deploy/helm/mecak8s`
 - Supersedes: —
 - Superseded by: —
 
@@ -97,20 +97,32 @@ looking at either series family can mistake one for the other.
 
 **Resource attributes** (set once per process via `productmetrics.Config`,
 not per-metric labels): `service.name=mecatl`, `service.version`,
+`mecatl.install.id` (a per-install random UUID — see below),
 `mecatl.binary` (one of the closed `Binary` set:
 `mecated`/`mecatui`/`mecatequi`/`mecak8s`).
 
-**No per-install identifier is attached, deliberately.** This pipeline's
-destination is a Prometheus-remote-write backend (`stacklok/infra#5604`),
-where every resource attribute becomes a permanent label on *every*
-instrument's time series. A random per-install UUID would multiply active
-series by (installs × instrument count) with no bound as adoption grows —
-an unbounded-cardinality cost for a precision (exact unique-install counts)
-the design never actually required. `installid.go` still persists a local
-UUID, but purely as a first-run marker for the disclosure notice (§ below)
-— its value is never read back by `NewProvider` or attached to anything
-exported. Unique-install counts are approximated from heartbeat volume/
-cadence instead of counted exactly.
+**A per-install identifier IS attached, after being sized and accepted.**
+This pipeline's destination is a Prometheus-remote-write backend
+(`stacklok/infra#5604`), where every resource attribute becomes a permanent
+label on *every* instrument's time series. A random per-install UUID was
+initially left out over exactly this concern — it multiplies active series
+by (installs × instrument count), an unbounded-cardinality cost that grows
+with adoption. It was reinstated after sizing that cost against the actual
+backend (Amazon Managed Service for Prometheus, per `stacklok/infra#5604`):
+roughly $1,930/month at 100,000 installs under a worst-case assumption (every
+instrument in this catalog, 24/7 uptime), and roughly $650/month under a
+more realistic assumption (an interactive CLI tool, ~8h/day active use) —
+both well within what the adoption signal an exact per-install breakdown
+enables (activation rate, time-to-first-value, weekly retention) is worth to
+the product team, and a defensible ceiling rather than a runaway.
+`installid.go` still persists a local UUID; its value is now threaded into
+`Config.InstallID` and attached as the `mecatl.install.id` resource
+attribute. `mecak8s` — storage-free, no PVC (ADR 0048) — cannot use that
+same local-file mechanism (every pod restart would mint a fresh, never-reused
+id, the worst-case cardinality pattern this pipeline could hit); its Helm
+chart instead provisions one stable id per release via a Kubernetes
+ConfigMap (see "mecak8s's install-id: a Helm ConfigMap, not a local file"
+below).
 
 **Heartbeat** (`metrics.go`/`heartbeat.go` — on start, then every ~24h for
 long-running processes; single fire for `mecatequi`):
@@ -129,11 +141,15 @@ normal periodic-reader cadence since these are cumulative counters):
 | Instrument | Kind | Attributes | Fires on |
 |---|---|---|---|
 | `mecatl.product.sessions_started` | counter | none | `EvSessionInit` |
-| `mecatl.product.runs_completed` | counter | `stop` (reuses `session.StopReason`) | `EvResult` |
-| `mecatl.product.tool_calls` | counter | none — **no tool/MCP-server name label at all** | every `ToolCallRecorder.ToolCall` |
+| `mecatl.product.runs_completed` | counter | `stop` (reuses `session.StopReason`), `had_tool_call` (`true`/`false`: at least one SUCCESSFUL tool call in the run — an errored-only run is `false`) | `EvResult` |
+| `mecatl.product.tool_calls` | counter | `category` (a built-in tool's own name from a closed allowlist, `mcp` for anything MCP-server-provided via the structural `mcp__` name prefix, or `other` for anything unrecognized — **never a raw MCP server/tool name**), `outcome` (`success`/`error`) | every `ToolCallRecorder.ToolCall`/`RunAwareToolCallRecorder.ToolCallForRun` |
 | `mecatl.product.tokens` | counter | `kind` (`input`/`output`/`cache_read`/`cache_write`/`reasoning`) | `EvResult`'s `Usage` |
 | `mecatl.product.subagent_used` | counter | none | `EvSubagentStart` |
 | `mecatl.product.team_used` | counter | none | `EvTeamStart` |
+| `mecatl.product.run_duration` | histogram (seconds) | none | `EvResult`, when this process observed the run's `EvSessionInit` |
+| `mecatl.product.tool_calls_per_run` | histogram (count) | none | every `EvResult` (a tool-less run contributes an honest 0) |
+| `mecatl.product.time_to_first_value` | histogram (seconds) | none | at most once per install, ever, on the first run with `had_tool_call=true` and `stop=StopEndTurn` |
+
 
 **Deliberate scope refinement from the original design spec.** The spec's
 illustrative heartbeat catalog listed `teams`/`subagents`/`learning` as
@@ -255,6 +271,85 @@ one and the balance shifts back toward requiring opt-in:
    trusting `--product-metrics` for real, rather than trusting either the
    docs or the code review that produced them.
 
+### Correlating a tool call to its run: `port.RunAwareToolCallRecorder`
+
+`had_tool_call`, `tool_calls_per_run`, and `time_to_first_value` all need to
+know which *run* a given tool call belongs to. The existing
+`port.ToolCallRecorder.ToolCall(id session.SessionID, ...)` only carries a
+`SessionID` — a session can span many sequential runs over its lifetime, so a
+`SessionID` alone cannot answer "did this run make a tool call". The engine's
+other event-sourced callback, `port.EventSink.Emit(ctx, session.Event)`, has
+the opposite problem: `session.Event.RunID` is present, but `Emit` never sees
+a tool call at all.
+
+The fix is a new, standalone, OPTIONAL port interface —
+`port.RunAwareToolCallRecorder` — added to `engine/port/log.go`, mirroring the
+existing `HookApprovalLearner` precedent (`engine/port/hookrunner.go`) exactly:
+
+```go
+type RunAwareToolCallRecorder interface {
+	ToolCallForRun(runID string, id session.SessionID, call session.ToolCall,
+		result session.ToolResult, queued, took time.Duration)
+}
+```
+
+`engine/agent/dispatch.go`'s one `ToolCallRecorder` call site type-asserts for
+this richer interface and prefers it (passing the enclosing `Run`'s own
+`RunID()`, already in scope — no new parameter threading needed anywhere in
+the call chain) when a recorder implements it, falling back to the plain
+`ToolCall` otherwise. This is purely additive: no existing `ToolCallRecorder`
+implementer (the operator telemetry pipeline, `jsonlstore`, `redisstore`) is
+affected, and `engine/CHANGELOG.md` records it as `Added` (minor) per
+`engine/COMPATIBILITY.md`.
+
+`internal/adapter/productmetrics.Recorder` implements
+`RunAwareToolCallRecorder` (`toolcall.go`): `ToolCallForRun` records the
+bounded `category`/`outcome` attributes on `tool_calls` and tallies a
+per-run state (`hadToolCall`, `toolCallCount`, `startedAt`) keyed by `RunID`
+in a mutex-guarded `perRunTracker`, cleared at the run's `EvResult`. The
+category derivation is a closed-set projection, `toolCategory`
+(`toolcall.go`): the `mcp__` structural name prefix (`internal/adapter/mcp`'s
+`"mcp__" + server + "__" + toolName` construction) buckets every MCP-server
+tool under the single literal `"mcp"` with no allowlist needed; every other
+name is checked against a maintained `builtinToolCategories` allowlist
+(mecatl's own fixed tool catalog), falling back to the literal `"other"` for
+anything unrecognized. A hand-maintained allowlist for non-MCP tools was not
+the original design (a pure structural-prefix rule was) — it became necessary
+because this package's existing privacy-guard test (`bounded_test.go`)
+correctly rejects any tool name reaching an attribute value verbatim, and a
+prefix-only rule would let an agent-def name, a learned-skill name, or a
+future extension-seam name (all potentially operator- or model-derived free
+text) leak straight onto an exported counter. The allowlist trades "zero
+maintenance for new built-ins" for "structurally impossible to leak" — a new
+built-in tool shows up as `"other"` until a line is added, which is visible
+and harmless, never a leak.
+
+### mecak8s's install-id: a Helm ConfigMap, not a local file
+
+`mecak8s` runs storage-free with no PVC (ADR 0048) — the local-file mechanism
+`installid.go` uses for the other three binaries would mint a fresh,
+never-reused install id on every pod restart, the worst-case cardinality
+pattern this pipeline could hit (every replica of every deployment counted as
+a distinct, ever-churning "install"). Its Helm chart
+(`deploy/helm/mecak8s/templates/install-id-configmap.yaml`) instead
+provisions ONE stable id per release into a `<release>-mecak8s-install-id`
+ConfigMap, using Helm's standard `lookup`+`uuidv4` "generate once, keep stable
+on upgrade" idiom: a `lookup` against the release namespace for an existing
+ConfigMap of that name reuses its `installId` value verbatim on every `helm
+upgrade` (and safely re-mints a fresh id if the lookup finds no usable value —
+a nil `.data` map or a missing key degrade to "mint a new one", never an
+error or an empty string); only a genuinely first `helm install` mints a new
+id. `lookup` runs with the Helm client's own credentials at render time, not
+the pod's ServiceAccount at runtime, so no RBAC grant was needed. The id is
+threaded into the container via a `MECATL_PRODUCT_METRICS_INSTALL_ID`
+environment variable (`configMapKeyRef`), which `cmd/mecak8s/observability.go`
+reads and passes to `internal/cliconfig.BuildProductMetrics`'s new
+`installIDOverride` parameter — non-empty skips `LoadOrCreateInstallIDDefault`
+entirely and never reports `FirstRun` (the chart, not the process, owns the
+id's lifecycle). The other three binaries pass `""` and keep the local-file
+behavior unchanged. Deleting the ConfigMap resets the id, the same as
+deleting the local file does for the other three binaries.
+
 ## Consequences
 
 - A new direct dependency surface: `github.com/stacklok/toolhive-core/telemetry/providers`
@@ -271,10 +366,14 @@ one and the balance shifts back toward requiring opt-in:
   disabled-pipeline posture when a non-release build carries no baked ingest
   key (`bakedKey == ""` refuses `NewProvider` outright) — a local `go build`/
   `go test`/CI build can never phone home regardless of flag state.
-- A new small persisted file per install
-  (`$XDG_STATE_HOME/mecatl/telemetry-id`, a bare random v4 UUID) — trivially
-  reset by deleting it, carrying no machine or user information, and never
-  read back for export: it exists purely as a local first-run marker.
+- Two small persisted files per install, both under `$XDG_STATE_HOME/mecatl/`:
+  `telemetry-id` (a bare random v4 UUID, now attached as the
+  `mecatl.install.id` resource attribute — see the reinstatement rationale
+  above) and `first-value-recorded` (a bare marker recording whether
+  `time_to_first_value` has already been sampled). Both are trivially reset
+  by deleting them, carry no machine or user information, and (on
+  `mecak8s`) are replaced entirely by the Helm-provisioned ConfigMap — see
+  "mecak8s's install-id" above.
 - ADR-0027 List-1 (resource inventory) is NOT extended: the heartbeat
   ticker's lifetime matches the process (owned by the caller's
   `heartbeatCtx`, cancelled on shutdown alongside the rest of composition's

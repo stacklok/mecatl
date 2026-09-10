@@ -22,9 +22,10 @@ import (
 // telemetry without a visible disclosure is the pattern that burns
 // community trust; this is the whole of that disclosure.
 const ProductMetricsDisclosureNotice = `mecatl reports anonymous product-adoption metrics (version, OS/arch, which
-major features you have enabled, and coarse session/run/tool-call counts —
-never a prompt, file path, tool name, or model id) to help Stacklok understand
-community adoption. This is on by default. To opt out: pass
+major features you have enabled, an anonymous per-install identifier, and
+coarse session/run/tool-call counts by bounded category — never a prompt,
+file path, raw tool name, or model id) to help Stacklok understand community
+adoption. This is on by default. To opt out: pass
 --product-metrics=false, set DO_NOT_TRACK=1, or set
 telemetry.productMetrics.enabled: false in your settings.yaml. Details:
 see docs/adr/0319-product-metrics.md.
