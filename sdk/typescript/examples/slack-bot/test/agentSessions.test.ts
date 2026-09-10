@@ -110,6 +110,7 @@ function fakeResolver(allowedSlackUserIds: Set<string>): AccessResolver {
 
 function fakeConfig(overrides: Partial<BotConfig> = {}): BotConfig {
   return {
+    allowedChannelIds: undefined,
     allowedEmailDomains: undefined,
     allowedEmails: new Set(["allowed@example.com"]),
     mecatlTarget: { baseUrl: "http://unused" },
@@ -146,6 +147,54 @@ describe("registerAgentSessions", () => {
         user: "blocked-user",
       }),
     );
+  });
+
+  it("silently ignores an app_mention from a channel not on SLACK_ALLOWED_CHANNEL_IDS", async () => {
+    const resolve = vi.fn().mockResolvedValue({ allowed: true, principal: "allowed-user" });
+    const fake = setUp(
+      fakeBridge(vi.fn()),
+      fakeConfig({ allowedChannelIds: new Set(["C-allowed"]) }),
+      { resolve },
+    );
+
+    await fake.appMention({
+      event: {
+        bot_id: undefined,
+        channel: "C-blocked",
+        text: "<@BOT> hi",
+        ts: "100.001",
+        type: "app_mention",
+        user: "allowed-user",
+      },
+      context: { teamId: "T1" },
+      say: fake.say,
+    });
+
+    expect(fake.say).not.toHaveBeenCalled();
+    expect(fake.postEphemeral).not.toHaveBeenCalled();
+    expect(resolve).not.toHaveBeenCalled();
+  });
+
+  it("still answers an app_mention from a channel on SLACK_ALLOWED_CHANNEL_IDS", async () => {
+    const bridge = fakeBridge(
+      vi.fn().mockResolvedValue({ sessionId: "s1", stopReason: "end_turn", text: "hi there" }),
+    );
+    const fake = setUp(bridge, fakeConfig({ allowedChannelIds: new Set(["C-allowed"]) }));
+
+    await fake.appMention({
+      event: {
+        bot_id: undefined,
+        channel: "C-allowed",
+        text: "<@BOT> hi",
+        ts: "100.001",
+        type: "app_mention",
+        user: "allowed-user",
+      },
+      context: { teamId: "T1" },
+      say: fake.say,
+    });
+
+    expect(fake.say).toHaveBeenCalledWith({ text: "hi there", thread_ts: "100.001" });
   });
 
   it("rate-limits an app_mention with an ephemeral reply", async () => {
@@ -281,6 +330,29 @@ describe("registerAgentSessions", () => {
     // channel-aware resolver can tell a user-scoped DM decision apart from channel/group
     // policy — a DM must never pass its own channelId under that name.
     expect(resolve).toHaveBeenCalledWith({ slackUserId: "blocked-user" });
+  });
+
+  it("never applies SLACK_ALLOWED_CHANNEL_IDS to a DM (each DM has its own per-user channel id)", async () => {
+    const bridge = fakeBridge(
+      vi.fn().mockResolvedValue({ sessionId: "s1", stopReason: "end_turn", text: "hi there" }),
+    );
+    const fake = setUp(bridge, fakeConfig({ allowedChannelIds: new Set(["C-allowed"]) }));
+
+    await fake.message({
+      context: { botUserId: "BOT", teamId: "T1" },
+      message: {
+        bot_id: undefined,
+        channel: "D-not-on-the-list",
+        channel_type: "im",
+        subtype: undefined,
+        text: "hi",
+        ts: "200.001",
+        user: "allowed-user",
+      },
+      say: fake.say,
+    });
+
+    expect(fake.say).toHaveBeenCalledWith("hi there");
   });
 
   it("rejects an unauthorized channel-thread follow-up message with an ephemeral reply", async () => {

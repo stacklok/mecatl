@@ -100,6 +100,13 @@ export function registerAgentSessions(
 
   app.event("app_mention", async ({ event, context, say }) => {
     if (event.bot_id !== undefined) return;
+    // Hard channel-level gate, checked before anything else: if configured, a channel not on
+    // the list is silently ignored — this is the sole place a channel/group session ever
+    // gets started (see registerAgentSessions's doc comment), so gating here is enough to
+    // keep the bot out of every other channel too, no matter what's said in it.
+    if (config.allowedChannelIds !== undefined && !config.allowedChannelIds.has(event.channel)) {
+      return;
+    }
     if (event.user === undefined) {
       app.logger.warn("app_mention has no user id — ignoring (can't scope a reply to nobody)");
       return;

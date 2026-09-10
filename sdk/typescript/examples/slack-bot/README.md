@@ -96,6 +96,9 @@ export MECATL_GRPC_ADDRESS=127.0.0.1:50051   # or MECATL_SOCKET_PATH=/path/to/me
 export SLACK_ALLOWED_EMAILS=alice@example.com,bob@example.com   # comma-separated verified emails
 export SLACK_ALLOWED_EMAIL_DOMAINS=example.com                  # comma-separated domains, no "@"
 
+# Optional — restrict which channels can trigger a prompt at all (see "Security" below):
+export SLACK_ALLOWED_CHANNEL_IDS=C0123ABCDEF,C0456GHIJKL        # comma-separated Slack channel IDs
+
 task slack-bot:dev
 ```
 
@@ -169,6 +172,17 @@ Three independent mitigations:
   usually simpler, a domain) in `SLACK_ALLOWED_EMAILS`/
   `SLACK_ALLOWED_EMAIL_DOMAINS`, and add the `users:read` +
   `users:read.email` bot scopes (see step 1 above) before redeploying.
+- **`SLACK_ALLOWED_CHANNEL_IDS`** (optional) — comma-separated Slack channel
+  IDs (`C0123ABCDEF`, find one via a channel's "Copy link" in Slack). If
+  set, an `@mention` in any other channel is silently ignored — the bot
+  never joins that conversation at all, regardless of who sent it. This is
+  a separate, coarser gate than the identity checks above: it restricts
+  *which channels* the bot operates in, not *who* within them can use it.
+  It does **not** apply to DMs (a DM's channel ID is per-user, so there's
+  nothing meaningful to allowlist there — use `SLACK_ALLOWED_EMAILS`/
+  `SLACK_ALLOWED_EMAIL_DOMAINS` to control DM access). Unset means every
+  channel the bot is invited to is usable, subject to those identity
+  checks.
 - **`SLACK_RATE_LIMIT_MAX`** / **`SLACK_RATE_LIMIT_WINDOW_MS`** (defaults:
   20 prompts per 10 minutes, per Slack user) — bounds spend/abuse from a
   single reachable user. This is a request-count limit, not a token/spend
