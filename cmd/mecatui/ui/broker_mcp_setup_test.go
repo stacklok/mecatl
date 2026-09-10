@@ -82,11 +82,11 @@ func TestBrokerMCPStatus_Scenario3_SetupEligibility(t *testing.T) {
 func TestBrokerMCPStatus_Scenario3_ClearSuccessorCanConnect(t *testing.T) {
 	m, _ := setupPanelModel(t)
 	m.deps.Session.(*fakeConv).caps = m.caps
-	mm, clear := m.runClear()
-	if clear == nil {
+	mm, clearCmd := m.runClear()
+	if clearCmd == nil {
 		t.Fatal("clear did not start successor creation")
 	}
-	m = feedCmd(t, mm.(Model), clear)
+	m = feedCmd(t, mm.(Model), clearCmd)
 	m = openOverlay(t, m, ctrlKey('o'))
 	if !strings.Contains(setupPanelView(m), "c connect tools") {
 		t.Fatalf("fresh clear successor was not eligible: fresh=%t state=%q caps=%+v view=%s", m.freshSessionBinding, m.sessionState, m.caps, setupPanelView(m))

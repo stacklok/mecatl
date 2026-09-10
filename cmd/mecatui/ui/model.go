@@ -495,9 +495,11 @@ type Model struct {
 	// below are refreshed from the current session snapshot; zero timestamps are
 	// rendered as unknown rather than guessed.
 	sessionDetailsOpen bool
-	sessionState       string
-	sessionCreatedAt   int64
-	sessionModifiedAt  int64
+	// sessionState mirrors the server's session.State string ("idle", "running",
+	// …); sessionStateIdle names the one value this package compares against.
+	sessionState      string
+	sessionCreatedAt  int64
+	sessionModifiedAt int64
 	// sessionTitle is the session's human label for the terminal window/tab title
 	// (the "<title> — …" head of windowTitle). Set-once from the first genuine
 	// user prompt (submitPrompt), adopted on a session switch (switchToSession

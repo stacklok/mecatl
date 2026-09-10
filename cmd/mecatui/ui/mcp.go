@@ -143,7 +143,7 @@ func (m Model) brokerMCPSetupState() brokerMCPSetupState {
 	return brokerMCPSetupState{
 		eligible: m.caps.WorkspaceEnrollment && m.deps.WorkspaceEnrollment != nil && m.sessionID != "" &&
 			m.phase == phaseIdle && m.freshSessionBinding && m.conv.isEmpty() &&
-			m.sessionState == "idle" && m.enrollment.Status != client.WorkspaceEnrollmentConnected,
+			m.sessionState == sessionStateIdle && m.enrollment.Status != client.WorkspaceEnrollmentConnected,
 		pending: m.enrollment.ID != "" && m.enrollment.Status == client.WorkspaceEnrollmentPending,
 		busy:    m.enrollment.busy,
 		gen:     m.enrollment.controlGen,

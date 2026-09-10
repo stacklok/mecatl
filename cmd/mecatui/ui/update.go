@@ -472,7 +472,7 @@ func (m Model) applySessionReady(msg client.SessionReadyMsg) (tea.Model, tea.Cmd
 	m = m.bindSessionID(msg.SessionID)
 	m.freshSessionBinding = freshBinding
 	if freshBinding {
-		m.sessionState = "idle"
+		m.sessionState = sessionStateIdle
 	}
 	m = m.syncDebugTarget()
 	m.failedStepRetryTried = false
@@ -709,7 +709,7 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		mm, bindCmd, handled := m.applySessionReady(msg.ready)
 		m = mm.(Model)
 		m.freshSessionBinding = true
-		m.sessionState = "idle"
+		m.sessionState = sessionStateIdle
 		// The replacement was created with desiredMode, so its ready echo confirms
 		// that any deferred old-session mode switch is now settled. Leaving it set
 		// would make onIdleSubmit keep deferring every future prompt.

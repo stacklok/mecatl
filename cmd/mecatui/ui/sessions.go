@@ -14,6 +14,10 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
 
+// sessionStateIdle is the server's session.State value for an idle session,
+// mirrored here as a bare string since ui/ imports no engine/... packages.
+const sessionStateIdle = "idle"
+
 type sessionDetailsView struct {
 	ID            string
 	DebugTargetID string

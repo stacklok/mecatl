@@ -17,7 +17,9 @@ type ConnectorInspector interface {
 type Availability string
 
 const (
-	AvailabilityAvailable   Availability = "available"
+	// AvailabilityAvailable means the broker reached the connector inventory.
+	AvailabilityAvailable Availability = "available"
+	// AvailabilityUnavailable means the broker could not reach the connector inventory.
 	AvailabilityUnavailable Availability = "unavailable"
 )
 
@@ -25,11 +27,16 @@ const (
 type EnrollmentState string
 
 const (
+	// EnrollmentNotRequired means the connector needs no enrollment step.
 	EnrollmentNotRequired EnrollmentState = "not_required"
-	EnrollmentNotStarted  EnrollmentState = "not_started"
-	EnrollmentPending     EnrollmentState = "pending"
-	EnrollmentCompleted   EnrollmentState = "completed"
-	EnrollmentUnknown     EnrollmentState = "unknown"
+	// EnrollmentNotStarted means enrollment is required but has not begun.
+	EnrollmentNotStarted EnrollmentState = "not_started"
+	// EnrollmentPending means enrollment has started but not completed.
+	EnrollmentPending EnrollmentState = "pending"
+	// EnrollmentCompleted means enrollment has finished successfully.
+	EnrollmentCompleted EnrollmentState = "completed"
+	// EnrollmentUnknown means enrollment status could not be determined.
+	EnrollmentUnknown EnrollmentState = "unknown"
 )
 
 // CatalogueState is the closed vocabulary for ConnectorStatus.CatalogueState. A
@@ -38,10 +45,14 @@ const (
 type CatalogueState string
 
 const (
-	CatalogueHidden     CatalogueState = "hidden"
-	CatalogueDeclared   CatalogueState = "declared"
+	// CatalogueHidden means the connector's tools are not published.
+	CatalogueHidden CatalogueState = "hidden"
+	// CatalogueDeclared means the connector is declared but not yet discovered.
+	CatalogueDeclared CatalogueState = "declared"
+	// CatalogueDiscovered means the connector's tools were discovered and published.
 	CatalogueDiscovered CatalogueState = "discovered"
-	CatalogueUnknown    CatalogueState = "unknown"
+	// CatalogueUnknown means the catalogue state could not be determined.
+	CatalogueUnknown CatalogueState = "unknown"
 )
 
 // ConnectorInventory describes broker-local catalogue publication, not session
