@@ -1,4 +1,4 @@
-# ADR 0319 — Durable Dynamic Client Registration for direct MCP profiles
+# ADR 0325 — Durable Dynamic Client Registration for direct MCP profiles
 
 - Status: Proposed
 - Date: 2026-09-09
