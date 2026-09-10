@@ -21,12 +21,13 @@ import (
 type fakeHarnessClient struct {
 	mecatlv1.HarnessServiceClient // embedded; unset methods panic if called
 
-	resources *mecatlv1.ListMcpResourcesResponse
-	contents  *mecatlv1.ReadMcpResourceResponse
-	prompts   *mecatlv1.ListMcpPromptsResponse
-	prompt    *mecatlv1.GetMcpPromptResponse
-	sources   *mecatlv1.ListMcpSourcesResponse
-	groups    *mecatlv1.ListToolHiveGroupsResponse
+	resources  *mecatlv1.ListMcpResourcesResponse
+	contents   *mecatlv1.ReadMcpResourceResponse
+	prompts    *mecatlv1.ListMcpPromptsResponse
+	prompt     *mecatlv1.GetMcpPromptResponse
+	sources    *mecatlv1.ListMcpSourcesResponse
+	groups     *mecatlv1.ListToolHiveGroupsResponse
+	connectors *mecatlv1.ListSessionMcpConnectorsResponse
 
 	err error // when non-nil, every RPC returns it
 
@@ -79,6 +80,13 @@ func (f *fakeHarnessClient) ListToolHiveGroups(_ context.Context, _ *mecatlv1.Li
 		return nil, f.err
 	}
 	return f.groups, nil
+}
+
+func (f *fakeHarnessClient) ListSessionMcpConnectors(_ context.Context, _ *mecatlv1.ListSessionMcpConnectorsRequest, _ ...grpc.CallOption) (*mecatlv1.ListSessionMcpConnectorsResponse, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.connectors, nil
 }
 
 // newFakeClient wraps a fakeHarnessClient in a *Client so the wrappers exercise
@@ -300,5 +308,20 @@ func TestIsMCPAuthorizationPendingUsesStatusAndApplicationCode(t *testing.T) {
 		if IsMCPAuthorizationPending(err) {
 			t.Fatalf("untyped or wrong-status error classified as pending: %v", err)
 		}
+	}
+}
+
+func TestBrokerMCPStatus_Scenario3_Compatibility(t *testing.T) {
+	cl := newFakeClient(&fakeHarnessClient{connectors: &mecatlv1.ListSessionMcpConnectorsResponse{
+		Availability: "available", EnrollmentState: "completed", TotalConnectors: 1,
+		Connectors: []*mecatlv1.McpConnectorStatus{{Name: "github", CatalogueState: "discovered", ToolCount: 2}},
+	}})
+	msg := ListMCPConnectorsCmd(context.Background(), cl, "session-1", 3)()
+	got, ok := msg.(MCPConnectorStatusMsg)
+	if !ok {
+		t.Fatalf("msg = %T, want MCPConnectorStatusMsg", msg)
+	}
+	if got.SessionID != "session-1" || got.Generation != 3 || len(got.Inventory.Connectors) != 1 || got.Inventory.Connectors[0].ToolCount != 2 {
+		t.Fatalf("broker status = %#v", got)
 	}
 }

@@ -168,6 +168,31 @@ type MCPGroupsMsg struct {
 	Groups []string
 }
 
+// MCPConnectorStatus is one broker-local publication row. It deliberately has no
+// health, credential, routing, or prompt-readiness fields.
+type MCPConnectorStatus struct {
+	Name           string
+	CatalogueState string
+	ToolCount      uint32
+}
+
+// MCPConnectorInventory is the proto-free broker-local inventory response.
+type MCPConnectorInventory struct {
+	Availability    string
+	EnrollmentState string
+	Connectors      []MCPConnectorStatus
+	TotalConnectors uint32
+	Truncated       bool
+}
+
+// MCPConnectorStatusMsg binds a broker response to the requesting UI session and
+// refresh generation so a late command cannot overwrite newer state.
+type MCPConnectorStatusMsg struct {
+	SessionID  string
+	Generation uint64
+	Inventory  MCPConnectorInventory
+}
+
 // MCPErrMsg is the classified failure msg shared by all MCP RPCs. Op names the
 // action ("list resources", "read resource", …) for the ui; Class drives the
 // distinct rendering (input vs server vs not-configured); Err is the raw error
@@ -237,6 +262,20 @@ func (c *Client) ListToolHiveGroups(ctx context.Context) ([]string, error) {
 		return nil, err
 	}
 	return resp.GetGroups(), nil
+}
+
+// ListMCPConnectors reads the owned session's broker-local catalogue without
+// probing, enrolling, or changing session state.
+func (c *Client) ListMCPConnectors(ctx context.Context, sessionID string) (MCPConnectorInventory, error) {
+	resp, err := c.svc.ListSessionMcpConnectors(ctx, &mecatlv1.ListSessionMcpConnectorsRequest{SessionId: sessionID})
+	if err != nil {
+		return MCPConnectorInventory{}, err
+	}
+	out := MCPConnectorInventory{Availability: resp.GetAvailability(), EnrollmentState: resp.GetEnrollmentState(), TotalConnectors: resp.GetTotalConnectors(), Truncated: resp.GetTruncated(), Connectors: make([]MCPConnectorStatus, 0, len(resp.GetConnectors()))}
+	for _, row := range resp.GetConnectors() {
+		out.Connectors = append(out.Connectors, MCPConnectorStatus{Name: row.GetName(), CatalogueState: row.GetCatalogueState(), ToolCount: row.GetToolCount()})
+	}
+	return out, nil
 }
 
 // --- proto → plain mappers (nil-safe) ----------------------------------------
@@ -351,6 +390,12 @@ type MCP interface {
 	ListToolHiveGroups(ctx context.Context) ([]string, error)
 }
 
+// MCPConnectorReader is optional so older/direct-only MCP collaborators retain
+// their existing surface while broker-only mode has no direct-RPC fallback.
+type MCPConnectorReader interface {
+	ListMCPConnectors(ctx context.Context, sessionID string) (MCPConnectorInventory, error)
+}
+
 // ListMcpResourcesCmd lists resources (server "" = all).
 func ListMcpResourcesCmd(ctx context.Context, m MCP, server string) tea.Cmd {
 	return func() tea.Msg {
@@ -414,5 +459,17 @@ func ListToolHiveGroupsCmd(ctx context.Context, m MCP) tea.Cmd {
 			return MCPErrMsg{Op: "list groups", Class: classifyMCPErr(err), Err: err}
 		}
 		return MCPGroupsMsg{Groups: g}
+	}
+}
+
+// ListMCPConnectorsCmd reads broker-local inventory. The identity fields are
+// echoed even on failure by the UI-owned command generation, never the server.
+func ListMCPConnectorsCmd(ctx context.Context, m MCPConnectorReader, sessionID string, generation uint64) tea.Cmd {
+	return func() tea.Msg {
+		inventory, err := m.ListMCPConnectors(ctx, sessionID)
+		if err != nil {
+			return MCPErrMsg{Op: "list broker catalogue", Class: classifyMCPErr(err), Err: err}
+		}
+		return MCPConnectorStatusMsg{SessionID: sessionID, Generation: generation, Inventory: inventory}
 	}
 }

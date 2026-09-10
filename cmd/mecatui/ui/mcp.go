@@ -18,13 +18,27 @@ func (m Model) runMCPPrompts() (tea.Model, tea.Cmd)   { return m.openMCP(mcpProm
 
 // openMCP opens the selected MCP surface and starts its initial RPC.
 func (m Model) openMCP(v mcpView) (tea.Model, tea.Cmd) {
-	if m.phase != phaseIdle || m.deps.MCP == nil {
+	if m.phase != phaseIdle || m.deps.MCP == nil || (v != mcpPanel && !m.caps.MCP) {
 		return m, nil
 	}
 	m.prompt.Blur() // modal owns the keyboard while open
-	m.modal = &mcpState{view: v, loading: true, deps: (&m).surfaceDeps(), mcp: m.deps.MCP}
+	state := &mcpState{view: v, loading: true, deps: (&m).surfaceDeps(), mcp: m.deps.MCP, sessionID: m.sessionID}
+	if reader, ok := m.deps.MCP.(client.MCPConnectorReader); ok {
+		state.broker = reader
+		state.brokerMode = m.caps.MCPConnectorStatus
+	}
+	m.modal = state
 	switch v {
 	case mcpPanel:
+		if m.caps.MCPConnectorStatus {
+			if state.broker == nil {
+				m.closeModal()
+				_ = m.prompt.Focus()
+				return m, nil
+			}
+			state.brokerGeneration++
+			return m, client.ListMCPConnectorsCmd(m.deps.Ctx, state.broker, state.sessionID, state.brokerGeneration)
+		}
 		// Fetch the inventory and the ToolHive groups in parallel; groups are
 		// best-effort (rendered alongside the sources, degraded on failure).
 		return m, tea.Batch(
@@ -67,6 +81,14 @@ type mcpState struct {
 	groups     []string // ToolHive groups (best-effort; see groupsErr)
 	groupsErr  bool     // the groups fetch failed — degrade quietly, panel still works
 	groupsDone bool     // a groups result (success or error) has arrived
+
+	// Broker-only panel state. It is intentionally separate from direct MCP sources:
+	// broker capability must never trigger direct source/resource/prompt/group RPCs.
+	broker           client.MCPConnectorReader
+	sessionID        string
+	brokerGeneration uint64
+	inventory        client.MCPConnectorInventory
+	brokerMode       bool
 
 	// Panel live-refresh indicator. refreshing is set while a manual re-probe is
 	// in flight (distinct from the initial loading so already-shown sources stay
@@ -165,6 +187,10 @@ func (s *mcpState) refreshPanel() tea.Cmd {
 	}
 	s.refreshing = true
 	s.errMsg = ""
+	if s.brokerMode && s.broker != nil {
+		s.brokerGeneration++
+		return client.ListMCPConnectorsCmd(s.deps.ctx, s.broker, s.sessionID, s.brokerGeneration)
+	}
 	s.groupsDone = false
 	s.groupsErr = false
 	return tea.Batch(
@@ -362,6 +388,15 @@ func (*mcpState) HandleWheel(tea.MouseWheelMsg) (cmd tea.Cmd, handled bool) {
 //nolint:gocyclo // multiple MCP message types share one reducer
 func (s *mcpState) HandleMsg(msg tea.Msg) (cmd tea.Cmd, handled bool, closed bool) {
 	switch msg := msg.(type) {
+	case client.MCPConnectorStatusMsg:
+		if !s.brokerMode || msg.SessionID != s.sessionID || msg.Generation != s.brokerGeneration {
+			return nil, true, false
+		}
+		s.loading = false
+		s.refreshing = false
+		s.refreshed = true
+		s.inventory = msg.Inventory
+		return nil, true, false
 	case client.MCPSourcesMsg:
 		s.loading = false
 		if s.refreshing {
@@ -534,6 +569,9 @@ func renderMCPPanel(th theme.Theme, st mcpState, caps client.Capabilities, hk he
 		width = widths[0]
 	}
 	var b strings.Builder
+	if st.brokerMode {
+		return renderBrokerMCPPanel(th, st, hk, width)
+	}
 	empty := !st.loading && len(st.sources) == 0 && st.errMsg == ""
 	b.WriteString(renderMCPListHeader(th, st, caps, "MCP inventory", empty, "No MCP sources configured on this server."))
 	for _, s := range st.sources {
@@ -558,6 +596,44 @@ func renderMCPPanel(th theme.Theme, st mcpState, caps client.Capabilities, hk he
 	}
 	b.WriteString(renderGroupsLine(th, st, width))
 	b.WriteString("\n" + th.Style("muted").Render(mcpPanelFooter(st, hk)))
+	return b.String()
+}
+
+// renderBrokerMCPPanel renders only broker-local publication facts. It never
+// borrows direct-MCP wording because publication does not prove health,
+// authorization, installation, persistence, or prompt readiness.
+func renderBrokerMCPPanel(th theme.Theme, st mcpState, hk helpKeys, width int) string {
+	var b strings.Builder
+	b.WriteString(th.Style("askTitle").Render("Broker catalogue") + "\n")
+	if line := mcpStatusLine(th, st); line != "" {
+		b.WriteString(line + "\n")
+	}
+	if !st.loading && st.inventory.Availability == "unavailable" {
+		b.WriteString(th.Style("muted").Render("Broker state unavailable") + "\n")
+	} else if !st.loading {
+		state := st.inventory.EnrollmentState
+		if state != "not_required" && state != "not_started" && state != "pending" && state != "completed" {
+			state = "unknown"
+		}
+		b.WriteString(renderMCPInventoryRow(th, "toolArgs", "Enrollment: "+state, width) + "\n")
+		for _, row := range st.inventory.Connectors {
+			catalogue := row.CatalogueState
+			if catalogue != "hidden" && catalogue != "declared" && catalogue != "discovered" {
+				catalogue = "unknown"
+			}
+			count := fmt.Sprintf("%d", row.ToolCount)
+			if catalogue == "hidden" || catalogue == "unknown" {
+				count = "—"
+			}
+			b.WriteString(renderMCPInventoryRow(th, "toolName", fmt.Sprintf("%s  %s  %s tools", sanitizeTerminal(row.Name), catalogue, count), width) + "\n")
+		}
+		if st.inventory.Truncated {
+			b.WriteString(th.Style("muted").Render("Connector list truncated.") + "\n")
+		}
+	}
+	b.WriteString("\n" + th.Style("muted").Render("Broker publication only; session installation, persistence and prompt readiness are not verified.") + "\n")
+	b.WriteString(th.Style("muted").Render("Enrollment describes catalogue discovery, not current authorization. Live health is not monitored.") + "\n\n")
+	b.WriteString(th.Style("muted").Render(hk.refresh + " refresh local state · " + hk.closeOnly + " close"))
 	return b.String()
 }
 

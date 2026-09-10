@@ -143,7 +143,7 @@ func builtinCommands(caps client.Capabilities, w wiredCollaborators) []builtin {
 			run:  Model.runCompact,
 		})
 	}
-	if caps.MCP && w.MCP {
+	if (caps.MCP || caps.MCPConnectorStatus) && w.MCP {
 		out = append(out, builtin{
 			name: "mcp",
 			desc: "browse MCP inventory",

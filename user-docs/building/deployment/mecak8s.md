@@ -382,10 +382,10 @@ not per-backend controls or OAuth material.
 Set `mcp.broker.callbackURL` to ToolHive's final public HTTPS redirect to mecatl. Your ingress
 or gateway must also route the complete fixed `/v1/mcp/broker/` prefix, including ToolHive's
 upstream callback, to the mecak8s HTTP listener. Helm rejects an OAuth server without the final
-callback URL and the runtime rejects an invalid URL. Protected static declarations and live
-discovery stay hidden until enrollment succeeds; mecatl then strictly discovers every protected
-backend, collision-checks, and freezes the complete catalogue. A failed enrollment admits no
-partial protected tools. OAuth broker mode also requires the chart's OIDC caller identity
+callback URL and the runtime rejects an invalid URL. Protected static declarations are
+published as declared broker catalogue rows; protected connectors without admitted tools
+remain hidden until enrollment succeeds. Live discovery then freezes the complete catalogue.
+A failed enrollment admits no partial protected tools. OAuth broker mode also requires the chart's OIDC caller identity
 (`oidc.enabled: true`, issuer, and audience), so broker authorization controls have verified
 callers. The broker profile and server metadata are non-secret ConfigMap data. A preregistered
 client secret remains a `SecretKeyRef` projection only—never a values field or ConfigMap entry;
@@ -426,6 +426,17 @@ Set `client.mode: cimd` with `cimd.documentURL` for client ID metadata, or
 `client.mode: dcr` with an HTTPS RFC 8414 discovery URL for dynamic client
 registration. A plain OAuth2 upstream uses explicit `authorizationEndpoint`
 and `tokenEndpoint` values instead of `issuer`.
+
+### Inspect the broker catalogue in mecatui
+
+On a broker-only `mecak8s` connection, `/mcp` shows the owned session's local
+broker catalogue: enrollment state, connector names, catalogue state, and tool
+counts. Refresh reads only that local state; it does not probe an upstream,
+refresh credentials, or enroll connectors. Declared static tools and lazily
+discovered enrolled tools are distinct states. The display is not a health check
+or proof that the server installed or persisted the catalogue, or that a prompt
+is ready. A restarted pod can report broker state unavailable; do not switch to
+global MCP as a workaround.
 
 Keep MCP and OAuth endpoints on HTTPS and provide pod egress through your
 NetworkPolicy or mesh; this chart has no general NetworkPolicy. The explicit
