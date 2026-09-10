@@ -86,8 +86,8 @@ var coreImportRules = []coreImportRule{
 	{
 		pkg:             modulePrefix + "engine/governance",
 		allowedCore:     map[string]bool{},
-		allowedExternal: map[string]bool{"mvdan.cc/sh/v3/syntax": true},
-		desc:            "governance is the session-free domain leaf: it may import stdlib plus mvdan.cc/sh/v3/syntax for private Shell compatibility classification",
+		allowedExternal: map[string]bool{},
+		desc:            "governance is the session-free domain leaf: it may import stdlib only",
 	},
 	{
 		pkg: modulePrefix + "engine/learning",
@@ -133,18 +133,19 @@ var coreImportRules = []coreImportRule{
 	{
 		pkg: modulePrefix + "engine/agent",
 		allowedCore: map[string]bool{
-			modulePrefix + "engine/session":    true,
-			modulePrefix + "engine/learning":   true,
-			modulePrefix + "engine/governance": true,
-			modulePrefix + "engine/prompt":     true,
-			modulePrefix + "engine/tool":       true,
-			modulePrefix + "engine/port":       true,
-			modulePrefix + "engine/team":       true,
+			modulePrefix + "engine/session":              true,
+			modulePrefix + "engine/learning":             true,
+			modulePrefix + "engine/governance":           true,
+			modulePrefix + "engine/prompt":               true,
+			modulePrefix + "engine/tool":                 true,
+			modulePrefix + "engine/internal/shellcompat": true,
+			modulePrefix + "engine/port":                 true,
+			modulePrefix + "engine/team":                 true,
 		},
 		allowedExternal: map[string]bool{
 			"golang.org/x/sync/errgroup": true,
 		},
-		desc: "agent may import only domain + port + team + stdlib + golang.org/x/sync/errgroup — adapters are INJECTED, never imported",
+		desc: "agent may import only domain + the internal Shell compatibility helper + port + team + stdlib + golang.org/x/sync/errgroup — adapters are INJECTED, never imported",
 	},
 }
 

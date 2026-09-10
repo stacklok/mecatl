@@ -648,9 +648,10 @@ per-package `doc.go` files and honoured by the code:
 | Package | May import |
 |---|---|
 | `session`, `governance`, `tool`, `prompt` (domain) | stdlib + other domain packages. Never `adapter`, `agent`, `contracts`, `os`, or any third-party library. |
+| `engine/internal/shellcompat` | stdlib + `mvdan.cc/sh/v3/syntax` only. It is an engine-internal Shell execution-compatibility helper, not a public domain or policy package. |
 | `port` | domain packages + stdlib (`context`, `io`, `iter`, `time`). |
-| `agent` (application) | domain + `port` + stdlib only. Never an adapter or `contracts`. (Tests may import adapters.) |
-| `engine/adapter/*` | domain + `port` + the one external library it adapts. Production files never import `agent`; `search`/`webfetch` import the domain leaf `governance` for canonical untrusted-content framing instead. This boundary is enforced by `engine/arch/layering_test.go` (`TestNoEngineAdapterImportsAgent`). |
+| `agent` (application) | domain + the internal `engine/internal/shellcompat` helper + `port` + stdlib only. Never an adapter or `contracts`. (Tests may import adapters.) |
+| `engine/adapter/*` | domain + `port` + the one external library it adapts. The sole Shell-compatibility exception is `engine/adapter/fstools` → `engine/internal/shellcompat`; production files otherwise never import `agent`. `search`/`webfetch` import the domain leaf `governance` for canonical untrusted-content framing instead. This boundary is enforced by `engine/arch/layering_test.go` (`TestNoEngineAdapterImportsAgent`). |
 | `internal/adapter/*` | host adapter dependencies are explicit rather than uniformly agent-free. `server` imports `agent` to drive and relay runs, `tokenizer` implements `agent.TokenCounter`/compaction seams, and `modelhook` imports `agent` only for the shared `StripLoneCodeFence` parser while importing `governance` for canonical fence policy. Other deliberate adapter→adapter carve-outs include: (1) `mcpperf` → `telemetry` for the `RuntimeSnapshot` DTO; (2) `soul`/`memory` → `skills` for `ScanForInjection`; (3) `permconfig`/`skills`/`agents`/`soul`/`memory` → the stdlib-only `xdgconfig` path-resolution leaf; and (4) `soul`/`memory` → `engine/prompt` only for compile-time source-port assertions. |
 | `contracts/gen` | generated; protobuf + gRPC runtime. |
 | `app` (composition) | the shared engine/service assembly (`app.Build`). MAY import adapters + `agent` + (via `server`) `contracts/gen`. Nothing imports it but the `cmd/` mains. |

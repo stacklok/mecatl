@@ -1,4 +1,7 @@
-package governance
+// Package shellcompat provides the bounded, model-facing Shell portability diagnostic.
+// It is internal to the engine: only the Shell tool implementations may share this
+// execution-compatibility helper. It does not participate in authorization.
+package shellcompat
 
 import (
 	"path/filepath"
@@ -7,12 +10,13 @@ import (
 	"mvdan.cc/sh/v3/syntax"
 )
 
-// ShellCompatibilityError returns bounded POSIX portability feedback for a
-// model-facing command. It is deliberately neither an authorization decision nor
-// a shell emulator: it only recognizes selected Bash AST nodes when the trusted
-// configured shell path names sh or dash. Parse failures and every other shell
-// basename leave the exact command bytes for the runner unchanged.
-func ShellCompatibilityError(shellPath, command string) error {
+// Check returns bounded POSIX portability feedback for a model-facing command. It
+// is exported only within the engine's Go internal boundary. It is deliberately
+// neither an authorization decision nor a shell emulator: it only recognizes
+// selected Bash AST nodes when the trusted configured shell path names sh or dash.
+// Parse failures and every other shell basename leave the exact command bytes for
+// the runner unchanged.
+func Check(shellPath, command string) error {
 	if shell := filepath.Base(shellPath); shell != "sh" && shell != "dash" {
 		return nil
 	}

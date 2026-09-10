@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/governance"
+	"github.com/stacklok/mecatl/engine/internal/shellcompat"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 )
@@ -199,7 +199,7 @@ func shellCompatibilityDiagnostic(runner tool.CommandRunner, command string) err
 	if !ok {
 		return nil
 	}
-	return governance.ShellCompatibilityError(provider.ShellPath(), command)
+	return shellcompat.Check(provider.ShellPath(), command)
 }
 
 func fstoolsTemporaryScope(scope string) tool.TemporaryScope {
