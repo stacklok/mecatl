@@ -140,9 +140,9 @@ func TestBrokerMCPStatus_Scenario1_EnrollmentStates(t *testing.T) {
 			tx := lookupWorkspaceTransactionLocked(a.logical, presentation.Ref.ID)
 			tx.status = status
 			a.logical.mu.Unlock()
-			want := "not_started"
+			want := contract.EnrollmentNotStarted
 			if status == session.AuthorizationPending || status == session.AuthorizationGranted {
-				want = "pending"
+				want = contract.EnrollmentPending
 			}
 			got := connectorInventory(t, r, "session", a.Binding())
 			if got.EnrollmentState != want || !reflect.DeepEqual(got.Connectors, initialConnectorRows()) {
@@ -399,6 +399,13 @@ func TestConnectorInventoryBoundsAndCancellation(t *testing.T) {
 	wantName := "bad�" + strings.Repeat("界", 124)
 	if got.TotalConnectors != 257 || !got.Truncated || len(got.Connectors) != 256 || got.Connectors[0].Name != wantName || got.Connectors[255].Name != "anonymous-255" {
 		t.Fatalf("bounded inventory = %+v", got)
+	}
+	// An unprotected connector with zero discovered tools, before any enrollment
+	// completes, must still read "discovered" (the !protected branch) rather
+	// than being mistaken for "hidden" (a protected connector's pre-enrollment
+	// state) just because its tool count happens to be zero.
+	if got.Connectors[1].Name != "anonymous-1" || got.Connectors[1].CatalogueState != "discovered" || got.Connectors[1].ToolCount != 0 {
+		t.Fatalf("unprotected zero-tool connector = %+v", got.Connectors[1])
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()

@@ -34,12 +34,12 @@ func (r *Runtime) InspectConnectors(ctx context.Context, id session.SessionID, b
 		return contract.ConnectorInventory{}, ErrInvalidCatalogue
 	}
 	out := contract.ConnectorInventory{
-		Availability: "unavailable", EnrollmentState: "unknown",
+		Availability: contract.AvailabilityUnavailable, EnrollmentState: contract.EnrollmentUnknown,
 		Connectors:      make([]contract.ConnectorStatus, min(count, maxConnectorRows)),
 		TotalConnectors: uint32(count), Truncated: count > maxConnectorRows,
 	}
 	for i := range out.Connectors {
-		out.Connectors[i] = contract.ConnectorStatus{Name: connectorDisplayName(construction.backends[i].Name), CatalogueState: "unknown"}
+		out.Connectors[i] = contract.ConnectorStatus{Name: connectorDisplayName(construction.backends[i].Name), CatalogueState: contract.CatalogueUnknown}
 	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -53,7 +53,7 @@ func (r *Runtime) InspectConnectors(ctx context.Context, id session.SessionID, b
 	if logical.deleted || logical.provisional || binding != expected {
 		return out, nil
 	}
-	out.Availability = "available"
+	out.Availability = contract.AvailabilityAvailable
 	out.EnrollmentState = r.connectorEnrollmentState(logical)
 	routes := r.catalogue.routes
 	if logical.completedEnrollment != nil {
@@ -70,11 +70,11 @@ func (r *Runtime) InspectConnectors(ctx context.Context, id session.SessionID, b
 		_, protected := construction.providerByBackend[backend]
 		switch {
 		case !protected || logical.completedEnrollment != nil:
-			row.CatalogueState = "discovered"
+			row.CatalogueState = contract.CatalogueDiscovered
 		case row.ToolCount > 0:
-			row.CatalogueState = "declared"
+			row.CatalogueState = contract.CatalogueDeclared
 		default:
-			row.CatalogueState = "hidden"
+			row.CatalogueState = contract.CatalogueHidden
 		}
 	}
 	return out, nil
@@ -83,21 +83,21 @@ func (r *Runtime) InspectConnectors(ctx context.Context, id session.SessionID, b
 // The caller holds the logical read lock. In particular this is not
 // expireLocked or ObserveWorkspaceEnrollment: even expired/granted transactions
 // remain untouched until their existing control path settles or discovers them.
-func (r *Runtime) connectorEnrollmentState(logical *logicalSession) string {
+func (r *Runtime) connectorEnrollmentState(logical *logicalSession) contract.EnrollmentState {
 	if len(r.process.construction.protectedBackends) == 0 {
-		return "not_required"
+		return contract.EnrollmentNotRequired
 	}
 	if logical.completedEnrollment != nil {
-		return "completed"
+		return contract.EnrollmentCompleted
 	}
 	now := r.oauth.now()
 	for _, transaction := range logical.authorizations {
 		if transaction.bundleBackends != nil && now.Before(transaction.expiresAt) &&
 			(transaction.status == session.AuthorizationPending || transaction.status == session.AuthorizationGranted) {
-			return "pending"
+			return contract.EnrollmentPending
 		}
 	}
-	return "not_started"
+	return contract.EnrollmentNotStarted
 }
 
 func connectorDisplayName(name string) string {

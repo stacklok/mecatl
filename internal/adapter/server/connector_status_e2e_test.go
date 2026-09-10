@@ -41,7 +41,7 @@ func (s *connectorStoreSpy) Save(ctx context.Context, sess *session.Session) err
 	return s.SessionStore.Save(ctx, sess)
 }
 
-func inspectMultiUpstream(t *testing.T, f *multiUpstreamFixture, enrollment, catalogue string) {
+func inspectMultiUpstream(t *testing.T, f *multiUpstreamFixture, enrollment brokercontract.EnrollmentState, catalogue brokercontract.CatalogueState) {
 	t.Helper()
 	ctx := session.WithPrincipal(t.Context(), connectorOwner())
 	f.service.cfg.OwnershipEnforced = true
@@ -120,10 +120,10 @@ func TestBrokerMCPStatus_Scenario1_ReadOnly(t *testing.T) {
 			if phase != "before consent" && f.drive(started.URL) != 200 {
 				t.Fatal("consent failed")
 			}
-			enrollment, catalogue := "pending", "hidden"
+			enrollment, catalogue := brokercontract.EnrollmentPending, brokercontract.CatalogueHidden
 			if phase == "published" {
 				f.connect()
-				enrollment, catalogue = "completed", "discovered"
+				enrollment, catalogue = brokercontract.EnrollmentCompleted, brokercontract.CatalogueDiscovered
 			}
 			inspectMultiUpstream(t, f, enrollment, catalogue)
 		})

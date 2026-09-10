@@ -64,9 +64,9 @@ func (h *HarnessServer) ListSessionMcpConnectors(ctx context.Context, req *mecat
 }
 
 func toProtoConnectorInventory(in brokercontract.ConnectorInventory) *mecatlv1.ListSessionMcpConnectorsResponse {
-	out := &mecatlv1.ListSessionMcpConnectorsResponse{Availability: valid(in.Availability), EnrollmentState: valid(in.EnrollmentState), TotalConnectors: in.TotalConnectors, Truncated: in.Truncated, Connectors: make([]*mecatlv1.McpConnectorStatus, len(in.Connectors))}
+	out := &mecatlv1.ListSessionMcpConnectorsResponse{Availability: valid(string(in.Availability)), EnrollmentState: valid(string(in.EnrollmentState)), TotalConnectors: in.TotalConnectors, Truncated: in.Truncated, Connectors: make([]*mecatlv1.McpConnectorStatus, len(in.Connectors))}
 	for i, row := range in.Connectors {
-		out.Connectors[i] = &mecatlv1.McpConnectorStatus{Name: valid(row.Name), CatalogueState: valid(row.CatalogueState), ToolCount: row.ToolCount}
+		out.Connectors[i] = &mecatlv1.McpConnectorStatus{Name: valid(row.Name), CatalogueState: valid(string(row.CatalogueState)), ToolCount: row.ToolCount}
 	}
 	return out
 }
