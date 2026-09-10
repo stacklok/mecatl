@@ -2,7 +2,7 @@
 
 **Contract:** human-reviewed/v1
 **Phase:** command-tool identity and POSIX compatibility
-**Status:** proposed. Amendment: move the parser-backed portability diagnostic to an engine-internal execution-compatibility helper, with no new exported helper API. This change requires review before implementation resumes.
+**Status:** approved, 2026-09-09. The issue owner reviewed and approved this amendment; its merged commit becomes the required implementation baseline before work resumes.
 **Delivery:** Split. This changes model-facing tool schemas, compatibility behavior, operator configuration, durable awaiting-call handling, and an engine-module dependency; those interfaces require a Plan / Interface checkpoint before implementation.
 **Expected tasks:** deferred to orchestration
 **Issue:** [stacklok/mecatl#1109](https://github.com/stacklok/mecatl/issues/1109).
