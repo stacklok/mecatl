@@ -3,6 +3,11 @@
  * not declared in this package's own `package.json`). Bolt's real client satisfies this
  * structurally, and tests can fake it without pulling in the SDK's types either. */
 export interface UserLookupClient {
+  /** `auth.test` needs no scope beyond the bot token itself; used once, cached, to learn our
+   * own installed workspace's team id (see `EmailAllowlistResolver`'s Slack Connect check). */
+  auth: {
+    test(): Promise<{ team_id?: string }>;
+  };
   users: {
     info(args: { user: string }): Promise<{
       user?: {
@@ -12,6 +17,7 @@ export interface UserLookupClient {
         is_stranger?: boolean;
         is_ultra_restricted?: boolean;
         profile?: { email?: string };
+        team_id?: string;
       };
     }>;
   };
@@ -57,23 +63,34 @@ export interface EmailAllowlistConfig {
  *
  * 1. **Identity-integrity rejects, always enforced, regardless of allowlist config:** a
  *    deleted/deactivated account, a workspace guest (`is_restricted`/`is_ultra_restricted`),
- *    a Slack Connect member of a different company entirely (`is_stranger`), or an explicitly
- *    unconfirmed email (`is_email_confirmed === false` — checked only when the field is
- *    actually present; not every token populates it, and its absence must never itself be
- *    treated as a rejection). These aren't configurable policy — they're the exact structural
- *    gaps `SLACK_ALLOWED_USER_IDS` couldn't express (see issue #1241).
+ *    any member of a different company's workspace entirely — whether or not they're in a
+ *    shared channel with us (see the Slack Connect note below) — or an explicitly unconfirmed
+ *    email (`is_email_confirmed === false` — checked only when the field is actually present;
+ *    not every token populates it, and its absence must never itself be treated as a
+ *    rejection). These aren't configurable policy — they're the exact structural gaps
+ *    `SLACK_ALLOWED_USER_IDS` couldn't express (see issue #1241).
  * 2. **The configured allowlist**, once identity is verified: allowed if the email is in
  *    `allowedEmails`, or its domain is in `allowedEmailDomains`. If BOTH are unset, every
- *    identity-verified (non-guest, non-stranger) user is allowed — the same "unrestricted by
- *    default" posture `SLACK_ALLOWED_USER_IDS` had, minus the guest/stranger gap.
+ *    identity-verified (non-guest, non-external) user is allowed — the same "unrestricted by
+ *    default" posture `SLACK_ALLOWED_USER_IDS` had, minus the guest/external gap.
  *
- * Fails closed: any `users.info` error (network, missing scope, unknown user) is logged and
- * treated as not allowed — never falls back to trusting an unresolved identity.
+ * **Slack Connect note:** `is_stranger` is true only when the looked-up user belongs to a
+ * different workspace AND shares no channel visible to us — it is false (or absent) for an
+ * external Slack Connect member who *does* share a channel with us, even though that person
+ * is still not part of our company. Slack's API has no single "is external" field for this
+ * (confirmed against the `users.info` docs — the documented way to tell is comparing
+ * `team_id`), so this resolver additionally fetches its own installed workspace's team id
+ * once via `auth.test` (cached for the resolver's lifetime) and rejects any user whose
+ * `team_id` doesn't match, `is_stranger` notwithstanding.
+ *
+ * Fails closed: any `users.info`/`auth.test` error (network, missing scope, unknown user) is
+ * logged and treated as not allowed — never falls back to trusting an unresolved identity.
  */
 export class EmailAllowlistResolver implements AccessResolver {
   readonly #client: UserLookupClient;
   readonly #config: EmailAllowlistConfig;
   readonly #logger: MinimalLogger;
+  #ownTeamId: Promise<string | undefined> | undefined;
 
   constructor(client: UserLookupClient, config: EmailAllowlistConfig, logger: MinimalLogger) {
     this.#client = client;
@@ -99,6 +116,22 @@ export class EmailAllowlistResolver implements AccessResolver {
       return { allowed: false };
     }
     if (user.is_stranger === true) {
+      return { allowed: false };
+    }
+    const ownTeamId = await this.#resolveOwnTeamId();
+    if (ownTeamId === undefined) {
+      this.#logger.warn(
+        "own team id could not be resolved — cannot verify workspace membership, treating as not authorized",
+      );
+      return { allowed: false };
+    }
+    if (user.team_id === undefined) {
+      this.#logger.warn(`users.info returned no team_id for ${ctx.slackUserId}`);
+      return { allowed: false };
+    }
+    if (user.team_id !== ownTeamId) {
+      // A Slack Connect member from another company, sharing a channel with us — is_stranger
+      // is false for exactly this case, so it takes this separate check to reject them.
       return { allowed: false };
     }
     if (user.is_email_confirmed === false) {
@@ -127,5 +160,22 @@ export class EmailAllowlistResolver implements AccessResolver {
       return { allowed: true, principal: normalizedEmail };
     }
     return { allowed: false };
+  }
+
+  /** Resolved once via `auth.test` and cached for this resolver's lifetime — the bot's own
+   * installed workspace never changes mid-process. A failed lookup is cached as `undefined`
+   * (not retried per call), which the caller treats as fail-closed on every subsequent call
+   * until the process restarts — correct for the same reason a permanently missing scope is. */
+  #resolveOwnTeamId(): Promise<string | undefined> {
+    if (this.#ownTeamId === undefined) {
+      this.#ownTeamId = this.#client.auth.test().then(
+        (response) => response.team_id,
+        (error: unknown) => {
+          this.#logger.warn("auth.test failed — cannot resolve own team id", error);
+          return undefined;
+        },
+      );
+    }
+    return this.#ownTeamId;
   }
 }

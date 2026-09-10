@@ -11,8 +11,7 @@ const FAILURE_MESSAGE =
   "Something went wrong running that against mecatl. Check the bot's logs for details.";
 const GREETING = "Tag me with a prompt and I'll run it against mecatl.";
 const NOT_AUTHORIZED_MESSAGE =
-  "You're not authorized to use this bot. Ask the operator to add your email to " +
-  "SLACK_ALLOWED_EMAILS or your domain to SLACK_ALLOWED_EMAIL_DOMAINS.";
+  "You're not authorized to use this bot. Ask the operator to grant you access.";
 const RATE_LIMITED_MESSAGE = "Rate limit exceeded — try again in a bit.";
 const MENTION_PREFIX = /^<@[^>]+>\s*/;
 
@@ -72,15 +71,6 @@ export function registerAgentSessions(
   const dmStatusAnchor = new Map<string, string>();
   const activeChannelThreads = new Set<string>();
   const rateLimiter = new SlidingWindowRateLimiter(config.rateLimit.max, config.rateLimit.windowMs);
-
-  if (config.allowedEmails === undefined && config.allowedEmailDomains === undefined) {
-    app.logger.warn(
-      "SLACK_ALLOWED_EMAILS/SLACK_ALLOWED_EMAIL_DOMAINS are not set — every verified, " +
-        "non-guest workspace member who can reach this bot (DM it, or share a channel it's " +
-        "invited to) has unattended command-execution access to mecated. Set one of them to " +
-        "restrict who can trigger a prompt.",
-    );
-  }
 
   app.event("app_home_opened", async ({ event, say }) => {
     if (event.tab !== "messages") return;
@@ -154,7 +144,11 @@ export function registerAgentSessions(
         app.logger.warn("DM message has no user id — ignoring (can't resolve access for nobody)");
         return;
       }
-      const decision = await resolver.resolve({ channelId, slackUserId: userId });
+      // No channelId here — the AccessResolver contract (issue #1241) defines it as absent
+      // for DMs, so a channel-aware resolver can tell a user-scoped DM decision apart from
+      // channel/group policy. This is a real DM, so leave it unset rather than passing this
+      // surface's own channelId under that name.
+      const decision = await resolver.resolve({ slackUserId: userId });
       if (!decision.allowed) return void notify(NOT_AUTHORIZED_MESSAGE);
       if (!rateLimiter.allow(userId)) return void notify(RATE_LIMITED_MESSAGE);
       const anchor = dmStatusAnchor.get(channelId) ?? message.ts;

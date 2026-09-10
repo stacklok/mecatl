@@ -14,6 +14,15 @@ async function main(): Promise<void> {
     token: config.slackBotToken,
   });
 
+  if (config.allowedEmails === undefined && config.allowedEmailDomains === undefined) {
+    app.logger.warn(
+      "SLACK_ALLOWED_EMAILS/SLACK_ALLOWED_EMAIL_DOMAINS are not set — every verified, " +
+        "non-guest workspace member who can reach this bot (DM it, or share a channel it's " +
+        "invited to) has unattended command-execution access to mecated. Set one of them to " +
+        "restrict who can trigger a prompt.",
+    );
+  }
+
   const bridge = new MecatlBridge(config.mecatlTarget);
   const resolver = new EmailAllowlistResolver(
     app.client,

@@ -10,8 +10,7 @@ import type { BotConfig } from "../src/env.js";
 const EXTERNAL_AUTH_MESSAGE =
   "This needs a connector to be authorized by an administrator before it can be used here.";
 const NOT_AUTHORIZED_MESSAGE =
-  "You're not authorized to use this bot. Ask the operator to add your email to " +
-  "SLACK_ALLOWED_EMAILS or your domain to SLACK_ALLOWED_EMAIL_DOMAINS.";
+  "You're not authorized to use this bot. Ask the operator to grant you access.";
 const RATE_LIMITED_MESSAGE = "Rate limit exceeded — try again in a bit.";
 const FAILURE_MESSAGE =
   "Something went wrong running that against mecatl. Check the bot's logs for details.";
@@ -259,7 +258,8 @@ describe("registerAgentSessions", () => {
   });
 
   it("leaves a DM's rejection reply as a plain say — DMs have no visibility problem to fix", async () => {
-    const fake = setUp(fakeBridge(vi.fn()), fakeConfig());
+    const resolve = vi.fn().mockResolvedValue({ allowed: false });
+    const fake = setUp(fakeBridge(vi.fn()), fakeConfig(), { resolve });
 
     await fake.message({
       context: { botUserId: "BOT", teamId: "T1" },
@@ -277,6 +277,10 @@ describe("registerAgentSessions", () => {
 
     expect(fake.postEphemeral).not.toHaveBeenCalled();
     expect(fake.say).toHaveBeenCalledWith(NOT_AUTHORIZED_MESSAGE);
+    // The AccessResolver contract (issue #1241) defines channelId as absent for DMs, so a
+    // channel-aware resolver can tell a user-scoped DM decision apart from channel/group
+    // policy — a DM must never pass its own channelId under that name.
+    expect(resolve).toHaveBeenCalledWith({ slackUserId: "blocked-user" });
   });
 
   it("rejects an unauthorized channel-thread follow-up message with an ephemeral reply", async () => {
