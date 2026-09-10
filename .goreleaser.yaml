@@ -167,6 +167,12 @@ brews:
   # ARCHIVE ids here, not build ids; there is exactly one archive, so omitting
   # it is both correct and unambiguous.
   - name: mecatl
+    # A prerelease must NOT bump the tap. `release.prerelease: auto` only marks
+    # the GitHub Release; without this, a vX.Y.Z-rc1 tag would still push a
+    # formula and hand every `brew install stacklok/tap/mecatl` user an rc as
+    # the stable version. "auto" skips the tap push exactly when
+    # ctx.Semver.Prerelease is non-empty, so a plain vX.Y.Z is unaffected.
+    skip_upload: auto
     homepage: "https://github.com/stacklok/mecatl"
     # Homebrew style (FormulaAudit/Desc) rejects a description that starts with
     # the formula name, so this must not begin with "Mecatl". Verified by
