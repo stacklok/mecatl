@@ -264,7 +264,7 @@ jobs:
       # A full repository path is required because local action paths resolve in the caller's checkout.
       - name: Extract prompt
         id: prompt
-        uses: stacklok/mecatl/.github/actions/mecatequi-extract-prompt@v0.0.30
+        uses: stacklok/mecatl/.github/actions/mecatequi-extract-prompt@v0.0.31
         with:
           out-file: ${{ runner.temp }}/prompt.txt
 
@@ -272,7 +272,7 @@ jobs:
       # step-level env on a `uses:` step does not propagate to its internal steps.
       - name: mecatequi
         id: mecatequi
-        uses: stacklok/mecatl/.github/actions/mecatequi@v0.0.30
+        uses: stacklok/mecatl/.github/actions/mecatequi@v0.0.31
         with:
           prompt-file: ${{ steps.prompt.outputs.prompt-file }}
           untrusted: "true"
@@ -402,7 +402,7 @@ jobs:
       # publish.sh applies the patch as data and reads the resolved GH_TOKEN from the
       # job environment; it never executes agent output.
       - name: Publish
-        uses: stacklok/mecatl/.github/actions/mecatequi-publish@v0.0.30
+        uses: stacklok/mecatl/.github/actions/mecatequi-publish@v0.0.31
         with:
           issue-number: ${{ github.event.issue.number }}
           patch-path: ${{ runner.temp }}/mecatequi-run/mecatequi.patch
