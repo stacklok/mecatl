@@ -867,6 +867,10 @@ func run(mode commandMode, remaining []string) error {
 	// rather than slog.Default().
 	diag := slogdiag.NewFromLogger(logger)
 
+	// Emit the build identity once logging is configured, so every daemon startup
+	// can be tied to the binary that produced its operational logs.
+	slog.Info("mecated starting", "version", buildinfo.BuildID)
+
 	// Log the selected daemon config path when one was loaded (issue #338).
 	// The path was validated during merge; log it so operators can confirm
 	// which file was read.

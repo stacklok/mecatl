@@ -65,7 +65,9 @@ mecated serve \
 Set `--log-level` to one of the exact values `debug`, `info`, `warn`, or `error`
 (default `info`). The same threshold is used for ambient `slog` output and
 injected diagnostics. Invalid values, including `--log-level=`, fall back to
-`info` and emit one warning.
+`info` and emit one warning. Each startup also emits the build identity as an
+INFO log with `msg="mecated starting"` and a `version` field; use it to identify
+the binary that produced the remaining server logs.
 
 `--store-dir` enables local JSONL persistence with an authoritative v2 current
 snapshot plus readable v1 history. The configured path and every ancestor must be
