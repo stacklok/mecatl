@@ -42,22 +42,41 @@ const (
 	diagnosticCredentialBroker                   = "broker"
 	// authorization is the Mecatl-owned OAuth transaction lifecycle. Its fields
 	// are closed values only; never add protocol values or identifiers here.
-	diagnosticEventAuthorization              = "authorization"
-	diagnosticEventAuthorizationLookup        = "authorization_lookup"
-	diagnosticReasonRequestStarted            = "request_started"
-	diagnosticReasonCallbackSucceeded         = "callback_succeeded"
-	diagnosticReasonCallbackDenied            = "callback_denied"
-	diagnosticReasonCallbackExpired           = "callback_expired"
-	diagnosticReasonCallbackFailed            = "callback_failed"
-	diagnosticReasonAuthorizationFound        = "found"
-	diagnosticReasonAuthorizationNotFound     = "not_found"
-	diagnosticReasonAuthorizationLookupFailed = "lookup_failed"
-	diagnosticReasonStateUnavailable          = "state_unavailable"
-	diagnosticAuthorizationSurfacePresent     = "present"
-	diagnosticAuthorizationSurfaceStatus      = "status"
-	diagnosticAuthorizationSurfaceCancel      = "cancel"
-	diagnosticRouteSurfaceNative              = "native"
-	diagnosticRouteSurfaceQuery               = "query"
+	diagnosticEventAuthorization               = "authorization"
+	diagnosticEventAuthorizationLookup         = "authorization_lookup"
+	diagnosticReasonRequestStarted             = "request_started"
+	diagnosticReasonCallbackSucceeded          = "callback_succeeded"
+	diagnosticReasonCallbackDenied             = "callback_denied"
+	diagnosticReasonCallbackExpired            = "callback_expired"
+	diagnosticReasonCallbackFailed             = "callback_failed"
+	diagnosticReasonAuthorizationFound         = "found"
+	diagnosticReasonAuthorizationNotFound      = "not_found"
+	diagnosticReasonAuthorizationLookupFailed  = "lookup_failed"
+	diagnosticReasonStateUnavailable           = "state_unavailable"
+	diagnosticAuthorizationSurfacePresent      = "present"
+	diagnosticAuthorizationSurfaceStatus       = "status"
+	diagnosticAuthorizationSurfaceCancel       = "cancel"
+	diagnosticRouteSurfaceNative               = "native"
+	diagnosticRouteSurfaceQuery                = "query"
+	diagnosticEventWorkspaceEnrollment         = "workspace_enrollment"
+	diagnosticEventSessionAttach               = "session_attach"
+	diagnosticReasonSessionCreated             = "created"
+	diagnosticReasonSessionReattached          = "reattached"
+	diagnosticEventQueryFailure                = "query_failure"
+	diagnosticQueryReasonTargetUnavailable     = "target_unavailable"
+	diagnosticQueryReasonTransport             = "transport"
+	diagnosticQueryReasonProjectionLimit       = "projection_limit"
+	diagnosticQueryReasonExecutionUncertain    = "execution_uncertain"
+	diagnosticEnrollmentOperationBegin         = "begin"
+	diagnosticEnrollmentOperationObserve       = "observe"
+	diagnosticEnrollmentOperationCancel        = "cancel"
+	diagnosticEnrollmentReasonRequestStarted   = "request_started"
+	diagnosticEnrollmentReasonRequestObserved  = "request_observed"
+	diagnosticEnrollmentReasonRequestCancelled = "request_cancelled"
+	diagnosticEnrollmentReasonAlreadyCompleted = "already_completed"
+	diagnosticEnrollmentReasonRejected         = "rejected"
+	diagnosticEnrollmentReasonStarted          = "started"
+	diagnosticEnrollmentReasonCompleted        = "completed"
 )
 
 var (
@@ -366,6 +385,7 @@ func (r *Runtime) AttachSession(ctx context.Context, id session.SessionID) (cont
 			return nil, "", err
 		}
 	}
+	r.logSessionAttach(ctx, id, outcome)
 	return attachment, outcome, nil
 }
 
@@ -652,12 +672,22 @@ func (t *sessionTool) invoke(ctx context.Context, call session.ToolCall, tokens 
 	return r.caller(ctx, t.attachment.logical.ref, t.route.backend, call)
 }
 
-func (r *Runtime) logAuthorization(ctx context.Context, event, reason string, level port.Level, surface string) {
+func (r *Runtime) logAuthorization(ctx context.Context, event, reason string, level port.Level, surface string, extra ...any) {
 	args := []any{"event", event, "reason", reason}
 	if surface != "" {
 		args = append(args, "surface", surface)
 	}
+	args = append(args, extra...)
 	r.diag.Log(ctx, level, "mcp broker authorization", args...)
+}
+
+func diagnosticOAuthErrorCode(code string) string {
+	switch code {
+	case "access_denied", "server_error", "temporarily_unavailable", "invalid_request", "unauthorized_client", "unsupported_response_type", "invalid_scope", "interaction_required", "login_required", "account_selection_required", "consent_required":
+		return code
+	default:
+		return "unknown"
+	}
 }
 
 func authorizationLookupReason(err error) string {
@@ -683,6 +713,28 @@ func levelForTokenRefresh(reason string) port.Level {
 
 func (r *Runtime) logRouteUnavailable(ctx context.Context, surface string) {
 	r.diag.Log(ctx, port.LevelWarn, "mcp broker route unavailable", "event", diagnosticEventRouteUnavailable, "surface", surface)
+}
+
+func (r *Runtime) logSessionAttach(ctx context.Context, id session.SessionID, outcome contract.AttachOutcome) {
+	reason := diagnosticReasonSessionReattached
+	if outcome == contract.AttachCreated {
+		reason = diagnosticReasonSessionCreated
+	}
+	r.diag.Log(ctx, port.LevelInfo, "mcp broker session attach", "event", diagnosticEventSessionAttach, "reason", reason, "session", string(id))
+}
+
+func (r *Runtime) logWorkspaceEnrollment(ctx context.Context, level port.Level, operation, reason string, args ...any) {
+	fields := []any{
+		"event", diagnosticEventWorkspaceEnrollment,
+		"operation", operation,
+		"reason", reason,
+	}
+	fields = append(fields, args...)
+	r.diag.Log(ctx, level, "mcp broker workspace enrollment", fields...)
+}
+
+func (r *Runtime) logQueryFailure(ctx context.Context, reason string) {
+	r.diag.Log(ctx, port.LevelWarn, "mcp broker query failed", "event", diagnosticEventQueryFailure, "reason", reason)
 }
 
 func copySpec(spec tool.ToolSpec) tool.ToolSpec {

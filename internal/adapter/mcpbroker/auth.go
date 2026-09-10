@@ -670,10 +670,10 @@ func (r *Runtime) handleCallbackError(state, oauthError string) error {
 		transaction.claimed = true
 		if oauthError == "access_denied" {
 			transaction.status = session.AuthorizationDenied
-			r.logAuthorization(context.Background(), diagnosticEventAuthorization, diagnosticReasonCallbackDenied, port.LevelInfo, "callback")
+			r.logAuthorization(context.Background(), diagnosticEventAuthorization, diagnosticReasonCallbackDenied, port.LevelInfo, "callback", "oauth_error", diagnosticOAuthErrorCode(oauthError))
 		} else {
 			transaction.status = session.AuthorizationFailed
-			r.logAuthorization(context.Background(), diagnosticEventAuthorization, diagnosticReasonCallbackFailed, port.LevelWarn, "callback")
+			r.logAuthorization(context.Background(), diagnosticEventAuthorization, diagnosticReasonCallbackFailed, port.LevelWarn, "callback", "oauth_error", diagnosticOAuthErrorCode(oauthError))
 		}
 	}
 	if transaction.cancel != nil {

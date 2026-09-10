@@ -961,6 +961,7 @@ func (s *Service) interruptRestoredAuthorizationLocked(ctx context.Context, sess
 		_, statusErr := attachment.AuthorizationStatus(ctx, pending.Authorization)
 		release()
 		if statusErr == nil {
+			s.cfg.Diagnostics.Log(ctx, port.LevelInfo, "MCP authorization pending rejection", "event", "mcp_authorization_pending_rejection", "reason", "live_external_authorization", "session", string(sess.ID))
 			return nil, false, fmt.Errorf("%w: session %q has a live external authorization", ErrFailedPrecondition, sess.ID)
 		}
 		if !errors.Is(statusErr, brokercontract.ErrStateUnavailable) {

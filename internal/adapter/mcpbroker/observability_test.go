@@ -14,6 +14,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
+	contract "github.com/stacklok/mecatl/internal/mcpbroker"
 )
 
 func TestBrokerRefreshDiagnosticsUseClosedValuesAndRedact(t *testing.T) {
@@ -105,7 +106,7 @@ func TestBrokerAuthorizationLifecycleDiagnosticsRedactCallbackSecrets(t *testing
 	logs := diag.String()
 	for _, want := range []string{
 		"eventauthorization", "reasonrequest_started", "eventauthorization_lookup", "reasonfound",
-		"reasoncallback_succeeded", "reasoncallback_denied",
+		"reasoncallback_succeeded", "reasoncallback_denied", "oauth_erroraccess_denied",
 	} {
 		if !strings.Contains(logs, want) {
 			t.Errorf("diagnostics missing %q: %s", want, logs)
@@ -179,5 +180,45 @@ func TestAuthenticatedCatalogueFreezeDiagnosticsAreEnrichedAndRedacted(t *testin
 	}
 	if logs = diag.String(); !strings.Contains(logs, "reasondiscovery_failed") {
 		t.Errorf("freeze failure diagnostic missing: %s", logs)
+	}
+}
+
+func TestWorkspaceEnrollmentDiagnosticsCoverBundleFlow(t *testing.T) {
+	tokenServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"opaque","token_type":"Bearer","expires_in":3600}`))
+	}))
+	defer tokenServer.Close()
+
+	diag := &recordingBrokerDiagnostics{}
+	runtime := newWorkspaceEnrollmentRuntime(t, tokenServer, &orderedCapabilityQueries{}, "github")
+	runtime.diag = diag.With("component", "mcpbroker")
+	attached, _, err := runtime.AttachSession(t.Context(), "workspace-enrollment-observability")
+	if err != nil {
+		t.Fatal(err)
+	}
+	enroller := attached.(contract.WorkspaceEnrollmentAttachment)
+	presentation, err := enroller.BeginWorkspaceEnrollment(t.Context())
+	if err != nil {
+		t.Fatalf("BeginWorkspaceEnrollment: %v", err)
+	}
+	if _, err := enroller.ObserveWorkspaceEnrollment(t.Context(), presentation.Ref); err != nil {
+		t.Fatalf("ObserveWorkspaceEnrollment: %v", err)
+	}
+	if _, err := enroller.CancelWorkspaceEnrollment(t.Context(), presentation.Ref); err != nil {
+		t.Fatalf("CancelWorkspaceEnrollment: %v", err)
+	}
+	if _, _, err := runtime.AttachSession(t.Context(), "workspace-enrollment-observability"); err != nil {
+		t.Fatalf("reattach: %v", err)
+	}
+
+	logs := diag.String()
+	for _, want := range []string{
+		"eventsession_attach", "reasoncreated", "reasonreattached", "eventworkspace_enrollment", "operationbegin", "operationobserve", "operationcancel",
+		"reasonrequest_started", "reasonrequest_observed", "reasonrequest_cancelled",
+	} {
+		if !strings.Contains(logs, want) {
+			t.Errorf("diagnostics missing %q: %s", want, logs)
+		}
 	}
 }
