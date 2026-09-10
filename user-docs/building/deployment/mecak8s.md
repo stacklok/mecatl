@@ -1012,7 +1012,7 @@ For a development port-forward, bearer traffic stays on loopback:
 ```sh
 kubectl port-forward -n mecatl service/mecak8s-agent 8080:8080 &
 export MECATL_AUTH_TOKEN="$(your-oidc-cli print-access-token)"
-bin/mecatui connect 127.0.0.1:8080 --auth-token "$MECATL_AUTH_TOKEN"
+mecatui connect 127.0.0.1:8080 --auth-token "$MECATL_AUTH_TOKEN"
 ```
 
 To prove that the token is actually required, remove the environment fallback and
@@ -1020,7 +1020,7 @@ submit a prompt in a separate TUI session:
 
 ```sh
 env -u MECATL_AUTH_TOKEN \
-  bin/mecatui connect 127.0.0.1:8080
+  mecatui connect 127.0.0.1:8080
 ```
 
 A gRPC dial can succeed before credentials are checked; the unauthenticated

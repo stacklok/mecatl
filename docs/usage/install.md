@@ -1,8 +1,26 @@
 ## 1. Prerequisites & install
 
+### Install a release build
+
+If you only need to *run* Mecatl, you do not need this toolchain. Homebrew
+installs `mecatui` and `mecated` from the latest release:
+
+```sh
+brew install stacklok/tap/mecatl
+```
+
+Each `vX.Y.Z` tag also attaches signed `darwin`/`linux` x `amd64`/`arm64`
+archives with checksums, cosign bundles, SBOMs, and build provenance to its
+GitHub release. The public [install guide](https://mecatl.dev/docs/install)
+covers archive verification and the Homebrew prefix. The rest of this section is
+the **from-source** path, which is what a contributor and every `task` target
+below need.
+
+### Build from source
+
 | Tool | Version | Needed for |
 | --- | --- | --- |
-| Go | >= 1.26.3 (toolchain auto-resolves from `go.mod`) | building & running everything |
+| Go | >= 1.26.6 (toolchain auto-resolves from `go.mod`) | building & running everything |
 | [go-task](https://taskfile.dev) | v3 | the `task` build targets |
 | [golangci-lint](https://golangci-lint.run/) | v2.x | `task lint` (config: `.golangci.yml`) |
 | `goimports` | — | `task fmt` only |
@@ -15,12 +33,14 @@ $ task build
 go build -o bin/mecated ./cmd/mecated
 go build -o bin/mecademo ./cmd/mecademo
 go build -o bin/mecatequi ./cmd/mecatequi
+go build -o bin/mecak8s ./cmd/mecak8s
 go build -o bin/mecatui ./cmd/mecatui
 ```
 
 This produces `bin/mecated` (the server), `bin/mecatui` (the terminal UI),
-`bin/mecademo` (the offline demo), and `bin/mecatequi` (the single-shot headless
-CI/batch runner — see §15). To install the operator-facing binaries into
+`bin/mecademo` (the offline demo), `bin/mecatequi` (the single-shot headless
+CI/batch runner — see §15), and `bin/mecak8s` (the Kubernetes-native agent). To
+install the operator-facing binaries into
 `GOBIN` / `GOPATH/bin`:
 
 ```console
@@ -38,9 +58,12 @@ the supplied value, including `dev`, is retained verbatim. Direct unstamped Go o
 ko builds use the runtime embedded-VCS fallback (`dev+<12-char-vcs-revision>[.dirty]`
 or `dev`) and never invoke git at runtime.
 
-The repo is a **Go workspace** (a committed `go.work`) spanning two modules: the
-root (`github.com/stacklok/mecatl`) and the importable core
-(`github.com/stacklok/mecatl/engine`). `task build` builds both. A plain
+The repo is a **Go workspace** (a committed `go.work`) spanning seven modules: the
+root (`github.com/stacklok/mecatl`), the importable core
+(`github.com/stacklok/mecatl/engine`), the opt-in caller-identity adapter
+(`authn/oidc`), and the opt-in provider adapters (`provider/anthropic`,
+`provider/openai`, `provider/openaichat`, `provider/ssefilter`). `task build`
+builds all of them. A plain
 `go build ./...` from the repo root does not cross the module boundary, so the
 Taskfile runs `cd engine && go build ./...` for you; the workspace lets the root
 module build against the in-tree engine via a `replace` directive.
@@ -49,7 +72,7 @@ Other handy targets (`task --list` for the full set):
 
 | Task | What it does |
 | --- | --- |
-| `task build` | compile `bin/mecated`, `bin/mecademo`, `bin/mecatequi`, `bin/mecatui` + build the engine module |
+| `task build` | compile `bin/mecated`, `bin/mecademo`, `bin/mecatequi`, `bin/mecak8s`, `bin/mecatui` + build the engine module |
 | `task install` | install `mecated` and `mecatui` into `GOBIN` / `GOPATH/bin` |
 | `task test` | `go test -race ./...` (root) + the engine module + the `GOWORK=off` standalone hygiene proof |
 | `task test:engine-standalone` | `cd engine && GOWORK=off go build ./... && go test ./...` — proves the engine's tiny closure is self-contained |
@@ -106,7 +129,8 @@ consumer, so you can back the same loop with events instead of snapshots.
 
 The module is released under submodule tags of the form `engine/vX.Y.Z` (Go's
 convention for a module in a subdirectory), separate from the root `vX.Y.Z`
-container-image tags.
+release tags, which drive the container images, the release archives, and the
+Homebrew formula.
 
 Working IN this repo, the committed `go.work` makes the root build against the
 in-tree engine automatically. To reproduce a downstream consumer's isolated view

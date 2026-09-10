@@ -775,6 +775,37 @@ jobs:
       - name: Check action templates for empty expressions
         run: bash .github/actions/check-action-templates.sh
 
+      # Validate .goreleaser.yaml on every PR. A schema error there is otherwise
+      # only discoverable AFTER a tag has been pushed, which is irreversible: the
+      # tag has already published images and a public Homebrew formula. GoReleaser
+      # loads the config strictly, so an unknown or misspelled field is a hard
+      # error here rather than a warning.
+      #
+      # install-only downloads the pinned PREBUILT binary (seconds). Do not switch
+      # this to `go run github.com/goreleaser/goreleaser/v2@<ver>`: goreleaser does
+      # not build from source on this repo's Go toolchain (its module graph
+      # resolves grpc v1.80.0 against an x/net without http2.TrailerPrefix).
+      #
+      # The pin must stay in lockstep with release.yml and Taskfile.yml's
+      # GORELEASER_VERSION.
+      - uses: goreleaser/goreleaser-action@5daf1e915a5f0af01ddbcd89a43b8061ff4f1a89 # v7.2.2
+        with:
+          version: "v2.16.0"
+          install-only: true
+      - name: Validate the GoReleaser config
+        # `goreleaser check` exits 2 for "valid, but uses DEPRECATED properties".
+        # .goreleaser.yaml deliberately uses the deprecated `brews` block, because
+        # stacklok/homebrew-tap is a Formula/ tap and casks must live in Casks/.
+        # So 2 is expected and accepted; only exit 1 (invalid config) fails.
+        run: |
+          status=0
+          goreleaser check || status=$?
+          case "$status" in
+            0) ;;
+            2) echo "goreleaser check: config valid; uses deprecated properties (brews) - accepted" ;;
+            *) exit "$status" ;;
+          esac
+
       # The mecatequi composite-action glue scripts (extract-prompt.sh, publish.sh) have
       # offline bash tests with fake gh/git stubs that assert their SECURITY logic (no
       # untrusted-body interpolation; protected-paths gate incl. the -z path-quoting bypass;

@@ -103,6 +103,7 @@ const config: Config = {
         {
           title: 'Guides',
           items: [
+            {label: 'Install', to: '/docs/install'},
             {label: 'Use mecatui', to: '/docs/mecatui'},
             {label: 'Build on Mecatl', to: '/docs/building'},
             {label: 'Getting Started', to: '/docs/building/getting-started/demo'},

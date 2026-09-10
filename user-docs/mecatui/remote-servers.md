@@ -40,14 +40,14 @@ PKCE and needs browser connectivity to the loopback callback; it is not device l
 **Embedded mode** is bare `mecatui`. It starts a private `mecated` in the same process and connects over a private UNIX socket. The TUI process owns the local workspace, provider credentials, session storage, and policy configuration used by that embedded server.
 
 ```sh
-OPENAI_API_KEY=sk-... bin/mecatui --workspace "$PWD"
+OPENAI_API_KEY=sk-... mecatui --workspace "$PWD"
 ```
 
 **Remote mode** is `mecatui connect ADDRESS`. It dials the named, already-running `mecated`; it never starts an embedded server or searches for one. The remote server owns its workspace, provider credentials and model availability, storage, retention, and policy. Local client settings do not configure that server.
 
 ```sh
-bin/mecated serve &
-bin/mecatui connect 127.0.0.1:8080
+mecated serve &
+mecatui connect 127.0.0.1:8080
 ```
 
 Every connection uses the same path-free contract. `--workspace` is embedded/server
@@ -66,7 +66,7 @@ token, pass the token supplied by its operator:
 
 ```sh
 export MECATL_AUTH_TOKEN="$(cat ~/.mecatl/token)"
-bin/mecatui connect 127.0.0.1:8080 \
+mecatui connect 127.0.0.1:8080 \
   --auth-token "$MECATL_AUTH_TOKEN"
 ```
 
@@ -79,7 +79,7 @@ is the explicit plaintext downgrade; use it only for controlled, non-bearer test
 Add a CA bundle with `--tls-ca` only when the server uses a private CA.
 
 ```sh
-bin/mecatui connect mecated.example.internal:443 \
+mecatui connect mecated.example.internal:443 \
   --tls-ca /path/to/company-ca.pem \
   --auth-token "$MECATL_AUTH_TOKEN"
 ```
@@ -138,11 +138,11 @@ audience login remains supported.
 Remote enrollment and connecting are separate actions:
 
 ```sh
-bin/mecatui login mecated.example.internal:443 \
+mecatui login mecated.example.internal:443 \
   --issuer https://id.example.internal \
   --client-id mecatui --audience mecatl \
   --tls-ca /path/to/issuer-ca.pem --private-issuer
-bin/mecatui connect mecated.example.internal:443 \
+mecatui connect mecated.example.internal:443 \
   --tls --tls-ca /path/to/server-ca.pem
 ```
 
@@ -208,7 +208,7 @@ refreshed. The bearer is not placed in UI state, logs, or command arguments.
 Remove an enrollment with:
 
 ```sh
-bin/mecatui logout mecated.example.internal:443
+mecatui logout mecated.example.internal:443
 ```
 
 Logout conditionally removes the target-bound credential before its public registry

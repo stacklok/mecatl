@@ -13,7 +13,7 @@ Start by identifying whether you are running embedded `mecatui` or `mecatui conn
 Embedded mode detects provider credentials from its environment. Set one supported provider credential, or use the explicit offline path while learning the UI:
 
 ```sh
-bin/mecatui --mock --workspace "$PWD"
+mecatui --mock --workspace "$PWD"
 ```
 
 Do not put provider secrets in command-line flags. For provider credentials and server-side selection, use [Run mecated standalone](/building/deployment/mecated.md#provider-and-model).

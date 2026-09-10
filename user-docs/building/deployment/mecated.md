@@ -22,7 +22,8 @@ default and is purpose-built for no-PVC pod deployments.
 
 ## Quick start
 
-The canonical invocation is `mecated serve`:
+Get the executable first: `brew install stacklok/tap/mecatl`, or a signed release archive —
+see [Install Mecatl](/install.md). The canonical invocation is `mecated serve`:
 
 ```sh
 mecated serve

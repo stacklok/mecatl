@@ -14,6 +14,8 @@ The main operational distinction is simple: `mecated` is the general
 client/server deployment, `mecak8s` externalizes state for disposable Kubernetes
 pods, and mecatui provides an interactive terminal skin over an embedded server.
 
+- [**Install Mecatl**](/install.md) — get the released `mecatui` and `mecated` executables from Homebrew or a signed release archive, and verify them before they reach a host.
+
 - [**Embed the engine directly**](embed-engine.md) — import `github.com/stacklok/mecatl/engine`, wire the port interfaces yourself, and compose `app.Build` into your own binary without taking Mecatl's heavy require cone.
 
 - [**Configure Mecatl**](settings.md) — choose the operator settings and secret files, daemon topology configuration, command flags, and client-only mecatui settings for each deployment shape.

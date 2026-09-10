@@ -1,0 +1,265 @@
+# GoReleaser configuration for mecatl (https://goreleaser.com).
+#
+# SCOPE — this file owns EXACTLY three things:
+#   1. the darwin/linux binary ARCHIVES (mecated + mecatui, one tarball per
+#      platform, mirroring the `install` Taskfile target),
+#   2. the GitHub RELEASE object those archives attach to,
+#   3. the `mecatl` FORMULA in stacklok/homebrew-tap.
+#
+# It does NOT build container images. ko (.ko.yaml) remains the single owner of
+# every mecatl image; the `builds:` here and the `builds:` in .ko.yaml are
+# deliberately separate and MUST keep the same linker stamp (see ldflags below).
+#
+# The GoReleaser BINARY version is pinned in three places that move together:
+#   - .github/workflows/release.yml -> goreleaser-action `version:`
+#   - .github/workflows/ci.yml      -> goreleaser-action `version:` (install-only)
+#   - Taskfile.yml                  -> GORELEASER_VERSION
+# Nothing below uses a config field newer than v2.13, so the pin can float up
+# freely; GoReleaser loads this file STRICTLY (pkg/config: yaml.UnmarshalStrict),
+# so a field newer than the pinned binary is a hard failure, not a warning.
+#
+# Validate offline:  task release:check
+# Dry-run locally:   task release:snapshot && task release:verify
+version: 2
+project_name: mecatl
+
+builds:
+  # mecated and mecatui are SEPARATE builds so each gets its own binary name;
+  # they are archived TOGETHER (see archives.ids) because the brew pipe rejects
+  # more than one archive per OS/arch.
+  #
+  # `id` and `binary` both default to project_name ("mecatl"). Leaving either
+  # unset would collide the two builds and produce two binaries called `mecatl`.
+  - id: mecated
+    main: ./cmd/mecated
+    binary: mecated
+    # The Taskfile does not set this, but .ko.yaml does, and a Homebrew-installed
+    # binary must be static: no cgo, so no libc coupling to the builder image.
+    env:
+      - CGO_ENABLED=0
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    # -trimpath and -s -w match .ko.yaml exactly; mod_timestamp makes the output
+    # byte-stable across re-runs of the same tag (matters for the re-publish path).
+    flags:
+      - -trimpath
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    # THE ONLY stamped symbol in this repo is buildinfo.BuildID — there is no
+    # `main.version`. GoReleaser's DEFAULT ldflags stamp four `main.*` symbols
+    # that do not exist here, silently, and leave BuildID unset — so every
+    # Homebrew user would see `mecated dev+<vcs-rev>`. The brews `test:` block
+    # below is the tripwire for exactly that regression.
+    #
+    # `v{{ .Version }}`, NOT `{{ .Version }}`: GoReleaser strips the leading `v`
+    # from .Version, whereas .ko.yaml and the Taskfile both stamp the `git
+    # describe` form WITH the `v` (e.g. `v0.0.29`). Re-adding it keeps
+    # `--version` byte-identical across ko, Task and GoReleaser builds.
+    # Not `{{ .Tag }}` either: under --snapshot that reports the LAST tag, which
+    # would lie about what was built.
+    ldflags:
+      - -s -w
+      - -X github.com/stacklok/mecatl/internal/buildinfo.BuildID=v{{ .Version }}
+
+  - id: mecatui
+    main: ./cmd/mecatui
+    binary: mecatui
+    env:
+      - CGO_ENABLED=0
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    flags:
+      - -trimpath
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    ldflags:
+      - -s -w
+      - -X github.com/stacklok/mecatl/internal/buildinfo.BuildID=v{{ .Version }}
+
+# NOTE: no `gomod:` block, deliberately. `gomod.proxy` defaults to false; setting
+# it true would make GoReleaser fetch github.com/stacklok/mecatl/engine from
+# proxy.golang.org, where it does not exist as a published version — the root
+# module reaches it via `replace ... => ./engine`. That is a total release
+# failure, not a degradation. The go.work workspace is used as-is, exactly as
+# `task build` uses it; GOWORK must be left alone.
+
+archives:
+  # ONE archive per platform carrying BOTH binaries. `ids` selects BUILD ids and
+  # the archive pipe groups the matching binaries by platform, so each tarball
+  # gets mecated AND mecatui.
+  #
+  # This is what makes the formula install both: for an uploadable archive the
+  # brew pipe emits one `bin.install "<name>"` per binary in the archive, so no
+  # custom `install:` block is needed.
+  - id: mecatl
+    ids: [mecated, mecatui]
+    # `formats` is a LIST since v2.6; the singular `format` is deprecated.
+    # No format_overrides: there is no windows target here, so no zip. (Windows
+    # does compile — every unix-tagged file has an `_other`/`_unsupported`
+    # sibling and there is no cgo — but Homebrew does not serve it. Windows
+    # packaging would be scoop/winget, separately.)
+    formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    # The default `files` globs LICENSE*/README*/CHANGELOG*, which ships the
+    # repo's Apache-2.0 LICENSE (its section 4(a) wants it included).
+    #
+    # Do NOT set wrap_in_directory: the generated `bin.install "mecated"`
+    # expects the binaries at the archive ROOT.
+
+checksum:
+  # sha256 (the default) is required: the release workflow feeds this exact file
+  # to actions/attest-build-provenance's `subject-checksums`.
+  name_template: checksums.txt
+
+sboms:
+  # One SPDX-JSON SBOM per ARCHIVE, matching the per-image SBOMs the ko jobs
+  # attach. Requires `syft` on PATH (anchore/sbom-action/download-syft in CI).
+  #
+  # `args` is set EXPLICITLY to drop syft's default trailing `--enrich all`,
+  # which performs ONLINE lookups mid-release — latency and flake between
+  # "images pushed" and "release published", for no added assurance here.
+  - id: archive-sbom
+    artifacts: archive
+    documents:
+      - "${artifact}.spdx.json"
+    args: ["$artifact", "--output", "spdx-json=$document"]
+
+signs:
+  # Keyless cosign, the same OIDC identity and Rekor trail as the image
+  # signatures the ko jobs produce. `--bundle` writes cert+signature into ONE
+  # .sigstore.json, which is what `cosign verify-blob --bundle` consumes.
+  #
+  # Two entries, each with an explicit `id` (both would otherwise default to
+  # `default` and collide): the ARCHIVES (parity with signing each image by
+  # digest) and CHECKSUMS.TXT (the single root a consumer verifies once, then
+  # checks every artifact against with `sha256sum --check`).
+  - id: archives
+    cmd: cosign
+    args:
+      - sign-blob
+      - "--bundle=${signature}"
+      - "${artifact}"
+      - "--yes"
+    artifacts: archive
+    signature: "${artifact}.sigstore.json"
+    output: true
+  - id: checksums
+    cmd: cosign
+    args:
+      - sign-blob
+      - "--bundle=${signature}"
+      - "${artifact}"
+      - "--yes"
+    artifacts: checksum
+    signature: "${artifact}.sigstore.json"
+    output: true
+
+brews:
+  # DEPRECATED upstream since v2.16 in favour of `homebrew_casks`. Kept
+  # DELIBERATELY: stacklok/homebrew-tap is a Formula/ tap (Formula/modelith.rb,
+  # Formula/thv.rb) and casks MUST live in Casks/, which would fork the tap's
+  # layout and need a tap_migrations.json plus quarantine handling. Migrating is
+  # an org-wide move across mecatl + modelith + toolhive, not a mecatl decision.
+  #
+  # The cost is a deprecation WARNING on release (non-fatal) and exit code 2
+  # from `goreleaser check`, which `task release:check` and the ci.yml gate both
+  # tolerate explicitly. Revisit when the org migrates all three repos together.
+  #
+  # `ids` is deliberately unset (empty = all archives). Note it would select
+  # ARCHIVE ids here, not build ids; there is exactly one archive, so omitting
+  # it is both correct and unambiguous.
+  - name: mecatl
+    homepage: "https://github.com/stacklok/mecatl"
+    # Homebrew style (FormulaAudit/Desc) rejects a description that starts with
+    # the formula name, so this must not begin with "Mecatl". Verified by
+    # `brew style` in task release:verify.
+    description: "Agent harness for cloud-native workloads, with server and terminal UI"
+    # brews.license IS supported in the OSS build (metadata.license is Pro-only,
+    # so it must be set here). Without it the formula declares no licence.
+    license: "Apache-2.0"
+    directory: Formula
+    commit_author:
+      name: stacklokbot
+      email: info@stacklok.com
+    repository:
+      owner: stacklok
+      name: homebrew-tap
+      # No `branch:` (defaults to the tap's default branch, main) and no
+      # `pull_request:` — a direct commit, matching modelith and toolhive.
+      #
+      # Minted per run as a scoped GitHub App installation token; see
+      # release.yml. NEVER the workflow's own GITHUB_TOKEN, which cannot write
+      # to another repository.
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    # `brew test` exercises BOTH binaries and ASSERTS the linker stamp landed —
+    # a wrong ldflags path prints `mecated dev+<rev>` and fails HERE rather than
+    # shipping silently to every tap user.
+    #
+    # Safe without a TTY: cmd/mecated/main.go and cmd/mecatui/main.go both
+    # handle --version as the first statement in main(), before any listener or
+    # terminal setup.
+    #
+    # `v{{ .Version }}` (not `{{ .Tag }}`) so this is derived IDENTICALLY to the
+    # ldflags above and cannot drift from it.
+    test: |
+      assert_match "mecated v{{ .Version }}", shell_output("#{bin}/mecated --version")
+      assert_match "mecatui v{{ .Version }}", shell_output("#{bin}/mecatui --version")
+
+changelog:
+  # `github` uses the compare API and needs the FULL local tag graph for the
+  # previous-tag lookup — hence fetch-depth: 0 in release.yml.
+  use: github
+  sort: asc
+  # mecatl uses conventional commits WITH scopes (`fix(mecatui): ...`), so every
+  # pattern tolerates the optional `(scope)` and the breaking-change `!`.
+  filters:
+    exclude:
+      - '^docs(\([^)]*\))?!?:'
+      - '^chore(\([^)]*\))?!?:'
+      - '^test(\([^)]*\))?!?:'
+      - '^ci(\([^)]*\))?!?:'
+  groups:
+    - title: Features
+      regexp: '^feat(\([^)]*\))?!?:'
+      order: 0
+    - title: Fixes
+      regexp: '^fix(\([^)]*\))?!?:'
+      order: 1
+    - title: Other changes
+      order: 999
+
+release:
+  # No mecatl tag has carried a prerelease suffix yet, so `auto` is a no-op
+  # today and correctly marks a future vX.Y.Z-rc1 as a prerelease.
+  prerelease: auto
+  # THE RE-PUBLISH SWITCH. `workflow_dispatch` re-runs `release --clean` against
+  # a tag whose Release already exists; without this every asset upload fails
+  # with "already_exists". With it, GoReleaser deletes the colliding asset and
+  # retries. `keep-existing` (the default, stated explicitly) additionally
+  # protects hand-edited release notes from being clobbered.
+  #
+  # NOT self-healing: a run that dies BETWEEN "release created" and "assets
+  # uploaded" leaves a DRAFT, which a lookup by tag does not return, so the next
+  # attempt tries to create the release again and fails. Recovery is
+  #   gh release delete <tag> --cleanup-tag=false --yes
+  # before re-dispatching. Do NOT "fix" that with use_existing_draft: true —
+  # that flips the lookup to draft-only and breaks the common re-publish case.
+  mode: keep-existing
+  replace_existing_artifacts: true
+  header: |
+    ## Install
+
+    ```sh
+    brew install stacklok/tap/mecatl
+    ```
+
+    Installs both `mecated` (the server) and `mecatui` (the terminal UI).
+  footer: |
+    ## Verify
+
+    ```sh
+    cosign verify-blob \
+      --certificate-identity 'https://github.com/stacklok/mecatl/.github/workflows/release.yml@refs/tags/{{ .Tag }}' \
+      --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+      --bundle checksums.txt.sigstore.json checksums.txt
+    sha256sum --check --ignore-missing checksums.txt
+    gh attestation verify mecatl_{{ .Version }}_darwin_arm64.tar.gz --repo stacklok/mecatl
+    ```

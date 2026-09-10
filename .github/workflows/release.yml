@@ -1,5 +1,6 @@
-# Publishes and signs the mecated, mecatui, and mecak8s images plus the mecak8s
-# Helm chart from root `v*` tags or an explicitly selected tag.
+# Publishes and signs the mecated, mecatui, and mecak8s images, the mecak8s Helm
+# chart, and the mecated+mecatui CLI archives (a GitHub Release plus a
+# stacklok/homebrew-tap formula) from root `v*` tags or an explicitly selected tag.
 name: Release
 
 on:
@@ -15,15 +16,21 @@ on:
         required: true
         type: string
 
-# Least-privilege default. Only the publish job elevates, and only to exactly
-# what ko-push + cosign-keyless need.
+# Least-privilege default. Jobs elevate individually, and only to exactly what
+# they need: ko-push + cosign-keyless for the image jobs, and additionally
+# contents: write for publish-cli, which is the only job that creates a
+# GitHub Release.
 permissions:
   contents: read
 
-# Never run two releases for the same tag concurrently. Do NOT cancel in
-# progress — a half-signed release is worse than a slow one.
+# Never run two releases for the same tag concurrently. Keyed on the TAG, not
+# github.ref: on workflow_dispatch github.ref is refs/heads/main while on a tag
+# push it is refs/tags/vX.Y.Z, so a ref-keyed group would let a dispatch
+# re-publish of vX.Y.Z run alongside the original tag-push run. The ko jobs
+# tolerate that; a GitHub Release object and a cross-repo tap commit do not.
+# Do NOT cancel in progress — a half-signed release is worse than a slow one.
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 env:
@@ -616,5 +623,173 @@ jobs:
             echo "cosign verify ${OCI_REGISTRY}/mecak8s@${DIGEST} \\"
             echo "  --certificate-identity-regexp='https://github.com/stacklok/mecatl/' \\"
             echo "  --certificate-oidc-issuer=https://token.actions.githubusercontent.com"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # The CLI half of a mecatl release: the mecated + mecatui BINARIES, shipped as
+  # per-platform tarballs on a GitHub Release, plus the `mecatl` formula in
+  # stacklok/homebrew-tap. GoReleaser owns this and only this; ko still owns
+  # every container image (the jobs above, .ko.yaml). One formula, two binaries,
+  # mirroring the `install` Taskfile target.
+  #
+  # Deliberately NOT `needs:` any job above: there is no artifact dependency, and
+  # serialising a multi-minute job behind another buys nothing. It runs the
+  # reusable-pin gate ITSELF rather than inheriting it from `publish`, because a
+  # published formula is the most user-visible artifact in this workflow and must
+  # not be gated by luck of job ordering.
+  #
+  # Partial-failure shape, stated deliberately: GoReleaser's brew pipe continues
+  # on error and the Release is created before the formula is pushed, so a bad
+  # tap token fails this job WITHOUT losing the Release. Recover by re-running.
+  # If a run dies BETWEEN "release created" and "assets uploaded" it leaves a
+  # DRAFT, which a lookup by tag does not return, so a naive re-run tries to
+  # create the release again and fails; recover with
+  #   gh release delete <tag> --cleanup-tag=false --yes
+  # before re-dispatching. See .claude/skills/cut-release.
+  publish-cli:
+    name: Build, publish, sign, attest CLI archives + Homebrew formula
+    runs-on: ubuntu-24.04
+    # 30, not 20: a fetch-depth-0 checkout of a large history, eight
+    # cross-compiles, four syft scans and five Fulcio/Rekor round-trips.
+    timeout-minutes: 30
+    permissions:
+      contents: write # create the GitHub Release + upload assets (read covers the changelog compare API)
+      id-token: write # OIDC: cosign keyless sign-blob AND provenance
+      attestations: write # SLSA build provenance via actions/attest-build-provenance
+      # NOTE: the only job here holding contents: write, and it is scoped to THIS
+      # repo. The write to stacklok/homebrew-tap uses the separately minted App
+      # installation token below, never GITHUB_TOKEN.
+    env:
+      # On workflow_dispatch github.ref_name is the default branch, so prefer the
+      # explicit input; on a tag push github.ref_name is the tag.
+      VERSION: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # 0, NOT 1 (unlike the ko jobs): GoReleaser derives the current AND
+          # previous tag from git, and changelog.use=github compares the two. A
+          # depth-1 clone has neither and leaves .git/shallow, which GoReleaser
+          # warns about. With depth 0, actions/checkout fetches all branches AND
+          # all tags even when `ref` names a tag — which is also what makes the
+          # origin/main guard below work under persist-credentials: false.
+          fetch-depth: 0
+          ref: ${{ env.VERSION }}
+
+      # The same version-skew gate the mecated publish job runs. Repeated here,
+      # not inherited via needs:, so a Release and a public tap commit can never
+      # be published for a tag whose sibling-action pins point at the previous
+      # release.
+      - name: Check reusable-workflow pins match the release tag
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: EXPECTED_TAG="${RELEASE_TAG}" bash .github/actions/check-reusable-pins.sh
+
+      # A v* tag cut from any branch would otherwise publish a public formula.
+      # GitHub cannot branch-filter a tag trigger, so guard at run time. Compare
+      # against origin/main, which the depth-0 checkout already fetched — NOT
+      # `git fetch origin main`, which has no credentials here
+      # (persist-credentials: false) and would fail on this internal repo.
+      # HEAD, not $GITHUB_SHA: on workflow_dispatch $GITHUB_SHA is the branch
+      # head, while HEAD is the tag commit actually checked out.
+      - name: Ensure the release tag is on main
+        run: |
+          set -euo pipefail
+          if ! git merge-base --is-ancestor HEAD origin/main; then
+            echo "::error::release tags must be cut from a commit on main; $(git rev-parse HEAD) is not on main"
+            exit 1
+          fi
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          # engine/ and authn/oidc are their own modules (go.work monorepo);
+          # their go.sum files are part of the build cache key.
+          cache-dependency-path: |
+            go.sum
+            engine/go.sum
+            authn/oidc/go.sum
+
+      # GoReleaser shells out to cosign for signs: and syft for sboms:; neither
+      # is bundled. download-syft puts syft on PATH.
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+
+      # A per-run, scoped GitHub App installation token — the only credential
+      # that can write to stacklok/homebrew-tap. This job's GITHUB_TOKEN cannot
+      # (it is scoped to this repository), and no long-lived PAT is kept.
+      # permission-contents: write is the single permission the formula commit
+      # needs; the App installation itself is restricted to homebrew-tap.
+      - name: Mint the Homebrew tap token
+        id: homebrew-tap-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.HOMEBREW_TAP_APP_CLIENT_ID }}
+          private-key: ${{ secrets.HOMEBREW_TAP_APP_PRIVATE_KEY }}
+          owner: stacklok
+          repositories: homebrew-tap
+          permission-contents: write
+
+      # `release --clean` wipes dist/, then builds, archives, SBOMs, checksums,
+      # signs, creates the Release, uploads, and LAST pushes the formula.
+      #
+      # GORELEASER_CURRENT_TAG is set explicitly rather than relying on
+      # `git tag --points-at HEAD`: that fallback picks by -version:refname when
+      # several tags share a commit, which will happen once engine/vX.Y.Z tags
+      # exist (see .claude/skills/cut-release). The tag is never inferred here.
+      #
+      # `version:` pins the GoReleaser BINARY (a prebuilt download, not a source
+      # build) and must stay in lockstep with Taskfile.yml's GORELEASER_VERSION
+      # and the ci.yml validation step.
+      - uses: goreleaser/goreleaser-action@5daf1e915a5f0af01ddbcd89a43b8061ff4f1a89 # v7.2.2
+        with:
+          version: "v2.16.0"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ steps.homebrew-tap-token.outputs.token }}
+          GORELEASER_CURRENT_TAG: ${{ env.VERSION }}
+
+      # GoReleaser has no native GitHub-attestation pipe (unlike sboms/signs), so
+      # provenance is a post-step over the artifacts it just wrote. Feeding
+      # checksums.txt rather than a glob produces ONE attestation whose subjects
+      # are every artifact listed there, with the names and sha256 digests
+      # GoReleaser already computed — no glob to drift, no digest recomputed.
+      # `always()` is deliberate: if the tap push failed but the assets uploaded,
+      # the published archives still get their provenance. Precedent:
+      # release-sdk-typescript.yml attests a loose tarball the same way.
+      - name: Attest archive build provenance
+        if: ${{ always() && hashFiles('dist/checksums.txt') != '' }}
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: dist/checksums.txt
+
+      - name: Verify GitHub artifact attestation
+        if: ${{ always() && hashFiles('dist/checksums.txt') != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          for archive in dist/*.tar.gz; do
+            gh attestation verify "$archive" --repo "$REPO"
+          done
+
+      - name: Summary
+        if: ${{ always() && hashFiles('dist/checksums.txt') != '' }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## CLI archives published"
+            echo ""
+            echo '```sh'
+            echo "brew install stacklok/tap/mecatl"
+            echo '```'
+            echo ""
+            echo "### Checksums"
+            echo ""
+            echo '```'
+            cat dist/checksums.txt
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
