@@ -133,6 +133,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0282 — Managed workspace scratch cache](./0282-managed-workspace-scratch-cache.md) *(proposed; depends on 0281)*
 - [0201 — Background Bash commands](./0201-background-bash.md)
 - [0317 — Canonical Shell command tool](./0317-canonical-shell-command-tool.md) *(supersedes ADR 0201 decision D1 only)*
+- [0324 — Internal Shell compatibility diagnostic](./0324-internal-shell-compatibility-diagnostic.md) *(proposed; supersedes ADR 0317 parser-placement decision only)*
 - [0208 — Execution environments and version-aware file mutation](./0208-execution-environment.md) *(runtime-seam deferral superseded by 0211; version protocol authoritative)*
 - [0211 — Execution-environment runtime seam](./0211-execution-environment-runtime-seam.md) *(supersedes 0208 decisions 1–3; phase-3 persistence deferral superseded by 0214)*
 - [0214 — Execution-environment persistence and reattachment](./0214-environment-persistence.md) *(supersedes 0211 decision 6 only)*
