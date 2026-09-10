@@ -16,7 +16,9 @@ import (
 
 const mcpAuthorizationStatusPending = "pending"
 
-const mcpAuthorizationPollInterval = 3 * time.Second
+// Production polling stays fixed; a variable lets lifecycle tests execute the
+// actual Bubble Tea handoff without waiting three seconds per assertion.
+var mcpAuthorizationPollInterval = 3 * time.Second
 
 // mcpAuthorizationFirstEventTimeout bounds how long a control (recheck/cancel)
 // waits for its FIRST stream event. A recheck/cancel call normally completes in
@@ -461,13 +463,21 @@ func (m Model) updateMCPAuthorizationEvent(msg mcpAuthorizationEventMsg) (tea.Mo
 	mm, eventCmd := m.updateStreamEvent(msg.msg)
 	m = mm.(Model)
 	var sideEffect tea.Cmd
-	if auth, ok := msg.msg.(client.MCPAuthorizationMsg); ok && auth.Status != mcpAuthorizationStatusPending && m.phase == phaseRunning {
-		m.authorization.runningControlGen = msg.gen
-		// updateStreamEvent deliberately does not re-arm its ordinary Converse
-		// reader here: that stream closed when the authorization parked. Preserve
-		// the spinner tick that applyMCPAuthorization re-arms on the transition
-		// back into its visible running phase.
-		sideEffect = tea.Batch(sideEffect, m.sp.Tick)
+	if auth, ok := msg.msg.(client.MCPAuthorizationMsg); ok {
+		switch {
+		case auth.Status == mcpAuthorizationStatusPending && m.phase == phaseAuthorizing && m.authorization.polling:
+			// applyMCPAuthorization replaced the completed observation with a new
+			// generation. Hand off exactly one tick for that generation; eventCmd
+			// also carries the parked Converse reader and must not be propagated.
+			sideEffect = mcpAuthorizationPollTickCmd(m.sessionID, m.authorization.authorizationID, m.authorization.controlGen)
+		case auth.Status != mcpAuthorizationStatusPending && m.phase == phaseRunning:
+			m.authorization.runningControlGen = msg.gen
+			// updateStreamEvent deliberately does not re-arm its ordinary Converse
+			// reader here: that stream closed when the authorization parked. Preserve
+			// the spinner tick that applyMCPAuthorization re-arms on the transition
+			// back into its visible running phase.
+			sideEffect = tea.Batch(sideEffect, m.sp.Tick)
+		}
 	}
 	// Only the control stream is re-armed. updateStreamEvent's ordinary
 	// afterEvent command owns the original Converse source, which is already

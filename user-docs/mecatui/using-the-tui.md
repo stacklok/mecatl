@@ -27,8 +27,14 @@ When a tool needs permission, a modal shows what it wants to do. Read the reques
 
 When workspace-service enrollment or an MCP tool opens a browser authorization,
 complete consent there and return to the TUI. Mecatui observes the pending
-request automatically; do not press a refresh/recheck key. You can still cancel
-a pending MCP authorization from its card. Presentation links are opened or
+request automatically; do not press a refresh/recheck key. Each workspace-service
+connect, check, retry, or cancel attempt is bounded to 30 seconds. If that deadline
+expires, the server may have changed state even though mecatui did not receive the
+response, so mecatui stops automatic checks rather than guessing or retrying. Follow
+the displayed recovery: run `/clear`, then run `/tools-connect` in the replacement
+session. This does not claim that the timed-out server operation completed.
+
+You can still cancel a pending MCP authorization from its card. Presentation links are opened or
 copied only for that interaction and are not retained in the conversation.
 
 ## Change the conversation settings

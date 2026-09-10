@@ -17,6 +17,12 @@ const connectAction = "connect"
 
 const workspaceEnrollmentPollInterval = 3 * time.Second
 
+// workspaceEnrollmentTimeout bounds each cooperative unary enrollment action.
+// It is a variable only so tests can exercise the fixed production duration.
+var workspaceEnrollmentTimeout = 30 * time.Second
+
+const workspaceEnrollmentTimeoutNotice = "workspace services request timed out; the server outcome may be uncertain — run /clear, then /tools-connect in the replacement session"
+
 // workspaceEnrollmentPollTickMsg is bound to the session and pending enrollment
 // it observes, so stale timer deliveries cannot affect a replacement session.
 type workspaceEnrollmentPollTickMsg struct {
@@ -124,6 +130,13 @@ func workspaceEnrollmentCmd(ctx context.Context, control client.WorkspaceEnrollm
 		default:
 			err = fmt.Errorf("unknown workspace enrollment action")
 		}
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			// A controller may finish concurrently with cancellation after the
+			// server has committed. The client context remains authoritative: never
+			// publish a result observed only after its operation boundary expired.
+			result = client.WorkspaceEnrollment{}
+			err = ctxErr
+		}
 		return workspaceEnrollmentMsg{result: result, action: action, sessionID: sessionID, targetEnrollmentID: enrollmentID, gen: gen, err: err}
 	}
 }
@@ -142,7 +155,7 @@ func (m Model) startWorkspaceEnrollmentControl(action string) (tea.Model, tea.Cm
 	}
 	m.enrollment.controlGen++
 	gen := m.enrollment.controlGen
-	ctx, cancel := context.WithCancel(m.deps.Ctx)
+	ctx, cancel := context.WithTimeout(m.deps.Ctx, workspaceEnrollmentTimeout)
 	m.enrollment.controlCancel = cancel
 	return m, workspaceEnrollmentCmd(ctx, m.deps.WorkspaceEnrollment, m.sessionID, m.enrollment.ID, action, gen)
 }
@@ -218,12 +231,28 @@ func (m Model) applyWorkspaceEnrollment(msg workspaceEnrollmentMsg) (tea.Model, 
 		m.enrollment.controlCancel = nil
 	}
 	if msg.err != nil {
-		m.enrollment.err = oneLine(sanitizeTerminal(msg.err.Error()))
-		m.workspaceEnrollmentNotice = m.enrollment.err
-		if msg.action == "check" && m.enrollment.Status == client.WorkspaceEnrollmentPending && m.enrollment.presentationDelivered {
-			return m, workspaceEnrollmentPollTickCmd(m.sessionID, m.enrollment.ID, m.enrollment.controlGen)
+		switch {
+		case errors.Is(msg.err, context.DeadlineExceeded):
+			// The unary RPC may have committed before its response was lost. Keep
+			// the opaque correlation, but stop this same-session control loop: an
+			// automatic retry could duplicate an overloaded connect operation.
+			m.enrollment.presentationDelivered = false
+			m.enrollment.err = workspaceEnrollmentTimeoutNotice
+			m.workspaceEnrollmentNotice = workspaceEnrollmentTimeoutNotice
+			return m, nil
+		case errors.Is(msg.err, context.Canceled):
+			// Parent/session replacement cancellation is expected teardown, not a
+			// deadline outcome. Leave it silent and prevent a queued poll re-arm.
+			m.enrollment.presentationDelivered = false
+			return m, nil
+		default:
+			m.enrollment.err = oneLine(sanitizeTerminal(msg.err.Error()))
+			m.workspaceEnrollmentNotice = m.enrollment.err
+			if msg.action == "check" && m.enrollment.Status == client.WorkspaceEnrollmentPending && m.enrollment.presentationDelivered {
+				return m, workspaceEnrollmentPollTickCmd(m.sessionID, m.enrollment.ID, m.enrollment.controlGen)
+			}
+			return m, nil
 		}
-		return m, nil
 	}
 	// Presentation data is ephemeral: open it but never retain, render, or log it.
 	presentationURL := msg.result.PresentationURL
