@@ -1,5 +1,11 @@
 # Mecatui logical conversation anchors — acceptance plan
 
+**Contract:** human-reviewed/v2
+**Work classification:** Architectural — ADR 0301 establishes durable client-rendering, selection, and performance invariants.
+**Decision record:** [ADR 0301](../adr/0301-logical-conversation-anchors.md)
+**Delivery:** Combined
+**Expected tasks:** 1
+**Combined rationale:** The UI-local rendering refactor has one cohesive interface and behavior contract; separate plan review would not provide a useful integration boundary.
 **Phase:** mecatui conversation-view correctness refactor
 **Status:** landed, 2026-09-06. Derived from the accepted ADR after operator decisions.
 **ADR:** [ADR-0301](../adr/0301-logical-conversation-anchors.md) — UI-local logical anchors, provenance, selection, and performance constraints.
@@ -7,9 +13,22 @@
 
 The smallest set of work that keeps a reader and a live selection attached to
 logical conversation content rather than an unstable rendered row while the UI
-streams, reflows, or changes card detail state. It stays entirely in
-`cmd/mecatui/ui`; it neither widens protocol state nor changes transcript
-persistence.
+streams, reflows, or changes card detail state. It stays in the mecatui client layer;
+it neither widens protocol state nor changes transcript persistence.
+
+## Human decisions
+
+None — ADR 0301 and Combined delivery are already accepted; no further human judgment remains.
+
+## Interface contract
+
+- **gRPC / protobuf:** None — UI-local rendering state does not cross the client boundary.
+- **Exported Go APIs / interfaces:** None — no exported UI or engine API changes.
+- **Tool schemas:** None — no agent tools change.
+- **CLI / config:** None — no flags, environment variables, or configuration keys change.
+- **Events / persistence:** None — anchors, frames, and selections remain process-local and reset during transcript reconstruction.
+- **Security / authority:** None — the UI-only rendering change does not alter trust, permissions, secrets, or ownership boundaries.
+- **Compatibility / migration:** None — existing mecatui rendering and session protocols remain compatible.
 
 ## Why these scope cuts
 
@@ -118,7 +137,8 @@ or tightening the performance gate.
 
 1. `task lint` and `task test` pass.
 2. `task docs` passes after the ADR and plan changes.
-3. `task ac-trace-strict` passes after this plan is landed.
+3. `task ac-trace-strict` is waived for this delivery because upstream #1318 has
+   an unrelated `proposed`-status incompatibility.
 4. The named tests are green, pin the ADR-0301 behavior, and are grep-locatable.
 5. `task perf:scenarios` reports the existing scrollback metrics for comparison
    with the recorded 5% allocation/bytes review target; the deterministic

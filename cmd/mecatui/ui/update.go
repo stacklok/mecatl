@@ -3834,7 +3834,6 @@ func (m Model) onMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 	// next View() renders the new position rather than the stale pre-wheel output.
 	m.rend.invalidateVPView()
 	m.conversationView.observe(m.vp)
-	m.traceSelection("viewport.mouse_wheel")
 	return m, cmd
 }
 
@@ -3912,7 +3911,6 @@ func (m Model) onModalMousePress(mo tea.Mouse) (tea.Model, tea.Cmd, bool) {
 // convenience over the copy-on-release default). A press outside the conversation
 // region (header/input/footer) or while an overlay owns the body starts nothing.
 func (m Model) onMousePress(mo tea.Mouse) (tea.Model, tea.Cmd) {
-	m.traceSelection("viewport.mouse_press")
 	if m.deps.Debug || m.deps.DebugMouse {
 		m.mouseDebug = m.mouseDebugLine(mo)
 	}
@@ -3977,16 +3975,13 @@ func (m Model) onMousePress(mo tea.Mouse) (tea.Model, tea.Cmd) {
 		default: // 1 (and a wrapped 4th press): today's zero-width anchor, no copy.
 			m.sel = selection{active: true, anchorL: line, anchorC: col, headL: line, headC: col}
 			snapshotSelection(&m)
-			m.traceSelection("selection.mouse_down")
 			return m, disarm
 		}
 
-		m.traceSelection("selection.mouse_down")
 		// Word/line select copies immediately (copy-on-select), but only when the
 		// gesture produced a non-empty span — a double-click past end-of-line, or a
 		// triple-click on a blank line, yields an empty selection and copies nothing.
 		if m.sel.empty() {
-			m.traceSelection("selection.mouse_down")
 			return m, disarm
 		}
 		return m.clickCopy(disarm)
@@ -4230,7 +4225,6 @@ func (m *Model) extendHeadToEdge(dir autoScrollDir, x int) {
 // autoscroll only makes sense while the button is HELD; on release the drag is over,
 // so we just snap the head to wherever the pointer last was and finish.
 func (m Model) onMouseRelease(mo tea.Mouse) (tea.Model, tea.Cmd) {
-	m.traceSelection("selection.mouse_release")
 	if (&m).promptMouseRelease(mo) {
 		return m, nil
 	}
@@ -4269,23 +4263,6 @@ func (m Model) copySelection() (tea.Model, tea.Cmd) {
 		return m.copyPayload("")
 	}
 	return m.copyPayload(m.sel.copied)
-}
-
-// traceSelection emits one content-free structural state snapshot when the opt-in
-// composition callback is installed.
-func (m Model) traceSelection(event string) {
-	if m.deps.SelectionTrace == nil {
-		return
-	}
-	m.deps.SelectionTrace(SelectionTraceRecord{
-		Event: event, ViewDirty: m.viewDirty, SelectionActive: m.sel.active,
-		AnchorLine: m.sel.anchorL, AnchorColumn: m.sel.anchorC,
-		HeadLine: m.sel.headL, HeadColumn: m.sel.headC,
-		Follow: m.conversationView.mode == followTail, YOffset: m.vp.YOffset(), AtBottom: m.vp.AtBottom(),
-		ViewportBytes:      len(m.vp.GetContent()),
-		FrameLines:         len(m.conversationView.frame.lines),
-		SelectionBaseBytes: len(m.selBase),
-	})
 }
 
 // snapshotSelection records the selection's identity anchor and RE-SPLICES the
@@ -4329,8 +4306,6 @@ func snapshotSelection(m *Model) {
 		m.sel.copied = m.sel.snapshot
 	}
 	m.conversationView.replaceProjection(&m.vp, styleSelection(base, m.sel, m.deps.Theme.Style("selection")))
-	m.traceSelection("viewport.projection_replace")
-	m.traceSelection("selection.snapshot")
 }
 
 // clearSelection drops any active text selection (including a pending edge-
@@ -4403,7 +4378,6 @@ func (m Model) onScrollKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// next View() renders the new position rather than the stale pre-scroll output.
 	m.rend.invalidateVPView()
 	m.conversationView.observe(m.vp)
-	m.traceSelection("viewport.keyboard_scroll")
 	return m, cmd
 }
 
@@ -4451,7 +4425,6 @@ func (m *Model) refreshView() {
 	// back to the byte-identical string path below.
 	if !m.sel.active && !m.expandTools {
 		m.conversationView.replace(&m.vp, frame)
-		m.traceSelection("viewport.content_replace")
 		return
 	}
 	content := strings.Join(frame.lines, "\n")
@@ -4484,7 +4457,6 @@ func (m *Model) refreshView() {
 		content = styleSelection(content, m.sel, m.deps.Theme.Style("selection"))
 	}
 	m.conversationView.replaceContent(&m.vp, content, frame)
-	m.traceSelection("viewport.content_replace")
 }
 
 // drainQueue MERGES staged follow-ups into ONE prompt only after a healthy

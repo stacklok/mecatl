@@ -25,27 +25,6 @@ import (
 
 const unknownLabel = "unknown"
 
-// SelectionTrace receives opt-in, content-free selection and viewport diagnostics.
-// It is injected by the composition root so ui neither owns a log sink nor performs
-// I/O on its update goroutine when tracing is disabled.
-type SelectionTrace func(SelectionTraceRecord)
-
-// SelectionTraceRecord describes a selection/viewport transition without retaining
-// conversation text or content-derived fingerprints.
-type SelectionTraceRecord struct {
-	Event                    string
-	ViewDirty                bool
-	SelectionActive          bool
-	AnchorLine, AnchorColumn int
-	HeadLine, HeadColumn     int
-	Follow                   bool
-	YOffset                  int
-	AtBottom                 bool
-	ViewportBytes            int
-	FrameLines               int
-	SelectionBaseBytes       int
-}
-
 // SessionCreator creates a server-side session and returns its id together with
 // the server's advertised capabilities. *client.Client satisfies it (via the
 // sessionAdapter); tests supply a fake. Keeping it an interface lets the ui be
@@ -240,9 +219,7 @@ type Deps struct {
 	// theme; a dark or absent response keeps Theme as given. Explicit theme
 	// selection always wins — this field is simply never set true then.
 	ThemeAutoDetect bool
-	// SelectionTrace receives opt-in content-free viewport diagnostics. nil is the
-	// disabled default and keeps the update/render path allocation-free.
-	SelectionTrace SelectionTrace
+
 	// StatusSource is composed outside ui. The UI only submits display facts and
 	// consumes semantic snapshots through one Bubble Tea listener.
 	StatusSource statusline.Source
