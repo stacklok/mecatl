@@ -23,6 +23,9 @@ func (m Model) openMCP(v mcpView) (tea.Model, tea.Cmd) {
 	}
 	m.prompt.Blur() // modal owns the keyboard while open
 	state := &mcpState{view: v, loading: true, deps: (&m).surfaceDeps(), mcp: m.deps.MCP, sessionID: m.sessionID}
+	if v == mcpPanel {
+		state.setup = m.brokerMCPSetupState()
+	}
 	if reader, ok := m.deps.MCP.(client.MCPConnectorReader); ok {
 		state.broker = reader
 		state.brokerMode = m.caps.MCPConnectorStatus
@@ -89,6 +92,7 @@ type mcpState struct {
 	brokerGeneration uint64
 	inventory        client.MCPConnectorInventory
 	brokerMode       bool
+	setup            brokerMCPSetupState
 
 	// Panel live-refresh indicator. refreshing is set while a manual re-probe is
 	// in flight (distinct from the initial loading so already-shown sources stay
@@ -114,6 +118,23 @@ type mcpState struct {
 	deps surfaceDeps // the shared ambient base (incl. ctx), set once at Open
 	mcp  client.MCP  // the surface-specific RPC client, set once at Open
 
+}
+
+// brokerMCPSetupState is copied from the active session's existing enrollment
+// controller state when the broker inventory opens. Catalogue state is never
+// used to infer whether controls are available.
+type brokerMCPSetupState struct {
+	eligible bool
+	pending  bool
+	busy     bool
+}
+
+func (m Model) brokerMCPSetupState() brokerMCPSetupState {
+	return brokerMCPSetupState{
+		eligible: m.caps.WorkspaceEnrollment && m.deps.WorkspaceEnrollment != nil && m.sessionID != "",
+		pending:  m.enrollment.ID != "" && m.enrollment.Status == client.WorkspaceEnrollmentPending,
+		busy:     m.enrollment.busy,
+	}
 }
 
 // argField is one required-argument input in the prompt-args sub-state.
@@ -172,6 +193,10 @@ func (s *mcpState) handlePanelKey(msg tea.KeyPressMsg) (cmd tea.Cmd, handled boo
 		return nil, true, true
 	case key.Matches(msg, s.deps.keys.Refresh):
 		return s.refreshPanel(), true, false
+	case msg.String() == "c" && s.brokerMode && s.setup.eligible && !s.setup.busy:
+		return func() tea.Msg { return mcpWorkspaceEnrollmentActionMsg{action: connectAction} }, true, false
+	case msg.String() == "x" && s.brokerMode && s.setup.pending && !s.setup.busy:
+		return func() tea.Msg { return mcpWorkspaceEnrollmentActionMsg{action: "cancel"} }, true, false
 	}
 	return nil, true, false
 }
@@ -249,6 +274,10 @@ func (s *mcpState) handleResourceKey(msg tea.KeyPressMsg) (cmd tea.Cmd, handled 
 // prompt input after the surface closes (the preview lives on the surface, so it
 // is snapshotted into the marker at key time).
 type mcpInsertResourceMsg struct{ preview string }
+
+// mcpWorkspaceEnrollmentActionMsg asks the Model to use its existing
+// whole-bundle enrollment controls from the broker inventory.
+type mcpWorkspaceEnrollmentActionMsg struct{ action string }
 
 // handlePromptListKey handles the prompt list: navigate, then enter selects. If
 // the selected prompt has required args, it transitions to arg entry; otherwise
@@ -449,6 +478,14 @@ func (s *mcpState) HandleMsg(msg tea.Msg) (cmd tea.Cmd, handled bool, closed boo
 		// handled=false falls through to the Model's updateMCPMsg insertion arm;
 		// closed=true records the surface is done with it.
 		return nil, false, true
+	case workspaceEnrollmentMsg:
+		if s.brokerMode && msg.sessionID == s.sessionID {
+			s.setup.pending = msg.err == nil && msg.result.ID != "" && msg.result.Status == client.WorkspaceEnrollmentPending
+			s.setup.busy = false
+		}
+		return nil, false, false
+	case mcpWorkspaceEnrollmentActionMsg:
+		return nil, false, false
 	case client.MCPErrMsg:
 		// A failed ToolHive-groups fetch is best-effort: degrade quietly so the
 		// inventory panel still renders. The shared error seam is reserved for the
@@ -482,6 +519,22 @@ func (m Model) updateMCPMsg(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 	case mcpInsertResourceMsg:
 		mm, cmd := m.insertIntoInput(msg.preview, "loaded resource")
 		return mm, cmd, true
+	case mcpWorkspaceEnrollmentActionMsg:
+		var mm tea.Model
+		var cmd tea.Cmd
+		switch msg.action {
+		case connectAction:
+			mm, cmd = m.runToolsConnect()
+		case "cancel":
+			mm, cmd = m.runToolsCancel()
+		default:
+			return m, nil, true
+		}
+		model := mm.(Model)
+		if state, ok := model.modal.(*mcpState); ok {
+			state.setup = model.brokerMCPSetupState()
+		}
+		return model, cmd, true
 	default:
 		return m, nil, false
 	}
@@ -637,9 +690,25 @@ func renderBrokerMCPPanel(th theme.Theme, st mcpState, hk helpKeys, width int) s
 			b.WriteString(th.Style("muted").Render("Connector list truncated.") + "\n")
 		}
 	}
-	b.WriteString("\n" + th.Style("muted").Render("Catalogue status · not a live connection check") + "\n\n")
-	b.WriteString(th.Style("muted").Render(hk.refresh + " refresh local state · " + hk.closeOnly + " close"))
+	b.WriteString("\n" + th.Style("muted").Render("Catalogue status · not a live connection check") + "\n")
+	if setup := brokerMCPSetupLine(st.setup); setup != "" {
+		b.WriteString(th.Style("muted").Render(setup) + "\n")
+	}
+	b.WriteString("\n" + th.Style("muted").Render(hk.refresh+" refresh local state · "+hk.closeOnly+" close"))
 	return b.String()
+}
+
+func brokerMCPSetupLine(setup brokerMCPSetupState) string {
+	switch {
+	case !setup.eligible:
+		return ""
+	case setup.busy:
+		return "Setting up tools…"
+	case setup.pending:
+		return "c Continue in browser · x cancel setup"
+	default:
+		return "c connect tools"
+	}
 }
 
 func brokerEnrollmentLabel(state string) string {

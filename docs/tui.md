@@ -767,7 +767,8 @@ and makes no RPC.
 These commands are *always* available because they are client-owned commands (with
 `/clear` using the dedicated `ClearSession` RPC); `/compact` (force one server-side
 history compaction pass), `/mcp` (browse the direct MCP inventory or, on a
-broker-only server, the owned session's local broker catalogue), `/agents` (browse the agent-definition inventory — the
+broker-only server, the owned session's local broker catalogue and its available
+whole-bundle setup actions), `/agents` (browse the agent-definition inventory — the
 resolved registry the `Subagent` tool routes delegations to), `/team` (the unified
 agents overlay pinned to the Teams tab — same surface as `f6`, which picks a
 context-sensitive default tab), `/skills` (browse the skills inventory),

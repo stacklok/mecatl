@@ -59,6 +59,61 @@ func TestMCPBrokerPanelGolden(t *testing.T) {
 	compareGolden(t, "mcp_broker_panel.golden", stripANSI([]byte(renderBrokerMCPPanel(aztec(), st, helpKeys{}, 100))))
 }
 
+func TestBrokerMCPStatus_Scenario3_UnifiedSetupActions(t *testing.T) {
+	st := mcpState{view: mcpPanel, brokerMode: true, setup: brokerMCPSetupState{eligible: true}}
+	view := renderBrokerMCPPanel(aztec(), st, helpKeys{}, 100)
+	if !strings.Contains(view, "c connect tools") {
+		t.Fatalf("eligible inventory omitted setup action:\n%s", view)
+	}
+	cmd, handled, closed := st.HandleKey(tea.KeyPressMsg{Code: 'c', Text: "c"})
+	if !handled || closed || cmd == nil {
+		t.Fatalf("connect action = handled:%t closed:%t cmd:%t", handled, closed, cmd != nil)
+	}
+	if msg := cmd(); msg != (mcpWorkspaceEnrollmentActionMsg{action: connectAction}) {
+		t.Fatalf("connect action message = %#v", msg)
+	}
+
+	st.setup.pending = true
+	view = renderBrokerMCPPanel(aztec(), st, helpKeys{}, 100)
+	for _, want := range []string{"Continue in browser", "x cancel setup"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("pending inventory omitted %q:\n%s", want, view)
+		}
+	}
+	cmd, handled, closed = st.HandleKey(tea.KeyPressMsg{Code: 'x', Text: "x"})
+	if !handled || closed || cmd == nil {
+		t.Fatalf("cancel action = handled:%t closed:%t cmd:%t", handled, closed, cmd != nil)
+	}
+	if msg := cmd(); msg != (mcpWorkspaceEnrollmentActionMsg{action: "cancel"}) {
+		t.Fatalf("cancel action message = %#v", msg)
+	}
+
+	st.setup = brokerMCPSetupState{}
+	st.inventory.EnrollmentState = "not_started"
+	view = renderBrokerMCPPanel(aztec(), st, helpKeys{}, 100)
+	for _, unwanted := range []string{"connect tools", "Continue in browser", "cancel setup"} {
+		if strings.Contains(view, unwanted) {
+			t.Errorf("ineligible inventory offered %q:\n%s", unwanted, view)
+		}
+	}
+
+	control := &workspaceEnrollmentControlFake{connect: client.WorkspaceEnrollment{ID: "bundle-1", Status: client.WorkspaceEnrollmentPending}}
+	m := newMCPModel(t, aztec(), &countingBrokerMCP{})
+	m.caps = client.Capabilities{MCPConnectorStatus: true, WorkspaceEnrollment: true}
+	m.deps.WorkspaceEnrollment = control
+	mm, _ := m.runMCP()
+	m = mm.(Model)
+	mm, controlCmd, handled := m.updateMCPMsg(mcpWorkspaceEnrollmentActionMsg{action: connectAction})
+	if !handled || controlCmd == nil {
+		t.Fatalf("broker connect did not route to enrollment controller: handled=%t cmd=%t", handled, controlCmd != nil)
+	}
+	m = mm.(Model)
+	m = applyAll(m, controlCmd())
+	if control.connectCalls != 1 || m.enrollment.ID != "bundle-1" {
+		t.Fatalf("broker connect did not reuse enrollment flow: calls=%d state=%+v", control.connectCalls, m.enrollment)
+	}
+}
+
 func TestBrokerMCPStatus_Scenario3_Panel(t *testing.T) {
 	st := mcpState{brokerMode: true, inventory: client.MCPConnectorInventory{
 		Availability: "available", EnrollmentState: "not_started", Truncated: true,

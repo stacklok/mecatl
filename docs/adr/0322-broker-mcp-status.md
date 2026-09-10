@@ -64,6 +64,17 @@ status labels, and one concise “Catalogue status · not a live connection chec
 line; detailed publication and enrollment semantics remain in this ADR and the
 operator guide rather than as always-visible panel caveats.
 
+## Implementation extension
+
+The directing human explicitly extended the approved local scope without a separate
+amendment PR: broker `/mcp` and Ctrl+O are the primary inventory-and-setup surface.
+They may invoke only the existing caller-owned whole-bundle enrollment controller.
+The panel offers Connect tools from actual local session/control eligibility, and a
+pending local bundle presents Continue in browser and Cancel setup. `/tools-connect`
+and `/tools-cancel` remain equivalent compatibility shortcuts. Opening and refresh
+remain read-only inspection, no per-connector action is introduced, and direct MCP
+behavior is unchanged.
+
 ## Consequences
 
 Broker-only Kubernetes users can inspect their connector catalogue without changing

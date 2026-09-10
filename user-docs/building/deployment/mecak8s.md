@@ -431,8 +431,12 @@ and `tokenEndpoint` values instead of `issuer`.
 
 On a broker-only `mecak8s` connection, `/mcp` shows the owned session's local
 broker catalogue: enrollment state, connector names, catalogue state, and tool
-counts. Refresh reads only that local state; it does not probe an upstream,
-refresh credentials, or enroll connectors. Declared static tools and lazily
+counts. Opening and refresh read only that local state; they do not probe an upstream,
+refresh credentials, or enroll connectors. When the existing whole-bundle enrollment
+control is available for the active session, `/mcp` (or Ctrl+O) offers Connect tools;
+a pending setup shows Continue in browser and Cancel setup. Those actions reuse the
+existing bundle flow, and `/tools-connect` and `/tools-cancel` remain equivalent
+shortcuts. Declared static tools and lazily
 discovered enrolled tools are distinct states. The display is not a health check
 or proof that the server installed or persisted the catalogue, or that a prompt
 is ready. A restarted pod can report broker state unavailable; do not switch to
