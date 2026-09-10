@@ -649,9 +649,12 @@ jobs:
   publish-cli:
     name: Build, publish, sign, attest CLI archives + Homebrew formula
     runs-on: ubuntu-24.04
-    # 30, not 20: a fetch-depth-0 checkout of a large history, eight
-    # cross-compiles, four syft scans and five Fulcio/Rekor round-trips.
-    timeout-minutes: 30
+    # 60, measured rather than guessed. On the v0.0.30 run the disk reclaim took
+    # ~2 min and eight cross-compiles were still going at 22 min (at --parallelism
+    # 2 on a 4-CPU runner); at the default parallelism, builds plus four syft
+    # scans, five Fulcio/Rekor round-trips and ~400 MB of asset upload need more
+    # than the 30 min that timed that attempt out.
+    timeout-minutes: 60
     permissions:
       contents: write # create the GitHub Release + upload assets (read covers the changelog compare API)
       id-token: write # OIDC: cosign keyless sign-blob AND provenance
@@ -687,6 +690,10 @@ jobs:
       # SHA-pin for a handful of rm calls. `|| true` on each: the exact set of
       # preinstalled directories varies by runner image, and a missing path must
       # not fail the release.
+      #
+      # MEASURED on the v0.0.30 run: the runner starts with just 14 GB free (the
+      # floor GitHub actually guarantees), and this reclaims 28 GB, ending at
+      # 42 GB free against a ~10 GB need. Takes ~2 minutes.
       #
       # The before/after report is deliberate — if this ever runs out of space
       # again, the log says how much headroom there actually was.
@@ -778,11 +785,12 @@ jobs:
       - uses: goreleaser/goreleaser-action@5daf1e915a5f0af01ddbcd89a43b8061ff4f1a89 # v7.2.2
         with:
           version: "v2.16.0"
-          # --parallelism 2 bounds how many compiles hold a $WORK tree at once.
-          # Defence in depth alongside the disk reclaim above: the failure was a
-          # write to $WORK, so capping concurrency caps peak temporary usage.
-          # Default is the CPU count, i.e. all eight targets at once.
-          args: release --clean --parallelism 2
+          # No --parallelism cap. A cap of 2 was tried and REGRESSED the job into
+          # a 30-minute timeout: the runner has 4 CPUs, so the default is already
+          # 4, and halving it left the build on target 7 of 8 at the deadline.
+          # Peak $WORK usage was the reason to cap, and the reclaim above now
+          # provides 42 GB against a ~10 GB need, so the cap bought nothing.
+          args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ steps.homebrew-tap-token.outputs.token }}
