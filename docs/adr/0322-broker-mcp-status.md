@@ -50,15 +50,19 @@ server engine rebuild and aggregate Save. Either later step may fail without era
 broker publication; the inventory reports that publication and never repairs the
 session or implies those steps succeeded. Similarly, expired/terminal broker state
 can coexist with a persisted pending enrollment that still gates prompts. Inspection
-must not settle that gate. The panel explicitly says session installation, persistence
-and prompt readiness are not verified. Offline tests inject post-discovery build/Save
-failures and expired/terminal attempts with still-pending aggregates.
+must not settle that gate. The panel uses concise friendly labels rather than
+claiming session installation, persistence, or prompt readiness. Offline tests
+inject post-discovery build/Save failures and expired/terminal attempts with
+still-pending aggregates.
 
 This ADR records the approved implementation boundary. The exact fields, status
 vocabulary, disclosure policy and bounds are in the
 [acceptance plan](../acceptance/broker-mcp-status.md); broker and direct MCP are
 mutually exclusive supported compositions, so the broker panel never exposes
-resources, prompts, or groups.
+resources, prompts, or groups. The presentation uses `MCP inventory`, friendly
+status labels, and one concise “Catalogue status · not a live connection check”
+line; detailed publication and enrollment semantics remain in this ADR and the
+operator guide rather than as always-visible panel caveats.
 
 ## Consequences
 
@@ -66,8 +70,9 @@ Broker-only Kubernetes users can inspect their connector catalogue without chang
 deployment modes. Existing clients retain truthful resource/prompt capabilities.
 The new operation requires end-to-end ownership, affinity, listener gating and
 redaction tests, plus a pure broker snapshot interface separate from enrollment
-controls. The UI must explain that no active enrollment is not proof that lazy
-OAuth is unavailable, and that catalogue completion is not a health check.
+controls. The UI maps status to friendly labels and presents only that the
+catalogue status is not a live connection check; the detailed distinction between
+lazy OAuth and enrolment remains in the operator documentation.
 
 Process-local inspection does not improve broker restart recovery or replica routing.
 A restarted pod cannot claim a session is connected from persisted tool names, and

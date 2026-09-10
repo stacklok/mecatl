@@ -608,46 +608,66 @@ func renderMCPPanel(th theme.Theme, st mcpState, caps client.Capabilities, hk he
 	return b.String()
 }
 
-// renderBrokerMCPPanel renders only broker-local publication facts. It never
-// borrows direct-MCP wording because publication does not prove health,
-// authorization, installation, persistence, or prompt readiness.
+// renderBrokerMCPPanel renders the broker inventory without projecting machine
+// status tokens or making connection, authorization, or readiness claims.
 func renderBrokerMCPPanel(th theme.Theme, st mcpState, hk helpKeys, width int) string {
 	var b strings.Builder
-	b.WriteString(th.Style("askTitle").Render("Broker catalogue") + "\n")
+	b.WriteString(th.Style("askTitle").Render("MCP inventory") + "\n")
 	if line := mcpStatusLine(th, st); line != "" {
 		b.WriteString(line + "\n")
 	}
 	if !st.loading && st.inventory.Availability != "available" {
-		state := "unknown"
+		state := "Status unavailable"
 		if st.inventory.Availability == unavailableText {
-			state = "unavailable"
+			state = "Broker state unavailable"
 		}
-		b.WriteString(th.Style("muted").Render("Broker state "+state) + "\n")
+		b.WriteString(th.Style("muted").Render(state) + "\n")
 	} else if !st.loading {
-		state := st.inventory.EnrollmentState
-		if state != "not_required" && state != "not_started" && state != "pending" && state != "completed" {
-			state = "unknown"
-		}
-		b.WriteString(renderMCPInventoryRow(th, "toolArgs", "Enrollment: "+state, width) + "\n")
+		b.WriteString(renderMCPInventoryRow(th, "toolArgs", "Enrollment: "+brokerEnrollmentLabel(st.inventory.EnrollmentState), width) + "\n")
 		for _, row := range st.inventory.Connectors {
-			catalogue := row.CatalogueState
-			if catalogue != "hidden" && catalogue != "declared" && catalogue != "discovered" {
-				catalogue = "unknown"
-			}
+			catalogue := brokerCatalogueLabel(row.CatalogueState)
 			count := fmt.Sprintf("%d", row.ToolCount)
-			if catalogue == "hidden" || catalogue == "unknown" {
+			if row.CatalogueState != "declared" && row.CatalogueState != "discovered" {
 				count = "—"
 			}
-			b.WriteString(renderMCPInventoryRow(th, "toolName", fmt.Sprintf("%s  %s  %s tools", sanitizeTerminal(row.Name), catalogue, count), width) + "\n")
+			b.WriteString(renderMCPInventoryRow(th, "toolName", fmt.Sprintf("%s  %s", sanitizeTerminal(row.Name), catalogue), width) + "\n")
+			b.WriteString(renderMCPInventoryRow(th, "toolArgs", "  "+count+" tools", width) + "\n")
 		}
 		if st.inventory.Truncated {
 			b.WriteString(th.Style("muted").Render("Connector list truncated.") + "\n")
 		}
 	}
-	b.WriteString("\n" + th.Style("muted").Render("Broker publication only; session installation, persistence and prompt readiness are not verified.") + "\n")
-	b.WriteString(th.Style("muted").Render("Enrollment describes catalogue discovery, not current authorization. Live health is not monitored.") + "\n\n")
+	b.WriteString("\n" + th.Style("muted").Render("Catalogue status · not a live connection check") + "\n\n")
 	b.WriteString(th.Style("muted").Render(hk.refresh + " refresh local state · " + hk.closeOnly + " close"))
 	return b.String()
+}
+
+func brokerEnrollmentLabel(state string) string {
+	switch state {
+	case "not_required":
+		return "No setup required"
+	case "not_started":
+		return "No active setup"
+	case "pending":
+		return "Setup in progress"
+	case "completed":
+		return "Catalogue ready"
+	default:
+		return "Status unavailable"
+	}
+}
+
+func brokerCatalogueLabel(state string) string {
+	switch state {
+	case "hidden":
+		return "Awaiting discovery"
+	case "declared":
+		return "Tools declared"
+	case "discovered":
+		return "Tools discovered"
+	default:
+		return "Status unavailable"
+	}
 }
 
 // mcpPanelFooter is the panel's footer hint. Before any manual refresh it carries

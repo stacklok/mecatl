@@ -65,9 +65,38 @@ func TestBrokerMCPStatus_Scenario3_Panel(t *testing.T) {
 		Connectors: []client.MCPConnectorStatus{{Name: "hidden", CatalogueState: "hidden"}, {Name: "future", CatalogueState: "future"}},
 	}}
 	view := renderBrokerMCPPanel(aztec(), st, helpKeys{}, 100)
-	for _, want := range []string{"Broker catalogue", "Enrollment: not_started", "— tools", "Connector list truncated.", "Broker publication only; session installation, persistence and prompt readiness are not verified.", "Live health is not monitored."} {
+	for _, want := range []string{"MCP inventory", "Enrollment: No active setup", "hidden  Awaiting discovery", "  — tools", "future  Status unavailable", "Connector list truncated.", "Catalogue status · not a live connection check"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("panel missing %q:\n%s", want, view)
+		}
+	}
+	for _, unwanted := range []string{"not_started", "hidden  hidden", "future  unknown", "Broker publication only", "Enrollment describes catalogue", "Live health is not monitored"} {
+		if strings.Contains(view, unwanted) {
+			t.Errorf("panel exposes machine status or verbose caveat %q:\n%s", unwanted, view)
+		}
+	}
+}
+
+func TestBrokerMCPStatus_FriendlyStatusLabels(t *testing.T) {
+	for state, want := range map[string]string{
+		"not_required": "No setup required",
+		"not_started":  "No active setup",
+		"pending":      "Setup in progress",
+		"completed":    "Catalogue ready",
+		"future":       "Status unavailable",
+	} {
+		if got := brokerEnrollmentLabel(state); got != want {
+			t.Errorf("brokerEnrollmentLabel(%q) = %q, want %q", state, got, want)
+		}
+	}
+	for state, want := range map[string]string{
+		"hidden":     "Awaiting discovery",
+		"declared":   "Tools declared",
+		"discovered": "Tools discovered",
+		"future":     "Status unavailable",
+	} {
+		if got := brokerCatalogueLabel(state); got != want {
+			t.Errorf("brokerCatalogueLabel(%q) = %q, want %q", state, got, want)
 		}
 	}
 }
@@ -100,7 +129,7 @@ func TestBrokerMCPStatus_Scenario3_StaleResponses(t *testing.T) {
 func TestBrokerMCPStatus_Scenario3_UnknownAvailability(t *testing.T) {
 	st := mcpState{brokerMode: true, inventory: client.MCPConnectorInventory{Availability: "future"}}
 	view := renderBrokerMCPPanel(aztec(), st, helpKeys{}, 100)
-	if !strings.Contains(view, "Broker state unknown") {
+	if !strings.Contains(view, "Status unavailable") {
 		t.Fatalf("future availability looked available:\n%s", view)
 	}
 }

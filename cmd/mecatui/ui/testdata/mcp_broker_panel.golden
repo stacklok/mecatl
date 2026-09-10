@@ -1,10 +1,11 @@
-Broker catalogue
-Enrollment: not_started
-hidden  hidden  — tools
-github  discovered  2 tools
+MCP inventory
+Enrollment: No active setup
+hidden  Awaiting discovery
+  — tools
+github  Tools discovered
+  2 tools
 Connector list truncated.
 
-Broker publication only; session installation, persistence and prompt readiness are not verified.
-Enrollment describes catalogue discovery, not current authorization. Live health is not monitored.
+Catalogue status · not a live connection check
 
  refresh local state ·  close
