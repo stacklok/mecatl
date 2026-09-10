@@ -125,7 +125,7 @@ func BuildProductMetrics(
 
 	go productmetrics.RunHeartbeat(heartbeatCtx, recorder, heartbeatInterval, snap)
 
-	armFirstValueTracking(ctx, recorder, diag)
+	armFirstValueTracking(ctx, recorder, installIDOverride, diag)
 
 	return ProductMetricsHandles{
 		Sink:             recorder,
@@ -135,7 +135,26 @@ func BuildProductMetrics(
 	}, nil
 }
 
-// armFirstValueTracking enables mecatl.product.time_to_first_value on recorder.
+// armFirstValueTracking enables mecatl.product.time_to_first_value on
+// recorder — EXCEPT when installIDOverride is non-empty (mecak8s), where it
+// deliberately does nothing.
+//
+// mecak8s runs storage-free with no PVC (ADR 0048) — the SAME reason its
+// install-id comes from a Helm ConfigMap rather than a local file (see
+// provider.go's doc comment). The once-ever contract of time_to_first_value
+// depends on the SAME kind of durable local marker
+// (LoadOrCreateFirstValueMarkerDefault, under $XDG_STATE_HOME) the install-id
+// mechanism does, and mecak8s's Helm chart provisions no equivalent for it.
+// Arming anyway would make every pod restart/replica rearm with
+// alreadyRecorded=false, so a continuously-rolling deployment would emit a
+// steady stream of "time to first value" samples that are really
+// "time from this pod's start to its first qualifying run" — indistinguishable
+// in the backend, under one stable mecatl.install.id, from a stream of
+// brand-new installs onboarding continuously. Silently shipping that under a
+// "once per install, ever" label would be worse than not shipping the metric
+// at all for this one binary; a future durable marker (the ConfigMap, or
+// Redis, since mecak8s already depends on it — ADR 0048) can lift this
+// restriction later.
 //
 // firstSeenAt is time.Now(): this process's start, not the install-id file's
 // mtime. The approximation is deliberate and sound for the signal's purpose (a
@@ -150,7 +169,10 @@ func BuildProductMetrics(
 // anything: time_to_first_value is a nice-to-have signal, not load-bearing
 // enough to fail the whole product-metrics pipeline over. The worst case is one
 // duplicate sample from a later process.
-func armFirstValueTracking(ctx context.Context, recorder *productmetrics.Recorder, diag port.Diagnostics) {
+func armFirstValueTracking(ctx context.Context, recorder *productmetrics.Recorder, installIDOverride string, diag port.Diagnostics) {
+	if installIDOverride != "" {
+		return
+	}
 	already, err := productmetrics.FirstValueRecordedDefault()
 	if err != nil && diag != nil {
 		diag.Log(ctx, port.LevelDebug,

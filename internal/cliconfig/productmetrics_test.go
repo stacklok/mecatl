@@ -5,7 +5,11 @@ import (
 	"strings"
 	"testing"
 
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/productmetrics"
 )
 
@@ -132,5 +136,49 @@ func TestBuildProductMetricsInstallIDOverrideNeverReportsFirstRun(t *testing.T) 
 				t.Error("an externally provisioned install id must never report FirstRun")
 			}
 		})
+	}
+}
+
+// TestArmFirstValueTrackingSkipsWhenInstallIDIsOverridden pins the fix for the
+// finding in the final whole-branch review: mecak8s (which passes a non-empty
+// installIDOverride) has no durable local marker for time_to_first_value's
+// once-ever contract, the same storage-free problem (ADR 0048) install-id
+// solves via a Helm ConfigMap. Arming anyway would make every pod
+// restart/replica rearm with alreadyRecorded=false, turning "once per
+// install, ever" into "once per pod start" — a silent correctness bug in the
+// metric's own contract. armFirstValueTracking must therefore no-op entirely
+// when installIDOverride is non-empty: EnableFirstValueTracking must never be
+// called, so a subsequent qualifying EvResult records nothing.
+func TestArmFirstValueTrackingSkipsWhenInstallIDIsOverridden(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	recorder, err := productmetrics.NewRecorder(mp)
+	if err != nil {
+		t.Fatalf("NewRecorder: %v", err)
+	}
+
+	armFirstValueTracking(context.Background(), recorder, "11111111-2222-3333-[REDACTED]", port.NopDiagnostics{})
+
+	// Drive a qualifying run: a successful tool call followed by a clean-ended
+	// result. If tracking were (incorrectly) armed, this would record a
+	// time_to_first_value sample.
+	recorder.ToolCallForRun("run-1", session.SessionID("s"), session.ToolCall{Name: "Read"}, session.ToolResult{}, 0, 0)
+	recorder.Emit(context.Background(), session.Event{
+		Type: session.EvResult, RunID: "run-1",
+		Result: &session.ResultPayload{Stop: session.StopEndTurn},
+	})
+
+	var rm metricdata.ResourceMetrics
+	if err := reader.Collect(context.Background(), &rm); err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if m.Name == "mecatl.product.time_to_first_value" {
+				if hist, ok := m.Data.(metricdata.Histogram[float64]); ok && len(hist.DataPoints) > 0 {
+					t.Fatalf("time_to_first_value recorded %d data point(s) despite an install-id override — armFirstValueTracking must skip arming entirely for mecak8s", len(hist.DataPoints))
+				}
+			}
+		}
 	}
 }

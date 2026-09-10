@@ -149,7 +149,10 @@ func TestRecorderPerRunTrackerIsRaceFreeUnderConcurrentUse(t *testing.T) {
 	wg.Wait()
 
 	for _, runID := range live {
-		st := r.perRun.finish(runID)
+		st, tracked := r.perRun.finish(runID)
+		if !tracked {
+			t.Errorf("%s: finish reported untracked, want tracked (tool calls were made)", runID)
+		}
 		if st.toolCallCount != 8 {
 			t.Errorf("%s toolCallCount = %d, want 8", runID, st.toolCallCount)
 		}
@@ -178,14 +181,17 @@ func TestRecorderToolCallForRunTalliesPerRunCount(t *testing.T) {
 	// A call with no run correlation must not land on any run.
 	r.ToolCall(session.SessionID("s"), session.ToolCall{Name: "Read"}, session.ToolResult{}, 0, 0)
 
-	st := r.perRun.finish("run-1")
+	st, tracked := r.perRun.finish("run-1")
+	if !tracked {
+		t.Error("finish(\"run-1\") reported untracked, want tracked")
+	}
 	if st.toolCallCount != 3 {
 		t.Errorf("toolCallCount = %d, want 3", st.toolCallCount)
 	}
 	if !st.hadToolCall {
 		t.Error("hadToolCall = false, want true (two of the three calls succeeded)")
 	}
-	if got := r.perRun.finish(""); got != (perRunState{}) {
-		t.Errorf("finish(\"\") = %+v, want the zero state", got)
+	if got, gotTracked := r.perRun.finish(""); got != (perRunState{}) || gotTracked {
+		t.Errorf("finish(\"\") = (%+v, tracked=%v), want the zero state and tracked=false", got, gotTracked)
 	}
 }

@@ -241,20 +241,30 @@ func (t *perRunTracker) markToolCall(runID string, errored bool) {
 
 // finish drops runID's live state at EvResult and returns a COPY of what was
 // there (the zero value if the run recorded nothing — e.g. a run with no tool
-// calls and no delegation-family use). Returning a copy, not the pointer,
-// keeps every field read outside the lock race-free.
-func (t *perRunTracker) finish(runID string) perRunState {
+// calls and no delegation-family use), plus tracked reporting whether this
+// run ever had an entry in the map at all. tracked is false both for an empty
+// runID (no run correlation available — the base ToolCallRecorder.ToolCall
+// path, or a caller like RetryFailedStep's RunRequest{} that mints no RunID)
+// and for a nonempty runID this Recorder never observed an EvSessionInit or
+// tool call for (e.g. a process restart mid-run). Distinguishing "genuinely
+// tracked, made zero tool calls" from "never tracked at all" matters: without
+// it, tool_calls_per_run would record a FABRICATED 0 for an untracked run
+// that may have made many real tool calls this Recorder simply never
+// correlated to it — recordResult uses tracked to skip that histogram
+// sample entirely rather than report a number that isn't true. Returning a
+// copy, not the pointer, keeps every field read outside the lock race-free.
+func (t *perRunTracker) finish(runID string) (st perRunState, tracked bool) {
 	if runID == "" {
-		return perRunState{}
+		return perRunState{}, false
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	st, ok := t.states[runID]
+	existing, ok := t.states[runID]
 	if !ok {
-		return perRunState{}
+		return perRunState{}, false
 	}
 	delete(t.states, runID)
-	return *st
+	return *existing, true
 }
 
 // Compile-time interface checks.
@@ -346,7 +356,8 @@ func (r *Recorder) Emit(ctx context.Context, ev session.Event) {
 	case session.EvResult:
 		// finish both reads and clears the run's state, so the had_tool_call
 		// resolution and the bounded-map cleanup are one step.
-		r.recordResult(ctx, ev.Result, r.perRun.finish(ev.RunID))
+		st, tracked := r.perRun.finish(ev.RunID)
+		r.recordResult(ctx, ev.Result, st, tracked)
 	case session.EvSubagentStart:
 		if r.perRun.markFamilyUsed(ev.RunID, familySubagent) {
 			r.subagentUsed.Add(ctx, 1)
@@ -367,8 +378,11 @@ const (
 )
 
 // recordResult counts the completed run against its bounded stop reason and
-// the had_tool_call fact carried by the run's just-finished state.
-func (r *Recorder) recordResult(ctx context.Context, res *session.ResultPayload, st perRunState) {
+// the had_tool_call fact carried by the run's just-finished state. tracked
+// (from perRunTracker.finish) gates tool_calls_per_run: an untracked run
+// (empty RunID, or a RunID this Recorder never observed an EvSessionInit or
+// tool call for) must not report a fabricated 0 — see finish's doc comment.
+func (r *Recorder) recordResult(ctx context.Context, res *session.ResultPayload, st perRunState, tracked bool) {
 	stop := session.StopNone
 	if res != nil {
 		stop = res.Stop
@@ -376,7 +390,9 @@ func (r *Recorder) recordResult(ctx context.Context, res *session.ResultPayload,
 	r.runsCompleted.Add(ctx, 1, metric.WithAttributes(
 		attribute.String(attrStop, string(stop)),
 		attribute.String(attrHadToolCall, strconv.FormatBool(st.hadToolCall))))
-	r.toolCallsPerRun.Record(ctx, st.toolCallCount)
+	if tracked {
+		r.toolCallsPerRun.Record(ctx, st.toolCallCount)
+	}
 	if !st.startedAt.IsZero() {
 		r.runDuration.Record(ctx, time.Since(st.startedAt).Seconds())
 	}

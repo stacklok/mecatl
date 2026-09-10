@@ -62,7 +62,8 @@ func (d *DryRunRecorder) Emit(ctx context.Context, ev session.Event) {
 		d.diag.Log(ctx, port.LevelInfo, "product metrics (dry-run): would record sessions_started+1")
 		d.perRun.markStarted(ev.RunID)
 	case session.EvResult:
-		d.emitResult(ctx, ev.Result, d.perRun.finish(ev.RunID))
+		st, tracked := d.perRun.finish(ev.RunID)
+		d.emitResult(ctx, ev.Result, st, tracked)
 	case session.EvSubagentStart:
 		if d.perRun.markFamilyUsed(ev.RunID, familySubagent) {
 			d.diag.Log(ctx, port.LevelInfo, "product metrics (dry-run): would record subagent_used+1")
@@ -74,7 +75,7 @@ func (d *DryRunRecorder) Emit(ctx context.Context, ev session.Event) {
 	}
 }
 
-func (d *DryRunRecorder) emitResult(ctx context.Context, res *session.ResultPayload, st perRunState) {
+func (d *DryRunRecorder) emitResult(ctx context.Context, res *session.ResultPayload, st perRunState, tracked bool) {
 	stop := session.StopNone
 	if res != nil {
 		stop = res.Stop
@@ -83,7 +84,12 @@ func (d *DryRunRecorder) emitResult(ctx context.Context, res *session.ResultPayl
 	fields := []any{
 		"stop", string(stop),
 		attrHadToolCall, st.hadToolCall,
-		"tool_calls_per_run", st.toolCallCount,
+	}
+	// tool_calls_per_run mirrors Recorder.recordResult's tracked guard: an
+	// untracked run (no RunID, or a RunID this recorder never saw an
+	// EvSessionInit/tool call for) would otherwise report a fabricated 0.
+	if tracked {
+		fields = append(fields, "tool_calls_per_run", st.toolCallCount)
 	}
 	// run_duration is only meaningful when this recorder actually observed the
 	// run's EvSessionInit (mirroring Recorder.recordResult's zero-startedAt

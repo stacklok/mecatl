@@ -70,7 +70,10 @@ func TestRecorderNeverAttachesUnboundedAttributesOrSensitiveContent(t *testing.T
 		10*time.Millisecond, 20*time.Millisecond,
 	)
 	// The run-aware path, with an MCP-namespaced name whose server and remote
-	// tool halves are both operator-chosen free text.
+	// tool halves are both operator-chosen free text. EvSessionInit is driven
+	// FIRST with the SAME RunID so this run is genuinely tracked — exercising
+	// run_duration and tool_calls_per_run too, not just category/outcome.
+	r.Emit(context.Background(), session.Event{Type: session.EvSessionInit, RunID: "run-x"})
 	r.ToolCallForRun(
 		"run-x",
 		session.SessionID("sensitive-session-id-marker"),
@@ -96,8 +99,16 @@ func TestRecorderNeverAttachesUnboundedAttributesOrSensitiveContent(t *testing.T
 	for _, sm := range rm.ScopeMetrics {
 		totalMetrics += len(sm.Metrics)
 	}
-	if totalMetrics < 10 {
-		t.Fatalf("collected only %d metrics, want at least 10 (the full mecatl.product.* instrument set) — the walk below would otherwise pass vacuously", totalMetrics)
+	// wantInstrumentCount is NewRecorder's exact registered instrument count
+	// (heartbeat, feature_enabled, provider_configured, deployment_mode,
+	// sessions_started, runs_completed, tool_calls, tokens, subagent_used,
+	// team_used, run_duration, tool_calls_per_run, time_to_first_value).
+	// Asserting the EXACT count, not a floor, means a future instrument this
+	// test's driving code doesn't happen to exercise fails loudly here rather
+	// than silently passing the walk below vacuously.
+	const wantInstrumentCount = 13
+	if totalMetrics != wantInstrumentCount {
+		t.Fatalf("collected %d metrics, want exactly %d (the full mecatl.product.* instrument set) — the walk below would otherwise pass vacuously on a new, unexercised instrument", totalMetrics, wantInstrumentCount)
 	}
 
 	for _, sm := range rm.ScopeMetrics {

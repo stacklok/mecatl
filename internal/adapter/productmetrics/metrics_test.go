@@ -315,9 +315,15 @@ func TestRecorderToolCallsPerRunRecordedAtResult(t *testing.T) {
 }
 
 func TestRecorderToolCallsPerRunRecordsZeroForAToollessRun(t *testing.T) {
-	// A run that called no tool still contributes a 0 sample — otherwise the
-	// distribution silently over-reports by omitting its whole left tail.
+	// A TRACKED run (its EvSessionInit was observed) that called no tool still
+	// contributes a 0 sample — otherwise the distribution silently
+	// over-reports by omitting its whole left tail. This is distinct from an
+	// UNTRACKED run (no EvSessionInit ever observed, e.g. a retry path that
+	// mints no RunID, or a process restart mid-run): see
+	// TestRecorderToolCallsPerRunSkippedForAnUntrackedRun below — recording a
+	// 0 there would be a FABRICATED sample, not an honest one.
 	r, reader := newTestRecorder(t)
+	r.Emit(context.Background(), session.Event{Type: session.EvSessionInit, RunID: "run-1"})
 	r.Emit(context.Background(), session.Event{Type: session.EvResult, RunID: "run-1", Result: &session.ResultPayload{Stop: session.StopEndTurn}})
 
 	agg, ok := collect(t, reader)["mecatl.product.tool_calls_per_run"]
@@ -330,5 +336,26 @@ func TestRecorderToolCallsPerRunRecordsZeroForAToollessRun(t *testing.T) {
 	}
 	if len(hist.DataPoints) != 1 || hist.DataPoints[0].Count != 1 || hist.DataPoints[0].Sum != 0 {
 		t.Fatalf("expected one data point with count 1 summing to 0, got %+v", hist.DataPoints)
+	}
+}
+
+// TestRecorderToolCallsPerRunSkippedForAnUntrackedRun pins the fix for the
+// finding in the final whole-branch review: a run whose EvSessionInit this
+// Recorder never observed (e.g. RetryFailedStep's RunRequest{}, which mints
+// no RunID, or a process restart mid-run) must not report a 0 on
+// tool_calls_per_run — that 0 would be indistinguishable from a genuine
+// zero-tool-call run, silently biasing the distribution downward for a run
+// that may have made many real tool calls this Recorder simply never
+// correlated. An untracked run must record NOTHING on this instrument.
+func TestRecorderToolCallsPerRunSkippedForAnUntrackedRun(t *testing.T) {
+	r, reader := newTestRecorder(t)
+	// No EvSessionInit for "run-1" — this run is genuinely untracked, even
+	// though it carries a real, nonempty RunID.
+	r.Emit(context.Background(), session.Event{Type: session.EvResult, RunID: "run-1", Result: &session.ResultPayload{Stop: session.StopEndTurn}})
+
+	if agg, ok := collect(t, reader)["mecatl.product.tool_calls_per_run"]; ok {
+		if hist, ok := agg.(metricdata.Histogram[int64]); ok && len(hist.DataPoints) > 0 {
+			t.Fatalf("tool_calls_per_run recorded %+v for an untracked run, want no data point at all", hist.DataPoints)
+		}
 	}
 }

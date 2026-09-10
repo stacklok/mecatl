@@ -67,7 +67,8 @@ Zero import relationship with `internal/adapter/telemetry`. It owns:
   mirroring the OTLP-push-with-flush precedent ADR 0098 already established
   for that binary's shape.
 - Its own local install-identity file (`installid.go`) — a first-run marker
-  only, deliberately never exported (see the cardinality note below).
+  whose UUID value is now also attached as the `mecatl.install.id` resource
+  attribute (see "A per-install identifier IS attached" below).
 
 Composition combines the two independent sinks with a trivial fan-out helper
 in `internal/cliconfig` (`BuildProductMetrics`, `TeeToolCallRecorder`) — the
@@ -169,9 +170,12 @@ signal than a static capability flag. This ADR records the *shipped* set;
 readers should treat the design spec (`docs/superpowers/specs/2026-09-08-product-metrics-otel-design.md`)
 as historical context, not the current catalog.
 
-Nothing here is free text, a session/run/model identifier, a tool or MCP
-server name, a file path, a prompt, or an output. Every label value is drawn
-from a closed Go-level enum already defined in `internal/adapter/productmetrics/config.go`
+Nothing here is free text, a session/run/model identifier, an MCP server/tool
+name, a file path, a prompt, or an output. `category` is the one attribute
+that emits a name verbatim — but only a built-in tool's own name, drawn from
+a maintained closed allowlist in `toolcall.go` (`builtinToolCategories`), with
+`"mcp"`/`"other"` as safe catch-alls; every other label value is drawn from a
+closed Go-level enum defined in `internal/adapter/productmetrics/config.go`
 or reused from `engine/session` (`StopReason`).
 
 ### Opt-out precedence and the operator-tier-only settings gate

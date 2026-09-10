@@ -107,7 +107,7 @@ func (r *Recorder) ToolCall(id session.SessionID, call session.ToolCall, result 
 
 // ToolCallForRun satisfies port.RunAwareToolCallRecorder. It records the
 // bounded category/outcome attributes and tallies the run's per-run state
-// (had_tool_call, and the tool-call count a later task publishes).
+// (had_tool_call, and the tool-call count published as tool_calls_per_run).
 //
 // It reads exactly two things off its arguments: call.Name, only through the
 // closed-set toolCategory projection, and result.IsError, a boolean. The
