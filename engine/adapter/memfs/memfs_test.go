@@ -29,6 +29,22 @@ func TestNamespaceConformance(t *testing.T) {
 
 // --- memfs-specific tests ---
 
+func TestAuthorityResourcePathRootDot(t *testing.T) {
+	ws := memfs.NewWorkspace("/ws")
+	target, workspace, err := ws.AuthorityResourcePath(".")
+	if err != nil {
+		t.Fatalf("AuthorityResourcePath(\".\"): %v", err)
+	}
+	if target != "/ws" || workspace != "/ws" {
+		t.Fatalf("AuthorityResourcePath(\".\") = (%q, %q), want (/ws, /ws)", target, workspace)
+	}
+	for _, p := range []string{"", "/abs", "../escape", "a/../../escape"} {
+		if _, _, err := ws.AuthorityResourcePath(p); err == nil {
+			t.Fatalf("AuthorityResourcePath(%q) succeeded, want an escape error", p)
+		}
+	}
+}
+
 // TestDerivedDirectoryVanishesOnceEmpty pins memfs's derived-directory
 // contract (the tool.WorkspaceNamespace doc-comment): a directory has no
 // record of its own, so once its last file is removed the directory itself

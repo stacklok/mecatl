@@ -245,6 +245,9 @@ func (w *Workspace) AuthorityResourcePath(p string) (target, workspace string, e
 	if !path.IsAbs(workspace) {
 		return "", "", fmt.Errorf("%w: workspace root is not absolute", ErrPathEscape)
 	}
+	if p == "." {
+		return workspace, workspace, nil
+	}
 	key, err := cleanPath(p)
 	if err != nil {
 		return "", "", err
