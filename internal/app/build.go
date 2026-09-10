@@ -65,6 +65,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/grpcdriver"
 	"github.com/stacklok/mecatl/internal/adapter/hookexec"
 	"github.com/stacklok/mecatl/internal/adapter/k8slease"
+	"github.com/stacklok/mecatl/internal/adapter/llmendpoint"
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	mcpsource "github.com/stacklok/mecatl/internal/adapter/mcp/source"
 	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
@@ -259,6 +260,14 @@ type Config struct {
 		Load(permconfig.ProviderDefinitions) (ProviderCredentials, interface{ Close() error }, error)
 	}
 	ProviderCredentialLifecycle interface{ Close() error }
+	// NativeEndpointCredentialLoader resolves an existing deployment credential
+	// for each native definition. Missing credentials leave optional endpoints
+	// status-visible but unavailable; the loader must not start enrollment.
+	NativeEndpointCredentialLoader interface {
+		Load(context.Context, permconfig.ProviderDefinition) (llmendpoint.BearerSource, error)
+	}
+	// nativeEndpointTransport is the hermetic transport seam used by tests.
+	nativeEndpointTransport http.RoundTripper
 	// ProviderOverrides is the effective built-in endpoint source. Command-root CLI
 	// overrides are merged over operator settings before registry construction.
 	ProviderOverrides permconfig.ProviderOverrides
@@ -2814,6 +2823,18 @@ func adoptHealedDefault(reg *providerRegistry, providerID string, fallbackProvid
 	return resolvedProvider, healed
 }
 
+func resolveProviderSelection(reg *providerRegistry, providerID string) (providerEntry, error) {
+	if entry, ok := reg.Lookup(providerID); ok {
+		return entry, nil
+	}
+	if reg != nil {
+		if _, ok := reg.unavailableNative[providerID]; ok {
+			return providerEntry{}, fmt.Errorf("%w: %w: endpoint %q; run `mecatui llm login %s`", server.ErrInvalidArgument, llmendpoint.ErrNotEnrolled, providerID, providerID)
+		}
+	}
+	return providerEntry{}, fmt.Errorf("%w: unknown or unavailable provider %q", server.ErrInvalidArgument, providerID)
+}
+
 func selectedProviderModel(reg *providerRegistry, providerID, model string) string {
 	if model != "" {
 		return model
@@ -2841,9 +2862,9 @@ func debugSessionEngineFactory(cfg Config, reg *providerRegistry, fallback port.
 			provider, model = adoptHealedDefault(reg, providerID, provider)
 		}
 		if sel.ProviderID != "" {
-			entry, ok := reg.Lookup(sel.ProviderID)
-			if !ok {
-				return server.SessionEngineResult{}, fmt.Errorf("%w: unknown or unavailable provider %q", server.ErrInvalidArgument, sel.ProviderID)
+			entry, err := resolveProviderSelection(reg, sel.ProviderID)
+			if err != nil {
+				return server.SessionEngineResult{}, err
 			}
 			provider, providerID = entry.provider, sel.ProviderID
 			model = selectedProviderModel(reg, providerID, sel.ModelID)
@@ -2970,9 +2991,9 @@ func sessionEngineFactoryWithTools(
 			resolvedProvider, resolvedModel = adoptHealedDefault(reg, resolvedProviderID, resolvedProvider)
 		}
 		if sel.ProviderID != "" {
-			entry, ok := reg.Lookup(sel.ProviderID)
-			if !ok {
-				return server.SessionEngineResult{}, fmt.Errorf("%w: unknown or unavailable provider %q", server.ErrInvalidArgument, sel.ProviderID)
+			entry, err := resolveProviderSelection(reg, sel.ProviderID)
+			if err != nil {
+				return server.SessionEngineResult{}, err
 			}
 			resolvedProvider = entry.provider
 			resolvedProviderID = sel.ProviderID

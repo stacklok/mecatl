@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"os"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -176,7 +177,7 @@ func liveRefreshDelay(cfg Config) time.Duration {
 // live lister — the gate that decides whether the background refresh runs at all.
 func anyProviderHasLister(reg *providerRegistry) bool {
 	for _, pid := range reg.Available() {
-		if entry, ok := reg.Lookup(pid); ok && entry.lister != nil {
+		if entry, ok := reg.Lookup(pid); ok && entry.lister != nil && !entry.nativeEndpoint {
 			return true
 		}
 	}
@@ -579,6 +580,10 @@ func liveModelSnapshot(ctx context.Context, d port.Diagnostics, reg *providerReg
 		if pid == providerMock {
 			continue // the mock never advertises selectable models
 		}
+		if entry, ok := reg.Lookup(pid); ok && entry.nativeEndpoint {
+			byProvider[pid] = providerInventoryFloor(reg, pid)
+			continue // native authenticated listing is on-demand, never during Build
+		}
 		if models, ok := reg.bootstrapModels[pid]; ok {
 			// Default discovery already fetched this exact live entitlement snapshot
 			// synchronously. Publish it without a duplicate back-to-back request.
@@ -760,10 +765,18 @@ func providerStatusProto(reg *providerRegistry) []*mecatlv1.ProviderStatus {
 	if reg == nil {
 		return nil
 	}
+	ids := reg.Available()
+	for id := range reg.unavailableNative {
+		if !slices.Contains(ids, id) {
+			ids = append(ids, id)
+		}
+	}
+	sort.Strings(ids)
 	var out []*mecatlv1.ProviderStatus
-	for _, pid := range reg.Available() {
-		entry, ok := reg.Lookup(pid)
-		if !ok || (!entry.intentDriven && pid != providerOpenAICodex && entry.defaultModel == "") {
+	for _, pid := range ids {
+		entry, available := reg.Lookup(pid)
+		_, unavailableNative := reg.unavailableNative[pid]
+		if !unavailableNative && (!available || (!entry.intentDriven && pid != providerOpenAICodex && entry.defaultModel == "")) {
 			continue
 		}
 		status, ok := reg.outcomes.getStatus(pid)
@@ -856,7 +869,7 @@ func refreshStaleModels(ctx context.Context, d port.Diagnostics, reg *providerRe
 	var stale []string
 	for _, pid := range reg.Available() {
 		entry, ok := reg.Lookup(pid)
-		if !ok || entry.lister == nil || !entry.intentDriven {
+		if !ok || entry.lister == nil || (!entry.intentDriven && !entry.nativeEndpoint) {
 			continue
 		}
 		if status, ok := reg.outcomes.getStatus(pid); ok && status.State == statusOK {

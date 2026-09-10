@@ -18,6 +18,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/internal/adapter/llmendpoint"
 	"github.com/stacklok/mecatl/internal/adapter/llmresilience"
 	"github.com/stacklok/mecatl/internal/adapter/openaibearer"
 	"github.com/stacklok/mecatl/internal/adapter/openaicodex"
@@ -109,6 +110,12 @@ var (
 // lookup so registry construction never touches the real process environment.
 type envDetector func(name string) string
 
+type nativeCredentialLoaderFunc func(context.Context, permconfig.ProviderDefinition) (llmendpoint.BearerSource, error)
+
+func (f nativeCredentialLoaderFunc) Load(ctx context.Context, definition permconfig.ProviderDefinition) (llmendpoint.BearerSource, error) {
+	return f(ctx, definition)
+}
+
 // providerEnvVars returns the ordered list of environment variables whose
 // non-empty value makes a provider AVAILABLE (any one suffices). The var NAMES
 // come from the embedded models.dev catalog's per-provider env[] (S2 replaced
@@ -156,6 +163,9 @@ type providerEntry struct {
 	provider  port.LLMProvider // resilience-wrapped, ready to hand to an engine
 	available bool             // ≥1 of the provider's env[] keys resolved
 	baseURL   string           // for logging/diagnostics ONLY; never wired
+	// nativeEndpoint marks a deployment-wide native gateway. Its credentialed
+	// live listing is on-demand only; Build publishes the configured model floor.
+	nativeEndpoint bool
 	// defaultModel is the composition-owned floor for a custom provider. Built-in
 	// entries leave it empty and resolve through builtinDefaultModel.
 	defaultModel string
@@ -225,9 +235,13 @@ type providerEntry struct {
 // provider so the Build call site is unchanged); per-session multi-provider
 // routing is S3.
 type providerRegistry struct {
-	entries      map[string]providerEntry // keyed by provider id; only AVAILABLE entries
-	defaultID    string                   // resolved default provider (precedence: resolveDefaultModel)
-	defaultModel string                   // resolved default model for defaultID ("" => adapter/endpoint default)
+	entries map[string]providerEntry // keyed by provider id; only AVAILABLE entries
+	// unavailableNative retains configured endpoint identities that are valid but
+	// not enrolled. They remain status-visible and explicit selection can return
+	// an actionable error without falling back.
+	unavailableNative map[string]struct{}
+	defaultID         string // resolved default provider (precedence: resolveDefaultModel)
+	defaultModel      string // resolved default model for defaultID ("" => adapter/endpoint default)
 	// meta is the composition-owned live-metadata store the request-path resolvers
 	// read (output ceiling / context window / modalities / thinking). It is seeded
 	// from the catalog at build BEFORE any network call and atomically swapped by the
@@ -625,7 +639,10 @@ func buildProviderRegistryContext(ctx context.Context, cfg Config, detect envDet
 		entries[providerAnthropic] = newAnthropicEntryFor(cfg, providerAnthropic, key, builtinBaseURL(cfg, providerAnthropic), meta, true)
 	}
 
-	addCustomProviderEntries(entries, cfg, meta)
+	unavailableNative, err := addCustomProviderEntries(ctx, entries, cfg, meta)
+	if err != nil {
+		return nil, err
+	}
 
 	// toolhive (issue #262, D1): registered by CONFIG-DETECTED INTENT alone —
 	// resolveToolhiveIntent NEVER runs a network probe, so registration never
@@ -645,7 +662,15 @@ func buildProviderRegistryContext(ctx context.Context, cfg Config, detect envDet
 	}
 
 	if len(entries) == 0 {
+		if len(unavailableNative) > 0 {
+			return nil, fmt.Errorf("native LLM endpoint is not enrolled: run `mecatui llm login ENDPOINT`")
+		}
 		return nil, errNoProvider
+	}
+	if cfg.DefaultProvider != "" {
+		if _, unavailable := unavailableNative[cfg.DefaultProvider]; unavailable {
+			return nil, fmt.Errorf("native LLM endpoint %q is not enrolled: run `mecatui llm login %s`", cfg.DefaultProvider, cfg.DefaultProvider)
+		}
 	}
 
 	// Stamp each entry's OPERATOR-DEFAULT effort BEFORE the registry is handed
@@ -659,7 +684,11 @@ func buildProviderRegistryContext(ctx context.Context, cfg Config, detect envDet
 		entries[id] = entry
 	}
 
-	reg := &providerRegistry{entries: entries, meta: meta, outcomes: newLiveOutcomeStore()}
+	outcomes := newLiveOutcomeStore()
+	for id := range unavailableNative {
+		outcomes.recordFailure(id, statusNotEnrolled, "run `mecatui llm login "+id+"`")
+	}
+	reg := &providerRegistry{entries: entries, unavailableNative: unavailableNative, meta: meta, outcomes: outcomes}
 	reg.defaultID, reg.defaultModel = resolveDefaultModel(cfg, reg)
 	// Seed the live-metadata store from the embedded catalog for every available
 	// provider — the t=0 floor every resolver reads before the background live swap.
@@ -751,11 +780,24 @@ func sortedProviderDefinitions(definitions permconfig.ProviderDefinitions) []per
 	return out
 }
 
-func addCustomProviderEntries(entries map[string]providerEntry, cfg Config, meta *liveMetaStore) {
+func addCustomProviderEntries(ctx context.Context, entries map[string]providerEntry, cfg Config, meta *liveMetaStore) (map[string]struct{}, error) {
+	unavailableNative := make(map[string]struct{})
 	for _, definition := range sortedProviderDefinitions(cfg.ProviderDefinitions) {
-		// Native endpoints already share the provider-definition path, but remain
-		// unavailable until the native credential lifecycle mints their entries.
 		if definition.Native != nil {
+			if cfg.NativeEndpointCredentialLoader == nil {
+				unavailableNative[definition.ID] = struct{}{}
+				continue
+			}
+			source, err := cfg.NativeEndpointCredentialLoader.Load(ctx, definition)
+			if err != nil || source == nil {
+				unavailableNative[definition.ID] = struct{}{}
+				continue
+			}
+			entry, err := newNativeProviderEntry(cfg, definition, source)
+			if err != nil {
+				return nil, err
+			}
+			entries[definition.ID] = entry
 			continue
 		}
 		key := cfg.CustomProviderAPIKeys[definition.ID]
@@ -764,6 +806,20 @@ func addCustomProviderEntries(entries map[string]providerEntry, cfg Config, meta
 		}
 		entries[definition.ID] = newCustomProviderEntry(cfg, definition, key, meta)
 	}
+	return unavailableNative, nil
+}
+
+func newNativeProviderEntry(cfg Config, definition permconfig.ProviderDefinition, source llmendpoint.BearerSource) (providerEntry, error) {
+	client, err := llmendpoint.NewGatewayHTTPClient(definition.BaseURL, source, cfg.nativeEndpointTransport)
+	if err != nil {
+		return providerEntry{}, fmt.Errorf("configure native LLM endpoint %q: %w", definition.ID, err)
+	}
+	entry := newOpenAICompatEntry(cfg, definition.ID, "transport-owned", definition.BaseURL,
+		openai.WithHTTPClient(client), openai.WithMaxRetries(0))
+	entry.nativeEndpoint = true
+	entry.defaultModel = definition.DefaultModel
+	entry.lister = gatewayLister{inner: openaicompat.NewLister(definition.BaseURL, "", client)}
+	return entry, nil
 }
 
 func newCustomProviderEntry(cfg Config, definition permconfig.ProviderDefinition, key string, meta *liveMetaStore) providerEntry {
@@ -1604,6 +1660,7 @@ const (
 	statusOK           = "ok"
 	statusUnreachable  = "unreachable"
 	statusUnauthorized = "unauthorized"
+	statusNotEnrolled  = "not-enrolled"
 	statusEmpty        = "empty"
 )
 

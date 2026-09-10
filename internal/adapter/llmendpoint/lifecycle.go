@@ -287,6 +287,16 @@ func (l Lifecycle) Enroll(ctx context.Context, id CredentialIdentity) error {
 
 // Refresh exchanges the exact loaded refresh token and commits rotation before return.
 func (l Lifecycle) Refresh(ctx context.Context, id CredentialIdentity) (Token, error) {
+	return l.refresh(ctx, id, "")
+}
+
+// RefreshRejected refreshes rejected unless another synchronized caller already
+// replaced it, in which case the newer durable token is reused.
+func (l Lifecycle) RefreshRejected(ctx context.Context, id CredentialIdentity, rejected string) (Token, error) {
+	return l.refresh(ctx, id, rejected)
+}
+
+func (l Lifecycle) refresh(ctx context.Context, id CredentialIdentity, rejected string) (Token, error) {
 	var out Token
 	if l.Repository == nil || l.Locker == nil || l.Exchange == nil {
 		return out, ErrNotEnrolled
@@ -295,6 +305,10 @@ func (l Lifecycle) Refresh(ctx context.Context, id CredentialIdentity) (Token, e
 		rec, err := l.Repository.Load(ctx, id)
 		if err != nil {
 			return err
+		}
+		if rejected != "" && rec.Token.AccessToken != rejected {
+			out = rec.Token
+			return nil
 		}
 		next, err := l.Exchange(ctx, rec.Token.RefreshToken)
 		if err != nil {
