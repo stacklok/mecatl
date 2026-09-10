@@ -81,7 +81,32 @@ func TeeToolCallRecorder(recorders ...port.ToolCallRecorder) port.ToolCallRecord
 type multiToolCallRecorder []port.ToolCallRecorder
 
 func (m multiToolCallRecorder) ToolCall(id session.SessionID, call session.ToolCall, result session.ToolResult, queued, took time.Duration) {
+	m.ToolCallForRun("", id, call, result, queued, took)
+}
+
+// ToolCallForRun satisfies port.RunAwareToolCallRecorder: it forwards runID to
+// any element that implements the richer interface, and falls back to that
+// element's plain ToolCall otherwise. Without this method, wrapping a
+// RunAwareToolCallRecorder-capable recorder (e.g. productmetrics.Recorder) in
+// a multiToolCallRecorder would ERASE the optional capability — the engine's
+// dispatch.go type-assertion is on Deps.ToolCallRecorder itself, and a
+// composed value that only implements the base interface fails that
+// assertion regardless of what it wraps. This is the general hazard with
+// decorating an optional-capability interface: every decorator in the chain
+// must forward it, or the capability silently stops reaching the type that
+// actually needs it.
+func (m multiToolCallRecorder) ToolCallForRun(runID string, id session.SessionID, call session.ToolCall, result session.ToolResult, queued, took time.Duration) {
 	for _, r := range m {
+		if aware, ok := r.(port.RunAwareToolCallRecorder); ok {
+			aware.ToolCallForRun(runID, id, call, result, queued, took)
+			continue
+		}
 		r.ToolCall(id, call, result, queued, took)
 	}
 }
+
+// Compile-time interface check: multiToolCallRecorder must keep forwarding
+// port.RunAwareToolCallRecorder, or had_tool_call/tool_calls_per_run/
+// time_to_first_value silently go inert in every binary that tees a
+// productmetrics.Recorder through this helper.
+var _ port.RunAwareToolCallRecorder = multiToolCallRecorder(nil)
