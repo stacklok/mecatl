@@ -2,7 +2,7 @@
 
 **Contract:** human-reviewed/v1
 **Phase:** local direct-MCP OAuth durability
-**Status:** in-progress. Core implementation and aggregate repository gates are green, but seven named acceptance proofs, the cloud-native resource re-audit, panel review, implementation PR, and live local-mecatui qualification remain. Plan / Interface PR #1331 merged at `4ef7af6a74225e04a45e1e9dda7c3888b25cad3e`. On 2026-09-10 the human explicitly waived a separate amendment PR and amended direct DCR v1 in place to disable refresh; complete resource-bound public-client refresh is deferred to issue #1355.
+**Status:** landed. Candidate implementation, the seven named acceptance proofs, aggregate gates, documentation/site builds, offline demo, and cloud-native resource re-audit are complete on the implementation branch; panel review, implementation PR, and the separate human-run local-mecatui qualification remain. Plan / Interface PR #1331 merged at `4ef7af6a74225e04a45e1e9dda7c3888b25cad3e`. On 2026-09-10 the human explicitly waived a separate amendment PR and amended direct DCR v1 in place to disable refresh; complete resource-bound public-client refresh is deferred to issue #1355.
 **Delivery:** Split. This changes an operator-facing OAuth client union, durable credential identity, registration lifecycle, and the local interactive authorization boundary.
 **Expected tasks:** deferred to orchestration
 **Issue:** none — scope supplied for acceptance-contract review.
