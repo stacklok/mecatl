@@ -293,6 +293,9 @@ func (m Model) adoptAuthoritativeTranscript(row client.SessionListItem, loaded c
 	m.stuck = true
 	m.statusMsg = "continuing chat " + sanitizeTerminal(row.Title) + " — type to add a turn"
 	cmd := m.prompt.Focus()
+	if contextCmd := m.refreshStatusContextCmd(); contextCmd != nil {
+		cmd = tea.Batch(cmd, contextCmd)
+	}
 	m.refreshView()
 	if m.deps.Session != nil {
 		cmd = tea.Batch(cmd, client.RefreshResolvedModelCmd(m.deps.Ctx, m.deps.Session, row.ID))
