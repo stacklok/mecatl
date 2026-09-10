@@ -676,6 +676,39 @@ jobs:
           fetch-depth: 0
           ref: ${{ env.VERSION }}
 
+      # Eight cross-compiles (2 binaries x 4 platforms) of this dependency graph
+      # exhaust the runner's disk: the first v0.0.30 attempt died 18 minutes in
+      # with `compile: writing output: ... no space left on device` while linking
+      # linux_amd64. The Go build cache holds a separate full entry set per
+      # target, and dist/ alone is ~1.6 GB.
+      #
+      # Reclaim the preinstalled toolchains this job never uses. Done inline
+      # rather than via a third-party action so there is no extra dependency to
+      # SHA-pin for a handful of rm calls. `|| true` on each: the exact set of
+      # preinstalled directories varies by runner image, and a missing path must
+      # not fail the release.
+      #
+      # The before/after report is deliberate — if this ever runs out of space
+      # again, the log says how much headroom there actually was.
+      - name: Reclaim runner disk space
+        run: |
+          set -uo pipefail
+          echo "::group::Disk before"
+          df -h /
+          echo "::endgroup::"
+          sudo rm -rf /usr/local/lib/android || true
+          sudo rm -rf /usr/share/dotnet || true
+          sudo rm -rf /opt/ghc || true
+          sudo rm -rf /usr/local/.ghcup || true
+          sudo rm -rf /usr/share/swift || true
+          sudo rm -rf /usr/local/share/boost || true
+          sudo rm -rf /usr/local/share/powershell || true
+          sudo rm -rf /opt/hostedtoolcache/CodeQL || true
+          docker image prune --all --force || true
+          echo "::group::Disk after"
+          df -h /
+          echo "::endgroup::"
+
       # The same version-skew gate the mecated publish job runs. Repeated here,
       # not inherited via needs:, so a Release and a public tap commit can never
       # be published for a tag whose sibling-action pins point at the previous
@@ -745,7 +778,11 @@ jobs:
       - uses: goreleaser/goreleaser-action@5daf1e915a5f0af01ddbcd89a43b8061ff4f1a89 # v7.2.2
         with:
           version: "v2.16.0"
-          args: release --clean
+          # --parallelism 2 bounds how many compiles hold a $WORK tree at once.
+          # Defence in depth alongside the disk reclaim above: the failure was a
+          # write to $WORK, so capping concurrency caps peak temporary usage.
+          # Default is the CPU count, i.e. all eight targets at once.
+          args: release --clean --parallelism 2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ steps.homebrew-tap-token.outputs.token }}
