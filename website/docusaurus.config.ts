@@ -36,6 +36,39 @@ const config: Config = {
   ],
   plugins: [
     [
+      '@signalwire/docusaurus-plugin-llms-txt',
+      {
+        depth: 2,
+        content: {
+          includeBlog: false,
+          includePages: true,
+          includeDocs: true,
+          includeGeneratedIndex: false,
+          enableLlmsFullTxt: false,
+          enableMarkdownFiles: true,
+          excludeRoutes: ['/search'],
+        },
+        includeOrder: [
+          '/docs/install',
+          '/docs/mecatui/**',
+          '/docs/building/**',
+          '/docs/features/**',
+          '/docs/reference/**',
+        ],
+        optionalLinks: [
+          {
+            title: 'Mecatl on GitHub',
+            url: 'https://github.com/stacklok/mecatl',
+            description: 'Source code for Mecatl.',
+          },
+          {
+            title: 'Community Discord',
+            url: 'https://discord.gg/stacklok',
+          },
+        ],
+      },
+    ],
+    [
       '@docusaurus/plugin-client-redirects',
       {
         redirects: [{from: ['/docs/intro'], to: '/docs'}],
