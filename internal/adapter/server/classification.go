@@ -474,7 +474,7 @@ var systemAccessTable = map[syscaller.Root]ClassificationEntry{
 	},
 	syscaller.RootStaleSessionReconcile: {
 		KindSharedInfrastructure,
-		"stale-session repair: may enumerate metadata and settle only owned, running, non-scheduled crash orphans through the root-authorized narrow server seam; cannot read transcripts or use caller memory",
+		"stale-session repair: may enumerate metadata and settle only owned, running, non-scheduled crash orphans through the root-authorized narrow server seam, AND (issue #1334) clear this process's own lease-loss tombstones for awaiting/cancelled sessions via a bounded trial-Acquire; cannot read transcripts or use caller memory",
 	},
 }
 

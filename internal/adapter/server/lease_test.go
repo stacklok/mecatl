@@ -1098,3 +1098,88 @@ func TestReconcileLeaseLossTombstoneRefusesWhenGenuinelyHeldElsewhere(t *testing
 		t.Fatalf("StartRun after a refused reconcile = %v, want still ErrSessionLeasedElsewhere", err)
 	}
 }
+
+// TestReconcileLeaseLossTombstoneFailSafeOnGenericError is the fail-safe
+// negative case for a bare, non-sentinel trial-Acquire error — anything other
+// than port.ErrLeaseHeld/port.ErrLeaseUnsupported. leaseTrial must treat
+// ambiguity as "not free," never as license to clear the tombstone.
+func TestReconcileLeaseLossTombstoneFailSafeOnGenericError(t *testing.T) {
+	lease := &fakeLease{}
+	store := memstore.New()
+	ps := permstore.New()
+	cat := tool.NewCatalog()
+	engine := agent.NewEngine(agent.Deps{
+		LLM:     blockingProvider{},
+		Catalog: cat,
+		Policy:  permpolicy.NewPolicy(nil, ps),
+		Model:   "test-model",
+	})
+	svc, err := newPlacementTestService(server.Config{
+		Engine:             engine,
+		Store:              store,
+		SessionLease:       lease,
+		LeaseOwner:         "owner-test",
+		LeaseTTL:           90 * time.Millisecond,
+		LeaseRenewInterval: 15 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	t.Cleanup(svc.Close)
+
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	run, err := svc.StartRun(context.Background(), sess.ID, "go")
+	if err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+
+	var lost atomic.Bool
+	lease.mu.Lock()
+	lease.renewHook = func(port.Lease) (port.Lease, error) {
+		lost.Store(true)
+		return port.Lease{}, port.ErrLeaseHeld
+	}
+	lease.mu.Unlock()
+	for range run.Events() {
+	}
+	svc.FinishRun(sess.ID, run)
+	if !lost.Load() {
+		t.Fatal("precondition: the renewer never lost the lease")
+	}
+
+	cancelled := session.New(sess.ID, session.ModeDefault, sess.EnvironmentRef, session.Limits{}, time.Unix(0, 0))
+	if err := cancelled.RecordUserPrompt("go", nil); err != nil {
+		t.Fatalf("RecordUserPrompt: %v", err)
+	}
+	if err := cancelled.BeginTurn(); err != nil {
+		t.Fatalf("BeginTurn: %v", err)
+	}
+	if err := cancelled.Cancel(); err != nil {
+		t.Fatalf("Cancel: %v", err)
+	}
+	if err := store.Save(context.Background(), cancelled); err != nil {
+		t.Fatalf("overwrite Save: %v", err)
+	}
+
+	// A bare backend error — not one of the two lease sentinels — must be
+	// treated as ambiguous, never as proof the lease is free.
+	lease.mu.Lock()
+	lease.acquireErr = errors.New("boom")
+	lease.mu.Unlock()
+
+	staleCtx := syscaller.Context(context.Background(), syscaller.RootStaleSessionReconcile)
+	cleared, err := svc.ReconcileLeaseLossTombstone(staleCtx, sess.ID)
+	if err != nil {
+		t.Fatalf("ReconcileLeaseLossTombstone on a generic trial error: %v", err)
+	}
+	if cleared {
+		t.Fatal("ReconcileLeaseLossTombstone on a generic trial error = true, want false (fail-safe)")
+	}
+
+	if _, err := svc.StartRun(context.Background(), sess.ID, "again"); !errors.Is(err, server.ErrSessionLeasedElsewhere) {
+		t.Fatalf("StartRun after a fail-safe-refused reconcile = %v, want still ErrSessionLeasedElsewhere", err)
+	}
+}

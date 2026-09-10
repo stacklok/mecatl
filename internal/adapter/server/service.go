@@ -6919,44 +6919,79 @@ func (s *Service) SessionStale(ctx context.Context, meta port.SessionMeta) bool 
 	if disabled {
 		return false
 	}
-	trialCtx, cancel := context.WithTimeout(ctx, leaseAcquireTimeout)
-	lease, err := s.cfg.SessionLease.Acquire(trialCtx, meta.ID, s.cfg.LeaseOwner+staleTrialLeaseSuffix)
-	cancel()
-	switch {
-	case errors.Is(err, port.ErrLeaseHeld):
-		s.mu.Lock()
-		_, selfHeld := s.heldLeases[meta.ID]
-		s.mu.Unlock()
+	free, held := s.leaseTrial(ctx, meta.ID, "session staleness sweep")
+	if held != nil {
 		// The self-held-lease correction: ErrLeaseHeld against our OWN trial
 		// call (a different owner string than the real hold, so the backend
 		// sees a genuine conflict) is NOT evidence of a live peer when this
 		// process itself is the one holding the real lease — it is evidence
 		// this process's own prior run died without releasing it.
+		s.mu.Lock()
+		_, selfHeld := s.heldLeases[meta.ID]
+		s.mu.Unlock()
 		return selfHeld
+	}
+	return free
+}
+
+// leaseTrial performs a bounded TRIAL Acquire+immediate-Release against the
+// real lease backend, proving whether id's lease is genuinely free right now
+// — the refinement SHARED by SessionStale (StateRunning crash-orphan
+// detection) and ReconcileLeaseLossTombstone (issue #1334's awaiting/
+// cancelled tombstone clearing). Both trial owners use the SAME suffixed
+// owner string (staleTrialLeaseSuffix, never a new unrelated string) so a
+// trial is self-attributable in lease-backend diagnostics, and neither ever
+// holds the trial lease across the caller's later decision — a successful
+// trial releases immediately, so there is nothing to hold across a write.
+//
+// held is non-nil ONLY for a genuine port.ErrLeaseHeld: the caller decides
+// what that means for ITS OWN bookkeeping — SessionStale's self-held-lease
+// correction consults s.heldLeases to distinguish "this process's own prior
+// run died without releasing it" (stale) from "a genuinely different live
+// owner holds it" (not stale); ReconcileLeaseLossTombstone simply leaves its
+// tombstone in place either way, since by definition it already knows this
+// process lost the lease. leaseTrial itself makes no ownership judgement on
+// ErrLeaseHeld. Every OTHER outcome is folded into (false, nil) so both
+// callers stay one switch shorter: ErrLeaseUnsupported stickily disables the
+// sweep for the process lifetime (logged once via logCtx), and any other
+// error/timeout is a fail-safe WARN (never treat ambiguity as free). Only
+// free==true (nobody held it) is safe to act on.
+func (s *Service) leaseTrial(ctx context.Context, id session.SessionID, logCtx string) (free bool, held error) {
+	trialCtx, cancel := context.WithTimeout(ctx, leaseAcquireTimeout)
+	lease, err := s.cfg.SessionLease.Acquire(trialCtx, id, s.cfg.LeaseOwner+staleTrialLeaseSuffix)
+	cancel()
+	switch {
+	case errors.Is(err, port.ErrLeaseHeld):
+		return false, err
 	case errors.Is(err, port.ErrLeaseUnsupported):
 		s.mu.Lock()
 		firstTime := !s.leaseSweepDisabled
 		s.leaseSweepDisabled = true
 		s.mu.Unlock()
 		if firstTime {
-			s.cfg.Diagnostics.Log(ctx, port.LevelInfo, "session staleness sweep: lease backend does not support leasing; disabling the sweep",
+			s.cfg.Diagnostics.Log(ctx, port.LevelInfo, logCtx+": lease backend does not support leasing; disabling the sweep",
 				"owner", s.cfg.LeaseOwner)
 		}
-		return false
+		return false, nil
 	case err != nil:
-		// Infra error or timeout — fail-safe: never mass-abandon on a flaky
-		// lease backend.
-		s.cfg.Diagnostics.Log(ctx, port.LevelWarn, "session staleness sweep: trial lease acquire failed; treating as not stale (fail-safe)",
-			"session", string(meta.ID), "err", err.Error())
-		return false
+		// Infra error or timeout — fail-safe: never treat ambiguity as free.
+		s.cfg.Diagnostics.Log(ctx, port.LevelWarn, logCtx+": trial lease acquire failed; treating as not free (fail-safe)",
+			"session", string(id), "err", err.Error())
+		return false, nil
 	}
 	// Success: nobody held it. Release the trial immediately — this function
-	// only decides staleness, it performs no write, so there is nothing to
-	// hold the lease across.
+	// only decides, it performs no write, so there is nothing to hold across
+	// the caller's later action.
 	relCtx, relCancel := context.WithTimeout(context.WithoutCancel(ctx), leaseAcquireTimeout)
-	_ = s.cfg.SessionLease.Release(relCtx, lease)
+	if relErr := s.cfg.SessionLease.Release(relCtx, lease); relErr != nil {
+		// A leaked trial silently pins the lease until its own TTL expiry with
+		// no diagnostic explaining the delay — worth one WARN even though the
+		// caller's decision (free==true) already went through.
+		s.cfg.Diagnostics.Log(ctx, port.LevelWarn, logCtx+": trial lease release failed; it will pin until TTL expiry",
+			"session", string(id), "err", relErr.Error())
+	}
 	relCancel()
-	return true
+	return true, nil
 }
 
 // LeaseSweepDisabled reports whether SessionStale has stickily disabled the
@@ -7094,6 +7129,14 @@ func (s *Service) LostOwnershipCandidates(ctx context.Context) ([]session.Sessio
 // no-op for "still held" / "already cleared by a concurrent caller"/"no
 // tombstone for this id"). Exported for internal/app's composition-level
 // sweep, mirroring SessionStale/SettleIfStale/StaleRunningCandidates.
+//
+// RESIDUAL INTERLEAVE (bounded, safe): CloseSession can race this call and
+// clear s.lostOwnership[id] itself (unconditionally, via closeSessionLocal)
+// between the pre-trial check and the post-trial re-check below. Both
+// re-checks re-read s.lostOwnership under s.mu, so a CloseSession that wins
+// the race simply makes this call an honest no-op (false, nil) rather than a
+// double-clear or a stale write — the same "last write wins, re-verified
+// under the lock" posture SettleIfStale documents for its own TOCTOU window.
 func (s *Service) ReconcileLeaseLossTombstone(ctx context.Context, id session.SessionID) (bool, error) {
 	if !staleReconcileAuthorized(ctx) {
 		return false, ErrManagementUnauthorized
@@ -7121,35 +7164,15 @@ func (s *Service) ReconcileLeaseLossTombstone(ctx context.Context, id session.Se
 		return false, nil
 	}
 
-	trialCtx, cancel := context.WithTimeout(ctx, leaseAcquireTimeout)
-	lease, err := s.cfg.SessionLease.Acquire(trialCtx, id, s.cfg.LeaseOwner+staleTrialLeaseSuffix)
-	cancel()
-	switch {
-	case errors.Is(err, port.ErrLeaseHeld):
-		// Still genuinely held — a live peer, or this process's own
-		// not-yet-expired record from before the loss was declared. Leave the
-		// tombstone; the next sweep pass re-checks.
-		return false, nil
-	case errors.Is(err, port.ErrLeaseUnsupported):
-		s.mu.Lock()
-		firstTime := !s.leaseSweepDisabled
-		s.leaseSweepDisabled = true
-		s.mu.Unlock()
-		if firstTime {
-			s.cfg.Diagnostics.Log(ctx, port.LevelInfo, "lease-loss tombstone reconcile: lease backend does not support leasing; disabling the sweep",
-				"owner", s.cfg.LeaseOwner)
-		}
-		return false, nil
-	case err != nil:
-		s.cfg.Diagnostics.Log(ctx, port.LevelWarn, "lease-loss tombstone reconcile: trial lease acquire failed; leaving tombstone in place (fail-safe)",
-			"session", string(id), "err", err.Error())
+	free, held := s.leaseTrial(ctx, id, "lease-loss tombstone reconcile")
+	if held != nil || !free {
+		// Still genuinely held (a live peer, or this process's own
+		// not-yet-expired record from before the loss was declared), or the
+		// trial declined ambiguously (leaseTrial already logged the
+		// unsupported/error case) — leave the tombstone; the next sweep pass
+		// re-checks.
 		return false, nil
 	}
-	// Success: nobody holds it. Release immediately — nothing is held across
-	// this call, mirroring SessionStale's own trial.
-	relCtx, relCancel := context.WithTimeout(context.WithoutCancel(ctx), leaseAcquireTimeout)
-	_ = s.cfg.SessionLease.Release(relCtx, lease)
-	relCancel()
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
