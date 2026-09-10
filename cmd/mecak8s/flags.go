@@ -36,6 +36,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
 	"github.com/stacklok/mecatl/internal/app"
 	"github.com/stacklok/mecatl/internal/cliconfig"
+	"github.com/stacklok/mecatl/internal/flaghelp"
 )
 
 // k8s-native listen defaults. A pod binds 0.0.0.0 (not loopback — the
@@ -472,7 +473,7 @@ func parseFlags(argv []string) (config, error) {
 
 	fs.Usage = func() {
 		_, _ = fmt.Fprint(fs.Output(), "Usage: mecak8s [flags]\n\n")
-		cliconfig.PrintDefaults(fs.Output(), fs)
+		flaghelp.PrintDefaults(fs.Output(), fs)
 		_, _ = fmt.Fprintln(fs.Output(), "\nVersion: mecak8s --version prints the build version and exits.")
 	}
 

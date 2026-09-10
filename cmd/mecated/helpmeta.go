@@ -6,7 +6,7 @@ import (
 	"io"
 	"sort"
 
-	"github.com/stacklok/mecatl/internal/cliconfig"
+	"github.com/stacklok/mecatl/internal/flaghelp"
 )
 
 // flagMeta annotates a registered flag for progressive mode-specific help.
@@ -417,7 +417,7 @@ func renderGroupedCommon(out io.Writer, fs *flag.FlagSet, common map[string]bool
 		sort.Slice(entries, func(i, j int) bool { return entries[i].name < entries[j].name })
 		_, _ = fmt.Fprintf(out, "%s:\n", grp)
 		for _, e := range entries {
-			cliconfig.PrintFlagDefault(out, e.f)
+			flaghelp.PrintFlagDefault(out, e.f)
 		}
 		_, _ = fmt.Fprintf(out, "\n")
 	}
@@ -427,7 +427,7 @@ func renderGroupedCommon(out io.Writer, fs *flag.FlagSet, common map[string]bool
 // It uses the single cliconfig formatter.
 func writeServeHelpAll(out io.Writer, fs *flag.FlagSet) {
 	_, _ = fmt.Fprintf(out, "Usage: mecated serve [flags]\n\nFlags:\n")
-	cliconfig.PrintDefaultsExcluding(out, fs, nil)
+	flaghelp.PrintDefaultsExcluding(out, fs, nil)
 }
 
 // writeAcpHelpAll renders the exhaustive ACP-applicable flag list for
@@ -435,7 +435,7 @@ func writeServeHelpAll(out io.Writer, fs *flag.FlagSet) {
 // via the single cliconfig formatter.
 func writeAcpHelpAll(out io.Writer, fs *flag.FlagSet) {
 	_, _ = fmt.Fprintf(out, "Usage: mecated acp [flags]\n\nFlags:\n")
-	cliconfig.PrintDefaultsExcluding(out, fs, acpExcludedNames())
+	flaghelp.PrintDefaultsExcluding(out, fs, acpExcludedNames())
 }
 
 // writeTopLevelHelpAll renders the exhaustive reference for the top-level
@@ -457,7 +457,7 @@ func writeTopLevelHelpAll(out io.Writer, fs *flag.FlagSet) {
 	_, _ = fmt.Fprintf(out, "\nExhaustive serve-compatible flag reference (every public flag a\n")
 	_, _ = fmt.Fprintf(out, "`mecated serve` invocation accepts):\n\n")
 	_, _ = fmt.Fprintf(out, "Flags:\n")
-	cliconfig.PrintDefaultsExcluding(out, fs, nil)
+	flaghelp.PrintDefaultsExcluding(out, fs, nil)
 	_, _ = fmt.Fprintf(out, "\nNote: `mecated acp --help-all` lists the ACP-scoped subset\n")
 	_, _ = fmt.Fprintf(out, "(server-boundary flags such as --grpc-addr/--tls-*/--metrics-addr\n")
 	_, _ = fmt.Fprintf(out, "and the scheduler/driver knobs are omitted there).\n")

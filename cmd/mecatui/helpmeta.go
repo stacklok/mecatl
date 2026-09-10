@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/stacklok/mecatl/internal/cliconfig"
+	"github.com/stacklok/mecatl/internal/flaghelp"
 )
 
 // flagApplicability annotates a registered mecatui flag for mode-specific
@@ -364,7 +364,7 @@ func renderGroupedCommon(out io.Writer, fs *flag.FlagSet, common map[string]bool
 		sort.Slice(entries, func(i, j int) bool { return entries[i].name < entries[j].name })
 		_, _ = fmt.Fprintf(out, "%s:\n", grp)
 		for _, e := range entries {
-			cliconfig.PrintFlagDefault(out, e.f)
+			flaghelp.PrintFlagDefault(out, e.f)
 		}
 		_, _ = fmt.Fprintf(out, "\n")
 	}
@@ -387,7 +387,7 @@ func writeSessionsHelpAll(out io.Writer, fs *flag.FlagSet, mode transportMode) {
 			}
 		}
 	}
-	cliconfig.PrintDefaultsExcluding(out, fs, exclude)
+	flaghelp.PrintDefaultsExcluding(out, fs, exclude)
 }
 
 // writeBareHelpAll renders the exhaustive flag list for the bare `mecatui
@@ -396,7 +396,7 @@ func writeBareHelpAll(out io.Writer, fs *flag.FlagSet) {
 	_, _ = fmt.Fprintf(out, "Usage: mecatui [flags]\n\n")
 	writeCommandSummary(out)
 	_, _ = fmt.Fprintln(out, "\nFlags:")
-	cliconfig.PrintDefaultsExcluding(out, fs, nil)
+	flaghelp.PrintDefaultsExcluding(out, fs, nil)
 }
 
 // writeConnectHelpAll renders the exhaustive connect-applicable flag list for
@@ -410,5 +410,5 @@ func writeConnectHelpAll(out io.Writer, fs *flag.FlagSet) {
 			exclude[name] = true
 		}
 	}
-	cliconfig.PrintDefaultsExcluding(out, fs, exclude)
+	flaghelp.PrintDefaultsExcluding(out, fs, exclude)
 }
