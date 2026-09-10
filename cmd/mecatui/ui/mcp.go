@@ -120,20 +120,37 @@ type mcpState struct {
 
 }
 
-// brokerMCPSetupState is copied from the active session's existing enrollment
-// controller state when the broker inventory opens. Catalogue state is never
-// used to infer whether controls are available.
+// brokerMCPSetupState projects the existing controller after Model validation.
+// A resumed/rebound transcript is not positive proof of pre-prompt eligibility;
+// catalogue facts may exclude Connect but never establish that eligibility.
 type brokerMCPSetupState struct {
 	eligible bool
 	pending  bool
 	busy     bool
+	gen      uint64
+	status   client.WorkspaceEnrollmentStatus
 }
 
 func (m Model) brokerMCPSetupState() brokerMCPSetupState {
 	return brokerMCPSetupState{
-		eligible: m.caps.WorkspaceEnrollment && m.deps.WorkspaceEnrollment != nil && m.sessionID != "",
-		pending:  m.enrollment.ID != "" && m.enrollment.Status == client.WorkspaceEnrollmentPending,
-		busy:     m.enrollment.busy,
+		eligible: m.caps.WorkspaceEnrollment && m.deps.WorkspaceEnrollment != nil && m.sessionID != "" &&
+			m.phase == phaseIdle && !m.restartedThisRun && m.conv.isEmpty() &&
+			(m.sessionState == "" || m.sessionState == "idle") && m.enrollment.Status != client.WorkspaceEnrollmentConnected,
+		pending: m.enrollment.ID != "" && m.enrollment.Status == client.WorkspaceEnrollmentPending,
+		busy:    m.enrollment.busy,
+		gen:     m.enrollment.controlGen,
+		status:  m.enrollment.Status,
+	}
+}
+
+func (s *mcpState) canConnect() bool {
+	return s.brokerMode && !s.loading && !s.refreshing && s.errMsg == "" && s.setup.eligible &&
+		!s.setup.pending && !s.setup.busy && s.inventory.Availability == "available" && s.inventory.EnrollmentState == "not_started"
+}
+
+func (m Model) syncMCPSetup() {
+	if st := mcpActive(m); st != nil {
+		st.setup = m.brokerMCPSetupState()
 	}
 }
 
@@ -193,10 +210,12 @@ func (s *mcpState) handlePanelKey(msg tea.KeyPressMsg) (cmd tea.Cmd, handled boo
 		return nil, true, true
 	case key.Matches(msg, s.deps.keys.Refresh):
 		return s.refreshPanel(), true, false
-	case msg.String() == "c" && s.brokerMode && s.setup.eligible && !s.setup.busy:
-		return func() tea.Msg { return mcpWorkspaceEnrollmentActionMsg{action: connectAction} }, true, false
+	case msg.String() == "c" && s.canConnect():
+		msg := mcpWorkspaceEnrollmentActionMsg{action: connectAction, source: s, sessionID: s.sessionID, gen: s.setup.gen}
+		return func() tea.Msg { return msg }, true, false
 	case msg.String() == "x" && s.brokerMode && s.setup.pending && !s.setup.busy:
-		return func() tea.Msg { return mcpWorkspaceEnrollmentActionMsg{action: "cancel"} }, true, false
+		msg := mcpWorkspaceEnrollmentActionMsg{action: "cancel", source: s, sessionID: s.sessionID, gen: s.setup.gen}
+		return func() tea.Msg { return msg }, true, false
 	}
 	return nil, true, false
 }
@@ -277,7 +296,11 @@ type mcpInsertResourceMsg struct{ preview string }
 
 // mcpWorkspaceEnrollmentActionMsg asks the Model to use its existing
 // whole-bundle enrollment controls from the broker inventory.
-type mcpWorkspaceEnrollmentActionMsg struct{ action string }
+type mcpWorkspaceEnrollmentActionMsg struct {
+	action, sessionID string
+	source            *mcpState
+	gen               uint64
+}
 
 // handlePromptListKey handles the prompt list: navigate, then enter selects. If
 // the selected prompt has required args, it transitions to arg entry; otherwise
@@ -479,10 +502,6 @@ func (s *mcpState) HandleMsg(msg tea.Msg) (cmd tea.Cmd, handled bool, closed boo
 		// closed=true records the surface is done with it.
 		return nil, false, true
 	case workspaceEnrollmentMsg:
-		if s.brokerMode && msg.sessionID == s.sessionID {
-			s.setup.pending = msg.err == nil && msg.result.ID != "" && msg.result.Status == client.WorkspaceEnrollmentPending
-			s.setup.busy = false
-		}
 		return nil, false, false
 	case mcpWorkspaceEnrollmentActionMsg:
 		return nil, false, false
@@ -520,6 +539,15 @@ func (m Model) updateMCPMsg(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		mm, cmd := m.insertIntoInput(msg.preview, "loaded resource")
 		return mm, cmd, true
 	case mcpWorkspaceEnrollmentActionMsg:
+		state := mcpActive(m)
+		if state == nil || state != msg.source || msg.sessionID != m.sessionID || msg.gen != m.enrollment.controlGen {
+			return m, nil, true
+		}
+		m.syncMCPSetup()
+		if m.enrollment.busy || (msg.action == connectAction && !state.canConnect()) ||
+			(msg.action == "cancel" && !state.setup.pending) {
+			return m, nil, true
+		}
 		var mm tea.Model
 		var cmd tea.Cmd
 		switch msg.action {
@@ -676,7 +704,16 @@ func renderBrokerMCPPanel(th theme.Theme, st mcpState, hk helpKeys, width int) s
 		}
 		b.WriteString(th.Style("muted").Render(state) + "\n")
 	} else if !st.loading {
-		b.WriteString(renderMCPInventoryRow(th, "toolArgs", "Enrollment: "+brokerEnrollmentLabel(st.inventory.EnrollmentState), width) + "\n")
+		label := brokerEnrollmentLabel(st.inventory.EnrollmentState)
+		switch {
+		case st.setup.pending:
+			label = "Setup in progress"
+		case st.setup.status == client.WorkspaceEnrollmentConnected:
+			label = "Catalogue ready"
+		case st.setup.status == client.WorkspaceEnrollmentCancelled:
+			label = "No active setup"
+		}
+		b.WriteString(renderMCPInventoryRow(th, "toolArgs", "Enrollment: "+label, width) + "\n")
 		for _, row := range st.inventory.Connectors {
 			catalogue := brokerCatalogueLabel(row.CatalogueState)
 			count := fmt.Sprintf("%d", row.ToolCount)
@@ -691,23 +728,23 @@ func renderBrokerMCPPanel(th theme.Theme, st mcpState, hk helpKeys, width int) s
 		}
 	}
 	b.WriteString("\n" + th.Style("muted").Render("Catalogue status · not a live connection check") + "\n")
-	if setup := brokerMCPSetupLine(st.setup); setup != "" {
+	if setup := brokerMCPSetupLine(st); setup != "" {
 		b.WriteString(th.Style("muted").Render(setup) + "\n")
 	}
 	b.WriteString("\n" + th.Style("muted").Render(hk.refresh+" refresh local state · "+hk.closeOnly+" close"))
 	return b.String()
 }
 
-func brokerMCPSetupLine(setup brokerMCPSetupState) string {
+func brokerMCPSetupLine(st mcpState) string {
 	switch {
-	case !setup.eligible:
+	case st.setup.busy:
 		return ""
-	case setup.busy:
-		return "Setting up tools…"
-	case setup.pending:
-		return "c Continue in browser · x cancel setup"
-	default:
+	case st.setup.pending:
+		return "x cancel setup"
+	case st.canConnect():
 		return "c connect tools"
+	default:
+		return ""
 	}
 }
 

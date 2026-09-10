@@ -191,8 +191,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// keeps the state machine symmetric).
 	wasKittyShowing := m.kittyActive && m.conv.isEmpty()
 
+	m.syncMCPSetup()
 	model, cmd := m.update(msg)
 	if mm, ok := model.(Model); ok {
+		mm.syncMCPSetup()
 		// A non-selectable body owner stops an in-progress prompt drag without
 		// clearing a completed prompt selection. Conversation selection remains
 		// blocked and is cleared when its body owner changes.

@@ -69,11 +69,19 @@ operator guide rather than as always-visible panel caveats.
 The directing human explicitly extended the approved local scope without a separate
 amendment PR: broker `/mcp` and Ctrl+O are the primary inventory-and-setup surface.
 They may invoke only the existing caller-owned whole-bundle enrollment controller.
-The panel offers Connect tools from actual local session/control eligibility, and a
-pending local bundle presents Continue in browser and Cancel setup. `/tools-connect`
-and `/tools-cancel` remain equivalent compatibility shortcuts. Opening and refresh
-remain read-only inspection, no per-connector action is introduced, and direct MCP
-behavior is unchanged.
+The panel offers Connect tools only for a fresh idle empty local session with a
+wired enrollment capability/controller, no busy control and no known completed
+enrollment. Resumed/unknown eligibility is hidden rather than guessed; catalogue
+state is only a negative exclusion. Pending setup shows Setup in progress and
+Cancel setup only. The user's subsequent simplicity direction explicitly removes
+Continue in browser: no reopen-browser feature, retained URL, new controller or
+eligibility registry; existing browser launch/poll/completion remain unchanged.
+The existing controller's safe status and generation survive terminal cleanup,
+not its transaction ID or presentation data. `/tools-connect` and `/tools-cancel`
+remain unchanged compatibility shortcuts. Opening and refresh remain read-only
+inspection, no per-connector action is introduced, and direct MCP behavior is
+unchanged. AC3.4 retains its original documentation criterion; new action ACs are
+appended in the locally approved plan.
 
 ## Consequences
 
