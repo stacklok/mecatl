@@ -140,7 +140,7 @@ func (r *Runtime) AuthorizeWithCallbackPath(ctx context.Context, expectedIssuer,
 	return r.authorize(ctx, expectedIssuer, callbackPath, authorize)
 }
 
-func (r *Runtime) authorize(ctx context.Context, expectedIssuer, callbackPath string, authorize AuthorizeFunc) error {
+func (r *Runtime) authorize(ctx context.Context, expectedIssuer, callbackPath string, authorize AuthorizeFunc) error { //nolint:gocyclo // callback lifecycle and cleanup states stay explicit.
 	if ctx == nil {
 		return errors.New("OAuth authorization requires a context")
 	}
