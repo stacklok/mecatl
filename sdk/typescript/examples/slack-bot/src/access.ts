@@ -162,16 +162,28 @@ export class EmailAllowlistResolver implements AccessResolver {
     return { allowed: false };
   }
 
-  /** Resolved once via `auth.test` and cached for this resolver's lifetime — the bot's own
-   * installed workspace never changes mid-process. A failed lookup is cached as `undefined`
-   * (not retried per call), which the caller treats as fail-closed on every subsequent call
-   * until the process restarts — correct for the same reason a permanently missing scope is. */
+  /** Resolved via `auth.test` and cached ONLY on success — the bot's own installed workspace
+   * never changes mid-process, so a real team id is cached for the resolver's lifetime. A
+   * failure (network blip, transient Slack API error) or a response with no `team_id` clears
+   * the cache back to `undefined` so the NEXT call retries; the CURRENT call still fails
+   * closed (the caller treats an `undefined` return as "can't verify, deny"). Caching a
+   * failure would conflate a transient hiccup with a permanent misconfiguration (like a
+   * missing scope) and deny every user for the rest of the process's life over one bad
+   * moment at startup. */
   #resolveOwnTeamId(): Promise<string | undefined> {
     if (this.#ownTeamId === undefined) {
       this.#ownTeamId = this.#client.auth.test().then(
-        (response) => response.team_id,
+        (response) => {
+          if (response.team_id === undefined) {
+            this.#logger.warn("auth.test returned no team_id");
+            this.#ownTeamId = undefined;
+            return undefined;
+          }
+          return response.team_id;
+        },
         (error: unknown) => {
           this.#logger.warn("auth.test failed — cannot resolve own team id", error);
+          this.#ownTeamId = undefined;
           return undefined;
         },
       );

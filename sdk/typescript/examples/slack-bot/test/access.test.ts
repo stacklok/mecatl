@@ -230,6 +230,29 @@ describe("EmailAllowlistResolver", () => {
     expect(logger.warn).toHaveBeenCalled();
   });
 
+  it("retries auth.test on the next resolve after a transient failure, and can then succeed", async () => {
+    let authTestCalls = 0;
+    const authTest = async (): Promise<{ team_id?: string }> => {
+      authTestCalls += 1;
+      if (authTestCalls === 1) throw new Error("transient network error");
+      return { team_id: OWN_TEAM_ID };
+    };
+    const resolver = new EmailAllowlistResolver(
+      fakeClient(async () => ({ user: VERIFIED_USER }), authTest),
+      { allowedEmailDomains: undefined, allowedEmails: undefined },
+      fakeLogger(),
+    );
+
+    await expect(resolver.resolve({ slackUserId: "U1" })).resolves.toStrictEqual({
+      allowed: false,
+    });
+    await expect(resolver.resolve({ slackUserId: "U1" })).resolves.toStrictEqual({
+      allowed: true,
+      principal: "person@example.com",
+    });
+    expect(authTestCalls).toBe(2);
+  });
+
   it("fails closed when users.info returns no email (missing scope)", async () => {
     const logger = fakeLogger();
     const resolver = new EmailAllowlistResolver(
