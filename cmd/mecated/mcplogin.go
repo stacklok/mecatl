@@ -19,12 +19,15 @@ import (
 	"github.com/stacklok/mecatl/mcp/oauthlogin"
 )
 
-var errMCPLoginUsage = errors.New("usage: mecated mcp login SERVER [--no-browser] [--permission-config PATH ...]")
+const mcpLoginUsage = "usage: mecated mcp login SERVER [--no-browser] [--permission-config PATH ...] [--reset-dcr-registration | --retry-dcr-registration]"
+
+var errMCPLoginUsage = errors.New(mcpLoginUsage)
 
 type mcpLoginArgs struct {
 	server            string
 	noBrowser         bool
 	permissionConfigs []string
+	dcrAction         mcp.OAuthDCRLoginAction
 }
 
 func parseMCPLoginArgs(args []string, out io.Writer) (mcpLoginArgs, error) {
@@ -33,19 +36,33 @@ func parseMCPLoginArgs(args []string, out io.Writer) (mcpLoginArgs, error) {
 		arg := args[i]
 		switch arg {
 		case "-h", "--help":
-			_, _ = fmt.Fprintln(out, "Usage: mecated mcp login SERVER [--no-browser] [--permission-config PATH ...]\n\nAuthorize one operator-configured OAuth MCP server. --no-browser prints the terminal authorization URL. --permission-config selects trusted operator settings and is repeatable.")
+			_, _ = fmt.Fprintln(out, "Usage: "+strings.TrimPrefix(mcpLoginUsage, "usage: ")+"\n\nAuthorize one operator-configured OAuth MCP server. --no-browser prints the terminal authorization URL. --permission-config selects trusted operator settings and is repeatable. DCR registration recovery requires exactly one explicit --reset-dcr-registration or --retry-dcr-registration operation.")
 			return mcpLoginArgs{}, flag.ErrHelp
 		case "--no-browser":
 			if parsed.noBrowser {
 				return mcpLoginArgs{}, errMCPLoginUsage
 			}
 			parsed.noBrowser = true
-		case "--permission-config":
-			i++
-			if i >= len(args) || args[i] == "" || strings.HasPrefix(args[i], "-") {
+		case "--reset-dcr-registration":
+			if parsed.dcrAction != mcp.OAuthDCRLoginReuse {
 				return mcpLoginArgs{}, errMCPLoginUsage
 			}
-			parsed.permissionConfigs = append(parsed.permissionConfigs, args[i])
+			parsed.dcrAction = mcp.OAuthDCRLoginResetRegistration
+		case "--retry-dcr-registration":
+			if parsed.dcrAction != mcp.OAuthDCRLoginReuse {
+				return mcpLoginArgs{}, errMCPLoginUsage
+			}
+			parsed.dcrAction = mcp.OAuthDCRLoginRetryRegistration
+		case "--permission-config":
+			if i+1 >= len(args) {
+				return mcpLoginArgs{}, errMCPLoginUsage
+			}
+			path := args[i+1] // #nosec G602 -- the immediately preceding bound check proves i+1 is valid.
+			if path == "" || strings.HasPrefix(path, "-") {
+				return mcpLoginArgs{}, errMCPLoginUsage
+			}
+			i++
+			parsed.permissionConfigs = append(parsed.permissionConfigs, path)
 		default:
 			if path, ok := strings.CutPrefix(arg, "--permission-config="); ok {
 				if path == "" {
@@ -91,6 +108,8 @@ func mcpLoginRemedy(err error) error {
 	var rejected *oauthlogin.CallbackRejectedError
 	var bind *oauthlogin.CallbackBindError
 	switch {
+	case errors.Is(err, mcp.ErrOAuthDCRRecoveryRequired):
+		return errors.New("MCP OAuth DCR registration recovery is required; use --retry-dcr-registration for a valid unresolved attempt or --reset-dcr-registration for a valid existing registration")
 	case errors.As(err, &provider) && errors.Is(err, app.ErrMCPLoginAuthorization):
 		return fmt.Errorf("MCP OAuth authorization server rejected login (%s); review the requested scopes and provider policy", provider.Sanitized())
 	case errors.As(err, &rejected) && errors.Is(err, app.ErrMCPLoginAuthorization):
@@ -115,12 +134,12 @@ func mcpLoginRemedy(err error) error {
 	}
 }
 
-var executeMCPLogin = func(ctx context.Context, server mcp.ServerConfig, opts oauthlogin.Options) error {
-	runtime, err := oauthlogin.New(opts)
+var executeMCPLogin = func(ctx context.Context, server mcp.ServerConfig, runtimeOpts oauthlogin.Options, loginOpts app.MCPLoginOptions) error {
+	runtime, err := oauthlogin.New(runtimeOpts)
 	if err != nil {
 		return errors.New("MCP OAuth login runtime unavailable")
 	}
-	return app.LoginMCP(ctx, server, runtime)
+	return app.LoginMCPWithOptions(ctx, server, runtime, loginOpts)
 }
 
 func loadMCPLoginProfiles(explicit []string) (*cliconfig.MCPProfiles, error) {
@@ -155,7 +174,7 @@ func runMCPLogin(args []string, stdout io.Writer) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := executeMCPLogin(ctx, server, opts); err != nil {
+	if err := executeMCPLogin(ctx, server, opts, app.MCPLoginOptions{DCRAction: parsed.dcrAction}); err != nil {
 		return mcpLoginRemedy(err)
 	}
 	_, err = fmt.Fprintf(stdout, "MCP OAuth login succeeded for %s\n", server.Name)

@@ -269,7 +269,7 @@ func resolveMCPSubcommand(args []string) commandResolution {
 }
 
 func writeMCPHelp(out io.Writer) {
-	_, _ = fmt.Fprintln(out, "Usage: mecated mcp login SERVER [--no-browser] [--permission-config PATH ...]\n\nAuthorize one operator-configured OAuth MCP server. --permission-config selects trusted operator settings only; it never supplies OAuth values.")
+	_, _ = fmt.Fprintln(out, "Usage: "+strings.TrimPrefix(mcpLoginUsage, "usage: ")+"\n\nAuthorize one operator-configured OAuth MCP server. --permission-config selects trusted operator settings only; it never supplies OAuth values. DCR recovery modifiers are mutually exclusive and perform an explicit registration operation before login.")
 }
 
 func mcpUsageError(argv []string) error {
@@ -278,9 +278,9 @@ func mcpUsageError(argv []string) error {
 		sub = argv[2]
 	}
 	if sub == "" {
-		return errors.New("mcp: missing subcommand\navailable subcommands:\n  mcp login SERVER [--no-browser] [--permission-config PATH ...]    authorize a configured OAuth server")
+		return errors.New("mcp: missing subcommand\navailable subcommands:\n  " + strings.TrimPrefix(mcpLoginUsage, "usage: mecated ") + "    authorize a configured OAuth server")
 	}
-	return fmt.Errorf("mcp: unknown subcommand %q\navailable subcommands:\n  mcp login SERVER [--no-browser] [--permission-config PATH ...]    authorize a configured OAuth server", sub)
+	return fmt.Errorf("mcp: unknown subcommand %q\navailable subcommands:\n  %s    authorize a configured OAuth server", sub, strings.TrimPrefix(mcpLoginUsage, "usage: mecated "))
 }
 
 // configUsageError builds the error message for a bare/unknown `config` invocation.

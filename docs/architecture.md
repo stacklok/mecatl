@@ -112,13 +112,18 @@ unadvertised server may omit `iss`, while any supplied value must still match th
 issuer. The strict operator-tier
 `mcp.servers` schema and the single `internal/cliconfig` loader feed all three headless
 roots. Normal serve, ACP, mecatequi, and mecak8s install no presenter; only
-`mecated mcp login SERVER [--no-browser] [--permission-config PATH ...]` authorizes a
+`mecated mcp login SERVER [--no-browser] [--permission-config PATH ...]
+[--reset-dcr-registration | --retry-dcr-registration]` authorizes a
 mutable local profile, selecting trusted operator settings through the same resolver and
 precedence as serve; the option never carries OAuth values. A hermetic cross-boundary gate
-proves login-process exit, a first warm serving process, lazy refresh with durable
-refresh-token rotation, a second warm process, and transparent MCP-session reconnect through
-the model-visible global catalog. No reauthorization occurs across either restart or
-reconnect. The global manager/controllers close before loader-owned Stores and Readers. ACP
+proves preregistered login-process exit, warm serving, lazy refresh with durable refresh-token
+rotation, and transparent MCP-session reconnect through the model-visible global catalog.
+Direct DCR profiles instead persist a separate public-client registration and a
+generation-bound no-refresh access grant. A valid registration is reused across explicit
+logins; expiry returns login-required without refresh or browser launch, while the two
+DCR-only login modifiers explicitly retry a pending attempt or replace a ready registration.
+No reauthorization occurs across restart or reconnect while the selected credential remains
+valid. The global manager/controllers close before loader-owned Stores and Readers. ACP
 cannot provide OAuth profiles or install/drive authorization, but after operator
 authorization ACP sessions may invoke the shared global OAuth-backed tools under ordinary
 permissions. OAuth is not available for per-session MCP, inline agent definitions, or

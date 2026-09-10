@@ -32,7 +32,8 @@ func TestMCPLoginHelpAndUsageAreSideEffectFree(t *testing.T) {
 	if err := res.run(strings.NewReader(""), &out, io.Discard); !errors.Is(err, flag.ErrHelp) {
 		t.Fatalf("help error = %v", err)
 	}
-	if !strings.Contains(out.String(), "mecated mcp login SERVER [--no-browser]") {
+	if !strings.Contains(out.String(), "mecated mcp login SERVER [--no-browser]") ||
+		!strings.Contains(out.String(), "--reset-dcr-registration | --retry-dcr-registration") {
 		t.Fatalf("help = %q", out.String())
 	}
 
@@ -63,6 +64,41 @@ func TestMCPLoginHelpAndUsageAreSideEffectFree(t *testing.T) {
 	}
 }
 
+func TestADR_0325_DCRResetAndRetryCLI(t *testing.T) {
+	for _, tc := range []struct {
+		flag string
+		want mcp.OAuthDCRLoginAction
+	}{
+		{"--reset-dcr-registration", mcp.OAuthDCRLoginResetRegistration},
+		{"--retry-dcr-registration", mcp.OAuthDCRLoginRetryRegistration},
+	} {
+		parsed, err := parseMCPLoginArgs([]string{"gateway", tc.flag}, io.Discard)
+		if err != nil {
+			t.Fatalf("parse %s: %v", tc.flag, err)
+		}
+		if parsed.dcrAction != tc.want {
+			t.Fatalf("parse %s action = %v, want %v", tc.flag, parsed.dcrAction, tc.want)
+		}
+	}
+	for _, args := range [][]string{
+		{"gateway", "--reset-dcr-registration", "--retry-dcr-registration"},
+		{"gateway", "--retry-dcr-registration", "--reset-dcr-registration"},
+		{"gateway", "--reset-dcr-registration", "--reset-dcr-registration"},
+		{"gateway", "--retry-dcr-registration", "--retry-dcr-registration"},
+	} {
+		if _, err := parseMCPLoginArgs(args, io.Discard); !errors.Is(err, errMCPLoginUsage) {
+			t.Errorf("parseMCPLoginArgs(%q) error = %v", args, err)
+		}
+	}
+
+	const secret = "registration-client-id-secret-canary"
+	recovery := errors.Join(app.ErrMCPLoginAuthorization, mcp.ErrOAuthDCRRecoveryRequired, errors.New(secret))
+	got := mcpLoginRemedy(recovery).Error()
+	if strings.Contains(got, secret) || !strings.Contains(got, "--retry-dcr-registration") || !strings.Contains(got, "--reset-dcr-registration") {
+		t.Fatalf("recovery remedy = %q", got)
+	}
+}
+
 func TestMCPGroupHelpActionHasNoRuntimeSideEffects(t *testing.T) {
 	xdg := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", xdg)
@@ -78,7 +114,7 @@ func TestMCPGroupHelpActionHasNoRuntimeSideEffects(t *testing.T) {
 	original := executeMCPLogin
 	t.Cleanup(func() { executeMCPLogin = original })
 	calls := 0
-	executeMCPLogin = func(context.Context, mcp.ServerConfig, oauthlogin.Options) error {
+	executeMCPLogin = func(context.Context, mcp.ServerConfig, oauthlogin.Options, app.MCPLoginOptions) error {
 		calls++
 		return errors.New("help must not execute login")
 	}
@@ -202,7 +238,7 @@ func TestRunMCPLoginExecutionPathUsesRandomCallback(t *testing.T) {
 	original := executeMCPLogin
 	t.Cleanup(func() { executeMCPLogin = original })
 	calls := 0
-	executeMCPLogin = func(_ context.Context, server mcp.ServerConfig, opts oauthlogin.Options) error {
+	executeMCPLogin = func(_ context.Context, server mcp.ServerConfig, opts oauthlogin.Options, loginOpts app.MCPLoginOptions) error {
 		calls++
 		if server.Name != "GitHub" || server.OAuth == nil || server.OAuth.CredentialStore == nil || server.OAuth.CredentialReader != nil {
 			t.Fatalf("selected server = %#v", server)
@@ -210,10 +246,13 @@ func TestRunMCPLoginExecutionPathUsesRandomCallback(t *testing.T) {
 		if !opts.NoBrowser || opts.URLWriter == nil || opts.RedirectURL != "" {
 			t.Fatalf("runtime options = %#v; no-browser or random-path default was not forwarded", opts)
 		}
+		if loginOpts.DCRAction != mcp.OAuthDCRLoginRetryRegistration {
+			t.Fatalf("login options = %#v", loginOpts)
+		}
 		return nil
 	}
 	var out strings.Builder
-	if err := runMCPLogin([]string{"github", "--permission-config", local, "--no-browser"}, &out); err != nil {
+	if err := runMCPLogin([]string{"github", "--permission-config", local, "--no-browser", "--retry-dcr-registration"}, &out); err != nil {
 		t.Fatal(err)
 	}
 	if calls != 1 || !strings.Contains(out.String(), "succeeded for GitHub") {
