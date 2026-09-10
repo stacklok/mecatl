@@ -192,7 +192,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0223 — Pin MCP transport-error semantics that do not replay rejected calls](./0223-mcp-sdk-transport-error-semantics.md) *(superseded by 0309)*
 - [0309 — MCP closed-idle POST failures are ambiguous and never replayed](./0309-mcp-ambiguous-closed-idle-post.md)
 - [0323 — Broker-attached MCP query projection](./0323-target-governed-mcp-query.md)
-- [0310 — Lazy ToolHive authorization for statically declared protected tools](./0310-lazy-toolhive-static-tools.md) *(pre-prompt-only authenticated discovery superseded by 0319)*
+- [0310 — Lazy ToolHive authorization for statically declared protected tools](./0310-lazy-toolhive-static-tools.md) *(pre-prompt-only authenticated discovery superseded by 0326)*
 - [0311 — Per-upstream MCP broker OAuth grants](./0311-per-upstream-mcp-broker-oauth-grants.md) *(static-tool admission superseded by 0310)*
 - [0312 — Confidential ToolHive broker client credentials](./0312-confidential-toolhive-broker-client.md)
 - [0314 — Dynamic Client Registration for MCP broker upstreams](./0314-mcp-broker-dcr-client.md)

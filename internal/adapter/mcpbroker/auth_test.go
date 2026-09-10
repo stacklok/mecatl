@@ -161,7 +161,7 @@ func TestADR_0310_LazyAuthorizationDoesNotDiscoverUndeclaredTools(t *testing.T) 
 	}
 }
 
-func TestADR_0319_LazyGrantReplacesDeclaredMetadata(t *testing.T) {
+func TestADR_0326_LazyGrantReplacesDeclaredMetadata(t *testing.T) {
 	tokenServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"access_token":"broker-token","token_type":"Bearer","expires_in":3600}`))
@@ -231,7 +231,7 @@ func TestADR_0319_LazyGrantReplacesDeclaredMetadata(t *testing.T) {
 	}
 }
 
-func TestADR_0319_LazyGrantRefreshFailureIsAtomic(t *testing.T) {
+func TestADR_0326_LazyGrantRefreshFailureIsAtomic(t *testing.T) {
 	tokenServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"access_token":"broker-token","token_type":"Bearer","expires_in":3600}`))
@@ -323,6 +323,105 @@ func TestADR_0319_LazyGrantRefreshFailureIsAtomic(t *testing.T) {
 		t.Fatalf("Process.Close: %v", err)
 	}
 	assertStatic("process-close race")
+}
+
+// TestADR_0326_LazyGrantRefreshRejectsInvalidUndeclaredMetadata pins the
+// validation-ordering fix: an invalid/oversized undeclared authenticated
+// definition must abort the whole refresh, not be silently dropped while a
+// valid declared subset still publishes. Before the fix,
+// stageAuthenticatedDeclaredRoutes filtered to declared names BEFORE calling
+// validateAuthenticatedRoute, so an undeclared definition never reached the
+// shared admission boundary at all.
+func TestADR_0326_LazyGrantRefreshRejectsInvalidUndeclaredMetadata(t *testing.T) {
+	tokenServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"broker-token","token_type":"Bearer","expires_in":3600}`))
+	}))
+	defer tokenServer.Close()
+	harness := newProtectedHarness(t, tokenServer)
+	harness.runtime.catalogue.routes[0].broker = true
+	attachment, _ := attach(t, harness.runtime, "lazy-refresh-invalid-undeclared")
+	protected := toolByName(t, attachment, "mcp__github__create").(*protectedSessionTool)
+	queries := &orderedCapabilityQueries{responses: map[string]AuthenticatedCapabilities{
+		"github": {
+			Backend: "github", Tools: []ToolDefinition{
+				{Backend: "github", Name: "mcp__github__create", Description: "live", Schema: json.RawMessage(`{"type":"object"}`)},
+				// Invalid: empty schema fails validateAuthenticatedRoute. This
+				// definition is not declared, so the pre-fix code never
+				// validated it and would have published the declared subset
+				// above regardless.
+				{Backend: "github", Name: "mcp__github__undeclared", Description: "hidden", Schema: json.RawMessage(``)},
+			},
+		},
+	}}
+	harness.runtime.process = &Process{Runtime: harness.runtime, construction: toolHiveConstruction{protectedBackends: []string{"github"}}, protectedTarget: protected.route.oauth, queryAuthenticated: queries.query}
+	authorization, state := requestProtected(t, attachment, session.NewToolCall("lazy-refresh-invalid-undeclared", protected.Spec().Name, json.RawMessage(`{}`)))
+	if got := callback(t, harness.runtime, "code", state).Code; got != http.StatusOK {
+		t.Fatalf("callback status = %d", got)
+	}
+	if _, err := attachment.RefreshGrantedAuthorizationCatalogue(t.Context(), authorization); !errors.Is(err, ErrInvalidCatalogue) {
+		t.Fatalf("RefreshGrantedAuthorizationCatalogue error = %v, want ErrInvalidCatalogue", err)
+	}
+	if got := toolByName(t, attachment, "mcp__github__create").Spec().Description; got == "live" {
+		t.Fatal("invalid undeclared definition still published the declared subset")
+	}
+}
+
+// TestADR_0326_LazyGrantRefreshRetryReusesPublishedSnapshot pins the
+// transactional-retry fix: once a grant refresh has published a catalogue for
+// a given granted transaction, a retry against the SAME transaction (as a
+// caller does after restoring the claim following a downstream
+// session-engine rebuild failure) must reuse that exact snapshot rather than
+// re-running live authenticated discovery, which could return different
+// metadata on a second call.
+func TestADR_0326_LazyGrantRefreshRetryReusesPublishedSnapshot(t *testing.T) {
+	tokenServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"broker-token","token_type":"Bearer","expires_in":3600}`))
+	}))
+	defer tokenServer.Close()
+	harness := newProtectedHarness(t, tokenServer)
+	harness.runtime.catalogue.routes[0].broker = true
+	attachment, _ := attach(t, harness.runtime, "lazy-refresh-retry")
+	protected := toolByName(t, attachment, "mcp__github__create").(*protectedSessionTool)
+	queries := &orderedCapabilityQueries{responses: map[string]AuthenticatedCapabilities{
+		"github": {Backend: "github", Tools: []ToolDefinition{
+			{Backend: "github", Name: "mcp__github__create", Description: "live", Schema: json.RawMessage(`{"type":"object"}`)},
+		}},
+	}}
+	harness.runtime.process = &Process{Runtime: harness.runtime, construction: toolHiveConstruction{protectedBackends: []string{"github"}}, protectedTarget: protected.route.oauth, queryAuthenticated: queries.query}
+	authorization, state := requestProtected(t, attachment, session.NewToolCall("lazy-refresh-retry", protected.Spec().Name, json.RawMessage(`{}`)))
+	if got := callback(t, harness.runtime, "code", state).Code; got != http.StatusOK {
+		t.Fatalf("callback status = %d", got)
+	}
+	first, err := attachment.RefreshGrantedAuthorizationCatalogue(t.Context(), authorization)
+	if err != nil {
+		t.Fatalf("first RefreshGrantedAuthorizationCatalogue: %v", err)
+	}
+	queries.mu.Lock()
+	callsAfterFirst := queries.calls
+	// Change what discovery would return, proving a retry cannot observe it:
+	// a retry that re-queried would publish "changed" instead of "live".
+	queries.responses["github"] = AuthenticatedCapabilities{Backend: "github", Tools: []ToolDefinition{
+		{Backend: "github", Name: "mcp__github__create", Description: "changed", Schema: json.RawMessage(`{"type":"object"}`)},
+	}}
+	queries.mu.Unlock()
+	second, err := attachment.RefreshGrantedAuthorizationCatalogue(t.Context(), authorization)
+	if err != nil {
+		t.Fatalf("retry RefreshGrantedAuthorizationCatalogue: %v", err)
+	}
+	queries.mu.Lock()
+	callsAfterSecond := queries.calls
+	queries.mu.Unlock()
+	if callsAfterSecond != callsAfterFirst {
+		t.Fatalf("retry re-queried authenticated discovery: calls %d -> %d", callsAfterFirst, callsAfterSecond)
+	}
+	if !reflect.DeepEqual(toolNames(first), toolNames(second)) {
+		t.Fatalf("retry tools = %v, want %v", toolNames(second), toolNames(first))
+	}
+	if got := toolByName(t, attachment, "mcp__github__create").Spec().Description; got != "live" {
+		t.Fatalf("retry published re-discovered metadata: description = %q, want %q", got, "live")
+	}
 }
 
 func TestProtectedCallCallbackSingleUseAndRefreshCustody(t *testing.T) {

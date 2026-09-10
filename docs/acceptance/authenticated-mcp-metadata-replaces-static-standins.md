@@ -2,12 +2,12 @@
 
 **Contract:** human-reviewed/v1
 **Phase:** Session-scoped MCP broker protected-tool admission
-**Status:** landed candidate, 2026-09-09. Local implementation and verification are complete; authoritative only when these changes merge.
+**Status:** in-progress, 2026-09-10. Implementation and verification are complete in [PR #1320](https://github.com/stacklok/mecatl/pull/1320); authoritative only when that PR merges.
 **Delivery:** Split. This changes the ADR-governed model-visible protected-tool catalogue and its authority-sensitive read-only classification, so it requires Plan / Interface review before implementation.
 **Expected tasks:** 2
 **Issue:** [#1319](https://github.com/stacklok/mecatl/issues/1319)
-**Plan PR:** <added when opened>
-**Approved baseline:** `17ff18154` (local plan commit explicitly approved for execution in this workspace; no remote Plan PR requested)
+**Plan PR:** [#1320](https://github.com/stacklok/mecatl/pull/1320) (plan and implementation combined into one PR — reactive fix discovered during manual verification, not a fresh spine kickoff)
+**Approved baseline:** pending PR #1320 review; this document and the implementation land together on merge
 
 Static protected-tool declarations make an operator-selected initial surface available before ToolHive authorization. After successful pre-prompt enrollment, [ADR 0310](../adr/0310-lazy-toolhive-static-tools.md) says the complete authenticated catalogue replaces those visible stand-ins. Today, `stageAuthenticatedRoutes` removes a live definition whose name collides with a declaration and reinstates the declaration's description, schema, and read-only classification. It also retains a declared tool that authenticated discovery no longer returns. Consequently, each session discards its own authenticated metadata and membership for declared names.
 
@@ -65,11 +65,11 @@ A successful declared-tool call authorizes the configured ToolHive bundle. Befor
 
 **Acceptance:**
 - AC3.1: The exact granted bundle authorization queries every configured protected backend; matching declared tools use live description, schema, and `ReadOnly`, and omitted declarations disappear.
-  - verify: `TestADR_0319_LazyGrantReplacesDeclaredMetadata`
+  - verify: `TestADR_0326_LazyGrantReplacesDeclaredMetadata`
 - AC3.2: Undeclared authenticated tools remain hidden after lazy authorization, while pre-prompt enrollment continues to admit the complete authenticated catalogue.
-  - verify: `TestADR_0319_LazyGrantReplacesDeclaredMetadata`, `TestADR_0310_AuthenticatedCatalogueReplacesDeclaredMembership`
+  - verify: `TestADR_0326_LazyGrantReplacesDeclaredMetadata`, `TestADR_0310_AuthenticatedCatalogueReplacesDeclaredMembership`
 - AC3.3: A backend query, metadata validation, lifecycle race, or forged authorization publishes no partial catalogue and leaves the prior declarations authoritative.
-  - verify: `TestADR_0319_LazyGrantRefreshFailureIsAtomic`, `TestADR_0319_LazyGrantReplacesDeclaredMetadata`
+  - verify: `TestADR_0326_LazyGrantRefreshFailureIsAtomic`, `TestADR_0326_LazyGrantReplacesDeclaredMetadata`
 - AC3.4: The parked authorization continuation rebuilds its session engine from the exact refreshed tool snapshot before resuming the granted call.
   - verify: `TestAuthenticatedMCPMetadataReplacement_Scenario2_RebuildsParkedContinuation`, `TestAuthenticatedMCPMetadataReplacement_Scenario2_ReplacesJustParkedRun`
 
@@ -98,4 +98,4 @@ A successful declared-tool call authorizes the configured ToolHive bundle. Befor
 
 - A long-lived session can retain stale authenticated metadata after either successful discovery path. Refresh requires a separate lifecycle, concurrency, persistence, and in-flight-call contract; starting a fresh session is the v1 update path.
 - Like ordinary MCP tools, the broker accepts the authenticated server's read-only hint. A dishonest `true` can make a remote operation plan-visible and read-parallel; configured permission Deny/Ask rules remain independent, and broader MCP hint attestation is a separate security design.
-- ADR 0319 supersedes ADR 0310's pre-prompt-only discovery clause while preserving lazy authorization's declared-only membership boundary.
+- ADR 0326 supersedes ADR 0310's pre-prompt-only discovery clause while preserving lazy authorization's declared-only membership boundary.

@@ -78,6 +78,14 @@ type attachmentCatalogue struct {
 	routes map[string]route
 	tools  []tool.Tool
 	frozen contract.WorkspaceCatalogue
+	// refreshedFor is the zero value until a lazy bundle grant refresh
+	// publishes this exact catalogue; it then names the granting transaction.
+	// A retry against the SAME granted transaction (e.g. after a downstream
+	// session-engine rebuild failure) short-circuits on this rather than
+	// re-running live authenticated discovery — which would both waste the
+	// round trip and risk publishing a different snapshot than the one the
+	// caller already promised for that grant.
+	refreshedFor authorizationIdentity
 }
 
 func newAttachmentCatalogue(routes []route, tools []tool.Tool, frozen contract.WorkspaceCatalogue) *attachmentCatalogue {
@@ -180,6 +188,7 @@ func (a *Attachment) publishRefreshedCatalogue(logical *logicalSession, process 
 		bundle.transaction.status == session.AuthorizationGranted && logical.brokerCredential == bundle.grant &&
 		!process.closed && process.Runtime == a.runtime && !a.closed
 	if valid {
+		candidate.refreshedFor = bundle.transaction.identity
 		a.catalogue = candidate
 	}
 	return valid
@@ -220,6 +229,14 @@ func (a *Attachment) RefreshGrantedAuthorizationCatalogue(ctx context.Context, a
 		return nil, err
 	}
 	if unchanged {
+		return a.catalogue.Tools(), nil
+	}
+	if a.catalogue.refreshedFor != (authorizationIdentity{}) && a.catalogue.refreshedFor == bundle.transaction.identity {
+		// A retry for the exact same granted transaction (e.g. a caller whose
+		// downstream session-engine rebuild failed and restored the claim for
+		// another attempt): reuse the already-published, already-validated
+		// snapshot rather than re-running live authenticated discovery, which
+		// could return different metadata on a second call.
 		return a.catalogue.Tools(), nil
 	}
 
@@ -370,15 +387,20 @@ func stageAuthenticatedDeclaredRoutes(ctx context.Context, process *Process, bro
 		}
 		process.diagnostics().Log(ctx, port.LevelInfo, "authenticated discovery succeeded", "backend", backend, "tools", len(capabilities.Tools))
 		for _, definition := range capabilities.Tools {
-			if declaredBackend, declared := declared[definition.Name]; !declared || declaredBackend != backend {
-				continue
-			}
+			// Every discovered definition passes the shared admission boundary —
+			// qualified name, UTF-8, size, JSON-object schema, private material,
+			// and collision — before the declared-name membership rule decides
+			// whether it is staged. An invalid or oversized undeclared definition
+			// must abort the whole freeze, not be silently dropped.
 			route, err := validateAuthenticatedRoute(backend, definition, seen)
 			if err != nil {
 				return nil, err
 			}
-			route.broker = true
 			seen[route.spec.Name] = struct{}{}
+			if declaredBackend, isDeclared := declared[definition.Name]; !isDeclared || declaredBackend != backend {
+				continue
+			}
+			route.broker = true
 			staged = append(staged, route)
 		}
 	}

@@ -1,7 +1,7 @@
-# ADR 0319 — Lazy ToolHive grants refresh declared metadata
+# ADR 0326 — Lazy ToolHive grants refresh declared metadata
 
-- Status: Proposed
-- Date: 2026-09-09
+- Status: Accepted
+- Date: 2026-09-10
 - Scope: session-scoped MCP broker protected-tool admission
 - Supersedes: ADR 0310's pre-prompt-only authenticated-discovery clause
 - Superseded by: None
