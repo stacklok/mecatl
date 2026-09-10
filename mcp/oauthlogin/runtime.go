@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -127,6 +128,19 @@ func New(opts Options) (*Runtime, error) {
 
 // Authorize runs one loopback authorization interaction. Calls on the same Runtime are serialized.
 func (r *Runtime) Authorize(ctx context.Context, expectedIssuer string, authorize AuthorizeFunc) error {
+	return r.authorize(ctx, expectedIssuer, "", authorize)
+}
+
+// AuthorizeWithCallbackPath runs one loopback authorization interaction using a
+// registration-bound random callback path and a fresh ephemeral IPv4 port.
+func (r *Runtime) AuthorizeWithCallbackPath(ctx context.Context, expectedIssuer, callbackPath string, authorize AuthorizeFunc) error {
+	if r == nil || r.opts.RedirectURL != "" || !validCallbackPath(callbackPath) {
+		return errors.New("OAuth callback path is invalid")
+	}
+	return r.authorize(ctx, expectedIssuer, callbackPath, authorize)
+}
+
+func (r *Runtime) authorize(ctx context.Context, expectedIssuer, callbackPath string, authorize AuthorizeFunc) error {
 	if ctx == nil {
 		return errors.New("OAuth authorization requires a context")
 	}
@@ -154,9 +168,12 @@ func (r *Runtime) Authorize(ctx context.Context, expectedIssuer string, authoriz
 	redirectURL := ""
 	attemptPolicy := attemptMatchingRoute
 	if r.opts.RedirectURL == "" {
-		path, err = randomCallbackPath(r.random)
-		if err != nil {
-			return errors.New("generate OAuth callback path: failed")
+		path = callbackPath
+		if path == "" {
+			path, err = randomCallbackPath(r.random)
+			if err != nil {
+				return errors.New("generate OAuth callback path: failed")
+			}
 		}
 	} else {
 		fixed, _ := fixedRedirect(r.opts.RedirectURL)
@@ -308,6 +325,15 @@ func fixedRedirect(raw string) (fixedRedirectConfig, bool) {
 	default:
 		return fixedRedirectConfig{}, false
 	}
+}
+
+func validCallbackPath(path string) bool {
+	if !strings.HasPrefix(path, callbackPrefix) {
+		return false
+	}
+	encoded := strings.TrimPrefix(path, callbackPrefix)
+	raw, err := base64.RawURLEncoding.Strict().DecodeString(encoded)
+	return err == nil && len(raw) == callbackBytes && base64.RawURLEncoding.EncodeToString(raw) == encoded
 }
 
 func canonicalIssuer(raw string) (string, error) {

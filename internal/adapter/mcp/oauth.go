@@ -27,10 +27,23 @@ type OAuthSubject struct {
 	Principal string
 }
 
+// OAuthDCRConfig selects durable Dynamic Client Registration for a direct MCP profile.
+type OAuthDCRConfig struct{}
+
+// OAuthDCRLoginAction selects the explicit registration operation performed by login.
+type OAuthDCRLoginAction uint8
+
+const (
+	OAuthDCRLoginReuse OAuthDCRLoginAction = iota
+	OAuthDCRLoginResetRegistration
+	OAuthDCRLoginRetryRegistration
+)
+
 // OAuthClientConfig selects one durable client-registration profile.
 type OAuthClientConfig struct {
 	Preregistered               *oauthex.ClientCredentials
 	ClientIDMetadataDocumentURL string
+	DCR                         *OAuthDCRConfig
 }
 
 // OAuthNetworkPolicy declares endpoint origins. DNS and transport enforcement is
@@ -76,6 +89,8 @@ type OAuthOptions struct {
 	AllowedScopes        []string
 	Timeout              time.Duration
 	allowLoopbackForTest bool
+	dcr                  *oauthDCRResolved
+	dcrTicket            *oauthDCRTicket
 }
 
 // AllowOAuthLoopbackForTest enables loopback only for in-process test servers.
@@ -142,7 +157,7 @@ func validateOAuthOptions(opts OAuthOptions) (oauthRegistration, map[string]stru
 		return oauthRegistration{}, nil, errors.New("OAuth max redirects must be between zero and five")
 	}
 
-	registration, err := validateOAuthRegistration(opts.Client, opts.Issuer)
+	registration, err := resolvedOAuthRegistration(opts)
 	if err != nil {
 		return oauthRegistration{}, nil, err
 	}
@@ -156,8 +171,12 @@ func validateOAuthOptions(opts OAuthOptions) (oauthRegistration, map[string]stru
 func validateOAuthRegistration(clientOpts OAuthClientConfig, issuer string) (oauthRegistration, error) {
 	preregistered := clientOpts.Preregistered != nil
 	cimd := clientOpts.ClientIDMetadataDocumentURL != ""
-	if preregistered == cimd {
+	dcr := clientOpts.DCR != nil
+	if boolCount(preregistered, cimd, dcr) != 1 {
 		return oauthRegistration{}, errors.New("OAuth client must configure exactly one registration form")
+	}
+	if dcr {
+		return oauthRegistration{}, errors.New("OAuth DCR client registration is unresolved")
 	}
 	if preregistered {
 		client := clientOpts.Preregistered
@@ -181,6 +200,33 @@ func validateOAuthRegistration(clientOpts OAuthClientConfig, issuer string) (oau
 		return oauthRegistration{}, errors.New("OAuth client ID metadata document URL is invalid")
 	}
 	return oauthRegistration{kind: "cimd", clientID: clientOpts.ClientIDMetadataDocumentURL, cimd: clientOpts.ClientIDMetadataDocumentURL}, nil
+}
+
+func boolCount(values ...bool) int {
+	count := 0
+	for _, value := range values {
+		if value {
+			count++
+		}
+	}
+	return count
+}
+
+func resolvedOAuthRegistration(opts OAuthOptions) (oauthRegistration, error) {
+	if opts.Client.DCR == nil {
+		return validateOAuthRegistration(opts.Client, opts.Issuer)
+	}
+	if boolCount(opts.Client.Preregistered != nil, opts.Client.ClientIDMetadataDocumentURL != "", true) != 1 || opts.dcr == nil {
+		return oauthRegistration{}, errors.New("OAuth DCR client registration is unresolved")
+	}
+	if opts.dcr.issuer != opts.Issuer || opts.dcr.clientID == "" || !validDCRRandom(opts.dcr.generation) {
+		return oauthRegistration{}, errors.New("OAuth DCR client registration is invalid")
+	}
+	client := &oauthex.ClientCredentials{ClientID: opts.dcr.clientID, Issuer: opts.Issuer}
+	if err := client.Validate(); err != nil {
+		return oauthRegistration{}, errors.New("OAuth DCR client registration is invalid")
+	}
+	return oauthRegistration{kind: "dcr", clientID: opts.dcr.clientID, sdk: client}, nil
 }
 
 func validateOAuthOrigins(issuer *url.URL, network OAuthNetworkPolicy) (map[string]struct{}, error) {
@@ -378,14 +424,20 @@ func NewOAuthController(ctx context.Context, resource string, opts OAuthOptions)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if _, _, err := validateOAuthOptions(opts); err != nil {
-		return nil, err
-	}
 	if _, err := canonicalOAuthResource(resource); err != nil {
 		return nil, err
 	}
 	client, transport, err := newOAuthHTTPClient(resource, opts)
 	if err != nil {
+		return nil, err
+	}
+	opts, err = resolvePreparedDCR(ctx, resource, opts, client)
+	if err != nil {
+		transport.base.CloseIdleConnections()
+		return nil, projectOAuthError(err)
+	}
+	if _, _, err := validateOAuthOptions(opts); err != nil {
+		transport.base.CloseIdleConnections()
 		return nil, err
 	}
 	lifetimeCtx, lifetimeCancel := context.WithCancel(context.Background())

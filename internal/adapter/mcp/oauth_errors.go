@@ -28,6 +28,9 @@ func (e *OAuthError) Error() string {
 	if errors.Is(e.kind, ErrOAuthLoginRequired) {
 		return "mcp OAuth login required"
 	}
+	if errors.Is(e.kind, ErrOAuthDCRRecoveryRequired) {
+		return ErrOAuthDCRRecoveryRequired.Error()
+	}
 	return "mcp OAuth unavailable"
 }
 
@@ -55,6 +58,9 @@ func projectOAuthError(err error) error {
 	var rejected *oauthlogin.CallbackRejectedError
 	if errors.As(err, &rejected) {
 		return &OAuthError{kind: ErrOAuthUnavailable, diagnostic: rejected.Sanitized()}
+	}
+	if errors.Is(err, ErrOAuthDCRRecoveryRequired) {
+		return &OAuthError{kind: ErrOAuthDCRRecoveryRequired}
 	}
 	if errors.Is(err, ErrOAuthLoginRequired) {
 		return &OAuthError{kind: ErrOAuthLoginRequired}

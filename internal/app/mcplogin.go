@@ -53,10 +53,17 @@ func loginDiagnostic(category, diagnostic error) error {
 		diagnostic = rejected.Sanitized()
 	case errors.As(diagnostic, &bind):
 		diagnostic = &oauthlogin.CallbackBindError{Reason: bind.Reason}
+	case errors.Is(diagnostic, mcp.ErrOAuthDCRRecoveryRequired):
+		diagnostic = mcp.ErrOAuthDCRRecoveryRequired
 	default:
 		return category
 	}
 	return &mcpLoginDiagnostic{category: category, diagnostic: diagnostic}
+}
+
+// MCPLoginOptions selects an explicit DCR registration recovery action.
+type MCPLoginOptions struct {
+	DCRAction mcp.OAuthDCRLoginAction
 }
 
 // LoginMCP runs one host-authorized OAuth login against an already-resolved MCP
@@ -65,12 +72,38 @@ func loginDiagnostic(category, diagnostic error) error {
 // completed, a usable credential was durably stored or restored, and the
 // temporary server/controller were closed.
 func LoginMCP(ctx context.Context, cfg mcp.ServerConfig, runtime *oauthlogin.Runtime) error {
+	return LoginMCPWithOptions(ctx, cfg, runtime, MCPLoginOptions{})
+}
+
+// LoginMCPWithOptions runs LoginMCP with an explicit DCR registration action.
+func LoginMCPWithOptions(ctx context.Context, cfg mcp.ServerConfig, runtime *oauthlogin.Runtime, opts MCPLoginOptions) error {
 	if err := validateMCPLoginConfig(cfg, runtime); err != nil {
 		return err
 	}
+	if opts.DCRAction > mcp.OAuthDCRLoginRetryRegistration {
+		return ErrMCPLoginConfig
+	}
+	if cfg.OAuth.Client.DCR == nil {
+		if opts.DCRAction != mcp.OAuthDCRLoginReuse {
+			return ErrMCPLoginConfig
+		}
+		return loginMCPAuthorize(cfg, func(authorize oauthlogin.AuthorizeFunc) error {
+			return runtime.Authorize(ctx, cfg.OAuth.Issuer, authorize)
+		})
+	}
+	prepared, callbackPath, err := mcp.PrepareOAuthDCRLogin(ctx, cfg.URL, *cfg.OAuth, opts.DCRAction)
+	if err != nil {
+		return loginDiagnostic(ErrMCPLoginAuthorization, err)
+	}
+	cfg.OAuth = &prepared
+	return loginMCPAuthorize(cfg, func(authorize oauthlogin.AuthorizeFunc) error {
+		return runtime.AuthorizeWithCallbackPath(ctx, cfg.OAuth.Issuer, callbackPath, authorize)
+	})
+}
 
+func loginMCPAuthorize(cfg mcp.ServerConfig, run func(oauthlogin.AuthorizeFunc) error) error {
 	var operationCategory error
-	err := runtime.Authorize(ctx, cfg.OAuth.Issuer, func(ctx context.Context, redirectURL string, present func(context.Context, string) (oauthlogin.Result, error)) error {
+	err := run(func(ctx context.Context, redirectURL string, present func(context.Context, string) (oauthlogin.Result, error)) error {
 		loginCfg := cfg
 		oauth := *cfg.OAuth
 		oauth.RedirectURL = redirectURL

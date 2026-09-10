@@ -149,7 +149,7 @@ func validateOAuthIdentity(identity oauthCredentialIdentity) error {
 			return err
 		}
 	}
-	if identity.ClientKind != "preregistered" && identity.ClientKind != "cimd" {
+	if identity.ClientKind != "preregistered" && identity.ClientKind != "cimd" && identity.ClientKind != "dcr" {
 		return errors.New("OAuth client kind is unsupported")
 	}
 	return nil
@@ -169,7 +169,7 @@ func OAuthCredentialRecordKey(resource string, opts OAuthOptions) ([]byte, error
 	if err != nil {
 		return nil, err
 	}
-	registration, err := validateOAuthRegistration(opts.Client, opts.Issuer)
+	registration, err := resolvedOAuthRegistration(opts)
 	if err != nil {
 		return nil, err
 	}
