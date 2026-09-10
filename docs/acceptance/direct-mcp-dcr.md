@@ -2,12 +2,12 @@
 
 **Contract:** human-reviewed/v1
 **Phase:** local direct-MCP OAuth durability
-**Status:** proposed, 2026-09-09. All human decisions required for implementation are resolved and recorded; the proposed contract awaits human plan/interface review, not approval or landing. Gateway discovery, the standalone public-client DCR/PKCE port probe, and an operator-driven mecatui spike against the deployed gateway passed; refresh and the full failure/recovery contract remain unverified.
+**Status:** approved. Plan / Interface PR #1331 merged at `4ef7af6a74225e04a45e1e9dda7c3888b25cad3e`; implementation has not started. Gateway discovery, the standalone public-client DCR/PKCE port probe, and an operator-driven mecatui spike against the deployed gateway passed; refresh and the full failure/recovery contract remain unverified.
 **Delivery:** Split. This changes an operator-facing OAuth client union, durable credential identity, registration lifecycle, and the local interactive authorization boundary.
 **Expected tasks:** deferred to orchestration
 **Issue:** none — scope supplied for acceptance-contract review.
 **Plan PR:** https://github.com/stacklok/mecatl/pull/1331
-**Approved baseline:** <merged plan commit; absent until approved>
+**Approved baseline:** `4ef7af6a74225e04a45e1e9dda7c3888b25cad3e`
 
 Enable a local mecatui direct (non-broker) MCP profile to use RFC 7591 Dynamic Client Registration (DCR), then the existing authorization-code/PKCE login path, against `https://connector-gateway.example.com/gw/mcp`. The durable registration and resulting grant must survive a local restart and permit a harmless discovered read tool. This does not change remote mecatui OIDC, the MCP broker, or `CallMcpWithQuery`.
 
