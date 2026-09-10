@@ -191,6 +191,25 @@ func PrepareOAuthDCRLogin(ctx context.Context, resource string, opts OAuthOption
 		if action == OAuthDCRLoginResetRegistration && stored.State != oauthDCRStateReady || action == OAuthDCRLoginRetryRegistration && stored.State != oauthDCRStatePending {
 			return OAuthOptions{}, "", ErrOAuthDCRRecoveryRequired
 		}
+		if action == OAuthDCRLoginResetRegistration {
+			grantIdentity := oauthCredentialIdentity{
+				Profile: identity.Profile, Principal: identity.Principal, Resource: identity.Resource,
+				Issuer: identity.Issuer, ClientKind: oauthDCRClientKind, ClientID: stored.Registration.ClientID,
+			}
+			grantKey, keyErr := oauthDCRCredentialKey(grantIdentity, stored.Generation)
+			if keyErr != nil {
+				return OAuthOptions{}, "", ErrOAuthDCRRecoveryRequired
+			}
+			grantRecord, grantErr := opts.CredentialStore.Get(ctx, grantKey)
+			if grantErr == nil {
+				issuerOrigins := map[string]struct{}{transport.issuerOrigin: {}}
+				if _, decodeErr := decodeOAuthDCRGrant(grantRecord.Value, grantIdentity, stored.Generation, issuerOrigins); decodeErr != nil {
+					return OAuthOptions{}, "", ErrOAuthDCRRecoveryRequired
+				}
+			} else if !errors.Is(grantErr, credentialstore.ErrNotFound) {
+				return OAuthOptions{}, "", ErrOAuthDCRRecoveryRequired
+			}
+		}
 		reason := "explicit_reset"
 		if action == OAuthDCRLoginRetryRegistration {
 			reason = "explicit_retry"
@@ -399,6 +418,9 @@ func resolvePreparedDCR(ctx context.Context, resource string, opts OAuthOptions,
 	registerClient.Transport = capture
 	response, err := oauthex.RegisterClient(ctx, ticket.registrationEndpoint, request, &registerClient)
 	if err != nil || capture.invalid || capture.issuedAt != nil && *capture.issuedAt < 0 || !validDCRRegistrationResponse(response, request) {
+		if winner, ok := adoptDCRReady(ctx, opts.CredentialStore, ticket); ok {
+			return withResolvedDCR(opts, winner), nil
+		}
 		return OAuthOptions{}, ErrOAuthDCRRecoveryRequired
 	}
 	ready := ticket.record
@@ -413,17 +435,25 @@ func resolvePreparedDCR(ctx context.Context, resource string, opts OAuthOptions,
 		return OAuthOptions{}, ErrOAuthDCRRecoveryRequired
 	}
 	if _, err = opts.CredentialStore.Put(ctx, ticket.key, value, &ticket.version); err != nil {
-		winner, getErr := opts.CredentialStore.Get(ctx, ticket.key)
-		if getErr != nil {
+		winner, ok := adoptDCRReady(ctx, opts.CredentialStore, ticket)
+		if !ok {
 			return OAuthOptions{}, ErrOAuthDCRRecoveryRequired
 		}
-		stored, decodeErr := decodeOAuthDCRRecord(winner.Value, ticket.record.Identity)
-		if decodeErr != nil || stored.State != oauthDCRStateReady || stored.Generation != ticket.record.Generation || stored.MetadataFingerprint != ticket.record.MetadataFingerprint {
-			return OAuthOptions{}, ErrOAuthDCRRecoveryRequired
-		}
-		ready = stored
+		ready = winner
 	}
 	return withResolvedDCR(opts, ready), nil
+}
+
+func adoptDCRReady(ctx context.Context, store credentialstore.Store, ticket *oauthDCRTicket) (oauthDCRRecord, bool) {
+	winner, err := store.Get(ctx, ticket.key)
+	if err != nil {
+		return oauthDCRRecord{}, false
+	}
+	stored, err := decodeOAuthDCRRecord(winner.Value, ticket.record.Identity)
+	if err != nil || stored.State != oauthDCRStateReady || stored.Generation != ticket.record.Generation || stored.MetadataFingerprint != ticket.record.MetadataFingerprint || !equalDCRMetadata(stored.Metadata, ticket.record.Metadata) {
+		return oauthDCRRecord{}, false
+	}
+	return stored, true
 }
 
 func validDCRRegistrationResponse(response *oauthex.ClientRegistrationResponse, request *oauthex.ClientRegistrationMetadata) bool {

@@ -44,6 +44,9 @@ type dcrMetadataFixture struct {
 	registrationAccessToken string
 	rejectPortVariation     bool
 	registeredRedirect      string
+	registrationStarted     chan struct{}
+	registrationRelease     <-chan struct{}
+	registrationStatus      int
 }
 
 func newDCRMetadataFixture(t *testing.T) *dcrMetadataFixture {
@@ -88,6 +91,17 @@ func newDCRMetadataFixture(t *testing.T) *dcrMetadataFixture {
 		case r.URL.Path == "/oauth/register" || r.URL.Path == "/oauth/register-v2":
 			w.Header().Set("Content-Type", "application/json")
 			f.registerCount++
+			if f.registrationStarted != nil {
+				close(f.registrationStarted)
+				f.registrationStarted = nil
+			}
+			if f.registrationRelease != nil {
+				<-f.registrationRelease
+			}
+			if f.registrationStatus != 0 {
+				http.Error(w, `{"error":"registration_outcome_unknown"}`, f.registrationStatus)
+				return
+			}
 			var request oauthex.ClientRegistrationMetadata
 			_ = json.NewDecoder(r.Body).Decode(&request)
 			if len(request.RedirectURIs) == 1 {
@@ -408,6 +422,126 @@ func TestOAuthDCRExplicitResetAndRetryReplaceOnePredecessor(t *testing.T) {
 	_ = controller.Close()
 	if fixture.registerCount != 2 {
 		t.Fatalf("registration POST count = %d, want 2", fixture.registerCount)
+	}
+}
+
+func TestOAuthDCRRegistrationResetRejectsCorruptGrantWithoutMutation(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func([]byte) []byte
+		fail   bool
+	}{
+		{name: "corrupt", mutate: func([]byte) []byte { return []byte(`{"schema":"corrupt"}`) }},
+		{name: "unsupported", mutate: func(value []byte) []byte {
+			return []byte(strings.Replace(string(value), `"version":2`, `"version":3`, 1))
+		}},
+		{name: "identity mismatch", mutate: func(value []byte) []byte {
+			return []byte(strings.Replace(string(value), `"principal":"local-user"`, `"principal":"other-user"`, 1))
+		}},
+		{name: "backend failure", fail: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture := newDCRMetadataFixture(t)
+			resource, store := fixture.server.URL+"/gw/mcp", newDCRMemoryStore(t)
+			opts := fixture.options(t, store)
+			controller := authorizeDCRForProof(t, fixture, resource, opts)
+			generation, clientID := controller.state.registration.generation, controller.state.registration.clientID
+			_ = controller.Close()
+
+			grantIdentity := oauthCredentialIdentity{
+				Profile: opts.Subject.Profile, Principal: opts.Subject.Principal, Resource: resource,
+				Issuer: opts.Issuer, ClientKind: oauthDCRClientKind, ClientID: clientID,
+			}
+			grantKey, err := oauthDCRCredentialKey(grantIdentity, generation)
+			if err != nil {
+				t.Fatal(err)
+			}
+			grant, err := store.Get(context.Background(), grantKey)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var resetStore credentialstore.Store
+			resetStore = store
+			if tc.fail {
+				wrapped := &scriptedDCRStore{Store: store}
+				wrapped.get = func(ctx context.Context, key []byte) (credentialstore.Record, error) {
+					if string(key) == string(grantKey) {
+						return credentialstore.Record{}, credentialstore.ErrUnavailable
+					}
+					return store.Get(ctx, key)
+				}
+				resetStore = wrapped
+			} else {
+				mutated := tc.mutate(grant.Value)
+				if string(mutated) == string(grant.Value) {
+					t.Fatal("fixture did not corrupt the grant")
+				}
+				if _, err := store.Put(context.Background(), grantKey, mutated, &grant.Version); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			registrationIdentity := oauthDCRIdentity{Profile: opts.Subject.Profile, Principal: opts.Subject.Principal, Resource: resource, Issuer: opts.Issuer}
+			registrationKey, err := oauthDCRRegistrationKey(registrationIdentity)
+			if err != nil {
+				t.Fatal(err)
+			}
+			before, err := store.Get(context.Background(), registrationKey)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resetOpts := fixture.options(t, resetStore)
+			if _, _, err := PrepareOAuthDCRLogin(context.Background(), resource, resetOpts, OAuthDCRLoginResetRegistration); !errors.Is(err, ErrOAuthDCRRecoveryRequired) {
+				t.Fatalf("reset with invalid current grant = %v, want recovery-required", err)
+			}
+			after, err := store.Get(context.Background(), registrationKey)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(after.Value) != string(before.Value) || !after.Version.Equal(before.Version) {
+				t.Fatal("reset mutated the registration after grant validation failed")
+			}
+		})
+	}
+}
+
+func TestOAuthDCRRegistrationResetAllowsValidOrMissingGrant(t *testing.T) {
+	for _, state := range []string{"active", "reset", "missing"} {
+		t.Run(state, func(t *testing.T) {
+			fixture := newDCRMetadataFixture(t)
+			resource, store := fixture.server.URL+"/gw/mcp", newDCRMemoryStore(t)
+			opts := fixture.options(t, store)
+			var controller *OAuthController
+			if state == "active" {
+				controller = authorizeDCRForProof(t, fixture, resource, opts)
+			} else {
+				prepared, path, err := PrepareOAuthDCRLogin(context.Background(), resource, opts, OAuthDCRLoginReuse)
+				if err != nil {
+					t.Fatal(err)
+				}
+				prepared.RedirectURL = "http://127.0.0.1:49152" + path
+				controller, err = NewOAuthController(context.Background(), resource, prepared)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			generation, clientID := controller.state.registration.generation, controller.state.registration.clientID
+			_ = controller.Close()
+			if state == "missing" {
+				identity := oauthCredentialIdentity{Profile: opts.Subject.Profile, Principal: opts.Subject.Principal, Resource: resource, Issuer: opts.Issuer, ClientKind: oauthDCRClientKind, ClientID: clientID}
+				key, _ := oauthDCRCredentialKey(identity, generation)
+				record, err := store.Get(context.Background(), key)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := store.Delete(context.Background(), key, record.Version); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, path, err := PrepareOAuthDCRLogin(context.Background(), resource, opts, OAuthDCRLoginResetRegistration); err != nil || path == "" {
+				t.Fatalf("reset with %s grant = path %q, error %v", state, path, err)
+			}
+		})
 	}
 }
 

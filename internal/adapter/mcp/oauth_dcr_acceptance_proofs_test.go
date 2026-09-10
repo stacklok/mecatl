@@ -7,11 +7,14 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/auth"
 	"golang.org/x/oauth2"
+
+	"github.com/stacklok/mecatl/internal/adapter/credentialstore"
 )
 
 func dcrChallenge(t *testing.T, resource string) (*http.Request, *http.Response) {
@@ -412,47 +415,266 @@ func TestDirectMCPDCR_Scenario2_ReauthorizationRedirectAndScopeBinding(t *testin
 	}
 }
 
-func TestADR_0325_DirectDCRUnknownAttemptRecovery(t *testing.T) {
-	fixture := newDCRMetadataFixture(t)
-	resource, store := fixture.server.URL+"/gw/mcp", newDCRMemoryStore(t)
-	opts := fixture.options(t, store)
-	old, oldPath, err := PrepareOAuthDCRLogin(context.Background(), resource, opts, OAuthDCRLoginReuse)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := PrepareOAuthDCRLogin(context.Background(), resource, opts, OAuthDCRLoginReuse); !errors.Is(err, ErrOAuthDCRRecoveryRequired) {
-		t.Fatalf("pending attempt was automatically retried: %v", err)
-	}
-	if fixture.registerCount != 0 {
-		t.Fatalf("pending recovery posted %d registrations", fixture.registerCount)
-	}
-	retry, retryPath, err := PrepareOAuthDCRLogin(context.Background(), resource, opts, OAuthDCRLoginRetryRegistration)
-	if err != nil {
-		t.Fatal(err)
-	}
-	retry.RedirectURL = "http://127.0.0.1:49153" + retryPath
-	winner, err := NewOAuthController(context.Background(), resource, retry)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer winner.Close()
-	if fixture.registerCount != 1 {
-		t.Fatalf("explicit retry registrations = %d", fixture.registerCount)
-	}
+type scriptedDCRStore struct {
+	credentialstore.Store
+	get func(context.Context, []byte) (credentialstore.Record, error)
+	put func(context.Context, []byte, []byte, *credentialstore.Version) (credentialstore.Record, error)
+}
 
-	old.RedirectURL = "http://127.0.0.1:49152" + oldPath
-	if _, err := NewOAuthController(context.Background(), resource, old); !errors.Is(err, ErrOAuthDCRRecoveryRequired) {
-		t.Fatalf("late uncertain writer = %v", err)
+func (s *scriptedDCRStore) Get(ctx context.Context, key []byte) (credentialstore.Record, error) {
+	if s.get != nil {
+		return s.get(ctx, key)
 	}
-	if fixture.registerCount != 2 {
-		t.Fatalf("late already-started POST count=%d, want 2 without an automatic retry", fixture.registerCount)
+	return s.Store.Get(ctx, key)
+}
+
+func (s *scriptedDCRStore) Put(ctx context.Context, key, value []byte, expected *credentialstore.Version) (credentialstore.Record, error) {
+	if s.put != nil {
+		return s.put(ctx, key, value, expected)
 	}
-	restored, path, err := PrepareOAuthDCRLogin(context.Background(), resource, opts, OAuthDCRLoginReuse)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if path != retryPath || restored.dcr == nil || restored.dcr.generation != retry.dcrTicket.record.Generation {
-		t.Fatalf("late error displaced ready winner: path=%q resolved=%#v", path, restored.dcr)
+	return s.Store.Put(ctx, key, value, expected)
+}
+
+func TestADR_0325_DirectDCRUnknownAttemptRecovery(t *testing.T) {
+	t.Run("pending contender stops while winner still owns preparation", func(t *testing.T) {
+		fixture := newDCRMetadataFixture(t)
+		resource, base := fixture.server.URL+"/gw/mcp", newDCRMemoryStore(t)
+		committed, release := make(chan struct{}), make(chan struct{})
+		var once sync.Once
+		store := &scriptedDCRStore{Store: base}
+		store.put = func(ctx context.Context, key, value []byte, expected *credentialstore.Version) (credentialstore.Record, error) {
+			record, err := base.Put(ctx, key, value, expected)
+			if err == nil && expected == nil {
+				once.Do(func() {
+					close(committed)
+					<-release
+				})
+			}
+			return record, err
+		}
+		opts := fixture.options(t, store)
+		type result struct {
+			opts OAuthOptions
+			path string
+			err  error
+		}
+		winner := make(chan result, 1)
+		go func() {
+			prepared, path, err := PrepareOAuthDCRLogin(context.Background(), resource, opts, OAuthDCRLoginReuse)
+			winner <- result{opts: prepared, path: path, err: err}
+		}()
+		<-committed
+		if _, _, err := PrepareOAuthDCRLogin(context.Background(), resource, opts, OAuthDCRLoginReuse); !errors.Is(err, ErrOAuthDCRRecoveryRequired) {
+			t.Fatalf("pending contender = %v, want recovery-required", err)
+		}
+		close(release)
+		if got := <-winner; got.err != nil || got.opts.dcrTicket == nil || got.path == "" {
+			t.Fatalf("pending winner = %#v", got)
+		}
+		if fixture.registerCount != 0 {
+			t.Fatalf("contention issued %d registration POSTs", fixture.registerCount)
+		}
+	})
+
+	t.Run("unknown POST outcome is not repeated automatically", func(t *testing.T) {
+		fixture := newDCRMetadataFixture(t)
+		resource, store := fixture.server.URL+"/gw/mcp", newDCRMemoryStore(t)
+		opts := fixture.options(t, store)
+		prepared, path, err := PrepareOAuthDCRLogin(context.Background(), resource, opts, OAuthDCRLoginReuse)
+		if err != nil {
+			t.Fatal(err)
+		}
+		prepared.RedirectURL = "http://127.0.0.1:49152" + path
+		started, release := make(chan struct{}), make(chan struct{})
+		fixture.registrationStarted, fixture.registrationRelease = started, release
+		ctx, cancel := context.WithCancel(context.Background())
+		result := make(chan error, 1)
+		go func() {
+			_, err := NewOAuthController(ctx, resource, prepared)
+			result <- err
+		}()
+		<-started
+		cancel()
+		close(release)
+		if err := <-result; !errors.Is(err, ErrOAuthDCRRecoveryRequired) {
+			t.Fatalf("unknown POST outcome = %v, want recovery-required", err)
+		}
+		if _, _, err := PrepareOAuthDCRLogin(context.Background(), resource, opts, OAuthDCRLoginReuse); !errors.Is(err, ErrOAuthDCRRecoveryRequired) {
+			t.Fatalf("ordinary retry after unknown POST = %v", err)
+		}
+		if fixture.registerCount != 1 {
+			t.Fatalf("unknown POST was repeated %d times", fixture.registerCount)
+		}
+	})
+
+	t.Run("explicit retry fences an old publication and retains one predecessor", func(t *testing.T) {
+		fixture := newDCRMetadataFixture(t)
+		resource, base := fixture.server.URL+"/gw/mcp", newDCRMemoryStore(t)
+		store := &scriptedDCRStore{Store: base}
+		opts := fixture.options(t, store)
+		old, oldPath, err := PrepareOAuthDCRLogin(context.Background(), resource, opts, OAuthDCRLoginReuse)
+		if err != nil {
+			t.Fatal(err)
+		}
+		oldGeneration := old.dcrTicket.record.Generation
+		atPublication, releasePublication := make(chan struct{}), make(chan struct{})
+		var once sync.Once
+		store.put = func(ctx context.Context, key, value []byte, expected *credentialstore.Version) (credentialstore.Record, error) {
+			record, decodeErr := decodeOAuthDCRRecord(value, old.dcrTicket.record.Identity)
+			if decodeErr == nil && record.State == oauthDCRStateReady && record.Generation == oldGeneration {
+				once.Do(func() {
+					close(atPublication)
+					<-releasePublication
+				})
+			}
+			return base.Put(ctx, key, value, expected)
+		}
+		old.RedirectURL = "http://127.0.0.1:49152" + oldPath
+		oldResult := make(chan error, 1)
+		go func() {
+			_, err := NewOAuthController(context.Background(), resource, old)
+			oldResult <- err
+		}()
+		<-atPublication
+		retry, _, err := PrepareOAuthDCRLogin(context.Background(), resource, opts, OAuthDCRLoginRetryRegistration)
+		if err != nil {
+			t.Fatal(err)
+		}
+		close(releasePublication)
+		if err := <-oldResult; !errors.Is(err, ErrOAuthDCRRecoveryRequired) {
+			t.Fatalf("stale publication = %v, want recovery-required", err)
+		}
+		latest, latestPath, err := PrepareOAuthDCRLogin(context.Background(), resource, opts, OAuthDCRLoginRetryRegistration)
+		if err != nil {
+			t.Fatal(err)
+		}
+		latest.RedirectURL = "http://127.0.0.1:49153" + latestPath
+		winner, err := NewOAuthController(context.Background(), resource, latest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = winner.Close()
+
+		identity := latest.dcrTicket.record.Identity
+		key, _ := oauthDCRRegistrationKey(identity)
+		stored, err := base.Get(context.Background(), key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ready, err := decodeOAuthDCRRecord(stored.Value, identity)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ready.Generation != latest.dcrTicket.record.Generation || ready.PreviousAttempt == nil || ready.PreviousAttempt.Generation != retry.dcrTicket.record.Generation || ready.PreviousAttempt.Reason != "explicit_retry" {
+			t.Fatalf("retry winner/evidence = %#v", ready)
+		}
+		if ready.PreviousAttempt.Generation == oldGeneration || strings.Count(string(stored.Value), `"previous_attempt"`) != 1 {
+			t.Fatalf("previous-attempt evidence is not bounded: %s", stored.Value)
+		}
+	})
+
+	t.Run("ready winner is adopted over a late registration error", func(t *testing.T) {
+		fixture := newDCRMetadataFixture(t)
+		resource, store := fixture.server.URL+"/gw/mcp", newDCRMemoryStore(t)
+		opts := fixture.options(t, store)
+		prepared, path, err := PrepareOAuthDCRLogin(context.Background(), resource, opts, OAuthDCRLoginReuse)
+		if err != nil {
+			t.Fatal(err)
+		}
+		prepared.RedirectURL = "http://127.0.0.1:49152" + path
+		started, release := make(chan struct{}), make(chan struct{})
+		fixture.registrationStarted, fixture.registrationRelease, fixture.registrationStatus = started, release, http.StatusGatewayTimeout
+		result := make(chan struct {
+			controller *OAuthController
+			err        error
+		}, 1)
+		go func() {
+			controller, err := NewOAuthController(context.Background(), resource, prepared)
+			result <- struct {
+				controller *OAuthController
+				err        error
+			}{controller: controller, err: err}
+		}()
+		<-started
+		identity := prepared.dcrTicket.record.Identity
+		key, _ := oauthDCRRegistrationKey(identity)
+		pending, err := store.Get(context.Background(), key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ready := prepared.dcrTicket.record
+		ready.State = oauthDCRStateReady
+		ready.Registration = &oauthDCRRegistration{ClientID: fixture.clientID, RegisteredRedirectURI: prepared.RedirectURL}
+		value, err := encodeOAuthDCRRecord(ready, identity)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.Put(context.Background(), key, value, &pending.Version); err != nil {
+			t.Fatal(err)
+		}
+		close(release)
+		got := <-result
+		if got.err != nil || got.controller == nil {
+			t.Fatalf("late error did not adopt ready winner: controller=%v err=%v", got.controller, got.err)
+		}
+		_ = got.controller.Close()
+		if fixture.registerCount != 1 {
+			t.Fatalf("late error caused %d registration POSTs", fixture.registerCount)
+		}
+	})
+
+	for _, tc := range []struct {
+		name      string
+		commitPut bool
+		wantOK    bool
+	}{
+		{name: "reported save failure with committed ready winner", commitPut: true, wantOK: true},
+		{name: "uncommitted save ambiguity remains recovery required", commitPut: false, wantOK: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture := newDCRMetadataFixture(t)
+			resource, base := fixture.server.URL+"/gw/mcp", newDCRMemoryStore(t)
+			store := &scriptedDCRStore{Store: base}
+			opts := fixture.options(t, store)
+			prepared, path, err := PrepareOAuthDCRLogin(context.Background(), resource, opts, OAuthDCRLoginReuse)
+			if err != nil {
+				t.Fatal(err)
+			}
+			store.put = func(ctx context.Context, key, value []byte, expected *credentialstore.Version) (credentialstore.Record, error) {
+				record, decodeErr := decodeOAuthDCRRecord(value, prepared.dcrTicket.record.Identity)
+				if decodeErr == nil && record.State == oauthDCRStateReady {
+					if tc.commitPut {
+						if _, err := base.Put(ctx, key, value, expected); err != nil {
+							return credentialstore.Record{}, err
+						}
+					}
+					return credentialstore.Record{}, credentialstore.ErrUnavailable
+				}
+				return base.Put(ctx, key, value, expected)
+			}
+			prepared.RedirectURL = "http://127.0.0.1:49152" + path
+			controller, err := NewOAuthController(context.Background(), resource, prepared)
+			if tc.wantOK {
+				if err != nil || controller == nil {
+					t.Fatalf("committed winner was not adopted: controller=%v err=%v", controller, err)
+				}
+				_ = controller.Close()
+				return
+			}
+			if !errors.Is(err, ErrOAuthDCRRecoveryRequired) || controller != nil {
+				t.Fatalf("uncommitted ambiguity = controller=%v err=%v", controller, err)
+			}
+			identity := prepared.dcrTicket.record.Identity
+			key, _ := oauthDCRRegistrationKey(identity)
+			persisted, getErr := base.Get(context.Background(), key)
+			if getErr != nil {
+				t.Fatal(getErr)
+			}
+			pending, decodeErr := decodeOAuthDCRRecord(persisted.Value, identity)
+			if decodeErr != nil || pending.State != oauthDCRStatePending {
+				t.Fatalf("uncommitted ambiguity lost pending evidence: %#v %v", pending, decodeErr)
+			}
+		})
 	}
 }
 
