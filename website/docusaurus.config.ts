@@ -2,6 +2,10 @@ import {themes as prismThemes} from 'prism-react-renderer';
 import type {Config} from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
 
+// Tracking is enabled only for Vercel production deployments. Local
+// development and Vercel previews omit it to avoid polluting analytics data.
+const isProductionDeploy = process.env.VERCEL_ENV === 'production';
+
 const config: Config = {
   title: 'Mecatl',
   tagline: 'A cloud-native harness for agentic systems',
@@ -95,6 +99,9 @@ const config: Config = {
           showLastUpdateAuthor: true,
         },
         blog: false,
+        googleTagManager: isProductionDeploy
+          ? {containerId: 'GTM-KCC7R6SS'}
+          : undefined,
         theme: {
           customCss: './src/css/custom.css',
         },
