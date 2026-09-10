@@ -462,6 +462,56 @@ jobs:
           (cd provider/openai && go build ./...)
           (cd provider/openaichat && go build ./...)
 
+  # Release archives are cross-compiled for darwin on an ubuntu runner, which
+  # cannot execute them, so nothing else in CI ever RUNS a darwin binary. This
+  # job is the native Apple Silicon smoke test: it proves the two executables the
+  # Homebrew formula ships actually start on the platform most users install on,
+  # and that the buildinfo.BuildID linker stamp round-trips.
+  #
+  # The stamp assertion matters because .goreleaser.yaml is the only place that
+  # names the -X symbol path; a wrong path still compiles and still produces a
+  # working binary, but reports the `dev+<vcs-rev>` fallback instead of the tag.
+  # Catching that here means it cannot reach a published formula, where the only
+  # other check (`brew test`) runs post-publication.
+  smoke-darwin-arm64:
+    name: CLI smoke test (macOS arm64)
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
+    runs-on: macos-14
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            engine/go.sum
+      - name: Build and run the formula's executables
+        env:
+          # A recognisable stand-in for a release tag. The release build stamps
+          # the same symbol with `v{{ .Version }}` (see .goreleaser.yaml).
+          STAMP: v0.0.0-cismoke
+        run: |
+          set -euo pipefail
+          # CGO_ENABLED=0 matches .goreleaser.yaml and .ko.yaml, so this exercises
+          # the same static build the formula ships.
+          for bin in mecated mecatui; do
+            CGO_ENABLED=0 go build -trimpath \
+              -ldflags "-s -w -X github.com/stacklok/mecatl/internal/buildinfo.BuildID=${STAMP}" \
+              -o "$RUNNER_TEMP/$bin" "./cmd/$bin"
+            out="$("$RUNNER_TEMP/$bin" --version)"
+            echo "$out"
+            # Exact form, matching buildinfo.PrintVersion: "<name> <BuildID>".
+            if [ "$out" != "$bin $STAMP" ]; then
+              echo "::error::$bin --version printed '$out', expected '$bin $STAMP' (linker stamp lost)"
+              exit 1
+            fi
+          done
+
   managed-temp-macos:
     name: Managed temporary storage (macOS)
     needs: changes
