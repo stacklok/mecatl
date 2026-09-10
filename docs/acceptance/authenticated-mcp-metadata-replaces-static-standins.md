@@ -2,12 +2,12 @@
 
 **Contract:** human-reviewed/v1
 **Phase:** Session-scoped MCP broker protected-tool admission
-**Status:** in-progress, 2026-09-10. Implementation and verification are complete in [PR #1320](https://github.com/stacklok/mecatl/pull/1320); authoritative only when that PR merges.
-**Delivery:** Split. This changes the ADR-governed model-visible protected-tool catalogue and its authority-sensitive read-only classification, so it requires Plan / Interface review before implementation.
+**Status:** in-progress, 2026-09-10. Split Plan/Interface PR requirement explicitly waived (see Human decisions); implementation and verification are complete in [PR #1320](https://github.com/stacklok/mecatl/pull/1320), authoritative on merge.
+**Delivery:** Split, waived — see Human decisions. This changes the ADR-governed model-visible protected-tool catalogue and its authority-sensitive read-only classification, so it would ordinarily require Plan / Interface review before implementation.
 **Expected tasks:** 2
 **Issue:** [#1319](https://github.com/stacklok/mecatl/issues/1319)
-**Plan PR:** [#1320](https://github.com/stacklok/mecatl/pull/1320) (plan and implementation combined into one PR — reactive fix discovered during manual verification, not a fresh spine kickoff)
-**Approved baseline:** pending PR #1320 review; this document and the implementation land together on merge
+**Plan PR:** [#1320](https://github.com/stacklok/mecatl/pull/1320) (plan and implementation combined into one PR under the recorded waiver below)
+**Approved baseline:** waived — plan and implementation land together in PR #1320 on merge; see Human decisions
 
 Static protected-tool declarations make an operator-selected initial surface available before ToolHive authorization. After successful pre-prompt enrollment, [ADR 0310](../adr/0310-lazy-toolhive-static-tools.md) says the complete authenticated catalogue replaces those visible stand-ins. Today, `stageAuthenticatedRoutes` removes a live definition whose name collides with a declaration and reinstates the declaration's description, schema, and read-only classification. It also retains a declared tool that authenticated discovery no longer returns. Consequently, each session discards its own authenticated metadata and membership for declared names.
 
@@ -18,6 +18,7 @@ The approved contract makes static declarations pre-authentication placeholders 
 - [x] For a name present in both a static protected-tool declaration and authenticated discovery, should authenticated metadata replace the declaration after successful enrollment, should the declaration remain an operator override, or should a field-level hybrid apply? — Decision: authenticated discovery controls post-enrollment tool membership, description, and schema. Static declarations are pre-authentication placeholders only. A declared tool absent from authenticated discovery disappears from the enrolled catalogue.
 - [x] If authenticated metadata wins, which successful authorization paths replace placeholders, and must an existing session refresh on another trigger or cadence? — Decision: successful pre-prompt enrollment performs authenticated discovery once and atomically freezes the complete session catalogue. A successful lazy bundle grant performs one all-backend discovery and atomically replaces or removes declared placeholders only; undeclared tools remain hidden. Later runs and ToolHive token refreshes do not refresh either result. A fresh session performs fresh authenticated discovery; no refresh control, timer, generation, or invalidation path is added.
 - [x] Does `ReadOnly` have a distinct operator-trust purpose that requires static precedence, or is ToolHive's authenticated `ReadOnly` hint the post-enrollment input? — Decision: authenticated discovery controls `ReadOnly` after enrollment, matching ordinary MCP tools. An absent live hint defaults conservatively to `false`. Static `ReadOnly` applies only to the pre-authentication stand-in. Existing permission rules remain independent and deny-dominant; the hint controls plan-mode visibility and read-parallel versus mutate-serial dispatch.
+- [x] Does this Split/Architectural plan require a separately merged Plan/Interface PR before implementation, per `docs/development-process.md`'s definition of done? — Decision: explicit human waiver from Jakub Hrozek, repository maintainer: "Waiving the Split Plan/Interface PR requirement for this work — combining plan and implementation in PR #1320 given it's a reactive fix discovered during manual verification." The waiver lifts only plan/interface ceremony; layering rules, AGENTS.md invariants, applicable verification, and human merge authority are unaffected and were independently satisfied via panel review on PR #1320.
 
 ## Interface contract
 
