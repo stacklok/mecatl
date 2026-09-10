@@ -2,7 +2,7 @@
 
 **Contract:** human-reviewed/v1
 **Phase:** local direct-MCP OAuth durability
-**Status:** approved. Plan / Interface PR #1331 merged at `4ef7af6a74225e04a45e1e9dda7c3888b25cad3e`; implementation has not started. Gateway discovery, the standalone public-client DCR/PKCE port probe, and an operator-driven mecatui spike against the deployed gateway passed; refresh and the full failure/recovery contract remain unverified.
+**Status:** in-progress. Plan / Interface PR #1331 merged at `4ef7af6a74225e04a45e1e9dda7c3888b25cad3e`; implementation is underway. Gateway discovery, the standalone public-client DCR/PKCE port probe, and an operator-driven mecatui spike against the deployed gateway passed; refresh and the full failure/recovery contract remain unverified.
 **Delivery:** Split. This changes an operator-facing OAuth client union, durable credential identity, registration lifecycle, and the local interactive authorization boundary.
 **Expected tasks:** deferred to orchestration
 **Issue:** none — scope supplied for acceptance-contract review.
