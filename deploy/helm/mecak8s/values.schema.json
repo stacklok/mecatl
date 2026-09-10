@@ -237,6 +237,14 @@
         }
       }
     },
+    "logging": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["level"],
+      "properties": {
+        "level": {"type": "string", "enum": ["", "debug", "info", "warn", "error"]}
+      }
+    },
     "extraEnv": {"type": "array", "items": {"type": "object"}},
     "extraArgs": {"type": "array", "items": {"type": "string", "minLength": 1}},
     "extraVolumeMounts": {

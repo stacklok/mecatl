@@ -27,7 +27,15 @@ imagePullSecrets: []
 # either way.
 extraEnv: []
 
-# extraArgs appends command-line arguments to the mecak8s agent container.
+# logging controls the process-wide slog threshold. Empty preserves the binary's
+# INFO default; set to debug temporarily to inspect embedded ToolHive/authserver/vMCP
+# logs. Metrics and OTLP remain separate opt-in settings.
+logging:
+  level: ""
+
+# extraArgs appends command-line arguments to the mecak8s agent container. It remains
+# the escape hatch for flags not modeled by the chart; when it contains --log-level,
+# it is appended after logging.level and therefore takes precedence.
 extraArgs: []
 
 # First-class remote Streamable HTTP MCP connections. Authentication is an

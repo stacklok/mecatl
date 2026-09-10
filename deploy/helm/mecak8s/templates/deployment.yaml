@@ -107,6 +107,9 @@ spec:
             - {{ printf "--session-lease-k8s-namespace=%s" .Release.Namespace | quote }}
             - --headless=true
             - --posture=auto
+            {{- if .Values.logging.level }}
+            - {{ printf "--log-level=%s" .Values.logging.level | quote }}
+            {{- end }}
             {{- if .Values.defaultProvider }}
             - {{ printf "--default-provider=%s" .Values.defaultProvider | quote }}
             {{- end }}
