@@ -3,6 +3,7 @@ package productmetrics
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"sync"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -16,21 +17,26 @@ import (
 const meterName = "github.com/stacklok/mecatl/internal/adapter/productmetrics"
 
 // Attribute keys. Every value ever attached under these keys is drawn from a
-// bounded closed set (session.StopReason, the fixed token-kind strings, or
-// this package's own Feature/ProviderFamily/DeploymentMode enums) — never a
-// session id, model id, tool name, or free text.
+// bounded closed set (session.StopReason, the fixed token-kind strings, this
+// package's own Feature/ProviderFamily/DeploymentMode enums, or "true"/"false")
+// — never a session id, model id, or free text. The tool_calls instrument's
+// two keys live with their closed-set projection in toolcall.go.
 const (
-	attrStop     = "stop"
-	attrKind     = "kind"
-	attrFeature  = "feature"
-	attrProvider = "family"
-	attrMode     = "mode"
+	attrStop        = "stop"
+	attrKind        = "kind"
+	attrFeature     = "feature"
+	attrProvider    = "family"
+	attrMode        = "mode"
+	attrHadToolCall = "had_tool_call"
 )
 
 // Recorder is the product-metrics adapter: it implements port.EventSink
-// (this file) and port.ToolCallRecorder (toolcall.go), deriving ONLY the
-// bounded counts in the design's catalog. It never reads a tool name,
-// session id, model id, or any free-text field.
+// (this file) and port.ToolCallRecorder + port.RunAwareToolCallRecorder
+// (toolcall.go), deriving ONLY the bounded counts in the design's catalog. It
+// never reads a session id, model id, result content, or any free-text field;
+// the one thing it reads from a tool call is its NAME, and only to map it
+// through the closed-set projection in toolcall.go (toolCategory), which can
+// emit nothing but a built-in tool's own name, "mcp", or "other".
 type Recorder struct {
 	heartbeat       metric.Int64Counter
 	featureEnabled  metric.Int64Counter
@@ -43,29 +49,127 @@ type Recorder struct {
 	subagentUsed    metric.Int64Counter
 	teamUsed        metric.Int64Counter
 
-	// runFamiliesUsed dedups subagentUsed/teamUsed to their documented
-	// "at least once per run" semantics: a run's first EvSubagentStart or
-	// EvTeamStart increments the counter, later ones in the SAME run (e.g. a
-	// fan-out of concurrent Subagent calls) do not. Keyed by the loop-stamped
-	// session.Event.RunID (opaque, not a session id) — never a tool name,
-	// session id, or free-text field, preserving this package's no-PII
-	// invariant. Bounded to concurrently-live runs: each run's entry is
-	// cleared on its EvResult.
-	mu              sync.Mutex
-	runFamiliesUsed map[string]usedFamilies
+	// perRun holds the bounded per-live-run facts this package derives across
+	// the Emit/ToolCallForRun boundary. See perRunTracker.
+	perRun *perRunTracker
 }
 
-// usedFamilies tracks, per live run, which delegation families have already
-// been counted at least once.
-type usedFamilies struct {
-	subagent bool
-	team     bool
+// perRunState is the bounded set of facts tracked for ONE live run, keyed by
+// the loop-stamped session.Event.RunID (an opaque per-run correlation id, ADR
+// 0249 — never a session id, tool name, or free-text field, so this package's
+// no-PII invariant holds). Every field is a count or a boolean derived from a
+// closed vocabulary; nothing here is ever attached as an attribute VALUE.
+type perRunState struct {
+	// subagentSeen/teamSeen dedup subagentUsed/teamUsed to their documented
+	// "at least once per run" semantics: a run's first EvSubagentStart or
+	// EvTeamStart increments the counter, later ones in the SAME run (e.g. a
+	// fan-out of concurrent Subagent calls) do not.
+	subagentSeen bool
+	teamSeen     bool
+
+	// hadToolCall records whether the run made at least one SUCCESSFUL tool
+	// call — the product definition of "this run took an action", read at
+	// EvResult time as the runs_completed had_tool_call attribute.
+	hadToolCall bool
+
+	// toolCallCount is the run's total tool calls (successful or not). It is
+	// tallied here but not yet published as an instrument; the tool-calls-per-run
+	// distribution is a later task in this plan.
+	toolCallCount int64
+}
+
+// perRunTracker guards the live-run state map. Bounded to concurrently-live
+// runs: a run's entry is created lazily on its first observed fact and dropped
+// on its EvResult, so the map never grows across a process's lifetime.
+//
+// CONCURRENCY: every method below performs its map lookup AND its field
+// mutation as ONE critical section under mu, and no *perRunState pointer ever
+// escapes a locked region. Callers therefore cannot race on a state's fields:
+// Emit (per event) and ToolCallForRun (per tool call) run concurrently on a
+// fan-out run, and the only shape that is provably safe is "the lock covers
+// both halves".
+type perRunTracker struct {
+	mu     sync.Mutex
+	states map[string]*perRunState
+}
+
+func newPerRunTracker() *perRunTracker {
+	return &perRunTracker{states: make(map[string]*perRunState)}
+}
+
+// stateLocked returns runID's live state, creating it if absent. The caller
+// MUST hold t.mu, and must not retain the pointer past the critical section.
+func (t *perRunTracker) stateLocked(runID string) *perRunState {
+	st, ok := t.states[runID]
+	if !ok {
+		st = &perRunState{}
+		t.states[runID] = st
+	}
+	return st
+}
+
+// markFamilyUsed reports whether this is the first time, within the run
+// identified by runID, that family has been observed — marking it seen as a
+// side effect. An empty runID (no run context to dedup against) always counts,
+// matching the pre-dedup behavior.
+func (t *perRunTracker) markFamilyUsed(runID string, family delegationFamily) bool {
+	if runID == "" {
+		return true
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	st := t.stateLocked(runID)
+	seen := &st.subagentSeen
+	if family == familyTeam {
+		seen = &st.teamSeen
+	}
+	if *seen {
+		return false
+	}
+	*seen = true
+	return true
+}
+
+// markToolCall tallies one tool call against runID. An empty runID (a caller
+// on the base port.ToolCallRecorder path, with no run to correlate against) is
+// tracked nowhere — its call is still counted on the tool_calls instrument,
+// but it can contribute to no run's had_tool_call.
+func (t *perRunTracker) markToolCall(runID string, errored bool) {
+	if runID == "" {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	st := t.stateLocked(runID)
+	st.toolCallCount++
+	if !errored {
+		st.hadToolCall = true
+	}
+}
+
+// finish drops runID's live state at EvResult and returns a COPY of what was
+// there (the zero value if the run recorded nothing — e.g. a run with no tool
+// calls and no delegation-family use). Returning a copy, not the pointer,
+// keeps every field read outside the lock race-free.
+func (t *perRunTracker) finish(runID string) perRunState {
+	if runID == "" {
+		return perRunState{}
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	st, ok := t.states[runID]
+	if !ok {
+		return perRunState{}
+	}
+	delete(t.states, runID)
+	return *st
 }
 
 // Compile-time interface checks.
 var (
-	_ port.EventSink        = (*Recorder)(nil)
-	_ port.ToolCallRecorder = (*Recorder)(nil)
+	_ port.EventSink                = (*Recorder)(nil)
+	_ port.ToolCallRecorder         = (*Recorder)(nil)
+	_ port.RunAwareToolCallRecorder = (*Recorder)(nil)
 )
 
 // NewRecorder constructs every instrument from the given MeterProvider. It
@@ -73,7 +177,7 @@ var (
 // is fallible.
 func NewRecorder(mp metric.MeterProvider) (*Recorder, error) {
 	meter := mp.Meter(meterName)
-	r := &Recorder{runFamiliesUsed: make(map[string]usedFamilies)}
+	r := &Recorder{perRun: newPerRunTracker()}
 	var err error
 
 	if r.heartbeat, err = meter.Int64Counter("mecatl.product.heartbeat",
@@ -97,11 +201,11 @@ func NewRecorder(mp metric.MeterProvider) (*Recorder, error) {
 		return nil, fmt.Errorf("productmetrics: sessions_started counter: %w", err)
 	}
 	if r.runsCompleted, err = meter.Int64Counter("mecatl.product.runs_completed",
-		metric.WithDescription("Total runs completed, by bounded stop reason.")); err != nil {
+		metric.WithDescription("Total runs completed, by bounded stop reason and whether the run made at least one successful tool call.")); err != nil {
 		return nil, fmt.Errorf("productmetrics: runs_completed counter: %w", err)
 	}
 	if r.toolCalls, err = meter.Int64Counter("mecatl.product.tool_calls",
-		metric.WithDescription("Total tool calls executed (no tool identity attached).")); err != nil {
+		metric.WithDescription(`Total tool calls executed, by bounded category (a built-in tool's own name, the single value "mcp" for any MCP-server tool, or "other") and outcome.`)); err != nil {
 		return nil, fmt.Errorf("productmetrics: tool_calls counter: %w", err)
 	}
 	if r.tokens, err = meter.Int64Counter("mecatl.product.tokens",
@@ -124,22 +228,23 @@ func NewRecorder(mp metric.MeterProvider) (*Recorder, error) {
 // ONLY ev.Type, ev.RunID, ev.Result.Stop, and ev.Result.Usage — never a
 // session id, model id/alias, tool name, or any free-text field
 // (ev.Result.Text/Error are never touched). ev.RunID is an opaque per-run
-// correlation id (ADR 0249), not a session id, and is used ONLY to dedup
-// subagentUsed/teamUsed to one count per run (see firstInRun); it never
-// becomes an attribute value.
+// correlation id (ADR 0249), not a session id, and is used ONLY as the key of
+// the per-run tracker (dedup'ing subagentUsed/teamUsed and resolving
+// had_tool_call at EvResult); it never becomes an attribute value.
 func (r *Recorder) Emit(ctx context.Context, ev session.Event) {
 	switch ev.Type {
 	case session.EvSessionInit:
 		r.sessionsStarted.Add(ctx, 1)
 	case session.EvResult:
-		r.recordResult(ctx, ev.Result)
-		r.clearRun(ev.RunID)
+		// finish both reads and clears the run's state, so the had_tool_call
+		// resolution and the bounded-map cleanup are one step.
+		r.recordResult(ctx, ev.Result, r.perRun.finish(ev.RunID))
 	case session.EvSubagentStart:
-		if r.firstInRun(ev.RunID, familySubagent) {
+		if r.perRun.markFamilyUsed(ev.RunID, familySubagent) {
 			r.subagentUsed.Add(ctx, 1)
 		}
 	case session.EvTeamStart:
-		if r.firstInRun(ev.RunID, familyTeam) {
+		if r.perRun.markFamilyUsed(ev.RunID, familyTeam) {
 			r.teamUsed.Add(ctx, 1)
 		}
 	}
@@ -153,49 +258,19 @@ const (
 	familyTeam
 )
 
-// firstInRun reports whether this is the first time, within the run
-// identified by runID, that family has been observed — marking it seen as a
-// side effect. An empty runID (no run context to dedup against) always
-// counts, matching the pre-dedup behavior.
-func (r *Recorder) firstInRun(runID string, family delegationFamily) bool {
-	if runID == "" {
-		return true
+// recordResult counts the completed run against its bounded stop reason and
+// the had_tool_call fact carried by the run's just-finished state.
+func (r *Recorder) recordResult(ctx context.Context, res *session.ResultPayload, st perRunState) {
+	stop := session.StopNone
+	if res != nil {
+		stop = res.Stop
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	u := r.runFamiliesUsed[runID]
-	var seen *bool
-	switch family {
-	case familySubagent:
-		seen = &u.subagent
-	case familyTeam:
-		seen = &u.team
-	}
-	if *seen {
-		return false
-	}
-	*seen = true
-	r.runFamiliesUsed[runID] = u
-	return true
-}
-
-// clearRun drops the run's dedup entry once it has ended (EvResult), so
-// runFamiliesUsed stays bounded to concurrently-live runs.
-func (r *Recorder) clearRun(runID string) {
-	if runID == "" {
-		return
-	}
-	r.mu.Lock()
-	delete(r.runFamiliesUsed, runID)
-	r.mu.Unlock()
-}
-
-func (r *Recorder) recordResult(ctx context.Context, res *session.ResultPayload) {
+	r.runsCompleted.Add(ctx, 1, metric.WithAttributes(
+		attribute.String(attrStop, string(stop)),
+		attribute.String(attrHadToolCall, strconv.FormatBool(st.hadToolCall))))
 	if res == nil {
-		r.runsCompleted.Add(ctx, 1, metric.WithAttributes(attribute.String(attrStop, string(session.StopNone))))
 		return
 	}
-	r.runsCompleted.Add(ctx, 1, metric.WithAttributes(attribute.String(attrStop, string(res.Stop))))
 	u := res.Usage
 	r.tokens.Add(ctx, int64(u.InputTokens), metric.WithAttributes(attribute.String(attrKind, "input")))
 	r.tokens.Add(ctx, int64(u.OutputTokens), metric.WithAttributes(attribute.String(attrKind, "output")))

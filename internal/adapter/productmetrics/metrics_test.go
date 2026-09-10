@@ -3,6 +3,7 @@ package productmetrics
 import (
 	"context"
 	"testing"
+	"time"
 
 	"go.opentelemetry.io/otel/attribute"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
@@ -171,5 +172,86 @@ func TestRecorderSubagentUsedCountsEachDistinctRun(t *testing.T) {
 
 	if got := sumValue(t, collect(t, reader)["mecatl.product.subagent_used"]); got != 3 {
 		t.Errorf("subagent_used = %d, want 3 (run-1's dedup entry cleared on its EvResult)", got)
+	}
+}
+
+func TestRecorderRunsCompletedHadToolCallTrueWhenASuccessfulToolCallOccurred(t *testing.T) {
+	r, reader := newTestRecorder(t)
+	r.ToolCallForRun("run-1", session.SessionID("s"), session.ToolCall{Name: "Read"}, session.ToolResult{IsError: false}, 0, time.Millisecond)
+	r.Emit(context.Background(), session.Event{
+		Type: session.EvResult, RunID: "run-1",
+		Result: &session.ResultPayload{Stop: session.StopEndTurn},
+	})
+
+	agg := collect(t, reader)["mecatl.product.runs_completed"]
+	if got := sumPoint(t, agg, attrHadToolCall, "true"); got != 1 {
+		t.Errorf("runs_completed{had_tool_call=true} = %d, want 1", got)
+	}
+}
+
+func TestRecorderRunsCompletedHadToolCallFalseWithNoToolCall(t *testing.T) {
+	r, reader := newTestRecorder(t)
+	r.Emit(context.Background(), session.Event{
+		Type: session.EvResult, RunID: "run-2",
+		Result: &session.ResultPayload{Stop: session.StopEndTurn},
+	})
+
+	agg := collect(t, reader)["mecatl.product.runs_completed"]
+	if got := sumPoint(t, agg, attrHadToolCall, "false"); got != 1 {
+		t.Errorf("runs_completed{had_tool_call=false} = %d, want 1", got)
+	}
+}
+
+// TestRecorderRunsCompletedHadToolCallFalseWhenOnlyToolCallErrored pins the
+// product definition: had_tool_call means the run took at least one
+// SUCCESSFUL action, so a run whose only tool call errored is false.
+func TestRecorderRunsCompletedHadToolCallFalseWhenOnlyToolCallErrored(t *testing.T) {
+	r, reader := newTestRecorder(t)
+	r.ToolCallForRun("run-3", session.SessionID("s"), session.ToolCall{Name: "Bash"}, session.ToolResult{IsError: true}, 0, time.Millisecond)
+	r.Emit(context.Background(), session.Event{
+		Type: session.EvResult, RunID: "run-3",
+		Result: &session.ResultPayload{Stop: session.StopError},
+	})
+
+	agg := collect(t, reader)["mecatl.product.runs_completed"]
+	if got := sumPoint(t, agg, attrHadToolCall, "false"); got != 1 {
+		t.Errorf("runs_completed{had_tool_call=false} = %d, want 1 (the only tool call errored)", got)
+	}
+}
+
+// TestRecorderRunsCompletedHadToolCallOnNilResult pins that a result-less
+// EvResult still carries the attribute (the stop-reason arm already defaults
+// to StopNone) rather than emitting an attribute-shape that differs from
+// every other data point on the instrument.
+func TestRecorderRunsCompletedHadToolCallOnNilResult(t *testing.T) {
+	r, reader := newTestRecorder(t)
+	r.ToolCallForRun("run-4", session.SessionID("s"), session.ToolCall{Name: "Read"}, session.ToolResult{}, 0, 0)
+	r.Emit(context.Background(), session.Event{Type: session.EvResult, RunID: "run-4"})
+
+	agg := collect(t, reader)["mecatl.product.runs_completed"]
+	if got := sumPoint(t, agg, attrHadToolCall, "true"); got != 1 {
+		t.Errorf("runs_completed{had_tool_call=true} = %d, want 1", got)
+	}
+	if got := sumPoint(t, agg, attrStop, string(session.StopNone)); got != 1 {
+		t.Errorf("runs_completed{stop=none} = %d, want 1", got)
+	}
+}
+
+// TestRecorderPerRunStateIsIsolatedAcrossConcurrentRuns proves the per-run
+// state is scoped to its run: two interleaved runs (a real possibility —
+// Team/Parallel fan-out, or two concurrent client sessions on one process)
+// must not leak their tool-call facts into each other.
+func TestRecorderPerRunStateIsIsolatedAcrossConcurrentRuns(t *testing.T) {
+	r, reader := newTestRecorder(t)
+	r.ToolCallForRun("run-a", session.SessionID("s1"), session.ToolCall{Name: "Read"}, session.ToolResult{}, 0, time.Millisecond)
+	r.Emit(context.Background(), session.Event{Type: session.EvResult, RunID: "run-b", Result: &session.ResultPayload{Stop: session.StopEndTurn}})
+	r.Emit(context.Background(), session.Event{Type: session.EvResult, RunID: "run-a", Result: &session.ResultPayload{Stop: session.StopEndTurn}})
+
+	agg := collect(t, reader)["mecatl.product.runs_completed"]
+	if got := sumPoint(t, agg, attrHadToolCall, "false"); got != 1 {
+		t.Errorf("runs_completed{had_tool_call=false} = %d, want 1 (run-a's tool call must not leak into run-b)", got)
+	}
+	if got := sumPoint(t, agg, attrHadToolCall, "true"); got != 1 {
+		t.Errorf("runs_completed{had_tool_call=true} = %d, want 1 (run-a's own tool call)", got)
 	}
 }

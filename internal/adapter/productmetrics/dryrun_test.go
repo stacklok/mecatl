@@ -52,6 +52,55 @@ func TestDryRunRecorderImplementsPorts(_ *testing.T) {
 	r := NewDryRunRecorder(diag)
 	var _ port.EventSink = r
 	var _ port.ToolCallRecorder = r
+	var _ port.RunAwareToolCallRecorder = r
+}
+
+// TestDryRunRecorderMirrorsRecorderToolCallAttributes pins the lockstep
+// contract: the audit path must log the SAME bounded attributes Recorder
+// attaches (an audit surface that understates what is sent defeats its own
+// purpose), and the category must still be the closed-set projection — never
+// the raw name, never an MCP server/tool name.
+func TestDryRunRecorderMirrorsRecorderToolCallAttributes(t *testing.T) {
+	diag := &capturingDiag{}
+	r := NewDryRunRecorder(diag)
+
+	r.ToolCallForRun("run-1", session.SessionID("s"),
+		session.ToolCall{Name: "mcp__evilserver__leak_this_name"},
+		session.ToolResult{IsError: true}, 0, 0)
+	r.Emit(context.Background(), session.Event{
+		Type: session.EvResult, RunID: "run-1",
+		Result: &session.ResultPayload{Stop: session.StopError},
+	})
+
+	if len(diag.args) != 2 {
+		t.Fatalf("got %d logged lines, want 2: %v", len(diag.lines), diag.lines)
+	}
+	if !hasArg(diag.args[0], attrCategory, categoryMCP) {
+		t.Errorf("tool_calls dry-run log args = %v, want %s=%s", diag.args[0], attrCategory, categoryMCP)
+	}
+	if !hasArg(diag.args[0], attrOutcome, outcomeError) {
+		t.Errorf("tool_calls dry-run log args = %v, want %s=%s", diag.args[0], attrOutcome, outcomeError)
+	}
+	if !hasArg(diag.args[1], attrHadToolCall, false) {
+		t.Errorf("runs_completed dry-run log args = %v, want %s=false (the only tool call errored)", diag.args[1], attrHadToolCall)
+	}
+	for _, args := range diag.args {
+		for _, a := range args {
+			if s, ok := a.(string); ok && (strings.Contains(s, "evilserver") || strings.Contains(s, "leak_this_name")) {
+				t.Errorf("dry-run log leaked an MCP server/tool name: %v", args)
+			}
+		}
+	}
+}
+
+// hasArg reports whether a Diagnostics key/value arg slice carries key=want.
+func hasArg(args []any, key string, want any) bool {
+	for i := 0; i+1 < len(args); i += 2 {
+		if k, ok := args[i].(string); ok && k == key && args[i+1] == want {
+			return true
+		}
+	}
+	return false
 }
 
 // TestDryRunRecorderResultNeverLeaksFreeText covers the EvResult branch (not

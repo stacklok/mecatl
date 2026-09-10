@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
 	"github.com/stacklok/mecatl/engine/session"
@@ -16,21 +17,30 @@ import (
 // must add it here explicitly — the same "closed set is a reviewed
 // decision" discipline as internal/adapter/telemetry's attrRole.
 var allowedAttributeKeys = map[string]bool{
-	attrStop:     true,
-	attrKind:     true,
-	attrFeature:  true,
-	attrProvider: true,
-	attrMode:     true,
+	attrStop:        true,
+	attrKind:        true,
+	attrFeature:     true,
+	attrProvider:    true,
+	attrMode:        true,
+	attrHadToolCall: true,
+	attrCategory:    true,
+	attrOutcome:     true,
 }
 
 // sensitiveMarkers are strings injected into every field the Recorder must
-// NEVER read. If any of these ever shows up in a collected metric name or
-// attribute value, something started reading a field it shouldn't.
+// NEVER read, or (for the tool-name markers) must only ever read through a
+// closed-set projection. If any of these ever shows up in a collected metric
+// name or attribute value, something started emitting a field it shouldn't.
 var sensitiveMarkers = []string{
 	"sensitive-session-id-marker",
 	"secret-tool-name-marker",
 	"secret-tool-content-marker",
 	"secret-error-text-marker",
+	// The MCP server + remote tool names inside a namespaced mcp__ tool name:
+	// operator-chosen free text, which must be bucketed under the single
+	// literal "mcp" rather than emitted.
+	"evilserver",
+	"leak_this_name",
 }
 
 func TestRecorderNeverAttachesUnboundedAttributesOrSensitiveContent(t *testing.T) {
@@ -55,6 +65,19 @@ func TestRecorderNeverAttachesUnboundedAttributesOrSensitiveContent(t *testing.T
 		session.ToolResult{Content: "secret-tool-content-marker", IsError: true},
 		10*time.Millisecond, 20*time.Millisecond,
 	)
+	// The run-aware path, with an MCP-namespaced name whose server and remote
+	// tool halves are both operator-chosen free text.
+	r.ToolCallForRun(
+		"run-x",
+		session.SessionID("sensitive-session-id-marker"),
+		session.ToolCall{Name: "mcp__evilserver__leak_this_name"},
+		session.ToolResult{Content: "secret-tool-content-marker"},
+		10*time.Millisecond, 20*time.Millisecond,
+	)
+	r.Emit(context.Background(), session.Event{
+		Type: session.EvResult, RunID: "run-x",
+		Result: &session.ResultPayload{Stop: session.StopEndTurn},
+	})
 	r.Heartbeat(FeatureSnapshot{
 		Memory: true, Guardrails: true, MCP: true, Scheduling: true,
 		Provider: ProviderOther, Mode: ModeK8s,
@@ -88,19 +111,54 @@ func TestRecorderNeverAttachesUnboundedAttributesOrSensitiveContent(t *testing.T
 					if !allowedAttributeKeys[key] {
 						t.Errorf("metric %s carries attribute key %q, not in allowedAttributeKeys", md.Name, key)
 					}
+					// Every value must be a STRING: a non-string value would
+					// slip past the sensitive-substring walk below with an
+					// empty AsString(), making this guard vacuous for it.
+					if kv.Value.Type() != attribute.STRING {
+						t.Errorf("metric %s attribute %q has value type %v, want STRING", md.Name, key, kv.Value.Type())
+					}
 					assertNoSensitiveSubstring(t, kv.Value.AsString())
 				}
 			}
-			// mecatl.product.tool_calls carries NO attributes at all — the
-			// strongest form of "no tool identity ever attaches."
+			// mecatl.product.tool_calls carries exactly the two bounded
+			// tool-call keys — the category value can only ever be a built-in
+			// tool's own name, "mcp", or "other" (see toolCategory), so no
+			// tool identity beyond mecatl's own fixed catalog can attach.
 			if md.Name == "mecatl.product.tool_calls" {
 				for _, dp := range sum.DataPoints {
-					if dp.Attributes.Len() != 0 {
-						t.Errorf("mecatl.product.tool_calls data point carries %d attributes, want 0: %v",
+					if _, ok := dp.Attributes.Value(attrCategory); !ok {
+						t.Errorf("mecatl.product.tool_calls data point is missing the %s attribute: %v", attrCategory, dp.Attributes)
+					}
+					if _, ok := dp.Attributes.Value(attrOutcome); !ok {
+						t.Errorf("mecatl.product.tool_calls data point is missing the %s attribute: %v", attrOutcome, dp.Attributes)
+					}
+					if dp.Attributes.Len() != 2 {
+						t.Errorf("mecatl.product.tool_calls data point carries %d attributes, want exactly 2: %v",
 							dp.Attributes.Len(), dp.Attributes)
 					}
 				}
 			}
+		}
+	}
+}
+
+// TestToolCategoryOnlyEmitsClosedSetValues is the direct unit-level guard on
+// the one projection that reads a tool name: whatever it is fed, the output
+// must be a member of builtinToolCategories ∪ {"mcp", "other"}.
+func TestToolCategoryOnlyEmitsClosedSetValues(t *testing.T) {
+	inputs := []string{
+		"", "Read", "Bash", "mcp__evilserver__leak_this_name", "mcp__", "mcp_",
+		"secret-tool-name-marker", "MCP__X__Y", "read", "Read ",
+		"agent-def-derived-name", strings.Repeat("x", 4096),
+	}
+	for _, in := range inputs {
+		got := toolCategory(in)
+		if got == categoryMCP || got == categoryOther {
+			continue
+		}
+		if !builtinToolCategories[got] {
+			t.Errorf("toolCategory(%q) = %q, which is outside the closed set (builtins ∪ {%q, %q})",
+				in, got, categoryMCP, categoryOther)
 		}
 	}
 }
