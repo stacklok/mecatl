@@ -179,6 +179,10 @@ PR after verification. There is no cleanup or status-only PR.
   injection; all callers admitted to one mecated share configured endpoint availability and
   gateway identity, while ToolHive remains explicit optional proxy compatibility with no
   cross-store secret migration. Status: proposed.
+- [ToolHive native Anthropic gateway support](toolhive-native-anthropic.md) — expose the
+  gateway's native Anthropic catalog and Messages endpoint as `toolhive-anthropic`, while
+  preserving the existing Responses-backed `toolhive` provider and shared gateway identity.
+  Status: implementation in progress under explicit workflow waiver; not approved or landed.
 - [Surface approval migration](surface-approval-migration.md) — final Phase-2 migration of the mecatui approval UI onto the dynamic surface contract, including ephemeral render-frame hit dispatch. Status: landed.
 - [Spine convergence](spine-convergence.md) — bring the
   to-acceptance-plan / plan-orchestrate / test-writer spine + ac-trace into

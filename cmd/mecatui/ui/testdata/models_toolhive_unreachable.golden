@@ -15,7 +15,7 @@
 ┃       openai · text-embed                                                                           ┃
 ┃       openrouter · Claude  img reason 1M                                                            ┃
 ┃                                                                                                     ┃
-┃  toolhive: proxy not reachable — start it with `thv llm proxy start`                                ┃
+┃  toolhive: gateway not reachable — start it with `thv llm proxy start`                              ┃
 ┃                                                                                                     ┃
 ┃  type to filter · ↑/↓/pgup move · enter use · ctrl+g set global default · esc clear filter / close  ┃
 ┃  ● current  ★ global default                                                                        ┃

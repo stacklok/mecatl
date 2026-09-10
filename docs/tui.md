@@ -952,6 +952,12 @@ actionable `auth.yaml`/restart or connectivity remedy. A prior successful list m
 remain visible during a later refresh failure, but that does not hide an inference
 failure. Codex rows never receive ToolHive's `org` intent label.
 
+One configured ToolHive gateway may contribute two picker namespaces:
+`toolhive` (OpenAI Responses) and `toolhive-anthropic` (native Anthropic Messages).
+Both receive the `org` provenance tag, but the header/footer treat them as one
+gateway family: when either is active, its sibling does not produce a duplicate
+"gateway available" notice. Catalog failures and counts remain independent.
+
 `enter` on the cursor row **switches immediately** — the conversation is ALWAYS kept.
 Because the provider is FIXED per session, switching live means a real handoff: a fresh
 session on the picked model is **seeded with the current session's conversation** through

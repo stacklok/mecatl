@@ -45,6 +45,10 @@ func TestProductionProviderEntriesShareNetworkAttemptObservation(t *testing.T) {
 			return newAnthropicEntryFor(cfg, providerAnthropic, "test", server.URL, newLiveMetaStore(), false,
 				anthropicprovider.WithRequestOption(anthropicoption.WithHTTPClient(server.Client())))
 		}},
+		{name: providerToolhiveAnthropic, model: "claude-sonnet-4-6", entry: func() providerEntry {
+			return newAnthropicEntryFor(cfg, providerToolhiveAnthropic, "test", server.URL, newLiveMetaStore(), false,
+				anthropicprovider.WithRequestOption(anthropicoption.WithHTTPClient(server.Client())))
+		}},
 	}
 
 	for _, test := range tests {

@@ -107,12 +107,13 @@ func TestListerRejectsOversizedResponse(t *testing.T) {
 }
 
 func TestListerPreservesHTTPStatus(t *testing.T) {
+	const responseSentinel = "reflected-bearer-do-not-log"
 	for _, statusCode := range []int{http.StatusUnauthorized, http.StatusBadGateway} {
 		t.Run(http.StatusText(statusCode), func(t *testing.T) {
 			client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
 				return &http.Response{
 					StatusCode: statusCode,
-					Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"not for callers"}}`)),
+					Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"` + responseSentinel + `"}}`)),
 					Header:     http.Header{"Content-Type": []string{"application/json"}},
 				}, nil
 			})}
@@ -123,6 +124,9 @@ func TestListerPreservesHTTPStatus(t *testing.T) {
 			var statusErr interface{ StatusCode() int }
 			if !errors.As(err, &statusErr) || statusErr.StatusCode() != statusCode {
 				t.Fatalf("ListModels error = %v, want StatusCode() == %d", err, statusCode)
+			}
+			if strings.Contains(err.Error(), responseSentinel) {
+				t.Fatalf("ListModels error exposed response body: %v", err)
 			}
 		})
 	}

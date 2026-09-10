@@ -19,6 +19,7 @@ import (
 // header rewrite without a real token source.
 type captureTransport struct {
 	auth    atomic.Value // string
+	xAPI    atomic.Value // string
 	calls   atomic.Int32
 	recvErr error
 }
@@ -26,6 +27,7 @@ type captureTransport struct {
 func (c *captureTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	c.calls.Add(1)
 	c.auth.Store(req.Header.Get("Authorization"))
+	c.xAPI.Store(req.Header.Get("X-Api-Key"))
 	if c.recvErr != nil {
 		return nil, c.recvErr
 	}
@@ -48,6 +50,7 @@ func TestBearerRoundTripper_RewritesHeader(t *testing.T) {
 	}
 	req, _ := http.NewRequest(http.MethodGet, "https://gw.example/v1/models", nil)
 	req.Header.Set("Authorization", "Bearer thv-proxy") // the SDK's placeholder
+	req.Header.Set("X-Api-Key", "conflicting-placeholder")
 	resp, err := rt.RoundTrip(req)
 	if err != nil {
 		t.Fatalf("RoundTrip: %v", err)
@@ -57,6 +60,9 @@ func TestBearerRoundTripper_RewritesHeader(t *testing.T) {
 	ct := rt.base.(*captureTransport)
 	if got := ct.auth.Load().(string); got != "Bearer "+fakeToken {
 		t.Errorf("Authorization = %q, want %q", got, "Bearer "+fakeToken)
+	}
+	if got := ct.xAPI.Load().(string); got != "" {
+		t.Errorf("X-Api-Key = %q, want stripped", got)
 	}
 	if ct.calls.Load() != 1 {
 		t.Errorf("base transport calls = %d, want 1", ct.calls.Load())
@@ -100,13 +106,11 @@ func TestBearerRoundTripper_SanitisedError(t *testing.T) {
 	}
 }
 
-// TestBearerRoundTripper_OnlyMutatesAuth is the static guard for the "never log
-// the Authorization header" discipline (AGENTS.md security): the RoundTripper
-// has no log path of its own, and this test pins that the ONLY mutation it
-// performs on the request is the Authorization header Del+Set (the clone's
-// other headers are untouched). It is the falsifiable pin against a future
-// change that logs or copies the header elsewhere.
-func TestBearerRoundTripper_OnlyMutatesAuth(t *testing.T) {
+// TestBearerRoundTripper_OnlyMutatesAuthentication is the static guard for the
+// "never log credentials" discipline (AGENTS.md security): the RoundTripper has
+// no log path of its own, clones before removing the conflicting authentication
+// headers, and leaves the caller's request untouched.
+func TestBearerRoundTripper_OnlyMutatesAuthentication(t *testing.T) {
 	rt := &bearerRoundTripper{
 		base:  &captureTransport{},
 		token: func(context.Context) (string, error) { return "tok", nil },
@@ -175,10 +179,10 @@ func TestDirectBaseURL(t *testing.T) {
 		"https://gw.example.com/toolhive":  "https://gw.example.com/toolhive/v1",
 		"https://gw.example.com/toolhive/": "https://gw.example.com/toolhive/v1",
 		"":                                 "",
-		// A query must survive on the QUERY, not be concatenated into: string
-		// concatenation produced "https://gw.example.com?x=1/v1", swallowing the
-		// path segment into the query value.
-		"https://gw.example.com?x=1": "https://gw.example.com/v1?x=1",
+		// Credential-shaped query/userinfo/fragment material is stripped rather
+		// than concatenated into a request or diagnostic URL.
+		"https://gw.example.com?x=1":                                      "https://gw.example.com/v1",
+		"https://user:secret@gw.example.com/prefix?token=secret#fragment": "https://gw.example.com/prefix/v1",
 	} {
 		if got := directBaseURL(in); got != want {
 			t.Errorf("directBaseURL(%q) = %q, want %q", in, got, want)
@@ -378,12 +382,12 @@ func TestToolhiveDirectRemintSurvival(t *testing.T) {
 		Diagnostics:        diag,
 	}
 	intent := toolhiveIntent{
-		mode:           toolhiveModeDirect,
-		baseURL:        "https://gw.example.com/v1",
-		gatewayURL:     "https://gw.example.com",
-		oidcConfigured: true,
+		mode:       toolhiveModeDirect,
+		baseURL:    "https://gw.example.com/v1",
+		gatewayURL: "https://gw.example.com",
 	}
-	entry := newDirectGatewayEntry(cfg, providerToolhive, intent, cfgPath)
+	entry := newDirectGatewayEntry(cfg, providerToolhive, intent,
+		newDirectGatewayClient(cfg, intent, cfgPath))
 
 	if entry.remint == nil {
 		t.Fatal("direct-mode entry has no remint closure")

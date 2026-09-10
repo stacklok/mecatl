@@ -233,8 +233,8 @@ func TestToolhiveAvailableNotDefault_E2E(t *testing.T) {
 		t.Fatalf("ListModels: %v", err)
 	}
 	status := resp.GetProviderStatus()
-	if len(status) != 1 {
-		t.Fatalf("provider_status = %d rows, want 1 (toolhive only — v1 intent-driven-scoped): %+v", len(status), status)
+	if len(status) != 2 {
+		t.Fatalf("provider_status = %d rows, want 2 (both ToolHive protocols): %+v", len(status), status)
 	}
 	row := status[0]
 	if row.GetProviderId() != providerToolhive {

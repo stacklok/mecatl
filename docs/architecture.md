@@ -288,6 +288,13 @@ in `provider/openai`, the native Anthropic Messages API in
 `provider/anthropic` ([multi-provider](architecture/providers.md)) — so the core is provider-agnostic and
 unit-testable against fakes (`mockllm`, `memfs`, `memstore`).
 
+The ToolHive gateway composes those same two wire adapters as separate registry
+identities backed by one detected gateway configuration: `toolhive` remains the
+OpenAI Responses/default surface, while `toolhive-anthropic` exposes native
+Anthropic discovery and Messages inference. Their inventories and health are
+independent; their direct-mode OIDC source is shared. See the
+[provider chapter](architecture/providers.md#multi-provider--registry-per-session-routing--model-inventory).
+
 OpenAI has two deliberately separate registry identities. `openai` uses a public
 API key and the supported public Responses API. Experimental `openai-codex`
 uses a manually supplied ChatGPT Codex access-token snapshot against OpenAI's

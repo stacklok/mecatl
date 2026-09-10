@@ -2,10 +2,10 @@
 // it detects, by reading ToolHive's OWN on-disk config file, whether a ToolHive
 // LLM gateway proxy is set up for this user — and, if so, what LOOPBACK port it
 // listens on — and (issue #265, tokensource.go) builds an in-process OIDC token
-// source so the `toolhive` provider can talk DIRECTLY to the real gateway_url
-// with no local proxy hop. The actual live-listing HTTP call is made by the
-// protocol-generic internal/adapter/openaicompat.Lister, which this package
-// merely feeds a hardcoded loopback base URL.
+// source so both ToolHive protocol providers can talk DIRECTLY to the real
+// gateway_url with no local proxy hop. Live listing remains owned by the wire
+// adapters: internal/adapter/openaicompat for `toolhive` and provider/anthropic
+// for `toolhive-anthropic`; this package supplies only detected routing intent.
 //
 // # What this reads
 //

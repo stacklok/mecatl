@@ -430,17 +430,17 @@ is ordinary JSON. Turns are consumed in order across model calls:
 
 #### The ToolHive LLM gateway (no API key needed)
 
-If you have [ToolHive](https://docs.stacklok.com/toolhive/)'s local LLM proxy
-running, `--toolhive-llm` (on by default) auto-detects it and registers it as
-provider id `toolhive` — no API key required, since ToolHive holds the
-credential. `/models` (or the mecatui welcome splash) tells you when it's
-available but not your default, so you can opt in with `/models` or
-`--default-provider toolhive` without unsetting whatever key-based provider you
-already have. On a host other operators also use, pass `--toolhive-llm=false` —
-a per-user ToolHive config detected by one operator's process shouldn't surprise
-another.
+If you have configured [ToolHive](https://docs.stacklok.com/toolhive/)'s LLM gateway,
+`--toolhive-llm` (on by default) auto-detects it and registers two
+protocol-specific provider IDs:
+`toolhive` uses OpenAI Responses, while `toolhive-anthropic` uses native Anthropic
+Messages. No API key is required, since ToolHive holds the credential. `/models`
+(or the mecatui welcome splash) tells you when either is available but not your
+default, so you can opt in without unsetting a key-based provider. On a host other
+operators also use, pass `--toolhive-llm=false` — a per-user ToolHive config detected
+by one operator's process shouldn't surprise another.
 
-There are two routing modes for how the `toolhive` provider reaches the gateway,
+There are two routing modes for how both ToolHive providers reach the gateway,
 selected by `--toolhive-llm-mode` (default `auto`):
 
 - **Proxy mode** (the original path): Mecatl talks to a local reverse proxy
@@ -485,6 +485,10 @@ Two things worth knowing before you rely on it:
   runs the gateway to add a cost route for the alias. A session created before
   you fix this keeps failing on every turn even after the fix lands; open a
   fresh session rather than waiting for it to self-heal.
+
+For provider selection, protocol paths, independent catalog status, and
+model-routing troubleshooting, see
+[Choose models and providers](/features/choose-models.md#select-toolhive-gateway-models).
 
 ### Posture
 

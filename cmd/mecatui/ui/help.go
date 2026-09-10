@@ -520,6 +520,9 @@ func (m Model) zeroStateMemoryNote() string {
 // provider id comes from the status row, so a future non-ToolHive
 // intent-driven provider reads naturally without a code change here.
 func (m Model) zeroStateGatewayNote() string {
+	if isToolhiveProviderID(m.resolvedSessionModel.ProviderID) {
+		return ""
+	}
 	row, ok := availableNotDefaultStatus(m.modelCatalog.statuses)
 	if !ok {
 		return ""
