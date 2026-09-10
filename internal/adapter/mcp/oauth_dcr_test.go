@@ -4,32 +4,40 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/auth"
 	"github.com/modelcontextprotocol/go-sdk/oauthex"
+	"golang.org/x/oauth2"
 
 	"github.com/stacklok/mecatl/internal/adapter/credentialstore"
 )
 
 type dcrMetadataFixture struct {
-	mu             sync.Mutex
-	server         *httptest.Server
-	registration   string
-	issuerOverride string
-	resourceValue  string
-	authServers    []string
-	codeMethods    []string
-	grantTypes     []string
-	authMethods    []string
-	responseTypes  []string
-	scopes         []string
-	registerCount  int
-	clientID       string
-	cosmeticSuffix string
+	mu                 sync.Mutex
+	server             *httptest.Server
+	registration       string
+	issuerOverride     string
+	resourceValue      string
+	authServers        []string
+	codeMethods        []string
+	grantTypes         []string
+	authMethods        []string
+	responseTypes      []string
+	scopes             []string
+	registerCount      int
+	tokenCount         int
+	tokenForms         []url.Values
+	clientID           string
+	cosmeticSuffix     string
+	unsolicitedRefresh bool
 }
 
 func newDCRMetadataFixture(t *testing.T) *dcrMetadataFixture {
@@ -80,6 +88,16 @@ func newDCRMetadataFixture(t *testing.T) *dcrMetadataFixture {
 				"client_id": f.clientID, "token_endpoint_auth_method": "none", "redirect_uris": request.RedirectURIs,
 				"grant_types": request.GrantTypes, "response_types": request.ResponseTypes, "scope": request.Scope,
 			})
+		case r.URL.Path == "/oauth/token":
+			f.tokenCount++
+			_ = r.ParseForm()
+			f.tokenForms = append(f.tokenForms, r.PostForm)
+			response := map[string]any{"access_token": "dcr-access", "token_type": "Bearer", "expires_in": 3600, "scope": "openid"}
+			if f.unsolicitedRefresh {
+				response["refresh_token"] = "unsolicited-refresh"
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(response)
 		default:
 			http.NotFound(w, r)
 		}
@@ -322,5 +340,209 @@ func TestADR_0325_DirectDCRRegistrationCASWinnerAdoption(t *testing.T) {
 	_, _, err = PrepareOAuthDCRLogin(context.Background(), resource, fixture.options(t, store), OAuthDCRLoginRetryRegistration)
 	if !errors.Is(err, ErrOAuthDCRRecoveryRequired) {
 		t.Fatalf("retry against ready = %v, want recovery-required", err)
+	}
+}
+
+func TestADR_0325_PublicNoneWireQualification(t *testing.T) {
+	fixture := newDCRMetadataFixture(t)
+	resource := fixture.server.URL + "/gw/mcp"
+	store := newDCRMemoryStore(t)
+	opts := fixture.options(t, store)
+	opts.Presenter = OAuthPresenterFunc(func(_ context.Context, raw string) (*auth.AuthorizationResult, error) {
+		u, err := url.Parse(raw)
+		if err != nil {
+			return nil, err
+		}
+		q := u.Query()
+		if q.Get("code_challenge_method") != "S256" || q.Get("code_challenge") == "" || len(q["resource"]) != 1 || q.Get("resource") != resource || q.Get("scope") != "openid" {
+			t.Fatalf("authorization query = %v", q)
+		}
+		return &auth.AuthorizationResult{Code: "fixture-code", State: q.Get("state"), Iss: fixture.server.URL}, nil
+	})
+	prepared, path, err := PrepareOAuthDCRLogin(context.Background(), resource, opts, OAuthDCRLoginReuse)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared.RedirectURL = "http://127.0.0.1:49152" + path
+	controller, err := NewOAuthController(context.Background(), resource, prepared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer controller.Close()
+	req, _ := http.NewRequest(http.MethodGet, resource, nil)
+	resp := &http.Response{StatusCode: http.StatusUnauthorized, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(""))}
+	resp.Header.Set("WWW-Authenticate", `Bearer scope="openid"`)
+	if err := controller.Authorize(context.Background(), req, resp); err != nil {
+		t.Fatalf("authorize public DCR: %v", err)
+	}
+	fixture.mu.Lock()
+	defer fixture.mu.Unlock()
+	if fixture.tokenCount != 1 || len(fixture.tokenForms) != 1 {
+		t.Fatalf("upstream token requests = %d, want one parameter fallback", fixture.tokenCount)
+	}
+	form := fixture.tokenForms[0]
+	if form.Get("client_id") != fixture.clientID || len(form["resource"]) != 1 || form.Get("resource") != resource || form.Get("client_secret") != "" || form.Get("client_assertion") != "" || form.Get("code_verifier") == "" {
+		t.Fatalf("public token form = %v", form)
+	}
+}
+
+func TestDirectMCPDCR_Scenario2_RestartRestoresRegistrationGrantAndReadTool(t *testing.T) {
+	fixture := newDCRMetadataFixture(t)
+	resource := fixture.server.URL + "/gw/mcp"
+	store := newDCRMemoryStore(t)
+	opts := fixture.options(t, store)
+	opts.Presenter = OAuthPresenterFunc(func(_ context.Context, raw string) (*auth.AuthorizationResult, error) {
+		u, _ := url.Parse(raw)
+		return &auth.AuthorizationResult{Code: "fixture-code", State: u.Query().Get("state"), Iss: fixture.server.URL}, nil
+	})
+	prepared, path, err := PrepareOAuthDCRLogin(context.Background(), resource, opts, OAuthDCRLoginReuse)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared.RedirectURL = "http://127.0.0.1:49152" + path
+	controller, err := NewOAuthController(context.Background(), resource, prepared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, _ := http.NewRequest(http.MethodGet, resource, nil)
+	resp := &http.Response{StatusCode: http.StatusUnauthorized, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(""))}
+	resp.Header.Set("WWW-Authenticate", `Bearer scope="openid"`)
+	if err := controller.Authorize(context.Background(), req, resp); err != nil {
+		t.Fatal(err)
+	}
+	_ = controller.Close()
+
+	restored, err := NewOAuthController(context.Background(), resource, fixture.options(t, store))
+	if err != nil {
+		t.Fatalf("restore controller: %v", err)
+	}
+	defer restored.Close()
+	source, err := restored.TokenSource(context.Background())
+	if err != nil || source == nil {
+		t.Fatalf("restored token source = %v, %v", source, err)
+	}
+	token, err := source.Token()
+	if err != nil || token.AccessToken != "dcr-access" || token.RefreshToken != "" {
+		t.Fatalf("restored token = %#v, %v", token, err)
+	}
+	fixture.mu.Lock()
+	registrations, exchanges := fixture.registerCount, fixture.tokenCount
+	fixture.mu.Unlock()
+	if registrations != 1 || exchanges != 1 {
+		t.Fatalf("restart network counts register=%d token=%d", registrations, exchanges)
+	}
+}
+
+func TestADR_0325_DirectDCRRejectsUnsolicitedRefreshToken(t *testing.T) {
+	fixture := newDCRMetadataFixture(t)
+	fixture.unsolicitedRefresh = true
+	resource := fixture.server.URL + "/gw/mcp"
+	store := newDCRMemoryStore(t)
+	opts := fixture.options(t, store)
+	opts.Presenter = OAuthPresenterFunc(func(_ context.Context, raw string) (*auth.AuthorizationResult, error) {
+		u, _ := url.Parse(raw)
+		return &auth.AuthorizationResult{Code: "fixture-code", State: u.Query().Get("state"), Iss: fixture.server.URL}, nil
+	})
+	prepared, path, err := PrepareOAuthDCRLogin(context.Background(), resource, opts, OAuthDCRLoginReuse)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared.RedirectURL = "http://127.0.0.1:49152" + path
+	controller, err := NewOAuthController(context.Background(), resource, prepared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer controller.Close()
+	req, _ := http.NewRequest(http.MethodGet, resource, nil)
+	resp := &http.Response{StatusCode: http.StatusUnauthorized, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(""))}
+	resp.Header.Set("WWW-Authenticate", `Bearer scope="openid"`)
+	if err := controller.Authorize(context.Background(), req, resp); err == nil {
+		t.Fatal("unsolicited refresh token was accepted")
+	}
+	source, err := controller.TokenSource(context.Background())
+	if err != nil || source != nil {
+		t.Fatalf("unsolicited refresh persisted source = %v, %v", source, err)
+	}
+}
+
+func TestADR_0325_DirectDCRExpiryRequiresLoginWithoutRefresh(t *testing.T) {
+	fixture := newDCRMetadataFixture(t)
+	resource := fixture.server.URL + "/gw/mcp"
+	store := newDCRMemoryStore(t)
+	opts := fixture.options(t, store)
+	prepared, path, err := PrepareOAuthDCRLogin(context.Background(), resource, opts, OAuthDCRLoginReuse)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared.RedirectURL = "http://127.0.0.1:49152" + path
+	controller, err := NewOAuthController(context.Background(), resource, prepared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generation := controller.state.registration.generation
+	clientID := controller.state.registration.clientID
+	identity := oauthCredentialIdentity{Profile: opts.Subject.Profile, Principal: opts.Subject.Principal, Resource: resource, Issuer: opts.Issuer, ClientKind: "dcr", ClientID: clientID}
+	key, _ := oauthDCRCredentialKey(identity, generation)
+	record, _ := store.Get(context.Background(), key)
+	cfg := &oauth2.Config{ClientID: clientID, Endpoint: oauth2.Endpoint{TokenURL: fixture.server.URL + "/oauth/token", AuthStyle: oauth2.AuthStyleAutoDetect}, RedirectURL: prepared.RedirectURL, Scopes: []string{"openid"}}
+	expired := &oauth2.Token{AccessToken: "expired", TokenType: "Bearer", Expiry: time.Now().Add(-time.Hour)}
+	grant := newOAuthDCRActiveGrant(identity, generation, cfg, expired)
+	value, _ := encodeOAuthDCRGrant(grant, identity, generation, controller.state.origins)
+	_, err = store.Put(context.Background(), key, value, &record.Version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = controller.Close()
+	restored, err := NewOAuthController(context.Background(), resource, fixture.options(t, store))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restored.Close()
+	source, _ := restored.TokenSource(context.Background())
+	if source == nil {
+		t.Fatal("expired durable grant was not restored for login-required classification")
+	}
+	if _, err := source.Token(); !errors.Is(err, ErrOAuthLoginRequired) {
+		t.Fatalf("expired DCR token error = %v", err)
+	}
+	fixture.mu.Lock()
+	exchanges := fixture.tokenCount
+	fixture.mu.Unlock()
+	if exchanges != 0 {
+		t.Fatalf("expiry caused %d token requests", exchanges)
+	}
+}
+
+func TestADR_0325_DirectDCRGrantResetFencesStaleWriters(t *testing.T) {
+	fixture := newDCRMetadataFixture(t)
+	resource := fixture.server.URL + "/gw/mcp"
+	store := newDCRMemoryStore(t)
+	opts := fixture.options(t, store)
+	prepared, path, err := PrepareOAuthDCRLogin(context.Background(), resource, opts, OAuthDCRLoginReuse)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared.RedirectURL = "http://127.0.0.1:49152" + path
+	controller, err := NewOAuthController(context.Background(), resource, prepared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer controller.Close()
+	if err := controller.state.beginAuthorization(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := controller.state.reset(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &oauth2.Config{ClientID: controller.state.registration.clientID, Endpoint: oauth2.Endpoint{TokenURL: fixture.server.URL + "/oauth/token", AuthStyle: oauth2.AuthStyleAutoDetect}, RedirectURL: prepared.RedirectURL, Scopes: []string{"openid"}}
+	_, err = controller.state.newTokenSource(context.Background(), cfg, &oauth2.Token{AccessToken: "stale", TokenType: "Bearer", Expiry: time.Now().Add(time.Hour)})
+	if !errors.Is(err, ErrOAuthLoginRequired) {
+		t.Fatalf("stale authorization write error = %v, want login required", err)
+	}
+	controller.state.mu.Lock()
+	state := controller.state.dcrGrant.State
+	controller.state.mu.Unlock()
+	if state != "reset" {
+		t.Fatalf("stale writer resurrected grant state %q", state)
 	}
 }

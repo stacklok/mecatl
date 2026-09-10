@@ -294,6 +294,14 @@ func loadMCPProfile(input profileInput, lookup func(string) (string, bool), owne
 	}
 }
 
+func resolvedOAuthScopePolicy(decl *permconfig.MCPOAuthProfile) (bool, []string) {
+	scopes := append([]string(nil), decl.Scopes...)
+	if decl.Client.Mode == "dcr" && len(scopes) == 0 {
+		scopes = []string{"openid"}
+	}
+	return decl.RequestRefreshToken, scopes
+}
+
 func loadOAuthProfile(profile permconfig.MCPServerProfile, lookup func(string) (string, bool), owner *MCPProfiles, stores map[string]credentialstore.Store) (*mcp.OAuthOptions, error) {
 	decl := profile.Auth.OAuth
 	if decl == nil || decl.Network == nil {
@@ -302,11 +310,7 @@ func loadOAuthProfile(profile permconfig.MCPServerProfile, lookup func(string) (
 	if err := validateGlobalOAuth(profile); err != nil {
 		return nil, err
 	}
-	requestRefresh := decl.RequestRefreshToken
-	allowedScopes := append([]string(nil), decl.Scopes...)
-	if decl.Client.Mode == "dcr" && len(allowedScopes) == 0 {
-		allowedScopes = []string{"openid"}
-	}
+	requestRefresh, allowedScopes := resolvedOAuthScopePolicy(decl)
 	opts := &mcp.OAuthOptions{
 		Subject:       mcp.OAuthSubject{Profile: decl.Profile, Principal: decl.Principal},
 		Issuer:        decl.Issuer,

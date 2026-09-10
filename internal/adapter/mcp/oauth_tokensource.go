@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/url"
 	"slices"
 	"sync"
 
@@ -25,10 +26,12 @@ type oauthCredentialState struct {
 	allowInMemory  bool
 	lifetime       context.Context
 
-	record   *credentialstore.Record
-	envelope oauthCredentialEnvelope
-	config   *oauth2.Config
-	token    *oauth2.Token
+	record               *credentialstore.Record
+	envelope             oauthCredentialEnvelope
+	dcrGrant             oauthDCRGrantEnvelope
+	authorizationVersion *credentialstore.Version
+	config               *oauth2.Config
+	token                *oauth2.Token
 }
 
 type persistentTokenSource struct {
@@ -59,13 +62,30 @@ func (s *oauthCredentialState) operationContext(ctx context.Context) (context.Co
 
 func restoreOAuthCredential(ctx context.Context, reader credentialstore.Reader, writer credentialstore.ConditionalWriter, identity oauthCredentialIdentity, registration oauthRegistration, origins map[string]struct{}, client *http.Client, requestRefresh, allowInMemory bool) (*oauthCredentialState, error) {
 	key, err := oauthCredentialKey(identity)
+	if registration.kind == oauthDCRClientKind {
+		key, err = oauthDCRCredentialKey(identity, registration.generation)
+	}
 	if err != nil {
 		return nil, err
 	}
 	state := &oauthCredentialState{reader: reader, writer: writer, key: key, identity: identity, registration: registration, origins: origins, client: client, requestRefresh: requestRefresh, allowInMemory: allowInMemory}
 	record, err := reader.Get(ctx, key)
 	if errors.Is(err, credentialstore.ErrNotFound) {
-		return state, nil
+		if registration.kind != oauthDCRClientKind {
+			return state, nil
+		}
+		if writer == nil {
+			return nil, projectOAuthError(ErrOAuthUnavailable)
+		}
+		reset := newOAuthDCRResetGrant(identity, registration.generation)
+		value, encodeErr := encodeOAuthDCRGrant(reset, identity, registration.generation, origins)
+		if encodeErr != nil {
+			return nil, projectOAuthError(encodeErr)
+		}
+		record, err = writer.Put(ctx, key, value, nil)
+		if errors.Is(err, credentialstore.ErrConflict) {
+			record, err = reader.Get(ctx, key)
+		}
 	}
 	if err != nil {
 		return nil, projectOAuthError(err)
@@ -89,7 +109,7 @@ func (s *oauthCredentialState) initialTokenSource() oauth2.TokenSource {
 func (s *oauthCredentialState) tokenSource(ctx context.Context) oauth2.TokenSource {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.record == nil {
+	if s.record == nil || s.config == nil || s.token == nil {
 		return nil
 	}
 	return &persistentTokenSource{state: s, ctx: ctx}
@@ -111,6 +131,9 @@ func (s *oauthCredentialState) newTokenSource(ctx context.Context, cfg *oauth2.C
 	token = cloneOAuthToken(token)
 	if err := s.validateConfig(cfg); err != nil {
 		return nil, projectOAuthError(err)
+	}
+	if s.registration.kind == oauthDCRClientKind {
+		return s.newDCRTokenSource(ctx, cfg, token)
 	}
 	envelope := newOAuthCredentialEnvelope(s.identity, cfg, token)
 	value, err := encodeOAuthCredential(envelope, s.identity, s.requestRefresh, s.origins)
@@ -149,6 +172,14 @@ func (s *oauthCredentialState) validateConfig(cfg *oauth2.Config) error {
 	if s.registration.kind == "preregistered" && cfg.Endpoint.AuthStyle != oauth2.AuthStyleInHeader {
 		return errors.New("OAuth token configuration authentication style is invalid")
 	}
+	if s.registration.kind == oauthDCRClientKind {
+		tokenURL, tokenErr := validateHTTPURL("OAuth DCR token URL", cfg.Endpoint.TokenURL, false)
+		issuerURL, issuerErr := url.Parse(s.identity.Issuer)
+		redirect, redirectErr := url.Parse(cfg.RedirectURL)
+		if cfg.ClientSecret != "" || cfg.Endpoint.AuthStyle != oauth2.AuthStyleAutoDetect || len(cfg.Scopes) != 1 || cfg.Scopes[0] != oauthDCRScope || tokenErr != nil || issuerErr != nil || urlOrigin(tokenURL) != urlOrigin(issuerURL) || redirectErr != nil || redirect.Path != s.registration.redirectPath {
+			return errors.New("OAuth DCR token configuration is invalid")
+		}
+	}
 	return nil
 }
 
@@ -178,6 +209,18 @@ func (s *oauthCredentialState) tokenLocked(ctx context.Context, allowConflict bo
 	}
 	if s.record == nil || s.config == nil {
 		return nil, projectOAuthError(ErrOAuthLoginRequired)
+	}
+	if s.registration.kind == oauthDCRClientKind {
+		if err := s.reloadLocked(ctx); err != nil {
+			return nil, projectOAuthError(err)
+		}
+		if err := s.validateDCRRegistrationLocked(ctx); err != nil {
+			return nil, projectOAuthError(err)
+		}
+		if s.token == nil || !s.token.Valid() {
+			return nil, projectOAuthError(ErrOAuthLoginRequired)
+		}
+		return cloneOAuthToken(s.token), nil
 	}
 	if s.token.RefreshToken == "" && !s.token.Valid() {
 		return nil, projectOAuthError(ErrOAuthLoginRequired)
@@ -307,6 +350,35 @@ func (s *oauthCredentialState) reloadLocked(ctx context.Context) error {
 }
 
 func (s *oauthCredentialState) installRecordLocked(record credentialstore.Record) error {
+	if s.registration.kind == oauthDCRClientKind {
+		grant, err := decodeOAuthDCRGrant(record.Value, s.identity, s.registration.generation, s.origins)
+		if err != nil {
+			return err
+		}
+		record.Value = slices.Clone(record.Value)
+		s.record = &record
+		s.dcrGrant = grant
+		s.envelope = oauthCredentialEnvelope{}
+		s.config = nil
+		s.token = nil
+		if grant.State == "reset" {
+			return nil
+		}
+		tokenURL, tokenErr := url.Parse(grant.Authorization.TokenURL)
+		issuerURL, issuerErr := url.Parse(s.identity.Issuer)
+		redirect, redirectErr := url.Parse(grant.Authorization.RedirectURL)
+		if tokenErr != nil || issuerErr != nil || redirectErr != nil || urlOrigin(tokenURL) != urlOrigin(issuerURL) || redirect.Path != s.registration.redirectPath {
+			return errors.New("OAuth DCR grant binding is invalid")
+		}
+		token, err := oauthDCRGrantToken(grant)
+		if err != nil {
+			return err
+		}
+		auth := grant.Authorization
+		s.config = &oauth2.Config{ClientID: s.registration.clientID, Endpoint: oauth2.Endpoint{TokenURL: auth.TokenURL, AuthStyle: oauth2.AuthStyleInParams}, RedirectURL: auth.RedirectURL, Scopes: append([]string(nil), auth.Scopes...)}
+		s.token = token
+		return nil
+	}
 	envelope, err := decodeOAuthCredential(record.Value, s.identity, s.requestRefresh, s.origins)
 	if err != nil {
 		return err
@@ -333,6 +405,8 @@ func (s *oauthCredentialState) installLocked(record credentialstore.Record, enve
 func (s *oauthCredentialState) clearLocked() {
 	s.record = nil
 	s.envelope = oauthCredentialEnvelope{}
+	s.dcrGrant = oauthDCRGrantEnvelope{}
+	s.authorizationVersion = nil
 	s.config = nil
 	s.token = nil
 }
@@ -347,6 +421,9 @@ func (s *oauthCredentialState) reset(ctx context.Context) error {
 	}
 	if s.writer == nil {
 		return projectOAuthError(ErrOAuthUnavailable)
+	}
+	if s.registration.kind == oauthDCRClientKind {
+		return s.resetDCRLocked(ctx)
 	}
 	if s.record == nil {
 		s.clearLocked()
@@ -366,6 +443,110 @@ func (s *oauthCredentialState) reset(ctx context.Context) error {
 	}
 	if err := s.reloadLocked(ctx); err != nil {
 		return projectOAuthError(err)
+	}
+	return nil
+}
+
+func (s *oauthCredentialState) beginAuthorization(ctx context.Context) error {
+	if s.registration.kind != oauthDCRClientKind {
+		return nil
+	}
+	ctx, cancel := s.operationContext(ctx)
+	defer cancel()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.reloadLocked(ctx); err != nil {
+		return projectOAuthError(err)
+	}
+	if err := s.validateDCRRegistrationLocked(ctx); err != nil {
+		return projectOAuthError(err)
+	}
+	if err := s.resetDCRLocked(ctx); err != nil {
+		return err
+	}
+	version := s.record.Version
+	s.authorizationVersion = &version
+	return nil
+}
+
+func (s *oauthCredentialState) newDCRTokenSource(ctx context.Context, cfg *oauth2.Config, token *oauth2.Token) (oauth2.TokenSource, error) {
+	if token.RefreshToken != "" {
+		return nil, projectOAuthError(ErrOAuthUnavailable)
+	}
+	grant := newOAuthDCRActiveGrant(s.identity, s.registration.generation, cfg, token)
+	value, err := encodeOAuthDCRGrant(grant, s.identity, s.registration.generation, s.origins)
+	if err != nil {
+		return nil, projectOAuthError(err)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.authorizationVersion == nil {
+		return nil, projectOAuthError(ErrOAuthDCRRecoveryRequired)
+	}
+	expected := *s.authorizationVersion
+	s.authorizationVersion = nil
+	if err := s.validateDCRRegistrationLocked(ctx); err != nil {
+		return nil, projectOAuthError(err)
+	}
+	record, err := s.writer.Put(ctx, s.key, value, &expected)
+	if err == nil {
+		if err := s.installRecordLocked(record); err != nil {
+			return nil, projectOAuthError(err)
+		}
+		if err := s.validateDCRRegistrationLocked(ctx); err != nil {
+			return nil, projectOAuthError(err)
+		}
+		return &persistentTokenSource{state: s}, nil
+	}
+	if !errors.Is(err, credentialstore.ErrConflict) {
+		return nil, projectOAuthError(err)
+	}
+	if err := s.reloadLocked(ctx); err != nil {
+		return nil, projectOAuthError(err)
+	}
+	if s.dcrGrant.State != "active" {
+		return nil, projectOAuthError(ErrOAuthLoginRequired)
+	}
+	return &persistentTokenSource{state: s}, nil
+}
+
+func (s *oauthCredentialState) resetDCRLocked(ctx context.Context) error {
+	reset := newOAuthDCRResetGrant(s.identity, s.registration.generation)
+	value, err := encodeOAuthDCRGrant(reset, s.identity, s.registration.generation, s.origins)
+	if err != nil {
+		return projectOAuthError(err)
+	}
+	var expected *credentialstore.Version
+	if s.record != nil {
+		version := s.record.Version
+		expected = &version
+	}
+	record, err := s.writer.Put(ctx, s.key, value, expected)
+	if err == nil {
+		return projectOAuthError(s.installRecordLocked(record))
+	}
+	if !errors.Is(err, credentialstore.ErrConflict) {
+		return projectOAuthError(err)
+	}
+	if err := s.reloadLocked(ctx); err != nil {
+		return projectOAuthError(err)
+	}
+	return projectOAuthError(ErrOAuthDCRRecoveryRequired)
+}
+
+func (s *oauthCredentialState) validateDCRRegistrationLocked(ctx context.Context) error {
+	identity := oauthDCRIdentity{Profile: s.identity.Profile, Principal: s.identity.Principal, Resource: s.identity.Resource, Issuer: s.identity.Issuer}
+	key, err := oauthDCRRegistrationKey(identity)
+	if err != nil {
+		return err
+	}
+	record, err := s.reader.Get(ctx, key)
+	if err != nil {
+		return ErrOAuthDCRRecoveryRequired
+	}
+	stored, err := decodeOAuthDCRRecord(record.Value, identity)
+	if err != nil || stored.State != oauthDCRStateReady || stored.Generation != s.registration.generation || stored.Registration.ClientID != s.registration.clientID {
+		return ErrOAuthDCRRecoveryRequired
 	}
 	return nil
 }

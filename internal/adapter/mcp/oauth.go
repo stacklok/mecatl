@@ -34,8 +34,11 @@ type OAuthDCRConfig struct{}
 type OAuthDCRLoginAction uint8
 
 const (
+	// OAuthDCRLoginReuse reuses a ready registration or creates the initial registration.
 	OAuthDCRLoginReuse OAuthDCRLoginAction = iota
+	// OAuthDCRLoginResetRegistration explicitly replaces a ready registration.
 	OAuthDCRLoginResetRegistration
+	// OAuthDCRLoginRetryRegistration explicitly retries a pending registration attempt.
 	OAuthDCRLoginRetryRegistration
 )
 
@@ -107,6 +110,8 @@ type oauthRegistration struct {
 	kind         string
 	clientID     string
 	clientSecret string
+	generation   string
+	redirectPath string
 	sdk          *oauthex.ClientCredentials
 	cimd         string
 }
@@ -226,7 +231,7 @@ func resolvedOAuthRegistration(opts OAuthOptions) (oauthRegistration, error) {
 	if err := client.Validate(); err != nil {
 		return oauthRegistration{}, errors.New("OAuth DCR client registration is invalid")
 	}
-	return oauthRegistration{kind: "dcr", clientID: opts.dcr.clientID, sdk: client}, nil
+	return oauthRegistration{kind: oauthDCRClientKind, clientID: opts.dcr.clientID, generation: opts.dcr.generation, redirectPath: opts.dcr.path, sdk: client}, nil
 }
 
 func validateOAuthOrigins(issuer *url.URL, network OAuthNetworkPolicy) (map[string]struct{}, error) {
@@ -276,7 +281,7 @@ func validateHTTPURL(field, raw string, httpsOnly bool) (*url.URL, error) {
 	if err != nil || !u.IsAbs() || u.Host == "" || u.User != nil || u.Fragment != "" {
 		return nil, errors.New(field + " is invalid")
 	}
-	if (httpsOnly && !strings.EqualFold(u.Scheme, "https")) || (!httpsOnly && !strings.EqualFold(u.Scheme, "http") && !strings.EqualFold(u.Scheme, "https")) {
+	if (httpsOnly && !strings.EqualFold(u.Scheme, "https")) || (!httpsOnly && !strings.EqualFold(u.Scheme, oauthHTTPURLScheme) && !strings.EqualFold(u.Scheme, "https")) {
 		return nil, errors.New(field + " is invalid")
 	}
 	if u.Hostname() == "" || !validPort(u) {
@@ -303,7 +308,7 @@ func urlOrigin(u *url.URL) string {
 		hostname = ip.String()
 	}
 	port := u.Port()
-	if port == "" || scheme == "https" && port == "443" || scheme == "http" && port == "80" {
+	if port == "" || scheme == "https" && port == "443" || scheme == oauthHTTPURLScheme && port == "80" {
 		port = ""
 	}
 	if strings.Contains(hostname, ":") {
@@ -436,6 +441,9 @@ func NewOAuthController(ctx context.Context, resource string, opts OAuthOptions)
 		transport.base.CloseIdleConnections()
 		return nil, projectOAuthError(err)
 	}
+	if opts.dcr != nil {
+		transport.dcrPublicClientID = opts.dcr.clientID
+	}
 	if _, _, err := validateOAuthOptions(opts); err != nil {
 		transport.base.CloseIdleConnections()
 		return nil, err
@@ -540,7 +548,7 @@ func (c *OAuthController) authorizationAllowed(ctx context.Context) error {
 // this credential identity while leaving cancellation bounded by each caller's
 // context. A completed outcome remains attached to its challenge key until a
 // different credential/challenge arrives or ResetCredential invalidates it.
-func (c *OAuthController) Authorize(ctx context.Context, req *http.Request, resp *http.Response) error {
+func (c *OAuthController) Authorize(ctx context.Context, req *http.Request, resp *http.Response) error { //nolint:gocyclo // single-flight state transitions stay explicit.
 	if err := c.authorizationAllowed(ctx); err != nil {
 		closeOAuthResponse(resp)
 		return err
@@ -610,14 +618,23 @@ func (c *OAuthController) Authorize(ctx context.Context, req *http.Request, resp
 		c.flight = flight
 		c.flightMu.Unlock()
 
+		if err := c.state.beginAuthorization(ctx); err != nil {
+			closeOAuthResponse(resp)
+			c.completeAuthorizationFlight(flight, err)
+			return err
+		}
 		err := projectOAuthError(c.authorize(ctx, req, resp))
-		c.flightMu.Lock()
-		flight.err = err
-		flight.completed = true
-		close(flight.done)
-		c.flightMu.Unlock()
+		c.completeAuthorizationFlight(flight, err)
 		return err
 	}
+}
+
+func (c *OAuthController) completeAuthorizationFlight(flight *authorizationFlight, err error) {
+	c.flightMu.Lock()
+	flight.err = err
+	flight.completed = true
+	close(flight.done)
+	c.flightMu.Unlock()
 }
 
 // ResetCredential conditionally deletes the current record and clears the live

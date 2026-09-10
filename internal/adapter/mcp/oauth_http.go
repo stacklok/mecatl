@@ -98,6 +98,8 @@ type oauthHTTPTransport struct {
 	issuerOrigin       string
 	resourceOrigin     string
 	requireClientBasic bool
+	dcrPublicClientID  string
+	dcrResource        string
 	lookup             oauthLookupFunc
 	dial               oauthDialFunc
 	allowLoopback      bool
@@ -134,6 +136,7 @@ func newOAuthHTTPClient(resource string, opts OAuthOptions) (*http.Client, *oaut
 		issuerOrigin:       urlOrigin(issuer),
 		resourceOrigin:     urlOrigin(resourceURL),
 		requireClientBasic: opts.Client.Preregistered != nil,
+		dcrResource:        canonical,
 		lookup:             resolver.LookupNetIP,
 		dial:               dialer.DialContext,
 		allowLoopback:      opts.allowLoopbackForTest,
@@ -242,6 +245,22 @@ func (t *oauthHTTPTransport) validateEgress(req *http.Request, origin string) er
 		if t.requireClientBasic && !strings.HasPrefix(req.Header.Get("Authorization"), "Basic ") {
 			return errors.New("OAuth confidential client must use client_secret_basic")
 		}
+		if err := t.validateDCRPublicExchange(req, form); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (t *oauthHTTPTransport) validateDCRPublicExchange(req *http.Request, form url.Values) error {
+	if t.dcrPublicClientID == "" || form.Get("grant_type") != "authorization_code" {
+		return nil
+	}
+	if strings.HasPrefix(req.Header.Get("Authorization"), "Basic ") {
+		return errors.New("OAuth public client Basic probe rejected")
+	}
+	if req.Header.Get("Authorization") != "" || len(form["client_id"]) != 1 || form.Get("client_id") != t.dcrPublicClientID || len(form["resource"]) != 1 || form.Get("resource") != t.dcrResource || form.Get("client_secret") != "" || form.Get("client_assertion") != "" || form.Get("client_assertion_type") != "" {
+		return errors.New("OAuth public client token request is invalid")
 	}
 	return nil
 }

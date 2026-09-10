@@ -32,8 +32,14 @@ const (
 	oauthDCRRegistrationKeyDomain = "mecatl/mcp/oauth-dcr-registration-key/v1"
 	oauthDCRRedirectPolicy        = "ipv4-loopback-variable-port/v1"
 	oauthDCRCallbackPrefix        = "/oauth/callback/"
+	oauthDCRClientKind            = "dcr"
+	oauthDCRScope                 = "openid"
+	oauthDCRStatePending          = "pending"
+	oauthDCRStateReady            = "ready"
+	oauthHTTPURLScheme            = "http"
 )
 
+// ErrOAuthDCRRecoveryRequired reports durable DCR state that requires an explicit operator recovery action.
 var ErrOAuthDCRRecoveryRequired = errors.New("OAuth DCR recovery required")
 
 type oauthDCRIdentity struct {
@@ -107,7 +113,7 @@ func (t *oauthDCRTicket) consume() bool {
 
 // PrepareOAuthDCRLogin validates discovery and prepares one durable registration
 // attempt. It never launches a browser or sends the registration request.
-func PrepareOAuthDCRLogin(ctx context.Context, resource string, opts OAuthOptions, action OAuthDCRLoginAction) (OAuthOptions, string, error) {
+func PrepareOAuthDCRLogin(ctx context.Context, resource string, opts OAuthOptions, action OAuthDCRLoginAction) (OAuthOptions, string, error) { //nolint:gocyclo // explicit CAS states and recovery actions stay visible.
 	if ctx == nil {
 		return OAuthOptions{}, "", errors.New("OAuth DCR preparation requires a context")
 	}
@@ -153,12 +159,12 @@ func PrepareOAuthDCRLogin(ctx context.Context, resource string, opts OAuthOption
 		}
 		if action == OAuthDCRLoginReuse {
 			meta.RedirectPath = stored.Metadata.RedirectPath
-			if stored.State != "ready" || stored.MetadataFingerprint != fingerprintDCRMetadata(meta) || !equalDCRMetadata(stored.Metadata, meta) {
+			if stored.State != oauthDCRStateReady || stored.MetadataFingerprint != fingerprintDCRMetadata(meta) || !equalDCRMetadata(stored.Metadata, meta) {
 				return OAuthOptions{}, "", ErrOAuthDCRRecoveryRequired
 			}
 			return withResolvedDCR(opts, stored), stored.Metadata.RedirectPath, nil
 		}
-		if action == OAuthDCRLoginResetRegistration && stored.State != "ready" || action == OAuthDCRLoginRetryRegistration && stored.State != "pending" {
+		if action == OAuthDCRLoginResetRegistration && stored.State != oauthDCRStateReady || action == OAuthDCRLoginRetryRegistration && stored.State != oauthDCRStatePending {
 			return OAuthOptions{}, "", ErrOAuthDCRRecoveryRequired
 		}
 		reason := "explicit_reset"
@@ -201,7 +207,7 @@ func PrepareOAuthDCRLogin(ctx context.Context, resource string, opts OAuthOption
 		if decodeErr == nil {
 			meta.RedirectPath = stored.Metadata.RedirectPath
 		}
-		if decodeErr == nil && stored.State == "ready" && stored.MetadataFingerprint == fingerprintDCRMetadata(meta) && equalDCRMetadata(stored.Metadata, meta) {
+		if decodeErr == nil && stored.State == oauthDCRStateReady && stored.MetadataFingerprint == fingerprintDCRMetadata(meta) && equalDCRMetadata(stored.Metadata, meta) {
 			return withResolvedDCR(opts, stored), stored.Metadata.RedirectPath, nil
 		}
 		return OAuthOptions{}, "", ErrOAuthDCRRecoveryRequired
@@ -225,7 +231,7 @@ func newOAuthDCRPending(identity oauthDCRIdentity, meta oauthDCRMetadata, previo
 	meta.RedirectPath = oauthDCRCallbackPrefix + pathValue
 	pending := oauthDCRRecord{
 		Schema: oauthDCRRegistrationSchema, Version: oauthDCRRegistrationVersion, Identity: identity,
-		Generation: generation, State: "pending", AttemptStartedAt: time.Now().UTC().Format(time.RFC3339Nano), Metadata: meta,
+		Generation: generation, State: oauthDCRStatePending, AttemptStartedAt: time.Now().UTC().Format(time.RFC3339Nano), Metadata: meta,
 	}
 	if reason != "" {
 		pending.PreviousAttempt = &oauthDCRPreviousAttempt{Generation: previous.Generation, AttemptStartedAt: previous.AttemptStartedAt, Reason: reason}
@@ -234,14 +240,14 @@ func newOAuthDCRPending(identity oauthDCRIdentity, meta oauthDCRMetadata, previo
 	return pending, nil
 }
 
-func discoverDCRMetadata(ctx context.Context, resource string, opts OAuthOptions, client *http.Client) (oauthDCRMetadata, string, error) {
+func discoverDCRMetadata(ctx context.Context, resource string, opts OAuthOptions, client *http.Client) (oauthDCRMetadata, string, error) { //nolint:gocyclo // fail-closed metadata matrix is intentionally explicit.
 	resourceURL, _ := url.Parse(resource)
 	prmURL := urlOrigin(resourceURL) + "/.well-known/oauth-protected-resource" + resourceURL.EscapedPath()
 	prm, err := oauthex.GetProtectedResourceMetadata(ctx, prmURL, resource, client)
 	if err != nil {
 		return oauthDCRMetadata{}, "", errors.New("OAuth DCR protected-resource metadata request failed")
 	}
-	if prm == nil || prm.Resource != resource || len(prm.AuthorizationServers) != 1 || prm.AuthorizationServers[0] != opts.Issuer || !slices.Contains(prm.ScopesSupported, "openid") {
+	if prm == nil || prm.Resource != resource || len(prm.AuthorizationServers) != 1 || prm.AuthorizationServers[0] != opts.Issuer || !slices.Contains(prm.ScopesSupported, oauthDCRScope) {
 		return oauthDCRMetadata{}, "", errors.New("OAuth DCR protected-resource metadata is invalid")
 	}
 	issuerURL, err := validateHTTPURL("OAuth DCR issuer", opts.Issuer, !opts.allowLoopbackForTest)
@@ -265,13 +271,13 @@ func discoverDCRMetadata(ctx context.Context, resource string, opts OAuthOptions
 			return oauthDCRMetadata{}, "", errors.New("OAuth DCR endpoint is invalid")
 		}
 	}
-	if !slices.Contains(as.CodeChallengeMethodsSupported, "S256") || !slices.Contains(as.ResponseTypesSupported, "code") || !slices.Contains(as.GrantTypesSupported, "authorization_code") || !slices.Contains(as.TokenEndpointAuthMethodsSupported, "none") || !slices.Contains(as.ScopesSupported, "openid") {
+	if !slices.Contains(as.CodeChallengeMethodsSupported, "S256") || !slices.Contains(as.ResponseTypesSupported, "code") || !slices.Contains(as.GrantTypesSupported, "authorization_code") || !slices.Contains(as.TokenEndpointAuthMethodsSupported, "none") || !slices.Contains(as.ScopesSupported, oauthDCRScope) {
 		return oauthDCRMetadata{}, "", errors.New("OAuth DCR public authorization-code metadata is unsupported")
 	}
-	return oauthDCRMetadata{Issuer: opts.Issuer, Resource: resource, RedirectPolicy: oauthDCRRedirectPolicy, TokenEndpointAuthMethod: "none", GrantTypes: []string{"authorization_code"}, ResponseTypes: []string{"code"}, Scopes: []string{"openid"}}, as.RegistrationEndpoint, nil
+	return oauthDCRMetadata{Issuer: opts.Issuer, Resource: resource, RedirectPolicy: oauthDCRRedirectPolicy, TokenEndpointAuthMethod: "none", GrantTypes: []string{"authorization_code"}, ResponseTypes: []string{"code"}, Scopes: []string{oauthDCRScope}}, as.RegistrationEndpoint, nil
 }
 
-func resolvePreparedDCR(ctx context.Context, resource string, opts OAuthOptions, client *http.Client) (OAuthOptions, error) {
+func resolvePreparedDCR(ctx context.Context, resource string, opts OAuthOptions, client *http.Client) (OAuthOptions, error) { //nolint:gocyclo // registration publication keeps each failure state explicit.
 	if opts.Client.DCR == nil || opts.dcr != nil {
 		return opts, nil
 	}
@@ -301,7 +307,7 @@ func resolvePreparedDCR(ctx context.Context, resource string, opts OAuthOptions,
 			return OAuthOptions{}, ErrOAuthDCRRecoveryRequired
 		}
 		stored, err := decodeOAuthDCRRecord(record.Value, identity)
-		if err != nil || stored.State != "ready" {
+		if err != nil || stored.State != oauthDCRStateReady {
 			return OAuthOptions{}, ErrOAuthDCRRecoveryRequired
 		}
 		meta.RedirectPath = stored.Metadata.RedirectPath
@@ -316,7 +322,7 @@ func resolvePreparedDCR(ctx context.Context, resource string, opts OAuthOptions,
 		return OAuthOptions{}, ErrOAuthDCRRecoveryRequired
 	}
 	redirect, err := url.Parse(opts.RedirectURL)
-	if err != nil || redirect.Scheme != "http" || redirect.User != nil || redirect.Hostname() != "127.0.0.1" || !validDCRRedirectPort(redirect.Port()) || redirect.RawQuery != "" || redirect.Fragment != "" || redirect.Path != ticket.record.Metadata.RedirectPath {
+	if err != nil || redirect.Scheme != oauthHTTPURLScheme || redirect.User != nil || redirect.Hostname() != "127.0.0.1" || !validDCRRedirectPort(redirect.Port()) || redirect.RawQuery != "" || redirect.Fragment != "" || redirect.Path != ticket.record.Metadata.RedirectPath {
 		return OAuthOptions{}, ErrOAuthDCRRecoveryRequired
 	}
 	request := &oauthex.ClientRegistrationMetadata{
@@ -330,7 +336,7 @@ func resolvePreparedDCR(ctx context.Context, resource string, opts OAuthOptions,
 		return OAuthOptions{}, ErrOAuthDCRRecoveryRequired
 	}
 	ready := ticket.record
-	ready.State = "ready"
+	ready.State = oauthDCRStateReady
 	issued := response.ClientIDIssuedAt.Unix()
 	if response.ClientIDIssuedAt.IsZero() {
 		issued = 0
@@ -349,7 +355,7 @@ func resolvePreparedDCR(ctx context.Context, resource string, opts OAuthOptions,
 			return OAuthOptions{}, ErrOAuthDCRRecoveryRequired
 		}
 		stored, decodeErr := decodeOAuthDCRRecord(winner.Value, ticket.record.Identity)
-		if decodeErr != nil || stored.State != "ready" || stored.Generation != ticket.record.Generation || stored.MetadataFingerprint != ticket.record.MetadataFingerprint {
+		if decodeErr != nil || stored.State != oauthDCRStateReady || stored.Generation != ticket.record.Generation || stored.MetadataFingerprint != ticket.record.MetadataFingerprint {
 			return OAuthOptions{}, ErrOAuthDCRRecoveryRequired
 		}
 		ready = stored
@@ -407,7 +413,7 @@ func oauthDCRRegistrationKey(identity oauthDCRIdentity) ([]byte, error) {
 		if len(field) > math.MaxUint32 {
 			return nil, errors.New("OAuth DCR identity field is too large")
 		}
-		binary.BigEndian.PutUint32(size[:], uint32(len(field)))
+		binary.BigEndian.PutUint32(size[:], uint32(len(field))) // #nosec G115 -- checked above.
 		framed = append(framed, size[:]...)
 		framed = append(framed, field...)
 	}
@@ -494,7 +500,7 @@ func uniqueDCRJSONValue(decoder *json.Decoder, token json.Token) bool {
 	}
 }
 
-func validateOAuthDCRRecord(record oauthDCRRecord, expected oauthDCRIdentity) error {
+func validateOAuthDCRRecord(record oauthDCRRecord, expected oauthDCRIdentity) error { //nolint:gocyclo // strict persisted-state validation is intentionally linear.
 	if record.Schema != oauthDCRRegistrationSchema || record.Version != oauthDCRRegistrationVersion || record.Identity != expected || validateDCRIdentity(record.Identity) != nil {
 		return errors.New("OAuth DCR registration record identity is invalid")
 	}
@@ -517,16 +523,16 @@ func validateOAuthDCRRecord(record oauthDCRRecord, expected oauthDCRIdentity) er
 		}
 	}
 	switch record.State {
-	case "pending":
+	case oauthDCRStatePending:
 		if record.Registration != nil {
 			return errors.New("OAuth DCR pending record contains registration")
 		}
-	case "ready":
+	case oauthDCRStateReady:
 		if record.Registration == nil || validateSafeValue("OAuth DCR client ID", record.Registration.ClientID) != nil || record.Registration.RegisteredRedirectURI == "" {
 			return errors.New("OAuth DCR ready record is invalid")
 		}
 		u, err := url.Parse(record.Registration.RegisteredRedirectURI)
-		if err != nil || u.Scheme != "http" || u.User != nil || u.Hostname() != "127.0.0.1" || !validDCRRedirectPort(u.Port()) || u.Path != record.Metadata.RedirectPath || u.RawQuery != "" || u.Fragment != "" {
+		if err != nil || u.Scheme != oauthHTTPURLScheme || u.User != nil || u.Hostname() != "127.0.0.1" || !validDCRRedirectPort(u.Port()) || u.Path != record.Metadata.RedirectPath || u.RawQuery != "" || u.Fragment != "" {
 			return errors.New("OAuth DCR registered redirect is invalid")
 		}
 		if record.Registration.ClientIDIssuedAt != nil && *record.Registration.ClientIDIssuedAt < 0 {
@@ -539,11 +545,11 @@ func validateOAuthDCRRecord(record oauthDCRRecord, expected oauthDCRIdentity) er
 }
 
 func validDCRMetadata(meta oauthDCRMetadata, identity oauthDCRIdentity) bool {
-	return meta.Issuer == identity.Issuer && meta.Resource == identity.Resource && meta.RedirectPolicy == oauthDCRRedirectPolicy && validDCRCallbackPath(meta.RedirectPath) && meta.TokenEndpointAuthMethod == "none" && slices.Equal(meta.GrantTypes, []string{"authorization_code"}) && slices.Equal(meta.ResponseTypes, []string{"code"}) && slices.Equal(meta.Scopes, []string{"openid"})
+	return meta.Issuer == identity.Issuer && meta.Resource == identity.Resource && meta.RedirectPolicy == oauthDCRRedirectPolicy && validDCRCallbackPath(meta.RedirectPath) && meta.TokenEndpointAuthMethod == "none" && slices.Equal(meta.GrantTypes, []string{"authorization_code"}) && slices.Equal(meta.ResponseTypes, []string{"code"}) && slices.Equal(meta.Scopes, []string{oauthDCRScope})
 }
 
 func validDCRRequestedScopes(opts OAuthOptions) bool {
-	return !opts.RequestRefreshToken && len(opts.AllowedScopes) == 1 && opts.AllowedScopes[0] == "openid"
+	return !opts.RequestRefreshToken && len(opts.AllowedScopes) == 1 && opts.AllowedScopes[0] == oauthDCRScope
 }
 
 func validDCRRedirectPort(port string) bool {
