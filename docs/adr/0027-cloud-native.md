@@ -407,7 +407,13 @@ byte-identical with no lease.
   single-host flock lease (`internal/adapter/flocklease`, an operation-scoped stable
   transition lock + a retained generation-specific liveness flock + atomic record;
   expiry permits generic TTL takeover even while the old process lives, while a free
-  recorded-generation lock detects SIGKILL for immediate pre-expiry crash takeover),
+  recorded-generation lock detects SIGKILL for immediate pre-expiry crash takeover;
+  issue #1333 — a `Renew` past TTL whose durable record still names the caller at its
+  own fencing token RECLAIMS with a fresh expiry instead of declaring loss, since on a
+  single host that can only be true if nobody else raced an Acquire in the gap — a
+  process suspended past the TTL, e.g. laptop sleep, no longer loses its lease to a
+  competitor that never ran; a record whose owner/token DID change is still
+  unconditional `ErrLeaseHeld`),
   the gRPC driver
   (`SessionLeaseService` in `contracts/proto/mecatl/driver/v1/session_lease.proto`,
   client/server in `internal/adapter/grpcdriver/sessionlease.go` — the multi-host

@@ -98,6 +98,39 @@ func TestRenewStillFailsAfterGenuineTakeover(t *testing.T) {
 	}
 }
 
+// TestRenewFailsWithoutLocallyTrackedGeneration isolates the held == nil
+// hard-fail branch: Renew must fail closed for a caller with no locally
+// tracked generation handle for that lease, even when the durable record
+// still names that exact owner and token and is not expired. Two independent
+// *Lease instances over the SAME dir simulate this — the second instance
+// never ran the first's Acquire, so it never populated its own `held` map for
+// that generation, regardless of what the shared on-disk record says.
+func TestRenewFailsWithoutLocallyTrackedGeneration(t *testing.T) {
+	const ttl = time.Minute
+	dir := t.TempDir()
+	clk := &fakeClock{t: time.Unix(1_700_000_000, 0)}
+	holder, err := flocklease.New(dir, ttl, clk)
+	if err != nil {
+		t.Fatalf("New holder: %v", err)
+	}
+	stranger, err := flocklease.New(dir, ttl, clk)
+	if err != nil {
+		t.Fatalf("New stranger: %v", err)
+	}
+	ctx := context.Background()
+	held, err := holder.Acquire(ctx, session.SessionID("untracked-generation"), "owner")
+	if err != nil {
+		t.Fatalf("Acquire via holder: %v", err)
+	}
+	// Copy the returned Lease value: the record on disk still names this exact
+	// owner and token, and it has not expired, yet `stranger` never tracked the
+	// generation locally.
+	copied := held
+	if _, err := stranger.Renew(ctx, copied); !errors.Is(err, port.ErrLeaseHeld) {
+		t.Fatalf("Renew from an instance with no locally tracked generation = %v, want ErrLeaseHeld", err)
+	}
+}
+
 func TestFlockleaseConformance(t *testing.T) {
 	leaseconformance.Run(t, func(t *testing.T) (port.SessionLease, func(time.Duration)) {
 		clk := &fakeClock{t: time.Unix(1_700_000_000, 0)}
