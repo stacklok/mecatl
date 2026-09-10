@@ -16,12 +16,48 @@ import (
 
 	"golang.org/x/oauth2"
 
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	mcpadapter "github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	contract "github.com/stacklok/mecatl/internal/mcpbroker"
+)
+
+const (
+	diagnosticEventTokenRefresh                  = "token_refresh"
+	diagnosticEventRouteUnavailable              = "route_unavailable"
+	diagnosticEventAuthenticatedCatalogueFreeze  = "authenticated_catalogue_freeze"
+	diagnosticEventAuthenticatedCatalogueBackend = "authenticated_catalogue_backend"
+	diagnosticReasonSucceeded                    = "succeeded"
+	diagnosticReasonFailed                       = "failed"
+	diagnosticReasonReauthRequired               = "reauth_required"
+	diagnosticReasonDiscoveryFailed              = "discovery_failed"
+	diagnosticReasonDiscovered                   = "discovered"
+	diagnosticReasonValidationFailed             = "validation_failed"
+	diagnosticReasonMaterializeFailed            = "materialize_failed"
+	diagnosticReasonAuthorityUnavailable         = "authority_unavailable"
+	diagnosticCredentialRoute                    = "route"
+	diagnosticCredentialBroker                   = "broker"
+	// authorization is the Mecatl-owned OAuth transaction lifecycle. Its fields
+	// are closed values only; never add protocol values or identifiers here.
+	diagnosticEventAuthorization              = "authorization"
+	diagnosticEventAuthorizationLookup        = "authorization_lookup"
+	diagnosticReasonRequestStarted            = "request_started"
+	diagnosticReasonCallbackSucceeded         = "callback_succeeded"
+	diagnosticReasonCallbackDenied            = "callback_denied"
+	diagnosticReasonCallbackExpired           = "callback_expired"
+	diagnosticReasonCallbackFailed            = "callback_failed"
+	diagnosticReasonAuthorizationFound        = "found"
+	diagnosticReasonAuthorizationNotFound     = "not_found"
+	diagnosticReasonAuthorizationLookupFailed = "lookup_failed"
+	diagnosticReasonStateUnavailable          = "state_unavailable"
+	diagnosticAuthorizationSurfacePresent     = "present"
+	diagnosticAuthorizationSurfaceStatus      = "status"
+	diagnosticAuthorizationSurfaceCancel      = "cancel"
+	diagnosticRouteSurfaceNative              = "native"
+	diagnosticRouteSurfaceQuery               = "query"
 )
 
 var (
@@ -196,6 +232,7 @@ type Runtime struct {
 	caller           Caller
 	authorizedCaller AuthorizedCaller
 	queryCaller      QueryCaller
+	diag             port.Diagnostics
 	oauth            oauthRuntimeOptions
 	sessions         map[session.SessionID]*logicalSession
 	states           map[string]callbackState
@@ -230,6 +267,7 @@ func New(catalogue *Catalogue, caller Caller, options ...Option) (*Runtime, erro
 		catalogue:     catalogue,
 		caller:        caller,
 		oauth:         defaultOAuthRuntimeOptions(),
+		diag:          port.NopDiagnostics{},
 		sessions:      make(map[session.SessionID]*logicalSession),
 		states:        make(map[string]callbackState),
 		bindingPrefix: base64.RawURLEncoding.EncodeToString(bindingSeed),
@@ -582,6 +620,7 @@ func (t *sessionTool) Execute(ctx context.Context, call session.ToolCall, _ tool
 	}
 	resolved, ok := t.attachment.lookupRoute(call.Name)
 	if !ok || resolved.backend != t.route.backend {
+		t.attachment.runtime.logRouteUnavailable(ctx, diagnosticRouteSurfaceNative)
 		return session.NewToolError(call.ID, "broker tool route is unavailable"), nil
 	}
 	if err := opCtx.Err(); err != nil {
@@ -611,6 +650,39 @@ func (t *sessionTool) invoke(ctx context.Context, call session.ToolCall, tokens 
 		return r.authorizedCaller(ctx, t.attachment.logical.ref, t.route.backend, call, tokens)
 	}
 	return r.caller(ctx, t.attachment.logical.ref, t.route.backend, call)
+}
+
+func (r *Runtime) logAuthorization(ctx context.Context, event, reason string, level port.Level, surface string) {
+	args := []any{"event", event, "reason", reason}
+	if surface != "" {
+		args = append(args, "surface", surface)
+	}
+	r.diag.Log(ctx, level, "mcp broker authorization", args...)
+}
+
+func authorizationLookupReason(err error) string {
+	if errors.Is(err, contract.ErrStateUnavailable) {
+		return diagnosticReasonStateUnavailable
+	}
+	if errors.Is(err, contract.ErrAuthorizationNotFound) {
+		return diagnosticReasonAuthorizationNotFound
+	}
+	return diagnosticReasonAuthorizationLookupFailed
+}
+
+func (r *Runtime) logTokenRefresh(ctx context.Context, credential, reason string) {
+	r.diag.Log(ctx, levelForTokenRefresh(reason), "mcp broker token refresh", "event", diagnosticEventTokenRefresh, "credential", credential, "reason", reason)
+}
+
+func levelForTokenRefresh(reason string) port.Level {
+	if reason == diagnosticReasonSucceeded {
+		return port.LevelInfo
+	}
+	return port.LevelWarn
+}
+
+func (r *Runtime) logRouteUnavailable(ctx context.Context, surface string) {
+	r.diag.Log(ctx, port.LevelWarn, "mcp broker route unavailable", "event", diagnosticEventRouteUnavailable, "surface", surface)
 }
 
 func copySpec(spec tool.ToolSpec) tool.ToolSpec {

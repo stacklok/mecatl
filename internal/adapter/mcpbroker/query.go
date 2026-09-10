@@ -53,9 +53,10 @@ func (*attachmentQueryTool) target(call session.ToolCall) (session.ToolCall, str
 	return session.NewToolCall(call.ID, name, append(json.RawMessage(nil), remoteArgs...)), filter, nil
 }
 
-func (t *attachmentQueryTool) native(call session.ToolCall, filter string) (tool.Tool, error) {
+func (t *attachmentQueryTool) native(ctx context.Context, call session.ToolCall, filter string) (tool.Tool, error) {
 	route, ok := t.attachment.lookupRoute(call.Name)
 	if !ok {
+		t.attachment.runtime.logRouteUnavailable(ctx, diagnosticRouteSurfaceQuery)
 		return nil, errors.New("broker tool route is unavailable")
 	}
 	base := &sessionTool{attachment: t.attachment, route: route, queryFilter: filter}
@@ -73,7 +74,7 @@ func (t *attachmentQueryTool) RequestAuthorization(ctx context.Context, call ses
 	if err != nil {
 		return session.ExternalAuthorization{}, false, err
 	}
-	target, err := t.native(native, filter)
+	target, err := t.native(ctx, native, filter)
 	if err != nil {
 		return session.ExternalAuthorization{}, false, err
 	}
@@ -97,7 +98,7 @@ func (t *attachmentQueryTool) Execute(ctx context.Context, call session.ToolCall
 	if err != nil {
 		return session.NewToolError(call.ID, fmt.Sprintf("CallMcpWithQuery: %v", err)), nil
 	}
-	target, err := t.native(native, filter)
+	target, err := t.native(ctx, native, filter)
 	if err != nil {
 		return session.NewToolError(call.ID, fmt.Sprintf("CallMcpWithQuery: %v", err)), nil
 	}

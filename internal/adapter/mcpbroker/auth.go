@@ -18,6 +18,7 @@ import (
 
 	"golang.org/x/oauth2"
 
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	contract "github.com/stacklok/mecatl/internal/mcpbroker"
@@ -200,6 +201,16 @@ func withHardenedTokenEndpoint(endpoint string) Option {
 	return func(runtime *Runtime) { runtime.oauth.forcedTokenEndpoint = endpoint }
 }
 
+// withDiagnostics installs the broker-owned diagnostics sink. It remains private
+// because construction owns the injection seam.
+func withDiagnostics(diagnostics port.Diagnostics) Option {
+	return func(runtime *Runtime) {
+		if diagnostics != nil {
+			runtime.diag = diagnostics
+		}
+	}
+}
+
 const (
 	// Resolved authorization records are retained for idempotent status/cancel.
 	// At the cap, new authorizations fail closed rather than evicting replay state.
@@ -354,6 +365,11 @@ func (t *protectedSessionTool) RequestAuthorization(ctx context.Context, call se
 	logical.mu.Lock()
 	if result, found, resolved, err := existingAuthorizationLocked(logical, t.route.backend, hash, bundle); resolved {
 		logical.mu.Unlock()
+		reason := authorizationLookupReason(err)
+		if err == nil && found {
+			reason = diagnosticReasonAuthorizationFound
+		}
+		t.attachment.runtime.logAuthorization(ctx, diagnosticEventAuthorizationLookup, reason, port.LevelDebug, "request")
 		return result, found, err
 	}
 	logical.mu.Unlock()
@@ -389,6 +405,11 @@ func (t *protectedSessionTool) RequestAuthorization(ctx context.Context, call se
 	// Re-verify: a concurrent call (or deletion) may have already resolved this
 	// exact backend/call while the secret was resolving above.
 	if result, found, resolved, err := existingAuthorizationLocked(logical, t.route.backend, hash, bundle); resolved {
+		reason := authorizationLookupReason(err)
+		if err == nil && found {
+			reason = diagnosticReasonAuthorizationFound
+		}
+		t.attachment.runtime.logAuthorization(ctx, diagnosticEventAuthorizationLookup, reason, port.LevelDebug, "request")
 		return result, found, err
 	}
 	copyRoute := *t.route.oauth
@@ -408,6 +429,7 @@ func (t *protectedSessionTool) RequestAuthorization(ctx context.Context, call se
 		transaction.state = ""
 		return session.ExternalAuthorization{}, false, errors.New("create unique callback state")
 	}
+	t.attachment.runtime.logAuthorization(ctx, diagnosticEventAuthorization, diagnosticReasonRequestStarted, port.LevelDebug, "request")
 	return transaction.external(), true, nil
 }
 
@@ -477,8 +499,10 @@ func (a *Attachment) PresentAuthorization(ctx context.Context, authorization ses
 	defer a.logical.mu.Unlock()
 	transaction, err := a.lookupAuthorizationLocked(authorization)
 	if err != nil {
+		a.runtime.logAuthorization(ctx, diagnosticEventAuthorizationLookup, authorizationLookupReason(err), port.LevelDebug, diagnosticAuthorizationSurfacePresent)
 		return "", err
 	}
+	a.runtime.logAuthorization(ctx, diagnosticEventAuthorizationLookup, diagnosticReasonAuthorizationFound, port.LevelDebug, diagnosticAuthorizationSurfacePresent)
 	a.expireLocked(transaction)
 	if transaction.status != session.AuthorizationPending || transaction.claimed {
 		return "", contract.ErrAuthorizationNotFound
@@ -501,8 +525,10 @@ func (a *Attachment) AuthorizationStatus(ctx context.Context, authorization sess
 	defer a.logical.mu.Unlock()
 	transaction, err := a.lookupAuthorizationLocked(authorization)
 	if err != nil {
+		a.runtime.logAuthorization(ctx, diagnosticEventAuthorizationLookup, authorizationLookupReason(err), port.LevelDebug, diagnosticAuthorizationSurfaceStatus)
 		return "", err
 	}
+	a.runtime.logAuthorization(ctx, diagnosticEventAuthorizationLookup, diagnosticReasonAuthorizationFound, port.LevelDebug, diagnosticAuthorizationSurfaceStatus)
 	a.expireLocked(transaction)
 	return transaction.status, nil
 }
@@ -534,8 +560,10 @@ func (a *Attachment) CancelAuthorization(ctx context.Context, authorization sess
 	defer a.logical.mu.Unlock()
 	transaction, err := a.lookupAuthorizationLocked(authorization)
 	if err != nil {
+		a.runtime.logAuthorization(ctx, diagnosticEventAuthorizationLookup, authorizationLookupReason(err), port.LevelDebug, diagnosticAuthorizationSurfaceCancel)
 		return "", err
 	}
+	a.runtime.logAuthorization(ctx, diagnosticEventAuthorizationLookup, diagnosticReasonAuthorizationFound, port.LevelDebug, diagnosticAuthorizationSurfaceCancel)
 	a.expireLocked(transaction)
 	switch transaction.status {
 	case session.AuthorizationPending:
@@ -625,22 +653,27 @@ func exactCallbackValues(values url.Values) bool {
 func (r *Runtime) handleCallbackError(state, oauthError string) error {
 	indexed, ok := r.claimCallbackState(state)
 	if !ok {
+		r.logAuthorization(context.Background(), diagnosticEventAuthorizationLookup, diagnosticReasonAuthorizationNotFound, port.LevelDebug, "callback")
 		return contract.ErrAuthorizationNotFound
 	}
 	logical, transaction := indexed.logical, indexed.transaction
 	logical.mu.Lock()
 	defer logical.mu.Unlock()
 	if logical.deleted || transaction.status != session.AuthorizationPending || transaction.claimed {
+		r.logAuthorization(context.Background(), diagnosticEventAuthorizationLookup, diagnosticReasonAuthorizationNotFound, port.LevelDebug, "callback")
 		return contract.ErrAuthorizationNotFound
 	}
 	if !r.oauth.now().Before(transaction.expiresAt) {
 		transaction.status = session.AuthorizationExpired
+		r.logAuthorization(context.Background(), diagnosticEventAuthorization, diagnosticReasonCallbackExpired, port.LevelInfo, "callback")
 	} else {
 		transaction.claimed = true
 		if oauthError == "access_denied" {
 			transaction.status = session.AuthorizationDenied
+			r.logAuthorization(context.Background(), diagnosticEventAuthorization, diagnosticReasonCallbackDenied, port.LevelInfo, "callback")
 		} else {
 			transaction.status = session.AuthorizationFailed
+			r.logAuthorization(context.Background(), diagnosticEventAuthorization, diagnosticReasonCallbackFailed, port.LevelWarn, "callback")
 		}
 	}
 	if transaction.cancel != nil {
@@ -658,16 +691,19 @@ func (r *Runtime) handleCallback(ctx context.Context, code, state string) error 
 	closed := r.closed
 	r.mu.RUnlock()
 	if closed {
+		r.logAuthorization(ctx, diagnosticEventAuthorizationLookup, diagnosticReasonStateUnavailable, port.LevelDebug, "callback")
 		return contract.ErrStateUnavailable
 	}
 	indexed, ok := r.claimCallbackState(state)
 	if !ok {
+		r.logAuthorization(ctx, diagnosticEventAuthorizationLookup, diagnosticReasonAuthorizationNotFound, port.LevelDebug, "callback")
 		return contract.ErrAuthorizationNotFound
 	}
 	logical, transaction := indexed.logical, indexed.transaction
 	logical.mu.Lock()
 	if logical.deleted || transaction.status != session.AuthorizationPending || transaction.claimed {
 		logical.mu.Unlock()
+		r.logAuthorization(ctx, diagnosticEventAuthorizationLookup, diagnosticReasonAuthorizationNotFound, port.LevelDebug, "callback")
 		return contract.ErrAuthorizationNotFound
 	}
 	if !r.oauth.now().Before(transaction.expiresAt) {
@@ -676,6 +712,7 @@ func (r *Runtime) handleCallback(ctx context.Context, code, state string) error 
 		transaction.verifier = ""
 		transaction.state = ""
 		logical.mu.Unlock()
+		r.logAuthorization(ctx, diagnosticEventAuthorization, diagnosticReasonCallbackExpired, port.LevelInfo, "callback")
 		return contract.ErrAuthorizationNotFound
 	}
 	transaction.claimed = true
@@ -699,10 +736,12 @@ func (r *Runtime) handleCallback(ctx context.Context, code, state string) error 
 	defer logical.mu.Unlock()
 	transaction.cancel = nil
 	if logical.deleted || transaction.status != session.AuthorizationPending {
+		r.logAuthorization(ctx, diagnosticEventAuthorizationLookup, diagnosticReasonStateUnavailable, port.LevelDebug, "callback")
 		return contract.ErrStateUnavailable
 	}
 	if err != nil || !validBearerToken(token) {
 		transaction.status = session.AuthorizationFailed
+		r.logAuthorization(ctx, diagnosticEventAuthorization, diagnosticReasonCallbackFailed, port.LevelWarn, "callback")
 		return errors.New("OAuth token exchange failed")
 	}
 	grant := &oauthGrant{config: cfg, token: token, resource: transaction.route.resource, firstCall: transaction.callHash, firstPending: true, executed: make(map[session.ToolCallID][32]byte)}
@@ -716,6 +755,7 @@ func (r *Runtime) handleCallback(ctx context.Context, code, state string) error 
 		logical.grants[transaction.backend] = grant
 	}
 	transaction.status = session.AuthorizationGranted
+	r.logAuthorization(ctx, diagnosticEventAuthorization, diagnosticReasonCallbackSucceeded, port.LevelInfo, "callback")
 	return nil
 }
 
@@ -831,17 +871,22 @@ func (s *scopedTokenSource) Token() (*oauth2.Token, error) {
 		var retrieveErr *oauth2.RetrieveError
 		if errors.As(err, &retrieveErr) && retrieveErr.ErrorCode == "invalid_grant" {
 			s.logical.revokeGrantLocked(s.backend, grant)
+			s.runtime.logTokenRefresh(s.ctx, diagnosticCredentialRoute, diagnosticReasonReauthRequired)
+		} else {
+			s.runtime.logTokenRefresh(s.ctx, diagnosticCredentialRoute, diagnosticReasonFailed)
 		}
 		return nil, errors.New("OAuth token refresh failed")
 	}
 	if !validBearerToken(fresh) {
 		s.logical.revokeGrantLocked(s.backend, grant)
+		s.runtime.logTokenRefresh(s.ctx, diagnosticCredentialRoute, diagnosticReasonFailed)
 		return nil, errors.New("OAuth token refresh failed")
 	}
 	if fresh.RefreshToken == "" {
 		fresh.RefreshToken = grant.token.RefreshToken
 	}
 	grant.token = fresh
+	s.runtime.logTokenRefresh(s.ctx, diagnosticCredentialRoute, diagnosticReasonSucceeded)
 	return cloneToken(fresh), nil
 }
 
@@ -903,18 +948,23 @@ func (s *brokerTokenSource) Token() (*oauth2.Token, error) {
 		if errors.As(err, &retrieveErr) && retrieveErr.ErrorCode == "invalid_grant" {
 			clearGrantToken(grant)
 			s.logical.brokerCredential = nil
+			s.runtime.logTokenRefresh(s.ctx, diagnosticCredentialBroker, diagnosticReasonReauthRequired)
+		} else {
+			s.runtime.logTokenRefresh(s.ctx, diagnosticCredentialBroker, diagnosticReasonFailed)
 		}
 		return nil, errors.New("OAuth broker credential refresh failed")
 	}
 	if !validBearerToken(fresh) {
 		clearGrantToken(grant)
 		s.logical.brokerCredential = nil
+		s.runtime.logTokenRefresh(s.ctx, diagnosticCredentialBroker, diagnosticReasonFailed)
 		return nil, errors.New("OAuth broker credential refresh failed")
 	}
 	if fresh.RefreshToken == "" {
 		fresh.RefreshToken = grant.token.RefreshToken
 	}
 	grant.token = fresh
+	s.runtime.logTokenRefresh(s.ctx, diagnosticCredentialBroker, diagnosticReasonSucceeded)
 	return cloneToken(fresh), nil
 }
 

@@ -3,6 +3,7 @@ package mcpbroker
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"unicode/utf8"
@@ -149,6 +150,11 @@ func (a *Attachment) freezeAuthenticatedCatalogue(ctx context.Context, ref contr
 
 	stagedRoutes, err := stageAuthenticatedRoutes(ctx, process, brokerCredential, backends, base, occupied)
 	if err != nil {
+		reason := diagnosticReasonDiscoveryFailed
+		if errors.Is(err, ErrInvalidCatalogue) {
+			reason = diagnosticReasonValidationFailed
+		}
+		process.diagnostics().Log(ctx, port.LevelWarn, "mcp broker authenticated catalogue freeze", "event", diagnosticEventAuthenticatedCatalogueFreeze, "reason", reason)
 		return nil, nil, err
 	}
 
@@ -167,18 +173,21 @@ func (a *Attachment) freezeAuthenticatedCatalogue(ctx context.Context, ref contr
 	}
 	frozen, err := contract.NewWorkspaceCatalogue(ref, allTools)
 	if err != nil {
+		process.diagnostics().Log(ctx, port.LevelWarn, "mcp broker authenticated catalogue freeze", "event", diagnosticEventAuthenticatedCatalogueFreeze, "reason", diagnosticReasonMaterializeFailed)
 		return nil, nil, fmt.Errorf("%w: freeze attachment catalogue", ErrInvalidCatalogue)
 	}
 
 	// A Process may close while a query returns. Do not publish a catalogue whose
 	// process no longer owns its discovery authority.
 	if !process.catalogueStillAvailable(a.runtime) || a.closed {
+		process.diagnostics().Log(ctx, port.LevelWarn, "mcp broker authenticated catalogue freeze", "event", diagnosticEventAuthenticatedCatalogueFreeze, "reason", diagnosticReasonAuthorityUnavailable)
 		return nil, nil, ErrAuthenticatedDiscovery
 	}
 	candidate := newAttachmentCatalogue(allRoutes, frozen.Tools(), frozen)
 	if publish {
 		a.catalogue = candidate
 	}
+	process.diagnostics().Log(ctx, port.LevelInfo, "mcp broker authenticated catalogue freeze", "event", diagnosticEventAuthenticatedCatalogueFreeze, "reason", diagnosticReasonSucceeded, "routes", len(allRoutes))
 	return frozen, candidate, nil
 }
 
@@ -209,19 +218,20 @@ func stageAuthenticatedRoutes(ctx context.Context, process *Process, brokerCrede
 		}
 	}
 	staged := make([]route, 0)
-	for _, backend := range backends {
+	for backendIndex, backend := range backends {
 		capabilities, err := process.QueryAuthenticatedCapabilities(ctx, brokerCredential, backend)
 		if err != nil || capabilities.Backend != backend {
 			// The underlying cause is deliberately not distinguishable beyond this
 			// point (authenticated_discovery.go collapses every failure mode —
 			// unauthenticated, transport, upstream-error, backend-mismatch — into
 			// ErrAuthenticatedDiscovery, a single admission boundary, on purpose).
-			// This is still the one place an operator can learn WHICH configured
-			// backend broke a catalogue freeze that otherwise fails all-or-nothing.
-			process.diagnostics().Log(ctx, port.LevelWarn, "authenticated discovery failed; catalogue freeze aborted", "backend", backend)
+			// This is still the one place an operator can locate WHICH configured
+			// backend position broke a catalogue freeze that otherwise fails
+			// all-or-nothing, without logging its configured name.
+			process.diagnostics().Log(ctx, port.LevelWarn, "mcp broker authenticated catalogue backend", "event", diagnosticEventAuthenticatedCatalogueBackend, "reason", diagnosticReasonDiscoveryFailed, "backend_index", backendIndex)
 			return nil, ErrAuthenticatedDiscovery
 		}
-		process.diagnostics().Log(ctx, port.LevelInfo, "authenticated discovery succeeded", "backend", backend, "tools", len(capabilities.Tools))
+		process.diagnostics().Log(ctx, port.LevelInfo, "mcp broker authenticated catalogue backend", "event", diagnosticEventAuthenticatedCatalogueBackend, "reason", diagnosticReasonDiscovered, "backend_index", backendIndex, "tools", len(capabilities.Tools))
 		declaredTools := process.construction.staticByBackend[backend]
 		declaredNames := make(map[string]struct{}, len(declaredTools))
 		for _, declared := range declaredTools {

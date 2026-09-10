@@ -134,6 +134,7 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 	caller := anonymousCaller(construction.anonymous)
 	runtimeOptions := append([]Option(nil), options.runtimeOptions...)
 	runtimeOptions = append(runtimeOptions,
+		withDiagnostics(diag),
 		WithAuthorizedCaller(toolHiveProtectedCaller(issuer+"/mcp", options.brokerHTTPClient, diag)),
 		WithQueryCaller(toolHiveQueryCaller(construction.anonymous, issuer+"/mcp", options.brokerHTTPClient)),
 	)
