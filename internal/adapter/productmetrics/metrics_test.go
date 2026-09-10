@@ -291,3 +291,44 @@ func TestRecorderRunDurationNotRecordedWithoutMatchingSessionInit(t *testing.T) 
 		}
 	}
 }
+
+func TestRecorderToolCallsPerRunRecordedAtResult(t *testing.T) {
+	r, reader := newTestRecorder(t)
+	r.ToolCallForRun("run-1", session.SessionID("s"), session.ToolCall{Name: "Read"}, session.ToolResult{}, 0, time.Millisecond)
+	r.ToolCallForRun("run-1", session.SessionID("s"), session.ToolCall{Name: "Bash"}, session.ToolResult{}, 0, time.Millisecond)
+	// An ERRORED call still counts toward the run's tool-call total (only
+	// had_tool_call is success-gated).
+	r.ToolCallForRun("run-1", session.SessionID("s"), session.ToolCall{Name: "Grep"}, session.ToolResult{IsError: true}, 0, time.Millisecond)
+	r.Emit(context.Background(), session.Event{Type: session.EvResult, RunID: "run-1", Result: &session.ResultPayload{Stop: session.StopEndTurn}})
+
+	agg, ok := collect(t, reader)["mecatl.product.tool_calls_per_run"]
+	if !ok {
+		t.Fatal("mecatl.product.tool_calls_per_run missing")
+	}
+	hist, ok := agg.(metricdata.Histogram[int64])
+	if !ok {
+		t.Fatalf("aggregation is %T, want Histogram[int64]", agg)
+	}
+	if len(hist.DataPoints) != 1 || hist.DataPoints[0].Count != 1 || hist.DataPoints[0].Sum != 3 {
+		t.Fatalf("expected one data point with count 1 summing to 3, got %+v", hist.DataPoints)
+	}
+}
+
+func TestRecorderToolCallsPerRunRecordsZeroForAToollessRun(t *testing.T) {
+	// A run that called no tool still contributes a 0 sample — otherwise the
+	// distribution silently over-reports by omitting its whole left tail.
+	r, reader := newTestRecorder(t)
+	r.Emit(context.Background(), session.Event{Type: session.EvResult, RunID: "run-1", Result: &session.ResultPayload{Stop: session.StopEndTurn}})
+
+	agg, ok := collect(t, reader)["mecatl.product.tool_calls_per_run"]
+	if !ok {
+		t.Fatal("mecatl.product.tool_calls_per_run missing")
+	}
+	hist, ok := agg.(metricdata.Histogram[int64])
+	if !ok {
+		t.Fatalf("aggregation is %T, want Histogram[int64]", agg)
+	}
+	if len(hist.DataPoints) != 1 || hist.DataPoints[0].Count != 1 || hist.DataPoints[0].Sum != 0 {
+		t.Fatalf("expected one data point with count 1 summing to 0, got %+v", hist.DataPoints)
+	}
+}

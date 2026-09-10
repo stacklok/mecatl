@@ -108,10 +108,41 @@ func BuildProductMetrics(
 
 	go productmetrics.RunHeartbeat(heartbeatCtx, recorder, heartbeatInterval, snap)
 
+	armFirstValueTracking(ctx, recorder, diag)
+
 	return ProductMetricsHandles{
 		Sink:             recorder,
 		ToolCallRecorder: recorder,
 		Shutdown:         provider.Shutdown,
 		FirstRun:         firstRun,
 	}, nil
+}
+
+// armFirstValueTracking enables mecatl.product.time_to_first_value on recorder.
+//
+// firstSeenAt is time.Now(): this process's start, not the install-id file's
+// mtime. The approximation is deliberate and sound for the signal's purpose (a
+// coarse "how long did onboarding take", not a billing-grade timer) — the
+// marker read below means the metric can only ever fire on an install that has
+// not yet had a qualifying run, and for a genuinely new install this process IS
+// the first one, so "now" is that install's first-seen moment to within the
+// process's own startup. It also keeps the install-id file's path private to
+// the productmetrics package.
+//
+// A marker-read failure degrades to "track it anyway" rather than disabling
+// anything: time_to_first_value is a nice-to-have signal, not load-bearing
+// enough to fail the whole product-metrics pipeline over. The worst case is one
+// duplicate sample from a later process.
+func armFirstValueTracking(ctx context.Context, recorder *productmetrics.Recorder, diag port.Diagnostics) {
+	already, err := productmetrics.FirstValueRecordedDefault()
+	if err != nil && diag != nil {
+		diag.Log(ctx, port.LevelDebug,
+			"product metrics: could not read the first-value marker; time_to_first_value may be re-recorded once",
+			"error", err)
+		already = false
+	}
+	recorder.EnableFirstValueTracking(time.Now(), already, func() error {
+		_, werr := productmetrics.LoadOrCreateFirstValueMarkerDefault()
+		return werr
+	})
 }

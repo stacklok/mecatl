@@ -45,6 +45,10 @@ var sensitiveMarkers = []string{
 
 func TestRecorderNeverAttachesUnboundedAttributesOrSensitiveContent(t *testing.T) {
 	r, reader := newTestRecorder(t)
+	// Arm time_to_first_value so its data points are collected too — an
+	// unarmed Recorder never records it, which would leave that instrument
+	// outside the walk below.
+	r.EnableFirstValueTracking(time.Now(), false, nil)
 
 	// Drive every observation path with deliberately sensitive-looking data.
 	r.Emit(context.Background(), session.Event{Type: session.EvSessionInit})
@@ -99,12 +103,8 @@ func TestRecorderNeverAttachesUnboundedAttributesOrSensitiveContent(t *testing.T
 	for _, sm := range rm.ScopeMetrics {
 		for _, md := range sm.Metrics {
 			assertNoSensitiveSubstring(t, md.Name)
-			sum, ok := md.Data.(metricdata.Sum[int64])
-			if !ok {
-				t.Fatalf("metric %s: aggregation is %T, want Sum[int64]", md.Name, md.Data)
-			}
-			for _, dp := range sum.DataPoints {
-				iter := dp.Attributes.Iter()
+			for _, attrs := range dataPointAttributes(t, md.Name, md.Data) {
+				iter := attrs.Iter()
 				for iter.Next() {
 					kv := iter.Attribute()
 					key := string(kv.Key)
@@ -125,21 +125,49 @@ func TestRecorderNeverAttachesUnboundedAttributesOrSensitiveContent(t *testing.T
 			// tool's own name, "mcp", or "other" (see toolCategory), so no
 			// tool identity beyond mecatl's own fixed catalog can attach.
 			if md.Name == "mecatl.product.tool_calls" {
-				for _, dp := range sum.DataPoints {
-					if _, ok := dp.Attributes.Value(attrCategory); !ok {
-						t.Errorf("mecatl.product.tool_calls data point is missing the %s attribute: %v", attrCategory, dp.Attributes)
+				for _, attrs := range dataPointAttributes(t, md.Name, md.Data) {
+					if _, ok := attrs.Value(attrCategory); !ok {
+						t.Errorf("mecatl.product.tool_calls data point is missing the %s attribute: %v", attrCategory, attrs)
 					}
-					if _, ok := dp.Attributes.Value(attrOutcome); !ok {
-						t.Errorf("mecatl.product.tool_calls data point is missing the %s attribute: %v", attrOutcome, dp.Attributes)
+					if _, ok := attrs.Value(attrOutcome); !ok {
+						t.Errorf("mecatl.product.tool_calls data point is missing the %s attribute: %v", attrOutcome, attrs)
 					}
-					if dp.Attributes.Len() != 2 {
+					if attrs.Len() != 2 {
 						t.Errorf("mecatl.product.tool_calls data point carries %d attributes, want exactly 2: %v",
-							dp.Attributes.Len(), dp.Attributes)
+							attrs.Len(), attrs)
 					}
 				}
 			}
 		}
 	}
+}
+
+// dataPointAttributes returns every collected data point's attribute set,
+// whatever aggregation the instrument uses. The walk must cover histograms as
+// well as sums: this package publishes run_duration, tool_calls_per_run and
+// time_to_first_value as histograms, and an aggregation this helper did not
+// know about would silently drop that instrument out of the no-PII guard —
+// so an unrecognised shape is a hard failure, never a skip.
+func dataPointAttributes(t *testing.T, name string, agg metricdata.Aggregation) []attribute.Set {
+	t.Helper()
+	var out []attribute.Set
+	switch data := agg.(type) {
+	case metricdata.Sum[int64]:
+		for _, dp := range data.DataPoints {
+			out = append(out, dp.Attributes)
+		}
+	case metricdata.Histogram[int64]:
+		for _, dp := range data.DataPoints {
+			out = append(out, dp.Attributes)
+		}
+	case metricdata.Histogram[float64]:
+		for _, dp := range data.DataPoints {
+			out = append(out, dp.Attributes)
+		}
+	default:
+		t.Fatalf("metric %s: unhandled aggregation %T — add it to dataPointAttributes so the no-PII walk keeps covering it", name, agg)
+	}
+	return out
 }
 
 // TestToolCategoryOnlyEmitsClosedSetValues is the direct unit-level guard on

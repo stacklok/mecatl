@@ -39,21 +39,92 @@ const (
 // through the closed-set projection in toolcall.go (toolCategory), which can
 // emit nothing but a built-in tool's own name, "mcp", or "other".
 type Recorder struct {
-	heartbeat       metric.Int64Counter
-	featureEnabled  metric.Int64Counter
-	providerConfig  metric.Int64Counter
-	deploymentMode  metric.Int64Counter
-	sessionsStarted metric.Int64Counter
-	runsCompleted   metric.Int64Counter
-	toolCalls       metric.Int64Counter
-	tokens          metric.Int64Counter
-	subagentUsed    metric.Int64Counter
-	teamUsed        metric.Int64Counter
-	runDuration     metric.Float64Histogram
+	heartbeat        metric.Int64Counter
+	featureEnabled   metric.Int64Counter
+	providerConfig   metric.Int64Counter
+	deploymentMode   metric.Int64Counter
+	sessionsStarted  metric.Int64Counter
+	runsCompleted    metric.Int64Counter
+	toolCalls        metric.Int64Counter
+	tokens           metric.Int64Counter
+	subagentUsed     metric.Int64Counter
+	teamUsed         metric.Int64Counter
+	runDuration      metric.Float64Histogram
+	toolCallsPerRun  metric.Int64Histogram
+	timeToFirstValue metric.Float64Histogram
 
 	// perRun holds the bounded per-live-run facts this package derives across
 	// the Emit/ToolCallForRun boundary. See perRunTracker.
 	perRun *perRunTracker
+
+	// firstValue holds the once-per-install time_to_first_value state. It is
+	// deliberately SEPARATE from perRun (which is per-live-run, keyed by run id
+	// and dropped at EvResult): this is install-scoped, single-slot state whose
+	// whole lifetime is the process.
+	firstValue firstValueTracker
+}
+
+// firstValueTracker guards the once-ever time_to_first_value state. Armed by
+// EnableFirstValueTracking (composition), read and flipped at most once by
+// recordResult.
+//
+// CONCURRENCY: as with perRunTracker, the "is it done" test and the "mark it
+// done" write are ONE critical section — concurrent EvResult observations on a
+// fan-out deployment would otherwise both pass the test and record two samples
+// for a metric whose entire contract is "at most one, ever".
+type firstValueTracker struct {
+	mu sync.Mutex
+	// armed is false until EnableFirstValueTracking is called; an unarmed
+	// Recorder never records the metric at all (the default, byte-identical to
+	// the pre-feature posture for every existing caller of NewRecorder).
+	armed bool
+	// firstSeenAt is this install's first-seen moment; the recorded duration is
+	// measured from it.
+	firstSeenAt time.Time
+	// done is true once the sample exists — either recorded by THIS process, or
+	// (per the persisted marker) by an earlier one.
+	done bool
+	// recordFn persists the marker so a LATER process invocation also stays
+	// disabled. Called at most once, best-effort.
+	recordFn func() error
+}
+
+// EnableFirstValueTracking arms mecatl.product.time_to_first_value recording.
+// firstSeenAt is this install's first-seen timestamp; alreadyRecorded, when
+// true, permanently disables recording for this Recorder's lifetime (this
+// install already has its one sample). recordFn persists the local marker so a
+// later process invocation also stays disabled; it is called at most once, and
+// may be nil (in-memory-only tracking).
+//
+// It is a separate arming step rather than a NewRecorder parameter so that
+// NewRecorder's signature — and every existing caller and test of it — stays
+// unchanged; an unarmed Recorder simply never records this instrument.
+func (r *Recorder) EnableFirstValueTracking(firstSeenAt time.Time, alreadyRecorded bool, recordFn func() error) {
+	r.firstValue.mu.Lock()
+	defer r.firstValue.mu.Unlock()
+	r.firstValue.armed = true
+	r.firstValue.firstSeenAt = firstSeenAt
+	r.firstValue.done = alreadyRecorded
+	r.firstValue.recordFn = recordFn
+}
+
+// claim reports whether THIS observation is the install's first-value moment, marking it claimed and persisting the marker as one atomic step. It
+// returns the firstSeenAt to measure from; a false claim means the metric must
+// not be recorded (unarmed, already recorded, or no usable firstSeenAt).
+func (t *firstValueTracker) claim() (time.Time, bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if !t.armed || t.done || t.firstSeenAt.IsZero() {
+		return time.Time{}, false
+	}
+	t.done = true
+	if t.recordFn != nil {
+		// Best-effort: a failed write risks re-recording once on a later
+		// process, which is a fidelity wobble in a coarse onboarding signal —
+		// not a correctness bug worth failing anything over.
+		_ = t.recordFn()
+	}
+	return t.firstSeenAt, true
 }
 
 // perRunState is the bounded set of facts tracked for ONE live run, keyed by
@@ -74,9 +145,8 @@ type perRunState struct {
 	// EvResult time as the runs_completed had_tool_call attribute.
 	hadToolCall bool
 
-	// toolCallCount is the run's total tool calls (successful or not). It is
-	// tallied here but not yet published as an instrument; the tool-calls-per-run
-	// distribution is a later task in this plan.
+	// toolCallCount is the run's total tool calls (successful or not),
+	// published at EvResult as the tool_calls_per_run distribution.
 	toolCallCount int64
 
 	// startedAt is the wall-clock time this run's EvSessionInit was observed,
@@ -248,6 +318,16 @@ func NewRecorder(mp metric.MeterProvider) (*Recorder, error) {
 		metric.WithUnit("s")); err != nil {
 		return nil, fmt.Errorf("productmetrics: run_duration histogram: %w", err)
 	}
+	if r.toolCallsPerRun, err = meter.Int64Histogram("mecatl.product.tool_calls_per_run",
+		metric.WithDescription("Total tool calls made within a single run."),
+		metric.WithUnit("{tool_call}")); err != nil {
+		return nil, fmt.Errorf("productmetrics: tool_calls_per_run histogram: %w", err)
+	}
+	if r.timeToFirstValue, err = meter.Float64Histogram("mecatl.product.time_to_first_value",
+		metric.WithDescription("One-time-per-install duration, in seconds, from this install's first-seen moment (approximated by the first product-metrics startup that observes no marker) to its first run that both made a successful tool call and ended cleanly."),
+		metric.WithUnit("s")); err != nil {
+		return nil, fmt.Errorf("productmetrics: time_to_first_value histogram: %w", err)
+	}
 	return r, nil
 }
 
@@ -296,8 +376,17 @@ func (r *Recorder) recordResult(ctx context.Context, res *session.ResultPayload,
 	r.runsCompleted.Add(ctx, 1, metric.WithAttributes(
 		attribute.String(attrStop, string(stop)),
 		attribute.String(attrHadToolCall, strconv.FormatBool(st.hadToolCall))))
+	r.toolCallsPerRun.Record(ctx, st.toolCallCount)
 	if !st.startedAt.IsZero() {
 		r.runDuration.Record(ctx, time.Since(st.startedAt).Seconds())
+	}
+	// The install's first-value moment: the first run that BOTH took an action
+	// (a successful tool call) and ended cleanly. Recorded at most once ever,
+	// across process restarts — see firstValueTracker.
+	if stop == session.StopEndTurn && st.hadToolCall {
+		if firstSeenAt, claimed := r.firstValue.claim(); claimed {
+			r.timeToFirstValue.Record(ctx, time.Since(firstSeenAt).Seconds())
+		}
 	}
 	if res == nil {
 		return
