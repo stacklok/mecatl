@@ -28,10 +28,10 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
@@ -300,8 +300,6 @@ type config struct {
 	installationID      string
 }
 
-var canonicalUUID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
-
 // stringList is a repeatable string flag.Value, preserving order across
 // multiple occurrences (mirrors cmd/mecated's stringList).
 type stringList []string
@@ -558,8 +556,11 @@ func parseFlags(argv []string) (config, error) {
 		return config{}, errors.New("mecak8s: openai-codex OAuth is unsupported; use an API-key provider or mecated/mecatui")
 	}
 
-	if cfg.installationID != "" && !canonicalUUID.MatchString(cfg.installationID) {
-		return config{}, fmt.Errorf("--telemetry-installation-id must be a canonical UUID, got %q", cfg.installationID)
+	if cfg.installationID != "" {
+		parsed, err := uuid.Parse(cfg.installationID)
+		if err != nil || parsed.String() != cfg.installationID {
+			return config{}, fmt.Errorf("--telemetry-installation-id must be a canonical UUID, got %q", cfg.installationID)
+		}
 	}
 
 	// --metrics-addr MUST be loopback (ADR 0018 decision 6): the admin mux serves
