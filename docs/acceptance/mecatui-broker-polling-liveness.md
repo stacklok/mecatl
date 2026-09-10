@@ -9,8 +9,8 @@
 **Expected tasks:** 1
 **Combined rationale:** Both failures are private Bubble Tea command-handoff/liveness defects in the same broker-consent UI boundary. One worker can pin both state-machine regressions, make the minimal client-local fix, update the user wording, and run the same gates; a separate plan PR would not expose an additional interface or useful review boundary.
 **Issue:** [stacklok/mecatl#1322](https://github.com/stacklok/mecatl/issues/1322).
-**Combined implementation PR:** Not opened; implementation requires explicit `/plan-orchestrate` invocation.
-**Approved baseline:** Not applicable until the Combined candidate is human-approved at final review.
+**Combined implementation PR:** [#1341](https://github.com/stacklok/mecatl/pull/1341).
+**Approved baseline:** Not applicable — this plan and implementation form the single human-reviewed Combined candidate.
 
 Restore the behavior already promised by mecatui: after browser presentation, both a lazy
 per-tool MCP authorization and pre-prompt workspace-service enrollment continue observing
