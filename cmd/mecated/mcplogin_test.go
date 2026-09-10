@@ -207,8 +207,8 @@ func TestRunMCPLoginExecutionPathUsesFixedCallback(t *testing.T) {
 		if server.Name != "GitHub" || server.OAuth == nil || server.OAuth.CredentialStore == nil || server.OAuth.CredentialReader != nil {
 			t.Fatalf("selected server = %#v", server)
 		}
-		if !opts.NoBrowser || opts.URLWriter == nil || opts.RedirectURL != oauthlogin.ExactRedirectURL {
-			t.Fatalf("runtime options = %#v; no-browser or fixed-callback redirect was not forwarded", opts)
+		if !opts.NoBrowser || opts.URLWriter == nil || !opts.PinCallbackPath || opts.RedirectURL != "" {
+			t.Fatalf("runtime options = %#v; no-browser or pinned-callback-path was not forwarded", opts)
 		}
 		return nil
 	}

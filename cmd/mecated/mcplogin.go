@@ -149,14 +149,19 @@ func runMCPLogin(args []string, stdout io.Writer) error {
 		return err
 	}
 
-	// RedirectURL is pinned to the fixed callback (ADR 0112's ExactRedirectURL), not left
-	// to the runtime's random-path/ephemeral-port default: selectMCPLoginServer only ever
-	// returns a server whose OAuth was populated by loadOAuthClient, which accepts exactly
-	// a preregistered confidential client or a CIMD client — never DCR (mcpprofile.go) — so
-	// every server reachable here already commits to a client identity (a preregistered
-	// client_id, or a CIMD document's declared redirect_uris) that must be registered
-	// ahead of time. A random callback path can never match a value fixed in advance.
-	opts := oauthlogin.Options{NoBrowser: parsed.noBrowser, RedirectURL: oauthlogin.ExactRedirectURL}
+	// PinCallbackPath fixes the callback's path (not its port): selectMCPLoginServer
+	// only ever returns a server whose OAuth was populated by loadOAuthClient, which
+	// accepts exactly a preregistered confidential client or a CIMD client — never
+	// DCR (mcpprofile.go) — so every server reachable here already commits to a
+	// client identity that must be registered ahead of time, and a random callback
+	// path can never match a value fixed in advance. Both client kinds only ever
+	// target MCP-shaped, RFC 8252-aware authorization servers, which accept any port
+	// for a registered loopback redirect_uri as long as the path matches — so unlike
+	// oauthlogin.ExactRedirectURL (a fully fixed callback, port included, for a
+	// general-purpose OIDC target that cannot be assumed to implement RFC 8252
+	// dynamic-port matching), this login still gets an unpredictable port every run,
+	// preserving the squatting resistance a foreseeable port would give up.
+	opts := oauthlogin.Options{NoBrowser: parsed.noBrowser, PinCallbackPath: true}
 	if parsed.noBrowser {
 		opts.URLWriter = stdout
 	}
