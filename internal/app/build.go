@@ -8547,9 +8547,9 @@ func shellOr(shell string) string {
 const SoulApplyAction = "soul:apply"
 
 // defaultRules is the built-in permission ruleset: read-only tools (Read, Grep,
-// Glob, WebFetch, the Subagent explorer) are allowed; mutating tools (Bash, Edit, Write)
-// and the writable SkillDraft tool ask for approval. Anything unmatched defaults to
-// ask via the evaluator.
+// Glob, ListDir, WebFetch, the Subagent explorer) are allowed; mutating tools
+// (Bash, Edit, Write) and the writable SkillDraft tool ask for approval. Anything
+// unmatched defaults to ask via the evaluator.
 //
 // These rules carry ScopeBuiltinDefault — the LOWEST precedence scope, below every
 // config scope (issue #13). That lets a higher-scope config Allow LOOSEN a built-in
@@ -8581,6 +8581,7 @@ func defaultRules() []governance.Rule {
 		{Scope: governance.ScopeBuiltinDefault, Tool: "Read", Effect: governance.Allow},
 		{Scope: governance.ScopeBuiltinDefault, Tool: "Grep", Effect: governance.Allow},
 		{Scope: governance.ScopeBuiltinDefault, Tool: "Glob", Effect: governance.Allow},
+		{Scope: governance.ScopeBuiltinDefault, Tool: "ListDir", Effect: governance.Allow},
 		{Scope: governance.ScopeBuiltinDefault, Tool: "WebFetch", Effect: governance.Allow},
 		// WebSearch (issue #26): floor-Allow, same posture as WebFetch — config-
 		// overridable to ask/deny in any scope. The REAL egress gate is the provider

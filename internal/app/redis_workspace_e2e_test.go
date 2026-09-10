@@ -92,6 +92,48 @@ func TestRedisWorkspaceBuiltEngineExercisesAllFileToolsAcrossSamePrincipalSessio
 	}
 }
 
+// TestRedisWorkspaceRootListDirIsNotDeniedByAuthority pins the fix for
+// authorityWorkspaceResource deriving an authority identity for ListDir's
+// documented root spelling ("."): the Redis-backed Workspace's
+// AuthorityResourcePath used to reject "." as a path escape, so a root
+// ListDir was denied by the authority evaluator before Execute ever ran, even
+// though ReadDir itself has always accepted "." as the workspace root.
+func TestRedisWorkspaceRootListDirIsNotDeniedByAuthority(t *testing.T) {
+	mr := miniredis.RunT(t)
+	provider := mockllm.New(
+		mockllm.ToolCallTurn(session.ToolCall{ID: "list-root", Name: "ListDir", Args: json.RawMessage(`{"path":"."}`)}),
+		mockllm.TextTurn("done"),
+	)
+	built, err := Build(context.Background(), Config{
+		RedisURL:            mr.Addr(),
+		RedisAllowPlaintext: true,
+		RedisFilesystem:     true,
+		RedisReadLedger:     true,
+		MockProvider:        provider,
+		NoSoul:              true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer built.Close()
+
+	principal := &session.Principal{Issuer: "https://issuer.example", Subject: "root-listdir", GrantType: session.GrantTypeUser}
+	ctx := session.WithPrincipal(context.Background(), principal)
+	sess, err := built.Service.CreateSessionWithProfile(ctx, session.ModeAccept, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	results := runRedisWorkspaceE2E(ctx, t, built.Service, sess.ID, "list the workspace root")
+	result, ok := results["list-root"]
+	if !ok {
+		t.Fatal("missing ToolResult for list-root")
+	}
+	if result.IsError {
+		t.Fatalf("root ListDir was denied before execution: %s", result.Content)
+	}
+}
+
 func runRedisWorkspaceE2E(ctx context.Context, t *testing.T, svc *server.Service, id session.SessionID, prompt string) map[session.ToolCallID]session.ToolResult {
 	t.Helper()
 	run, err := svc.StartRun(ctx, id, prompt)

@@ -218,3 +218,42 @@ func TestRedisWorkspaceScopesAndMissingNamespace(t *testing.T) {
 		t.Fatal("OpenWorkspace(missing) succeeded")
 	}
 }
+
+// TestRedisWorkspaceAuthorityResourcePathRootDot pins that AuthorityResourcePath
+// maps "." (the documented ListDir/ReadDir root spelling, ADR-consistent with
+// cleanWorkspaceDir) to the workspace root instead of rejecting it as an
+// escape — the bug that denied a root ListDir authority check before
+// execution — while continuing to reject every other invalid spelling
+// (empty, absolute, NUL-containing, and ".."-traversing paths) exactly as
+// cleanWorkspacePath already does.
+func TestRedisWorkspaceAuthorityResourcePathRootDot(t *testing.T) {
+	mr := miniredis.RunT(t)
+	st, err := redisstore.New(mr.Addr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := t.Context()
+	ws, err := st.CreateWorkspace(ctx, "authority-root")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolver, ok := tool.Workspace(ws).(tool.AuthorityResourceResolver)
+	if !ok {
+		t.Fatal("redisstore.Workspace does not implement tool.AuthorityResourceResolver")
+	}
+
+	target, workspace, err := resolver.AuthorityResourcePath(".")
+	if err != nil {
+		t.Fatalf("AuthorityResourcePath(\".\") err = %v, want nil", err)
+	}
+	if target != "/workspace" || workspace != "/workspace" {
+		t.Fatalf("AuthorityResourcePath(\".\") = (%q, %q), want (/workspace, /workspace)", target, workspace)
+	}
+
+	for _, p := range []string{"", "/abs", "has\x00nul", "../escape", "a/../../escape"} {
+		if _, _, err := resolver.AuthorityResourcePath(p); err == nil {
+			t.Fatalf("AuthorityResourcePath(%q) succeeded, want an escape error", p)
+		}
+	}
+}
