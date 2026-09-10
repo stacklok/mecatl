@@ -21,23 +21,28 @@ import (
 )
 
 type dcrMetadataFixture struct {
-	mu                 sync.Mutex
-	server             *httptest.Server
-	registration       string
-	issuerOverride     string
-	resourceValue      string
-	authServers        []string
-	codeMethods        []string
-	grantTypes         []string
-	authMethods        []string
-	responseTypes      []string
-	scopes             []string
-	registerCount      int
-	tokenCount         int
-	tokenForms         []url.Values
-	clientID           string
-	cosmeticSuffix     string
-	unsolicitedRefresh bool
+	mu                      sync.Mutex
+	server                  *httptest.Server
+	registration            string
+	issuerOverride          string
+	resourceValue           string
+	authServers             []string
+	codeMethods             []string
+	grantTypes              []string
+	authMethods             []string
+	responseTypes           []string
+	scopes                  []string
+	registerCount           int
+	tokenCount              int
+	tokenForms              []url.Values
+	clientID                string
+	cosmeticSuffix          string
+	unsolicitedRefresh      bool
+	accessToken             string
+	refreshToken            string
+	registrationAccessToken string
+	rejectPortVariation     bool
+	registeredRedirect      string
 }
 
 func newDCRMetadataFixture(t *testing.T) *dcrMetadataFixture {
@@ -84,17 +89,36 @@ func newDCRMetadataFixture(t *testing.T) *dcrMetadataFixture {
 			f.registerCount++
 			var request oauthex.ClientRegistrationMetadata
 			_ = json.NewDecoder(r.Body).Decode(&request)
-			_ = json.NewEncoder(w).Encode(map[string]any{
+			if len(request.RedirectURIs) == 1 {
+				f.registeredRedirect = request.RedirectURIs[0]
+			}
+			response := map[string]any{
 				"client_id": f.clientID, "token_endpoint_auth_method": "none", "redirect_uris": request.RedirectURIs,
 				"grant_types": request.GrantTypes, "response_types": request.ResponseTypes, "scope": request.Scope,
-			})
+			}
+			if f.registrationAccessToken != "" {
+				response["registration_access_token"] = f.registrationAccessToken
+			}
+			_ = json.NewEncoder(w).Encode(response)
 		case r.URL.Path == "/oauth/token":
 			f.tokenCount++
 			_ = r.ParseForm()
 			f.tokenForms = append(f.tokenForms, r.PostForm)
-			response := map[string]any{"access_token": "dcr-access", "token_type": "Bearer", "expires_in": 3600, "scope": "openid"}
+			if f.rejectPortVariation && r.PostForm.Get("redirect_uri") != f.registeredRedirect {
+				http.Error(w, `{"error":"invalid_grant"}`, http.StatusBadRequest)
+				return
+			}
+			access := f.accessToken
+			if access == "" {
+				access = "dcr-access"
+			}
+			response := map[string]any{"access_token": access, "token_type": "Bearer", "expires_in": 3600, "scope": "openid"}
 			if f.unsolicitedRefresh {
-				response["refresh_token"] = "unsolicited-refresh"
+				refresh := f.refreshToken
+				if refresh == "" {
+					refresh = "unsolicited-refresh"
+				}
+				response["refresh_token"] = refresh
 			}
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(response)
