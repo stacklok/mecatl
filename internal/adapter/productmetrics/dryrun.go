@@ -14,14 +14,27 @@ import (
 // it over OTLP — the --product-metrics-dry-run audit path, so a skeptical
 // operator can see exactly what this pipeline would have sent without
 // trusting the docs. It logs ONLY the same bounded fields Recorder ever reads
-// (event type, stop reason, had_tool_call, the closed-set tool category and
-// outcome, token counts by kind, feature/provider/mode enum values) — never a
-// session id, a raw tool name, or free-text content, mirroring Recorder's own
-// privacy discipline exactly.
+// (event type, stop reason, had_tool_call, run_duration, tool_calls_per_run,
+// the closed-set tool category and outcome, token counts by kind,
+// feature/provider/mode enum values) — never a session id, a raw tool name,
+// or free-text content, mirroring Recorder's own privacy discipline exactly.
 //
 // The audit path must stay in LOCKSTEP with Recorder: an attribute Recorder
 // attaches but DryRunRecorder omits makes this surface understate what is
 // sent, which is the one thing it exists to rule out.
+//
+// time_to_first_value is the ONE deliberate divergence, by design: Recorder's
+// version is a once-ever, install-scoped, persisted-marker sample (armed via
+// EnableFirstValueTracking, composition-only). DryRunRecorder has — and must
+// have — NO persistent state (no XDG_STATE_HOME reads/writes; it stays a
+// stateless, one-shot audit tool per the ADR), so it cannot reproduce "at
+// most once, ever" across process restarts. Instead it logs a would-be
+// time_to_first_value observation on EVERY run that qualifies (StopEndTurn +
+// at least one successful tool call), not just the first one this process
+// happens to see. That is MORE verbose than what Recorder would actually
+// send, but it is the honest, simpler choice for a diagnostic surface whose
+// job is "show what COULD be sent" — an operator sees every candidate moment
+// rather than only whichever one a real install's persisted marker allowed.
 type DryRunRecorder struct {
 	diag   port.Diagnostics
 	perRun *perRunTracker
@@ -40,12 +53,14 @@ func NewDryRunRecorder(diag port.Diagnostics) *DryRunRecorder {
 }
 
 // Emit logs the bounded event type (and, for EvResult, the stop reason,
-// had_tool_call, and token counts by kind) — the exact same fields
-// Recorder.Emit reads.
+// had_tool_call, run_duration_seconds, tool_calls_per_run, token counts by
+// kind, and a separate would-be time_to_first_value line when the run
+// qualifies) — the exact same underlying facts Recorder.Emit reads.
 func (d *DryRunRecorder) Emit(ctx context.Context, ev session.Event) {
 	switch ev.Type {
 	case session.EvSessionInit:
 		d.diag.Log(ctx, port.LevelInfo, "product metrics (dry-run): would record sessions_started+1")
+		d.perRun.markStarted(ev.RunID)
 	case session.EvResult:
 		d.emitResult(ctx, ev.Result, d.perRun.finish(ev.RunID))
 	case session.EvSubagentStart:
@@ -60,21 +75,44 @@ func (d *DryRunRecorder) Emit(ctx context.Context, ev session.Event) {
 }
 
 func (d *DryRunRecorder) emitResult(ctx context.Context, res *session.ResultPayload, st perRunState) {
-	if res == nil {
-		d.diag.Log(ctx, port.LevelInfo, "product metrics (dry-run): would record runs_completed",
-			"stop", string(session.StopNone),
-			attrHadToolCall, st.hadToolCall)
-		return
+	stop := session.StopNone
+	if res != nil {
+		stop = res.Stop
 	}
-	u := res.Usage
-	d.diag.Log(ctx, port.LevelInfo, "product metrics (dry-run): would record runs_completed + tokens",
-		"stop", string(res.Stop),
+
+	fields := []any{
+		"stop", string(stop),
 		attrHadToolCall, st.hadToolCall,
-		"input_tokens", u.InputTokens,
-		"output_tokens", u.OutputTokens,
-		"cache_read_tokens", u.CacheReadTokens,
-		"cache_write_tokens", u.CacheWriteTokens,
-		"reasoning_tokens", u.ReasoningTokens)
+		"tool_calls_per_run", st.toolCallCount,
+	}
+	// run_duration is only meaningful when this recorder actually observed the
+	// run's EvSessionInit (mirroring Recorder.recordResult's zero-startedAt
+	// guard) — a run whose start this process missed reports no duration
+	// rather than a nonsense one measured from time.Time{}.
+	if !st.startedAt.IsZero() {
+		fields = append(fields, "run_duration_seconds", time.Since(st.startedAt).Seconds())
+	}
+
+	msg := "product metrics (dry-run): would record runs_completed"
+	if res != nil {
+		u := res.Usage
+		msg = "product metrics (dry-run): would record runs_completed + tokens"
+		fields = append(fields,
+			"input_tokens", u.InputTokens,
+			"output_tokens", u.OutputTokens,
+			"cache_read_tokens", u.CacheReadTokens,
+			"cache_write_tokens", u.CacheWriteTokens,
+			"reasoning_tokens", u.ReasoningTokens)
+	}
+	d.diag.Log(ctx, port.LevelInfo, msg, fields...)
+
+	// See the DryRunRecorder doc comment: unlike Recorder's once-ever,
+	// persisted-marker time_to_first_value, dry-run logs this on EVERY
+	// qualifying run (no state to track "first" against) — the honest
+	// simplification for a stateless audit surface.
+	if stop == session.StopEndTurn && st.hadToolCall {
+		d.diag.Log(ctx, port.LevelInfo, "product metrics (dry-run): would record time_to_first_value")
+	}
 }
 
 // ToolCall logs the run-less form, matching Recorder.ToolCall's delegation.

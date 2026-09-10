@@ -150,3 +150,123 @@ func TestDryRunRecorderHeartbeatLogsOnlyEnums(t *testing.T) {
 		t.Fatalf("got %d logged lines, want 1: %v", len(diag.lines), diag.lines)
 	}
 }
+
+// TestDryRunRecorderLogsRunDurationAndToolCallsPerRun pins the two
+// runs_completed fields this task adds: run_duration_seconds (present only
+// when this recorder observed the run's EvSessionInit) and
+// tool_calls_per_run (the run's total tool-call count, successful or not).
+func TestDryRunRecorderLogsRunDurationAndToolCallsPerRun(t *testing.T) {
+	diag := &capturingDiag{}
+	r := NewDryRunRecorder(diag)
+
+	r.Emit(context.Background(), session.Event{Type: session.EvSessionInit, RunID: "run-1"})
+	r.ToolCallForRun("run-1", session.SessionID("s"), session.ToolCall{Name: "Read"}, session.ToolResult{}, 0, 0)
+	r.ToolCallForRun("run-1", session.SessionID("s"), session.ToolCall{Name: "Bash"}, session.ToolResult{IsError: true}, 0, 0)
+	r.Emit(context.Background(), session.Event{
+		Type: session.EvResult, RunID: "run-1",
+		Result: &session.ResultPayload{Stop: session.StopError},
+	})
+
+	// diag.args: [0]=sessions_started, [1]=Read tool_calls, [2]=Bash tool_calls, [3]=runs_completed.
+	if len(diag.args) != 4 {
+		t.Fatalf("got %d logged lines, want 4: %v", len(diag.lines), diag.lines)
+	}
+	runsCompleted := diag.args[3]
+	if !hasArg(runsCompleted, "tool_calls_per_run", int64(2)) {
+		t.Errorf("runs_completed dry-run log args = %v, want tool_calls_per_run=2", runsCompleted)
+	}
+	if !hasArg(runsCompleted, attrHadToolCall, true) {
+		t.Errorf("runs_completed dry-run log args = %v, want %s=true (one successful call)", runsCompleted, attrHadToolCall)
+	}
+	found := false
+	for i := 0; i+1 < len(runsCompleted); i += 2 {
+		if k, ok := runsCompleted[i].(string); ok && k == "run_duration_seconds" {
+			found = true
+			if _, ok := runsCompleted[i+1].(float64); !ok {
+				t.Errorf("run_duration_seconds arg = %v (%T), want float64", runsCompleted[i+1], runsCompleted[i+1])
+			}
+		}
+	}
+	if !found {
+		t.Errorf("runs_completed dry-run log args = %v, want a run_duration_seconds field (EvSessionInit was observed)", runsCompleted)
+	}
+}
+
+// TestDryRunRecorderOmitsRunDurationWhenSessionInitUnseen covers a run whose
+// EvSessionInit this recorder never observed (e.g. it started before this
+// process attached) — run_duration_seconds must be omitted rather than
+// reporting a bogus duration measured from a zero time.
+func TestDryRunRecorderOmitsRunDurationWhenSessionInitUnseen(t *testing.T) {
+	diag := &capturingDiag{}
+	r := NewDryRunRecorder(diag)
+
+	r.Emit(context.Background(), session.Event{
+		Type: session.EvResult, RunID: "run-never-started",
+		Result: &session.ResultPayload{Stop: session.StopError},
+	})
+
+	if len(diag.args) != 1 {
+		t.Fatalf("got %d logged lines, want 1: %v", len(diag.lines), diag.lines)
+	}
+	for i := 0; i+1 < len(diag.args[0]); i += 2 {
+		if k, ok := diag.args[0][i].(string); ok && k == "run_duration_seconds" {
+			t.Errorf("run_duration_seconds present for a run whose EvSessionInit was never observed: %v", diag.args[0])
+		}
+	}
+}
+
+// TestDryRunRecorderLogsTimeToFirstValueEveryQualifyingRun pins this task's
+// documented design choice: unlike Recorder's once-ever, persisted-marker
+// time_to_first_value, the stateless dry-run path logs a would-be
+// time_to_first_value observation on EVERY run that qualifies (StopEndTurn +
+// at least one successful tool call) — proven here across TWO separate
+// qualifying runs, both logging it.
+func TestDryRunRecorderLogsTimeToFirstValueEveryQualifyingRun(t *testing.T) {
+	diag := &capturingDiag{}
+	r := NewDryRunRecorder(diag)
+
+	qualify := func(runID string) {
+		r.ToolCallForRun(runID, session.SessionID("s"), session.ToolCall{Name: "Read"}, session.ToolResult{}, 0, 0)
+		r.Emit(context.Background(), session.Event{
+			Type: session.EvResult, RunID: runID,
+			Result: &session.ResultPayload{Stop: session.StopEndTurn},
+		})
+	}
+	qualify("run-a")
+	qualify("run-b")
+
+	count := 0
+	for _, line := range diag.lines {
+		if line == "product metrics (dry-run): would record time_to_first_value" {
+			count++
+		}
+	}
+	if count != 2 {
+		t.Errorf("got %d time_to_first_value lines across two qualifying runs, want 2 (dry-run logs every qualifying run, not once-ever): %v", count, diag.lines)
+	}
+}
+
+// TestDryRunRecorderOmitsTimeToFirstValueWhenNotQualifying covers the two
+// non-qualifying shapes: no successful tool call, and a non-StopEndTurn stop.
+func TestDryRunRecorderOmitsTimeToFirstValueWhenNotQualifying(t *testing.T) {
+	diag := &capturingDiag{}
+	r := NewDryRunRecorder(diag)
+
+	// No tool call at all: StopEndTurn but hadToolCall stays false.
+	r.Emit(context.Background(), session.Event{
+		Type: session.EvResult, RunID: "run-no-tools",
+		Result: &session.ResultPayload{Stop: session.StopEndTurn},
+	})
+	// A successful tool call but a non-EndTurn stop.
+	r.ToolCallForRun("run-error-stop", session.SessionID("s"), session.ToolCall{Name: "Read"}, session.ToolResult{}, 0, 0)
+	r.Emit(context.Background(), session.Event{
+		Type: session.EvResult, RunID: "run-error-stop",
+		Result: &session.ResultPayload{Stop: session.StopError},
+	})
+
+	for _, line := range diag.lines {
+		if line == "product metrics (dry-run): would record time_to_first_value" {
+			t.Errorf("time_to_first_value logged for a non-qualifying run: %v", diag.lines)
+		}
+	}
+}
