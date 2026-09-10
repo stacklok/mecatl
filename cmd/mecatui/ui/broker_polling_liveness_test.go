@@ -237,11 +237,20 @@ func TestMecatuiBrokerPollingLiveness_Scenario1_AmbiguousTimeoutFailsClosed(t *t
 	m.enrollment.busy = true
 	mm, cmd := m.startWorkspaceEnrollmentControl("check")
 	m = mm.(Model)
-	m = applyAll(m, cmd())
+	raw := cmd()
+	result, ok := raw.(workspaceEnrollmentMsg)
+	if !ok {
+		t.Fatalf("workspace enrollment command returned %T, want workspaceEnrollmentMsg", raw)
+	}
+	mm, followUp := m.applyWorkspaceEnrollment(result)
+	m = mm.(Model)
+	if followUp != nil {
+		t.Fatal("ambiguous timeout scheduled a follow-up control")
+	}
 	if !control.didTransition() {
 		t.Fatal("fake did not record the server-side transition before withholding its response")
 	}
-	if m.enrollment.busy || m.enrollment.presentationDelivered {
+	if m.enrollment.busy || m.enrollment.presentationDelivered || m.enrollment.controlCancel != nil {
 		t.Fatalf("ambiguous timeout remained active: %+v", m.enrollment)
 	}
 	if m.enrollment.ID != "enrollment-current" || m.enrollment.Status != client.WorkspaceEnrollmentPending || m.enrollment.controlGen != 8 {
@@ -273,8 +282,16 @@ func TestMecatuiBrokerPollingLiveness_Scenario1_TimeoutRequiresFreshSessionRecov
 			m.enrollment.busy = true
 			mm, cmd := m.startWorkspaceEnrollmentControl(action)
 			m = mm.(Model)
-			m = applyAll(m, cmd())
-			time.Sleep(2 * workspaceEnrollmentTimeout)
+			raw := cmd()
+			result, ok := raw.(workspaceEnrollmentMsg)
+			if !ok {
+				t.Fatalf("%s command returned %T, want workspaceEnrollmentMsg", action, raw)
+			}
+			mm, followUp := m.applyWorkspaceEnrollment(result)
+			m = mm.(Model)
+			if followUp != nil {
+				t.Fatalf("%s timeout scheduled an automatic follow-up control", action)
+			}
 			if control.callCount() != 1 {
 				t.Fatalf("%s timeout made %d calls, want no automatic follow-up", action, control.callCount())
 			}
