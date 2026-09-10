@@ -2,9 +2,7 @@ package ui
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -52,24 +50,10 @@ func mcpAuthorizationPollTickCmd(sessionID, authorizationID string, gen uint64) 
 }
 
 func (m Model) applyMCPAuthorizationPollTick(msg mcpAuthorizationPollTickMsg) (tea.Model, tea.Cmd) {
-	fields := []any{"session", msg.sessionID, "authorization", msg.authorizationID, "tick_gen", msg.gen,
-		"current_gen", m.authorization.controlGen, "phase", int(m.phase), "polling", m.authorization.polling,
-		"poll_busy", m.authorization.pollBusy, "timer_armed", m.authorization.firstEventTimer != nil}
-	switch {
-	case !m.currentAuthorizationMessage(msg.sessionID, msg.authorizationID, msg.gen):
-		slog.InfoContext(m.deps.Ctx, "MCP authorization: poll tick ignored", append(fields, "reason", "stale")...)
-		return m, nil
-	case !m.authorization.polling:
-		slog.InfoContext(m.deps.Ctx, "MCP authorization: poll tick ignored", append(fields, "reason", "polling_disabled")...)
-		return m, nil
-	case m.authorization.pollBusy:
-		slog.InfoContext(m.deps.Ctx, "MCP authorization: poll tick ignored", append(fields, "reason", "control_busy")...)
-		return m, nil
-	case m.phase != phaseAuthorizing:
-		slog.InfoContext(m.deps.Ctx, "MCP authorization: poll tick ignored", append(fields, "reason", "wrong_phase")...)
+	if !m.currentAuthorizationMessage(msg.sessionID, msg.authorizationID, msg.gen) || !m.authorization.polling ||
+		m.authorization.pollBusy || m.phase != phaseAuthorizing {
 		return m, nil
 	}
-	slog.InfoContext(m.deps.Ctx, "MCP authorization: poll tick starting recheck", fields...)
 	m.authorization.pollBusy = true
 	mm, cmd := m.startMCPAuthorizationControl(false)
 	updated := mm.(Model)
@@ -103,10 +87,6 @@ func (a *mcpAuthorizationState) stopFirstEventTimer() {
 }
 
 func (m Model) applyMCPAuthorization(msg client.MCPAuthorizationMsg) (tea.Model, tea.Cmd) {
-	slog.InfoContext(m.deps.Ctx, "MCP authorization: status received",
-		"session", m.sessionID, "authorization", msg.AuthorizationID, "status", msg.Status,
-		"current_authorization", m.authorization.authorizationID, "current_gen", m.authorization.controlGen,
-		"phase", int(m.phase), "polling", m.authorization.polling, "poll_busy", m.authorization.pollBusy)
 	if msg.Status != mcpAuthorizationStatusPending {
 		reenteredRunning := false
 		if m.authorization.authorizationID == msg.AuthorizationID {
@@ -187,8 +167,6 @@ func (m Model) startMCPAuthorizationPresentation(copyLink bool) (tea.Model, tea.
 	ctx, cancel := context.WithCancel(m.deps.Ctx)
 	m.authorization.presentationCancel = cancel
 	sessionID, authorizationID, gen := m.sessionID, m.authorization.authorizationID, m.authorization.controlGen
-	slog.InfoContext(m.deps.Ctx, "MCP authorization: presentation requested",
-		"session", sessionID, "authorization", authorizationID, "gen", gen, "copy", copyLink)
 	return m, func() tea.Msg {
 		if err := ctx.Err(); err != nil {
 			return mcpAuthorizationErrorMsg{sessionID: sessionID, authorizationID: authorizationID, gen: gen, err: err}
@@ -208,13 +186,8 @@ func (m Model) startMCPAuthorizationPresentation(copyLink bool) (tea.Model, tea.
 			if copyLink {
 				verb = "copy"
 			}
-			slog.InfoContext(m.deps.Ctx, "MCP authorization: presentation failed",
-				"session", sessionID, "authorization", authorizationID, "gen", gen, "action", verb,
-				"cancelled", ctx.Err() != nil)
 			return mcpAuthorizationErrorMsg{sessionID: sessionID, authorizationID: authorizationID, gen: gen, err: fmt.Errorf("%s authorization: %w", verb, err)}
 		}
-		slog.InfoContext(m.deps.Ctx, "MCP authorization: presentation completed",
-			"session", sessionID, "authorization", authorizationID, "gen", gen, "copy", copyLink)
 		if copyLink {
 			return mcpAuthorizationCopyMsg{sessionID: sessionID, authorizationID: authorizationID, gen: gen, url: url}
 		}
@@ -223,7 +196,6 @@ func (m Model) startMCPAuthorizationPresentation(copyLink bool) (tea.Model, tea.
 }
 
 func (m Model) startMCPAuthorizationControl(cancelAuthorization bool) (tea.Model, tea.Cmd) {
-	previousGen := m.authorization.controlGen
 	if m.authorization.controlCancel != nil {
 		m.authorization.controlCancel()
 	}
@@ -236,24 +208,14 @@ func (m Model) startMCPAuthorizationControl(cancelAuthorization bool) (tea.Model
 	gen := m.authorization.controlGen
 	ctx, cancel := context.WithCancel(m.deps.Ctx)
 	m.authorization.controlCancel = cancel
-	sessionID, authorizationID := m.sessionID, m.authorization.authorizationID
-	m.authorization.firstEventTimer = time.AfterFunc(mcpAuthorizationFirstEventTimeout, func() {
-		slog.InfoContext(m.deps.Ctx, "MCP authorization: first-event watchdog fired",
-			"session", sessionID, "authorization", authorizationID, "gen", gen, "cancel", cancelAuthorization)
-		cancel()
-	})
+	m.authorization.firstEventTimer = time.AfterFunc(mcpAuthorizationFirstEventTimeout, cancel)
 	m.authorization.errorText = ""
 	m.authorizationEvents = nil
-	slog.InfoContext(m.deps.Ctx, "MCP authorization: control started",
-		"session", sessionID, "authorization", authorizationID, "previous_gen", previousGen, "gen", gen,
-		"cancel", cancelAuthorization, "polling", m.authorization.polling, "poll_busy", m.authorization.pollBusy)
-	return m, controlMCPAuthorizationCmd(ctx, m.deps.MCPAuthorization, sessionID, authorizationID, gen, cancelAuthorization)
+	return m, controlMCPAuthorizationCmd(ctx, m.deps.MCPAuthorization, m.sessionID, m.authorization.authorizationID, gen, cancelAuthorization)
 }
 
 func controlMCPAuthorizationCmd(ctx context.Context, control client.MCPAuthorizationController, sessionID, authorizationID string, gen uint64, cancelAuthorization bool) tea.Cmd {
 	return func() tea.Msg {
-		slog.InfoContext(ctx, "MCP authorization: control RPC opening",
-			"session", sessionID, "authorization", authorizationID, "gen", gen, "cancel", cancelAuthorization)
 		var stream *client.EventStream
 		var err error
 		if cancelAuthorization {
@@ -262,14 +224,8 @@ func controlMCPAuthorizationCmd(ctx context.Context, control client.MCPAuthoriza
 			stream, err = control.RecheckMCPAuthorization(ctx, sessionID, authorizationID)
 		}
 		if err != nil {
-			slog.InfoContext(ctx, "MCP authorization: control RPC failed",
-				"session", sessionID, "authorization", authorizationID, "gen", gen, "cancel", cancelAuthorization,
-				"context_error", ctx.Err() != nil)
 			return mcpAuthorizationErrorMsg{sessionID: sessionID, authorizationID: authorizationID, gen: gen, err: err}
 		}
-		slog.InfoContext(ctx, "MCP authorization: control RPC stream opened",
-			"session", sessionID, "authorization", authorizationID, "gen", gen, "cancel", cancelAuthorization,
-			"nil_stream", stream == nil)
 		return mcpAuthorizationStreamMsg{sessionID: sessionID, authorizationID: authorizationID, gen: gen, ctx: ctx, stream: stream}
 	}
 }
@@ -316,14 +272,8 @@ func (m Model) updateMCPAuthorizationMsg(message tea.Msg) (tea.Model, tea.Cmd, b
 		return m.updateMCPAuthorizationEvent(msg)
 	case mcpAuthorizationStreamClosedMsg:
 		if !m.currentAuthorizationMessage(msg.sessionID, msg.authorizationID, msg.gen) {
-			slog.InfoContext(m.deps.Ctx, "MCP authorization: stale control stream close ignored",
-				"session", msg.sessionID, "authorization", msg.authorizationID, "gen", msg.gen,
-				"current_gen", m.authorization.controlGen)
 			return m, nil, true
 		}
-		slog.InfoContext(m.deps.Ctx, "MCP authorization: control stream closed",
-			"session", msg.sessionID, "authorization", msg.authorizationID, "gen", msg.gen,
-			"phase", int(m.phase), "polling", m.authorization.polling, "poll_busy", m.authorization.pollBusy)
 		m.authorizationEvents = nil
 		m.authorization.stopFirstEventTimer()
 		if m.authorization.controlCancel != nil {
@@ -346,15 +296,8 @@ func (m Model) updateMCPAuthorizationMsg(message tea.Msg) (tea.Model, tea.Cmd, b
 		return m, nil, true
 	case mcpAuthorizationErrorMsg:
 		if !m.currentAuthorizationMessage(msg.sessionID, msg.authorizationID, msg.gen) {
-			slog.InfoContext(m.deps.Ctx, "MCP authorization: stale control error ignored",
-				"session", msg.sessionID, "authorization", msg.authorizationID, "gen", msg.gen,
-				"current_gen", m.authorization.controlGen)
 			return m, nil, true
 		}
-		slog.InfoContext(m.deps.Ctx, "MCP authorization: control error received",
-			"session", msg.sessionID, "authorization", msg.authorizationID, "gen", msg.gen,
-			"phase", int(m.phase), "polling", m.authorization.polling, "poll_busy", m.authorization.pollBusy,
-			"context_error", errors.Is(msg.err, context.Canceled) || errors.Is(msg.err, context.DeadlineExceeded))
 		m.authorizationEvents = nil
 		m.authorization.stopFirstEventTimer()
 		if m.authorization.controlCancel != nil {
@@ -374,8 +317,6 @@ func (m Model) updateMCPAuthorizationMsg(message tea.Msg) (tea.Model, tea.Cmd, b
 		return m, nil, true
 	case mcpAuthorizationActionMsg:
 		if m.currentAuthorizationMessage(msg.sessionID, msg.authorizationID, msg.gen) {
-			slog.InfoContext(m.deps.Ctx, "MCP authorization: presentation armed polling",
-				"session", msg.sessionID, "authorization", msg.authorizationID, "gen", msg.gen, "action", "open")
 			m.authorization.errorText = ""
 			if m.authorization.presentationCancel != nil {
 				m.authorization.presentationCancel()
@@ -385,19 +326,11 @@ func (m Model) updateMCPAuthorizationMsg(message tea.Msg) (tea.Model, tea.Cmd, b
 			m.statusMsg = sanitizeTerminal(msg.text)
 			return m, mcpAuthorizationPollTickCmd(msg.sessionID, msg.authorizationID, msg.gen), true
 		}
-		slog.InfoContext(m.deps.Ctx, "MCP authorization: stale presentation completion ignored",
-			"session", msg.sessionID, "authorization", msg.authorizationID, "gen", msg.gen,
-			"current_gen", m.authorization.controlGen, "action", "open")
 		return m, nil, true
 	case mcpAuthorizationCopyMsg:
 		if !m.currentAuthorizationMessage(msg.sessionID, msg.authorizationID, msg.gen) {
-			slog.InfoContext(m.deps.Ctx, "MCP authorization: stale presentation completion ignored",
-				"session", msg.sessionID, "authorization", msg.authorizationID, "gen", msg.gen,
-				"current_gen", m.authorization.controlGen, "action", "copy")
 			return m, nil, true
 		}
-		slog.InfoContext(m.deps.Ctx, "MCP authorization: presentation armed polling",
-			"session", msg.sessionID, "authorization", msg.authorizationID, "gen", msg.gen, "action", "copy")
 		m.authorization.errorText = ""
 		if m.authorization.presentationCancel != nil {
 			m.authorization.presentationCancel()
@@ -416,15 +349,8 @@ func (m Model) updateMCPAuthorizationMsg(message tea.Msg) (tea.Model, tea.Cmd, b
 
 func (m Model) updateMCPAuthorizationEvent(msg mcpAuthorizationEventMsg) (tea.Model, tea.Cmd, bool) {
 	if !m.currentAuthorizationMessage(msg.sessionID, msg.authorizationID, msg.gen) {
-		slog.InfoContext(m.deps.Ctx, "MCP authorization: stale control stream event ignored",
-			"session", msg.sessionID, "authorization", msg.authorizationID, "gen", msg.gen,
-			"current_gen", m.authorization.controlGen, "event_type", fmt.Sprintf("%T", msg.msg))
 		return m, nil, true
 	}
-	slog.InfoContext(m.deps.Ctx, "MCP authorization: control stream event received",
-		"session", msg.sessionID, "authorization", msg.authorizationID, "gen", msg.gen,
-		"event_type", fmt.Sprintf("%T", msg.msg), "phase", int(m.phase),
-		"polling", m.authorization.polling, "poll_busy", m.authorization.pollBusy)
 	// Any message on this stream — error or genuine event — proves the call is
 	// alive, so the first-event watchdog has done its job. Stopping it here
 	// (rather than only in the mcpAuthorizationErrorMsg/StreamClosedMsg cases)
@@ -492,19 +418,9 @@ func (m Model) updateMCPAuthorizationEvent(msg mcpAuthorizationEventMsg) (tea.Mo
 }
 
 func (m Model) updateMCPAuthorizationStream(msg mcpAuthorizationStreamMsg) (tea.Model, tea.Cmd) {
-	if !m.currentAuthorizationMessage(msg.sessionID, msg.authorizationID, msg.gen) {
-		slog.InfoContext(m.deps.Ctx, "MCP authorization: stale control stream ignored",
-			"session", msg.sessionID, "authorization", msg.authorizationID, "gen", msg.gen,
-			"current_gen", m.authorization.controlGen, "nil_stream", msg.stream == nil)
+	if !m.currentAuthorizationMessage(msg.sessionID, msg.authorizationID, msg.gen) || msg.stream == nil {
 		return m, nil
 	}
-	if msg.stream == nil {
-		slog.InfoContext(m.deps.Ctx, "MCP authorization: nil control stream ignored",
-			"session", msg.sessionID, "authorization", msg.authorizationID, "gen", msg.gen)
-		return m, nil
-	}
-	slog.InfoContext(m.deps.Ctx, "MCP authorization: control stream reader attached",
-		"session", msg.sessionID, "authorization", msg.authorizationID, "gen", msg.gen)
 	ch := make(chan tea.Msg, 16)
 	m.authorizationEvents = ch
 	m.authorization.controlStream = msg.stream
