@@ -28,6 +28,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -296,7 +297,10 @@ type config struct {
 	otlpMetricsEndpoint string
 	otlpMetricsProtocol string
 	otlpShutdownTimeout time.Duration
+	installationID      string
 }
+
+var canonicalUUID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
 // stringList is a repeatable string flag.Value, preserving order across
 // multiple occurrences (mirrors cmd/mecated's stringList).
@@ -470,6 +474,7 @@ func parseFlags(argv []string) (config, error) {
 	fs.StringVar(&cfg.otlpMetricsEndpoint, "otlp-metrics-endpoint", "", "OTLP METRICS collector endpoint (empty disables metrics push). An opt-in twin to --metrics-addr for non-scrape deployments; the prometheus reader stays on either way")
 	fs.StringVar(&cfg.otlpMetricsProtocol, "otlp-metrics-protocol", "grpc", "OTLP transport for metrics: \"grpc\" (default) or \"http\"")
 	fs.DurationVar(&cfg.otlpShutdownTimeout, "otlp-shutdown-timeout", 5*time.Second, "bound on the telemetry flush at SIGTERM (so a dead collector cannot hang shutdown). 0 disables the bound")
+	fs.StringVar(&cfg.installationID, "telemetry-installation-id", os.Getenv("MECATL_INSTALLATION_ID"), "stable canonical UUID exported as the optional mecatl.installation.id OTel resource attribute (default: MECATL_INSTALLATION_ID; empty omits it)")
 
 	fs.Usage = func() {
 		_, _ = fmt.Fprint(fs.Output(), "Usage: mecak8s [flags]\n\n")
@@ -551,6 +556,10 @@ func parseFlags(argv []string) (config, error) {
 	cfg.providerCredentials = cfg.providerFlags.Resolve()
 	if cfg.providerCredentials.HasOpenAICodex() {
 		return config{}, errors.New("mecak8s: openai-codex OAuth is unsupported; use an API-key provider or mecated/mecatui")
+	}
+
+	if cfg.installationID != "" && !canonicalUUID.MatchString(cfg.installationID) {
+		return config{}, fmt.Errorf("--telemetry-installation-id must be a canonical UUID, got %q", cfg.installationID)
 	}
 
 	// --metrics-addr MUST be loopback (ADR 0018 decision 6): the admin mux serves

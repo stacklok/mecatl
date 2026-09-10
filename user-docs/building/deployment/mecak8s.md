@@ -265,6 +265,36 @@ Or the explicit unsafe bypass.
 Setting both in-pod TLS and the upstream attestation is valid.
 The bypass annotates the pod as unsafe; a secure upstream attestation is annotated as TLS-terminated-upstream, and neither annotation can be set through `podAnnotations`.
 
+### Installation telemetry identity
+
+The chart owns a non-secret ConfigMap containing one `installation-id`. With the
+default `telemetry.installationID: ""`, the first live Helm install generates a
+canonical UUID. Later upgrades and rollbacks recover the existing ConfigMap value
+with Helm `lookup`, so the release keeps the same identity. An uninstall removes
+the ConfigMap; a later reinstall therefore generates a new identity.
+
+Set an explicit canonical UUID when manifests must render deterministically (for
+example, GitOps or offline `helm template`) or when identity must survive an
+uninstall/reinstall:
+
+```yaml
+telemetry:
+  installationID: 123e4567-e89b-12d3-a456-426614174000
+```
+
+Changing that explicit value deliberately rotates the identity and rolls the
+Deployment. Removing the override does not rotate an installed release: Helm
+preserves the value already stored in the ConfigMap. The ID is not a credential
+and does not belong in a Secret, but it is a stable deployment identifier; apply
+your normal telemetry-data handling policy to it.
+
+The Deployment projects the ConfigMap key as `MECATL_INSTALLATION_ID`.
+`mecak8s` uses it as the default for `--telemetry-installation-id` and, when
+telemetry is enabled, exports it as the OTel resource attribute
+`mecatl.installation.id`. It is not `service.instance.id` and is not added as a
+per-measurement metric label. Outside the chart, leaving the environment variable
+and flag empty preserves the prior behavior and omits the resource attribute.
+
 Understand what edge mode costs before choosing it.
 On an h2c backend the caller's `Authorization: Bearer` token crosses the pod network in cleartext.
 Any workload that can reach the Service ClusterIP can read that token and replay it as the caller.
@@ -752,6 +782,7 @@ production install:
 |---|---|
 | `rbac.yaml` | ServiceAccount + Role (lease verbs only) + RoleBinding |
 | `deployment.yaml` | Agent Deployment — `replicas: 2` by default (one is supported), no PVC, storage-free |
+| `telemetry-configmap.yaml` | Chart-owned, non-secret installation UUID projected into the agent for OTel resource identity |
 | `service.yaml` | ClusterIP Service exposing gRPC (8080) and HTTP/SSE (8081) |
 | `pdb.yaml` | PodDisruptionBudget (`minAvailable: 1`) when `replicaCount >= 2`; omitted for one replica |
 | `raw-driver-networkpolicy.yaml` | Rendered only when `oidc.enabled` — scopes ingress on `app.kubernetes.io/component: raw-driver` pods to the agent pod only |

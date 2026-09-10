@@ -64,6 +64,8 @@ type OTLPConfig struct {
 	SampleRatio float64
 	// Version sets the resource service.version attribute when non-empty.
 	Version string
+	// InstallationID sets the optional mecatl.installation.id resource attribute.
+	InstallationID string
 
 	// --- OTLP metrics push (optional; the prometheus reader stays always on) ---
 	// MetricsEndpoint is the collector address for an OTLP METRICS push reader
@@ -328,6 +330,9 @@ func newResource(ctx context.Context, cfg OTLPConfig) (*resource.Resource, error
 	attrs := []attribute.KeyValue{semconv.ServiceName(name)}
 	if cfg.Version != "" {
 		attrs = append(attrs, semconv.ServiceVersion(cfg.Version))
+	}
+	if cfg.InstallationID != "" {
+		attrs = append(attrs, attribute.String("mecatl.installation.id", cfg.InstallationID))
 	}
 	return resource.New(ctx,
 		resource.WithAttributes(attrs...),

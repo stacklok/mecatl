@@ -101,6 +101,13 @@ model: ""
 maxRunTokens: null
 maxTeamTokens: null
 
+# Stable, non-secret identity exported on mecak8s OTel resources. When empty,
+# Helm creates a UUID on the first live install and preserves the ConfigMap value
+# across upgrades and rollbacks. Set a canonical UUID for deterministic rendering,
+# GitOps, or identity continuity across uninstall/reinstall.
+telemetry:
+  installationID: ""
+
 # A real provider (mockProvider: false) requires OIDC and either pod TLS or an
 # explicitly asserted gateway TLS boundary. The unsafe bypass remains for local
 # development or a trusted mesh that supplies both controls outside the pod.

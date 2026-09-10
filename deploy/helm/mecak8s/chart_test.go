@@ -101,6 +101,53 @@ func deploymentFromRender(t *testing.T, rendered string) *appsv1.Deployment {
 	return nil
 }
 
+func workloadEnv(container corev1.Container) []corev1.EnvVar {
+	return slices.DeleteFunc(slices.Clone(container.Env), func(env corev1.EnvVar) bool {
+		return env.Name == "MECATL_INSTALLATION_ID"
+	})
+}
+
+func TestMecak8sHelmChart_InstallationID(t *testing.T) {
+	const explicit = "123e4567-e89b-12d3-a456-426614174000"
+
+	rendered, err := helm(t, productionArgs()...)
+	if err != nil {
+		t.Fatalf("render defaults: %v\n%s", err, rendered)
+	}
+	cm := configMapFromRender(t, rendered, "production-mecak8s-telemetry")
+	if got := cm.Data["installation-id"]; !canonicalUUIDPattern.MatchString(got) {
+		t.Fatalf("generated installation-id = %q, want canonical UUID", got)
+	}
+	deployment := deploymentFromRender(t, rendered)
+	env := deployment.Spec.Template.Spec.Containers[0].Env
+	installationEnv := slices.IndexFunc(env, func(v corev1.EnvVar) bool { return v.Name == "MECATL_INSTALLATION_ID" })
+	if installationEnv < 0 || env[installationEnv].ValueFrom == nil || env[installationEnv].ValueFrom.ConfigMapKeyRef == nil ||
+		env[installationEnv].ValueFrom.ConfigMapKeyRef.Name != "production-mecak8s-telemetry" || env[installationEnv].ValueFrom.ConfigMapKeyRef.Key != "installation-id" {
+		t.Fatalf("MECATL_INSTALLATION_ID environment = %#v", env)
+	}
+	if _, ok := deployment.Spec.Template.Annotations["checksum/telemetry-installation-id"]; ok {
+		t.Fatal("generated installation ID unexpectedly produced a pod-template checksum")
+	}
+
+	rendered, err = helm(t, append(productionArgs(), "--set", "telemetry.installationID="+explicit)...)
+	if err != nil {
+		t.Fatalf("render explicit installation ID: %v\n%s", err, rendered)
+	}
+	if got := configMapFromRender(t, rendered, "production-mecak8s-telemetry").Data["installation-id"]; got != explicit {
+		t.Fatalf("explicit installation-id = %q, want %q", got, explicit)
+	}
+	wantChecksum := fmt.Sprintf("%x", sha256.Sum256([]byte(explicit)))
+	if got := deploymentFromRender(t, rendered).Spec.Template.Annotations["checksum/telemetry-installation-id"]; got != wantChecksum {
+		t.Fatalf("installation ID checksum = %q, want %q", got, wantChecksum)
+	}
+
+	if rendered, err = helm(t, append(productionArgs(), "--set", "telemetry.installationID=not-a-uuid")...); err == nil {
+		t.Fatalf("invalid installation ID passed schema validation:\n%s", rendered)
+	}
+}
+
+var canonicalUUIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+
 func pdbFromRender(t *testing.T, rendered string) *policyv1.PodDisruptionBudget {
 	t.Helper()
 	for _, document := range strings.Split(rendered, "\n---") {
@@ -528,8 +575,8 @@ func TestMecak8sHelmChart_LearningStore(t *testing.T) {
 			t.Fatalf("default render unexpectedly contains %q", forbidden)
 		}
 	}
-	if len(container.Env) != 0 {
-		t.Fatalf("default learning store environment = %#v, want none", container.Env)
+	if env := workloadEnv(container); len(env) != 0 {
+		t.Fatalf("default learning store environment = %#v, want none", env)
 	}
 
 	for _, tc := range []struct {
@@ -560,8 +607,8 @@ func TestMecak8sHelmChart_LearningStore(t *testing.T) {
 			if got := slices.Contains(container.Args, "--driver-tls"); got != tc.wantTLS {
 				t.Fatalf("anonymous learning store --driver-tls = %t, want %t: %q", got, tc.wantTLS, container.Args)
 			}
-			if len(container.Env) != 0 || strings.Contains(rendered, "MECATL_DRIVER_AUTH_TOKEN") {
-				t.Fatalf("anonymous learning store environment = %#v, want no driver token", container.Env)
+			if env := workloadEnv(container); len(env) != 0 || strings.Contains(rendered, "MECATL_DRIVER_AUTH_TOKEN") {
+				t.Fatalf("anonymous learning store environment = %#v, want no driver token", env)
 			}
 		})
 	}
@@ -598,8 +645,9 @@ func TestMecak8sHelmChart_LearningStore(t *testing.T) {
 	if slices.ContainsFunc(container.Args, func(arg string) bool { return strings.HasPrefix(arg, "--driver-auth-token") }) {
 		t.Fatalf("driver token was rendered as an argument: %q", container.Args)
 	}
-	if len(container.Env) != 1 || container.Env[0].Name != "MECATL_DRIVER_AUTH_TOKEN" || container.Env[0].Value != "" || container.Env[0].ValueFrom == nil || container.Env[0].ValueFrom.SecretKeyRef == nil || container.Env[0].ValueFrom.SecretKeyRef.Name != "learning-driver-credentials" || container.Env[0].ValueFrom.SecretKeyRef.Key != "bearer-token" {
-		t.Fatalf("learning driver environment = %#v", container.Env)
+	env := workloadEnv(container)
+	if len(env) != 1 || env[0].Name != "MECATL_DRIVER_AUTH_TOKEN" || env[0].Value != "" || env[0].ValueFrom == nil || env[0].ValueFrom.SecretKeyRef == nil || env[0].ValueFrom.SecretKeyRef.Name != "learning-driver-credentials" || env[0].ValueFrom.SecretKeyRef.Key != "bearer-token" {
+		t.Fatalf("learning driver environment = %#v", env)
 	}
 	for _, name := range []string{"learning-store-ca", "learning-store-mtls"} {
 		if !slices.ContainsFunc(container.VolumeMounts, func(mount corev1.VolumeMount) bool { return mount.Name == name && mount.ReadOnly }) {
@@ -736,12 +784,13 @@ func TestMecak8sHelmChart_ProductionFixturesReferenceProviderCredential(t *testi
 			if !slices.Contains(container.Args, "--default-provider=openrouter") || !slices.Contains(container.Args, "--model=anthropic/claude-sonnet-4-6") {
 				t.Fatalf("production provider selection = %q", container.Args)
 			}
-			if len(container.Env) != 1 {
-				t.Fatalf("provider environment = %#v, want one SecretKeyRef", container.Env)
+			env := workloadEnv(container)
+			if len(env) != 1 {
+				t.Fatalf("provider environment = %#v, want one SecretKeyRef", env)
 			}
-			env := container.Env[0]
-			if env.Name != "OPENROUTER_API_KEY" || env.ValueFrom == nil || env.ValueFrom.SecretKeyRef == nil || env.ValueFrom.SecretKeyRef.Name != "provider-credentials" || env.ValueFrom.SecretKeyRef.Key != "openrouter-api-key" {
-				t.Fatalf("provider environment = %#v", env)
+			providerEnv := env[0]
+			if providerEnv.Name != "OPENROUTER_API_KEY" || providerEnv.ValueFrom == nil || providerEnv.ValueFrom.SecretKeyRef == nil || providerEnv.ValueFrom.SecretKeyRef.Name != "provider-credentials" || providerEnv.ValueFrom.SecretKeyRef.Key != "openrouter-api-key" {
+				t.Fatalf("provider environment = %#v", providerEnv)
 			}
 		})
 	}
@@ -1335,7 +1384,7 @@ func TestMecak8sHelmChart_OIDC_PrivateHTTPSIssuer(t *testing.T) {
 }
 
 func TestMecak8sHelmChart_ServerTLS(t *testing.T) {
-	base := productionArgs()
+	base := append(productionArgs(), "--set", "telemetry.installationID=123e4567-e89b-12d3-a456-426614174000")
 	defaultRender, err := helm(t, base...)
 	if err != nil {
 		t.Fatalf("render default production values: %v", err)
@@ -1535,8 +1584,9 @@ func TestMecak8sHelmChart_KindLiveProviderDisablesMock(t *testing.T) {
 	if slices.Contains(container.Args, "--mock") {
 		t.Fatal("Kind live-provider profile retained --mock")
 	}
-	if len(container.Env) != 1 || container.Env[0].Name != "OPENROUTER_API_KEY" || container.Env[0].ValueFrom == nil || container.Env[0].ValueFrom.SecretKeyRef == nil || container.Env[0].ValueFrom.SecretKeyRef.Name != "mecak8s-live-provider" {
-		t.Fatalf("Kind live-provider environment = %#v", container.Env)
+	env := workloadEnv(container)
+	if len(env) != 1 || env[0].Name != "OPENROUTER_API_KEY" || env[0].ValueFrom == nil || env[0].ValueFrom.SecretKeyRef == nil || env[0].ValueFrom.SecretKeyRef.Name != "mecak8s-live-provider" {
+		t.Fatalf("Kind live-provider environment = %#v", env)
 	}
 }
 
@@ -1545,8 +1595,8 @@ func TestMecak8sHelmChart_ExtraEnv(t *testing.T) {
 	if err != nil {
 		t.Fatalf("render production values: %v", err)
 	}
-	if strings.Contains(rendered, "\n          env:") {
-		t.Fatal("default render (extraEnv unset) unexpectedly contains an env: block")
+	if !strings.Contains(rendered, "name: MECATL_INSTALLATION_ID") {
+		t.Fatal("default render missing chart-managed installation ID environment")
 	}
 
 	args := append(productionArgs(),
@@ -1848,14 +1898,15 @@ mcp:
 			t.Fatalf("MCP args missing %q: %#v", want, container.Args)
 		}
 	}
-	if len(container.Env) != 1 || container.Env[0].Name != "MCP_INTERNAL_API_TOKEN" ||
-		container.Env[0].Value != "" || container.Env[0].ValueFrom == nil ||
-		container.Env[0].ValueFrom.SecretKeyRef == nil ||
-		container.Env[0].ValueFrom.SecretKeyRef.Name != "internal-mcp" ||
-		container.Env[0].ValueFrom.SecretKeyRef.Key != "bearer-token" {
-		t.Fatalf("static bearer environment = %#v", container.Env)
+	env := workloadEnv(container)
+	if len(env) != 1 || env[0].Name != "MCP_INTERNAL_API_TOKEN" ||
+		env[0].Value != "" || env[0].ValueFrom == nil ||
+		env[0].ValueFrom.SecretKeyRef == nil ||
+		env[0].ValueFrom.SecretKeyRef.Name != "internal-mcp" ||
+		env[0].ValueFrom.SecretKeyRef.Key != "bearer-token" {
+		t.Fatalf("static bearer environment = %#v", env)
 	}
-	if strings.Contains(rendered, "kind: ConfigMap") || strings.Contains(rendered, "--permission-config=/etc/mecatl-mcp/settings.yaml") {
+	if strings.Contains(rendered, "production-mecak8s-mcp") || strings.Contains(rendered, "--permission-config=/etc/mecatl-mcp/settings.yaml") {
 		t.Fatal("static/no-auth MCP render unexpectedly created an OAuth profile")
 	}
 }
@@ -1872,11 +1923,8 @@ mcp:
 		t.Fatalf("render no-auth MCP values: %v", err)
 	}
 	container := deploymentFromRender(t, rendered).Spec.Template.Spec.Containers[0]
-	if len(container.Env) != 0 {
-		t.Fatalf("no-auth MCP environment = %#v, want empty", container.Env)
-	}
-	if strings.Contains(rendered, "\n          env:") {
-		t.Fatal("no-auth MCP render unexpectedly contains an env block")
+	if env := workloadEnv(container); len(env) != 0 {
+		t.Fatalf("no-auth MCP environment = %#v, want empty", env)
 	}
 }
 
@@ -2044,8 +2092,9 @@ mcp:
 	if slices.ContainsFunc(container.Args, func(arg string) bool { return strings.HasPrefix(arg, "--mcp-server=") }) {
 		t.Fatal("broker routes must not be duplicated as legacy global flags")
 	}
-	if len(container.Env) != 1 || container.Env[0].Name != "MECATL_MCP_OAUTH_REGISTERED_CLIENT_SECRET" || container.Env[0].ValueFrom == nil || container.Env[0].ValueFrom.SecretKeyRef == nil || container.Env[0].ValueFrom.SecretKeyRef.Name != "oauth-registered" || container.Env[0].ValueFrom.SecretKeyRef.Key != "client-secret" {
-		t.Fatalf("OAuth environment is not SecretKeyRef-only: %#v", container.Env)
+	env := workloadEnv(container)
+	if len(env) != 1 || env[0].Name != "MECATL_MCP_OAUTH_REGISTERED_CLIENT_SECRET" || env[0].ValueFrom == nil || env[0].ValueFrom.SecretKeyRef == nil || env[0].ValueFrom.SecretKeyRef.Name != "oauth-registered" || env[0].ValueFrom.SecretKeyRef.Key != "client-secret" {
+		t.Fatalf("OAuth environment is not SecretKeyRef-only: %#v", env)
 	}
 	cm := configMapFromRender(t, rendered, "production-mecak8s-mcp")
 	profile := cm.Data["settings.yaml"]

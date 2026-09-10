@@ -35,6 +35,9 @@ type HeadlessTelemetryConfig struct {
 	// when empty (matches telemetry.Setup).
 	ServiceName string
 
+	// InstallationID sets the optional mecatl.installation.id resource attribute.
+	InstallationID string
+
 	// OTLPTraceEndpoint enables OTLP TRACE push when non-empty. Mirrors mecated's
 	// --otlp-endpoint. Empty disables tracing.
 	OTLPTraceEndpoint string
@@ -116,6 +119,7 @@ func HeadlessTelemetry(ctx context.Context, cfg HeadlessTelemetryConfig) (Headle
 		Protocol:        cfg.OTLPTraceProtocol,
 		Insecure:        cfg.OTLPTraceInsecure,
 		ServiceName:     cfg.ServiceName,
+		InstallationID:  cfg.InstallationID,
 		MetricsEndpoint: cfg.OTLPMetricsEndpoint,
 		MetricsProtocol: cfg.OTLPMetricsProtocol,
 		MetricsInsecure: cfg.OTLPMetricsInsecure,

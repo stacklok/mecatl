@@ -26,6 +26,7 @@ type observability struct {
 func buildObservability(ctx context.Context, cfg config) (observability, error) {
 	h, err := cliconfig.HeadlessTelemetry(ctx, cliconfig.HeadlessTelemetryConfig{
 		ServiceName:         "mecak8s",
+		InstallationID:      cfg.installationID,
 		OTLPTraceEndpoint:   cfg.otlpEndpoint,
 		OTLPTraceProtocol:   cfg.otlpProtocol,
 		OTLPTraceInsecure:   cfg.otlpInsecure,

@@ -1,0 +1,17 @@
+{{- $name := printf "%s-telemetry" (include "mecak8s.fullname" .) -}}
+{{- $installationID := .Values.telemetry.installationID -}}
+{{- if not $installationID -}}
+{{- $existing := lookup "v1" "ConfigMap" .Release.Namespace $name -}}
+{{- if and $existing $existing.data (hasKey $existing.data "installation-id") -}}
+{{- $installationID = index $existing.data "installation-id" -}}
+{{- else -}}
+{{- $installationID = uuidv4 -}}
+{{- end -}}
+{{- end -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}
+  labels: {{- include "mecak8s.labels" . | nindent 4 }}
+data:
+  installation-id: {{ $installationID | quote }}
