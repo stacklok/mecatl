@@ -14,6 +14,26 @@ owned by `mecated` directly; the agent loop, tool catalog, permission policy,
 provider registry, MCP, and skills wiring live in `internal/app` — the same
 composition layer the embedded TUI (`mecatui`) uses in-process.
 
+## Native LLM endpoints
+
+Native **LLM endpoints** are deployment-wide operator configuration, not remote-client
+settings. Configure `llm.credential_home` and strict `llm.endpoints.ID` entries in the
+user-global settings file; each requires the Responses protocol, canonical HTTPS URL,
+default model, OIDC values, and independent issuer/gateway trust policies. The native
+credential is encrypted and keyring-backed under that explicit home. `mecated` never
+opens a browser: enroll with embedded `mecatui llm login ENDPOINT`, then start or
+restart mecated to use the same record. A missing record leaves an optional endpoint
+`not-enrolled`/unavailable, fails startup when it is the effective default, and never
+falls back to another endpoint or ToolHive.
+
+Every admitted caller shares a usable endpoint's deployment-scoped gateway identity, quota,
+gateway-side audit/retention posture, and model availability. Use a dedicated deployment/service
+gateway identity. Caller OIDC only authenticates/attributes ownership: mecatl drops the raw
+inbound caller bearer and never forwards or retains caller credentials. For mutually untrusted or
+per-user upstream authorization, use separate deployments pending an explicit forwarded-token or
+RFC 8693-style token exchange contract. Lifecycle confirmations are stderr-only and never print
+tokens.
+
 If you are deploying to Kubernetes without persistent volumes, see
 [mecak8s](/building/deployment/mecak8s.md) instead. That binary wires Redis + k8s Leases by
 default and is purpose-built for no-PVC pod deployments.

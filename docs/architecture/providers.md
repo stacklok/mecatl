@@ -129,6 +129,37 @@ into the opaque `Message.Reasoning` STRING) are absorbed at adapter-construction
 the DTO. `UseMock` short-circuits to a single synthetic
 `mock` entry (offline). The zero-keys case is the named, actionable `errNoProvider`.
 
+### Native LLM endpoints
+
+The operator-only `llm.endpoints` facade adds explicitly configured native **LLM
+endpoints** to the same composition-owned registry; it does not create a second
+registry or an entitlement layer. Each exact endpoint ID is the existing durable
+`provider_id`, and `default_model` is the deployment-wide inventory floor. Native
+entries accept only the Responses protocol and require an explicit credential home,
+OIDC profile, and separately configured issuer and gateway HTTPS trust policies.
+Build does no authenticated model probe. A usable encrypted record makes live listing
+global to the deployment; a missing record leaves an optional endpoint unavailable and
+makes a selected/default endpoint fail closed without ToolHive or default fallback.
+
+The endpoint record is in `mecatl/provider-oidc/v1`, encrypted under the explicit
+credential home and bound to the endpoint, canonical gateway, exact issuer, client,
+resource, scopes, redirect, and both trust identities. Its access and refresh tokens
+are never exposed through events, snapshots, diagnostics, model context, or RPC.
+`mecated` opens/refreshes an existing record only; browser/loopback enrollment belongs
+to embedded local `mecatui llm login ENDPOINT`. Status is passive local inspection and
+logout deletes local state before bounded best-effort revocation. The lifecycle uses
+an endpoint-scoped cross-process lock through exchange and CAS commit; a crash after
+upstream refresh rotation but before local persistence can require login again.
+
+Gateway authority is deployment-scoped. All callers admitted by mecated share a usable
+endpoint's gateway identity, quota, gateway-side audit/retention posture, and model
+availability; operators should use a dedicated deployment/service identity. Caller
+OIDC remains authentication and session ownership only: raw inbound caller bearers are
+dropped after authentication and are never forwarded or retained. Separate deployments
+are required for mutually untrusted or per-user upstream authorization until explicit
+forwarded-token or RFC 8693 token-exchange contracts exist. This is distinct from the
+ToolHive LLM gateway's retained provider identity/modes and from ToolHive MCP discovery.
+
 ### Experimental `openai-codex` subscription provider
 
 `openai-codex` is a distinct, credential-driven registry entry for a ChatGPT

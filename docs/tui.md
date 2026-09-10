@@ -14,6 +14,17 @@ start and no TCP port. See [Run](#run).
 
 It is built on the Charm v2 stack (Bubble Tea / Lip Gloss / Bubbles / Glamour).
 
+### Native LLM endpoint login
+
+Embedded local mecatui can enroll an operator-configured native **LLM endpoint** with
+`mecatui llm login ENDPOINT`; `status [ENDPOINT]` only inspects local metadata and
+`logout ENDPOINT` removes local state before best-effort revocation. The lifecycle uses
+the explicit credential home and never prints tokens, codes, or authorization URLs.
+It is not `mecatui login ADDRESS`, which authenticates this client to a remote mecated,
+and it is not ToolHive MCP discovery, ToolHive LLM lifecycle, or the manual Codex
+subscription credential. A connected client does not enroll a gateway for its remote
+server: that server's operator owns its native endpoint records.
+
 ### Local status lines
 
 Mecatui reads `status_customization:` only from the client-owned

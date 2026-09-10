@@ -85,6 +85,35 @@ a future Kubernetes Secret `resourceVersion` CAS backend. See
 
 ---
 
+## Native LLM endpoint lifecycle
+
+`internal/cliconfig.NativeEndpointRuntime` is the host-owned lifecycle for an
+operator-configured native LLM endpoint. It resolves the canonical endpoint identity
+and independently configured issuer and gateway trust clients before it opens protected
+storage. The encrypted keyring-backed record is in `mecatl/provider-oidc/v1` beneath
+the explicit `llm.credential_home`; its identity binds endpoint, canonical gateway,
+exact issuer, client, resource audience, normalized scopes, redirect, and both trust
+policy/CA digests. No plaintext, environment fallback, migration, discovery, or
+credential material is persisted in sessions/events or exposed over RPC.
+
+Only embedded local mecatui supplies the bounded browser/loopback presenter. Mecated's
+loader is browser-free and holds its opened source runtimes until Build close. Status
+uses existing local read-only state only, and logout makes exact local deletion
+authoritative before bounded best-effort revocation. The transaction locker is hashed,
+owner-only, context-aware, and holds the lifecycle through exchange and CAS commit; a
+crash after upstream rotation but before local commit may require login. The access
+token is the authorization-code exchange result only—not an ID token or a caller
+bearer—and gateway requests use one pre-stream 401 refresh/retry at most.
+
+The endpoint inventory is deployment-wide, not a caller entitlement. Mecated drops
+inbound caller bearers after verification and retains only the principal for ownership.
+All admitted callers share the configured gateway identity, quota, gateway-side
+audit/retention posture, and model availability; deploy a dedicated service identity
+and separate deployments for mutually untrusted/per-user upstream authorization until
+an explicit forwarded-token or RFC 8693 exchange contract exists. See [ADR 0326](../adr/0326-native-llm-endpoint-gateway-credentials.md).
+
+---
+
 ## Caller identity embedding and OIDC module boundary
 
 The engine accepts identity only after verification. `session.PrincipalFromClaims`

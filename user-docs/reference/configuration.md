@@ -119,6 +119,31 @@ Strict operator-defined LLM providers. Project-tier definitions are ignored. Pro
 | `providers.team-gateway.auth` | `providerauth` | `(absent)` |  |
 | `providers.team-gateway.auth.method` | `string` | `none` |  |
 
+## `llm`
+
+Tier: **operator**
+
+Strict operator-tier native LLM endpoints and their explicit protected credential home. Project values are ignored. Lifecycle commands use exact endpoint IDs and never change provider selection.
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `llm.credential_home` | `string` | `(required with endpoints)` |  |
+| `llm.endpoints` | `map[string]nativeendpoint` | `(absent)` |  |
+| `llm.endpoints.<key>.protocol` | `string` | `(required)` |  |
+| `llm.endpoints.<key>.url` | `string` | `(required)` |  |
+| `llm.endpoints.<key>.default_model` | `string` | `(required)` |  |
+| `llm.endpoints.<key>.oidc` | `nativeoidc` | `(required)` |  |
+| `llm.endpoints.<key>.oidc.issuer` | `string` | `(required)` |  |
+| `llm.endpoints.<key>.oidc.client_id` | `string` | `(required)` |  |
+| `llm.endpoints.<key>.oidc.resource_audience` | `string` | `(required)` |  |
+| `llm.endpoints.<key>.oidc.scopes` | `[]string` | `(required)` |  |
+| `llm.endpoints.<key>.issuer_trust` | `nativetrust` | `(required)` |  |
+| `llm.endpoints.<key>.issuer_trust.policy` | `string` | `(required)` |  |
+| `llm.endpoints.<key>.issuer_trust.ca_bundle` | `string` | `(forbidden for public)` |  |
+| `llm.endpoints.<key>.gateway_trust` | `nativetrust` | `(required)` |  |
+| `llm.endpoints.<key>.gateway_trust.policy` | `string` | `(required)` |  |
+| `llm.endpoints.<key>.gateway_trust.ca_bundle` | `string` | `(forbidden for public)` |  |
+
 ## `provider_overrides`
 
 Tier: **operator**

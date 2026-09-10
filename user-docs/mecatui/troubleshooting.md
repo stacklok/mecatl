@@ -18,7 +18,26 @@ mecatui --mock --workspace "$PWD"
 
 Do not put provider secrets in command-line flags. For provider credentials and server-side selection, use [Run mecated standalone](/building/deployment/mecated.md#provider-and-model).
 
-## Cannot connect, authenticate, or verify TLS
+## Native LLM endpoint is not enrolled or unavailable
+
+Native **LLM endpoint** lifecycle is local embedded-mode operator work: run
+`mecatui llm status ENDPOINT` to inspect configured state without a browser, refresh,
+or network request, then run `mecatui llm login ENDPOINT` from embedded mecatui if the
+operator must enroll it. A connected client cannot enroll the remote server. Confirm
+that the remote server operator configured the exact endpoint and its explicit
+credential home; do not add a token to client flags or expect a fallback to ToolHive.
+A missing record is `not-enrolled`/unavailable, and a configured default without a
+usable record prevents startup. Status and errors deliberately contain no tokens,
+codes, authorization URLs, record keys, or trust paths.
+
+Use a dedicated deployment/service gateway identity. The gateway identity, quota,
+gateway-side audit/retention posture, and model availability are shared by all callers
+admitted to that deployment. Caller login does not grant a personal upstream gateway
+credential: mecatl drops inbound bearer material after verification and never forwards
+or retains it. Use separate deployments for mutually untrusted or per-user upstream
+authorization until a future explicit forwarded-token or RFC 8693 token-exchange
+contract exists.
+
 
 These are distinct failures:
 
