@@ -1,6 +1,6 @@
 # ADR 0324 — Internal Shell compatibility diagnostic
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-09-09
 - Scope: parser-backed Shell portability diagnostic ownership and API boundary
 - Supersedes: ADR 0317 decision paragraph on parser placement only

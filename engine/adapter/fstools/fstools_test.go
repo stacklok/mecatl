@@ -76,6 +76,42 @@ func execWithRunner(t *testing.T, tl tool.Tool, in session.ToolCall, ws tool.Wor
 	return res
 }
 
+type shellPathRunner struct {
+	inner tool.CommandRunner
+	shell string
+	calls int
+}
+
+func (r *shellPathRunner) Run(ctx context.Context, command string) (tool.CommandResult, error) {
+	r.calls++
+	return r.inner.Run(ctx, command)
+}
+
+func (r *shellPathRunner) ShellPath() string { return r.shell }
+
+func TestShellCompatibilityDiagnostic(t *testing.T) {
+	ws := memfs.NewWorkspace("/")
+	inner := memfs.NewCommandRunner()
+	inner.SetResult(&tool.CommandResult{Stdout: "ok", ExitCode: 0}, nil)
+	runner := &shellPathRunner{inner: inner, shell: "/bin/sh"}
+
+	res := execWithRunner(t, NewShellTool(), call(t, ShellToolName, map[string]any{"command": "[[ -n value ]]"}), ws, runner)
+	if !res.IsError || !strings.Contains(res.Content, "not portable") {
+		t.Fatalf("Shell compatibility result = %+v, want a portability error", res)
+	}
+	if runner.calls != 0 {
+		t.Fatalf("compatibility error ran command %d times, want 0", runner.calls)
+	}
+
+	res = execWithRunner(t, NewShellTool(), call(t, ShellToolName, map[string]any{"command": "echo ok"}), ws, runner)
+	if res.IsError || res.Content != "ok\n[exit code: 0]" {
+		t.Fatalf("portable Shell result = %+v, want executed success", res)
+	}
+	if runner.calls != 1 {
+		t.Fatalf("portable command ran %d times, want 1", runner.calls)
+	}
+}
+
 // seed writes a file directly into a memfs workspace (no read recorded).
 func seed(t *testing.T, ws *memfs.Workspace, path, content string) {
 	t.Helper()

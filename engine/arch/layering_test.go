@@ -271,6 +271,55 @@ func TestNoEngineAdapterImportsAgent(t *testing.T) {
 	}
 }
 
+func TestShellCompatibilityDiagnostic(t *testing.T) {
+	const shellcompatImport = modulePrefix + "engine/internal/shellcompat"
+	wantImporters := map[string]bool{
+		modulePrefix + "engine/agent":           false,
+		modulePrefix + "engine/adapter/fstools": false,
+	}
+
+	err := filepath.WalkDir("..", func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() {
+			return nil
+		}
+		bp, importErr := build.ImportDir(path, 0)
+		if importErr != nil {
+			var noGo *build.NoGoError
+			if errors.As(importErr, &noGo) {
+				return nil
+			}
+			return importErr
+		}
+		for _, imp := range bp.Imports {
+			if imp != shellcompatImport {
+				continue
+			}
+			rel, relErr := filepath.Rel("..", path)
+			if relErr != nil {
+				return relErr
+			}
+			importer := modulePrefix + "engine/" + filepath.ToSlash(rel)
+			if _, ok := wantImporters[importer]; !ok {
+				t.Errorf("only agent and adapter/fstools may import %s; found %s", shellcompatImport, importer)
+				continue
+			}
+			wantImporters[importer] = true
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk engine packages: %v", err)
+	}
+	for importer, found := range wantImporters {
+		if !found {
+			t.Errorf("expected %s to import %s", importer, shellcompatImport)
+		}
+	}
+}
+
 // TestCoreImportDirection is the SYMMETRIC direction check: for every one of the
 // seven core tiers, its DIRECT non-test imports must be a subset of that tier's
 // exact allow-set (table above). This closes the gap that TestNoCoreImportsAdapter

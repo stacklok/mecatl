@@ -4,6 +4,7 @@
 - Date: 2026-09-07
 - Scope: command-tool identity, legacy Bash compatibility, portable-POSIX command feedback, and exported engine naming
 - Supersedes: ADR 0201 decision D1 only (the command-tool identity)
+- Superseded by: ADR 0324 decision paragraph on parser placement only
 
 ## Context
 
