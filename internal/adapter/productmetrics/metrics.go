@@ -324,7 +324,7 @@ func NewRecorder(mp metric.MeterProvider) (*Recorder, error) {
 		return nil, fmt.Errorf("productmetrics: tool_calls_per_run histogram: %w", err)
 	}
 	if r.timeToFirstValue, err = meter.Float64Histogram("mecatl.product.time_to_first_value",
-		metric.WithDescription("One-time-per-install duration, in seconds, from this install's first-seen moment (approximated by the first product-metrics startup that observes no marker) to its first run that both made a successful tool call and ended cleanly."),
+		metric.WithDescription("One-time-per-install duration, in seconds, from the start of the process that observed this install's first run that both made a successful tool call and ended cleanly (an approximation of onboarding time, not install age: a process started days after install and reaching that run in minutes reports minutes, not days)."),
 		metric.WithUnit("s")); err != nil {
 		return nil, fmt.Errorf("productmetrics: time_to_first_value histogram: %w", err)
 	}
