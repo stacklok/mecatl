@@ -20,18 +20,22 @@ shipped Shell tools, not depend on its parser details.
 
 ## Decision
 
-Place the parser-backed diagnostic in `engine/internal/shellcompat`. It is shared only by
-engine-internal Shell tool implementations. Its parser walk, result classification, and
-concrete error type remain unexported outside that internal package.
+Place the parser-backed diagnostic in `engine/internal/shellcompat`. Its `Check(shellPath,
+command string) error` function is exported only for engine descendants: Go's `internal`
+boundary prevents external consumers from importing the package. Only the loop-aware and
+reference Shell tool implementations may import it. Its parser walk, result
+classification, and concrete error type remain private to the package.
 
 Keep the behavior from ADR 0317 unchanged: inspect only the final post-PreToolUse command
 for configured shell-path basenames `sh` and `dash`, reject only the selected non-portable
 Bash constructs as a normal non-executing tool error, preserve original bytes for permitted
 commands, and never use the result for authorization or sandboxing.
 
-Do not add an exported governance or tool diagnostic helper and do not widen
+Do not add an externally importable governance or tool diagnostic helper and do not widen
 `tool.CommandRunner` for profile discovery. Permit `mvdan.cc/sh/v3/syntax` only in the
-internal helper's dependency allowance.
+internal helper's dependency allowance. Permit only `engine/agent` and
+`engine/adapter/fstools` to import that helper, through explicit depguard and
+import-direction rules.
 
 ## Consequences
 
