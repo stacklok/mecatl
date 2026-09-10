@@ -1,0 +1,29 @@
+{{/*
+Generates ONE stable install-id for this Helm release, shared by every replica
+and preserved across every `helm upgrade` — unlike a per-pod local file, which
+mecak8s cannot use at all: it runs storage-free, no PVC (ADR 0048), so every pod
+restart would otherwise mint a fresh, never-reused id — the worst-case
+cardinality pattern for the product-metrics pipeline this feeds.
+
+The `lookup` guard is the standard Helm idiom for "generate once, keep stable on
+upgrade": when a ConfigMap of this name already exists in the release namespace
+its EXISTING value is reused verbatim, so only a genuinely first `helm install`
+(or a deliberately deleted ConfigMap) mints a new id. `lookup` returns an empty
+map for a client-side render (`helm template`, `--dry-run`), so those renders
+show a throwaway id rather than the cluster's — expected, and never written.
+*/}}
+{{- $existing := lookup "v1" "ConfigMap" .Release.Namespace (printf "%s-install-id" (include "mecak8s.fullname" .)) }}
+{{- $installID := "" }}
+{{- if and $existing $existing.data }}
+{{- $installID = index $existing.data "installId" }}
+{{- end }}
+{{- if not $installID }}
+{{- $installID = uuidv4 }}
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mecak8s.fullname" . }}-install-id
+  labels: {{- include "mecak8s.labels" . | nindent 4 }}
+data:
+  installId: {{ $installID | quote }}

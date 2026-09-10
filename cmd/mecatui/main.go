@@ -1038,7 +1038,7 @@ func setupProductMetrics(ctx context.Context, cfg config, diag port.Diagnostics)
 	heartbeatCtx, cancelHeartbeat := context.WithCancel(context.Background())
 	pm, err := cliconfig.BuildProductMetrics(ctx, heartbeatCtx, productMetricsEnabled, cfg.productMetricsDryRun,
 		productmetrics.BinaryMecatui, buildinfo.BuildID, productmetrics.DefaultHeartbeatInterval,
-		productMetricsSnapshot(), diag)
+		productMetricsSnapshot(), "" /* no install-id override: local-file mechanism */, diag)
 	if err != nil {
 		diag.Log(ctx, port.LevelWarn, "mecatui: product metrics disabled: setup failed", "err", err.Error())
 	}

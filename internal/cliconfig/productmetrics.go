@@ -62,6 +62,16 @@ type ProductMetricsHandles struct {
 // short-lived process like mecatequi can exit before an unawaited goroutine
 // ever runs) and returns handles wrapping the DryRunRecorder as both Sink
 // and ToolCallRecorder.
+//
+// installIDOverride, when non-empty, is used verbatim as the install id and
+// the local-file mechanism (LoadOrCreateInstallIDDefault) is skipped entirely.
+// It exists for mecak8s, which runs storage-free with no PVC (ADR 0048): its
+// Helm chart provisions ONE stable id per release in a ConfigMap and threads
+// it in via MECATL_PRODUCT_METRICS_INSTALL_ID, because a local file would mint
+// a fresh, never-reused id on every pod restart. An override never reports
+// FirstRun (nothing was minted here, and the chart — not this process — owns
+// the id's lifecycle). Every other binary passes "" and keeps the local-file
+// behaviour unchanged.
 func BuildProductMetrics(
 	ctx, heartbeatCtx context.Context,
 	enabled, dryRun bool,
@@ -69,6 +79,7 @@ func BuildProductMetrics(
 	version string,
 	heartbeatInterval time.Duration,
 	snap productmetrics.FeatureSnapshot,
+	installIDOverride string,
 	diag port.Diagnostics,
 ) (ProductMetricsHandles, error) {
 	noop := func(context.Context) error { return nil }
@@ -85,10 +96,15 @@ func BuildProductMetrics(
 	// local install-id file and reports firstRun for the disclosure notice
 	// below. Reinstated as a real, exported resource attribute (see
 	// provider.go's doc comment) after its cardinality cost was sized and
-	// accepted.
-	installID, firstRun, err := productmetrics.LoadOrCreateInstallIDDefault()
-	if err != nil {
-		return ProductMetricsHandles{Shutdown: noop}, fmt.Errorf("product metrics: install id: %w", err)
+	// accepted. An externally provisioned id (see installIDOverride) bypasses
+	// it: there is no file to read, write, or report a first run from.
+	installID, firstRun := installIDOverride, false
+	if installID == "" {
+		var err error
+		installID, firstRun, err = productmetrics.LoadOrCreateInstallIDDefault()
+		if err != nil {
+			return ProductMetricsHandles{Shutdown: noop}, fmt.Errorf("product metrics: install id: %w", err)
+		}
 	}
 
 	provider, err := productmetrics.NewProvider(ctx, productmetrics.Config{

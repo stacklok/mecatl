@@ -245,6 +245,8 @@ The four channels above are all **operator-facing**: they help you observe your 
 
 **Self-verify before trusting it.** `--product-metrics-dry-run` prints every observation this pipeline would have sent to stderr instead of exporting it, so you can check the "no PII" claim yourself rather than take the docs' word for it.
 
+**On Kubernetes.** The reported install identifier is an anonymous random UUID. `mecated`, `mecatui`, and `mecatequi` keep it in a local state file, but `mecak8s` is storage-free (no PVC), so a per-pod file would produce a brand-new id on every restart. The Helm chart therefore provisions the id once, into a `<release>-mecak8s-install-id` ConfigMap that is reused across every `helm upgrade`, and mounts it into the container as `MECATL_PRODUCT_METRICS_INSTALL_ID`. Delete that ConfigMap to reset the id, or opt out entirely with any of the switches above — the env var only decides *which* id is used when reporting is on.
+
 ---
 
 ## What's next

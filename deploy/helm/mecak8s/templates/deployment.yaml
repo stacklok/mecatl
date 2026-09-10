@@ -195,10 +195,17 @@ spec:
             {{- if $mcpSettings }}
             - --permission-config=/etc/mecatl-mcp/settings.yaml
             {{- end }}
-          {{- $mcpEnvServers := false }}
-          {{- range .Values.mcp.servers }}{{- if ne .auth.mode "none" }}{{- $mcpEnvServers = true }}{{- end }}{{- end }}
-          {{- if or .Values.extraEnv $mcpEnvServers $learningStoreTokenConfigured }}
           env:
+            {{- /* The chart-provisioned, stable-per-release product-metrics
+                   install id. Always present: mecak8s is storage-free (ADR
+                   0048), so the local-file mechanism the other binaries use
+                   would mint a fresh id on every pod restart. See
+                   install-id-configmap.yaml. */}}
+            - name: MECATL_PRODUCT_METRICS_INSTALL_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "mecak8s.fullname" . }}-install-id
+                  key: installId
             {{- if $learningStoreTokenConfigured }}
             - name: MECATL_DRIVER_AUTH_TOKEN
               valueFrom:
@@ -222,7 +229,6 @@ spec:
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
-          {{- end }}
           ports:
             - {name: grpc, containerPort: 8080}
             - {name: http, containerPort: 8081}

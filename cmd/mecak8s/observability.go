@@ -87,9 +87,20 @@ func buildObservability(ctx context.Context, cfg config, diag port.Diagnostics) 
 		FlagValue:       cfg.productMetrics,
 		SettingsEnabled: permResolver.OperatorProductMetricsEnabled(),
 	})
+	// mecak8s cannot use the local-file install-id mechanism the other three
+	// binaries share: it runs storage-free with no PVC (ADR 0048), so every
+	// pod restart would mint a fresh, never-reused id — the worst-case
+	// cardinality pattern for this pipeline. The Helm chart instead provisions
+	// ONE stable id per release in a ConfigMap (see
+	// deploy/helm/mecak8s/templates/install-id-configmap.yaml) and threads it
+	// in through this env var. Empty (the binary run directly, outside the
+	// chart) falls back to BuildProductMetrics's own local-file default —
+	// still functional, just without the "one stable id per k8s deployment"
+	// guarantee the chart provides.
+	installIDOverride := os.Getenv("MECATL_PRODUCT_METRICS_INSTALL_ID")
 	pm, pmErr := cliconfig.BuildProductMetrics(ctx, ctx, enabled, cfg.productMetricsDryRun,
 		productmetrics.BinaryMecak8s, buildinfo.BuildID, productmetrics.DefaultHeartbeatInterval,
-		productmetrics.FeatureSnapshot{Mode: productmetrics.ModeK8s}, diag)
+		productmetrics.FeatureSnapshot{Mode: productmetrics.ModeK8s}, installIDOverride, diag)
 	if pmErr != nil {
 		// Mirror the existing telemetry-setup-failure posture: a warning, never
 		// a fatal error — product metrics are best-effort and must not block

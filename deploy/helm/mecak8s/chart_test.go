@@ -101,6 +101,30 @@ func deploymentFromRender(t *testing.T, rendered string) *appsv1.Deployment {
 	return nil
 }
 
+// installIDEnvVar is the chart-provisioned product-metrics install id
+// (install-id-configmap.yaml). It is UNCONDITIONAL — mecak8s is storage-free
+// (ADR 0048), so the local-file mechanism the other binaries use would mint a
+// fresh id on every pod restart — which means every env-shape assertion below
+// is about the OTHER, opt-in variables. appEnv drops it so those assertions
+// keep saying exactly what they said before it existed.
+const installIDEnvVar = "MECATL_PRODUCT_METRICS_INSTALL_ID"
+
+// maskInstallID neutralises the per-render uuidv4 so two renders can be
+// compared for equality everywhere ELSE. See install-id-configmap.yaml.
+func maskInstallID(rendered string) string {
+	return regexp.MustCompile(`(?m)^  installId: .*$`).ReplaceAllString(rendered, "  installId: MASKED")
+}
+
+func appEnv(env []corev1.EnvVar) []corev1.EnvVar {
+	out := make([]corev1.EnvVar, 0, len(env))
+	for _, e := range env {
+		if e.Name != installIDEnvVar {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
 func pdbFromRender(t *testing.T, rendered string) *policyv1.PodDisruptionBudget {
 	t.Helper()
 	for _, document := range strings.Split(rendered, "\n---") {
@@ -528,8 +552,8 @@ func TestMecak8sHelmChart_LearningStore(t *testing.T) {
 			t.Fatalf("default render unexpectedly contains %q", forbidden)
 		}
 	}
-	if len(container.Env) != 0 {
-		t.Fatalf("default learning store environment = %#v, want none", container.Env)
+	if env := appEnv(container.Env); len(env) != 0 {
+		t.Fatalf("default learning store environment = %#v, want none", env)
 	}
 
 	for _, tc := range []struct {
@@ -560,8 +584,8 @@ func TestMecak8sHelmChart_LearningStore(t *testing.T) {
 			if got := slices.Contains(container.Args, "--driver-tls"); got != tc.wantTLS {
 				t.Fatalf("anonymous learning store --driver-tls = %t, want %t: %q", got, tc.wantTLS, container.Args)
 			}
-			if len(container.Env) != 0 || strings.Contains(rendered, "MECATL_DRIVER_AUTH_TOKEN") {
-				t.Fatalf("anonymous learning store environment = %#v, want no driver token", container.Env)
+			if env := appEnv(container.Env); len(env) != 0 || strings.Contains(rendered, "MECATL_DRIVER_AUTH_TOKEN") {
+				t.Fatalf("anonymous learning store environment = %#v, want no driver token", env)
 			}
 		})
 	}
@@ -598,8 +622,8 @@ func TestMecak8sHelmChart_LearningStore(t *testing.T) {
 	if slices.ContainsFunc(container.Args, func(arg string) bool { return strings.HasPrefix(arg, "--driver-auth-token") }) {
 		t.Fatalf("driver token was rendered as an argument: %q", container.Args)
 	}
-	if len(container.Env) != 1 || container.Env[0].Name != "MECATL_DRIVER_AUTH_TOKEN" || container.Env[0].Value != "" || container.Env[0].ValueFrom == nil || container.Env[0].ValueFrom.SecretKeyRef == nil || container.Env[0].ValueFrom.SecretKeyRef.Name != "learning-driver-credentials" || container.Env[0].ValueFrom.SecretKeyRef.Key != "bearer-token" {
-		t.Fatalf("learning driver environment = %#v", container.Env)
+	if env := appEnv(container.Env); len(env) != 1 || env[0].Name != "MECATL_DRIVER_AUTH_TOKEN" || env[0].Value != "" || env[0].ValueFrom == nil || env[0].ValueFrom.SecretKeyRef == nil || env[0].ValueFrom.SecretKeyRef.Name != "learning-driver-credentials" || env[0].ValueFrom.SecretKeyRef.Key != "bearer-token" {
+		t.Fatalf("learning driver environment = %#v", env)
 	}
 	for _, name := range []string{"learning-store-ca", "learning-store-mtls"} {
 		if !slices.ContainsFunc(container.VolumeMounts, func(mount corev1.VolumeMount) bool { return mount.Name == name && mount.ReadOnly }) {
@@ -736,10 +760,11 @@ func TestMecak8sHelmChart_ProductionFixturesReferenceProviderCredential(t *testi
 			if !slices.Contains(container.Args, "--default-provider=openrouter") || !slices.Contains(container.Args, "--model=anthropic/claude-sonnet-4-6") {
 				t.Fatalf("production provider selection = %q", container.Args)
 			}
-			if len(container.Env) != 1 {
-				t.Fatalf("provider environment = %#v, want one SecretKeyRef", container.Env)
+			providerEnv := appEnv(container.Env)
+			if len(providerEnv) != 1 {
+				t.Fatalf("provider environment = %#v, want one SecretKeyRef", providerEnv)
 			}
-			env := container.Env[0]
+			env := providerEnv[0]
 			if env.Name != "OPENROUTER_API_KEY" || env.ValueFrom == nil || env.ValueFrom.SecretKeyRef == nil || env.ValueFrom.SecretKeyRef.Name != "provider-credentials" || env.ValueFrom.SecretKeyRef.Key != "openrouter-api-key" {
 				t.Fatalf("provider environment = %#v", env)
 			}
@@ -1344,7 +1369,10 @@ func TestMecak8sHelmChart_ServerTLS(t *testing.T) {
 	if err != nil {
 		t.Fatalf("render tls.enabled=false production values: %v", err)
 	}
-	if defaultRender != falseRender {
+	// The chart-owned install id is a fresh uuidv4 on every client-side render
+	// (lookup finds no cluster ConfigMap), so it differs between two otherwise
+	// identical renders by design — mask it rather than comparing it.
+	if maskInstallID(defaultRender) != maskInstallID(falseRender) {
 		t.Fatal("tls.enabled=false changed the default production render")
 	}
 	for _, forbidden := range []string{"--tls-cert", "--tls-key", "/var/run/secrets/tls", "name: tls", "scheme: HTTPS"} {
@@ -1535,8 +1563,63 @@ func TestMecak8sHelmChart_KindLiveProviderDisablesMock(t *testing.T) {
 	if slices.Contains(container.Args, "--mock") {
 		t.Fatal("Kind live-provider profile retained --mock")
 	}
-	if len(container.Env) != 1 || container.Env[0].Name != "OPENROUTER_API_KEY" || container.Env[0].ValueFrom == nil || container.Env[0].ValueFrom.SecretKeyRef == nil || container.Env[0].ValueFrom.SecretKeyRef.Name != "mecak8s-live-provider" {
-		t.Fatalf("Kind live-provider environment = %#v", container.Env)
+	if env := appEnv(container.Env); len(env) != 1 || env[0].Name != "OPENROUTER_API_KEY" || env[0].ValueFrom == nil || env[0].ValueFrom.SecretKeyRef == nil || env[0].ValueFrom.SecretKeyRef.Name != "mecak8s-live-provider" {
+		t.Fatalf("Kind live-provider environment = %#v", env)
+	}
+}
+
+// TestMecak8sHelmChart_ProductMetricsInstallID pins the storage-free install-id
+// contract (ADR 0048): mecak8s keeps no local state, so a per-pod install-id
+// file would mint a fresh, never-reused id on every restart. The chart instead
+// provisions ONE id per release in a ConfigMap and mounts it as an env var, so
+// both halves — the generated value and the reference to it — must render
+// unconditionally, on the bare default values as well as a production fixture.
+func TestMecak8sHelmChart_ProductMetricsInstallID(t *testing.T) {
+	// A bare v4 UUID: nothing machine- or user-derived may appear here.
+	uuidV4 := regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
+
+	for _, tc := range []struct {
+		name, release string
+		args          []string
+	}{
+		{name: "production", release: "production", args: productionArgs()},
+		{name: "kind", release: "kind", args: kindFixtureArgs()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rendered, err := helm(t, tc.args...)
+			if err != nil {
+				t.Fatalf("render: %v", err)
+			}
+
+			name := tc.release + "-mecak8s-install-id"
+			cm := configMapFromRender(t, rendered, name)
+			id := cm.Data["installId"]
+			if !uuidV4.MatchString(id) {
+				t.Fatalf("ConfigMap %q installId = %q, want a v4 UUID", name, id)
+			}
+			if cm.Labels["app.kubernetes.io/name"] != "mecak8s" {
+				t.Fatalf("ConfigMap %q labels = %#v, want the chart's standard labels", name, cm.Labels)
+			}
+
+			container := deploymentFromRender(t, rendered).Spec.Template.Spec.Containers[0]
+			var got *corev1.EnvVar
+			for i := range container.Env {
+				if container.Env[i].Name == installIDEnvVar {
+					got = &container.Env[i]
+				}
+			}
+			if got == nil {
+				t.Fatalf("container environment = %#v, want %s", container.Env, installIDEnvVar)
+			}
+			// Referenced, never inlined: the id must come from the ConfigMap at
+			// pod start, so a `helm upgrade` that reuses the existing ConfigMap
+			// cannot be undone by a stale literal baked into the Deployment.
+			ref := got.ValueFrom
+			if got.Value != "" || ref == nil || ref.ConfigMapKeyRef == nil ||
+				ref.ConfigMapKeyRef.Name != name || ref.ConfigMapKeyRef.Key != "installId" {
+				t.Fatalf("%s = %#v, want a configMapKeyRef to %q/installId", installIDEnvVar, *got, name)
+			}
+		})
 	}
 }
 
@@ -1545,8 +1628,8 @@ func TestMecak8sHelmChart_ExtraEnv(t *testing.T) {
 	if err != nil {
 		t.Fatalf("render production values: %v", err)
 	}
-	if strings.Contains(rendered, "\n          env:") {
-		t.Fatal("default render (extraEnv unset) unexpectedly contains an env: block")
+	if env := appEnv(deploymentFromRender(t, rendered).Spec.Template.Spec.Containers[0].Env); len(env) != 0 {
+		t.Fatalf("default render (extraEnv unset) environment = %#v, want only the chart-owned install id", env)
 	}
 
 	args := append(productionArgs(),
@@ -1801,19 +1884,21 @@ mcp:
 			t.Fatalf("MCP args missing %q: %#v", want, container.Args)
 		}
 	}
-	if len(container.Env) != 1 || container.Env[0].Name != "MCP_INTERNAL_API_TOKEN" ||
-		container.Env[0].Value != "" || container.Env[0].ValueFrom == nil ||
-		container.Env[0].ValueFrom.SecretKeyRef == nil ||
-		container.Env[0].ValueFrom.SecretKeyRef.Name != "internal-mcp" ||
-		container.Env[0].ValueFrom.SecretKeyRef.Key != "bearer-token" {
-		t.Fatalf("static bearer environment = %#v", container.Env)
+	if env := appEnv(container.Env); len(env) != 1 || env[0].Name != "MCP_INTERNAL_API_TOKEN" ||
+		env[0].Value != "" || env[0].ValueFrom == nil ||
+		env[0].ValueFrom.SecretKeyRef == nil ||
+		env[0].ValueFrom.SecretKeyRef.Name != "internal-mcp" ||
+		env[0].ValueFrom.SecretKeyRef.Key != "bearer-token" {
+		t.Fatalf("static bearer environment = %#v", appEnv(container.Env))
 	}
-	if strings.Contains(rendered, "kind: ConfigMap") || strings.Contains(rendered, "--permission-config=/etc/mecatl-mcp/settings.yaml") {
+	// The install-id ConfigMap is unconditional, so the OAuth-profile probe
+	// names the MCP settings ConfigMap specifically rather than any ConfigMap.
+	if strings.Contains(rendered, "-mecak8s-mcp") || strings.Contains(rendered, "--permission-config=/etc/mecatl-mcp/settings.yaml") {
 		t.Fatal("static/no-auth MCP render unexpectedly created an OAuth profile")
 	}
 }
 
-func TestMecak8sHelmChart_MCPNoAuthDoesNotRenderEnv(t *testing.T) {
+func TestMecak8sHelmChart_MCPNoAuthRendersNoTokenEnv(t *testing.T) {
 	rendered, err := renderMCPValues(t, `
 mcp:
   servers:
@@ -1825,11 +1910,8 @@ mcp:
 		t.Fatalf("render no-auth MCP values: %v", err)
 	}
 	container := deploymentFromRender(t, rendered).Spec.Template.Spec.Containers[0]
-	if len(container.Env) != 0 {
-		t.Fatalf("no-auth MCP environment = %#v, want empty", container.Env)
-	}
-	if strings.Contains(rendered, "\n          env:") {
-		t.Fatal("no-auth MCP render unexpectedly contains an env block")
+	if env := appEnv(container.Env); len(env) != 0 {
+		t.Fatalf("no-auth MCP environment = %#v, want empty", env)
 	}
 }
 
@@ -1997,8 +2079,8 @@ mcp:
 	if slices.ContainsFunc(container.Args, func(arg string) bool { return strings.HasPrefix(arg, "--mcp-server=") }) {
 		t.Fatal("broker routes must not be duplicated as legacy global flags")
 	}
-	if len(container.Env) != 1 || container.Env[0].Name != "MECATL_MCP_OAUTH_REGISTERED_CLIENT_SECRET" || container.Env[0].ValueFrom == nil || container.Env[0].ValueFrom.SecretKeyRef == nil || container.Env[0].ValueFrom.SecretKeyRef.Name != "oauth-registered" || container.Env[0].ValueFrom.SecretKeyRef.Key != "client-secret" {
-		t.Fatalf("OAuth environment is not SecretKeyRef-only: %#v", container.Env)
+	if env := appEnv(container.Env); len(env) != 1 || env[0].Name != "MECATL_MCP_OAUTH_REGISTERED_CLIENT_SECRET" || env[0].ValueFrom == nil || env[0].ValueFrom.SecretKeyRef == nil || env[0].ValueFrom.SecretKeyRef.Name != "oauth-registered" || env[0].ValueFrom.SecretKeyRef.Key != "client-secret" {
+		t.Fatalf("OAuth environment is not SecretKeyRef-only: %#v", env)
 	}
 	cm := configMapFromRender(t, rendered, "production-mecak8s-mcp")
 	profile := cm.Data["settings.yaml"]

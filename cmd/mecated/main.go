@@ -1145,7 +1145,7 @@ func setupProductMetrics(ctx context.Context, cfg config, diag port.Diagnostics)
 	heartbeatCtx, cancelHeartbeat := context.WithCancel(context.Background())
 	pm, err := cliconfig.BuildProductMetrics(ctx, heartbeatCtx, productMetricsEnabled, cfg.productMetricsDryRun,
 		productmetrics.BinaryMecated, buildinfo.BuildID, productmetrics.DefaultHeartbeatInterval,
-		productMetricsSnapshot(cfg), diag)
+		productMetricsSnapshot(cfg), "" /* no install-id override: local-file mechanism */, diag)
 	if err != nil {
 		slog.Warn("product metrics disabled: setup failed", "err", err)
 	}

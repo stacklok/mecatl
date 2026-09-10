@@ -74,7 +74,8 @@ func buildObservability(ctx context.Context, f flags, diag port.Diagnostics) (ob
 	})
 	pm, pmErr := cliconfig.BuildProductMetrics(ctx, context.Background(), enabled, f.productMetricsDryRun,
 		productmetrics.BinaryMecatequi, buildinfo.BuildID, 0, /* single fire, short-lived */
-		productmetrics.FeatureSnapshot{Mode: productmetrics.ModeHeadless}, diag)
+		productmetrics.FeatureSnapshot{Mode: productmetrics.ModeHeadless},
+		"" /* no install-id override: local-file mechanism */, diag)
 	if pmErr != nil {
 		// Mirror the existing telemetry-setup-failure posture: a warning, never
 		// a fatal error — product metrics are best-effort and must not block a
