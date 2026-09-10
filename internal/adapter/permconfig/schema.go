@@ -71,6 +71,9 @@ const MaxContextWindowTokens = 2_000_000
 // where a typo'd key would silently disable a rule list (see the custom
 // UnmarshalYAML on Permissions / SubagentPermissions).
 type Config struct {
+	// LLM is the strict operator-tier native endpoint facade. Project values are
+	// ignored by Resolver with a value-free warning.
+	LLM *LLMSection `yaml:"llm"`
 	// Providers holds strict, operator-tier custom LLM provider definitions. Project
 	// values are ignored by Resolver with a value-free warning.
 	Providers ProviderDefinitions `yaml:"providers"`

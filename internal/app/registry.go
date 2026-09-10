@@ -753,6 +753,11 @@ func sortedProviderDefinitions(definitions permconfig.ProviderDefinitions) []per
 
 func addCustomProviderEntries(entries map[string]providerEntry, cfg Config, meta *liveMetaStore) {
 	for _, definition := range sortedProviderDefinitions(cfg.ProviderDefinitions) {
+		// Native endpoints already share the provider-definition path, but remain
+		// unavailable until the native credential lifecycle mints their entries.
+		if definition.Native != nil {
+			continue
+		}
 		key := cfg.CustomProviderAPIKeys[definition.ID]
 		if definition.Auth.Method == "api_key" && key == "" {
 			continue

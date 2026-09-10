@@ -216,6 +216,7 @@ type Resolver struct {
 	// provider configuration captured once at resolver construction.
 	operatorProviders         ProviderDefinitions
 	operatorProviderOverrides ProviderOverrides
+	operatorLLM               *LLMSection
 	operatorProviderConfigErr error
 
 	mu    sync.RWMutex
@@ -484,6 +485,7 @@ func newWithEnv(opts Options, env xdgconfig.ResolveEnv) *Resolver {
 	}
 	var report Report
 	r.userRules = r.loadUserRules(&report)
+	r.normalizeNativeEndpoints()
 	r.logReport(&report, "user-global")
 	return r
 }
@@ -615,6 +617,9 @@ func (r *Resolver) loadProjectRules(ws tool.WorkspaceReader) ([]governance.Rule,
 		// project repo weaken or disable a security checker — a downgrade the usual
 		// tighten-only project gate does NOT permit (it reverses here: project config
 		// can only TIGHTEN permissions, but a guardrail relaxation is a LOOSENING).
+		if cfg.LLM != nil {
+			r.diag.Log(context.Background(), port.LevelWarn, "llm: IGNORING project-tier llm block (operator-tier only)", "file", src.path, "root", ws.Root())
+		}
 		if cfg.Providers != nil {
 			r.diag.Log(context.Background(), port.LevelWarn, "providers: IGNORING project-tier providers block (operator-tier only)", "file", src.path, "root", ws.Root())
 		}
@@ -849,7 +854,7 @@ func (r *Resolver) applyTrustGate(rules []governance.Rule, report *Report) []gov
 // Read from the host filesystem via the injectable env (NOT a workspace — these
 // live outside any session root). Fail-soft per file.
 func (r *Resolver) captureOperatorParseError(data []byte, err error) {
-	if (hasTopLevelKey(data, "providers") || hasTopLevelKey(data, "provider_overrides")) && r.operatorProviderConfigErr == nil {
+	if (hasTopLevelKey(data, "llm") || hasTopLevelKey(data, "providers") || hasTopLevelKey(data, "provider_overrides")) && r.operatorProviderConfigErr == nil {
 		r.operatorProviderConfigErr = errors.New("operator provider configuration is invalid")
 	}
 	if hasTopLevelKey(data, "retention") && r.operatorRetentionErr == nil {
@@ -909,6 +914,7 @@ func (r *Resolver) loadUserRules(report *Report) []governance.Rule {
 		r.captureMCP(cfg.MCP)
 		r.captureRetention(cfg.Retention)
 		r.captureStorageManagement(cfg.StorageManagement)
+		r.captureLLM(cfg.LLM)
 		r.captureProviders(cfg.Providers, cfg.ProviderOverrides)
 	}
 
@@ -949,6 +955,7 @@ func (r *Resolver) loadUserRules(report *Report) []governance.Rule {
 				r.captureRetention(cfg.Retention)
 				r.captureStorageManagement(cfg.StorageManagement)
 				r.captureTemporaryStorage(cfg.TemporaryStorage)
+				r.captureLLM(cfg.LLM)
 				r.captureProviders(cfg.Providers, cfg.ProviderOverrides)
 			}
 		}
@@ -969,6 +976,36 @@ func (r *Resolver) loadUserRules(report *Report) []governance.Rule {
 	}
 
 	return rules
+}
+
+// captureLLM records the first complete operator native-endpoint facade.
+func (r *Resolver) captureLLM(llm *LLMSection) {
+	if r.operatorLLM == nil && llm != nil {
+		r.operatorLLM = llm
+	}
+}
+
+// normalizeNativeEndpoints folds the facade into the one existing provider-
+// definition snapshot exactly once, after operator precedence is resolved.
+func (r *Resolver) normalizeNativeEndpoints() {
+	if r.operatorLLM == nil || r.operatorProviderConfigErr != nil {
+		return
+	}
+	native := r.operatorLLM.ProviderDefinitions()
+	for id := range native {
+		if _, exists := r.operatorProviders[id]; exists {
+			r.operatorProviderConfigErr = errors.New("operator LLM endpoint id collides with providers")
+			return
+		}
+	}
+	merged := make(ProviderDefinitions, len(r.operatorProviders)+len(native))
+	for id, definition := range r.operatorProviders {
+		merged[id] = definition
+	}
+	for id, definition := range native {
+		merged[id] = definition
+	}
+	r.operatorProviders = merged
 }
 
 // captureProviders records the first complete operator provider snapshot. Explicit

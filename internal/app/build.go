@@ -1344,6 +1344,19 @@ type ProviderCredentials struct {
 	CustomProviderAPIKeys map[string]string
 }
 
+func legacyProviderDefinitions(definitions permconfig.ProviderDefinitions) permconfig.ProviderDefinitions {
+	if definitions == nil {
+		return nil
+	}
+	legacy := make(permconfig.ProviderDefinitions, len(definitions))
+	for id, definition := range definitions {
+		if definition.Native == nil {
+			legacy[id] = definition
+		}
+	}
+	return legacy
+}
+
 // Built is the result of Build: the assembled server.Service plus a Close func
 // that tears down composition-owned resources. Close is always safe to call.
 type Built struct {
@@ -1620,7 +1633,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		cfg.ProviderOverrides = mergeProviderOverrides(settingsOverrides, cfg.ProviderOverrides)
 	}
 	if cfg.ProviderCredentialLoader != nil {
-		credentials, lifecycle, err := cfg.ProviderCredentialLoader.Load(definitions)
+		credentials, lifecycle, err := cfg.ProviderCredentialLoader.Load(legacyProviderDefinitions(definitions))
 		if err != nil {
 			return nil, err
 		}

@@ -55,6 +55,34 @@ func TestADR_0238_BuildLoadsProviderCredentialLoaderOnce(t *testing.T) {
 	}
 }
 
+func TestNativeEndpointBypassesLegacyCredentialLoader(t *testing.T) {
+	loader := &capturingProviderCredentialLoader{}
+	definitions := permconfig.ProviderDefinitions{
+		"native": {
+			ID: "native", BaseURL: "https://gateway.example/v1", DefaultModel: "model", APIFlavor: "openai-responses",
+			Native: &permconfig.NativeEndpointIdentity{CredentialHome: "/credentials"},
+		},
+		"legacy": {
+			ID: "legacy", BaseURL: "https://legacy.example/v1", DefaultModel: "model", APIFlavor: "openai-responses",
+			Auth: permconfig.ProviderAuth{Method: "none"},
+		},
+	}
+	built, err := Build(context.Background(), Config{
+		Workspace: t.TempDir(), Model: "mock", MockProvider: mockllm.New(),
+		ProviderDefinitions: definitions, ProviderCredentialLoader: loader,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer built.Close()
+	if _, exists := loader.definitions["native"]; exists {
+		t.Fatal("native endpoint reached the legacy provider credential loader")
+	}
+	if _, exists := loader.definitions["legacy"]; !exists {
+		t.Fatal("legacy provider definition was not passed to its credential loader")
+	}
+}
+
 func TestADR_0238_BuildOwnsProviderCredentialLifecycle(t *testing.T) {
 	t.Run("loader error aborts build", func(t *testing.T) {
 		loader := &capturingProviderCredentialLoader{err: errors.New("profile unavailable")}

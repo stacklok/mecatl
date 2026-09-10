@@ -157,6 +157,7 @@ func (c *Config) UnmarshalYAML(node ast.Node) error {
 		return fmt.Errorf("permission config must be a mapping")
 	}
 	known := map[string]any{
+		"llm":                    newPermconfigNodePointer(&c.LLM),
 		"providers":              &c.Providers,
 		"provider_overrides":     &c.ProviderOverrides,
 		"permissions":            &c.Permissions,
@@ -187,6 +188,13 @@ func (c *Config) UnmarshalYAML(node ast.Node) error {
 				section:  key,
 				location: permconfigMappingEntryLocation(entry),
 				err:      err,
+			}
+		}
+	}
+	if c.LLM != nil {
+		for id := range c.LLM.Endpoints {
+			if _, exists := c.Providers[id]; exists {
+				return &permconfigSchemaError{section: "llm", err: fmt.Errorf("endpoint id collides with providers")}
 			}
 		}
 	}
