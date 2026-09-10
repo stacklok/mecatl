@@ -1094,6 +1094,15 @@ const rpcCatalogRows = [
     ),
   }),
   rpc({
+    key: "HarnessService.ListSessionMcpConnectors",
+    service: "HarnessService",
+    method: "ListSessionMcpConnectors",
+    shape: "unary",
+    backingService: "ListSessionMcpConnectors",
+    grpc: grpc(HarnessService.method.listSessionMcpConnectors),
+    http: http("GET", "/v1/sessions/{id}/mcp/connectors", ["id=session_id"], [], "none", "json"),
+  }),
+  rpc({
     key: "HarnessService.ConnectWorkspaceServices",
     service: "HarnessService",
     method: "ConnectWorkspaceServices",
