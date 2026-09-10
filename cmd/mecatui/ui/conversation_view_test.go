@@ -63,6 +63,20 @@ func TestADR_0301_AnchorFallbackIsDeterministic(t *testing.T) {
 		t.Errorf("end-biased adjacent-block fallback row = %d, want 3", got)
 	}
 
+	// Derived rows have no source offset. When the exact local row disappears,
+	// preserve the reading edge within the same semantic region before leaving it.
+	derived := anchorFrame(
+		renderedRow{blockID: 4, region: conversationRegionReasoning, row: 0},
+		renderedRow{blockID: 4, region: conversationRegionReasoning, row: 2},
+		renderedRow{blockID: 4, region: conversationRegionReasoning, row: 4},
+	)
+	if got := view.restore(derived, readingAnchor{blockID: 4, region: conversationRegionReasoning, row: 3, bias: towardStart}); got != 1 {
+		t.Errorf("start-biased derived same-region fallback row = %d, want 1", got)
+	}
+	if got := view.restore(derived, readingAnchor{blockID: 4, region: conversationRegionReasoning, row: 1, bias: towardEnd}); got != 1 {
+		t.Errorf("end-biased derived same-region fallback row = %d, want 1", got)
+	}
+
 	// Tool-card provenance follows the rendered semantic sections, not a fraction
 	// of their total rows: a wrapped argument section can be much longer than its
 	// one-line result.

@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"charm.land/bubbles/v2/viewport"
+
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 )
 
@@ -91,6 +93,55 @@ func TestExpandedReasoningProvenanceUsesWrappedRows(t *testing.T) {
 	}
 	if got := stripANSIstr(frame.lines[firstBody]); !strings.Contains(got, "BODY-START") {
 		t.Fatalf("first body row = %q, want BODY-START", got)
+	}
+}
+
+// TestExpandedReasoningAnchorSurvivesReflow keeps the visible reasoning text at
+// its logical grapheme location while leaving the header and caveat as chrome.
+func TestExpandedReasoningAnchorSurvivesReflow(t *testing.T) {
+	c := &conversation{}
+	c.startAssistant()
+	c.appendReasoning("first reasoning detail wraps before the REASONING-ANCHOR semantic text and continues after it")
+	c.appendAssistant("answer body keeps the viewport from following the tail")
+
+	r := newCacheRenderer()
+	r.setWidth(30)
+	narrow := r.renderConversationFrame(c, true)
+	assistant := c.blocks[0]
+	anchorRow := -1
+	for i, line := range narrow.lines {
+		row := narrow.provenance[i]
+		if row.blockID == assistant.id && row.region == conversationRegionReasoning && strings.Contains(stripANSIstr(line), "REASONING-ANCHOR") {
+			if !row.text {
+				t.Fatal("expanded reasoning text row must be text-bearing")
+			}
+			anchorRow = i
+			break
+		}
+	}
+	if anchorRow < 0 {
+		t.Fatalf("reasoning anchor text not found in %q", narrow.lines)
+	}
+	for i, line := range narrow.lines {
+		row := narrow.provenance[i]
+		if row.blockID == assistant.id && row.region == conversationRegionReasoning &&
+			(strings.Contains(stripANSIstr(line), "reasoning summary") || strings.Contains(stripANSIstr(line), reasoningCaveat)) && row.text {
+			t.Fatalf("reasoning presentation row %q must not be text-bearing", line)
+		}
+	}
+
+	vp := viewport.New()
+	vp.SetHeight(1)
+	vp.SetContentLines(narrow.lines)
+	vp.SetYOffset(anchorRow)
+	view := conversationView{mode: anchored, frame: narrow}
+	r.setWidth(100)
+	wide := r.renderConversationFrame(c, true)
+	view.replace(&vp, wide)
+
+	row := wide.provenance[vp.YOffset()]
+	if row.region != conversationRegionReasoning || !row.text || !strings.Contains(stripANSIstr(wide.lines[vp.YOffset()]), "REASONING-ANCHOR") {
+		t.Fatalf("restored row = %#v %q, want text-bearing reasoning row containing anchor", row, wide.lines[vp.YOffset()])
 	}
 }
 

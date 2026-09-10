@@ -259,9 +259,19 @@ func (r *renderer) provenanceRows(b *block, rendered string, expand bool, toolCa
 	case blockAssistant:
 		textStart = 2 // label plus its intentional blank row
 		if b.reasoning != "" {
-			reasoningRows := len(strings.Split(r.renderReasoning(b, expand), "\n"))
+			reasoning := r.renderReasoning(b, expand)
+			reasoningRows := len(strings.Split(reasoning, "\n"))
 			for i := textStart; i < min(textStart+reasoningRows, len(rows)); i++ {
 				rows[i] = renderedRow{blockID: b.id, region: conversationRegionReasoning, row: i - textStart}
+			}
+			if expand {
+				// The header and caveat describe the presentation. Only the
+				// expanded reasoning body is semantic text that can survive a
+				// reflow by its grapheme offset.
+				caveatRows := len(strings.Split(r.wrapStyled(reasoningCaveat, r.th.Style("reasoning")), "\n"))
+				for i := textStart + 1 + caveatRows; i < min(textStart+reasoningRows, len(rows)); i++ {
+					rows[i].text = true
+				}
 			}
 			textStart += reasoningRows
 		}
@@ -292,7 +302,8 @@ func (r *renderer) provenanceRows(b *block, rendered string, expand bool, toolCa
 func (r *renderer) assignVisibleOffsets(b *block, rows []renderedRow, lines []string) {
 	offsets := map[regionKind]int{}
 	for i := range rows {
-		if rows[i].blockID == 0 || rows[i].region == conversationRegionChrome || rows[i].region == conversationRegionAppendix {
+		if rows[i].blockID == 0 || rows[i].region == conversationRegionChrome || rows[i].region == conversationRegionAppendix ||
+			(rows[i].region == conversationRegionReasoning && !rows[i].text) {
 			continue
 		}
 		rows[i].text = true

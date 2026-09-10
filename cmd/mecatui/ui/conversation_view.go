@@ -109,15 +109,12 @@ func exactAnchorRow(frame renderedFrame, anchor readingAnchor) int {
 }
 
 func sameRegionRow(frame renderedFrame, anchor readingAnchor) int {
+	if !anchor.text {
+		return sameDerivedRegionRow(frame, anchor)
+	}
 	candidate := -1
 	for i, row := range frame.provenance {
-		if row.blockID != anchor.blockID || row.region != anchor.region {
-			continue
-		}
-		if !anchor.text || !row.text {
-			if candidate < 0 || anchor.bias == towardEnd {
-				candidate = i
-			}
+		if row.blockID != anchor.blockID || row.region != anchor.region || !row.text {
 			continue
 		}
 		if anchor.bias == towardStart && row.sourceOffset <= anchor.sourceOffset {
@@ -126,6 +123,37 @@ func sameRegionRow(frame renderedFrame, anchor readingAnchor) int {
 			}
 		}
 		if anchor.bias == towardEnd && row.sourceOffset >= anchor.sourceOffset && candidate < 0 {
+			candidate = i
+		}
+	}
+	return candidate
+}
+
+func sameDerivedRegionRow(frame renderedFrame, anchor readingAnchor) int {
+	candidate := -1
+	for i, row := range frame.provenance {
+		if row.blockID != anchor.blockID || row.region != anchor.region {
+			continue
+		}
+		if anchor.bias == towardStart {
+			if row.row <= anchor.row && (candidate < 0 || frame.provenance[candidate].row < row.row) {
+				candidate = i
+			}
+		} else if row.row >= anchor.row && (candidate < 0 || frame.provenance[candidate].row > row.row) {
+			candidate = i
+		}
+	}
+	if candidate >= 0 {
+		return candidate
+	}
+	// The exact local row disappeared at this edge of the region. Preserve the
+	// reading direction while selecting the closest surviving row on the other side.
+	for i, row := range frame.provenance {
+		if row.blockID != anchor.blockID || row.region != anchor.region {
+			continue
+		}
+		if candidate < 0 || (anchor.bias == towardStart && row.row < frame.provenance[candidate].row) ||
+			(anchor.bias == towardEnd && row.row > frame.provenance[candidate].row) {
 			candidate = i
 		}
 	}
