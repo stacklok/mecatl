@@ -48,7 +48,7 @@ var builtinToolCategories = map[string]bool{
 	// Filesystem + shell (engine/adapter/fstools, engine/agent).
 	"Read": true, "ListDir": true, "Edit": true, "Write": true,
 	"Copy": true, "Move": true, "Remove": true, "Grep": true, "Glob": true,
-	"Bash": true, "BashStatus": true, "BashSystemTemp": true,
+	"Bash": true, "BashStatus": true,
 	// Outbound reads (engine/adapter/webfetch, engine/adapter/search).
 	"WebFetch": true, "WebSearch": true,
 	// MCP meta-tools — mecatl's OWN fixed names, distinct from the
@@ -58,6 +58,11 @@ var builtinToolCategories = map[string]bool{
 	// Delegation (engine/agent).
 	"Subagent": true, "SubagentStatus": true, "InspectSubagent": true,
 	"Parallel": true, "Team": true, "InspectMember": true, "SubmitResult": true,
+	// Team coordination (engine/agent/teamtools.go).
+	"SendMessage": true, "AddTask": true, "ClaimTask": true,
+	"CompleteTask": true, "ListTasks": true, "RecordFinding": true,
+	// Session debugging (internal/adapter/sessiondebug).
+	"InspectSession": true,
 	// Skills.
 	"Skill": true, "SkillDraft": true,
 	// Project memory (internal/adapter/memory).
