@@ -32,10 +32,13 @@ func (c *fakeClock) advance(d time.Duration) {
 	c.t = c.t.Add(d)
 }
 
-// TestFlockleaseConformance runs the shared SessionLease conformance table
-// against the single-host flock lease over a temp dir, driving its injected fake
-// clock past the TTL.
-func TestExpiredSameOwnerMustTakeNewGeneration(t *testing.T) {
+// TestRenewReclaimsExpiredLeaseWithNoCompetitor covers issue #1333: a process
+// suspended (e.g. laptop sleep) past the TTL must not lose its lease to a
+// competitor that never ran. On a single host, the durable record still
+// naming the caller at the caller's own token — read under the same stable
+// transition lock Acquire/Release use — proves nobody raced an Acquire in the
+// interim, so Renew reclaims with a fresh expiry instead of declaring loss.
+func TestRenewReclaimsExpiredLeaseWithNoCompetitor(t *testing.T) {
 	const ttl = time.Minute
 	clk := &fakeClock{t: time.Unix(1_700_000_000, 0)}
 	adapter, err := flocklease.New(t.TempDir(), ttl, clk)
@@ -47,26 +50,51 @@ func TestExpiredSameOwnerMustTakeNewGeneration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Acquire first: %v", err)
 	}
+	clk.advance(2 * ttl)
+	renewed, err := adapter.Renew(ctx, first)
+	if err != nil {
+		t.Fatalf("Renew expired-but-uncontested lease: %v", err)
+	}
+	if renewed.Token != first.Token {
+		t.Fatalf("renewed token = %d, want unchanged %d", renewed.Token, first.Token)
+	}
+	if !renewed.Expiry.After(first.Expiry) {
+		t.Fatalf("renewed expiry %v not extended past original %v", renewed.Expiry, first.Expiry)
+	}
+	wantExpiry := clk.Now().Add(ttl)
+	if !renewed.Expiry.Equal(wantExpiry) {
+		t.Fatalf("renewed expiry = %v, want %v", renewed.Expiry, wantExpiry)
+	}
+}
+
+// TestRenewStillFailsAfterGenuineTakeover is the critical safety case: a
+// record whose owner/token DID change during the gap — a genuine competitor
+// took over — must still return ErrLeaseHeld unconditionally, even though on
+// a real single host this specific race can't happen concurrently (it is
+// simulated here by an out-of-band Acquire under a different owner).
+func TestRenewStillFailsAfterGenuineTakeover(t *testing.T) {
+	const ttl = time.Minute
+	clk := &fakeClock{t: time.Unix(1_700_000_000, 0)}
+	adapter, err := flocklease.New(t.TempDir(), ttl, clk)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ctx := context.Background()
+	id := session.SessionID("contested-expiry")
+	first, err := adapter.Acquire(ctx, id, "owner-a")
+	if err != nil {
+		t.Fatalf("Acquire first: %v", err)
+	}
 	clk.advance(ttl)
+	competitor, err := adapter.Acquire(ctx, id, "owner-b")
+	if err != nil {
+		t.Fatalf("Acquire competitor: %v", err)
+	}
+	if competitor.Token <= first.Token {
+		t.Fatalf("competitor token = %d, want > original token %d", competitor.Token, first.Token)
+	}
 	if _, err := adapter.Renew(ctx, first); !errors.Is(err, port.ErrLeaseHeld) {
-		t.Fatalf("Renew expired generation = %v, want ErrLeaseHeld", err)
-	}
-	successor, err := adapter.Acquire(ctx, first.SessionID, first.Owner)
-	if err != nil {
-		t.Fatalf("Acquire same owner after expiry: %v", err)
-	}
-	if successor.Token <= first.Token {
-		t.Fatalf("successor token = %d, want > expired token %d", successor.Token, first.Token)
-	}
-	if err := adapter.Release(ctx, first); err != nil {
-		t.Fatalf("stale Release: %v", err)
-	}
-	refreshed, err := adapter.Renew(ctx, successor)
-	if err != nil {
-		t.Fatalf("Renew successor after stale Release: %v", err)
-	}
-	if refreshed.Token != successor.Token {
-		t.Fatalf("renewed token = %d, want %d", refreshed.Token, successor.Token)
+		t.Fatalf("Renew after genuine takeover = %v, want ErrLeaseHeld", err)
 	}
 }
 
