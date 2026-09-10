@@ -255,3 +255,39 @@ func TestRecorderPerRunStateIsIsolatedAcrossConcurrentRuns(t *testing.T) {
 		t.Errorf("runs_completed{had_tool_call=true} = %d, want 1 (run-a's own tool call)", got)
 	}
 }
+
+func TestRecorderRunDurationRecordedFromSessionInitToResult(t *testing.T) {
+	r, reader := newTestRecorder(t)
+	r.Emit(context.Background(), session.Event{Type: session.EvSessionInit, RunID: "run-1"})
+	time.Sleep(5 * time.Millisecond)
+	r.Emit(context.Background(), session.Event{Type: session.EvResult, RunID: "run-1", Result: &session.ResultPayload{Stop: session.StopEndTurn}})
+
+	agg, ok := collect(t, reader)["mecatl.product.run_duration"]
+	if !ok {
+		t.Fatal("mecatl.product.run_duration missing")
+	}
+	hist, ok := agg.(metricdata.Histogram[float64])
+	if !ok {
+		t.Fatalf("aggregation is %T, want Histogram[float64]", agg)
+	}
+	if len(hist.DataPoints) != 1 || hist.DataPoints[0].Count != 1 {
+		t.Fatalf("expected exactly 1 recorded duration, got %+v", hist.DataPoints)
+	}
+	if hist.DataPoints[0].Sum <= 0 {
+		t.Errorf("recorded duration sum = %v, want > 0", hist.DataPoints[0].Sum)
+	}
+}
+
+func TestRecorderRunDurationNotRecordedWithoutMatchingSessionInit(t *testing.T) {
+	// A run whose EvSessionInit this Recorder never observed (e.g. process
+	// restarted mid-run — an edge case, not a common path) must not record a
+	// bogus/negative duration.
+	r, reader := newTestRecorder(t)
+	r.Emit(context.Background(), session.Event{Type: session.EvResult, RunID: "orphan-run", Result: &session.ResultPayload{Stop: session.StopEndTurn}})
+
+	if agg, ok := collect(t, reader)["mecatl.product.run_duration"]; ok {
+		if hist, ok := agg.(metricdata.Histogram[float64]); ok && len(hist.DataPoints) > 0 && hist.DataPoints[0].Count > 0 {
+			t.Errorf("recorded a duration for a run with no observed EvSessionInit: %+v", hist.DataPoints)
+		}
+	}
+}

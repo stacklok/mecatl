@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"sync"
+	"time"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
@@ -48,6 +49,7 @@ type Recorder struct {
 	tokens          metric.Int64Counter
 	subagentUsed    metric.Int64Counter
 	teamUsed        metric.Int64Counter
+	runDuration     metric.Float64Histogram
 
 	// perRun holds the bounded per-live-run facts this package derives across
 	// the Emit/ToolCallForRun boundary. See perRunTracker.
@@ -76,6 +78,13 @@ type perRunState struct {
 	// tallied here but not yet published as an instrument; the tool-calls-per-run
 	// distribution is a later task in this plan.
 	toolCallCount int64
+
+	// startedAt is the wall-clock time this run's EvSessionInit was observed,
+	// used at EvResult time to compute run_duration. It stays the zero Time
+	// for a run whose EvSessionInit this Recorder never saw (e.g. a process
+	// restart mid-run) — recordResult must never record a duration from a
+	// zero startedAt.
+	startedAt time.Time
 }
 
 // perRunTracker guards the live-run state map. Bounded to concurrently-live
@@ -128,6 +137,19 @@ func (t *perRunTracker) markFamilyUsed(runID string, family delegationFamily) bo
 	}
 	*seen = true
 	return true
+}
+
+// markStarted stamps runID's start time as now. Called once, from Emit's
+// EvSessionInit case; a run with no observed EvSessionInit never has this
+// called and its startedAt stays the zero Time.
+func (t *perRunTracker) markStarted(runID string) {
+	if runID == "" {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	st := t.stateLocked(runID)
+	st.startedAt = time.Now()
 }
 
 // markToolCall tallies one tool call against runID. An empty runID (a caller
@@ -221,6 +243,11 @@ func NewRecorder(mp metric.MeterProvider) (*Recorder, error) {
 		metric.WithDescription("Runs that used the Team delegation family at least once.")); err != nil {
 		return nil, fmt.Errorf("productmetrics: team_used counter: %w", err)
 	}
+	if r.runDuration, err = meter.Float64Histogram("mecatl.product.run_duration",
+		metric.WithDescription("Wall-clock duration of a run, from session init to result, in seconds."),
+		metric.WithUnit("s")); err != nil {
+		return nil, fmt.Errorf("productmetrics: run_duration histogram: %w", err)
+	}
 	return r, nil
 }
 
@@ -235,6 +262,7 @@ func (r *Recorder) Emit(ctx context.Context, ev session.Event) {
 	switch ev.Type {
 	case session.EvSessionInit:
 		r.sessionsStarted.Add(ctx, 1)
+		r.perRun.markStarted(ev.RunID)
 	case session.EvResult:
 		// finish both reads and clears the run's state, so the had_tool_call
 		// resolution and the bounded-map cleanup are one step.
@@ -268,6 +296,9 @@ func (r *Recorder) recordResult(ctx context.Context, res *session.ResultPayload,
 	r.runsCompleted.Add(ctx, 1, metric.WithAttributes(
 		attribute.String(attrStop, string(stop)),
 		attribute.String(attrHadToolCall, strconv.FormatBool(st.hadToolCall))))
+	if !st.startedAt.IsZero() {
+		r.runDuration.Record(ctx, time.Since(st.startedAt).Seconds())
+	}
 	if res == nil {
 		return
 	}
