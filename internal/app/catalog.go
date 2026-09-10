@@ -213,6 +213,11 @@ func assembleCatalog(ctx context.Context, cfg Config, reg *providerRegistry, sto
 		registerCoreTools(cfg, cat, s.narrate, s.noFS, a.searchProvider)
 	})
 	for _, sessionTool := range s.sessionTools {
+		// A direct global manager retains ownership of its existing query wrapper.
+		// The attachment-bound variant is for broker-only session catalogues.
+		if sessionTool.Spec().Name == "CallMcpWithQuery" && a.globalMgr != nil {
+			continue
+		}
 		classified.mustRegister(sessionTool, classification(server.KindDerived,
 			"session-bound wrapper supplied explicitly by the host attachment"))
 	}

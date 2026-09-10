@@ -133,6 +133,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0282 — Managed workspace scratch cache](./0282-managed-workspace-scratch-cache.md) *(proposed; depends on 0281)*
 - [0201 — Background Bash commands](./0201-background-bash.md)
 - [0317 — Canonical Shell command tool](./0317-canonical-shell-command-tool.md) *(supersedes ADR 0201 decision D1 only)*
+- [0324 — Internal Shell compatibility diagnostic](./0324-internal-shell-compatibility-diagnostic.md) *(proposed; supersedes ADR 0317 parser-placement decision only)*
 - [0208 — Execution environments and version-aware file mutation](./0208-execution-environment.md) *(runtime-seam deferral superseded by 0211; version protocol authoritative)*
 - [0211 — Execution-environment runtime seam](./0211-execution-environment-runtime-seam.md) *(supersedes 0208 decisions 1–3; phase-3 persistence deferral superseded by 0214)*
 - [0214 — Execution-environment persistence and reattachment](./0214-environment-persistence.md) *(supersedes 0211 decision 6 only)*
@@ -190,10 +191,12 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0113 — Operator MCP authentication profiles and explicit login](./0113-operator-mcp-auth-profiles.md)
 - [0223 — Pin MCP transport-error semantics that do not replay rejected calls](./0223-mcp-sdk-transport-error-semantics.md) *(superseded by 0309)*
 - [0309 — MCP closed-idle POST failures are ambiguous and never replayed](./0309-mcp-ambiguous-closed-idle-post.md)
+- [0323 — Broker-attached MCP query projection](./0323-target-governed-mcp-query.md)
 - [0310 — Lazy ToolHive authorization for statically declared protected tools](./0310-lazy-toolhive-static-tools.md)
 - [0311 — Per-upstream MCP broker OAuth grants](./0311-per-upstream-mcp-broker-oauth-grants.md) *(static-tool admission superseded by 0310)*
 - [0312 — Confidential ToolHive broker client credentials](./0312-confidential-toolhive-broker-client.md)
 - [0314 — Dynamic Client Registration for MCP broker upstreams](./0314-mcp-broker-dcr-client.md)
+- [0325 — Durable Dynamic Client Registration for direct MCP profiles](./0325-direct-mcp-dcr.md) *(proposed)*
 
 ### Performance & diagnostics
 - [0018 — Perf observability](./0018-perf-observability.md)

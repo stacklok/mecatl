@@ -279,6 +279,38 @@ The chart creates no agent PVC and ships no general NetworkPolicy.
 The cluster must provide network isolation because agent egress depends on operator-selected endpoints.
 The `oidc.*` values add a narrow raw-driver NetworkPolicy when caller identity is enabled.
 
+For an OpenAI-compatible gateway that trusts Kubernetes workload identity, use the
+chart's existing `extraArgs`, `extraVolumes`, and `extraVolumeMounts` to project a
+ServiceAccount token and pass an explicit gateway base URL with the bearer file:
+
+```yaml
+extraArgs:
+  - --openai-base-url=https://llm-gateway.stacklok.dev/v1
+  - --openai-bearer-token-file=/var/run/secrets/llm-gateway/token
+extraVolumes:
+  - name: llm-gateway-token
+    projected:
+      sources:
+        - serviceAccountToken:
+            path: token
+            audience: api://mecak8s-llm-gateway
+            expirationSeconds: 600
+extraVolumeMounts:
+  - name: llm-gateway-token
+    mountPath: /var/run/secrets/llm-gateway
+    readOnly: true
+```
+
+`mecak8s` reads the file before every OpenAI request, so token rotation is
+automatic. Bearer-file mode requires an explicit, nonempty
+`--openai-base-url` and never defaults to `api.openai.com`. The base URL must
+use HTTPS unless it targets loopback development, and redirects are refused.
+`--openai-bearer-token-file` is mutually exclusive with `OPENAI_API_KEY`.
+
+Choose the gateway's exact audience instead of the default Kubernetes API
+audience. Configure the gateway to trust the cluster issuer, that audience, and
+the exact `system:serviceaccount:<namespace>:<serviceaccount>` subject.
+
 ### Session affinity is an infrastructure contract
 
 Official clients attach the exact `X-Mecatl-Session-ID` field to session-bound gRPC and
@@ -1031,7 +1063,7 @@ For a development port-forward, bearer traffic stays on loopback:
 ```sh
 kubectl port-forward -n mecatl service/mecak8s-agent 8080:8080 &
 export MECATL_AUTH_TOKEN="$(your-oidc-cli print-access-token)"
-bin/mecatui connect 127.0.0.1:8080 --auth-token "$MECATL_AUTH_TOKEN"
+mecatui connect 127.0.0.1:8080 --auth-token "$MECATL_AUTH_TOKEN"
 ```
 
 To prove that the token is actually required, remove the environment fallback and
@@ -1039,7 +1071,7 @@ submit a prompt in a separate TUI session:
 
 ```sh
 env -u MECATL_AUTH_TOKEN \
-  bin/mecatui connect 127.0.0.1:8080
+  mecatui connect 127.0.0.1:8080
 ```
 
 A gRPC dial can succeed before credentials are checked; the unauthenticated

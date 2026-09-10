@@ -8,7 +8,7 @@ See [ADR 0321](./adr/0321-canonical-user-documentation-ownership.md) for the own
 
 | Legacy topic | Canonical page |
 | --- | --- |
-| Install and first agent | [Build your first agent](https://mecatl.dev/docs/building/getting-started/first-agent) |
+| Installation | [Install Mecatl](https://mecatl.dev/docs/install) |
 | Offline demo | [See Mecatl in 60 seconds](https://mecatl.dev/docs/building/getting-started/demo) |
 | `mecated` operation | [Run mecated standalone](https://mecatl.dev/docs/building/deployment/mecated) |
 | Guardrails and permissions | [Permissions and posture](https://mecatl.dev/docs/features/permissions-and-posture) |

@@ -61,6 +61,16 @@ var (
 	heapSampleInterval        = 50 * time.Millisecond
 )
 
+// Validate rejects an invalid jq expression before a remote operation begins.
+func Validate(filter string) error {
+	query, err := gojq.Parse(filter)
+	if err != nil {
+		return fmt.Errorf("jq parse error: %w", err)
+	}
+	_, err = gojq.Compile(query)
+	return err
+}
+
 // Run evaluates a jq filter against a JSON input and returns the
 // JSON-stringified result.
 //

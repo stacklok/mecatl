@@ -1307,6 +1307,11 @@ func (e *Engine) authorizeExecution(ctx context.Context, r *Run, sess *session.S
 	if !bound {
 		return session.ToolResult{}, false
 	}
+	// A run-scoped tool can bypass delegated authority only through private
+	// runtime metadata. The zero value is restrictive, and callers cannot set it.
+	if r.req.extraToolAuthorityExempt(call.Name) {
+		return session.ToolResult{}, false
+	}
 	if e.deps.AuthorityEvaluator == nil {
 		return session.NewToolError(call.ID, fmt.Sprintf("tool %q was not executed: authority evaluator is not configured", call.Name)), true
 	}

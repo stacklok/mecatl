@@ -153,6 +153,9 @@ type Config struct {
 	Model             string
 	UseOpenAI         bool
 	OpenAIKey         string
+	// OpenAIBearerTokenFile is a rotating credential source for only the OpenAI
+	// registry entry. The adapter reads it for every request.
+	OpenAIBearerTokenFile string
 	// OpenAICodexCredential is the validated, immutable manual ChatGPT token
 	// snapshot consumed only by the distinct openai-codex registry entry.
 	OpenAICodexCredential openaicodex.Credential
@@ -856,6 +859,7 @@ type Config struct {
 	MCPBrokerDiscovered       []mcpbroker.ToolDefinition
 	MCPBrokerCaller           mcpbroker.Caller
 	MCPBrokerAuthorizedCaller mcpbroker.AuthorizedCaller
+	MCPBrokerQueryCaller      mcpbroker.QueryCaller
 	MCPBrokerOptions          []mcpbroker.Option
 	// MCPProfileLoader resolves operator-tier profiles with the same permission
 	// resolver Build already owns. Command roots install it so settings are not
@@ -1960,7 +1964,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	var brokerHandlers mcpbroker.HandlerBundle
 	var brokerCallbackPath string
 	brokerConfigured := len(brokerDeclaration.Routes) != 0 || cfg.MCPBrokerCaller != nil ||
-		cfg.MCPBrokerAuthorizedCaller != nil || len(cfg.MCPBrokerDiscovered) != 0 || len(cfg.MCPBrokerOptions) != 0
+		cfg.MCPBrokerAuthorizedCaller != nil || cfg.MCPBrokerQueryCaller != nil || len(cfg.MCPBrokerDiscovered) != 0 || len(cfg.MCPBrokerOptions) != 0
 	if brokerSelected && brokerConfigured {
 		occupied := make([]string, 0)
 		if assets.rootCatalog != nil {
@@ -1968,7 +1972,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 				occupied = append(occupied, registered.Spec().Name)
 			}
 		}
-		if cfg.MCPBrokerCaller == nil && cfg.MCPBrokerAuthorizedCaller == nil && len(cfg.MCPBrokerDiscovered) == 0 && len(cfg.MCPBrokerOptions) == 0 {
+		if cfg.MCPBrokerCaller == nil && cfg.MCPBrokerAuthorizedCaller == nil && cfg.MCPBrokerQueryCaller == nil && len(cfg.MCPBrokerDiscovered) == 0 && len(cfg.MCPBrokerOptions) == 0 {
 			authRedisClient, authStorageClose, err := buildToolHiveAuthRedisClient(cfg)
 			if err != nil {
 				childLiveness.Close()
@@ -2003,6 +2007,9 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 			options := append([]mcpbroker.Option(nil), cfg.MCPBrokerOptions...)
 			if cfg.MCPBrokerAuthorizedCaller != nil {
 				options = append(options, mcpbroker.WithAuthorizedCaller(cfg.MCPBrokerAuthorizedCaller))
+			}
+			if cfg.MCPBrokerQueryCaller != nil {
+				options = append(options, mcpbroker.WithQueryCaller(cfg.MCPBrokerQueryCaller))
 			}
 			brokerRuntime, err = mcpbroker.New(catalogue, cfg.MCPBrokerCaller, options...)
 			if err != nil {

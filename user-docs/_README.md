@@ -13,6 +13,7 @@ do not create a manual sidebar to express this structure.
 | Location | Audience and content | Exclusions |
 | --- | --- | --- |
 | `intro.md` | New readers choosing between the terminal-client and builder paths. | Detailed instructions and reference material. Link to the owning section. |
+| `install.md` | Anyone who needs Mecatl's executables on a workstation or host: Homebrew, release archives and their verification, and the pointer to a source build. | First-run workflow, configuration, and per-shape deployment steps. Link to the owning client or deployment page. |
 | `mecatui/` | Terminal users who need to start, connect, configure, or troubleshoot the `mecatui` client. | Server deployment, server policy, and shared feature semantics. Link to the owning server or feature page. |
 | `building/getting-started/` | Builders and embedders following a first path, such as creating an agent or choosing a deployment. | Exhaustive API reference, operations procedures, and feature configuration. |
 | `building/what-you-get/` | Builders who need an overview or technical reference for engine capabilities included in an embedding. | Operator procedures and feature configuration that applies across deployment shapes. Link to the feature page for those. |
@@ -39,6 +40,7 @@ when that is the reader's task; it must not repeat the canonical feature guide.
 
 | Topic | Canonical page | Supporting page responsibility |
 | --- | --- | --- |
+| Installing Mecatl | `install.md` | `mecatui/getting-started.md` gives the client reader the one-command path and links here; `building/deployment/*` pages link here for the released executable and the Homebrew prefix. |
 | Using the terminal client | `mecatui/` | `features/use-mecatui.md` is a feature-level entry point and links to the client guides for controls and workflows. |
 | Scheduled tasks | `features/scheduled-tasks.md` | `building/what-you-get/scheduled-tasks.md` describes the builder-facing storage, claiming, and recovery model. |
 | Permissions and posture | `features/permissions-and-posture.md` | `building/what-you-get/permissions.md` describes evaluator, delegated-authority, and custom-policy integration. |

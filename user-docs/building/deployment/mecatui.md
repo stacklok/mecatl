@@ -94,3 +94,4 @@ at runtime.
 - [Run mecated standalone](mecated.md) — the server that a bare `mecatui` embeds in-process — or dials via `mecatui connect ADDRESS`.
 - [Drive via gRPC / HTTP](grpc-http.md) — the wire protocol `mecatui` speaks as a client.
 - [Permissions & guardrails](/building/what-you-get/permissions.md) — the posture ladder and workspace trust behave identically inside the container.
+- [Install Mecatl](/install.md) — the same release publishes native `mecatui` and `mecated` executables through Homebrew and signed archives, for when a container is not the right shape.

@@ -124,6 +124,8 @@ PR after verification. There is no cleanup or status-only PR.
   enhanced-key-event-only, silent press-release-press idle prompt gesture with an exact
   500 ms generation-tagged expiry; it reuses `clearPrompt`, preserves surface ownership,
   and documents universal `ctrl+u`. Status: landed.
+- [CallMcpWithQuery broker support](callmcpwithquery-broker-support.md) — bounded jq projection for a direct MCP target or a current broker attachment, preserving the attachment's existing session isolation and authorization gates. Status: implemented locally under explicit workflow waiver; not approved or landed.
+
 - [Mecatui card layout](mecatui-card-layout.md) — width-bounded card rendering
   that wraps raw dynamic rows before styling, preventing Lipgloss alignment
   padding from becoming vertical whitespace while retaining intentional
@@ -147,6 +149,7 @@ PR after verification. There is no cleanup or status-only PR.
   inventory and enrollment/catalogue status behind `/mcp`, without probes or new
   persistence. Status: draft; exact interface/disclosure decisions await confirmation.
 - [MCP broker DCR client](mcp-broker-dcr-client.md) — a third `mcp.servers[].auth.oauth.client.mode: dcr`, exposing ToolHive's existing RFC 7591 Dynamic Client Registration upstream-client support for protected MCP servers with no preregistered client or hosted CIMD document. Status: draft.
+- [Direct MCP Dynamic Client Registration](direct-mcp-dcr.md) — proposed contract for durable public-client DCR in a local direct MCP profile, reusing the existing authorization-code login while keeping broker and remote mecatui OIDC authority separate. Status: proposed.
 
 - [Local mecak8s Kind fixture](mecak8s-kind-fixture.md) — cleanly separates an
   operator-run mock/real-provider mecak8s fixture, optional Keycloak caller
@@ -167,6 +170,11 @@ PR after verification. There is no cleanup or status-only PR.
 - [Operator-defined LLM providers](operator-defined-llm-providers.md) — operator-local,
   truthfully named gateway providers over the existing Responses, Chat Completions, and
   Anthropic Messages adapters, plus persistent built-in endpoint overrides. Status: draft.
+- [Native LLM-gateway OIDC login](native-llm-gateway-login.md) — deployment-scoped
+  mecatl-owned gateway login with protected refresh/logout lifecycle and direct bearer
+  injection; all callers admitted to one mecated share configured endpoint availability and
+  gateway identity, while ToolHive remains explicit optional proxy compatibility with no
+  cross-store secret migration. Status: proposed.
 - [Surface approval migration](surface-approval-migration.md) — final Phase-2 migration of the mecatui approval UI onto the dynamic surface contract, including ephemeral render-frame hit dispatch. Status: landed.
 - [Spine convergence](spine-convergence.md) — bring the
   to-acceptance-plan / plan-orchestrate / test-writer spine + ac-trace into

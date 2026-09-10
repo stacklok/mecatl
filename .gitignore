@@ -1,5 +1,10 @@
 # Compiled binaries
 /bin/
+# GoReleaser output (task release:snapshot). Ignored so a local snapshot
+# does not pollute the `git status -sb` check in the cut-release procedure,
+# and so generated markdown inside it stays out of the matlatl corpus
+# (.matlatl.yml sets respectGitignore: true).
+/dist/
 /mecated
 /mecademo
 *.exe

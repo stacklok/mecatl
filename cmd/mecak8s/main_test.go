@@ -64,6 +64,20 @@ func TestVersionInvocationIsExact(t *testing.T) {
 	}
 }
 
+func TestOpenAIBearerTokenFileFlagThreadsToAppConfig(t *testing.T) {
+	const path = "/var/run/secrets/tokens/openai"
+	cfg, err := parseFlags([]string{"--openai-bearer-token-file=" + path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.openAIBearerTokenFile != path {
+		t.Fatalf("parsed token file = %q, want %q", cfg.openAIBearerTokenFile, path)
+	}
+	if got := appConfig(cfg, nil, observability{}).OpenAIBearerTokenFile; got != path {
+		t.Fatalf("app token file = %q, want %q", got, path)
+	}
+}
+
 func TestMecak8sRejectsOpenAICodexCredential(t *testing.T) {
 	expires := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
 	path := filepath.Join(t.TempDir(), "auth.yaml")

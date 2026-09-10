@@ -197,7 +197,12 @@ filter expression can't hang or blow up the context budget. Everything
 happens in memory; nothing is spilled to disk, which is what keeps this tool
 working the same way on a storage-free deployment as on a normal one. It's
 read-only, so it participates in read-parallel dispatch like any other
-read-only tool.
+read-only tool. Broker-only sessions expose the same tool only when their current
+attachment has eligible frozen tools; its request, authorization, filtering, and
+result stay on that attachment. The harness never bypasses the attachment with a
+separate upstream connection. The concrete broker transport keeps its existing
+routing (configured upstream URL for anonymous routes, broker endpoint for protected
+routes), and a failed or ambiguous delivered call is not replayed.
 
 ---
 

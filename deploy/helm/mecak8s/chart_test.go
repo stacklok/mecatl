@@ -1666,6 +1666,53 @@ func TestMecak8sHelmChart_XDGImageVolumeSkillMount(t *testing.T) {
 	}
 }
 
+func TestMecak8sHelmChart_OpenAIProjectedServiceAccountToken(t *testing.T) {
+	rendered, err := renderMCPValues(t, `
+extraArgs:
+  - --openai-base-url=https://llm-gateway.stacklok.dev/v1
+  - --openai-bearer-token-file=/var/run/secrets/llm-gateway/token
+extraVolumes:
+  - name: llm-gateway-token
+    projected:
+      sources:
+        - serviceAccountToken:
+            path: token
+            audience: api://mecak8s-llm-gateway
+            expirationSeconds: 600
+extraVolumeMounts:
+  - name: llm-gateway-token
+    mountPath: /var/run/secrets/llm-gateway
+    readOnly: true
+`)
+	if err != nil {
+		t.Fatalf("render projected OpenAI token: %v", err)
+	}
+	deployment := deploymentFromRender(t, rendered)
+	container := deployment.Spec.Template.Spec.Containers[0]
+	for _, arg := range []string{
+		"--openai-base-url=https://llm-gateway.stacklok.dev/v1",
+		"--openai-bearer-token-file=/var/run/secrets/llm-gateway/token",
+	} {
+		if !slices.Contains(container.Args, arg) {
+			t.Fatalf("container args missing %q: %#v", arg, container.Args)
+		}
+	}
+	if !slices.ContainsFunc(container.VolumeMounts, func(m corev1.VolumeMount) bool {
+		return m.Name == "llm-gateway-token" && m.MountPath == "/var/run/secrets/llm-gateway" && m.ReadOnly
+	}) {
+		t.Fatalf("container volume mounts missing read-only gateway token mount: %#v", container.VolumeMounts)
+	}
+	if !slices.ContainsFunc(deployment.Spec.Template.Spec.Volumes, func(v corev1.Volume) bool {
+		if v.Name != "llm-gateway-token" || v.Projected == nil || len(v.Projected.Sources) != 1 {
+			return false
+		}
+		token := v.Projected.Sources[0].ServiceAccountToken
+		return token != nil && token.Path == "token" && token.Audience == "api://mecak8s-llm-gateway" && token.ExpirationSeconds != nil && *token.ExpirationSeconds == 600
+	}) {
+		t.Fatalf("pod volumes missing projected OpenAI ServiceAccount token: %#v", deployment.Spec.Template.Spec.Volumes)
+	}
+}
+
 func TestMecak8sHelmChart_NewValuesAreSchemaValidated(t *testing.T) {
 	for _, tc := range []struct {
 		name string

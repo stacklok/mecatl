@@ -96,6 +96,33 @@ func TestADR_0296_StartupResumeReceivesEligibleLocalContext(t *testing.T) {
 	}
 }
 
+func TestADR_0296_SessionsContinuationReceivesEligibleLocalContext(t *testing.T) {
+	root := t.TempDir()
+	source := statusline.NewTemplateSource(statusline.TemplateSet{Footer: statusline.SurfaceTemplates{
+		Full: `<footer><text>{{.Workspace.Path}}</text></footer>`,
+	}}, 0)
+	t.Cleanup(func() { _ = source.Close(context.Background()) })
+	m := New(Deps{
+		Ctx: context.Background(), Theme: theme.New("aztec", theme.AztecPalette()),
+		StatusSource: source, LocalSessionContext: statusContextGetter{roots: map[string]string{"continued": root}},
+	})
+	m.width = 200
+
+	updated, contextCmd, handled := m.adoptAuthoritativeTranscript(client.SessionListItem{
+		ID: "continued", Title: "Stored chat", Placement: client.Placement{Kind: "local", Label: "active-workspace"},
+	}, conversation{})
+	if !handled || contextCmd == nil {
+		t.Fatal("sessions continuation did not resolve local status context")
+	}
+	m = updated.(Model)
+	updated, _ = m.Update(statusContextMessage(t, contextCmd))
+	m = updated.(Model)
+
+	if got, want := m.statusLineSnapshot().Workspace.Path, root; got != want {
+		t.Fatalf("status input workspace path = %q, want continued local root %q", got, want)
+	}
+}
+
 func waitStatusContextSurfaceText(t *testing.T, source statusline.Source, want string) {
 	t.Helper()
 	for {

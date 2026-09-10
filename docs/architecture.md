@@ -173,8 +173,11 @@ profile data.
 
 Authenticated discovery results remain staged until the opaque pre-prompt enrollment succeeds.
 Mecatl then collision-checks every protected backend, freezes the complete model-visible catalogue,
-and rebuilds the session engine; a failure admits no partial catalogue. Normal mecatl permissions govern the
-frozen tools. `server.Service` holds only local attachments, and each per-session catalogue is
+and rebuilds the session engine; a failure admits no partial catalogue. In a broker-only
+session with eligible frozen tools, `CallMcpWithQuery` is attachment-bound: it invokes the
+same frozen route and authorization transaction, applies bounded in-memory jq before normal
+result rendering, and never opens a direct upstream connection or exposes the raw successful
+result. Normal mecatl permissions govern the frozen tools. `server.Service` holds only local attachments, and each per-session catalogue is
 assembled from an explicit wrapper-tool slice after the canonical session ID is reserved. The
 session snapshot persists an opaque broker-incarnation binding and reload requires an exact
 match. Ordinary `CloseSession` detaches locally, while permanent owner deletion and retention
