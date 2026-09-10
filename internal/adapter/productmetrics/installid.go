@@ -25,12 +25,10 @@ const installIDRelPath = "mecatl/telemetry-id"
 // one-time disclosure notice. readFile/writeFile/mkdirAll are injected for
 // testing; LoadOrCreateInstallIDDefault binds the real filesystem.
 //
-// The returned id is deliberately never threaded into any exported metric
-// attribute or resource (see provider.go): this pipeline's destination is a
-// Prometheus-remote-write backend, where a per-install identifier would
-// become a permanent, unbounded-cardinality label on every instrument. The
-// file still exists purely as a local first-run marker for the disclosure
-// notice — its actual UUID value has no other consumer.
+// The returned id IS threaded into an exported resource attribute (see
+// provider.go) — this package makes no attempt to keep the id local-only;
+// that was a prior, now-reverted design (see git history / the ADR's
+// cost-analysis section for why it was reinstated).
 func LoadOrCreateInstallID(
 	env xdgconfig.ResolveEnv,
 	readFile func(string) ([]byte, error),

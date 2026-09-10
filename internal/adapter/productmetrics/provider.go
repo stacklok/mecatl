@@ -53,15 +53,17 @@ func NewProvider(ctx context.Context, cfg Config) (*Provider, error) {
 	// or the exporter tries TLS against a plaintext listener and every
 	// export fails. The real production endpoint is always https://.
 	//
-	// Deliberately NOT included: any per-install identifier. This pipeline's
-	// destination is a Prometheus-remote-write backend (stacklok/infra#5604),
-	// where every resource attribute becomes a permanent label on EVERY
-	// instrument's time series — attaching a random per-install value here
-	// would multiply active-series count by (installs × instrument count),
-	// an unbounded-cardinality cost with no bound as adoption grows. Only
-	// mecatl.binary (a small closed enum) is attached; unique-install
-	// counting is approximated from heartbeat volume instead (see
-	// installid.go's doc comment).
+	// mecatl.install.id is a per-install random UUID, deliberately attached
+	// as a resource attribute (so it flattens onto every instrument this
+	// provider exports). This was removed once (see git history) over
+	// unbounded-cardinality concerns on the Prometheus-remote-write
+	// destination (stacklok/infra#5604), then reinstated after the actual
+	// cost was sized against real AMP pricing and accepted — see the ADR's
+	// cost-analysis section for the numbers. mecak8s provisions this value
+	// differently (a stable per-Helm-release ConfigMap, not this package's
+	// local install-id file — see internal/cliconfig's mecak8s wiring and
+	// deploy/helm/mecak8s/templates/install-id-configmap.yaml), since a
+	// pod-local file would mint a new id on every pod restart.
 	composite, err := providers.NewCompositeProvider(ctx,
 		providers.WithServiceName("mecatl"),
 		providers.WithServiceVersion(cfg.Version),
@@ -70,7 +72,8 @@ func NewProvider(ctx context.Context, cfg Config) (*Provider, error) {
 		providers.WithInsecure(strings.HasPrefix(endpoint, "http://")),
 		providers.WithHeaders(map[string]string{headerKeyName: bakedKey}),
 		providers.WithCustomAttributes(map[string]string{
-			"mecatl.binary": string(cfg.Binary),
+			"mecatl.install.id": cfg.InstallID,
+			"mecatl.binary":     string(cfg.Binary),
 		}),
 	)
 	if err != nil {

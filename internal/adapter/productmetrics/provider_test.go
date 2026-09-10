@@ -35,8 +35,9 @@ func TestNewProviderExportsToConfiguredEndpoint(t *testing.T) {
 	defer func() { endpoint = origEndpoint }()
 
 	p, err := NewProvider(context.Background(), Config{
-		Binary:  BinaryMecated,
-		Version: "test",
+		Binary:    BinaryMecated,
+		Version:   "test",
+		InstallID: "11111111-1111-1111-1111-111111111111",
 	})
 	if err != nil {
 		t.Fatalf("NewProvider: %v", err)
