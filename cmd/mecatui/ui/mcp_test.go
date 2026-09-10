@@ -40,20 +40,6 @@ func newMCPModel(t *testing.T, th theme.Theme, mcp client.MCP) Model {
 	return m
 }
 
-// mcpActive returns the open MCP modal's state (or nil) off the Model, so a test
-// can read the migrated surface state without holding an mcpState field. It
-// asserts the modal IS a *mcpState, which pins the open path too.
-func mcpActive(m Model) *mcpState {
-	if m.modal == nil {
-		return nil
-	}
-	s, ok := m.modal.(*mcpState)
-	if !ok {
-		return nil
-	}
-	return s
-}
-
 // runCmd executes a tea.Cmd to completion and returns its msg (nil-safe). MCP
 // commands are single-shot RPC closures, so this is deterministic.
 func runCmd(cmd tea.Cmd) tea.Msg {

@@ -120,6 +120,12 @@ type mcpState struct {
 
 }
 
+// mcpActive returns the open MCP modal state, if any.
+func mcpActive(m Model) *mcpState {
+	state, _ := m.modal.(*mcpState)
+	return state
+}
+
 // brokerMCPSetupState projects the existing controller after Model validation.
 // A resumed/rebound transcript is not positive proof of pre-prompt eligibility;
 // catalogue facts may exclude Connect but never establish that eligibility.
