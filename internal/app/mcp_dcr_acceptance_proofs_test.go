@@ -12,6 +12,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/internal/app"
 	"github.com/stacklok/mecatl/mcp/oauthlogin"
@@ -54,7 +55,7 @@ func writeDCRSettings(t *testing.T, fixture *loginFixture, root string) (string,
 	}
 }
 
-func loginDCRProfile(t *testing.T, settings string, lookup func(string) (string, bool), runtime *oauthlogin.Runtime) {
+func loginDCRProfile(t *testing.T, fixture *loginFixture, settings string, lookup func(string) (string, bool), runtime *oauthlogin.Runtime) {
 	t.Helper()
 	resolver := permconfig.New(permconfig.Options{ExplicitFiles: []string{settings}})
 	profiles, err := loadAcceptanceMCPProfiles(t, resolver.OperatorMCP(), lookup)
@@ -66,21 +67,21 @@ func loginDCRProfile(t *testing.T, settings string, lookup func(string) (string,
 	if !ok {
 		t.Fatal("DCR profile was not resolved")
 	}
+	mcp.TrustOAuthCertificateForTest(t, cfg.OAuth, fixture.server.Certificate())
 	if err := app.LoginMCP(context.Background(), cfg, runtime); err != nil {
 		t.Fatalf("DCR login: %v", err)
 	}
 }
 
 func TestDirectMCPDCR_Scenario2_RegistersAuthorizesAndLists(t *testing.T) {
-	fixture := newLoginFixture(t)
-	fixture.dcr = true
+	fixture := newDCRLoginFixture(t)
 	settings, lookup := writeDCRSettings(t, fixture, filepath.Join(t.TempDir(), "credentials"))
 	browser := &loginBrowser{client: fixture.server.Client()}
 	runtime, err := oauthlogin.New(oauthlogin.Options{Launcher: browser})
 	if err != nil {
 		t.Fatal(err)
 	}
-	loginDCRProfile(t, settings, lookup, runtime)
+	loginDCRProfile(t, fixture, settings, lookup, runtime)
 	fixture.mu.Lock()
 	register, token, basic, forms, authenticated := fixture.register, fixture.token, fixture.basicRequests, append([]url.Values(nil), fixture.tokenForms...), fixture.authorized
 	fixture.mu.Unlock()
@@ -92,7 +93,7 @@ func TestDirectMCPDCR_Scenario2_RegistersAuthorizesAndLists(t *testing.T) {
 	}
 
 	diag := &acceptanceDiag{}
-	built, err := buildAcceptanceMCP(t, settings, lookup, diag, mockllm.New(mockllm.ToolCallTurn(session.NewToolCall("read", "mcp__protected__ready", []byte(`{}`))), mockllm.TextTurn("complete")))
+	built, err := buildDCRAcceptanceMCP(t, fixture, settings, lookup, diag, mockllm.New(mockllm.ToolCallTurn(session.NewToolCall("read", "mcp__protected__ready", []byte(`{}`))), mockllm.TextTurn("complete")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,8 +113,7 @@ func TestDirectMCPDCR_Scenario2_RegistersAuthorizesAndLists(t *testing.T) {
 }
 
 func TestDirectMCPDCR_Scenario2_HostOnlyAuthorizationPresentation(t *testing.T) {
-	fixture := newLoginFixture(t)
-	fixture.dcr = true
+	fixture := newDCRLoginFixture(t)
 	root := filepath.Join(t.TempDir(), "credentials")
 	settings, lookup := writeDCRSettings(t, fixture, root)
 	browser := &loginBrowser{client: fixture.server.Client()}
@@ -121,13 +121,13 @@ func TestDirectMCPDCR_Scenario2_HostOnlyAuthorizationPresentation(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	loginDCRProfile(t, settings, lookup, runtime)
+	loginDCRProfile(t, fixture, settings, lookup, runtime)
 	if browser.calls.Load() != 1 {
 		t.Fatalf("explicit presenter calls=%d", browser.calls.Load())
 	}
 
 	diag := &acceptanceDiag{}
-	built, err := buildAcceptanceMCP(t, settings, lookup, diag, mockllm.New(mockllm.ToolCallTurn(session.NewToolCall("restart", "mcp__protected__ready", []byte(`{}`))), mockllm.TextTurn("complete")))
+	built, err := buildDCRAcceptanceMCP(t, fixture, settings, lookup, diag, mockllm.New(mockllm.ToolCallTurn(session.NewToolCall("restart", "mcp__protected__ready", []byte(`{}`))), mockllm.TextTurn("complete")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,8 +168,8 @@ func TestInvariant_direct_mcp_dcr_secret_redaction(t *testing.T) {
 		registrationAccess = "app-registration-access-redaction-canary"
 		unsolicitedRefresh = "app-unsolicited-refresh-redaction-canary"
 	)
-	fixture := newLoginFixture(t)
-	fixture.dcr, fixture.dcrClientID, fixture.dcrAccessToken, fixture.dcrRegAccess = true, clientID, accessToken, registrationAccess
+	fixture := newDCRLoginFixture(t)
+	fixture.dcrClientID, fixture.dcrAccessToken, fixture.dcrRegAccess = clientID, accessToken, registrationAccess
 	root := filepath.Join(t.TempDir(), "credentials")
 	settings, lookup := writeDCRSettings(t, fixture, root)
 	browser := &loginBrowser{client: fixture.server.Client()}
@@ -177,7 +177,7 @@ func TestInvariant_direct_mcp_dcr_secret_redaction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	loginDCRProfile(t, settings, lookup, runtime)
+	loginDCRProfile(t, fixture, settings, lookup, runtime)
 	browser.mu.Lock()
 	presented := append([]string(nil), browser.urls...)
 	browser.mu.Unlock()
@@ -191,7 +191,7 @@ func TestInvariant_direct_mcp_dcr_secret_redaction(t *testing.T) {
 	transient := []string{presented[0], "login-code-canary", presentedURL.Query().Get("state"), registrationAccess, unsolicitedRefresh}
 
 	diag := &acceptanceDiag{}
-	built, err := buildAcceptanceMCP(t, settings, lookup, diag, mockllm.New(mockllm.ToolCallTurn(session.NewToolCall("redaction", "mcp__protected__ready", []byte(`{}`))), mockllm.TextTurn("complete")))
+	built, err := buildDCRAcceptanceMCP(t, fixture, settings, lookup, diag, mockllm.New(mockllm.ToolCallTurn(session.NewToolCall("redaction", "mcp__protected__ready", []byte(`{}`))), mockllm.TextTurn("complete")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,8 +202,8 @@ func TestInvariant_direct_mcp_dcr_secret_redaction(t *testing.T) {
 	}
 	projections := append(model, diagnosticSurfaces(diag)...)
 
-	bad := newLoginFixture(t)
-	bad.dcr, bad.dcrClientID, bad.dcrAccessToken, bad.dcrRegAccess, bad.dcrRefreshToken = true, clientID, accessToken, registrationAccess, unsolicitedRefresh
+	bad := newDCRLoginFixture(t)
+	bad.dcrClientID, bad.dcrAccessToken, bad.dcrRegAccess, bad.dcrRefreshToken = clientID, accessToken, registrationAccess, unsolicitedRefresh
 	badSettings, badLookup := writeDCRSettings(t, bad, filepath.Join(t.TempDir(), "bad-credentials"))
 	resolver := permconfig.New(permconfig.Options{ExplicitFiles: []string{badSettings}})
 	profiles, loadErr := loadAcceptanceMCPProfiles(t, resolver.OperatorMCP(), badLookup)
@@ -258,8 +258,7 @@ func TestInvariant_direct_mcp_dcr_secret_redaction(t *testing.T) {
 }
 
 func TestDirectMCPDCR_Scenario3_RestartIdentityMismatchFailsClosed(t *testing.T) {
-	fixture := newLoginFixture(t)
-	fixture.dcr = true
+	fixture := newDCRLoginFixture(t)
 	fixture.dcrClientID = "restart-client-canary"
 	fixture.dcrAccessToken = "restart-access-canary"
 	root := filepath.Join(t.TempDir(), "credentials")
@@ -269,7 +268,7 @@ func TestDirectMCPDCR_Scenario3_RestartIdentityMismatchFailsClosed(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	loginDCRProfile(t, settings, lookup, runtime)
+	loginDCRProfile(t, fixture, settings, lookup, runtime)
 	body, err := os.ReadFile(settings)
 	if err != nil {
 		t.Fatal(err)
@@ -280,7 +279,7 @@ func TestDirectMCPDCR_Scenario3_RestartIdentityMismatchFailsClosed(t *testing.T)
 	}
 
 	diag := &acceptanceDiag{}
-	built, err := buildAcceptanceMCP(t, mismatchSettings, lookup, diag, mockllm.New(mockllm.ToolCallTurn(session.NewToolCall("mismatch", "mcp__protected__ready", []byte(`{}`))), mockllm.TextTurn("complete")))
+	built, err := buildDCRAcceptanceMCP(t, fixture, mismatchSettings, lookup, diag, mockllm.New(mockllm.ToolCallTurn(session.NewToolCall("mismatch", "mcp__protected__ready", []byte(`{}`))), mockllm.TextTurn("complete")))
 	if err != nil {
 		t.Fatal(err)
 	}

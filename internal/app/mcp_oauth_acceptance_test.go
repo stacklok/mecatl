@@ -2,6 +2,7 @@ package app_test
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -377,6 +378,7 @@ func loadAcceptanceMCPProfiles(t *testing.T, operator *permconfig.MCPSection, lo
 type acceptanceLoopbackProfileResolver struct {
 	t      *testing.T
 	loader *cliconfig.MCPProfileResolver
+	cert   *x509.Certificate
 }
 
 func (r *acceptanceLoopbackProfileResolver) Load(operator *permconfig.MCPSection) ([]mcp.ServerConfig, interface{ Close() error }, error) {
@@ -387,6 +389,7 @@ func (r *acceptanceLoopbackProfileResolver) Load(operator *permconfig.MCPSection
 	for i := range servers {
 		if servers[i].OAuth != nil {
 			mcp.AllowOAuthLoopbackForTest(r.t, servers[i].OAuth)
+			mcp.TrustOAuthCertificateForTest(r.t, servers[i].OAuth, r.cert)
 		}
 	}
 	return servers, lifecycle, nil
@@ -431,16 +434,26 @@ func writeAcceptanceOAuthSettings(t *testing.T, fixture *loginFixture, root stri
 
 func buildAcceptanceMCP(t *testing.T, settings string, lookup func(string) (string, bool), diag *acceptanceDiag, llm *mockllm.Provider) (*app.Built, error) {
 	t.Helper()
-	return buildAcceptanceMCPConfig(t, settings, lookup, diag, llm, false)
+	return buildAcceptanceMCPConfigWithCert(t, settings, lookup, diag, llm, false, nil)
+}
+
+func buildDCRAcceptanceMCP(t *testing.T, fixture *loginFixture, settings string, lookup func(string) (string, bool), diag *acceptanceDiag, llm *mockllm.Provider) (*app.Built, error) {
+	t.Helper()
+	return buildAcceptanceMCPConfigWithCert(t, settings, lookup, diag, llm, false, fixture.server.Certificate())
 }
 
 func buildAcceptanceMCPConfig(t *testing.T, settings string, lookup func(string) (string, bool), diag *acceptanceDiag, llm *mockllm.Provider, headless bool) (*app.Built, error) {
+	t.Helper()
+	return buildAcceptanceMCPConfigWithCert(t, settings, lookup, diag, llm, headless, nil)
+}
+
+func buildAcceptanceMCPConfigWithCert(t *testing.T, settings string, lookup func(string) (string, bool), diag *acceptanceDiag, llm *mockllm.Provider, headless bool, cert *x509.Certificate) (*app.Built, error) {
 	t.Helper()
 	return app.Build(context.Background(), app.Config{
 		Workspace: filepath.Dir(settings), Model: "mock", MockProvider: llm, Headless: headless, Diagnostics: diag,
 		PermissionConfigs: []string{settings},
 		MCPProfileLoader: &acceptanceLoopbackProfileResolver{
-			t: t, loader: cliconfig.NewMCPProfileResolver(nil, lookup),
+			t: t, loader: cliconfig.NewMCPProfileResolver(nil, lookup), cert: cert,
 		},
 	})
 }

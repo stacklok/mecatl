@@ -84,6 +84,10 @@ func validateGlobalOAuth(route permconfig.MCPServerProfile) error {
 	if oauth.Client.DCR == nil || oauth.Client.DCR.DiscoveryURL != "" {
 		return fmt.Errorf("%w: MCP server %q: direct DCR requires an empty dcr payload", ErrMCPProfileInvalid, route.Name)
 	}
+	issuer, err := url.Parse(oauth.Issuer)
+	if err != nil || issuer.Scheme != "https" {
+		return fmt.Errorf("%w: MCP server %q: direct DCR requires an HTTPS issuer", ErrMCPProfileInvalid, route.Name)
+	}
 	if oauth.Credentials.Mode != "local" || oauth.Credentials.Local == nil || oauth.Credentials.Environment != nil {
 		return fmt.Errorf("%w: MCP server %q: direct DCR requires mutable local credentials", ErrMCPProfileInvalid, route.Name)
 	}

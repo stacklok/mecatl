@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/x509"
 	"errors"
 	"net"
 	"net/http"
@@ -92,6 +93,7 @@ type OAuthOptions struct {
 	AllowedScopes        []string
 	Timeout              time.Duration
 	allowLoopbackForTest bool
+	testRootCAs          *x509.CertPool
 	dcr                  *oauthDCRResolved
 	dcrTicket            *oauthDCRTicket
 }
@@ -104,6 +106,17 @@ func AllowOAuthLoopbackForTest(t interface{ Helper() }, opts *OAuthOptions) {
 	if opts != nil {
 		opts.allowLoopbackForTest = true
 	}
+}
+
+// TrustOAuthCertificateForTest trusts one test server certificate for OAuth TLS.
+func TrustOAuthCertificateForTest(t interface{ Helper() }, opts *OAuthOptions, cert *x509.Certificate) {
+	t.Helper()
+	if opts == nil || cert == nil {
+		return
+	}
+	roots := x509.NewCertPool()
+	roots.AddCert(cert)
+	opts.testRootCAs = roots
 }
 
 type oauthRegistration struct {

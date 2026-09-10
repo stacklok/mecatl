@@ -442,8 +442,6 @@ type MCPOAuthProfile struct {
 	Scopes []string `yaml:"scopes"`
 	// RequestRefreshToken asks the authorization server for refresh capability.
 	RequestRefreshToken bool `yaml:"request_refresh_token"`
-	// RequestRefreshTokenSet records field presence for direct-DCR defaults.
-	RequestRefreshTokenSet bool `yaml:"-"`
 	// Credentials selects one global-mode local or environment credential source and is forbidden in broker mode.
 	Credentials MCPOAuthCredentialProfile `yaml:"credentials"`
 	// Network is required. Global profiles enforce its exact-origin egress policy;
@@ -717,7 +715,6 @@ func (o *MCPOAuthProfile) UnmarshalYAML(node ast.Node) error {
 	if !mappingHasKey(node, "client") {
 		return errors.New("mcp.servers[].auth.oauth.client is required")
 	}
-	o.RequestRefreshTokenSet = mappingHasKey(node, "request_refresh_token")
 	if o.Upstream != nil && o.Upstream.Mode == mcpOAuth2Mode && mappingHasKey(node, "issuer") {
 		return errors.New("mcp.servers[].auth.oauth.issuer is forbidden for oauth2 upstream")
 	}

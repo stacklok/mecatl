@@ -138,6 +138,16 @@ type loginCode struct {
 }
 
 func newLoginFixture(t *testing.T) *loginFixture {
+	return newLoginFixtureWithTLS(t, false)
+}
+
+func newDCRLoginFixture(t *testing.T) *loginFixture {
+	f := newLoginFixtureWithTLS(t, true)
+	f.dcr = true
+	return f
+}
+
+func newLoginFixtureWithTLS(t *testing.T, useTLS bool) *loginFixture {
 	t.Helper()
 	f := &loginFixture{codes: make(map[string]loginCode), refreshTokens: make(map[string]int), acceptedBearer: loginAccessToken, initialExpiry: 3600}
 	f.mcpServer = mcpsdk.NewServer(
@@ -156,9 +166,14 @@ func newLoginFixture(t *testing.T) *loginFixture {
 		return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "fixture-ready"}}}, nil, nil
 	})
 	f.mcpHandler = f.newMCPHandler()
-	f.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.serveHTTP(w, r)
-	}))
+	})
+	if useTLS {
+		f.server = httptest.NewTLSServer(handler)
+	} else {
+		f.server = httptest.NewServer(handler)
+	}
 	t.Cleanup(f.server.Close)
 	return f
 }

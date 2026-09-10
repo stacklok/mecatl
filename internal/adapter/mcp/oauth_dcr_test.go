@@ -36,6 +36,7 @@ type dcrMetadataFixture struct {
 	tokenCount              int
 	tokenForms              []url.Values
 	clientID                string
+	clientIDIssuedAt        *int64
 	cosmeticSuffix          string
 	unsolicitedRefresh      bool
 	accessToken             string
@@ -96,6 +97,9 @@ func newDCRMetadataFixture(t *testing.T) *dcrMetadataFixture {
 				"client_id": f.clientID, "token_endpoint_auth_method": "none", "redirect_uris": request.RedirectURIs,
 				"grant_types": request.GrantTypes, "response_types": request.ResponseTypes, "scope": request.Scope,
 			}
+			if f.clientIDIssuedAt != nil {
+				response["client_id_issued_at"] = *f.clientIDIssuedAt
+			}
 			if f.registrationAccessToken != "" {
 				response["registration_access_token"] = f.registrationAccessToken
 			}
@@ -139,6 +143,31 @@ func (f *dcrMetadataFixture) options(t *testing.T, store credentialstore.Store) 
 	}
 	AllowOAuthLoopbackForTest(t, &opts)
 	return opts
+}
+
+func TestValidateDCRAuthorizationURL(t *testing.T) {
+	const resource = "https://connector.example/gw/mcp"
+	valid := "https://issuer.example/authorize?scope=openid&resource=https%3A%2F%2Fconnector.example%2Fgw%2Fmcp"
+	for _, tc := range []struct {
+		name string
+		raw  string
+		ok   bool
+	}{
+		{name: "exact", raw: valid, ok: true},
+		{name: "missing scope", raw: strings.Replace(valid, "scope=openid&", "", 1)},
+		{name: "challenge scope union", raw: strings.Replace(valid, "scope=openid", "scope=openid+admin", 1)},
+		{name: "duplicate scope", raw: valid + "&scope=openid"},
+		{name: "missing resource", raw: strings.Split(valid, "&resource=")[0]},
+		{name: "wrong resource", raw: strings.Replace(valid, url.QueryEscape(resource), url.QueryEscape("https://connector.example/mcp"), 1)},
+		{name: "duplicate resource", raw: valid + "&resource=" + url.QueryEscape(resource)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateDCRAuthorizationURL(tc.raw, resource)
+			if (err == nil) != tc.ok {
+				t.Fatalf("ValidateDCRAuthorizationURL() error = %v, want success %t", err, tc.ok)
+			}
+		})
+	}
 }
 
 func newDCRMemoryStore(t *testing.T) credentialstore.Store {
@@ -221,6 +250,54 @@ func TestADR_0325_DirectDCRMetadataAndEgressPolicy(t *testing.T) {
 			}
 			if bad.registerCount != 0 {
 				t.Fatalf("invalid metadata caused %d registration POSTs", bad.registerCount)
+			}
+		})
+	}
+}
+
+func TestADR_0325_DirectDCRRegistrationIssuedAtIsNonnegativeAndPresencePreserved(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		issuedAt int64
+		wantOK   bool
+	}{
+		{name: "negative rejected", issuedAt: -1},
+		{name: "Unix epoch preserved", issuedAt: 0, wantOK: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture := newDCRMetadataFixture(t)
+			fixture.clientIDIssuedAt = &tc.issuedAt
+			resource := fixture.server.URL + "/gw/mcp"
+			store := newDCRMemoryStore(t)
+			opts := fixture.options(t, store)
+			prepared, path, err := PrepareOAuthDCRLogin(context.Background(), resource, opts, OAuthDCRLoginReuse)
+			if err != nil {
+				t.Fatal(err)
+			}
+			prepared.RedirectURL = "http://127.0.0.1:49152" + path
+			controller, err := NewOAuthController(context.Background(), resource, prepared)
+			if (err == nil) != tc.wantOK {
+				t.Fatalf("registration error = %v, want success %t", err, tc.wantOK)
+			}
+			if controller != nil {
+				_ = controller.Close()
+			}
+			identity := oauthDCRIdentity{Profile: opts.Subject.Profile, Principal: opts.Subject.Principal, Resource: resource, Issuer: opts.Issuer}
+			key, keyErr := oauthDCRRegistrationKey(identity)
+			if keyErr != nil {
+				t.Fatal(keyErr)
+			}
+			record, getErr := store.Get(context.Background(), key)
+			if getErr != nil {
+				t.Fatal(getErr)
+			}
+			stored, decodeErr := decodeOAuthDCRRecord(record.Value, identity)
+			if tc.wantOK {
+				if decodeErr != nil || stored.Registration == nil || stored.Registration.ClientIDIssuedAt == nil || *stored.Registration.ClientIDIssuedAt != 0 {
+					t.Fatalf("stored epoch registration = %#v, error %v", stored.Registration, decodeErr)
+				}
+			} else if decodeErr == nil && stored.State == oauthDCRStateReady {
+				t.Fatalf("negative issuance time was persisted ready: %#v", stored.Registration)
 			}
 		})
 	}

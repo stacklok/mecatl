@@ -141,9 +141,10 @@ func newOAuthHTTPClient(resource string, opts OAuthOptions) (*http.Client, *oaut
 		dial:               dialer.DialContext,
 		allowLoopback:      opts.allowLoopbackForTest,
 	}
+	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: opts.testRootCAs}
 	transport.base = &http.Transport{
 		Proxy:                  nil,
-		TLSClientConfig:        &tls.Config{MinVersion: tls.VersionTLS12},
+		TLSClientConfig:        tlsConfig,
 		TLSHandshakeTimeout:    5 * time.Second,
 		ResponseHeaderTimeout:  10 * time.Second,
 		MaxResponseHeaderBytes: 64 << 10,

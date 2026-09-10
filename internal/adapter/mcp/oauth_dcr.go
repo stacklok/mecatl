@@ -42,6 +42,30 @@ const (
 // ErrOAuthDCRRecoveryRequired reports durable DCR state that requires an explicit operator recovery action.
 var ErrOAuthDCRRecoveryRequired = errors.New("OAuth DCR recovery required")
 
+// ValidateDCRAuthorizationURL checks the final SDK authorization request before
+// the host presents it. The SDK may union challenge scopes after ScopeFilter runs.
+func ValidateDCRAuthorizationURL(authorizationURL, resource string) error {
+	canonical, err := canonicalOAuthResource(resource)
+	if err != nil {
+		return errors.New("OAuth DCR authorization resource is invalid")
+	}
+	u, err := url.Parse(authorizationURL)
+	if err != nil {
+		return errors.New("OAuth DCR authorization URL is invalid")
+	}
+	query, err := url.ParseQuery(u.RawQuery)
+	if err != nil {
+		return errors.New("OAuth DCR authorization URL is invalid")
+	}
+	if scopes := query["scope"]; len(scopes) != 1 || scopes[0] != oauthDCRScope {
+		return errors.New("OAuth DCR authorization scope is invalid")
+	}
+	if resources := query["resource"]; len(resources) != 1 || resources[0] != canonical {
+		return errors.New("OAuth DCR authorization resource is invalid")
+	}
+	return nil
+}
+
 type oauthDCRIdentity struct {
 	Profile   string `json:"profile"`
 	Principal string `json:"principal"`
@@ -277,6 +301,42 @@ func discoverDCRMetadata(ctx context.Context, resource string, opts OAuthOptions
 	return oauthDCRMetadata{Issuer: opts.Issuer, Resource: resource, RedirectPolicy: oauthDCRRedirectPolicy, TokenEndpointAuthMethod: "none", GrantTypes: []string{"authorization_code"}, ResponseTypes: []string{"code"}, Scopes: []string{oauthDCRScope}}, as.RegistrationEndpoint, nil
 }
 
+type dcrRegistrationResponseCapture struct {
+	base     http.RoundTripper
+	issuedAt *int64
+	invalid  bool
+}
+
+func (c *dcrRegistrationResponseCapture) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := c.base.RoundTrip(req)
+	if err != nil || resp == nil || resp.Body == nil {
+		return resp, err
+	}
+	body, readErr := io.ReadAll(io.LimitReader(resp.Body, credentialstore.MaxValueBytes+1))
+	_ = resp.Body.Close()
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	if readErr != nil || len(body) > credentialstore.MaxValueBytes {
+		c.invalid = true
+		return resp, nil
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(body, &fields) != nil {
+		c.invalid = true
+		return resp, nil
+	}
+	raw, present := fields["client_id_issued_at"]
+	if !present {
+		return resp, nil
+	}
+	var issuedAt int64
+	if json.Unmarshal(raw, &issuedAt) != nil {
+		c.invalid = true
+		return resp, nil
+	}
+	c.issuedAt = &issuedAt
+	return resp, nil
+}
+
 func resolvePreparedDCR(ctx context.Context, resource string, opts OAuthOptions, client *http.Client) (OAuthOptions, error) { //nolint:gocyclo // registration publication keeps each failure state explicit.
 	if opts.Client.DCR == nil || opts.dcr != nil {
 		return opts, nil
@@ -331,18 +391,21 @@ func resolvePreparedDCR(ctx context.Context, resource string, opts OAuthOptions,
 	}
 	registerClient := *client
 	registerClient.CheckRedirect = func(*http.Request, []*http.Request) error { return ErrOAuthDCRRecoveryRequired }
+	transport := registerClient.Transport
+	if transport == nil {
+		transport = http.DefaultTransport
+	}
+	capture := &dcrRegistrationResponseCapture{base: transport}
+	registerClient.Transport = capture
 	response, err := oauthex.RegisterClient(ctx, ticket.registrationEndpoint, request, &registerClient)
-	if err != nil || !validDCRRegistrationResponse(response, request) {
+	if err != nil || capture.invalid || capture.issuedAt != nil && *capture.issuedAt < 0 || !validDCRRegistrationResponse(response, request) {
 		return OAuthOptions{}, ErrOAuthDCRRecoveryRequired
 	}
 	ready := ticket.record
 	ready.State = oauthDCRStateReady
-	issued := response.ClientIDIssuedAt.Unix()
-	if response.ClientIDIssuedAt.IsZero() {
-		issued = 0
-	}
 	ready.Registration = &oauthDCRRegistration{ClientID: response.ClientID, RegisteredRedirectURI: opts.RedirectURL}
-	if issued > 0 {
+	if capture.issuedAt != nil {
+		issued := *capture.issuedAt
 		ready.Registration.ClientIDIssuedAt = &issued
 	}
 	value, encodeErr := encodeOAuthDCRRecord(ready, ticket.record.Identity)
@@ -365,6 +428,9 @@ func resolvePreparedDCR(ctx context.Context, resource string, opts OAuthOptions,
 
 func validDCRRegistrationResponse(response *oauthex.ClientRegistrationResponse, request *oauthex.ClientRegistrationMetadata) bool {
 	if response == nil || validateSafeValue("OAuth DCR client ID", response.ClientID) != nil || response.ClientSecret != "" || response.TokenEndpointAuthMethod != "none" {
+		return false
+	}
+	if !response.ClientIDIssuedAt.IsZero() && response.ClientIDIssuedAt.Unix() < 0 {
 		return false
 	}
 	if !slices.Equal(response.RedirectURIs, request.RedirectURIs) {
