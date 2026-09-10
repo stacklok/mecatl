@@ -18,7 +18,7 @@ func (m Model) runMCPPrompts() (tea.Model, tea.Cmd)   { return m.openMCP(mcpProm
 
 // openMCP opens the selected MCP surface and starts its initial RPC.
 func (m Model) openMCP(v mcpView) (tea.Model, tea.Cmd) {
-	if m.phase != phaseIdle || m.deps.MCP == nil || (v != mcpPanel && !m.caps.MCP) {
+	if m.phase != phaseIdle || m.deps.MCP == nil {
 		return m, nil
 	}
 	m.prompt.Blur() // modal owns the keyboard while open

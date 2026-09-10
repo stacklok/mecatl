@@ -7,6 +7,17 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 )
 
+func TestMCPBrokerPanelGolden(t *testing.T) {
+	st := mcpState{brokerMode: true, inventory: client.MCPConnectorInventory{
+		Availability: "available", EnrollmentState: "not_started", Truncated: true,
+		Connectors: []client.MCPConnectorStatus{
+			{Name: "hidden", CatalogueState: "hidden"},
+			{Name: "github", CatalogueState: "discovered", ToolCount: 2},
+		},
+	}}
+	compareGolden(t, "mcp_broker_panel.golden", stripANSI([]byte(renderBrokerMCPPanel(aztec(), st, helpKeys{}, 100))))
+}
+
 func TestBrokerMCPStatus_Scenario3_Panel(t *testing.T) {
 	st := mcpState{brokerMode: true, inventory: client.MCPConnectorInventory{
 		Availability: "available", EnrollmentState: "not_started", Truncated: true,

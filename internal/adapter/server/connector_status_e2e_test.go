@@ -130,6 +130,49 @@ func TestBrokerMCPStatus_Scenario1_ReadOnly(t *testing.T) {
 	}
 }
 
+func TestBrokerMCPStatus_Scenario1_PersistedPendingGate(t *testing.T) {
+	ctx := session.WithPrincipal(t.Context(), connectorOwner())
+	f := newMultiUpstreamFixture(t, false, ctx)
+	started := f.start()
+
+	// Terminate the broker-owned transaction without calling the service's
+	// settlement path. The aggregate's pending prompt gate must remain intact.
+	attachment, _, err := f.process.Runtime.AttachSession(ctx, f.session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	enroller, ok := attachment.(brokercontract.WorkspaceEnrollmentAttachment)
+	if !ok {
+		t.Fatal("broker attachment does not support enrollment")
+	}
+	cancelled, err := enroller.CancelWorkspaceEnrollment(ctx, started.Ref)
+	if err != nil || cancelled.Status != brokercontract.WorkspaceEnrollmentCancelled {
+		t.Fatalf("cancelled terminal broker attempt = %#v, %v", cancelled, err)
+	}
+
+	f.service.cfg.OwnershipEnforced = true
+	f.service.cfg.MCPConnectorInspector = f.process.Runtime
+	store := &connectorStoreSpy{SessionStore: f.service.cfg.Store}
+	f.service.cfg.Store = store
+	inventory, err := f.service.ListSessionMcpConnectors(ctx, f.session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inventory.EnrollmentState != "not_started" {
+		t.Fatalf("enrollment state = %q, want no active broker enrollment", inventory.EnrollmentState)
+	}
+	after, err := store.Load(ctx, f.session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := after.PendingWorkspaceEnrollment(); !ok || string(got.ID) != string(started.Ref.ID) {
+		t.Fatalf("persisted pending gate = %+v, %v; want enrollment %q", got, ok, started.Ref.ID)
+	}
+	if store.saves != 0 {
+		t.Fatalf("inspection saved or settled persisted enrollment %d times", store.saves)
+	}
+}
+
 func TestBrokerMCPStatus_Scenario1_PublicationBeforeSessionCommit(t *testing.T) {
 	for _, failure := range []string{"engine rebuild", "aggregate save"} {
 		t.Run(failure, func(t *testing.T) {
