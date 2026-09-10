@@ -2,7 +2,7 @@
 
 **Contract:** human-reviewed/v1
 **Phase:** Native organizational LLM-gateway authentication
-**Status:** proposed, 2026-09-10. The directing human approved the reduced deployment-scoped v1 scope; all implementation-shaping decisions are settled below and this Split interface contract is ready for human review.
+**Status:** in-progress, 2026-09-10. The Plan / Interface contract was approved by merge; implementation is underway from the approved baseline.
 **Delivery:** Split. This changes operator CLI/configuration, provider credential custody, durable secret lifecycle, and the trust boundary between mecatl, ToolHive, and remote callers, so the interface must be approved separately from implementation.
 **Expected tasks:** deferred to orchestration
 
