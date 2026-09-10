@@ -1293,9 +1293,8 @@ func (e *Engine) PrepareAuthorizationContinuation(ctx context.Context, sess *ses
 	status := resolution.Status()
 	return e.prepareRun(ctx, sess, RunRequest{RunID: sess.RunID(), CanPresentAuthorization: true}, session.Usage{}, func(ctx context.Context, r *Run) {
 		e.emit(r, session.Event{Type: session.EvSessionInit})
-		toolToRun, ok := e.deps.Catalog.Lookup(pending.Call.Name)
-		if !ok {
-			results := []session.ToolResult{session.NewToolError(pending.Call.ID, "authorization continuation tool is unavailable")}
+		reject := func(callReason, resultReason string) {
+			results := []session.ToolResult{session.NewToolError(pending.Call.ID, resultReason)}
 			for _, deferred := range pending.Deferred {
 				results = append(results, session.NewToolError(deferred.ID, "authorization deferred sibling was not executed"))
 			}
@@ -1305,7 +1304,23 @@ func (e *Engine) PrepareAuthorizationContinuation(ctx context.Context, sess *ses
 			}
 			e.save(ctx, r, sess)
 			e.emitAuthorizationResolution(r, sess.Counters.Turns, pending.Authorization, pending.Call.ID, status, results)
-			e.terminate(ctx, r, sess, session.StopError, "", session.Usage{}, fmt.Errorf("tool %q unavailable", pending.Call.Name), false)
+			e.terminate(ctx, r, sess, session.StopError, "", session.Usage{}, fmt.Errorf("%s: %q", callReason, pending.Call.Name), false)
+		}
+		toolToRun, ok := e.deps.Catalog.Lookup(pending.Call.Name)
+		if !ok {
+			reject("tool unavailable", "authorization continuation tool is unavailable")
+			return
+		}
+		// Catalog.Available filters non-read-only tools out of plan mode's
+		// model-visible catalog — the model can only ever REQUEST this
+		// continuation in the first place because the tool looked read-only at
+		// park time. A grant refresh (e.g. a lazy protected-tool authorization
+		// replacing a static placeholder with live metadata) can change that
+		// classification before resume. Lookup bypasses the mode filter, so
+		// re-check it explicitly here rather than trust whatever the tool
+		// looked like when it parked.
+		if sess.Mode == session.ModePlan && !toolToRun.ReadOnly() {
+			reject("no longer permitted in plan mode", fmt.Sprintf("authorization continuation is no longer permitted: plan mode is active and %q now mutates the workspace; present a plan and exit plan mode first", pending.Call.Name))
 			return
 		}
 		result := e.execute(ctx, r, sess, env, sess.Counters.Turns, pending.Call, toolToRun, time.Time{})

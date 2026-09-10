@@ -252,6 +252,11 @@ func newLifecycleFixture(t *testing.T, status session.AuthorizationStatus, attac
 
 func newLifecycleFixtureWithTurns(t *testing.T, status session.AuthorizationStatus, attachErr error, now func() time.Time, timer AuthorizationTimerFactory, turns ...mockllm.Turn) lifecycleFixture {
 	t.Helper()
+	return newLifecycleFixtureWithMode(t, status, attachErr, now, timer, session.ModeDefault, turns...)
+}
+
+func newLifecycleFixtureWithMode(t *testing.T, status session.AuthorizationStatus, attachErr error, now func() time.Time, timer AuthorizationTimerFactory, mode session.PermissionMode, turns ...mockllm.Turn) lifecycleFixture {
+	t.Helper()
 	store := memstore.New()
 	mutation := &lifecycleTool{}
 	attachment := &lifecycleAttachment{binding: "broker-binding", tool: mutation, status: status, url: "https://auth.example/authorize?state=live"}
@@ -289,7 +294,7 @@ func newLifecycleFixtureWithTurns(t *testing.T, status session.AuthorizationStat
 	call := session.NewToolCall("protected-call", "protected", json.RawMessage(`{"value":1}`))
 	deferred := session.NewToolCall("deferred-call", "later", json.RawMessage(`{}`))
 	pending := session.PendingAuthorization{Authorization: session.ExternalAuthorization{ID: "authorization:1", DisplayName: "Calendar", Binding: "opaque-binding", ExpiresAt: now().Add(time.Hour)}, Call: call, Deferred: []session.ToolCall{deferred}}
-	sess := session.New("authorization-session", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/repo", Revision: "in-tree-v1"}, session.Limits{}, now())
+	sess := session.New("authorization-session", mode, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/repo", Revision: "in-tree-v1"}, session.Limits{}, now())
 	sess.ExternalBinding = session.ExternalBinding(attachment.binding)
 	if err := sess.BeginTurn(); err != nil {
 		t.Fatal(err)
@@ -471,6 +476,38 @@ func TestAuthenticatedMCPMetadataReplacement_Scenario2_ReplacesJustParkedRun(t *
 	drainLifecycleRun(t, f.svc, result)
 	if got := f.attach.tool.calls.Load(); got != 1 {
 		t.Fatalf("protected executions = %d", got)
+	}
+}
+
+// TestAuthenticatedMCPMetadataReplacement_PlanModeBlocksMutatingRefresh pins the
+// fix for a plan-mode bypass: RefreshGrantedAuthorizationCatalogue can replace a
+// declared placeholder with live metadata that is now mutating. Catalog.Lookup
+// (used by PrepareAuthorizationContinuation) bypasses plan mode's ReadOnly
+// visibility filter, so a resumed continuation must recheck plan mode + ReadOnly
+// itself before executing — never trust whatever the tool looked like when it
+// parked.
+func TestAuthenticatedMCPMetadataReplacement_PlanModeBlocksMutatingRefresh(t *testing.T) {
+	f := newLifecycleFixtureWithMode(t, session.AuthorizationGranted, nil, time.Now, nil, session.ModePlan)
+	control := MCPAuthorizationControl{SessionID: "authorization-session", AuthorizationID: f.pending.Authorization.ID}
+	result, err := f.svc.RecheckMCPAuthorization(t.Context(), control.SessionID, control)
+	if err != nil || result.Run == nil {
+		t.Fatalf("RecheckMCPAuthorization = (%+v, %v)", result, err)
+	}
+	events := drainLifecycleRun(t, f.svc, result)
+	if got := f.attach.tool.calls.Load(); got != 0 {
+		t.Fatalf("plan-mode session executed a mutating refreshed tool: calls = %d", got)
+	}
+	var found bool
+	for _, ev := range events {
+		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == f.pending.Call.ID {
+			found = true
+			if !ev.ToolResult.IsError || !strings.Contains(ev.ToolResult.Content, "plan mode") {
+				t.Fatalf("tool result = %+v, want a plan-mode error", ev.ToolResult)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("no tool result recorded for the blocked continuation")
 	}
 }
 
