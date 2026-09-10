@@ -101,6 +101,7 @@ func sweepStaleSessions(ctx context.Context, svc *server.Service, diag port.Diag
 		// silent here rather than double-logging every tick.
 		return
 	}
+	reconcileLeaseLossTombstones(ctx, svc, diag)
 	rows, err := svc.StaleRunningCandidates(ctx)
 	if err != nil {
 		diag.Log(ctx, port.LevelWarn, "stale-session sweep: list failed; skipping sweep", "err", err.Error())
@@ -134,5 +135,48 @@ func sweepStaleSessions(ctx context.Context, svc *server.Service, diag port.Diag
 	if settled > 0 {
 		diag.Log(ctx, port.LevelInfo, "stale-session sweep: settled crash-orphaned running sessions",
 			"settled", settled)
+	}
+}
+
+// reconcileLeaseLossTombstones is issue #1334's fix for the shape the sweep
+// above cannot reach: onLeaseLost drives a session OUT of StateRunning as part
+// of handling a declared lease loss (to awaiting via the preserveAwaiting
+// branch, or eventually to cancelled), so it can never become a StateRunning
+// candidate again for sweepStaleSessions to rediscover — and the
+// lostOwnership tombstone (a permanent fail-fast by design for every ordinary
+// caller) would otherwise never clear short of CloseSession or a process
+// restart. Scoped to exactly the ids THIS process tombstoned
+// (svc.LostOwnershipCandidates is an in-memory read of Service's own
+// bookkeeping, not a store-wide scan), so this never fans out trial-Acquire
+// calls against the — potentially huge — steady-state population of ordinary
+// finished awaiting/cancelled sessions in the store.
+func reconcileLeaseLossTombstones(ctx context.Context, svc *server.Service, diag port.Diagnostics) {
+	ids, err := svc.LostOwnershipCandidates(ctx)
+	if err != nil {
+		diag.Log(ctx, port.LevelWarn, "stale-session sweep: lease-loss tombstone candidate list failed", "err", err.Error())
+		return
+	}
+	var cleared, failed int
+	var firstErr string
+	for _, id := range ids {
+		ok, recErr := svc.ReconcileLeaseLossTombstone(ctx, id)
+		if recErr != nil {
+			failed++
+			if firstErr == "" {
+				firstErr = recErr.Error()
+			}
+			continue
+		}
+		if ok {
+			cleared++
+		}
+	}
+	if failed > 0 {
+		diag.Log(ctx, port.LevelWarn, "stale-session sweep: some lease-loss tombstone reconciles failed",
+			"failed", failed, "first_err", firstErr)
+	}
+	if cleared > 0 {
+		diag.Log(ctx, port.LevelInfo, "stale-session sweep: cleared stranded lease-loss tombstones",
+			"cleared", cleared)
 	}
 }

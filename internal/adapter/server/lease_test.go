@@ -2,6 +2,7 @@ package server_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"iter"
 	"sync"
@@ -769,4 +770,331 @@ func TestLeaseTransientRenewBlipKeepsRun(t *testing.T) {
 	run.Cancel()
 	svc.CloseSession(sess.ID)
 	<-cancelled // the explicit cancel now ends it cleanly.
+}
+
+// TestReconcileLeaseLossTombstoneRecoversCancelledSession is issue #1334's core
+// repro: onLeaseLost drives a session with no parked ask OUT of StateRunning
+// via run.Cancel() (to StateCancelled), so it can never again match the
+// StateRunning-only stale-session sweep (SessionStale/SettleIfStale) and the
+// lostOwnership tombstone would otherwise never clear short of CloseSession or
+// a process restart. ReconcileLeaseLossTombstone must clear it once a genuine
+// trial-Acquire proves the lease free, unblocking the next ordinary run-entry
+// (which itself, unchanged, repairs the session state via loadAndReopen's
+// existing Interrupt seam).
+func TestReconcileLeaseLossTombstoneRecoversCancelledSession(t *testing.T) {
+	lease := &fakeLease{}
+	store := memstore.New()
+	ps := permstore.New()
+	cat := tool.NewCatalog()
+	engine := agent.NewEngine(agent.Deps{
+		LLM:     blockingProvider{},
+		Catalog: cat,
+		Policy:  permpolicy.NewPolicy(nil, ps),
+		Model:   "test-model",
+	})
+	svc, err := newPlacementTestService(server.Config{
+		Engine:             engine,
+		Store:              store,
+		SessionLease:       lease,
+		LeaseOwner:         "owner-test",
+		LeaseTTL:           90 * time.Millisecond,
+		LeaseRenewInterval: 15 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	t.Cleanup(svc.Close)
+
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	run, err := svc.StartRun(context.Background(), sess.ID, "go")
+	if err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+
+	// Fail the next renew: no parked ask, so onLeaseLost's preserveAwaiting
+	// branch does not apply — it cancels the live run, which blockingProvider
+	// ends with StopCancelled once ctx is done.
+	var lost atomic.Bool
+	lease.mu.Lock()
+	lease.renewHook = func(port.Lease) (port.Lease, error) {
+		lost.Store(true)
+		return port.Lease{}, port.ErrLeaseHeld
+	}
+	lease.mu.Unlock()
+
+	var sawCancel bool
+	for ev := range run.Events() {
+		if ev.Type == session.EvResult && ev.Result != nil && ev.Result.Stop == session.StopCancelled {
+			sawCancel = true
+		}
+	}
+	svc.FinishRun(sess.ID, run)
+	if !lost.Load() || !sawCancel {
+		t.Fatal("precondition: the renewer never lost the lease and cancelled the run")
+	}
+
+	// The engine here has no Store wired (mirrors newAskingService's
+	// engineSaves=false), so the durable snapshot is whatever this test writes
+	// directly — the crash-orphan-test idiom. Persist the StateCancelled shape
+	// onLeaseLost's real cancel path would leave behind.
+	cancelled := session.New(sess.ID, session.ModeDefault, sess.EnvironmentRef, session.Limits{}, time.Unix(0, 0))
+	if err := cancelled.RecordUserPrompt("go", nil); err != nil {
+		t.Fatalf("RecordUserPrompt: %v", err)
+	}
+	if err := cancelled.BeginTurn(); err != nil {
+		t.Fatalf("BeginTurn: %v", err)
+	}
+	if err := cancelled.Cancel(); err != nil {
+		t.Fatalf("Cancel: %v", err)
+	}
+	if err := store.Save(context.Background(), cancelled); err != nil {
+		t.Fatalf("overwrite Save: %v", err)
+	}
+
+	// Precondition: the tombstone still fails every ordinary caller fast, even
+	// though the session itself is an ordinary Interrupt-recoverable cancelled
+	// snapshot.
+	if _, err := svc.StartRun(context.Background(), sess.ID, "again"); !errors.Is(err, server.ErrSessionLeasedElsewhere) {
+		t.Fatalf("StartRun before reconcile = %v, want ErrSessionLeasedElsewhere", err)
+	}
+
+	staleCtx := syscaller.Context(context.Background(), syscaller.RootStaleSessionReconcile)
+	ids, err := svc.LostOwnershipCandidates(staleCtx)
+	if err != nil {
+		t.Fatalf("LostOwnershipCandidates: %v", err)
+	}
+	if len(ids) != 1 || ids[0] != sess.ID {
+		t.Fatalf("LostOwnershipCandidates = %v, want [%q]", ids, sess.ID)
+	}
+	cleared, err := svc.ReconcileLeaseLossTombstone(staleCtx, sess.ID)
+	if err != nil {
+		t.Fatalf("ReconcileLeaseLossTombstone: %v", err)
+	}
+	if !cleared {
+		t.Fatal("ReconcileLeaseLossTombstone = false, want true (the lease is genuinely free)")
+	}
+
+	// The tombstone is gone, not merely bypassed once: a normal re-entry now
+	// succeeds, and loadAndReopen's existing Interrupt seam repairs the state.
+	run2, err := svc.StartRun(context.Background(), sess.ID, "again")
+	if err != nil {
+		t.Fatalf("StartRun after ReconcileLeaseLossTombstone = %v, want success (tombstone should be cleared)", err)
+	}
+	run2.Cancel()
+	for range run2.Events() {
+	}
+	svc.FinishRun(sess.ID, run2)
+}
+
+// TestReconcileLeaseLossTombstoneRecoversAwaitingSession is the awaiting
+// counterpart: onLeaseLost's preserveAwaiting branch drives the session to
+// StateAwaiting (parked on a permission ask) rather than cancelling it, and
+// deliberately leaves heldLeases[id] in place (marked invalid) instead of
+// deleting it. ReconcileLeaseLossTombstone must clear BOTH the tombstone and
+// that stale invalid heldLeases entry, or the very next real Acquire attempt
+// would still hard-refuse via acquireLeaseCore's separate held-but-invalid
+// check even with the tombstone gone.
+func TestReconcileLeaseLossTombstoneRecoversAwaitingSession(t *testing.T) {
+	lease := &fakeLease{}
+	store := memstore.New()
+	ps := permstore.New()
+	var ran atomic.Int64
+	cat := tool.NewCatalog()
+	cat.MustRegister(&writeAskTool{ran: &ran})
+	// Engine has no Store wired (mirrors newAskingService's engineSaves=false):
+	// the run's internal cancel-on-loss must not overwrite the durable awaiting
+	// snapshot svc.Persist writes below. Two scripted turns: the initial ask,
+	// then the post-resume completion.
+	engine := agent.NewEngine(agent.Deps{
+		LLM: mockllm.New(
+			mockllm.ToolCallTurn(session.NewToolCall("w1", "Write", json.RawMessage(`{"path":"a.go"}`))),
+			mockllm.TextTurn("done after approval"),
+		),
+		Catalog: cat,
+		Policy:  permpolicy.NewPolicy(nil, ps),
+		Model:   "test-model",
+	})
+	svc, err := newPlacementTestService(server.Config{
+		Engine:             engine,
+		Store:              store,
+		SessionLease:       lease,
+		LeaseOwner:         "owner-test",
+		LeaseTTL:           90 * time.Millisecond,
+		LeaseRenewInterval: 15 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	t.Cleanup(svc.Close)
+
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	run, err := svc.StartRun(context.Background(), sess.ID, "go")
+	if err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+	var askID string
+	for ev := range run.Events() {
+		if ev.Type == session.EvPermissionAsk && ev.Ask != nil {
+			askID = ev.Ask.AskID
+			svc.Persist(context.Background(), sess.ID) // durable awaiting snapshot; marks runState.awaiting.
+			break
+		}
+	}
+	if askID == "" {
+		t.Fatal("the run never raised a permission ask")
+	}
+
+	// The run stays genuinely parked (nothing resolves the ask); fail the next
+	// renew so onLeaseLost's preserveAwaiting branch fires.
+	var lost atomic.Bool
+	lease.mu.Lock()
+	lease.renewHook = func(port.Lease) (port.Lease, error) {
+		lost.Store(true)
+		return port.Lease{}, port.ErrLeaseHeld
+	}
+	lease.mu.Unlock()
+	for range run.Events() { // drain the retract + cancel-driven terminal.
+	}
+	svc.FinishRun(sess.ID, run)
+	if !lost.Load() {
+		t.Fatal("precondition: the renewer never attempted a Renew")
+	}
+	if ran.Load() != 0 {
+		t.Fatalf("Write executed %d time(s) pre-approval, want 0", ran.Load())
+	}
+
+	// Precondition: the durable snapshot is still the awaiting one svc.Persist
+	// wrote (the parked run's cancel-driven terminal must not have overwritten
+	// it — the engine has no Store), yet every ordinary caller fails fast on
+	// the tombstone.
+	reloaded, err := store.Load(context.Background(), sess.ID)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if reloaded.State != session.StateAwaiting {
+		t.Fatalf("precondition: durable state = %q, want awaiting", reloaded.State)
+	}
+	if err := svc.Approve(context.Background(), sess.ID, askID, session.VerdictAllowOnce); !errors.Is(err, server.ErrSessionLeasedElsewhere) {
+		t.Fatalf("Approve before reconcile = %v, want ErrSessionLeasedElsewhere", err)
+	}
+
+	staleCtx := syscaller.Context(context.Background(), syscaller.RootStaleSessionReconcile)
+	cleared, err := svc.ReconcileLeaseLossTombstone(staleCtx, sess.ID)
+	if err != nil {
+		t.Fatalf("ReconcileLeaseLossTombstone: %v", err)
+	}
+	if !cleared {
+		t.Fatal("ReconcileLeaseLossTombstone = false, want true (the lease is genuinely free)")
+	}
+
+	// The tombstone (and the stale invalid heldLeases bookkeeping) is gone: the
+	// pending ask resumes normally through the existing awaiting-resume seam.
+	resumed, err := svc.ApproveRun(context.Background(), sess.ID, askID, session.VerdictAllowOnce, "")
+	if err != nil {
+		t.Fatalf("ApproveRun after ReconcileLeaseLossTombstone = %v, want success", err)
+	}
+	var stop session.StopReason
+	for ev := range resumed.Events() {
+		if ev.Type == session.EvResult && ev.Result != nil {
+			stop = ev.Result.Stop
+		}
+	}
+	svc.FinishRun(sess.ID, resumed)
+	if ran.Load() != 1 {
+		t.Fatalf("pending Write executed %d time(s) on resume, want exactly 1", ran.Load())
+	}
+	if stop != session.StopEndTurn {
+		t.Fatalf("resumed run stop = %q, want %q", stop, session.StopEndTurn)
+	}
+}
+
+// TestReconcileLeaseLossTombstoneRefusesWhenGenuinelyHeldElsewhere is the
+// safety-critical negative counterpart: a genuine trial-Acquire failure (a
+// real competitor, or a peer's not-yet-expired hold) must leave the tombstone
+// in place — ReconcileLeaseLossTombstone must never clear it unconditionally.
+func TestReconcileLeaseLossTombstoneRefusesWhenGenuinelyHeldElsewhere(t *testing.T) {
+	lease := &fakeLease{}
+	store := memstore.New()
+	ps := permstore.New()
+	cat := tool.NewCatalog()
+	engine := agent.NewEngine(agent.Deps{
+		LLM:     blockingProvider{},
+		Catalog: cat,
+		Policy:  permpolicy.NewPolicy(nil, ps),
+		Model:   "test-model",
+	})
+	svc, err := newPlacementTestService(server.Config{
+		Engine:             engine,
+		Store:              store,
+		SessionLease:       lease,
+		LeaseOwner:         "owner-test",
+		LeaseTTL:           90 * time.Millisecond,
+		LeaseRenewInterval: 15 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	t.Cleanup(svc.Close)
+
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	run, err := svc.StartRun(context.Background(), sess.ID, "go")
+	if err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+
+	var lost atomic.Bool
+	lease.mu.Lock()
+	lease.renewHook = func(port.Lease) (port.Lease, error) {
+		lost.Store(true)
+		return port.Lease{}, port.ErrLeaseHeld
+	}
+	lease.mu.Unlock()
+	for range run.Events() {
+	}
+	svc.FinishRun(sess.ID, run)
+	if !lost.Load() {
+		t.Fatal("precondition: the renewer never lost the lease")
+	}
+
+	cancelled := session.New(sess.ID, session.ModeDefault, sess.EnvironmentRef, session.Limits{}, time.Unix(0, 0))
+	if err := cancelled.RecordUserPrompt("go", nil); err != nil {
+		t.Fatalf("RecordUserPrompt: %v", err)
+	}
+	if err := cancelled.BeginTurn(); err != nil {
+		t.Fatalf("BeginTurn: %v", err)
+	}
+	if err := cancelled.Cancel(); err != nil {
+		t.Fatalf("Cancel: %v", err)
+	}
+	if err := store.Save(context.Background(), cancelled); err != nil {
+		t.Fatalf("overwrite Save: %v", err)
+	}
+
+	// Unlike the recovery test, a REAL competitor now genuinely holds the
+	// lease — the trial-Acquire must see that, not merely "expired".
+	lease.mu.Lock()
+	lease.acquireErr = port.ErrLeaseHeld
+	lease.mu.Unlock()
+
+	staleCtx := syscaller.Context(context.Background(), syscaller.RootStaleSessionReconcile)
+	cleared, err := svc.ReconcileLeaseLossTombstone(staleCtx, sess.ID)
+	if err != nil {
+		t.Fatalf("ReconcileLeaseLossTombstone while genuinely held elsewhere: %v", err)
+	}
+	if cleared {
+		t.Fatal("ReconcileLeaseLossTombstone while genuinely held elsewhere = true, want false")
+	}
+
+	if _, err := svc.StartRun(context.Background(), sess.ID, "again"); !errors.Is(err, server.ErrSessionLeasedElsewhere) {
+		t.Fatalf("StartRun after a refused reconcile = %v, want still ErrSessionLeasedElsewhere", err)
+	}
 }
