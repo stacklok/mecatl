@@ -938,6 +938,20 @@ type Service struct {
 	// override carries its own truthful identity (issue #462 phase-2 finding #2).
 	sessionEnvironments map[session.SessionID]tool.Environment
 
+	// clientMCPSpecs holds the ORIGINAL client-supplied MCP server specs for a
+	// session's lifetime, guarded by mu. The Service never threaded these through
+	// a session-engine REBUILD (mode change, ADR-0310 full enrollment freeze, or a
+	// broker grant refresh) — callSessionEngine's specs argument was hardcoded nil
+	// there — so a rebuild silently dropped every client-provided MCP tool. This
+	// map closes that gap: written once at session creation (createPerSessionEngine)
+	// and on an ACP client's session/load (LoadSessionWithMCP), read by
+	// buildAndRegisterSessionEngineWithBrokerTools in place of nil. It is absent
+	// for a session with no client MCP (the common case), present only entries
+	// deleted on session removal (CloseSession, a failed create's rollback) or
+	// full shutdown — never on a mere rebuild-attempt rollback, since the specs
+	// remain valid for the session's surviving prior engine.
+	clientMCPSpecs map[session.SessionID][]mcp.ServerConfig
+
 	// reservedIDs holds caller-chosen session ids (WithSessionID) that are
 	// mid-create: reserved under s.mu at the top of createSession and released
 	// (defer) once the session is registered (per-session path) or persisted
@@ -1379,6 +1393,7 @@ func NewServiceContext(ctx context.Context, cfg Config) (*Service, error) {
 		brokerAttachments:   make(map[session.SessionID]brokercontract.Attachment),
 		authorizationExpiry: make(map[session.SessionID]*authorizationExpiry),
 		sessionEnvironments: make(map[session.SessionID]tool.Environment),
+		clientMCPSpecs:      make(map[session.SessionID][]mcp.ServerConfig),
 		reservedIDs:         make(map[session.SessionID]struct{}),
 		runEntryGenerations: make(map[session.SessionID]uint64),
 		replayedApprovals:   make(map[session.SessionID]struct{}),
@@ -2436,6 +2451,9 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 		builtForMode:    res.BuiltForMode,
 		close:           closeFn,
 	}
+	if len(specs) > 0 {
+		s.clientMCPSpecs[sess.ID] = append([]mcp.ServerConfig(nil), specs...)
+	}
 	s.mu.Unlock()
 
 	persisted, perr := s.persistCreatedSession(ctx, sess, owner, retryRequest)
@@ -2446,6 +2464,7 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 		s.mu.Lock()
 		delete(s.sessionEngines, sess.ID)
 		delete(s.sessionEnvironments, sess.ID)
+		delete(s.clientMCPSpecs, sess.ID)
 		s.mu.Unlock()
 		if closeFn != nil {
 			_ = closeFn()
@@ -2777,6 +2796,7 @@ func (s *Service) closeSessionLocal(id session.SessionID) {
 	// Drop any per-session environment override too: it closes over the (now
 	// disconnecting) connection, so it must not outlive the session.
 	delete(s.sessionEnvironments, id)
+	delete(s.clientMCPSpecs, id)
 	// Drop the once-per-id approval-replay marker (cloud-native Phase 3b): the
 	// OnCloseSession above Forgot this session's learned rules, so a LATER reload of
 	// the same id in this process MUST be allowed to replay them from the durable log
@@ -2940,6 +2960,7 @@ func (s *Service) Close() {
 	// of their own (the underlying connection is closed separately) but must not
 	// linger past the Service.
 	s.sessionEnvironments = make(map[session.SessionID]tool.Environment)
+	s.clientMCPSpecs = make(map[session.SessionID][]mcp.ServerConfig)
 	// Close all per-session event subscriptions so subscriber goroutines can exit
 	// cleanly. Close owns both shutdown and channel closure while holding subMu: a
 	// publisher holds subMu.RLock through its send, so no send can race close.
@@ -4209,6 +4230,7 @@ func (s *Service) LoadSessionWithMCP(ctx context.Context, id session.SessionID, 
 		// shell-less Environment with an honest nofs ref.
 		s.sessionEnvironments[id] = tool.MustEnvironment(sess.EnvironmentRef, nofs.New(), memledger.New(), nil)
 	}
+	s.clientMCPSpecs[id] = append([]mcp.ServerConfig(nil), specs...)
 	s.mu.Unlock()
 	return sess, nil
 }
@@ -5162,6 +5184,12 @@ func (s *Service) buildAndRegisterSessionEngineWithBrokerTools(ctx context.Conte
 	var err error
 	var broker *localBrokerAttachment
 	var brokerCommitted bool
+	// The session's original client-supplied MCP specs, if any: a rebuild must
+	// carry them forward or client-provided MCP tools silently disappear (they
+	// are otherwise threaded through only once, at session creation/load).
+	s.mu.Lock()
+	specs := s.clientMCPSpecs[id]
+	s.mu.Unlock()
 	if sess.Kind == session.SessionKindDebug {
 		target, loadErr := s.cfg.Store.Load(ctx, sess.Relationship.DebugTargetID)
 		if loadErr != nil || target == nil || sess.DebugTargetFingerprint == "" || !sess.Relationship.DebugTargetIncarnation.Valid() ||
@@ -5177,7 +5205,7 @@ func (s *Service) buildAndRegisterSessionEngineWithBrokerTools(ctx context.Conte
 		if workspaceErr != nil {
 			return nil, workspaceErr
 		}
-		res, err = s.callSessionEngine(ctx, sel, nil, profile, workspace, mode, append([]tool.Tool(nil), exactTools...))
+		res, err = s.callSessionEngine(ctx, sel, specs, profile, workspace, mode, append([]tool.Tool(nil), exactTools...))
 	} else {
 		broker, err = s.openBrokerAttachment(ctx, id, sess.ExternalBinding, true)
 		if err != nil {
@@ -5188,7 +5216,7 @@ func (s *Service) buildAndRegisterSessionEngineWithBrokerTools(ctx context.Conte
 		if workspaceErr != nil {
 			return nil, workspaceErr
 		}
-		res, err = s.callSessionEngine(ctx, sel, nil, profile, workspace, mode, brokerTools(broker))
+		res, err = s.callSessionEngine(ctx, sel, specs, profile, workspace, mode, brokerTools(broker))
 	}
 	if err != nil {
 		return nil, fmt.Errorf("server: build session engine %q: %w", id, err)

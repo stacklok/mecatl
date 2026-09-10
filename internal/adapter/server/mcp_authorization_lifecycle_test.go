@@ -172,6 +172,7 @@ type lifecycleFixture struct {
 	attach     *lifecycleAttachment
 	pending    session.PendingAuthorization
 	builtTools *[][]string
+	builtSpecs *[][]mcp.ServerConfig
 }
 
 // lifecyclePlacementProvider reattaches only the local ref the fixture binds
@@ -270,6 +271,7 @@ func newLifecycleFixtureWithMode(t *testing.T, status session.AuthorizationStatu
 	}
 	shared := buildEngine(nil)
 	var builtTools [][]string
+	var builtSpecs [][]mcp.ServerConfig
 	cfg := Config{
 		Engine: shared, Store: store, PlacementProvider: lifecyclePlacementProvider{}, PlacementScope: "test",
 		MCPBroker: broker, Now: now, AuthorizationTimer: timer,
@@ -279,12 +281,13 @@ func newLifecycleFixtureWithMode(t *testing.T, status session.AuthorizationStatu
 	cfg.SessionEngine = func(_ context.Context, _ ProviderSelector, _ []mcp.ServerConfig, _ SessionProfile, _ string, mode session.PermissionMode) (SessionEngineResult, error) {
 		return SessionEngineResult{Engine: buildEngine(nil), BuiltForMode: mode, Close: func() error { return nil }}, nil
 	}
-	cfg.SessionEngineWithTools = func(_ context.Context, _ ProviderSelector, _ []mcp.ServerConfig, _ SessionProfile, _ string, mode session.PermissionMode, tools []tool.Tool) (SessionEngineResult, error) {
+	cfg.SessionEngineWithTools = func(_ context.Context, _ ProviderSelector, specs []mcp.ServerConfig, _ SessionProfile, _ string, mode session.PermissionMode, tools []tool.Tool) (SessionEngineResult, error) {
 		names := make([]string, 0, len(tools))
 		for _, candidate := range tools {
 			names = append(names, candidate.Spec().Name)
 		}
 		builtTools = append(builtTools, names)
+		builtSpecs = append(builtSpecs, specs)
 		return SessionEngineResult{Engine: buildEngine(tools), BuiltForMode: mode, Close: func() error { return nil }}, nil
 	}
 	svc, err := NewService(cfg)
@@ -308,7 +311,7 @@ func newLifecycleFixtureWithMode(t *testing.T, status session.AuthorizationStatu
 	if err := store.Save(t.Context(), sess); err != nil {
 		t.Fatal(err)
 	}
-	return lifecycleFixture{svc: svc, store: store, broker: broker, attach: attachment, pending: pending, builtTools: &builtTools}
+	return lifecycleFixture{svc: svc, store: store, broker: broker, attach: attachment, pending: pending, builtTools: &builtTools, builtSpecs: &builtSpecs}
 }
 
 func drainLifecycleRun(t *testing.T, svc *Service, result MCPAuthorizationResult) []session.Event {
@@ -433,6 +436,31 @@ func TestAuthenticatedMCPMetadataReplacement_Scenario2_RebuildsParkedContinuatio
 	}
 	if got := *f.builtTools; len(got) == 0 || !slices.Contains(got[len(got)-1], "refreshed") {
 		t.Fatalf("continuation engine tools = %v, want refreshed snapshot", got)
+	}
+	drainLifecycleRun(t, f.svc, result)
+}
+
+// TestAuthenticatedMCPMetadataReplacement_RebuildPreservesClientMCPSpecs pins
+// the fix for a session-engine rebuild silently dropping client-provided MCP
+// tools: buildAndRegisterSessionEngineWithBrokerTools hardcoded nil specs on
+// every rebuild (mode change, ADR-0310 enrollment freeze, and a lazy grant
+// refresh), so a session with client MCP configured lost it the first time any
+// of those rebuilt its engine. The Service must thread the session's original
+// specs (recorded at creation/load, s.clientMCPSpecs) through instead.
+func TestAuthenticatedMCPMetadataReplacement_RebuildPreservesClientMCPSpecs(t *testing.T) {
+	f := newLifecycleFixture(t, session.AuthorizationGranted, nil, time.Now, nil)
+	clientSpecs := []mcp.ServerConfig{{Name: "docs", URL: "https://docs.example/mcp"}}
+	f.svc.mu.Lock()
+	f.svc.clientMCPSpecs["authorization-session"] = clientSpecs
+	f.svc.mu.Unlock()
+
+	control := MCPAuthorizationControl{SessionID: "authorization-session", AuthorizationID: f.pending.Authorization.ID}
+	result, err := f.svc.RecheckMCPAuthorization(t.Context(), control.SessionID, control)
+	if err != nil || result.Run == nil {
+		t.Fatalf("RecheckMCPAuthorization = (%+v, %v)", result, err)
+	}
+	if got := *f.builtSpecs; len(got) == 0 || len(got[len(got)-1]) != len(clientSpecs) || got[len(got)-1][0].Name != clientSpecs[0].Name {
+		t.Fatalf("rebuild specs = %v, want %v", got, clientSpecs)
 	}
 	drainLifecycleRun(t, f.svc, result)
 }
