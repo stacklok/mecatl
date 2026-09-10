@@ -571,14 +571,7 @@ embedded server, its operational diagnostics (and the `--perf` surface's log lin
 are written to `$XDG_STATE_HOME/mecatl/mecatui.log` (fallback
 `~/.local/state/mecatl/mecatui.log`) — a stderr line would corrupt the Bubble Tea
 alt-screen. `--quiet` discards them instead. A client-only run (`mecatui connect`) logs
-nothing of its own. Set `MECATUI_SELECTION_TRACE=1` (or `true`) before an embedded
-launch to add opt-in, structured selection/scroll/viewport-projection records to this
-same file for apparent scrollback truncation diagnosis. They contain structural
-coordinates, offsets, dirty/selection/follow/bottom state, viewport and
-selection-base byte counts, and rendered-frame line count; no conversation content
-or content-derived fingerprint/digest is logged. Any other value leaves it off;
-`--quiet`, a failed/locked sink, and client-only
-`mecatui connect` discard the trace along with this local sink.
+nothing of its own.
 
 The file's floor is `info`. ALL FIVE paths that end a turn TERMINALLY — a permanent
 non-retryable provider error, a mid-stream stream failure (or cancellation), a

@@ -330,7 +330,7 @@ func TestEmptyReleaseDropsSelectionBaseBeforeTheNextProjection(t *testing.T) {
 
 // TestLogicalConversationAnchors_Scenario1_ChangingFrame proves that the live
 // Model event and mouse-input paths preserve a selected subagent-card goal when
-// an unrelated streamed update changes the rendered frame.
+// a live SubagentTool event changes that card's rendered frame.
 func TestLogicalConversationAnchors_Scenario1_ChangingFrame(t *testing.T) {
 	const marker = "SUBAGENTGOALMARKER"
 	m, _ := selModel(t)
@@ -354,13 +354,18 @@ func TestLogicalConversationAnchors_Scenario1_ChangingFrame(t *testing.T) {
 		t.Fatalf("selected live subagent goal = %q, want %q", got, marker)
 	}
 
-	// This is the coalesced live-delta path, not a direct conversation mutation.
-	m = applyAll(m,
-		client.AssistantDeltaMsg{Turn: 1, Text: "unrelated tail update"},
-		renderTickMsg{},
-	)
+	// This changes the card through the live subagent event path, rather than an
+	// unrelated conversation mutation.
+	before := m.vp.GetContent()
+	m = applyAll(m, client.SubagentMsg{
+		Kind: client.SubagentTool, ParentCallID: "parent", ChildID: "child-1",
+		ToolName: "Read", InnerKind: "tool.call", Detail: `{"path":"auth.go"}`, ToolCount: 1,
+	})
+	if got := m.vp.GetContent(); got == before || !strings.Contains(ansi.Strip(got), "Read") {
+		t.Fatalf("subagent tool event did not change the card:\n%s", ansi.Strip(got))
+	}
 	if !m.sel.active {
-		t.Fatal("stable subagent-card selection was cleared by a live delta")
+		t.Fatal("stable subagent-card selection was cleared by a live subagent event")
 	}
 	if got := selectedText(m.vp.GetContent(), m.sel); got != marker {
 		t.Fatalf("selection after changing frame = %q, want %q", got, marker)

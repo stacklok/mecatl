@@ -77,6 +77,21 @@ func TestADR_0301_AnchorFallbackIsDeterministic(t *testing.T) {
 		t.Errorf("end-biased derived same-region fallback row = %d, want 1", got)
 	}
 
+	// A text anchor whose expanded reasoning disappears still stays in its
+	// reasoning region by selecting the surviving collapsed summary before
+	// falling back to an unrelated region in the same block.
+	collapsedReasoning := anchorFrame(
+		renderedRow{blockID: 5, region: conversationRegionReasoning, row: 0},
+		renderedRow{blockID: 5, region: conversationRegionReasoning, row: 2},
+		renderedRow{blockID: 5, region: conversationRegionBody, sourceOffset: 0, text: true},
+	)
+	if got := view.restore(collapsedReasoning, readingAnchor{blockID: 5, region: conversationRegionReasoning, sourceOffset: 8, row: 1, text: true, bias: towardStart}); got != 0 {
+		t.Errorf("start-biased text-to-derived same-region fallback row = %d, want 0", got)
+	}
+	if got := view.restore(collapsedReasoning, readingAnchor{blockID: 5, region: conversationRegionReasoning, sourceOffset: 8, row: 1, text: true, bias: towardEnd}); got != 1 {
+		t.Errorf("end-biased text-to-derived same-region fallback row = %d, want 1", got)
+	}
+
 	// Tool-card provenance follows the rendered semantic sections, not a fraction
 	// of their total rows: a wrapped argument section can be much longer than its
 	// one-line result.

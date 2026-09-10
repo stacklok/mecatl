@@ -81,6 +81,11 @@ func (conversationView) restore(frame renderedFrame, anchor readingAnchor) int {
 	if row := sameRegionRow(frame, anchor); row >= 0 {
 		return row
 	}
+	if anchor.text {
+		if row := sameDerivedFallbackRow(frame, anchor); row >= 0 {
+			return row
+		}
+	}
 	if row := sameBlockRow(frame, anchor); row >= 0 {
 		return row
 	}
@@ -129,35 +134,67 @@ func sameRegionRow(frame renderedFrame, anchor readingAnchor) int {
 	return candidate
 }
 
+func sameDerivedFallbackRow(frame renderedFrame, anchor readingAnchor) int {
+	return nearestRegionRow(frame, anchor, true)
+}
+
 func sameDerivedRegionRow(frame renderedFrame, anchor readingAnchor) int {
+	return nearestRegionRow(frame, anchor, false)
+}
+
+// nearestRegionRow preserves the reading edge within a region whose exact row
+// disappeared. derivedOnly selects the collapsed presentation fallback for an
+// anchor that was previously text-bearing.
+func nearestRegionRow(frame renderedFrame, anchor readingAnchor, derivedOnly bool) int {
 	candidate := -1
 	for i, row := range frame.provenance {
-		if row.blockID != anchor.blockID || row.region != anchor.region {
+		if !matchesRegionRow(row, anchor, derivedOnly) {
 			continue
 		}
-		if anchor.bias == towardStart {
-			if row.row <= anchor.row && (candidate < 0 || frame.provenance[candidate].row < row.row) {
-				candidate = i
-			}
-		} else if row.row >= anchor.row && (candidate < 0 || frame.provenance[candidate].row > row.row) {
+		if preferredRegionRow(row.row, candidateRow(frame, candidate), anchor) {
 			candidate = i
 		}
 	}
 	if candidate >= 0 {
 		return candidate
 	}
-	// The exact local row disappeared at this edge of the region. Preserve the
-	// reading direction while selecting the closest surviving row on the other side.
 	for i, row := range frame.provenance {
-		if row.blockID != anchor.blockID || row.region != anchor.region {
+		if !matchesRegionRow(row, anchor, derivedOnly) {
 			continue
 		}
-		if candidate < 0 || (anchor.bias == towardStart && row.row < frame.provenance[candidate].row) ||
-			(anchor.bias == towardEnd && row.row > frame.provenance[candidate].row) {
+		if oppositeRegionRow(row.row, candidateRow(frame, candidate), anchor.bias) {
 			candidate = i
 		}
 	}
 	return candidate
+}
+
+func matchesRegionRow(row renderedRow, anchor readingAnchor, derivedOnly bool) bool {
+	return row.blockID == anchor.blockID && row.region == anchor.region && (!derivedOnly || !row.text)
+}
+
+func candidateRow(frame renderedFrame, candidate int) int {
+	if candidate < 0 {
+		return -1
+	}
+	return frame.provenance[candidate].row
+}
+
+func preferredRegionRow(row, candidate int, anchor readingAnchor) bool {
+	if anchor.bias == towardStart {
+		return row <= anchor.row && (candidate < 0 || candidate < row)
+	}
+	return row >= anchor.row && (candidate < 0 || candidate > row)
+}
+
+func oppositeRegionRow(row, candidate int, bias edgeBias) bool {
+	if candidate < 0 {
+		return true
+	}
+	if bias == towardStart {
+		return row < candidate
+	}
+	return row > candidate
 }
 
 func sameBlockRow(frame renderedFrame, anchor readingAnchor) int {
