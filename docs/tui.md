@@ -276,9 +276,20 @@ server is authoritative.
   guaranteed. Existing credential-only orphans cannot be pruned because the store has
   no enumeration operation.
 
-- **`mecatui llm login [--skip-browser]`** — runs the separate ToolHive LLM gateway
-  OIDC flow and exits without connecting to `mecated`. `--skip-browser` prints its
-  authorization URL and waits for the callback. It is not remote-server login.
+- **`mecatui llm login ENDPOINT`**, **`mecatui llm status [ENDPOINT]`**, and
+  **`mecatui llm logout ENDPOINT`** — manage an operator-configured native LLM
+  endpoint without connecting to `mecated`. Login is signal-aware and holds one
+  bounded five-minute overall browser/callback budget, including time spent under
+  the endpoint lifecycle lock. Status is passive and local; with no configured
+  endpoints it reports how to configure `llm.endpoints` instead of succeeding with
+  empty output. Unknown IDs list the configured endpoint IDs and direct operators
+  to `mecatui llm status`. Login success is written to stderr and never prints the
+  access token. `ENDPOINT=toolhive` invokes the separate ToolHive login; the
+  one-release bare `mecatui llm login` alias warns and remains ToolHive-only.
+  `--skip-browser` is ToolHive-only and may print its authorization URL. Machine
+  consumers that previously read mecatl stdout must use ToolHive's explicit
+  `thv llm token` tooling. These commands are distinct from remote
+  `mecatui login ADDRESS`, ToolHive MCP discovery, and manual Codex authentication.
 
 ### OIDC-connected server
 

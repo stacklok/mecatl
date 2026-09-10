@@ -1024,7 +1024,7 @@ func TestCommandSummaryUsesIndentedWrappedDescriptions(t *testing.T) {
 		"  debug TARGET [flags]\n    diagnose by an exact session ID or displayed 12-column short handle; exact\n    identity wins, a unique handle resolves automatically, and ambiguity asks\n    for the full exact ID\n",
 		"  connect ADDRESS [sessions | debug TARGET] [flags]\n    dial a running mecated at ADDRESS (host:port), optionally browsing or\n    debugging a stored session\n",
 		"  login ADDRESS\n    log in to a remote mecated at ADDRESS using OIDC\n",
-		"  llm login [--skip-browser]\n    run the ToolHive LLM gateway OIDC browser flow (no session)\n",
+		"  llm login ENDPOINT | llm status [ENDPOINT] | llm logout ENDPOINT\n    manage native LLM endpoint enrollment; use endpoint 'toolhive' only for\n    ToolHive login\n",
 	} {
 		if !strings.Contains(summary, want) {
 			t.Errorf("command summary missing indented, wrapped description %q:\n%s", want, summary)

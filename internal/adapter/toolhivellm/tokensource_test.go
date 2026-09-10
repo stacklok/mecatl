@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,11 +12,48 @@ import (
 
 	"github.com/stacklok/toolhive/pkg/llm"
 	"golang.org/x/oauth2"
+
+	"github.com/stacklok/mecatl/engine/port"
 )
+
+func TestInvariant_toolhive_interactive_login_never_prints_access_token(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("llm:\n  gateway_url: https://gateway.example/v1\n  oidc:\n    issuer: https://issuer.example\n    client_id: client\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	originalFactory := interactiveTokenSourceFactory
+	t.Cleanup(func() { interactiveTokenSourceFactory = originalFactory })
+	const canary = "toolhive-access-token-canary"
+	interactiveTokenSourceFactory = func(llm.Config, string, bool, bool, port.Diagnostics) (tokenSource, error) {
+		return staticTokenSource(canary), nil
+	}
+
+	oldStdout := os.Stdout
+	read, write, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = write
+	err = RunInteractiveLogin(t.Context(), path, false, nil)
+	_ = write.Close()
+	os.Stdout = oldStdout
+	output, readErr := io.ReadAll(read)
+	_ = read.Close()
+	if err != nil || readErr != nil {
+		t.Fatalf("RunInteractiveLogin = %v, read stdout = %v", err, readErr)
+	}
+	if strings.Contains(string(output), canary) || len(output) != 0 {
+		t.Fatalf("RunInteractiveLogin disclosed token on stdout: %q", output)
+	}
+}
+
+type staticTokenSource string
+
+func (s staticTokenSource) Token(context.Context) (string, error) { return string(s), nil }
 
 // TestTokenRequiredHint (F5 AC #7): when the raw error is llm.ErrTokenRequired,
 // sanitizeTokenError returns ErrTokenRequiredHint, which names BOTH remediations
-// (thv llm setup / mecatui login AND --toolhive-llm-mode proxy) so a headless
+// (thv llm setup / mecatui llm login toolhive AND --toolhive-llm-mode proxy) so a headless
 // operator sees the exact next step.
 func TestTokenRequiredHint(t *testing.T) {
 	err := sanitizeTokenError(llm.ErrTokenRequired)
@@ -25,7 +63,7 @@ func TestTokenRequiredHint(t *testing.T) {
 	msg := err.Error()
 	for _, want := range []string{
 		"thv llm setup",
-		"mecatui login",
+		"mecatui llm login toolhive",
 		"--toolhive-llm-mode proxy",
 	} {
 		if !strings.Contains(msg, want) {

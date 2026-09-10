@@ -27,7 +27,11 @@ operator must enroll it. A connected client cannot enroll the remote server. Con
 that the remote server operator configured the exact endpoint and its explicit
 credential home; do not add a token to client flags or expect a fallback to ToolHive.
 A missing record is `not-enrolled`/unavailable, and a configured default without a
-usable record prevents startup. Status and errors deliberately contain no tokens,
+usable record prevents startup. If bare `mecatui llm status` reports that no native
+endpoints are configured, add the endpoint under the operator-tier `llm.endpoints`
+settings first. If a command reports an unknown endpoint, use the configured ID list in
+the error or rerun bare status, then retry with the exact ID; the command never guesses a
+hostname, model, or default. Status and errors deliberately contain no tokens,
 codes, authorization URLs, record keys, or trust paths.
 
 Use a dedicated deployment/service gateway identity. The gateway identity, quota,

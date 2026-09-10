@@ -313,6 +313,39 @@ func TestNativeLLMGatewayLogin_Scenario5_TransactionLockOrderingAndConcurrency(t
 	}
 }
 
+func TestInvariant_rotated_refresh_is_persisted_before_access_validation(t *testing.T) {
+	backend := credentialstore.NewMemoryBackend()
+	store, _ := backend.Open(llmendpoint.CredentialNamespace)
+	repo := llmendpoint.NewCredentialRepository(store)
+	id := testIdentity()
+	old := llmendpoint.Token{AccessToken: "old", RefreshToken: "prior", TokenType: "Bearer", Expiry: time.Now().Add(-time.Minute)}
+	if _, err := repo.Save(t.Context(), id, old, nil); err != nil {
+		t.Fatal(err)
+	}
+	validationErr := errors.New("access profile rejected")
+	lifecycle := llmendpoint.Lifecycle{
+		Repository: repo,
+		Locker:     llmendpoint.MemoryLocker(),
+		Exchange: func(context.Context, string) (llmendpoint.Token, error) {
+			return llmendpoint.Token{AccessToken: "untrusted-access", RefreshToken: "rotated", TokenType: "Bearer", Expiry: time.Now().Add(time.Hour)}, nil
+		},
+		ValidateAccessToken: func(context.Context, string) error {
+			loaded, err := repo.Load(t.Context(), id)
+			if err != nil || loaded.Token.RefreshToken != "rotated" {
+				t.Fatalf("validation ran before rotated refresh commit: record=%+v err=%v", loaded.Token, err)
+			}
+			return validationErr
+		},
+	}
+	if _, err := lifecycle.Refresh(t.Context(), id); !errors.Is(err, validationErr) {
+		t.Fatalf("Refresh error = %v", err)
+	}
+	loaded, err := repo.Load(t.Context(), id)
+	if err != nil || loaded.Token.RefreshToken != "rotated" {
+		t.Fatalf("rotated refresh was not retained after access rejection: %+v %v", loaded.Token, err)
+	}
+}
+
 func TestNativeLLMGatewayLogin_Scenario5_RotationAndAmbiguousCommit(t *testing.T) {
 	backend := credentialstore.NewMemoryBackend()
 	store, _ := backend.Open(llmendpoint.CredentialNamespace)

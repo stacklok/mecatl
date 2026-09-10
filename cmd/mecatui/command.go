@@ -37,7 +37,7 @@ const (
 	llmActionStatus                  = "status"
 	llmActionLogout                  = "logout"
 	toolHiveEndpointID               = "toolhive"
-	// modeLogin is the CLI-only `mecatui llm login` subcommand.
+	// modeLogin is the CLI-only `mecatui llm` lifecycle subcommand.
 	modeLogin transportMode = "llm-login"
 	// modeRemoteLogout removes one saved remote enrolment without starting a transport.
 	modeRemoteLogout transportMode = "remote-logout"
@@ -94,8 +94,8 @@ var topLevelCommands = []topLevelCommand{
 	},
 	{
 		name:     "llm",
-		synopsis: "llm login [--skip-browser]",
-		purpose:  "run the ToolHive LLM gateway OIDC browser flow (no session)",
+		synopsis: "llm login ENDPOINT | llm status [ENDPOINT] | llm logout ENDPOINT",
+		purpose:  "manage native LLM endpoint enrollment; use endpoint 'toolhive' only for ToolHive login",
 		resolve:  resolveLLMCommand,
 	},
 }

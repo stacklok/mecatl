@@ -9,10 +9,15 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/stacklok/toolhive-core/networking"
+
+	"github.com/stacklok/mecatl/authn/oidc/scopedhttps"
 	"github.com/stacklok/mecatl/internal/adapter/credentialstore"
 	"github.com/stacklok/mecatl/internal/adapter/llmendpoint"
 	"github.com/stacklok/mecatl/internal/adapter/oidcclient"
@@ -44,11 +49,11 @@ func OpenNativeEndpointRuntime(definition permconfig.ProviderDefinition, present
 	if definition.Native == nil {
 		return nil, llmendpoint.ErrNotEnrolled
 	}
-	issuerClient, issuerDigest, err := nativeTrustClient(definition.Native.IssuerTrust)
+	issuerClient, issuerDigest, err := nativeTrustClient(definition.Native.OIDC.Issuer, definition.Native.IssuerTrust)
 	if err != nil {
 		return nil, llmendpoint.ErrNotEnrolled
 	}
-	gatewayClient, gatewayDigest, err := nativeTrustClient(definition.Native.GatewayTrust)
+	gatewayClient, gatewayDigest, err := nativeTrustClient(definition.BaseURL, definition.Native.GatewayTrust)
 	if err != nil {
 		return nil, llmendpoint.ErrNotEnrolled
 	}
@@ -67,16 +72,16 @@ func OpenNativeEndpointRuntime(definition permconfig.ProviderDefinition, present
 	return &NativeEndpointRuntime{definition: definition, identity: id, issuer: issuerClient, gateway: gatewayClient.Transport, present: present, locker: locker}, nil
 }
 
-func nativeTrustClient(trust permconfig.NativeTrust) (*http.Client, string, error) {
-	transport := http.DefaultTransport.(*http.Transport).Clone()
+func nativeTrustClient(endpoint string, trust permconfig.NativeTrust) (*http.Client, string, error) {
 	digest := ""
+	var pem []byte
 	if trust.Policy == "private-ca" {
 		file, err := os.Open(trust.CABundle)
 		if err != nil {
 			return nil, "", err
 		}
 		defer func() { _ = file.Close() }()
-		pem, err := io.ReadAll(io.LimitReader(file, (1<<20)+1))
+		pem, err = io.ReadAll(io.LimitReader(file, (1<<20)+1))
 		if err != nil || len(pem) > 1<<20 {
 			return nil, "", errors.New("native endpoint CA bundle is unavailable")
 		}
@@ -86,15 +91,88 @@ func nativeTrustClient(trust permconfig.NativeTrust) (*http.Client, string, erro
 		}
 		sum := sha256.Sum256(pem)
 		digest = hex.EncodeToString(sum[:])
-		transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: pool}
 	}
-	return &http.Client{Transport: transport, Timeout: 30 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, digest, nil
+
+	var transport http.RoundTripper
+	if trust.Policy == "private-ca" {
+		transport = &lazyScopedTransport{endpoint: endpoint, pem: append([]byte(nil), pem...)}
+	} else {
+		transport = &http.Transport{
+			Proxy:                  nil,
+			DialContext:            networking.NewPrivateIPBlockingDialContext(),
+			TLSClientConfig:        &tls.Config{MinVersion: tls.VersionTLS12},
+			TLSHandshakeTimeout:    10 * time.Second,
+			ResponseHeaderTimeout:  15 * time.Second,
+			MaxResponseHeaderBytes: 32 << 10,
+			DisableKeepAlives:      true,
+		}
+	}
+	confined, err := newOriginTransport(endpoint, transport)
+	if err != nil {
+		return nil, "", err
+	}
+	return &http.Client{Transport: confined, Timeout: 30 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, digest, nil
+}
+
+type lazyScopedTransport struct {
+	mu       sync.Mutex
+	endpoint string
+	pem      []byte
+	next     http.RoundTripper
+}
+
+func (t *lazyScopedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	t.mu.Lock()
+	if t.next == nil {
+		client, err := scopedhttps.NewSingleIssuerClient(req.Context(), []string{t.endpoint}, t.pem)
+		if err != nil {
+			t.mu.Unlock()
+			return nil, err
+		}
+		t.next = client.Transport
+		clear(t.pem)
+		t.pem = nil
+	}
+	next := t.next
+	t.mu.Unlock()
+	return next.RoundTrip(req)
+}
+
+type originTransport struct {
+	scheme, host, port string
+	next               http.RoundTripper
+}
+
+func newOriginTransport(endpoint string, next http.RoundTripper) (originTransport, error) {
+	u, err := url.Parse(endpoint)
+	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || next == nil {
+		return originTransport{}, errors.New("native endpoint origin is invalid")
+	}
+	port := u.Port()
+	if port == "" {
+		port = "443"
+	}
+	return originTransport{scheme: u.Scheme, host: u.Hostname(), port: port, next: next}, nil
+}
+
+func (t originTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req == nil || req.URL == nil {
+		return nil, errors.New("native endpoint request is invalid")
+	}
+	port := req.URL.Port()
+	if port == "" {
+		port = "443"
+	}
+	if req.URL.Scheme != t.scheme || !strings.EqualFold(req.URL.Hostname(), t.host) || port != t.port || req.URL.User != nil {
+		return nil, errors.New("native endpoint request escaped its configured origin")
+	}
+	return t.next.RoundTrip(req)
 }
 
 func (r *NativeEndpointRuntime) open(ctx context.Context, existingOnly bool) (*llmendpoint.CredentialRepository, credentialstore.Store, error) {
 	keyring, err := oidcclient.NewKeyring(r.definition.Native.CredentialHome)
 	if err != nil {
-		return nil, nil, llmendpoint.ErrNotEnrolled
+		return nil, nil, err
 	}
 	store, err := llmendpoint.NewProtectedStore(ctx, llmendpoint.ProtectedStoreConfig{Root: r.definition.Native.CredentialHome, Keyring: keyring, ExistingOnly: existingOnly})
 	if err != nil {
@@ -114,6 +192,9 @@ func (r *NativeEndpointRuntime) lifecycle(repo *llmendpoint.CredentialRepository
 		Exchange: func(ctx context.Context, refresh string) (llmendpoint.Token, error) {
 			tok, err := oidcclient.Refresh(ctx, cfg, refresh)
 			return llmendpoint.Token{AccessToken: tok.AccessToken, RefreshToken: tok.RefreshToken, TokenType: tok.TokenType, Expiry: tok.Expiry}, err
+		},
+		ValidateAccessToken: func(ctx context.Context, access string) error {
+			return oidcclient.ValidateAccessToken(ctx, cfg, access)
 		},
 	}
 }
@@ -168,10 +249,15 @@ func (r *NativeEndpointRuntime) Source(ctx context.Context) (llmendpoint.BearerS
 	if err != nil {
 		return nil, err
 	}
+	source := &nativeBearerSource{LifecycleSource: llmendpoint.LifecycleSource{Identity: r.identity, Repository: repo, Lifecycle: r.lifecycle(repo)}, transport: r.gateway}
+	if err := source.Validate(ctx); err != nil {
+		_ = store.Close()
+		return nil, err
+	}
 	r.mu.Lock()
 	r.stores = append(r.stores, store)
 	r.mu.Unlock()
-	return &nativeBearerSource{LifecycleSource: llmendpoint.LifecycleSource{Identity: r.identity, Repository: repo, Lifecycle: r.lifecycle(repo)}, transport: r.gateway}, nil
+	return source, nil
 }
 
 // Close releases every serving-process store opened by Source.

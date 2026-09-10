@@ -5080,7 +5080,7 @@ func validateToolhiveLLMMode(cfg Config) error {
 	}
 	if !toolhivellm.OIDCConfigured(path) {
 		return fmt.Errorf(
-			"--toolhive-llm-mode direct requires a ToolHive LLM gateway configured with the OIDC trio (gateway_url, oidc.issuer, oidc.client_id) — run `thv llm config set` and `thv llm setup` (or `mecatui login`), or use --toolhive-llm-mode auto/proxy")
+			"--toolhive-llm-mode direct requires a ToolHive LLM gateway configured with the OIDC trio (gateway_url, oidc.issuer, oidc.client_id) — run `thv llm config set` and `thv llm setup` (or `mecatui llm login toolhive`), or use --toolhive-llm-mode auto/proxy")
 	}
 	return nil
 }

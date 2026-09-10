@@ -29,6 +29,29 @@ func (s *replacingStore) Delete(ctx context.Context, key []byte, expected creden
 	return s.Store.Delete(ctx, key, expected)
 }
 
+func TestInvariant_native_endpoint_source_requires_exact_record_before_availability(t *testing.T) {
+	backend := credentialstore.NewMemoryBackend()
+	store, _ := backend.Open(llmendpoint.CredentialNamespace)
+	repo := llmendpoint.NewCredentialRepository(store)
+	id := testIdentity()
+	source := &llmendpoint.LifecycleSource{Identity: id, Repository: repo, Lifecycle: llmendpoint.Lifecycle{Repository: repo, Locker: llmendpoint.MemoryLocker()}}
+	if err := source.Validate(t.Context()); !errors.Is(err, llmendpoint.ErrNotEnrolled) {
+		t.Fatalf("missing exact record validated: %v", err)
+	}
+	if _, err := repo.Save(t.Context(), id, llmendpoint.Token{AccessToken: "access", RefreshToken: "refresh", TokenType: "Bearer", Expiry: time.Now().Add(time.Hour)}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := source.Validate(t.Context()); err != nil {
+		t.Fatalf("exact record rejected: %v", err)
+	}
+	drift := id
+	drift.ResourceAudience = "other"
+	source.Identity = drift
+	if err := source.Validate(t.Context()); !errors.Is(err, llmendpoint.ErrNotEnrolled) {
+		t.Fatalf("identity-drifted record validated: %v", err)
+	}
+}
+
 func TestNativeLLMGatewayLogin_Scenario5_LocalStatusIsPassive(t *testing.T) {
 	backend := credentialstore.NewMemoryBackend()
 	store, err := backend.Open(llmendpoint.CredentialNamespace)

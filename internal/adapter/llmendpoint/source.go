@@ -15,6 +15,18 @@ type LifecycleSource struct {
 	Now        func() time.Time
 }
 
+// Validate requires one exact-identity durable record before an endpoint can be
+// advertised as available or selected as a default.
+func (s *LifecycleSource) Validate(ctx context.Context) error {
+	if s == nil || s.Repository == nil || s.Lifecycle.Locker == nil {
+		return ErrNotEnrolled
+	}
+	return s.Lifecycle.Locker.With(ctx, s.Identity, func(ctx context.Context) error {
+		_, err := s.Repository.Load(ctx, s.Identity)
+		return err
+	})
+}
+
 // Token returns a usable cached bearer, refreshing an expired record before it
 // leaves the lifecycle transaction.
 func (s *LifecycleSource) Token(ctx context.Context) (string, error) {

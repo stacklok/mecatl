@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -30,11 +31,11 @@ type Keyring struct {
 // NewKeyring binds OS-keyring access to one explicit owner-only credential root.
 func NewKeyring(root string) (*Keyring, error) {
 	if root == "" || !filepath.IsAbs(root) || filepath.Clean(root) != root {
-		return nil, errors.New("OIDC credential root must be absolute and clean")
+		return nil, fmt.Errorf("%w: OIDC credential root must be absolute and clean", ErrStorage)
 	}
 	info, err := os.Stat(root)
 	if err != nil || !info.IsDir() || info.Mode().Perm()&0o077 != 0 {
-		return nil, errors.New("OIDC credential root is unavailable or not owner-only")
+		return nil, fmt.Errorf("%w: OIDC credential root is unavailable or not owner-only", ErrStorage)
 	}
 	sum := sha256.Sum256(append([]byte(keyringDomain), []byte(root)...))
 	return &Keyring{root: root, account: "root-" + hex.EncodeToString(sum[:])}, nil
@@ -43,7 +44,7 @@ func NewKeyring(root string) (*Keyring, error) {
 // Key retrieves the root-bound key. create permits first creation but never a fallback backend.
 func (k *Keyring) Key(ctx context.Context, create bool) ([]byte, error) {
 	if k == nil {
-		return nil, errors.New("OIDC keyring is unavailable")
+		return nil, fmt.Errorf("%w: OIDC keyring is unavailable", ErrStorage)
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -54,29 +55,29 @@ func (k *Keyring) Key(ctx context.Context, create bool) ([]byte, error) {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		return nil, errors.New("OIDC keyring lock is unavailable")
+		return nil, fmt.Errorf("%w: OIDC keyring lock is unavailable", ErrStorage)
 	}
 	if !locked {
-		return nil, errors.New("OIDC keyring lock was not acquired")
+		return nil, fmt.Errorf("%w: OIDC keyring lock was not acquired", ErrStorage)
 	}
 	defer func() { _ = lock.Unlock() }()
 	if err := os.Chmod(lock.Path(), 0o600); err != nil {
-		return nil, errors.New("OIDC keyring lock could not be protected")
+		return nil, fmt.Errorf("%w: OIDC keyring lock could not be protected", ErrStorage)
 	}
 	encoded, err := keyringapi.Get(keyringService, k.account)
 	if err == nil {
 		return decodeKey(encoded)
 	}
 	if !errors.Is(err, keyringapi.ErrNotFound) || !create {
-		return nil, errors.New("OIDC keyring entry is unavailable")
+		return nil, fmt.Errorf("%w: OIDC keyring entry is unavailable", ErrStorage)
 	}
 	key := make([]byte, 32)
 	if _, err := io.ReadFull(rand.Reader, key); err != nil {
-		return nil, errors.New("OIDC encryption key generation failed")
+		return nil, fmt.Errorf("%w: OIDC encryption key generation failed", ErrStorage)
 	}
 	if err := keyringapi.Set(keyringService, k.account, base64.RawStdEncoding.EncodeToString(key)); err != nil {
 		clear(key)
-		return nil, errors.New("OIDC keyring entry could not be created")
+		return nil, fmt.Errorf("%w: OIDC keyring entry could not be created", ErrStorage)
 	}
 	return key, nil
 }
@@ -85,7 +86,7 @@ func decodeKey(encoded string) ([]byte, error) {
 	key, err := base64.RawStdEncoding.DecodeString(encoded)
 	if err != nil || len(key) != 32 {
 		clear(key)
-		return nil, errors.New("OIDC keyring entry is corrupt")
+		return nil, fmt.Errorf("%w: OIDC keyring entry is corrupt", ErrStorage)
 	}
 	return key, nil
 }

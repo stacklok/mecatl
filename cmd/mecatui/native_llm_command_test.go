@@ -4,10 +4,14 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/stacklok/mecatl/internal/adapter/credentialstore"
 	"github.com/stacklok/mecatl/internal/adapter/llmendpoint"
+	"github.com/stacklok/mecatl/internal/adapter/oidcclient"
 )
 
 type fakeNativeLLMHost struct {
@@ -148,6 +152,61 @@ func TestNativeLLMGatewayLogin_Scenario6_ToolHiveLifecycleMessage(t *testing.T) 
 		if stdout.Len() != 0 || stderr.Len() != 0 {
 			t.Fatalf("%s inspected or emitted lifecycle state", action)
 		}
+	}
+}
+
+func TestInvariant_native_llm_lifecycle_errors_are_safe_and_actionable(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"not enrolled", llmendpoint.ErrNotEnrolled, "llm login corp"},
+		{"discovery", oidcclient.ErrDiscovery, "issuer trust"},
+		{"authorization", oidcclient.ErrAuthorization, "browser"},
+		{"token", oidcclient.ErrToken, "OIDC endpoint configuration"},
+		{"storage", credentialstore.ErrUnavailable, "protected credential storage"},
+		{"keyring", oidcclient.ErrStorage, "protected credential storage"},
+		{"timeout", context.DeadlineExceeded, "timed out"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			host := &fakeNativeLLMHost{ids: []string{"corp"}, loginErr: fmt.Errorf("secret-canary: %w", tc.err)}
+			err := runNativeLLMCommand(t.Context(), "login", "corp", false, host, &bytes.Buffer{}, &bytes.Buffer{})
+			if err == nil || !strings.Contains(err.Error(), tc.want) || strings.Contains(err.Error(), "secret-canary") {
+				t.Fatalf("safe remediation = %v, want %q without provider detail", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestInvariant_native_llm_status_and_unknown_endpoint_are_actionable(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	empty := &fakeNativeLLMHost{statuses: map[string]llmendpoint.Status{}}
+	err := runNativeLLMCommand(t.Context(), "status", "", false, empty, &stdout, &stderr)
+	if err == nil || !strings.Contains(err.Error(), "no native LLM endpoints are configured") || stdout.Len() != 0 {
+		t.Fatalf("empty status = %v stdout=%q", err, stdout.String())
+	}
+
+	host := &fakeNativeLLMHost{ids: []string{"corp", "research"}, statuses: map[string]llmendpoint.Status{}}
+	err = runNativeLLMCommand(t.Context(), "login", "missing", false, host, &stdout, &stderr)
+	for _, want := range []string{"unknown native LLM endpoint", "corp, research", "llm status"} {
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("unknown endpoint remediation = %v, want %q", err, want)
+		}
+	}
+}
+
+func TestInvariant_native_llm_enrollment_context_is_bounded(t *testing.T) {
+	ctx, cancel := newNativeLLMEnrollmentContext(20 * time.Millisecond)
+	defer cancel()
+	select {
+	case <-ctx.Done():
+		if !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			t.Fatalf("enrollment context = %v", ctx.Err())
+		}
+	case <-time.After(time.Second):
+		t.Fatal("enrollment context was not bounded")
 	}
 }
 

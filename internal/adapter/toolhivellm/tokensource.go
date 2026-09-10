@@ -62,7 +62,7 @@ type TokenSourceFunc func(ctx context.Context) (string, error)
 // credential — it carries no secret.
 //
 //nolint:gosec // G101 false positive: see above.
-const ErrTokenRequiredHint = "no cached ToolHive LLM gateway credential — run `thv llm setup` (or `mecatui login`) to log in, or use `--toolhive-llm-mode proxy`"
+const ErrTokenRequiredHint = "no cached ToolHive LLM gateway credential — run `thv llm setup` (or `mecatui llm login toolhive`) to log in, or use `--toolhive-llm-mode proxy`"
 
 // resolveConfigPath turns a possibly-empty configPath into a CONCRETE file
 // path. A non-empty configPath (the test-fixture seam) passes through
@@ -177,7 +177,7 @@ func OIDCConfigured(configPath string) bool {
 // It mirrors buildLLMTokenSource in toolhive's own cmd/thv/app/llm.go so there
 // is ONE token-source construction path, not two. interactive controls whether
 // a genuine cache miss may launch the browser OIDC flow (false for the
-// headless direct-mode provider, true for `mecatui login`); skipBrowser
+// headless direct-mode provider, true for `mecatui llm login toolhive`); skipBrowser
 // prints the auth URL instead of opening a browser (headless/SSH/CI), and has
 // no effect unless interactive is also true.
 func buildTokenSource(llmCfg llm.Config, configPath string, interactive, skipBrowser bool, diag port.Diagnostics) (*llm.TokenSource, error) {
@@ -250,14 +250,23 @@ func sanitizeTokenError(err error) error {
 	return errors.New(llm.SanitizeTokenError(err))
 }
 
+type tokenSource interface {
+	Token(context.Context) (string, error)
+}
+
+var interactiveTokenSourceFactory = func(cfg llm.Config, configPath string, interactive, skipBrowser bool, diag port.Diagnostics) (tokenSource, error) {
+	return buildTokenSource(cfg, configPath, interactive, skipBrowser, diag)
+}
+
 // RunInteractiveLogin runs the interactive OIDC browser flow in-process (the
-// SAME buildTokenSource pipeline with interactive=true) and prints the fresh
-// access token to stdout — the `mecatui login` subcommand. It is CLI-ONLY: it
-// does NOT start a session or connect to a server. skipBrowser prints the
-// authorization URL instead of opening a browser (headless/SSH/CI). The
-// tokenRefUpdater persists the rotated refresh-token reference so a
-// subsequent non-interactive DirectTokenSource call finds the credential
-// without re-login.
+// SAME buildTokenSource pipeline with interactive=true) and obtains a fresh
+// access token only to complete and cache the enrollment. It never prints or
+// returns that token; machine consumers must use ToolHive's explicit token tooling.
+// It is CLI-ONLY and does not start a session or connect to a server.
+// skipBrowser prints the authorization URL instead of opening a browser
+// (headless/SSH/CI). The tokenRefUpdater persists the rotated refresh-token
+// reference so a subsequent non-interactive DirectTokenSource call finds the
+// credential without re-login.
 func RunInteractiveLogin(ctx context.Context, configPath string, skipBrowser bool, diag port.Diagnostics) error {
 	path, err := resolveConfigPath(configPath)
 	if err != nil {
@@ -270,19 +279,18 @@ func RunInteractiveLogin(ctx context.Context, configPath string, skipBrowser boo
 	if !llmCfg.IsConfigured() {
 		return errors.New("ToolHive LLM gateway is not configured — run `thv llm config set` first (gateway_url, oidc.issuer, oidc.client_id)")
 	}
-	ts, err := buildTokenSource(llmCfg, path, true /* interactive */, skipBrowser, diag)
+	ts, err := interactiveTokenSourceFactory(llmCfg, path, true /* interactive */, skipBrowser, diag)
 	if err != nil {
 		return err
 	}
-	// The token itself is the deliverable of `login`; printing it to stdout is
-	// the point (mirrors `thv llm token`). It is never logged.
-	tok, err := ts.Token(ctx)
+	// The access token is consumed only to complete and cache enrollment. The
+	// mecatui lifecycle command deliberately has no token-output mode.
+	_, err = ts.Token(ctx)
 	if err != nil {
 		// Same sanitiser as the direct path (ONE policy), so a ctrl-C during the
 		// browser wait still surfaces as context.Canceled rather than an opaque
 		// generic error.
 		return sanitizeTokenError(err)
 	}
-	fmt.Println(tok)
 	return nil
 }

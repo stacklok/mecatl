@@ -27,6 +27,8 @@ var (
 	ErrAuthorization = errors.New("oidcclient: authorization rejected")
 	// ErrToken reports an exchange or access-token profile rejection.
 	ErrToken = errors.New("oidcclient: token rejected")
+	// ErrStorage reports unavailable or corrupt protected local key material.
+	ErrStorage = errors.New("oidcclient: protected storage unavailable")
 )
 
 // Config describes one exact-issuer public-client authorization-code exchange.
@@ -63,7 +65,7 @@ func AuthorizationCode(ctx context.Context, cfg Config) (Token, error) {
 	if err != nil {
 		return Token{}, ErrDiscovery
 	}
-	if doc.Issuer != cfg.Issuer || !slices.Contains(doc.CodeChallengeMethods, "S256") {
+	if doc.Issuer != cfg.Issuer || !slices.Contains(doc.CodeChallengeMethods, "S256") || !discoveryEndpointsConfined(cfg.Issuer, doc) {
 		return Token{}, ErrDiscovery
 	}
 	validate, closeValidator, err := accessValidator(ctx, cfg, doc)
@@ -109,30 +111,52 @@ func AuthorizationCode(ctx context.Context, cfg Config) (Token, error) {
 }
 
 // Refresh exchanges one retained refresh token through exact-issuer discovery.
-// Provider-controlled errors are collapsed to ErrToken.
+// Provider-controlled detail is collapsed; invalid_grant alone remains a
+// body-free structured RetrieveError so exact-version cleanup can recognize it.
 func Refresh(ctx context.Context, cfg Config, refreshToken string) (Token, error) {
 	if refreshToken == "" || cfg.HTTPClient == nil || !secureIssuer(cfg.Issuer) || cfg.ClientID == "" {
 		return Token{}, ErrToken
 	}
 	doc, err := discover(ctx, cfg.HTTPClient, cfg.Issuer)
-	if err != nil || doc.Issuer != cfg.Issuer {
+	if err != nil || doc.Issuer != cfg.Issuer || !discoveryEndpointsConfined(cfg.Issuer, doc) {
 		return Token{}, ErrDiscovery
 	}
-	validate, closeValidator, err := accessValidator(ctx, cfg, doc)
-	if err != nil {
-		return Token{}, ErrDiscovery
-	}
-	defer closeValidator()
 	oc := oauth2.Config{ClientID: cfg.ClientID, Endpoint: oauth2.Endpoint{TokenURL: doc.TokenEndpoint, AuthStyle: oauth2.AuthStyleInParams}, Scopes: append([]string(nil), cfg.Scopes...)}
 	tokenCtx := context.WithValue(ctx, oauth2.HTTPClient, cfg.HTTPClient)
 	tok, err := oc.TokenSource(tokenCtx, &oauth2.Token{RefreshToken: refreshToken}).Token()
-	if err != nil || tok.AccessToken == "" || tok.TokenType != "Bearer" {
+	if err != nil {
+		var retrieve *oauth2.RetrieveError
+		if errors.As(err, &retrieve) && retrieve.ErrorCode == "invalid_grant" {
+			return Token{}, &oauth2.RetrieveError{ErrorCode: "invalid_grant"}
+		}
 		return Token{}, ErrToken
 	}
-	if err := validate(ctx, tok.AccessToken); err != nil {
+	if tok.AccessToken == "" || tok.TokenType != "Bearer" {
 		return Token{}, ErrToken
 	}
 	return Token{AccessToken: tok.AccessToken, RefreshToken: tok.RefreshToken, TokenType: tok.TokenType, Expiry: tok.Expiry}, nil
+}
+
+// ValidateAccessToken validates a refreshed access token against exact-issuer
+// metadata. Callers that durably retain refresh-token rotation must invoke this
+// only after committing the exchange result.
+func ValidateAccessToken(ctx context.Context, cfg Config, token string) error {
+	if token == "" || cfg.HTTPClient == nil || !secureIssuer(cfg.Issuer) || cfg.Audience == "" {
+		return ErrToken
+	}
+	doc, err := discover(ctx, cfg.HTTPClient, cfg.Issuer)
+	if err != nil || doc.Issuer != cfg.Issuer || !discoveryEndpointsConfined(cfg.Issuer, doc) {
+		return ErrDiscovery
+	}
+	validate, closeValidator, err := accessValidator(ctx, cfg, doc)
+	if err != nil {
+		return ErrDiscovery
+	}
+	defer closeValidator()
+	if err := validate(ctx, token); err != nil {
+		return ErrToken
+	}
+	return nil
 }
 
 // Revoke makes one RFC 7009 request. It never includes provider response text in
@@ -142,7 +166,7 @@ func Revoke(ctx context.Context, cfg Config, token, hint string) error {
 		return ErrToken
 	}
 	doc, err := discover(ctx, cfg.HTTPClient, cfg.Issuer)
-	if err != nil || doc.Issuer != cfg.Issuer || !secureEndpoint(doc.RevocationEndpoint) {
+	if err != nil || doc.Issuer != cfg.Issuer || !discoveryEndpointsConfined(cfg.Issuer, doc) || doc.RevocationEndpoint == "" {
 		return ErrDiscovery
 	}
 	form := url.Values{"token": {token}, "token_type_hint": {hint}, "client_id": {cfg.ClientID}}
@@ -204,6 +228,31 @@ func discover(ctx context.Context, client *http.Client, issuer string) (discover
 		return discovery{}, ErrDiscovery
 	}
 	return doc, nil
+}
+
+func discoveryEndpointsConfined(issuer string, doc discovery) bool {
+	for _, endpoint := range []string{doc.AuthorizationEndpoint, doc.TokenEndpoint, doc.JWKSURI} {
+		if !sameOriginEndpoint(issuer, endpoint) {
+			return false
+		}
+	}
+	return doc.RevocationEndpoint == "" || sameOriginEndpoint(issuer, doc.RevocationEndpoint)
+}
+
+func sameOriginEndpoint(issuer, endpoint string) bool {
+	base, baseErr := url.Parse(issuer)
+	target, targetErr := url.Parse(endpoint)
+	if baseErr != nil || targetErr != nil || !secureURL(base) || !secureURL(target) || target.RawQuery != "" || target.ForceQuery || target.Fragment != "" {
+		return false
+	}
+	return strings.EqualFold(base.Scheme, target.Scheme) && strings.EqualFold(base.Hostname(), target.Hostname()) && effectivePort(base) == effectivePort(target)
+}
+
+func effectivePort(u *url.URL) string {
+	if port := u.Port(); port != "" {
+		return port
+	}
+	return "443"
 }
 
 func secureIssuer(raw string) bool {

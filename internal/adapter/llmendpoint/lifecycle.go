@@ -254,11 +254,12 @@ func (l *memoryLocker) With(ctx context.Context, _ CredentialIdentity, fn func(c
 
 // Lifecycle serializes refresh exchange and durable CAS commit.
 type Lifecycle struct {
-	Repository  *CredentialRepository
-	Locker      Locker
-	Authorize   func(context.Context) (Token, error)
-	Exchange    func(context.Context, string) (Token, error)
-	AfterCommit func()
+	Repository          *CredentialRepository
+	Locker              Locker
+	Authorize           func(context.Context) (Token, error)
+	Exchange            func(context.Context, string) (Token, error)
+	ValidateAccessToken func(context.Context, string) error
+	AfterCommit         func()
 }
 
 // Status is the closed, value-free local credential state vocabulary.
@@ -405,6 +406,11 @@ func (l Lifecycle) refresh(ctx context.Context, id CredentialIdentity, rejected 
 		out = saved.Token
 		if l.AfterCommit != nil {
 			l.AfterCommit()
+		}
+		if l.ValidateAccessToken != nil {
+			if err := l.ValidateAccessToken(ctx, saved.Token.AccessToken); err != nil {
+				return err
+			}
 		}
 		return nil
 	})
