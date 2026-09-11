@@ -437,12 +437,12 @@ jobs:
           # silently failing at it.
           create-storage-record: false
 
-  # Not a Go binary, so this doesn't go through ko like the jobs above — a
-  # plain docker/build-push-action build of the existing dev/Compose
-  # Dockerfile. The bot's TypeScript source still lives under
+  # Not a Go binary, so this doesn't go through ko like the jobs above. The
+  # multi-stage Dockerfile builds the bot, then copies only production artifacts
+  # into its digest-pinned Chainguard runtime image. The bot's source lives under
   # sdk/typescript/examples/ and isn't a published npm package (see
-  # ../sdk/typescript/examples/slack-bot/README.md); only this container
-  # image is released, from the same v* tag as mecated/mecatui/mecak8s.
+  # ../sdk/typescript/examples/slack-bot/README.md); only this container image is
+  # released from the same v* tag as the Go images.
   publish-slack-bot:
     name: Build, publish, sign, attest Slack bot example image
     runs-on: ubuntu-24.04

@@ -1,8 +1,8 @@
 # Runs the whole Slack bot demo: a real `mecated` plus the bot, wired
 # together on an internal-only Docker network (neither port is published to
 # the host — the bot reaches Slack outbound over Socket Mode; nothing needs
-# to reach in). Both Dockerfiles under docker/ are local dev/demo images,
-# not the project's official release artifact — see their header comments.
+# to reach in). The bot Dockerfile is shared with the official release image;
+# the mecated Dockerfile is local-dev-only — see their header comments.
 #
 # Usage: copy .env.example to .env, fill it in, then `docker compose up --build`.
 services:

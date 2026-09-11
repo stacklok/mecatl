@@ -138,6 +138,22 @@ updates:
           - minor
           - patch
 
+  # Slack bot release image (both Chainguard Node stages are digest-pinned).
+  - package-ecosystem: docker
+    directory: "/sdk/typescript/examples/slack-bot/docker"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "chore(deps)"
+    labels:
+      - dependencies
+    groups:
+      docker-minor-patch:
+        update-types:
+          - minor
+          - patch
+
   # SHA-pinned GitHub Actions (bumps the pin SHA + its `# vX.Y.Z` comment).
   - package-ecosystem: github-actions
     directory: "/"

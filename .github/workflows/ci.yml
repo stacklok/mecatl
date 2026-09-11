@@ -390,6 +390,78 @@ jobs:
       - name: Test Slack bot example (offline, spawns mecated --mock)
         run: task slack-bot:test
 
+      - name: Build hardened Slack bot image (no push)
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: docker build --load --tag mecatl-slack-bot:ci --secret id=npm_token,env=NODE_AUTH_TOKEN --file sdk/typescript/examples/slack-bot/docker/bot.Dockerfile sdk/typescript/examples/slack-bot
+
+      - name: Validate Slack bot runtime image
+        run: |
+          # Use the image's real ENTRYPOINT and CMD. A missing app token makes
+          # dist/index.js fail before Socket Mode can contact Slack, while its
+          # module imports still prove the compiled entrypoint and runtime deps load.
+          mkdir -p .scratch
+          if docker run --rm \
+            --env SLACK_BOT_TOKEN=ci-test-token \
+            --env MECATL_GRPC_ADDRESS=127.0.0.1:1 \
+            mecatl-slack-bot:ci > .scratch/runtime-image.log 2>&1; then
+            cat .scratch/runtime-image.log
+            echo "container unexpectedly started without SLACK_APP_TOKEN" >&2
+            exit 1
+          fi
+          grep --fixed-strings "Missing required environment variable: SLACK_APP_TOKEN" .scratch/runtime-image.log
+
+          # Exercise the bridge compiled into the final image against a real,
+          # offline mecated --mock. Socket Mode itself requires Slack's network
+          # service and credentials, so this intentionally stops at the bot's
+          # lowest independently testable integration boundary.
+          mkdir -p .scratch/slack-image-workspace
+          bin/mecated serve --mock \
+            --workspace="$PWD/.scratch/slack-image-workspace" \
+            --ready-file="$PWD/.scratch/slack-image-ready.json" \
+            --grpc-addr=127.0.0.1:0 \
+            --http-addr= \
+            --metrics-addr= \
+            --no-soul \
+            --no-user-model \
+            --no-scheduler \
+            --flight-recorder=false \
+            > .scratch/slack-image-mecated.log 2>&1 &
+          daemon_pid=$!
+          trap 'kill "$daemon_pid" 2>/dev/null || true; wait "$daemon_pid" 2>/dev/null || true' EXIT
+          for _ in {1..500}; do
+            test -s .scratch/slack-image-ready.json && break
+            if ! kill -0 "$daemon_pid" 2>/dev/null; then
+              cat .scratch/slack-image-mecated.log
+              exit 1
+            fi
+            sleep 0.02
+          done
+          test -s .scratch/slack-image-ready.json
+          grpc_address=$(jq --exit-status --raw-output '.grpc_address' .scratch/slack-image-ready.json)
+          docker run --rm --network host \
+            --env BRIDGE_BASE_URL="http://$grpc_address" \
+            --entrypoint /usr/bin/node \
+            mecatl-slack-bot:ci --input-type=module --eval '
+              import { MecatlBridge } from "./dist/bridge.js";
+              const bridge = new MecatlBridge({ baseUrl: process.env.BRIDGE_BASE_URL });
+              try {
+                const result = await bridge.handlePrompt("ci:final-image", "hello");
+                const expected = "Mock provider: no real model is configured. Set OPENAI_API_KEY for live use.";
+                if (result.text !== expected || result.stopReason !== "end_turn" || !result.sessionId) {
+                  throw new Error(`unexpected bridge result: ${JSON.stringify(result)}`);
+                }
+              } finally {
+                await bridge.close();
+              }
+            '
+
+          docker run --rm --entrypoint /usr/bin/node mecatl-slack-bot:ci --input-type=module --eval '
+            import { existsSync } from "node:fs";
+            const forbidden = ["/bin/sh", "/usr/bin/corepack", "/usr/bin/pnpm", "node_modules/tsx", "node_modules/typescript", "node_modules/vitest", "node_modules/@biomejs"];
+            if (process.getuid() === 0 || forbidden.some(existsSync)) process.exit(1);
+          '
+
   build:
     name: Build
     needs: changes

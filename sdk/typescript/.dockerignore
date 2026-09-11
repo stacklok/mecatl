@@ -1,5 +1,14 @@
 # Keeps the Slack bot demo image's build context (examples/slack-bot/docker-compose.yml)
 # small and avoids pnpm choking on a locally-built node_modules/dist getting copied in.
+# Never send local runtime configuration or private-key credentials to the builder.
 **/node_modules
 **/dist
 **/.api-extractor-temp
+**/.env
+**/.env.local
+**/.env.*.local
+**/.npmrc
+**/*.pem
+**/*.key
+**/*.p12
+**/*.pfx
