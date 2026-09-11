@@ -83,7 +83,7 @@ a future Kubernetes Secret `resourceVersion` CAS backend. See
 [ADR 0218](../adr/0218-credential-store.md) and
 [ADR 0221](../adr/0221-read-only-credential-source.md).
 
-## Local microVM redesign contract (ADR 0326)
+## Local microVM redesign contract (ADR 0334)
 
 Tasks 59–65 complete ordinary `microvm-local` readiness, immutable Brood admission with
 in-process `toolhive-core/container/verifier`, the one-shot rootfs materializer,
@@ -147,7 +147,7 @@ signing, independent refresh channels, per-session fairness/quotas, dashboards, 
 exhaustive cache-poisoning controls. The historical subsection below records the superseded
 accumulator implementation only; it is not target architecture.
 
-### Local microVM development release activation (ADR 0326)
+### Local microVM development release activation (ADR 0334)
 
 The unsupported source workflow is compile-time absent unless both local roots are built with
 `microvm_dev`. Those tagged roots alone register the descriptor and acknowledgement flags;
@@ -6454,14 +6454,14 @@ the scoped WRITE path is deferred** (see below).
   constructs `AgentDef`s from wire metadata — `Memory` is **NOT** carried on the wire in v1 (no proto
   change); a driver-served def stays cold-start.
 
-### Historical environment placement implementation (superseded by ADR 0326 redesign)
+### Historical environment placement implementation (superseded by ADR 0334 redesign)
 
 This subsection describes the existing accumulator code and its test seams. Its
 session-per-VM lifecycle, derived image, deny-default networking, explicit init/recover,
 `--microvm`, external cosign, mode widening, and per-generation rootfs clone are removal
 inputs, not target decisions. The authoritative target is the redesign contract under
-[Local microVM redesign contract](#local-microvm-redesign-contract-adr-0326), the living
-[architecture](../architecture/microvm-environments.md), and ADR 0326.
+[Local microVM redesign contract](#local-microvm-redesign-contract-adr-0334), the living
+[architecture](../architecture/microvm-environments.md), and ADR 0334.
 
 `environment_profile` is independent from the existing tool-surface `profile`. The
 request carries only an alias resolved against `permconfig.Resolver`'s operator-only

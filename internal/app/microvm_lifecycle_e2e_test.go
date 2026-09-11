@@ -316,16 +316,16 @@ func TestMicroVMOperatorJourneyIsLazyIsolatedAndRestartExact(t *testing.T) {
 	}
 
 	firstProvider := mockllm.New(
-		mockllm.ToolCallTurn(session.NewToolCall("write-a", "Bash", json.RawMessage(`{"command":"printf alpha > a.txt"}`))),
+		mockllm.ToolCallTurn(session.NewToolCall("write-a", "Shell", json.RawMessage(`{"command":"printf alpha > a.txt"}`))),
 		mockllm.TextTurn("first complete"),
-		mockllm.ToolCallTurn(session.NewToolCall("write-b", "Bash", json.RawMessage(`{"command":"test ! -e a.txt && printf beta > b.txt"}`))),
+		mockllm.ToolCallTurn(session.NewToolCall("write-b", "Shell", json.RawMessage(`{"command":"test ! -e a.txt && printf beta > b.txt"}`))),
 		mockllm.TextTurn("second complete"),
 		mockllm.ToolCallTurn(session.NewToolCall("direct-child", "Subagent", json.RawMessage(`{"prompt":"write a direct child marker","mode":"read-write"}`))),
-		mockllm.ToolCallTurn(session.NewToolCall("direct-write", "Bash", json.RawMessage(`{"command":"printf direct > direct-child.txt"}`))),
+		mockllm.ToolCallTurn(session.NewToolCall("direct-write", "Shell", json.RawMessage(`{"command":"printf direct > direct-child.txt"}`))),
 		mockllm.TextTurn("direct child complete"),
 		mockllm.TextTurn("parent observed direct child"),
 		mockllm.ToolCallTurn(session.NewToolCall("isolated-child", "Subagent", json.RawMessage(`{"prompt":"report your isolated working directory"}`))),
-		mockllm.ToolCallTurn(session.NewToolCall("isolated-pwd", "Bash", json.RawMessage(`{"command":"pwd"}`))),
+		mockllm.ToolCallTurn(session.NewToolCall("isolated-pwd", "Shell", json.RawMessage(`{"command":"pwd"}`))),
 		mockllm.TextTurn("isolated child complete"),
 		mockllm.TextTurn("parent observed isolated child"),
 	)
@@ -397,7 +397,7 @@ func TestMicroVMOperatorJourneyIsLazyIsolatedAndRestartExact(t *testing.T) {
 	first.Close()
 
 	secondProvider := mockllm.New(
-		mockllm.ToolCallTurn(session.NewToolCall("read-a", "Bash", json.RawMessage(`{"command":"test \"$(cat a.txt)\" = alpha"}`))),
+		mockllm.ToolCallTurn(session.NewToolCall("read-a", "Shell", json.RawMessage(`{"command":"test \"$(cat a.txt)\" = alpha"}`))),
 		mockllm.TextTurn("restart complete"),
 	)
 	second, err := Build(ctx, config(secondProvider))

@@ -204,4 +204,4 @@ sophisticated retention, crash-orphan reconciliation, crash-durable and cross-pr
 merge, Linux arm64 and macOS live support, upstream Brood signing, independent refresh
 channels, per-session fairness and quotas, dashboards, and exhaustive cache-poisoning
 controls. Non-Git, scheduled, remote, multi-user, and cross-principal placement also remain
-out of scope. See [ADR 0326](../adr/0326-microvm-execution-environments.md).
+out of scope. See [ADR 0334](../adr/0334-microvm-execution-environments.md).

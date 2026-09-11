@@ -1200,7 +1200,7 @@ idempotent readiness immediately before each actual default MicroVM provision at
 startup and no-FS creation do not run readiness or allocate a validation attachment. The live
 `microvm-local` support boundary is the signed Linux-amd64 `mecatui` release binary:
 ordinary source builds have no authenticated release defaults and fail closed. For source
-development only, [ADR 0326](adr/0326-microvm-execution-environments.md#6-keep-source-build-release-activation-developer-only) defines a
+development only, [ADR 0334](adr/0334-microvm-execution-environments.md#6-keep-source-build-release-activation-developer-only) defines a
 separately tagged `microvm_dev` mecated and embedded-local mecatui binaries whose
 development activation requires explicit
 acknowledgement and a strict owner-only local release descriptor. Untagged and published

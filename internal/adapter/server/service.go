@@ -1389,7 +1389,6 @@ func NewService(cfg Config) (*Service, error) {
 		reservedIDs:              make(map[session.SessionID]struct{}),
 		runEntryGenerations:      make(map[session.SessionID]uint64),
 		replayedApprovals:        make(map[session.SessionID]struct{}),
-		steerMsgIDs:              make(map[session.SessionID][]steerMsgID),
 		heldLeases:               make(map[session.SessionID]*heldLease),
 		lostOwnership:            make(map[session.SessionID]struct{}),
 		cleanupTokenKey:          cleanupTokenKey,

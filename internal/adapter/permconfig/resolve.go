@@ -599,7 +599,7 @@ func stampsEqual(a, b map[string]fileStamp) bool {
 // each at its tier scope (local > shared), applies the trust gate, and logs the
 // import report. It is fail-soft PER FILE: an unreadable/malformed file is logged
 // and skipped, so a bad shared YAML never suppresses a good local/Claude file.
-func (r *Resolver) loadProjectRules(ws tool.WorkspaceReader) ([]governance.Rule, *ModelsSection) {
+func (r *Resolver) loadProjectRules(ws tool.WorkspaceReader) ([]governance.Rule, *ModelsSection) { //nolint:gocyclo // Project-tier parsing keeps per-subtree warnings at one trust boundary.
 	var report Report
 	var rules []governance.Rule
 	var projectModels *ModelsSection

@@ -75,7 +75,7 @@ func TestMicroVMDefaultPlacementDailyHarnessJourney(t *testing.T) {
 		t.Fatal(err)
 	}
 	provider := mockllm.New(
-		mockllm.ToolCallTurn(session.NewToolCall("daily-bash", "Bash", json.RawMessage(`{"command":"cat tracked.txt && printf harness-change > journey.txt"}`))),
+		mockllm.ToolCallTurn(session.NewToolCall("daily-bash", "Shell", json.RawMessage(`{"command":"cat tracked.txt && printf harness-change > journey.txt"}`))),
 		mockllm.TextTurn("done"),
 	)
 	built, err := app.Build(ctx, app.Config{
