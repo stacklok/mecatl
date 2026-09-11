@@ -130,6 +130,8 @@ code {
   color: var(--mec-rope);
   border-radius: 4px;
   padding: 0.1em 0.35em;
+  font-variant-ligatures: none;
+  font-feature-settings: 'liga' 0, 'calt' 0;
 }
 
 .theme-code-block {
@@ -143,6 +145,10 @@ code {
 .theme-code-block pre {
   white-space: pre-wrap;
   overflow-wrap: break-word;
+}
+
+.theme-code-block pre code {
+  padding: var(--ifm-pre-padding);
 }
 
 .theme-code-block.nowrap pre {

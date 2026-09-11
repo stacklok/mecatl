@@ -2,6 +2,7 @@ import type { App } from "@slack/bolt";
 import { ServerError } from "@stacklok/mecatl-sdk";
 import { describe, expect, it, vi } from "vitest";
 
+import type { AccessResolver } from "../src/access.js";
 import { registerAgentSessions } from "../src/agentSessions.js";
 import type { MecatlBridge } from "../src/bridge.js";
 import type { BotConfig } from "../src/env.js";
@@ -9,7 +10,7 @@ import type { BotConfig } from "../src/env.js";
 const EXTERNAL_AUTH_MESSAGE =
   "This needs a connector to be authorized by an administrator before it can be used here.";
 const NOT_AUTHORIZED_MESSAGE =
-  "You're not authorized to use this bot. Ask the operator to add your Slack user ID to SLACK_ALLOWED_USER_IDS.";
+  "You're not authorized to use this bot. Ask the operator to grant you access.";
 const RATE_LIMITED_MESSAGE = "Rate limit exceeded — try again in a bit.";
 const FAILURE_MESSAGE =
   "Something went wrong running that against mecatl. Check the bot's logs for details.";
@@ -32,7 +33,11 @@ interface FakeApp {
 
 /** Builds a fake bolt `App` and registers `registerAgentSessions` against it, capturing the
  * handlers it installs so a test can invoke them directly with a synthetic event/message. */
-function setUp(bridge: MecatlBridge, config: BotConfig): FakeApp {
+function setUp(
+  bridge: MecatlBridge,
+  config: BotConfig,
+  resolver: AccessResolver = fakeResolver(new Set(["allowed-user"])),
+): FakeApp {
   const say = vi.fn().mockResolvedValue(undefined);
   const postEphemeral = vi.fn().mockResolvedValue(undefined);
   const startStream = vi.fn().mockResolvedValue({ ts: "stream-ts" });
@@ -60,7 +65,7 @@ function setUp(bridge: MecatlBridge, config: BotConfig): FakeApp {
     },
   } as unknown as App;
 
-  registerAgentSessions(app, bridge, config);
+  registerAgentSessions(app, bridge, config, resolver);
 
   if (
     handlers.appMention === undefined ||
@@ -90,9 +95,24 @@ function fakeBridge(
   return { cancel, handlePrompt } as unknown as MecatlBridge;
 }
 
+/** A trivial `AccessResolver` for tests that only care about allow/deny, not `EmailAllowlistResolver`'s
+ * own `users.info` logic (that gets its own dedicated test file, `access.test.ts`). */
+function fakeResolver(allowedSlackUserIds: Set<string>): AccessResolver {
+  return {
+    resolve: (ctx) =>
+      Promise.resolve(
+        allowedSlackUserIds.has(ctx.slackUserId)
+          ? { allowed: true, principal: ctx.slackUserId }
+          : { allowed: false },
+      ),
+  };
+}
+
 function fakeConfig(overrides: Partial<BotConfig> = {}): BotConfig {
   return {
-    allowedUserIds: new Set(["allowed-user"]),
+    allowedChannelIds: undefined,
+    allowedEmailDomains: undefined,
+    allowedEmails: new Set(["allowed@example.com"]),
     mecatlTarget: { baseUrl: "http://unused" },
     rateLimit: { max: 100, windowMs: 60_000 },
     slackAppToken: "xapp-test",
@@ -127,6 +147,54 @@ describe("registerAgentSessions", () => {
         user: "blocked-user",
       }),
     );
+  });
+
+  it("silently ignores an app_mention from a channel not on SLACK_ALLOWED_CHANNEL_IDS", async () => {
+    const resolve = vi.fn().mockResolvedValue({ allowed: true, principal: "allowed-user" });
+    const fake = setUp(
+      fakeBridge(vi.fn()),
+      fakeConfig({ allowedChannelIds: new Set(["C-allowed"]) }),
+      { resolve },
+    );
+
+    await fake.appMention({
+      event: {
+        bot_id: undefined,
+        channel: "C-blocked",
+        text: "<@BOT> hi",
+        ts: "100.001",
+        type: "app_mention",
+        user: "allowed-user",
+      },
+      context: { teamId: "T1" },
+      say: fake.say,
+    });
+
+    expect(fake.say).not.toHaveBeenCalled();
+    expect(fake.postEphemeral).not.toHaveBeenCalled();
+    expect(resolve).not.toHaveBeenCalled();
+  });
+
+  it("still answers an app_mention from a channel on SLACK_ALLOWED_CHANNEL_IDS", async () => {
+    const bridge = fakeBridge(
+      vi.fn().mockResolvedValue({ sessionId: "s1", stopReason: "end_turn", text: "hi there" }),
+    );
+    const fake = setUp(bridge, fakeConfig({ allowedChannelIds: new Set(["C-allowed"]) }));
+
+    await fake.appMention({
+      event: {
+        bot_id: undefined,
+        channel: "C-allowed",
+        text: "<@BOT> hi",
+        ts: "100.001",
+        type: "app_mention",
+        user: "allowed-user",
+      },
+      context: { teamId: "T1" },
+      say: fake.say,
+    });
+
+    expect(fake.say).toHaveBeenCalledWith({ text: "hi there", thread_ts: "100.001" });
   });
 
   it("rate-limits an app_mention with an ephemeral reply", async () => {
@@ -239,7 +307,8 @@ describe("registerAgentSessions", () => {
   });
 
   it("leaves a DM's rejection reply as a plain say — DMs have no visibility problem to fix", async () => {
-    const fake = setUp(fakeBridge(vi.fn()), fakeConfig());
+    const resolve = vi.fn().mockResolvedValue({ allowed: false });
+    const fake = setUp(fakeBridge(vi.fn()), fakeConfig(), { resolve });
 
     await fake.message({
       context: { botUserId: "BOT", teamId: "T1" },
@@ -257,6 +326,33 @@ describe("registerAgentSessions", () => {
 
     expect(fake.postEphemeral).not.toHaveBeenCalled();
     expect(fake.say).toHaveBeenCalledWith(NOT_AUTHORIZED_MESSAGE);
+    // The AccessResolver contract (issue #1241) defines channelId as absent for DMs, so a
+    // channel-aware resolver can tell a user-scoped DM decision apart from channel/group
+    // policy — a DM must never pass its own channelId under that name.
+    expect(resolve).toHaveBeenCalledWith({ slackUserId: "blocked-user" });
+  });
+
+  it("never applies SLACK_ALLOWED_CHANNEL_IDS to a DM (each DM has its own per-user channel id)", async () => {
+    const bridge = fakeBridge(
+      vi.fn().mockResolvedValue({ sessionId: "s1", stopReason: "end_turn", text: "hi there" }),
+    );
+    const fake = setUp(bridge, fakeConfig({ allowedChannelIds: new Set(["C-allowed"]) }));
+
+    await fake.message({
+      context: { botUserId: "BOT", teamId: "T1" },
+      message: {
+        bot_id: undefined,
+        channel: "D-not-on-the-list",
+        channel_type: "im",
+        subtype: undefined,
+        text: "hi",
+        ts: "200.001",
+        user: "allowed-user",
+      },
+      say: fake.say,
+    });
+
+    expect(fake.say).toHaveBeenCalledWith("hi there");
   });
 
   it("rejects an unauthorized channel-thread follow-up message with an ephemeral reply", async () => {

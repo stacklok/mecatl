@@ -84,6 +84,10 @@ func (s *Server) callTool(ctx context.Context, tool string, args json.RawMessage
 		return CallResult{}, fmt.Errorf("mcp call failed: %w", callErr)
 	}
 
+	return rawCallResult(s.name, tool, res), nil
+}
+
+func rawCallResult(server, tool string, res *mcpsdk.CallToolResult) CallResult {
 	var structured json.RawMessage
 	if res.StructuredContent != nil {
 		// The SDK unmarshals structuredContent into an any; re-marshal to a
@@ -124,24 +128,24 @@ func (s *Server) callTool(ctx context.Context, tool string, args json.RawMessage
 				content = []ResourceContents{{Text: text}}
 			}
 			return CallResult{
-				Server:            s.name,
+				Server:            server,
 				Tool:              tool,
 				Content:           content,
 				StructuredContent: structured,
 				IsError:           res.IsError,
-			}, nil
+			}
 		}
 	}
 
 	out := callResultContent(res.Content)
 
 	return CallResult{
-		Server:            s.name,
+		Server:            server,
 		Tool:              tool,
 		Content:           out,
 		StructuredContent: structured,
 		IsError:           res.IsError,
-	}, nil
+	}
 }
 
 // jqInputPreview locates the JSON source CallMcpWithQuery.Execute will choose

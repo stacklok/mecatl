@@ -1,4 +1,17 @@
-package cliconfig
+// Package flaghelp renders flag usage with the conventional CLI spelling:
+// --name for multi-character names and -n for one-character aliases.
+//
+// It is deliberately a LEAF package: stdlib plus one terminal-width helper, and
+// nothing else. It was extracted from internal/cliconfig because Go's unit of
+// dependency is the package, not the function — importing cliconfig for a flag
+// formatter also linked internal/app and, through it, k8s.io/client-go, the
+// 1Password WASM SDK, Redis, AWS and OpenTelemetry. cmd/mecademo did exactly
+// that for a single PrintDefaults call, which cost 71 MB (84.3 -> 13.0 MB) in a
+// binary that runs a fully offline scripted demo.
+//
+// Keep it leaf. Anything needing app.Config, provider credentials or MCP
+// profiles belongs in internal/cliconfig, not here.
+package flaghelp
 
 import (
 	"flag"

@@ -188,8 +188,8 @@ machinery, and their tests.
   schedules.
 - cmd (`cmd/mecated`): delete `schedules_cmd.go` (+ tests) and the
   `os.Args[1]=="schedules"` dispatch in `main.go`.
-- docs: drop the `schedules:` block from `docs/configuration-reference.md`,
-  the declarative + CLI sections from `docs/usage.md`, and update
+- docs: drop the `schedules:` block from `user-docs/reference/configuration.md`,
+  the declarative + CLI sections from `user-docs/`, and update
   `docs/architecture.md`'s scheduled-tasks section.
 
 **Acceptance:**
@@ -252,7 +252,7 @@ hard-deny vetoes the mutating create)
 |---|---|---|
 | Fire-result delivery BACK into the originating chat ("ping me when X") | follow-up | [ADR-0059](../adr/0059-scheduled-tasks.md) decision #8 (pull-only v1) |
 | `mecak8s schedules` CLI (never existed — no surface to remove) | n/a | parity with the existing policy |
-| In-overlay schedule Create form + NL→cron in mecatui | later phase | `docs/usage.md` scheduled-tasks note |
+| In-overlay schedule Create form + NL→cron in mecatui | later phase | `user-docs/` scheduled-tasks note |
 | Per-schedule reasoning-effort override | later phase | [ADR-0055](../adr/0055-reasoning-effort.md) / ADR 0059 (port omits effort) |
 | `singleton: false` overlap opt-out (real bool) | engine-port/proto change | [ADR-0059](../adr/0059-scheduled-tasks.md) / config-reference note |
 
@@ -261,9 +261,9 @@ hard-deny vetoes the mutating create)
 - `docs/adr/0073-schedule-tool.md` (this plan's ADR — added alongside).
 - `docs/architecture.md` scheduled-tasks section: rewrite for the model-facing
   tool, on-by-default scheduler, and the removed settings/CLI surfaces.
-- `docs/usage.md`: replace the declarative-settings + `mecated schedules` CLI
+- `user-docs/`: replace the declarative-settings + `mecated schedules` CLI
   sections with the in-chat `Schedule` tool + on-by-default behaviour.
-- `docs/configuration-reference.md`: remove the `schedules` subtree.
+- `user-docs/reference/configuration.md`: remove the `schedules` subtree.
 - `docs/design/IMPLEMENTATION-NOTES.md`: update the scheduled-tasks note.
 - `docs/design/PRODUCTION-READINESS.md`: scheduled-tasks row status update.
 - `engine/api/*.txt` + `engine/CHANGELOG.md` if the tool/registration changes

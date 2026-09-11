@@ -1058,7 +1058,7 @@ func TestValidateEmbeddedProviderRequired(t *testing.T) {
 	} else {
 		msg := err.Error()
 		for _, want := range []string{
-			"no LLM provider", "--auth-file", "ToolHive", "--mock", "connect", "docs/usage.md",
+			"no LLM provider", "--auth-file", "ToolHive", "--mock", "connect", "https://mecatl.dev/docs/features/choose-models",
 		} {
 			if !strings.Contains(msg, want) {
 				t.Errorf("validate() error %q does not mention %q", msg, want)

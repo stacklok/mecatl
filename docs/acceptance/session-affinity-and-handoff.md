@@ -371,7 +371,7 @@ otherwise concentrate traffic on one selected replica.
   lease-loss, and handoff invariants; user docs cover client and mecak8s operator use.
 - `docs/adr/0027-cloud-native.md` resource and rehydration inventories are re-audited
   for any new owner-transition state, goroutine, registry, or durable field.
-- `docs/usage.md`, relevant `user-docs/` pages, and generated configuration reference land with the
+- Relevant `user-docs/` pages and the generated configuration reference land with the
   behavior; frozen ADR 0216 remains byte-unchanged.
 - No production code is implemented by this design step; `/plan-orchestrate` owns
   decomposition and one accumulator PR.

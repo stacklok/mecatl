@@ -26,7 +26,7 @@
 // RBAC: this adapter only ever calls Get/Create/Update/Delete (never List or
 // Watch), so it needs get,create,update,delete on `leases` in the
 // `coordination.k8s.io` API group, namespace-scoped (a Role + RoleBinding on the
-// configured namespace). See docs/usage.md for the manifest.
+// configured namespace). See user-docs/building/deployment/mecated.md.
 package k8slease
 
 import (

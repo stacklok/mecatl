@@ -34,6 +34,47 @@ const config: Config = {
       },
     ],
   ],
+  plugins: [
+    [
+      '@signalwire/docusaurus-plugin-llms-txt',
+      {
+        depth: 2,
+        content: {
+          includeBlog: false,
+          includePages: true,
+          includeDocs: true,
+          includeGeneratedIndex: false,
+          enableLlmsFullTxt: false,
+          enableMarkdownFiles: true,
+          excludeRoutes: ['/search'],
+        },
+        includeOrder: [
+          '/docs/install',
+          '/docs/mecatui/**',
+          '/docs/building/**',
+          '/docs/features/**',
+          '/docs/reference/**',
+        ],
+        optionalLinks: [
+          {
+            title: 'Mecatl on GitHub',
+            url: 'https://github.com/stacklok/mecatl',
+            description: 'Source code for Mecatl.',
+          },
+          {
+            title: 'Community Discord',
+            url: 'https://discord.gg/stacklok',
+          },
+        ],
+      },
+    ],
+    [
+      '@docusaurus/plugin-client-redirects',
+      {
+        redirects: [{from: ['/docs/intro'], to: '/docs'}],
+      },
+    ],
+  ],
 
   i18n: {
     defaultLocale: 'en',
@@ -76,6 +117,11 @@ const config: Config = {
       style: 'dark',
       items: [
         {
+          to: '/docs',
+          position: 'left',
+          label: 'Docs',
+        },
+        {
           to: '/docs/mecatui',
           position: 'left',
           label: 'mecatui',
@@ -101,12 +147,18 @@ const config: Config = {
       style: 'dark',
       links: [
         {
-          title: 'Guides',
+          title: 'Get started',
           items: [
+            {label: 'Install', to: '/docs/install'},
             {label: 'Use mecatui', to: '/docs/mecatui'},
+            {label: 'Getting started', to: '/docs/building/getting-started/demo'},
+          ],
+        },
+        {
+          title: 'Build',
+          items: [
             {label: 'Build on Mecatl', to: '/docs/building'},
-            {label: 'Getting Started', to: '/docs/building/getting-started/demo'},
-            {label: 'Extension Points', to: '/docs/building/extension-points'},
+            {label: 'Extension points', to: '/docs/building/extension-points'},
             {label: 'Deployment', to: '/docs/building/deployment'},
           ],
         },
@@ -114,10 +166,12 @@ const config: Config = {
           title: 'More',
           items: [
             {label: 'GitHub', href: 'https://github.com/stacklok/mecatl'},
+            {label: 'Discord', href: 'https://discord.gg/stacklok'},
+            {label: 'Stacklok', href: 'https://stacklok.com'},
           ],
         },
       ],
-      copyright: `Copyright © ${new Date().getFullYear()} Stacklok, Inc. Built with Docusaurus.`,
+      copyright: `Copyright © ${new Date().getFullYear()} Stacklok, Inc.`,
     },
     prism: {
       // Dark-only site — only need the dark theme.

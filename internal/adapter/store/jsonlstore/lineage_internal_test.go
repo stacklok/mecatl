@@ -3,6 +3,7 @@ package jsonlstore
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -204,8 +205,28 @@ func TestLineageLegacyGlobalIndexNeverBecomesAQueryFallback(t *testing.T) {
 	if err := st.Create(t.Context(), root); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.ReadSessionLineage(t.Context(), port.SessionLineageQuery{RootID: root.ID, RootIncarnation: root.Incarnation(), Limit: 10}); err == nil {
-		t.Fatal("targeted write treated an unmigrated global v1 index as complete")
+	if err := root.RecordUserPrompt("newest snapshot", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Save(t.Context(), root); err != nil {
+		t.Fatalf("second Save: %v", err)
+	}
+	paths := st.lineageAffectedPaths(retainedLineageRecord(root), nil)
+	if dirty, err := anyLineageDirty(paths); err != nil {
+		t.Fatal(err)
+	} else if dirty {
+		t.Fatal("successful Save left dirty lineage partitions")
+	}
+	loaded, err := st.Load(t.Context(), root.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := loaded.Conversation.Messages; len(got) != 1 || got[0].Text != "newest snapshot" {
+		t.Fatalf("loaded messages = %#v, want newest snapshot", got)
+	}
+	_, err = st.ReadSessionLineage(t.Context(), port.SessionLineageQuery{RootID: root.ID, RootIncarnation: root.Incarnation(), Limit: 10})
+	if !errors.Is(err, errLineagePartitionIncomplete) {
+		t.Fatalf("ReadSessionLineage error = %v, want %v", err, errLineagePartitionIncomplete)
 	}
 }
 

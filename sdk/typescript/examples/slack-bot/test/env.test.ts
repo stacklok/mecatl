@@ -42,4 +42,18 @@ describe("loadConfig", () => {
     const config = loadConfig({ ...BASE_ENV, MECATL_SOCKET_PATH: "/tmp/mecated.sock" });
     expect(config.mecatlTarget).toStrictEqual({ socketPath: "/tmp/mecated.sock" });
   });
+
+  it("leaves allowedChannelIds undefined when SLACK_ALLOWED_CHANNEL_IDS is unset", () => {
+    const config = loadConfig({ ...BASE_ENV, MECATL_SOCKET_PATH: "/tmp/mecated.sock" });
+    expect(config.allowedChannelIds).toBeUndefined();
+  });
+
+  it("parses SLACK_ALLOWED_CHANNEL_IDS into a set, preserving case", () => {
+    const config = loadConfig({
+      ...BASE_ENV,
+      MECATL_SOCKET_PATH: "/tmp/mecated.sock",
+      SLACK_ALLOWED_CHANNEL_IDS: " C0123ABCDEF, C0456GHIJKL ,,",
+    });
+    expect(config.allowedChannelIds).toStrictEqual(new Set(["C0123ABCDEF", "C0456GHIJKL"]));
+  });
 });

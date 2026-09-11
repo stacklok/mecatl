@@ -63,7 +63,7 @@ keymap:
 Or override an action for one launch:
 
 ```sh
-bin/mecatui --keymap Agents=ctrl+f12 --keymap Effort=ctrl+f5
+mecatui --keymap Agents=ctrl+f12 --keymap Effort=ctrl+f5
 ```
 
 Bindings resolve per action: the deprecated legacy `$XDG_CONFIG_HOME/mecatl/settings.yaml` keymap is lowest precedence, the client file overrides it, and `--keymap` wins for the named action. Settings are read at startup, so restart after changing them.

@@ -31,11 +31,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
 	"github.com/stacklok/mecatl/internal/app"
 	"github.com/stacklok/mecatl/internal/cliconfig"
+	"github.com/stacklok/mecatl/internal/flaghelp"
 )
 
 // k8s-native listen defaults. A pod binds 0.0.0.0 (not loopback — the
@@ -120,6 +123,7 @@ type config struct {
 	defaultModel           string
 	defaultProviderFlagSet bool
 	useOpenAI              bool
+	openAIBearerTokenFile  string
 	// providerFlags holds shared provider flag bindings; providerCredentials is
 	// the once-resolved snapshot projected by appConfig without further I/O.
 	providerFlags       *cliconfig.ProviderFlags
@@ -305,6 +309,7 @@ type config struct {
 	// via diag instead of exporting it over OTLP — an audit mode to verify
 	// the no-PII claim before trusting --product-metrics for real.
 	productMetricsDryRun bool
+	installationID       string
 }
 
 // stringList is a repeatable string flag.Value, preserving order across
@@ -345,7 +350,8 @@ func parseFlags(argv []string) (config, error) {
 	fs.StringVar(&cfg.model, "model", "", "model identifier sent to the provider (empty: provider-appropriate default)")
 	fs.StringVar(&cfg.defaultProvider, "default-provider", "", "server-configured deployment-wide default provider id (e.g. openai, openrouter, anthropic); validated FAIL-FAST at startup")
 	fs.StringVar(&cfg.defaultModel, "default-model", "", "server-configured deployment-wide default model id for the default provider; validated FAIL-FAST at startup")
-	fs.BoolVar(&cfg.useOpenAI, "openai", false, "use the OpenAI Responses provider (key from OPENAI_API_KEY)")
+	fs.BoolVar(&cfg.useOpenAI, "openai", false, "use the OpenAI Responses provider (key from OPENAI_API_KEY or --openai-bearer-token-file)")
+	fs.StringVar(&cfg.openAIBearerTokenFile, "openai-bearer-token-file", "", "path to a rotating OpenAI bearer token (mecak8s only; requires --openai-base-url and is mutually exclusive with OPENAI_API_KEY)")
 	// Shared provider base-URL flags + credential reads (cliconfig): registers
 	// --openai-base-url / --openrouter-base-url / --anthropic-base-url and reads
 	// OPENAI/OPENROUTER/ANTHROPIC_API_KEY — the SAME helper mecated/mecatequi
@@ -478,6 +484,7 @@ func parseFlags(argv []string) (config, error) {
 	fs.StringVar(&cfg.otlpMetricsEndpoint, "otlp-metrics-endpoint", "", "OTLP METRICS collector endpoint (empty disables metrics push). An opt-in twin to --metrics-addr for non-scrape deployments; the prometheus reader stays on either way")
 	fs.StringVar(&cfg.otlpMetricsProtocol, "otlp-metrics-protocol", "grpc", "OTLP transport for metrics: \"grpc\" (default) or \"http\"")
 	fs.DurationVar(&cfg.otlpShutdownTimeout, "otlp-shutdown-timeout", 5*time.Second, "bound on the telemetry flush at SIGTERM (so a dead collector cannot hang shutdown). 0 disables the bound")
+	fs.StringVar(&cfg.installationID, "telemetry-installation-id", os.Getenv("MECATL_INSTALLATION_ID"), "stable canonical UUID exported as the optional mecatl.installation.id OTel resource attribute (default: MECATL_INSTALLATION_ID; empty omits it)")
 
 	fs.BoolVar(&cfg.productMetrics, "product-metrics", true,
 		"report anonymous product-adoption metrics to Stacklok (version, OS/arch, enabled features, coarse session/run/tool-call counts — never a prompt, file path, tool name, or model id). ON by default; opt out with --product-metrics=false, DO_NOT_TRACK=1, or telemetry.productMetrics.enabled: false in settings.yaml")
@@ -486,7 +493,7 @@ func parseFlags(argv []string) (config, error) {
 
 	fs.Usage = func() {
 		_, _ = fmt.Fprint(fs.Output(), "Usage: mecak8s [flags]\n\n")
-		cliconfig.PrintDefaults(fs.Output(), fs)
+		flaghelp.PrintDefaults(fs.Output(), fs)
 		_, _ = fmt.Fprintln(fs.Output(), "\nVersion: mecak8s --version prints the build version and exits.")
 	}
 
@@ -568,6 +575,13 @@ func parseFlags(argv []string) (config, error) {
 		return config{}, errors.New("mecak8s: openai-codex OAuth is unsupported; use an API-key provider or mecated/mecatui")
 	}
 
+	if cfg.installationID != "" {
+		parsed, err := uuid.Parse(cfg.installationID)
+		if err != nil || parsed.String() != cfg.installationID {
+			return config{}, fmt.Errorf("--telemetry-installation-id must be a canonical UUID, got %q", cfg.installationID)
+		}
+	}
+
 	// --metrics-addr MUST be loopback (ADR 0018 decision 6): the admin mux serves
 	// pprof/expvar/metrics output that can embed prompt text, file paths, and
 	// goroutine stacks — secret-shaped. A non-loopback bind is REJECTED at parse
@@ -628,6 +642,7 @@ func appConfig(cfg config, diag port.Diagnostics, obs observability) app.Config 
 		DefaultModel:           cfg.defaultModel,
 		DefaultProviderFlagSet: cfg.defaultProviderFlagSet,
 		UseOpenAI:              cfg.useOpenAI,
+		OpenAIBearerTokenFile:  cfg.openAIBearerTokenFile,
 		UseMock:                cfg.useMock,
 		MockProvider:           cfg.mockProvider,
 		Shell:                  cfg.shell,

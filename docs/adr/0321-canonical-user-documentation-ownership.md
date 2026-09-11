@@ -1,6 +1,6 @@
 # ADR 0321 — Canonical user documentation ownership
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-09-09
 - Scope: user-facing guides, operator reference, API reference, and contributor guidance
 - Supersedes: ADR 0002's assignment of user-facing usage truth to `docs/usage.md`

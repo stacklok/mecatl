@@ -490,23 +490,12 @@ func (st *Store) recoverDirtyLineage(ctx context.Context, id session.SessionID) 
 		if err := st.publishLineageRecord(recovered, manifest.Old, manifest.Paths); err != nil {
 			return err
 		}
-		legacy, err := st.legacyLineageUncertain()
-		if err != nil {
-			return err
-		}
-		if legacy {
-			return errLineagePartitionIncomplete
-		}
 		return st.clearLineageDirty(manifest.Paths)
 	})
 }
 
 func (st *Store) mutateLineage(ctx context.Context, record port.SessionLineageRecord, publishSnapshot func() error) error {
 	if err := st.recoverDirtyLineage(ctx, record.ID); err != nil {
-		return err
-	}
-	legacyUncertain, err := st.legacyLineageUncertain()
-	if err != nil {
 		return err
 	}
 	recordPath := st.lineageRecordPath(record.ID)
@@ -530,9 +519,6 @@ func (st *Store) mutateLineage(ctx context.Context, record port.SessionLineageRe
 		if err := st.publishLineageRecord(record, old, paths); err != nil {
 			return err
 		}
-		if legacyUncertain {
-			return nil
-		}
 		return st.clearLineageDirty(paths)
 	})
 }
@@ -551,10 +537,6 @@ func anyLineageDirty(paths []string) (bool, error) {
 
 func (st *Store) pruneLineage(ctx context.Context, id session.SessionID, deleteSnapshot func() error) error {
 	if err := st.recoverDirtyLineage(ctx, id); err != nil {
-		return err
-	}
-	legacyUncertain, err := st.legacyLineageUncertain()
-	if err != nil {
 		return err
 	}
 	recordPath := st.lineageRecordPath(id)
@@ -607,9 +589,6 @@ func (st *Store) pruneLineage(ctx context.Context, id session.SessionID, deleteS
 		}
 		if err := deleteSnapshot(); err != nil {
 			return err
-		}
-		if legacyUncertain {
-			return nil
 		}
 		return st.clearLineageDirty(paths)
 	})
@@ -845,6 +824,11 @@ func (st *Store) ReadSessionLineage(_ context.Context, query port.SessionLineage
 		return port.SessionLineageResult{}, errLineagePartitionIncomplete
 	} else if !os.IsNotExist(err) {
 		return port.SessionLineageResult{}, fmt.Errorf("jsonlstore: inspect lineage migration state: %w", err)
+	}
+	if legacy, err := st.legacyLineageUncertain(); err != nil {
+		return port.SessionLineageResult{}, err
+	} else if legacy {
+		return port.SessionLineageResult{}, errLineagePartitionIncomplete
 	}
 	if query.RecordID != "" {
 		path := st.lineagePointPath(query.RootID, query.RootIncarnation, query.RecordID, string(query.RecordIncarnation))

@@ -1,9 +1,11 @@
 package agent_test
 
 import (
+	"context"
 	"strings"
 	"testing"
 
+	"github.com/stacklok/mecatl/engine/adapter/localauthority"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/agent"
@@ -45,6 +47,45 @@ func TestSubagentStructuredOutputHappyPath(t *testing.T) {
 	if !strings.Contains(results[0].Content, "agentId: subagent-s1-p1") {
 		t.Fatalf("structured-output success must carry the agentId trailer, got %q", results[0].Content)
 	}
+}
+
+// TestSubagentStructuredOutputBypassesDelegatedAuthority verifies that SubmitResult
+// remains usable when the child inherits a narrowed, bound authority. SubmitResult is
+// an engine-private result sink, not a delegable capability.
+func TestSubagentStructuredOutputBypassesDelegatedAuthority(t *testing.T) {
+	childEngine := agent.NewEngine(agent.Deps{
+		LLM: mockllm.New(
+			mockllm.ToolCallTurn(toolCall("k1", "SubmitResult", `{"name":"Ada","age":36}`)),
+			mockllm.TextTurn("done"),
+		),
+		Catalog:            catalogWith(t),
+		Policy:             permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil),
+		Model:              "child-model",
+		AuthorityEvaluator: localauthority.New(),
+	})
+	task := agent.NewSubagentTool(childEngine)
+	parent := agent.NewEngine(agent.Deps{
+		LLM: mockllm.New(
+			mockllm.ToolCallTurn(toolCall("p1", "Subagent", `{"prompt":"profile Ada","output_schema":`+personSchema+`}`)),
+			mockllm.TextTurn("parent done"),
+		),
+		Catalog:            catalogWith(t, task),
+		Policy:             permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil),
+		Model:              "parent-model",
+		AuthorityEvaluator: localauthority.New(),
+	})
+
+	events := drain(parent.Run(context.Background(), authoritySession(t, "Subagent"), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"}))
+	for _, event := range events {
+		if event.ToolResult == nil || event.ToolResult.CallID != "p1" {
+			continue
+		}
+		if event.ToolResult.IsError || !strings.Contains(event.ToolResult.Content, `"name":"Ada"`) {
+			t.Fatalf("bound-authority structured result = %+v, want valid SubmitResult payload", event.ToolResult)
+		}
+		return
+	}
+	t.Fatal("missing parent Subagent result")
 }
 
 // TestSubagentStructuredOutputRetryCorrects is the ADVERSARIAL/uncooperative-mock test: the

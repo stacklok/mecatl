@@ -238,9 +238,12 @@ tasks:
           set -eu
           trap 'status=$?; deploy/mecak8s-kind/cleanup-on-failure.sh "$status"' EXIT
           mkdir -p {{.STATE}}
-          umask 077
+          chmod 0700 {{.STATE}}
           kind create cluster --name={{.CLUSTER}} --config=deploy/mecak8s-kind/kind-config.yaml
-          kind get kubeconfig --name={{.CLUSTER}} > {{.KUBECONFIG}}
+          kubeconfig={{.STATE}}/kconfig.yaml
+          kind get kubeconfig --name={{.CLUSTER}} > "$kubeconfig"
+          chmod 0600 "$kubeconfig"
+          mv -f "$kubeconfig" {{.KUBECONFIG}}
 
   namespace-apply:
     internal: true

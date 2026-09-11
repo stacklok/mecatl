@@ -532,7 +532,7 @@ explicit/declarative/remembered trust works on both roots. Thus every valid trus
 steering and shell, and a headless untrusted repo gets neither. No second synchronized ingestion or
 shell grant exists. `narratePosture` runs after `resolveTrust`, so its `trust_project` and
 `project_ingestion` fields are authoritative and cannot contradict `narrateTrust`. No engine API
-change — composition-only. See ADR 0095 and `docs/usage/workspace-trust.md`.
+change — composition-only. See ADR 0095 and `user-docs/features/permissions-and-posture.md`.
 
 `AllowAllTools` is still implemented as a **rule** (a single `ScopeCLI` allow-all from the shared
 `yoloAllowAllRule` in `internal/app/build.go`), NOT a `PermissionMode` and NOT an evaluator bypass —
@@ -1242,7 +1242,7 @@ ever reached `cfg.Model`) — the review must-fix that closed the chain.
 **Per-slot scoping (deliberate non-goal this slice).** The allowlist is a FLAT set with no per-slot
 dimension: a model allowlisted as a cheap default may also be bound by a trusted project to the
 `guardrail`/`ask-reviewer` safety-checker slots. Acceptable (the operator approved the model) but
-coarser than "approved models" implies — documented in usage.md + ADR 0030 as an operator caveat;
+coarser than "approved models" implies — documented in `user-docs/features/choose-models.md` + ADR 0030 as an operator caveat;
 per-slot scoping is a future follow-up.
 
 **CLI-key survival (the precedence mechanism).** `captureCLIModelKeys(cfg)` snapshots which model keys
@@ -2459,7 +2459,8 @@ finishes"). The Spec guard test grew to require SubagentStatus + background. Doc
 design promoted to `docs/adr/0015-background-subagents.md` (as-built, amendments folded, I1-I4
 hashes), architecture §8 gained the background/SubagentStatus/cancel paragraph (+ the stale
 forking-only-gate and blanket-auto-deny bullets corrected to the childGate/4-step reality),
-docs/tui.md gained the marker/notice/footer-count notes, docs/usage.md's delegation note gained
+docs/tui.md gained the marker/notice/footer-count notes, and
+`user-docs/building/what-you-get/subagents-teams-parallel.md` gained
 background + per-child cancel (and the child-concurrency default corrected 10→4). Guards:
 `client.TestEventToMsg` (background decode), `ui.TestSubagentRosterLineBackgroundMarker` /
 `TestSubagentRosterBackgroundMarkerEndToEnd` / `TestSubagentFocusBackgroundNote` /
@@ -3548,12 +3549,12 @@ so the loosening is made loud.
 surface. It builds ONE model of the four permconfig subtrees (`permissions`,
 `guardrails`, `posture`, `models`) and renders BOTH operator-facing artifacts from it —
 the commented skeleton `mecated config init` writes (`RenderSkeleton`) and the Markdown
-`docs/configuration-reference.md` table (`RenderReference`) — so the two surfaces cannot
+`user-docs/reference/configuration.md` table (`RenderReference`) — so the two surfaces cannot
 drift from each other, and because the model is built by REFLECTING over the
 `permconfig.*Section` structs and harvesting their field doc-comments, neither can drift
 from the code. **Flag-driven features (soul/memory/commands/user-model/session-lease) are
 OUT of the YAML reference by design** — they are configured via CLI flags + their own
-files, so the reference carries only a hand-written pointer block to `usage.md`, not an
+files, so the reference carries only a hand-written pointer block to the user docs, not an
 auto-harvested flag dump.
 
 The go/ast doc-comment harvest lives ONLY in the build-time generator
@@ -3640,7 +3641,20 @@ or failed session may be adopted.
 The credential record is keyed by the canonical target and complete public OIDC
 identity. Numeric ports canonicalize to ordinary decimal spelling, so a legacy
 credential identity containing a zero-padded port needs one login after upgrade. The
-host-internal credential store is encrypted by a root-scoped OS-keyring account. A
+host-internal credential store is selected by `internal/adapter/clientauth/credential_backend.go`
+(`ResolveCredentialStore`) and pinned before OAuth in strict non-secret metadata.
+Login-only `auto|keyring|file` uses the read-only 500 ms helper on fresh Linux auto;
+macOS auto uses keyring. Only absent/joined detection timeout permits file selection;
+parent cancellation and other failures fail closed. Pinned lifecycle paths use
+`OpenExistingCredentialStore`, never detection or migration. The file substrate in
+`internal/adapter/credentialstore/plain_file.go` shares the encrypted store's local
+CAS/lock/atomic-sync protections, with fresh generations and complete-record versions,
+but records are plaintext at rest under `clientauth-plaintext/`. Directories are 0700,
+files 0600; same-account access is outside confidentiality guarantees. The initial
+file notice is emitted once before OAuth. All clients sharing a file root must be
+upgraded. Valid legacy registry evidence pins keyring before secret access; corrupt
+metadata or registry evidence fails closed. On the keyring route, encryption uses a
+root-scoped OS-keyring account. A
 stable root-local flock serializes first creation and copies the old unsuffixed keyring
 entry into that account without deleting it only when the encrypted namespace contains
 an actual credential record; an empty namespace created by opening the old store is not
@@ -4985,7 +4999,7 @@ daemon.
 `pkg/auth/oauth/oidc.go` <!-- lint:not-a-citation: path inside the toolhive dependency, not a repo file --> builds its own OIDC-discovery `http.Client` with no
 `InsecureSkipVerify` plumbing). A self-signed gateway must use
 `--toolhive-llm-mode proxy` (which DOES honor it). The limitation is documented in the
-ADR + `docs/usage.md` + `user-docs/` with the one-line remediation; a future ToolHive
+ADR + `user-docs/building/deployment/mecated.md` with the one-line remediation; a future ToolHive
 bump that closes the gap removes it with a one-line code change. The toolhive dep is
 bumped v0.31.0 → v0.40.0 — the EARLIEST release with `pkg/llm.NewTokenSource`,
 avoiding an `mcpsdk` v1.7.0 goroutine leak present at v0.42.0+ that would regress
@@ -7934,7 +7948,7 @@ execution requires an explicit workspace-file workflow.
   permission ask) — strictly stronger than the skill driver, whose payloads still ride the
   permission-gated Bash path. **A compromised agent-source driver executes arbitrary shell
   on the harness host via def hooks; treat it as harness-equivalent infrastructure** (echoed
-  in docs/usage.md and the proto `AgentDef.hooks` comment). `resolveAgentSeam`'s driver
+  in user-docs/ and the proto `AgentDef.hooks` comment). `resolveAgentSeam`'s driver
   branch narrates every driver def carrying hooks once at build ("agent def carries
   lifecycle hooks (harness-side shell)", names only — never hook values).
 - **Driver client discipline** (`grpcdriver.NewAgentSource(conn, AgentOptions{Diagnostics})`):
@@ -9081,7 +9095,7 @@ with no signal at all. `DisallowUnknownFields` plus the decoder's own error deta
 offending field) makes it a self-diagnosing 400. This is a deliberate BEHAVIOUR CHANGE — a request
 with a stray field used to succeed — accepted because the alternative is a silent drop, and it
 matches `decodeLearningJSON`'s existing strictness on the same handler set. Noted for clients in
-`docs/usage/http-sse-api.md`.
+`user-docs/reference/http-sse-api.md`.
 
 **`MaxClientServers` bounds fan-out, not wall-clock.** The original rationale said the factory
 connects SERIALLY so an uncapped count would stall a create for count x timeout. `mcp.NewManager`

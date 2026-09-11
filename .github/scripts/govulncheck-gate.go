@@ -31,7 +31,7 @@
 // Args are the allowlist of accepted-risk OSV ids. Pass NONE for a STRICT gate
 // (the engine module: any reachable vuln reds the build). The mecatl ROOT app
 // allowlists exactly two unfixable-upstream docker CVEs — see the CI job and
-// docs/usage.md (supply-chain) for the documented rationale.
+// .github/workflows/ci.yml for the documented rationale.
 package main
 
 import (
@@ -156,7 +156,7 @@ func report(reachable, allow map[string]bool) int {
 		for _, id := range newIDs {
 			fmt.Fprintf(os.Stderr, "  - %s  (https://pkg.go.dev/vuln/%s)\n", id, id)
 		}
-		fmt.Fprintln(os.Stderr, "Fix the vulnerability (bump the dependency), or — only if there is no upstream fix and the risk is accepted — add the id to the allowlist with a dated rationale in .github/workflows/ci.yml + docs/usage.md.")
+		fmt.Fprintln(os.Stderr, "Fix the vulnerability (bump the dependency), or — only if there is no upstream fix and the risk is accepted — add the id to the allowlist with a dated rationale in .github/workflows/ci.yml.")
 		return 1
 	}
 

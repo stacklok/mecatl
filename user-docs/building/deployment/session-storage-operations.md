@@ -9,7 +9,7 @@ description: Operate and protect the local JSONL session store through Mecatl's 
 This guide is for a single-user `mecated` daemon with the embedded JSONL store. It keeps the
 executable, operator policy, and plaintext session state at stable paths, and uses Mecatl's
 management API rather than editing store files. For the storage-management API,
-see the [gRPC reference](https://github.com/stacklok/mecatl/blob/main/docs/usage/grpc-api.md); for the interactive workflow,
+see the [gRPC reference](/reference/grpc-api.md); for the interactive workflow,
 see [mecatui session maintenance](/mecatui/sessions.md#privacy-and-maintenance).
 
 :::warning[The store contains plaintext]
@@ -53,9 +53,12 @@ planner summary. Unknown, corrupt, active, awaiting, live, and leased sessions r
 
 ## Linux: systemd user service
 
-Install the released `mecated` executable at `/usr/local/bin/mecated`. Create the config and state
-directories before enabling the service; `%h` is systemd's stable home-directory specifier. Save the
-following as `~/.config/systemd/user/mecated.service`.
+Install the released `mecated` executable at `/usr/local/bin/mecated`. A Homebrew install puts it in
+`$(brew --prefix)/bin` instead — `/home/linuxbrew/.linuxbrew/bin/mecated` on Linux — so either point
+`ExecStart` at that absolute path or symlink the executable into `/usr/local/bin/mecated`; systemd
+performs no `PATH` lookup or shell expansion. See [Install Mecatl](/install.md). Create the config and
+state directories before enabling the service; `%h` is systemd's stable home-directory specifier. Save
+the following as `~/.config/systemd/user/mecated.service`.
 
 {/* scenario9-systemd */}
 ```ini
@@ -82,7 +85,10 @@ example and not from `settings.yaml`.
 
 ## macOS: launchd user agent
 
-Install the released executable at `/usr/local/bin/mecated`. Replace `USERNAME` with the login
+Install the released executable at `/usr/local/bin/mecated`. A Homebrew install puts it under
+`$(brew --prefix)/bin`, which is `/opt/homebrew/bin/mecated` on Apple silicon and
+`/usr/local/bin/mecated` on Intel; confirm the location with `brew --prefix mecatl` and use that exact
+absolute path in `ProgramArguments`. See [Install Mecatl](/install.md). Replace `USERNAME` with the login
 account in every path, create both `Library/Application Support/mecatl` and its `sessions`
 subdirectory owner-only, and save this as
 `~/Library/LaunchAgents/com.stacklok.mecatl.plist`. launchd does not expand `~` or shell variables.

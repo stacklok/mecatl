@@ -15,7 +15,7 @@ mecatui ships with three themes:
 Select one at launch:
 
 ```sh
-bin/mecatui --theme mono
+mecatui --theme mono
 ```
 
 You can also set `MECATUI_THEME=mono`. Use `--list-themes` to print the themes available to this launch.

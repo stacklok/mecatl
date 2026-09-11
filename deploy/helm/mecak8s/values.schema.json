@@ -80,6 +80,17 @@
     },
     "maxRunTokens": {"type": ["integer", "null"], "minimum": 1},
     "maxTeamTokens": {"type": ["integer", "null"], "minimum": 1},
+    "telemetry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["installationID"],
+      "properties": {
+        "installationID": {
+          "type": "string",
+          "pattern": "^(|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$"
+        }
+      }
+    },
     "terminationGracePeriodSeconds": {"type": "integer", "minimum": 1},
     "workspace": {"type": "string"},
     "imagePullSecrets": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["name"], "properties": {"name": {"type": "string", "minLength": 1}}}},

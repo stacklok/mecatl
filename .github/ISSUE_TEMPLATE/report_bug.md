@@ -5,7 +5,7 @@ about: Report a bug to help us improve
 
 ## Bug description
 Clearly describe the bug you encountered. Before filing, check the
-[troubleshooting guide](https://github.com/stacklok/mecatl/blob/main/docs/usage/troubleshooting.md) for known operator
+[Mecatl documentation](https://mecatl.dev/docs/) for troubleshooting guidance and known operator
 issues.
 
 ## Steps to reproduce

@@ -237,7 +237,7 @@ func TestWebSearchBackendDown(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("backend-down should not be an error result: %q", res.Content)
 	}
-	for _, want := range []string{"temporarily unavailable", "Exa", "BRAVE_API_KEY", "SEARXNG_URL", "Enabling web search"} {
+	for _, want := range []string{"temporarily unavailable", "Exa", "BRAVE_API_KEY", "SEARXNG_URL", "mecatl.dev/docs/building/what-you-get/core-tools#configure-web-search"} {
 		if !strings.Contains(res.Content, want) {
 			t.Fatalf("backend-down message missing %q; got %q", want, res.Content)
 		}

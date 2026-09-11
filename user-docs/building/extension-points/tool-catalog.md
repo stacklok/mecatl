@@ -256,8 +256,8 @@ command file shadows a same-named skill; a skill shadows a same-named
 slash-command driver source; both shadow MCP prompts. The project-tier trust
 gate is inherited — an untrusted workspace's project-tier skills are not
 invocable as `/<skill-name>` until you `--trust-project`. See
-[`docs/usage/skills-soul-usermodel.md`](https://github.com/stacklok/mecatl/blob/main/docs/usage/skills-soul-usermodel.md#skills-as-slash-commands-skill-name)
-for the full rules.
+[Skills, commands, and soul](/features/skills-commands-and-soul.md#slash-commands)
+for the user-facing rules.
 
 ### The filesystem source
 

@@ -1,4 +1,4 @@
-package cliconfig
+package flaghelp
 
 import (
 	"bytes"

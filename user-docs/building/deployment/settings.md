@@ -22,7 +22,7 @@ server cannot reconfigure that server.
 | CLI flags and environment | Invocation flags and documented environment variables | The process launcher | A deployment-specific override or one-run choice, such as workspace, provider/model, store, or transport. |
 | mecatui client settings | `$XDG_CONFIG_HOME/mecatui/settings.yaml` (normally `~/.config/mecatui/settings.yaml`) | Local terminal user | Keybindings and status-line presentation only. |
 
-The generated [configuration reference](https://github.com/stacklok/mecatl/blob/main/docs/configuration-reference.md)
+The generated [configuration reference](/reference/configuration.md)
 is the exhaustive schema, defaults, and tier table for the shared operator
 `settings.yaml`. Use `mecated config init` to scaffold it and `mecated config
 validate` to validate it without starting a server.
@@ -64,6 +64,46 @@ daemon file < explicit `mecated serve` flag. It controls topology only; use
 command's `--help-all` and the generated reference for a setting's exact
 precedence rather than assuming every flag applies to every binary.
 
+## Configure provider credentials
+
+Keep provider credentials in the process environment or in an owner-readable
+`auth.yaml` file:
+
+```yaml
+providers:
+  anthropic:
+    api_key: <ANTHROPIC_API_KEY>
+  openai:
+    api_key: <OPENAI_API_KEY>
+  openai-codex:
+    oauth:
+      access_token: <CHATGPT_CODEX_ACCESS_TOKEN>
+      account_id: <ACCOUNT_ID>             # Optional when present in the token.
+      expires_at: 2026-09-30T12:00:00Z     # Optional when present in the token.
+  openrouter:
+    api_key: <OPENROUTER_API_KEY>
+  opencode:
+    api_key: <OPENCODE_API_KEY>
+```
+
+For API-key providers, a matching environment variable takes precedence over
+the file entry. `openai-codex` is file-only and accepts only the `oauth` mapping
+shown above. The default path is `$XDG_CONFIG_HOME/mecatl/auth.yaml`, normally
+`~/.config/mecatl/auth.yaml`; `--auth-file` selects another path.
+
+The parser reports unknown providers, fields, duplicate keys, and invalid
+credential shapes without printing values. A missing conventional file is not
+an error. A missing explicit `--auth-file` path produces a warning. On Unix,
+Mecatl also warns when group or other users can read the file. Use mode `0600`
+on a shared host and restart the process after replacing a credential.
+
+The experimental `openai-codex` provider captures one immutable token snapshot
+at startup. It has no login or refresh flow. When both the token and file carry
+an account or expiry claim, the values must agree and the earlier expiry wins.
+Mode `0600` prevents access by other users, but another process running as the
+same user can still read a known plaintext path. Use a dedicated operating-system
+identity or a stronger sandbox when that residual risk is unacceptable.
+
 ## Embedded and connected mecatui
 
 Bare `mecatui` embeds a private server, so its local operator settings,
@@ -93,3 +133,5 @@ details.
   TLS, and client authentication.
 - [Keybindings](/mecatui/keybindings.md) covers the client-owned keymap schema
   and overrides.
+- [Configuration reference](/reference/configuration.md) lists every
+  `settings.yaml` key, type, default, and allowed tier.

@@ -1,7 +1,7 @@
 # Taskfile for mecatl (https://taskfile.dev).
 #
 # Required tools (assumed on PATH; install commands below):
-#   - go            >= 1.26.3   (the toolchain)
+#   - go            >= 1.26.6   (the toolchain)
 #   - golangci-lint (version in scripts/install-golangci-lint.sh)
 #                               task tools:golangci-lint (installs the CI-matching
 #                               official release binary into .tools/bin)
@@ -45,6 +45,11 @@ vars:
       fi
   MECATL_METRICS_KEY: '{{.MECATL_METRICS_KEY | default ""}}'
   BUILD_LDFLAGS: '-X github.com/stacklok/mecatl/internal/buildinfo.BuildID={{.BUILD_ID}} -X github.com/stacklok/mecatl/internal/adapter/productmetrics.bakedKey={{.MECATL_METRICS_KEY}}'
+  # The GoReleaser BINARY version. Must stay in lockstep with the `version:`
+  # pinned in .github/workflows/release.yml and .github/workflows/ci.yml.
+  # .goreleaser.yaml is loaded STRICTLY, so a config field newer than this pin
+  # is a hard failure rather than a warning.
+  GORELEASER_VERSION: v2.16.0
 
 tasks:
   default:
@@ -215,6 +220,101 @@ tasks:
       - ko build --push --bare
           --image-label=org.stacklok.broodbox.agent=/var/run/ko/agent.yaml
           ./cmd/mecatui
+
+  # --- Release archives / Homebrew formula (GoReleaser) ----------------------
+  #
+  # GoReleaser owns ONLY the mecated+mecatui binary archives, the GitHub Release
+  # they attach to, and the `mecatl` formula in stacklok/homebrew-tap. Container
+  # images stay with ko (the ko:* targets above, .ko.yaml). See .goreleaser.yaml.
+  #
+  # These targets are LOCAL VERIFICATION only — the real release runs from
+  # .github/workflows/release.yml on a vX.Y.Z tag. Deliberately not part of
+  # `task ci`: they need a tool most contributors do not have, exactly like the
+  # ko:* targets and `task vuln`.
+
+  release:require-goreleaser:
+    internal: true
+    desc: Fail early with an actionable message if goreleaser is missing, and warn on version skew
+    cmds:
+      # goreleaser is expected ON PATH, like ko. Deliberately NOT
+      # `go run github.com/goreleaser/goreleaser/v2@<ver>`: goreleaser does not
+      # build from source on this repo's Go toolchain (its module graph resolves
+      # grpc v1.80.0 against an x/net without http2.TrailerPrefix). CI is
+      # unaffected because goreleaser-action downloads a PREBUILT binary.
+      - cmd: |
+          if ! command -v goreleaser >/dev/null 2>&1; then
+            echo "goreleaser is not installed. Install it: https://goreleaser.com/install/"
+            echo "CI pins {{.GORELEASER_VERSION}}; match it locally for representative output."
+            exit 1
+          fi
+          have="$(goreleaser --version 2>/dev/null | awk '/GitVersion:/ {print $2}')"
+          if [ "$have" != "{{.GORELEASER_VERSION}}" ]; then
+            echo "warning: local goreleaser $have differs from the CI pin {{.GORELEASER_VERSION}};"
+            echo "         snapshot output is representative but not identical."
+          fi
+        silent: true
+
+  release:check:
+    desc: Validate .goreleaser.yaml offline (strict schema; tolerates the deliberate `brews` deprecation)
+    cmds:
+      # `goreleaser check` exits 2 for "valid, but uses DEPRECATED properties".
+      # We use the deprecated `brews` block deliberately, because
+      # stacklok/homebrew-tap is a Formula/ tap and casks must live in Casks/
+      # (see the rationale in .goreleaser.yaml). Exit 2 is therefore expected and
+      # accepted; only exit 1 (genuinely invalid config) fails this gate.
+      - task: release:require-goreleaser
+      - cmd: |
+          status=0
+          goreleaser check || status=$?
+          case "$status" in
+            0) ;;
+            2) echo "goreleaser check: config valid; uses deprecated properties (brews) - accepted" ;;
+            *) exit "$status" ;;
+          esac
+
+  release:snapshot:
+    desc: Build the release archives and Homebrew formula locally into dist/ (no tag, no upload, no tokens)
+    cmds:
+      # --snapshot skips publish/announce/validate, so this needs neither a clean
+      # tree, nor a tag, nor GITHUB_TOKEN, nor HOMEBREW_TAP_GITHUB_TOKEN (the tap
+      # token is only templated inside the publish path, which is never reached).
+      # It does NOT skip sign or sbom, so skip those explicitly to avoid needing
+      # cosign and syft locally. --skip=publish is redundant but self-documenting.
+      - task: release:require-goreleaser
+      - goreleaser release --snapshot --clean --skip=publish,sign,sbom
+
+  release:verify:
+    desc: Prove the release:snapshot output - both binaries per archive, the linker stamp, and formula style
+    cmds:
+      # Run `task release:snapshot` first. Three assertions, each guarding a
+      # failure mode that would otherwise reach Homebrew users silently:
+      #   1. the archive is FLAT and carries BOTH binaries (the generated
+      #      `bin.install "mecated"` requires them at the archive root),
+      #   2. --version reports the stamped tag and not buildinfo's `dev+<rev>`
+      #      VCS fallback (which is what a wrong -X symbol path produces),
+      #   3. the generated formula passes Homebrew's own rubocop rules.
+      # Note `brew style` is called WITHOUT --formula: that flag requires the
+      # file to live in a real tap and rejects a path under dist/.
+      - cmd: |
+          set -eu
+          arch="$(ls dist/mecatl_*_"$(go env GOOS)"_"$(go env GOARCH)".tar.gz)"
+          echo "==> $arch"
+          tar -tzf "$arch"
+          for want in mecated mecatui; do
+            tar -tzf "$arch" | grep -qx "$want" || { echo "MISSING $want at archive root"; exit 1; }
+          done
+          work="$(mktemp -d)"
+          trap 'rm -rf "$work"' EXIT
+          tar -xzf "$arch" -C "$work"
+          for bin in mecated mecatui; do
+            out="$("$work/$bin" --version)"
+            echo "==> $out"
+            case "$out" in
+              *"dev+"*) echo "STAMP LOST: $bin reports the buildinfo VCS fallback; check the -X symbol path"; exit 1 ;;
+            esac
+          done
+          echo "==> brew style dist/homebrew/Formula/mecatl.rb"
+          brew style dist/homebrew/Formula/mecatl.rb
 
   test:root-race-partition:
     desc: Test and validate the static root-module race package partition
@@ -831,7 +931,7 @@ tasks:
       - task: docs:configref
 
   docs:configref:
-    desc: Regenerate the committed config-init skeleton + configuration-reference.md from the permconfig schema
+    desc: Regenerate the committed config-init skeleton + rendered configuration reference from the permconfig schema
     cmds:
       # The generator harvests the permconfig schema's field doc-comments (go/ast) and
       # reflects over the *Section structs, emitting the TWO committed artifacts both
@@ -839,7 +939,7 @@ tasks:
       # build-time program — the shipped mecated binary embeds the skeleton. The CI
       # docs job diffs the regenerated artifacts against these committed files and
       # fails on drift. Never hand-edit either output.
-      - go run ./internal/configgen/cmd/configref --skeleton internal/configgen/settings.skeleton.yaml --reference docs/configuration-reference.md
+      - go run ./internal/configgen/cmd/configref --skeleton internal/configgen/settings.skeleton.yaml --reference user-docs/reference/configuration.md
 
   docs:check:
     desc: Gate acceptance-plan checker fixtures, ADR-number uniqueness and stale moved paths, then doc link health with matlatl (strict — broken links/anchors, orphans, unreachable)

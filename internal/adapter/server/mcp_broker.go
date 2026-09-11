@@ -28,7 +28,13 @@ func brokerTools(local *localBrokerAttachment) []tool.Tool {
 	if local == nil {
 		return nil
 	}
-	return local.attachment.Tools()
+	tools := local.attachment.Tools()
+	if query, ok := local.attachment.(interface{ CallMcpWithQueryTool() tool.Tool }); ok {
+		if candidate := query.CallMcpWithQueryTool(); candidate != nil {
+			tools = append(tools, candidate)
+		}
+	}
+	return tools
 }
 
 func (s *Service) callSessionEngine(ctx context.Context, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, workspace string, mode session.PermissionMode, sessionTools []tool.Tool) (SessionEngineResult, error) {

@@ -6,34 +6,29 @@ description: Choose how to embed, run, or operate Mecatl across local and cloud 
 
 # Deployment overview
 
-Mecatl ships several composition roots over the same `engine/agent` loop. Use
-[the deployment decision guide](/building/getting-started/deployment-decision.md)
-to choose a shape; this page is the directory of detailed deployment guides.
+Mecatl runs the same agent loop as an embedded library, standalone service,
+Kubernetes workload, or single CI task. Choose the form that matches who owns
+the process, state, and execution environment.
 
-The main operational distinction is simple: `mecated` is the general
-client/server deployment, `mecak8s` externalizes state for disposable Kubernetes
-pods, and mecatui provides an interactive terminal skin over an embedded server.
+Start with [Pick your deployment](/building/getting-started/deployment-decision.md)
+if you have not chosen one yet.
 
-- [**Embed the engine directly**](embed-engine.md) — import `github.com/stacklok/mecatl/engine`, wire the port interfaces yourself, and compose `app.Build` into your own binary without taking Mecatl's heavy require cone.
+## Choose a deployment
 
-- [**Configure Mecatl**](settings.md) — choose the operator settings and secret files, daemon topology configuration, command flags, and client-only mecatui settings for each deployment shape.
+| Deployment | Use it when you want to |
+| --- | --- |
+| [Embed the Go engine](./embed-engine.md) | Run the agent loop inside your application and supply its adapters. |
+| [Run `mecated`](./mecated.md) | Provide a general-purpose remote service for terminal or API clients. |
+| [Run `mecak8s`](./mecak8s.md) | Use Redis-backed sessions and Kubernetes Leases across disposable replicas. |
+| [Run `mecatequi`](./mecatequi.md) | Execute one task in CI and return a patch, summary, and exit status. |
 
-- [**Run mecated standalone**](mecated.md) — configure and operate the `mecated` composition root: flags, TLS/auth, `--store-dir` persistence, session leasing for multi-replica deployments, Prometheus/OTel, and graceful shutdown.
+To see the Kubernetes model locally, follow
+[Try Mecatl on Kubernetes](/building/getting-started/kubernetes.md).
 
-- [**Operate local session storage**](session-storage-operations.md) — tested systemd user-service and launchd examples, daemon-owned retention, management capability truth, and the quiesced backup/migration/restore runbook.
+## Operate and integrate
 
-- [**Cloud-native k8s with mecak8s**](mecak8s.md) — deploy the `cmd/mecak8s` composition root using the `deploy/helm/mecak8s/` Helm chart; covers the external Redis requirement, RBAC requirements for `leases`, pod drain, and lease release on SIGTERM.
-
-- [**Single-shot CI with mecatequi**](mecatequi.md) — adopt the `mecatequi-reusable.yml` reusable workflow, understand the split-privilege job graph (agent job holds no write token; publish job applies the patch as data), and read `stop-reason` + `non-empty-diff` from action outputs correctly.
-
-- [**Drive via gRPC / HTTP**](grpc-http.md) — the wire protocol: the gRPC `Converse` stream, the HTTP/SSE surface, the `ResumeApproval` frame for permission verdicts, and the `POST /v1/sessions/{id}/approve` endpoint.
-
-- [**mecatui container image (brood-box)**](mecatui.md) — the `ghcr.io/stacklok/mecatl/mecatui` container image: built + signed on release, carries a brood-box agent manifest, importable via `bbox agents import`.
-
----
-
-## What's next
-
-- [Pick your deployment shape](/building/getting-started/deployment-decision.md) — full decision tree with trade-offs before you commit to a shape.
-- [The agent loop](/building/what-you-get/agent-loop.md) — understand what the engine does once it is running, regardless of which composition root you chose.
-- [Permissions & guardrails](/building/what-you-get/permissions.md) — the posture ladder (`--posture strict|trusted|auto|yolo`) and workspace trust behave identically across all four shapes; the only deployment-specific difference is headless vs interactive defaults.
+- [Install Mecatl](/install.md)
+- [Configure a deployment](./settings.md)
+- [Operate local session storage](./session-storage-operations.md)
+- [Connect clients through gRPC or HTTP/SSE](./grpc-http.md)
+- [Run the `mecatui` container image](./mecatui.md)

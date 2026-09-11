@@ -934,7 +934,7 @@ func validateEmbeddedProvider(c config) error {
 	if app.ToolhiveAvailable(probe) {
 		return nil
 	}
-	return errors.New("no LLM provider configured: set a provider credential, use --auth-file, enable a ToolHive gateway, pass --mock, or connect to mecated; see docs/usage.md")
+	return errors.New("no LLM provider configured: set a provider credential, use --auth-file, enable a ToolHive gateway, pass --mock, or connect to mecated; see https://mecatl.dev/docs/features/choose-models")
 }
 
 // mayEmbed reports whether this run may host an embedded server, and so is

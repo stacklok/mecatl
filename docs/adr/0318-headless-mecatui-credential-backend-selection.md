@@ -1,6 +1,6 @@
 # ADR 0318 — Headless mecatui credential backend selection
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-09-09
 - Scope: local remote-`mecatui` credential backend selection and persistence
 - Supersedes: ADR 0277's keyring-only credential-backend selection clauses

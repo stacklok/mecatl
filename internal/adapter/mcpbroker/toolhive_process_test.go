@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -30,6 +31,7 @@ import (
 	"github.com/stacklok/toolhive/pkg/oauthproto"
 	"golang.org/x/oauth2"
 
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	contract "github.com/stacklok/mecatl/internal/mcpbroker"
@@ -53,6 +55,25 @@ func (s *registerClientSpy) RegisterClient(ctx context.Context, client fosite.Cl
 	s.client = client
 	s.registered.Store(true)
 	return s.MemoryStorage.RegisterClient(ctx, client)
+}
+
+type recordingBrokerDiagnostics struct {
+	mu      sync.Mutex
+	records []string
+}
+
+func (d *recordingBrokerDiagnostics) Log(_ context.Context, _ port.Level, msg string, args ...any) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.records = append(d.records, msg+" "+fmt.Sprint(args...))
+}
+
+func (d *recordingBrokerDiagnostics) With(...any) port.Diagnostics { return d }
+
+func (d *recordingBrokerDiagnostics) String() string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return strings.Join(d.records, "\n")
 }
 
 func TestNewToolHiveProcessUsesConfiguredAuthStorage(t *testing.T) {
@@ -1086,7 +1107,7 @@ func TestToolHiveProtectedCallerRejectsCrossBackendCapabilityDrift(t *testing.T)
 	if err != nil || wanted != "github_enterprise.create_issue" {
 		t.Fatalf("protected advertised name = %q, %v", wanted, err)
 	}
-	caller := toolHiveProtectedCaller(httpServer.URL, nil)
+	caller := toolHiveProtectedCaller(httpServer.URL, nil, port.NopDiagnostics{})
 	_, err = caller(t.Context(), SessionRef{}, "github_enterprise",
 		session.NewToolCall("call-1", "mcp__github_enterprise__create_issue", json.RawMessage(`{}`)),
 		oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "session-bearer", TokenType: "Bearer"}))
@@ -1115,8 +1136,9 @@ func TestToolHiveProtectedCallerInjectsSessionBearer(t *testing.T) {
 	}))
 	t.Cleanup(httpServer.Close)
 
-	caller := toolHiveProtectedCaller(httpServer.URL, nil)
-	result, err := caller(t.Context(), SessionRef{}, "private", session.NewToolCall("call-1", "mcp__private__echo", json.RawMessage(`{"text":"hello"}`)), oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "session-bearer", TokenType: "Bearer"}))
+	diag := &recordingBrokerDiagnostics{}
+	caller := toolHiveProtectedCaller(httpServer.URL, nil, diag)
+	result, err := caller(t.Context(), SessionRef{id: "session-1"}, "private", session.NewToolCall("call-1", "mcp__private__echo", json.RawMessage(`{"text":"hello"}`)), oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "session-bearer", TokenType: "Bearer"}))
 	if err != nil {
 		t.Fatalf("protected caller: %v", err)
 	}
@@ -1125,6 +1147,26 @@ func TestToolHiveProtectedCallerInjectsSessionBearer(t *testing.T) {
 	}
 	if result.CallID != "call-1" || result.Content != "protected:hello" || result.IsError {
 		t.Fatalf("result = %#v", result)
+	}
+	logs := diag.String()
+	for _, want := range []string{
+		"MCP broker: protected connection starting",
+		"MCP broker: protected connection completed",
+		"MCP broker: protected tool execution starting",
+		"MCP broker: protected tool execution completed",
+		"sessionsession-1",
+		"backendprivate",
+		"duration",
+		"successtrue",
+	} {
+		if !strings.Contains(logs, want) {
+			t.Errorf("diagnostics missing %q: %s", want, logs)
+		}
+	}
+	for _, secret := range []string{"session-bearer", `{"text":"hello"}`, "protected:hello"} {
+		if strings.Contains(logs, secret) {
+			t.Errorf("diagnostics contain private material %q: %s", secret, logs)
+		}
 	}
 }
 

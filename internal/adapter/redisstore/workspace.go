@@ -183,7 +183,14 @@ func (st *Store) OpenWorkspace(ctx context.Context, scope string) (*Workspace, e
 func (*Workspace) Root() string { return workspaceRoot }
 
 // AuthorityResourcePath projects a confined virtual path for policy evaluation.
+// "." names the workspace root itself — the same root ReadDir/cleanWorkspaceDir
+// already accept for a directory listing — and maps directly to workspaceRoot
+// without relaxing the rejection of empty, absolute, NUL-containing, or
+// ".."-traversing paths, which still flow through cleanWorkspacePath unchanged.
 func (*Workspace) AuthorityResourcePath(p string) (string, string, error) {
+	if p == "." {
+		return workspaceRoot, workspaceRoot, nil
+	}
 	key, err := cleanWorkspacePath(p)
 	if err != nil {
 		return "", workspaceRoot, err

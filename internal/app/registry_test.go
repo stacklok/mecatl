@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"sync/atomic"
@@ -69,6 +72,172 @@ func TestRegistryNProviders(t *testing.T) {
 	// OpenRouter must carry the default base URL for diagnostics.
 	if e, _ := reg.Lookup("openrouter"); e.baseURL != openRouterDefaultBaseURL {
 		t.Errorf("openrouter baseURL = %q, want %q", e.baseURL, openRouterDefaultBaseURL)
+	}
+}
+
+func TestRegistryOpenAIBearerTokenFileAvailabilityAndConflict(t *testing.T) {
+	baseURL := "https://gateway.example/v1"
+	bearerConfig := Config{
+		OpenAIBearerTokenFile: "/var/run/secrets/tokens/openai",
+		ProviderOverrides: permconfig.ProviderOverrides{
+			providerOpenAI: {BaseURL: baseURL},
+		},
+	}
+	reg, err := buildProviderRegistry(bearerConfig, fakeEnv(nil))
+	if err != nil {
+		t.Fatalf("file-only registry: %v", err)
+	}
+	if got := reg.Available(); !reflect.DeepEqual(got, []string{providerOpenAI}) {
+		t.Fatalf("file-only Available() = %v, want [%s]", got, providerOpenAI)
+	}
+
+	for _, tc := range []struct {
+		name string
+		cfg  Config
+		env  map[string]string
+	}{
+		{name: "environment key", cfg: bearerConfig, env: map[string]string{"OPENAI_API_KEY": "key"}},
+		{name: "direct config key", cfg: func() Config { cfg := bearerConfig; cfg.OpenAIKey = "key"; return cfg }()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := buildProviderRegistry(tc.cfg, fakeEnv(tc.env))
+			if err == nil || !strings.Contains(err.Error(), "remove the OpenAI API-key credential or remove --openai-bearer-token-file") {
+				t.Fatalf("key+file error = %v, want actionable conflict", err)
+			}
+		})
+	}
+
+	withoutBaseURL := bearerConfig
+	withoutBaseURL.ProviderOverrides = nil
+	if _, err := buildProviderRegistry(withoutBaseURL, fakeEnv(nil)); err == nil || !strings.Contains(err.Error(), "requires an explicit nonempty --openai-base-url") {
+		t.Fatalf("file without base URL error = %v, want explicit base URL requirement", err)
+	}
+
+	reg, err = buildProviderRegistry(Config{}, fakeEnv(map[string]string{"OPENAI_API_KEY": "key"}))
+	if err != nil {
+		t.Fatalf("API-key registry regression: %v", err)
+	}
+	if _, ok := reg.Lookup(providerOpenAI); !ok {
+		t.Fatal("API-key OpenAI provider unavailable")
+	}
+}
+
+func TestRegistryOpenAIBearerTokenFileResponsesWiring(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "token")
+	write := func(token string) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(token), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var hits atomic.Int32
+	var headers []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		headers = append(headers, r.Header.Get("Authorization"))
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "event: response.output_text.delta\n"+
+			`data: {"type":"response.output_text.delta","sequence_number":0,"delta":"registry-ok"}`+"\n\n"+
+			"event: response.completed\n"+
+			`data: {"type":"response.completed","sequence_number":1,"response":{"status":"completed","usage":{"input_tokens":1,"output_tokens":1}}}`+"\n\n")
+	}))
+	defer srv.Close()
+
+	reg, err := buildProviderRegistry(Config{
+		OpenAIBearerTokenFile: path,
+		LLMMaxAttempts:        4,
+		ProviderOverrides: permconfig.ProviderOverrides{
+			providerOpenAI: {BaseURL: srv.URL + "/v1"},
+		},
+	}, fakeEnv(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, ok := reg.Lookup(reg.Default())
+	if !ok || entry.id != providerOpenAI {
+		t.Fatalf("selected registry entry = %#v, want OpenAI", entry)
+	}
+
+	for _, token := range []string{"first-registry-token", "second-registry-token"} {
+		write(token)
+		seq, err := entry.provider.Stream(t.Context(), port.LLMRequest{Model: "model", Messages: []session.Message{session.NewUserMessage("hi")}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var text string
+		var completed bool
+		for chunk, err := range seq {
+			if err != nil {
+				t.Fatal(err)
+			}
+			if chunk.Kind == port.ChunkText {
+				text += chunk.Text
+			}
+			if chunk.Kind == port.ChunkDone {
+				completed = true
+			}
+		}
+		if text != "registry-ok" || !completed {
+			t.Fatalf("Responses result text=%q completed=%v", text, completed)
+		}
+	}
+	if hits.Load() != 2 {
+		t.Fatalf("Responses hits = %d, want 2", hits.Load())
+	}
+	wantHeaders := []string{"Bearer first-registry-token", "Bearer second-registry-token"}
+	if !reflect.DeepEqual(headers, wantHeaders) {
+		t.Fatalf("Authorization headers = %#v, want rotating headers", headers)
+	}
+}
+
+func TestRegistryOpenAIBearerCredentialFailureIsTerminalAndRedacted(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "private-token-path")
+	const tokenMaterial = "failure-token-material"
+	if err := os.WriteFile(path, []byte(tokenMaterial+" invalid"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hits.Add(1) }))
+	defer srv.Close()
+
+	reg, err := buildProviderRegistry(Config{
+		OpenAIBearerTokenFile: path,
+		LLMMaxAttempts:        4,
+		LLMBreakerThreshold:   1,
+		ProviderOverrides: permconfig.ProviderOverrides{
+			providerOpenAI: {BaseURL: srv.URL + "/v1"},
+		},
+	}, fakeEnv(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, _ := reg.Lookup(providerOpenAI)
+	for range 2 {
+		seq, err := entry.provider.Stream(t.Context(), port.LLMRequest{Model: "model", Messages: []session.Message{session.NewUserMessage("hi")}})
+		streamErr := err
+		if err == nil {
+			for _, err := range seq {
+				if err != nil {
+					streamErr = err
+				}
+			}
+		}
+		if streamErr == nil {
+			t.Fatal("credential failure was not returned")
+		}
+		got := streamErr.Error()
+		for _, secret := range []string{path, tokenMaterial} {
+			if strings.Contains(got, secret) {
+				t.Fatalf("credential error leaked secret material: %q", got)
+			}
+		}
+		if strings.Contains(got, "circuit breaker") {
+			t.Fatalf("credential failure counted toward breaker: %q", got)
+		}
+	}
+	if hits.Load() != 0 {
+		t.Fatalf("underlying transport hits = %d, want 0", hits.Load())
 	}
 }
 
@@ -141,7 +310,7 @@ func TestRegistryZeroKeys(t *testing.T) {
 	for _, want := range []string{
 		"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "OPENCODE_API_KEY",
 		"--openai-base-url", "--anthropic-base-url", "--openrouter-base-url", "--opencode-base-url",
-		"--mock", "docs/usage.md",
+		"--mock", "https://mecatl.dev/docs/features/choose-models",
 	} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("error message %q does not mention %q", msg, want)
@@ -196,7 +365,11 @@ func TestRegistryZeroKeysViaBuildProvider(t *testing.T) {
 // TestRegistryMockShortCircuit: UseMock ⇒ a single "mock" entry regardless of the
 // environment (even with real keys present).
 func TestRegistryMockShortCircuit(t *testing.T) {
-	reg, err := buildProviderRegistry(Config{UseMock: true}, fakeEnv(map[string]string{
+	reg, err := buildProviderRegistry(Config{
+		UseMock:               true,
+		OpenAIKey:             "ignored-config-key",
+		OpenAIBearerTokenFile: "/ignored/bearer-file",
+	}, fakeEnv(map[string]string{
 		"OPENAI_API_KEY":     "sk-openai",
 		"OPENROUTER_API_KEY": "sk-openrouter",
 	}))
@@ -219,6 +392,14 @@ func TestRegistryMockShortCircuit(t *testing.T) {
 	// The real providers must NOT be constructed under the mock short-circuit.
 	if _, ok := reg.Lookup("openai"); ok {
 		t.Error("openai should not exist under UseMock")
+	}
+
+	if _, err := buildProviderRegistry(Config{
+		MockProvider:          mockllm.New(mockllm.TextTurn("scripted")),
+		OpenAIKey:             "ignored-config-key",
+		OpenAIBearerTokenFile: "/ignored/bearer-file",
+	}, fakeEnv(map[string]string{"OPENAI_API_KEY": "ignored-env-key"})); err != nil {
+		t.Fatalf("buildProviderRegistry(MockProvider) must ignore real auth conflicts: %v", err)
 	}
 }
 

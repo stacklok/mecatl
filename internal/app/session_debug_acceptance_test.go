@@ -183,9 +183,9 @@ func TestSessionDebuggerCrossBoundaryAcceptance(t *testing.T) {
 		{Type: session.EvCompactionArchive, CompactionArchive: &session.CompactionArchivePayload{Replaced: archive}},
 		{Type: session.EvRequestManifest, RunID: "target-run", Turn: 1, RequestManifest: &manifest},
 		{Type: session.EvNetworkAttempt, RunID: "target-run", Turn: 1, NetworkAttempt: &network},
-		{Type: session.EvSubagentStart, Subagent: &session.SubagentPayload{ParentCallID: "sub-call", ChildID: string(retained.ID)}},
-		{Type: session.EvParallelBranch, Parallel: &session.ParallelPayload{ParentCallID: "parallel-call", ChildID: string(pruned.ID), BranchIndex: 0}},
-		{Type: session.EvTeamMember, Team: &session.TeamPayload{ParentCallID: "team-call", TeamID: "team-1", Member: "reviewer", MemberSessionID: string(team.ID)}},
+		{Type: session.EvSubagentStart, Subagent: &session.SubagentPayload{ParentCallID: "sub-call", ChildID: string(retained.ID), ChildIncarnation: retained.Incarnation()}},
+		{Type: session.EvParallelBranch, Parallel: &session.ParallelPayload{ParentCallID: "parallel-call", ChildID: string(pruned.ID), ChildIncarnation: pruned.Incarnation(), BranchIndex: 0}},
+		{Type: session.EvTeamMember, Team: &session.TeamPayload{ParentCallID: "team-call", TeamID: "team-1", Member: "reviewer", MemberSessionID: string(team.ID), MemberIncarnation: team.Incarnation()}},
 		{Type: session.EvScheduleFired, Schedule: &session.SchedulePayload{Kind: "fired", ScheduleName: "nightly", SessionID: scheduled.ID}},
 	}
 	for _, ev := range events {
@@ -226,9 +226,13 @@ func TestSessionDebuggerCrossBoundaryAcceptance(t *testing.T) {
 	debugID := created.GetSessionId()
 	root, _ := converseDebugAcceptance(t, client, debugID, "Diagnose and draft a GitHub issue; do not publish it.", mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_UNSPECIFIED)
 	for call, wants := range map[string][]string{
-		"status":     {`"latest_run_counters"`, `"lifetime_event_log"`},
-		"related":    {`"subagent"`, `"parallel"`, `"team"`, `"schedule"`, `"pruned"`},
-		"delegation": {`"type":"subagent"`, `"type":"parallel"`, `"type":"team"`, `"type":"schedule"`},
+		"status":  {`"latest_run_counters"`, `"lifetime_event_log"`},
+		"related": {`"subagent"`, `"parallel"`, `"team"`, `"schedule"`, `"pruned"`},
+		// delegation rows are proof-gated to currently-RETAINED direct lineage
+		// (ADR 0299): the pruned parallel branch and the schedule kind (not yet
+		// wired to a lineage-provable join) are correctly absent here, unlike
+		// "related" above, which reports every direct edge including pruned ones.
+		"delegation": {`"type":"subagent"`, `"type":"team"`},
 		"history":    {`"compaction_archive"`, `"history_handle"`},
 		"manifest":   {`"provider":"mock"`, `"model":"acceptance"`, `"message_count":2`, `"message_bytes":42`, `"Glob"`},
 		"network":    {`"failure_class":"timeout"`, `"successful_attempts_timed":false`},
@@ -256,7 +260,7 @@ func TestSessionDebuggerCrossBoundaryAcceptance(t *testing.T) {
 		mockllm.TextTurn("child evidence checked"),
 	)
 	scoped, _ := converseDebugAcceptance(t, client, debugID, "Inspect the retained child and verify isolation.", mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_UNSPECIFIED)
-	if !strings.Contains(scoped["child"], "retained child finding") || !strings.Contains(scoped["history-page"], `"view":"transcript"`) || !strings.Contains(scoped["probe"], "invalid, stale, or inaccessible") {
+	if !strings.Contains(scoped["child"], "retained child finding") || !strings.Contains(scoped["history-page"], `"view":"transcript"`) || !strings.Contains(scoped["probe"], "scope handle is unsupported, malformed, or stale") {
 		t.Fatalf("scoped evidence/isolation failed: %+v", scoped)
 	}
 

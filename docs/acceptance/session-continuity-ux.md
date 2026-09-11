@@ -112,7 +112,7 @@ authoritative snapshot transcript, not EventLog. The TUI remains a proto-free cl
   - verify: `TestInvariant_transcript_failure_never_enables_hidden_context`
 - AC4.7: Closed capability reason codes, not parsed prose, determine enabled actions; caller-visible text reveals no owner/lease identity or backend path.
   - verify: `TestSessionContinuityUX_Scenario4_ReasonCodes`
-- AC4.8: Palette text, `?` help, overlay hints, `docs/tui.md`, `docs/usage.md`, and `user-docs/` consistently say Continue for chats and Inspect for scheduled/child runs.
+- AC4.8: Palette text, `?` help, overlay hints, `docs/tui.md`, and relevant `user-docs/` pages consistently say Continue for chats and Inspect for scheduled/child runs.
   - verify: inspection — `task docs` and `task site:build` pass with the reviewed wording
 
 ---
@@ -200,7 +200,7 @@ run API.
 - Promote ADR-0217 to Accepted with Scenario 1; after acceptance it is frozen.
 - Regenerate protobufs/contracts and the engine API baseline/CHANGELOG when applicable.
 - Extend store/source/driver conformance for taxonomy and paging.
-- Update `docs/architecture.md`, `docs/design/IMPLEMENTATION-NOTES.md`, `docs/tui.md`, `docs/usage.md`, CLI help, and `user-docs/` in the same PR.
+- Update `docs/architecture.md`, `docs/design/IMPLEMENTATION-NOTES.md`, `docs/tui.md`, CLI help, and relevant `user-docs/` pages in the same PR.
 - Keep session retention, ownership, lease, environment reattachment, UTF-8, and child-isolation tests green.
 
 ## Sequencing recommendation

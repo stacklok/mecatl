@@ -20,7 +20,7 @@ with the model provider, state store, filesystem, and UI that fit your
 workflow. These concerns connect through explicit interfaces, so changing one
 does not require replacing the agent loop.
 
-Read the [Mecatl documentation](https://mecatl.dev/docs/intro) to get started.
+Read the [Mecatl documentation](https://mecatl.dev/docs) to get started.
 
 ## What it provides
 
@@ -39,12 +39,27 @@ Read the [Mecatl documentation](https://mecatl.dev/docs/intro) to get started.
 
 | Goal | Start with |
 | --- | --- |
-| Run an agent service | [`mecated`](./cmd/mecated) and the [operator guide](./docs/usage.md) |
+| Run an agent service | [`mecated`](./cmd/mecated) and the [deployment guide](https://mecatl.dev/docs/building/deployment/mecated) |
 | Run agents on Kubernetes | [`mecak8s`](./cmd/mecak8s) and the [Kubernetes deployment guide](https://mecatl.dev/docs/building/deployment/mecak8s) |
-| Use an agent locally | [Run the offline demo](#try-it-locally), then use [`mecatui`](./cmd/mecatui) |
+| Use an agent locally | [Install](#install), then use [`mecatui`](./cmd/mecatui) — or [run the offline demo](#try-it-locally) from a checkout |
 | Connect an application | The [gRPC and HTTP/SSE integration guide](https://mecatl.dev/docs/building/deployment/grpc-http) |
 | Build unattended automation | [`mecatequi`](./cmd/mecatequi) for one prompt, a patch, and a machine-readable result |
 | Embed the runtime | [`engine`](./engine) and the [embedding guide](https://mecatl.dev/docs/building/deployment/embed-engine) |
+
+## Install
+
+Homebrew installs the two executables most people run — `mecatui`, the terminal
+client, and `mecated`, the server:
+
+```sh
+brew install stacklok/tap/mecatl
+```
+
+Every release also attaches macOS and Linux archives (amd64 and arm64) with
+checksums, cosign signature bundles, SBOMs, and build provenance. See
+[Install Mecatl](https://mecatl.dev/docs/install) for archive verification, the
+container images, and the from-source path. `mecademo`, `mecatequi`, and
+`mecak8s` are not in the formula — build them from a checkout with `task build`.
 
 ## Run agents as production workloads
 
@@ -92,7 +107,8 @@ attenuation remain active design work. See the
 ## Try it locally
 
 The offline demo runs a scripted session with tool calls, a permission approval,
-delegation, and usage accounting. It does not require an API key.
+delegation, and usage accounting. It does not require an API key. It runs from a
+checkout of this repository; the Homebrew formula does not ship `mecademo`.
 
 ```sh
 go run ./cmd/mecademo
@@ -110,7 +126,7 @@ For an embedded deployment, see the
 
 > **Security:** `mecated` is unauthenticated by default and intended for
 > loopback, single-user use. Configure authentication and transport protection
-> before binding it off-loopback. The [operator guide](./docs/usage.md) covers
+> before binding it off-loopback. The [deployment guide](https://mecatl.dev/docs/building/deployment/mecated) covers
 > bearer auth, TLS/mTLS, OIDC, rate limits, and deployment posture.
 
 ## User documentation
@@ -124,7 +140,7 @@ For an embedded deployment, see the
 
 - [Repository documentation index](./docs/README.md)
 - [Architecture guide](./docs/architecture.md)
-- [Usage and operator guide](./docs/usage.md)
+- [User documentation](https://mecatl.dev/docs/)
 - [Production-readiness tracker](./docs/design/PRODUCTION-READINESS.md)
 - [Engine compatibility contract](./engine/COMPATIBILITY.md)
 

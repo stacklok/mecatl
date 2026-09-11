@@ -24,9 +24,9 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 ## Index
 
 ### Process & conventions
-- [0002 — Documentation lifecycle](./0002-documentation-lifecycle.md)
+- [0002 — Documentation lifecycle](./0002-documentation-lifecycle.md) *(user-facing ownership superseded by 0321)*
 - [0003 — Consolidate design records as ADRs](./0003-consolidate-design-records-as-adrs.md)
-- [0321 — Canonical user documentation ownership](./0321-canonical-user-documentation-ownership.md) *(proposed)*
+- [0321 — Canonical user documentation ownership](./0321-canonical-user-documentation-ownership.md)
 - [0072 — The acceptance-plan spine](./0072-acceptance-plan-spine.md) *(superseded by 0295)*
 - [0295 — One scaled acceptance-plan spine for substantive work](./0295-unified-development-spine.md) *(single-PR decision superseded by 0306)*
 - [0306 — Human-reviewed development contracts before implementation](./0306-human-reviewed-development-contracts.md)
@@ -84,8 +84,8 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0233 — Secure external Redis on the shared connection layer](./0233-secure-external-redis.md)
 - [0237 — Listener-scoped workspace authority](./0237-listener-scoped-workspace-authority.md)
 - [0286 — Public and private OIDC issuers are two transports, not one policy](./0286-issuer-transport-split.md) *(supersedes ADR 0284's implicit CA-presence mode selection, and ADR 0277's private-only transport clauses)*
-- [0277 — Remote mecatui OIDC client authentication](./0277-remote-mecatui-oidc.md) *(supersedes 0270–0273; keyring-only credential backend selection proposed to be superseded by 0318)*
-- [0318 — Headless mecatui credential backend selection](./0318-headless-mecatui-credential-backend-selection.md) *(proposed; supersedes ADR 0277's keyring-only credential-backend selection clauses)*
+- [0277 — Remote mecatui OIDC client authentication](./0277-remote-mecatui-oidc.md) *(supersedes 0270–0273; its keyring-only credential backend-selection clauses are superseded by 0318)*
+- [0318 — Headless mecatui credential backend selection](./0318-headless-mecatui-credential-backend-selection.md) *(Accepted; supersedes ADR 0277's keyring-only credential-backend selection clauses)*
 - [0305 — OAuth protected-resource discovery for remote mecatui](./0305-oauth-protected-resource-discovery.md) *(scope-selection clarification proposed in 0316)*
 - [0316 — Server-owned scopes for discovered mecatui login](./0316-server-owned-discovered-oidc-scopes.md) *(proposed; supersedes ADR 0305's scope-selection clauses only)*
 - [0284 — Optional system trust for remote mecatui OIDC issuers](./0284-optional-system-trust-remote-oidc.md) *(supersedes ADR 0277's mandatory issuer-CA requirement only; mode selection superseded by 0286)*
@@ -133,6 +133,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0282 — Managed workspace scratch cache](./0282-managed-workspace-scratch-cache.md) *(proposed; depends on 0281)*
 - [0201 — Background Bash commands](./0201-background-bash.md)
 - [0317 — Canonical Shell command tool](./0317-canonical-shell-command-tool.md) *(supersedes ADR 0201 decision D1 only)*
+- [0324 — Internal Shell compatibility diagnostic](./0324-internal-shell-compatibility-diagnostic.md) *(proposed; supersedes ADR 0317 parser-placement decision only)*
 - [0208 — Execution environments and version-aware file mutation](./0208-execution-environment.md) *(runtime-seam deferral superseded by 0211; version protocol authoritative)*
 - [0211 — Execution-environment runtime seam](./0211-execution-environment-runtime-seam.md) *(supersedes 0208 decisions 1–3; phase-3 persistence deferral superseded by 0214)*
 - [0214 — Execution-environment persistence and reattachment](./0214-environment-persistence.md) *(supersedes 0211 decision 6 only)*
@@ -190,10 +191,12 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0113 — Operator MCP authentication profiles and explicit login](./0113-operator-mcp-auth-profiles.md)
 - [0223 — Pin MCP transport-error semantics that do not replay rejected calls](./0223-mcp-sdk-transport-error-semantics.md) *(superseded by 0309)*
 - [0309 — MCP closed-idle POST failures are ambiguous and never replayed](./0309-mcp-ambiguous-closed-idle-post.md)
+- [0323 — Broker-attached MCP query projection](./0323-target-governed-mcp-query.md)
 - [0310 — Lazy ToolHive authorization for statically declared protected tools](./0310-lazy-toolhive-static-tools.md)
 - [0311 — Per-upstream MCP broker OAuth grants](./0311-per-upstream-mcp-broker-oauth-grants.md) *(static-tool admission superseded by 0310)*
 - [0312 — Confidential ToolHive broker client credentials](./0312-confidential-toolhive-broker-client.md)
 - [0314 — Dynamic Client Registration for MCP broker upstreams](./0314-mcp-broker-dcr-client.md)
+- [0325 — Durable Dynamic Client Registration for direct MCP profiles](./0325-direct-mcp-dcr.md) *(proposed)*
 
 ### Performance & diagnostics
 - [0018 — Perf observability](./0018-perf-observability.md)

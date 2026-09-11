@@ -64,7 +64,7 @@ existing config surface through to that already-shipped capability.
   `deploy/helm/mecak8s/templates/_helpers.tpl`'s `mecak8s.mcpOAuthSettings`
   template. `internal/configgen/build.go`'s reflection-based settings.yaml
   reference generator (`case "client":` around line 518) gains a third
-  branch so `docs/configuration-reference.md` documents it.
+  branch so `user-docs/reference/configuration.md` documents it.
 - **Events / persistence:** None — DCR-obtained credentials are held and
   cached entirely inside ToolHive's existing embedded-authorization-server
   storage (`mcpbroker.ToolHiveConfig.AuthRedisClient` / in-memory fallback,
@@ -108,7 +108,7 @@ and template rendering into the same `settings.yaml` shape, and
 turns into a `DCRConfig`-bearing `authserver.OAuth2UpstreamRunConfig` with an
 empty `ClientID` — never both. See
 [ADR 0314](../adr/0314-mcp-broker-dcr-client.md) and the existing
-`preregistered`/`cimd` precedent in `docs/usage/mecak8s.md`.
+`preregistered`/`cimd` precedent in `user-docs/building/deployment/mecak8s.md`.
 
 **Acceptance:**
 - AC1.1: `permconfig` strictly decodes a `dcr` client declaration (a single
@@ -136,8 +136,8 @@ empty `ClientID` — never both. See
   upstream shape; invalid DCR/OIDC combinations cannot reach ToolHive as an
   OIDC configuration and fail only later at construction.
   - verify: `TestADR_0314_DCRRequiresExplicitOAuth2Upstream`
-- AC1.5: `docs/configuration-reference.md` documents the `dcr` client shape
-  after `task docs` regeneration, and `docs/usage/mecak8s.md` carries one
+- AC1.5: `user-docs/reference/configuration.md` documents the `dcr` client shape
+  after `task docs` regeneration, and `user-docs/building/deployment/mecak8s.md` carries one
   worked `dcr` example alongside the existing `preregistered`/CIMD examples.
   - verify: inspection — generated-doc + prose-example presence is not a
     behavioral assertion `task ac-trace` can name a Go test for

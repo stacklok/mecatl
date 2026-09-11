@@ -183,14 +183,14 @@ func TestReconcileStaleFireAfterSessionSettles(t *testing.T) {
 	// and persist an in-flight session (StateRunning — the crashed process's
 	// in-flight run) + an in-flight fire record (RecordFireStart's write).
 	const sessID session.SessionID = "sched--crash-run-crashed"
-	if err := store.Save(ctx, &session.Session{
-		ID:             sessID,
-		State:          session.StateRunning,
-		EnvironmentRef: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: localDefaultPlacementID, Revision: localDefaultPlacementRevision},
-		Conversation: &session.Conversation{
-			Messages: []session.Message{session.NewUserMessage("crashed mid-run")},
-		},
-	}); err != nil {
+	crashed := session.New(sessID, session.ModeDefault,
+		session.EnvironmentRef{Kind: session.EnvKindLocal, ID: localDefaultPlacementID, Revision: localDefaultPlacementRevision},
+		session.Limits{}, startAt)
+	crashed.Conversation = &session.Conversation{
+		Messages: []session.Message{session.NewUserMessage("crashed mid-run")},
+	}
+	crashed.State = session.StateRunning
+	if err := store.Save(ctx, crashed); err != nil {
 		t.Fatalf("Save session: %v", err)
 	}
 	if err := schedStore.Save(ctx, port.Schedule{

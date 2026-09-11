@@ -22,7 +22,8 @@ default and is purpose-built for no-PVC pod deployments.
 
 ## Quick start
 
-The canonical invocation is `mecated serve`:
+Get the executable first: `brew install stacklok/tap/mecatl`, or a signed release archive —
+see [Install Mecatl](/install.md). The canonical invocation is `mecated serve`:
 
 ```sh
 mecated serve
@@ -64,7 +65,9 @@ mecated serve \
 Set `--log-level` to one of the exact values `debug`, `info`, `warn`, or `error`
 (default `info`). The same threshold is used for ambient `slog` output and
 injected diagnostics. Invalid values, including `--log-level=`, fall back to
-`info` and emit one warning.
+`info` and emit one warning. Each startup also emits the build identity as an
+INFO log with `msg="mecated starting"` and a `version` field; use it to identify
+the binary that produced the remaining server logs.
 
 `--store-dir` enables local JSONL persistence with an authoritative v2 current
 snapshot plus readable v1 history. The configured path and every ancestor must be
@@ -109,8 +112,19 @@ owner-readable `~/.config/mecatl/auth.yaml`; `auth.method: none` needs no creden
 The ID is persisted with sessions, so removing or renaming it makes those sessions fail
 loudly instead of selecting another provider. Built-in endpoint settings belong under
 `provider_overrides`; the matching `--*-base-url` flag wins. See the
-[configuration reference](https://github.com/stacklok/mecatl/blob/main/docs/configuration-reference.md)
+[configuration reference](/reference/configuration.md)
 for the strict schema.
+
+Self-hosted `openai-responses` endpoints, including vLLM, llama.cpp, and LiteLLM
+proxies, vary in their `/v1/responses` support. An endpoint can omit hosted tools,
+automatic prompt caching, encrypted reasoning content or summaries, strict mode, or
+`parallel_tool_calls`. If the endpoint does not support the Responses API features you
+need, use the `openai-chat-completions` flavor, which works with more self-hosted
+endpoints.
+
+The built-in `openai` and `openrouter` providers send prompt-cache hints only through
+their canonical base URLs. A base URL override disables these hints so a compatible
+endpoint cannot reject an unsupported cache field.
 
 ---
 
@@ -202,9 +216,8 @@ charged there once. A normally admitted bad token remains **401** / gRPC
 This is a bound on **signing-key** revocation during an outage, not per-token
 revocation. An otherwise valid token remains acceptable until its normal expiry.
 The JWKS cache is process-local and not persisted; a restarted process fetches
-current keys again. The flags are identical on `mecak8s`. Full reference:
-[usage.md](https://github.com/stacklok/mecatl/blob/main/docs/usage.md) and
-[ADR 0204](https://github.com/stacklok/mecatl/blob/main/docs/adr/0204-caller-identity-threading.md).
+current keys again. The flags are identical on `mecak8s`. See [Caller identity
+and OIDC](/features/caller-identity.md) and [ADR 0204](https://github.com/stacklok/mecatl/blob/main/docs/adr/0204-caller-identity-threading.md).
 
 #### Daemon config file (`daemon.yaml`)
 
@@ -293,8 +306,7 @@ gateway reached over the OpenAI Chat Completions protocol rather than OpenAI's
 own Responses API — a separate adapter under the hood, but it configures the
 same way as any other provider here. An optional `auth.yaml` credentials file
 is also supported for operators who'd rather not export a key into the shell
-environment; see
-[`docs/usage/mecated.md`](https://github.com/stacklok/mecatl/blob/main/docs/usage/mecated.md#credentials-file-authyaml).
+environment. See [Configure provider credentials](./settings.md#configure-provider-credentials).
 
 Experimental provider `openai-codex` can instead use a manually supplied
 ChatGPT Codex subscription token from that file. It is a separate billing
@@ -302,8 +314,18 @@ identity from public API-key `openai`, uses an undocumented private backend,
 and has no login or refresh flow. Configure `providers.openai-codex.oauth`,
 keep the file owner-only, select `--default-provider openai-codex` (or an
 explicit session selector), and restart after replacing the token. `0600` does
-not stop same-UID Bash from reading a known plaintext file. See the
-[exact schema, lifecycle, and failure guidance](https://github.com/stacklok/mecatl/blob/main/docs/usage/mecated.md#openai-codex-subscription-manual-token-experimental).
+not stop same-UID Bash from reading a known plaintext file. See
+[Configure provider credentials](./settings.md#configure-provider-credentials).
+
+### Bash tool
+
+| Flag | Default | Notes |
+|---|---|---|
+| `--shell` | `/bin/sh` | Shell used to execute `Bash`-tool commands. Empty disables `Bash` (shell-less mode). |
+| `--no-bash` | `false` | Disable the `Bash` tool entirely; overrides `--shell`. |
+
+Use either flag to remove shell access for the deployment. This operator-controlled
+setting is stronger than the optional per-session `no-fs` profile.
 
 #### Offline mock providers (no credentials)
 
@@ -313,12 +335,32 @@ PATH` reads one strict JSON document at startup (failing before the listener
 binds if it is missing or malformed) and replaces that canned turn with ordered
 text and tool-call turns, so an offline run can exercise permission asks and, via
 a turn's `delay_ms`, cancellation. Both imply the offline provider, so neither
-needs a provider credential. See the
-[scripted-mock schema and lifecycle](https://github.com/stacklok/mecatl/blob/main/docs/usage/mecated.md#scripted-offline-mock).
+needs a provider credential.
+
+Each scripted turn sets exactly one of `text` or `tool_calls`. Tool-call `args`
+is ordinary JSON. Turns are consumed in order across model calls:
+
+```json
+{
+  "turns": [
+    {
+      "tool_calls": [
+        {
+          "id": "write-1",
+          "name": "Write",
+          "args": { "path": "proof.txt", "content": "ok\n" }
+        }
+      ]
+    },
+    { "text": "continued after the tool" },
+    { "delay_ms": 2000, "text": "a cancellable turn" }
+  ]
+}
+```
 
 #### The ToolHive LLM gateway (no API key needed)
 
-If you have [ToolHive](https://toolhive.dev)'s local LLM proxy running, `--toolhive-llm`
+If you have [ToolHive](https://docs.stacklok.com/toolhive/)'s local LLM proxy running, `--toolhive-llm`
 (on by default) auto-detects it and registers it as provider id `toolhive` — no API key
 required, since ToolHive holds the credential. `/models` (or the mecatui welcome splash)
 tells you when it's available but not your default, so you can opt in with `/models` or
@@ -336,22 +378,29 @@ selected by `--toolhive-llm-mode` (default `auto`):
   imports ToolHive as a library and talks DIRECTLY to the real `gateway_url` — no local
   proxy hop, no subprocess. The OIDC bearer token is minted and refreshed in-process
   by a per-request HTTP RoundTripper. Get the credential once with
-  `mecatui login` (in-process interactive OIDC flow; add `--skip-browser` for
+  `mecatui llm login` (in-process interactive OIDC flow; add `--skip-browser` for
   headless/SSH/CI) or `thv llm setup`. Direct mode needs the OIDC trio
   (`gateway_url` + `issuer` + `client_id`) configured AND an HTTPS `gateway_url`
   (`http://localhost`/`http://127.0.0.1` are the dev carve-out); `auto` falls back to
   proxy when either is absent, `direct` Build-fails fast with the remediation.
 
 `mecated` is headless, so a direct-mode cache-miss surfaces a terminal error
-(naming `thv llm setup` / `mecatui login` / `--toolhive-llm-mode proxy`) rather than
-launching a browser — run `mecatui login` (or `thv llm setup`) to obtain the
+(naming `thv llm setup` / `mecatui llm login` / `--toolhive-llm-mode proxy`) rather than
+launching a browser — run `mecatui llm login` (or `thv llm setup`) to obtain the
 credential, or `--toolhive-llm-mode proxy` to fall back. If your gateway uses a
 self-signed certificate, use `--toolhive-llm-mode proxy` — direct mode does not honor
 `tls_skip_verify` (an upstream ToolHive gap), and proxy mode does.
 
-See the [ToolHive LLM gateway reference](https://github.com/stacklok/mecatl/blob/main/docs/usage.md#toolhive-llm-gateway)
-for the full flag table, the `mecatui login` walkthrough, and the troubleshooting
-table.
+| Flag | Default | Purpose |
+| --- | --- | --- |
+| `--toolhive-llm` | `true` | Detect ToolHive's local LLM configuration. Set it to `false` on a shared host where this process must not use another operator's configuration. |
+| `--toolhive-llm-base-url` | `""` | Use an explicit loopback proxy URL. This always selects proxy mode. |
+| `--toolhive-llm-mode` | `auto` | Use `direct` when the HTTPS gateway URL and OIDC settings are complete; otherwise use the loopback proxy. Set `proxy` or `direct` to require one path. |
+
+Run `mecatui llm login` for the interactive OIDC flow, or add `--skip-browser`
+to print the authorization URL for an SSH session. This command writes the
+refresh-token reference to ToolHive's configuration and does not start a Mecatl
+session.
 
 Two things worth knowing before you rely on it:
 
@@ -381,8 +430,8 @@ On a **headless** root (`--headless`), posture never raises `TrustProject`. Expl
 `--trust-project`, `trustedWorkspaces:`, or undrifted remembered trust admits BOTH repo steering and
 the read-only child shell. Without a trust source, `--posture auto` keeps its approvals but gets
 neither because `.git` is not vouched. See
-[workspace trust](https://github.com/stacklok/mecatl/blob/main/docs/usage/workspace-trust.md#project-tier-ingestion-on-headless-roots-the-opt-in-design)
-for the full walkthrough.
+[Permissions and posture](/features/permissions-and-posture.md#project-trust)
+for the trust sources and headless behavior.
 
 See [Permissions & guardrails](/building/what-you-get/permissions.md) for the full rule
 engine. Posture is read from the operator-global `settings.yaml` (`posture:` key)

@@ -19,6 +19,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/adapter/llmresilience"
+	"github.com/stacklok/mecatl/internal/adapter/openaibearer"
 	"github.com/stacklok/mecatl/internal/adapter/openaicodex"
 	"github.com/stacklok/mecatl/internal/adapter/openaicompat"
 	"github.com/stacklok/mecatl/internal/adapter/openrouter"
@@ -474,7 +475,7 @@ var errNoProvider = errors.New(
 		"or OPENCODE_API_KEY (OpenCode Go) " +
 		"in the environment; for an OpenAI- or Anthropic-compatible/proxy endpoint pass the matching key " +
 		"plus --openai-base-url / --anthropic-base-url / --openrouter-base-url / --opencode-base-url; to try mecatl offline with " +
-		"no key run with --mock; see docs/usage.md for provider setup")
+		"no key run with --mock; see https://mecatl.dev/docs/features/choose-models for provider setup")
 
 // buildProviderRegistry constructs the registry from cfg and the injected env
 // detector. It builds (and resilience-wraps) ONLY the available providers — there
@@ -496,6 +497,7 @@ func mockDefaultModel(configured string) string {
 	return providerMock
 }
 
+//nolint:gocyclo // Registry assembly branches once per independently configured provider and auth mode.
 func buildProviderRegistryContext(ctx context.Context, cfg Config, detect envDetector) (*providerRegistry, error) {
 	ctx = providerRegistryContext(ctx)
 	detect = providerRegistryDetector(detect)
@@ -532,6 +534,14 @@ func buildProviderRegistryContext(ctx context.Context, cfg Config, detect envDet
 		}, nil
 	}
 
+	openAIKey := providerKey(cfg.OpenAIKey, providerOpenAI, detect)
+	if openAIKey != "" && cfg.OpenAIBearerTokenFile != "" {
+		return nil, errors.New("OpenAI API key and --openai-bearer-token-file are mutually exclusive; remove the OpenAI API-key credential or remove --openai-bearer-token-file")
+	}
+	if cfg.OpenAIBearerTokenFile != "" && builtinBaseURL(cfg, providerOpenAI) == "" {
+		return nil, errors.New("--openai-bearer-token-file requires an explicit nonempty --openai-base-url")
+	}
+
 	entries := make(map[string]providerEntry)
 
 	// The live-metadata store the request-path resolvers read. Construct it FIRST so
@@ -542,13 +552,19 @@ func buildProviderRegistryContext(ctx context.Context, cfg Config, detect envDet
 	// floor — see liveMetaStore.
 	meta := newLiveMetaStore()
 
-	// openai: AVAILABLE iff a key resolves — from cfg.OpenAIKey (which the cmd layer
-	// reads from OPENAI_API_KEY) or, failing that, the OPENAI_API_KEY env var via
-	// detect. Availability is purely KEY-DRIVEN; the legacy cfg.UseOpenAI flag is a
-	// back-compat selector the cmd layer still sets when a key is present, but it does
-	// NOT gate the registry (a key alone suffices — env auto-detection is the S1 model).
-	if key := providerKey(cfg.OpenAIKey, providerOpenAI, detect); key != "" {
-		entries[providerOpenAI] = newOpenAICompatEntry(cfg, providerOpenAI, key, builtinBaseURL(cfg, providerOpenAI))
+	// openai: AVAILABLE iff an API key resolves or a bearer-token file is
+	// configured. The file is read by the transport for every request so projected
+	// Kubernetes ServiceAccount token rotation is observed without a restart.
+	if openAIKey != "" {
+		entries[providerOpenAI] = newOpenAICompatEntry(cfg, providerOpenAI, openAIKey, builtinBaseURL(cfg, providerOpenAI))
+	} else if cfg.OpenAIBearerTokenFile != "" {
+		baseURL := builtinBaseURL(cfg, providerOpenAI)
+		client, err := openaibearer.NewHTTPClient(cfg.OpenAIBearerTokenFile, baseURL, nil)
+		if err != nil {
+			return nil, fmt.Errorf("configure OpenAI bearer token file: %w", err)
+		}
+		entries[providerOpenAI] = newOpenAICompatEntry(cfg, providerOpenAI, "", baseURL,
+			openai.WithHTTPClient(client), openai.WithMaxRetries(0))
 	}
 
 	if entry, err := newOpenAICodexEntry(cfg); err != nil {
@@ -1588,7 +1604,7 @@ const (
 
 // toolhiveStatusHints is the ONE place the remediation-hint copy lives,
 // shared by the Build-time probe diagnostics, the v1 provider_status
-// projection (providerStatusProto), and (verbatim) docs/usage.md's
+// projection (providerStatusProto), and the public model-selection guide's
 // troubleshooting table — so the three surfaces cannot drift on wording.
 var toolhiveStatusHints = map[string]string{
 	statusUnreachable:  "start it with `thv llm proxy start`",

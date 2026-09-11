@@ -53,8 +53,8 @@ token, but the shipped brood-box manifest does not mount that secret or allow
 pass `--auth-file` and `--default-provider openai-codex`, and permit HTTPS to
 `chatgpt.com`. This is not public OpenAI API credit: it uses an undocumented
 private backend, has no refresh flow, and requires relaunch after token
-replacement. Read the [exact operator setup and same-UID plaintext
-boundary](https://github.com/stacklok/mecatl/blob/main/docs/usage/mecated.md#openai-codex-subscription-manual-token-experimental)
+replacement. Read the [operator setup and same-UID plaintext
+boundary](./settings.md#configure-provider-credentials)
 before adding the mount.
 
 ## Runtime and sensitive local administration
@@ -94,3 +94,4 @@ at runtime.
 - [Run mecated standalone](mecated.md) — the server that a bare `mecatui` embeds in-process — or dials via `mecatui connect ADDRESS`.
 - [Drive via gRPC / HTTP](grpc-http.md) — the wire protocol `mecatui` speaks as a client.
 - [Permissions & guardrails](/building/what-you-get/permissions.md) — the posture ladder and workspace trust behave identically inside the container.
+- [Install Mecatl](/install.md) — the same release publishes native `mecatui` and `mecated` executables through Homebrew and signed archives, for when a container is not the right shape.

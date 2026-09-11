@@ -13,7 +13,7 @@ Start by identifying whether you are running embedded `mecatui` or `mecatui conn
 Embedded mode detects provider credentials from its environment. Set one supported provider credential, or use the explicit offline path while learning the UI:
 
 ```sh
-bin/mecatui --mock --workspace "$PWD"
+mecatui --mock --workspace "$PWD"
 ```
 
 Do not put provider secrets in command-line flags. For provider credentials and server-side selection, use [Run mecated standalone](/building/deployment/mecated.md#provider-and-model).
@@ -43,7 +43,10 @@ paths, and credential material.
 
 ## The workspace is missing or unexpected
 
-For an embedded session, `--workspace` is the local checkout. For a connected server, it is an absolute path in the server's filesystem. Ask the operator which paths are mounted or permitted; do not assume your local path exists in a container, pod, or remote host. See [Connect to a server](./remote-servers.md#choose-the-connection-shape).
+For an embedded session, `--workspace` is the local checkout. For a connected
+session, the server configures the workspace in its own filesystem. Ask the
+operator which paths are available. See
+[Connect the client](./remote-servers.md#connect-the-client).
 
 ## A provider error says retrying will not help
 

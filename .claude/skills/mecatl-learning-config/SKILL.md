@@ -29,8 +29,9 @@ parts of [the configuration reference](references/config-format.md):
   or troubleshooting.
 
 Do not require reading the entire reference at activation. Repository background
-is in `docs/usage/configuration.md` and
-`docs/usage/skills-soul-usermodel.md`; cite those paths as prose, not links.
+is in `user-docs/reference/configuration.md`,
+`user-docs/building/deployment/settings.md`, and
+`user-docs/features/learning.md`; cite those paths as prose, not links.
 
 ## Safety contract
 

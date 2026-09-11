@@ -47,9 +47,14 @@ refreshes lazily, persists refresh-token rotation, and remains warm after restar
 and ACP never open a browser. Environment-backed profiles are read-only and require an
 external Secret update plus process restart. Keep `static_bearer` as a rollback profile when
 the server supports it. See the
-[operator configuration guide](https://github.com/stacklok/mecatl/blob/main/docs/usage/configuration.md#global-mcp-authentication-profiles).
+[MCP OAuth and credentials](/features/mcp-oauth-and-credentials.md#configure-a-profile).
 
-**ToolHive discovery.** If you run MCP servers via [ToolHive](https://toolhive.io), Mecatl discovers them automatically from the running workloads — no `--mcp-server` flag needed. ToolHive proxy URLs are HTTP, so the streaming-HTTP constraint is met transparently. Discovery is controlled by `--toolhive` (default `true`; pass `--toolhive=false` to disable) and `--toolhive-group` (default group when empty).
+**ToolHive discovery.** If you run MCP servers with
+[ToolHive](https://docs.stacklok.com/toolhive/), Mecatl discovers the running
+servers automatically. You do not need the `--mcp-server` flag. ToolHive proxy
+URLs use HTTP, which satisfies the streaming-HTTP requirement. Control discovery
+with `--toolhive` (default `true`) and `--toolhive-group` (the default group when
+empty).
 
 ---
 
@@ -197,7 +202,12 @@ filter expression can't hang or blow up the context budget. Everything
 happens in memory; nothing is spilled to disk, which is what keeps this tool
 working the same way on a storage-free deployment as on a normal one. It's
 read-only, so it participates in read-parallel dispatch like any other
-read-only tool.
+read-only tool. Broker-only sessions expose the same tool only when their current
+attachment has eligible frozen tools; its request, authorization, filtering, and
+result stay on that attachment. The harness never bypasses the attachment with a
+separate upstream connection. The concrete broker transport keeps its existing
+routing (configured upstream URL for anonymous routes, broker endpoint for protected
+routes), and a failed or ambiguous delivered call is not replayed.
 
 ---
 

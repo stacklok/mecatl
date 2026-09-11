@@ -1026,7 +1026,12 @@ type Service struct {
 	heldLeases map[session.SessionID]*heldLease
 	// lostOwnership remembers that this Service definitively lost an id even after
 	// the heavyweight heldLease/capability tombstones are removed at lifecycle
-	// settlement. It is cleared only by explicit CloseSession teardown.
+	// settlement. Cleared by explicit CloseSession teardown, and — the ONE other
+	// caller, narrowly scoped — by acquireLeaseCore's bypassTombstone=true path
+	// (used only via acquireMutationLeaseForStaleSettle, i.e. SettleIfStale/the
+	// stale-session reconcile sweep) on a genuine re-Acquire success. Every other
+	// caller (acquireLease/reaffirmLease with bypassTombstone=false) still fails
+	// fast on it forever.
 	lostOwnership map[session.SessionID]struct{}
 
 	// leaseDisabled is set (once) when Config.SessionLease reports
@@ -2715,15 +2720,18 @@ func (s *Service) CloseSession(id session.SessionID) {
 // avoid re-locking the non-reentrant per-id mutex.
 //
 // A session this process already definitively lost (lostOwnership[id] set by
-// onLeaseLost) skips the reaffirm/settle step: a fresh acquireLease would only
-// hit the SAME tombstone check and fail every time, so CloseSession — the
-// documented recovery path (docs/adr/0027-cloud-native.md List 1 row 27) — could
-// never reach closeSessionLocal, the only place that clears the tombstone. There
-// is nothing to settle either: settleAuthorizationLocked is a no-op unless this
-// process is mid external-authorization, which it cannot be once it has lost the
-// lease. closeSessionLocal itself is already safe to call in this state —
+// onLeaseLost) skips the reaffirm/settle step as an optimization: it is closing
+// this session anyway, so there is nothing to gain from a real re-Acquire just
+// to immediately Release it again, and settleAuthorizationLocked is a no-op
+// unless this process is mid external-authorization, which it cannot be once
+// it has lost the lease. (acquireLease/reaffirmLease still fail fast on the
+// tombstone for every OTHER caller — the one narrow exception is
+// acquireMutationLeaseForStaleSettle/SettleIfStale, see lostOwnership's field
+// doc comment — but skipping the round trip here is still correct and
+// cheaper.) closeSessionLocal itself is already safe to call in this state —
 // releaseLease guards on lease validity and never re-releases a hold onLeaseLost
-// already invalidated.
+// already invalidated, and it unconditionally clears the tombstone too, so
+// CloseSession remains a recovery path regardless.
 func (s *Service) closeSessionAuthorized(id session.SessionID) {
 	s.mu.Lock()
 	_, alreadyLost := s.lostOwnership[id]
@@ -6361,6 +6369,56 @@ func (s *Service) acquireMutationLease(ctx context.Context, id session.SessionID
 	return func() { s.releaseLease(id) }, nil
 }
 
+// acquireMutationLeaseForStaleSettle is acquireMutationLease's counterpart for
+// SettleIfStale ONLY (the composition-level stale-session reconcile sweep,
+// issue #475). Every OTHER caller of acquireLease/acquireMutationLease
+// deliberately fails fast forever once lostOwnership[id] is set — once this
+// process has been told it lost a session's lease, it must never quietly
+// resume acting as owner without an explicit CloseSession, even if the
+// backend would technically permit a fresh Acquire (TestADR_0294_
+// AwaitingLeaseLossRetractsLocalAskPreservesSnapshot and the Scenario5/7
+// session-affinity-and-handoff tests pin this: a stale owner must stay
+// refused even when no successor ever actually took the lease over).
+//
+// SettleIfStale is different: its caller is authorized as the system
+// stale-reconciler (staleReconcileAuthorized, internal/adapter/server/
+// stale_maintenance.go), reachable only from the composition-level sweep
+// goroutine (internal/app/session_reconcile.go) — never from a gRPC/HTTP
+// request, since admissiblePrincipal (authn.go) rejects any externally
+// authenticated principal carrying the internal issuer or the system grant
+// type (pinned by TestCallerIdentityEdgeRejectsMalformedPrincipal's "system
+// grant"/"internal issuer sys" cases). That caller has already independently
+// verified, via SessionStale's age-horizon-first test plus a local IsLive
+// check, that id is a genuine crash orphan — never a live handoff in
+// progress. For exactly that narrow, pre-verified case a real re-Acquire is
+// safe: flocklease.Renew's ErrLeaseHeld does not distinguish "a real
+// competitor took it" from "this record simply expired because a renew
+// landed late" (a missed tick, GC pause, backend blip), so once real time has
+// passed the record may simply be free again — and that is the only way a
+// session recovered by the sweep (never closed, so closeSessionLocal's
+// tombstone-clear is never reached) becomes re-acquirable short of a process
+// restart. A genuine live successor still correctly refuses this via
+// ErrLeaseHeld below, so this narrows the fail-fast; it does not weaken the
+// exclusion. It deliberately skips acquireLease's drain gate (unlike every
+// other caller): repairing an already-crash-orphaned session is cleanup, not
+// a new admission, so a shutting-down replica settling one before it exits is
+// safe and desirable, not something Drain() needs to steer away from.
+func (s *Service) acquireMutationLeaseForStaleSettle(ctx context.Context, id session.SessionID) (func(), error) {
+	s.mu.Lock()
+	_, preHeld := s.heldLeases[id]
+	s.mu.Unlock()
+	if err := s.acquireLeaseCore(ctx, id, true); err != nil {
+		return func() {}, err
+	}
+	s.mu.Lock()
+	_, held := s.heldLeases[id]
+	s.mu.Unlock()
+	if preHeld || !held {
+		return func() {}, nil
+	}
+	return func() { s.releaseLease(id) }, nil
+}
+
 func (s *Service) mutationLeaseHeld(id session.SessionID) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -6441,6 +6499,22 @@ func (s *Service) acquireLease(ctx context.Context, id session.SessionID) error 
 // a fresh admission — so the drain gate (which exists to refuse NEW run-entries)
 // must not reject it: Close() legitimately runs after Drain() has armed.
 func (s *Service) reaffirmLease(ctx context.Context, id session.SessionID) error {
+	return s.acquireLeaseCore(ctx, id, false)
+}
+
+// acquireLeaseCore is the Acquire -> classify -> install-and-renew sequence
+// shared by reaffirmLease (bypassTombstone=false: every normal caller —
+// run-entry, ApproveRun's awaiting-resume, RenameSession/DeleteSession/other
+// management mutations) and acquireMutationLeaseForStaleSettle
+// (bypassTombstone=true: SettleIfStale ONLY). bypassTombstone is the ONE
+// safety-relevant axis the two policies differ on — whether a prior
+// definitive-loss tombstone (lostOwnership[id], set by onLeaseLost) hard-refuses
+// before ever attempting a real Acquire, or is treated as stale evidence that
+// deserves a genuine re-Acquire attempt. See reaffirmLease's and
+// acquireMutationLeaseForStaleSettle's doc comments for why each policy is
+// correct for its callers; do not change this parameter's meaning without
+// re-reading both.
+func (s *Service) acquireLeaseCore(ctx context.Context, id session.SessionID, bypassTombstone bool) error {
 	if s.cfg.SessionLease == nil {
 		return nil
 	}
@@ -6449,19 +6523,27 @@ func (s *Service) reaffirmLease(ctx context.Context, id session.SessionID) error
 		s.mu.Unlock()
 		return nil
 	}
-	if _, lost := s.lostOwnership[id]; lost {
+	if _, lost := s.lostOwnership[id]; lost && !bypassTombstone {
 		s.mu.Unlock()
 		return fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, id)
 	}
 	if h, held := s.heldLeases[id]; held {
 		valid := h.valid
 		s.mu.Unlock()
-		if !valid {
+		if valid {
+			return nil // already ours for this session; acquire only on first entry.
+		}
+		if !bypassTombstone {
 			return fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, id)
 		}
-		return nil // already ours for this session; acquire only on first entry.
+		// bypassTombstone: an invalid held entry here is stale local bookkeeping
+		// deliberately left behind by onLeaseLost's preserveAwaiting branch
+		// (heldLeases[id] is NOT deleted there, only marked invalid). Fall through
+		// to a real Acquire instead of permanently refusing — the post-Acquire
+		// install below replaces it rather than mistaking it for a live winner.
+	} else {
+		s.mu.Unlock()
 	}
-	s.mu.Unlock()
 
 	acqCtx, acqCancel := context.WithTimeout(ctx, leaseAcquireTimeout)
 	lease, err := s.cfg.SessionLease.Acquire(acqCtx, id, s.cfg.LeaseOwner)
@@ -6486,10 +6568,20 @@ func (s *Service) reaffirmLease(ctx context.Context, id session.SessionID) error
 
 	// Store the hold and start the renewer. A second acquire that raced us (lost
 	// the Acquire call, won the map insert) is collapsed: keep the first, cancel
-	// our just-started renewer for the duplicate.
+	// our just-started renewer for the duplicate. The dup check only collapses
+	// against a VALID existing entry — a stale invalid one (the
+	// bypassTombstone fall-through case above) must not be mistaken for a live
+	// winner, or the freshly Acquired lease would be silently dropped without
+	// ever being released.
 	renewCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	s.mu.Lock()
-	if _, dup := s.heldLeases[id]; dup {
+	if bypassTombstone {
+		// The backend just proved id is free/ours again — any earlier
+		// definitive-loss tombstone no longer applies to this now-verified-orphaned
+		// session.
+		delete(s.lostOwnership, id)
+	}
+	if existing, dup := s.heldLeases[id]; dup && existing.valid {
 		s.mu.Unlock()
 		cancel()
 		return nil
@@ -6866,7 +6958,7 @@ func (s *Service) SettleIfStale(ctx context.Context, id session.SessionID) (bool
 	if s.IsLive(id) {
 		return false, nil
 	}
-	release, err := s.acquireMutationLease(ctx, id)
+	release, err := s.acquireMutationLeaseForStaleSettle(ctx, id)
 	if err != nil {
 		return false, err
 	}

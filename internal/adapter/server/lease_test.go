@@ -18,6 +18,7 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/server"
+	"github.com/stacklok/mecatl/internal/syscaller"
 )
 
 // fakeLease is a programmable port.SessionLease for the server-layer lease tests.
@@ -366,6 +367,205 @@ func TestCloseSessionStillRefusedWhileLeaseHeldElsewhere(t *testing.T) {
 	_, err = svc.StartRun(context.Background(), sess.ID, "go")
 	if !errors.Is(err, server.ErrSessionLeasedElsewhere) {
 		t.Fatalf("StartRun after a deferred CloseSession = %v, want still ErrSessionLeasedElsewhere", err)
+	}
+}
+
+// TestStaleSessionSweepRecoversAfterSelfInflictedLeaseLoss reproduces the
+// production deadlock: this process's lease renewer misses its window
+// (flocklease's Renew returns ErrLeaseHeld identically for "a real competitor
+// took it" and "this record simply expired because a renew landed late" —
+// there is no live run for onLeaseLost to cancel here, isolating the tombstone
+// effect from any run-completion save race), onLeaseLost sets the
+// lostOwnership tombstone, and the durable snapshot is (as in production, via a
+// crash or an interrupted persist) left at StateRunning.
+//
+// The session was never closed, so its only recovery path is the periodic
+// stale-session reconcile sweep (internal/app/session_reconcile.go), which
+// reaches this exact session via SettleIfStale -> acquireMutationLease ->
+// acquireLease -> reaffirmLease. Before the fix, reaffirmLease fail-fasts on
+// the tombstone without ever attempting a real Acquire, so this is a
+// permanent deadlock recoverable only by a process restart or CloseSession
+// (docs/adr/0027-cloud-native.md List 1 row 27) — neither of which the sweep
+// can perform. The fix: once the tombstone is set, reaffirmLease attempts a
+// real Acquire before giving up, and clears the tombstone on success.
+func TestStaleSessionSweepRecoversAfterSelfInflictedLeaseLoss(t *testing.T) {
+	lease := &fakeLease{}
+	store := memstore.New()
+	ps := permstore.New()
+	cat := tool.NewCatalog()
+	engine := agent.NewEngine(agent.Deps{
+		LLM:     mockllm.New(mockllm.TextTurn("first")),
+		Catalog: cat,
+		Policy:  permpolicy.NewPolicy(nil, ps),
+		Model:   "test-model",
+	})
+	svc, err := newPlacementTestService(server.Config{
+		Engine:             engine,
+		Store:              store,
+		SessionLease:       lease,
+		LeaseOwner:         "owner-test",
+		LeaseTTL:           90 * time.Millisecond,
+		LeaseRenewInterval: 15 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	t.Cleanup(svc.Close)
+
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	run, err := svc.StartRun(context.Background(), sess.ID, "go")
+	if err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+	for range run.Events() {
+	}
+	svc.FinishRun(sess.ID, run)
+
+	// The run has already completed (and persisted) cleanly. The lease is still
+	// held for the session's life (HOLD-FOR-SESSION-LIFE), so its renewer is
+	// still ticking. Fail the NEXT renew with no live run for onLeaseLost to
+	// cancel — deterministic, no completion-save race.
+	var lost atomic.Bool
+	lease.mu.Lock()
+	lease.renewHook = func(port.Lease) (port.Lease, error) {
+		lost.Store(true)
+		return port.Lease{}, port.ErrLeaseHeld // self-inflicted or real — flocklease can't tell.
+	}
+	lease.mu.Unlock()
+	deadline := time.Now().Add(2 * time.Second)
+	for !lost.Load() && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if !lost.Load() {
+		t.Fatal("the renewer never attempted a Renew after arming renewHook")
+	}
+	if svc.IsLive(sess.ID) {
+		t.Fatal("precondition: IsLive after loss with no live run = true, want false")
+	}
+
+	// Now overwrite the durable snapshot to the StateRunning shape a crash (or an
+	// interrupted final persist) leaves behind — the sweep's actual candidate
+	// filter (staleMaintenanceSessionCandidate requires State==Running).
+	if err := store.Save(context.Background(), crashOrphanedSession(t, sess.ID)); err != nil {
+		t.Fatalf("overwrite Save: %v", err)
+	}
+
+	staleCtx := syscaller.Context(context.Background(), syscaller.RootStaleSessionReconcile)
+	settled, err := svc.SettleIfStale(staleCtx, sess.ID)
+	if err != nil {
+		t.Fatalf("SettleIfStale after self-inflicted lease loss = (%v, %v), want (true, nil) — the sweep must be able to recover a never-closed session", settled, err)
+	}
+	if !settled {
+		t.Fatal("SettleIfStale after self-inflicted lease loss = false, want true")
+	}
+
+	acquiresAfter := func() int {
+		lease.mu.Lock()
+		defer lease.mu.Unlock()
+		return lease.acquires
+	}()
+	if acquiresAfter < 2 {
+		t.Fatalf("Acquire count after SettleIfStale = %d, want >= 2 (a fresh Acquire proves the tombstone was cleared, not bypassed)", acquiresAfter)
+	}
+
+	// The tombstone must be gone, not merely bypassed once: a normal re-entry now
+	// succeeds too.
+	lease.mu.Lock()
+	lease.renewHook = nil
+	lease.mu.Unlock()
+	run2, err := svc.StartRun(context.Background(), sess.ID, "go")
+	if err != nil {
+		t.Fatalf("StartRun after SettleIfStale recovery = %v, want success (tombstone should be cleared)", err)
+	}
+	for range run2.Events() {
+	}
+	svc.FinishRun(sess.ID, run2)
+}
+
+// TestStaleSessionSweepRefusesWhenGenuinelyHeldElsewhere is
+// TestStaleSessionSweepRecoversAfterSelfInflictedLeaseLoss's negative
+// counterpart: the sweep's bypass of the lostOwnership tombstone must still
+// correctly refuse when a REAL competitor (not this same process) currently
+// holds the lease, and must leave the durable snapshot untouched.
+func TestStaleSessionSweepRefusesWhenGenuinelyHeldElsewhere(t *testing.T) {
+	lease := &fakeLease{}
+	store := memstore.New()
+	ps := permstore.New()
+	cat := tool.NewCatalog()
+	engine := agent.NewEngine(agent.Deps{
+		LLM:     mockllm.New(mockllm.TextTurn("first")),
+		Catalog: cat,
+		Policy:  permpolicy.NewPolicy(nil, ps),
+		Model:   "test-model",
+	})
+	svc, err := newPlacementTestService(server.Config{
+		Engine:             engine,
+		Store:              store,
+		SessionLease:       lease,
+		LeaseOwner:         "owner-test",
+		LeaseTTL:           90 * time.Millisecond,
+		LeaseRenewInterval: 15 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	t.Cleanup(svc.Close)
+
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	run, err := svc.StartRun(context.Background(), sess.ID, "go")
+	if err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+	for range run.Events() {
+	}
+	svc.FinishRun(sess.ID, run)
+
+	var lost atomic.Bool
+	lease.mu.Lock()
+	lease.renewHook = func(port.Lease) (port.Lease, error) {
+		lost.Store(true)
+		return port.Lease{}, port.ErrLeaseHeld
+	}
+	lease.mu.Unlock()
+	deadline := time.Now().Add(2 * time.Second)
+	for !lost.Load() && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if !lost.Load() {
+		t.Fatal("the renewer never attempted a Renew after arming renewHook")
+	}
+
+	if err := store.Save(context.Background(), crashOrphanedSession(t, sess.ID)); err != nil {
+		t.Fatalf("overwrite Save: %v", err)
+	}
+
+	// Unlike the recovery test, a REAL competitor now genuinely holds the lease
+	// — the sweep's own re-Acquire attempt must see that, not merely "expired".
+	lease.mu.Lock()
+	lease.acquireErr = port.ErrLeaseHeld
+	lease.mu.Unlock()
+
+	staleCtx := syscaller.Context(context.Background(), syscaller.RootStaleSessionReconcile)
+	settled, err := svc.SettleIfStale(staleCtx, sess.ID)
+	if !errors.Is(err, server.ErrSessionLeasedElsewhere) {
+		t.Fatalf("SettleIfStale while genuinely held elsewhere = (%v, %v), want (false, ErrSessionLeasedElsewhere)", settled, err)
+	}
+	if settled {
+		t.Fatal("SettleIfStale while genuinely held elsewhere = true, want false")
+	}
+
+	reloaded, err := store.Load(context.Background(), sess.ID)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if reloaded.State != session.StateRunning {
+		t.Fatalf("reloaded state = %q, want running (no write should have happened while genuinely held elsewhere)", reloaded.State)
 	}
 }
 

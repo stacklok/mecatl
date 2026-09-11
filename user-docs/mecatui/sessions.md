@@ -14,8 +14,8 @@ Sessions preserve a conversation, its tool history, workspace, mode, model, and 
 Pass an exact session ID, or let mecatui choose the newest eligible main chat:
 
 ```sh
-bin/mecatui --resume 01JOPAQUESESSIONID
-bin/mecatui connect 127.0.0.1:8080 --resume-latest
+mecatui --resume 01JOPAQUESESSIONID
+mecatui connect 127.0.0.1:8080 --resume-latest
 ```
 
 `--resume-latest` continues the newest eligible chat and, when none exists, starts a fresh chat instead of failing — the "continue where I left off, otherwise begin" launch. (A genuine storage/list failure still surfaces rather than being masked as a new chat.)
@@ -156,8 +156,8 @@ manual compaction; older servers hide it. A cascade summary can still use model 
 Open the inventory without creating a session:
 
 ```sh
-bin/mecatui sessions
-bin/mecatui connect 127.0.0.1:8080 sessions
+mecatui sessions
+mecatui connect 127.0.0.1:8080 sessions
 ```
 
 Choose a main chat to **Continue**, or open scheduled, child, and other runs to **Inspect** their authoritative transcript without attaching to them. Eligible main chats can also be **Forked** into a new chat. The inventory can copy an ID, rename a session, and—when the server permits it—delete it. Actions are checked again by the server, so an old inventory row cannot bypass active-session or lease protections. Caller identity, where enabled, records ownership but does not isolate sessions between authenticated callers.

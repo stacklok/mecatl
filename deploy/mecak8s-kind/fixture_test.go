@@ -49,7 +49,7 @@ func TestMecak8sKindFixture_Scenario1_DedicatedKubeconfig(t *testing.T) {
 		"KUBECONFIG: deploy/mecak8s-kind/kconfig.yaml", "CONTEXT: kind-mecatl-dev",
 		"--kubeconfig={{.KUBECONFIG}}", "--context={{.CONTEXT}}", "--kube-context={{.CONTEXT}}",
 		"kind delete cluster --name={{.CLUSTER}}", "rm -rf {{.STATE}}", "rm -f {{.KUBECONFIG}} {{.SETUP_LOCK}}",
-		"umask 077",
+		"chmod 0700 {{.STATE}}", "chmod 0600 \"$kubeconfig\"", "mv -f \"$kubeconfig\" {{.KUBECONFIG}}",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("dedicated fixture lifecycle missing %q", want)
@@ -440,8 +440,7 @@ func TestMecak8sKindFixture_Scenario3_LoopbackReachability(t *testing.T) {
 
 func TestMecak8sKindFixture_Scenario3_LoginDocumentation(t *testing.T) {
 	for _, path := range []string{
-		"README.md", "../mecak8s-vmcp/README.md", "../../docs/usage/mecak8s.md",
-		"../README.md", "../../user-docs/building/deployment/mecak8s.md",
+		"README.md", "../mecak8s-vmcp/README.md", "../README.md",
 	} {
 		body, err := os.ReadFile(path)
 		if err != nil {
@@ -458,6 +457,18 @@ func TestMecak8sKindFixture_Scenario3_LoginDocumentation(t *testing.T) {
 		}
 		if strings.Index(text, "Authorization Code + PKCE") > strings.Index(text, "password grant") {
 			t.Fatalf("%s presents password grant before the normal PKCE journey", path)
+		}
+	}
+	deploymentGuide, err := os.ReadFile("../../user-docs/building/deployment/mecak8s.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"/building/getting-started/kubernetes.md",
+		"deploy/mecak8s-kind/README.md",
+	} {
+		if !strings.Contains(string(deploymentGuide), want) {
+			t.Fatalf("production deployment guide does not route local fixture readers to %q", want)
 		}
 	}
 }

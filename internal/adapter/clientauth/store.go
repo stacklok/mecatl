@@ -205,6 +205,7 @@ func newExistingKeyringProvider(root string, backend keyringBackend) (*KeyringPr
 	if root == "" || !filepath.IsAbs(root) || filepath.Clean(root) != root || backend == nil {
 		return nil, errors.New("clientauth: existing store root is invalid")
 	}
+	// #nosec G703 -- root is the caller-selected absolute storage authority, validated above and canonicalized below, not a credential-derived relative path.
 	info, err := os.Stat(root)
 	if err != nil {
 		return nil, fmt.Errorf("clientauth: existing store root: %w", err)
@@ -471,10 +472,14 @@ type CredentialRecord struct {
 	Version credentialstore.Version
 }
 
+type corruptCredentialReplacer interface {
+	ReplaceCorrupt(context.Context, []byte, []byte) (credentialstore.Record, error)
+}
+
 // Credentials is a target-bound, CAS-safe credential repository.
 type Credentials struct {
 	store     credentialstore.Store
-	fileStore *credentialstore.EncryptedFileStore
+	fileStore corruptCredentialReplacer
 }
 
 // NewCredentials creates a credential repository backed by store.
@@ -482,7 +487,7 @@ func NewCredentials(store credentialstore.Store) (*Credentials, error) {
 	if store == nil {
 		return nil, errors.New("clientauth: credential store is required")
 	}
-	fileStore, _ := store.(*credentialstore.EncryptedFileStore)
+	fileStore, _ := store.(corruptCredentialReplacer)
 	return &Credentials{store: store, fileStore: fileStore}, nil
 }
 

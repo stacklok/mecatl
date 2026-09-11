@@ -219,7 +219,7 @@ import mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 ```
 
 For RPC-by-RPC behavior, request fields, response semantics, and stream control
-frames, see the [gRPC API reference](https://github.com/stacklok/mecatl/blob/main/docs/usage/grpc-api.md).
+frames, see the [gRPC API reference](/reference/grpc-api.md).
 
 One `Converse` stream drives one run: start it with exactly one `Prompt` or
 `RetryStart`, then send only controls while it remains live. A received second start
@@ -235,7 +235,7 @@ HTTP endpoints use JSON request bodies. A prompt starts an SSE response: each
 `data:` line contains the JSON projection of the shared event model.
 
 For the route inventory, request/response schemas, event behavior, authentication,
-and `curl` examples, see the [HTTP/SSE API reference](https://github.com/stacklok/mecatl/blob/main/docs/usage/http-sse-api.md).
+and `curl` examples, see the [HTTP/SSE API reference](/reference/http-sse-api.md).
 
 ### Important difference: steering
 

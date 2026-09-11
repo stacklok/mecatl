@@ -184,6 +184,10 @@ type Caller func(context.Context, SessionRef, string, session.ToolCall) (session
 // scoped to the exact logical session and route and retains refresh custody.
 type AuthorizedCaller func(context.Context, SessionRef, string, session.ToolCall, oauth2.TokenSource) (session.ToolResult, error)
 
+// QueryCaller invokes one advertised tool and applies the jq projection before
+// the raw result can leave the broker transport boundary.
+type QueryCaller func(context.Context, SessionRef, string, session.ToolCall, oauth2.TokenSource, string) (session.ToolResult, error)
+
 // Runtime owns logical broker sessions and creates process-local attachments.
 type Runtime struct {
 	mu               sync.RWMutex
@@ -191,6 +195,7 @@ type Runtime struct {
 	catalogue        *Catalogue
 	caller           Caller
 	authorizedCaller AuthorizedCaller
+	queryCaller      QueryCaller
 	oauth            oauthRuntimeOptions
 	sessions         map[session.SessionID]*logicalSession
 	states           map[string]callbackState
@@ -557,13 +562,15 @@ func (a *Attachment) finishAttachmentOperation() {
 }
 
 type sessionTool struct {
-	attachment *Attachment
-	route      route
+	attachment  *Attachment
+	route       route
+	queryFilter string
 }
 
 func (t *sessionTool) Spec() tool.ToolSpec { return copySpec(t.route.spec) }
 func (t *sessionTool) ReadOnly() bool      { return t.route.readOnly }
 
+// Execute (sessionTool.Execute) invokes the attachment-bound native tool route.
 func (t *sessionTool) Execute(ctx context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	opCtx, done, err := t.attachment.beginOperation(ctx)
 	if err != nil {
@@ -587,9 +594,23 @@ func (t *sessionTool) Execute(ctx context.Context, call session.ToolCall, _ tool
 	if t.route.oauth != nil {
 		return t.executeProtected(opCtx, call)
 	}
-	result, err := t.attachment.runtime.caller(opCtx, t.attachment.logical.ref, t.route.backend, call)
+	result, err := t.invoke(opCtx, call, nil)
 	result.CallID = call.ID
 	return result, err
+}
+
+func (t *sessionTool) invoke(ctx context.Context, call session.ToolCall, tokens oauth2.TokenSource) (session.ToolResult, error) {
+	r := t.attachment.runtime
+	if t.queryFilter != "" {
+		if r.queryCaller == nil {
+			return session.ToolResult{}, errors.New("broker query transport unavailable")
+		}
+		return r.queryCaller(ctx, t.attachment.logical.ref, t.route.backend, call, tokens, t.queryFilter)
+	}
+	if tokens != nil {
+		return r.authorizedCaller(ctx, t.attachment.logical.ref, t.route.backend, call, tokens)
+	}
+	return r.caller(ctx, t.attachment.logical.ref, t.route.backend, call)
 }
 
 func copySpec(spec tool.ToolSpec) tool.ToolSpec {

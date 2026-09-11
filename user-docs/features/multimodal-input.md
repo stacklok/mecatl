@@ -132,7 +132,7 @@ or unresolved capability is fail-closed.
   workspace is needed for the prompt itself.
 
 For the wire definitions and exact event flow, see [Drive via gRPC / HTTP](/building/deployment/grpc-http.md)
-and [the HTTP/SSE API guide](https://github.com/stacklok/mecatl/blob/main/docs/usage/http-sse-api.md). For provider adapter capability requirements, see [LLM provider extension points](/building/extension-points/llm-provider.md).
+and [the HTTP/SSE API guide](/reference/http-sse-api.md). For provider adapter capability requirements, see [LLM provider extension points](/building/extension-points/llm-provider.md).
 
 ## Next steps
 

@@ -291,7 +291,7 @@ type config struct {
 	// as <dir>/<name>/SKILL.md (repeatable; highest precedence). Empty + no
 	// conventional set disables the Skill tool. skillsConventional adds the
 	// built-in conventional project/user locations (lower precedence), default OFF
-	// to keep skills strictly opt-in (a trust boundary — see resolve.go / usage.md).
+	// to keep skills strictly opt-in (a trust boundary; see the user-docs skills guide).
 	skillsDirs         stringList
 	skillsConventional bool
 
@@ -638,7 +638,7 @@ func runConfigInit(argv []string, out io.Writer) error {
 		return fmt.Errorf("writing %s: %w", path, err)
 	}
 	_, _ = fmt.Fprintf(out, "wrote operator settings skeleton to %s\n", path)
-	_, _ = fmt.Fprintf(out, "edit it, then (re)start mecated. See docs/configuration-reference.md for the full key reference.\n")
+	_, _ = fmt.Fprintf(out, "edit it, then (re)start mecated. See https://mecatl.dev/docs/reference/configuration for the full key reference.\n")
 	return nil
 }
 
@@ -690,7 +690,7 @@ func runConfigDaemonInit(argv []string, out io.Writer) error {
 	}
 	_, _ = fmt.Fprintf(out, "wrote daemon config skeleton to %s\n", path)
 	_, _ = fmt.Fprintf(out, "it is NOT auto-loaded; start the server with 'mecated serve --config %s' to use it.\n", path)
-	_, _ = fmt.Fprintf(out, "validate it with 'mecated config daemon validate'. See docs/usage/mecated.md for the full reference.\n")
+	_, _ = fmt.Fprintf(out, "validate it with 'mecated config daemon validate'. See https://mecatl.dev/docs/building/deployment/mecated for the full reference.\n")
 	return nil
 }
 
@@ -876,6 +876,10 @@ func run(mode commandMode, remaining []string) error {
 	// so the facts print identically — but flow through the injected port.Diagnostics
 	// rather than slog.Default().
 	diag := slogdiag.NewFromLogger(logger)
+
+	// Emit the build identity once logging is configured, so every daemon startup
+	// can be tied to the binary that produced its operational logs.
+	slog.Info("mecated starting", "version", buildinfo.BuildID)
 
 	// Log the selected daemon config path when one was loaded (issue #338).
 	// The path was validated during merge; log it so operators can confirm
@@ -1737,7 +1741,7 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 	fs.StringVar(&cfg.learningStoreURL, "learning-store-url", "", "host:port of one distributed learning gRPC driver providing AttemptRepositoryService, ProposalRepositoryService, and SkillRepositoryService. The complete set must be explicitly advertised at startup; a partial or legacy driver fails closed with no local-repository fallback. Repository partitions are opaque on this transport. Same auth/TLS posture as --session-store-url (equal URLs share one connection)")
 	fs.StringVar(&cfg.sessionLeaseURL, "session-lease-url", "", "host:port of a remote session-lease gRPC driver (mecatl.driver.v1.SessionLeaseService) for cross-process single-writer enforcement (cloud-native Phase 4, multi-replica). Empty = NO leasing (the byte-identical single-writer-by-affinity default: route every session to one replica). Mutually exclusive with --session-lease-dir / --session-lease-k8s-namespace. Same auth/TLS posture as --session-store-url (equal URLs share one connection)")
 	fs.StringVar(&cfg.sessionLeaseDir, "session-lease-dir", "", "directory for a SINGLE-HOST flock session lease (cross-process single-writer enforcement among processes on ONE machine; flock auto-releases on crash). NOT safe across hosts — use --session-lease-k8s-namespace or --session-lease-url for multi-host/multi-replica. Empty = no leasing")
-	fs.StringVar(&cfg.sessionLeaseK8sNamespace, "session-lease-k8s-namespace", "", "Kubernetes namespace for coordination.k8s.io Lease-backed session leasing (the in-cluster multi-replica path). Uses in-cluster config (or the default kubeconfig out-of-cluster); the ServiceAccount needs get,create,update,delete on leases in coordination.k8s.io for this namespace (never list/watch — see docs/usage.md). Empty = no leasing")
+	fs.StringVar(&cfg.sessionLeaseK8sNamespace, "session-lease-k8s-namespace", "", "Kubernetes namespace for coordination.k8s.io Lease-backed session leasing (the in-cluster multi-replica path). Uses in-cluster config (or the default kubeconfig out-of-cluster); the ServiceAccount needs get,create,update,delete on leases in coordination.k8s.io for this namespace (never list/watch — see https://mecatl.dev/docs/building/deployment/mecated). Empty = no leasing")
 	fs.DurationVar(&cfg.sessionLeaseTTL, "session-lease-ttl", 30*time.Second, "session-lease lifetime: a crashed/killed holder's lease becomes claimable after this long. Only meaningful when a lease backend is selected")
 	fs.DurationVar(&cfg.sessionLeaseRenewInterval, "session-lease-renew-interval", 0, "how often the per-session renewer refreshes a held lease; 0 = --session-lease-ttl / 3. Keep it well below the TTL so a slow store does not lose the lease and cancel the run. Only meaningful when a lease backend is selected")
 	// Scheduled tasks (issue #189, Phase 1f; ADR 0073). The scheduler is ON by
@@ -1793,10 +1797,10 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 	fs.StringVar(&cfg.commandSourceURL, "command-source-url", "", "host:port of a remote slash-command gRPC driver (mecatl.driver.v1.CommandSourceService); COMPOSES with file-backed commands rather than replacing them — a local command file shadows a same-named driver command, and MCP prompts stay last. Consulted LIVE on every expansion/listing (no snapshot); probed once at startup (fatal if unreachable), runtime faults fail soft (raw text passes through). TRUST BOUNDARY: an expanded command body becomes the user prompt — point this only at a driver you trust. Same auth/TLS posture as --session-store-url (equal URLs share one connection)")
 
 	fs.BoolVar(&cfg.enableParallel, "enable-parallel", true, "register the Parallel fan-out tool (parallel isolated child branches)")
-	fs.StringVar(&cfg.websearchURL, "websearch-url", "", "WEBSEARCH (issue #26): base URL of a vendor-neutral HTTP JSON search endpoint (e.g. a SearXNG /search URL or a generic JSON search API) backing the always-present WebSearch tool. This is the EXPLICIT OVERRIDE — it wins over the SEARXNG_URL/BRAVE_API_KEY env tiers and the Exa anonymous default. The API key is read from WEBSEARCH_API_KEY, never a flag value. The adapter carries its own per-call timeout and concurrency limit. Setup walkthrough: docs/usage.md \"Enabling web search\"")
-	fs.StringVar(&cfg.websearchMode, "websearch", "", "WEBSEARCH master switch: pass `--websearch=off` to DISABLE web search entirely (the kill switch — no outbound search calls, the tool reports it is disabled). Web search is ON by default (Exa anonymous tier; set EXA_API_KEY to upgrade the default tier, or SEARXNG_URL / BRAVE_API_KEY to switch backends). Any value other than \"off\" (or unset) leaves web search enabled. See docs/usage.md \"Enabling web search\"")
-	fs.StringVar(&cfg.websearchAuthHeader, "websearch-auth-header", "", "WEBSEARCH: HTTP header the WEBSEARCH_API_KEY is sent in (default \"Authorization\" as a Bearer token; set e.g. \"X-API-Key\" to send the raw key). Ignored when no key is set. See docs/usage.md \"Enabling web search\"")
-	fs.StringVar(&cfg.websearchQueryParam, "websearch-query-param", "", "WEBSEARCH: URL query parameter the search string is placed in (default \"q\"). Tune for a generic JSON search endpoint that expects a different parameter name. See docs/usage.md \"Enabling web search\"")
+	fs.StringVar(&cfg.websearchURL, "websearch-url", "", "WEBSEARCH (issue #26): base URL of a vendor-neutral HTTP JSON search endpoint (e.g. a SearXNG /search URL or a generic JSON search API) backing the always-present WebSearch tool. This is the EXPLICIT OVERRIDE — it wins over the SEARXNG_URL/BRAVE_API_KEY env tiers and the Exa anonymous default. The API key is read from WEBSEARCH_API_KEY, never a flag value. The adapter carries its own per-call timeout and concurrency limit. Setup: https://mecatl.dev/docs/building/what-you-get/core-tools#configure-web-search")
+	fs.StringVar(&cfg.websearchMode, "websearch", "", "WEBSEARCH master switch: pass `--websearch=off` to DISABLE web search entirely (the kill switch — no outbound search calls, the tool reports it is disabled). Web search is ON by default (Exa anonymous tier; set EXA_API_KEY to upgrade the default tier, or SEARXNG_URL / BRAVE_API_KEY to switch backends). Any value other than \"off\" (or unset) leaves web search enabled. See https://mecatl.dev/docs/building/what-you-get/core-tools#configure-web-search")
+	fs.StringVar(&cfg.websearchAuthHeader, "websearch-auth-header", "", "WEBSEARCH: HTTP header the WEBSEARCH_API_KEY is sent in (default \"Authorization\" as a Bearer token; set e.g. \"X-API-Key\" to send the raw key). Ignored when no key is set. See https://mecatl.dev/docs/building/what-you-get/core-tools#configure-web-search")
+	fs.StringVar(&cfg.websearchQueryParam, "websearch-query-param", "", "WEBSEARCH: URL query parameter the search string is placed in (default \"q\"). Tune for a generic JSON search endpoint that expects a different parameter name. See https://mecatl.dev/docs/building/what-you-get/core-tools#configure-web-search")
 	fs.IntVar(&cfg.forkPreservedCap, "fork-preserved-cap", agent.DefaultPreservedForkCap, "max PRESERVED winner forks (join=first/judge) kept on disk at once; the oldest beyond this is LRU-reaped. Preserved forks stay inspectable until reaped")
 	fs.BoolVar(&cfg.enableTeams, "enable-teams", true, "register the experimental agent-teams capability (CreateTeam/SpawnTeammate/RunTeam); on by default and inert until a client drives a team. Pass --enable-teams=false to disable")
 	fs.BoolVar(&cfg.noSteer, "no-steer", false, "disable the mid-run steer inbox (steer-while-running, issue #512): a client `steer` frame on the Converse stream then reports too_late and ServerCapabilities.steer reads false. Steer is ON by default; this is the opt-OUT. The operator-tier settings.yaml `steer: false` scalar is the YAML twin (CLI out-ranks YAML; a project-tier steer: key is ignored)")

@@ -120,10 +120,13 @@ PR after verification. There is no cleanup or status-only PR.
   declarations, run-local orchestration state, and a final human code-review gate.
   Status: landed in this Combined candidate; authoritative on merge.
 - [Mecatui live-feed reconnect](mecatui-live-reconnect.md) — regression closure for bearer-backed first-Recv authentication rejection, existing `/connect` recovery, cross-loop reconnect continuity/backoff, and real-event recovery without weakening generation, cancellation, or catch-up invariants. Status: landed.
+- [Mecatui broker polling liveness](mecatui-broker-polling-liveness.md) — restores automatic lazy MCP-authorization polling after a pending control event and bounds every workspace-enrollment attempt so broker consent cannot remain client-busy forever. Status: landed in this Combined candidate; authoritative on merge.
 - [Mecatui double-Escape draft clearing](mecatui-double-escape.md) — a fail-closed,
   enhanced-key-event-only, silent press-release-press idle prompt gesture with an exact
   500 ms generation-tagged expiry; it reuses `clearPrompt`, preserves surface ownership,
   and documents universal `ctrl+u`. Status: landed.
+- [CallMcpWithQuery broker support](callmcpwithquery-broker-support.md) — bounded jq projection for a direct MCP target or a current broker attachment, preserving the attachment's existing session isolation and authorization gates. Status: implemented locally under explicit workflow waiver; not approved or landed.
+
 - [Mecatui card layout](mecatui-card-layout.md) — width-bounded card rendering
   that wraps raw dynamic rows before styling, preventing Lipgloss alignment
   padding from becoming vertical whitespace while retaining intentional
@@ -131,7 +134,7 @@ PR after verification. There is no cleanup or status-only PR.
 - [Headless mecatui credential storage](headless-client-credential-storage.md) —
   Linux-first, read-only Secret Service detection for a root-pinned keyring or
   owner-only plaintext local credential backend; selection and upgrade-only
-  compatibility decisions are settled. Status: proposed.
+  compatibility decisions are settled. Status: in-progress.
 - [Persistent read-before-write ledgers](persistent-read-before-write-ledgers.md) —
   storage-independent, session-scoped read evidence with an in-memory default,
   a durable Redis contract proof, and fail-closed file-tool behavior. Status: draft.
@@ -143,7 +146,11 @@ PR after verification. There is no cleanup or status-only PR.
   system escape and deterministic crash-residue reaping. Status: landed.
 - [Session title generation and token usage](session-title-generation.md) — mecatui `/title`, an opt-in routed model title after up to three genuine prompts, and durable title-model token attribution. Status: draft.
 - [Per-upstream MCP broker OAuth grants](mcp-broker-multi-upstream-oauth.md) — accept multiple broker OAuth upstreams while keeping grants, callback state, authenticated discovery, and workspace-enrollment progression backend-scoped. Status: draft.
+- [Broker MCP status](broker-mcp-status.md) — proposed owner-scoped broker connector
+  inventory and enrollment/catalogue status behind `/mcp`, without probes or new
+  persistence. Status: draft; exact interface/disclosure decisions await confirmation.
 - [MCP broker DCR client](mcp-broker-dcr-client.md) — a third `mcp.servers[].auth.oauth.client.mode: dcr`, exposing ToolHive's existing RFC 7591 Dynamic Client Registration upstream-client support for protected MCP servers with no preregistered client or hosted CIMD document. Status: draft.
+- [Direct MCP Dynamic Client Registration](direct-mcp-dcr.md) — proposed contract for durable public-client DCR in a local direct MCP profile, reusing the existing authorization-code login while keeping broker and remote mecatui OIDC authority separate. Status: proposed.
 
 - [Local mecak8s Kind fixture](mecak8s-kind-fixture.md) — cleanly separates an
   operator-run mock/real-provider mecak8s fixture, optional Keycloak caller
@@ -164,6 +171,11 @@ PR after verification. There is no cleanup or status-only PR.
 - [Operator-defined LLM providers](operator-defined-llm-providers.md) — operator-local,
   truthfully named gateway providers over the existing Responses, Chat Completions, and
   Anthropic Messages adapters, plus persistent built-in endpoint overrides. Status: draft.
+- [Native LLM-gateway OIDC login](native-llm-gateway-login.md) — deployment-scoped
+  mecatl-owned gateway login with protected refresh/logout lifecycle and direct bearer
+  injection; all callers admitted to one mecated share configured endpoint availability and
+  gateway identity, while ToolHive remains explicit optional proxy compatibility with no
+  cross-store secret migration. Status: proposed.
 - [Surface approval migration](surface-approval-migration.md) — final Phase-2 migration of the mecatui approval UI onto the dynamic surface contract, including ephemeral render-frame hit dispatch. Status: landed.
 - [Spine convergence](spine-convergence.md) — bring the
   to-acceptance-plan / plan-orchestrate / test-writer spine + ac-trace into

@@ -24,7 +24,8 @@ imagePullSecrets: []
 # default automatically — no --default-provider flag needed. The Secret
 # itself can come from anywhere (a `kubectl create secret` in Kind, an
 # ExternalSecret in a real cluster, ...); this values shape is identical
-# either way.
+# either way. MECATL_INSTALLATION_ID and chart-generated authentication
+# environment names are reserved; rendering fails if extraEnv collides with one.
 extraEnv: []
 
 # extraArgs appends command-line arguments to the mecak8s agent container.
@@ -42,7 +43,7 @@ extraArgs: []
 # declares its protected tool catalogue statically (name/description/
 # inputSchema/readOnly per entry): declared tools are admitted into the
 # session's catalogue immediately, with the credential itself deferred to the
-# model's first attempt to call one — see docs/usage/mecak8s.md for a worked
+# model's first attempt to call one — see user-docs/building/deployment/mecak8s.md for a worked
 # GitHub example of both.
 mcp:
   broker:
@@ -90,7 +91,7 @@ skills:
 # see mcp.broker.callbackURL above. The Deployment also renders strategy.type:
 # Recreate instead of RollingUpdate in that mode, so a rollout fully retires the
 # old incarnation before starting the new one (planned downtime, not zero-downtime
-# — see docs/usage/mecak8s.md).
+# — see user-docs/building/deployment/mecak8s.md).
 replicaCount: 2
 mockProvider: false
 
@@ -100,6 +101,14 @@ defaultProvider: ""
 model: ""
 maxRunTokens: null
 maxTeamTokens: null
+
+# Stable, non-secret identity exported on mecak8s OTel resources. Empty is safe
+# only for live Helm install/upgrade: Helm creates a UUID on install and preserves
+# the live ConfigMap value on ordinary upgrades. Offline/template-based GitOps must
+# set a canonical UUID because lookup is unavailable and uuidv4 changes each render.
+# Set an explicit value for identity continuity across uninstall/reinstall too.
+telemetry:
+  installationID: ""
 
 # A real provider (mockProvider: false) requires OIDC and either pod TLS or an
 # explicitly asserted gateway TLS boundary. The unsafe bypass remains for local

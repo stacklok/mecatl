@@ -8,15 +8,15 @@ A **headless agentic coding harness** in Go 1.26 (hexagonal/DDD): the streaming 
 loop, ~7 tools, permissions, hooks, and subagents behind a provider-agnostic port.
 Driven over gRPC + HTTP; an optional Bubble Tea TUI (`mecatui`) is a client.
 
-> **Documentation lifecycle (ADR 0002 + ADR 0003):**
-> `docs/architecture.md` is the LIVING "how it works"; `docs/usage.md` is how to
-> run it; `docs/design/PRODUCTION-READINESS.md` is the ONLY shipped/deferred tracker; and
-> `docs/design/IMPLEMENTATION-NOTES.md` is the dense living subsystem reference. A frozen ADR
-> records only a genuinely durable Architectural decision (see
-> `docs/development-process.md`), not every feature or Bounded change. Supersede accepted ADRs
-> with a new ADR; never edit their decision text. Keep local rationale in the issue, PR, or
-> acceptance plan and repeatable procedure in skills. Prefer living design detail outside this
-> lean correction file.
+> **Documentation lifecycle (ADR 0002 + ADR 0003 + ADR 0321):**
+> `docs/architecture.md` is the LIVING "how it works"; `user-docs/` is the canonical
+> user-facing guidance and reference; `docs/design/PRODUCTION-READINESS.md` is the ONLY
+> shipped/deferred tracker; and `docs/design/IMPLEMENTATION-NOTES.md` is the dense living
+> subsystem reference. A frozen ADR records only a genuinely durable Architectural decision
+> (see `docs/development-process.md`), not every feature or Bounded change. Supersede accepted
+> ADRs with a new ADR; never edit their decision text. Keep local rationale in the issue, PR,
+> or acceptance plan and repeatable procedure in skills. Prefer living design detail outside
+> this lean correction file.
 
 ## Operating as an agent in this repository
 
@@ -49,6 +49,8 @@ task generate           # regenerate contracts/gen from contracts/proto via buf
 cd engine && go test ./agent/ -run TestFullCycle   # a single engine test (engine/ is its OWN module — run go test from engine/, not the repo root)
 go run ./cmd/mecademo    # end-to-end demo, fully offline (mock provider)
 ```
+
+> **Timeouts:** `task test` and `task lint` are full-repository gates and can run well beyond two minutes. When invoking them through an agent or other timeout-bound runner, start with a **600-second timeout**; the default 120 seconds will almost certainly time out.
 
 > `engine/` is its **own Go module** (`github.com/stacklok/mecatl/engine`), kept in
 > this repo as a MONOREPO via the committed `go.work` (`use ./` + `use ./engine`).
@@ -168,11 +170,11 @@ print a full offline session (turn → tool.call → permission.ask + approval �
 - For smoke tests / scratch files, use the repo-local `.scratch/` dir (gitignored) — **not** `/tmp` or `mktemp`.
 - **Changed a core `engine/` exported API?** The `api-compat` gate will fail until you run `task api:update`, commit the changed `engine/api/*.txt`, and note the change in `engine/CHANGELOG.md` classified per `engine/COMPATIBILITY.md` (Added = minor, Changed/Removed = breaking). See ADR 0037.
 - **Changed any Markdown? Run `task generate` (for contract changes) or `task docs` before committing — always.** `task docs` refreshes the generated configuration reference and runs the strict link gate (`task docs:check`); `task generate` also refreshes the configuration reference. The CI `docs` job fails on configuration-reference drift or any link regression — `matlatl check . --strict` (no broken links/anchors, orphans, unreachable, or ambiguous links; corpus config in `.matlatl.yml` / `.matlatlignore`).
-- **Changed user-facing behavior (flags, config surface, deployment steps, APIs)? Update `user-docs/` (the public site content, rendered by the separate `website/` Docusaurus app — see `website/CLAUDE.md`) in the SAME PR, not "later."** This is a distinct tree from `docs/` above, and it is the weak link in the documentation lifecycle: the CI `user-docs` job (`task site:build`, Docusaurus `onBrokenLinks: 'throw'`) catches a broken link or an unreachable page, but nothing gates *staleness* — a shipped feature with zero user-docs mention is invisible to CI. Do this checklist before opening the PR: (1) does an existing `user-docs/building/what-you-get/*.md` or `user-docs/building/deployment/*.md` page cover the area you touched — if yes, extend it; (2) if no page covers it and the feature is operator-visible, add one short section (not a new page unless the topic is genuinely new surface); (3) `task site:build` locally to catch a broken link before CI does. Keep it lean: a short note plus a link out to the full `docs/usage/`/`docs/architecture/` reference is usually enough — `user-docs/` is not the place to re-explain implementation detail.
+- **Changed user-facing behavior (flags, config surface, deployment steps, APIs)? Update the owning `user-docs/` page in the SAME PR, not "later."** The separate `website/` Docusaurus app renders this canonical content (see `website/CLAUDE.md`). The CI `user-docs` job (`task site:build`, Docusaurus `onBrokenLinks: 'throw'`) catches broken links and unreachable pages, but it cannot detect a missing behavior update. Before opening the PR: (1) find the owning task, feature, deployment, or reference page using `user-docs/_README.md`; (2) extend it rather than creating another treatment; (3) update generated reference sources instead of generated Markdown; and (4) run `task site:build`. `docs/usage/` contains compatibility pointers for historical links and is not an authoring surface.
 
 ## See also
 
 - [Project README](README.md) — the feature overview, quick start, and project layout.
 - [Architecture guide](docs/architecture.md) — how the harness works: layers, the loop, ports, the API surface.
-- [Usage & operator guide](docs/usage.md) — building, running `mecated`, every flag, the gRPC + HTTP/SSE APIs.
+- [User documentation](https://mecatl.dev/docs/) — canonical guides for using, building, and operating Mecatl, including rendered reference material.
 - [Engine library contract](engine/COMPATIBILITY.md) — the importable-core stability surface; ADRs [0036](docs/adr/0036-engine-module.md) (module), [0037](docs/adr/0037-engine-stability-contract.md) (API gate), [0038](docs/adr/0038-event-sourced-rehydration.md) (event-sourced rehydration).

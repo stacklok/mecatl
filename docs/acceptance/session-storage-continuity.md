@@ -213,7 +213,7 @@ sessions**. The capability-driven client and explicit vocabulary follow [ADR-021
 A daemon operator follows tested systemd or macOS launchd examples, inspects policy and dry-run
 impact, and performs a quiesced backup/migration/restore. The daemon remains the sole automatic
 cleanup owner under [ADR-0226](../adr/0226-session-storage-maintenance.md), with storage privacy
-and lifecycle documented in [`docs/usage/configuration.md`](../usage/configuration.md).
+and lifecycle documented in [`user-docs/reference/configuration.md`](https://mecatl.dev/docs/reference/configuration).
 
 **Acceptance:**
 - AC9.1: Tested systemd user-service and launchd examples parse, resolve the intended executable/config/state paths, preserve each argument exactly, and invoke the daemon-owned retention configuration rather than an external deletion command.
@@ -236,7 +236,7 @@ and lifecycle documented in [`docs/usage/configuration.md`](../usage/configurati
 
 ## Cross-cutting deliverables
 
-- Update `docs/architecture.md`, `docs/design/IMPLEMENTATION-NOTES.md`, `docs/design/PRODUCTION-READINESS.md`, `docs/tui.md`, `docs/usage/`, and `user-docs/` with the shipped behavior.
+- Update `docs/architecture.md`, `docs/design/IMPLEMENTATION-NOTES.md`, `docs/design/PRODUCTION-READINESS.md`, `docs/tui.md`, and relevant `user-docs/` pages with the shipped behavior.
 - Inventory every catalog, maintenance-job registry, cache, goroutine, semaphore, and durable file in ADR 0027 Lists 1/2 as required by `AGENTS.md`.
 - Extend store/driver conformance and engine compatibility artifacts for any exported optional port surface.
 - Keep every test offline; no live model, Redis service, or network dependency.

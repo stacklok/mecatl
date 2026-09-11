@@ -8,9 +8,36 @@ import (
 
 	dto "github.com/prometheus/client_model/go"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	otelmetric "go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace/noop"
 )
+
+func TestResourceInstallationID(t *testing.T) {
+	const id = "123e4567-e89b-12d3-a456-426614174000"
+	for _, tc := range []struct {
+		name string
+		id   string
+		want bool
+	}{
+		{name: "omitted when unset"},
+		{name: "present when configured", id: id, want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res, err := newResource(t.Context(), OTLPConfig{InstallationID: tc.id})
+			if err != nil {
+				t.Fatalf("newResource: %v", err)
+			}
+			value, ok := res.Set().Value(attribute.Key("mecatl.installation.id"))
+			if ok != tc.want {
+				t.Fatalf("installation attribute present = %t, want %t", ok, tc.want)
+			}
+			if ok && value.AsString() != id {
+				t.Fatalf("installation attribute = %q, want %q", value.AsString(), id)
+			}
+		})
+	}
+}
 
 func TestSetupDisabledWhenEndpointEmpty(t *testing.T) {
 	// A no-op provider is installed so we can assert Setup does not replace the

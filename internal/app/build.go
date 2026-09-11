@@ -153,6 +153,9 @@ type Config struct {
 	Model             string
 	UseOpenAI         bool
 	OpenAIKey         string
+	// OpenAIBearerTokenFile is a rotating credential source for only the OpenAI
+	// registry entry. The adapter reads it for every request.
+	OpenAIBearerTokenFile string
 	// OpenAICodexCredential is the validated, immutable manual ChatGPT token
 	// snapshot consumed only by the distinct openai-codex registry entry.
 	OpenAICodexCredential openaicodex.Credential
@@ -533,7 +536,7 @@ type Config struct {
 	//     multi-host / multi-replica path; shares the Driver* auth/TLS + connection
 	//     cache).
 	//   - SessionLeaseK8sNamespace: a coordination.k8s.io Lease per session in that
-	//     namespace (the in-cluster multi-replica path; needs RBAC — see usage.md).
+	//     namespace (the in-cluster multi-replica path; needs RBAC; see the mecated deployment guide).
 	//   - SessionLeaseDir: a single-host flock lease under that directory (one
 	//     machine, several processes; flock auto-releases on crash).
 	// All empty = no explicit override → local StoreDir gets an automatic flock
@@ -856,6 +859,7 @@ type Config struct {
 	MCPBrokerDiscovered       []mcpbroker.ToolDefinition
 	MCPBrokerCaller           mcpbroker.Caller
 	MCPBrokerAuthorizedCaller mcpbroker.AuthorizedCaller
+	MCPBrokerQueryCaller      mcpbroker.QueryCaller
 	MCPBrokerOptions          []mcpbroker.Option
 	// MCPProfileLoader resolves operator-tier profiles with the same permission
 	// resolver Build already owns. Command roots install it so settings are not
@@ -1960,7 +1964,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	var brokerHandlers mcpbroker.HandlerBundle
 	var brokerCallbackPath string
 	brokerConfigured := len(brokerDeclaration.Routes) != 0 || cfg.MCPBrokerCaller != nil ||
-		cfg.MCPBrokerAuthorizedCaller != nil || len(cfg.MCPBrokerDiscovered) != 0 || len(cfg.MCPBrokerOptions) != 0
+		cfg.MCPBrokerAuthorizedCaller != nil || cfg.MCPBrokerQueryCaller != nil || len(cfg.MCPBrokerDiscovered) != 0 || len(cfg.MCPBrokerOptions) != 0
 	if brokerSelected && brokerConfigured {
 		occupied := make([]string, 0)
 		if assets.rootCatalog != nil {
@@ -1968,7 +1972,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 				occupied = append(occupied, registered.Spec().Name)
 			}
 		}
-		if cfg.MCPBrokerCaller == nil && cfg.MCPBrokerAuthorizedCaller == nil && len(cfg.MCPBrokerDiscovered) == 0 && len(cfg.MCPBrokerOptions) == 0 {
+		if cfg.MCPBrokerCaller == nil && cfg.MCPBrokerAuthorizedCaller == nil && cfg.MCPBrokerQueryCaller == nil && len(cfg.MCPBrokerDiscovered) == 0 && len(cfg.MCPBrokerOptions) == 0 {
 			authRedisClient, authStorageClose, err := buildToolHiveAuthRedisClient(cfg)
 			if err != nil {
 				childLiveness.Close()
@@ -2003,6 +2007,9 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 			options := append([]mcpbroker.Option(nil), cfg.MCPBrokerOptions...)
 			if cfg.MCPBrokerAuthorizedCaller != nil {
 				options = append(options, mcpbroker.WithAuthorizedCaller(cfg.MCPBrokerAuthorizedCaller))
+			}
+			if cfg.MCPBrokerQueryCaller != nil {
+				options = append(options, mcpbroker.WithQueryCaller(cfg.MCPBrokerQueryCaller))
 			}
 			brokerRuntime, err = mcpbroker.New(catalogue, cfg.MCPBrokerCaller, options...)
 			if err != nil {
@@ -8540,9 +8547,9 @@ func shellOr(shell string) string {
 const SoulApplyAction = "soul:apply"
 
 // defaultRules is the built-in permission ruleset: read-only tools (Read, Grep,
-// Glob, WebFetch, the Subagent explorer) are allowed; mutating tools (Bash, Edit, Write)
-// and the writable SkillDraft tool ask for approval. Anything unmatched defaults to
-// ask via the evaluator.
+// Glob, ListDir, WebFetch, the Subagent explorer) are allowed; mutating tools
+// (Bash, Edit, Write) and the writable SkillDraft tool ask for approval. Anything
+// unmatched defaults to ask via the evaluator.
 //
 // These rules carry ScopeBuiltinDefault — the LOWEST precedence scope, below every
 // config scope (issue #13). That lets a higher-scope config Allow LOOSEN a built-in
@@ -8574,6 +8581,7 @@ func defaultRules() []governance.Rule {
 		{Scope: governance.ScopeBuiltinDefault, Tool: "Read", Effect: governance.Allow},
 		{Scope: governance.ScopeBuiltinDefault, Tool: "Grep", Effect: governance.Allow},
 		{Scope: governance.ScopeBuiltinDefault, Tool: "Glob", Effect: governance.Allow},
+		{Scope: governance.ScopeBuiltinDefault, Tool: "ListDir", Effect: governance.Allow},
 		{Scope: governance.ScopeBuiltinDefault, Tool: "WebFetch", Effect: governance.Allow},
 		// WebSearch (issue #26): floor-Allow, same posture as WebFetch — config-
 		// overridable to ask/deny in any scope. The REAL egress gate is the provider
