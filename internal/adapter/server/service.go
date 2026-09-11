@@ -1227,9 +1227,17 @@ type runState struct {
 	// prompt-ingress changes publish only after their save succeeds.
 	titleRevision uint64
 	// persistMu makes admission of the durable awaiting save and drain's
-	// awaiting/non-awaiting decision one lifecycle transaction. Backend calls
-	// admitted before invalidation may still complete.
+	// awaiting/non-awaiting decision one lifecycle transaction. Live approval
+	// and cancellation signals cross the same barrier: they either wait for an
+	// admitted awaiting save, or mark the pending ask stale before waking the
+	// engine so a delayed relay never snapshots a concurrently-resuming session.
+	// Backend calls admitted before invalidation may still complete.
 	persistMu sync.Mutex
+	// resolvedAskID and cancelSignaled are guarded by persistMu. They close the
+	// event-delivery race where a control reaches a detached/background run after
+	// the engine emitted permission.ask but before its relay starts Persist.
+	resolvedAskID  string
+	cancelSignaled bool
 	// preserveDurable prevents a shutdown-cancelled local awaiting run from
 	// overwriting the already-durable PendingAsk handoff point.
 	preserveDurable atomic.Bool
@@ -5491,8 +5499,17 @@ func (s *Service) approveLiveRun(id session.SessionID, target *agent.Run, askID 
 		return fmt.Errorf("%w: %q", ErrUnavailable, id)
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	st := s.runs[id]
+	s.mu.Unlock()
+	if st == nil {
+		return ErrNoActiveRun
+	}
+	// Persist and a control signal must be one ordered transaction. Persist takes
+	// persistMu before revalidating under s.mu, so retain that lock order here.
+	st.persistMu.Lock()
+	defer st.persistMu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if st == nil || st.run == nil || st.run != target || st.cancelling {
 		return ErrNoActiveRun
 	}
@@ -5505,6 +5522,9 @@ func (s *Service) approveLiveRun(id session.SessionID, target *agent.Run, askID 
 	if err := checkExpectedRun(expectedRunID, target.RunID()); err != nil {
 		return err
 	}
+	// Set before waking the run. If permission.ask is still buffered, its relay
+	// observes this marker and skips the now-stale awaiting snapshot.
+	st.resolvedAskID = askID
 	target.Approve(askID, verdict)
 	return nil
 }
@@ -5587,23 +5607,14 @@ func (s *Service) ApproveRun(ctx context.Context, id session.SessionID, askID st
 			}
 			return nil, ErrNoActiveRun
 		}
-		if s.cfg.SessionLease != nil && !s.leaseDisabled {
-			h := s.heldLeases[id]
-			if h == nil || !h.valid || h.ctx.Err() != nil {
-				s.mu.Unlock()
-				return nil, fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, id)
-			}
-		}
 		run := st.run
-		// Compare against the run that would ACTUALLY receive the verdict, not the
-		// session's stored id: after a terminal race those can differ, and the
-		// whole point of expected_run_id is to refuse exactly that case (ADR 0249).
-		if err := checkExpectedRun(expectedRunID, run.RunID()); err != nil {
-			s.mu.Unlock()
+		s.mu.Unlock()
+		// Compare against and signal the run that would ACTUALLY receive the
+		// verdict. approveLiveRun revalidates the registry + lease after crossing
+		// the awaiting-persistence barrier.
+		if err := s.approveLiveRun(id, run, askID, verdict, expectedRunID); err != nil {
 			return nil, err
 		}
-		run.Approve(askID, verdict)
-		s.mu.Unlock()
 		return nil, nil
 	}
 	s.mu.Unlock()
@@ -5653,23 +5664,13 @@ func (s *Service) resumeFromAwaiting(ctx context.Context, id session.SessionID, 
 	st, ok := s.runs[id]
 	if ok {
 		run := st.approvalRun()
+		s.mu.Unlock()
 		if run == nil {
-			s.mu.Unlock()
 			return nil, ErrNoActiveRun
 		}
-		if s.cfg.SessionLease != nil && !s.leaseDisabled {
-			h := s.heldLeases[id]
-			if h == nil || !h.valid || h.ctx.Err() != nil {
-				s.mu.Unlock()
-				return nil, fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, id)
-			}
-		}
-		if err := checkExpectedRun(expectedRunID, run.RunID()); err != nil {
-			s.mu.Unlock()
+		if err := s.approveLiveRun(id, run, askID, verdict, expectedRunID); err != nil {
 			return nil, err
 		}
-		run.Approve(askID, verdict)
-		s.mu.Unlock()
 		return nil, nil
 	}
 	s.mu.Unlock()
@@ -5948,24 +5949,45 @@ func (s *Service) Cancel(ctx context.Context, id session.SessionID, expectedRunI
 	s.mu.Lock()
 	st := s.runs[id]
 	if st != nil && st.run != nil {
-		if s.cfg.SessionLease != nil && !s.leaseDisabled {
-			h := s.heldLeases[id]
-			if h == nil || !h.valid || h.ctx.Err() != nil {
-				s.mu.Unlock()
-				return fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, id)
-			}
-		}
 		run := st.run
-		if err := checkExpectedRun(expectedRunID, run.RunID()); err != nil {
-			s.mu.Unlock()
-			return err
-		}
-		run.Cancel()
 		s.mu.Unlock()
-		return nil
+		return s.cancelLiveRun(id, run, expectedRunID)
 	}
 	s.mu.Unlock()
 	return s.noActiveRun(ctx, id)
+}
+
+// cancelLiveRun orders a cancellation signal against permission-ask
+// persistence. It is shared by unary and stream controls so a detached run can
+// never resume its aggregate while the relay snapshots StateAwaiting.
+func (s *Service) cancelLiveRun(id session.SessionID, target *agent.Run, expectedRunID string) error {
+	s.mu.Lock()
+	st := s.runs[id]
+	s.mu.Unlock()
+	if st == nil {
+		return ErrNoActiveRun
+	}
+	st.persistMu.Lock()
+	defer st.persistMu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.runs[id] != st || st.run == nil || st.run != target || st.cancelling {
+		return ErrNoActiveRun
+	}
+	if s.cfg.SessionLease != nil && !s.leaseDisabled {
+		h := s.heldLeases[id]
+		if h == nil || !h.valid || h.ctx.Err() != nil {
+			return fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, id)
+		}
+	}
+	if err := checkExpectedRun(expectedRunID, target.RunID()); err != nil {
+		return err
+	}
+	// Set before waking the run. Any permission.ask already in the event buffer
+	// is historical once cancellation wins and must not trigger an awaiting save.
+	st.cancelSignaled = true
+	target.Cancel()
+	return nil
 }
 
 // CancelChild cancels ONE child (a subagent) of the session's in-flight run,
@@ -6039,6 +6061,38 @@ func (s *Service) Persist(ctx context.Context, id session.SessionID) {
 	if !current || st.preserveDurable.Load() {
 		return
 	}
+	if !s.mutationLeaseHeld(id) {
+		return
+	}
+	s.persistRun(ctx, id, st)
+}
+
+// persistPermissionAsk is Persist with control-event correlation. A detached
+// relay can observe permission.ask after an approval/cancellation already won;
+// in that ordering the aggregate is resuming and must not be read or persisted.
+func (s *Service) persistPermissionAsk(ctx context.Context, id session.SessionID, askID string) {
+	if _, err := s.GetSession(ctx, id); err != nil {
+		return
+	}
+	s.mu.Lock()
+	st, ok := s.runs[id]
+	s.mu.Unlock()
+	if !ok {
+		return
+	}
+	st.persistMu.Lock()
+	defer st.persistMu.Unlock()
+	s.mu.Lock()
+	current := s.runs[id] == st
+	s.mu.Unlock()
+	if !current || st.preserveDurable.Load() || st.cancelSignaled {
+		return
+	}
+	if st.resolvedAskID == askID && askID != "" {
+		return
+	}
+	// A different ask proves any prior resolution marker is obsolete.
+	st.resolvedAskID = ""
 	if !s.mutationLeaseHeld(id) {
 		return
 	}
@@ -6205,7 +6259,11 @@ func (s *Service) relayEvent(ctx context.Context, id session.SessionID, ev sessi
 		return false
 	}
 	if ev.Type == session.EvPermissionAsk {
-		s.Persist(ctx, id)
+		askID := ""
+		if ev.Ask != nil {
+			askID = ev.Ask.AskID
+		}
+		s.persistPermissionAsk(ctx, id, askID)
 		if autoApprove {
 			s.MaybeAutoApprovePlan(ctx, id, ev)
 		}

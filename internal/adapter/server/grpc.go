@@ -855,10 +855,7 @@ func (h *HarnessServer) readControl(ctx context.Context, id session.SessionID, c
 				}
 			}
 		case *mecatlv1.ConverseRequest_Cancel:
-			if k.Cancel != nil && h.staleStreamControl(ctx, id, "cancel", k.Cancel.GetExpectedRunId(), ct.active()) {
-				break
-			}
-			ct.active().Cancel()
+			h.handleCancelFrame(ctx, id, ct, k.Cancel)
 		case *mecatlv1.ConverseRequest_CancelChild:
 			if k.CancelChild != nil {
 				// Per-child cancel, addressed by the child session id. A false return
@@ -883,13 +880,29 @@ func (h *HarnessServer) readControl(ctx context.Context, id session.SessionID, c
 			case rl.controlErr <- status.Error(codes.InvalidArgument, "converse: unexpected start frame after start"):
 			default:
 			}
-			ct.active().Cancel()
+			target := ct.active()
+			if err := h.svc.cancelLiveRun(id, target, ""); err != nil {
+				target.Cancel() // protocol-fault backstop: never leave the bad stream running
+			}
 			return
 		default:
 			// Preserve protobuf forward compatibility: an unset or future unknown
 			// oneof arm carries no understood control and is ignored.
 			continue
 		}
+	}
+}
+
+func (h *HarnessServer) handleCancelFrame(ctx context.Context, id session.SessionID, ct *controlTarget, frame *mecatlv1.Cancel) {
+	if frame == nil {
+		return
+	}
+	target := ct.active()
+	if h.staleStreamControl(ctx, id, "cancel", frame.GetExpectedRunId(), target) {
+		return
+	}
+	if err := h.svc.cancelLiveRun(id, target, frame.GetExpectedRunId()); err != nil {
+		h.svc.Diagnostics().Log(ctx, port.LevelWarn, "live cancel frame refused", "session", string(id), "err", err.Error())
 	}
 }
 

@@ -15,7 +15,8 @@
     },
     { "text": "Chromium multimodal permission flow completed" },
     { "delay_ms": 2000, "text": "cancel arrived too late" },
-    { "delay_ms": 600, "text": "strict steer flow completed" },
+    { "delay_ms": 600, "text": "strict steer first turn completed" },
+    { "text": "strict steer flow completed" },
     { "delay_ms": 800, "text": "persisted Chromium run completed" }
   ]
 }
