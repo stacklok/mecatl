@@ -159,28 +159,29 @@ func identityKey(id CredentialIdentity) ([]byte, error) {
 // CredentialRecordKey returns the endpoint's versioned opaque store key.
 func CredentialRecordKey(id CredentialIdentity) ([]byte, error) { return identityKey(id) }
 
-// ProtectedStoreConfig requires explicit keyring material and has no fallback source.
+// ProtectedStoreConfig requires an explicit key source and has no fallback source.
 type ProtectedStoreConfig struct {
 	Root         string
-	Keyring      Keyring
+	KeySource    KeySource
 	ExistingOnly bool
 }
 
-// Keyring returns root-bound encryption key material and optionally permits creation.
-type Keyring interface {
+// KeySource returns encryption key material and optionally permits creation.
+// The caller clears the returned bytes after opening the encrypted store.
+type KeySource interface {
 	Key(context.Context, bool) ([]byte, error)
 }
 
-// NewProtectedStore opens only the encrypted, explicitly keyring-backed namespace.
+// NewProtectedStore opens only the encrypted namespace using the selected key source.
 func NewProtectedStore(ctx context.Context, cfg ProtectedStoreConfig) (credentialstore.Store, error) {
-	if cfg.Root == "" || cfg.Keyring == nil {
+	if cfg.Root == "" || cfg.KeySource == nil {
 		return nil, ErrNotEnrolled
 	}
-	key, err := cfg.Keyring.Key(ctx, !cfg.ExistingOnly)
+	key, err := cfg.KeySource.Key(ctx, !cfg.ExistingOnly)
+	defer clear(key)
 	if err != nil || len(key) != 32 {
 		return nil, errors.Join(ErrNotEnrolled, err)
 	}
-	defer clear(key)
 	var store credentialstore.Store
 	if cfg.ExistingOnly {
 		store, err = credentialstore.OpenExistingEncryptedFile(cfg.Root, CredentialNamespace, key)
@@ -342,10 +343,8 @@ func (l Lifecycle) Enroll(ctx context.Context, id CredentialIdentity) error {
 		return ErrNotEnrolled
 	}
 	return l.Locker.With(ctx, id, func(ctx context.Context) error {
-		tok, err := l.Authorize(ctx)
-		if err != nil {
-			return err
-		}
+		// Verify existing ciphertext before OAuth; a changed key must not start
+		// enrollment or replace a record it cannot decrypt.
 		var expected *credentialstore.Version
 		current, err := l.Repository.Load(ctx, id)
 		switch {
@@ -353,6 +352,10 @@ func (l Lifecycle) Enroll(ctx context.Context, id CredentialIdentity) error {
 			expected = &current.Version
 		case errors.Is(err, credentialstore.ErrNotFound):
 		default:
+			return err
+		}
+		tok, err := l.Authorize(ctx)
+		if err != nil {
 			return err
 		}
 		_, err = l.Repository.Save(ctx, id, tok, expected)

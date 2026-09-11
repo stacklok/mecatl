@@ -175,6 +175,7 @@ func TestNativeLLMConfigSetUpdatePreservesUnrelatedAndSupportsOptions(t *testing
 		t.Fatal(err)
 	}
 	initial := "# keep this comment\nposture: trusted\nmodels:\n  default_provider: openai\nllm:\n  credential_home: " + home + "\n  endpoints:\n    other:\n      protocol: openai-responses\n      url: https://other.example/v1\n      default_model: old\n      oidc:\n        issuer: https://issuer.example\n        client_id: old\n        scopes: [openid]\n      issuer_trust: {policy: public}\n      gateway_trust: {policy: public}\n"
+	initial = strings.Replace(initial, "llm:\n", "llm:\n  credential_key: {source: environment, key_env: MECATL_NATIVE_LLM_CREDENTIAL_KEY}\n", 1)
 	if err := os.WriteFile(path, []byte(initial), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -197,6 +198,9 @@ func TestNativeLLMConfigSetUpdatePreservesUnrelatedAndSupportsOptions(t *testing
 	var cfg permconfig.Config
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		t.Fatal(err)
+	}
+	if cfg.LLM.CredentialKey != (permconfig.NativeCredentialKey{Source: "environment", KeyEnv: "MECATL_NATIVE_LLM_CREDENTIAL_KEY"}) {
+		t.Fatal("config set changed the shared credential-key source")
 	}
 	ep := cfg.LLM.Endpoints["corp"]
 	if len(ep.OIDC.Scopes) != 2 || !slices.Contains(ep.OIDC.Scopes, "models.read") || !slices.Contains(ep.OIDC.Scopes, "offline_access") || ep.IssuerTrust.Policy != "private-ca" || ep.GatewayTrust.Policy != "private-ca" {

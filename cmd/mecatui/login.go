@@ -590,7 +590,7 @@ func nativeLifecycleError(action, endpoint string, err error) error {
 	case errors.Is(err, context.DeadlineExceeded):
 		return errors.New("native LLM endpoint lifecycle timed out; retry and complete the browser callback within five minutes")
 	case errors.Is(err, oidcclient.ErrStorage), errors.Is(err, credentialstore.ErrUnavailable), errors.Is(err, credentialstore.ErrClosed), errors.Is(err, credentialstore.ErrCorrupt):
-		return errors.New("native LLM protected credential storage is unavailable; check the configured credential home and OS keyring, then retry")
+		return errors.New("native LLM protected credential storage is unavailable; check the configured credential home and llm.credential_key source (OS keyring or environment key), then retry")
 	case errors.Is(err, oidcclient.ErrDiscovery):
 		return errors.New("native LLM issuer discovery failed; check issuer trust, DNS, TLS, and exact endpoint configuration, then retry")
 	case callbackAddressInUse(err):

@@ -36,13 +36,50 @@ updates, including ones that omit the flag, must retain the configured home unti
 are migrated. When `resource_audience` is omitted, Mecatl
 omits the authorization request parameter and does not require an audience during local
 access-token validation; a configured value remains strictly requested and matched. The
-native credential is encrypted and keyring-backed under that configured home. `mecated` never
+native credential is always encrypted under that configured home, using the OS keyring by
+default or the explicit environment-key option below. `mecated` never
 opens a browser: enroll with embedded `mecatui llm login ENDPOINT` (add `--no-browser`
 to print the authorization URL to stderr and wait at the fixed ToolHive-compatible redirect
 `http://localhost:8666/callback`), then start or restart mecated to use the same native Mecatl
 record. This registration compatibility does not reuse or copy ToolHive credentials. A missing record leaves an optional endpoint
 `not-enrolled`/unavailable, fails startup when it is the effective default, and never
 falls back to another endpoint or ToolHive.
+
+### Keyring-free encrypted credentials
+
+For an operator-managed environment without an OS keyring, add this shared block to the
+existing `llm` mapping in **operator settings**, alongside `credential_home` and `endpoints`:
+
+```yaml
+credential_key:
+  source: environment
+  key_env: MECATL_NATIVE_LLM_CREDENTIAL_KEY
+```
+
+Provision the referenced variable securely in both the embedded mecatui login process and
+the mecated service environment. Its value must be canonical **padded standard base64**
+encoding exactly **32 cryptographically random bytes**, with no whitespace or line breaks.
+Use a secret manager or protected service-environment provisioning; never put the value in
+settings, command arguments, shell history, logs, or an agent prompt. The reference must be
+a valid `MECATL_*` name; model-facing Shell environments scrub these variables. The
+access/refresh tokens still live only in the existing owner-only **encrypted** credential
+store, and refresh-token rotation is persisted there before a bearer is returned.
+
+Omitting `credential_key` retains the existing OS-keyring behavior. Explicit
+`credential_key: {source: keyring}` is equivalent and forbids `key_env`, even when empty.
+Unknown sources/fields and invalid combinations are rejected. There is **no automatic
+fallback** from a missing or broken keyring. An unset or malformed environment key fails
+before OAuth or credential mutation. A well-formed but wrong key cannot decrypt an existing
+record; login refuses before OAuth rather than overwriting it. A missing encrypted namespace
+reports `storage-unavailable` in environment mode; login initializes it, while status,
+logout, and serving never create it or a key.
+
+The source is shared across **all endpoints in that credential home**, not configured per
+endpoint. `llm config set` preserves the existing shared selection. Source and variable name
+are not part of credential identity: changing them does not migrate, re-encrypt, or overwrite
+records. Keep the original key available; losing it makes its records unreadable. Coordinate
+key provisioning across all processes sharing the home, and restart serving processes after
+an intentional change. Native and ToolHive credentials remain isolated.
 
 Every admitted caller shares a usable endpoint's deployment-scoped gateway identity, quota,
 gateway-side audit/retention posture, and model availability. Use a dedicated deployment/service

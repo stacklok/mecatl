@@ -191,6 +191,10 @@ func llmSubtree(_ Docs) *Subtree {
 		Doc: "Strict operator-tier native LLM endpoints and their explicit protected credential home. Project values are ignored. Lifecycle commands use exact endpoint IDs and never change provider selection.",
 		Fields: []*Field{
 			{Key: "credential_home", Type: configStringType, Default: "(required with endpoints)", ExampleValue: "/var/lib/mecatl/provider-oidc"},
+			{Key: "credential_key", Type: "nativecredentialkey", Default: "(keyring)", Doc: "Shared encryption-key source for all native endpoints; no automatic fallback or migration. Records always remain encrypted.", Nested: []*Field{
+				{Key: "source", Type: configStringType, Default: "keyring", ExampleValue: "environment", Doc: "Closed choice: keyring or environment. Omission of credential_key preserves the OS-keyring default."},
+				{Key: "key_env", Type: configStringType, Default: "(required for environment; forbidden for keyring)", ExampleValue: "MECATL_NATIVE_LLM_CREDENTIAL_KEY", Doc: "MECATL_* environment reference containing canonical padded base64 decoding to exactly 32 bytes. Only the reference belongs in settings, never the key value."},
+			}},
 			{Key: "endpoints", Type: "map[string]nativeendpoint", Default: configAbsent, ExampleMapKey: "corp-gateway", Nested: []*Field{
 				{Key: "protocol", Type: configStringType, Default: configRequired, ExampleValue: "openai-responses"},
 				{Key: "url", Type: configStringType, Default: configRequired, ExampleValue: "https://gateway.example/v1"},

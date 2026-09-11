@@ -135,6 +135,15 @@
 #| change provider selection.
 # llm:
 #   credential_home: /var/lib/mecatl/provider-oidc
+#   # Shared encryption-key source for all native endpoints; no automatic fallback or
+#   # migration. Records always remain encrypted.
+#   credential_key:
+#     # Closed choice: keyring or environment. Omission of credential_key preserves the
+#     # OS-keyring default.
+#     source: environment
+#     # MECATL_* environment reference containing canonical padded base64 decoding to
+#     # exactly 32 bytes. Only the reference belongs in settings, never the key value.
+#     key_env: MECATL_NATIVE_LLM_CREDENTIAL_KEY
 #   endpoints:
 #     corp-gateway:
 #       protocol: openai-responses

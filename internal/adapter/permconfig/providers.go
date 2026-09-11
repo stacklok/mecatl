@@ -45,7 +45,50 @@ type ProviderDefinition struct {
 // LLMSection is the strict operator-owned native endpoint facade.
 type LLMSection struct {
 	CredentialHome string                    `yaml:"credential_home"`
+	CredentialKey  NativeCredentialKey       `yaml:"credential_key"`
 	Endpoints      NativeEndpointDefinitions `yaml:"endpoints"`
+}
+
+// NativeCredentialKey selects encryption-key custody for the shared credential home.
+// The zero value preserves the existing keyring default.
+type NativeCredentialKey struct {
+	Source string `yaml:"source"`
+	KeyEnv string `yaml:"key_env,omitempty"`
+}
+
+// Validate rejects unknown sources and incompatible environment references.
+func (k NativeCredentialKey) Validate() error {
+	switch k.Source {
+	case "", "keyring":
+		if k.KeyEnv != "" {
+			return errors.New("llm.credential_key: keyring source forbids key_env")
+		}
+	case "environment":
+		return validateMCPSecretRef("llm.credential_key.key_env", k.KeyEnv)
+	default:
+		return errors.New("llm.credential_key: unsupported source")
+	}
+	return nil
+}
+
+// UnmarshalYAML validates the closed, explicit key-source configuration.
+func (k *NativeCredentialKey) UnmarshalYAML(node ast.Node) error {
+	*k = NativeCredentialKey{}
+	if err := decodeStrictMapping(node, "llm.credential_key", map[string]any{
+		"source": &k.Source, "key_env": &k.KeyEnv,
+	}); err != nil {
+		return err
+	}
+	if k.Source == "" {
+		return errors.New("llm.credential_key: source is required")
+	}
+	if k.Source == "keyring" {
+		// Reject even an empty or null key_env, not just nonempty values.
+		if err := decodeStrictMapping(node, "llm.credential_key", map[string]any{"source": &k.Source}); err != nil {
+			return err
+		}
+	}
+	return k.Validate()
 }
 
 // NativeEndpointDefinitions is the strict endpoint-ID keyed facade.
@@ -67,6 +110,7 @@ type NativeEndpointDefinition struct {
 // existing provider-definition path.
 type NativeEndpointIdentity struct {
 	CredentialHome string
+	CredentialKey  NativeCredentialKey
 	OIDC           NativeOIDC
 	IssuerTrust    NativeTrust
 	GatewayTrust   NativeTrust
@@ -101,8 +145,10 @@ type ProviderOverride struct {
 
 // UnmarshalYAML decodes and canonicalizes the native endpoint facade.
 func (l *LLMSection) UnmarshalYAML(node ast.Node) error {
+	l.CredentialKey = NativeCredentialKey{Source: "keyring"}
 	if err := decodeStrictMapping(node, "llm", map[string]any{
 		"credential_home": &l.CredentialHome,
+		"credential_key":  &l.CredentialKey,
 		"endpoints":       &l.Endpoints,
 	}); err != nil {
 		return err
@@ -222,7 +268,7 @@ func (l *LLMSection) ProviderDefinitions() ProviderDefinitions {
 			ID: id, BaseURL: endpoint.URL, DefaultModel: endpoint.DefaultModel,
 			APIFlavor: endpoint.Protocol,
 			Native: &NativeEndpointIdentity{
-				CredentialHome: l.CredentialHome, OIDC: endpoint.OIDC,
+				CredentialHome: l.CredentialHome, CredentialKey: l.CredentialKey, OIDC: endpoint.OIDC,
 				IssuerTrust: endpoint.IssuerTrust, GatewayTrust: endpoint.GatewayTrust,
 			},
 		}

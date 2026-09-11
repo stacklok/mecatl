@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -66,6 +68,49 @@ func TestNativeLLMGatewayLogin_Scenario4_SecretCanaryNonDisclosure(t *testing.T)
 		if strings.Contains(combined, canary) {
 			t.Fatalf("secret canary disclosed: %q", canary)
 		}
+	}
+}
+
+func TestNativeEnvironmentKeyCommandOutput(t *testing.T) {
+	xdg, home := t.TempDir(), t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", xdg)
+	const keyCanary = "invalid-native-encryption-key-canary"
+	t.Setenv("MECATL_NATIVE_LLM_CREDENTIAL_KEY", keyCanary)
+	if err := os.Chmod(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runNativeConfigForTest(t, nativeConfigArgs(home)); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(xdg, "mecatl", "settings.yaml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := strings.Replace(string(data), "source: keyring", "source: environment\n    key_env: MECATL_NATIVE_LLM_CREDENTIAL_KEY", 1)
+	if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	host, err := newNativeLLMHost(t.Context(), false, &stderr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = host.Close() }()
+	for _, action := range []string{"login", "logout", "status"} {
+		err := runNativeLLMCommand(t.Context(), action, "corp", false, host, &stdout, &stderr)
+		if action != "status" && (err == nil || !strings.Contains(err.Error(), "llm.credential_key")) {
+			t.Fatalf("missing key-source remediation: %v", err)
+		}
+		if strings.Contains(stdout.String()+stderr.String()+fmt.Sprint(err), keyCanary) {
+			t.Fatal("command disclosed encryption key")
+		}
+	}
+	if !strings.Contains(stdout.String(), "storage-unavailable") {
+		t.Fatal("status did not report unavailable key material")
+	}
+	if entries, err := os.ReadDir(home); err != nil || len(entries) != 0 {
+		t.Fatal("invalid environment key initialized storage or keyring")
 	}
 }
 

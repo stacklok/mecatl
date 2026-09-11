@@ -128,6 +128,9 @@ Strict operator-tier native LLM endpoints and their explicit protected credentia
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `llm.credential_home` | `string` | `(required with endpoints)` |  |
+| `llm.credential_key` | `nativecredentialkey` | `(keyring)` | Shared encryption-key source for all native endpoints; no automatic fallback or migration. Records always remain encrypted. |
+| `llm.credential_key.source` | `string` | `keyring` | Closed choice: keyring or environment. Omission of credential_key preserves the OS-keyring default. |
+| `llm.credential_key.key_env` | `string` | `(required for environment; forbidden for keyring)` | MECATL_* environment reference containing canonical padded base64 decoding to exactly 32 bytes. Only the reference belongs in settings, never the key value. |
 | `llm.endpoints` | `map[string]nativeendpoint` | `(absent)` |  |
 | `llm.endpoints.<key>.protocol` | `string` | `(required)` |  |
 | `llm.endpoints.<key>.url` | `string` | `(required)` |  |

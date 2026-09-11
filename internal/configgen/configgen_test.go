@@ -46,6 +46,8 @@ func authoritativeKeys() []string {
 	collect("temporary_storage", permconfig.TemporaryStorageSection{})
 	collect("storage_management", permconfig.StorageManagementSection{})
 	collect("storage_management.principals", permconfig.StorageManagementPrincipal{})
+	collect("llm", permconfig.LLMSection{})
+	collect("llm.credential_key", permconfig.NativeCredentialKey{})
 	collect("models", permconfig.ModelsSection{})
 	collect("models.router", permconfig.RouterSection{})
 	collect("models.router.categories", permconfig.RouterCategory{})

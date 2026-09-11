@@ -247,7 +247,7 @@ func TestNativeLLMGatewayLogin_Scenario4_CredentialIdentityAndStorage(t *testing
 	if err := os.Chmod(protectedRoot, 0700); err != nil {
 		t.Fatal(err)
 	}
-	protected, err := llmendpoint.NewProtectedStore(t.Context(), llmendpoint.ProtectedStoreConfig{Root: protectedRoot, Keyring: staticKeyring{key: make([]byte, 32)}})
+	protected, err := llmendpoint.NewProtectedStore(t.Context(), llmendpoint.ProtectedStoreConfig{Root: protectedRoot, KeySource: staticKeyring{key: make([]byte, 32)}})
 	if err != nil {
 		t.Fatalf("open protected keyring-backed store: %v", err)
 	}
@@ -282,7 +282,7 @@ func TestNativeLLMGatewayLogin_Scenario5_ProtectedStorePreservesAbsentKeyMateria
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := llmendpoint.NewProtectedStore(t.Context(), llmendpoint.ProtectedStoreConfig{
-				Root: root, Keyring: staticKeyring{err: keyErr}, ExistingOnly: true,
+				Root: root, KeySource: staticKeyring{err: keyErr}, ExistingOnly: true,
 			})
 			if !errors.Is(err, keyErr) {
 				t.Fatalf("NewProtectedStore error = %v, want %v", err, keyErr)

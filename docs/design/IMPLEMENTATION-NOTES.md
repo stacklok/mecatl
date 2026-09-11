@@ -90,8 +90,14 @@ a future Kubernetes Secret `resourceVersion` CAS backend. See
 `internal/cliconfig.NativeEndpointRuntime` is the host-owned lifecycle for an
 operator-configured native LLM endpoint. It resolves the canonical endpoint identity
 and independently configured issuer and gateway trust clients before it opens protected
-storage. The encrypted keyring-backed record is in `mecatl/provider-oidc/v1` beneath
-the explicit `llm.credential_home`; its identity binds endpoint, canonical gateway,
+storage. The encrypted record is in `mecatl/provider-oidc/v1` beneath
+the explicit `llm.credential_home`. Shared operator-only `llm.credential_key` defaults to
+`source: keyring`; explicit `source: environment` requires a valid `MECATL_*` `key_env`
+reference containing canonical padded base64 for exactly 32 bytes, reusing the MCP OAuth
+local encrypted-store decoder. The environment source never opens a keyring; no fallback,
+key generation, record migration, or re-encryption is implicit. Source/reference are not
+record identity. Invalid key material fails before storage mutation or OAuth, and enrollment
+checks existing ciphertext before authorization. The record identity binds endpoint, canonical gateway,
 exact issuer and client, optional resource audience, normalized scopes, redirect, and both trust
 policy/CA digests. A configured audience remains part of the exact identity and is requested
 and matched; omission skips both. No plaintext, environment fallback, migration, discovery, or

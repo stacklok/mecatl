@@ -87,7 +87,7 @@ func runLLMConfigCommand(res invocationResolution, stdout, stderr io.Writer) err
 }
 
 func setNativeLLMEndpoint(doc *yamldiag.Document, endpointID string, opts nativeLLMConfigSetOptions) error {
-	var section permconfig.LLMSection
+	section := permconfig.LLMSection{CredentialKey: permconfig.NativeCredentialKey{Source: "keyring"}}
 	llmNode, err := uniqueMappingValue(doc.Mapping(), "llm", false)
 	if err != nil {
 		return err

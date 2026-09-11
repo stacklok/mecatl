@@ -170,15 +170,38 @@ func (t originTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 }
 
 func (r *NativeEndpointRuntime) open(ctx context.Context, existingOnly bool) (*llmendpoint.CredentialRepository, credentialstore.Store, error) {
-	keyring, err := oidcclient.NewKeyring(r.definition.Native.CredentialHome)
-	if err != nil {
+	selection := r.definition.Native.CredentialKey
+	if err := selection.Validate(); err != nil {
 		return nil, nil, err
 	}
-	store, err := llmendpoint.NewProtectedStore(ctx, llmendpoint.ProtectedStoreConfig{Root: r.definition.Native.CredentialHome, Keyring: keyring, ExistingOnly: existingOnly})
+	var source llmendpoint.KeySource
+	if selection.Source == "environment" {
+		source = nativeEnvironmentKey(selection.KeyEnv)
+	} else {
+		keyring, err := oidcclient.NewKeyring(r.definition.Native.CredentialHome)
+		if err != nil {
+			return nil, nil, err
+		}
+		source = keyring
+	}
+	store, err := llmendpoint.NewProtectedStore(ctx, llmendpoint.ProtectedStoreConfig{Root: r.definition.Native.CredentialHome, KeySource: source, ExistingOnly: existingOnly})
 	if err != nil {
 		return nil, nil, err
 	}
 	return llmendpoint.NewCredentialRepository(store), store, nil
+}
+
+type nativeEnvironmentKey string
+
+func (name nativeEnvironmentKey) Key(ctx context.Context, _ bool) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	key, err := decodeMCPKey(os.Getenv(string(name)))
+	if err != nil {
+		return nil, errors.Join(credentialstore.ErrUnavailable, errors.New("llm.credential_key: environment key must be canonical padded base64 decoding to exactly 32 bytes"))
+	}
+	return key, nil
 }
 
 func (r *NativeEndpointRuntime) lifecycle(repo *llmendpoint.CredentialRepository) llmendpoint.Lifecycle {
