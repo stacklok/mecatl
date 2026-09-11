@@ -1,19 +1,24 @@
 #!/usr/bin/env bash
-# bump-release-pins.sh — bump the reusable-workflow version pins for a new release tag.
+# bump-release-pins.sh — bump the release version and the reusable-workflow pins LOCALLY.
+#
+# THE NORMAL PATH IS CI, NOT THIS SCRIPT. `.github/workflows/create-release-pr.yml` opens the
+# release PR and drives the same bump through `stacklok/releaseo`. This script exists for two
+# narrower jobs: a local dry run (see what the release PR will contain, without dispatching a
+# workflow), and the emergency fallback if releaseo is unavailable.
 #
 # The mecatequi reusable workflow references its three first-party sibling composite
 # actions by a HARDCODED literal tag (an expression is illegal in `uses:`), so a release
 # MUST bump those pins in the same tagged commit or the release ships pins pointing at the
 # previous tag — the version skew the `lint:reusable-pins` gate fails the release on.
 #
-# This edits the two files that gate cares about and runs the gate to prove it passes:
-#   .github/workflows/mecatequi-reusable.yml  (the three `uses:` pins + the header comment)
-#   .github/actions/check-reusable-pins.sh    (the EXPECTED_TAG default, in lockstep)
+# This edits the two files that carry the version and runs the gate to prove it passes:
+#   VERSION                                   (BARE semver — the single authored source of truth)
+#   .github/workflows/mecatequi-reusable.yml  (the three `uses:` pins)
 #
-# It does NOT touch the illustrative tag refs in user-docs/building/deployment/mecatequi.md (a release MAY
-# bump those too, but they don't gate the release). It does NOT commit, tag, or push —
-# that's the human/agent's job (see SKILL.md), so the version choice and the tag
-# annotation stay deliberate.
+# It does NOT edit .github/actions/check-reusable-pins.sh: that script DERIVES its expected tag
+# from VERSION and holds no copy of the version. It does NOT touch the illustrative tag refs in
+# user-docs/building/deployment/mecatequi.md (a release MAY bump those too, but they don't gate
+# the release). It does NOT commit, tag, or push — that's the human/agent's job (see SKILL.md).
 #
 # Usage: scripts/bump-release-pins.sh vX.Y.Z   (run from the repo root)
 set -euo pipefail
@@ -30,18 +35,19 @@ fi
 
 WF=".github/workflows/mecatequi-reusable.yml"
 GATE=".github/actions/check-reusable-pins.sh"
-for f in "${WF}" "${GATE}"; do
+VERSION_FILE="VERSION"
+for f in "${WF}" "${GATE}" "${VERSION_FILE}"; do
   [[ -f "${f}" ]] || { echo "error: ${f} not found — run from the repo root" >&2; exit 1; }
 done
 
-# Derive the current (old) tag from the gate's committed EXPECTED_TAG default.
-OLD_TAG="$(sed -nE 's/^EXPECTED_TAG="\$\{EXPECTED_TAG:-(v[0-9]+\.[0-9]+\.[0-9]+)\}".*/\1/p' "${GATE}")"
-if [[ -z "${OLD_TAG}" ]]; then
-  echo "error: could not read the current EXPECTED_TAG from ${GATE}" >&2
+# Derive the current (old) tag from VERSION, which holds BARE semver (0.0.33, not v0.0.33).
+OLD_TAG="v$(tr -d '[:space:]' < "${VERSION_FILE}")"
+if [[ ! "${OLD_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "error: ${VERSION_FILE} does not hold bare semver (read '${OLD_TAG#v}')" >&2
   exit 1
 fi
 if [[ "${OLD_TAG}" == "${NEW_TAG}" ]]; then
-  echo "error: ${GATE} already pins ${NEW_TAG} — nothing to bump" >&2
+  echo "error: ${VERSION_FILE} already holds ${NEW_TAG#v} — nothing to bump" >&2
   exit 1
 fi
 
@@ -56,18 +62,20 @@ echo "Bumping reusable-workflow pins ${OLD_TAG} -> ${NEW_TAG}"
 OLD_TAG="${OLD_TAG}" NEW_TAG="${NEW_TAG}" perl -pi -e \
   's/(stacklok\/mecatl\/\.github\/actions\/[^@]+@)\Q$ENV{OLD_TAG}\E/$1$ENV{NEW_TAG}/g' \
   "${WF}"
-# The gate's EXPECTED_TAG default, in lockstep.
-OLD_TAG="${OLD_TAG}" NEW_TAG="${NEW_TAG}" perl -pi -e \
-  's/(EXPECTED_TAG="\$\{EXPECTED_TAG:-)\Q$ENV{OLD_TAG}\E(\}")/$1$ENV{NEW_TAG}$2/' \
-  "${GATE}"
+# VERSION carries BARE semver and is the source the gate derives its default from, so writing
+# it here is all that is needed — the gate needs no edit and cannot fall out of lockstep.
+printf '%s\n' "${NEW_TAG#v}" > "${VERSION_FILE}"
 
 # Prove the gate passes both with an explicit override and on the committed default.
 EXPECTED_TAG="${NEW_TAG}" bash "${GATE}"
 bash "${GATE}"
 
 echo
-echo "Pins bumped. Next (see SKILL.md):"
-echo "  git add ${GATE} ${WF}"
-echo "  git commit -m 'chore(release): bump reusable-workflow pins ${OLD_TAG} -> ${NEW_TAG}'"
-echo "  git tag -a ${NEW_TAG} -m '<release notes>'"
-echo "  git push origin main && git push origin ${NEW_TAG}"
+echo "Version and pins bumped locally (${OLD_TAG} -> ${NEW_TAG}). Changed:"
+echo "  ${VERSION_FILE}"
+echo "  ${WF}"
+echo
+echo "This is a DRY RUN of what create-release-pr.yml produces. To cut a real release, revert"
+echo "these edits and dispatch the workflow instead (see SKILL.md):"
+echo "  git checkout -- ${VERSION_FILE} ${WF}"
+echo "  gh workflow run create-release-pr.yml -f bump_type=patch"
