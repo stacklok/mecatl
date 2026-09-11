@@ -8,7 +8,7 @@
 **Delivery:** Split. The exported Go API, public error code, operator configuration, and shutdown resource boundary warrant independent Plan / Interface review before implementation.
 **Expected tasks:** deferred to orchestration
 **Issue:** [stacklok/mecatl#876](https://github.com/stacklok/mecatl/issues/876).
-**Plan PR:** added when opened
+**Plan PR:** [stacklok/mecatl#1422](https://github.com/stacklok/mecatl/pull/1422)
 **Approved baseline:** absent until approved
 
 Redis durable followers get their own bounded connection pool and fail-fast admission limit,
