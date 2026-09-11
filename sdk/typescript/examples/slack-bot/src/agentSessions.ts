@@ -24,20 +24,15 @@ const MENTION_PREFIX = /^<@[^>]+>\s*/;
  * `app.event`/`app.message` + the raw `agents.sessions.setStatus` API (not
  * yet wrapped by bolt-js).
  *
- * `agents.sessions.setStatus` requires `thread_ts` on EVERY call, DMs
- * included (easy to misread the API docs otherwise — a DM message has no
- * `thread_ts` field of its own, so this bridge anchors one: the first
- * message's own `ts` in a given DM channel, remembered and reused for every
- * later status call in that channel. `chat.startStream` has the same
- * requirement (its `thread_ts` is mandatory, not optional), so a DM reply
- * that streams is now anchored under that same DM anchor too — a real,
- * user-visible change from a plain, unthreaded `say()`. A DM reply that
- * never streams (no `message.delta`s arrived) still posts unthreaded, via
- * the same plain `say()` fallback as before.
+ * `agents.sessions.setStatus` and Agent Session streaming require a thread
+ * root in DMs as well as regular channels. Slack omits `thread_ts` from a
+ * top-level message and supplies it on replies, so the canonical root is
+ * `message.thread_ts ?? message.ts`: a top-level DM starts a new session and
+ * a reply continues the session rooted at its `thread_ts`.
  *
  * Two surfaces, two session-keying strategies:
- * - DM: every message in the channel is one mecatl session (no real
- *   `thread_ts` exists on this surface to key a narrower one on).
+ * - DM: every Slack thread is one mecatl session. A top-level message's own
+ *   `ts` becomes the thread root; replies reuse their `thread_ts`.
  * - Channel (public or private): `app_mention` starts/continues a session
  *   keyed by `channel:thread_ts` (a top-level mention's own `ts` becomes the
  *   thread root); a later reply in that SAME thread without re-mentioning
@@ -68,7 +63,6 @@ export function registerAgentSessions(
   resolver: AccessResolver,
 ): void {
   const greetedDm = new Set<string>();
-  const dmStatusAnchor = new Map<string, string>();
   const activeChannelThreads = new Set<string>();
   const rateLimiter = new SlidingWindowRateLimiter(config.rateLimit.max, config.rateLimit.windowMs);
 
@@ -83,14 +77,11 @@ export function registerAgentSessions(
   // shape (AgentSessionStoppedEvent) but doesn't wire it into bolt's own event
   // union, hence the manual cast — same "hand-rolled, not yet wrapped by bolt-js"
   // situation as the rest of this file. thread_ts here is whichever anchor the
-  // session was actually keyed on: the DM anchor (if it matches) or the real
-  // channel thread root — same dual-keying scheme as the message handlers below.
+  // session was keyed on — the same channel:thread root used by both the DM
+  // and channel message handlers below.
   app.event("agent_session_stopped", async ({ event }) => {
     const stopped = event as unknown as { channel: string; thread_ts: string };
-    const threadKey =
-      dmStatusAnchor.get(stopped.channel) === stopped.thread_ts
-        ? stopped.channel
-        : `${stopped.channel}:${stopped.thread_ts}`;
+    const threadKey = `${stopped.channel}:${stopped.thread_ts}`;
     try {
       await bridge.cancel(threadKey);
     } catch (error) {
@@ -144,9 +135,8 @@ export function registerAgentSessions(
     const threadTs = message.thread_ts;
 
     if (message.channel_type === "im") {
-      // A DM channel is already just the bot and this one person, so plain `say` has no
-      // visibility problem here — unlike the channel/group branch below.
-      const notify = sayNotifier(say, undefined);
+      const rootTs = threadTs ?? message.ts;
+      const notify = sayNotifier(say, rootTs);
       if (userId === undefined) {
         app.logger.warn("DM message has no user id — ignoring (can't resolve access for nobody)");
         return;
@@ -158,15 +148,14 @@ export function registerAgentSessions(
       const decision = await resolver.resolve({ slackUserId: userId });
       if (!decision.allowed) return void notify(NOT_AUTHORIZED_MESSAGE);
       if (!rateLimiter.allow(userId)) return void notify(RATE_LIMITED_MESSAGE);
-      const anchor = dmStatusAnchor.get(channelId) ?? message.ts;
-      if (!dmStatusAnchor.has(channelId)) dmStatusAnchor.set(channelId, anchor);
+      const threadKey = `${channelId}:${rootTs}`;
       await runPrompt(
         app,
         bridge,
         channelId,
-        anchor,
-        undefined,
-        channelId,
+        rootTs,
+        rootTs,
+        threadKey,
         text,
         userId,
         context.teamId,
@@ -250,9 +239,8 @@ async function runPrompt(
   notifyError: Notifier,
 ): Promise<void> {
   await setSessionStatus(app, channelId, statusThreadTs, "processing");
-  // chat.startStream requires thread_ts unconditionally, so this always anchors on
-  // statusThreadTs — the same anchor setSessionStatus already uses for a DM (see this
-  // file's own doc comment on the resulting DM-threading difference from plain say()).
+  // Agent Session streaming is thread-scoped, so this uses the same canonical
+  // root as status, fallback replies, cancellation, and the mecatl session key.
   const stream = new SlackTextStream(
     app,
     channelId,
