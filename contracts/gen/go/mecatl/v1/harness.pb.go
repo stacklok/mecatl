@@ -1272,7 +1272,9 @@ type ServerCapabilities struct {
 	// teams is true when agent teams are enabled (a member-engine factory is
 	// wired). Gates the ctrl+a deep view's relevance.
 	Teams bool `protobuf:"varint,5,opt,name=teams,proto3" json:"teams,omitempty"`
-	// bash is true when the Bash tool is registered (i.e. NOT --no-bash).
+	// bash reports availability of the canonical Shell tool. Its historical
+	// spelling is retained for wire/API compatibility; false means Shell is not
+	// registered (for example, the operator ran --no-shell).
 	Bash bool `protobuf:"varint,6,opt,name=bash,proto3" json:"bash,omitempty"`
 	// image is true when the wired LLM provider consumes image prompt parts.
 	// Gates the @-mention file-attach UX for images (a client refuses to send an

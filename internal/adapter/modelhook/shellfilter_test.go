@@ -22,8 +22,8 @@ func (c *countingChecker) Check(_ context.Context, _ modelhook.CheckRequest) (mo
 	return c.verdict, nil
 }
 
-// bashSkipRule is the default-shaped Shell rule: pre/block with the read-only pre-filter on.
-func bashSkipRule(t *testing.T) modelhook.CompiledRule {
+// shellSkipRule is the default-shaped Shell rule: pre/block with the read-only pre-filter on.
+func shellSkipRule(t *testing.T) modelhook.CompiledRule {
 	t.Helper()
 	r, ok := modelhook.CompileRule(modelhook.RuleSpec{
 		Match: "Shell", Phases: []string{"pre"}, Mode: string(modelhook.ModeBlock), SkipReadOnlyShell: true,
@@ -34,8 +34,8 @@ func bashSkipRule(t *testing.T) modelhook.CompiledRule {
 	return r
 }
 
-// bashArgs builds a Shell tool-call args JSON with a "command" field.
-func bashArgs(cmd string) json.RawMessage {
+// shellArgs builds a Shell tool-call args JSON with a "command" field.
+func shellArgs(cmd string) json.RawMessage {
 	b, _ := json.Marshal(map[string]string{"command": cmd})
 	return b
 }
@@ -63,7 +63,7 @@ func (noopHooks) Run(context.Context, governance.HookEvent) (governance.HookOutc
 // TestShellReadOnlySkipsChecker: a CONFIDENTLY read-only Pre Shell command skips the
 // checker entirely (calls==0) and returns the zero (pass-through) outcome.
 func TestShellReadOnlySkipsChecker(t *testing.T) {
-	rule := bashSkipRule(t)
+	rule := shellSkipRule(t)
 	readOnly := []string{
 		"ls",
 		"cat f",
@@ -75,7 +75,7 @@ func TestShellReadOnlySkipsChecker(t *testing.T) {
 	}
 	for _, cmd := range readOnly {
 		t.Run(cmd, func(t *testing.T) {
-			calls, out := runOne(t, rule, governance.PhasePreToolUse, "Shell", bashArgs(cmd))
+			calls, out := runOne(t, rule, governance.PhasePreToolUse, "Shell", shellArgs(cmd))
 			if calls != 0 {
 				t.Fatalf("read-only %q must skip the checker; calls=%d", cmd, calls)
 			}
@@ -89,7 +89,7 @@ func TestShellReadOnlySkipsChecker(t *testing.T) {
 // TestShellMutatingIsInspected: a mutating command is NOT skipped — the checker runs
 // once.
 func TestShellMutatingIsInspected(t *testing.T) {
-	rule := bashSkipRule(t)
+	rule := shellSkipRule(t)
 	mutating := []string{
 		"mkdir build",
 		"touch out",
@@ -99,7 +99,7 @@ func TestShellMutatingIsInspected(t *testing.T) {
 	}
 	for _, cmd := range mutating {
 		t.Run(cmd, func(t *testing.T) {
-			calls, _ := runOne(t, rule, governance.PhasePreToolUse, "Shell", bashArgs(cmd))
+			calls, _ := runOne(t, rule, governance.PhasePreToolUse, "Shell", shellArgs(cmd))
 			if calls != 1 {
 				t.Fatalf("mutating %q must be inspected; calls=%d", cmd, calls)
 			}
@@ -110,7 +110,7 @@ func TestShellMutatingIsInspected(t *testing.T) {
 // TestShellAmbiguousIsInspected: a substitution-as-verb / not-provably-read-only command
 // is inspected (fail-safe direction — never skipped on ambiguity).
 func TestShellAmbiguousIsInspected(t *testing.T) {
-	rule := bashSkipRule(t)
+	rule := shellSkipRule(t)
 	ambiguous := []string{
 		"$(printf ls)",     // command substitution in command position: executes its output.
 		"`printf ls`",      // backtick in command position: same.
@@ -118,7 +118,7 @@ func TestShellAmbiguousIsInspected(t *testing.T) {
 	}
 	for _, cmd := range ambiguous {
 		t.Run(cmd, func(t *testing.T) {
-			calls, _ := runOne(t, rule, governance.PhasePreToolUse, "Shell", bashArgs(cmd))
+			calls, _ := runOne(t, rule, governance.PhasePreToolUse, "Shell", shellArgs(cmd))
 			if calls != 1 {
 				t.Fatalf("ambiguous %q must be inspected (fail-safe); calls=%d", cmd, calls)
 			}
@@ -166,7 +166,7 @@ func TestShellFilterDoesNotApplyToNonShell(t *testing.T) {
 // TestShellMalformedArgsAreInspected: an unparseable args object OR a missing command
 // field falls through to inspection (fail-safe — never presumed read-only).
 func TestShellMalformedArgsAreInspected(t *testing.T) {
-	rule := bashSkipRule(t)
+	rule := shellSkipRule(t)
 	cases := []struct {
 		name  string
 		input json.RawMessage
@@ -189,7 +189,7 @@ func TestShellMalformedArgsAreInspected(t *testing.T) {
 // TestShellCmdFallbackField: the "cmd" alias field is read when "command" is absent. A
 // read-only "cmd" still skips.
 func TestShellCmdFallbackField(t *testing.T) {
-	rule := bashSkipRule(t)
+	rule := shellSkipRule(t)
 	calls, _ := runOne(t, rule, governance.PhasePreToolUse, "Shell", json.RawMessage(`{"cmd":"ls"}`))
 	if calls != 0 {
 		t.Fatalf("a read-only command in the cmd field must skip; calls=%d", calls)
@@ -205,7 +205,7 @@ func TestShellFilterWithoutFlagInspects(t *testing.T) {
 	if !ok {
 		t.Fatal("rule must compile")
 	}
-	calls, _ := runOne(t, r, governance.PhasePreToolUse, "Shell", bashArgs("ls"))
+	calls, _ := runOne(t, r, governance.PhasePreToolUse, "Shell", shellArgs("ls"))
 	if calls != 1 {
 		t.Fatalf("without the flag, a read-only Shell command must still be inspected; calls=%d", calls)
 	}
@@ -222,10 +222,10 @@ func TestCompileRuleCarriesSkipReadOnlyShell(t *testing.T) {
 	if !ok1 || !ok2 {
 		t.Fatal("both rules must compile")
 	}
-	if c, _ := runOne(t, with, governance.PhasePreToolUse, "Shell", bashArgs("ls")); c != 0 {
+	if c, _ := runOne(t, with, governance.PhasePreToolUse, "Shell", shellArgs("ls")); c != 0 {
 		t.Fatalf("SkipReadOnlyShell=true must skip a read-only command; calls=%d", c)
 	}
-	if c, _ := runOne(t, without, governance.PhasePreToolUse, "Shell", bashArgs("ls")); c != 1 {
+	if c, _ := runOne(t, without, governance.PhasePreToolUse, "Shell", shellArgs("ls")); c != 1 {
 		t.Fatalf("SkipReadOnlyShell=false must inspect a read-only command; calls=%d", c)
 	}
 }

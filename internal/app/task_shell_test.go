@@ -36,7 +36,7 @@ func TestBuildChildEngineWithRunnerHasShell(t *testing.T) {
 	if runner == nil {
 		t.Fatal("precondition: expected a non-nil sandboxed runner with Shell set")
 	}
-	eng := buildChildEngine(cfg, nil, bashThenEdit(), "", cfg.Model, runner)
+	eng := buildChildEngine(cfg, nil, shellThenEdit(), "", cfg.Model, runner)
 
 	events := drainEngine(t, eng)
 	if unknownToolResult(events, "b1") {
@@ -55,7 +55,7 @@ func TestBuildChildEngineWithRunnerHasShell(t *testing.T) {
 // unchanged.
 func TestBuildChildEngineNoRunnerHasNoShell(t *testing.T) {
 	cfg := teamCfg(t)
-	eng := buildChildEngine(cfg, nil, bashThenEdit(), "", cfg.Model, nil)
+	eng := buildChildEngine(cfg, nil, shellThenEdit(), "", cfg.Model, nil)
 
 	events := drainEngine(t, eng)
 	if !unknownToolResult(events, "b1") {
@@ -139,7 +139,7 @@ func TestBuildAgentSubagentEnginesWithRunnerKeepsShellDropsEdit(t *testing.T) {
 	})
 
 	// With a runner: Shell kept, Edit dropped.
-	engines, _, _ := agentSubagentEnginesForTest(context.Background(), cfg, bashThenEdit(), reg, nil, hookexec.New(nil), runner, nil)
+	engines, _, _ := agentSubagentEnginesForTest(context.Background(), cfg, shellThenEdit(), reg, nil, hookexec.New(nil), runner, nil)
 	eng := engines["inspector"]
 	if eng == nil {
 		t.Fatal("inspector engine not built")
@@ -156,7 +156,7 @@ func TestBuildAgentSubagentEnginesWithRunnerKeepsShellDropsEdit(t *testing.T) {
 	}
 
 	// Without a runner: Shell dropped too (no shell, no isolation).
-	enginesNoShell, _, _ := agentSubagentEnginesForTest(context.Background(), cfg, bashThenEdit(), reg, nil, hookexec.New(nil), nil, nil)
+	enginesNoShell, _, _ := agentSubagentEnginesForTest(context.Background(), cfg, shellThenEdit(), reg, nil, hookexec.New(nil), nil, nil)
 	engNoShell := enginesNoShell["inspector"]
 	if engNoShell == nil {
 		t.Fatal("inspector engine (no shell) not built")

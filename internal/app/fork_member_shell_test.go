@@ -25,10 +25,10 @@ import (
 // shell-less (like the main session). A read-only (base-sharing) member still must
 // NOT get Shell — that assertion is kept below.
 
-// bashThenEdit scripts a child/member turn that first calls Shell, then Edit, then a
+// shellThenEdit scripts a child/member turn that first calls Shell, then Edit, then a
 // text turn. Whether each tool is in the catalog is observable from the resulting
 // tool.result: an unknown tool surfaces as an error result reading `unknown tool ...`.
-func bashThenEdit() *mockllm.Provider {
+func shellThenEdit() *mockllm.Provider {
 	bash := session.ToolCall{
 		ID:   "b1",
 		Name: "Shell",
@@ -107,7 +107,7 @@ func TestForkChildEngineHasShellAndEdit(t *testing.T) {
 	if runner == nil {
 		t.Fatal("precondition: expected a non-nil command runner with Shell set")
 	}
-	eng := buildParallelChildEngine(cfg, nil, bashThenEdit(), "", cfg.Model, runner)
+	eng := buildParallelChildEngine(cfg, nil, shellThenEdit(), "", cfg.Model, runner)
 	assertCanonicalShellCatalog(t, eng, true)
 
 	events := drainEngine(t, eng)
@@ -128,7 +128,7 @@ func TestForkChildEngineHasShellAndEdit(t *testing.T) {
 // the main session.
 func TestForkChildEngineNoRunnerHasNoShell(t *testing.T) {
 	cfg := teamCfg(t)
-	eng := buildParallelChildEngine(cfg, nil, bashThenEdit(), "", cfg.Model, nil)
+	eng := buildParallelChildEngine(cfg, nil, shellThenEdit(), "", cfg.Model, nil)
 	assertCanonicalShellCatalog(t, eng, false)
 
 	events := drainEngine(t, eng)
@@ -151,7 +151,7 @@ func TestMutatingMemberHasShellAndEdit(t *testing.T) {
 		t.Fatal("precondition: expected a non-nil command runner with Shell set")
 	}
 	tm := team.New("t")
-	factory := memberFactoryForTest(cfg, bashThenEdit(), hookexec.New(nil), agents.NewRegistry(nil), nil, runner, false, nil)
+	factory := memberFactoryForTest(cfg, shellThenEdit(), hookexec.New(nil), agents.NewRegistry(nil), nil, runner, false, nil)
 	build := factory(tm, agent.MemberSpec{Name: "writer", Mutating: true}, "")
 	if build.Engine == nil {
 		t.Fatal("factory returned a nil engine")
@@ -178,7 +178,7 @@ func TestReadOnlyMemberHasNoShellOrEdit(t *testing.T) {
 	cfg := teamCfg(t)
 	runner := buildCommandRunner(cfg)
 	tm := team.New("t")
-	factory := memberFactoryForTest(cfg, bashThenEdit(), hookexec.New(nil), agents.NewRegistry(nil), nil, runner, false, nil)
+	factory := memberFactoryForTest(cfg, shellThenEdit(), hookexec.New(nil), agents.NewRegistry(nil), nil, runner, false, nil)
 	build := factory(tm, agent.MemberSpec{Name: "reader", Mutating: false}, "")
 	if build.Engine == nil {
 		t.Fatal("factory returned a nil engine")
@@ -206,7 +206,7 @@ func TestReadOnlyIsolatedMemberHasShellNotEdit(t *testing.T) {
 		t.Fatal("precondition: expected a non-nil sandboxed runner with Shell set")
 	}
 	tm := team.New("t")
-	factory := memberFactoryForTest(cfg, bashThenEdit(), hookexec.New(nil), agents.NewRegistry(nil), nil, runner, true, nil)
+	factory := memberFactoryForTest(cfg, shellThenEdit(), hookexec.New(nil), agents.NewRegistry(nil), nil, runner, true, nil)
 	build := factory(tm, agent.MemberSpec{Name: "reader", Mutating: false}, "")
 	if build.Engine == nil {
 		t.Fatal("factory returned a nil engine")
@@ -237,7 +237,7 @@ func TestReadOnlyMemberNoRunnerNoShellNotIsolated(t *testing.T) {
 	tm := team.New("t")
 	// roIsolationAvailable is moot when the runner is nil — pass true to prove the
 	// runner gate (runner != nil) is what actually withholds Shell.
-	factory := memberFactoryForTest(cfg, bashThenEdit(), hookexec.New(nil), agents.NewRegistry(nil), nil, nil, true, nil)
+	factory := memberFactoryForTest(cfg, shellThenEdit(), hookexec.New(nil), agents.NewRegistry(nil), nil, nil, true, nil)
 	build := factory(tm, agent.MemberSpec{Name: "reader", Mutating: false}, "")
 	if build.Engine == nil {
 		t.Fatal("factory returned a nil engine")
@@ -261,7 +261,7 @@ func TestReadOnlyIsolatedMemberDefKeepsShellDropsEdit(t *testing.T) {
 	runner := buildSandboxedCommandRunner(cfg)
 	tm := team.New("t")
 	def := agents.AgentDef{Name: "reader", Description: "r", Tools: []string{"Read", "Edit", "Shell"}}
-	factory := memberFactoryForTest(cfg, bashThenEdit(), hookexec.New(nil), regOf(def), nil, runner, true, nil)
+	factory := memberFactoryForTest(cfg, shellThenEdit(), hookexec.New(nil), regOf(def), nil, runner, true, nil)
 	build := factory(tm, agent.MemberSpec{Name: "reader", AgentType: "reader", Mutating: false}, "")
 	if build.Engine == nil {
 		t.Fatal("factory returned a nil engine")
@@ -288,7 +288,7 @@ func TestMutatingMemberDefCanScopeInShell(t *testing.T) {
 	runner := buildCommandRunner(cfg)
 	tm := team.New("t")
 	def := agents.AgentDef{Name: "writer", Description: "w", Tools: []string{"Read", "Edit", "Shell"}}
-	factory := memberFactoryForTest(cfg, bashThenEdit(), hookexec.New(nil), regOf(def), nil, runner, false, nil)
+	factory := memberFactoryForTest(cfg, shellThenEdit(), hookexec.New(nil), regOf(def), nil, runner, false, nil)
 	build := factory(tm, agent.MemberSpec{Name: "writer", AgentType: "writer", Mutating: true}, "")
 	if build.Engine == nil {
 		t.Fatal("factory returned a nil engine")
@@ -316,7 +316,7 @@ func TestReadOnlyMemberDefCannotScopeInShell(t *testing.T) {
 	runner := buildCommandRunner(cfg)
 	tm := team.New("t")
 	def := agents.AgentDef{Name: "reader", Description: "r", Tools: []string{"Read", "Edit", "Shell"}}
-	factory := memberFactoryForTest(cfg, bashThenEdit(), hookexec.New(nil), regOf(def), nil, runner, false, nil)
+	factory := memberFactoryForTest(cfg, shellThenEdit(), hookexec.New(nil), regOf(def), nil, runner, false, nil)
 	build := factory(tm, agent.MemberSpec{Name: "reader", AgentType: "reader", Mutating: false}, "")
 	if build.Engine == nil {
 		t.Fatal("factory returned a nil engine")

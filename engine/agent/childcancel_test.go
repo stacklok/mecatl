@@ -156,7 +156,7 @@ func TestCancelChildWhileParkedOnAsk(t *testing.T) {
 		mockllm.ToolCallTurn(toolCall("k1", "Shell", `{"command":"cat $(zap)"}`)),
 		mockllm.TextTurn("child: never reached"),
 	)
-	childEngine := bashChildEngine(childLLM, bash)
+	childEngine := shellChildEngine(childLLM, bash)
 	task := agent.NewSubagentTool(childEngine, agent.WithChildForker(&recordingSubagentForker{}))
 
 	parentLLM := mockllm.New(
@@ -235,7 +235,7 @@ func TestChildTimeoutRetractsSurfacedAskMidRun(t *testing.T) {
 		mockllm.ToolCallTurn(toolCall("k1", "Shell", `{"command":"cat $(zap)"}`)),
 		mockllm.TextTurn("child: never reached"),
 	)
-	task := agent.NewSubagentTool(bashChildEngine(childLLM, bash),
+	task := agent.NewSubagentTool(shellChildEngine(childLLM, bash),
 		agent.WithChildForker(&recordingSubagentForker{}))
 
 	parentLLM := mockllm.New(
@@ -586,7 +586,7 @@ func TestStaleVerdictAfterCancelResumeDoesNotResolveNewAsk(t *testing.T) {
 		mockllm.ToolCallTurn(toolCall("k1", "Shell", `{"command":"cat $(zap)"}`)),
 		mockllm.TextTurn("child: adapted after denial"),
 	)
-	childEngine := bashChildEngine(childLLM, bash)
+	childEngine := shellChildEngine(childLLM, bash)
 	task := agent.NewSubagentTool(childEngine, agent.WithSubagentStore(store))
 
 	parentLLM := mockllm.New(

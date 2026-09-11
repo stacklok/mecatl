@@ -83,11 +83,11 @@ func block(t *testing.T, match string, phases ...string) modelhook.CompiledRule 
 	return r
 }
 
-// bashDefaultRule is the default-shaped Shell guardrail: pre/block with the read-only
+// shellDefaultRule is the default-shaped Shell guardrail: pre/block with the read-only
 // pre-filter on (ADR 0060) — what an operator gets out of the box when guardrails are
 // configured with no explicit rule list. It carries the Shell-specific rubric, exactly as
 // the composition's defaultGuardrailSpecs wires it.
-func bashDefaultRule(t *testing.T) modelhook.CompiledRule {
+func shellDefaultRule(t *testing.T) modelhook.CompiledRule {
 	t.Helper()
 	r, ok := modelhook.CompileRule(modelhook.RuleSpec{
 		Match: "Shell", Phases: []string{"pre"}, Mode: string(modelhook.ModeBlock),
@@ -116,12 +116,12 @@ func (c *capturingChecker) Check(_ context.Context, req modelhook.CheckRequest) 
 // false-positive fix.
 func TestShellDefaultRuleModelSeesLocalWriteSafeRubric(t *testing.T) {
 	chk := &capturingChecker{}
-	bt := bashTool(new(bool))
+	bt := shellTool(new(bool))
 	hooks := modelhook.New(hookexec.New(nil), modelhook.Options{
-		Rules: []modelhook.CompiledRule{bashDefaultRule(t)}, Checker: chk,
+		Rules: []modelhook.CompiledRule{shellDefaultRule(t)}, Checker: chk,
 	})
 	llm := mockllm.New(
-		mockllm.ToolCallTurn(bashCall("c1", "cat hello > /other/repo/notes.txt")),
+		mockllm.ToolCallTurn(shellCall("c1", "cat hello > /other/repo/notes.txt")),
 		mockllm.TextTurn("done"),
 	)
 	cat := tool.NewCatalog()
@@ -158,16 +158,16 @@ func (e checkerErr) Error() string { return string(e) }
 
 const errCheckerUnavailable = checkerErr("checker unavailable / verdict unparseable")
 
-// bashTool is a fakeTool whose Execute records whether it ran (the Shell blast-radius
+// shellTool is a fakeTool whose Execute records whether it ran (the Shell blast-radius
 // surface under test). It is NOT read-only (a Shell call may mutate).
-func bashTool(ran *bool) *fakeTool {
+func shellTool(ran *bool) *fakeTool {
 	return &fakeTool{name: "Shell", readOnly: false, exec: func(in session.ToolCall) session.ToolResult {
 		*ran = true
 		return session.NewToolResult(in.ID, "command output")
 	}}
 }
 
-func bashCall(id, cmd string) session.ToolCall {
+func shellCall(id, cmd string) session.ToolCall {
 	args, _ := json.Marshal(map[string]string{"command": cmd})
 	return session.NewToolCall(session.ToolCallID(id), "Shell", args)
 }
@@ -204,10 +204,10 @@ func (d *warnCapturingDiag) has(sub string) bool {
 func runShellGuardrail(t *testing.T, chk modelhook.VerdictChecker, rule modelhook.CompiledRule, cmd string, deps agent.Deps) (bool, []session.Event) {
 	t.Helper()
 	ran := false
-	bt := bashTool(&ran)
+	bt := shellTool(&ran)
 	hooks := modelhook.New(hookexec.New(nil), modelhook.Options{Rules: []modelhook.CompiledRule{rule}, Checker: chk})
 	llm := mockllm.New(
-		mockllm.ToolCallTurn(bashCall("c1", cmd)),
+		mockllm.ToolCallTurn(shellCall("c1", cmd)),
 		mockllm.TextTurn("done"),
 	)
 	cat := tool.NewCatalog()
@@ -236,7 +236,7 @@ func sawBlockedToolResult(evs []session.Event) bool {
 // executes (Pre veto) and the model gets the block error result.
 func TestGuardrailShellMutatingBlockedInLoop(t *testing.T) {
 	chk := &scriptedChecker{verdict: modelhook.Verdict{Safe: boolp(false), Reason: "merges a PR unattended"}}
-	ran, evs := runShellGuardrail(t, chk, bashDefaultRule(t), "git commit -m x", agent.Deps{})
+	ran, evs := runShellGuardrail(t, chk, shellDefaultRule(t), "git commit -m x", agent.Deps{})
 	if ran {
 		t.Fatal("a Pre-blocked mutating Shell command must NOT execute")
 	}
@@ -252,7 +252,7 @@ func TestGuardrailShellMutatingBlockedInLoop(t *testing.T) {
 // NEVER called (the read-only pre-filter, ADR 0060 — zero LLM calls).
 func TestGuardrailShellReadOnlySkipsCheckerInLoop(t *testing.T) {
 	chk := &scriptedChecker{verdict: modelhook.Verdict{Safe: boolp(false)}} // would block if consulted
-	ran, evs := runShellGuardrail(t, chk, bashDefaultRule(t), "git status", agent.Deps{})
+	ran, evs := runShellGuardrail(t, chk, shellDefaultRule(t), "git status", agent.Deps{})
 	if !ran {
 		t.Fatal("a read-only Shell command must execute (the pre-filter skips the checker)")
 	}
@@ -272,11 +272,11 @@ func TestGuardrailShellCheckerErrorFailsOpen(t *testing.T) {
 	// The Runner takes its own Diagnostics (the loop's deps.Diagnostics is separate),
 	// so wire the capturing diag into the modelhook.Runner directly here.
 	ran := false
-	bt := bashTool(&ran)
+	bt := shellTool(&ran)
 	hooks := modelhook.New(hookexec.New(nil), modelhook.Options{
-		Rules: []modelhook.CompiledRule{bashDefaultRule(t)}, Checker: chk, Diagnostics: diag,
+		Rules: []modelhook.CompiledRule{shellDefaultRule(t)}, Checker: chk, Diagnostics: diag,
 	})
-	llm := mockllm.New(mockllm.ToolCallTurn(bashCall("c1", "git commit -m x")), mockllm.TextTurn("done"))
+	llm := mockllm.New(mockllm.ToolCallTurn(shellCall("c1", "git commit -m x")), mockllm.TextTurn("done"))
 	cat := tool.NewCatalog()
 	cat.MustRegister(bt)
 	e := newEngine(agent.Deps{LLM: llm, Catalog: cat, Hooks: hooks})
@@ -319,7 +319,7 @@ func TestGuardrailShellCheckerErrorFailsClosed(t *testing.T) {
 func TestGuardrailShellVetoSurvivesYolo(t *testing.T) {
 	allowAll := permpolicy.NewPolicy([]governance.Rule{{Effect: governance.Allow}}, nil)
 	chk := &scriptedChecker{verdict: modelhook.Verdict{Safe: boolp(false), Reason: "outward action under yolo"}}
-	ran, evs := runShellGuardrail(t, chk, bashDefaultRule(t), "git commit -m x", agent.Deps{Policy: allowAll})
+	ran, evs := runShellGuardrail(t, chk, shellDefaultRule(t), "git commit -m x", agent.Deps{Policy: allowAll})
 	if ran {
 		t.Fatal("the guardrail veto must survive an allow-all (yolo) permission policy — the tool must NOT execute")
 	}
@@ -450,12 +450,12 @@ func TestGuardrailSafeContentUnchanged(t *testing.T) {
 // returns whether the tool ran, whether a HookOriginated ask surfaced, and the events.
 func runShellGuardrailInteractive(t *testing.T, waiver *modelhook.WaiverHolder, diag port.Diagnostics, sessionID, cmd string, verdict session.ApprovalVerdict) (ran, asked bool, evs []session.Event) {
 	t.Helper()
-	bt := bashTool(&ran)
+	bt := shellTool(&ran)
 	chk := &scriptedChecker{verdict: modelhook.Verdict{Safe: boolp(false), Reason: "mutating shell action"}}
 	hooks := modelhook.New(hookexec.New(nil), modelhook.Options{
-		Rules: []modelhook.CompiledRule{bashDefaultRule(t)}, Checker: chk, Diagnostics: diag, Waiver: waiver,
+		Rules: []modelhook.CompiledRule{shellDefaultRule(t)}, Checker: chk, Diagnostics: diag, Waiver: waiver,
 	})
-	llm := mockllm.New(mockllm.ToolCallTurn(bashCall("c1", cmd)), mockllm.TextTurn("done"))
+	llm := mockllm.New(mockllm.ToolCallTurn(shellCall("c1", cmd)), mockllm.TextTurn("done"))
 	cat := tool.NewCatalog()
 	cat.MustRegister(bt)
 	e := newEngine(agent.Deps{LLM: llm, Catalog: cat, Hooks: hooks, Interactive: true})

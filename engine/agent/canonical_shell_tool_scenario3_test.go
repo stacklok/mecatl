@@ -28,7 +28,7 @@ func TestCanonicalShellTool_Scenario3_NonPortableASTDoesNotExecute(t *testing.T)
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			foreground := &fakeShellRunner{res: tool.CommandResult{Stdout: "executed"}, shell: "/bin/sh"}
-			result, err := NewShellTool().Execute(context.Background(), bashCall("foreground", tc.command, 0, false), bashEnvRunner(foreground))
+			result, err := NewShellTool().Execute(context.Background(), shellCall("foreground", tc.command, 0, false), shellEnvRunner(foreground))
 			if err != nil || !result.IsError || !strings.Contains(result.Content, "not portable") {
 				t.Fatalf("foreground result = %+v, err = %v; want portability error", result, err)
 			}
@@ -37,7 +37,7 @@ func TestCanonicalShellTool_Scenario3_NonPortableASTDoesNotExecute(t *testing.T)
 			}
 
 			temporary := &fakeShellRunner{res: tool.CommandResult{Stdout: "executed"}, shell: "/bin/dash"}
-			result, err = NewShellTool().Execute(context.Background(), scopedShellCall("temporary", tc.command, "system"), bashEnvRunner(temporary))
+			result, err = NewShellTool().Execute(context.Background(), scopedShellCall("temporary", tc.command, "system"), shellEnvRunner(temporary))
 			if err != nil || !result.IsError || !strings.Contains(result.Content, "not portable") {
 				t.Fatalf("temporary result = %+v, err = %v; want portability error", result, err)
 			}
@@ -47,7 +47,7 @@ func TestCanonicalShellTool_Scenario3_NonPortableASTDoesNotExecute(t *testing.T)
 
 			background := &fakeStreamingRunner{shell: "/bin/sh", started: make(chan struct{})}
 			registry := newChildRunRegistry()
-			result, err = NewShellTool().(childCapableTool).ExecuteWithParent(context.Background(), bashCall("background", tc.command, 0, true), bashEnvRunner(background), nil, parentCaps{children: registry})
+			result, err = NewShellTool().(childCapableTool).ExecuteWithParent(context.Background(), shellCall("background", tc.command, 0, true), shellEnvRunner(background), nil, parentCaps{children: registry})
 			if err != nil || !result.IsError || !strings.Contains(result.Content, "not portable") {
 				t.Fatalf("background result = %+v, err = %v; want portability error", result, err)
 			}
@@ -68,7 +68,7 @@ func TestCanonicalShellTool_Scenario3_BashAndUnknownShellPassThrough(t *testing.
 		t.Run(shell, func(t *testing.T) {
 			command := "[[ -n x ]] && set -o pipefail; printf $'x'"
 			runner := &fakeShellRunner{res: tool.CommandResult{Stdout: "ok"}, shell: shell}
-			result, err := NewShellTool().Execute(context.Background(), bashCall("pass", command, 0, false), bashEnvRunner(runner))
+			result, err := NewShellTool().Execute(context.Background(), shellCall("pass", command, 0, false), shellEnvRunner(runner))
 			if err != nil || result.IsError {
 				t.Fatalf("result = %+v, err = %v; want pass-through", result, err)
 			}
@@ -84,7 +84,7 @@ func TestCanonicalShellTool_Scenario3_PipefailPassesThroughShDashDiagnostic(t *t
 	for _, shell := range []string{"/bin/sh", "/bin/dash"} {
 		t.Run(shell, func(t *testing.T) {
 			runner := &fakeShellRunner{res: tool.CommandResult{Stdout: "ok"}, shell: shell}
-			result, err := NewShellTool().Execute(context.Background(), bashCall("pipefail", command, 0, false), bashEnvRunner(runner))
+			result, err := NewShellTool().Execute(context.Background(), shellCall("pipefail", command, 0, false), shellEnvRunner(runner))
 			if err != nil || result.IsError {
 				t.Fatalf("result = %+v, err = %v; want pass-through", result, err)
 			}
@@ -104,7 +104,7 @@ func TestCanonicalShellTool_Scenario3_SyntaxContextAndParseFailure(t *testing.T)
 		"[[", // parser failure passes through.
 	} {
 		runner := &fakeShellRunner{res: tool.CommandResult{Stdout: "ok"}, shell: "/bin/sh"}
-		result, err := NewShellTool().Execute(context.Background(), bashCall("context", command, 0, false), bashEnvRunner(runner))
+		result, err := NewShellTool().Execute(context.Background(), shellCall("context", command, 0, false), shellEnvRunner(runner))
 		if err != nil || result.IsError {
 			t.Fatalf("command %q: result = %+v, err = %v; want pass-through", command, result, err)
 		}
@@ -119,7 +119,7 @@ func TestCanonicalShellTool_Scenario3_EffectiveCommandBytePreservation(t *testin
 
 	t.Run("foreground", func(t *testing.T) {
 		runner := &fakeShellRunner{res: tool.CommandResult{Stdout: "ok"}, shell: "/bin/sh"}
-		result := runEffectiveShellCommand(t, bashCall("foreground", "ignored", 0, false), runner, command)
+		result := runEffectiveShellCommand(t, shellCall("foreground", "ignored", 0, false), runner, command)
 		if result.IsError {
 			t.Fatalf("result = %+v, want success", result)
 		}
@@ -144,7 +144,7 @@ func TestCanonicalShellTool_Scenario3_EffectiveCommandBytePreservation(t *testin
 
 	t.Run("background", func(t *testing.T) {
 		runner := &fakeStreamingRunner{shell: "/bin/sh", started: make(chan struct{})}
-		result := runEffectiveShellCommand(t, bashCall("background", "ignored", 0, true), runner, command)
+		result := runEffectiveShellCommand(t, shellCall("background", "ignored", 0, true), runner, command)
 		if result.IsError {
 			t.Fatalf("result = %+v, want started background job", result)
 		}
@@ -165,7 +165,7 @@ func TestCanonicalShellTool_Scenario3_EffectiveCommandBytePreservation(t *testin
 		},
 		{
 			name:   "background",
-			call:   bashCall("nonportable-background", "printf safe", 0, true),
+			call:   shellCall("nonportable-background", "printf safe", 0, true),
 			runner: &fakeStreamingRunner{shell: "/bin/sh", started: make(chan struct{})},
 		},
 	} {
@@ -211,7 +211,7 @@ func runEffectiveShellCommand(t *testing.T, call session.ToolCall, runner tool.C
 	})
 	sess := session.New(session.SessionID("effective-"+string(call.ID)), session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws", Revision: "v1"}, session.Limits{MaxTurns: 2}, time.Now())
 	var result session.ToolResult
-	for event := range engine.Run(context.Background(), sess, bashEnvRunner(runner), RunRequest{Text: "run"}).Events() {
+	for event := range engine.Run(context.Background(), sess, shellEnvRunner(runner), RunRequest{Text: "run"}).Events() {
 		if event.Type == session.EvToolResult && event.ToolResult != nil && event.ToolResult.CallID == call.ID {
 			result = *event.ToolResult
 		}
@@ -227,7 +227,7 @@ func (h effectiveCommandHook) Run(_ context.Context, event governance.HookEvent)
 	if event.Phase != governance.PhasePreToolUse {
 		return governance.HookOutcome{}, nil
 	}
-	var args bashArgs
+	var args shellArgs
 	if err := json.Unmarshal(event.Input, &args); err != nil {
 		return governance.HookOutcome{}, err
 	}

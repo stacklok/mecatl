@@ -25,7 +25,7 @@ func configChildEngine(llm port.LLMProvider, bash tool.Tool, configured ...gover
 	rules := append([]governance.Rule{{Scope: governance.ScopeBuiltinDefault, Effect: governance.Allow}}, configured...)
 	return agent.NewEngine(agent.Deps{
 		LLM:     llm,
-		Catalog: bashCatalog(bash),
+		Catalog: shellCatalog(bash),
 		Policy:  permpolicy.NewPolicy(rules, nil, governance.WithAudience(governance.AudienceSubagent)),
 		Model:   "child-model",
 	})
@@ -330,7 +330,7 @@ func TestBareFloorChildSubstitutionAskStillSurfaces(t *testing.T) {
 		mockllm.TextTurn("child done"),
 	)
 	// bashChildEngine IS the canonical bare-floor fixture (AllowAllFloorRules).
-	child := bashChildEngine(childLLM, bash)
+	child := shellChildEngine(childLLM, bash)
 	task := agent.NewSubagentTool(child, agent.WithChildForker(&recordingSubagentForker{}))
 
 	parentLLM := mockllm.New(
@@ -557,7 +557,7 @@ func TestChildAskYoloNonSubstitutionAutoApproves(t *testing.T) {
 			mockllm.ToolCallTurn(toolCall("k1", "Shell", `{"command":"python3 script.py"}`)),
 			mockllm.TextTurn("child done"),
 		)
-		child := agent.NewEngine(agent.Deps{LLM: childLLM, Catalog: bashCatalog(bash), Policy: yoloChildPolicy(), Model: "child-model"})
+		child := agent.NewEngine(agent.Deps{LLM: childLLM, Catalog: shellCatalog(bash), Policy: yoloChildPolicy(), Model: "child-model"})
 		task := agent.NewSubagentTool(child) // headless parent below ⇒ no surfacing path.
 
 		parentLLM := mockllm.New(
@@ -584,7 +584,7 @@ func TestChildAskYoloNonSubstitutionAutoApproves(t *testing.T) {
 			mockllm.ToolCallTurn(toolCall("k1", "Shell", `{"command":"cat $(zap)"}`)),
 			mockllm.TextTurn("child adapted"),
 		)
-		child := agent.NewEngine(agent.Deps{LLM: childLLM, Catalog: bashCatalog(bash), Policy: yoloChildPolicy(), Model: "child-model"})
+		child := agent.NewEngine(agent.Deps{LLM: childLLM, Catalog: shellCatalog(bash), Policy: yoloChildPolicy(), Model: "child-model"})
 		task := agent.NewSubagentTool(child)
 
 		parentLLM := mockllm.New(

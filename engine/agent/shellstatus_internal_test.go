@@ -11,20 +11,20 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
-// bashStatusCall builds a ShellStatus tool call with the given JSON args.
-func bashStatusCall(id string, args map[string]any) session.ToolCall {
+// shellStatusCall builds a ShellStatus tool call with the given JSON args.
+func shellStatusCall(id string, args map[string]any) session.ToolCall {
 	raw, err := json.Marshal(args)
 	if err != nil {
 		panic(err)
 	}
-	return session.ToolCall{ID: session.ToolCallID(id), Name: bashStatusToolName, Args: raw}
+	return session.ToolCall{ID: session.ToolCallID(id), Name: shellStatusToolName, Args: raw}
 }
 
 // execShellStatus drives ShellStatus through the childCapableTool seam against reg.
 func execShellStatus(t *testing.T, reg *childRunRegistry, id string, args map[string]any) session.ToolResult {
 	t.Helper()
 	res, err := NewShellStatusTool().(childCapableTool).ExecuteWithParent(
-		context.Background(), bashStatusCall(id, args), bashEnv, nil, parentCaps{children: reg})
+		context.Background(), shellStatusCall(id, args), shellEnv, nil, parentCaps{children: reg})
 	if err != nil {
 		t.Fatalf("ExecuteWithParent err = %v", err)
 	}
@@ -34,7 +34,7 @@ func execShellStatus(t *testing.T, reg *childRunRegistry, id string, args map[st
 // TestShellStatusCapsLessError pins the honest no-registry error on the plain
 // Execute path (and on ExecuteWithParent with a nil registry).
 func TestShellStatusCapsLessError(t *testing.T) {
-	res, err := NewShellStatusTool().Execute(context.Background(), bashStatusCall("s1", nil), bashEnv)
+	res, err := NewShellStatusTool().Execute(context.Background(), shellStatusCall("s1", nil), shellEnv)
 	if err != nil {
 		t.Fatalf("Execute err = %v", err)
 	}
@@ -42,7 +42,7 @@ func TestShellStatusCapsLessError(t *testing.T) {
 		t.Fatalf("res = %+v, want the no-registry error", res)
 	}
 	res, err = NewShellStatusTool().(childCapableTool).ExecuteWithParent(
-		context.Background(), bashStatusCall("s2", nil), bashEnv, nil, parentCaps{})
+		context.Background(), shellStatusCall("s2", nil), shellEnv, nil, parentCaps{})
 	if err != nil {
 		t.Fatalf("ExecuteWithParent err = %v", err)
 	}
@@ -231,7 +231,7 @@ func TestShellStatusWaitMsParkWake(t *testing.T) {
 	reg := newChildRunRegistry()
 	caps := parentCaps{children: reg}
 	if _, err := NewShellTool().(childCapableTool).ExecuteWithParent(
-		context.Background(), bashCall("w1", "block", 0, true), bashEnvRunner(r), nil, caps); err != nil {
+		context.Background(), shellCall("w1", "block", 0, true), shellEnvRunner(r), nil, caps); err != nil {
 		t.Fatalf("start err = %v", err)
 	}
 	select {
@@ -244,7 +244,7 @@ func TestShellStatusWaitMsParkWake(t *testing.T) {
 	done := make(chan outcome, 1)
 	go func() {
 		res, err := NewShellStatusTool().(childCapableTool).ExecuteWithParent(
-			context.Background(), bashStatusCall("s1", map[string]any{"job_id": "bashcmd-w1", "wait_ms": 30000}), bashEnv, nil, caps)
+			context.Background(), shellStatusCall("s1", map[string]any{"job_id": "bashcmd-w1", "wait_ms": 30000}), shellEnv, nil, caps)
 		if err != nil {
 			t.Errorf("wait call err = %v", err)
 		}
@@ -273,7 +273,7 @@ func TestShellStatusWaitMsParkWake(t *testing.T) {
 	r2 := &fakeStreamingRunner{run: make(chan struct{}), started: make(chan struct{})}
 	defer close(r2.run)
 	if _, err := NewShellTool().(childCapableTool).ExecuteWithParent(
-		context.Background(), bashCall("w2", "block", 0, true), bashEnvRunner(r2), nil, caps); err != nil {
+		context.Background(), shellCall("w2", "block", 0, true), shellEnvRunner(r2), nil, caps); err != nil {
 		t.Fatalf("start w2 err = %v", err)
 	}
 	<-r2.started
@@ -303,14 +303,14 @@ func TestShellStatusWaitAnyJob(t *testing.T) {
 	r := &fakeStreamingRunner{out: "later\n", exitCode: 0, run: make(chan struct{}), started: make(chan struct{})}
 	caps := parentCaps{children: reg}
 	if _, err := NewShellTool().(childCapableTool).ExecuteWithParent(
-		context.Background(), bashCall("any1", "block", 0, true), bashEnvRunner(r), nil, caps); err != nil {
+		context.Background(), shellCall("any1", "block", 0, true), shellEnvRunner(r), nil, caps); err != nil {
 		t.Fatalf("start err = %v", err)
 	}
 	<-r.started
 	done := make(chan session.ToolResult, 1)
 	go func() {
 		res, _ := NewShellStatusTool().(childCapableTool).ExecuteWithParent(
-			context.Background(), bashStatusCall("s2", map[string]any{"wait_ms": 30000}), bashEnv, nil, caps)
+			context.Background(), shellStatusCall("s2", map[string]any{"wait_ms": 30000}), shellEnv, nil, caps)
 		done <- res
 	}()
 	time.Sleep(50 * time.Millisecond)
@@ -333,7 +333,7 @@ func TestShellStatusCancel(t *testing.T) {
 	reg := newChildRunRegistry()
 	caps := parentCaps{children: reg}
 	if _, err := NewShellTool().(childCapableTool).ExecuteWithParent(
-		context.Background(), bashCall("c1", "sleep 100", 0, true), bashEnvRunner(r), nil, caps); err != nil {
+		context.Background(), shellCall("c1", "sleep 100", 0, true), shellEnvRunner(r), nil, caps); err != nil {
 		t.Fatalf("start err = %v", err)
 	}
 	select {
@@ -426,7 +426,7 @@ func TestLiveBackgroundIDsMatching(t *testing.T) {
 	if got := reg.liveBackgroundIDsMatching(delegationFamiliesOnly); len(got) != 1 || got[0] != "subagent-s" {
 		t.Fatalf("delegation-only = %v, want [subagent-s]", got)
 	}
-	if got := reg.liveBackgroundIDsMatching(bashCmdFamiliesOnly); len(got) != 1 || got[0] != "bashcmd-b" {
+	if got := reg.liveBackgroundIDsMatching(shellCmdFamiliesOnly); len(got) != 1 || got[0] != "bashcmd-b" {
 		t.Fatalf("bash-only = %v, want [bashcmd-b]", got)
 	}
 }

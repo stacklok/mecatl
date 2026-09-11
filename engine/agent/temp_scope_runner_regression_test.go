@@ -22,7 +22,7 @@ func (r *unscopedShellRunner) Run(_ context.Context, command string) (tool.Comma
 // default cannot silently degrade to an unscoped command runner.
 func TestADR_0281_ShellScopeRequiresScopedRunner(t *testing.T) {
 	runner := &unscopedShellRunner{res: tool.CommandResult{Stdout: "unexpected"}}
-	result, err := NewShellTool().Execute(context.Background(), scopedShellCall("scope", "echo unexpected", "managed"), bashEnvRunner(runner))
+	result, err := NewShellTool().Execute(context.Background(), scopedShellCall("scope", "echo unexpected", "managed"), shellEnvRunner(runner))
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}

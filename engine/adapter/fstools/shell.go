@@ -16,13 +16,13 @@ import (
 // Shell tool registers under (the permission evaluator special-cases the literal,
 // so the constant lives in the port package where every implementation — this
 // adapter's AND engine/agent's background-capable ShellTool — can import it).
-// Callers probe the catalog for bash enablement by referencing the constant
+// Callers probe the catalog for Shell enablement by referencing the constant
 // rather than a local literal that could drift on a rename (see
 // internal/adapter/server.Service.capabilities).
 const ShellToolName = tool.ShellToolName
 
-// bashDescription is the model-facing documentation for the Shell tool.
-const bashDescription = `Run a shell command in the workspace root and return its combined output and exit code.
+// shellDescription is the model-facing documentation for the Shell tool.
+const shellDescription = `Run a shell command in the workspace root and return its combined output and exit code.
 
 When to use:
 - To run builds, tests, linters, git, and other CLI tooling.
@@ -105,8 +105,8 @@ func NewShellTool() tool.Tool {
 // Compile-time assertion that ShellTool implements tool.Tool.
 var _ tool.Tool = ShellTool{}
 
-// bashArgs is the JSON argument shape for the Shell tool.
-type bashArgs struct {
+// shellArgs is the JSON argument shape for the Shell tool.
+type shellArgs struct {
 	Command   string `json:"command"`
 	TimeoutMS int    `json:"timeout_ms"`
 	TempScope string `json:"temp_scope"`
@@ -116,7 +116,7 @@ type bashArgs struct {
 func (ShellTool) Spec() tool.ToolSpec {
 	return tool.ToolSpec{
 		Name:        ShellToolName,
-		Description: bashDescription,
+		Description: shellDescription,
 		Schema: schema(`{
   "type": "object",
   "properties": {
@@ -141,7 +141,7 @@ func (ShellTool) ReadOnly() bool { return false }
 // output with the exit code. The runner is read off env; a shell-less namespace
 // (nil runner) surfaces ErrNoShell.
 func (ShellTool) Execute(ctx context.Context, in session.ToolCall, env tool.Environment) (session.ToolResult, error) {
-	var args bashArgs
+	var args shellArgs
 	if msg, ok := parseArgs(in, &args); !ok {
 		return session.NewToolError(in.ID, msg), nil
 	}
@@ -160,7 +160,7 @@ func (ShellTool) Execute(ctx context.Context, in session.ToolCall, env tool.Envi
 		// no-shell message can never drift from bashErrorTrailer's ErrNoShell
 		// wording. An empty body + tool.ErrNoShell yields the standalone
 		// "[command failed to run: no shell available]" byte-identically.
-		return session.NewToolError(in.ID, bashErrorMessage("", tool.ErrNoShell, 0)), nil
+		return session.NewToolError(in.ID, shellErrorMessage("", tool.ErrNoShell, 0)), nil
 	}
 
 	if err := shellCompatibilityDiagnostic(runner, args.Command); err != nil {
@@ -181,13 +181,13 @@ func (ShellTool) Execute(ctx context.Context, in session.ToolCall, env tool.Envi
 		// the ctx error (see osfs.CommandRunner.Run), so preserve that partial
 		// output here rather than discarding it: a timed-out build that printed
 		// a useful failure should not collapse to a bare "command failed".
-		body := bashCombinedOutput(res, false) // includeExit=false: the ctx-error
+		body := shellCombinedOutput(res, false) // includeExit=false: the ctx-error
 		// path leaves ExitCode as a 0 placeholder; printing "[exit code: 0]"
 		// would read as success, which is misleading on a failure.
-		return session.NewToolError(in.ID, bashErrorMessage(body, err, args.TimeoutMS)), nil
+		return session.NewToolError(in.ID, shellErrorMessage(body, err, args.TimeoutMS)), nil
 	}
 
-	out := truncateBytes(bashCombinedOutput(res, true))
+	out := truncateBytes(shellCombinedOutput(res, true))
 	if res.ExitCode != 0 {
 		return session.NewToolError(in.ID, out), nil
 	}
@@ -219,11 +219,11 @@ func runWithTemporaryScope(ctx context.Context, runner tool.CommandRunner, comma
 	return runner.Run(ctx, command)
 }
 
-// bashCombinedOutput renders a CommandResult as the model-facing combined output:
+// shellCombinedOutput renders a CommandResult as the model-facing combined output:
 // stdout then stderr (each newline-normalized), and — only when includeExit — a
 // trailing "[exit code: N]" line. The success path includes the exit line; the
 // ctx-error path omits it (ExitCode is an unset 0 placeholder there).
-func bashCombinedOutput(res tool.CommandResult, includeExit bool) string {
+func shellCombinedOutput(res tool.CommandResult, includeExit bool) string {
 	var b strings.Builder
 	if res.Stdout != "" {
 		b.WriteString(res.Stdout)
@@ -243,7 +243,7 @@ func bashCombinedOutput(res tool.CommandResult, includeExit bool) string {
 	return b.String()
 }
 
-// bashErrorMessage composes the model-facing message for a runner error, keeping
+// shellErrorMessage composes the model-facing message for a runner error, keeping
 // any partial output (body) and appending a trailer that explains why the command
 // stopped. timeoutMS is the caller-requested timeout (0 if unset) — used only to
 // name the configured limit on a deadline; the runner's own default timeout is
@@ -255,8 +255,8 @@ func bashCombinedOutput(res tool.CommandResult, includeExit bool) string {
 // than truncating the joined string — which would land the cut inside the body and
 // drop the "timed out"/"canceled" signal entirely, leaving the model to read a
 // truncated result as an ordinary too-long one.
-func bashErrorMessage(body string, err error, timeoutMS int) string {
-	noBodyMsg, trailer := bashErrorTrailer(err, timeoutMS)
+func shellErrorMessage(body string, err error, timeoutMS int) string {
+	noBodyMsg, trailer := shellErrorTrailer(err, timeoutMS)
 	if body == "" {
 		// No partial output: the standalone phrasing IS the whole message.
 		return truncateBytes(noBodyMsg)
@@ -272,11 +272,11 @@ func bashErrorMessage(body string, err error, timeoutMS int) string {
 	return truncate(body, budget) + suffix
 }
 
-// bashErrorTrailer returns the model-facing wording for a runner error: noBodyMsg
+// shellErrorTrailer returns the model-facing wording for a runner error: noBodyMsg
 // is the self-contained message when the command produced no output; trailer is
 // the line appended after any partial output. Classification order: deadline /
 // cancellation first, then no-shell, then a generic default.
-func bashErrorTrailer(err error, timeoutMS int) (noBodyMsg, trailer string) {
+func shellErrorTrailer(err error, timeoutMS int) (noBodyMsg, trailer string) {
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
 		if timeoutMS > 0 {

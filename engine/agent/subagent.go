@@ -4486,7 +4486,7 @@ func resolveChildAsk(run *Run, ask session.PendingAsk, posture childPosture) {
 	} else if ask.FlooredConfiguredAllow {
 		run.Approve(ask.AskID, session.VerdictAllowOnce)
 		return
-	} else if posture.isolated && ask.Tool == "Shell" && governance.IsolationApprovable(bashCmdFromArgs(ask.Args)) {
+	} else if posture.isolated && ask.Tool == "Shell" && governance.IsolationApprovable(shellCmdFromArgs(ask.Args)) {
 		// Step A2: isolated child + isolation-approvable Shell → auto-approve.
 		run.Approve(ask.AskID, session.VerdictAllowOnce)
 		return
@@ -4574,11 +4574,11 @@ func resolveChildAsk(run *Run, ask session.PendingAsk, posture childPosture) {
 	run.autoDenyChildAsk(ask.AskID, childAutoDenyMessage(ask.Reason, ask.ConfiguredAsk))
 }
 
-// bashCmdFromArgs extracts the Shell command string from a pending ask's raw args,
+// shellCmdFromArgs extracts the Shell command string from a pending ask's raw args,
 // delegating to the shared governance extractor (the single source of truth for the
 // Shell tool-call args schema). Empty on a parse failure (then
 // IsolationApprovable("") is false — fail safe).
-func bashCmdFromArgs(args json.RawMessage) string {
+func shellCmdFromArgs(args json.RawMessage) string {
 	cmd, _ := governance.ShellCommandFromArgs(args)
 	return cmd
 }

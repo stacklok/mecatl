@@ -82,7 +82,7 @@ func TestPermissionAskMsgSetsOfferAlways(t *testing.T) {
 // full-screen view state and the modal's mini-viewport offset, so the next ask
 // never inherits a stale scroll position or an open view.
 func TestResolveAskResetsArgsViewState(t *testing.T) {
-	m := openArgsView(t, bashAskModel(t, longShellArgs))
+	m := openArgsView(t, shellAskModel(t, longShellArgs))
 	approvalSurfaceOf(t, m).argsViewRaw = true
 	approvalSurfaceOf(t, m).askVPOffset = 3
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: 'a', Text: "a"})

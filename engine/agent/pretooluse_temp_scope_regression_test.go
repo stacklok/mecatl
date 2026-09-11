@@ -34,7 +34,7 @@ func TestADR_0281_PreToolUseManagedToSystemRequiresAuthorization(t *testing.T) {
 	engine := NewEngine(Deps{LLM: mockllm.New(mockllm.ToolCallTurn(original), mockllm.TextTurn("done")), Catalog: catalog, Policy: permpolicy.NewPolicy([]governance.Rule{{Tool: tool.ShellToolName, Pattern: "go test*", Effect: governance.Allow}}, nil), Hooks: hooks})
 	runner := &fakeShellRunner{res: tool.CommandResult{Stdout: "must not execute"}}
 	sess := session.New("mutated-scope", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws", Revision: "v1"}, session.Limits{MaxTurns: 2}, time.Now())
-	run := engine.Run(context.Background(), sess, bashEnvRunner(runner), RunRequest{Text: "run"})
+	run := engine.Run(context.Background(), sess, shellEnvRunner(runner), RunRequest{Text: "run"})
 	for event := range run.Events() {
 		if event.Type == session.EvPermissionAsk && event.Ask != nil {
 			if !strings.Contains(string(event.Ask.Args), `"temp_scope":"system"`) {

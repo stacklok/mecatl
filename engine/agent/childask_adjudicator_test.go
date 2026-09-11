@@ -78,7 +78,7 @@ func substitutionAskTurns(n int) []mockllm.Turn {
 // INFO with the decision/verdict fields.
 func TestAdjudicatorAllowRunsHeadlessSubagentCommand(t *testing.T) {
 	bash := &fakeShell{}
-	child := bashChildEngine(mockllm.New(substitutionAskTurns(2)...), bash)
+	child := shellChildEngine(mockllm.New(substitutionAskTurns(2)...), bash)
 	task := agent.NewSubagentTool(child)
 
 	stub := &scriptedAdjudicator{script: []adjOutcome{allow("read-only"), allow("read-only")}}
@@ -172,7 +172,7 @@ func TestAdjudicatorDenyCarriesReviewedMessage(t *testing.T) {
 	rec := &requestRecorder{}
 	childLLM := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(rec.observe)},
 		substitutionAskTurns(1)...)
-	child := bashChildEngine(childLLM, bash)
+	child := shellChildEngine(childLLM, bash)
 	task := agent.NewSubagentTool(child)
 
 	stub := &scriptedAdjudicator{script: []adjOutcome{deny("touches the\x1bnetwork")}}
@@ -226,7 +226,7 @@ func TestAdjudicatorErrorFallsBackToPlainAutoDeny(t *testing.T) {
 	rec := &requestRecorder{}
 	childLLM := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(rec.observe)},
 		substitutionAskTurns(1)...)
-	child := bashChildEngine(childLLM, bash)
+	child := shellChildEngine(childLLM, bash)
 	task := agent.NewSubagentTool(child)
 
 	stub := &scriptedAdjudicator{script: []adjOutcome{{err: errors.New("reviewer wedged")}}}
@@ -274,7 +274,7 @@ func TestAdjudicatorErrorFallsBackToPlainAutoDeny(t *testing.T) {
 // failure limits so the run, not the child's failure cap, is what bounds it.
 func TestAdjudicatorBreakerOpensAfterConsecutiveDenies(t *testing.T) {
 	bash := &fakeShell{}
-	child := bashChildEngine(mockllm.New(substitutionAskTurns(4)...), bash)
+	child := shellChildEngine(mockllm.New(substitutionAskTurns(4)...), bash)
 	task := agent.NewSubagentTool(child, agent.WithChildLimits(session.Limits{
 		MaxTurns: 50, MaxToolCalls: 200, MaxConsecutiveFailures: 10,
 	}))
@@ -316,7 +316,7 @@ func TestAdjudicatorBreakerOpensAfterConsecutiveDenies(t *testing.T) {
 // DO open it). Nothing executes either way.
 func TestAdjudicatorAbstainDoesNotCountTowardBreaker(t *testing.T) {
 	bash := &fakeShell{}
-	child := bashChildEngine(mockllm.New(substitutionAskTurns(4)...), bash)
+	child := shellChildEngine(mockllm.New(substitutionAskTurns(4)...), bash)
 	task := agent.NewSubagentTool(child, agent.WithChildLimits(session.Limits{
 		MaxTurns: 50, MaxToolCalls: 200, MaxConsecutiveFailures: 10,
 	}))
@@ -346,7 +346,7 @@ func TestAdjudicatorAbstainDoesNotCountTowardBreaker(t *testing.T) {
 // so the breaker opens only after MaxDenies denies in a row.
 func TestAdjudicatorAllowResetsBreaker(t *testing.T) {
 	bash := &fakeShell{}
-	child := bashChildEngine(mockllm.New(substitutionAskTurns(5)...), bash)
+	child := shellChildEngine(mockllm.New(substitutionAskTurns(5)...), bash)
 	task := agent.NewSubagentTool(child, agent.WithChildLimits(session.Limits{
 		MaxTurns: 50, MaxToolCalls: 200, MaxConsecutiveFailures: 10,
 	}))
@@ -462,7 +462,7 @@ func TestAdjudicatorConfiguredRulesStillWin(t *testing.T) {
 			mockllm.ToolCallTurn(toolCall("k1", "Shell", `{"command":"go test ./..."}`)),
 			mockllm.TextTurn("child done"),
 		)
-		child := bashChildEngine(childLLM, bash)
+		child := shellChildEngine(childLLM, bash)
 		task := agent.NewSubagentTool(child, agent.WithChildForker(&recordingSubagentForker{}))
 		stub := &scriptedAdjudicator{}
 		e := newEngine(agent.Deps{LLM: mockllm.New(parentTurns()...), Catalog: catalogWith(t, task), ChildAskReviewer: stub})
@@ -482,7 +482,7 @@ func TestAdjudicatorConfiguredRulesStillWin(t *testing.T) {
 // ask to the human; the reviewer is never consulted (surface wins).
 func TestAdjudicatorNotConsultedWhenInteractive(t *testing.T) {
 	bash := &fakeShell{}
-	child := bashChildEngine(mockllm.New(substitutionAskTurns(1)...), bash)
+	child := shellChildEngine(mockllm.New(substitutionAskTurns(1)...), bash)
 	task := agent.NewSubagentTool(child)
 
 	stub := &scriptedAdjudicator{script: []adjOutcome{allow("would have allowed")}}
@@ -517,7 +517,7 @@ func TestAdjudicatorIsolationBitThreaded(t *testing.T) {
 	run := func(t *testing.T, forked bool) bool {
 		t.Helper()
 		bash := &fakeShell{}
-		child := bashChildEngine(mockllm.New(substitutionAskTurns(1)...), bash)
+		child := shellChildEngine(mockllm.New(substitutionAskTurns(1)...), bash)
 		opts := []agent.SubagentOption{}
 		if forked {
 			opts = append(opts, agent.WithChildForker(&recordingSubagentForker{}))

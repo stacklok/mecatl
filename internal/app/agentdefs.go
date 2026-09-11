@@ -396,21 +396,21 @@ type scopeDiag struct {
 // Subagent-routed child (allowMutating == false), as a pure set operation over the
 // AVAILABLE base tools. It is the read-only shim over scopedToolNamesMode; see that
 // for the full algorithm. Subagent children are unconditionally read-only so
-// Subagent.ReadOnly() stays honestly true. bashMissReason is the PRECISE
-// Shell-base-miss diagnostic for this call site (bashScopeMissReason(cfg); "" for a
+// Subagent.ReadOnly() stays honestly true. shellMissReason is the PRECISE
+// Shell-base-miss diagnostic for this call site (shellScopeMissReason(cfg); "" for a
 // pure name-set projection that drops diagnostics).
-func scopedToolNames(def agents.AgentDef, available map[string]tool.Tool, bashMissReason string) ([]string, []scopeDiag) {
-	return scopedToolNamesMode(def, available, false, false, bashMissReason)
+func scopedToolNames(def agents.AgentDef, available map[string]tool.Tool, shellMissReason string) ([]string, []scopeDiag) {
+	return scopedToolNamesMode(def, available, false, false, shellMissReason)
 }
 
-// bashScopeMissReason returns the PRECISE def-scoping diagnostic for a Shell
+// shellScopeMissReason returns the PRECISE def-scoping diagnostic for a Shell
 // allowlist entry that misses the AVAILABLE base set. Shell is a core tool, so the
 // miss is never a typo — it means NO shell exists at this call site, and the
 // diagnostic must name the ACTUAL cause: a --no-shell operator on a TRUSTED
 // workspace must not be told to --trust-project. The untrusted wording reuses
 // subagentShellUntrustedReason — the single wording source — so this diagnostic
 // and the Subagent Spec note cannot drift.
-func bashScopeMissReason(cfg Config) string {
+func shellScopeMissReason(cfg Config) string {
 	switch {
 	case cfg.NoShell:
 		return "shell unavailable (Shell disabled via --no-shell); dropped"
@@ -449,10 +449,10 @@ func bashScopeMissReason(cfg Config) string {
 // available maps an available base tool name to its tool.Tool (used to read
 // ReadOnly()). It returns the kept names (sorted) and the diagnostics. The caller
 // (teams) still appends MemberTools AFTER this — coordination tools bypass the
-// allowlist and this filter entirely. bashMissReason is the PRECISE diagnostic to
-// emit when Shell misses the base set (see bashScopeMissReason); "" falls back to a
+// allowlist and this filter entirely. shellMissReason is the PRECISE diagnostic to
+// emit when Shell misses the base set (see shellScopeMissReason); "" falls back to a
 // cause-less generic.
-func scopedToolNamesMode(def agents.AgentDef, available map[string]tool.Tool, allowMutating, allowShell bool, bashMissReason string) ([]string, []scopeDiag) {
+func scopedToolNamesMode(def agents.AgentDef, available map[string]tool.Tool, allowMutating, allowShell bool, shellMissReason string) ([]string, []scopeDiag) {
 	disallowed := make(map[string]struct{}, len(def.DisallowedTools))
 	for _, d := range def.DisallowedTools {
 		disallowed[d] = struct{}{}
@@ -492,11 +492,11 @@ func scopedToolNamesMode(def agents.AgentDef, available map[string]tool.Tool, al
 				// Shell is a core tool, so a base-set miss is never a typo: it means NO
 				// shell is available at this call site — --no-shell, an empty shell, or
 				// (issue #40) an untrusted workspace withholding the subagent shell.
-				// bashMissReason names the PRECISE cause (computed by the caller via
-				// bashScopeMissReason from its cfg, so a --no-shell operator on a
+				// shellMissReason names the PRECISE cause (computed by the caller via
+				// shellScopeMissReason from its cfg, so a --no-shell operator on a
 				// TRUSTED workspace is never told to --trust-project) — distinct from
 				// the generic unknown-tool diagnostic either way.
-				reason := bashMissReason
+				reason := shellMissReason
 				if reason == "" {
 					reason = "shell unavailable; dropped"
 				}
@@ -806,7 +806,7 @@ func buildAgentSubagentEngines(ctx context.Context, cfg Config, provider port.LL
 		// also be rebuilt by the writable factory on another call. The writable ceiling
 		// adds the MCP tools that were successfully registered in the read-only engine;
 		// writable core scoping alone does not include definition-provided tools.
-		writableNames, _ := scopedToolNamesMode(def, base, true, runner != nil, bashScopeMissReason(cfg))
+		writableNames, _ := scopedToolNamesMode(def, base, true, runner != nil, shellScopeMissReason(cfg))
 		for _, name := range names {
 			if strings.HasPrefix(name, "mcp__") {
 				writableNames = append(writableNames, name)
@@ -870,7 +870,7 @@ func buildAgentSubagentEngines(ctx context.Context, cfg Config, provider port.LL
 // the "agent def engine built" INFO with the same fields the pre-extraction inline path
 // carried (tools/preloaded_skills) — the extraction must not silently drop diagnostics.
 func buildAgentDefEngine(ctx context.Context, cfg Config, def agents.AgentDef, role, source string, childProvider port.LLMProvider, model string, windowFn func() int, base map[string]tool.Tool, allowMutating, allowShell bool, skillIdx skillIndex, defaultHooks port.HookRunner, runner tool.CommandRunner, mainMgr *mcp.Manager) (*agent.Engine, func() error, []string, []string, int) {
-	names, diags := scopedToolNamesMode(def, base, allowMutating, allowShell, bashScopeMissReason(cfg))
+	names, diags := scopedToolNamesMode(def, base, allowMutating, allowShell, shellScopeMissReason(cfg))
 	for _, d := range diags {
 		cfg.diag().Log(ctx, port.LevelWarn, "agent def tool scoping",
 			"agent", def.Name, "tool", d.tool, "reason", d.reason, "source", source)

@@ -329,7 +329,7 @@ func buildAskReviewPrompt(policy string, req ChildAskReviewRequest) string {
 // other tool — mirroring surfacedCommandPreview, the human-surfacing sibling.
 func askReviewSubject(ask session.PendingAsk) string {
 	if ask.Tool == "Shell" {
-		if cmd := bashCmdFromArgs(ask.Args); cmd != "" {
+		if cmd := shellCmdFromArgs(ask.Args); cmd != "" {
 			return cmd
 		}
 	}

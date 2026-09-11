@@ -233,7 +233,7 @@ func TestSurfaceApprovalMigration_Scenario2_PlanReviewLayoutAndOffset(t *testing
 }
 
 func TestSurfaceApprovalMigration_Scenario2_ArgsAndDiffModes(t *testing.T) {
-	m := openArgsView(t, bashAskModel(t, longShellArgs))
+	m := openArgsView(t, shellAskModel(t, longShellArgs))
 	if got := stripANSIstr(m.View().Content); !strings.Contains(got, "Ask args: Shell") {
 		t.Fatalf("surface args render = %q, want args view", got)
 	}
@@ -291,7 +291,7 @@ func TestSurfaceApprovalMigration_Scenario3_ApprovalMouseParity(t *testing.T) {
 }
 
 func TestSurfaceApprovalMigration_Scenario3_WheelCapture(t *testing.T) {
-	m := openArgsView(t, bashAskModel(t, tallShellArgs))
+	m := openArgsView(t, shellAskModel(t, tallShellArgs))
 	before := approvalSurfaceOf(t, m).argsVP.YOffset()
 	mm, _ := m.onMouseWheel(tea.MouseWheelMsg{Button: tea.MouseWheelDown, X: 1, Y: 1})
 	m = mm.(Model)
@@ -309,7 +309,7 @@ func TestApprovalFillViewsCaptureWheelBeforeViewportMaterialization(t *testing.T
 		{
 			name: "args",
 			model: func(t *testing.T) Model {
-				m := bashAskModel(t, tallShellArgs)
+				m := shellAskModel(t, tallShellArgs)
 				m, _ = pressKey(m, tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
 				return m
 			},

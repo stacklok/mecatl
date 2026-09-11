@@ -55,7 +55,7 @@ func runSubagentShell(t *testing.T, cfg Config, command string) session.ToolResu
 	if runner == nil {
 		t.Fatal("precondition: expected a sandboxed runner (Shell set + trusted)")
 	}
-	provider := &bashWriteProvider{command: command, marker: "out.txt"}
+	provider := &shellWriteProvider{command: command, marker: "out.txt"}
 	childEngine := buildChildEngine(cfg, nil, provider, "", cfg.Model, runner)
 
 	rf := &recordingForker{inner: forker.New(func(root string) (tool.Workspace, error) {
@@ -169,7 +169,7 @@ permissions:
     deny:
       - "Shell(curl:*)"
 `)
-	provider := &bashWriteProvider{command: "true", marker: "x"}
+	provider := &shellWriteProvider{command: "true", marker: "x"}
 	deps := childEngineDepsForProvider(cfg, "task", provider, cfg.Model, func() int { return defaultContextWindowTokens }, tool.NewCatalog(), explorerPromptConfig(modelCfgFor(cfg, cfg.Model)), nil)
 
 	eval := func(cmd string) governance.PermissionDecision {

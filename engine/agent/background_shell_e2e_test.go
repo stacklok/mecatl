@@ -167,10 +167,10 @@ func (g *startThenReleaseTool) Execute(ctx context.Context, in session.ToolCall,
 // it parks until a channel closes — the deterministic "the background job has
 // genuinely reached its park" anchor scripted parent turns sequence on.
 
-// bashCatalogFor builds the main-engine catalog for these tests: the agent
+// shellCatalogFor builds the main-engine catalog for these tests: the agent
 // ShellTool + the ShellStatus companion. (The runner is bound to the Environment
 // at Execute time now — issue #462 — so the catalog no longer captures it.)
-func bashCatalogFor(t *testing.T, extra ...tool.Tool) *tool.Catalog {
+func shellCatalogFor(t *testing.T, extra ...tool.Tool) *tool.Catalog {
 	t.Helper()
 	tools := append([]tool.Tool{agent.NewShellTool(), agent.NewShellStatusTool()}, extra...)
 	return catalogWith(t, tools...)
@@ -183,7 +183,7 @@ func bashCatalogFor(t *testing.T, extra ...tool.Tool) *tool.Catalog {
 // (a second collect reports already-delivered).
 func TestBackgroundShellHappyPath(t *testing.T) {
 	runner := newFakeShellStreamer()
-	cat := bashCatalogFor(t, &awaitSignalTool{ch: runner.started})
+	cat := shellCatalogFor(t, &awaitSignalTool{ch: runner.started})
 
 	llm := mockllm.New(
 		mockllm.ToolCallTurn(toolCall("b1", "Shell", `{"command":"build","background":true}`)),
@@ -286,7 +286,7 @@ func TestBackgroundShellHappyPath(t *testing.T) {
 // cancellation.
 func TestBackgroundShellCancel(t *testing.T) {
 	runner := newFakeShellStreamer()
-	cat := bashCatalogFor(t, &awaitSignalTool{ch: runner.started})
+	cat := shellCatalogFor(t, &awaitSignalTool{ch: runner.started})
 
 	llm := mockllm.New(
 		mockllm.ToolCallTurn(toolCall("b1", "Shell", `{"command":"slow","background":true}`)),
@@ -335,7 +335,7 @@ func TestBackgroundShellCancel(t *testing.T) {
 // and the drain cancels the job (the fake saw its ctx fire).
 func TestBackgroundShellRunEndDrain(t *testing.T) {
 	runner := newFakeShellStreamer() // never released: the job outlives every parent turn
-	cat := bashCatalogFor(t, &awaitSignalTool{ch: runner.started})
+	cat := shellCatalogFor(t, &awaitSignalTool{ch: runner.started})
 
 	llm := mockllm.New(
 		mockllm.ToolCallTurn(
@@ -375,7 +375,7 @@ func TestBackgroundShellRunEndDrain(t *testing.T) {
 // invocations before the Allow verdict, and the job spawns after it.
 func TestBackgroundShellPermissionGate(t *testing.T) {
 	runner := newFakeShellStreamer()
-	cat := bashCatalogFor(t, &startThenReleaseTool{runner: runner})
+	cat := shellCatalogFor(t, &startThenReleaseTool{runner: runner})
 	policy := permpolicy.NewPolicy(nil, nil) // no rule → Ask on the Shell call
 
 	// Turn 1: the gated Shell call + a start-then-release anchor in the SAME read
@@ -434,7 +434,7 @@ func TestBackgroundShellPermissionGate(t *testing.T) {
 // roster is empty).
 func TestBackgroundShellForegroundParity(t *testing.T) {
 	runner := newFakeShellStreamer()
-	cat := bashCatalogFor(t)
+	cat := shellCatalogFor(t)
 
 	llm := mockllm.New(
 		mockllm.ToolCallTurn(toolCall("b1", "Shell", `{"command":"echo hi"}`)),

@@ -82,7 +82,7 @@ func TestTrustGatesIngestionAndShellTogether(t *testing.T) {
 // through the trust gate, and that a trusted workspace keeps the shell.
 func TestUntrustedSubagentChildCatalogHasNoShell(t *testing.T) {
 	untrusted := untrustedTeamCfg(t)
-	eng := buildChildEngine(untrusted, nil, bashThenEdit(), "", untrusted.Model, buildSandboxedCommandRunner(untrusted))
+	eng := buildChildEngine(untrusted, nil, shellThenEdit(), "", untrusted.Model, buildSandboxedCommandRunner(untrusted))
 	events := drainEngine(t, eng)
 	if !unknownToolResult(events, "b1") {
 		t.Error("untrusted: the default Subagent explorer dispatched Shell; the trust gate must leave it shell-less")
@@ -92,7 +92,7 @@ func TestUntrustedSubagentChildCatalogHasNoShell(t *testing.T) {
 	}
 
 	trusted := teamCfg(t)
-	engTrusted := buildChildEngine(trusted, nil, bashThenEdit(), "", trusted.Model, buildSandboxedCommandRunner(trusted))
+	engTrusted := buildChildEngine(trusted, nil, shellThenEdit(), "", trusted.Model, buildSandboxedCommandRunner(trusted))
 	eventsTrusted := drainEngine(t, engTrusted)
 	if !sawDispatchedTool(eventsTrusted, "b1") {
 		t.Error("trusted: the explorer must keep its worktree shell (the gate must not over-fire)")
@@ -182,7 +182,7 @@ func TestUntrustedSubagentNoForkerWired(t *testing.T) {
 // isolation), even though a shell is configured.
 func TestUntrustedReadOnlyMemberHasNoShell(t *testing.T) {
 	cfg := untrustedTeamCfg(t)
-	prov := bashThenEdit()
+	prov := shellThenEdit()
 	factory, _, _, _, _ := buildTeamWiring(context.Background(), cfg, regForTest(prov, providerMock, cfg.Model), prov, providerMock, cfg.Model, nil, agents.NewRegistry(nil), nil, catalogAssets{}, false)
 	build := factory(team.New("t"), agent.MemberSpec{Name: "reader", Mutating: false}, "")
 	if build.Engine == nil {
@@ -205,7 +205,7 @@ func TestUntrustedReadOnlyMemberHasNoShell(t *testing.T) {
 // buildForceCopyRunner). Edit survives too.
 func TestUntrustedMutatingMemberKeepsShell(t *testing.T) {
 	cfg := untrustedTeamCfg(t)
-	prov := bashThenEdit()
+	prov := shellThenEdit()
 	factory, _, _, _, _ := buildTeamWiring(context.Background(), cfg, regForTest(prov, providerMock, cfg.Model), prov, providerMock, cfg.Model, nil, agents.NewRegistry(nil), nil, catalogAssets{}, false)
 	build := factory(team.New("t"), agent.MemberSpec{Name: "writer", Mutating: true}, "")
 	if build.Engine == nil {
@@ -300,7 +300,7 @@ func TestBaseSubagentToolsUntrustedExcludesShell(t *testing.T) {
 		t.Fatal("shell-less: Shell must be excluded from the subagent base toolset")
 	}
 	def := agents.AgentDef{Name: "inspector", Tools: []string{"Read", "Shell"}}
-	names, diags := scopedToolNames(def, base, bashScopeMissReason(untrusted))
+	names, diags := scopedToolNames(def, base, shellScopeMissReason(untrusted))
 	if strings.Join(names, ",") != "Read" {
 		t.Fatalf("shell-less scoped names = %v, want [Read]", names)
 	}
@@ -344,7 +344,7 @@ func TestShellScopeMissReasonPreciseCause(t *testing.T) {
 	} {
 		cfg := teamCfg(t)
 		tc.mutate(&cfg)
-		got := bashScopeMissReason(cfg)
+		got := shellScopeMissReason(cfg)
 		if !strings.Contains(got, "shell unavailable") {
 			t.Errorf("%s: reason must lead with the shell-unavailable cause, got %q", name, got)
 		}
@@ -366,7 +366,7 @@ func TestShellScopeMissReasonPreciseCause(t *testing.T) {
 // silently lose its shell while the default-tier one kept it.
 func TestUntrustedMutatingDefMemberKeepsShell(t *testing.T) {
 	cfg := untrustedTeamCfg(t)
-	prov := bashThenEdit()
+	prov := shellThenEdit()
 	def := agents.AgentDef{Name: "builder", Tools: []string{"Read", "Shell", "Edit"}}
 	factory, _, _, _, _ := buildTeamWiring(context.Background(), cfg, regForTest(prov, providerMock, cfg.Model), prov, providerMock, cfg.Model, nil, regOf(def), nil, catalogAssets{}, false)
 	build := factory(team.New("t"), agent.MemberSpec{Name: "writer", AgentType: "builder", Mutating: true}, "")

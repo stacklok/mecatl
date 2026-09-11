@@ -696,7 +696,9 @@ message ServerCapabilities {
   // teams is true when agent teams are enabled (a member-engine factory is
   // wired). Gates the ctrl+a deep view's relevance.
   bool teams = 5;
-  // bash is true when the Bash tool is registered (i.e. NOT --no-bash).
+  // bash reports availability of the canonical Shell tool. Its historical
+  // spelling is retained for wire/API compatibility; false means Shell is not
+  // registered (for example, the operator ran --no-shell).
   bool bash = 6;
   // image is true when the wired LLM provider consumes image prompt parts.
   // Gates the @-mention file-attach UX for images (a client refuses to send an

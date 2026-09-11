@@ -2316,12 +2316,12 @@ change: the loop still emits exactly THREE operator lines.
 ShellStatus; ADR 0201).** The open half of #23 after ADR 0015's background subagents:
 a long-running shell command (a dev server, a watch loop, a slow build) detaches
 instead of blocking the turn. **The tool is the AGENT loop's own Shell**
-(`engine/agent/bashtool.go`, `ShellTool` / `NewShellTool`), NOT the fstools adapter's —
+(`engine/agent/shelltool.go`, `ShellTool` / `NewShellTool`), NOT the fstools adapter's —
 the background half needs the parent run's `childRunRegistry`, an agent-package type
 fstools cannot import, so the foreground half is RE-IMPLEMENTED byte-identical to the
 fstools body (same arg validation, timeout ctx, `runner.Run`, combined-output shaping,
-the 25 000-byte cap, the exit-code error — `bashToolMaxOutputBytes` /
-`bashToolTruncationMarker` mirror `fstools.MaxOutputBytes` / `TruncationMarker`
+the 25 000-byte cap, the exit-code error — `shellToolMaxOutputBytes` /
+`shellToolTruncationMarker` mirror `fstools.MaxOutputBytes` / `TruncationMarker`
 EXACTLY, kept identical by discipline) and the background half rides the
 `childCapableTool` seam (`ExecuteWithParent`), the same dispatcher seam Subagent /
 SubagentStatus reach `parentCaps` through. It registers under the literal name
@@ -2332,7 +2332,7 @@ IDENTICAL deny/ask/allow fold, compound-command split, plan-mode gate, and guard
 modelhook `Shell` rules as a foreground call; a second tool name would silently bypass
 the bash gate (D1: any new shell affordance must register under the gated name or
 extend it). The name's single authority moved to `engine/tool/tool.go`
-(`ShellToolName`); `engine/adapter/fstools/bash.go` aliases it
+(`ShellToolName`); `engine/adapter/fstools/shell.go` aliases it
 (`fstools.ShellToolName = tool.ShellToolName`) so the adapter and the agent tool share
 one constant. **Registry family (D4):** a background call registers a
 `childFamilyShellCmd` ("bash-cmd") entry on the parent run's registry under
@@ -2346,7 +2346,7 @@ registry gained three bash-only fields (`outputTail *tailBuffer`, `exitCode int`
 `collectMatching` / `liveBackgroundIDsMatching` (nil exclude ⇒ every entry) — so the
 SHARED registry serves two DISJOINT projections: `SubagentStatus` filters bash-cmd
 OUT (`delegationFamiliesOnly`), `ShellStatus` filters the three delegation families
-out (`bashCmdFamiliesOnly`); one stored body, exactly-once delivery, two doors, and
+out (`shellCmdFamiliesOnly`); one stored body, exactly-once delivery, two doors, and
 neither tool can drift its view of an entry or deliver through the other. The
 background detach is FAIL-FAST on the job-count gate (`maxBackgroundShellJobs` = 8 —
 the Subagent gate's scale; a job holds its slot ACROSS turns so blocking could
@@ -2375,7 +2375,7 @@ retaining the LAST `maxShellJobTailBytes` = 64 KiB (retention exceeds the 25 000
 render cap so ShellStatus shows more than one render; 8 jobs ≈ 512 KiB worst case,
 bounded) over a 2×capacity scratch (append + slide, one bounded memmove per write,
 zero reallocations), with a `Truncated` flag set the first time a byte drops.
-**ShellStatus** (`engine/agent/bashstatus.go`, `ShellStatusTool` /
+**ShellStatus** (`engine/agent/shellstatus.go`, `ShellStatusTool` /
 `NewShellStatusTool`, read-only — `ReadOnly() == true` so a `wait_ms` park overlaps
 other tools in the turn) is the SOLE status/collect/cancel channel: no args → the
 roster of THIS run's bash jobs (ids + state + stop ONLY — the command text is
@@ -2419,9 +2419,9 @@ The no-fs profile's excluded set gained `ShellStatus` (no Shell ⇒ no jobs to s
 identical to foreground Shell:** the start is the ONE main-run ask when policy says
 Ask (PauseForApproval before anything detaches); once started the job runs to
 completion/cancel/drain with no further gating, exactly as a foreground command is
-gated once at start. Guards: `engine/agent/bashtool_internal_test.go` +
-`bashstatus_internal_test.go` + `tailbuffer_internal_test.go` +
-`background_bash_e2e_test.go` (the offline end-to-end), `internal/adapter/osfs/
+gated once at start. Guards: `engine/agent/shelltool_internal_test.go` +
+`shellstatus_internal_test.go` + `tailbuffer_internal_test.go` +
+`background_shell_e2e_test.go` (the offline end-to-end), `internal/adapter/osfs/
 osfs_stream_test.go` + `command_procgroup_unix_test.go` (the streaming seam + the
 group-kill), and the composition pins above. DEFERRED (v2): foreground→background
 mid-flight promotion (Ctrl+B — the blocking `CommandRunner.Run` seam has no detach

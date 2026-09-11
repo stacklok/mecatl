@@ -20,7 +20,7 @@ func TestCanonicalShellTool_Scenario1_RejectsLegacyToolCall(t *testing.T) {
 	legacy := session.NewToolCall("legacy", "Bash", []byte(`{"command":"echo should-not-run"}`))
 	eng := NewEngine(Deps{LLM: mockllm.New(mockllm.ToolCallTurn(legacy), mockllm.TextTurn("done")), Catalog: catalog, Policy: permpolicy.NewPolicy([]governance.Rule{{Tool: tool.ShellToolName, Effect: governance.Allow}}, nil)})
 	sess := session.New("legacy", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws", Revision: "v1"}, session.Limits{MaxTurns: 3}, time.Now())
-	run := eng.Run(context.Background(), sess, bashEnvRunner(runner), RunRequest{Text: "run"})
+	run := eng.Run(context.Background(), sess, shellEnvRunner(runner), RunRequest{Text: "run"})
 	var result session.ToolResult
 	for event := range run.Events() {
 		if event.Type == session.EvToolResult && event.ToolResult != nil {
@@ -105,7 +105,7 @@ func TestCanonicalShellTool_Scenario2_LegacyPendingCallRejected(t *testing.T) {
 	catalog := tool.NewCatalog()
 	catalog.MustRegister(NewShellTool())
 	eng := NewEngine(Deps{LLM: mockllm.New(mockllm.TextTurn("done")), Catalog: catalog, Policy: permpolicy.NewPolicy([]governance.Rule{{Tool: tool.ShellToolName, Effect: governance.Allow}}, nil)})
-	run := eng.ResumeApproval(context.Background(), sess, bashEnvRunner(runner), askID, session.VerdictAllowOnce)
+	run := eng.ResumeApproval(context.Background(), sess, shellEnvRunner(runner), askID, session.VerdictAllowOnce)
 	var result session.ToolResult
 	for event := range run.Events() {
 		if event.Type == session.EvToolResult && event.ToolResult != nil {

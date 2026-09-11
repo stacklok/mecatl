@@ -38,9 +38,9 @@ const maxSubagentStatusWaitMs = 120000
 // delegation id is never collected through ShellStatus.
 var delegationFamiliesOnly = map[childFamily]bool{childFamilyShellCmd: true}
 
-// bashCmdFamiliesOnly is the mirror set for ShellStatus: it projects ONLY the
+// shellCmdFamiliesOnly is the mirror set for ShellStatus: it projects ONLY the
 // bash-cmd background jobs, excluding every delegation family.
-var bashCmdFamiliesOnly = map[childFamily]bool{
+var shellCmdFamiliesOnly = map[childFamily]bool{
 	childFamilySubagent:       true,
 	childFamilyParallelBranch: true,
 	childFamilyTeamMember:     true,

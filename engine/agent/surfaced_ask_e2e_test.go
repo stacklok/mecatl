@@ -27,7 +27,7 @@ func TestE2E_SurfacedAskAllowed(t *testing.T) {
 		mockllm.ToolCallTurn(toolCall("k1", "Shell", `{"command":"cat $(zap)"}`)),
 		mockllm.TextTurn("child: command output processed"),
 	)
-	childEngine := bashChildEngine(childLLM, bash)
+	childEngine := shellChildEngine(childLLM, bash)
 	task := agent.NewSubagentTool(childEngine, agent.WithChildForker(&recordingSubagentForker{}))
 
 	parentLLM := mockllm.New(
@@ -69,7 +69,7 @@ func TestE2E_SurfacedChildAskCarriesChildGatedCallID(t *testing.T) {
 		mockllm.ToolCallTurn(toolCall("k1", "Shell", `{"command":"cat $(zap)"}`)),
 		mockllm.TextTurn("child: command output processed"),
 	)
-	childEngine := bashChildEngine(childLLM, bash)
+	childEngine := shellChildEngine(childLLM, bash)
 	task := agent.NewSubagentTool(childEngine, agent.WithChildForker(&recordingSubagentForker{}))
 
 	parentLLM := mockllm.New(
@@ -103,7 +103,7 @@ func TestE2E_SurfacedAskDenied(t *testing.T) {
 		mockllm.ToolCallTurn(toolCall("k1", "Shell", `{"command":"cat $(zap)"}`)),
 		mockllm.TextTurn("child: proceeding without that command"),
 	)
-	childEngine := bashChildEngine(childLLM, bash)
+	childEngine := shellChildEngine(childLLM, bash)
 	task := agent.NewSubagentTool(childEngine, agent.WithChildForker(&recordingSubagentForker{}))
 
 	parentLLM := mockllm.New(
@@ -136,7 +136,7 @@ func TestE2E_HeadlessAutoDeny(t *testing.T) {
 		mockllm.ToolCallTurn(toolCall("k1", "Shell", `{"command":"cat $(zap)"}`)),
 		mockllm.TextTurn("child: adapted"),
 	)
-	childEngine := bashChildEngine(childLLM, bash)
+	childEngine := shellChildEngine(childLLM, bash)
 	task := agent.NewSubagentTool(childEngine, agent.WithChildForker(&recordingSubagentForker{}))
 
 	diag := newRecordingDiag()
@@ -175,7 +175,7 @@ func TestE2E_AdversarialSubstitutionHidesDestructiveStillDenied(t *testing.T) {
 		mockllm.ToolCallTurn(toolCall("k1", "Shell", `{"command":"go test $(zap)"}`)),
 		mockllm.TextTurn("child: adapted"),
 	)
-	childEngine := bashChildEngine(childLLM, bash)
+	childEngine := shellChildEngine(childLLM, bash)
 	task := agent.NewSubagentTool(childEngine, agent.WithChildForker(&recordingSubagentForker{}))
 
 	parentLLM := mockllm.New(

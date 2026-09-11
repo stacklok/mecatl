@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func bashArgs(cmd string) json.RawMessage {
+func shellArgs(cmd string) json.RawMessage {
 	b, _ := json.Marshal(map[string]string{"command": cmd})
 	return b
 }
@@ -55,7 +55,7 @@ func TestDenyBeatsAllowAcrossScopes(t *testing.T) {
 		{Scope: ScopeManaged, Tool: "Shell", Pattern: "rm *", Effect: Deny},
 	}
 	e := NewEvaluator(rules)
-	got := e.Evaluate("Shell", bashArgs("rm x"), false)
+	got := e.Evaluate("Shell", shellArgs("rm x"), false)
 	if got.Effect != Deny {
 		t.Fatalf("expected Deny (deny beats allow across scopes), got %v (%s)", got.Effect, got.Reason)
 	}
@@ -68,7 +68,7 @@ func TestDenyInLowScopeBeatsAllowInHighScope(t *testing.T) {
 		{Scope: ScopeUser, Tool: "Shell", Pattern: "rm *", Effect: Deny},
 	}
 	e := NewEvaluator(rules)
-	if got := e.Evaluate("Shell", bashArgs("rm x"), false); got.Effect != Deny {
+	if got := e.Evaluate("Shell", shellArgs("rm x"), false); got.Effect != Deny {
 		t.Fatalf("expected Deny regardless of scope, got %v", got.Effect)
 	}
 }
@@ -156,7 +156,7 @@ func TestCompoundShellDenyBlocksWhole(t *testing.T) {
 		{Scope: ScopeUser, Tool: "Shell", Pattern: "rm *", Effect: Deny},
 	}
 	e := NewEvaluator(rules)
-	got := e.Evaluate("Shell", bashArgs("git status && rm -rf /"), false)
+	got := e.Evaluate("Shell", shellArgs("git status && rm -rf /"), false)
 	if got.Effect != Deny {
 		t.Fatalf("expected Deny for compound containing rm, got %v (%s)", got.Effect, got.Reason)
 	}
@@ -169,7 +169,7 @@ func TestCompoundShellAllAllowed(t *testing.T) {
 		{Scope: ScopeUser, Tool: "Shell", Pattern: "ls", Effect: Allow},
 	}
 	e := NewEvaluator(rules)
-	if got := e.Evaluate("Shell", bashArgs("git status && ls"), false); got.Effect != Allow {
+	if got := e.Evaluate("Shell", shellArgs("git status && ls"), false); got.Effect != Allow {
 		t.Fatalf("expected Allow, got %v (%s)", got.Effect, got.Reason)
 	}
 }
@@ -180,7 +180,7 @@ func TestCanonicalizedShellMatching(t *testing.T) {
 		{Scope: ScopeManaged, Tool: "Shell", Pattern: "rm *", Effect: Deny},
 	}
 	e := NewEvaluator(rules)
-	if got := e.Evaluate("Shell", bashArgs("timeout 5 rm x"), false); got.Effect != Deny {
+	if got := e.Evaluate("Shell", shellArgs("timeout 5 rm x"), false); got.Effect != Deny {
 		t.Fatalf("expected Deny after canonicalizing timeout wrapper, got %v", got.Effect)
 	}
 }
@@ -205,12 +205,12 @@ func TestPlanModeFilter(t *testing.T) {
 		{"Copy denied", "Copy", copyMoveArgs("/x", "/y"), Deny},
 		{"Move denied", "Move", copyMoveArgs("/x", "/y"), Deny},
 		{"Remove denied", "Remove", fileArgs("/x"), Deny},
-		{"non-RO Shell denied", "Shell", bashArgs("rm -rf /"), Deny},
+		{"non-RO Shell denied", "Shell", shellArgs("rm -rf /"), Deny},
 		{"Read allowed", "Read", fileArgs("/x"), Allow},
 		{"ListDir allowed", "ListDir", fileArgs("/x"), Allow},
 		{"Grep allowed", "Grep", fileArgs("/x"), Allow},
 		{"Glob allowed", "Glob", fileArgs("/x"), Allow},
-		{"read-only Shell allowed", "Shell", bashArgs("git status"), Allow},
+		{"read-only Shell allowed", "Shell", shellArgs("git status"), Allow},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -275,7 +275,7 @@ func TestSubstitutionEscalatesPastAllow(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := e.Evaluate("Shell", bashArgs(tc.cmd), false)
+			got := e.Evaluate("Shell", shellArgs(tc.cmd), false)
 			if effectRank(got.Effect) < effectRank(Ask) {
 				t.Fatalf("Evaluate(%q) = %v (%s); want >= Ask", tc.cmd, got.Effect, got.Reason)
 			}
@@ -291,7 +291,7 @@ func TestSubstitutionPreservesDeny(t *testing.T) {
 		{Scope: ScopeManaged, Tool: "Shell", Pattern: "*rm*", Effect: Deny},
 	}
 	e := NewEvaluator(rules)
-	if got := e.Evaluate("Shell", bashArgs("echo $(rm -rf build)"), false); got.Effect != Deny {
+	if got := e.Evaluate("Shell", shellArgs("echo $(rm -rf build)"), false); got.Effect != Deny {
 		t.Fatalf("expected Deny for hidden rm, got %v (%s)", got.Effect, got.Reason)
 	}
 }
@@ -304,15 +304,15 @@ func TestResolveShellSubstitutionLoosening(t *testing.T) {
 	e := NewEvaluator(allowAll)
 
 	// Read-only substitution: allowed, not floored.
-	if got := e.Evaluate("Shell", bashArgs("cat $(ls)"), false); got.Effect != Allow {
+	if got := e.Evaluate("Shell", shellArgs("cat $(ls)"), false); got.Effect != Allow {
 		t.Fatalf("read-only substitution: Evaluate = %v (%s); want Allow", got.Effect, got.Reason)
 	}
-	if got := e.Evaluate("Shell", bashArgs(`for p in $(git ls-files); do cat "$p"; done`), false); got.Effect != Allow {
+	if got := e.Evaluate("Shell", shellArgs(`for p in $(git ls-files); do cat "$p"; done`), false); got.Effect != Allow {
 		t.Fatalf("read-only loop substitution: Evaluate = %v (%s); want Allow", got.Effect, got.Reason)
 	}
 	// Non-read-only substitution (innocuous stand-in `zap`): still floored to Ask
 	// even under allow-all (the floor stands without yolo).
-	if got := e.Evaluate("Shell", bashArgs("cat $(zap)"), false); got.Effect != Ask {
+	if got := e.Evaluate("Shell", shellArgs("cat $(zap)"), false); got.Effect != Ask {
 		t.Fatalf("non-read-only substitution: Evaluate = %v (%s); want Ask", got.Effect, got.Reason)
 	}
 	// A configured Deny on the inner stand-in still wins (deny-dominance).
@@ -320,7 +320,7 @@ func TestResolveShellSubstitutionLoosening(t *testing.T) {
 		{Scope: ScopeCLI, Effect: Allow},
 		{Scope: ScopeManaged, Tool: "Shell", Pattern: "*zap*", Effect: Deny},
 	})
-	if got := eDeny.Evaluate("Shell", bashArgs("echo $(zap)"), false); got.Effect != Deny {
+	if got := eDeny.Evaluate("Shell", shellArgs("echo $(zap)"), false); got.Effect != Deny {
 		t.Fatalf("configured deny on inner: Evaluate = %v (%s); want Deny", got.Effect, got.Reason)
 	}
 }
@@ -333,7 +333,7 @@ func TestResolveShellYoloLoosensFloor(t *testing.T) {
 	e := NewEvaluator(allowAll, WithLooseSubstitution(true))
 
 	// A non-read-only substitution (stand-in) is now allowed under loose+allow-all.
-	if got := e.Evaluate("Shell", bashArgs("cat $(zap)"), false); got.Effect != Allow {
+	if got := e.Evaluate("Shell", shellArgs("cat $(zap)"), false); got.Effect != Allow {
 		t.Fatalf("loose substitution: Evaluate = %v (%s); want Allow", got.Effect, got.Reason)
 	}
 	// A configured Deny on the inner stand-in still wins even with loose substitution.
@@ -341,7 +341,7 @@ func TestResolveShellYoloLoosensFloor(t *testing.T) {
 		{Scope: ScopeCLI, Effect: Allow},
 		{Scope: ScopeManaged, Tool: "Shell", Pattern: "*zap*", Effect: Deny},
 	}, WithLooseSubstitution(true))
-	if got := eDeny.Evaluate("Shell", bashArgs("echo $(zap)"), false); got.Effect != Deny {
+	if got := eDeny.Evaluate("Shell", shellArgs("echo $(zap)"), false); got.Effect != Deny {
 		t.Fatalf("loose + configured deny: Evaluate = %v (%s); want Deny", got.Effect, got.Reason)
 	}
 	// T4: floor loosening must NEVER suppress a CONFIGURED Ask. A ScopeManaged Ask on the
@@ -351,13 +351,13 @@ func TestResolveShellYoloLoosensFloor(t *testing.T) {
 		{Scope: ScopeCLI, Effect: Allow},
 		{Scope: ScopeManaged, Tool: "Shell", Pattern: "*zap*", Effect: Ask},
 	}, WithLooseSubstitution(true))
-	if got := eAsk.Evaluate("Shell", bashArgs("echo $(zap)"), false); got.Effect != Ask {
+	if got := eAsk.Evaluate("Shell", shellArgs("echo $(zap)"), false); got.Effect != Ask {
 		t.Fatalf("loose + configured Ask: Evaluate = %v (%s); want Ask (a configured Ask must survive yolo)", got.Effect, got.Reason)
 	}
 	// Without loose (and without yolo) the same call floors at Ask — proves the
 	// default is unchanged.
 	ePlain := NewEvaluator(allowAll)
-	if got := ePlain.Evaluate("Shell", bashArgs("cat $(zap)"), false); got.Effect != Ask {
+	if got := ePlain.Evaluate("Shell", shellArgs("cat $(zap)"), false); got.Effect != Ask {
 		t.Fatalf("default (no loose): Evaluate = %v (%s); want Ask", got.Effect, got.Reason)
 	}
 }
@@ -375,7 +375,7 @@ func TestPlanModeDeniesSubstitutionAndNewline(t *testing.T) {
 	}
 	for _, cmd := range cases {
 		t.Run(cmd, func(t *testing.T) {
-			if got := e.Evaluate("Shell", bashArgs(cmd), true); got.Effect != Deny {
+			if got := e.Evaluate("Shell", shellArgs(cmd), true); got.Effect != Deny {
 				t.Fatalf("plan mode Evaluate(%q) = %v (%s); want Deny", cmd, got.Effect, got.Reason)
 			}
 		})

@@ -23,7 +23,7 @@ import (
 func yoloChildEngine(llm port.LLMProvider, bash tool.Tool) *agent.Engine {
 	return agent.NewEngine(agent.Deps{
 		LLM:     llm,
-		Catalog: bashCatalog(bash),
+		Catalog: shellCatalog(bash),
 		Policy: permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil,
 			governance.WithAudience(governance.AudienceSubagent),
 			governance.WithLooseSubstitution(true)),
@@ -39,7 +39,7 @@ func yoloChildEngine(llm port.LLMProvider, bash tool.Tool) *agent.Engine {
 func autoChildEngine(llm port.LLMProvider, bash tool.Tool) *agent.Engine {
 	return agent.NewEngine(agent.Deps{
 		LLM:     llm,
-		Catalog: bashCatalog(bash),
+		Catalog: shellCatalog(bash),
 		Policy: permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil,
 			governance.WithAudience(governance.AudienceSubagent)),
 		Model: "child-model",

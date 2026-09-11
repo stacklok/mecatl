@@ -16,7 +16,7 @@ never executed in. The correct unit is an **execution environment**: an identity
 filesystem and command namespace.
 
 The current public seam passes a `tool.Workspace` to tools while Bash closes over a separately injected
-`tool.CommandRunner` (`engine/tool/tool.go`, `engine/adapter/fstools/bash.go`). Forking and merging are
+`tool.CommandRunner` (`engine/tool/tool.go`, `engine/adapter/fstools/bash.go`). Forking and merging are <!-- lint:not-a-citation: historical path retained by the frozen ADR -->
 already separate capabilities (`engine/tool/isolation.go`). Collapsing these into a large interface now
 would widen the core API before remote ownership, lifecycle, transport, and durable reattachment are
 understood. It would also put persistence in the wrong layer: `session` cannot import `tool`, because

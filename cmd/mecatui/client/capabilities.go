@@ -16,7 +16,9 @@ type Capabilities struct {
 	Skills        bool
 	Teams         bool
 	Agents        bool
-	Bash          bool
+	// Bash reports availability of the canonical Shell tool. Its historical
+	// spelling is retained for compatibility with the established wire/Go API.
+	Bash bool
 	// Soul / UserModel report whether the server has a soul source / user-model store
 	// wired. They gate the /soul and /usermodel read-only inspection panels.
 	Soul      bool

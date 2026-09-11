@@ -17,7 +17,7 @@ import (
 // Compile-time assertion that Policy satisfies the frozen port interface.
 var _ port.PermissionPolicy = (*permpolicy.Policy)(nil)
 
-func bashCall(cmd string) session.ToolCall {
+func shellCall(cmd string) session.ToolCall {
 	args, _ := json.Marshal(map[string]string{"command": cmd})
 	return session.NewToolCall("c1", "Shell", args)
 }
@@ -35,7 +35,7 @@ func TestPolicyDenyBeatsAllow(t *testing.T) {
 		{Scope: governance.ScopeManaged, Tool: "Shell", Pattern: "rm *", Effect: governance.Allow},
 		{Scope: governance.ScopeUser, Tool: "Shell", Pattern: "rm *", Effect: governance.Deny},
 	}, nil)
-	got := p.Evaluate(context.Background(), sid, session.ModeDefault, bashCall("rm x"), nil)
+	got := p.Evaluate(context.Background(), sid, session.ModeDefault, shellCall("rm x"), nil)
 	if got.Effect != governance.Deny {
 		t.Fatalf("expected Deny, got %v", got.Effect)
 	}
@@ -81,7 +81,7 @@ func TestPolicyAcceptEditsAutoAllowsEditWrite(t *testing.T) {
 		t.Fatalf("accept-edits mode second Edit: expected Allow, got %v", got.Effect)
 	}
 	// Shell is untouched: accept-edits auto-accepts file edits only.
-	if got := p.Evaluate(context.Background(), sid, session.ModeAccept, bashCall("rm x"), nil); got.Effect != governance.Ask {
+	if got := p.Evaluate(context.Background(), sid, session.ModeAccept, shellCall("rm x"), nil); got.Effect != governance.Ask {
 		t.Fatalf("accept-edits mode Shell: expected Ask (unaffected), got %v", got.Effect)
 	}
 }
@@ -109,11 +109,11 @@ func TestPolicyAcceptEditsDefersToConfiguredAskAndDeny(t *testing.T) {
 // `git status` resolve Allow (it would otherwise be the default Ask).
 func TestPolicyLearnThenAllow(t *testing.T) {
 	p := permpolicy.NewPolicy(nil, permstore.New())
-	if got := p.Evaluate(context.Background(), sid, session.ModeDefault, bashCall("git status"), nil); got.Effect != governance.Ask {
+	if got := p.Evaluate(context.Background(), sid, session.ModeDefault, shellCall("git status"), nil); got.Effect != governance.Ask {
 		t.Fatalf("pre-learn: expected Ask, got %v", got.Effect)
 	}
-	p.Learn(sid, bashCall("git status"))
-	if got := p.Evaluate(context.Background(), sid, session.ModeDefault, bashCall("git status"), nil); got.Effect != governance.Allow {
+	p.Learn(sid, shellCall("git status"))
+	if got := p.Evaluate(context.Background(), sid, session.ModeDefault, shellCall("git status"), nil); got.Effect != governance.Allow {
 		t.Fatalf("post-learn: expected Allow, got %v", got.Effect)
 	}
 }
@@ -123,8 +123,8 @@ func TestPolicyLearnedAllowCannotOverrideDeny(t *testing.T) {
 	p := permpolicy.NewPolicy([]governance.Rule{
 		{Scope: governance.ScopeManaged, Tool: "Shell", Pattern: "git status", Effect: governance.Deny},
 	}, permstore.New())
-	p.Learn(sid, bashCall("git status"))
-	if got := p.Evaluate(context.Background(), sid, session.ModeDefault, bashCall("git status"), nil); got.Effect != governance.Deny {
+	p.Learn(sid, shellCall("git status"))
+	if got := p.Evaluate(context.Background(), sid, session.ModeDefault, shellCall("git status"), nil); got.Effect != governance.Deny {
 		t.Fatalf("expected Deny to survive a learned allow, got %v", got.Effect)
 	}
 }
@@ -141,11 +141,11 @@ func TestPolicyLearnedAllowDoesNotBypassPlanMode(t *testing.T) {
 // Cross-session isolation: a rule learned in session A is invisible to session B.
 func TestPolicyLearnedRuleSessionIsolation(t *testing.T) {
 	p := permpolicy.NewPolicy(nil, permstore.New())
-	p.Learn("A", bashCall("git status"))
-	if got := p.Evaluate(context.Background(), "A", session.ModeDefault, bashCall("git status"), nil); got.Effect != governance.Allow {
+	p.Learn("A", shellCall("git status"))
+	if got := p.Evaluate(context.Background(), "A", session.ModeDefault, shellCall("git status"), nil); got.Effect != governance.Allow {
 		t.Fatalf("session A should see its learned allow, got %v", got.Effect)
 	}
-	if got := p.Evaluate(context.Background(), "B", session.ModeDefault, bashCall("git status"), nil); got.Effect != governance.Ask {
+	if got := p.Evaluate(context.Background(), "B", session.ModeDefault, shellCall("git status"), nil); got.Effect != governance.Ask {
 		t.Fatalf("session B must NOT see session A's learned rule, got %v", got.Effect)
 	}
 }
@@ -155,8 +155,8 @@ func TestPolicyLearnedRuleSessionIsolation(t *testing.T) {
 // silently learned as a tool+pattern allow).
 func TestPolicyLearnRefusesCompound(t *testing.T) {
 	p := permpolicy.NewPolicy(nil, permstore.New())
-	p.Learn(sid, bashCall("git status; rm -rf /"))
-	if got := p.Evaluate(context.Background(), sid, session.ModeDefault, bashCall("git status"), nil); got.Effect != governance.Ask {
+	p.Learn(sid, shellCall("git status; rm -rf /"))
+	if got := p.Evaluate(context.Background(), sid, session.ModeDefault, shellCall("git status"), nil); got.Effect != governance.Ask {
 		t.Fatalf("a compound learn must not have recorded `git status`, got %v", got.Effect)
 	}
 }
@@ -164,8 +164,8 @@ func TestPolicyLearnRefusesCompound(t *testing.T) {
 // With a nil store, Learn is a no-op and Evaluate is the pure static policy.
 func TestPolicyNilStoreLearnIsNoop(t *testing.T) {
 	p := permpolicy.NewPolicy(nil, nil)
-	p.Learn(sid, bashCall("git status")) // must not panic
-	if got := p.Evaluate(context.Background(), sid, session.ModeDefault, bashCall("git status"), nil); got.Effect != governance.Ask {
+	p.Learn(sid, shellCall("git status")) // must not panic
+	if got := p.Evaluate(context.Background(), sid, session.ModeDefault, shellCall("git status"), nil); got.Effect != governance.Ask {
 		t.Fatalf("nil-store policy should stay Ask, got %v", got.Effect)
 	}
 }
@@ -199,7 +199,7 @@ func TestPolicyResolverPerWorkspace(t *testing.T) {
 
 	wsA := memfs.NewWorkspace("/ws-a")
 	wsB := memfs.NewWorkspace("/ws-b")
-	call := bashCall("go test ./...")
+	call := shellCall("go test ./...")
 
 	if got := p.Evaluate(context.Background(), sid, session.ModeDefault, call, wsA); got.Effect != governance.Allow {
 		t.Fatalf("ws-a should allow (config allow loosens built-in ask), got %v", got.Effect)
@@ -220,9 +220,9 @@ func TestPolicyResolverDenyBeatsLearnedAllow(t *testing.T) {
 		"/ws": {{Scope: governance.ScopeSharedProject, Tool: "Shell", Pattern: "git status", Effect: governance.Deny}},
 	}}
 	p := permpolicy.NewPolicyWithResolver(nil, permstore.New(), resolver)
-	p.Learn(sid, bashCall("git status")) // learn an allow for the very same call
+	p.Learn(sid, shellCall("git status")) // learn an allow for the very same call
 	ws := memfs.NewWorkspace("/ws")
-	if got := p.Evaluate(context.Background(), sid, session.ModeDefault, bashCall("git status"), ws); got.Effect != governance.Deny {
+	if got := p.Evaluate(context.Background(), sid, session.ModeDefault, shellCall("git status"), ws); got.Effect != governance.Deny {
 		t.Fatalf("project deny must beat a learned allow, got %v", got.Effect)
 	}
 }
@@ -235,7 +235,7 @@ func TestPolicyAllowAllLoosensBuiltinFloor(t *testing.T) {
 		{Scope: governance.ScopeBuiltinDefault, Tool: "Shell", Effect: governance.Ask},
 		{Scope: governance.ScopeCLI, Effect: governance.Allow},
 	}, nil)
-	if got := pShell.Evaluate(context.Background(), sid, session.ModeDefault, bashCall("ls"), nil); got.Effect != governance.Allow {
+	if got := pShell.Evaluate(context.Background(), sid, session.ModeDefault, shellCall("ls"), nil); got.Effect != governance.Allow {
 		t.Fatalf("allow-all should loosen the built-in Shell Ask floor, got %v", got.Effect)
 	}
 
@@ -256,7 +256,7 @@ func TestPolicyAllowAllLosesToManagedDeny(t *testing.T) {
 		{Scope: governance.ScopeCLI, Effect: governance.Allow},
 		{Scope: governance.ScopeManaged, Tool: "Shell", Pattern: "rm *", Effect: governance.Deny},
 	}, nil)
-	if got := p.Evaluate(context.Background(), sid, session.ModeDefault, bashCall("rm x"), nil); got.Effect != governance.Deny {
+	if got := p.Evaluate(context.Background(), sid, session.ModeDefault, shellCall("rm x"), nil); got.Effect != governance.Deny {
 		t.Fatalf("a managed Deny must beat allow-all, got %v", got.Effect)
 	}
 }
@@ -269,7 +269,7 @@ func TestPolicyAllowAllDefersToConfiguredAsk(t *testing.T) {
 		{Scope: governance.ScopeCLI, Effect: governance.Allow},
 		{Scope: governance.ScopeUser, Tool: "Shell", Pattern: "git push*", Effect: governance.Ask},
 	}, nil)
-	if got := p.Evaluate(context.Background(), sid, session.ModeDefault, bashCall("git push origin"), nil); got.Effect != governance.Ask {
+	if got := p.Evaluate(context.Background(), sid, session.ModeDefault, shellCall("git push origin"), nil); got.Effect != governance.Ask {
 		t.Fatalf("allow-all must defer to a configured Ask, got %v", got.Effect)
 	}
 }
@@ -283,7 +283,7 @@ func TestPolicyAllowAllCompoundShellDenyWins(t *testing.T) {
 		{Scope: governance.ScopeCLI, Effect: governance.Allow},
 		{Scope: governance.ScopeUser, Tool: "Shell", Pattern: "rm *", Effect: governance.Deny},
 	}, nil)
-	if got := p.Evaluate(context.Background(), sid, session.ModeDefault, bashCall("ls && rm x"), nil); got.Effect != governance.Deny {
+	if got := p.Evaluate(context.Background(), sid, session.ModeDefault, shellCall("ls && rm x"), nil); got.Effect != governance.Deny {
 		t.Fatalf("compound-bash deny must win under allow-all, got %v", got.Effect)
 	}
 }
@@ -307,19 +307,19 @@ func TestPolicyAudienceOptionForwarded(t *testing.T) {
 
 	subPolicy := permpolicy.NewPolicyWithResolver(floor, nil, resolver,
 		governance.WithAudience(governance.AudienceSubagent))
-	if got := subPolicy.Evaluate(context.Background(), sid, session.ModeDefault, bashCall("go test ./..."), ws); got.Effect != governance.Allow {
+	if got := subPolicy.Evaluate(context.Background(), sid, session.ModeDefault, shellCall("go test ./..."), ws); got.Effect != governance.Allow {
 		t.Fatalf("subagent policy must honour an AudienceSubagent resolver allow, got %v (%s)", got.Effect, got.Reason)
 	}
-	if got := subPolicy.Evaluate(context.Background(), sid, session.ModeDefault, bashCall("go vet ./..."), ws); got.Effect != governance.Ask {
+	if got := subPolicy.Evaluate(context.Background(), sid, session.ModeDefault, shellCall("go vet ./..."), ws); got.Effect != governance.Ask {
 		t.Fatalf("subagent policy must IGNORE an AudienceMain resolver allow, got %v (%s)", got.Effect, got.Reason)
 	}
 
 	mainPolicy := permpolicy.NewPolicyWithResolver(floor, nil, resolver,
 		governance.WithAudience(governance.AudienceMain))
-	if got := mainPolicy.Evaluate(context.Background(), sid, session.ModeDefault, bashCall("go vet ./..."), ws); got.Effect != governance.Allow {
+	if got := mainPolicy.Evaluate(context.Background(), sid, session.ModeDefault, shellCall("go vet ./..."), ws); got.Effect != governance.Allow {
 		t.Fatalf("main policy must honour an AudienceMain resolver allow, got %v (%s)", got.Effect, got.Reason)
 	}
-	if got := mainPolicy.Evaluate(context.Background(), sid, session.ModeDefault, bashCall("go test ./..."), ws); got.Effect != governance.Ask {
+	if got := mainPolicy.Evaluate(context.Background(), sid, session.ModeDefault, shellCall("go test ./..."), ws); got.Effect != governance.Ask {
 		t.Fatalf("main policy must IGNORE an AudienceSubagent resolver allow, got %v (%s)", got.Effect, got.Reason)
 	}
 }

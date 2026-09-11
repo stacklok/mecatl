@@ -461,7 +461,9 @@ export type ServerCapabilities = Message<"mecatl.v1.ServerCapabilities"> & {
   teams: boolean;
 
   /**
-   * bash is true when the Bash tool is registered (i.e. NOT --no-bash).
+   * bash reports availability of the canonical Shell tool. Its historical
+   * spelling is retained for wire/API compatibility; false means Shell is not
+   * registered (for example, the operator ran --no-shell).
    *
    * @generated from field: bool bash = 6;
    */

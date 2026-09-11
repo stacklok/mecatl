@@ -19,20 +19,20 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/osfs"
 )
 
-// bashWriteProvider is a STATELESS scripted LLM (safe for the concurrent child
+// shellWriteProvider is a STATELESS scripted LLM (safe for the concurrent child
 // runs Fork fans out): on the first turn of a branch it calls Shell to write a
 // relative-path marker file; once a tool result is present it ends the turn with a
 // summary. It decides from the request's own history, not a shared cursor.
-type bashWriteProvider struct {
+type shellWriteProvider struct {
 	command string
 	marker  string
 }
 
-func (*bashWriteProvider) Capabilities() port.ProviderCapabilities {
+func (*shellWriteProvider) Capabilities() port.ProviderCapabilities {
 	return port.ProviderCapabilities{}
 }
 
-func (p *bashWriteProvider) Stream(ctx context.Context, req port.LLMRequest) (iter.Seq2[port.Chunk, error], error) {
+func (p *shellWriteProvider) Stream(ctx context.Context, req port.LLMRequest) (iter.Seq2[port.Chunk, error], error) {
 	hasToolResult := false
 	for _, m := range req.Messages {
 		if m.ToolResult != nil {
@@ -133,7 +133,7 @@ func TestForkShellWritesIntoForkNotBase(t *testing.T) {
 		return buildForceCopyRunner(childCfg)
 	}))}
 
-	provider := &bashWriteProvider{command: "echo hi > marker.txt", marker: "marker.txt"}
+	provider := &shellWriteProvider{command: "echo hi > marker.txt", marker: "marker.txt"}
 	childEngine := buildParallelChildEngine(cfg, nil, provider, "", cfg.Model, runner)
 
 	// join=first PRESERVES the winning branch's fork (cleanup not called), so the
@@ -215,7 +215,7 @@ func TestForkGitCommitDoesNotTouchBaseRepo(t *testing.T) {
 	}))}
 
 	// The branch writes a file then commits it — all inside its fork.
-	provider := &bashWriteProvider{
+	provider := &shellWriteProvider{
 		command: "echo branchwork > branch.txt && git add -A && git commit -m 'branch commit' && git update-ref refs/heads/sneaky HEAD",
 		marker:  "branch.txt",
 	}
@@ -304,7 +304,7 @@ func TestParallelBranchRunnerIsHardened(t *testing.T) {
 	cfg := Config{Workspace: base, Model: "mock", Shell: "/bin/sh", EnableParallel: true}
 
 	envFile := filepath.Join(t.TempDir(), "env.txt")
-	provider := &bashWriteProvider{command: "env > " + envFile, marker: "env.txt"}
+	provider := &shellWriteProvider{command: "env > " + envFile, marker: "env.txt"}
 
 	// The REAL wiring under test: registerParallelTool builds the branch runner
 	// itself (this is exactly the line that regressed to the unhardened runner).

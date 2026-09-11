@@ -385,7 +385,7 @@ func TestBackgroundChildSurfacedAskAnsweredMidRun(t *testing.T) {
 		mockllm.ToolCallTurn(toolCall("k1", "Shell", `{"command":"cat $(zap)"}`)),
 		mockllm.TextTurn("child: bash done"),
 	)
-	task := agent.NewSubagentTool(bashChildEngine(childLLM, bash),
+	task := agent.NewSubagentTool(shellChildEngine(childLLM, bash),
 		agent.WithChildForker(&recordingSubagentForker{}))
 
 	parentLLM := mockllm.New(
@@ -432,7 +432,7 @@ func TestBackgroundChildCancelledWhileParkedOnAsk(t *testing.T) {
 		),
 		mockllm.TextTurn("child: never reached"),
 	)
-	task := agent.NewSubagentTool(bashChildEngine(childLLM, bash),
+	task := agent.NewSubagentTool(shellChildEngine(childLLM, bash),
 		agent.WithChildForker(&recordingSubagentForker{}))
 
 	parentLLM := mockllm.New(
@@ -486,7 +486,7 @@ func TestRunEndDrainRetractsParkedAsk(t *testing.T) {
 		mockllm.ToolCallTurn(toolCall("k1", "Shell", `{"command":"cat $(zap)"}`)),
 		mockllm.TextTurn("child resumed fine"),
 	)
-	task := agent.NewSubagentTool(bashChildEngine(childLLM, bash),
+	task := agent.NewSubagentTool(shellChildEngine(childLLM, bash),
 		agent.WithChildForker(&recordingSubagentForker{}),
 		agent.WithSubagentStore(store))
 

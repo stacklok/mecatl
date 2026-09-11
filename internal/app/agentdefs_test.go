@@ -98,7 +98,7 @@ func TestScopedToolNamesDropsMutatingForSubagent(t *testing.T) {
 		t.Fatalf("expected Shell in base when a shell is configured")
 	}
 	def := agents.AgentDef{Name: "writer", Tools: []string{"Read", "Edit", "Write", "Shell"}}
-	names, diags := scopedToolNames(def, base, bashScopeMissReason(cfg))
+	names, diags := scopedToolNames(def, base, shellScopeMissReason(cfg))
 	if strings.Join(names, ",") != "Read" {
 		t.Fatalf("mutating tools not dropped: %v", names)
 	}
@@ -131,20 +131,20 @@ func TestScopedToolNamesModeAllowShell(t *testing.T) {
 	def := agents.AgentDef{Name: "m", Tools: []string{"Read", "Edit", "Write", "Shell"}}
 
 	// (false, true): worktree read-only member keeps Shell, drops Edit/Write.
-	names, _ := scopedToolNamesMode(def, base, false, true, bashScopeMissReason(cfg))
+	names, _ := scopedToolNamesMode(def, base, false, true, shellScopeMissReason(cfg))
 	sort.Strings(names)
 	if strings.Join(names, ",") != "Read,Shell" {
 		t.Fatalf("(allowMutating=false, allowShell=true) kept = %v, want [Read Shell]", names)
 	}
 
 	// (false, false): base-sharing read-only member drops Shell too.
-	names, _ = scopedToolNamesMode(def, base, false, false, bashScopeMissReason(cfg))
+	names, _ = scopedToolNamesMode(def, base, false, false, shellScopeMissReason(cfg))
 	if strings.Join(names, ",") != "Read" {
 		t.Fatalf("(false,false) kept = %v, want [Read] (all mutating dropped)", names)
 	}
 
 	// (true, _): mutating member keeps everything.
-	names, _ = scopedToolNamesMode(def, base, true, false, bashScopeMissReason(cfg))
+	names, _ = scopedToolNamesMode(def, base, true, false, shellScopeMissReason(cfg))
 	sort.Strings(names)
 	if strings.Join(names, ",") != "Edit,Read,Shell,Write" {
 		t.Fatalf("(true,_) kept = %v, want [Shell Edit Read Write]", names)
@@ -156,7 +156,7 @@ func TestScopedToolNamesDefaultSetIsReadOnly(t *testing.T) {
 	cfg := Config{Shell: "/bin/sh", Workspace: t.TempDir(), TrustProject: true}
 	base := baseSubagentTools(cfg)
 	def := agents.AgentDef{Name: "x"}
-	names, _ := scopedToolNames(def, base, bashScopeMissReason(cfg))
+	names, _ := scopedToolNames(def, base, shellScopeMissReason(cfg))
 	sort.Strings(names)
 	// Read-only core tools: FetchMcpResource, Glob, Grep, ListDir, Read, WebFetch.
 	// Edit/Write/Copy/Move/Remove/Shell dropped (all mutating).

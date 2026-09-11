@@ -30,7 +30,7 @@ func TestAudienceMatchMatrix(t *testing.T) {
 			// decision is Deny; when filtered, the no-match default Ask stands.
 			rules := []Rule{{Scope: ScopeSharedProject, Tool: "Shell", Pattern: "rm *", Effect: Deny, Audience: tc.rule}}
 			e := NewEvaluator(rules, WithAudience(tc.evaluator))
-			got := e.Evaluate("Shell", bashArgs("rm x"), false)
+			got := e.Evaluate("Shell", shellArgs("rm x"), false)
 			if tc.matches && got.Effect != Deny {
 				t.Fatalf("rule audience %v should bind evaluator audience %v; got %v", tc.rule, tc.evaluator, got.Effect)
 			}
@@ -50,11 +50,11 @@ func TestSubagentRuleInvisibleToMainAndViceVersa(t *testing.T) {
 	mainAllow := Rule{Scope: ScopeSharedProject, Tool: "Shell", Pattern: "rm *", Effect: Allow, Audience: AudienceMain}
 
 	mainEval := NewEvaluator([]Rule{subAllow}, WithAudience(AudienceMain))
-	if got := mainEval.Evaluate("Shell", bashArgs("rm x"), false); got.Effect != Ask {
+	if got := mainEval.Evaluate("Shell", shellArgs("rm x"), false); got.Effect != Ask {
 		t.Fatalf("subagent allow must be invisible to the main evaluator (default Ask), got %v", got.Effect)
 	}
 	subEval := NewEvaluator([]Rule{mainAllow}, WithAudience(AudienceSubagent))
-	if got := subEval.Evaluate("Shell", bashArgs("rm x"), false); got.Effect != Ask {
+	if got := subEval.Evaluate("Shell", shellArgs("rm x"), false); got.Effect != Ask {
 		t.Fatalf("main allow must be invisible to a subagent evaluator (default Ask), got %v", got.Effect)
 	}
 }
@@ -69,7 +69,7 @@ func TestDenyDominantWithMixedAudiences(t *testing.T) {
 	}
 	for _, aud := range []Audience{AudienceMain, AudienceSubagent, AudienceAll} {
 		e := NewEvaluator(rules, WithAudience(aud))
-		if got := e.Evaluate("Shell", bashArgs("rm x"), false); got.Effect != Deny {
+		if got := e.Evaluate("Shell", shellArgs("rm x"), false); got.Effect != Deny {
 			t.Fatalf("AudienceAll deny must dominate for evaluator audience %v; got %v", aud, got.Effect)
 		}
 	}
@@ -78,7 +78,7 @@ func TestDenyDominantWithMixedAudiences(t *testing.T) {
 		{Scope: ScopeSharedProject, Tool: "Shell", Pattern: "rm *", Effect: Deny, Audience: AudienceSubagent},
 	}
 	e := NewEvaluator(subRules, WithAudience(AudienceSubagent))
-	if got := e.Evaluate("Shell", bashArgs("rm x"), false); got.Effect != Deny {
+	if got := e.Evaluate("Shell", shellArgs("rm x"), false); got.Effect != Deny {
 		t.Fatalf("subagent deny must dominate the all-audience allow on a subagent evaluator; got %v", got.Effect)
 	}
 }
@@ -88,7 +88,7 @@ func TestDenyDominantWithMixedAudiences(t *testing.T) {
 func TestAudienceDefaultIsAllBackCompat(t *testing.T) {
 	rules := []Rule{{Scope: ScopeSharedProject, Tool: "Shell", Pattern: "ls*", Effect: Allow, Audience: AudienceSubagent}}
 	e := NewEvaluator(rules)
-	if got := e.Evaluate("Shell", bashArgs("ls"), false); got.Effect != Allow {
+	if got := e.Evaluate("Shell", shellArgs("ls"), false); got.Effect != Allow {
 		t.Fatalf("default (AudienceAll) evaluator must match a tagged rule; got %v", got.Effect)
 	}
 }
@@ -164,7 +164,7 @@ func TestConfiguredAskTruthTable(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			e := NewEvaluator(tc.rules)
-			got := e.Evaluate("Shell", bashArgs(tc.cmd), false)
+			got := e.Evaluate("Shell", shellArgs(tc.cmd), false)
 			if got.Effect != tc.wantEffect {
 				t.Fatalf("effect = %v, want %v (%s)", got.Effect, tc.wantEffect, got.Reason)
 			}
@@ -315,7 +315,7 @@ func TestFlooredConfiguredAllow(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			e := NewEvaluator(tc.rules)
-			got := e.Evaluate("Shell", bashArgs(tc.cmd), false)
+			got := e.Evaluate("Shell", shellArgs(tc.cmd), false)
 			if got.Effect != tc.wantEffect {
 				t.Fatalf("effect = %v, want %v (%s)", got.Effect, tc.wantEffect, got.Reason)
 			}
@@ -339,7 +339,7 @@ func TestFlooredConfiguredAllowNeverOnDeny(t *testing.T) {
 		{Scope: ScopeSharedProject, Tool: "Shell", Pattern: "go vet*", Effect: Deny},
 	}
 	e := NewEvaluator(rules)
-	got := e.Evaluate("Shell", bashArgs("cat $(zap) && go vet ./..."), false)
+	got := e.Evaluate("Shell", shellArgs("cat $(zap) && go vet ./..."), false)
 	if got.Effect != Deny {
 		t.Fatalf("expected Deny, got %v", got.Effect)
 	}

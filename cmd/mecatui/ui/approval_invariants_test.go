@@ -42,7 +42,7 @@ func TestPlanReviewNoOpRepopulationPreservesOffset(t *testing.T) {
 // RE-populates (the raw tier appears) — and the offset is preserved across the
 // re-population, not yanked to the top.
 func TestArgsViewRawToggleRepopulates(t *testing.T) {
-	m := openArgsView(t, bashAskModel(t, longShellArgs))
+	m := openArgsView(t, shellAskModel(t, longShellArgs))
 	before := approvalSurfaceOf(t, m).argsVP.YOffset()
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: 'r', Text: "r"})
 	raw := stripANSIstr(m.View().Content)

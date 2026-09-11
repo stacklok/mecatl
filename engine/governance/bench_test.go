@@ -79,7 +79,7 @@ func BenchmarkEvaluatorEvaluate(b *testing.B) {
 	})
 
 	b.Run("plain-bash", func(b *testing.B) {
-		args := bashArgs("git status")
+		args := shellArgs("git status")
 		b.ReportAllocs()
 		for b.Loop() {
 			sinkDecision = e.Evaluate("Shell", args, false)
@@ -87,7 +87,7 @@ func BenchmarkEvaluatorEvaluate(b *testing.B) {
 	})
 
 	b.Run("compound-bash", func(b *testing.B) {
-		args := bashArgs("git status && git log --oneline | head -n 5")
+		args := shellArgs("git status && git log --oneline | head -n 5")
 		b.ReportAllocs()
 		for b.Loop() {
 			sinkDecision = e.Evaluate("Shell", args, false)

@@ -642,11 +642,11 @@ func (s *approvalSurface) miniScroll(step, maxOff int) {
 	s.askVPOffset = max(0, min(maxOff, s.askVPOffset+step))
 }
 
-// bashAskArgs mirrors the Shell tool's args JSON shape for the ask-args pretty
+// shellAskArgs mirrors the Shell tool's args JSON shape for the ask-args pretty
 // tier (mirroring mutatedPath's editDiffArgs/writeDiffArgs precedent). The
-// envelope can also carry timeout_ms (engine's bashArgs shape); the ui layer
+// envelope can also carry timeout_ms (engine's shellArgs shape); the ui layer
 // knows it as a JSON field NAME, not an import.
-type bashAskArgs struct {
+type shellAskArgs struct {
 	Command   string `json:"command"`
 	TimeoutMS int    `json:"timeout_ms"`
 }
@@ -673,7 +673,7 @@ func askArgsContent(th theme.Theme, ask pendingAsk) (pretty string, raw string, 
 	raw = sanitizeTerminal(strings.TrimSpace(ask.Args))
 	pretty = prettyJSON(ask.Args)
 	if ask.Tool == "Shell" {
-		var args bashAskArgs
+		var args shellAskArgs
 		if err := json.Unmarshal([]byte(strings.TrimSpace(ask.Args)), &args); err == nil && args.Command != "" {
 			pretty = sanitizeTerminal(args.Command)
 			if args.TimeoutMS != 0 {

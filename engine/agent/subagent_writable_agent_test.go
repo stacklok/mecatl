@@ -231,7 +231,7 @@ func TestSubagentWritableAgentNotIsolatedSkipsA2(t *testing.T) {
 		mockllm.ToolCallTurn(toolCall("k1", "Shell", `{"command":"go test $(echo ./...)"}`)),
 		mockllm.TextTurn("child: adapted after the denied command"),
 	)
-	writableSpec := bashChildEngine(specLLM, bash)
+	writableSpec := shellChildEngine(specLLM, bash)
 	task := agent.NewSubagentTool(
 		childEngineWith(mockllm.New(mockllm.TextTurn("DEFAULT")), catalogWith(t)),
 		agent.WithAgentEngines(

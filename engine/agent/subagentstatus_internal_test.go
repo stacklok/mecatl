@@ -95,7 +95,7 @@ func TestStatusToolsDisjointProjections(t *testing.T) {
 	// SubagentStatus roster: the subagent, never the bash job.
 	res, err := NewSubagentStatusTool().(childCapableTool).ExecuteWithParent(
 		context.Background(), session.ToolCall{ID: "s1", Name: subagentStatusToolName, Args: json.RawMessage(`{}`)},
-		bashEnv, nil, parentCaps{children: reg})
+		shellEnv, nil, parentCaps{children: reg})
 	if err != nil {
 		t.Fatalf("ExecuteWithParent err = %v", err)
 	}
@@ -107,7 +107,7 @@ func TestStatusToolsDisjointProjections(t *testing.T) {
 	res, err = NewSubagentStatusTool().(childCapableTool).ExecuteWithParent(
 		context.Background(), session.ToolCall{ID: "s2", Name: subagentStatusToolName,
 			Args: json.RawMessage(`{"agent_id":"bashcmd-j"}`)},
-		bashEnv, nil, parentCaps{children: reg})
+		shellEnv, nil, parentCaps{children: reg})
 	if err != nil {
 		t.Fatalf("ExecuteWithParent err = %v", err)
 	}

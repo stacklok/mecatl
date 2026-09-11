@@ -3158,7 +3158,7 @@ func sessionEngineFactoryWithTools(
 		// tool it cannot call).
 		deps.PromptConfig = applySchedulePosture(deps.PromptConfig, scheduleManagerPresent(assets))
 		deps.PromptConfig = applyAgentModelDiscoveryPosture(deps.PromptConfig, deps.Catalog)
-		deps.PromptConfig = applyTemporaryStoragePosture(deps.PromptConfig, bashAvailable(cfg))
+		deps.PromptConfig = applyTemporaryStoragePosture(deps.PromptConfig, shellAvailable(cfg))
 		deps.PromptConfig = applyDiagnosticsPosture(deps.PromptConfig)
 		deps.PromptConfig = applyLearningPosture(deps.PromptConfig, learningCfg.LearningMode, learningCfg.SkillActivationPolicy, learningCfg.automaticAdmissionLedger)
 		// MODEL-VISIBLE no-FS posture (ADR 0070, the #40 pattern): tell the model up
@@ -4050,7 +4050,7 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 	// note (the model is never told about a tool it cannot call).
 	deps.PromptConfig = applySchedulePosture(deps.PromptConfig, scheduleManagerPresent(assets))
 	deps.PromptConfig = applyAgentModelDiscoveryPosture(deps.PromptConfig, deps.Catalog)
-	deps.PromptConfig = applyTemporaryStoragePosture(deps.PromptConfig, bashAvailable(cfg))
+	deps.PromptConfig = applyTemporaryStoragePosture(deps.PromptConfig, shellAvailable(cfg))
 	deps.PromptConfig = applyDiagnosticsPosture(deps.PromptConfig)
 	deps.PromptConfig = applyLearningPosture(deps.PromptConfig, cfg.LearningMode, cfg.SkillActivationPolicy, assets.automaticAdmissionLedger)
 	// The shell-less default-FS posture is NOT baked into the shared engine's
@@ -5244,7 +5244,7 @@ func registerCoreTools(cfg Config, cat *tool.Catalog, log, noFS bool, searchProv
 		}
 	} else if log {
 		cfg.diag().Log(context.Background(), port.LevelInfo, "Shell tool DISABLED (shell-less mode): the agent has no command execution",
-			"reason", bashDisabledReason(cfg))
+			"reason", shellDisabledReason(cfg))
 	}
 }
 
@@ -6343,8 +6343,8 @@ func subagentShellUntrustedReason(cfg Config) string {
 		"or confirm trust in mecatui to enable the subagent shell)"
 }
 
-// bashDisabledReason returns a short human-readable reason Shell is disabled.
-func bashDisabledReason(cfg Config) string {
+// shellDisabledReason returns a short human-readable reason Shell is disabled.
+func shellDisabledReason(cfg Config) string {
 	switch {
 	case cfg.NoShell:
 		return "bash disabled"
@@ -7784,7 +7784,7 @@ func buildMemberEngine(cfg Config, provReg *providerRegistry, provider port.LLMP
 			// allowShell: a non-mutating member may keep Shell ONLY when a runner is
 			// wired AND a read-only forker is available to isolate it in a worktree.
 			allowShell := !spec.Mutating && runner != nil && roIsolationAvailable
-			names, diags := scopedToolNamesMode(def, base, spec.Mutating, allowShell, bashScopeMissReason(cfg))
+			names, diags := scopedToolNamesMode(def, base, spec.Mutating, allowShell, shellScopeMissReason(cfg))
 			for _, d := range diags {
 				cfg.diag().Log(context.Background(), port.LevelWarn, "team member agent def tool scoping",
 					"member", spec.Name, "agent", def.Name, "tool", d.tool, "reason", d.reason, "source", reg.Detail(def.Name))
@@ -8096,7 +8096,7 @@ func applyAgentModelDiscoveryPosture(pc prompt.Config, catalog *tool.Catalog) pr
 // Shell exposes. It is deliberately explicit that scope is not a sandbox.
 const temporaryStoragePostureNote = "Shell temporary storage defaults to managed storage; managed storage is disposable after the command. Use temp_scope: system only when a command needs host-shared or longer-lived temporary state. temp_scope is not a filesystem sandbox: ordinary Shell authority still governs every command and path."
 
-func bashAvailable(cfg Config) bool {
+func shellAvailable(cfg Config) bool {
 	return !cfg.NoShell && cfg.Shell != ""
 }
 

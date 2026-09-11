@@ -803,7 +803,7 @@ func shellSystemScope(c session.ToolCall) bool {
 		return false
 	}
 	args, _, ok := parseShellArgs(c)
-	return ok && bashScope(args) == tool.TemporaryScopeSystem
+	return ok && shellScope(args) == tool.TemporaryScopeSystem
 }
 
 // systemScopeApprovalArgs projects only the requested scope and a command verb.
@@ -1858,7 +1858,7 @@ func logRouterMissReason(ctx context.Context, diag port.Diagnostics, missReason 
 // always clampPreview'd by the caller before emission.
 func surfacedCommandPreview(ask session.PendingAsk) string {
 	if ask.Tool == "Shell" {
-		if cmd := bashCmdFromArgs(ask.Args); cmd != "" {
+		if cmd := shellCmdFromArgs(ask.Args); cmd != "" {
 			return cmd
 		}
 	}

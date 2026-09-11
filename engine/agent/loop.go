@@ -94,17 +94,17 @@ const shellLessPostureNote = "This session has NO shell: the Shell tool is not a
 // injected as a harness-framed user message at Step 2a of drive (A2 —
 // notice-only injection). It carries ONLY harness-authored metadata: child ids
 // + their session.StopReason labels, NOTHING child-authored (no goal labels, no
-// result text — the delegation bodies' sole channel is SubagentStatus, the bash
+// result text — the delegation bodies' sole channel is SubagentStatus, the Shell
 // jobs' ShellStatus). The rendering is FAMILY-AWARE: the delegation clause keeps
 // its exact historical wording (the substring "background subagent(s) finished"
 // is a stable test key — do not change it) and a background-Shell clause is
-// APPENDED only when bash jobs are among the finished, so a subagent-only run
+// APPENDED only when Shell jobs are among the finished, so a subagent-only run
 // renders byte-identically to before.
 func backgroundNoticeText(finished []childStatus) string {
-	var delegationIDs, bashItems []string
+	var delegationIDs, shellItems []string
 	for _, st := range finished {
 		if st.family == childFamilyShellCmd {
-			bashItems = append(bashItems, fmt.Sprintf("%s (%s)", st.id, st.stop))
+			shellItems = append(shellItems, fmt.Sprintf("%s (%s)", st.id, st.stop))
 		} else {
 			delegationIDs = append(delegationIDs, fmt.Sprintf("%s (%s)", st.id, st.stop))
 		}
@@ -115,10 +115,10 @@ func backgroundNoticeText(finished []childStatus) string {
 			"Collect each result with SubagentStatus before relying on it.]",
 			len(delegationIDs), strings.Join(delegationIDs, ", "))
 	}
-	if len(bashItems) > 0 {
+	if len(shellItems) > 0 {
 		fmt.Fprintf(&b, "[harness note: %d background command(s) finished: %s. "+
 			"Collect each output with ShellStatus before relying on it.]",
-			len(bashItems), strings.Join(bashItems, ", "))
+			len(shellItems), strings.Join(shellItems, ", "))
 	}
 	return b.String()
 }
@@ -129,13 +129,13 @@ func backgroundNoticeText(finished []childStatus) string {
 // ONLY (A9 — no goal labels, nothing model/child-authored). Like the notice it
 // is FAMILY-AWARE: the delegation clause keeps its exact historical wording
 // (the substring "background subagent(s) still running" is a stable test key —
-// do not change it) and a background-Shell clause is APPENDED only for live bash
+// do not change it) and a background-Shell clause is APPENDED only for live Shell
 // jobs, each clause naming its own collection channel.
 func backgroundPendingNudgeText(ids []string) string {
-	var delegationIDs, bashIDs []string
+	var delegationIDs, shellIDs []string
 	for _, id := range ids {
 		if strings.HasPrefix(id, ShellCmdJobPrefix) {
-			bashIDs = append(bashIDs, id)
+			shellIDs = append(shellIDs, id)
 		} else {
 			delegationIDs = append(delegationIDs, id)
 		}
@@ -147,11 +147,11 @@ func backgroundPendingNudgeText(ids []string) string {
 			"anything still running when you finish will be cancelled.]",
 			len(delegationIDs), strings.Join(delegationIDs, ", "))
 	}
-	if len(bashIDs) > 0 {
+	if len(shellIDs) > 0 {
 		fmt.Fprintf(&b, "[harness note: %d background command(s) still running: %s. "+
 			"Collect or wait for them with ShellStatus, cancel them, or finish — "+
 			"anything still running when you finish will be cancelled.]",
-			len(bashIDs), strings.Join(bashIDs, ", "))
+			len(shellIDs), strings.Join(shellIDs, ", "))
 	}
 	return b.String()
 }

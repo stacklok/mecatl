@@ -25,7 +25,7 @@ type fakeShell struct {
 }
 
 func (*fakeShell) Spec() tool.ToolSpec {
-	return tool.ToolSpec{Name: "Shell", Description: "fake bash", Schema: bashSchema}
+	return tool.ToolSpec{Name: "Shell", Description: "fake bash", Schema: shellSchema}
 }
 func (*fakeShell) ReadOnly() bool { return false }
 func (b *fakeShell) Execute(_ context.Context, in session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
@@ -44,7 +44,7 @@ func (b *fakeShell) ran() []string {
 	return append([]string(nil), b.executed...)
 }
 
-var bashSchema = json.RawMessage(`{"type":"object","properties":{"command":{"type":"string"}},"required":["command"]}`)
+var shellSchema = json.RawMessage(`{"type":"object","properties":{"command":{"type":"string"}},"required":["command"]}`)
 
 // recordingDiag captures diagnostic Log calls for assertions (the headless auto-deny
 // operator line). It is concurrency-safe. With-derived children record into the same
@@ -123,7 +123,7 @@ func TestChildAskRouterRoutesVerdict(t *testing.T) {
 		mockllm.ToolCallTurn(toolCall("k1", "Shell", `{"command":"cat $(zap)"}`)),
 		mockllm.TextTurn("child done"),
 	)
-	childEngine := bashChildEngine(childLLM, bash)
+	childEngine := shellChildEngine(childLLM, bash)
 	task := agent.NewSubagentTool(childEngine, agent.WithChildForker(&recordingSubagentForker{}))
 
 	parentLLM := mockllm.New(
@@ -159,7 +159,7 @@ func TestSurfacedAskRedaction(t *testing.T) {
 		),
 		mockllm.TextTurn("child done"),
 	)
-	childEngine := bashChildEngine(childLLM, bash)
+	childEngine := shellChildEngine(childLLM, bash)
 	task := agent.NewSubagentTool(childEngine, agent.WithChildForker(&recordingSubagentForker{}))
 
 	parentLLM := mockllm.New(
@@ -220,7 +220,7 @@ func TestIsolatedSubagentAutoApprovesWorktreeSafe(t *testing.T) {
 		mockllm.ToolCallTurn(toolCall("k1", "Shell", `{"command":`+jsonString(cmd)+`}`)),
 		mockllm.TextTurn("child done"),
 	)
-	childEngine := bashChildEngine(childLLM, bash)
+	childEngine := shellChildEngine(childLLM, bash)
 	task := agent.NewSubagentTool(childEngine, agent.WithChildForker(&recordingSubagentForker{}))
 
 	// NON-interactive parent: no surface path. Only A2 can clear the ask.
@@ -247,7 +247,7 @@ func TestNonIsolatedHeadlessChildAutoDenies(t *testing.T) {
 		mockllm.ToolCallTurn(toolCall("k1", "Shell", `{"command":"cat $(zap)"}`)),
 		mockllm.TextTurn("child done"),
 	)
-	childEngine := bashChildEngine(childLLM, bash)
+	childEngine := shellChildEngine(childLLM, bash)
 	// No forker → not isolated. No Interactive → headless. So the ask auto-denies.
 	task := agent.NewSubagentTool(childEngine)
 
@@ -285,7 +285,7 @@ func TestNonIsolatedHeadlessChildAutoDenies(t *testing.T) {
 
 // --- shared helpers for the child-ask tests ---------------------------------
 
-// bashChildEngine builds a child engine with the given Shell tool under the
+// shellChildEngine builds a child engine with the given Shell tool under the
 // CANONICAL default child posture: the allow-all FLOOR
 // (permpolicy.AllowAllFloorRules — the same ruleset production childRules()
 // uses, so fixture and composition cannot drift). The floor allow-all still
@@ -293,16 +293,16 @@ func TestNonIsolatedHeadlessChildAutoDenies(t *testing.T) {
 // separate from allow-all, and a FLOOR-scoped allow never registers as a
 // configured Allow), so a `cat $(zap)` call produces an EvPermissionAsk the
 // child posture then resolves.
-func bashChildEngine(llm port.LLMProvider, bash tool.Tool) *agent.Engine {
+func shellChildEngine(llm port.LLMProvider, bash tool.Tool) *agent.Engine {
 	return agent.NewEngine(agent.Deps{
 		LLM:     llm,
-		Catalog: bashCatalog(bash),
+		Catalog: shellCatalog(bash),
 		Policy:  permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil),
 		Model:   "child-model",
 	})
 }
 
-func bashCatalog(bash tool.Tool) *tool.Catalog {
+func shellCatalog(bash tool.Tool) *tool.Catalog {
 	c := tool.NewCatalog()
 	c.MustRegister(bash)
 	return c

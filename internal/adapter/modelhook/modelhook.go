@@ -208,7 +208,7 @@ var _ port.HookApprovalLearner = (*Runner)(nil)
 // waiver then keys on the verbatim args, still an EXACT match, never a blanket one.
 func waiverKey(ev governance.HookEvent) string {
 	if ev.Tool == "Shell" {
-		if c, ok := bashCmdFromArgs(string(ev.Input)); ok {
+		if c, ok := shellCmdFromArgs(string(ev.Input)); ok {
 			return c
 		}
 	}
@@ -279,7 +279,7 @@ func (r *Runner) check(ctx context.Context, phase Phase, rule CompiledRule, ev g
 	// falls through to inspection. No diagnostic on the skip path — it must stay
 	// zero-cost.
 	if rule.skipReadOnlyShell && phase == PhasePre && ev.Tool == "Shell" {
-		if cmd, ok := bashCmdFromArgs(string(ev.Input)); ok && bashFullyReadOnly(cmd) {
+		if cmd, ok := shellCmdFromArgs(string(ev.Input)); ok && shellFullyReadOnly(cmd) {
 			return governance.HookOutcome{}
 		}
 	}
@@ -480,24 +480,24 @@ func contentUnderReview(phase Phase, ev governance.HookEvent) string {
 	return string(ev.Input)
 }
 
-// bashCmdFromArgs extracts the shell command string from a Shell tool call's raw args
+// shellCmdFromArgs extracts the shell command string from a Shell tool call's raw args
 // JSON via the shared governance extractor (the single source of truth for the Shell
 // tool-call args schema, reused by the permission evaluator and the Subagent
 // isolation gate). It is FAIL-SAFE: a parse error or a missing/whitespace-only
 // command returns ("", false), so the caller INSPECTS rather than skips (an
 // unreadable args object must never be presumed read-only).
-func bashCmdFromArgs(raw string) (string, bool) {
+func shellCmdFromArgs(raw string) (string, bool) {
 	return governance.ShellCommandFromArgs(json.RawMessage(raw))
 }
 
-// bashFullyReadOnly reports whether a shell command line is CONFIDENTLY read-only,
-// reusing the engine/governance bash classifiers so the skip decision matches the
+// shellFullyReadOnly reports whether a shell command line is CONFIDENTLY read-only,
+// reusing the engine/governance Shell classifiers so the skip decision matches the
 // permission gate's fail-safe direction exactly (substitution/ambiguity is inspected,
 // never skipped). It accepts the command iff governance.ReadOnlyShell reports the whole
 // line read-only, OR every SplitCommands segment is a provably-read-only substitution
 // (governance.SubstitutionReadOnly — e.g. `cat $(ls)`). Any segment not provably
 // read-only ⇒ false ⇒ inspect. An empty split (whitespace-only) ⇒ false ⇒ inspect.
-func bashFullyReadOnly(cmd string) bool {
+func shellFullyReadOnly(cmd string) bool {
 	if governance.ReadOnlyShell(cmd) {
 		return true
 	}

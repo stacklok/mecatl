@@ -55,7 +55,7 @@ permission bypass by construction. The name's single authority moved to
 AND the agent loop's) imports the one constant instead of re-spelling the literal.
 
 **D2 — the tool lives in `engine/agent` over the `childCapableTool` seam, foreground
-byte-identical to fstools.** `engine/agent/bashtool.go` (`BashTool` /
+byte-identical to fstools.** `engine/agent/bashtool.go` (`BashTool` / <!-- lint:not-a-citation: historical path and identifier retained by the frozen ADR -->
 `NewBashTool`) re-implements the fstools Bash body's orchestration verbatim (same arg
 validation, timeout ctx, `runner.Run`, combined-output shaping, 25 000-byte cap,
 exit-code error) — `engine/agent` must not import the fstools adapter, so the two
