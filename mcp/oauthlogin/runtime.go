@@ -21,10 +21,18 @@ const (
 	callbackBytes   = 32
 	shutdownTimeout = time.Second
 
+	// fixedCallbackPath is the well-known, pre-registerable callback path shared by
+	// ExactRedirectURL (fixed path + fixed port) and Options.PinCallbackPath (fixed
+	// path + ephemeral port) — see PinCallbackPath's doc comment for why a target's
+	// own capabilities decide which of the two a caller should use.
+	fixedCallbackPath = "/oauth/callback"
+
 	// ExactRedirectURL is the fixed callback URI used by clients that have a
-	// pre-registered redirect. It is deliberately IPv4-literal and must not be
+	// pre-registered redirect requiring an EXACT string match, port included (a
+	// general-purpose OIDC target with no obligation to implement RFC 8252 loopback
+	// dynamic-port matching). It is deliberately IPv4-literal and must not be
 	// changed to localhost or a wildcard address.
-	ExactRedirectURL = "http://127.0.0.1:18473/oauth/callback"
+	ExactRedirectURL = "http://127.0.0.1:18473" + fixedCallbackPath
 )
 
 var (
@@ -69,10 +77,25 @@ type Options struct {
 	URLWriter io.Writer
 	Launcher  BrowserLauncher
 
-	// RedirectURL enables an explicitly configured callback. The only accepted
-	// value is ExactRedirectURL; empty preserves the random-path, ephemeral-port
-	// behavior used by existing callers.
+	// RedirectURL enables an explicitly configured callback with a FIXED PORT as
+	// well as a fixed path. The only accepted value is ExactRedirectURL. Use this
+	// only for a target that requires an exact redirect_uri string match (a
+	// general-purpose OIDC target with no obligation to implement RFC 8252 loopback
+	// dynamic-port matching) — it reintroduces local port-squatting exposure that
+	// PinCallbackPath does not (see its doc comment). Mutually exclusive with
+	// PinCallbackPath. Empty preserves the random-path, ephemeral-port default.
 	RedirectURL string
+
+	// PinCallbackPath fixes the callback's PATH to the same well-known value
+	// ExactRedirectURL uses, while still binding an EPHEMERAL port. Use this for a
+	// target whose authorization server implements RFC 8252 §7.3 loopback dynamic-
+	// port matching — the AS accepts any port for a registered loopback redirect_uri
+	// as long as the path matches — which lets a client register one fixed
+	// redirect_uri while every login still gets its own unpredictable port,
+	// preserving the squatting resistance ExactRedirectURL's fixed port gives up.
+	// Mutually exclusive with RedirectURL: New rejects setting both rather than
+	// silently picking one.
+	PinCallbackPath bool
 }
 
 // Result is the validated loopback authorization response.
@@ -103,6 +126,9 @@ func New(opts Options) (*Runtime, error) {
 	}
 	if opts.RedirectURL != "" && !isExactRedirectURL(opts.RedirectURL) {
 		return nil, errors.New("OAuth redirect URL is invalid")
+	}
+	if opts.RedirectURL != "" && opts.PinCallbackPath {
+		return nil, errors.New("OAuth redirect URL and pinned callback path are mutually exclusive")
 	}
 	launcher := opts.Launcher
 	if launcher == nil {
@@ -142,22 +168,9 @@ func (r *Runtime) Authorize(ctx context.Context, expectedIssuer string, authoriz
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	path := ""
-	address := "127.0.0.1:0"
-	callbackHost := ""
-	redirectURL := ""
-	attemptPolicy := attemptMatchingRoute
-	if r.opts.RedirectURL == "" {
-		path, err = randomCallbackPath(r.random)
-		if err != nil {
-			return errors.New("generate OAuth callback path: failed")
-		}
-	} else {
-		path = "/oauth/callback"
-		address = "127.0.0.1:18473"
-		callbackHost = "127.0.0.1:18473"
-		redirectURL = ExactRedirectURL
-		attemptPolicy = attemptFixedRoute
+	path, address, callbackHost, redirectURL, attemptPolicy, err := resolveCallbackMode(r.opts, r.random)
+	if err != nil {
+		return err
 	}
 	ln, err := r.listen(ctx, "tcp4", address)
 	if err != nil {
@@ -284,6 +297,41 @@ func randomCallbackPath(reader io.Reader) (string, error) {
 		return "", err
 	}
 	return callbackPrefix + base64.RawURLEncoding.EncodeToString(raw[:]), nil
+}
+
+// resolveCallbackMode picks the callback path, bind address, Host-header match, any
+// pre-computed redirect URL, and attempt policy for one Authorize call. Extracted from
+// Authorize purely to keep that function's branch count under the gocyclo limit; the
+// three cases mirror Options.RedirectURL/PinCallbackPath's doc comments exactly.
+func resolveCallbackMode(opts Options, random io.Reader) (
+	path, address, callbackHost, redirectURL string, attemptPolicy callbackAttemptPolicy, err error,
+) {
+	address = "127.0.0.1:0"
+	switch {
+	case opts.RedirectURL != "":
+		// Fixed path AND fixed port: an exact redirect_uri string match, for a
+		// target with no obligation to implement RFC 8252 dynamic-port matching.
+		path = fixedCallbackPath
+		address = "127.0.0.1:18473"
+		callbackHost = "127.0.0.1:18473"
+		redirectURL = ExactRedirectURL
+		attemptPolicy = attemptFixedRoute
+	case opts.PinCallbackPath:
+		// Fixed path, ephemeral port: address/callbackHost/redirectURL stay at their
+		// random-port defaults — computed by the caller from the OS-assigned
+		// listener address, exactly like the random-path case below — so only the
+		// path is pinned; an RFC 8252-compliant AS's dynamic-port matching accepts
+		// whichever port this run happens to get.
+		path = fixedCallbackPath
+		attemptPolicy = attemptFixedRoute
+	default:
+		attemptPolicy = attemptMatchingRoute
+		path, err = randomCallbackPath(random)
+		if err != nil {
+			return "", "", "", "", 0, errors.New("generate OAuth callback path: failed")
+		}
+	}
+	return path, address, callbackHost, redirectURL, attemptPolicy, nil
 }
 
 func isExactRedirectURL(raw string) bool {
