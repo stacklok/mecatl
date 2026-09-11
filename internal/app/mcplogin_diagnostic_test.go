@@ -1,7 +1,6 @@
 package app
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -10,36 +9,6 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/mcp/oauthlogin"
 )
-
-func TestDCRLoginPresenterRejectsScopeAndResourceDrift(t *testing.T) {
-	const resource = "https://connector.example/gw/mcp"
-	presented := 0
-	presenter := dcrOAuthLoginPresenter(resource, func(context.Context, string) (oauthlogin.Result, error) {
-		presented++
-		return oauthlogin.Result{}, nil
-	})
-	for _, raw := range []string{
-		"https://issuer.example/authorize?scope=openid+admin&resource=https%3A%2F%2Fconnector.example%2Fgw%2Fmcp",
-		"https://issuer.example/authorize?scope=openid&scope=openid&resource=https%3A%2F%2Fconnector.example%2Fgw%2Fmcp",
-		"https://issuer.example/authorize?scope=openid&resource=https%3A%2F%2Fconnector.example%2Fmcp",
-		"https://issuer.example/authorize?scope=openid&resource=https%3A%2F%2Fconnector.example%2Fgw%2Fmcp&resource=https%3A%2F%2Fconnector.example%2Fgw%2Fmcp",
-	} {
-		if _, err := presenter.PresentAuthorization(context.Background(), raw); err == nil {
-			t.Fatalf("invalid final authorization URL was accepted: %s", raw)
-		}
-	}
-	if presented != 0 {
-		t.Fatalf("invalid final authorization URLs reached host presenter %d times", presented)
-	}
-
-	valid := "https://issuer.example/authorize?scope=openid&resource=https%3A%2F%2Fconnector.example%2Fgw%2Fmcp"
-	if _, err := presenter.PresentAuthorization(context.Background(), valid); err != nil {
-		t.Fatalf("valid final authorization URL: %v", err)
-	}
-	if presented != 1 {
-		t.Fatalf("valid final authorization URL reached host presenter %d times", presented)
-	}
-}
 
 func TestMCPLoginDiagnosticPreservesCategoryAndSafeDetail(t *testing.T) {
 	t.Run("provider fields remain printable and bounded", func(t *testing.T) {

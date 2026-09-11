@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 
-	"github.com/modelcontextprotocol/go-sdk/auth"
-
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/mcp/oauthlogin"
 )
@@ -111,9 +109,6 @@ func loginMCPAuthorize(cfg mcp.ServerConfig, run func(oauthlogin.AuthorizeFunc) 
 		oauth := *cfg.OAuth
 		oauth.RedirectURL = redirectURL
 		oauth.Presenter = mcp.OAuthLoginPresenter(present)
-		if oauth.Client.DCR != nil {
-			oauth.Presenter = dcrOAuthLoginPresenter(cfg.URL, present)
-		}
 		loginCfg.OAuth = &oauth
 
 		server, err := mcp.Connect(ctx, loginCfg, nil)
@@ -154,16 +149,6 @@ func loginMCPAuthorize(cfg mcp.ServerConfig, run func(oauthlogin.AuthorizeFunc) 
 		return loginDiagnostic(ErrMCPLoginAuthorization, err)
 	}
 	return ErrMCPLoginCleanup
-}
-
-func dcrOAuthLoginPresenter(resource string, present func(context.Context, string) (oauthlogin.Result, error)) mcp.OAuthPresenter {
-	delegate := mcp.OAuthLoginPresenter(present)
-	return mcp.OAuthPresenterFunc(func(ctx context.Context, authorizationURL string) (*auth.AuthorizationResult, error) {
-		if err := mcp.ValidateDCRAuthorizationURL(authorizationURL, resource); err != nil {
-			return nil, err
-		}
-		return delegate.PresentAuthorization(ctx, authorizationURL)
-	})
 }
 
 func validateMCPLoginConfig(cfg mcp.ServerConfig, runtime *oauthlogin.Runtime) error {

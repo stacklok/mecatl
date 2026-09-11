@@ -442,6 +442,9 @@ func NewOAuthController(ctx context.Context, resource string, opts OAuthOptions)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	if opts.Client.DCR != nil && !validDCRRequestedScopes(opts) {
+		return nil, errors.New("OAuth DCR configuration is invalid")
+	}
 	if _, err := canonicalOAuthResource(resource); err != nil {
 		return nil, err
 	}
@@ -503,6 +506,11 @@ func (c *OAuthController) presentAuthorization(ctx context.Context, args *auth.A
 	authorizationURL, err := validateHTTPURL("OAuth authorization URL", args.URL, false)
 	if err != nil || urlOrigin(authorizationURL) != c.transport.issuerOrigin {
 		return nil, projectOAuthError(ErrOAuthUnavailable)
+	}
+	if c.state.registration.kind == oauthDCRClientKind {
+		if err := validateDCRAuthorizationURL(args.URL, c.state.identity.Resource); err != nil {
+			return nil, projectOAuthError(err)
+		}
 	}
 	result, err := c.presenter.PresentAuthorization(ctx, args.URL)
 	return result, projectOAuthError(err)

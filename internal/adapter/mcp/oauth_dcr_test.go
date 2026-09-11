@@ -35,8 +35,10 @@ type dcrMetadataFixture struct {
 	responseTypes           []string
 	scopes                  []string
 	registerCount           int
+	metadataCount           int
 	tokenCount              int
 	tokenForms              []url.Values
+	registrationScope       string
 	clientID                string
 	clientIDIssuedAt        *int64
 	cosmeticSuffix          string
@@ -68,6 +70,7 @@ func newDCRMetadataFixture(t *testing.T) *dcrMetadataFixture {
 		}
 		switch {
 		case strings.Contains(r.URL.Path, "oauth-protected-resource"):
+			f.metadataCount++
 			resourceValue := issuer + "/gw/mcp"
 			if f.resourceValue != "" {
 				resourceValue = f.resourceValue
@@ -79,6 +82,7 @@ func newDCRMetadataFixture(t *testing.T) *dcrMetadataFixture {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(oauthex.ProtectedResourceMetadata{Resource: resourceValue, AuthorizationServers: authServers, ScopesSupported: []string{"openid"}})
 		case strings.Contains(r.URL.Path, ".well-known/oauth-authorization-server") || strings.Contains(r.URL.Path, ".well-known/openid-configuration"):
+			f.metadataCount++
 			w.Header().Set("Content-Type", "application/json")
 			registration := f.registration
 			if registration == "" {
@@ -107,6 +111,7 @@ func newDCRMetadataFixture(t *testing.T) *dcrMetadataFixture {
 			}
 			var request oauthex.ClientRegistrationMetadata
 			_ = json.NewDecoder(r.Body).Decode(&request)
+			f.registrationScope = request.Scope
 			if len(request.RedirectURIs) == 1 {
 				f.registeredRedirect = request.RedirectURIs[0]
 			}
@@ -200,14 +205,111 @@ func TestDCRRegistrationResponseScopesMayExpandWithinAdvertisedSet(t *testing.T)
 func TestOAuthDCRAcceptsAdvertisedServerAddedRegistrationScope(t *testing.T) {
 	fixture := newDCRMetadataFixture(t)
 	fixture.registrationScopes = []string{"openid", "offline_access"}
-	resource := fixture.server.URL + "/gw/mcp"
-	prepared, path, err := PrepareOAuthDCRLogin(context.Background(), resource, fixture.options(t, newDCRMemoryStore(t)), OAuthDCRLoginReuse)
+	resource, store := fixture.server.URL+"/gw/mcp", newDCRMemoryStore(t)
+	var presented string
+	opts := fixture.options(t, store)
+	opts.Presenter = OAuthPresenterFunc(func(_ context.Context, raw string) (*auth.AuthorizationResult, error) {
+		presented = raw
+		u, _ := url.Parse(raw)
+		return &auth.AuthorizationResult{Code: "fixture-code", State: u.Query().Get("state"), Iss: fixture.server.URL}, nil
+	})
+	prepared, path, err := PrepareOAuthDCRLogin(context.Background(), resource, opts, OAuthDCRLoginReuse)
 	if err != nil {
 		t.Fatal(err)
 	}
 	prepared.RedirectURL = "http://127.0.0.1:49152" + path
-	if _, err := NewOAuthController(context.Background(), resource, prepared); err != nil {
+	controller, err := NewOAuthController(context.Background(), resource, prepared)
+	if err != nil {
 		t.Fatalf("NewOAuthController() rejected advertised scope expansion: %v", err)
+	}
+	defer controller.Close()
+
+	fixture.mu.Lock()
+	registrationScope := fixture.registrationScope
+	fixture.mu.Unlock()
+	if registrationScope != "openid" {
+		t.Fatalf("registration requested scope %q, want openid", registrationScope)
+	}
+	identity := oauthDCRIdentity{Profile: opts.Subject.Profile, Principal: opts.Subject.Principal, Resource: resource, Issuer: opts.Issuer}
+	registrationKey, err := oauthDCRRegistrationKey(identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	storedRegistration, err := store.Get(context.Background(), registrationKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registration, err := decodeOAuthDCRRecord(storedRegistration.Value, identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(registration.Metadata.Scopes) != 1 || registration.Metadata.Scopes[0] != "openid" {
+		t.Fatalf("durable registration scopes = %v, want [openid]", registration.Metadata.Scopes)
+	}
+
+	req, resp := dcrChallenge(t, resource)
+	if err := controller.Authorize(context.Background(), req, resp); err != nil {
+		t.Fatal(err)
+	}
+	u, err := url.Parse(presented)
+	if err != nil {
+		t.Fatal(err)
+	}
+	query := u.Query()
+	if query.Get("scope") != "openid" || len(query["scope"]) != 1 || query.Get("resource") != resource || len(query["resource"]) != 1 {
+		t.Fatalf("final authorization request = %v", query)
+	}
+	grantIdentity := oauthCredentialIdentity{Profile: opts.Subject.Profile, Principal: opts.Subject.Principal, Resource: resource, Issuer: opts.Issuer, ClientKind: oauthDCRClientKind, ClientID: fixture.clientID}
+	grantKey, err := oauthDCRCredentialKey(grantIdentity, registration.Generation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	storedGrant, err := store.Get(context.Background(), grantKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grant, err := decodeOAuthDCRGrant(storedGrant.Value, grantIdentity, registration.Generation, controller.state.origins)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if grant.Authorization == nil || len(grant.Authorization.Scopes) != 1 || grant.Authorization.Scopes[0] != "openid" {
+		t.Fatalf("durable DCR grant scopes = %#v, want [openid]", grant.Authorization)
+	}
+}
+
+func TestOAuthDCRMinimalPublicAuthorizationCodeMetadataSucceedsAndReusesReadyRecord(t *testing.T) {
+	fixture := newDCRMetadataFixture(t)
+	fixture.grantTypes = []string{"authorization_code"}
+	fixture.authMethods = []string{"none"}
+	fixture.responseTypes = []string{"code"}
+	fixture.codeMethods = []string{"S256"}
+	fixture.scopes = []string{"openid"}
+	resource, store := fixture.server.URL+"/gw/mcp", newDCRMemoryStore(t)
+	opts := fixture.options(t, store)
+	prepared, path, err := PrepareOAuthDCRLogin(context.Background(), resource, opts, OAuthDCRLoginReuse)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared.RedirectURL = "http://127.0.0.1:49152" + path
+	controller, err := NewOAuthController(context.Background(), resource, prepared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := controller.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reused, reusedPath, err := PrepareOAuthDCRLogin(context.Background(), resource, opts, OAuthDCRLoginReuse)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reusedPath != path || reused.dcr == nil {
+		t.Fatalf("ready record was not reused: path=%q dcr=%#v", reusedPath, reused.dcr)
+	}
+	fixture.mu.Lock()
+	registrations := fixture.registerCount
+	fixture.mu.Unlock()
+	if registrations != 1 {
+		t.Fatalf("registrations = %d, want 1", registrations)
 	}
 }
 
@@ -228,9 +330,82 @@ func TestValidateDCRAuthorizationURL(t *testing.T) {
 		{name: "duplicate resource", raw: valid + "&resource=" + url.QueryEscape(resource)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			err := ValidateDCRAuthorizationURL(tc.raw, resource)
+			err := validateDCRAuthorizationURL(tc.raw, resource)
 			if (err == nil) != tc.ok {
-				t.Fatalf("ValidateDCRAuthorizationURL() error = %v, want success %t", err, tc.ok)
+				t.Fatalf("validateDCRAuthorizationURL() error = %v, want success %t", err, tc.ok)
+			}
+		})
+	}
+}
+
+func TestOAuthControllerValidatesDCRAuthorizationBeforeCallingPresenter(t *testing.T) {
+	fixture := newDCRMetadataFixture(t)
+	resource, store := fixture.server.URL+"/gw/mcp", newDCRMemoryStore(t)
+	presented := 0
+	opts := fixture.options(t, store)
+	opts.Presenter = OAuthPresenterFunc(func(context.Context, string) (*auth.AuthorizationResult, error) {
+		presented++
+		return &auth.AuthorizationResult{}, nil
+	})
+	prepared, path, err := PrepareOAuthDCRLogin(context.Background(), resource, opts, OAuthDCRLoginReuse)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared.RedirectURL = "http://127.0.0.1:49152" + path
+	controller, err := NewOAuthController(context.Background(), resource, prepared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer controller.Close()
+
+	invalid := fixture.server.URL + "/oauth/authorize?scope=openid+admin&resource=" + url.QueryEscape(resource)
+	if _, err := controller.presentAuthorization(context.Background(), &auth.AuthorizationArgs{URL: invalid}); err == nil {
+		t.Fatal("scope-union authorization URL was accepted")
+	}
+	if presented != 0 {
+		t.Fatalf("invalid DCR URL reached presenter %d times", presented)
+	}
+	valid := fixture.server.URL + "/oauth/authorize?scope=openid&resource=" + url.QueryEscape(resource)
+	if _, err := controller.presentAuthorization(context.Background(), &auth.AuthorizationArgs{URL: valid}); err != nil {
+		t.Fatalf("valid DCR authorization URL: %v", err)
+	}
+	if presented != 1 {
+		t.Fatalf("valid DCR URL reached presenter %d times", presented)
+	}
+
+	nonDCRCalls := 0
+	nonDCR := newControllerForTest(t, OAuthPresenterFunc(func(context.Context, string) (*auth.AuthorizationResult, error) {
+		nonDCRCalls++
+		return &auth.AuthorizationResult{}, nil
+	}))
+	if _, err := nonDCR.presentAuthorization(context.Background(), &auth.AuthorizationArgs{URL: "https://issuer.example/authorize?scope=openid+admin&resource=" + url.QueryEscape(resource)}); err != nil {
+		t.Fatalf("non-DCR presenter was incorrectly constrained: %v", err)
+	}
+	if nonDCRCalls != 1 {
+		t.Fatalf("non-DCR presenter calls = %d, want 1", nonDCRCalls)
+	}
+}
+
+func TestNewOAuthControllerRejectsInvalidDCRLocalAuthorityBeforeDiscovery(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(*OAuthOptions)
+	}{
+		{name: "refresh token", mutate: func(opts *OAuthOptions) { opts.RequestRefreshToken = true }},
+		{name: "broader scopes", mutate: func(opts *OAuthOptions) { opts.AllowedScopes = []string{"openid", "offline_access"} }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture := newDCRMetadataFixture(t)
+			opts := fixture.options(t, newDCRMemoryStore(t))
+			tc.mutate(&opts)
+			if _, err := NewOAuthController(context.Background(), fixture.server.URL+"/gw/mcp", opts); err == nil {
+				t.Fatal("invalid DCR local authority was accepted")
+			}
+			fixture.mu.Lock()
+			metadata, registrations := fixture.metadataCount, fixture.registerCount
+			fixture.mu.Unlock()
+			if metadata != 0 || registrations != 0 {
+				t.Fatalf("invalid DCR configuration used metadata/registration network: %d/%d", metadata, registrations)
 			}
 		})
 	}

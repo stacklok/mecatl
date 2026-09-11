@@ -127,9 +127,9 @@ func validPersistedDCRFailureCategory(category string) bool {
 	return category == "" || category == oauthDCRFailureOutcomeUnknown || category == oauthDCRFailureResponseInvalid || category == oauthDCRFailureReadyPersistence
 }
 
-// ValidateDCRAuthorizationURL checks the final SDK authorization request before
+// validateDCRAuthorizationURL checks the final SDK authorization request before
 // the host presents it. The SDK may union challenge scopes after ScopeFilter runs.
-func ValidateDCRAuthorizationURL(authorizationURL, resource string) error {
+func validateDCRAuthorizationURL(authorizationURL, resource string) error {
 	canonical, err := canonicalOAuthResource(resource)
 	if err != nil {
 		return errors.New("OAuth DCR authorization resource is invalid")
