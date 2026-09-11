@@ -3,6 +3,7 @@
 - Status: Accepted
 - Date: 2026
 - Scope: mecatequi binary contract, split-privilege job graph, trust boundary, and reusable workflow distribution
+- Superseded by: [ADR 0327](./0327-self-repository-action-refs.md) hardcoded-ref pinning decision only
 
 ## Context
 
