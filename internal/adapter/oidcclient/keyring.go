@@ -73,7 +73,7 @@ func (k *Keyring) Key(ctx context.Context, create bool) ([]byte, error) {
 	if errors.Is(err, keyringapi.ErrNotFound) && !create {
 		return nil, credentialstore.ErrNotFound
 	}
-	if err != nil {
+	if err != nil && !errors.Is(err, keyringapi.ErrNotFound) {
 		return nil, fmt.Errorf("%w: OIDC keyring entry is unavailable", ErrStorage)
 	}
 	key := make([]byte, 32)

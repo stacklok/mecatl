@@ -1,6 +1,7 @@
 package oidcclient_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -38,6 +39,30 @@ func TestKeyringExistingOnlyDistinguishesAbsentEntryFromBackendFailure(t *testin
 	keyringapi.MockInitWithError(errors.New("keyring backend unavailable"))
 	if _, err := keyring.Key(t.Context(), false); !errors.Is(err, oidcclient.ErrStorage) || errors.Is(err, credentialstore.ErrNotFound) {
 		t.Fatalf("keyring backend failure = %v, want storage error only", err)
+	}
+}
+
+func TestKeyringCreatesAbsentEntry(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Chmod(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+
+	keyringapi.MockInit()
+	keyring, err := oidcclient.NewKeyring(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := keyring.Key(t.Context(), true)
+	if err != nil {
+		t.Fatalf("create missing keyring entry: %v", err)
+	}
+	stored, err := keyring.Key(t.Context(), false)
+	if err != nil {
+		t.Fatalf("retrieve created keyring entry: %v", err)
+	}
+	if !bytes.Equal(stored, created) {
+		t.Fatal("retrieved keyring entry differs from created key")
 	}
 }
 
