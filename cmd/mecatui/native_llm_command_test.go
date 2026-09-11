@@ -139,11 +139,19 @@ func TestNativeLLMGatewayLogin_CommandHelpDistinguishesBrowserFlags(t *testing.T
 	for _, want := range []string{
 		"llm login ENDPOINT [--no-browser]",
 		"--no-browser prints the authorization URL to stderr",
+		"http://localhost:8666/callback",
 		"llm login toolhive [--skip-browser]",
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("command help missing %q:\n%s", want, output)
 		}
+	}
+}
+
+func TestNativeLLMGatewayLogin_BrowserUsesToolHiveCompatibleRedirect(t *testing.T) {
+	opts := nativeLLMOAuthOptions(false, nil)
+	if opts.NoBrowser || opts.URLWriter != nil || opts.RedirectURL != oauthlogin.ToolHiveCompatibleRedirectURL {
+		t.Fatalf("native browser OAuth options = %+v", opts)
 	}
 }
 
@@ -154,7 +162,7 @@ func TestNativeLLMGatewayLogin_NoBrowserUsesFixedLoopbackPresenter(t *testing.T)
 	)
 	var stderr bytes.Buffer
 	opts := nativeLLMOAuthOptions(true, &stderr)
-	if !opts.NoBrowser || opts.URLWriter != &stderr || opts.RedirectURL != oauthlogin.ExactRedirectURL {
+	if !opts.NoBrowser || opts.URLWriter != &stderr || opts.RedirectURL != oauthlogin.ToolHiveCompatibleRedirectURL {
 		t.Fatalf("native no-browser OAuth options = %+v", opts)
 	}
 	runtime, err := oauthlogin.New(opts)
@@ -162,6 +170,9 @@ func TestNativeLLMGatewayLogin_NoBrowserUsesFixedLoopbackPresenter(t *testing.T)
 		t.Fatal(err)
 	}
 	err = runtime.Authorize(t.Context(), issuer, func(ctx context.Context, redirect string, present func(context.Context, string) (oauthlogin.Result, error)) error {
+		if redirect != oauthlogin.ToolHiveCompatibleRedirectURL {
+			return fmt.Errorf("native redirect = %q", redirect)
+		}
 		callback, parseErr := url.Parse(redirect)
 		if parseErr != nil {
 			return parseErr
@@ -241,6 +252,7 @@ func TestInvariant_native_llm_lifecycle_errors_are_safe_and_actionable(t *testin
 		{"not enrolled", llmendpoint.ErrNotEnrolled, "llm login corp"},
 		{"discovery", oidcclient.ErrDiscovery, "issuer trust"},
 		{"authorization", oidcclient.ErrAuthorization, "browser"},
+		{"callback occupied", errors.Join(oidcclient.ErrAuthorization, &oauthlogin.CallbackBindError{Reason: oauthlogin.CallbackBindAddressInUse}), "port 8666"},
 		{"token", oidcclient.ErrToken, "OIDC endpoint configuration"},
 		{"storage", credentialstore.ErrUnavailable, "protected credential storage"},
 		{"keyring", oidcclient.ErrStorage, "protected credential storage"},

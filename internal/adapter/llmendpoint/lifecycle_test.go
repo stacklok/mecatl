@@ -545,5 +545,5 @@ func (s *ambiguousCommitStore) Put(ctx context.Context, key, value []byte, expec
 }
 
 func testIdentity() llmendpoint.CredentialIdentity {
-	return llmendpoint.CredentialIdentity{SchemaVersion: 1, EndpointID: "corp", Gateway: "https://gateway.example/v1", Issuer: "https://issuer.example", ClientID: "client", ResourceAudience: "gateway", Scopes: []string{"models.read", "offline_access"}, RedirectURI: oauthlogin.ExactRedirectURL, IssuerTrust: llmendpoint.TrustIdentity{Policy: "private-ca", CADigest: "issuer-ca"}, GatewayTrust: llmendpoint.TrustIdentity{Policy: "private-ca", CADigest: "gateway-ca"}}
+	return llmendpoint.CredentialIdentity{SchemaVersion: 1, EndpointID: "corp", Gateway: "https://gateway.example/v1", Issuer: "https://issuer.example", ClientID: "client", ResourceAudience: "gateway", Scopes: []string{"models.read", "offline_access"}, RedirectURI: oauthlogin.ToolHiveCompatibleRedirectURL, IssuerTrust: llmendpoint.TrustIdentity{Policy: "private-ca", CADigest: "issuer-ca"}, GatewayTrust: llmendpoint.TrustIdentity{Policy: "private-ca", CADigest: "gateway-ca"}}
 }

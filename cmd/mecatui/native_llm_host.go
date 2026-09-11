@@ -45,7 +45,7 @@ var openNativeEndpointRuntime = func(_ context.Context, definition permconfig.Pr
 }
 
 func nativeLLMOAuthOptions(noBrowser bool, urlWriter io.Writer) oauthlogin.Options {
-	opts := oauthlogin.Options{RedirectURL: oauthlogin.ExactRedirectURL}
+	opts := oauthlogin.Options{RedirectURL: oauthlogin.ToolHiveCompatibleRedirectURL}
 	if noBrowser {
 		opts.NoBrowser = true
 		opts.URLWriter = urlWriter

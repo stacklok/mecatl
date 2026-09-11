@@ -197,7 +197,11 @@ func Revoke(ctx context.Context, cfg Config, token, hint string) error {
 func validConfig(ctx context.Context, cfg Config) bool {
 	return ctx != nil && cfg.HTTPClient != nil && cfg.Present != nil &&
 		secureIssuer(cfg.Issuer) && cfg.ClientID != "" &&
-		cfg.RedirectURI == oauthlogin.ExactRedirectURL && len(cfg.Scopes) > 0
+		validRedirectURI(cfg.RedirectURI) && len(cfg.Scopes) > 0
+}
+
+func validRedirectURI(uri string) bool {
+	return uri == oauthlogin.ExactRedirectURL || uri == oauthlogin.ToolHiveCompatibleRedirectURL
 }
 
 func accessValidator(ctx context.Context, cfg Config, doc discovery) (func(context.Context, string) error, func(), error) {
@@ -290,6 +294,10 @@ func safeContextError(err error) error {
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		return context.DeadlineExceeded
+	}
+	var bind *oauthlogin.CallbackBindError
+	if errors.As(err, &bind) {
+		return &oauthlogin.CallbackBindError{Reason: bind.Reason}
 	}
 	return ErrAuthorization
 }

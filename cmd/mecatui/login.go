@@ -554,7 +554,7 @@ var (
 func runLLMCommand(res invocationResolution) error {
 	if len(res.remaining) == 1 && isHelpMetaFlag(res.remaining[0]) {
 		fmt.Fprintln(os.Stderr, "Usage: mecatui llm config set ENDPOINT [flags] | mecatui llm login ENDPOINT [--no-browser] | mecatui llm status [ENDPOINT] | mecatui llm logout ENDPOINT")
-		fmt.Fprintln(os.Stderr, "Native endpoint login: --no-browser prints the authorization URL to stderr and waits for the fixed loopback callback.")
+		fmt.Fprintln(os.Stderr, "Native endpoint login: --no-browser prints the authorization URL to stderr and waits at the fixed ToolHive-compatible callback http://localhost:8666/callback.")
 		fmt.Fprintln(os.Stderr, "ToolHive login: mecatui llm login toolhive [--skip-browser]")
 		return flag.ErrHelp
 	}
@@ -593,6 +593,8 @@ func nativeLifecycleError(action, endpoint string, err error) error {
 		return errors.New("native LLM protected credential storage is unavailable; check the configured credential home and OS keyring, then retry")
 	case errors.Is(err, oidcclient.ErrDiscovery):
 		return errors.New("native LLM issuer discovery failed; check issuer trust, DNS, TLS, and exact endpoint configuration, then retry")
+	case callbackAddressInUse(err):
+		return errors.New("native LLM login cannot listen on localhost port 8666 because it is already in use; stop the process using port 8666, then retry")
 	case errors.Is(err, oidcclient.ErrAuthorization):
 		return errors.New("native LLM authorization was not completed; retry and complete the newest browser flow")
 	case errors.Is(err, oidcclient.ErrToken):
@@ -602,6 +604,11 @@ func nativeLifecycleError(action, endpoint string, err error) error {
 	default:
 		return fmt.Errorf("native LLM endpoint %s failed; retry or run `mecatui llm status %s` for local state", action, endpoint)
 	}
+}
+
+func callbackAddressInUse(err error) bool {
+	var bind *oauthlogin.CallbackBindError
+	return errors.As(err, &bind) && bind.Reason == oauthlogin.CallbackBindAddressInUse
 }
 
 func runNativeLLMCommand(ctx context.Context, action, endpoint string, skipBrowser bool, host nativeLLMHost, stdout, stderr io.Writer) error {

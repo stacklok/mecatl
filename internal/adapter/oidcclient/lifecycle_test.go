@@ -93,6 +93,35 @@ func TestValidateAccessTokenAllowsOmittedAudience(t *testing.T) {
 	}
 }
 
+func TestAuthorizationCodePreservesClosedCallbackBindReason(t *testing.T) {
+	var issuer *httptest.Server
+	issuer = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/.well-known/openid-configuration" {
+			http.NotFound(w, r)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"issuer": issuer.URL, "authorization_endpoint": issuer.URL + "/authorize",
+			"token_endpoint": issuer.URL + "/token", "jwks_uri": issuer.URL + "/keys",
+			"code_challenge_methods_supported": []string{"S256"},
+		})
+	}))
+	defer issuer.Close()
+
+	_, err := oidcclient.AuthorizationCode(t.Context(), oidcclient.Config{
+		Issuer: issuer.URL, ClientID: "client", RedirectURI: oauthlogin.ToolHiveCompatibleRedirectURL,
+		Scopes: []string{"offline_access"}, HTTPClient: issuer.Client(),
+		Present: func(context.Context, string) (oauthlogin.Result, error) {
+			return oauthlogin.Result{}, &oauthlogin.CallbackBindError{Reason: oauthlogin.CallbackBindAddressInUse}
+		},
+		ValidateAccessToken: func(context.Context, string) error { return nil },
+	})
+	var bind *oauthlogin.CallbackBindError
+	if !errors.Is(err, oidcclient.ErrAuthorization) || !errors.As(err, &bind) || bind.Reason != oauthlogin.CallbackBindAddressInUse {
+		t.Fatalf("authorization bind error = %v", err)
+	}
+}
+
 func TestInvariant_native_oidc_discovered_endpoints_stay_on_issuer_origin(t *testing.T) {
 	var requests atomic.Int32
 	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {

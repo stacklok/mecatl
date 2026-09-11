@@ -655,32 +655,41 @@ func TestExactRedirectAuthenticatedRejectionIsTerminal(t *testing.T) {
 	}
 }
 
-func TestExactRedirectRejectsOccupiedPort(t *testing.T) {
-	listener, err := net.Listen("tcp4", "127.0.0.1:18473")
-	if err != nil {
-		t.Skipf("fixed callback port unavailable for test: %v", err)
-	}
-	defer listener.Close()
-	runtime, err := New(Options{RedirectURL: ExactRedirectURL})
-	if err != nil {
-		t.Fatal(err)
-	}
-	called := false
-	err = runtime.Authorize(context.Background(), testIssuer, func(context.Context, string, func(context.Context, string) (Result, error)) error {
-		called = true
-		return nil
-	})
-	// The closed bind reason distinguishes an occupied fixed port without retaining
-	// the nested network error or the random callback capability.
-	if err == nil || called {
-		t.Fatalf("occupied-port result = %v, authorize called=%v", err, called)
-	}
-	var bind *CallbackBindError
-	if !errors.As(err, &bind) || bind.Reason != CallbackBindAddressInUse || !errors.Is(err, ErrAuthorizationFailed) {
-		t.Fatalf("error = %v, want address-in-use CallbackBindError", err)
-	}
-	if strings.Contains(err.Error(), callbackPrefix) {
-		t.Fatalf("error leaked the callback path: %v", err)
+func TestFixedRedirectRejectsOccupiedPort(t *testing.T) {
+	for _, tc := range []struct {
+		name, redirect, address string
+	}{
+		{name: "remote", redirect: ExactRedirectURL, address: "127.0.0.1:18473"},
+		{name: "ToolHive-compatible", redirect: ToolHiveCompatibleRedirectURL, address: "localhost:8666"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			listener, err := net.Listen("tcp4", tc.address)
+			if err != nil {
+				t.Skipf("fixed callback port unavailable for test: %v", err)
+			}
+			defer listener.Close()
+			runtime, err := New(Options{RedirectURL: tc.redirect})
+			if err != nil {
+				t.Fatal(err)
+			}
+			called := false
+			err = runtime.Authorize(context.Background(), testIssuer, func(context.Context, string, func(context.Context, string) (Result, error)) error {
+				called = true
+				return nil
+			})
+			// The closed bind reason distinguishes an occupied fixed port without retaining
+			// the nested network error or the callback route.
+			if err == nil || called {
+				t.Fatalf("occupied-port result = %v, authorize called=%v", err, called)
+			}
+			var bind *CallbackBindError
+			if !errors.As(err, &bind) || bind.Reason != CallbackBindAddressInUse || !errors.Is(err, ErrAuthorizationFailed) {
+				t.Fatalf("error = %v, want address-in-use CallbackBindError", err)
+			}
+			if strings.Contains(err.Error(), callbackPrefix) || strings.Contains(err.Error(), "/callback") {
+				t.Fatalf("error leaked the callback path: %v", err)
+			}
+		})
 	}
 }
 
@@ -705,13 +714,18 @@ func TestExactRedirectCancellationReleasesListener(t *testing.T) {
 	_ = listener.Close()
 }
 
-func TestExactRedirectValidationIsStrict(t *testing.T) {
+func TestFixedRedirectValidationIsStrict(t *testing.T) {
 	for _, redirect := range []string{
 		"http://localhost:18473/oauth/callback",
 		"http://127.0.0.1:18473/wrong",
 		"http://127.0.0.1:18473/oauth/callback?x=1",
 		"http://user@127.0.0.1:18473/oauth/callback",
 		"https://127.0.0.1:18473/oauth/callback",
+		"http://127.0.0.1:8666/callback",
+		"http://localhost:8666/oauth/callback",
+		"http://localhost:8667/callback",
+		"http://localhost:8666/callback?x=1",
+		"https://localhost:8666/callback",
 	} {
 		if _, err := New(Options{RedirectURL: redirect}); err == nil {
 			t.Errorf("accepted redirect %q", redirect)

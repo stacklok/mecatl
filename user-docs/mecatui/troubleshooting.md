@@ -25,8 +25,11 @@ Native **LLM endpoint** lifecycle is local embedded-mode operator work: run
 or network request, then run `mecatui llm login ENDPOINT` from embedded mecatui if the
 operator must enroll it. In Toolbx, SSH, or another environment that cannot launch a
 browser, use `mecatui llm login ENDPOINT --no-browser`: Mecatui prints the authorization
-URL to stderr and waits up to five minutes for the existing fixed loopback callback. Open
-the URL in a browser that can return that callback to the machine running Mecatui.
+URL to stderr and waits up to five minutes at the fixed ToolHive-compatible redirect
+`http://localhost:8666/callback`. Open the URL in a browser that can return that callback to
+port 8666 on the machine running Mecatui. If port 8666 is occupied, stop the process using it
+and retry. The registered redirect is shared for client compatibility, but native Mecatl
+credentials remain isolated: Mecatui does not read, copy, or reuse ToolHive credentials.
 ToolHive is separate and retains `mecatui llm login toolhive --skip-browser`; do not swap
 the two flags. A connected client cannot enroll the remote server. Confirm
 that the remote server operator configured the exact endpoint and its explicit

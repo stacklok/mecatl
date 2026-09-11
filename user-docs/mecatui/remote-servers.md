@@ -116,7 +116,10 @@ Use `/connect` inside the TUI to choose another saved server.
 Remote enrollment and local LLM endpoint authentication are separate actions.
 `mecatui login ADDRESS` authenticates the client to a remote `mecated` server;
 `mecatui llm login ENDPOINT` authenticates a locally configured native LLM
-endpoint and never authenticates to remote `mecated`.
+endpoint and never authenticates to remote `mecated`. Native login uses the fixed
+ToolHive-compatible registered redirect `http://localhost:8666/callback`, including with
+`--no-browser`, but stores a separate native Mecatl credential and never reads or copies
+ToolHive credentials. Remote `mecatui login ADDRESS` retains its separate fixed callback.
 
 Inspect local endpoint status with `mecatui llm status [ENDPOINT]` and remove its
 credential with `mecatui llm logout ENDPOINT`. The reserved

@@ -97,8 +97,12 @@ policy/CA digests. A configured audience remains part of the exact identity and 
 and matched; omission skips both. No plaintext, environment fallback, migration, discovery, or
 credential material is persisted in sessions/events or exposed over RPC.
 
-Only embedded local mecatui supplies the bounded browser/loopback presenter. Mecated's
-loader is browser-free and holds its opened source runtimes until Build close. Status
+Only embedded local mecatui supplies the bounded browser/loopback presenter. Native login's
+closed callback profile is the ToolHive-compatible registered redirect
+`http://localhost:8666/callback`; it binds only that host, port, and path, while remote
+`mecatui login ADDRESS` retains `http://127.0.0.1:18473/oauth/callback`. Sharing the
+registered redirect does not share credentials: native storage remains isolated and no
+ToolHive credential is read or copied. Mecated's loader is browser-free and holds its opened source runtimes until Build close. Status
 uses existing local read-only state only, and logout makes exact local deletion
 authoritative before bounded best-effort revocation. The transaction locker is hashed,
 owner-only, context-aware, and holds the lifecycle through exchange and CAS commit; a

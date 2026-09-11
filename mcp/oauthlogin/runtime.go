@@ -21,10 +21,14 @@ const (
 	callbackBytes   = 32
 	shutdownTimeout = time.Second
 
-	// ExactRedirectURL is the fixed callback URI used by clients that have a
-	// pre-registered redirect. It is deliberately IPv4-literal and must not be
-	// changed to localhost or a wildcard address.
+	// ExactRedirectURL is the fixed callback URI used by remote mecatui login.
+	// It is deliberately IPv4-literal and must not be changed to localhost or
+	// a wildcard address.
 	ExactRedirectURL = "http://127.0.0.1:18473/oauth/callback"
+
+	// ToolHiveCompatibleRedirectURL is the fixed callback URI used by native
+	// LLM login so an existing ToolHive-compatible client registration works.
+	ToolHiveCompatibleRedirectURL = "http://localhost:8666/callback"
 )
 
 var (
@@ -69,9 +73,9 @@ type Options struct {
 	URLWriter io.Writer
 	Launcher  BrowserLauncher
 
-	// RedirectURL enables an explicitly configured callback. The only accepted
-	// value is ExactRedirectURL; empty preserves the random-path, ephemeral-port
-	// behavior used by existing callers.
+	// RedirectURL enables an explicitly configured callback. Only the package's
+	// fixed redirect constants are accepted; empty preserves the random-path,
+	// ephemeral-port behavior used by existing callers.
 	RedirectURL string
 }
 
@@ -101,8 +105,10 @@ func New(opts Options) (*Runtime, error) {
 	if opts.NoBrowser && opts.URLWriter == nil {
 		return nil, errors.New("no-browser OAuth login requires a URL writer")
 	}
-	if opts.RedirectURL != "" && !isExactRedirectURL(opts.RedirectURL) {
-		return nil, errors.New("OAuth redirect URL is invalid")
+	if opts.RedirectURL != "" {
+		if _, ok := fixedRedirect(opts.RedirectURL); !ok {
+			return nil, errors.New("OAuth redirect URL is invalid")
+		}
 	}
 	launcher := opts.Launcher
 	if launcher == nil {
@@ -153,10 +159,11 @@ func (r *Runtime) Authorize(ctx context.Context, expectedIssuer string, authoriz
 			return errors.New("generate OAuth callback path: failed")
 		}
 	} else {
-		path = "/oauth/callback"
-		address = "127.0.0.1:18473"
-		callbackHost = "127.0.0.1:18473"
-		redirectURL = ExactRedirectURL
+		fixed, _ := fixedRedirect(r.opts.RedirectURL)
+		path = fixed.path
+		address = fixed.address
+		callbackHost = fixed.host
+		redirectURL = r.opts.RedirectURL
 		attemptPolicy = attemptFixedRoute
 	}
 	ln, err := r.listen(ctx, "tcp4", address)
@@ -286,8 +293,21 @@ func randomCallbackPath(reader io.Reader) (string, error) {
 	return callbackPrefix + base64.RawURLEncoding.EncodeToString(raw[:]), nil
 }
 
-func isExactRedirectURL(raw string) bool {
-	return raw == ExactRedirectURL
+type fixedRedirectConfig struct {
+	address string
+	host    string
+	path    string
+}
+
+func fixedRedirect(raw string) (fixedRedirectConfig, bool) {
+	switch raw {
+	case ExactRedirectURL:
+		return fixedRedirectConfig{address: "127.0.0.1:18473", host: "127.0.0.1:18473", path: "/oauth/callback"}, true
+	case ToolHiveCompatibleRedirectURL:
+		return fixedRedirectConfig{address: "localhost:8666", host: "localhost:8666", path: "/callback"}, true
+	default:
+		return fixedRedirectConfig{}, false
+	}
 }
 
 func canonicalIssuer(raw string) (string, error) {

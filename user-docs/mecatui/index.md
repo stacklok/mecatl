@@ -49,8 +49,11 @@ use `--resource-audience VALUE` only when the issuer requires one.
 
 Manage credentials for a locally configured native LLM endpoint with
 `mecatui llm login ENDPOINT`; add `--no-browser` to print the authorization URL
-to stderr and wait for the same fixed loopback callback when the current environment cannot
-launch a browser. Inspect credentials with `mecatui llm status [ENDPOINT]`,
+to stderr and wait at the fixed ToolHive-compatible redirect
+`http://localhost:8666/callback` when the current environment cannot launch a browser.
+This reuses the redirect registered for the existing ToolHive client ID; Mecatl still stores
+native credentials in its isolated credential home and never reads or copies ToolHive credentials.
+Inspect credentials with `mecatui llm status [ENDPOINT]`,
 and remove them with `mecatui llm logout ENDPOINT`. ToolHive remains compatible
 through the reserved `toolhive` endpoint and keeps its established
 `mecatui llm login toolhive --skip-browser` spelling; `--no-browser` is for native

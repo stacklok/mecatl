@@ -25,7 +25,7 @@ import (
 	"github.com/stacklok/mecatl/mcp/oauthlogin"
 )
 
-const nativeRedirectURI = "http://127.0.0.1:18473/oauth/callback"
+const nativeRedirectURI = oauthlogin.ToolHiveCompatibleRedirectURL
 
 // NativeEndpointPresenter presents one authorization URL through a host-owned callback runtime.
 type NativeEndpointPresenter func(context.Context, string) (oauthlogin.Result, error)
