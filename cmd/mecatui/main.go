@@ -432,6 +432,8 @@ func runSpecialMode(res invocationResolution) (bool, error) {
 	switch res.mode {
 	case modeLogin:
 		return true, runLLMCommand(res)
+	case modeLLMConfig:
+		return true, runLLMConfigCommand(res, os.Stdout, os.Stderr)
 	case modeRemoteLogin:
 		return true, runRemoteLogin(res.address, res.remaining)
 	case modeRemoteLogout:

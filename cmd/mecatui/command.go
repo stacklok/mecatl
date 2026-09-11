@@ -36,9 +36,13 @@ const (
 	llmActionLogin                   = "login"
 	llmActionStatus                  = "status"
 	llmActionLogout                  = "logout"
+	llmActionConfig                  = "config"
+	llmConfigActionSet               = "set"
 	toolHiveEndpointID               = "toolhive"
 	// modeLogin is the CLI-only `mecatui llm` lifecycle subcommand.
 	modeLogin transportMode = "llm-login"
+	// modeLLMConfig writes native endpoint configuration without starting lifecycle operations.
+	modeLLMConfig transportMode = "llm-config"
 	// modeRemoteLogout removes one saved remote enrolment without starting a transport.
 	modeRemoteLogout transportMode = "remote-logout"
 	// modeRemoteLogin is the reserved remote-login route. It must remain
@@ -94,8 +98,8 @@ var topLevelCommands = []topLevelCommand{
 	},
 	{
 		name:     "llm",
-		synopsis: "llm login ENDPOINT | llm status [ENDPOINT] | llm logout ENDPOINT",
-		purpose:  "manage native LLM endpoint enrollment; use endpoint 'toolhive' only for ToolHive login",
+		synopsis: "llm <config|login|status|logout> [args]",
+		purpose:  "configure and manage native LLM endpoints; use endpoint 'toolhive' only for ToolHive login",
 		resolve:  resolveLLMCommand,
 	},
 }
@@ -245,7 +249,7 @@ func resolveRemoteLogoutCommand(args []string) invocationResolution {
 
 //nolint:gocyclo // Exact command grammar keeps each accepted form explicit.
 func resolveLLMCommand(args []string) invocationResolution {
-	const usage = "llm: usage: mecatui llm login ENDPOINT | mecatui llm status [ENDPOINT] | mecatui llm logout ENDPOINT"
+	const usage = "llm: usage: mecatui llm config set ENDPOINT [flags] | mecatui llm login ENDPOINT | mecatui llm status [ENDPOINT] | mecatui llm logout ENDPOINT"
 	if len(args) == 1 && isHelpMetaFlag(args[0]) {
 		return invocationResolution{mode: modeLogin, remaining: args}
 	}
@@ -254,6 +258,14 @@ func resolveLLMCommand(args []string) invocationResolution {
 	}
 	action := args[0]
 	switch action {
+	case llmActionConfig:
+		if len(args) == 2 && isHelpMetaFlag(args[1]) {
+			return invocationResolution{mode: modeLLMConfig, remaining: args[1:]}
+		}
+		if len(args) < 3 || args[1] != llmConfigActionSet || strings.HasPrefix(args[2], "-") {
+			return invocationResolution{err: errors.New(usage)}
+		}
+		return invocationResolution{mode: modeLLMConfig, llmAction: llmConfigActionSet, llmEndpoint: args[2], remaining: args[3:]}
 	case llmActionLogin:
 		if len(args) == 1 {
 			return invocationResolution{mode: modeLogin, llmAction: action, llmEndpoint: toolHiveEndpointID, llmDeprecatedAlias: true}
@@ -385,7 +397,8 @@ func writeTopLevelHelp(out io.Writer) {
 	_, _ = fmt.Fprintln(out, "Bare 'mecatui [flags]' hosts an embedded mecated server in-process (no loopback probe).")
 	_, _ = fmt.Fprintln(out)
 	writeCommandSummary(out)
-	_, _ = fmt.Fprintln(out, "\nNative LLM endpoints: mecatui llm login ENDPOINT | mecatui llm status [ENDPOINT] | mecatui llm logout ENDPOINT")
+	_, _ = fmt.Fprintln(out, "\nNative LLM configuration: mecatui llm config set ENDPOINT [flags]")
+	_, _ = fmt.Fprintln(out, "Native LLM lifecycle: mecatui llm login ENDPOINT | mecatui llm status [ENDPOINT] | mecatui llm logout ENDPOINT")
 	_, _ = fmt.Fprintln(out, "Remote mecatui uses `mecatui login ADDRESS`; ToolHive MCP discovery and manual openai-codex authentication are separate.")
 	_, _ = fmt.Fprintln(out, "\nHelp: mecatui --help, mecatui -h, or mecatui help")
 	_, _ = fmt.Fprintln(out, "      mecatui help <command> aliases mecatui <command> --help")

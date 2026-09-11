@@ -23,6 +23,27 @@ a separate server.
 - Run `mecatui login ADDRESS` to enroll with a remote server's OIDC issuer.
   This is separate from local LLM endpoint authentication.
 
+Configure a native endpoint without hand-editing YAML, then manage its local credentials:
+
+```sh
+mecatui llm config set corp \
+  --gateway-url https://gateway.example/v1 \
+  --issuer https://issuer.example \
+  --client-id mecatl \
+  --default-model corp-model \
+  --credential-home /absolute/path/to/mecatl-llm-credentials
+mecatui llm login corp
+```
+
+`config set` updates only the named endpoint in the operator-global Mecatl
+`settings.yaml`, preserving unrelated settings and other endpoints. The credential home must
+already be an owner-only (`0700`) directory; it is shared by all native endpoints, so later
+updates must use the configured home until credentials are migrated. It does not choose
+`models.default_provider` or start login. Public CA trust is the default. For private
+PKI, add `--issuer-ca-bundle PATH` and/or `--gateway-ca-bundle PATH`. Add repeatable
+`--scope VALUE` flags to replace the default `openid` and `offline_access` scopes, and
+use `--resource-audience VALUE` only when the issuer requires one.
+
 Manage credentials for a locally configured native LLM endpoint with
 `mecatui llm login ENDPOINT`, inspect them with `mecatui llm status [ENDPOINT]`,
 and remove them with `mecatui llm logout ENDPOINT`. ToolHive remains compatible

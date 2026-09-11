@@ -54,7 +54,7 @@ type NativeEndpointDefinitions map[string]NativeEndpointDefinition
 // NativeEndpointDefinition is one validated native endpoint before it is
 // normalized into ProviderDefinition.
 type NativeEndpointDefinition struct {
-	ID           string
+	ID           string      `yaml:"-"`
 	Protocol     string      `yaml:"protocol"`
 	URL          string      `yaml:"url"`
 	DefaultModel string      `yaml:"default_model"`
@@ -76,14 +76,14 @@ type NativeEndpointIdentity struct {
 type NativeOIDC struct {
 	Issuer           string   `yaml:"issuer"`
 	ClientID         string   `yaml:"client_id"`
-	ResourceAudience string   `yaml:"resource_audience"`
+	ResourceAudience string   `yaml:"resource_audience,omitempty"`
 	Scopes           []string `yaml:"scopes"`
 }
 
 // NativeTrust is one independently validated TLS trust identity.
 type NativeTrust struct {
 	Policy   string `yaml:"policy"`
-	CABundle string `yaml:"ca_bundle"`
+	CABundle string `yaml:"ca_bundle,omitempty"`
 }
 
 // ProviderAuth controls the closed custom-provider authentication vocabulary.

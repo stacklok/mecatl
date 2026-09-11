@@ -553,7 +553,7 @@ var (
 
 func runLLMCommand(res invocationResolution) error {
 	if len(res.remaining) == 1 && isHelpMetaFlag(res.remaining[0]) {
-		fmt.Fprintln(os.Stderr, "Usage: mecatui llm login ENDPOINT | mecatui llm status [ENDPOINT] | mecatui llm logout ENDPOINT")
+		fmt.Fprintln(os.Stderr, "Usage: mecatui llm config set ENDPOINT [flags] | mecatui llm login ENDPOINT | mecatui llm status [ENDPOINT] | mecatui llm logout ENDPOINT")
 		return flag.ErrHelp
 	}
 	if res.llmDeprecatedAlias {
