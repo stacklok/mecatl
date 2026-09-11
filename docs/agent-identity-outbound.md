@@ -881,7 +881,7 @@ stays open.
 The third is where AWS and Azure both are. Bedrock AgentCore stores vault entries under the
 agent identity and the user together, so a token is scoped to that pair. Entra Agent ID has no
 shared vault: the agent identity is a service principal with its own delegated permissions,
-consented to per agent. Atrium reaches the same place and calls the consent record a
+consented to per agent. The system reaches the same place and calls the consent record a
 `ConnectorBinding`. One credential per user is where we stop, not a property of the model.
 
 *Un-defers when* two conditions hold together: a second agent that needs different authority
