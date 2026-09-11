@@ -93,9 +93,7 @@ func TestAuthenticationRejectionDiagnosticsAreCategorizedAndSafe(t *testing.T) {
 				t.Fatalf("diagnostic records = %d, want 1", len(diag.records))
 			}
 			record := diag.records[0]
-			if record.level != port.LevelWarn || record.message != "authentication" || record.args["outcome"] != "rejected" || record.args["category"] != tc.wantCategory || record.args["transport"] != "grpc" || record.args["status"] != "Unauthenticated" || len(record.args) != 4 {
-				t.Fatalf("unsafe or unexpected diagnostic: %#v", record)
-			}
+			assertAuthRecord(t, record, port.LevelWarn, "rejected", tc.wantCategory, "grpc", "Unauthenticated")
 			if strings.Contains(record.render(), sensitive) || strings.Contains(record.render(), "private.example") || strings.Contains(record.render(), "alice") || strings.Contains(record.render(), "private-key") {
 				t.Fatalf("diagnostic leaked sensitive authentication data: %s", record.render())
 			}
@@ -129,9 +127,7 @@ func TestHTTPAuthenticationRejectionDiagnosticPreservesGenericClientResult(t *te
 		t.Fatalf("diagnostic records = %d, want 1", len(diag.records))
 	}
 	record := diag.records[0]
-	if record.level != port.LevelWarn || record.message != "authentication" || record.args["outcome"] != "rejected" || record.args["category"] != "wrong_issuer" || record.args["transport"] != "http" || record.args["status"] != "401" || len(record.args) != 4 {
-		t.Fatalf("unsafe or unexpected diagnostic: %#v", record)
-	}
+	assertAuthRecord(t, record, port.LevelWarn, "rejected", "wrong_issuer", "http", "401")
 	if strings.Contains(record.render(), sensitive) || strings.Contains(record.render(), "private.example") || strings.Contains(record.render(), "alice") || strings.Contains(record.render(), "private-key") {
 		t.Fatalf("diagnostic leaked sensitive authentication data: %s", record.render())
 	}
@@ -172,9 +168,7 @@ func TestHTTPMalformedAndStaticBearerRejectionsAreObservedSafely(t *testing.T) {
 				t.Fatalf("diagnostic records = %d, want 1", len(diag.records))
 			}
 			record := diag.records[0]
-			if record.level != port.LevelWarn || record.message != "authentication" || record.args["outcome"] != "rejected" || record.args["category"] != tc.category || record.args["transport"] != "http" || record.args["status"] != "401" || len(record.args) != 4 {
-				t.Fatalf("unsafe or unexpected diagnostic: %#v", record)
-			}
+			assertAuthRecord(t, record, port.LevelWarn, "rejected", tc.category, "http", "401")
 			for _, value := range []string{"secret-token", "wrong-token", "private.example", "alice"} {
 				if strings.Contains(record.render(), value) {
 					t.Fatalf("diagnostic leaked %q: %s", value, record.render())
@@ -225,9 +219,7 @@ func TestAuthenticationDiagnosticsCoverEnabledSuccessAndAvailability(t *testing.
 				t.Fatalf("diagnostic records = %d, want 1", len(diag.records))
 			}
 			record := diag.records[0]
-			if record.level != tc.level || record.message != "authentication" || record.args["outcome"] != tc.outcome || record.args["category"] != tc.category || record.args["transport"] != "http" || record.args["status"] != tc.status || len(record.args) != 4 {
-				t.Fatalf("unexpected diagnostic: %#v", record)
-			}
+			assertAuthRecord(t, record, tc.level, tc.outcome, tc.category, "http", tc.status)
 			for _, sensitive := range []string{"secret", "private.example", "alice"} {
 				if strings.Contains(record.render(), sensitive) {
 					t.Fatalf("diagnostic leaked %q: %s", sensitive, record.render())
@@ -280,9 +272,7 @@ func TestGRPCAuthenticationDiagnosticsCoverSuccessAndUnavailable(t *testing.T) {
 				t.Fatalf("diagnostic records = %d, want 1", len(diag.records))
 			}
 			record := diag.records[0]
-			if record.level != tc.level || record.message != "authentication" || record.args["outcome"] != tc.outcome || record.args["category"] != tc.category || record.args["transport"] != "grpc" || record.args["status"] != tc.statusText || len(record.args) != 4 {
-				t.Fatalf("unexpected diagnostic: %#v", record)
-			}
+			assertAuthRecord(t, record, tc.level, tc.outcome, tc.category, "grpc", tc.statusText)
 			for _, sensitive := range []string{"secret", "sensitive-token", "private.example", "alice", "sensitive IdP failure"} {
 				if strings.Contains(record.render(), sensitive) {
 					t.Fatalf("diagnostic leaked %q: %s", sensitive, record.render())
@@ -299,11 +289,13 @@ func TestAcceptedAuthenticationDiagnosticsAreBoundedPerCategoryAndTransport(t *t
 		config    server.SecurityConfig
 		transport string
 		token     string
+		category  string
+		status    string
 	}{
-		{name: "static grpc", config: server.SecurityConfig{AuthToken: "secret"}, transport: "grpc", token: "secret"},
-		{name: "static http", config: server.SecurityConfig{AuthToken: "secret"}, transport: "http", token: "secret"},
-		{name: "identity grpc", config: server.SecurityConfig{Validator: fixedDiagnosticValidator{principal: principal}}, transport: "grpc", token: "sensitive-token"},
-		{name: "identity http", config: server.SecurityConfig{Validator: fixedDiagnosticValidator{principal: principal}}, transport: "http", token: "sensitive-token"},
+		{name: "static grpc", config: server.SecurityConfig{AuthToken: "secret"}, transport: "grpc", token: "secret", category: "static_bearer", status: "OK"},
+		{name: "static http", config: server.SecurityConfig{AuthToken: "secret"}, transport: "http", token: "secret", category: "static_bearer", status: "200"},
+		{name: "identity grpc", config: server.SecurityConfig{Validator: fixedDiagnosticValidator{principal: principal}}, transport: "grpc", token: "sensitive-token", category: "validated_identity", status: "OK"},
+		{name: "identity http", config: server.SecurityConfig{Validator: fixedDiagnosticValidator{principal: principal}}, transport: "http", token: "sensitive-token", category: "validated_identity", status: "200"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			diag := &authRecordingDiagnostics{}
@@ -334,9 +326,7 @@ func TestAcceptedAuthenticationDiagnosticsAreBoundedPerCategoryAndTransport(t *t
 				t.Fatalf("accepted authentication diagnostics = %d, want 1", len(records))
 			}
 			record := records[0]
-			if record.level != port.LevelInfo || record.message != "authentication" || record.args["outcome"] != "accepted" {
-				t.Fatalf("unexpected accepted authentication diagnostic: %#v", record)
-			}
+			assertAuthRecord(t, record, port.LevelInfo, "accepted", tc.category, tc.transport, tc.status)
 		})
 	}
 }
@@ -414,6 +404,13 @@ type diagnosticRecord struct {
 
 func (r diagnosticRecord) render() string {
 	return r.message + " " + r.args["outcome"] + " " + r.args["category"] + " " + r.args["transport"] + " " + r.args["status"]
+}
+
+func assertAuthRecord(t *testing.T, record diagnosticRecord, level port.Level, outcome, category, transport, statusText string) {
+	t.Helper()
+	if record.level != level || record.message != "authentication" || record.args["outcome"] != outcome || record.args["category"] != category || record.args["transport"] != transport || record.args["status"] != statusText || len(record.args) != 4 {
+		t.Fatalf("unexpected authentication diagnostic: %#v", record)
+	}
 }
 
 type authRecordingDiagnostics struct {
