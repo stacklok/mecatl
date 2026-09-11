@@ -16,11 +16,12 @@ do not create a manual sidebar to express this structure.
 | `install.md` | Anyone who needs Mecatl's executables on a workstation or host: Homebrew, release archives and their verification, and the pointer to a source build. | First-run workflow, configuration, and per-shape deployment steps. Link to the owning client or deployment page. |
 | `mecatui/` | Terminal users who need to start, connect, configure, or troubleshoot the `mecatui` client. | Server deployment, server policy, and shared feature semantics. Link to the owning server or feature page. |
 | `building/getting-started/` | Builders and embedders following a first path, such as creating an agent or choosing a deployment. | Exhaustive API reference, operations procedures, and feature configuration. |
+| `building/typescript-sdk/` | TypeScript developers connecting applications, controlling sessions and runs, or owning a local daemon. | Wire-protocol reference and shared feature semantics. Link to the owning reference or feature page. |
 | `building/what-you-get/` | Builders who need an overview or technical reference for engine capabilities included in an embedding. | Operator procedures and feature configuration that applies across deployment shapes. Link to the feature page for those. |
 | `building/extension-points/` | Developers integrating with Mecatl's public seams, ports, and APIs. | How to operate a supplied deployment or use an existing feature. |
 | `building/deployment/` | Operators and platform builders deploying, securing, and maintaining a specific Mecatl delivery shape. | Client workflows and shared feature behavior except where a deployment changes availability or operation. |
 | `features/` | Users and operators enabling or understanding a capability of the shared agent and server core. Each feature page states availability and links to shape-specific deployment instructions. | Terminal-client controls, embedding APIs, and deployment runbooks. |
-| `reference/` | Readers looking up generated configuration fields or exact gRPC and HTTP/SSE contracts. | Tutorials, deployment workflows, and conceptual background. Link to the owning guide. |
+| `reference/` | Readers looking up generated configuration or SDK fields and exact gRPC and HTTP/SSE contracts. | Tutorials, deployment workflows, and conceptual background. Link to the owning guide. |
 
 `building/` is the builder and operator umbrella. Its `index.md` routes readers to
 the appropriate subsection; it does not own a second copy of their material.
@@ -55,6 +56,8 @@ when that is the reader's task; it must not repeat the canonical feature guide.
 | Configuration schema | `reference/configuration.md` | `building/deployment/settings.md` explains which configuration plane to use. |
 | gRPC API | `reference/grpc-api.md` | `building/deployment/grpc-http.md` explains client integration and transport choice. |
 | HTTP and SSE API | `reference/http-sse-api.md` | `building/deployment/grpc-http.md` explains client integration and transport choice. |
+| TypeScript SDK workflows | `building/getting-started/typescript-sdk.md` and `building/typescript-sdk/` | Deployment and feature pages link to the SDK guide that owns the application workflow. |
+| TypeScript SDK method reference | `reference/typescript-sdk-api/` | SDK guides link to the generated entry-point reference instead of copying signatures or option inventories. |
 | Troubleshooting | The troubleshooting section nearest the affected workflow | Do not create a second catch-all list when the owning page can provide the remedy. |
 
 When adding a page that appears to overlap an existing page, identify its canonical
@@ -121,9 +124,16 @@ Start with the applicable implementation source:
   deployed behavior
 
 The files under `docs/usage/` are compatibility pointers for historical links,
-not an authoring surface. Update the owning `user-docs/` page instead. The
-generated `reference/configuration.md` page is the exception to direct editing:
-change the configuration schema or generator, then run `task docs:configref`.
+not an authoring surface. Update the owning `user-docs/` page instead.
+
+Generated reference pages are exceptions to direct editing:
+
+- For `reference/configuration.md`, change the configuration schema or generator,
+  then run `task docs:configref`.
+- For `reference/typescript-sdk-api/core.md` and `node.md`, change the TSDoc in
+  `sdk/typescript/src/` or the SDK documentation generator, then run
+  `task sdk:docs`. Use `task sdk:docs:check` to verify that the committed output
+  is current without changing it.
 
 Confirm availability and defaults against the shipped public surface: flags or
 configuration, composition, capability advertisement, handlers, and deployed

@@ -86,7 +86,7 @@ export interface EventContentBlock {
   readonly url: string;
 }
 
-/** The payload of a `tool.result` event. Multimodal helpers arrive in M1 Scenario 18. @public */
+/** The text, structured data, and content blocks from a `tool.result` event. @public */
 export interface ToolResultEventPayload {
   readonly blocks: readonly EventContentBlock[];
   readonly callId: string;
@@ -347,7 +347,7 @@ export interface EventCommon {
   readonly usage: EventUsage | undefined;
 }
 
-/** Maps every known wire kind to its hand-crafted payload contract. @public */
+/** Maps every supported event kind to its typed payload. @public */
 export interface EventPayloads {
   readonly approval: ApprovalEventPayload;
   readonly "authorization.required": AuthorizationEventPayload;

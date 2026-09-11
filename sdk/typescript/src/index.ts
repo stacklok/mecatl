@@ -1,5 +1,5 @@
 /**
- * Transport-neutral mecatl SDK entry point.
+ * Transport-neutral Mecatl SDK entry point.
  *
  * @packageDocumentation
  */

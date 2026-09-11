@@ -7,13 +7,13 @@ import type { CredentialOptions } from "./credentials.js";
 import { credentialInterceptor } from "./credentials.js";
 import { registerTransport } from "./raw.js";
 
-/** @public */
+/** Shared credentials and HTTP/2 settings for the gRPC transport in Node.js or Bun. @public */
 export interface NodeTransportCommonOptions extends CredentialOptions {
-  /** Additional HTTP/2 session options. createConnection is owned by socketPath. */
+  /** Additional HTTP/2 session options. The SDK controls `createConnection` when using `socketPath`. */
   nodeOptions?: Omit<ClientSessionOptions, "createConnection">;
 }
 
-/** @public */
+/** Selects a TCP authority or Unix domain socket for the gRPC transport. @public */
 export type NodeTransportOptions = NodeTransportCommonOptions &
   (
     | {
@@ -29,7 +29,7 @@ export type NodeTransportOptions = NodeTransportCommonOptions &
       }
   );
 
-/** Creates the Node/Bun real-gRPC-over-HTTP/2 transport for TCP or UDS. @public */
+/** Creates a gRPC transport for Node.js or Bun over HTTP/2 or a Unix domain socket. @public */
 export function createNodeTransport(options: NodeTransportOptions): Transport {
   const credentials: CredentialOptions = {
     ...(options.headers === undefined ? {} : { headers: options.headers }),

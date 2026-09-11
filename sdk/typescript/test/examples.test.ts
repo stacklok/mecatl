@@ -14,10 +14,13 @@ const conciseExamples = [
   "callback-tool.ts",
   "durable-attachment.ts",
   "local-spawn.ts",
+  "multimodal.ts",
   "one-shot-query.ts",
   "permissions.ts",
   "plan-resolution.ts",
+  "quickstart.ts",
   "remote-connect.ts",
+  "run-events.ts",
   "schedules.ts",
   "teams.ts",
 ] as const;

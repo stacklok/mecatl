@@ -82,9 +82,9 @@ export const MECATL_ERROR_CODES = [
 ] as const;
 // END MECATL_ERROR_CODES
 
-/** @public */
+/** Error codes returned by the Mecatl server, plus `unknown` for future codes. @public */
 export type ServerErrorCode = (typeof MECATL_ERROR_CODES)[number] | "unknown";
-/** @public */
+/** Error codes produced locally by the SDK. @public */
 export type SDKErrorCode =
   | "authentication"
   | "cursor_scope"
@@ -100,9 +100,9 @@ export type SDKErrorCode =
   | "transport"
   | "unsupported_platform" // M3_LOCAL_ERROR_CODE
   | "unsupported_feature";
-/** @public */
+/** Every machine-readable error code exposed by the SDK. @public */
 export type MecatlErrorCode = ServerErrorCode | SDKErrorCode;
-/** @public */
+/** Transport implementations supported by the SDK. @public */
 export type TransportKind = "grpc" | "http";
 /** The request transport, or `local` when validation failed before transport selection. @public */
 export type ErrorOrigin = TransportKind | "local";
@@ -145,12 +145,17 @@ export type PromptValidationReason =
   | "source_xor"
   | "url";
 
-/** @public */
+/** Metadata attached to one MecatlError. @public */
 export interface MecatlErrorOptions {
+  /** Original failure retained on the JavaScript Error instance. */
   cause?: unknown;
+  /** Stable machine-readable SDK or server error code. */
   code: MecatlErrorCode;
+  /** Server request ID, when the transport supplied one. */
   requestId?: string | undefined;
+  /** HTTP status, when the failure came from the HTTP transport. */
   status?: number | undefined;
+  /** Transport that observed the failure, or `local` for SDK validation. */
   transport: ErrorOrigin;
 }
 
@@ -170,6 +175,7 @@ export class MecatlError extends Error {
     this.transport = options.transport;
   }
 
+  /** Returns a JSON-safe representation without the original cause. */
   toJSON(): Record<string, unknown> {
     return {
       name: this.name,
@@ -182,28 +188,28 @@ export class MecatlError extends Error {
   }
 }
 
-/** @public */
+/** A request failed before the server returned a domain response. @public */
 export class TransportError extends MecatlError {
   constructor(message: string, options: Omit<MecatlErrorOptions, "code">) {
     super(message, { ...options, code: "transport" });
   }
 }
 
-/** @public */
+/** Credential resolution or server authentication failed. @public */
 export class AuthenticationError extends MecatlError {
   constructor(message: string, options: Omit<MecatlErrorOptions, "code">) {
     super(message, { ...options, code: "authentication" });
   }
 }
 
-/** @public */
+/** A transport response violated the SDK's protocol contract. @public */
 export class ProtocolError extends MecatlError {
   constructor(message: string, options: Omit<MecatlErrorOptions, "code">) {
     super(message, { ...options, code: "protocol" });
   }
 }
 
-/** @public */
+/** The connected server does not advertise a required feature. @public */
 export class UnsupportedFeatureError extends MecatlError {
   readonly feature: string;
 
@@ -216,7 +222,7 @@ export class UnsupportedFeatureError extends MecatlError {
   }
 }
 
-/** @public */
+/** An operation is invalid for the current local SDK lifecycle state. @public */
 export class InvalidStateError extends MecatlError {
   constructor(message: string, options: Omit<MecatlErrorOptions, "code">) {
     super(message, { ...options, code: "invalid_state" });
@@ -303,14 +309,14 @@ export class PermissionAskAlreadyResolvedError extends InvalidStateError {
   }
 }
 
-/** @public */
+/** The connected server does not satisfy the SDK compatibility floor. @public */
 export class IncompatibleServerError extends MecatlError {
   constructor(message: string, options: Omit<MecatlErrorOptions, "code">) {
     super(message, { ...options, code: "incompatible_server" });
   }
 }
 
-/** @public */
+/** A typed domain failure returned by the Mecatl server. @public */
 export class ServerError extends MecatlError {
   declare readonly code: ServerErrorCode;
 

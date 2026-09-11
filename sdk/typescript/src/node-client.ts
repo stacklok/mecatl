@@ -5,11 +5,11 @@ import type { ClientDiagnosticsOptions } from "./errors.js";
 import { createNodeTransport, type NodeTransportOptions } from "./node-transport.js";
 import { type NodeClient, withToolRegistration } from "./tool.js";
 
-/** Options accepted by the Node/Bun connect() entry point. @public */
+/** Options accepted by `connect()` in Node.js or Bun. @public */
 export type NodeConnectOptions = (NodeTransportOptions | InjectedTransportOptions) &
   ClientDiagnosticsOptions;
 
-/** Creates a Node/Bun Client over gRPC TCP/UDS or a caller-injected transport. @public */
+/** Creates a client for Node.js or Bun over gRPC or a caller-provided transport. @public */
 export function connect(options: NodeConnectOptions): NodeClient {
   if ("transport" in options) {
     return withToolRegistration(

@@ -4,5 +4,8 @@
   "mainEntryPointFilePath": "<projectFolder>/dist/node.d.ts",
   "apiReport": {
     "reportFileName": "mecatl-sdk-node.api.md"
+  },
+  "docModel": {
+    "apiJsonFilePath": "<projectFolder>/.api-extractor-temp/models/node/mecatl-sdk-node.api.json"
   }
 }

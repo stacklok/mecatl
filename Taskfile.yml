@@ -959,9 +959,10 @@ tasks:
       - go run github.com/stacklok/modelith/cmd/modelith@73429dd46a22b3c3491c4654edca391fc9bd63f2 lint --completeness error docs/architecture/mecatl.modelith.yaml
 
   docs:
-    desc: Refresh the configuration reference and gate doc links (matlatl) — run before committing doc changes
+    desc: Refresh generated references and gate doc links (matlatl) — run before committing doc changes
     cmds:
       - task: docs:configref
+      - task: sdk:docs
       - task: docs:check
 
   ac-trace:

@@ -42,7 +42,7 @@ Read the [Mecatl documentation](https://mecatl.dev/docs) to get started.
 | Run an agent service | [`mecated`](./cmd/mecated) and the [deployment guide](https://mecatl.dev/docs/building/deployment/mecated) |
 | Run agents on Kubernetes | [`mecak8s`](./cmd/mecak8s) and the [Kubernetes deployment guide](https://mecatl.dev/docs/building/deployment/mecak8s) |
 | Use an agent locally | [Install](#install), then use [`mecatui`](./cmd/mecatui) — or [run the offline demo](#try-it-locally) from a checkout |
-| Connect an application | The [gRPC and HTTP/SSE integration guide](https://mecatl.dev/docs/building/deployment/grpc-http) |
+| Connect an application | The [TypeScript SDK guides](https://mecatl.dev/docs/building/typescript-sdk/) or the [gRPC and HTTP/SSE integration guide](https://mecatl.dev/docs/building/deployment/grpc-http) |
 | Build unattended automation | [`mecatequi`](./cmd/mecatequi) for one prompt, a patch, and a machine-readable result |
 | Embed the runtime | [`engine`](./engine) and the [embedding guide](https://mecatl.dev/docs/building/deployment/embed-engine) |
 
@@ -135,6 +135,8 @@ For an embedded deployment, see the
   deployment information.
 - [Client integration guide](https://mecatl.dev/docs/building/deployment/grpc-http)
   for gRPC and HTTP/SSE clients.
+- [TypeScript SDK guides](https://mecatl.dev/docs/building/typescript-sdk/) for
+  Node.js, Bun, and browser applications.
 
 ## Architecture and engineering documentation
 

@@ -1,0 +1,8 @@
+{
+  "label": "TypeScript SDK",
+  "position": 3,
+  "link": {
+    "type": "doc",
+    "id": "building/typescript-sdk/index"
+  }
+}

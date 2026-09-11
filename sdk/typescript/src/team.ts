@@ -24,37 +24,46 @@ import { RPC_CATALOG } from "./rpc-catalog.js";
 
 /** One initial or incrementally spawned team member. @public */
 export interface TeamMemberOptions {
+  /** Unique handle used to address this member. */
   name: string;
+  /** Agent-definition name adopted by this member. */
   agentType?: string;
+  /** Marks this member as the team coordinator. */
   lead?: boolean;
+  /** Requests an isolated workspace with mutating tools. */
   mutating?: boolean;
+  /** First-turn prompt for this member. */
   initialPrompt?: string;
 }
 
 /** Options used to create a server-owned team. @public */
 export interface CreateTeamOptions {
+  /** Session that owns the team. */
   sessionId: string;
+  /** Optional human-readable team label. */
   name?: string;
+  /** Initial members enrolled atomically. */
   members?: readonly TeamMemberOptions[];
+  /** Objective supplied to the coordinating member. */
   goal?: string;
   /**
-   * Optional team-wide token ceiling sent verbatim as `max_team_tokens`.
-   *
-   * The daemon treats this value as tighten-only against its own unadvertised cap.
-   * Omitting it sends no client default, and the SDK never presents it as a way to
-   * increase or replace the daemon-owned budget.
+   * Optional team-wide token limit. The daemon applies the lower of this value
+   * and its configured cap. Omit it to use the daemon's cap.
    */
   maxTeamTokens?: number;
 }
 
 /** One operator message sent to a team member. @public */
 export interface TeamMessageOptions {
+  /** Recipient member handle. */
   to: string;
+  /** Sender label recorded with the message. */
   from?: string;
+  /** Message body delivered to the member. */
   body: string;
 }
 
-/** An existing M1 discriminated event tagged with its producing team member. @public */
+/** A run event tagged with the team member that produced it. @public */
 export type TeamMemberRunEvent = Event & {
   readonly member: string;
 };
@@ -75,24 +84,31 @@ export interface TeamRun extends AsyncIterable<TeamRunEvent> {
   result(): Promise<TeamOutcome>;
 }
 
-/** An ergonomic handle for the seven team RPCs. @public */
+/** A handle for direct team operations. @public */
 export interface Team {
   readonly id: string;
   /** The typed initial roster returned atomically by CreateTeam. This is not a live view. */
   readonly initialMembers: readonly TeamMember[];
+  /** Adds one member to the team. */
   spawn(member: TeamMemberOptions, options?: RequestOptions): Promise<SpawnTeammateResponse>;
+  /** Sends a message to a team member. */
   message(
     message: TeamMessageOptions,
     options?: RequestOptions,
   ): Promise<SendTeammateMessageResponse>;
+  /** Cancels one team member. */
   cancel(member: string, options?: RequestOptions): Promise<CancelTeammateResponse>;
+  /** Starts a single-consumption team run. */
   run(options?: RequestOptions): TeamRun;
+  /** Returns the current team roster and state. */
   list(options?: RequestOptions): Promise<ListTeamResponse>;
+  /** Permanently removes the server-owned team. */
   cleanup(options?: RequestOptions): Promise<CleanupTeamResponse>;
 }
 
 /** Direct team creation operations exposed by a Client. @public */
 export interface Teams {
+  /** Creates a server-owned team bound to a session. */
   create(request: CreateTeamOptions, options?: RequestOptions): Promise<Team>;
 }
 

@@ -869,7 +869,7 @@ export async function spawnInternal(
   }
 }
 
-/** Starts one local mecated daemon and resolves after its ready-file barrier. @public */
+/** Starts one local `mecated` daemon and resolves when it reports that it is ready. @public */
 export function spawn(options: SpawnOptions = {}): Promise<SpawnedClient> {
   return spawnInternal(options);
 }

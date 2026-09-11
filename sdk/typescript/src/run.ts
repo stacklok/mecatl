@@ -36,6 +36,7 @@ export type PermissionAskResponder = (
 
 /** Options applied to one run. @public */
 export interface RunOptions {
+  /** Automatically answers ordinary permission asks. */
   onPermissionAsk?: PermissionAskResponder;
   /** Automatically answers only plan-originated PresentPlan asks. */
   onPlanApproval?: PlanApprovalResponder;
@@ -58,7 +59,7 @@ export interface RunResult {
 export interface Run extends AsyncIterable<Event> {
   readonly id: string;
   readonly sessionId: string;
-  /** Sends a permission verdict for a raw permission.ask event. Scenario 7 adds responders. */
+  /** Sends a permission verdict for a `permission.ask` event. */
   approve(askId: string, allow: boolean): Promise<void>;
   /** Resolves one pending ask on this run with the server's string verdict vocabulary. */
   resolveAsk(askId: string, verdict: PermissionVerdict): Promise<void>;

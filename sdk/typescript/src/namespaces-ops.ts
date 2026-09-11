@@ -82,36 +82,45 @@ import { RPC_CATALOG } from "./rpc-catalog.js";
 
 /** Configured skill inventory operations. @public */
 export interface Skills {
+  /** Lists the configured skills visible to the server. */
   list(request: ListSkillsRequest, options?: RequestOptions): Promise<ListSkillsResponse>;
 }
 
 /** Learned-skill inventory and server-owned lifecycle operations. @public */
 export interface LearnedSkills {
+  /** Lists learned skills and their lifecycle state. */
   list(
     request: ListLearnedSkillsRequest,
     options?: RequestOptions,
   ): Promise<ListLearnedSkillsResponse>;
+  /** Gets one learned skill. */
   get(request: GetLearnedSkillRequest, options?: RequestOptions): Promise<GetLearnedSkillResponse>;
+  /** Compares two versions of a learned skill. */
   diffVersions(
     request: DiffLearnedSkillVersionsRequest,
     options?: RequestOptions,
   ): Promise<DiffLearnedSkillVersionsResponse>;
+  /** Activates a learned skill. */
   activate(
     request: MutateLearnedSkillRequest,
     options?: RequestOptions,
   ): Promise<MutateLearnedSkillResponse>;
+  /** Rejects a learned skill. */
   reject(
     request: MutateLearnedSkillRequest,
     options?: RequestOptions,
   ): Promise<MutateLearnedSkillResponse>;
+  /** Archives a learned skill. */
   archive(
     request: MutateLearnedSkillRequest,
     options?: RequestOptions,
   ): Promise<MutateLearnedSkillResponse>;
+  /** Rolls a learned skill back to an earlier version. */
   rollback(
     request: RollbackLearnedSkillRequest,
     options?: RequestOptions,
   ): Promise<MutateLearnedSkillResponse>;
+  /** Lists the recorded changes to learned skills. */
   listChanges(
     request: ListSkillChangesRequest,
     options?: RequestOptions,
@@ -120,18 +129,22 @@ export interface LearnedSkills {
 
 /** Learning-attempt inventory and server-owned lifecycle operations. @public */
 export interface LearningAttempts {
+  /** Gets one learning attempt. */
   get(
     request: GetLearningAttemptRequest,
     options?: RequestOptions,
   ): Promise<GetLearningAttemptResponse>;
+  /** Lists learning attempts visible to the caller. */
   list(
     request: ListLearningAttemptsRequest,
     options?: RequestOptions,
   ): Promise<ListLearningAttemptsResponse>;
+  /** Retries a failed learning attempt. */
   retry(
     request: MutateLearningAttemptRequest,
     options?: RequestOptions,
   ): Promise<MutateLearningAttemptResponse>;
+  /** Abandons an eligible learning attempt. */
   abandon(
     request: MutateLearningAttemptRequest,
     options?: RequestOptions,
@@ -140,18 +153,22 @@ export interface LearningAttempts {
 
 /** Learning-proposal inventory and server-owned decision operations. @public */
 export interface LearningProposals {
+  /** Lists staged learning proposals. */
   list(
     request: ListLearningProposalsRequest,
     options?: RequestOptions,
   ): Promise<ListLearningProposalsResponse>;
+  /** Gets one staged learning proposal. */
   get(
     request: GetLearningProposalRequest,
     options?: RequestOptions,
   ): Promise<GetLearningProposalResponse>;
+  /** Approves or rejects a staged learning proposal. */
   decide(
     request: DecideLearningProposalRequest,
     options?: RequestOptions,
   ): Promise<DecideLearningProposalResponse>;
+  /** Reverts an eligible learning promotion. */
   undoPromotion(
     request: UndoLearningPromotionRequest,
     options?: RequestOptions,
@@ -160,6 +177,7 @@ export interface LearningProposals {
 
 /** Session-reflection operations. @public */
 export interface Reflection {
+  /** Reflects one completed session into learning evidence. */
   reflect(
     request: ReflectSessionRequest,
     options?: RequestOptions,
@@ -168,20 +186,24 @@ export interface Reflection {
 
 /** Resolved soul inspection operations. @public */
 export interface Soul {
+  /** Gets the server's resolved soul snapshot. */
   get(request: GetSoulRequest, options?: RequestOptions): Promise<GetSoulResponse>;
 }
 
 /** Resolved user-model inspection operations. @public */
 export interface UserModel {
+  /** Gets the caller's bounded user-model index or one detail entry. */
   get(request: GetUserModelRequest, options?: RequestOptions): Promise<GetUserModelResponse>;
 }
 
 /** Dream-plan generation and server-owned decision operations. @public */
 export interface DreamPlans {
+  /** Generates a bounded-lifetime dream plan. */
   generate(
     request: GenerateDreamPlanRequest,
     options?: RequestOptions,
   ): Promise<GenerateDreamPlanResponse>;
+  /** Applies or dismisses a generated dream plan. */
   decide(
     request: DecideDreamPlanRequest,
     options?: RequestOptions,
@@ -190,53 +212,73 @@ export interface DreamPlans {
 
 /** Schedule and fire inventory plus server-owned lifecycle operations. @public */
 export interface Schedules {
+  /** Creates a recurring schedule. */
   create(request: CreateScheduleRequest, options?: RequestOptions): Promise<CreateScheduleResponse>;
+  /** Gets one schedule. */
   get(request: GetScheduleRequest, options?: RequestOptions): Promise<GetScheduleResponse>;
+  /** Lists schedules visible to the caller. */
   list(request: ListSchedulesRequest, options?: RequestOptions): Promise<ListSchedulesResponse>;
+  /** Updates one schedule. */
   update(request: UpdateScheduleRequest, options?: RequestOptions): Promise<UpdateScheduleResponse>;
+  /** Deletes one schedule. */
   delete(request: DeleteScheduleRequest, options?: RequestOptions): Promise<DeleteScheduleResponse>;
+  /** Requests an immediate schedule fire. */
   fireNow(request: FireNowRequest, options?: RequestOptions): Promise<FireNowResponse>;
+  /** Pauses one schedule. */
   pause(request: PauseScheduleRequest, options?: RequestOptions): Promise<PauseScheduleResponse>;
+  /** Resumes one paused schedule. */
   resume(request: ResumeScheduleRequest, options?: RequestOptions): Promise<ResumeScheduleResponse>;
+  /** Gets one schedule fire. */
   getFire(request: GetFireRequest, options?: RequestOptions): Promise<GetFireResponse>;
+  /** Lists fires for a schedule. */
   listFires(request: ListFiresRequest, options?: RequestOptions): Promise<ListFiresResponse>;
 }
 
 /** Storage health, migration, and cleanup operations owned by the server. @public */
 export interface Storage {
+  /** Gets the configured session-storage health. */
   getHealth(
     request: GetStorageHealthRequest,
     options?: RequestOptions,
   ): Promise<GetStorageHealthResponse>;
+  /** Previews a session-storage migration. */
   planMigration(
     request: PlanSessionMigrationRequest,
     options?: RequestOptions,
   ): Promise<SessionMigrationPlan>;
+  /** Starts a planned session-storage migration. */
   applyMigration(
     request: ApplySessionMigrationRequest,
     options?: RequestOptions,
   ): Promise<SessionMigrationJob>;
+  /** Resumes an interrupted session-storage migration. */
   resumeMigration(
     request: ResumeSessionMigrationRequest,
     options?: RequestOptions,
   ): Promise<SessionMigrationJob>;
+  /** Cancels a session-storage migration. */
   cancelMigration(
     request: CancelSessionMigrationRequest,
     options?: RequestOptions,
   ): Promise<SessionMigrationJob>;
+  /** Gets one session-storage migration job. */
   getMigrationJob(
     request: GetSessionMigrationJobRequest,
     options?: RequestOptions,
   ): Promise<SessionMigrationJob>;
+  /** Previews a session-storage cleanup. */
   planCleanup(
     request: PlanSessionCleanupRequest,
     options?: RequestOptions,
   ): Promise<PlanSessionCleanupResponse>;
+  /** Starts a planned session-storage cleanup. */
   applyCleanup(request: ApplySessionCleanupRequest, options?: RequestOptions): Promise<CleanupJob>;
+  /** Cancels a session-storage cleanup. */
   cancelCleanup(
     request: CancelSessionCleanupRequest,
     options?: RequestOptions,
   ): Promise<CleanupJob>;
+  /** Gets one session-storage cleanup job. */
   getCleanupJob(
     request: GetSessionCleanupJobRequest,
     options?: RequestOptions,

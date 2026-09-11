@@ -30,23 +30,29 @@ export type RequestOptions = CallOptions;
 
 /** MCP resource, prompt, source, and ToolHive-group inventory operations. @public */
 export interface McpInventory {
+  /** Lists the MCP resources exposed by configured servers. */
   listResources(
     request: ListMcpResourcesRequest,
     options?: RequestOptions,
   ): Promise<ListMcpResourcesResponse>;
+  /** Reads one MCP resource by URI. */
   readResource(
     request: ReadMcpResourceRequest,
     options?: RequestOptions,
   ): Promise<ReadMcpResourceResponse>;
+  /** Lists the MCP prompts exposed by configured servers. */
   listPrompts(
     request: ListMcpPromptsRequest,
     options?: RequestOptions,
   ): Promise<ListMcpPromptsResponse>;
+  /** Expands one MCP prompt into its rendered messages. */
   getPrompt(request: GetMcpPromptRequest, options?: RequestOptions): Promise<GetMcpPromptResponse>;
+  /** Lists configured MCP sources and their diagnostics. */
   listSources(
     request: ListMcpSourcesRequest,
     options?: RequestOptions,
   ): Promise<ListMcpSourcesResponse>;
+  /** Lists ToolHive groups present in the resolved MCP inventory. */
   listToolHiveGroups(
     request: ListToolHiveGroupsRequest,
     options?: RequestOptions,
@@ -55,21 +61,25 @@ export interface McpInventory {
 
 /** Resolved agent-definition inventory operations. @public */
 export interface Agents {
+  /** Lists the resolved agent definitions. */
   list(request: ListAgentsRequest, options?: RequestOptions): Promise<ListAgentsResponse>;
 }
 
 /** Session-scoped slash-command inventory operations. @public */
 export interface Commands {
+  /** Lists slash commands available to a session. */
   list(request: ListCommandsRequest, options?: RequestOptions): Promise<ListCommandsResponse>;
 }
 
 /** Session-scoped worktree inventory operations. @public */
 export interface Worktrees {
+  /** Lists worktrees eligible for a session fork or clear operation. */
   list(request: ListWorktreesRequest, options?: RequestOptions): Promise<ListWorktreesResponse>;
 }
 
 /** Selectable model inventory operations. @public */
 export interface Models {
+  /** Lists selectable providers and models. */
   list(request: ListModelsRequest, options?: RequestOptions): Promise<ListModelsResponse>;
 }
 

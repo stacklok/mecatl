@@ -121,6 +121,25 @@ tasks:
     cmds:
       - pnpm run api:update
 
+  docs:
+    desc: Regenerate the committed TypeScript SDK method reference
+    deps: [build]
+    cmds:
+      - pnpm run api:check
+      - pnpm run docs:generate
+
+  docs:check:
+    desc: Verify the committed TypeScript SDK method reference is current
+    deps: [build]
+    cmds:
+      - pnpm run api:check
+      - |
+        sdk_docs_tmp="$(mktemp -d)"
+        trap 'rm -r "$sdk_docs_tmp"' EXIT
+        pnpm run docs:generate --output "$sdk_docs_tmp"
+        diff -u ../../user-docs/reference/typescript-sdk-api/core.md "$sdk_docs_tmp/core.md"
+        diff -u ../../user-docs/reference/typescript-sdk-api/node.md "$sdk_docs_tmp/node.md"
+
   pack:
     desc: Build and pack the TypeScript SDK into the ignored temporary directory
     deps: [install]

@@ -7,7 +7,7 @@ import { PLAN_APPROVED_PROCEED_TEXT, type PlanApprovalResponder } from "./plan.j
 import type { PermissionAskResponder, Run } from "./run.js";
 import { type SpawnOptions, spawn } from "./spawn.js";
 
-/** Options for one spawn-create-run-cleanup query. @public */
+/** Options for one `query()` call. @public */
 export interface QueryOptions {
   /** Use an existing client instead of spawning a local daemon. The client remains caller-owned. */
   client?: Client;
@@ -25,9 +25,9 @@ export interface QueryOptions {
   spawn?: SpawnOptions;
 }
 
-/** One query-owned event stream. Its session id remains useful when retention uses a supplied client. @public */
+/** One query-owned event stream and its created session ID. @public */
 export interface Query extends AsyncIterable<Event> {
-  /** The id of the session created for this query. */
+  /** The ID of the session created for this query. */
   readonly sessionId: string;
 }
 

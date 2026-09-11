@@ -29,6 +29,9 @@ deployment.
 - [What Mecatl provides](/building/what-you-get/engine-and-session.md) explains
   the engine, session model, agent loop, tools, permissions, hooks, and other
   built-in capabilities.
+- [TypeScript SDK](/building/typescript-sdk/index.md) covers application
+  connections, sessions and runs, approvals, durable activity, and callback
+  tools.
 - [Extension points](/building/extension-points/index.md) covers the Go ports for
   model providers, storage, permissions, tools, and other adapters.
 - [Deployment guides](/building/deployment/index.md) cover embedding the engine,

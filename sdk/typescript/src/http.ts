@@ -27,8 +27,9 @@ import {
   resolveHTTPRoute,
 } from "./rpc-catalog.js";
 
-/** @public */
+/** Options for the browser-compatible HTTP and SSE transport. @public */
 export interface HttpTransportOptions extends CredentialOptions {
+  /** HTTP API base URL. Relative values resolve against the browser origin. */
   baseUrl: string;
   /** Passed to every request made by this transport. */
   credentials?: RequestCredentials;
@@ -560,7 +561,7 @@ async function* parseSSE(
   }
 }
 
-/** Creates the browser-safe mecated HTTP/JSON/SSE implementation of Connect Transport. @public */
+/** Creates a browser-compatible Connect-ES transport over Mecatl's HTTP and SSE API. @public */
 export function createHttpTransport(options: HttpTransportOptions): Transport {
   const transport = new HttpTransport(options);
   return registerTransport(transport, "http", {

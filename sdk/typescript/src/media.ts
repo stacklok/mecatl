@@ -11,12 +11,15 @@ export const MAX_PROMPT_MEDIA_PARTS = 16;
 
 /** The source accepted by imagePart() and audioPart(). Exactly one field is required. @public */
 export interface MediaPartSource {
+  /** Inline media bytes. */
   bytes?: Uint8Array;
+  /** Absolute HTTPS media URL. */
   url?: string;
 }
 
 /** Options accepted by imagePart() and audioPart(). @public */
 export interface MediaPartOptions extends MediaPartSource {
+  /** Media type beginning with `image/` or `audio/` for the selected helper. */
   mimeType: string;
 }
 

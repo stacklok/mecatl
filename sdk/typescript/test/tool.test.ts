@@ -249,7 +249,7 @@ describe("callback tool registration", () => {
     );
 
     expect(source).toContain("Unverified caller assertion");
-    expect(source).toContain("concurrent read batch");
-    expect(source).toContain("plan mode's fixed");
+    expect(source).toContain("scheduling concurrent read-only calls");
+    expect(source).toContain("Plan mode does not automatically");
   });
 });

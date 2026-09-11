@@ -1,5 +1,5 @@
 /**
- * Node.js and Bun mecatl SDK entry point.
+ * Node.js and Bun Mecatl SDK entry point.
  *
  * @packageDocumentation
  */

@@ -2,10 +2,10 @@ import type { Interceptor } from "@connectrpc/connect";
 import type { TransportKind } from "./errors.js";
 import { AuthenticationError } from "./errors.js";
 
-/** @public */
+/** Resolves request headers immediately before each SDK request. @public */
 export type CredentialProvider = () => HeadersInit | Promise<HeadersInit>;
 
-/** @public */
+/** Static or per-request credentials accepted by SDK transports. @public */
 export interface CredentialOptions {
   /** Headers copied once at transport construction. */
   headers?: HeadersInit;
