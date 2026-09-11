@@ -102,13 +102,6 @@ jobs:
           fetch-depth: 1
           ref: ${{ env.VERSION }}
 
-      # Sibling action refs use literal version tags; fail before publishing if they
-      # do not match this release tag.
-      - name: Check reusable-workflow pins match the release tag
-        env:
-          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
-        run: EXPECTED_TAG="${RELEASE_TAG}" bash .github/actions/check-reusable-pins.sh
-
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
@@ -803,15 +796,6 @@ jobs:
           echo "::group::Disk after"
           df -h /
           echo "::endgroup::"
-
-      # The same version-skew gate the mecated publish job runs. Repeated here,
-      # not inherited via needs:, so a Release and a public tap commit can never
-      # be published for a tag whose sibling-action pins point at the previous
-      # release.
-      - name: Check reusable-workflow pins match the release tag
-        env:
-          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
-        run: EXPECTED_TAG="${RELEASE_TAG}" bash .github/actions/check-reusable-pins.sh
 
       # The same on-main gate the `guard` job runs. Repeated here, not merely
       # inherited via needs:, for the same reason the pin gate above is: this is

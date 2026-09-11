@@ -807,15 +807,17 @@ jobs:
           (cd provider/openai && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --timeout=10m ./...)
           (cd provider/openaichat && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --timeout=10m ./...)
 
-      # Lint the GitHub Actions workflows + assert the reusable workflow's first-party
-      # sibling-action pins match the release tag (the version-skew guard). actionlint is
-      # pinned via `go run` so no extra binary install is needed; it embeds shellcheck for
-      # `run:` blocks when available. `task lint:actions` chains the reusable-pins check.
+      # Lint the GitHub Actions workflows. actionlint is pinned via `go run` so no extra
+      # binary install is needed; it embeds shellcheck for `run:` blocks when available.
+      #
+      # -ignore: actionlint's latest release (v1.7.12, 2026-03) predates the `$/`
+      # self-repository `uses:` syntax GitHub shipped in 2026-07, so it rejects a valid ref
+      # as "invalid format". Upstream request: rhysd/actionlint#711. Scoped to that one
+      # message, so every other `uses:` error still fails the build.
       - name: Lint GitHub Actions
-        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
-
-      - name: Check reusable-workflow pins
-        run: bash .github/actions/check-reusable-pins.sh
+        run: |
+          go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 \
+            -ignore 'specifying action "\$/.*" in invalid format'
 
       # Reject a LIVE empty ${{ }} expression in a PARSED field of any workflow/action manifest
       # (issue #70). GitHub evaluates `${{ ... }}` inside parsed action.yml/workflow scalars, and

@@ -38,15 +38,15 @@ Two consequences of the Homebrew half, before you start:
 you dispatch a workflow, a bot opens the PR, a human merges it, and a bot tags the merge
 commit. You never run `git push origin main`, and you never create the tag by hand.
 
-The reason a release needs a commit at all: `mecatequi-reusable.yml` references its three
-first-party sibling composite actions by a **hardcoded** `@vX.Y.Z` literal (expressions are
-illegal in `uses:`). Every release MUST bump those pins in the same tagged commit, or the
-release ships pins pointing at the previous tag — the version skew that
-`.github/actions/check-reusable-pins.sh` fails the release on.
+`VERSION` (repo root, **bare** semver — `0.0.34`, not `v0.0.34`) is the single authored source
+of the release version, and the only file a release changes. The release PR is a one-line diff.
 
-`VERSION` (repo root, **bare** semver — `0.0.33`, not `v0.0.33`) is the single authored source
-of the release version. `create-release-pr.yml` bumps it and the three pins together;
-`check-reusable-pins.sh` derives its expected tag from it and holds no copy.
+It did not used to be. `mecatequi-reusable.yml` referenced its three sibling composite actions
+by a hardcoded `@vX.Y.Z` literal, so every release had to bump those pins in the same tagged
+commit or ship version skew. That self-reference — a file naming a tag that does not exist yet —
+is why a release needed a commit on `main` at all. The pins are now `$/` self-repository refs,
+which resolve to this repo at the exact ref the workflow is running from, so there is nothing
+left to bump and skew is impossible rather than merely policed.
 
 ## Steps
 
@@ -238,12 +238,12 @@ bump and no `release.yml` run to confirm — the push of the tag is the whole re
   idempotently via its `workflow_dispatch` `tag` input.
 - **Setup, once.** Both workflows read the release GitHub App from a `release` GitHub
   Environment (`vars.RELEASE_APP_CLIENT_ID`, `secrets.RELEASE_APP_PRIVATE_KEY`), whose
-  deployment-branch policy must be restricted to `main`. Repo-level secrets would let anyone
+  deployment-branch policy must be restricted to `main`. The App needs exactly two repository
+  permissions — Contents: write and Pull requests: write. It does NOT need Workflows: write,
+  because a release no longer edits anything under `.github/workflows/`. Repo-level secrets would let anyone
   with push access dispatch a modified workflow from a branch and mint the App credential.
 - **One release at a time.** If any `release/v*` PR is open, the next dispatch refuses and names
   it — merge or close it first. Once none is open, leftover `release/v*` branches from failed
   runs are deleted automatically before the new PR is cut.
-- **A local dry run** of exactly what the release PR will contain, without dispatching anything:
-  `.claude/skills/cut-release/scripts/bump-release-pins.sh vX.Y.Z`, then
-  `git checkout -- VERSION .github/workflows/mecatequi-reusable.yml` to revert. That script is
-  also the fallback if the release App or releaseo is unavailable.
+- **The release PR's whole diff is `VERSION`.** Both workflows assert that: anything else in
+  the commit stops the release rather than being tagged. There is nothing to dry-run locally.

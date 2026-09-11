@@ -1,9 +1,10 @@
 # Reusable mecatequi workflow. See user-docs/building/deployment/mecatequi.md for setup and
 # docs/adr/0028-mecatequi.md for the split-privilege design.
 #
-# Sibling actions require full repository paths because local paths resolve in the
-# caller's checkout. Their literal version tags are checked by
-# .github/actions/check-reusable-pins.sh.
+# Sibling actions use the `$/` self-repository syntax: it resolves to THIS repository at
+# the exact ref this workflow is running from, with no checkout. That is why there is no
+# version pin here to bump. `./` would be wrong — a workspace-relative path resolves in the
+# CALLER's checkout, which does not contain these actions.
 
 name: mecatequi (reusable)
 
@@ -262,23 +263,17 @@ jobs:
 
       # Extract the untrusted prompt from the event file rather than interpolating event text.
       # A full repository path is required because local action paths resolve in the caller's checkout.
-      # RELEASE-PINNED (jobs.implement.steps[1]): create-release-pr.yml rewrites this ref by
-      # POSITIONAL index. Reordering the steps in this job retargets that write silently —
-      # update the version_files paths there in the same change.
       - name: Extract prompt
         id: prompt
-        uses: stacklok/mecatl/.github/actions/mecatequi-extract-prompt@v0.0.34
+        uses: $/.github/actions/mecatequi-extract-prompt
         with:
           out-file: ${{ runner.temp }}/prompt.txt
 
       # The LLM keys reach the composite action through the job-level environment above;
       # step-level env on a `uses:` step does not propagate to its internal steps.
-      # RELEASE-PINNED (jobs.implement.steps[2]): create-release-pr.yml rewrites this ref by
-      # POSITIONAL index. Reordering the steps in this job retargets that write silently —
-      # update the version_files paths there in the same change.
       - name: mecatequi
         id: mecatequi
-        uses: stacklok/mecatl/.github/actions/mecatequi@v0.0.34
+        uses: $/.github/actions/mecatequi
         with:
           prompt-file: ${{ steps.prompt.outputs.prompt-file }}
           untrusted: "true"
@@ -407,11 +402,8 @@ jobs:
 
       # publish.sh applies the patch as data and reads the resolved GH_TOKEN from the
       # job environment; it never executes agent output.
-      # RELEASE-PINNED (jobs.publish.steps[4]): create-release-pr.yml rewrites this ref by
-      # POSITIONAL index. Reordering the steps in this job retargets that write silently —
-      # update the version_files paths there in the same change.
       - name: Publish
-        uses: stacklok/mecatl/.github/actions/mecatequi-publish@v0.0.34
+        uses: $/.github/actions/mecatequi-publish
         with:
           issue-number: ${{ github.event.issue.number }}
           patch-path: ${{ runner.temp }}/mecatequi-run/mecatequi.patch
