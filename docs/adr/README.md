@@ -244,6 +244,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0025 — UX discoverability](./0025-ux-discoverability.md)
 - [0026 — Clipboard image paste](./0026-clipboard-image-paste.md)
 - [0028 — mecatequi (single-shot GitHub Action)](./0028-mecatequi.md)
+- [0319 — Signed release archives and Homebrew tap distribution](./0319-release-archives-and-homebrew-tap.md) *(Accepted; recorded after implementation under an explicit spine waiver)*
 - [0082 — Factory MCP wiring for the one-shot mains](./0082-factory-mcp-wiring.md)
 - [0090 — Per-server opt-in for plain-http token-bearing MCP endpoints](./0090-mcp-insecure-http-optin.md)
 - [0032 — First-class worktree binding for a session](./0032-worktree-binding.md)
