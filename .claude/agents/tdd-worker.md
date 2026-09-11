@@ -63,8 +63,10 @@ setup command is the only parent-rooted operation):
 
    Confirm the chosen path with `git -C <worktree> rev-parse --show-toplevel` and
    `git -C <worktree> branch --show-current`; both must match the report and task
-   brief. Root **every** Read, Glob, Grep, Edit, Write, and Bash command there
-   (`git -C <worktree> ...` for git). Never use the parent checkout. If isolation
+   brief. Root **every** Read, Glob, Grep, Edit, Write, and command-execution
+   tool call there (`git -C <worktree> ...` for git). Use the tool name supplied
+   by the current harness; Mecatl exposes `Shell`, while Claude Code exposes
+   `Bash`. Never use the parent checkout. If isolation
    or the attempt branch cannot be validated, **fail the task**. Never reuse an
    earlier attempt's branch/path; failed worktrees are intentionally retained.
 
