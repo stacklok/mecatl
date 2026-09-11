@@ -11,8 +11,7 @@
 ToolHive ships an LLM gateway proxy (`thv llm proxy`, distinct from ToolHive's MCP-workload
 discovery that mecatl already integrates via `--toolhive`) that fronts an operator's coding-agent
 credential — an OpenAI-shaped `GET /v1/models` + `/v1/chat/completions` surface over an
-organization's gateway (see stacklok-enterprise-platform#2270 for the concrete wire shape this ADR
-targets). An operator running that proxy locally should get mecatl talking to it with **zero
+organization's gateway. An operator running that proxy locally should get mecatl talking to it with **zero
 configuration**: no API key to set, no base-URL flag to remember, just `thv llm proxy start` and
 `mecatl` picks it up.
 
