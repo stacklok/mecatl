@@ -48,14 +48,14 @@ team member before it deploys a pull request from a fork; disabling that
 control is outside this decision. The Preview environment contains no project
 secrets because Docusaurus needs none to build. Production-only values, if any
 are introduced later, remain scoped to Production. A maintainer authorization
-precedes deployment of a forked pull request. The team must confirm whether a
-later commit requires a new authorization before this ADR is accepted.
+precedes deployment of a forked pull request.
 
 Treat every preview as arbitrary contributor-controlled HTML and JavaScript.
-Apply `X-Robots-Tag: noindex` and appropriate security headers to preview
-responses, and decide whether previews also require Vercel Deployment
-Protection before this ADR is accepted. Preview URLs must not receive
-production cookies, credentials, analytics secrets, or privileged API access.
+Keep Vercel Deployment Protection disabled for previews so contributors and
+other non-members can inspect an authorized deployment. Apply
+`X-Robots-Tag: noindex` and appropriate security headers to preview responses.
+Preview URLs must not receive production cookies, credentials, analytics
+secrets, or privileged API access.
 
 Move published URL redirects into repository-owned Vercel configuration so
 Vercel returns HTTP redirect responses before serving the static build. The
@@ -98,24 +98,33 @@ The existing `task site:dev` workflow avoids another public surface. It does
 not give reviewers a shared URL and makes navigation and responsive-layout
 review dependent on each reviewer's local environment.
 
-## Discussion before acceptance
+## Vercel project requirements
 
-This ADR is a design proposal. It authorizes no hosting, workflow, or DNS change
-while its status is Proposed. Discussion must resolve:
+The prepared Vercel project uses the same baseline as the Stacklok
+documentation site:
 
-- the owning Vercel team, project, plan, and cost center;
-- confirmation of Git Fork Protection and environment-variable behavior under
-  the Stacklok Vercel organization;
-- preview Deployment Protection, retention, and access expectations;
-- the exact build, output, ignored-build, and Node.js settings;
+- The project root directory is `website/`.
+- The Ignored Build Step is
+  `git diff HEAD^ HEAD --quiet -- . ../user-docs`, so Vercel builds only commits
+  that change `website/` or `user-docs/`.
+- Git Fork Protection is enabled.
+- Deployment Protection is disabled for previews.
+- Protected Sourcemaps is enabled.
+- Build Logs and Source Protection is enabled.
+- The Preview environment contains no project secrets.
+
+These settings are part of the production and fork trust boundaries. Changes
+to them require security review against the constraints in this ADR.
+
+## Implementation planning
+
+This ADR remains a proposal and authorizes no hosting, workflow, or DNS change
+while its status is Proposed. The Architectural acceptance plan must define:
+
 - production and preview response headers, analytics, and observability;
 - redirect migration and verification;
-- DNS cutover, rollback criteria, and the AWS decommissioning sequence; and
-- whether another Stacklok site supplies a reusable Vercel project baseline.
-
-If the proposal proceeds, an Architectural acceptance plan must define these
-settings, the production and fork trust boundaries, migration proofs, rollback,
-and cleanup before implementation.
+- DNS cutover and rollback criteria; and
+- the AWS decommissioning sequence and rollback window.
 
 ## Consequences
 
@@ -126,10 +135,10 @@ longer needs a bespoke AWS content-deployment role or CloudFront request logic
 after migration.
 
 Vercel becomes the availability, build, cache, redirect, and preview security
-provider for `mecatl.dev`. The team must confirm organization settings rather
-than assuming provider defaults, especially for fork authorization and preview
-environment variables. Preview deployments still publish untrusted active
-content and require maintainer judgment before a fork build goes live.
+provider for `mecatl.dev`. The team must preserve the project requirements in
+this ADR, especially Git Fork Protection and the secret-free Preview
+environment. Preview deployments still publish untrusted active content and
+require maintainer judgment before a fork build goes live.
 
 The migration changes production DNS and removes recoverable AWS
 infrastructure only after a rollback window. Running both hosts during cutover
