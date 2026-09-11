@@ -4,6 +4,7 @@ package cliconfig
 
 import (
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,17 +25,39 @@ func doNotTrackOptOut(v string) bool {
 	}
 }
 
+// mecatlProductMetricsOverride parses the MECATL_PRODUCT_METRICS env var: a
+// mecatl-specific boolean override, distinct from the generic DO_NOT_TRACK
+// convention. Named to match --product-metrics/telemetry.productMetrics.enabled
+// exactly (one vocabulary word across all three surfaces) rather than a
+// "track"/"telemetry"-flavored name — this codebase's OWN "telemetry" already
+// means the unrelated, opt-in operator OTLP/Prometheus pipeline
+// (internal/adapter/telemetry), so a same-flavored name here would misleadingly
+// suggest it also touches that pipeline; it does not and never should.
+// set is false when the var is empty/unset/unparseable, letting the caller
+// fall through to the next precedence tier.
+func mecatlProductMetricsOverride(v string) (value, set bool) {
+	if v == "" {
+		return false, false
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		return false, false
+	}
+	return b, true
+}
+
 // ProductMetricsPrecedence carries the opt-out inputs
 // ResolveProductMetricsEnabled folds, highest precedence first: an explicit
-// CLI flag, then the DO_NOT_TRACK env var convention (donottrack.sh),
-// then the operator settings.yaml value, then default-enabled.
+// CLI flag, then the mecatl-specific MECATL_PRODUCT_METRICS env var, then the
+// DO_NOT_TRACK env var convention (donottrack.sh), then the operator
+// settings.yaml value, then default-enabled.
 type ProductMetricsPrecedence struct {
 	// FlagSet/FlagValue report whether --product-metrics was explicitly
 	// passed on the command line and its value.
 	FlagSet   bool
 	FlagValue bool
-	// Getenv abstracts os.Getenv for DO_NOT_TRACK / testing. Defaults to
-	// os.Getenv when nil.
+	// Getenv abstracts os.Getenv for MECATL_PRODUCT_METRICS / DO_NOT_TRACK /
+	// testing. Defaults to os.Getenv when nil.
 	Getenv func(string) string
 	// SettingsEnabled is permconfig.Resolver.OperatorProductMetricsEnabled()
 	// — nil when the operator set no telemetry.productMetrics.enabled value.
@@ -51,6 +74,9 @@ func ResolveProductMetricsEnabled(p ProductMetricsPrecedence) bool {
 	getenv := p.Getenv
 	if getenv == nil {
 		getenv = os.Getenv
+	}
+	if v, set := mecatlProductMetricsOverride(getenv("MECATL_PRODUCT_METRICS")); set {
+		return v
 	}
 	if doNotTrackOptOut(getenv("DO_NOT_TRACK")) {
 		return false

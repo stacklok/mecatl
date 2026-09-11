@@ -26,8 +26,8 @@ major features you have enabled, an anonymous per-install identifier, and
 coarse session/run/tool-call counts by bounded category — never a prompt,
 file path, raw tool name, or model id) to help Stacklok understand community
 adoption. This is on by default. To opt out: pass
---product-metrics=false, set DO_NOT_TRACK=1, or set
-telemetry.productMetrics.enabled: false in your settings.yaml. Details:
+--product-metrics=false, set MECATL_PRODUCT_METRICS=false, set DO_NOT_TRACK=1,
+or set telemetry.productMetrics.enabled: false in your settings.yaml. Details:
 see docs/adr/0329-product-metrics.md.
 `
 

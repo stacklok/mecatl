@@ -1717,7 +1717,7 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 	fs.BoolVar(&cfg.otlpInsecure, "otlp-insecure", false, "skip TLS when dialing the OTLP collector (development only)")
 
 	fs.BoolVar(&cfg.productMetrics, "product-metrics", true,
-		"report anonymous product-adoption metrics to Stacklok (version, OS/arch, enabled features, coarse session/run/tool-call counts — never a prompt, file path, tool name, or model id). ON by default; opt out with --product-metrics=false, DO_NOT_TRACK=1, or telemetry.productMetrics.enabled: false in settings.yaml")
+		"report anonymous product-adoption metrics to Stacklok (version, OS/arch, enabled features, coarse session/run/tool-call counts — never a prompt, file path, tool name, or model id). ON by default; opt out with --product-metrics=false, MECATL_PRODUCT_METRICS=false, DO_NOT_TRACK=1, or telemetry.productMetrics.enabled: false in settings.yaml")
 	fs.BoolVar(&cfg.productMetricsDryRun, "product-metrics-dry-run", false,
 		"print every product-metrics observation to stderr instead of sending it — verify the no-PII claim yourself before enabling --product-metrics for real")
 

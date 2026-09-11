@@ -181,20 +181,36 @@ or reused from `engine/session` (`StopReason`).
 ### Opt-out precedence and the operator-tier-only settings gate
 
 Product metrics are **enabled by default** (opt-out). `internal/cliconfig.ResolveProductMetricsEnabled`
-(`productmetrics_config.go`) folds four inputs, highest precedence first:
+(`productmetrics_config.go`) folds five inputs, highest precedence first:
 
 1. An explicit CLI flag: `--product-metrics=false` (all four binaries).
-2. The `DO_NOT_TRACK` environment variable set to a truthy value (`""`/`"0"`/
+2. The `MECATL_PRODUCT_METRICS` environment variable, when it parses as a
+   `strconv.ParseBool` boolean (`1`/`true`/`0`/`false`, case-insensitive, and
+   their variants) — a mecatl-specific override, checked BEFORE the generic
+   `DO_NOT_TRACK` convention so it can win in either direction (e.g. opt
+   mecatl back IN despite an ambient `DO_NOT_TRACK=1` set for other tools, or
+   opt mecatl OUT specifically without touching `DO_NOT_TRACK`). Named to
+   match `--product-metrics`/`telemetry.productMetrics.enabled` exactly —
+   deliberately NOT `*_DO_NOT_TRACK` or `*_TELEMETRY`: this package's own
+   `internal/adapter/telemetry` already means something else (the unrelated,
+   opt-in operator OTLP/Prometheus pipeline), so a same-flavored name here
+   would misleadingly suggest this variable also touches that pipeline. An
+   unset/empty/unparseable value falls through to the next tier.
+3. The `DO_NOT_TRACK` environment variable set to a truthy value (`""`/`"0"`/
    `"false"`, case-insensitive, are NOT an opt-out) — the cross-ecosystem
    convention (donottrack.sh), so the one env var that already opts CI
    fleets and dev machines out of *other* tools' telemetry covers mecatl
-   too, with no mecatl-specific variable to remember. (A dedicated
-   `MECATL_PRODUCT_METRICS=0` was deliberately not added on top of it — one
-   standard signal beats two overlapping ones.)
-3. `telemetry.productMetrics.enabled: false` in the **operator-tier**
+   too, with no mecatl-specific variable to remember. (Originally the ONLY
+   env-var signal, on the reasoning that "one standard signal beats two
+   overlapping ones" — `MECATL_PRODUCT_METRICS` was added afterward for
+   users who want mecatl-specific control independent of their `DO_NOT_TRACK`
+   setting; the two are complementary, not redundant, since one is a
+   cross-tool convention and the other is a same-named override matching
+   this package's own flag/settings vocabulary.)
+4. `telemetry.productMetrics.enabled: false` in the **operator-tier**
    settings file (`~/.config/mecatl/settings.yaml` + CLI-loaded equivalents)
    — `permconfig.Resolver.OperatorProductMetricsEnabled()`.
-4. Default: enabled.
+5. Default: enabled.
 
 The settings toggle is **operator-tier only**, the same trust boundary as
 `guardrails:`/`openrouter:` (AGENTS.md's existing operator-tier-only
@@ -255,7 +271,7 @@ one and the balance shifts back toward requiring opt-in:
    binary is about to actually send product metrics (telemetry enabled, and
    this install's telemetry-id file did not yet exist), it prints
    `cliconfig.ProductMetricsDisclosureNotice` once to stderr — what is
-   collected, that it is on by default, and the exact three ways to turn it
+   collected, that it is on by default, and the exact four ways to turn it
    off. It never blocks. An opt-out default with no visible disclosure is
    the pattern that burns community trust; this is the whole of that
    disclosure, and it is not optional or hidden in a man page.

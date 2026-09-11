@@ -241,6 +241,7 @@ The four channels above are all **operator-facing**: they help you observe your 
 **It's on by default (opt-out).** The first time a run is actually about to send product metrics, Mecatl prints a one-time, non-blocking disclosure to stderr naming what's collected and how to turn it off. To disable it, use any of:
 
 - `--product-metrics=false` on the command line (all four binaries).
+- The `MECATL_PRODUCT_METRICS` environment variable set to `false`/`0` — a mecatl-specific override, checked before `DO_NOT_TRACK` below, so it can also opt you back **in** even if you have `DO_NOT_TRACK` set globally for other tools.
 - The `DO_NOT_TRACK` environment variable set to a truthy value (`"0"`/`"false"` do not opt out) — the same convention other tools already respect.
 - `telemetry.productMetrics.enabled: false` in your **operator-tier** `~/.config/mecatl/settings.yaml`. This setting is operator-tier only: a project repo's `.mecatl/settings.yaml` cannot change your telemetry choice in either direction.
 

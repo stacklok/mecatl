@@ -250,7 +250,7 @@ func parseFlags(argv []string) (flags, error) {
 	fs.DurationVar(&f.otlpShutdownTimeout, "otlp-shutdown-timeout", 5*time.Second, "bound on the telemetry flush at exit (so a dead collector cannot hang the run). 0 disables the bound (flush until it completes); the flush runs BEFORE the diff/summary emit defer unwinds")
 
 	fs.BoolVar(&f.productMetrics, "product-metrics", true,
-		"report anonymous product-adoption metrics to Stacklok (version, OS/arch, enabled features, coarse session/run/tool-call counts — never a prompt, file path, tool name, or model id). ON by default; opt out with --product-metrics=false, DO_NOT_TRACK=1, or telemetry.productMetrics.enabled: false in settings.yaml")
+		"report anonymous product-adoption metrics to Stacklok (version, OS/arch, enabled features, coarse session/run/tool-call counts — never a prompt, file path, tool name, or model id). ON by default; opt out with --product-metrics=false, MECATL_PRODUCT_METRICS=false, DO_NOT_TRACK=1, or telemetry.productMetrics.enabled: false in settings.yaml")
 	fs.BoolVar(&f.productMetricsDryRun, "product-metrics-dry-run", false,
 		"print every product-metrics observation to stderr instead of sending it — verify the no-PII claim yourself before enabling --product-metrics for real")
 

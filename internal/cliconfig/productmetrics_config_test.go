@@ -10,28 +10,64 @@ import (
 
 func boolPtr(b bool) *bool { return &b }
 
-func TestResolveProductMetricsEnabledPrecedence(t *testing.T) {
-	getenvSet := func(string) string { return "1" }
-	getenvUnset := func(string) string { return "" }
+// envMap builds a Getenv func from a name->value map; an unlisted name
+// returns "" (unset), matching os.Getenv's own behavior.
+func envMap(m map[string]string) func(string) string {
+	return func(name string) string { return m[name] }
+}
 
+func TestResolveProductMetricsEnabledPrecedence(t *testing.T) {
 	cases := []struct {
 		name string
 		p    ProductMetricsPrecedence
 		want bool
 	}{
-		{"flag true wins over everything", ProductMetricsPrecedence{FlagSet: true, FlagValue: true, Getenv: getenvSet, SettingsEnabled: boolPtr(false)}, true},
-		{"flag false wins over everything", ProductMetricsPrecedence{FlagSet: true, FlagValue: false, Getenv: getenvUnset, SettingsEnabled: boolPtr(true)}, false},
-		{"DO_NOT_TRACK disables when no flag", ProductMetricsPrecedence{Getenv: getenvSet, SettingsEnabled: boolPtr(true)}, false},
-		{"settings.yaml honoured when no flag/env", ProductMetricsPrecedence{Getenv: getenvUnset, SettingsEnabled: boolPtr(false)}, false},
-		{"default enabled when nothing set", ProductMetricsPrecedence{Getenv: getenvUnset, SettingsEnabled: nil}, true},
-		{"DO_NOT_TRACK=0 is not an opt-out", ProductMetricsPrecedence{Getenv: func(string) string { return "0" }, SettingsEnabled: boolPtr(true)}, true},
-		{"DO_NOT_TRACK=false is not an opt-out", ProductMetricsPrecedence{Getenv: func(string) string { return "false" }, SettingsEnabled: boolPtr(true)}, true},
-		{"DO_NOT_TRACK=true disables", ProductMetricsPrecedence{Getenv: func(string) string { return "true" }, SettingsEnabled: boolPtr(true)}, false},
+		{"flag true wins over everything", ProductMetricsPrecedence{FlagSet: true, FlagValue: true, Getenv: envMap(map[string]string{"DO_NOT_TRACK": "1", "MECATL_PRODUCT_METRICS": "0"}), SettingsEnabled: boolPtr(false)}, true},
+		{"flag false wins over everything", ProductMetricsPrecedence{FlagSet: true, FlagValue: false, Getenv: envMap(nil), SettingsEnabled: boolPtr(true)}, false},
+		{"MECATL_PRODUCT_METRICS wins over DO_NOT_TRACK", ProductMetricsPrecedence{Getenv: envMap(map[string]string{"MECATL_PRODUCT_METRICS": "true", "DO_NOT_TRACK": "1"}), SettingsEnabled: boolPtr(false)}, true},
+		{"MECATL_PRODUCT_METRICS=false wins over an unset DO_NOT_TRACK and settings", ProductMetricsPrecedence{Getenv: envMap(map[string]string{"MECATL_PRODUCT_METRICS": "false"}), SettingsEnabled: boolPtr(true)}, false},
+		{"MECATL_PRODUCT_METRICS unparseable falls through to DO_NOT_TRACK", ProductMetricsPrecedence{Getenv: envMap(map[string]string{"MECATL_PRODUCT_METRICS": "yes", "DO_NOT_TRACK": "1"}), SettingsEnabled: boolPtr(true)}, false},
+		{"DO_NOT_TRACK disables when no flag or MECATL_PRODUCT_METRICS", ProductMetricsPrecedence{Getenv: envMap(map[string]string{"DO_NOT_TRACK": "1"}), SettingsEnabled: boolPtr(true)}, false},
+		{"settings.yaml honoured when no flag/env", ProductMetricsPrecedence{Getenv: envMap(nil), SettingsEnabled: boolPtr(false)}, false},
+		{"default enabled when nothing set", ProductMetricsPrecedence{Getenv: envMap(nil), SettingsEnabled: nil}, true},
+		{"DO_NOT_TRACK=0 is not an opt-out", ProductMetricsPrecedence{Getenv: envMap(map[string]string{"DO_NOT_TRACK": "0"}), SettingsEnabled: boolPtr(true)}, true},
+		{"DO_NOT_TRACK=false is not an opt-out", ProductMetricsPrecedence{Getenv: envMap(map[string]string{"DO_NOT_TRACK": "false"}), SettingsEnabled: boolPtr(true)}, true},
+		{"DO_NOT_TRACK=true disables", ProductMetricsPrecedence{Getenv: envMap(map[string]string{"DO_NOT_TRACK": "true"}), SettingsEnabled: boolPtr(true)}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := ResolveProductMetricsEnabled(tc.p); got != tc.want {
 				t.Errorf("ResolveProductMetricsEnabled(%+v) = %v, want %v", tc.p, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestMecatlProductMetricsOverride pins the parsing rules for the
+// MECATL_PRODUCT_METRICS env var directly: any strconv.ParseBool-recognized
+// spelling is honored: unset/empty/unparseable means "not set" (falls through
+// to the next precedence tier), never a false positive.
+func TestMecatlProductMetricsOverride(t *testing.T) {
+	cases := []struct {
+		in        string
+		wantValue bool
+		wantSet   bool
+	}{
+		{"", false, false},
+		{"1", true, true},
+		{"true", true, true},
+		{"TRUE", true, true},
+		{"0", false, true},
+		{"false", false, true},
+		{"FALSE", false, true},
+		{"yes", false, false},
+		{"no", false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.in, func(t *testing.T) {
+			value, set := mecatlProductMetricsOverride(tc.in)
+			if value != tc.wantValue || set != tc.wantSet {
+				t.Errorf("mecatlProductMetricsOverride(%q) = (%v, %v), want (%v, %v)", tc.in, value, set, tc.wantValue, tc.wantSet)
 			}
 		})
 	}
