@@ -52,10 +52,10 @@ precedes deployment of a forked pull request.
 
 Treat every preview as arbitrary contributor-controlled HTML and JavaScript.
 Keep Vercel Deployment Protection disabled for previews so contributors and
-other non-members can inspect an authorized deployment. Apply
-`X-Robots-Tag: noindex` and appropriate security headers to preview responses.
-Preview URLs must not receive production cookies, credentials, analytics
-secrets, or privileged API access.
+other non-members can inspect an authorized deployment. Vercel automatically
+marks Preview deployments `noindex` and `nofollow`. Preview URLs must not
+receive production cookies, credentials, analytics secrets, or privileged API
+access.
 
 Move published URL redirects into repository-owned Vercel configuration so
 Vercel returns HTTP redirect responses before serving the static build. The
@@ -121,7 +121,8 @@ to them require security review against the constraints in this ADR.
 This ADR remains a proposal and authorizes no hosting, workflow, or DNS change
 while its status is Proposed. The Architectural acceptance plan must define:
 
-- production and preview response headers, analytics, and observability;
+- any additional production and preview response headers, analytics, and
+  observability;
 - redirect migration and verification;
 - DNS cutover and rollback criteria; and
 - the AWS decommissioning sequence and rollback window.
