@@ -319,8 +319,9 @@ jobs:
 
       # Fetch the previous-main baseline BEFORE it is superseded, so the post-merge
       # allocs gate can catch a regression that slipped through PR review. Authenticated
-      # gh api (GITHUB_TOKEN) — raw.githubusercontent.com is unauthenticated and 404s
-      # on a private repo. Failed fetch leaves NO file (allocsgate absent→skip).
+      # gh api (GITHUB_TOKEN) works for either repository visibility; an unauthenticated
+      # raw URL cannot read a private repository. Failed fetch leaves NO file
+      # (allocsgate absent→skip).
       - name: Fetch previous-main baseline
         shell: bash
         env:
@@ -428,13 +429,12 @@ jobs:
 
       # Persist the raw bench.txt into the gh-pages data dir so the allocs gate has a
       # baseline to fetch next time (perf-tracking.md baseline-storage resolution
-      # (a): the baseline IS the gh-pages-stored bench.txt). The
-      # github-action-benchmark commits above already advanced gh-pages; we add one
-      # more commit carrying bench.txt at BENCH_BASELINE_PATH. The push retries on a
-      # non-fast-forward (a clone races a concurrent gh-pages advance) so the
-      # baseline update is never silently dropped, leaving the next PR to gate
-      # against a stale baseline.
-      - name: Publish bench.txt baseline to gh-pages
+      # (a): the baseline IS the gh-pages-stored bench.txt). github-action-benchmark
+      # owns the generated index.html, so this final commit enforces the dashboard's
+      # noindex directive after all four action invocations and restores it if the
+      # generated file is ever replaced. The push retries on a non-fast-forward so
+      # neither update is silently dropped.
+      - name: Publish perf baseline and dashboard noindex directive
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -443,29 +443,31 @@ jobs:
           tmp="$(mktemp -d)"
           remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           git clone --depth 1 --branch gh-pages "$remote" "$tmp"
+          dashboard_index="$tmp/dev/bench/index.html"
           mkdir -p "$tmp/$(dirname "${BENCH_BASELINE_PATH}")"
           cp bench-new.txt "$tmp/${BENCH_BASELINE_PATH}"
+          .github/scripts/ensure-perf-dashboard-noindex.sh "$dashboard_index"
           git -C "$tmp" config user.name "github-actions[bot]"
           git -C "$tmp" config user.email "github-actions[bot]@users.noreply.github.com"
-          git -C "$tmp" add "${BENCH_BASELINE_PATH}"
+          git -C "$tmp" add "${BENCH_BASELINE_PATH}" "dev/bench/index.html"
           if git -C "$tmp" diff --cached --quiet; then
-            echo "bench.txt baseline unchanged; nothing to commit."
+            echo "perf baseline and dashboard metadata unchanged; nothing to commit."
             exit 0
           fi
-          git -C "$tmp" commit -m "perf: update bench.txt baseline for ${HEAD_SHA}"
+          git -C "$tmp" commit -m "perf: update dashboard data for ${HEAD_SHA}"
           # Push with a rebase-retry loop: a concurrent gh-pages advance (e.g. the
           # action's own dashboard commit on another run) makes the first push a
           # non-fast-forward; rebase onto the new tip and retry rather than drop it.
           for attempt in 1 2 3 4 5; do
             if git -C "$tmp" push origin gh-pages; then
-              echo "pushed bench.txt baseline (attempt $attempt)."
+              echo "pushed perf baseline and dashboard metadata (attempt $attempt)."
               exit 0
             fi
             echo "push rejected (attempt $attempt); rebasing onto origin/gh-pages and retrying."
             git -C "$tmp" pull --rebase origin gh-pages
             sleep $(( attempt * 2 ))
           done
-          echo "::error title=baseline push failed::could not push bench.txt baseline after 5 attempts."
+          echo "::error title=perf publish failed::could not push perf baseline and dashboard metadata after 5 attempts."
           exit 1
 
       - name: Upload perf artifacts

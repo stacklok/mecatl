@@ -828,6 +828,12 @@ jobs:
       - name: Check action templates for empty expressions
         run: bash .github/actions/check-action-templates.sh
 
+      # github-action-benchmark owns the generated HTML on gh-pages. Assert the final
+      # publish step enforces the noindex directive and that the transformation remains
+      # idempotent and fails closed on template drift.
+      - name: Test performance dashboard noindex guard
+        run: bash .github/scripts/ensure-perf-dashboard-noindex_test.sh
+
       # Validate .goreleaser.yaml on every PR. A schema error there is otherwise
       # only discoverable AFTER a tag has been pushed, which is irreversible: the
       # tag has already published images and a public Homebrew formula. GoReleaser
