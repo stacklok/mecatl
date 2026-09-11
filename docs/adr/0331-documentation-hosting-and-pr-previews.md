@@ -1,6 +1,6 @@
 # ADR 0331 — Host public documentation and pull request previews on Vercel
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-09-10
 - Scope: production hosting for `mecatl.dev`, hosted previews for pull requests
   that change `website/` or `user-docs/`, redirect ownership, and the security
@@ -57,12 +57,10 @@ marks Preview deployments `noindex` and `nofollow`. Preview URLs must not
 receive production cookies, credentials, analytics secrets, or privileged API
 access.
 
-Move published URL redirects into repository-owned Vercel configuration so
+Store published URL redirects in repository-owned Vercel configuration so
 Vercel returns HTTP redirect responses before serving the static build. The
-current Docusaurus client redirect remains in place until the production host
-migrates. During cutover, represent it in `vercel.json`, verify the old and new
-URLs against the Vercel deployment, then remove the duplicate client redirect.
-Future page moves update the same repository-owned redirect registry.
+existing `/docs/intro` redirect is represented in `vercel.json`. Future page
+moves update the same repository-owned redirect registry.
 
 After the DNS cutover and an agreed rollback window, remove the production S3
 bucket, CloudFront distribution and functions, Route 53 aliases that target
@@ -116,10 +114,9 @@ documentation site:
 These settings are part of the production and fork trust boundaries. Changes
 to them require security review against the constraints in this ADR.
 
-## Implementation planning
+## Migration requirements
 
-This ADR remains a proposal and authorizes no hosting, workflow, or DNS change
-while its status is Proposed. The Architectural acceptance plan must define:
+The production cutover and AWS decommissioning work must define and verify:
 
 - any additional production and preview response headers, analytics, and
   observability;
@@ -154,4 +151,5 @@ temporarily adds operational complexity.
 - [Stacklok documentation Vercel configuration](https://github.com/stacklok/docs-website/blob/main/vercel.json)
 - [ADR 0002: Documentation lifecycle](./0002-documentation-lifecycle.md)
 - [ADR 0321: Canonical user documentation ownership](./0321-canonical-user-documentation-ownership.md)
-- Production site deployment: `.github/workflows/deploy-site.yml`
+- Rollback site deployment during the cutover window:
+  `.github/workflows/deploy-site.yml`

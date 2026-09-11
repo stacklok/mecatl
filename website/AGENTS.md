@@ -102,10 +102,9 @@ When a URL change is necessary, the pull request must either preserve the old UR
 with a redirect or explain why no redirect is needed, such as when the page was
 never published.
 
-URL redirects use `@docusaurus/plugin-client-redirects`. Declare them in the
-`plugins` section of `docusaurus.config.ts`, verify both the old and canonical
-URLs, and keep the old path while published inbound links may still use it. Do
-not rely on an undocumented hosting or CloudFront change.
+URL redirects use Vercel HTTP redirects. Declare them in `vercel.json`, verify
+both the old and canonical URLs against a Vercel deployment, and keep the old
+path while published inbound links may still use it.
 
 ---
 

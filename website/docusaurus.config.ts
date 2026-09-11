@@ -36,6 +36,12 @@ const config: Config = {
   ],
   plugins: [
     [
+      'vercel-analytics',
+      {
+        debug: false,
+      },
+    ],
+    [
       '@signalwire/docusaurus-plugin-llms-txt',
       {
         depth: 2,
@@ -66,12 +72,6 @@ const config: Config = {
             url: 'https://discord.gg/stacklok',
           },
         ],
-      },
-    ],
-    [
-      '@docusaurus/plugin-client-redirects',
-      {
-        redirects: [{from: ['/docs/intro'], to: '/docs'}],
       },
     ],
   ],
