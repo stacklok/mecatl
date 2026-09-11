@@ -91,3 +91,23 @@ func TestCallMcpWithQueryBrokerSupport_BundledToolHiveProjection(t *testing.T) {
 		}
 	}
 }
+
+func TestCallMcpWithQueryBrokerSupport_InvalidTargetSkipsAuthorization(t *testing.T) {
+	process, err := NewToolHiveProcess(t.Context(), ToolHiveConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer process.Close()
+	attachment, _ := attach(t, process.Runtime, "invalid-target")
+	query := &attachmentQueryTool{attachment: attachment}
+	call := session.NewToolCall("query", "CallMcpWithQuery", json.RawMessage(`{"server":"broker","tool":"mcp__broker__list","jq_filter":"."}`))
+
+	_, required, err := query.RequestAuthorization(t.Context(), call)
+	if err != nil || required {
+		t.Fatalf("invalid target authorization = required %v, err %v; want no authorization and no error", required, err)
+	}
+	result, err := query.Execute(t.Context(), call, tool.Environment{})
+	if err != nil || !result.IsError || !strings.Contains(result.Content, "bare remote tool name") {
+		t.Fatalf("invalid target execution = %+v, %v", result, err)
+	}
+}
