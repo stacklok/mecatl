@@ -204,12 +204,33 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 		}
 	}
 	profile := profileForSession(created)
-	var builtEngine *sessionEngine
-	if s.sessionNeedsPerFactory(selector, nil, profile, binding.Environment.Workspace().Root()) {
-		if s.cfg.SessionEngine == nil {
+	var (
+		builtEngine     *sessionEngine
+		broker          *localBrokerAttachment
+		brokerCommitted bool
+	)
+	// A successor is a new broker incarnation, never a reattachment of the
+	// source. Build it before the engine so the exact tools belonging to this
+	// id are the ones the factory receives. The binding is stamped on the
+	// successor before its first durable publication; broker commit happens only
+	// after that publication succeeds.
+	if s.cfg.MCPBroker != nil {
+		broker, err = s.openBrokerAttachment(mutationCtx, created.ID, "", false)
+		if err != nil {
+			return "", err
+		}
+		defer s.finalizeBrokerAttachment(broker, &brokerCommitted)
+		created.ExternalBinding = broker.attachment.Binding()
+	}
+	if s.cfg.MCPBroker != nil || s.sessionNeedsPerFactory(selector, nil, profile, binding.Environment.Workspace().Root()) {
+		if s.cfg.MCPBroker == nil && s.cfg.SessionEngine == nil {
 			return "", fmt.Errorf("%w: per-session engine not supported (no session-engine factory configured)", ErrInvalidArgument)
 		}
-		builtEngine, err = s.buildAndRegisterSessionEngine(mutationCtx, created, selector, profile, created.Mode, false)
+		if broker != nil {
+			builtEngine, err = s.buildAndRegisterSessionEngineWithBrokerTools(mutationCtx, created, selector, profile, created.Mode, false, brokerTools(broker), true)
+		} else {
+			builtEngine, err = s.buildAndRegisterSessionEngine(mutationCtx, created, selector, profile, created.Mode, false)
+		}
 		if err != nil {
 			return "", err
 		}
@@ -243,6 +264,16 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 		}
 		s.logDiscoveryError(ctx, "persist successor placement", err)
 		return "", fmt.Errorf("%w: placement storage failed", ErrInternal)
+	}
+	if broker != nil {
+		commitCtx, cancelCommit := context.WithTimeout(context.WithoutCancel(mutationCtx), engineCloseTimeout)
+		commitErr := s.commitBrokerAttachment(commitCtx, created.ID, broker)
+		cancelCommit()
+		if commitErr != nil {
+			cleanupEngine()
+			return "", fmt.Errorf("%w: %v", ErrInternal, commitErr)
+		}
+		brokerCommitted = true
 	}
 	return created.ID, nil
 }

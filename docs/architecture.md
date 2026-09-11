@@ -1170,6 +1170,9 @@ Failures detected before active-source cancellation leave the source and client 
 unchanged. For a running or awaiting Clear, cancellation is the irreversible boundary: a
 later failure publishes no successor and performs no client rebind, but the source may remain
 terminal-cancelled. Fork and idle-source failures retain the non-mutating source behavior.
+In broker mode, each successor receives a fresh broker attachment and persists its own opaque
+binding before publication; broker enrollment and authorization are not copied from the
+source. A missing or mismatched binding during later reattachment still fails closed.
 Schedules similarly
 persist their resolved exact ref, durable owner, and placement scope—not a selector or
 "current default" intent—and reauthorize and exactly reattach at each fire.

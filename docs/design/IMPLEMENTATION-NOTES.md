@@ -6441,7 +6441,11 @@ bindings/engines if ownership is lost. For a running or awaiting Clear, selector
 runs while the source is untouched, then cancellation is the irreversible abandon-and-replace
 boundary. Any later lease, placement, engine, or persistence failure publishes no successor
 and causes no client rebind, but the source may already be terminal-cancelled; retry remains
-valid and prior workspace mutations are never rolled back. No distributed transaction across
+valid and prior workspace mutations are never rolled back. In broker mode, every successor mints a fresh
+broker attachment keyed by its own session ID, persists that attachment's opaque binding before
+commit, and builds the per-session catalogue from its exact broker tools even with a zero selector.
+The source binding and broker authorization are never copied; reattachment of a missing or stale
+binding remains fail-closed. No distributed transaction across
 those systems is claimed. The current `SessionStore` seam has no lease-token
 conditional create, so there is an accepted residual window after the final held-lease check and
 before or during publication: a concurrent renewal loss cancels the context but cannot make every

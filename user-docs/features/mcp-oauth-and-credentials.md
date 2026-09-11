@@ -132,6 +132,10 @@ only its hash, while mecatl uses the process-private raw secret solely for HTTP-
 exchange and refresh. It is never included in the browser flow, controls, logs, snapshots, or
 upstream calls. A failed enrollment exposes no partial protected catalogue.
 
+A model switch creates a new session and therefore a new broker attachment. The
+new session does not inherit the old session's enrollment or authorization;
+protected backends may need to be enrolled again.
+
 A protected broker upstream may instead use `client.mode: dcr`. This asks
 ToolHive to dynamically register the upstream client from the configured HTTPS
 RFC 8414 discovery document, so no preregistered client secret or client-ID

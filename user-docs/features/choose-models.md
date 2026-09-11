@@ -33,6 +33,11 @@ private replay state, such as reasoning state that the new provider cannot
 understand. The new session's provider, model, and capabilities are reported by
 the server.
 
+When broker OAuth is enabled, this peer is also a new broker session. Protected
+MCP enrollment is session-scoped, so switching models may require enrolling the
+protected backends again; authorization is not silently copied from the old
+session.
+
 Type `/effort` to choose a reasoning-effort tier. Mecatui applies a changed
 tier by creating a peer session with the same provider, model, and conversation.
 The picker is available only when the connected server advertises the relevant
