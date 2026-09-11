@@ -496,6 +496,10 @@ type SteerPayload struct {
 	Text string
 	// Parts carries the committed non-text media in fragment order.
 	Parts []Content
+	// MessageID is the client-minted id of the latest steer appended to this
+	// committed bundle. It is the positional watermark clients use to resolve
+	// every queued steer through that id.
+	MessageID string
 }
 
 // UserPromptPayload is the structured detail carried by an EvUserPrompt Event: the

@@ -392,19 +392,16 @@ gRPC `Converse` controls or unary HTTP controls. The pieces:
   `http_steer` compatibility feature advertises this transport surface.
 - **The `message_id` watermark correlation.** Steer frames carry a
   client-minted `message_id` (`contracts/proto/mecatl/v1/harness.proto`). The
-  engine inbox parks text plus media while the Service keeps a small per-session FIFO
-  (`internal/adapter/server/service.go` (`trackSteerMessageID`)) of the ordered
-  frame ids appended into the pending bundle. On drain, the relay pops the
-  whole list and stamps the `EvSteer` echo with the LATEST (tail) id — the
-  **watermark** the client splits its ordered queue on (sends up to and
-  including it drained, sends after it still pending). The ack lane echoes each
-  frame's own id on its outcome; a retract drops the whole correlation list
-  atomically with the inbox transition; a `CloseSession` clears the map entry
-  with the session. IDs longer than 64 Unicode code points are rejected before
-  admission rather than truncated. The correlation is positional (never
-  text-match) — pinned by
-  `internal/adapter/server/steer_watermark_pin_test.go`
-  (`TestLookupSteerMessageIDExactUnderDuplicateTexts`).
+  engine inbox parks the id with the text and media in one mutex-guarded bundle.
+  Each append replaces the bundled id, making the latest contributing id the
+  **watermark** the client uses to split its ordered queue. The drain takes the
+  content and watermark atomically, and `EvSteer` carries both. An enqueue into
+  the newly empty inbox cannot change an already-drained bundle while its event
+  is waiting for relay projection. The ack lane echoes each frame's own id on
+  its outcome, and a retract removes the whole pending bundle atomically. IDs
+  longer than 64 Unicode code points are rejected before admission rather than
+  truncated. `TestSteerMessageIDIsAtomicWithDrainedBundle` pins the critical
+  drain, enqueue, and projection ordering.
 - **Fidelity.** The inbox is in-memory and best-effort: a pending (un-drained)
   steer is lost with its run on a crash — reset-by-design, inventoried in
   [ADR 0027](../adr/0027-cloud-native.md) (List 1 / List 2). Only a steer that

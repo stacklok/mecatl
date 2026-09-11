@@ -100,8 +100,10 @@ HTTP entry point, on the same terms the gRPC one already has.
   promoted run is never left registered without a consumer.
 - **One Service owns admission and cancellation.** HTTP and gRPC both call
   `Service.Steer` and `Service.CancelSteer`; the live-run lookup,
-  `expected_run_id` check, inbox transition, and watermark update happen under
-  the Service lock. A stale or malformed gRPC control is refused without
+  `expected_run_id` check, and inbox transition happen through the same Service
+  path. The engine stores `message_id` in the mutex-guarded pending bundle, so
+  the drain emits the watermark that belongs to the committed content. A stale
+  or malformed gRPC control is refused without
   terminating the `Converse` stream: steer acknowledges `too_late`,
   cancel-steer acknowledges `none_pending`, and the bounded diagnostic records
   the refusal. The engine inbox and promote-on-terminal-race behavior from ADR

@@ -362,7 +362,7 @@ type SessionID string
 type SessionKind string
 type SessionRelationship struct{ScheduleName string "json:\"schedule_name,omitempty\""; OriginSessionID SessionID "json:\"origin_session_id,omitempty\""; OriginIncarnation IncarnationID "json:\"origin_incarnation,omitempty\""; ParentSessionID SessionID "json:\"parent_session_id,omitempty\""; ParentIncarnation IncarnationID "json:\"parent_incarnation,omitempty\""; CallID ToolCallID "json:\"call_id,omitempty\""; BranchIndex *int "json:\"branch_index,omitempty\""; TeamID string "json:\"team_id,omitempty\""; MemberName string "json:\"member_name,omitempty\""; DebugTargetID SessionID "json:\"debug_target_id,omitempty\""; DebugTargetIncarnation IncarnationID "json:\"debug_target_incarnation,omitempty\""}
 type State string
-type SteerPayload struct{Text string; Parts []Content}
+type SteerPayload struct{Text string; Parts []Content; MessageID string}
 type StopReason string
 type StreamProgress uint8
 type SubagentPayload struct{ParentCallID string; ChildID string; ChildIncarnation IncarnationID; Goal string; Background bool; RoutedCategory string; RoutedModel string; RoutingReason string; Model string; ToolName string; IsError bool; ToolCount int; Text string; Detail string; InnerKind EventType; Usage Usage; Stop StopReason; Cause string; DurationMs int64}

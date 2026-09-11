@@ -641,7 +641,6 @@ func (h *HarnessServer) sendEvent(rl *runRelay, ev session.Event) {
 		return // log-only event: consumed by the durable log, not relayed to the client wire
 	}
 	proto := toProto(ev)
-	h.svc.stampSteerEcho(rl.logCtx, rl.id, ev, proto)
 	if err := rl.snd.Send(&mecatlv1.ConverseResponse{Event: proto}); err != nil {
 		rl.sendErr = err
 	}
@@ -971,7 +970,7 @@ func (h *HarnessServer) handleSteerFrame(ctx context.Context, id session.Session
 		// the correlation state (id + outcome only — never the text, which is
 		// producer-influenced and carries no diagnostic value).
 		h.svc.Diagnostics().Log(ctx, port.LevelInfo, "steer frame enqueued",
-			"session", string(id), "message_id", firstRunes(msgID, msgIDLogMax),
+			"session", string(id), "message_id", firstMessageIDRunes(msgID),
 			"text_len", len(text), "outcome", string(outcome))
 		enqueueSteerAck(ctx, rl.acks, &mecatlv1.SteerAck{Outcome: steerOutcomeToProto(outcome), Text: valid(text), MessageId: valid(msgID)})
 		return
@@ -982,7 +981,7 @@ func (h *HarnessServer) handleSteerFrame(ctx context.Context, id session.Session
 	// and reports its terminal outcome as the steer ack (promoted=true: never a
 	// drop, never an ack-after-close).
 	h.svc.Diagnostics().Log(ctx, port.LevelInfo, "steer frame promoted (too_late follow-up)",
-		"session", string(id), "message_id", firstRunes(msgID, msgIDLogMax), "text_len", len(text))
+		"session", string(id), "message_id", firstMessageIDRunes(msgID), "text_len", len(text))
 	ho.post(steerPromotion{run: promotedRun, text: text, messageID: msgID})
 }
 
@@ -995,7 +994,7 @@ func (h *HarnessServer) handleSteerCancelFrame(ctx context.Context, id session.S
 	msgID := frame.GetMessageId()
 	if err := validateSteerMessageID(msgID); err != nil {
 		h.svc.Diagnostics().Log(ctx, port.LevelWarn, "steer_cancel frame refused",
-			"session", string(id), "reason", "invalid_message_id", "message_id", firstRunes(msgID, msgIDLogMax))
+			"session", string(id), "reason", "invalid_message_id", "message_id", firstMessageIDRunes(msgID))
 		enqueueSteerAck(ctx, rl.acks, &mecatlv1.SteerAck{Outcome: mecatlv1.SteerOutcome_STEER_OUTCOME_NONE_PENDING, MessageId: valid(msgID)})
 		return
 	}
@@ -1003,7 +1002,7 @@ func (h *HarnessServer) handleSteerCancelFrame(ctx context.Context, id session.S
 	if err != nil {
 		outcome = agent.SteerNonePending // never wedge the reader on a cancel fault
 		h.svc.Diagnostics().Log(ctx, port.LevelWarn, "steer_cancel frame refused",
-			"session", string(id), "reason", classifyError(err).Code, "message_id", firstRunes(msgID, msgIDLogMax))
+			"session", string(id), "reason", classifyError(err).Code, "message_id", firstMessageIDRunes(msgID))
 	}
 	// Log only on a RETRACTED outcome (a none_pending cancel is the
 	// information-free common case — the ack carries it; the none_pending
@@ -1011,7 +1010,7 @@ func (h *HarnessServer) handleSteerCancelFrame(ctx context.Context, id session.S
 	// client-minted message_id is clamped to a bounded prefix.
 	if outcome == agent.SteerRetracted {
 		h.svc.Diagnostics().Log(ctx, port.LevelInfo, "steer_cancel frame retracted",
-			"session", string(id), "message_id", firstRunes(msgID, msgIDLogMax), "outcome", string(outcome))
+			"session", string(id), "message_id", firstMessageIDRunes(msgID), "outcome", string(outcome))
 	}
 	enqueueSteerAck(ctx, rl.acks, &mecatlv1.SteerAck{Outcome: steerOutcomeToProto(outcome), MessageId: valid(msgID)})
 }
@@ -1033,12 +1032,10 @@ func enqueueSteerAck(ctx context.Context, acks chan<- *mecatlv1.SteerAck, ack *m
 // log sites.
 const msgIDLogMax = 64
 
-// firstRunes returns the first n runes of s without allocating a []rune (the
-// range-over-string form; used to clamp a diagnostics text preview).
-func firstRunes(s string, n int) string {
-	if n <= 0 {
-		return ""
-	}
+// firstMessageIDRunes returns the bounded message-id prefix without allocating
+// a []rune (the range-over-string form).
+func firstMessageIDRunes(s string) string {
+	n := msgIDLogMax
 	for i := range s {
 		if n == 0 {
 			return s[:i]

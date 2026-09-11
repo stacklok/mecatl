@@ -61,9 +61,8 @@ The core: a run-scoped, single-slot mutex inbox on `Run`, drained at the existin
 At most one pending steer *bundle* per run. A second `steer` while one is pending **appends** (`pending += "\n\n"+text`, outcome `SteerAppended`) — supersede/slot_full were dropped in round 3; replacing a pending bundle is explicit **cancel-then-resend** (`steer_cancel` on `↑` edit-back). The client cannot observe the exact drain moment (stream latency), so the engine reports the outcome authoritatively rather than letting the client guess — the drain echo doubles as the recorded-history invariant that [`AGENTS.md` — the recorded == streamed == model-view rule](../../AGENTS.md) pins, and the outcome is an enum, not stacked booleans. Every frame carries a client-minted `message_id` the server echoes verbatim on the ack and the drain echo, so the client correlates by id and ignores a stale ack (id no longer in queue). See the race analysis in #512 + [ADR-0038](../adr/0038-event-sourced-rehydration.md).
 
 **Work:**
-- engine app (`engine/agent`): the inbox's `EnqueueSteer(text, parts) → {accepted | appended | too_late}` / `CancelSteer() → {retracted | none_pending}` / drain transitions; an enum-typed outcome.
-- The original drain emitted `EvSteer` carrying the committed merged text + the watermark `message_id`; ADR-0251 later added ordered media parts to that same echo. The watermark remains the tail of the Service wire-correlation id list.
-- The Service per-session FIFO (`trackSteerMessageID`/`LookupSteerMessageID`/`dropSteerMessageID`) tracks the ordered id-list; the drain echo pops the tail as the watermark the client splits its queue on.
+- engine app (`engine/agent`): the inbox's `EnqueueSteerWithMessageID(text, parts, messageID) → {accepted | appended | too_late}` / `CancelSteer() → {retracted | none_pending}` / drain transitions; an enum-typed outcome. `EnqueueSteer(text, parts)` remains the id-less compatibility entry point.
+- The drain emits `EvSteer` carrying the committed merged text, ordered media parts, and watermark `message_id`. The engine stores the latest contributing id in the same mutex-guarded bundle as the content.
 
 **Acceptance:**
 - AC2.1: At most one bundle is pending per run; a second `steer` while one is pending **appends** (`SteerAppended`), the pending bundle grows by append, and only the pending merged text ever drains as ONE bundle. Replacing a pending bundle is explicit: `steer_cancel` then resend — the cancel-then-recompose path.
@@ -72,8 +71,8 @@ At most one pending steer *bundle* per run. A second `steer` while one is pendin
   - verify: `TestSteer_CancelRetractsPending`
 - AC2.3: A `steer` that arrives *after* the boundary drained (or after the run went terminal) reports `too_late` — never silently drained into a finished turn.
   - verify: `TestSteer_TooLateNotDrained`
-- AC2.4: The drain emits `EvSteer` carrying the committed merged text and the watermark `message_id` (the TAIL id of the bundle's ordered id-list the Service tracked) — the client splits its ordered queue on it. The correlation is positional, never textual; the ADR-0228 pin `TestLookupSteerMessageIDExactUnderDuplicateTexts` holds.
-  - verify: `TestSteer_DrainEmitsCommittedEcho`; `TestSteer_MessageIdRoundTrip`; `TestSteer_WatermarkEchoLatestId`; `TestLookupSteerMessageIDExactUnderDuplicateTexts`
+- AC2.4: The drain emits `EvSteer` carrying the committed merged text and the watermark `message_id` (the latest id stored in that engine bundle) — the client splits its ordered queue on it. A new enqueue after the drain cannot change the prior bundle's watermark while its event awaits projection.
+  - verify: `TestSteer_DrainEmitsCommittedEcho`; `TestSteer_MessageIdRoundTrip`; `TestSteer_WatermarkEchoLatestId`; `TestSteerMessageIDIsAtomicWithDrainedBundle`
 - AC2.5: Enqueue/cancel/drain are safe under concurrent access — no data race, no double-drain.
   - verify: `TestSteer_InboxConcurrentSafe` (run under `-race`); `TestSteer_AppendLinearizable`
 - AC2.6: The recorded steer, the streamed `EvSteer` echo, and the message the model sees have the same text and ordered parts — the recorded == streamed == model-view invariant holds (steer text is UTF-8-repaired at ingress).
@@ -122,7 +121,7 @@ The steer rides the existing bidi `Converse` stream as a `ConverseRequest` oneof
 
 **Work:**
 - contracts (`contracts/proto`): `Steer` + `SteerCancel` messages, a `steer` / `steer_cancel` oneof arm on `ConverseRequest`, the `ServerCapabilities.steer` runtime bit, and multimodal `Steer` / `EvSteer` payloads; `task generate` regenerates `contracts/gen`.
-- engine app (`engine/agent`): the canonical `Run.EnqueueSteer(text, parts)` entry point the Service drives, and the `EvSteer` event projection.
+- engine app (`engine/agent`): the canonical `Run.EnqueueSteerWithMessageID(text, parts, messageID)` entry point the Service drives, the id-less `Run.EnqueueSteer(text, parts)` compatibility entry point, and the `EvSteer` event projection.
 - composition (`internal/adapter/server`): the `Converse` handler routes steer frames to the live run's inbox and relays the outcome back to the client.
 
 **Acceptance:**
@@ -175,7 +174,7 @@ The client-side merge and the engine-side slot are **distinct mechanisms that mu
 - **`user-docs/reference/http-sse-api.md`** — a note that steer is gRPC-only in v1 (the HTTP run path has no mid-run client→server channel).
 - **`docs/tui.md`** — the steer-mode queue card (pending / sent / promoted) and the capability-driven flip vs the local queue.
 - **`docs/architecture.md`** — the steer inbox + Step 2a seam under the loop section (living "how it works").
-- **`engine/CHANGELOG.md` + `engine/api/*.txt`** — the `Run.EnqueueSteer(text, parts)` signature and `EvSteer` media payload are exported engine-module surface, so `task api:update` is **required**, with a breaking Changed note in `engine/CHANGELOG.md`.
+- **`engine/CHANGELOG.md` + `engine/api/*.txt`** — the `Run.EnqueueSteer(text, parts)` signature, `Run.EnqueueSteerWithMessageID(text, parts, messageID)`, and `EvSteer` payload are exported engine-module surface, so `task api:update` is **required**, with compatibility notes in `engine/CHANGELOG.md`.
 
 ## Sequencing recommendation
 
@@ -183,14 +182,14 @@ Scenario 1 (engine inbox + boundary injection) is the foundation and lands first
 
 ## Named tests landing in this plan
 
-`TestSteer_AcceptedOnEmpty`, `TestSteer_AppendAckAdvancesPhase`, `TestSteer_AppendedDrainMerged`, `TestSteer_AppendedMerges`, `TestSteer_AppendLinearizable`, `TestSteer_AskStillRequiresVerdict`, `TestSteer_AwaitingAskIsHeld`, `TestSteer_AwaitingResumeDrains`, `TestSteer_BurnedAckStillIgnored`, `TestSteer_CancelRetractsPending`, `TestSteer_CapabilityAdvertised`, `TestSteer_CapabilitySingleSource`, `TestSteer_CardGolden`, `TestSteer_CleanExitContinuesRun`, `TestSteer_ConverseCancelRetracts`, `TestSteer_ConverseFrameRoundTrip`, `TestSteer_RuntimeDisabledFallsBackToLocalQueue`, `TestSteer_DrainEmitsCommittedEcho`, `TestSteer_EmptyInboxNoOp`, `TestSteer_IdLessEchoClearsQueue`, `TestSteer_InboxConcurrentSafe`, `TestSteer_IngressUTF8Repaired`, `TestSteer_InjectedAtTurnBoundary`, `TestSteer_KeepsPromptPrefixByteStable`, `TestSteer_LiveRunEnqueues`, `TestSteer_MergeThreeIntoOneDrain`, `TestSteer_MessageIdRoundTrip`, `TestSteer_NeverClosedParked`, `TestSteer_NoSupersedePath`, `TestSteer_OutcomeMatrix`, `TestSteer_PendingSteerLostOnRestart`, `TestSteer_PreservesToolPairing`, `TestSteer_PromotedRelaySequential`, `TestSteer_PromotionUsesRunEntryFunnel`, `TestSteer_ProtoEnumAppend`, `TestSteer_RecomposedFragmentRendersPerPart`, `TestSteer_RecordedAndRehydrated`, `TestSteer_SurvivesCompactionBoundary`, `TestSteer_TerminalRacePromotes`, `TestSteer_TooLateNotDrained`, `TestSteer_TUIBurnedIdFreshDraft`, `TestSteer_TUIEditBackNoDuplicate`, `TestSteer_TUIEditCancelThenRecompose`, `TestSteer_TUIIgnoresStaleAck`, `TestSteer_TUIQueuedUntilLanded`, `TestSteer_WatermarkSplitOnQueuedAck`, `TestLookupSteerMessageIDExactUnderDuplicateTexts`, `TestInvariant_recorded_streamed_model_view`.
+`TestSteer_AcceptedOnEmpty`, `TestSteer_AppendAckAdvancesPhase`, `TestSteer_AppendedDrainMerged`, `TestSteer_AppendedMerges`, `TestSteer_AppendLinearizable`, `TestSteer_AskStillRequiresVerdict`, `TestSteer_AwaitingAskIsHeld`, `TestSteer_AwaitingResumeDrains`, `TestSteer_BurnedAckStillIgnored`, `TestSteer_CancelRetractsPending`, `TestSteer_CapabilityAdvertised`, `TestSteer_CapabilitySingleSource`, `TestSteer_CardGolden`, `TestSteer_CleanExitContinuesRun`, `TestSteer_ConverseCancelRetracts`, `TestSteer_ConverseFrameRoundTrip`, `TestSteer_RuntimeDisabledFallsBackToLocalQueue`, `TestSteer_DrainEmitsCommittedEcho`, `TestSteer_EmptyInboxNoOp`, `TestSteer_IdLessEchoClearsQueue`, `TestSteer_InboxConcurrentSafe`, `TestSteer_IngressUTF8Repaired`, `TestSteer_InjectedAtTurnBoundary`, `TestSteer_KeepsPromptPrefixByteStable`, `TestSteer_LiveRunEnqueues`, `TestSteer_MergeThreeIntoOneDrain`, `TestSteer_MessageIdRoundTrip`, `TestSteer_NeverClosedParked`, `TestSteer_NoSupersedePath`, `TestSteer_OutcomeMatrix`, `TestSteer_PendingSteerLostOnRestart`, `TestSteer_PreservesToolPairing`, `TestSteer_PromotedRelaySequential`, `TestSteer_PromotionUsesRunEntryFunnel`, `TestSteer_ProtoEnumAppend`, `TestSteer_RecomposedFragmentRendersPerPart`, `TestSteer_RecordedAndRehydrated`, `TestSteer_SurvivesCompactionBoundary`, `TestSteer_TerminalRacePromotes`, `TestSteer_TooLateNotDrained`, `TestSteer_TUIBurnedIdFreshDraft`, `TestSteer_TUIEditBackNoDuplicate`, `TestSteer_TUIEditCancelThenRecompose`, `TestSteer_TUIIgnoresStaleAck`, `TestSteer_TUIQueuedUntilLanded`, `TestSteer_WatermarkSplitOnQueuedAck`, `TestSteerMessageIDIsAtomicWithDrainedBundle`, `TestInvariant_recorded_streamed_model_view`.
 
 ## Definition of done
 
 1. `task lint` and `task test` pass (both modules, `-race`).
 2. `task docs` — configuration reference regenerated and the matlatl strict link gate green.
 3. `task generate` — `contracts/gen` regenerated from the proto change and committed.
-4. `task api:update` was run for the breaking `Run.EnqueueSteer(text, parts)` signature and `EvSteer` media payload; the regenerated `engine/api/*.txt` and Changed note are present.
+4. `task api:update` was run for `Run.EnqueueSteer(text, parts)`, `Run.EnqueueSteerWithMessageID(text, parts, messageID)`, and the `EvSteer` payload; the regenerated `engine/api/*.txt` and compatibility notes are present.
 5. `task ac-trace-strict` — every AC's `verify:` proof resolves (this plan is `landed`).
 6. The named tests above are green and grep-locatable by their identifiers.
 7. `go run ./cmd/mecademo` still prints a full offline session.

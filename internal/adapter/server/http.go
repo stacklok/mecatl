@@ -1154,7 +1154,6 @@ func (h *HTTPHandler) relayRunSSE(w http.ResponseWriter, r *http.Request, id ses
 			continue
 		}
 		proto := toProto(ev)
-		h.svc.stampSteerEcho(logCtx, id, ev, proto)
 		if err := enc.Encode(proto); err != nil { // Encode appends a newline
 			fail()
 			continue
@@ -1545,10 +1544,6 @@ func (h *HTTPHandler) steer(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.Text == "" && len(body.Parts) == 0 {
 		writeError(w, http.StatusBadRequest, "text or parts is required")
-		return
-	}
-	if err := validateSteerMessageID(body.MessageID); err != nil {
-		writeServiceError(w, err)
 		return
 	}
 	parts, err := toContentParts(body.Parts)

@@ -823,10 +823,15 @@ cancellable provisional `runState` before acquisition or engine construction, th
 atomically promote it only while the drain gate and exact held lease remain valid.
 Thus later save/delete/event/tool/metadata and sidecar operations fail locally; local invalidation is not backend fencing:
 a call admitted before loss may still complete,
-and stores carry no lease token or epoch. For an awaiting run, `persistMu` makes the
-save result and local awaiting marker one drain-visible lifecycle transaction. The
-Service retracts local ask delivery and prevents later relay persistence, but leaves the
-durable `PendingAsk` unresolved and byte-identical for TTL takeover. Settled stale run
+and stores carry no lease token or epoch. For an awaiting run, `persistMu` orders the
+save, local awaiting marker, live approval, and live cancellation as one lifecycle
+transaction. A control that arrives during the save waits for it to finish. A control
+that wins before the relay starts marks the ask stale before waking the run, so the
+delayed relay skips the awaiting snapshot. After crossing the barrier, each control
+revalidates that the captured `runState` is still the exact registry entry before it
+signals the run. The Service retracts local ask delivery and prevents later relay
+persistence, but leaves the durable `PendingAsk` unresolved and byte-identical for TTL
+takeover. Settled stale run
 references remove heavyweight held-lease/capability tombstones; the lightweight
 `lostOwnership` denial remains until explicit local session teardown so that stale
 Service cannot reacquire.
@@ -8814,10 +8819,12 @@ required** and it is portable across Anthropic Messages / OpenAI Responses / Cha
 Completions.
 
 **Engine (`engine/agent/steer.go`).** A `Run`-scoped, single-slot, append-default
-**mutex** inbox atomically owns `{text, parts}`. At most one pending steer bundle
-per run: a second `EnqueueSteer` appends text with a blank line only when
-both fragments are non-empty and appends validated `session.Content` parts in
-fragment order (issue #861, ADR 0251). Replacing a pending bundle is the explicit
+**mutex** inbox atomically owns `{text, parts, message_id}`. At most one pending
+steer bundle per run: a second `EnqueueSteerWithMessageID` appends text with a
+blank line only when both fragments are non-empty and appends validated
+`session.Content` parts in fragment order (issue #861, ADR 0251). Its id replaces
+the prior id as the bundle watermark. `EnqueueSteer` remains the id-less
+compatibility entry point. Replacing a pending bundle is the explicit
 cancel-then-resend (`CancelSteer`, then a fresh steer with a fresh `message_id`).
 `CancelSteer` retracts; the boundary drain commits the merged bundle as ONE user
 message. The outcome is a closed enum (`accepted`/`appended`/`retracted`/
@@ -8866,14 +8873,14 @@ steer acknowledges `too_late`, cancel-steer acknowledges `none_pending`, and a
 bounded diagnostic records the refusal.
 
 **Correlation (watermark).** Every control may carry a client-minted `message_id`;
-the ack lane echoes its own frame's id on each outcome. The engine inbox parks text
-and media together, while the Service keeps a per-session FIFO of the ordered frame
-ids (`trackSteerMessageID`/`LookupSteerMessageID`). On drain the relay pops the
-whole list and stamps the `EvSteer` echo with the LATEST (tail) id — the
-**watermark** the client splits its ordered queue on (positional, never text-match
-— pinned by `TestLookupSteerMessageIDExactUnderDuplicateTexts`). A successful
-retract deletes the FIFO in the same Service critical section. IDs longer than 64
-Unicode code points are rejected before admission, never truncated (CWE-770).
+the ack lane echoes its own frame's id on each outcome. The engine inbox parks the
+id with text and media in one mutex-guarded bundle. Each append replaces the bundled
+id, so the latest contributing id is the **watermark** the client uses to split its
+ordered queue. The drain takes the content and watermark atomically, and `EvSteer`
+carries both. A sender can enqueue the next bundle before the prior event reaches the
+relay without changing the prior event's watermark. A successful retract removes the
+whole pending bundle in the same engine critical section. IDs longer than 64 Unicode
+code points are rejected before admission, never truncated (CWE-770).
 
 **Lost terminal race → auto-promote + transport-specific handoff:** a steer arriving for a session whose
 run is already terminal is promoted to a fresh follow-up run through the hardened

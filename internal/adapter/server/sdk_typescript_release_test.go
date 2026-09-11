@@ -226,7 +226,6 @@ func TestSDKTypescriptRelease_Scenario1_PublicServiceProjectionParity(t *testing
 		"LoadSession",
 		"LoadSessionWithMCP",
 		"LookupRun",
-		"LookupSteerMessageID",
 		"MaintenanceMutationAvailable",
 		"ManualDreamCapabilities",
 		"MaybeAutoApprovePlan",

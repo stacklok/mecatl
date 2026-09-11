@@ -84,8 +84,9 @@ type steerInbox struct {
 }
 
 type steerContent struct {
-	text  string
-	parts []session.Content
+	text      string
+	parts     []session.Content
+	messageID string
 }
 
 // newSteerInbox mints an armed (open, empty-slot) inbox.
@@ -93,16 +94,26 @@ func newSteerInbox() *steerInbox {
 	return &steerInbox{}
 }
 
-// EnqueueSteer enqueues a text, media, or mixed steer atomically. It is the
-// wire-facing steer entry point: a live run's Service routes an operator steer
-// here. It reports the authoritative SteerOutcome (accepted/appended/too_late)
-// — never an error for the ordinary too-late race (that outcome is what the
-// Service promotes on).
+// EnqueueSteer enqueues a text, media, or mixed steer atomically without a
+// correlation id. It is the compatibility entry point for engine consumers
+// that do not need a committed-echo watermark. It reports the authoritative
+// SteerOutcome (accepted/appended/too_late), never an error for the ordinary
+// too-late race.
 func (r *Run) EnqueueSteer(text string, parts []session.Content) (SteerOutcome, error) {
+	return r.EnqueueSteerWithMessageID(text, parts, "")
+}
+
+// EnqueueSteerWithMessageID enqueues a text, media, or mixed steer together
+// with the client-minted message id that identifies its committed echo. The id
+// is part of the mutex-guarded pending bundle, so a drain observes the exact
+// watermark that belonged to the content it took. When multiple steers append
+// before a drain, the latest id becomes the bundle watermark.
+func (r *Run) EnqueueSteerWithMessageID(text string, parts []session.Content, messageID string) (SteerOutcome, error) {
 	if r.steer == nil {
 		return SteerTooLate, nil
 	}
 	repaired := session.ToValidUTF8(text)
+	repairedMessageID := session.ToValidUTF8(messageID)
 	if repaired == "" && len(parts) == 0 {
 		return SteerTooLate, fmt.Errorf("agent: steer text or parts required")
 	}
@@ -125,9 +136,10 @@ func (r *Run) EnqueueSteer(text string, parts []session.Content) (SteerOutcome, 
 		}
 		r.steer.pending.text += repaired
 		r.steer.pending.parts = combinedParts
+		r.steer.pending.messageID = repairedMessageID
 		return SteerAppended, nil
 	}
-	r.steer.pending = steerContent{text: repaired, parts: ownedParts}
+	r.steer.pending = steerContent{text: repaired, parts: ownedParts, messageID: repairedMessageID}
 	r.steer.has = true
 	return SteerAccepted, nil
 }
@@ -285,7 +297,7 @@ func (e *Engine) commitSteer(ctx context.Context, r *Run, sess *session.Session,
 	}
 	e.emitUserPrompt(r, sess.Counters.Turns, content.text, content.parts)
 	e.emit(r, session.Event{Type: session.EvSteer, Turn: sess.Counters.Turns,
-		Steer: &session.SteerPayload{Text: content.text, Parts: content.parts}})
+		Steer: &session.SteerPayload{Text: content.text, Parts: content.parts, MessageID: content.messageID}})
 	e.save(ctx, r, sess)
 	return nil
 }
