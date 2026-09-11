@@ -155,6 +155,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0248 — SDK compatibility discovery and the typed error contract](./0248-sdk-compatibility-and-error-contract.md)
 - [0249 — Durable run identity: a host-minted `run_id`](./0249-durable-run-identity.md)
 - [0250 — Durable cursors and the session watch transport](./0250-durable-cursors-and-watch.md)
+- [0328 — Isolated bounded Redis follow capacity](./0328-isolated-redis-follow-capacity.md) *(proposed; supersedes ADR 0250's shared-pool sizing deferral and ADR 0240's no-force-close rule for isolated follow clients only)*
 
 ### Providers & APIs
 - [0308 — Asynchronous session-title generation](./0308-session-title-generation-and-auxiliary-usage.md) *(proposed)*
