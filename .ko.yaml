@@ -36,6 +36,7 @@ builds:
     ldflags:
       - -s -w
       - '{{with index .Env "VERSION"}}-X github.com/stacklok/mecatl/internal/buildinfo.BuildID={{.}}{{end}}'
+      - '{{with index .Env "MECATL_METRICS_INGEST_KEY"}}-X github.com/stacklok/mecatl/internal/adapter/productmetrics.bakedKey={{.}}{{end}}'
   # mecak8s (ADR 0048): the storage-free k8s-native agent binary. Same distroless
   # base + build flags as mecated — it is a thin peer of mecated that composes
   # app.Build with k8s-native defaults (Redis store + k8s lease + drain gate).
@@ -48,11 +49,19 @@ builds:
     ldflags:
       - -s -w
       - '{{with index .Env "VERSION"}}-X github.com/stacklok/mecatl/internal/buildinfo.BuildID={{.}}{{end}}'
+      - '{{with index .Env "MECATL_METRICS_INGEST_KEY"}}-X github.com/stacklok/mecatl/internal/adapter/productmetrics.bakedKey={{.}}{{end}}'
   # mecatui (issue #302): the optional Bubble Tea TUI binary. It overrides the
   # distroless base with the brood-box wolfi base (see baseImageOverrides above —
   # brood-box connects over SSH and needs a shell) and ships a kodata/agent.yaml
   # brood-box manifest alongside the binary. VERSION, when nonempty, is retained
   # verbatim as the explicit linker stamp.
+  #
+  # MECATL_METRICS_INGEST_KEY (all three builds above and below): the plain
+  # product-metrics ingest key the release workflow extracts from the
+  # MECATL_METRICS_KEY secret's {"mecatl": "<key>"} JSON blob (see
+  # .github/workflows/release.yml) before invoking `ko build`. Absent/empty
+  # (any non-release build) omits the ldflag entirely, matching Taskfile.yml's
+  # local-build posture: NewProvider refuses to construct on an empty bakedKey.
   - id: mecatui
     main: ./cmd/mecatui
     flags:
@@ -62,3 +71,4 @@ builds:
     ldflags:
       - -s -w
       - '{{with index .Env "VERSION"}}-X github.com/stacklok/mecatl/internal/buildinfo.BuildID={{.}}{{end}}'
+      - '{{with index .Env "MECATL_METRICS_INGEST_KEY"}}-X github.com/stacklok/mecatl/internal/adapter/productmetrics.bakedKey={{.}}{{end}}'

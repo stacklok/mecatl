@@ -56,9 +56,18 @@ builds:
     # `--version` byte-identical across ko, Task and GoReleaser builds.
     # Not `{{ .Tag }}` either: under --snapshot that reports the LAST tag, which
     # would lie about what was built.
+    #
+    # The product-metrics ingest key (stacklok/infra#5604): {{ .Env.MECATL_METRICS_INGEST_KEY }}
+    # reads the plain key the release workflow extracts from the MECATL_METRICS_KEY
+    # secret (a {"mecatl": "<key>"} JSON blob — see .github/workflows/release.yml)
+    # into that env var BEFORE this step runs. An empty/unset value renders as a
+    # bare trailing `=`, which is a harmless empty-string ldflag: NewProvider
+    # refuses to construct on an empty bakedKey, so a run with no key configured
+    # degrades to the same never-phones-home posture as any local/dev build.
     ldflags:
       - -s -w
       - -X github.com/stacklok/mecatl/internal/buildinfo.BuildID=v{{ .Version }}
+      - -X github.com/stacklok/mecatl/internal/adapter/productmetrics.bakedKey={{ .Env.MECATL_METRICS_INGEST_KEY }}
 
   - id: mecatui
     main: ./cmd/mecatui
@@ -73,6 +82,7 @@ builds:
     ldflags:
       - -s -w
       - -X github.com/stacklok/mecatl/internal/buildinfo.BuildID=v{{ .Version }}
+      - -X github.com/stacklok/mecatl/internal/adapter/productmetrics.bakedKey={{ .Env.MECATL_METRICS_INGEST_KEY }}
 
 # NOTE: no `gomod:` block, deliberately. `gomod.proxy` defaults to false; setting
 # it true would make GoReleaser fetch github.com/stacklok/mecatl/engine from
