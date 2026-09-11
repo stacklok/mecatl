@@ -45,6 +45,11 @@ func TestDevelopmentReleaseDescriptorIsStrictAndLocal(t *testing.T) {
 		t.Fatalf("development request = %#v", request)
 	}
 
+	if _, err := ReadyRequestFromDevelopmentDescriptor(descriptor, "changed-source"); err == nil ||
+		!strings.Contains(err.Error(), "task microvm:dev:prepare") || !strings.Contains(err.Error(), "task microvm:dev:build") {
+		t.Fatalf("source-build mismatch error = %v, want actionable rebuild commands", err)
+	}
+
 	bundleLink := filepath.Join(root, "release-link.tar.gz")
 	if err := os.Symlink(bundle, bundleLink); err != nil {
 		t.Fatal(err)

@@ -6,15 +6,15 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 
-	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/microvmmanager"
 	"github.com/stacklok/mecatl/internal/app"
 	"github.com/stacklok/mecatl/internal/microvmcmd"
@@ -61,6 +61,9 @@ func TestMecatedMicroVMHelpAllMatchesAdvertisedTopLevelGuidance(t *testing.T) {
 			t.Fatalf("help-all omitted %q: %q", want, out.String())
 		}
 	}
+	if strings.Contains(out.String(), "mecatui microvm") {
+		t.Fatalf("help advertised noncanonical frontend: %q", out.String())
+	}
 	if manager.doctorCalls != 0 || manager.statusCalls != 0 || manager.deleteCalls != 0 {
 		t.Fatalf("help called manager: doctor=%d status=%d delete=%d", manager.doctorCalls, manager.statusCalls, manager.deleteCalls)
 	}
@@ -97,15 +100,6 @@ func TestMecatedReleaseStampFeedsReadinessDefaults(t *testing.T) {
 	}
 }
 
-func TestMecatedReadinessStagesUseCommandDiagnostics(t *testing.T) {
-	diag := &readinessDiagnostics{}
-	ctx := withMicroVMReadinessDiagnostics(t.Context(), diag)
-	microvmmanager.ReportReadinessStage(ctx, microvmmanager.StageDownload)
-	if len(diag.records) != 1 || diag.records[0] != "microvm-local readiness stage download status Downloading microVM components (up to about 2 GiB)" {
-		t.Fatalf("diagnostics = %q", diag.records)
-	}
-}
-
 func TestConfigureMicroVMLocalProfileWiresHeadlessReadinessDiagnosticsAndEgress(t *testing.T) {
 	originalVersion, originalDefaults := microVMReleaseVersion, microVMReleaseDefaultsB64
 	t.Cleanup(func() { microVMReleaseVersion, microVMReleaseDefaultsB64 = originalVersion, originalDefaults })
@@ -120,11 +114,16 @@ func TestConfigureMicroVMLocalProfileWiresHeadlessReadinessDiagnosticsAndEgress(
 	}
 	microVMReleaseDefaultsB64 = base64.StdEncoding.EncodeToString(defaults)
 	manager := &mecatedMicroVMFake{endpoint: "unix:///run/private/microvmd.sock"}
-	diag := &readinessDiagnostics{}
-	var cfg app.Config
-	cfg.Workspace = t.TempDir()
 	selection := microvmmanager.GuestEgressSelection{Mode: microvmmanager.GuestEgressDenyAll}
-	if err := configureMicroVMLocalProfileWithManager(&cfg, diag, manager, manager.endpoint, "", false, selection); err != nil {
+	cfg, err := app.ConfigureExecution(app.Config{
+		Workspace: t.TempDir(), DefaultPlacement: app.PlacementMicroVMLocal, DefaultPlacementSet: true,
+		MicroVMGuestEgress: selection, MicroVMGuestEgressSet: true,
+		MicroVMReadyRequest: func(selection microvmmanager.GuestEgressSelection) (microvmmanager.ReadyRequest, error) {
+			return microVMReadyRequestWithDevelopment("", false, selection)
+		},
+		MicroVMManagerFactory: func() (app.MicroVMReadyManager, string, error) { return manager, manager.endpoint, nil },
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
 	if cfg.PlacementProvider == nil || cfg.PlacementScope != "deployment" {
@@ -149,7 +148,15 @@ func TestMecatedCLICompositionValidatesMicroVMDefaultAfterReadiness(t *testing.T
 	}
 	microVMReleaseDefaultsB64 = base64.StdEncoding.EncodeToString(defaults)
 
-	listener, err := net.Listen("unix", filepath.Join(t.TempDir(), "microvmd.sock"))
+	socketDir, err := os.MkdirTemp("/tmp", "mecatl-mv-cli-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = os.Remove(filepath.Join(socketDir, "microvmd.sock"))
+		_ = os.Remove(socketDir)
+	})
+	listener, err := net.Listen("unix", filepath.Join(socketDir, "microvmd.sock"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,14 +171,17 @@ func TestMecatedCLICompositionValidatesMicroVMDefaultAfterReadiness(t *testing.T
 	}
 	composition := appConfig(parsed, nil, nil, nil, nil, nil)
 	manager := &mecatedMicroVMFake{endpoint: "unix://" + listener.Addr().String()}
-	if err := configureMicroVMLocalProfileWithManager(&composition, nil, manager, manager.endpoint, "", false); err != nil {
-		t.Fatalf("configure CLI-selected placement: %v", err)
+	composition.MicroVMManagerFactory = func() (app.MicroVMReadyManager, string, error) {
+		return manager, manager.endpoint, nil
 	}
 	built, err := app.Build(t.Context(), composition)
 	if err != nil {
 		t.Fatalf("CLI composition did not become service-ready: %v", err)
 	}
 	defer built.Close()
+	if _, err := built.Service.CreateSession(t.Context(), session.ModeDefault, session.Limits{}); err != nil {
+		t.Fatalf("create CLI-selected MicroVM session: %v", err)
+	}
 	if err := <-requestSeen; err != nil {
 		t.Fatal(err)
 	}
@@ -245,26 +255,12 @@ func writeCLICompositionFrame(w io.Writer, value any) error {
 func TestMecatedHelpDiscoversMicroVMCommands(t *testing.T) {
 	var out strings.Builder
 	writeTopLevelHelp(&out)
-	for _, want := range []string{"microvm doctor|status|delete", "local microVM state", "offline"} {
+	for _, want := range []string{"microvm doctor|status|delete", "local microVM attachments"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("help omitted %q:\n%s", want, out.String())
 		}
 	}
 }
-
-type readinessDiagnostics struct {
-	records []string
-}
-
-func (d *readinessDiagnostics) Log(_ context.Context, _ port.Level, message string, args ...any) {
-	parts := []string{message}
-	for _, arg := range args {
-		parts = append(parts, fmt.Sprint(arg))
-	}
-	d.records = append(d.records, strings.Join(parts, " "))
-}
-
-func (d *readinessDiagnostics) With(...any) port.Diagnostics { return d }
 
 type mecatedMicroVMFake struct {
 	status      microvmmanager.Status

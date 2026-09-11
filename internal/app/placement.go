@@ -160,7 +160,7 @@ func (p *localPlacementProvider) bindWorktree(choice server.Worktree) (server.Pl
 	if err != nil {
 		return server.PlacementBinding{}, server.ErrPlacementUnavailable
 	}
-	return server.PlacementBinding{Environment: env, Ref: ref, Metadata: server.PlacementMetadata{
+	return server.PlacementBinding{Environment: env, Ref: ref, CompositionRoot: choice.Path, Metadata: server.PlacementMetadata{
 		Label: choice.Branch, Branch: choice.Branch, Revision: choice.Head,
 	}}, nil
 }
@@ -189,9 +189,10 @@ func (p *localPlacementProvider) bindLocal() (server.PlacementBinding, error) {
 		return server.PlacementBinding{}, server.ErrPlacementUnavailable
 	}
 	return server.PlacementBinding{
-		Environment: env,
-		Ref:         ref,
-		Metadata:    server.PlacementMetadata{Label: "Local workspace", Revision: "configured"},
+		Environment:     env,
+		Ref:             ref,
+		CompositionRoot: p.root,
+		Metadata:        server.PlacementMetadata{Label: "Local workspace", Revision: "configured"},
 	}, nil
 }
 

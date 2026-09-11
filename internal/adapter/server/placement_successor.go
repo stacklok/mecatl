@@ -222,7 +222,11 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 		defer s.finalizeBrokerAttachment(broker, &brokerCommitted)
 		created.ExternalBinding = broker.attachment.Binding()
 	}
-	if s.cfg.MCPBroker != nil || s.sessionNeedsPerFactory(selector, nil, profile, binding.Environment.Workspace().Root()) {
+	compositionRoot, err := PlacementCompositionRoot(binding)
+	if err != nil {
+		return "", err
+	}
+	if s.cfg.MCPBroker != nil || s.sessionNeedsPerFactory(selector, nil, profile, compositionRoot) {
 		if s.cfg.MCPBroker == nil && s.cfg.SessionEngine == nil {
 			return "", fmt.Errorf("%w: per-session engine not supported (no session-engine factory configured)", ErrInvalidArgument)
 		}

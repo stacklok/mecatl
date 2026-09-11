@@ -211,6 +211,8 @@ type Resolver struct {
 	operatorStorageManagementErr error
 	operatorTemporaryStorage     *TemporaryStorageSection
 	operatorTemporaryStorageErr  error
+	operatorExecution            *ExecutionSection
+	operatorExecutionErr         error
 
 	// operatorProviders and operatorProviderOverrides are immutable operator-tier
 	// provider configuration captured once at resolver construction.
@@ -257,6 +259,15 @@ func (r *Resolver) OperatorTemporaryStorage() (*TemporaryStorageSection, error) 
 		return nil, nil
 	}
 	return r.operatorTemporaryStorage, r.operatorTemporaryStorageErr
+}
+
+// OperatorExecution returns the immutable operator-tier execution policy and any
+// strict parse failure that would otherwise silently restore host execution.
+func (r *Resolver) OperatorExecution() (*ExecutionSection, error) {
+	if r == nil {
+		return nil, nil
+	}
+	return r.operatorExecution, r.operatorExecutionErr
 }
 
 // OperatorGuardrails returns the operator-tier guardrails config (user-global + CLI
@@ -696,6 +707,11 @@ func (r *Resolver) loadProjectRules(ws tool.WorkspaceReader) ([]governance.Rule,
 				"retention: IGNORING a project-tier retention block (operator-tier only; projects cannot weaken cleanup protection)",
 				"file", src.path, "root", ws.Root())
 		}
+		if cfg.Execution != nil {
+			r.diag.Log(context.Background(), port.LevelWarn,
+				"execution: IGNORING project-tier execution block (operator-tier only)",
+				"file", src.path, "root", ws.Root())
+		}
 		if cfg.TemporaryStorage != nil {
 			r.diag.Log(context.Background(), port.LevelWarn,
 				"temporary_storage: IGNORING a project-tier temporary_storage block (operator-tier only; projects cannot redirect command temporary storage or alter cleanup retention)",
@@ -870,6 +886,9 @@ func (r *Resolver) captureOperatorParseError(data []byte, err error) {
 	if hasTopLevelKey(data, "storage_management") && r.operatorStorageManagementErr == nil {
 		r.operatorStorageManagementErr = err
 	}
+	if hasTopLevelKey(data, "execution") && r.operatorExecutionErr == nil {
+		r.operatorExecutionErr = err
+	}
 	if hasTopLevelKey(data, "temporary_storage") && r.operatorTemporaryStorageErr == nil {
 		r.operatorTemporaryStorageErr = err
 	}
@@ -922,6 +941,7 @@ func (r *Resolver) loadUserRules(report *Report) []governance.Rule {
 		r.captureRetention(cfg.Retention)
 		r.captureStorageManagement(cfg.StorageManagement)
 		r.captureLegacyLLM(cfg.LLM)
+		r.captureExecution(cfg.Execution)
 		r.captureProviders(cfg.Providers, cfg.ProviderOverrides, cfg.CredentialStore)
 	}
 
@@ -961,6 +981,7 @@ func (r *Resolver) loadUserRules(report *Report) []governance.Rule {
 				r.captureMCP(cfg.MCP)
 				r.captureRetention(cfg.Retention)
 				r.captureStorageManagement(cfg.StorageManagement)
+				r.captureExecution(cfg.Execution)
 				r.captureTemporaryStorage(cfg.TemporaryStorage)
 				r.captureLegacyLLM(cfg.LLM)
 				r.captureProviders(cfg.Providers, cfg.ProviderOverrides, cfg.CredentialStore)
@@ -993,6 +1014,13 @@ func (r *Resolver) captureLegacyLLM(llm *LLMSection) {
 
 // captureProviders records the first complete operator provider snapshot. Explicit
 // files precede user-global settings, so the command-line operator tier wins.
+func (r *Resolver) captureExecution(s *ExecutionSection) {
+	if s == nil || r.operatorExecution != nil {
+		return
+	}
+	r.operatorExecution = s
+}
+
 func (r *Resolver) captureProviders(definitions ProviderDefinitions, overrides ProviderOverrides, store *CredentialStoreSection) {
 	if r.operatorProviders == nil && definitions != nil {
 		r.operatorProviders = definitions

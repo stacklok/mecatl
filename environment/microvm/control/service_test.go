@@ -4,7 +4,6 @@ import (
 	"errors"
 	"net"
 	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/stacklok/mecatl/environment/microvm/control"
@@ -27,7 +26,8 @@ func TestMicroVMEnvironments_Scenario2_LocalPeerCredentialsBindOwner(t *testing.
 		t.Fatalf("new control service: %v", err)
 	}
 
-	socketPath := filepath.Join(t.TempDir(), "control.sock")
+	t.Chdir(t.TempDir())
+	socketPath := "control.sock"
 	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: socketPath, Net: "unix"})
 	if err != nil {
 		t.Fatalf("listen on local control socket: %v", err)

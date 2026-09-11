@@ -164,49 +164,53 @@ printf '%s\n' "$publish_host_section" | grep -F 'main.microVMReleaseVersion' >/d
 printf '%s\n' "$publish_host_section" | grep -F 'main.microVMReleaseStampRequired=release' >/dev/null
 require '[ "${PLATFORM}" != linux-amd64 ] && [ "$(basename "${asset}")" = install-microvm-release.sh ]' "$release"
 
-# Functional host-stamp/entrypoint contract: both real binaries must consume the
-# same defaults through their package-specific version symbol, execute the shared
-# offline command before server/TUI construction, and derive the same XDG socket.
+# Functional host-stamp/entrypoint contract: both real binaries consume the same
+# defaults through their package-specific version symbol. Mecated exercises its offline
+# administration entrypoint; mecatui proves the stamp reaches embedded app composition.
 host_scratch="$repo_root/.scratch/microvm-host-entrypoint-test"
 rm -rf "$host_scratch"
 mkdir -p "$host_scratch/home" "$host_scratch/config" "$host_scratch/data" "$host_scratch/state" "$host_scratch/runtime"
 host_version=v0.0.0-host-contract
 host_platform=linux-amd64
 host_defaults=$(printf '{"%s":{"version":"%s","platform":"%s","url":"https://example.invalid/microvm.tar.gz","sha256":"%064d","policy_revision":"contract","certificate_identity":"https://example.invalid/release.yml","oidc_issuer":"https://token.actions.githubusercontent.com"}}' "$host_platform" "$host_version" "$host_platform" 0 | base64 -w0)
-for binary in mecated mecatui; do
-  case "$binary" in
-    mecated) version_symbol=main.microVMReleaseVersion; wrong_version_symbol=main.version ;;
-    mecatui) version_symbol=main.version; wrong_version_symbol=main.microVMReleaseVersion ;;
-  esac
-  go build -trimpath -buildvcs=false \
-    -ldflags="-X ${version_symbol}=${host_version} -X main.microVMReleaseDefaultsB64=${host_defaults} -X main.microVMReleaseStampRequired=release" \
-    -o "$host_scratch/$binary" "./cmd/$binary"
-  HOME="$host_scratch/home" XDG_CONFIG_HOME="$host_scratch/config" XDG_DATA_HOME="$host_scratch/data" \
-    XDG_STATE_HOME="$host_scratch/state" XDG_RUNTIME_DIR="$host_scratch/runtime" \
-    "$host_scratch/$binary" microvm status --output json >"$host_scratch/$binary.json"
+# mecated owns lifecycle administration; exercise its real status entrypoint.
+binary=mecated
+version_symbol=main.microVMReleaseVersion
+wrong_version_symbol=main.version
+go build -trimpath -buildvcs=false \
+  -ldflags="-X ${version_symbol}=${host_version} -X main.microVMReleaseDefaultsB64=${host_defaults} -X main.microVMReleaseStampRequired=release" \
+  -o "$host_scratch/$binary" "./cmd/$binary"
+HOME="$host_scratch/home" XDG_CONFIG_HOME="$host_scratch/config" XDG_DATA_HOME="$host_scratch/data" \
+  XDG_STATE_HOME="$host_scratch/state" XDG_RUNTIME_DIR="$host_scratch/runtime" \
+  "$host_scratch/$binary" microvm status --output json >"$host_scratch/$binary.json"
 
-  go build -trimpath -buildvcs=false \
-    -ldflags="-X ${wrong_version_symbol}=${host_version} -X main.microVMReleaseDefaultsB64=${host_defaults} -X main.microVMReleaseStampRequired=release" \
-    -o "$host_scratch/$binary-wrong-version" "./cmd/$binary"
-  if HOME="$host_scratch/home" XDG_CONFIG_HOME="$host_scratch/config" XDG_DATA_HOME="$host_scratch/data" \
-    XDG_STATE_HOME="$host_scratch/state" XDG_RUNTIME_DIR="$host_scratch/runtime" \
-    "$host_scratch/$binary-wrong-version" microvm status --output json >/dev/null 2>&1; then
-    echo "$binary accepted defaults stamped through the other frontend's version symbol" >&2
-    exit 1
-  fi
+go build -trimpath -buildvcs=false \
+  -ldflags="-X ${wrong_version_symbol}=${host_version} -X main.microVMReleaseDefaultsB64=${host_defaults} -X main.microVMReleaseStampRequired=release" \
+  -o "$host_scratch/$binary-wrong-version" "./cmd/$binary"
+if HOME="$host_scratch/home" XDG_CONFIG_HOME="$host_scratch/config" XDG_DATA_HOME="$host_scratch/data" \
+  XDG_STATE_HOME="$host_scratch/state" XDG_RUNTIME_DIR="$host_scratch/runtime" \
+  "$host_scratch/$binary-wrong-version" microvm status --output json >/dev/null 2>&1; then
+  echo "$binary accepted defaults stamped through the wrong version symbol" >&2
+  exit 1
+fi
 
-  go build -trimpath -buildvcs=false \
-    -ldflags="-X ${version_symbol}=${host_version} -X main.missingMicroVMReleaseDefaults=${host_defaults} -X main.microVMReleaseStampRequired=release" \
-    -o "$host_scratch/$binary-missing-defaults" "./cmd/$binary"
-  if HOME="$host_scratch/home" XDG_CONFIG_HOME="$host_scratch/config" XDG_DATA_HOME="$host_scratch/data" \
-    XDG_STATE_HOME="$host_scratch/state" XDG_RUNTIME_DIR="$host_scratch/runtime" \
-    "$host_scratch/$binary-missing-defaults" microvm status --output json >/dev/null 2>&1; then
-    echo "$binary accepted a missing defaults stamp symbol" >&2
-    exit 1
-  fi
-done
-cmp "$host_scratch/mecated.json" "$host_scratch/mecatui.json"
-expected_status=$(printf '{"profile":"microvm-local","configured":false,"running":false,"socket":"/tmp/mv-%s/microvmd.sock","guest_egress":"","generations":[],"continuation":""}\n' "$(id -u)")
+go build -trimpath -buildvcs=false \
+  -ldflags="-X ${version_symbol}=${host_version} -X main.missingMicroVMReleaseDefaults=${host_defaults} -X main.microVMReleaseStampRequired=release" \
+  -o "$host_scratch/$binary-missing-defaults" "./cmd/$binary"
+if HOME="$host_scratch/home" XDG_CONFIG_HOME="$host_scratch/config" XDG_DATA_HOME="$host_scratch/data" \
+  XDG_STATE_HOME="$host_scratch/state" XDG_RUNTIME_DIR="$host_scratch/runtime" \
+  "$host_scratch/$binary-missing-defaults" microvm status --output json >/dev/null 2>&1; then
+  echo "$binary accepted a missing defaults stamp symbol" >&2
+  exit 1
+fi
+
+# mecatui has no administration frontend. Verify its package-specific linker
+# symbols feed embedded app composition without starting KVM or an interactive TUI.
+go test -run '^TestMecatuiReleaseStampFeedsEmbeddedReadinessDefaults$' \
+  -ldflags="-X main.version=${host_version} -X main.microVMReleaseDefaultsB64=${host_defaults} -X main.microVMReleaseStampRequired=release" \
+  ./cmd/mecatui
+
+expected_status=$(printf '{"backend":"microvm-local","configured":false,"running":false,"state":"unconfigured","error":"","remediation":"Select microvm-local in operator settings; run '\''mecated microvm doctor'\'' first.","socket":"/tmp/mv-%s/microvmd.sock","guest_egress":"","generations":[],"continuation":""}\n' "$(id -u)")
 test "$(cat "$host_scratch/mecated.json")" = "$expected_status"
 
 scratch="$repo_root/.scratch/microvm-release-test"

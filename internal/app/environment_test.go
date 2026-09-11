@@ -48,7 +48,7 @@ func (p appTestPlacementProvider) Bind(_ context.Context, req server.PlacementBi
 	}
 	root := p.root
 	ref := session.EnvironmentRef{Kind: session.EnvKindMem, ID: root, Revision: "test-v1"}
-	return server.PlacementBinding{Ref: ref, Environment: tool.MustEnvironment(ref, memfs.NewWorkspace(root), memledger.New(), nil)}, nil
+	return server.PlacementBinding{Ref: ref, Environment: tool.MustEnvironment(ref, memfs.NewWorkspace(root), memledger.New(), nil), CompositionRoot: root}, nil
 }
 func (appTestPlacementProvider) ListWorktrees(context.Context, server.PlacementDiscoveryRequest) ([]server.ScopedWorktree, error) {
 	return nil, nil
@@ -62,7 +62,7 @@ func (p appTestPlacementProvider) Reattach(_ context.Context, req server.Placeme
 	if req.Ref.Kind == session.EnvKindNoFS {
 		return server.PlacementBinding{Ref: req.Ref, Environment: tool.MustEnvironment(req.Ref, nofs.New(), memledger.New(), nil)}, nil
 	}
-	return server.PlacementBinding{Ref: req.Ref, Environment: tool.MustEnvironment(req.Ref, memfs.NewWorkspace(root), memledger.New(), nil)}, nil
+	return server.PlacementBinding{Ref: req.Ref, Environment: tool.MustEnvironment(req.Ref, memfs.NewWorkspace(root), memledger.New(), nil), CompositionRoot: root}, nil
 }
 
 func newTestServerService(cfg server.Config) (*server.Service, error) {
@@ -80,7 +80,7 @@ func newTestServerService(cfg server.Config) (*server.Service, error) {
 		cfg.PlacementProvider = appTestPlacementProvider{root: root}
 		cfg.PlacementScope = "legacy-local"
 	}
-	return server.NewServiceContext(context.Background(), cfg)
+	return server.NewService(cfg)
 }
 
 func memEnvironment(root string) tool.Environment {

@@ -12,9 +12,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -65,7 +68,8 @@ func TestMicroVMUserBootstrap_Scenario14_PIDReuseWithSameBinaryIsRejected(t *tes
 }
 
 func TestDefaultOperationsWaitSocketRejectsStaleSocket(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "microvmd.sock")
+	t.Chdir(t.TempDir())
+	path := "microvmd.sock"
 	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
 	if err != nil {
 		t.Fatal(err)
@@ -105,6 +109,129 @@ func TestDefaultOperationsWaitSocketRejectsStaleSocket(t *testing.T) {
 		}
 	case <-ctx.Done():
 		t.Fatal("WaitSocket did not observe live daemon socket")
+	}
+}
+
+func TestMicroVMSubprocessEnvironmentScrubsSecretsAndPreservesRuntimeValues(t *testing.T) {
+	secrets := map[string]string{
+		"OPENROUTER_API_KEY":    "provider-canary",
+		"GH_TOKEN":              "github-canary",
+		"AWS_SECRET_ACCESS_KEY": "aws-canary",
+		"AZURE_CLIENT_SECRET":   "azure-canary",
+		"DEPLOYMENT_TOKEN":      "shaped-canary",
+	}
+	for name, value := range secrets {
+		t.Setenv(name, value)
+	}
+	kept := map[string]string{
+		"HOME":          "/home/microvm-canary",
+		"XDG_DATA_HOME": "/var/lib/microvm-canary",
+		"SSL_CERT_FILE": "/etc/ssl/microvm-canary.pem",
+		"GOTOOLCHAIN":   "local",
+	}
+	for name, value := range kept {
+		t.Setenv(name, value)
+	}
+	output, err := scrubbedCommand(exec.Command("env")).Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	environment := string(output)
+	for name, value := range secrets {
+		if strings.Contains(environment, name+"=") || strings.Contains(environment, value) {
+			t.Fatalf("scrubbed subprocess leaked %s", name)
+		}
+	}
+	for name, value := range kept {
+		if !strings.Contains(environment, name+"="+value+"\n") {
+			t.Fatalf("scrubbed subprocess dropped %s", name)
+		}
+	}
+	if !strings.Contains(environment, "PATH=") {
+		t.Fatal("scrubbed subprocess dropped PATH")
+	}
+}
+
+func TestDefaultOperationsStartScrubsDaemonEnvironmentAndDetachesFromRequest(t *testing.T) {
+	root := t.TempDir()
+	paths := testPaths(root)
+	if err := preparePaths(paths); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(paths.DaemonBinary), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	capture := filepath.Join(root, "daemon.env")
+	script := fmt.Sprintf("#!/bin/sh\n/usr/bin/env > %q\nwhile :; do sleep 1; done\n", capture)
+	if err := os.WriteFile(paths.DaemonBinary, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	secrets := map[string]string{
+		"OPENROUTER_API_KEY": "provider-start-canary",
+		"GH_TOKEN":           "github-start-canary",
+		"DEPLOYMENT_TOKEN":   "shaped-start-canary",
+	}
+	for name, value := range secrets {
+		t.Setenv(name, value)
+	}
+	kept := map[string]string{
+		"HOME":            filepath.Join(root, "home"),
+		"XDG_DATA_HOME":   filepath.Join(root, "data-home"),
+		"XDG_RUNTIME_DIR": filepath.Join(root, "runtime-home"),
+		"SSL_CERT_FILE":   filepath.Join(root, "cert.pem"),
+	}
+	for name, value := range kept {
+		t.Setenv(name, value)
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	if err := (&DefaultOperations{}).Start(ctx, paths); err != nil {
+		cancel()
+		t.Fatal(err)
+	}
+	cancel() // the detached daemon must outlive the initiating readiness request.
+	pidData, err := os.ReadFile(filepath.Join(paths.StateDir, "microvmd.pid"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(pidData)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = syscall.Kill(-pid, syscall.SIGKILL)
+		_ = os.Remove(paths.RuntimeDir)
+	})
+
+	deadline := time.Now().Add(2 * time.Second)
+	var environment string
+	for time.Now().Before(deadline) {
+		data, readErr := os.ReadFile(capture)
+		if readErr == nil && len(data) > 0 {
+			environment = string(data)
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if environment == "" {
+		t.Fatal("detached daemon did not capture its launch environment")
+	}
+	if err := syscall.Kill(pid, 0); err != nil {
+		t.Fatalf("daemon did not survive initiating-request cancellation: %v", err)
+	}
+	for name, value := range secrets {
+		if strings.Contains(environment, name+"=") || strings.Contains(environment, value) {
+			t.Fatalf("daemon launch environment leaked %s", name)
+		}
+	}
+	for name, value := range kept {
+		if !strings.Contains(environment, name+"="+value+"\n") {
+			t.Fatalf("daemon launch environment dropped %s", name)
+		}
+	}
+	if !strings.Contains(environment, "PATH=") {
+		t.Fatal("daemon launch environment dropped PATH")
 	}
 }
 

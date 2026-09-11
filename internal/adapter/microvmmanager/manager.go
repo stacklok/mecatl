@@ -14,6 +14,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -193,10 +194,6 @@ type EgressRule struct {
 type ReadyRequest struct {
 	Release Release
 	Policy  Policy
-	// PreserveExistingGuestEgress keeps an existing validated owner-only daemon
-	// policy when the operator omitted both guest-egress flags. With no existing
-	// config, Policy's permissive default applies.
-	PreserveExistingGuestEgress bool
 }
 
 // Artifact is one installer-projected verified admission artifact.
@@ -283,78 +280,82 @@ func (m *Manager) EnsureReady(ctx context.Context, request ReadyRequest) (string
 	}
 	defer unlock()
 	if len(request.Policy.publicKey) != 0 {
-		keyPath := filepath.Join(m.paths.DataDir, "trust", "development-"+strings.TrimPrefix(request.Policy.PublicKeyIdentity, "sha256:")+".pub")
 		if bytesSHA256(request.Policy.publicKey) != request.Policy.PublicKeyIdentity {
 			return "", readinessError(StagePrepare, errors.New("local microVM release public-key identity mismatch"))
 		}
-		if err := atomicWrite(keyPath, request.Policy.publicKey); err != nil {
-			return "", readinessError(StagePrepare, fmt.Errorf("materialize local microVM release public key: %w", err))
-		}
-		request.Policy.PublicKey = keyPath
+		request.Policy.PublicKey = filepath.Join(m.paths.DataDir, "trust", "development-"+strings.TrimPrefix(request.Policy.PublicKeyIdentity, "sha256:")+".pub")
 	}
 	if err := validateReleasePolicy(request.Release, request.Policy); err != nil {
 		return "", readinessError(StagePrepare, err)
-	}
-	if request.PreserveExistingGuestEgress {
-		if err := preserveGuestEgressPolicy(m.paths.ConfigFile, &request.Policy); err != nil {
-			return "", readinessError(StagePrepare, err)
-		}
 	}
 	ReportReadinessStage(ctx, StagePreflight)
 	if err := m.ops.Preflight(ctx, m.paths); err != nil {
 		return "", readinessError(StagePreflight, fmt.Errorf("microVM preflight: %w", err))
 	}
-	ReportReadinessStage(ctx, StageDownload)
-	manifest, err := m.ops.Download(ctx, request.Release, filepath.Join(m.paths.DataDir, "download"))
-	if err != nil {
-		return "", readinessError(StageDownload, fmt.Errorf("download release bundle: %w", err))
-	}
-	ReportReadinessStage(ctx, StageVerify)
-	if err := m.ops.Verify(ctx, request.Release, manifest); err != nil {
-		return "", readinessError(StageVerify, fmt.Errorf("verify release bundle: %w", err))
-	}
-	ReportReadinessStage(ctx, StageInstall)
-	installed, err := m.ops.Install(ctx, manifest, filepath.Join(m.paths.DataDir, "verified"))
-	if err != nil {
-		return "", readinessError(StageInstall, fmt.Errorf("install verified release bundle: %w", err))
-	}
-	if err := validateInstalled(installed, m.paths.DataDir); err != nil {
-		return "", readinessError(StageInstall, err)
-	}
-	cacheRefresh, err := verifiedArtifactCacheNeedsRefresh(m.paths.ConfigFile, request.Release, request.Policy)
-	if err != nil {
-		return "", readinessError(StageInstall, err)
-	}
-	if err := writeDaemonConfig(m.paths.ConfigFile, m.paths, request.Release, request.Policy, installed); err != nil {
-		return "", readinessError(StageInstall, err)
-	}
-	ReportReadinessStage(ctx, StageDaemon)
+
 	running, err := m.ops.Running(ctx, m.paths)
 	if err != nil {
-		return "", readinessError(StageDaemon, err)
+		ReportReadinessStage(ctx, StageDaemon)
+		return "", readinessError(StageDaemon, fmt.Errorf("inspect existing microvmd runtime: %w", err))
 	}
-	if running {
-		expected, expectedErr := expectedDaemonInfo(m.paths)
-		if expectedErr != nil {
-			return "", readinessError(StageDaemon, expectedErr)
+	configured := regularFile(m.paths.ConfigFile)
+	if configured || running {
+		ReportReadinessStage(ctx, StageDaemon)
+		if !configured {
+			return "", readinessError(StageDaemon, errors.New("microvmd is serving without the manager-owned configuration; existing runtime was left unchanged"))
 		}
-		serving, infoErr := m.ops.DaemonInfo(ctx, m.paths)
-		if infoErr != nil || !serving.Equal(expected) {
-			if stopErr := m.ops.Stop(ctx, m.paths); stopErr != nil {
-				return "", readinessError(StageDaemon, fmt.Errorf("serving microvmd is incompatible and safe managed restart failed; stop the exact user service with your service manager, then retry: %w", stopErr))
-			}
-			running = false
+		if err := configuredRequestCompatible(m.paths.ConfigFile, request.Release, request.Policy); err != nil {
+			return "", readinessError(StageDaemon, fmt.Errorf("existing microvmd configuration is incompatible with the requested release or policy; existing runtime was left unchanged: %w", err))
 		}
-	}
-	if cacheRefresh {
-		if running {
-			return "", readinessError(StageDaemon, errors.New("serving microvmd reported current identity while its prior artifact admission differed"))
+		if !running {
+			return "", readinessError(StageDaemon, errors.New("configured microvmd is not serving; refusing to replace or restart existing repository runtime"))
 		}
-		if err := resetVerifiedArtifactCache(m.paths.DataDir); err != nil {
+		expected, err := expectedDaemonInfo(m.paths)
+		if err != nil {
+			return "", readinessError(StageDaemon, fmt.Errorf("validate installed microvmd identity without changing it: %w", err))
+		}
+		serving, err := m.ops.DaemonInfo(ctx, m.paths)
+		if err != nil {
+			return "", readinessError(StageDaemon, fmt.Errorf("query serving microvmd identity; existing runtime was left unchanged: %w", err))
+		}
+		if !serving.Equal(expected) {
+			return "", readinessError(StageDaemon, errors.New("serving microvmd identity is incompatible with its installed release, policy, process, or runtime state; existing runtime was left unchanged"))
+		}
+	} else {
+		fresh, err := managerRuntimeFresh(m.paths)
+		if err != nil {
+			return "", readinessError(StageDaemon, err)
+		}
+		if !fresh {
+			ReportReadinessStage(ctx, StageDaemon)
+			return "", readinessError(StageDaemon, errors.New("unconfigured microvmd has existing repository runtime state; refusing to overwrite or delete it"))
+		}
+		ReportReadinessStage(ctx, StageDownload)
+		manifest, err := m.ops.Download(ctx, request.Release, filepath.Join(m.paths.DataDir, "download"))
+		if err != nil {
+			return "", readinessError(StageDownload, fmt.Errorf("download release bundle: %w", err))
+		}
+		ReportReadinessStage(ctx, StageVerify)
+		if err := m.ops.Verify(ctx, request.Release, manifest); err != nil {
+			return "", readinessError(StageVerify, fmt.Errorf("verify release bundle: %w", err))
+		}
+		ReportReadinessStage(ctx, StageInstall)
+		installed, err := m.ops.Install(ctx, manifest, filepath.Join(m.paths.DataDir, "verified"))
+		if err != nil {
+			return "", readinessError(StageInstall, fmt.Errorf("install verified release bundle: %w", err))
+		}
+		if err := validateInstalled(installed, m.paths.DataDir); err != nil {
 			return "", readinessError(StageInstall, err)
 		}
-	}
-	if !running {
+		if len(request.Policy.publicKey) != 0 {
+			if err := atomicWrite(request.Policy.PublicKey, request.Policy.publicKey); err != nil {
+				return "", readinessError(StageInstall, fmt.Errorf("materialize local microVM release public key: %w", err))
+			}
+		}
+		if err := writeDaemonConfig(m.paths.ConfigFile, m.paths, request.Release, request.Policy, installed); err != nil {
+			return "", readinessError(StageInstall, err)
+		}
+		ReportReadinessStage(ctx, StageDaemon)
 		if err := m.ops.Start(ctx, m.paths); err != nil {
 			return "", readinessError(StageDaemon, fmt.Errorf("start microvmd: %w", err))
 		}
@@ -379,6 +380,88 @@ func (m *Manager) EnsureReady(ctx context.Context, request ReadyRequest) (string
 
 func readinessError(stage ReadinessStage, err error) error {
 	return fmt.Errorf("microvm-local readiness failed during %s: %w; correct the reported problem and retry ordinary use", stage, err)
+}
+
+func configuredRequestCompatible(path string, release Release, policy Policy) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read existing microvmd config: %w", err)
+	}
+	var current map[string]any
+	if err := json.Unmarshal(data, &current); err != nil {
+		return fmt.Errorf("decode existing microvmd config: %w", err)
+	}
+	desired := map[string]any{
+		"release_identity":      "sha256:" + release.SHA256,
+		"policy_revision":       policy.PolicyRevision,
+		"required_attestations": policy.RequiredAttestations,
+		"guest_egress":          map[string]any{"Mode": policy.GuestEgressMode, "Allow": policy.GuestAllow},
+		"admission":             policy.Admission,
+		"profiles":              map[string]any{Alias: map[string]any{"resources": policy.Resources}},
+	}
+	if policy.CertificateIdentity != "" {
+		desired["certificate_identity"], desired["oidc_issuer"] = policy.CertificateIdentity, policy.OIDCIssuer
+	} else {
+		desired["public_key"], desired["public_key_identity"] = policy.PublicKey, policy.PublicKeyIdentity
+	}
+	normalized, err := json.Marshal(desired)
+	if err != nil {
+		return err
+	}
+	if err := json.Unmarshal(normalized, &desired); err != nil {
+		return err
+	}
+	for key, want := range desired {
+		if got, ok := current[key]; !ok || !reflect.DeepEqual(got, want) {
+			return fmt.Errorf("configured %s differs from the requested value", key)
+		}
+	}
+	if policy.CertificateIdentity != "" {
+		for _, key := range []string{"public_key", "public_key_identity"} {
+			if _, present := current[key]; present {
+				return fmt.Errorf("configured %s conflicts with requested trust policy", key)
+			}
+		}
+	} else {
+		for _, key := range []string{"certificate_identity", "oidc_issuer"} {
+			if _, present := current[key]; present {
+				return fmt.Errorf("configured %s conflicts with requested trust policy", key)
+			}
+		}
+	}
+	return nil
+}
+
+func managerRuntimeFresh(paths Paths) (bool, error) {
+	for _, path := range []string{
+		paths.DaemonBinary,
+		filepath.Join(paths.DataDir, "verified"),
+		filepath.Join(paths.DataDir, "cache"),
+		filepath.Join(paths.StateDir, "microvmd.pid"),
+		filepath.Join(paths.StateDir, "microvmd.process.json"),
+		paths.ConfigFile,
+		paths.Socket,
+	} {
+		if _, err := os.Lstat(path); err == nil {
+			return false, nil
+		} else if !errors.Is(err, fs.ErrNotExist) {
+			return false, fmt.Errorf("inspect existing microvmd runtime state: %w", err)
+		}
+	}
+	entries, err := os.ReadDir(paths.StateDir)
+	if err != nil {
+		return false, fmt.Errorf("inspect microvmd state directory: %w", err)
+	}
+	for _, entry := range entries {
+		if entry.Name() != "manager.lock" {
+			return false, nil
+		}
+	}
+	entries, err = os.ReadDir(paths.RuntimeDir)
+	if err != nil {
+		return false, fmt.Errorf("inspect microvmd runtime directory: %w", err)
+	}
+	return len(entries) == 0, nil
 }
 
 // Generation is one exact owner-scoped daemon generation.
@@ -421,19 +504,35 @@ func (m *Manager) Status(ctx context.Context, requests ...StatusRequest) (Status
 	configured := regularFile(m.paths.ConfigFile)
 	running, err := m.ops.Running(ctx, m.paths)
 	status := Status{Configured: configured, Running: running, Socket: m.paths.Socket}
-	if configured {
-		selection, policyErr := readGuestEgressPolicy(m.paths.ConfigFile)
-		if policyErr != nil {
-			return Status{}, policyErr
-		}
-		status.GuestEgress = GuestEgressSummary(selection)
+	if err != nil {
+		return status, fmt.Errorf("inspect microVM daemon state: %w", err)
 	}
-	if err != nil || !running || m.lifecycle == nil {
-		return status, err
+	if !configured {
+		if running {
+			return status, errors.New("microvmd is serving without manager-owned configuration")
+		}
+		return status, nil
+	}
+	selection, err := readGuestEgressPolicy(m.paths.ConfigFile)
+	if err != nil {
+		return status, fmt.Errorf("inspect configured microVM policy: %w", err)
+	}
+	status.GuestEgress = GuestEgressSummary(selection)
+	if _, err := expectedDaemonInfo(m.paths); err != nil {
+		return status, fmt.Errorf("inspect configured microVM identity: %w", err)
+	}
+	if !running {
+		return status, errors.New("configured microvmd is not serving")
+	}
+	if _, err := m.ops.Doctor(ctx, m.paths); err != nil {
+		return status, fmt.Errorf("inspect serving microVM health and identity: %w", err)
+	}
+	if m.lifecycle == nil {
+		return status, nil
 	}
 	page, err := m.lifecycle.Inventory(ctx, "local", microvmclient.InventoryRequest{PageSize: request.PageSize, Continuation: request.Continuation})
 	if err != nil {
-		return Status{}, err
+		return status, fmt.Errorf("inspect microVM inventory: %w", err)
 	}
 	status.Continuation = page.Continuation
 	status.Generations = make([]Generation, len(page.Entries))
@@ -447,10 +546,11 @@ func (m *Manager) Status(ctx context.Context, requests ...StatusRequest) (Status
 // installing, starting, or changing configuration.
 func (m *Manager) Doctor(ctx context.Context) (string, error) {
 	if m.ops == nil {
-		return "host preflight: failed: manager operations are not configured\nbackend: not checked\n", errors.New("microVM manager operations are not configured")
+		return "scope: current OS principal on this execution host\nhost preflight: failed: manager operations are not configured\nbackend: not checked\n", errors.New("microVM manager operations are not configured")
 	}
 
 	var report strings.Builder
+	_, _ = fmt.Fprintln(&report, "scope: current OS principal on this execution host")
 	var failures []error
 	preflightErr := m.ops.Preflight(ctx, m.paths)
 	if preflightErr != nil {
@@ -463,16 +563,25 @@ func (m *Manager) Doctor(ctx context.Context) (string, error) {
 	configured := regularFile(m.paths.ConfigFile)
 	running, runningErr := m.ops.Running(ctx, m.paths)
 	switch {
-	case !configured:
-		_, _ = fmt.Fprintln(&report, "backend: not configured")
-		failures = append(failures, errors.New("microVM backend is not configured"))
 	case runningErr != nil:
 		_, _ = fmt.Fprintf(&report, "backend: unhealthy: inspect daemon state: %v\n", runningErr)
 		failures = append(failures, fmt.Errorf("inspect microVM daemon state: %w", runningErr))
-	case !running:
-		_, _ = fmt.Fprintln(&report, "backend: configured; daemon not running")
-		failures = append(failures, errors.New("microVM daemon is not running"))
-	default:
+	case !configured && running:
+		_, _ = fmt.Fprintln(&report, "backend: unhealthy: daemon is serving without manager-owned configuration")
+		failures = append(failures, errors.New("orphaned microVM daemon runtime"))
+	case !configured:
+		_, _ = fmt.Fprintln(&report, "backend: ready to configure on first use")
+	case configured:
+		if _, err := expectedDaemonInfo(m.paths); err != nil {
+			_, _ = fmt.Fprintf(&report, "backend: unhealthy: configured state is invalid: %v\n", err)
+			failures = append(failures, fmt.Errorf("microVM configured state is invalid: %w", err))
+			break
+		}
+		if !running {
+			_, _ = fmt.Fprintln(&report, "backend: configured; daemon not running")
+			failures = append(failures, errors.New("microVM daemon is not running"))
+			break
+		}
 		daemonReport, err := m.ops.Doctor(ctx, m.paths)
 		if err != nil {
 			_, _ = fmt.Fprintf(&report, "backend: unhealthy: %v\n", err)
@@ -489,13 +598,18 @@ func (m *Manager) Doctor(ctx context.Context) (string, error) {
 	}
 
 	if preflightErr != nil {
-		_, _ = fmt.Fprintln(&report, "next: fix the failed host prerequisite, then select microvm-local to install/start the backend automatically:")
+		_, _ = fmt.Fprintln(&report, "next: fix the failed host prerequisite, then rerun doctor")
+	} else if !configured && !running && runningErr == nil {
+		_, _ = fmt.Fprintln(&report, "next: select microvm-local to configure the backend on first use:")
 	} else if len(failures) > 0 {
-		_, _ = fmt.Fprintln(&report, "next: host prerequisites passed; select microvm-local to configure or start the backend automatically:")
+		_, _ = fmt.Fprintln(&report, "next: inspect and repair the existing local daemon state; ordinary use will not replace or restart it automatically")
 	} else {
 		_, _ = fmt.Fprintln(&report, "next: select microvm-local as the deployment default:")
 	}
-	_, _ = fmt.Fprintln(&report, "  mecatui --default-placement microvm-local")
+	_, _ = fmt.Fprintln(&report, "  embedded mecatui operator settings:")
+	_, _ = fmt.Fprintln(&report, "    execution:")
+	_, _ = fmt.Fprintln(&report, "      default_placement: microvm-local")
+	_, _ = fmt.Fprintln(&report, "  guest IPv4 egress defaults to permissive; before first use set execution.microvm.guest_egress.mode to deny-all or allowlist")
 	_, _ = fmt.Fprintln(&report, `  mecated serve --headless --default-placement microvm-local; then POST /v1/sessions with {}`)
 	_, _ = fmt.Fprintln(&report, "doctor is read-only; it never downloads, installs, or starts microvmd")
 	return report.String(), errors.Join(failures...)
@@ -656,42 +770,6 @@ func pathWithin(root, path string) bool {
 	}
 	rel, err := filepath.Rel(filepath.Clean(root), filepath.Clean(path))
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
-}
-
-func verifiedArtifactCacheNeedsRefresh(configPath string, release Release, policy Policy) (bool, error) {
-	data, err := os.ReadFile(configPath)
-	if errors.Is(err, fs.ErrNotExist) {
-		return false, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("read existing microvmd config before artifact-cache reconciliation: %w", err)
-	}
-	var current struct {
-		ReleaseIdentity string `json:"release_identity"`
-		PolicyRevision  string `json:"policy_revision"`
-	}
-	if err := json.Unmarshal(data, &current); err != nil {
-		return false, fmt.Errorf("decode existing microvmd config before artifact-cache reconciliation: %w", err)
-	}
-	return current.ReleaseIdentity != "sha256:"+release.SHA256 || current.PolicyRevision != policy.PolicyRevision, nil
-}
-
-func resetVerifiedArtifactCache(dataDir string) error {
-	cache := filepath.Join(dataDir, "cache")
-	info, err := os.Lstat(cache)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("inspect stale verified artifact cache: %w", err)
-	}
-	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return errors.New("refusing to replace stale verified artifact cache with an unsafe file type")
-	}
-	if err := os.RemoveAll(cache); err != nil {
-		return fmt.Errorf("replace stale verified artifact cache: %w", err)
-	}
-	return nil
 }
 
 func writeDaemonConfig(path string, paths Paths, release Release, policy Policy, installed InstalledArtifacts) error {

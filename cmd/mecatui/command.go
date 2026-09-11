@@ -69,7 +69,6 @@ const (
 	// distinct from modeLogin so an address can never accidentally invoke the
 	// ToolHive browser flow.
 	modeRemoteLogin transportMode = "remote-login"
-	modeMicroVM     transportMode = "microvm"
 )
 
 // topLevelCommand is the single catalog for named entry points. Resolution,
@@ -122,14 +121,6 @@ var topLevelCommands = []topLevelCommand{
 		synopsis: "providers [command]",
 		purpose:  "inspect and manage embedded provider configuration and locally managed credentials",
 		resolve:  resolveProvidersCommand,
-	},
-	{
-		name:     "microvm",
-		synopsis: "microvm doctor|status|delete",
-		purpose:  "inspect or delete owner-scoped microVM state on this host",
-		resolve: func(args []string) invocationResolution {
-			return invocationResolution{mode: modeMicroVM, remaining: args}
-		},
 	},
 }
 

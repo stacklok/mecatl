@@ -96,7 +96,10 @@ Exact reattachment is allowed only while every owned dependency remains live in-
 Daemon restart loses the in-process hosted network provider, so readiness and resolve fail
 promptly with a named phase while preserving the durable record, rootfs, and worktrees; no
 replacement or destructive reconciliation occurs. The registry layer itself does not
-multiplex guest environments.
+multiplex guest environments. Selecting the backend at service startup performs no Bind and
+allocates no logical attachment. `EnsureReady` runs only when an actual default MicroVM session
+is created; no-FS bypasses it, and readiness failure occurs before session persistence with no
+host-local fallback.
 
 The daemon creates and registers one distinct Git worktree for each session or isolated
 child. A newly accepted guest connection first proves repository-generation boot authority
@@ -119,7 +122,22 @@ On Linux the backend supplies namespace-side UID/GID 65532 through go-microvm's
 creates the unprivileged user namespace, without world-mode widening. The built-in hosted
 network provides unrestricted IPv4; the guest IPv6 stack remains enabled but external IPv6
 is unrouted and unsupported. Optional deny-all or allowlist tightening filters IPv4,
-disables IPv6, and is fail-closed. Linux amd64 KVM is the sole live claim.
+disables IPv6, and is fail-closed. Linux amd64 KVM is the sole live claim. Qualification used
+OpenRouter `openai/gpt-5-mini` through the public HTTP create/prompt path and observed normal
+Write, Read, and Bash in the Wolfi guest as UID 65532, source isolation, exact same-session
+reattachment after only mecated restarted, and healthy doctor/status results. Microvmd remained
+alive throughout the harness restart, so this evidence does not widen the documented fail-closed
+microvmd-restart boundary.
+
+Two defects found during qualification are fixed at their owning seams. The development descriptor
+check in `internal/adapter/microvmmanager/development_release_microvm_dev.go`
+(`ReadyRequestFromDevelopmentDescriptor`) now distinguishes malformed identity from source-build
+drift and tells developers to regenerate and rebuild, without disclosing either identity. The
+MicroVM Workspace in `internal/adapter/microvm/client.go` (`AuthorityResourcePath`) now implements
+`tool.AuthorityResourceResolver`, projecting authorization resources onto confined guest
+`/workspace` rather than leaving policy without a workspace resource identity. Focused tests pin
+the actionable diagnostic and reject empty, absolute, NUL-containing, and escaping authority
+paths.
 
 Status uses deterministic owner-scoped pages of at most 64 entries with opaque continuation
 tokens. Explicit deferrals are repository-VM deletion UX,
@@ -187,16 +205,16 @@ never opens registry files. `Status` holds one bounded page and its continuation
 a lifetime inventory. Readiness starts or reuses the verified daemon, invokes `Daemon.reconcile`, and
 walks bounded inventory pages without retaining prior rows; status prints one page plus a
 copyable `--continuation` command. Startup and readiness share the existing reconciler and
-never call Create or enable host fallback. Generation deletion takes the complete local
-owner/session/ref/generation binding and returns a bounded cleanup result distinguishing a
-removed clean worktree from the retained dirty path. The shared
-`internal/microvmcmd` command validates that the complete selector appears in the
-current status inventory before it asks for interactive confirmation (or honors
-`--yes`); ordinary TUI close remains detach-only. Continuing a preserved chat uses ordinary profile selection with
-`--default-placement microvm-local --resume SESSION_ID`; exact persisted placement is
-reattached by the server and never reselected by the resume request. The canonical command surface is
-`mecated microvm doctor|status|delete`; `mecatui microvm` invokes exactly the same
-local-host implementation as a compatibility frontend and never follows `mecatui connect`. Automatic readiness reports the exact resolved
+never call Create or enable host fallback. Exact logical-attachment deletion is exposed
+only by `mecated microvm delete`: it validates the exact owner-scoped backend, attachment,
+ref, and generation from status, confirms destructive action, preserves dirty worktrees,
+and never deletes or resets the repository VM. It is not a server API.
+Continuing a preserved chat uses
+`mecatui --resume SESSION_ID`; exact persisted placement is reattached by the server and
+never reselected by the resume request. The local administration surface is
+`mecated microvm doctor|status|delete`, scoped to the current execution host and OS
+principal; doctor and status are read-only. `mecatui connect` never invokes local MicroVM
+administration or readiness. Automatic readiness reports the exact resolved
 manager paths plus download, trust, resource, and egress policy; failures direct the
 operator to correct the reported cause and retry ordinary profile selection. Published
 standalone host binaries are bound by signed checksum manifests and provenance, embed only
@@ -205,19 +223,20 @@ their verified bundle supplies its own installer. No ambient installer override 
 `environment/microvm/daemon.go`
 (`LifecycleInfo`) exposes protocol, release/running-binary/config identities, policy
 revision, sorted profiles, and socket only after Unix peer authentication.
-`internal/adapter/microvmmanager/manager.go` (`EnsureReady`) reuses a serving daemon only
-when that projection exactly matches the newly installed binary and config.
-Otherwise `internal/adapter/microvmmanager/default_operations.go` (`Stop`) verifies
-the persisted PID plus process-start token, binary digest, exact launch arguments,
-and socket before signaling; PID reuse or ambiguous service ownership fails with
-service-manager guidance while the alias remains disabled. Before any download or repository
-provisioning, `internal/adapter/microvmmanager/default_operations.go` (`Preflight`) checks Git,
+`internal/adapter/microvmmanager/manager.go` (`EnsureReady`) serializes all callers with the manager lock. It installs and starts only a
+genuinely fresh repository-scoped runtime; subsequent sessions and host processes reuse only
+a serving daemon whose persisted desired release/policy, installed binary/config, protocol,
+profile set, and socket identities all match. Conflicts or unhealthy state fail without stop,
+config rewrite, cache/state deletion, or runtime replacement. The exact `Stop` operation remains
+internal for explicit lifecycle cleanup and is never called by ordinary readiness. Before any
+download or repository provisioning, `internal/adapter/microvmmanager/default_operations.go`
+(`Preflight`) checks Git,
 Python 3, KVM, and actual ephemeral unprivileged-user-namespace creation; disabled controls
 and exhausted quota fail actionably without changing host policy. `Doctor` repeats that host
 preflight, first queries
 this serving identity, then runs the complete readiness probes against the same
 exact installation rather than validating only newly written files. Initialization
-defaults to 2 vCPUs, 4 GiB RAM, and deny-all guest
+defaults to 2 vCPUs, 4 GiB RAM, and permissive guest
 egress. `internal/adapter/microvmmanager/manager.go` (`DefaultPaths`) separates config (`$XDG_CONFIG_HOME/mecatl`), artifacts and
 the daemon binary (`$XDG_DATA_HOME/mecatl/microvm`), durable registry/worktrees
 (`$XDG_STATE_HOME/mecatl/microvm`), and the short owner-only runtime socket; each
@@ -6878,10 +6897,18 @@ Placement is server-owned across embedded, loopback, remote, and cloud-native co
 `internal/app/placement.go` installs the local immutable provider over the operator's private
 configured root plus no-FS attenuation. `server.PlacementBinder` is mandatory and is the single Bind
 choke point; provider authorization and resolution happen in one snapshot and return a complete
-Environment, exact `EnvironmentRef{Kind, ID, Revision}`, and bounded display metadata. Startup
-validates the deployment default without caching it, and ordinary run entry always reattaches a
-fresh Environment so the read ledger resets; after restart, a verified local binding whose workspace
-root differs from the configured default rebuilds its root-scoped per-session engine and policy before
+Environment, exact `EnvironmentRef{Kind, ID, Revision}`, bounded display metadata, and an
+internal host-composition root where applicable. Service construction validates provider/scope
+configuration only and never calls Bind: allocation and backend readiness occur on actual default
+creation, while no-FS bypasses MicroVM readiness. Ordinary run entry always exactly reattaches a
+fresh Environment so the read ledger resets; Reattach never calls Bind or bootstraps replacement
+state. The host-composition root—not `Environment.Workspace().Root()`—selects the shared or
+per-session project policy assembly. Local placement supplies its selected host root; MicroVM
+supplies its configured source checkout after exact repository resolution while tools retain guest
+`/workspace`; no-FS supplies none. This value is process-local binding context, never snapshot or
+public/model-visible data, and missing required MicroVM context fails closed. After restart, a
+verified binding whose host-composition root differs from the configured default rebuilds its
+root-scoped per-session engine and policy before
 running rather than using the shared default-root engine. `sessionEnvironments` remains overrides-only
 (ACP and other explicitly owned overlays). Placement-provider, discovery, and storage failures cross
 public gRPC/HTTP only as stable content-free categories; bounded detailed causes remain on injected

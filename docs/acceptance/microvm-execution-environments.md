@@ -1,8 +1,8 @@
 # MicroVM execution environments — acceptance plan
 
 **Phase:** MVP rescope — repository-scoped local microVM execution
-**Status:** landed
-**Evidence:** Tasks 59–65 are complete. The required Linux amd64 KVM journey passes; all other live-platform claims remain deferred.
+**Status:** landed; required Linux amd64 qualification manually verified
+**Evidence:** Tasks 59–65 and deterministic offline coverage are complete. `task e2e:microvm` is the automated Linux amd64 KVM gate and uses the deterministic in-process mock provider; it does not contact OpenRouter and is not the evidence for the live-provider claim. A separate manual qualification trace was executed on 2026-09-10 with Linux amd64 KVM and OpenRouter `openai/gpt-5-mini` through the public HTTP create and prompt APIs. Normal Write, Read, and Bash ran in the Wolfi guest as UID 65532; the proof marker existed only in the MicroVM logical worktree. The same session reattached after mecated restarted while microvmd remained alive, and `microvm doctor` and `microvm status` both reported healthy. This does not claim recovery after a microvmd restart. No credential, exact private placement ref, socket, or host path from that trace is retained in this document. All other live-platform claims remain deferred.
 **Issue:** [stacklok/mecatl#526](https://github.com/stacklok/mecatl/issues/526)
 **ADR:** [ADR 0326](../adr/0326-microvm-execution-environments.md)
 **Accumulator branch:** `acc/microvm-execution-environments`
@@ -25,8 +25,8 @@ This completed scenario follows
 
 **Acceptance:**
 
-- AC1.1: Selecting `microvm-local` as the trusted deployment default runs idempotent `EnsureReady` before MicroVM placement, while the host-local default does not start or probe microvmd.
-  - verify: `TestMicroVMDefaultPlacementUsesNormalCreateSessionAndExactReattach`
+- AC1.1: Selecting `microvm-local` as the trusted deployment default runs idempotent `EnsureReady` before MicroVM placement, while the host-local default does not start or probe microvmd. Service construction allocates no attachment, no-fs bypasses MicroVM readiness, and failed readiness persists nothing or falls back nowhere.
+  - verify: `TestBareEmbeddedConfigResolvesOperatorExecutionSettings`, `TestBareEmbeddedHostLocalOmissionDoesNoMicroVMWork`, `TestMicroVMOperatorJourneyIsLazyIsolatedAndRestartExact`, `TestServiceConstructionDoesNotAllocatePlacement`, `TestPlacementReadinessFailurePersistsNothingAndDoesNotFallBack`
 - AC1.2: Concurrent startup or first-use calls are serialized by the inter-process manager lock and converge on one compatible daemon and configuration.
   - verify: `TestMicroVMRedesign_Scenario1_EnsureReadyConvergesUnderManagerLock`
 - AC1.3: A failed readiness attempt returns an actionable error without changing the configured deployment default; repeating ordinary use retries readiness.
@@ -99,7 +99,7 @@ cross-process merge coordinator or crash-durable merge journal is required.
 **Acceptance:**
 
 - AC5.1: Sessions in one repository attach to the same repository VM with distinct logical refs and worktrees; a direct-write child reuses its parent's logical Environment, while a read-only Subagent, Parallel branch, or Team member receives a distinct logical ref and worktree in that VM.
-  - verify: `TestMicroVMMVP_Scenario5_SessionsAndChildrenReuseRepositoryVM`
+  - verify: `TestMicroVMOperatorJourneyIsLazyIsolatedAndRestartExact`, `TestMicroVMMVP_Scenario5_SessionsAndChildrenReuseRepositoryVM`
 - AC5.2: Closing a session or child detaches its process-local handles without destroying the repository VM, rootfs, shared cache, or another attached logical environment.
   - verify: `TestMicroVMMVP_Scenario5_CloseDetachesWithoutDestroyingRepositoryVM`
 - AC5.3: The existing isolated-child merge path applies a non-conflicting child change and preserves the child on conflict; the MVP makes no cross-process serialization or crash-recovery claim.
@@ -125,12 +125,37 @@ containment; tightening remains optional and fail-closed when selected.
 
 This follows [the required live journey](../architecture/microvm-environments.md#required-live-journey-and-limits).
 
-The live proof is intentionally narrow and operator-oriented.
+The automated `task e2e:microvm` proof is intentionally narrow and deterministic: it uses the
+mock LLM provider while crossing production Linux amd64 KVM placement and guest boundaries. It
+never requires or reads `OPENROUTER_API_KEY` and is suitable for the opt-in KVM CI job.
+
+A separate manual qualification was executed on 2026-09-10 with OpenRouter
+`openai/gpt-5-mini`. The reproducible procedure was:
+
+1. Start from a verified release-stamped `mecated` in a disposable Git checkout on a Linux amd64
+   host where the invoking user can open `/dev/kvm`; use private, newly created XDG state, data,
+   config, and runtime directories.
+2. Supply `OPENROUTER_API_KEY` only in the server process environment (never a command argument,
+   file, trace, or captured output), select `microvm-local`, and run `mecated microvm doctor` before
+   starting the headless HTTP server.
+3. Through the documented public HTTP API, create one session and prompt the model to use Write,
+   Read, and Bash to create and read a unique marker and report `id -u`. Confirm the terminal result
+   reports UID 65532, then confirm the source checkout does not contain the marker.
+4. Stop only `mecated`, leave microvmd running, restart `mecated` with the same private XDG roots,
+   and prompt the same public session ID to read the marker. Confirm exact session continuation.
+5. Run `mecated microvm doctor` and `mecated microvm status`; confirm healthy output. Copy no status
+   row into evidence because it contains private attachment/ref/path data. End the server, unset the
+   credential, and remove the disposable state through the operator-controlled cleanup procedure.
+
+The observed outcomes were successful Write/Read/Bash in the Wolfi guest, UID 65532, source-checkout
+isolation, harness-restart reattachment while microvmd remained alive, and healthy doctor/status.
+No credential, private placement ref, socket, or host path was retained. This manual trace is not an
+automated gate and is not evidence for microvmd restart recovery.
 
 **Acceptance:**
 
-- AC7.1: Linux amd64 KVM enters through production profile/session composition and proves ordinary first use, direct admitted Brood consumption with in-process verification, one repository VM/rootfs, two sessions with a shared declared cache and distinct worktrees, confined filesystem and exec, unrestricted IPv4 networking with external IPv6 unsupported, close-detach, and prompt explicit daemon-restart failure that preserves the record/rootfs/worktrees and mints no replacement. Optional fail-closed tightening is proven separately by AC6.2's production app/profile and network enforcement tests, not by this live journey.
-  - verify: demonstration — `task e2e:microvm` is the required Linux amd64 KVM live gate
+- AC7.1: Linux amd64 KVM enters through production profile/session composition and proves ordinary first use, direct admitted Brood consumption with in-process verification, one guest-backed session, confined filesystem/Bash execution, and source-checkout isolation. Deterministic production-composition tests separately prove two-session logical-worktree isolation, exact harness-restart reattachment, fail-closed daemon-state loss, and direct-write versus isolated-child routing. Repository-VM/rootfs singleton, networking, close-detach, and merge/conflict behavior remain proven by their focused AC2–AC6 tests; the live journey does not overclaim those observations.
+  - verify: `task e2e:microvm` runs `TestMicroVMDefaultPlacementDailyHarnessJourney` plus `TestMicroVMOperatorJourneyIsLazyIsolatedAndRestartExact`; focused evidence is listed by AC2–AC6
 - AC7.2: Concise architecture, operator, and public documentation describes profile selection, the repository sharing boundary, distinct worktrees, direct Brood admission, Linux ownership, permissive networking, optional tightening, restart failure behavior, and the deferred surfaces without claiming Linux arm64 or macOS live support.
   - verify: inspection — `task docs` and `task site:build` prove the linked documentation surfaces build
 
@@ -149,13 +174,11 @@ also remain out of scope.
 
 ## Cross-cutting deliverables
 
-- Historical tasks 1–58 and completed tasks 59–61 remain intact. Tasks 62–65 are the only
-  remaining implementation tasks.
+- Historical tasks 1–58 and completed tasks 59–65 remain intact.
 - The durable registry fails closed on inconsistent restart state; it does not silently
   recreate, delete, or reconcile an orphan.
 - Default, no-fs, and engine-standalone gates preserve the opt-in module boundary.
-- Every remaining numbered AC is quoted with its exact `verify:` line in exactly one of
-  tasks 62–65.
+- Every numbered AC is quoted with its exact `verify:` line in exactly one of tasks 62–65.
 
 ## Definition of done
 
@@ -167,5 +190,4 @@ also remain out of scope.
 
 ## Exit criteria
 
-When the definition of done holds on the accumulator and review finds no ship blocker, the
-orchestrator may flip this plan from `in-progress` to `landed`.
+The definition of done holds on the accumulator; humans retain merge authority.

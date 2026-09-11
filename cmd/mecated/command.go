@@ -245,7 +245,7 @@ func writeTopLevelHelp(out io.Writer) {
 	_, _ = fmt.Fprintf(out, "  serve                   start the network daemon (gRPC + HTTP/SSE)\n")
 	_, _ = fmt.Fprintf(out, "  acp                     serve the Agent Client Protocol over stdio\n")
 	_, _ = fmt.Fprintf(out, "  mcp login SERVER [flags] authorize an operator-configured OAuth MCP server\n")
-	_, _ = fmt.Fprintf(out, "  microvm doctor|status|delete administer local microVM state (offline)\n")
+	_, _ = fmt.Fprintf(out, "  microvm doctor|status|delete inspect and administer local microVM attachments\n")
 	_, _ = fmt.Fprintf(out, "  import                  import a Codex or Claude Code session, skills, and workspace files\n")
 	_, _ = fmt.Fprintf(out, "  config init             write/print the operator settings.yaml skeleton (--print, --force)\n")
 	_, _ = fmt.Fprintf(out, "  config validate         validate operator settings.yaml without writing (--file, --learning-patch)\n")

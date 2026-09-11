@@ -6,7 +6,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"io/fs"
 	"net"
 	"os"
 	"strconv"
@@ -24,8 +23,8 @@ const (
 	GuestEgressAllowlist = "allowlist"
 )
 
-// GuestEgressSelection is the host-operator CLI projection of guest egress.
-// It is intentionally not part of any API or project configuration surface.
+// GuestEgressSelection is the host-operator projection of guest egress. It is
+// intentionally not part of any public session API or project configuration surface.
 type GuestEgressSelection struct {
 	Mode  string
 	Allow []EgressRule
@@ -34,6 +33,26 @@ type GuestEgressSelection struct {
 // NewGuestEgressSelection returns the byte-compatible default policy selection.
 func NewGuestEgressSelection() GuestEgressSelection {
 	return GuestEgressSelection{Mode: GuestEgressPermissive}
+}
+
+// ParseGuestEgressSelection parses settings values with the same destination
+// grammar used by the command-line flags.
+func ParseGuestEgressSelection(mode string, allow []string) (GuestEgressSelection, error) {
+	selection := GuestEgressSelection{Mode: mode}
+	if selection.Mode == "" {
+		selection.Mode = GuestEgressPermissive
+	}
+	for _, value := range allow {
+		rule, err := parseEgressRule(value)
+		if err != nil {
+			return GuestEgressSelection{}, err
+		}
+		selection.Allow = append(selection.Allow, rule)
+	}
+	if err := selection.Validate(); err != nil {
+		return GuestEgressSelection{}, err
+	}
+	return selection, nil
 }
 
 // ModeValue returns a flag.Value for --microvm-guest-egress.
@@ -188,19 +207,6 @@ func GuestEgressSummary(selection GuestEgressSelection) string {
 	default:
 		return GuestEgressPermissive
 	}
-}
-
-func preserveGuestEgressPolicy(path string, policy *Policy) error {
-	selection, err := readGuestEgressPolicy(path)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("refusing to replace existing microvmd guest egress policy: %w", err)
-	}
-	policy.GuestEgressMode = selection.Mode
-	policy.GuestAllow = append([]EgressRule(nil), selection.Allow...)
-	return nil
 }
 
 func readGuestEgressPolicy(path string) (GuestEgressSelection, error) {

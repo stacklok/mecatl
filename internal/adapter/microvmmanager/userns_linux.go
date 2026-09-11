@@ -16,7 +16,7 @@ import (
 
 func checkLinuxUserNamespaces(ctx context.Context) error {
 	return checkLinuxUserNamespaceControls(os.ReadFile, func() error {
-		cmd := exec.CommandContext(ctx, "true")
+		cmd := scrubbedCommand(exec.CommandContext(ctx, "true"))
 		cmd.SysProcAttr = &syscall.SysProcAttr{Cloneflags: syscall.CLONE_NEWUSER}
 		return cmd.Run()
 	})

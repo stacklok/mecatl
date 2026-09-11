@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
@@ -53,6 +54,46 @@ func TestPlacementProviderUsesOpaqueDaemonProfileAndExactRef(t *testing.T) {
 	}
 	if placed.Metadata.Label != "Local microVM" || strings.Contains(placed.Metadata.Label, "/private/") {
 		t.Fatalf("public placement metadata = %+v", placed.Metadata)
+	}
+	if placed.CompositionRoot != "/source" || placed.Environment.Workspace().Root() != "/workspace" {
+		t.Fatalf("host/guest roots = %q/%q", placed.CompositionRoot, placed.Environment.Workspace().Root())
+	}
+}
+
+func TestMicroVMWorkspaceProvidesConfinedAuthorityResourceIdentity(t *testing.T) {
+	var resolver tool.AuthorityResourceResolver = &workspace{}
+	target, root, err := resolver.AuthorityResourcePath("proof/file.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target != "/workspace/proof/file.txt" || root != "/workspace" {
+		t.Fatalf("authority resource = %q, %q", target, root)
+	}
+	for _, escaped := range []string{"", "/etc/passwd", "../outside", "dir/../../outside", "bad\x00path"} {
+		if _, _, err := resolver.AuthorityResourcePath(escaped); err == nil {
+			t.Errorf("AuthorityResourcePath(%q) accepted an invalid path", escaped)
+		}
+	}
+}
+
+func TestNoFSBindBypassesMicroVMReadiness(t *testing.T) {
+	readinessCalls := 0
+	client, err := NewPlacementProvider("unix:///run/unused-microvmd.sock", "/source", "microvm-local", "deployment", func(context.Context) error {
+		readinessCalls++
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding, err := client.Bind(context.Background(), server.PlacementBindRequest{Selector: server.NoFSPlacement(), Scope: "deployment", Operation: server.PlacementOperationCreate})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if readinessCalls != 0 {
+		t.Fatalf("no-fs readiness calls = %d, want 0", readinessCalls)
+	}
+	if binding.CompositionRoot != "" || binding.Environment.Workspace().Root() != "" {
+		t.Fatalf("no-fs host/guest roots = %q/%q, want empty", binding.CompositionRoot, binding.Environment.Workspace().Root())
 	}
 }
 

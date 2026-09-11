@@ -119,6 +119,10 @@ type PlacementBinding struct {
 	Environment tool.Environment
 	Ref         session.EnvironmentRef
 	Metadata    PlacementMetadata
+	// CompositionRoot is the trusted host root used only to assemble host-side
+	// project policy and prompt sources. It is independent of the execution
+	// namespace exposed by Environment.Workspace().Root(). No-FS bindings leave it empty.
+	CompositionRoot string
 	// Close releases provisional provider resources. It is called after creation
 	// because ordinary bindings are reattached fresh at run entry.
 	Close func() error
@@ -230,32 +234,14 @@ func NewPlacementBinder(provider PlacementProvider) (*PlacementBinder, error) {
 	return &PlacementBinder{provider: provider}, nil
 }
 
-func configuredPlacementBinder(ctx context.Context, cfg Config) (*PlacementBinder, error) {
+func configuredPlacementBinder(cfg Config) (*PlacementBinder, error) {
 	if cfg.PlacementProvider == nil {
 		return nil, fmt.Errorf("%w: PlacementProvider is required", ErrConfig)
 	}
 	if cfg.PlacementScope == "" {
 		return nil, fmt.Errorf("%w: PlacementScope is required with PlacementProvider", ErrConfig)
 	}
-	binder, err := NewPlacementBinder(cfg.PlacementProvider)
-	if err != nil {
-		return nil, err
-	}
-	// NewService runs before a listener can serve. Binding the configured
-	// default proves that its current record is authorized, available,
-	// revision-stable, and capable of constructing a complete environment. The
-	// result is deliberately not cached.
-	validation, err := binder.Bind(ctx, PlacementBindRequest{
-		Selector: DefaultPlacement(), Scope: cfg.PlacementScope,
-		Operation: PlacementOperationCreate,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("server: validate default placement: %w", err)
-	}
-	if validation.Close != nil {
-		_ = validation.Close()
-	}
-	return binder, nil
+	return NewPlacementBinder(cfg.PlacementProvider)
 }
 
 func (s *Service) bindPlacementForCreate(ctx context.Context, profile SessionProfile, owner *session.Principal) (string, *PlacementBinding, error) {
@@ -268,13 +254,20 @@ func (s *Service) bindPlacementForCreate(ctx context.Context, profile SessionPro
 		Operation: PlacementOperationCreate,
 	})
 	if err != nil {
+		s.logPlacementProviderError(ctx, "bind", err)
 		return "", nil, err
 	}
-	boundRoot := binding.Environment.Workspace().Root()
-	if profile == ProfileNoFS && boundRoot != "" {
+	executionRoot := binding.Environment.Workspace().Root()
+	if profile == ProfileNoFS && executionRoot != "" {
+		discardPlacementBinding(binding)
 		return "", nil, ErrInvalidPlacementBinding
 	}
-	return boundRoot, &binding, nil
+	compositionRoot, err := PlacementCompositionRoot(binding)
+	if err != nil {
+		discardPlacementBinding(binding)
+		return "", nil, err
+	}
+	return compositionRoot, &binding, nil
 }
 
 func (s *Service) persistPlacedCreatedSession(ctx context.Context, sess *session.Session, owner *session.Principal, request *createRequest, placement *PlacementBinding) (*session.Session, error) {
@@ -311,18 +304,38 @@ func (s *Service) resolveSchedulePlacement(ctx context.Context, ref session.Envi
 	return binding.Ref, string(s.cfg.PlacementScope), ProfileDefault, nil
 }
 
-func (s *Service) privateWorkspace(ctx context.Context, sess *session.Session) (string, error) {
-	s.mu.Lock()
-	env, ok := s.sessionEnvironments[sess.ID]
-	s.mu.Unlock()
-	if ok && env.Ref() == sess.EnvironmentRef && env.Workspace() != nil {
-		return env.Workspace().Root(), nil
-	}
+func (s *Service) privateCompositionRoot(ctx context.Context, sess *session.Session) (string, error) {
 	binding, err := s.ReattachPlacement(ctx, sess.EnvironmentRef)
 	if err != nil {
 		return "", err
 	}
-	return binding.Environment.Workspace().Root(), nil
+	if binding.Close != nil {
+		defer func() { _ = binding.Close() }()
+	}
+	return PlacementCompositionRoot(binding)
+}
+
+// PlacementCompositionRoot returns the validated host-side project root for a binding.
+// It never treats a guest execution root as host composition context.
+func PlacementCompositionRoot(binding PlacementBinding) (string, error) {
+	if binding.Ref.Kind == session.EnvKindNoFS {
+		if binding.CompositionRoot != "" {
+			return "", ErrInvalidPlacementBinding
+		}
+		return "", nil
+	}
+	if binding.CompositionRoot != "" {
+		return binding.CompositionRoot, nil
+	}
+	// Local providers historically exposed one host namespace for both execution
+	// and composition. Preserve that internal compatibility without ever treating
+	// a non-local guest root (notably microVM /workspace) as a host path.
+	if binding.Ref.Kind == session.EnvKindLocal {
+		return binding.Environment.Workspace().Root(), nil
+	}
+	// Other remote placements may intentionally have no host-side project context.
+	// MicroVM cannot reach this branch because validation requires CompositionRoot.
+	return "", nil
 }
 
 // Bind validates the request, delegates exactly one atomic operation to the
@@ -340,6 +353,7 @@ func (b *PlacementBinder) Bind(ctx context.Context, req PlacementBindRequest) (P
 		return PlacementBinding{}, sanitizePlacementProviderError(err)
 	}
 	if err := validatePlacementBinding(binding); err != nil {
+		discardPlacementBinding(binding)
 		return PlacementBinding{}, err
 	}
 	return binding, nil
@@ -364,12 +378,20 @@ func (b *PlacementBinder) Reattach(ctx context.Context, req PlacementReattachReq
 		return PlacementBinding{}, sanitizePlacementProviderError(err)
 	}
 	if binding.Ref != req.Ref {
+		discardPlacementBinding(binding)
 		return PlacementBinding{}, ErrInvalidPlacementBinding
 	}
 	if err := validatePlacementBinding(binding); err != nil {
+		discardPlacementBinding(binding)
 		return PlacementBinding{}, err
 	}
 	return binding, nil
+}
+
+func discardPlacementBinding(binding PlacementBinding) {
+	if binding.Close != nil {
+		_ = binding.Close()
+	}
 }
 
 func clonePlacementRequest(req PlacementBindRequest) PlacementBindRequest {
@@ -403,6 +425,10 @@ func validatePlacementBinding(binding PlacementBinding) error {
 		return ErrInvalidPlacementBinding
 	}
 	if binding.Environment.Ref() != binding.Ref {
+		return ErrInvalidPlacementBinding
+	}
+	if binding.Ref.Kind == session.EnvKindNoFS && binding.CompositionRoot != "" ||
+		binding.Ref.Kind == session.EnvironmentKind("microvm") && binding.CompositionRoot == "" {
 		return ErrInvalidPlacementBinding
 	}
 	if runner := binding.Environment.CommandRunner(); runner != nil {

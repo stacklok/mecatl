@@ -647,6 +647,11 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 			m.submitStatusLine()
 		}
 		return m, nil, true
+	case startupProgressMsg:
+		if m.phase == phaseConnecting && msg != "" {
+			m.statusMsg = m.deps.Theme.Style("muted").Render(sanitizeTerminal(string(msg)))
+		}
+		return m, m.startupProgressCmd(), true
 	case client.SessionReadyMsg:
 		return m.applySessionReady(msg)
 	case workspaceEnrollmentMsg:
@@ -772,6 +777,11 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		}
 		m.phase = phaseFatal
 		m.fatalErr = msg.Err.Error()
+		if m.deps.StartupFailureHint != nil {
+			if hint := m.deps.StartupFailureHint(); hint != "" {
+				m.fatalErr = "microvm-local preparation failed (placement_unavailable); " + hint
+			}
+		}
 		return m, nil, true
 	case restartFailedMsg:
 		// A /models restart-now re-create (or a /worktrees re-create, or an /effort

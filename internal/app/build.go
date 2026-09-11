@@ -71,6 +71,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
 	"github.com/stacklok/mecatl/internal/adapter/mcpbroker"
 	"github.com/stacklok/mecatl/internal/adapter/memory"
+	"github.com/stacklok/mecatl/internal/adapter/microvmmanager"
 	"github.com/stacklok/mecatl/internal/adapter/modelhook"
 	"github.com/stacklok/mecatl/internal/adapter/openaicodex"
 	"github.com/stacklok/mecatl/internal/adapter/osfs"
@@ -146,6 +147,21 @@ type Config struct {
 	// PlacementScope is the trusted authorization scope passed to the provider.
 	// Empty defaults to the process deployment scope.
 	PlacementScope server.PlacementScope
+	// DefaultPlacement and MicroVMGuestEgress are command-root overrides for the
+	// operator execution policy. Their Set bits preserve omission so settings.yaml
+	// remains authoritative unless a serve flag was actually supplied.
+	DefaultPlacement      string
+	DefaultPlacementSet   bool
+	MicroVMGuestEgress    microvmmanager.GuestEgressSelection
+	MicroVMGuestEgressSet bool
+	MicroVMReadyRequest   func(microvmmanager.GuestEgressSelection) (microvmmanager.ReadyRequest, error)
+	MicroVMManagerFactory func() (MicroVMReadyManager, string, error)
+	// MicroVMReadinessObserver receives bounded, secret-free preparation updates.
+	// MicroVMReadinessFailureHint is appended to a stable preparation error without
+	// exposing the manager's private paths or process output.
+	MicroVMReadinessObserver    microvmmanager.ReadinessObserver
+	MicroVMReadinessFailed      func(microvmmanager.ReadinessStage)
+	MicroVMReadinessFailureHint string
 	// ClientMCPOnCreate permits client-provided MCP servers on a session-creating
 	// API request (issue #821, ADR 0237 applied to outbound MCP). It is a
 	// deployment policy the cmd/ main decides from its listener topology and Build passes through verbatim; the zero value fails
@@ -1563,6 +1579,11 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// SAME instance — one discovery pass, one cache, no per-consumer drift.
 	cfg.permResolver = buildPermResolver(cfg)
 	cfg.childPermResolver = buildChildPermResolver(cfg)
+	var executionErr error
+	cfg, executionErr = foldExecution(cfg)
+	if executionErr != nil {
+		return nil, executionErr
+	}
 	var temporaryStorageErr error
 	cfg, temporaryStorageErr = foldOperatorTemporaryStorage(cfg)
 	if temporaryStorageErr != nil {
@@ -2602,7 +2623,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	}
 	applyTeamConfig(&svcCfg, cfg, reg, provider, mainMgr, agentReg, assets.skillIndex, assets)
 
-	svc, err := server.NewServiceContext(ctx, svcCfg)
+	svc, err := server.NewService(svcCfg)
 	if err != nil {
 		closeBroker()
 		childLiveness.Close()

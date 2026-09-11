@@ -67,7 +67,19 @@ accepting an arbitrary host path. Stale generations, replayed credentials, sibli
 path escapes fail before dispatch. Transport failure never falls back to host filesystem or
 shell.
 
-Workspace and CommandRunner remain affined to the same root and cwd. Existing opaque file
+The placement binding also carries an internal host-composition root that is distinct from
+the guest execution root. MicroVM Bind and exact Reattach supply the configured source checkout
+only after the daemon resolves the binding against that repository. Host-side project
+instructions, rules, slash commands, permission learning, and authorization use that root;
+Read/Edit/Bash continue to use guest `/workspace`. The composition root is not snapshot data,
+public metadata, or model-visible content. Missing MicroVM composition context fails closed,
+and no-FS deliberately supplies none.
+
+Workspace and CommandRunner remain affined to the same root and cwd. The MicroVM Workspace's
+`tool.AuthorityResourceResolver` projects relative tool paths onto the same confined guest
+`/workspace` identity used by filesystem RPCs; this lets authorization evaluate the guest
+resource without mistaking the host composition root for tool authority. Absolute, empty,
+NUL-containing, and escaping paths fail closed. Existing opaque file
 versions, create-only and conditional writes, ordered stdout/stderr, exit status, bounded
 output, and process-group cancellation remain the data-plane contract. This confines
 protocol requests; it does not create a kernel sandbox between worktrees in one repository
@@ -113,11 +125,12 @@ ownership parity are deferred, regardless of compile/static coverage.
 
 `microvm-local` defaults to unrestricted guest IPv4 egress. The guest IPv6 stack remains
 enabled, but go-microvm's hosted topology does not route external IPv6; external IPv6 is
-unsupported rather than a dual-stack claim. At the two host-local composition roots,
-operators select `--microvm-guest-egress=permissive|deny-all|allowlist`; allowlist mode
-uses repeatable `--microvm-guest-allow=HOST:PORT/tcp|udp` rules. That means
-`mecated serve --headless ...` for the local server, or local embedded
-`mecatui --default-placement microvm-local ...`. Rules normalize hostnames and reject
+unsupported rather than a dual-stack claim. The strict operator-tier `execution:`
+settings select `default_placement: host-local|microvm-local` and
+`microvm.guest_egress.mode: permissive|deny-all|allowlist`; allowlist mode uses
+`allow: [HOST:PORT/tcp|udp]`. Both mecated and bare embedded mecatui consume the same
+resolved policy, while explicit mecated serve flags remain higher-precedence overrides.
+Rules normalize hostnames and reject
 IP literals, wildcards, malformed values, and duplicates. The selection is host-only:
 no engine port, HTTP/gRPC request, project setting, or release-default field carries it.
 No API client selects this placement; `profile` remains limited to the default tool surface
@@ -126,43 +139,65 @@ or explicit `no-fs` attenuation.
 A selected tightening mode filters IPv4 and disables IPv6, aborting readiness if either
 enforcement step fails; it never falls back to permissive operation. The validated
 selection overlays only the guest-egress fields after authenticated release/resource
-defaults are built. Because daemon config identity includes policy, changing the selection
-causes the existing mismatch/restart convergence rather than reusing a daemon with stale
-policy. Omitting the flags leaves the prior permissive request byte-compatible.
+default configuration is built. Omission resolves to permissive egress.
 
 Guest egress policy does not govern host providers, WebFetch, WebSearch, MCP, hooks, OCI
 discovery, or telemetry.
 
 ## Readiness and bounded operations
 
-Ordinary `--default-placement microvm-local` deployment selection calls the completed idempotent
-`EnsureReady` flow from the signed Linux-amd64 release binary. Ordinary source builds do
+Selecting the `execution.default_placement` value `microvm-local` (or the mecated serve flag override)
+configures the provider without provisioning. Actual default session creation calls the completed
+idempotent
+`EnsureReady` flow from the signed Linux-amd64 release binary; service startup and explicit
+`no-fs` creation bypass it. A readiness failure occurs before placement creation and session
+persistence, with no host-local fallback. Composition attaches one bounded readiness observer
+used by diagnostics and the embedded TUI; the first-session connecting screen therefore reports
+verified download/install/start stages without a second prewarm or policy path. The permissive
+IPv4 default is disclosed before readiness starts. Embedded failures expose only a stable stage,
+`mecated microvm doctor`, and the diagnostics-log location; detailed manager errors remain in the
+operator log. Ordinary source builds do
 not embed authenticated release defaults and fail closed. Before release download or
 repository provisioning, readiness checks Git, Python 3, read-write KVM access, the Linux
 user-namespace controls, and an actual ephemeral namespace creation to detect disabled or
 exhausted quota. Doctor repeats those non-destructive host checks. Neither path changes
-ACLs, groups, sysctls, or quota. The manager lock converges concurrent startup, and errors never rewrite
-desired configuration. There is no dedicated activation flag, init command, or recover
-command.
+ACLs, groups, sysctls, or quota. The manager lock serializes concurrent startup across
+sessions and host processes. Only genuinely fresh state is installed and started; compatible
+callers reuse the repository daemon. Desired release or egress conflicts and unhealthy or
+incompatible runtime state fail without rewriting active configuration, stopping the daemon,
+deleting state, or replacing repository runtime. There is no dedicated activation flag, init
+command, or recover command.
 
 Status reads the durable repository logical-attachment inventory as the sole `microvm-local`
 inventory authority; it survives daemon restart and shows the shared repository generation with each
-exact session/ref/worktree and health, in deterministic owner-scoped pages of at most 64 entries
-plus an opaque continuation token. Exact delete remains available after restart, removes only the
-selected logical attachment and a clean worktree, and records a dirty worktree as retained stale
-recovery state. It never deletes the repository VM.
-Doctor remains diagnostic. Repository-VM deletion UX and a broad reconciliation state machine
-are deferred. Same-process reattachment requires every dependency to remain live; daemon
+exact attachment/ref/worktree and health, in deterministic owner-scoped pages of at most 64 entries
+plus an opaque continuation token. Its JSON uses `backend` and `attachment_id`; an attachment ID
+is not a public mecatl session ID. Stopped and unhealthy states still return a bounded status
+object with `state`, stable `error`, and `remediation` before the command exits nonzero.
+`mecated microvm delete` requires the exact backend,
+attachment, ref, and generation from one owner-scoped status row plus confirmation. It removes
+only that logical attachment and a clean worktree, preserves dirty worktrees, and never deletes
+or resets the repository VM. Doctor, status, and delete are local to the execution host and
+current OS principal; mecatui and remote connect expose no administration surface. A fresh host
+with satisfied prerequisites is successfully reported as ready to configure on first use.
+Same-process reattachment requires every dependency to remain live; daemon
 restart fails loudly and preserves state because hosted networking cannot be reconstructed safely.
 
 ## Required live journey and limits
 
-Linux amd64 KVM is the only required live platform. Its journey proves ordinary first use,
-direct admitted Brood boot and in-process verification, one VM/rootfs, two sessions sharing
-a declared cache but not a worktree, confined filesystem and exec, unrestricted IPv4
-networking with the external-IPv6 limitation explicit, detach, and prompt daemon-restart
-failure with preserved state and no replacement. Optional fail-closed tightening is proven
-by AC6.2's production app/profile and network enforcement tests rather than a second live VM.
+The automated `task e2e:microvm` Linux-amd64 KVM gate uses the deterministic mock provider and
+does not contact OpenRouter. Separately, a manual qualification executed on 2026-09-10 used
+OpenRouter `openai/gpt-5-mini` through public HTTP session creation and prompting. Normal Write,
+Read, and Bash ran in the Wolfi guest as UID 65532, with a proof marker absent from the source
+checkout. The same session reattached after mecated restarted while microvmd remained alive;
+doctor and status were healthy. No credential, private placement ref, socket, or host path was
+retained in the evidence. This proves first-use readiness, direct artifact admission and in-process verification, guest
+filesystem and Bash execution, source isolation from the guest namespace, and exact harness
+restart reattachment. It does not prove microvmd restart recovery: that remains fail-closed as
+described above. Deterministic composition tests prove repository-VM reuse across multiple
+sessions, daemon-restart failure behavior, and delegation routing. Optional fail-closed network
+tightening is proven by AC6.2's deterministic app/profile and network-enforcement tests rather
+than a second live VM.
 
 Deferred after the MVP: repository-VM deletion UX,
 sophisticated retention, crash-orphan reconciliation, crash-durable and cross-process

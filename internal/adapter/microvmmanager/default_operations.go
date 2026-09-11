@@ -23,12 +23,18 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/stacklok/mecatl/internal/adapter/envscrub"
 	microvmclient "github.com/stacklok/mecatl/internal/adapter/microvm"
 )
 
 const maxReleaseBundleBytes = 2 << 30
 
 const managedProcessSchema = "mecatl-microvmd-process/v1"
+
+func scrubbedCommand(cmd *exec.Cmd) *exec.Cmd {
+	cmd.Env = envscrub.Scrub(os.Environ())
+	return cmd
+}
 
 type managedProcessRecord struct {
 	Schema          string   `json:"schema"`
@@ -85,11 +91,11 @@ func (o *DefaultOperations) Preflight(ctx context.Context, _ Paths) error {
 		}
 		return file.Close()
 	}
-	version, err := exec.CommandContext(ctx, "sw_vers", "-productVersion").Output()
+	version, err := scrubbedCommand(exec.CommandContext(ctx, "sw_vers", "-productVersion")).Output()
 	if err != nil || darwinMajor(strings.TrimSpace(string(version))) < 15 {
 		return errors.New("microVMs require Apple Silicon macOS 15 or newer")
 	}
-	output, err := exec.CommandContext(ctx, "sysctl", "-n", "kern.hv_support").Output()
+	output, err := scrubbedCommand(exec.CommandContext(ctx, "sysctl", "-n", "kern.hv_support")).Output()
 	if err != nil || strings.TrimSpace(string(output)) != "1" {
 		return errors.New("hypervisor.framework is unavailable to the current user")
 	}
@@ -309,7 +315,7 @@ func (o *DefaultOperations) Install(ctx context.Context, manifest, installRoot s
 	if err := atomicWriteMode(installer, installerData, 0o700); err != nil {
 		return InstalledArtifacts{}, fmt.Errorf("materialize verified installer: %w", err)
 	}
-	cmd := exec.CommandContext(ctx, installer, manifest, installRoot) // #nosec G204 -- executable and each argument are distinct verified paths.
+	cmd := scrubbedCommand(exec.CommandContext(ctx, installer, manifest, installRoot)) // #nosec G204 -- executable and each argument are distinct verified paths.
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return InstalledArtifacts{}, fmt.Errorf("release installer: %w: %s", err, strings.TrimSpace(string(output)))
 	}
@@ -446,7 +452,7 @@ func (*DefaultOperations) Start(_ context.Context, paths Paths) error {
 		return err
 	}
 	args := []string{"--state-dir", paths.StateDir, "--socket", paths.Socket, "--config", paths.ConfigFile}
-	cmd := exec.Command(paths.DaemonBinary, args...) // #nosec G204 -- absolute manager-owned executable and separate fixed arguments.
+	cmd := scrubbedCommand(exec.Command(paths.DaemonBinary, args...)) // #nosec G204 -- absolute manager-owned executable and separate fixed arguments.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	cmd.Stdout, cmd.Stderr = log, log
 	if err := cmd.Start(); err != nil {
@@ -526,7 +532,7 @@ func (o *DefaultOperations) Doctor(ctx context.Context, paths Paths) (string, er
 	if !serving.Equal(expected) {
 		return "", errors.New("serving microvmd identity does not match installed release, binary, policy, profiles, config, and socket")
 	}
-	cmd := exec.CommandContext(ctx, paths.DaemonBinary, "--doctor", "--state-dir", paths.StateDir, "--socket", paths.Socket, "--config", paths.ConfigFile) // #nosec G204 -- exact identity was authenticated above; arguments are fixed manager paths.
+	cmd := scrubbedCommand(exec.CommandContext(ctx, paths.DaemonBinary, "--doctor", "--state-dir", paths.StateDir, "--socket", paths.Socket, "--config", paths.ConfigFile)) // #nosec G204 -- exact identity was authenticated above; arguments are fixed manager paths.
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("microvmd readiness checks: %w: %s", err, strings.TrimSpace(string(output)))
@@ -623,7 +629,7 @@ func validateManagedProcess(record managedProcessRecord, paths Paths) error { //
 		return nil
 	}
 	if runtime.GOOS == "darwin" {
-		output, err := exec.Command("ps", "-p", strconv.Itoa(record.PID), "-o", "command=").Output()
+		output, err := scrubbedCommand(exec.Command("ps", "-p", strconv.Itoa(record.PID), "-o", "command=")).Output()
 		if err != nil {
 			return fmt.Errorf("read managed daemon process identity: %w", err)
 		}
@@ -657,7 +663,7 @@ func processStartIdentity(pid int) (string, error) {
 		return strings.TrimSpace(string(bootID)) + ":" + fields[19], nil
 	}
 	if runtime.GOOS == "darwin" {
-		output, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "lstart=").Output()
+		output, err := scrubbedCommand(exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "lstart=")).Output()
 		if err != nil {
 			return "", err
 		}

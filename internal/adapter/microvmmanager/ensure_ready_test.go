@@ -48,7 +48,7 @@ func TestMicroVMRedesign_Scenario1_EnsureReadyConvergesUnderManagerLock(t *testi
 	}
 }
 
-func TestEnsureReadyRefreshesCacheOnlyWhenReleaseAdmissionChanges(t *testing.T) {
+func TestEnsureReadyPreservesExistingAdmissionStateOnMismatch(t *testing.T) {
 	root := t.TempDir()
 	paths := testPaths(root)
 	if err := preparePaths(paths); err != nil {
@@ -66,26 +66,20 @@ func TestEnsureReadyRefreshesCacheOnlyWhenReleaseAdmissionChanges(t *testing.T) 
 		t.Fatal(err)
 	}
 	request := ReadyRequest{Release: Release{URL: "https://example.invalid/release.tar.gz", SHA256: strings.Repeat("c", 64)}, Policy: testPolicy(root)}
-	manager := New(paths, &fakeOps{})
-	if _, err := manager.EnsureReady(context.Background(), request); err != nil {
-		t.Fatalf("converge changed release admission: %v", err)
+	ops := &fakeOps{}
+	if _, err := New(paths, ops).EnsureReady(context.Background(), request); err == nil || !strings.Contains(err.Error(), "configuration is incompatible") {
+		t.Fatalf("admission mismatch error = %v", err)
 	}
-	if _, err := os.Lstat(cacheMarker); !os.IsNotExist(err) {
-		t.Fatalf("stale cache marker survived admission change: %v", err)
+	if got, err := os.ReadFile(paths.ConfigFile); err != nil || string(got) != string(oldConfig) {
+		t.Fatalf("existing config changed: %q, err=%v", got, err)
 	}
-
-	steadyMarker := filepath.Join(paths.DataDir, "cache", "current-policy-entry")
-	if err := os.MkdirAll(filepath.Dir(steadyMarker), 0o700); err != nil {
-		t.Fatal(err)
+	if got, err := os.ReadFile(cacheMarker); err != nil || string(got) != "stale" {
+		t.Fatalf("existing cache changed: %q, err=%v", got, err)
 	}
-	if err := os.WriteFile(steadyMarker, []byte("current"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := manager.EnsureReady(context.Background(), request); err != nil {
-		t.Fatalf("reuse current release admission: %v", err)
-	}
-	if _, err := os.Stat(steadyMarker); err != nil {
-		t.Fatalf("current-policy cache was unnecessarily removed: %v", err)
+	for _, forbidden := range []string{"download", "verify", "install", "start", "stop"} {
+		if contains(ops.calls, forbidden) {
+			t.Fatalf("mismatch called %s: %v", forbidden, ops.calls)
+		}
 	}
 }
 

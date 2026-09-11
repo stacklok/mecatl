@@ -93,7 +93,7 @@ func assertProductionImportsExclude(t *testing.T, root, excluded string) {
 			return walkErr
 		}
 		if entry.IsDir() {
-			if path == excluded || (root != filepath.Join(repoRoot(t), "engine") && path == filepath.Join(root, "engine")) {
+			if path == excluded || path == filepath.Join(repoRoot(t), ".scratch") || (root != filepath.Join(repoRoot(t), "engine") && path == filepath.Join(root, "engine")) {
 				return filepath.SkipDir
 			}
 			return nil

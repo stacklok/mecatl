@@ -189,11 +189,11 @@ type ResolvedModel struct {
 // and apply the no-FS prompt posture. A no-FS session ALWAYS routes through this
 // factory — the shared engine has the FS tools baked in.
 //
-// workspace is the SESSION's workspace root (issue #32): the factory pins the
-// per-session engine's CHILD permission resolver to it, so a per-session
+// compositionRoot is the SESSION's trusted host project-composition root (issue #32):
+// the factory pins the per-session engine's CHILD permission resolver to it, so a per-session
 // engine's subagents/members/branches resolve project permission rules from
-// THEIR session's pre-fork base root — never the server flag's root, and never
-// a fork root. Empty (a no-fs session, or a resume that persisted none) pins no
+// THEIR session's pre-fork base root — never the execution environment's guest root,
+// the server flag's root, or a fork root. Empty (a no-fs session) pins no
 // project root (user/CLI rules only).
 //
 // mode is the session's PermissionMode (ADR 0030 Layer 3, the mode→model
@@ -376,10 +376,10 @@ type Config struct {
 	// It is read-only and called per request (discovery is cheap file scanning).
 	Commands CommandLister
 
-	// SharedEngineRoot is the verified workspace root the shared engine's policy
-	// collaborators were assembled for. Every filesystem-capable placement with a
-	// different root must use SessionEngine, including custom environment kinds and
-	// rootless shared deployments.
+	// SharedEngineRoot is the verified host project-composition root the shared
+	// engine's policy collaborators were assembled for. Every filesystem-capable
+	// placement with a different composition root must use SessionEngine, including
+	// guest execution namespaces, custom environment kinds, and rootless shared deployments.
 	SharedEngineRoot string
 
 	// Agents is the resolved agent-definition snapshot taken at startup. It backs
@@ -938,6 +938,11 @@ type Service struct {
 	// does NOT guess a ref or runner from the override's presence — every
 	// override carries its own truthful identity (issue #462 phase-2 finding #2).
 	sessionEnvironments map[session.SessionID]tool.Environment
+	// sessionEnvironmentCloses owns the placement handle behind an environment
+	// override when that handle must remain live with the override (notably ACP
+	// exact reattachment). Replacement, CloseSession, and Service.Close each
+	// detach it exactly once. Guarded by mu.
+	sessionEnvironmentCloses map[session.SessionID]func() error
 
 	// clientMCPSpecs holds the ORIGINAL client-supplied MCP server specs for a
 	// session's lifetime, guarded by mu. The Service never threaded these through
@@ -1316,23 +1321,15 @@ func normalizeServerImplementation(value string) string {
 	return value
 }
 
-// NewService validates cfg and constructs a Service using a background startup
-// context. Composition roots with a lifecycle context should call
-// NewServiceContext.
+// NewService validates cfg and constructs a Service.
 func NewService(cfg Config) (*Service, error) {
-	return NewServiceContext(context.Background(), cfg)
-}
-
-// NewServiceContext validates cfg and constructs a Service. ctx bounds and
-// propagates trusted startup context to configured placement providers.
-func NewServiceContext(ctx context.Context, cfg Config) (*Service, error) {
 	if cfg.Engine == nil {
 		return nil, fmt.Errorf("%w: Engine is required", ErrConfig)
 	}
 	if cfg.Store == nil {
 		return nil, fmt.Errorf("%w: Store is required", ErrConfig)
 	}
-	placementBinder, err := configuredPlacementBinder(ctx, cfg)
+	placementBinder, err := configuredPlacementBinder(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -1378,25 +1375,27 @@ func NewServiceContext(ctx context.Context, cfg Config) (*Service, error) {
 	}
 	_, shutdownCancel := context.WithCancel(context.Background())
 	svc := &Service{
-		cfg:                 cfg,
-		placementBinder:     placementBinder,
-		shutdownCancel:      shutdownCancel,
-		runs:                make(map[session.SessionID]*runState),
-		teams:               make(map[string]*teamState),
-		sessionEngines:      make(map[session.SessionID]*sessionEngine),
-		brokerAttachments:   make(map[session.SessionID]brokercontract.Attachment),
-		authorizationExpiry: make(map[session.SessionID]*authorizationExpiry),
-		sessionEnvironments: make(map[session.SessionID]tool.Environment),
-		clientMCPSpecs:      make(map[session.SessionID][]mcp.ServerConfig),
-		reservedIDs:         make(map[session.SessionID]struct{}),
-		runEntryGenerations: make(map[session.SessionID]uint64),
-		replayedApprovals:   make(map[session.SessionID]struct{}),
-		heldLeases:          make(map[session.SessionID]*heldLease),
-		lostOwnership:       make(map[session.SessionID]struct{}),
-		cleanupTokenKey:     cleanupTokenKey,
-		cleanupPlans:        make(map[string]cleanupTokenPayload),
-		cleanupJobs:         make(map[string]cleanupJobRecord),
-		subscriptions:       make(map[session.SessionID]map[int64]chan session.Event),
+		cfg:                      cfg,
+		placementBinder:          placementBinder,
+		shutdownCancel:           shutdownCancel,
+		runs:                     make(map[session.SessionID]*runState),
+		teams:                    make(map[string]*teamState),
+		sessionEngines:           make(map[session.SessionID]*sessionEngine),
+		brokerAttachments:        make(map[session.SessionID]brokercontract.Attachment),
+		authorizationExpiry:      make(map[session.SessionID]*authorizationExpiry),
+		sessionEnvironments:      make(map[session.SessionID]tool.Environment),
+		sessionEnvironmentCloses: make(map[session.SessionID]func() error),
+		clientMCPSpecs:           make(map[session.SessionID][]mcp.ServerConfig),
+		reservedIDs:              make(map[session.SessionID]struct{}),
+		runEntryGenerations:      make(map[session.SessionID]uint64),
+		replayedApprovals:        make(map[session.SessionID]struct{}),
+		steerMsgIDs:              make(map[session.SessionID][]steerMsgID),
+		heldLeases:               make(map[session.SessionID]*heldLease),
+		lostOwnership:            make(map[session.SessionID]struct{}),
+		cleanupTokenKey:          cleanupTokenKey,
+		cleanupPlans:             make(map[string]cleanupTokenPayload),
+		cleanupJobs:              make(map[string]cleanupJobRecord),
+		subscriptions:            make(map[session.SessionID]map[int64]chan session.Event),
 	}
 	svc.titleCoordinator = buildTitleCoordinator(svc, cfg)
 	// Narrow the durable log to the cursor seam once (ADR 0250). A backend that
@@ -2184,8 +2183,12 @@ func (s *Service) createSession(ctx context.Context, mode session.PermissionMode
 			return nil, err
 		}
 		placement = opts.placement
-		workspace = placement.Environment.Workspace().Root()
-		if profile == ProfileNoFS && workspace != "" || profile != ProfileNoFS && workspace == "" {
+		executionRoot := placement.Environment.Workspace().Root()
+		workspace, err = PlacementCompositionRoot(*placement)
+		if err != nil {
+			return nil, err
+		}
+		if profile == ProfileNoFS && executionRoot != "" || profile != ProfileNoFS && executionRoot == "" {
 			return nil, ErrInvalidPlacementBinding
 		}
 	} else {
@@ -2701,9 +2704,22 @@ func (s *Service) CreateSessionWithMCP(ctx context.Context, mode session.Permiss
 // tracks the session and does this on disconnect). The gRPC/HTTP surfaces never
 // call this, so their environment path is unchanged (issue #462 phase-2 finding #2).
 func (s *Service) SetSessionEnvironment(id session.SessionID, env tool.Environment) {
+	s.setSessionEnvironment(id, env, nil)
+}
+
+func (s *Service) setSessionEnvironment(id session.SessionID, env tool.Environment, closeFn func() error) {
 	s.mu.Lock()
+	priorClose := s.sessionEnvironmentCloses[id]
 	s.sessionEnvironments[id] = env
+	if closeFn == nil {
+		delete(s.sessionEnvironmentCloses, id)
+	} else {
+		s.sessionEnvironmentCloses[id] = closeFn
+	}
 	s.mu.Unlock()
+	if priorClose != nil {
+		_ = priorClose()
+	}
 }
 
 // CloseSession tears down the per-session engine registered for id (if any) and
@@ -2787,7 +2803,10 @@ func (s *Service) closeSessionLocal(id session.SessionID) {
 	brokerAttachment := s.brokerAttachments[id]
 	delete(s.brokerAttachments, id)
 	// Drop any per-session environment override too: it closes over the (now
-	// disconnecting) connection, so it must not outlive the session.
+	// disconnecting) connection, so it must not outlive the session. A retained
+	// placement handle is detached after releasing the registry lock.
+	environmentClose := s.sessionEnvironmentCloses[id]
+	delete(s.sessionEnvironmentCloses, id)
 	delete(s.sessionEnvironments, id)
 	delete(s.clientMCPSpecs, id)
 	// Drop the once-per-id approval-replay marker (cloud-native Phase 3b): the
@@ -2806,6 +2825,11 @@ func (s *Service) closeSessionLocal(id session.SessionID) {
 	s.mu.Unlock()
 	if expiry != nil && expiry.timer != nil {
 		expiry.timer.Stop()
+	}
+	if environmentClose != nil {
+		if err := environmentClose(); err != nil {
+			s.cfg.Diagnostics.Log(context.Background(), port.LevelWarn, "session environment placement close failed")
+		}
 	}
 	if ok && se.close != nil {
 		if err := se.close(); err != nil {
@@ -2944,9 +2968,10 @@ func (s *Service) Close() {
 	s.sessionEngines = make(map[session.SessionID]*sessionEngine)
 	brokerAttachments := s.brokerAttachments
 	s.brokerAttachments = make(map[session.SessionID]brokercontract.Attachment)
-	// Drop all per-session environment overrides on shutdown; they hold no resources
-	// of their own (the underlying connection is closed separately) but must not
-	// linger past the Service.
+	// Drop all per-session environment overrides on shutdown and retain their
+	// placement detach callbacks for exactly-once cleanup outside the lock.
+	environmentCloses := s.sessionEnvironmentCloses
+	s.sessionEnvironmentCloses = make(map[session.SessionID]func() error)
 	s.sessionEnvironments = make(map[session.SessionID]tool.Environment)
 	s.clientMCPSpecs = make(map[session.SessionID][]mcp.ServerConfig)
 	// Close all per-session event subscriptions so subscriber goroutines can exit
@@ -3004,6 +3029,13 @@ func (s *Service) Close() {
 	attachmentWG.Wait()
 	cancelAttachments()
 
+	for _, closeEnvironment := range environmentCloses {
+		if closeEnvironment != nil {
+			if err := closeEnvironment(); err != nil {
+				s.cfg.Diagnostics.Log(context.Background(), port.LevelWarn, "session environment placement close failed during shutdown")
+			}
+		}
+	}
 	// Stop every renewer and release every held cross-process lease on shutdown
 	// (cloud-native Phase 4), so a restarted process can take the sessions over
 	// without waiting out the TTL. Best-effort (detached short-timeout ctx).
@@ -3367,7 +3399,7 @@ func (s *Service) CompactSession(ctx context.Context, id session.SessionID, call
 	if err := admitRunPurpose(sess, runPurposeChat); err != nil {
 		return agent.ManualCompactionResult{}, err
 	}
-	eng, _, err := s.engineAndEnvironmentFor(ctx, sess)
+	eng, _, _, err := s.engineAndEnvironmentFor(ctx, sess)
 	if err != nil {
 		return agent.ManualCompactionResult{}, err
 	}
@@ -4181,7 +4213,7 @@ func (s *Service) LoadSessionWithMCP(ctx context.Context, id session.SessionID, 
 	// loaded session's persisted Mode (ADR 0030 Layer 3), so a session loaded into plan
 	// mode mounts the plan model; builtForMode is stamped from the result so a later
 	// in-process mode switch on this reloaded session triggers the CASE 1 rebuild.
-	workspace, err := s.privateWorkspace(ctx, sess)
+	workspace, err := s.privateCompositionRoot(ctx, sess)
 	if err != nil {
 		return nil, err
 	}
@@ -4330,7 +4362,7 @@ func (s *Service) RetryFailedRun(ctx context.Context, id session.SessionID) (*ag
 		}
 	}()
 	ctx = admissionCtx
-	engine, env, err := s.engineAndEnvironmentFor(ctx, sess)
+	engine, env, compositionRoot, err := s.engineAndEnvironmentFor(ctx, sess)
 	if err != nil {
 		return nil, err
 	}
@@ -4344,7 +4376,7 @@ func (s *Service) RetryFailedRun(ctx context.Context, id session.SessionID) (*ag
 	if !leaseHeld() {
 		return nil, fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, id)
 	}
-	ctx = memory.WithWorkspace(ctx, env.Workspace().Root())
+	ctx = memory.WithWorkspace(ctx, compositionRoot)
 	run, err := s.promoteRunAdmission(id, st, stopAdmission, func() *agent.Run {
 		return engine.RetryFailedStep(ctx, sess, env)
 	})
@@ -4563,7 +4595,7 @@ func (s *Service) startRunContent(ctx context.Context, id session.SessionID, tex
 			}
 		}()
 	}
-	engine, env, err := s.engineAndEnvironmentFor(ctx, sess)
+	engine, env, compositionRoot, err := s.engineAndEnvironmentFor(ctx, sess)
 	if err != nil {
 		return nil, err
 	}
@@ -4578,7 +4610,7 @@ func (s *Service) startRunContent(ctx context.Context, id session.SessionID, tex
 	if !leaseHeld() {
 		return nil, fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, id)
 	}
-	ctx = memory.WithWorkspace(ctx, env.Workspace().Root())
+	ctx = memory.WithWorkspace(ctx, compositionRoot)
 	run, err := s.promoteRunAdmission(id, st, stopAdmission, func() *agent.Run {
 		return engine.Run(ctx, sess, env, agent.RunRequest{Text: text, Parts: parts, RunID: runID, CanPresentAuthorization: canPresentAuthorization})
 	})
@@ -4888,7 +4920,7 @@ func admitRunPurpose(sess *session.Session, purpose runPurpose) error {
 //     plan slot is active): PROMOTE the default-FS session to a per-session factory
 //     engine. ModeNeedsEngine is nil (no plan slot) ⇒ this never fires and the session
 //     keeps the shared engine — BYTE-IDENTICAL to pre-Phase-3.
-func (s *Service) engineAndEnvironmentFor(ctx context.Context, sess *session.Session) (*agent.Engine, tool.Environment, error) { //nolint:gocyclo // the per-session engine/environment resolution is inherently branched
+func (s *Service) engineAndEnvironmentFor(ctx context.Context, sess *session.Session) (*agent.Engine, tool.Environment, string, error) { //nolint:gocyclo // the per-session engine/environment resolution is inherently branched
 	id := sess.ID
 	attribution := s.ResolvedModel(id)
 	sess.SetUsageAttribution(attribution.ProviderID, attribution.ModelID)
@@ -4898,26 +4930,30 @@ func (s *Service) engineAndEnvironmentFor(ctx context.Context, sess *session.Ses
 	envOverride, hasEnvOverride := s.sessionEnvironments[id]
 	s.mu.Unlock()
 	if !sess.EnvironmentRef.Valid() {
-		return nil, tool.Environment{}, ErrInvalidPlacementSelection
+		return nil, tool.Environment{}, "", ErrInvalidPlacementSelection
 	}
 	verified, err := s.ReattachPlacement(ctx, sess.EnvironmentRef)
 	if err != nil {
-		return nil, tool.Environment{}, err
+		return nil, tool.Environment{}, "", err
 	}
 	if s.cfg.SessionReadLedger != nil {
 		ledger := s.cfg.SessionReadLedger(id)
 		if ledger == nil {
-			return nil, tool.Environment{}, fmt.Errorf("%w: session read-ledger factory returned nil", ErrConfig)
+			return nil, tool.Environment{}, "", fmt.Errorf("%w: session read-ledger factory returned nil", ErrConfig)
 		}
 		verified.Environment, err = tool.NewEnvironment(verified.Ref, verified.Environment.Workspace(), ledger, verified.Environment.CommandRunner())
 		if err != nil {
-			return nil, tool.Environment{}, fmt.Errorf("%w: bind session read ledger: %v", ErrConfig, err)
+			return nil, tool.Environment{}, "", fmt.Errorf("%w: bind session read ledger: %v", ErrConfig, err)
 		}
 	}
 	verifiedPlacement := &verified
+	compositionRoot, err := PlacementCompositionRoot(verified)
+	if err != nil {
+		return nil, tool.Environment{}, "", err
+	}
 	if hasEnvOverride {
 		if err := s.validateEnvironmentOverride(sess, envOverride, verifiedPlacement.Environment); err != nil {
-			return nil, tool.Environment{}, err
+			return nil, tool.Environment{}, "", err
 		}
 	}
 	switch {
@@ -4936,13 +4972,13 @@ func (s *Service) engineAndEnvironmentFor(ctx context.Context, sess *session.Ses
 		live := st != nil && st.run != nil
 		s.mu.Unlock()
 		if live {
-			return nil, tool.Environment{}, fmt.Errorf("%w: cannot rebuild engine for session %q mid-run (mode change must be deferred to a turn boundary)", ErrInvalidArgument, id)
+			return nil, tool.Environment{}, "", fmt.Errorf("%w: cannot rebuild engine for session %q mid-run (mode change must be deferred to a turn boundary)", ErrInvalidArgument, id)
 		}
 		sel := ProviderSelector{ProviderID: sess.ProviderID, ModelID: sess.ModelID, ReasoningEffort: sess.ReasoningEffort}
 		profile := profileForSession(sess)
 		rebuilt, err := s.buildAndRegisterSessionEngine(ctx, sess, sel, profile, sess.Mode, true)
 		if err != nil {
-			return nil, tool.Environment{}, err
+			return nil, tool.Environment{}, "", err
 		}
 		se, hasEngine = rebuilt, true
 		// The environment override may have been (re-)registered by the rebuild (no-fs).
@@ -4958,13 +4994,13 @@ func (s *Service) engineAndEnvironmentFor(ctx context.Context, sess *session.Ses
 		sel := ProviderSelector{ProviderID: sess.ProviderID, ModelID: sess.ModelID, ReasoningEffort: sess.ReasoningEffort}
 		promoted, err := s.buildAndRegisterSessionEngine(ctx, sess, sel, ProfileDefault, sess.Mode, false)
 		if err != nil {
-			return nil, tool.Environment{}, err
+			return nil, tool.Environment{}, "", err
 		}
 		se, hasEngine = promoted, true
 	}
 	placementNeedsEngine := !hasEngine && !s.needsRehydration(sess) &&
 		sess.EnvironmentRef.Kind != session.EnvKindNoFS &&
-		verifiedPlacement.Environment.Workspace().Root() != s.cfg.SharedEngineRoot
+		compositionRoot != s.cfg.SharedEngineRoot
 	if !hasEngine && (s.needsRehydration(sess) || placementNeedsEngine) {
 		// RESTART REHYDRATION (issue #55, widened in the cloud-native Phase 1): a
 		// PERSISTED session that needed a PER-SESSION engine — a non-default
@@ -4978,7 +5014,7 @@ func (s *Service) engineAndEnvironmentFor(ctx context.Context, sess *session.Ses
 		var err error
 		se, err = s.rehydrateSession(ctx, sess)
 		if err != nil {
-			return nil, tool.Environment{}, err
+			return nil, tool.Environment{}, "", err
 		}
 		hasEngine = true
 		// Placement environments are never restored from the override registry;
@@ -4993,9 +5029,9 @@ func (s *Service) engineAndEnvironmentFor(ctx context.Context, sess *session.Ses
 		// overrides are complete environments: the creator supplied the accurate ref
 		// and the correct (possibly nil) CommandRunner. Use them directly; never guess
 		// a ref, namespace, or runner from the override's presence.
-		return engine, envOverride, nil
+		return engine, envOverride, compositionRoot, nil
 	}
-	return engine, verifiedPlacement.Environment, nil
+	return engine, verifiedPlacement.Environment, compositionRoot, nil
 }
 
 // sessionNeedsPerFactory reports whether a CreateSession with the given inputs
@@ -5154,7 +5190,7 @@ func (s *Service) buildAndRegisterSessionEngineWithBrokerTools(ctx context.Conte
 		}
 		res, err = s.cfg.DebugSessionEngine(ctx, sel, profile, mode, sess.Relationship.DebugTargetID, sess.DebugTargetFingerprint, target.Owner, sess.DebugMCPServers, sess.DebugMCPTools)
 	} else if useExactTools {
-		workspace, workspaceErr := s.privateWorkspace(ctx, sess)
+		workspace, workspaceErr := s.privateCompositionRoot(ctx, sess)
 		if workspaceErr != nil {
 			return nil, workspaceErr
 		}
@@ -5165,7 +5201,7 @@ func (s *Service) buildAndRegisterSessionEngineWithBrokerTools(ctx context.Conte
 			return nil, err
 		}
 		defer s.finalizeBrokerAttachment(broker, &brokerCommitted)
-		workspace, workspaceErr := s.privateWorkspace(ctx, sess)
+		workspace, workspaceErr := s.privateCompositionRoot(ctx, sess)
 		if workspaceErr != nil {
 			return nil, workspaceErr
 		}
@@ -5663,14 +5699,14 @@ func (s *Service) resumeFromAwaiting(ctx context.Context, id session.SessionID, 
 		}
 	}()
 	ctx = admissionCtx
-	engine, env, err := s.engineAndEnvironmentFor(ctx, sess)
+	engine, env, compositionRoot, err := s.engineAndEnvironmentFor(ctx, sess)
 	if err != nil {
 		return nil, err
 	}
 	if !leaseHeld() {
 		return nil, fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, id)
 	}
-	ctx = memory.WithWorkspace(ctx, env.Workspace().Root())
+	ctx = memory.WithWorkspace(ctx, compositionRoot)
 	run, err := s.promoteRunAdmission(id, st, stopAdmission, func() *agent.Run {
 		return engine.ResumeApproval(ctx, sess, env, askID, verdict)
 	})

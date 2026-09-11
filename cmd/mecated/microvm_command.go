@@ -32,5 +32,5 @@ func runLocalMicroVMCommand(args []string, stdin io.Reader, stdout io.Writer) er
 			interactive = term.IsTerminal(int(inFile.Fd())) && term.IsTerminal(int(outFile.Fd()))
 		}
 	}
-	return microvmcmd.Run(context.Background(), microvmcmd.FrontendMecated, args, stdin, stdout, manager, interactive)
+	return microvmcmd.Run(context.Background(), args, stdin, stdout, manager, interactive)
 }

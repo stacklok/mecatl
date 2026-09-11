@@ -2,6 +2,7 @@ package microvmmanager
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"os"
@@ -43,10 +44,11 @@ func TestDefaultPathsBoundsDerivedRepositoryNetworkSocket(t *testing.T) {
 	}
 }
 
-func TestEnsureReadyPreservesOmittedGuestEgressAndExplicitPermissiveResets(t *testing.T) {
+func TestEnsureReadyTreatsDesiredGuestEgressAsAuthoritative(t *testing.T) {
 	root := t.TempDir()
 	paths := testPaths(root)
-	manager := New(paths, &fakeOps{})
+	ops := &fakeOps{}
+	manager := New(paths, ops)
 	request := ReadyRequest{
 		Release: Release{URL: "https://example.invalid/release.tar.gz", SHA256: strings.Repeat("a", 64)},
 		Policy:  testPolicy(root),
@@ -55,53 +57,58 @@ func TestEnsureReadyPreservesOmittedGuestEgressAndExplicitPermissiveResets(t *te
 	if _, err := manager.EnsureReady(t.Context(), request); err != nil {
 		t.Fatal(err)
 	}
-
-	omitted := request
-	omitted.Policy.GuestEgressMode = GuestEgressPermissive
-	omitted.PreserveExistingGuestEgress = true
-	if _, err := manager.EnsureReady(t.Context(), omitted); err != nil {
+	before, err := os.ReadFile(paths.ConfigFile)
+	if err != nil {
 		t.Fatal(err)
 	}
-	selection, err := readGuestEgressPolicy(paths.ConfigFile)
-	if err != nil || selection.Mode != GuestEgressDenyAll {
-		t.Fatalf("preserved policy = %#v, err=%v", selection, err)
-	}
-	status, err := manager.Status(t.Context())
-	if err != nil || status.GuestEgress != GuestEgressDenyAll {
-		t.Fatalf("status policy = %q, err=%v", status.GuestEgress, err)
-	}
+	calls := len(ops.calls)
 
-	explicit := omitted
-	explicit.PreserveExistingGuestEgress = false
-	if _, err := manager.EnsureReady(t.Context(), explicit); err != nil {
+	conflict := request
+	conflict.Policy.GuestEgressMode = GuestEgressPermissive
+	if _, err := manager.EnsureReady(t.Context(), conflict); err == nil || !strings.Contains(err.Error(), "configuration is incompatible") {
+		t.Fatalf("conflicting policy error = %v", err)
+	}
+	after, err := os.ReadFile(paths.ConfigFile)
+	if err != nil {
 		t.Fatal(err)
 	}
-	selection, err = readGuestEgressPolicy(paths.ConfigFile)
-	if err != nil || selection.Mode != GuestEgressPermissive {
-		t.Fatalf("reset policy = %#v, err=%v", selection, err)
+	if !reflect.DeepEqual(after, before) {
+		t.Fatal("conflicting readiness overwrote the active daemon config")
+	}
+	for _, call := range ops.calls[calls:] {
+		if call == "download" || call == "verify" || call == "install" || call == "start" || call == "stop" {
+			t.Fatalf("conflicting readiness mutated daemon lifecycle: %v", ops.calls[calls:])
+		}
 	}
 }
 
-func TestEnsureReadyRejectsUnsafeExistingPolicyWhenFlagsOmitted(t *testing.T) {
+func TestEnsureReadyRejectsCorruptExistingConfigWithoutMutation(t *testing.T) {
 	root := t.TempDir()
 	paths := testPaths(root)
 	if err := os.MkdirAll(filepath.Dir(paths.ConfigFile), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(paths.ConfigFile, []byte(`{"guest_egress":{"Mode":"allowlist","Allow":[]}}`), 0o600); err != nil {
+	before := []byte(`{"guest_egress":{"Mode":"allowlist","Allow":[]}}`)
+	if err := os.WriteFile(paths.ConfigFile, before, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	request := ReadyRequest{
 		Release: Release{URL: "https://example.invalid/release.tar.gz", SHA256: strings.Repeat("a", 64)},
-		Policy:  testPolicy(root), PreserveExistingGuestEgress: true,
+		Policy:  testPolicy(root),
 	}
-	ops := &fakeOps{}
+	ops := &fakeOps{running: true}
 	_, err := New(paths, ops).EnsureReady(t.Context(), request)
-	if err == nil || !strings.Contains(err.Error(), "refusing to replace existing microvmd guest egress policy") {
+	if err == nil || !strings.Contains(err.Error(), "configuration is incompatible") {
 		t.Fatalf("error = %v", err)
 	}
-	if len(ops.calls) != 0 {
-		t.Fatalf("unsafe policy reached operations: %v", ops.calls)
+	after, readErr := os.ReadFile(paths.ConfigFile)
+	if readErr != nil || !reflect.DeepEqual(after, before) {
+		t.Fatalf("config changed: %q, err=%v", after, readErr)
+	}
+	for _, forbidden := range []string{"download", "verify", "install", "start", "stop"} {
+		if contains(ops.calls, forbidden) {
+			t.Fatalf("corrupt policy reached %q: %v", forbidden, ops.calls)
+		}
 	}
 }
 
@@ -202,20 +209,135 @@ func TestReadinessStageProjectionIsClosedAndUnknownIsSilent(t *testing.T) {
 	}
 }
 
-func TestMicroVMRedesign_EnsureReadyRestartsOnlyIncompatibleDaemon(t *testing.T) {
+func TestEnsureReadyRefusesUnsafeExistingRuntimeBranchesWithoutMutation(t *testing.T) {
+	t.Run("configured but stopped", func(t *testing.T) {
+		root := t.TempDir()
+		paths := testPaths(root)
+		ops := &fakeOps{}
+		request := ReadyRequest{Release: Release{URL: "https://example.invalid/release.tar.gz", SHA256: strings.Repeat("a", 64)}, Policy: testPolicy(root)}
+		if _, err := New(paths, ops).EnsureReady(t.Context(), request); err != nil {
+			t.Fatal(err)
+		}
+		ops.running = false
+		ops.calls = nil
+		_, err := New(paths, ops).EnsureReady(t.Context(), request)
+		if err == nil || !strings.Contains(err.Error(), "configured microvmd is not serving") {
+			t.Fatalf("stopped configured runtime error = %v", err)
+		}
+		assertNoReadinessMutation(t, ops.calls)
+	})
+
+	t.Run("serving without manager config", func(t *testing.T) {
+		root := t.TempDir()
+		ops := &fakeOps{running: true}
+		request := ReadyRequest{Release: Release{URL: "https://example.invalid/release.tar.gz", SHA256: strings.Repeat("a", 64)}, Policy: testPolicy(root)}
+		_, err := New(testPaths(root), ops).EnsureReady(t.Context(), request)
+		if err == nil || !strings.Contains(err.Error(), "serving without the manager-owned configuration") {
+			t.Fatalf("unmanaged serving runtime error = %v", err)
+		}
+		assertNoReadinessMutation(t, ops.calls)
+	})
+
+	t.Run("residual unconfigured runtime artifacts", func(t *testing.T) {
+		root := t.TempDir()
+		paths := testPaths(root)
+		if err := preparePaths(paths); err != nil {
+			t.Fatal(err)
+		}
+		marker := filepath.Join(paths.RuntimeDir, "residual.sock")
+		if err := os.WriteFile(marker, []byte("residual"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		ops := &fakeOps{}
+		request := ReadyRequest{Release: Release{URL: "https://example.invalid/release.tar.gz", SHA256: strings.Repeat("a", 64)}, Policy: testPolicy(root)}
+		_, err := New(paths, ops).EnsureReady(t.Context(), request)
+		if err == nil || !strings.Contains(err.Error(), "existing repository runtime state") {
+			t.Fatalf("residual runtime error = %v", err)
+		}
+		if _, statErr := os.Stat(marker); statErr != nil {
+			t.Fatalf("residual artifact changed: %v", statErr)
+		}
+		assertNoReadinessMutation(t, ops.calls)
+	})
+}
+
+func assertNoReadinessMutation(t *testing.T, calls []string) {
+	t.Helper()
+	for _, forbidden := range []string{"download", "verify", "install", "start", "stop"} {
+		if contains(calls, forbidden) {
+			t.Fatalf("unsafe readiness branch called %q: %v", forbidden, calls)
+		}
+	}
+}
+
+func TestEnsureReadyReusesOnlyCompatibleDaemonWithoutRestart(t *testing.T) {
 	for _, mismatch := range []string{"", "binary", "policy"} {
 		t.Run(mismatch, func(t *testing.T) {
 			root := t.TempDir()
-			ops := &fakeOps{running: true, identityMismatch: mismatch}
+			paths := testPaths(root)
+			ops := &fakeOps{}
 			request := ReadyRequest{Release: Release{URL: "https://example.invalid/release.tar.gz", SHA256: strings.Repeat("a", 64)}, Policy: testPolicy(root)}
-			if _, err := New(testPaths(root), ops).EnsureReady(context.Background(), request); err != nil {
+			manager := New(paths, ops)
+			if _, err := manager.EnsureReady(t.Context(), request); err != nil {
 				t.Fatal(err)
 			}
-			wantRestart := mismatch != ""
-			if got := contains(ops.calls, "stop") && contains(ops.calls, "start"); got != wantRestart {
-				t.Fatalf("calls = %v, restart=%t want %t", ops.calls, got, wantRestart)
+			ops.identityMismatch = mismatch
+			before, err := os.ReadFile(paths.ConfigFile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			callStart := len(ops.calls)
+			_, err = manager.EnsureReady(t.Context(), request)
+			if mismatch == "" && err != nil {
+				t.Fatal(err)
+			}
+			if mismatch != "" && (err == nil || !strings.Contains(err.Error(), "identity is incompatible")) {
+				t.Fatalf("mismatch error = %v", err)
+			}
+			for _, forbidden := range []string{"stop", "start", "download", "verify", "install"} {
+				if contains(ops.calls[callStart:], forbidden) {
+					t.Fatalf("reuse called %s: %v", forbidden, ops.calls[callStart:])
+				}
+			}
+			after, readErr := os.ReadFile(paths.ConfigFile)
+			if readErr != nil || !reflect.DeepEqual(after, before) {
+				t.Fatalf("reuse changed config: err=%v", readErr)
 			}
 		})
+	}
+}
+
+func TestEnsureReadyConcurrentCallersStartFreshDaemonOnce(t *testing.T) {
+	root := t.TempDir()
+	ops := &fakeOps{}
+	manager := New(testPaths(root), ops)
+	request := ReadyRequest{Release: Release{URL: "https://example.invalid/release.tar.gz", SHA256: strings.Repeat("a", 64)}, Policy: testPolicy(root)}
+	start := make(chan struct{})
+	errs := make(chan error, 8)
+	for range 8 {
+		go func() {
+			<-start
+			_, err := manager.EnsureReady(t.Context(), request)
+			errs <- err
+		}()
+	}
+	close(start)
+	for range 8 {
+		if err := <-errs; err != nil {
+			t.Fatal(err)
+		}
+	}
+	starts, installs := 0, 0
+	for _, call := range ops.calls {
+		if call == "start" {
+			starts++
+		}
+		if call == "install" {
+			installs++
+		}
+	}
+	if starts != 1 || installs != 1 || contains(ops.calls, "stop") {
+		t.Fatalf("calls = %v; starts=%d installs=%d", ops.calls, starts, installs)
 	}
 }
 
@@ -226,26 +348,27 @@ func TestDoctorReportsFreshAndFailureStatesWithoutMutation(t *testing.T) {
 		ops        *fakeOps
 		want       []string
 	}{
-		{name: "fresh home", ops: &fakeOps{}, want: []string{"host preflight: passed", "backend: not configured", "host prerequisites passed; select microvm-local", "mecatui --default-placement microvm-local", "doctor is read-only"}},
-		{name: "daemon stopped", configured: true, ops: &fakeOps{}, want: []string{"host preflight: passed", "backend: configured; daemon not running", "host prerequisites passed; select microvm-local"}},
+		{name: "fresh home", ops: &fakeOps{}, want: []string{"host preflight: passed", "backend: ready to configure on first use", "select microvm-local to configure", "default_placement: microvm-local", "guest IPv4 egress defaults to permissive", "doctor is read-only"}},
+		{name: "daemon stopped", configured: true, ops: &fakeOps{}, want: []string{"host preflight: passed", "backend: configured; daemon not running", "ordinary use will not replace or restart"}},
 		{name: "healthy", configured: true, ops: &fakeOps{running: true}, want: []string{"host preflight: passed", "backend: healthy", "PASS hypervisor ready"}},
 		{name: "daemon unhealthy", configured: true, ops: &fakeOps{running: true, doctorErr: errors.New("guest transport unavailable")}, want: []string{"backend: unhealthy", "guest transport unavailable"}},
-		{name: "host preflight failed", ops: &fakeOps{failAt: "preflight"}, want: []string{"host preflight: failed", "backend: not configured"}},
+		{name: "host preflight failed", ops: &fakeOps{failAt: "preflight"}, want: []string{"host preflight: failed", "backend: ready to configure on first use"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
 			paths := testPaths(root)
 			if tc.configured {
-				if err := os.MkdirAll(filepath.Dir(paths.ConfigFile), 0o700); err != nil {
+				running, doctorErr, failAt := tc.ops.running, tc.ops.doctorErr, tc.ops.failAt
+				tc.ops.running, tc.ops.doctorErr, tc.ops.failAt = false, nil, ""
+				request := ReadyRequest{Release: Release{URL: "https://example.invalid/release.tar.gz", SHA256: strings.Repeat("a", 64)}, Policy: testPolicy(root)}
+				if _, err := New(paths, tc.ops).EnsureReady(t.Context(), request); err != nil {
 					t.Fatal(err)
 				}
-				if err := os.WriteFile(paths.ConfigFile, []byte("{}"), 0o600); err != nil {
-					t.Fatal(err)
-				}
+				tc.ops.running, tc.ops.doctorErr, tc.ops.failAt, tc.ops.calls = running, doctorErr, failAt, nil
 			}
 			report, err := New(paths, tc.ops).Doctor(t.Context())
-			if tc.name == "healthy" {
+			if tc.name == "healthy" || tc.name == "fresh home" {
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -272,7 +395,12 @@ func TestDoctorReportsFreshAndFailureStatesWithoutMutation(t *testing.T) {
 func TestMicroVMLifecycleUX_ManagerStatusAndDeleteRemainExact(t *testing.T) {
 	root := t.TempDir()
 	paths := testPaths(root)
-	ops := &fakeOps{running: true}
+	ops := &fakeOps{}
+	request := ReadyRequest{Release: Release{URL: "https://example.invalid/release.tar.gz", SHA256: strings.Repeat("a", 64)}, Policy: testPolicy(root)}
+	if _, err := New(paths, ops).EnsureReady(t.Context(), request); err != nil {
+		t.Fatal(err)
+	}
+	ops.calls = nil
 	daemon := &fakeLifecycleClient{entries: []microvmclient.InventoryEntry{{
 		Owner: "local", SessionID: "s1", EnvironmentID: "env-1", Ref: "env-1@7", Generation: 7,
 		WorktreePath: "/worktrees/s1", Health: microvmclient.GenerationStale,
@@ -296,11 +424,18 @@ func TestMicroVMLifecycleUX_ManagerStatusAndDeleteRemainExact(t *testing.T) {
 
 func TestRepositoryManagerInventoryPagesAndExactLogicalDelete(t *testing.T) {
 	root := t.TempDir()
+	paths := testPaths(root)
+	ops := &fakeOps{}
+	request := ReadyRequest{Release: Release{URL: "https://example.invalid/release.tar.gz", SHA256: strings.Repeat("a", 64)}, Policy: testPolicy(root)}
+	if _, err := New(paths, ops).EnsureReady(t.Context(), request); err != nil {
+		t.Fatal(err)
+	}
+	ops.calls = nil
 	daemon := &fakeLifecycleClient{entries: []microvmclient.InventoryEntry{{
 		Owner: "local", SessionID: "session-a", EnvironmentID: "logical-a", Ref: "logical-a@9", Generation: 9,
 		WorktreePath: "/worktrees/a", State: "ready", Health: microvmclient.GenerationHealthy,
 	}}, continuation: "next"}
-	manager := New(testPaths(root), &fakeOps{running: true}, daemon)
+	manager := New(paths, ops, daemon)
 	first, err := manager.Status(t.Context(), StatusRequest{PageSize: 1})
 	if err != nil {
 		t.Fatal(err)
@@ -449,7 +584,9 @@ func (f *fakeOps) Stop(context.Context, Paths) error {
 }
 
 func testPaths(root string) Paths {
-	return Paths{StateDir: filepath.Join(root, "state"), RuntimeDir: filepath.Join(root, "run"), Socket: filepath.Join(root, "run", "d.sock"), DataDir: filepath.Join(root, "data"), ConfigFile: filepath.Join(root, "config", "microvmd.json"), UserSettings: filepath.Join(root, "config", "settings.yaml"), DaemonBinary: filepath.Join(root, "data", "bin", "mecatl-microvmd")}
+	digest := sha256.Sum256([]byte(root))
+	runtimeDir := filepath.Join(os.TempDir(), fmt.Sprintf("mvt-%x", digest[:8]))
+	return Paths{StateDir: filepath.Join(root, "state"), RuntimeDir: runtimeDir, Socket: filepath.Join(runtimeDir, "d.sock"), DataDir: filepath.Join(root, "data"), ConfigFile: filepath.Join(root, "config", "microvmd.json"), UserSettings: filepath.Join(root, "config", "settings.yaml"), DaemonBinary: filepath.Join(root, "data", "bin", "mecatl-microvmd")}
 }
 
 func testPolicy(_ string) Policy {

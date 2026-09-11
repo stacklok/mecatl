@@ -154,16 +154,19 @@ choice the client makes, not something the model can flip mid-session — see
 
 ### Execution placement providers
 
-`microvm-local` is a trusted deployment default selected only by a local composition root
-with `--default-placement microvm-local`. Ordinary session creation then uses that default;
+`microvm-local` is a trusted deployment default selected through the strict operator-tier
+`execution.default_placement` setting (or a higher-precedence explicit mecated serve flag).
+Bare mecatui consumes that setting for its embedded server; mecatui connect remains remote-only.
+Ordinary session creation then uses that default;
 clients cannot submit a placement alias, workspace path, or exact environment ref. Public
 session data contains bounded `PlacementMetadata` only. `profile: "no-fs"` remains the one
 client-selected attenuation. The daemon owns image, resource, egress, lifecycle, and
 attestation policy, and unavailable placement fails without host fallback.
 
-Guest IPv4 is permissive by default, with external IPv6 unrouted. Local composition-root
-flags may tighten it: `--microvm-guest-egress=deny-all`, or `allowlist` with repeatable
-`--microvm-guest-allow=HOST:PORT/tcp|udp`. HTTP/gRPC requests and project config cannot
+Guest IPv4 is permissive by default, with external IPv6 unrouted. The operator can tighten
+it with `execution.microvm.guest_egress.mode: deny-all`, or `allowlist` plus
+`allow: [HOST:PORT/tcp|udp]`. Explicit mecated serve flags override settings for one run.
+HTTP/gRPC requests and project config cannot
 select or weaken placement or egress policy.
 
 ---

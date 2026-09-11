@@ -47,14 +47,18 @@ func (s *Service) ownedSessionEnvironment(ctx context.Context, id session.Sessio
 // ListCommandsForSession owner-authorizes and exactly reattaches before command
 // discovery. A no-FS source returns empty without touching either provider.
 func (s *Service) ListCommandsForSession(ctx context.Context, id session.SessionID) ([]Command, error) {
-	sess, env, err := s.ownedSessionEnvironment(ctx, id)
+	sess, _, err := s.ownedSessionEnvironment(ctx, id)
 	if err != nil {
 		return nil, err
 	}
 	if sess.EnvironmentRef.Kind == session.EnvKindNoFS || s.cfg.Commands == nil {
 		return nil, nil
 	}
-	commands, err := s.cfg.Commands.List(ctx, env.Workspace().Root())
+	compositionRoot, err := s.privateCompositionRoot(ctx, sess)
+	if err != nil {
+		return nil, err
+	}
+	commands, err := s.cfg.Commands.List(ctx, compositionRoot)
 	if err != nil {
 		s.logDiscoveryError(ctx, "list commands", err)
 		return nil, fmt.Errorf("%w: command discovery failed", ErrInternal)

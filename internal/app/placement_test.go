@@ -128,7 +128,7 @@ func TestADR_0291_CompositionConfiguresProviderOwnedPlacements(t *testing.T) {
 		}
 	})
 
-	t.Run("startup validation uses the build context", func(t *testing.T) {
+	t.Run("first bind uses the session context", func(t *testing.T) {
 		ref := session.EnvironmentRef{Kind: "remote", ID: "opaque-context-id", Revision: "r1"}
 		provider := &compositionPlacementProvider{binding: server.PlacementBinding{
 			Ref: ref,
@@ -146,8 +146,11 @@ func TestADR_0291_CompositionConfiguresProviderOwnedPlacements(t *testing.T) {
 			t.Fatalf("Build: %v", err)
 		}
 		defer built.Close()
+		if _, err := built.Service.CreateSession(ctx, session.ModeDefault, session.Limits{}); err != nil {
+			t.Fatalf("CreateSession: %v", err)
+		}
 		if provider.contextSeen != "build-context" {
-			t.Fatalf("startup provider context value = %v, want build-context", provider.contextSeen)
+			t.Fatalf("session provider context value = %v, want build-context", provider.contextSeen)
 		}
 	})
 
@@ -194,8 +197,8 @@ func TestADR_0291_CompositionConfiguresProviderOwnedPlacements(t *testing.T) {
 				t.Fatalf("Build: %v", err)
 			}
 			defer built.Close()
-			if len(provider.calls) != 1 || provider.calls[0].Selector.Kind != server.PlacementSelectorDefault {
-				t.Fatalf("startup Bind calls = %+v, want exactly one default Bind", provider.calls)
+			if len(provider.calls) != 0 {
+				t.Fatalf("Build eagerly bound provider: %+v", provider.calls)
 			}
 
 			binding, err := built.Service.BindPlacement(context.Background(), server.DefaultPlacement(), server.PlacementOperationCreate)
@@ -205,24 +208,31 @@ func TestADR_0291_CompositionConfiguresProviderOwnedPlacements(t *testing.T) {
 			if binding.Ref != ref {
 				t.Fatalf("provider ref = %+v, want stable exact %+v", binding.Ref, ref)
 			}
+			if len(provider.calls) != 1 || provider.calls[0].Selector.Kind != server.PlacementSelectorDefault {
+				t.Fatalf("first Bind calls = %+v, want exactly one default Bind", provider.calls)
+			}
 		})
 	}
 
-	t.Run("invalid default fails startup", func(t *testing.T) {
+	t.Run("invalid default fails first bind without startup allocation", func(t *testing.T) {
 		provider := &compositionPlacementProvider{err: server.ErrPlacementUnavailable}
 		built, err := Build(context.Background(), Config{
 			Workspace: rootForPlacementTest(t), UseMock: true,
 			PlacementProvider: provider, PlacementScope: "deployment-a",
 		})
-		if built != nil {
-			built.Close()
-			t.Fatal("Build returned a service for an invalid default placement")
+		if err != nil {
+			t.Fatalf("Build: %v", err)
 		}
+		defer built.Close()
+		if len(provider.calls) != 0 {
+			t.Fatalf("Build eagerly bound invalid provider: %d calls", len(provider.calls))
+		}
+		_, err = built.Service.BindPlacement(context.Background(), server.DefaultPlacement(), server.PlacementOperationCreate)
 		if !errors.Is(err, server.ErrPlacementUnavailable) {
-			t.Fatalf("Build error = %v, want ErrPlacementUnavailable", err)
+			t.Fatalf("BindPlacement error = %v, want ErrPlacementUnavailable", err)
 		}
 		if len(provider.calls) != 1 {
-			t.Fatalf("startup Bind calls = %d, want 1", len(provider.calls))
+			t.Fatalf("first Bind calls = %d, want 1", len(provider.calls))
 		}
 	})
 }

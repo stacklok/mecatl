@@ -274,6 +274,12 @@ type Deps struct {
 	// (composed in main). Default false (full splash).
 	NoBanner bool
 
+	// StartupProgress carries bounded host-composition progress while the first
+	// session is being created. StartupFailureHint returns matching host-owned
+	// remediation when that preparation fails behind a redacted server error.
+	StartupProgress    <-chan string
+	StartupFailureHint func() string
+
 	// Ctx is the program-level context; per-run stream contexts derive from it.
 	Ctx context.Context //nolint:containedctx // stored to parent per-run stream cancels
 
@@ -1195,6 +1201,21 @@ func (m Model) resetSessionDerived() Model {
 // startupResumeReadyMsg starts post-adoption work only after Bubble Tea owns the
 // model, preserving transcript-before-seed ordering.
 type startupResumeReadyMsg struct{}
+type startupProgressMsg string
+
+func (m Model) startupProgressCmd() tea.Cmd {
+	if m.deps.StartupProgress == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		select {
+		case message := <-m.deps.StartupProgress:
+			return startupProgressMsg(message)
+		case <-m.deps.Ctx.Done():
+			return nil
+		}
+	}
+}
 
 // Init starts the spinner and kicks off connect.
 //
@@ -1209,6 +1230,9 @@ type startupResumeReadyMsg struct{}
 // CreateSession directly (the historical path, with an empty selection).
 func (m Model) Init() tea.Cmd {
 	startup := m.startupCmd()
+	if m.deps.StartupProgress != nil {
+		startup = tea.Batch(startup, m.startupProgressCmd())
+	}
 	// The light/dark auto-detect (ADR 0280) wraps structurally around whatever
 	// startup fires, so every branch gets it without threading a themeDetectCmd
 	// through each one. Deps.ThemeAutoDetect is false unless composition armed it

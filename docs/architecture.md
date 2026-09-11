@@ -1171,7 +1171,8 @@ fetched by the `FetchMcpResource` tool through `ValidateMediaURL` (SSRF
 backstop, CWE-918). See `docs/adr/0078-mcp-typed-tool-results.md`.
 
 **Server-owned placement.** Trusted composition installs one placement provider and
-scope before listeners serve. `CreateSession` accepts only the provider's deployment
+scope before listeners serve, but service construction validates only that configuration: it
+never calls `Bind` or allocates a provisional placement. `CreateSession` accepts only the provider's deployment
 `default` or explicit `no-fs`; the public request has no workspace, cwd, placement ID,
 or selector. Local embedded and daemon deployments configure their root privately with
 `--workspace`; remote/cloud-native providers may bind another backend without widening
@@ -1180,28 +1181,42 @@ cannot select authority.
 
 A microVM placement keeps tools and shell in guest `/workspace` while host-owned settings,
 soul, memory, MCP, hooks, identity, provider credentials, and the TUI remain outside the
-guest. Sessions persist only exact private `EnvironmentRef` identity; unknown, disabled,
+guest. Each private placement binding separately carries the trusted host source checkout for
+project instructions, rules, commands, permission learning, and authorization; host composition
+never infers that root from guest `/workspace`, and the value is neither persisted nor exposed.
+No-FS has no host composition root. Sessions persist only exact private `EnvironmentRef` identity; unknown, disabled,
 mismatched, or unavailable generations fail without host-local fallback. Lifecycle
 composition reattaches the exact generation and explicitly detaches or deletes it without
 exposing source, worktree, endpoint, or guest paths on public APIs.
 
-The user-local manager surface is `mecatui microvm doctor|status|delete`; daily use selects
-`mecatui --default-placement microvm-local`. The shared provisioning boundary performs
-idempotent readiness immediately before the first provision attempt. The live
+The user-local administration surface is `mecated microvm doctor|status|delete`, scoped
+to the current OS principal and local execution host. Doctor and status are read-only;
+delete requires one exact backend/attachment/ref/generation status row plus confirmation,
+preserves dirty worktrees, and never deletes or resets the repository VM. Daily embedded
+use sets `execution.default_placement` to `microvm-local` once in operator settings and then
+launches bare `mecatui`; remote `mecatui connect` remains client-only. The shared
+provisioning boundary performs
+idempotent readiness immediately before each actual default MicroVM provision attempt; service
+startup and no-FS creation do not run readiness or allocate a validation attachment. The live
 `microvm-local` support boundary is the signed Linux-amd64 `mecatui` release binary:
 ordinary source builds have no authenticated release defaults and fail closed. For source
 development only, [ADR 0326](adr/0326-microvm-execution-environments.md#6-keep-source-build-release-activation-developer-only) defines a
-separately tagged `microvm_dev` binary whose local composition roots require explicit
+separately tagged `microvm_dev` mecated and embedded-local mecatui binaries whose
+development activation requires explicit
 acknowledgement and a strict owner-only local release descriptor. Untagged and published
 binaries do not expose this path; release verification and daemon-policy checks remain.
 Readiness
 preflights Git, Python 3, KVM access, and an actual ephemeral unprivileged user-namespace
-creation before downloading or provisioning repository state. Readiness and doctor
+creation before downloading or provisioning repository state. One repository-scoped daemon
+is shared across sessions and host processes. Under the manager lock, genuinely fresh state
+is installed and started once; compatible callers reuse it. A desired release or egress-policy
+conflict, corrupt configuration, identity mismatch, stopped daemon, or unhealthy runtime fails
+without rewriting configuration, stopping the daemon, deleting state, or replacing repository
+runtime. Readiness and doctor
 authenticate the daemon serving the owner-only socket and require its protocol,
 release/binary, loaded-config, policy, profile-set, and socket identities to match.
-A stale daemon is signaled only after its persisted PID, process-start token, binary,
-arguments, and socket identify the exact managed process; otherwise the alias remains
-disabled with user-service-manager guidance. It supports local single-user Git sessions on
+A mismatch or unhealthy daemon is left untouched and readiness fails with local repair
+guidance. It supports local single-user Git sessions on
 Linux amd64 with KVM. Linux arm64 and Apple Silicon macOS have compile/static coverage only;
 live support is deferred. Schedules, remote placement, multi-user enforcement, non-Git
 sources, and unified host+guest egress policy remain out of scope. See the [microVM architecture](architecture/microvm-environments.md) and

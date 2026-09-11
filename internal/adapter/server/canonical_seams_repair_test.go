@@ -61,7 +61,7 @@ type revisionPlacementProvider struct{ binds int }
 
 func (*revisionPlacementProvider) binding(revision string) PlacementBinding {
 	ref := session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/same-root", Revision: revision}
-	return PlacementBinding{Ref: ref, Environment: tool.MustEnvironment(ref, memfs.NewWorkspace("/same-root"), memledger.New(), nil)}
+	return PlacementBinding{Ref: ref, Environment: tool.MustEnvironment(ref, memfs.NewWorkspace("/same-root"), memledger.New(), nil), CompositionRoot: "/same-root"}
 }
 
 func (p *revisionPlacementProvider) Bind(context.Context, PlacementBindRequest) (PlacementBinding, error) {
@@ -70,7 +70,7 @@ func (p *revisionPlacementProvider) Bind(context.Context, PlacementBindRequest) 
 }
 
 func (*revisionPlacementProvider) Reattach(_ context.Context, req PlacementReattachRequest) (PlacementBinding, error) {
-	return PlacementBinding{Ref: req.Ref, Environment: tool.MustEnvironment(req.Ref, memfs.NewWorkspace("/same-root"), memledger.New(), nil)}, nil
+	return PlacementBinding{Ref: req.Ref, Environment: tool.MustEnvironment(req.Ref, memfs.NewWorkspace("/same-root"), memledger.New(), nil), CompositionRoot: "/same-root"}, nil
 }
 
 func (*revisionPlacementProvider) ListWorktrees(context.Context, PlacementDiscoveryRequest) ([]ScopedWorktree, error) {
@@ -91,7 +91,7 @@ func TestInvariant_create_retry_matches_complete_environment_ref(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.EnvironmentRef.Revision != "2" {
+	if first.EnvironmentRef.Revision != "1" {
 		t.Fatalf("first ref = %+v, want provider's complete create binding", first.EnvironmentRef)
 	}
 	if _, err := svc.CreateSessionWithProfile(ctx, session.ModeDefault, session.Limits{}, ProviderSelector{}, ProfileDefault, WithSessionID("fixed")); err == nil {
@@ -126,7 +126,7 @@ func TestInvariant_create_session_rejects_only_legacy_unknown_placement_fields(t
 
 func TestInvariant_filesystem_placement_root_selects_policy_engine_for_every_kind(t *testing.T) {
 	ref := session.EnvironmentRef{Kind: "custom-fs", ID: "opaque", Revision: "r1"}
-	provider := &repairPlacementProvider{binding: PlacementBinding{Ref: ref, Environment: tool.MustEnvironment(ref, memfs.NewWorkspace("/root-b"), memledger.New(), nil)}}
+	provider := &repairPlacementProvider{binding: PlacementBinding{Ref: ref, Environment: tool.MustEnvironment(ref, memfs.NewWorkspace("/root-b"), memledger.New(), nil), CompositionRoot: "/root-b"}}
 	factoryCalls := 0
 	svc, err := NewService(Config{
 		Engine: repairEngine(), Store: memstore.New(), PlacementProvider: provider, PlacementScope: "test", SharedEngineRoot: "/root-a",
@@ -151,7 +151,7 @@ func TestInvariant_filesystem_placement_root_selects_policy_engine_for_every_kin
 
 func TestInvariant_environment_override_is_reauthorized_at_every_run_entry(t *testing.T) {
 	ref := session.EnvironmentRef{Kind: "custom-fs", ID: "opaque", Revision: "r1"}
-	provider := &repairPlacementProvider{binding: PlacementBinding{Ref: ref, Environment: tool.MustEnvironment(ref, memfs.NewWorkspace("/fresh"), memledger.New(), nil)}}
+	provider := &repairPlacementProvider{binding: PlacementBinding{Ref: ref, Environment: tool.MustEnvironment(ref, memfs.NewWorkspace("/fresh"), memledger.New(), nil), CompositionRoot: "/fresh"}}
 	store := memstore.New()
 	svc, err := NewService(Config{Engine: repairEngine(), Store: store, PlacementProvider: provider, PlacementScope: "test", SharedEngineRoot: "/fresh"})
 	if err != nil {

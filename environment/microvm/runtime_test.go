@@ -153,7 +153,8 @@ func TestLibkrunBackend_FreshBackendOpensDestructionOnlyExactProcess(t *testing.
 	}()
 
 	root := t.TempDir()
-	endpoint := filepath.Join(root, "guest.sock")
+	t.Chdir(root)
+	endpoint := "guest.sock"
 	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: endpoint, Net: "unix"})
 	if err != nil {
 		t.Fatal(err)

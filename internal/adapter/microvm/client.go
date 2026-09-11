@@ -16,6 +16,7 @@ import (
 	"io/fs"
 	"net"
 	"net/url"
+	pathpkg "path"
 	"strconv"
 	"strings"
 	"sync"
@@ -228,7 +229,8 @@ func (c *Client) provisionPlacement(ctx context.Context, principal *session.Prin
 func (c *Client) placementBinding(ref session.EnvironmentRef, claim binding, closePlacement func() error) server.PlacementBinding {
 	return server.PlacementBinding{
 		Ref: ref, Environment: c.environment(ref, claim), Close: closePlacement,
-		Metadata: server.PlacementMetadata{Kind: string(kindMicroVM), Label: "Local microVM", Revision: ref.Revision},
+		CompositionRoot: c.sourceCheckout,
+		Metadata:        server.PlacementMetadata{Kind: string(kindMicroVM), Label: "Local microVM", Revision: ref.Revision},
 	}
 }
 
@@ -663,7 +665,16 @@ type workspace struct {
 	ledger  map[string]tool.FileVersion
 }
 
-func (*workspace) Root() string { return "/workspace" }
+func (*workspace) Root() string { return publicGuestRoot }
+
+// AuthorityResourcePath projects the same confined guest path used by workspace RPCs.
+func (*workspace) AuthorityResourcePath(p string) (target, root string, err error) {
+	cleaned := pathpkg.Clean(p)
+	if p == "" || pathpkg.IsAbs(p) || cleaned == ".." || strings.HasPrefix(cleaned, "../") || strings.IndexByte(p, 0) >= 0 {
+		return "", publicGuestRoot, errors.New("microvm workspace path escapes the guest root")
+	}
+	return pathpkg.Join(publicGuestRoot, cleaned), publicGuestRoot, nil
+}
 
 type workspaceRequest struct {
 	Operation    string `json:"operation"`

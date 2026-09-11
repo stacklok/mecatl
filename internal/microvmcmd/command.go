@@ -1,5 +1,5 @@
-// Package microvmcmd implements the binary-neutral, local microVM lifecycle
-// administration command shared by mecated and mecatui.
+// Package microvmcmd implements the canonical mecated local microVM lifecycle
+// administration command.
 package microvmcmd
 
 import (
@@ -24,24 +24,13 @@ type Manager interface {
 
 type outputFormat string
 
-// Frontend identifies the installed binary that invoked the shared command.
-type Frontend string
-
 const (
-	// FrontendMecated identifies the mecated command frontend.
-	FrontendMecated Frontend = "mecated"
-	// FrontendMecatui identifies the mecatui command frontend.
-	FrontendMecatui Frontend = "mecatui"
-
 	outputText outputFormat = "text"
 	outputJSON outputFormat = "json"
 )
 
 // Run parses and executes one local microVM administration command.
-func Run(ctx context.Context, frontend Frontend, args []string, in io.Reader, out io.Writer, manager Manager, interactive bool) error {
-	if frontend != FrontendMecated && frontend != FrontendMecatui {
-		return fmt.Errorf("unsupported microvm command frontend %q", frontend)
-	}
+func Run(ctx context.Context, args []string, in io.Reader, out io.Writer, manager Manager, interactive bool) error {
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "--help-all" || args[0] == "-h" {
 		WriteHelp(out)
 		return nil
@@ -50,11 +39,11 @@ func Run(ctx context.Context, frontend Frontend, args []string, in io.Reader, ou
 	case "doctor":
 		return runDoctor(ctx, args[1:], out, manager)
 	case "status":
-		return runStatus(ctx, frontend, args[1:], out, manager)
+		return runStatus(ctx, args[1:], out, manager)
 	case "delete":
 		return runDelete(ctx, args[1:], in, out, manager, interactive)
 	default:
-		return fmt.Errorf("unknown microvm command %q; run 'mecated microvm --help' (or 'mecatui microvm --help') for doctor, status, and delete usage", args[0])
+		return fmt.Errorf("unknown microvm command %q; run 'mecated microvm --help' for doctor, status, and delete usage", args[0])
 	}
 }
 
@@ -115,18 +104,18 @@ func runDoctor(ctx context.Context, args []string, out io.Writer, manager Manage
 		}
 	}
 	if doctorErr != nil {
-		return fmt.Errorf("microVM doctor found problems: %w; follow the next action in the report, then rerun 'mecated microvm doctor' (or 'mecatui microvm doctor')", doctorErr)
+		return fmt.Errorf("microVM doctor found problems: %w; follow the next action in the report, then rerun 'mecated microvm doctor'", doctorErr)
 	}
 	return nil
 }
 
-func runStatus(ctx context.Context, frontend Frontend, args []string, out io.Writer, manager Manager) error {
+func runStatus(ctx context.Context, args []string, out io.Writer, manager Manager) error {
 	fs := flag.NewFlagSet("microvm status", flag.ContinueOnError)
 	fs.SetOutput(out)
 	fs.Usage = func() { writeStatusHelp(out) }
 	var pageSize int
 	var continuation, output string
-	fs.IntVar(&pageSize, "page-size", 50, "generation rows per page (maximum 64)")
+	fs.IntVar(&pageSize, "page-size", 50, "attachment/status rows per page (maximum 64)")
 	fs.StringVar(&continuation, "continuation", "", "opaque continuation from the previous status page")
 	outputFlag(fs, &output)
 	if err := fs.Parse(args); err != nil {
@@ -142,22 +131,49 @@ func runStatus(ctx context.Context, frontend Frontend, args []string, out io.Wri
 	if err != nil {
 		return err
 	}
-	status, err := manager.Status(ctx, microvmmanager.StatusRequest{PageSize: pageSize, Continuation: continuation})
-	if err != nil {
-		return fmt.Errorf("inspect microVM status: %w", err)
-	}
+	status, statusErr := manager.Status(ctx, microvmmanager.StatusRequest{PageSize: pageSize, Continuation: continuation})
+	state, errorClass, remediation := statusSummary(status, statusErr)
 	if format == outputJSON {
-		return writeJSON(out, statusJSON{
-			Profile: microvmmanager.Alias, Configured: status.Configured, Running: status.Running,
+		if writeErr := writeJSON(out, statusJSON{
+			Backend: microvmmanager.Alias, Configured: status.Configured, Running: status.Running,
+			State: state, Error: errorClass, Remediation: remediation,
 			Socket: status.Socket, GuestEgress: status.GuestEgress, Generations: generationJSONs(status.Generations), Continuation: status.Continuation,
-		})
+		}); writeErr != nil {
+			return writeErr
+		}
+		if statusErr != nil {
+			return fmt.Errorf("inspect microVM status: %w", statusErr)
+		}
+		return nil
 	}
-	writeStatusText(out, frontend, status)
+	writeStatusText(out, status)
+	if statusErr != nil {
+		_, _ = fmt.Fprintf(out, "backend state: %s\nerror: %s\nremediation: %s\n", state, errorClass, remediation)
+		return fmt.Errorf("inspect microVM status: %w", statusErr)
+	}
 	return nil
 }
 
+func statusSummary(status microvmmanager.Status, err error) (state, errorClass, remediation string) {
+	if err == nil {
+		if !status.Configured {
+			return "unconfigured", "", "Select microvm-local in operator settings; run 'mecated microvm doctor' first."
+		}
+		return "ready", "", ""
+	}
+	remediation = "Run 'mecated microvm doctor', follow its next action, then retry."
+	switch {
+	case status.Configured && !status.Running:
+		return "stopped", "daemon_not_running", remediation
+	case !status.Configured && status.Running:
+		return "unhealthy", "unmanaged_daemon", remediation
+	default:
+		return "unhealthy", "status_check_failed", remediation
+	}
+}
+
 type generationJSON struct {
-	SessionID     string `json:"session_id"`
+	AttachmentID  string `json:"attachment_id"`
 	EnvironmentID string `json:"environment_id"`
 	Ref           string `json:"ref"`
 	Generation    uint32 `json:"generation"`
@@ -168,9 +184,12 @@ type generationJSON struct {
 }
 
 type statusJSON struct {
-	Profile      string           `json:"profile"`
+	Backend      string           `json:"backend"`
 	Configured   bool             `json:"configured"`
 	Running      bool             `json:"running"`
+	State        string           `json:"state"`
+	Error        string           `json:"error"`
+	Remediation  string           `json:"remediation"`
 	Socket       string           `json:"socket"`
 	GuestEgress  string           `json:"guest_egress"`
 	Generations  []generationJSON `json:"generations"`
@@ -181,7 +200,7 @@ func generationJSONs(generations []microvmmanager.Generation) []generationJSON {
 	result := make([]generationJSON, len(generations))
 	for i, generation := range generations {
 		result[i] = generationJSON{
-			SessionID: generation.SessionID, EnvironmentID: generation.EnvironmentID, Ref: generation.Ref,
+			AttachmentID: generation.SessionID, EnvironmentID: generation.EnvironmentID, Ref: generation.Ref,
 			Generation: generation.Generation, WorktreePath: generation.WorktreePath, State: generation.State,
 			Health: string(generation.Health), Error: generation.Error,
 		}
@@ -189,21 +208,22 @@ func generationJSONs(generations []microvmmanager.Generation) []generationJSON {
 	return result
 }
 
-func writeStatusText(out io.Writer, frontend Frontend, status microvmmanager.Status) {
-	_, _ = fmt.Fprintf(out, "profile: %s\nconfigured: %t\ndaemon running: %t\nsocket: %s\nguest egress: %s\n", microvmmanager.Alias, status.Configured, status.Running, status.Socket, configuredValue(status.GuestEgress))
+func writeStatusText(out io.Writer, status microvmmanager.Status) {
+	_, _ = fmt.Fprintf(out, "backend: %s\nconfigured: %t\ndaemon running: %t\nsocket: %s\nguest egress: %s\n", microvmmanager.Alias, status.Configured, status.Running, status.Socket, configuredValue(status.GuestEgress))
 	for _, generation := range status.Generations {
-		_, _ = fmt.Fprintf(out, "logical worktree: session=%s ref=%s repository-generation=%d health=%s state=%s worktree=%s", generation.SessionID, generation.Ref, generation.Generation, generation.Health, generation.State, generation.WorktreePath)
+		_, _ = fmt.Fprintf(out, "logical worktree: attachment_id=%s ref=%s repository-generation=%d health=%s state=%s worktree=%s", generation.SessionID, generation.Ref, generation.Generation, generation.Health, generation.State, generation.WorktreePath)
 		if generation.Error != "" {
 			_, _ = fmt.Fprintf(out, " error=%q", generation.Error)
 		}
 		_, _ = fmt.Fprintln(out)
 	}
 	if status.Continuation != "" {
-		_, _ = fmt.Fprintf(out, "next page: %s microvm status --continuation %q\n", frontend, status.Continuation)
+		_, _ = fmt.Fprintf(out, "next page: mecated microvm status --continuation %q\n", status.Continuation)
 	}
+	_, _ = fmt.Fprintln(out, "status scope: current OS principal on this execution host")
 	_, _ = fmt.Fprintln(out, "status is read-only; it never installs, starts, stops, or deletes microVM state")
 	if !status.Configured {
-		_, _ = fmt.Fprintln(out, "backend state: not configured")
+		_, _ = fmt.Fprintln(out, "backend state: ready to configure on first use")
 		writeSelectionExamples(out)
 	} else if !status.Running {
 		_, _ = fmt.Fprintln(out, "backend state: configured; daemon not running")
@@ -219,7 +239,13 @@ func configuredValue(value string) string {
 }
 
 func writeSelectionExamples(out io.Writer) {
-	_, _ = fmt.Fprintln(out, "next (mecatui): mecatui --default-placement microvm-local")
+	_, _ = fmt.Fprintln(out, "guest IPv4 egress defaults to permissive; to deny it before first use, add this to operator settings:")
+	_, _ = fmt.Fprintln(out, "  execution:")
+	_, _ = fmt.Fprintln(out, "    default_placement: microvm-local")
+	_, _ = fmt.Fprintln(out, "    microvm:")
+	_, _ = fmt.Fprintln(out, "      guest_egress:")
+	_, _ = fmt.Fprintln(out, "        mode: deny-all")
+	_, _ = fmt.Fprintln(out, "next (embedded mecatui): run mecatui (use mode: allowlist plus allow entries for selected destinations)")
 	_, _ = fmt.Fprintln(out, `next (HTTP API): run 'mecated serve --headless --default-placement microvm-local', then POST /v1/sessions with {}`)
 }
 
@@ -228,12 +254,13 @@ func runDelete(ctx context.Context, args []string, in io.Reader, out io.Writer, 
 	fs.SetOutput(out)
 	fs.Usage = func() { writeDeleteHelp(out) }
 	var yes bool
-	var sessionID, ref, output string
+	var backend, attachmentID, ref, output string
 	var generation uint
 	fs.BoolVar(&yes, "yes", false, "confirm destructive removal")
-	fs.StringVar(&sessionID, "session", "", "exact session id")
+	fs.StringVar(&backend, "backend", "", "exact backend name (microvm-local)")
+	fs.StringVar(&attachmentID, "attachment-id", "", "exact logical attachment id from status")
 	fs.StringVar(&ref, "ref", "", "exact microVM environment ref")
-	fs.UintVar(&generation, "generation", 0, "exact microVM generation")
+	fs.UintVar(&generation, "generation", 0, "exact repository generation")
 	outputFlag(fs, &output)
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -248,27 +275,30 @@ func runDelete(ctx context.Context, args []string, in io.Reader, out io.Writer, 
 	if err != nil {
 		return err
 	}
+	if backend != microvmmanager.Alias {
+		return fmt.Errorf("microVM delete requires --backend %s", microvmmanager.Alias)
+	}
 	if uint64(generation) > uint64(^uint32(0)) {
 		return errors.New("microvm delete: generation exceeds uint32")
 	}
-	request := microvmmanager.DeleteRequest{SessionID: sessionID, Ref: ref, Generation: uint32(generation)} // #nosec G115 -- range checked above.
+	request := microvmmanager.DeleteRequest{SessionID: attachmentID, Ref: ref, Generation: uint32(generation)} // #nosec G115 -- range checked above.
 	if err := microvmmanager.ValidateDeleteRequest(request); err != nil {
-		return err
+		return errors.New("microVM delete requires matching --attachment-id, --ref, and --generation")
 	}
 	found, err := statusHasGeneration(ctx, manager, request)
 	if err != nil {
 		return fmt.Errorf("validate microVM delete target: %w", err)
 	}
 	if !found {
-		return errors.New("microVM delete target is not present in microvm status; refresh status and copy all three values from one row")
+		return errors.New("microVM delete target is not present in owner-scoped local status; refresh status and copy backend, attachment_id, ref, and generation from one row")
 	}
 	if format == outputJSON && !yes {
 		return errors.New("microVM delete with --output json requires explicit confirmation with --yes")
 	}
 	if format == outputText {
-		_, _ = fmt.Fprintf(out, "Permanently delete logical worktree session=%s ref=%s repository-generation=%d. The shared repository VM is not deleted. Closing a host client normally only detaches and preserves this worktree. Dirty worktrees are retained.\n", sessionID, ref, generation)
+		_, _ = fmt.Fprintf(out, "Permanently delete local logical attachment backend=%s attachment_id=%s ref=%s generation=%d. The repository VM is retained. Dirty worktrees are preserved.\n", backend, attachmentID, ref, generation)
 		if interactive && !yes {
-			_, _ = fmt.Fprint(out, "Permanently delete this exact microVM generation? [y/N] ")
+			_, _ = fmt.Fprint(out, "Permanently delete this exact local logical attachment? [y/N] ")
 			answer, _ := bufio.NewReader(in).ReadString('\n')
 			yes = strings.EqualFold(strings.TrimSpace(answer), "y") || strings.EqualFold(strings.TrimSpace(answer), "yes")
 		}
@@ -278,31 +308,33 @@ func runDelete(ctx context.Context, args []string, in io.Reader, out io.Writer, 
 	}
 	result, err := manager.Delete(ctx, request)
 	if err != nil {
-		return fmt.Errorf("delete exact microVM generation: %w", err)
+		return fmt.Errorf("delete exact local logical attachment: %w", err)
 	}
 	if format == outputJSON {
 		return writeJSON(out, struct {
+			Backend       string             `json:"backend"`
 			Selector      deleteSelectorJSON `json:"selector"`
 			Result        deleteResultJSON   `json:"result"`
 			DirtyRetained bool               `json:"dirty_retained"`
 		}{
-			Selector:      deleteSelectorJSON{SessionID: request.SessionID, Ref: request.Ref, Generation: request.Generation},
+			Backend:       backend,
+			Selector:      deleteSelectorJSON{AttachmentID: attachmentID, Ref: ref, Generation: uint32(generation)},
 			Result:        deleteResultJSON{WorktreePath: result.WorktreePath, WorktreeRemoved: !result.WorktreeRetained, RepositoryVMRetained: true},
 			DirtyRetained: result.WorktreeRetained,
 		})
 	}
 	if result.WorktreeRetained {
-		_, _ = fmt.Fprintf(out, "logical attachment deleted; dirty worktree retained: %s\n", result.WorktreePath)
+		_, _ = fmt.Fprintf(out, "logical attachment deleted; dirty worktree preserved on this host: %s\n", result.WorktreePath)
 	} else {
-		_, _ = fmt.Fprintf(out, "logical attachment and clean worktree removed; repository VM retained: %s\n", result.WorktreePath)
+		_, _ = fmt.Fprintf(out, "logical attachment and clean worktree removed; repository VM retained on this host: %s\n", result.WorktreePath)
 	}
 	return nil
 }
 
 type deleteSelectorJSON struct {
-	SessionID  string `json:"session_id"`
-	Ref        string `json:"ref"`
-	Generation uint32 `json:"generation"`
+	AttachmentID string `json:"attachment_id"`
+	Ref          string `json:"ref"`
+	Generation   uint32 `json:"generation"`
 }
 
 type deleteResultJSON struct {
@@ -313,6 +345,7 @@ type deleteResultJSON struct {
 
 func statusHasGeneration(ctx context.Context, manager Manager, request microvmmanager.DeleteRequest) (bool, error) {
 	continuation := ""
+	matches := 0
 	seen := make(map[string]struct{})
 	for range 1024 {
 		status, err := manager.Status(ctx, microvmmanager.StatusRequest{PageSize: 64, Continuation: continuation})
@@ -321,11 +354,14 @@ func statusHasGeneration(ctx context.Context, manager Manager, request microvmma
 		}
 		for _, generation := range status.Generations {
 			if generation.SessionID == request.SessionID && generation.Ref == request.Ref && generation.Generation == request.Generation {
-				return true, nil
+				matches++
+				if matches > 1 {
+					return false, errors.New("microVM status returned an ambiguous duplicate delete target")
+				}
 			}
 		}
 		if status.Continuation == "" {
-			return false, nil
+			return matches == 1, nil
 		}
 		if _, duplicate := seen[status.Continuation]; duplicate {
 			return false, errors.New("microVM status returned a repeated continuation")
@@ -336,26 +372,24 @@ func statusHasGeneration(ctx context.Context, manager Manager, request microvmma
 	return false, errors.New("microVM delete validation exceeded 1024 status pages")
 }
 
-// WriteHelp documents the canonical command and the compatibility frontend.
+// WriteHelp documents the canonical mecated command.
 func WriteHelp(out io.Writer) {
 	lines := []string{
 		"Usage: mecated microvm doctor|status|delete [flags]",
-		"       mecatui microvm doctor|status|delete [flags]",
 		"",
-		"Administers microVM state owned by the current local OS principal on this host.",
-		"It never targets a remote server selected by 'mecatui connect'.",
-		"'mecatui microvm' is a compatibility frontend over this same command.",
+		"Administers microVM state owned by the current OS principal on this local execution host.",
 		"",
 		"doctor    read-only host preflight and backend health; never installs or starts",
-		"status    read-only owner-scoped repository generations and logical worktrees",
-		"delete    remove an exact logical --session/--ref/--generation after validation and confirmation",
+		"status    read-only owner-scoped repository generations and logical attachments",
+		"delete    remove one exact logical attachment after validation and confirmation",
 		"",
-		"Run '<binary> microvm <command> --help' for command flags and examples.",
+		"Run 'mecated microvm <command> --help' for command flags and examples.",
 		"Text output is the default; every command accepts --output text|json.",
-		"Repository-VM deletion is not supported.",
+		"Repository-VM deletion and reset are not supported.",
 		"",
-		"Create a microVM session in mecatui:",
-		"  mecatui --default-placement microvm-local",
+		"Configure embedded mecatui placement in operator settings:",
+		"  execution:",
+		"    default_placement: microvm-local",
 		"Create one through a headless HTTP server (child asks use headless policy, not a local TUI):",
 		`  mecated serve --headless --default-placement microvm-local; then POST /v1/sessions with {}`,
 		"Selecting the deployment default performs installation/readiness; doctor and status never do.",
@@ -365,28 +399,28 @@ func WriteHelp(out io.Writer) {
 
 func writeDoctorHelp(out io.Writer) {
 	_, _ = fmt.Fprintln(out, `Usage: mecated microvm doctor [--output text|json]
-       mecatui microvm doctor [--output text|json]
 
-Read-only host preflight and backend diagnosis. This command never downloads,
-installs, configures, or starts microvmd. On a fresh home it reports "not
-configured" and shows how selecting microvm-local performs readiness.`)
+Read-only host preflight and backend diagnosis for the current OS principal on
+this execution host. This command never downloads, installs, configures, or starts
+microvmd. On a fresh home with satisfied prerequisites it reports "ready to
+configure on first use" and succeeds.`)
 }
 
 func writeStatusHelp(out io.Writer) {
 	_, _ = fmt.Fprintln(out, `Usage: mecated microvm status [--page-size 1..64] [--continuation TOKEN] [--output text|json]
-       mecatui microvm status [--page-size 1..64] [--continuation TOKEN] [--output text|json]
 
-Read-only owner-scoped backend and logical-worktree inventory. It never installs,
-starts, stops, or deletes anything. Pass the printed opaque continuation token to
-read the next page.`)
+Read-only inventory local to the current OS principal on this execution host.
+Rows are owner-scoped repository generations and logical worktrees. It never
+installs, starts, stops, or deletes anything. Pass the printed opaque continuation
+token to read the next page.`)
 }
 
 func writeDeleteHelp(out io.Writer) {
-	_, _ = fmt.Fprintln(out, `Usage: mecated microvm delete --session ID --ref REF --generation N [--yes] [--output text|json]
-       mecatui microvm delete --session ID --ref REF --generation N [--yes] [--output text|json]
+	_, _ = fmt.Fprintln(out, `Usage: mecated microvm delete --backend microvm-local --attachment-id ID --ref REF --generation N [--yes] [--output text|json]
 
-Copy all three selector values from one 'microvm status' row. This removes only
-the exact logical attachment and a clean worktree; dirty worktrees and the shared
-repository VM are retained. Interactive text mode prompts unless --yes is set;
+Copy backend, attachment_id, ref, and generation from one owner-scoped local
+'mecated microvm status' row. This removes only that exact logical attachment
+and a clean worktree. Dirty worktrees are preserved; the repository VM is never
+deleted or reset. Interactive text mode prompts unless --yes is set;
 noninteractive and JSON use require --yes.`)
 }

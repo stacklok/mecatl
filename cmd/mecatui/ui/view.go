@@ -549,6 +549,9 @@ func (m Model) footerActivity() string {
 		left = m.deps.Theme.Style("askTitle").Render(label)
 	case phaseConnecting:
 		left = m.sp.View() + " connecting…"
+		if m.statusMsg != "" {
+			left = m.sp.View() + " " + m.statusMsg
+		}
 	default:
 		left = m.idleFooterLeft()
 	}

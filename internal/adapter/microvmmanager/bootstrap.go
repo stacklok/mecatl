@@ -53,7 +53,6 @@ func ReadyRequestFromDefaults(encoded, version string, egress ...GuestEgressSele
 			RequiredAttestations: requiredMicroVMAttestations(),
 			GuestEgressMode:      GuestEgressPermissive, Resources: defaultMicroVMResources(),
 		},
-		PreserveExistingGuestEgress: len(egress) == 0,
 	}
 	if err := applyGuestEgress(&request, egress); err != nil {
 		return ReadyRequest{}, err

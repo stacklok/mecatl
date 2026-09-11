@@ -560,7 +560,8 @@ func TestRepositoryRuntimeStartRollsBackEveryOwnedAcquisition(t *testing.T) {
 	} {
 		t.Run(tc.stage, func(t *testing.T) {
 			root := t.TempDir()
-			endpoint := filepath.Join(root, "guest.sock")
+			t.Chdir(root)
+			endpoint := "guest.sock"
 			provider := &fakeNetworkProvider{socket: filepath.Join(root, "network.sock")}
 			if tc.stage == "network" {
 				provider.socket = ""

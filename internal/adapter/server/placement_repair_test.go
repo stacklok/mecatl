@@ -35,7 +35,11 @@ type repairPlacementProvider struct {
 
 func (p *repairPlacementProvider) Bind(context.Context, PlacementBindRequest) (PlacementBinding, error) {
 	p.binds++
-	return p.binding, p.err
+	binding := p.binding
+	if binding.CompositionRoot == "" && binding.Environment.Workspace() != nil && binding.Ref.Kind != session.EnvKindNoFS {
+		binding.CompositionRoot = binding.Environment.Workspace().Root()
+	}
+	return binding, p.err
 }
 func (p *repairPlacementProvider) Reattach(_ context.Context, req PlacementReattachRequest) (PlacementBinding, error) {
 	p.reattaches++
@@ -44,6 +48,9 @@ func (p *repairPlacementProvider) Reattach(_ context.Context, req PlacementReatt
 	}
 	binding := p.binding
 	binding.Ref = req.Ref
+	if binding.CompositionRoot == "" && binding.Environment.Workspace() != nil && binding.Ref.Kind != session.EnvKindNoFS {
+		binding.CompositionRoot = binding.Environment.Workspace().Root()
+	}
 	binding.Environment = tool.MustEnvironment(req.Ref, memfs.NewWorkspace("/fresh"), memledger.New(), nil)
 	return binding, nil
 }
@@ -74,6 +81,28 @@ func TestInvariant_ordinary_placement_bindings_are_not_environment_overrides(t *
 	svc.mu.Unlock()
 	if got != 0 {
 		t.Fatalf("ordinary environment overrides = %d, want 0", got)
+	}
+}
+
+func TestCreateSessionLogsSanitizedPlacementFailureCause(t *testing.T) {
+	private := "/srv/private/tenant/repository"
+	diag := &repairDiagnostics{}
+	provider := &repairPlacementProvider{err: errors.New("microVM development release descriptor identity does not match this source build at " + private)}
+	svc, err := NewService(Config{
+		Engine: repairEngine(), Store: memstore.New(), PlacementProvider: provider,
+		PlacementScope: "test", SharedEngineRoot: "/bound", Diagnostics: diag,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer svc.Close()
+
+	_, err = svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
+	if !errors.Is(err, ErrPlacementUnavailable) || strings.Contains(err.Error(), private) {
+		t.Fatalf("public create error = %q, want content-free placement unavailable", err)
+	}
+	if !strings.Contains(diag.text, "descriptor identity does not match this source build") || !strings.Contains(diag.text, "[redacted]") || strings.Contains(diag.text, private) {
+		t.Fatalf("placement diagnostic was not actionable and sanitized: %q", diag.text)
 	}
 }
 
@@ -135,7 +164,7 @@ func (immediateLeaseLoss) Release(context.Context, port.Lease) error { return ni
 func TestInvariant_successor_lease_loss_cleans_provisional_binding(t *testing.T) {
 	ref := session.EnvironmentRef{Kind: session.EnvKindMem, ID: "placement", Revision: "v1"}
 	closed := &atomic.Int32{}
-	provider := leaseLossPlacementProvider{binding: PlacementBinding{Ref: ref, Environment: tool.MustEnvironment(ref, memfs.NewWorkspace("/source"), memledger.New(), nil)}, closed: closed}
+	provider := leaseLossPlacementProvider{binding: PlacementBinding{Ref: ref, Environment: tool.MustEnvironment(ref, memfs.NewWorkspace("/source"), memledger.New(), nil), CompositionRoot: "/provisional"}, closed: closed}
 	store := memstore.New()
 	source := session.New("source", session.ModeDefault, ref, session.Limits{}, time.Unix(1, 0))
 	if err := store.Save(context.Background(), source); err != nil {

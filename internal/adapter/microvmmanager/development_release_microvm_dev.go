@@ -51,8 +51,11 @@ func ReadyRequestFromDevelopmentDescriptor(path, sourceBuildIdentity string, egr
 	if decoder.Decode(&struct{}{}) != io.EOF {
 		return ReadyRequest{}, errors.New("microVM development release descriptor must contain exactly one JSON object")
 	}
-	if descriptor.Schema != DevelopmentReleaseSchema || descriptor.Platform != "linux-amd64" || descriptor.SourceBuildIdentity == "" || descriptor.SourceBuildIdentity != sourceBuildIdentity || descriptor.PolicyRevision == "" {
-		return ReadyRequest{}, errors.New("microVM development release descriptor identity does not match this source build")
+	if descriptor.Schema != DevelopmentReleaseSchema || descriptor.Platform != "linux-amd64" || descriptor.SourceBuildIdentity == "" || descriptor.PolicyRevision == "" {
+		return ReadyRequest{}, errors.New("microVM development release descriptor identity is invalid")
+	}
+	if descriptor.SourceBuildIdentity != sourceBuildIdentity {
+		return ReadyRequest{}, errors.New("microVM development release descriptor does not match this source build; after source changes, rerun task microvm:dev:prepare and task microvm:dev:build")
 	}
 	if !lowerSHA256(descriptor.BundleSHA256) || !strings.HasPrefix(descriptor.PublicKeyIdentity, "sha256:") || !lowerSHA256(strings.TrimPrefix(descriptor.PublicKeyIdentity, "sha256:")) {
 		return ReadyRequest{}, errors.New("microVM development release descriptor contains an invalid digest identity")
@@ -91,7 +94,6 @@ func ReadyRequestFromDevelopmentDescriptor(path, sourceBuildIdentity string, egr
 			PolicyRevision: descriptor.PolicyRevision, PublicKeyIdentity: descriptor.PublicKeyIdentity, publicKey: key,
 			RequiredAttestations: requiredMicroVMAttestations(), GuestEgressMode: GuestEgressPermissive, Resources: defaultMicroVMResources(),
 		},
-		PreserveExistingGuestEgress: len(egress) == 0,
 	}
 	if err := applyGuestEgress(&request, egress); err != nil {
 		_ = bundle.Close()

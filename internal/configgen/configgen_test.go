@@ -54,6 +54,9 @@ func authoritativeKeys() []string {
 		"providers.team-gateway.auth.oidc.issuer", "providers.team-gateway.auth.oidc.client_id", "providers.team-gateway.auth.oidc.resource_audience", "providers.team-gateway.auth.oidc.scopes",
 		"providers.team-gateway.auth.oidc.issuer_trust", "providers.team-gateway.auth.oidc.gateway_trust",
 	)
+	collect("execution", permconfig.ExecutionSection{})
+	collect("execution.microvm", permconfig.ExecutionMicroVMSection{})
+	collect("execution.microvm.guest_egress", permconfig.ExecutionGuestEgressSection{})
 	collect("models", permconfig.ModelsSection{})
 	collect("models.router", permconfig.RouterSection{})
 	collect("models.router.categories", permconfig.RouterCategory{})
@@ -343,6 +346,7 @@ func TestSubtreeTiersAreAsPinned(t *testing.T) {
 		"retention":              configgen.TierOperator, // operator-only: project cannot enable destructive cleanup
 		"temporary_storage":      configgen.TierOperator, // operator-only: project cannot redirect command storage or cleanup
 		"storage_management":     configgen.TierOperator, // operator-only: project cannot grant process-wide management
+		"execution":              configgen.TierOperator, // operator-only: project cannot choose host execution placement or guest egress
 		"steer":                  configgen.TierOperator, // operator-only: a project cannot flip the mid-run steer surface (issue #512)
 		"models":                 configgen.TierProject,  // operator + project (project within the operator allowlist)
 		"openrouter":             configgen.TierOperator, // operator-only: a project cannot steer the OpenRouter downstream provider (issue #480)

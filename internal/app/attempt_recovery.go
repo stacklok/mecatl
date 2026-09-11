@@ -162,7 +162,10 @@ func recoverAttempt(ctx context.Context, cfg Config, reg *providerRegistry, sess
 			if err != nil || binding.Ref != source.EnvironmentRef || binding.Environment.Workspace() == nil {
 				return learning.FailureNone, errAttemptSetupTransient
 			}
-			workspace = binding.Environment.Workspace().Root()
+			workspace, err = server.PlacementCompositionRoot(binding)
+			if err != nil {
+				return learning.FailureNone, errAttemptSetupTransient
+			}
 			closePlacement = binding.Close
 			if record.CheckpointStage == learning.AttemptCheckpointNone {
 				return learning.FailureNone, nil

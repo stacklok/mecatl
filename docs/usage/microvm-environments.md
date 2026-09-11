@@ -7,8 +7,19 @@ It supports one local operator and one canonical Git repository per VM. Linux ar
 macOS, remote placement, schedules, multi-user sharing, and non-Git sources are not
 available.
 
-Install only the host binary for the journey you use. Installing both `mecatui` and
-`mecated` is optional.
+The embedded journey requires both host binaries: `mecatui` runs the in-process server,
+while `mecated` supplies the local administration commands. No separately running
+`mecated` process is required. The headless journey needs only `mecated`.
+
+`task e2e:microvm` is the opt-in automated Linux amd64 KVM gate. It uses the
+deterministic mock provider, never reads `OPENROUTER_API_KEY`, and does not prove a live-provider
+journey. A separate manual qualification was executed on 2026-09-10 with OpenRouter
+`openai/gpt-5-mini` through the public HTTP create and prompt APIs. Write, Read, and Bash ran in
+the Wolfi guest as UID 65532, with a proof marker absent from the source checkout. The same
+session reattached after restarting only mecated while microvmd remained alive; doctor and status
+were healthy. No credential, private placement ref, socket, or host path was retained. See the
+acceptance plan for the reproducible qualification steps. This is not a microvmd-restart recovery
+claim.
 
 ## Before either journey
 
@@ -17,21 +28,22 @@ Use a published, release-stamped binary. Verify it before installation:
 ```sh
 VERSION=vX.Y.Z
 PLATFORM=linux-amd64
-BINARY=mecatui # or mecated
 mkdir -p "$HOME/.local/bin" .scratch/mecatl-host-release
 cd .scratch/mecatl-host-release
-gh release download "$VERSION" --repo stacklok/mecatl \
-  --pattern "${BINARY}-${VERSION}-${PLATFORM}" \
-  --pattern "${BINARY}-${VERSION}-${PLATFORM}.sha256" \
-  --pattern "${BINARY}-${VERSION}-${PLATFORM}.sigstore.json"
-cosign verify-blob \
-  --bundle "${BINARY}-${VERSION}-${PLATFORM}.sigstore.json" \
-  --certificate-identity "https://github.com/stacklok/mecatl/.github/workflows/release.yml@refs/tags/${VERSION}" \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  "${BINARY}-${VERSION}-${PLATFORM}"
-gh attestation verify "${BINARY}-${VERSION}-${PLATFORM}" --repo stacklok/mecatl
-sha256sum --check "${BINARY}-${VERSION}-${PLATFORM}.sha256"
-install -m 0755 "${BINARY}-${VERSION}-${PLATFORM}" "$HOME/.local/bin/${BINARY}"
+for BINARY in mecatui mecated; do
+  gh release download "$VERSION" --repo stacklok/mecatl \
+    --pattern "${BINARY}-${VERSION}-${PLATFORM}" \
+    --pattern "${BINARY}-${VERSION}-${PLATFORM}.sha256" \
+    --pattern "${BINARY}-${VERSION}-${PLATFORM}.sigstore.json"
+  cosign verify-blob \
+    --bundle "${BINARY}-${VERSION}-${PLATFORM}.sigstore.json" \
+    --certificate-identity "https://github.com/stacklok/mecatl/.github/workflows/release.yml@refs/tags/${VERSION}" \
+    --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+    "${BINARY}-${VERSION}-${PLATFORM}"
+  gh attestation verify "${BINARY}-${VERSION}-${PLATFORM}" --repo stacklok/mecatl
+  sha256sum --check "${BINARY}-${VERSION}-${PLATFORM}.sha256"
+  install -m 0755 "${BINARY}-${VERSION}-${PLATFORM}" "$HOME/.local/bin/${BINARY}"
+done
 export PATH="$HOME/.local/bin:$PATH"
 cd ../..
 ```
@@ -52,16 +64,21 @@ local descriptor only from this checkout:
 task microvm:dev:prepare
 task microvm:dev:build
 DESCRIPTOR="$(pwd)/.scratch/microvm-dev/linux-amd64/release.json"
+DEV_CONFIG="$(pwd)/.scratch/microvm-dev/config"
+mkdir -p "$DEV_CONFIG/mecatl"
+cat >"$DEV_CONFIG/mecatl/settings.yaml" <<'YAML'
+execution:
+  default_placement: microvm-local
+YAML
 
-# Interactive root:
-.scratch/microvm-dev/bin/mecatui \
+# Headless server composition:
+.scratch/microvm-dev/bin/mecated serve --headless \
   --default-placement microvm-local \
   --microvm-dev-release="$DESCRIPTOR" \
   --microvm-dev-acknowledge-untrusted-local-artifacts
 
-# Or headless server root:
-.scratch/microvm-dev/bin/mecated serve --headless \
-  --default-placement microvm-local \
+# Embedded local mecatui composition; the isolated operator settings above are required:
+XDG_CONFIG_HOME="$DEV_CONFIG" .scratch/microvm-dev/bin/mecatui \
   --microvm-dev-release="$DESCRIPTOR" \
   --microvm-dev-acknowledge-untrusted-local-artifacts
 ```
@@ -72,29 +89,40 @@ are required. They are unavailable to published binaries and cannot be supplied 
 settings, environment variables, HTTP, or gRPC. Runtime artifact verification and
 admission still apply.
 
-## mecatui-only journey
+## Embedded mecatui journey
 
-From the Git repository:
+Set the operator-owned deployment policy once in `~/.config/mecatl/settings.yaml`:
 
-```sh
-mecatui microvm doctor
-mecatui --default-placement microvm-local
+```yaml
+execution:
+  default_placement: microvm-local
 ```
 
-`microvm doctor` is diagnostic only. It can report `backend: not configured` on a fresh
-home. Selecting `microvm-local` prepares the verified local runtime and creates the
-session. Bare `mecatui` remains host-local.
-
-Inspect placement and resume with the same profile:
+Then use the canonical administration command and launch the embedded server normally:
 
 ```sh
-mecatui microvm status
-mecatui --default-placement microvm-local --resume SESSION_ID
+mecated microvm doctor
+mecatui
 ```
 
-Placement selection is per `mecatui` invocation. A microVM session retains its exact
-persisted placement and is never moved to host execution; the same
-`--default-placement microvm-local` is needed only when starting a new embedded server.
+`microvm doctor` is diagnostic only. With prerequisites satisfied, a fresh home reports
+`backend: ready to configure on first use` and exits successfully. Bare `mecatui` embeds
+its own server; do not start a separate `mecated serve` process. It resolves the operator
+execution policy, then the first-session screen shows bounded download, verification,
+installation, and daemon-start progress while the verified runtime is prepared. A
+preparation failure names a stable stage and directs the operator to `mecated microvm
+doctor` and the exact mecatui diagnostics log. `mecatui connect ADDRESS` is a pure remote
+client and never reads or forwards local placement intent.
+
+Inspect placement and resume without reselecting it:
+
+```sh
+mecated microvm status
+mecatui --resume SESSION_ID
+```
+
+A microVM session retains its exact persisted placement and is never moved to host
+execution. Public session `profile` remains limited to the deployment default and `no-fs`.
 
 ## Headless mecated-only journey
 
@@ -131,27 +159,25 @@ only bounded placement metadata; exact refs and host/guest paths remain private.
 Guest IPv4 egress is permissive by default. External IPv6 is unrouted and unsupported.
 The local host operator can restrict guest networking:
 
-```sh
-# Block all guest egress.
-mecatui --default-placement microvm-local \
-  --microvm-guest-egress=deny-all
-
-# Allow only these guest destinations.
-mecated serve --headless \
-  --microvm-guest-egress=allowlist \
-  --microvm-guest-allow=api.example.com:443/tcp \
-  --microvm-guest-allow=dns.example.com:53/udp
+```yaml
+execution:
+  default_placement: microvm-local
+  microvm:
+    guest_egress:
+      mode: allowlist
+      allow:
+        - api.example.com:443/tcp
+        - dns.example.com:53/udp
 ```
 
-`--microvm-guest-egress` accepts `permissive`, `deny-all`, or `allowlist`.
-`--microvm-guest-allow` is repeatable and requires at least one valid rule with
-`allowlist`. Rules use `HOST:PORT/tcp|udp`; IP literals (including IPv6), wildcards,
-invalid ports or protocols, whitespace/control characters, and duplicate rules are
-invalid. Invalid policy or unavailable enforcement stops readiness. Existing validated
-owner-only policy is retained across daemon restarts and session resumes; pass an
-explicit mode to change it, including `--microvm-guest-egress=permissive` to reset it.
+The strict operator-tier `mode` accepts `permissive`, `deny-all`, or `allowlist`.
+`allow` requires at least one valid rule with `allowlist`. Rules use
+`HOST:PORT/tcp|udp`; IP literals (including IPv6), wildcards, invalid ports or
+protocols, whitespace/control characters, and duplicate rules are invalid. Invalid
+policy or unavailable enforcement stops readiness. Omission means permissive.
+Explicit `mecated serve` flags remain higher-precedence one-run overrides.
 
-These flags are host-local only. HTTP/gRPC requests and project configuration cannot select
+This policy is host-operator owned. HTTP/gRPC requests and project configuration cannot select
 or weaken `microvm-local` placement or guest egress. Guest egress does not cover host
 provider, WebFetch, WebSearch, MCP, hook, artifact, or telemetry traffic. The fixed
 VM defaults are 2 virtual CPUs and 4 GiB memory.
@@ -165,16 +191,31 @@ routing; they do not provide kernel isolation between mutually hostile processes
 same VM. Different canonical repositories receive different VMs. A direct-write child
 uses its parent's environment.
 
-`microvm doctor` and `microvm status` are read-only. Use status before deleting one
-specific logical attachment:
+`microvm doctor` and `microvm status` are read-only and inspect only state owned by
+the current OS principal on the execution host. Status JSON names the backend as
+`backend` and daemon attachment rows as `attachment_id`; those attachment IDs are not
+public mecatl session IDs. A configured-but-stopped or unhealthy backend still emits a
+bounded JSON document with `state`, stable `error`, and `remediation` fields, then exits
+nonzero. `mecated microvm delete` removes one exact logical attachment:
+copy `backend`, `attachment_id`, `ref`, and `generation` from one status row and confirm:
 
 ```sh
-mecated microvm status --output json
-mecated microvm delete --session ID --ref REF --generation N --yes
+mecated microvm delete \
+  --backend microvm-local \
+  --attachment-id ATTACHMENT_ID \
+  --ref REF \
+  --generation GENERATION
 ```
 
-`mecatui microvm ...` provides the same local commands. Delete retains dirty worktrees
-and does not delete the shared repository VM. After a daemon restart, repository
+Deletion preserves a dirty worktree and never deletes or resets the repository VM. It is
+local-only administration in `mecated`; `mecatui connect` cannot invoke it.
+
+One repository-scoped daemon is shared by sessions and host processes. Ordinary readiness
+installs and starts only genuinely fresh state and reuses only an exactly compatible healthy
+daemon. A different desired release or guest-egress policy, corrupt configuration, identity
+mismatch, stopped daemon, or orphaned runtime fails loudly without stopping the daemon,
+rewriting its active config, deleting state, or replacing repository runtime. Resolve the
+reported local state conflict explicitly before retrying. After a daemon restart, repository
 records, rootfs, and worktrees can remain available while live hosted dependencies do
 not. Such sessions report the problem; mecatl does not fall back to host filesystem or
 shell execution and does not create an empty replacement environment.
