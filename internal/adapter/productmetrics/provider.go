@@ -11,14 +11,14 @@ import (
 
 // endpoint and headerKeyName are the ONE destination this pipeline can ever
 // send to (stacklok/infra#5604): a dedicated, internet-facing OTLP/HTTP
-// ingest at metrics.stacklok.com, gated by a single shared key baked into
+// ingest at mecatl.metrics.stacklok.com, gated by a single shared key baked into
 // the binary. Neither is operator-configurable — an operator's own
 // --otlp-endpoint has zero effect on this path, and this path has zero
 // effect on the operator's own OTLP/Prometheus pipeline (a completely
 // separate MeterProvider, never installed as global). endpoint is a var
 // (not a const) so tests can point it at an httptest server.
 var (
-	endpoint      = "https://metrics.stacklok.com/v1/metrics"
+	endpoint      = "https://mecatl.metrics.stacklok.com/v1/metrics"
 	headerKeyName = "x-mecatl-metrics-key"
 )
 

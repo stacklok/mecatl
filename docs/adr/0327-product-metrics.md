@@ -11,7 +11,7 @@
 mecatl had no visibility into community adoption: no install counts, no
 feature-adoption signal, no aggregate usage depth. Stacklok's infra team
 stood up a dedicated, internet-facing OTLP/HTTP metrics ingest at
-`https://metrics.stacklok.com/v1/metrics` specifically for mecatl binaries
+`https://mecatl.metrics.stacklok.com/v1/metrics` specifically for mecatl binaries
 running on infrastructure Stacklok does not control (`stacklok/infra#5604`):
 API-key-gated at the edge (`x-mecatl-metrics-key` header, stripped before the
 collector) and server-side filtered to accept only metric names matching
@@ -49,7 +49,7 @@ Zero import relationship with `internal/adapter/telemetry`. It owns:
 
 - Its own `metric.MeterProvider` (`Provider`, wrapping
   `toolhive-core/telemetry/providers.CompositeProvider`), built against a
-  **hardcoded** endpoint (`https://metrics.stacklok.com/v1/metrics`) and a
+  **hardcoded** endpoint (`https://mecatl.metrics.stacklok.com/v1/metrics`) and a
   **hardcoded** header key baked into the binary at build time via
   `-X …productmetrics.bakedKey=…` (`Taskfile.yml`'s `BUILD_LDFLAGS`) — neither
   is operator-configurable, and there is exactly one place this data can go.
@@ -223,7 +223,7 @@ just a code-review norm that erodes over time. `DryRunRecorder` mirrors
 
 Additional structural safeguards: exporter failures are silent to the app
 (lazy-dial exporter, matching the existing OTLP exporter pattern — a dead
-`metrics.stacklok.com` never blocks or slows a session); `Shutdown` is
+`mecatl.metrics.stacklok.com` never blocks or slows a session); `Shutdown` is
 bounded so a hung network path can never delay process exit; the
 `MeterProvider` is never installed as the process-global provider (mirrors
 `internal/adapter/telemetry`'s own discipline), so it structurally cannot
