@@ -1331,16 +1331,7 @@ func TestRegistryOmitsInvalidEntriesWithoutBlockingOthers(t *testing.T) {
 	dir := t.TempDir()
 	bad := Connection{Identity: identity("relative-ca.example:443"), IssuerCAFile: "issuer-ca.pem"}
 	good := Connection{Identity: identity("unrelated-target.example:443"), IssuerCAFile: "/ca.pem"}
-	body, err := json.Marshal(struct {
-		Version     int          `json:"version"`
-		Connections []Connection `json:"connections"`
-	}{Version: 1, Connections: []Connection{bad, good}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "clientauth-connections.json"), body, 0600); err != nil {
-		t.Fatal(err)
-	}
+	writeRegistryConnections(t, dir, bad, good)
 	reg, err := OpenRegistry(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -1369,16 +1360,7 @@ func TestRegistryQuarantinesMalformedPersistedServerCAAndRejectsRelativeUpsert(t
 	dir := t.TempDir()
 	bad := Connection{Identity: identity("relative-server-ca.example:443"), ServerCAFile: "server-ca.pem"}
 	good := Connection{Identity: identity("valid-server-ca.example:443"), ServerCAFile: "/server-ca.pem"}
-	body, err := json.Marshal(struct {
-		Version     int          `json:"version"`
-		Connections []Connection `json:"connections"`
-	}{Version: 1, Connections: []Connection{bad, good}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "clientauth-connections.json"), body, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeRegistryConnections(t, dir, bad, good)
 	reg, err := OpenRegistry(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -1463,6 +1445,20 @@ func TestRegistryMutationsPreserveQuarantinedRawRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertQuarantined("replaceTarget")
+}
+
+func writeRegistryConnections(t *testing.T, dir string, connections ...Connection) {
+	t.Helper()
+	body, err := json.Marshal(struct {
+		Version     int          `json:"version"`
+		Connections []Connection `json:"connections"`
+	}{Version: 1, Connections: connections})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "clientauth-connections.json"), body, 0o600); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func mustStoreJSON(t *testing.T, value any) json.RawMessage {

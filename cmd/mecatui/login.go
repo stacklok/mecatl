@@ -39,7 +39,13 @@ var (
 	confirmDiscoveredEnrollment = confirmDiscoveredLogin
 )
 
-const defaultOIDCScopes = "openid,profile,offline_access"
+const (
+	defaultOIDCScopes = "openid,profile,offline_access"
+	issuerCAFlag      = "tls-ca"
+	serverCAFlag      = "server-tls-ca"
+)
+
+type caFlagName string
 
 type discoveredEnrollment struct {
 	Resource    string
@@ -94,7 +100,7 @@ func runRemoteLogin(address string, args []string) error {
 		return err
 	}
 	storeMode := clientauth.CredentialStoreMode(credentialStore)
-	serverCAFile, err := resolveCAFlag("server-tls-ca", serverTLSCA)
+	serverCAFile, err := resolveCAFlag(serverTLSCA, serverCAFlag)
 	if err != nil {
 		return err
 	}
@@ -117,7 +123,7 @@ func runRemoteLogin(address string, args []string) error {
 	if privateIssuer && tlsCA == "" {
 		return errors.New("login: --private-issuer requires --tls-ca")
 	}
-	issuerCAFile, err := resolveCAFlag("tls-ca", tlsCA)
+	issuerCAFile, err := resolveCAFlag(tlsCA, issuerCAFlag)
 	if err != nil {
 		return err
 	}
@@ -154,7 +160,7 @@ func validateRemoteLoginOptions(extra int, timeout time.Duration, credentialStor
 	return nil
 }
 
-func resolveCAFlag(name, path string) (string, error) {
+func resolveCAFlag(path string, name caFlagName) (string, error) {
 	if path == "" {
 		return "", nil
 	}
@@ -225,6 +231,7 @@ func savedDiscoveredEnrollmentMatches(enrollment discoveredEnrollment) bool {
 	return saved.Identity.Equal(conn.Identity) &&
 		saved.ResourceURL == conn.ResourceURL &&
 		saved.IssuerCAFile == conn.IssuerCAFile &&
+		saved.ServerCAFile == conn.ServerCAFile &&
 		saved.IssuerAddressPolicy == conn.IssuerAddressPolicy
 }
 

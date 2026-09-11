@@ -1,9 +1,13 @@
 # Persist saved mecatui server CA — acceptance plan
 
-**Contract:** human-reviewed/v1
+**Contract:** human-reviewed/v2
+**Work classification:** Architectural — persisting target-specific server trust and superseding ADR 0287 establishes a durable client transport and security decision.
+**Decision record:** [ADR 0326](../adr/0326-persisted-mecatui-server-ca.md)
 **Phase:** focused mecatui remote-login capability
 **Status:** in-progress, 2026-09-08
-**Delivery:** Split
+**Delivery:** Split. A separate plan/interface PR is required by the Architectural workflow; no waiver has been authorized.
+**Expected tasks:** 1
+**Workflow waiver:** Pending explicit human authorization. This combined implementation candidate cannot be treated as an approved or complete contract until that waiver is granted (or the required plan/interface PR is completed).
 **Issue:** [#886](https://github.com/stacklok/mecatl/issues/886)
 
 A private gRPC server CA supplied as `mecatui login --server-tls-ca PATH` is stored with the target and restored by a later saved `mecatui connect ADDRESS`. Login `--tls-ca` remains issuer-only; an explicit `connect --tls-ca` wins for that invocation.
@@ -30,7 +34,7 @@ issuer/server trust split in [ADR 0287](../adr/0287-target-aware-mecatui-tls.md)
 - AC1.1: login saves a separately named server CA path while retaining the issuer CA path for OIDC operations only.
   - verify: `TestRemoteLoginStoresAbsoluteCAReferencesAcrossCWDChanges`
 - AC1.2: a saved connect restores the saved server CA, while a non-empty `connect --tls-ca` takes precedence.
-  - verify: `TestApplySavedServerCA`
+  - verify: `TestResolveTransportUsesPersistedServerCAWithExplicitOverride`
 - AC1.3: legacy registry rows with no server CA remain readable.
   - verify: `TestRegistryReadsLegacyIssuerCAAndMigratesOnMutation`
 

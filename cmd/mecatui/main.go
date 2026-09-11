@@ -1171,6 +1171,9 @@ func resolveRemoteTransport(ctx context.Context, cfg config, noop func()) (targe
 				applySavedServerCA(cfg, conn, &dial)
 			}
 		}
+		// Registry open/find failures are intentionally ignored here: explicit
+		// bearer and anonymous modes do not depend on saved enrollment. A lookup
+		// is only a best-effort opportunity to reuse its non-secret server CA.
 		return cfg.connectAddress, dial, noop, nil
 	}
 

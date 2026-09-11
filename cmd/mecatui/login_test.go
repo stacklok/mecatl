@@ -345,14 +345,14 @@ func TestDiscoveredLoginPropagatesServerCA(t *testing.T) {
 		}
 		return true, nil
 	}
-	executeRemoteLogin = func(_ context.Context, conn clientauth.Connection, _ bool) error {
+	executeRemoteLogin = func(_ context.Context, conn clientauth.Connection, _ bool, _ clientauth.CredentialStoreMode) error {
 		if conn.ServerCAFile != "/server-ca.pem" {
 			t.Fatalf("saved server CA = %q, want propagated CA", conn.ServerCAFile)
 		}
 		return nil
 	}
 
-	if err := runDiscoveredRemoteLogin("resource.example", "", "/server-ca.pem", false, true, time.Second); err != nil {
+	if err := runDiscoveredRemoteLogin("resource.example", "", "/server-ca.pem", false, true, time.Second, clientauth.CredentialStoreAuto); err != nil {
 		t.Fatal(err)
 	}
 }
