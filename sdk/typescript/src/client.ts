@@ -160,17 +160,53 @@ export interface ForkSessionOptions {
 /** A durable Mecatl session handle. @public */
 export interface Session {
   readonly id: string;
-  /** Attaches to an explicit run, or selects the newest run in the durable log. */
+  /**
+   * Attaches to an explicit run, or selects the newest run in the durable log.
+   *
+   * @param runId - Run ID to follow. Omit it to select the newest run.
+   * @param options - Replay position, event filtering, and cancellation options.
+   * @returns A single-consumption durable stream bound to the selected run.
+   * @throws `NoRunsError` when no run can be selected.
+   * @throws `CursorScopeError` when a cursor would widen its original filter.
+   */
   attach(runId?: string, options?: AttachOptions): Promise<AttachedRun>;
-  /** Opens the durable cross-run activity stream for this session. */
+  /**
+   * Opens the durable cross-run activity stream for this session.
+   *
+   * @param options - Replay position, event filtering, and cancellation options.
+   * @returns A single-consumption stream of session activity.
+   * @throws `CursorScopeError` when a cursor would widen its original filter.
+   */
   activity(options?: AttachOptions): Promise<SessionActivity>;
-  /** Starts a run and resolves once its first run-ID-bearing event arrives. */
+  /**
+   * Starts a run and resolves once its first run-ID-bearing event arrives.
+   *
+   * @param prompt - Text or ordered text, image, and audio parts for the run.
+   * @param options - Automatic permission and plan-approval responders.
+   * @returns A single-consumption handle for the accepted run.
+   * @throws `PromptValidationError` when the prompt is invalid or unsupported.
+   * @throws `SessionBusyError` when the session already has an active run.
+   */
   run(prompt: PromptInput, options?: RunOptions): Promise<Run>;
-  /** Atomically resolves a durably parked plan and streams its resumed and continuation runs. */
+  /**
+   * Atomically resolves a durably parked plan and streams its resumed and continuation runs.
+   *
+   * @param verdict - Plan decision. Defaults to `approve`.
+   * @returns A single-consumption plan-resolution stream.
+   * @throws `ServerError` when the session has no parked plan awaiting approval.
+   */
   resolvePlan(verdict?: PlanApprovalVerdict): PlanResolution;
-  /** Releases runtime resources without removing the durable session. */
+  /**
+   * Releases runtime resources without removing the durable session.
+   *
+   * @returns A promise that resolves after local session resources are released.
+   */
   close(): Promise<void>;
-  /** Permanently removes the durable session and its sidecars. */
+  /**
+   * Permanently removes the durable session and its sidecars.
+   *
+   * @returns A promise that resolves after the server removes the session.
+   */
   delete(): Promise<void>;
 }
 
@@ -1182,7 +1218,13 @@ export function connectTransport(options: ClientCoreOptions): Client {
   return new ClientImpl(options);
 }
 
-/** Creates an isomorphic Client over HTTP or a caller-injected transport. @public */
+/**
+ * Creates an isomorphic Client over HTTP or a caller-injected transport.
+ *
+ * @param options - HTTP transport settings or a caller-owned transport.
+ * @returns A high-level Mecatl client.
+ * @public
+ */
 export function connect(options: ConnectOptions): Client {
   if ("transport" in options) {
     return connectTransport({

@@ -102,13 +102,37 @@ export interface AttachedRun extends SessionActivity {
   readonly runId: string;
   /** True until this attachment observes its run's terminal result. */
   readonly live: boolean;
-  /** Cancels the attached run using its exact run ID. */
+  /**
+   * Cancels the attached run using its exact run ID.
+   *
+   * @returns A promise that resolves after the cancellation request is accepted.
+   */
   cancel(): Promise<void>;
-  /** Reports that approval controls are unavailable on durable attachments. */
+  /**
+   * Reports that approval controls are unavailable on durable attachments.
+   *
+   * @param askId - Permission-ask ID, retained for parity with a live run.
+   * @param allow - Boolean verdict, retained for parity with a live run.
+   * @returns A rejected promise.
+   * @throws `UnsupportedFeatureError` for every call.
+   */
   approve(askId: string, allow: boolean): Promise<never>;
-  /** Reports that ask resolution is unavailable on durable attachments. */
+  /**
+   * Reports that ask resolution is unavailable on durable attachments.
+   *
+   * @param askId - Permission-ask ID, retained for parity with a live run.
+   * @param verdict - Permission verdict, retained for parity with a live run.
+   * @returns A rejected promise.
+   * @throws `UnsupportedFeatureError` for every call.
+   */
   resolveAsk(askId: string, verdict: PermissionVerdict): Promise<never>;
-  /** Reports that steering is unavailable on durable attachments. */
+  /**
+   * Reports that steering is unavailable on durable attachments.
+   *
+   * @param text - Steering text, retained for parity with a live run.
+   * @returns A rejected promise.
+   * @throws `UnsupportedFeatureError` for every call.
+   */
   steer(text: string): Promise<never>;
 }
 

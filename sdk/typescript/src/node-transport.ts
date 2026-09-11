@@ -29,7 +29,13 @@ export type NodeTransportOptions = NodeTransportCommonOptions &
       }
   );
 
-/** Creates a gRPC transport for Node.js or Bun over HTTP/2 or a Unix domain socket. @public */
+/**
+ * Creates a gRPC transport for Node.js or Bun over HTTP/2 or a Unix domain socket.
+ *
+ * @param options - TCP authority or Unix socket plus credentials and HTTP/2 settings.
+ * @returns A Connect-ES gRPC transport.
+ * @public
+ */
 export function createNodeTransport(options: NodeTransportOptions): Transport {
   const credentials: CredentialOptions = {
     ...(options.headers === undefined ? {} : { headers: options.headers }),

@@ -283,7 +283,15 @@ export async function queryInternal(
   }
 }
 
-/** Spawns if needed, creates one session, runs one prompt, and cleans up owned resources. @public */
+/**
+ * Spawns if needed, creates one session, runs one prompt, and cleans up owned resources.
+ *
+ * @param prompt - Text or ordered text, image, and audio parts for the run.
+ * @param options - Session, responder, cancellation, retention, and daemon options.
+ * @returns A single-consumption event stream for the query-created session.
+ * @throws `PlanApprovalRequiredError` when plan mode has no approval responder.
+ * @public
+ */
 export function query(prompt: PromptInput, options: QueryOptions = {}): Promise<Query> {
   return queryInternal(prompt, options);
 }

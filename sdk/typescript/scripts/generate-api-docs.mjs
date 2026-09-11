@@ -131,13 +131,22 @@ function isCallable(item) {
 
 function validateDocumentation(items, entryPoint) {
   const missing = [];
+  const detailedCallableTypes = new Set([
+    "AttachedRun",
+    "NodeClient",
+    "PlanResolution",
+    "Run",
+    "Session",
+  ]);
   const documentedMemberTypes = new Set(["MediaPartSource", "SessionLimits", "SessionMcpServer"]);
   const propertyKinds = new Set(["Property", "PropertySignature"]);
   for (const item of items) {
     const itemName = publicName(item);
-    if (parseDocComment(item.docComment).summary === "") {
+    const itemDoc = parseDocComment(item.docComment);
+    if (itemDoc.summary === "") {
       missing.push(itemName);
     }
+    if (item.kind === "Function") validateCallableDetails(item, itemName, itemDoc, missing);
     for (const member of item.members ?? []) {
       const propertyNeedsDocumentation =
         (itemName.endsWith("Options") || documentedMemberTypes.has(itemName)) &&
@@ -149,12 +158,32 @@ function validateDocumentation(items, entryPoint) {
         const memberName = member.kind === "Constructor" ? "constructor" : member.name;
         missing.push(`${itemName}.${memberName}`);
       }
+      if (detailedCallableTypes.has(itemName) && isCallable(member)) {
+        const memberName = member.kind === "Constructor" ? "constructor" : member.name;
+        validateCallableDetails(
+          member,
+          `${itemName}.${memberName}`,
+          parseDocComment(member.docComment),
+          missing,
+        );
+      }
     }
   }
   if (missing.length > 0) {
     throw new Error(
       `${entryPoint} has undocumented public declarations or callables:\n${missing.map((name) => `- ${name}`).join("\n")}`,
     );
+  }
+}
+
+function validateCallableDetails(item, name, doc, missing) {
+  for (const parameter of item.parameters ?? []) {
+    if ((doc.params.get(parameter.parameterName) ?? "") === "") {
+      missing.push(`${name} parameter ${parameter.parameterName}`);
+    }
+  }
+  if (item.returnTypeTokenRange !== undefined && doc.returns === "") {
+    missing.push(`${name} return value`);
   }
 }
 
@@ -168,6 +197,57 @@ const groupTitles = {
   TypeAlias: "Type aliases",
   Variable: "Variables",
 };
+const groupKinds = {
+  Class: "Class",
+  Enum: "Enumeration",
+  Function: "Function",
+  Interface: "Interface",
+  Namespace: "Namespace",
+  TypeAlias: "Type alias",
+  Variable: "Variable",
+};
+
+function anchorPart(value) {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/gu, "-")
+    .replace(/^-|-$/gu, "");
+}
+
+function escapeHtml(value) {
+  return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+}
+
+function itemAnchor(item) {
+  const overload = item.overloadIndex > 1 ? `-overload-${item.overloadIndex}` : "";
+  return `api-${anchorPart(publicName(item))}-${anchorPart(item.kind)}${overload}`;
+}
+
+function memberAnchor(item, member) {
+  const memberName = member.kind === "Constructor" ? "constructor" : member.name;
+  const overload = member.overloadIndex > 1 ? `-overload-${member.overloadIndex}` : "";
+  return `api-${anchorPart(publicName(item))}-${anchorPart(memberName)}-${anchorPart(member.kind)}${overload}`;
+}
+
+function memberDisplayName(item, member) {
+  const owner = publicName(item);
+  const memberName = member.kind === "Constructor" ? "constructor" : member.name;
+  if (memberName.startsWith("[")) return `${owner}${memberName}`;
+  if (memberName.startsWith('"')) return `${owner}[${memberName}]`;
+  return `${owner}.${memberName}`;
+}
+
+function renderSymbolIndex(items) {
+  const output = ["## Symbol index", "", "| Symbol | Kind |", "| --- | --- |"];
+  const sorted = [...items].sort((left, right) =>
+    publicName(left).localeCompare(publicName(right)),
+  );
+  for (const item of sorted) {
+    output.push(`| [\`${publicName(item)}\`](#${itemAnchor(item)}) | ${groupKinds[item.kind]} |`);
+  }
+  output.push("");
+  return output;
+}
 
 function renderNarrative(doc) {
   const output = [];
@@ -211,7 +291,11 @@ function renderCallableDetails(item, doc) {
 
 function renderItem(item) {
   const doc = parseDocComment(item.docComment);
-  const output = [`### \`${publicName(item)}\``, "", ...renderNarrative(doc)];
+  const output = [
+    `<Heading as="h3" id="${itemAnchor(item)}"><code>${escapeHtml(publicName(item))}</code></Heading>`,
+    "",
+    ...renderNarrative(doc),
+  ];
   const signature = excerpt(item);
   if (signature !== "") output.push("```ts", signature, "```", "");
   if (isCallable(item)) output.push(...renderCallableDetails(item, doc));
@@ -222,11 +306,27 @@ function renderItem(item) {
     const name = leftName.localeCompare(rightName);
     return name === 0 ? left.kind.localeCompare(right.kind) : name;
   });
+  const callableMembers = members.filter(isCallable);
+  if (callableMembers.length > 0) {
+    output.push(
+      `Callable members: ${callableMembers
+        .map((member) => {
+          const suffix = member.overloadIndex > 1 ? ` (overload ${member.overloadIndex})` : "";
+          const name = member.kind === "Constructor" ? "constructor" : `${member.name}()`;
+          return `[\`${name}\`${suffix}](#${memberAnchor(item, member)})`;
+        })
+        .join(", ")}`,
+      "",
+    );
+  }
   for (const member of members) {
     const suffix = member.overloadIndex > 1 ? ` (overload ${member.overloadIndex})` : "";
-    const memberName = member.kind === "Constructor" ? "constructor" : member.name;
     const memberDoc = parseDocComment(member.docComment);
-    output.push(`#### \`${memberName}\`${suffix}`, "", ...renderNarrative(memberDoc));
+    output.push(
+      `<Heading as="h4" id="${memberAnchor(item, member)}"><code>${escapeHtml(memberDisplayName(item, member))}</code>${suffix}</Heading>`,
+      "",
+      ...renderNarrative(memberDoc),
+    );
     const memberSignature = excerpt(member);
     if (memberSignature !== "") output.push("```ts", memberSignature, "```", "");
     if (isCallable(member)) output.push(...renderCallableDetails(member, memberDoc));
@@ -234,7 +334,7 @@ function renderItem(item) {
   return output;
 }
 
-function renderReference({ description, entryPoint, items, position, title }) {
+function renderReference({ description, entryPoint, items, position, sharedReference, title }) {
   const output = [
     "---",
     `title: ${title}`,
@@ -243,13 +343,17 @@ function renderReference({ description, entryPoint, items, position, title }) {
     "toc_max_heading_level: 2",
     "---",
     "",
+    'import Heading from "@theme/Heading";',
+    "",
     `# ${title}`,
     "",
-    "{/* Code generated by sdk/typescript/scripts/generate-api-docs.mjs. DO NOT EDIT. */}",
+    "{/* Generated from API Extractor models and sdk/typescript/src TSDoc. Regenerate with task sdk:docs. DO NOT EDIT. */}",
     "",
-    `This reference is generated from the published \`${entryPoint}\` declarations.`,
-    "Update the TSDoc in `sdk/typescript/src/`, then run `task sdk:docs`.",
+    sharedReference === undefined
+      ? `This reference describes the declarations exported by \`${entryPoint}\`.`
+      : `This page lists declarations added or changed by \`${entryPoint}\`. The entry point also exports the [shared core API](${sharedReference}).`,
     "",
+    ...renderSymbolIndex(items),
   ];
 
   const grouped = new Map();
@@ -309,6 +413,7 @@ await Promise.all([
       entryPoint: "@stacklok/mecatl-sdk/node",
       items: nodeSpecificItems,
       position: 3,
+      sharedReference: "./core.md",
       title: "TypeScript SDK Node.js and Bun API",
     }),
   ),

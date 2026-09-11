@@ -77,6 +77,9 @@ and continues the remaining cleanup steps.
   private daemon.
 - [Handle permissions and plans](./permissions-and-plans.md) in a long-running
   application or one-shot query.
+
+## Related information
+
 - [TypeScript SDK Node.js and Bun API](/reference/typescript-sdk-api/node.md)
   for all `spawn()` and `query()` options.
 

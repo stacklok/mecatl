@@ -19,9 +19,12 @@ activity stream:
 import { connect } from "@stacklok/mecatl-sdk/node";
 
 await using client = connect({
-  baseUrl: process.env.MECATL_URL ?? "http://127.0.0.1:8081",
+  baseUrl: process.env.MECATL_URL ?? "http://127.0.0.1:8080",
 });
-const session = await client.sessions.get(process.env.MECATL_SESSION_ID ?? "session-id");
+const sessionId = process.env.MECATL_SESSION_ID;
+if (sessionId === undefined) throw new Error("MECATL_SESSION_ID is required");
+
+const session = await client.sessions.get(sessionId);
 const previous = process.env.MECATL_CURSOR;
 await using activity = await session.activity(
   previous === undefined ? { from: "start" } : { from: previous },
@@ -36,8 +39,9 @@ for await (const envelope of activity) {
 ```
 
 Replace the checkpoint log with application-owned persistence. Commit each side
-effect before its cursor. Delivery is at least once, so make the side effect
-idempotent.
+effect before its cursor. Delivery of durably appended events is ordered and at
+least once, so make the side effect idempotent. A storage failure can create the
+gaps described under [Handle terminal watch errors](#handle-terminal-watch-errors).
 
 The SDK stores reconnect state only in memory. It does not write cursors to
 browser storage or the filesystem.
@@ -87,12 +91,12 @@ not retry prompts, approvals, mutations, or owned runs automatically.
 
 - [Handle permissions and plans](./permissions-and-plans.md) for the live-run
   controls that durable attachments do not expose.
-- [TypeScript SDK core API](/reference/typescript-sdk-api/core.md) for cursor,
-  envelope, and attachment types.
 - [Session continuity](/features/session-continuity.md) for the server-side
   persistence model.
 
 ## Related information
 
+- [TypeScript SDK core API](/reference/typescript-sdk-api/core.md) for cursor,
+  envelope, and attachment types.
 - [HTTP and SSE API reference](/reference/http-sse-api.md)
 - [gRPC API reference](/reference/grpc-api.md)

@@ -561,7 +561,13 @@ async function* parseSSE(
   }
 }
 
-/** Creates a browser-compatible Connect-ES transport over Mecatl's HTTP and SSE API. @public */
+/**
+ * Creates a browser-compatible Connect-ES transport over Mecatl's HTTP and SSE API.
+ *
+ * @param options - HTTP endpoint, credentials, and fetch implementation.
+ * @returns A Connect-ES transport for Mecatl's HTTP and SSE routes.
+ * @public
+ */
 export function createHttpTransport(options: HttpTransportOptions): Transport {
   const transport = new HttpTransport(options);
   return registerTransport(transport, "http", {

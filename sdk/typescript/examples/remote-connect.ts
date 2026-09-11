@@ -1,7 +1,7 @@
 import { connect } from "@stacklok/mecatl-sdk/node";
 
 const client = connect({
-  baseUrl: process.env.MECATL_URL ?? "http://127.0.0.1:8081",
+  baseUrl: process.env.MECATL_URL ?? "http://127.0.0.1:8080",
 });
 
 try {

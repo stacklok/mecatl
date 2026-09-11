@@ -73,7 +73,16 @@ export interface ToolDefinition {
 
 /** A client for Node.js or Bun with local callback-tool registration. @public */
 export interface NodeClient extends Client {
-  /** Registers one callback tool in the client-wide immutable tool set. */
+  /**
+   * Registers one callback tool in the client-wide immutable tool set.
+   *
+   * @param name - Name advertised by the local MCP server.
+   * @param schema - JSON Schema 2020-12 value for the tool arguments.
+   * @param handler - Function invoked with validated arguments and an abort signal.
+   * @param options - Read-only assertion and per-tool concurrency limit.
+   * @returns The immutable registered-tool description and model-facing name.
+   * @throws `ToolRegistrationError` when the name, schema, or options are invalid.
+   */
   tool(
     name: string,
     schema: ToolSchema,

@@ -19,7 +19,7 @@ for decisions the application is authorized to make:
 import { connect } from "@stacklok/mecatl-sdk/node";
 
 await using client = connect({
-  baseUrl: process.env.MECATL_URL ?? "http://127.0.0.1:8081",
+  baseUrl: process.env.MECATL_URL ?? "http://127.0.0.1:8080",
 });
 const session = await client.sessions.create({});
 const run = await session.run("Inspect the repository without changing it", {
@@ -43,14 +43,20 @@ Plan approval is separate from ordinary permission approval. Pass
 `onPlanApproval` when the run can call `PresentPlan`:
 
 ```ts
-const run = await session.run("Plan and implement the requested change", {
-  onPlanApproval: (_ask, signal) => (signal.aborted ? undefined : "iterate"),
+import { PermissionMode } from "@stacklok/mecatl-sdk/gen";
+
+const planSession = await client.sessions.create({ mode: PermissionMode.PLAN });
+const run = await planSession.run("Plan and implement the requested change", {
+  onPlanApproval: (_ask, signal) => (signal.aborted ? undefined : "approve"),
 });
+
+console.log((await run.result()).stopReason);
 ```
 
 The responder returns `approve`, `accept_edits`, `iterate`, or `undefined`.
 `query()` requires `onPlanApproval` before it creates resources when the new
-session uses plan mode.
+session uses plan mode. Set `session.mode` to `PermissionMode.PLAN` in the query
+options.
 
 ## Continue a parked plan
 
@@ -79,10 +85,10 @@ needs the durable timeline across both run IDs.
   across both runs.
 - [Permissions and posture](/features/permissions-and-posture.md) for the
   server-side permission model.
-- [TypeScript SDK core API](/reference/typescript-sdk-api/core.md) for responder,
-  error, and plan-resolution types.
 
 ## Related information
 
+- [TypeScript SDK core API](/reference/typescript-sdk-api/core.md) for responder,
+  error, and plan-resolution types.
 - [Permissions and guardrails for builders](/building/what-you-get/permissions.md)
 - [Start and resume sessions](/features/start-and-resume-sessions.md)

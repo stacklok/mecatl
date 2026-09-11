@@ -97,11 +97,11 @@ prompt; the server remains authoritative.
   approval decisions.
 - [Resume durable activity](./durable-activity.md) to observe runs after a
   disconnect or application restart.
-- [TypeScript SDK core API](/reference/typescript-sdk-api/core.md) for the full
-  `Session`, `Run`, event, and media surfaces.
 
 ## Related information
 
+- [TypeScript SDK core API](/reference/typescript-sdk-api/core.md) for the full
+  `Session`, `Run`, event, and media surfaces.
 - [Start and resume sessions](/features/start-and-resume-sessions.md)
 - [Multimodal input](/features/multimodal-input.md)
 - [Agent loop](/building/what-you-get/agent-loop.md)

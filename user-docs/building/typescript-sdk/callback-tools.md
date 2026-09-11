@@ -12,15 +12,40 @@ session.
 
 ## Register a tool
 
-This local smoke-test example starts a private daemon, registers one read-only
-tool, then creates a session that can call it:
+This local example uses a scripted offline provider so it produces the same tool
+call without model-provider credentials. Create `callback-tool-script.json`:
+
+```json title="callback-tool-script.json"
+{
+  "turns": [
+    {
+      "tool_calls": [
+        {
+          "id": "lookup-1",
+          "name": "mcp__sdk__lookup_issue",
+          "args": { "issue": 821 }
+        }
+      ]
+    },
+    { "text": "The callback tool returned the issue status." }
+  ]
+}
+```
+
+Start a private daemon, register the tool, and allow only its permission ask:
 
 ```ts
+import { fileURLToPath } from "node:url";
 import { spawn } from "@stacklok/mecatl-sdk/node";
 
-await using client = await spawn({ args: ["--authority-evaluator", "noop"] });
+const mockScript = fileURLToPath(
+  new URL("./callback-tool-script.json", import.meta.url),
+);
+await using client = await spawn({
+  args: ["--authority-evaluator", "noop", "--mock-script", mockScript],
+});
 
-client.tool(
+const tool = client.tool(
   "lookup_issue",
   {
     additionalProperties: false,
@@ -33,7 +58,11 @@ client.tool(
 );
 
 const session = await client.sessions.create({});
-console.log((await (await session.run("Look up issue 821")).result()).text);
+const run = await session.run("Look up issue 821", {
+  onPermissionAsk: (ask) => (ask.tool === tool.modelName ? "allow_once" : "deny"),
+});
+
+console.log((await run.result()).text);
 ```
 
 Callback tools currently require the `noop` authority evaluator because their
@@ -84,10 +113,10 @@ session creation.
   events and terminal results.
 - [Permissions and posture](/features/permissions-and-posture.md) to configure
   server-side tool decisions.
-- [TypeScript SDK Node.js and Bun API](/reference/typescript-sdk-api/node.md)
-  for callback schemas, handlers, results, and error types.
 
 ## Related information
 
+- [TypeScript SDK Node.js and Bun API](/reference/typescript-sdk-api/node.md)
+  for callback schemas, handlers, results, and error types.
 - [MCP client](/building/what-you-get/mcp-client.md)
 - [Tool catalog extension point](/building/extension-points/tool-catalog.md)
