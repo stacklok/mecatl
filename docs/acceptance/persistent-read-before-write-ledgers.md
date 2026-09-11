@@ -111,7 +111,7 @@ A post-mutation ledger-write failure is reported honestly: the already-successfu
 | Redis-backed file contents and mecak8s operator/configuration wiring | [stacklok/mecatl#889](https://github.com/stacklok/mecatl/issues/889) | [ADR-0048](../adr/0048-mecak8s.md); this plan proves only the independent ledger half |
 | Composition-level selection of durable ledgers for production sessions | #889 | This plan migrates signatures and proves adapters; it does not add a flag, profile, or default durable wiring |
 | Principal-scoped file-content namespaces and anonymous fallback | #889 | File scoping is deliberately unchanged here |
-| Bash, command execution, sandboxing, fork/merge, or executable semantics | future remote-filesystem work | [ADR-0211](../adr/0211-execution-environment-runtime-seam.md) remains unchanged |
+| Shell, command execution, sandboxing, fork/merge, or executable semantics | future remote-filesystem work | [ADR-0211](../adr/0211-execution-environment-runtime-seam.md) remains unchanged |
 | A generic remote filesystem or ledger RPC protocol | future driver design | [ADR-0214](../adr/0214-environment-persistence.md) defers transport selection |
 | TTL or time-based pruning for durable ledger keys | follow-up with the concrete mecak8s lifecycle | Delete-with-session is required here; #888 does not choose an age-based retention policy |
 

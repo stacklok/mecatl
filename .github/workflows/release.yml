@@ -38,7 +38,47 @@ env:
   GOFLAGS: -mod=readonly
 
 jobs:
+  # A v* tag can be created from ANY commit — GitHub cannot branch-filter a tag trigger — so
+  # "the tag is on main" has to be checked at run time. It used to be checked in publish-cli
+  # ONLY, which left the five image/chart jobs publishing cosign-signed, SLSA-attested
+  # artifacts from a tag cut on an unreviewed branch. That is the bypass around the release-PR
+  # flow, so the check gates every publishing job now.
+  #
+  # A shared job rather than the same four lines copied six times. publish-cli deliberately
+  # KEEPS its own inline copy as well (like the pin gate it repeats): it is the one job that
+  # writes outside this repository, so it re-verifies rather than inheriting.
+  guard:
+    name: Ensure the release tag is on main
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    env:
+      # On workflow_dispatch github.ref_name is the default branch, so prefer the
+      # explicit input; on a tag push github.ref_name is the tag.
+      VERSION: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # 0 so origin/main is present to compare against. NOT `git fetch origin main`:
+          # persist-credentials is false, so a fetch has no credentials on this repo.
+          fetch-depth: 0
+          ref: ${{ env.VERSION }}
+
+      # HEAD, not $GITHUB_SHA: on workflow_dispatch $GITHUB_SHA is the branch head, while
+      # HEAD is the tag commit actually checked out above.
+      - name: Ensure the release tag is on main
+        run: |
+          set -euo pipefail
+          if ! git merge-base --is-ancestor HEAD origin/main; then
+            echo "::error::release tags must be cut from a commit on main; $(git rev-parse HEAD) is not on main"
+            exit 1
+          fi
+          echo "$(git rev-parse HEAD) is on main"
+
   publish:
+    needs: guard
     name: Build, publish, sign, attest
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -177,6 +217,7 @@ jobs:
   # The mecatui image carries cmd/mecatui/kodata/agent.yaml through ko's kodata
   # support and identifies it with the org.stacklok.broodbox.agent OCI label.
   publish-mecatui:
+    needs: guard
     name: Build, publish, sign, attest mecatui
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -309,6 +350,7 @@ jobs:
           create-storage-record: false
 
   publish-mecak8s:
+    needs: guard
     name: Build, publish, sign, attest mecak8s
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -444,6 +486,7 @@ jobs:
   # ../sdk/typescript/examples/slack-bot/README.md); only this container
   # image is released, from the same v* tag as mecated/mecatui/mecak8s.
   publish-slack-bot:
+    needs: guard
     name: Build, publish, sign, attest Slack bot example image
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -549,7 +592,7 @@ jobs:
   # Publish the chart only after its default image tag exists.
   publish-helm-chart:
     name: Package, publish, sign Helm chart
-    needs: publish-mecak8s
+    needs: [guard, publish-mecak8s]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -691,6 +734,7 @@ jobs:
   #   gh release delete <tag> --cleanup-tag=false --yes
   # before re-dispatching. See .claude/skills/cut-release.
   publish-cli:
+    needs: guard
     name: Build, publish, sign, attest CLI archives + Homebrew formula
     runs-on: ubuntu-24.04
     # 60, measured rather than guessed. On the v0.0.30 run the disk reclaim took
@@ -769,9 +813,11 @@ jobs:
           RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
         run: EXPECTED_TAG="${RELEASE_TAG}" bash .github/actions/check-reusable-pins.sh
 
-      # A v* tag cut from any branch would otherwise publish a public formula.
-      # GitHub cannot branch-filter a tag trigger, so guard at run time. Compare
-      # against origin/main, which the depth-0 checkout already fetched — NOT
+      # The same on-main gate the `guard` job runs. Repeated here, not merely
+      # inherited via needs:, for the same reason the pin gate above is: this is
+      # the only job that writes OUTSIDE this repository (a public tap commit),
+      # so it re-verifies rather than trusting the job graph.
+      # Compare against origin/main, which the depth-0 checkout already fetched — NOT
       # `git fetch origin main`, which has no credentials here
       # (persist-credentials: false) and would fail on this internal repo.
       # HEAD, not $GITHUB_SHA: on workflow_dispatch $GITHUB_SHA is the branch

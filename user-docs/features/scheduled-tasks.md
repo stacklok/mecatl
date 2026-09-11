@@ -37,7 +37,7 @@ delete, and fire-now. There is no separate `mecated schedules` CLI.
 
 A schedule uses exactly one trigger: a cron expression or a one-shot timestamp.
 It defaults to read-leaning behavior. A schedule that may use `Edit`, `Write`,
-or `Bash` must explicitly set `mutating: true`; this is not an implicit
+or `Shell` must explicitly set `mutating: true`; this is not an implicit
 allow-all mode.
 
 Example REST workflow:

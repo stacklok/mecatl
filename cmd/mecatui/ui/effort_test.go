@@ -25,6 +25,17 @@ func pressEffortKey(t *testing.T, m Model, msg tea.KeyPressMsg) Model {
 	return mm.(Model)
 }
 
+// TestF7OpensEffortPicker proves the replacement shortcut reaches the effort
+// operation through the normal idle-key reducer.
+func TestF7OpensEffortPicker(t *testing.T) {
+	m := newModelsModel(t, sampleModels(), &fakeStore{}, modelsCaps(), client.ModelSelection{})
+	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF7})
+	m = mm.(Model)
+	if m.effort.view != effortPanel {
+		t.Fatalf("f7 left effort view = %v, want effortPanel", m.effort.view)
+	}
+}
+
 // TestRunEffortOpensPicker asserts runEffort opens the picker, blurs the input, and
 // renders the enum rows (no RPC — the enum is fixed and client-owned).
 func TestRunEffortOpensPicker(t *testing.T) {

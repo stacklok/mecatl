@@ -17,7 +17,7 @@ import (
 
 // newStreamer returns the runner narrowed to the OPTIONAL tool.CommandStreamer
 // capability, failing the test if the concrete runner declines it (osfs must
-// always implement it — the background-Bash capture rides this seam).
+// always implement it — the background-Shell capture rides this seam).
 func newStreamer(t *testing.T, dir string) tool.CommandStreamer {
 	t.Helper()
 	s, ok := newRunner(t, dir).(tool.CommandStreamer)

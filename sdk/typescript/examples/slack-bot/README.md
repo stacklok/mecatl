@@ -199,11 +199,12 @@ do once reached.
 
 **DM:**
 1. Open a DM with the bot.
-2. Send a message → expect one reply.
-3. Send a second message in the same DM → expect it to remember context
-   from the first (same mecatl session, reused for every message in that
-   DM channel — this surface has no `thread_ts` to key a narrower session
-   on).
+2. Send a top-level message → expect a streamed reply in a new thread under
+   that message.
+3. Reply inside that thread → expect it to remember context from the first
+   prompt (the same mecatl session is reused for that Slack thread).
+4. Send another top-level message → expect a separate thread and a fresh
+   mecatl session.
 
 **Channel:**
 1. Invite the bot to a channel, `@mention` it with a prompt → expect a
@@ -222,9 +223,10 @@ the event even arrived before the bridge runs anything. Run with
 
 - Every permission ask mecatl raises is auto-approved — this bot is meant
   for a trusted dev workspace, not unattended production use.
-- DM: one `mecated` session per Slack DM channel. Channel (public or
-  private): one session per thread (`channel:thread_ts`), started by an
-  `@mention` and continued by plain replies in that same thread.
+- DM and channel: one `mecated` session per Slack thread
+  (`channel:thread_ts`). A top-level DM starts a new session; a channel
+  thread starts when the bot is `@mention`ed. Replies in either thread
+  continue the corresponding session.
 - **A bot restart forgets which mecatl session belongs to which Slack
   thread** — the thread↔session map is in-memory only. An in-progress
   thread starts a fresh mecatl session after a restart, even if the real

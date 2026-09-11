@@ -64,6 +64,7 @@ func NewHTTPHandler(svc *Service) *HTTPHandler {
 		handler http.HandlerFunc
 	}{
 		{"GET /v1/sessions/{id}", h.getSession},
+		{"GET /v1/sessions/{id}/mcp/connectors", h.listSessionMcpConnectors},
 		{"GET /v1/sessions/{id}/transcript", h.getSessionTranscript},
 		{"POST /v1/sessions/{id}/mode", h.setMode},
 		{"DELETE /v1/sessions/{id}", h.closeSession},
@@ -157,6 +158,14 @@ func NewHTTPHandler(svc *Service) *HTTPHandler {
 
 // ServeHTTP routes to the registered handlers.
 func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// ServeMux canonicalizes the doubled separator in this one session-scoped
+	// route before matching, which would turn an empty id into a redirect. Keep
+	// the REST contract aligned with gRPC: it is an invalid request, never a
+	// cacheable redirect.
+	if r.Method == http.MethodGet && r.URL.Path == "/v1/sessions//mcp/connectors" {
+		requireSessionAffinity(h.listSessionMcpConnectors)(w, r)
+		return
+	}
 	h.mux.ServeHTTP(w, r)
 }
 
@@ -344,27 +353,28 @@ func resolvedModelToJSON(rm ResolvedModel) *resolvedModelJSON {
 // client gets. Populated from the shared Service.capabilities() so the two
 // surfaces cannot drift.
 type serverCapabilitiesJSON struct {
-	MCP               bool                              `json:"mcp"`
-	SlashCommands     bool                              `json:"slash_commands"`
-	Memory            bool                              `json:"memory"`
-	Skills            bool                              `json:"skills"`
-	Teams             bool                              `json:"teams"`
-	Bash              bool                              `json:"bash"`
-	Image             bool                              `json:"image"`
-	Audio             bool                              `json:"audio"`
-	ModelSelection    bool                              `json:"model_selection"`
-	Reflection        bool                              `json:"reflection"`
-	LearningProposals bool                              `json:"learning_proposals"`
-	LearnedSkills     bool                              `json:"learned_skills"`
-	StorageHealth     bool                              `json:"storage_health"`
-	StorageMigration  bool                              `json:"storage_migration"`
-	StorageCleanup    bool                              `json:"storage_cleanup"`
-	SessionDebug      bool                              `json:"session_debug"`
-	DebugMCP          bool                              `json:"debug_mcp"`
-	ManualDream       *mecatlv1.ManualDreamCapabilities `json:"manual_dream,omitempty"`
-	Steer             bool                              `json:"steer"`
-	ManualCompaction  bool                              `json:"manual_compaction"`
-	Posture           string                            `json:"posture,omitempty"`
+	MCPConnectorStatus bool                              `json:"mcp_connector_status"`
+	MCP                bool                              `json:"mcp"`
+	SlashCommands      bool                              `json:"slash_commands"`
+	Memory             bool                              `json:"memory"`
+	Skills             bool                              `json:"skills"`
+	Teams              bool                              `json:"teams"`
+	Bash               bool                              `json:"bash"`
+	Image              bool                              `json:"image"`
+	Audio              bool                              `json:"audio"`
+	ModelSelection     bool                              `json:"model_selection"`
+	Reflection         bool                              `json:"reflection"`
+	LearningProposals  bool                              `json:"learning_proposals"`
+	LearnedSkills      bool                              `json:"learned_skills"`
+	StorageHealth      bool                              `json:"storage_health"`
+	StorageMigration   bool                              `json:"storage_migration"`
+	StorageCleanup     bool                              `json:"storage_cleanup"`
+	SessionDebug       bool                              `json:"session_debug"`
+	DebugMCP           bool                              `json:"debug_mcp"`
+	ManualDream        *mecatlv1.ManualDreamCapabilities `json:"manual_dream,omitempty"`
+	Steer              bool                              `json:"steer"`
+	ManualCompaction   bool                              `json:"manual_compaction"`
+	Posture            string                            `json:"posture,omitempty"`
 }
 
 // capabilitiesJSON projects the shared proto capabilities onto the JSON shape.
@@ -373,27 +383,28 @@ func capabilitiesJSON(c *mecatlv1.ServerCapabilities) *serverCapabilitiesJSON {
 		return nil
 	}
 	return &serverCapabilitiesJSON{
-		MCP:               c.GetMcp(),
-		SlashCommands:     c.GetSlashCommands(),
-		Memory:            c.GetMemory(),
-		Skills:            c.GetSkills(),
-		Teams:             c.GetTeams(),
-		Bash:              c.GetBash(),
-		Image:             c.GetImage(),
-		Audio:             c.GetAudio(),
-		ModelSelection:    c.GetModelSelection(),
-		Reflection:        c.GetReflection(),
-		LearningProposals: c.GetLearningProposals(),
-		LearnedSkills:     c.GetLearnedSkills(),
-		StorageHealth:     c.GetStorageHealth(),
-		StorageMigration:  c.GetStorageMigration(),
-		StorageCleanup:    c.GetStorageCleanup(),
-		SessionDebug:      c.GetSessionDebug(),
-		DebugMCP:          c.GetDebugMcp(),
-		ManualDream:       c.GetManualDream(),
-		Steer:             c.GetSteer(),
-		ManualCompaction:  c.GetManualCompaction(),
-		Posture:           c.GetPosture(),
+		MCPConnectorStatus: c.GetMcpConnectorStatus(),
+		MCP:                c.GetMcp(),
+		SlashCommands:      c.GetSlashCommands(),
+		Memory:             c.GetMemory(),
+		Skills:             c.GetSkills(),
+		Teams:              c.GetTeams(),
+		Bash:               c.GetBash(),
+		Image:              c.GetImage(),
+		Audio:              c.GetAudio(),
+		ModelSelection:     c.GetModelSelection(),
+		Reflection:         c.GetReflection(),
+		LearningProposals:  c.GetLearningProposals(),
+		LearnedSkills:      c.GetLearnedSkills(),
+		StorageHealth:      c.GetStorageHealth(),
+		StorageMigration:   c.GetStorageMigration(),
+		StorageCleanup:     c.GetStorageCleanup(),
+		SessionDebug:       c.GetSessionDebug(),
+		DebugMCP:           c.GetDebugMcp(),
+		ManualDream:        c.GetManualDream(),
+		Steer:              c.GetSteer(),
+		ManualCompaction:   c.GetManualCompaction(),
+		Posture:            c.GetPosture(),
 	}
 }
 
@@ -614,7 +625,7 @@ func (h *HTTPHandler) createSession(w http.ResponseWriter, r *http.Request) {
 	scaps := h.svc.SessionCapabilities(sess.ID)
 	writeJSON(w, http.StatusCreated, createSessionResp{
 		SessionID:           string(sess.ID),
-		Capabilities:        capabilitiesJSON(h.svc.capabilities()),
+		Capabilities:        capabilitiesJSON(h.svc.capabilitiesFor(r.Context())),
 		SessionCapabilities: &sessionCapabilitiesJSON{Image: scaps.Image, Audio: scaps.Audio},
 		ResolvedModel:       resolvedModelToJSON(h.svc.ResolvedModel(sess.ID)),
 		Placement:           placementMetadataToJSON(sess.Placement),
@@ -1951,6 +1962,16 @@ func (h *HTTPHandler) getMcpPrompt(w http.ResponseWriter, r *http.Request) {
 // deliberately separate resources rather than one overloaded document.
 func (h *HTTPHandler) getCompatibilityInfo(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, h.svc.CompatibilityInfo(r.Context()))
+}
+
+func (h *HTTPHandler) listSessionMcpConnectors(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	result, err := h.svc.ListSessionMcpConnectors(r.Context(), session.SessionID(r.PathValue("id")))
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toProtoConnectorInventory(result))
 }
 
 // listMcpSources handles GET /v1/mcp/sources.

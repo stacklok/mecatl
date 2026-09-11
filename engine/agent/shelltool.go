@@ -10,35 +10,36 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/stacklok/mecatl/engine/internal/shellcompat"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 )
 
-// bashToolMaxOutputBytes caps the byte length of one Bash tool result. It
+// shellToolMaxOutputBytes caps the byte length of one Shell tool result. It
 // mirrors engine/adapter/fstools.MaxOutputBytes EXACTLY (both 25,000 bytes):
 // engine/agent is core production code and must not import the fstools
 // adapter, so the constant is redefined here — keep the two byte-identical.
-const bashToolMaxOutputBytes = 25_000
+const shellToolMaxOutputBytes = 25_000
 
-// bashToolTruncationMarker is the suffix bashTruncate appends when it trims a
+// shellToolTruncationMarker is the suffix shellTruncate appends when it trims a
 // body to the byte cap — mirrors fstools.TruncationMarker byte-identically.
-const bashToolTruncationMarker = "\n... [output truncated: exceeded 25000 bytes]"
+const shellToolTruncationMarker = "\n... [output truncated: exceeded 25000 bytes]"
 
-// maxBackgroundBashJobs bounds the live background-Bash jobs one parent run
+// maxBackgroundShellJobs bounds the live background-Shell jobs one parent run
 // holds. It matches the Subagent background gate's scale (8): each live job is
 // an OS process the run-end drain must cancel+join plus a 64 KiB tail buffer.
-const maxBackgroundBashJobs = 8
+const maxBackgroundShellJobs = 8
 
-// BashSystemTempToolName is the synthetic, tool-wide permission capability for
+// ShellSystemTempToolName is the synthetic, tool-wide permission capability for
 // the system temporary-directory overlay. It never appears in the catalog and
-// never authorizes Bash execution by itself.
-const bashSystemTempToolName = "BashSystemTemp"
+// never authorizes Shell execution by itself.
+const shellSystemTempToolName = "ShellSystemTemp"
 
-// bashToolDescription is the model-facing documentation for the Bash tool. The
-// foreground half is byte-identical to the fstools Bash description (the
+// shellToolDescription is the model-facing documentation for the Shell tool. The
+// foreground half is byte-identical to the fstools Shell description (the
 // composition swap must not change the contract a foreground call sees); the
 // trailing paragraph documents the background flag this variant adds.
-const bashToolDescription = `Run a shell command in the workspace root and return its combined output and exit code.
+const shellToolDescription = `Run a shell command in the workspace root and return its combined output and exit code.
 
 When to use:
 - To run builds, tests, linters, git, and other CLI tooling.
@@ -50,9 +51,13 @@ When NOT to use:
 
 Behavior:
 - The command runs with the workspace root as its working directory.
-- Despite its name, Bash does not necessarily run Bash: it invokes "shell -c command"
+- Despite its name, Shell does not necessarily run Shell: it invokes "shell -c command"
   with the shell reported by "shell:" in the system prompt's <env> block (for
   example, "/bin/sh").
+- When the configured shell path basename is sh or dash, Shell provides a limited
+  compatibility diagnostic for [[ ... ]], process substitution, array expressions,
+  and ANSI-C quotes before execution. This is feedback only: permission, guardrail,
+  trust, and secret-scrubbing controls remain independent.
 - The shell is non-interactive: it has no terminal or user input. Do not run
   interactive commands such as "git rebase -i", editors, pagers, or REPLs.
 - Under a subagent (a forked branch or an isolated team member) the working
@@ -71,7 +76,7 @@ Background:
 - Set background to true for a long-running command (a dev server, a watch loop,
   a slow build). The call returns immediately with a job id and the command
   keeps running while you continue.
-- BashStatus is the SOLE channel to a background job: poll it for the retained
+- ShellStatus is the SOLE channel to a background job: poll it for the retained
   output tail, collect the finished job's result, or cancel the job. Output is
   NOT delivered back to you automatically.
 - A background job keeps only the most recent output (a bounded tail, older
@@ -101,16 +106,16 @@ Limits:
   Prefer a direct command for inspection (run the inner command first, then use its
   output) when a substitution is not essential.`
 
-// BashTool is the agent-loop Bash tool: the foreground path is byte-identical
-// to the fstools Bash body's orchestration (same arg validation, timeout ctx,
+// ShellTool is the agent-loop Shell tool: the foreground path is byte-identical
+// to the fstools Shell body's orchestration (same arg validation, timeout ctx,
 // runner.Run, combined-output shaping, exit-code error), and background:true
 // detaches the command as a run-scoped background job on the parent run's
 // child registry (the childCapableTool seam). It lives in engine/agent — not
 // the fstools adapter — because the background half needs the child registry,
 // which is an agent-package type.
 //
-// The tool registers under tool.BashToolName ("Bash"): the permission
-// evaluator special-cases that literal name (resolveBash / planModeDecision /
+// The tool registers under tool.ShellToolName ("Shell"): the permission
+// evaluator special-cases that literal name (resolveShell / planModeDecision /
 // LearnableRule), so a second tool name would silently bypass the bash gate.
 // Statically non-read-only: whether a specific command is read-only is
 // governance's job, not this tool's.
@@ -121,40 +126,40 @@ Limits:
 // child namespace), so the command's cwd always matches the workspace the tool
 // executes against, never a stale shared parent base. A namespace with no
 // shell (env.CommandRunner == nil) surfaces ErrNoShell honestly. The
-// composition root decides whether to REGISTER a Bash tool at all based on
-// runner availability; a shell-less catalog simply omits Bash.
-type BashTool struct{}
+// composition root decides whether to REGISTER a Shell tool at all based on
+// runner availability; a shell-less catalog simply omits Shell.
+type ShellTool struct{}
 
-// NewBashTool constructs the Bash tool. The runner is NOT captured here — it
+// NewShellTool constructs the Shell tool. The runner is NOT captured here — it
 // is read off the tool.Environment at Execute time (issue #462). The
 // composition root registers the returned tool ONLY when a runner is available
-// for the namespace; without one, the catalog has no Bash and the agent runs
+// for the namespace; without one, the catalog has no Shell and the agent runs
 // shell-less. Background calls additionally require the bound runner to
 // implement tool.CommandStreamer (they decline honestly when it does not).
-func NewBashTool() tool.Tool {
-	return BashTool{}
+func NewShellTool() tool.Tool {
+	return ShellTool{}
 }
 
-// Compile-time assertions: BashTool is a tool.Tool with the childCapableTool
+// Compile-time assertions: ShellTool is a tool.Tool with the childCapableTool
 // seam the dispatcher drives background calls through.
 var (
-	_ tool.Tool        = BashTool{}
-	_ childCapableTool = BashTool{}
+	_ tool.Tool        = ShellTool{}
+	_ childCapableTool = ShellTool{}
 )
 
-// bashArgs is the JSON argument shape for the Bash tool.
-type bashArgs struct {
+// shellArgs is the JSON argument shape for the Shell tool.
+type shellArgs struct {
 	Command    string `json:"command"`
 	TimeoutMS  int    `json:"timeout_ms"`
 	Background bool   `json:"background"`
 	TempScope  string `json:"temp_scope"`
 }
 
-// Spec returns the model-facing specification of the Bash tool.
-func (BashTool) Spec() tool.ToolSpec {
+// Spec returns the model-facing specification of the Shell tool.
+func (ShellTool) Spec() tool.ToolSpec {
 	return tool.ToolSpec{
-		Name:        tool.BashToolName,
-		Description: bashToolDescription,
+		Name:        tool.ShellToolName,
+		Description: shellToolDescription,
 		Schema: json.RawMessage(`{
   "type": "object",
   "properties": {
@@ -168,38 +173,38 @@ func (BashTool) Spec() tool.ToolSpec {
 		// timeout_ms and background are intentionally OPTIONAL and absent from
 		// "required" — the openai adapter sends tools NON-STRICT, and arg
 		// validation happens at the execution edge (same discipline as the
-		// fstools Bash spec; do NOT "fix" required).
+		// fstools Shell spec; do NOT "fix" required).
 	}
 }
 
-// ReadOnly reports that Bash is statically treated as mutating.
-func (BashTool) ReadOnly() bool { return false }
+// ReadOnly reports that Shell is statically treated as mutating.
+func (ShellTool) ReadOnly() bool { return false }
 
-// bashNoShellResult is the SINGLE composer for a nil-runner (shell-less
+// shellNoShellResult is the SINGLE composer for a nil-runner (shell-less
 // namespace) site, so the no-shell message can never drift from
-// bashErrorTrailer's ErrNoShell wording. It mirrors the fstools Bash tool's
+// bashErrorTrailer's ErrNoShell wording. It mirrors the fstools Shell tool's
 // nil-runner path: an empty body + tool.ErrNoShell yields the standalone
 // "[command failed to run: no shell available]" byte-identically.
-func bashNoShellResult(callID session.ToolCallID) session.ToolResult {
-	return session.NewToolError(callID, bashErrorMessage("", tool.ErrNoShell, 0))
+func shellNoShellResult(callID session.ToolCallID) session.ToolResult {
+	return session.NewToolError(callID, shellErrorMessage("", tool.ErrNoShell, 0))
 }
 
-// Execute runs a FOREGROUND Bash call. A background:true call must arrive via
+// Execute runs a FOREGROUND Shell call. A background:true call must arrive via
 // the childCapableTool seam (ExecuteWithParent), which owns the child
 // registry; on the plain Execute path it gets an honest error, never a silent
 // foreground fallback (the model was promised detached delivery).
-func (t BashTool) Execute(ctx context.Context, in session.ToolCall, env tool.Environment) (session.ToolResult, error) {
-	args, msg, ok := parseBashArgs(in)
+func (t ShellTool) Execute(ctx context.Context, in session.ToolCall, env tool.Environment) (session.ToolResult, error) {
+	args, msg, ok := parseShellArgs(in)
 	if !ok {
 		return session.NewToolError(in.ID, msg), nil
 	}
 	if args.Background {
 		return session.NewToolError(in.ID,
-			"Bash: `background` is not supported on this run (no child registry); omit it to run in the foreground"), nil
+			"Shell: `background` is not supported on this run (no child registry); omit it to run in the foreground"), nil
 	}
 	runner := env.CommandRunner()
 	if runner == nil {
-		return bashNoShellResult(in.ID), nil
+		return shellNoShellResult(in.ID), nil
 	}
 	return t.runForeground(ctx, in.ID, args, runner), nil
 }
@@ -208,32 +213,36 @@ func (t BashTool) Execute(ctx context.Context, in session.ToolCall, env tool.Env
 // same as Execute; the background half registers a run-scoped job on the
 // parent run's child registry (cancelled at run end by its drain), detaches
 // the drive, and returns the started-result immediately. It emits NO events —
-// a background Bash job is not a delegation family; the started-result, the
+// a background Shell job is not a delegation family; the started-result, the
 // registry (notice/status/collect), and the stored result are the only
 // channels.
-func (t BashTool) ExecuteWithParent(ctx context.Context, in session.ToolCall, env tool.Environment, _ func(session.Event), caps parentCaps) (session.ToolResult, error) {
-	args, msg, ok := parseBashArgs(in)
+func (t ShellTool) ExecuteWithParent(ctx context.Context, in session.ToolCall, env tool.Environment, _ func(session.Event), caps parentCaps) (session.ToolResult, error) {
+	args, msg, ok := parseShellArgs(in)
 	if !ok {
 		return session.NewToolError(in.ID, msg), nil
 	}
 	runner := env.CommandRunner()
 	if !args.Background {
 		if runner == nil {
-			return bashNoShellResult(in.ID), nil
+			return shellNoShellResult(in.ID), nil
 		}
 		return t.runForeground(ctx, in.ID, args, runner), nil
 	}
 	if caps.children == nil {
 		return session.NewToolError(in.ID,
-			"Bash: `background` is not supported on this run (no child registry); omit it to run in the foreground"), nil
+			"Shell: `background` is not supported on this run (no child registry); omit it to run in the foreground"), nil
 	}
 	if runner == nil {
-		return bashNoShellResult(in.ID), nil
+		return shellNoShellResult(in.ID), nil
 	}
 	streamer, ok := runner.(tool.CommandStreamer)
 	if !ok {
 		return session.NewToolError(in.ID,
-			"Bash: `background` is not supported by this command runner (it cannot stream output); omit it to run in the foreground"), nil
+			"Shell: `background` is not supported by this command runner (it cannot stream output); omit it to run in the foreground"), nil
+	}
+
+	if err := shellCompatibilityDiagnostic(runner, args.Command); err != nil {
+		return session.NewToolError(in.ID, err.Error()), nil
 	}
 
 	// Job-count gate: FAIL-FAST, mirroring the Subagent background gate — a
@@ -241,19 +250,19 @@ func (t BashTool) ExecuteWithParent(ctx context.Context, in session.ToolCall, en
 	// deadlock the model against itself. The read happens BEFORE the job's own
 	// registration, so the error lists only genuinely-live jobs (the failing
 	// call's own id can never appear in it).
-	if ids := caps.liveBackgroundChildIDs(); len(ids) >= maxBackgroundBashJobs {
-		return session.NewToolError(in.ID, bashJobGateFullError(ids)), nil
+	if ids := caps.liveBackgroundChildIDs(); len(ids) >= maxBackgroundShellJobs {
+		return session.NewToolError(in.ID, shellJobGateFullError(ids)), nil
 	}
 
-	jobID := session.SessionID(BashCmdJobPrefix + string(in.ID))
+	jobID := session.SessionID(ShellCmdJobPrefix + string(in.ID))
 	jobCtx, cancelJob := context.WithCancel(ctx)
 	// Per-call wall-clock deadline: a hard ceiling on the job, independent of a
 	// run-end cancel. timeoutCtx lets the terminal classification tell a
 	// deadline-kill (DeadlineExceeded) apart from a parent cancellation.
 	jobCtx, timeoutCtx, cancelTimeout := applyCallTimeout(jobCtx, &args.TimeoutMS)
 
-	_ = caps.registerChildRun(jobCtx, jobID, childFamilyBashCmd, bashCommandLabel(args.Command), cancelJob, true)
-	tail := newTailBuffer(maxBashJobTailBytes)
+	_ = caps.registerChildRun(jobCtx, jobID, childFamilyShellCmd, shellCommandLabel(args.Command), cancelJob, true)
+	tail := newTailBuffer(maxShellJobTailBytes)
 	caps.attachChildOutputTail(jobID, tail)
 	caps.startChildRun(jobID)
 
@@ -261,17 +270,17 @@ func (t BashTool) ExecuteWithParent(ctx context.Context, in session.ToolCall, en
 
 	return session.NewToolResult(in.ID, fmt.Sprintf("background bash job started.\n\njob id: %s\n\n"+
 		"It keeps running while you continue; a note will tell you when it finishes. "+
-		"Poll its output or collect its result with BashStatus; it will be "+
+		"Poll its output or collect its result with ShellStatus; it will be "+
 		"cancelled if it is still running when this run ends.", jobID)), nil
 }
 
-// driveBackground is the detached goroutine owning one background-Bash job's
+// driveBackground is the detached goroutine owning one background-Shell job's
 // remaining lifecycle: stream → classify the terminal → store the result. It
 // is run-scoped: jobCtx derives from the parent run's, the run-end drain
 // cancels and joins it (doneCh closes in the deferred finishChildRunResult),
 // and it emits NOTHING — no events cross its goroutine boundary.
-func (BashTool) driveBackground(jobCtx, timeoutCtx context.Context, jobID session.SessionID, args bashArgs, streamer tool.CommandStreamer, tail *tailBuffer, cancelJob, cancelTimeout context.CancelFunc, caps parentCaps) {
-	exitCode, err := runStreamingBashWithScope(jobCtx, streamer, args.Command, bashScope(args), args.TempScope != "", tail)
+func (ShellTool) driveBackground(jobCtx, timeoutCtx context.Context, jobID session.SessionID, args shellArgs, streamer tool.CommandStreamer, tail *tailBuffer, cancelJob, cancelTimeout context.CancelFunc, caps parentCaps) {
+	exitCode, err := runStreamingShellWithScope(jobCtx, streamer, args.Command, shellScope(args), args.TempScope != "", tail)
 	caps.setChildExitCode(jobID, exitCode)
 
 	// Terminal classification, mirroring the Subagent background terminal
@@ -290,7 +299,7 @@ func (BashTool) driveBackground(jobCtx, timeoutCtx context.Context, jobID sessio
 	case err != nil:
 		stop = session.StopError
 	}
-	res := bashJobTerminalResult(string(jobID), tail, exitCode, err, stop)
+	res := shellJobTerminalResult(string(jobID), tail, exitCode, err, stop)
 
 	// Ownership releases FIRST, the done signal LAST — the Subagent background
 	// ordering: finishChildRunResult closes the registry doneCh the run-end
@@ -300,62 +309,73 @@ func (BashTool) driveBackground(jobCtx, timeoutCtx context.Context, jobID sessio
 	caps.finishChildRunResult(jobID, stop, &res)
 }
 
-// runForeground is the fstools Bash body's Execute orchestration, kept
+// runForeground is the fstools Shell body's Execute orchestration, kept
 // byte-identical: timeout ctx → runner.Run → combined output → exit-code
 // error. It is re-implemented here (not imported) because engine/agent must
 // not import the fstools adapter.
-func (BashTool) runForeground(ctx context.Context, callID session.ToolCallID, args bashArgs, runner tool.CommandRunner) session.ToolResult {
+func (ShellTool) runForeground(ctx context.Context, callID session.ToolCallID, args shellArgs, runner tool.CommandRunner) session.ToolResult {
+	if err := shellCompatibilityDiagnostic(runner, args.Command); err != nil {
+		return session.NewToolError(callID, err.Error())
+	}
 	if args.TimeoutMS > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, time.Duration(args.TimeoutMS)*time.Millisecond)
 		defer cancel()
 	}
 
-	res, err := runBashWithScope(ctx, runner, args.Command, bashScope(args), args.TempScope != "")
+	res, err := runShellWithScope(ctx, runner, args.Command, shellScope(args), args.TempScope != "")
 	if err != nil {
 		// Surface command-execution failures (no shell, timeout, cancellation)
 		// to the model so it can adapt, preserving the runner's partial output
 		// rather than collapsing to a bare "command failed".
-		body := bashCombinedOutput(res, false) // includeExit=false: the ctx-error
+		body := shellCombinedOutput(res, false) // includeExit=false: the ctx-error
 		// path leaves ExitCode as a 0 placeholder; printing "[exit code: 0]"
 		// would read as success, which is misleading on a failure.
-		return session.NewToolError(callID, bashErrorMessage(body, err, args.TimeoutMS))
+		return session.NewToolError(callID, shellErrorMessage(body, err, args.TimeoutMS))
 	}
 
-	out := bashTruncate(bashCombinedOutput(res, true))
+	out := shellTruncate(shellCombinedOutput(res, true))
 	if res.ExitCode != 0 {
 		return session.NewToolError(callID, out)
 	}
 	return session.NewToolResult(callID, out)
 }
 
-// parseBashArgs unmarshals and validates a Bash call's JSON arguments, the
+// parseShellArgs unmarshals and validates a Shell call's JSON arguments, the
 // fstools validation verbatim (plus the background flag's type, which
 // session.ParseArgs checks).
-func parseBashArgs(in session.ToolCall) (args bashArgs, msg string, ok bool) {
+func parseShellArgs(in session.ToolCall) (args shellArgs, msg string, ok bool) {
 	if msg, ok := session.ParseArgs(in, &args); !ok {
-		return bashArgs{}, msg, false
+		return shellArgs{}, msg, false
 	}
 	if strings.TrimSpace(args.Command) == "" {
-		return bashArgs{}, "the \"command\" argument is required", false
+		return shellArgs{}, "the \"command\" argument is required", false
 	}
 	if args.TimeoutMS < 0 {
-		return bashArgs{}, "\"timeout_ms\" must be non-negative", false
+		return shellArgs{}, "\"timeout_ms\" must be non-negative", false
 	}
 	if args.TempScope != "" && args.TempScope != string(tool.TemporaryScopeManaged) && args.TempScope != string(tool.TemporaryScopeSystem) {
-		return bashArgs{}, "\"temp_scope\" must be managed or system", false
+		return shellArgs{}, "\"temp_scope\" must be managed or system", false
 	}
 	return args, "", true
 }
 
-func bashScope(args bashArgs) tool.TemporaryScope {
+func shellScope(args shellArgs) tool.TemporaryScope {
 	if args.TempScope == string(tool.TemporaryScopeSystem) {
 		return tool.TemporaryScopeSystem
 	}
 	return tool.TemporaryScopeManaged
 }
 
-func runBashWithScope(ctx context.Context, runner tool.CommandRunner, command string, scope tool.TemporaryScope, requested bool) (tool.CommandResult, error) {
+func shellCompatibilityDiagnostic(runner tool.CommandRunner, command string) error {
+	provider, ok := runner.(interface{ ShellPath() string })
+	if !ok {
+		return nil
+	}
+	return shellcompat.Check(provider.ShellPath(), command)
+}
+
+func runShellWithScope(ctx context.Context, runner tool.CommandRunner, command string, scope tool.TemporaryScope, requested bool) (tool.CommandResult, error) {
 	if scoped, ok := runner.(tool.CommandTemporaryScopeRunner); ok {
 		return scoped.RunWithTemporaryScope(ctx, command, scope)
 	}
@@ -365,7 +385,7 @@ func runBashWithScope(ctx context.Context, runner tool.CommandRunner, command st
 	return runner.Run(ctx, command)
 }
 
-func runStreamingBashWithScope(ctx context.Context, runner tool.CommandStreamer, command string, scope tool.TemporaryScope, requested bool, out io.Writer) (int, error) {
+func runStreamingShellWithScope(ctx context.Context, runner tool.CommandStreamer, command string, scope tool.TemporaryScope, requested bool, out io.Writer) (int, error) {
 	if scoped, ok := runner.(tool.CommandTemporaryScopeStreamer); ok {
 		return scoped.RunStreamingWithTemporaryScope(ctx, command, scope, out)
 	}
@@ -375,11 +395,11 @@ func runStreamingBashWithScope(ctx context.Context, runner tool.CommandStreamer,
 	return runner.RunStreaming(ctx, command, out)
 }
 
-// bashCombinedOutput renders a CommandResult as the model-facing combined
+// shellCombinedOutput renders a CommandResult as the model-facing combined
 // output: stdout then stderr (each newline-normalized), and — only when
 // includeExit — a trailing "[exit code: N]" line. Byte-identical to the
 // fstools helper of the same name.
-func bashCombinedOutput(res tool.CommandResult, includeExit bool) string {
+func shellCombinedOutput(res tool.CommandResult, includeExit bool) string {
 	var b strings.Builder
 	if res.Stdout != "" {
 		b.WriteString(res.Stdout)
@@ -399,29 +419,29 @@ func bashCombinedOutput(res tool.CommandResult, includeExit bool) string {
 	return b.String()
 }
 
-// bashErrorMessage composes the model-facing message for a runner error,
+// shellErrorMessage composes the model-facing message for a runner error,
 // keeping any partial output (body) and appending a trailer that explains why
 // the command stopped — the fstools helper's exact contract: the trailer
 // ALWAYS survives the output cap (the BODY is truncated first, reserving room
 // for the trailer and the truncation marker), so a timed-out/runaway command
 // that flooded its output can never lose the "timed out"/"canceled" signal.
-func bashErrorMessage(body string, err error, timeoutMS int) string {
-	noBodyMsg, trailer := bashErrorTrailer(err, timeoutMS)
+func shellErrorMessage(body string, err error, timeoutMS int) string {
+	noBodyMsg, trailer := shellErrorTrailer(err, timeoutMS)
 	if body == "" {
-		return bashTruncate(noBodyMsg)
+		return shellTruncate(noBodyMsg)
 	}
 	suffix := "\n" + trailer
-	budget := bashToolMaxOutputBytes - len(suffix) - len(bashToolTruncationMarker)
+	budget := shellToolMaxOutputBytes - len(suffix) - len(shellToolTruncationMarker)
 	if budget < 0 {
 		budget = 0
 	}
-	return bashTruncateBody(body, budget) + suffix
+	return shellTruncateBody(body, budget) + suffix
 }
 
-// bashErrorTrailer returns the model-facing wording for a runner error,
+// shellErrorTrailer returns the model-facing wording for a runner error,
 // byte-identical to the fstools classification: deadline / cancellation first,
 // then no-shell, then a generic default.
-func bashErrorTrailer(err error, timeoutMS int) (noBodyMsg, trailer string) {
+func shellErrorTrailer(err error, timeoutMS int) (noBodyMsg, trailer string) {
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
 		if timeoutMS > 0 {
@@ -442,15 +462,15 @@ func bashErrorTrailer(err error, timeoutMS int) (noBodyMsg, trailer string) {
 	}
 }
 
-// bashJobTerminalResult renders the stored result a finished background-Bash
-// job leaves for BashStatus collection: the retained output tail (capped like
-// any Bash result) followed by a one-line terminal summary — the exit code, or
+// shellJobTerminalResult renders the stored result a finished background-Shell
+// job leaves for ShellStatus collection: the retained output tail (capped like
+// any Shell result) followed by a one-line terminal summary — the exit code, or
 // the reason the job stopped, plus whether the tail was truncated. The error
 // bit is set for a non-zero exit, a timeout, and an execution fault; a clean
 // exit and a cancellation (matching the foreground ctx-error contract, which
 // also reports cancellation as a tool error) follow their stop classification.
-func bashJobTerminalResult(jobID string, tail *tailBuffer, exitCode int, err error, stop session.StopReason) session.ToolResult {
-	body := bashTruncate(strings.TrimRight(tail.Snapshot(), "\n"))
+func shellJobTerminalResult(jobID string, tail *tailBuffer, exitCode int, err error, stop session.StopReason) session.ToolResult {
+	body := shellTruncate(strings.TrimRight(tail.Snapshot(), "\n"))
 	var summary string
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
@@ -476,36 +496,36 @@ func bashJobTerminalResult(jobID string, tail *tailBuffer, exitCode int, err err
 	return res
 }
 
-// bashJobGateFullError renders the background-Bash gate's fail-fast error:
+// shellJobGateFullError renders the background-Shell gate's fail-fast error:
 // model-addressable, listing the currently-live background ids (ids ONLY —
 // nothing model-authored) and the recoverable actions. It mirrors the Subagent
-// gate's wording and names the jobs' own channel (BashStatus).
-func bashJobGateFullError(ids []string) string {
-	msg := "Bash: background job concurrency limit reached"
+// gate's wording and names the jobs' own channel (ShellStatus).
+func shellJobGateFullError(ids []string) string {
+	msg := "Shell: background job concurrency limit reached"
 	if len(ids) > 0 {
 		msg += "; currently running in the background: " + strings.Join(ids, ", ")
 	}
-	return msg + ". Wait for one to finish with BashStatus (use wait_ms), or run this command in the foreground."
+	return msg + ". Wait for one to finish with ShellStatus (use wait_ms), or run this command in the foreground."
 }
 
-// bashCommandLabel is the registry label for a background job: the command
+// shellCommandLabel is the registry label for a background job: the command
 // line normalized through the delegation families' own goal-label clamp
 // (truncateGoal — single bounded line, ellipsis on overflow). It backs only
 // the started-result echo and internal overlays, never roster or notice
 // output (ids and enum labels only there).
-func bashCommandLabel(command string) string {
+func shellCommandLabel(command string) string {
 	return truncateGoal(strings.TrimSpace(command))
 }
 
-// bashTruncate trims s to at most bashToolMaxOutputBytes on a rune boundary,
+// shellTruncate trims s to at most bashToolMaxOutputBytes on a rune boundary,
 // appending bashToolTruncationMarker when it does — the fstools truncateBytes.
-func bashTruncate(s string) string {
-	return bashTruncateBody(s, bashToolMaxOutputBytes)
+func shellTruncate(s string) string {
+	return shellTruncateBody(s, shellToolMaxOutputBytes)
 }
 
-// bashTruncateBody is bashTruncate's bounded core (the fstools truncate): a
+// shellTruncateBody is bashTruncate's bounded core (the fstools truncate): a
 // rune-boundary cut so the result is never invalid UTF-8.
-func bashTruncateBody(s string, maxBytes int) string {
+func shellTruncateBody(s string, maxBytes int) string {
 	if len(s) <= maxBytes {
 		return s
 	}
@@ -513,5 +533,5 @@ func bashTruncateBody(s string, maxBytes int) string {
 	for cut > 0 && !utf8.RuneStart(s[cut]) {
 		cut--
 	}
-	return s[:cut] + bashToolTruncationMarker
+	return s[:cut] + shellToolTruncationMarker
 }

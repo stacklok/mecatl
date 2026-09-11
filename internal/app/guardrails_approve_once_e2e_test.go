@@ -18,13 +18,13 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
-// guardrailMarker is the filename the scripted Bash command creates in the workspace.
+// guardrailMarker is the filename the scripted Shell command creates in the workspace.
 // Asserting its presence/absence after the run is the MODEL-FACING proof that the tool
 // actually ran (allow) or did not (deny/headless) — not merely that no block result
 // appeared on the stream.
 const guardrailMarker = "guard_marker"
 
-// markerExists reports whether the scripted Bash command's marker file landed in ws.
+// markerExists reports whether the scripted Shell command's marker file landed in ws.
 func markerExists(t *testing.T, ws string) bool {
 	t.Helper()
 	_, err := os.Stat(filepath.Join(ws, guardrailMarker))
@@ -36,21 +36,21 @@ func markerExists(t *testing.T, ws string) bool {
 
 // guardrails_approve_once_e2e_test.go is the FULL-composition e2e for the ADR-0062
 // approve-once flow: app.Build + server.Service over the HTTP SSE relay, offline. The
-// model issues a single mutating Bash call (`gh pr merge`); the engine-backed guardrail
+// model issues a single mutating Shell call (`gh pr merge`); the engine-backed guardrail
 // checker (driven by the SAME mock provider, which scripts the verdict turn between the
 // agent's tool-call turn and its final turn) judges it UNSAFE. Under an INTERACTIVE
 // service the block surfaces as a permission ask (HookOriginated) resolved via /approve;
 // under a HEADLESS service it degrades to a terminal block (no ask ever); under posture
 // YOLO it demotes to advisory (tool runs, no ask, no block).
 
-// guardrailE2EScript scripts the shared mock provider for one Bash call: the agent's
+// guardrailE2EScript scripts the shared mock provider for one Shell call: the agent's
 // tool-call turn, then the checker's UNSAFE verdict turn (a single JSON object — the
-// checker fires during the Bash call's preHook, between the agent's two turns), then the
+// checker fires during the Shell call's preHook, between the agent's two turns), then the
 // agent's final turn. The checker output must be the whole-object verdict ParseVerdict
 // accepts.
 func guardrailE2EScript(cmd string) []mockllm.Turn {
 	return []mockllm.Turn{
-		mockllm.ToolCallTurn(session.NewToolCall("c1", "Bash", json.RawMessage(`{"command":"`+cmd+`"}`))),
+		mockllm.ToolCallTurn(session.NewToolCall("c1", "Shell", json.RawMessage(`{"command":"`+cmd+`"}`))),
 		mockllm.TextTurn(`{"safe": false, "reason": "merges a PR unattended"}`),
 		mockllm.TextTurn("done"),
 	}
@@ -58,7 +58,7 @@ func guardrailE2EScript(cmd string) []mockllm.Turn {
 
 func guardrailE2ECfg(t *testing.T, interactive bool, posture Posture, cmd string) Config {
 	t.Helper()
-	// auto/yolo grant allow-all so the POLICY does not ask for the mutating Bash call —
+	// auto/yolo grant allow-all so the POLICY does not ask for the mutating Shell call —
 	// only the GUARDRAIL gates it (the point of the test). They refuse to boot as root
 	// without a declared sandbox; affirm one so the test boots in any environment.
 	if posture >= PostureAuto {
@@ -69,8 +69,8 @@ func guardrailE2ECfg(t *testing.T, interactive bool, posture Posture, cmd string
 	// AVAILABLE and the providerConstructor returns our scripted mock. The model ids
 	// contain "-" so lookupModelAlias treats them as concrete (known) — guardrails
 	// then wire (normalizeGuardrailsModel passes for a concrete id off the mock path).
-	// Shell must be set or the Bash tool is not registered (buildCommandRunner). An
-	// EXPLICIT Bash pre/block rule makes the enforcement deterministic.
+	// Shell must be set or the Shell tool is not registered (buildCommandRunner). An
+	// EXPLICIT Shell pre/block rule makes the enforcement deterministic.
 	return Config{
 		Workspace:           t.TempDir(),
 		NoSoul:              true,
@@ -78,7 +78,7 @@ func guardrailE2ECfg(t *testing.T, interactive bool, posture Posture, cmd string
 		MemoryDir:           t.TempDir(),
 		Model:               "test-model",
 		GuardrailsModel:     "guard-model",
-		GuardrailsRules:     []GuardrailRule{{Match: "Bash", Phases: []string{"pre"}, Mode: "block"}},
+		GuardrailsRules:     []GuardrailRule{{Match: "Shell", Phases: []string{"pre"}, Mode: "block"}},
 		Shell:               "/bin/sh",
 		Interactive:         interactive,
 		Posture:             posture,
@@ -137,7 +137,7 @@ func driveGuardrailPrompt(t *testing.T, srvURL, id, text string, onEvent func(ev
 }
 
 // Interactive Allow once: the guardrail block surfaces as a HookOriginated ask; /approve
-// AllowOnce runs the Bash call and the run completes.
+// AllowOnce runs the Shell call and the run completes.
 func TestGuardrailApproveOnceE2EInteractiveAllow(t *testing.T) {
 	ctx := context.Background()
 	cfg := guardrailE2ECfg(t, true, PostureAuto, "touch "+guardrailMarker)
@@ -175,9 +175,9 @@ func TestGuardrailApproveOnceE2EInteractiveAllow(t *testing.T) {
 			t.Fatal("AllowOnce must run the tool, not surface a guardrail block error")
 		}
 	}
-	// MODEL-FACING proof: the Bash command actually RAN — its marker file exists.
+	// MODEL-FACING proof: the Shell command actually RAN — its marker file exists.
 	if !markerExists(t, cfg.Workspace) {
-		t.Fatal("AllowOnce must EXECUTE the Bash command — the marker file is missing (the tool did not run)")
+		t.Fatal("AllowOnce must EXECUTE the Shell command — the marker file is missing (the tool did not run)")
 	}
 	final, err := built.Service.GetSession(ctx, sess.ID)
 	if err != nil {
@@ -188,7 +188,7 @@ func TestGuardrailApproveOnceE2EInteractiveAllow(t *testing.T) {
 	}
 }
 
-// Interactive Deny: the ask is denied and the Bash call is blocked.
+// Interactive Deny: the ask is denied and the Shell call is blocked.
 func TestGuardrailApproveOnceE2EInteractiveDeny(t *testing.T) {
 	ctx := context.Background()
 	cfg := guardrailE2ECfg(t, true, PostureAuto, "touch "+guardrailMarker)
@@ -229,7 +229,7 @@ func TestGuardrailApproveOnceE2EInteractiveDeny(t *testing.T) {
 	}
 	// MODEL-FACING proof: a deny must NOT execute the command — no marker file.
 	if markerExists(t, cfg.Workspace) {
-		t.Fatal("a denied guardrail ask must NOT execute the Bash command — but the marker file exists (the tool ran)")
+		t.Fatal("a denied guardrail ask must NOT execute the Shell command — but the marker file exists (the tool ran)")
 	}
 }
 
@@ -267,7 +267,7 @@ func TestGuardrailApproveOnceE2EHeadlessTerminalBlock(t *testing.T) {
 	}
 	// MODEL-FACING proof: a headless terminal block must NOT execute the command.
 	if markerExists(t, cfg.Workspace) {
-		t.Fatal("a headless terminal block must NOT execute the Bash command — but the marker file exists (the tool ran)")
+		t.Fatal("a headless terminal block must NOT execute the Shell command — but the marker file exists (the tool ran)")
 	}
 }
 
@@ -298,7 +298,7 @@ func TestGuardrailApproveOnceE2EYoloAdvisory(t *testing.T) {
 	}
 	// MODEL-FACING proof: under yolo (advisory) the command RUNS — marker exists.
 	if !markerExists(t, cfg.Workspace) {
-		t.Fatal("under yolo (advisory) the Bash command must run — the marker file is missing")
+		t.Fatal("under yolo (advisory) the Shell command must run — the marker file is missing")
 	}
 	final, err := built.Service.GetSession(ctx, sess.ID)
 	if err != nil {

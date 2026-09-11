@@ -284,11 +284,11 @@ Compare the `tools:` field against the agent's actual role.
 
 | Role pattern | Expected tools |
 |---|---|
-| Reviewer / auditor (read-only) | `Read, Glob, Grep` + maybe `Bash` (for `git diff`, scanners) + maybe `WebFetch` (for citing live specs) |
+| Reviewer / auditor (read-only) | `Read, Glob, Grep` + a command-execution tool (`Shell` in Mecatl; `Bash` in Claude Code) when needed (for `git diff`, scanners) + maybe `WebFetch` (for citing live specs) |
 | Implementer / refactor | + `Edit, Write` |
-| Builder / new-feature | + `Edit, Write, Bash` (with appropriate `permissionMode`) |
+| Builder / new-feature | + `Edit, Write`, and a command-execution tool (`Shell` in Mecatl; `Bash` in Claude Code) with appropriate `permissionMode` |
 | Designer / planner | `Read, Glob, Grep` + `WebFetch` for research |
-| Test runner | + `Bash` |
+| Test runner | + a command-execution tool (`Shell` in Mecatl; `Bash` in Claude Code) |
 | Data-fetcher with external state | + `mcpServers` with the specific server scoped |
 
 Findings:
@@ -296,8 +296,10 @@ Findings:
   privilege and Anthropic's published reviewer pattern.
 - **Inheriting all tools by omitting `tools:`** on a reviewer is
   Medium — implicitly grants Write/Edit through inheritance.
-- **Granting `Bash` without a `PreToolUse` validation hook** for
-  destructive operations is context-dependent; usually Medium.
+- **Granting a command-execution tool without a `PreToolUse` validation hook** for
+  destructive operations is context-dependent; usually Medium. Use the current
+  harness's tool name (`Shell` in Mecatl, `Bash` in Claude Code) in a concrete
+  definition; do not assume the spellings are interchangeable tool calls.
 - **Granting `mcpServers` whose tool surface the agent doesn't
   use** is Low — wastes tool-description tokens.
 - **Listing `Agent`** in tools is Info — silently has no effect

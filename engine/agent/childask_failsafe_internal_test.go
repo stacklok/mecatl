@@ -22,9 +22,9 @@ func TestResolveChildAskBothBitsTrueFailsSafe(t *testing.T) {
 	// step 0 (ConfiguredAsk) must win → fall through to headless auto-deny.
 	ask := session.PendingAsk{
 		AskID:                  askID,
-		Tool:                   "Bash",
+		Tool:                   "Shell",
 		Args:                   json.RawMessage(`{"command":"go test $(git rev-parse HEAD)"}`),
-		Reason:                 "approval required by rule for Bash (go test*)",
+		Reason:                 "approval required by rule for Shell (go test*)",
 		ConfiguredAsk:          true,
 		FlooredConfiguredAllow: true,
 	}

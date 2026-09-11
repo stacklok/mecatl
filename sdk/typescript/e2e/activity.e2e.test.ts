@@ -93,6 +93,12 @@ describe("offline durable activity wire", () => {
           expect(resumedKeys.some((key) => key.startsWith(`${firstRun.id}:`))).toBe(true);
           expect(resumedKeys.some((key) => key.startsWith(`${secondRun.id}:`))).toBe(true);
           expect(secondRun.id).not.toBe(firstRun.id);
+
+          // Admission of the second run proves the replacement daemon acquired the
+          // old session's lease. Close it explicitly and wait for the server's
+          // acknowledgement before destructive teardown; close also clears any
+          // process-local lease-loss bookkeeping before delete reacquires the lease.
+          await adopted.close();
           await adopted.delete();
         } finally {
           await actorClient?.close();

@@ -1,16 +1,13 @@
  mecatui  ·  session sess-test-00  ·  mode default
 ────────────────────────────────────────────────────────────────────────────────────────────────────
-Ask args: Bash
+Ask args: Shell
 
 {"command":"find . -name '*.go' -not -path './vendor/*' -print0 | xargs -0 grep -nH 'func Test' ↩
 | awk -F: '{print $1}' | sort | uniq -c | sort -rn | head -40 | while read -r count file; do ↩
 printf '%5d  %s\\n' \"$count\" \"$file\"; done | tee /tmp/test-counts.txt | column -t -s' ↩
 '","timeout_ms":60000}
 
-Bash requires approval
-
-
-
+Shell requires approval
 
 
 

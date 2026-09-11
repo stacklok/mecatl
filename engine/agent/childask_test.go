@@ -16,19 +16,19 @@ import (
 	"github.com/stacklok/mecatl/engine/tool"
 )
 
-// fakeBash is a non-read-only Bash tool that records the commands it executed and
+// fakeShell is a non-read-only Shell tool that records the commands it executed and
 // returns a canned result. It never actually runs anything (the command literal is
-// inert), so a test can assert "the child executed Bash" without a real shell.
-type fakeBash struct {
+// inert), so a test can assert "the child executed Shell" without a real shell.
+type fakeShell struct {
 	mu       sync.Mutex
 	executed []string
 }
 
-func (*fakeBash) Spec() tool.ToolSpec {
-	return tool.ToolSpec{Name: "Bash", Description: "fake bash", Schema: bashSchema}
+func (*fakeShell) Spec() tool.ToolSpec {
+	return tool.ToolSpec{Name: "Shell", Description: "fake bash", Schema: shellSchema}
 }
-func (*fakeBash) ReadOnly() bool { return false }
-func (b *fakeBash) Execute(_ context.Context, in session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
+func (*fakeShell) ReadOnly() bool { return false }
+func (b *fakeShell) Execute(_ context.Context, in session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	var args struct {
 		Command string `json:"command"`
 	}
@@ -38,13 +38,13 @@ func (b *fakeBash) Execute(_ context.Context, in session.ToolCall, _ tool.Enviro
 	b.mu.Unlock()
 	return session.NewToolResult(in.ID, "bash ran: "+args.Command), nil
 }
-func (b *fakeBash) ran() []string {
+func (b *fakeShell) ran() []string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return append([]string(nil), b.executed...)
 }
 
-var bashSchema = json.RawMessage(`{"type":"object","properties":{"command":{"type":"string"}},"required":["command"]}`)
+var shellSchema = json.RawMessage(`{"type":"object","properties":{"command":{"type":"string"}},"required":["command"]}`)
 
 // recordingDiag captures diagnostic Log calls for assertions (the headless auto-deny
 // operator line). It is concurrency-safe. With-derived children record into the same
@@ -116,14 +116,14 @@ func (l diagLine) argValue(key string) any {
 // interactive parent engine whose Subagent child surfaces an ask, then approves via the
 // surfaced (child) askID.
 func TestChildAskRouterRoutesVerdict(t *testing.T) {
-	bash := &fakeBash{}
+	bash := &fakeShell{}
 	// Child: isolated (forker) but the command is NOT isolation-approvable (non-read-only
 	// inner stand-in `zap`), so it surfaces to the parent rather than auto-approving.
 	childLLM := mockllm.New(
-		mockllm.ToolCallTurn(toolCall("k1", "Bash", `{"command":"cat $(zap)"}`)),
+		mockllm.ToolCallTurn(toolCall("k1", "Shell", `{"command":"cat $(zap)"}`)),
 		mockllm.TextTurn("child done"),
 	)
-	childEngine := bashChildEngine(childLLM, bash)
+	childEngine := shellChildEngine(childLLM, bash)
 	task := agent.NewSubagentTool(childEngine, agent.WithChildForker(&recordingSubagentForker{}))
 
 	parentLLM := mockllm.New(
@@ -138,28 +138,28 @@ func TestChildAskRouterRoutesVerdict(t *testing.T) {
 	approveOnAsk(t, r, session.VerdictAllowOnce)
 
 	if got := bash.ran(); len(got) != 1 || !strings.Contains(got[0], "cat $(zap)") {
-		t.Fatalf("child Bash should have executed once after the surfaced ask was approved; ran=%v", got)
+		t.Fatalf("child Shell should have executed once after the surfaced ask was approved; ran=%v", got)
 	}
 }
 
 // TestSurfacedAskRedaction proves the surfaced parent EvPermissionAsk clamps the
 // command and frames it as a subagent request — peer-injected/untrusted args never ride
 // raw — and that NO child transcript content (message.delta / result body) crosses to
-// the parent (gauntlet #7). The child's Bash command embeds a long, framing-shaped,
+// the parent (gauntlet #7). The child's Shell command embeds a long, framing-shaped,
 // "untrusted" string; the surfaced ask must contain the clamped command framed as a
 // request, never a child result body.
 func TestSurfacedAskRedaction(t *testing.T) {
-	bash := &fakeBash{}
+	bash := &fakeShell{}
 	untrusted := "cat $(zap " + strings.Repeat("X", 400) + ")" // long, non-read-only inner
 	childLLM := mockllm.New(
 		mockllm.ChunksTurn(
 			mockllm.TextChunk("CHILD-SECRET-TEXT-do-not-leak"),
-			mockllm.ToolCallChunk(toolCall("k1", "Bash", `{"command":`+jsonString(untrusted)+`}`)),
+			mockllm.ToolCallChunk(toolCall("k1", "Shell", `{"command":`+jsonString(untrusted)+`}`)),
 			mockllm.DoneChunk(session.StopEndTurn),
 		),
 		mockllm.TextTurn("child done"),
 	)
-	childEngine := bashChildEngine(childLLM, bash)
+	childEngine := shellChildEngine(childLLM, bash)
 	task := agent.NewSubagentTool(childEngine, agent.WithChildForker(&recordingSubagentForker{}))
 
 	parentLLM := mockllm.New(
@@ -189,7 +189,7 @@ func TestSurfacedAskRedaction(t *testing.T) {
 	if sawChildText {
 		t.Fatalf("gauntlet #7: child message.delta text leaked to the parent stream")
 	}
-	if !strings.Contains(surfaced.Reason, `subagent "x" requests approval to run Bash`) {
+	if !strings.Contains(surfaced.Reason, `subagent "x" requests approval to run Shell`) {
 		t.Fatalf("surfaced ask must be framed as an attributed subagent request, got reason: %q", surfaced.Reason)
 	}
 	// The command is clamped (rune-bounded); the 400-X blob must not ride in full.
@@ -209,18 +209,18 @@ func jsonString(s string) string {
 }
 
 // TestIsolatedSubagentAutoApprovesWorktreeSafe proves an ISOLATED Subagent child's
-// worktree-safe Bash (the motivating per-package coverage loop: substitution +
+// worktree-safe Shell (the motivating per-package coverage loop: substitution +
 // go test/list) auto-APPROVES (A2) — the child executes it without surfacing or
 // denying — even on a NON-interactive parent (so it is the isolation auto-approve, not
 // surfacing, that clears it).
 func TestIsolatedSubagentAutoApprovesWorktreeSafe(t *testing.T) {
-	bash := &fakeBash{}
+	bash := &fakeShell{}
 	cmd := `for pkg in $(go list ./...); do go test -cover "$pkg"; done`
 	childLLM := mockllm.New(
-		mockllm.ToolCallTurn(toolCall("k1", "Bash", `{"command":`+jsonString(cmd)+`}`)),
+		mockllm.ToolCallTurn(toolCall("k1", "Shell", `{"command":`+jsonString(cmd)+`}`)),
 		mockllm.TextTurn("child done"),
 	)
-	childEngine := bashChildEngine(childLLM, bash)
+	childEngine := shellChildEngine(childLLM, bash)
 	task := agent.NewSubagentTool(childEngine, agent.WithChildForker(&recordingSubagentForker{}))
 
 	// NON-interactive parent: no surface path. Only A2 can clear the ask.
@@ -233,21 +233,21 @@ func TestIsolatedSubagentAutoApprovesWorktreeSafe(t *testing.T) {
 	_ = drain(r)
 
 	if got := bash.ran(); len(got) != 1 {
-		t.Fatalf("isolated worktree-safe Bash should auto-approve and execute once; ran=%v", got)
+		t.Fatalf("isolated worktree-safe Shell should auto-approve and execute once; ran=%v", got)
 	}
 }
 
 // TestNonIsolatedHeadlessChildAutoDenies proves a NON-isolated (no forker), HEADLESS
-// child's Bash substitution ask auto-DENIES with the ACCURATE message + a correlated
+// child's Shell substitution ask auto-DENIES with the ACCURATE message + a correlated
 // operator diagnostic (LevelInfo, agent=<role>), and that NO permission-ask event for
 // the deny leaks onto the parent run's Events() stream.
 func TestNonIsolatedHeadlessChildAutoDenies(t *testing.T) {
-	bash := &fakeBash{}
+	bash := &fakeShell{}
 	childLLM := mockllm.New(
-		mockllm.ToolCallTurn(toolCall("k1", "Bash", `{"command":"cat $(zap)"}`)),
+		mockllm.ToolCallTurn(toolCall("k1", "Shell", `{"command":"cat $(zap)"}`)),
 		mockllm.TextTurn("child done"),
 	)
-	childEngine := bashChildEngine(childLLM, bash)
+	childEngine := shellChildEngine(childLLM, bash)
 	// No forker → not isolated. No Interactive → headless. So the ask auto-denies.
 	task := agent.NewSubagentTool(childEngine)
 
@@ -285,7 +285,7 @@ func TestNonIsolatedHeadlessChildAutoDenies(t *testing.T) {
 
 // --- shared helpers for the child-ask tests ---------------------------------
 
-// bashChildEngine builds a child engine with the given Bash tool under the
+// shellChildEngine builds a child engine with the given Shell tool under the
 // CANONICAL default child posture: the allow-all FLOOR
 // (permpolicy.AllowAllFloorRules — the same ruleset production childRules()
 // uses, so fixture and composition cannot drift). The floor allow-all still
@@ -293,16 +293,16 @@ func TestNonIsolatedHeadlessChildAutoDenies(t *testing.T) {
 // separate from allow-all, and a FLOOR-scoped allow never registers as a
 // configured Allow), so a `cat $(zap)` call produces an EvPermissionAsk the
 // child posture then resolves.
-func bashChildEngine(llm port.LLMProvider, bash tool.Tool) *agent.Engine {
+func shellChildEngine(llm port.LLMProvider, bash tool.Tool) *agent.Engine {
 	return agent.NewEngine(agent.Deps{
 		LLM:     llm,
-		Catalog: bashCatalog(bash),
+		Catalog: shellCatalog(bash),
 		Policy:  permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil),
 		Model:   "child-model",
 	})
 }
 
-func bashCatalog(bash tool.Tool) *tool.Catalog {
+func shellCatalog(bash tool.Tool) *tool.Catalog {
 	c := tool.NewCatalog()
 	c.MustRegister(bash)
 	return c

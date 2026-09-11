@@ -343,7 +343,7 @@ Keeping them one test would make the #371 proof depend on an optional scenario.
 | MCP prompts (`ListPrompts` / `GetPrompt`) | — | not a tool surface: their consumers are composition-time slash-command construction, a gRPC client API, and the prompt expander. There is no `Execute` to gate |
 | Minting signed instance credentials | [#478](https://github.com/stacklok/mecatl/issues/478) | issuer infrastructure is its own slice |
 | A containment predicate over resolved MCP targets | [#377](https://github.com/stacklok/mecatl/issues/377) deferral | needed when resource-level authority arrives, not before |
-| Capability scopes below exact tool names (Bash subcommands, action grammars) | future authority vocabulary | the set is tool-name granular by decision |
+| Capability scopes below exact tool names (Shell subcommands, action grammars) | future authority vocabulary | the set is tool-name granular by decision |
 | Whether a scheduled fire derives from its creator | [#373](https://github.com/stacklok/mecatl/issues/373) | a design decision, not a fix; Scenario 6 only requires the derivation point be explicit |
 | CAS, storage MACs, protection against direct snapshot mutation | [#374](https://github.com/stacklok/mecatl/issues/374), [#385](https://github.com/stacklok/mecatl/issues/385) | store integrity is a separate threat |
 | Tenant isolation and cross-caller access | [#368](https://github.com/stacklok/mecatl/issues/368) | ownership is a different question |

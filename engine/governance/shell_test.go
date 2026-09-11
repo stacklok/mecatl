@@ -91,7 +91,7 @@ func TestCanonicalize(t *testing.T) {
 	}
 }
 
-func TestReadOnlyBash(t *testing.T) {
+func TestReadOnlyShell(t *testing.T) {
 	tests := []struct {
 		name string
 		in   string
@@ -156,8 +156,8 @@ func TestReadOnlyBash(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := ReadOnlyBash(tt.in); got != tt.want {
-				t.Fatalf("ReadOnlyBash(%q) = %v, want %v", tt.in, got, tt.want)
+			if got := ReadOnlyShell(tt.in); got != tt.want {
+				t.Fatalf("ReadOnlyShell(%q) = %v, want %v", tt.in, got, tt.want)
 			}
 		})
 	}

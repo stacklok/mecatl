@@ -22,7 +22,7 @@ import (
 // The plan CONTENT rides the tool's `plan` string argument. surfacePlanAsk copies
 // c.Args into PendingAsk.Args (the existing channel), so the plan reaches the
 // mecatui plan-approval modal via proto `PermissionAsk.args` — the SAME posture as
-// every other permission ask (Write/Bash asks carry their args for operator review).
+// every other permission ask (Write/Shell asks carry their args for operator review).
 // The operator is the intended audience. Gauntlet #7 holds: the EvApproval payload
 // carries ONLY tool NAME + verdict + askID + call id — NO args (ApprovalPayload has
 // no args field); the plan in EvPermissionAsk.Args is the live operator-review

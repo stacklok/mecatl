@@ -29,13 +29,13 @@ const validLearningPatch = `learning:
 
 func TestGoccyYAMLMigration_Scenario4_LearningPatchPreservesUnrelatedDocument(t *testing.T) {
 	t.Parallel()
-	base := []byte("permissions:\n  deny:\n    - Bash(rm *)\nlearning:\n  mode: off\n")
+	base := []byte("permissions:\n  deny:\n    - Shell(rm *)\nlearning:\n  mode: off\n")
 	proposed, err := validateSettingsInMemory(base, []byte(validLearningPatch))
 	if err != nil {
 		t.Fatalf("replace learning: %v", err)
 	}
 	got := string(proposed)
-	if !strings.Contains(got, "Bash(rm *)") || !strings.Contains(got, "mode: review") || strings.Contains(got, "mode: off") {
+	if !strings.Contains(got, "Shell(rm *)") || !strings.Contains(got, "mode: review") || strings.Contains(got, "mode: off") {
 		t.Fatalf("replacement did not preserve unrelated settings and replace learning:\n%s", got)
 	}
 	if _, err := validateSettingsInMemory([]byte("permissions:\n  deny: [Read]\n"), nil); err != nil {
@@ -140,7 +140,7 @@ func TestGoccyYAMLMigration_Scenario2_ConfigValidateADR0225Safety(t *testing.T) 
 	dir := t.TempDir()
 	basePath := filepath.Join(dir, "settings $draft; name.yaml")
 	patchPath := filepath.Join(dir, "learning patch.yaml")
-	base := []byte("permissions:\n  deny:\n    - Bash(rm *)\nlearning:\n  mode: off\n")
+	base := []byte("permissions:\n  deny:\n    - Shell(rm *)\nlearning:\n  mode: off\n")
 	if err := os.WriteFile(basePath, base, 0o600); err != nil {
 		t.Fatal(err)
 	}

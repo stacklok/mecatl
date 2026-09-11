@@ -283,7 +283,7 @@ func TestGuardrailsPostureLine(t *testing.T) {
 // line must SURFACE the yolo advisory demotion so an operator sees the security
 // downgrade in the log, not only in docs. Non-yolo tiers must NOT carry the note.
 func TestGuardrailsPostureLineStatesYoloDemotion(t *testing.T) {
-	specs := []modelhook.RuleSpec{{Match: "Bash", Phases: []string{"pre"}, Mode: string(modelhook.ModeAdvisory)}}
+	specs := []modelhook.RuleSpec{{Match: "Shell", Phases: []string{"pre"}, Mode: string(modelhook.ModeAdvisory)}}
 	yolo := guardrailsPostureLine(Config{Posture: PostureYolo}, "m", srcGate, specs, false)
 	if !strings.Contains(yolo, "DEMOTED to advisory by posture yolo") {
 		t.Fatalf("the yolo posture line must state the advisory demotion; line=%q", yolo)

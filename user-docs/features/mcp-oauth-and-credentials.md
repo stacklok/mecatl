@@ -114,7 +114,7 @@ For global OAuth profiles, `mecak8s` does not open a browser and uses a Kubernet
 Secret-backed credential. Broker OAuth instead uses an external browser to complete a
 session enrollment; its preregistered client secret, when needed, is still a Kubernetes
 Secret. Agent-facing shells receive a scrubbed environment so MCP/provider credentials are
-not exposed through Bash. See the [Kubernetes deployment guide](/building/deployment/mecak8s.md)
+not exposed through Shell. See the [Kubernetes deployment guide](/building/deployment/mecak8s.md)
 for the Secret wiring.
 
 ## ToolHive broker OAuth
@@ -131,6 +131,10 @@ pre-prompt enrollment flow to discover and freeze the complete protected catalog
 only its hash, while mecatl uses the process-private raw secret solely for HTTP-Basic token
 exchange and refresh. It is never included in the browser flow, controls, logs, snapshots, or
 upstream calls. A failed enrollment exposes no partial protected catalogue.
+
+A model switch creates a new session and therefore a new broker attachment. The
+new session does not inherit the old session's enrollment or authorization;
+protected backends may need to be enrolled again.
 
 A protected broker upstream may instead use `client.mode: dcr`. This asks
 ToolHive to dynamically register the upstream client from the configured HTTPS

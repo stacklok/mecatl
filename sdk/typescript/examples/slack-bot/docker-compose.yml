@@ -16,10 +16,19 @@ services:
       - --http-addr=
       - --workspace=/workspace
       - --ready-file=/tmp/mecated-ready.json
-      # Stacklok gateway via a plain OpenAI-compatible key (OPENAI_API_KEY),
-      # NOT the `toolhive` provider's OIDC path — that one needs the host's OS
-      # keyring, which a container can't reach. See DESIGN.md/README.md.
-      - --openai-base-url=https://sprout.stacklok.dev/v1
+      # Optional OpenAI-compatible gateway, reached with a plain key
+      # (OPENAI_API_KEY) and NOT the `toolhive` provider's OIDC path — that one
+      # needs the host's OS keyring, which a container can't reach. See
+      # DESIGN.md/README.md. Set OPENAI_BASE_URL in .env to point at one.
+      #
+      # Leaving it unset is safe, and is NOT the empty-string trap described
+      # under `environment:` below — that trap is about provider KEYS, where an
+      # empty value still reads as "this provider is configured, try it". An
+      # empty base URL is inert: cliconfig.EndpointOverrides() registers an
+      # override only for a non-empty value, so `--openai-base-url=` leaves the
+      # OpenAI provider on its own default endpoint, exactly as if the flag
+      # were absent.
+      - --openai-base-url=${OPENAI_BASE_URL:-}
     # List form, no `:-` default: an unset var is genuinely OMITTED from the
     # container's environment. `KEY: ${VAR:-}` (map form) instead sets an EMPTY
     # STRING when unset — which mecated still treats as "this provider is

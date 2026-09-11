@@ -75,7 +75,7 @@ Available skills:`
 
 func TestFSSkillLogicalActivationGolden(t *testing.T) {
 	dir := t.TempDir()
-	writeSkill(t, dir, "full", "---\nname: full\ndescription: every block\ncompatibility: \"mecatl >= 0.1\"\nallowed-tools: \"Bash Read\"\n---\nFull body.\n")
+	writeSkill(t, dir, "full", "---\nname: full\ndescription: every block\ncompatibility: \"mecatl >= 0.1\"\nallowed-tools: \"Shell Read\"\n---\nFull body.\n")
 	writeAsset(t, dir, "full", "scripts/run.sh", "#!/bin/sh\necho ok\n")
 	writeAsset(t, dir, "full", "references/api.md", "API notes\n")
 
@@ -87,7 +87,7 @@ func TestFSSkillLogicalActivationGolden(t *testing.T) {
 	tl := NewTool(metas, src)
 	want := "Skill: full\n" +
 		"Compatibility: mecatl >= 0.1\n" +
-		"This skill declares allowed-tools: Bash, Read. These are the tools the skill expects to use; each call still follows normal permission rules.\n" +
+		"This skill declares allowed-tools: Shell, Read. These are the tools the skill expects to use; each call still follows normal permission rules.\n" +
 		"Bundled assets (logical names; request one with this Skill tool's asset argument):\n" +
 		"  - references/api.md (10 bytes)\n" +
 		"  - scripts/run.sh (18 bytes)\n\n" +
@@ -99,7 +99,7 @@ func TestFSSkillLogicalActivationGolden(t *testing.T) {
 	if got, wantDesc := tl.Spec().Description, expectedPreamble+"\n- full: every block"; got != wantDesc {
 		t.Errorf("description:\n got %q\nwant %q", got, wantDesc)
 	}
-	for _, forbidden := range []string{"Base directory", filepath.Join(dir, "full"), "absolute path", "Read tool", "via Bash"} {
+	for _, forbidden := range []string{"Base directory", filepath.Join(dir, "full"), "absolute path", "Read tool", "via Shell"} {
 		if strings.Contains(res.Content, forbidden) {
 			t.Errorf("activation leaked forbidden %q: %q", forbidden, res.Content)
 		}

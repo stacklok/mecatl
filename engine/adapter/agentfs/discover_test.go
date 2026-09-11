@@ -733,3 +733,16 @@ body`), "invalid-header.md")
 		t.Fatalf("malformed frontmatter reason leaked YAML source: %q", reason)
 	}
 }
+
+func TestLegacyBashToolListNormalizesToShell(t *testing.T) {
+	def, reason, _ := parseAgentDef([]byte("---\nname: legacy\ndescription: legacy tools\ntools: [Bash, Read]\ndisallowedTools: [Bash]\n---\nbody\n"), "legacy.md")
+	if reason != "" {
+		t.Fatalf("parseAgentDef reason = %q", reason)
+	}
+	if got, want := strings.Join(def.Tools, ","), "Shell,Read"; got != want {
+		t.Fatalf("tools = %q, want %q", got, want)
+	}
+	if got, want := strings.Join(def.DisallowedTools, ","), "Shell"; got != want {
+		t.Fatalf("disallowed tools = %q, want %q", got, want)
+	}
+}

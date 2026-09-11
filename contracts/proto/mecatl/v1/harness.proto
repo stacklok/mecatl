@@ -126,6 +126,10 @@ service HarnessService {
   // startup; it performs no live discovery.
   rpc ListMcpSources(ListMcpSourcesRequest) returns (ListMcpSourcesResponse);
 
+  // ListSessionMcpConnectors inspects the owned session's broker-local catalogue.
+  // This read neither probes upstreams nor progresses enrollment.
+  rpc ListSessionMcpConnectors(ListSessionMcpConnectorsRequest) returns (ListSessionMcpConnectorsResponse);
+
   // ListToolHiveGroups returns the distinct, non-empty ToolHive groups present
   // in the resolved source inventory. Derived from the snapshot — it does NOT
   // call ToolHive.
@@ -681,7 +685,7 @@ message GetCompatibilityInfoResponse {
 // old clients ignore and new clients reading an old server see as false.
 message ServerCapabilities {
   // mcp is true when MCP inventory/resources/prompts are available (an MCP
-  // provider is wired). Gates ctrl+o / ctrl+r / ctrl+p.
+  // provider is wired). Gates ctrl+o / ctrl+r / f8.
   bool mcp = 1;
   // slash_commands is true when slash-command discovery is available (a command
   // lister is wired). Gates the / palette.
@@ -694,9 +698,11 @@ message ServerCapabilities {
   // model's concern — the panel is discovery only.
   bool skills = 4;
   // teams is true when agent teams are enabled (a member-engine factory is
-  // wired). Gates the ctrl+a deep view's relevance.
+  // wired). Gates the f6 deep view's relevance.
   bool teams = 5;
-  // bash is true when the Bash tool is registered (i.e. NOT --no-bash).
+  // bash reports availability of the canonical Shell tool. Its historical
+  // spelling is retained for wire/API compatibility; false means Shell is not
+  // registered (for example, the operator ran --no-shell).
   bool bash = 6;
   // image is true when the wired LLM provider consumes image prompt parts.
   // Gates the @-mention file-attach UX for images (a client refuses to send an
@@ -786,6 +792,36 @@ message ServerCapabilities {
   // workspace_enrollment is true when protected workspace services must be
   // admitted as one complete bundle before the first prompt.
   bool workspace_enrollment = 28;
+  // mcp_connector_status requires a wired broker inspector, enforced ownership
+  // and a verified caller. It does not enable direct MCP resources or prompts.
+  bool mcp_connector_status = 29;
+}
+
+// ListSessionMcpConnectorsRequest names an owned, broker-bound session.
+message ListSessionMcpConnectorsRequest {
+  string session_id = 1;
+}
+
+// ListSessionMcpConnectorsResponse reports broker publication, not current health,
+// credential validity, session installation, persistence or prompt readiness.
+message ListSessionMcpConnectorsResponse {
+  // available or unavailable (lost runtime state or binding mismatch).
+  string availability = 1;
+  // not_required, not_started, pending, completed or unknown.
+  string enrollment_state = 2;
+  // Configured order, at most 256 rows, including configured-but-hidden tools.
+  repeated McpConnectorStatus connectors = 3;
+  uint32 total_connectors = 4;
+  bool truncated = 5;
+}
+
+// McpConnectorStatus is a safe display row, never a routing handle.
+message McpConnectorStatus {
+  // Display name only; control-free and bounded to 128 runes.
+  string name = 1;
+  // hidden, declared, discovered or unknown. Unknown count is not an empty catalogue.
+  string catalogue_state = 2;
+  uint32 tool_count = 3;
 }
 
 // CreateSessionResponse carries the newly-allocated session id.
@@ -2280,7 +2316,7 @@ message Team {
   Usage usage = 12;
   // context_used is the member's CURRENT context occupancy — the most recent
   // turn's input-token count (team.member turn.end). It is the numerator of the
-  // per-member context meter in the ctrl+a agents overlay; 0 when unknown.
+  // per-member context meter in the f6 agents overlay; 0 when unknown.
   int64 context_used = 13;
   // context_window is the producing member engine's context window in tokens —
   // the meter's denominator (team.member turn.end). 0 when unknown (no meter is
@@ -2289,7 +2325,7 @@ message Team {
   // tasks is a snapshot of the team's SHARED TASK LIST in creation order. It is
   // set on a first-class team.tasks event (a team-wide event with no member, emitted
   // on change, de-duped) and on team.end (the terminal snapshot). It feeds the
-  // ctrl+a agents task sub-view; it carries only task metadata, never member content.
+  // f6 agents task sub-view; it carries only task metadata, never member content.
   // Reuses the existing TeamTask message.
   repeated TeamTask tasks = 15;
   // findings is a snapshot of the team's SHARED FINDINGS LEDGER in append order. It

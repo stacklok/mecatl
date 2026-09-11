@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -19,18 +20,18 @@ import (
 // the view, lifecycle (advance/retract/endRun), resize re-wrap, tiny terminals,
 // hostile payloads, and the goldens for the pretty/raw/scrolled/modal frames.
 
-// longBashArgs is a long single-line pipeline (~400 chars) whose wrapped
+// longShellArgs is a long single-line pipeline (~400 chars) whose wrapped
 // rendering exercises the args view and the modal mini-viewport. It carries a
 // non-zero timeout_ms so the pretty tier's muted timeout annotation renders
 // (it must never appear in the verbatim raw tier).
-const longBashArgs = `{"command":"find . -name '*.go' -not -path './vendor/*' -print0 | xargs -0 grep -nH 'func Test' | awk -F: '{print $1}' | sort | uniq -c | sort -rn | head -40 | while read -r count file; do printf '%5d  %s\\n' \"$count\" \"$file\"; done | tee /tmp/test-counts.txt | column -t -s' '","timeout_ms":60000}`
+const longShellArgs = `{"command":"find . -name '*.go' -not -path './vendor/*' -print0 | xargs -0 grep -nH 'func Test' | awk -F: '{print $1}' | sort | uniq -c | sort -rn | head -40 | while read -r count file; do printf '%5d  %s\\n' \"$count\" \"$file\"; done | tee /tmp/test-counts.txt | column -t -s' '","timeout_ms":60000}`
 
-// tallBashArgs is a multi-line heredoc-style command with enough real newlines
+// tallShellArgs is a multi-line heredoc-style command with enough real newlines
 // (40 source lines) that the full-screen args view has genuine scroll room.
-var tallBashArgs = `{"command":"` + strings.Join(tallBashCommandLines(40), `\n`) + `"}`
+var tallShellArgs = `{"command":"` + strings.Join(tallShellCommandLines(40), `\n`) + `"}`
 
-// bashAskModel installs a Bash ask through the normal reducer path.
-func bashAskModel(t *testing.T, args string) Model {
+// shellAskModel installs a Shell ask through the normal reducer path.
+func shellAskModel(t *testing.T, args string) Model {
 	t.Helper()
 	m := newTestModelFromDeps(Deps{Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background()})
 	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 30})
@@ -38,7 +39,7 @@ func bashAskModel(t *testing.T, args string) Model {
 	m.stream = client.NewStream(&fakeRecver{}, &fakeSender{})
 	m.phase = phaseRunning
 	return applyAll(m, client.PermissionAskMsg{
-		AskID: "sess-test-0001:1:bash-1", Tool: "Bash", Args: args, Reason: "Bash requires approval",
+		AskID: "sess-test-0001:1:bash-1", Tool: "Shell", Args: args, Reason: "Shell requires approval",
 	})
 }
 
@@ -56,10 +57,10 @@ func openArgsView(t *testing.T, m Model) Model {
 	return m
 }
 
-// TestCtrlTOpensArgsViewForBashAsk pins the ctrl+t routing: a non-diff,
+// TestCtrlTOpensArgsViewForShellAsk pins the ctrl+t routing: a non-diff,
 // non-plan ask opens the full-screen args view WITHOUT touching m.expandTools.
-func TestCtrlTOpensArgsViewForBashAsk(t *testing.T) {
-	m := bashAskModel(t, longBashArgs)
+func TestCtrlTOpensArgsViewForShellAsk(t *testing.T) {
+	m := shellAskModel(t, longShellArgs)
 	before := m.expandTools
 	m = openArgsView(t, m)
 	if m.expandTools != before {
@@ -69,7 +70,7 @@ func TestCtrlTOpensArgsViewForBashAsk(t *testing.T) {
 		t.Errorf("phase must stay phaseAwaitingApproval with the view open, got %v", m.phase)
 	}
 	got := stripANSIstr(m.View().Content)
-	if !strings.Contains(got, "Ask args: Bash") {
+	if !strings.Contains(got, "Ask args: Shell") {
 		t.Errorf("the args view must render its title, got %q", got)
 	}
 	if !strings.Contains(got, "find . -name") {
@@ -91,31 +92,48 @@ func TestCtrlTPlanAskUnchanged(t *testing.T) {
 	}
 }
 
-// TestCtrlTEditAskKeepsModalExpand pins that an Edit (diff-capable) ask keeps
-// the in-modal expand behaviour: ctrl+t toggles expandTools, no args view.
-func TestCtrlTEditAskKeepsModalExpand(t *testing.T) {
+// TestCtrlTEditAskOpensBoundedDetails pins that an Edit ask opens its full diff
+// in the scrollable approval-details view rather than expanding the centered
+// modal vertically.
+func TestCtrlTEditAskOpensBoundedDetails(t *testing.T) {
+	var lines []string
+	for i := 0; i < maxDiffLines+8; i++ {
+		lines = append(lines, "line"+strconv.Itoa(i))
+	}
 	m := approvalModel(t, pendingAsk{
 		AskID: "sess-test-0001:1:edit-1",
 		Tool:  "Edit",
-		Args:  `{"path":"main.go","old_string":"a","new_string":"b"}`,
+		Args:  `{"path":"main.go","old_string":"` + strings.Join(lines, `\n`) + `","new_string":"b"}`,
 	})
 	before := m.expandTools
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
-	if approvalSurfaceOf(t, m).argsViewOpen {
-		t.Error("ctrl+t on an Edit ask must NOT open the args view")
+	_ = m.View()
+	s := approvalSurfaceOf(t, m)
+	if !s.argsViewOpen || !s.argsVPReady {
+		t.Fatal("ctrl+t on an Edit ask must open the approval-details viewport")
 	}
-	if m.expandTools == before {
-		t.Error("ctrl+t on an Edit ask must keep toggling expandTools")
+	if m.expandTools != before {
+		t.Error("ctrl+t on an Edit ask must not toggle expandTools")
+	}
+	if got := stripANSIstr(m.View().Content); !strings.Contains(got, "Approval details: Edit") || !strings.Contains(got, "- line0") {
+		t.Errorf("details view must render the diff, got %q", got)
+	}
+	if got := lipgloss.Height(m.renderBody()); got > m.vp.Height() {
+		t.Errorf("approval details height = %d, want at most viewport height %d", got, m.vp.Height())
+	}
+	m, _ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyEnd})
+	if got := stripANSIstr(m.View().Content); !strings.Contains(got, "- line"+strconv.Itoa(maxDiffLines+7)) {
+		t.Errorf("end must reveal the last diff line, got %q", got)
 	}
 }
 
 // TestArgsViewRawToggle pins the RawArgs (r) toggle: inside the view, r flips
 // pretty→raw (the VERBATIM wire args string appears) and back. The hint's raw
-// clause renders whenever the tiers genuinely differ (a Bash ask, or any ask
+// clause renders whenever the tiers genuinely differ (a Shell ask, or any ask
 // whose pretty tier re-indents the verbatim raw) and hides only when the tiers
 // are byte-identical.
 func TestArgsViewRawToggle(t *testing.T) {
-	m := openArgsView(t, bashAskModel(t, longBashArgs))
+	m := openArgsView(t, shellAskModel(t, longShellArgs))
 	pretty := stripANSIstr(m.View().Content)
 	if strings.Contains(pretty, `"command"`) {
 		t.Errorf("the pretty tier must not show the JSON envelope, got %q", pretty)
@@ -136,10 +154,10 @@ func TestArgsViewRawToggle(t *testing.T) {
 		t.Fatal("a second r must toggle back to pretty")
 	}
 
-	// Non-Bash ask with re-indenting JSON args: the tiers DO differ (verbatim
+	// Non-Shell ask with re-indenting JSON args: the tiers DO differ (verbatim
 	// single-line raw vs prettyJSON pretty), so the raw clause advertises and r
 	// visibly toggles.
-	m2 := openArgsView(t, bashAskModel(t, `{"url":"https://example.com"}`))
+	m2 := openArgsView(t, shellAskModel(t, `{"url":"https://example.com"}`))
 	approvalSurfaceOf(t, m2).ask.Tool = "WebFetch"
 	_ = m2.View()
 	before := stripANSIstr(m2.View().Content)
@@ -149,10 +167,10 @@ func TestArgsViewRawToggle(t *testing.T) {
 	m2, _ = pressKey(m2, tea.KeyPressMsg{Code: 'r', Text: "r"})
 	after := stripANSIstr(m2.View().Content)
 	if before == after {
-		t.Errorf("r on a non-Bash ask with differing tiers must toggle visibly")
+		t.Errorf("r on a non-Shell ask with differing tiers must toggle visibly")
 	}
 	if !strings.Contains(after, `{"url":"https://example.com"}`) {
-		t.Errorf("the non-Bash raw tier must be the verbatim wire args, got %q", after)
+		t.Errorf("the non-Shell raw tier must be the verbatim wire args, got %q", after)
 	}
 }
 
@@ -161,15 +179,15 @@ func TestArgsViewRawToggle(t *testing.T) {
 func TestArgsViewRawTierIsVerbatim(t *testing.T) {
 	th := theme.New("aztec", theme.AztecPalette())
 	const wire = `{"command":"echo a\n echo b","timeout_ms":1200}`
-	_, raw, ok := askArgsContent(th, pendingAsk{Tool: "Bash", Args: wire})
+	_, raw, ok := askArgsContent(th, pendingAsk{Tool: "Shell", Args: wire})
 	if !ok {
-		t.Fatal("a Bash ask must be args-view capable")
+		t.Fatal("a Shell ask must be args-view capable")
 	}
 	if raw != wire {
 		t.Errorf("raw tier = %q, want the verbatim wire string %q", raw, wire)
 	}
 	// Control bytes are still neutralized on the raw tier.
-	_, raw2, _ := askArgsContent(th, pendingAsk{Tool: "Bash", Args: "{\"c\":\"x\"}\x1b[2J"})
+	_, raw2, _ := askArgsContent(th, pendingAsk{Tool: "Shell", Args: "{\"c\":\"x\"}\x1b[2J"})
 	if strings.Contains(raw2, "\x1b") {
 		t.Errorf("the raw tier must neutralize control bytes, got %q", raw2)
 	}
@@ -178,7 +196,7 @@ func TestArgsViewRawTierIsVerbatim(t *testing.T) {
 // TestArgsViewEscReturnsToModal pins that esc closes the view back to the
 // modal (phase stays awaitingApproval, the modal renders again).
 func TestArgsViewEscReturnsToModal(t *testing.T) {
-	m := openArgsView(t, bashAskModel(t, longBashArgs))
+	m := openArgsView(t, shellAskModel(t, longShellArgs))
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyEscape})
 	if approvalSurfaceOf(t, m).argsViewOpen {
 		t.Error("esc must close the args view")
@@ -196,7 +214,7 @@ func TestArgsViewEscReturnsToModal(t *testing.T) {
 // view toggles back to the modal (onExpandToolsKey's argsViewOpen branch), with
 // the modal rendering again — like esc, and without touching expandTools.
 func TestArgsViewCtrlTClosesView(t *testing.T) {
-	m := bashAskModel(t, longBashArgs)
+	m := shellAskModel(t, longShellArgs)
 	before := m.expandTools
 	m = openArgsView(t, m)
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
@@ -219,7 +237,7 @@ func TestArgsViewCtrlTClosesView(t *testing.T) {
 // ScrollTop (home) jumps to the top and ScrollBottom (end) to the bottom of
 // tall args (the pinned action bar's hint advertises them).
 func TestArgsViewHomeEndJump(t *testing.T) {
-	m := openArgsView(t, bashAskModel(t, tallBashArgs))
+	m := openArgsView(t, shellAskModel(t, tallShellArgs))
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyEnd})
 	if bottom := approvalSurfaceOf(t, m).argsVP.YOffset(); bottom == 0 {
 		t.Fatal("end inside the args view must jump to the bottom of tall args")
@@ -233,7 +251,7 @@ func TestArgsViewHomeEndJump(t *testing.T) {
 // TestArgsViewVerdictKeysResolveFromInside pins that the verdict keys resolve
 // the ask from inside the view (the operator can read the full args, then act).
 func TestArgsViewVerdictKeysResolveFromInside(t *testing.T) {
-	m := openArgsView(t, bashAskModel(t, longBashArgs))
+	m := openArgsView(t, shellAskModel(t, longShellArgs))
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: 'a', Text: "a"})
 	if m.phase != phaseRunning {
 		t.Errorf("allow from inside the view must resolve → phaseRunning, got %v", m.phase)
@@ -249,7 +267,7 @@ func TestArgsViewVerdictKeysResolveFromInside(t *testing.T) {
 // TestArgsViewQueuedSuccessorClosesView pins that a queued successor advancing
 // while the view is open closes the view and shows the successor's modal.
 func TestArgsViewQueuedSuccessorClosesView(t *testing.T) {
-	m := bashAskModel(t, longBashArgs)
+	m := shellAskModel(t, longShellArgs)
 	m = applyAll(m, client.PermissionAskMsg{AskID: "sess-test-0001:1:write-2", Tool: "Write", Args: `{"path":"n.txt","content":"x"}`})
 	m = openArgsView(t, m)
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: 'a', Text: "a"})
@@ -270,7 +288,7 @@ func TestArgsViewQueuedSuccessorClosesView(t *testing.T) {
 // TestArgsViewRetractWhileOpenBehavesLikeResolve pins that retracting the
 // visible ask while its args view is open tears the view down symmetrically.
 func TestArgsViewRetractWhileOpenBehavesLikeResolve(t *testing.T) {
-	m := openArgsView(t, bashAskModel(t, longBashArgs))
+	m := openArgsView(t, shellAskModel(t, longShellArgs))
 	m = applyAll(m, client.PermissionRetractMsg{AskID: "sess-test-0001:1:bash-1"})
 	if m.modal != nil {
 		t.Error("a retract while the final ask is open must tear down its surface")
@@ -283,7 +301,7 @@ func TestArgsViewRetractWhileOpenBehavesLikeResolve(t *testing.T) {
 // TestArgsViewMouseWheelScrollsArgsVP pins that the mouse wheel routes to the
 // args viewport (not the conversation viewport) while the view is open.
 func TestArgsViewMouseWheelScrollsArgsVP(t *testing.T) {
-	m := openArgsView(t, bashAskModel(t, tallBashArgs))
+	m := openArgsView(t, shellAskModel(t, tallShellArgs))
 	if approvalSurfaceOf(t, m).argsVP.YOffset() != 0 {
 		t.Fatal("precondition: the args view opens at the top")
 	}
@@ -301,7 +319,7 @@ func TestArgsViewMouseWheelScrollsArgsVP(t *testing.T) {
 // TestArgsViewResizePreservesYOffset pins that a resize mid-view re-wraps the
 // args at the new width while preserving the operator's scroll offset.
 func TestArgsViewResizePreservesYOffset(t *testing.T) {
-	m := openArgsView(t, bashAskModel(t, tallBashArgs))
+	m := openArgsView(t, shellAskModel(t, tallShellArgs))
 	approvalSurfaceOf(t, m).argsVP.SetYOffset(2)
 	if approvalSurfaceOf(t, m).argsVP.YOffset() != 2 {
 		t.Fatalf("precondition: the tall content must admit YOffset 2, got %d", approvalSurfaceOf(t, m).argsVP.YOffset())
@@ -330,7 +348,7 @@ func TestModalMiniViewportScrollRenders(t *testing.T) {
 	m.sessionID = "sess-test-0001"
 	m.stream = client.NewStream(&fakeRecver{}, &fakeSender{})
 	m.phase = phaseRunning
-	m = applyAll(m, client.PermissionAskMsg{AskID: "sess-test-0001:1:bash-1", Tool: "Bash", Args: tallBashArgs, Reason: "Bash requires approval"})
+	m = applyAll(m, client.PermissionAskMsg{AskID: "sess-test-0001:1:bash-1", Tool: "Shell", Args: tallShellArgs, Reason: "Shell requires approval"})
 	if approvalSurfaceOf(t, m).miniScrollRange() <= 0 {
 		t.Fatal("precondition: tall args must have hidden rows to scroll")
 	}
@@ -355,7 +373,7 @@ func TestArgsViewTinyTerminalKeepsCardOnScreen(t *testing.T) {
 	m.sessionID = "sess-test-0001"
 	m.stream = client.NewStream(&fakeRecver{}, &fakeSender{})
 	m.phase = phaseRunning
-	m = applyAll(m, client.PermissionAskMsg{AskID: "sess-test-0001:1:bash-1", Tool: "Bash", Args: longBashArgs, Reason: "Bash requires approval"})
+	m = applyAll(m, client.PermissionAskMsg{AskID: "sess-test-0001:1:bash-1", Tool: "Shell", Args: longShellArgs, Reason: "Shell requires approval"})
 	body := m.renderBody()
 	// The args region is budgeted to (region - reserve) rows, so the whole body
 	// (before the askCard frame) can never exceed reserve + that budget — the
@@ -364,17 +382,17 @@ func TestArgsViewTinyTerminalKeepsCardOnScreen(t *testing.T) {
 	if got := lipgloss.Height(body) - 4; got > bound { // -4: the askCard frame is outside the body reserve
 		t.Errorf("body height %d exceeds the bounded reserve %d on a 24-row terminal", got, bound)
 	}
-	// And the args mini-viewport itself never renders more rows than its
-	// region-budgeted view: the hint line proves rows were hidden.
-	if !strings.Contains(stripANSIstr(body), "ctrl+t full args") {
-		t.Errorf("a tiny-terminal long-args modal must render the capped hint, got %q", stripANSIstr(body))
+	// The final card cap may replace the mini-viewport hint with its universal
+	// details marker when the pinned actions leave fewer rows than that hint needs.
+	if !strings.Contains(stripANSIstr(body), "ctrl+t details") {
+		t.Errorf("a tiny-terminal long-args modal must render the capped details hint, got %q", stripANSIstr(body))
 	}
 }
 
 // TestArgsViewHostilePayload pins that control bytes in the ask args are
 // sanitized before they reach the args view (CWE-150, reusing escapePayload).
 func TestArgsViewHostilePayload(t *testing.T) {
-	m := openArgsView(t, bashAskModel(t, `{"command":"cat `+escapePayload+`"}`))
+	m := openArgsView(t, shellAskModel(t, `{"command":"cat `+escapePayload+`"}`))
 	raw := []byte(m.View().Content)
 	residual := ansiRE.ReplaceAll(raw, nil)
 	if strings.Contains(string(residual), "\x1b") {
@@ -385,7 +403,7 @@ func TestArgsViewHostilePayload(t *testing.T) {
 // TestArgsViewFocusUnchanged pins that opening/closing the args view does not
 // touch the modal's keyboard-focused verdict.
 func TestArgsViewFocusUnchanged(t *testing.T) {
-	m := bashAskModel(t, longBashArgs)
+	m := shellAskModel(t, longShellArgs)
 	approvalSurfaceOf(t, m).ask.focusedVerdict = client.VerdictDeny
 	m = openArgsView(t, m)
 	if got := approvalSurfaceOf(t, m).ask.focusedVerdict; got != client.VerdictDeny {
@@ -409,7 +427,7 @@ func TestRawArgsReboundChordToggles(t *testing.T) {
 	m.sessionID = "sess-test-0001"
 	m.stream = client.NewStream(&fakeRecver{}, &fakeSender{})
 	m.phase = phaseRunning
-	m = applyAll(m, client.PermissionAskMsg{AskID: "sess-test-0001:1:bash-1", Tool: "Bash", Args: longBashArgs, Reason: "Bash requires approval"})
+	m = applyAll(m, client.PermissionAskMsg{AskID: "sess-test-0001:1:bash-1", Tool: "Shell", Args: longShellArgs, Reason: "Shell requires approval"})
 	m = openArgsView(t, m)
 	// The default chord r is now inert inside the view.
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: 'r', Text: "r"})
@@ -431,7 +449,7 @@ func TestRawArgsReboundChordToggles(t *testing.T) {
 // the plain modal (view closed) does nothing — only the args view consults
 // RawArgs.
 func TestBareRInPlainModalDoesNothing(t *testing.T) {
-	m := bashAskModel(t, longBashArgs)
+	m := shellAskModel(t, longShellArgs)
 	before := lastNotice(m)
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: 'r', Text: "r"})
 	if approvalSurfaceOf(t, m).argsViewOpen || approvalSurfaceOf(t, m).argsViewRaw {
@@ -452,7 +470,7 @@ func TestModalMiniViewportScrollKeys(t *testing.T) {
 	for i := 0; i < 20; i++ {
 		cmdLines = append(cmdLines, "echo line"+string(rune('a'+i)))
 	}
-	m := bashAskModel(t, `{"command":"`+strings.Join(cmdLines, `\n`)+`"}`)
+	m := shellAskModel(t, `{"command":"`+strings.Join(cmdLines, `\n`)+`"}`)
 	if maxOff := approvalSurfaceOf(t, m).miniScrollRange(); maxOff <= 0 {
 		t.Fatal("precondition: the args must overflow the mini-viewport")
 	}
@@ -485,7 +503,7 @@ func TestModalMiniViewportScrollKeys(t *testing.T) {
 	}
 	// A short-args ask: nothing hidden → the scroll keys no-op AND fall through
 	// (they must not be consumed).
-	short := bashAskModel(t, `{"command":"ls"}`)
+	short := shellAskModel(t, `{"command":"ls"}`)
 	if maxOff := approvalSurfaceOf(t, short).miniScrollRange(); maxOff != 0 {
 		t.Fatalf("a short ask must have no hidden rows, got max %d", maxOff)
 	}
@@ -516,7 +534,7 @@ func TestSurfaceApprovalMigration_Scenario3_ModalWheelCapture(t *testing.T) {
 		{
 			name: "generic card regardless of pointer position",
 			model: func(t *testing.T) Model {
-				m := newScrollable(t, "Bash", tallBashArgs)
+				m := newScrollable(t, "Shell", tallShellArgs)
 				_ = m.View()
 				return m
 			},
@@ -571,14 +589,14 @@ func TestWheelScrollsConversationWithoutModal(t *testing.T) {
 
 // TestAskArgsViewPrettyGolden locks the full-screen args view's pretty frame.
 func TestAskArgsViewPrettyGolden(t *testing.T) {
-	m := openArgsView(t, bashAskModel(t, longBashArgs))
+	m := openArgsView(t, shellAskModel(t, longShellArgs))
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "askargs_view_pretty.golden", got)
 }
 
 // TestAskArgsViewRawGolden locks the full-screen args view's raw frame.
 func TestAskArgsViewRawGolden(t *testing.T) {
-	m := openArgsView(t, bashAskModel(t, longBashArgs))
+	m := openArgsView(t, shellAskModel(t, longShellArgs))
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: 'r', Text: "r"})
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "askargs_view_raw.golden", got)
@@ -590,7 +608,7 @@ func TestAskArgsViewRawGolden(t *testing.T) {
 // byte-identical to the pretty one (a vacuous test that passes with broken
 // scrolling). The first visible line must differ from the pretty golden's.
 func TestAskArgsViewScrolledGolden(t *testing.T) {
-	m := openArgsView(t, bashAskModel(t, tallBashArgs))
+	m := openArgsView(t, shellAskModel(t, tallShellArgs))
 	approvalSurfaceOf(t, m).argsVP.SetYOffset(2)
 	if approvalSurfaceOf(t, m).argsVP.YOffset() != 2 {
 		t.Fatalf("the tall fixture must admit YOffset 2, got %d — the golden would be vacuous", approvalSurfaceOf(t, m).argsVP.YOffset())
@@ -610,14 +628,14 @@ func TestAskArgsViewScrolledGolden(t *testing.T) {
 // TestAskArgsModalCappedHintGolden locks the capped modal WITH its hint line:
 // a TALL ask (a heredoc-style command, >6 wrapped args rows) renders exactly
 // permissionModalArgsMaxLines args rows + the "… scroll · ctrl+t full args"
-// hint (askargs_modal_longbash.golden covers the uncapped 3-row shape). It is
+// hint (askargs_modal_longshell.golden covers the uncapped 3-row shape). It is
 // keyed on renderPermissionModal directly with an EXPLICIT height (as
 // ask_queue_test.go does) — the full-View fixture's body region is clamped to
 // ~20 rows at 100x30, so the region-budget cap (reserve 16) yields 4 rows, not
 // the 6-row cap this golden exists to lock.
 func TestAskArgsModalCappedHintGolden(t *testing.T) {
-	args := `{"command":"` + strings.Join(tallBashCommandLines(14), `\n`) + `"}`
-	m := bashAskModel(t, args) // the live help-key markings ride the renderer
+	args := `{"command":"` + strings.Join(tallShellCommandLines(14), `\n`) + `"}`
+	m := shellAskModel(t, args) // the live help-key markings ride the renderer
 	s := approvalSurfaceOf(t, m)
 	plain := stripANSIstr(s.renderPermissionModal(100, 40))
 	if n := strings.Count(plain, "echo step-"); n != permissionModalArgsMaxLines {
@@ -629,9 +647,9 @@ func TestAskArgsModalCappedHintGolden(t *testing.T) {
 	compareGolden(t, "askargs_modal_capped_hint.golden", []byte(plain))
 }
 
-// tallBashCommandLines builds n heredoc-style command lines (the same shape
-// tallBashArgs carries).
-func tallBashCommandLines(n int) []string {
+// tallShellCommandLines builds n heredoc-style command lines (the same shape
+// tallShellArgs carries).
+func tallShellCommandLines(n int) []string {
 	lines := make([]string, 0, n)
 	for i := 0; i < n; i++ {
 		lines = append(lines, "echo step-"+strings.Repeat("x", 4)+string(rune('a'+i%26))+"-"+strings.Repeat("y", i%7))
@@ -639,10 +657,10 @@ func tallBashCommandLines(n int) []string {
 	return lines
 }
 
-// TestAskArgsModalLongBashGolden locks the centered modal with a long-args
-// Bash ask (the wrapped, capped mini-viewport + hint).
-func TestAskArgsModalLongBashGolden(t *testing.T) {
-	m := bashAskModel(t, longBashArgs)
+// TestAskArgsModalLongShellGolden locks the centered modal with a long-args
+// Shell ask (the wrapped, capped mini-viewport + hint).
+func TestAskArgsModalLongShellGolden(t *testing.T) {
+	m := shellAskModel(t, longShellArgs)
 	got := stripANSI([]byte(m.View().Content))
-	compareGolden(t, "askargs_modal_longbash.golden", got)
+	compareGolden(t, "askargs_modal_longshell.golden", got)
 }

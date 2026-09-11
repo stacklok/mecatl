@@ -20,7 +20,7 @@ import (
 
 // TestADR_0281_EngineSystemPromptContainsTempScopeContract pins the declared
 // lifecycle affordance in the factory-built Role layer, rather than merely the
-// Bash tool inventory where a duplicated description would make this vacuous.
+// Shell tool inventory where a duplicated description would make this vacuous.
 func TestADR_0281_EngineSystemPromptContainsTempScopeContract(t *testing.T) {
 	ctx := context.Background()
 	var captured prompt.Layered

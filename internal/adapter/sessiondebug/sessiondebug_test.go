@@ -58,7 +58,7 @@ func TestStatusOmitsPendingArgsAndDoesNotMutateTarget(t *testing.T) {
 	if err := target.BeginTurn(); err != nil {
 		t.Fatal(err)
 	}
-	if err := target.PauseForApproval(session.PendingAsk{AskID: "ask", Tool: "Bash", Call: "tc", Args: []byte(`{"secret":"DO-NOT-LEAK"}`), Reason: "private"}); err != nil {
+	if err := target.PauseForApproval(session.PendingAsk{AskID: "ask", Tool: "Shell", Call: "tc", Args: []byte(`{"secret":"DO-NOT-LEAK"}`), Reason: "private"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Save(context.Background(), target); err != nil {
@@ -66,7 +66,7 @@ func TestStatusOmitsPendingArgsAndDoesNotMutateTarget(t *testing.T) {
 	}
 	before, _ := store.Load(context.Background(), target.ID)
 	got := execute(t, New(target.ID, store, nil), `{"view":"status"}`)
-	if got.IsError || strings.Contains(got.Content, "DO-NOT-LEAK") || !strings.Contains(got.Content, `"tool":"Bash"`) {
+	if got.IsError || strings.Contains(got.Content, "DO-NOT-LEAK") || !strings.Contains(got.Content, `"tool":"Shell"`) {
 		t.Fatalf("status = %s", got.Content)
 	}
 	after, _ := store.Load(context.Background(), target.ID)

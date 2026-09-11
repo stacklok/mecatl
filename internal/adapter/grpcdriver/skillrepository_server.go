@@ -78,48 +78,25 @@ func (s *skillRepositoryServer) RecordSkillEvaluation(ctx context.Context, req *
 }
 
 func (s *skillRepositoryServer) StageSkill(ctx context.Context, req *driverv1.SkillMutationRequest) (*driverv1.SkillVersionResponse, error) {
-	mutation, err := skillMutationFromProto(req)
-	if err != nil {
-		return nil, skillRepositoryStatus(err)
-	}
-	value, err := s.repository.Stage(ctx, mutation.partition, mutation.owner, mutation.id, mutation.version, mutation.revision)
-	return serverSkillResponse(value, err)
+	return applySkillLifecycleMutation(ctx, req, s.repository.Stage)
 }
+
 func (s *skillRepositoryServer) ActivateSkill(ctx context.Context, req *driverv1.SkillMutationRequest) (*driverv1.SkillVersionResponse, error) {
-	mutation, err := skillMutationFromProto(req)
-	if err != nil {
-		return nil, skillRepositoryStatus(err)
-	}
-	value, err := s.repository.Activate(ctx, mutation.partition, mutation.owner, mutation.id, mutation.version, mutation.revision)
-	return serverSkillResponse(value, err)
+	return applySkillLifecycleMutation(ctx, req, s.repository.Activate)
 }
 func (s *skillRepositoryServer) ActivateValidatedSkill(ctx context.Context, req *driverv1.SkillMutationRequest) (*driverv1.SkillVersionResponse, error) {
 	activator, ok := s.repository.(learning.ValidatedSkillActivator)
 	if !ok {
 		return nil, status.Error(codes.Unimplemented, "validated skill activation is not supported")
 	}
-	mutation, err := skillMutationFromProto(req)
-	if err != nil {
-		return nil, skillRepositoryStatus(err)
-	}
-	value, err := activator.ActivateValidated(ctx, mutation.partition, mutation.owner, mutation.id, mutation.version, mutation.revision)
-	return serverSkillResponse(value, err)
+	return applySkillLifecycleMutation(ctx, req, activator.ActivateValidated)
 }
 func (s *skillRepositoryServer) RejectSkill(ctx context.Context, req *driverv1.SkillMutationRequest) (*driverv1.SkillVersionResponse, error) {
-	mutation, err := skillMutationFromProto(req)
-	if err != nil {
-		return nil, skillRepositoryStatus(err)
-	}
-	value, err := s.repository.Reject(ctx, mutation.partition, mutation.owner, mutation.id, mutation.version, mutation.revision)
-	return serverSkillResponse(value, err)
+	return applySkillLifecycleMutation(ctx, req, s.repository.Reject)
 }
+
 func (s *skillRepositoryServer) ArchiveSkill(ctx context.Context, req *driverv1.SkillMutationRequest) (*driverv1.SkillVersionResponse, error) {
-	mutation, err := skillMutationFromProto(req)
-	if err != nil {
-		return nil, skillRepositoryStatus(err)
-	}
-	value, err := s.repository.Archive(ctx, mutation.partition, mutation.owner, mutation.id, mutation.version, mutation.revision)
-	return serverSkillResponse(value, err)
+	return applySkillLifecycleMutation(ctx, req, s.repository.Archive)
 }
 func (s *skillRepositoryServer) RollbackSkill(ctx context.Context, req *driverv1.RollbackSkillRequest) (*driverv1.SkillVersionResponse, error) {
 	partition := skillPartitionFromProto(req.GetPartition())
@@ -148,6 +125,18 @@ func skillMutationFromProto(req *driverv1.SkillMutationRequest) (skillMutation, 
 	}
 	return mutation, nil
 }
+
+type skillLifecycleOperation func(context.Context, learning.SkillPartition, string, learning.SkillID, learning.VersionID, learning.Revision) (learning.SkillVersion, error)
+
+func applySkillLifecycleMutation(ctx context.Context, req *driverv1.SkillMutationRequest, operation skillLifecycleOperation) (*driverv1.SkillVersionResponse, error) {
+	mutation, err := skillMutationFromProto(req)
+	if err != nil {
+		return nil, skillRepositoryStatus(err)
+	}
+	value, err := operation(ctx, mutation.partition, mutation.owner, mutation.id, mutation.version, mutation.revision)
+	return serverSkillResponse(value, err)
+}
+
 func serverSkillResponse(value learning.SkillVersion, err error) (*driverv1.SkillVersionResponse, error) {
 	if err != nil {
 		return nil, skillRepositoryStatus(err)

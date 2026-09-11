@@ -624,7 +624,7 @@ func TestParseSkillAllowedToolsAcceptsResolvedScalarsAsText(t *testing.T) {
 func TestParseSkillAllowedTools(t *testing.T) {
 	t.Run("space-separated string form splits into names", func(t *testing.T) {
 		dir := t.TempDir()
-		writeSkill(t, dir, "tooling", "---\nname: tooling\ndescription: a skill with allowed-tools\nallowed-tools: \"Bash Read Grep\"\n---\nbody\n")
+		writeSkill(t, dir, "tooling", "---\nname: tooling\ndescription: a skill with allowed-tools\nallowed-tools: \"Shell Read Grep\"\n---\nbody\n")
 		got, skips, err := Discover(dir)
 		if err != nil {
 			t.Fatalf("Discover: %v", err)
@@ -635,7 +635,7 @@ func TestParseSkillAllowedTools(t *testing.T) {
 		if len(got) != 1 || got[0].Name != "tooling" {
 			t.Fatalf("tooling skill not parsed: %+v", got)
 		}
-		want := []string{"Bash", "Read", "Grep"}
+		want := []string{"Shell", "Read", "Grep"}
 		if !reflect.DeepEqual(got[0].AllowedTools, want) {
 			t.Errorf("AllowedTools = %v, want %v", got[0].AllowedTools, want)
 		}
@@ -653,12 +653,12 @@ func TestParseSkillAllowedTools(t *testing.T) {
 
 	t.Run("extra whitespace is tolerated", func(t *testing.T) {
 		dir := t.TempDir()
-		writeSkill(t, dir, "ws", "---\nname: ws\ndescription: lots of whitespace\nallowed-tools: \"  Bash   Read    Grep  \"\n---\nbody\n")
+		writeSkill(t, dir, "ws", "---\nname: ws\ndescription: lots of whitespace\nallowed-tools: \"  Shell   Read    Grep  \"\n---\nbody\n")
 		got, _, err := Discover(dir)
 		if err != nil {
 			t.Fatalf("Discover: %v", err)
 		}
-		want := []string{"Bash", "Read", "Grep"}
+		want := []string{"Shell", "Read", "Grep"}
 		if !reflect.DeepEqual(got[0].AllowedTools, want) {
 			t.Errorf("AllowedTools = %v, want %v (extra whitespace should collapse)", got[0].AllowedTools, want)
 		}
@@ -666,7 +666,7 @@ func TestParseSkillAllowedTools(t *testing.T) {
 
 	t.Run("YAML list form is accepted", func(t *testing.T) {
 		dir := t.TempDir()
-		writeSkill(t, dir, "listform", "---\nname: listform\ndescription: list form\nallowed-tools:\n  - Bash\n  - Read\n  - Grep\n---\nbody\n")
+		writeSkill(t, dir, "listform", "---\nname: listform\ndescription: list form\nallowed-tools:\n  - Shell\n  - Read\n  - Grep\n---\nbody\n")
 		got, skips, err := Discover(dir)
 		if err != nil {
 			t.Fatalf("Discover: %v", err)
@@ -674,7 +674,7 @@ func TestParseSkillAllowedTools(t *testing.T) {
 		if len(skips) != 0 {
 			t.Fatalf("list form must parse cleanly, skips=%v", skips)
 		}
-		want := []string{"Bash", "Read", "Grep"}
+		want := []string{"Shell", "Read", "Grep"}
 		if !reflect.DeepEqual(got[0].AllowedTools, want) {
 			t.Errorf("AllowedTools = %v, want %v", got[0].AllowedTools, want)
 		}
@@ -769,7 +769,7 @@ func TestGoccyYAMLMigration_Scenario3_SkillFrontmatterCompatibility(t *testing.T
 	skill, reason, _ := ParseSkill([]byte(`---
 name: review
 description: review changes
-allowed-tools: [Read, "Grep Bash"]
+allowed-tools: [Read, "Grep Shell"]
 metadata:
   audience: engineers
 unknown-future-field: ignored
@@ -778,7 +778,7 @@ review the change`), "review/SKILL.md")
 	if reason != "" {
 		t.Fatalf("parse skill frontmatter: %s", reason)
 	}
-	if got, want := strings.Join(skill.AllowedTools, ","), "Read,Grep,Bash"; got != want {
+	if got, want := strings.Join(skill.AllowedTools, ","), "Read,Grep,Shell"; got != want {
 		t.Fatalf("allowed-tools = %q, want %q", got, want)
 	}
 	if skill.Metadata["audience"] != "engineers" {
@@ -791,5 +791,15 @@ review the change`), "review/SKILL.md")
 	}
 	if strings.Contains(reason, "leaked-secret") || strings.Contains(reason, "unterminated") {
 		t.Fatalf("malformed frontmatter reason leaked YAML source: %q", reason)
+	}
+}
+
+func TestLegacyBashAllowedToolsNormalizesToShell(t *testing.T) {
+	skill, reason, _ := ParseSkill([]byte("---\nname: legacy\ndescription: legacy tools\nallowed-tools: \"Bash Read\"\n---\nbody\n"), "legacy/SKILL.md")
+	if reason != "" {
+		t.Fatalf("ParseSkill reason = %q", reason)
+	}
+	if got, want := strings.Join(skill.AllowedTools, ","), "Shell,Read"; got != want {
+		t.Fatalf("allowed tools = %q, want %q", got, want)
 	}
 }

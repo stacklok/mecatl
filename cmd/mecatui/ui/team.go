@@ -18,7 +18,7 @@ import (
 //
 // It is the OVERFLOW HOME the inline Team card's maxTeamLanes cap defers to — the
 // inline card stays the calm default (capped, with a "· +K more" roll-up), and
-// ctrl+a is the opt-in deep view showing the WHOLE team plus per-member detail.
+// f6 is the opt-in deep view showing the WHOLE team plus per-member detail.
 type teamView int
 
 const (
@@ -44,7 +44,7 @@ type teamState struct {
 }
 
 // openTeam opens the roster overlay over the most-recent populated Team card.
-// It is openable while idle OR while a team is streaming (Gap B): ctrl+a is the
+// It is openable while idle OR while a team is streaming (Gap B): f6 is the
 // opt-in deep view, and the most useful time to open it is mid-run. It still
 // rejects phaseAwaitingApproval (a permission modal owns the keyboard) and any
 // fatal/connecting phase. It is a no-op when no team has run yet — the empty
@@ -59,7 +59,7 @@ func (m Model) openTeam() (tea.Model, tea.Cmd) {
 		// No team to show — surface a brief hint rather than opening an empty panel.
 		// Distinguish "teams not enabled on this server" from "no team has run yet"
 		// using the relayed caps, the same honest-affordance treatment the inventory
-		// panels use. (The unified ctrl+a still opens onto the Subagents tab when only
+		// panels use. (The unified f6 still opens onto the Subagents tab when only
 		// subagents ran; the /team command is team-specific, so it hints here.)
 		if !m.caps.Teams {
 			m.statusMsg = "agent teams are not enabled on this server"
@@ -70,7 +70,7 @@ func (m Model) openTeam() (tea.Model, tea.Cmd) {
 	}
 	m.prompt.Blur() // overlay owns the keyboard while open
 	// The /team command opens the unified overlay pinned to the Teams tab (its
-	// team-specific entry point); ctrl+a uses openAgents for the context-sensitive tab.
+	// team-specific entry point); f6 uses openAgents for the context-sensitive tab.
 	m.agentsTab = tabTeams
 	m.team = teamState{view: teamRoster}
 	m.subagents = subagentState{view: subagentRoster}
@@ -268,7 +268,7 @@ func teamFocusRows(height int) int {
 	return rows
 }
 
-// The Teams tab of the unified ctrl+a overlay is rendered by renderTeamsTab
+// The Teams tab of the unified f6 overlay is rendered by renderTeamsTab
 // (agents_overlay.go), which dispatches to the renderTeamRoster/Focus/Tasks/Findings
 // builders below. The former standalone renderTeamOverlay (which framed the body in
 // its own centerCard) is gone — the unified container owns the framing now.

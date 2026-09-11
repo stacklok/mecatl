@@ -45,7 +45,7 @@ This is confirmed still unresolved: the driver protocol
 every other stateful port (sessions, memory, skills, soul, agent defs, commands),
 and deliberately left the workspace/FS driver as a **proto sketch only**
 (`WorkspaceService` in `docs/adr/0005-driver-seams.md`) — because it breaks the
-64 MiB unary rule (needs chunked/streamed reads, paged Glob/Grep), because Bash
+64 MiB unary rule (needs chunked/streamed reads, paged Glob/Grep), because Shell
 needs real exec against real files (a remote FS can serve the read side only, or
 must pair with a local materialization step), and because part of the `Workspace`
 surface (the Edit read-ledger) is harness state, not storage, and shouldn't cross
@@ -71,7 +71,7 @@ Sub-questions worth scoping, roughly in order of how directly they gate the rest
   (pattern + path only — no output modes, context lines, case control, type
   filters); there's no directory manipulation as first-class tools (mkdir / rename
   / delete), which matters specifically because mecatl's shell-less posture
-  (`--no-bash`) has *no other way* to rename or delete a file. Beyond that: unified
+  (`--no-shell`) has *no other way* to rename or delete a file. Beyond that: unified
   diff / multi-edit, multimodal/binary reads, and an LSP-backed tier (go-to-def,
   find-references, rename-symbol). Guiding principle: shape tool operations around
   what an LLM can reliably address — content anchors, line ranges, names/symbols —

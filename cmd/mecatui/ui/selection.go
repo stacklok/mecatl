@@ -31,6 +31,14 @@ const (
 	scrollDown
 )
 
+type selectionPoint struct {
+	blockID      uint64
+	region       regionKind
+	sourceOffset int
+	before       string
+	after        string
+}
+
 // selection is the in-app text-selection state: a left-click-drag over the
 // conversation viewport that highlights runes and copies them on release (OSC52 +
 // shell fallback). Its coordinates are LOGICAL CONTENT positions, NOT screen
@@ -64,16 +72,12 @@ type selection struct {
 	// at 1 line. It is advanced ONLY in onAutoScroll — never in armAutoScroll, which
 	// re-fires per cell at the edge and would otherwise reset acceleration each motion.
 	autoScrollRamp int
-	// snapshot is the VISIBLE selected text (selectedText) as of the last time the
-	// selection geometry changed via a gesture — the identity anchor for the
-	// selection. The anchor/head are absolute line indices into the viewport content,
-	// so a reflow that changes the line count ABOVE or WITHIN the selection (ctrl+t
-	// expand/collapse, compaction) silently re-points them at different text. On every
-	// re-render refreshView recomputes selectedText against the CURRENT content and,
-	// if it no longer equals snapshot, DROPS the selection rather than highlight/copy
-	// the wrong runes. A pure streaming append BELOW the selection leaves the selected
-	// lines untouched, so snapshot still matches and the selection survives (Req 2).
-	snapshot string
+	// logical endpoints and copied text prove a selection still identifies the same
+	// visible text after a frame replacement. The physical positions above are only
+	// the current frame projection used by the existing gesture and styling code.
+	anchorPoint, headPoint selectionPoint
+	copied                 string
+	snapshot               string
 }
 
 // convTopRow is the 0-based screen row where the conversation viewport's first row
@@ -324,6 +328,104 @@ func selectedText(content string, sel selection) string {
 		out = append(out, strings.TrimRight(seg, " "))
 	}
 	return strings.Join(out, "\n")
+}
+
+const selectionContextGraphemes = 16
+
+func selectionRowText(_ renderedFrame, row renderedRow, line string) (text string, leading int) {
+	plain := ansi.Strip(line)
+	if row.kind == blockTool {
+		return graphemeSlice(plain, row.leading, row.leading+row.span), row.leading
+	}
+	withoutIndent := plain
+	if row.indent > 0 {
+		withoutIndent = strings.TrimPrefix(withoutIndent, strings.Repeat(" ", row.indent))
+	}
+	withoutPresentation := withoutIndent
+	if row.kind == blockAssistant {
+		withoutPresentation = strings.TrimPrefix(withoutPresentation, strings.Repeat(" ", assistantBodyHang))
+	}
+	leading = graphemeCount(plain) - graphemeCount(withoutPresentation)
+	return canonicalRowText(row.kind, plain, row.indent), leading
+}
+
+func selectionPointFor(frame renderedFrame, line, col int) (selectionPoint, bool) {
+	if line < 0 || line >= len(frame.provenance) {
+		return selectionPoint{}, false
+	}
+	row := frame.provenance[line]
+	if !row.text || row.blockID == 0 {
+		return selectionPoint{}, false
+	}
+	lineText, leading := selectionRowText(frame, row, frame.lines[line])
+	offset := col - leading
+	if offset < 0 || offset > graphemeCount(lineText) {
+		return selectionPoint{}, false
+	}
+	return selectionPoint{
+		blockID: row.blockID, region: row.region, sourceOffset: row.sourceOffset + offset,
+		before: graphemeSlice(lineText, max(0, offset-selectionContextGraphemes), offset),
+		after:  graphemeSlice(lineText, offset, min(graphemeCount(lineText), offset+selectionContextGraphemes)),
+	}, true
+}
+
+func graphemeSlice(text string, start, end int) string {
+	return text[colToByte(text, start):colToByte(text, end)]
+}
+
+// resolveLogical projects a selection's durable endpoints into frame. It accepts
+// neither nearby rows nor fallback anchors: selection must prove both endpoint
+// contexts and its exact ANSI-free copied text still exist.
+func (s *selection) resolveLogical(frame renderedFrame) bool {
+	anchorL, anchorC, ok := resolveSelectionPoint(frame, s.anchorPoint)
+	if !ok {
+		return false
+	}
+	headL, headC, ok := resolveSelectionPoint(frame, s.headPoint)
+	if !ok {
+		return false
+	}
+	s.anchorL, s.anchorC, s.headL, s.headC = anchorL, anchorC, headL, headC
+	return selectedText(strings.Join(frame.lines, "\n"), *s) == s.copied
+}
+
+func resolveSelectionPoint(frame renderedFrame, point selectionPoint) (int, int, bool) {
+	// Context proves that the visible text is unchanged, while the canonical source
+	// offset establishes which occurrence it identifies. Either proof alone can
+	// match duplicated text after a reflow, so reject an ambiguous exact match.
+	line, col, matches := 0, 0, 0
+	for i, row := range frame.provenance {
+		if row.blockID != point.blockID || row.region != point.region || !row.text {
+			continue
+		}
+		text, leading := selectionRowText(frame, row, frame.lines[i])
+		for offset := 0; offset <= graphemeCount(text); offset++ {
+			if row.sourceOffset+offset != point.sourceOffset {
+				continue
+			}
+			before := graphemeSlice(text, max(0, offset-selectionContextGraphemes), offset)
+			after := graphemeSlice(text, offset, min(graphemeCount(text), offset+selectionContextGraphemes))
+			if strings.HasSuffix(before, point.before) && strings.HasPrefix(after, point.after) {
+				line, col, matches = i, leading+offset, matches+1
+			}
+		}
+	}
+	return line, col, matches == 1
+}
+
+func (s *selection) snapshotLogical(frame renderedFrame, content string) bool {
+	anchor, ok := selectionPointFor(frame, s.anchorL, s.anchorC)
+	if !ok {
+		return false
+	}
+	head, ok := selectionPointFor(frame, s.headL, s.headC)
+	if !ok {
+		return false
+	}
+	s.anchorPoint, s.headPoint = anchor, head
+	s.copied = selectedText(content, *s)
+	s.snapshot = s.copied
+	return s.copied != ""
 }
 
 // graphemeCount returns the number of grapheme clusters in an ansi-stripped line —

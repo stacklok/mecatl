@@ -1,0 +1,267 @@
+# Opens the release PR — stage 1 of 3 in mecatl's release flow.
+#
+# WHY THIS EXISTS. Cutting a release used to require a commit pushed straight to main: the
+# reusable workflow pins its three sibling composite actions by a HARDCODED @vX.Y.Z literal
+# (an expression is illegal in `uses:`), so the tagged commit must carry a fresh pin bump.
+# That made the release the one routine write to main that skipped code review. This workflow
+# moves the bump into an ordinary reviewable PR.
+#
+# THE FLOW (see .claude/skills/cut-release/SKILL.md):
+#   1. a human dispatches THIS workflow and picks a bump type
+#      -> releaseo opens "Release vX.Y.Z" on branch release/vX.Y.Z
+#   2. a human reviews and squash-merges it              -> VERSION changes on main
+#   3. create-release-tag.yml tags the merge commit      -> release.yml publishes
+#
+# WHY A GITHUB APP AND NOT GITHUB_TOKEN. GitHub suppresses workflow runs for events triggered
+# by GITHUB_TOKEN ("with the exception of workflow_dispatch and repository_dispatch, other
+# GITHUB_TOKEN-triggered events do not create workflow runs at all"). A GITHUB_TOKEN-created
+# PR would get no CI, and the tag pushed in stage 2 would never fire release.yml. An App
+# installation token is a distinct principal, so its events cascade normally.
+name: Create Release PR
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump_type:
+        description: 'Version bump type'
+        required: true
+        type: choice
+        options: [patch, minor, major]
+
+# Least-privilege default; the job elevates to exactly what the stale-branch cleanup needs.
+# The PR itself is created by the App token, not by GITHUB_TOKEN.
+permissions:
+  contents: read
+
+# One release PR at a time. Two concurrent runs would race on the same release/vX.Y.Z ref.
+concurrency:
+  group: create-release-pr
+  cancel-in-progress: false
+
+jobs:
+  release-pr:
+    name: Open release PR
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # RELEASE_APP_PRIVATE_KEY lives in this environment, not in repo secrets, and the
+    # environment's deployment-branch policy restricts it to `main`. Without that, anyone with
+    # push access could dispatch a modified copy of this workflow from a branch and exfiltrate a
+    # contents:write + pull-requests:write App credential — which is exactly the authority this
+    # whole flow exists to keep behind review. Same pattern as deploy-site.yml's `production`.
+    environment: release
+    permissions:
+      contents: write # delete stale release/v* refs left by a failed run
+      pull-requests: read # detect an already-open release PR
+    steps:
+      # releaseo pushes with the token it is given explicitly (through the Git Data API),
+      # never with the credential actions/checkout would otherwise persist in .git/config.
+      # fetch-depth: 0 so the release notes below can see the previous tag.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          # filter: blob:none makes this a PARTIAL clone. fetch-depth: 0 on this
+          # repo means 184 branches / 123 tags against a 306 MB history, which
+          # measured 5m18s of a 5m35s run — 95% of the job. Filtering blobs
+          # fetches the commit graph and trees but not historical file contents,
+          # which is all this job needs: commit metadata for release notes, and
+          # tip-of-branch files (fetched with the checkout) for the version bump.
+          #
+          # NOTE the interaction with persist-credentials: false below — after
+          # checkout there are no credentials, so a LAZY blob fetch would fail.
+          # Everything here reads either commit metadata or tip files, and
+          # `git diff --name-only` needs trees (included) not blobs. Do not add a
+          # step that reads a historical file's CONTENTS without re-authenticating.
+          filter: blob:none
+          persist-credentials: false
+
+      # releaseo hard-fails with "Reference already exists" if an earlier run died after
+      # creating the branch, so leftover refs must go first. Deliberately NOT scoped to the
+      # version about to be cut: recomputing releaseo's own semver math here just to name one
+      # branch is a second source of truth that can disagree with it. Any open release PR at
+      # all means a release is already in flight, and once there is none, every leftover
+      # release/v* ref is by definition stale.
+      - name: Refuse or clean up an in-flight release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # --limit: gh pr list returns only 30 rows by default, so a busy queue could hide an
+          # open release PR and let a second one be cut alongside it.
+          open_prs="$(gh pr list --state open --limit 200 --json number,headRefName \
+            --jq '[.[] | select(.headRefName | startswith("release/v"))]')"
+          if [ "$(printf '%s' "${open_prs}" | jq 'length')" != "0" ]; then
+            echo "::error::a release PR is already open — merge or close it before cutting again"
+            printf '%s\n' "${open_prs}" | jq -r '.[] | "  #\(.number) on \(.headRefName)"'
+            exit 1
+          fi
+          # No open release PR, so anything left under release/vX.Y.Z is debris from a failed run.
+          # matching-refs is a PREFIX match, not a glob: "heads/release/v" also returns
+          # release/validate-docs and release/vault-migration. Delete only exact vX.Y.Z refs —
+          # this is the one destructive call in the flow and it must not eat a colleague's branch.
+          gh api --paginate "/repos/${REPOSITORY}/git/matching-refs/heads/release/v" --jq '.[].ref' \
+            | while read -r ref; do
+                case "${ref}" in
+                  refs/heads/release/v[0-9]*.[0-9]*.[0-9]*) ;;
+                  *) echo "skipping ${ref} (not a release/vX.Y.Z ref)"; continue ;;
+                esac
+                gh api -X DELETE "/repos/${REPOSITORY}/git/refs/${ref#refs/}"
+                echo "deleted stale ${ref}"
+              done
+
+      # Minted only now: everything above runs repo-controlled scripts and gh calls that have no
+      # business happening while a contents:write App credential is live in the job.
+      # Scoped explicitly — without these the token carries every permission the installation
+      # holds. It is handed to releaseo, which pushes a branch and opens a PR; that is all.
+      - name: Mint the release app token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      # Bumps VERSION (implicitly — it is never listed in version_files) and the three pins.
+      #
+      # HOW version_files WORKS, and the one sharp edge. `path` is a goccy YAMLPath used to
+      # READ the current value; `prefix` is concatenated as prefix+version to build the search
+      # string, so each entry matches the exact current ref and swaps only the version part.
+      # But releaseo strips the [N] index before WRITING, and the write is a global regex over
+      # `uses: <exact old value>`. That is safe here because the three refs are distinct and
+      # each appears once. It is NOT safe if a step is reordered: the read would return some
+      # other `uses:` value, which contains no embedded version, and releaseo would then
+      # replace that value wholesale across the file. The indices are asserted below, and the
+      # pin sites in mecatequi-reusable.yml carry a matching warning comment.
+      #
+      # No helm_docs_args: mecatl's chart version is overridden at package time
+      # (`helm package --version`), and a non-empty value would additionally sweep every dirty
+      # working-tree file into the release commit.
+      #
+      # The composite action needs `yq` to convert version_files to JSON; it is preinstalled
+      # on GitHub-hosted ubuntu runners and is not installed here.
+      - name: Create the release PR
+        id: release
+        uses: stacklok/releaseo@80e8d8131d41cf8763254d02360f2c5ce9b7c0df # v0.0.4
+        with:
+          # Must match the pinned SHA above: the action downloads the releaseo binary of this
+          # version, so a SHA bump without an input bump silently runs mismatched halves.
+          releaseo_version: v0.0.4
+          bump_type: ${{ inputs.bump_type }}
+          token: ${{ steps.app-token.outputs.token }}
+          version_files: |
+            - file: .github/workflows/mecatequi-reusable.yml
+              path: jobs.implement.steps[1].uses
+              prefix: 'stacklok/mecatl/.github/actions/mecatequi-extract-prompt@v'
+            - file: .github/workflows/mecatequi-reusable.yml
+              path: jobs.implement.steps[2].uses
+              prefix: 'stacklok/mecatl/.github/actions/mecatequi@v'
+            - file: .github/workflows/mecatequi-reusable.yml
+              path: jobs.publish.steps[4].uses
+              prefix: 'stacklok/mecatl/.github/actions/mecatequi-publish@v'
+
+      # releaseo writes to disk before committing through the API, so the working tree still
+      # holds exactly what the PR contains. Assert the SHAPE of that diff: a correct bump is
+      # VERSION plus exactly three changed lines in the reusable workflow. This is what catches
+      # the reordered-step corruption described above, which the pin gate alone cannot see
+      # (every first-party pin would still read the new tag).
+      - name: Verify the release diff
+        env:
+          # releaseo's own resolved version (bare semver), not a number recomputed here.
+          NEW_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          WF='.github/workflows/mecatequi-reusable.yml'
+
+          changed="$(git diff --name-only | sort)"
+          if [ -z "${changed}" ]; then
+            echo "::error::releaseo left no working-tree changes to inspect — review the PR by hand"
+            echo "  It edits files on disk before committing through the API, so the tree should be"
+            echo "  dirty here. If a newer releaseo cleans up, rewrite this guard against the PR diff."
+            exit 1
+          fi
+          if [ "${changed}" != "$(printf '%s\n%s\n' "${WF}" 'VERSION' | sort)" ]; then
+            echo "::error::unexpected release diff — expected only VERSION and ${WF}"
+            printf 'got:\n%s\n' "${changed}"
+            exit 1
+          fi
+
+          # awk, not `read < <(...)`: an empty numstat would make read return non-zero and
+          # abort under `set -e` with no diagnostic at all.
+          numstat="$(git diff --numstat -- "${WF}")"
+          if [ "$(printf '%s' "${numstat}" | awk '{print $1 "/" $2}')" != "3/3" ]; then
+            echo "::error::${WF} changed ${numstat}, expected exactly 3 added and 3 removed"
+            echo "  a reordered step can make releaseo rewrite the wrong 'uses:' ref"
+            git --no-pager diff -- "${WF}"
+            exit 1
+          fi
+
+          # Two halves, both needed. With the override: the pins match the version releaseo
+          # says it cut. Without it: the pins match what VERSION actually now contains. Only
+          # running the first would let a VERSION/pin split merge clean and wedge stage 2,
+          # after the bump is already on main.
+          EXPECTED_TAG="v${NEW_VERSION}" bash .github/actions/check-reusable-pins.sh
+          bash .github/actions/check-reusable-pins.sh
+          echo "Release diff verified: VERSION -> ${NEW_VERSION}, 3 pins bumped."
+
+      # The 3/3 assertion above is the only thing that catches positional-index corruption, but
+      # it runs on THIS dispatch, not as a status check on the PR — a reviewer looking at the PR
+      # would see nothing wrong. Convert the PR to a draft so the finding is mechanically
+      # un-mergeable rather than relying on someone reading this job's log.
+      - name: Block the PR if verification failed
+        if: failure() && steps.release.outputs.pr_number != ''
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PR: ${{ steps.release.outputs.pr_number }}
+        run: |
+          set -euo pipefail
+          gh pr ready --undo "${PR}"
+          gh pr comment "${PR}" --body \
+            'Release verification failed on the dispatch run — converted to draft. Do not merge; read the job log, close this PR and delete its branch.'
+          echo "::warning::PR #${PR} converted to draft"
+
+      # releaseo's body lists the files it changed, which is a two-line version bump. What is
+      # actually shipping is every commit on main since the last tag, and nothing in the PR shows
+      # it. Append the range so the approval gate is a real review rather than a rubber stamp.
+      - name: Add the commit range to the PR body
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PR: ${{ steps.release.outputs.pr_number }}
+          NEW_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          prev="$(git describe --tags --abbrev=0 --match 'v[0-9]*' HEAD 2>/dev/null || true)"
+          {
+            gh pr view "${PR}" --json body --jq .body
+            printf '\n\n---\n\n## Shipping in v%s\n\n' "${NEW_VERSION}"
+            if [ -n "${prev}" ]; then
+              printf '%s\n\n' "Commits on \`main\` since \`${prev}\`:"
+              # Capped: a PR body is limited to 65536 characters.
+              git log "${prev}..HEAD" --no-merges --format='- %s' | head -300
+              total="$(git rev-list --count --no-merges "${prev}..HEAD")"
+              if [ "${total}" -gt 300 ]; then
+                printf '\n_...and %s more._\n' "$((total - 300))"
+              fi
+            else
+              printf '%s\n' "_No previous \`v*\` tag found — this appears to be the first release._"
+            fi
+          } > "${RUNNER_TEMP}/pr-body.md"
+          gh pr edit "${PR}" --body-file "${RUNNER_TEMP}/pr-body.md"
+          echo "Added the commit range to PR #${PR}."
+
+      - name: Summary
+        env:
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+          RELEASE_PR_NUMBER: ${{ steps.release.outputs.pr_number }}
+          RELEASE_PR_URL: ${{ steps.release.outputs.pr_url }}
+        run: |
+          {
+            echo "## Release PR created"
+            echo ""
+            echo "- **Version**: v${RELEASE_VERSION}"
+            echo "- **PR**: #${RELEASE_PR_NUMBER}"
+            echo "- **URL**: ${RELEASE_PR_URL}"
+            echo ""
+            echo "Review and squash-merge it. Merging fires \`create-release-tag.yml\`, which"
+            echo "tags the merge commit and triggers \`release.yml\`."
+          } >> "$GITHUB_STEP_SUMMARY"

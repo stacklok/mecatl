@@ -27,9 +27,9 @@ hand-rolled message editing — is the core design choice.
 | `suspended` | awaiting / `PendingAsk` |
 | `closed` | completed / cancelled / failed (terminal) |
 
-- **One mecatl session per Slack thread.** A new top-level `@mention` starts a
-  fresh session; replies in that thread continue it. Matches both platforms'
-  own thread-scoped models.
+- **One mecatl session per Slack thread.** A new top-level DM or channel
+  `@mention` starts a fresh session; replies in that thread continue it.
+  Matches both platforms' own thread-scoped models.
 - **Streaming is spiked first, not assumed.** Target native
   `chat.startStream`/`appendStream`/`stopStream` for real token streaming
   from `Converse`. Community reports say this works in DMs but fails in
@@ -106,9 +106,10 @@ requirements") — **revised to the `agent_view` model above**:
 - **DM.** Raw `app.event("app_home_opened", ...)`, filtered to
   `tab === "messages"`: greets a channel once (dedup'd in-memory by
   channel id). Raw `app.message(...)`, filtered to `channel_type === "im"`:
-  runs the prompt and posts one final reply via `say()`. Every message in
-  the DM is one session (no `thread_ts` on this surface to key a narrower
-  session on).
+  derives the canonical root as `message.thread_ts ?? message.ts`, runs the
+  prompt, and streams the reply into that thread. A top-level message starts
+  a fresh mecatl session; a reply continues the session for its existing
+  Slack thread.
 - **Channel.** Raw `app.event("app_mention", ...)`: starts (or continues) a
   session keyed by `channel:thread_ts` (a top-level mention's own `ts`
   becomes the thread root — Slack only sets `thread_ts` on replies). Raw
@@ -124,9 +125,9 @@ requirements") — **revised to the `agent_view` model above**:
 - `agents.sessions.setStatus` called directly via `app.client.apiCall(...)`
   (bolt-js has no typed wrapper for this method) — `processing` before the
   run, `active` after, best-effort (a status-call failure never blocks the
-  reply — this API is new enough to not fully trust yet). Channel calls
-  additionally pass `thread_ts` (required for thread-based sessions per the
-  API docs); DM calls omit it.
+  reply — this API is new enough to not fully trust yet). DM and channel
+  calls pass the same canonical `thread_ts` used for session identity,
+  streaming, fallback replies, and cancellation.
 - Auto-approve every permission ask (`onPermissionAsk: () => "allow_once"`).
 
 **Channel support is implemented but not yet live-verified** — built from

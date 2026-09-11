@@ -30,6 +30,7 @@ type builtin struct {
 // read clearly and a new collaborator is one field, not an 8th positional bool.
 type wiredCollaborators struct {
 	MCP          bool
+	MCPConnector bool
 	Agents       bool
 	Skills       bool
 	Soul         bool
@@ -56,8 +57,10 @@ type wiredCollaborators struct {
 // copy once omitted Sessions, so /sessions never appeared in autocomplete even
 // though the actual dispatch path built it correctly).
 func (m Model) wiredCollaborators() wiredCollaborators {
+	_, mcpConnector := m.deps.MCP.(client.MCPConnectorReader)
 	return wiredCollaborators{
-		MCP: m.deps.MCP != nil, Agents: m.deps.Agents != nil, Skills: m.deps.Skills != nil,
+		MCP: m.deps.MCP != nil, MCPConnector: mcpConnector,
+		Agents: m.deps.Agents != nil, Skills: m.deps.Skills != nil,
 		Soul: m.deps.Soul != nil, UserModel: m.deps.UserModel != nil, Models: m.deps.Models != nil,
 		Reflections: m.deps.Reflections != nil,
 		Dream:       m.deps.Dream != nil,
@@ -75,8 +78,9 @@ func (m Model) wiredCollaborators() wiredCollaborators {
 
 // builtinCommands returns the caps-filtered built-in set for the connected
 // server. /clear, /help, and /quit are ALWAYS present — they act purely on the Model and
-// need no server feature. /mcp is present only when the server advertises MCP
-// AND a Commander-independent MCP collaborator is wired (w.MCP); /agents (the
+// need no server feature. /mcp needs either the direct MCP capability with its
+// direct collaborator (w.MCP), or the broker connector-status capability with its
+// connector reader (w.MCPConnector); /agents (the
 // definition inventory) only when the server advertises Agents AND an agents
 // collaborator is wired (w.Agents); /team (the live-team overlay) only when the
 // server advertises Teams; /skills only when the server advertises Skills
@@ -143,7 +147,7 @@ func builtinCommands(caps client.Capabilities, w wiredCollaborators) []builtin {
 			run:  Model.runCompact,
 		})
 	}
-	if caps.MCP && w.MCP {
+	if (caps.MCP && w.MCP) || (caps.MCPConnectorStatus && w.MCPConnector) {
 		out = append(out, builtin{
 			name: "mcp",
 			desc: "browse MCP inventory",
@@ -451,7 +455,7 @@ func (m Model) runAgentsInv() (tea.Model, tea.Cmd) {
 	return m.openAgentsInv()
 }
 
-// runTeam opens the live agent-team overlay — the same surface ctrl+a opens.
+// runTeam opens the live agent-team overlay — the same surface f6 opens.
 // Only registered when caps.Teams.
 func (m Model) runTeam() (tea.Model, tea.Cmd) {
 	return m.openTeam()
@@ -542,7 +546,7 @@ func (m Model) runPosture() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// debugAskPayloads are the three canned long-args Bash commands /debug-ask
+// debugAskPayloads are the three canned long-args Shell commands /debug-ask
 // rotates through (issue #488): (a) one very long single-line pipeline, (b) a
 // compound &&/||/; command with pipes and redirections, (c) a heredoc carrying
 // real newlines. Each is injected JSON-encoded as {"command": …} so the modal's
@@ -553,7 +557,7 @@ var debugAskPayloads = []string{
 	"cat <<'EOF' > /tmp/report.md\n# Nightly report\n\n## Summary\n\n- total: 42\n- failed: 3\n- skipped: 1\n\n## Failures\n\n- pkg/foo: TestBar — timeout after 30s waiting on the fixture server\n- pkg/baz: TestQux — golden mismatch (see .scratch/qux.diff)\n- pkg/quux: TestCorge — nil dereference on empty input\n\n## Environment\n\nRun at $(date -u +%FT%TZ) against the staging workspace (us-east-1).\nRunner: nightly-04 · image sha256:9f86d08…\n\n## Next steps\n\nRe-run the three failing tests with -count=1 -v and attach the artifacts bundle to the tracker issue.\nEOF\nprintf 'wrote %s (%d bytes)\\n' /tmp/report.md \"$(wc -c < /tmp/report.md)\"",
 }
 
-// runDebugAsk injects a FAKE permission ask with long Bash args through the SAME
+// runDebugAsk injects a FAKE permission ask with long Shell args through the SAME
 // reducer the wire drives (applyPermissionAsk over a client.PermissionAskMsg), so
 // queueing, dedupe, focus, the (1 of N) badge, and the click geometry all
 // exercise for real. Registered only in client debug mode. Each invocation
@@ -576,7 +580,7 @@ func (m Model) runDebugAsk() (tea.Model, tea.Cmd) {
 	// always button is offered — the modal shows all three buttons).
 	return m.applyPermissionAsk(client.PermissionAskMsg{
 		AskID:  fmt.Sprintf("sess-debug-ask-%d", n),
-		Tool:   "Bash",
+		Tool:   "Shell",
 		Args:   string(args),
 		Reason: "debug ask (client debug mode) — not from the model",
 	})

@@ -385,6 +385,7 @@ func TestWorkspaceEnrollmentQueuedPresentationIsCancelledBeforeOpen(t *testing.T
 type workspaceEnrollmentControlFake struct {
 	connect      client.WorkspaceEnrollment
 	connectCalls int
+	cancelCalls  int
 }
 
 func (f *workspaceEnrollmentControlFake) ConnectWorkspaceServices(context.Context, string) (client.WorkspaceEnrollment, error) {
@@ -396,6 +397,7 @@ func (*workspaceEnrollmentControlFake) RetryWorkspaceEnrollment(context.Context,
 	return client.WorkspaceEnrollment{}, nil
 }
 
-func (*workspaceEnrollmentControlFake) CancelWorkspaceEnrollment(context.Context, string, string) (client.WorkspaceEnrollment, error) {
-	return client.WorkspaceEnrollment{}, nil
+func (f *workspaceEnrollmentControlFake) CancelWorkspaceEnrollment(_ context.Context, _ string, id string) (client.WorkspaceEnrollment, error) {
+	f.cancelCalls++
+	return client.WorkspaceEnrollment{ID: id, Status: client.WorkspaceEnrollmentCancelled}, nil
 }

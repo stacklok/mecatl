@@ -1,11 +1,11 @@
 ---
 name: cut-release
 description: >-
-  Cut a tagged release of mecatl — bump the reusable-workflow version pins, commit,
-  annotate and push a vX.Y.Z tag, which triggers the Release workflow (ko images + Helm
-  chart to GHCR, plus a GitHub Release with signed archives and a Homebrew formula bump).
-  Use when asked to cut/ship/tag/publish a release or bump the version. NOT for general
-  git tagging unrelated to a mecatl release.
+  Cut a tagged release of mecatl — dispatch the Create Release PR workflow, review and
+  merge the release PR, then verify the tag and the artifacts it publishes (ko images +
+  Helm chart to GHCR, plus a GitHub Release with signed archives and a Homebrew formula
+  bump). Use when asked to cut/ship/tag/publish a release or bump the version. NOT for
+  general git tagging unrelated to a mecatl release.
 metadata:
   author: stacklok
 ---
@@ -34,65 +34,79 @@ Two consequences of the Homebrew half, before you start:
   public release and a tap commit. `task release:snapshot && task release:verify` builds the
   archives and the formula locally, with no tag, no upload and no tokens.
 
-The one fragile part: the `mecatequi-reusable.yml` workflow references its three first-party
-sibling composite actions by a **hardcoded** `@vX.Y.Z` literal (expressions are illegal in
-`uses:`). Every release MUST bump those pins in the same tagged commit, or the release ships
-pins pointing at the previous tag — the version skew that `.github/actions/check-reusable-pins.sh`
-fails the release on. The bundled script does this bump for you.
+**Nothing pushes a commit to `main`.** The release runs through an ordinary pull request:
+you dispatch a workflow, a bot opens the PR, a human merges it, and a bot tags the merge
+commit. You never run `git push origin main`, and you never create the tag by hand.
+
+The reason a release needs a commit at all: `mecatequi-reusable.yml` references its three
+first-party sibling composite actions by a **hardcoded** `@vX.Y.Z` literal (expressions are
+illegal in `uses:`). Every release MUST bump those pins in the same tagged commit, or the
+release ships pins pointing at the previous tag — the version skew that
+`.github/actions/check-reusable-pins.sh` fails the release on.
+
+`VERSION` (repo root, **bare** semver — `0.0.33`, not `v0.0.33`) is the single authored source
+of the release version. `create-release-pr.yml` bumps it and the three pins together;
+`check-reusable-pins.sh` derives its expected tag from it and holds no copy.
 
 ## Steps
 
 Run from the repo root.
 
-1. **Pick the next version.** Find the latest tag and increment per semver (releases so far are
-   `v0.0.x` patch bumps).
+1. **Confirm what you're shipping.** The release tags whatever is on `main` when the release PR
+   merges. Review what has landed since the last tag:
    ```sh
-   git tag --sort=-v:refname | head -1     # e.g. v0.0.5  ->  next is v0.0.6
+   git tag --sort=-v:refname --list 'v*' | head -1   # e.g. v0.0.33
+   git log <last-tag>..origin/main --oneline
+   ```
+   Pick the bump type from that: `patch` for fixes, `minor` for additive behavior, `major` for
+   a break. Releases so far have all been `patch`.
+
+2. **Dispatch the release-PR workflow.** This is the only step that starts a release:
+   ```sh
+   gh workflow run create-release-pr.yml -f bump_type=patch
+   gh run watch "$(gh run list --workflow=create-release-pr.yml --limit 1 --json databaseId --jq '.[0].databaseId')"
+   ```
+   It bumps `VERSION` and the three Mecatequi pins, opens `Release vX.Y.Z` from branch
+   `release/vX.Y.Z`, and then asserts the diff shape — exactly `VERSION` plus three changed
+   lines in `mecatequi-reusable.yml`. **If that verification step fails, do not merge the PR**;
+   close it, delete the branch, and read the job log. The likely cause is a reordered step in
+   `mecatequi-reusable.yml` (see the `RELEASE-PINNED` comments there).
+
+3. **Review the release PR like any other PR** and confirm the diff is only the version bump:
+   ```sh
+   gh pr list --head "release/vX.Y.Z" --json number,url,files
+   gh pr diff <number>
+   ```
+   Wait for CI to go green. The PR is opened by the release GitHub App, so it triggers checks
+   normally.
+
+4. **Squash-merge it.** A human does this — it is the approval gate, and it is the only way
+   `VERSION` changes on `main`:
+   ```sh
+   gh pr merge <number> --squash
+   ```
+   The tagging workflow does not read the commit subject — it asks GitHub which PR produced
+   the commit and requires a merged, bot-opened PR from branch `release/vX.Y.Z` whose diff is
+   only `VERSION` plus the three pins. So the squash title does not matter, but adding anything
+   else to the release PR will stop the tag.
+
+5. **Watch the tag get created.** Merging fires `create-release-tag.yml`, which re-verifies the
+   commit and pushes the annotated tag. That push fires `release.yml` on its own — the tag is
+   pushed by a GitHub App installation token precisely so the cascade happens, where a
+   `GITHUB_TOKEN`-pushed tag would trigger nothing:
+   ```sh
+   gh run watch "$(gh run list --workflow=create-release-tag.yml --limit 1 --json databaseId --jq '.[0].databaseId')"
+   git fetch --tags && git tag --sort=-v:refname --list 'v*' | head -1
    ```
 
-2. **Confirm what you're tagging.** A release tags the current committed `HEAD` plus the one
-   pin-bump commit on top. Check what's been added since the last tag, and make sure `HEAD` is
-   what you intend to ship (if another agent has uncommitted work, it stays out — you only stage
-   the two pin files):
-   ```sh
-   git log <last-tag>..HEAD --oneline
-   git status -sb
-   ```
-
-3. **Bump the pins** with the bundled script (edits the two gated files and proves the gate passes):
-   ```sh
-   .claude/skills/cut-release/scripts/bump-release-pins.sh vX.Y.Z
-   ```
-
-4. **Commit ONLY the two pin files** by explicit path — never `git add -A`, never sweep in another
-   agent's working-tree changes:
-   ```sh
-   git add .github/actions/check-reusable-pins.sh .github/workflows/mecatequi-reusable.yml
-   git commit -m "chore(release): bump reusable-workflow pins vOLD -> vNEW"
-   ```
-
-5. **Create an annotated tag** with concise release notes (group the commits since the last tag
-   into a few bullet lines):
-   ```sh
-   git tag -a vX.Y.Z -m "vX.Y.Z — <one-line summary>
-
-   - <bullet>
-   - <bullet>"
-   ```
-
-6. **Push the commit, then the tag** (tag push is what fires the Release workflow):
-   ```sh
-   git push origin main && git push origin vX.Y.Z
-   ```
-
-7. **Confirm the release run started, then wait for it.** The archive/Homebrew job is the one
+6. **Confirm the release run started, then wait for it.** The archive/Homebrew job is the one
    that reaches outside this repository, so it is the one to watch:
    ```sh
    gh run list --workflow=release.yml --limit 3
    gh run watch "$(gh run list --workflow=release.yml --limit 1 --json databaseId --jq '.[0].databaseId')"
    ```
 
-8. **Verify the GitHub Release carries every artifact.** It must not be a draft, and it must
+7. **Verify the GitHub Release carries every artifact.** It must not be a draft, and it must
    have four archives plus a checksum file, with a cosign bundle and an SBOM alongside each:
    ```sh
    gh release view vX.Y.Z --json isDraft,assets --jq '{draft: .isDraft, assets: [.assets[].name]}'
@@ -115,14 +129,14 @@ Run from the repo root.
    a lookup by tag does not return, so a naive re-run fails trying to create the release again.
    Recover with `gh release delete vX.Y.Z --cleanup-tag=false --yes`, then re-dispatch.
 
-9. **Verify the Homebrew tap got the formula bump:**
+8. **Verify the Homebrew tap got the formula bump:**
    ```sh
    gh api repos/stacklok/homebrew-tap/commits --jq '.[0].commit.message'
    gh api repos/stacklok/homebrew-tap/contents/Formula/mecatl.rb --jq '.content' \
      | base64 -d | grep -E 'version|url|sha256' | head
    ```
    The top commit must name the version you just cut, and the formula's `url` and `sha256`
-   values must match the release assets from step 8.
+   values must match the release assets from step 7.
 
    **While `stacklok/mecatl` is private, `brew install stacklok/tap/mecatl` fails** even after a
    correct tap commit: Homebrew's downloader does not authenticate, so it cannot fetch a release
@@ -180,6 +194,10 @@ Run from the repo root.
    git push origin engine/vX.Y.Z
    ```
 
+**This line is deliberately still manual.** An engine tag adds no commit to `main` and carries
+no pin bump, so it never needed the release-PR flow the root `vX.Y.Z` line uses — pushing the
+tag is the whole release.
+
 **IMPORTANT — an engine tag fires NO image build, NO GitHub Release, and NO Homebrew formula bump.** `release.yml` triggers on `v*` (the root tag
 glob), which does **not** match `engine/v*`, so cutting an engine tag runs none of the ko build /
 cosign / SBOM / SLSA pipeline. It only publishes the module version, making it resolvable for
@@ -191,17 +209,41 @@ bump and no `release.yml` run to confirm — the push of the tag is the whole re
 - **Two publishing destinations, one tag.** A run can succeed on the GHCR images and still fail
   on the release or the tap (or vice versa). GoReleaser's brew pipe continues on error and the
   Release is created before the formula is pushed, so a bad tap token loses the formula but NOT
-  the Release. Steps 8 and 9 are not optional: a green `gh run list` line is not proof that
+  the Release. Steps 7 and 8 are not optional: a green `gh run list` line is not proof that
   `brew install` works.
 - **Never hand-edit `stacklok/homebrew-tap`.** The formula is generated from the tag by the
   release workflow and carries a `DO NOT EDIT` header. A manual edit is overwritten by the next
   release and desynchronizes the checksums in the meantime.
-- **Tag and commit must match.** The pushed tag must point at the commit that carries the bumped
-  pins, or the pin gate fails the release. Step 4 → 5 ordering guarantees this.
+- **Never push to `main`, and never create a root `vX.Y.Z` tag by hand.** Both are the
+  workflows' job. A hand-pushed pin bump skips code review, and a hand-created tag would point
+  at a commit whose pins the release gate then rejects. If `VERSION` is edited on `main` outside
+  a release PR, `create-release-tag.yml` refuses to tag it rather than cutting a release from
+  it. `release.yml`'s `guard` job additionally refuses to publish anything from a tag that is
+  not an ancestor of `main`, so a tag cut on a branch builds nothing. (This applies to the ROOT
+  `v*` line only — the `engine/v*` tags below are still cut by hand, deliberately: they carry
+  no pin bump and add no commit to `main`.)
 - **Annotated tags only** (`git tag -a`), matching prior releases — they carry a tagger + message.
+  `create-release-tag.yml` does this; the tagger is `github-actions[bot]`.
 - **Don't bump illustrative documentation refs** unless asked — the `@vX.Y.Z` examples in
-  `user-docs/building/deployment/mecatequi.md` are illustrative and do NOT gate the release. The script
-  deliberately leaves them alone.
-- **Commit trailer:** end the commit message with the repo's `Co-Authored-By` trailer (see AGENTS.md).
-- **If the release run fails on the pin gate**, the tag's commit didn't have the pins bumped — the
-  commit/tag ordering in steps 4–6 was broken. Re-tag the correct commit.
+  `user-docs/building/deployment/mecatequi.md` are illustrative and do NOT gate the release. The
+  release flow deliberately leaves them alone.
+- **If the release run fails on the pin gate**, the tagged commit didn't carry the bumped pins.
+  That should be impossible through the normal flow — `create-release-pr.yml` verifies the bump
+  before the PR can merge, and `create-release-tag.yml` tags only the merge commit. It means
+  someone tagged by hand, or `VERSION` and the pins drifted apart. Fix forward with a patch.
+- **Rerunning is safe.** `create-release-tag.yml` makes one decision from the tag's state and
+  the commit's provenance, so it is quiet when there is nothing to do (the tag already points
+  here, or `VERSION` names an already-released tag this commit did not produce) and loud only
+  when a tag should have been created and something is wrong. `release.yml` re-signs
+  idempotently via its `workflow_dispatch` `tag` input.
+- **Setup, once.** Both workflows read the release GitHub App from a `release` GitHub
+  Environment (`vars.RELEASE_APP_CLIENT_ID`, `secrets.RELEASE_APP_PRIVATE_KEY`), whose
+  deployment-branch policy must be restricted to `main`. Repo-level secrets would let anyone
+  with push access dispatch a modified workflow from a branch and mint the App credential.
+- **One release at a time.** If any `release/v*` PR is open, the next dispatch refuses and names
+  it — merge or close it first. Once none is open, leftover `release/v*` branches from failed
+  runs are deleted automatically before the new PR is cut.
+- **A local dry run** of exactly what the release PR will contain, without dispatching anything:
+  `.claude/skills/cut-release/scripts/bump-release-pins.sh vX.Y.Z`, then
+  `git checkout -- VERSION .github/workflows/mecatequi-reusable.yml` to revert. That script is
+  also the fallback if the release App or releaseo is unavailable.

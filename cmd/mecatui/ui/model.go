@@ -219,6 +219,7 @@ type Deps struct {
 	// theme; a dark or absent response keeps Theme as given. Explicit theme
 	// selection always wins — this field is simply never set true then.
 	ThemeAutoDetect bool
+
 	// StatusSource is composed outside ui. The UI only submits display facts and
 	// consumes semantic snapshots through one Bubble Tea listener.
 	StatusSource statusline.Source
@@ -480,6 +481,12 @@ type Model struct {
 	sessionsTranscriptRequestToken uint64
 	sessionsPageRequestToken       uint64
 	sessionsActionRequestToken     uint64
+	// mcpRequestToken identifies broker inventory work across MCP panel lifetimes.
+	// A panel-local refresh generation alone restarts at one after reopen.
+	mcpRequestToken uint64
+	// freshSessionBinding is true only for a session created by this UI's initial
+	// create flow or /clear successor, never for adopted, resumed, or handoff bindings.
+	freshSessionBinding bool
 	// Maintenance job handles outlive the Sessions overlay. Reopening uses them
 	// only to refetch server-owned durable progress; the UI owns no job state.
 	maintenanceMigrationJobID string
@@ -488,9 +495,11 @@ type Model struct {
 	// below are refreshed from the current session snapshot; zero timestamps are
 	// rendered as unknown rather than guessed.
 	sessionDetailsOpen bool
-	sessionState       string
-	sessionCreatedAt   int64
-	sessionModifiedAt  int64
+	// sessionState mirrors the server's session.State string ("idle", "running",
+	// …); sessionStateIdle names the one value this package compares against.
+	sessionState      string
+	sessionCreatedAt  int64
+	sessionModifiedAt int64
 	// sessionTitle is the session's human label for the terminal window/tab title
 	// (the "<title> — …" head of windowTitle). Set-once from the first genuine
 	// user prompt (submitPrompt), adopted on a session switch (switchToSession
@@ -519,8 +528,9 @@ type Model struct {
 	width  int
 	height int
 
-	conv conversation
-	vp   viewport.Model
+	conv             conversation
+	vp               viewport.Model
+	conversationView conversationView
 
 	// authorization is separate from permission approval: MCP browser authorization
 	// has no allow/always/deny verdict and never carries tool arguments or a URL.
@@ -538,13 +548,6 @@ type Model struct {
 
 	prompt prompttextarea.Editor
 	sp     spinner.Model
-	// stuck is true while the viewport auto-follows the bottom (tails streaming
-	// output). It is no longer hardcoded: syncStuck re-derives it from
-	// m.vp.AtBottom() after every scroll/wheel/nav so a scroll-up unsticks (and
-	// survives streaming — refreshView only re-pins to bottom when stuck) and
-	// scrolling/jumping back to the bottom re-sticks (auto-follow resumes). The
-	// initial value is true because an empty conversation is already at-bottom.
-	stuck bool
 
 	// viewDirty is set when a streamed delta mutated the conversation but
 	// refreshView has not yet re-rendered it into the viewport. A one-shot
@@ -575,7 +578,7 @@ type Model struct {
 	failedStepRetryTried         bool               // one-shot guard for automatic typed precommit retry; reset by a genuine prompt or session replacement
 	failedStepRetryRun           bool               // current Converse stream was opened with RetryStart
 	failedStepRetryAuthoritative bool               // current retry emitted turn.start and therefore called the model
-	team                         teamState          // unified ctrl+a agents overlay: container open flag + Teams-tab state (view==teamNone when closed)
+	team                         teamState          // unified f6 agents overlay: container open flag + Teams-tab state (view==teamNone when closed)
 	agentsTab                    agentsTab          // active tab in the unified agents overlay (Subagents | Parallel | Teams)
 	subagents                    subagentState      // Subagents-tab state of the unified agents overlay (roster | focus)
 	parallel                     parallelState      // Parallel-tab state of the unified agents overlay (roster | group focus)
@@ -837,15 +840,7 @@ type Model struct {
 	// the line-capped view and the full view. Flipped by ctrl+t.
 	expandTools bool
 
-	// filesChanged is the de-duplicated, insertion-ordered set of workspace paths
-	// touched by file-MUTATING tool calls (Edit/Write) this session, derived
-	// purely from observed tool.call events (no proto/server change). filesSeen is
-	// the membership set guarding the order-preserving slice against duplicates.
-	// Surfaced as a muted "Δ N files" header indicator, with the list folded into
-	// the ctrl+t details expansion.
-	filesChanged []string
-	filesSeen    map[string]struct{}
-
+	// Changed-file membership and the synthetic appendix identity belong to conv.
 	// streamCh is the current run's reader channel; WaitForMsg drains it.
 	streamCh chan tea.Msg
 
@@ -1006,16 +1001,16 @@ func New(deps Deps) Model {
 	// themes alike — styleSelection reads it via m.deps.Theme.Style("selection").
 
 	m := Model{
-		deps:    deps,
-		keys:    keys,
-		rend:    newRenderer(th, hk),
-		hits:    &hitRegions{},
-		metrics: &renderedSurfaceMetrics{},
-		phase:   phaseConnecting,
-		prompt:  prompt,
-		sp:      sp,
-		vp:      vp,
-		stuck:   true,
+		deps:             deps,
+		keys:             keys,
+		rend:             newRenderer(th, hk),
+		hits:             &hitRegions{},
+		metrics:          &renderedSurfaceMetrics{},
+		phase:            phaseConnecting,
+		prompt:           prompt,
+		sp:               sp,
+		vp:               vp,
+		conversationView: conversationView{mode: followTail},
 		// Armed exactly when Init will actually request the background colour
 		// (see ThemeAutoDetect); onBackgroundColor disarms it on the first
 		// response so a late/duplicate one is a no-op.
@@ -1085,23 +1080,20 @@ func New(deps Deps) Model {
 	return m
 }
 
-// recordFileChange folds a workspace path touched by a file-mutating tool into
-// the session's changed-files set, preserving first-seen order and ignoring
-// duplicates. Non-mutating / unrecognised tools never reach here (the caller
-// gates on mutatedPath). Lazily initialises the membership set so a zero Model
-// needs no constructor wiring.
-func (m *Model) recordFileChange(path string) {
-	if path == "" {
-		return
-	}
-	if m.filesSeen == nil {
-		m.filesSeen = make(map[string]struct{})
-	}
-	if _, ok := m.filesSeen[path]; ok {
-		return
-	}
-	m.filesSeen[path] = struct{}{}
-	m.filesChanged = append(m.filesChanged, path)
+// resetDocumentProjection drops state tied to the current conversation document.
+// Rebuilt transcripts reuse block indexes and identities, so this must run before a
+// replacement is rendered rather than relying on cache keys or anchor fallback.
+func (m Model) resetDocumentProjection() Model {
+	m.rend.resetBlockCaches()
+	m.conversationView = conversationView{mode: followTail}
+	m.sel = selection{}
+	m.selBase = ""
+	// Advance the generation instead of resetting it: an already-scheduled disarm
+	// must not match the first click in the replacement document.
+	m.clickCount = 0
+	m.clickL, m.clickC = 0, 0
+	m.clickGen++
+	return m
 }
 
 // resetSession is the single seam that owns "the session-derived state of the
@@ -1117,12 +1109,7 @@ func (m Model) resetSession() Model {
 }
 
 func (m Model) resetSessionDerived() Model {
-	// Drop renderer caches before installing the target's authoritative transcript.
-	m.rend.resetBlockCaches()
-	// Reset auto-follow for the next session's transcript.
-	m.stuck = true
-	m.filesChanged = nil
-	m.filesSeen = nil
+	m = m.resetDocumentProjection()
 	m.usage = client.Usage{}
 	m.contextTokens = 0
 	m.activeTool = ""
@@ -1180,12 +1167,6 @@ func (m Model) resetSessionDerived() Model {
 	// would silently re-attach old pastes to a future marker collision).
 	m.stagedPastes = nil
 	m.nextPasteN = 0
-	// Drop any active text selection: /clear rebuilds the transcript, so a selection
-	// anchored into the old content is stale. The caller's refreshView re-renders
-	// without re-applying it (sel is now inactive), clearing the highlight too.
-	m.sel = selection{}
-	// Drop any pending multi-click sequence: it is anchored into the old content.
-	m.clickCount = 0
 	// Disarm the live feed: a /clear or session switch rebuilds the session, so
 	// the old live subscription (bound to the old/cleared session id or opened
 	// while the stale session was active) must not route delivery events into the

@@ -230,7 +230,7 @@ type multiUpstreamFixture struct {
 	failBuilds      int
 }
 
-func newMultiUpstreamFixture(t *testing.T, rejectB bool) *multiUpstreamFixture {
+func newMultiUpstreamFixture(t *testing.T, rejectB bool, contexts ...context.Context) *multiUpstreamFixture {
 	t.Helper()
 	f := &multiUpstreamFixture{t: t, issuerA: newMultiUpstreamOIDC(t, "backend-a"), issuerB: newMultiUpstreamOIDC(t, "backend-b"), mcpA: newMultiUpstreamMCP(t, "backend-a"), mcpB: newMultiUpstreamMCP(t, "backend-b"), store: newMultiUpstreamTokenStore()}
 	f.mcpB.reject = rejectB
@@ -278,7 +278,11 @@ func newMultiUpstreamFixture(t *testing.T, rejectB bool) *multiUpstreamFixture {
 	}
 	f.service = svc
 	t.Cleanup(svc.Close)
-	f.session, err = svc.CreateSession(t.Context(), session.ModeDefault, session.Limits{})
+	ctx := t.Context()
+	if len(contexts) != 0 {
+		ctx = contexts[0]
+	}
+	f.session, err = svc.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

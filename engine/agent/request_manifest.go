@@ -63,7 +63,7 @@ func (e *Engine) requestToolDecisions(r *Run, sess *session.Session, env tool.En
 			decision = session.RequestToolModeFiltered
 		} else if bound && !authorityDisclosesTool(name, authority.CapabilitySet) {
 			decision = session.RequestToolAuthorityFiltered
-		} else if name == tool.BashToolName && env.CommandRunner() == nil && env.Ref().Kind != session.EnvKindNoFS {
+		} else if name == tool.ShellToolName && env.CommandRunner() == nil && env.Ref().Kind != session.EnvKindNoFS {
 			decision = session.RequestToolMountUnavailable
 		} else if _, ok := overlays[name]; ok {
 			decision = session.RequestToolShadowed

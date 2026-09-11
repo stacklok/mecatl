@@ -84,7 +84,7 @@ immutable capability bundle carrying a content-only `Workspace` (`env.Workspace(
 a separately selected non-null `ReadLedger` (`env.ReadLedger()`), an optional bound
 `CommandRunner` (`env.CommandRunner()`; nil when the namespace has no shell), and a
 backend identity ref (`env.Ref()`). File-system tools obtain the Workspace and ledger;
-the Bash tool obtains the runner and surfaces `ErrNoShell` when it is nil.
+the Shell tool obtains the runner and surfaces `ErrNoShell` when it is nil.
 `Workspace` scopes all paths to one root, rejects escapes, exposes the read/search
 surface, and carries the versioned content-mutation protocol from
 [ADR 0208](../adr/0208-execution-environment.md). It exposes no ledger operation.
@@ -131,15 +131,15 @@ provide true backend CAS.
 **Command execution is a separate seam, bound to one namespace at construction.**
 `tool.CommandRunner` (`Run(ctx, command) (CommandResult, error)`) is the only
 chokepoint for shell execution; the agent loop never references it, and only the
-Bash tool depends on it. A runner is BOUND to a single namespace at construction
+Shell tool depends on it. A runner is BOUND to a single namespace at construction
 (no per-call `workdir` — the command's cwd always matches the `Workspace` the tool
-executes against). That makes Bash — and therefore *all* command
-execution — optional in the catalog: `NewBashTool()` is registered only
+executes against). That makes Shell — and therefore *all* command
+execution — optional in the catalog: `NewShellTool()` is registered only
 when a runner is configured, and `tools.Register`
 deliberately excludes it. The `osfs` adapter ships a local `/bin/sh`
 `CommandRunner` (output-capped, context-bounded, process-group-killed on
 cancel); a runner may also execute remotely or refuse with `tool.ErrNoShell`. A
-shell-less deployment simply omits Bash, and an OS sandbox would wrap this seam.
+shell-less deployment simply omits Shell, and an OS sandbox would wrap this seam.
 [ADR 0211](../adr/0211-execution-environment-runtime-seam.md) implements the
 runtime seam: a coding agent runs in an execution environment (`tool.Environment`)
 whose `Workspace`, separately selected `ReadLedger`, and bound `CommandRunner` address one namespace and evidence scope. The
@@ -158,23 +158,23 @@ version-aware file-mutation foundation is [ADR 0208](../adr/0208-execution-envir
 layering reason (the tools that need them depend on the interface, not a
 `port`).
 
-**The Bash tool itself is the agent loop's own** (`engine/agent/bashtool.go`,
-`agent.NewBashTool`), not the fstools adapter's: the foreground half is
+**The Shell tool itself is the agent loop's own** (`engine/agent/bashtool.go`,
+`agent.NewShellTool`), not the fstools adapter's: the foreground half is
 byte-identical to the fstools body, and `background: true` detaches the command
 as a run-scoped background job on the parent run's child registry — an
 agent-package type fstools cannot import. It registers under the literal name
-`"Bash"` (`tool.BashToolName`) because the permission evaluator special-cases
+`"Shell"` (`tool.ShellToolName`) because the permission evaluator special-cases
 that name (the compound-command split, the plan-mode read-only gate, rule
 learning) — a second tool name would silently bypass the bash gate, so any shell
 affordance must register under the gated name or extend the gate. A background
 call returns immediately with a `bashcmd-<callID>` job id and runs detached in
 the REAL workspace (no isolation — its effects may interleave with the model's
-own edits, and the description says so); the read-only **`BashStatus`** tool
-(`engine/agent/bashstatus.go`, registered iff Bash is, never in child catalogs)
+own edits, and the description says so); the read-only **`ShellStatus`** tool
+(`engine/agent/bashstatus.go`, registered iff Shell is, so Shell-enabled child catalogs include `ShellStatus`)
 is the sole status/collect/cancel channel — no args → the run's job roster (ids
 + state + stop only), `job_id` → the command + retained output tail (live) or
 the exactly-once collected result (done), `wait_ms` (≤120s) parks, `cancel`
-signals the job's context. Permissions are identical to foreground Bash (the
+signals the job's context. Permissions are identical to foreground Shell (the
 start is the ask; nothing re-asks mid-run), and a job still live at run end is
 cancelled and joined by the same drain the background subagents use — a job is
 RUN-scoped, never session-scoped. Streaming the job's output is the OPTIONAL
@@ -182,7 +182,7 @@ RUN-scoped, never session-scoped. Streaming the job's output is the OPTIONAL
 io.Writer) (exitCode int, err error)` — the osfs runner implements it over the
 same spawn/wait tail as `Run`; a runner without it declines background calls
 honestly): the job streams interleaved stdout+stderr into a bounded 64 KiB tail
-ring (`engine/agent/tailbuffer.go`), so `BashStatus` shows the RECENT output a
+ring (`engine/agent/tailbuffer.go`), so `ShellStatus` shows the RECENT output a
 head-capped capture would have lost. See
 [ADR 0201](../adr/0201-background-bash.md) and
 [subagents & teams](subagents-and-teams.md) for the registry family mechanics.

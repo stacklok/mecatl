@@ -18,7 +18,7 @@ var _ port.HookRunner = (*hookexec.Runner)(nil)
 func event() governance.HookEvent {
 	return governance.HookEvent{
 		Phase:     governance.PhasePreToolUse,
-		Tool:      "Bash",
+		Tool:      "Shell",
 		Input:     json.RawMessage(`{"command":"rm -rf /"}`),
 		SessionID: "s1",
 	}
@@ -85,7 +85,7 @@ func TestOtherExitIsError(t *testing.T) {
 func TestStdinCarriesEventJSON(t *testing.T) {
 	// The hook greps its own stdin for fields; if absent it exits 2 to signal
 	// failure of the assertion via Block.
-	script := `payload=$(cat); echo "$payload" | grep -q '"Tool":"Bash"' && echo "$payload" | grep -q '"SessionID":"s1"' || { echo "missing fields: $payload" 1>&2; exit 2; }`
+	script := `payload=$(cat); echo "$payload" | grep -q '"Tool":"Shell"' && echo "$payload" | grep -q '"SessionID":"s1"' || { echo "missing fields: $payload" 1>&2; exit 2; }`
 	r := hookexec.New(map[governance.HookPhase]string{
 		governance.PhasePreToolUse: script,
 	})

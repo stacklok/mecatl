@@ -100,7 +100,7 @@ func TestAskReviewerEngineDisablesNoProgressNudge(t *testing.T) {
 		t.Fatalf("reviewer must be built")
 	}
 	if _, err := reviewer.Review(context.Background(), agent.ChildAskReviewRequest{
-		Ask: session.PendingAsk{Tool: "Bash", Args: json.RawMessage(`{"command":"ls"}`)},
+		Ask: session.PendingAsk{Tool: "Shell", Args: json.RawMessage(`{"command":"ls"}`)},
 	}); err == nil {
 		t.Fatalf("an empty reviewer turn must yield a failure (fail-safe deny), not a verdict")
 	}
@@ -234,19 +234,19 @@ func TestChildDepsClearAskAdjudicator(t *testing.T) {
 
 // --- e2e: real engine + supervisor, headless, scripted reviewer-allow -------
 
-// appFakeBash is a recording non-read-only Bash stand-in (the engine test
+// appFakeShell is a recording non-read-only Shell stand-in (the engine test
 // fixture, replicated here because test helpers do not cross packages).
-type appFakeBash struct {
+type appFakeShell struct {
 	mu       sync.Mutex
 	executed []string
 }
 
-func (*appFakeBash) Spec() tool.ToolSpec {
-	return tool.ToolSpec{Name: "Bash", Description: "fake bash",
+func (*appFakeShell) Spec() tool.ToolSpec {
+	return tool.ToolSpec{Name: "Shell", Description: "fake bash",
 		Schema: json.RawMessage(`{"type":"object","properties":{"command":{"type":"string"}},"required":["command"]}`)}
 }
-func (*appFakeBash) ReadOnly() bool { return false }
-func (b *appFakeBash) Execute(_ context.Context, in session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
+func (*appFakeShell) ReadOnly() bool { return false }
+func (b *appFakeShell) Execute(_ context.Context, in session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	var args struct {
 		Command string `json:"command"`
 	}
@@ -256,14 +256,14 @@ func (b *appFakeBash) Execute(_ context.Context, in session.ToolCall, _ tool.Env
 	b.mu.Unlock()
 	return session.NewToolResult(in.ID, "bash ran: "+args.Command), nil
 }
-func (b *appFakeBash) ran() []string {
+func (b *appFakeShell) ran() []string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return append([]string(nil), b.executed...)
 }
 
 // appFakeForker hands out in-memory fork environments (the engine test fixture's
-// shape) so a read-only member can carry Bash.
+// shape) so a read-only member can carry Shell.
 type appFakeForker struct{}
 
 func (appFakeForker) Fork(_ context.Context, _ tool.Environment, label string) (tool.Environment, func() error, string, error) {
@@ -275,10 +275,10 @@ func (appFakeForker) Fork(_ context.Context, _ tool.Environment, label string) (
 // (engineDepsForProvider + attachAskAdjudicator), a Team supervisor member built
 // through the real child deps path (childEngineDepsForProvider, which clears the
 // nested adjudicator), and the REAL engineAskAdjudicator over a mockllm SCRIPTED
-// to allow — the member's substitution-floored Bash (`cat $(zap)`) executes,
+// to allow — the member's substitution-floored Shell (`cat $(zap)`) executes,
 // where the pre-#31 posture blanket-denied it.
 func TestAskReviewerE2EHeadlessTeamAllow(t *testing.T) {
-	bash := &appFakeBash{}
+	bash := &appFakeShell{}
 	cfg := Config{
 		Model: "m",
 		// UseMock skips alias validation; the reviewer model is a literal id the
@@ -294,7 +294,7 @@ func TestAskReviewerE2EHeadlessTeamAllow(t *testing.T) {
 		}
 		cat.MustRegister(bash)
 		memberLLM := mockllm.New(
-			mockllm.ToolCallTurn(session.NewToolCall("a1", "Bash", json.RawMessage(`{"command":"cat $(zap)"}`))),
+			mockllm.ToolCallTurn(session.NewToolCall("a1", "Shell", json.RawMessage(`{"command":"cat $(zap)"}`))),
 			mockllm.TextTurn("lead: inspected"),
 			mockllm.TextTurn("CONSOLIDATED: done"),
 		)
@@ -350,6 +350,6 @@ func TestAskReviewerE2EHeadlessTeamAllow(t *testing.T) {
 		t.Fatalf("run did not complete cleanly: %+v", last)
 	}
 	if got := bash.ran(); len(got) != 1 || !strings.Contains(got[0], "cat $(zap)") {
-		t.Fatalf("the reviewer-allowed substitution-floored Bash must execute; ran=%v", got)
+		t.Fatalf("the reviewer-allowed substitution-floored Shell must execute; ran=%v", got)
 	}
 }

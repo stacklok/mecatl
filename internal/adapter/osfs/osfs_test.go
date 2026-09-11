@@ -135,7 +135,7 @@ func TestCommandRunnerWorkingDir(t *testing.T) {
 // different directory runs its commands THERE — never the two crossing via a
 // per-call workdir. This is the fork-isolation property the Environment seam
 // relies on: a forked child gets its OWN runner bound to the child namespace,
-// so its Bash observes the child tree (not the parent's), and a relative write
+// so its Shell observes the child tree (not the parent's), and a relative write
 // lands in the runner's bound root.
 func TestCommandRunnerBoundNamespace(t *testing.T) {
 	ctx := context.Background()

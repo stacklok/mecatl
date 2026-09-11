@@ -11,7 +11,7 @@
   ┃  │  › ◐ audit auth flow #r-a3f1 · Grep… · 7 tools · ↑0 ↓0  │                                 ┃
   ┃  ╰─────────────────────────────────────────────────────────╯                                 ┃
   ┃    ◐ find dead code #r-b2e2 · Read… · 4 tools · ↑0 ↓0                                        ┃
-  ┃    ◐ trace config loading #r-c1d3 · Bash… · 11 tools · ↑0 ↓0                                 ┃
+  ┃    ◐ trace config loading #r-c1d3 · Shell… · 11 tools · ↑0 ↓0                                ┃
   ┃    ✓ map test coverage #r-d0c4 · done · 9 tools · ↑15K ↓4K                                   ┃
   ┃    ✗ check error handling #r-e9b5 · error · 2 tools · ↑3K ↓500                               ┃
   ┃                                                                                              ┃
@@ -26,5 +26,5 @@
 │
 │
 ────────────────────────────────────────────────────────────────────────────────────────────────────
- connected                                       ⛭ subagents 3◐ 2✓ · ctrl+a  ctx 0 · ↑0 ↓0 cache 0%
+ connected                                           ⛭ subagents 3◐ 2✓ · f6  ctx 0 · ↑0 ↓0 cache 0%
 ? help · / commands · ctrl+c quit

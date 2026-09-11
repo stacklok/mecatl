@@ -399,8 +399,8 @@ func TestFoldRecoversCompactionArchiveHead(t *testing.T) {
 // following EvApproval/EvResult lands the session in StateAwaiting with the pending
 // ask restored.
 func TestFoldUnansweredAskIsAwaiting(t *testing.T) {
-	call := toolCall("c1", "Bash", `{"command":"ls"}`)
-	ask := session.PendingAsk{AskID: "s1:0:c1:r0", Tool: "Bash", Reason: "needs approval"}
+	call := toolCall("c1", "Shell", `{"command":"ls"}`)
+	ask := session.PendingAsk{AskID: "s1:0:c1:r0", Tool: "Shell", Reason: "needs approval"}
 	evs := []session.Event{
 		{Type: session.EvTurnStart, Turn: 0},
 		{Type: session.EvMessageDelta, Turn: 0, Text: "running a command"},
@@ -420,7 +420,7 @@ func TestFoldUnansweredAskIsAwaiting(t *testing.T) {
 	if !ok {
 		t.Fatalf("no pending ask restored")
 	}
-	if got.AskID != ask.AskID || got.Tool != "Bash" {
+	if got.AskID != ask.AskID || got.Tool != "Shell" {
 		t.Fatalf("pending = %+v, want %+v", got, ask)
 	}
 }
@@ -428,13 +428,13 @@ func TestFoldUnansweredAskIsAwaiting(t *testing.T) {
 // TestFoldResolvedAskNotAwaiting asserts an ask FOLLOWED by an approval (then a
 // terminal result) is NOT awaiting — the verdict cleared it.
 func TestFoldResolvedAskNotAwaiting(t *testing.T) {
-	call := toolCall("c1", "Bash", `{"command":"ls"}`)
-	ask := session.PendingAsk{AskID: "s1:0:c1:r0", Tool: "Bash"}
+	call := toolCall("c1", "Shell", `{"command":"ls"}`)
+	ask := session.PendingAsk{AskID: "s1:0:c1:r0", Tool: "Shell"}
 	evs := []session.Event{
 		{Type: session.EvTurnStart, Turn: 0},
 		{Type: session.EvToolCall, Turn: 0, ToolCall: &call},
 		{Type: session.EvPermissionAsk, Turn: 0, Ask: &ask},
-		{Type: session.EvApproval, Turn: 0, Approval: &session.ApprovalPayload{AskID: ask.AskID, Verdict: session.VerdictStringAllowOnce, Tool: "Bash", Call: "c1"}},
+		{Type: session.EvApproval, Turn: 0, Approval: &session.ApprovalPayload{AskID: ask.AskID, Verdict: session.VerdictStringAllowOnce, Tool: "Shell", Call: "c1"}},
 		{Type: session.EvToolResult, Turn: 0, ToolResult: ptr(session.NewToolResult("c1", "ok"))},
 		{Type: session.EvResult, Turn: 0, Result: &session.ResultPayload{Stop: session.StopEndTurn}},
 	}

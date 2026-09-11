@@ -22,7 +22,7 @@ import (
 // yolo/auto operator postures (Scenario 2), an out-of-root WRITE escape at
 // yolo (Allow) / auto (Ask — Scenario 3), and resolves a strict/trusted
 // out-of-root read OR write escape to ASK (Scenario 4 — instead of today's
-// hard ErrPathEscape dead-end that only pushes the model to an opaque Bash
+// hard ErrPathEscape dead-end that only pushes the model to an opaque Shell
 // `cat /path`). It is COMPOSITION, not domain — the escape decision is a
 // posture/policy concern, and the osfs containment vetting is never stripped
 // (the relaxed workspace still canonicalize-then-rejects and serves through
@@ -130,8 +130,8 @@ func (p *escapePolicy) classifierFor(ws tool.WorkspaceReader) *escapeClassifier 
 //  3. pseudo-fs (/proc, /sys, /dev) → Deny at EVERY posture (the never-relaxed
 //     category — an in-process Read of /proc/self/environ would return the
 //     SERVER's raw, unscrubbed environment, a channel the envscrub-scrubbed
-//     Bash parity path does not provide);
-//  4. an out-of-root READ escape at auto/yolo → Allow (Bash parity); at
+//     Shell parity path does not provide);
+//  4. an out-of-root READ escape at auto/yolo → Allow (Shell parity); at
 //     strict/trusted → Ask (Scenario 4 — the legible FS-tool ask instead of
 //     the ErrPathEscape dead-end);
 //  5. an out-of-root WRITE escape → Allow at yolo, Ask at auto AND at
@@ -154,7 +154,7 @@ func (p *escapePolicy) Evaluate(ctx context.Context, sessionID session.SessionID
 	switch kind {
 	case escapePseudoFS:
 		// Never-relaxed at every posture: an FS read of a pseudo-fs path would
-		// exfiltrate the SERVER's raw environment, a channel Bash does not
+		// exfiltrate the SERVER's raw environment, a channel Shell does not
 		// provide (the env-scrub gotcha). Hard-deny even at yolo.
 		return governance.PermissionDecision{
 			Effect: governance.Deny,
@@ -179,7 +179,7 @@ func (p *escapePolicy) Evaluate(ctx context.Context, sessionID session.SessionID
 		switch c.Name {
 		case "Read":
 			if p.posture >= PostureAuto {
-				// Bash parity: at auto/yolo Bash already reads the same bytes, so
+				// Shell parity: at auto/yolo Shell already reads the same bytes, so
 				// the FS read boundary was cosmetic. The relaxed workspace serves
 				// the read; the wrapper only has to not stand in its way.
 				return governance.PermissionDecision{Effect: governance.Allow}
@@ -187,7 +187,7 @@ func (p *escapePolicy) Evaluate(ctx context.Context, sessionID session.SessionID
 			// Scenario 4 (docs/acceptance/path-escape-posture.md): at
 			// strict/trusted a READ escape ASKS on the FS tool itself instead
 			// of dead-ending on ErrPathEscape (which only pushed the model to
-			// an opaque Bash `cat /path`). The inner policy already ran first:
+			// an opaque Shell `cat /path`). The inner policy already ran first:
 			// a configured Deny and a configured Ask both returned above
 			// (deny-dominance + the configured-Ask floor), so the escape Ask
 			// only ever replaces an inner ALLOW — Read's built-in floor. The
@@ -198,7 +198,7 @@ func (p *escapePolicy) Evaluate(ctx context.Context, sessionID session.SessionID
 			// allow-once only).
 			return governance.PermissionDecision{
 				Effect: governance.Ask,
-				Reason: fmt.Sprintf("out-of-workspace read: %q lies outside the workspace root — approve to read it through the FS tool (a Bash cat of the same path is NOT a substitute)", path),
+				Reason: fmt.Sprintf("out-of-workspace read: %q lies outside the workspace root — approve to read it through the FS tool (a Shell cat of the same path is NOT a substitute)", path),
 			}
 		case "Write", "Edit":
 			// Scenario 3: a WRITE escape is allowed at yolo and ASKS at auto —

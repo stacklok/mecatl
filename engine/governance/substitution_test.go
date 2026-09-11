@@ -5,7 +5,7 @@ import "testing"
 // A NOTE ON DESTRUCTIVE STAND-INS (repo memory: no-destructive-strings-in-test-literals):
 // these tests never use a real destructive command literal. A "non-read-only inner"
 // is modelled with the innocuous, UNRECOGNISED verb `zap` — it is not in readOnlyVerbs,
-// so simpleReadOnly/ReadOnlyBash classify it not-read-only exactly as a real mutating
+// so simpleReadOnly/ReadOnlyShell classify it not-read-only exactly as a real mutating
 // verb would, but it does nothing if ever run. We assert on the CLASSIFICATION effect,
 // not on any destructive literal.
 

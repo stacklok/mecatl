@@ -266,7 +266,7 @@ func TestParseMCPName(t *testing.T) {
 		t.Fatalf("got (%q, %q, %v), want (foo, bar__baz, true)", server, tool, ok)
 	}
 	// Non-MCP names.
-	for _, name := range []string{"Read", "Bash", "mcp__only", "mcp__", "notmcp__a__b", ""} {
+	for _, name := range []string{"Read", "Shell", "mcp__only", "mcp__", "notmcp__a__b", ""} {
 		if _, _, ok := parseMCPName(name); ok {
 			t.Errorf("parseMCPName(%q) should be ok=false", name)
 		}

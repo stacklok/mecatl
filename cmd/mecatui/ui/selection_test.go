@@ -31,7 +31,7 @@ func selModel(t *testing.T) (Model, *fakeClipboard) {
 	m.conv.addUser("a request")
 	m.conv.appendAssistant(strings.Repeat("line of streamed output\n", 120))
 	m.phase = phaseIdle
-	m.stuck = true
+	m.conversationView.mode = followTail
 	m.refreshView()
 	return m, cb
 }
@@ -466,7 +466,7 @@ func TestSelectionHighlightOnStyledLaterLine(t *testing.T) {
 	m.conv.endReasoningStream() // freeze the collapsed "reasoning summary · N lines" line
 	m.conv.appendAssistant(marker + " is the selected answer line")
 	m.phase = phaseIdle
-	m.stuck = true
+	m.conversationView.mode = followTail
 	m.refreshView()
 
 	// PRECONDITION: at least one content line ABOVE the answer is ANSI-styled (the
@@ -538,7 +538,7 @@ func styledTranscriptModel(t *testing.T, answer string) (Model, int) {
 	m.conv.endReasoningStream()
 	m.conv.appendAssistant(answer)
 	m.phase = phaseIdle
-	m.stuck = true
+	m.conversationView.mode = followTail
 	m.refreshView()
 
 	idx := lineIndexContaining(m.vp.GetContent(), strings.Fields(answer)[0])
@@ -659,15 +659,15 @@ func TestDragReSplicesAfterDeltaUsesFreshBase(t *testing.T) {
 
 // TestInitialSelectionInDirtyWindowKeepsTailFollowed covers the distinct first-click
 // path: a streaming delta has grown the conversation but its coalesced render tick
-// has not yet run. snapshotSelection must install the fresh content AND preserve
-// tail-following immediately; the tick must keep it there.
+// has not yet run. snapshotSelection must use the displayed frame without exposing
+// the pending content; the tick then advances the tail while preserving tail-follow.
 func TestInitialSelectionInDirtyWindowKeepsTailFollowed(t *testing.T) {
 	const tail = "DIRTY SELECTION TAIL"
 
 	m, _ := selModel(t)
 	m.phase = phaseRunning
-	if !m.stuck || !m.vp.AtBottom() {
-		t.Fatalf("precondition: selection model should follow the tail: stuck=%v atBottom=%v", m.stuck, m.vp.AtBottom())
+	if m.conversationView.mode != followTail || !m.vp.AtBottom() {
+		t.Fatalf("precondition: selection model should follow the tail: stuck=%v atBottom=%v", m.conversationView.mode == followTail, m.vp.AtBottom())
 	}
 
 	// The real delta reducer marks the grown transcript dirty without flushing it.
@@ -676,27 +676,29 @@ func TestInitialSelectionInDirtyWindowKeepsTailFollowed(t *testing.T) {
 		t.Fatal("precondition: streaming delta should leave the view dirty before its render tick")
 	}
 
-	// The initial press starts a selection and takes the dirty snapshot before the
-	// pending render tick. It must not leave the former YOffset visible.
+	// The initial press starts a selection in the displayed pre-delta frame.
 	m, _ = pressMouse(m, tea.MouseLeft, 0, convTopRow(m))
 	if !m.sel.active {
 		t.Fatal("initial press should activate a selection")
 	}
-	if !m.vp.AtBottom() {
-		t.Fatal("dirty selection snapshot should remain at the fresh tail")
+	if !m.viewDirty {
+		t.Fatal("dirty selection snapshot must leave the pending delta for its render tick")
 	}
-	if !m.stuck {
+	if !m.vp.AtBottom() {
+		t.Fatal("dirty selection snapshot should keep following the displayed tail")
+	}
+	if m.conversationView.mode != followTail {
 		t.Fatal("dirty selection snapshot should keep tail-following enabled")
 	}
-	if !strings.Contains(ansi.Strip(m.vp.View()), tail) {
-		t.Fatalf("dirty selection snapshot should show the fresh tail %q", tail)
+	if strings.Contains(ansi.Strip(m.vp.View()), tail) {
+		t.Fatalf("dirty selection snapshot exposed pending tail %q", tail)
 	}
 
 	m = applyAll(m, renderTickMsg{})
 	if !m.vp.AtBottom() {
 		t.Fatal("render tick should keep the dirty selection snapshot at the tail")
 	}
-	if !m.stuck {
+	if m.conversationView.mode != followTail {
 		t.Fatal("render tick should keep tail-following enabled")
 	}
 	if !strings.Contains(ansi.Strip(m.vp.View()), tail) {
@@ -710,8 +712,8 @@ func TestInitialSelectionInDirtyWindowKeepsTailFollowed(t *testing.T) {
 func TestInitialSelectionInDirtyWindowDoesNotRepinManualScroll(t *testing.T) {
 	m, _ := selModel(t)
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyPgUp})
-	if m.stuck || m.vp.AtBottom() {
-		t.Fatalf("precondition: pgup should leave the selection model manually scrolled: stuck=%v atBottom=%v", m.stuck, m.vp.AtBottom())
+	if m.conversationView.mode == followTail || m.vp.AtBottom() {
+		t.Fatalf("precondition: pgup should leave the selection model manually scrolled: stuck=%v atBottom=%v", m.conversationView.mode == followTail, m.vp.AtBottom())
 	}
 	before := m.vp.YOffset()
 	m.phase = phaseRunning
@@ -733,35 +735,26 @@ func TestInitialSelectionInDirtyWindowDoesNotRepinManualScroll(t *testing.T) {
 	if !m.sel.active {
 		t.Fatal("initial press should activate a selection")
 	}
-	if m.stuck || m.vp.AtBottom() {
-		t.Fatalf("dirty selection snapshot repinned manual scroll: stuck=%v atBottom=%v", m.stuck, m.vp.AtBottom())
+	if m.conversationView.mode == followTail || m.vp.AtBottom() {
+		t.Fatalf("dirty selection snapshot repinned manual scroll: stuck=%v atBottom=%v", m.conversationView.mode == followTail, m.vp.AtBottom())
 	}
 	if got := m.vp.YOffset(); got != before {
 		t.Fatalf("dirty selection snapshot changed manual YOffset: got %d, want %d", got, before)
 	}
 
 	m = applyAll(m, renderTickMsg{})
-	if m.stuck || m.vp.AtBottom() {
-		t.Fatalf("render tick repinned manual scroll: stuck=%v atBottom=%v", m.stuck, m.vp.AtBottom())
+	if m.conversationView.mode == followTail || m.vp.AtBottom() {
+		t.Fatalf("render tick repinned manual scroll: stuck=%v atBottom=%v", m.conversationView.mode == followTail, m.vp.AtBottom())
 	}
 	if got := m.vp.YOffset(); got != before {
 		t.Fatalf("render tick changed manual YOffset: got %d, want %d", got, before)
 	}
 }
 
-// TestGestureInDirtyWindowDoesNotFlashBack covers the gap
-// TestDragReSplicesAfterDeltaUsesFreshBase deliberately leaves: that test always
-// pairs the streaming delta with its renderTickMsg flush, so selBase is already
-// refreshed before the next gesture. But a streamed delta only marks the view
-// DIRTY (the flush is deferred to the frame-cadence tick) — a mouse gesture that
-// lands in the window BETWEEN the delta and the tick would re-splice the STALE
-// selBase and SetContent it, reverting the viewport to the pre-delta conversation
-// (a visible "flash back" to an earlier state). snapshotSelection must re-capture
-// the base from the live conversation whenever the view is dirty, so the splice
-// always starts from current content. Here a delta lands in the dirty window
-// (viewDirty set, tick not yet fired) before the extending drag, and the post-drag
-// viewport must still carry the new token (not the pre-delta content).
-func TestGestureInDirtyWindowDoesNotFlashBack(t *testing.T) {
+// TestGestureInDirtyWindowKeepsDisplayedFrame covers a drag that lands after a
+// coalesced delta but before its render tick. snapshotSelection must re-splice the
+// displayed base, leaving the newer conversation content hidden until the tick.
+func TestGestureInDirtyWindowKeepsDisplayedFrame(t *testing.T) {
 	m, _, _ := newTestModel(t, theme.New("aztec", theme.AztecPalette()))
 	m.deps.NoAltScreen = false
 	m.deps.Clipboard = &fakeClipboard{}
@@ -775,7 +768,7 @@ func TestGestureInDirtyWindowDoesNotFlashBack(t *testing.T) {
 		m.conv.appendAssistant(strings.Repeat("answer line\n", 12))
 	}
 	m.phase = phaseRunning
-	m.stuck = true
+	m.conversationView.mode = followTail
 	m.refreshView()
 
 	top := convTopRow(m)
@@ -788,24 +781,24 @@ func TestGestureInDirtyWindowDoesNotFlashBack(t *testing.T) {
 		t.Fatal("press+drag should open a non-empty selection")
 	}
 
-	// A streaming delta lands in the dirty window: the conversation advances and the
-	// view is marked dirty, but the frame-cadence render tick has NOT fired yet (so
-	// selBase has not been refreshed by refreshView). Appending directly + setting
-	// viewDirty is exactly what the AssistantDeltaMsg reducer does (appendAssistant +
-	// markDirty) minus the tick arm.
+	// A streaming delta lands in the dirty window: the conversation advances but the
+	// frame-cadence render tick has NOT fired yet.
 	m.conv.appendAssistant("IN-FLIGHT DELTA TOKEN\n")
 	m.viewDirty = true
 
-	// DRAG again INSIDE the dirty window: snapshotSelection must re-capture the fresh
-	// base (grown by the delta) rather than re-splice the stale pre-delta one.
+	// DRAG again inside the dirty window. The selection remains against the frame the
+	// reader can see; it must not reveal the deferred delta.
 	m, _ = motionMouse(m, 30, y)
+	if !m.viewDirty {
+		t.Fatal("gesture must leave the pending delta for its ordinary render tick")
+	}
+	if strings.Contains(ansi.Strip(m.vp.GetContent()), "IN-FLIGHT DELTA TOKEN") {
+		t.Error("post-drag viewport exposed the hidden in-flight delta")
+	}
 
-	// TEETH: the post-drag viewport must contain the in-flight token. A stale base
-	// re-splice would SetContent the pre-delta content, dropping the token (flash back).
-	// Assert on the ANSI-STRIPPED content: the markdown render interleaves style codes
-	// with the text, so a literal substring match on the raw output is unreliable.
-	if !strings.Contains(ansi.Strip(m.vp.GetContent()), "IN-FLIGHT DELTA TOKEN") {
-		t.Error("post-drag viewport lost the in-flight delta — snapshotSelection re-spliced a STALE base (flash back)")
+	m.refreshView()
+	if !m.sel.active {
+		t.Fatal("ordinary render should preserve the stable logical selection")
 	}
 }
 
@@ -1172,12 +1165,8 @@ func lineIndexContaining(content, sub string) int {
 	return -1
 }
 
-// TestSelectionClearedOnReflowAboveIt: selection-identity robustness. The anchor/
-// head are ABSOLUTE line indices, so a re-render that changes the line count above
-// (or within) the selection — here ctrl+t expanding a tool body — re-points them at
-// different text. The selection must be DROPPED, not left highlighting/copying the
-// wrong runes. (A pure append BELOW does not trigger this — see
-// TestSelectionSurvivesStreamingDelta.)
+// TestSelectionClearedOnReflowAboveIt: selection identity must not retain a span
+// whose copied visible text changes when a reflow introduces new rendered rows.
 func TestSelectionClearedOnReflowAboveIt(t *testing.T) {
 	cb := &fakeClipboard{}
 	m, _, _ := newTestModel(t, theme.New("aztec", theme.AztecPalette()))
@@ -1190,12 +1179,12 @@ func TestSelectionClearedOnReflowAboveIt(t *testing.T) {
 	// A tool block whose body is long enough that ctrl+t (full vs line-capped) changes
 	// its rendered height, followed by a UNIQUE assistant marker line BELOW it.
 	m.conv.addUser("req")
-	m.conv.addTool("t1", "Bash", `{"cmd":"seq 40"}`)
+	m.conv.addTool("t1", "Shell", `{"cmd":"seq 40"}`)
 	m.conv.resolveTool("t1", strings.TrimRight(strings.Repeat("toolbodyline\n", 40), "\n"), false)
 	const marker = "UNIQUEMARKERZZZ"
 	m.conv.appendAssistant(marker + " trailing words here")
 	m.phase = phaseIdle
-	m.stuck = true
+	m.conversationView.mode = followTail
 	m.refreshView()
 
 	// Select within the marker line (in the capped render).
@@ -1225,7 +1214,7 @@ func TestSelectionClearedOnReflowAboveIt(t *testing.T) {
 		t.Fatalf("test setup did not shift the layout (marker stayed at line %d); ctrl+t must change the tool body height", markerLine)
 	}
 	if m.sel.active {
-		t.Errorf("selection should be CLEARED after a reflow shifted the content under it (marker %d → %d)", markerLine, afterIdx)
+		t.Errorf("selection should be CLEARED after a reflow changed the selected text (marker %d → %d)", markerLine, afterIdx)
 	}
 	if strings.Contains(m.vp.View(), selectionBgSGR(t, m)) {
 		t.Error("no selection background highlight should remain after the reflow-clear")
@@ -1263,14 +1252,14 @@ func TestWheelKeepsSelection(t *testing.T) {
 	if !m.sel.active {
 		t.Fatal("precondition: a selection should be active")
 	}
-	beforeStuck := m.stuck
+	beforeMode := m.conversationView.mode
 
 	m, _ = pressKey(m, tea.MouseWheelMsg{Button: tea.MouseWheelUp})
 
 	if !m.sel.active {
 		t.Error("a wheel scroll must NOT clear an active selection")
 	}
-	if m.stuck == beforeStuck && beforeStuck {
+	if m.conversationView.mode == beforeMode && beforeMode == followTail {
 		t.Error("a wheel-up should have unstuck the view (auto-follow re-derived)")
 	}
 }
@@ -1318,7 +1307,7 @@ func TestSelectionSurvivesStreamingDelta(t *testing.T) {
 	m, _ = motionMouse(m, 10, top)
 	anchorL, anchorC := m.sel.anchorL, m.sel.anchorC
 	headL, headC := m.sel.headL, m.sel.headC
-	beforeStuck := m.stuck
+	beforeMode := m.conversationView.mode
 
 	m.phase = phaseRunning
 	m = applyAll(m,
@@ -1333,8 +1322,8 @@ func TestSelectionSurvivesStreamingDelta(t *testing.T) {
 	if !m.sel.active {
 		t.Error("selection should still be active after a streaming delta")
 	}
-	if m.stuck != beforeStuck {
-		t.Errorf("streaming delta changed stuck: %v → %v", beforeStuck, m.stuck)
+	if m.conversationView.mode != beforeMode {
+		t.Errorf("streaming delta changed stuck: %v → %v", beforeMode, m.conversationView.mode)
 	}
 	// The selection is still derivable after the delta: its visible text is non-empty
 	// and still equals the identity snapshot (the snapshot reflow-clear in refreshView
@@ -1462,7 +1451,7 @@ func TestDragNearTopEdgeScrollsUp(t *testing.T) {
 		t.Error("an armed edge-autoscroll should return a re-arming tick command")
 	}
 	// An upward scroll is an explicit user scroll → unstick auto-follow.
-	if m.stuck {
+	if m.conversationView.mode == followTail {
 		t.Error("edge-autoscroll up should unstick auto-follow")
 	}
 }
@@ -2224,7 +2213,7 @@ func convModel(t *testing.T, line string) (Model, int, int) {
 	m.conv.addUser("req")
 	m.conv.appendAssistant(line)
 	m.phase = phaseIdle
-	m.stuck = true
+	m.conversationView.mode = followTail
 	m.refreshView()
 	m.deps.Clipboard = cb // ensure threaded after refresh
 	idx := lineIndexContaining(m.vp.GetContent(), strings.Fields(line)[0])

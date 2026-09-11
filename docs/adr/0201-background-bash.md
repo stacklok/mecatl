@@ -51,11 +51,11 @@ plan-mode gate, and the guardrail modelhook `Bash` rules as a foreground call. T
 generalized rule this records: **any new shell affordance must register under the
 gated name or extend the gate** — a second name for a shell-executing tool is a
 permission bypass by construction. The name's single authority moved to
-`engine/tool/tool.go` (`BashToolName`) so every implementation (the fstools adapter's
+`engine/tool/tool.go` (`BashToolName`) so every implementation (the fstools adapter's <!-- lint:not-a-citation: historical identifier removed by ADR 0317 -->
 AND the agent loop's) imports the one constant instead of re-spelling the literal.
 
 **D2 — the tool lives in `engine/agent` over the `childCapableTool` seam, foreground
-byte-identical to fstools.** `engine/agent/bashtool.go` (`BashTool` /
+byte-identical to fstools.** `engine/agent/bashtool.go` (`BashTool` / <!-- lint:not-a-citation: historical path and identifier retained by the frozen ADR -->
 `NewBashTool`) re-implements the fstools Bash body's orchestration verbatim (same arg
 validation, timeout ctx, `runner.Run`, combined-output shaping, 25 000-byte cap,
 exit-code error) — `engine/agent` must not import the fstools adapter, so the two

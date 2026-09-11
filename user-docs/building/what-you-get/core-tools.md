@@ -30,8 +30,8 @@ These tools are always present in a default session (no extra configuration requ
 | `Copy` | Copy one regular file to a new path. The destination must not exist; directories and overwrites are refused. | No |
 | `Move` | Move a file or directory to a new path. The destination must not exist, so an existing path is never silently replaced. | No |
 | `Remove` | Remove one file or empty physical directory. Removal is never recursive; non-empty and virtual derived directories are refused. | No |
-| `Bash` | Execute a shell command. The model's general-purpose escape hatch for tasks no other tool covers. Subject to permission rules. Supports `background: true` for long-running commands (see below). | No |
-| `BashStatus` | Check on the background commands `Bash` started in this run: poll a job's output tail, collect a finished job's result, or cancel a job. Registered wherever `Bash` is. | Yes |
+| `Shell` | Execute a shell command. The model's general-purpose escape hatch for tasks no other tool covers. Subject to permission rules. Supports `background: true` for long-running commands (see below). | No |
+| `ShellStatus` | Check on the background commands `Shell` started in this run: poll a job's output tail, collect a finished job's result, or cancel a job. Registered wherever `Shell` is. | Yes |
 | `Grep` | Search file contents for a pattern (regex or literal) across the workspace. Returns matching lines with context. Supports `**` recursive globs when scoping the search to a subtree; broad unscoped searches have a safety budget, so supply `path` for large workspaces. | Yes |
 | `Glob` | List files matching a glob pattern. Useful for discovering which files exist before reading them. Supports `**` for recursive matching across any number of directory levels. | Yes |
 | `DiscoverModels` | Inspect the server's resolved model inventory through a bounded, safe projection. Each returned `provider_id` + `model_id` pair is an exact selection handle. Present in default and no-filesystem profiles. | Yes |
@@ -70,20 +70,20 @@ verbatim, results are fenced as untrusted content, redirects are refused, and
 each call has a bounded timeout and concurrency limit. Configure permission
 rules or guardrails when queries need an additional exfiltration control.
 
-:::note[Bash is mutating]
+:::note[Shell is mutating]
 
-`Bash` is always classified as mutating regardless of what the command does. If you need the model to run read-only shell commands concurrently, use `ListDir`, `Grep`, and `Glob` instead — they are purpose-built read-only tools that run in parallel.
+`Shell` is always classified as mutating regardless of what the command does. If you need the model to run read-only shell commands concurrently, use `ListDir`, `Grep`, and `Glob` instead — they are purpose-built read-only tools that run in parallel.
 
 :::
 
-An operator can disable shell access for the entire deployment. `mecated --no-bash`
-removes the `Bash` tool, and `--shell ""` has the same effect. This applies whether or
+An operator can disable shell access for the entire deployment. `mecated --no-shell`
+removes the `Shell` tool, and `--shell ""` has the same effect. This applies whether or
 not a client requests the `no-fs` session profile. See [Run mecated
 standalone](/building/deployment/mecated.md#flag-reference).
 
 ### Managed temporary storage (Linux and macOS)
 
-Bash uses a private managed temporary lease by default. On normal completion the
+Shell uses a private managed temporary lease by default. On normal completion the
 harness removes that lease; a bounded maintenance worker later reclaims only
 validated, unlocked abandoned command/job leases after the operator-configured
 TTL. It never sweeps arbitrary system temporary files and never blocks command
@@ -94,19 +94,19 @@ An operator can set `temporary_storage.mode: system` in user-global
 `~/.config/mecatl/settings.yaml` to restore system temporary storage. This rollback
 mode creates no new managed leases, runs no reaper, and leaves existing managed
 storage untouched for explicit inspection or removal. A model's `temp_scope:
-system` request remains permission-gated; it needs both the normal Bash decision
-and the separate `BashSystemTemp` capability. In managed mode, `managed_root`,
+system` request remains permission-gated; it needs both the normal Shell decision
+and the separate `ShellSystemTemp` capability. In managed mode, `managed_root`,
 `system_temp_dir`, `command_reap_after`, `reap_interval`, `reap_timeout` (default
 five minutes), and `shutdown_reap_timeout` (default one minute) configure storage
 and cleanup.
 
 ### Background commands
 
-A `Bash` call with `background: true` returns immediately with a `bashcmd-<id>` job id and keeps the command running while the model continues — the pattern for a dev server, a watch loop, or a slow build. The permission ask happens once, at start, exactly as for a foreground command. The read-only `BashStatus` tool is the only channel back: no arguments lists this run's jobs (id, running/done, stop reason), `job_id` shows the command and its retained output tail (or collects a finished job's result, delivered once), `wait_ms` waits for a finish, and `cancel` stops a job. A background command runs in the **real workspace with no isolation** — its effects can interleave with the model's own file changes — keeps only a bounded tail of recent output, and is **cancelled automatically if it is still running when the run ends** (a job lives for one run, never across sessions).
+A `Shell` call with `background: true` returns immediately with a `bashcmd-<id>` job id and keeps the command running while the model continues — the pattern for a dev server, a watch loop, or a slow build. The permission ask happens once, at start, exactly as for a foreground command. The read-only `ShellStatus` tool is the only channel back: no arguments lists this run's jobs (id, running/done, stop reason), `job_id` shows the command and its retained output tail (or collects a finished job's result, delivered once), `wait_ms` waits for a finish, and `cancel` stops a job. A background command runs in the **real workspace with no isolation** — its effects can interleave with the model's own file changes — keeps only a bounded tail of recent output, and is **cancelled automatically if it is still running when the run ends** (a job lives for one run, never across sessions).
 
 ### The no-filesystem session profile
 
-A session can be created with `profile: "no-fs"` — for a workspace that has no real filesystem to speak of, or a deployment that never wants one in reach. It removes `Read`/`ListDir`/`Write`/`Edit`/`Copy`/`Move`/`Remove`/`Grep`/`Glob`/`Bash`/`BashStatus`/`Parallel`/`SkillDraft` from the catalog entirely; `WebFetch`, `WebSearch`, the memory tools, and any MCP tools stay. A `Subagent`/`Team` child spawned from a no-fs session gets the equivalent file-less catalog, not the default one. This is a session-creation choice the client makes, not something the model can flip mid-session — see [Engine & session model](engine-and-session.md) for how a session is created.
+A session can be created with `profile: "no-fs"` — for a workspace that has no real filesystem to speak of, or a deployment that never wants one in reach. It removes `Read`/`ListDir`/`Write`/`Edit`/`Copy`/`Move`/`Remove`/`Grep`/`Glob`/`Shell`/`ShellStatus`/`Parallel`/`SkillDraft` from the catalog entirely; `WebFetch`, `WebSearch`, the memory tools, and any MCP tools stay. A `Subagent`/`Team` child spawned from a no-fs session gets the equivalent file-less catalog, not the default one. This is a session-creation choice the client makes, not something the model can flip mid-session — see [Engine & session model](engine-and-session.md) for how a session is created.
 
 ---
 

@@ -26,7 +26,7 @@ import (
 //
 // WHAT IT PROVES: drive a real model to a Write permission ask on #1, resolve it
 // allow-ALWAYS (which both runs the Write AND learns a session-scoped rule keyed
-// on the file path — see governance.LearnableRule / nonBashPattern, the Write
+// on the file path — see governance.LearnableRule / nonShellPattern, the Write
 // rule is path-exact). The allow-always verdict is durably recorded as an
 // EvApproval in the session EventLog. SIGKILL #1 (the in-memory permstore dies
 // with it), restart #2 sharing the store, resume the session and prompt for

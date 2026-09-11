@@ -261,8 +261,8 @@ func TestMCPServerListBearerRequiresHTTPS(t *testing.T) {
 }
 
 // TestMCPServerInsecureHTTPOrderIndependent is the issue-#358 contract
-// addition (from titlani#40's devils-advocate pass): the scheme gate must NOT
-// fire inside Set (argv order), so `--mcp-server-insecure-http tequitl`
+// addition (from the scheduler side's devils-advocate pass): the scheme gate
+// must NOT fire inside Set (argv order), so `--mcp-server-insecure-http tequitl`
 // relaxes `--mcp-server tequitl=http://…` REGARDLESS of which flag comes
 // first on argv. Both orders are pinned; both must yield the SAME parsed
 // servers with the bearer attached.

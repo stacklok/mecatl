@@ -239,7 +239,7 @@ type SkillSource interface {
 
 A `SkillSource` deals in **logical bundles** — no path, directory, or root concept is present on the port. Both the filesystem-backed source (`engine/adapter/skillfs.FSSource`) and a remote driver are consumed identically through these methods; filesystem paths remain private to the adapter.
 
-Skills may have **assets**: auxiliary payloads identified by a logical name like `references/api.md`. Asset names are slash-separated relative identifiers with no `..` or empty segments — validated by `tool.ValidSkillAssetName`. Calling `Skill` with `{name}` returns the instructions and bounded logical inventory. Calling it again with `{name, asset}` fetches only that textual payload, bounded by the tool-output cap and rejected if it is invalid UTF-8 or contains NUL bytes. Assets are not materialized, mounted as workspace read roots, or made available to `Read` or Bash.
+Skills may have **assets**: auxiliary payloads identified by a logical name like `references/api.md`. Asset names are slash-separated relative identifiers with no `..` or empty segments — validated by `tool.ValidSkillAssetName`. Calling `Skill` with `{name}` returns the instructions and bounded logical inventory. Calling it again with `{name, asset}` fetches only that textual payload, bounded by the tool-output cap and rejected if it is invalid UTF-8 or contains NUL bytes. Assets are not materialized, mounted as workspace read roots, or made available to `Read` or Shell.
 
 ### Skills inject instructions, not tools
 

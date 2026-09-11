@@ -84,9 +84,10 @@ var coreImportRules = []coreImportRule{
 		desc: "session may import governance's capability value + stdlib; governance stays session-free",
 	},
 	{
-		pkg:         modulePrefix + "engine/governance",
-		allowedCore: map[string]bool{},
-		desc:        "governance is the session-free domain leaf: it may import only stdlib (zero internal imports)",
+		pkg:             modulePrefix + "engine/governance",
+		allowedCore:     map[string]bool{},
+		allowedExternal: map[string]bool{},
+		desc:            "governance is the session-free domain leaf: it may import stdlib only",
 	},
 	{
 		pkg: modulePrefix + "engine/learning",
@@ -132,18 +133,19 @@ var coreImportRules = []coreImportRule{
 	{
 		pkg: modulePrefix + "engine/agent",
 		allowedCore: map[string]bool{
-			modulePrefix + "engine/session":    true,
-			modulePrefix + "engine/learning":   true,
-			modulePrefix + "engine/governance": true,
-			modulePrefix + "engine/prompt":     true,
-			modulePrefix + "engine/tool":       true,
-			modulePrefix + "engine/port":       true,
-			modulePrefix + "engine/team":       true,
+			modulePrefix + "engine/session":              true,
+			modulePrefix + "engine/learning":             true,
+			modulePrefix + "engine/governance":           true,
+			modulePrefix + "engine/prompt":               true,
+			modulePrefix + "engine/tool":                 true,
+			modulePrefix + "engine/internal/shellcompat": true,
+			modulePrefix + "engine/port":                 true,
+			modulePrefix + "engine/team":                 true,
 		},
 		allowedExternal: map[string]bool{
 			"golang.org/x/sync/errgroup": true,
 		},
-		desc: "agent may import only domain + port + team + stdlib + golang.org/x/sync/errgroup — adapters are INJECTED, never imported",
+		desc: "agent may import only domain + the internal Shell compatibility helper + port + team + stdlib + golang.org/x/sync/errgroup — adapters are INJECTED, never imported",
 	},
 }
 
@@ -266,6 +268,55 @@ func TestNoEngineAdapterImportsAgent(t *testing.T) {
 	}
 	if packages == 0 {
 		t.Fatal("no engine/adapter packages found; the adapter-to-agent boundary check is vacuous")
+	}
+}
+
+func TestShellCompatibilityDiagnostic(t *testing.T) {
+	const shellcompatImport = modulePrefix + "engine/internal/shellcompat"
+	wantImporters := map[string]bool{
+		modulePrefix + "engine/agent":           false,
+		modulePrefix + "engine/adapter/fstools": false,
+	}
+
+	err := filepath.WalkDir("..", func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() {
+			return nil
+		}
+		bp, importErr := build.ImportDir(path, 0)
+		if importErr != nil {
+			var noGo *build.NoGoError
+			if errors.As(importErr, &noGo) {
+				return nil
+			}
+			return importErr
+		}
+		for _, imp := range bp.Imports {
+			if imp != shellcompatImport {
+				continue
+			}
+			rel, relErr := filepath.Rel("..", path)
+			if relErr != nil {
+				return relErr
+			}
+			importer := modulePrefix + "engine/" + filepath.ToSlash(rel)
+			if _, ok := wantImporters[importer]; !ok {
+				t.Errorf("only agent and adapter/fstools may import %s; found %s", shellcompatImport, importer)
+				continue
+			}
+			wantImporters[importer] = true
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk engine packages: %v", err)
+	}
+	for importer, found := range wantImporters {
+		if !found {
+			t.Errorf("expected %s to import %s", importer, shellcompatImport)
+		}
 	}
 }
 

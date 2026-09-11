@@ -83,7 +83,7 @@ func assertLeaseLockHeld(t *testing.T, leasePath string) {
 }
 
 // TestADR_0281_BackgroundJobLeaseLifecycle pins that the streaming path used by
-// Bash background jobs allocates a job lease, retains it until its process group
+// Shell background jobs allocates a job lease, retains it until its process group
 // has joined, and applies the foreground terminal cleanup rule.
 func TestADR_0281_BackgroundJobLeaseLifecycle(t *testing.T) {
 	streamer := managedJobStreamer(t)

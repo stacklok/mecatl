@@ -212,6 +212,12 @@ a peer exhausts the bucket, requests return HTTP **429** / gRPC
 that bucket; they continue to the existing verified-principal limiter and are
 charged there once. A normally admitted bad token remains **401** / gRPC
 `UNAUTHENTICATED`, while an IdP outage remains **503** / gRPC `UNAVAILABLE`.
+Enabled authentication also writes structured operator diagnostics. Rejected and
+unavailable outcomes are logged per request; accepted authentication logs one INFO
+record per closed category/transport pair (static bearer or validated identity, over
+HTTP or gRPC), not per request. Fields are closed outcome/category and
+transport/status values only; credentials, JWTs, validator errors, issuer, subject,
+claims, and KID are never logged.
 
 This is a bound on **signing-key** revocation during an outage, not per-token
 revocation. An otherwise valid token remains acceptable until its normal expiry.
@@ -314,18 +320,8 @@ identity from public API-key `openai`, uses an undocumented private backend,
 and has no login or refresh flow. Configure `providers.openai-codex.oauth`,
 keep the file owner-only, select `--default-provider openai-codex` (or an
 explicit session selector), and restart after replacing the token. `0600` does
-not stop same-UID Bash from reading a known plaintext file. See
-[Configure provider credentials](./settings.md#configure-provider-credentials).
-
-### Bash tool
-
-| Flag | Default | Notes |
-|---|---|---|
-| `--shell` | `/bin/sh` | Shell used to execute `Bash`-tool commands. Empty disables `Bash` (shell-less mode). |
-| `--no-bash` | `false` | Disable the `Bash` tool entirely; overrides `--shell`. |
-
-Use either flag to remove shell access for the deployment. This operator-controlled
-setting is stronger than the optional per-session `no-fs` profile.
+not stop same-UID Shell from reading a known plaintext file. See the
+[exact schema, lifecycle, and failure guidance](https://github.com/stacklok/mecatl/blob/main/docs/usage/mecated.md#openai-codex-subscription-manual-token-experimental).
 
 #### Offline mock providers (no credentials)
 
@@ -480,7 +476,7 @@ and a logical asset inventory; `{name, asset}` fetches one bounded textual asset
 Local and remote skills behave the same. Assets are not materialized or exposed as
 workspace files, and bundled scripts are not implicitly executable. If a skill needs
 a real file, its instructions must create or obtain one explicitly in the workspace,
-where ordinary Write/Bash permissions apply.
+where ordinary Write/Shell permissions apply.
 
 ### Observability
 

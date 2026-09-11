@@ -502,7 +502,7 @@ production-proven (FAPI) claim for exactly this. A v1 entry:
 
 ```json
 {"type": "mecatl_agent",
- "operations": ["Read", "Grep", "Bash"],
+ "operations": ["Read", "Grep", "Shell"],
  "resources": ["/workspace/repo"],
  "constraints": {"posture_ceiling": "auto", "max_depth": 3}}
 ```
@@ -1014,7 +1014,7 @@ that never leave a signing service.
   `hashicorp_vault`, with the upstream-authority plugins as the CA side;
   cert-manager's external-issuer pattern is the same shape.) **Honesty note
   on reachability:** local-signing buys audit/integrity and availability,
-  not process isolation. The Bash tool runs in the same filesystem namespace
+  not process isolation. The Shell tool runs in the same filesystem namespace
   as the process holding the intermediate key, with no OS-level isolation,
   and `envscrub` is irrelevant to an in-memory `crypto.Signer` (it scrubs
   secret-shaped env *names*, not a resident key). So a prompt-injected agent

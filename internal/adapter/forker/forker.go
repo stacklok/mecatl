@@ -20,7 +20,7 @@
 //     is an independent repository with its OWN object database and refs.
 //
 // Isolation guarantees: a child Workspace returned by Fork is rooted at an
-// isolated directory; Write/Edit/Bash through the child affect ONLY that
+// isolated directory; Write/Edit/Shell through the child affect ONLY that
 // directory. The base tree is never written. cleanup is idempotent-friendly (it
 // tolerates an already-removed child) and must be called when the child is done.
 //
@@ -28,18 +28,18 @@
 //
 // The git-worktree path isolates the WORKING TREE and INDEX but SHARES the object
 // database and refs. Forked children CAN mutate their working tree: Edit/Write land
-// in the fork, and Bash is workspace-aware (its CommandRunner runs with the forked
+// in the fork, and Shell is workspace-aware (its CommandRunner runs with the forked
 // child's Workspace.Root() as the working directory; see app.buildParallelChildEngine /
-// buildMemberEngine and internal/adapter/tools/bash.go), so a child's Bash — and any
+// buildMemberEngine and internal/adapter/tools/bash.go), so a child's Shell — and any
 // git it runs — defaults to the fork's working tree, not the parent base. But in a
-// worktree, a child that runs `git commit` / `git push` / `git update-ref` via Bash
+// worktree, a child that runs `git commit` / `git push` / `git update-ref` via Shell
 // writes objects and refs into the SHARED `.git`, escaping isolation. That is the
 // inherent git-worktree model.
 //
 // To close that gap for MUTATING forks, construct the Forker WithForceCopy: it
 // forces the recursive-copy path even for a git repo and copies the `.git`
 // directory along with the tree, so the fork is a SELF-CONTAINED repository. A
-// branch's git/Bash writes (commits, refs, objects) then stay inside the fork and
+// branch's git/Shell writes (commits, refs, objects) then stay inside the fork and
 // CANNOT reach the base repo. The composition root wires WithForceCopy for the Fork
 // tool's branches and for mutating team members (see internal/app/build.go).
 //
@@ -48,8 +48,8 @@
 // read-only team members (see internal/app.buildTeamWiring): a worktree SHARES the
 // base repo's `.git`, so the member gets the full commit history for `git log`/`git
 // show` inspection at near-zero cost, while its own working tree + index keep its
-// (non-mutating) Bash from disturbing the base working tree. Because a worktree shares
-// `.git/config` + `.git/hooks`, the composition root runs such a member's Bash through
+// (non-mutating) Shell from disturbing the base working tree. Because a worktree shares
+// `.git/config` + `.git/hooks`, the composition root runs such a member's Shell through
 // a SANDBOXED command runner that neutralises git config-driven code execution
 // (core.pager / core.hooksPath / core.fsmonitor / external diff); see
 // internal/app.buildSandboxedCommandRunner.
@@ -118,9 +118,9 @@ type childRoot func(root string) (tool.Workspace, error)
 // childRunner is the constructor the forker uses to build a BOUND tool.CommandRunner
 // for an isolated child directory (issue #462). It is injected so this adapter does
 // not import the osfs adapter directly and so the composition root controls the
-// hardening (envscrub + gitenv) applied to a child's Bash. The runner is bound to
+// hardening (envscrub + gitenv) applied to a child's Shell. The runner is bound to
 // the child root — the command's cwd follows the forked workspace, never the parent
-// base. nil means "no shell for this child" (the child's Bash surfaces ErrNoShell).
+// base. nil means "no shell for this child" (the child's Shell surfaces ErrNoShell).
 // The composition root passes a closure over osfs.NewCommandRunnerShell that applies
 // the same env-scrubbing the parent runner gets.
 type childRunner func(root string) tool.CommandRunner
@@ -135,7 +135,7 @@ type Forker struct {
 	// newRunner builds a child tool.CommandRunner bound to the isolated directory,
 	// or nil when the child namespace has no shell. nil (the field) means the
 	// forker was constructed without a runner builder, so EVERY forked child is
-	// shell-less (the composition root wires the builder only when Bash is on).
+	// shell-less (the composition root wires the builder only when Shell is on).
 	newRunner childRunner
 	// tmpBase is the parent directory under which child directories are created.
 	// Empty means os.MkdirTemp's default (os.TempDir()).
@@ -144,7 +144,7 @@ type Forker struct {
 	runGit func(ctx context.Context, dir string, args ...string) error
 	// forceCopy, when true, makes Fork always take the recursive-copy path (copying
 	// .git too) instead of the git-worktree path, even for a git repo — giving the
-	// fork its OWN object DB/refs so a child's git/Bash writes stay inside the fork.
+	// fork its OWN object DB/refs so a child's git/Shell writes stay inside the fork.
 	forceCopy bool
 	// dirtyOverlay, when true, mirrors the parent's uncommitted state (tracked
 	// modifications + staged changes + deletions + untracked non-ignored files) into
@@ -168,7 +168,7 @@ func WithTempBase(dir string) Option {
 // WithForceCopy forces FULL isolation: Fork always takes the recursive-copy path
 // (copying the base tree INCLUDING its `.git` when present) instead of a git
 // worktree, even when the base is a git repo. The fork is then a self-contained
-// repository with its own object database and refs, so a child branch's git/Bash
+// repository with its own object database and refs, so a child branch's git/Shell
 // writes (commits, refs, objects, working-tree edits) CANNOT reach the base repo.
 //
 // This is the mode for MUTATING forks (the Parallel tool's branches and mutating team
@@ -218,9 +218,9 @@ func WithDirtyOverlay() Option {
 
 // WithRunner injects the bound-command-runner builder the forker uses to mint a
 // child tool.CommandRunner for each forked directory (issue #462). The runner is
-// bound to the child root, so a forked child's Bash observes the SAME child
+// bound to the child root, so a forked child's Shell observes the SAME child
 // namespace its Read/Write do. nil (or unset) means forked children are shell-less
-// (the composition root wires the builder only when Bash is on). The builder is
+// (the composition root wires the builder only when Shell is on). The builder is
 // called once per Fork with the isolated child directory; it returns nil when the
 // child namespace should have no shell (e.g. the trust gate withheld it).
 func WithRunner(r childRunner) Option {
@@ -271,7 +271,7 @@ func (f *Forker) Fork(ctx context.Context, base tool.Environment, label string) 
 
 	// Force-copy mode: always take the full recursive copy (including .git), giving
 	// the fork its own object DB/refs. This is the MUTATING-fork isolation mode — a
-	// child's git/Bash writes can never reach the base repo. copyTree already carries
+	// child's git/Shell writes can never reach the base repo. copyTree already carries
 	// the parent's dirty state verbatim, so there is never a degraded-fork advisory.
 	if f.forceCopy {
 		ws, cleanup, ferr := f.forkCopyInto(baseRoot, childDir)
@@ -339,12 +339,12 @@ func (f *Forker) Fork(ctx context.Context, base tool.Environment, label string) 
 // second childDir risks divergence on the worktree-failure→copy fallback path,
 // where forkCopy mints a FRESH directory distinct from the one Fork reserved
 // (git refused the worktree, so the reservation was discarded) — binding the
-// runner and ref to the discarded reservation would point Bash and identity at a
+// runner and ref to the discarded reservation would point Shell and identity at a
 // directory the child never executes in. Deriving both from ws.Root() makes that
 // impossible: Workspace, Ref, and runner always share the actual copy root.
 //
 // When no runner builder is wired (or it returns nil for this root) the child is
-// shell-less and its Bash surfaces ErrNoShell honestly.
+// shell-less and its Shell surfaces ErrNoShell honestly.
 func (f *Forker) childEnv(base tool.Environment, ws tool.Workspace) (tool.Environment, error) {
 	root := ws.Root()
 	var runner tool.CommandRunner

@@ -77,7 +77,7 @@ func TestHasProjectAuthorityAllowLocalFile(t *testing.T) {
 // honoured trusted or not, so a trust grant would change nothing.
 func TestHasProjectAuthorityDenyOnlyNotAuthority(t *testing.T) {
 	ws := realDir(t, t.TempDir(), "repo")
-	writeFile(t, ws, ".mecatl/settings.yaml", "permissions:\n  deny:\n    - Bash\n  ask:\n    - Write\n")
+	writeFile(t, ws, ".mecatl/settings.yaml", "permissions:\n  deny:\n    - Shell\n  ask:\n    - Write\n")
 	if New().HasProjectAuthority(ws) {
 		t.Fatal("a deny/ask-only project settings.yaml was treated as authority; only ALLOW rules are")
 	}
@@ -119,7 +119,7 @@ func TestHasProjectAuthorityClaudeAllowLocalFile(t *testing.T) {
 // with an empty allow list (and only deny/ask) is NOT authority.
 func TestHasProjectAuthorityClaudeEmptyAllowNotAuthority(t *testing.T) {
 	ws := realDir(t, t.TempDir(), "repo")
-	writeFile(t, ws, ".claude/settings.json", `{"permissions":{"allow":[],"deny":["Bash"]}}`)
+	writeFile(t, ws, ".claude/settings.json", `{"permissions":{"allow":[],"deny":["Shell"]}}`)
 	if New().HasProjectAuthority(ws) {
 		t.Fatal("a Claude settings.json empty allow list was treated as authority")
 	}

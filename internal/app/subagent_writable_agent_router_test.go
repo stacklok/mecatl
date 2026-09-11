@@ -33,7 +33,7 @@ func TestWritableRoutableDefFullBuildE2E(t *testing.T) {
 	agentsDir := t.TempDir()
 	mcpURL := newMCPTestServer(t)
 	const bodyMarker = "WRITABLE-ROUTED-SPECIALIST-BODY"
-	if err := os.WriteFile(filepath.Join(agentsDir, "writer.md"), []byte("---\nname: writer\ndescription: writable specialist\ntools: [Read, Write, Bash]\nmcpServers:\n  - name: main\n---\n"+bodyMarker), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(agentsDir, "writer.md"), []byte("---\nname: writer\ndescription: writable specialist\ntools: [Read, Write, Shell]\nmcpServers:\n  - name: main\n---\n"+bodyMarker), 0o644); err != nil {
 		t.Fatalf("write agent def: %v", err)
 	}
 
@@ -66,7 +66,7 @@ func TestWritableRoutableDefFullBuildE2E(t *testing.T) {
 				mockllm.ToolCallTurn(session.NewToolCall("c1", "Subagent", []byte(`{"prompt":"write the routed result","mode":"read-write","agent":"writer"}`))),
 				mockllm.TextTurn(`{"category":"large"}`),
 				mockllm.ToolCallTurn(session.NewToolCall("w1", "Write", []byte(`{"path":"routed.txt","content":"written in parent\n"}`))),
-				mockllm.ToolCallTurn(session.NewToolCall("b1", "Bash", []byte(`{"command":"printf 'bash in parent\\n' > bash-routed.txt"}`))),
+				mockllm.ToolCallTurn(session.NewToolCall("b1", "Shell", []byte(`{"command":"printf 'bash in parent\\n' > bash-routed.txt"}`))),
 				mockllm.ToolCallTurn(session.NewToolCall("m1", "mcp__main__echo", []byte(`{"text":"authority retained"}`))),
 				mockllm.TextTurn("writable routed specialist done"),
 				mockllm.TextTurn("parent done"),
@@ -101,7 +101,7 @@ func TestWritableRoutableDefFullBuildE2E(t *testing.T) {
 	mu.Lock()
 	gotReqs := append([]writableRouteReq(nil), reqs...)
 	mu.Unlock()
-	// parent → classifier → child Write → child Bash → child reference-MCP call → child
+	// parent → classifier → child Write → child Shell → child reference-MCP call → child
 	// summary → parent. Exactly seven requests proves the writable named delegation was
 	// classified exactly once and retained the referenced MCP tool after routing.
 	if len(gotReqs) != 7 {
@@ -114,7 +114,7 @@ func TestWritableRoutableDefFullBuildE2E(t *testing.T) {
 		if !strings.Contains(gotReqs[i].system, bodyMarker) {
 			t.Fatalf("routed child request %d lost specialist body; system=%q", i, gotReqs[i].system)
 		}
-		if !slices.Contains(gotReqs[i].tools, "Write") || !slices.Contains(gotReqs[i].tools, "Bash") || !slices.Contains(gotReqs[i].tools, "mcp__main__echo") {
+		if !slices.Contains(gotReqs[i].tools, "Write") || !slices.Contains(gotReqs[i].tools, "Shell") || !slices.Contains(gotReqs[i].tools, "mcp__main__echo") {
 			t.Fatalf("routed child request %d lost scoped writable/reference-MCP tools; tools=%v", i, gotReqs[i].tools)
 		}
 		if slices.Contains(gotReqs[i].tools, "Edit") {
@@ -127,7 +127,7 @@ func TestWritableRoutableDefFullBuildE2E(t *testing.T) {
 		t.Fatalf("routed.txt = %q", got)
 	}
 	if got, err := os.ReadFile(filepath.Join(workspace, "bash-routed.txt")); err != nil {
-		t.Fatalf("main-bound Bash did not mutate the parent workspace: %v", err)
+		t.Fatalf("main-bound Shell did not mutate the parent workspace: %v", err)
 	} else if string(got) != "bash in parent\n" {
 		t.Fatalf("bash-routed.txt = %q", got)
 	}
@@ -136,7 +136,7 @@ func TestWritableRoutableDefFullBuildE2E(t *testing.T) {
 		t.Fatalf("GetSession(routed child): %v", err)
 	}
 	authority, bound := child.BoundAuthority()
-	if !bound || !authority.CapabilitySet.DirectWrite || !authority.CapabilitySet.AllowsTool("Write") || !authority.CapabilitySet.AllowsTool("Bash") || !authority.CapabilitySet.AllowsTool("mcp__main__echo") || authority.CapabilitySet.AllowsTool("Edit") {
+	if !bound || !authority.CapabilitySet.DirectWrite || !authority.CapabilitySet.AllowsTool("Write") || !authority.CapabilitySet.AllowsTool("Shell") || !authority.CapabilitySet.AllowsTool("mcp__main__echo") || authority.CapabilitySet.AllowsTool("Edit") {
 		t.Fatalf("routed writable specialist authority = %+v, bound=%t", authority, bound)
 	}
 	assertNoSiblingForkDir(t, workspace)

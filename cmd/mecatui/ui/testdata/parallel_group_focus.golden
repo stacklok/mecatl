@@ -21,7 +21,7 @@
   ┃    ✓ Edit — file: svc.go                                                                     ┃
   ┃    slice approach is cleaner                                                                 ┃
   ┃    ✗ branch-3 · refactor inline · failed · error · 900ms · 1 tool · ↑4K ↓600                 ┃
-  ┃    ✗ Bash                                                                                    ┃
+  ┃    ✗ Shell                                                                                   ┃
   ┃                                                                                              ┃
   ┃                                                                                              ┃
   ┃  ↑/↓ select · esc back                                                                       ┃
@@ -33,5 +33,5 @@
 │
 │
 ────────────────────────────────────────────────────────────────────────────────────────────────────
- connected                                        ⑂ parallel 0◐ 1✓ · ctrl+a  ctx 0 · ↑0 ↓0 cache 0%
+ connected                                            ⑂ parallel 0◐ 1✓ · f6  ctx 0 · ↑0 ↓0 cache 0%
 ? help · / commands · ctrl+c quit

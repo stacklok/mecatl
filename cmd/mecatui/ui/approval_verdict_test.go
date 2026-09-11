@@ -67,11 +67,11 @@ func TestPermissionAskMsgSetsOfferAlways(t *testing.T) {
 	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 30})
 	m.sessionID = "sess-abc"
 
-	m1 := applyAll(m, client.PermissionAskMsg{AskID: "sess-abc:1:c1", Tool: "Bash"})
+	m1 := applyAll(m, client.PermissionAskMsg{AskID: "sess-abc:1:c1", Tool: "Shell"})
 	if !approvalSurfaceOf(t, m1).ask.offerAlways {
 		t.Error("a main-agent ask should offer always-allow")
 	}
-	m2 := applyAll(m, client.PermissionAskMsg{AskID: "subagent-c1:1:k1", Tool: "Bash"})
+	m2 := applyAll(m, client.PermissionAskMsg{AskID: "subagent-c1:1:k1", Tool: "Shell"})
 	if approvalSurfaceOf(t, m2).ask.offerAlways {
 		t.Error("a surfaced child ask must NOT offer always-allow")
 	}
@@ -82,7 +82,7 @@ func TestPermissionAskMsgSetsOfferAlways(t *testing.T) {
 // full-screen view state and the modal's mini-viewport offset, so the next ask
 // never inherits a stale scroll position or an open view.
 func TestResolveAskResetsArgsViewState(t *testing.T) {
-	m := openArgsView(t, bashAskModel(t, longBashArgs))
+	m := openArgsView(t, shellAskModel(t, longShellArgs))
 	approvalSurfaceOf(t, m).argsViewRaw = true
 	approvalSurfaceOf(t, m).askVPOffset = 3
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: 'a', Text: "a"})
@@ -94,7 +94,7 @@ func TestResolveAskResetsArgsViewState(t *testing.T) {
 // TestApprovalWResolvesAlways: with always-allow offered, 'w' resolves the modal as
 // always-allow and records the always notice.
 func TestApprovalWResolvesAlways(t *testing.T) {
-	m := approvalModel(t, pendingAsk{AskID: "sess-test-0001:1:c1", Tool: "Bash", offerAlways: true})
+	m := approvalModel(t, pendingAsk{AskID: "sess-test-0001:1:c1", Tool: "Shell", offerAlways: true})
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: 'w', Text: "w"})
 	if m.phase != phaseRunning {
 		t.Fatalf("resolving must return to phaseRunning, got %v", m.phase)
@@ -107,7 +107,7 @@ func TestApprovalWResolvesAlways(t *testing.T) {
 // TestApprovalWIgnoredOnChildAsk: 'w' is a no-op on a child ask (no always offered) —
 // the modal stays open and no notice is recorded.
 func TestApprovalWIgnoredOnChildAsk(t *testing.T) {
-	m := approvalModel(t, pendingAsk{AskID: "subagent-c1:1:k1", Tool: "Bash", offerAlways: false})
+	m := approvalModel(t, pendingAsk{AskID: "subagent-c1:1:k1", Tool: "Shell", offerAlways: false})
 	before := len(m.conv.blocks)
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: 'w', Text: "w"})
 	if m.phase != phaseAwaitingApproval {
@@ -120,7 +120,7 @@ func TestApprovalWIgnoredOnChildAsk(t *testing.T) {
 
 // TestApprovalAllowAndDenyNotices: 'a' allows once, 'd' denies, with the exact notices.
 func TestApprovalAllowAndDenyNotices(t *testing.T) {
-	m := approvalModel(t, pendingAsk{AskID: "sess-test-0001:1:c1", Tool: "Bash", offerAlways: true})
+	m := approvalModel(t, pendingAsk{AskID: "sess-test-0001:1:c1", Tool: "Shell", offerAlways: true})
 	ma, _ := pressKey(m, tea.KeyPressMsg{Code: 'a', Text: "a"})
 	if got := lastNotice(ma); got != "permission allowed" {
 		t.Errorf("allow notice = %q", got)
@@ -134,7 +134,7 @@ func TestApprovalAllowAndDenyNotices(t *testing.T) {
 // TestApprovalCycleThreeButtons: tab/right cycles focus over the visible verdict
 // set; left retreats; enter resolves the focused verdict.
 func TestApprovalCycleThreeButtons(t *testing.T) {
-	m := approvalModel(t, pendingAsk{AskID: "sess-test-0001:1:c1", Tool: "Bash", offerAlways: true})
+	m := approvalModel(t, pendingAsk{AskID: "sess-test-0001:1:c1", Tool: "Shell", offerAlways: true})
 	if got := approvalSurfaceOf(t, m).ask.focusedVerdict; got != client.VerdictAllowOnce {
 		t.Fatalf("initial focused verdict = %v, want allow once", got)
 	}
@@ -163,7 +163,7 @@ func TestApprovalCycleThreeButtons(t *testing.T) {
 
 // TestApprovalCycleTwoButtons: with no always offered, tab skips Allow Always.
 func TestApprovalCycleTwoButtons(t *testing.T) {
-	m := approvalModel(t, pendingAsk{AskID: "subagent-c1:1:k1", Tool: "Bash", offerAlways: false})
+	m := approvalModel(t, pendingAsk{AskID: "subagent-c1:1:k1", Tool: "Shell", offerAlways: false})
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyTab})
 	if got := approvalSurfaceOf(t, m).ask.focusedVerdict; got != client.VerdictDeny {
 		t.Fatalf("after tab focused verdict = %v, want deny — always is skipped", got)
@@ -183,7 +183,7 @@ func TestApprovalCycleTwoButtons(t *testing.T) {
 }
 
 func TestApprovalClickResolvesMappedVerdict(t *testing.T) {
-	m := approvalModel(t, pendingAsk{AskID: "sess-test-0001:1:c1", Tool: "Bash", offerAlways: true})
+	m := approvalModel(t, pendingAsk{AskID: "sess-test-0001:1:c1", Tool: "Shell", offerAlways: true})
 	s := approvalSurfaceOf(t, m)
 	s.ask.focusedVerdict = client.VerdictDeny
 	_, _ = s.Render(100, 30)

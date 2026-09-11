@@ -159,7 +159,7 @@ type catalogSession struct {
 	narrate    bool
 	// noFS selects the NO-FILESYSTEM catalog profile (the "no-fs" session
 	// profile, issue #55): the core tier registers tools.NoFS() (WebFetch only)
-	// instead of tools.All()+Bash, Parallel and SkillDraft are skipped (both are
+	// instead of tools.All()+Shell, Parallel and SkillDraft are skipped (both are
 	// filesystem acts — branch forks and draft files), and the Subagent/Team
 	// children get the file-less child surface (noFSChildCatalog) with NO forkers
 	// and NO shell. Everything else (global/client MCP, resource meta-tools,
@@ -239,7 +239,7 @@ func assembleCatalog(ctx context.Context, cfg Config, reg *providerRegistry, sto
 	// PresentPlan (issue #206, Wave 3) — the plan-approval gate's signalling tool.
 	// Registered in EVERY catalog (shared AND per-session, both no-FS and default
 	// profiles) so TestPerSessionCatalogMatchesSharedCatalog's name-set equality
-	// holds; it is NOT in the no-FS excluded set {Read,Edit,Write,Grep,Glob,Bash,
+	// holds; it is NOT in the no-FS excluded set {Read,Edit,Write,Grep,Glob,Shell,
 	// Parallel,SkillDraft} (it is a signalling affordance, not a filesystem act).
 	// The tool implements tool.PlanOnly, so the catalog's mode projection excludes
 	// it from every non-plan mode (Available/Specs/AdvertisedSpecs); the dispatcher's
@@ -403,7 +403,7 @@ func registerParallelTool(ctx context.Context, cfg Config, cat *tool.Catalog, re
 		return
 	}
 	// WithRunner (issue #462): the forker mints a BOUND runner for each branch
-	// namespace so a forked branch's Bash observes its OWN force-copy, never the
+	// namespace so a forked branch's Shell observes its OWN force-copy, never the
 	// parent base. The builder applies the SAME trust-UNGATED hardening
 	// buildForceCopyRunner does (force-copy forks do no fork-time git, so the
 	// trust gate does not apply — see the comment above).
@@ -414,7 +414,7 @@ func registerParallelTool(ctx context.Context, cfg Config, cat *tool.Catalog, re
 			}
 			return newHardenedRunnerForRoot(cfg, childRoot)
 		}))
-	// Parallel branches run Bash through the HARDENED, trust-UNGATED runner (issue
+	// Parallel branches run Shell through the HARDENED, trust-UNGATED runner (issue
 	// #40) — the same construction as Mutating team members (buildForceCopyRunner).
 	// Ungated because a force-copy fork is created by a pure FS copy, with NO git
 	// invocation at fork time (no checkout, so no smudge filter or hook can fire) —
@@ -646,7 +646,7 @@ func registerSkillFamily(ctx context.Context, cfg Config, cat *tool.Catalog, a c
 // team member) runs with: the six memory/user-model tools over the SHARED
 // flocked stores, WebFetch + WebSearch (search-then-fetch discovery), and the
 // server-global MCP tools — and nothing that touches a filesystem (no
-// Read/Grep/Glob, no Bash, no Edit/Write). A fresh
+// Read/Grep/Glob, no Shell, no Edit/Write). A fresh
 // catalog per call (the readOnlyExplorerCatalog idiom: one catalog per engine).
 // The global MCP tools are REUSED from the shared manager, never reconnected.
 func newNoFSClassifiedChildCatalog(ctx context.Context, cfg Config, a catalogAssets) *classifiedCatalog {

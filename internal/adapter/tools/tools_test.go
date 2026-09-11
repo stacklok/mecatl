@@ -49,8 +49,8 @@ func exec(t *testing.T, tl tool.Tool, in session.ToolCall, ws tool.Workspace) se
 }
 
 func TestReadOnlyFlags(t *testing.T) {
-	// Bash is excluded from All() (it requires a CommandRunner); these are the
-	// always-available tools. Bash's ReadOnly is asserted separately.
+	// Shell is excluded from All() (it requires a CommandRunner); these are the
+	// always-available tools. Shell's ReadOnly is asserted separately.
 	want := map[string]bool{
 		"Read":             true,
 		"ListDir":          true,
@@ -76,25 +76,25 @@ func TestReadOnlyFlags(t *testing.T) {
 			t.Errorf("%s.ReadOnly() = %v, want %v", name, got[name], w)
 		}
 	}
-	// Bash is mutating.
-	if NewBashTool().ReadOnly() {
-		t.Error("Bash.ReadOnly() = true, want false")
+	// Shell is mutating.
+	if NewShellTool().ReadOnly() {
+		t.Error("Shell.ReadOnly() = true, want false")
 	}
 }
 
-// TestAllExcludesBash documents that the always-available catalog has NO Bash:
+// TestAllExcludesShell documents that the always-available catalog has NO Shell:
 // command execution is optional and added only when a runner is configured.
-func TestAllExcludesBash(t *testing.T) {
+func TestAllExcludesShell(t *testing.T) {
 	for _, tl := range All() {
-		if tl.Spec().Name == "Bash" {
-			t.Fatal("All() must not include Bash (it requires a CommandRunner)")
+		if tl.Spec().Name == "Shell" {
+			t.Fatal("All() must not include Shell (it requires a CommandRunner)")
 		}
 	}
 }
 
 // TestNoFSExcludesFileTools pins the no-FS core surface: NoFS() is exactly
 // {WebFetch, FetchMcpResource} — no file-touching tool (Read/Edit/Write/Grep/
-// Glob) and no Bash may ever appear in it. FetchMcpResource (issue #223 Phase
+// Glob) and no Shell may ever appear in it. FetchMcpResource (issue #223 Phase
 // 2) is an outbound read that needs no filesystem, so it rides alongside
 // WebFetch. This is the anti-drift pin for the "no-fs" session profile's core
 // tier: a tool added to All() does NOT automatically reach NoFS().
@@ -112,7 +112,7 @@ func TestNoFSExcludesFileTools(t *testing.T) {
 			t.Errorf("NoFS() missing %q", want)
 		}
 	}
-	banned := map[string]bool{"Read": true, "ListDir": true, "Edit": true, "Write": true, "Copy": true, "Move": true, "Remove": true, "Grep": true, "Glob": true, BashToolName: true}
+	banned := map[string]bool{"Read": true, "ListDir": true, "Edit": true, "Write": true, "Copy": true, "Move": true, "Remove": true, "Grep": true, "Glob": true, ShellToolName: true}
 	for _, tl := range got {
 		if banned[tl.Spec().Name] {
 			t.Errorf("NoFS() includes file/shell tool %q — the no-FS profile must never carry it", tl.Spec().Name)
@@ -133,16 +133,16 @@ func TestAllAndRegister(t *testing.T) {
 			t.Errorf("catalog missing %q after Register", name)
 		}
 	}
-	// Register does NOT add Bash; the catalog is shell-less until NewBashTool is
+	// Register does NOT add Shell; the catalog is shell-less until NewShellTool is
 	// registered explicitly.
-	if _, ok := cat.Lookup("Bash"); ok {
-		t.Error("Register added Bash; it must be opt-in via NewBashTool")
+	if _, ok := cat.Lookup("Shell"); ok {
+		t.Error("Register added Shell; it must be opt-in via NewShellTool")
 	}
-	// Adding the optional Bash tool succeeds (the runner is bound to the
-	// Environment at Execute time, so NewBashTool takes no runner now).
-	cat.MustRegister(NewBashTool())
-	if _, ok := cat.Lookup("Bash"); !ok {
-		t.Error("catalog missing Bash after explicit NewBashTool registration")
+	// Adding the optional Shell tool succeeds (the runner is bound to the
+	// Environment at Execute time, so NewShellTool takes no runner now).
+	cat.MustRegister(NewShellTool())
+	if _, ok := cat.Lookup("Shell"); !ok {
+		t.Error("catalog missing Shell after explicit NewShellTool registration")
 	}
 	// Re-registering must collide.
 	if err := Register(cat); err == nil {

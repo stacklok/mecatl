@@ -1,6 +1,6 @@
 package ui
 
-// Tests for the I2 per-child cancel affordances: the ctrl+a overlay's `x` key on
+// Tests for the I2 per-child cancel affordances: the f6 overlay's `x` key on
 // PARALLEL-BRANCH lanes (inside a focused group) and TEAM-MEMBER lanes (roster +
 // focus pane) sends a CancelChild frame carrying the lane's child id — the D16
 // wire handle (Parallel.child_id / Team.member_session_id), never a derived id —
@@ -15,7 +15,7 @@ import (
 )
 
 // parallelOverlayModel builds a connected model with one LIVE Parallel group (one
-// running + one done branch) and the ctrl+a overlay open on the Parallel tab,
+// running + one done branch) and the f6 overlay open on the Parallel tab,
 // stream sends recorded by the returned fakeSender.
 func parallelOverlayModel(t *testing.T) (Model, *fakeSender) {
 	t.Helper()
@@ -32,7 +32,7 @@ func parallelOverlayModel(t *testing.T) (Model, *fakeSender) {
 		client.ParallelMsg{Kind: client.ParallelBranchEnd, ParentCallID: "p1", BranchIndex: 1,
 			ChildID: "parallel-p1-1", Stop: "end_turn"},
 	)
-	mm, _ := m.Update(ctrlKey('a'))
+	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
 	if m.team.view == teamNone || m.agentsTab != tabParallel {
 		t.Fatalf("overlay did not open on the Parallel tab (view=%v tab=%v)", m.team.view, m.agentsTab)
@@ -88,7 +88,7 @@ func TestParallelBranchCancelNoChildIDNoOp(t *testing.T) {
 		client.ParallelMsg{Kind: client.ParallelStart, ParentCallID: "p1", Join: "all", BranchCount: 1},
 		client.ParallelMsg{Kind: client.ParallelBranchStart, ParentCallID: "p1", BranchIndex: 0, BranchLabel: "branch-1"},
 	)
-	mm, _ := m.Update(ctrlKey('a'))
+	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
 	mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)
@@ -101,7 +101,7 @@ func TestParallelBranchCancelNoChildIDNoOp(t *testing.T) {
 
 // teamOverlayCancelModel builds a connected model with a LIVE team (lead + worker,
 // the worker's lane carrying its member session id off a team.member event) and
-// the ctrl+a overlay open on the Teams tab.
+// the f6 overlay open on the Teams tab.
 func teamOverlayCancelModel(t *testing.T) (Model, *fakeSender) {
 	t.Helper()
 	m := newMCPModel(t, aztec(), nil)
@@ -117,7 +117,7 @@ func teamOverlayCancelModel(t *testing.T) (Model, *fakeSender) {
 		client.TeamMsg{Kind: client.TeamMember, ParentCallID: "t1", TeamID: "t1", Member: "worker",
 			MemberSessionID: "team-t1-worker", InnerKind: "tool.call", ToolName: "Read"},
 	)
-	mm, _ := m.Update(ctrlKey('a'))
+	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
 	if m.team.view != teamRoster || m.agentsTab != tabTeams {
 		t.Fatalf("overlay did not open on the Teams tab (view=%v tab=%v)", m.team.view, m.agentsTab)

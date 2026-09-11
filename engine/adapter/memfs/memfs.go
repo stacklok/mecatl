@@ -4,7 +4,7 @@
 // performs Grep over the in-memory contents.
 //
 // memfs has no shell, so its Workspace deliberately does NOT execute commands.
-// For deterministic Bash-tool stubbing it exposes a separate, programmable
+// For deterministic Shell-tool stubbing it exposes a separate, programmable
 // tool.CommandRunner (see CommandRunner / NewCommandRunner): by default Run
 // returns ErrNoShell so tests cannot accidentally depend on shell behavior, and
 // a canned result may be programmed via SetResult.
@@ -566,7 +566,7 @@ func (w *Workspace) Grep(ctx context.Context, pattern, pathGlob string) ([]tool.
 }
 
 // CommandRunner is a programmable, in-memory tool.CommandRunner for
-// deterministic Bash-tool stubbing. memfs has no shell, so by default Run
+// deterministic Shell-tool stubbing. memfs has no shell, so by default Run
 // returns ErrNoShell; program a canned result (or error) with SetResult.
 type CommandRunner struct {
 	mu     sync.Mutex
@@ -600,7 +600,7 @@ func (r *CommandRunner) SetResult(res *tool.CommandResult, err error) {
 // Run returns the programmed canned result. memfs has no shell, so absent a
 // programmed result it returns ErrNoShell. It honors ctx cancellation. The
 // command string is ignored beyond being a marker; this method exists for
-// deterministic Bash-tool stubbing, not real execution.
+// deterministic Shell-tool stubbing, not real execution.
 func (r *CommandRunner) Run(ctx context.Context, _ string) (tool.CommandResult, error) {
 	return r.run(ctx)
 }

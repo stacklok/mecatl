@@ -301,7 +301,7 @@ func TestForkForceCopyIsFullyIsolatedRepo(t *testing.T) {
 		t.Fatalf("force-copy fork .git must be a directory (own object DB), got a file (worktree gitlink)")
 	}
 
-	// Mutate INSIDE the fork in every way a branch's Bash/git could: a new commit, a
+	// Mutate INSIDE the fork in every way a branch's Shell/git could: a new commit, a
 	// directly-written ref, and a new working-tree file.
 	writeFile(t, filepath.Join(child.Root(), "branch-only.txt"), "made in fork\n")
 	runGit(t, child.Root(), "add", "-A")

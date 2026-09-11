@@ -46,7 +46,7 @@ func TestMainRulesInjectsAllowAllWhenSet(t *testing.T) {
 
 // TestMainRulesPolicyAutoAllowsAskFloor closes the loop on the structural check
 // above: it drives mainRules through the REAL permpolicy evaluator and asserts the
-// injected rule actually flips the built-in mutate-ask floor (Bash/Edit) from Ask
+// injected rule actually flips the built-in mutate-ask floor (Shell/Edit) from Ask
 // to Allow when AllowAllTools is set, and leaves it at Ask when unset. This would
 // catch a wrong scope (one that cannot loosen the ScopeBuiltinDefault floor) that
 // the shape-only assertions miss. Benign commands only; nothing executes (the test
@@ -54,13 +54,13 @@ func TestMainRulesInjectsAllowAllWhenSet(t *testing.T) {
 func TestMainRulesPolicyAutoAllowsAskFloor(t *testing.T) {
 	const sid = session.SessionID("s1")
 	bashArgs, _ := json.Marshal(map[string]string{"command": "touch x"})
-	bashCall := session.NewToolCall("c1", "Bash", bashArgs)
+	bashCall := session.NewToolCall("c1", "Shell", bashArgs)
 	editArgs, _ := json.Marshal(map[string]string{"file_path": "/x"})
 	editCall := session.NewToolCall("c2", "Edit", editArgs)
 
 	on := permpolicy.NewPolicy(mainRules(Config{AllowAllTools: true}), nil)
 	if got := on.Evaluate(context.Background(), sid, session.ModeDefault, bashCall, nil); got.Effect != governance.Allow {
-		t.Fatalf("AllowAllTools=true Bash: expected Allow, got %v", got.Effect)
+		t.Fatalf("AllowAllTools=true Shell: expected Allow, got %v", got.Effect)
 	}
 	if got := on.Evaluate(context.Background(), sid, session.ModeDefault, editCall, nil); got.Effect != governance.Allow {
 		t.Fatalf("AllowAllTools=true Edit: expected Allow, got %v", got.Effect)
@@ -68,7 +68,7 @@ func TestMainRulesPolicyAutoAllowsAskFloor(t *testing.T) {
 
 	off := permpolicy.NewPolicy(mainRules(Config{AllowAllTools: false}), nil)
 	if got := off.Evaluate(context.Background(), sid, session.ModeDefault, bashCall, nil); got.Effect != governance.Ask {
-		t.Fatalf("AllowAllTools=false Bash: expected Ask, got %v", got.Effect)
+		t.Fatalf("AllowAllTools=false Shell: expected Ask, got %v", got.Effect)
 	}
 	if got := off.Evaluate(context.Background(), sid, session.ModeDefault, editCall, nil); got.Effect != governance.Ask {
 		t.Fatalf("AllowAllTools=false Edit: expected Ask, got %v", got.Effect)
@@ -85,7 +85,7 @@ func TestMainRulesPolicyAutoAllowsAskFloor(t *testing.T) {
 func TestYoloLoosensSubstitutionFloorViaComposition(t *testing.T) {
 	const sid = session.SessionID("s1")
 	args, _ := json.Marshal(map[string]string{"command": "cat $(zap)"})
-	call := session.NewToolCall("c1", "Bash", args)
+	call := session.NewToolCall("c1", "Shell", args)
 
 	// Built the SAME way buildEngine builds the main policy.
 	yoloCfg := Config{AllowAllTools: true}
@@ -138,7 +138,7 @@ func TestChildRulesInjectsAllowAllWhenSet(t *testing.T) {
 }
 
 // TestChildPolicyAutoApprovesNonSubstitution proves the child policy
-// auto-approves a plain (non-read-only, non-substitution) mutate Bash command —
+// auto-approves a plain (non-read-only, non-substitution) mutate Shell command —
 // and that this holds REGARDLESS of --yolo, because the child floor is a blanket
 // allow-all (children have no mutate-ask floor to loosen, unlike the main
 // engine's defaultRules()). This pins the empirical reality the
@@ -149,7 +149,7 @@ func TestChildRulesInjectsAllowAllWhenSet(t *testing.T) {
 func TestChildPolicyAutoApprovesNonSubstitution(t *testing.T) {
 	const sid = session.SessionID("s1")
 	args, _ := json.Marshal(map[string]string{"command": "python3 script.py"})
-	call := session.NewToolCall("c1", "Bash", args)
+	call := session.NewToolCall("c1", "Shell", args)
 
 	for _, yolo := range []bool{true, false} {
 		p := childPermPolicy(Config{AllowAllTools: yolo})
@@ -170,13 +170,13 @@ func TestYoloChildSubstitutionStillFailsSafe(t *testing.T) {
 	child := childPermPolicy(Config{AllowAllTools: true})
 
 	badArgs, _ := json.Marshal(map[string]string{"command": "cat $(zap)"}) // non-read-only inner
-	badCall := session.NewToolCall("c1", "Bash", badArgs)
+	badCall := session.NewToolCall("c1", "Shell", badArgs)
 	if got := child.Evaluate(context.Background(), sid, session.ModeDefault, badCall, nil); got.Effect != governance.Ask || got.FlooredConfiguredAllow || got.ConfiguredAsk {
 		t.Fatalf("--yolo child substitution (bad inner) must Ask with no Floored/Configured bits; got %+v", got)
 	}
 
 	goodArgs, _ := json.Marshal(map[string]string{"command": "go test $(git rev-parse HEAD)"}) // read-only inner
-	goodCall := session.NewToolCall("c2", "Bash", goodArgs)
+	goodCall := session.NewToolCall("c2", "Shell", goodArgs)
 	if got := child.Evaluate(context.Background(), sid, session.ModeDefault, goodCall, nil); got.Effect != governance.Ask || !got.FlooredConfiguredAllow {
 		t.Fatalf("--yolo child substitution (read-only inner) must Ask with FlooredConfiguredAllow; got %+v", got)
 	}
@@ -184,7 +184,7 @@ func TestYoloChildSubstitutionStillFailsSafe(t *testing.T) {
 
 // TestYoloLoosensChildSubstitutionStrictDoesNot is the governance/permpolicy DECISION
 // proof for the posture ladder's headline behaviour change: a CHILD policy built with
-// LooseChildSubstitution=true (yolo) ALLOWS a substitution/heredoc Bash command that
+// LooseChildSubstitution=true (yolo) ALLOWS a substitution/heredoc Shell command that
 // the same policy with it false (strict/trusted/auto) ASKS — AND the locked-at-every-
 // tier invariants still hold under yolo: a ScopeManaged Deny still wins, and a
 // configured (above-floor) Ask still asks. Innocuous non-read-only stand-ins only;
@@ -192,9 +192,9 @@ func TestYoloChildSubstitutionStillFailsSafe(t *testing.T) {
 func TestYoloLoosensChildSubstitutionStrictDoesNot(t *testing.T) {
 	const sid = session.SessionID("s1")
 	subArgs, _ := json.Marshal(map[string]string{"command": "cat $(zap)"}) // non-read-only inner
-	subCall := session.NewToolCall("c1", "Bash", subArgs)
+	subCall := session.NewToolCall("c1", "Shell", subArgs)
 	heredocArgs, _ := json.Marshal(map[string]string{"command": "python3 - <<'PY'\nprint('x')\nPY"})
-	heredocCall := session.NewToolCall("c2", "Bash", heredocArgs)
+	heredocCall := session.NewToolCall("c2", "Shell", heredocArgs)
 
 	yolo := childPermPolicy(Config{LooseChildSubstitution: true})
 	for _, c := range []session.ToolCall{subCall, heredocCall} {
@@ -216,7 +216,7 @@ func TestYoloLoosensChildSubstitutionStrictDoesNot(t *testing.T) {
 
 	// Locked-at-every-tier: a ScopeManaged Deny still wins under yolo (deny-dominance).
 	denyRules := append([]governance.Rule{
-		{Scope: governance.ScopeManaged, Tool: "Bash", Effect: governance.Deny, Audience: governance.AudienceSubagent},
+		{Scope: governance.ScopeManaged, Tool: "Shell", Effect: governance.Deny, Audience: governance.AudienceSubagent},
 	}, childRules(Config{LooseChildSubstitution: true})...)
 	denyPolicy := permpolicy.NewPolicy(denyRules, nil, childEvaluatorOptions(Config{LooseChildSubstitution: true})...)
 	if got := denyPolicy.Evaluate(context.Background(), sid, session.ModeDefault, subCall, nil); got.Effect != governance.Deny {
@@ -225,11 +225,11 @@ func TestYoloLoosensChildSubstitutionStrictDoesNot(t *testing.T) {
 
 	// Locked-at-every-tier: a CONFIGURED (above-floor) Ask still asks under yolo.
 	askRules := append([]governance.Rule{
-		{Scope: governance.ScopeUser, Tool: "Bash", Effect: governance.Ask, Audience: governance.AudienceSubagent},
+		{Scope: governance.ScopeUser, Tool: "Shell", Effect: governance.Ask, Audience: governance.AudienceSubagent},
 	}, childRules(Config{LooseChildSubstitution: true})...)
 	askPolicy := permpolicy.NewPolicy(askRules, nil, childEvaluatorOptions(Config{LooseChildSubstitution: true})...)
 	plainArgs, _ := json.Marshal(map[string]string{"command": "zap -rf build"})
-	plainCall := session.NewToolCall("c3", "Bash", plainArgs)
+	plainCall := session.NewToolCall("c3", "Shell", plainArgs)
 	if got := askPolicy.Evaluate(context.Background(), sid, session.ModeDefault, plainCall, nil); got.Effect != governance.Ask {
 		t.Fatalf("yolo must NOT suppress a configured Ask; got %v (%s)", got.Effect, got.Reason)
 	}
@@ -286,7 +286,7 @@ func TestAllowAllToolsBindsMainAndChildren(t *testing.T) {
 	// through the real evaluator to prove the rule is wired, not inert.
 	const sid = session.SessionID("s1")
 	args, _ := json.Marshal(map[string]string{"command": "zap -rf build"}) // unknown-verb mutate stand-in
-	call := session.NewToolCall("c1", "Bash", args)
+	call := session.NewToolCall("c1", "Shell", args)
 	on := permpolicy.NewPolicy(mainRules(Config{AllowAllTools: true}), nil, mainEvaluatorOptions(Config{AllowAllTools: true})...)
 	if got := on.Evaluate(context.Background(), sid, session.ModeDefault, call, nil); got.Effect != governance.Allow {
 		t.Fatalf("main posture under --yolo must Allow a plain mutate; got %v (%s)", got.Effect, got.Reason)
@@ -314,7 +314,7 @@ func TestAllowAllToolsBindsMainAndChildren(t *testing.T) {
 func TestChildSubstitutionLooseningIsTierDependent(t *testing.T) {
 	const sid = session.SessionID("s1")
 	args, _ := json.Marshal(map[string]string{"command": "cat $(zap)"})
-	call := session.NewToolCall("c1", "Bash", args)
+	call := session.NewToolCall("c1", "Shell", args)
 
 	eval := func(opts ...governance.EvaluatorOption) governance.Effect {
 		p := permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil, opts...)

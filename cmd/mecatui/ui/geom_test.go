@@ -411,7 +411,7 @@ func TestApprovalMouseClickRequiresCapture(t *testing.T) {
 // on the pinned bar at the bottom of the body region and each resolves a click
 // to its verdict — the SAME buttons as the modal (not the plan wording).
 func TestAskButtonAtArgsViewHitsEachButton(t *testing.T) {
-	m := openArgsView(t, bashAskModel(t, longBashArgs))
+	m := openArgsView(t, shellAskModel(t, longShellArgs))
 	byVerdict := hitScan(m)
 	if len(byVerdict) != 3 {
 		t.Fatalf("the args view (offerAlways) must expose 3 buttons, got %d", len(byVerdict))
@@ -447,7 +447,7 @@ func TestAskButtonAtArgsViewHitsEachButton(t *testing.T) {
 // capped mini-viewport + hint line) still hits its buttons exactly — the added
 // region rows and the hint line never swallow the button band.
 func TestAskButtonAtLongArgsModalStable(t *testing.T) {
-	m := bashAskModel(t, longBashArgs)
+	m := shellAskModel(t, longShellArgs)
 	byVerdict := hitScan(m)
 	if len(byVerdict) != 3 {
 		t.Fatalf("the long-args modal must expose 3 buttons, got %d", len(byVerdict))

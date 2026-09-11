@@ -240,10 +240,10 @@ func TestPasteIgnoredWhileAgentsOverlayOpen(t *testing.T) {
 	m = seedTeam(m, func(c *conversation) {
 		c.setTeamStart("t1", "", roster())
 	})
-	mm, _ := m.Update(ctrlKey('a'))
+	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
 	if m.team.view == teamNone {
-		t.Fatalf("agents overlay should be open after ctrl+a")
+		t.Fatalf("agents overlay should be open after f6")
 	}
 	_ = m.prompt.Focus() // defeat the blur masking — exercise the gate, not the blur.
 

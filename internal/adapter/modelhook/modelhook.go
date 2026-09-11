@@ -201,14 +201,14 @@ var _ port.HookRunner = (*Runner)(nil)
 var _ port.HookApprovalLearner = (*Runner)(nil)
 
 // waiverKey is the concrete authorization key a waiver matches on for a PreToolUse
-// event: the Bash COMMAND (so two cosmetically-different invocations of the same
+// event: the Shell COMMAND (so two cosmetically-different invocations of the same
 // command normalize-equal), or the raw args JSON for any other tool. It is the SINGLE
 // key derivation shared by LearnHookApproval (arm) and check (consult) so the two
-// cannot drift. An unreadable Bash args object falls back to the raw input — the
+// cannot drift. An unreadable Shell args object falls back to the raw input — the
 // waiver then keys on the verbatim args, still an EXACT match, never a blanket one.
 func waiverKey(ev governance.HookEvent) string {
-	if ev.Tool == "Bash" {
-		if c, ok := bashCmdFromArgs(string(ev.Input)); ok {
+	if ev.Tool == "Shell" {
+		if c, ok := shellCmdFromArgs(string(ev.Input)); ok {
 			return c
 		}
 	}
@@ -217,7 +217,7 @@ func waiverKey(ev governance.HookEvent) string {
 
 // LearnHookApproval arms a session waiver from a human "Allow & don't ask again"
 // verdict (ADR 0062). The engine calls it with the neutral governance.HookEvent for
-// the approved hook-blocked call; the Runner derives the CONCRETE waiver key (Bash
+// the approved hook-blocked call; the Runner derives the CONCRETE waiver key (Shell
 // command, else raw args) and arms the shared holder for an EXACT (normalized) match.
 // A nil waiver holder (the off posture) makes it a no-op (ArmFromApproval on nil is a
 // no-op).
@@ -271,15 +271,15 @@ func (r *Runner) check(ctx context.Context, phase Phase, rule CompiledRule, ev g
 			return governance.HookOutcome{}
 		}
 	}
-	// Read-only Bash pre-filter (the local-shell cost guard): when the matched rule
-	// opts in, a Pre-phase Bash call whose command is CONFIDENTLY read-only skips the
+	// Read-only Shell pre-filter (the local-shell cost guard): when the matched rule
+	// opts in, a Pre-phase Shell call whose command is CONFIDENTLY read-only skips the
 	// checker entirely — ZERO LLM calls, zero latency. Only mutating/outward commands
 	// reach the checker. It is fail-safe: an unparseable args object, a missing command
 	// field, or any command not provably read-only (substitution-as-verb, unknown verb)
 	// falls through to inspection. No diagnostic on the skip path — it must stay
 	// zero-cost.
-	if rule.skipReadOnlyBash && phase == PhasePre && ev.Tool == "Bash" {
-		if cmd, ok := bashCmdFromArgs(string(ev.Input)); ok && bashFullyReadOnly(cmd) {
+	if rule.skipReadOnlyShell && phase == PhasePre && ev.Tool == "Shell" {
+		if cmd, ok := shellCmdFromArgs(string(ev.Input)); ok && shellFullyReadOnly(cmd) {
 			return governance.HookOutcome{}
 		}
 	}
@@ -480,25 +480,25 @@ func contentUnderReview(phase Phase, ev governance.HookEvent) string {
 	return string(ev.Input)
 }
 
-// bashCmdFromArgs extracts the shell command string from a Bash tool call's raw args
-// JSON via the shared governance extractor (the single source of truth for the Bash
+// shellCmdFromArgs extracts the shell command string from a Shell tool call's raw args
+// JSON via the shared governance extractor (the single source of truth for the Shell
 // tool-call args schema, reused by the permission evaluator and the Subagent
 // isolation gate). It is FAIL-SAFE: a parse error or a missing/whitespace-only
 // command returns ("", false), so the caller INSPECTS rather than skips (an
 // unreadable args object must never be presumed read-only).
-func bashCmdFromArgs(raw string) (string, bool) {
-	return governance.BashCommandFromArgs(json.RawMessage(raw))
+func shellCmdFromArgs(raw string) (string, bool) {
+	return governance.ShellCommandFromArgs(json.RawMessage(raw))
 }
 
-// bashFullyReadOnly reports whether a shell command line is CONFIDENTLY read-only,
-// reusing the engine/governance bash classifiers so the skip decision matches the
+// shellFullyReadOnly reports whether a shell command line is CONFIDENTLY read-only,
+// reusing the engine/governance Shell classifiers so the skip decision matches the
 // permission gate's fail-safe direction exactly (substitution/ambiguity is inspected,
-// never skipped). It accepts the command iff governance.ReadOnlyBash reports the whole
+// never skipped). It accepts the command iff governance.ReadOnlyShell reports the whole
 // line read-only, OR every SplitCommands segment is a provably-read-only substitution
 // (governance.SubstitutionReadOnly — e.g. `cat $(ls)`). Any segment not provably
 // read-only ⇒ false ⇒ inspect. An empty split (whitespace-only) ⇒ false ⇒ inspect.
-func bashFullyReadOnly(cmd string) bool {
-	if governance.ReadOnlyBash(cmd) {
+func shellFullyReadOnly(cmd string) bool {
+	if governance.ReadOnlyShell(cmd) {
 		return true
 	}
 	segs := governance.SplitCommands(cmd)
@@ -572,20 +572,20 @@ const defaultPrePrompt = "Inspect the OUTBOUND tool-call arguments below for dat
 	"Judge the arguments unsafe if they would leak a secret or sensitive data; otherwise safe. " +
 	"If you are uncertain, judge unsafe."
 
-// DefaultBashPrePrompt is the built-in OUTBOUND rubric for the DEFAULT Bash rule (ADR
+// DefaultShellPrePrompt is the built-in OUTBOUND rubric for the DEFAULT Shell rule (ADR
 // 0060). The generic defaultPrePrompt is an EXFILTRATION rubric written for network/MCP
 // boundaries; applied to local-shell args a weak checker reads its "sensitive local data
 // transmitted off the machine" + "if uncertain, judge unsafe" clauses and false-positives
 // on ordinary dev work — a real incident blocked a legitimate local write to a sibling git
 // repo as "exfiltration." A local write is data STAYING on the machine, never exfiltration.
 //
-// This Bash-specific rubric flags only CONCRETE dangerous categories and EXPLICITLY
+// This Shell-specific rubric flags only CONCRETE dangerous categories and EXPLICITLY
 // declares ORDINARY local work safe. The blanket "if uncertain, judge unsafe" is REPLACED
-// with a fail-toward-safe-with-concrete-triggers posture for Bash specifically — a
+// with a fail-toward-safe-with-concrete-triggers posture for Shell specifically — a
 // deliberate rubric-level choice: the named categories still catch the genuinely dangerous
 // cases (incl. `gh pr merge`), and the out-of-band approve-once flow (ADR 0062 — an
 // interactive Allow once / Allow & don't ask / Deny modal on a guardrail block) covers any
-// residual a checker still over-flags. It rides every mutating-Bash pre-check, so it is
+// residual a checker still over-flags. It rides every mutating-Shell pre-check, so it is
 // kept tight.
 //
 // The five categories are: off-machine upload, fetch-and-execute remote code, irreversible
@@ -594,7 +594,7 @@ const defaultPrePrompt = "Inspect the OUTBOUND tool-call arguments below for dat
 // off-machine access or persistent code execution even though the bytes never leave the
 // machine. Category (5) and the local-write carve-out COEXIST: an ordinary source/config
 // write to a sibling repo stays SAFE; only the named sensitive targets are UNSAFE.
-const DefaultBashPrePrompt = "Inspect the OUTBOUND shell command below. Judge it UNSAFE only if you can " +
+const DefaultShellPrePrompt = "Inspect the OUTBOUND shell command below. Judge it UNSAFE only if you can " +
 	"identify one of these SPECIFIC dangerous actions: (1) sending data OFF THIS MACHINE to an external or " +
 	"network destination — e.g. curl/wget/scp/nc uploading file contents or command output to a remote host, " +
 	"or piping data into a network request — especially secrets, credentials, keys, or tokens; (2) fetching " +

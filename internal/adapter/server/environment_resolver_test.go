@@ -227,17 +227,17 @@ func TestEnvironmentResolverReattachesAndRuns(t *testing.T) {
 	}
 }
 
-// TestEnvironmentResolverReattachesAndRunsReadAndBash (issue #462 phase-3 finding
+// TestEnvironmentResolverReattachesAndRunsReadAndShell (issue #462 phase-3 finding
 // #2) proves a correctly-wired resolver reattaches a live Environment and the
-// run executes BOTH a Read tool call and a Bash tool call THROUGH the resolved
+// run executes BOTH a Read tool call and a Shell tool call THROUGH the resolved
 // Environment's Workspace AND CommandRunner, so `remote-seed` reaches BOTH tool
-// results — not just the file-API Read, but the fake Bash runner's `cat` against
+// results — not just the file-API Read, but the fake Shell runner's `cat` against
 // the SAME namespace. This closes the gap left by the Read-only
 // TestEnvironmentResolverReattachesAndRuns: a remote Environment whose runner is
 // nil (or pointing at the wrong namespace) would pass the Read test but fail
 // here. The floor (AllowAllFloorRules) pre-approves the read-only `cat`, so no
 // permission ask is surfaced.
-func TestEnvironmentResolverReattachesAndRunsReadAndBash(t *testing.T) {
+func TestEnvironmentResolverReattachesAndRunsReadAndShell(t *testing.T) {
 	ctx := context.Background()
 	b := remoteenv.NewBackend()
 	env, err := b.NewEnvironment("main")
@@ -249,14 +249,14 @@ func TestEnvironmentResolverReattachesAndRunsReadAndBash(t *testing.T) {
 		t.Fatalf("CreateFile: %v", err)
 	}
 
-	// Script: turn 1 calls Read; turn 2 calls Bash `cat seed.txt`; turn 3 reports
+	// Script: turn 1 calls Read; turn 2 calls Shell `cat seed.txt`; turn 3 reports
 	// the content back.
 	llm := mockllm.New(
 		mockllm.ToolCallTurn(call("c1", "Read", `{"path":"seed.txt"}`)),
-		mockllm.ToolCallTurn(call("c2", "Bash", `{"command":"cat seed.txt"}`)),
+		mockllm.ToolCallTurn(call("c2", "Shell", `{"command":"cat seed.txt"}`)),
 		mockllm.TextTurn("done"),
 	)
-	svc, store, factoryCalls := newEnvTestServiceWithLLM(t, b.Resolve, llm, []tool.Tool{&tools.ReadTool{}, tools.NewBashTool()})
+	svc, store, factoryCalls := newEnvTestServiceWithLLM(t, b.Resolve, llm, []tool.Tool{&tools.ReadTool{}, tools.NewShellTool()})
 	sess := remoteSessionWithRef(t, store, ref)
 
 	run, err := svc.StartRun(ctx, sess.ID, "go")
@@ -286,7 +286,7 @@ func TestEnvironmentResolverReattachesAndRunsReadAndBash(t *testing.T) {
 		t.Fatalf("Read tool result = %q, want one containing %q (Read must execute against the RESOLVED Environment's workspace)", readResult, "remote-seed")
 	}
 	if !strings.Contains(bashResult, "remote-seed") {
-		t.Fatalf("Bash tool result = %q, want one containing %q (the resolved Environment's CommandRunner must observe the SAME namespace — cat seed.txt must reach the resolved workspace)", bashResult, "remote-seed")
+		t.Fatalf("Shell tool result = %q, want one containing %q (the resolved Environment's CommandRunner must observe the SAME namespace — cat seed.txt must reach the resolved workspace)", bashResult, "remote-seed")
 	}
 	if *factoryCalls != 1 {
 		t.Fatalf("factory called %d times, want 1 (remote root differs from the shared engine policy root)", *factoryCalls)

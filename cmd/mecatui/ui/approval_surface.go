@@ -438,16 +438,13 @@ func (s approvalSurface) miniScrollRange() (maxOff int) {
 	return askArgsMiniViewport(s.deps.theme, pretty, s.regionW, s.regionH).maxOffset
 }
 
-// approvalExpandToggle is the approval arm of the ctrl+t handler (issue #488),
-// the pure surface half of the old onExpandToolsKey approval branch: inside the
-// permission modal ctrl+t ROUTES by ask type — a non-diff, non-plan ask
-// opens/closes the full-screen ask-args view INSTEAD of toggling expandTools;
-// a plan ask or an Edit/Write (diff-capable) ask reports approval=false so the
-// Model keeps the in-modal expand behaviour byte-for-byte. The returned
-// actions carry the view re-population (the Model executes it against its
-// renderer).
+// approvalExpandToggle opens the full-screen approval-detail view for every
+// non-plan ask. Keeping even expanded Edit/Write diffs in that viewport ensures
+// the centered approval card never grows vertically and hides its controls.
+// The returned actions carry the view re-population (the Model executes it
+// against its renderer).
 func (s *approvalSurface) approvalExpandToggle() (approval bool) {
-	if isPlanAsk(s.ask.Tool) || isDiffCapableAskTool(s.ask.Tool) {
+	if isPlanAsk(s.ask.Tool) {
 		return false
 	}
 	if s.argsViewOpen {
@@ -485,12 +482,11 @@ func isPlanAsk(tool string) bool {
 }
 
 // isDiffCapableAskTool reports whether a permission ask's tool renders as a
-// colourised diff in the modal (matching renderToolDiff's switch). It is the
-// ctrl+t routing discriminator (issue #488): a diff-capable ask keeps the
-// in-modal ctrl+t diff expand, while every other non-plan ask's ctrl+t opens
-// the full-screen args view. A malformed-Edit-args ask still classifies as
-// diff-capable (it falls back to JSON args, but the ask's FLAVOUR is the diff
-// surface).
+// colourised diff in approval views (matching renderToolDiff's switch). It
+// selects the diff detail renderer; ctrl+t opens that renderer in the
+// full-screen approval-details view. A malformed-Edit-args ask still
+// classifies as diff-capable (it falls back to JSON args in the card, but the
+// ask's FLAVOUR is the diff surface).
 func isDiffCapableAskTool(tool string) bool {
 	return tool == "Edit" || tool == "Write"
 }
@@ -642,11 +638,11 @@ func (s *approvalSurface) miniScroll(step, maxOff int) {
 	s.askVPOffset = max(0, min(maxOff, s.askVPOffset+step))
 }
 
-// bashAskArgs mirrors the Bash tool's args JSON shape for the ask-args pretty
+// shellAskArgs mirrors the Shell tool's args JSON shape for the ask-args pretty
 // tier (mirroring mutatedPath's editDiffArgs/writeDiffArgs precedent). The
-// envelope can also carry timeout_ms (engine's bashArgs shape); the ui layer
+// envelope can also carry timeout_ms (engine's shellArgs shape); the ui layer
 // knows it as a JSON field NAME, not an import.
-type bashAskArgs struct {
+type shellAskArgs struct {
 	Command   string `json:"command"`
 	TimeoutMS int    `json:"timeout_ms"`
 }
@@ -658,11 +654,11 @@ type bashAskArgs struct {
 // The RAW tier is the VERBATIM wire args text — sanitizeTerminal(ask.Args),
 // nothing else (no prettyJSON, no re-indent): raw is the escape hatch that can
 // never lie, "exactly what am I approving". The PRETTY tier is the readable
-// decode: a Bash ask's {"command": …} decodes into the command TEXT (real
+// decode: a Shell ask's {"command": …} decodes into the command TEXT (real
 // newlines, terminal-sanitized) so a long pipeline reads as shell, not escaped
 // JSON, and a non-zero timeout_ms appends a muted "timeout_ms: N" annotation
 // line (th styles it) so the pretty tier loses nothing the envelope carries;
-// every other tool/shape falls back to prettyJSON. The tiers differ for Bash
+// every other tool/shape falls back to prettyJSON. The tiers differ for Shell
 // and for any multi-line-tool args, so the raw/pretty toggle is honest on
 // those asks; a single short line identical in both tiers (empty, or non-JSON
 // passthrough) hides the hint.
@@ -672,8 +668,8 @@ func askArgsContent(th theme.Theme, ask pendingAsk) (pretty string, raw string, 
 	}
 	raw = sanitizeTerminal(strings.TrimSpace(ask.Args))
 	pretty = prettyJSON(ask.Args)
-	if ask.Tool == "Bash" {
-		var args bashAskArgs
+	if ask.Tool == "Shell" {
+		var args shellAskArgs
 		if err := json.Unmarshal([]byte(strings.TrimSpace(ask.Args)), &args); err == nil && args.Command != "" {
 			pretty = sanitizeTerminal(args.Command)
 			if args.TimeoutMS != 0 {
@@ -685,7 +681,7 @@ func askArgsContent(th theme.Theme, ask pendingAsk) (pretty string, raw string, 
 }
 
 // askArgsTiersDiffer reports whether the raw tier adds anything over the pretty
-// tier — true whenever the two tiers genuinely differ (a decoded Bash command,
+// tier — true whenever the two tiers genuinely differ (a decoded Shell command,
 // a timeout_ms annotation, or any args whose pretty tier re-indents). The
 // toggle hint renders only then; for an ask whose tiers are byte-identical
 // (empty args, or a non-JSON single-line passthrough) a "raw" toggle would be
@@ -796,6 +792,24 @@ const permissionModalArgsMaxLines = 10
 // never receives an over-region body even on a tiny terminal.
 const permissionModalBodyReserve = 16
 
+// capApprovalCardBody keeps all approval content above the pinned action rows
+// within the offered card height. The full content remains available through
+// the scrollable approval-details view.
+func capApprovalCardBody(body string, height, actionRows int, marker string) string {
+	if height <= 0 {
+		return body
+	}
+	rows := max(1, height-actionRows)
+	lines := strings.Split(strings.TrimRight(body, "\n"), "\n")
+	if len(lines) <= rows {
+		return body
+	}
+	if rows == 1 {
+		return marker + "\n"
+	}
+	return strings.Join(lines[:rows-1], "\n") + "\n" + marker + "\n"
+}
+
 // permissionModalBodyParts builds the generic permission modal's body CONTENT AND
 // reports the button box's top row within it. It is the SINGLE source for BOTH the
 // render path (renderPermissionModal) and the approval surface's mouse hit-test:
@@ -812,7 +826,9 @@ const permissionModalBodyReserve = 16
 func (s *approvalSurface) permissionModalBodyParts(width, height int) (body string, buttonsRow int) {
 	th := s.deps.theme
 	ask := s.ask
-	expand := s.expandTools
+	// Approval details always stay capped in the centered card. Ctrl+t opens the
+	// scrollable full-screen details view instead of expanding this card.
+	expand := false
 	queued := len(s.queue)
 	argsOffset := s.askVPOffset
 	titleText := "Permission required"
@@ -828,10 +844,10 @@ func (s *approvalSurface) permissionModalBodyParts(width, height int) (body stri
 	var b strings.Builder
 	b.WriteString(title + "\n\n")
 	b.WriteString(th.Style("toolName").Render(sanitizeTerminal(ask.Tool)) + "\n")
-	// Prefer a concrete diff for Edit/Write. Collapsed by default (line-capped, so
-	// a huge Write can't grow the modal off-screen); ctrl+t (expand) reveals the
-	// full diff right here at the gate. Fall back to pretty JSON for any other
-	// tool, or when the Edit/Write args don't parse into the expected shape.
+	// Prefer a concrete diff for Edit/Write. It is always capped to the rows left
+	// above the pinned actions; ctrl+t opens the complete, scrollable diff in the
+	// approval-details view. Fall back to pretty JSON for any other tool, or when
+	// the Edit/Write args don't parse into the expected shape.
 	if diff, ok := s.render.diff(ask.Tool, ask.Args, expand, askArgsCardContentWidth(th, width)); ok {
 		if diff != "" {
 			b.WriteString(th.Style("muted").Render("changes:") + "\n")
@@ -842,7 +858,7 @@ func (s *approvalSurface) permissionModalBodyParts(width, height int) (body stri
 		}
 	} else if pretty, _, ok := askArgsContent(th, ask); ok && pretty != "" {
 		// Non-diff ask: the args region is a height-capped mini-viewport of the
-		// WRAPPED pretty tier (a Bash ask's decoded command text, else pretty
+		// WRAPPED pretty tier (a Shell ask's decoded command text, else pretty
 		// JSON). The region declares min(natural, cap, region-budget) rows and
 		// scrolls via argsOffset; hidden rows append a hint line advertising the
 		// scroll keys and the ctrl+t full-args view. A pathological no-args ask
@@ -878,13 +894,23 @@ func (s *approvalSurface) permissionModalBodyParts(width, height int) (body stri
 			b.WriteString(th.Style("muted").Render(wrapApprovalReason(ask.Reason, askArgsCardContentWidth(th, width))) + "\n")
 		}
 	} else if args := prettyJSON(ask.Args); args != "" {
-		b.WriteString(th.Style("toolArgs").Render(args) + "\n")
+		b.WriteString(th.Style("toolArgs").Render(wrapAskArgsContinuations(th, args, askArgsCardContentWidth(th, width))) + "\n")
 		if ask.Reason != "" {
 			b.WriteString("\n" + th.Style("muted").Render(wrapApprovalReason(ask.Reason, askArgsCardContentWidth(th, width))) + "\n")
 		}
 	} else if ask.Reason != "" {
 		b.WriteString("\n" + th.Style("muted").Render(wrapApprovalReason(ask.Reason, askArgsCardContentWidth(th, width))) + "\n")
 	}
+	// Keep every server-derived detail (including a malformed diff fallback and
+	// an arbitrarily long reason) above the pinned verdict controls within the
+	// offered card height.
+	actionRows := 4 // joining spacer + three-row button box
+	if ask.offerAlways {
+		actionRows++
+	}
+	preActions := capApprovalCardBody(b.String(), height, actionRows, th.Style("muted").Render("… ctrl+t details"))
+	b.Reset()
+	b.WriteString(preActions)
 
 	// Three visible verdicts when always-allow is offered (main-agent asks), two
 	// otherwise (surfaced subagent asks). The shared visible verdict set drives
@@ -1187,16 +1213,23 @@ func (s *approvalSurface) planLayout() planReviewLayout {
 }
 
 // ---------------------------------------------------------------------------
-// Full-screen ask-args view (issue #488)
+// Full-screen approval-detail view (issue #488)
 // ---------------------------------------------------------------------------
 
-// argsReviewFooterHeight is the rows reserved at the bottom of the full-screen
-// ask-args view for the pinned action bar (buttons + the always footnote + the
-// scroll/raw hint). Same shape as planReviewFooterHeight.
-const argsReviewFooterHeight = 3
+// argsReviewFooterHeight returns the rows outside the approval-details viewport:
+// its joining spacer, three-row action box, scroll hint, and optional
+// always-allow footnote. Reserving the actual rendered footer keeps the details
+// view within the offered conversation height.
+func argsReviewFooterHeight(ask pendingAsk) int {
+	height := 5 // joining spacer + three-row buttons + scroll hint
+	if ask.offerAlways {
+		height++
+	}
+	return height
+}
 
-// clearAskArgsView tears down the full-screen ask-args view AND resets the
-// modal's args mini-viewport offset: it drops the viewport content, marks it
+// clearAskArgsView tears down the full-screen approval-details view AND resets
+// the modal's args mini-viewport offset: it drops the viewport content, marks it
 // not-ready/closed, and resets the raw toggle so the next ask opens pretty.
 // Called whenever the ask resolves (any verdict), is retracted, advances to a
 // queued successor, or the run/session ends — mirroring clearPlanReview — so a
@@ -1247,27 +1280,38 @@ func argsScrollHint(hk helpKeys, tiersDiffer bool) string {
 	return hint + " · " + hk.cancel + " back"
 }
 
-// openArgs materializes the full pretty/raw args view and preserves the reader's
+// openArgs materializes the full approval-details view and preserves the reader's
 // offset across ask, queue, tier, or geometry cache invalidations.
 func (s *approvalSurface) openArgs(width, height int) {
-	vpHeight := max(1, height-argsReviewFooterHeight)
+	vpHeight := max(1, height-argsReviewFooterHeight(s.ask))
 	fingerprint := argsAskFingerprint(s.ask, len(s.queue), s.argsViewRaw)
 	if s.argsVPReady && s.argsVPWidth == width && s.argsVPHeight == vpHeight && s.argsVPFingerprint == fingerprint {
 		return
 	}
 	previous, fresh := s.argsVP.YOffset(), !s.argsVPReady
 	title := "Ask args: " + sanitizeTerminal(s.ask.Tool)
-	if len(s.queue) > 0 {
-		title = fmt.Sprintf("Ask args: %s (1 of %d)", sanitizeTerminal(s.ask.Tool), len(s.queue)+1)
+	if isDiffCapableAskTool(s.ask.Tool) {
+		title = "Approval details: " + sanitizeTerminal(s.ask.Tool)
 	}
-	pretty, raw, ok := askArgsContent(s.deps.theme, s.ask)
-	tier := pretty
-	if s.argsViewRaw {
-		tier = raw
+	if len(s.queue) > 0 {
+		title = fmt.Sprintf("%s (1 of %d)", title, len(s.queue)+1)
 	}
 	var body string
-	if ok && tier != "" {
-		body = s.deps.theme.Style("toolArgs").Render(wrapAskArgsContinuations(s.deps.theme, tier, planReviewContentWidth(width))) + "\n"
+	if isDiffCapableAskTool(s.ask.Tool) {
+		if diff, ok := s.render.diff(s.ask.Tool, s.ask.Args, true, planReviewContentWidth(width)); ok && diff != "" {
+			body = s.deps.theme.Style("muted").Render("changes:") + "\n" + diff + "\n"
+		} else if args := prettyJSON(s.ask.Args); args != "" {
+			body = s.deps.theme.Style("toolArgs").Render(wrapAskArgsContinuations(s.deps.theme, args, planReviewContentWidth(width))) + "\n"
+		}
+	} else {
+		pretty, raw, ok := askArgsContent(s.deps.theme, s.ask)
+		tier := pretty
+		if s.argsViewRaw {
+			tier = raw
+		}
+		if ok && tier != "" {
+			body = s.deps.theme.Style("toolArgs").Render(wrapAskArgsContinuations(s.deps.theme, tier, planReviewContentWidth(width))) + "\n"
+		}
 	}
 	if s.ask.Reason != "" {
 		body += "\n" + s.deps.theme.Style("muted").Render(wrapApprovalReason(s.ask.Reason, planReviewContentWidth(width))) + "\n"
@@ -1293,7 +1337,7 @@ func (s *approvalSurface) argsLayout() argsReviewLayout {
 	if s.ask.offerAlways {
 		bar += "\n" + s.deps.theme.Style("muted").Render(approvalAlwaysFootnote(s.deps.marks.allowAlways))
 	}
-	bar += "\n" + s.deps.theme.Style("muted").Render(argsScrollHint(s.deps.marks, askArgsTiersDiffer(s.deps.theme, s.ask)))
+	bar += "\n" + s.deps.theme.Style("muted").Render(argsScrollHint(s.deps.marks, !isDiffCapableAskTool(s.ask.Tool) && askArgsTiersDiffer(s.deps.theme, s.ask)))
 	layout := argsReviewLayout{content: view, buttonsHeight: lipgloss.Height(buttons)}
 	if view != "" {
 		layout.buttonsRow = strings.Count(view, "\n") + 1

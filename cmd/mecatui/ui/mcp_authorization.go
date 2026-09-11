@@ -450,7 +450,7 @@ func (m Model) renderMCPAuthorization() string {
 	if m.authorization.displayName != "" {
 		body += " for " + m.authorization.displayName
 	}
-	body += "\n\nOpen or copy the link, then browser consent is checked automatically.\n\n[" + open + "] Open Browser   [" + copyLink + "] Copy Link   [" + cancel + "] Cancel"
+	body += "\n\nOpen or copy the link, then browser consent is checked automatically.\n\n[" + open + "] Complete connection   [" + copyLink + "] Copy Link   [" + cancel + "] Cancel"
 	if errText := strings.TrimSpace(m.authorization.errorText); errText != "" {
 		body += "\n\nError: " + sanitizeTerminal(errText)
 	}

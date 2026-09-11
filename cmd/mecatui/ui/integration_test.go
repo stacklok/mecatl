@@ -175,16 +175,16 @@ func TestFooterTeamSegmentTiers(t *testing.T) {
 	})
 	left := "ready"
 
-	// Wide: full team tier (glyph + team-id + k/N working + ctrl+a agents) AND the
+	// Wide: full team tier (glyph + team-id + k/N working + f6 agents) AND the
 	// full context meter (ctx + %).
 	wide := stripANSIstr(m.fitFooter(left, 200))
-	for _, want := range []string{teamLiveGlyph, "team-x", "2/2 working", "ctrl+a agents", "ctx ", "70%"} {
+	for _, want := range []string{teamLiveGlyph, "team-x", "2/2 working", "f6 agents", "ctx ", "70%"} {
 		if !strings.Contains(wide, want) {
 			t.Errorf("wide footer should contain %q:\n%q", want, wide)
 		}
 	}
 
-	// Medium: team segment degrades to the id-less "⟳ k/N working · ctrl+a"; the
+	// Medium: team segment degrades to the id-less "⟳ k/N working · f6"; the
 	// context % must still be present.
 	med := stripANSIstr(m.fitFooter(left, 56))
 	if !strings.Contains(med, teamLiveGlyph) || !strings.Contains(med, "2/2 working") {
@@ -226,7 +226,7 @@ func TestFooterNoTeamSegment(t *testing.T) {
 
 // TestFooterTeamDoneDropsSegment asserts a team that has ENDED drops the footer
 // segment — latestTeamBlock still returns it, so liveTeamBlock's !teamDone gate is
-// what hides it. This is deliberately NARROWER than the ctrl+a overlay, which
+// what hides it. This is deliberately NARROWER than the f6 overlay, which
 // opens on the last-seen team (done or not) to review a finished roster.
 func TestFooterTeamDoneDropsSegment(t *testing.T) {
 	th := theme.New("aztec", theme.AztecPalette())
@@ -339,11 +339,11 @@ func TestUserModelSlashCommandEndToEnd(t *testing.T) {
 	}
 }
 
-// TestTeamOverlayCtrlAMidRunEndToEnd drives the live-team overlay open MID-RUN via
-// the real keypress reducer (issue #15, Gap B): with a team streaming, ctrl+a
+// TestTeamOverlayF6MidRunEndToEnd drives the live-team overlay open MID-RUN via
+// the real keypress reducer (issue #15, Gap B): with a team streaming, f6
 // opens the roster overlay (rendered in the viewport) without enqueuing or
 // cancelling. It complements the unit test by going through Update + View.
-func TestTeamOverlayCtrlAMidRunEndToEnd(t *testing.T) {
+func TestTeamOverlayF6MidRunEndToEnd(t *testing.T) {
 	m := newMCPModel(t, aztec(), nil)
 	m.caps.Teams = true
 	m = seedTeam(m, func(c *conversation) {
@@ -352,16 +352,16 @@ func TestTeamOverlayCtrlAMidRunEndToEnd(t *testing.T) {
 	})
 	m.phase = phaseRunning
 
-	mm, _ := m.Update(ctrlKey('a'))
+	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
 	if m.team.view != teamRoster {
-		t.Fatalf("ctrl+a mid-run should open the roster overlay, view=%v", m.team.view)
+		t.Fatalf("f6 mid-run should open the roster overlay, view=%v", m.team.view)
 	}
 	if len(m.queued) != 0 {
-		t.Errorf("ctrl+a mid-run must not enqueue, queue=%v", m.queued)
+		t.Errorf("f6 mid-run must not enqueue, queue=%v", m.queued)
 	}
 	if m.phase != phaseRunning {
-		t.Errorf("ctrl+a mid-run must not change the phase, got %v", m.phase)
+		t.Errorf("f6 mid-run must not change the phase, got %v", m.phase)
 	}
 	body := stripANSIstr(m.View().Content)
 	if !strings.Contains(body, "agents · 2 members") || !strings.Contains(body, "[lead]") {

@@ -319,7 +319,7 @@ func TestHookOutcomesWrap(t *testing.T) {
 		{"modified", string(client.HookModified), "✎"},
 		{"info", "", "•"},
 	} {
-		out := renderHookBlock(r, long, "PreToolUse", "Bash", tc.decision)
+		out := renderHookBlock(r, long, "PreToolUse", "Shell", tc.decision)
 		lines := strings.Split(out, "\n")
 		if len(lines) <= 1 {
 			t.Fatalf("%s: expected the long hook notice to wrap, got %d lines", tc.name, len(lines))

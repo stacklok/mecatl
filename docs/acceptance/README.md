@@ -126,7 +126,7 @@ PR after verification. There is no cleanup or status-only PR.
   500 ms generation-tagged expiry; it reuses `clearPrompt`, preserves surface ownership,
   and documents universal `ctrl+u`. Status: landed.
 - [CallMcpWithQuery broker support](callmcpwithquery-broker-support.md) — bounded jq projection for a direct MCP target or a current broker attachment, preserving the attachment's existing session isolation and authorization gates. Status: implemented locally under explicit workflow waiver; not approved or landed.
-
+- [Mecatui logical conversation anchors](mecatui-logical-conversation-anchors.md) — UI-local semantic reading anchors, line provenance, conservative live selection retention, and cache-preserving viewport replacement. Status: landed in this Combined candidate; authoritative on merge.
 - [Mecatui card layout](mecatui-card-layout.md) — width-bounded card rendering
   that wraps raw dynamic rows before styling, preventing Lipgloss alignment
   padding from becoming vertical whitespace while retaining intentional
@@ -146,9 +146,10 @@ PR after verification. There is no cleanup or status-only PR.
   system escape and deterministic crash-residue reaping. Status: landed.
 - [Session title generation and token usage](session-title-generation.md) — mecatui `/title`, an opt-in routed model title after up to three genuine prompts, and durable title-model token attribution. Status: draft.
 - [Per-upstream MCP broker OAuth grants](mcp-broker-multi-upstream-oauth.md) — accept multiple broker OAuth upstreams while keeping grants, callback state, authenticated discovery, and workspace-enrollment progression backend-scoped. Status: draft.
-- [Broker MCP status](broker-mcp-status.md) — proposed owner-scoped broker connector
+- [Broker MCP status](broker-mcp-status.md) — approved owner-scoped broker connector
   inventory and enrollment/catalogue status behind `/mcp`, without probes or new
-  persistence. Status: draft; exact interface/disclosure decisions await confirmation.
+  persistence. Status: approved; original plan PR merged, decisions recorded locally under
+  an explicit human waiver of a separate amendment PR/merge for inclusion in the implementation PR.
 - [MCP broker DCR client](mcp-broker-dcr-client.md) — a third `mcp.servers[].auth.oauth.client.mode: dcr`, exposing ToolHive's existing RFC 7591 Dynamic Client Registration upstream-client support for protected MCP servers with no preregistered client or hosted CIMD document. Status: draft.
 - [Direct MCP Dynamic Client Registration](direct-mcp-dcr.md) — proposed contract for durable public-client DCR in a local direct MCP profile, reusing the existing authorization-code login while keeping broker and remote mecatui OIDC authority separate. Status: proposed.
 
@@ -202,6 +203,9 @@ PR after verification. There is no cleanup or status-only PR.
 - [Caller identity](caller-identity.md) — completed acceptance record for optional
   OIDC caller attribution: a verified principal, durable session/schedule ownership,
   and log-only event actors; no authorization. Status: landed.
+- [Caller-validation observability](caller-validation-observability.md) — closed,
+  privacy-safe auth-edge diagnostics for accepted credentials, rejections, and IdP
+  unavailability across HTTP and gRPC. Status: landed.
 - [Caller separation](caller-separation.md) — enforce OIDC caller isolation over
   application sessions, schedules, teams, memory, event streams, live runs, and
   model-facing object access; remote-driver enforcement is deferred to #452. Status:

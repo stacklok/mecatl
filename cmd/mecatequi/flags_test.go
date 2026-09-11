@@ -408,7 +408,7 @@ func TestAppConfigMapping(t *testing.T) {
 		if cfg.MaxRunTokens != 1234 || cfg.MaxTeamTokens != 5678 {
 			t.Errorf("budgets not mapped: run=%d team=%d", cfg.MaxRunTokens, cfg.MaxTeamTokens)
 		}
-		if !cfg.NoBash {
+		if !cfg.NoShell {
 			t.Error("--no-bash not mapped")
 		}
 		if cfg.Posture != app.PostureAuto {
@@ -451,4 +451,16 @@ func TestAppConfigMapping(t *testing.T) {
 			t.Error("a present OPENAI_API_KEY should flip UseOpenAI on (mecated parity)")
 		}
 	})
+}
+
+func TestCanonicalShellTool_Scenario2_LegacyNoBashFlag(t *testing.T) {
+	for _, name := range []string{"--no-shell", "--no-bash"} {
+		f, err := parseFlags([]string{"--prompt", "x", name})
+		if err != nil {
+			t.Fatalf("parseFlags(%s): %v", name, err)
+		}
+		if !f.noShell {
+			t.Fatalf("%s did not disable Shell", name)
+		}
+	}
 }

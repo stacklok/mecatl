@@ -36,10 +36,10 @@ func TestSurfaceAskAttribution(t *testing.T) {
 		wantPrefix string
 		wantClean  bool // assert no raw control byte survived in the Reason
 	}{
-		{"subagent goal", `subagent "fix flaky tests"`, `subagent "fix flaky tests" requests approval to run Bash`, false},
-		{"team member name", `team member "researcher"`, `team member "researcher" requests approval to run Bash`, false},
-		{"parallel branch label", `parallel branch "branch-2"`, `parallel branch "branch-2" requests approval to run Bash`, false},
-		{"empty label keeps generic framing", "", "subagent requests approval to run Bash", false},
+		{"subagent goal", `subagent "fix flaky tests"`, `subagent "fix flaky tests" requests approval to run Shell`, false},
+		{"team member name", `team member "researcher"`, `team member "researcher" requests approval to run Shell`, false},
+		{"parallel branch label", `parallel branch "branch-2"`, `parallel branch "branch-2" requests approval to run Shell`, false},
+		{"empty label keeps generic framing", "", "subagent requests approval to run Shell", false},
 		{"control-bearing label is neutralised", "team member \"a\x07b\"", "", true},
 	}
 	for _, tc := range tests {
@@ -62,7 +62,7 @@ func TestSurfaceAskAttribution(t *testing.T) {
 			child := &Run{events: make(chan session.Event, 1), asks: newAskRegistry()}
 			ask := session.PendingAsk{
 				AskID:  "child-sess:1:k1",
-				Tool:   "Bash",
+				Tool:   "Shell",
 				Args:   json.RawMessage(`{"command":"cat data.txt"}`),
 				Reason: "command substitution requires approval",
 			}

@@ -348,8 +348,8 @@ func (*ParallelTool) Spec() tool.ToolSpec {
 			"merge. For work where branches must coordinate or share state, use Team — Parallel branches " +
 			"are fully independent and never communicate. " +
 			"Each branch runs in an isolated fork, so a branch may IMPLEMENT by editing, " +
-			"writing files, and running shell commands (Bash), not just explore — its changes " +
-			"land in its own fork and never touch this workspace (Bash runs with the fork as its " +
+			"writing files, and running shell commands (Shell), not just explore — its changes " +
+			"land in its own fork and never touch this workspace (Shell runs with the fork as its " +
 			"working directory). " +
 			"Each branch cannot see this conversation or the other branches, so make every " +
 			"task in `tasks` self-contained (use `shared` for common context). " +
@@ -372,19 +372,19 @@ func (*ParallelTool) Spec() tool.ToolSpec {
 // INVARIANT — this is the same invariant SubagentTool documents, but Parallel makes it
 // strictly safer: every child branch runs in its OWN forked workspace, never the
 // shared base. So the child's filesystem-mutating tools (Edit / Write) land in the
-// isolated fork and CANNOT race on, or mutate, the parent's shared base. Bash is
-// now workspace-aware (see app.buildParallelChildEngine): BashTool.Execute passes the
+// isolated fork and CANNOT race on, or mutate, the parent's shared base. Shell is
+// now workspace-aware (see app.buildParallelChildEngine): ShellTool.Execute passes the
 // per-branch forked Workspace.Root() to its CommandRunner as the working directory,
-// so a branch's Bash runs in its OWN fork — its DEFAULT cwd is the fork, not the
-// shared parent base. (Residual: unlike path-scoped Edit/Write, Bash can still
-// escape its cwd via absolute paths or `cd`; that is the inherent Bash trust model,
+// so a branch's Shell runs in its OWN fork — its DEFAULT cwd is the fork, not the
+// shared parent base. (Residual: unlike path-scoped Edit/Write, Shell can still
+// escape its cwd via absolute paths or `cd`; that is the inherent Shell trust model,
 // the same as the main session. What the fix guarantees is that no ACCIDENTAL
-// shared-base mutation happens — a branch's relative-path Bash lands in the fork.)
-// That is why ReadOnly() can safely return true even for mutating (Edit/Write/Bash)
+// shared-base mutation happens — a branch's relative-path Shell lands in the fork.)
+// That is why ReadOnly() can safely return true even for mutating (Edit/Write/Shell)
 // children — for the SAME reason SubagentTool.ReadOnly() stays true: each tool isolates
 // its mutating child so the child's writes never touch the shared parent base.
 // Isolation, not catalog read-only-ness, is the boundary (after Phase 2 a Subagent child
-// with Bash runs in its OWN git worktree exactly as a Parallel branch runs in its own
+// with Shell runs in its OWN git worktree exactly as a Parallel branch runs in its own
 // force-copy). The remaining distinction is only WHICH tools the child gets: a Parallel
 // branch keeps Edit/Write (it is meant to IMPLEMENT in its fork), while a Subagent child
 // drops them and is shell-only (a read-only explorer that may run git/build/test but
@@ -504,7 +504,7 @@ func (t *ParallelTool) Execute(ctx context.Context, call session.ToolCall, env t
 }
 
 // ReadOnly stays true (each branch isolates its writes); see ReadOnly. ParallelTool
-// implements childCapableTool so a branch's Bash ask can be surfaced to the human
+// implements childCapableTool so a branch's Shell ask can be surfaced to the human
 // (interactive) or auto-denied with the accurate message (headless) — every branch is
 // isolated, so most such asks auto-approve via A2 first.
 
@@ -1118,7 +1118,7 @@ func (t *ParallelTool) runBranch(ctx context.Context, callID session.ToolCallID,
 	}
 
 	run := branchEngine.Run(ctx, childSess, childEnv, RunRequest{Text: prompt})
-	// A Parallel branch always runs in its OWN isolated fork, so its Bash asks are eligible
+	// A Parallel branch always runs in its OWN isolated fork, so its Shell asks are eligible
 	// for the A2 worktree-safe auto-approve; the parent caps carry surface/headless
 	// posture (threaded from Execute → runBranches → runBranch). We REUSE
 	// drainChildObserved — the SINGLE redaction chokepoint shared with Subagent — and hand

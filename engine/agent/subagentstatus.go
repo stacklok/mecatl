@@ -32,15 +32,15 @@ const maxSubagentStatusWaitMs = 120000
 // delegationFamiliesOnly is the family-exclusion set for SubagentStatus's
 // registry reads: it projects the THREE delegation families
 // (subagent/parallel-branch/team-member) and filters OUT the bash-cmd
-// background jobs — those are BashStatus's projection. The registry is SHARED;
+// background jobs — those are ShellStatus's projection. The registry is SHARED;
 // the projections are disjoint (an entry of one family is invisible to the
 // other tool), so a bash job id is never mislabeled "a subagent" and a
-// delegation id is never collected through BashStatus.
-var delegationFamiliesOnly = map[childFamily]bool{childFamilyBashCmd: true}
+// delegation id is never collected through ShellStatus.
+var delegationFamiliesOnly = map[childFamily]bool{childFamilyShellCmd: true}
 
-// bashCmdFamiliesOnly is the mirror set for BashStatus: it projects ONLY the
+// shellCmdFamiliesOnly is the mirror set for ShellStatus: it projects ONLY the
 // bash-cmd background jobs, excluding every delegation family.
-var bashCmdFamiliesOnly = map[childFamily]bool{
+var shellCmdFamiliesOnly = map[childFamily]bool{
 	childFamilySubagent:       true,
 	childFamilyParallelBranch: true,
 	childFamilyTeamMember:     true,
@@ -231,7 +231,7 @@ func childKindLabel(st childStatus) string {
 		return "team member"
 	case childFamilyParallelBranch:
 		return "parallel branch"
-	case childFamilyBashCmd:
+	case childFamilyShellCmd:
 		return "background command"
 	default:
 		if st.background {

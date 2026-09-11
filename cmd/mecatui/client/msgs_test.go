@@ -87,8 +87,8 @@ func TestEventToMsg(t *testing.T) {
 		{
 			"hook blocked",
 			&mecatlv1.Event{Type: "hook", Text: "blocked by policy", Hook: &mecatlv1.Hook{
-				Phase: "PreToolUse", Tool: "Bash", Decision: mecatlv1.HookDecision_HOOK_DECISION_BLOCKED}},
-			HookMsg{Text: "blocked by policy", Phase: "PreToolUse", Tool: "Bash", Decision: HookBlocked},
+				Phase: "PreToolUse", Tool: "Shell", Decision: mecatlv1.HookDecision_HOOK_DECISION_BLOCKED}},
+			HookMsg{Text: "blocked by policy", Phase: "PreToolUse", Tool: "Shell", Decision: HookBlocked},
 		},
 		{
 			"hook nil payload defaults to info",

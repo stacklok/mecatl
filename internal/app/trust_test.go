@@ -281,7 +281,7 @@ func TestResolveTrustMonotonicPositiveDenyHonoured(t *testing.T) {
 
 			// Build the permconfig resolver the SAME way buildEngine does, feeding the
 			// folded decision. The project ships a DENY; it must survive being trusted.
-			settingsYAML := "permissions:\n  deny:\n    - \"Bash(some-blocked-cmd:*)\"\n"
+			settingsYAML := "permissions:\n  deny:\n    - \"Shell(some-blocked-cmd:*)\"\n"
 			if err := os.MkdirAll(filepath.Join(ws, ".mecatl"), 0o755); err != nil {
 				t.Fatalf("mkdir .mecatl: %v", err)
 			}
@@ -304,10 +304,10 @@ func TestResolveTrustMonotonicPositiveDenyHonoured(t *testing.T) {
 
 			found := false
 			for _, r := range rules {
-				if r.Tool == "Bash" && r.Effect == governance.Deny {
+				if r.Tool == "Shell" && r.Effect == governance.Deny {
 					found = true
 				}
-				if r.Effect == governance.Allow && r.Tool == "Bash" {
+				if r.Effect == governance.Allow && r.Tool == "Shell" {
 					t.Fatalf("trust must not turn a project DENY into an ALLOW: %+v", r)
 				}
 			}
@@ -465,7 +465,7 @@ func TestResolveTrustRememberedMonotonicDenyHonoured(t *testing.T) {
 	}
 
 	// The project ships a DENY; remembered trust must not turn it into an ALLOW.
-	settingsYAML := "permissions:\n  deny:\n    - \"Bash(some-blocked-cmd:*)\"\n"
+	settingsYAML := "permissions:\n  deny:\n    - \"Shell(some-blocked-cmd:*)\"\n"
 	if err := os.WriteFile(filepath.Join(ws, ".mecatl", "settings.yaml"), []byte(settingsYAML), 0o644); err != nil {
 		t.Fatalf("write project settings: %v", err)
 	}
@@ -478,7 +478,7 @@ func TestResolveTrustRememberedMonotonicDenyHonoured(t *testing.T) {
 		t.Fatalf("open ws reader: %v", err)
 	}
 	for _, r := range resolver.Resolve(context.Background(), wsReader) {
-		if r.Effect == governance.Allow && r.Tool == "Bash" {
+		if r.Effect == governance.Allow && r.Tool == "Shell" {
 			t.Fatalf("remembered trust turned a project DENY into an ALLOW: %+v", r)
 		}
 	}
@@ -639,7 +639,7 @@ func TestHasProjectAuthorityCompositionPerType(t *testing.T) {
 		{"skill", ".mecatl/skills/x/SKILL.md", "skill body", true},
 		{"mecatl-allow", ".mecatl/settings.yaml", "permissions:\n  allow:\n    - Read\n", true},
 		{"claude-allow", ".claude/settings.json", `{"permissions":{"allow":["Read"]}}`, true},
-		{"deny-only", ".mecatl/settings.yaml", "permissions:\n  deny:\n    - Bash\n", false},
+		{"deny-only", ".mecatl/settings.yaml", "permissions:\n  deny:\n    - Shell\n", false},
 		{"empty-allow", ".mecatl/settings.yaml", "permissions:\n  allow: []\n", false},
 	}
 	for _, tc := range cases {

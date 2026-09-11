@@ -8,7 +8,7 @@
 // doc.go forbids it). port.PermissionPolicy's signature uses session types, so
 // any concrete implementation of it must import session — and therefore cannot
 // live in governance. This package is that thin translation seam; the actual
-// deny → ask → allow logic, compound-Bash splitting and plan-mode gating all
+// deny → ask → allow logic, compound-Shell splitting and plan-mode gating all
 // live in package governance and are unit-tested there.
 package permpolicy
 
@@ -112,7 +112,7 @@ func NewPolicyWithResolver(rules []governance.Rule, store port.PermissionStore, 
 // ScopeBuiltinDefault, it can only ever LOOSEN the built-in mutate-ask floor
 // (resolveSimpleRule's existing issue-#13 mechanic: a higher-precedence Allow
 // may loosen ONLY an Ask scoped at ScopeBuiltinDefault) — it can never suppress
-// a CONFIGURED deny/ask for Edit/Write from any scope above the floor, and Bash
+// a CONFIGURED deny/ask for Edit/Write from any scope above the floor, and Shell
 // is untouched (accept-edits auto-accepts file edits only, mirroring the
 // client-visible "accept edits" contract; it is not a broader auto-run mode).
 var acceptEditsRules = []governance.Rule{
@@ -122,7 +122,7 @@ var acceptEditsRules = []governance.Rule{
 
 // Evaluate returns the permission decision for tool call c under mode, scoped to
 // sessionID and the session workspace ws. Plan mode (session.ModePlan) forces a
-// deny for mutating tools (Edit/Write and non read-only Bash) BEFORE any extra
+// deny for mutating tools (Edit/Write and non read-only Shell) BEFORE any extra
 // rule is consulted. Accept-edits mode (session.ModeAccept) contributes the
 // floor-loosening acceptEditsRules into the extra set, so Edit/Write auto-allow
 // UNLESS a configured (above-floor) deny/ask says otherwise. All other modes
@@ -147,8 +147,8 @@ func (p *Policy) Evaluate(ctx context.Context, sessionID session.SessionID, mode
 
 // Learn records a per-session allow rule for tool call c (the model's "allow
 // always" verdict). It derives the rule via governance.LearnableRule and stores
-// it only when the call is safely learnable (a single, non-substituted Bash
-// command, or a non-Bash call with a targetable pattern); otherwise it is a
+// it only when the call is safely learnable (a single, non-substituted Shell
+// command, or a non-Shell call with a targetable pattern); otherwise it is a
 // no-op. With no store configured it is always a no-op.
 func (p *Policy) Learn(sessionID session.SessionID, c session.ToolCall) {
 	if p.store == nil {

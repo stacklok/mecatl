@@ -28,7 +28,7 @@ const MaxOutputBytes = 25_000
 
 // TruncationMarker is the suffix Truncate appends when it trims s to the byte cap.
 // It is exported so a caller that needs to reserve room for additional content
-// AFTER a truncated body (e.g. the Bash tool's timeout/cancel trailer, which must
+// AFTER a truncated body (e.g. the Shell tool's timeout/cancel trailer, which must
 // survive the cap) can account for the marker's worst-case length without
 // hard-coding the literal. Truncate is the only writer of it.
 const TruncationMarker = "\n... [output truncated: exceeded 25000 bytes]"

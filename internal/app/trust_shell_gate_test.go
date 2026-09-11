@@ -25,7 +25,7 @@ import (
 // false) yields a nil sandboxed runner (buildSandboxedCommandRunner), which
 // degrades every worktree-shell surface — the default Subagent explorer, per-def
 // subagents, the model-override factory children, and read-only team members —
-// to Bash-less Read/Grep/Glob, with no forker wired and an honest Subagent Spec
+// to Shell-less Read/Grep/Glob, with no forker wired and an honest Subagent Spec
 // note. The deliberate ASYMMETRY: a MUTATING member keeps its hardened shell
 // (buildForceCopyRunner, shared with Parallel branches) because a force-copy fork
 // involves NO fork-time git invocation (pure FS copy — the worktree-checkout RCE
@@ -77,22 +77,22 @@ func TestTrustGatesIngestionAndShellTogether(t *testing.T) {
 	}
 }
 
-// TestUntrustedSubagentChildCatalogHasNoBash proves the default Subagent explorer
-// degrades to the Bash-less read-only catalog when the runner derivation runs
+// TestUntrustedSubagentChildCatalogHasNoShell proves the default Subagent explorer
+// degrades to the Shell-less read-only catalog when the runner derivation runs
 // through the trust gate, and that a trusted workspace keeps the shell.
-func TestUntrustedSubagentChildCatalogHasNoBash(t *testing.T) {
+func TestUntrustedSubagentChildCatalogHasNoShell(t *testing.T) {
 	untrusted := untrustedTeamCfg(t)
-	eng := buildChildEngine(untrusted, nil, bashThenEdit(), "", untrusted.Model, buildSandboxedCommandRunner(untrusted))
+	eng := buildChildEngine(untrusted, nil, shellThenEdit(), "", untrusted.Model, buildSandboxedCommandRunner(untrusted))
 	events := drainEngine(t, eng)
 	if !unknownToolResult(events, "b1") {
-		t.Error("untrusted: the default Subagent explorer dispatched Bash; the trust gate must leave it shell-less")
+		t.Error("untrusted: the default Subagent explorer dispatched Shell; the trust gate must leave it shell-less")
 	}
 	if !unknownToolResult(events, "e1") {
 		t.Error("untrusted: the explorer got Edit; it must stay a read-only explorer")
 	}
 
 	trusted := teamCfg(t)
-	engTrusted := buildChildEngine(trusted, nil, bashThenEdit(), "", trusted.Model, buildSandboxedCommandRunner(trusted))
+	engTrusted := buildChildEngine(trusted, nil, shellThenEdit(), "", trusted.Model, buildSandboxedCommandRunner(trusted))
 	eventsTrusted := drainEngine(t, engTrusted)
 	if !sawDispatchedTool(eventsTrusted, "b1") {
 		t.Error("trusted: the explorer must keep its worktree shell (the gate must not over-fire)")
@@ -101,7 +101,7 @@ func TestUntrustedSubagentChildCatalogHasNoBash(t *testing.T) {
 
 // TestUntrustedSubagentNoForkerWired drives the REAL buildSubagentTool with an
 // untrusted (shell-configured) cfg and proves the no-shell/no-forker coupling holds
-// for the trust gate exactly as for NoBash: the child's Bash ATTEMPT is actually
+// for the trust gate exactly as for NoShell: the child's Shell ATTEMPT is actually
 // observed bouncing off the catalog (an "unknown tool" error result rides the next
 // LLM request — not merely "nothing happened"), the probe file is never written, and
 // the real git workspace's .git/worktrees stays empty (no `git worktree add` ever
@@ -128,7 +128,7 @@ func TestUntrustedSubagentNoForkerWired(t *testing.T) {
 		requests = append(requests, r)
 		reqMu.Unlock()
 	})},
-		mockllm.ToolCallTurn(session.ToolCall{ID: "p1", Name: "Bash", Args: gitArgs("pwd > " + probeFile)}),
+		mockllm.ToolCallTurn(session.ToolCall{ID: "p1", Name: "Shell", Args: gitArgs("pwd > " + probeFile)}),
 		mockllm.TextTurn("could not run a shell"),
 	)
 
@@ -144,24 +144,24 @@ func TestUntrustedSubagentNoForkerWired(t *testing.T) {
 		t.Fatalf("Subagent.Execute: %v", err)
 	}
 	if res.IsError {
-		t.Fatalf("Subagent must complete degraded (Bash-less), not error: %q", res.Content)
+		t.Fatalf("Subagent must complete degraded (Shell-less), not error: %q", res.Content)
 	}
-	// The Bash attempt was OBSERVED failing: the child's follow-up request replays
-	// an unknown-tool error result for p1 (Bash absent from the catalog), so the
+	// The Shell attempt was OBSERVED failing: the child's follow-up request replays
+	// an unknown-tool error result for p1 (Shell absent from the catalog), so the
 	// degradation is proven by the attempt, not assumed from inactivity.
 	reqMu.Lock()
-	var sawUnknownBash bool
+	var sawUnknownShell bool
 	for _, r := range requests {
 		for _, m := range r.Messages {
 			if m.ToolResult != nil && m.ToolResult.CallID == "p1" && m.ToolResult.IsError &&
 				strings.Contains(m.ToolResult.Content, "unknown tool") {
-				sawUnknownBash = true
+				sawUnknownShell = true
 			}
 		}
 	}
 	reqMu.Unlock()
-	if !sawUnknownBash {
-		t.Error("the child's Bash attempt was never observed bouncing off the catalog as an unknown-tool error")
+	if !sawUnknownShell {
+		t.Error("the child's Shell attempt was never observed bouncing off the catalog as an unknown-tool error")
 	}
 	if _, err := os.Stat(probeFile); err == nil {
 		t.Fatal("probe file was written; an untrusted workspace must wire NO child shell and NO forker")
@@ -177,12 +177,12 @@ func TestUntrustedSubagentNoForkerWired(t *testing.T) {
 	}
 }
 
-// TestUntrustedReadOnlyMemberHasNoBash drives the REAL buildTeamWiring with an
-// untrusted cfg: a read-only member gets NO Bash (and is not flagged for worktree
+// TestUntrustedReadOnlyMemberHasNoShell drives the REAL buildTeamWiring with an
+// untrusted cfg: a read-only member gets NO Shell (and is not flagged for worktree
 // isolation), even though a shell is configured.
-func TestUntrustedReadOnlyMemberHasNoBash(t *testing.T) {
+func TestUntrustedReadOnlyMemberHasNoShell(t *testing.T) {
 	cfg := untrustedTeamCfg(t)
-	prov := bashThenEdit()
+	prov := shellThenEdit()
 	factory, _, _, _, _ := buildTeamWiring(context.Background(), cfg, regForTest(prov, providerMock, cfg.Model), prov, providerMock, cfg.Model, nil, agents.NewRegistry(nil), nil, catalogAssets{}, false)
 	build := factory(team.New("t"), agent.MemberSpec{Name: "reader", Mutating: false}, "")
 	if build.Engine == nil {
@@ -193,19 +193,19 @@ func TestUntrustedReadOnlyMemberHasNoBash(t *testing.T) {
 	}
 	events := drainEngine(t, build.Engine)
 	if !unknownToolResult(events, "b1") {
-		t.Error("untrusted: a read-only member dispatched Bash; the trust gate must withhold the worktree shell")
+		t.Error("untrusted: a read-only member dispatched Shell; the trust gate must withhold the worktree shell")
 	}
 }
 
-// TestUntrustedMutatingMemberKeepsBash is the ASYMMETRY pin (issue #40): through the
-// SAME untrusted buildTeamWiring, a MUTATING member still gets Bash — its force-copy
+// TestUntrustedMutatingMemberKeepsShell is the ASYMMETRY pin (issue #40): through the
+// SAME untrusted buildTeamWiring, a MUTATING member still gets Shell — its force-copy
 // fork is created without any git invocation (the fork-time checkout RCE the trust
 // gate closes cannot fire), and its run-time git over the copied untrusted .git is
 // the accepted main-session-parity residual (the Parallel rationale —
 // buildForceCopyRunner). Edit survives too.
-func TestUntrustedMutatingMemberKeepsBash(t *testing.T) {
+func TestUntrustedMutatingMemberKeepsShell(t *testing.T) {
 	cfg := untrustedTeamCfg(t)
-	prov := bashThenEdit()
+	prov := shellThenEdit()
 	factory, _, _, _, _ := buildTeamWiring(context.Background(), cfg, regForTest(prov, providerMock, cfg.Model), prov, providerMock, cfg.Model, nil, agents.NewRegistry(nil), nil, catalogAssets{}, false)
 	build := factory(team.New("t"), agent.MemberSpec{Name: "writer", Mutating: true}, "")
 	if build.Engine == nil {
@@ -213,7 +213,7 @@ func TestUntrustedMutatingMemberKeepsBash(t *testing.T) {
 	}
 	events := drainEngine(t, build.Engine)
 	if !sawDispatchedTool(events, "b1") {
-		t.Error("untrusted: a MUTATING member lost Bash; the trust gate must withhold only the WORKTREE shell (force-copy forks keep theirs)")
+		t.Error("untrusted: a MUTATING member lost Shell; the trust gate must withhold only the WORKTREE shell (force-copy forks keep theirs)")
 	}
 	if !sawDispatchedTool(events, "e1") {
 		t.Error("untrusted: a MUTATING member lost Edit; untrust must not strip the mutating fork toolset")
@@ -255,14 +255,14 @@ func TestUntrustedSubagentSpecCarriesNoShellNote(t *testing.T) {
 	}
 }
 
-// TestNoBashFlagNoteDistinctFromUntrusted pins the note's CAUSE attribution: a
+// TestNoShellFlagNoteDistinctFromUntrusted pins the note's CAUSE attribution: a
 // shell-less deployment (--no-bash, or an empty shell) must NOT produce the
 // posture-below-auto no-shell note — those causes keep the historical description
 // unchanged (the pre-#40 behaviour), whether the workspace is trusted or not.
-func TestNoBashFlagNoteDistinctFromUntrusted(t *testing.T) {
+func TestNoShellFlagNoteDistinctFromUntrusted(t *testing.T) {
 	for name, mutate := range map[string]func(*Config){
-		"no-bash trusted":     func(c *Config) { c.NoBash = true },
-		"no-bash untrusted":   func(c *Config) { c.NoBash = true; c.TrustProject = false },
+		"no-bash trusted":     func(c *Config) { c.NoShell = true },
+		"no-bash untrusted":   func(c *Config) { c.NoShell = true; c.TrustProject = false },
 		"empty-shell trusted": func(c *Config) { c.Shell = "" },
 		// Empty shell + untrusted: the EMPTY SHELL must win the blame — there is no
 		// shell for --posture auto to enable, so the no-shell note (and its
@@ -285,66 +285,66 @@ func TestNoBashFlagNoteDistinctFromUntrusted(t *testing.T) {
 	}
 }
 
-// TestBaseSubagentToolsUntrustedExcludesBash pins the diagnostic-only name-set
-// computation (issue #40, fix 2): baseSubagentTools runs Bash
+// TestBaseSubagentToolsUntrustedExcludesShell pins the diagnostic-only name-set
+// computation (issue #40, fix 2): baseSubagentTools runs Shell
 // availability through the TRUST-GATED path (cfg.TrustProject),
-// so an untrusted workspace's base set excludes Bash and a def
+// so an untrusted workspace's base set excludes Shell and a def
 // allow-listing it draws the ACCURATE "shell unavailable … untrusted"
 // diagnostic — not the misleading generic unknown-tool one. A trusted
-// workspace keeps Bash in the base (the historical "mutating; dropped"
+// workspace keeps Shell in the base (the historical "mutating; dropped"
 // diagnostic path).
-func TestBaseSubagentToolsUntrustedExcludesBash(t *testing.T) {
+func TestBaseSubagentToolsUntrustedExcludesShell(t *testing.T) {
 	untrusted := untrustedTeamCfg(t) // untrusted → no shell
 	base := baseSubagentTools(untrusted)
-	if _, ok := base["Bash"]; ok {
-		t.Fatal("shell-less: Bash must be excluded from the subagent base toolset")
+	if _, ok := base["Shell"]; ok {
+		t.Fatal("shell-less: Shell must be excluded from the subagent base toolset")
 	}
-	def := agents.AgentDef{Name: "inspector", Tools: []string{"Read", "Bash"}}
-	names, diags := scopedToolNames(def, base, bashScopeMissReason(untrusted))
+	def := agents.AgentDef{Name: "inspector", Tools: []string{"Read", "Shell"}}
+	names, diags := scopedToolNames(def, base, shellScopeMissReason(untrusted))
 	if strings.Join(names, ",") != "Read" {
 		t.Fatalf("shell-less scoped names = %v, want [Read]", names)
 	}
 	var bashReason string
 	for _, d := range diags {
-		if d.tool == "Bash" {
+		if d.tool == "Shell" {
 			bashReason = d.reason
 		}
 	}
 	for _, want := range []string{"shell unavailable", "untrusted", "--trust-project"} {
 		if !strings.Contains(bashReason, want) {
-			t.Errorf("shell-less Bash scope diagnostic must say %q (accurate cause), got %q", want, bashReason)
+			t.Errorf("shell-less Shell scope diagnostic must say %q (accurate cause), got %q", want, bashReason)
 		}
 	}
 	if strings.Contains(bashReason, "unknown tool") {
-		t.Errorf("shell-less Bash scope diagnostic must not be the misleading generic unknown-tool one: %q", bashReason)
+		t.Errorf("shell-less Shell scope diagnostic must not be the misleading generic unknown-tool one: %q", bashReason)
 	}
 
-	if _, ok := baseSubagentTools(teamCfg(t))["Bash"]; !ok {
-		t.Fatal("trusted: Bash must stay in the subagent base toolset")
+	if _, ok := baseSubagentTools(teamCfg(t))["Shell"]; !ok {
+		t.Fatal("trusted: Shell must stay in the subagent base toolset")
 	}
 }
 
-// TestBashScopeMissReasonPreciseCause pins the per-cause attribution of the per-def
-// Bash-miss diagnostic (issue #40 follow-up): each disable cause
-// names ITSELF — in particular, --no-bash or an empty shell must NOT suggest
+// TestShellScopeMissReasonPreciseCause pins the per-cause attribution of the per-def
+// Shell-miss diagnostic (issue #40 follow-up): each disable cause
+// names ITSELF — in particular, --no-shell or an empty shell must NOT suggest
 // --trust-project (there is no trust problem to fix), and only the untrusted
 // cause carries the --trust-project remedy.
-func TestBashScopeMissReasonPreciseCause(t *testing.T) {
+func TestShellScopeMissReasonPreciseCause(t *testing.T) {
 	for name, tc := range map[string]struct {
 		mutate       func(*Config)
 		want, reject string
 	}{
-		"no-bash (trusted)":     {func(c *Config) { c.NoBash = true }, "--no-bash", "--trust-project"},
-		"no-bash untrusted":     {func(c *Config) { c.NoBash = true; c.TrustProject = false }, "--no-bash", "--trust-project"},
+		"no-shell (trusted)":    {func(c *Config) { c.NoShell = true }, "--no-shell", "--trust-project"},
+		"no-shell untrusted":    {func(c *Config) { c.NoShell = true; c.TrustProject = false }, "--no-shell", "--trust-project"},
 		"empty-shell (trusted)": {func(c *Config) { c.Shell = "" }, "no shell configured", "--trust-project"},
 		"empty-shell untrusted": {func(c *Config) { c.Shell = ""; c.TrustProject = false }, "no shell configured", "--trust-project"},
 		// The trust axis: an untrusted workspace withholds the shell; the remedy
 		// is --trust-project.
-		"untrusted": {func(c *Config) { c.TrustProject = false }, "--trust-project", "--no-bash"},
+		"untrusted": {func(c *Config) { c.TrustProject = false }, "--trust-project", "--no-shell"},
 	} {
 		cfg := teamCfg(t)
 		tc.mutate(&cfg)
-		got := bashScopeMissReason(cfg)
+		got := shellScopeMissReason(cfg)
 		if !strings.Contains(got, "shell unavailable") {
 			t.Errorf("%s: reason must lead with the shell-unavailable cause, got %q", name, got)
 		}
@@ -357,17 +357,17 @@ func TestBashScopeMissReasonPreciseCause(t *testing.T) {
 	}
 }
 
-// TestUntrustedMutatingDefMemberKeepsBash is the DEF-TIER asymmetry pin (issue #40):
-// an untrusted workspace's trust-gated base excludes Bash, so a MUTATING member
-// adopting a def that allow-lists Bash keeps it ONLY via buildMemberEngine's
+// TestUntrustedMutatingDefMemberKeepsShell is the DEF-TIER asymmetry pin (issue #40):
+// an untrusted workspace's trust-gated base excludes Shell, so a MUTATING member
+// adopting a def that allow-lists Shell keeps it ONLY via buildMemberEngine's
 // mutating re-add (`spec.Mutating && mutatingRunner != nil` putting the ungated
-// force-copy runner's Bash back into the base before scoping). Delete that re-add
+// force-copy runner's Shell back into the base before scoping). Delete that re-add
 // and this test fails (mutation-verified) — the def-tier mutating member would
 // silently lose its shell while the default-tier one kept it.
-func TestUntrustedMutatingDefMemberKeepsBash(t *testing.T) {
+func TestUntrustedMutatingDefMemberKeepsShell(t *testing.T) {
 	cfg := untrustedTeamCfg(t)
-	prov := bashThenEdit()
-	def := agents.AgentDef{Name: "builder", Tools: []string{"Read", "Bash", "Edit"}}
+	prov := shellThenEdit()
+	def := agents.AgentDef{Name: "builder", Tools: []string{"Read", "Shell", "Edit"}}
 	factory, _, _, _, _ := buildTeamWiring(context.Background(), cfg, regForTest(prov, providerMock, cfg.Model), prov, providerMock, cfg.Model, nil, regOf(def), nil, catalogAssets{}, false)
 	build := factory(team.New("t"), agent.MemberSpec{Name: "writer", AgentType: "builder", Mutating: true}, "")
 	if build.Engine == nil {
@@ -375,7 +375,7 @@ func TestUntrustedMutatingDefMemberKeepsBash(t *testing.T) {
 	}
 	events := drainEngine(t, build.Engine)
 	if !sawDispatchedTool(events, "b1") {
-		t.Error("untrusted: a MUTATING per-def member lost Bash; the def base re-add (spec.Mutating && mutatingRunner != nil) must restore the ungated force-copy shell")
+		t.Error("untrusted: a MUTATING per-def member lost Shell; the def base re-add (spec.Mutating && mutatingRunner != nil) must restore the ungated force-copy shell")
 	}
 	if !sawDispatchedTool(events, "e1") {
 		t.Error("untrusted: a MUTATING per-def member lost Edit; the def allowlist must keep mutating tools for a Mutating member")
@@ -419,19 +419,19 @@ func TestUntrustedReadOnlyMemberPromptCarriesShellNote(t *testing.T) {
 	}
 }
 
-// TestUntrustedWorkspaceSubagentRunsBashless is the end-to-end degradation proof: a
+// TestUntrustedWorkspaceSubagentRunsShellless is the end-to-end degradation proof: a
 // real parent engine drives the REAL buildSubagentTool over an untrusted workspace;
-// the scripted child attempts Bash, which is simply ABSENT (unknown tool), the child
+// the scripted child attempts Shell, which is simply ABSENT (unknown tool), the child
 // loop completes degraded (the parent receives a non-error summary), and no shell
 // ever runs anywhere (the external probe file is never written ⇒ no worktree was
 // created for it either).
-func TestUntrustedWorkspaceSubagentRunsBashless(t *testing.T) {
+func TestUntrustedWorkspaceSubagentRunsShellless(t *testing.T) {
 	cfg := untrustedTeamCfg(t)
 
 	probeDir := t.TempDir()
 	probeFile := filepath.Join(probeDir, "probe.txt")
 	childProvider := mockllm.New(
-		mockllm.ToolCallTurn(session.ToolCall{ID: "p1", Name: "Bash", Args: gitArgs("pwd > " + probeFile)}),
+		mockllm.ToolCallTurn(session.ToolCall{ID: "p1", Name: "Shell", Args: gitArgs("pwd > " + probeFile)}),
 		mockllm.TextTurn("no shell available; proceeding with read-only findings"),
 	)
 
@@ -440,18 +440,18 @@ func TestUntrustedWorkspaceSubagentRunsBashless(t *testing.T) {
 		defer func() { _ = closeFn() }()
 	}
 
-	// SAME-ARTIFACT tie: the ONE built tool whose child runs Bash-less below must
-	// ALSO carry the no-shell Spec note — note-presence ⇔ Bash-absence in a single
+	// SAME-ARTIFACT tie: the ONE built tool whose child runs Shell-less below must
+	// ALSO carry the no-shell Spec note — note-presence ⇔ Shell-absence in a single
 	// artifact, so the description can never promise a shell this exact tool lacks
 	// (the spec-note and gate tests alone could each pass against two different
 	// builds).
 	desc := task.Spec().Description
 	if strings.Contains(desc, "throwaway worktree") {
-		t.Errorf("the SAME Subagent tool whose child runs Bash-less still promises the worktree shell:\n%s", desc)
+		t.Errorf("the SAME Subagent tool whose child runs Shell-less still promises the worktree shell:\n%s", desc)
 	}
 	for _, want := range []string{"untrusted", "--trust-project"} {
 		if !strings.Contains(desc, want) {
-			t.Errorf("the SAME Subagent tool whose child runs Bash-less must carry the no-shell note naming %q, got:\n%s", want, desc)
+			t.Errorf("the SAME Subagent tool whose child runs Shell-less must carry the no-shell note naming %q, got:\n%s", want, desc)
 		}
 	}
 
@@ -491,16 +491,16 @@ func TestUntrustedWorkspaceSubagentRunsBashless(t *testing.T) {
 // TestSandboxedShellAvailableGateTable is the structural gate table for the
 // SANDBOXED (read-only worktree) child shell gate — sandboxedShellAvailable. It
 // pins the ONE boolean expression every sandboxed child runner builder + matching
-// Bash catalog registration gate consults, across the full (NoBash, Shell,
+// Shell catalog registration gate consults, across the full (NoShell, Shell,
 // TrustProject) product, so the trust-gated read-only shell availability cannot
 // drift between the runner builder, the per-child forker builder, and the catalog
 // registration gate. The trust gate is load-bearing ONLY here (read-only worktree
 // shares the base repo's `.git`).
 func TestSandboxedShellAvailableGateTable(t *testing.T) {
 	for name, tc := range map[string]struct {
-		noBash, trust bool
-		shell         string
-		want          bool
+		noShell, trust bool
+		shell          string
+		want           bool
 	}{
 		"happy trusted":           {false, true, "/bin/sh", true},
 		"no-bash trusted":         {true, true, "/bin/sh", false},
@@ -512,7 +512,7 @@ func TestSandboxedShellAvailableGateTable(t *testing.T) {
 		"no-bash empty untrusted": {true, false, "", false},
 	} {
 		t.Run(name, func(t *testing.T) {
-			cfg := Config{NoBash: tc.noBash, Shell: tc.shell, TrustProject: tc.trust}
+			cfg := Config{NoShell: tc.noShell, Shell: tc.shell, TrustProject: tc.trust}
 			if got := sandboxedShellAvailable(cfg); got != tc.want {
 				t.Errorf("sandboxedShellAvailable(%+v) = %v, want %v", cfg, got, tc.want)
 			}
@@ -523,17 +523,17 @@ func TestSandboxedShellAvailableGateTable(t *testing.T) {
 // TestForceCopyShellAvailableGateTable is the structural gate table for the
 // FORCE-COPY (mutating fork) child shell gate — forceCopyShellAvailable. It pins
 // the ONE boolean expression every force-copy child runner builder consults,
-// across the full (NoBash, Shell) product, and proves the DELIBERATE ASYMMETRY:
+// across the full (NoShell, Shell) product, and proves the DELIBERATE ASYMMETRY:
 // trust is NOT consulted (a force-copy fork has no fork-time git invocation, so
 // the worktree-checkout RCE the sandboxed gate closes cannot fire). An untrusted
 // workspace with a shell STILL gets a force-copy shell — the accepted
-// main-session-parity residual (TestUntrustedMutatingMemberKeepsBash pins the
+// main-session-parity residual (TestUntrustedMutatingMemberKeepsShell pins the
 // catalog-level consequence).
 func TestForceCopyShellAvailableGateTable(t *testing.T) {
 	for name, tc := range map[string]struct {
-		noBash, trust bool
-		shell         string
-		want          bool
+		noShell, trust bool
+		shell          string
+		want           bool
 	}{
 		"happy trusted":         {false, true, "/bin/sh", true},
 		"no-bash trusted":       {true, true, "/bin/sh", false},
@@ -546,7 +546,7 @@ func TestForceCopyShellAvailableGateTable(t *testing.T) {
 		"no-bash empty untrusted": {true, false, "", false},
 	} {
 		t.Run(name, func(t *testing.T) {
-			cfg := Config{NoBash: tc.noBash, Shell: tc.shell, TrustProject: tc.trust}
+			cfg := Config{NoShell: tc.noShell, Shell: tc.shell, TrustProject: tc.trust}
 			if got := forceCopyShellAvailable(cfg); got != tc.want {
 				t.Errorf("forceCopyShellAvailable(%+v) = %v, want %v", cfg, got, tc.want)
 			}
@@ -557,15 +557,15 @@ func TestForceCopyShellAvailableGateTable(t *testing.T) {
 // TestShellGateHelpersMatchRunnerBuilders is the structural anti-drift pin: the
 // boolean gate helpers (sandboxedShellAvailable / forceCopyShellAvailable) must
 // agree with the runner builders (buildSandboxedCommandRunner /
-// buildForceCopyRunner) on EVERY row of the (NoBash, Shell, TrustProject) product
+// buildForceCopyRunner) on EVERY row of the (NoShell, Shell, TrustProject) product
 // — a non-nil runner iff the gate is true. If a future change makes the gate and
 // the builder disagree (e.g. the builder gains a check the gate lacks), this test
 // fails, so the catalog registration gate and the runner builder cannot drift.
 func TestShellGateHelpersMatchRunnerBuilders(t *testing.T) {
-	for _, noBash := range []bool{false, true} {
+	for _, noShell := range []bool{false, true} {
 		for _, shell := range []string{"", "/bin/sh"} {
 			for _, trust := range []bool{false, true} {
-				cfg := Config{NoBash: noBash, Shell: shell, TrustProject: trust, Workspace: t.TempDir()}
+				cfg := Config{NoShell: noShell, Shell: shell, TrustProject: trust, Workspace: t.TempDir()}
 				if got := buildSandboxedCommandRunner(cfg) != nil; got != sandboxedShellAvailable(cfg) {
 					t.Errorf("sandboxed: runner nil-ness (%v) != gate (%v) for cfg %+v", got, sandboxedShellAvailable(cfg), cfg)
 				}

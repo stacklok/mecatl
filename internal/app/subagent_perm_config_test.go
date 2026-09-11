@@ -43,25 +43,25 @@ func permCfgWorkspace(t *testing.T, settingsYAML string) Config {
 	return cfg
 }
 
-// runSubagentBash drives the REAL wiring — buildSandboxedCommandRunner +
+// runSubagentShell drives the REAL wiring — buildSandboxedCommandRunner +
 // buildChildEngine (the default explorer shape) + the worktree forker + the
-// Subagent tool — with a scripted provider whose single Bash call is `command`.
+// Subagent tool — with a scripted provider whose single Shell call is `command`.
 // The Subagent fork is CLEANED UP after the run, so observable markers must
 // land OUTSIDE it (an absolute path — the TestParallelBranchRunnerIsHardened
 // precedent). Returns the Subagent result.
-func runSubagentBash(t *testing.T, cfg Config, command string) session.ToolResult {
+func runSubagentShell(t *testing.T, cfg Config, command string) session.ToolResult {
 	t.Helper()
 	runner := buildSandboxedCommandRunner(cfg)
 	if runner == nil {
 		t.Fatal("precondition: expected a sandboxed runner (Shell set + trusted)")
 	}
-	provider := &bashWriteProvider{command: command, marker: "out.txt"}
+	provider := &shellWriteProvider{command: command, marker: "out.txt"}
 	childEngine := buildChildEngine(cfg, nil, provider, "", cfg.Model, runner)
 
 	rf := &recordingForker{inner: forker.New(func(root string) (tool.Workspace, error) {
 		return osfs.NewWorkspace(root)
 	}, forker.WithRunner(func(childRoot string) tool.CommandRunner {
-		if cfg.NoBash || cfg.Shell == "" || !cfg.TrustProject {
+		if cfg.NoShell || cfg.Shell == "" || !cfg.TrustProject {
 			return nil
 		}
 		return newHardenedRunnerForRoot(cfg, childRoot)
@@ -84,7 +84,7 @@ func runSubagentBash(t *testing.T, cfg Config, command string) session.ToolResul
 	return res
 }
 
-// substFloorCmd builds a substitution-floored, non-isolation-approvable Bash
+// substFloorCmd builds a substitution-floored, non-isolation-approvable Shell
 // line writing an ABSOLUTE marker: the redirection makes the blanked outer
 // non-read-only (so A1 cannot clear it, and A2 rejects the redirection), while
 // the inner (`ls`) is positively READ-ONLY — the issue-#32 bound requires that;
@@ -97,21 +97,21 @@ func substFloorCmd(marker string) string {
 
 // TestSubagentConfigAllowEndToEnd drives the issue-#32 ALLOW direction through
 // the real wiring: a project .mecatl/settings.yaml `subagent: allow:` block
-// clears a substitution-floored child Bash that would otherwise headless-deny —
+// clears a substitution-floored child Shell that would otherwise headless-deny —
 // observable as the marker file the command writes.
 func TestSubagentConfigAllowEndToEnd(t *testing.T) {
 	t.Run("without config the command is auto-denied", func(t *testing.T) {
 		cfg := permCfgWorkspace(t, "")
 		marker := filepath.Join(t.TempDir(), "out.txt")
-		_ = runSubagentBash(t, cfg, substFloorCmd(marker))
+		_ = runSubagentShell(t, cfg, substFloorCmd(marker))
 		if _, err := os.Stat(marker); !os.IsNotExist(err) {
 			t.Fatalf("control: the floored command must NOT run without a configured allow (err=%v)", err)
 		}
 	})
 	t.Run("with a subagent allow it executes", func(t *testing.T) {
-		cfg := permCfgWorkspace(t, "permissions:\n  subagent:\n    allow:\n      - \"Bash(echo:*)\"\n")
+		cfg := permCfgWorkspace(t, "permissions:\n  subagent:\n    allow:\n      - \"Shell(echo:*)\"\n")
 		marker := filepath.Join(t.TempDir(), "out.txt")
-		res := runSubagentBash(t, cfg, substFloorCmd(marker))
+		res := runSubagentShell(t, cfg, substFloorCmd(marker))
 		if _, err := os.Stat(marker); err != nil {
 			t.Fatalf("the configured subagent allow should have cleared the floored command (marker missing: %v); result: %s",
 				err, res.Content)
@@ -125,9 +125,9 @@ func TestSubagentConfigAllowEndToEnd(t *testing.T) {
 // whose substitution hides a NON-read-only inner (`zap` stand-in) — the child
 // auto-denies headless and the command never runs.
 func TestSubagentConfigAllowHiddenInnerStillDenied(t *testing.T) {
-	cfg := permCfgWorkspace(t, "permissions:\n  subagent:\n    allow:\n      - \"Bash(echo:*)\"\n")
+	cfg := permCfgWorkspace(t, "permissions:\n  subagent:\n    allow:\n      - \"Shell(echo:*)\"\n")
 	marker := filepath.Join(t.TempDir(), "out.txt")
-	res := runSubagentBash(t, cfg, "echo $(zap) > "+marker)
+	res := runSubagentShell(t, cfg, "echo $(zap) > "+marker)
 	if _, err := os.Stat(marker); !os.IsNotExist(err) {
 		t.Fatalf("a configured outer allow must NOT auto-run a hidden non-read-only inner (err=%v); result: %s", err, res.Content)
 	}
@@ -137,17 +137,17 @@ func TestSubagentConfigAllowHiddenInnerStillDenied(t *testing.T) {
 }
 
 // TestSubagentConfigDenyEndToEnd drives the DENY direction: a `subagent: deny:`
-// block blocks even a PLAIN child Bash the allow-all floor would have run, and
+// block blocks even a PLAIN child Shell the allow-all floor would have run, and
 // the child still degrades to a deliverable (no hard error).
 func TestSubagentConfigDenyEndToEnd(t *testing.T) {
-	cfg := permCfgWorkspace(t, "permissions:\n  subagent:\n    deny:\n      - \"Bash(echo:*)\"\n")
+	cfg := permCfgWorkspace(t, "permissions:\n  subagent:\n    deny:\n      - \"Shell(echo:*)\"\n")
 	marker := filepath.Join(t.TempDir(), "out.txt")
-	res := runSubagentBash(t, cfg, "echo denied > "+marker)
+	res := runSubagentShell(t, cfg, "echo denied > "+marker)
 	if _, err := os.Stat(marker); !os.IsNotExist(err) {
 		t.Fatalf("the configured subagent deny must block the command (err=%v)", err)
 	}
 	if res.IsError {
-		t.Fatalf("a denied child Bash degrades, it does not hard-fail the Subagent call: %s", res.Content)
+		t.Fatalf("a denied child Shell degrades, it does not hard-fail the Subagent call: %s", res.Content)
 	}
 }
 
@@ -160,23 +160,23 @@ func TestChildEngineDepsForProviderSubagentPolicy(t *testing.T) {
 	cfg := permCfgWorkspace(t, `
 permissions:
   ask:
-    - "Bash(go vet:*)"
+    - "Shell(go vet:*)"
   subagent:
     allow:
-      - "Bash(cat:*)"
+      - "Shell(cat:*)"
     ask:
-      - "Bash(go test:*)"
+      - "Shell(go test:*)"
     deny:
-      - "Bash(curl:*)"
+      - "Shell(curl:*)"
 `)
-	provider := &bashWriteProvider{command: "true", marker: "x"}
+	provider := &shellWriteProvider{command: "true", marker: "x"}
 	deps := childEngineDepsForProvider(cfg, "task", provider, cfg.Model, func() int { return defaultContextWindowTokens }, tool.NewCatalog(), explorerPromptConfig(modelCfgFor(cfg, cfg.Model)), nil)
 
 	eval := func(cmd string) governance.PermissionDecision {
 		args, _ := json.Marshal(map[string]string{"command": cmd})
 		// nil workspace: the PINNED resolver must still serve the project rules.
 		return deps.Policy.Evaluate(context.Background(), "s1", session.ModeDefault,
-			session.NewToolCall("c1", "Bash", args), nil)
+			session.NewToolCall("c1", "Shell", args), nil)
 	}
 
 	if got := eval("go test ./..."); got.Effect != governance.Ask || !got.ConfiguredAsk {
@@ -217,9 +217,9 @@ func TestAutoTierChildLoosensMutateFloorNotSubstitution(t *testing.T) {
 	// AUTO tier: allow-all, but the child substitution defense stays ON.
 	cfg := Config{Workspace: "", Model: "mock", AllowAllTools: true, LooseChildSubstitution: false}
 	mutateArgs, _ := json.Marshal(map[string]string{"command": "zap -rf build"}) // unknown-verb mutate stand-in
-	mutateCall := session.NewToolCall("c1", "Bash", mutateArgs)
+	mutateCall := session.NewToolCall("c1", "Shell", mutateArgs)
 	subArgs, _ := json.Marshal(map[string]string{"command": "cat $(zap)"}) // non-read-only inner
-	subCall := session.NewToolCall("c2", "Bash", subArgs)
+	subCall := session.NewToolCall("c2", "Shell", subArgs)
 
 	// Mirror buildEngine's main-policy construction (rules + evaluator options +
 	// the build-once resolver — nil here, no config sources).
@@ -263,8 +263,8 @@ func TestChildRulesFloorScopeNeutral(t *testing.T) {
 	}
 	for _, cmd := range cmds {
 		args, _ := json.Marshal(map[string]string{"command": cmd})
-		got := current.Evaluate("Bash", args, false)
-		want := legacy.Evaluate("Bash", args, false)
+		got := current.Evaluate("Shell", args, false)
+		want := legacy.Evaluate("Shell", args, false)
 		if got.Effect != want.Effect {
 			t.Fatalf("childRules() not neutral for %q: got %v, legacy %v", cmd, got.Effect, want.Effect)
 		}
@@ -286,16 +286,16 @@ func TestChildRulesFloorScopeNeutral(t *testing.T) {
 // exclusion keeps holding: the pinned resolver ignores the per-call (fork)
 // workspace entirely.
 func TestPerSessionChildResolverPinsSessionRoot(t *testing.T) {
-	// The SERVER root carries a deny on `Bash(zap:*)`; the SESSION root carries
-	// an allow-clearing subagent ask on `Bash(go test:*)`. The child policy for
+	// The SERVER root carries a deny on `Shell(zap:*)`; the SESSION root carries
+	// an allow-clearing subagent ask on `Shell(go test:*)`. The child policy for
 	// the session must see the session root's rules, not the server root's.
-	serverCfg := permCfgWorkspace(t, "permissions:\n  subagent:\n    deny:\n      - \"Bash(zap:*)\"\n")
+	serverCfg := permCfgWorkspace(t, "permissions:\n  subagent:\n    deny:\n      - \"Shell(zap:*)\"\n")
 	sessionRoot := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(sessionRoot, ".mecatl"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(sessionRoot, ".mecatl", "settings.yaml"),
-		[]byte("permissions:\n  subagent:\n    ask:\n      - \"Bash(go test:*)\"\n"), 0o644); err != nil {
+		[]byte("permissions:\n  subagent:\n    ask:\n      - \"Shell(go test:*)\"\n"), 0o644); err != nil {
 		t.Fatalf("write session settings: %v", err)
 	}
 
@@ -309,7 +309,7 @@ func TestPerSessionChildResolverPinsSessionRoot(t *testing.T) {
 		// nil per-call workspace: a child evaluates over its FORK workspace,
 		// which the pin must ignore — the session root still drives resolution.
 		return policy.Evaluate(context.Background(), "s1", session.ModeDefault,
-			session.NewToolCall("c1", "Bash", args), nil)
+			session.NewToolCall("c1", "Shell", args), nil)
 	}
 	if got := eval("go test ./..."); got.Effect != governance.Ask || !got.ConfiguredAsk {
 		t.Fatalf("the SESSION root's subagent ask must bind the per-session child policy; got %+v", got)
@@ -322,7 +322,7 @@ func TestPerSessionChildResolverPinsSessionRoot(t *testing.T) {
 	shared := childPermPolicy(serverCfg)
 	args, _ := json.Marshal(map[string]string{"command": "zap"})
 	if got := shared.Evaluate(context.Background(), "s2", session.ModeDefault,
-		session.NewToolCall("c2", "Bash", args), nil); got.Effect != governance.Deny {
+		session.NewToolCall("c2", "Shell", args), nil); got.Effect != governance.Deny {
 		t.Fatalf("the shared engine's children must keep the server-root pin; got %+v", got)
 	}
 }
@@ -334,7 +334,7 @@ func TestPerSessionChildResolverPinsSessionRoot(t *testing.T) {
 // WithAudience(AudienceMain) pin from mainEvaluatorOptions makes the
 // subagent-tagged allow bind the main evaluator and fails this test.
 func TestMainPolicyIgnoresSubagentBlock(t *testing.T) {
-	cfg := permCfgWorkspace(t, "permissions:\n  subagent:\n    allow:\n      - \"Bash(echo:*)\"\n")
+	cfg := permCfgWorkspace(t, "permissions:\n  subagent:\n    allow:\n      - \"Shell(echo:*)\"\n")
 	policy := permpolicy.NewPolicyWithResolver(mainRules(cfg), nil, cfg.permResolver, mainEvaluatorOptions(cfg)...)
 	ws, err := osfs.NewWorkspace(cfg.Workspace)
 	if err != nil {
@@ -342,7 +342,7 @@ func TestMainPolicyIgnoresSubagentBlock(t *testing.T) {
 	}
 	args, _ := json.Marshal(map[string]string{"command": "echo hi > f.txt"})
 	got := policy.Evaluate(context.Background(), "s1", session.ModeDefault,
-		session.NewToolCall("c1", "Bash", args), ws)
+		session.NewToolCall("c1", "Shell", args), ws)
 	if got.Effect != governance.Ask {
 		t.Fatalf("a subagent-block allow must be INVISIBLE to the main policy (mutate-ask floor stands); got %+v", got)
 	}

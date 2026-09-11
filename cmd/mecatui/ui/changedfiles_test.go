@@ -25,7 +25,7 @@ func TestMutatedPath(t *testing.T) {
 		{"write", "Write", `{"path":"b/c.txt","content":"hi"}`, "b/c.txt", true},
 		{"read is not mutating", "Read", `{"path":"a.go"}`, "", false},
 		{"grep is not mutating", "Grep", `{"path":"."}`, "", false},
-		{"bash is not mutating", "Bash", `{"command":"rm x"}`, "", false},
+		{"bash is not mutating", "Shell", `{"command":"rm x"}`, "", false},
 		{"edit malformed args", "Edit", "not json", "", false},
 		{"edit empty path", "Edit", `{"path":"","old_string":"x","new_string":"y"}`, "", false},
 		{"write no path", "Write", `{"content":"x"}`, "", false},
@@ -45,20 +45,20 @@ func TestMutatedPath(t *testing.T) {
 // order and ignores duplicates (and empty paths).
 func TestRecordFileChangeDedupesAndOrders(t *testing.T) {
 	var m Model
-	m.recordFileChange("a.go")
-	m.recordFileChange("b.go")
-	m.recordFileChange("a.go") // dup
-	m.recordFileChange("")     // ignored
-	m.recordFileChange("c.go")
-	m.recordFileChange("b.go") // dup
+	m.conv.recordFileChange("a.go")
+	m.conv.recordFileChange("b.go")
+	m.conv.recordFileChange("a.go") // dup
+	m.conv.recordFileChange("")     // ignored
+	m.conv.recordFileChange("c.go")
+	m.conv.recordFileChange("b.go") // dup
 
 	want := []string{"a.go", "b.go", "c.go"}
-	if len(m.filesChanged) != len(want) {
-		t.Fatalf("filesChanged = %v, want %v", m.filesChanged, want)
+	if len(m.conv.filesChanged) != len(want) {
+		t.Fatalf("filesChanged = %v, want %v", m.conv.filesChanged, want)
 	}
 	for i := range want {
-		if m.filesChanged[i] != want[i] {
-			t.Fatalf("filesChanged = %v, want %v", m.filesChanged, want)
+		if m.conv.filesChanged[i] != want[i] {
+			t.Fatalf("filesChanged = %v, want %v", m.conv.filesChanged, want)
 		}
 	}
 }
@@ -76,8 +76,8 @@ func TestChangedFilesAccumulatesFromToolCalls(t *testing.T) {
 		client.ToolCallMsg{ID: "4", Name: "Edit", Args: `{"path":"edited.go","old_string":"b","new_string":"c"}`}, // dup path
 	)
 	want := []string{"edited.go", "made.go"}
-	if strings.Join(m.filesChanged, ",") != strings.Join(want, ",") {
-		t.Errorf("filesChanged = %v, want %v", m.filesChanged, want)
+	if strings.Join(m.conv.filesChanged, ",") != strings.Join(want, ",") {
+		t.Errorf("filesChanged = %v, want %v", m.conv.filesChanged, want)
 	}
 }
 
@@ -87,11 +87,11 @@ func TestChangedFilesIndicator(t *testing.T) {
 	if got := m.changedFilesIndicator(); got != "" {
 		t.Errorf("empty session indicator = %q, want empty", got)
 	}
-	m.recordFileChange("a.go")
+	m.conv.recordFileChange("a.go")
 	if got := m.changedFilesIndicator(); got != "✎ 1 file" {
 		t.Errorf("indicator = %q, want %q", got, "✎ 1 file")
 	}
-	m.recordFileChange("b.go")
+	m.conv.recordFileChange("b.go")
 	if got := m.changedFilesIndicator(); got != "✎ 2 files" {
 		t.Errorf("indicator = %q, want %q", got, "✎ 2 files")
 	}
@@ -113,12 +113,12 @@ func TestRenderChangedFiles(t *testing.T) {
 }
 
 func TestStatusLineHeaderReservationOnlyAddsGapForSystemLane(t *testing.T) {
-	m := Model{width: 80, stuck: true}
+	m := Model{width: 80, conversationView: conversationView{mode: followTail}}
 	if got, want := m.statusLineGeometry().headerAvailable, 78; got != want {
 		t.Fatalf("header availability without a right lane = %d, want %d", got, want)
 	}
 
-	m.filesChanged = make([]string, 100)
+	m.conv.filesChanged = make([]string, 100)
 	if tail := m.changedFilesIndicator(); tail != "✎ 100 files" {
 		t.Fatalf("100-file indicator = %q", tail)
 	}
@@ -127,7 +127,7 @@ func TestStatusLineHeaderReservationOnlyAddsGapForSystemLane(t *testing.T) {
 		t.Fatalf("header availability with changed-files lane = %d, want %d", got, want)
 	}
 
-	m.filesChanged = make([]string, 10_000)
+	m.conv.filesChanged = make([]string, 10_000)
 	if got, want := m.changedFilesIndicator(), "✎ 999+ files"; got != want {
 		t.Fatalf("changed-files indicator must remain bounded: %q, want %q", got, want)
 	}

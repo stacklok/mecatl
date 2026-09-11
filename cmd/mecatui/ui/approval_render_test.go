@@ -8,6 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
 
@@ -30,11 +31,13 @@ func renderApprovalModalWithRenderer(r *renderer, ask pendingAsk, expand bool, w
 }
 
 func approvalSurfaceForRender(r *renderer, ask pendingAsk, expand bool, queued, argsOffset int) approvalSurface {
+	// Approval cards no longer expand in place; keep this fixture parameter so
+	// callers can prove an ambient expanded-tools state cannot change that.
+	_ = expand
 	return approvalSurface{
 		ask:         ask,
 		queue:       make([]pendingAsk, queued),
 		askVPOffset: argsOffset,
-		expandTools: expand,
 		deps:        surfaceDeps{theme: r.th, marks: r.marks},
 		render:      newApprovalRender(r),
 	}
@@ -86,33 +89,33 @@ func TestPermissionModalWriteDiff(t *testing.T) {
 	}
 }
 
-// TestPermissionModalNonDiffToolFallback: a Bash ask renders the decoded command
+// TestPermissionModalNonDiffToolFallback: a Shell ask renders the decoded command
 // TEXT (the pretty tier), not the raw JSON envelope — issue #488.
 func TestPermissionModalNonDiffToolFallback(t *testing.T) {
 	plain := modalPlain(pendingAsk{
-		Tool: "Bash",
+		Tool: "Shell",
 		Args: `{"command":"rm -rf /tmp/x"}`,
 	}, false)
 	// The command may soft-wrap across the accent-barred lines at the narrow test
 	// width; assert it survives once the bar/whitespace is normalized out.
 	norm := strings.Join(strings.Fields(plain), " ")
 	if !strings.Contains(norm, "rm -rf /tmp/x") {
-		t.Errorf("expected the decoded command text for Bash, got %q", plain)
+		t.Errorf("expected the decoded command text for Shell, got %q", plain)
 	}
 	if strings.Contains(plain, `"command"`) {
-		t.Errorf("a Bash ask must not render the raw JSON envelope, got %q", plain)
+		t.Errorf("a Shell ask must not render the raw JSON envelope, got %q", plain)
 	}
 }
 
-// TestPermissionModalNonBashKeepsJSON: a non-diff, non-Bash ask renders the
-// pretty-printed JSON args (the pretty tier only decodes Bash commands).
-func TestPermissionModalNonBashKeepsJSON(t *testing.T) {
+// TestPermissionModalNonShellKeepsJSON: a non-diff, non-Shell ask renders the
+// pretty-printed JSON args (the pretty tier only decodes Shell commands).
+func TestPermissionModalNonShellKeepsJSON(t *testing.T) {
 	plain := modalPlain(pendingAsk{
 		Tool: "WebFetch",
 		Args: `{"url":"https://example.com/x"}`,
 	}, false)
 	if !strings.Contains(plain, "url") || !strings.Contains(plain, "https://example.com/x") {
-		t.Errorf("expected pretty JSON args for a non-Bash tool, got %q", plain)
+		t.Errorf("expected pretty JSON args for a non-Shell tool, got %q", plain)
 	}
 }
 
@@ -129,37 +132,53 @@ func TestPermissionModalMalformedEditFallback(t *testing.T) {
 	}
 }
 
-// TestPermissionModalExpandRevealsFullDiff: the cross-confirmed CWE-451 fix.
-// Collapsed, a long Write is line-capped and shows a truthful "ctrl+t expand"
-// marker; with expand on (ctrl+t at the gate) the full content is revealed, so
-// the operator can see every line being authorized before deciding.
-func TestPermissionModalExpandRevealsFullDiff(t *testing.T) {
-	// Build content with more lines than the diff cap so it must collapse.
+// TestPermissionModalDiffStaysCapped verifies that a large diff remains capped
+// in the centered card even when the surrounding tool view is expanded. Ctrl+t
+// opens the separate scrollable details view instead.
+func TestPermissionModalDiffStaysCapped(t *testing.T) {
 	var lines []string
 	for i := 0; i < maxDiffLines+8; i++ {
 		lines = append(lines, "line"+strconv.Itoa(i))
 	}
 	args := `{"path":"big.txt","content":"` + strings.Join(lines, `\n`) + `"}`
-	ask := pendingAsk{Tool: "Write", Args: args}
+	assertApprovalCardIsBounded(t, pendingAsk{Tool: "Write", Args: args}, "+ line"+strconv.Itoa(maxDiffLines+7))
+}
 
-	collapsed := modalPlain(ask, false)
-	if !strings.Contains(collapsed, "ctrl+t expand") {
-		t.Errorf("collapsed modal should show the expand marker, got %q", collapsed)
-	}
-	// The last line is past the cap, so it must be hidden when collapsed.
-	if strings.Contains(collapsed, "+ line"+strconv.Itoa(maxDiffLines+7)) {
-		t.Errorf("collapsed modal should hide content past the cap, got %q", collapsed)
-	}
+func TestPermissionModalCapsReasonAndMalformedArgs(t *testing.T) {
+	assertApprovalCardIsBounded(t, pendingAsk{
+		Tool:   "Write",
+		Args:   `{"path":"big.txt","content":"line"}`,
+		Reason: strings.Repeat("long approval reason ", 80) + "reason tail",
+	}, "reason tail")
+	assertApprovalCardIsBounded(t, pendingAsk{
+		Tool: "Write",
+		Args: strings.Repeat("malformed approval args\n", 80) + "malformed tail",
+	}, "malformed tail")
+}
 
-	expanded := modalPlain(ask, true)
-	if strings.Contains(expanded, "ctrl+t expand") {
-		t.Errorf("expanded modal should not show the collapse marker, got %q", expanded)
+func assertApprovalCardIsBounded(t *testing.T, ask pendingAsk, hidden string) {
+	t.Helper()
+	m := approvalModel(t, ask)
+	m.closeModal()
+	m.phase = phaseRunning
+	m.expandTools = true // Ambient transcript detail state must not expand an approval card.
+	m = applyAll(m, client.PermissionAskMsg{AskID: "sess-test-0001:1:write-1", Tool: ask.Tool, Args: ask.Args, Reason: ask.Reason})
+
+	rendered := stripANSIstr(m.View().Content)
+	if !strings.Contains(rendered, "ctrl+t details") {
+		t.Errorf("capped modal should show the details marker, got %q", rendered)
 	}
-	if !strings.Contains(expanded, "+ line"+strconv.Itoa(maxDiffLines+7)) {
-		t.Errorf("expanded modal should reveal the full diff (every line), got %q", expanded)
+	if strings.Contains(rendered, hidden) {
+		t.Errorf("approval card must hide overflowing detail %q, got %q", hidden, rendered)
 	}
-	if countLines(expanded) <= countLines(collapsed) {
-		t.Errorf("expanded modal should be taller than collapsed (more lines visible)")
+	if got := lipgloss.Height(m.renderBody()); got > m.vp.Height() {
+		t.Errorf("approval card height = %d, want at most viewport height %d", got, m.vp.Height())
+	}
+	m, _ = pressKey(m, tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
+	_ = m.View()
+	m, _ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyEnd})
+	if got := stripANSIstr(m.View().Content); !strings.Contains(got, hidden) {
+		t.Errorf("approval details must preserve hidden detail %q, got %q", hidden, got)
 	}
 }
 
@@ -167,7 +186,7 @@ func TestPermissionModalExpandRevealsFullDiff(t *testing.T) {
 // buttons — [A]llow / Al[w]ays / [D]eny — plus the muted always-allow caption.
 func TestPermissionModalOffersAlways(t *testing.T) {
 	plain := modalPlain(pendingAsk{
-		Tool:        "Bash",
+		Tool:        "Shell",
 		Args:        `{"command":"ls"}`,
 		offerAlways: true,
 	}, false)
@@ -183,7 +202,7 @@ func TestPermissionModalOffersAlways(t *testing.T) {
 // shows only the two buttons and no always-allow caption.
 func TestPermissionModalNoAlwaysForChild(t *testing.T) {
 	plain := modalPlain(pendingAsk{
-		Tool:        "Bash",
+		Tool:        "Shell",
 		Args:        `{"command":"ls"}`,
 		offerAlways: false,
 	}, false)
@@ -201,7 +220,7 @@ func TestPermissionModalNoAlwaysForChild(t *testing.T) {
 func TestPermissionModalChildReasonsWrapToWidth(t *testing.T) {
 	reason := strings.Repeat("child approval reason needs a readable wrapped line ", 8)
 	for _, ask := range []pendingAsk{
-		{Tool: "Bash", Args: `{"command":"printf child"}`, Reason: reason},
+		{Tool: "Shell", Args: `{"command":"printf child"}`, Reason: reason},
 		{Tool: "WebFetch", Args: `{"url":"https://example.com/child"}`, Reason: reason},
 	} {
 		rendered := renderApprovalModal(ask, false, 52, 24)
@@ -216,7 +235,7 @@ func TestPermissionModalChildReasonsWrapToWidth(t *testing.T) {
 func TestApprovalReasonWrapsInFullArgsAndPlanViews(t *testing.T) {
 	reason := strings.Repeat("childreason ", 30)
 
-	args := approvalModel(t, pendingAsk{AskID: "child:1:a", Tool: "Bash", Args: `{"command":"printf child"}`, Reason: reason})
+	args := approvalModel(t, pendingAsk{AskID: "child:1:a", Tool: "Shell", Args: `{"command":"printf child"}`, Reason: reason})
 	args = applyAll(args, tea.WindowSizeMsg{Width: 52, Height: 30})
 	approvalSurfaceOf(t, args).argsViewOpen = true
 	assertApprovalViewFits(t, args, 52)
@@ -237,16 +256,13 @@ func assertApprovalViewFits(t *testing.T, m Model, width int) {
 	}
 }
 
-// countLines counts newline-separated lines for the taller-than assertion.
-func countLines(s string) int { return strings.Count(s, "\n") + 1 }
-
-// TestPermissionModalArgsWrapLongBash pins the issue #488 fix: a long Bash
+// TestPermissionModalArgsWrapLongShell pins the issue #488 fix: a long Shell
 // command wraps INSIDE the card — no content line exceeds the wrap budget (the
 // same no-runoff assertion shape as TestPlanAskWidthWrapsNoRunoff).
-func TestPermissionModalArgsWrapLongBash(t *testing.T) {
+func TestPermissionModalArgsWrapLongShell(t *testing.T) {
 	longCmd := "find . -name '*.go' -not -path './vendor/*' -print0 | xargs -0 grep -nH 'func Test' | awk -F: '{print $1}' | sort | uniq -c | sort -rn | head -40"
 	args := `{"command":"` + longCmd + `"}`
-	ask := pendingAsk{Tool: "Bash", Args: args, Reason: "Bash requires approval"}
+	ask := pendingAsk{Tool: "Shell", Args: args, Reason: "Shell requires approval"}
 	rendered := renderApprovalModal(ask, false, 80, 24)
 	// The card renders inside an 80-col region; every visible line must fit.
 	for _, line := range strings.Split(stripANSIstr(rendered), "\n") {
@@ -308,7 +324,7 @@ func TestPermissionModalArgsMiniViewportCapsHeight(t *testing.T) {
 		cmdLines = append(cmdLines, "echo line"+strconv.Itoa(i))
 	}
 	args := `{"command":"` + strings.Join(cmdLines, `\n`) + `"}`
-	ask := pendingAsk{Tool: "Bash", Args: args, offerAlways: true}
+	ask := pendingAsk{Tool: "Shell", Args: args, offerAlways: true}
 	r := newTestRenderer()
 	s := approvalSurfaceForRender(r, ask, false, 0, 0)
 	body, buttonsRow := s.permissionModalBodyParts(80, 24)
@@ -348,18 +364,18 @@ func TestPermissionModalArgsMiniViewportCapsHeight(t *testing.T) {
 	}
 }
 
-// TestPermissionModalBashPrettyUnescapesCommand pins the pretty tier: the Bash
+// TestPermissionModalShellPrettyUnescapesCommand pins the pretty tier: the Shell
 // args JSON decodes into the command text with REAL newlines (not \n escapes).
 // The raw tier is the VERBATIM wire args string (the literal ask.Args text).
-func TestPermissionModalBashPrettyUnescapesCommand(t *testing.T) {
+func TestPermissionModalShellPrettyUnescapesCommand(t *testing.T) {
 	const wireArgs = `{"command":"printf 'a\nb\n' | sort","timeout_ms":60000}`
 	th := theme.New("aztec", theme.AztecPalette())
 	pretty, raw, ok := askArgsContent(th, pendingAsk{
-		Tool: "Bash",
+		Tool: "Shell",
 		Args: wireArgs,
 	})
 	if !ok {
-		t.Fatal("a Bash ask must be args-view capable")
+		t.Fatal("a Shell ask must be args-view capable")
 	}
 	if !strings.Contains(pretty, "printf 'a\nb\n' | sort") {
 		t.Errorf("pretty tier must decode the command with real newlines, got %q", pretty)
@@ -377,21 +393,21 @@ func TestPermissionModalBashPrettyUnescapesCommand(t *testing.T) {
 		t.Errorf("raw tier must be the verbatim wire args %q, got %q", wireArgs, raw)
 	}
 	if pretty == raw {
-		t.Error("a Bash ask's tiers must differ (the raw toggle is honest)")
+		t.Error("a Shell ask's tiers must differ (the raw toggle is honest)")
 	}
 }
 
 // TestAskArgsContentFallbacks pins the pretty-tier fallbacks (fix-round 4e): a
-// Bash ask whose args do not decode into a command (empty command, or invalid
+// Shell ask whose args do not decode into a command (empty command, or invalid
 // JSON) falls back to the prettyJSON pretty tier, while the raw tier stays the
 // verbatim wire string.
 func TestAskArgsContentFallbacks(t *testing.T) {
 	th := theme.New("aztec", theme.AztecPalette())
 
 	// Empty command string: pretty falls back to prettyJSON of the envelope.
-	pretty, raw, ok := askArgsContent(th, pendingAsk{Tool: "Bash", Args: `{"command":""}`})
+	pretty, raw, ok := askArgsContent(th, pendingAsk{Tool: "Shell", Args: `{"command":""}`})
 	if !ok {
-		t.Fatal("a Bash ask must be args-view capable")
+		t.Fatal("a Shell ask must be args-view capable")
 	}
 	if pretty != "{\n  \"command\": \"\"\n}" {
 		t.Errorf("empty-command pretty must be the prettyJSON envelope, got %q", pretty)
@@ -403,14 +419,14 @@ func TestAskArgsContentFallbacks(t *testing.T) {
 	// Invalid JSON: both tiers are the sanitizeTerminal passthrough (prettyJSON
 	// of malformed JSON returns the sanitized input as-is), so the tiers agree
 	// and the toggle honestly hides.
-	pretty, raw, ok = askArgsContent(th, pendingAsk{Tool: "Bash", Args: `not json`})
+	pretty, raw, ok = askArgsContent(th, pendingAsk{Tool: "Shell", Args: `not json`})
 	if !ok {
-		t.Fatal("a Bash ask must be args-view capable")
+		t.Fatal("a Shell ask must be args-view capable")
 	}
 	if pretty != "not json" || raw != "not json" {
 		t.Errorf("invalid-JSON tiers must be the passthrough, got pretty=%q raw=%q", pretty, raw)
 	}
-	if askArgsTiersDiffer(th, pendingAsk{Tool: "Bash", Args: `not json`}) {
+	if askArgsTiersDiffer(th, pendingAsk{Tool: "Shell", Args: `not json`}) {
 		t.Error("identical tiers must hide the raw/pretty toggle hint")
 	}
 }
@@ -431,8 +447,8 @@ func TestAskArgsContentGates(t *testing.T) {
 }
 
 // TestPermissionModalHintHonesty pins the hint text per ask type: a non-diff
-// ask with hidden rows advertises the ctrl+t full-args view; a diff ask keeps
-// the in-modal expand affordance and never advertises the full-args view.
+// ask with hidden rows advertises the ctrl+t full-args view; a diff ask advertises
+// the separate ctrl+t details view and never advertises the full-args view.
 func TestPermissionModalHintHonesty(t *testing.T) {
 	// Non-diff ask with hidden rows → full-args hint.
 	var cmdLines []string
@@ -440,20 +456,20 @@ func TestPermissionModalHintHonesty(t *testing.T) {
 		cmdLines = append(cmdLines, "echo line"+strconv.Itoa(i))
 	}
 	longArgs := `{"command":"` + strings.Join(cmdLines, `\n`) + `"}`
-	nonDiff := modalPlain(pendingAsk{Tool: "Bash", Args: longArgs}, false)
+	nonDiff := modalPlain(pendingAsk{Tool: "Shell", Args: longArgs}, false)
 	if !strings.Contains(nonDiff, "ctrl+t full args") {
 		t.Errorf("a long non-diff ask must advertise ctrl+t full args, got %q", nonDiff)
 	}
 	// Short non-diff ask → the hint is UNCONDITIONAL (ctrl+t opens the full view
 	// regardless of length; it just carries no scroll clause when nothing is hidden).
-	short := modalPlain(pendingAsk{Tool: "Bash", Args: `{"command":"ls"}`}, false)
+	short := modalPlain(pendingAsk{Tool: "Shell", Args: `{"command":"ls"}`}, false)
 	if !strings.Contains(short, "ctrl+t full args") {
 		t.Errorf("a short ask must still advertise ctrl+t full args (no scroll clause), got %q", short)
 	}
 	if strings.Contains(short, "scroll") {
 		t.Errorf("a short ask's hint must NOT advertise scroll (nothing hidden), got %q", short)
 	}
-	// Diff ask → the in-modal expand affordance, never the full-args hint.
+	// Diff ask → the separate details view, never the full-args view.
 	var writeLines []string
 	for i := 0; i < maxDiffLines+4; i++ {
 		writeLines = append(writeLines, "line"+strconv.Itoa(i))
@@ -462,8 +478,8 @@ func TestPermissionModalHintHonesty(t *testing.T) {
 		Tool: "Write",
 		Args: `{"path":"big.txt","content":"` + strings.Join(writeLines, `\n`) + `"}`,
 	}, false)
-	if !strings.Contains(diff, "ctrl+t expand") {
-		t.Errorf("a long diff ask must keep the in-modal expand affordance, got %q", diff)
+	if !strings.Contains(diff, "ctrl+t details") {
+		t.Errorf("a long diff ask must advertise the details view, got %q", diff)
 	}
 	if strings.Contains(diff, "full args") {
 		t.Errorf("a diff ask must not advertise the full-args view, got %q", diff)

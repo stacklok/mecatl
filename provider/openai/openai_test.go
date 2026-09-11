@@ -1355,7 +1355,7 @@ func TestItemIDMultiTurnRoundTrip(t *testing.T) {
 
 // TestBuildToolsStrictOff asserts that function tools are sent NON-STRICT: the
 // FunctionToolParam.Strict field is left unset (the param.Opt zero value), so the
-// SDK omits it and the upstream default (non-strict) applies. A Bash-shaped schema
+// SDK omits it and the upstream default (non-strict) applies. A Shell-shaped schema
 // with an optional `timeout_ms` not listed in `required` would 400 under strict
 // mode on a strict-enforcing OpenAI-compatible upstream; non-strict accepts it.
 func TestBuildToolsStrictOff(t *testing.T) {

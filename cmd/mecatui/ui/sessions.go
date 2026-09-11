@@ -14,6 +14,10 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
 
+// sessionStateIdle is the server's session.State value for an idle session,
+// mirrored here as a bare string since ui/ imports no engine/... packages.
+const sessionStateIdle = "idle"
+
 type sessionDetailsView struct {
 	ID            string
 	DebugTargetID string
@@ -84,6 +88,7 @@ func sessionsSurface(m *Model) *sessionsState {
 
 func (m Model) bindSessionID(id string) Model {
 	if id != m.sessionID {
+		m.freshSessionBinding = false
 		m.compactPending = false
 		m.compactRequestToken++
 		if m.clearPending != nil && m.clearPending.sourceID != id {
@@ -278,6 +283,7 @@ func (m Model) adoptAuthoritativeTranscript(row client.SessionListItem, loaded c
 	m = m.endRun("")
 	m = m.resetSession()
 	m = m.bindSessionID(row.ID)
+	m.freshSessionBinding = false
 	m.sessionTitle = row.Title
 	m.sessionTitleProvenance = row.TitleProvenance
 	m.sessionTitleRevision = row.TitleRevision
@@ -290,7 +296,6 @@ func (m Model) adoptAuthoritativeTranscript(row client.SessionListItem, loaded c
 	m.closeModal()
 	m.browsingStartupSessions = false
 	m.phase = phaseIdle
-	m.stuck = true
 	m.statusMsg = "continuing chat " + sanitizeTerminal(row.Title) + " — type to add a turn"
 	cmd := m.prompt.Focus()
 	if contextCmd := m.refreshStatusContextCmd(); contextCmd != nil {

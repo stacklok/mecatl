@@ -35,7 +35,7 @@ Each hook is a shell command run as `<shell> -c <command>` (default `/bin/sh`). 
 ```json
 {
   "Phase": "PreToolUse",
-  "Tool": "Bash",
+  "Tool": "Shell",
   "Input": { "command": "rm -rf build" },
   "SessionID": "8867bdea940108c1dd82d13d3fb7fc61"
 }
@@ -68,11 +68,11 @@ On exit 0, if stdout is a JSON object, it is parsed as a control envelope:
 
 A malformed (non-JSON-object) stdout is treated as a plain message and the original payload stands — so hooks that only print a message or produce no output at all are unaffected.
 
-## Block example: guard Bash against `rm -rf`
+## Block example: guard Shell against `rm -rf`
 
 ```sh
 #!/bin/sh
-# pretooluse-guard.sh — wire as a PreToolUse hook for the Bash tool.
+# pretooluse-guard.sh — wire as a PreToolUse hook for the Shell tool.
 event="$(cat)"
 if printf '%s' "$event" | grep -q '"rm -rf'; then
   echo "blocked: 'rm -rf' is not permitted by policy"
@@ -125,7 +125,7 @@ For `PreToolUse`, the permission policy runs on the **original, pre-mutation** a
 
 ## Guardrails: a built-in model-backed hook
 
-Everything above is a **shell** hook you write yourself. Mecatl also ships a built-in `PreToolUse`/`PostToolUse` pair that inspects tool content with a dedicated checker **model** instead of a script — a separate "guardrails" layer, off until you point it at a checker model, then on by default with a sensible ruleset (blocking `WebSearch`/`WebFetch`/all MCP tools/`Bash`) rather than empty. It exists for the case a shell hook can't handle well: judging whether a fetched web page looks like a prompt-injection attempt, or whether a tool call is about to exfiltrate a secret. See [Permissions & guardrails](permissions.md#layer-2--model-backed-guardrails) for the full picture, including the approve-once recovery flow when a guardrail blocks something you actually wanted.
+Everything above is a **shell** hook you write yourself. Mecatl also ships a built-in `PreToolUse`/`PostToolUse` pair that inspects tool content with a dedicated checker **model** instead of a script — a separate "guardrails" layer, off until you point it at a checker model, then on by default with a sensible ruleset (blocking `WebSearch`/`WebFetch`/all MCP tools/`Shell`) rather than empty. It exists for the case a shell hook can't handle well: judging whether a fetched web page looks like a prompt-injection attempt, or whether a tool call is about to exfiltrate a secret. See [Permissions & guardrails](permissions.md#layer-2--model-backed-guardrails) for the full picture, including the approve-once recovery flow when a guardrail blocks something you actually wanted.
 
 ## What's next
 

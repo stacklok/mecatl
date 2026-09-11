@@ -4,7 +4,7 @@
 //
 // This package contains BOTH the file-backed store adapter AND the tool.Tool
 // values that drive it. They are kept together deliberately: the tools are thin
-// adapters over the store seam (constructor-injected, mirroring NewBashTool),
+// adapters over the store seam (constructor-injected, mirroring NewShellTool),
 // and shipping them as one opt-in unit lets the composition root wire memory with
 // a single import. The tools depend only on the tool.MemoryStore interface, so a
 // fake in-memory store can stand in for tests.

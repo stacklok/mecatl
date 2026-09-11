@@ -185,7 +185,7 @@ func TestPathEscapePosture_Scenario1_SymlinkEscapeIsEscape(t *testing.T) {
 // under /proc, /sys, or /dev classifies as the NEVER-RELAXED pseudo-fs
 // category — distinct from a regular escape — because an in-process FS read of
 // e.g. /proc/self/environ would return the SERVER's raw, unscrubbed
-// environment, a secret-exfiltration channel the envscrub-scrubbed Bash parity
+// environment, a secret-exfiltration channel the envscrub-scrubbed Shell parity
 // path does not provide (docs/acceptance/path-escape-posture.md scope cuts).
 // The category must not collapse into escape and must not be reachable as
 // in-root, including when a symlink leads there.
@@ -242,7 +242,7 @@ func TestPathEscapePosture_Scenario1_PseudoFsClassification(t *testing.T) {
 
 // TestEscapeClassifier_UnrelatedToolsAreNotEscapes pins the call-shape half of
 // the classifier: non-FS tools, FS tools with a malformed/missing path arg,
-// and Bash (whose command is gated by the bash classifiers, never the escape
+// and Shell (whose command is gated by the bash classifiers, never the escape
 // classifier) classify in-root — the escape decision never fires where no
 // workspace path exists, so the later wrapping policy leaves every such call
 // to the inner policy untouched (no behaviour change in this wave).
@@ -254,7 +254,7 @@ func TestEscapeClassifier_UnrelatedToolsAreNotEscapes(t *testing.T) {
 		name string
 		args string
 	}{
-		"Bash":       {"Bash", `{"command": "cat /etc/passwd"}`},
+		"Shell":      {"Shell", `{"command": "cat /etc/passwd"}`},
 		"Glob":       {"Glob", `{"pattern": "**/*.go"}`},
 		"Grep":       {"Grep", `{"pattern": "x", "path": "/etc/**"}`},
 		"WebFetch":   {"WebFetch", `{"url": "https://example.com"}`},

@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func bashArgs(cmd string) json.RawMessage {
+func shellArgs(cmd string) json.RawMessage {
 	b, _ := json.Marshal(map[string]string{"command": cmd})
 	return b
 }
@@ -30,7 +30,7 @@ func copyMoveArgs(source, destination string) json.RawMessage {
 // the query must match (Allow), and a non-matching query falls through to the
 // built-in Ask default.
 //
-// MUTATION-VERIFY: remove "query" from nonBashPattern's probe-key list and this
+// MUTATION-VERIFY: remove "query" from nonShellPattern's probe-key list and this
 // test fails — the query never derives a pattern, so the glob rule cannot match.
 func TestWebSearchQueryPatternMatches(t *testing.T) {
 	e := NewEvaluator([]Rule{
@@ -48,14 +48,14 @@ func TestWebSearchQueryPatternMatches(t *testing.T) {
 // gauntlet #8: a deny in ANY scope beats an allow in ANY scope.
 func TestDenyBeatsAllowAcrossScopes(t *testing.T) {
 	rules := []Rule{
-		// user scope (lowest precedence) allows Bash rm.
-		{Scope: ScopeUser, Tool: "Bash", Pattern: "rm *", Effect: Allow},
-		// managed scope (highest precedence) denies Bash rm — but per doc 08,
+		// user scope (lowest precedence) allows Shell rm.
+		{Scope: ScopeUser, Tool: "Shell", Pattern: "rm *", Effect: Allow},
+		// managed scope (highest precedence) denies Shell rm — but per doc 08,
 		// even a LOWER-precedence deny must beat a higher-precedence allow.
-		{Scope: ScopeManaged, Tool: "Bash", Pattern: "rm *", Effect: Deny},
+		{Scope: ScopeManaged, Tool: "Shell", Pattern: "rm *", Effect: Deny},
 	}
 	e := NewEvaluator(rules)
-	got := e.Evaluate("Bash", bashArgs("rm x"), false)
+	got := e.Evaluate("Shell", shellArgs("rm x"), false)
 	if got.Effect != Deny {
 		t.Fatalf("expected Deny (deny beats allow across scopes), got %v (%s)", got.Effect, got.Reason)
 	}
@@ -64,11 +64,11 @@ func TestDenyBeatsAllowAcrossScopes(t *testing.T) {
 // Even when the deny is in the LOWEST scope and allow in the HIGHEST, deny wins.
 func TestDenyInLowScopeBeatsAllowInHighScope(t *testing.T) {
 	rules := []Rule{
-		{Scope: ScopeManaged, Tool: "Bash", Pattern: "rm *", Effect: Allow},
-		{Scope: ScopeUser, Tool: "Bash", Pattern: "rm *", Effect: Deny},
+		{Scope: ScopeManaged, Tool: "Shell", Pattern: "rm *", Effect: Allow},
+		{Scope: ScopeUser, Tool: "Shell", Pattern: "rm *", Effect: Deny},
 	}
 	e := NewEvaluator(rules)
-	if got := e.Evaluate("Bash", bashArgs("rm x"), false); got.Effect != Deny {
+	if got := e.Evaluate("Shell", shellArgs("rm x"), false); got.Effect != Deny {
 		t.Fatalf("expected Deny regardless of scope, got %v", got.Effect)
 	}
 }
@@ -88,7 +88,7 @@ func TestSameEffectHigherScopeWins(t *testing.T) {
 
 // The ONLY loosening (issue #13): a higher-precedence Allow relaxes the BUILT-IN
 // DEFAULT Ask floor (ScopeBuiltinDefault). Here a shared-project Allow loosens the
-// built-in Bash/Write ask.
+// built-in Shell/Write ask.
 func TestConfigAllowLoosensBuiltinDefaultAsk(t *testing.T) {
 	rules := []Rule{
 		{Scope: ScopeSharedProject, Tool: "Write", Effect: Allow},
@@ -150,43 +150,43 @@ func TestNoMatchDefaultsToAsk(t *testing.T) {
 
 // gauntlet / doc 08 #10: a deny on `rm` blocks the whole `git status && rm -rf /`
 // compound even though `git status` would be allowed.
-func TestCompoundBashDenyBlocksWhole(t *testing.T) {
+func TestCompoundShellDenyBlocksWhole(t *testing.T) {
 	rules := []Rule{
-		{Scope: ScopeUser, Tool: "Bash", Pattern: "git status", Effect: Allow},
-		{Scope: ScopeUser, Tool: "Bash", Pattern: "rm *", Effect: Deny},
+		{Scope: ScopeUser, Tool: "Shell", Pattern: "git status", Effect: Allow},
+		{Scope: ScopeUser, Tool: "Shell", Pattern: "rm *", Effect: Deny},
 	}
 	e := NewEvaluator(rules)
-	got := e.Evaluate("Bash", bashArgs("git status && rm -rf /"), false)
+	got := e.Evaluate("Shell", shellArgs("git status && rm -rf /"), false)
 	if got.Effect != Deny {
 		t.Fatalf("expected Deny for compound containing rm, got %v (%s)", got.Effect, got.Reason)
 	}
 }
 
 // A compound where every sub-command is allowed resolves to allow.
-func TestCompoundBashAllAllowed(t *testing.T) {
+func TestCompoundShellAllAllowed(t *testing.T) {
 	rules := []Rule{
-		{Scope: ScopeUser, Tool: "Bash", Pattern: "git status", Effect: Allow},
-		{Scope: ScopeUser, Tool: "Bash", Pattern: "ls", Effect: Allow},
+		{Scope: ScopeUser, Tool: "Shell", Pattern: "git status", Effect: Allow},
+		{Scope: ScopeUser, Tool: "Shell", Pattern: "ls", Effect: Allow},
 	}
 	e := NewEvaluator(rules)
-	if got := e.Evaluate("Bash", bashArgs("git status && ls"), false); got.Effect != Allow {
+	if got := e.Evaluate("Shell", shellArgs("git status && ls"), false); got.Effect != Allow {
 		t.Fatalf("expected Allow, got %v (%s)", got.Effect, got.Reason)
 	}
 }
 
 // Canonicalization is applied before matching: a wrapped rm matches an `rm` deny.
-func TestCanonicalizedBashMatching(t *testing.T) {
+func TestCanonicalizedShellMatching(t *testing.T) {
 	rules := []Rule{
-		{Scope: ScopeManaged, Tool: "Bash", Pattern: "rm *", Effect: Deny},
+		{Scope: ScopeManaged, Tool: "Shell", Pattern: "rm *", Effect: Deny},
 	}
 	e := NewEvaluator(rules)
-	if got := e.Evaluate("Bash", bashArgs("timeout 5 rm x"), false); got.Effect != Deny {
+	if got := e.Evaluate("Shell", shellArgs("timeout 5 rm x"), false); got.Effect != Deny {
 		t.Fatalf("expected Deny after canonicalizing timeout wrapper, got %v", got.Effect)
 	}
 }
 
-// gauntlet #3: plan mode denies Edit/Write and non-read-only Bash, allows
-// Read/Grep/Glob and read-only Bash.
+// gauntlet #3: plan mode denies Edit/Write and non-read-only Shell, allows
+// Read/Grep/Glob and read-only Shell.
 func TestPlanModeFilter(t *testing.T) {
 	// Allow-everything rules so plan-mode is the only thing that can deny.
 	rules := []Rule{
@@ -205,12 +205,12 @@ func TestPlanModeFilter(t *testing.T) {
 		{"Copy denied", "Copy", copyMoveArgs("/x", "/y"), Deny},
 		{"Move denied", "Move", copyMoveArgs("/x", "/y"), Deny},
 		{"Remove denied", "Remove", fileArgs("/x"), Deny},
-		{"non-RO Bash denied", "Bash", bashArgs("rm -rf /"), Deny},
+		{"non-RO Shell denied", "Shell", shellArgs("rm -rf /"), Deny},
 		{"Read allowed", "Read", fileArgs("/x"), Allow},
 		{"ListDir allowed", "ListDir", fileArgs("/x"), Allow},
 		{"Grep allowed", "Grep", fileArgs("/x"), Allow},
 		{"Glob allowed", "Glob", fileArgs("/x"), Allow},
-		{"read-only Bash allowed", "Bash", bashArgs("git status"), Allow},
+		{"read-only Shell allowed", "Shell", shellArgs("git status"), Allow},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -254,14 +254,14 @@ func TestPlanModeBeatsAllowRuleForNamespaceTools(t *testing.T) {
 	}
 }
 
-// Finding 1: a Bash allow rule for an outer literal must not silently approve a
+// Finding 1: a Shell allow rule for an outer literal must not silently approve a
 // destructive inner command hidden in command/process substitution or subshell
 // grouping. Such a segment is floored at Ask (or worse) even when the outer
 // command would be allowed.
 func TestSubstitutionEscalatesPastAllow(t *testing.T) {
 	rules := []Rule{
 		// Allow echo broadly; the substitution must still escalate.
-		{Scope: ScopeManaged, Tool: "Bash", Pattern: "echo *", Effect: Allow},
+		{Scope: ScopeManaged, Tool: "Shell", Pattern: "echo *", Effect: Allow},
 	}
 	e := NewEvaluator(rules)
 	cases := []struct {
@@ -275,7 +275,7 @@ func TestSubstitutionEscalatesPastAllow(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := e.Evaluate("Bash", bashArgs(tc.cmd), false)
+			got := e.Evaluate("Shell", shellArgs(tc.cmd), false)
 			if effectRank(got.Effect) < effectRank(Ask) {
 				t.Fatalf("Evaluate(%q) = %v (%s); want >= Ask", tc.cmd, got.Effect, got.Reason)
 			}
@@ -287,11 +287,11 @@ func TestSubstitutionEscalatesPastAllow(t *testing.T) {
 // Ask floor) when the segment can be matched.
 func TestSubstitutionPreservesDeny(t *testing.T) {
 	rules := []Rule{
-		{Scope: ScopeManaged, Tool: "Bash", Pattern: "echo *", Effect: Allow},
-		{Scope: ScopeManaged, Tool: "Bash", Pattern: "*rm*", Effect: Deny},
+		{Scope: ScopeManaged, Tool: "Shell", Pattern: "echo *", Effect: Allow},
+		{Scope: ScopeManaged, Tool: "Shell", Pattern: "*rm*", Effect: Deny},
 	}
 	e := NewEvaluator(rules)
-	if got := e.Evaluate("Bash", bashArgs("echo $(rm -rf build)"), false); got.Effect != Deny {
+	if got := e.Evaluate("Shell", shellArgs("echo $(rm -rf build)"), false); got.Effect != Deny {
 		t.Fatalf("expected Deny for hidden rm, got %v (%s)", got.Effect, got.Reason)
 	}
 }
@@ -299,28 +299,28 @@ func TestSubstitutionPreservesDeny(t *testing.T) {
 // A1: a fully read-only substitution is NOT floored at Ask — it resolves by the
 // ordinary rule fold (Allow under an allow-all rule), while a non-read-only
 // substitution still escalates and a configured Deny on the inner still wins.
-func TestResolveBashSubstitutionLoosening(t *testing.T) {
+func TestResolveShellSubstitutionLoosening(t *testing.T) {
 	allowAll := []Rule{{Scope: ScopeCLI, Effect: Allow}}
 	e := NewEvaluator(allowAll)
 
 	// Read-only substitution: allowed, not floored.
-	if got := e.Evaluate("Bash", bashArgs("cat $(ls)"), false); got.Effect != Allow {
+	if got := e.Evaluate("Shell", shellArgs("cat $(ls)"), false); got.Effect != Allow {
 		t.Fatalf("read-only substitution: Evaluate = %v (%s); want Allow", got.Effect, got.Reason)
 	}
-	if got := e.Evaluate("Bash", bashArgs(`for p in $(git ls-files); do cat "$p"; done`), false); got.Effect != Allow {
+	if got := e.Evaluate("Shell", shellArgs(`for p in $(git ls-files); do cat "$p"; done`), false); got.Effect != Allow {
 		t.Fatalf("read-only loop substitution: Evaluate = %v (%s); want Allow", got.Effect, got.Reason)
 	}
 	// Non-read-only substitution (innocuous stand-in `zap`): still floored to Ask
 	// even under allow-all (the floor stands without yolo).
-	if got := e.Evaluate("Bash", bashArgs("cat $(zap)"), false); got.Effect != Ask {
+	if got := e.Evaluate("Shell", shellArgs("cat $(zap)"), false); got.Effect != Ask {
 		t.Fatalf("non-read-only substitution: Evaluate = %v (%s); want Ask", got.Effect, got.Reason)
 	}
 	// A configured Deny on the inner stand-in still wins (deny-dominance).
 	eDeny := NewEvaluator([]Rule{
 		{Scope: ScopeCLI, Effect: Allow},
-		{Scope: ScopeManaged, Tool: "Bash", Pattern: "*zap*", Effect: Deny},
+		{Scope: ScopeManaged, Tool: "Shell", Pattern: "*zap*", Effect: Deny},
 	})
-	if got := eDeny.Evaluate("Bash", bashArgs("echo $(zap)"), false); got.Effect != Deny {
+	if got := eDeny.Evaluate("Shell", shellArgs("echo $(zap)"), false); got.Effect != Deny {
 		t.Fatalf("configured deny on inner: Evaluate = %v (%s); want Deny", got.Effect, got.Reason)
 	}
 }
@@ -328,20 +328,20 @@ func TestResolveBashSubstitutionLoosening(t *testing.T) {
 // yolo: WithLooseSubstitution disables the substitution Ask floor — a non-read-only
 // substitution resolves by the ordinary fold (Allow under allow-all). A configured
 // Deny still wins.
-func TestResolveBashYoloLoosensFloor(t *testing.T) {
+func TestResolveShellYoloLoosensFloor(t *testing.T) {
 	allowAll := []Rule{{Scope: ScopeCLI, Effect: Allow}}
 	e := NewEvaluator(allowAll, WithLooseSubstitution(true))
 
 	// A non-read-only substitution (stand-in) is now allowed under loose+allow-all.
-	if got := e.Evaluate("Bash", bashArgs("cat $(zap)"), false); got.Effect != Allow {
+	if got := e.Evaluate("Shell", shellArgs("cat $(zap)"), false); got.Effect != Allow {
 		t.Fatalf("loose substitution: Evaluate = %v (%s); want Allow", got.Effect, got.Reason)
 	}
 	// A configured Deny on the inner stand-in still wins even with loose substitution.
 	eDeny := NewEvaluator([]Rule{
 		{Scope: ScopeCLI, Effect: Allow},
-		{Scope: ScopeManaged, Tool: "Bash", Pattern: "*zap*", Effect: Deny},
+		{Scope: ScopeManaged, Tool: "Shell", Pattern: "*zap*", Effect: Deny},
 	}, WithLooseSubstitution(true))
-	if got := eDeny.Evaluate("Bash", bashArgs("echo $(zap)"), false); got.Effect != Deny {
+	if got := eDeny.Evaluate("Shell", shellArgs("echo $(zap)"), false); got.Effect != Deny {
 		t.Fatalf("loose + configured deny: Evaluate = %v (%s); want Deny", got.Effect, got.Reason)
 	}
 	// T4: floor loosening must NEVER suppress a CONFIGURED Ask. A ScopeManaged Ask on the
@@ -349,23 +349,23 @@ func TestResolveBashYoloLoosensFloor(t *testing.T) {
 	// yolo loosens only the built-in substitution FLOOR, never an author-configured Ask.
 	eAsk := NewEvaluator([]Rule{
 		{Scope: ScopeCLI, Effect: Allow},
-		{Scope: ScopeManaged, Tool: "Bash", Pattern: "*zap*", Effect: Ask},
+		{Scope: ScopeManaged, Tool: "Shell", Pattern: "*zap*", Effect: Ask},
 	}, WithLooseSubstitution(true))
-	if got := eAsk.Evaluate("Bash", bashArgs("echo $(zap)"), false); got.Effect != Ask {
+	if got := eAsk.Evaluate("Shell", shellArgs("echo $(zap)"), false); got.Effect != Ask {
 		t.Fatalf("loose + configured Ask: Evaluate = %v (%s); want Ask (a configured Ask must survive yolo)", got.Effect, got.Reason)
 	}
 	// Without loose (and without yolo) the same call floors at Ask — proves the
 	// default is unchanged.
 	ePlain := NewEvaluator(allowAll)
-	if got := ePlain.Evaluate("Bash", bashArgs("cat $(zap)"), false); got.Effect != Ask {
+	if got := ePlain.Evaluate("Shell", shellArgs("cat $(zap)"), false); got.Effect != Ask {
 		t.Fatalf("default (no loose): Evaluate = %v (%s); want Ask", got.Effect, got.Reason)
 	}
 }
 
-// Plan mode hard-denies non-read-only Bash; substitution/grouping/newline forms
+// Plan mode hard-denies non-read-only Shell; substitution/grouping/newline forms
 // must be classified non-read-only so plan mode is not fooled.
 func TestPlanModeDeniesSubstitutionAndNewline(t *testing.T) {
-	e := NewEvaluator([]Rule{{Scope: ScopeManaged, Tool: "Bash", Effect: Allow}})
+	e := NewEvaluator([]Rule{{Scope: ScopeManaged, Tool: "Shell", Effect: Allow}})
 	cases := []string{
 		"cat $(rm x)",
 		"echo `rm x`",
@@ -375,19 +375,19 @@ func TestPlanModeDeniesSubstitutionAndNewline(t *testing.T) {
 	}
 	for _, cmd := range cases {
 		t.Run(cmd, func(t *testing.T) {
-			if got := e.Evaluate("Bash", bashArgs(cmd), true); got.Effect != Deny {
+			if got := e.Evaluate("Shell", shellArgs(cmd), true); got.Effect != Deny {
 				t.Fatalf("plan mode Evaluate(%q) = %v (%s); want Deny", cmd, got.Effect, got.Reason)
 			}
 		})
 	}
 }
 
-// Direct ReadOnlyBash assertions called out in the finding.
-func TestReadOnlyBashFindingCases(t *testing.T) {
-	if ReadOnlyBash("cat $(rm x)") {
-		t.Fatal(`ReadOnlyBash("cat $(rm x)") = true, want false`)
+// Direct ReadOnlyShell assertions called out in the finding.
+func TestReadOnlyShellFindingCases(t *testing.T) {
+	if ReadOnlyShell("cat $(rm x)") {
+		t.Fatal(`ReadOnlyShell("cat $(rm x)") = true, want false`)
 	}
-	if ReadOnlyBash("ls\nrm x") {
-		t.Fatal("ReadOnlyBash(\"ls\\nrm x\") = true, want false")
+	if ReadOnlyShell("ls\nrm x") {
+		t.Fatal("ReadOnlyShell(\"ls\\nrm x\") = true, want false")
 	}
 }

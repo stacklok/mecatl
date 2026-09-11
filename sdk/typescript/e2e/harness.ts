@@ -76,12 +76,10 @@ export async function withDaemon<T>(
         if (previousReady.socket_path !== undefined) {
           await rm(previousReady.socket_path, { force: true });
         }
-        if (effectiveOptions.durable === true) {
-          // The local JSONL store auto-wires a session lease. A killed daemon cannot
-          // write its release tombstone, so wait past the deliberately short e2e TTL
-          // before the replacement process tries to adopt the same session.
-          await delay(400);
-        }
+        // stop() does not return until the old process has exited. The local JSONL
+        // store's lease is backed by a process-owned flock, so process exit is the
+        // lifecycle boundary that makes takeover safe even when SIGKILL prevented a
+        // release tombstone. Waiting for the TTL here would only reintroduce timing.
         effectiveOptions = { ...effectiveOptions, ...restartOptions };
         running = await startDaemon(
           effectiveOptions,
@@ -129,7 +127,7 @@ async function startDaemon(
     "--flight-recorder=false",
   ];
   if (options.durable === true) {
-    args.push("--store-dir", storeDirectory, "--session-lease-ttl", "300ms");
+    args.push("--store-dir", storeDirectory);
   }
   if (options.uds === true) {
     args.push(

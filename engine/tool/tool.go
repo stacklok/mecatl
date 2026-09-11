@@ -21,7 +21,7 @@ import (
 
 // ErrNoShell is the sentinel a CommandRunner returns when it has no shell to
 // execute against (e.g. the in-memory runner, or a shell-less remote pod). The
-// Bash tool surfaces it to the model as a tool-level error rather than aborting
+// Shell tool surfaces it to the model as a tool-level error rather than aborting
 // the harness.
 var ErrNoShell = errors.New("tool: no shell available")
 
@@ -118,21 +118,21 @@ type FileInfo struct {
 	IsDir bool
 }
 
-// BashToolName is the catalog name of the Bash tool. It is the single authority
-// for the name the Bash tool registers under (used in its Spec().Name) so a
+// ShellToolName is the catalog name of the Shell tool. It is the single authority
+// for the name the Shell tool registers under (used in its Spec().Name) so a
 // consumer can probe the catalog for bash enablement by referencing the constant
 // rather than a local literal that could drift on a rename (see
 // internal/adapter/server.Service.capabilities). It lives in the PORT package
 // (not an adapter) because the permission evaluator special-cases the literal
 // name — a tool named anything else would silently bypass the bash gate — so
-// every Bash implementation must register under exactly this name, and
-// engine/agent's own BashTool cannot import the fstools adapter to get it.
-const BashToolName = "Bash"
+// every Shell implementation must register under exactly this name, and
+// engine/agent's own ShellTool cannot import the fstools adapter to get it.
+const ShellToolName = "Shell"
 
 // CommandRunner executes a shell command. Implementations may run it locally
 // (/bin/sh), in a remote environment, or refuse it (no shell available). The
-// agent loop never references this type — only the Bash tool depends on it,
-// which is what makes the Bash tool (and therefore any command execution)
+// agent loop never references this type — only the Shell tool depends on it,
+// which is what makes the Shell tool (and therefore any command execution)
 // optional in the catalog.
 //
 // BOUND RUNNER (issue #462). A CommandRunner is bound to a single namespace at
@@ -150,7 +150,7 @@ type CommandRunner interface {
 	Run(ctx context.Context, command string) (CommandResult, error)
 }
 
-// TemporaryScope selects the runner-owned temporary-storage overlay for one Bash
+// TemporaryScope selects the runner-owned temporary-storage overlay for one Shell
 // invocation. It is a lifecycle choice, never a filesystem sandbox.
 type TemporaryScope string
 
@@ -170,7 +170,7 @@ type CommandTemporaryScopeRunner interface {
 }
 
 // CommandTemporaryScopeStreamer is CommandTemporaryScopeRunner's streaming
-// counterpart for background Bash jobs.
+// counterpart for background Shell jobs.
 type CommandTemporaryScopeStreamer interface {
 	CommandStreamer
 	RunStreamingWithTemporaryScope(ctx context.Context, command string, scope TemporaryScope, out io.Writer) (exitCode int, err error)
@@ -532,7 +532,7 @@ type MemoryEntry struct {
 
 // MemoryStore is the seam for conservative, cross-session ("tiered") memory
 // (harness pattern 3). It is defined here, alongside Workspace and CommandRunner,
-// for the same layering reason: the memory tools depend on it the way the Bash
+// for the same layering reason: the memory tools depend on it the way the Shell
 // tool depends on CommandRunner, and keeping the interface in engine/tool
 // avoids the port↔tool import cycle a separate package would risk.
 //

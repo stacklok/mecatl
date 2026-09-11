@@ -221,17 +221,17 @@ func TestSubagentWritableAgentFactoryNilIsUnsupported(t *testing.T) {
 
 // TestSubagentWritableAgentNotIsolatedSkipsA2 mirrors TestSubagentWritableNotIsolatedSkipsA2
 // for the writable SPECIALIST (mode:"read-write"+agent): the child's isolation-approvable
-// Bash substitution under a HEADLESS parent must AUTO-DENY — because a writable specialist
+// Shell substitution under a HEADLESS parent must AUTO-DENY — because a writable specialist
 // is isolated:false (ADR 0041/0058 — it mutates the real tree, no fork), so the A2
 // isolation auto-approve (which only fires when isolated) does NOT apply. The read-only
 // childForker is a failingForker to also prove no fork happens.
 func TestSubagentWritableAgentNotIsolatedSkipsA2(t *testing.T) {
-	bash := &fakeBash{}
+	bash := &fakeShell{}
 	specLLM := mockllm.New(
-		mockllm.ToolCallTurn(toolCall("k1", "Bash", `{"command":"go test $(echo ./...)"}`)),
+		mockllm.ToolCallTurn(toolCall("k1", "Shell", `{"command":"go test $(echo ./...)"}`)),
 		mockllm.TextTurn("child: adapted after the denied command"),
 	)
-	writableSpec := bashChildEngine(specLLM, bash)
+	writableSpec := shellChildEngine(specLLM, bash)
 	task := agent.NewSubagentTool(
 		childEngineWith(mockllm.New(mockllm.TextTurn("DEFAULT")), catalogWith(t)),
 		agent.WithAgentEngines(
@@ -251,7 +251,7 @@ func TestSubagentWritableAgentNotIsolatedSkipsA2(t *testing.T) {
 	drainWithTimeout(t, r)
 
 	if got := bash.ran(); len(got) != 0 {
-		t.Fatalf("a NON-isolated (direct-write) writable specialist's isolation-approvable Bash must NOT be "+
+		t.Fatalf("a NON-isolated (direct-write) writable specialist's isolation-approvable Shell must NOT be "+
 			"A2 auto-approved under a headless parent — it must auto-deny; but the command ran: %v", got)
 	}
 }

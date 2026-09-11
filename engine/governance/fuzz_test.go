@@ -79,7 +79,7 @@ func seedGovernance(f *testing.F) {
 
 // FuzzSplitCommands asserts SplitCommands never panics and upholds several
 // invariants, the most important being the security cross-check against
-// HasSubstitutionOrGrouping / ReadOnlyBash: any input that contains a
+// HasSubstitutionOrGrouping / ReadOnlyShell: any input that contains a
 // substitution, grouping, or a raw newline can never be classified read-only.
 func FuzzSplitCommands(f *testing.F) {
 	seedGovernance(f)
@@ -133,16 +133,16 @@ func FuzzSplitCommands(f *testing.F) {
 		// Invariant 4 (security): a raw (unquoted) newline in the input means more
 		// than one logical command may be present, so the line must NOT be
 		// classified read-only as a single safe command. We assert the splitter
-		// actually broke on it by checking ReadOnlyBash's downstream guarantee.
-		if hasRawNewline(cmd) && ReadOnlyBash(cmd) {
-			// ReadOnlyBash may still be true if BOTH sides are independently
+		// actually broke on it by checking ReadOnlyShell's downstream guarantee.
+		if hasRawNewline(cmd) && ReadOnlyShell(cmd) {
+			// ReadOnlyShell may still be true if BOTH sides are independently
 			// read-only (e.g. "ls\npwd"); that is fine. The violation would be a
 			// destructive token surviving as read-only, which Invariant 5 covers.
 			_ = segs
 		}
 
 		// Invariant 5 (security, the crux): if ANY produced segment contains a
-		// substitution/grouping construct, ReadOnlyBash must be false. A
+		// substitution/grouping construct, ReadOnlyShell must be false. A
 		// substitution can hide an arbitrary destructive inner command that the
 		// operator splitter cannot decompose.
 		anySub := false
@@ -152,8 +152,8 @@ func FuzzSplitCommands(f *testing.F) {
 				break
 			}
 		}
-		if anySub && ReadOnlyBash(cmd) {
-			t.Fatalf("SECURITY: ReadOnlyBash(%q)=true but a segment has substitution/grouping: %#v", cmd, segs)
+		if anySub && ReadOnlyShell(cmd) {
+			t.Fatalf("SECURITY: ReadOnlyShell(%q)=true but a segment has substitution/grouping: %#v", cmd, segs)
 		}
 	})
 }
@@ -196,20 +196,20 @@ func FuzzCanonicalize(f *testing.F) {
 	})
 }
 
-// FuzzReadOnlyBash asserts ReadOnlyBash never panics and that the
+// FuzzReadOnlyShell asserts ReadOnlyShell never panics and that the
 // substitution/grouping fail-safe holds: any command whose split yields a
 // segment with substitution or grouping is never read-only.
-func FuzzReadOnlyBash(f *testing.F) {
+func FuzzReadOnlyShell(f *testing.F) {
 	seedGovernance(f)
 	f.Fuzz(func(t *testing.T, cmd string) {
-		ro := ReadOnlyBash(cmd)
+		ro := ReadOnlyShell(cmd)
 		if !ro {
 			return
 		}
 		// If classified read-only, NO segment may contain substitution/grouping.
 		for _, s := range SplitCommands(cmd) {
 			if HasSubstitutionOrGrouping(s) {
-				t.Fatalf("SECURITY: ReadOnlyBash(%q)=true but segment %q has substitution/grouping", cmd, s)
+				t.Fatalf("SECURITY: ReadOnlyShell(%q)=true but segment %q has substitution/grouping", cmd, s)
 			}
 		}
 		// And no segment may, after canonicalization, contain a destructive verb
@@ -217,12 +217,12 @@ func FuzzReadOnlyBash(f *testing.F) {
 		for _, s := range SplitCommands(cmd) {
 			canon := Canonicalize(s)
 			if strings.ContainsAny(canon, ">") {
-				t.Fatalf("SECURITY: ReadOnlyBash(%q)=true but segment %q canonicalizes to a redirection %q", cmd, s, canon)
+				t.Fatalf("SECURITY: ReadOnlyShell(%q)=true but segment %q canonicalizes to a redirection %q", cmd, s, canon)
 			}
 			fs := fieldSet(canon)
 			for _, tok := range destructiveTokens {
 				if fs[tok] {
-					t.Fatalf("SECURITY: ReadOnlyBash(%q)=true but segment %q contains destructive token %q", cmd, s, tok)
+					t.Fatalf("SECURITY: ReadOnlyShell(%q)=true but segment %q contains destructive token %q", cmd, s, tok)
 				}
 			}
 		}
@@ -236,7 +236,7 @@ func FuzzReadOnlyBash(f *testing.F) {
 func FuzzSubstitutionReadOnly(f *testing.F) {
 	seedGovernance(f)
 	// Nested read-only subshells/substitutions: the recursive inner case the soundness
-	// assertion must model (a regression seed for the `ReadOnlyBash || SubstitutionReadOnly`
+	// assertion must model (a regression seed for the `ReadOnlyShell || SubstitutionReadOnly`
 	// inner contract).
 	f.Add("( (cat))")
 	f.Add("echo $(cat $(ls))")
@@ -253,9 +253,9 @@ func FuzzSubstitutionReadOnly(f *testing.F) {
 
 // assertSubstReadOnlySound recursively verifies that a segment SubstitutionReadOnly
 // cleared decomposes to ONLY read-only programs: every extracted inner is either plain
-// ReadOnlyBash OR itself a sound read-only substitution (the recursive case — a nested
+// ReadOnlyShell OR itself a sound read-only substitution (the recursive case — a nested
 // `( (cat))` / `cat $(cat $(ls))`), and the blanked outer carries no output redirection
-// or destructive token. This mirrors the classifier's own `ReadOnlyBash(in) ||
+// or destructive token. This mirrors the classifier's own `ReadOnlyShell(in) ||
 // SubstitutionReadOnly(in)` inner contract, so the fuzzer asserts genuine soundness
 // rather than a stricter shape the classifier never promised.
 func assertSubstReadOnlySound(t *testing.T, seg string) {
@@ -266,7 +266,7 @@ func assertSubstReadOnlySound(t *testing.T, seg string) {
 	}
 	for _, in := range inner {
 		switch {
-		case ReadOnlyBash(in):
+		case ReadOnlyShell(in):
 			// plain read-only inner — sound.
 		case SubstitutionReadOnly(in):
 			assertSubstReadOnlySound(t, in) // nested read-only substitution — recurse.
@@ -421,7 +421,7 @@ func isFieldTail(full, tail []string) bool {
 // floored-configured-allow classifier (issue #32), mirroring
 // FuzzSubstitutionReadOnly/FuzzIsolationApprovable: for every segment
 // flooredAllowSafe clears, EVERY recursively-extracted inner must be
-// independently read-only (plain ReadOnlyBash or a sound read-only
+// independently read-only (plain ReadOnlyShell or a sound read-only
 // substitution — the configured Allow vouches only for the OUTER, never a
 // hidden inner), extraction/blanking must have succeeded, a lone-placeholder
 // residual must be a pure subshell, and the blanked outer must carry no
@@ -461,7 +461,7 @@ func assertFlooredAllowSound(t *testing.T, seg string) {
 	}
 	for _, in := range inner {
 		switch {
-		case ReadOnlyBash(in):
+		case ReadOnlyShell(in):
 			// plain read-only inner — sound.
 		case SubstitutionReadOnly(in):
 			assertSubstReadOnlySound(t, in) // nested read-only substitution — recurse.

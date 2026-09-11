@@ -12,8 +12,8 @@ func TestRedisFilesystemFlags(t *testing.T) {
 		t.Fatal(err)
 	}
 	built := appConfig(cfg, port.NopDiagnostics{}, observability{})
-	if !built.RedisFilesystem || !built.RedisReadLedger || !built.NoBash {
-		t.Fatalf("app config filesystem=%v ledger=%v noBash=%v", built.RedisFilesystem, built.RedisReadLedger, built.NoBash)
+	if !built.RedisFilesystem || !built.RedisReadLedger || !built.NoShell {
+		t.Fatalf("app config filesystem=%v ledger=%v noShell=%v", built.RedisFilesystem, built.RedisReadLedger, built.NoShell)
 	}
 }
 

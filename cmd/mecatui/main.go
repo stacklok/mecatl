@@ -1105,7 +1105,7 @@ func embeddedConfig(cfg config, diag port.Diagnostics) app.Config {
 		RouterDisabled:        cfg.subagentModelRouterSet && !cfg.subagentModelRouter,
 		UseMock:               cfg.mock,
 		Shell:                 "/bin/sh",
-		NoBash:                cfg.noBash,
+		NoShell:               cfg.noShell,
 		Compaction:            "heuristic",
 		Tokenizer:             "heuristic",
 		LLMMaxAttempts:        3,

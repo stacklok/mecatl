@@ -74,7 +74,7 @@ func TestToolSpecSupportsOptionalAssetAndStaysReadOnly(t *testing.T) {
 	if !strings.Contains(string(spec.Schema), `"asset"`) || !strings.Contains(spec.Description, "{name, asset}") {
 		t.Errorf("spec does not advertise optional asset: %+v", spec)
 	}
-	for _, forbidden := range []string{"Base directory", "absolute path", "use Read", "via Bash"} {
+	for _, forbidden := range []string{"Base directory", "absolute path", "use Read", "via Shell"} {
 		if strings.Contains(spec.Description, forbidden) {
 			t.Errorf("description contains forbidden %q", forbidden)
 		}
@@ -98,7 +98,7 @@ func TestActivationReturnsBodyAndLogicalInventoryWithoutReadingAsset(t *testing.
 			t.Errorf("activation missing %q: %q", want, res.Content)
 		}
 	}
-	for _, forbidden := range []string{"Base directory", "absolute path", "Read tool", "via Bash"} {
+	for _, forbidden := range []string{"Base directory", "absolute path", "Read tool", "via Shell"} {
 		if strings.Contains(res.Content, forbidden) {
 			t.Errorf("activation contains forbidden %q: %q", forbidden, res.Content)
 		}

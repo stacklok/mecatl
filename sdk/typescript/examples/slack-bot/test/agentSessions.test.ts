@@ -19,6 +19,7 @@ const FAILURE_MESSAGE =
 type AnyHandler = (args: any) => Promise<void>;
 
 interface FakeApp {
+  apiCall: ReturnType<typeof vi.fn>;
   app: App;
   say: ReturnType<typeof vi.fn>;
   postEphemeral: ReturnType<typeof vi.fn>;
@@ -38,6 +39,7 @@ function setUp(
   config: BotConfig,
   resolver: AccessResolver = fakeResolver(new Set(["allowed-user"])),
 ): FakeApp {
+  const apiCall = vi.fn().mockResolvedValue(undefined);
   const say = vi.fn().mockResolvedValue(undefined);
   const postEphemeral = vi.fn().mockResolvedValue(undefined);
   const startStream = vi.fn().mockResolvedValue({ ts: "stream-ts" });
@@ -52,7 +54,7 @@ function setUp(
 
   const app = {
     client: {
-      apiCall: vi.fn().mockResolvedValue(undefined),
+      apiCall,
       chat: { appendStream, postEphemeral, startStream, stopStream },
     },
     event: (eventName: string, handler: AnyHandler) => {
@@ -76,6 +78,7 @@ function setUp(
   }
   return {
     agentSessionStopped: handlers.agentSessionStopped,
+    apiCall,
     app,
     appendStream,
     appMention: handlers.appMention,
@@ -306,7 +309,7 @@ describe("registerAgentSessions", () => {
     expect(fake.say).toHaveBeenCalledWith({ text: "hi there", thread_ts: "100.001" });
   });
 
-  it("leaves a DM's rejection reply as a plain say — DMs have no visibility problem to fix", async () => {
+  it("scopes a DM rejection reply to the message's thread root", async () => {
     const resolve = vi.fn().mockResolvedValue({ allowed: false });
     const fake = setUp(fakeBridge(vi.fn()), fakeConfig(), { resolve });
 
@@ -325,7 +328,10 @@ describe("registerAgentSessions", () => {
     });
 
     expect(fake.postEphemeral).not.toHaveBeenCalled();
-    expect(fake.say).toHaveBeenCalledWith(NOT_AUTHORIZED_MESSAGE);
+    expect(fake.say).toHaveBeenCalledWith({
+      text: NOT_AUTHORIZED_MESSAGE,
+      thread_ts: "200.001",
+    });
     // The AccessResolver contract (issue #1241) defines channelId as absent for DMs, so a
     // channel-aware resolver can tell a user-scoped DM decision apart from channel/group
     // policy — a DM must never pass its own channelId under that name.
@@ -352,7 +358,130 @@ describe("registerAgentSessions", () => {
       say: fake.say,
     });
 
-    expect(fake.say).toHaveBeenCalledWith("hi there");
+    expect(fake.say).toHaveBeenCalledWith({ text: "hi there", thread_ts: "200.001" });
+  });
+
+  it("starts separate sessions for separate top-level DM messages", async () => {
+    const handlePrompt = vi.fn().mockImplementation(async (_threadKey, text, onDelta) => {
+      await onDelta(`reply to ${text}`);
+      return { sessionId: `session-${text}`, stopReason: "end_turn", text: `reply to ${text}` };
+    });
+    const fake = setUp(fakeBridge(handlePrompt), fakeConfig());
+
+    for (const [text, ts] of [
+      ["first", "200.001"],
+      ["second", "200.002"],
+    ]) {
+      await fake.message({
+        context: { botUserId: "BOT", teamId: "T1" },
+        message: {
+          bot_id: undefined,
+          channel: "D1",
+          channel_type: "im",
+          subtype: undefined,
+          text,
+          ts,
+          user: "allowed-user",
+        },
+        say: fake.say,
+      });
+    }
+
+    expect(handlePrompt).toHaveBeenNthCalledWith(1, "D1:200.001", "first", expect.any(Function));
+    expect(handlePrompt).toHaveBeenNthCalledWith(2, "D1:200.002", "second", expect.any(Function));
+    expect(fake.startStream).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ channel: "D1", thread_ts: "200.001" }),
+    );
+    expect(fake.startStream).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ channel: "D1", thread_ts: "200.002" }),
+    );
+    expect(fake.apiCall).toHaveBeenCalledWith("agents.sessions.setStatus", {
+      channel_id: "D1",
+      status: "processing",
+      thread_ts: "200.001",
+    });
+    expect(fake.apiCall).toHaveBeenCalledWith("agents.sessions.setStatus", {
+      channel_id: "D1",
+      status: "processing",
+      thread_ts: "200.002",
+    });
+  });
+
+  it("continues the same session for a reply in an existing DM thread", async () => {
+    const handlePrompt = vi.fn().mockImplementation(async (_threadKey, _text, onDelta) => {
+      await onDelta("reply");
+      return { sessionId: "s1", stopReason: "end_turn", text: "reply" };
+    });
+    const fake = setUp(fakeBridge(handlePrompt), fakeConfig());
+
+    await fake.message({
+      context: { botUserId: "BOT", teamId: "T1" },
+      message: {
+        bot_id: undefined,
+        channel: "D1",
+        channel_type: "im",
+        subtype: undefined,
+        text: "follow up",
+        thread_ts: "200.001",
+        ts: "200.003",
+        user: "allowed-user",
+      },
+      say: fake.say,
+    });
+
+    expect(handlePrompt).toHaveBeenCalledWith("D1:200.001", "follow up", expect.any(Function));
+    expect(fake.startStream).toHaveBeenCalledWith(
+      expect.objectContaining({ channel: "D1", thread_ts: "200.001" }),
+    );
+  });
+
+  it("falls back into the current DM thread when streaming fails", async () => {
+    const bridge = fakeBridge(
+      vi.fn().mockImplementation(async (_threadKey, _text, onDelta) => {
+        await onDelta("partial");
+        return { sessionId: "s1", stopReason: "end_turn", text: "complete" };
+      }),
+    );
+    const fake = setUp(bridge, fakeConfig());
+    fake.startStream.mockRejectedValue(new Error("stream failed"));
+
+    await fake.message({
+      context: { botUserId: "BOT", teamId: "T1" },
+      message: {
+        bot_id: undefined,
+        channel: "D1",
+        channel_type: "im",
+        subtype: undefined,
+        text: "hi",
+        ts: "200.002",
+        user: "allowed-user",
+      },
+      say: fake.say,
+    });
+
+    expect(fake.say).toHaveBeenCalledWith({ text: "complete", thread_ts: "200.002" });
+  });
+
+  it("reports a failed DM prompt in the current thread", async () => {
+    const fake = setUp(fakeBridge(vi.fn().mockRejectedValue(new Error("boom"))), fakeConfig());
+
+    await fake.message({
+      context: { botUserId: "BOT", teamId: "T1" },
+      message: {
+        bot_id: undefined,
+        channel: "D1",
+        channel_type: "im",
+        subtype: undefined,
+        text: "hi",
+        ts: "200.002",
+        user: "allowed-user",
+      },
+      say: fake.say,
+    });
+
+    expect(fake.say).toHaveBeenCalledWith({ text: FAILURE_MESSAGE, thread_ts: "200.002" });
   });
 
   it("rejects an unauthorized channel-thread follow-up message with an ephemeral reply", async () => {
@@ -570,28 +699,13 @@ describe("registerAgentSessions", () => {
     expect(cancel).toHaveBeenCalledWith("C1:100.001");
   });
 
-  it("cancels the bridge run for a DM agent_session_stopped, keyed on the channel alone", async () => {
+  it("cancels the bridge run for a DM agent_session_stopped, keyed on its thread", async () => {
     const cancel = vi.fn().mockResolvedValue(undefined);
     const fake = setUp(fakeBridge(vi.fn(), cancel), fakeConfig());
 
-    // Seed the DM anchor the same way a real first DM message would.
-    await fake.message({
-      context: { botUserId: "BOT", teamId: "T1" },
-      message: {
-        bot_id: undefined,
-        channel: "D1",
-        channel_type: "im",
-        subtype: undefined,
-        text: "hi",
-        ts: "200.001",
-        user: "allowed-user",
-      },
-      say: fake.say,
-    });
-
     await fake.agentSessionStopped({ event: { channel: "D1", thread_ts: "200.001" } });
 
-    expect(cancel).toHaveBeenCalledWith("D1");
+    expect(cancel).toHaveBeenCalledWith("D1:200.001");
   });
 
   it("logs a warning instead of throwing when bridge.cancel() fails", async () => {

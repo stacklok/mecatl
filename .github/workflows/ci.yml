@@ -569,6 +569,7 @@ jobs:
           bash .github/scripts/race-aggregate-workflow_test.sh
           bash .github/scripts/docs-only-changes_test.sh
           bash .github/scripts/docs-only-workflow_test.sh
+          bash .github/scripts/deslop-workflow_test.sh
       - name: go test -race (root-a and modules)
         env:
           RACE_TIMING: ${{ github.event_name == 'workflow_dispatch' && inputs.race_timing }}
@@ -867,53 +868,13 @@ jobs:
           bash .github/actions/mecatequi-extract-prompt/extract-prompt_test.sh
           bash .github/actions/mecatequi-publish/publish_test.sh
           bash .github/actions/action-wrappers_test.sh
-          bash .github/scripts/lint-vet-workflow_test.sh
 
-  # Keep cmd/vet authoritative and complete without serializing its cold root-module
-  # cost behind golangci-lint. The two jobs use separate runners, so vet adds no CPU
-  # or memory contention to the already resource-bound golangci analysis.
-  vet:
-    name: Vet
-    needs: changes
-    if: needs.changes.outputs.docs_only != 'true'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-          cache: true
-          cache-dependency-path: |
-            go.sum
-            engine/go.sum
-            authn/oidc/go.sum
-            provider/ssefilter/go.sum
-            provider/anthropic/go.sum
-            provider/openai/go.sum
-            provider/openaichat/go.sum
-
-      - name: Require complete vet coverage
-        shell: bash
-        run: |
-          set -euo pipefail
-          go vet ./...
-          (cd engine && go vet ./...)
-          (cd authn/oidc && go vet ./...)
-          (cd provider/ssefilter && go vet ./...)
-          (cd provider/anthropic && go vet ./...)
-          (cd provider/openai && go vet ./...)
-          (cd provider/openaichat && go vet ./...)
-
-  # Preserve one stable required context while analysis and vet run concurrently.
-  # The aggregate itself validates the classifier and both applicable child jobs,
-  # so failures and cancellations cannot be hidden by dependency skipping.
+  # Preserve one stable required context while golangci-lint runs.
+  # The aggregate validates the classifier and applicable analysis job, so failures
+  # and cancellations cannot be hidden by dependency skipping.
   lint:
     name: Lint
-    needs: [changes, analysis, vet]
+    needs: [changes, analysis]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -924,7 +885,6 @@ jobs:
           CHANGES_RESULT: ${{ needs.changes.result }}
           DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
           ANALYSIS_RESULT: ${{ needs.analysis.result }}
-          VET_RESULT: ${{ needs.vet.result }}
         run: |
           set -euo pipefail
           if [[ "$CHANGES_RESULT" != success ]]; then
@@ -932,14 +892,14 @@ jobs:
             exit 1
           fi
           if [[ "$DOCS_ONLY" == true ]]; then
-            if [[ "$ANALYSIS_RESULT" != skipped || "$VET_RESULT" != skipped ]]; then
-              echo "docs-only child jobs were not skipped: analysis=$ANALYSIS_RESULT vet=$VET_RESULT" >&2
+            if [[ "$ANALYSIS_RESULT" != skipped ]]; then
+              echo "docs-only analysis job was not skipped: analysis=$ANALYSIS_RESULT" >&2
               exit 1
             fi
             exit 0
           fi
-          if [[ "$ANALYSIS_RESULT" != success || "$VET_RESULT" != success ]]; then
-            echo "lint coverage failed: analysis=$ANALYSIS_RESULT vet=$VET_RESULT" >&2
+          if [[ "$ANALYSIS_RESULT" != success ]]; then
+            echo "lint coverage failed: analysis=$ANALYSIS_RESULT" >&2
             exit 1
           fi
 

@@ -14,7 +14,7 @@ import (
 )
 
 // Finding 2: a symlink created INSIDE the workspace (the model can do this via
-// Bash `ln -s`) must not let Read/Write/Stat/fingerprint follow it out of the
+// Shell `ln -s`) must not let Read/Write/Stat/fingerprint follow it out of the
 // root. os.Root refuses the traversal and we map the error to ErrPathEscape.
 
 // newSymlinkWorkspace builds a Workspace under t.TempDir() and plants two
@@ -250,7 +250,7 @@ func TestRelaxedWriteCreateFileReplaceFileRejectAbsoluteSymlinkLeaf(t *testing.T
 }
 
 // TestReadDirIncludesSymlinkEntryWithSymlinkMode pins that a symlink INSIDE the
-// workspace root (created via Bash `ln -s`, not an escape) is reported by
+// workspace root (created via Shell `ln -s`, not an escape) is reported by
 // ReadDir with FileInfo.Mode carrying fs.ModeSymlink — it must not be silently
 // coerced to look like a regular file entry, so a caller inspecting Mode can
 // tell a symlink apart from real content before acting on it.

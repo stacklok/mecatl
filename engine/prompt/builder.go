@@ -224,7 +224,7 @@ func toolInventory(tools []tool.ToolSpec) string {
 // tools actually registered for the turn, so the model is steered toward the
 // dedicated tool only when it exists. It is GENERATED from the live catalog (a
 // membership set over ToolSpec.Name) rather than a static block, so a build with
-// Bash disabled does not tell the model to "reserve Bash", etc. The prompt
+// Shell disabled does not tell the model to "reserve Shell", etc. The prompt
 // package stays adapter-agnostic: tool names are matched as plain string
 // literals here (it must not import adapter/tools — that would invert layering).
 //
@@ -264,8 +264,8 @@ func toolDisciplineHints(tools []tool.ToolSpec) string {
 		b.WriteString(strings.Join(clauses, "; "))
 		b.WriteString(".")
 	}
-	if present["Bash"] {
-		writeSentence(&b, "Reserve Bash for real system/terminal commands.")
+	if present["Shell"] {
+		writeSentence(&b, "Reserve Shell for real system/terminal commands.")
 	}
 	if present["Subagent"] {
 		writeSentence(&b, "Use Subagent for focused delegation. For multiple independent read-only tasks, issue one Subagent call per task in the same assistant turn so eligible calls run concurrently; wait between calls only when a later task depends on an earlier result.")

@@ -39,16 +39,16 @@ import (
 //
 //   - BASE-SHARE, no shell — the fallback when no read-only forker is wired: a
 //     read-only member shares the base workspace and gets NO workspace-mutating
-//     tool (no Edit/Write/Bash), so it cannot corrupt the shared base. It retains
+//     tool (no Edit/Write/Shell), so it cannot corrupt the shared base. It retains
 //     the exact parent content backend while receiving a fresh read ledger.
 //   - READ-ONLY WORKTREE, full shell — a read-only member runs in a cheap git
 //     worktree (the default forker mode, shares the base repo's `.git` ⇒ full
-//     history) with Read/Grep/Glob PLUS Bash, but never Edit/Write. It can inspect
+//     history) with Read/Grep/Glob PLUS Shell, but never Edit/Write. It can inspect
 //     with a real shell (git log/show, cat, build, test) confined to a throwaway
 //     worktree; the shared `.git` is hardened against config-driven code execution
 //     in the composition layer (see internal/app.buildSandboxedCommandRunner).
 //   - MUTATING COPY, full shell — a Mutating member runs in its OWN force-copied
-//     fork (own `.git`) with Edit/Write/Bash, so parallel writes are safe because
+//     fork (own `.git`) with Edit/Write/Shell, so parallel writes are safe because
 //     isolated — exactly like Fork.
 //
 // The two forked tiers use DIFFERENT injected forkers (s.forker = force-copy for
@@ -84,11 +84,11 @@ var (
 	// catalog contains a workspace-mutating tool. It is a server MISCONFIGURATION of
 	// the member's catalog, not a bad client request. It is gated on base-sharing
 	// (neither Mutating nor read-only-isolated): a worktree-isolated read-only member
-	// is exempt exactly like a mutating one, because its mutating-classified Bash
+	// is exempt exactly like a mutating one, because its mutating-classified Shell
 	// lands in its own throwaway worktree, never the shared base.
 	ErrReadOnlyMemberMutating = errors.New("agent: read-only member given workspace-mutating tool")
 	// ErrReadOnlyShellNoForker is returned by AddMember when a member's factory marked
-	// it read-only-isolated (MemberBuild.IsolateReadOnly — it put Bash into a
+	// it read-only-isolated (MemberBuild.IsolateReadOnly — it put Shell into a
 	// non-mutating member's catalog) but no read-only forker is configured. It is a
 	// should-never-happen server MIS-WIRE assertion: the composition layer only sets
 	// IsolateReadOnly when the read-only forker is wired, so this guards the two from
@@ -178,7 +178,7 @@ type MemberSpec struct {
 	// coordinates); it runs on its initial prompt and whenever it has messages.
 	Lead bool
 	// Mutating requests a self-contained force-copied fork (own `.git`) for this
-	// member, with Edit/Write/Bash. A read-only member (the default) either runs in
+	// member, with Edit/Write/Shell. A read-only member (the default) either runs in
 	// an isolated git WORKTREE with a shell for inspection (when a read-only forker is
 	// wired — the factory sets MemberBuild.IsolateReadOnly) or, failing that, shares
 	// the base workspace with no shell. See the package "Workspace policy" doc.
@@ -223,15 +223,15 @@ type MemberBuild struct {
 	// the team coordination tools. Empty when the def scopes no MCP servers.
 	MCPToolNames []string
 	// IsolateReadOnly tells the supervisor this is a NON-mutating member that the
-	// factory nonetheless gave Bash (i.e. it put a workspace-mutating shell into a
+	// factory nonetheless gave Shell (i.e. it put a workspace-mutating shell into a
 	// read-only member's catalog because a read-only forker is available). When true
 	// the supervisor runs the member in an isolated git WORKTREE (via s.roForker) so
-	// its mutating-classified Bash lands in a throwaway checkout, never the shared
+	// its mutating-classified Shell lands in a throwaway checkout, never the shared
 	// base — and the read-only-member workspace-mutating-tool backstop EXEMPTS it
 	// (the guard gates on base-sharing, and an isolated member is not base-sharing).
 	// It is false for a base-sharing read-only member (no shell) and for a Mutating
 	// member (the Mutating flag already drives its force-copy fork). The factory must
-	// set it true ONLY when it actually added Bash to a non-mutating catalog AND a
+	// set it true ONLY when it actually added Shell to a non-mutating catalog AND a
 	// read-only forker is available; setting it without a wired forker trips
 	// ErrReadOnlyShellNoForker.
 	IsolateReadOnly bool
@@ -247,17 +247,17 @@ type MemberBuild struct {
 //
 //   - A read-only member that the factory CANNOT isolate (no read-only forker /
 //     runner wired) shares the base workspace, so it must get NO mutating tool
-//     (no Edit/Write/Bash) and MemberBuild.IsolateReadOnly stays false.
-//   - A read-only member the factory CAN isolate gets Read/Grep/Glob PLUS Bash (but
+//     (no Edit/Write/Shell) and MemberBuild.IsolateReadOnly stays false.
+//   - A read-only member the factory CAN isolate gets Read/Grep/Glob PLUS Shell (but
 //     NOT Edit/Write) and sets MemberBuild.IsolateReadOnly=true, so the supervisor
-//     runs it in a throwaway git worktree (s.roForker) where its Bash is confined.
+//     runs it in a throwaway git worktree (s.roForker) where its Shell is confined.
 //   - A Mutating member (which runs in an isolated force-copy fork via s.forker) may
-//     get Edit/Write/Bash.
+//     get Edit/Write/Shell.
 //
-// Bash is workspace-aware: BashTool.Execute runs the command with the member's
-// (forked) Workspace.Root() as the working directory, so an isolated member's Bash
+// Shell is workspace-aware: ShellTool.Execute runs the command with the member's
+// (forked) Workspace.Root() as the working directory, so an isolated member's Shell
 // runs in its OWN worktree/fork, never the shared parent base — which is why an
-// isolated member MAY be given Bash while a base-sharing read-only member must not.
+// isolated member MAY be given Shell while a base-sharing read-only member must not.
 //
 // routedModel is the OPT-IN semantic model router's classification for an UNDEFINED
 // member (ADR 0034), the ALREADY-RESOLVED concrete model id the member's engine should
@@ -374,7 +374,7 @@ type memberRT struct {
 	cleanup func() error
 	sess    *session.Session
 	// isolated reports that this member runs in its OWN isolated workspace (a Mutating
-	// force-copy fork or a read-only worktree) — so its Bash asks are eligible for the A2
+	// force-copy fork or a read-only worktree) — so its Shell asks are eligible for the A2
 	// worktree-safe auto-approve. false for a base-sharing read-only member (which has no
 	// shell anyway). Set in AddMember from needFork.
 	isolated bool
@@ -795,7 +795,7 @@ func (s *Supervisor) AddMember(ctx context.Context, spec MemberSpec) error {
 	// read-only-isolated member that the factory granted a shell (worktree fork,
 	// s.roForker). A neither-mutating-nor-isolated member shares the base (no fork,
 	// no shell). needFork also drives the mutating-tool backstop below: an isolated
-	// member's mutating-classified Bash lands in its OWN workspace, so it is exempt.
+	// member's mutating-classified Shell lands in its OWN workspace, so it is exempt.
 	needFork := spec.Mutating || build.IsolateReadOnly
 	ws, cleanup, err := s.selectMemberWorkspace(ctx, spec, build)
 	if err != nil {
@@ -816,7 +816,7 @@ func (s *Supervisor) AddMember(ctx context.Context, spec MemberSpec) error {
 	// above, but the factory builds the Engine's catalog independently. Verify they
 	// agree. The backstop gates on BASE-SHARING (!needFork): a member that shares the
 	// base must NOT be handed a WORKSPACE-mutating tool (Edit / Write / non-read-only
-	// Bash) — that would let it corrupt the shared base concurrently with peers. A
+	// Shell) — that would let it corrupt the shared base concurrently with peers. A
 	// member running in its OWN workspace (Mutating fork OR read-only worktree) is
 	// exempt: its mutating tool lands in the isolated fork, never the shared base.
 	// Team coordination tools report ReadOnly() == false but only mutate TEAM state,

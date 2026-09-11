@@ -133,7 +133,7 @@ https://agentskills.io) and Claude Code's extensions
 | `license` | no | License name or path to bundled LICENSE. |
 | `compatibility` | no | 1-500 chars. Environment requirements. |
 | `metadata` | no | Author, version, tags, etc. — agent-tool-specific. |
-| `allowed-tools` | no | Pre-approved tools (experimental). Space-delimited, supports `Bash(git:*) Read`. |
+| `allowed-tools` | no | Pre-approved tools (experimental). Space-delimited; Claude Code supports `Bash(git:*) Read`. Tool names are harness-specific, so preserve the target harness's syntax rather than treating `Bash` and Mecatl's `Shell` as interchangeable calls. |
 | `disable-model-invocation` | no | Claude Code extension; `true` makes the skill manual-only (`/skill-name`). Use for skills with side effects. |
 | `context` | no | Claude Code extension; `fork` injects skill content into a fork or named subagent context. |
 

@@ -581,7 +581,7 @@ MISS logs an INFO naming the reason (`degenerate-input`/`classifier-error`/`canc
 `empty-model` — metadata only, issue #287); the breaker-open INFO is unchanged. The
 routed fields surface end-to-end: the session struct + the proto/client wire
 (`routed_category`/`routed_model` on the `Subagent` event payload), relayed through
-the gRPC + HTTP relays and rendered by mecatui (inline card + ctrl+a fleet roster).
+the gRPC + HTTP relays and rendered by mecatui (inline card + f6 fleet roster).
 
 The structured miss/gate half of this observability surface is described below under the
 per-delegation routing-reason surface ([ADR 0083](../adr/0083-routing-reason-on-delegation-start.md)).
@@ -608,7 +608,7 @@ families). The per-family seam respects each family's engine lifetime:
 Like the Subagent family, the team and parallel routed fields surface **end-to-end on the
 proto/client wire**: `routed_category`/`routed_model` on the `TeamMemberSpec` (team.start
 roster) and on the `Parallel` event (branch_start), relayed through the gRPC + HTTP relays
-and rendered by mecatui (the ctrl+a Teams roster row and the Parallel group-focus branch
+and rendered by mecatui (the f6 Teams roster row and the Parallel group-focus branch
 row). Bare metadata only — a category label + a model id, never member/branch content
 (gauntlet #7).
 

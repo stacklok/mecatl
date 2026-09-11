@@ -21,18 +21,18 @@ func TestSubagentBlockParseAudienceAndScope(t *testing.T) {
 	const yamlDoc = `
 permissions:
   allow:
-    - "Bash(go test:*)"
+    - "Shell(go test:*)"
   ask:
-    - "Bash(go vet:*)"
+    - "Shell(go vet:*)"
   deny:
-    - "Bash(rm:*)"
+    - "Shell(rm:*)"
   subagent:
     allow:
-      - "Bash(cat:*)"
+      - "Shell(cat:*)"
     ask:
-      - "Bash(go build:*)"
+      - "Shell(go build:*)"
     deny:
-      - "Bash(curl:*)"
+      - "Shell(curl:*)"
 `
 	cfg, err := parseYAML([]byte(yamlDoc))
 	if err != nil {
@@ -56,7 +56,7 @@ permissions:
 		{"curl*", governance.Deny, governance.AudienceSubagent},
 	}
 	for _, w := range want {
-		r := findRule(rules, "Bash", w.pattern)
+		r := findRule(rules, "Shell", w.pattern)
 		if r == nil {
 			t.Fatalf("rule %q missing: %+v", w.pattern, rules)
 			return
@@ -79,17 +79,17 @@ func TestPermissionsStrictUnknownKeys(t *testing.T) {
 	}{
 		{
 			name: "typo'd subagent key",
-			doc:  "permissions:\n  subagnet:\n    allow:\n      - \"Bash(ls)\"\n",
+			doc:  "permissions:\n  subagnet:\n    allow:\n      - \"Shell(ls)\"\n",
 			frag: `unknown key "subagnet"`,
 		},
 		{
 			name: "typo'd allow key",
-			doc:  "permissions:\n  alow:\n    - \"Bash(ls)\"\n",
+			doc:  "permissions:\n  alow:\n    - \"Shell(ls)\"\n",
 			frag: `unknown key "alow"`,
 		},
 		{
 			name: "typo'd key inside the subagent block",
-			doc:  "permissions:\n  subagent:\n    dany:\n      - \"Bash(rm:*)\"\n",
+			doc:  "permissions:\n  subagent:\n    dany:\n      - \"Shell(rm:*)\"\n",
 			frag: `permissions.subagent: unknown key "dany"`,
 		},
 	}
@@ -115,7 +115,7 @@ trustedWorkspaces:
 someFutureKey: true
 permissions:
   allow:
-    - "Bash(ls)"
+    - "Shell(ls)"
 `
 	cfg, err := parseYAML([]byte(yamlDoc))
 	if err != nil {
@@ -144,7 +144,7 @@ func TestRuleCapDropOrderSafestSurvive(t *testing.T) {
 	mk := func(n int, verb string) []string {
 		specs := make([]string, n)
 		for i := range specs {
-			specs[i] = fmt.Sprintf("Bash(%s-%d:*)", verb, i)
+			specs[i] = fmt.Sprintf("Shell(%s-%d:*)", verb, i)
 		}
 		return specs
 	}
@@ -187,9 +187,9 @@ func TestRuleCapDropOrderSafestSurvive(t *testing.T) {
 func TestClaudeImportAudienceTagging(t *testing.T) {
 	const doc = `{
   "permissions": {
-    "allow": ["Bash(go test:*)", "WebFetch(domain:example.com)"],
-    "ask": ["Bash(go vet:*)"],
-    "deny": ["Bash(rm:*)"]
+    "allow": ["Shell(go test:*)", "WebFetch(domain:example.com)"],
+    "ask": ["Shell(go vet:*)"],
+    "deny": ["Shell(rm:*)"]
   }
 }`
 	var report Report
@@ -202,10 +202,10 @@ func TestClaudeImportAudienceTagging(t *testing.T) {
 		effect        governance.Effect
 		audience      governance.Audience
 	}{
-		{"Bash", "go test*", governance.Allow, governance.AudienceMain},
+		{"Shell", "go test*", governance.Allow, governance.AudienceMain},
 		{"WebFetch", "domain:example.com", governance.Ask, governance.AudienceMain}, // demoted, bucket = allow
-		{"Bash", "go vet*", governance.Ask, governance.AudienceMain},
-		{"Bash", "rm*", governance.Deny, governance.AudienceAll},
+		{"Shell", "go vet*", governance.Ask, governance.AudienceMain},
+		{"Shell", "rm*", governance.Deny, governance.AudienceAll},
 	}
 	for _, c := range checks {
 		r := findRule(rules, c.tool, c.pattern)
@@ -228,36 +228,36 @@ func TestTrustGateDropsSubagentAllowsKeepsDenyAsk(t *testing.T) {
 	const yamlDoc = `
 permissions:
   deny:
-    - "Bash(rm:*)"
+    - "Shell(rm:*)"
   subagent:
     allow:
-      - "Bash(cat:*)"
+      - "Shell(cat:*)"
     ask:
-      - "Bash(go build:*)"
+      - "Shell(go build:*)"
     deny:
-      - "Bash(curl:*)"
+      - "Shell(curl:*)"
 `
 	r := newWithEnv(Options{Conventional: true, TrustProject: false}, fakeEnv())
 	ws := newProjectWS(t, "/repo", yamlDoc)
 	rules := r.Resolve(context.Background(), ws)
 
-	if findRule(rules, "Bash", "cat*") != nil {
+	if findRule(rules, "Shell", "cat*") != nil {
 		t.Fatalf("untrusted project's SUBAGENT allow must be dropped: %+v", rules)
 	}
-	if got := findRule(rules, "Bash", "go build*"); got == nil || got.Effect != governance.Ask || got.Audience != governance.AudienceSubagent {
+	if got := findRule(rules, "Shell", "go build*"); got == nil || got.Effect != governance.Ask || got.Audience != governance.AudienceSubagent {
 		t.Fatalf("untrusted project's subagent ask must be kept (AudienceSubagent): %+v", got)
 	}
-	if got := findRule(rules, "Bash", "curl*"); got == nil || got.Effect != governance.Deny || got.Audience != governance.AudienceSubagent {
+	if got := findRule(rules, "Shell", "curl*"); got == nil || got.Effect != governance.Deny || got.Audience != governance.AudienceSubagent {
 		t.Fatalf("untrusted project's subagent deny must be kept (AudienceSubagent): %+v", got)
 	}
-	if findRule(rules, "Bash", "rm*") == nil {
+	if findRule(rules, "Shell", "rm*") == nil {
 		t.Fatalf("top-level deny must be kept: %+v", rules)
 	}
 
 	// Trusted: the subagent allow resolves, tagged AudienceSubagent.
 	rt := newWithEnv(Options{Conventional: true, TrustProject: true}, fakeEnv())
 	trusted := rt.Resolve(context.Background(), newProjectWS(t, "/repo2", yamlDoc))
-	if got := findRule(trusted, "Bash", "cat*"); got == nil || got.Effect != governance.Allow || got.Audience != governance.AudienceSubagent {
+	if got := findRule(trusted, "Shell", "cat*"); got == nil || got.Effect != governance.Allow || got.Audience != governance.AudienceSubagent {
 		t.Fatalf("trusted project's subagent allow must resolve (AudienceSubagent): %+v", got)
 	}
 }
@@ -290,14 +290,14 @@ func TestStrictSkipWarnNamesLostRuleCounts(t *testing.T) {
 	const doc = `
 permissions:
   deny:
-    - "Bash(zap:*)"
+    - "Shell(zap:*)"
   ask:
-    - "Bash(go vet:*)"
+    - "Shell(go vet:*)"
   alow:
-    - "Bash(ls)"
+    - "Shell(ls)"
   subagent:
     deny:
-      - "Bash(curl:*)"
+      - "Shell(curl:*)"
 `
 	ws := newProjectWS(t, "/repo", doc)
 	rules := r.Resolve(context.Background(), ws)

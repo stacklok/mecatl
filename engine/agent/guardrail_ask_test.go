@@ -70,24 +70,24 @@ func (h hookApprovalLearnerStub) LearnHookApproval(_ context.Context, ev governa
 	h.learnedTool.Store(ev.Tool)
 }
 
-// bashGuardTool is a non-read-only Bash-like tool recording whether it ran.
-func bashGuardTool(ran *atomic.Bool) *fakeTool {
-	return &fakeTool{name: "Bash", readOnly: false,
+// shellGuardTool is a non-read-only Shell-like tool recording whether it ran.
+func shellGuardTool(ran *atomic.Bool) *fakeTool {
+	return &fakeTool{name: "Shell", readOnly: false,
 		exec: func(_ context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
 			ran.Store(true)
 			return session.NewToolResult(in.ID, "ran"), nil
 		}}
 }
 
-// driveGuardrailAsk runs ONE prompt issuing a single Bash call under the stub hooks,
+// driveGuardrailAsk runs ONE prompt issuing a single Shell call under the stub hooks,
 // resolving the FIRST hook-originated permission ask with verdict. It returns the
 // captured ask (if any), whether the tool ran, and the drained events.
 func driveGuardrailAsk(t *testing.T, hooks *hookApprovalStub, interactive bool, cmd string, verdict session.ApprovalVerdict) (ask *session.PendingAsk, ran bool, evs []session.Event) {
 	t.Helper()
 	var didRun atomic.Bool
-	cat := catalogWith(t, bashGuardTool(&didRun))
+	cat := catalogWith(t, shellGuardTool(&didRun))
 	llm := mockllm.New(
-		mockllm.ToolCallTurn(toolCall("c1", "Bash", `{"command":"`+cmd+`"}`)),
+		mockllm.ToolCallTurn(toolCall("c1", "Shell", `{"command":"`+cmd+`"}`)),
 		mockllm.TextTurn("done"),
 	)
 	e := newEngine(agent.Deps{LLM: llm, Catalog: cat, Hooks: hooks, Interactive: interactive})
@@ -106,7 +106,7 @@ func driveGuardrailAsk(t *testing.T, hooks *hookApprovalStub, interactive bool, 
 // InteractiveAllow: an interactive engine surfaces a hook-originated ask (with
 // Ask.HookOriginated true), and AllowOnce runs the tool and fires EvApproval.
 func TestGuardrailAskInteractiveAllowRuns(t *testing.T) {
-	stub := &hookApprovalStub{tool: "Bash", reason: "blocked by guardrail: merges a PR"}
+	stub := &hookApprovalStub{tool: "Shell", reason: "blocked by guardrail: merges a PR"}
 	ask, ran, evs := driveGuardrailAsk(t, stub, true, "gh pr merge", session.VerdictAllowOnce)
 	if ask == nil {
 		t.Fatal("an interactive hook block must surface a permission ask")
@@ -133,7 +133,7 @@ func TestGuardrailAskInteractiveAllowRuns(t *testing.T) {
 
 // InteractiveDeny: VerdictDeny → denied result, tool not executed.
 func TestGuardrailAskInteractiveDenyBlocks(t *testing.T) {
-	stub := &hookApprovalStub{tool: "Bash", reason: "blocked by guardrail: merges a PR"}
+	stub := &hookApprovalStub{tool: "Shell", reason: "blocked by guardrail: merges a PR"}
 	ask, ran, evs := driveGuardrailAsk(t, stub, true, "gh pr merge", session.VerdictDeny)
 	if ask == nil {
 		t.Fatal("the block must still surface an ask before the deny")
@@ -156,7 +156,7 @@ func TestGuardrailAskInteractiveDenyBlocks(t *testing.T) {
 // HeadlessDegradesToTerminalBlock (adversarial): a non-interactive engine NEVER
 // surfaces an ask — the block stands and the tool never runs.
 func TestGuardrailAskHeadlessDegradesToBlock(t *testing.T) {
-	stub := &hookApprovalStub{tool: "Bash", reason: "blocked by guardrail: merges a PR"}
+	stub := &hookApprovalStub{tool: "Shell", reason: "blocked by guardrail: merges a PR"}
 	// Pass a verdict that would ALLOW if an ask existed — it must never be consulted.
 	ask, ran, evs := driveGuardrailAsk(t, stub, false, "gh pr merge", session.VerdictAllowAlways)
 	if ask != nil {
@@ -216,7 +216,7 @@ func TestGuardrailAskPostApprovalIgnored(t *testing.T) {
 // Interactive:false; this is the same code path as the headless test but named for
 // the child-isolation guarantee.)
 func TestGuardrailAskChildDegrades(t *testing.T) {
-	stub := &hookApprovalStub{tool: "Bash", reason: "blocked by guardrail"}
+	stub := &hookApprovalStub{tool: "Shell", reason: "blocked by guardrail"}
 	ask, ran, _ := driveGuardrailAsk(t, stub, false, "gh pr merge", session.VerdictAllowOnce)
 	if ask != nil {
 		t.Fatal("a child (Interactive:false) engine must never surface a guardrail ask")
@@ -230,13 +230,13 @@ func TestGuardrailAskChildDegrades(t *testing.T) {
 // (LearnHookApproval fires); the stub then stops asking for a matching command in
 // the same session. A non-matching command still asks.
 func TestGuardrailAskAllowAlwaysArmsWaiver(t *testing.T) {
-	base := &hookApprovalStub{tool: "Bash", reason: "blocked by guardrail", stopAfterLearn: true}
+	base := &hookApprovalStub{tool: "Shell", reason: "blocked by guardrail", stopAfterLearn: true}
 	learner := hookApprovalLearnerStub{hookApprovalStub: base}
 
 	// First matching block under an interactive engine, AllowAlways.
 	var ran1 atomic.Bool
-	cat1 := catalogWith(t, bashGuardTool(&ran1))
-	llm1 := mockllm.New(mockllm.ToolCallTurn(toolCall("c1", "Bash", `{"command":"gh pr merge"}`)), mockllm.TextTurn("done"))
+	cat1 := catalogWith(t, shellGuardTool(&ran1))
+	llm1 := mockllm.New(mockllm.ToolCallTurn(toolCall("c1", "Shell", `{"command":"gh pr merge"}`)), mockllm.TextTurn("done"))
 	sess := newSession(t, session.Limits{})
 	e1 := newEngine(agent.Deps{LLM: llm1, Catalog: cat1, Hooks: learner, Interactive: true})
 	r1 := e1.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
@@ -256,7 +256,7 @@ func TestGuardrailAskAllowAlwaysArmsWaiver(t *testing.T) {
 	if base.learned.Load() != 1 {
 		t.Fatalf("AllowAlways must arm the waiver (LearnHookApproval); learned=%d", base.learned.Load())
 	}
-	if got, _ := base.learnedTool.Load().(string); got != "Bash" {
+	if got, _ := base.learnedTool.Load().(string); got != "Shell" {
 		t.Fatalf("the learned event must carry the tool; got %q", got)
 	}
 
@@ -266,8 +266,8 @@ func TestGuardrailAskAllowAlwaysArmsWaiver(t *testing.T) {
 		t.Fatalf("reopen: %v", err)
 	}
 	var ran2 atomic.Bool
-	cat2 := catalogWith(t, bashGuardTool(&ran2))
-	llm2 := mockllm.New(mockllm.ToolCallTurn(toolCall("c2", "Bash", `{"command":"gh pr merge"}`)), mockllm.TextTurn("done"))
+	cat2 := catalogWith(t, shellGuardTool(&ran2))
+	llm2 := mockllm.New(mockllm.ToolCallTurn(toolCall("c2", "Shell", `{"command":"gh pr merge"}`)), mockllm.TextTurn("done"))
 	e2 := newEngine(agent.Deps{LLM: llm2, Catalog: cat2, Hooks: learner, Interactive: true})
 	r2 := e2.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	var secondAsk bool
@@ -289,10 +289,10 @@ func TestGuardrailAskAllowAlwaysArmsWaiver(t *testing.T) {
 // process death), then ResumeApproval(AllowOnce) executes the tool EXACTLY ONCE with
 // the preHook NOT re-run (the HookOriginated skip).
 func TestGuardrailAskResumeFromAwaitingAllow(t *testing.T) {
-	stub := &hookApprovalStub{tool: "Bash", reason: "blocked by guardrail"}
+	stub := &hookApprovalStub{tool: "Shell", reason: "blocked by guardrail"}
 	var ran atomic.Bool
-	cat := catalogWith(t, bashGuardTool(&ran))
-	llm := mockllm.New(mockllm.ToolCallTurn(toolCall("c1", "Bash", `{"command":"gh pr merge"}`)), mockllm.TextTurn("done"))
+	cat := catalogWith(t, shellGuardTool(&ran))
+	llm := mockllm.New(mockllm.ToolCallTurn(toolCall("c1", "Shell", `{"command":"gh pr merge"}`)), mockllm.TextTurn("done"))
 	sess := newSession(t, session.Limits{})
 	e := newEngine(agent.Deps{LLM: llm, Catalog: cat, Hooks: stub, Interactive: true})
 
@@ -335,7 +335,7 @@ func TestGuardrailAskResumeFromAwaitingAllow(t *testing.T) {
 	// WITHOUT preHook being consulted again (the stub's preCalls stays at its
 	// pre-restart count of 1).
 	preBefore := stub.preCalls.Load()
-	cat2 := catalogWith(t, bashGuardTool(&ran))
+	cat2 := catalogWith(t, shellGuardTool(&ran))
 	e2 := newEngine(agent.Deps{LLM: mockllm.New(mockllm.TextTurn("ok")), Catalog: cat2, Hooks: stub, Interactive: true})
 	rr := e2.ResumeApproval(context.Background(), restored, agent.MemEnv("/ws"), askID, session.VerdictAllowOnce)
 	drain(rr)
@@ -352,11 +352,11 @@ func TestGuardrailAskResumeFromAwaitingAllow(t *testing.T) {
 // LearnHookApproval (the live verdict already armed it; the resume path only finishes
 // the parked turn). Pins that the learner is wired ONLY at the live verdict site.
 func TestGuardrailAskResumeAllowAlwaysDoesNotReArm(t *testing.T) {
-	base := &hookApprovalStub{tool: "Bash", reason: "blocked by guardrail"}
+	base := &hookApprovalStub{tool: "Shell", reason: "blocked by guardrail"}
 	learner := hookApprovalLearnerStub{hookApprovalStub: base}
 	var ran atomic.Bool
-	cat := catalogWith(t, bashGuardTool(&ran))
-	llm := mockllm.New(mockllm.ToolCallTurn(toolCall("c1", "Bash", `{"command":"gh pr merge"}`)), mockllm.TextTurn("done"))
+	cat := catalogWith(t, shellGuardTool(&ran))
+	llm := mockllm.New(mockllm.ToolCallTurn(toolCall("c1", "Shell", `{"command":"gh pr merge"}`)), mockllm.TextTurn("done"))
 	sess := newSession(t, session.Limits{})
 	e := newEngine(agent.Deps{LLM: llm, Catalog: cat, Hooks: learner, Interactive: true})
 
@@ -383,7 +383,7 @@ func TestGuardrailAskResumeAllowAlwaysDoesNotReArm(t *testing.T) {
 	}
 
 	// Resume with AllowAlways: the call executes, but the resume path must NOT re-arm.
-	cat2 := catalogWith(t, bashGuardTool(&ran))
+	cat2 := catalogWith(t, shellGuardTool(&ran))
 	e2 := newEngine(agent.Deps{LLM: mockllm.New(mockllm.TextTurn("ok")), Catalog: cat2, Hooks: learner, Interactive: true})
 	rr := e2.ResumeApproval(context.Background(), restored, agent.MemEnv("/ws"), askID, session.VerdictAllowAlways)
 	drain(rr)
@@ -403,11 +403,11 @@ func TestGuardrailAskResumeAllowAlwaysDoesNotReArm(t *testing.T) {
 func TestGuardrailAskResumePolicyAskRefinedBlockFailsSafe(t *testing.T) {
 	// preHook is INERT on the first pass (noPreBlock) so the LIVE ask is the POLICY
 	// ask, not a hook ask; on the resume re-run we flip it to return an askable block.
-	stub := &hookApprovalStub{tool: "Bash", reason: "blocked by guardrail", noPreBlock: true}
+	stub := &hookApprovalStub{tool: "Shell", reason: "blocked by guardrail", noPreBlock: true}
 	var ran atomic.Bool
-	cat := catalogWith(t, bashGuardTool(&ran))
-	llm := mockllm.New(mockllm.ToolCallTurn(toolCall("c1", "Bash", `{"command":"gh pr merge"}`)), mockllm.TextTurn("done"))
-	// A policy that ASKS for Bash (ModeDefault, mutating tool, no allow rule).
+	cat := catalogWith(t, shellGuardTool(&ran))
+	llm := mockllm.New(mockllm.ToolCallTurn(toolCall("c1", "Shell", `{"command":"gh pr merge"}`)), mockllm.TextTurn("done"))
+	// A policy that ASKS for Shell (ModeDefault, mutating tool, no allow rule).
 	policy := permpolicy.NewPolicy(nil, permstore.New())
 	sess := newSession(t, session.Limits{})
 	e := newEngine(agent.Deps{LLM: llm, Catalog: cat, Hooks: stub, Policy: policy, Interactive: true})
@@ -435,7 +435,7 @@ func TestGuardrailAskResumePolicyAskRefinedBlockFailsSafe(t *testing.T) {
 
 	// Now make the resume's preHook re-run return an askable block.
 	stub.noPreBlock = false
-	cat2 := catalogWith(t, bashGuardTool(&ran))
+	cat2 := catalogWith(t, shellGuardTool(&ran))
 	policy2 := permpolicy.NewPolicy(nil, permstore.New())
 	e2 := newEngine(agent.Deps{LLM: mockllm.New(mockllm.TextTurn("ok")), Catalog: cat2, Hooks: stub, Policy: policy2, Interactive: true})
 	rr := e2.ResumeApproval(context.Background(), restored, agent.MemEnv("/ws"), askID, session.VerdictAllowOnce)

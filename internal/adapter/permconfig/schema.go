@@ -63,8 +63,8 @@ const MaxContextWindowTokens = 2_000_000
 // Claude-Code permissions shape so a user familiar with one can read the other.
 //
 // Each list entry is a RULE SPEC string of the form "Tool(pattern)" or bare
-// "Tool" (tool-wide). For Bash the pattern is a command glob, e.g.
-// "Bash(go test*)". See parseSpec / normalizeGlob for the exact grammar.
+// "Tool" (tool-wide). For Shell the pattern is a command glob, e.g.
+// "Shell(go test*)". See parseSpec / normalizeGlob for the exact grammar.
 //
 // The TOP level of Config stays LENIENT (other keys — trustedWorkspaces etc. —
 // must keep parsing); strictness applies only INSIDE the permissions: subtree,

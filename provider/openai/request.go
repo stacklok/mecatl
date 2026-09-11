@@ -178,7 +178,7 @@ func reasoningEffortFor(token string) (shared.ReasoningEffort, bool) {
 // Tools are sent NON-STRICT (Strict left unset → SDK omits it → upstream default
 // is non-strict). Strict mode requires every tool schema's `required` to list ALL
 // of its `properties` keys, but many built-in tools carry genuinely optional
-// params (Bash timeout_ms, Edit replace_all, Read offset/limit, Grep path, the
+// params (Shell timeout_ms, Edit replace_all, Read offset/limit, Grep path, the
 // memory Remember/query tools, ToolSearch, Fork, Team, Subagent,…). A
 // strict-enforcing OpenAI-compatible upstream (e.g. Azure reached via OpenRouter)
 // would 400 those schemas. We do not need strict's guarantee: tool arguments are

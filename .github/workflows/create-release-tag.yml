@@ -1,0 +1,231 @@
+# Tags the merged release PR — stage 2 of 3 in mecatl's release flow.
+#
+# Fires when a human merges the PR that `create-release-pr.yml` opened, which is the only
+# thing that changes VERSION on main. It re-verifies that the commit really is a merged
+# release PR, then pushes the annotated vX.Y.Z tag that triggers release.yml.
+#
+# WHY THE APP TOKEN IS LOAD-BEARING HERE. GitHub suppresses workflow runs for events triggered
+# by GITHUB_TOKEN, so a tag pushed with GITHUB_TOKEN would sit there and release.yml would
+# never run. The App installation token is a distinct principal, so the tag push cascades.
+#
+# PORTED FROM stacklok/toolhive, with ONE deliberate omission: no `gh release create`.
+# toolhive's releaser.yml triggers on `release: published`, so its tag workflow MUST create the
+# Release to start the publish. mecatl's release.yml triggers on `push: tags: 'v*'`, so the tag
+# push alone is enough — and .goreleaser.yaml sets `release.mode: keep-existing`, so a Release
+# pre-created here would KEEP its `--generate-notes` body and GoReleaser would never apply its
+# own header/footer. Creating one here does not merely duplicate work; it silently drops the
+# `brew install` and `cosign verify-blob` instructions from every release. The
+# Release-Triggered-By trailer toolhive extracts exists only to feed those notes, so it is not
+# read here either.
+name: Create Release Tag
+
+on:
+  push:
+    branches: [main]
+    paths: ['VERSION']
+  # Re-drive after a transient failure. Every check below re-runs, so this adds no authority —
+  # without it, the only recovery from a flaky tag push is burning the version on a new PR.
+  workflow_dispatch:
+
+# The tag push uses the App token, not GITHUB_TOKEN — nothing here needs write.
+permissions:
+  contents: read
+
+# Keyed on the ref rather than the version: two pushes to main cannot be tagging different
+# versions concurrently, and the tag-exists check below makes a re-run idempotent anyway.
+concurrency:
+  group: create-release-tag-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  create-tag:
+    name: Tag the release commit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # See create-release-pr.yml: the App key is environment-scoped, not a repo secret, so a
+    # branch cannot dispatch a modified copy of this workflow and mint a contents:write token.
+    environment: release
+    permissions:
+      contents: read # checkout
+      pull-requests: read # resolve the PR that produced this commit
+    steps:
+      # fetch-depth: 0 so `git rev-parse <tag>` can see existing tags for the idempotency check.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          # filter: blob:none makes this a PARTIAL clone. fetch-depth: 0 on this
+          # repo means 184 branches / 123 tags against a 306 MB history, which
+          # measured 5m18s of a 5m35s run — 95% of the job. Filtering blobs
+          # fetches the commit graph and trees but not historical file contents,
+          # which is all this job needs: commit metadata for release notes, and
+          # tip-of-branch files (fetched with the checkout) for the version bump.
+          #
+          # NOTE the interaction with persist-credentials: false below — after
+          # checkout there are no credentials, so a LAZY blob fetch would fail.
+          # Everything here reads either commit metadata or tip files, and
+          # `git diff --name-only` needs trees (included) not blobs. Do not add a
+          # step that reads a historical file's CONTENTS without re-authenticating.
+          filter: blob:none
+          persist-credentials: false
+
+      - name: Read the version
+        id: version
+        run: |
+          set -euo pipefail
+          VERSION="$(tr -d '[:space:]' < VERSION)"
+          if ! printf '%s' "${VERSION}" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::VERSION must hold bare semver (MAJOR.MINOR.PATCH), got '${VERSION}'"
+            exit 1
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
+
+      # The path filter alone is not proof that this commit came from the release flow, and
+      # neither is the commit SUBJECT: matching /^Release vX.Y.Z/ only asserts a naming
+      # convention, and it silently couples the gate to the repo's squash-title setting (flip
+      # squash_merge_commit_title and every release wedges AFTER the bump is already on main).
+      # Ask GitHub what produced this commit instead, then check what it actually contains.
+      # ONE decision, because tag state and provenance are interdependent — see the table.
+      # Ordering matters: the tag-state check comes FIRST. The commit that INTRODUCES the
+      # VERSION file (this feature's own bootstrap merge) touches VERSION from a non-release
+      # branch, so a provenance-first order fails it and the new mechanism's very first run on
+      # main looks broken. It is harmless — no tag, no publish — but it should be quiet, and
+      # provenance only has to hold when a tag is actually about to be created.
+      #
+      #   tag state      provenance   outcome
+      #   ------------   ----------   ---------------------------------------------------
+      #   at this SHA    (not run)    nothing to do (idempotent re-run)
+      #   elsewhere      fails        nothing to do (bootstrap: VERSION names a released tag)
+      #   elsewhere      passes       ERROR: this release PR's version is already tagged
+      #   absent         fails        ERROR: VERSION edited outside the release flow
+      #   absent         passes       verify contents + pins, then tag
+      - name: Decide whether to tag
+        id: decide
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ steps.version.outputs.tag }}
+          REPOSITORY: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+          WF: .github/workflows/mecatequi-reusable.yml
+        run: |
+          set -euo pipefail
+
+          # --- tag state -------------------------------------------------------------
+          state=absent
+          at=""
+          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+            # Peel the annotated tag to the commit it names.
+            at="$(git rev-parse "refs/tags/${TAG}^{commit}")"
+            if [ "${at}" = "${SHA}" ]; then state=current; else state=elsewhere; fi
+          fi
+          echo "tag ${TAG}: state=${state}${at:+ (at ${at})}"
+
+          if [ "${state}" = "current" ]; then
+            echo "should_tag=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::${TAG} already points at ${SHA} — nothing to do"
+            exit 0
+          fi
+
+          # --- provenance, evaluated but not yet enforced ------------------------------
+          # Asking GitHub which PR produced the commit, rather than pattern-matching the
+          # commit subject: a subject regex only asserts a naming convention, fails outright
+          # on a rebase merge, and silently couples the gate to squash_merge_commit_title.
+          pr="$(gh api "/repos/${REPOSITORY}/commits/${SHA}/pulls" --jq '.[0] // {}')"
+          head_ref="$(printf '%s' "${pr}" | jq -r '.head.ref // ""')"
+          merged_at="$(printf '%s' "${pr}" | jq -r '.merged_at // ""')"
+          author_type="$(printf '%s' "${pr}" | jq -r '.user.type // ""')"
+          echo "PR head=${head_ref:-<none>} merged=${merged_at:-<no>} author_type=${author_type:-<none>}"
+
+          provenance=no
+          if [ "${head_ref}" = "release/v${VERSION}" ] && [ -n "${merged_at}" ] \
+            && [ "${author_type}" = "Bot" ]; then
+            provenance=ok
+          fi
+
+          # --- decision ----------------------------------------------------------------
+          if [ "${provenance}" != "ok" ]; then
+            if [ "${state}" = "elsewhere" ]; then
+              echo "should_tag=false" >> "$GITHUB_OUTPUT"
+              echo "::notice::${TAG} already exists (at ${at}) and this commit is not its release PR — nothing to do"
+              exit 0
+            fi
+            echo "::error::${SHA} is not a merged release PR for v${VERSION} — refusing to tag"
+            echo "  Expected a merged PR opened by the release App from branch release/v${VERSION}."
+            echo "  Cut releases with the Create Release PR workflow, never by editing VERSION."
+            exit 1
+          fi
+
+          if [ "${state}" = "elsewhere" ]; then
+            echo "::error::${TAG} already exists at ${at}, but this release PR expects to create it"
+            echo "  Refusing to move a published tag — its archives' checksums are recorded in"
+            echo "  the Homebrew formula. Fix forward with the next patch version."
+            exit 1
+          fi
+
+          # --- provenance holds and the tag is absent: check contents, then tag ---------
+          # A release commit bumps the version and nothing else. This is what stops a PR that
+          # is correctly named and correctly branched from also shipping a payload.
+          changed="$(git diff --name-only "${SHA}^" "${SHA}" | sort)"
+          if [ "${changed}" != "$(printf '%s\n%s\n' "${WF}" 'VERSION' | sort)" ]; then
+            echo "::error::release commit changes more than the version bump — refusing to tag"
+            printf 'got:\n%s\n' "${changed}"
+            echo "  The release PR must carry ONLY the version bump; something else rode along."
+            echo "  VERSION is already bumped on main, so this number is spent: dispatch"
+            echo "  create-release-pr.yml again to cut the next patch from the current main."
+            exit 1
+          fi
+
+          # VERSION and the Mecatequi pins must agree. release.yml runs this same gate, but
+          # only AFTER the tag exists, and a published tag is immutable in practice.
+          bash .github/actions/check-reusable-pins.sh
+
+          echo "should_tag=true" >> "$GITHUB_OUTPUT"
+          echo "Verified: ${TAG} will be created at ${SHA}"
+
+      # Minted last, immediately before the only step that needs it: every check above runs
+      # repo-controlled scripts and has no business doing so with a contents:write App
+      # credential live in the job.
+      - name: Mint the release app token
+        id: app-token
+        if: steps.decide.outputs.should_tag == 'true'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+
+      # Annotated, matching every prior mecatl release. The token rides in the push URL rather
+      # than a persisted credential, so it is never written to .git/config.
+      - name: Create and push the tag
+        if: steps.decide.outputs.should_tag == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "${TAG}" -m "Release ${TAG}"
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${REPOSITORY}.git" "${TAG}"
+          echo "::notice::pushed ${TAG} — release.yml will publish it"
+
+      - name: Summary
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          SHOULD_TAG: ${{ steps.decide.outputs.should_tag }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          {
+            echo "## Release tag ${TAG}"
+            echo ""
+            if [ "${SHOULD_TAG}" != "true" ]; then
+              echo "Nothing to tag — see the job log for which case applied."
+            else
+              echo "Pushed \`${TAG}\`. \`release.yml\` publishes the images, Helm chart,"
+              echo "GitHub Release and Homebrew formula bump."
+              echo ""
+              echo "Watch it: <https://github.com/${REPOSITORY}/actions/workflows/release.yml>"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

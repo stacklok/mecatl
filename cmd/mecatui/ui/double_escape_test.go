@@ -203,7 +203,7 @@ func TestADR_0303_DoubleEscape_Scenario1_OwnersConsumeAndDisarm(t *testing.T) {
 		assertFreshNext(t, m)
 	})
 	t.Run("approval", func(t *testing.T) {
-		m := enableEventTypes(bashAskModel(t, `{"command":"true"}`))
+		m := enableEventTypes(shellAskModel(t, `{"command":"true"}`))
 		m.doubleEscapeArmed, m.doubleEscapeReleased = true, true
 		m = applyAll(m, escapePress())
 		if m.doubleEscapeArmed {
@@ -242,7 +242,7 @@ func TestADR_0303_DoubleEscape_Scenario1_AllEscapeOwnersSuppressGesture(t *testi
 		{"paused queue", func(m Model) Model { m.queuePaused = "paused"; return m }},
 		{"session details", func(m Model) Model { m.sessionDetailsOpen = true; return m }},
 		{"help", func(m Model) Model { m.showHelp = true; return m }},
-		{"modal", func(m Model) Model { m.modal = bashAskModel(t, `{"command":"true"}`).modal; return m }},
+		{"modal", func(m Model) Model { m.modal = shellAskModel(t, `{"command":"true"}`).modal; return m }},
 		{"team", func(m Model) Model { m.team.view = teamRoster; return m }},
 		{"agents inventory", func(m Model) Model { m.agentsInv.view = agentsInvPanel; return m }},
 		{"user model", func(m Model) Model { m.userModel.view = userModelPanel; return m }},

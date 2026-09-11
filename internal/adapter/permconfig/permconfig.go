@@ -76,6 +76,11 @@ func parseYAML(data []byte) (Config, error) {
 	if err := cfg.UnmarshalYAML(root); err != nil {
 		return Config{}, safePermconfigSchemaError(err)
 	}
+	if cfg.Guardrails != nil {
+		for i := range cfg.Guardrails.Rules {
+			cfg.Guardrails.Rules[i].Match = canonicalLegacyToolName(cfg.Guardrails.Rules[i].Match)
+		}
+	}
 	return cfg, nil
 }
 
@@ -255,12 +260,12 @@ func parseSpec(spec string, scope governance.Scope, effect governance.Effect) (g
 	open := strings.IndexByte(s, '(')
 	if open < 0 {
 		// Bare tool name, tool-wide rule (empty pattern matches any args).
-		return governance.Rule{Scope: scope, Tool: s, Effect: effect}, true
+		return governance.Rule{Scope: scope, Tool: canonicalLegacyToolName(s), Effect: effect}, true
 	}
 	if !strings.HasSuffix(s, ")") {
 		return governance.Rule{}, false
 	}
-	toolName := strings.TrimSpace(s[:open])
+	toolName := canonicalLegacyToolName(strings.TrimSpace(s[:open]))
 	if toolName == "" {
 		return governance.Rule{}, false
 	}
@@ -277,7 +282,7 @@ func parseSpec(spec string, scope governance.Scope, effect governance.Effect) (g
 //
 //   - The Claude-Code convention "<prefix>:*" (and the bare "<prefix>:") means a
 //     prefix match: "go test:*" → "go test*", "git push:" → "git push*". This is
-//     applied to ANY tool (Claude uses it for Bash; harmless elsewhere since the
+//     applied to ANY tool (Claude uses it for Shell; harmless elsewhere since the
 //     ":" form is Claude-specific).
 //   - An empty pattern stays empty (tool-wide).
 //   - Everything else passes through unchanged (it is already a mecatl glob, e.g.
@@ -348,4 +353,27 @@ func lostRuleCounts(data []byte) (deny, ask, allow int, ok bool) {
 			true
 	}
 	return 0, 0, 0, true
+}
+
+func canonicalLegacyToolName(name string) string {
+	if strings.HasSuffix(name, "*") {
+		switch strings.TrimSuffix(name, "*") {
+		case "Bash":
+			return "Shell*"
+		case "BashStatus":
+			return "ShellStatus*"
+		case "BashSystemTemp":
+			return "ShellSystemTemp*"
+		}
+	}
+	switch name {
+	case "Bash":
+		return "Shell"
+	case "BashStatus":
+		return "ShellStatus"
+	case "BashSystemTemp":
+		return "ShellSystemTemp"
+	default:
+		return name
+	}
 }

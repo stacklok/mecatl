@@ -1,9 +1,9 @@
 package agent_test
 
-// End-to-end background-Bash tests through the REAL loop (BACKGROUND-BASH
-// feature): the agent BashTool's `background: true` flag detaches a command
+// End-to-end background-Shell tests through the REAL loop (BACKGROUND-BASH
+// feature): the agent ShellTool's `background: true` flag detaches a command
 // onto the parent run's child registry (family bash-cmd, ids "bashcmd-<callID>"),
-// BashStatus is its sole channel (roster / live tail / collect-once / cancel),
+// ShellStatus is its sole channel (roster / live tail / collect-once / cancel),
 // the finished job rides the family-aware turn-boundary harness note, and the
 // run-end drain cancels a still-running job. Every test drives a scripted
 // mockllm engine with a channel-controlled fake CommandStreamer (no real
@@ -26,8 +26,8 @@ import (
 
 // --- fake streaming command runner ------------------------------------------
 
-// bgBashJobHandle is the test's handle on one RunStreaming invocation.
-type bgBashJobHandle struct {
+// bgShellJobHandle is the test's handle on one RunStreaming invocation.
+type bgShellJobHandle struct {
 	started   chan struct{} // closed when the invocation parks
 	release   chan struct{} // close to let the invocation finish
 	released  chan struct{} // closed on the FIRST releaseOnce (observe "release happened")
@@ -35,37 +35,37 @@ type bgBashJobHandle struct {
 	done      chan struct{} // closed when the invocation's terminal is certain
 }
 
-// fakeBashStreamer is a controllable tool.CommandRunner + tool.CommandStreamer
+// fakeShellStreamer is a controllable tool.CommandRunner + tool.CommandStreamer
 // double. RunStreaming invocations park until the test releases them (writing
 // the canned output, exiting 0) or their ctx dies (recording the cancel and
 // returning ctx.Err()). Run is the foreground seam: it runs immediately and
 // records every invocation.
-type fakeBashStreamer struct {
+type fakeShellStreamer struct {
 	mu        sync.Mutex
 	streaming int
 	fgRuns    []string
 
 	started  chan struct{} // closed on the FIRST RunStreaming invocation
 	released chan struct{} // closed on the FIRST releaseOnce
-	job      *bgBashJobHandle
+	job      *bgShellJobHandle
 }
 
-func newFakeBashStreamer() *fakeBashStreamer {
-	return &fakeBashStreamer{
+func newFakeShellStreamer() *fakeShellStreamer {
+	return &fakeShellStreamer{
 		started:  make(chan struct{}),
 		released: make(chan struct{}),
 	}
 }
 
 // Run is the foreground path: immediate, recorded, canned-success.
-func (f *fakeBashStreamer) Run(_ context.Context, command string) (tool.CommandResult, error) {
+func (f *fakeShellStreamer) Run(_ context.Context, command string) (tool.CommandResult, error) {
 	f.mu.Lock()
 	f.fgRuns = append(f.fgRuns, command)
 	f.mu.Unlock()
 	return tool.CommandResult{Stdout: "fg: " + command + "\n"}, nil
 }
 
-func (f *fakeBashStreamer) RunWithEnvironment(ctx context.Context, command string, _ tool.CommandEnvironmentOverlay) (tool.CommandResult, error) {
+func (f *fakeShellStreamer) RunWithEnvironment(ctx context.Context, command string, _ tool.CommandEnvironmentOverlay) (tool.CommandResult, error) {
 	return f.Run(ctx, command)
 }
 
@@ -74,8 +74,8 @@ func (f *fakeBashStreamer) RunWithEnvironment(ctx context.Context, command strin
 // drive stores the result right after; ctx-cancel → the drive records the
 // cancellation right after), which is the signal a parent anchor parks on to
 // sequence "the job's terminal has genuinely landed" before a turn boundary.
-func (f *fakeBashStreamer) RunStreaming(ctx context.Context, command string, out io.Writer) (int, error) {
-	h := &bgBashJobHandle{
+func (f *fakeShellStreamer) RunStreaming(ctx context.Context, command string, out io.Writer) (int, error) {
+	h := &bgShellJobHandle{
 		started:   make(chan struct{}),
 		release:   make(chan struct{}),
 		released:  make(chan struct{}),
@@ -103,12 +103,12 @@ func (f *fakeBashStreamer) RunStreaming(ctx context.Context, command string, out
 	}
 }
 
-func (f *fakeBashStreamer) RunStreamingWithEnvironment(ctx context.Context, command string, _ tool.CommandEnvironmentOverlay, out io.Writer) (int, error) {
+func (f *fakeShellStreamer) RunStreamingWithEnvironment(ctx context.Context, command string, _ tool.CommandEnvironmentOverlay, out io.Writer) (int, error) {
 	return f.RunStreaming(ctx, command, out)
 }
 
 // releaseOnce lets the (first) parked streaming invocation finish, exactly once.
-func (f *fakeBashStreamer) releaseOnce() {
+func (f *fakeShellStreamer) releaseOnce() {
 	f.mu.Lock()
 	h := f.job
 	f.mu.Unlock()
@@ -128,14 +128,14 @@ func (f *fakeBashStreamer) releaseOnce() {
 }
 
 // streamingCalls reports how many RunStreaming invocations ever started.
-func (f *fakeBashStreamer) streamingCalls() int {
+func (f *fakeShellStreamer) streamingCalls() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.streaming
 }
 
 // foregroundCalls reports the recorded foreground Run commands.
-func (f *fakeBashStreamer) foregroundCalls() []string {
+func (f *fakeShellStreamer) foregroundCalls() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]string(nil), f.fgRuns...)
@@ -147,7 +147,7 @@ func (f *fakeBashStreamer) foregroundCalls() []string {
 // scripted parent turn sequences on. Driving the release from INSIDE dispatch
 // (not the event stream) removes the race where a card-keyed release fires
 // after a sibling wait_ms park has already missed its wake.
-type startThenReleaseTool struct{ runner *fakeBashStreamer }
+type startThenReleaseTool struct{ runner *fakeShellStreamer }
 
 func (*startThenReleaseTool) Spec() tool.ToolSpec {
 	return tool.ToolSpec{Name: "StartThenRelease", Description: "waits for the job then releases it", Schema: emptyObjSchema}
@@ -167,38 +167,38 @@ func (g *startThenReleaseTool) Execute(ctx context.Context, in session.ToolCall,
 // it parks until a channel closes — the deterministic "the background job has
 // genuinely reached its park" anchor scripted parent turns sequence on.
 
-// bashCatalogFor builds the main-engine catalog for these tests: the agent
-// BashTool + the BashStatus companion. (The runner is bound to the Environment
+// shellCatalogFor builds the main-engine catalog for these tests: the agent
+// ShellTool + the ShellStatus companion. (The runner is bound to the Environment
 // at Execute time now — issue #462 — so the catalog no longer captures it.)
-func bashCatalogFor(t *testing.T, extra ...tool.Tool) *tool.Catalog {
+func shellCatalogFor(t *testing.T, extra ...tool.Tool) *tool.Catalog {
 	t.Helper()
-	tools := append([]tool.Tool{agent.NewBashTool(), agent.NewBashStatusTool()}, extra...)
+	tools := append([]tool.Tool{agent.NewShellTool(), agent.NewShellStatusTool()}, extra...)
 	return catalogWith(t, tools...)
 }
 
-// TestBackgroundBashHappyPath is the headline e2e: the model starts a
+// TestBackgroundShellHappyPath is the headline e2e: the model starts a
 // background command, polls it RUNNING (live tail peek), the job finishes,
 // the NEXT turn boundary records the family-aware harness note naming the job
-// id, and BashStatus then collects the completed tail + exit line EXACTLY ONCE
+// id, and ShellStatus then collects the completed tail + exit line EXACTLY ONCE
 // (a second collect reports already-delivered).
-func TestBackgroundBashHappyPath(t *testing.T) {
-	runner := newFakeBashStreamer()
-	cat := bashCatalogFor(t, &awaitSignalTool{ch: runner.started})
+func TestBackgroundShellHappyPath(t *testing.T) {
+	runner := newFakeShellStreamer()
+	cat := shellCatalogFor(t, &awaitSignalTool{ch: runner.started})
 
 	llm := mockllm.New(
-		mockllm.ToolCallTurn(toolCall("b1", "Bash", `{"command":"build","background":true}`)),
+		mockllm.ToolCallTurn(toolCall("b1", "Shell", `{"command":"build","background":true}`)),
 		// Park until the streaming invocation is genuinely live, so the poll
 		// below deterministically observes a RUNNING job.
 		mockllm.ToolCallTurn(toolCall("pw", "AwaitChild", `{}`)),
-		mockllm.ToolCallTurn(toolCall("b2", "BashStatus", `{"job_id":"bashcmd-b1"}`)),
+		mockllm.ToolCallTurn(toolCall("b2", "ShellStatus", `{"job_id":"bashcmd-b1"}`)),
 		// Roster wait (no job_id): parks until the job's terminal lands in the
 		// registry but does NOT collect, so the NEXT turn boundary sees a
 		// finished, uncollected job and injects the harness note.
-		mockllm.ToolCallTurn(toolCall("b4", "BashStatus", `{"wait_ms":30000}`)),
+		mockllm.ToolCallTurn(toolCall("b4", "ShellStatus", `{"wait_ms":30000}`)),
 		// Collect the finished result (exactly once)...
-		mockllm.ToolCallTurn(toolCall("b5", "BashStatus", `{"job_id":"bashcmd-b1"}`)),
+		mockllm.ToolCallTurn(toolCall("b5", "ShellStatus", `{"job_id":"bashcmd-b1"}`)),
 		// ...and a second collect reports already-delivered.
-		mockllm.ToolCallTurn(toolCall("b6", "BashStatus", `{"job_id":"bashcmd-b1"}`)),
+		mockllm.ToolCallTurn(toolCall("b6", "ShellStatus", `{"job_id":"bashcmd-b1"}`)),
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{LLM: llm, Catalog: cat})
@@ -216,12 +216,12 @@ func TestBackgroundBashHappyPath(t *testing.T) {
 	results := resultByCallID(evs)
 
 	// The background call returned IMMEDIATELY with the started-result naming
-	// the bashcmd- job id and the BashStatus channel.
+	// the bashcmd- job id and the ShellStatus channel.
 	started := results["b1"]
 	if started == nil || started.IsError {
-		t.Fatalf("background Bash call must return a non-error started-result, got %+v", started)
+		t.Fatalf("background Shell call must return a non-error started-result, got %+v", started)
 	}
-	for _, want := range []string{"job id: bashcmd-b1", "BashStatus", "cancelled if it is still running when this run ends"} {
+	for _, want := range []string{"job id: bashcmd-b1", "ShellStatus", "cancelled if it is still running when this run ends"} {
 		if !strings.Contains(started.Content, want) {
 			t.Fatalf("started-result must mention %q, got %q", want, started.Content)
 		}
@@ -241,7 +241,7 @@ func TestBackgroundBashHappyPath(t *testing.T) {
 	// The turn-boundary harness note: EXACTLY ONE message, the bash clause
 	// naming the job id + its stop label, and no delegation clause.
 	wantNotice := "[harness note: 1 background command(s) finished: bashcmd-b1 (end_turn). " +
-		"Collect each output with BashStatus before relying on it.]"
+		"Collect each output with ShellStatus before relying on it.]"
 	noticeIdx := userMessageEqual(sess.Conversation.Messages, wantNotice)
 	if len(noticeIdx) != 1 {
 		t.Fatalf("exactly ONE exact bash-finished notice expected, got %d in history:\n%v",
@@ -280,20 +280,20 @@ func TestBackgroundBashHappyPath(t *testing.T) {
 	}
 }
 
-// TestBackgroundBashCancel drives the cancel verb: the model cancels a live
-// job through BashStatus, the fake runner's ctx fires (the process-group seam
+// TestBackgroundShellCancel drives the cancel verb: the model cancels a live
+// job through ShellStatus, the fake runner's ctx fires (the process-group seam
 // in production), the job lands StopCancelled, and the collect reports the
 // cancellation.
-func TestBackgroundBashCancel(t *testing.T) {
-	runner := newFakeBashStreamer()
-	cat := bashCatalogFor(t, &awaitSignalTool{ch: runner.started})
+func TestBackgroundShellCancel(t *testing.T) {
+	runner := newFakeShellStreamer()
+	cat := shellCatalogFor(t, &awaitSignalTool{ch: runner.started})
 
 	llm := mockllm.New(
-		mockllm.ToolCallTurn(toolCall("b1", "Bash", `{"command":"slow","background":true}`)),
+		mockllm.ToolCallTurn(toolCall("b1", "Shell", `{"command":"slow","background":true}`)),
 		mockllm.ToolCallTurn(toolCall("pw", "AwaitChild", `{}`)),
-		mockllm.ToolCallTurn(toolCall("b2", "BashStatus", `{"cancel":"bashcmd-b1"}`)),
+		mockllm.ToolCallTurn(toolCall("b2", "ShellStatus", `{"cancel":"bashcmd-b1"}`)),
 		// Wait for the cancellation to land in the registry, then collect.
-		mockllm.ToolCallTurn(toolCall("b3", "BashStatus", `{"job_id":"bashcmd-b1","wait_ms":30000}`)),
+		mockllm.ToolCallTurn(toolCall("b3", "ShellStatus", `{"job_id":"bashcmd-b1","wait_ms":30000}`)),
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{LLM: llm, Catalog: cat})
@@ -329,17 +329,17 @@ func TestBackgroundBashCancel(t *testing.T) {
 	}
 }
 
-// TestBackgroundBashRunEndDrain is the D10/drain contract for a bash job: a
+// TestBackgroundShellRunEndDrain is the D10/drain contract for a bash job: a
 // would-be clean end with a LIVE job draws the background-pending nudge ONCE
 // (naming the bash job id), the model ends again, the run terminates cleanly,
 // and the drain cancels the job (the fake saw its ctx fire).
-func TestBackgroundBashRunEndDrain(t *testing.T) {
-	runner := newFakeBashStreamer() // never released: the job outlives every parent turn
-	cat := bashCatalogFor(t, &awaitSignalTool{ch: runner.started})
+func TestBackgroundShellRunEndDrain(t *testing.T) {
+	runner := newFakeShellStreamer() // never released: the job outlives every parent turn
+	cat := shellCatalogFor(t, &awaitSignalTool{ch: runner.started})
 
 	llm := mockllm.New(
 		mockllm.ToolCallTurn(
-			toolCall("b1", "Bash", `{"command":"watch","background":true}`),
+			toolCall("b1", "Shell", `{"command":"watch","background":true}`),
 			toolCall("pw", "AwaitChild", `{}`), // job genuinely mid-flight at the clean end
 		),
 		mockllm.TextTurn("done (ignoring the nudge)"),
@@ -352,7 +352,7 @@ func TestBackgroundBashRunEndDrain(t *testing.T) {
 
 	// The pending nudge fired EXACTLY ONCE, the bash clause naming the job id.
 	wantNudge := "[harness note: 1 background command(s) still running: bashcmd-b1. " +
-		"Collect or wait for them with BashStatus, cancel them, or finish — " +
+		"Collect or wait for them with ShellStatus, cancel them, or finish — " +
 		"anything still running when you finish will be cancelled.]"
 	if nudgeIdx := userMessageEqual(sess.Conversation.Messages, wantNudge); len(nudgeIdx) != 1 {
 		t.Fatalf("exactly ONE exact bash pending-nudge expected, got %d:\n%v",
@@ -370,15 +370,15 @@ func TestBackgroundBashRunEndDrain(t *testing.T) {
 	}
 }
 
-// TestBackgroundBashPermissionGate drives the start through an Ask policy: the
+// TestBackgroundShellPermissionGate drives the start through an Ask policy: the
 // background call pauses on EvPermissionAsk, the fake runner has ZERO
 // invocations before the Allow verdict, and the job spawns after it.
-func TestBackgroundBashPermissionGate(t *testing.T) {
-	runner := newFakeBashStreamer()
-	cat := bashCatalogFor(t, &startThenReleaseTool{runner: runner})
-	policy := permpolicy.NewPolicy(nil, nil) // no rule → Ask on the Bash call
+func TestBackgroundShellPermissionGate(t *testing.T) {
+	runner := newFakeShellStreamer()
+	cat := shellCatalogFor(t, &startThenReleaseTool{runner: runner})
+	policy := permpolicy.NewPolicy(nil, nil) // no rule → Ask on the Shell call
 
-	// Turn 1: the gated Bash call + a start-then-release anchor in the SAME read
+	// Turn 1: the gated Shell call + a start-then-release anchor in the SAME read
 	// batch. Both pause on asks (Ask-by-default policy); b1's ask resolves first,
 	// its job spawns and parks, then the anchor (itself ask-approved) waits for
 	// that start and releases it — so by turn 2 the job is finishing, and b2's
@@ -386,23 +386,23 @@ func TestBackgroundBashPermissionGate(t *testing.T) {
 	// dispatch), never keyed on the event stream, so it cannot miss a park.
 	llm := mockllm.New(
 		mockllm.ToolCallTurn(
-			toolCall("b1", "Bash", `{"command":"build","background":true}`),
+			toolCall("b1", "Shell", `{"command":"build","background":true}`),
 			toolCall("rel", "StartThenRelease", `{}`),
 		),
-		mockllm.ToolCallTurn(toolCall("b2", "BashStatus", `{"job_id":"bashcmd-b1","wait_ms":30000}`)),
+		mockllm.ToolCallTurn(toolCall("b2", "ShellStatus", `{"job_id":"bashcmd-b1","wait_ms":30000}`)),
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{LLM: llm, Catalog: cat, Policy: policy})
 	sess := newSession(t, session.Limits{})
 	r := e.Run(context.Background(), sess, agent.MemEnvRunner("/ws", runner), agent.RunRequest{Text: "go"})
 
-	var sawBashAsk bool
+	var sawShellAsk bool
 	evs := drainObserving(t, r, func(ev session.Event) {
 		if ev.Type == session.EvPermissionAsk && ev.Ask != nil {
 			// Correlate the ask to the BASH call via its structured Call field
 			// (grammar-free); before the verdict the command must not have run.
 			if ev.Ask.Call == "b1" {
-				sawBashAsk = true
+				sawShellAsk = true
 				if got := runner.streamingCalls(); got != 0 {
 					t.Errorf("runner must have ZERO invocations before the Allow verdict, got %d", got)
 				}
@@ -410,8 +410,8 @@ func TestBackgroundBashPermissionGate(t *testing.T) {
 			r.Approve(ev.Ask.AskID, session.VerdictAllowOnce)
 		}
 	})
-	if !sawBashAsk {
-		t.Fatalf("the background Bash call must pause on EvPermissionAsk")
+	if !sawShellAsk {
+		t.Fatalf("the background Shell call must pause on EvPermissionAsk")
 	}
 
 	// After Allow the job spawned and was collectable.
@@ -428,17 +428,17 @@ func TestBackgroundBashPermissionGate(t *testing.T) {
 	}
 }
 
-// TestBackgroundBashForegroundParity pins the foreground half: a Bash call
+// TestBackgroundShellForegroundParity pins the foreground half: a Shell call
 // with no background flag runs synchronously through the same engine, returns
-// the ordinary combined output, and leaves NO registry entry (BashStatus's
+// the ordinary combined output, and leaves NO registry entry (ShellStatus's
 // roster is empty).
-func TestBackgroundBashForegroundParity(t *testing.T) {
-	runner := newFakeBashStreamer()
-	cat := bashCatalogFor(t)
+func TestBackgroundShellForegroundParity(t *testing.T) {
+	runner := newFakeShellStreamer()
+	cat := shellCatalogFor(t)
 
 	llm := mockllm.New(
-		mockllm.ToolCallTurn(toolCall("b1", "Bash", `{"command":"echo hi"}`)),
-		mockllm.ToolCallTurn(toolCall("b2", "BashStatus", `{}`)),
+		mockllm.ToolCallTurn(toolCall("b1", "Shell", `{"command":"echo hi"}`)),
+		mockllm.ToolCallTurn(toolCall("b2", "ShellStatus", `{}`)),
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{LLM: llm, Catalog: cat})
@@ -449,7 +449,7 @@ func TestBackgroundBashForegroundParity(t *testing.T) {
 
 	fg := results["b1"]
 	if fg == nil || fg.IsError || !strings.Contains(fg.Content, "fg: echo hi") || !strings.Contains(fg.Content, "[exit code: 0]") {
-		t.Fatalf("foreground Bash must return the ordinary synchronous result, got %+v", fg)
+		t.Fatalf("foreground Shell must return the ordinary synchronous result, got %+v", fg)
 	}
 	if got := runner.foregroundCalls(); len(got) != 1 || got[0] != "echo hi" {
 		t.Fatalf("the foreground runner must have run the command once, got %v", got)

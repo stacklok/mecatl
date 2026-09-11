@@ -10,24 +10,24 @@ import (
 	"github.com/stacklok/mecatl/engine/tool"
 )
 
-// bashstatus.go implements the LIVE this-run background-Bash job tool, the
-// registry-backed companion of the agent BashTool's `background: true` flag
-// (bashtool.go). The split from SubagentStatus is deliberate: the registry is
+// shellstatus.go implements the LIVE this-run background-Shell job tool, the
+// registry-backed companion of the agent ShellTool's `background: true` flag
+// (shelltool.go). The split from SubagentStatus is deliberate: the registry is
 // SHARED across every child family, but the projections are DISJOINT —
-// SubagentStatus serves the three delegation families (bash-cmd entries are
-// filtered out of its roster/collect) and BashStatus serves ONLY the bash-cmd
-// jobs. A background Bash job is NOT a delegation family (no child session, no
+// SubagentStatus serves the three delegation families (shell-command entries are
+// filtered out of its roster/collect) and ShellStatus serves ONLY the shell-command
+// jobs. A background Shell job is NOT a delegation family (no child session, no
 // engine, no observability events), so it gets its own lean channel rather
 // than growing delegation affordances it does not have (no InspectSubagent
 // transcript, no resume).
 
-// bashStatusToolName is the catalog name of the background-Bash job tool.
-const bashStatusToolName = "BashStatus"
+// shellStatusToolName is the catalog name of the background-Shell job tool.
+const shellStatusToolName = "ShellStatus"
 
-// bashStatusArgs is the model-supplied argument payload. All fields are
+// shellStatusArgs is the model-supplied argument payload. All fields are
 // optional: no args → the roster of THIS run's background bash jobs.
-type bashStatusArgs struct {
-	// JobID targets one job by its id (the 'job id:' line of its Bash
+type shellStatusArgs struct {
+	// JobID targets one job by its id (the 'job id:' line of its Shell
 	// background started-result). Empty → roster.
 	JobID string `json:"job_id,omitempty"`
 	// WaitMs parks up to this many milliseconds (capped at
@@ -45,13 +45,13 @@ type bashStatusArgs struct {
 	Cancel string `json:"cancel,omitempty"`
 }
 
-// bashStatusSchema is the JSON schema the model sees for the tool's arguments.
-var bashStatusSchema = json.RawMessage(`{
+// shellStatusSchema is the JSON schema the model sees for the tool's arguments.
+var shellStatusSchema = json.RawMessage(`{
   "type": "object",
   "properties": {
     "job_id": {
       "type": "string",
-      "description": "Optional id of one background command (the 'job id:' line on its Bash result). With it: that job's state, its command, and its retained output tail — and, for a finished job, its full result (delivered once). Without it: a roster of every background command started in this run."
+      "description": "Optional id of one background command (the 'job id:' line on its Shell result). With it: that job's state, its command, and its retained output tail — and, for a finished job, its full result (delivered once). Without it: a roster of every background command started in this run."
     },
     "wait_ms": {
       "type": "integer",
@@ -64,23 +64,23 @@ var bashStatusSchema = json.RawMessage(`{
   }
 }`)
 
-// BashStatusTool reports the LIVE state of this run's background Bash jobs,
+// ShellStatusTool reports the LIVE state of this run's background Shell jobs,
 // collects a finished job's result, and cancels a live job. It reaches the
 // parent run's child registry through parentCaps (the childCapableTool seam) —
 // the same seam SubagentStatus uses, filtered to the bash-cmd family. It is
-// registered wherever the agent Bash tool is (the composition root's main
+// registered wherever the agent Shell tool is (the composition root's main
 // catalogs), never in child catalogs.
-type BashStatusTool struct{}
+type ShellStatusTool struct{}
 
-// NewBashStatusTool constructs the BashStatus tool. It is stateless: all state
+// NewShellStatusTool constructs the ShellStatus tool. It is stateless: all state
 // lives in the per-run registry handed down via parentCaps.
-func NewBashStatusTool() tool.Tool { return &BashStatusTool{} }
+func NewShellStatusTool() tool.Tool { return &ShellStatusTool{} }
 
-// Spec returns the model-facing specification for the BashStatus tool.
-func (*BashStatusTool) Spec() tool.ToolSpec {
+// Spec returns the model-facing specification for the ShellStatus tool.
+func (*ShellStatusTool) Spec() tool.ToolSpec {
 	return tool.ToolSpec{
-		Name: bashStatusToolName,
-		Description: "Check on the background commands started by Bash in THIS run, collect a " +
+		Name: shellStatusToolName,
+		Description: "Check on the background commands started by Shell in THIS run, collect a " +
 			"finished job's output, or cancel a running job. With no arguments: a roster of every " +
 			"background command started in this run (id, running/done, stop reason). With job_id: " +
 			"that job's state, its command, and its retained output tail — and, for a FINISHED job, " +
@@ -89,32 +89,32 @@ func (*BashStatusTool) Spec() tool.ToolSpec {
 			"any background child) to finish first — while waiting it occupies one tool slot of the " +
 			"current turn. With cancel: request that job's cancellation. Output is NOT delivered back " +
 			"automatically: this tool is the SOLE channel to a background command's result.",
-		Schema: bashStatusSchema,
+		Schema: shellStatusSchema,
 	}
 }
 
-// ReadOnly reports that BashStatus never mutates the workspace: its reads hit
+// ReadOnly reports that ShellStatus never mutates the workspace: its reads hit
 // the in-memory registry, and cancel only signals the job's context (the kill
 // is the job drive's own ctx reaction). The dispatcher may therefore run it
 // read-parallel — which is also what lets a wait_ms park overlap other tools
 // in the same turn.
-func (*BashStatusTool) ReadOnly() bool { return true }
+func (*ShellStatusTool) ReadOnly() bool { return true }
 
 // Execute is the caps-less path (plain Execute, no parent run threaded): there
 // is no registry to read, which is an honest model-addressable error — this
 // tool is only meaningful inside a run that registers its children.
-func (*BashStatusTool) Execute(_ context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
+func (*ShellStatusTool) Execute(_ context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	return session.NewToolError(call.ID,
-		"BashStatus: no live registry is available on this run"), nil
+		"ShellStatus: no live registry is available on this run"), nil
 }
 
 // ExecuteWithParent is the childCapableTool seam: it receives the parent run's
 // capabilities and reads/collects/cancels through caps.children, filtered to
 // the bash-cmd family (bashCmdFamiliesOnly).
-func (t *BashStatusTool) ExecuteWithParent(ctx context.Context, call session.ToolCall, env tool.Environment, _ func(session.Event), caps parentCaps) (session.ToolResult, error) {
-	var args bashStatusArgs
+func (t *ShellStatusTool) ExecuteWithParent(ctx context.Context, call session.ToolCall, env tool.Environment, _ func(session.Event), caps parentCaps) (session.ToolResult, error) {
+	var args shellStatusArgs
 	if msg, ok := session.ParseArgs(call, &args); !ok {
-		return session.NewToolError(call.ID, "BashStatus: "+msg), nil
+		return session.NewToolError(call.ID, "ShellStatus: "+msg), nil
 	}
 	reg := caps.children
 	if reg == nil {
@@ -127,7 +127,7 @@ func (t *BashStatusTool) ExecuteWithParent(ctx context.Context, call session.Too
 	// honestly (requestCancel reports not-live as false; the family check keeps
 	// a delegation id from being cancellable through the wrong tool).
 	if target := strings.TrimSpace(args.Cancel); target != "" {
-		return cancelBashJob(call.ID, reg, target), nil
+		return cancelShellJob(call.ID, reg, target), nil
 	}
 
 	// Wait phase: park on the target's doneCh (or the registry's terminal
@@ -138,21 +138,21 @@ func (t *BashStatusTool) ExecuteWithParent(ctx context.Context, call session.Too
 	// so collecting a finished job with wait_ms set is not a stall.
 	if d := effectiveStatusWait(args.WaitMs); d > 0 {
 		if unknown := waitForChild(ctx, reg, id, d); unknown {
-			return unknownBashJobError(call.ID, id), nil
+			return unknownShellJobError(call.ID, id), nil
 		}
 	}
 
 	if id == "" {
-		return session.NewToolResult(call.ID, renderBashJobRoster(reg.statusSnapshotMatching(bashCmdFamiliesOnly))), nil
+		return session.NewToolResult(call.ID, renderShellJobRoster(reg.statusSnapshotMatching(shellCmdFamiliesOnly))), nil
 	}
-	return bashJobDetail(call.ID, reg, id), nil
+	return shellJobDetail(call.ID, reg, id), nil
 }
 
-// renderBashJobRoster renders the no-args roster: one line per bash job — id,
+// renderShellJobRoster renders the no-args roster: one line per bash job — id,
 // state, stop — ids and enum-ish labels ONLY (the A9 trust posture: the command
 // text is model-authored untrusted, so it never rides a bulk roster; the
 // per-job detail view is where a deliberately-inspecting model may see it).
-func renderBashJobRoster(sts []childStatus) string {
+func renderShellJobRoster(sts []childStatus) string {
 	if len(sts) == 0 {
 		return "No background commands have been started in this run."
 	}
@@ -172,27 +172,27 @@ func renderBashJobRoster(sts []childStatus) string {
 	return b.String()
 }
 
-// bashJobDetail is the per-job view. For a LIVE job: state + the command +
+// shellJobDetail is the per-job view. For a LIVE job: state + the command +
 // the CURRENT output tail snapshot (a peek — NOT marked delivered; the stored
 // terminal result remains collectible). For a DONE job: the stored result via
 // the registry's collect machinery, exactly once (collectOK delivers the body;
 // collectAlready reports the delivery happened). The command rides the detail
-// view on the same trust footing as the Bash result's own echo: the model is
+// view on the same trust footing as the Shell result's own echo: the model is
 // deliberately inspecting ONE job, never being bulk-fed model-authored text.
-func bashJobDetail(callID session.ToolCallID, reg *childRunRegistry, id string) session.ToolResult {
-	res, st, outcome := reg.collectMatching(id, bashCmdFamiliesOnly)
+func shellJobDetail(callID session.ToolCallID, reg *childRunRegistry, id string) session.ToolResult {
+	res, st, outcome := reg.collectMatching(id, shellCmdFamiliesOnly)
 	switch outcome {
 	case collectUnknown:
-		return unknownBashJobError(callID, id)
+		return unknownShellJobError(callID, id)
 	case collectRunning:
-		return session.NewToolResult(callID, renderLiveBashJob(reg, id, st))
+		return session.NewToolResult(callID, renderLiveShellJob(reg, id, st))
 	case collectAlready:
 		return session.NewToolResult(callID, fmt.Sprintf(
 			"background command %s (%s): result already delivered.", id, st.stop))
 	default: // collectOK (a bash job is background by construction; collectForeground is unreachable)
 		if res == nil {
 			// Defensive: a bash terminal that stored no result (should not
-			// happen — BashTool.driveBackground always stores one).
+			// happen — ShellTool.driveBackground always stores one).
 			return session.NewToolResult(callID, fmt.Sprintf(
 				"background command %s finished (%s) but recorded no result body.", id, st.stop))
 		}
@@ -203,10 +203,10 @@ func bashJobDetail(callID session.ToolCallID, reg *childRunRegistry, id string) 
 	}
 }
 
-// renderLiveBashJob renders the RUNNING-job detail: state + command + the
+// renderLiveShellJob renders the RUNNING-job detail: state + command + the
 // retained output tail as it stands NOW. It is a snapshot, never a stream —
 // the model polls again (or waits with wait_ms) for fresher output.
-func renderLiveBashJob(reg *childRunRegistry, id string, st childStatus) string {
+func renderLiveShellJob(reg *childRunRegistry, id string, st childStatus) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "background command %s is %s.\ncommand: %s", id, st.state, st.goal)
 	tail, truncated, ok := reg.outputTailSnapshot(id)
@@ -215,7 +215,7 @@ func renderLiveBashJob(reg *childRunRegistry, id string, st childStatus) string 
 		b.WriteString("\n\n(no output yet)")
 	default:
 		b.WriteString("\n\n--- output so far (tail) ---\n")
-		b.WriteString(bashTruncate(strings.TrimRight(tail, "\n")))
+		b.WriteString(shellTruncate(strings.TrimRight(tail, "\n")))
 		if truncated {
 			b.WriteString("\n[older output dropped: retained the last 65536 bytes]")
 		}
@@ -224,15 +224,15 @@ func renderLiveBashJob(reg *childRunRegistry, id string, st childStatus) string 
 	return b.String()
 }
 
-// cancelBashJob requests one job's cancellation through the registry and
+// cancelShellJob requests one job's cancellation through the registry and
 // reports the outcome. It does NOT wait for the terminal — the drive's ctx
 // reaction (process kill + doneCh close) lands asynchronously; the model polls
 // the job to observe it. The confirmation names the job ONLY (ids — nothing
 // model-authored).
-func cancelBashJob(callID session.ToolCallID, reg *childRunRegistry, id string) session.ToolResult {
+func cancelShellJob(callID session.ToolCallID, reg *childRunRegistry, id string) session.ToolResult {
 	// Family check first: the cancel verb is bash-cmd-only, so an id of another
 	// family gets the same honest miss as an unknown id (never "cancelled").
-	sts := reg.statusSnapshotMatching(bashCmdFamiliesOnly)
+	sts := reg.statusSnapshotMatching(shellCmdFamiliesOnly)
 	known := false
 	for _, st := range sts {
 		if st.id == id {
@@ -241,7 +241,7 @@ func cancelBashJob(callID session.ToolCallID, reg *childRunRegistry, id string) 
 		}
 	}
 	if !known {
-		return unknownBashJobError(callID, id)
+		return unknownShellJobError(callID, id)
 	}
 	cancel, _, ok := reg.requestCancel(id)
 	if !ok {
@@ -254,15 +254,15 @@ func cancelBashJob(callID session.ToolCallID, reg *childRunRegistry, id string) 
 			"anything still running when this run ends is cancelled anyway.", id))
 }
 
-// unknownBashJobError is the model-addressable miss for a job_id this run never
+// unknownShellJobError is the model-addressable miss for a job_id this run never
 // started as a background command.
-func unknownBashJobError(callID session.ToolCallID, id string) session.ToolResult {
+func unknownShellJobError(callID session.ToolCallID, id string) session.ToolResult {
 	return session.NewToolError(callID, fmt.Sprintf(
-		"BashStatus: no background command %q in this run; call BashStatus with no arguments for the roster", id))
+		"ShellStatus: no background command %q in this run; call ShellStatus with no arguments for the roster", id))
 }
 
-// Compile-time assertions: BashStatusTool is a Tool and receives parent caps.
+// Compile-time assertions: ShellStatusTool is a Tool and receives parent caps.
 var (
-	_ tool.Tool        = (*BashStatusTool)(nil)
-	_ childCapableTool = (*BashStatusTool)(nil)
+	_ tool.Tool        = (*ShellStatusTool)(nil)
+	_ childCapableTool = (*ShellStatusTool)(nil)
 )

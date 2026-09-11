@@ -29,7 +29,7 @@ func TestSurfaceApprovalMigration_Scenario1_DynamicSurfaceQueue(t *testing.T) {
 	m = applyAll(m,
 		client.PermissionAskMsg{AskID: "session-1:1:a", Tool: "Write"},
 		client.PermissionAskMsg{AskID: "session-1:1:a", Tool: "Write"},
-		client.PermissionAskMsg{AskID: "child-1:1:b", Tool: "Bash"},
+		client.PermissionAskMsg{AskID: "child-1:1:b", Tool: "Shell"},
 	)
 	s := approvalSurfaceOf(t, m)
 	if s.ask.AskID != "session-1:1:a" || len(s.queue) != 1 || s.queue[0].AskID != "child-1:1:b" {
@@ -114,7 +114,7 @@ func TestCloseModalSynchronizesSurfaceTokensWithoutLifecycleEffects(t *testing.T
 }
 
 func TestApprovalSurfaceRoutesKeysBeforePhase(t *testing.T) {
-	m := approvalModel(t, pendingAsk{AskID: "ask", Tool: "Bash", offerAlways: true})
+	m := approvalModel(t, pendingAsk{AskID: "ask", Tool: "Shell", offerAlways: true})
 	m.phase = phaseRunning // stale chrome must not bypass the open modal.
 
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: 'a', Text: "a"})
@@ -140,16 +140,19 @@ func TestEffectiveModelSetterUpdatesApprovalIdentityOnly(t *testing.T) {
 	}
 }
 
-func TestApprovalExpandIntentCarriesSurfaceValue(t *testing.T) {
+func TestApprovalExpandOpensDetailsWithoutChangingExpandState(t *testing.T) {
 	m := approvalModel(t, pendingAsk{AskID: "diff", Tool: "Edit", Args: `{"path":"a","old_string":"a","new_string":"b"}`, offerAlways: true})
 	s := approvalSurfaceOf(t, m)
 	s.expandTools = true
-	m.expandTools = false // the surface remains the source of this interaction's desired value.
+	m.expandTools = false
 
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
 
-	if s.expandTools || m.expandTools {
-		t.Fatalf("expand values = surface:%v model:%v, want false:false", s.expandTools, m.expandTools)
+	if !s.expandTools || m.expandTools {
+		t.Fatalf("expand values = surface:%v model:%v, want true:false", s.expandTools, m.expandTools)
+	}
+	if !approvalSurfaceOf(t, m).argsViewOpen {
+		t.Fatal("ctrl+t must open the bounded approval-details view")
 	}
 }
 
@@ -183,7 +186,7 @@ func TestSurfaceApprovalMigration_Scenario2_VerdictTransportAndChildPolicy(t *te
 	debug := newTestModelFromDeps(Deps{Theme: debugTheme()})
 	debug.sessionID = "debug"
 	debug.phase = phaseIdle
-	debug = applyAll(debug, client.PermissionAskMsg{AskID: "debug:1:a", Tool: "Bash"})
+	debug = applyAll(debug, client.PermissionAskMsg{AskID: "debug:1:a", Tool: "Shell"})
 	debug.stream = nil
 	debug, cmd = pressKey(debug, tea.KeyPressMsg{Code: 'a', Text: "a"})
 	if cmd != nil {
@@ -217,7 +220,7 @@ func TestSurfaceApprovalMigration_Scenario2_PlanReviewLayoutAndOffset(t *testing
 	if got := s.planVP.YOffset(); got != before {
 		t.Fatalf("same ask/queue/model/geometry must be a no-op: offset %d, want %d", got, before)
 	}
-	s.queue = append(s.queue, pendingAsk{AskID: "queued", Tool: "Bash"})
+	s.queue = append(s.queue, pendingAsk{AskID: "queued", Tool: "Shell"})
 	if got := stripANSIstr(m.View().Content); !strings.Contains(got, "Plan ready for review (1 of 2)") {
 		t.Fatalf("queue-count change must invalidate plan cache: %q", got)
 	}
@@ -233,8 +236,8 @@ func TestSurfaceApprovalMigration_Scenario2_PlanReviewLayoutAndOffset(t *testing
 }
 
 func TestSurfaceApprovalMigration_Scenario2_ArgsAndDiffModes(t *testing.T) {
-	m := openArgsView(t, bashAskModel(t, longBashArgs))
-	if got := stripANSIstr(m.View().Content); !strings.Contains(got, "Ask args: Bash") {
+	m := openArgsView(t, shellAskModel(t, longShellArgs))
+	if got := stripANSIstr(m.View().Content); !strings.Contains(got, "Ask args: Shell") {
 		t.Fatalf("surface args render = %q, want args view", got)
 	}
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: 'r', Text: "r"})
@@ -249,8 +252,8 @@ func TestSurfaceApprovalMigration_Scenario2_ArgsAndDiffModes(t *testing.T) {
 	diff := approvalModel(t, pendingAsk{AskID: "diff", Tool: "Edit", Args: `{"path":"a","old_string":"a","new_string":"b"}`, offerAlways: true})
 	before := diff.expandTools
 	diff, _ = pressKey(diff, tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
-	if diff.expandTools == before || approvalSurfaceOf(t, diff).argsViewOpen {
-		t.Fatal("diff mode must retain the in-modal expand keyboard behavior")
+	if diff.expandTools != before || !approvalSurfaceOf(t, diff).argsViewOpen {
+		t.Fatal("diff mode must open the bounded details view without changing expand state")
 	}
 }
 
@@ -291,7 +294,7 @@ func TestSurfaceApprovalMigration_Scenario3_ApprovalMouseParity(t *testing.T) {
 }
 
 func TestSurfaceApprovalMigration_Scenario3_WheelCapture(t *testing.T) {
-	m := openArgsView(t, bashAskModel(t, tallBashArgs))
+	m := openArgsView(t, shellAskModel(t, tallShellArgs))
 	before := approvalSurfaceOf(t, m).argsVP.YOffset()
 	mm, _ := m.onMouseWheel(tea.MouseWheelMsg{Button: tea.MouseWheelDown, X: 1, Y: 1})
 	m = mm.(Model)
@@ -309,7 +312,7 @@ func TestApprovalFillViewsCaptureWheelBeforeViewportMaterialization(t *testing.T
 		{
 			name: "args",
 			model: func(t *testing.T) Model {
-				m := bashAskModel(t, tallBashArgs)
+				m := shellAskModel(t, tallShellArgs)
 				m, _ = pressKey(m, tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
 				return m
 			},

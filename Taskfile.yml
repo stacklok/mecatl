@@ -747,7 +747,7 @@ tasks:
       - sh scripts/install-golangci-lint.sh
 
   lint:
-    desc: Run pinned golangci-lint (parallel-safe) and go vet over the root, engine, authn/oidc, and provider modules
+    desc: Run pinned golangci-lint (parallel-safe) over the root, engine, authn/oidc, and provider modules
     deps: [tools:golangci-lint]
     env:
       GOLANGCI_LINT: "{{.ROOT_DIR}}/.tools/bin/golangci-lint"
@@ -756,25 +756,18 @@ tasks:
         msg: "missing pinned golangci-lint; run: task tools:golangci-lint"
     cmds:
       - '"$GOLANGCI_LINT" run --allow-parallel-runners ./...'
-      - go vet ./...
       # engine/ is its own module — it shares the ROOT golangci config (no
       # engine-local .golangci.yml) so the depguard layering allowlists stay the
       # single source of truth across the module boundary.
       - 'cd engine && "$GOLANGCI_LINT" run --config ../.golangci.yml --allow-parallel-runners ./...'
-      - cd engine && go vet ./...
       # authn/oidc is a separate opt-in adapter module, sharing the root config.
       - 'cd authn/oidc && "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners ./...'
-      - cd authn/oidc && go vet ./...
       # provider/ submodules (ADR 0093) — each its own module; sharing the ROOT
       # golangci config so the depguard allowlists stay the single source of truth.
       - 'cd provider/ssefilter && "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners ./...'
-      - cd provider/ssefilter && go vet ./...
       - 'cd provider/anthropic && "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners ./...'
-      - cd provider/anthropic && go vet ./...
       - 'cd provider/openai && "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners ./...'
-      - cd provider/openai && go vet ./...
       - 'cd provider/openaichat && "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners ./...'
-      - cd provider/openaichat && go vet ./...
 
   vuln:
     desc: |
@@ -841,13 +834,13 @@ tasks:
       Lint all GitHub Actions workflows with actionlint (pinned via `go run`, so no
       preinstalled binary is needed). Catches expression-context errors, bad `uses:`
       refs, and shell issues in `run:` blocks. Runs the reusable-pins check AND the
-      empty-expression template guard too, so a single `task lint:actions` covers the
-      whole Actions surface.
+      empty-expression template guard, and Deslop advisory-workflow contract test too, so a
+      single `task lint:actions` covers the whole Actions surface.
     cmds:
       - go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
       - task: lint:reusable-pins
       - task: lint:action-templates
-      - bash .github/scripts/lint-vet-workflow_test.sh
+      - bash .github/scripts/deslop-workflow_test.sh
 
   lint:reusable-pins:
     desc: |

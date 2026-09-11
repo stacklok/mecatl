@@ -78,14 +78,14 @@ const noProgressExtractiveNudgeText = "Stop investigating now and do not run any
 // tool.Environment handed to Run has no CommandRunner (env.CommandRunner() == nil) and
 // is not the no-FS profile (whose noFSPostureNote already states "no shell"). It is the
 // ADR-0070 affordance for the shell-less default-FS posture: the model must learn from
-// the PROMPT that the Bash tool is absent (the spec is also dropped from the advertised
+// the PROMPT that the Shell tool is absent (the spec is also dropped from the advertised
 // tools), not from a trail of unknown-tool errors, so it plans around the file tools and
 // its own reasoning instead of burning turns attempting a shell it cannot call. It is
 // the per-request, environment-capability-truthed analogue of composition's noFSPostureNote
 // (which covers the no-filesystem-at-all case): environment capability is per-run/per-turn,
 // so it rides the volatile suffix and is NOT baked into the cache-stable prefix. The
 // "NO shell" substring is a stable test key — do not change it.
-const shellLessPostureNote = "This session has NO shell: the Bash tool is not available. " +
+const shellLessPostureNote = "This session has NO shell: the Shell tool is not available. " +
 	"Do not attempt to run commands, build, test, or invoke git — work through the file " +
 	"tools (Read/ListDir/Write/Edit/Copy/Move/Remove/Grep/Glob), your other tools (MCP, memory, web fetch), and " +
 	"your own reasoning."
@@ -94,17 +94,17 @@ const shellLessPostureNote = "This session has NO shell: the Bash tool is not av
 // injected as a harness-framed user message at Step 2a of drive (A2 —
 // notice-only injection). It carries ONLY harness-authored metadata: child ids
 // + their session.StopReason labels, NOTHING child-authored (no goal labels, no
-// result text — the delegation bodies' sole channel is SubagentStatus, the bash
-// jobs' BashStatus). The rendering is FAMILY-AWARE: the delegation clause keeps
+// result text — the delegation bodies' sole channel is SubagentStatus, the Shell
+// jobs' ShellStatus). The rendering is FAMILY-AWARE: the delegation clause keeps
 // its exact historical wording (the substring "background subagent(s) finished"
-// is a stable test key — do not change it) and a background-Bash clause is
-// APPENDED only when bash jobs are among the finished, so a subagent-only run
+// is a stable test key — do not change it) and a background-Shell clause is
+// APPENDED only when Shell jobs are among the finished, so a subagent-only run
 // renders byte-identically to before.
 func backgroundNoticeText(finished []childStatus) string {
-	var delegationIDs, bashItems []string
+	var delegationIDs, shellItems []string
 	for _, st := range finished {
-		if st.family == childFamilyBashCmd {
-			bashItems = append(bashItems, fmt.Sprintf("%s (%s)", st.id, st.stop))
+		if st.family == childFamilyShellCmd {
+			shellItems = append(shellItems, fmt.Sprintf("%s (%s)", st.id, st.stop))
 		} else {
 			delegationIDs = append(delegationIDs, fmt.Sprintf("%s (%s)", st.id, st.stop))
 		}
@@ -115,10 +115,10 @@ func backgroundNoticeText(finished []childStatus) string {
 			"Collect each result with SubagentStatus before relying on it.]",
 			len(delegationIDs), strings.Join(delegationIDs, ", "))
 	}
-	if len(bashItems) > 0 {
+	if len(shellItems) > 0 {
 		fmt.Fprintf(&b, "[harness note: %d background command(s) finished: %s. "+
-			"Collect each output with BashStatus before relying on it.]",
-			len(bashItems), strings.Join(bashItems, ", "))
+			"Collect each output with ShellStatus before relying on it.]",
+			len(shellItems), strings.Join(shellItems, ", "))
 	}
 	return b.String()
 }
@@ -129,13 +129,13 @@ func backgroundNoticeText(finished []childStatus) string {
 // ONLY (A9 — no goal labels, nothing model/child-authored). Like the notice it
 // is FAMILY-AWARE: the delegation clause keeps its exact historical wording
 // (the substring "background subagent(s) still running" is a stable test key —
-// do not change it) and a background-Bash clause is APPENDED only for live bash
+// do not change it) and a background-Shell clause is APPENDED only for live Shell
 // jobs, each clause naming its own collection channel.
 func backgroundPendingNudgeText(ids []string) string {
-	var delegationIDs, bashIDs []string
+	var delegationIDs, shellIDs []string
 	for _, id := range ids {
-		if strings.HasPrefix(id, BashCmdJobPrefix) {
-			bashIDs = append(bashIDs, id)
+		if strings.HasPrefix(id, ShellCmdJobPrefix) {
+			shellIDs = append(shellIDs, id)
 		} else {
 			delegationIDs = append(delegationIDs, id)
 		}
@@ -147,11 +147,11 @@ func backgroundPendingNudgeText(ids []string) string {
 			"anything still running when you finish will be cancelled.]",
 			len(delegationIDs), strings.Join(delegationIDs, ", "))
 	}
-	if len(bashIDs) > 0 {
+	if len(shellIDs) > 0 {
 		fmt.Fprintf(&b, "[harness note: %d background command(s) still running: %s. "+
-			"Collect or wait for them with BashStatus, cancel them, or finish — "+
+			"Collect or wait for them with ShellStatus, cancel them, or finish — "+
 			"anything still running when you finish will be cancelled.]",
-			len(bashIDs), strings.Join(bashIDs, ", "))
+			len(shellIDs), strings.Join(shellIDs, ", "))
 	}
 	return b.String()
 }
@@ -494,7 +494,7 @@ func (e *Engine) Capabilities() port.ProviderCapabilities {
 // ContextWindow reports the model's context window in tokens, resolved LIVE via
 // Deps.ContextWindow at the point of call, or 0 when unknown/unset/disabled. The
 // team supervisor reads it from each member's engine so a forwarded turn.end can
-// carry the denominator for the per-member context meter in the ctrl+a agents
+// carry the denominator for the per-member context meter in the f6 agents
 // overlay (the resolver lives in private deps).
 func (e *Engine) ContextWindow() int {
 	if e.deps.ContextWindow == nil {
@@ -2593,20 +2593,20 @@ func (e *Engine) buildRequest(ctx context.Context, r *Run, sess *session.Session
 	// Shell-less Environment (issue #462 review): the CAPABILITY TRUTH for whether
 	// this turn has a shell is the LIVE tool.Environment handed to Run, NOT the
 	// shared Engine's catalog/prompt (which were built once from server config and
-	// may advertise Bash the per-run Environment cannot serve). A shell-less
+	// may advertise Shell the per-run Environment cannot serve). A shell-less
 	// Environment (env.CommandRunner() == nil) — an ACP/editor override, a --no-bash
-	// deployment, or a runner that could not be built — has NO Bash this turn, so:
-	// (a) DROP the Bash spec from the advertised tools so the model is not invited
-	// to call a shell it cannot reach (a stale/hallucinated Bash call the model
+	// deployment, or a runner that could not be built — has NO Shell this turn, so:
+	// (a) DROP the Shell spec from the advertised tools so the model is not invited
+	// to call a shell it cannot reach (a stale/hallucinated Shell call the model
 	// makes anyway still resolves from the catalog and surfaces the honest
 	// bashNoShellResult "no shell available" tool error — it is never a silent pass),
 	// and (b) append ONE shell-less posture clause to the per-request system prompt
 	// (the ADR-0070 model-visible affordance) so the model learns from the PROMPT
-	// that Bash is absent, not from a trail of errors. The clause rides the VOLATILE
+	// that Shell is absent, not from a trail of errors. The clause rides the VOLATILE
 	// suffix — environment capability is per-run/per-turn, so it must NOT be baked
 	// into the cache-stable prefix (that would be dishonest to the cache when an
 	// override changes it mid-session). The no-FS profile is EXCLUDED: its catalog
-	// already omits Bash AND its noFSPostureNote (baked by composition) already
+	// already omits Shell AND its noFSPostureNote (baked by composition) already
 	// states "no shell", so a second clause here would duplicate/contradict. This is
 	// the SINGLE per-request choke point: ACP overrides, --no-bash deployments, and
 	// any future shell-less Environment all converge here, independent of the
@@ -2615,7 +2615,7 @@ func (e *Engine) buildRequest(ctx context.Context, r *Run, sess *session.Session
 	if shellLess {
 		filtered := cfg.Tools[:0]
 		for _, ts := range cfg.Tools {
-			if ts.Name == tool.BashToolName {
+			if ts.Name == tool.ShellToolName {
 				continue
 			}
 			filtered = append(filtered, ts)
@@ -2667,7 +2667,7 @@ func (e *Engine) buildRequest(ctx context.Context, r *Run, sess *session.Session
 	// (prompt.Build) is in use. A host-supplied PromptBuilder fully owns the system
 	// prompt (issue #127: NONE of the coding-agent defaults may leak), so the loop
 	// must NOT inject harness-authored text the host did not write; the host still
-	// learns the capability truth from the advertised tool specs (Bash is dropped
+	// learns the capability truth from the advertised tool specs (Shell is dropped
 	// above regardless of builder). The clause follows the <env> block (the
 	// capability truth the model reads) and stays out of the cache-stable prefix.
 	// The "NO shell" substring is a stable test key.
@@ -2923,7 +2923,7 @@ func (r *Run) emitOrAbort(ev session.Event, abort <-chan struct{}) bool {
 // children. A var only as a TEST seam (the drain tests shorten it; nothing
 // outside tests writes it) — operationally it is a constant, deliberately NOT a
 // Deps/Config knob (operator tuning would be overkill for a backstop):
-// ctx-cancel kills a child's in-flight model stream and Bash process promptly
+// ctx-cancel kills a child's in-flight model stream and Shell process promptly
 // (the adapters swallow the cancel; exec.CommandContext kills; the osfs runner's
 // cmd.WaitDelay bounds the residual grandchild-pipe wait), so a child that has
 // not joined within 10s is either genuinely wedged or parked on its own EMIT

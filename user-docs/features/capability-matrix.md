@@ -32,7 +32,7 @@ of its server.
 | Need | `mecated` | `mecak8s` | `mecatui` embedded |
 | --- | --- | --- | --- |
 | Run a general-purpose server | ✓ | ✓ | Starts one locally |
-| Workspace and Bash namespace | Host-local workspace | Harness pod workspace | Host-local workspace |
+| Workspace and Shell namespace | Host-local workspace | Harness pod workspace | Host-local workspace |
 | gRPC API | ✓ | ✓ | Private Unix socket |
 | HTTP/SSE API | ✓ | ✓ | — |
 | Durable state | Optional configured backend | Redis-backed | JSONL store by default |
@@ -61,7 +61,7 @@ Redis stores session state and durable events, Kubernetes leases coordinate
 ownership across replicas, and readiness/drain behavior suits a deployment
 controller.
 
-The workspace and any Bash command run in the harness pod namespace, not on a
+The workspace and any Shell command run in the harness pod namespace, not on a
 remote caller’s machine. `mecak8s` is headless by default, so unresolved
 permission asks need an explicit headless-reviewer strategy or are denied.
 ACP is intentionally not available in this deployment.
@@ -76,9 +76,9 @@ in the TUI.
 Its durable store defaults to a per-workspace JSONL location under XDG state.
 Use `--no-store` for in-memory state or `--store-dir` to choose another location.
 
-## Workspace and Bash execution
+## Workspace and Shell execution
 
-Filesystem tools and Bash operate in the namespace where the harness runs. In
+Filesystem tools and Shell operate in the namespace where the harness runs. In
 `mecak8s`, that normally means the pod’s workspace and command environment, not
 the client’s machine. A remote client does not upload or share its local
 checkout. See [Execution environments](./execution-environments.md) for the

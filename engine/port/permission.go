@@ -31,7 +31,7 @@ type PermissionPolicy interface {
 
 	// Learn records a per-session allow rule derived from tool call c (the model's
 	// "allow always" verdict). It is a no-op when c is not safely learnable (a
-	// compound/substituted Bash command, or a call with no targetable pattern —
+	// compound/substituted Shell command, or a call with no targetable pattern —
 	// see governance.LearnableRule). It NEVER overrides a deny or bypasses plan
 	// mode: the learned rule is consulted by Evaluate at the lowest scope only.
 	Learn(sessionID session.SessionID, c session.ToolCall)

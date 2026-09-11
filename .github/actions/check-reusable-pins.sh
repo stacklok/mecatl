@@ -12,17 +12,37 @@
 # `stacklok/mecatl/.github/actions/*@REF` pin and asserts they ALL equal EXPECTED_TAG.
 #
 # Override the expected tag with EXPECTED_TAG=vX.Y.Z (the release process passes the new tag
-# before bumping); the default is the value currently committed in the workflow header, kept
-# in ONE place below so a human bumping the release edits exactly one literal here + the pins.
+# before bumping). The DEFAULT is DERIVED from the repo-root VERSION file — the single authored
+# source of truth for the release version — so this script holds NO copy of the version and
+# cannot drift from it. VERSION is bare semver (0.0.33); the leading `v` is added here.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT="$(cd "${HERE}/.." && pwd)"           # repo root (.github/ -> ..)
+ROOT="$(cd "${HERE}/.." && pwd)"           # the .github/ dir (.github/actions/ -> ..)
+REPO_ROOT="$(cd "${ROOT}/.." && pwd)"      # the repo root (.github/ -> ..)
 WF="${ROOT}/workflows/mecatequi-reusable.yml"
+VERSION_FILE="${REPO_ROOT}/VERSION"
 
-# The CURRENT release tag the reusable workflow's sibling-action pins must equal. Bump this
-# in lockstep with the @vX.Y.Z pins in mecatequi-reusable.yml at release time.
-EXPECTED_TAG="${EXPECTED_TAG:-v0.0.33}"
+# The CURRENT release tag the reusable workflow's sibling-action pins must equal, DERIVED from
+# VERSION rather than duplicated here. `create-release-pr.yml` bumps VERSION and the pins in the
+# same commit; nothing hand-edits a version literal in this file.
+if [ -z "${EXPECTED_TAG:-}" ]; then
+  if [ ! -f "${VERSION_FILE}" ]; then
+    echo "check-reusable-pins: ${VERSION_FILE} not found — it is the source of the expected tag" >&2
+    exit 1
+  fi
+  # tr, not $(cat): strips the trailing newline and any stray whitespace in one portable step.
+  EXPECTED_TAG="v$(tr -d '[:space:]' < "${VERSION_FILE}")"
+fi
+
+case "${EXPECTED_TAG}" in
+  v[0-9]*.[0-9]*.[0-9]*) ;;
+  *)
+    echo "check-reusable-pins: expected tag '${EXPECTED_TAG}' is not a vX.Y.Z semver tag" >&2
+    echo "  (VERSION must hold BARE semver, e.g. 1.2.3 — not v1.2.3)" >&2
+    exit 1
+    ;;
+esac
 
 if [ ! -f "${WF}" ]; then
   echo "check-reusable-pins: ${WF} not found" >&2
@@ -58,7 +78,8 @@ done
 
 if [ "${fail}" -ne 0 ]; then
   echo "check-reusable-pins: VERSION SKEW — every first-party sibling-action pin must equal ${EXPECTED_TAG}." >&2
-  echo "  Bump the @vX.Y.Z pins in ${WF} (and EXPECTED_TAG in this script) in the SAME tagged commit." >&2
+  echo "  Bump VERSION and the @vX.Y.Z pins in ${WF} in the SAME tagged commit." >&2
+  echo "  create-release-pr.yml does this; .claude/skills/cut-release/scripts/bump-release-pins.sh is the local path." >&2
   exit 1
 fi
 

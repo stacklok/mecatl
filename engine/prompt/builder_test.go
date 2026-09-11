@@ -15,7 +15,7 @@ func sampleTools() []tool.ToolSpec {
 	return []tool.ToolSpec{
 		{Name: "Read", Description: "Read a file's contents.\nMore detail here."},
 		{Name: "Edit", Description: "Edit a file in place."},
-		{Name: "Bash", Description: "Run a shell command."},
+		{Name: "Shell", Description: "Run a shell command."},
 	}
 }
 
@@ -70,7 +70,7 @@ func TestStablePrefixContainsToolsAndNoVolatile(t *testing.T) {
 	}
 	got := prompt.Build(cfg).StablePrefix
 
-	for _, name := range []string{"Read", "Edit", "Bash"} {
+	for _, name := range []string{"Read", "Edit", "Shell"} {
 		if !strings.Contains(got, name) {
 			t.Errorf("StablePrefix missing tool name %q\nprefix=%q", name, got)
 		}
@@ -131,13 +131,13 @@ func TestEnvBlockDeterministicAndComplete(t *testing.T) {
 
 // TestToolDisciplineHints exercises the generated tool-discipline guidance: a
 // full catalog emits every dedicated-tool and delegation clause plus the
-// reserve-Bash and generic parallel lines; a Bash-absent catalog omits the reserve
+// reserve-Shell and generic parallel lines; a Shell-absent catalog omits the reserve
 // line; an empty catalog emits only the generic parallel line with no dangling
 // heading; and output is byte-stable on repeat.
 func TestToolDisciplineHints(t *testing.T) {
 	full := []tool.ToolSpec{
 		{Name: "Read"}, {Name: "Edit"}, {Name: "Write"}, {Name: "Glob"},
-		{Name: "Grep"}, {Name: "Bash"}, {Name: "Subagent"}, {Name: "Parallel"},
+		{Name: "Grep"}, {Name: "Shell"}, {Name: "Subagent"}, {Name: "Parallel"},
 		{Name: "Team"}, {Name: "Remember"},
 	}
 	got := prompt.Build(prompt.Config{Tools: full}).StablePrefix
@@ -148,7 +148,7 @@ func TestToolDisciplineHints(t *testing.T) {
 		"Write (not heredoc/echo) to create files",
 		"Glob (not find/ls) to locate files",
 		"Grep (not grep/rg) to search contents",
-		"Reserve Bash for real system/terminal commands.",
+		"Reserve Shell for real system/terminal commands.",
 		"Use Subagent for focused delegation.",
 		"issue one Subagent call per task in the same assistant turn so eligible calls run concurrently",
 		"wait between calls only when a later task depends on an earlier result.",
@@ -164,13 +164,13 @@ func TestToolDisciplineHints(t *testing.T) {
 		}
 	}
 
-	// Bash absent → no reserve-Bash line.
-	noBash := prompt.Build(prompt.Config{Tools: []tool.ToolSpec{{Name: "Read"}}}).StablePrefix
-	if strings.Contains(noBash, "Reserve Bash") {
-		t.Errorf("Bash-absent catalog should omit the reserve-Bash line\nprefix=%q", noBash)
+	// Shell absent → no reserve-Shell line.
+	noShell := prompt.Build(prompt.Config{Tools: []tool.ToolSpec{{Name: "Read"}}}).StablePrefix
+	if strings.Contains(noShell, "Reserve Shell") {
+		t.Errorf("Shell-absent catalog should omit the reserve-Shell line\nprefix=%q", noShell)
 	}
-	if !strings.Contains(noBash, "Make independent tool calls in parallel") {
-		t.Errorf("parallel line must always be present\nprefix=%q", noBash)
+	if !strings.Contains(noShell, "Make independent tool calls in parallel") {
+		t.Errorf("parallel line must always be present\nprefix=%q", noShell)
 	}
 
 	// Empty catalog → only the parallel line, NO dangling dedicated-tool heading.

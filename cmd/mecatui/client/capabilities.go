@@ -10,13 +10,18 @@ import (
 // inventories as "not enabled" vs "enabled but empty") WITHOUT importing proto.
 // All-false is the safe default (an older server omits the field).
 type Capabilities struct {
-	MCP           bool
-	SlashCommands bool
-	Memory        bool
-	Skills        bool
-	Teams         bool
-	Agents        bool
-	Bash          bool
+	// MCPConnectorStatus gates the broker-local connector inventory. It is separate
+	// from MCP: broker-only deployments deliberately expose no direct resources or prompts.
+	MCPConnectorStatus bool
+	MCP                bool
+	SlashCommands      bool
+	Memory             bool
+	Skills             bool
+	Teams              bool
+	Agents             bool
+	// Bash reports availability of the canonical Shell tool. Its historical
+	// spelling is retained for compatibility with the established wire/Go API.
+	Bash bool
 	// Soul / UserModel report whether the server has a soul source / user-model store
 	// wired. They gate the /soul and /usermodel read-only inspection panels.
 	Soul      bool
@@ -85,6 +90,7 @@ func capabilitiesFrom(c *mecatlv1.ServerCapabilities) Capabilities {
 		return Capabilities{}
 	}
 	return Capabilities{
+		MCPConnectorStatus:  c.GetMcpConnectorStatus(),
 		MCP:                 c.GetMcp(),
 		SlashCommands:       c.GetSlashCommands(),
 		Memory:              c.GetMemory(),

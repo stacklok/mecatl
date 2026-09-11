@@ -48,14 +48,15 @@ func (*attachmentQueryTool) target(call session.ToolCall) (session.ToolCall, str
 	}
 	name := "mcp__" + server + "__" + toolName
 	if !strings.HasPrefix(name, "mcp__") || strings.Contains(server, "__") || strings.Contains(toolName, "__") {
-		return session.ToolCall{}, "", errors.New("CallMcpWithQuery target is invalid")
+		return session.ToolCall{}, "", errors.New(`the "tool" argument must be the bare remote tool name, without an "mcp__<server>__" prefix`)
 	}
 	return session.NewToolCall(call.ID, name, append(json.RawMessage(nil), remoteArgs...)), filter, nil
 }
 
-func (t *attachmentQueryTool) native(call session.ToolCall, filter string) (tool.Tool, error) {
+func (t *attachmentQueryTool) native(ctx context.Context, call session.ToolCall, filter string) (tool.Tool, error) {
 	route, ok := t.attachment.lookupRoute(call.Name)
 	if !ok {
+		t.attachment.runtime.logRouteUnavailable(ctx, t.attachment.logical.ref.SessionID(), diagnosticRouteSurfaceQuery)
 		return nil, errors.New("broker tool route is unavailable")
 	}
 	base := &sessionTool{attachment: t.attachment, route: route, queryFilter: filter}
@@ -71,11 +72,14 @@ func (t *attachmentQueryTool) RequestAuthorization(ctx context.Context, call ses
 	}
 	native, filter, err := t.target(call)
 	if err != nil {
-		return session.ExternalAuthorization{}, false, err
+		// Argument and route validation are local and have not started OAuth.
+		// Execute repeats the pure checks and returns a model-visible ToolResult.
+		return session.ExternalAuthorization{}, false, nil
 	}
-	target, err := t.native(native, filter)
+	target, err := t.native(ctx, native, filter)
 	if err != nil {
-		return session.ExternalAuthorization{}, false, err
+		// Route resolution is local too; preserve the normal tool-error path.
+		return session.ExternalAuthorization{}, false, nil
 	}
 	requester, ok := target.(tool.AuthorizationRequester)
 	if !ok {
@@ -89,6 +93,20 @@ func (t *attachmentQueryTool) AbortAuthorization(ctx context.Context, authorizat
 	return err
 }
 
+func queryFailureReason(err error) string {
+	message := err.Error()
+	switch {
+	case strings.Contains(message, "query result could not be projected within limits"):
+		return diagnosticQueryReasonProjectionLimit
+	case strings.Contains(message, "query transport failed"), strings.Contains(message, "connect query target"):
+		return diagnosticQueryReasonTransport
+	case strings.Contains(message, "query target unavailable"):
+		return diagnosticQueryReasonTargetUnavailable
+	default:
+		return diagnosticQueryReasonExecutionUncertain
+	}
+}
+
 func (t *attachmentQueryTool) Execute(ctx context.Context, call session.ToolCall, env tool.Environment) (session.ToolResult, error) {
 	if err := ctx.Err(); err != nil {
 		return session.ToolResult{}, err
@@ -97,12 +115,13 @@ func (t *attachmentQueryTool) Execute(ctx context.Context, call session.ToolCall
 	if err != nil {
 		return session.NewToolError(call.ID, fmt.Sprintf("CallMcpWithQuery: %v", err)), nil
 	}
-	target, err := t.native(native, filter)
+	target, err := t.native(ctx, native, filter)
 	if err != nil {
 		return session.NewToolError(call.ID, fmt.Sprintf("CallMcpWithQuery: %v", err)), nil
 	}
 	result, err := target.Execute(ctx, native, env)
 	if err != nil {
+		t.attachment.runtime.logQueryFailure(ctx, queryFailureReason(err))
 		// The protected route claims before transport; never retry an uncertain call.
 		return session.NewToolError(call.ID, "CallMcpWithQuery: target may have succeeded; automatic replay refused after a query transport or projection failure"), nil
 	}

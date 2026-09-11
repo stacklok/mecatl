@@ -164,6 +164,10 @@ func mapError(err error) error {
 	var authnErr *authn.Error
 	if errors.As(err, &authnErr) {
 		category := authnCategory(authnErr.Reason)
+		switch authnErr.Reason {
+		case authn.ReasonKeysUnavailable, authn.ReasonKeysStale:
+			return authenticationRejection{category: category, err: fmt.Errorf("%w: %s", ErrIdentityUnavailable, authnErr.Reason)}
+		}
 		switch authnErr.Code {
 		case authn.CodeUnavailable:
 			return authenticationRejection{category: category, err: fmt.Errorf("%w: %s", ErrIdentityUnavailable, authnErr.Reason)}

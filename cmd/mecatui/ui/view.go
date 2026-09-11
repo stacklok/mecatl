@@ -433,13 +433,10 @@ func (m Model) headerNextBadge() string {
 	return "next: " + truncate(sanitizeTerminal(label), maxModelLen)
 }
 
-// scrollIndicator returns the muted "↑ NN%" header cue shown ONLY when the user
-// has scrolled up off the bottom (!m.stuck) — the discoverable signal that the
-// view is no longer tailing live output and how far up it sits. It is "" while
-// stuck (auto-following the bottom), so the at-bottom steady-state header — and
-// thus the View goldens captured there — is unchanged.
+// scrollIndicator returns the muted "↑ NN%" header cue shown only when the view
+// is anchored rather than following the tail.
 func (m Model) scrollIndicator() string {
-	if m.stuck {
+	if m.conversationView.mode == followTail {
 		return ""
 	}
 	return fmt.Sprintf("↑ %d%%", int(m.vp.ScrollPercent()*100))
@@ -454,7 +451,7 @@ func (m Model) scrollIndicator() string {
 const changedFilesIndicatorLimit = 999
 
 func (m Model) changedFilesIndicator() string {
-	n := len(m.filesChanged)
+	n := len(m.conv.filesChanged)
 	if n == 0 {
 		return ""
 	}
@@ -707,12 +704,12 @@ func (m Model) contextWindow() int64 {
 // segment is PREPENDED to the right side; it is LOWER priority than the context
 // meter (it's an advertisement, context % is the headline safety signal), so it is
 // the FIRST thing dropped as width tightens. The <agents> chord below is the LIVE
-// Agents binding (issue #457) — "ctrl+a" by default, rebound via keymap. Tiers,
+// Agents binding (issue #457) — "f6" by default, rebound via keymap. Tiers,
 // richest to poorest (defaults shown):
 //
-//	"⟳ team-x · 2/3 working · ctrl+a agents  ctx ▒▒▒▒▒·· 70% · 140K/200K · ↑7.9K ↓345 cache 88%"
-//	"⟳ team-x · 2/3 working · ctrl+a agents  ctx ▒▒▒▒▒·· 70% · 140K/200K"
-//	"⟳ 2/3 working · ctrl+a  ctx ▒▒▒▒▒·· 70%"   (team→medium, ctx→compact)
+//	"⟳ team-x · 2/3 working · f6 agents  ctx ▒▒▒▒▒·· 70% · 140K/200K · ↑7.9K ↓345 cache 88%"
+//	"⟳ team-x · 2/3 working · f6 agents  ctx ▒▒▒▒▒·· 70% · 140K/200K"
+//	"⟳ 2/3 working · f6  ctx ▒▒▒▒▒·· 70%"   (team→medium, ctx→compact)
 //	"⟳ 2/3  ctx 70%"                            (team→compact, ctx→minimal)
 //	"ctx 70%"                                    (team DROPPED, ctx wins)
 //	then the existing ctx-only fallbacks, then left status alone.
@@ -734,7 +731,7 @@ func (m Model) fitFooter(left string, width int) string {
 	// to the right side at three tiers (full/medium/compact). Each is built from up to
 	// two sub-segments joined by sep:
 	//   - the team segment, non-empty ONLY for a LIVE team (liveTeamBlock — not teamDone).
-	//     This DELIBERATELY differs from the ctrl+a overlay's gate: the footer is a
+	//     This DELIBERATELY differs from the f6 overlay's gate: the footer is a
 	//     live-activity advertisement and hides once the team is done, whereas the
 	//     overlay opens on the last-seen team done-or-not (so the user can still review a
 	//     finished roster). The two are meant to disagree in the done state — don't unify.

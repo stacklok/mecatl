@@ -55,8 +55,8 @@ type SkillMeta struct {
 	// author's intent. It is NEVER a permission grant: the permission evaluator
 	// (governance/port.PermissionPolicy/engine/agent dispatch) NEVER reads it.
 	// Every call still resolves through the normal deny-dominant policy — at
-	// every posture, including yolo — so a skill declaring `allowed-tools: "Bash"`
-	// does NOT pre-approve, loosen, or auto-approve a Bash call. nil/empty when the
+	// every posture, including yolo — so a skill declaring `allowed-tools: "Shell"`
+	// does NOT pre-approve, loosen, or auto-approve a Shell call. nil/empty when the
 	// skill omits it (a skill without the field renders byte-identically to
 	// before). The parser splits the YAML value on whitespace and defensively
 	// caps the count at ≤64 names and each name at ≤64 chars (recording a

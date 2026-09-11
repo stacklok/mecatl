@@ -6,8 +6,8 @@ import (
 )
 
 // readOnlyTools are tools whose use never mutates the workspace and are therefore
-// always permitted under plan mode. Bash is classified per-command via
-// ReadOnlyBash rather than appearing here.
+// always permitted under plan mode. Shell is classified per-command via
+// ReadOnlyShell rather than appearing here.
 var readOnlyTools = map[string]bool{
 	"Read":    true,
 	"ListDir": true,
@@ -16,8 +16,8 @@ var readOnlyTools = map[string]bool{
 }
 
 // mutatingTools are tools that always mutate and are unconditionally denied by
-// plan mode. Bash is not listed: a Bash call is mutating only when its command
-// is not read-only (see ReadOnlyBash).
+// plan mode. Shell is not listed: a Shell call is mutating only when its command
+// is not read-only (see ReadOnlyShell).
 var mutatingTools = map[string]bool{
 	"Edit":   true,
 	"Write":  true,
@@ -42,7 +42,7 @@ var mutatingTools = map[string]bool{
 type Evaluator struct {
 	rules []Rule
 	// looseSubstitution, when true, DISABLES the built-in substitution Ask floor in
-	// resolveBash: a substitution/subshell segment that is NOT SubstitutionReadOnly is
+	// resolveShell: a substitution/subshell segment that is NOT SubstitutionReadOnly is
 	// resolved by resolveSimple's own decision (so a higher-scope allow-all loosens it)
 	// instead of being floored at Ask. It is the substitution analogue of the
 	// mutate-ask floor loosening the --yolo allow-all already grants. Deny-dominance is
@@ -95,7 +95,7 @@ func NewEvaluator(rules []Rule, opts ...EvaluatorOption) *Evaluator {
 }
 
 // Evaluate resolves the decision for a tool call. tool is the tool name, args is
-// its raw JSON argument payload (used for Bash compound-command splitting and
+// its raw JSON argument payload (used for Shell compound-command splitting and
 // pattern matching), and planMode forces deny for mutating actions (plan mode).
 // It evaluates against the Evaluator's static rules only (no learned extras).
 func (e *Evaluator) Evaluate(tool string, args json.RawMessage, planMode bool) PermissionDecision {
@@ -139,7 +139,7 @@ func (e *Evaluator) EvaluateWith(tool string, args json.RawMessage, planMode boo
 // It returns (rule, false) — DO NOT learn — in any case where learning would be
 // unsafe or untargetable:
 //
-//   - Bash whose command splits into != 1 segment (a compound `a && b` / `a; b`),
+//   - Shell whose command splits into != 1 segment (a compound `a && b` / `a; b`),
 //     OR contains command/process substitution or subshell grouping ($(...),
 //     backticks, (...)), OR is empty. Learning a single literal from a compound or
 //     substituted line could green-light a hidden destructive command, so we refuse.
@@ -169,13 +169,13 @@ func (*Evaluator) LearnableRule(tool string, args json.RawMessage) (Rule, bool) 
 }
 
 // learnablePattern derives the exact canonical pattern a learned rule would carry
-// for (tool, args), or ok=false when the call must not be learned. For Bash it
+// for (tool, args), or ok=false when the call must not be learned. For Shell it
 // requires EXACTLY one canonicalized segment with no substitution/grouping; for
-// every other tool it reuses nonBashPattern (the path/target field). An empty
+// every other tool it reuses nonShellPattern (the path/target field). An empty
 // derived pattern is returned as-is so the caller refuses a tool-wide grant.
 func learnablePattern(tool string, args json.RawMessage) (string, bool) {
-	if tool == "Bash" {
-		cmd, _ := BashCommandFromArgs(args)
+	if tool == "Shell" {
+		cmd, _ := ShellCommandFromArgs(args)
 		if cmd == "" {
 			return "", false
 		}
@@ -193,7 +193,7 @@ func learnablePattern(tool string, args json.RawMessage) (string, bool) {
 		}
 		return Canonicalize(seg), true
 	}
-	return nonBashPattern(tool, args), true
+	return nonShellPattern(tool, args), true
 }
 
 // planModeDecision applies the plan-mode read-only gate. It returns a Deny
@@ -206,33 +206,33 @@ func planModeDecision(tool string, args json.RawMessage) (PermissionDecision, bo
 			Reason: "plan mode is active: " + tool + " mutates the workspace and is not permitted; present a plan and exit plan mode first",
 		}, true
 	}
-	if tool == "Bash" {
-		cmd, ok := BashCommandFromArgs(args)
-		if ok && !ReadOnlyBash(cmd) {
+	if tool == "Shell" {
+		cmd, ok := ShellCommandFromArgs(args)
+		if ok && !ReadOnlyShell(cmd) {
 			return PermissionDecision{
 				Effect: Deny,
-				Reason: "plan mode is active: this Bash command is not read-only and is not permitted; present a plan and exit plan mode first",
+				Reason: "plan mode is active: this Shell command is not read-only and is not permitted; present a plan and exit plan mode first",
 			}, true
 		}
 	}
-	// Read-only tools (Read/Grep/Glob) and read-only Bash fall through.
+	// Read-only tools (Read/Grep/Glob) and read-only Shell fall through.
 	return PermissionDecision{}, false
 }
 
 // resolve runs the deny → ask → allow rule engine for a single tool call. For
-// Bash it splits compound commands and requires EVERY sub-command to be allowed:
+// Shell it splits compound commands and requires EVERY sub-command to be allowed:
 // a deny on any sub-command (e.g. `rm` in `git status && rm -rf /`) denies the
 // whole compound.
 func (e *Evaluator) resolve(rules []Rule, tool string, args json.RawMessage) PermissionDecision {
-	if tool == "Bash" {
-		return e.resolveBash(rules, args)
+	if tool == "Shell" {
+		return e.resolveShell(rules, args)
 	}
 	if tool == "Copy" || tool == "Move" {
 		if patterns, ok := copyMovePatterns(args); ok {
 			return e.resolvePatterns(rules, tool, patterns)
 		}
 	}
-	pattern := nonBashPattern(tool, args)
+	pattern := nonShellPattern(tool, args)
 	return e.resolveSimple(rules, tool, pattern)
 }
 
@@ -255,8 +255,8 @@ func (e *Evaluator) resolvePatterns(rules []Rule, tool string, patterns []string
 	return worst
 }
 
-// resolveBash evaluates each canonicalized sub-command of a (possibly compound)
-// Bash line and folds them with deny → ask → allow: the worst outcome wins. It
+// resolveShell evaluates each canonicalized sub-command of a (possibly compound)
+// Shell line and folds them with deny → ask → allow: the worst outcome wins. It
 // also folds the two child-ask decision bits (issue #32): ConfiguredAsk (any
 // segment's winning Ask came from a configured rule — conservative, so a
 // configured Ask anywhere gates the whole compound) and FlooredConfiguredAllow
@@ -266,12 +266,12 @@ func (e *Evaluator) resolvePatterns(rules []Rule, tool string, patterns []string
 // and the floor-free fold is Allow). The two are mutually exclusive by
 // construction: a configured Ask on any segment makes the floor-free fold
 // not-Allow.
-func (e *Evaluator) resolveBash(rules []Rule, args json.RawMessage) PermissionDecision {
-	cmd, _ := BashCommandFromArgs(args)
+func (e *Evaluator) resolveShell(rules []Rule, args json.RawMessage) PermissionDecision {
+	cmd, _ := ShellCommandFromArgs(args)
 	subs := SplitCommands(cmd)
 	if len(subs) == 0 {
 		// No parseable command: evaluate against the raw (empty) pattern.
-		return e.resolveSimple(rules, "Bash", "")
+		return e.resolveSimple(rules, "Shell", "")
 	}
 	worst := PermissionDecision{Effect: Allow, Reason: ""}
 	haveDecision := false
@@ -290,13 +290,13 @@ func (e *Evaluator) resolveBash(rules []Rule, args json.RawMessage) PermissionDe
 			//   (A1) the substitution is fully READ-ONLY (every extracted inner is
 			//        read-only AND the blanked outer is read-only) — do NOT floor:
 			//        let resolveSimple's decision stand, so `cat $(ls)` resolves as
-			//        the read-only Bash it is (Allow under allow-all / the read floor).
+			//        the read-only Shell it is (Allow under allow-all / the read floor).
 			//   (yolo) looseSubstitution disables the floor entirely — resolveSimple's
 			//        decision stands so an allow-all rule loosens it.
 			//   (default) we cannot soundly extract the inner program, so fail safe:
 			//        evaluate the segment AND floor the result at Ask so an allow rule
 			//        for the outer literal can never silently approve a hidden command.
-			seg, segRule := e.resolveSimpleRule(rules, "Bash", Canonicalize(sub))
+			seg, segRule := e.resolveSimpleRule(rules, "Shell", Canonicalize(sub))
 			switch {
 			case SubstitutionReadOnly(sub):
 				d = seg // read-only substitution: no floor, the ordinary decision stands.
@@ -321,7 +321,7 @@ func (e *Evaluator) resolveBash(rules []Rule, args json.RawMessage) PermissionDe
 				}
 				d = PermissionDecision{
 					Effect: Ask,
-					Reason: "Bash command contains command/process substitution or subshell grouping that may hide an inner command; client approval required",
+					Reason: "Shell command contains command/process substitution or subshell grouping that may hide an inner command; client approval required",
 				}
 				if !haveDecision || effectRank(d.Effect) > effectRank(worst.Effect) {
 					worst = d
@@ -330,7 +330,7 @@ func (e *Evaluator) resolveBash(rules []Rule, args json.RawMessage) PermissionDe
 				continue
 			}
 		} else {
-			d = e.resolveSimple(rules, "Bash", Canonicalize(sub))
+			d = e.resolveSimple(rules, "Shell", Canonicalize(sub))
 		}
 		// Un-floored segment (plain, A1, yolo, or kept Ask/Deny): its own effect IS
 		// its floor-free effect.
@@ -391,7 +391,7 @@ func (e *Evaluator) resolveSimple(rules []Rule, tool, pattern string) Permission
 }
 
 // resolveSimpleRule is resolveSimple plus the WINNING rule (nil for the
-// no-matching-rule default Ask), so resolveBash can read the winner's
+// no-matching-rule default Ask), so resolveShell can read the winner's
 // configured-ness when folding the substitution-floor decision bits.
 func (e *Evaluator) resolveSimpleRule(rules []Rule, tool, pattern string) (PermissionDecision, *Rule) {
 	// Collect the highest-precedence matching rule per effect.
@@ -554,11 +554,11 @@ func copyMovePatterns(args json.RawMessage) ([]string, bool) {
 	return []string{values.Source, values.Destination}, true
 }
 
-// nonBashPattern derives the pattern string to match a single-resource non-Bash tool call
+// nonShellPattern derives the pattern string to match a single-resource non-Shell tool call
 // against. It uses the most common path/target field of the built-in tools so
 // rules can target specific files; unknown shapes fall back to the empty string
 // (which only matches tool-wide rules).
-func nonBashPattern(_ string, args json.RawMessage) string {
+func nonShellPattern(_ string, args json.RawMessage) string {
 	if len(args) == 0 {
 		return ""
 	}
@@ -577,16 +577,16 @@ func nonBashPattern(_ string, args json.RawMessage) string {
 	return ""
 }
 
-// BashCommandFromArgs extracts the command string from a Bash tool call's raw
+// ShellCommandFromArgs extracts the command string from a Shell tool call's raw
 // args JSON. It reads the "command" field, then "cmd" as a fallback, returning
 // the first non-empty (after TrimSpace) string. It is FAIL-SAFE: a JSON parse
 // error OR neither field carrying a non-empty string returns ("", false), so a
 // caller that gates a safety decision on the result INSPECTS rather than skips
 // (an unreadable args object must never be presumed read-only). This is the
-// single shared extraction for the Bash tool-call args schema — the governance
-// evaluator, the Subagent isolation gate, and the guardrail Bash pre-filter all
+// single shared extraction for the Shell tool-call args schema — the governance
+// evaluator, the Subagent isolation gate, and the guardrail Shell pre-filter all
 // call it, so a schema change lands in one place.
-func BashCommandFromArgs(args json.RawMessage) (string, bool) {
+func ShellCommandFromArgs(args json.RawMessage) (string, bool) {
 	if len(args) == 0 {
 		return "", false
 	}
@@ -610,7 +610,7 @@ func BashCommandFromArgs(args json.RawMessage) (string, bool) {
 	return "", false
 }
 
-// IsReadOnlyTool reports whether a non-Bash tool is unconditionally read-only.
+// IsReadOnlyTool reports whether a non-Shell tool is unconditionally read-only.
 // Exposed for callers (dispatch, plan-mode) that need the same classification.
 func IsReadOnlyTool(tool string) bool {
 	return readOnlyTools[tool]

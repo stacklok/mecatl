@@ -1499,7 +1499,7 @@ classifications + the parent-usage folds, so NO new lock is added to `parallel.g
 cancelled-before-start branch carries neither (never routed). Composition's
 `buildParallelEngineFactory` (`internal/app/build.go`, sibling of `buildSubagentEngineFactory`)
 mints the routed branch engine through `childEngineDepsForProvider` over the parallel branch
-catalog (Read/Grep/Glob/Edit/Write + Bash), using the routed model DIRECTLY (NOT
+catalog (Read/Grep/Glob/Edit/Write + Shell), using the routed model DIRECTLY (NOT
 `resolveDefaultChildModel`, which would re-run the def-less chain and discard the routed id);
 `registerParallelTool` wires it unconditionally (inert without a `routeTask`).
 NO new outlives-a-call resource (ADR 0027 List 1): the routed engines are per-call /
@@ -1518,7 +1518,7 @@ surface end-to-end on the proto/client wire, NOT session-struct-only: `routed_ca
 `Parallel` message (branch_start, fields 19/20). `toProtoTeam`/`toProtoParallel` populate
 them from the payload (both relays flow through the one mapper), the mecatui client structs
 (`client.TeamMemberSpec`, `client.ParallelMsg`) carry them via the generated getters, and
-mecatui renders a muted `routed: <category> → <model>` cue on the ctrl+a Teams roster row
+mecatui renders a muted `routed: <category> → <model>` cue on the f6 Teams roster row
 (`teamRosterLine`) and the Parallel group-focus branch row (`parallelBranchLine`) — reusing
 the Subagent router's `subagentRoutedLabel` helper, absent when unrouted. Bare metadata only
 (gauntlet #7). The LIVE e2e specs (`team_router_test.go` / `parallel_router_test.go`) assert
@@ -1574,10 +1574,10 @@ child's Role appends `explorerReferencesInstruction` (via `explorerPromptConfig`
 so the child ENDS its summary with a `References:` block listing relevant file paths (path or
 path:line) — model-visible by construction (it shapes the child's output → the RESULT text). It is
 DISTINCT from the shared `defaultTone` "Cite code as file_path:line" inline-citation sentence. The
-read-only explorer tool surface `{Read, Grep, Glob, +sandboxed Bash when runner != nil}` is now
+read-only explorer tool surface `{Read, Grep, Glob, +sandboxed Shell when runner != nil}` is now
 `readOnlyExplorerCatalog(runner)` — ONE definition shared by `buildChildEngine`,
 `buildSubagentEngineFactory` (byte-identical), and `buildForkChildEngine`'s read-only base (which then
-layers Edit/Write). The team-member catalog is DELIBERATELY NOT built from it (its Bash gating
+layers Edit/Write). The team-member catalog is DELIBERATELY NOT built from it (its Shell gating
 differs: `spec.Mutating || roIsolationAvailable` + the `isolateReadOnly` side-effect). Guard:
 `app.TestExplorerPromptInstructsReferences`.
 
@@ -1617,7 +1617,7 @@ the mecatui fleet lane, and the SAME payload field is appended to the ACP `subag
 `ParallelPayload` deliberately gains NO proto field: a branch failure already
 reaches the model through the `Parallel` ToolResult text, which is what `failReason` feeds. In
 mecatui the inline Subagent card needs no new slot (the server-composed error body already carries
-the cause and the card renders it in its result slot); the ctrl+a fleet FOCUS pane gains a
+the cause and the card renders it in its result slot); the f6 fleet FOCUS pane gains a
 `failed: <cause>` block (`subagentFailureLine`) — rune-clamped for HEIGHT and word-wrapped to
 `cardTextWidth(width)` via the same `indentWrap` pair the /skills + /agents inventory panels use, because
 `renderSubagentFocus`'s widest line directly sets the overlay card's width and `centerCard`/
@@ -1781,11 +1781,11 @@ TextconvDoesNotFire)`.
 0040's writable path).** `Subagent` has a `mode` arg (closed set
 `{"","read-only","read-write"}`); a `mode:"read-write"` call runs its child
 DIRECTLY against the REAL parent workspace — NO fork, NO copy, NO merge-back. Its
-Edit/Write/Bash mutate the real tree IN PLACE, exactly as the main agent does, and
+Edit/Write/Shell mutate the real tree IN PLACE, exactly as the main agent does, and
 git is the rollback layer. The writable child engine
 (`buildWritableSubagentChildEngine`, role `task:read-write`) LAYERS Edit/Write onto
 the read-only explorer catalog and uses the MAIN session's command runner
-(`buildCommandRunner` — main-session parity: a writable child's Bash hits the real
+(`buildCommandRunner` — main-session parity: a writable child's Shell hits the real
 repo, so it must resolve as the main session's does under the operator's
 posture/policy, not the trust-ungated force-copy runner). It is DEFAULT-wired (no
 flag, no `Config`; the no-FS profile excludes it); the per-call default stays
@@ -1805,7 +1805,7 @@ in the tree — there is no fork to quarantine them; that is the accepted direct
 trade-off. The
 writable child posture is `isolated:false` (it shares the real tree), so
 `governance.IsolationApprovable` (the A2 isolation auto-approve) does NOT apply to
-its Bash. Wired via `WithWritableChildEngine` only (the now-removed
+its Shell. Wired via `WithWritableChildEngine` only (the now-removed
 `WithWritableChildForker`/`WithSubagentAutoMerge` were a clean break — see
 `engine/CHANGELOG.md`). **Dispatch-serial (the LOAD-BEARING correctness fix).** A
 direct-write child mutates the real tree DURING its run, so the dispatcher MUST keep
@@ -1880,7 +1880,7 @@ investigator stalled, resume it with write access to apply the fix" is legal —
 worktree is gone. `editsSurvived` is `writable && the resumed snapshot's persisted Workspace == the
 real parent root` (captured BEFORE `buildChildSession`'s `Rehome` overwrites it, so no new persisted
 field is needed). The INVERSE falsehood
-is the worse one: a read-only child has no Edit/Write but DOES have Bash in that worktree, so it may
+is the worse one: a read-only child has no Edit/Write but DOES have Shell in that worktree, so it may
 genuinely have applied edits, and a child that trusts absent edits builds on nothing. The third cell
 exists because keying only on the edits axis handed that same call `resumeStalenessNote` — "you are
 running in a FRESH workspace checkout" — while it held Edit/Write on the operator's REAL repository
@@ -2042,7 +2042,7 @@ worded FAMILY-NEUTRALLY ("child agent …") so it stays truthful when team/paral
 store fallback ErrNotFound/ErrNoActiveRun) backs HTTP `POST /v1/sessions/{id}/cancel-child`. The
 SAME regen landed the three DORMANT fields for the next iterations (A10): `Subagent.background=10`
 (now written by the mapper since I3a), `Parallel.child_id=18`, `Team.member_session_id=18` (17 is
-taken by dispositions — A1; both written since I2). mecatui: the ctrl+a Subagents tab gains an `x` cancel key (roster + focus pane,
+taken by dispositions — A1; both written since I2). mecatui: the f6 Subagents tab gains an `x` cancel key (roster + focus pane,
 non-terminal lanes only, confirm-less — recoverable) sending `client.Stream.SendCancelChild`;
 `permission.retract` maps to `PermissionRetractMsg`; mecatui keeps a FIFO ask queue behind the
 visible modal (`m.ask` is always the head — concurrent subagents surface asks concurrently), so a
@@ -2312,31 +2312,31 @@ pre-existing I3a tests `TestBackgroundChildCancelledAtRunEnd` and `TestBackgroun
 now script a second clean end (their first one legitimately draws the nudge). No diagnostics
 change: the loop still emits exactly THREE operator lines.
 
-**Background Bash commands (issue #23 commands half — `background: true` on Bash +
-BashStatus; ADR 0201).** The open half of #23 after ADR 0015's background subagents:
+**Background Shell commands (issue #23 commands half — `background: true` on Shell +
+ShellStatus; ADR 0201).** The open half of #23 after ADR 0015's background subagents:
 a long-running shell command (a dev server, a watch loop, a slow build) detaches
-instead of blocking the turn. **The tool is the AGENT loop's own Bash**
-(`engine/agent/bashtool.go`, `BashTool` / `NewBashTool`), NOT the fstools adapter's —
+instead of blocking the turn. **The tool is the AGENT loop's own Shell**
+(`engine/agent/shelltool.go`, `ShellTool` / `NewShellTool`), NOT the fstools adapter's —
 the background half needs the parent run's `childRunRegistry`, an agent-package type
 fstools cannot import, so the foreground half is RE-IMPLEMENTED byte-identical to the
 fstools body (same arg validation, timeout ctx, `runner.Run`, combined-output shaping,
-the 25 000-byte cap, the exit-code error — `bashToolMaxOutputBytes` /
-`bashToolTruncationMarker` mirror `fstools.MaxOutputBytes` / `TruncationMarker`
+the 25 000-byte cap, the exit-code error — `shellToolMaxOutputBytes` /
+`shellToolTruncationMarker` mirror `fstools.MaxOutputBytes` / `TruncationMarker`
 EXACTLY, kept identical by discipline) and the background half rides the
 `childCapableTool` seam (`ExecuteWithParent`), the same dispatcher seam Subagent /
 SubagentStatus reach `parentCaps` through. It registers under the literal name
-`"Bash"` — the ONE gated name the permission evaluator special-cases
+`"Shell"` — the ONE gated name the permission evaluator special-cases
 (`engine/governance/evaluator.go`: `resolve` / `planModeDecision` /
-`LearnableRule` match `tool == "Bash"`) — so a background start resolves through the
+`LearnableRule` match `tool == "Shell"`) — so a background start resolves through the
 IDENTICAL deny/ask/allow fold, compound-command split, plan-mode gate, and guardrail
-modelhook `Bash` rules as a foreground call; a second tool name would silently bypass
+modelhook `Shell` rules as a foreground call; a second tool name would silently bypass
 the bash gate (D1: any new shell affordance must register under the gated name or
 extend it). The name's single authority moved to `engine/tool/tool.go`
-(`BashToolName`); `engine/adapter/fstools/bash.go` aliases it
-(`fstools.BashToolName = tool.BashToolName`) so the adapter and the agent tool share
+(`ShellToolName`); `engine/adapter/fstools/shell.go` aliases it
+(`fstools.ShellToolName = tool.ShellToolName`) so the adapter and the agent tool share
 one constant. **Registry family (D4):** a background call registers a
-`childFamilyBashCmd` ("bash-cmd") entry on the parent run's registry under
-`bashcmd-<callID>` (`BashCmdJobPrefix` — names NO session, so the InspectSubagent
+`childFamilyShellCmd` ("bash-cmd") entry on the parent run's registry under
+`bashcmd-<callID>` (`ShellCmdJobPrefix` — names NO session, so the InspectSubagent
 prefix gate and the child-session retention GC must never learn it), a NON-delegation
 family: no child session, no engine, no `subagent.*` events (the ChildActivity
 trip-wire deliberately unfired). It rides the registry ONLY for the run-scoped
@@ -2345,10 +2345,10 @@ registry gained three bash-only fields (`outputTail *tailBuffer`, `exitCode int`
 `childEntry`) plus FAMILY-FILTERED seams — `statusSnapshotMatching` /
 `collectMatching` / `liveBackgroundIDsMatching` (nil exclude ⇒ every entry) — so the
 SHARED registry serves two DISJOINT projections: `SubagentStatus` filters bash-cmd
-OUT (`delegationFamiliesOnly`), `BashStatus` filters the three delegation families
-out (`bashCmdFamiliesOnly`); one stored body, exactly-once delivery, two doors, and
+OUT (`delegationFamiliesOnly`), `ShellStatus` filters the three delegation families
+out (`shellCmdFamiliesOnly`); one stored body, exactly-once delivery, two doors, and
 neither tool can drift its view of an entry or deliver through the other. The
-background detach is FAIL-FAST on the job-count gate (`maxBackgroundBashJobs` = 8 —
+background detach is FAIL-FAST on the job-count gate (`maxBackgroundShellJobs` = 8 —
 the Subagent gate's scale; a job holds its slot ACROSS turns so blocking could
 deadlock the model against itself; the ids read runs BEFORE the job's own
 registration so the error never lists the failing call's own id), mints
@@ -2371,12 +2371,12 @@ by type assertion; a runner lacking it declines and the background call fails so
 sharing ONE private `run` spawn/wait tail between `Run` (capped head buffers) and
 `RunStreaming` (the caller's sink) so the two cannot drift. Each job streams into
 `engine/agent/tailbuffer.go` (`tailBuffer`) — a mutex-guarded sliding-window ring
-retaining the LAST `maxBashJobTailBytes` = 64 KiB (retention exceeds the 25 000-byte
-render cap so BashStatus shows more than one render; 8 jobs ≈ 512 KiB worst case,
+retaining the LAST `maxShellJobTailBytes` = 64 KiB (retention exceeds the 25 000-byte
+render cap so ShellStatus shows more than one render; 8 jobs ≈ 512 KiB worst case,
 bounded) over a 2×capacity scratch (append + slide, one bounded memmove per write,
 zero reallocations), with a `Truncated` flag set the first time a byte drops.
-**BashStatus** (`engine/agent/bashstatus.go`, `BashStatusTool` /
-`NewBashStatusTool`, read-only — `ReadOnly() == true` so a `wait_ms` park overlaps
+**ShellStatus** (`engine/agent/shellstatus.go`, `ShellStatusTool` /
+`NewShellStatusTool`, read-only — `ReadOnly() == true` so a `wait_ms` park overlaps
 other tools in the turn) is the SOLE status/collect/cancel channel: no args → the
 roster of THIS run's bash jobs (ids + state + stop ONLY — the command text is
 model-authored untrusted and never rides a bulk roster, the A9 posture);
@@ -2394,7 +2394,7 @@ waits for the terminal. Its floor-scoped Allow rides `defaultRules` alongside
 `engine/agent/loop.go`) are FAMILY-AWARE — the delegation clause keeps its
 byte-exact historical wording (the substrings "background subagent(s) finished" /
 "background subagent(s) still running" are stable test keys) and a "background
-command(s) finished / still running" clause naming `BashStatus` is APPENDED only
+command(s) finished / still running" clause naming `ShellStatus` is APPENDED only
 when bash jobs are among the finished/live, so a subagent-only run renders
 byte-identically to before. **procgroup pre-fix (D9):** `internal/adapter/procgroup`
 (extracted from `hookexec`, which already had the code) puts a child process in its
@@ -2402,26 +2402,26 @@ own process group and kills the WHOLE group on ctx cancel (POSIX `Setpgid` + a
 `Cancel` signalling the negative PID; a no-op elsewhere); the osfs `CommandRunner`
 now configures it unconditionally, so a backgrounded grandchild (`sleep 30 &`,
 `make`'s compiler children) dies with the shell instead of being orphaned — fixing
-grandchild orphans for FOREGROUND Bash too, and load-bearing here because cancel is a
-background job's primary lifecycle (a run-end drain or `BashStatus` cancel that left
+grandchild orphans for FOREGROUND Shell too, and load-bearing here because cancel is a
+background job's primary lifecycle (a run-end drain or `ShellStatus` cancel that left
 grandchildren would leak processes at scale). **Catalog wiring:** the composition
-root registers `agent.NewBashTool()` + `agent.NewBashStatusTool()` together in
+root registers `agent.NewShellTool()` + `agent.NewShellStatusTool()` together in
 `internal/app/build.go` (`registerCoreTools`) under the ONE shell gate (the pair
-cannot drift apart; pinned by `TestBackgroundBashCatalogWiring`), and swaps EVERY
-other Bash construction to the agent tool — the read-only explorer catalog
+cannot drift apart; pinned by `TestBackgroundShellCatalogWiring`), and swaps EVERY
+other Shell construction to the agent tool — the read-only explorer catalog
 (`readOnlyExplorerCatalog`), per-def scoped catalogs (`buildAgentDefEngine`,
 `baseSubagentTools`), and team members (`buildMemberEngine` /
 `registerDefaultMemberTools`) — so a CHILD backgrounds a command against its OWN
-run's registry (run-scoped, drained at the child's run end) but gets NO BashStatus
-(the collection channel stays main-catalog-only, mirroring the SubagentStatus rule).
-The no-fs profile's excluded set gained `BashStatus` (no Bash ⇒ no jobs to status;
+run's registry (run-scoped, drained at the child's run end); Shell-enabled child catalogs
+include **`ShellStatus`** for that child run's status/collection channel.
+The no-fs profile's excluded set gained `ShellStatus` (no Shell ⇒ no jobs to status;
 `noFSExcludedTools` in `internal/app/nofs_profile_test.go`). **Permissions (D5) are
-identical to foreground Bash:** the start is the ONE main-run ask when policy says
+identical to foreground Shell:** the start is the ONE main-run ask when policy says
 Ask (PauseForApproval before anything detaches); once started the job runs to
 completion/cancel/drain with no further gating, exactly as a foreground command is
-gated once at start. Guards: `engine/agent/bashtool_internal_test.go` +
-`bashstatus_internal_test.go` + `tailbuffer_internal_test.go` +
-`background_bash_e2e_test.go` (the offline end-to-end), `internal/adapter/osfs/
+gated once at start. Guards: `engine/agent/shelltool_internal_test.go` +
+`shellstatus_internal_test.go` + `tailbuffer_internal_test.go` +
+`background_shell_e2e_test.go` (the offline end-to-end), `internal/adapter/osfs/
 osfs_stream_test.go` + `command_procgroup_unix_test.go` (the streaming seam + the
 group-kill), and the composition pins above. DEFERRED (v2): foreground→background
 mid-flight promotion (Ctrl+B — the blocking `CommandRunner.Run` seam has no detach
@@ -2512,16 +2512,16 @@ structure neutral, contents provider-private, never displayed/interpreted/valida
 the enum, and NOT a `port.LLMRequest` field.
 
 **Team-member workspace policy is THREE-TIER** (isolation is the security boundary; capability
-flows down from the parent, which has Bash): a base-sharing read-only member (no forker wired)
+flows down from the parent, which has Shell): a base-sharing read-only member (no forker wired)
 gets NO shell; a read-only member the factory marks `MemberBuild.IsolateReadOnly` runs in a
 cheap git **worktree** (shares the base repo's `.git` ⇒ full history) with Read/Grep/Glob +
-**Bash** but never Edit/Write — so it can `git log`/`git show`/build/test, confined to a
+**Shell** but never Edit/Write — so it can `git log`/`git show`/build/test, confined to a
 throwaway checkout; a Mutating member runs in a **force-copy** fork (own `.git`) with
-Edit/Write/Bash. The Supervisor holds TWO forkers (`s.forker` force-copy, `s.roForker`
+Edit/Write/Shell. The Supervisor holds TWO forkers (`s.forker` force-copy, `s.roForker`
 worktree via `WithReadOnlyForker`); `AddMember`'s mutating-tool backstop gates on
-**base-sharing** (`!needFork`), so an isolated member's Bash is exempt.
+**base-sharing** (`!needFork`), so an isolated member's Shell is exempt.
 
-A read-only member's Bash runs through a **sandboxed** command runner
+A read-only member's Shell runs through a **sandboxed** command runner
 (`buildSandboxedCommandRunner`) that neutralises the **fixed-key** git config-driven
 code-execution vectors in the shared `.git` (`core.pager`/`hooksPath`/`fsmonitor`/external
 diff + scrubbed `GIT_*`/`PAGER`); it does **NOT** close attacker-named `.gitattributes` driver
@@ -2588,7 +2588,7 @@ isolation guarantee is unchanged (the overlay reads the parent, writes the child
 limitation: an uncommitted submodule-POINTER change rides the diff as a gitlink update but the
 submodule's own working tree is not recursively overlaid (best-effort by design).
 
-**Subagent Bash permission asks resolve in a 4-step model (NOT a blanket auto-deny).** The
+**Subagent Shell permission asks resolve in a 4-step model (NOT a blanket auto-deny).** The
 old contract auto-DENIED every subagent permission ask, so a team member / Subagent child could
 NEVER run a command containing substitution/subshell — the `$(go list ./...)`-per-package
 coverage loop hard-failed with a misleading "denied by user". The fix (`handleChildEvent` →
@@ -2598,9 +2598,9 @@ coverage loop hard-failed with a misleading "denied by user". The fix (`handleCh
 - **Step 1 — A1 read-only substitution (GLOBAL).** `governance.SubstitutionReadOnly(seg)`
   extracts every recursively-nested inner command (`extractSubstitutions`) and blanks the outer
   (`outerWithSubstitutionsBlanked` → an inert `MECATL_SUBST` placeholder); if every inner is
-  `ReadOnlyBash` and the blanked outer is `simpleReadOnly`, `resolveBash` does NOT floor at Ask
-  (the ordinary fold stands). It is a SEPARATE classifier — `ReadOnlyBash`/`simpleReadOnly`/
-  plan-mode and the `FuzzReadOnlyBash`/`FuzzSplitCommands` Inv-5 are byte-for-byte unchanged. A
+  `ReadOnlyShell` and the blanked outer is `simpleReadOnly`, `resolveShell` does NOT floor at Ask
+  (the ordinary fold stands). It is a SEPARATE classifier — `ReadOnlyShell`/`simpleReadOnly`/
+  plan-mode and the `FuzzReadOnlyShell`/`FuzzSplitCommands` Inv-5 are byte-for-byte unchanged. A
   bare `(subshell)` is safe grouping; `$(...)`/backticks in command position are NOT (the output
   is executed), so a lone-placeholder outer is accepted only for `isPureSubshell`. Shell
   control-flow keywords (`for … in …; do …; done`) are stripped (`stripShellKeywords`) so the
@@ -2624,7 +2624,7 @@ coverage loop hard-failed with a misleading "denied by user". The fix (`handleCh
   (interactivity + a register-then-emit `surfaceAsk`) to a `childCapableTool`
   (Subagent/Team/Parallel's `ExecuteWithParent`). `resolveChildAsk` registers the child Run in the
   parent router and emits a REDACTED parent `EvPermissionAsk` (command `clampPreview`'d, framed
-  "subagent requests approval to run Bash: …", raw `Args` dropped — gauntlet #7), then returns
+  "subagent requests approval to run Shell: …", raw `Args` dropped — gauntlet #7), then returns
   WITHOUT resolving; the child parks in its own goroutine. The parent's `Run.Approve` routes the
   verdict to the child by the child-namespaced askID (`childAskRouter.route` → `child.Approve`);
   NO proto change (the child session id IS the namespace). A parked team member blocks only its
@@ -2674,7 +2674,7 @@ coverage loop hard-failed with a misleading "denied by user". The fix (`handleCh
   `flooredAllowSafe` (a sibling classifier in `bash.go`). Its bound (panel-hardened): **the
   configured Allow vouches ONLY for the OUTER literal — every recursively-extracted INNER must
   independently classify positively read-only** (the SAME A1 inner contract SubstitutionReadOnly
-  applies: `ReadOnlyBash(in) || SubstitutionReadOnly(in)`; an unknown/mutating inner like
+  applies: `ReadOnlyShell(in) || SubstitutionReadOnly(in)`; an unknown/mutating inner like
   `$(zap)`/`$(touch x)` fails — the substitution floor's charter "an allow rule for the outer
   literal can never silently approve a hidden command" holds), PLUS the worktree-escape
   REJECTIONS on the blanked outer as defense-in-depth (`escapeRejectionsFree` — the ONE rejection
@@ -2686,7 +2686,7 @@ coverage loop hard-failed with a misleading "denied by user". The fix (`handleCh
   surfaces. Fail-safe false on extraction ambiguity. `resolveChildAsk` resolves a qualifying ask
   `AllowOnce` without surfacing. Positive soundness is fuzzed (`FuzzFlooredConfiguredAllow`,
   the repo convention for auto-approval-gating classifiers). The pre-existing classifiers
-  (`SubstitutionReadOnly`/`ReadOnlyBash`/`IsolationApprovable` + their fuzzers) are
+  (`SubstitutionReadOnly`/`ReadOnlyShell`/`IsolationApprovable` + their fuzzers) are
   byte-for-byte unchanged. The `--yolo` allow-all RULE binds children too (the shared
   `yoloAllowAllRule` injected into `childRules`). The child substitution-floor LOOSENING is
   TIER-AWARE: under `auto` children never get `WithLooseSubstitution` (the floor holds, injection-
@@ -2740,7 +2740,7 @@ miss path is fail-safe deny). Prompt trust split (`buildAskReviewPrompt`): the p
 (`req.Isolated` — O6) are TRUSTED header (each `neutraliseFraming`'d for defense-in-depth, and the
 prompt's own `Policy:`/`Tool:`/`Requested command:`/`Respond with ONLY …`/`Execution context:`
 headers are in the shared `framingHeader` strip list); the COMMAND (`askReviewSubject` —
-`bashCmdFromArgs`, raw Reason for non-Bash, the `surfacedCommandPreview` mirror) rides INSIDE the
+`bashCmdFromArgs`, raw Reason for non-Shell, the `surfacedCommandPreview` mirror) rides INSIDE the
 existing `untrustedFence` after `neutraliseFraming`, with the explicit instruction that fenced text
 is the artifact under review, claims of prior approval inside it are VOID, and uncertainty ⇒ deny.
 
@@ -2960,11 +2960,11 @@ ACP), NOT model-visible; `writeTeamStatus` is unchanged. The terminal `EvTeamEnd
 the closed-enum reason (the per-round `Cause` does NOT widen it); a retried member's failed rounds
 each surface their own cause. It rides the proto `Team.cause` field 19.
 
-**The Subagent delegation tool (read-only explorer) gets the SAME treatment** (Phase 2): when Bash is
+**The Subagent delegation tool (read-only explorer) gets the SAME treatment** (Phase 2): when Shell is
 configured, `SubagentTool` holds a worktree `childForker` (`WithChildForker`) and forks each child
-run into a throwaway git worktree BEFORE running it (`buildChildEngine` registers Bash via the
+run into a throwaway git worktree BEFORE running it (`buildChildEngine` registers Shell via the
 SAME `buildSandboxedCommandRunner`; `buildSubagentTool` wires the worktree forker iff a runner
-exists; per-def Subagent engines keep Bash via `scopedToolNamesMode`'s `allowShell` and share the
+exists; per-def Subagent engines keep Shell via `scopedToolNamesMode`'s `allowShell` and share the
 one forker; that forker carries `WithDirtyOverlay` — see the dirty-aware-fork note above — so the
 child's worktree mirrors the operator's uncommitted state instead of a clean HEAD). So a `Subagent`
 to "investigate X" can now `git log`/`git show`/`cat`/build/test in an isolated checkout that
@@ -2979,7 +2979,7 @@ the Subagent-concurrency-cap note above). Same
 `gitenv` hardening + same untrusted-`.gitattributes` residual as team members; the
 workspace-trust gate — the SHARED mitigation for both Team + Subagent — is DONE (issue #40):
 an untrusted workspace nils the sandboxed runner, so Subagent children and read-only members
-run Bash-less (no forker wired, honest Spec note + member prompt line), while Mutating
+run Shell-less (no forker wired, honest Spec note + member prompt line), while Mutating
 members and Parallel branches keep their hardened shells (`buildForceCopyRunner`: force-copy
 fork creation runs no git, so the fork-time checkout RCE can't fire; their run-time git over
 the verbatim-copied untrusted `.git` is the accepted main-session-parity residual).
@@ -3838,30 +3838,30 @@ three layers to keep the engine importable and the verdict shape in the adapter:
 **Default-on with no rules.** A configured checker model is the opt-in-to-spend; with
 no explicit rule list guardrails take the built-in **default block rule set**
 (`defaultGuardrailSpecs`: WebSearch pre+post, WebFetch post, `mcp__*` pre+post, and
-`Bash` pre — all block, the headline default; ADR 0053 flipped advisory→block, ADR
-0060 added `Bash`). The `Bash` rule carries a **read-only pre-filter**
-(`SkipReadOnlyBash`): the modelhook adapter skips the checker entirely for a Pre Bash
-command it can prove read-only (reusing `governance.ReadOnlyBash`/`SplitCommands`/
+`Shell` pre — all block, the headline default; ADR 0053 flipped advisory→block, ADR
+0060 added `Shell`). The `Shell` rule carries a **read-only pre-filter**
+(`SkipReadOnlyShell`): the modelhook adapter skips the checker entirely for a Pre Shell
+command it can prove read-only (reusing `governance.ReadOnlyShell`/`SplitCommands`/
 `SubstitutionReadOnly` — fail-safe: substitution/ambiguity is inspected), so a
 guardrail-protected shell costs an LLM call ONLY on a mutating/outward command (e.g.
 `gh pr merge`), not on every `ls`. The OTHER local tools
 (Read/ListDir/Edit/Write/Copy/Move/Remove/Grep/Glob) remain deliberately unmatched. An
 explicit `guardrails.rules` list replaces the
-defaults (an operator's explicit `Bash` rule does NOT inherit the pre-filter — it
+defaults (an operator's explicit `Shell` rule does NOT inherit the pre-filter — it
 inspects every command). There is no per-session call-count cap — the checker runs per
 matched call, and cost control lives in the operator's provider/billing layer (checker
 token spend is not folded into `MaxRunTokens`).
 
 **Per-tool rubric routing (ADR 0060).** `buildCheckPrompt` calls `rubric(phase, rule)`,
 which prefers a rule's non-empty `prompt` over the built-in default — the SAME seam
-operator custom prompts use. The default **Bash** rule wires `Prompt:
-modelhook.DefaultBashPrePrompt` (an EXPORTED const), so a Pre Bash check routes to a
-Bash-SPECIFIC rubric; **Web/MCP** rules leave `Prompt` empty and keep the generic
+operator custom prompts use. The default **Shell** rule wires `Prompt:
+modelhook.DefaultShellPrePrompt` (an EXPORTED const), so a Pre Shell check routes to a
+Shell-SPECIFIC rubric; **Web/MCP** rules leave `Prompt` empty and keep the generic
 `defaultPrePrompt`. Why: `defaultPrePrompt` is an exfiltration rubric for network/MCP
 boundaries — its "sensitive local data transmitted off the machine" + "if uncertain,
 judge unsafe" clauses false-positive on local-shell args (a real incident blocked a
 legitimate write to a sibling repo as "exfiltration"; a local write is data STAYING on
-the machine). `DefaultBashPrePrompt` flags only FIVE concrete dangerous categories
+the machine). `DefaultShellPrePrompt` flags only FIVE concrete dangerous categories
 (off-machine upload, `curl … | sh`, irreversible remote actions incl. `gh pr merge`,
 destructive local ops, AND local-PERSISTENCE writes to sensitive targets — authorized_keys
 / shell rc / crontab / systemd / git-hooks — which never leave the machine so the first
@@ -3871,7 +3871,7 @@ sibling repo stays SAFE, only the named sensitive targets are UNSAFE), replacing
 blanket "if uncertain, judge unsafe" with "judge SAFE unless a specific dangerous action
 is identifiable" — a deliberate precision-over-recall posture for the local shell, with
 the out-of-band approve-once ask (ADR 0062) as the residual recovery. An operator's
-explicit `Bash` rule with no `prompt:` falls back to `defaultPrePrompt` (least-surprising
+explicit `Shell` rule with no `prompt:` falls back to `defaultPrePrompt` (least-surprising
 — an explicit rule opts out of the default-set conveniences).
 
 **The #1 constraint — `PostToolUse` Block is INERT.** The tool has already run by the
@@ -3939,7 +3939,7 @@ prompt directive.
   (`LearnHookApproval(ctx, governance.HookEvent)`) is type-asserted on `Deps.Hooks` and
   called by `askHookApproval` ONLY on a `VerdictAllowAlways` verdict for a hook ask (no
   method added to `HookRunner` — that would break the API). The `modelhook.Runner`
-  implements it by arming `modelhook.WaiverHolder` (session-keyed; tool-exact + Bash
+  implements it by arming `modelhook.WaiverHolder` (session-keyed; tool-exact + Shell
   command-substring, the matching shape inherited from the deleted `OverrideScope`). The
   Runner's `check` consults the waiver FIRST on a Pre phase — a hit returns the empty
   allow outcome WITHOUT an LLM call and logs a `guardrail-waived` audit line. In-memory
@@ -4006,7 +4006,7 @@ tool call refined into an askable ask, a serialized provenance marker, a verdict
   The plan content rides the args through the EXISTING channel: `surfacePlanAsk` copies
   `c.Args` into `PendingAsk.Args` (the model passes the plan in the PresentPlan `plan`
   argument), so proto `PermissionAsk.args` carries it to the mecatui plan-approval modal —
-  the SAME posture as every other permission ask (Write/Bash asks carry their args for
+  the SAME posture as every other permission ask (Write/Shell asks carry their args for
   operator review); the operator is the intended audience. Gauntlet #7 holds: the
   `EvApproval` payload carries ONLY tool NAME + verdict + askID + call id — NO args.
 - **The scrollable plan-approval view (`cmd/mecatui/ui/approval_render.go`
@@ -4023,7 +4023,7 @@ tool call refined into an askable ask, a serialized provenance marker, a verdict
   never breaks the modal). **The non-diff ask-args surface (issue #488, ADR
   0108 — `cmd/mecatui/ui/approval_render.go` (`openAskArgsView`))** mirrors this
   trio one-for-one: a non-diff, non-plan ask's args WRAP inside the centered
-  card (a Bash `{"command": …}` decodes to the command text), cap at six rows
+  card (a Shell `{"command": …}` decodes to the command text), cap at six rows
   plus a scroll/full-args hint, and `ctrl+t` opens the full-screen argsVP view
   (raw JSON via the bare-`r` RawArgs toggle; the verdict keys/buttons work from
   inside it) — ctrl+t routing by ask type is `isDiffCapableAskTool` (Edit/Write
@@ -4641,7 +4641,7 @@ itself is not permanent product-tree tooling. Secret sentinel tests cover the ex
 Authorization boundary and assert absence from every other header/body, diagnostics,
 errors, prompts, lifecycle hooks, events, snapshots, and raw JSONL. Generic main and
 isolated-child runner oracles prove provider credentials do not enter command-runner
-environments. Residual boundary: a same-UID Bash process can read a known plaintext
+environments. Residual boundary: a same-UID Shell process can read a known plaintext
 `auth.yaml` path; mode `0600` is not privilege separation.
 
 ### `openaicompat` + `toolhivellm` — ToolHive LLM gateway provider (issue #262, ADR 0064)
@@ -5012,7 +5012,7 @@ depguard allowlist scopes `github.com/stacklok/toolhive/*` to `tokensource.go` O
 `openai.buildTools` sends function tools **non-strict** (`FunctionToolParam.Strict` left unset
 → the SDK omits it → upstream default applies). Strict mode would require every tool schema's
 `required` to list ALL of its `properties`, but many built-in tools carry genuinely optional
-params (Bash `timeout_ms`, Edit `replace_all`, Read `offset`/`limit`, Grep `path`, memory
+params (Shell `timeout_ms`, Edit `replace_all`, Read `offset`/`limit`, Grep `path`, memory
 Remember/query, ToolSearch, Parallel, Team, Subagent, …); a strict-enforcing OpenAI-compatible
 upstream (Azure reached via OpenRouter) `400`s those. We don't need the guarantee: **argument
 validation lives at the execution edge** — every tool re-parses/validates via
@@ -5239,7 +5239,7 @@ Exa-anonymous is the default while it lasts — and why graceful degradation is 
   WebFetch's arbitrary-URL fetch). Child catalogs (`noFSChildCatalog`) carry it for
   read-only-discovery parity with WebFetch. Bare `WebSearch` in a Claude allow imports
   VERBATIM (no demotion). ACP `toolKindFor` maps it to `"search"`.
-- **The `query` probe (DOMAIN):** `governance.nonBashPattern` adds `"query"` to its
+- **The `query` probe (DOMAIN):** `governance.nonShellPattern` adds `"query"` to its
   probe-key list (after path/file_path/pattern/url), so an arg-pattern permission rule
   can target a `WebSearch` call by its query string (`WebSearch(query:…)`) — the prior
   round missed this. Mutation-verified: removing the key fails the probe test.
@@ -5402,7 +5402,7 @@ A tool can hand back arbitrary bytes, and an invalid-UTF-8 Go string in a
 `session.ToolResult` (or any producer-influenced string) kills the live gRPC
 Converse stream: the mapper copies the Go string into a protobuf string field
 verbatim, and protobuf REJECTS invalid UTF-8 at marshal time (`codes.Internal`),
-after which the relay cancels the run. The confirmed producer was a Bash call
+after which the relay cancels the run. The confirmed producer was a Shell call
 (`sed … | cat -t`): BSD `cat -t` renders a valid em dash's continuation bytes as
 ASCII while retaining the `\xe2` lead byte, leaving an orphaned lead byte. The
 byte path is `internal/adapter/osfs/osfs.go` (`cappedBuffer`) →
@@ -5825,12 +5825,13 @@ is `/v1/mcp/broker/oauth/callback`; the separately configured callback URL is To
 redirect to mecatl, so ingress needs the complete fixed broker prefix plus the final callback
 path.
 
-Protected static declarations are not model-visible at construction. On successful enrollment,
-`internal/adapter/mcpbroker/workspace_catalogue.go` (`FreezeAuthenticatedCatalogue`) performs
-strict authenticated discovery for every configured protected backend, collision-checks the
-complete result, and atomically replaces the attachment catalogue. It either publishes the full
-frozen catalogue and rebuilds the session engine or exposes no protected tools; no per-backend
-mecatl authorization continuation exists. `server.Service` attaches only after
+Protected static declarations are represented as declared broker catalogue rows and
+remain visible as model tools before enrollment. Successful enrollment in
+`internal/adapter/mcpbroker/workspace_catalogue.go` (`FreezeAuthenticatedCatalogue`)
+adds authenticated discoveries to those static definitions, collision-checks the complete
+result, and atomically freezes the merged attachment catalogue before rebuilding the
+session engine. It either publishes that complete frozen catalogue or leaves the existing
+static declarations intact; no per-backend mecatl authorization continuation exists. `server.Service` attaches only after
 `SessionStore.Create` returns the canonical ID, persists `session.Session.ExternalBinding`, and
 passes `Attachment.Tools()` explicitly through `SessionEngineRequest.BrokerTools` into
 `assembleCatalog`. Reload reattaches through the same contract and accepts only an exact
@@ -6152,13 +6153,13 @@ because the shared engine has FS tools baked in.
 
 - **Catalog profile:** `catalogSession.noFS` threads through `assembleCatalog`.
   `registerCoreTools(…, noFS)` registers `tools.NoFS()` = {WebFetch} PLUS WebSearch (both
-  outbound reads, no filesystem) — never Bash (the configured runner is not consulted);
+  outbound reads, no filesystem) — never Shell (the configured runner is not consulted);
   `registerParallelTool` is SKIPPED (a branch is a
   filesystem fork; the deliverable is a fork PATH); `registerSkillDraft` is SKIPPED (drafting
   writes a SKILL.md — a filesystem-authoring act). Everything else (global/client MCP +
   resource meta-tools, Subagent trio, Team/InspectMember, the memory six, Skill) registers
   identically. The EXACT delta — default set MINUS {Read, ListDir, Edit, Write, Copy, Move,
-  Remove, Grep, Glob, Bash,
+  Remove, Grep, Glob, Shell,
   Parallel, SkillDraft} — is pinned by `TestNoFSCatalogProfile` (the issue-#42 idiom over the
   REAL `buildCatalog` assets, mutation-verified).
 - **Skill stays ON, body-only:** a skill body is TEXT INJECTION, not a filesystem act; an
@@ -6199,7 +6200,7 @@ because the shared engine has FS tools baked in.
 ### Version-aware Workspace mutation and the execution-environment seam (ADR 0208 + ADR 0211 + ADR 0214)
 
 A coding agent ultimately needs one execution environment whose filesystem and command namespace are
-affined: the bytes Read/Edit see and the tree Bash builds must be the same place. ADR 0208 fixes the
+affined: the bytes Read/Edit see and the tree Shell builds must be the same place. ADR 0208 fixes the
 version protocol; ADR 0211 implements the runtime seam; ADR 0291 makes
 `session.EnvironmentRef{Kind, ID, Revision}` the sole durable identity. The minimal immutable
 `tool.Environment` carries that ref plus a non-null `Workspace` and an optional bound
@@ -6289,7 +6290,7 @@ fallback participates.
 ### Path-escape posture (`docs/acceptance/path-escape-posture.md` + ADR 0080)
 
 The osfs out-of-root rejection used to be a silent dead-end: `ErrPathEscape` pushed the
-model to an opaque Bash `cat /path`, losing the FS tools' invariants and audit shape. The
+model to an opaque Shell `cat /path`, losing the FS tools' invariants and audit shape. The
 path-escape-posture plan turns that rejection into a **posture-appropriate decision** —
 without ever stripping the osfs containment vetting (ADR-0047's `*os.Root` +
 canonicalize-then-reject is byte-for-byte intact; the relax consults policy BEFORE the
@@ -6304,7 +6305,7 @@ tool body, never re-opens it after).
   helpers `LocalizeInRoot` and `ResolveRoot` — the SAME canonicalize-then-reject primitives
   the tool body runs over the same canonicalized root, so a symlinked absolute path
   classifies identically to the tool body by construction. The escape relax applies only
-  to Read/Write/Edit: ListDir/Copy/Move/Remove stay workspace-confined, Bash is gated by
+  to Read/Write/Edit: ListDir/Copy/Move/Remove stay workspace-confined, Shell is gated by
   its own classifiers, and Glob/Grep route patterns and stay workspace-confined at every posture (ADR-0047 point 5), and a malformed path arg
   classifies in-root (the
   tool body's own validation rejects it — the escape decision never invents a path).
@@ -6333,7 +6334,7 @@ tool body, never re-opens it after).
 | pseudo-fs (`/proc`,`/sys`,`/dev`) | hard deny, every posture | hard deny, every posture |
 | any child engine | hard deny, every posture | hard deny, every posture |
 
-At `auto`/`yolo` a read escape allows by Bash parity (the Bash channel already reads the
+At `auto`/`yolo` a read escape allows by Shell parity (the Shell channel already reads the
 same bytes, so the FS read boundary was cosmetic); a write escape allows only at `yolo`
 and ASKS everywhere below it (never a silent un-asked mutation). At `strict`/`trusted`
 BOTH read and write escapes now ASK on the FS tool itself (Scenario 4) instead of
@@ -6362,7 +6363,7 @@ never validate its read-before-edit invariant through this wrapper.
 
 **Pseudo-fs is never relaxed** (`escapePseudoFS`, distinct from a regular escape at
 every posture): an in-process FS Read of `/proc/self/environ` would return the SERVER's
-raw, unscrubbed environment — a secret-exfiltration channel the envscrub-scrubbed Bash
+raw, unscrubbed environment — a secret-exfiltration channel the envscrub-scrubbed Shell
 parity path (`cat /proc/self/environ` in the child shell) does not provide. Relaxing it
 would break the parity premise, so it hard-denies even at `yolo` — policy first, then
 the tool-body wrapper as defense-in-depth.
@@ -6441,7 +6442,11 @@ bindings/engines if ownership is lost. For a running or awaiting Clear, selector
 runs while the source is untouched, then cancellation is the irreversible abandon-and-replace
 boundary. Any later lease, placement, engine, or persistence failure publishes no successor
 and causes no client rebind, but the source may already be terminal-cancelled; retry remains
-valid and prior workspace mutations are never rolled back. No distributed transaction across
+valid and prior workspace mutations are never rolled back. In broker mode, every successor mints a fresh
+broker attachment keyed by its own session ID, persists that attachment's opaque binding before
+commit, and builds the per-session catalogue from its exact broker tools even with a zero selector.
+The source binding and broker authorization are never copied; reattachment of a missing or stale
+binding remains fail-closed. No distributed transaction across
 those systems is claimed. The current `SessionStore` seam has no lease-token
 conditional create, so there is an accepted residual window after the final held-lease check and
 before or during publication: a concurrent renewal loss cancels the context but cannot make every
@@ -6651,7 +6656,7 @@ yet (a replay consumer is Phase 3b). See `CLOUD-NATIVE.md` (Phase 3, ledger row 
   after the verdict resolves) and `engine/agent/dispatch.go` (`resolvePendingCall`) (the
   resume-from-awaiting path, at entry). **`AllowAlways`, not `Learned`:** it mirrors
   `verdict == allow_always` — but it is named for the VERDICT, not the policy outcome,
-  because `Policy.Learn` no-ops on an unlearnable call (compound/substituted Bash with no
+  because `Policy.Learn` no-ops on an unlearnable call (compound/substituted Shell with no
   targetable pattern), so an allow-always verdict sets the flag true even when NO rule was
   recorded. A 3b permstore-replay consumer filters on it as a HINT and re-derives the real
   rule from the conversation (the metadata-only event never carries a pattern). In 3a
@@ -7837,7 +7842,7 @@ The settled decisions, condensed:
   ADVISORY ONLY — NEVER a permission grant: the permission evaluator (governance/
   `port.PermissionPolicy`/`engine/agent` dispatch) NEVER reads it, and every call still
   resolves through the normal deny-dominant policy at EVERY posture (including yolo), so a
-  skill declaring `allowed-tools: "Bash"` does NOT pre-approve or loosen a Bash call. The
+  skill declaring `allowed-tools: "Shell"` does NOT pre-approve or loosen a Shell call. The
   parser splits the YAML value (the spec's space-separated STRING form, or a YAML list form)
   on whitespace, trimming/dropping empties, and defensively caps the count at ≤64 names and
   each name at ≤64 chars (truncating the PREFIX on count overflow with a non-fatal warning
@@ -7857,7 +7862,7 @@ The settled decisions, condensed:
   fit whole. Successful assets are never truncated. Invalid UTF-8 or NUL bytes are rejected before
   returning text. FS and driver skills therefore render identically. There is NO
   `AssetMaterializer`, temp cache, `FSSource.AssetDir(s)`, base-directory header, workspace
-  read-root threading, executable-bit application, or implicit execution. Bash requiring real
+  read-root threading, executable-bit application, or implicit execution. Shell requiring real
   files does not justify materializing textual references; a workflow that genuinely needs a
   file must create or obtain one explicitly in the workspace under ordinary permissions.
 - **K — Skill tool seam.** `skills.NewTool(metas []tool.SkillMeta, source tool.SkillSource)`
@@ -7913,7 +7918,7 @@ The settled decisions, condensed:
 observability; admission is gated where sources are CONSTRUCTED — an untrusted workspace's
 project tier is never built); the logical-name grammar (verbatim from `ValidSkillAssetName`);
 and the no-watch/snapshot decision and its trust-gate rationale. ADR 0108 supersedes the former
-materialize-for-Bash conclusion: textual assets are fetched through `Skill({name,asset})`, while
+materialize-for-Shell conclusion: textual assets are fetched through `Skill({name,asset})`, while
 execution requires an explicit workspace-file workflow.
 
 ## Source drivers — agent defs + commands (Phase C2: `engine/tool/agentsource.go` + `engine/prompt/commandsource.go` + `agents.FSSource` + grpcdriver clients)
@@ -7946,7 +7951,7 @@ execution requires an explicit workspace-file workflow.
 - **HOOKS = HARNESS-SIDE SHELL (trust framing).** A def's `hooks:` map executes through
   `hookexec` as UNGATED shell on the HARNESS HOST (every scoped lifecycle phase, no
   permission ask) — strictly stronger than the skill driver, whose payloads still ride the
-  permission-gated Bash path. **A compromised agent-source driver executes arbitrary shell
+  permission-gated Shell path. **A compromised agent-source driver executes arbitrary shell
   on the harness host via def hooks; treat it as harness-equivalent infrastructure** (echoed
   in user-docs/ and the proto `AgentDef.hooks` comment). `resolveAgentSeam`'s driver
   branch narrates every driver def carrying hooks once at build ("agent def carries
@@ -8142,7 +8147,7 @@ m.deps.Models != nil` (same mechanism as `/soul`/`/usermodel`); palette-only ope
 it collides with enter); fixed builtin order now `clear, help, mcp, agents, team, skills, soul,
 usermodel, models`.
 
-**Unified `ctrl+a` agents overlay + fleet footer** (Subagent delegation-tool watchability, Package C) is
+**Unified `f6` agents overlay + fleet footer** (Subagent delegation-tool watchability, Package C) is
 CLIENT-ONLY — built purely from the relayed `subagent.*`/`team.*` projection, NO new server
 event/field (the F2 finding: the three `subagent.*` events already carry ChildID/goal/tool
 name/error/count/usage/stop/duration). Two pieces:
@@ -8152,10 +8157,10 @@ name/error/count/usage/stop/duration). Two pieces:
   Part of the conversation, so `/clear` drops it. `subagentFleetCounts`/`hasSubagents` drive the
   footer + the Subagents tab.
 - **Fleet footer segment** (`footer.go` `subagentFooter{Full,Medium,Compact}`, mirroring the team
-  segment): `⛭ subagents N◐ M✓ · ctrl+a`, shown once ≥1 subagent started; `view.go` `fitFooter`
+  segment): `⛭ subagents N◐ M✓ · f6`, shown once ≥1 subagent started; `view.go` `fitFooter`
   composes it into an "agents prefix" (team segment + fleet segment via `joinSeg`) that sheds
   before the ctx meter. No-subagent footer is byte-identical to before.
-- **Unified overlay** (`agents_overlay.go`): ONE `ctrl+a` surface with two tabs (`agentsTab`
+- **Unified overlay** (`agents_overlay.go`): ONE `f6` surface with two tabs (`agentsTab`
   Subagents|Teams). The container open flag + Teams-tab state STILL live on `m.team` (teamState) —
   the existing team overlay became the Teams tab verbatim (`renderTeamsTab` dispatches to the
   unchanged `renderTeamRoster`/`Focus`/`Tasks`/`Findings`; the standalone `renderTeamOverlay` is
@@ -8167,7 +8172,7 @@ name/error/count/usage/stop/duration). Two pieces:
   Teams when a team is LIVE, else Subagents when subagents ran, else the available tab. The newer
   Subagent/Team terminal stop reasons (`budget`/`structured_output`/`no_progress`/`max_*`) ride the
   string `stop` field and map to compact labels in `subagentStopLabel` (+ a ✓/✗ glyph split in
-  `subagentLaneGlyph`: cap-family ✓, error/cancel-family ✗). Help/zero-state `ctrl+a` row is no
+  `subagentLaneGlyph`: cap-family ✓, error/cancel-family ✗). Help/zero-state `f6` row is no
   longer teams-gated (subagents are always available via Subagent). Gauntlet #7 holds: the focus pane
   shows redacted chips only, never child content.
 
@@ -8216,7 +8221,7 @@ to extract a shared `ChildActivity` value object — not before** (recorded in t
   (a fork-failed branch still emits a coherent `branch_end` with `Failed=true`).
 - **Client/UI** (`cmd/mecatui`): `client.ParallelMsg`/`ParallelKind` + `applyParallel` build GROUPED
   `parallelGroup`/`parallelBranch` state (deterministic, insertion-ordered, no map-iteration flake);
-  a third `Parallel` tab in the unified `ctrl+a` overlay (`Subagents | Parallel | Teams`) renders the
+  a third `Parallel` tab in the unified `f6` overlay (`Subagents | Parallel | Teams`) renders the
   grouped roster (join + branch counts + winner) → ONE-level group focus (branches inline with chip
   traces carrying bounded previews, the winner highlighted, the preserved fork path, a "bounded
   previews" honesty note). It folds into the fleet

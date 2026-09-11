@@ -288,8 +288,8 @@ func parseAskVerdict(text string) (askVerdict, bool) {
 //     (the fence is the load-bearing control), and scrubbing it would over-redact
 //     a legitimate operator rubric line that happens to look like a section
 //     header.
-//   - The requested command (the Bash command string, or the raw ask reason for a
-//     non-Bash tool) is CHILD-MODEL-authored and can embed peer-injected text →
+//   - The requested command (the Shell command string, or the raw ask reason for a
+//     non-Shell tool) is CHILD-MODEL-authored and can embed peer-injected text →
 //     untrusted, wrapped in a fenced block via governance.WriteUntrustedBlock (framing markers
 //     neutralised first so the command cannot forge its own closing fence or a
 //     section header), with an explicit instruction that the fenced text is the
@@ -324,12 +324,12 @@ func buildAskReviewPrompt(policy string, req ChildAskReviewRequest) string {
 	return b.String()
 }
 
-// askReviewSubject is the text under review: the Bash command string for a Bash
+// askReviewSubject is the text under review: the Shell command string for a Shell
 // ask (the same field tolerance the evaluator uses), the raw ask reason for any
 // other tool — mirroring surfacedCommandPreview, the human-surfacing sibling.
 func askReviewSubject(ask session.PendingAsk) string {
-	if ask.Tool == "Bash" {
-		if cmd := bashCmdFromArgs(ask.Args); cmd != "" {
+	if ask.Tool == "Shell" {
+		if cmd := shellCmdFromArgs(ask.Args); cmd != "" {
 			return cmd
 		}
 	}

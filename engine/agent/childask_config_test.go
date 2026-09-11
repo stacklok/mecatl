@@ -25,7 +25,7 @@ func configChildEngine(llm port.LLMProvider, bash tool.Tool, configured ...gover
 	rules := append([]governance.Rule{{Scope: governance.ScopeBuiltinDefault, Effect: governance.Allow}}, configured...)
 	return agent.NewEngine(agent.Deps{
 		LLM:     llm,
-		Catalog: bashCatalog(bash),
+		Catalog: shellCatalog(bash),
 		Policy:  permpolicy.NewPolicy(rules, nil, governance.WithAudience(governance.AudienceSubagent)),
 		Model:   "child-model",
 	})
@@ -81,13 +81,13 @@ func (rr *requestRecorder) toolResultContents() []string {
 // NEVER suppressed: it SURFACES to the interactive parent, and only the
 // approval runs it.
 func TestConfiguredChildAskSurfacedNotAutoApproved(t *testing.T) {
-	bash := &fakeBash{}
+	bash := &fakeShell{}
 	childLLM := mockllm.New(
-		mockllm.ToolCallTurn(toolCall("k1", "Bash", `{"command":"go test ./..."}`)),
+		mockllm.ToolCallTurn(toolCall("k1", "Shell", `{"command":"go test ./..."}`)),
 		mockllm.TextTurn("child done"),
 	)
 	child := configChildEngine(childLLM, bash,
-		governance.Rule{Scope: governance.ScopeSharedProject, Tool: "Bash", Pattern: "go test*", Effect: governance.Ask, Audience: governance.AudienceSubagent})
+		governance.Rule{Scope: governance.ScopeSharedProject, Tool: "Shell", Pattern: "go test*", Effect: governance.Ask, Audience: governance.AudienceSubagent})
 	// Forker ⇒ ISOLATED child: without the configured Ask, A2 would auto-approve
 	// `go test ./...` (pinned by TestIsolatedSubagentAutoApprovesWorktreeSafe).
 	task := agent.NewSubagentTool(child, agent.WithChildForker(&recordingSubagentForker{}))
@@ -117,7 +117,7 @@ func TestConfiguredChildAskSurfacedNotAutoApproved(t *testing.T) {
 	// The surfaced reason must carry the POLICY reason (the rule that gated it),
 	// so the operator can tell their own configured rule from a substitution
 	// floor (UX should-fix 4). The policy reason names the matched rule.
-	if !strings.Contains(surfacedReason, "approval required by rule for Bash") {
+	if !strings.Contains(surfacedReason, "approval required by rule for Shell") {
 		t.Fatalf("surfaced ask must include the configured-rule reason so the operator knows WHY it surfaced; got %q", surfacedReason)
 	}
 	if ranBeforeAsk {
@@ -137,14 +137,14 @@ func TestConfiguredChildAskSurfacedNotAutoApproved(t *testing.T) {
 // rule) and never "denied by user" (no user denied anything) — plus the
 // correlated operator diagnostic.
 func TestConfiguredChildAskHeadlessAutoDenyMessage(t *testing.T) {
-	bash := &fakeBash{}
+	bash := &fakeShell{}
 	rec := &requestRecorder{}
 	childLLM := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(rec.observe)},
-		mockllm.ToolCallTurn(toolCall("k1", "Bash", `{"command":"go test ./..."}`)),
+		mockllm.ToolCallTurn(toolCall("k1", "Shell", `{"command":"go test ./..."}`)),
 		mockllm.TextTurn("child adapted"),
 	)
 	child := configChildEngine(childLLM, bash,
-		governance.Rule{Scope: governance.ScopeSharedProject, Tool: "Bash", Pattern: "go test*", Effect: governance.Ask, Audience: governance.AudienceSubagent})
+		governance.Rule{Scope: governance.ScopeSharedProject, Tool: "Shell", Pattern: "go test*", Effect: governance.Ask, Audience: governance.AudienceSubagent})
 	task := agent.NewSubagentTool(child, agent.WithChildForker(&recordingSubagentForker{}))
 
 	diag := newRecordingDiag()
@@ -197,13 +197,13 @@ func TestConfiguredChildAskHeadlessAutoDenyMessage(t *testing.T) {
 // positively read-only: the hidden-inner adversarial twin
 // (TestAdversarialConfiguredAllowHiddenInnerStillGated) pins the complement.
 func TestFlooredConfiguredAllowExecutesWithoutSurfacing(t *testing.T) {
-	bash := &fakeBash{}
+	bash := &fakeShell{}
 	childLLM := mockllm.New(
-		mockllm.ToolCallTurn(toolCall("k1", "Bash", `{"command":"go generate $(ls)"}`)),
+		mockllm.ToolCallTurn(toolCall("k1", "Shell", `{"command":"go generate $(ls)"}`)),
 		mockllm.TextTurn("child done"),
 	)
 	child := configChildEngine(childLLM, bash,
-		governance.Rule{Scope: governance.ScopeSharedProject, Tool: "Bash", Pattern: "go generate*", Effect: governance.Allow, Audience: governance.AudienceSubagent})
+		governance.Rule{Scope: governance.ScopeSharedProject, Tool: "Shell", Pattern: "go generate*", Effect: governance.Allow, Audience: governance.AudienceSubagent})
 	task := agent.NewSubagentTool(child) // NO forker: not isolated, A2 unavailable.
 
 	parentLLM := mockllm.New(
@@ -233,13 +233,13 @@ func TestFlooredConfiguredAllowExecutesWithoutSurfacing(t *testing.T) {
 // deny keeps it unexecuted. Innocuous stand-ins per the no-destructive-literals
 // rule; asserted on the EFFECT (the command never ran).
 func TestAdversarialConfiguredAllowHiddenInnerStillGated(t *testing.T) {
-	allowRule := governance.Rule{Scope: governance.ScopeSharedProject, Tool: "Bash", Pattern: "go test*", Effect: governance.Allow, Audience: governance.AudienceSubagent}
+	allowRule := governance.Rule{Scope: governance.ScopeSharedProject, Tool: "Shell", Pattern: "go test*", Effect: governance.Allow, Audience: governance.AudienceSubagent}
 	const cmd = `{"command":"go test $(touch SAFE_MARKER)"}`
 
 	t.Run("headless: auto-denied, never executed", func(t *testing.T) {
-		bash := &fakeBash{}
+		bash := &fakeShell{}
 		childLLM := mockllm.New(
-			mockllm.ToolCallTurn(toolCall("k1", "Bash", cmd)),
+			mockllm.ToolCallTurn(toolCall("k1", "Shell", cmd)),
 			mockllm.TextTurn("child adapted"),
 		)
 		child := configChildEngine(childLLM, bash, allowRule)
@@ -256,9 +256,9 @@ func TestAdversarialConfiguredAllowHiddenInnerStillGated(t *testing.T) {
 		}
 	})
 	t.Run("interactive: surfaces, deny keeps it unexecuted", func(t *testing.T) {
-		bash := &fakeBash{}
+		bash := &fakeShell{}
 		childLLM := mockllm.New(
-			mockllm.ToolCallTurn(toolCall("k1", "Bash", cmd)),
+			mockllm.ToolCallTurn(toolCall("k1", "Shell", cmd)),
 			mockllm.TextTurn("child adapted"),
 		)
 		child := configChildEngine(childLLM, bash, allowRule)
@@ -290,13 +290,13 @@ func TestAdversarialConfiguredAllowHiddenInnerStillGated(t *testing.T) {
 // floored ask stays unresolved: headless ⇒ auto-denied, never executed, even
 // for an ISOLATED child.
 func TestAdversarialSubagentAllowGitPushStillGated(t *testing.T) {
-	bash := &fakeBash{}
+	bash := &fakeShell{}
 	childLLM := mockllm.New(
-		mockllm.ToolCallTurn(toolCall("k1", "Bash", `{"command":"git push $(x)"}`)),
+		mockllm.ToolCallTurn(toolCall("k1", "Shell", `{"command":"git push $(x)"}`)),
 		mockllm.TextTurn("child adapted"),
 	)
 	child := configChildEngine(childLLM, bash,
-		governance.Rule{Scope: governance.ScopeSharedProject, Tool: "Bash", Pattern: "git push*", Effect: governance.Allow, Audience: governance.AudienceSubagent})
+		governance.Rule{Scope: governance.ScopeSharedProject, Tool: "Shell", Pattern: "git push*", Effect: governance.Allow, Audience: governance.AudienceSubagent})
 	// Isolated AND headless: neither A2 (escape verb) nor the floored-allow bit
 	// (escape bound) may clear it, and there is no human to surface to.
 	task := agent.NewSubagentTool(child, agent.WithChildForker(&recordingSubagentForker{}))
@@ -318,19 +318,19 @@ func TestAdversarialSubagentAllowGitPushStillGated(t *testing.T) {
 // regression the issue-#32 work once introduced (exposed as a test hang): a
 // child under the DEFAULT posture — the bare allow-all FLOOR
 // (permpolicy.AllowAllFloorRules), NO configured rules — must still SURFACE its
-// substitution-floored Bash ask to an interactive parent. The blanket floor
+// substitution-floored Shell ask to an interactive parent. The blanket floor
 // allow-all must never register as a "configured Allow" and trip
 // FlooredConfiguredAllow into a silent auto-approve. Asserted POSITIVELY (the
 // ask event is observed, and the command runs only after the approval), not via
 // a drain timeout.
 func TestBareFloorChildSubstitutionAskStillSurfaces(t *testing.T) {
-	bash := &fakeBash{}
+	bash := &fakeShell{}
 	childLLM := mockllm.New(
-		mockllm.ToolCallTurn(toolCall("k1", "Bash", `{"command":"cat $(zap)"}`)),
+		mockllm.ToolCallTurn(toolCall("k1", "Shell", `{"command":"cat $(zap)"}`)),
 		mockllm.TextTurn("child done"),
 	)
 	// bashChildEngine IS the canonical bare-floor fixture (AllowAllFloorRules).
-	child := bashChildEngine(childLLM, bash)
+	child := shellChildEngine(childLLM, bash)
 	task := agent.NewSubagentTool(child, agent.WithChildForker(&recordingSubagentForker{}))
 
 	parentLLM := mockllm.New(
@@ -364,13 +364,13 @@ func TestBareFloorChildSubstitutionAskStillSurfaces(t *testing.T) {
 // half of (d): the gated escape command SURFACES to the human (it is approvable
 // — just never auto-approvable) and a DENY keeps it unexecuted.
 func TestAdversarialSubagentAllowGitPushSurfacesWhenInteractive(t *testing.T) {
-	bash := &fakeBash{}
+	bash := &fakeShell{}
 	childLLM := mockllm.New(
-		mockllm.ToolCallTurn(toolCall("k1", "Bash", `{"command":"git push $(x)"}`)),
+		mockllm.ToolCallTurn(toolCall("k1", "Shell", `{"command":"git push $(x)"}`)),
 		mockllm.TextTurn("child adapted"),
 	)
 	child := configChildEngine(childLLM, bash,
-		governance.Rule{Scope: governance.ScopeSharedProject, Tool: "Bash", Pattern: "git push*", Effect: governance.Allow, Audience: governance.AudienceSubagent})
+		governance.Rule{Scope: governance.ScopeSharedProject, Tool: "Shell", Pattern: "git push*", Effect: governance.Allow, Audience: governance.AudienceSubagent})
 	task := agent.NewSubagentTool(child, agent.WithChildForker(&recordingSubagentForker{}))
 
 	parentLLM := mockllm.New(
@@ -403,15 +403,15 @@ func TestAdversarialSubagentAllowGitPushSurfacesWhenInteractive(t *testing.T) {
 // exactly where the floor-scope fixture hang lived. It does NOT touch
 // TestCancelChildWhileParkedOnAsk (the substitution-floor parked path).
 func TestCancelChildWhileParkedOnConfiguredAsk(t *testing.T) {
-	bash := &fakeBash{}
+	bash := &fakeShell{}
 	childLLM := mockllm.New(
-		mockllm.ToolCallTurn(toolCall("k1", "Bash", `{"command":"go test ./..."}`)),
+		mockllm.ToolCallTurn(toolCall("k1", "Shell", `{"command":"go test ./..."}`)),
 		mockllm.TextTurn("child: never reached"),
 	)
 	// Configured subagent Ask on go test*: without it, the ISOLATED child's
 	// `go test ./...` would A2-auto-approve and nothing would park.
 	child := configChildEngine(childLLM, bash,
-		governance.Rule{Scope: governance.ScopeSharedProject, Tool: "Bash", Pattern: "go test*", Effect: governance.Ask, Audience: governance.AudienceSubagent})
+		governance.Rule{Scope: governance.ScopeSharedProject, Tool: "Shell", Pattern: "go test*", Effect: governance.Ask, Audience: governance.AudienceSubagent})
 	task := agent.NewSubagentTool(child, agent.WithChildForker(&recordingSubagentForker{}))
 
 	parentLLM := mockllm.New(
@@ -477,10 +477,10 @@ func TestCancelChildWhileParkedOnConfiguredAsk(t *testing.T) {
 // the isolation auto-approve, surfaces to the interactive parent, and runs only
 // after approval.
 func TestTeamMemberConfiguredAskSurfaces(t *testing.T) {
-	leadBash := &fakeBash{}
+	leadShell := &fakeShell{}
 	memberPolicy := permpolicy.NewPolicy(
 		append(permpolicy.AllowAllFloorRules(),
-			governance.Rule{Scope: governance.ScopeSharedProject, Tool: "Bash", Pattern: "go test*", Effect: governance.Ask, Audience: governance.AudienceSubagent}),
+			governance.Rule{Scope: governance.ScopeSharedProject, Tool: "Shell", Pattern: "go test*", Effect: governance.Ask, Audience: governance.AudienceSubagent}),
 		nil, governance.WithAudience(governance.AudienceSubagent))
 
 	factory := func(tm *team.Team, spec agent.MemberSpec, _ string) agent.MemberBuild {
@@ -488,9 +488,9 @@ func TestTeamMemberConfiguredAskSurfaces(t *testing.T) {
 		for _, tl := range agent.MemberTools(tm, spec.Name, nil) {
 			cat.MustRegister(tl)
 		}
-		cat.MustRegister(leadBash)
+		cat.MustRegister(leadShell)
 		llm := mockllm.New(
-			mockllm.ToolCallTurn(toolCall("a1", "Bash", `{"command":"go test ./..."}`)),
+			mockllm.ToolCallTurn(toolCall("a1", "Shell", `{"command":"go test ./..."}`)),
 			mockllm.TextTurn("lead: tests run"),
 			mockllm.TextTurn("CONSOLIDATED: done"),
 		)
@@ -513,7 +513,7 @@ func TestTeamMemberConfiguredAskSurfaces(t *testing.T) {
 	evs := drainApproving(r, session.VerdictAllowOnce, func(ev session.Event) {
 		if ev.Type == session.EvPermissionAsk && ev.Ask != nil {
 			sawAsk = true
-			if len(leadBash.ran()) != 0 {
+			if len(leadShell.ran()) != 0 {
 				ranBeforeAsk = true
 			}
 		}
@@ -524,7 +524,7 @@ func TestTeamMemberConfiguredAskSurfaces(t *testing.T) {
 	if ranBeforeAsk {
 		t.Fatalf("the member command ran before the surfaced ask was approved")
 	}
-	if got := leadBash.ran(); len(got) != 1 {
+	if got := leadShell.ran(); len(got) != 1 {
 		t.Fatalf("approval should run the member command exactly once; ran=%v", got)
 	}
 	if res := lastResult(t, evs); res.Stop == session.StopError {
@@ -536,7 +536,7 @@ func TestTeamMemberConfiguredAskSurfaces(t *testing.T) {
 // EXACT ruleset production childRules(Config{AllowAllTools:true}) produces (a
 // ScopeCLI AudienceSubagent allow-all PREPENDED to the AllowAllFloorRules floor,
 // pinned AudienceSubagent). It proves the --yolo child ruleset is BENIGN at the
-// loop level: a plain non-read-only, non-substitution Bash command runs on a
+// loop level: a plain non-read-only, non-substitution Shell command runs on a
 // HEADLESS (non-interactive) parent with no surfaced ask and no auto-deny (the
 // blanket child floor allows it — children have no mutate-ask floor), AND the
 // paired substitution variant (non-read-only inner) STILL floors → headless ⇒
@@ -552,12 +552,12 @@ func TestChildAskYoloNonSubstitutionAutoApproves(t *testing.T) {
 	}
 
 	t.Run("plain mutate auto-approves without surfacing", func(t *testing.T) {
-		bash := &fakeBash{}
+		bash := &fakeShell{}
 		childLLM := mockllm.New(
-			mockllm.ToolCallTurn(toolCall("k1", "Bash", `{"command":"python3 script.py"}`)),
+			mockllm.ToolCallTurn(toolCall("k1", "Shell", `{"command":"python3 script.py"}`)),
 			mockllm.TextTurn("child done"),
 		)
-		child := agent.NewEngine(agent.Deps{LLM: childLLM, Catalog: bashCatalog(bash), Policy: yoloChildPolicy(), Model: "child-model"})
+		child := agent.NewEngine(agent.Deps{LLM: childLLM, Catalog: shellCatalog(bash), Policy: yoloChildPolicy(), Model: "child-model"})
 		task := agent.NewSubagentTool(child) // headless parent below ⇒ no surfacing path.
 
 		parentLLM := mockllm.New(
@@ -579,12 +579,12 @@ func TestChildAskYoloNonSubstitutionAutoApproves(t *testing.T) {
 	})
 
 	t.Run("substitution with bad inner still auto-denies", func(t *testing.T) {
-		bash := &fakeBash{}
+		bash := &fakeShell{}
 		childLLM := mockllm.New(
-			mockllm.ToolCallTurn(toolCall("k1", "Bash", `{"command":"cat $(zap)"}`)),
+			mockllm.ToolCallTurn(toolCall("k1", "Shell", `{"command":"cat $(zap)"}`)),
 			mockllm.TextTurn("child adapted"),
 		)
-		child := agent.NewEngine(agent.Deps{LLM: childLLM, Catalog: bashCatalog(bash), Policy: yoloChildPolicy(), Model: "child-model"})
+		child := agent.NewEngine(agent.Deps{LLM: childLLM, Catalog: shellCatalog(bash), Policy: yoloChildPolicy(), Model: "child-model"})
 		task := agent.NewSubagentTool(child)
 
 		parentLLM := mockllm.New(

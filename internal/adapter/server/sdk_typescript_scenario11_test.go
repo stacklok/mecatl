@@ -37,12 +37,31 @@ type sdkScenario11Job struct {
 	Env            map[string]string   `yaml:"env"`
 	Environment    string              `yaml:"environment"`
 	If             string              `yaml:"if"`
-	Needs          string              `yaml:"needs"`
+	Needs          sdkScenario11Needs  `yaml:"needs"`
 	Outputs        map[string]string   `yaml:"outputs"`
 	Permissions    map[string]string   `yaml:"permissions"`
 	RunsOn         string              `yaml:"runs-on"`
 	Steps          []sdkScenario11Step `yaml:"steps"`
 	TimeoutMinutes int                 `yaml:"timeout-minutes"`
+}
+
+// sdkScenario11Needs models a job's `needs:`, which GitHub accepts as either a single job id
+// or a sequence of them. Typing it as a bare string parses the SDK release workflow but fails
+// outright on release.yml's `needs: [guard, publish-mecak8s]`.
+type sdkScenario11Needs []string
+
+func (n *sdkScenario11Needs) UnmarshalYAML(b []byte) error {
+	var one string
+	if err := yaml.Unmarshal(b, &one); err == nil {
+		*n = sdkScenario11Needs{one}
+		return nil
+	}
+	var many []string
+	if err := yaml.Unmarshal(b, &many); err != nil {
+		return err
+	}
+	*n = many
+	return nil
 }
 
 type sdkScenario11Step struct {
@@ -69,8 +88,8 @@ func TestADR_0304_ManualDispatchIsDryRunOnly(t *testing.T) {
 	if !reflect.DeepEqual(verify.Permissions, map[string]string{"contents": "read"}) {
 		t.Errorf("verify permissions = %v, want contents: read only", verify.Permissions)
 	}
-	if publish.Needs != "verify" {
-		t.Errorf("publish needs = %q, want verify", publish.Needs)
+	if !reflect.DeepEqual([]string(publish.Needs), []string{"verify"}) {
+		t.Errorf("publish needs = %v, want [verify]", publish.Needs)
 	}
 	if publish.Environment != "github-packages-publish" {
 		t.Errorf("publish environment = %q, want github-packages-publish", publish.Environment)

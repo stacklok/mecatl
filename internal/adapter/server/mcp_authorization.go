@@ -46,6 +46,7 @@ var (
 	errAuthorizationExpired            = fmt.Errorf("%w: the pending MCP authorization has expired", ErrNotFound)
 	errAuthorizationNotPending         = fmt.Errorf("%w: the MCP authorization is no longer pending", ErrNotFound)
 	errAuthorizationUnclaimable        = fmt.Errorf("%w: the pending MCP authorization could not be claimed", ErrNotFound)
+	errMCPAuthorizationPending         = errors.New("server: MCP authorization is pending; complete the browser authorization or cancel it before sending another message")
 )
 
 // brokerStateLost reports a genuinely unavailable broker transaction, which a
@@ -961,7 +962,8 @@ func (s *Service) interruptRestoredAuthorizationLocked(ctx context.Context, sess
 		_, statusErr := attachment.AuthorizationStatus(ctx, pending.Authorization)
 		release()
 		if statusErr == nil {
-			return nil, false, fmt.Errorf("%w: session %q has a live external authorization", ErrFailedPrecondition, sess.ID)
+			s.cfg.Diagnostics.Log(ctx, port.LevelInfo, "MCP authorization pending rejection", "event", "mcp_authorization_pending_rejection", "reason", "live_external_authorization", "session", string(sess.ID))
+			return nil, false, fmt.Errorf("%w: session %q has a live external authorization", errMCPAuthorizationPending, sess.ID)
 		}
 		if !errors.Is(statusErr, brokercontract.ErrStateUnavailable) {
 			return nil, false, statusErr

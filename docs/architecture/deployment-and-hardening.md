@@ -167,7 +167,7 @@ the same effect the highest-precedence `Scope` wins (`Managed > CLI >
 LocalProject > SharedProject > User > BuiltinDefault`); **no matching rule
 defaults to Ask** (the
 harness never silently allows an unconfigured call). Plan mode (`ModePlan`)
-denies mutating tools (`Edit`, `Write`) and non-read-only `Bash` up front.
+denies mutating tools (`Edit`, `Write`) and non-read-only `Shell` up front.
 `ScopeBuiltinDefault` is the harness's built-in floor (read-allow /
 mutate-ask), with ONE narrow exception to the same-effect tie-break: a
 higher-scope configured Allow may loosen **only** a built-in-default Ask —
@@ -200,7 +200,7 @@ children) — at `auto`/`trusted`/`strict` a child's `$(...)` still resolves thr
 [subagents & teams](subagents-and-teams.md) child-ask model. See `docs/adr/0022-allow-all-posture.md` and the CLAUDE.md "CONFIG
 axis" / "Posture ladder" notes.
 
-For Bash, `bash.go` splits compound lines (`SplitCommands`, honouring quotes and
+For Shell, `bash.go` splits compound lines (`SplitCommands`, honouring quotes and
 splitting on `&&`, `||`, `;`, `|`, a bare `&`, and newlines) and evaluates
 **every** sub-command, taking the worst outcome — so a deny on `rm` blocks
 `git status && rm -rf /`. `Canonicalize` strips a **closed, audited** set of
@@ -214,7 +214,7 @@ resolves by the ordinary rule fold instead (global, main + children). For
 ISOLATED children (worktree/force-copy forks), `IsolationApprovable`
 additionally auto-approves read-only plus a minimal worktree-safe verb set —
 the [subagents & teams](subagents-and-teams.md) 4-step child-ask model.
-`ReadOnlyBash` classifies a command line as read-only for plan-mode gating and
+`ReadOnlyShell` classifies a command line as read-only for plan-mode gating and
 is deliberately a SEPARATE, unchanged classifier.
 
 ### Workspace trust (`internal/app/trust.go`, `internal/adapter/workspacetrust`)

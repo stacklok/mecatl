@@ -396,30 +396,30 @@ type scopeDiag struct {
 // Subagent-routed child (allowMutating == false), as a pure set operation over the
 // AVAILABLE base tools. It is the read-only shim over scopedToolNamesMode; see that
 // for the full algorithm. Subagent children are unconditionally read-only so
-// Subagent.ReadOnly() stays honestly true. bashMissReason is the PRECISE
-// Bash-base-miss diagnostic for this call site (bashScopeMissReason(cfg); "" for a
+// Subagent.ReadOnly() stays honestly true. shellMissReason is the PRECISE
+// Shell-base-miss diagnostic for this call site (shellScopeMissReason(cfg); "" for a
 // pure name-set projection that drops diagnostics).
-func scopedToolNames(def agents.AgentDef, available map[string]tool.Tool, bashMissReason string) ([]string, []scopeDiag) {
-	return scopedToolNamesMode(def, available, false, false, bashMissReason)
+func scopedToolNames(def agents.AgentDef, available map[string]tool.Tool, shellMissReason string) ([]string, []scopeDiag) {
+	return scopedToolNamesMode(def, available, false, false, shellMissReason)
 }
 
-// bashScopeMissReason returns the PRECISE def-scoping diagnostic for a Bash
-// allowlist entry that misses the AVAILABLE base set. Bash is a core tool, so the
+// shellScopeMissReason returns the PRECISE def-scoping diagnostic for a Shell
+// allowlist entry that misses the AVAILABLE base set. Shell is a core tool, so the
 // miss is never a typo — it means NO shell exists at this call site, and the
-// diagnostic must name the ACTUAL cause: a --no-bash operator on a TRUSTED
+// diagnostic must name the ACTUAL cause: a --no-shell operator on a TRUSTED
 // workspace must not be told to --trust-project. The untrusted wording reuses
 // subagentShellUntrustedReason — the single wording source — so this diagnostic
 // and the Subagent Spec note cannot drift.
-func bashScopeMissReason(cfg Config) string {
+func shellScopeMissReason(cfg Config) string {
 	switch {
-	case cfg.NoBash:
-		return "shell unavailable (Bash disabled via --no-bash); dropped"
+	case cfg.NoShell:
+		return "shell unavailable (Shell disabled via --no-shell); dropped"
 	case cfg.Shell == "":
 		return "shell unavailable (no shell configured); dropped"
 	case !cfg.TrustProject:
 		return "shell unavailable: " + subagentShellUntrustedReason(cfg) + "; dropped"
 	default:
-		// A shell is configured and the workspace is trusted, yet Bash missed
+		// A shell is configured and the workspace is trusted, yet Shell missed
 		// the base: the runner failed to build (its own WARN already names the
 		// workspace/error).
 		return "shell unavailable (command runner could not be built); dropped"
@@ -436,23 +436,23 @@ func bashScopeMissReason(cfg Config) string {
 //  4. drop any name not in the available base set (DISTINCT "unknown tool"
 //     diagnostic — a typo or an MCP/skills tool this Tier-1 call site can't see);
 //  5. when allowMutating is false, drop any mutating (non-read-only) tool with a
-//     DISTINCT diagnostic — EXCEPT that when allowShell is true the Bash tool alone
+//     DISTINCT diagnostic — EXCEPT that when allowShell is true the Shell tool alone
 //     survives. allowMutating == true (a Mutating team member, which runs in an
 //     isolated force-copy fork; AND a writable specialist Subagent (ADR 0058), which
-//     keeps Edit/Write/Bash over the real parent workspace via the MAIN runner) keeps
-//     every mutating tool (Edit/Write/Bash). allowMutating == false + allowShell == true
+//     keeps Edit/Write/Shell over the real parent workspace via the MAIN runner) keeps
+//     every mutating tool (Edit/Write/Shell). allowMutating == false + allowShell == true
 //     (a read-only team member that the supervisor will isolate in a git worktree)
-//     keeps Bash for inspection but still drops Edit/Write. allowMutating == false +
+//     keeps Shell for inspection but still drops Edit/Write. allowMutating == false +
 //     allowShell == false (a Subagent child or a base-sharing read-only member) drops
 //     every mutating tool.
 //
 // available maps an available base tool name to its tool.Tool (used to read
 // ReadOnly()). It returns the kept names (sorted) and the diagnostics. The caller
 // (teams) still appends MemberTools AFTER this — coordination tools bypass the
-// allowlist and this filter entirely. bashMissReason is the PRECISE diagnostic to
-// emit when Bash misses the base set (see bashScopeMissReason); "" falls back to a
+// allowlist and this filter entirely. shellMissReason is the PRECISE diagnostic to
+// emit when Shell misses the base set (see shellScopeMissReason); "" falls back to a
 // cause-less generic.
-func scopedToolNamesMode(def agents.AgentDef, available map[string]tool.Tool, allowMutating, allowShell bool, bashMissReason string) ([]string, []scopeDiag) {
+func scopedToolNamesMode(def agents.AgentDef, available map[string]tool.Tool, allowMutating, allowShell bool, shellMissReason string) ([]string, []scopeDiag) {
 	disallowed := make(map[string]struct{}, len(def.DisallowedTools))
 	for _, d := range def.DisallowedTools {
 		disallowed[d] = struct{}{}
@@ -488,15 +488,15 @@ func scopedToolNamesMode(def agents.AgentDef, available map[string]tool.Tool, al
 		}
 		t, ok := available[name]
 		if !ok {
-			if name == tools.BashToolName {
-				// Bash is a core tool, so a base-set miss is never a typo: it means NO
-				// shell is available at this call site — --no-bash, an empty shell, or
+			if name == tools.ShellToolName {
+				// Shell is a core tool, so a base-set miss is never a typo: it means NO
+				// shell is available at this call site — --no-shell, an empty shell, or
 				// (issue #40) an untrusted workspace withholding the subagent shell.
-				// bashMissReason names the PRECISE cause (computed by the caller via
-				// bashScopeMissReason from its cfg, so a --no-bash operator on a
+				// shellMissReason names the PRECISE cause (computed by the caller via
+				// shellScopeMissReason from its cfg, so a --no-shell operator on a
 				// TRUSTED workspace is never told to --trust-project) — distinct from
 				// the generic unknown-tool diagnostic either way.
-				reason := bashMissReason
+				reason := shellMissReason
 				if reason == "" {
 					reason = "shell unavailable; dropped"
 				}
@@ -511,11 +511,11 @@ func scopedToolNamesMode(def agents.AgentDef, available map[string]tool.Tool, al
 		}
 		if !allowMutating && !t.ReadOnly() {
 			// Step 5: read-only call site (Subagent, or a read-only team member). A
-			// workspace-mutating tool is dropped — EXCEPT Bash when allowShell is true,
+			// workspace-mutating tool is dropped — EXCEPT Shell when allowShell is true,
 			// i.e. a read-only member the supervisor isolates in a git worktree, where a
 			// shell is used for inspection (git log/show, build, test) but Edit/Write
-			// would still corrupt nothing shared, so we keep ONLY Bash.
-			if allowShell && name == tools.BashToolName {
+			// would still corrupt nothing shared, so we keep ONLY Shell.
+			if allowShell && name == tools.ShellToolName {
 				kept = append(kept, name)
 				continue
 			}
@@ -528,13 +528,13 @@ func scopedToolNamesMode(def agents.AgentDef, available map[string]tool.Tool, al
 }
 
 // baseSubagentTools returns the AVAILABLE base toolset a Subagent-def catalog is scoped
-// over: the core read-only/explorer tools plus Bash-if-AVAILABLE (mirroring what
-// buildChildEngine/buildMemberEngine register). Bash availability runs through the
+// over: the core read-only/explorer tools plus Shell-if-AVAILABLE (mirroring what
+// buildChildEngine/buildMemberEngine register). Shell availability runs through the
 // TRUST-GATED sandboxed path (buildSandboxedCommandRunner, issue #40) — the SAME gate
 // the actual child registration uses — so on an untrusted workspace the base set
-// honestly excludes Bash and a def allow-listing it gets the accurate
-// "shell unavailable" diagnostic (scopedToolNamesMode's Bash-specific miss reason)
-// instead of a misleading one. When Bash IS available it is included even though a
+// honestly excludes Shell and a def allow-listing it gets the accurate
+// "shell unavailable" diagnostic (scopedToolNamesMode's Shell-specific miss reason)
+// instead of a misleading one. When Shell IS available it is included even though a
 // read-only call site will drop it, so that drop gets the DISTINCT "mutating; dropped"
 // diagnostic rather than "unknown tool". (A Mutating member's UNGATED shell is
 // re-added by buildMemberEngine on top of this base — see buildForceCopyRunner.)
@@ -544,7 +544,7 @@ func baseSubagentTools(cfg Config) map[string]tool.Tool {
 		out[t.Spec().Name] = t
 	}
 	if runner := buildSandboxedCommandRunner(cfg); runner != nil {
-		bt := agent.NewBashTool()
+		bt := agent.NewShellTool()
 		out[bt.Spec().Name] = bt
 	}
 	return out
@@ -739,7 +739,7 @@ func defHookRunner(cfg Config, def agents.AgentDef, fallback port.HookRunner) po
 // metadata the Subagent tool routes over. Each engine gets:
 //   - a SCOPED catalog = (def.Tools allowlist ∩ available base tools) minus
 //     def.DisallowedTools, never Subagent/Fork/ToolSearch and never Edit/Write (a Subagent
-//     child is a read-only explorer), but KEEPING Bash when the Subagent tool can isolate
+//     child is a read-only explorer), but KEEPING Shell when the Subagent tool can isolate
 //     the child in a worktree (runner != nil — see allowShell below);
 //   - a resolved model (def.Model > SubagentModel > parent);
 //   - the def.Body composed into the system prompt as the Role (composition-layer
@@ -755,13 +755,13 @@ func defHookRunner(cfg Config, def agents.AgentDef, fallback port.HookRunner) po
 // is the inert fallback HookRunner a def with no scoped `hooks:` adopts (so the
 // default Subagent engine behaviour is unchanged).
 //
-// runner is the SANDBOXED command runner (nil when Bash is disabled). When non-nil
+// runner is the SANDBOXED command runner (nil when Shell is disabled). When non-nil
 // the Subagent tool forks every child into a worktree, so a per-def Subagent explorer that
-// scopes Bash KEEPS it (allowShell) — registered with the hardened runner — and runs
+// scopes Shell KEEPS it (allowShell) — registered with the hardened runner — and runs
 // it in that isolated worktree, exactly like the default explorer; Edit/Write are
 // still dropped. The per-def engines share the SAME SubagentTool child forker (the fork
 // happens in SubagentTool.run regardless of which engine handles the call), so they only
-// need Bash in their catalog. When runner is nil, allowShell is false and Bash is
+// need Shell in their catalog. When runner is nil, allowShell is false and Shell is
 // dropped — the def stays a base-sharing read-only explorer with no shell.
 //
 // PROVIDER RESOLUTION (per-sub-agent provider): each def's (provider, model) is
@@ -778,7 +778,7 @@ func buildAgentSubagentEngines(ctx context.Context, cfg Config, provider port.LL
 		return nil, nil, nil
 	}
 	base := baseSubagentTools(cfg)
-	// allowShell: a per-def Subagent explorer keeps Bash ONLY when a (sandboxed) runner is
+	// allowShell: a per-def Subagent explorer keeps Shell ONLY when a (sandboxed) runner is
 	// wired — the Subagent tool then isolates the child in a worktree where its shell is
 	// confined. Edit/Write stay dropped regardless (read-only explorer).
 	allowShell := runner != nil
@@ -806,7 +806,7 @@ func buildAgentSubagentEngines(ctx context.Context, cfg Config, provider port.LL
 		// also be rebuilt by the writable factory on another call. The writable ceiling
 		// adds the MCP tools that were successfully registered in the read-only engine;
 		// writable core scoping alone does not include definition-provided tools.
-		writableNames, _ := scopedToolNamesMode(def, base, true, runner != nil, bashScopeMissReason(cfg))
+		writableNames, _ := scopedToolNamesMode(def, base, true, runner != nil, shellScopeMissReason(cfg))
 		for _, name := range names {
 			if strings.HasPrefix(name, "mcp__") {
 				writableNames = append(writableNames, name)
@@ -851,18 +851,18 @@ func buildAgentSubagentEngines(ctx context.Context, cfg Config, provider port.LL
 //
 // base is the AVAILABLE base toolset the def's catalog is scoped over
 // (baseSubagentTools(cfg)); allowMutating, when true, KEEPS workspace-mutating tools
-// (Edit/Write/Bash) over the real workspace instead of dropping them — a Mutating team
+// (Edit/Write/Shell) over the real workspace instead of dropping them — a Mutating team
 // member (isolated force-copy fork) and a writable specialist Subagent (ADR 0058, direct-
 // write against the real parent workspace via the MAIN runner) both pass true, while a
 // read-only Subagent explorer and a read-only team member pass false (Edit/Write dropped;
-// Bash kept only when allowShell is true and the member is worktree-isolated). allowShell
-// mirrors the caller's runner-wired posture (a per-def Subagent explorer keeps Bash iff a
-// sandboxed runner is wired; allowMutating=true makes allowShell irrelevant for Bash-keep,
-// since Bash is kept unconditionally, but the factory still passes runner!=nil for
-// doc-clarity and so Bash registers with the runner). skillIdx is the build-once name→body
+// Shell kept only when allowShell is true and the member is worktree-isolated). allowShell
+// mirrors the caller's runner-wired posture (a per-def Subagent explorer keeps Shell iff a
+// sandboxed runner is wired; allowMutating=true makes allowShell irrelevant for Shell-keep,
+// since Shell is kept unconditionally, but the factory still passes runner!=nil for
+// doc-clarity and so Shell registers with the runner). skillIdx is the build-once name→body
 // preload index; defaultHooks is the inert fallback a def with no scoped `hooks:` adopts.
 // runner is the command runner (sandboxed for a read-only explorer, the MAIN runner for a
-// writable specialist — nil when Bash is disabled); mainMgr supplies the reference-MCP
+// writable specialist — nil when Shell is disabled); mainMgr supplies the reference-MCP
 // base manager (defMCPTools).
 //
 // It returns the engine + the def's inline-MCP close func (nil when the def opened no
@@ -870,7 +870,7 @@ func buildAgentSubagentEngines(ctx context.Context, cfg Config, provider port.LL
 // the "agent def engine built" INFO with the same fields the pre-extraction inline path
 // carried (tools/preloaded_skills) — the extraction must not silently drop diagnostics.
 func buildAgentDefEngine(ctx context.Context, cfg Config, def agents.AgentDef, role, source string, childProvider port.LLMProvider, model string, windowFn func() int, base map[string]tool.Tool, allowMutating, allowShell bool, skillIdx skillIndex, defaultHooks port.HookRunner, runner tool.CommandRunner, mainMgr *mcp.Manager) (*agent.Engine, func() error, []string, []string, int) {
-	names, diags := scopedToolNamesMode(def, base, allowMutating, allowShell, bashScopeMissReason(cfg))
+	names, diags := scopedToolNamesMode(def, base, allowMutating, allowShell, shellScopeMissReason(cfg))
 	for _, d := range diags {
 		cfg.diag().Log(ctx, port.LevelWarn, "agent def tool scoping",
 			"agent", def.Name, "tool", d.tool, "reason", d.reason, "source", source)
@@ -879,14 +879,14 @@ func buildAgentDefEngine(ctx context.Context, cfg Config, def agents.AgentDef, r
 	classified := newClassifiedCatalog()
 	cat := classified.catalog
 	for _, name := range names {
-		// Bash registers with the HARDENED runner (the base map's Bash is the
+		// Shell registers with the HARDENED runner (the base map's Shell is the
 		// unhardened one used only to compute the name set), since the Subagent child's
 		// shell runs over a worktree that shares the parent `.git`. Every other tool
 		// registers as-is. allowShell is true iff runner != nil, so this branch only
 		// fires with a non-nil runner.
 		registered := base[name]
-		if name == tools.BashToolName && runner != nil {
-			registered = agent.NewBashTool()
+		if name == tools.ShellToolName && runner != nil {
+			registered = agent.NewShellTool()
 		}
 		entry, ok := coreToolClassification(registered)
 		if !ok {
@@ -894,6 +894,11 @@ func buildAgentDefEngine(ctx context.Context, cfg Config, def agents.AgentDef, r
 			continue
 		}
 		classified.mustRegister(registered, &entry)
+	}
+	if _, ok := cat.Lookup(tools.ShellToolName); ok {
+		status := agent.NewShellStatusTool()
+		entry, _ := coreToolClassification(status)
+		classified.mustRegister(status, &entry)
 	}
 
 	// Per-agent MCP: a def's mcpServers add the referenced/inline servers' tools to

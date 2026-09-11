@@ -67,6 +67,7 @@ func TestSessionAffinityAndHandoff_Scenario3_HTTPRouteInventory(t *testing.T) {
 		name, method, path, body string
 	}{
 		{"get", http.MethodGet, "/v1/sessions/route-id", ""},
+		{"connectors", http.MethodGet, "/v1/sessions/route-id/mcp/connectors", ""},
 		{"transcript", http.MethodGet, "/v1/sessions/route-id/transcript", ""},
 		{"mode", http.MethodPost, "/v1/sessions/route-id/mode", `{"mode":"default"}`},
 		{"close", http.MethodDelete, "/v1/sessions/route-id", ""},

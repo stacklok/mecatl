@@ -7,21 +7,22 @@ import (
 	"strings"
 	"time"
 
+	"github.com/stacklok/mecatl/engine/internal/shellcompat"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 )
 
-// BashToolName aliases tool.BashToolName, the single authority for the name the
-// Bash tool registers under (the permission evaluator special-cases the literal,
+// ShellToolName aliases tool.ShellToolName, the single authority for the name the
+// Shell tool registers under (the permission evaluator special-cases the literal,
 // so the constant lives in the port package where every implementation — this
-// adapter's AND engine/agent's background-capable BashTool — can import it).
-// Callers probe the catalog for bash enablement by referencing the constant
+// adapter's AND engine/agent's background-capable ShellTool — can import it).
+// Callers probe the catalog for Shell enablement by referencing the constant
 // rather than a local literal that could drift on a rename (see
 // internal/adapter/server.Service.capabilities).
-const BashToolName = tool.BashToolName
+const ShellToolName = tool.ShellToolName
 
-// bashDescription is the model-facing documentation for the Bash tool.
-const bashDescription = `Run a shell command in the workspace root and return its combined output and exit code.
+// shellDescription is the model-facing documentation for the Shell tool.
+const shellDescription = `Run a shell command in the workspace root and return its combined output and exit code.
 
 When to use:
 - To run builds, tests, linters, git, and other CLI tooling.
@@ -33,9 +34,13 @@ When NOT to use:
 
 Behavior:
 - The command runs with the workspace root as its working directory.
-- Despite its name, Bash does not necessarily run Bash: it invokes "shell -c command"
+- Despite its name, Shell does not necessarily run Shell: it invokes "shell -c command"
   with the shell reported by "shell:" in the system prompt's <env> block (for
   example, "/bin/sh").
+- When the configured shell path basename is sh or dash, Shell provides a limited
+  compatibility diagnostic for [[ ... ]], process substitution, array expressions,
+  and ANSI-C quotes before execution. This is feedback only: permission, guardrail,
+  trust, and secret-scrubbing controls remain independent.
 - The shell is non-interactive: it has no terminal or user input. Do not run
   interactive commands such as "git rebase -i", editors, pagers, or REPLs.
 - Under a subagent (a forked branch or an isolated team member) the working
@@ -67,7 +72,7 @@ Limits:
   Prefer a direct command for inspection (run the inner command first, then use its
   output) when a substitution is not essential.`
 
-// BashTool runs a shell command via the CommandRunner bound to the
+// ShellTool runs a shell command via the CommandRunner bound to the
 // tool.Environment it executes against (issue #462). It is statically
 // classified as non-read-only: deciding whether a specific command is
 // read-only is governance's job, not this tool's.
@@ -78,40 +83,40 @@ Limits:
 // the command's cwd always matches the workspace the tool executes against,
 // never a stale shared parent base. A namespace with no shell (env.CommandRunner
 // == nil) surfaces ErrNoShell honestly rather than aborting. The composition
-// root decides whether to REGISTER a Bash tool at all based on runner
-// availability; a shell-less catalog simply omits Bash.
+// root decides whether to REGISTER a Shell tool at all based on runner
+// availability; a shell-less catalog simply omits Shell.
 //
-// Residual: this fixes the runner's working DIRECTORY, not Bash's trust model.
-// Unlike path-scoped Edit/Write (confined by os.Root), Bash can still escape its
+// Residual: this fixes the runner's working DIRECTORY, not Shell's trust model.
+// Unlike path-scoped Edit/Write (confined by os.Root), Shell can still escape its
 // cwd via absolute paths or `cd` — that is inherent to running a shell, the same
 // as in the main session. The fix removes the ACCIDENTAL shared-base mutation
-// (a fork branch's relative-path Bash landing in the parent base), which is what
+// (a fork branch's relative-path Shell landing in the parent base), which is what
 // ParallelTool.ReadOnly() / the read-only-share / mutating-fork isolation needs.
-type BashTool struct{}
+type ShellTool struct{}
 
-// NewBashTool constructs the Bash tool. The runner is NOT captured here — it is
+// NewShellTool constructs the Shell tool. The runner is NOT captured here — it is
 // read off the tool.Environment at Execute time (issue #462). The composition
 // root registers the returned tool ONLY when a runner is available for the
-// namespace; without one, the catalog has no Bash and the agent runs shell-less.
-func NewBashTool() tool.Tool {
-	return BashTool{}
+// namespace; without one, the catalog has no Shell and the agent runs shell-less.
+func NewShellTool() tool.Tool {
+	return ShellTool{}
 }
 
-// Compile-time assertion that BashTool implements tool.Tool.
-var _ tool.Tool = BashTool{}
+// Compile-time assertion that ShellTool implements tool.Tool.
+var _ tool.Tool = ShellTool{}
 
-// bashArgs is the JSON argument shape for the Bash tool.
-type bashArgs struct {
+// shellArgs is the JSON argument shape for the Shell tool.
+type shellArgs struct {
 	Command   string `json:"command"`
 	TimeoutMS int    `json:"timeout_ms"`
 	TempScope string `json:"temp_scope"`
 }
 
-// Spec returns the model-facing specification of the Bash tool.
-func (BashTool) Spec() tool.ToolSpec {
+// Spec returns the model-facing specification of the Shell tool.
+func (ShellTool) Spec() tool.ToolSpec {
 	return tool.ToolSpec{
-		Name:        BashToolName,
-		Description: bashDescription,
+		Name:        ShellToolName,
+		Description: shellDescription,
 		Schema: schema(`{
   "type": "object",
   "properties": {
@@ -129,14 +134,14 @@ func (BashTool) Spec() tool.ToolSpec {
 	}
 }
 
-// ReadOnly reports that Bash is statically treated as mutating.
-func (BashTool) ReadOnly() bool { return false }
+// ReadOnly reports that Shell is statically treated as mutating.
+func (ShellTool) ReadOnly() bool { return false }
 
 // Execute runs the command, honoring an optional timeout, and returns combined
 // output with the exit code. The runner is read off env; a shell-less namespace
 // (nil runner) surfaces ErrNoShell.
-func (BashTool) Execute(ctx context.Context, in session.ToolCall, env tool.Environment) (session.ToolResult, error) {
-	var args bashArgs
+func (ShellTool) Execute(ctx context.Context, in session.ToolCall, env tool.Environment) (session.ToolResult, error) {
+	var args shellArgs
 	if msg, ok := parseArgs(in, &args); !ok {
 		return session.NewToolError(in.ID, msg), nil
 	}
@@ -155,7 +160,11 @@ func (BashTool) Execute(ctx context.Context, in session.ToolCall, env tool.Envir
 		// no-shell message can never drift from bashErrorTrailer's ErrNoShell
 		// wording. An empty body + tool.ErrNoShell yields the standalone
 		// "[command failed to run: no shell available]" byte-identically.
-		return session.NewToolError(in.ID, bashErrorMessage("", tool.ErrNoShell, 0)), nil
+		return session.NewToolError(in.ID, shellErrorMessage("", tool.ErrNoShell, 0)), nil
+	}
+
+	if err := shellCompatibilityDiagnostic(runner, args.Command); err != nil {
+		return session.NewToolError(in.ID, err.Error()), nil
 	}
 
 	if args.TimeoutMS > 0 {
@@ -172,17 +181,25 @@ func (BashTool) Execute(ctx context.Context, in session.ToolCall, env tool.Envir
 		// the ctx error (see osfs.CommandRunner.Run), so preserve that partial
 		// output here rather than discarding it: a timed-out build that printed
 		// a useful failure should not collapse to a bare "command failed".
-		body := bashCombinedOutput(res, false) // includeExit=false: the ctx-error
+		body := shellCombinedOutput(res, false) // includeExit=false: the ctx-error
 		// path leaves ExitCode as a 0 placeholder; printing "[exit code: 0]"
 		// would read as success, which is misleading on a failure.
-		return session.NewToolError(in.ID, bashErrorMessage(body, err, args.TimeoutMS)), nil
+		return session.NewToolError(in.ID, shellErrorMessage(body, err, args.TimeoutMS)), nil
 	}
 
-	out := truncateBytes(bashCombinedOutput(res, true))
+	out := truncateBytes(shellCombinedOutput(res, true))
 	if res.ExitCode != 0 {
 		return session.NewToolError(in.ID, out), nil
 	}
 	return session.NewToolResult(in.ID, out), nil
+}
+
+func shellCompatibilityDiagnostic(runner tool.CommandRunner, command string) error {
+	provider, ok := runner.(interface{ ShellPath() string })
+	if !ok {
+		return nil
+	}
+	return shellcompat.Check(provider.ShellPath(), command)
 }
 
 func fstoolsTemporaryScope(scope string) tool.TemporaryScope {
@@ -202,11 +219,11 @@ func runWithTemporaryScope(ctx context.Context, runner tool.CommandRunner, comma
 	return runner.Run(ctx, command)
 }
 
-// bashCombinedOutput renders a CommandResult as the model-facing combined output:
+// shellCombinedOutput renders a CommandResult as the model-facing combined output:
 // stdout then stderr (each newline-normalized), and — only when includeExit — a
 // trailing "[exit code: N]" line. The success path includes the exit line; the
 // ctx-error path omits it (ExitCode is an unset 0 placeholder there).
-func bashCombinedOutput(res tool.CommandResult, includeExit bool) string {
+func shellCombinedOutput(res tool.CommandResult, includeExit bool) string {
 	var b strings.Builder
 	if res.Stdout != "" {
 		b.WriteString(res.Stdout)
@@ -226,7 +243,7 @@ func bashCombinedOutput(res tool.CommandResult, includeExit bool) string {
 	return b.String()
 }
 
-// bashErrorMessage composes the model-facing message for a runner error, keeping
+// shellErrorMessage composes the model-facing message for a runner error, keeping
 // any partial output (body) and appending a trailer that explains why the command
 // stopped. timeoutMS is the caller-requested timeout (0 if unset) — used only to
 // name the configured limit on a deadline; the runner's own default timeout is
@@ -238,8 +255,8 @@ func bashCombinedOutput(res tool.CommandResult, includeExit bool) string {
 // than truncating the joined string — which would land the cut inside the body and
 // drop the "timed out"/"canceled" signal entirely, leaving the model to read a
 // truncated result as an ordinary too-long one.
-func bashErrorMessage(body string, err error, timeoutMS int) string {
-	noBodyMsg, trailer := bashErrorTrailer(err, timeoutMS)
+func shellErrorMessage(body string, err error, timeoutMS int) string {
+	noBodyMsg, trailer := shellErrorTrailer(err, timeoutMS)
 	if body == "" {
 		// No partial output: the standalone phrasing IS the whole message.
 		return truncateBytes(noBodyMsg)
@@ -255,11 +272,11 @@ func bashErrorMessage(body string, err error, timeoutMS int) string {
 	return truncate(body, budget) + suffix
 }
 
-// bashErrorTrailer returns the model-facing wording for a runner error: noBodyMsg
+// shellErrorTrailer returns the model-facing wording for a runner error: noBodyMsg
 // is the self-contained message when the command produced no output; trailer is
 // the line appended after any partial output. Classification order: deadline /
 // cancellation first, then no-shell, then a generic default.
-func bashErrorTrailer(err error, timeoutMS int) (noBodyMsg, trailer string) {
+func shellErrorTrailer(err error, timeoutMS int) (noBodyMsg, trailer string) {
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
 		if timeoutMS > 0 {

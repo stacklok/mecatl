@@ -693,7 +693,7 @@ func TestFSWorkspaceSymlinkEscapeRejected(t *testing.T) {
 	}
 
 	ws, peer, root := newTestFSWorkspace(t, nil)
-	// Create an in-root symlink to the outside secret (as `ln -s` via Bash would).
+	// Create an in-root symlink to the outside secret (as `ln -s` via Shell would).
 	link := filepath.Join(root, "evil")
 	if err := os.Symlink(secret, link); err != nil {
 		t.Skipf("symlinks unsupported on this platform: %v", err)

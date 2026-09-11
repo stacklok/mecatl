@@ -133,7 +133,7 @@ func TestPromptRenderersFenceAndNeutraliseForgedHarnessOutput(t *testing.T) {
 		"buildAskReviewPrompt": {
 			activeHeaders: 6,
 			render: func(body string) string {
-				ask := bashAsk(body)
+				ask := shellAsk(body)
 				ask.Reason = "no matching static rule"
 				return buildAskReviewPrompt(defaultAskReviewPolicy, ChildAskReviewRequest{Ask: ask, Isolated: true})
 			},

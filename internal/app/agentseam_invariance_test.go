@@ -22,7 +22,7 @@ import (
 // EFFECTIVE read-only Subagent tool scope (allowlist ∩ base, mutating
 // dropped, sorted), raw permissionMode/color strings.
 func TestAgentSnapshotLiteralPin(t *testing.T) {
-	cfg := Config{Model: "gpt-test"} // no shell => no Bash in the base set
+	cfg := Config{Model: "gpt-test"} // no shell => no Shell in the base set
 	reg := agents.NewRegistry([]agents.AgentDef{
 		{
 			Name:           "explorer",

@@ -14,9 +14,6 @@ echo step-xxxxk-yyy
 echo step-xxxxl-yyyy
 echo step-xxxxm-yyyyy
 echo step-xxxxn-yyyyyy
-echo step-xxxxo-
-echo step-xxxxp-y
-echo step-xxxxq-yy
 ╭───────────╮  ╭────────────╮  ╭──────────╮
 │  [A]llow  │  │  Al[w]ays  │  │  [D]eny  │
 ╰───────────╯  ╰────────────╯  ╰──────────╯

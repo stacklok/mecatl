@@ -929,7 +929,7 @@ func (r *testSessionLiveness) IsLive(id session.SessionID) bool {
 // TestChildRegistryLivenessCoversEveryTerminalPath pins the structural chokepoints
 // used by foreground/background Subagent, Parallel, and Team. Team markDone is
 // deliberately not final because the lead may still synthesise; final supervisor
-// cleanup releases it. Pre-start aborts release immediately and Bash is excluded.
+// cleanup releases it. Pre-start aborts release immediately and Shell is excluded.
 func TestChildRegistryLivenessCoversEveryTerminalPath(t *testing.T) {
 	tracker := &testSessionLiveness{}
 	reg := newChildRunRegistry()
@@ -969,9 +969,9 @@ func TestChildRegistryLivenessCoversEveryTerminalPath(t *testing.T) {
 		}
 	}
 
-	reg.register("bashcmd-test", childFamilyBashCmd, "test", cancel, true)
+	reg.register("bashcmd-test", childFamilyShellCmd, "test", cancel, true)
 	if tracker.IsLive("bashcmd-test") {
-		t.Fatal("background Bash has no child session and must not register session liveness")
+		t.Fatal("background Shell has no child session and must not register session liveness")
 	}
 	reg.markDone("bashcmd-test", session.StopEndTurn)
 }

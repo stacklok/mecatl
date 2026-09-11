@@ -1,6 +1,6 @@
 package ui
 
-// Tests for the per-subagent cancel affordance: the ctrl+a overlay's `x` key sends
+// Tests for the per-subagent cancel affordance: the f6 overlay's `x` key sends
 // a CancelChild frame for the selected/focused NON-terminal lane (and only then),
 // and a permission.retract from the server dismisses the approval modal iff the
 // pending askID matches the VISIBLE ask (advancing the FIFO ask queue — see
@@ -15,7 +15,7 @@ import (
 )
 
 // subagentOverlayModel builds a connected model with one RUNNING and one DONE
-// subagent lane and the ctrl+a overlay open on the Subagents tab, its stream's
+// subagent lane and the f6 overlay open on the Subagents tab, its stream's
 // sends recorded by the returned fakeSender.
 func subagentOverlayModel(t *testing.T) (Model, *fakeSender) {
 	t.Helper()
@@ -28,7 +28,7 @@ func subagentOverlayModel(t *testing.T) (Model, *fakeSender) {
 		client.SubagentMsg{Kind: client.SubagentStart, ParentCallID: "p2", ChildID: "subagent-p2", Goal: "map coverage"},
 		client.SubagentMsg{Kind: client.SubagentEnd, ParentCallID: "p2", ChildID: "subagent-p2", Stop: "end_turn"},
 	)
-	mm, _ := m.Update(ctrlKey('a'))
+	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
 	if m.team.view == teamNone || m.agentsTab != tabSubagents {
 		t.Fatalf("overlay did not open on the Subagents tab (view=%v tab=%v)", m.team.view, m.agentsTab)
@@ -96,7 +96,7 @@ func TestSubagentFocusCancelKeySendsFrame(t *testing.T) {
 // pending modal dismisses it (back to running, with a notice); the run keeps
 // streaming.
 func TestPermissionRetractDismissesMatchingModal(t *testing.T) {
-	m := approvalModel(t, pendingAsk{AskID: "subagent-p1:1:k1", Tool: "Bash", Reason: "subagent request"})
+	m := approvalModel(t, pendingAsk{AskID: "subagent-p1:1:k1", Tool: "Shell", Reason: "subagent request"})
 	m = applyAll(m, client.PermissionRetractMsg{AskID: "subagent-p1:1:k1"})
 	if m.phase != phaseRunning {
 		t.Fatalf("matching retract must dismiss the modal back to running, got phase %v", m.phase)
@@ -114,7 +114,7 @@ func TestPermissionRetractDismissesMatchingModal(t *testing.T) {
 // queued-match lookup misses too) — leaves the open modal untouched (idempotent
 // stale-retract handling).
 func TestPermissionRetractNonMatchingIgnored(t *testing.T) {
-	m := approvalModel(t, pendingAsk{AskID: "subagent-p1:1:k1", Tool: "Bash"})
+	m := approvalModel(t, pendingAsk{AskID: "subagent-p1:1:k1", Tool: "Shell"})
 	m = applyAll(m, client.PermissionRetractMsg{AskID: "subagent-OTHER:9:z9"})
 	if m.phase != phaseAwaitingApproval {
 		t.Fatalf("non-matching retract must not dismiss the modal, got phase %v", m.phase)

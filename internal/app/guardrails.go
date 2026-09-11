@@ -167,12 +167,12 @@ func buildGuardrailsHooks(cfg Config, provReg *providerRegistry, provider port.L
 // not observe-only. Advisory is available via the defaultMode key or an explicit
 // rule list.
 //
-// Bash IS matched (pre, block) so a configured guardrail protects the local-shell
+// Shell IS matched (pre, block) so a configured guardrail protects the local-shell
 // blast radius out of the box (the motivating incident: an agent ran
-// `gh pr merge --squash` as a Bash call and merged its own PR unattended; the old
+// `gh pr merge --squash` as a Shell call and merged its own PR unattended; the old
 // default set only matched WebSearch/WebFetch/mcp__* so guardrails never saw it). To
-// avoid an LLM call on every shell command, the Bash rule carries SkipReadOnlyBash:
-// the modelhook adapter's read-only pre-filter lets a confidently-read-only Pre Bash
+// avoid an LLM call on every shell command, the Shell rule carries SkipReadOnlyShell:
+// the modelhook adapter's read-only pre-filter lets a confidently-read-only Pre Shell
 // command bypass the checker entirely, so ONLY mutating/outward commands are
 // inspected. The pre-filter is fail-safe — an ambiguous/substitution command is still
 // inspected. The OTHER local tools (Read/ListDir/Edit/Write/Copy/Move/Remove/Grep/Glob)
@@ -198,14 +198,14 @@ var defaultGuardrailSpecs = []modelhook.RuleSpec{
 	{Match: "mcp__*", Phases: []string{string(modelhook.PhasePre), string(modelhook.PhasePost)}, Mode: string(modelhook.ModeBlock)},
 	// Local shell (the #1 blast radius). Pre only — inspect the OUTBOUND command for a
 	// mutating/outward action (e.g. `gh pr merge`, a push, a destructive write). The
-	// read-only pre-filter (SkipReadOnlyBash) skips the checker for a confidently
+	// read-only pre-filter (SkipReadOnlyShell) skips the checker for a confidently
 	// read-only command, so a guardrail-protected shell costs an LLM call ONLY on a
 	// mutating/outward command, not on every `ls`/`grep`/`git status`. It carries a
-	// Bash-SPECIFIC rubric (modelhook.DefaultBashPrePrompt): the generic exfiltration
+	// Shell-SPECIFIC rubric (modelhook.DefaultShellPrePrompt): the generic exfiltration
 	// rubric (defaultPrePrompt) false-positives on ordinary local writes (a local write
-	// is data STAYING on the machine, not exfiltration), so Bash gets a concrete-trigger,
+	// is data STAYING on the machine, not exfiltration), so Shell gets a concrete-trigger,
 	// fail-toward-safe rubric instead. ADR 0060.
-	{Match: "Bash", Phases: []string{string(modelhook.PhasePre)}, Mode: string(modelhook.ModeBlock), SkipReadOnlyBash: true, Prompt: modelhook.DefaultBashPrePrompt},
+	{Match: "Shell", Phases: []string{string(modelhook.PhasePre)}, Mode: string(modelhook.ModeBlock), SkipReadOnlyShell: true, Prompt: modelhook.DefaultShellPrePrompt},
 }
 
 // effectiveGuardrailSpecs returns the rule specs to compile: the operator's explicit

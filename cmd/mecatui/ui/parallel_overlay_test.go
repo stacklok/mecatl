@@ -1,6 +1,6 @@
 package ui
 
-// Tests for the third ctrl+a tab — Parallel (the fork-join GROUP roster + per-group
+// Tests for the third f6 tab — Parallel (the fork-join GROUP roster + per-group
 // focus). A Parallel run is a GROUP (not a flat fleet): branches share a join mode + a
 // single winner + preserved fork paths. Everything renders from the REDACTED,
 // metadata-only parallel.* event projection — no branch content (gauntlet #7). The seeds
@@ -92,7 +92,7 @@ func TestParallelRosterRendersGroup(t *testing.T) {
 		branchEndPar("p1", 1, 120, 25, 3, "end_turn", false, "/fork/branch-2"),
 		endPar("p1", "judge", 2, 1, "/fork/branch-2", "end_turn"),
 	)
-	mm, _ := m.Update(ctrlKey('a'))
+	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
 	if m.agentsTab != tabParallel {
 		t.Fatalf("expected Parallel tab as default (a finished parallel run, no team/sub), got %v", m.agentsTab)
@@ -119,7 +119,7 @@ func TestParallelGroupFocusWinnerHighlight(t *testing.T) {
 		branchEndPar("p1", 1, 120, 25, 3, "end_turn", false, "/fork/branch-2"),
 		endPar("p1", "judge", 2, 1, "/fork/branch-2", "end_turn"),
 	)
-	mm, _ := m.Update(ctrlKey('a'))
+	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
 	mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)
@@ -162,7 +162,7 @@ func TestParallelFailedBranchGlyph(t *testing.T) {
 		branchEndPar("p1", 1, 120, 25, 3, "end_turn", false, "/fork/branch-2"),
 		endPar("p1", "all", 2, -1, "", "end_turn"),
 	)
-	mm, _ := m.Update(ctrlKey('a'))
+	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
 	mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)
@@ -189,7 +189,7 @@ func TestParallelGroupFocusBranchDurationAndRunStop(t *testing.T) {
 		branchEndPar("p1", 1, 120, 25, 3, "end_turn", false, "/fork/branch-2"),
 		endPar("p1", "judge", 2, 1, "/fork/branch-2", "end_turn"),
 	)
-	mm, _ := m.Update(ctrlKey('a'))
+	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
 	mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)
@@ -216,7 +216,7 @@ func TestParallelGroupFocusNoRunStopForJoinAll(t *testing.T) {
 		branchEndPar("p1", 1, 120, 25, 3, "end_turn", false, "/fork/branch-2"),
 		endPar("p1", "all", 2, -1, "", ""), // join=all: no winner, no run stop
 	)
-	mm, _ := m.Update(ctrlKey('a'))
+	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
 	mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)
@@ -226,7 +226,7 @@ func TestParallelGroupFocusNoRunStopForJoinAll(t *testing.T) {
 	}
 }
 
-// TestParallelTabRoutingAndEsc asserts ctrl+a → tab reaches the Parallel tab and esc
+// TestParallelTabRoutingAndEsc asserts f6 → tab reaches the Parallel tab and esc
 // from the roster closes the overlay.
 func TestParallelTabRoutingAndEsc(t *testing.T) {
 	m := newMCPModel(t, aztec(), nil)
@@ -234,7 +234,7 @@ func TestParallelTabRoutingAndEsc(t *testing.T) {
 	// beats finished parallel), and tab must reach Parallel.
 	m = seedSubagents(m, "s1", startSub("s1", "c1", "audit"))
 	m = seedParallel(m, "p1", startPar("p1", "all", 1), branchStartPar("p1", 0, "branch-1", "go"))
-	mm, _ := m.Update(ctrlKey('a'))
+	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
 	if m.agentsTab != tabParallel {
 		// parallel is LIVE (no branch_end) so parallelLive beats haveSub.
@@ -267,7 +267,7 @@ func TestParallelOverlayBoundsBranchContent(t *testing.T) {
 		branchEndPar("p1", 0, 10, 2, 1, "end_turn", false, "/fork/branch-1"),
 		endPar("p1", "all", 1, -1, "", "end_turn"),
 	)
-	mm, _ := m.Update(ctrlKey('a'))
+	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
 	mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)
@@ -295,7 +295,7 @@ func TestParallelOverlayBoundsBranchContent(t *testing.T) {
 		branchEndPar("p1", 0, 10, 2, 1, "end_turn", false, "/fork/branch-1"),
 		endPar("p1", "all", 1, -1, "", "end_turn"),
 	)
-	mm2, _ := m2.Update(ctrlKey('a'))
+	mm2, _ := m2.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m2 = mm2.(Model)
 	mm2, _ = m2.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m2 = mm2.(Model)
@@ -322,7 +322,7 @@ func TestParallelGroupFocusHeightBounded(t *testing.T) {
 		msgs = append(msgs, branchToolParPreview("p1", i, "message.delta", "", "a branch note", 1))
 	}
 	m = seedParallel(m, "p1", msgs...)
-	mm, _ := m.Update(ctrlKey('a'))
+	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
 	mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)
@@ -352,7 +352,7 @@ func TestParallelRosterWindowed(t *testing.T) {
 		parent := "p" + string(rune('a'+i))
 		m = seedParallel(m, parent, startPar(parent, "all", 1), branchStartPar(parent, 0, "branch-1", "go"))
 	}
-	mm, _ := m.Update(ctrlKey('a'))
+	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
 	if m.agentsTab != tabParallel {
 		t.Fatalf("expected Parallel tab, got %v", m.agentsTab)
@@ -380,7 +380,7 @@ func TestParallelRosterOrderInsertionStable(t *testing.T) {
 	// Insert p_b before p_a — render order must follow INSERTION, not the ids' sort order.
 	m = seedParallel(m, "p_b", startPar("p_b", "all", 1), branchStartPar("p_b", 0, "branch-1", "second-seeded BBB"))
 	m = seedParallel(m, "p_a", startPar("p_a", "judge", 1), branchStartPar("p_a", 0, "branch-1", "first-after AAA"))
-	mm, _ := m.Update(ctrlKey('a'))
+	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
 	if m.agentsTab != tabParallel {
 		t.Fatalf("expected Parallel tab, got %v", m.agentsTab)
@@ -420,7 +420,7 @@ func TestParallelBranchOrderByIndex(t *testing.T) {
 		branchEndPar("p1", 1, 20, 4, 1, "end_turn", false, "/fork/branch-2"),
 		endPar("p1", "all", 3, -1, "", "end_turn"),
 	)
-	mm, _ := m.Update(ctrlKey('a'))
+	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
 	mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)
@@ -451,7 +451,7 @@ func TestParallelBranchTransientToolGlyph(t *testing.T) {
 		branchStartPar("p1", 0, "branch-1", "explore"),
 		branchToolPar("p1", 0, "Grep", true, 1), // a tool errored, but the branch is still RUNNING
 	)
-	mm, _ := m.Update(ctrlKey('a'))
+	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
 	mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)
@@ -500,7 +500,7 @@ func TestParallelBranchRoutedMetadata(t *testing.T) {
 		branchStartParModel("p1", 1, "branch-2", "unrouted", "anthropic/claude-3.5"),
 		branchStartPar("p1", 2, "branch-3", "no model known"),
 	)
-	mm, _ := m.Update(ctrlKey('a'))
+	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
 	mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)

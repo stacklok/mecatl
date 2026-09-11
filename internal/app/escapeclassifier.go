@@ -35,7 +35,7 @@ const (
 	// category, distinct from a regular escape at every posture, because an
 	// in-process FS read of e.g. /proc/self/environ returns the SERVER's raw,
 	// unscrubbed environment — a secret-exfiltration channel the
-	// envscrub-scrubbed Bash parity path does not provide (plan scope cuts).
+	// envscrub-scrubbed Shell parity path does not provide (plan scope cuts).
 	escapePseudoFS
 )
 
@@ -105,8 +105,8 @@ type fsPathArg struct {
 }
 
 // classify reports the escapeKind of an FS-tool call. Only Read/Write/Edit
-// carry a workspace path the escape decision applies to: Bash commands are
-// gated by the bash classifiers (SplitCommands/ReadOnlyBash), Glob/Grep route
+// carry a workspace path the escape decision applies to: Shell commands are
+// gated by the bash classifiers (SplitCommands/ReadOnlyShell), Glob/Grep route
 // patterns (not paths) and stay workspace-confined at every posture (ADR-0047
 // point 5), and every other tool has no FS path — all classify in-root so the
 // later wrapping policy leaves them to the inner policy untouched. A malformed

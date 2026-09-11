@@ -96,6 +96,7 @@ require (
 	go.opentelemetry.io/otel/sdk/log v0.22.0 // indirect
 	go.starlark.net v0.0.0-20260630144053-529d8e869a14 // indirect
 	gopkg.in/warnings.v0 v0.1.2 // indirect
+	mvdan.cc/sh/v3 v3.12.0 // indirect
 )
 
 require (
@@ -187,7 +188,7 @@ require (
 	github.com/gobuffalo/pop/v6 v6.1.1 // indirect
 	github.com/gobwas/glob v0.2.3 // indirect
 	github.com/goccy/go-json v0.10.6 // indirect
-	github.com/godbus/dbus/v5 v5.2.2 // indirect
+	github.com/godbus/dbus/v5 v5.2.2
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang/mock v1.7.0-rc.1 // indirect
 	github.com/google/gnostic-models v0.7.1 // indirect

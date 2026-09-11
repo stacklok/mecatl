@@ -117,6 +117,17 @@ linters:
           deny:
             - pkg: os
               desc: 'core domain must not import os (CLAUDE.md layering rule); side effects belong in adapters/composition'
+        engine-internal-shellcompat:
+          list-mode: strict
+          files:
+            - '**/engine/internal/shellcompat/**.go'
+            - '!$test'
+          allow:
+            - $gostd
+            - mvdan.cc/sh/v3/syntax
+          deny:
+            - pkg: os
+              desc: 'Shell compatibility is a parser-only internal helper; execution belongs in tool adapters'
         core-session:
           list-mode: strict
           files:
@@ -353,6 +364,7 @@ linters:
             - $gostd
             - github.com/stacklok/mecatl/engine/session
             - github.com/stacklok/mecatl/engine/tool
+            - github.com/stacklok/mecatl/engine/internal/shellcompat
           deny:
             - pkg: os
               desc: 'fstools are the core FS tool bodies over the injected tool.Workspace/CommandRunner; they must not touch the real OS'
@@ -744,6 +756,7 @@ linters:
             - github.com/stacklok/mecatl/engine/governance
             - github.com/stacklok/mecatl/engine/prompt
             - github.com/stacklok/mecatl/engine/tool
+            - github.com/stacklok/mecatl/engine/internal/shellcompat
             - github.com/stacklok/mecatl/engine/port
             - github.com/stacklok/mecatl/engine/team
             - golang.org/x/sync/errgroup

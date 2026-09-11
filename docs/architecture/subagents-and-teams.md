@@ -11,13 +11,13 @@
 `SubagentTool` is a `tool.Tool` (catalog name `Subagent`) that delegates a focused,
 self-contained task (multi-step investigation or build/test/git work) to a **child agent loop**. Its `Execute`:
 1. **Workspace selection.** When a child forker is wired (`WithChildForker` — the
-   composition root wires it **iff** the child catalog includes Bash) it forks the
+   composition root wires it **iff** the child catalog includes Shell) it forks the
    incoming `ws` into an **isolated git worktree** (the forker DEFAULT mode — shares
    the base repo's `.git`, so the child sees full history) and runs the child there;
    the worktree is torn down after the child drains. Without a forker the child has
-   no Bash and runs against the **parent** `ws`, exactly as before. A fork **failure**
+   no Shell and runs against the **parent** `ws`, exactly as before. A fork **failure**
    on the wired path is a tool **error**, never a silent fallback to the shared `ws`
-   (running the child's Bash in the shared base is the exact hazard isolation exists
+   (running the child's Shell in the shared base is the exact hazard isolation exists
    to prevent).
 2. Builds a **fresh** child `session.New(...)` — own conversation, own (tighter)
    `Limits` (`defaultChildLimits`: 500 turns / 2000 tool calls / 5 failures, issue #50 —
@@ -91,7 +91,7 @@ prefix the feature relies on) and SAME-PROVIDER only (mutually exclusive with
 `mode: "read-write"` (ADR 0077, superseding 0040's writable path; closed set
 `{"","read-only","read-write"}`, default read-only) runs the child DIRECTLY against
 the REAL parent workspace with Edit/Write — NO fork, NO copy, NO merge-back. Its
-Edit/Write/Bash mutate the real tree IN PLACE, exactly as the main agent does, and
+Edit/Write/Shell mutate the real tree IN PLACE, exactly as the main agent does, and
 git is the rollback layer — the "delegate one task and land its edits" path
 (default-wired, no flag; rejected with `background`, with explicit `agent`+`model` together
 (v1 scope limit), and under the no-FS profile; `read-write`+`agent` alone runs the named
@@ -142,28 +142,28 @@ recreation, and retained child
 transcripts are read through revalidated scope handles. This keeps unrelated session IDs
 unprobeable and makes retention gaps explicit ([ADR 0258](../adr/0258-cryptographic-session-incarnations.md)).
 
-**Background Bash jobs ride the same registry as a NON-delegation family**
-(`docs/adr/0201-background-bash.md`). A `background: true` call on the `Bash`
+**Background Shell jobs ride the same registry as a NON-delegation family**
+(`docs/adr/0201-background-bash.md`). A `background: true` call on the `Shell`
 tool registers a `bash-cmd` entry (`bashcmd-<callID>` — a bare process, NO child
 session/engine, no `subagent.*` events, no InspectSubagent/resume), returns the
 job id immediately, and detaches the drive; the run-scoped cancel-at-end drain,
 the turn-boundary notice, and the background-pending nudge all cover it (the
 notice/nudge are family-aware: the subagent clause keeps its exact wording and a
-"background command(s) …" clause naming `BashStatus` is appended only when bash
+"background command(s) …" clause naming `ShellStatus` is appended only when shell
 jobs are among the finished/live). The registry is SHARED but the two status
 tools project it DISJOINTLY: `SubagentStatus` filters bash-cmd entries out, the
-read-only **`BashStatus`** tool (registered iff Bash is, never in child
+read-only **`ShellStatus`** tool (registered iff Shell is, including in child
 catalogs) serves ONLY bash-cmd jobs — roster (ids+state+stop only), per-job
 command + retained 64 KiB output tail (live) or exactly-once collected result
 (done), `wait_ms` park, `cancel` verb. A child (Subagent/explorer/team member)
-gets the same background-capable `Bash` against its OWN run's registry, but
-never `BashStatus`. See [ports](ports.md) for the tool/streaming seam.
+gets the same background-capable `Shell` and its paired `ShellStatus` against its
+OWN run's registry, but never `SubagentStatus`. See [ports](ports.md) for the tool/streaming seam.
 
 The child is a **read-only explorer with a shell** by default — capability flows down
-from the parent (which has Bash); isolation, not catalog read-only-ness, is the
+from the parent (which has Shell); isolation, not catalog read-only-ness, is the
 security boundary:
-- The composition layer wires `childEngine` with **Read/Grep/Glob plus Bash**
-  (`buildChildEngine` registers Bash via the **sandboxed** runner —
+- The composition layer wires `childEngine` with **Read/Grep/Glob plus Shell**
+  (`buildChildEngine` registers Shell via the **sandboxed** runner —
   `buildSandboxedCommandRunner`, the SAME hardening team members get, since the
   worktree shares the parent `.git`), **never `Subagent`/`Parallel`/`ToolSearch`** (no
   recursion / fan-out) and **never Edit/Write** (the read-only explorer inspects, it
@@ -171,7 +171,7 @@ security boundary:
   `writableChildEngine` (`buildWritableSubagentChildEngine`: the explorer surface +
   **Edit/Write**, over the REAL parent workspace + the MAIN session's command runner
   `buildCommandRunner` — main-session parity, NO fork — ADR 0077); it is NOT isolated
-  (`isolated:false`, so the A2 isolation auto-approve does not apply to its Bash) and
+  (`isolated:false`, so the A2 isolation auto-approve does not apply to its Shell) and
   git is the rollback. A `read-write`+`agent` call routes through
   `agentWritableFactory` (`buildAgentWritableEngineFactory`) on the definition's resolved
   model, or—when the definition is unpinned and same-provider—through
@@ -179,15 +179,15 @@ security boundary:
   router's pick. Both rebuild the specialist with `allowMutating=true` over the MAIN runner,
   preserving its prompt/skills/catalog and per-def limits (ADR 0058/0239). A routed factory
   decline falls back to the ordinary writable specialist and reports the unavailable target
-  rather than claiming the routed model ran. Per-def Subagent engines keep Bash via `scopedToolNamesMode`'s
+  rather than claiming the routed model ran. Per-def Subagent engines keep Shell via `scopedToolNamesMode`'s
   `allowShell` and share the one read-only `SubagentTool` forker. With no runner
-  (`--no-bash`) the child is a Bash-less read-only explorer and no forker is wired — the
+  (`--no-shell`) the child is a Shell-less read-only explorer and no forker is wired — the
   original behaviour. The policy is **allow-all** so the child never prompts a human
   (`internal/app`: `buildSubagentTool` / `buildChildEngine` /
   `buildWritableSubagentChildEngine` / `buildAgentSubagentEngines`).
 - `SubagentTool.ReadOnly()` stays **`true`**, letting the parent run read-only `Subagent`
   calls concurrently with other read-only tools. This is safe because a read-only
-  child's (mutating-classified) Bash writes land in the **isolated worktree**, never the
+  child's (mutating-classified) Shell writes land in the **isolated worktree**, never the
   shared base the parent's other read-only calls race over; the only shared surface is
   the `.git` object DB/refs (git-locked; config-driven code-exec vectors neutralised via
   `gitenv`).

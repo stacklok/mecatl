@@ -84,13 +84,13 @@ func TestClaudeImportTildeLeftInert(t *testing.T) {
 
 // Fail-safe row 3: an unparseable spec is DROPPED + reported.
 func TestClaudeImportUnparseableDropped(t *testing.T) {
-	data := []byte(`{"permissions":{"allow":["Bash(unterminated","",  "Read"]}}`)
+	data := []byte(`{"permissions":{"allow":["Shell(unterminated","",  "Read"]}}`)
 	var report Report
 	rules, err := importClaude(data, governance.ScopeUser, &report)
 	if err != nil {
 		t.Fatalf("importClaude: %v", err)
 	}
-	// "Read" survives; "Bash(unterminated" and "" are dropped.
+	// "Read" survives; "Shell(unterminated" and "" are dropped.
 	if findRule(rules, "Read", "") == nil {
 		t.Fatalf("the valid Read rule should survive: %+v", rules)
 	}
@@ -102,19 +102,19 @@ func TestClaudeImportUnparseableDropped(t *testing.T) {
 // Fail-safe NEVER widens: a deny/ask bucket is imported verbatim (no demotion),
 // and an allow is never escalated to a deny/ask except the WebFetch demotion.
 func TestClaudeImportNeverWidens(t *testing.T) {
-	data := []byte(`{"permissions":{"deny":["Bash(rm:*)"],"ask":["Bash(git push:*)"],"allow":["Bash(go test:*)"]}}`)
+	data := []byte(`{"permissions":{"deny":["Shell(rm:*)"],"ask":["Shell(git push:*)"],"allow":["Shell(go test:*)"]}}`)
 	var report Report
 	rules, err := importClaude(data, governance.ScopeSharedProject, &report)
 	if err != nil {
 		t.Fatalf("importClaude: %v", err)
 	}
-	if r := findRule(rules, "Bash", "rm*"); r == nil || r.Effect != governance.Deny {
+	if r := findRule(rules, "Shell", "rm*"); r == nil || r.Effect != governance.Deny {
 		t.Fatalf("deny must import verbatim: %+v", rules)
 	}
-	if r := findRule(rules, "Bash", "git push*"); r == nil || r.Effect != governance.Ask {
+	if r := findRule(rules, "Shell", "git push*"); r == nil || r.Effect != governance.Ask {
 		t.Fatalf("ask must import verbatim: %+v", rules)
 	}
-	if r := findRule(rules, "Bash", "go test*"); r == nil || r.Effect != governance.Allow {
+	if r := findRule(rules, "Shell", "go test*"); r == nil || r.Effect != governance.Allow {
 		t.Fatalf("a non-WebFetch allow must stay an allow: %+v", rules)
 	}
 	if !report.Empty() {

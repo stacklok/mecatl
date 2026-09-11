@@ -118,7 +118,7 @@ func (w *fsWorkspace) Root() string { return w.local.Root() }
 //     EXISTING ancestor of the joined target and re-verify the resolved real path
 //     is still within the EvalSymlinks-resolved Root(); reject if it escapes. This
 //     defends against a model creating an in-workspace symlink (e.g. `ln -s
-//     /etc/passwd evil` via Bash) and then reading/writing it — without this the
+//     /etc/passwd evil` via Shell) and then reading/writing it — without this the
 //     editor would receive "<root>/evil" and might follow it out of root.
 //
 // An ABSOLUTE path is accepted iff confineSymlinks confirms it resolves inside

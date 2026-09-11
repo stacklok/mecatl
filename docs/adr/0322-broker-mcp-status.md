@@ -1,6 +1,6 @@
 # ADR 0322 — Session-owned broker connector inspection
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-09-09
 - Scope: broker connector inventory in mecak8s and mecatui
 - Supersedes: None
@@ -24,7 +24,7 @@ not a read-only status API.
 
 ## Decision
 
-Propose a separate owner-authorized `ListSessionMcpConnectors` API and independent
+Adopt a separate owner-authorized `ListSessionMcpConnectors` API and independent
 `mcp_connector_status` capability, rendered through the existing `/mcp` command.
 Keep the old `mcp` capability and all direct provider operations unchanged.
 Require `OwnershipEnforced=true` and a verified principal for the new capability
@@ -34,7 +34,7 @@ permits access when ownership enforcement is disabled. Keep that compatibility
 behavior unchanged for other operations. Extend the descriptor-based session-affinity
 matrix and HTTP session-route tests for the new operation.
 
-These are proposed disclosure prerequisites, not yet human-approved decisions.
+These are accepted disclosure prerequisites. Existing transport authentication applies; no separate listener toggle exists.
 
 Expose bounded connector display names, per-connector catalogue states and counts,
 and aggregate enrollment state. Inspect existing process-local broker state under
@@ -50,14 +50,38 @@ server engine rebuild and aggregate Save. Either later step may fail without era
 broker publication; the inventory reports that publication and never repairs the
 session or implies those steps succeeded. Similarly, expired/terminal broker state
 can coexist with a persisted pending enrollment that still gates prompts. Inspection
-must not settle that gate. The panel explicitly says session installation, persistence
-and prompt readiness are not verified. Offline tests inject post-discovery build/Save
-failures and expired/terminal attempts with still-pending aggregates.
+must not settle that gate. The panel uses concise friendly labels rather than
+claiming session installation, persistence, or prompt readiness. Offline tests
+inject post-discovery build/Save failures and expired/terminal attempts with
+still-pending aggregates.
 
-This ADR is proposed, not implementation authorization. The exact candidate fields,
-status vocabulary, disclosure policy and bounds are in the
-[acceptance plan](../acceptance/broker-mcp-status.md), whose open human decisions must
-be resolved before orchestration.
+This ADR records the approved implementation boundary. The exact fields, status
+vocabulary, disclosure policy and bounds are in the
+[acceptance plan](../acceptance/broker-mcp-status.md); broker and direct MCP are
+mutually exclusive supported compositions, so the broker panel never exposes
+resources, prompts, or groups. The presentation uses `MCP inventory`, friendly
+status labels, and one concise “Catalogue status · not a live connection check”
+line; detailed publication and enrollment semantics remain in this ADR and the
+operator guide rather than as always-visible panel caveats.
+
+## Implementation extension
+
+The directing human explicitly extended the approved local scope without a separate
+amendment PR: broker `/mcp` and Ctrl+O are the primary inventory-and-setup surface.
+They may invoke only the existing caller-owned whole-bundle enrollment controller.
+The panel offers Connect tools only for a fresh idle empty local session with a
+wired enrollment capability/controller, no busy control and no known completed
+enrollment. Resumed/unknown eligibility is hidden rather than guessed; catalogue
+state is only a negative exclusion. Pending setup shows Setup in progress and
+Cancel setup only. The user's subsequent simplicity direction explicitly removes
+Continue in browser: no reopen-browser feature, retained URL, new controller or
+eligibility registry; existing browser launch/poll/completion remain unchanged.
+The existing controller's safe status and generation survive terminal cleanup,
+not its transaction ID or presentation data. `/tools-connect` and `/tools-cancel`
+remain unchanged compatibility shortcuts. Opening and refresh remain read-only
+inspection, no per-connector action is introduced, and direct MCP behavior is
+unchanged. AC3.4 retains its original documentation criterion; new action ACs are
+appended in the locally approved plan.
 
 ## Consequences
 
@@ -65,8 +89,9 @@ Broker-only Kubernetes users can inspect their connector catalogue without chang
 deployment modes. Existing clients retain truthful resource/prompt capabilities.
 The new operation requires end-to-end ownership, affinity, listener gating and
 redaction tests, plus a pure broker snapshot interface separate from enrollment
-controls. The UI must explain that no active enrollment is not proof that lazy
-OAuth is unavailable, and that catalogue completion is not a health check.
+controls. The UI maps status to friendly labels and presents only that the
+catalogue status is not a live connection check; the detailed distinction between
+lazy OAuth and enrolment remains in the operator documentation.
 
 Process-local inspection does not improve broker restart recovery or replica routing.
 A restarted pod cannot claim a session is connected from persisted tool names, and

@@ -1,6 +1,6 @@
 # ADR 0301 — Logical conversation anchors in mecatui
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-09-06
 - Scope: `cmd/mecatui/ui` conversation rendering, scrolling, selection, and scrollback-performance invariants
 - Supersedes: none
@@ -60,34 +60,46 @@ type readingAnchor struct {
 wrapping, markdown layout, streaming growth, card expansion, and terminal resize
 can create, remove, or move them. The block ID is assigned only in the TUI when a
 document block is created; it is neither a protocol field nor persisted state.
-`region` identifies a stable display area where one exists, such as an assistant
-body, reasoning summary, tool header, tool arguments, tool result, or the
-changed-files footer. The footer is a synthetic UI document block: it participates
-in provenance while visible and falls back to the preceding conversation block
-when collapsing removes it.
+`region` identifies a stable display area where one exists. The initial closed
+set is card chrome, primary body, reasoning, tool arguments, tool result, and the
+changed-files appendix. Changed-file membership, the
+appendix's first-observation identity allocation, and its document-block
+lifecycle belong to `conversation`; the root Model delegates its event routing
+to that owner. The appendix receives one UI-local ID when the session first
+observes a changed file, participates in provenance only while expanded and
+non-empty, and falls back to the preceding conversation block when collapse
+hides it.
 
-For a text-bearing region, `sourceOffset` is a grapheme-safe position in that
-region's canonical source text. The renderer maps that source position to the
-current wrapped output row, so width reflow preserves the same source location
-rather than merely the same local rendered-row number. `row` is only the
+For a text-bearing region, `sourceOffset` is a grapheme-safe position in its
+canonical visible text: ANSI-free text after its ordinary presentation
+transformation and terminal normalization, with soft-wrap boundaries excluded.
+This deliberately is not a raw-Markdown source map; the renderer maps this
+coordinate to current wrapped output while using the existing
+`x/ansi` grapheme segmentation and width primitives. `row` is only the
 intentional fallback for a derived/non-textual region with no meaningful source
-coordinate, such as card chrome.
+coordinate, such as card chrome or a collapsed summary.
 
 ### 2. Render line provenance with the existing frame
 
-The renderer MUST produce the existing rendered lines together with lightweight
-per-row provenance sufficient to map the first visible viewport row to and from a
-`readingAnchor`, including canonical source spans for text-bearing regions.
-Provenance references the existing rendered strings and block identity; it MUST
-NOT duplicate rendered text or retain another full transcript.
+The renderer MUST produce one concrete package-private rendered frame containing
+the existing rendered lines and lockstep per-row provenance. That provenance
+must support both mapping the first visible viewport row to a `readingAnchor`
+and resolving an anchor back to its current row, including canonical source
+spans for text-bearing regions. It references the existing rendered strings and
+block identity; it MUST NOT duplicate rendered text or retain another full
+transcript. Provenance has the same document lifetime as the cached render it
+describes and MUST be reset or rebuilt whenever the conversation is
+reconstructed, so an index-reused block can never retain an old document's
+identity.
 
 Before replacing viewport content, the conversation-view owner captures either
 tail-follow mode or the current first-visible anchor. After rendering, it restores
 that anchor's current row and then projects the result to Bubble Tea's viewport.
-If restoration or relayout clamps an anchored projection to the document bottom,
-the controller promotes it to `followTail`; the next appended content then remains
-visible. The only source of truth for whether the next update follows the tail is
-this model, not a cached boolean independently inferred at selected mutation sites.
+If restoration or relayout leaves an anchored projection bottom-aligned, the
+controller promotes it to `followTail`; the next appended content then remains
+visible. The only source of truth for whether the next update follows the tail
+is this model, not a cached boolean independently inferred at selected mutation
+sites.
 
 ### 3. Define deterministic changed-content fallback
 
@@ -117,10 +129,12 @@ wrapped-line number.
 
 Selection and reading position share block/region coordinates, but they do not
 share the same survival policy. A reading position may use the fallback above.
-A selection MUST survive only when both endpoints still resolve to the same
-selected visible text after rendering. If a source mutation, expansion change,
-markdown transformation, or reflow makes that unprovable, the TUI clears the
-selection rather than copying text different from what was highlighted.
+A selection records both endpoints, the exact ANSI-free copied text, and up to
+16 grapheme clusters of context on each side of each endpoint. It survives only
+when the rendered frame resolves endpoint contexts and the selected visible text
+is still identical. This permits a live card to append around a selection without
+clearing it, but clears the selection rather than copying altered text when the
+identity cannot be proved.
 
 ### 5. Isolate the conversation-view controller inside the TUI
 
@@ -154,7 +168,13 @@ Logical-anchor metadata may grow linearly with rendered rows, matching the
 existing line-slice model, but it MUST NOT add another O(rendered-bytes) copy per
 frame or increase steady-state retention by another full rendered transcript.
 Selection and expanded-card paths may retain their existing full-frame costs;
-this decision does not claim to optimize them.
+this decision does not claim to optimize them. The established scrollback
+allocation and bytes-per-operation metrics have a 5% review target against a
+recorded baseline. Existing TUI render benchmarks are advisory because their
+runtime and process-wide allocation sampling are demonstrably noisy; therefore
+cache-equivalence and depth-scaling tests, rather than an unreliable numeric CI
+threshold, enforce that this change does not increase the asymptotic per-frame
+cost. RSS remains monitored.
 
 A later virtualization, raw-content retention, eviction, or on-demand-history
 design is a separate decision. It must be justified by profiling and must not be

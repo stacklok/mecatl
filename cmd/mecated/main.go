@@ -130,7 +130,7 @@ type config struct {
 	mockProvider         port.LLMProvider
 	storeDir             string
 	shell                string
-	noBash               bool
+	noShell              bool
 	authorityEvaluator   string
 	cedarAuthorityPolicy string
 
@@ -172,6 +172,10 @@ type config struct {
 	// maxTeamTokens is the team-wide cumulative token ceiling for a single team run
 	// (the round-boundary brake). 0 (default) disables it.
 	maxTeamTokens int
+
+	// Diagnostics is the configured operational sink shared by application and edge
+	// authentication observability. It is runtime-only and never parsed from flags.
+	diagnostics port.Diagnostics
 
 	// Observability: the Prometheus /metrics listen address (empty disables it),
 	// plus the OTLP trace exporter knobs (empty endpoint disables tracing).
@@ -607,7 +611,7 @@ func runConfigInit(argv []string, out io.Writer) error {
 	var printOnly, force bool
 	fs.BoolVar(&printOnly, "print", false, "print the skeleton to stdout and write NO file (a paste-ready reference)")
 	fs.BoolVar(&force, "force", false, "overwrite an existing settings.yaml (default: refuse, naming the path)")
-	if err := fs.Parse(argv); err != nil {
+	if err := fs.Parse(cliconfig.NormalizeLegacyNoBash(argv)); err != nil {
 		return err
 	}
 
@@ -658,7 +662,7 @@ func runConfigDaemonInit(argv []string, out io.Writer) error {
 	var printOnly, force bool
 	fs.BoolVar(&printOnly, "print", false, "print the daemon.yaml skeleton to stdout and write NO file (a paste-ready reference)")
 	fs.BoolVar(&force, "force", false, "overwrite an existing daemon.yaml (default: refuse, naming the path)")
-	if err := fs.Parse(argv); err != nil {
+	if err := fs.Parse(cliconfig.NormalizeLegacyNoBash(argv)); err != nil {
 		return err
 	}
 
@@ -709,7 +713,7 @@ func runConfigDaemonValidate(argv []string, out io.Writer) error {
 	fs.SetOutput(out)
 	var file string
 	fs.StringVar(&file, "file", "", "path to the daemon.yaml to validate (default: the conventional $XDG_CONFIG_HOME/mecatl/daemon.yaml)")
-	if err := fs.Parse(argv); err != nil {
+	if err := fs.Parse(cliconfig.NormalizeLegacyNoBash(argv)); err != nil {
 		return err
 	}
 
@@ -751,7 +755,7 @@ func runSkillsPromote(argv []string, in io.Reader, out io.Writer) error {
 	fs.StringVar(&quarantine, "skills-draft-dir", "", "the QUARANTINE directory the candidate was drafted into")
 	fs.StringVar(&active, "skills-dir", "", "the ACTIVE skills directory to promote the candidate into")
 	fs.BoolVar(&assumeYes, "yes", false, "skip the interactive content review and promote without confirmation (scripted/CI use only)")
-	if err := fs.Parse(argv); err != nil {
+	if err := fs.Parse(cliconfig.NormalizeLegacyNoBash(argv)); err != nil {
 		return err
 	}
 	name := fs.Arg(0)
@@ -798,7 +802,7 @@ func runPerfMCPPrintConfig(argv []string, out io.Writer) error {
 	fs.SetOutput(out)
 	var addr string
 	fs.StringVar(&addr, "metrics-addr", defaultMetricsAddr, "the loopback admin listen address the perf MCP server is mounted on (host:port); sets the host:port in the printed URL")
-	if err := fs.Parse(argv); err != nil {
+	if err := fs.Parse(cliconfig.NormalizeLegacyNoBash(argv)); err != nil {
 		return err
 	}
 
@@ -876,6 +880,7 @@ func run(mode commandMode, remaining []string) error {
 	// so the facts print identically — but flow through the injected port.Diagnostics
 	// rather than slog.Default().
 	diag := slogdiag.NewFromLogger(logger)
+	cfg.diagnostics = diag
 
 	// Emit the build identity once logging is configured, so every daemon startup
 	// can be tied to the binary that produced its operational logs.
@@ -1177,7 +1182,7 @@ func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, 
 		MockProvider:                  cfg.mockProvider,
 		StoreDir:                      cfg.storeDir,
 		Shell:                         cfg.shell,
-		NoBash:                        cfg.noBash,
+		NoShell:                       cfg.noShell,
 		AuthorityEvaluator:            cfg.authorityEvaluator,
 		CedarAuthorityPolicy:          cfg.cedarAuthorityPolicy,
 		OwnershipEnforced:             cfg.oidc.Enabled(),
@@ -1308,7 +1313,7 @@ func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, 
 		Privileged:             privilegedProcess(),
 		// mecated serves the bidi Converse + HTTP-SSE surfaces, whose clients CAN
 		// answer a permission ask (ResumeApproval) — so by default a subagent's
-		// unresolved Bash ask is SURFACED to the attached human rather than
+		// unresolved Shell ask is SURFACED to the attached human rather than
 		// auto-denied. --headless inverts this for an autonomous / CI deployment whose
 		// clients drive runs but never answer permission prompts: surfacing there would
 		// park the child until run-end, so we run NON-interactive (Interactive=false),
@@ -1685,10 +1690,10 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 	fs.StringVar(&cfg.mockScript, "mock-script", "", "path to a JSON mockllm script (offline; implies --mock and supports text, tool-call, and delayed turns)")
 	fs.StringVar(&cfg.storeDir, "store-dir", "", "directory for the JSONL session store (empty -> in-memory store)")
 	fs.StringVar(&cfg.sessionStoreURL, "session-store-url", "", "host:port of a remote session-store gRPC driver (mecatl.driver.v1.SessionStoreService); replaces the local store, so it is mutually exclusive with --store-dir. Loopback may ride plaintext; pair a non-loopback target with --driver-tls (and --driver-auth-token as needed)")
-	fs.StringVar(&cfg.shell, "shell", "/bin/sh", "shell used to execute Bash-tool commands; empty disables Bash (shell-less mode)")
+	fs.StringVar(&cfg.shell, "shell", "/bin/sh", "shell used to execute Shell-tool commands; empty disables Shell (shell-less mode)")
 	fs.StringVar(&cfg.authorityEvaluator, "authority-evaluator", "local", "authority evaluator: local (default), noop, or cedar; cedar requires --cedar-authority-policy")
 	fs.StringVar(&cfg.cedarAuthorityPolicy, "cedar-authority-policy", "", "path to the static operator Cedar authority policy; read once at startup when --authority-evaluator=cedar")
-	fs.BoolVar(&cfg.noBash, "no-bash", false, "disable the Bash tool entirely (shell-less mode); overrides --shell")
+	fs.BoolVar(&cfg.noShell, "no-shell", false, "disable the Shell tool entirely (shell-less mode); overrides --shell")
 
 	fs.StringVar(&cfg.compaction, "compaction", "heuristic", "compaction strategy: \"heuristic\" (default, single-summary) or \"cascade\" (tiered snip→strip→collapse→summarize)")
 	fs.StringVar(&cfg.tokenizer, "tokenizer", "heuristic", "token counter for the compaction trigger: \"heuristic\" (default, dependency-free) or \"tiktoken\" (offline tiktoken vocab)")
@@ -1812,7 +1817,7 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 	fs.BoolVar(&cfg.toolHiveEnabled, "toolhive", true, "discover MCP servers from the running ToolHive workloads (the embedded ToolHive library lists already-running workloads and reads their HTTP proxy URLs; mecatl NEVER starts or spawns a workload). Fails soft to zero servers when no container runtime is reachable. TRUST BOUNDARY: registering tools from running workloads is the same trust class as --mcp-server — every discovered workload's tools enter the model context")
 	fs.StringVar(&cfg.toolHiveGroup, "toolhive-group", "", "ToolHive group to discover workloads from (empty -> the \"default\" group). Only consulted when --toolhive is set")
 
-	fs.Var(&cfg.permissionConfigs, "permission-config", "path to a YAML permission-config file (.mecatl/settings.yaml schema: a permissions.{allow,ask,deny} list of \"Tool(pattern)\" specs) to load at the CLI scope — the HIGHEST config precedence, fully trusted (repeatable). Always loaded regardless of --permissions-conventional. A CLI rule out-ranks a project/user rule of the same effect; a config allow can LOOSEN ONLY the built-in Bash/Edit/Write ask, but a deny/ask in ANY scope still wins and a config allow never suppresses a configured ask")
+	fs.Var(&cfg.permissionConfigs, "permission-config", "path to a YAML permission-config file (.mecatl/settings.yaml schema: a permissions.{allow,ask,deny} list of \"Tool(pattern)\" specs) to load at the CLI scope — the HIGHEST config precedence, fully trusted (repeatable). Always loaded regardless of --permissions-conventional. A CLI rule out-ranks a project/user rule of the same effect; a config allow can LOOSEN ONLY the built-in Shell/Edit/Write ask, but a deny/ask in ANY scope still wins and a config allow never suppresses a configured ask")
 	fs.BoolVar(&cfg.permissionsConventional, "permissions-conventional", true, "auto-discover the per-project permission config: <workspace>/.mecatl/settings.local.yaml (gitignored, personal — higher precedence) and <workspace>/.mecatl/settings.yaml (checked-in, shared), plus — with --import-claude-permissions — the matching .claude/settings.local.json and .claude/settings.json, plus the user-global file ($XDG_CONFIG_HOME/mecatl/settings.yaml). RE-RESOLVED PER SESSION against each session's workspace root (and revalidated on file mtime change), so two sessions in different repos get different decisions. ON by default and INERT when no such file exists. TRUST BOUNDARY: a project's ALLOW rules are honoured ONLY with --trust-project; its deny/ask rules are ALWAYS honoured")
 	fs.BoolVar(&cfg.importClaudePermissions, "import-claude-permissions", false, "also import Claude-Code settings.json permissions (project <workspace>/.claude/settings{,.local}.json and user ~/.claude/settings.json) when --permissions-conventional is set. LOSSY (fail-safe): a WebFetch(domain:...) ALLOW is DEMOTED to ask, a Read(~/...) rule is left INERT (\"~\" unexpanded), an unparseable spec is DROPPED — every case is logged")
 	fs.BoolVar(&cfg.trustProject, "trust-project", false, "honour a discovered PROJECT's ALLOW rules (its deny/ask rules are always honoured regardless). Default OFF (the safe stance): an untrusted repo's permission grants are ignored. TRUST BOUNDARY: enabling this lets a checked-in .mecatl/settings.yaml auto-approve tool calls — only pass it for a repo you trust")
@@ -1858,7 +1863,7 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 		writeServeCommonHelp(out, fs)
 	}
 
-	if err := fs.Parse(argv); err != nil {
+	if err := fs.Parse(cliconfig.NormalizeLegacyNoBash(argv)); err != nil {
 		// Return the fully-registered FlagSet even on a parse/help error so the
 		// progressive-help completeness invariant (validateFlagMeta) can run over
 		// the full real registration path via the --help-triggered ErrHelp path.
@@ -2479,10 +2484,11 @@ func buildEdge(ctx context.Context, cfg config) (*tls.Config, *server.Authentica
 		return nil, nil, nil, err
 	}
 	return tlsCfg, server.NewAuthenticator(server.SecurityConfig{
-		AuthToken: cfg.authToken,
-		RateLimit: cfg.rateLimit,
-		RateBurst: cfg.rateBurst,
-		Validator: validator,
+		AuthToken:   cfg.authToken,
+		RateLimit:   cfg.rateLimit,
+		RateBurst:   cfg.rateBurst,
+		Validator:   validator,
+		Diagnostics: cfg.diagnostics,
 	}), corsPolicy, nil
 }
 

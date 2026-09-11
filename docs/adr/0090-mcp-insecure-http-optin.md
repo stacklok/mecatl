@@ -11,11 +11,12 @@ token-bearing URL that is not `https` — or `http` to an explicit loopback host
 scheduler-injected `MCP_<NAME>_TOKEN` bearer is never sent cleartext off-host. That is
 the correct default, and it stays the default.
 
-But the in-cluster scheduler (titlani, the kubernetes arm of the run contract —
-titlani#40, pairing with issue #358 the way #341 paired with titlani#38) points agent
-runs at plain-http MCP Services inside a NetworkPolicy-scoped namespace, where the same
-short-TTL bearer already crosses the identical wire from the scheduler's own client.
-Under the #347 gate those runs cannot start at all.
+But the in-cluster scheduler — the kubernetes arm of the run contract, tracked in a
+separate repository — points agent runs at plain-http MCP Services inside a
+NetworkPolicy-scoped namespace, where the same short-TTL bearer already crosses the
+identical wire from the scheduler's own client. Its half of this change pairs with issue
+#358 here, the way issue #341 paired with its scheduler-side counterpart. Under the #347
+gate those runs cannot start at all.
 
 Two alternatives were considered and rejected:
 
@@ -27,7 +28,7 @@ Two alternatives were considered and rejected:
   every server at once, so one legitimately-cleartext in-cluster endpoint would also
   waive the check for an internet-facing one added later.
 
-One contract subtlety surfaced in titlani#40's devils-advocate pass: the #347 gate
+One contract subtlety surfaced in the scheduler side's devils-advocate pass: the #347 gate
 fired inside `MCPServerList.Set` — at flag-parse time, in argv order — so any
 relaxation flag parsed *after* its `--mcp-server` would arrive too late. Argv ordering
 must not be part of the caller's contract.
@@ -66,7 +67,7 @@ must not be part of the caller's contract.
 
 ## Consequences
 
-- A titlani-launched in-cluster run can name its plain-http MCP Services explicitly,
+- A scheduler-launched in-cluster run can name its plain-http MCP Services explicitly,
   per server, and the invocation itself documents the accepted cleartext hop — the
   security review reads the flag list, not the cluster topology.
 - The default posture is byte-identical: a token-bearing http non-loopback URL without
@@ -88,8 +89,9 @@ must not be part of the caller's contract.
 
 ## See also
 
-- Issue [#358](https://github.com/stacklok/mecatl/issues/358); titlani#40 — the paired
-  kubernetes scheduler half (source of the order-independence requirement).
+- Issue [#358](https://github.com/stacklok/mecatl/issues/358) — the paired kubernetes
+  scheduler half, tracked in the scheduler's own repository (source of the
+  order-independence requirement).
 - [ADR 0082 — Factory MCP wiring for the one-shot mains](./0082-factory-mcp-wiring.md)
   — the shared `--mcp-server` helper + the #347 hardenings this opt-in punches a named,
   per-server hole through.

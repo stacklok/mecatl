@@ -9,7 +9,7 @@
                ┃                                                                   ┃
                ┃  Permission required                                              ┃
                ┃                                                                   ┃
-               ┃  Bash                                                             ┃
+               ┃  Shell                                                            ┃
                ┃  │ echo step-xxxxa-                                               ┃
                ┃  │ echo step-xxxxb-y                                              ┃
                ┃  │ echo step-xxxxc-yy                                             ┃
@@ -22,7 +22,7 @@
                ┃  │ echo step-xxxxj-yy                                             ┃
                ┃                                                                   ┃
                ┃  … pgup/pgdn scroll · ctrl+t full args                            ┃
-               ┃  Bash requires approval                                           ┃
+               ┃  Shell requires approval                                          ┃
                ┃                                                                   ┃
                ┃  ╭───────────╮  ╭────────────╮  ╭──────────╮                      ┃
                ┃  │  [A]llow  │  │  Al[w]ays  │  │  [D]eny  │                      ┃

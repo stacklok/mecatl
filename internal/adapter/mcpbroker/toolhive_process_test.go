@@ -62,13 +62,28 @@ type recordingBrokerDiagnostics struct {
 	records []string
 }
 
+type boundBrokerDiagnostics struct {
+	parent *recordingBrokerDiagnostics
+	args   []any
+}
+
 func (d *recordingBrokerDiagnostics) Log(_ context.Context, _ port.Level, msg string, args ...any) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.records = append(d.records, msg+" "+fmt.Sprint(args...))
 }
 
-func (d *recordingBrokerDiagnostics) With(...any) port.Diagnostics { return d }
+func (d *recordingBrokerDiagnostics) With(args ...any) port.Diagnostics {
+	return &boundBrokerDiagnostics{parent: d, args: append([]any(nil), args...)}
+}
+
+func (d *boundBrokerDiagnostics) Log(ctx context.Context, level port.Level, msg string, args ...any) {
+	d.parent.Log(ctx, level, msg, append(d.args, args...)...)
+}
+
+func (d *boundBrokerDiagnostics) With(args ...any) port.Diagnostics {
+	return &boundBrokerDiagnostics{parent: d.parent, args: append(append([]any(nil), d.args...), args...)}
+}
 
 func (d *recordingBrokerDiagnostics) String() string {
 	d.mu.Lock()

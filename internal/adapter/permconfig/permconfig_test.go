@@ -1,24 +1,28 @@
 package permconfig
 
 import (
+	"context"
 	"os"
 	"testing"
 
 	"github.com/goccy/go-yaml"
 
+	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/governance"
+	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/engine/tool"
 )
 
 func TestParseYAMLLoad(t *testing.T) {
 	data := []byte(`
 permissions:
   allow:
-    - "Bash(go test:*)"
+    - "Shell(go test:*)"
     - "Read"
   ask:
-    - "Bash(git push:*)"
+    - "Shell(git push:*)"
   deny:
-    - "Bash(rm:*)"
+    - "Shell(rm:*)"
 `)
 	cfg, err := parseYAML(data)
 	if err != nil {
@@ -39,7 +43,7 @@ permissions:
 	// The Claude-style "go test:*" must normalise to the glob "go test*".
 	var found bool
 	for _, r := range rules {
-		if r.Tool == "Bash" && r.Effect == governance.Allow {
+		if r.Tool == "Shell" && r.Effect == governance.Allow {
 			if r.Pattern != "go test*" {
 				t.Fatalf("expected normalised pattern %q, got %q", "go test*", r.Pattern)
 			}
@@ -53,7 +57,7 @@ permissions:
 		}
 	}
 	if !found {
-		t.Fatal("did not find the normalised Bash allow rule")
+		t.Fatal("did not find the normalised Shell allow rule")
 	}
 }
 
@@ -149,12 +153,12 @@ func TestParseSpec(t *testing.T) {
 		wantPattern string
 	}{
 		{"Read", true, "Read", ""},
-		{"Bash(go test:*)", true, "Bash", "go test*"},
-		{"Bash(git push:)", true, "Bash", "git push*"},
-		{"Bash(rm -rf *)", true, "Bash", "rm -rf *"},
+		{"Shell(go test:*)", true, "Shell", "go test*"},
+		{"Shell(git push:)", true, "Shell", "git push*"},
+		{"Shell(rm -rf *)", true, "Shell", "rm -rf *"},
 		{"Edit(src/**)", true, "Edit", "src/**"},
 		{"", false, "", ""},
-		{"Bash(unterminated", false, "", ""},
+		{"Shell(unterminated", false, "", ""},
 		{"(noTool)", false, "", ""},
 	}
 	for _, c := range cases {
@@ -186,6 +190,46 @@ func TestNormalizeGlob(t *testing.T) {
 	for in, want := range cases {
 		if got := normalizeGlob(in); got != want {
 			t.Fatalf("normalizeGlob(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestCanonicalShellTool_Scenario2_LegacyConfigPreservesDeny(t *testing.T) {
+	cfg, err := parseYAML([]byte(`
+permissions:
+  allow: ["Bash(go test:*)"]
+  deny: ["Bash(go test:*)", "BashSystemTemp"]
+guardrails:
+  model: checker
+  rules:
+    - match: Bash
+    - match: Bash*
+    - match: BashStatus
+    - match: BashStatus*
+    - match: BashSystemTemp
+    - match: BashSystemTemp*
+`))
+	if err != nil {
+		t.Fatalf("parseYAML: %v", err)
+	}
+
+	var report Report
+	rules := rulesFromConfig(cfg, governance.ScopeSharedProject, &report)
+	decision := permpolicy.NewPolicy(rules, nil).Evaluate(context.Background(), "legacy", session.ModeDefault, session.NewToolCall("shell", tool.ShellToolName, []byte(`{"command":"go test ./..."}`)), nil)
+	if decision.Effect != governance.Deny {
+		t.Fatalf("legacy Bash rules decision = %q, want deny", decision.Effect)
+	}
+	tempDecision := permpolicy.NewPolicy(rules, nil).Evaluate(context.Background(), "legacy", session.ModeDefault, session.NewToolCall("temp", "ShellSystemTemp", nil), nil)
+	if tempDecision.Effect != governance.Deny {
+		t.Fatalf("legacy BashSystemTemp rule decision = %q, want deny", tempDecision.Effect)
+	}
+	guardrails := cfg.Guardrails
+	if guardrails == nil || len(guardrails.Rules) != 6 {
+		t.Fatalf("guardrails = %#v", guardrails)
+	}
+	for i, want := range []string{tool.ShellToolName, "Shell*", "ShellStatus", "ShellStatus*", "ShellSystemTemp", "ShellSystemTemp*"} {
+		if got := guardrails.Rules[i].Match; got != want {
+			t.Errorf("legacy guardrail match = %q, want %q", got, want)
 		}
 	}
 }

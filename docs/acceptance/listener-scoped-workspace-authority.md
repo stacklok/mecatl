@@ -132,7 +132,7 @@ posture in [ADR 0032](../adr/0032-worktree-binding.md).
   and succeeds with an empty workspace.
   - verify: `TestListenerScopedWorkspaceAuthority_Scenario4_Mecak8sDefaultsToNoFS`
 - AC4.2: The default mecak8s session catalog excludes `Read`, `Edit`, `Write`,
-  `Grep`, `Glob`, `Bash`, `Parallel`, and `SkillDraft`, while retaining the
+  `Grep`, `Glob`, `Shell`, `Parallel`, and `SkillDraft`, while retaining the
   documented no-FS-safe tools.
   - verify: `TestNoFSCatalogProfile`
 - AC4.3: mecak8s accepts an explicit no-FS profile and treats the wire's empty

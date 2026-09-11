@@ -127,7 +127,7 @@ func (h *HarnessServer) CreateSession(ctx context.Context, req *mecatlv1.CreateS
 	// passthrough id. Same single-source discipline as session_capabilities.
 	return &mecatlv1.CreateSessionResponse{
 		SessionId:    string(sess.ID),
-		Capabilities: h.svc.capabilities(),
+		Capabilities: h.svc.capabilitiesFor(ctx),
 		SessionCapabilities: &mecatlv1.SessionCapabilities{
 			Image: scaps.Image,
 			Audio: scaps.Audio,
@@ -198,7 +198,7 @@ func (h *HarnessServer) GetSession(ctx context.Context, req *mecatlv1.GetSession
 	if err != nil {
 		return nil, toStatus(err)
 	}
-	proto := toProtoSession(sess, h.svc.ResolvedModel(sess.ID), h.svc.capabilities())
+	proto := toProtoSession(sess, h.svc.ResolvedModel(sess.ID), h.svc.capabilitiesFor(ctx))
 	// Lazy display-time fallback: a session whose snapshot Title was never seeded
 	// (or is empty) gets a derived label so GetSession shows one without a
 	// write-on-read — sess.Title is NOT mutated.
@@ -238,7 +238,7 @@ func (h *HarnessServer) SetMode(ctx context.Context, req *mecatlv1.SetModeReques
 	if err != nil {
 		return nil, toStatus(err)
 	}
-	return &mecatlv1.SetModeResponse{Session: toProtoSession(sess, h.svc.ResolvedModel(sess.ID), h.svc.capabilities())}, nil
+	return &mecatlv1.SetModeResponse{Session: toProtoSession(sess, h.svc.ResolvedModel(sess.ID), h.svc.capabilitiesFor(ctx))}, nil
 }
 
 // CloseSession ends a session and releases its server-side resources. It returns
@@ -270,7 +270,7 @@ func (h *HarnessServer) RenameSession(ctx context.Context, req *mecatlv1.RenameS
 	if err != nil {
 		return nil, toStatus(err)
 	}
-	return &mecatlv1.RenameSessionResponse{Session: toProtoSession(sess, h.svc.ResolvedModel(sess.ID), h.svc.capabilities())}, nil
+	return &mecatlv1.RenameSessionResponse{Session: toProtoSession(sess, h.svc.ResolvedModel(sess.ID), h.svc.capabilitiesFor(ctx))}, nil
 }
 
 // DeleteSession physically removes an idle main session and store-managed sidecars.

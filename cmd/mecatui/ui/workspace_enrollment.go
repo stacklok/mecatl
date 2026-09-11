@@ -264,17 +264,12 @@ func (m Model) applyWorkspaceEnrollment(msg workspaceEnrollmentMsg) (tea.Model, 
 		return m.finalizeWorkspaceEnrollmentConnected()
 	}
 	if terminal, notice, statusMsg := terminalWorkspaceEnrollmentNotice(msg.result.Status); terminal {
-		// Every terminal status (cancelled/denied/expired/failed) fully resets
-		// the enrollment state, exactly like the cancelled case always did: the
-		// broker has already torn down its transaction for ANY terminal status,
-		// so retaining the stale ID here would make the next /tools-connect
-		// send a "check" or "retry" against a transaction that no longer
-		// exists. A clean reset makes the next attempt start a genuinely fresh
-		// enrollment, matching what the server now does on its side too.
+		// Clear the transaction, retaining only its terminal status and generation.
+		// A new /tools-connect starts fresh; old replies remain stale.
 		if m.enrollment.presentationCancel != nil {
 			m.enrollment.presentationCancel()
 		}
-		m.enrollment = workspaceEnrollmentState{}
+		m.enrollment = workspaceEnrollmentState{Status: msg.result.Status, controlGen: m.enrollment.controlGen}
 		m.workspaceEnrollmentNotice = notice
 		m.statusMsg = statusMsg
 		return m, nil
@@ -328,7 +323,7 @@ func (m Model) finalizeWorkspaceEnrollmentConnected() (tea.Model, tea.Cmd) {
 	if m.enrollment.presentationCancel != nil {
 		m.enrollment.presentationCancel()
 	}
-	m.enrollment = workspaceEnrollmentState{}
+	m.enrollment = workspaceEnrollmentState{Status: client.WorkspaceEnrollmentConnected, controlGen: m.enrollment.controlGen}
 	m.workspaceEnrollmentNotice = ""
 	focusCmd := m.prompt.Focus()
 	m.statusMsg = "workspace services connected"

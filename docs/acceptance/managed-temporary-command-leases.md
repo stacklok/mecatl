@@ -6,7 +6,7 @@
 **Accumulator branch:** `acc/managed-temporary-command-leases` (off `main`).
 
 The smallest set of work that makes managed temporary storage the default for local
-Linux and macOS Bash commands and background jobs: each gets a private, attributable lease;
+Linux and macOS Shell commands and background jobs: each gets a private, attributable lease;
 the harness cleans it promptly where safe and reclaims only validated crash residue
 on a bounded schedule. Workspace keys derive transiently from canonical physical
 paths and are never persisted as raw backend identity. The owner-only workspace manifest
@@ -25,7 +25,7 @@ harness can demonstrate, not which packages exist on disk.
   uses the inherited system temporary directory by default rather than an XDG
   cache/state/runtime directory, and makes `mode: system` the explicit rollback.
 - [ADR-0201](../adr/0201-background-bash.md) keeps foreground and background work
-  under the existing `Bash` permission and process-group lifecycle; the new storage
+  under the existing `Shell` permission and process-group lifecycle; the new storage
   feature must not create a second shell-execution tool or weaken cancellation.
 - [ADR-0211](../adr/0211-execution-environment-runtime-seam.md) keeps the bound
   `CommandRunner` and `Workspace` together in `tool.Environment`; an invocation
@@ -106,38 +106,38 @@ path into deletion authority ([ADR-0281](../adr/0281-managed-temporary-command-l
 
 ---
 
-### Scenario 2 — Bash explicitly chooses lifecycle scope
+### Scenario 2 — Shell explicitly chooses lifecycle scope
 
-The existing `Bash` tool accepts `temp_scope: managed|system`, defaulting to managed
+The existing `Shell` tool accepts `temp_scope: managed|system`, defaulting to managed
 when the operator has management enabled. It uses a second, tool-wide synthetic
-`BashSystemTemp` policy decision only for the system environment overlay; this is
-not a path authorization, does not grant Bash, and deliberately introduces no
-compound Bash-option permission grammar in v1 ([ADR-0281](../adr/0281-managed-temporary-command-leases.md)
+`ShellSystemTemp` policy decision only for the system environment overlay; this is
+not a path authorization, does not grant Shell, and deliberately introduces no
+compound Shell-option permission grammar in v1 ([ADR-0281](../adr/0281-managed-temporary-command-leases.md)
 §1; [ADR-0201](../adr/0201-background-bash.md) D1/D5).
 
 **Work:**
 - engine/tool and engine/app (`engine/agent`): validate the optional scope field,
-  preserve the existing Bash command authorization, and evaluate the second
+  preserve the existing Shell command authorization, and evaluate the second
   synthetic capability only for a system-scope request.
-- composition (`internal/app`): install the floor-scoped `BashSystemTemp` Ask and
-  model-visible Bash guidance through the real engine factory.
+- composition (`internal/app`): install the floor-scoped `ShellSystemTemp` Ask and
+  model-visible Shell guidance through the real engine factory.
 - adapters / docs: render an approval/audit annotation that identifies the requested
   unmanaged scope but never records a raw temporary path; document operator config
   and migration behavior in `user-docs/`.
 
 **Acceptance:**
-- AC2.1: A Bash call without `temp_scope`, or with `temp_scope: managed`, receives
+- AC2.1: A Shell call without `temp_scope`, or with `temp_scope: managed`, receives
   the managed lease overlay when managed mode is enabled; an unknown scope is
   rejected before command execution.
-  - verify: `TestADR_0281_BashManagedScopeDefaultAndValidation`
-- AC2.2: A `temp_scope: system` request requires both the ordinary Bash decision
-  and `BashSystemTemp`; allowing `Bash(go test:*)` alone never permits the system
-  overlay, while a deny on `BashSystemTemp` dominates every allow.
+  - verify: `TestADR_0281_ShellManagedScopeDefaultAndValidation`
+- AC2.2: A `temp_scope: system` request requires both the ordinary Shell decision
+  and `ShellSystemTemp`; allowing `Shell(go test:*)` alone never permits the system
+  overlay, while a deny on `ShellSystemTemp` dominates every allow.
   - verify: `TestADR_0281_SystemScopeRequiresIndependentCapability`
-- AC2.3: `BashSystemTemp` is a deliberately tool-wide v1 capability: its allow
-  permits the system overlay only for Bash commands independently allowed by normal
-  policy, never Bash execution or arbitrary filesystem paths.
-  - verify: `TestADR_0281_SystemTempCapabilityIsGlobalButNotBashAllow`
+- AC2.3: `ShellSystemTemp` is a deliberately tool-wide v1 capability: its allow
+  permits the system overlay only for Shell commands independently allowed by normal
+  policy, never Shell execution or arbitrary filesystem paths.
+  - verify: `TestADR_0281_SystemTempCapabilityIsGlobalButNotShellAllow`
 - AC2.4: A system-scope approval and audit record disclose the scope and safe command
   summary but contain neither raw temporary path nor environment values.
   - verify: `TestADR_0281_SystemTempApprovalDoesNotLeakPath`
@@ -145,7 +145,7 @@ compound Bash-option permission grammar in v1 ([ADR-0281](../adr/0281-managed-te
   disposable, `temp_scope: system` is the declared escape for host-shared or
   longer-lived temporary state, and the field is not a filesystem sandbox.
   - verify: `TestADR_0281_EngineSystemPromptContainsTempScopeContract`
-- AC2.6: When the operator selects `mode: system`, every Bash call retains the
+- AC2.6: When the operator selects `mode: system`, every Shell call retains the
   configured/inherited system temporary-directory behavior, no managed allocation
   is created, and per-call `temp_scope` cannot re-enable management.
   - verify: `TestADR_0281_SystemModeIsRollbackSwitch`
@@ -154,7 +154,7 @@ compound Bash-option permission grammar in v1 ([ADR-0281](../adr/0281-managed-te
 
 ### Scenario 3 — every managed command and job has one disposable lease
 
-A foreground command and a background Bash job each receive their own random private
+A foreground command and a background Shell job each receive their own random private
 lease. The runner supplies the lease `tmp/` child through an invocation environment
 overlay—not through shell interpolation—and ordinary completion, cancellation, and
 timeout preserve the existing process-group result while attempting exact-target
@@ -172,7 +172,7 @@ cleanup only after the managed group is gone ([ADR-0281](../adr/0281-managed-tem
   runner-owned marker and create test HOME/XDG roots below that lease.
 
 **Acceptance:**
-- AC3.1: A managed foreground Bash call receives a distinct owner-only
+- AC3.1: A managed foreground Shell call receives a distinct owner-only
   `cmd-<16-char-base64-random-id>/tmp` directory in both `TMPDIR` and `GOTMPDIR`; shell
   text is byte-for-byte free of injected temporary paths, and manifest metadata
   contains no command, output, environment, credential, or transcript content.
@@ -184,7 +184,7 @@ cleanup only after the managed group is gone ([ADR-0281](../adr/0281-managed-tem
   absent from the command environment while only the expected temporary-storage
   variables differ by scope.
   - verify: `TestADR_0281_TempOverlayPreservesSecretScrub`
-- AC3.2: A managed `background: true` Bash call receives one distinct
+- AC3.2: A managed `background: true` Shell call receives one distinct
   `job-<16-char-base64-random-id>/tmp` lease that remains held for its complete job lifetime
   and is cleaned under the same terminal rules as a foreground command.
   - verify: `TestADR_0281_BackgroundJobLeaseLifecycle`
@@ -200,7 +200,7 @@ cleanup only after the managed group is gone ([ADR-0281](../adr/0281-managed-tem
   its temporary HOME/XDG_CONFIG_HOME tree inside that command's lease; an absent or
   forged marker retains its existing safe behavior.
   - verify: `TestADR_0281_TestHomeUsesValidatedLeaseMarker`
-- AC3.6: Bash executing through an isolated worktree or force-copy child
+- AC3.6: Shell executing through an isolated worktree or force-copy child
   `tool.Environment` receives a lease keyed to that child workspace instance—not its
   parent—and its overlay is applied by the runner bound to the same child namespace.
   - verify: `TestADR_0281_ChildEnvironmentGetsDistinctAffinedLease`
@@ -260,7 +260,7 @@ this process-lifetime worker and its durable sweep coordination state
   architecture and public operator documentation describe the Linux and macOS managed
   lifecycle and system-mode rollback.
   - verify: inspection — documentation and inventory are reviewed with the lifecycle implementation; `task docs` enforces links and generated `llms.txt`.
-- AC4.6: In an offline end-to-end run, a managed Bash command allocates a private
+- AC4.6: In an offline end-to-end run, a managed Shell command allocates a private
   lease, normal terminal handling removes it, and a separately deferred eligible
   residue is removed only by a deterministic later reaper sweep—without a live model
   or network.
@@ -272,7 +272,7 @@ this process-lifetime worker and its durable sweep coordination state
 |---|---|---|
 | Cross-command workspace scratchpad and its retention protocol | later implementation plan | [ADR-0282](../adr/0282-managed-workspace-scratch-cache.md) |
 | Filesystem/environment fork allocation, retained-winner cap, and fork quarantine | later implementation plan | [ADR-0283](../adr/0283-managed-delegation-fork-lifecycle.md) |
-| A compound or parameterized permission grammar such as Bash-option selectors | separate decision and ADR | [ADR-0281](../adr/0281-managed-temporary-command-leases.md) §1 |
+| A compound or parameterized permission grammar such as Shell-option selectors | separate decision and ADR | [ADR-0281](../adr/0281-managed-temporary-command-leases.md) §1 |
 | Windows managed-mode ownership/locking/no-link contract | later platform design | [ADR-0281](../adr/0281-managed-temporary-command-leases.md) §1, §6 |
 | Global system-temp cleanup, arbitrary agent-selected cleanup paths, container/VM sandboxing, and session-lifetime temp directories | not planned by this capability | [ADR-0281](../adr/0281-managed-temporary-command-leases.md) §7 |
 | Policy for migrating a supported older manifest version | version-increment proposal | [ADR-0281](../adr/0281-managed-temporary-command-leases.md) §3 |
@@ -319,7 +319,7 @@ the agent loop remains adapter-agnostic.
 
 - **Manifest migrations.** Future format versions fail closed until a version-specific
   migration policy is proposed; this plan implements no migration path.
-- **System-scope granularity.** `BashSystemTemp` is intentionally global in v1. A
+- **System-scope granularity.** `ShellSystemTemp` is intentionally global in v1. A
   command-pattern/options mini-language needs a separate design decision.
 - **Escaped processes.** Process-group escape remains observable but not reliably
   discoverable; ADR 0281 intentionally permits deletion after group exit or crash TTL.

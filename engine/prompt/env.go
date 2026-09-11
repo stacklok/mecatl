@@ -24,7 +24,7 @@ type Env struct {
 	// Mode is the session permission mode (e.g. "default", "plan",
 	// "acceptEdits").
 	Mode string
-	// Shell is the shell the Bash tool executes against (e.g. "/bin/bash").
+	// Shell is the shell the Shell tool executes against (e.g. "/bin/sh").
 	Shell string
 	// GitStatus is a start-of-session git snapshot (branch + short status +
 	// recent commits). It may be multi-line and is rendered as a dedicated

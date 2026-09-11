@@ -70,7 +70,7 @@ func (m Model) copyActiveSelection() (tea.Model, tea.Cmd) {
 		return m.copyPayload(m.prompt.SelectedText())
 	}
 	if m.sel.active && !m.sel.empty() {
-		return m.copyPayload(selectedText(m.vp.GetContent(), m.sel))
+		return m.copySelection()
 	}
 	return m, nil
 }

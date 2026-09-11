@@ -26,7 +26,6 @@ const ScopeManaged Scope = 0
 const ScopeSharedProject Scope = 3
 const ScopeUser Scope = 4
 const UntrustedFence untyped string = "<<<UNTRUSTED"
-func BashCommandFromArgs(args json.RawMessage) (string, bool)
 func Canonicalize(cmd string) string
 func ConsumeDelegationHop(set CapabilitySet) (CapabilitySet, error)
 func FenceUntrusted(body string) string
@@ -38,7 +37,8 @@ func Narrow(left CapabilitySet, right CapabilitySet) CapabilitySet
 func NeutraliseDelegationResult(s string) string
 func NeutraliseFraming(s string) string
 func NewEvaluator(rules []Rule, opts ...EvaluatorOption) *Evaluator
-func ReadOnlyBash(cmd string) bool
+func ReadOnlyShell(cmd string) bool
+func ShellCommandFromArgs(args json.RawMessage) (string, bool)
 func SplitCommands(cmd string) []string
 func SubstitutionReadOnly(seg string) bool
 func WithAudience(a Audience) EvaluatorOption

@@ -14,13 +14,13 @@ A rule all three share: **a child's transcript never enters the parent conversat
 
 ### Watching a delegation in mecatui — bounded previews
 
-In `mecatui` a running delegation is watchable at the same fidelity whichever tool produced it: a collapsed Subagent card shows the child's **live current-tool name**, and `ctrl+t` (the expanded trace) and the `ctrl+a` agents overlay's Subagent/Parallel focus panes show Team-format traces — tool chips with **bounded previews** of child tool args/results plus capped child message lines. Every preview is capped and control-byte-scrubbed, and this is a client-only view: nothing here enters the parent conversation, and a child's permission ask is never forwarded. The task board, findings ledger, per-member dispositions, mutating cue, and context meter remain Team-only. See [`docs/architecture/domain-model.md`](https://github.com/stacklok/mecatl/blob/main/docs/architecture/domain-model.md) and [`docs/tui.md`](https://github.com/stacklok/mecatl/blob/main/docs/tui.md) for the full projection and overlay reference.
+In `mecatui` a running delegation is watchable at the same fidelity whichever tool produced it: a collapsed Subagent card shows the child's **live current-tool name**, and `ctrl+t` (the expanded trace) and the `f6` agents overlay's Subagent/Parallel focus panes show Team-format traces — tool chips with **bounded previews** of child tool args/results plus capped child message lines. Every preview is capped and control-byte-scrubbed, and this is a client-only view: nothing here enters the parent conversation, and a child's permission ask is never forwarded. The task board, findings ledger, per-member dispositions, mutating cue, and context meter remain Team-only. See [`docs/architecture/domain-model.md`](https://github.com/stacklok/mecatl/blob/main/docs/architecture/domain-model.md) and [`docs/tui.md`](https://github.com/stacklok/mecatl/blob/main/docs/tui.md) for the full projection and overlay reference.
 
 ## Subagent — delegate one task
 
 `Subagent` spawns a single child agent with a fresh, empty context (unless you ask it to inherit yours — see `fork` below) and hands it a self-contained instruction. It's the right tool for "go investigate X" or "go make this focused change" when the task doesn't need your current conversation. For multiple independent **read-only** investigations, issue one Subagent call per task in the same assistant turn: eligible calls run concurrently.
 
-By default a subagent is **read-only**: it can Read/Grep/Glob and run build/test/git commands in a throwaway worktree, but it has no `Edit`/`Write` tools, and any file changes it makes along the way (e.g. via Bash) are discarded when the run ends — nothing it does touches your working tree. Ask for `mode: "read-write"` when you want it to actually change files (see below).
+By default a subagent is **read-only**: it can Read/Grep/Glob and run build/test/git commands in a throwaway worktree, but it has no `Edit`/`Write` tools, and any file changes it makes along the way (e.g. via Shell) are discarded when the run ends — nothing it does touches your working tree. Ask for `mode: "read-write"` when you want it to actually change files (see below).
 
 ### Key call arguments
 
@@ -70,7 +70,7 @@ investigations (issue separate Subagent calls in the same assistant turn), or fo
 tasks that need to coordinate or share state as they go (that's what Team is for;
 Parallel branches never communicate with each other).
 
-Each branch can implement, not just explore: it has the full read-write toolset (Edit, Write, Bash) because its changes land only in its own isolated fork, never in your shared workspace. Since a branch can't see your conversation or the other branches, describe every task as fully self-contained — use the call's `shared` field for context that applies to all of them.
+Each branch can implement, not just explore: it has the full read-write toolset (Edit, Write, Shell) because its changes land only in its own isolated fork, never in your shared workspace. Since a branch can't see your conversation or the other branches, describe every task as fully self-contained — use the call's `shared` field for context that applies to all of them.
 
 ### `join` — how the result comes back
 

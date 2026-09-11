@@ -61,7 +61,7 @@ func execWithLedger(t *testing.T, tl tool.Tool, in session.ToolCall, ws tool.Wor
 	return res
 }
 
-// execWithRunner runs a tool against an Environment that binds runner (the Bash
+// execWithRunner runs a tool against an Environment that binds runner (the Shell
 // tool reads it off the Environment, issue #462).
 func execWithRunner(t *testing.T, tl tool.Tool, in session.ToolCall, ws tool.Workspace, runner tool.CommandRunner) session.ToolResult {
 	t.Helper()
@@ -74,6 +74,42 @@ func execWithRunner(t *testing.T, tl tool.Tool, in session.ToolCall, ws tool.Wor
 		t.Fatalf("%s: unexpected harness error: %v", tl.Spec().Name, err)
 	}
 	return res
+}
+
+type shellPathRunner struct {
+	inner tool.CommandRunner
+	shell string
+	calls int
+}
+
+func (r *shellPathRunner) Run(ctx context.Context, command string) (tool.CommandResult, error) {
+	r.calls++
+	return r.inner.Run(ctx, command)
+}
+
+func (r *shellPathRunner) ShellPath() string { return r.shell }
+
+func TestShellCompatibilityDiagnostic(t *testing.T) {
+	ws := memfs.NewWorkspace("/")
+	inner := memfs.NewCommandRunner()
+	inner.SetResult(&tool.CommandResult{Stdout: "ok", ExitCode: 0}, nil)
+	runner := &shellPathRunner{inner: inner, shell: "/bin/sh"}
+
+	res := execWithRunner(t, NewShellTool(), call(t, ShellToolName, map[string]any{"command": "[[ -n value ]]"}), ws, runner)
+	if !res.IsError || !strings.Contains(res.Content, "not portable") {
+		t.Fatalf("Shell compatibility result = %+v, want a portability error", res)
+	}
+	if runner.calls != 0 {
+		t.Fatalf("compatibility error ran command %d times, want 0", runner.calls)
+	}
+
+	res = execWithRunner(t, NewShellTool(), call(t, ShellToolName, map[string]any{"command": "echo ok"}), ws, runner)
+	if res.IsError || res.Content != "ok\n[exit code: 0]" {
+		t.Fatalf("portable Shell result = %+v, want executed success", res)
+	}
+	if runner.calls != 1 {
+		t.Fatalf("portable command ran %d times, want 1", runner.calls)
+	}
 }
 
 // seed writes a file directly into a memfs workspace (no read recorded).
@@ -110,22 +146,22 @@ func TestReadOnlyFlags(t *testing.T) {
 			t.Errorf("%s.ReadOnly() = %v, want %v", name, got[name], w)
 		}
 	}
-	// Bash is mutating.
-	if NewBashTool().ReadOnly() {
-		t.Error("Bash.ReadOnly() = true, want false")
+	// Shell is mutating.
+	if NewShellTool().ReadOnly() {
+		t.Error("Shell.ReadOnly() = true, want false")
 	}
 }
 
 // TestAllAndRegister pins the fstools bundle: All() is exactly the nine
-// filesystem tools (NO Bash — it is opt-in via NewBashTool), Register adds them,
-// and NewBashTool registers Bash separately.
+// filesystem tools (NO Shell — it is opt-in via NewShellTool), Register adds them,
+// and NewShellTool registers Shell separately.
 func TestAllAndRegister(t *testing.T) {
 	if len(All()) != 9 {
 		t.Fatalf("All() = %d tools, want 9 (Read, ListDir, Edit, Write, Copy, Move, Remove, Grep, Glob)", len(All()))
 	}
 	for _, tl := range All() {
-		if tl.Spec().Name == BashToolName {
-			t.Fatal("All() must not include Bash (it requires a CommandRunner)")
+		if tl.Spec().Name == ShellToolName {
+			t.Fatal("All() must not include Shell (it requires a CommandRunner)")
 		}
 	}
 	cat := tool.NewCatalog()
@@ -137,12 +173,12 @@ func TestAllAndRegister(t *testing.T) {
 			t.Errorf("catalog missing %q after Register", name)
 		}
 	}
-	if _, ok := cat.Lookup(BashToolName); ok {
-		t.Error("Register added Bash; it must be opt-in via NewBashTool")
+	if _, ok := cat.Lookup(ShellToolName); ok {
+		t.Error("Register added Shell; it must be opt-in via NewShellTool")
 	}
-	cat.MustRegister(NewBashTool())
-	if _, ok := cat.Lookup(BashToolName); !ok {
-		t.Error("catalog missing Bash after explicit NewBashTool registration")
+	cat.MustRegister(NewShellTool())
+	if _, ok := cat.Lookup(ShellToolName); !ok {
+		t.Error("catalog missing Shell after explicit NewShellTool registration")
 	}
 	// Re-registering must collide.
 	if err := Register(cat); err == nil {
@@ -151,7 +187,7 @@ func TestAllAndRegister(t *testing.T) {
 }
 
 func TestSpecsHaveDocs(t *testing.T) {
-	all := append(All(), NewBashTool())
+	all := append(All(), NewShellTool())
 	for _, tl := range all {
 		s := tl.Spec()
 		if s.Name == "" {
@@ -728,65 +764,65 @@ func TestWriteDeletedAfterReadIsModelVisible(t *testing.T) {
 	}
 }
 
-func TestBashOutputAndExitMapping(t *testing.T) {
+func TestShellOutputAndExitMapping(t *testing.T) {
 	ws := memfs.NewWorkspace("/")
 	runner := memfs.NewCommandRunner()
-	bash := NewBashTool()
+	bash := NewShellTool()
 
 	runner.SetResult(&tool.CommandResult{Stdout: "hi there", Stderr: "", ExitCode: 0}, nil)
-	res := execWithRunner(t, bash, call(t, "Bash", map[string]any{"command": "echo hi there"}), ws, runner)
+	res := execWithRunner(t, bash, call(t, "Shell", map[string]any{"command": "echo hi there"}), ws, runner)
 	if res.IsError {
-		t.Fatalf("Bash exit 0 should not be an error: %s", res.Content)
+		t.Fatalf("Shell exit 0 should not be an error: %s", res.Content)
 	}
 	if !strings.Contains(res.Content, "hi there") || !strings.Contains(res.Content, "[exit code: 0]") {
-		t.Errorf("Bash content = %q", res.Content)
+		t.Errorf("Shell content = %q", res.Content)
 	}
 
 	// Non-zero exit => error result, output preserved.
 	runner.SetResult(&tool.CommandResult{Stdout: "", Stderr: "boom", ExitCode: 2}, nil)
-	res = execWithRunner(t, bash, call(t, "Bash", map[string]any{"command": "false"}), ws, runner)
+	res = execWithRunner(t, bash, call(t, "Shell", map[string]any{"command": "false"}), ws, runner)
 	if !res.IsError {
 		t.Error("non-zero exit should be a tool error")
 	}
 	if !strings.Contains(res.Content, "boom") || !strings.Contains(res.Content, "[exit code: 2]") {
-		t.Errorf("Bash error content = %q", res.Content)
+		t.Errorf("Shell error content = %q", res.Content)
 	}
 }
 
-func TestBashNoShellSurfacesAsToolError(t *testing.T) {
+func TestShellNoShellSurfacesAsToolError(t *testing.T) {
 	ws := memfs.NewWorkspace("/")
-	bash := NewBashTool()
+	bash := NewShellTool()
 	// A shell-less Environment (nil runner) surfaces the no-shell message. The
 	// nil-runner path routes through bashErrorMessage (the SAME composer every
 	// runner-error site uses), so the message is byte-identical to the
 	// ErrNoShell trailer wording — pin the exact string so it cannot drift.
 	const wantNoShell = "[command failed to run: no shell available]"
-	res := exec(t, bash, call(t, "Bash", map[string]any{"command": "echo hi"}), ws)
+	res := exec(t, bash, call(t, "Shell", map[string]any{"command": "echo hi"}), ws)
 	if !res.IsError {
 		t.Error("no-shell should surface as a tool error, not a harness error")
 	}
 	if res.Content != wantNoShell {
-		t.Errorf("Bash no-shell content = %q; want %q", res.Content, wantNoShell)
+		t.Errorf("Shell no-shell content = %q; want %q", res.Content, wantNoShell)
 	}
 	// tool.ErrNoShell must be classified as the no-shell case, not the generic
 	// default — the message should name the missing shell.
 	rr := &recordingRunner{returnError: tool.ErrNoShell}
-	res = execWithRunner(t, NewBashTool(), call(t, "Bash", map[string]any{"command": "echo hi"}), ws, rr)
+	res = execWithRunner(t, NewShellTool(), call(t, "Shell", map[string]any{"command": "echo hi"}), ws, rr)
 	if !res.IsError {
 		t.Error("ErrNoShell should surface as a tool error")
 	}
 	if res.Content != wantNoShell {
-		t.Errorf("Bash no-shell content = %q; want %q", res.Content, wantNoShell)
+		t.Errorf("Shell no-shell content = %q; want %q", res.Content, wantNoShell)
 	}
 }
 
-func TestBashTimeoutSurfacesPartialOutput(t *testing.T) {
+func TestShellTimeoutSurfacesPartialOutput(t *testing.T) {
 	ws := memfs.NewWorkspace("/")
 	rr := &recordingRunner{
 		result:      tool.CommandResult{Stdout: "hi\n"},
 		returnError: context.DeadlineExceeded,
 	}
-	res := execWithRunner(t, NewBashTool(), call(t, "Bash", map[string]any{"command": "echo hi; sleep 5", "timeout_ms": 50}), ws, rr)
+	res := execWithRunner(t, NewShellTool(), call(t, "Shell", map[string]any{"command": "echo hi; sleep 5", "timeout_ms": 50}), ws, rr)
 	if !res.IsError {
 		t.Fatal("a timed-out command should be a tool error")
 	}
@@ -801,10 +837,10 @@ func TestBashTimeoutSurfacesPartialOutput(t *testing.T) {
 	}
 }
 
-func TestBashTimeoutNoOutput(t *testing.T) {
+func TestShellTimeoutNoOutput(t *testing.T) {
 	ws := memfs.NewWorkspace("/")
 	rr := &recordingRunner{returnError: context.DeadlineExceeded}
-	res := execWithRunner(t, NewBashTool(), call(t, "Bash", map[string]any{"command": "sleep 5", "timeout_ms": 50}), ws, rr)
+	res := execWithRunner(t, NewShellTool(), call(t, "Shell", map[string]any{"command": "sleep 5", "timeout_ms": 50}), ws, rr)
 	if !res.IsError {
 		t.Fatal("a timed-out command should be a tool error")
 	}
@@ -819,7 +855,7 @@ func TestBashTimeoutNoOutput(t *testing.T) {
 	}
 }
 
-func TestBashTimeoutNoTimeoutMsSet(t *testing.T) {
+func TestShellTimeoutNoTimeoutMsSet(t *testing.T) {
 	ws := memfs.NewWorkspace("/")
 	rr := &recordingRunner{
 		result:      tool.CommandResult{Stdout: "partial\n"},
@@ -827,7 +863,7 @@ func TestBashTimeoutNoTimeoutMsSet(t *testing.T) {
 	}
 	// No timeout_ms: the runner's private default fired. We must not fabricate a
 	// number we cannot see.
-	res := execWithRunner(t, NewBashTool(), call(t, "Bash", map[string]any{"command": "sleep 99"}), ws, rr)
+	res := execWithRunner(t, NewShellTool(), call(t, "Shell", map[string]any{"command": "sleep 99"}), ws, rr)
 	if !res.IsError {
 		t.Fatal("a timed-out command should be a tool error")
 	}
@@ -842,13 +878,13 @@ func TestBashTimeoutNoTimeoutMsSet(t *testing.T) {
 	}
 }
 
-func TestBashCancelSurfacesPartialOutput(t *testing.T) {
+func TestShellCancelSurfacesPartialOutput(t *testing.T) {
 	ws := memfs.NewWorkspace("/")
 	rr := &recordingRunner{
 		result:      tool.CommandResult{Stdout: "before cancel\n"},
 		returnError: context.Canceled,
 	}
-	res := execWithRunner(t, NewBashTool(), call(t, "Bash", map[string]any{"command": "echo before cancel; sleep 5"}), ws, rr)
+	res := execWithRunner(t, NewShellTool(), call(t, "Shell", map[string]any{"command": "echo before cancel; sleep 5"}), ws, rr)
 	if !res.IsError {
 		t.Fatal("a canceled command should be a tool error")
 	}
@@ -860,18 +896,18 @@ func TestBashCancelSurfacesPartialOutput(t *testing.T) {
 	}
 }
 
-// TestBashTimeoutTrailerSurvivesTruncation pins the worst case: a runaway/timed-out
+// TestShellTimeoutTrailerSurvivesTruncation pins the worst case: a runaway/timed-out
 // command produces output larger than the output cap, so a naive "truncate the
 // joined string" would land the cut inside the body and drop the timeout signal.
 // The trailer must survive.
-func TestBashTimeoutTrailerSurvivesTruncation(t *testing.T) {
+func TestShellTimeoutTrailerSurvivesTruncation(t *testing.T) {
 	ws := memfs.NewWorkspace("/")
 	huge := strings.Repeat("x", MaxOutputBytes+5000) + "\n"
 	rr := &recordingRunner{
 		result:      tool.CommandResult{Stdout: huge},
 		returnError: context.DeadlineExceeded,
 	}
-	res := execWithRunner(t, NewBashTool(), call(t, "Bash", map[string]any{"command": "yes", "timeout_ms": 50}), ws, rr)
+	res := execWithRunner(t, NewShellTool(), call(t, "Shell", map[string]any{"command": "yes", "timeout_ms": 50}), ws, rr)
 	if !res.IsError {
 		t.Fatal("a timed-out command should be a tool error")
 	}
@@ -886,15 +922,15 @@ func TestBashTimeoutTrailerSurvivesTruncation(t *testing.T) {
 	}
 }
 
-// TestBashTimeoutStderrSurvives covers the motivating case — a build failure whose
+// TestShellTimeoutStderrSurvives covers the motivating case — a build failure whose
 // partial output landed on STDERR, not stdout.
-func TestBashTimeoutStderrSurvives(t *testing.T) {
+func TestShellTimeoutStderrSurvives(t *testing.T) {
 	ws := memfs.NewWorkspace("/")
 	rr := &recordingRunner{
 		result:      tool.CommandResult{Stderr: "compile error: undefined symbol\n"},
 		returnError: context.DeadlineExceeded,
 	}
-	res := execWithRunner(t, NewBashTool(), call(t, "Bash", map[string]any{"command": "go build ./...", "timeout_ms": 50}), ws, rr)
+	res := execWithRunner(t, NewShellTool(), call(t, "Shell", map[string]any{"command": "go build ./...", "timeout_ms": 50}), ws, rr)
 	if !res.IsError {
 		t.Fatal("a timed-out command should be a tool error")
 	}
@@ -906,12 +942,12 @@ func TestBashTimeoutStderrSurvives(t *testing.T) {
 	}
 }
 
-// TestBashTimeoutNoOutputNoTimeoutMs hits the no-output + unset-timeout_ms branch:
+// TestShellTimeoutNoOutputNoTimeoutMs hits the no-output + unset-timeout_ms branch:
 // no fabricated number, and a self-contained no-output phrasing.
-func TestBashTimeoutNoOutputNoTimeoutMs(t *testing.T) {
+func TestShellTimeoutNoOutputNoTimeoutMs(t *testing.T) {
 	ws := memfs.NewWorkspace("/")
 	rr := &recordingRunner{returnError: context.DeadlineExceeded}
-	res := execWithRunner(t, NewBashTool(), call(t, "Bash", map[string]any{"command": "sleep 99"}), ws, rr)
+	res := execWithRunner(t, NewShellTool(), call(t, "Shell", map[string]any{"command": "sleep 99"}), ws, rr)
 	if !res.IsError {
 		t.Fatal("a timed-out command should be a tool error")
 	}
@@ -923,15 +959,15 @@ func TestBashTimeoutNoOutputNoTimeoutMs(t *testing.T) {
 	}
 }
 
-// TestBashGenericErrorKeepsPartialOutput covers the non-ctx default branch: a
+// TestShellGenericErrorKeepsPartialOutput covers the non-ctx default branch: a
 // generic runner error must still preserve any captured partial output.
-func TestBashGenericErrorKeepsPartialOutput(t *testing.T) {
+func TestShellGenericErrorKeepsPartialOutput(t *testing.T) {
 	ws := memfs.NewWorkspace("/")
 	rr := &recordingRunner{
 		result:      tool.CommandResult{Stdout: "partial\n"},
 		returnError: errors.New("boom"),
 	}
-	res := execWithRunner(t, NewBashTool(), call(t, "Bash", map[string]any{"command": "echo partial"}), ws, rr)
+	res := execWithRunner(t, NewShellTool(), call(t, "Shell", map[string]any{"command": "echo partial"}), ws, rr)
 	if !res.IsError {
 		t.Fatal("a runner error should be a tool error")
 	}
@@ -952,7 +988,7 @@ func tail(s string, n int) string {
 }
 
 // recordingRunner is a tool.CommandRunner fake that records the last Run call so
-// a test can assert BashTool reads the bound runner off the Environment and
+// a test can assert ShellTool reads the bound runner off the Environment and
 // passes the command through (issue #462: the runner is bound to a namespace
 // root, so there is no per-call workdir).
 type recordingRunner struct {
@@ -970,32 +1006,32 @@ func (r *recordingRunner) RunWithEnvironment(ctx context.Context, command string
 	return r.Run(ctx, command)
 }
 
-// TestBashUsesBoundRunner proves BashTool.Execute reads the CommandRunner off
+// TestShellUsesBoundRunner proves ShellTool.Execute reads the CommandRunner off
 // the tool.Environment (issue #462): the bound runner receives the command, and
 // a shell-less Environment (nil runner) surfaces ErrNoShell honestly.
-func TestBashUsesBoundRunner(t *testing.T) {
+func TestShellUsesBoundRunner(t *testing.T) {
 	ws := memfs.NewWorkspace("/fork/root")
 	rr := &recordingRunner{result: tool.CommandResult{Stdout: "ok", ExitCode: 0}}
-	bash := NewBashTool()
+	bash := NewShellTool()
 
-	res := execWithRunner(t, bash, call(t, "Bash", map[string]any{"command": "echo hi"}), ws, rr)
+	res := execWithRunner(t, bash, call(t, "Shell", map[string]any{"command": "echo hi"}), ws, rr)
 	if res.IsError {
 		t.Fatalf("unexpected tool error: %s", res.Content)
 	}
 	if rr.gotCommand != "echo hi" {
-		t.Errorf("Bash passed command %q; want %q", rr.gotCommand, "echo hi")
+		t.Errorf("Shell passed command %q; want %q", rr.gotCommand, "echo hi")
 	}
 	if !strings.Contains(res.Content, "ok") {
-		t.Errorf("Bash content = %q; want the runner's output", res.Content)
+		t.Errorf("Shell content = %q; want the runner's output", res.Content)
 	}
 
 	// A shell-less Environment (nil runner) surfaces ErrNoShell honestly.
-	res = exec(t, bash, call(t, "Bash", map[string]any{"command": "echo hi"}), ws)
+	res = exec(t, bash, call(t, "Shell", map[string]any{"command": "echo hi"}), ws)
 	if !res.IsError {
 		t.Fatal("a shell-less Environment should surface a no-shell tool error")
 	}
 	if !strings.Contains(res.Content, "no shell available") {
-		t.Errorf("Bash no-shell content = %q; want a 'no shell available' message", res.Content)
+		t.Errorf("Shell no-shell content = %q; want a 'no shell available' message", res.Content)
 	}
 }
 
@@ -1086,7 +1122,7 @@ func TestMissingRequiredArgs(t *testing.T) {
 		{ReadTool{}, call(t, "Read", map[string]any{})},
 		{EditTool{}, call(t, "Edit", map[string]any{"path": "a"})},
 		{WriteTool{}, call(t, "Write", map[string]any{"content": "x"})},
-		{NewBashTool(), call(t, "Bash", map[string]any{})},
+		{NewShellTool(), call(t, "Shell", map[string]any{})},
 		{GrepTool{}, call(t, "Grep", map[string]any{})},
 		{GlobTool{}, call(t, "Glob", map[string]any{})},
 	}
@@ -1098,10 +1134,10 @@ func TestMissingRequiredArgs(t *testing.T) {
 	}
 }
 
-// TestBashEnvHermetic confirms the temp dir machinery works without touching the
+// TestShellEnvHermetic confirms the temp dir machinery works without touching the
 // network; this keeps the suite hermetic. A real-shell test belongs with the osfs
 // adapter (internal/adapter/tools' abspath_tools_test.go over a real workspace).
-func TestBashEnvHermetic(t *testing.T) {
+func TestShellEnvHermetic(t *testing.T) {
 	dir := t.TempDir()
 	if _, err := os.Stat(dir); err != nil {
 		t.Fatalf("temp dir: %v", err)

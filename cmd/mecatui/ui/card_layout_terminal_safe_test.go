@@ -63,7 +63,7 @@ func TestMecatuiCardLayout_Scenario4_DynamicCardTextIsTerminalSafe(t *testing.T)
 
 	t.Run("approval", func(t *testing.T) {
 		ask := pendingAsk{
-			Tool:   "Bash-" + value,
+			Tool:   "Shell-" + value,
 			Args:   `{"command":"` + value + `"}`,
 			Reason: value,
 		}

@@ -284,7 +284,7 @@ const (
 	TeamFindings TeamKind = "findings"
 )
 
-// TeamTask is one entry in the team's shared task list, as plain data the ctrl+a
+// TeamTask is one entry in the team's shared task list, as plain data the f6
 // agents task sub-view renders. Mirrors mecatlv1.TeamTask; carries only task
 // metadata, never member content. Deps are the task ids this task waits on.
 type TeamTask struct {
@@ -296,7 +296,7 @@ type TeamTask struct {
 }
 
 // TeamFinding is one entry in the team's shared findings ledger, as plain data the
-// ctrl+a agents findings view renders. Mirrors mecatlv1.TeamFinding; carries only
+// f6 agents findings view renders. Mirrors mecatlv1.TeamFinding; carries only
 // the recording member's name and a bounded body preview, never the raw finding.
 type TeamFinding struct {
 	Member string
@@ -373,16 +373,16 @@ type TeamMsg struct {
 	// ContextUsed / ContextWindow are the per-member context-meter numerator
 	// (current context occupancy — the most recent turn's input tokens) and
 	// denominator (the member engine's context window), set on TeamMember turn.end;
-	// 0 when unknown. They drive the band bar on each member lane in the ctrl+a
+	// 0 when unknown. They drive the band bar on each member lane in the f6
 	// agents overlay.
 	ContextUsed   int64
 	ContextWindow int64
 	// Tasks is the team's shared task-list snapshot, set on a TeamTasks msg (the
-	// first-class team.tasks event) and on TeamEnd. It feeds the ctrl+a agents task
+	// first-class team.tasks event) and on TeamEnd. It feeds the f6 agents task
 	// sub-view.
 	Tasks []TeamTask
 	// Findings is the team's shared findings-ledger snapshot, set on a TeamFindings
-	// msg (the first-class team.findings event) and on TeamEnd. It feeds the ctrl+a
+	// msg (the first-class team.findings event) and on TeamEnd. It feeds the f6
 	// agents findings view.
 	Findings []TeamFinding
 	// Dispositions is the per-member terminal disposition snapshot, set on a TeamEnd
@@ -418,7 +418,7 @@ const (
 )
 
 // ParallelMsg is the BOUNDED projection of a Parallel fork-join run, as plain data
-// the ui renders in the ctrl+a Parallel tab. Unlike the FLAT SubagentMsg, a
+// the ui renders in the f6 Parallel tab. Unlike the FLAT SubagentMsg, a
 // Parallel run is a GROUP: N branches of ONE call (keyed by ParentCallID) sharing a
 // join strategy and a single winner. It carries ids, a goal label, child tool
 // names/counts, usage, stop, duration, the join strategy, and the winner index —

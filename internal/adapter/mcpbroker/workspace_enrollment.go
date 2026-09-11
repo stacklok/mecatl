@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	contract "github.com/stacklok/mecatl/internal/mcpbroker"
 )
@@ -85,6 +86,7 @@ func (a *Attachment) BeginWorkspaceEnrollment(ctx context.Context) (contract.Wor
 	if len(backends) == 0 {
 		return contract.WorkspaceEnrollmentPresentation{}, ErrWorkspaceEnrollmentUnsupported
 	}
+	a.runtime.logWorkspaceEnrollment(ctx, port.LevelDebug, diagnosticEnrollmentOperationBegin, diagnosticEnrollmentReasonRequestStarted, "backend_count", len(backends))
 
 	logical := a.logical
 	a.enrollmentMu.Lock()
@@ -92,6 +94,13 @@ func (a *Attachment) BeginWorkspaceEnrollment(ctx context.Context) (contract.Wor
 	logical.mu.Lock()
 	if result, resolved, err := existingWorkspaceEnrollmentLocked(a, logical); resolved {
 		logical.mu.Unlock()
+		reason := diagnosticEnrollmentReasonRejected
+		if errors.Is(err, errWorkspaceEnrollmentAlreadyCompleted) {
+			reason = diagnosticEnrollmentReasonAlreadyCompleted
+		} else if err == nil {
+			reason = diagnosticEnrollmentReasonRequestObserved
+		}
+		a.runtime.logWorkspaceEnrollment(ctx, port.LevelInfo, diagnosticEnrollmentOperationBegin, reason, "backend_count", len(backends))
 		return result, err
 	}
 	logical.mu.Unlock()
@@ -146,6 +155,7 @@ func (a *Attachment) BeginWorkspaceEnrollment(ctx context.Context) (contract.Wor
 		return contract.WorkspaceEnrollmentPresentation{}, errors.New("mcpbroker: create unique callback state")
 	}
 	url := presentWorkspaceTransaction(transaction)
+	a.runtime.logWorkspaceEnrollment(ctx, port.LevelInfo, diagnosticEnrollmentOperationBegin, diagnosticEnrollmentReasonStarted, "backend_count", len(backends))
 	return contract.WorkspaceEnrollmentPresentation{Ref: workspaceEnrollmentRef(transaction), URL: url}, nil
 }
 
@@ -166,6 +176,7 @@ func (a *Attachment) ObserveWorkspaceEnrollment(ctx context.Context, ref contrac
 	if !ref.Valid() {
 		return contract.WorkspaceEnrollmentResult{}, errors.New("mcpbroker: invalid workspace enrollment reference")
 	}
+	a.runtime.logWorkspaceEnrollment(ctx, port.LevelDebug, diagnosticEnrollmentOperationObserve, diagnosticEnrollmentReasonRequestObserved)
 
 	logical := a.logical
 	a.enrollmentMu.Lock()
@@ -181,6 +192,7 @@ func (a *Attachment) ObserveWorkspaceEnrollment(ctx context.Context, ref contrac
 		if err != nil {
 			return contract.WorkspaceEnrollmentResult{}, err
 		}
+		a.runtime.logWorkspaceEnrollment(ctx, port.LevelInfo, diagnosticEnrollmentOperationObserve, diagnosticEnrollmentReasonCompleted, "status", contract.WorkspaceEnrollmentConnected)
 		return contract.WorkspaceEnrollmentResult{Ref: ref, Status: contract.WorkspaceEnrollmentConnected, Catalogue: catalogue}, nil
 	}
 	transaction := lookupWorkspaceTransactionLocked(logical, ref.ID)
@@ -197,22 +209,27 @@ func (a *Attachment) ObserveWorkspaceEnrollment(ctx context.Context, ref contrac
 	switch status {
 	case session.AuthorizationPending:
 		logical.mu.Unlock()
+		a.runtime.logWorkspaceEnrollment(ctx, port.LevelInfo, diagnosticEnrollmentOperationObserve, diagnosticEnrollmentReasonRequestObserved, "status", contract.WorkspaceEnrollmentPending)
 		return contract.WorkspaceEnrollmentResult{Ref: ref, Status: contract.WorkspaceEnrollmentPending}, nil
 	case session.AuthorizationCancelled:
 		result := a.observeTerminalWorkspaceTransactionLocked(logical, transaction, contract.WorkspaceEnrollmentCancelled)
 		logical.mu.Unlock()
+		a.runtime.logWorkspaceEnrollment(ctx, port.LevelInfo, diagnosticEnrollmentOperationObserve, diagnosticEnrollmentReasonCompleted, "status", result.Status)
 		return result, nil
 	case session.AuthorizationExpired:
 		result := a.observeTerminalWorkspaceTransactionLocked(logical, transaction, contract.WorkspaceEnrollmentExpired)
 		logical.mu.Unlock()
+		a.runtime.logWorkspaceEnrollment(ctx, port.LevelInfo, diagnosticEnrollmentOperationObserve, diagnosticEnrollmentReasonCompleted, "status", result.Status)
 		return result, nil
 	case session.AuthorizationDenied:
 		result := a.observeTerminalWorkspaceTransactionLocked(logical, transaction, contract.WorkspaceEnrollmentDenied)
 		logical.mu.Unlock()
+		a.runtime.logWorkspaceEnrollment(ctx, port.LevelInfo, diagnosticEnrollmentOperationObserve, diagnosticEnrollmentReasonCompleted, "status", result.Status)
 		return result, nil
 	case session.AuthorizationFailed, session.AuthorizationClosed:
 		result := a.observeTerminalWorkspaceTransactionLocked(logical, transaction, contract.WorkspaceEnrollmentFailed)
 		logical.mu.Unlock()
+		a.runtime.logWorkspaceEnrollment(ctx, port.LevelWarn, diagnosticEnrollmentOperationObserve, diagnosticEnrollmentReasonCompleted, "status", result.Status)
 		return result, nil
 	case session.AuthorizationGranted:
 		// fall through to discovery below, unlocked.
@@ -273,6 +290,7 @@ func (a *Attachment) ObserveWorkspaceEnrollment(ctx context.Context, ref contrac
 	a.mu.Unlock()
 	a.runtime.removeCallbackState(state, transaction)
 
+	a.runtime.logWorkspaceEnrollment(ctx, port.LevelInfo, diagnosticEnrollmentOperationObserve, diagnosticEnrollmentReasonCompleted, "status", contract.WorkspaceEnrollmentConnected)
 	return contract.WorkspaceEnrollmentResult{Ref: ref, Status: contract.WorkspaceEnrollmentConnected, Catalogue: catalogue}, nil
 }
 
@@ -290,6 +308,7 @@ func (a *Attachment) CancelWorkspaceEnrollment(ctx context.Context, ref contract
 	if !ref.Valid() {
 		return contract.WorkspaceEnrollmentResult{}, errors.New("mcpbroker: invalid workspace enrollment reference")
 	}
+	a.runtime.logWorkspaceEnrollment(ctx, port.LevelDebug, diagnosticEnrollmentOperationCancel, diagnosticEnrollmentReasonRequestCancelled)
 	logical := a.logical
 	a.enrollmentMu.Lock()
 	defer a.enrollmentMu.Unlock()
@@ -300,6 +319,7 @@ func (a *Attachment) CancelWorkspaceEnrollment(ctx context.Context, ref contract
 		return contract.WorkspaceEnrollmentResult{}, contract.ErrAuthorizationNotFound
 	}
 	result := a.terminateWorkspaceTransactionLocked(logical, transaction, contract.WorkspaceEnrollmentCancelled)
+	a.runtime.logWorkspaceEnrollment(ctx, port.LevelInfo, diagnosticEnrollmentOperationCancel, diagnosticEnrollmentReasonCompleted, "status", result.Status)
 	return result, nil
 }
 
