@@ -6,12 +6,13 @@
 
 ## Context
 
-A scheduler in the same platform (titlani) launches mecatequi as a one-shot Kubernetes
-Job / local subprocess to execute a work item, injecting a **short-lived per-run
-identity** the run must present as a Bearer token to MCP endpoints — a ToolHive vmcp and
-a tequitl task-graph server. The contract is titlani's run-contract ADR 0010: MCP access
-rides `--mcp-server <name>=<url>` plus a `MCP_<NAME>_TOKEN` environment variable per
-server (issue #341; part of the dark-factory epic, pairing with titlani #37/#38).
+A scheduler in the same platform launches mecatequi as a one-shot Kubernetes Job /
+local subprocess to execute a work item, injecting a **short-lived per-run identity**
+the run must present as a Bearer token to MCP endpoints — a ToolHive vmcp and a tequitl
+task-graph server. The contract is the scheduler's own run-contract ADR 0010, tracked in
+its repository: MCP access rides `--mcp-server <name>=<url>` plus a `MCP_<NAME>_TOKEN`
+environment variable per server (issue #341; part of the dark-factory epic, pairing with
+the scheduler-side halves of that contract).
 
 Three gaps blocked that contract:
 
@@ -68,7 +69,7 @@ Three gaps blocked that contract:
 
 ## Consequences
 
-- A titlani-launched run reaches vmcp/tequitl with a per-run bearer using only flags +
+- A scheduler-launched run reaches vmcp/tequitl with a per-run bearer using only flags +
   env the scheduler controls; no engine or proto change, `engine/api/*.txt` untouched.
 - The three mains share one parse/token path; a future change to the convention (e.g.
   a token file) lands once in `internal/cliconfig/mcpserver.go`.
@@ -95,8 +96,9 @@ Three gaps blocked that contract:
 
 ## See also
 
-- Issue [#341](https://github.com/stacklok/mecatl/issues/341); titlani's run-contract
-  ADR 0010 (stacklok/titlani#37, #38) — the paired scheduler half of this contract.
+- Issue [#341](https://github.com/stacklok/mecatl/issues/341); the scheduler's
+  run-contract ADR 0010 and its paired issues, tracked in the scheduler's own
+  repository — the scheduler half of this contract.
 - [ADR 0028 — mecatequi](./0028-mecatequi.md) (the forge-agnostic single-shot runner),
   [ADR 0048 — mecak8s](./0048-mecak8s.md) (the k8s-native peer).
 - `docs/usage/mecatequi-ci.md` ("The factory invocation profile") and

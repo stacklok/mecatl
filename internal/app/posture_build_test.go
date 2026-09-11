@@ -130,7 +130,7 @@ func TestBuildOperatorYAMLPostureSeam(t *testing.T) {
 		if !strings.Contains(fact, "trust_project=false") {
 			t.Fatalf("headless auto without --trust-project must leave trust_project=false (the ladder is interactive-only; the shell gate reads it); fact: %q", fact)
 		}
-		// titlani's deterministic guard (issue #359 final correction): a HEADLESS
+		// The scheduler's deterministic guard (issue #359 final correction): a HEADLESS
 		// mecated at --posture auto with NO explicit --trust-project must NOT have the
 		// read-only child shell (the deliberate fail-safe capability loss — the repo's
 		// .git is not vouched, so the worktree-fork git checkout cannot run). The
@@ -173,7 +173,7 @@ func TestBuildOperatorYAMLPostureSeam(t *testing.T) {
 		if !strings.Contains(fact, "trust_project=true") {
 			t.Fatalf("interactive auto must derive trust_project=true (the ladder raises it on interactive roots; the shell gate reads it); fact: %q", fact)
 		}
-		// titlani's deterministic guard (issue #359 final correction): an INTERACTIVE
+		// The scheduler's deterministic guard (issue #359 final correction): an INTERACTIVE
 		// mecated at --posture auto with NO explicit --trust-project must keep the
 		// read-only child shell. The shell gate (buildSandboxedCommandRunner) reads
 		// cfg.TrustProject, which the ladder raised above; the build-once composition

@@ -159,7 +159,7 @@ func TestAppConfigWiresMCPAuthority(t *testing.T) {
 // end-to-end through mecatequi's parseFlags (which runs the post-parse
 // Finalize): --mcp-server-insecure-http relaxes the token-bearing http scheme
 // gate for the NAMED server only, ORDER-INDEPENDENTLY — the relaxation works
-// whether it precedes or follows its --mcp-server on argv (the titlani#40
+// whether it precedes or follows its --mcp-server on argv (the scheduler-side
 // contract addition: argv ordering is not part of the scheduler's contract).
 func TestParseFlagsMCPServerInsecureHTTP(t *testing.T) {
 	t.Run("relaxation before the server", func(t *testing.T) {

@@ -59,7 +59,7 @@ type mcpServerEntry struct {
 // relaxation names its Finalize step resolves against them. It was extracted
 // from cmd/mecated (issue #341) so mecatequi and mecak8s register the SAME
 // flag + token convention instead of growing three drifting copies: a
-// scheduler (titlani) launching one-shot runs injects a short-lived per-run
+// scheduler launching one-shot runs injects a short-lived per-run
 // identity as MCP_<NAME>_TOKEN, and the run presents it as a Bearer to the
 // named MCP endpoint.
 //
