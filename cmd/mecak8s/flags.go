@@ -139,7 +139,7 @@ type config struct {
 	// mcpServers holds the repeatable --mcp-server name=URL entries (issue #341,
 	// the factory MCP wiring), via the SAME cliconfig.MCPServerList helper as
 	// mecated/mecatequi: a per-server bearer rides the MCP_<NAME>_TOKEN env (a
-	// scheduler like titlani injects a short-lived per-run identity there), token
+	// scheduler injects a short-lived per-run identity there), token
 	// optional. Threaded onto app.Config.MCPServers in appConfig.
 	mcpServers   *cliconfig.MCPServerList
 	useMock      bool

@@ -23,6 +23,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/agent"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/server"
@@ -84,26 +85,80 @@ func newOfflineService(t *testing.T) *server.Service {
 
 // authenticatorFromFlags runs the REAL flag→config→SecurityConfig path: it
 // parses argv through parseFlags (so --auth-token / MECATL_AUTH_TOKEN lands in
-// cfg.authToken) and constructs the Authenticator from that config EXACTLY as
-// serve() does (see cmd/mecated/main.go: server.SecurityConfig{AuthToken:
-// cfg.authToken, RateLimit: cfg.rateLimit, RateBurst: cfg.rateBurst}). Mirroring
-// serve()'s construction here — rather than calling serve(), which binds real
-// listeners and blocks — is the same pattern TestAdminMuxMountsPerfMCP uses for
-// the admin mux. It returns the parsed token so a test can assert the flag
-// actually threaded through.
+// cfg.authToken) then calls buildEdge, the same construction serve uses. It
+// returns the parsed token so a test can assert the flag actually threaded
+// through.
 func authenticatorFromFlags(t *testing.T, argv []string) (*server.Authenticator, string) {
 	t.Helper()
 	cfg, err := parseFlags(argv)
 	if err != nil {
 		t.Fatalf("parseFlags(%v): %v", argv, err)
 	}
-	auth := server.NewAuthenticator(server.SecurityConfig{
-		AuthToken: cfg.authToken,
-		RateLimit: cfg.rateLimit,
-		RateBurst: cfg.rateBurst,
-	})
+	_, auth, _, err := buildEdge(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("buildEdge: %v", err)
+	}
 	return auth, cfg.authToken
 }
+
+func TestBuildEdgeWiresAuthenticationDiagnostics(t *testing.T) {
+	diag := &edgeRecordingDiagnostics{}
+	_, auth, _, err := buildEdge(context.Background(), config{authToken: "secret", diagnostics: diag})
+	if err != nil {
+		t.Fatalf("buildEdge: %v", err)
+	}
+
+	_, err = auth.UnaryInterceptor()(context.Background(), nil, &grpc.UnaryServerInfo{}, func(context.Context, any) (any, error) {
+		t.Fatal("handler called after rejected authentication")
+		return nil, nil
+	})
+	if status.Code(err) != codes.Unauthenticated {
+		t.Fatalf("missing bearer code = %v, want Unauthenticated", status.Code(err))
+	}
+	if len(diag.records) != 1 {
+		t.Fatalf("authentication diagnostics = %#v, want one safe rejection", diag.records)
+	}
+	record := diag.records[0]
+	if record.message != "authentication" || record.args["outcome"] != "rejected" || record.args["category"] != "missing_bearer" || record.args["transport"] != "grpc" || record.args["status"] != "Unauthenticated" {
+		t.Fatalf("authentication diagnostic = %#v, want safe missing-bearer rejection", record)
+	}
+
+	disabled := &edgeRecordingDiagnostics{}
+	_, auth, _, err = buildEdge(context.Background(), config{diagnostics: disabled})
+	if err != nil {
+		t.Fatalf("buildEdge disabled: %v", err)
+	}
+	handled := false
+	if _, err := auth.UnaryInterceptor()(context.Background(), nil, &grpc.UnaryServerInfo{}, func(context.Context, any) (any, error) {
+		handled = true
+		return nil, nil
+	}); err != nil {
+		t.Fatalf("disabled authentication rejected request: %v", err)
+	}
+	if !handled || len(disabled.records) != 0 {
+		t.Fatalf("disabled authentication changed: handled=%t diagnostics=%#v", handled, disabled.records)
+	}
+}
+
+type edgeDiagnosticRecord struct {
+	message string
+	args    map[string]string
+}
+
+type edgeRecordingDiagnostics struct{ records []edgeDiagnosticRecord }
+
+func (d *edgeRecordingDiagnostics) Log(_ context.Context, _ port.Level, message string, args ...any) {
+	record := edgeDiagnosticRecord{message: message, args: make(map[string]string, len(args)/2)}
+	for i := 0; i+1 < len(args); i += 2 {
+		key, ok := args[i].(string)
+		if ok {
+			record.args[key], _ = args[i+1].(string)
+		}
+	}
+	d.records = append(d.records, record)
+}
+
+func (d *edgeRecordingDiagnostics) With(...any) port.Diagnostics { return d }
 
 // dialWiredGRPC stands up an in-memory gRPC server with the given Authenticator
 // installed as the unary + stream interceptors — the SAME interceptors serve()

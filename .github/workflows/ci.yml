@@ -202,6 +202,7 @@ jobs:
       - uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99 # v1.50.0
         with:
           version: '1.72.0'
+          github_token: ${{ github.token }}
 
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
 
@@ -569,6 +570,7 @@ jobs:
           bash .github/scripts/race-aggregate-workflow_test.sh
           bash .github/scripts/docs-only-changes_test.sh
           bash .github/scripts/docs-only-workflow_test.sh
+          bash .github/scripts/deslop-workflow_test.sh
       - name: go test -race (root-a and modules)
         env:
           RACE_TIMING: ${{ github.event_name == 'workflow_dispatch' && inputs.race_timing }}

@@ -481,6 +481,12 @@ type Model struct {
 	sessionsTranscriptRequestToken uint64
 	sessionsPageRequestToken       uint64
 	sessionsActionRequestToken     uint64
+	// mcpRequestToken identifies broker inventory work across MCP panel lifetimes.
+	// A panel-local refresh generation alone restarts at one after reopen.
+	mcpRequestToken uint64
+	// freshSessionBinding is true only for a session created by this UI's initial
+	// create flow or /clear successor, never for adopted, resumed, or handoff bindings.
+	freshSessionBinding bool
 	// Maintenance job handles outlive the Sessions overlay. Reopening uses them
 	// only to refetch server-owned durable progress; the UI owns no job state.
 	maintenanceMigrationJobID string
@@ -489,9 +495,11 @@ type Model struct {
 	// below are refreshed from the current session snapshot; zero timestamps are
 	// rendered as unknown rather than guessed.
 	sessionDetailsOpen bool
-	sessionState       string
-	sessionCreatedAt   int64
-	sessionModifiedAt  int64
+	// sessionState mirrors the server's session.State string ("idle", "running",
+	// …); sessionStateIdle names the one value this package compares against.
+	sessionState      string
+	sessionCreatedAt  int64
+	sessionModifiedAt int64
 	// sessionTitle is the session's human label for the terminal window/tab title
 	// (the "<title> — …" head of windowTitle). Set-once from the first genuine
 	// user prompt (submitPrompt), adopted on a session switch (switchToSession

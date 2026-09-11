@@ -30,6 +30,7 @@ type builtin struct {
 // read clearly and a new collaborator is one field, not an 8th positional bool.
 type wiredCollaborators struct {
 	MCP          bool
+	MCPConnector bool
 	Agents       bool
 	Skills       bool
 	Soul         bool
@@ -56,8 +57,10 @@ type wiredCollaborators struct {
 // copy once omitted Sessions, so /sessions never appeared in autocomplete even
 // though the actual dispatch path built it correctly).
 func (m Model) wiredCollaborators() wiredCollaborators {
+	_, mcpConnector := m.deps.MCP.(client.MCPConnectorReader)
 	return wiredCollaborators{
-		MCP: m.deps.MCP != nil, Agents: m.deps.Agents != nil, Skills: m.deps.Skills != nil,
+		MCP: m.deps.MCP != nil, MCPConnector: mcpConnector,
+		Agents: m.deps.Agents != nil, Skills: m.deps.Skills != nil,
 		Soul: m.deps.Soul != nil, UserModel: m.deps.UserModel != nil, Models: m.deps.Models != nil,
 		Reflections: m.deps.Reflections != nil,
 		Dream:       m.deps.Dream != nil,
@@ -75,8 +78,9 @@ func (m Model) wiredCollaborators() wiredCollaborators {
 
 // builtinCommands returns the caps-filtered built-in set for the connected
 // server. /clear, /help, and /quit are ALWAYS present — they act purely on the Model and
-// need no server feature. /mcp is present only when the server advertises MCP
-// AND a Commander-independent MCP collaborator is wired (w.MCP); /agents (the
+// need no server feature. /mcp needs either the direct MCP capability with its
+// direct collaborator (w.MCP), or the broker connector-status capability with its
+// connector reader (w.MCPConnector); /agents (the
 // definition inventory) only when the server advertises Agents AND an agents
 // collaborator is wired (w.Agents); /team (the live-team overlay) only when the
 // server advertises Teams; /skills only when the server advertises Skills
@@ -143,7 +147,7 @@ func builtinCommands(caps client.Capabilities, w wiredCollaborators) []builtin {
 			run:  Model.runCompact,
 		})
 	}
-	if caps.MCP && w.MCP {
+	if (caps.MCP && w.MCP) || (caps.MCPConnectorStatus && w.MCPConnector) {
 		out = append(out, builtin{
 			name: "mcp",
 			desc: "browse MCP inventory",

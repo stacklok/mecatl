@@ -171,6 +171,10 @@ type config struct {
 	// (the round-boundary brake). 0 (default) disables it.
 	maxTeamTokens int
 
+	// Diagnostics is the configured operational sink shared by application and edge
+	// authentication observability. It is runtime-only and never parsed from flags.
+	diagnostics port.Diagnostics
+
 	// Observability: the Prometheus /metrics listen address (empty disables it),
 	// plus the OTLP trace exporter knobs (empty endpoint disables tracing).
 	metricsAddr  string
@@ -866,6 +870,7 @@ func run(mode commandMode, remaining []string) error {
 	// so the facts print identically — but flow through the injected port.Diagnostics
 	// rather than slog.Default().
 	diag := slogdiag.NewFromLogger(logger)
+	cfg.diagnostics = diag
 
 	// Emit the build identity once logging is configured, so every daemon startup
 	// can be tied to the binary that produced its operational logs.
@@ -2378,10 +2383,11 @@ func buildEdge(ctx context.Context, cfg config) (*tls.Config, *server.Authentica
 		return nil, nil, nil, err
 	}
 	return tlsCfg, server.NewAuthenticator(server.SecurityConfig{
-		AuthToken: cfg.authToken,
-		RateLimit: cfg.rateLimit,
-		RateBurst: cfg.rateBurst,
-		Validator: validator,
+		AuthToken:   cfg.authToken,
+		RateLimit:   cfg.rateLimit,
+		RateBurst:   cfg.rateBurst,
+		Validator:   validator,
+		Diagnostics: cfg.diagnostics,
 	}), corsPolicy, nil
 }
 

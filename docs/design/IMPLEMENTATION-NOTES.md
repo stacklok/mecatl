@@ -5825,12 +5825,13 @@ is `/v1/mcp/broker/oauth/callback`; the separately configured callback URL is To
 redirect to mecatl, so ingress needs the complete fixed broker prefix plus the final callback
 path.
 
-Protected static declarations are not model-visible at construction. On successful enrollment,
-`internal/adapter/mcpbroker/workspace_catalogue.go` (`FreezeAuthenticatedCatalogue`) performs
-strict authenticated discovery for every configured protected backend, collision-checks the
-complete result, and atomically replaces the attachment catalogue. It either publishes the full
-frozen catalogue and rebuilds the session engine or exposes no protected tools; no per-backend
-mecatl authorization continuation exists. `server.Service` attaches only after
+Protected static declarations are represented as declared broker catalogue rows and
+remain visible as model tools before enrollment. Successful enrollment in
+`internal/adapter/mcpbroker/workspace_catalogue.go` (`FreezeAuthenticatedCatalogue`)
+adds authenticated discoveries to those static definitions, collision-checks the complete
+result, and atomically freezes the merged attachment catalogue before rebuilding the
+session engine. It either publishes that complete frozen catalogue or leaves the existing
+static declarations intact; no per-backend mecatl authorization continuation exists. `server.Service` attaches only after
 `SessionStore.Create` returns the canonical ID, persists `session.Session.ExternalBinding`, and
 passes `Attachment.Tools()` explicitly through `SessionEngineRequest.BrokerTools` into
 `assembleCatalog`. Reload reattaches through the same contract and accepts only an exact

@@ -23,7 +23,7 @@ in a dark factory, whoever can push to the cloned ref controls the agent's instr
 Lowering `TrustProject=false` would kill the approvals AND the read-only subagent shell.
 
 **ADR 0092** shipped a `--no-project-trust` suppressor: a negative boolean that kept
-`TrustProject` true while suppressing ingestion. Consumer (titlani) feedback identified a
+`TrustProject` true while suppressing ingestion. Consumer feedback identified a
 **fail-open critique**: the suppressor's zero-value (false = "not suppressing") preserves the
 default behaviour — but the operator's real intent for a scheduler on untrusted repos is
 "don't ingest," and forgetting the flag silently grants ingestion. The right shape is a
@@ -62,7 +62,7 @@ grants the shell (both roots). Each line only RAISES.
 **The fail-safe default (the whole point):** `mecatequi --posture auto` over an untrusted
 clone now yields allow-all approvals + a working child shell but NO repo steering (the
 scheduler supplies its own `--instructions`). A forgotten flag degrades to a less-steered
-agent, not a hijacked one — the asymmetry titlani asked for.
+agent, not a hijacked one — the asymmetry the consumer asked for.
 
 **Truth tables** (T=TrustProject, G=ingest granted, S=shell granted):
 
@@ -94,7 +94,7 @@ INTERACTIVE (G=T OR posture>=auto; S=posture>=auto):
 
 **A. The negative suppressor (`--no-project-trust`, ADR 0092).** A single boolean that
 suppresses ingestion when true. The zero-value (false) preserves the default behaviour, so
-a forgotten flag silently grants ingestion — exactly the fail-open titlani identified.
+a forgotten flag silently grants ingestion — exactly the fail-open the consumer identified.
 Rejected because the positive-grant + two-axis shape is both safer (fail-safe default) and
 cleaner long-term (the subagent shell is independently decoupled from ingestion, so a
 scheduler that wants the shell but not the steering gets exactly that with no flag at all).

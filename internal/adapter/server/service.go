@@ -542,6 +542,8 @@ type Config struct {
 	SessionEngineWithTools SessionEngineWithToolsFactory
 	// MCPBroker owns logical broker state; Service owns only local attachments.
 	MCPBroker brokercontract.Service
+	// MCPConnectorInspector exposes local-only inventory for the bundled broker.
+	MCPConnectorInspector brokercontract.ConnectorInspector
 	// WorkspaceEnrollment advertises the optional pre-prompt enrollment capability.
 	// It must be true only when MCPBroker attachments implement the enrollment boundary.
 	WorkspaceEnrollment bool
@@ -2551,10 +2553,10 @@ func (s *Service) capabilities() *mecatlv1.ServerCapabilities {
 // this operator enabled?" and changes with operator config; features answers
 // "what does this build implement?" and changes on upgrade. Folding one into the
 // other makes a --no-bash deployment indistinguishable from version skew.
-func (s *Service) CompatibilityInfo(context.Context) *mecatlv1.GetCompatibilityInfoResponse {
+func (s *Service) CompatibilityInfo(ctx context.Context) *mecatlv1.GetCompatibilityInfoResponse {
 	return &mecatlv1.GetCompatibilityInfoResponse{
 		ApiMajor:     APIMajor,
-		Capabilities: s.capabilities(),
+		Capabilities: s.capabilitiesFor(ctx),
 		Features:     serverFeatures(s.featureScope()),
 		Deployment:   s.cfg.DeploymentID,
 	}

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -62,17 +63,19 @@ func TestAuthenticationRejectionDiagnosticsAreCategorizedAndSafe(t *testing.T) {
 
 	const sensitive = "Bearer eyJ.secret.token issuer=https://private.example subject=alice kid=private-key"
 	for _, tc := range []struct {
-		name     string
-		category string
+		name          string
+		inputCategory string
+		wantCategory  string
 	}{
-		{name: "wrong audience", category: "wrong_audience"},
-		{name: "wrong issuer", category: "wrong_issuer"},
+		{name: "wrong audience", inputCategory: "wrong_audience", wantCategory: "wrong_audience"},
+		{name: "wrong issuer", inputCategory: "wrong_issuer", wantCategory: "wrong_issuer"},
+		{name: "unknown external category", inputCategory: "issuer=https://private.example", wantCategory: "invalid_token"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			diag := &authRecordingDiagnostics{}
 			auth := server.NewAuthenticator(server.SecurityConfig{
-				Validator:   diagnosticValidator{category: tc.category, err: sensitive},
+				Validator:   diagnosticValidator{category: tc.inputCategory, err: sensitive},
 				Diagnostics: diag,
 			})
 			ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", sensitive))
@@ -90,9 +93,7 @@ func TestAuthenticationRejectionDiagnosticsAreCategorizedAndSafe(t *testing.T) {
 				t.Fatalf("diagnostic records = %d, want 1", len(diag.records))
 			}
 			record := diag.records[0]
-			if record.message != "authentication rejected" || record.args["category"] != tc.category || record.args["transport"] != "grpc" || record.args["status"] != "Unauthenticated" {
-				t.Fatalf("unsafe or unexpected diagnostic: %#v", record)
-			}
+			assertAuthRecord(t, record, port.LevelWarn, "rejected", tc.wantCategory, "grpc", "Unauthenticated")
 			if strings.Contains(record.render(), sensitive) || strings.Contains(record.render(), "private.example") || strings.Contains(record.render(), "alice") || strings.Contains(record.render(), "private-key") {
 				t.Fatalf("diagnostic leaked sensitive authentication data: %s", record.render())
 			}
@@ -126,13 +127,256 @@ func TestHTTPAuthenticationRejectionDiagnosticPreservesGenericClientResult(t *te
 		t.Fatalf("diagnostic records = %d, want 1", len(diag.records))
 	}
 	record := diag.records[0]
-	if record.message != "authentication rejected" || record.args["category"] != "wrong_issuer" || record.args["transport"] != "http" || record.args["status"] != "401" {
-		t.Fatalf("unsafe or unexpected diagnostic: %#v", record)
-	}
+	assertAuthRecord(t, record, port.LevelWarn, "rejected", "wrong_issuer", "http", "401")
 	if strings.Contains(record.render(), sensitive) || strings.Contains(record.render(), "private.example") || strings.Contains(record.render(), "alice") || strings.Contains(record.render(), "private-key") {
 		t.Fatalf("diagnostic leaked sensitive authentication data: %s", record.render())
 	}
 }
+
+func TestHTTPMalformedAndStaticBearerRejectionsAreObservedSafely(t *testing.T) {
+	t.Parallel()
+
+	const sensitive = "Bearer secret-token issuer=https://private.example subject=alice"
+	for _, tc := range []struct {
+		name     string
+		config   server.SecurityConfig
+		header   string
+		category string
+	}{
+		{name: "malformed identity bearer", config: server.SecurityConfig{Validator: diagnosticValidator{category: "malformed", err: sensitive}}, header: sensitive, category: "malformed"},
+		{name: "static bearer", config: server.SecurityConfig{AuthToken: "secret-token"}, header: "Bearer wrong-token", category: "invalid_token"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			diag := &authRecordingDiagnostics{}
+			tc.config.Diagnostics = diag
+			auth := server.NewAuthenticator(tc.config)
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			req.Header.Set("Authorization", tc.header)
+			response := httptest.NewRecorder()
+			auth.Middleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+				t.Fatal("handler called after rejected authentication")
+			})).ServeHTTP(response, req)
+
+			if response.Code != http.StatusUnauthorized {
+				t.Fatalf("HTTP status = %d, want 401", response.Code)
+			}
+			if got := response.Body.String(); !strings.Contains(got, "missing or invalid bearer token") || strings.Contains(got, sensitive) || strings.Contains(got, "wrong-token") {
+				t.Fatalf("HTTP response = %q, want generic rejection", got)
+			}
+			if len(diag.records) != 1 {
+				t.Fatalf("diagnostic records = %d, want 1", len(diag.records))
+			}
+			record := diag.records[0]
+			assertAuthRecord(t, record, port.LevelWarn, "rejected", tc.category, "http", "401")
+			for _, value := range []string{"secret-token", "wrong-token", "private.example", "alice"} {
+				if strings.Contains(record.render(), value) {
+					t.Fatalf("diagnostic leaked %q: %s", value, record.render())
+				}
+			}
+		})
+	}
+}
+
+func TestAuthenticationDiagnosticsCoverEnabledSuccessAndAvailability(t *testing.T) {
+	t.Parallel()
+
+	principal := &session.Principal{Issuer: "https://private.example", Subject: "alice", GrantType: session.GrantTypeUser}
+	for _, tc := range []struct {
+		name       string
+		config     server.SecurityConfig
+		wantStatus int
+		outcome    string
+		category   string
+		status     string
+		body       string
+		level      port.Level
+	}{
+		{name: "static bearer accepted", config: server.SecurityConfig{AuthToken: "secret"}, wantStatus: http.StatusNoContent, outcome: "accepted", category: "static_bearer", status: "200", level: port.LevelInfo},
+		{name: "identity accepted", config: server.SecurityConfig{Validator: fixedDiagnosticValidator{principal: principal}}, wantStatus: http.StatusNoContent, outcome: "accepted", category: "validated_identity", status: "200", level: port.LevelInfo},
+		{name: "identity unavailable", config: server.SecurityConfig{Validator: fixedDiagnosticValidator{err: unavailableDiagnosticError{}}}, wantStatus: http.StatusServiceUnavailable, outcome: "unavailable", category: "jwks_stale", status: "503", body: "identity provider unavailable", level: port.LevelWarn},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			diag := &authRecordingDiagnostics{}
+			tc.config.Diagnostics = diag
+			auth := server.NewAuthenticator(tc.config)
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			req.Header.Set("Authorization", "Bearer secret")
+			response := httptest.NewRecorder()
+			auth.Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })).ServeHTTP(response, req)
+
+			if response.Code != tc.wantStatus {
+				t.Fatalf("HTTP status = %d, want %d", response.Code, tc.wantStatus)
+			}
+			if tc.body != "" && !strings.Contains(response.Body.String(), tc.body) {
+				t.Fatalf("HTTP response = %q, want generic %q", response.Body.String(), tc.body)
+			}
+			if strings.Contains(response.Body.String(), "sensitive IdP failure") {
+				t.Fatalf("HTTP response leaked validator error: %q", response.Body.String())
+			}
+			if len(diag.records) != 1 {
+				t.Fatalf("diagnostic records = %d, want 1", len(diag.records))
+			}
+			record := diag.records[0]
+			assertAuthRecord(t, record, tc.level, tc.outcome, tc.category, "http", tc.status)
+			for _, sensitive := range []string{"secret", "private.example", "alice"} {
+				if strings.Contains(record.render(), sensitive) {
+					t.Fatalf("diagnostic leaked %q: %s", sensitive, record.render())
+				}
+			}
+		})
+	}
+
+	diag := &authRecordingDiagnostics{}
+	auth := server.NewAuthenticator(server.SecurityConfig{Diagnostics: diag})
+	auth.Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })).ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
+	if len(diag.records) != 0 {
+		t.Fatalf("disabled authentication emitted diagnostics: %#v", diag.records)
+	}
+}
+
+func TestGRPCAuthenticationDiagnosticsCoverSuccessAndUnavailable(t *testing.T) {
+	t.Parallel()
+
+	principal := &session.Principal{Issuer: "https://private.example", Subject: "alice", GrantType: session.GrantTypeUser}
+	for _, tc := range []struct {
+		name        string
+		config      server.SecurityConfig
+		bearer      string
+		wantCode    codes.Code
+		wantMessage string
+		outcome     string
+		category    string
+		statusText  string
+		level       port.Level
+	}{
+		{name: "static bearer accepted", config: server.SecurityConfig{AuthToken: "secret"}, bearer: "secret", wantCode: codes.OK, outcome: "accepted", category: "static_bearer", statusText: "OK", level: port.LevelInfo},
+		{name: "identity accepted", config: server.SecurityConfig{Validator: fixedDiagnosticValidator{principal: principal}}, bearer: "sensitive-token", wantCode: codes.OK, outcome: "accepted", category: "validated_identity", statusText: "OK", level: port.LevelInfo},
+		{name: "identity unavailable", config: server.SecurityConfig{Validator: fixedDiagnosticValidator{err: unavailableDiagnosticError{}}}, bearer: "sensitive-token", wantCode: codes.Unavailable, wantMessage: "identity provider unavailable", outcome: "unavailable", category: "jwks_stale", statusText: "Unavailable", level: port.LevelWarn},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			diag := &authRecordingDiagnostics{}
+			tc.config.Diagnostics = diag
+			auth := server.NewAuthenticator(tc.config)
+			ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", "Bearer "+tc.bearer))
+			_, err := auth.UnaryInterceptor()(ctx, nil, &grpc.UnaryServerInfo{}, func(context.Context, any) (any, error) { return nil, nil })
+			if status.Code(err) != tc.wantCode {
+				t.Fatalf("gRPC code = %v, want %v", status.Code(err), tc.wantCode)
+			}
+			if tc.wantMessage != "" && status.Convert(err).Message() != tc.wantMessage {
+				t.Fatalf("gRPC message = %q, want %q", status.Convert(err).Message(), tc.wantMessage)
+			}
+			if len(diag.records) != 1 {
+				t.Fatalf("diagnostic records = %d, want 1", len(diag.records))
+			}
+			record := diag.records[0]
+			assertAuthRecord(t, record, tc.level, tc.outcome, tc.category, "grpc", tc.statusText)
+			for _, sensitive := range []string{"secret", "sensitive-token", "private.example", "alice", "sensitive IdP failure"} {
+				if strings.Contains(record.render(), sensitive) {
+					t.Fatalf("diagnostic leaked %q: %s", sensitive, record.render())
+				}
+			}
+		})
+	}
+}
+
+func TestAcceptedAuthenticationDiagnosticsAreBoundedPerCategoryAndTransport(t *testing.T) {
+	principal := &session.Principal{Issuer: "https://private.example", Subject: "alice", GrantType: session.GrantTypeUser}
+	for _, tc := range []struct {
+		name      string
+		config    server.SecurityConfig
+		transport string
+		token     string
+		category  string
+		status    string
+	}{
+		{name: "static grpc", config: server.SecurityConfig{AuthToken: "secret"}, transport: "grpc", token: "secret", category: "static_bearer", status: "OK"},
+		{name: "static http", config: server.SecurityConfig{AuthToken: "secret"}, transport: "http", token: "secret", category: "static_bearer", status: "200"},
+		{name: "identity grpc", config: server.SecurityConfig{Validator: fixedDiagnosticValidator{principal: principal}}, transport: "grpc", token: "sensitive-token", category: "validated_identity", status: "OK"},
+		{name: "identity http", config: server.SecurityConfig{Validator: fixedDiagnosticValidator{principal: principal}}, transport: "http", token: "sensitive-token", category: "validated_identity", status: "200"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			diag := &authRecordingDiagnostics{}
+			tc.config.Diagnostics = diag
+			auth := server.NewAuthenticator(tc.config)
+
+			var wg sync.WaitGroup
+			for range 32 {
+				wg.Go(func() {
+					switch tc.transport {
+					case "grpc":
+						ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", "Bearer "+tc.token))
+						_, err := auth.UnaryInterceptor()(ctx, nil, &grpc.UnaryServerInfo{}, func(context.Context, any) (any, error) { return nil, nil })
+						if err != nil {
+							t.Errorf("accepted gRPC request failed: %v", err)
+						}
+					case "http":
+						req := httptest.NewRequest(http.MethodGet, "/", nil)
+						req.Header.Set("Authorization", "Bearer "+tc.token)
+						auth.Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })).ServeHTTP(httptest.NewRecorder(), req)
+					}
+				})
+			}
+			wg.Wait()
+
+			records := diag.snapshot()
+			if len(records) != 1 {
+				t.Fatalf("accepted authentication diagnostics = %d, want 1", len(records))
+			}
+			record := records[0]
+			assertAuthRecord(t, record, port.LevelInfo, "accepted", tc.category, tc.transport, tc.status)
+		})
+	}
+}
+
+func TestRejectedAndUnavailableAuthenticationDiagnosticsRemainPerRequest(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		config server.SecurityConfig
+		header string
+		status int
+	}{
+		{name: "rejected", config: server.SecurityConfig{AuthToken: "secret"}, header: "Bearer wrong", status: http.StatusUnauthorized},
+		{name: "malformed", config: server.SecurityConfig{Validator: diagnosticValidator{category: "malformed", err: "invalid"}}, header: "Bearer malformed", status: http.StatusUnauthorized},
+		{name: "unavailable", config: server.SecurityConfig{Validator: fixedDiagnosticValidator{err: unavailableDiagnosticError{}}}, header: "Bearer unavailable", status: http.StatusServiceUnavailable},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			diag := &authRecordingDiagnostics{}
+			tc.config.Diagnostics = diag
+			auth := server.NewAuthenticator(tc.config)
+			h := auth.Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }))
+			for range 2 {
+				req := httptest.NewRequest(http.MethodGet, "/", nil)
+				req.Header.Set("Authorization", tc.header)
+				response := httptest.NewRecorder()
+				h.ServeHTTP(response, req)
+				if response.Code != tc.status {
+					t.Fatalf("HTTP status = %d, want %d", response.Code, tc.status)
+				}
+			}
+			if records := diag.snapshot(); len(records) != 2 {
+				t.Fatalf("authentication diagnostics = %d, want 2", len(records))
+			}
+		})
+	}
+}
+
+type fixedDiagnosticValidator struct {
+	principal *session.Principal
+	err       error
+}
+
+func (v fixedDiagnosticValidator) Validate(context.Context, string) (*session.Principal, error) {
+	return v.principal, v.err
+}
+
+type unavailableDiagnosticError struct{}
+
+func (unavailableDiagnosticError) Error() string                           { return "sensitive IdP failure" }
+func (unavailableDiagnosticError) Unwrap() error                           { return server.ErrIdentityUnavailable }
+func (unavailableDiagnosticError) AuthenticationRejectionCategory() string { return "jwks_stale" }
 
 type diagnosticValidator struct {
 	category string
@@ -153,18 +397,29 @@ func (diagnosticRejection) Unwrap() error                             { return s
 func (e diagnosticRejection) AuthenticationRejectionCategory() string { return e.category }
 
 type diagnosticRecord struct {
+	level   port.Level
 	message string
 	args    map[string]string
 }
 
 func (r diagnosticRecord) render() string {
-	return r.message + " " + r.args["category"] + " " + r.args["transport"] + " " + r.args["status"]
+	return r.message + " " + r.args["outcome"] + " " + r.args["category"] + " " + r.args["transport"] + " " + r.args["status"]
 }
 
-type authRecordingDiagnostics struct{ records []diagnosticRecord }
+func assertAuthRecord(t *testing.T, record diagnosticRecord, level port.Level, outcome, category, transport, statusText string) {
+	t.Helper()
+	if record.level != level || record.message != "authentication" || record.args["outcome"] != outcome || record.args["category"] != category || record.args["transport"] != transport || record.args["status"] != statusText || len(record.args) != 4 {
+		t.Fatalf("unexpected authentication diagnostic: %#v", record)
+	}
+}
 
-func (d *authRecordingDiagnostics) Log(_ context.Context, _ port.Level, msg string, args ...any) {
-	record := diagnosticRecord{message: msg, args: make(map[string]string, len(args)/2)}
+type authRecordingDiagnostics struct {
+	mu      sync.Mutex
+	records []diagnosticRecord
+}
+
+func (d *authRecordingDiagnostics) Log(_ context.Context, level port.Level, msg string, args ...any) {
+	record := diagnosticRecord{level: level, message: msg, args: make(map[string]string, len(args)/2)}
 	for i := 0; i+1 < len(args); i += 2 {
 		key, ok := args[i].(string)
 		if !ok {
@@ -172,7 +427,15 @@ func (d *authRecordingDiagnostics) Log(_ context.Context, _ port.Level, msg stri
 		}
 		record.args[key], _ = args[i+1].(string)
 	}
+	d.mu.Lock()
 	d.records = append(d.records, record)
+	d.mu.Unlock()
+}
+
+func (d *authRecordingDiagnostics) snapshot() []diagnosticRecord {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return append([]diagnosticRecord(nil), d.records...)
 }
 
 func (d *authRecordingDiagnostics) With(...any) port.Diagnostics { return d }
@@ -236,7 +499,8 @@ func TestGRPCAuthBearer(t *testing.T) {
 // With no token configured, requests pass without credentials (dev mode).
 func TestGRPCAuthDisabledAllows(t *testing.T) {
 	svc := newService(t, mockllm.New(), allowRules())
-	auth := server.NewAuthenticator(server.SecurityConfig{})
+	diag := &authRecordingDiagnostics{}
+	auth := server.NewAuthenticator(server.SecurityConfig{Diagnostics: diag})
 	client, cleanup := dialGRPCSecure(t, svc, auth)
 	defer cleanup()
 
@@ -244,6 +508,9 @@ func TestGRPCAuthDisabledAllows(t *testing.T) {
 	defer cancel()
 	if _, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{}); err != nil {
 		t.Fatalf("auth-disabled CreateSession: %v", err)
+	}
+	if len(diag.records) != 0 {
+		t.Fatalf("auth-disabled unary emitted diagnostics: %#v", diag.records)
 	}
 }
 
@@ -290,7 +557,8 @@ func TestGRPCAuthRejectsDuplicateAuthorizationMetadata(t *testing.T) {
 }
 
 func TestGRPCAuthRejectsDuplicateAuthorizationMetadataWithoutAuthConfig(t *testing.T) {
-	auth := server.NewAuthenticator(server.SecurityConfig{})
+	diag := &authRecordingDiagnostics{}
+	auth := server.NewAuthenticator(server.SecurityConfig{Diagnostics: diag})
 	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs(
 		"authorization", "Bearer one", "authorization", "Bearer two"))
 
@@ -316,6 +584,9 @@ func TestGRPCAuthRejectsDuplicateAuthorizationMetadataWithoutAuthConfig(t *testi
 	}
 	if called {
 		t.Fatal("stream handler was called for duplicate authorization metadata without auth")
+	}
+	if len(diag.records) != 0 {
+		t.Fatalf("auth-disabled duplicate unary/stream emitted diagnostics: %#v", diag.records)
 	}
 }
 

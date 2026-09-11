@@ -35,23 +35,9 @@ func newMCPModel(t *testing.T, th theme.Theme, mcp client.MCP) Model {
 	})
 	m = applyAll(m,
 		tea.WindowSizeMsg{Width: 100, Height: 30},
-		client.SessionReadyMsg{SessionID: "sess-test-0001"},
+		client.SessionReadyMsg{SessionID: "sess-test-0001", Capabilities: client.Capabilities{MCP: true}},
 	)
 	return m
-}
-
-// mcpActive returns the open MCP modal's state (or nil) off the Model, so a test
-// can read the migrated surface state without holding an mcpState field. It
-// asserts the modal IS a *mcpState, which pins the open path too.
-func mcpActive(m Model) *mcpState {
-	if m.modal == nil {
-		return nil
-	}
-	s, ok := m.modal.(*mcpState)
-	if !ok {
-		return nil
-	}
-	return s
 }
 
 // runCmd executes a tea.Cmd to completion and returns its msg (nil-safe). MCP

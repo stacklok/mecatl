@@ -126,6 +126,10 @@ service HarnessService {
   // startup; it performs no live discovery.
   rpc ListMcpSources(ListMcpSourcesRequest) returns (ListMcpSourcesResponse);
 
+  // ListSessionMcpConnectors inspects the owned session's broker-local catalogue.
+  // This read neither probes upstreams nor progresses enrollment.
+  rpc ListSessionMcpConnectors(ListSessionMcpConnectorsRequest) returns (ListSessionMcpConnectorsResponse);
+
   // ListToolHiveGroups returns the distinct, non-empty ToolHive groups present
   // in the resolved source inventory. Derived from the snapshot — it does NOT
   // call ToolHive.
@@ -788,6 +792,36 @@ message ServerCapabilities {
   // workspace_enrollment is true when protected workspace services must be
   // admitted as one complete bundle before the first prompt.
   bool workspace_enrollment = 28;
+  // mcp_connector_status requires a wired broker inspector, enforced ownership
+  // and a verified caller. It does not enable direct MCP resources or prompts.
+  bool mcp_connector_status = 29;
+}
+
+// ListSessionMcpConnectorsRequest names an owned, broker-bound session.
+message ListSessionMcpConnectorsRequest {
+  string session_id = 1;
+}
+
+// ListSessionMcpConnectorsResponse reports broker publication, not current health,
+// credential validity, session installation, persistence or prompt readiness.
+message ListSessionMcpConnectorsResponse {
+  // available or unavailable (lost runtime state or binding mismatch).
+  string availability = 1;
+  // not_required, not_started, pending, completed or unknown.
+  string enrollment_state = 2;
+  // Configured order, at most 256 rows, including configured-but-hidden tools.
+  repeated McpConnectorStatus connectors = 3;
+  uint32 total_connectors = 4;
+  bool truncated = 5;
+}
+
+// McpConnectorStatus is a safe display row, never a routing handle.
+message McpConnectorStatus {
+  // Display name only; control-free and bounded to 128 runes.
+  string name = 1;
+  // hidden, declared, discovered or unknown. Unknown count is not an empty catalogue.
+  string catalogue_state = 2;
+  uint32 tool_count = 3;
 }
 
 // CreateSessionResponse carries the newly-allocated session id.

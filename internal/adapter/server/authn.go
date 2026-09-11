@@ -52,25 +52,47 @@ var (
 	errRejectedRateLimit = errors.New("rejected bearer rate limit exceeded")
 )
 
-// AuthenticationRejectionCategorizer supplies a safe, closed diagnostic category
-// for an authentication failure. Its value is never sent to clients.
-type AuthenticationRejectionCategorizer interface {
+type authenticationRejectionCategorizer interface {
 	AuthenticationRejectionCategory() string
 }
 
+type authObservationOutcome string
+
+type authObservationCategory string
+
+type authObservationTransport string
+
+type authObservationStatus string
+
 const (
-	authCategoryMissingBearer          = "missing_bearer"
-	authCategoryDuplicateAuthorization = "duplicate_authorization"
-	authCategoryWrongAudience          = "wrong_audience"
-	authCategoryWrongIssuer            = "wrong_issuer"
-	authCategoryMalformed              = "malformed"
-	authCategorySignature              = "signature"
-	authCategoryUnknownKID             = "unknown_kid"
-	authCategoryExpired                = "expired"
-	authCategoryNotYetValid            = "not_yet_valid"
-	authCategoryJWKSUnavailable        = "jwks_unavailable"
-	authCategoryJWKSStale              = "jwks_stale"
-	authCategoryInvalidToken           = "invalid_token"
+	authOutcomeAccepted    authObservationOutcome = "accepted"
+	authOutcomeRejected    authObservationOutcome = "rejected"
+	authOutcomeUnavailable authObservationOutcome = "unavailable"
+
+	authCategoryStaticBearer           authObservationCategory = "static_bearer"
+	authCategoryValidatedIdentity      authObservationCategory = "validated_identity"
+	authCategoryMissingBearer          authObservationCategory = "missing_bearer"
+	authCategoryDuplicateAuthorization authObservationCategory = "duplicate_authorization"
+	authCategoryWrongAudience          authObservationCategory = "wrong_audience"
+	authCategoryWrongIssuer            authObservationCategory = "wrong_issuer"
+	authCategoryMalformed              authObservationCategory = "malformed"
+	authCategorySignature              authObservationCategory = "signature"
+	authCategoryUnknownKID             authObservationCategory = "unknown_kid"
+	authCategoryExpired                authObservationCategory = "expired"
+	authCategoryNotYetValid            authObservationCategory = "not_yet_valid"
+	authCategoryJWKSUnavailable        authObservationCategory = "jwks_unavailable"
+	authCategoryJWKSStale              authObservationCategory = "jwks_stale"
+	authCategoryInvalidToken           authObservationCategory = "invalid_token"
+
+	authTransportGRPC authObservationTransport = "grpc"
+	authTransportHTTP authObservationTransport = "http"
+
+	authStatusGRPCOK              authObservationStatus = "OK"
+	authStatusGRPCUnauthenticated authObservationStatus = "Unauthenticated"
+	authStatusGRPCUnavailable     authObservationStatus = "Unavailable"
+	authStatusHTTPOK              authObservationStatus = "200"
+	authStatusHTTPUnauthorized    authObservationStatus = "401"
+	authStatusHTTPUnavailable     authObservationStatus = "503"
 )
 
 // SecurityConfig configures the reusable authentication and rate-limiting
@@ -103,8 +125,10 @@ type SecurityConfig struct {
 	// a service-wide base identity, while API requests are subordinate paths and
 	// the request Host is untrusted; this middleware cannot prove an exact RFC
 	// 9728 resource identity for a request.
-	// Diagnostics receives sanitized authentication-rejection records. Nil leaves
-	// diagnostics disabled; records never include credentials or validator errors.
+	// Diagnostics receives sanitized authentication outcome records. Accepted
+	// outcomes are emitted once per closed category/transport pair; rejected and
+	// unavailable outcomes remain per-request. Nil leaves diagnostics disabled;
+	// records never include credentials or validator errors.
 	Diagnostics port.Diagnostics
 }
 
@@ -317,6 +341,33 @@ func clientKeyFromAddr(addr string) string {
 
 // --- gRPC interceptors ------------------------------------------------------
 
+// authAcceptedObservations bounds accepted authentication logging to one record
+// for every closed category/transport pair. sync.Once makes that boundary safe
+// when concurrent requests first use a pair.
+type authAcceptedObservations struct {
+	staticGRPC   sync.Once
+	staticHTTP   sync.Once
+	identityGRPC sync.Once
+	identityHTTP sync.Once
+}
+
+func (o *authAcceptedObservations) once(category authObservationCategory, transport authObservationTransport) *sync.Once {
+	switch {
+	case category == authCategoryStaticBearer && transport == authTransportGRPC:
+		return &o.staticGRPC
+	case category == authCategoryStaticBearer && transport == authTransportHTTP:
+		return &o.staticHTTP
+	case category == authCategoryValidatedIdentity && transport == authTransportGRPC:
+		return &o.identityGRPC
+	case category == authCategoryValidatedIdentity && transport == authTransportHTTP:
+		return &o.identityHTTP
+	default:
+		// Unknown pairs are deliberately unobserved: accepted authentication is
+		// bounded only for the closed category/transport matrix above.
+		return nil
+	}
+}
+
 // Authenticator bundles the configured auth + rate-limit policy and exposes the
 // gRPC interceptors and HTTP middleware that enforce it. Construct it once and
 // share it across both surfaces.
@@ -327,6 +378,9 @@ type Authenticator struct {
 	// It is separate from limiters so valid requests consume only their verified
 	// principal's post-validation bucket.
 	rejectedLimiters *limiterSet
+	// accepted is fixed-size (two categories × two transports), so successful
+	// authentication observability cannot grow with request volume.
+	accepted authAcceptedObservations
 	// closeOnce guards the optional validator teardown so a defer plus an
 	// explicit shutdown call cannot double-close.
 	closeOnce sync.Once
@@ -477,10 +531,10 @@ func identityStatus(err error) error {
 	return status.Error(codes.Unauthenticated, "missing or invalid bearer token")
 }
 
-func rejectionCategory(err error) string {
-	var categorized AuthenticationRejectionCategorizer
+func rejectionCategory(err error) authObservationCategory {
+	var categorized authenticationRejectionCategorizer
 	if errors.As(err, &categorized) {
-		switch category := categorized.AuthenticationRejectionCategory(); category {
+		switch category := authObservationCategory(categorized.AuthenticationRejectionCategory()); category {
 		case authCategoryWrongAudience, authCategoryWrongIssuer, authCategoryMalformed,
 			authCategorySignature, authCategoryUnknownKID, authCategoryExpired,
 			authCategoryNotYetValid, authCategoryJWKSUnavailable, authCategoryJWKSStale:
@@ -490,11 +544,23 @@ func rejectionCategory(err error) string {
 	return authCategoryInvalidToken
 }
 
-func (a *Authenticator) logRejection(ctx context.Context, category, transport, statusText string) {
+func (a *Authenticator) observeAuthentication(ctx context.Context, outcome authObservationOutcome, category authObservationCategory, transport authObservationTransport, statusText authObservationStatus) {
 	if a.cfg.Diagnostics == nil {
 		return
 	}
-	a.cfg.Diagnostics.Log(ctx, port.LevelWarn, "authentication rejected", "category", category, "transport", transport, "status", statusText)
+	level := port.LevelWarn
+	if outcome == authOutcomeAccepted {
+		once := a.accepted.once(category, transport)
+		if once == nil {
+			return
+		}
+		level = port.LevelInfo
+		once.Do(func() {
+			a.cfg.Diagnostics.Log(ctx, level, "authentication", "outcome", string(outcome), "category", string(category), "transport", string(transport), "status", string(statusText))
+		})
+		return
+	}
+	a.cfg.Diagnostics.Log(ctx, level, "authentication", "outcome", string(outcome), "category", string(category), "transport", string(transport), "status", string(statusText))
 }
 
 // authGRPC verifies the static bearer token (when configured) and the caller
@@ -503,7 +569,9 @@ func (a *Authenticator) logRejection(ctx context.Context, category, transport, s
 func (a *Authenticator) authGRPC(ctx context.Context) (string, *session.Principal, error) {
 	bearer, present, duplicate := tokenFromMetadata(ctx)
 	if duplicate {
-		a.logRejection(ctx, authCategoryDuplicateAuthorization, "grpc", codes.Unauthenticated.String())
+		if a.cfg.authEnabled() || a.cfg.identityConfigured() {
+			a.observeAuthentication(ctx, authOutcomeRejected, authCategoryDuplicateAuthorization, authTransportGRPC, authStatusGRPCUnauthenticated)
+		}
 		return "", nil, status.Error(codes.Unauthenticated, "duplicate authorization metadata")
 	}
 	staticTok := ""
@@ -513,7 +581,7 @@ func (a *Authenticator) authGRPC(ctx context.Context) (string, *session.Principa
 			if !present {
 				category = authCategoryMissingBearer
 			}
-			a.logRejection(ctx, category, "grpc", codes.Unauthenticated.String())
+			a.observeAuthentication(ctx, authOutcomeRejected, category, authTransportGRPC, authStatusGRPCUnauthenticated)
 			return "", nil, status.Error(codes.Unauthenticated, "missing or invalid bearer token")
 		}
 		staticTok = bearer
@@ -533,9 +601,20 @@ func (a *Authenticator) authGRPC(ctx context.Context) (string, *session.Principa
 			if errors.Is(err, ErrIdentityUnavailable) && category == authCategoryInvalidToken {
 				category = authCategoryJWKSUnavailable
 			}
-			a.logRejection(ctx, category, "grpc", status.Code(identityErr).String())
+			outcome := authOutcomeRejected
+			statusText := authStatusGRPCUnauthenticated
+			if errors.Is(err, ErrIdentityUnavailable) {
+				outcome = authOutcomeUnavailable
+				statusText = authStatusGRPCUnavailable
+			}
+			a.observeAuthentication(ctx, outcome, category, authTransportGRPC, statusText)
 		}
 		return "", nil, identityErr
+	}
+	if a.cfg.identityConfigured() {
+		a.observeAuthentication(ctx, authOutcomeAccepted, authCategoryValidatedIdentity, authTransportGRPC, authStatusGRPCOK)
+	} else if a.cfg.authEnabled() {
+		a.observeAuthentication(ctx, authOutcomeAccepted, authCategoryStaticBearer, authTransportGRPC, authStatusGRPCOK)
 	}
 	return staticTok, p, nil
 }
@@ -626,7 +705,7 @@ func (a *Authenticator) Middleware(next http.Handler) http.Handler {
 				if !present {
 					category = authCategoryMissingBearer
 				}
-				a.logRejection(r.Context(), category, "http", "401")
+				a.observeAuthentication(r.Context(), authOutcomeRejected, category, authTransportHTTP, authStatusHTTPUnauthorized)
 				w.Header().Set("WWW-Authenticate", protectedResourceChallenge())
 				writeError(w, http.StatusUnauthorized, "missing or invalid bearer token")
 				return
@@ -656,7 +735,7 @@ func (a *Authenticator) Middleware(next http.Handler) http.Handler {
 				if category == authCategoryInvalidToken {
 					category = authCategoryJWKSUnavailable
 				}
-				a.logRejection(r.Context(), category, "http", "503")
+				a.observeAuthentication(r.Context(), authOutcomeUnavailable, category, authTransportHTTP, authStatusHTTPUnavailable)
 				writeError(w, http.StatusServiceUnavailable, "identity provider unavailable")
 				return
 			}
@@ -664,10 +743,15 @@ func (a *Authenticator) Middleware(next http.Handler) http.Handler {
 			if !present {
 				category = authCategoryMissingBearer
 			}
-			a.logRejection(r.Context(), category, "http", "401")
+			a.observeAuthentication(r.Context(), authOutcomeRejected, category, authTransportHTTP, authStatusHTTPUnauthorized)
 			w.Header().Set("WWW-Authenticate", protectedResourceChallenge())
 			writeError(w, http.StatusUnauthorized, "missing or invalid bearer token")
 			return
+		}
+		if a.cfg.identityConfigured() {
+			a.observeAuthentication(r.Context(), authOutcomeAccepted, authCategoryValidatedIdentity, authTransportHTTP, authStatusHTTPOK)
+		} else if a.cfg.authEnabled() {
+			a.observeAuthentication(r.Context(), authOutcomeAccepted, authCategoryStaticBearer, authTransportHTTP, authStatusHTTPOK)
 		}
 		if a.limiters != nil {
 			var key string

@@ -69,6 +69,8 @@ var genericErrorEntry = errorCodeEntry{
 // switch it replaces, preserving every existing classification exactly. A map
 // would randomise iteration and silently reclassify wrapped sentinels.
 var errorRegistry = []errorCodeEntry{
+	{Sentinel: errConnectorUnavailable, Code: "mcp_connector_unavailable", GRPC: codes.FailedPrecondition, HTTPStatus: http.StatusConflict, Title: "Failed precondition"},
+	{Sentinel: errConnectorUnauthenticated, Code: "unauthenticated", GRPC: codes.Unauthenticated, HTTPStatus: http.StatusUnauthorized, Title: "Authentication required"},
 	{Sentinel: ErrManagementUnauthorized, Code: "management_unauthorized", GRPC: codes.PermissionDenied, HTTPStatus: http.StatusForbidden, Title: "Management authorization required"},
 	{Sentinel: ErrStorageHealthBackend, Code: "storage_health_backend", GRPC: codes.Internal, HTTPStatus: http.StatusInternalServerError, Title: "Storage health unavailable"},
 	{Sentinel: ErrMigrationUnsupported, Code: "migration_unsupported", GRPC: codes.Unimplemented, HTTPStatus: http.StatusNotImplemented, Title: "Session migration is not supported"},

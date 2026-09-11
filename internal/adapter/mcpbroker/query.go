@@ -48,7 +48,7 @@ func (*attachmentQueryTool) target(call session.ToolCall) (session.ToolCall, str
 	}
 	name := "mcp__" + server + "__" + toolName
 	if !strings.HasPrefix(name, "mcp__") || strings.Contains(server, "__") || strings.Contains(toolName, "__") {
-		return session.ToolCall{}, "", errors.New("CallMcpWithQuery target is invalid")
+		return session.ToolCall{}, "", errors.New(`the "tool" argument must be the bare remote tool name, without an "mcp__<server>__" prefix`)
 	}
 	return session.NewToolCall(call.ID, name, append(json.RawMessage(nil), remoteArgs...)), filter, nil
 }
@@ -72,11 +72,14 @@ func (t *attachmentQueryTool) RequestAuthorization(ctx context.Context, call ses
 	}
 	native, filter, err := t.target(call)
 	if err != nil {
-		return session.ExternalAuthorization{}, false, err
+		// Argument and route validation are local and have not started OAuth.
+		// Execute repeats the pure checks and returns a model-visible ToolResult.
+		return session.ExternalAuthorization{}, false, nil
 	}
 	target, err := t.native(ctx, native, filter)
 	if err != nil {
-		return session.ExternalAuthorization{}, false, err
+		// Route resolution is local too; preserve the normal tool-error path.
+		return session.ExternalAuthorization{}, false, nil
 	}
 	requester, ok := target.(tool.AuthorizationRequester)
 	if !ok {

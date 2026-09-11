@@ -110,6 +110,29 @@ func TestApplyEmptyEnvLeavesEmptyFields(t *testing.T) {
 	}
 }
 
+// TestExplicitlyEmptyBaseURLFlagsRegisterNoOverride proves the flag PRESENT with an empty
+// value (`--openai-base-url=`) is equivalent to omitting it entirely: EndpointOverrides
+// registers nothing, so the provider keeps its own default endpoint. This is the
+// invariant the slack-bot example's docker-compose.yml leans on — it passes
+// `--openai-base-url=${OPENAI_BASE_URL:-}`, which Compose interpolates to an empty
+// value when the operator configures no gateway. Distinct from
+// TestApplyEmptyEnvLeavesEmptyFields, which covers the flags being ABSENT.
+func TestExplicitlyEmptyBaseURLFlagsRegisterNoOverride(t *testing.T) {
+	fs := flag.NewFlagSet("t", flag.ContinueOnError)
+	pf := RegisterProviderFlags(fs, ProviderFlagHelp{})
+	if err := fs.Parse([]string{
+		"--openai-base-url=",
+		"--openrouter-base-url=",
+		"--anthropic-base-url=",
+		"--opencode-base-url=",
+	}); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if overrides := pf.EndpointOverrides(); len(overrides) != 0 {
+		t.Errorf("explicitly empty base-url flags must register no override; got %#v", overrides)
+	}
+}
+
 // TestReadProviderKeysIsTheSingleSeam proves ReadProviderKeys reads the same three env
 // vars Apply uses — the one definition both the guard path and the wiring path share.
 func TestReadProviderKeysIsTheSingleSeam(t *testing.T) {

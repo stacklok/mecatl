@@ -60,6 +60,7 @@ const (
 	HarnessService_ListMcpPrompts_FullMethodName                  = "/mecatl.v1.HarnessService/ListMcpPrompts"
 	HarnessService_GetMcpPrompt_FullMethodName                    = "/mecatl.v1.HarnessService/GetMcpPrompt"
 	HarnessService_ListMcpSources_FullMethodName                  = "/mecatl.v1.HarnessService/ListMcpSources"
+	HarnessService_ListSessionMcpConnectors_FullMethodName        = "/mecatl.v1.HarnessService/ListSessionMcpConnectors"
 	HarnessService_ListToolHiveGroups_FullMethodName              = "/mecatl.v1.HarnessService/ListToolHiveGroups"
 	HarnessService_ListAgents_FullMethodName                      = "/mecatl.v1.HarnessService/ListAgents"
 	HarnessService_ListCommands_FullMethodName                    = "/mecatl.v1.HarnessService/ListCommands"
@@ -201,6 +202,9 @@ type HarnessServiceClient interface {
 	// diagnostics it raised. Derived from the resolution snapshot taken at
 	// startup; it performs no live discovery.
 	ListMcpSources(ctx context.Context, in *ListMcpSourcesRequest, opts ...grpc.CallOption) (*ListMcpSourcesResponse, error)
+	// ListSessionMcpConnectors inspects the owned session's broker-local catalogue.
+	// This read neither probes upstreams nor progresses enrollment.
+	ListSessionMcpConnectors(ctx context.Context, in *ListSessionMcpConnectorsRequest, opts ...grpc.CallOption) (*ListSessionMcpConnectorsResponse, error)
 	// ListToolHiveGroups returns the distinct, non-empty ToolHive groups present
 	// in the resolved source inventory. Derived from the snapshot — it does NOT
 	// call ToolHive.
@@ -692,6 +696,16 @@ func (c *harnessServiceClient) ListMcpSources(ctx context.Context, in *ListMcpSo
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListMcpSourcesResponse)
 	err := c.cc.Invoke(ctx, HarnessService_ListMcpSources_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *harnessServiceClient) ListSessionMcpConnectors(ctx context.Context, in *ListSessionMcpConnectorsRequest, opts ...grpc.CallOption) (*ListSessionMcpConnectorsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListSessionMcpConnectorsResponse)
+	err := c.cc.Invoke(ctx, HarnessService_ListSessionMcpConnectors_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1383,6 +1397,9 @@ type HarnessServiceServer interface {
 	// diagnostics it raised. Derived from the resolution snapshot taken at
 	// startup; it performs no live discovery.
 	ListMcpSources(context.Context, *ListMcpSourcesRequest) (*ListMcpSourcesResponse, error)
+	// ListSessionMcpConnectors inspects the owned session's broker-local catalogue.
+	// This read neither probes upstreams nor progresses enrollment.
+	ListSessionMcpConnectors(context.Context, *ListSessionMcpConnectorsRequest) (*ListSessionMcpConnectorsResponse, error)
 	// ListToolHiveGroups returns the distinct, non-empty ToolHive groups present
 	// in the resolved source inventory. Derived from the snapshot — it does NOT
 	// call ToolHive.
@@ -1750,6 +1767,9 @@ func (UnimplementedHarnessServiceServer) GetMcpPrompt(context.Context, *GetMcpPr
 }
 func (UnimplementedHarnessServiceServer) ListMcpSources(context.Context, *ListMcpSourcesRequest) (*ListMcpSourcesResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListMcpSources not implemented")
+}
+func (UnimplementedHarnessServiceServer) ListSessionMcpConnectors(context.Context, *ListSessionMcpConnectorsRequest) (*ListSessionMcpConnectorsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListSessionMcpConnectors not implemented")
 }
 func (UnimplementedHarnessServiceServer) ListToolHiveGroups(context.Context, *ListToolHiveGroupsRequest) (*ListToolHiveGroupsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListToolHiveGroups not implemented")
@@ -2246,6 +2266,24 @@ func _HarnessService_ListMcpSources_Handler(srv interface{}, ctx context.Context
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(HarnessServiceServer).ListMcpSources(ctx, req.(*ListMcpSourcesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _HarnessService_ListSessionMcpConnectors_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListSessionMcpConnectorsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HarnessServiceServer).ListSessionMcpConnectors(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HarnessService_ListSessionMcpConnectors_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HarnessServiceServer).ListSessionMcpConnectors(ctx, req.(*ListSessionMcpConnectorsRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -3257,6 +3295,10 @@ var HarnessService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListMcpSources",
 			Handler:    _HarnessService_ListMcpSources_Handler,
+		},
+		{
+			MethodName: "ListSessionMcpConnectors",
+			Handler:    _HarnessService_ListSessionMcpConnectors_Handler,
 		},
 		{
 			MethodName: "ListToolHiveGroups",
