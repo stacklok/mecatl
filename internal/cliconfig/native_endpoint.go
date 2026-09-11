@@ -216,13 +216,17 @@ func (r *NativeEndpointRuntime) Login(ctx context.Context) error {
 func (r *NativeEndpointRuntime) Status(ctx context.Context) llmendpoint.Status {
 	repo, store, err := r.open(ctx, true)
 	if err != nil {
-		if errors.Is(err, credentialstore.ErrNotFound) {
-			return llmendpoint.StatusNotEnrolled
-		}
-		return llmendpoint.StatusStorageUnavailable
+		return nativeEndpointOpenStatus(err)
 	}
 	defer func() { _ = store.Close() }()
 	return r.lifecycle(repo).Status(ctx, r.identity, time.Now())
+}
+
+func nativeEndpointOpenStatus(err error) llmendpoint.Status {
+	if errors.Is(err, credentialstore.ErrNotFound) {
+		return llmendpoint.StatusNotEnrolled
+	}
+	return llmendpoint.StatusStorageUnavailable
 }
 
 // Logout deletes exact local state before bounded best-effort revocation.

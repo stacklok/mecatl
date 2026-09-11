@@ -274,6 +274,23 @@ func TestNativeLLMGatewayLogin_Scenario4_CredentialIdentityAndStorage(t *testing
 	}
 }
 
+func TestNativeLLMGatewayLogin_Scenario5_ProtectedStorePreservesAbsentKeyMaterial(t *testing.T) {
+	root := t.TempDir()
+	for name, keyErr := range map[string]error{
+		"absent":      credentialstore.ErrNotFound,
+		"unavailable": credentialstore.ErrUnavailable,
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := llmendpoint.NewProtectedStore(t.Context(), llmendpoint.ProtectedStoreConfig{
+				Root: root, Keyring: staticKeyring{err: keyErr}, ExistingOnly: true,
+			})
+			if !errors.Is(err, keyErr) {
+				t.Fatalf("NewProtectedStore error = %v, want %v", err, keyErr)
+			}
+		})
+	}
+}
+
 func TestNativeLLMGatewayLogin_Scenario5_TransactionLockOrderingAndConcurrency(t *testing.T) {
 	root := t.TempDir()
 	if err := os.Chmod(root, 0700); err != nil {
@@ -492,10 +509,13 @@ func loginFixture(t *testing.T, response map[string]any) (oidcclient.Config, fun
 	return cfg, srv.Close
 }
 
-type staticKeyring struct{ key []byte }
+type staticKeyring struct {
+	key []byte
+	err error
+}
 
 func (k staticKeyring) Key(context.Context, bool) ([]byte, error) {
-	return append([]byte(nil), k.key...), nil
+	return append([]byte(nil), k.key...), k.err
 }
 
 type trackingLocker struct {

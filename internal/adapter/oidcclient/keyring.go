@@ -15,6 +15,8 @@ import (
 
 	"github.com/gofrs/flock"
 	keyringapi "github.com/zalando/go-keyring"
+
+	"github.com/stacklok/mecatl/internal/adapter/credentialstore"
 )
 
 const (
@@ -68,7 +70,10 @@ func (k *Keyring) Key(ctx context.Context, create bool) ([]byte, error) {
 	if err == nil {
 		return decodeKey(encoded)
 	}
-	if !errors.Is(err, keyringapi.ErrNotFound) || !create {
+	if errors.Is(err, keyringapi.ErrNotFound) && !create {
+		return nil, credentialstore.ErrNotFound
+	}
+	if err != nil {
 		return nil, fmt.Errorf("%w: OIDC keyring entry is unavailable", ErrStorage)
 	}
 	key := make([]byte, 32)

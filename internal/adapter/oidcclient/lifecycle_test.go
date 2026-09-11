@@ -7,15 +7,39 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
 
+	keyringapi "github.com/zalando/go-keyring"
 	"golang.org/x/oauth2"
 
+	"github.com/stacklok/mecatl/internal/adapter/credentialstore"
 	"github.com/stacklok/mecatl/internal/adapter/oidcclient"
 	"github.com/stacklok/mecatl/mcp/oauthlogin"
 )
+
+func TestKeyringExistingOnlyDistinguishesAbsentEntryFromBackendFailure(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Chmod(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+
+	keyringapi.MockInit()
+	keyring, err := oidcclient.NewKeyring(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := keyring.Key(t.Context(), false); !errors.Is(err, credentialstore.ErrNotFound) {
+		t.Fatalf("missing keyring entry = %v, want credentialstore.ErrNotFound", err)
+	}
+
+	keyringapi.MockInitWithError(errors.New("keyring backend unavailable"))
+	if _, err := keyring.Key(t.Context(), false); !errors.Is(err, oidcclient.ErrStorage) || errors.Is(err, credentialstore.ErrNotFound) {
+		t.Fatalf("keyring backend failure = %v, want storage error only", err)
+	}
+}
 
 func TestValidateAccessTokenAllowsOmittedAudience(t *testing.T) {
 	var issuer *httptest.Server
