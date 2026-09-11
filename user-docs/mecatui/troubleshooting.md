@@ -23,7 +23,12 @@ Do not put provider secrets in command-line flags. For provider credentials and 
 Native **LLM endpoint** lifecycle is local embedded-mode operator work: run
 `mecatui llm status ENDPOINT` to inspect configured state without a browser, refresh,
 or network request, then run `mecatui llm login ENDPOINT` from embedded mecatui if the
-operator must enroll it. A connected client cannot enroll the remote server. Confirm
+operator must enroll it. In Toolbx, SSH, or another environment that cannot launch a
+browser, use `mecatui llm login ENDPOINT --no-browser`: Mecatui prints the authorization
+URL to stderr and waits up to five minutes for the existing fixed loopback callback. Open
+the URL in a browser that can return that callback to the machine running Mecatui.
+ToolHive is separate and retains `mecatui llm login toolhive --skip-browser`; do not swap
+the two flags. A connected client cannot enroll the remote server. Confirm
 that the remote server operator configured the exact endpoint and its explicit
 credential home; do not add a token to client flags or expect a fallback to ToolHive.
 A missing record is `not-enrolled`/unavailable, and a configured default without a

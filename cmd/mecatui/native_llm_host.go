@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"io"
 	"slices"
 
 	"github.com/stacklok/mecatl/internal/adapter/llmendpoint"
@@ -15,6 +16,8 @@ import (
 type configuredNativeLLMHost struct {
 	definitions permconfig.ProviderDefinitions
 	runtimes    map[string]nativeEndpointRuntime
+	noBrowser   bool
+	urlWriter   io.Writer
 }
 
 type nativeEndpointRuntime interface {
@@ -24,9 +27,9 @@ type nativeEndpointRuntime interface {
 	Close() error
 }
 
-var openNativeEndpointRuntime = func(_ context.Context, definition permconfig.ProviderDefinition) (nativeEndpointRuntime, error) {
+var openNativeEndpointRuntime = func(_ context.Context, definition permconfig.ProviderDefinition, noBrowser bool, urlWriter io.Writer) (nativeEndpointRuntime, error) {
 	present := func(ctx context.Context, authorizationURL string) (oauthlogin.Result, error) {
-		runtime, err := oauthlogin.New(oauthlogin.Options{RedirectURL: oauthlogin.ExactRedirectURL})
+		runtime, err := oauthlogin.New(nativeLLMOAuthOptions(noBrowser, urlWriter))
 		if err != nil {
 			return oauthlogin.Result{}, err
 		}
@@ -41,7 +44,16 @@ var openNativeEndpointRuntime = func(_ context.Context, definition permconfig.Pr
 	return cliconfig.OpenNativeEndpointRuntime(definition, present)
 }
 
-func newNativeLLMHost(_ context.Context) (nativeLLMHost, error) {
+func nativeLLMOAuthOptions(noBrowser bool, urlWriter io.Writer) oauthlogin.Options {
+	opts := oauthlogin.Options{RedirectURL: oauthlogin.ExactRedirectURL}
+	if noBrowser {
+		opts.NoBrowser = true
+		opts.URLWriter = urlWriter
+	}
+	return opts
+}
+
+func newNativeLLMHost(_ context.Context, noBrowser bool, urlWriter io.Writer) (nativeLLMHost, error) {
 	resolver := permconfig.NewWithEnv(permconfig.Options{Conventional: true}, xdgconfig.OSEnv)
 	definitions, _, err := resolver.OperatorProviders()
 	if err != nil {
@@ -53,7 +65,12 @@ func newNativeLLMHost(_ context.Context) (nativeLLMHost, error) {
 			native[id] = definition
 		}
 	}
-	return &configuredNativeLLMHost{definitions: native, runtimes: make(map[string]nativeEndpointRuntime)}, nil
+	return &configuredNativeLLMHost{
+		definitions: native,
+		runtimes:    make(map[string]nativeEndpointRuntime),
+		noBrowser:   noBrowser,
+		urlWriter:   urlWriter,
+	}, nil
 }
 
 func (h *configuredNativeLLMHost) EndpointIDs() []string {
@@ -73,7 +90,7 @@ func (h *configuredNativeLLMHost) runtime(ctx context.Context, id string) (nativ
 	if !ok {
 		return nil, errors.New("unknown native LLM endpoint")
 	}
-	runtime, err := openNativeEndpointRuntime(ctx, definition)
+	runtime, err := openNativeEndpointRuntime(ctx, definition, h.noBrowser, h.urlWriter)
 	if err != nil {
 		return nil, err
 	}

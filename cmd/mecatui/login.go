@@ -553,19 +553,22 @@ var (
 
 func runLLMCommand(res invocationResolution) error {
 	if len(res.remaining) == 1 && isHelpMetaFlag(res.remaining[0]) {
-		fmt.Fprintln(os.Stderr, "Usage: mecatui llm config set ENDPOINT [flags] | mecatui llm login ENDPOINT | mecatui llm status [ENDPOINT] | mecatui llm logout ENDPOINT")
+		fmt.Fprintln(os.Stderr, "Usage: mecatui llm config set ENDPOINT [flags] | mecatui llm login ENDPOINT [--no-browser] | mecatui llm status [ENDPOINT] | mecatui llm logout ENDPOINT")
+		fmt.Fprintln(os.Stderr, "Native endpoint login: --no-browser prints the authorization URL to stderr and waits for the fixed loopback callback.")
+		fmt.Fprintln(os.Stderr, "ToolHive login: mecatui llm login toolhive [--skip-browser]")
 		return flag.ErrHelp
 	}
 	if res.llmDeprecatedAlias {
 		fmt.Fprintln(os.Stderr, "WARNING: bare `mecatui llm login` is deprecated; use `mecatui llm login toolhive`")
 	}
 	skipBrowser := len(res.remaining) == 1 && res.remaining[0] == "--skip-browser"
+	noBrowser := len(res.remaining) == 1 && res.remaining[0] == "--no-browser"
 	ctx, cancel := newNativeLLMEnrollmentContext(nativeLLMEnrollmentTimeout)
 	defer cancel()
 	if res.llmEndpoint == toolHiveEndpointID {
 		return runNativeLLMCommand(ctx, res.llmAction, res.llmEndpoint, skipBrowser, nil, os.Stdout, os.Stderr)
 	}
-	host, err := openNativeLLMHost(ctx)
+	host, err := openNativeLLMHost(ctx, noBrowser, os.Stderr)
 	if err != nil {
 		return errors.New("native LLM endpoint lifecycle is unavailable")
 	}

@@ -37,7 +37,8 @@ are migrated. When `resource_audience` is omitted, Mecatl
 omits the authorization request parameter and does not require an audience during local
 access-token validation; a configured value remains strictly requested and matched. The
 native credential is encrypted and keyring-backed under that configured home. `mecated` never
-opens a browser: enroll with embedded `mecatui llm login ENDPOINT`, then start or
+opens a browser: enroll with embedded `mecatui llm login ENDPOINT` (add `--no-browser`
+to print the authorization URL to stderr and wait for the fixed loopback callback), then start or
 restart mecated to use the same record. A missing record leaves an optional endpoint
 `not-enrolled`/unavailable, fails startup when it is the effective default, and never
 falls back to another endpoint or ToolHive.

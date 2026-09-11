@@ -48,12 +48,16 @@ PKI, add `--issuer-ca-bundle PATH` and/or `--gateway-ca-bundle PATH`. Add repeat
 use `--resource-audience VALUE` only when the issuer requires one.
 
 Manage credentials for a locally configured native LLM endpoint with
-`mecatui llm login ENDPOINT`, inspect them with `mecatui llm status [ENDPOINT]`,
+`mecatui llm login ENDPOINT`; add `--no-browser` to print the authorization URL
+to stderr and wait for the same fixed loopback callback when the current environment cannot
+launch a browser. Inspect credentials with `mecatui llm status [ENDPOINT]`,
 and remove them with `mecatui llm logout ENDPOINT`. ToolHive remains compatible
-through the reserved `toolhive` endpoint. Only `mecatui llm login toolhive`
-supports `--skip-browser`; the one-release bare `mecatui llm login` alias warns
+through the reserved `toolhive` endpoint and keeps its established
+`mecatui llm login toolhive --skip-browser` spelling; `--no-browser` is for native
+endpoints, not ToolHive. The one-release bare `mecatui llm login` alias warns
 and remains ToolHive-only. Login confirmations go to stderr, and Mecatl never
-prints a gateway token; stdout consumers must use ToolHive's explicit
+prints access or refresh tokens, authorization codes, credential paths, or other
+credential material; stdout consumers must use ToolHive's explicit
 `thv llm token` tooling.
 
 Follow [Connect to a server](./remote-servers.md) when you are ready to move the

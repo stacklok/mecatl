@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"flag"
 	"fmt"
+	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +15,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/credentialstore"
 	"github.com/stacklok/mecatl/internal/adapter/llmendpoint"
 	"github.com/stacklok/mecatl/internal/adapter/oidcclient"
+	"github.com/stacklok/mecatl/mcp/oauthlogin"
 )
 
 type fakeNativeLLMHost struct {
@@ -93,6 +97,7 @@ func TestNativeLLMGatewayLogin_Scenario6_CommandGrammarAndCopy(t *testing.T) {
 		action, endpoint string
 	}{
 		{[]string{"mecatui", "llm", "login", "corp"}, "login", "corp"},
+		{[]string{"mecatui", "llm", "login", "corp", "--no-browser"}, "login", "corp"},
 		{[]string{"mecatui", "llm", "status"}, "status", ""},
 		{[]string{"mecatui", "llm", "status", "corp"}, "status", "corp"},
 		{[]string{"mecatui", "llm", "logout", "corp"}, "logout", "corp"},
@@ -103,16 +108,88 @@ func TestNativeLLMGatewayLogin_Scenario6_CommandGrammarAndCopy(t *testing.T) {
 			t.Fatalf("resolve %v = %+v", tc.args, got)
 		}
 	}
-	for _, args := range [][]string{{"mecatui", "llm", "logout"}, {"mecatui", "llm", "login", "corp", "extra"}, {"mecatui", "llm", "status", "corp", "extra"}} {
+	for _, args := range [][]string{
+		{"mecatui", "llm", "logout"},
+		{"mecatui", "llm", "login", "corp", "extra"},
+		{"mecatui", "llm", "login", "corp", "--skip-browser"},
+		{"mecatui", "llm", "login", "toolhive", "--no-browser"},
+		{"mecatui", "llm", "login", "corp", "--no-browser", "--no-browser"},
+		{"mecatui", "llm", "status", "corp", "extra"},
+	} {
 		if got := resolveInvocation(args); got.err == nil {
 			t.Fatalf("invalid grammar accepted: %v", args)
 		}
 	}
 	var help bytes.Buffer
 	writeTopLevelHelp(&help)
-	for _, want := range []string{"mecatui login ADDRESS", "ToolHive MCP", "openai-codex", "llm login ENDPOINT", "llm status [ENDPOINT]", "llm logout ENDPOINT"} {
+	for _, want := range []string{"mecatui login ADDRESS", "ToolHive MCP", "openai-codex", "llm login ENDPOINT [--no-browser]", "llm status [ENDPOINT]", "llm logout ENDPOINT"} {
 		if !strings.Contains(help.String(), want) {
 			t.Fatalf("help missing %q:\n%s", want, help.String())
+		}
+	}
+}
+
+func TestNativeLLMGatewayLogin_CommandHelpDistinguishesBrowserFlags(t *testing.T) {
+	output := captureStderr(t, func() {
+		err := runLLMCommand(invocationResolution{remaining: []string{"--help"}})
+		if !errors.Is(err, flag.ErrHelp) {
+			t.Fatalf("runLLMCommand help error = %v", err)
+		}
+	})
+	for _, want := range []string{
+		"llm login ENDPOINT [--no-browser]",
+		"--no-browser prints the authorization URL to stderr",
+		"llm login toolhive [--skip-browser]",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("command help missing %q:\n%s", want, output)
+		}
+	}
+}
+
+func TestNativeLLMGatewayLogin_NoBrowserUsesFixedLoopbackPresenter(t *testing.T) {
+	const (
+		issuer           = "https://issuer.example.test"
+		authorizationURL = issuer + "/authorize?state=state-canary"
+	)
+	var stderr bytes.Buffer
+	opts := nativeLLMOAuthOptions(true, &stderr)
+	if !opts.NoBrowser || opts.URLWriter != &stderr || opts.RedirectURL != oauthlogin.ExactRedirectURL {
+		t.Fatalf("native no-browser OAuth options = %+v", opts)
+	}
+	runtime, err := oauthlogin.New(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = runtime.Authorize(t.Context(), issuer, func(ctx context.Context, redirect string, present func(context.Context, string) (oauthlogin.Result, error)) error {
+		callback, parseErr := url.Parse(redirect)
+		if parseErr != nil {
+			return parseErr
+		}
+		query := callback.Query()
+		query.Set("code", "authorization-code-canary")
+		query.Set("state", "state-canary")
+		query.Set("iss", issuer)
+		callback.RawQuery = query.Encode()
+		go func() {
+			response, requestErr := http.Get(callback.String()) //nolint:gosec // Fixed loopback URL from the OAuth runtime.
+			if requestErr == nil {
+				_ = response.Body.Close()
+			}
+		}()
+		_, presentErr := present(ctx, authorizationURL)
+		return presentErr
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := stderr.String()
+	if strings.Count(output, authorizationURL) != 1 || !strings.Contains(output, "callback must reach this machine") {
+		t.Fatalf("native no-browser output = %q", output)
+	}
+	for _, secret := range []string{"authorization-code-canary", "access-token-canary", "refresh-token-canary", "/credential/path/canary"} {
+		if strings.Contains(output, secret) {
+			t.Fatalf("native no-browser output disclosed %q: %q", secret, output)
 		}
 	}
 }

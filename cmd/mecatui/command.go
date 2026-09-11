@@ -99,7 +99,7 @@ var topLevelCommands = []topLevelCommand{
 	{
 		name:     "llm",
 		synopsis: "llm <config|login|status|logout> [args]",
-		purpose:  "configure and manage native LLM endpoints; use endpoint 'toolhive' only for ToolHive login",
+		purpose:  "configure and manage native LLM endpoints; native login accepts --no-browser, while endpoint 'toolhive' retains --skip-browser",
 		resolve:  resolveLLMCommand,
 	},
 }
@@ -249,7 +249,7 @@ func resolveRemoteLogoutCommand(args []string) invocationResolution {
 
 //nolint:gocyclo // Exact command grammar keeps each accepted form explicit.
 func resolveLLMCommand(args []string) invocationResolution {
-	const usage = "llm: usage: mecatui llm config set ENDPOINT [flags] | mecatui llm login ENDPOINT | mecatui llm status [ENDPOINT] | mecatui llm logout ENDPOINT"
+	const usage = "llm: usage: mecatui llm config set ENDPOINT [flags] | mecatui llm login ENDPOINT [--no-browser] | mecatui llm status [ENDPOINT] | mecatui llm logout ENDPOINT"
 	if len(args) == 1 && isHelpMetaFlag(args[0]) {
 		return invocationResolution{mode: modeLogin, remaining: args}
 	}
@@ -279,10 +279,10 @@ func resolveLLMCommand(args []string) invocationResolution {
 			}
 			return invocationResolution{mode: modeLogin, llmAction: action, llmEndpoint: args[1], remaining: args[2:]}
 		}
-		if len(args) != 2 || strings.HasPrefix(args[1], "-") {
+		if len(args) != 2 && len(args) != 3 || strings.HasPrefix(args[1], "-") || len(args) == 3 && args[2] != "--no-browser" {
 			return invocationResolution{err: errors.New(usage)}
 		}
-		return invocationResolution{mode: modeLogin, llmAction: action, llmEndpoint: args[1]}
+		return invocationResolution{mode: modeLogin, llmAction: action, llmEndpoint: args[1], remaining: args[2:]}
 	case llmActionStatus:
 		if len(args) > 2 || len(args) == 2 && strings.HasPrefix(args[1], "-") {
 			return invocationResolution{err: errors.New(usage)}
@@ -398,7 +398,7 @@ func writeTopLevelHelp(out io.Writer) {
 	_, _ = fmt.Fprintln(out)
 	writeCommandSummary(out)
 	_, _ = fmt.Fprintln(out, "\nNative LLM configuration: mecatui llm config set ENDPOINT [flags]")
-	_, _ = fmt.Fprintln(out, "Native LLM lifecycle: mecatui llm login ENDPOINT | mecatui llm status [ENDPOINT] | mecatui llm logout ENDPOINT")
+	_, _ = fmt.Fprintln(out, "Native LLM lifecycle: mecatui llm login ENDPOINT [--no-browser] | mecatui llm status [ENDPOINT] | mecatui llm logout ENDPOINT")
 	_, _ = fmt.Fprintln(out, "Remote mecatui uses `mecatui login ADDRESS`; ToolHive MCP discovery and manual openai-codex authentication are separate.")
 	_, _ = fmt.Fprintln(out, "\nHelp: mecatui --help, mecatui -h, or mecatui help")
 	_, _ = fmt.Fprintln(out, "      mecatui help <command> aliases mecatui <command> --help")
