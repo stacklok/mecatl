@@ -93,6 +93,14 @@ func (s *Service) NeedsRehydrationForTest(sess *session.Session) bool {
 	return s.needsRehydration(sess)
 }
 
+// SetSteerPromotionRegisteredForTest installs an inert callback invoked after a
+// promoted steer has registered its replacement run. Configure it before serving.
+func (s *Service) SetSteerPromotionRegisteredForTest(fn func()) {
+	s.mu.Lock()
+	s.steerPromotionRegistered = fn
+	s.mu.Unlock()
+}
+
 // SteerOutcomeToProtoForTest exposes the unexported steerOutcomeToProto mapper
 // so the full-matrix test can assert every agent.SteerOutcome arm.
 func SteerOutcomeToProtoForTest(o agent.SteerOutcome) mecatlv1.SteerOutcome {

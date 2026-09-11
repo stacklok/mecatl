@@ -394,13 +394,12 @@ func TestCancelChildPersistResumeRoundTrip(t *testing.T) {
 
 // TestCancelChildNaturalCompletionRace drives CancelChild concurrently with the
 // child's natural completion, repeatedly: whichever wins, the run terminates, the
-// registry never double-closes, and the Subagent result is one of EXACTLY TWO legal
-// renderings — the cancelled-by-user note, or the plain child answer — ALWAYS
-// carrying the resumable agentId trailer. Odd iterations sync the cancel on
-// EvSubagentStart so the live window (registered, possibly mid-drive) is genuinely
-// exercised; even iterations fire immediately (the not-yet-known/already-done
-// edges). Run with -race this pins the registry's concurrency contract at the Run
-// level.
+// registry never double-closes. Odd iterations synchronize cancellation on
+// EvSubagentStart, so they must render either the cancelled-by-user note or the
+// plain child answer, both with the resumable agentId trailer. Even iterations
+// fire immediately and additionally allow the supported queued-before-slot
+// cancellation error. Run with -race this pins the registry's concurrency
+// contract at the Run level.
 func TestCancelChildNaturalCompletionRace(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		childLLM := mockllm.New(mockllm.TextTurn("child: quick answer"))
@@ -438,11 +437,17 @@ func TestCancelChildNaturalCompletionRace(t *testing.T) {
 		if got := lastResult(t, evs); got.Stop == session.StopError {
 			t.Fatalf("iteration %d: run must never fail under the race: %q", i, got.Error)
 		}
-		// EXACTLY two legal renderings, both with the trailer.
 		res := subagentResultOf(t, evs)
+		// The immediate-cancel iterations can also catch a registered child while
+		// it waits to acquire its concurrency slot. That supported pre-start path
+		// is a tool error because no child drive ran (TestCancelChildMidGateWait).
 		if res.IsError {
-			t.Fatalf("iteration %d: the Subagent result must never be a tool error under the race: %q", i, res.Content)
+			if !syncOnStart && res.Content == "Subagent: subagent was cancelled by the user while waiting for a concurrency slot" {
+				continue
+			}
+			t.Fatalf("iteration %d: unexpected Subagent tool error under the race: %q", i, res.Content)
 		}
+		// Started children have exactly two legal renderings, both with the trailer.
 		if !strings.Contains(res.Content, "agentId: subagent-s1-p1") {
 			t.Fatalf("iteration %d: result must carry the resumable trailer, got %q", i, res.Content)
 		}

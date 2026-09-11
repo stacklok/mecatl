@@ -916,9 +916,12 @@ type Service struct {
 	// It is configured before serving and runs while the continuation handoff lock
 	// is held, immediately before cancellation is disarmed.
 	beforeAuthorizationContinuationStart func()
-	closed                               bool
-	shutdownComplete                     bool
-	closeMu                              sync.Mutex
+	// steerPromotionRegistered is an inert test synchronization seam. It runs
+	// after a promoted steer has registered its replacement run.
+	steerPromotionRegistered func()
+	closed                   bool
+	shutdownComplete         bool
+	closeMu                  sync.Mutex
 	// sessionEnvironments holds per-session Environment OVERRIDES. When an entry
 	// is present for a session id, StartRun uses it as the COMPLETE execution
 	// environment (Workspace + optional bound CommandRunner + accurate ref) instead
@@ -4724,6 +4727,7 @@ func (s *Service) Steer(ctx context.Context, id session.SessionID, text string, 
 func (s *Service) promotedSteerRun(ctx context.Context, id session.SessionID, text string, parts []session.Content, generation runEntryGeneration) (*agent.Run, error) {
 	run, err := s.startRunContent(ctx, id, text, parts, runPurposeChat, generation, false)
 	if err == nil {
+		s.notifySteerPromotionRegistered()
 		return run, nil // no live run blocked the entry — promoted immediately
 	}
 	if !errors.Is(err, ErrFailedPrecondition) {
@@ -4742,7 +4746,20 @@ func (s *Service) promotedSteerRun(ctx context.Context, id session.SessionID, te
 	// Registry cleared: the original relay finished and the run's final terminal
 	// state is durable. Drive the follow-up through the hardened funnel, which
 	// now sees the terminal state and reopens it.
-	return s.startRunContent(ctx, id, text, parts, runPurposeChat, generation, false)
+	run, err = s.startRunContent(ctx, id, text, parts, runPurposeChat, generation, false)
+	if err == nil {
+		s.notifySteerPromotionRegistered()
+	}
+	return run, err
+}
+
+func (s *Service) notifySteerPromotionRegistered() {
+	s.mu.Lock()
+	notify := s.steerPromotionRegistered
+	s.mu.Unlock()
+	if notify != nil {
+		notify()
+	}
 }
 
 // CancelSteer retracts the session's live run's PENDING (un-drained) steer,
