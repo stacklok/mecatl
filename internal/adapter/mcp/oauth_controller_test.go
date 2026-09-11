@@ -472,7 +472,11 @@ func TestServerRetainsOAuthHandlerAcrossReconnectAndRejectsStaticAuthorization(t
 		t.Fatal(err)
 	}
 	server := connectTest(t, ServerConfig{Name: "oauth-public", URL: resource, OAuth: &opts})
-	resourceTransport, ok := server.httpClient.Transport.(oauthResourceRoundTripper)
+	monitor, ok := server.httpClient.Transport.(*sseMonitorRoundTripper)
+	if !ok {
+		t.Fatal("OAuth MCP resource client did not install the SSE monitor")
+	}
+	resourceTransport, ok := monitor.base.(oauthResourceRoundTripper)
 	if !ok || resourceTransport.base != server.oauth.transport {
 		t.Fatal("OAuth MCP resource client did not reuse the pinned OAuth transport")
 	}
@@ -507,7 +511,11 @@ func TestServerRetainsOAuthHandlerAcrossReconnectAndRejectsStaticAuthorization(t
 	if server.oauth.handler != handler {
 		t.Fatal("reconnect replaced the official OAuth handler")
 	}
-	resourceTransport, ok = server.httpClient.Transport.(oauthResourceRoundTripper)
+	monitor, ok = server.httpClient.Transport.(*sseMonitorRoundTripper)
+	if !ok {
+		t.Fatal("reconnect removed the SSE monitor")
+	}
+	resourceTransport, ok = monitor.base.(oauthResourceRoundTripper)
 	if !ok || resourceTransport.base != server.oauth.transport {
 		t.Fatal("reconnect replaced the pinned OAuth resource transport")
 	}

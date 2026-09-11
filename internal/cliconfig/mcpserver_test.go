@@ -521,6 +521,74 @@ func TestMCPServerListServersNilSafe(t *testing.T) {
 	}
 }
 
+// TestMCPServerListDisableNotificationsEnv pins the ADR 0326 GET-hostile
+// gateway opt-out: MCP_<NAME>_DISABLE_NOTIFICATIONS (the same name-derived env
+// convention as the token) sets ServerConfig.DisableNotifications on that
+// server only. Unset = default (stream on); a value that does not parse as a
+// bool is a fail-loud Finalize error, never a silent default.
+func TestMCPServerListDisableNotificationsEnv(t *testing.T) {
+	t.Run("set true disables the stream on that server only", func(t *testing.T) {
+		t.Setenv("MCP_VMCP_DISABLE_NOTIFICATIONS", "true")
+		fs, list := newMCPFlagSet(t)
+		err := fs.Parse([]string{
+			"--mcp-server", "vmcp=https://vmcp.internal/mcp",
+			"--mcp-server", "tequitl=https://tequitl.internal/mcp",
+		})
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		mustFinalize(t, list)
+		got := list.Servers()
+		if len(got) != 2 {
+			t.Fatalf("Servers() len = %d, want 2", len(got))
+		}
+		if !got[0].DisableNotifications {
+			t.Errorf("vmcp DisableNotifications = false, want true (MCP_VMCP_DISABLE_NOTIFICATIONS=true)")
+		}
+		if got[1].DisableNotifications {
+			t.Errorf("tequitl DisableNotifications = true, want false (env var is per-server)")
+		}
+	})
+
+	t.Run("explicit false keeps the stream on", func(t *testing.T) {
+		t.Setenv("MCP_VMCP_DISABLE_NOTIFICATIONS", "false")
+		fs, list := newMCPFlagSet(t)
+		if err := fs.Parse([]string{"--mcp-server", "vmcp=https://vmcp.internal/mcp"}); err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		mustFinalize(t, list)
+		if got := list.Servers(); len(got) != 1 || got[0].DisableNotifications {
+			t.Errorf("Servers() = %+v, want one entry with DisableNotifications false", got)
+		}
+	})
+
+	t.Run("unparseable value fails Finalize loudly", func(t *testing.T) {
+		t.Setenv("MCP_VMCP_DISABLE_NOTIFICATIONS", "ture")
+		fs, list := newMCPFlagSet(t)
+		if err := fs.Parse([]string{"--mcp-server", "vmcp=https://vmcp.internal/mcp"}); err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		err := list.Finalize()
+		if err == nil {
+			t.Fatal("unparseable bool: want Finalize error, got nil (a typo must not silently keep the churny stream)")
+		}
+		if !strings.Contains(err.Error(), "MCP_VMCP_DISABLE_NOTIFICATIONS") {
+			t.Errorf("error = %q, want it to name MCP_VMCP_DISABLE_NOTIFICATIONS", err)
+		}
+	})
+
+	t.Run("unset defaults to stream on", func(t *testing.T) {
+		fs, list := newMCPFlagSet(t)
+		if err := fs.Parse([]string{"--mcp-server", "vmcp=https://vmcp.internal/mcp"}); err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		mustFinalize(t, list)
+		if got := list.Servers(); len(got) != 1 || got[0].DisableNotifications {
+			t.Errorf("Servers() = %+v, want the default (DisableNotifications false)", got)
+		}
+	})
+}
+
 // TestRegisterMCPServerFlagHelp proves the registration uses the canonical
 // flag names and, absent an override, the shared default help texts — the one
 // mecated carried before the extraction — so the three mains cannot drift.

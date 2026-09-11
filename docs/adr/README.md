@@ -197,6 +197,8 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0312 — Confidential ToolHive broker client credentials](./0312-confidential-toolhive-broker-client.md)
 - [0314 — Dynamic Client Registration for MCP broker upstreams](./0314-mcp-broker-dcr-client.md)
 - [0325 — Durable Dynamic Client Registration for direct MCP profiles](./0325-direct-mcp-dcr.md) *(proposed)*
+- [0326 — Per-server opt-out of the standalone SSE stream](./0326-mcp-standalone-sse-opt-out.md)
+- [0327 — Automatic detection of a GET-hostile standalone SSE stream](./0327-mcp-standalone-sse-auto-degradation.md)
 
 ### Performance & diagnostics
 - [0018 — Perf observability](./0018-perf-observability.md)

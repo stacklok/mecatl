@@ -232,6 +232,25 @@ supported yet. If a server drops a tool an existing session still has
 registered, calling it surfaces an error the model can react to, rather than
 the tool silently vanishing.
 
+### GET-hostile gateways
+
+Some gateways close or reject the notification connection while still handling
+normal tool calls fine. mecatl detects consecutive standalone-GET failures
+(including rejected/non-SSE responses and empty fast-closing SSE streams) and
+falls back to request/response only for that server — the only effect is that
+server's tool/prompt/resource list stops auto-refreshing on change. The
+automatic fallback is sticky for the running process: `false` or an unset
+`MCP_<NAME>_DISABLE_NOTIFICATIONS` does not force-enable the stream after it
+has been disabled automatically. Restart mecatl to begin a fresh detection
+window.
+
+If you already know a gateway is GET-hostile, set
+`MCP_<NAME>_DISABLE_NOTIFICATIONS=true` (same naming convention as
+`MCP_<NAME>_TOKEN`) before starting mecatl. `true` is a manual opt-out that
+skips the standalone notification stream entirely; it is not a tri-state
+override for the automatic verdict. See [ADR 0326](https://github.com/stacklok/mecatl/blob/main/docs/adr/0326-mcp-standalone-sse-opt-out.md)
+and [ADR 0327](https://github.com/stacklok/mecatl/blob/main/docs/adr/0327-mcp-standalone-sse-auto-degradation.md).
+
 ---
 
 ## Authentication and credentials

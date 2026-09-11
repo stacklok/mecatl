@@ -62,7 +62,7 @@ record; current behaviour is in the linked [architecture](../architecture.md) do
 | **OIDC caller identity** | ✅ attribution via shipped `toolhive-core/authn` v0.0.39; ✅ default 1h JWKS-staleness bound (503 after an unavailable refresh); ⛔ per-caller authorization/isolation (#368); ⛔ per-token revocation | `--oidc-max-jwks-staleness=0` deliberately restores unbounded cached-key availability; JWKS cache is process-local and reconstructible, never persisted. |
 | OS-level sandbox (process trust) | ⏸️ Deferred | Explicitly deferred (2026-05-29). The `CommandRunner` port is the seam; a Landlock(+seccomp) wrapper drops in later without touching the loop. Shell is also fully optional (shell-less deploys avoid the surface entirely), so this is not a blocker for those. |
 | Secrets handling (no key logging) | ✅ | key via env, never logged |
-| MCP transport restriction (no stdio) | ✅ | streaming-HTTP only; standalone SSE GET enabled for server-initiated notifications (ADR 0057) |
+| MCP transport restriction (no stdio) | ✅ | streaming-HTTP only; standalone SSE GET enabled for server-initiated notifications (ADR 0057), per-server opt-out for GET-hostile gateways (ADR 0226) |
 | Supply-chain hygiene (per-module vuln scan, dependabot, SHA-pinned actions) | ✅ | per-module `govulncheck` (engine STRICT, no allowlist / root fail-closed reachable-vuln gate via `.github/scripts/govulncheck-gate.go` + a documented 2-CVE docker allowlist reachable only through `internal/` ToolHive); `.github/dependabot.yml` for both modules + github-actions; every action SHA-pinned. Issue #118 |
 
 ## Reliability

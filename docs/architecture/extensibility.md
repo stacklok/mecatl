@@ -57,6 +57,13 @@ and the operation is never replayed automatically. See
 `notifications/{tools,prompts,resources}/list_changed` invalidate the cached
 snapshots (lazily re-listed on the next read); live catalog refresh is
 deferred to a later phase — see [ADR 0057](../adr/0057-mcp-server-notifications.md).
+A server behind a GET-hostile gateway (one that closes/rejects the standalone
+GET while POST stays healthy — the SDK's exhausted SSE reconnect then fails
+the WHOLE connection, and ADR 0056 heals it as a fresh `Mcp-Session-Id` with
+churn per cycle) can opt out per-server via
+`ServerConfig.DisableNotifications` / `MCP_<NAME>_DISABLE_NOTIFICATIONS`,
+trading list-changed notifications for a stable POST-only session — see
+[ADR 0326](../adr/0326-mcp-standalone-sse-opt-out.md).
 
 A dedicated debug session can borrow only direct tools from explicitly named, already
 connected server-global MCP servers. It persists the names and the exact initial tool-name

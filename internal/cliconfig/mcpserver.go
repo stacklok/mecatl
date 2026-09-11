@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
@@ -17,7 +18,8 @@ import (
 // three mains' --help identical.
 const DefaultMCPServerFlagHelp = "remote MCP server as name=URL (repeatable); auth token read from MCP_<NAME>_TOKEN. " +
 	"The name must match [A-Za-z0-9_]+ and be case-insensitively unique across entries (it derives the token env var); " +
-	"a token-bearing URL must be https, or http to a loopback host (see --mcp-server-insecure-http for the explicit per-server opt-out)"
+	"a token-bearing URL must be https, or http to a loopback host (see --mcp-server-insecure-http for the explicit per-server opt-out). " +
+	"Set MCP_<NAME>_DISABLE_NOTIFICATIONS=true on a GET-hostile gateway to disable the standalone SSE stream (ADR 0326)"
 
 // DefaultMCPServerInsecureHTTPFlagHelp is the shared --mcp-server-insecure-http
 // help text (issue #358, ADR 0090). Unlike --mcp-server it is NOT overridable
@@ -124,7 +126,8 @@ func (l *MCPServerList) Set(v string) error {
 	if !mcpServerName.MatchString(name) {
 		return fmt.Errorf("invalid --mcp-server %q: name must match [A-Za-z0-9_]+ (it derives the MCP_<NAME>_TOKEN env var)", v)
 	}
-	envName := "MCP_" + strings.ToUpper(name) + "_TOKEN"
+	upperName := strings.ToUpper(name)
+	envName := "MCP_" + upperName + "_TOKEN"
 	for _, prev := range l.entries {
 		if strings.EqualFold(prev.cfg.Name, name) {
 			return fmt.Errorf("invalid --mcp-server %q: name %q collides with earlier server %q on the token env var %s", v, name, prev.cfg.Name, envName)
@@ -167,9 +170,19 @@ func (l *MCPServerList) finalizeWithLookup(lookup func(string) (string, bool)) e
 	for i := range l.entries {
 		l.entries[i].hasToken = false
 		l.entries[i].cfg.Headers = nil
+		l.entries[i].cfg.DisableNotifications = false
 		if token, ok := lookup(l.entries[i].envName); ok && token != "" {
 			l.entries[i].hasToken = true
 			l.entries[i].cfg.Headers = map[string]string{"Authorization": "Bearer " + token}
+		}
+		disableEnv := "MCP_" + strings.ToUpper(l.entries[i].cfg.Name) + "_DISABLE_NOTIFICATIONS"
+		if raw, ok := lookup(disableEnv); ok && raw != "" {
+			b, err := strconv.ParseBool(raw)
+			if err != nil {
+				return fmt.Errorf("invalid --mcp-server %q: %s=%q does not parse as a bool: %w",
+					l.entries[i].raw, disableEnv, raw, err)
+			}
+			l.entries[i].cfg.DisableNotifications = b
 		}
 	}
 	relaxed := make([]bool, len(l.entries))
