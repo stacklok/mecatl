@@ -200,7 +200,7 @@ function importMap(): string {
       "@bufbuild/protobuf/wire": "/deps/protobuf/wire/index.js",
       "@bufbuild/protobuf/wkt": "/deps/protobuf/wkt/index.js",
       "@connectrpc/connect": "/deps/connect/index.js",
-      "@stacklok/mecatl-sdk": "/package/dist/index.js",
+      "@stacklok-oss/mecatl-sdk": "/package/dist/index.js",
     },
   }).replaceAll("<", "\\u003c");
 }

@@ -16,7 +16,7 @@ Load the session, restore its previous cursor when present, and open the
 activity stream:
 
 ```ts
-import { connect } from "@stacklok/mecatl-sdk/node";
+import { connect } from "@stacklok-oss/mecatl-sdk/node";
 
 await using client = connect({
   baseUrl: process.env.MECATL_URL ?? "http://127.0.0.1:8080",

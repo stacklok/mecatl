@@ -628,7 +628,7 @@ describe("loopback callback tool host", () => {
     expect(supported.value.result).toEqual({
       capabilities: { tools: {} },
       protocolVersion: "2025-06-18",
-      serverInfo: { name: "@stacklok/mecatl-sdk", version: "0.0.1" },
+      serverInfo: { name: "@stacklok-oss/mecatl-sdk", version: "0.1.0" },
       supportedVersions: MCP_PROTOCOL_VERSIONS,
     });
     expect(MCP_PROTOCOL_VERSIONS).toContain(

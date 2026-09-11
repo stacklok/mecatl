@@ -1,4 +1,4 @@
-import { spawn } from "@stacklok/mecatl-sdk/node";
+import { spawn } from "@stacklok-oss/mecatl-sdk/node";
 
 await using client = await spawn({ args: ["--mock"] });
 const session = await client.sessions.create({});

@@ -1,4 +1,4 @@
-import { query } from "@stacklok/mecatl-sdk/node";
+import { query } from "@stacklok-oss/mecatl-sdk/node";
 
 const oneShot = await query("Summarize the current working tree", {
   spawn: { args: ["--mock"] },

@@ -91,18 +91,16 @@ func TestADR_0304_ManualDispatchIsDryRunOnly(t *testing.T) {
 	if !reflect.DeepEqual([]string(publish.Needs), []string{"verify"}) {
 		t.Errorf("publish needs = %v, want [verify]", publish.Needs)
 	}
-	if publish.Environment != "github-packages-publish" {
-		t.Errorf("publish environment = %q, want github-packages-publish", publish.Environment)
+	if publish.Environment != "npm-publish" {
+		t.Errorf("publish environment = %q, want npm-publish", publish.Environment)
 	}
 	const publishCondition = "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/sdk/typescript/v')"
 	if publish.If != publishCondition {
 		t.Errorf("publish if = %q, want %q", publish.If, publishCondition)
 	}
 	wantPublishPermissions := map[string]string{
-		"attestations": "write",
-		"contents":     "read",
-		"id-token":     "write",
-		"packages":     "write",
+		"contents": "read",
+		"id-token": "write",
 	}
 	if !reflect.DeepEqual(publish.Permissions, wantPublishPermissions) {
 		t.Errorf("publish permissions = %v, want %v", publish.Permissions, wantPublishPermissions)
@@ -306,7 +304,7 @@ func TestSDKTypescriptRelease_Scenario11_GenerationCleanlinessGate(t *testing.T)
 		} `json:"repository"`
 	}
 	readSDKScenario11JSON(t, filepath.Join(root, "sdk", "typescript", "package.json"), &manifest)
-	if manifest.License != "Apache-2.0" || manifest.PublishConfig.Registry != "https://npm.pkg.github.com" || manifest.PublishConfig.Access != nil {
+	if manifest.License != "Apache-2.0" || manifest.PublishConfig.Registry != "https://registry.npmjs.org" || manifest.PublishConfig.Access == nil || *manifest.PublishConfig.Access != "public" {
 		t.Errorf("release metadata license/registry/access = %q/%q/%v", manifest.License, manifest.PublishConfig.Registry, manifest.PublishConfig.Access)
 	}
 	wantRepository := struct {
@@ -318,7 +316,7 @@ func TestSDKTypescriptRelease_Scenario11_GenerationCleanlinessGate(t *testing.T)
 		t.Errorf("repository = %+v, want %+v", manifest.Repository, wantRepository)
 	}
 	packedGate := verify.Steps[sdkScenario11StepNamed(verify, "Verify packed manifest release metadata")].Run
-	for _, proof := range []string{"package/package.json", "EXPECTED_VERSION", "Apache-2.0", "publishConfig.registry", "publishConfig.access", "https://npm.pkg.github.com", "sdk/typescript"} {
+	for _, proof := range []string{"package/package.json", "EXPECTED_VERSION", "Apache-2.0", "publishConfig.registry", "publishConfig.access", "https://registry.npmjs.org", "public", "sdk/typescript"} {
 		if !strings.Contains(packedGate, proof) {
 			t.Errorf("packed manifest gate is missing %q", proof)
 		}
@@ -333,7 +331,7 @@ func TestSDKTypescriptRelease_Scenario11_GenerationCleanlinessGate(t *testing.T)
 	}
 }
 
-func TestADR_0313_EphemeralJobTokenOnly(t *testing.T) {
+func TestADR_0328_TrustedPublishingNoStoredCredentials(t *testing.T) {
 	t.Parallel()
 
 	workflow, source := readSDKScenario11Workflow(t, sdkScenario11ReleaseWorkflow(t))
@@ -342,10 +340,8 @@ func TestADR_0313_EphemeralJobTokenOnly(t *testing.T) {
 	}
 	publish := workflow.Jobs["publish"]
 	wantPublishPermissions := map[string]string{
-		"attestations": "write",
-		"contents":     "read",
-		"id-token":     "write",
-		"packages":     "write",
+		"contents": "read",
+		"id-token": "write",
 	}
 	if !reflect.DeepEqual(publish.Permissions, wantPublishPermissions) {
 		t.Errorf("publish permissions = %v, want %v", publish.Permissions, wantPublishPermissions)
@@ -365,17 +361,17 @@ func TestADR_0313_EphemeralJobTokenOnly(t *testing.T) {
 	if idTokenJobs != 1 {
 		t.Errorf("id-token job count = %d, want exactly one", idTokenJobs)
 	}
-	if publish.Env["NODE_AUTH_TOKEN"] != "${{ secrets.GITHUB_TOKEN }}" {
-		t.Errorf("NODE_AUTH_TOKEN = %q, want ephemeral secrets.GITHUB_TOKEN", publish.Env["NODE_AUTH_TOKEN"])
+	if _, ok := publish.Env["NODE_AUTH_TOKEN"]; ok {
+		t.Errorf("publish must not set NODE_AUTH_TOKEN, got %q", publish.Env["NODE_AUTH_TOKEN"])
 	}
-	secretReferences := regexp.MustCompile(`secrets\.[A-Za-z_][A-Za-z0-9_]*`).FindAllString(source, -1)
-	if !reflect.DeepEqual(secretReferences, []string{"secrets.GITHUB_TOKEN"}) {
-		t.Errorf("secret references = %v, want only secrets.GITHUB_TOKEN", secretReferences)
+	if secretReferences := regexp.MustCompile(`secrets\.[A-Za-z_][A-Za-z0-9_]*`).FindAllString(source, -1); len(secretReferences) != 0 {
+		t.Errorf("secret references = %v, want none", secretReferences)
 	}
 	for _, forbidden := range []string{
 		"NPM_TOKEN", "_authToken", "npm_config_", "contents: write",
 		"pull-requests:", "issues:", "--provenance", ".npmrc", "--access",
-		"dist.attestations",
+		"packages: write", "attestations: write", "actions/attest-build-provenance@",
+		"gh attestation", "npm.pkg.github.com", "NODE_AUTH_TOKEN",
 	} {
 		if strings.Contains(source, forbidden) {
 			t.Errorf("release workflow contains forbidden credential/authority text %q", forbidden)
@@ -391,41 +387,47 @@ func TestADR_0313_EphemeralJobTokenOnly(t *testing.T) {
 	}
 	downloadIndex := sdkScenario11ActionIndex(publish, "actions/download-artifact@")
 	integrityIndex := sdkScenario11StepNamed(publish, "Re-verify downloaded tarball integrity")
-	attestationIndex := sdkScenario11ActionIndex(publish, "actions/attest-build-provenance@")
-	verifyAttestationIndex := sdkScenario11StepNamed(publish, "Verify GitHub artifact attestation")
 	publishIndex := sdkScenario11StepNamed(publish, "Publish downloaded tarball")
+	provenanceIndex := sdkScenario11StepNamed(publish, "Verify published npm provenance")
 	summaryIndex := sdkScenario11StepNamed(publish, "Record published artifact evidence")
-	if downloadIndex < 0 || integrityIndex <= downloadIndex || attestationIndex <= integrityIndex ||
-		verifyAttestationIndex <= attestationIndex || publishIndex <= verifyAttestationIndex || summaryIndex <= publishIndex {
-		t.Fatalf("download/integrity/attest/verify/publish/summary ordering = %d/%d/%d/%d/%d/%d",
-			downloadIndex, integrityIndex, attestationIndex, verifyAttestationIndex, publishIndex, summaryIndex)
+	if downloadIndex < 0 || integrityIndex <= downloadIndex || publishIndex <= integrityIndex ||
+		provenanceIndex <= publishIndex || summaryIndex <= provenanceIndex {
+		t.Fatalf("download/integrity/publish/provenance/summary ordering = %d/%d/%d/%d/%d",
+			downloadIndex, integrityIndex, publishIndex, provenanceIndex, summaryIndex)
 	}
-	attestation := publish.Steps[attestationIndex]
-	if attestation.ID != "attestation" || attestation.With["subject-path"] != "${{ needs.verify.outputs.tarball }}" {
-		t.Errorf("attestation step = %+v, want exact downloaded tarball subject", attestation)
-	}
-	verifyAttestationRun := publish.Steps[verifyAttestationIndex].Run
-	if !strings.Contains(verifyAttestationRun, `gh attestation verify "./${TARBALL}" --repo stacklok/mecatl`) {
-		t.Error("publish does not verify the GitHub artifact attestation")
+	if sdkScenario11ActionIndex(publish, "actions/attest-build-provenance@") >= 0 {
+		t.Error("publish must not mint a separate GitHub artifact attestation")
 	}
 	publishRun := publish.Steps[publishIndex].Run
 	if !strings.Contains(publishRun, `npm publish "./${TARBALL}"`) {
 		t.Error("publish must use the downloaded tarball path")
 	}
+	provenanceRun := publish.Steps[provenanceIndex].Run
+	for _, proof := range []string{"dist.attestations", "dist.integrity", "@stacklok-oss/mecatl-sdk@", "npm", "view"} {
+		if !strings.Contains(provenanceRun, proof) {
+			t.Errorf("published provenance gate is missing %q", proof)
+		}
+	}
 	summary := publish.Steps[summaryIndex]
-	if summary.Env["ATTESTATION_URL"] != "${{ steps.attestation.outputs.attestation-url }}" ||
-		summary.Env["INTEGRITY"] != "${{ needs.verify.outputs.integrity }}" ||
-		!strings.Contains(summary.Run, "$GITHUB_STEP_SUMMARY") {
-		t.Error("publish summary does not record integrity and attestation URL")
+	if summary.Env["INTEGRITY"] != "${{ needs.verify.outputs.integrity }}" ||
+		!strings.Contains(summary.Run, "$GITHUB_STEP_SUMMARY") ||
+		!strings.Contains(summary.Run, "dist.attestations") {
+		t.Error("publish summary does not record integrity and npm provenance")
 	}
 	setupNode := sdkScenario11Action(publish, "actions/setup-node@")
-	if setupNode == nil || setupNode.With["node-version"] != "24.7.0" ||
-		setupNode.With["registry-url"] != "https://npm.pkg.github.com" || setupNode.With["scope"] != "@stacklok" {
-		t.Errorf("publish Node/registry setup = %v, want exact Node 24.7.0 and GitHub Packages", setupNode)
+	if setupNode == nil || setupNode.With["node-version"] != "24.7.0" {
+		t.Errorf("publish Node setup = %v, want exact Node 24.7.0", setupNode)
 	}
-	floorRun := publish.Steps[sdkScenario11StepNamed(publish, "Assert GitHub Packages toolchain floors")].Run
+	if _, ok := setupNode.With["registry-url"]; ok {
+		t.Errorf("publish must not set registry-url, got %v", setupNode.With)
+	}
+	floorRun := publish.Steps[sdkScenario11StepNamed(publish, "Assert npm toolchain floors")].Run
 	if !strings.Contains(floorRun, "22.14.0") || !strings.Contains(floorRun, `test "$(npm --version)" = "11.5.1"`) {
 		t.Error("publish does not assert the Node and npm publishing floors")
+	}
+	packRun := workflow.Jobs["verify"].Steps[sdkScenario11StepNamed(workflow.Jobs["verify"], "Pack SDK and record integrity")].Run
+	if !strings.Contains(packRun, `stacklok-oss-mecatl-sdk-${VERSION}.tgz`) {
+		t.Error("verify does not assert the scoped public tarball basename")
 	}
 }
 

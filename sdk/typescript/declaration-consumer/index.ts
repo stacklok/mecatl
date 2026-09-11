@@ -1,5 +1,5 @@
-import * as mecatl from "@stacklok/mecatl-sdk";
-import * as mecatlNode from "@stacklok/mecatl-sdk/node";
+import * as mecatl from "@stacklok-oss/mecatl-sdk";
+import * as mecatlNode from "@stacklok-oss/mecatl-sdk/node";
 
 void mecatl;
 void mecatlNode;

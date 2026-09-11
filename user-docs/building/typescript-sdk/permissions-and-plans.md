@@ -16,7 +16,7 @@ UI or audit consumer can still observe it.
 for decisions the application is authorized to make:
 
 ```ts
-import { connect } from "@stacklok/mecatl-sdk/node";
+import { connect } from "@stacklok-oss/mecatl-sdk/node";
 
 await using client = connect({
   baseUrl: process.env.MECATL_URL ?? "http://127.0.0.1:8080",
@@ -43,7 +43,7 @@ Plan approval is separate from ordinary permission approval. Pass
 `onPlanApproval` when the run can call `PresentPlan`:
 
 ```ts
-import { PermissionMode } from "@stacklok/mecatl-sdk/gen";
+import { PermissionMode } from "@stacklok-oss/mecatl-sdk/gen";
 
 const planSession = await client.sessions.create({ mode: PermissionMode.PLAN });
 const run = await planSession.run("Plan and implement the requested change", {

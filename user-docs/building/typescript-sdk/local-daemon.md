@@ -30,7 +30,7 @@ This example uses the offline provider so you can verify process ownership
 without model-provider credentials:
 
 ```ts
-import { spawn } from "@stacklok/mecatl-sdk/node";
+import { spawn } from "@stacklok-oss/mecatl-sdk/node";
 
 await using client = await spawn({ args: ["--mock"] });
 const session = await client.sessions.create({});
@@ -53,7 +53,7 @@ values.
 and daemon shutdown:
 
 ```ts
-import { query } from "@stacklok/mecatl-sdk/node";
+import { query } from "@stacklok-oss/mecatl-sdk/node";
 
 const oneShot = await query("Summarize the current working tree", {
   spawn: { args: ["--mock"] },

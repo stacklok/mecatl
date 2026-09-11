@@ -1,7 +1,7 @@
 {
   "name": "mecatl-slack-bot-example",
   "version": "0.0.0",
-  "description": "Reference Slack bot built on @stacklok/mecatl-sdk",
+  "description": "Reference Slack bot built on @stacklok-oss/mecatl-sdk",
   "license": "Apache-2.0",
   "private": true,
   "type": "module",
@@ -19,7 +19,7 @@
   },
   "dependencies": {
     "@slack/bolt": "5.0.0",
-    "@stacklok/mecatl-sdk": "^0.0.1"
+    "@stacklok-oss/mecatl-sdk": "file:../.."
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.11",

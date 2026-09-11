@@ -8377,7 +8377,7 @@ clock.
 
 ## TypeScript SDK — `sdk/typescript/` (M1–M4 public v0.1 surface, ADRs 0279, 0288, 0292 and 0304)
 
-The ESM-only `@stacklok/mecatl-sdk` has three exports. `.` owns the transport-neutral
+The ESM-only `@stacklok-oss/mecatl-sdk` has three exports. `.` owns the transport-neutral
 `Client`/`Session`/`Run` API, typed events/errors, prompt-media helpers, and the hand-written
 HTTP/JSON/SSE transport. `./node` re-exports that surface and adds connect-node real gRPC over
 HTTP/2: TCP uses an ordinary base URL; UDS keeps an ordinary HTTP authority and supplies a
@@ -8385,7 +8385,10 @@ socket-opening `createConnection` through the HTTP/2 node options (`sdk/typescri
 never a `unix://` URL. `./gen` is the committed protobuf-es output generated only for
 `contracts/proto/mecatl/v1/`; it has a codegen freshness gate rather than an API Extractor
 report. The package requires Node 22 or newer, builds unbundled ESM plus declarations/source maps,
-and owns its pinned pnpm lock independently of the npm-based website.
+and owns its pinned pnpm lock independently of the npm-based website. The
+canonical published name is `@stacklok-oss/mecatl-sdk` on public npmjs
+(`sdk/typescript/v*` tags, `npm-publish` environment, npm-native provenance;
+[ADR 0328](../adr/0328-typescript-sdk-npmjs-stacklok-oss.md)).
 
 `sdk/typescript/src/raw.ts` enforces API-major compatibility before all non-compatibility RPCs;
 the ergonomic client also probes status and maps transport/auth/incompatibility states without

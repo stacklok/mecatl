@@ -335,7 +335,6 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read # checkout
-      packages: read # install @stacklok/mecatl-sdk from GitHub Packages
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -348,21 +347,17 @@ jobs:
           version: 11.25.0
           run_install: false
 
-      # registry-url + scope make setup-node write a USER-level ~/.npmrc with
-      # `//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}` — pnpm expands
-      # env vars there (unlike in the committed project .npmrc; see that
-      # file's own comment), so the install step below just needs the env var.
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '24'
           cache: pnpm
-          cache-dependency-path: sdk/typescript/examples/slack-bot/pnpm-lock.yaml
-          registry-url: https://npm.pkg.github.com
-          scope: '@stacklok'
+          cache-dependency-path: |
+            sdk/typescript/pnpm-lock.yaml
+            sdk/typescript/examples/slack-bot/pnpm-lock.yaml
 
       # Builds bin/mecated for the offline bridge test — a plain Go build, same
-      # toolchain the `sdk` job above already provisions. The example itself no
-      # longer builds the SDK from source (it installs the published package).
+      # toolchain the `sdk` job above already provisions. The example consumes
+      # the in-tree SDK via file:../..; slack-bot:install builds that first.
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
@@ -373,13 +368,7 @@ jobs:
 
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
 
-      # @stacklok/mecatl-sdk has no public npm registry yet, only GitHub
-      # Packages (TODO: drop this once it does) — the job's own ephemeral
-      # GITHUB_TOKEN, scoped read-only by `permissions.packages: read` above,
-      # covers reading it. No new secret needed.
       - name: Install Slack bot example dependencies (frozen)
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: task slack-bot:install
 
       - name: Lint and format-check Slack bot example

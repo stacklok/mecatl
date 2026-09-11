@@ -5,7 +5,7 @@
  * (`MECATL_GRPC_TLS=true`) — the local/Compose dev path never touches this.
  *
  * Caches the access token in memory and refetches shortly before it expires,
- * exposed as a `CredentialProvider` (see `@stacklok/mecatl-sdk`'s
+ * exposed as a `CredentialProvider` (see `@stacklok-oss/mecatl-sdk`'s
  * `credentials.ts`) so the SDK's gRPC transport attaches it to every call.
  */
 

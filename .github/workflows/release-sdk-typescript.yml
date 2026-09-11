@@ -7,8 +7,7 @@ on:
       - 'sdk/typescript/v*'
   workflow_dispatch:
 
-# Verification cannot mint OIDC, package, or attestation authority. The publish
-# job is the only elevation.
+# Verification cannot mint OIDC. The publish job is the only elevation.
 permissions:
   contents: read
 
@@ -149,7 +148,7 @@ jobs:
           fi
           tarball_path="${archives[0]}"
           tarball="$(basename "$tarball_path")"
-          test "$tarball" = "stacklok-mecatl-sdk-${VERSION}.tgz"
+          test "$tarball" = "stacklok-oss-mecatl-sdk-${VERSION}.tgz"
           integrity="$(node --input-type=module --eval "import { createHash } from 'node:crypto'; import { readFileSync } from 'node:fs'; process.stdout.write('sha512-' + createHash('sha512').update(readFileSync(process.argv[1])).digest('base64'))" "$tarball_path")"
           {
             echo "tarball=$tarball"
@@ -187,8 +186,8 @@ jobs:
             ["version", manifest.version, process.env.EXPECTED_VERSION],
             ["license", manifest.license, "Apache-2.0"],
             ["repository", JSON.stringify(manifest.repository), JSON.stringify(expectedRepository)],
-            ["publishConfig.registry", manifest.publishConfig?.registry, "https://npm.pkg.github.com"],
-            ["publishConfig.access", manifest.publishConfig?.access, undefined],
+            ["publishConfig.registry", manifest.publishConfig?.registry, "https://registry.npmjs.org"],
+            ["publishConfig.access", manifest.publishConfig?.access, "public"],
           ].filter(([, actual, expected]) => actual !== expected);
           if (failures.length > 0) {
             throw new Error(`packed manifest metadata mismatch: ${JSON.stringify(failures)}`);
@@ -220,28 +219,23 @@ jobs:
           retention-days: 1
 
   publish:
-    name: Publish inspected artifact to GitHub Packages
+    name: Publish inspected artifact to npmjs
     needs: verify
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/sdk/typescript/v')
-    environment: github-packages-publish
+    environment: npm-publish
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
-      packages: write
       id-token: write
-      attestations: write
-    env:
-      # The ephemeral token GitHub creates for this job, not a stored npm secret.
-      NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       # Node 24.7.0 bundles npm 11.5.1, so this exact distribution pin fixes
-      # both publishing tool versions without an install step.
+      # both publishing tool versions without an install step. Do not set
+      # registry-url: a generated user npmrc with a blank token disables
+      # trusted publishing.
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '24.7.0'
-          registry-url: https://npm.pkg.github.com
-          scope: '@stacklok'
 
       - name: Download inspected npm tarball
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -249,7 +243,7 @@ jobs:
           name: npm-package
           path: .
 
-      - name: Assert GitHub Packages toolchain floors
+      - name: Assert npm toolchain floors
         run: |
           set -euo pipefail
           node --input-type=module <<'NODE'
@@ -270,28 +264,48 @@ jobs:
           actual_integrity="$(node --input-type=module --eval "import { createHash } from 'node:crypto'; import { readFileSync } from 'node:fs'; process.stdout.write('sha512-' + createHash('sha512').update(readFileSync(process.argv[1])).digest('base64'))" "$TARBALL")"
           test "$actual_integrity" = "$EXPECTED_INTEGRITY"
 
-      - name: Attest downloaded tarball provenance
-        id: attestation
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
-        with:
-          subject-path: ${{ needs.verify.outputs.tarball }}
-
-      - name: Verify GitHub artifact attestation
-        env:
-          TARBALL: ${{ needs.verify.outputs.tarball }}
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          gh attestation verify "./${TARBALL}" --repo stacklok/mecatl
-
       - name: Publish downloaded tarball
         env:
           TARBALL: ${{ needs.verify.outputs.tarball }}
         run: npm publish "./${TARBALL}"
 
+      - name: Verify published npm provenance
+        env:
+          EXPECTED_INTEGRITY: ${{ needs.verify.outputs.integrity }}
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { execFileSync } from "node:child_process";
+
+          const version = process.env.VERSION;
+          const expectedIntegrity = process.env.EXPECTED_INTEGRITY;
+          const spec = `@stacklok-oss/mecatl-sdk@${version}`;
+          let lastError;
+          for (let attempt = 0; attempt < 12; attempt += 1) {
+            try {
+              const raw = execFileSync("npm", ["view", spec, "--json"], { encoding: "utf8" });
+              const viewed = JSON.parse(raw);
+              const dist = viewed.dist ?? viewed;
+              if (dist.integrity !== expectedIntegrity) {
+                throw new Error(`dist.integrity ${JSON.stringify(dist.integrity)} != ${expectedIntegrity}`);
+              }
+              const attestations = dist.attestations;
+              if (attestations == null || (typeof attestations === "object" && Object.keys(attestations).length === 0)) {
+                throw new Error("published package is missing dist.attestations");
+              }
+              process.stdout.write(JSON.stringify({ integrity: dist.integrity, attestations: true }) + "\n");
+              process.exit(0);
+            } catch (error) {
+              lastError = error;
+              execFileSync("sleep", ["5"]);
+            }
+          }
+          throw lastError ?? new Error(`npm view ${spec} failed`);
+          NODE
+
       - name: Record published artifact evidence
         env:
-          ATTESTATION_URL: ${{ steps.attestation.outputs.attestation-url }}
           INTEGRITY: ${{ needs.verify.outputs.integrity }}
           TARBALL: ${{ needs.verify.outputs.tarball }}
         run: |
@@ -300,5 +314,5 @@ jobs:
             echo ""
             echo "- Tarball: \`$TARBALL\`"
             echo "- npm integrity: \`$INTEGRITY\`"
-            echo "- GitHub attestation: $ATTESTATION_URL"
+            echo "- Provenance: npm dist.attestations"
           } >> "$GITHUB_STEP_SUMMARY"

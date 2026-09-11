@@ -11,7 +11,7 @@ import Heading from "@theme/Heading";
 
 {/* Generated from API Extractor models and sdk/typescript/src TSDoc. Regenerate with task sdk:docs. DO NOT EDIT. */}
 
-This reference describes the declarations exported by `@stacklok/mecatl-sdk`.
+This reference describes the declarations exported by `@stacklok-oss/mecatl-sdk`.
 
 ## Symbol index
 

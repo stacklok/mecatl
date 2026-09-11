@@ -1,6 +1,4 @@
 allowBuilds:
   esbuild: true
-minimumReleaseAgeExclude:
-  - '@stacklok/mecatl-sdk@0.0.1'
 onlyBuiltDependencies:
   - esbuild

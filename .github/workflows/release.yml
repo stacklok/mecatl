@@ -494,9 +494,7 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read # checkout
-      packages: write # push image + SBOM to GHCR; also covers reading
-        # @stacklok/mecatl-sdk from GitHub Packages during the build (write
-        # is a superset of read) — no separate secret needed for that half
+      packages: write # push image + SBOM to GHCR
       id-token: write # OIDC: cosign keyless signing AND provenance (ghcr login uses GITHUB_TOKEN, not OIDC)
       attestations: write # SLSA build provenance via actions/attest-build-provenance
     env:
@@ -521,27 +519,17 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Build context is the example directory itself — the bot depends on
-      # the PUBLISHED @stacklok/mecatl-sdk (GitHub Packages), not a sibling
-      # source symlink, so the SDK's source tree no longer needs to be in the
-      # build context (see the Dockerfile's own header comment). Tag both the
-      # version and latest, matching the ko-based jobs above.
-      #
-      # @stacklok/mecatl-sdk has no public npm registry yet, only GitHub
-      # Packages (TODO: drop the `secrets:` input below once it does) — the
-      # job's own ephemeral GITHUB_TOKEN, already packages:write above (a
-      # superset of read), covers installing it during the build; passed as
-      # a build secret, never a build arg/env (which would leak into layers).
+      # Build context is sdk/typescript because the bot depends on the in-tree
+      # SDK via file:../.. (see the Dockerfile header). Tag both the version
+      # and latest, matching the ko-based jobs above.
       - name: Build and push image
         id: build
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
-          context: sdk/typescript/examples/slack-bot
+          context: sdk/typescript
           file: sdk/typescript/examples/slack-bot/docker/bot.Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
-          secrets: |
-            npm_token=${{ secrets.GITHUB_TOKEN }}
           tags: |
             ${{ env.IMAGE }}:${{ env.VERSION }}
             ${{ env.IMAGE }}:latest

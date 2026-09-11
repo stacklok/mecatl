@@ -1,6 +1,6 @@
 # TypeScript SDK examples
 
-These small programs compile against the built `@stacklok/mecatl-sdk` package exports. They
+These small programs compile against the built `@stacklok-oss/mecatl-sdk` package exports. They
 are deliberately independent examples, not an application framework. Node.js 22+ and Bun use
 the same ESM `./node` entry point.
 

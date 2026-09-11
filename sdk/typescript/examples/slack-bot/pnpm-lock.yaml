@@ -11,9 +11,9 @@ importers:
       '@slack/bolt':
         specifier: 5.0.0
         version: 5.0.0(@types/express@5.0.6)(undici@7.29.0)
-      '@stacklok/mecatl-sdk':
-        specifier: ^0.0.1
-        version: 0.0.1
+      '@stacklok-oss/mecatl-sdk':
+        specifier: file:../..
+        version: link:../..
     devDependencies:
       '@biomejs/biome':
         specifier: 2.5.11
@@ -393,10 +393,6 @@ packages:
   '@slack/web-api@8.1.1':
     resolution: {integrity: sha512-am/z/LLbEC7gNQp6FpaGT0l4XnWqcXetpwdgZHzS7Nbb96q9R9QwWA3lo0ZXGuAHDkct0MvFnouzuc2Y4XNmow==}
     engines: {node: '>= 20', npm: '>=9.6.4'}
-
-  '@stacklok/mecatl-sdk@0.0.1':
-    resolution: {integrity: sha512-DkpNVXU1haOUdWo7b/XTzBQb6IUmPPu9qErWatZ2JJYrkl6i9PvLLcx6fyTcAW/1Lr3BNFO8fZ2rg/8mvxVSyw==, tarball: https://npm.pkg.github.com/download/@stacklok/mecatl-sdk/0.0.1/3a683b45ac238655b5820831895cce8aff06454e}
-    engines: {node: '>=22'}
 
   '@standard-schema/spec@1.1.0':
     resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
@@ -1338,13 +1334,6 @@ snapshots:
       p-queue: 6.6.2
       p-retry: 4.6.2
       retry: 0.13.1
-
-  '@stacklok/mecatl-sdk@0.0.1':
-    dependencies:
-      '@bufbuild/protobuf': 2.14.0
-      '@connectrpc/connect': 2.1.2(@bufbuild/protobuf@2.14.0)
-      '@connectrpc/connect-node': 2.1.2(@bufbuild/protobuf@2.14.0)(@connectrpc/connect@2.1.2(@bufbuild/protobuf@2.14.0))
-      ajv: 8.20.0
 
   '@standard-schema/spec@1.1.0': {}
 

@@ -25,9 +25,9 @@ const conciseExamples = [
   "teams.ts",
 ] as const;
 const publicImports = new Set([
-  "@stacklok/mecatl-sdk",
-  "@stacklok/mecatl-sdk/gen",
-  "@stacklok/mecatl-sdk/node",
+  "@stacklok-oss/mecatl-sdk",
+  "@stacklok-oss/mecatl-sdk/gen",
+  "@stacklok-oss/mecatl-sdk/node",
 ]);
 
 function compileExamples(): void {
@@ -89,7 +89,7 @@ test("every published example typechecks against package exports", () => {
           `${file} uses the SDK source tree as a backdoor`,
         ).toBe(false);
       }
-      if (specifier.startsWith("@stacklok/mecatl-sdk")) {
+      if (specifier.startsWith("@stacklok-oss/mecatl-sdk")) {
         expect(publicImports, `${file} imports a private package path`).toContain(specifier);
       }
     }

@@ -21,7 +21,7 @@ async function browserSmoke(page: Page, origin: string, baseUrl: string): Promis
   await page.goto(origin, { waitUntil: "domcontentloaded" });
   return page.evaluate(
     async ({ daemonUrl }) => {
-      const packageName: string = "@stacklok/mecatl-sdk";
+      const packageName: string = "@stacklok-oss/mecatl-sdk";
       const sdk = (await import(packageName)) as typeof import("../../src/index.js");
       const client = sdk.connect({ baseUrl: daemonUrl, credentials: "include" });
       try {

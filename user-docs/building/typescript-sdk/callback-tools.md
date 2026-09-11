@@ -36,7 +36,7 @@ Start a private daemon, register the tool, and allow only its permission ask:
 
 ```ts
 import { fileURLToPath } from "node:url";
-import { spawn } from "@stacklok/mecatl-sdk/node";
+import { spawn } from "@stacklok-oss/mecatl-sdk/node";
 
 const mockScript = fileURLToPath(
   new URL("./callback-tool-script.json", import.meta.url),

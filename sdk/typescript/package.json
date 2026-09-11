@@ -1,6 +1,6 @@
 {
-  "name": "@stacklok/mecatl-sdk",
-  "version": "0.0.1",
+  "name": "@stacklok-oss/mecatl-sdk",
+  "version": "0.1.0",
   "description": "TypeScript SDK for the mecatl agentic coding harness",
   "license": "Apache-2.0",
   "repository": {
@@ -13,7 +13,8 @@
     "url": "https://github.com/stacklok/mecatl/issues"
   },
   "publishConfig": {
-    "registry": "https://npm.pkg.github.com"
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
   },
   "type": "module",
   "sideEffects": false,

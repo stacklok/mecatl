@@ -1,5 +1,5 @@
 import type { App } from "@slack/bolt";
-import { ServerError } from "@stacklok/mecatl-sdk";
+import { ServerError } from "@stacklok-oss/mecatl-sdk";
 import { describe, expect, it, vi } from "vitest";
 
 import type { AccessResolver } from "../src/access.js";
