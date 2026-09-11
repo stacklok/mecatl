@@ -94,6 +94,11 @@ result for that server. `connect` never opens a browser. Use `--no-browser` with
 `login` on a headless host, then open the printed URL from a workstation that
 can reach port `18473` on the login host, usually through SSH port forwarding.
 
+If the gRPC server uses a private CA, pass `--server-tls-ca <PATH>` during login
+to save that server-trust reference for later connects. This is separate from
+login's issuer-only `--tls-ca`; an explicit `connect --tls-ca <PATH>` overrides
+the saved server CA for that invocation.
+
 Login uses the system keyring on macOS. On Linux, automatic selection uses an
 available Secret Service or owner-only plaintext files on a headless host. Use
 `--credential-store` when you need to choose the storage explicitly.

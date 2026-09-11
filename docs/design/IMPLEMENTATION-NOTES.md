@@ -3604,8 +3604,9 @@ remote enrollment: it requires `--issuer`, `--client-id`, and `--audience`; it d
 to public issuer address admission with system roots, while optional `--tls-ca` replaces
 them. `--private-issuer` requires that CA and selects scoped private admission. The registry
 saves the issuer policy and CA path/reference, never CA contents, for
-discovery/token/JWKS/refresh/revocation; the optional
-`connect --tls-ca` is separately the gRPC server trust root. `mecatui connect ADDRESS`
+discovery/token/JWKS/refresh/revocation; optional `login --server-tls-ca` separately
+persists a target-specific gRPC server CA reference, and an explicit `connect --tls-ca`
+overrides it for one invocation. `mecatui connect ADDRESS`
 only dials; it never implicitly opens a browser. `cmd/mecatui/config.go`
 (`resolveRemoteTLSPolicy`) resolves omitted `--tls` after target parsing: non-loopback
 and unparseable targets verify TLS, loopback defaults plaintext, and `--tls=false` is
@@ -3617,7 +3618,8 @@ Both layers classify targets with the SINGLE predicate `cmd/mecatui/client/clien
 per-RPC credential can never disagree about one target.
 A registry hit overrides the loopback default to verified gRPC TLS and rejects explicit
 plaintext or `--insecure`; the saved issuer CA is passed only to the issuer client, never
-to `DialConfig.TLSCAFile`. Credential resolution is static `--auth-token`, explicit
+to `DialConfig.TLSCAFile`. A saved `ServerCAFile` supplies the gRPC trust root by
+default; a non-empty connect-time `--tls-ca` overrides it. Credential resolution is static `--auth-token`, explicit
 `--anonymous`, saved OIDC enrollment, then a credential-free dial on any clean enrollment
 miss. The server is authoritative: only an actual `Unauthenticated` RPC establishes that
 caller authentication is required. Corrupt or unreadable registry, keyring, and credential

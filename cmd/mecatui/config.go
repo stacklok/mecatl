@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/internal/adapter/clientauth"
 	"github.com/stacklok/mecatl/internal/app"
 	"github.com/stacklok/mecatl/internal/cliconfig"
 )
@@ -560,9 +561,17 @@ func resolveRemoteTLSPolicy(cfg *config) error {
 	return nil
 }
 
+// applySavedServerCA restores the saved server trust root unless this connect
+// invocation explicitly supplies its own server CA.
+func applySavedServerCA(cfg config, conn clientauth.Connection, dial *client.DialConfig) {
+	if cfg.tlsCA == "" {
+		dial.TLSCAFile = conn.ServerCAFile
+	}
+}
+
 // applySavedRemoteTLSPolicy gives managed OIDC credentials their stronger
-// transport guarantee. TLSCAFile deliberately remains untouched: an issuer CA
-// is not gRPC server trust.
+// transport guarantee. TLSCAFile deliberately remains untouched after server
+// CA selection: an issuer CA is not gRPC server trust.
 func applySavedRemoteTLSPolicy(cfg config, dial *client.DialConfig) error {
 	if (cfg.tlsExplicit && !cfg.useTLS) || cfg.insecure {
 		return errors.New("saved remote authentication requires verified TLS; remove --tls=false and --insecure")

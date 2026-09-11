@@ -197,6 +197,56 @@ func TestDiscoveredLoginMatchingSavedEnrollmentSkipsConfirmation(t *testing.T) {
 	}
 }
 
+func TestSavedDiscoveredEnrollmentChangedServerCARequiresConfirmation(t *testing.T) {
+	oldConfigHome := xdg.ConfigHome
+	xdg.ConfigHome = t.TempDir()
+	t.Cleanup(func() { xdg.ConfigHome = oldConfigHome })
+	originalDiscover, originalConfirm, originalLogin := discoverRemoteResource, confirmDiscoveredEnrollment, executeRemoteLogin
+	t.Cleanup(func() {
+		discoverRemoteResource, confirmDiscoveredEnrollment, executeRemoteLogin = originalDiscover, originalConfirm, originalLogin
+	})
+
+	discovered := discoveredLoginFixture()
+	enrollment, err := discoveredEnrollmentFrom(discovered, "", []string{"api.read"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved := enrollment.Connection
+	saved.ServerCAFile = "/old-server-ca.pem"
+	registry, err := clientauth.OpenRegistry(filepath.Join(xdg.ConfigHome, "mecatl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := registry.Upsert(saved); err != nil {
+		t.Fatal(err)
+	}
+
+	discoverRemoteResource = func(context.Context, protectedResource) (discoveredResource, error) { return discovered, nil }
+	confirmed := false
+	confirmDiscoveredEnrollment = func(_ io.Reader, _ io.Writer, got discoveredEnrollment) (bool, error) {
+		confirmed = true
+		if got.Connection.ServerCAFile != "/new-server-ca.pem" {
+			t.Fatalf("confirmation server CA = %q, want changed server CA", got.Connection.ServerCAFile)
+		}
+		return true, nil
+	}
+	loggedIn := false
+	executeRemoteLogin = func(_ context.Context, got clientauth.Connection, _ bool, _ clientauth.CredentialStoreMode) error {
+		loggedIn = true
+		if got.ServerCAFile != "/new-server-ca.pem" {
+			t.Fatalf("login server CA = %q, want changed server CA", got.ServerCAFile)
+		}
+		return nil
+	}
+
+	if err := runRemoteLogin("api.example.com", []string{"--server-tls-ca", "/new-server-ca.pem"}); err != nil {
+		t.Fatal(err)
+	}
+	if !confirmed || !loggedIn {
+		t.Fatalf("changed server CA = confirmed:%v logged in:%v", confirmed, loggedIn)
+	}
+}
+
 func TestDiscoveredLoginChangedEnrollmentConfirms(t *testing.T) {
 	mutations := map[string]func(*clientauth.Connection){
 		"resource":              func(c *clientauth.Connection) { c.ResourceURL = "https://other.example.com" },

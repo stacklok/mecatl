@@ -822,9 +822,9 @@ func resolveTransport(ctx context.Context, cfg config) (target string, dial clie
 	// ADDRESS and NEVER probes/embeds; the bare invocation ALWAYS embeds and
 	// NEVER probes loopback.
 	if cfg.transportMode == modeConnect {
+		root := filepath.Join(xdg.ConfigHome, "mecatl")
 		dial := client.DialConfig{Server: cfg.connectAddress, AuthToken: cfg.authToken, ExplicitAnonymous: cfg.anonymous, UseTLS: cfg.useTLS, TLSCAFile: cfg.tlsCA, Insecure: cfg.insecure, RemotePlaintextAllowed: cfg.tlsExplicit && !cfg.useTLS}
 		if cfg.authToken == "" && !cfg.anonymous {
-			root := filepath.Join(xdg.ConfigHome, "mecatl")
 			registry, regErr := clientauth.OpenExistingRegistry(root)
 			if regErr != nil {
 				return target, client.DialConfig{}, noop, &client.AuthError{Reason: client.AuthStorageUnavailable}
@@ -833,6 +833,7 @@ func resolveTransport(ctx context.Context, cfg config) (target string, dial clie
 			if findErr == nil {
 				target = conn.Identity.Target
 				dial.Server = target
+				applySavedServerCA(cfg, conn, &dial)
 				if err := applySavedRemoteTLSPolicy(cfg, &dial); err != nil {
 					return target, client.DialConfig{}, noop, err
 				}
@@ -895,6 +896,19 @@ func resolveTransport(ctx context.Context, cfg config) (target string, dial clie
 			}
 			return target, client.DialConfig{}, noop, &client.AuthError{Reason: client.AuthStorageUnavailable}
 		}
+		registry, regErr := clientauth.OpenExistingRegistry(root)
+		if regErr == nil {
+			if conn, findErr := registry.Find(cfg.connectAddress); findErr == nil {
+				// Explicit bearer and anonymous connects may reuse only the
+				// target's saved server trust. Their transport policy remains
+				// entirely caller-controlled; the managed-OIDC guarantee above
+				// must not be inherited with this metadata.
+				applySavedServerCA(cfg, conn, &dial)
+			}
+		}
+		// Registry open/find failures are intentionally ignored here: explicit
+		// bearer and anonymous modes do not depend on saved enrollment. A lookup
+		// is only a best-effort opportunity to reuse its non-secret server CA.
 		return cfg.connectAddress, dial, noop, nil
 	}
 

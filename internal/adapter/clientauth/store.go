@@ -660,7 +660,8 @@ func (p IssuerAddressPolicy) valid() bool {
 
 // Connection is non-secret saved connection metadata. IssuerCAFile is used only
 // for OIDC discovery, JWKS, refresh, and revocation; it is not server transport
-// trust. UnmarshalJSON accepts the legacy tls_ca_file name for registry compatibility.
+// trust. ServerCAFile is used only to verify the saved target's gRPC server.
+// UnmarshalJSON accepts the legacy tls_ca_file name for registry compatibility.
 type Connection struct {
 	Identity Identity `json:"identity"`
 	// ResourceURL is the optional canonical HTTPS protected-resource identity.
@@ -668,6 +669,7 @@ type Connection struct {
 	// stay stable across this additive registry metadata change.
 	ResourceURL         string              `json:"resource_url,omitempty"`
 	IssuerCAFile        string              `json:"issuer_ca_file,omitempty"`
+	ServerCAFile        string              `json:"server_ca_file,omitempty"`
 	IssuerAddressPolicy IssuerAddressPolicy `json:"issuer_address_policy,omitempty"`
 }
 
@@ -678,6 +680,7 @@ func (c *Connection) UnmarshalJSON(data []byte) error {
 		Identity     Identity        `json:"identity"`
 		ResourceURL  string          `json:"resource_url"`
 		IssuerCAFile *string         `json:"issuer_ca_file"`
+		ServerCAFile string          `json:"server_ca_file"`
 		LegacyCAFile string          `json:"tls_ca_file"`
 		Policy       json.RawMessage `json:"issuer_address_policy"`
 	}
@@ -686,6 +689,7 @@ func (c *Connection) UnmarshalJSON(data []byte) error {
 	}
 	c.Identity = wire.Identity
 	c.ResourceURL = wire.ResourceURL
+	c.ServerCAFile = wire.ServerCAFile
 	if wire.IssuerCAFile != nil {
 		c.IssuerCAFile = *wire.IssuerCAFile
 	} else {
@@ -811,17 +815,12 @@ func (r *Registry) readRows() ([]registryRow, error) {
 		var conn Connection
 		valid := json.Unmarshal(raw, &fields) == nil && fields != nil && json.Unmarshal(raw, &conn) == nil
 		if valid {
-			for key := range fields {
-				if key != "identity" && key != "resource_url" && key != "issuer_ca_file" && key != "tls_ca_file" && key != "issuer_address_policy" {
-					valid = false
-					break
-				}
-			}
+			valid = validConnectionFields(fields)
 		}
 		if valid {
 			canonical, canonicalErr := conn.Identity.Canonical()
 			resource, resourceErr := canonicalResourceURL(conn.ResourceURL)
-			valid = canonicalErr == nil && resourceErr == nil && validIssuerCAFile(conn.IssuerCAFile) && conn.IssuerAddressPolicy.valid()
+			valid = canonicalErr == nil && resourceErr == nil && validCAFile(conn.IssuerCAFile) && validCAFile(conn.ServerCAFile) && conn.IssuerAddressPolicy.valid()
 			if valid {
 				conn.Identity = canonical
 				conn.ResourceURL = resource
@@ -830,6 +829,15 @@ func (r *Registry) readRows() ([]registryRow, error) {
 		rows = append(rows, registryRow{connection: conn, raw: raw, valid: valid})
 	}
 	return rows, nil
+}
+
+func validConnectionFields(fields map[string]json.RawMessage) bool {
+	for key := range fields {
+		if key != "identity" && key != "resource_url" && key != "issuer_ca_file" && key != "server_ca_file" && key != "tls_ca_file" && key != "issuer_address_policy" {
+			return false
+		}
+	}
+	return true
 }
 
 // Find returns the one saved connection addressed by an exact canonical resource
@@ -961,8 +969,11 @@ func normalizeConnection(conn Connection) (Connection, error) {
 		return Connection{}, errors.New("clientauth: resource URL must be canonical HTTPS")
 	}
 	conn.ResourceURL = resource
-	if !validIssuerCAFile(conn.IssuerCAFile) {
+	if !validCAFile(conn.IssuerCAFile) {
 		return Connection{}, errors.New("clientauth: issuer CA path must be absolute and clean")
+	}
+	if !validCAFile(conn.ServerCAFile) {
+		return Connection{}, errors.New("clientauth: server CA path must be absolute and clean")
 	}
 	if !conn.IssuerAddressPolicy.valid() {
 		return Connection{}, errors.New("clientauth: invalid issuer connection policy")
@@ -970,7 +981,7 @@ func normalizeConnection(conn Connection) (Connection, error) {
 	return conn, nil
 }
 
-func validIssuerCAFile(path string) bool {
+func validCAFile(path string) bool {
 	return path == "" || filepath.IsAbs(path) && filepath.Clean(path) == path
 }
 
@@ -1021,7 +1032,7 @@ func (r *Registry) Upsert(conn Connection) ([]Identity, error) {
 			displaced = append(displaced, existing.Identity)
 		}
 	}
-	kept = append(kept, registryRow{connection: Connection{Identity: id, ResourceURL: conn.ResourceURL, IssuerCAFile: conn.IssuerCAFile, IssuerAddressPolicy: conn.IssuerAddressPolicy}, valid: true})
+	kept = append(kept, registryRow{connection: conn, valid: true})
 	if err := r.writeRows(kept); err != nil {
 		return nil, err
 	}
@@ -1085,7 +1096,7 @@ func sameConnections(a, b []Connection) bool {
 		if right == "" {
 			right = IssuerAddressPolicyPrivate
 		}
-		if conn.ResourceURL != b[i].ResourceURL || conn.IssuerCAFile != b[i].IssuerCAFile || left != right || !conn.Identity.Equal(b[i].Identity) {
+		if conn.ResourceURL != b[i].ResourceURL || conn.IssuerCAFile != b[i].IssuerCAFile || conn.ServerCAFile != b[i].ServerCAFile || left != right || !conn.Identity.Equal(b[i].Identity) {
 			return false
 		}
 	}

@@ -1,15 +1,9 @@
 package main
 
 import (
-	"crypto/rand"
-	"crypto/rsa"
-	"encoding/base64"
 	"encoding/json"
-	"encoding/pem"
 	"errors"
-	"math/big"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -28,37 +22,21 @@ func TestFileCredentialProductionRoutes(t *testing.T) {
 	oldHome, oldRuntime := xdg.ConfigHome, newRemoteLoginRuntime
 	xdg.ConfigHome = t.TempDir()
 	t.Cleanup(func() { xdg.ConfigHome, newRemoteLoginRuntime = oldHome, oldRuntime })
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var issuer, refreshed string
+	var refreshed string
 	var exchanges atomic.Int32
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch r.URL.Path {
-		case "/.well-known/openid-configuration":
-			_ = json.NewEncoder(w).Encode(map[string]any{"issuer": issuer, "authorization_endpoint": issuer + "/authorize", "token_endpoint": issuer + "/token", "jwks_uri": issuer + "/keys", "code_challenge_methods_supported": []string{"S256"}})
-		case "/keys":
-			_ = json.NewEncoder(w).Encode(map[string]any{"keys": []map[string]string{{"kty": "RSA", "use": "sig", "alg": "RS256", "kid": "fixture", "n": base64.RawURLEncoding.EncodeToString(key.N.Bytes()), "e": base64.RawURLEncoding.EncodeToString(big.NewInt(int64(key.E)).Bytes())}}})
-		case "/token":
-			if err := r.ParseForm(); err != nil || r.Form.Get("grant_type") != "refresh_token" || r.Form.Get("refresh_token") != "original-refresh" {
-				t.Error("unexpected refresh request")
-				http.Error(w, "invalid fixture request", 400)
-				return
-			}
-			exchanges.Add(1)
-			_ = json.NewEncoder(w).Encode(map[string]any{"access_token": refreshed, "refresh_token": "rotated-refresh", "token_type": "Bearer", "expires_in": 3600})
-		default:
-			http.NotFound(w, r)
+	issuer := newOIDCTestIssuer(t, "fixture", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil || r.Form.Get("grant_type") != "refresh_token" || r.Form.Get("refresh_token") != "original-refresh" {
+			t.Error("unexpected refresh request")
+			http.Error(w, "invalid fixture request", http.StatusBadRequest)
+			return
 		}
+		exchanges.Add(1)
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": refreshed, "refresh_token": "rotated-refresh", "token_type": "Bearer", "expires_in": 3600})
 	}))
-	defer server.Close()
-	issuer = server.URL
 	sign := func(expiry time.Time) string {
-		tok := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{"iss": issuer, "sub": "fixture-user", "aud": "api", "exp": expiry.Unix(), "iat": time.Now().Add(-time.Hour).Unix()})
+		tok := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{"iss": issuer.Server.URL, "sub": "fixture-user", "aud": "api", "exp": expiry.Unix(), "iat": time.Now().Add(-time.Hour).Unix()})
 		tok.Header["kid"] = "fixture"
-		signed, err := tok.SignedString(key)
+		signed, err := tok.SignedString(issuer.Key)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -66,9 +44,7 @@ func TestFileCredentialProductionRoutes(t *testing.T) {
 	}
 	refreshed = sign(time.Now().Add(time.Hour))
 	ca := filepath.Join(xdg.ConfigHome, "issuer-ca.pem")
-	if err := os.WriteFile(ca, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw}), 0600); err != nil {
-		t.Fatal(err)
-	}
+	issuer.writeCA(t, ca)
 	root := filepath.Join(xdg.ConfigHome, "mecatl")
 	if _, err := clientauth.ResolveCredentialStore(t.Context(), root, clientauth.CredentialStoreFile); err != nil {
 		t.Fatal(err)
@@ -81,7 +57,7 @@ func TestFileCredentialProductionRoutes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	conn := clientauth.Connection{Identity: clientauth.Identity{Target: "example.test:443", Issuer: issuer, ClientID: "client", Audience: "api", RedirectURI: oauthlogin.ExactRedirectURL}, IssuerCAFile: ca, IssuerAddressPolicy: clientauth.IssuerAddressPolicyPrivate}
+	conn := clientauth.Connection{Identity: clientauth.Identity{Target: "example.test:443", Issuer: issuer.Server.URL, ClientID: "client", Audience: "api", RedirectURI: oauthlogin.ExactRedirectURL}, IssuerCAFile: ca, IssuerAddressPolicy: clientauth.IssuerAddressPolicyPrivate}
 	initial, err := creds.Save(t.Context(), conn.Identity, clientauth.Token{AccessToken: sign(time.Now().Add(-time.Minute)), RefreshToken: "original-refresh", TokenType: "Bearer", Expiry: time.Now().Add(-time.Minute).UTC().Format(time.RFC3339)}, nil)
 	if err != nil {
 		t.Fatal(err)

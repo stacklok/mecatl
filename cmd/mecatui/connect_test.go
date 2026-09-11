@@ -15,6 +15,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/adrg/xdg"
+	"github.com/zalando/go-keyring"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -403,7 +404,7 @@ func TestRemoteAnonymousProductionPathResolvesTLSAndPlaintext(t *testing.T) {
 	}
 }
 
-func TestExplicitStaticTokenBypassesSavedEnrollmentLookup(t *testing.T) {
+func TestCredentialIndependentModesIgnoreSavedEnrollmentLookupFailures(t *testing.T) {
 	oldConfigHome := xdg.ConfigHome
 	xdg.ConfigHome = t.TempDir()
 	t.Cleanup(func() { xdg.ConfigHome = oldConfigHome })
@@ -415,15 +416,27 @@ func TestExplicitStaticTokenBypassesSavedEnrollmentLookup(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	target, dial, cleanup, err := resolveTransport(t.Context(), config{
-		transportMode:  modeConnect,
-		connectAddress: "remote.example:443",
-		authToken:      "explicit-token",
-		useTLS:         true,
-	})
-	defer cleanup()
-	if err != nil || target != "remote.example:443" || dial.AuthToken != "explicit-token" || dial.TokenSource != nil || dial.ExplicitAnonymous {
-		t.Fatalf("target=%q dial=%#v err=%v, want explicit token without registry access", target, dial, err)
+	for _, tc := range []struct {
+		name      string
+		authToken string
+		anonymous bool
+	}{
+		{name: "static bearer", authToken: "explicit-token"},
+		{name: "anonymous", anonymous: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			target, dial, cleanup, err := resolveTransport(t.Context(), config{
+				transportMode:  modeConnect,
+				connectAddress: "remote.example:443",
+				authToken:      tc.authToken,
+				anonymous:      tc.anonymous,
+				useTLS:         true,
+			})
+			defer cleanup()
+			if err != nil || target != "remote.example:443" || dial.AuthToken != tc.authToken || dial.TokenSource != nil || dial.ExplicitAnonymous != tc.anonymous {
+				t.Fatalf("target=%q dial=%#v err=%v, want credential-independent mode despite corrupt registry", target, dial, err)
+			}
+		})
 	}
 }
 
@@ -486,6 +499,90 @@ func TestSavedLocalEnrollmentIsNotIgnored(t *testing.T) {
 	reason, ok := client.AuthFailure(resolveErr, false)
 	if dial.Server != "" || !ok || reason != client.AuthStorageUnavailable {
 		t.Fatalf("dial=%#v err=%v reason=%q ok=%v, want saved-enrollment credential path", dial, resolveErr, reason, ok)
+	}
+}
+
+func TestResolveTransportUsesPersistedServerCAWithExplicitOverride(t *testing.T) {
+	keyring.MockInit()
+	oldConfigHome := xdg.ConfigHome
+	xdg.ConfigHome = t.TempDir()
+	t.Cleanup(func() { xdg.ConfigHome = oldConfigHome })
+
+	issuer := newOIDCTestIssuer(t, "transport-test", nil)
+
+	root := filepath.Join(xdg.ConfigHome, "mecatl")
+	issuerCA := filepath.Join(root, "issuer-ca.pem")
+	serverCA := filepath.Join(root, "server-ca.pem")
+	explicitCA := filepath.Join(root, "explicit-ca.pem")
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	issuer.writeCA(t, issuerCA)
+	id := clientauth.Identity{
+		Target: "saved.example:443", Issuer: issuer.Server.URL, ClientID: "client", Audience: "audience",
+		RedirectURI: "http://127.0.0.1:18473/oauth/callback", Scopes: []string{"openid"},
+	}
+	registry, err := clientauth.OpenRegistry(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := registry.Upsert(clientauth.Connection{Identity: id, IssuerCAFile: issuerCA, ServerCAFile: serverCA, IssuerAddressPolicy: clientauth.IssuerAddressPolicyPrivate}); err != nil {
+		t.Fatal(err)
+	}
+	keys, err := clientauth.NewKeyringProvider(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := clientauth.OpenStore(t.Context(), root, keys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	creds, err := clientauth.NewCredentials(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := creds.Save(t.Context(), id, clientauth.Token{AccessToken: "saved-token", TokenType: "Bearer", Expiry: time.Now().Add(time.Hour).Format(time.RFC3339)}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		name            string
+		ca              string
+		authToken       string
+		anonymous       bool
+		tlsExplicit     bool
+		useTLS          bool
+		insecure        bool
+		want            string
+		wantTokenSource bool
+		wantPlaintext   bool
+		wantInsecure    bool
+	}{
+		{name: "saved CA is the managed OIDC default", useTLS: true, want: serverCA, wantTokenSource: true},
+		{name: "explicit connect CA overrides saved CA", ca: explicitCA, useTLS: true, want: explicitCA, wantTokenSource: true},
+		{name: "saved CA is independent of static bearer selection", authToken: "static-token", useTLS: true, want: serverCA},
+		{name: "static bearer insecure mode remains caller-controlled", authToken: "static-token", useTLS: true, insecure: true, want: serverCA, wantInsecure: true},
+		{name: "static bearer plaintext remains caller-controlled", authToken: "static-token", tlsExplicit: true, want: serverCA, wantPlaintext: true},
+		{name: "explicit connect CA overrides saved CA with static bearer", ca: explicitCA, authToken: "static-token", useTLS: true, want: explicitCA},
+		{name: "saved CA is independent of anonymous selection", anonymous: true, useTLS: true, want: serverCA},
+		{name: "anonymous insecure mode remains caller-controlled", anonymous: true, useTLS: true, insecure: true, want: serverCA, wantInsecure: true},
+		{name: "anonymous plaintext remains caller-controlled", anonymous: true, tlsExplicit: true, want: serverCA, wantPlaintext: true},
+		{name: "explicit connect CA overrides saved CA with anonymous", ca: explicitCA, anonymous: true, useTLS: true, want: explicitCA},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			target, dial, cleanup, err := resolveTransport(t.Context(), config{
+				transportMode: modeConnect, connectAddress: id.Target, tlsCA: tc.ca,
+				authToken: tc.authToken, anonymous: tc.anonymous,
+				tlsExplicit: tc.tlsExplicit, useTLS: tc.useTLS, insecure: tc.insecure,
+			})
+			defer cleanup()
+			if err != nil || target != id.Target || dial.Server != id.Target || dial.UseTLS != tc.useTLS || dial.Insecure != tc.wantInsecure || dial.RemotePlaintextAllowed != tc.wantPlaintext || dial.TLSCAFile != tc.want || (dial.TokenSource != nil) != tc.wantTokenSource || dial.AuthToken != tc.authToken || dial.ExplicitAnonymous != tc.anonymous {
+				t.Fatalf("target=%q dial=%#v err=%v, want saved verified transport with CA %q", target, dial, err, tc.want)
+			}
+		})
 	}
 }
 

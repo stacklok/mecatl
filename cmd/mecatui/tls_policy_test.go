@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/internal/adapter/clientauth"
 )
 
 func TestResolveRemoteTLSPolicy(t *testing.T) {
@@ -49,6 +50,25 @@ func TestResolveRemoteTLSPolicy(t *testing.T) {
 			}
 			if err != nil || cfg.useTLS != tc.wantTLS {
 				t.Fatalf("resolveRemoteTLSPolicy() = %v, tls=%v; want nil, %v", err, cfg.useTLS, tc.wantTLS)
+			}
+		})
+	}
+}
+
+func TestApplySavedServerCA(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		cfg  config
+		want string
+	}{
+		{name: "saved CA is restored", want: "/saved-server-ca.pem"},
+		{name: "connect CA overrides saved CA", cfg: config{tlsCA: "/explicit-server-ca.pem"}, want: "/explicit-server-ca.pem"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dial := client.DialConfig{TLSCAFile: tc.cfg.tlsCA}
+			applySavedServerCA(tc.cfg, clientauth.Connection{ServerCAFile: "/saved-server-ca.pem"}, &dial)
+			if dial.TLSCAFile != tc.want {
+				t.Fatalf("TLS CA = %q, want %q", dial.TLSCAFile, tc.want)
 			}
 		})
 	}

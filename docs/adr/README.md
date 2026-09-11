@@ -84,6 +84,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0233 — Secure external Redis on the shared connection layer](./0233-secure-external-redis.md)
 - [0237 — Listener-scoped workspace authority](./0237-listener-scoped-workspace-authority.md)
 - [0286 — Public and private OIDC issuers are two transports, not one policy](./0286-issuer-transport-split.md) *(supersedes ADR 0284's implicit CA-presence mode selection, and ADR 0277's private-only transport clauses)*
+- [0327 — Persist saved mecatui gRPC server CA references](./0327-persisted-mecatui-server-ca.md) *(supersedes only ADR 0287's sole custom gRPC server-CA-input clause; all other ADR 0287 decisions remain authoritative)*
 - [0277 — Remote mecatui OIDC client authentication](./0277-remote-mecatui-oidc.md) *(supersedes 0270–0273; its keyring-only credential backend-selection clauses are superseded by 0318)*
 - [0318 — Headless mecatui credential backend selection](./0318-headless-mecatui-credential-backend-selection.md) *(Accepted; supersedes ADR 0277's keyring-only credential-backend selection clauses)*
 - [0305 — OAuth protected-resource discovery for remote mecatui](./0305-oauth-protected-resource-discovery.md) *(scope-selection clarification proposed in 0316)*

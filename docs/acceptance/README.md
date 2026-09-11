@@ -115,6 +115,7 @@ PR after verification. There is no cleanup or status-only PR.
   Routine, Bounded, and Architectural work; keeps acceptance planning for substantive work
   while reserving ADRs for genuinely durable architecture decisions. Status: landed in this
   Combined candidate; authoritative on merge.
+- [Persist saved mecatui server CA](persist-mecatui-server-ca.md) — save a private gRPC server CA during OIDC login and restore it for saved connects without conflating it with issuer trust. Status: in-progress.
 - [Human-reviewed development contracts](human-reviewed-development-contracts.md) —
   plan/interface review before autonomous implementation, with exact interface
   declarations, run-local orchestration state, and a final human code-review gate.

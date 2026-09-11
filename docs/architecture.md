@@ -860,9 +860,9 @@ Legacy/private deployments without that profile require those values explicitly 
 retain the explicit-login `--scopes` override. Login defaults to public, globally routable issuer
 addresses verified against the system trust store; optional `--tls-ca` replaces those
 roots. `--private-issuer` requires `--tls-ca` and selects private-address admission. The
-saved policy and an explicit CA reference, never CA contents, are used for later refresh
-and logout. The login `--tls-ca` path is distinct from the
-optional server CA supplied to `connect`. It validates discovery, PKCE, and
+saved policy and explicit issuer and server CA references, never CA contents, are used for
+later refresh/logout and saved-target dialing respectively. The login `--tls-ca` path is distinct from the
+optional server CA saved by `login --server-tls-ca` or overridden by `connect --tls-ca`. It validates discovery, PKCE, and
 the resulting token before saving. `mecatui connect ADDRESS` never opens a browser or
 guesses missing settings. Credential selection is explicit-token first (and therefore wins
 if `--anonymous` is also present), then explicit
@@ -875,9 +875,11 @@ Remote credential-free targets still default to verified TLS, and plaintext requ
 explicit `--tls=false`; no private IP, DNS name, or Tailscale-like target weakens that policy.
 In a credential-free Tailscale deployment, tailnet membership and ACLs are the shared
 authority and all admitted peers share the server's unauthenticated caller posture. A saved credential forces verified TLS for the gRPC server,
-even on loopback; its saved issuer CA remains issuer-only, while `connect --tls-ca`
-is the only custom server-CA input. Login pins one backend per canonical clientauth
-root before OAuth ([ADR 0318](adr/0318-headless-mecatui-credential-backend-selection.md)).
+even on loopback; its saved issuer CA remains issuer-only. A separately saved
+`login --server-tls-ca` path supplies target-specific private server trust by default,
+while an explicit `connect --tls-ca` overrides it for that invocation. Login pins one
+backend per canonical clientauth root before OAuth
+([ADR 0318](adr/0318-headless-mecatui-credential-backend-selection.md)).
 `--credential-store=auto|keyring|file` is login-only. Fresh Linux auto uses a read-only,
 no-autostart same-executable D-Bus helper with a 500 ms joined deadline; only absence
 or its own timeout selects file. macOS auto selects keyring. Explicit file bypasses
@@ -944,7 +946,7 @@ The shared private-HTTPS path reuses a finite, owner-closed scoped keep-alive po
 every new dial re-resolves DNS and intersects the approved addresses while retaining
 HTTPS, origin, CA, hostname, and redirect safeguards. Kind remote login is available after fixture setup with host aliases and
 the public CA, but is a live qualification path, not ordinary offline-test coverage.
-See [ADR 0275](adr/0275-bounded-scoped-https-keepalive-oidc.md), [ADR 0277](adr/0277-remote-mecatui-oidc.md), [ADR 0287](adr/0287-target-aware-mecatui-tls.md), and [ADR 0274](adr/0274-remote-mecatui-logout-budget.md).
+See [ADR 0275](adr/0275-bounded-scoped-https-keepalive-oidc.md), [ADR 0277](adr/0277-remote-mecatui-oidc.md), [ADR 0287](adr/0287-target-aware-mecatui-tls.md), [ADR 0327](adr/0327-persisted-mecatui-server-ca.md), and [ADR 0274](adr/0274-remote-mecatui-logout-budget.md).
 
 **mecatequi — the single-shot headless runner (`cmd/mecatequi`).** A fourth composition
 root and a *peer of `mecademo`* over the same `app.Build`: it runs **one** prompt against
