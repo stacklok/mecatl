@@ -8387,7 +8387,8 @@ never a `unix://` URL. `./gen` is the committed protobuf-es output generated onl
 report. The package requires Node 22 or newer, builds unbundled ESM plus declarations/source maps,
 and owns its pinned pnpm lock independently of the npm-based website. The
 canonical published name is `@stacklok-oss/mecatl-sdk` on public npmjs
-(`sdk/typescript/v*` tags, `npm-publish` environment, npm-native provenance;
+(`sdk/typescript/v*` tags, `npm-publish` environment, staged trusted publishing,
+maintainer approval with 2FA, npm-native provenance;
 [ADR 0328](../adr/0328-typescript-sdk-npmjs-stacklok-oss.md)).
 
 `sdk/typescript/src/raw.ts` enforces API-major compatibility before all non-compatibility RPCs;

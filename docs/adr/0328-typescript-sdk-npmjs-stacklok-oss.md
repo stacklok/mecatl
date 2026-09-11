@@ -49,16 +49,16 @@ version unsupported, and publishing `0.1.0` moves `latest` to the supported
 release. Immediately after the package record exists, configure trusted
 publishing, revoke the bootstrap credential, and set publishing access to
 disallow tokens. `0.1.0` remains the first supported release and the first
-version published by the release workflow.
+version staged by the release workflow.
 
-**4. Publication stays behind the protected `npm-publish` environment.** Rename
+**4. Release staging stays behind the protected `npm-publish` environment.** Rename
 the GitHub Environment from `github-packages-publish` to `npm-publish` and
 require manual approval for the publish job. The npm trusted-publisher
 configuration must use that exact environment name, repository
 `stacklok/mecatl`, and workflow
-`.github/workflows/release-sdk-typescript.yml`. Its allowed actions must
-explicitly include direct `npm publish`; the workflow does not use npm staged
-publishing.
+`.github/workflows/release-sdk-typescript.yml`. Permit staged publishing only;
+leave direct `npm publish` disabled. A successful tag workflow creates a
+private npm release candidate and cannot make it public.
 
 **5. Authenticate supported releases with npm trusted publishing only.** The
 tag-gated `publish` job receives `contents: read` and `id-token: write`. It does not receive
@@ -68,21 +68,29 @@ any other long-lived npm credential. `verify` remains `contents: read` only.
 is the bounded exception described by Decision 3; its credential is never
 stored in GitHub Actions.
 
-**6. Prove provenance on the published package, not a second GitHub
-attestation.** Publish the inspected tarball by path. After publication,
-verify `dist.attestations` and `dist.integrity` against the packed SHA-512.
-Do not run `actions/attest-build-provenance` or `gh attestation verify` on
-this workflow. Provenance is asserted on npm's output, not by passing
-`--provenance` or `--access` on the publish command.
+**6. Stage the inspected artifact, then require npm approval.** The publish job
+uses an exactly pinned npm CLI at or above 11.15.0 and runs `npm stage publish`
+against the downloaded tarball path. It validates npm's JSON result against the
+expected package name, version, and SHA-512 integrity, then records the opaque
+stage ID. An authorized maintainer reviews the candidate in npm or with
+`npm stage view` / `npm stage download` and either approves or rejects it with
+2FA. The workflow's short-lived trust token cannot approve its own candidate.
 
-**7. Keep path-qualified release tags.** Release with `sdk/typescript/v0.1.0`.
+**7. Prove provenance on the approved package, not a second GitHub
+attestation.** After approval, use `npm view` to verify `dist.attestations` and
+`dist.integrity` against the packed SHA-512 recorded with the stage ID. Do not
+run `actions/attest-build-provenance` or `gh attestation verify` on this
+workflow. Provenance is asserted on npm's output, not by passing `--provenance`
+or `--access` on the staging command.
+
+**8. Keep path-qualified release tags.** Release with `sdk/typescript/v0.1.0`.
 The tag must match `package.json` version, resolve to the tagged commit, and
 be an ancestor of `origin/main`. Root `v*` image releases and provider-module
 tags stay isolated.
 
-**8. Delete the GitHub Packages preview manually after a successful npm
+**9. Delete the GitHub Packages preview manually after an approved npm
 release.** Do not automate unpublish or deletion in the release workflow.
-Publish and verify `@stacklok-oss/mecatl-sdk@0.1.0` first.
+Approve and verify `@stacklok-oss/mecatl-sdk@0.1.0` first.
 
 ## Consequences
 
@@ -92,10 +100,13 @@ Publish and verify `@stacklok-oss/mecatl-sdk@0.1.0` first.
   prerelease. `bootstrap` and `latest` point to it only until `0.1.0` publishes;
   the supported release then becomes `latest`.
 - Operators must create the `npm-publish` environment, trusted-publisher
-  record with direct `npm publish` authority, and npm `@stacklok-oss` package
-  permissions before the first tag.
-- A failed npm publish still leaves the GitHub Packages preview intact until
-  a human deletes it.
+  record with staged-publish-only authority, and npm `@stacklok-oss` package
+  permissions before the first tag. Package publishing access requires 2FA and
+  disallows tokens.
+- A tag stages `0.1.0`; it does not move `latest` or expose the SDK until an npm
+  maintainer approves it with 2FA.
+- A failed or rejected npm stage still leaves the GitHub Packages preview
+  intact until a human deletes it.
 - In-repository examples depend on the SDK via `file:` until
   `@stacklok-oss/mecatl-sdk@0.1.0` exists on npmjs.
 

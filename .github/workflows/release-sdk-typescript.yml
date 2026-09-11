@@ -1,4 +1,4 @@
-# Builds one immutable npm tarball and publishes only that inspected artifact.
+# Builds one immutable npm tarball and stages only that inspected artifact.
 name: Release TypeScript SDK
 
 on:
@@ -7,7 +7,7 @@ on:
       - 'sdk/typescript/v*'
   workflow_dispatch:
 
-# Verification cannot mint OIDC. The publish job is the only elevation.
+# Verification cannot mint OIDC. The staging job is the only elevation.
 permissions:
   contents: read
 
@@ -219,7 +219,7 @@ jobs:
           retention-days: 1
 
   publish:
-    name: Publish inspected artifact to npmjs
+    name: Stage inspected artifact on npmjs
     needs: verify
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/sdk/typescript/v')
     environment: npm-publish
@@ -229,13 +229,14 @@ jobs:
       contents: read
       id-token: write
     steps:
-      # Node 24.7.0 bundles npm 11.5.1, so this exact distribution pin fixes
-      # both publishing tool versions without an install step. Do not set
+      # Node 24.18.1 bundles npm 11.16.0, the first bundled CLI in this line
+      # above npm stage's 11.15.0 floor. This exact distribution pin fixes both
+      # publishing tool versions without an install step. Do not set
       # registry-url: a generated user npmrc with a blank token disables
       # trusted publishing.
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '24.7.0'
+          node-version: '24.18.1'
 
       - name: Download inspected npm tarball
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -253,7 +254,7 @@ jobs:
               (version[1] === 14 && version[2] >= 0)));
           if (!meetsFloor) throw new Error(`Node ${process.versions.node} is below 22.14.0`);
           NODE
-          test "$(npm --version)" = "11.5.1"
+          test "$(npm --version)" = "11.16.0"
 
       - name: Re-verify downloaded tarball integrity
         env:
@@ -264,55 +265,65 @@ jobs:
           actual_integrity="$(node --input-type=module --eval "import { createHash } from 'node:crypto'; import { readFileSync } from 'node:fs'; process.stdout.write('sha512-' + createHash('sha512').update(readFileSync(process.argv[1])).digest('base64'))" "$TARBALL")"
           test "$actual_integrity" = "$EXPECTED_INTEGRITY"
 
-      - name: Publish downloaded tarball
-        env:
-          TARBALL: ${{ needs.verify.outputs.tarball }}
-        run: npm publish "./${TARBALL}"
-
-      - name: Verify published npm provenance
+      # --json returns the registry-assigned stage id and npm's view of the
+      # exact candidate. The trusted-publisher token is deliberately unable to
+      # approve it; a maintainer must inspect and approve it with 2FA.
+      - name: Stage downloaded tarball
+        id: stage
         env:
           EXPECTED_INTEGRITY: ${{ needs.verify.outputs.integrity }}
+          TARBALL: ${{ needs.verify.outputs.tarball }}
           VERSION: ${{ needs.verify.outputs.version }}
         run: |
           set -euo pipefail
-          node --input-type=module <<'NODE'
-          import { execFileSync } from "node:child_process";
+          stage_json="$RUNNER_TEMP/npm-stage.json"
+          npm stage publish "./${TARBALL}" --json > "$stage_json"
+          STAGE_JSON="$stage_json" node --input-type=module <<'NODE'
+          import { appendFileSync, readFileSync } from "node:fs";
 
-          const version = process.env.VERSION;
-          const expectedIntegrity = process.env.EXPECTED_INTEGRITY;
-          const spec = `@stacklok-oss/mecatl-sdk@${version}`;
-          let lastError;
-          for (let attempt = 0; attempt < 12; attempt += 1) {
-            try {
-              const raw = execFileSync("npm", ["view", spec, "--json"], { encoding: "utf8" });
-              const viewed = JSON.parse(raw);
-              const dist = viewed.dist ?? viewed;
-              if (dist.integrity !== expectedIntegrity) {
-                throw new Error(`dist.integrity ${JSON.stringify(dist.integrity)} != ${expectedIntegrity}`);
-              }
-              const attestations = dist.attestations;
-              if (attestations == null || (typeof attestations === "object" && Object.keys(attestations).length === 0)) {
-                throw new Error("published package is missing dist.attestations");
-              }
-              process.stdout.write(JSON.stringify({ integrity: dist.integrity, attestations: true }) + "\n");
-              process.exit(0);
-            } catch (error) {
-              lastError = error;
-              execFileSync("sleep", ["5"]);
-            }
+          const packageName = "@stacklok-oss/mecatl-sdk";
+          const result = JSON.parse(readFileSync(process.env.STAGE_JSON, "utf8"));
+          const candidate = result[packageName];
+          if (candidate == null || typeof candidate !== "object") {
+            throw new Error(`npm stage output is missing ${packageName}`);
           }
-          throw lastError ?? new Error(`npm view ${spec} failed`);
+          process.stdout.write(JSON.stringify({
+            package: candidate.id,
+            integrity: candidate.integrity,
+            stageId: candidate.stageId,
+          }) + "\n");
+          const failures = [
+            ["name", candidate.name, packageName],
+            ["version", candidate.version, process.env.VERSION],
+            ["integrity", candidate.integrity, process.env.EXPECTED_INTEGRITY],
+          ].filter(([, actual, expected]) => actual !== expected);
+          if (failures.length > 0) {
+            throw new Error(`staged candidate mismatch: ${JSON.stringify(failures)}`);
+          }
+          if (typeof candidate.stageId !== "string" || candidate.stageId.length === 0) {
+            throw new Error("npm stage output is missing stageId");
+          }
+          appendFileSync(process.env.GITHUB_OUTPUT, `stage_id=${candidate.stageId}\n`);
           NODE
 
-      - name: Record published artifact evidence
+      - name: Record staged artifact and approval instructions
         env:
           INTEGRITY: ${{ needs.verify.outputs.integrity }}
+          STAGE_ID: ${{ steps.stage.outputs.stage_id }}
           TARBALL: ${{ needs.verify.outputs.tarball }}
+          VERSION: ${{ needs.verify.outputs.version }}
         run: |
           {
-            echo "## Published TypeScript SDK artifact"
+            echo "## Staged TypeScript SDK artifact"
             echo ""
+            echo "- Package: \`@stacklok-oss/mecatl-sdk@$VERSION\`"
             echo "- Tarball: \`$TARBALL\`"
             echo "- npm integrity: \`$INTEGRITY\`"
-            echo "- Provenance: npm dist.attestations"
+            echo "- npm stage id: \`$STAGE_ID\`"
+            echo "- Status: awaiting npm maintainer approval with 2FA"
+            echo ""
+            echo "Review the candidate in the npm UI or with \`npm stage view $STAGE_ID\` and"
+            echo "\`npm stage download $STAGE_ID\`. After approval, run"
+            echo "\`npm view @stacklok-oss/mecatl-sdk@$VERSION --json\` and verify that"
+            echo "\`dist.integrity\` equals the value above and \`dist.attestations\` is present."
           } >> "$GITHUB_STEP_SUMMARY"

@@ -377,6 +377,9 @@ func TestADR_0328_TrustedPublishingNoStoredCredentials(t *testing.T) {
 			t.Errorf("release workflow contains forbidden credential/authority text %q", forbidden)
 		}
 	}
+	if regexp.MustCompile(`(?m)^\s*npm publish(?:\s|$)`).MatchString(source) {
+		t.Error("release workflow grants direct npm publish authority instead of staging")
+	}
 
 	for jobName, job := range workflow.Jobs {
 		for _, step := range job.Steps {
@@ -387,43 +390,51 @@ func TestADR_0328_TrustedPublishingNoStoredCredentials(t *testing.T) {
 	}
 	downloadIndex := sdkScenario11ActionIndex(publish, "actions/download-artifact@")
 	integrityIndex := sdkScenario11StepNamed(publish, "Re-verify downloaded tarball integrity")
-	publishIndex := sdkScenario11StepNamed(publish, "Publish downloaded tarball")
-	provenanceIndex := sdkScenario11StepNamed(publish, "Verify published npm provenance")
-	summaryIndex := sdkScenario11StepNamed(publish, "Record published artifact evidence")
-	if downloadIndex < 0 || integrityIndex <= downloadIndex || publishIndex <= integrityIndex ||
-		provenanceIndex <= publishIndex || summaryIndex <= provenanceIndex {
-		t.Fatalf("download/integrity/publish/provenance/summary ordering = %d/%d/%d/%d/%d",
-			downloadIndex, integrityIndex, publishIndex, provenanceIndex, summaryIndex)
+	stageIndex := sdkScenario11StepNamed(publish, "Stage downloaded tarball")
+	summaryIndex := sdkScenario11StepNamed(publish, "Record staged artifact and approval instructions")
+	if downloadIndex < 0 || integrityIndex <= downloadIndex || stageIndex <= integrityIndex ||
+		summaryIndex <= stageIndex {
+		t.Fatalf("download/integrity/stage/summary ordering = %d/%d/%d/%d",
+			downloadIndex, integrityIndex, stageIndex, summaryIndex)
 	}
 	if sdkScenario11ActionIndex(publish, "actions/attest-build-provenance@") >= 0 {
-		t.Error("publish must not mint a separate GitHub artifact attestation")
+		t.Error("staging must not mint a separate GitHub artifact attestation")
 	}
-	publishRun := publish.Steps[publishIndex].Run
-	if !strings.Contains(publishRun, `npm publish "./${TARBALL}"`) {
-		t.Error("publish must use the downloaded tarball path")
+	stage := publish.Steps[stageIndex]
+	if stage.ID != "stage" {
+		t.Errorf("stage step id = %q, want stage", stage.ID)
 	}
-	provenanceRun := publish.Steps[provenanceIndex].Run
-	for _, proof := range []string{"dist.attestations", "dist.integrity", "@stacklok-oss/mecatl-sdk@", "npm", "view"} {
-		if !strings.Contains(provenanceRun, proof) {
-			t.Errorf("published provenance gate is missing %q", proof)
+	for _, proof := range []string{
+		`npm stage publish "./${TARBALL}" --json`, "@stacklok-oss/mecatl-sdk",
+		"candidate.name", "candidate.version", "candidate.integrity", "candidate.stageId",
+		"EXPECTED_INTEGRITY", "GITHUB_OUTPUT",
+	} {
+		if !strings.Contains(stage.Run, proof) {
+			t.Errorf("staged candidate gate is missing %q", proof)
 		}
 	}
 	summary := publish.Steps[summaryIndex]
 	if summary.Env["INTEGRITY"] != "${{ needs.verify.outputs.integrity }}" ||
+		summary.Env["STAGE_ID"] != "${{ steps.stage.outputs.stage_id }}" ||
 		!strings.Contains(summary.Run, "$GITHUB_STEP_SUMMARY") ||
+		!strings.Contains(summary.Run, "2FA") ||
+		!strings.Contains(summary.Run, "npm stage view") ||
+		!strings.Contains(summary.Run, "npm stage download") ||
+		!strings.Contains(summary.Run, "npm view") ||
+		!strings.Contains(summary.Run, "dist.integrity") ||
 		!strings.Contains(summary.Run, "dist.attestations") {
-		t.Error("publish summary does not record integrity and npm provenance")
+		t.Error("stage summary does not record candidate evidence, approval, and post-approval verification")
 	}
 	setupNode := sdkScenario11Action(publish, "actions/setup-node@")
-	if setupNode == nil || setupNode.With["node-version"] != "24.7.0" {
-		t.Errorf("publish Node setup = %v, want exact Node 24.7.0", setupNode)
+	if setupNode == nil || setupNode.With["node-version"] != "24.18.1" {
+		t.Errorf("publish Node setup = %v, want exact Node 24.18.1", setupNode)
 	}
 	if _, ok := setupNode.With["registry-url"]; ok {
 		t.Errorf("publish must not set registry-url, got %v", setupNode.With)
 	}
 	floorRun := publish.Steps[sdkScenario11StepNamed(publish, "Assert npm toolchain floors")].Run
-	if !strings.Contains(floorRun, "22.14.0") || !strings.Contains(floorRun, `test "$(npm --version)" = "11.5.1"`) {
-		t.Error("publish does not assert the Node and npm publishing floors")
+	if !strings.Contains(floorRun, "22.14.0") || !strings.Contains(floorRun, `test "$(npm --version)" = "11.16.0"`) {
+		t.Error("staging does not assert the Node and npm stage publishing floors")
 	}
 	packRun := workflow.Jobs["verify"].Steps[sdkScenario11StepNamed(workflow.Jobs["verify"], "Pack SDK and record integrity")].Run
 	if !strings.Contains(packRun, `stacklok-oss-mecatl-sdk-${VERSION}.tgz`) {
