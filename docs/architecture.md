@@ -146,8 +146,9 @@ and non-local flock/rename behavior remain outside it. See [ADR 0218](adr/0218-c
 
 Native LLM endpoint OAuth records use the separate `mecatl/provider-oidc/v1`
 namespace. Their authenticated identity includes the endpoint, canonical gateway,
-exact issuer, client and resource audience, normalized scopes, fixed redirect, and
-separate issuer/gateway trust-policy and loaded-CA digests. A hashed owner-only
+exact issuer and client, optional resource audience, normalized scopes, fixed redirect, and
+separate issuer/gateway trust-policy and loaded-CA digests. A configured audience stays
+part of the exact identity and is requested and matched; omission skips both. A hashed owner-only
 endpoint transaction flock surrounds load, refresh exchange, and record CAS; rotated
 refresh material is committed and ambiguous commits are exactly reread before a
 bearer is returned. This serializes cooperating processes but is not a provider/store

@@ -198,7 +198,7 @@ func llmSubtree(_ Docs) *Subtree {
 				{Key: "oidc", Type: "nativeoidc", Default: configRequired, Nested: []*Field{
 					{Key: "issuer", Type: configStringType, Default: configRequired, ExampleValue: "https://issuer.example"},
 					{Key: "client_id", Type: configStringType, Default: configRequired, ExampleValue: "mecatl"},
-					{Key: "resource_audience", Type: configStringType, Default: configRequired, ExampleValue: "https://gateway.example"},
+					{Key: "resource_audience", Type: configStringType, Default: "(empty)", ExampleValue: "https://gateway.example", Doc: "Optional OAuth audience parameter and access-token audience binding. Empty omits both."},
 					{Key: "scopes", Type: "[]string", Default: configRequired, ExampleValue: "[models.read, offline_access]"},
 				}},
 				trust("issuer_trust"), trust("gateway_trust"),

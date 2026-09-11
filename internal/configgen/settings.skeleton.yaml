@@ -143,6 +143,8 @@
 #       oidc:
 #         issuer: https://issuer.example
 #         client_id: mecatl
+#         # Optional OAuth audience parameter and access-token audience binding. Empty
+#         # omits both.
 #         resource_audience: https://gateway.example
 #         scopes: [models.read, offline_access]
 #       issuer_trust:

@@ -148,7 +148,7 @@ func sameIdentity(a, b CredentialIdentity) bool {
 }
 func identityKey(id CredentialIdentity) ([]byte, error) {
 	id = canonicalIdentity(id)
-	if id.SchemaVersion != 1 || id.EndpointID == "" || id.Gateway == "" || id.Issuer == "" || id.ClientID == "" || id.ResourceAudience == "" || len(id.Scopes) == 0 || id.RedirectURI == "" || id.IssuerTrust.Policy == "" || id.GatewayTrust.Policy == "" {
+	if id.SchemaVersion != 1 || id.EndpointID == "" || id.Gateway == "" || id.Issuer == "" || id.ClientID == "" || len(id.Scopes) == 0 || id.RedirectURI == "" || id.IssuerTrust.Policy == "" || id.GatewayTrust.Policy == "" {
 		return nil, ErrNotEnrolled
 	}
 	body, _ := json.Marshal(id)

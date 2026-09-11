@@ -22,6 +22,22 @@ import (
 	"github.com/stacklok/mecatl/mcp/oauthlogin"
 )
 
+func TestCredentialIdentityAllowsOmittedAudienceButStillBindsConfiguredAudience(t *testing.T) {
+	id := testIdentity()
+	id.ResourceAudience = ""
+	if _, err := llmendpoint.CredentialRecordKey(id); err != nil {
+		t.Fatalf("CredentialRecordKey without audience: %v", err)
+	}
+
+	withAudience := id
+	withAudience.ResourceAudience = "gateway"
+	withoutKey, _ := llmendpoint.CredentialRecordKey(id)
+	withKey, _ := llmendpoint.CredentialRecordKey(withAudience)
+	if string(withoutKey) == string(withKey) {
+		t.Fatal("configured audience did not remain part of credential identity")
+	}
+}
+
 func TestNativeLLMGatewayLogin_Scenario4_PKCEAndBoundedCallback(t *testing.T) {
 	var tokenRequests atomic.Int32
 	var issuer *httptest.Server
@@ -51,13 +67,29 @@ func TestNativeLLMGatewayLogin_Scenario4_PKCEAndBoundedCallback(t *testing.T) {
 			return oauthlogin.Result{}, err
 		}
 		q := u.Query()
-		if q.Get("code_challenge_method") != "S256" || q.Get("code_challenge") == "" || q.Get("redirect_uri") != oauthlogin.ExactRedirectURL {
+		if q.Get("code_challenge_method") != "S256" || q.Get("code_challenge") == "" || q.Get("redirect_uri") != oauthlogin.ExactRedirectURL || q.Get("audience") != "gateway" {
 			t.Fatalf("PKCE/redirect missing: %v", q)
 		}
 		return oauthlogin.Result{Code: "code", State: q.Get("state"), Iss: issuer.URL}, nil
 	}
 	if _, err := oidcclient.AuthorizationCode(t.Context(), base); err != nil {
 		t.Fatalf("AuthorizationCode: %v", err)
+	}
+	withoutAudience := base
+	withoutAudience.Audience = ""
+	withoutAudience.Present = func(_ context.Context, authURL string) (oauthlogin.Result, error) {
+		u, err := url.Parse(authURL)
+		if err != nil {
+			return oauthlogin.Result{}, err
+		}
+		q := u.Query()
+		if q.Has("audience") {
+			t.Fatalf("audience parameter sent when omitted: %v", q)
+		}
+		return oauthlogin.Result{Code: "code", State: q.Get("state"), Iss: issuer.URL}, nil
+	}
+	if _, err := oidcclient.AuthorizationCode(t.Context(), withoutAudience); err != nil {
+		t.Fatalf("AuthorizationCode without audience: %v", err)
 	}
 
 	backend := credentialstore.NewMemoryBackend()

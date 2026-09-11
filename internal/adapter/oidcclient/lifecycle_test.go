@@ -17,6 +17,33 @@ import (
 	"github.com/stacklok/mecatl/mcp/oauthlogin"
 )
 
+func TestValidateAccessTokenAllowsOmittedAudience(t *testing.T) {
+	var issuer *httptest.Server
+	issuer = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/.well-known/openid-configuration" {
+			http.NotFound(w, r)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"issuer": issuer.URL, "authorization_endpoint": issuer.URL + "/authorize",
+			"token_endpoint": issuer.URL + "/token", "jwks_uri": issuer.URL + "/keys",
+		})
+	}))
+	defer issuer.Close()
+
+	validated := false
+	err := oidcclient.ValidateAccessToken(t.Context(), oidcclient.Config{
+		Issuer: issuer.URL, HTTPClient: issuer.Client(),
+		ValidateAccessToken: func(_ context.Context, token string) error {
+			validated = token == "access-token"
+			return nil
+		},
+	}, "access-token")
+	if err != nil || !validated {
+		t.Fatalf("ValidateAccessToken without audience: validated=%v err=%v", validated, err)
+	}
+}
+
 func TestInvariant_native_oidc_discovered_endpoints_stay_on_issuer_origin(t *testing.T) {
 	var requests atomic.Int32
 	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {

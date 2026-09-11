@@ -23,6 +23,9 @@ type Config struct {
 	JWKSURI string
 	// Audience is the single service audience accepted in the token's aud claim.
 	Audience string
+	// AllowAnyAudience permits an empty Audience for resource clients whose
+	// authorization server does not bind access tokens to an audience.
+	AllowAnyAudience bool
 	// MaxJWKSStaleness bounds cached-key use during an identity-provider outage;
 	// zero disables the upper bound.
 	MaxJWKSStaleness time.Duration
@@ -76,14 +79,14 @@ type Validator struct {
 	closeOnce      sync.Once
 }
 
-// NewValidator constructs a fail-closed OIDC validator. Issuer and Audience
-// must both be non-empty. Secure issuer/JWKS transport and audience validation
-// remain enabled unless Config explicitly opts out where documented.
+// NewValidator constructs a fail-closed OIDC validator. Issuer must be non-empty;
+// Audience must also be non-empty unless AllowAnyAudience is explicitly enabled.
+// Secure issuer/JWKS transport remains enabled.
 func NewValidator(ctx context.Context, cfg Config) (*Validator, error) {
 	if cfg.Issuer == "" {
 		return nil, fmt.Errorf("%w: issuer is empty", ErrInvalidConfig)
 	}
-	if cfg.Audience == "" {
+	if cfg.Audience == "" && !cfg.AllowAnyAudience {
 		return nil, fmt.Errorf("%w: audience is empty", ErrInvalidConfig)
 	}
 	if cfg.AllowPrivateHTTPSIssuer && cfg.TrustedCAFile == "" {
@@ -115,12 +118,17 @@ func NewValidator(ctx context.Context, cfg Config) (*Validator, error) {
 }
 
 func authnConfig(cfg Config) authn.Config {
+	audiences := []string{cfg.Audience}
+	allowAnyAudience := cfg.Audience == "" && cfg.AllowAnyAudience
+	if allowAnyAudience {
+		audiences = nil
+	}
 	return authn.Config{
 		Issuer:            cfg.Issuer,
-		Audiences:         []string{cfg.Audience},
+		Audiences:         audiences,
 		JWKSURL:           cfg.JWKSURI,
 		MaxJWKSStaleness:  cfg.MaxJWKSStaleness,
-		AllowAnyAudience:  false,
+		AllowAnyAudience:  allowAnyAudience,
 		InsecureAllowHTTP: cfg.InsecureAllowPrivateIssuer,
 		AllowPrivateIP:    cfg.InsecureAllowPrivateIssuer,
 		CACertPath:        cfg.TrustedCAFile,

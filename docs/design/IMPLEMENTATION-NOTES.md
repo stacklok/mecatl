@@ -92,8 +92,9 @@ operator-configured native LLM endpoint. It resolves the canonical endpoint iden
 and independently configured issuer and gateway trust clients before it opens protected
 storage. The encrypted keyring-backed record is in `mecatl/provider-oidc/v1` beneath
 the explicit `llm.credential_home`; its identity binds endpoint, canonical gateway,
-exact issuer, client, resource audience, normalized scopes, redirect, and both trust
-policy/CA digests. No plaintext, environment fallback, migration, discovery, or
+exact issuer and client, optional resource audience, normalized scopes, redirect, and both trust
+policy/CA digests. A configured audience remains part of the exact identity and is requested
+and matched; omission skips both. No plaintext, environment fallback, migration, discovery, or
 credential material is persisted in sessions/events or exposed over RPC.
 
 Only embedded local mecatui supplies the bounded browser/loopback presenter. Mecated's

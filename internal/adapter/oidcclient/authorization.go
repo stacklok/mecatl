@@ -82,7 +82,7 @@ func AuthorizationCode(ctx context.Context, cfg Config) (Token, error) {
 		return Token{}, ErrAuthorization
 	}
 	oc := oauth2.Config{ClientID: cfg.ClientID, RedirectURL: cfg.RedirectURI, Endpoint: oauth2.Endpoint{AuthURL: doc.AuthorizationEndpoint, TokenURL: doc.TokenEndpoint, AuthStyle: oauth2.AuthStyleInParams}, Scopes: append([]string(nil), cfg.Scopes...)}
-	result, err := cfg.Present(ctx, oc.AuthCodeURL(state, oauth2.AccessTypeOffline, oauth2.S256ChallengeOption(verifier)))
+	result, err := cfg.Present(ctx, oc.AuthCodeURL(state, authCodeOptions(verifier, cfg.Audience)...))
 	if err != nil {
 		return Token{}, errors.Join(ErrAuthorization, safeContextError(err))
 	}
@@ -108,6 +108,14 @@ func AuthorizationCode(ctx context.Context, cfg Config) (Token, error) {
 		return Token{}, ErrToken
 	}
 	return Token{AccessToken: tok.AccessToken, RefreshToken: tok.RefreshToken, TokenType: tok.TokenType, Expiry: tok.Expiry}, nil
+}
+
+func authCodeOptions(verifier, audience string) []oauth2.AuthCodeOption {
+	options := []oauth2.AuthCodeOption{oauth2.AccessTypeOffline, oauth2.S256ChallengeOption(verifier)}
+	if audience != "" {
+		options = append(options, oauth2.SetAuthURLParam("audience", audience))
+	}
+	return options
 }
 
 // Refresh exchanges one retained refresh token through exact-issuer discovery.
@@ -141,7 +149,7 @@ func Refresh(ctx context.Context, cfg Config, refreshToken string) (Token, error
 // metadata. Callers that durably retain refresh-token rotation must invoke this
 // only after committing the exchange result.
 func ValidateAccessToken(ctx context.Context, cfg Config, token string) error {
-	if token == "" || cfg.HTTPClient == nil || !secureIssuer(cfg.Issuer) || cfg.Audience == "" {
+	if token == "" || cfg.HTTPClient == nil || !secureIssuer(cfg.Issuer) {
 		return ErrToken
 	}
 	doc, err := discover(ctx, cfg.HTTPClient, cfg.Issuer)
@@ -188,7 +196,7 @@ func Revoke(ctx context.Context, cfg Config, token, hint string) error {
 
 func validConfig(ctx context.Context, cfg Config) bool {
 	return ctx != nil && cfg.HTTPClient != nil && cfg.Present != nil &&
-		secureIssuer(cfg.Issuer) && cfg.ClientID != "" && cfg.Audience != "" &&
+		secureIssuer(cfg.Issuer) && cfg.ClientID != "" &&
 		cfg.RedirectURI == oauthlogin.ExactRedirectURL && len(cfg.Scopes) > 0
 }
 
@@ -196,7 +204,7 @@ func accessValidator(ctx context.Context, cfg Config, doc discovery) (func(conte
 	if cfg.ValidateAccessToken != nil {
 		return cfg.ValidateAccessToken, func() {}, nil
 	}
-	validator, err := authoidc.NewValidator(ctx, authoidc.Config{Issuer: cfg.Issuer, JWKSURI: doc.JWKSURI, Audience: cfg.Audience, HTTPClient: cfg.HTTPClient})
+	validator, err := authoidc.NewValidator(ctx, authoidc.Config{Issuer: cfg.Issuer, JWKSURI: doc.JWKSURI, Audience: cfg.Audience, AllowAnyAudience: cfg.Audience == "", HTTPClient: cfg.HTTPClient})
 	if err != nil {
 		return nil, nil, err
 	}

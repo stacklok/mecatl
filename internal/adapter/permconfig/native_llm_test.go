@@ -41,8 +41,15 @@ func TestInvariant_native_llm_endpoint_facade_normalizes_once(t *testing.T) {
 	if got.ID != "corp-gateway" || got.APIFlavor != "openai-responses" || got.BaseURL != "https://gateway.example/tenant/~v1" || got.DefaultModel != "corp-model" || got.Native == nil {
 		t.Fatalf("normalized provider = %+v", got)
 	}
-	if got.Native.CredentialHome != "/var/lib/mecatl/provider-oidc" || strings.Join(got.Native.OIDC.Scopes, ",") != "models.read,offline_access" {
+	if got.Native.CredentialHome != "/var/lib/mecatl/provider-oidc" || got.Native.OIDC.ResourceAudience != "https://gateway.example" || strings.Join(got.Native.OIDC.Scopes, ",") != "models.read,offline_access" {
 		t.Fatalf("native identity was not canonicalized once: %+v", got.Native)
+	}
+
+	withoutAudience := strings.Replace(validNativeLLMYAML, "        resource_audience: https://gateway.example\n", "", 1)
+	r, _ = newCapturedResolver(t, "/etc/mecatl/operator.yaml", withoutAudience, true)
+	providers, _, err = r.OperatorProviders()
+	if err != nil || providers["corp-gateway"].Native == nil || providers["corp-gateway"].Native.OIDC.ResourceAudience != "" {
+		t.Fatalf("optional resource audience was rejected or populated: providers=%+v err=%v", providers, err)
 	}
 
 	for _, input := range []string{
@@ -99,6 +106,7 @@ llm:
 		strings.Replace(validNativeLLMYAML, "policy: public", "policy: private-ca", 1),
 		strings.Replace(validNativeLLMYAML, "policy: private-ca\n        ca_bundle: /etc/mecatl/gateway-ca.pem", "policy: public\n        ca_bundle: /etc/mecatl/gateway-ca.pem", 1),
 		strings.Replace(validNativeLLMYAML, "models.read, offline_access, models.read", "models.read, bad scope", 1),
+		strings.Replace(validNativeLLMYAML, "https://gateway.example\n        scopes:", "'   '\n        scopes:", 1),
 		strings.Replace(validNativeLLMYAML, "      default_model: corp-model", "      default_model: corp-model\n      unknown: value", 1),
 		strings.Replace(validNativeLLMYAML, "      default_model: corp-model", "      default_model: corp-model\n      allowed_principals: [alice]", 1),
 	}

@@ -135,7 +135,7 @@ Strict operator-tier native LLM endpoints and their explicit protected credentia
 | `llm.endpoints.<key>.oidc` | `nativeoidc` | `(required)` |  |
 | `llm.endpoints.<key>.oidc.issuer` | `string` | `(required)` |  |
 | `llm.endpoints.<key>.oidc.client_id` | `string` | `(required)` |  |
-| `llm.endpoints.<key>.oidc.resource_audience` | `string` | `(required)` |  |
+| `llm.endpoints.<key>.oidc.resource_audience` | `string` | `(empty)` | Optional OAuth audience parameter and access-token audience binding. Empty omits both. |
 | `llm.endpoints.<key>.oidc.scopes` | `[]string` | `(required)` |  |
 | `llm.endpoints.<key>.issuer_trust` | `nativetrust` | `(required)` |  |
 | `llm.endpoints.<key>.issuer_trust.policy` | `string` | `(required)` |  |

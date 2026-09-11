@@ -19,8 +19,11 @@ composition layer the embedded TUI (`mecatui`) uses in-process.
 Native **LLM endpoints** are deployment-wide operator configuration, not remote-client
 settings. Configure `llm.credential_home` and strict `llm.endpoints.ID` entries in the
 user-global settings file; each requires the Responses protocol, canonical HTTPS URL,
-default model, OIDC values, and independent issuer/gateway trust policies. The native
-credential is encrypted and keyring-backed under that explicit home. `mecated` never
+default model, required OIDC issuer/client/scopes, an optional resource audience, and
+independent issuer/gateway trust policies. When `resource_audience` is omitted, Mecatl
+omits the authorization request parameter and does not require an audience during local
+access-token validation; a configured value remains strictly requested and matched. The
+native credential is encrypted and keyring-backed under that explicit home. `mecated` never
 opens a browser: enroll with embedded `mecatui llm login ENDPOINT`, then start or
 restart mecated to use the same record. A missing record leaves an optional endpoint
 `not-enrolled`/unavailable, fails startup when it is the effective default, and never

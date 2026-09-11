@@ -166,7 +166,7 @@ func (n *NativeEndpointDefinition) UnmarshalYAML(node ast.Node) error {
 	if strings.TrimSpace(n.DefaultModel) == "" {
 		return errors.New("llm endpoint: default_model is required")
 	}
-	if !llmendpoint.ValidIssuer(n.OIDC.Issuer) || strings.TrimSpace(n.OIDC.ClientID) == "" || strings.TrimSpace(n.OIDC.ResourceAudience) == "" || len(n.OIDC.Scopes) == 0 {
+	if !llmendpoint.ValidIssuer(n.OIDC.Issuer) || strings.TrimSpace(n.OIDC.ClientID) == "" || (n.OIDC.ResourceAudience != "" && strings.TrimSpace(n.OIDC.ResourceAudience) == "") || len(n.OIDC.Scopes) == 0 {
 		return errors.New("llm endpoint: oidc is required")
 	}
 	if err := llmendpoint.ValidateTrust(llmendpoint.Trust{Policy: n.IssuerTrust.Policy, CABundle: n.IssuerTrust.CABundle}); err != nil {
@@ -186,7 +186,7 @@ func (o *NativeOIDC) UnmarshalYAML(node ast.Node) error {
 	}); err != nil {
 		return err
 	}
-	if !llmendpoint.ValidIssuer(o.Issuer) || strings.TrimSpace(o.ClientID) == "" || strings.TrimSpace(o.ResourceAudience) == "" {
+	if !llmendpoint.ValidIssuer(o.Issuer) || strings.TrimSpace(o.ClientID) == "" || (o.ResourceAudience != "" && strings.TrimSpace(o.ResourceAudience) == "") {
 		return errors.New("llm endpoint oidc: required identity field is invalid")
 	}
 	scopes, err := llmendpoint.NormalizeScopes(o.Scopes)

@@ -268,6 +268,27 @@ func (f *jwksFixture) tokenWithIssuer(t *testing.T, issuer, audience string) str
 	return input + "." + base64.RawURLEncoding.EncodeToString(signature)
 }
 
+func TestValidatorOptionalAudiencePreservesConfiguredAudienceBinding(t *testing.T) {
+	fixture := newJWKSFixture(t)
+
+	optional, err := NewValidator(context.Background(), Config{
+		Issuer: fixture.srv.URL, JWKSURI: fixture.srv.URL + "/keys",
+		AllowAnyAudience: true, HTTPClient: fixture.srv.Client(),
+	})
+	if err != nil {
+		t.Fatalf("NewValidator without audience: %v", err)
+	}
+	t.Cleanup(func() { _ = optional.Close() })
+	if principal, err := optional.Validate(context.Background(), fixture.token(t, "another-service")); err != nil || principal == nil {
+		t.Fatalf("optional-audience Validate = (%#v, %v), want valid principal", principal, err)
+	}
+
+	strict := fixture.validator(t)
+	if principal, err := strict.Validate(context.Background(), fixture.token(t, "another-service")); principal != nil || !errors.Is(err, ErrInvalidToken) {
+		t.Fatalf("configured-audience Validate = (%#v, %v), want nil ErrInvalidToken", principal, err)
+	}
+}
+
 // TestCallerIdentityE2E_Scenario2_WrongAudienceRejected pins that a valid
 // signature cannot cross a deployment boundary with a different audience.
 func TestCallerIdentityE2E_Scenario2_WrongAudienceRejected(t *testing.T) {
