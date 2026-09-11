@@ -33,14 +33,19 @@ import (
 )
 
 type lifecycleTool struct {
-	calls atomic.Int32
+	calls  atomic.Int32
+	schema json.RawMessage
 	// hold, when set, runs inside Execute with the run context, so a test can
 	// hold a continuation in flight and observe whether it gets cancelled.
 	hold func(context.Context)
 }
 
-func (*lifecycleTool) Spec() tool.ToolSpec {
-	return tool.ToolSpec{Name: "protected", Schema: json.RawMessage(`{"type":"object"}`)}
+func (t *lifecycleTool) Spec() tool.ToolSpec {
+	schema := t.schema
+	if schema == nil {
+		schema = json.RawMessage(`{"type":"object"}`)
+	}
+	return tool.ToolSpec{Name: "protected", Schema: schema}
 }
 func (*lifecycleTool) ReadOnly() bool { return false }
 func (t *lifecycleTool) Execute(ctx context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
@@ -59,6 +64,14 @@ func (t lifecycleMarkerTool) Spec() tool.ToolSpec {
 func (lifecycleMarkerTool) ReadOnly() bool { return true }
 func (t lifecycleMarkerTool) Execute(_ context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	return session.NewToolResult(call.ID, t.name), nil
+}
+
+type lifecycleSchemaTool struct{ spec tool.ToolSpec }
+
+func (t lifecycleSchemaTool) Spec() tool.ToolSpec { return t.spec }
+func (lifecycleSchemaTool) ReadOnly() bool        { return true }
+func (lifecycleSchemaTool) Execute(_ context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
+	return session.NewToolResult(call.ID, "ok"), nil
 }
 
 type lifecycleParkingTool struct {
@@ -536,6 +549,95 @@ func TestAuthenticatedMCPMetadataReplacement_PlanModeBlocksMutatingRefresh(t *te
 	}
 	if !found {
 		t.Fatal("no tool result recorded for the blocked continuation")
+	}
+}
+
+// TestAuthenticatedMCPMetadataReplacement_RejectsParkedArgumentsOutsideReplacementSchema
+// pins the narrow lazy-transition gate: the parked call was valid for its static
+// declaration, but must not execute after authenticated metadata narrows it.
+func TestAuthenticatedMCPMetadataReplacement_RejectsParkedArgumentsOutsideReplacementSchema(t *testing.T) {
+	f := newLifecycleFixture(t, session.AuthorizationGranted, nil, time.Now, nil)
+	replacement := &lifecycleTool{schema: json.RawMessage(`{"type":"object","required":["title"],"properties":{"title":{"type":"string"}}}`)}
+	f.attach.refreshTools = []tool.Tool{replacement}
+
+	control := MCPAuthorizationControl{SessionID: "authorization-session", AuthorizationID: f.pending.Authorization.ID}
+	result, err := f.svc.RecheckMCPAuthorization(t.Context(), control.SessionID, control)
+	if err != nil || result.Run == nil {
+		t.Fatalf("RecheckMCPAuthorization = (%+v, %v)", result, err)
+	}
+	events := drainLifecycleRun(t, f.svc, result)
+	if got := replacement.calls.Load(); got != 0 {
+		t.Fatalf("replacement tool executions = %d, want 0", got)
+	}
+	if got := f.attach.tool.calls.Load(); got != 0 {
+		t.Fatalf("static tool executions = %d, want 0", got)
+	}
+	results := make(map[session.ToolCallID]session.ToolResult)
+	for _, event := range events {
+		if event.Type == session.EvToolResult && event.ToolResult != nil {
+			results[event.ToolResult.CallID] = *event.ToolResult
+		}
+	}
+	if got, ok := results[f.pending.Call.ID]; !ok || !got.IsError || got.Content != authorizationSchemaMismatch {
+		t.Fatalf("parked call result = %+v, want schema rejection", got)
+	}
+	if got, ok := results[f.pending.Deferred[0].ID]; !ok || !got.IsError || got.Content != "authorization deferred sibling was not executed" {
+		t.Fatalf("deferred call result = %+v, want paired deferred error", got)
+	}
+}
+
+func TestValidateGrantedAuthorizationArgumentsFailsClosed(t *testing.T) {
+	validSchema := json.RawMessage(`{"type":"object","required":["title"],"properties":{"title":{"type":"string"}}}`)
+	cases := []struct {
+		name   string
+		schema json.RawMessage
+		args   json.RawMessage
+		wantOK bool
+	}{
+		{name: "valid", schema: validSchema, args: json.RawMessage(`{"title":"ok"}`), wantOK: true},
+		{name: "malformed schema", schema: json.RawMessage(`{`), args: json.RawMessage(`{}`)},
+		{name: "non-object schema", schema: json.RawMessage(`true`), args: json.RawMessage(`{}`)},
+		{name: "unresolvable schema", schema: json.RawMessage(`{"$ref":"https://schemas.example/required.json"}`), args: json.RawMessage(`{}`)},
+		{name: "malformed args", schema: validSchema, args: json.RawMessage(`{`)},
+		{name: "non-object args", schema: validSchema, args: json.RawMessage(`[]`)},
+		{name: "schema mismatch", schema: validSchema, args: json.RawMessage(`{"title":1}`)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateGrantedAuthorizationArguments([]tool.Tool{&lifecycleTool{schema: tc.schema}}, session.NewToolCall("call", "protected", tc.args))
+			if (err == nil) != tc.wantOK {
+				t.Fatalf("validateGrantedAuthorizationArguments() error = %v, wantOK %v", err, tc.wantOK)
+			}
+		})
+	}
+}
+
+// TestValidateGrantedAuthorizationArgumentsCanonicalizesQueryArgs pins the same
+// JSON-encoded args-object recovery that CallMcpWithQuery applies before invoking a
+// remote protected target. The server transition validates the recovered target
+// against the authenticated target schema, so restart/lazy continuation preserves
+// that execution-compatible input without accepting malformed remote arguments.
+func TestValidateGrantedAuthorizationArgumentsCanonicalizesQueryArgs(t *testing.T) {
+	querySpec := mcp.CallMcpWithQuerySpec()
+	targetSpec := tool.ToolSpec{Name: "mcp__github__create", Schema: json.RawMessage(`{"type":"object","required":["title"],"properties":{"title":{"type":"string"}}}`)}
+	tools := []tool.Tool{lifecycleSchemaTool{spec: querySpec}, lifecycleSchemaTool{spec: targetSpec}}
+	cases := []struct {
+		name string
+		args json.RawMessage
+		want bool
+	}{
+		{name: "encoded object", args: json.RawMessage(`{"server":"github","tool":"create","args":"{\"title\":\"ok\"}","jq_filter":"."}`), want: true},
+		{name: "encoded malformed object", args: json.RawMessage(`{"server":"github","tool":"create","args":"{","jq_filter":"."}`)},
+		{name: "encoded non-object", args: json.RawMessage(`{"server":"github","tool":"create","args":"[]","jq_filter":"."}`)},
+		{name: "authenticated target mismatch", args: json.RawMessage(`{"server":"github","tool":"create","args":"{\"title\":1}","jq_filter":"."}`)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateGrantedAuthorizationArguments(tools, session.NewToolCall("query", querySpec.Name, tc.args))
+			if (err == nil) != tc.want {
+				t.Fatalf("validateGrantedAuthorizationArguments() error = %v, want success %v", err, tc.want)
+			}
+		})
 	}
 }
 

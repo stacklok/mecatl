@@ -476,6 +476,20 @@ func TestADR_0298_ToolHiveCompletesTwoUpstreamEnrollmentE2E(t *testing.T) {
 	}
 }
 
+type fixtureToolMetadata struct {
+	name, description, schema string
+	readOnly                  bool
+}
+
+func fixtureToolMetadataFor(tools []tool.Tool) []fixtureToolMetadata {
+	metadata := make([]fixtureToolMetadata, 0, len(tools))
+	for _, candidate := range tools {
+		spec := candidate.Spec()
+		metadata = append(metadata, fixtureToolMetadata{spec.Name, spec.Description, string(spec.Schema), candidate.ReadOnly()})
+	}
+	return metadata
+}
+
 func TestADR_0298_ToolHiveCompletedEnrollmentRetriesHostCompletionE2E(t *testing.T) {
 	f := newMultiUpstreamFixture(t, false)
 	started := f.start()
@@ -488,6 +502,16 @@ func TestADR_0298_ToolHiveCompletedEnrollmentRetriesHostCompletionE2E(t *testing
 	if _, err := f.service.ConnectWorkspaceServices(t.Context(), f.session.ID); err == nil {
 		t.Fatal("injected host completion failure unexpectedly succeeded")
 	}
+	// The real ToolHive broker has published its authenticated snapshot before
+	// the host's engine rebuild fails. The failed continuation must restore the
+	// claim, so this retry reaches the same snapshot rather than rediscovery.
+	f.mu.Lock()
+	if got := len(f.catalogueBuilds); got != 2 {
+		f.mu.Unlock()
+		t.Fatalf("catalogue builds after failed replacement = %d, want create plus one failed replacement", got)
+	}
+	published := fixtureToolMetadataFor(f.catalogueBuilds[1])
+	f.mu.Unlock()
 	headersA, _ := f.mcpA.snapshot()
 	headersB, _ := f.mcpB.snapshot()
 	connected, tools := f.connect()
@@ -496,6 +520,16 @@ func TestADR_0298_ToolHiveCompletedEnrollmentRetriesHostCompletionE2E(t *testing
 	}
 	if !reflect.DeepEqual(fixtureToolNames(tools), []string{"mcp__backend-a__whoami", "mcp__backend-b__whoami"}) {
 		t.Fatalf("retried frozen tools = %v", fixtureToolNames(tools))
+	}
+	f.mu.Lock()
+	if got := len(f.catalogueBuilds); got != 3 {
+		f.mu.Unlock()
+		t.Fatalf("catalogue builds after retry = %d, want create plus failed and retried replacements", got)
+	}
+	retried := fixtureToolMetadataFor(f.catalogueBuilds[2])
+	f.mu.Unlock()
+	if !reflect.DeepEqual(retried, published) {
+		t.Fatalf("retry rebuilt a different authenticated snapshot: got %#v, want published %#v", retried, published)
 	}
 	afterA, _ := f.mcpA.snapshot()
 	afterB, _ := f.mcpB.snapshot()

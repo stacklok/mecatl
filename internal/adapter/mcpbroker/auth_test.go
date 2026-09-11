@@ -254,14 +254,27 @@ func TestADR_0326_LazyGrantRefreshFailureIsAtomic(t *testing.T) {
 	}
 	process := &Process{Runtime: harness.runtime, construction: toolHiveConstruction{protectedBackends: []string{"github", "slack"}}, protectedTarget: protected.route.oauth, queryAuthenticated: queries.query}
 	harness.runtime.process = process
+	type staticMetadata struct {
+		name, description, schema string
+		readOnly                  bool
+	}
+	static := func(tools []tool.Tool) []staticMetadata {
+		metadata := make([]staticMetadata, 0, len(tools))
+		for _, candidate := range tools {
+			spec := candidate.Spec()
+			metadata = append(metadata, staticMetadata{spec.Name, spec.Description, string(spec.Schema), candidate.ReadOnly()})
+		}
+		return metadata
+	}
+	before := static(attachment.Tools())
 	authorization, state := requestProtected(t, attachment, session.NewToolCall("lazy-refresh-failure", protected.Spec().Name, json.RawMessage(`{}`)))
 	if got := callback(t, harness.runtime, "code", state).Code; got != http.StatusOK {
 		t.Fatalf("callback status = %d", got)
 	}
 	assertStatic := func(label string) {
 		t.Helper()
-		if got := toolNames(attachment.Tools()); !reflect.DeepEqual(got, []string{"mcp__github__create", "mcp__slack__list"}) {
-			t.Fatalf("%s published tools: %v", label, got)
+		if got := static(attachment.Tools()); !reflect.DeepEqual(got, before) {
+			t.Fatalf("%s published metadata = %#v, want unchanged static declarations %#v", label, got, before)
 		}
 	}
 	if _, err := attachment.RefreshGrantedAuthorizationCatalogue(t.Context(), authorization); !errors.Is(err, ErrAuthenticatedDiscovery) {

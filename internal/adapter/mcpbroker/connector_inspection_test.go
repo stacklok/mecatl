@@ -31,7 +31,7 @@ func connectorFixture(t *testing.T) (*Runtime, *Attachment, *orderedCapabilityQu
 	t.Cleanup(tokenServer.Close)
 	queries := &orderedCapabilityQueries{responses: map[string]AuthenticatedCapabilities{
 		"hidden":   {Backend: "hidden", Tools: []ToolDefinition{{Backend: "hidden", Name: "mcp__hidden__found", Schema: json.RawMessage(`{"type":"object"}`)}}},
-		"declared": {Backend: "declared"},
+		"declared": {Backend: "declared", Tools: []ToolDefinition{{Backend: "declared", Name: "mcp__declared__standin", Schema: json.RawMessage(`{"type":"object"}`)}}},
 		"empty":    {Backend: "empty"},
 	}}
 	r := newWorkspaceEnrollmentRuntime(t, tokenServer, queries, "hidden", "declared", "empty")
