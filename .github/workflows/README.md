@@ -10,7 +10,7 @@ release behavior. This page is only a stable index to operational guidance.
 - [Mecatequi CI adoption](https://mecatl.dev/docs/building/deployment/mecatequi) and its
   [design rationale](../../docs/adr/0028-mecatequi.md)
 
-## Cutting a release
+## Cutting a root release
 
 Releases go through a pull request; nothing pushes a commit to `main`.
 
@@ -32,3 +32,24 @@ including post-release verification, is in the
 release changes. Mecatequi's sibling actions use `$/` self-repository refs, which
 resolve to this repository at the ref the workflow is running from — so there is no
 version pin to bump and no skew to guard against.
+
+## Cutting a TypeScript SDK release
+
+The SDK uses the same release GitHub App and keeps its version independent from
+the root binaries:
+
+1. Dispatch [Create TypeScript SDK Release PR](create-sdk-typescript-release-pr.yml)
+   from `main` and select `patch`, `minor`, or `major`.
+2. Review and merge the bot-authored PR. Its entire diff is
+   [`sdk/typescript/VERSION`](../../sdk/typescript/VERSION) and the matching
+   `package.json` version.
+3. [Create TypeScript SDK Release Tag](create-sdk-typescript-release-tag.yml)
+   verifies the merged PR and pushes `sdk/typescript/vX.Y.Z` with the release App.
+4. [Release TypeScript SDK](release-sdk-typescript.yml) builds and inspects the
+   npm artifact, waits for GitHub Environment approval, and stages it on npm.
+5. An npm maintainer reviews the candidate, approves it with 2FA, and verifies
+   its public integrity and provenance.
+
+The App-authored tag means a maintainer who merged the release PR can approve the
+`npm-publish` environment even when prevent-self-review is enabled. The workflow
+and npm approvals remain separate gates.

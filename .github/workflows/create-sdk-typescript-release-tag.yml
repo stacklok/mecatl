@@ -1,0 +1,178 @@
+# Tags a merged TypeScript SDK release PR. The release GitHub App pushes the
+# tag so the tag-push event can start release-sdk-typescript.yml.
+name: Create TypeScript SDK Release Tag
+
+on:
+  push:
+    branches: [main]
+    paths: ['sdk/typescript/VERSION']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: create-sdk-typescript-release-tag-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  create-tag:
+    name: Tag the TypeScript SDK release commit
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: release
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          filter: blob:none
+          persist-credentials: false
+          ref: ${{ github.sha }}
+
+      - name: Read and validate the SDK version
+        id: version
+        run: |
+          set -euo pipefail
+          version="$(tr -d '[:space:]' < sdk/typescript/VERSION)"
+          if ! printf '%s' "$version" | grep -qE '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'; then
+            echo "::error::SDK VERSION must hold stable bare semver, got '${version}'"
+            exit 1
+          fi
+          manifest_version="$(node -p "require('./sdk/typescript/package.json').version")"
+          if [ "$manifest_version" != "$version" ]; then
+            echo "::error::SDK VERSION ${version} != package.json ${manifest_version}"
+            exit 1
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "tag=sdk/typescript/v${version}" >> "$GITHUB_OUTPUT"
+          echo "branch=release/sdk-typescript/v${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Decide whether to tag
+        id: decide
+        env:
+          EXPECTED_BRANCH: ${{ steps.version.outputs.branch }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          state=absent
+          at=""
+          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+            at="$(git rev-parse "refs/tags/${TAG}^{commit}")"
+            if [ "$at" = "$SHA" ]; then state=current; else state=elsewhere; fi
+          fi
+          echo "tag ${TAG}: state=${state}${at:+ (at ${at})}"
+
+          if [ "$state" = current ]; then
+            echo "should_tag=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::${TAG} already points at ${SHA}"
+            exit 0
+          fi
+
+          associated_prs="$(gh api "/repos/${REPOSITORY}/commits/${SHA}/pulls")"
+          matching_prs="$(printf '%s' "$associated_prs" | jq --arg branch "$EXPECTED_BRANCH" \
+            '[.[] | select(.head.ref == $branch and .base.ref == "main" and
+              .merged_at != null and .user.type == "Bot")]')"
+          provenance=no
+          if [ "$(printf '%s' "$matching_prs" | jq 'length')" = "1" ]; then
+            provenance=ok
+          fi
+
+          # The workflow's own bootstrap PR introduces sdk/typescript/VERSION
+          # after v0.1.0 already exists elsewhere. Treat that one case as a
+          # quiet no-op; all future untagged edits outside the release flow fail.
+          if [ "$provenance" != ok ]; then
+            if [ "$state" = elsewhere ]; then
+              echo "should_tag=false" >> "$GITHUB_OUTPUT"
+              echo "::notice::${TAG} already exists and this is not its release PR"
+              exit 0
+            fi
+            echo "::error::${SHA} is not the merged App-authored PR from ${EXPECTED_BRANCH}"
+            echo "Cut SDK releases with the Create TypeScript SDK Release PR workflow."
+            exit 1
+          fi
+
+          if [ "$state" = elsewhere ]; then
+            echo "::error::${TAG} already exists at ${at}; refusing to move it"
+            exit 1
+          fi
+
+          changed="$(git diff --name-only "${SHA}^" "$SHA" | sort)"
+          expected="$(printf '%s\n' sdk/typescript/VERSION sdk/typescript/package.json | sort)"
+          if [ "$changed" != "$expected" ]; then
+            echo "::error::the SDK release commit must contain only the version bump"
+            printf 'got:\n%s\n' "$changed"
+            exit 1
+          fi
+
+          parent_sha="$(git rev-parse "${SHA}^")"
+          previous="$(gh api --method GET "/repos/${REPOSITORY}/contents/sdk/typescript/VERSION" \
+            -f "ref=${parent_sha}" --jq .content | base64 --decode | tr -d '[:space:]')"
+          PREVIOUS="$previous" node --input-type=module <<'NODE'
+          const stable = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/;
+          const before = stable.exec(process.env.PREVIOUS);
+          const after = stable.exec(process.env.VERSION);
+          if (before == null || after == null) throw new Error("invalid SDK version lineage");
+          const a = after.slice(1).map(Number);
+          const b = before.slice(1).map(Number);
+          const greater = a[0] > b[0] || (a[0] === b[0] &&
+            (a[1] > b[1] || (a[1] === b[1] && a[2] > b[2])));
+          if (!greater) throw new Error(`${process.env.VERSION} does not advance ${process.env.PREVIOUS}`);
+          NODE
+          previous_tag="sdk/typescript/v${previous}"
+          git rev-parse -q --verify "refs/tags/${previous_tag}^{commit}" >/dev/null
+          git merge-base --is-ancestor "refs/tags/${previous_tag}^{commit}" "${SHA}^"
+
+          echo "should_tag=true" >> "$GITHUB_OUTPUT"
+          echo "verified: ${TAG} will be created at ${SHA}"
+
+      # Minted only after provenance, diff, version, and tag-state checks pass.
+      - name: Mint the release app token
+        id: app-token
+        if: steps.decide.outputs.should_tag == 'true'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+
+      - name: Create and push the SDK tag
+        if: steps.decide.outputs.should_tag == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPOSITORY: ${{ github.repository }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "Release $TAG"
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${REPOSITORY}.git" "$TAG"
+          echo "::notice::pushed ${TAG}; release-sdk-typescript.yml will stage it"
+
+      - name: Summary
+        env:
+          REPOSITORY: ${{ github.repository }}
+          SHOULD_TAG: ${{ steps.decide.outputs.should_tag }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          {
+            echo "## TypeScript SDK release tag"
+            echo ""
+            if [ "$SHOULD_TAG" != true ]; then
+              echo "Nothing to tag; see the decision step."
+            else
+              echo "Pushed \`$TAG\`. The npm workflow builds and inspects the artifact,"
+              echo "then waits for approval before staging it."
+              echo ""
+              echo "Watch it: <https://github.com/${REPOSITORY}/actions/workflows/release-sdk-typescript.yml>"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
