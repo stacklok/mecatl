@@ -1,5 +1,5 @@
 ---
-sidebar_position: 2
+sidebar_position: 10
 title: Embed the engine directly
 description: Embed the Mecatl engine in your Go service and wire its adapters in process.
 ---

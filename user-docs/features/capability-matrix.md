@@ -1,5 +1,5 @@
 ---
-sidebar_position: 2
+sidebar_position: 10
 title: Capability and deployment matrix
 description: Choose the Mecatl deployment surface that provides the capabilities you need.
 ---

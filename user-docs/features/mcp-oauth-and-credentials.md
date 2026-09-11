@@ -1,5 +1,5 @@
 ---
-sidebar_position: 5
+sidebar_position: 320
 title: MCP OAuth and credentials
 description: Configure MCP OAuth profiles and protect the credentials they use.
 ---

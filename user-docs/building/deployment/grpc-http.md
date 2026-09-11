@@ -1,5 +1,5 @@
 ---
-sidebar_position: 6
+sidebar_position: 120
 title: Drive via gRPC / HTTP
 description: Choose a client transport and find Mecatl's API contracts.
 ---

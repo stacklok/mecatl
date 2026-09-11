@@ -1,5 +1,5 @@
 ---
-sidebar_position: 3
+sidebar_position: 110
 title: Choose models and providers
 description: Select the provider, model, and reasoning effort for a Mecatl session.
 ---

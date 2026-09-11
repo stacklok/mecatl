@@ -1,5 +1,5 @@
 ---
-sidebar_position: 7
+sidebar_position: 130
 title: mecatui container image (brood-box)
 description: Run the signed mecatui container image as a brood-box agent or terminal client.
 ---

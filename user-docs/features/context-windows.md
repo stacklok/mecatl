@@ -1,5 +1,5 @@
 ---
-sidebar_position: 10
+sidebar_position: 130
 title: Context windows
 description: Control how Mecatl resolves model context windows and compacts long sessions.
 ---

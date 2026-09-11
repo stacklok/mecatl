@@ -1,5 +1,5 @@
 ---
-sidebar_position: 5
+sidebar_position: 20
 title: Use mecatui
 description: Use the Mecatl terminal UI to work with sessions, models, tools, and approvals.
 ---
