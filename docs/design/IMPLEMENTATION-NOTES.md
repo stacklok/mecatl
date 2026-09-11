@@ -111,7 +111,7 @@ inbound caller bearers after verification and retains only the principal for own
 All admitted callers share the configured gateway identity, quota, gateway-side
 audit/retention posture, and model availability; deploy a dedicated service identity
 and separate deployments for mutually untrusted/per-user upstream authorization until
-an explicit forwarded-token or RFC 8693 exchange contract exists. See [ADR 0327](../adr/0327-native-llm-endpoint-gateway-credentials.md).
+an explicit forwarded-token or RFC 8693 exchange contract exists. See [ADR 0328](../adr/0328-native-llm-endpoint-gateway-credentials.md).
 
 ---
 
