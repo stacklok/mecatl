@@ -162,9 +162,9 @@ export default function Colophon(): React.ReactElement {
           <h2>Type scale</h2>
           <div className={styles.scaleTable}>
             {[
-              {el: 'h1', size: 'clamp(2.2rem, 4vw, 3.4rem)', weight: '700', font: 'Space Grotesk', usage: 'Hero title only'},
-              {el: 'h2', size: '2rem (section) / 1.5rem (docs)', weight: '600', font: 'Space Grotesk', usage: 'Section titles, docs headings'},
-              {el: 'h3', size: '1.25rem', weight: '600', font: 'Space Grotesk', usage: 'Feature titles, docs sub-headings'},
+              {el: 'h1', size: 'Home: clamp(2.2rem, 4vw, 3.4rem) / docs: 3rem desktop', weight: '700', font: 'Space Grotesk', usage: 'Page titles'},
+              {el: 'h2', size: 'Home: clamp(1.85rem, 3vw, 2.45rem) / docs: 2rem desktop', weight: '600 or 700', font: 'Space Grotesk', usage: 'Section titles'},
+              {el: 'h3', size: 'Home: 1rem / docs: 1.5rem desktop', weight: '600', font: 'Space Grotesk', usage: 'Subsections and card titles'},
               {el: 'body', size: '1rem (16px)', weight: '400', font: 'Inter', usage: 'All body copy'},
               {el: 'small / muted', size: '0.9rem', weight: '400', font: 'Inter', usage: 'Subtitles, card bodies'},
               {el: 'label / eyebrow', size: '0.7–0.75rem', weight: '600', font: 'Space Grotesk', usage: 'Uppercase labels, sidebar categories'},

@@ -261,7 +261,7 @@ PR after verification. There is no cleanup or status-only PR.
   errors, exact-origin CORS, a durable host-minted `run_id` with stale-control guards,
   `port.CursorEventLog` + the Redis LIST→Stream migration, `WatchSessionEvents`, the
   spawned-daemon UDS/ready-file surface, and listener-scoped `mcp_servers`. Status: draft.
-- [TypeScript SDK core (M1)](sdk-typescript-core.md) — `@stacklok/mecatl-sdk` M1: the
+- [TypeScript SDK core (M1)](sdk-typescript-core.md) — `@stacklok-oss/mecatl-sdk` M1: the
   `sdk/typescript/` scaffold (pnpm 11, TS 6, biome, vitest, API Extractor), pinned
   protobuf-es generation for `mecatl.v1` with a freshness gate, Connect-ES + HTTP/SSE
   raw transports behind an injected-Transport seam, typed errors and the compatibility
@@ -280,18 +280,18 @@ PR after verification. There is no cleanup or status-only PR.
   approval deferred to an ack-only server route), and the offline
   daemon-restart and awaiting-resume e2e. Status: draft.
 - [TypeScript SDK local daemon and callback tools (M3)](sdk-typescript-local.md) —
-  `@stacklok/mecatl-sdk` M3: `spawn()`'s binary resolution, SDK-owned argv and
+  `@stacklok-oss/mecatl-sdk` M3: `spawn()`'s binary resolution, SDK-owned argv and
   ready-file barrier, the UDS-only tool-capable topology with its lifetime pipe,
   redacted startup-failure reporting, the spawned-versus-connected disposal
   ownership matrix, `query()`'s one-shot lifecycle, callback `tool()` with local
   schema validation and two-layer collision refusal, the hand-written loopback
   streaming-HTTP MCP host, and the offline Node/Bun e2e. Status: draft.
 - [TypeScript SDK public surface and v0.0.1 GitHub Packages release (M4)](sdk-typescript-release.md) —
-  `@stacklok/mecatl-sdk` M4: the descriptor-to-transport parity gate for all 77
+  `@stacklok-oss/mecatl-sdk` M4: the descriptor-to-transport parity gate for all 77
   public RPCs, thin typed namespaces, ergonomic teams, streaming plan
   resolution, TypeScript/Node/browser/macOS compatibility matrices, executable
-  examples and public docs, path-qualified GitHub Packages publication, and the
-  human-gated `v0.0.1` cut; npmjs `v0.1.0` remains a #821 follow-up. Status: draft.
+  examples and public docs. The frozen plan closed on GitHub Packages `v0.0.1`;
+  the canonical public cutover is npmjs `@stacklok-oss/mecatl-sdk@0.1.0` ([ADR 0328](../adr/0328-typescript-sdk-npmjs-stacklok-oss.md)). Status: draft.
 
 - [Canonical Shell command tool](canonical-shell-command-tool.md) — canonical `Shell`
   and `ShellStatus` model-facing names, safe legacy `Bash` input normalization, and

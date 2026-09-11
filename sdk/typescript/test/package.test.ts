@@ -25,7 +25,7 @@ type PackageJson = {
   license: string;
   name: string;
   packageManager: string;
-  publishConfig: { registry: string };
+  publishConfig: { access?: string; registry: string };
   repository: { directory: string; type: string; url: string };
   type: string;
   version: string;
@@ -118,7 +118,7 @@ beforeAll(() => {
   packedFiles = readPackedFiles(archivePath);
 
   consumerRoot = join(fixtureRoot, "consumer");
-  const installedRoot = join(consumerRoot, "node_modules", "@stacklok", "mecatl-sdk");
+  const installedRoot = join(consumerRoot, "node_modules", "@stacklok-oss", "mecatl-sdk");
   for (const [path, content] of packedFiles) {
     if (!path.startsWith("package/")) {
       continue;
@@ -154,14 +154,14 @@ test("exports map exposes exactly ., ./node, ./gen", () => {
   for (const subpath of ["", "/node", "/gen"]) {
     execFileSync(
       process.execPath,
-      ["--input-type=module", "--eval", `await import("@stacklok/mecatl-sdk${subpath}");`],
+      ["--input-type=module", "--eval", `await import("@stacklok-oss/mecatl-sdk${subpath}");`],
       { cwd: consumerRoot, stdio: "pipe" },
     );
   }
 
   const requireResult = spawnSync(
     process.execPath,
-    ["--input-type=commonjs", "--eval", 'require("@stacklok/mecatl-sdk")'],
+    ["--input-type=commonjs", "--eval", 'require("@stacklok-oss/mecatl-sdk")'],
     { cwd: consumerRoot, encoding: "utf8" },
   );
   expect(requireResult.status).not.toBe(0);
@@ -169,7 +169,7 @@ test("exports map exposes exactly ., ./node, ./gen", () => {
 
   const privateImport = spawnSync(
     process.execPath,
-    ["--input-type=module", "--eval", 'await import("@stacklok/mecatl-sdk/private");'],
+    ["--input-type=module", "--eval", 'await import("@stacklok-oss/mecatl-sdk/private");'],
     { cwd: consumerRoot, encoding: "utf8" },
   );
   expect(privateImport.status).not.toBe(0);
@@ -302,8 +302,8 @@ test("packed tarball carries dist and license only", () => {
   const packedPackageJson = JSON.parse(
     packedFiles.get("package/package.json")?.toString("utf8") ?? "{}",
   ) as PackageJson;
-  expect(packedPackageJson.name).toBe("@stacklok/mecatl-sdk");
-  expect(packedPackageJson.version).toBe("0.0.1");
+  expect(packedPackageJson.name).toBe("@stacklok-oss/mecatl-sdk");
+  expect(packedPackageJson.version).toBe("0.1.0");
   expect(packedPackageJson.license).toBe("Apache-2.0");
   expect(packedPackageJson.repository).toEqual({
     directory: "sdk/typescript",
@@ -317,7 +317,8 @@ test("packed tarball carries dist and license only", () => {
     url: "https://github.com/stacklok/mecatl/issues",
   });
   expect(packedPackageJson.publishConfig).toEqual({
-    registry: "https://npm.pkg.github.com",
+    access: "public",
+    registry: "https://registry.npmjs.org",
   });
   expect(packedPackageJson.engines).toEqual({ node: ">=22" });
   expect(packedPackageJson.dependencies).toEqual(packageJson.dependencies);
@@ -351,7 +352,7 @@ import type {
   Storage,
   UserModel,
   Worktrees,
-} from "@stacklok/mecatl-sdk";
+} from "@stacklok-oss/mecatl-sdk";
 import type {
   Agents as NodeAgents,
   Commands as NodeCommands,
@@ -370,7 +371,7 @@ import type {
   Storage as NodeStorage,
   UserModel as NodeUserModel,
   Worktrees as NodeWorktrees,
-} from "@stacklok/mecatl-sdk/node";
+} from "@stacklok-oss/mecatl-sdk/node";
 import {
   FireNowRequestSchema,
   ListAgentsRequestSchema,
@@ -380,7 +381,7 @@ import {
   type ListAgentsResponse,
   type ListModelsResponse,
   type SessionMigrationPlan,
-} from "@stacklok/mecatl-sdk/gen";
+} from "@stacklok-oss/mecatl-sdk/gen";
 
 declare const browser: Client;
 declare const node: NodeClient;

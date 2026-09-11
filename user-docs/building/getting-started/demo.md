@@ -8,7 +8,7 @@ description: Run the offline Mecatl demo to see tools, approvals, teams, and sub
 
 ## Prerequisites
 
-- **Go 1.26 or newer** (the `go` directive in `go.mod` pins the minor version only, so any 1.26.x toolchain works)
+- **Go 1.26.6 or newer** (the `go` directive in `go.mod` sets this minimum version)
 - The repo cloned locally:
   ```console
   $ git clone https://github.com/stacklok/mecatl
@@ -96,30 +96,32 @@ A subagent runs in the background; the harness notice lands at the next turn bou
 [004] turn=0 message.delta  text="I'll start a background subagent to verify the greeting while I keep this turn."
 [005] turn=0 turn.end
 [006] turn=0 tool.call      tool=Subagent args={"prompt":"verify the greeting file in the background","background":true}
-[007] turn=0 subagent.start child=subagent-call-bg-1 background=true goal="verify the greeting file in the background"
-[008] turn=0 tool.result    error=false result="agentId: subagent-call-bg-1 ⏎  ⏎ subagent started in the background. ..."
+[007] turn=0 subagent.start child=subagent-demo-background-session-call-bg-1 background=true goal="verify the greeting file in the background"
+[008] turn=0 tool.result    error=false result="agentId: subagent-demo-background-session-call-bg-1 ⏎  ⏎ subagent started in the background. ..."
 [009] turn=1 turn.start
 [010] turn=1 message.delta  text="Waiting for the background subagent to finish."
 [011] turn=1 turn.end
 [012] turn=1 tool.call      tool=SubagentStatus args={"wait_ms":30000}
-[013] turn=0 subagent.end   child=subagent-call-bg-1 stop=end_turn
-[014] turn=1 tool.result    error=false result="Subagents of this run (1): ⏎ - subagent-call-bg-1 [subagent, background] done (end_turn) — result ready; collect it with agent_id"
-[015] turn=2 user_prompt
-[016] turn=2 turn.start
-[017] turn=2 message.delta  text="The harness notice says it finished — collecting its result."
-[018] turn=2 turn.end
-[019] turn=2 tool.call      tool=SubagentStatus args={"agent_id":"subagent-call-bg-1"}
-[020] turn=2 tool.result    error=false result="agentId: subagent-call-bg-1 ⏎  ⏎ Background check complete: greeting.txt is intact and well-formed."
-[021] turn=3 turn.start
-[022] turn=3 message.delta  text="Done: the background subagent verified the greeting and I collected its result."
-[023] turn=3 turn.end
-[024] turn=0 result         stop=end_turn text="Done: the background subagent verified the greeting and I collected its result."
+[013] turn=0 subagent.tool
+[014] turn=0 subagent.tool
+[015] turn=0 subagent.end   child=subagent-demo-background-session-call-bg-1 stop=end_turn
+[016] turn=1 tool.result    error=false result="Subagents of this run (1): ⏎ - subagent-demo-background-session-call-bg-1 [subagent, background] done (end_turn) — result ready; collect it with agent_id"
+[017] turn=2 user_prompt
+[018] turn=2 turn.start
+[019] turn=2 message.delta  text="The harness notice says it finished — collecting its result."
+[020] turn=2 turn.end
+[021] turn=2 tool.call      tool=SubagentStatus args={"agent_id":"subagent-demo-background-session-call-bg-1"}
+[022] turn=2 tool.result    error=false result="agentId: subagent-demo-background-session-call-bg-1 ⏎  ⏎ Background check complete: greeting.txt is intact and well-formed."
+[023] turn=3 turn.start
+[024] turn=3 message.delta  text="Done: the background subagent verified the greeting and I collected its result."
+[025] turn=3 turn.end
+[026] turn=0 result         stop=end_turn text="Done: the background subagent verified the greeting and I collected its result."
       usage: in=0 out=0 cacheRead=0 cacheWrite=0 cacheHitRate=0.00
 --- harness notice(s) injected into the model's history at the turn boundary ---
-[harness note: 1 background subagent(s) finished: subagent-call-bg-1 (end_turn). Collect each result with SubagentStatus before relying on it.]
+[harness note: 1 background subagent(s) finished: subagent-demo-background-session-call-bg-1 (end_turn). Collect each result with SubagentStatus before relying on it.]
 ```
 
-The `user_prompt` at event 015 is the harness notice — a recorded user-role message the model sees at the next turn boundary. It is not a user keystroke; it is the mechanism by which the loop informs the model that a background child finished.
+The `user_prompt` at event 017 is the harness notice — a recorded user-role message the model sees at the next turn boundary. It is not a user keystroke; it is the mechanism by which the loop informs the model that a background child finished.
 
 :::note
 

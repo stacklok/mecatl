@@ -1,5 +1,5 @@
 ---
-sidebar_position: 3
+sidebar_position: 230
 title: Learning
 description: Configure evidence-backed learning, reflection, and learned-skill admission.
 ---

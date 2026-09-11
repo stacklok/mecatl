@@ -6,10 +6,10 @@ description: Understand the properties that make a Mecatl deployment cloud-nativ
 
 # Cloud-native kit properties
 
-`mecak8s` is storage-free itself by design: its pods own no durable state.
-Session snapshots and the durable event log live in Redis, while Kubernetes
-Leases coordinate session ownership. That makes the pod disposable without
-making the session disposable.
+`mecak8s` is storage-free itself by design: its pods own no durable state. In
+the production Helm deployment, session snapshots and the durable event log
+live in Redis, while Kubernetes Leases coordinate session ownership. That
+makes the pod disposable without making the session disposable.
 
 A Mecatl deployment is "cloud-native" when it satisfies three properties: the process holds no irreplaceable state, all durable state lives outside the process, and the record of what happened survives process death. This page defines those three properties, maps each deployment shape against them, walks the four delivery phases that shipped them, and explains what the properties mean for operators.
 
@@ -101,14 +101,14 @@ than silently replaying the whole transcript.
 |---|---|---|---|
 | **Embed the engine** | No — you wire it | You implement `port.SessionStore` and `port.EventLog` | You implement `port.EventLog` |
 | **mecated** | Yes, with `--store-dir` (single-host flock lease is automatic) or a remote store + `--session-lease-*` | JSONL on disk (`--store-dir`) or gRPC driver (`--session-store-url`); Redis not exposed; schedule registry via `--schedule-store-url` (`ScheduleStoreService` + `ScheduleOneShotReArmerService`) | JSONL sidecar (`.events.jsonl`) or gRPC driver (`--event-log-url`) |
-| **mecak8s** | Yes, out of the box | Redis (`internal/adapter/redisstore`) | Redis via same adapter |
+| **mecak8s** | Yes, when deployed with a durable store | Redis (`internal/adapter/redisstore`) when `--redis-url` is configured | Redis via the same adapter when configured |
 | **mecatequi** | No — one-shot process | None — stateless per run | No durable record after the run |
 
 **Embed:** the engine exports the ports; the reference adapters under `engine/adapter/` — `memstore`, `memlease`, `sessnap` — give you a working in-process starting point. For real externalization, implement `port.SessionStore`, `port.EventLog`, and `port.SessionLease` against your own backing service and wire them in composition.
 
 **mecated:** the `--store-dir` flag selects JSONL persistence (`internal/adapter/store/jsonlstore`), which implements `port.SessionStore`, `port.EventLog`, and `port.ToolCallRecorder` in one `Store` type. It automatically composes the single-host flock lease under `<store-dir>/.session-leases`. Remote or multi-host deployments must wire an appropriate session lease (`--session-lease-k8s-namespace` for Kubernetes or `--session-lease-url` for a gRPC driver); without one, session-affinity routing is the deployer's responsibility and destructive maintenance fails closed.
 
-**mecak8s:** wires Redis for session store and event log (`internal/adapter/redisstore`) and the Kubernetes `coordination.k8s.io/v1` lease adapter (`internal/adapter/k8slease`) at startup. The three properties hold when the external Redis and lease prerequisites are available; the Redis connection itself must be pointed somewhere and secured — `--redis-url` plus either verified TLS (`--redis-tls` or `--redis-tls-ca`) or, for a disposable local fixture only, the explicit `--redis-allow-plaintext` opt-in.
+**mecak8s:** with `--redis-url`, wires Redis for session store and event log (`internal/adapter/redisstore`) and the Kubernetes `coordination.k8s.io/v1` lease adapter (`internal/adapter/k8slease`) at startup. The three properties hold when the external Redis and lease prerequisites are available; the Redis connection itself must be pointed somewhere and secured — `--redis-url` plus either verified TLS (`--redis-tls` or `--redis-tls-ca`) or, for a disposable local fixture only, the explicit `--redis-allow-plaintext` opt-in.
 
 ---
 

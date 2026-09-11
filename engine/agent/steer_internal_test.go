@@ -75,6 +75,36 @@ func TestSteerMultimodalAppendAndCancel(t *testing.T) {
 	}
 }
 
+// TestSteerMessageIDIsAtomicWithDrainedBundle pins the drain-to-projection gap:
+// sender B may enqueue after bundle A drains but before A's EvSteer is projected.
+// The watermark must travel in the drained value, so B cannot replace A's id.
+func TestSteerMessageIDIsAtomicWithDrainedBundle(t *testing.T) {
+	r := &Run{steer: newSteerInbox()}
+	if got, err := r.EnqueueSteerWithMessageID("a1", nil, "m-a1"); err != nil || got != SteerAccepted {
+		t.Fatalf("first A enqueue = %q, %v", got, err)
+	}
+	if got, err := r.EnqueueSteerWithMessageID("a2", nil, "m-a2"); err != nil || got != SteerAppended {
+		t.Fatalf("second A enqueue = %q, %v", got, err)
+	}
+	bundleA, ok := r.drainSteer()
+	if !ok {
+		t.Fatal("bundle A did not drain")
+	}
+
+	// This is the critical interleave: B occupies the newly empty inbox before
+	// A is projected. A keeps its own tail watermark, and B remains pending.
+	if got, err := r.EnqueueSteerWithMessageID("b", nil, "m-b"); err != nil || got != SteerAccepted {
+		t.Fatalf("B enqueue after A drain = %q, %v", got, err)
+	}
+	if bundleA.text != "a1\n\na2" || bundleA.messageID != "m-a2" {
+		t.Fatalf("drained bundle A = %#v, want text %q and watermark %q", bundleA, "a1\n\na2", "m-a2")
+	}
+	bundleB, ok := r.drainSteer()
+	if !ok || bundleB.text != "b" || bundleB.messageID != "m-b" {
+		t.Fatalf("pending bundle B = %#v, %v, want text %q and watermark %q", bundleB, ok, "b", "m-b")
+	}
+}
+
 // TestSteer_InboxLinearizable (R2-3): the mutex inbox makes the finding-#1
 // deadlock shape impossible BY CONSTRUCTION — every transition (enqueue /
 // cancel / drain / close) is ONE critical section over the whole

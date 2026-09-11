@@ -1,5 +1,5 @@
 ---
-sidebar_position: 8
+sidebar_position: 120
 title: Multimodal input
 description: Send supported images and content blocks to models through Mecatl clients.
 ---

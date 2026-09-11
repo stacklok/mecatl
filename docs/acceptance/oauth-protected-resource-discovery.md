@@ -6,7 +6,7 @@
 **ADR:** [ADR 0305](../adr/0305-oauth-protected-resource-discovery.md) — RFC 9728 profile and resource/transport identity.
 **Accumulator branch:** `acc/oauth-protected-resource-discovery`.
 
-The smallest set of work lets a user enroll and reconnect to an OIDC-protected `mecated` or `mecak8s` deployment with `mecatui login mecak8s.staging.stacklok.dev`, without manually supplying issuer, audience, or public client ID. The server publishes RFC 9728 metadata plus a namespaced mecatl profile; mecatui confirms the discovered tuple once, then persists it through the existing PKCE and credential lifecycle.
+The smallest set of work lets a user enroll and reconnect to an OIDC-protected `mecated` or `mecak8s` deployment with `mecatui login mecak8s.staging.example.com`, without manually supplying issuer, audience, or public client ID. The server publishes RFC 9728 metadata plus a namespaced mecatl profile; mecatui confirms the discovered tuple once, then persists it through the existing PKCE and credential lifecycle.
 
 ## Why these scope cuts
 

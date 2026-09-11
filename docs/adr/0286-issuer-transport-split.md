@@ -102,9 +102,9 @@ third list here.
 The private-path tightening also binds `mecated`'s
 `--oidc-allow-private-https-issuer` validator, which shares the transport.
 
-Verified against a real public IdP: `mecatui login mecak8s.stacklok.dev:443`
+Verified against a real public IdP: `mecatui login mecak8s.example.com:443`
 with an Okta custom authorization server
-(`https://stacklok.okta.com/oauth2/aus26lv49q56ue2981d8`) and no `--tls-ca`
+(`https://<okta-org>/oauth2/<auth-server-id>`) and no `--tls-ca`
 completed discovery, PKCE authorization, token exchange, and JWKS validation,
 persisting `issuer_address_policy: public` with no CA reference alongside an
 untouched `private` fixture row. That same command previously failed with

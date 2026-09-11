@@ -107,7 +107,6 @@ jobs:
           TAG: ${{ steps.version.outputs.tag }}
           REPOSITORY: ${{ github.repository }}
           SHA: ${{ github.sha }}
-          WF: .github/workflows/mecatequi-reusable.yml
         run: |
           set -euo pipefail
 
@@ -165,9 +164,11 @@ jobs:
 
           # --- provenance holds and the tag is absent: check contents, then tag ---------
           # A release commit bumps the version and nothing else. This is what stops a PR that
-          # is correctly named and correctly branched from also shipping a payload.
-          changed="$(git diff --name-only "${SHA}^" "${SHA}" | sort)"
-          if [ "${changed}" != "$(printf '%s\n%s\n' "${WF}" 'VERSION' | sort)" ]; then
+          # is correctly named and correctly branched from also shipping a payload. Since the
+          # sibling actions moved to `$/` self-repository refs, no workflow file carries a
+          # version any more, so VERSION is the whole expected diff.
+          changed="$(git diff --name-only "${SHA}^" "${SHA}")"
+          if [ "${changed}" != "VERSION" ]; then
             echo "::error::release commit changes more than the version bump — refusing to tag"
             printf 'got:\n%s\n' "${changed}"
             echo "  The release PR must carry ONLY the version bump; something else rode along."
@@ -175,10 +176,6 @@ jobs:
             echo "  create-release-pr.yml again to cut the next patch from the current main."
             exit 1
           fi
-
-          # VERSION and the Mecatequi pins must agree. release.yml runs this same gate, but
-          # only AFTER the tag exists, and a published tag is immutable in practice.
-          bash .github/actions/check-reusable-pins.sh
 
           echo "should_tag=true" >> "$GITHUB_OUTPUT"
           echo "Verified: ${TAG} will be created at ${SHA}"

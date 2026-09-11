@@ -1,5 +1,5 @@
 ---
-sidebar_position: 4
+sidebar_position: 200
 title: Define named agents
 description: Define specialist agents with their own instructions, tools, and model settings.
 ---

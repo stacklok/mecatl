@@ -16,8 +16,7 @@ Releases go through a pull request; nothing pushes a commit to `main`.
 
 1. A maintainer dispatches [Create Release PR](create-release-pr.yml) and picks
    `patch`, `minor`, or `major`. A bot opens `Release vX.Y.Z` on branch
-   `release/vX.Y.Z`, bumping [`VERSION`](../../VERSION) and Mecatequi's
-   same-repository action pins.
+   `release/vX.Y.Z`, bumping [`VERSION`](../../VERSION) — the whole diff.
 2. A maintainer reviews and squash-merges that PR.
 3. [Create Release Tag](create-release-tag.yml) sees `VERSION` change on `main`,
    re-verifies the commit is a merged release PR, and pushes the annotated tag.
@@ -29,8 +28,7 @@ restricted to `main`, so the credential is not reachable from a branch. The full
 including post-release verification, is in the
 [cut-release skill](../../.claude/skills/cut-release/SKILL.md).
 
-`VERSION` is the single authored source of the release version.
-[`task lint:reusable-pins`](../actions/check-reusable-pins.sh) derives its expected
-tag from it and holds no copy. The
-[release-pin script](../../.claude/skills/cut-release/scripts/bump-release-pins.sh)
-performs the same bump locally, for a dry run or as a fallback.
+`VERSION` is the single authored source of the release version, and the only file a
+release changes. Mecatequi's sibling actions use `$/` self-repository refs, which
+resolve to this repository at the ref the workflow is running from — so there is no
+version pin to bump and no skew to guard against.

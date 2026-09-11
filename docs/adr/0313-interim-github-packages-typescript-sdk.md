@@ -1,10 +1,10 @@
 # ADR 0313 — Interim GitHub Packages distribution and 0.0.x versioning for the TypeScript SDK
 
-- Status: Proposed
+- Status: Superseded
 - Date: 2026-09-08
 - Scope: the interim registry, release authority, provenance, version line, and consumer installation contract for `@stacklok/mecatl-sdk`
 - Supersedes: ADR 0304 Decisions 8–9, in part
-- Superseded by: None
+- Superseded by: [ADR 0328](./0328-typescript-sdk-npmjs-stacklok-oss.md)
 
 ## Context
 
@@ -118,4 +118,3 @@ artifact, attestation, integrity, and inventory have been verified.
 - [ADR 0304 — TypeScript SDK public surface completeness and v0.1.0 release](./0304-typescript-sdk-public-surface-and-release.md)
 - [ADR 0093 — Provider modules and path-qualified tags](./0093-provider-modules.md)
 - [TypeScript SDK release acceptance plan](../acceptance/sdk-typescript-release.md)
-

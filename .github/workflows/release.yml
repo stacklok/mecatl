@@ -50,7 +50,11 @@ jobs:
   guard:
     name: Ensure the release tag is on main
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    # 10, not 5: the v0.0.35 release was LOST because an unfiltered depth-0 clone
+    # took 5m18s and tripped a 5-minute cap, skipping all six publish jobs. The
+    # blob filter below removes the cause; this removes the cliff, so a slow
+    # network cannot silently cost a release again.
+    timeout-minutes: 10
     permissions:
       contents: read
     env:
@@ -64,6 +68,11 @@ jobs:
           # 0 so origin/main is present to compare against. NOT `git fetch origin main`:
           # persist-credentials is false, so a fetch has no credentials on this repo.
           fetch-depth: 0
+          # This job reads NO file contents — only `git merge-base` and `git rev-parse`
+          # against the commit graph. An unfiltered depth-0 clone here cost ~5 minutes
+          # (306 MB, 184 branches, 123 tags) in front of every publish job, since all
+          # six `needs: guard`. blob:none fetches the graph without the blobs.
+          filter: blob:none
           ref: ${{ env.VERSION }}
 
       # HEAD, not $GITHUB_SHA: on workflow_dispatch $GITHUB_SHA is the branch head, while
@@ -101,13 +110,6 @@ jobs:
           # ko reads the base image digest from .ko.yaml; no deep history needed.
           fetch-depth: 1
           ref: ${{ env.VERSION }}
-
-      # Sibling action refs use literal version tags; fail before publishing if they
-      # do not match this release tag.
-      - name: Check reusable-workflow pins match the release tag
-        env:
-          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
-        run: EXPECTED_TAG="${RELEASE_TAG}" bash .github/actions/check-reusable-pins.sh
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -492,9 +494,7 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read # checkout
-      packages: write # push image + SBOM to GHCR; also covers reading
-        # @stacklok/mecatl-sdk from GitHub Packages during the build (write
-        # is a superset of read) — no separate secret needed for that half
+      packages: write # push image + SBOM to GHCR
       id-token: write # OIDC: cosign keyless signing AND provenance (ghcr login uses GITHUB_TOKEN, not OIDC)
       attestations: write # SLSA build provenance via actions/attest-build-provenance
     env:
@@ -519,27 +519,17 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Build context is the example directory itself — the bot depends on
-      # the PUBLISHED @stacklok/mecatl-sdk (GitHub Packages), not a sibling
-      # source symlink, so the SDK's source tree no longer needs to be in the
-      # build context (see the Dockerfile's own header comment). Tag both the
-      # version and latest, matching the ko-based jobs above.
-      #
-      # @stacklok/mecatl-sdk has no public npm registry yet, only GitHub
-      # Packages (TODO: drop the `secrets:` input below once it does) — the
-      # job's own ephemeral GITHUB_TOKEN, already packages:write above (a
-      # superset of read), covers installing it during the build; passed as
-      # a build secret, never a build arg/env (which would leak into layers).
+      # Build context is sdk/typescript because the bot depends on the in-tree
+      # SDK via file:../.. (see the Dockerfile header). Tag both the version
+      # and latest, matching the ko-based jobs above.
       - name: Build and push image
         id: build
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
-          context: sdk/typescript/examples/slack-bot
+          context: sdk/typescript
           file: sdk/typescript/examples/slack-bot/docker/bot.Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
-          secrets: |
-            npm_token=${{ secrets.GITHUB_TOKEN }}
           tags: |
             ${{ env.IMAGE }}:${{ env.VERSION }}
             ${{ env.IMAGE }}:latest
@@ -765,6 +755,15 @@ jobs:
           # all tags even when `ref` names a tag — which is also what makes the
           # origin/main guard below work under persist-credentials: false.
           fetch-depth: 0
+          # GoReleaser needs the tag graph (previous-tag lookup, changelog) and the
+          # TIP tree to build — the tip's blobs arrive with the checkout regardless, so
+          # only historical blobs are filtered out. `changelog.use: github` reads the
+          # compare API, not local blobs, and mod_timestamp reads commit metadata.
+          #
+          # Same caveat as the guard job: with persist-credentials: false there are no
+          # credentials for a lazy blob fetch, so do not add a step here that reads a
+          # HISTORICAL file's contents.
+          filter: blob:none
           ref: ${{ env.VERSION }}
 
       # Eight cross-compiles (2 binaries x 4 platforms) of this dependency graph
@@ -803,15 +802,6 @@ jobs:
           echo "::group::Disk after"
           df -h /
           echo "::endgroup::"
-
-      # The same version-skew gate the mecated publish job runs. Repeated here,
-      # not inherited via needs:, so a Release and a public tap commit can never
-      # be published for a tag whose sibling-action pins point at the previous
-      # release.
-      - name: Check reusable-workflow pins match the release tag
-        env:
-          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
-        run: EXPECTED_TAG="${RELEASE_TAG}" bash .github/actions/check-reusable-pins.sh
 
       # The same on-main gate the `guard` job runs. Repeated here, not merely
       # inherited via needs:, for the same reason the pin gate above is: this is

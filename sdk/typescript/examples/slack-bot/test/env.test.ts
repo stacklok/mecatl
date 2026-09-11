@@ -19,10 +19,10 @@ describe("loadConfig", () => {
       MECAK8S_OIDC_CLIENT_ID: "client-id",
       MECAK8S_OIDC_CLIENT_SECRET: "client-secret",
       MECAK8S_OIDC_TOKEN_URL: "https://example.okta.com/oauth2/abc/v1/token",
-      MECATL_GRPC_ADDRESS: "mecak8s.stacklok.dev:443",
+      MECATL_GRPC_ADDRESS: "mecak8s.example.com:443",
       MECATL_GRPC_TLS: "true",
     });
-    expect(config.mecatlTarget.baseUrl).toBe("https://mecak8s.stacklok.dev:443");
+    expect(config.mecatlTarget.baseUrl).toBe("https://mecak8s.example.com:443");
     expect(config.mecatlTarget.credentialProvider).toBeInstanceOf(Function);
   });
 
@@ -31,7 +31,7 @@ describe("loadConfig", () => {
       loadConfig({
         ...BASE_ENV,
         MECAK8S_OIDC_CLIENT_ID: "client-id",
-        MECATL_GRPC_ADDRESS: "mecak8s.stacklok.dev:443",
+        MECATL_GRPC_ADDRESS: "mecak8s.example.com:443",
         MECATL_GRPC_TLS: "true",
         // MECAK8S_OIDC_CLIENT_SECRET and MECAK8S_OIDC_TOKEN_URL intentionally omitted.
       }),

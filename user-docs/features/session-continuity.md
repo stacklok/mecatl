@@ -1,5 +1,5 @@
 ---
-sidebar_position: 9
+sidebar_position: 140
 title: Session continuity
 description: Persist, resume, maintain, and recover Mecatl sessions across deployment shapes.
 ---

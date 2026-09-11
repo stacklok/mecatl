@@ -833,23 +833,19 @@ tasks:
     desc: |
       Lint all GitHub Actions workflows with actionlint (pinned via `go run`, so no
       preinstalled binary is needed). Catches expression-context errors, bad `uses:`
-      refs, and shell issues in `run:` blocks. Runs the reusable-pins check AND the
-      empty-expression template guard, and Deslop advisory-workflow contract test too, so a
-      single `task lint:actions` covers the whole Actions surface.
+      refs, and shell issues in `run:` blocks. Runs the empty-expression template guard
+      and the performance-dashboard noindex guard plus the Deslop advisory-workflow
+      contract test, so a single `task lint:actions` covers the whole Actions surface.
     cmds:
-      - go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
-      - task: lint:reusable-pins
+      # -ignore: actionlint's latest release (v1.7.12, 2026-03) predates the `$/`
+      # self-repository `uses:` syntax GitHub shipped in 2026-07, so it rejects a valid
+      # ref as "invalid format". Upstream request: rhysd/actionlint#711. Drop the flag
+      # when it lands — it is scoped to that one message, so every other `uses:` error
+      # still fails the build.
+      - go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 -ignore 'specifying action "\$/.*" in invalid format'
       - task: lint:action-templates
+      - bash .github/scripts/ensure-perf-dashboard-noindex_test.sh
       - bash .github/scripts/deslop-workflow_test.sh
-
-  lint:reusable-pins:
-    desc: |
-      Assert every first-party sibling-action pin inside mecatequi-reusable.yml
-      (stacklok/mecatl/.github/actions/*@<tag>) equals the current release tag — the
-      mechanical version-skew guard (an expression is illegal in `uses:`, so the tag is
-      a hardcoded literal the release process must bump in the same tagged commit).
-    cmds:
-      - bash .github/actions/check-reusable-pins.sh
 
   lint:action-templates:
     desc: |

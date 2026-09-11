@@ -1,5 +1,5 @@
 ---
-sidebar_position: 2
+sidebar_position: 100
 title: Configure Mecatl
 sidebar_label: Settings guide
 description: Choose the right settings file or flag for each Mecatl deployment shape.

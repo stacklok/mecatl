@@ -391,8 +391,8 @@ const nodeSpecificItems = nodeItems.filter((item) => {
   return core === undefined || excerpt(core) !== excerpt(item);
 });
 
-validateDocumentation(coreItems, "@stacklok/mecatl-sdk");
-validateDocumentation(nodeSpecificItems, "@stacklok/mecatl-sdk/node");
+validateDocumentation(coreItems, "@stacklok-oss/mecatl-sdk");
+validateDocumentation(nodeSpecificItems, "@stacklok-oss/mecatl-sdk/node");
 await mkdir(output, { recursive: true });
 await Promise.all([
   writeFile(
@@ -400,7 +400,7 @@ await Promise.all([
     renderReference({
       description:
         "Look up the transport-neutral TypeScript SDK functions, methods, types, and errors.",
-      entryPoint: "@stacklok/mecatl-sdk",
+      entryPoint: "@stacklok-oss/mecatl-sdk",
       items: coreItems,
       position: 2,
       title: "TypeScript SDK core API",
@@ -410,7 +410,7 @@ await Promise.all([
     resolve(output, "node.md"),
     renderReference({
       description: "Look up the Node.js and Bun TypeScript SDK functions, methods, and types.",
-      entryPoint: "@stacklok/mecatl-sdk/node",
+      entryPoint: "@stacklok-oss/mecatl-sdk/node",
       items: nodeSpecificItems,
       position: 3,
       sharedReference: "./core.md",

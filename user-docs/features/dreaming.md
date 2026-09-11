@@ -1,5 +1,5 @@
 ---
-sidebar_position: 4
+sidebar_position: 240
 title: Dreaming and memory consolidation
 description: Consolidate project memory and the user model with bounded, reviewed operations.
 ---

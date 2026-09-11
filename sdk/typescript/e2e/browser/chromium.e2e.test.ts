@@ -130,7 +130,7 @@ test("Chromium completes the browser SDK control flow", async ({ browserHarness,
 
   const observed = await page.evaluate(
     async ({ baseUrl }) => {
-      const packageName: string = "@stacklok/mecatl-sdk";
+      const packageName: string = "@stacklok-oss/mecatl-sdk";
       const sdk = (await import(packageName)) as typeof import("../../src/index.js");
       const client = sdk.connect({ baseUrl, credentials: "include" });
       let result:
@@ -196,7 +196,7 @@ test("the browser transport passes exact-origin CORS preflight", async ({
   const preflights = await observePreflights(context, page, browserHarness.baseUrl);
   const allowed = await page.evaluate(
     async ({ baseUrl }) => {
-      const packageName: string = "@stacklok/mecatl-sdk";
+      const packageName: string = "@stacklok-oss/mecatl-sdk";
       const { connect } = (await import(packageName)) as typeof import("../../src/index.js");
       const client = connect({
         baseUrl,
@@ -237,7 +237,7 @@ test("the browser transport passes exact-origin CORS preflight", async ({
   await openFixture(page, browserHarness.siblingOrigin);
   const refused = await page.evaluate(
     async ({ baseUrl }) => {
-      const packageName: string = "@stacklok/mecatl-sdk";
+      const packageName: string = "@stacklok-oss/mecatl-sdk";
       const sdk = (await import(packageName)) as typeof import("../../src/index.js");
       const client = sdk.connect({
         baseUrl,
@@ -288,7 +288,7 @@ test("Chromium runs a multimodal prompt and permission callback", async ({
 
   const observed = await page.evaluate(
     async ({ baseUrl }) => {
-      const packageName: string = "@stacklok/mecatl-sdk";
+      const packageName: string = "@stacklok-oss/mecatl-sdk";
       const sdk = (await import(packageName)) as typeof import("../../src/index.js");
       const browserFetch = globalThis.fetch.bind(globalThis);
       const imageCapableMockFetch: typeof globalThis.fetch = async (input, init) => {
@@ -384,7 +384,7 @@ test("Chromium cancels steers when advertised and reattaches", async ({ browserH
 
   const observed = await page.evaluate(
     async ({ baseUrl }) => {
-      const packageName: string = "@stacklok/mecatl-sdk";
+      const packageName: string = "@stacklok-oss/mecatl-sdk";
       const sdk = (await import(packageName)) as typeof import("../../src/index.js");
       const compatibilityResponse = await fetch(`${baseUrl}/v1/compatibility`, {
         credentials: "include",

@@ -6,7 +6,7 @@ description: Understand the engine API contract, versioning rules, and compatibi
 
 # API stability
 
-`github.com/stacklok/mecatl/engine` is the importable core of Mecatl (ADR 0036). It ships as its own Go module with a small dependency closure (`doublestar`, `robfig/cron/v3`, `github.com/goccy/go-yaml`, `x/net`, and `x/sync`; test-only `goleak`) so external consumers do not pull Mecatl's full require cone — no LLM SDKs, no gRPC, no TUI stack. This page describes what the public surface covers, what is explicitly excluded, how changes are versioned, and how the three enforcement gates catch accidental breaks before they reach a consumer.
+`github.com/stacklok/mecatl/engine` is the importable core of Mecatl (ADR 0036). It ships as its own Go module with a small dependency closure (`doublestar`, `robfig/cron/v3`, `github.com/goccy/go-yaml`, `x/net`, `x/sync`, and `mvdan.cc/sh/v3`; test-only `goleak`) so external consumers do not pull Mecatl's full require cone — no LLM SDKs, no gRPC, no TUI stack. This page describes what the public surface covers, what is explicitly excluded, how changes are versioned, and how the three enforcement gates catch accidental breaks before they reach a consumer.
 
 ---
 
@@ -141,11 +141,12 @@ Mecatl persists a session as a snapshot (`engine/adapter/sessnap`). A host whose
 | Recorded stop reason | **MUST** | `EvResult.Stop` |
 | `PendingAsk` (when awaiting) | **MUST** | The trailing `EvPermissionAsk` with no following `EvApproval` or `EvResult` |
 | Cumulative `Usage` | **MUST** | The **sum** of every per-run `EvResult.Usage` (each is per-run; the token-budget brake reads the cumulative aggregate) |
-| Creation metadata: id, mode, limits, workspace, profile, provider/model selector, reasoning-effort, createdAt | **MUST** (supplied out-of-band) | **Not in any event** — provided by the caller via `eventsource.SessionMeta` |
+| Title, title provenance, title generation, and title revision | **MUST** | Authoritative values from `eventsource.SessionMeta`; an empty legacy title falls back to the first genuine `EvUserPrompt` |
+| Creation metadata: id, mode, limits, exact `EnvironmentRef`, placement metadata, profile, provider/model selector, reasoning effort, session kind and relationship, owner, authority, external binding, createdAt | **MUST** (supplied out-of-band) | **Not in any event** — provided by the caller via `eventsource.SessionMeta` |
 | `Counters` (turns / tool calls / consecutive failures) | Run-scoped — reflect the latest run segment (reset on `Reopen`) | `EvTurnStart` (turns), `EvToolResult` (tool calls, consecutive failures) |
 | Run plumbing: diagnostics binding, askID serials, context | Safe to lose — rebuilt fresh | n/a |
 
-**Creation metadata is not in events.** No event carries the session id, limits, workspace, profile, provider/model selector, reasoning-effort, or creation timestamp. There is deliberately no `EvSessionCreated` event (ADR 0038 notes it as a possible future extension). The caller who created the session supplies this data alongside the stream via `eventsource.SessionMeta`.
+**Creation metadata is not in events.** No event carries the session id, limits, exact environment identity, placement metadata, profile, provider/model selector, reasoning effort, title metadata, identity labels, or creation timestamp. There is deliberately no `EvSessionCreated` event (ADR 0038 notes it as a possible future extension). The caller who created the session supplies this data alongside the stream via `eventsource.SessionMeta`.
 
 User-role turns — both the genuine client prompt and harness-authored synthetic continuations (no-progress nudge, background-pending nudge, background-completion notice) — are event-carried via the log-only `EvUserPrompt` event. A fold therefore reconstructs the complete conversation in stream order.
 

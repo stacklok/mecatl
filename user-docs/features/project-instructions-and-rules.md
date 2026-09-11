@@ -1,5 +1,5 @@
 ---
-sidebar_position: 12
+sidebar_position: 220
 title: Project instructions and rules
 description: Control how trusted project instructions and .claude/rules guide Mecatl runs.
 ---

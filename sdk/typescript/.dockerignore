@@ -1,5 +1,7 @@
-# Keeps the Slack bot demo image's build context (examples/slack-bot/docker-compose.yml)
-# small and avoids pnpm choking on a locally-built node_modules/dist getting copied in.
+# Keeps the Slack bot demo image's build context (sdk/typescript) small and
+# avoids pnpm choking on a locally-built node_modules/dist getting copied in.
 **/node_modules
 **/dist
 **/.api-extractor-temp
+**/.release
+**/.env

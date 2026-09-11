@@ -123,7 +123,7 @@ connectivity proofs alongside AC2.1. This evidence does not claim approval,
 merge, or landed status.
 
 **Live end-to-end verification** (real kind cluster, Keycloak, and the
-connector-gateway.stacklok.dev fixture backend, mecak8s broker-only mode — no
+connector-gateway.example.com fixture backend, mecak8s broker-only mode — no
 direct/global MCP manager configured): confirmed `CallMcpWithQuery` is
 registered in a broker-only session (previously absent entirely, per the
 tracked gap in issue #1304); confirmed it routes through the session's

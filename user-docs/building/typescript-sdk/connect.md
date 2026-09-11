@@ -17,7 +17,7 @@ Import `connect()` from the Node.js and Bun entry point, then pass the gRPC
 listener's HTTP or HTTPS authority:
 
 ```ts
-import { connect } from "@stacklok/mecatl-sdk/node";
+import { connect } from "@stacklok-oss/mecatl-sdk/node";
 
 const client = connect({
   baseUrl: process.env.MECATL_URL ?? "http://127.0.0.1:8080",
@@ -54,7 +54,7 @@ Import from the transport-neutral entry point and use the BFF's same-origin
 path:
 
 ```ts
-import { connect } from "@stacklok/mecatl-sdk";
+import { connect } from "@stacklok-oss/mecatl-sdk";
 
 await using client = connect({
   baseUrl: "/mecatl",

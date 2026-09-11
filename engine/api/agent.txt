@@ -41,6 +41,7 @@
     method func (*Run).CancelChild(childID string) bool
     method func (*Run).CancelSteer() (SteerOutcome, error)
     method func (*Run).EnqueueSteer(text string, parts []session.Content) (SteerOutcome, error)
+    method func (*Run).EnqueueSteerWithMessageID(text string, parts []session.Content, messageID string) (SteerOutcome, error)
     method func (*Run).Events() <-chan session.Event
     method func (*Run).Outcome() RunOutcome
     method func (*Run).RetractPermissionAsk(askID string) bool

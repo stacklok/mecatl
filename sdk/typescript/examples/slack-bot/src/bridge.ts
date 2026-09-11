@@ -1,5 +1,5 @@
-import { type Client, type Run, ServerError, type Session } from "@stacklok/mecatl-sdk";
-import { connect, type NodeConnectOptions } from "@stacklok/mecatl-sdk/node";
+import { type Client, type Run, ServerError, type Session } from "@stacklok-oss/mecatl-sdk";
+import { connect, type NodeConnectOptions } from "@stacklok-oss/mecatl-sdk/node";
 
 export interface PromptOutcome {
   text: string;

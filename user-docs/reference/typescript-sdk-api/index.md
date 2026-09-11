@@ -6,16 +6,16 @@ sidebar_position: 1
 
 # TypeScript SDK API reference
 
-`@stacklok/mecatl-sdk` provides a transport-neutral client for browsers and a
+`@stacklok-oss/mecatl-sdk` provides a transport-neutral client for browsers and a
 Node.js and Bun client with gRPC and local-process capabilities.
 
 ## Entry points
 
 | Entry point | Contents |
 | --- | --- |
-| [`@stacklok/mecatl-sdk`](./core.md) | HTTP and SSE transport, ergonomic client, sessions, runs, events, durable activity, and shared types. |
-| [`@stacklok/mecatl-sdk/node`](./node.md) | Node.js and Bun gRPC transport, local daemon management, one-shot queries, filesystem media helpers, and callback tools. It also exports the core API. |
-| `@stacklok/mecatl-sdk/gen` | Generated protobuf-es messages and service descriptors. Use the [gRPC API reference](/reference/grpc-api.md) for the service contract. |
+| [`@stacklok-oss/mecatl-sdk`](./core.md) | HTTP and SSE transport, ergonomic client, sessions, runs, events, durable activity, and shared types. |
+| [`@stacklok-oss/mecatl-sdk/node`](./node.md) | Node.js and Bun gRPC transport, local daemon management, one-shot queries, filesystem media helpers, and callback tools. It also exports the core API. |
+| `@stacklok-oss/mecatl-sdk/gen` | Generated protobuf-es messages and service descriptors. Use the [gRPC API reference](/reference/grpc-api.md) for the service contract. |
 
 The core and Node.js/Bun method pages are generated from the declarations in
 the published package. Edit their TSDoc under `sdk/typescript/src/`, then run

@@ -1,6 +1,6 @@
 # mecatl Slack bot (example)
 
-A reference Slack bot built on `@stacklok/mecatl-sdk`: DM it, or `@mention`
+A reference Slack bot built on `@stacklok-oss/mecatl-sdk`: DM it, or `@mention`
 it in a channel, and it runs your message as a prompt against a real
 `mecated` session and replies with the answer (in the channel case, into
 the same thread). See [DESIGN.md](DESIGN.md) for the full design, why this
@@ -105,13 +105,13 @@ task slack-bot:dev
 ### Connecting to a remote, OIDC-gated deployment instead
 
 Point the bot at a real deployed backend (for example the shared staging
-`mecak8s`, `mecak8s.stacklok.dev:443`) instead of a local `mecated` by
+`mecak8s`, `mecak8s.example.com:443`) instead of a local `mecated` by
 setting `MECATL_GRPC_TLS=true`. This switches the target to `https://` and
 requires an OAuth2 client_credentials M2M credential, which the bot uses to
 mint and refresh a bearer token per call (`src/m2mToken.ts`):
 
 ```sh
-export MECATL_GRPC_ADDRESS=mecak8s.stacklok.dev:443
+export MECATL_GRPC_ADDRESS=mecak8s.example.com:443
 export MECATL_GRPC_TLS=true
 export MECAK8S_OIDC_TOKEN_URL=https://<okta-org>/oauth2/<auth-server-id>/v1/token
 export MECAK8S_OIDC_CLIENT_ID=...
@@ -251,11 +251,7 @@ Runs both `mecated` and the bot together, wired on an internal Docker
 network — no separately-installed Go or Node toolchain needed.
 
 ```sh
-cp .env.example .env    # fill in SLACK_BOT_TOKEN, SLACK_APP_TOKEN, a provider key,
-                         # and GH_PACKAGES_TOKEN (a GitHub PAT with read:packages —
-                         # needed to install @stacklok/mecatl-sdk during the image
-                         # build; see .env.example. TODO: goes away once the SDK is
-                         # on public npm)
+cp .env.example .env    # fill in SLACK_BOT_TOKEN, SLACK_APP_TOKEN, and a provider key
 docker compose up --build
 ```
 
@@ -279,13 +275,12 @@ Notes:
 
 ## Development
 
-`@stacklok/mecatl-sdk` installs from GitHub Packages (no public npm registry
-yet — TODO: this requirement goes away once there is one), so `install`
-needs a `read:packages`-scoped token: `NODE_AUTH_TOKEN=$(gh auth token) task
-slack-bot:install` (works as long as your `gh` login has that scope).
+The example consumes the in-tree `@stacklok-oss/mecatl-sdk` through
+`file:../..`. `task slack-bot:install` builds that package first, then installs
+the bot with a frozen lockfile.
 
 ```sh
-task slack-bot:install     # pnpm install — see the token note above
+task slack-bot:install     # builds the SDK, then pnpm install --frozen-lockfile
 task slack-bot:lint
 task slack-bot:typecheck
 task slack-bot:test        # offline; spawns a real mecated --mock, no Slack needed

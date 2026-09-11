@@ -1,4 +1,4 @@
-import type { CredentialProvider } from "@stacklok/mecatl-sdk/node";
+import type { CredentialProvider } from "@stacklok-oss/mecatl-sdk/node";
 import { M2MTokenProvider } from "./m2mToken.js";
 
 /** Connection info for the mecatl daemon this bot talks to. Exactly one of the two is set.

@@ -1,5 +1,5 @@
 ---
-sidebar_position: 7
+sidebar_position: 210
 title: Skills, commands, and soul
 description: Shape Mecatl runs with reusable skills, slash commands, and a durable persona.
 ---

@@ -15,7 +15,7 @@ client ID. The SDK's per-authorization DCR hook supplies no durable registration
 using it directly would create registration identity too late and could re-register on login.
 
 The connector gateway's canonical resource is
-`https://connector-gateway.stacklok.dev/gw/mcp`. Discovery advertised public DCR, code,
+`https://connector-gateway.example.com/gw/mcp`. Discovery advertised public DCR, code,
 authorization-code and refresh grants, S256, and `none`. An explicitly authorized standalone
 Python probe registered one public client and completed two browser authorizations/code
 exchanges on the same random callback path with two ports, both different from the registered

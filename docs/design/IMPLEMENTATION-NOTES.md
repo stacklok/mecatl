@@ -823,10 +823,15 @@ cancellable provisional `runState` before acquisition or engine construction, th
 atomically promote it only while the drain gate and exact held lease remain valid.
 Thus later save/delete/event/tool/metadata and sidecar operations fail locally; local invalidation is not backend fencing:
 a call admitted before loss may still complete,
-and stores carry no lease token or epoch. For an awaiting run, `persistMu` makes the
-save result and local awaiting marker one drain-visible lifecycle transaction. The
-Service retracts local ask delivery and prevents later relay persistence, but leaves the
-durable `PendingAsk` unresolved and byte-identical for TTL takeover. Settled stale run
+and stores carry no lease token or epoch. For an awaiting run, `persistMu` orders the
+save, local awaiting marker, live approval, and live cancellation as one lifecycle
+transaction. A control that arrives during the save waits for it to finish. A control
+that wins before the relay starts marks the ask stale before waking the run, so the
+delayed relay skips the awaiting snapshot. After crossing the barrier, each control
+revalidates that the captured `runState` is still the exact registry entry before it
+signals the run. The Service retracts local ask delivery and prevents later relay
+persistence, but leaves the durable `PendingAsk` unresolved and byte-identical for TTL
+takeover. Settled stale run
 references remove heavyweight held-lease/capability tombstones; the lightweight
 `lostOwnership` denial remains until explicit local session teardown so that stale
 Service cannot reacquire.
@@ -8372,7 +8377,7 @@ clock.
 
 ## TypeScript SDK — `sdk/typescript/` (M1–M4 public v0.1 surface, ADRs 0279, 0288, 0292 and 0304)
 
-The ESM-only `@stacklok/mecatl-sdk` has three exports. `.` owns the transport-neutral
+The ESM-only `@stacklok-oss/mecatl-sdk` has three exports. `.` owns the transport-neutral
 `Client`/`Session`/`Run` API, typed events/errors, prompt-media helpers, and the hand-written
 HTTP/JSON/SSE transport. `./node` re-exports that surface and adds connect-node real gRPC over
 HTTP/2: TCP uses an ordinary base URL; UDS keeps an ordinary HTTP authority and supplies a
@@ -8380,7 +8385,11 @@ socket-opening `createConnection` through the HTTP/2 node options (`sdk/typescri
 never a `unix://` URL. `./gen` is the committed protobuf-es output generated only for
 `contracts/proto/mecatl/v1/`; it has a codegen freshness gate rather than an API Extractor
 report. The package requires Node 22 or newer, builds unbundled ESM plus declarations/source maps,
-and owns its pinned pnpm lock independently of the npm-based website.
+and owns its pinned pnpm lock independently of the npm-based website. The
+canonical published name is `@stacklok-oss/mecatl-sdk` on public npmjs
+(`sdk/typescript/v*` tags, `npm-publish` environment, staged trusted publishing,
+maintainer approval with 2FA, npm-native provenance;
+[ADR 0328](../adr/0328-typescript-sdk-npmjs-stacklok-oss.md)).
 
 `sdk/typescript/src/raw.ts` enforces API-major compatibility before all non-compatibility RPCs;
 the ergonomic client also probes status and maps transport/auth/incompatibility states without
@@ -8390,8 +8399,8 @@ model real server-side races. `Run` is single-consumption: callers choose async 
 or `result()`, never both. Server terminal stops — including `cancelled` — resolve as typed
 values; transport/protocol/server failures reject. Every approval, cancel, and steer frame
 carries `expected_run_id`, so a stale HTTP control becomes typed `stale_run_control` and cannot
-affect the session's next run. HTTP steer remains deliberately unsupported until the server
-advertises `http_steer`.
+affect the session's next run. HTTP steer and cancel-steer use their unary routes only when the
+server advertises `http_steer`; older servers still produce the typed unsupported-feature error.
 
 `sdk/typescript/src/events.ts` normalizes gRPC protobuf events and HTTP JSON/SSE records into
 one discriminated union, retaining an explicit unknown-event member for forward compatibility.
@@ -8826,10 +8835,12 @@ required** and it is portable across Anthropic Messages / OpenAI Responses / Cha
 Completions.
 
 **Engine (`engine/agent/steer.go`).** A `Run`-scoped, single-slot, append-default
-**mutex** inbox atomically owns `{text, parts}`. At most one pending steer bundle
-per run: a second `EnqueueSteer` appends text with a blank line only when
-both fragments are non-empty and appends validated `session.Content` parts in
-fragment order (issue #861, ADR 0251). Replacing a pending bundle is the explicit
+**mutex** inbox atomically owns `{text, parts, message_id}`. At most one pending
+steer bundle per run: a second `EnqueueSteerWithMessageID` appends text with a
+blank line only when both fragments are non-empty and appends validated
+`session.Content` parts in fragment order (issue #861, ADR 0251). Its id replaces
+the prior id as the bundle watermark. `EnqueueSteer` remains the id-less
+compatibility entry point. Replacing a pending bundle is the explicit
 cancel-then-resend (`CancelSteer`, then a fresh steer with a fresh `message_id`).
 `CancelSteer` retracts; the boundary drain commits the merged bundle as ONE user
 message. The outcome is a closed enum (`accepted`/`appended`/`retracted`/
@@ -8861,21 +8872,33 @@ costs no prompt-cache rebuild beyond normal history growth). The drain emits
 `EvSteer` carrying the committed text and media parts — the authoritative echo;
 the client renders the echoed truth (recorded == streamed == model-view).
 
-**Wire (gRPC-only v1).** A `steer`/`steer_cancel` oneof arm on the bidi `Converse`
-stream, the `ServerCapabilities.steer` runtime gate, and the `EvSteer` echo. Mecatui
-uses native multimodal steer when the bit is true; otherwise every mid-run input
-stays in the local merge queue. The routing has ONE owner —
-`Service.Steer`/`Service.CancelSteer` (`internal/adapter/server/service.go`); the
-gRPC handler is a dumb frame→Service mapper. **Correlation (watermark).** Every
-frame carries a client-minted `message_id`; the ack lane echoes its own frame's
-id on each outcome. The engine inbox parks text and media together, while the Service keeps a
-per-session FIFO of the ordered frame ids (`trackSteerMessageID`/
-`LookupSteerMessageID`/`dropSteerMessageID`); on drain the relay pops the whole
-list and stamps the `EvSteer` echo with the LATEST (tail) id — the **watermark**
-the client splits its ordered queue on (positional, never text-match — pinned by
-`TestLookupSteerMessageIDExactUnderDuplicateTexts`). Ids are clamped to a 64-rune
-prefix at track before touching the FIFO or any log (CWE-770). **Lost terminal
-race → auto-promote + sequential handoff:** a steer arriving for a session whose
+**Wire.** gRPC uses `steer`/`steer_cancel` oneof arms on the bidi `Converse`
+stream. HTTP uses unary `POST /v1/sessions/{id}/steer` and
+`POST /v1/sessions/{id}/cancel-steer`, advertised by the `http_steer` compatibility
+feature. Both carry multimodal content where applicable, use the
+`ServerCapabilities.steer` runtime gate, and receive the same `EvSteer` echo.
+HTTP control JSON is bounded and strict: unknown fields and trailing values are
+rejected; cancel-steer alone permits an empty body as `{}`. Mecatui uses native
+multimodal steer when the runtime bit is true; otherwise every mid-run input stays
+in the local merge queue. The routing has ONE owner — `Service.Steer` and
+`Service.CancelSteer` (`internal/adapter/server/service.go`) — so HTTP and gRPC do
+not rederive admission, run identity, cancellation, or correlation state.
+`expected_run_id` is enforced atomically with the live-run lookup and inbox
+transition. A refused stale/invalid gRPC control does not terminate `Converse`:
+steer acknowledges `too_late`, cancel-steer acknowledges `none_pending`, and a
+bounded diagnostic records the refusal.
+
+**Correlation (watermark).** Every control may carry a client-minted `message_id`;
+the ack lane echoes its own frame's id on each outcome. The engine inbox parks the
+id with text and media in one mutex-guarded bundle. Each append replaces the bundled
+id, so the latest contributing id is the **watermark** the client uses to split its
+ordered queue. The drain takes the content and watermark atomically, and `EvSteer`
+carries both. A sender can enqueue the next bundle before the prior event reaches the
+relay without changing the prior event's watermark. A successful retract removes the
+whole pending bundle in the same engine critical section. IDs longer than 64 Unicode
+code points are rejected before admission, never truncated (CWE-770).
+
+**Lost terminal race → auto-promote + transport-specific handoff:** a steer arriving for a session whose
 run is already terminal is promoted to a fresh follow-up run through the hardened
 run-entry funnel (`StartRunContent`/`loadAndReopen` + lease + recover-if-terminal)
 — never silently dropped; the promote path awaits the original run's
@@ -8888,10 +8911,12 @@ is not goroutine-safe), the control target (`ResumeApproval`/`Cancel`/
 `CancelChild`) swaps to the promoted run atomically before its relay starts, and
 the promoted run is `FinishRun`-deregistered before the RPC returns (its terminal
 outcome is reported inline as the `steer.outcome` ack, `promoted=true`).
-**HTTP/SSE and ACP steer are deferred** (no client→server mid-run channel; a
-unary `POST .../steer` mirroring `approve`/`cancel` is the cheap follow-up
-shape), as is **steer-to-child** (needs a richer parent→child channel than
-`CancelChild`).
+The HTTP endpoint always returns a unary
+`{"outcome":"too_late","promoted":true,"run_id":"..."}` acknowledgement and
+drains the promoted run through a request-detached background recorder before
+deregistering it. It never switches the response to SSE. **ACP steer is deferred**
+(no client-to-server mid-run channel), as is **steer-to-child** (needs a richer
+parent-to-child channel than `CancelChild`).
 
 **mecatui.** Reads the `steer` capability off the CreateSession echo: present →
 `enter` mid-run sends a `steer` frame (each `enter` mints a fresh `message_id`,

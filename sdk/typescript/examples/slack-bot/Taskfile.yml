@@ -4,32 +4,19 @@ tasks:
   install:
     desc: |
       Install the Slack bot example's dependencies from the frozen pnpm lockfile.
-      @stacklok/mecatl-sdk installs from GitHub Packages (no public npm registry
-      yet — TODO: drop the auth requirement below once it has one), so this
-      needs a read:packages-scoped token. Set NODE_AUTH_TOKEN before running:
-        NODE_AUTH_TOKEN=$(gh auth token) task install
-      CI supplies it from the job's own GITHUB_TOKEN (see ci.yml). NODE_AUTH_TOKEN
-      alone does NOT configure pnpm auth (#1289 review, samuv) — the committed
-      .npmrc only maps the @stacklok scope to the registry, and pnpm refuses to
-      expand env vars in that committed file (see its own comment). This task
-      writes the actual auth line to a THROWAWAY user-level npmrc for the
-      duration of the install, the same trick the Dockerfile and CI use.
+      The example consumes the in-tree SDK via file:../.., so this builds that
+      package first.
     sources:
       - package.json
       - pnpm-lock.yaml
+      - ../../package.json
+      - ../../pnpm-lock.yaml
     generates:
       - node_modules/.modules.yaml
     cmds:
-      - cmd: |
-          set -euo pipefail
-          if [ -n "${NODE_AUTH_TOKEN:-}" ]; then
-            npmrc="$(mktemp)"
-            trap 'rm -f "$npmrc"' EXIT
-            printf '//npm.pkg.github.com/:_authToken=%s\n' "$NODE_AUTH_TOKEN" > "$npmrc"
-            NPM_CONFIG_USERCONFIG="$npmrc" pnpm install --frozen-lockfile
-          else
-            pnpm install --frozen-lockfile
-          fi
+      - task --dir ../../../.. sdk:install
+      - task --dir ../../../.. sdk:build
+      - pnpm install --frozen-lockfile
 
   lint:
     desc: Lint and format-check the Slack bot example with Biome

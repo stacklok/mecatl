@@ -1,5 +1,5 @@
 ---
-sidebar_position: 2
+sidebar_position: 100
 title: Start and resume sessions
 description: Create, select, and resume Mecatl sessions from the terminal or a client.
 ---

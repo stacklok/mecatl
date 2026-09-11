@@ -187,7 +187,7 @@ deferred until ToolHive exposes a custom-CA/client seam.
 | Explicit `registration_endpoint` (no-discovery DCR upstream) | Follow-on once a real no-discovery DCR upstream is known | See Human decisions |
 | DCR layered on OIDC (`issuer`) upstream discovery | Follow-on if ToolHive ever adds `DCRConfig` to `OIDCUpstreamRunConfig` | See Human decisions — `dcr` requires explicit `upstream: {mode: oauth2, ...}` |
 | `AllowPrivateIPs`/`InsecureAllowHTTP` exposure for DCR calls | Follow-on ADR if an in-cluster DCR upstream needs it | [ADR 0314](../adr/0314-mcp-broker-dcr-client.md) — mecatl exposes neither per-upstream override; ToolHive's localhost-development exception and process-wide compatibility setting remain outside this schema |
-| Manually wiring the live `mecak8s-dev` Kind cluster to `connector-gateway.stacklok.dev` | Manual verification after this plan lands | Operator action, not part of the automated acceptance surface |
+| Manually wiring the live `mecak8s-dev` Kind cluster to `connector-gateway.example.com` | Manual verification after this plan lands | Operator action, not part of the automated acceptance surface |
 | Global (non-broker) OAuth mode DCR support | Not requested; broker mode is the only place `mcp.servers[].auth.oauth.client` currently exists | N/A — same union, no separate global-mode client concept exists to extend |
 
 ## Definition of done

@@ -1017,21 +1017,6 @@ type Service struct {
 	// s.mu.
 	replayedApprovals map[session.SessionID]struct{}
 
-	// steerMsgIDs correlates a DRAINED steer's EvSteer echo with the client-minted
-	// message_id of the Steer frame that parked it (issue #512): the engine inbox
-	// parks TEXT ONLY, so the id lives at this wire-correlation layer. On each
-	// accepted/appended steer the Service appends the frame's id to the session's
-	// ordered list; when the EvSteer drain echo commits, the relay pops the WHOLE
-	// list and stamps the echo with the LATEST (tail) id — the WATERMARK the client
-	// splits its ordered queue on (positional, never text-match — pinned by
-	// internal/adapter/server/steer_watermark_pin_test.go). An unmatched echo (a
-	// steer enqueued by another surface with no id, or a drain after a retract)
-	// rides with "". The whole list is consumed on drain, dropped on retract
-	// (dropSteerMessageID), cleared on register() of a fresh run, and deleted on
-	// CloseSession — so the map holds at most one entry per accepted-unresolved
-	// steer. Guarded by s.mu.
-	steerMsgIDs map[session.SessionID][]steerMsgID
-
 	// heldLeases tracks the cross-process session leases this process currently
 	// holds (cloud-native Phase 4, ADR 0027). A lease is acquired ONCE per session
 	// on first run-entry (after the per-session runEntryMu) and held for the
@@ -1241,9 +1226,17 @@ type runState struct {
 	// prompt-ingress changes publish only after their save succeeds.
 	titleRevision uint64
 	// persistMu makes admission of the durable awaiting save and drain's
-	// awaiting/non-awaiting decision one lifecycle transaction. Backend calls
-	// admitted before invalidation may still complete.
+	// awaiting/non-awaiting decision one lifecycle transaction. Live approval
+	// and cancellation signals cross the same barrier: they either wait for an
+	// admitted awaiting save, or mark the pending ask stale before waking the
+	// engine so a delayed relay never snapshots a concurrently-resuming session.
+	// Backend calls admitted before invalidation may still complete.
 	persistMu sync.Mutex
+	// resolvedAskID and cancelSignaled are guarded by persistMu. They close the
+	// event-delivery race where a control reaches a detached/background run after
+	// the engine emitted permission.ask but before its relay starts Persist.
+	resolvedAskID  string
+	cancelSignaled bool
 	// preserveDurable prevents a shutdown-cancelled local awaiting run from
 	// overwriting the already-durable PendingAsk handoff point.
 	preserveDurable atomic.Bool
@@ -1397,7 +1390,6 @@ func NewServiceContext(ctx context.Context, cfg Config) (*Service, error) {
 		reservedIDs:         make(map[session.SessionID]struct{}),
 		runEntryGenerations: make(map[session.SessionID]uint64),
 		replayedApprovals:   make(map[session.SessionID]struct{}),
-		steerMsgIDs:         make(map[session.SessionID][]steerMsgID),
 		heldLeases:          make(map[session.SessionID]*heldLease),
 		lostOwnership:       make(map[session.SessionID]struct{}),
 		cleanupTokenKey:     cleanupTokenKey,
@@ -2809,11 +2801,6 @@ func (s *Service) closeSessionLocal(id session.SessionID) {
 	// sync.Map; like the approval-replay marker above, clearing it keeps the map
 	// from growing unbounded on a long-lived server.
 	s.recoverNotices.Delete(id)
-	// Drop any un-drained steer correlation ids (ADR-0228 review finding): a
-	// session closed with a parked-but-undrained steer would otherwise leak an
-	// entry in steerMsgIDs until process exit (same unbounded-map class the
-	// neighboring two deletes close).
-	delete(s.steerMsgIDs, id)
 	delete(s.lostOwnership, id)
 	s.mu.Unlock()
 	if expiry != nil && expiry.timer != nil {
@@ -4641,15 +4628,18 @@ func (s *Service) repairRunningSession(ctx context.Context, sess *session.Sessio
 // terminal-state repair failure surfaces as the funnel's error.
 //
 // messageID is the client-minted correlation id of the Steer frame ("" when the
-// caller supplied none). On an accepted steer it parks in the session's FIFO so
-// the EvSteer drain echo can echo it (LookupSteerMessageID); the ACK-side echo
-// is the caller's own frame field (it never crosses the Service).
+// caller supplied none). The engine parks it atomically with the pending content
+// so the EvSteer drain echo carries the exact bundle watermark. The ACK-side echo
+// is the caller's own frame field.
 func (s *Service) Steer(ctx context.Context, id session.SessionID, text string, parts []session.Content, messageID, expectedRunID string) (agent.SteerOutcome, bool, *agent.Run, error) {
 	generation := s.captureRunEntryGeneration(id)
 	// Authorize before touching the in-memory registry or the run-entry funnel:
 	// a steer injects caller input into a run / drives a follow-up, so a foreign
 	// request must be absence-equivalent (ErrNotFound), mirroring Cancel/Approve.
 	if _, err := s.GetSession(ctx, id); err != nil {
+		return agent.SteerTooLate, false, nil, err
+	}
+	if err := validateSteerMessageID(messageID); err != nil {
 		return agent.SteerTooLate, false, nil, err
 	}
 	// Live-run fast path: validate the exact lease hold and enqueue while holding
@@ -4677,12 +4667,9 @@ func (s *Service) Steer(ctx context.Context, id session.SessionID, text string, 
 			s.mu.Unlock()
 			return agent.SteerTooLate, false, nil, err
 		}
-		outcome, err := run.EnqueueSteer(text, parts)
+		outcome, err := run.EnqueueSteerWithMessageID(text, parts, messageID)
 		s.mu.Unlock()
 		if err == nil && outcome != agent.SteerTooLate {
-			if outcome == agent.SteerAccepted || outcome == agent.SteerAppended {
-				s.trackSteerMessageID(id, messageID)
-			}
 			return outcome, false, nil, nil
 		}
 		if err != nil {
@@ -4769,97 +4756,48 @@ func (s *Service) promotedSteerRun(ctx context.Context, id session.SessionID, te
 // session with no live run reports none_pending (there is no inbox to retract
 // from — the steer that would be pending is already lost with its run, the
 // best-effort in-memory contract the docs/acceptance/steer-while-running.md
-// Scenario-2 contract records). The wire's steer_cancel message_id never
-// crosses the Service (the ack-side echo is the caller's own frame field), so
-// the signature stays id-less.
-func (s *Service) CancelSteer(ctx context.Context, id session.SessionID) (agent.SteerOutcome, error) {
+// Scenario-2 contract records). expectedRunID has the same optional strictness
+// as the other run controls: when set, no absent or replacement run may be
+// touched. The wire's steer_cancel message_id never crosses the Service (the
+// ack-side echo is the caller's own frame field), so the signature stays
+// correlation-id-free.
+func (s *Service) CancelSteer(ctx context.Context, id session.SessionID, expectedRunID string) (agent.SteerOutcome, error) {
 	// Authorize before the registry read, mirroring Cancel: a foreign request is
 	// absence-equivalent (ErrNotFound), never a peek at another caller's inbox.
 	if _, err := s.GetSession(ctx, id); err != nil {
 		return agent.SteerNonePending, err
 	}
-	run, ok := s.LookupRun(id)
-	if !ok {
+	s.mu.Lock()
+	st := s.runs[id]
+	if st == nil || st.run == nil {
+		s.mu.Unlock()
+		if expectedRunID != "" {
+			return agent.SteerNonePending, checkExpectedRun(expectedRunID, "")
+		}
 		return agent.SteerNonePending, nil
 	}
+	run := st.run
+	if err := checkExpectedRun(expectedRunID, run.RunID()); err != nil {
+		s.mu.Unlock()
+		return agent.SteerNonePending, err
+	}
 	outcome, err := run.CancelSteer()
+	s.mu.Unlock()
 	if err != nil {
 		return outcome, fmt.Errorf("server: steer cancel: %w", err)
-	}
-	if outcome == agent.SteerRetracted {
-		s.dropSteerMessageID(id)
 	}
 	return outcome, nil
 }
 
-// steerMsgIDs maps a session to the ORDERED list of client-minted message_ids of
-// the steers appended into the run's single pending bundle (the engine inbox
-// parks text only — the id lives at this wire-correlation layer). At most ONE
-// bundle is pending per run (the single-slot inbox), so at most one ordered list
-// is pending per session: a send APPENDS its id; on drain every entry is consumed
-// positionally (the whole list is deleted) and the echo carries the LATEST (tail)
-// id as the WATERMARK the client splits its ordered queue on — never text-match.
-// Ids are clamped to a bounded prefix at track (CWE-770; the legitimately minted
-// ids are tiny — a longer client id that clips correlates identically on both
-// sides when the ack/echo report the same stored prefix).
-type steerMsgID struct {
-	messageID string
-}
+// maxSteerMessageIDRunes bounds a client-minted message id before it enters the
+// engine bundle and every downstream log, event, or diagnostic echo.
+const maxSteerMessageIDRunes = 64
 
-// steerMsgIDClamp bounds a client-minted message id before it touches the
-// watermark FIFO (and every downstream log/diagnostic echo). Ids beyond it are
-// truncated without losing the ack-correlation property for realistic ids.
-const steerMsgIDClamp = 64
-
-// trackSteerMessageID appends the client-minted message_id of an accepted OR
-// appended steer to the session's ordered pending-bundle list. When the bundle
-// drains, LookupSteerMessageID returns the TAIL (watermark) id and consumes the
-// whole list.
-func (s *Service) trackSteerMessageID(id session.SessionID, messageID string) {
-	if r := []rune(messageID); len(r) > steerMsgIDClamp {
-		messageID = string(r[:steerMsgIDClamp])
+func validateSteerMessageID(messageID string) error {
+	if utf8.RuneCountInString(messageID) > maxSteerMessageIDRunes {
+		return fmt.Errorf("%w: message_id exceeds %d characters", ErrInvalidArgument, maxSteerMessageIDRunes)
 	}
-	s.mu.Lock()
-	s.steerMsgIDs[id] = append(s.steerMsgIDs[id], steerMsgID{messageID: messageID})
-	depth := len(s.steerMsgIDs[id])
-	s.mu.Unlock()
-	// Correlation state, never text (untrusted producer content): depth + id
-	// suffice to rebuild intent across runs of the log.
-	s.cfg.Diagnostics.Log(context.Background(), port.LevelInfo, "steer message-id tracked",
-		"session", string(id), "message_id", messageID, "queue_depth", depth)
-}
-
-// dropSteerMessageID discards the correlation of a RETRACTED steer: the retract
-// clears the run's one pending bundle, so the WHOLE ordered list for the session
-// is dropped (the bundle is gone — nothing remains to correlate). A retract with
-// an empty list (id-less steer) is the harmless no-op.
-func (s *Service) dropSteerMessageID(id session.SessionID) {
-	s.mu.Lock()
-	delete(s.steerMsgIDs, id)
-	s.mu.Unlock()
-	s.cfg.Diagnostics.Log(context.Background(), port.LevelInfo, "steer message-id dropped (retract)", "session", string(id))
-}
-
-// LookupSteerMessageID returns the WATERMARK message_id for a drained bundle —
-// the LATEST (tail) id of the session's ordered pending list — and CONSUMES the
-// whole list (the bundle drained; the next bundle starts a fresh list). The
-// client splits its ordered queue on the watermark (positional, never
-// text-match — the drift class the abandoned `_ string` parameter gestured at).
-// "" when the list is empty (an id-less steer, or a drain after a retract).
-func (s *Service) LookupSteerMessageID(id session.SessionID) string {
-	s.mu.Lock()
-	q := s.steerMsgIDs[id]
-	if len(q) == 0 {
-		s.mu.Unlock()
-		return ""
-	}
-	watermark := q[len(q)-1].messageID
-	depth := len(q)
-	delete(s.steerMsgIDs, id)
-	s.mu.Unlock()
-	s.cfg.Diagnostics.Log(context.Background(), port.LevelInfo, "steer message-id watermark consumed",
-		"session", string(id), "message_id", watermark, "queue_depth", depth)
-	return watermark
+	return nil
 }
 
 // isDelegationChildSessionID reports whether id carries one of the delegation
@@ -5479,9 +5417,26 @@ func (s *Service) approveLiveRun(id session.SessionID, target *agent.Run, askID 
 		return fmt.Errorf("%w: %q", ErrUnavailable, id)
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	st := s.runs[id]
-	if st == nil || st.run == nil || st.run != target || st.cancelling {
+	s.mu.Unlock()
+	if st == nil {
+		return ErrNoActiveRun
+	}
+	return s.approveRunState(id, st, target, askID, verdict, expectedRunID)
+}
+
+// approveRunState crosses the persistence barrier for the runState captured by
+// approveLiveRun, then proves that exact state is still registered before it
+// signals the run. The explicit captured state keeps the post-barrier registry
+// identity proof in one place.
+func (s *Service) approveRunState(id session.SessionID, st *runState, target *agent.Run, askID string, verdict session.ApprovalVerdict, expectedRunID string) error {
+	// Persist and a control signal must be one ordered transaction. Persist takes
+	// persistMu before revalidating under s.mu, so retain that lock order here.
+	st.persistMu.Lock()
+	defer st.persistMu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.runs[id] != st || st.run == nil || st.run != target || st.cancelling {
 		return ErrNoActiveRun
 	}
 	if s.cfg.SessionLease != nil && !s.leaseDisabled {
@@ -5493,6 +5448,9 @@ func (s *Service) approveLiveRun(id session.SessionID, target *agent.Run, askID 
 	if err := checkExpectedRun(expectedRunID, target.RunID()); err != nil {
 		return err
 	}
+	// Set before waking the run. If permission.ask is still buffered, its relay
+	// observes this marker and skips the now-stale awaiting snapshot.
+	st.resolvedAskID = askID
 	target.Approve(askID, verdict)
 	return nil
 }
@@ -5575,23 +5533,14 @@ func (s *Service) ApproveRun(ctx context.Context, id session.SessionID, askID st
 			}
 			return nil, ErrNoActiveRun
 		}
-		if s.cfg.SessionLease != nil && !s.leaseDisabled {
-			h := s.heldLeases[id]
-			if h == nil || !h.valid || h.ctx.Err() != nil {
-				s.mu.Unlock()
-				return nil, fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, id)
-			}
-		}
 		run := st.run
-		// Compare against the run that would ACTUALLY receive the verdict, not the
-		// session's stored id: after a terminal race those can differ, and the
-		// whole point of expected_run_id is to refuse exactly that case (ADR 0249).
-		if err := checkExpectedRun(expectedRunID, run.RunID()); err != nil {
-			s.mu.Unlock()
+		s.mu.Unlock()
+		// Compare against and signal the run that would ACTUALLY receive the
+		// verdict. approveLiveRun revalidates the registry + lease after crossing
+		// the awaiting-persistence barrier.
+		if err := s.approveLiveRun(id, run, askID, verdict, expectedRunID); err != nil {
 			return nil, err
 		}
-		run.Approve(askID, verdict)
-		s.mu.Unlock()
 		return nil, nil
 	}
 	s.mu.Unlock()
@@ -5641,23 +5590,13 @@ func (s *Service) resumeFromAwaiting(ctx context.Context, id session.SessionID, 
 	st, ok := s.runs[id]
 	if ok {
 		run := st.approvalRun()
+		s.mu.Unlock()
 		if run == nil {
-			s.mu.Unlock()
 			return nil, ErrNoActiveRun
 		}
-		if s.cfg.SessionLease != nil && !s.leaseDisabled {
-			h := s.heldLeases[id]
-			if h == nil || !h.valid || h.ctx.Err() != nil {
-				s.mu.Unlock()
-				return nil, fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, id)
-			}
-		}
-		if err := checkExpectedRun(expectedRunID, run.RunID()); err != nil {
-			s.mu.Unlock()
+		if err := s.approveLiveRun(id, run, askID, verdict, expectedRunID); err != nil {
 			return nil, err
 		}
-		run.Approve(askID, verdict)
-		s.mu.Unlock()
 		return nil, nil
 	}
 	s.mu.Unlock()
@@ -5936,24 +5875,45 @@ func (s *Service) Cancel(ctx context.Context, id session.SessionID, expectedRunI
 	s.mu.Lock()
 	st := s.runs[id]
 	if st != nil && st.run != nil {
-		if s.cfg.SessionLease != nil && !s.leaseDisabled {
-			h := s.heldLeases[id]
-			if h == nil || !h.valid || h.ctx.Err() != nil {
-				s.mu.Unlock()
-				return fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, id)
-			}
-		}
 		run := st.run
-		if err := checkExpectedRun(expectedRunID, run.RunID()); err != nil {
-			s.mu.Unlock()
-			return err
-		}
-		run.Cancel()
 		s.mu.Unlock()
-		return nil
+		return s.cancelLiveRun(id, run, expectedRunID)
 	}
 	s.mu.Unlock()
 	return s.noActiveRun(ctx, id)
+}
+
+// cancelLiveRun orders a cancellation signal against permission-ask
+// persistence. It is shared by unary and stream controls so a detached run can
+// never resume its aggregate while the relay snapshots StateAwaiting.
+func (s *Service) cancelLiveRun(id session.SessionID, target *agent.Run, expectedRunID string) error {
+	s.mu.Lock()
+	st := s.runs[id]
+	s.mu.Unlock()
+	if st == nil {
+		return ErrNoActiveRun
+	}
+	st.persistMu.Lock()
+	defer st.persistMu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.runs[id] != st || st.run == nil || st.run != target || st.cancelling {
+		return ErrNoActiveRun
+	}
+	if s.cfg.SessionLease != nil && !s.leaseDisabled {
+		h := s.heldLeases[id]
+		if h == nil || !h.valid || h.ctx.Err() != nil {
+			return fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, id)
+		}
+	}
+	if err := checkExpectedRun(expectedRunID, target.RunID()); err != nil {
+		return err
+	}
+	// Set before waking the run. Any permission.ask already in the event buffer
+	// is historical once cancellation wins and must not trigger an awaiting save.
+	st.cancelSignaled = true
+	target.Cancel()
+	return nil
 }
 
 // CancelChild cancels ONE child (a subagent) of the session's in-flight run,
@@ -6027,6 +5987,38 @@ func (s *Service) Persist(ctx context.Context, id session.SessionID) {
 	if !current || st.preserveDurable.Load() {
 		return
 	}
+	if !s.mutationLeaseHeld(id) {
+		return
+	}
+	s.persistRun(ctx, id, st)
+}
+
+// persistPermissionAsk is Persist with control-event correlation. A detached
+// relay can observe permission.ask after an approval/cancellation already won;
+// in that ordering the aggregate is resuming and must not be read or persisted.
+func (s *Service) persistPermissionAsk(ctx context.Context, id session.SessionID, askID string) {
+	if _, err := s.GetSession(ctx, id); err != nil {
+		return
+	}
+	s.mu.Lock()
+	st, ok := s.runs[id]
+	s.mu.Unlock()
+	if !ok {
+		return
+	}
+	st.persistMu.Lock()
+	defer st.persistMu.Unlock()
+	s.mu.Lock()
+	current := s.runs[id] == st
+	s.mu.Unlock()
+	if !current || st.preserveDurable.Load() || st.cancelSignaled {
+		return
+	}
+	if st.resolvedAskID == askID && askID != "" {
+		return
+	}
+	// A different ask proves any prior resolution marker is obsolete.
+	st.resolvedAskID = ""
 	if !s.mutationLeaseHeld(id) {
 		return
 	}
@@ -6193,7 +6185,11 @@ func (s *Service) relayEvent(ctx context.Context, id session.SessionID, ev sessi
 		return false
 	}
 	if ev.Type == session.EvPermissionAsk {
-		s.Persist(ctx, id)
+		askID := ""
+		if ev.Ask != nil {
+			askID = ev.Ask.AskID
+		}
+		s.persistPermissionAsk(ctx, id, askID)
 		if autoApprove {
 			s.MaybeAutoApprovePlan(ctx, id, ev)
 		}
@@ -7041,7 +7037,6 @@ func (s *Service) beginRunAdmission(parent context.Context, id session.SessionID
 		return nil, nil, fmt.Errorf("%w: session %q already has an active run", ErrFailedPrecondition, id)
 	}
 	s.runs[id] = st
-	delete(s.steerMsgIDs, id)
 	s.mu.Unlock()
 	return st, ctx, nil
 }

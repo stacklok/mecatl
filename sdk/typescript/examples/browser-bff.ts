@@ -1,4 +1,4 @@
-import { connect } from "@stacklok/mecatl-sdk";
+import { connect } from "@stacklok-oss/mecatl-sdk";
 
 // Production guidance: point the browser at a same-origin BFF that injects the
 // daemon credential and enforces Origin and CSRF policy. The SDK does not ship

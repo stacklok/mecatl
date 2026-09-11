@@ -10,7 +10,7 @@ const consumerInstall = join(
   packageRoot,
   "declaration-consumer",
   "node_modules",
-  "@stacklok",
+  "@stacklok-oss",
   "mecatl-sdk",
 );
 

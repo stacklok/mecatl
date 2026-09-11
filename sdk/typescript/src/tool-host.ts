@@ -394,7 +394,7 @@ export class LoopbackToolHost implements ToolHostBinding {
         jsonResponse(response, rpc.id, {
           capabilities: { tools: {} },
           protocolVersion,
-          serverInfo: { name: "@stacklok/mecatl-sdk", version: "0.0.1" },
+          serverInfo: { name: "@stacklok-oss/mecatl-sdk", version: "0.1.0" },
           supportedVersions: [...MCP_PROTOCOL_VERSIONS],
         });
         return;

@@ -263,6 +263,18 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 - **`session.SteerPayload.Parts`** (issue #861, [ADR 0251](../docs/adr/0251-multimodal-steer.md)) — adds the committed media parts to the steer echo. Adding a field to an exported struct breaks external unkeyed literals, so this is Changed/breaking (pre-v1 a minor bump).
 
+- **`agent.Run.EnqueueSteerWithMessageID`**
+  ([ADR 0232](../docs/adr/0232-steer-while-running.md)) adds an enqueue entry
+  point that stores the client-minted correlation id atomically with the pending
+  steer bundle. `EnqueueSteer` remains the id-less compatibility entry point.
+  Added (minor).
+
+- **`session.SteerPayload.MessageID`**
+  ([ADR 0232](../docs/adr/0232-steer-while-running.md)) carries the latest
+  contributing steer id as the committed bundle's positional watermark. Adding
+  a field to an exported struct breaks external unkeyed literals, so this is
+  Changed/breaking (pre-v1 a minor bump).
+
 - **`session.Event.RequestManifest`** — adds the log-only, content-safe final-request
   manifest payload. Adding a field to an exported struct breaks external unkeyed literals,
   so this is Changed/breaking (pre-v1 a minor bump).

@@ -342,7 +342,6 @@ var serviceAccessTable = map[string]ClassificationEntry{
 	"FinishRun":                    {KindDerived, "deregisters an id the wire adapter already finished draining from its own authorized run"},
 	"PublishSessionEvent":          {KindDerived, "publishes to subscribers already registered via the (caller-owned) Subscribe for this id; PublishSessionEvent itself takes no ctx and makes no independent decision"},
 	"RecoverNotice":                {KindDerived, "pops a notice keyed by id that only the relay's own immediately-preceding, already-authorized StartRunContent call could have set"},
-	"LookupSteerMessageID":         {KindDerived, "pops a steer message-id correlation only the relay's own already-authorized Steer call could have parked; consumed by the gRPC relay's EvSteer echo stamp on the same stream"},
 	"SetSessionEnvironment":        {KindDerived, "called only with the id CreateSession* just returned to the same caller (internal/adapter/acp); renamed from SetSessionWorkspace by the execution-environments refactor"},
 	"CloseSession":                 {KindDerived, "internal cleanup for an id the caller (EndSession, already authorized) or the owning connection has already established as its own; takes no ctx"},
 	"EmitScheduleEvent":            {KindDerived, "stamps the fire's ALREADY-established actor (the scheduler's system principal for a tick fire, or FireNow's caller) captured at fire time; makes no independent ownership decision"},

@@ -920,7 +920,6 @@ func (s *Service) registerPrepared(id session.SessionID, run *agent.Run, sess *s
 		return false
 	}
 	s.runs[id] = &runState{run: run, sess: sess, settled: make(chan struct{})}
-	delete(s.steerMsgIDs, id)
 	return true
 }
 

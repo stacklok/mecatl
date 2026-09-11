@@ -148,7 +148,7 @@ projection continues to follow [ADR-0248](../adr/0248-sdk-compatibility-and-erro
 
 ### Scenario 4 — Official clients propagate affinity without a protobuf break
 
-mecatui and `@stacklok/mecatl-sdk` attach the field automatically whenever they already
+mecatui and `@stacklok-oss/mecatl-sdk` attach the field automatically whenever they already
 hold the target session. Raw callers get additive opt-in helpers. Existing
 `OpenConverse(ctx)` remains source-compatible, consistent with the additive API
 contract in [ADR-0248](../adr/0248-sdk-compatibility-and-error-contract.md) and the SDK

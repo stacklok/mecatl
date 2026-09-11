@@ -6,7 +6,7 @@ sidebar_position: 1
 
 # TypeScript SDK
 
-Use `@stacklok/mecatl-sdk` to create sessions, run agents, handle approvals,
+Use `@stacklok-oss/mecatl-sdk` to create sessions, run agents, handle approvals,
 follow durable activity, and call the rest of the Mecatl API from TypeScript.
 The package supports Node.js, Bun, and browser applications.
 
@@ -37,9 +37,9 @@ complete public surface.
 
 | Import | Use it for |
 | --- | --- |
-| `@stacklok/mecatl-sdk` | Browser HTTP and SSE connections, injected transports, and transport-neutral types. |
-| `@stacklok/mecatl-sdk/node` | Node.js and Bun gRPC connections, local daemons, one-shot queries, filesystem media helpers, and callback tools. |
-| `@stacklok/mecatl-sdk/gen` | Generated protobuf-es messages and service descriptors for low-level calls and typed namespace requests. |
+| `@stacklok-oss/mecatl-sdk` | Browser HTTP and SSE connections, injected transports, and transport-neutral types. |
+| `@stacklok-oss/mecatl-sdk/node` | Node.js and Bun gRPC connections, local daemons, one-shot queries, filesystem media helpers, and callback tools. |
+| `@stacklok-oss/mecatl-sdk/gen` | Generated protobuf-es messages and service descriptors for low-level calls and typed namespace requests. |
 
 ## Related information
 

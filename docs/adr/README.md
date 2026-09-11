@@ -72,7 +72,9 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0279 — TypeScript SDK architecture: Connect-ES transport, protobuf-es codegen, in-repo pnpm project](./0279-typescript-sdk-architecture.md) *(supersedes ADR 0253 Decisions 1–2 in part)*
 - [0288 — TypeScript SDK durable attachment: the watch envelope, the serializable cursor, and the reconnect authority](./0288-typescript-sdk-durable-attachment.md)
 - [0292 — TypeScript SDK local daemon and callback tools](./0292-typescript-sdk-local-daemon-and-tools.md)
-- [0304 — TypeScript SDK public surface completeness and v0.1.0 release](./0304-typescript-sdk-public-surface-and-release.md)
+- [0304 — TypeScript SDK public surface completeness and v0.1.0 release](./0304-typescript-sdk-public-surface-and-release.md) *(package identity and GitHub Packages interim superseded by 0328; 0313 superseded in full)*
+- [0313 — Interim GitHub Packages distribution and 0.0.x versioning](./0313-interim-github-packages-typescript-sdk.md) *(superseded by 0328)*
+- [0328 — Publish the TypeScript SDK to npmjs as `@stacklok-oss/mecatl-sdk`](./0328-typescript-sdk-npmjs-stacklok-oss.md) *(proposed)*
 - [0036 — `engine/` is its own Go module (monorepo via `go.work`)](./0036-engine-module.md)
 - [0037 — Engine public-API stability contract](./0037-engine-stability-contract.md)
 - [0038 — Event-sourced SessionStore rehydration (the reference fold)](./0038-event-sourced-rehydration.md)
@@ -245,7 +247,8 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 ### UX & forge
 - [0025 — UX discoverability](./0025-ux-discoverability.md)
 - [0026 — Clipboard image paste](./0026-clipboard-image-paste.md)
-- [0028 — mecatequi (single-shot GitHub Action)](./0028-mecatequi.md)
+- [0028 — mecatequi (single-shot GitHub Action)](./0028-mecatequi.md) *(hardcoded-ref pinning superseded by 0327)*
+- [0327 — Self-repository refs for the mecatequi sibling actions](./0327-self-repository-action-refs.md) *(Accepted; supersedes ADR 0028's hardcoded-ref pinning decision only)*
 - [0319 — Signed release archives and Homebrew tap distribution](./0319-release-archives-and-homebrew-tap.md) *(Accepted; recorded after implementation under an explicit spine waiver)*
 - [0082 — Factory MCP wiring for the one-shot mains](./0082-factory-mcp-wiring.md)
 - [0090 — Per-server opt-in for plain-http token-bearing MCP endpoints](./0090-mcp-insecure-http-optin.md)

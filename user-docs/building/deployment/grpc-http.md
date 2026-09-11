@@ -1,5 +1,5 @@
 ---
-sidebar_position: 6
+sidebar_position: 120
 title: Drive via gRPC / HTTP
 description: Choose a client transport and find Mecatl's API contracts.
 ---
@@ -43,7 +43,7 @@ exactly that negotiation data. A client wanting both makes both calls.
 
 ### Use the TypeScript SDK
 
-`@stacklok/mecatl-sdk` provides ergonomic clients for both transports. Node.js
+`@stacklok-oss/mecatl-sdk` provides ergonomic clients for both transports. Node.js
 and Bun applications can connect through gRPC. Browser applications use HTTP
 and SSE through a same-origin backend-for-frontend.
 

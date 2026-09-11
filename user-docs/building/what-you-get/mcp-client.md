@@ -29,7 +29,7 @@ mecated serve \
 
 The flag value is `<name>=<URL>` where `name` is the identifier that becomes the namespace prefix and `URL` is the streaming-HTTP endpoint. The same flag (and the token convention below) is accepted by all three headless binaries — `mecated`, `mecatequi`, and `mecak8s` — so a CI or scheduler-launched one-shot run can reach the same MCP endpoints as the daemon. The optional `mecatui` TUI has no `--mcp-server` flag; instead its embedded server reads operator-tier `mcp.servers` profiles from `~/.config/mecatl/settings.yaml` directly, with no flag required (a configured block with no loader wired surfaces a WARN).
 
-**Auth token.** If the server requires a bearer token, set the environment variable `MCP_<NAME>_TOKEN` (uppercased name). Mecatl sends it in the `Authorization: Bearer …` header and never logs it. Server names must match `[A-Za-z0-9_]+` and be case-insensitively unique (the name derives the env var), and a token-bearing URL must be `https` — or `http` to a loopback host — so the token is never sent in cleartext off-host:
+**Auth token.** If the server requires a bearer token, set the environment variable `MCP_<NAME>_TOKEN` (uppercased name). Mecatl sends it in the `Authorization: Bearer …` header and never logs it. Server names must match `[A-Za-z0-9_]+` and be case-insensitively unique (the name derives the env var). By default, a token-bearing URL must use `https`, or `http` to a loopback host. `--mcp-server-insecure-http <name>` is an explicit per-server opt-in for non-loopback HTTP, for deployments whose network controls and short-lived token policy make that acceptable:
 
 ```sh
 export MCP_GITHUB_TOKEN=ghp_…

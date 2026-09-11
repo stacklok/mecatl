@@ -27,20 +27,20 @@ flowchart TD
     D -- no --> MECATED[mecated]
 ```
 
-If you landed on **mecated** but want multi-replica support without affinity routing, add a session lease backend and an externalized store such as the gRPC driver — or switch to **mecak8s**, which wires Redis and Kubernetes Leases for you.
+If you landed on **mecated** but want multi-replica support without affinity routing, add a session lease backend and an externalized store such as the gRPC driver — or switch to **mecak8s**, which enables Kubernetes Leases by default and wires Redis when you configure `--redis-url`.
 
 ## Shape summary
 
 | Shape | When to choose | State model | Key dependency |
 |-------|---------------|-------------|----------------|
-| **Embed the engine** | You own the binary and want the loop in-process | You own it — implement the ports | `doublestar` + `robfig/cron/v3` + `github.com/goccy/go-yaml` + `x/net` + `x/sync` at runtime; `goleak` is test-only |
+| **Embed the engine** | You own the binary and want the loop in-process | You own it — implement the ports | `doublestar` + `robfig/cron/v3` + `github.com/goccy/go-yaml` + `x/net` + `x/sync` + `mvdan.cc/sh/v3` at runtime; `goleak` is test-only |
 | **mecated** | Single server, interactive clients (TUI, IDE), or a controlled service deployment | In-memory, JSONL on disk, or gRPC driver | A running process; durable local sessions need a PV or shared storage |
-| **mecak8s** | Kubernetes, no persistent volumes, multi-replica | Redis + Kubernetes `coordination.k8s.io` lease | Redis StatefulSet + k8s RBAC for `leases` |
+| **mecak8s** | Kubernetes, no persistent volumes, multi-replica | Configured Redis + Kubernetes `coordination.k8s.io` lease | Redis StatefulSet + k8s RBAC for `leases` |
 | **mecatequi** | GitHub Actions (or any CI): label/comment → patch → PR | None — stateless per run | LLM provider key; GitHub Actions runner |
 
 ## Embed the engine
 
-Import `github.com/stacklok/mecatl/engine` and wire the ports yourself. The engine module's runtime dependency closure is `doublestar`, `robfig/cron/v3`, `github.com/goccy/go-yaml`, `golang.org/x/net`, and `golang.org/x/sync`; `goleak` is test-only. Nothing from Mecatl's heavy require cone (OpenAI/Anthropic SDKs, gRPC, the TUI, client-go) enters your build graph.
+Import `github.com/stacklok/mecatl/engine` and wire the ports yourself. The engine module's runtime dependency closure is `doublestar`, `robfig/cron/v3`, `github.com/goccy/go-yaml`, `golang.org/x/net`, `golang.org/x/sync`, and `mvdan.cc/sh/v3`; `goleak` is test-only. Nothing from Mecatl's heavy require cone (OpenAI/Anthropic SDKs, gRPC, the TUI, client-go) enters your build graph.
 
 You implement `port.LLMProvider`, `port.SessionStore`, and the rest using the reference adapters under `engine/adapter/` as a starting point, or bring your own. You get the agent loop, the full tool catalog, the permission model, hooks, subagent delegation, and compaction with no binary dependency.
 
@@ -58,7 +58,7 @@ The cost: you run a process and keep it alive. Durable sessions mean a PV or sha
 
 ## mecak8s
 
-`mecak8s` runs two replicas by default with no PVC: session state lives in Redis, and single-writer enforcement uses `coordination.k8s.io` Leases. Set `replicaCount: 1` for a supported single-pod deployment when lower resource usage and simpler session routing matter more than high availability. In that mode, planned drains and pod failures can cause downtime; the chart omits the PDB because there is no second pod to protect. The pod is disposable for durable state: on graceful SIGTERM it drains and releases its leases so a successor can take over; after a crash, a successor waits for the lease TTL. Interrupted sessions are recoverable from the last persisted Redis snapshot on a later run.
+The production `mecak8s` Helm deployment runs two replicas by default with no PVC: configured Redis holds session state, and single-writer enforcement uses `coordination.k8s.io` Leases. Set `replicaCount: 1` for a supported single-pod deployment when lower resource usage and simpler session routing matter more than high availability. In that mode, planned drains and pod failures can cause downtime; the chart omits the PDB because there is no second pod to protect. The pod is disposable for durable state: on graceful SIGTERM it drains and releases its leases so a successor can take over; after a crash, a successor waits for the lease TTL. Interrupted sessions are recoverable from the last persisted Redis snapshot on a later run.
 
 `mecak8s` inverts `mecated`'s interactive defaults: `--headless` is on and
 `--posture` defaults to `auto`. It is optimized for unattended daemon operation,

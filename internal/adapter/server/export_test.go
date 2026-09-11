@@ -93,13 +93,6 @@ func (s *Service) NeedsRehydrationForTest(sess *session.Session) bool {
 	return s.needsRehydration(sess)
 }
 
-// TrackSteerMessageIDForTest appends one client-minted id to the session's
-// watermark FIFO — the test seam for the steer correlation invariant pin
-// (ADR-0233; assert positional, not textual, correlation).
-func (s *Service) TrackSteerMessageIDForTest(id session.SessionID, messageID string) {
-	s.trackSteerMessageID(id, messageID)
-}
-
 // SteerOutcomeToProtoForTest exposes the unexported steerOutcomeToProto mapper
 // so the full-matrix test can assert every agent.SteerOutcome arm.
 func SteerOutcomeToProtoForTest(o agent.SteerOutcome) mecatlv1.SteerOutcome {

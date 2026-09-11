@@ -286,9 +286,12 @@ and [ADR 0215](adr/0215-openai-subscription-manual-token.md).
 
 ### TypeScript SDK
 
-The ESM-only `@stacklok/mecatl-sdk` package lives in `sdk/typescript/`, with its
+The ESM-only `@stacklok-oss/mecatl-sdk` package lives in `sdk/typescript/`, with its
 own pnpm lockfile and Node-focused build/test gates kept separate from the Go
-modules and the npm-based `website/` tree. Its public surface is split by
+modules and the npm-based `website/` tree. A release tag stages an inspected
+artifact on public npmjs through trusted publishing; a maintainer must approve
+the candidate with 2FA before it becomes public
+([ADR 0328](adr/0328-typescript-sdk-npmjs-stacklok-oss.md)). Its public surface is split by
 transport: `.` is the transport-neutral core plus the browser HTTP/SSE client,
 while `./node` contains the Node/Bun real-gRPC transport (TCP and UDS), and
 `./gen` is reserved for protobuf-es types and service descriptors generated under

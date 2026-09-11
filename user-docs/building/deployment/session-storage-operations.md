@@ -1,5 +1,5 @@
 ---
-sidebar_position: 4
+sidebar_position: 110
 title: Operate local session storage
 description: Operate and protect the local JSONL session store through Mecatl's management API.
 ---

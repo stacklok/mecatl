@@ -9,9 +9,9 @@
 **Plan PR:** https://github.com/stacklok/mecatl/pull/1331
 **Approved baseline:** <merged plan commit; absent until approved>
 
-Enable a local mecatui direct (non-broker) MCP profile to use RFC 7591 Dynamic Client Registration (DCR), then the existing authorization-code/PKCE login path, against `https://connector-gateway.stacklok.dev/gw/mcp`. The durable registration and resulting grant must survive a local restart and permit a harmless discovered read tool. This does not change remote mecatui OIDC, the MCP broker, or `CallMcpWithQuery`.
+Enable a local mecatui direct (non-broker) MCP profile to use RFC 7591 Dynamic Client Registration (DCR), then the existing authorization-code/PKCE login path, against `https://connector-gateway.example.com/gw/mcp`. The durable registration and resulting grant must survive a local restart and permit a harmless discovered read tool. This does not change remote mecatui OIDC, the MCP broker, or `CallMcpWithQuery`.
 
-Anonymous discovery established that both `/mcp` and `/gw/mcp` returned a protected-resource challenge naming `https://connector-gateway.stacklok.dev/.well-known/oauth-protected-resource/gw/mcp`; that document bound resource `https://connector-gateway.stacklok.dev/gw/mcp` to the same-origin authorization server. Its authorization-server metadata advertised `/oauth/authorize`, `/oauth/token`, `/oauth/register`, `code`, `authorization_code`, `refresh_token`, token exchange, PKCE `S256`, public (`none`) token authentication, and `openid profile email offline_access`.
+Anonymous discovery established that both `/mcp` and `/gw/mcp` returned a protected-resource challenge naming `https://connector-gateway.example.com/.well-known/oauth-protected-resource/gw/mcp`; that document bound resource `https://connector-gateway.example.com/gw/mcp` to the same-origin authorization server. Its authorization-server metadata advertised `/oauth/authorize`, `/oauth/token`, `/oauth/register`, `code`, `authorization_code`, `refresh_token`, token exchange, PKCE `S256`, public (`none`) token authentication, and `openid profile email offline_access`.
 
 With explicit user authorization, a standalone local Python probe registered one public client for one IPv4-loopback callback URI and completed two browser authorizations and S256 PKCE code exchanges using the same client ID/path on two different ports, each different from the registered port. It requested only `openid` and the authorization-code grant, discarded issued tokens, and retained the registration response only in owner-only ignored local state. This proves deployed gateway loopback-port variation for that profile. Subsequently, the operator drove the Go spike through `mecated mcp login` and local mecatui against the deployed gateway, discovered the real connector tool catalog, invoked the harmless Excalidraw `read_me` tool, restarted mecatui without another registration, and invoked it again using the restored encrypted credential. That proves the selected SDK/DCR/PKCE/login/persistence/MCP invocation happy path, but not refresh, different-path rejection, concurrency, or uncertain-outcome recovery. No credential values or authorization URLs belong in this plan.
 
@@ -40,13 +40,13 @@ With explicit user authorization, a standalone local Python probe registered one
     mode: global
     servers:
       - name: connector
-        url: https://connector-gateway.stacklok.dev/gw/mcp
+        url: https://connector-gateway.example.com/gw/mcp
         auth:
           mode: oauth
           oauth:
             profile: connector
             principal: local-user
-            issuer: https://connector-gateway.stacklok.dev
+            issuer: https://connector-gateway.example.com
             client: {mode: dcr, dcr: {}}
             scopes: [openid, offline_access]
             request_refresh_token: true

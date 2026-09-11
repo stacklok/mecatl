@@ -75,7 +75,7 @@ Structured prompts combine text with image or audio parts. Node.js and Bun can
 read a local path through the `/node` entry point:
 
 ```ts
-import { imagePartFromPath, textPart } from "@stacklok/mecatl-sdk/node";
+import { imagePartFromPath, textPart } from "@stacklok-oss/mecatl-sdk/node";
 
 const image = await imagePartFromPath(
   new URL("./diagram.png", import.meta.url),

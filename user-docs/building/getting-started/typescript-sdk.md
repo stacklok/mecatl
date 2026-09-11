@@ -6,7 +6,7 @@ description: Run your first Mecatl prompt from TypeScript against a private offl
 
 # Use the TypeScript SDK
 
-In this tutorial, you will use `@stacklok/mecatl-sdk` to start a private
+In this tutorial, you will use `@stacklok-oss/mecatl-sdk` to start a private
 `mecated` process, create a session, and run one prompt without model-provider
 credentials.
 
@@ -14,10 +14,8 @@ credentials.
 
 You need:
 
-- macOS or Linux with [Homebrew](https://brew.sh/);
-- Node.js 22 or later;
-- a GitHub personal access token with `read:packages`; and
-- access to the internal `stacklok/mecatl` repository and its package.
+- macOS or Linux with [Homebrew](https://brew.sh/); and
+- Node.js 22 or later.
 
 ## Install `mecated`
 
@@ -42,24 +40,10 @@ npm init -y
 npm pkg set type=module
 ```
 
-Expose your GitHub token to the package manager:
+Install the SDK and TypeScript:
 
 ```sh
-export GITHUB_PACKAGES_TOKEN=<GITHUB_TOKEN>
-```
-
-Create `.npmrc` in the project directory. The file refers to the environment
-variable and does not contain the token value:
-
-```ini title=".npmrc"
-@stacklok:registry=https://npm.pkg.github.com
-//npm.pkg.github.com/:_authToken=${GITHUB_PACKAGES_TOKEN}
-```
-
-Install the SDK preview and TypeScript:
-
-```sh
-npm install @stacklok/mecatl-sdk@0.0.1
+npm install @stacklok-oss/mecatl-sdk
 npm install --save-dev --save-exact typescript@6.0.3
 ```
 
@@ -85,7 +69,7 @@ Create `tsconfig.json`:
 Create `quickstart.ts`:
 
 ```ts title="quickstart.ts"
-import { spawn } from "@stacklok/mecatl-sdk/node";
+import { spawn } from "@stacklok-oss/mecatl-sdk/node";
 
 const client = await spawn({ args: ["--mock"] });
 
@@ -126,15 +110,6 @@ You have created and consumed a complete Mecatl run from TypeScript.
   to stream events, send controls, and include media.
 
 ## Troubleshooting
-
-<details>
-<summary>Package installation returns 401 or 404</summary>
-
-Confirm that `GITHUB_PACKAGES_TOKEN` contains a GitHub token with
-`read:packages` and that your GitHub account can access the internal
-`stacklok/mecatl` repository and package.
-
-</details>
 
 <details>
 <summary>The SDK cannot find mecated</summary>

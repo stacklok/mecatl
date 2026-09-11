@@ -335,7 +335,6 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read # checkout
-      packages: read # install @stacklok/mecatl-sdk from GitHub Packages
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -348,21 +347,17 @@ jobs:
           version: 11.25.0
           run_install: false
 
-      # registry-url + scope make setup-node write a USER-level ~/.npmrc with
-      # `//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}` — pnpm expands
-      # env vars there (unlike in the committed project .npmrc; see that
-      # file's own comment), so the install step below just needs the env var.
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '24'
           cache: pnpm
-          cache-dependency-path: sdk/typescript/examples/slack-bot/pnpm-lock.yaml
-          registry-url: https://npm.pkg.github.com
-          scope: '@stacklok'
+          cache-dependency-path: |
+            sdk/typescript/pnpm-lock.yaml
+            sdk/typescript/examples/slack-bot/pnpm-lock.yaml
 
       # Builds bin/mecated for the offline bridge test — a plain Go build, same
-      # toolchain the `sdk` job above already provisions. The example itself no
-      # longer builds the SDK from source (it installs the published package).
+      # toolchain the `sdk` job above already provisions. The example consumes
+      # the in-tree SDK via file:../..; slack-bot:install builds that first.
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
@@ -373,13 +368,7 @@ jobs:
 
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
 
-      # @stacklok/mecatl-sdk has no public npm registry yet, only GitHub
-      # Packages (TODO: drop this once it does) — the job's own ephemeral
-      # GITHUB_TOKEN, scoped read-only by `permissions.packages: read` above,
-      # covers reading it. No new secret needed.
       - name: Install Slack bot example dependencies (frozen)
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: task slack-bot:install
 
       - name: Lint and format-check Slack bot example
@@ -808,15 +797,17 @@ jobs:
           (cd provider/openai && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --timeout=10m ./...)
           (cd provider/openaichat && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --timeout=10m ./...)
 
-      # Lint the GitHub Actions workflows + assert the reusable workflow's first-party
-      # sibling-action pins match the release tag (the version-skew guard). actionlint is
-      # pinned via `go run` so no extra binary install is needed; it embeds shellcheck for
-      # `run:` blocks when available. `task lint:actions` chains the reusable-pins check.
+      # Lint the GitHub Actions workflows. actionlint is pinned via `go run` so no extra
+      # binary install is needed; it embeds shellcheck for `run:` blocks when available.
+      #
+      # -ignore: actionlint's latest release (v1.7.12, 2026-03) predates the `$/`
+      # self-repository `uses:` syntax GitHub shipped in 2026-07, so it rejects a valid ref
+      # as "invalid format". Upstream request: rhysd/actionlint#711. Scoped to that one
+      # message, so every other `uses:` error still fails the build.
       - name: Lint GitHub Actions
-        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
-
-      - name: Check reusable-workflow pins
-        run: bash .github/actions/check-reusable-pins.sh
+        run: |
+          go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 \
+            -ignore 'specifying action "\$/.*" in invalid format'
 
       # Reject a LIVE empty ${{ }} expression in a PARSED field of any workflow/action manifest
       # (issue #70). GitHub evaluates `${{ ... }}` inside parsed action.yml/workflow scalars, and
@@ -825,6 +816,12 @@ jobs:
       # v0.0.2 reusable workflow. The guard excludes YAML `#` comment lines (never evaluated).
       - name: Check action templates for empty expressions
         run: bash .github/actions/check-action-templates.sh
+
+      # github-action-benchmark owns the generated HTML on gh-pages. Assert the final
+      # publish step enforces the noindex directive and that the transformation remains
+      # idempotent and fails closed on template drift.
+      - name: Test performance dashboard noindex guard
+        run: bash .github/scripts/ensure-perf-dashboard-noindex_test.sh
 
       # Validate .goreleaser.yaml on every PR. A schema error there is otherwise
       # only discoverable AFTER a tag has been pushed, which is irreversible: the

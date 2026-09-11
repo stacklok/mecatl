@@ -1,5 +1,5 @@
 ---
-sidebar_position: 5
+sidebar_position: 40
 title: Single-shot CI with mecatequi
 description: Run one bounded Mecatl prompt in CI and produce a patch, summary, and exit status.
 ---
@@ -108,6 +108,12 @@ This invariant holds across both adoption paths — the reusable workflow (§ Re
 ---
 
 ## Reusable workflow — the recommended adoption path
+
+> **Runner requirement:** the reusable workflow resolves its internal action references with
+> GitHub's `$/` self-repository syntax, which needs an Actions runner on **2.336.0 or newer**.
+> GitHub-hosted runners are already past this. Self-hosted runners update automatically unless
+> that was disabled; a runner older than 2.336.0 fails the job immediately with an invalid
+> `uses:` error rather than running anything.
 
 `.github/workflows/mecatequi-reusable.yml` is an `on: workflow_call` workflow. A consuming repo references it with a ~15-line caller:
 

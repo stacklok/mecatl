@@ -122,24 +122,9 @@ jobs:
           permission-contents: write
           permission-pull-requests: write
 
-      # Bumps VERSION (implicitly — it is never listed in version_files) and the three pins.
-      #
-      # HOW version_files WORKS, and the one sharp edge. `path` is a goccy YAMLPath used to
-      # READ the current value; `prefix` is concatenated as prefix+version to build the search
-      # string, so each entry matches the exact current ref and swaps only the version part.
-      # But releaseo strips the [N] index before WRITING, and the write is a global regex over
-      # `uses: <exact old value>`. That is safe here because the three refs are distinct and
-      # each appears once. It is NOT safe if a step is reordered: the read would return some
-      # other `uses:` value, which contains no embedded version, and releaseo would then
-      # replace that value wholesale across the file. The indices are asserted below, and the
-      # pin sites in mecatequi-reusable.yml carry a matching warning comment.
-      #
-      # No helm_docs_args: mecatl's chart version is overridden at package time
-      # (`helm package --version`), and a non-empty value would additionally sweep every dirty
-      # working-tree file into the release commit.
-      #
-      # The composite action needs `yq` to convert version_files to JSON; it is preinstalled
-      # on GitHub-hosted ubuntu runners and is not installed here.
+      # Bumps VERSION and nothing else. There is no version_files block: since the sibling
+      # actions moved to `$/` self-repository refs, no workflow file carries a version to
+      # bump, so the release PR is a one-line diff and the App needs no workflows:write.
       - name: Create the release PR
         id: release
         uses: stacklok/releaseo@80e8d8131d41cf8763254d02360f2c5ce9b7c0df # v0.0.4
@@ -149,60 +134,22 @@ jobs:
           releaseo_version: v0.0.4
           bump_type: ${{ inputs.bump_type }}
           token: ${{ steps.app-token.outputs.token }}
-          version_files: |
-            - file: .github/workflows/mecatequi-reusable.yml
-              path: jobs.implement.steps[1].uses
-              prefix: 'stacklok/mecatl/.github/actions/mecatequi-extract-prompt@v'
-            - file: .github/workflows/mecatequi-reusable.yml
-              path: jobs.implement.steps[2].uses
-              prefix: 'stacklok/mecatl/.github/actions/mecatequi@v'
-            - file: .github/workflows/mecatequi-reusable.yml
-              path: jobs.publish.steps[4].uses
-              prefix: 'stacklok/mecatl/.github/actions/mecatequi-publish@v'
 
       # releaseo writes to disk before committing through the API, so the working tree still
-      # holds exactly what the PR contains. Assert the SHAPE of that diff: a correct bump is
-      # VERSION plus exactly three changed lines in the reusable workflow. This is what catches
-      # the reordered-step corruption described above, which the pin gate alone cannot see
-      # (every first-party pin would still read the new tag).
+      # holds exactly what the PR contains. A release commit is now VERSION and nothing else —
+      # assert that, so anything else riding along is caught before a human reviews it.
       - name: Verify the release diff
         env:
-          # releaseo's own resolved version (bare semver), not a number recomputed here.
           NEW_VERSION: ${{ steps.release.outputs.version }}
         run: |
           set -euo pipefail
-          WF='.github/workflows/mecatequi-reusable.yml'
-
-          changed="$(git diff --name-only | sort)"
-          if [ -z "${changed}" ]; then
-            echo "::error::releaseo left no working-tree changes to inspect — review the PR by hand"
-            echo "  It edits files on disk before committing through the API, so the tree should be"
-            echo "  dirty here. If a newer releaseo cleans up, rewrite this guard against the PR diff."
+          changed="$(git diff --name-only)"
+          if [ "${changed}" != "VERSION" ]; then
+            echo "::error::expected the release commit to change VERSION and nothing else"
+            printf 'got:\n%s\n' "${changed:-<no working-tree changes>}"
             exit 1
           fi
-          if [ "${changed}" != "$(printf '%s\n%s\n' "${WF}" 'VERSION' | sort)" ]; then
-            echo "::error::unexpected release diff — expected only VERSION and ${WF}"
-            printf 'got:\n%s\n' "${changed}"
-            exit 1
-          fi
-
-          # awk, not `read < <(...)`: an empty numstat would make read return non-zero and
-          # abort under `set -e` with no diagnostic at all.
-          numstat="$(git diff --numstat -- "${WF}")"
-          if [ "$(printf '%s' "${numstat}" | awk '{print $1 "/" $2}')" != "3/3" ]; then
-            echo "::error::${WF} changed ${numstat}, expected exactly 3 added and 3 removed"
-            echo "  a reordered step can make releaseo rewrite the wrong 'uses:' ref"
-            git --no-pager diff -- "${WF}"
-            exit 1
-          fi
-
-          # Two halves, both needed. With the override: the pins match the version releaseo
-          # says it cut. Without it: the pins match what VERSION actually now contains. Only
-          # running the first would let a VERSION/pin split merge clean and wedge stage 2,
-          # after the bump is already on main.
-          EXPECTED_TAG="v${NEW_VERSION}" bash .github/actions/check-reusable-pins.sh
-          bash .github/actions/check-reusable-pins.sh
-          echo "Release diff verified: VERSION -> ${NEW_VERSION}, 3 pins bumped."
+          echo "Release diff verified: VERSION -> ${NEW_VERSION}"
 
       # The 3/3 assertion above is the only thing that catches positional-index corruption, but
       # it runs on THIS dispatch, not as a status check on the PR — a reviewer looking at the PR
