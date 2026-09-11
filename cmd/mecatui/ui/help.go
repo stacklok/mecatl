@@ -126,7 +126,7 @@ func helpBody(th theme.Theme, caps client.Capabilities, hk helpKeys) string {
 		{key: hk.allowAlways, action: "always allow (this session; main-agent asks only)"},
 		{key: hk.deny, action: "deny"},
 		{key: "←/→/tab", action: "cycle the focused button · enter activates it"},
-		{key: hk.expandTools, action: "full-screen args (non-diff asks) · in-modal diff expand (Edit/Write)"},
+		{key: hk.expandTools, action: "full-screen scrollable approval details (non-plan asks)"},
 		{key: hk.rawArgs, action: "raw args in the full view"},
 	})
 

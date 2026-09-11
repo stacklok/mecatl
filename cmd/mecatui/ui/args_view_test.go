@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -91,21 +92,38 @@ func TestCtrlTPlanAskUnchanged(t *testing.T) {
 	}
 }
 
-// TestCtrlTEditAskKeepsModalExpand pins that an Edit (diff-capable) ask keeps
-// the in-modal expand behaviour: ctrl+t toggles expandTools, no args view.
-func TestCtrlTEditAskKeepsModalExpand(t *testing.T) {
+// TestCtrlTEditAskOpensBoundedDetails pins that an Edit ask opens its full diff
+// in the scrollable approval-details view rather than expanding the centered
+// modal vertically.
+func TestCtrlTEditAskOpensBoundedDetails(t *testing.T) {
+	var lines []string
+	for i := 0; i < maxDiffLines+8; i++ {
+		lines = append(lines, "line"+strconv.Itoa(i))
+	}
 	m := approvalModel(t, pendingAsk{
 		AskID: "sess-test-0001:1:edit-1",
 		Tool:  "Edit",
-		Args:  `{"path":"main.go","old_string":"a","new_string":"b"}`,
+		Args:  `{"path":"main.go","old_string":"` + strings.Join(lines, `\n`) + `","new_string":"b"}`,
 	})
 	before := m.expandTools
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
-	if approvalSurfaceOf(t, m).argsViewOpen {
-		t.Error("ctrl+t on an Edit ask must NOT open the args view")
+	_ = m.View()
+	s := approvalSurfaceOf(t, m)
+	if !s.argsViewOpen || !s.argsVPReady {
+		t.Fatal("ctrl+t on an Edit ask must open the approval-details viewport")
 	}
-	if m.expandTools == before {
-		t.Error("ctrl+t on an Edit ask must keep toggling expandTools")
+	if m.expandTools != before {
+		t.Error("ctrl+t on an Edit ask must not toggle expandTools")
+	}
+	if got := stripANSIstr(m.View().Content); !strings.Contains(got, "Approval details: Edit") || !strings.Contains(got, "- line0") {
+		t.Errorf("details view must render the diff, got %q", got)
+	}
+	if got := lipgloss.Height(m.renderBody()); got > m.vp.Height() {
+		t.Errorf("approval details height = %d, want at most viewport height %d", got, m.vp.Height())
+	}
+	m, _ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyEnd})
+	if got := stripANSIstr(m.View().Content); !strings.Contains(got, "- line"+strconv.Itoa(maxDiffLines+7)) {
+		t.Errorf("end must reveal the last diff line, got %q", got)
 	}
 }
 
@@ -364,10 +382,10 @@ func TestArgsViewTinyTerminalKeepsCardOnScreen(t *testing.T) {
 	if got := lipgloss.Height(body) - 4; got > bound { // -4: the askCard frame is outside the body reserve
 		t.Errorf("body height %d exceeds the bounded reserve %d on a 24-row terminal", got, bound)
 	}
-	// And the args mini-viewport itself never renders more rows than its
-	// region-budgeted view: the hint line proves rows were hidden.
-	if !strings.Contains(stripANSIstr(body), "ctrl+t full args") {
-		t.Errorf("a tiny-terminal long-args modal must render the capped hint, got %q", stripANSIstr(body))
+	// The final card cap may replace the mini-viewport hint with its universal
+	// details marker when the pinned actions leave fewer rows than that hint needs.
+	if !strings.Contains(stripANSIstr(body), "ctrl+t details") {
+		t.Errorf("a tiny-terminal long-args modal must render the capped details hint, got %q", stripANSIstr(body))
 	}
 }
 

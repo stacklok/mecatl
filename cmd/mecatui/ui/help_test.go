@@ -140,12 +140,12 @@ func TestHelpAnnotationsTrackCaps(t *testing.T) {
 		}
 	}
 	// The permission-modal group (issue #488) is always present: the verdict
-	// chords, the ctrl+t full-args row, and the raw-args toggle row.
+	// chords, the ctrl+t full-details row, and the raw-args toggle row.
 	for _, sub := range []string{
 		"While the permission modal is open",
 		"allow once",
 		"always allow (this session; main-agent asks only)",
-		"full-screen args (non-diff asks)",
+		"full-screen scrollable approval details (non-plan asks)",
 		"raw args in the full view",
 	} {
 		if !strings.Contains(embedded, sub) {

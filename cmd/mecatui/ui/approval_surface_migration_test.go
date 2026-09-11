@@ -140,16 +140,19 @@ func TestEffectiveModelSetterUpdatesApprovalIdentityOnly(t *testing.T) {
 	}
 }
 
-func TestApprovalExpandIntentCarriesSurfaceValue(t *testing.T) {
+func TestApprovalExpandOpensDetailsWithoutChangingExpandState(t *testing.T) {
 	m := approvalModel(t, pendingAsk{AskID: "diff", Tool: "Edit", Args: `{"path":"a","old_string":"a","new_string":"b"}`, offerAlways: true})
 	s := approvalSurfaceOf(t, m)
 	s.expandTools = true
-	m.expandTools = false // the surface remains the source of this interaction's desired value.
+	m.expandTools = false
 
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
 
-	if s.expandTools || m.expandTools {
-		t.Fatalf("expand values = surface:%v model:%v, want false:false", s.expandTools, m.expandTools)
+	if !s.expandTools || m.expandTools {
+		t.Fatalf("expand values = surface:%v model:%v, want true:false", s.expandTools, m.expandTools)
+	}
+	if !approvalSurfaceOf(t, m).argsViewOpen {
+		t.Fatal("ctrl+t must open the bounded approval-details view")
 	}
 }
 
@@ -249,8 +252,8 @@ func TestSurfaceApprovalMigration_Scenario2_ArgsAndDiffModes(t *testing.T) {
 	diff := approvalModel(t, pendingAsk{AskID: "diff", Tool: "Edit", Args: `{"path":"a","old_string":"a","new_string":"b"}`, offerAlways: true})
 	before := diff.expandTools
 	diff, _ = pressKey(diff, tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
-	if diff.expandTools == before || approvalSurfaceOf(t, diff).argsViewOpen {
-		t.Fatal("diff mode must retain the in-modal expand keyboard behavior")
+	if diff.expandTools != before || !approvalSurfaceOf(t, diff).argsViewOpen {
+		t.Fatal("diff mode must open the bounded details view without changing expand state")
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
 
@@ -30,11 +31,13 @@ func renderApprovalModalWithRenderer(r *renderer, ask pendingAsk, expand bool, w
 }
 
 func approvalSurfaceForRender(r *renderer, ask pendingAsk, expand bool, queued, argsOffset int) approvalSurface {
+	// Approval cards no longer expand in place; keep this fixture parameter so
+	// callers can prove an ambient expanded-tools state cannot change that.
+	_ = expand
 	return approvalSurface{
 		ask:         ask,
 		queue:       make([]pendingAsk, queued),
 		askVPOffset: argsOffset,
-		expandTools: expand,
 		deps:        surfaceDeps{theme: r.th, marks: r.marks},
 		render:      newApprovalRender(r),
 	}
@@ -129,37 +132,53 @@ func TestPermissionModalMalformedEditFallback(t *testing.T) {
 	}
 }
 
-// TestPermissionModalExpandRevealsFullDiff: the cross-confirmed CWE-451 fix.
-// Collapsed, a long Write is line-capped and shows a truthful "ctrl+t expand"
-// marker; with expand on (ctrl+t at the gate) the full content is revealed, so
-// the operator can see every line being authorized before deciding.
-func TestPermissionModalExpandRevealsFullDiff(t *testing.T) {
-	// Build content with more lines than the diff cap so it must collapse.
+// TestPermissionModalDiffStaysCapped verifies that a large diff remains capped
+// in the centered card even when the surrounding tool view is expanded. Ctrl+t
+// opens the separate scrollable details view instead.
+func TestPermissionModalDiffStaysCapped(t *testing.T) {
 	var lines []string
 	for i := 0; i < maxDiffLines+8; i++ {
 		lines = append(lines, "line"+strconv.Itoa(i))
 	}
 	args := `{"path":"big.txt","content":"` + strings.Join(lines, `\n`) + `"}`
-	ask := pendingAsk{Tool: "Write", Args: args}
+	assertApprovalCardIsBounded(t, pendingAsk{Tool: "Write", Args: args}, "+ line"+strconv.Itoa(maxDiffLines+7))
+}
 
-	collapsed := modalPlain(ask, false)
-	if !strings.Contains(collapsed, "ctrl+t expand") {
-		t.Errorf("collapsed modal should show the expand marker, got %q", collapsed)
-	}
-	// The last line is past the cap, so it must be hidden when collapsed.
-	if strings.Contains(collapsed, "+ line"+strconv.Itoa(maxDiffLines+7)) {
-		t.Errorf("collapsed modal should hide content past the cap, got %q", collapsed)
-	}
+func TestPermissionModalCapsReasonAndMalformedArgs(t *testing.T) {
+	assertApprovalCardIsBounded(t, pendingAsk{
+		Tool:   "Write",
+		Args:   `{"path":"big.txt","content":"line"}`,
+		Reason: strings.Repeat("long approval reason ", 80) + "reason tail",
+	}, "reason tail")
+	assertApprovalCardIsBounded(t, pendingAsk{
+		Tool: "Write",
+		Args: strings.Repeat("malformed approval args\n", 80) + "malformed tail",
+	}, "malformed tail")
+}
 
-	expanded := modalPlain(ask, true)
-	if strings.Contains(expanded, "ctrl+t expand") {
-		t.Errorf("expanded modal should not show the collapse marker, got %q", expanded)
+func assertApprovalCardIsBounded(t *testing.T, ask pendingAsk, hidden string) {
+	t.Helper()
+	m := approvalModel(t, ask)
+	m.closeModal()
+	m.phase = phaseRunning
+	m.expandTools = true // Ambient transcript detail state must not expand an approval card.
+	m = applyAll(m, client.PermissionAskMsg{AskID: "sess-test-0001:1:write-1", Tool: ask.Tool, Args: ask.Args, Reason: ask.Reason})
+
+	rendered := stripANSIstr(m.View().Content)
+	if !strings.Contains(rendered, "ctrl+t details") {
+		t.Errorf("capped modal should show the details marker, got %q", rendered)
 	}
-	if !strings.Contains(expanded, "+ line"+strconv.Itoa(maxDiffLines+7)) {
-		t.Errorf("expanded modal should reveal the full diff (every line), got %q", expanded)
+	if strings.Contains(rendered, hidden) {
+		t.Errorf("approval card must hide overflowing detail %q, got %q", hidden, rendered)
 	}
-	if countLines(expanded) <= countLines(collapsed) {
-		t.Errorf("expanded modal should be taller than collapsed (more lines visible)")
+	if got := lipgloss.Height(m.renderBody()); got > m.vp.Height() {
+		t.Errorf("approval card height = %d, want at most viewport height %d", got, m.vp.Height())
+	}
+	m, _ = pressKey(m, tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
+	_ = m.View()
+	m, _ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyEnd})
+	if got := stripANSIstr(m.View().Content); !strings.Contains(got, hidden) {
+		t.Errorf("approval details must preserve hidden detail %q, got %q", hidden, got)
 	}
 }
 
@@ -236,9 +255,6 @@ func assertApprovalViewFits(t *testing.T, m Model, width int) {
 		}
 	}
 }
-
-// countLines counts newline-separated lines for the taller-than assertion.
-func countLines(s string) int { return strings.Count(s, "\n") + 1 }
 
 // TestPermissionModalArgsWrapLongShell pins the issue #488 fix: a long Shell
 // command wraps INSIDE the card — no content line exceeds the wrap budget (the
@@ -431,8 +447,8 @@ func TestAskArgsContentGates(t *testing.T) {
 }
 
 // TestPermissionModalHintHonesty pins the hint text per ask type: a non-diff
-// ask with hidden rows advertises the ctrl+t full-args view; a diff ask keeps
-// the in-modal expand affordance and never advertises the full-args view.
+// ask with hidden rows advertises the ctrl+t full-args view; a diff ask advertises
+// the separate ctrl+t details view and never advertises the full-args view.
 func TestPermissionModalHintHonesty(t *testing.T) {
 	// Non-diff ask with hidden rows → full-args hint.
 	var cmdLines []string
@@ -453,7 +469,7 @@ func TestPermissionModalHintHonesty(t *testing.T) {
 	if strings.Contains(short, "scroll") {
 		t.Errorf("a short ask's hint must NOT advertise scroll (nothing hidden), got %q", short)
 	}
-	// Diff ask → the in-modal expand affordance, never the full-args hint.
+	// Diff ask → the separate details view, never the full-args view.
 	var writeLines []string
 	for i := 0; i < maxDiffLines+4; i++ {
 		writeLines = append(writeLines, "line"+strconv.Itoa(i))
@@ -462,8 +478,8 @@ func TestPermissionModalHintHonesty(t *testing.T) {
 		Tool: "Write",
 		Args: `{"path":"big.txt","content":"` + strings.Join(writeLines, `\n`) + `"}`,
 	}, false)
-	if !strings.Contains(diff, "ctrl+t expand") {
-		t.Errorf("a long diff ask must keep the in-modal expand affordance, got %q", diff)
+	if !strings.Contains(diff, "ctrl+t details") {
+		t.Errorf("a long diff ask must advertise the details view, got %q", diff)
 	}
 	if strings.Contains(diff, "full args") {
 		t.Errorf("a diff ask must not advertise the full-args view, got %q", diff)
