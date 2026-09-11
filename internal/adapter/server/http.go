@@ -41,6 +41,8 @@ import (
 //	POST   /v1/sessions/{id}/approve  -> resolve the paused ask on the run
 //	POST   /v1/sessions/{id}/cancel   -> cancel the in-flight run
 //	POST   /v1/sessions/{id}/cancel-child -> cancel ONE child (subagent) of the run
+//	POST   /v1/sessions/{id}/steer    -> enqueue a mid-run steer; JSON outcome
+//	POST   /v1/sessions/{id}/cancel-steer -> retract a pending steer; JSON outcome
 //	POST   /v1/sessions/{id}/fork     -> ForkSession (peer session from a history snapshot; 201)
 //	GET    /v1/sessions/{id}/events   -> replay the durable event log; the stream ENDS
 //	GET    /v1/sessions/{id}/watch    -> durable replay-then-follow; the stream STAYS OPEN
@@ -83,6 +85,8 @@ func NewHTTPHandler(svc *Service) *HTTPHandler {
 		{"POST /v1/sessions/{id}/plan:approve", h.approvePlan},
 		{"POST /v1/sessions/{id}/cancel", h.cancel},
 		{"POST /v1/sessions/{id}/cancel-child", h.cancelChild},
+		{"POST /v1/sessions/{id}/steer", h.steer},
+		{"POST /v1/sessions/{id}/cancel-steer", h.cancelSteer},
 		{"POST /v1/sessions/{id}/fork", h.forkSession},
 		{"POST /v1/sessions/{id}/clear", h.clearSession},
 		{"POST /v1/sessions/{id}/reflect", h.reflectSession},
@@ -1149,7 +1153,9 @@ func (h *HTTPHandler) relayRunSSE(w http.ResponseWriter, r *http.Request, id ses
 			fail()
 			continue
 		}
-		if err := enc.Encode(toProto(ev)); err != nil { // Encode appends a newline
+		proto := toProto(ev)
+		h.svc.stampSteerEcho(logCtx, id, ev, proto)
+		if err := enc.Encode(proto); err != nil { // Encode appends a newline
 			fail()
 			continue
 		}
@@ -1462,6 +1468,146 @@ func (h *HTTPHandler) cancelChild(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// steerBody is the JSON body of POST /v1/sessions/{id}/steer. It mirrors the
+// gRPC Steer frame, including multimodal content and strict run targeting.
+type steerBody struct {
+	Text          string              `json:"text"`
+	Parts         []promptContentBody `json:"parts,omitempty"`
+	MessageID     string              `json:"message_id,omitempty"`
+	ExpectedRunID string              `json:"expected_run_id,omitempty"`
+}
+
+// cancelSteerBody is optional: an empty body is the unqualified, uncorrelated
+// idempotent operation, while a supplied body is decoded strictly.
+type cancelSteerBody struct {
+	MessageID     string `json:"message_id,omitempty"`
+	ExpectedRunID string `json:"expected_run_id,omitempty"`
+}
+
+type steerResponse struct {
+	Outcome   string `json:"outcome"`
+	MessageID string `json:"message_id,omitempty"`
+	Promoted  bool   `json:"promoted,omitempty"`
+	RunID     string `json:"run_id,omitempty"`
+}
+
+// decodeSteerControlJSON applies one strict, bounded request contract to both
+// steer controls. Unknown fields and trailing JSON are rejected: silently
+// dropping a misspelled expected_run_id would turn a safe strict control into
+// an unqualified operation.
+func decodeSteerControlJSON(w http.ResponseWriter, r *http.Request, dst any, allowEmpty bool) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, maxPromptBodyBytes)
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(dst); err != nil {
+		if allowEmpty && errors.Is(err, io.EOF) {
+			return true
+		}
+		writeSteerControlDecodeError(w, err)
+		return false
+	}
+	var trailing any
+	if err := dec.Decode(&trailing); !errors.Is(err, io.EOF) {
+		writeSteerControlDecodeError(w, err)
+		return false
+	}
+	return true
+}
+
+func decodeOptionalSteerControlJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
+	if r.ContentLength == 0 {
+		return true
+	}
+	return decodeSteerControlJSON(w, r, dst, true)
+}
+
+func writeSteerControlDecodeError(w http.ResponseWriter, err error) {
+	var maxErr *http.MaxBytesError
+	if errors.As(err, &maxErr) {
+		writeError(w, http.StatusRequestEntityTooLarge, "request body too large")
+		return
+	}
+	writeError(w, http.StatusBadRequest, "invalid JSON body")
+}
+
+// steer handles the unary HTTP peer of the gRPC steer frame. A live run
+// returns accepted/appended. An unqualified terminal-race steer retains the
+// existing promotion contract, but the HTTP response stays deterministically
+// unary: the promoted run is drained into durable state in the background and
+// its identity is returned in the JSON acknowledgement.
+func (h *HTTPHandler) steer(w http.ResponseWriter, r *http.Request) {
+	id := session.SessionID(r.PathValue("id"))
+	var body steerBody
+	if !decodeSteerControlJSON(w, r, &body, false) {
+		return
+	}
+	if body.Text == "" && len(body.Parts) == 0 {
+		writeError(w, http.StatusBadRequest, "text or parts is required")
+		return
+	}
+	if err := validateSteerMessageID(body.MessageID); err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	parts, err := toContentParts(body.Parts)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	// Promotion outlives this unary request by design. Detach cancellation while
+	// preserving caller identity; the registered run remains cancellable through
+	// the Service lifecycle and explicit run controls.
+	controlCtx := context.WithoutCancel(r.Context())
+	outcome, promoted, run, err := h.svc.Steer(controlCtx, id, body.Text, parts, body.MessageID, body.ExpectedRunID)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	response := steerResponse{Outcome: string(outcome), MessageID: body.MessageID}
+	if promoted {
+		if run == nil {
+			writeServiceError(w, fmt.Errorf("%w: promoted steer returned no run", ErrInternal))
+			return
+		}
+		response.Promoted = true
+		response.RunID = run.RunID()
+		logCtx := controlCtx
+		recorder := NewRunEventRecorder(logCtx, h.svc, id)
+		go func() {
+			defer recorder.Close()
+			for ev := range run.Events() {
+				// No client stream receives this event, but the shared relay
+				// lifecycle still owns durable logging, awaiting-state persistence,
+				// and optional plan auto-approval.
+				h.svc.relayEvent(logCtx, id, ev, true, recorder)
+			}
+			h.svc.finishRelayRun(logCtx, id, run)
+		}()
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+// cancelSteer retracts only the pending, un-drained steer bundle. With an
+// expected_run_id it fails stale when that exact run is absent or replaced;
+// without one it remains idempotent and reports none_pending.
+func (h *HTTPHandler) cancelSteer(w http.ResponseWriter, r *http.Request) {
+	id := session.SessionID(r.PathValue("id"))
+	var body cancelSteerBody
+	if !decodeOptionalSteerControlJSON(w, r, &body) {
+		return
+	}
+	if err := validateSteerMessageID(body.MessageID); err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	outcome, err := h.svc.CancelSteer(r.Context(), id, body.ExpectedRunID)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, steerResponse{Outcome: string(outcome), MessageID: body.MessageID})
 }
 
 // --- team request bodies -----------------------------------------------------

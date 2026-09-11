@@ -1,8 +1,8 @@
 # ADR 0252 — HTTP steer endpoint: `POST /v1/sessions/{id}/steer`
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-08-31
-- Scope: `internal/adapter/server` (`http.go`), the RFC 9457 error registry
+- Scope: `internal/adapter/server` (`http.go`, `grpc.go`, `service.go`), the RFC 9457 error registry
   ([ADR 0248](./0248-sdk-compatibility-and-error-contract.md)), mecatl's HTTP
   control surface.
 - Supersedes: none — extends [ADR 0232](./0232-steer-while-running.md), which
@@ -61,6 +61,13 @@ HTTP entry point, on the same terms the gRPC one already has.
   validation path. Dropping parts would regress exactly the browser clients
   this endpoint exists for to text-only steer, one release behind the gRPC
   path.
+- **Strict, bounded control bodies.** Both endpoints reject unknown fields,
+  trailing JSON, and bodies larger than 32 MiB. A steer body is required and
+  must contain text or at least one part. A cancel-steer body is optional; an
+  empty body is equivalent to `{}`. `message_id` remains optional on both
+  endpoints, but a supplied value longer than 64 Unicode code points is
+  rejected rather than truncated so acknowledgements and watermark echoes stay
+  identical.
 - **Same outcome vocabulary, over HTTP status + body.** The closed
   `SteerOutcome` enum (`accepted`/`appended`/`retracted`/`none_pending`/
   `too_late`) that already rides the gRPC ack is returned as the HTTP
@@ -75,24 +82,30 @@ HTTP entry point, on the same terms the gRPC one already has.
   X, not to start a new run. Case 2 is the one an SDK author most needs
   stated, since it is the opposite of the unqualified-steer promotion
   default described below.
+- **Cancel uses the same run guard.** `cancel-steer` accepts
+  `expected_run_id`, and the Service checks it atomically with finding and
+  retracting the pending bundle. A qualified request returns
+  `409 stale_run_control` when that exact run is absent or has been replaced.
+  An unqualified request remains idempotent and returns `200` with
+  `{"outcome":"none_pending"}` when there is nothing to retract.
 - **A promoted follow-up run is drained by the handler, never handed back
   bare.** `Service.Steer` can return a *registered* `promotedRun` whose
   caller "must drain + FinishRun" (`service.go`'s own doc comment) — the
-  same contract `StartRunContent` hands every other caller. The HTTP handler
-  follows the `approve` handler's existing REHYDRATE-path precedent
-  (`HTTPHandler.approve`, `internal/adapter/server/http.go`): if the
-  response writer supports flushing, relay the promoted run as SSE
-  (`relayRunSSE`) on this same response; otherwise drain it in the
-  background into the durable event log (`NewRunEventRecorder`) and
-  deregister it, returning an ack. Either way the promoted run's events
-  reach the durable log and the run is not left registered with nothing
-  draining it — steer must never wedge a run the way a bare
-  `{new_run_id}` body would.
-- **No other change to the engine.** `internal/adapter/server` routes
-  directly into the existing `Service.Steer`/`Service.CancelSteer` calls —
-  the same calls the gRPC handler already invokes. The steer inbox, its
-  mutex, its watermark correlation, and the promote-on-terminal-race
-  behaviour in ADR 0232 are untouched.
+  same contract `StartRunContent` hands every other caller. The HTTP endpoint
+  remains unconditionally unary: it returns
+  `{"outcome":"too_late","promoted":true,"run_id":"..."}` and drains the
+  promoted run in a request-detached background relay. That relay records its
+  events and deregisters the run. The response never changes to SSE based on
+  `http.Flusher`, so clients have one deterministic response contract and the
+  promoted run is never left registered without a consumer.
+- **One Service owns admission and cancellation.** HTTP and gRPC both call
+  `Service.Steer` and `Service.CancelSteer`; the live-run lookup,
+  `expected_run_id` check, inbox transition, and watermark update happen under
+  the Service lock. A stale or malformed gRPC control is refused without
+  terminating the `Converse` stream: steer acknowledges `too_late`,
+  cancel-steer acknowledges `none_pending`, and the bounded diagnostic records
+  the refusal. The engine inbox and promote-on-terminal-race behavior from ADR
+  0232 otherwise remain unchanged.
 - **`ServerCapabilities.steer` is unaffected; the feature registry gets a
   new row.** The capability bit already means "this server can be
   steered" and does not encode *which transport* can steer. Discoverability
@@ -121,17 +134,13 @@ HTTP entry point, on the same terms the gRPC one already has.
     at-most-one-pending-bundle contract, so two clients steering the same run
     from different transports still append, exactly as two gRPC clients
     would.
-  - HTTP has no persistent connection to hand back a promoted follow-up run
-    on, unlike gRPC's Converse-stream handoff (ADR 0232's terminate-window
-    promotion). A steer that loses the terminal race over HTTP gets the
-    promoted run relayed as SSE on this same response when the client is
-    streaming-capable, or drained to the durable log in the background with
-    an ack otherwise (mirroring `approve`'s existing REHYDRATE path) — never
-    a bare new `run_id` with nothing consuming it. A client that wants to
-    keep *watching* that run past this response still needs to
-    poll/attach separately; that ergonomic gap (not a correctness gap) is
-    accepted here rather than solved — closing it is the SDK's
-    `session.attach()` job (ADR 0250), not this endpoint's.
+  - HTTP has no persistent client-to-server control stream on which to hand
+    back a promoted follow-up run. A steer that loses the terminal race gets a
+    unary acknowledgement containing the new `run_id`; the server drains and
+    records that run in the background. A client that wants to watch it uses
+    the durable watch API with the returned run ID. This is the SDK's
+    `session.attach()` concern (ADR 0250), not a second response mode on this
+    endpoint.
   - ACP steer remains unsolved; this ADR does not reduce that scope.
 
 ## See also

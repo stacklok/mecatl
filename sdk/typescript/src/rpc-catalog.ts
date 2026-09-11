@@ -189,8 +189,17 @@ export const HTTP_ONLY_CONTROLS = {
     "json",
     "json",
   ),
+  cancelSteer: http(
+    "POST",
+    "/v1/sessions/{id}/cancel-steer",
+    ["id=session_id"],
+    [],
+    "optional-json",
+    "json",
+  ),
   prompt: http("POST", "/v1/sessions/{id}/prompt", ["id=session_id"], [], "json", "sse"),
   retry: http("POST", "/v1/sessions/{id}/retry", ["id=session_id"], [], "none", "sse"),
+  steer: http("POST", "/v1/sessions/{id}/steer", ["id=session_id"], [], "json", "json"),
 } as const;
 
 export type HTTPOnlyControlName = keyof typeof HTTP_ONLY_CONTROLS;

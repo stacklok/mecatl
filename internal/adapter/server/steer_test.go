@@ -54,9 +54,10 @@ var _ tool.Tool = (*blockingTextTool)(nil)
 
 // newSteerService builds a Service whose engine arms the steer inbox
 // (Deps.EnableSteer) and persists in-loop via Deps.Store, over the given mockllm
-// script + tools + policy rules. memstore is shared between the Service and the
-// engine so an in-loop Cancelled/Failed/Fail lands in the same store the
-// run-entry funnel reads.
+// script + tools + policy rules. The engine is interactive because these are
+// wire-facing controls and may need to keep an approval ask parked. memstore is
+// shared between the Service and the engine so an in-loop
+// Cancelled/Failed/Fail lands in the same store the run-entry funnel reads.
 func newSteerService(t *testing.T, llm *mockllm.Provider, rules []governance.Rule, tools ...tool.Tool) *server.Service {
 	t.Helper()
 	cat := tool.NewCatalog()
@@ -72,6 +73,7 @@ func newSteerService(t *testing.T, llm *mockllm.Provider, rules []governance.Rul
 		Catalog:     cat,
 		Policy:      permpolicy.NewPolicy(rules, nil),
 		Model:       "test-model",
+		Interactive: true,
 		Store:       store,
 		EnableSteer: true,
 	})

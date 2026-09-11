@@ -12,6 +12,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -164,8 +165,8 @@ func TestSteer_ConverseFrameRoundTrip(t *testing.T) {
 }
 
 // TestSteer_ConverseCancelRetracts drives the steer_cancel arm over the wire:
-// a pending steer is retracted, the ack reports RETRACTED, and no EvSteer echo
-// ever lands (the run drains nothing for it).
+// a stale qualified cancel is refused without touching the pending steer, then
+// a cancel naming the live run retracts it. The stream stays alive throughout.
 func TestSteer_ConverseCancelRetracts(t *testing.T) {
 	block := &blockingTextTool{started: make(chan struct{}), release: make(chan struct{})}
 	llm := mockllm.New(
@@ -198,14 +199,34 @@ func TestSteer_ConverseCancelRetracts(t *testing.T) {
 	framesSent := make(chan error, 1)
 	go func() {
 		<-block.started
+		live, ok := svc.LookupRun(session.SessionID(cs.GetSessionId()))
+		if !ok {
+			framesSent <- errors.New("live run not registered")
+			return
+		}
 		if err := stream.Send(&mecatlv1.ConverseRequest{
 			Kind: &mecatlv1.ConverseRequest_Steer{Steer: &mecatlv1.Steer{Text: "scratch that"}},
 		}); err != nil {
 			framesSent <- err
 			return
 		}
+		if err := stream.Send(&mecatlv1.ConverseRequest{
+			Kind: &mecatlv1.ConverseRequest_SteerCancel{SteerCancel: &mecatlv1.SteerCancel{
+				ExpectedRunId: live.RunID(),
+				MessageId:     strings.Repeat("é", 65),
+			}},
+		}); err != nil {
+			framesSent <- err
+			return
+		}
+		if err := stream.Send(&mecatlv1.ConverseRequest{
+			Kind: &mecatlv1.ConverseRequest_SteerCancel{SteerCancel: &mecatlv1.SteerCancel{ExpectedRunId: "stale-run"}},
+		}); err != nil {
+			framesSent <- err
+			return
+		}
 		framesSent <- stream.Send(&mecatlv1.ConverseRequest{
-			Kind: &mecatlv1.ConverseRequest_SteerCancel{SteerCancel: &mecatlv1.SteerCancel{}},
+			Kind: &mecatlv1.ConverseRequest_SteerCancel{SteerCancel: &mecatlv1.SteerCancel{ExpectedRunId: live.RunID()}},
 		})
 	}()
 
@@ -223,8 +244,8 @@ func TestSteer_ConverseCancelRetracts(t *testing.T) {
 		events = append(events, ev)
 		if ev.GetType() == "steer.outcome" {
 			outcomes = append(outcomes, ev.GetSteerOutcome().GetOutcome())
-			if len(outcomes) == 2 {
-				close(block.release) // both acks in: let the run finish
+			if len(outcomes) == 4 {
+				close(block.release) // every control ack is in: let the run finish
 			}
 		}
 		if ev.GetType() == "result" {
@@ -236,13 +257,16 @@ func TestSteer_ConverseCancelRetracts(t *testing.T) {
 		t.Fatalf("Send frames: %v", err)
 	}
 
-	// The accepted ack, then the retracted ack, in order.
-	if len(outcomes) != 2 {
-		t.Fatalf("steer outcomes = %v, want [ACCEPTED RETRACTED]", outcomes)
+	// The overlong-id and stale cancels report NONE_PENDING but leave the pending
+	// steer intact, proven by the following matching cancel returning RETRACTED.
+	if len(outcomes) != 4 {
+		t.Fatalf("steer outcomes = %v, want [ACCEPTED NONE_PENDING NONE_PENDING RETRACTED]", outcomes)
 	}
 	if outcomes[0] != mecatlv1.SteerOutcome_STEER_OUTCOME_ACCEPTED ||
-		outcomes[1] != mecatlv1.SteerOutcome_STEER_OUTCOME_RETRACTED {
-		t.Fatalf("steer outcomes = %v, want [ACCEPTED RETRACTED]", outcomes)
+		outcomes[1] != mecatlv1.SteerOutcome_STEER_OUTCOME_NONE_PENDING ||
+		outcomes[2] != mecatlv1.SteerOutcome_STEER_OUTCOME_NONE_PENDING ||
+		outcomes[3] != mecatlv1.SteerOutcome_STEER_OUTCOME_RETRACTED {
+		t.Fatalf("steer outcomes = %v, want [ACCEPTED NONE_PENDING NONE_PENDING RETRACTED]", outcomes)
 	}
 	if hasType(events, "steer") {
 		t.Fatalf("a retracted steer must never drain/echo: %v", typesOf(events))

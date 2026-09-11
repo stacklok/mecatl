@@ -321,8 +321,8 @@ askable ask, a serialized provenance marker, and a verdict tail.
 A **steer** is an operator-supplied message injected into an *in-flight* run
 (issue #512, [ADR 0232](../adr/0232-steer-while-running.md)): it takes effect at
 a turn boundary after the current streamed response and its tool batch settle —
-never mid-stream, never aborting an in-flight model call — and rides the gRPC
-`Converse` stream as `steer` / `steer_cancel` frames. The pieces:
+never mid-stream, never aborting an in-flight model call — and enters through
+gRPC `Converse` controls or unary HTTP controls. The pieces:
 
 - **The run-scoped mutex inbox** (`engine/agent/steer.go` (`steerInbox`)). Each
   `Run` carries a single-slot pending-steer box guarded by one mutex
@@ -383,6 +383,13 @@ never mid-stream, never aborting an in-flight model call — and rides the gRPC
   The promoted run is `FinishRun`-deregistered before the RPC returns, and its
   terminal outcome is reported inline as the `steer.outcome` ack
   (`promoted=true`) — never an orphaned relay, never an ack after close.
+- **The unary HTTP control pair** (`internal/adapter/server/http.go`).
+  `POST /v1/sessions/{id}/steer` and `POST
+  /v1/sessions/{id}/cancel-steer` call the same Service owners as gRPC. HTTP
+  stays deterministically unary when a terminal-race steer promotes: the JSON
+  acknowledgement carries the new `run_id`, while a request-detached relay
+  records and drains that run in the background before deregistering it. The
+  `http_steer` compatibility feature advertises this transport surface.
 - **The `message_id` watermark correlation.** Steer frames carry a
   client-minted `message_id` (`contracts/proto/mecatl/v1/harness.proto`). The
   engine inbox parks text plus media while the Service keeps a small per-session FIFO
@@ -392,8 +399,10 @@ never mid-stream, never aborting an in-flight model call — and rides the gRPC
   **watermark** the client splits its ordered queue on (sends up to and
   including it drained, sends after it still pending). The ack lane echoes each
   frame's own id on its outcome; a retract drops the whole correlation list
-  (`dropSteerMessageID`); a `CloseSession` clears the map entry with the
-  session. The correlation is positional (never text-match) — pinned by
+  atomically with the inbox transition; a `CloseSession` clears the map entry
+  with the session. IDs longer than 64 Unicode code points are rejected before
+  admission rather than truncated. The correlation is positional (never
+  text-match) — pinned by
   `internal/adapter/server/steer_watermark_pin_test.go`
   (`TestLookupSteerMessageIDExactUnderDuplicateTexts`).
 - **Fidelity.** The inbox is in-memory and best-effort: a pending (un-drained)
@@ -405,7 +414,8 @@ never mid-stream, never aborting an in-flight model call — and rides the gRPC
 Awaiting-ask runs hold the steer parked: the loop is suspended in
 `PauseForApproval`, and the resumed run's first Step 2a drains it (the steer is
 purely additive — the ask still requires an explicit verdict). Steer-to-child
-(subagent / team / parallel) and HTTP/SSE + ACP steer are deferred (ADR 0232).
+(subagent / team / parallel) and ACP steer are deferred (ADR 0232). HTTP steer
+is specified by [ADR 0252](../adr/0252-http-steer-endpoint.md).
 
 ## Follow-on reading
 

@@ -8378,8 +8378,8 @@ model real server-side races. `Run` is single-consumption: callers choose async 
 or `result()`, never both. Server terminal stops — including `cancelled` — resolve as typed
 values; transport/protocol/server failures reject. Every approval, cancel, and steer frame
 carries `expected_run_id`, so a stale HTTP control becomes typed `stale_run_control` and cannot
-affect the session's next run. HTTP steer remains deliberately unsupported until the server
-advertises `http_steer`.
+affect the session's next run. HTTP steer and cancel-steer use their unary routes only when the
+server advertises `http_steer`; older servers still produce the typed unsupported-feature error.
 
 `sdk/typescript/src/events.ts` normalizes gRPC protobuf events and HTTP JSON/SSE records into
 one discriminated union, retaining an explicit unknown-event member for forward compatibility.
@@ -8849,21 +8849,33 @@ costs no prompt-cache rebuild beyond normal history growth). The drain emits
 `EvSteer` carrying the committed text and media parts — the authoritative echo;
 the client renders the echoed truth (recorded == streamed == model-view).
 
-**Wire (gRPC-only v1).** A `steer`/`steer_cancel` oneof arm on the bidi `Converse`
-stream, the `ServerCapabilities.steer` runtime gate, and the `EvSteer` echo. Mecatui
-uses native multimodal steer when the bit is true; otherwise every mid-run input
-stays in the local merge queue. The routing has ONE owner —
-`Service.Steer`/`Service.CancelSteer` (`internal/adapter/server/service.go`); the
-gRPC handler is a dumb frame→Service mapper. **Correlation (watermark).** Every
-frame carries a client-minted `message_id`; the ack lane echoes its own frame's
-id on each outcome. The engine inbox parks text and media together, while the Service keeps a
-per-session FIFO of the ordered frame ids (`trackSteerMessageID`/
-`LookupSteerMessageID`/`dropSteerMessageID`); on drain the relay pops the whole
-list and stamps the `EvSteer` echo with the LATEST (tail) id — the **watermark**
-the client splits its ordered queue on (positional, never text-match — pinned by
-`TestLookupSteerMessageIDExactUnderDuplicateTexts`). Ids are clamped to a 64-rune
-prefix at track before touching the FIFO or any log (CWE-770). **Lost terminal
-race → auto-promote + sequential handoff:** a steer arriving for a session whose
+**Wire.** gRPC uses `steer`/`steer_cancel` oneof arms on the bidi `Converse`
+stream. HTTP uses unary `POST /v1/sessions/{id}/steer` and
+`POST /v1/sessions/{id}/cancel-steer`, advertised by the `http_steer` compatibility
+feature. Both carry multimodal content where applicable, use the
+`ServerCapabilities.steer` runtime gate, and receive the same `EvSteer` echo.
+HTTP control JSON is bounded and strict: unknown fields and trailing values are
+rejected; cancel-steer alone permits an empty body as `{}`. Mecatui uses native
+multimodal steer when the runtime bit is true; otherwise every mid-run input stays
+in the local merge queue. The routing has ONE owner — `Service.Steer` and
+`Service.CancelSteer` (`internal/adapter/server/service.go`) — so HTTP and gRPC do
+not rederive admission, run identity, cancellation, or correlation state.
+`expected_run_id` is enforced atomically with the live-run lookup and inbox
+transition. A refused stale/invalid gRPC control does not terminate `Converse`:
+steer acknowledges `too_late`, cancel-steer acknowledges `none_pending`, and a
+bounded diagnostic records the refusal.
+
+**Correlation (watermark).** Every control may carry a client-minted `message_id`;
+the ack lane echoes its own frame's id on each outcome. The engine inbox parks text
+and media together, while the Service keeps a per-session FIFO of the ordered frame
+ids (`trackSteerMessageID`/`LookupSteerMessageID`). On drain the relay pops the
+whole list and stamps the `EvSteer` echo with the LATEST (tail) id — the
+**watermark** the client splits its ordered queue on (positional, never text-match
+— pinned by `TestLookupSteerMessageIDExactUnderDuplicateTexts`). A successful
+retract deletes the FIFO in the same Service critical section. IDs longer than 64
+Unicode code points are rejected before admission, never truncated (CWE-770).
+
+**Lost terminal race → auto-promote + transport-specific handoff:** a steer arriving for a session whose
 run is already terminal is promoted to a fresh follow-up run through the hardened
 run-entry funnel (`StartRunContent`/`loadAndReopen` + lease + recover-if-terminal)
 — never silently dropped; the promote path awaits the original run's
@@ -8876,10 +8888,12 @@ is not goroutine-safe), the control target (`ResumeApproval`/`Cancel`/
 `CancelChild`) swaps to the promoted run atomically before its relay starts, and
 the promoted run is `FinishRun`-deregistered before the RPC returns (its terminal
 outcome is reported inline as the `steer.outcome` ack, `promoted=true`).
-**HTTP/SSE and ACP steer are deferred** (no client→server mid-run channel; a
-unary `POST .../steer` mirroring `approve`/`cancel` is the cheap follow-up
-shape), as is **steer-to-child** (needs a richer parent→child channel than
-`CancelChild`).
+The HTTP endpoint always returns a unary
+`{"outcome":"too_late","promoted":true,"run_id":"..."}` acknowledgement and
+drains the promoted run through a request-detached background recorder before
+deregistering it. It never switches the response to SSE. **ACP steer is deferred**
+(no client-to-server mid-run channel), as is **steer-to-child** (needs a richer
+parent-to-child channel than `CancelChild`).
 
 **mecatui.** Reads the `steer` capability off the CreateSession echo: present →
 `enter` mid-run sends a `steer` frame (each `enter` mints a fresh `message_id`,

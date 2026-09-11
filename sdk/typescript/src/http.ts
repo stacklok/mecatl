@@ -146,18 +146,6 @@ function sessionControlRoute(name: HTTPOnlyControlName, sessionId: string): Rout
   };
 }
 
-// HTTP steer remains a feature-gated latent client capability until the server
-// routes from ADR 0252 join this branch. It is deliberately outside the current
-// route inventory, whose partition must equal the handlers registered today.
-function latentHTTPSteerRoute(kind: "steer" | "steerCancel", sessionId: string): Route {
-  const suffix = kind === "steer" ? "steer" : "cancel-steer";
-  return {
-    body: true,
-    method: "POST",
-    path: `/v1/sessions/${encodeURIComponent(sessionId)}/${suffix}`,
-  };
-}
-
 class HttpTransport implements Transport {
   readonly #baseUrl: string;
   readonly #credentials: RequestCredentials | undefined;
@@ -319,7 +307,7 @@ class HttpTransport implements Transport {
         if (!this.#features.has("http_steer")) {
           throw new UnsupportedFeatureError("http_steer", { transport: "http" });
         }
-        route = latentHTTPSteerRoute("steer", sessionId);
+        route = sessionControlRoute("steer", sessionId);
         body = {
           expected_run_id: kind.value.expectedRunId,
           message_id: kind.value.messageId,
@@ -336,7 +324,7 @@ class HttpTransport implements Transport {
         if (!this.#features.has("http_steer")) {
           throw new UnsupportedFeatureError("http_steer", { transport: "http" });
         }
-        route = latentHTTPSteerRoute("steerCancel", sessionId);
+        route = sessionControlRoute("cancelSteer", sessionId);
         body = {
           expected_run_id: kind.value.expectedRunId,
           message_id: kind.value.messageId,

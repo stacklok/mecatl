@@ -120,6 +120,84 @@ describe("raw steer", () => {
     await client.close();
   });
 
+  it("HTTP steer uses the advertised unary control routes", async () => {
+    const controls: Array<{ body: Record<string, unknown>; path: string }> = [];
+    const encoder = new TextEncoder();
+    let closePrompt!: () => void;
+    const prompt = new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          encoder.encode('data: {"run_id":"run-http","text":"started","type":"message.delta"}\n\n'),
+        );
+        closePrompt = () => controller.close();
+      },
+    });
+    const fallback = fetchFor({ ...scriptedState, features: ["http_steer", "server_info"] });
+    const fetch: typeof globalThis.fetch = async (input, init) => {
+      const path = new URL(String(input)).pathname;
+      if (path === `/v1/sessions/${scriptedState.sessionId}/prompt`) {
+        return new Response(prompt, { headers: { "content-type": "text/event-stream" } });
+      }
+      if (
+        path === `/v1/sessions/${scriptedState.sessionId}/steer` ||
+        path === `/v1/sessions/${scriptedState.sessionId}/cancel-steer`
+      ) {
+        controls.push({
+          body: JSON.parse(String(init?.body)) as Record<string, unknown>,
+          path,
+        });
+        if (path.endsWith("/cancel-steer")) closePrompt();
+        return Response.json({ outcome: path.endsWith("/steer") ? "accepted" : "retracted" });
+      }
+      return fallback(input, init);
+    };
+    const http = createRawClient({
+      transport: createHttpTransport({ baseUrl: "http://mecatl.test", fetch }),
+    });
+    async function* frames() {
+      yield {
+        kind: {
+          case: "prompt" as const,
+          value: { sessionId: scriptedState.sessionId, text: "start" },
+        },
+      };
+      yield {
+        kind: {
+          case: "steer" as const,
+          value: {
+            expectedRunId: "run-http",
+            messageId: "steer-http",
+            text: "turn left",
+          },
+        },
+      };
+      yield {
+        kind: {
+          case: "steerCancel" as const,
+          value: { expectedRunId: "run-http", messageId: "cancel-http" },
+        },
+      };
+    }
+    for await (const _response of http.stream(HarnessService.method.converse, frames())) {
+      // Drain until cancel-steer closes the scripted prompt stream.
+    }
+    expect(controls).toEqual([
+      {
+        body: {
+          expected_run_id: "run-http",
+          message_id: "steer-http",
+          parts: [],
+          text: "turn left",
+        },
+        path: `/v1/sessions/${scriptedState.sessionId}/steer`,
+      },
+      {
+        body: { expected_run_id: "run-http", message_id: "cancel-http" },
+        path: `/v1/sessions/${scriptedState.sessionId}/cancel-steer`,
+      },
+    ]);
+  });
+
   it("run.steer never promotes; the raw seam may", async () => {
     const finishNewer = deferred();
     let runNumber = 0;

@@ -24,6 +24,12 @@ const APIMajor int32 = 1
 // Identifiers are STABLE ONCE PUBLISHED. Renaming one is a break dressed up as
 // a refactor: a deployed client gates on the exact string.
 const (
+	// FeatureHTTPSteer is the unary HTTP steer and cancel-steer control pair
+	// (issue #873, ADR 0252). The engine-level steer capability remains a
+	// separate runtime fact; this identifier reports that the HTTP transport
+	// implements the routes the TypeScript SDK can drive.
+	FeatureHTTPSteer = "http_steer"
+
 	// FeatureServerInfo is this RPC itself. It is degenerate over the wire — a
 	// client that received a response already knows the server implements it —
 	// but it is load-bearing as the registry's self-test: the feature set is
@@ -94,6 +100,7 @@ type FeatureScope struct {
 // repeated string and a client must treat it as a set, but a stable order keeps
 // diffs and golden fixtures readable.
 var allFeatures = []string{
+	FeatureHTTPSteer,
 	FeatureMCPServersOnCreate,
 	FeatureServerInfo,
 	FeatureWatchSessionEvents,
