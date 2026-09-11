@@ -379,20 +379,30 @@ const nodeModelPath = resolve(
   projectRoot,
   ".api-extractor-temp/models/node/mecatl-sdk-node.api.json",
 );
-const [coreModel, nodeModel] = await Promise.all([
+const denoModelPath = resolve(
+  projectRoot,
+  ".api-extractor-temp/models/deno/mecatl-sdk-deno.api.json",
+);
+const [coreModel, nodeModel, denoModel] = await Promise.all([
   readFile(coreModelPath, "utf8").then(JSON.parse),
   readFile(nodeModelPath, "utf8").then(JSON.parse),
+  readFile(denoModelPath, "utf8").then(JSON.parse),
 ]);
 const coreItems = loadEntryPoint(coreModel, coreModelPath);
 const nodeItems = loadEntryPoint(nodeModel, nodeModelPath);
+const denoItems = loadEntryPoint(denoModel, denoModelPath);
 const coreByReference = new Map(coreItems.map((item) => [item.canonicalReference, item]));
-const nodeSpecificItems = nodeItems.filter((item) => {
-  const core = coreByReference.get(item.canonicalReference);
-  return core === undefined || excerpt(core) !== excerpt(item);
-});
+const entryPointSpecificItems = (items) =>
+  items.filter((item) => {
+    const core = coreByReference.get(item.canonicalReference);
+    return core === undefined || excerpt(core) !== excerpt(item);
+  });
+const nodeSpecificItems = entryPointSpecificItems(nodeItems);
+const denoSpecificItems = entryPointSpecificItems(denoItems);
 
 validateDocumentation(coreItems, "@stacklok-oss/mecatl-sdk");
 validateDocumentation(nodeSpecificItems, "@stacklok-oss/mecatl-sdk/node");
+validateDocumentation(denoSpecificItems, "@stacklok-oss/mecatl-sdk/deno");
 await mkdir(output, { recursive: true });
 await Promise.all([
   writeFile(
@@ -417,7 +427,19 @@ await Promise.all([
       title: "TypeScript SDK Node.js and Bun API",
     }),
   ),
+  writeFile(
+    resolve(output, "deno.md"),
+    renderReference({
+      description: "Look up the Deno TypeScript SDK local-process functions, methods, and types.",
+      entryPoint: "@stacklok-oss/mecatl-sdk/deno",
+      items: denoSpecificItems,
+      position: 4,
+      sharedReference: "./core.md",
+      title: "TypeScript SDK Deno API",
+    }),
+  ),
 ]);
 
 process.stdout.write(`generated ${resolve(output, "core.md")}\n`);
 process.stdout.write(`generated ${resolve(output, "node.md")}\n`);
+process.stdout.write(`generated ${resolve(output, "deno.md")}\n`);

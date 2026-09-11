@@ -180,6 +180,7 @@ loopback-only server. Flags not covered here are advanced operator tuning; run
 |`--grpc-unix-socket`|`""` (off)|Serve gRPC on a UNIX-domain socket instead of a TCP port. Mutually exclusive with a configured `--grpc-addr`. See [Hosting a spawned daemon](#hosting-a-spawned-daemon)|
 |`--ready-file`|`""` (off)|Absolute path to write a JSON readiness document to, atomically, once every listener is up|
 |`--lifetime-pipe-fd`|`0` (off)|File descriptor of an inherited pipe read end or connected UNIX-domain stream socketpair endpoint; EOF on it stops the daemon gracefully (the parent-crash path)|
+|`--lifetime-stdin`|`false`|Use piped stdin for parent liveness; EOF stops the daemon gracefully. Mutually exclusive with `--lifetime-pipe-fd`|
 |`--auth-token`|`""` (off)|Bearer token required on every request; also `MECATL_AUTH_TOKEN`|
 |`--tls-cert`|`""`|PEM server certificate; enables TLS on both listeners when paired with `--tls-key`|
 |`--tls-key`|`""`|PEM server private key|
@@ -626,6 +627,14 @@ owner-only file contains no credentials and remains after shutdown, so check
 Keep the other endpoint open. EOF triggers graceful shutdown and persistence.
 The socket, readiness-file, and lifetime-pipe flags are off by default.
 
+`--lifetime-stdin` uses piped stdin for the same parent-liveness signal. A
+parent using `Deno.Command` sets `stdin: "piped"` and holds the writer open.
+Closing the writer or exiting closes the channel and triggers graceful shutdown.
+The daemon discards any bytes received. Regular files and terminals are
+rejected, and the flag cannot be combined with `--lifetime-pipe-fd`. The
+[Deno SDK integration](/building/typescript-sdk/local-daemon.md#start-a-daemon-from-deno)
+manages this channel for you.
+
 ### Add MCP servers per session
 
 Clients can add per-session MCP servers only when `mecated` uses a UNIX socket
@@ -653,7 +662,8 @@ On `SIGINT` or `SIGTERM`, `mecated` drains listeners for 10 seconds, flushes
 telemetry for up to five seconds, and persists configured session state.
 Interrupted runs recover from their snapshots after restart.
 
-EOF on an inherited `--lifetime-pipe-fd` follows the same path. See
+EOF on an inherited `--lifetime-pipe-fd` or piped `--lifetime-stdin` follows the
+same path. See
 [Hosting a spawned daemon](#hosting-a-spawned-daemon).
 
 ## Browsers and CORS

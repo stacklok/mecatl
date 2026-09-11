@@ -1,20 +1,22 @@
 ---
 title: Run a private local daemon
 description:
-  Start and dispose a private Mecatl daemon from a Node.js or Bun application.
+  Start and dispose a private Mecatl daemon from a Node.js, Bun, or Deno
+  application.
 sidebar_position: 3
 ---
 
 # Run a private local daemon
 
-Use `spawn()` when a Node.js or Bun application should own a private local
-`mecated` process. Use `query()` when a script needs one prompt and automatic
-cleanup.
+Use `spawn()` when a Node.js, Bun, or Deno application should own a private
+local `mecated` process. Use `query()` when a script needs one prompt and
+automatic cleanup.
 
 ## Prerequisites
 
-You need Node.js 22 or Bun 1.4 on macOS or Linux. Install `mecated` from
-Stacklok's Homebrew tap, then verify that it is available on `PATH`:
+You need Node.js 22, Bun 1.4, or Deno 2.9.3 or later in the Deno 2.x line on
+macOS or Linux. Install `mecated` from Stacklok's Homebrew tap, then verify that
+it is available on `PATH`:
 
 ```sh
 brew install stacklok/tap/mecatl
@@ -22,10 +24,11 @@ mecated --version
 ```
 
 For release archives and source builds, see [Install Mecatl](/install.md). The
-SDK locates the binary from `binaryPath`, then `MECATED_BIN`, then `PATH`. It
-does not download a binary.
+SDK uses the `binaryPath` option when set. Node.js and Bun then check
+`MECATED_BIN` and `PATH`; Deno checks `PATH`. The SDK does not download a
+binary.
 
-## Start a daemon with `spawn()`
+## Start a daemon from Node.js or Bun
 
 This example uses the offline provider so you can verify process ownership
 without model-provider credentials:
@@ -47,6 +50,46 @@ environment value or `args` to add `mecated serve` flags.
 `spawn()` owns the daemon's private Unix socket, readiness file, lifetime pipe,
 and shutdown arguments. Application-supplied `args` cannot replace those values.
 
+## Start a daemon from Deno
+
+This example requires a build of the unreleased Deno integration. SDK v0.1.0
+does not include it.
+
+Import `spawn()` from `@stacklok-oss/mecatl-sdk/deno`. Deno starts the daemon
+with `Deno.Command` and connects through an ephemeral loopback HTTP and SSE
+listener.
+
+```ts title="deno-local.ts"
+import { spawn } from '@stacklok-oss/mecatl-sdk/deno';
+
+await Deno.mkdir('.mecatl-runtime', { recursive: true });
+await using client = await spawn({
+  args: ['--mock'],
+  tempDirectory: '.mecatl-runtime',
+});
+
+const session = await client.sessions.create({});
+const result = await (await session.run('List the main packages')).result();
+
+console.log(result.text);
+```
+
+Run the application with access to the executable, runtime directory, and
+loopback listener:
+
+```sh
+deno run \
+  --allow-run=mecated \
+  --allow-read=.mecatl-runtime \
+  --allow-write=.mecatl-runtime \
+  --allow-net=127.0.0.1 \
+  deno-local.ts
+```
+
+The Deno client owns the readiness file and runtime directory. It keeps the
+daemon's standard input open as a parent-liveness channel. Closing the client
+closes that channel and waits for the daemon to exit.
+
 ## Run one prompt with `query()`
 
 `query()` composes daemon startup, session creation, one run, session deletion,
@@ -57,6 +100,22 @@ import { query } from '@stacklok-oss/mecatl-sdk/node';
 
 const oneShot = await query('Summarize the current working tree', {
   spawn: { args: ['--mock'] },
+});
+
+for await (const event of oneShot) {
+  if (event.kind === 'result') console.log(event.payload.text);
+}
+```
+
+For Deno, use the runtime directory covered by the `spawn()` example's
+permission flags:
+
+```ts
+import { query } from '@stacklok-oss/mecatl-sdk/deno';
+
+await Deno.mkdir('.mecatl-runtime', { recursive: true });
+const oneShot = await query('Summarize the current working tree', {
+  spawn: { args: ['--mock'], tempDirectory: '.mecatl-runtime' },
 });
 
 for await (const event of oneShot) {
@@ -81,8 +140,8 @@ continues the remaining cleanup steps.
 
 ## Next steps
 
-- [Register callback tools](./callback-tools.md) before creating a session on a
-  private daemon.
+- [Register callback tools](./callback-tools.md) before creating a session from
+  Node.js or Bun on a private daemon.
 - [Handle permissions and plans](./permissions-and-plans.md) in a long-running
   application or one-shot query.
 
@@ -90,6 +149,8 @@ continues the remaining cleanup steps.
 
 - [TypeScript SDK Node.js and Bun API](/reference/typescript-sdk-api/node.md)
   for all `spawn()` and `query()` options.
+- [TypeScript SDK Deno API](/reference/typescript-sdk-api/deno.md) for Deno
+  `spawn()` and `query()` options.
 
 ## Troubleshooting
 
@@ -106,5 +167,14 @@ executable's absolute path as `binaryPath`.
 
 Inspect the structured diagnostic delivered to your `diagnostics` callback. The
 SDK includes a bounded, credential-redacted tail of the daemon's stderr.
+
+</details>
+
+<details>
+<summary>Deno reports a permission error</summary>
+
+Grant `--allow-run` for `mecated`, read and write access to the configured
+runtime directory, and `--allow-net=127.0.0.1` for the local HTTP and SSE
+connection.
 
 </details>

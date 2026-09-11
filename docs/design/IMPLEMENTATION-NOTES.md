@@ -8473,17 +8473,19 @@ failures name only the class, never the value. The elapsed-time expiry leg is bo
 the only clock-dependent part because the official `oauth2.Token.Valid` has no injected
 clock.
 
-## TypeScript SDK — `sdk/typescript/` (M1–M4 public v0.1 surface, ADRs 0279, 0288, 0292 and 0304)
+## TypeScript SDK — `sdk/typescript/` (M1–M4 public surface and post-v0.1.0 Deno integration, ADRs 0279, 0288, 0292, 0304, 0328, 0334, and 0335)
 
-The ESM-only `@stacklok-oss/mecatl-sdk` has three exports. `.` owns the transport-neutral
+The ESM-only `@stacklok-oss/mecatl-sdk` has four exports. `.` owns the transport-neutral
 `Client`/`Session`/`Run` API, typed events/errors, prompt-media helpers, and the hand-written
 HTTP/JSON/SSE transport. `./node` re-exports that surface and adds connect-node real gRPC over
 HTTP/2: TCP uses an ordinary base URL; UDS keeps an ordinary HTTP authority and supplies a
 socket-opening `createConnection` through the HTTP/2 node options (`sdk/typescript/src/node-transport.ts`),
-never a `unix://` URL. `./gen` is the committed protobuf-es output generated only for
+never a `unix://` URL. `./deno` re-exports the transport-neutral surface and adds Deno-native
+`spawn()` / `query()` over HTTP/SSE without importing the Node graph. `./gen` is the committed protobuf-es output generated only for
 `contracts/proto/mecatl/v1/`; it has a codegen freshness gate rather than an API Extractor
-report. The package requires Node 22 or newer, builds unbundled ESM plus declarations/source maps,
-and owns its pinned pnpm lock independently of the npm-based website. The
+report. The package declares Node 22 or newer and Deno `>=2.9.3 <3` engine ranges, builds
+unbundled ESM plus declarations/source maps, and owns its pinned pnpm lock independently of the
+npm-based website. The
 canonical published name is `@stacklok-oss/mecatl-sdk` on public npmjs
 (`sdk/typescript/v*` tags, `npm-publish` environment, staged trusted publishing,
 maintainer approval with 2FA, npm-native provenance). A manually dispatched
@@ -8491,6 +8493,9 @@ release-App workflow advances `sdk/typescript/VERSION` and `package.json` in an
 exact two-file PR; its verified merge causes the App to push the matching tag
 and thereby trigger npm staging
 ([ADR 0328](../adr/0328-typescript-sdk-npmjs-stacklok-oss.md)).
+The post-build `scripts/add-deno-self-types.mjs` prepends every JavaScript module's stable
+`@ts-self-types` sibling declaration and one unmapped source-map line, because Deno does not infer
+TypeScript's adjacent declaration rule for relative `.js` imports.
 
 `sdk/typescript/src/raw.ts` enforces API-major compatibility before all non-compatibility RPCs;
 the ergonomic client also probes status and maps transport/auth/incompatibility states without
@@ -8516,7 +8521,7 @@ source XOR, MIME allowlists, per-part/count/aggregate bounds, and server capabil
 opening a run. The Node export adds path loaders; neither transport changes the normalized
 prompt model or event model.
 
-The offline real-wire lane is `sdk/typescript/e2e/`, separate from injected-transport unit
+The offline real-wire lanes are `sdk/typescript/e2e/`, separate from injected-transport unit
 tests and from the paid Go live suite below. `task sdk:e2e` first runs the repository Taskfile
 build, then Vitest spawns `bin/mecated` only on `127.0.0.1` or an owner-local UDS, with live
 provider credentials removed. Bare `--mock` remains its original single canned text turn.
@@ -8528,9 +8533,11 @@ examples compiler, pack, API reports, Go+TS codegen freshness, and this e2e; eac
 hard failure. `sdk/typescript/examples/slack-bot/` remains a separate pnpm project and CI job: its
 own `slack-bot:typecheck` task builds the same SDK `dist/` and supplies the second proof needed to
 cover every committed example without importing the Slack application's dependencies into the SDK
-package.
+package. `task sdk:deno` packs the package, applies stable `deno check` to `.`, `./deno`, and
+`./gen`, builds the same-checkout daemon, and runs the `Deno.Command` lifecycle at the declared
+runtime floor and current Deno 2.x CI lanes. The release workflow repeats the floor lane.
 
-M3's local-daemon root is `sdk/typescript/src/spawn.ts`. `spawn()` is reachable only from
+M3's Node/Bun local-daemon root is `sdk/typescript/src/spawn.ts`. Its `spawn()` is reachable only from
 `./node`; the transport-neutral entry point imports neither `node:child_process` nor the
 launcher module. Binary resolution is total and ordered: explicit `binaryPath`, then
 `MECATED_BIN`, then an SDK-owned `PATH` walk for `mecated`, with `stat` plus execute-access
@@ -8543,6 +8550,34 @@ is derived from the ready document's `features`, never from that option.
 `lifetimePipe: false` omits both the lifetime flag and the fourth stdio entry. Caller
 `env` values are merged over the inherited process environment before binary resolution
 and launch, and that environment is never used to build an outward-facing fact or message.
+
+Deno local ownership is isolated in `sdk/typescript/src/deno-spawn.ts` and exported only by
+`./deno`. The source uses structural runtime types so the NodeNext build does not absorb Deno
+ambient declarations; `denoRuntime()` resolves `globalThis.Deno` only when `spawn()` is called.
+The launcher creates `new Deno.Command(binaryPath ?? "mecated", options)` directly with no shell,
+inherits the parent environment, overlays caller `env`, pipes stderr, and opens piped stdin. Its
+fixed argv is `serve --grpc-addr 127.0.0.1:0 --http-addr 127.0.0.1:0 --ready-file <ready>
+--lifetime-stdin`; all five hosting flag families are collision-rejected from caller `args`.
+`mecated` always requires a gRPC listener, but the Deno client uses only the ready document's
+HTTP address. That TCP topology intentionally omits the UDS-only `mcp_servers_on_create` feature,
+and the Deno client type has no callback registry.
+
+`--lifetime-stdin` is an advanced daemon-hosting flag for process APIs that cannot assign an
+arbitrary inherited child descriptor. It is mutually exclusive with `--lifetime-pipe-fd`.
+Composition selects fd 0 only when the boolean is explicit, validates that it is a pipe through
+the same `checkLifetimePipeFD` path, adopts it after listener bind, and feeds EOF into the ordinary
+graceful shutdown select. Deno retains the writable stream without sending bytes. Explicit close
+closes that writer first, waits a bounded grace, then applies `SIGTERM` and `SIGKILL` bounds through
+the captured child handle. Parent death lets the kernel close the same writer and preserves the
+EOF cleanup contract without Node compatibility.
+
+The Deno ready parser requires schema `mecated-ready/1`, positive pid/API major, a string feature
+list, and an actual `127.0.0.1:<port>` HTTP address. It also requires the document pid to match the
+captured `Deno.ChildProcess.pid` before creating the common HTTP transport and making the first
+compatibility call. `tempDirectory`, when present, is resolved through `Deno.realPath`; otherwise
+`Deno.makeTempDir` chooses the base. Failure disposal, stderr tail bounds/redaction, frozen daemon
+metadata, diagnostic records, unexpected-exit terminal state, and idempotent stop/removal follow
+the Node contract through the same `ClientImpl` daemon-lifecycle hooks.
 
 Each spawn creates a `0700` directory with `mkdtemp`, never adopts a caller-predictable path,
 and holds `ready.json` plus `mecated.sock` there. Socket paths are checked against Darwin's
@@ -8608,12 +8643,14 @@ releases client resources and removes the runtime directory, but `isRunning()` p
 the already-observed child. Ordinary `connect()` construction supplies no daemon hooks and therefore
 has no process or runtime-directory authority.
 
-The one-shot layer is `sdk/typescript/src/query.ts`. Its public options keep the three ownership
+The one-shot state machine is `sdk/typescript/src/query.ts`. Its public options keep the three ownership
 domains separate: `session` is passed to `Client.sessions.create`, `spawn` is consulted only when
 there is no supplied client, `onPermissionAsk` configures the ordinary `Run` responder, and
 `onPlanApproval` configures only `PresentPlan`. The module-internal `queryInternal` options bag
-replaces only the spawn function for tests; no launcher or resource seam enters the `./node`
-barrel. Plan mode requires `onPlanApproval` before that seam is invoked. The live plan ask is
+replaces only the spawn function for tests and the two runtime wrappers. `node-query.ts` injects
+the Node spawn function, while `deno-query.ts` injects the Deno function, so the common module has
+no launcher import. No launcher or resource seam enters a public barrel. Plan mode requires
+`onPlanApproval` before that seam is invoked. The live plan ask is
 resolved through its existing Converse approval frame; after the same-ID run yields
 `plan_approved`, `QueryImpl` opens a fresh Converse stream with the constant in
 `sdk/typescript/src/plan.ts` (`PLAN_APPROVED_PROCEED_TEXT`) and flattens both runs. It never calls
@@ -8656,9 +8693,10 @@ The executable documentation surface lives in `sdk/typescript/examples/`. Its to
 resolves the package's self-name through `package.json#exports` after `dist/` is built. The named
 Vitest oracle in `sdk/typescript/test/examples.test.ts` inventories those programs, rejects an SDK
 source-tree import from every TypeScript file below `examples/`, and checks that SDK imports use
-only `.`, `./node`, or `./gen`. The same oracle makes the separate Slack bot proof visible by
+only `.`, `./node`, `./deno`, or `./gen`. The same oracle makes the separate Slack bot proof visible by
 pinning its CI job and `task slack-bot:typecheck` invocation. The second named oracle keeps the
-Node/Bun `connect()`/`spawn()`/`query()`/callback-tool coverage from being reduced to prose.
+Node/Bun `connect()`/`spawn()`/`query()`/callback-tool coverage and Deno remote/local coverage from
+being reduced to prose.
 
 Callback-tool registration lives in `sdk/typescript/src/tool.ts` and is decorated onto the
 Node/Bun client type without widening the transport-neutral `Client`. The one registry owns a

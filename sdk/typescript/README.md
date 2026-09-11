@@ -1,7 +1,11 @@
 # `@stacklok-oss/mecatl-sdk`
 
 The TypeScript SDK for the [mecatl](https://github.com/stacklok/mecatl) agentic coding
-harness. The package is ESM-only and supports Node.js 22 or newer.
+harness. The package is ESM-only and supports Node.js 22 or newer, Bun,
+Deno `>=2.9.3 <3`, and modern browsers.
+
+The Deno integration described here is unreleased and excluded from v0.1.0.
+Its first supported SDK release has not been assigned.
 
 ## Install
 
@@ -13,19 +17,20 @@ pnpm add @stacklok-oss/mecatl-sdk
 
 ## Public entry points
 
-The package has three public entry points:
+The package has four public entry points:
 
-- `@stacklok-oss/mecatl-sdk` — transport-neutral core and the browser HTTP/SSE transport;
-- `@stacklok-oss/mecatl-sdk/node` — Node/Bun gRPC transport and local-process features;
-- `@stacklok-oss/mecatl-sdk/gen` — protobuf-es types and service descriptors.
+- `@stacklok-oss/mecatl-sdk` - transport-neutral core plus browser and Deno remote HTTP/SSE;
+- `@stacklok-oss/mecatl-sdk/node` - Node/Bun gRPC and local-process features;
+- `@stacklok-oss/mecatl-sdk/deno` - Deno HTTP/SSE plus `Deno.Command` local-process features;
+- `@stacklok-oss/mecatl-sdk/gen` - protobuf-es types and service descriptors.
 
 ## Examples
 
 The focused programs in [the repository examples](https://github.com/stacklok/mecatl/tree/main/sdk/typescript/examples)
-cover remote `connect()`, local
-`spawn()` and `query()`, callback tools, browser+BFF deployment guidance, permissions,
-durable attachment, teams, schedules, and the two-run `PlanResolution`. CI builds the
-package first and type-checks those programs through only `.`, `./node`, and `./gen`.
+cover remote `connect()`, Node/Bun and Deno local `spawn()` and `query()`, callback tools,
+browser+BFF deployment guidance, permissions, durable attachment, teams, schedules, and
+the two-run `PlanResolution`. CI builds the package first and type-checks those programs
+through only `.`, `./node`, `./deno`, and `./gen`.
 The larger Slack bot is a separate pnpm project with its own package-export typecheck leg.
 
 ## Durable attachment
@@ -50,7 +55,7 @@ fact, then raises the same error if iteration continues. Both leave the cursor a
 last envelope before the gap. `CursorExpiredError` also ends the attachment and requires
 the caller to choose an explicit restart from the beginning or a transcript reload.
 
-## Local daemon
+## Node and Bun local daemon
 
 Node/Bun callers can import `spawn` from `@stacklok-oss/mecatl-sdk/node`. It resolves an existing
 `mecated` executable from `binaryPath`, `MECATED_BIN`, then `PATH`, starts a private UDS-only
@@ -86,9 +91,47 @@ of a dead-socket transport error. A child exit before readiness is a typed `spaw
 bounded, whole-line-redacted end of stderr. The optional `diagnostics` callback receives one
 structured safe record; without it the SDK never writes to `console`.
 
+## Deno local daemon
+
+Deno callers import `spawn` from `@stacklok-oss/mecatl-sdk/deno`. The SDK launches an
+installed `mecated` with `Deno.Command`, opens an ephemeral loopback HTTP/SSE
+connection, and returns after the ready-file and compatibility barriers succeed:
+
+```ts
+import { spawn } from "@stacklok-oss/mecatl-sdk/deno";
+
+await Deno.mkdir(".mecatl-runtime", { recursive: true });
+await using client = await spawn({
+  binaryPath: "/opt/mecatl/bin/mecated",
+  tempDirectory: ".mecatl-runtime",
+});
+const session = await client.sessions.create({});
+```
+
+Run this program with permission to execute the binary, read and write the
+runtime parent, and connect to loopback:
+
+```sh
+deno run \
+  --allow-run=/opt/mecatl/bin/mecated \
+  --allow-read=.mecatl-runtime \
+  --allow-write=.mecatl-runtime \
+  --allow-net=127.0.0.1 \
+  deno-local.ts
+```
+
+`binaryPath` defaults to `mecated` through Deno's PATH resolution. The daemon
+inherits the parent environment, and `env` values override individual entries.
+The SDK reserves its listener, ready-file, and lifetime arguments. It holds a
+piped stdin open as the parent-liveness channel, so parent exit produces EOF and
+gracefully stops the daemon. `close()` closes that channel, applies bounded
+signal fallbacks, and removes the private runtime directory. Deno local clients
+use HTTP/SSE and do not expose real gRPC, Unix-domain sockets, path media helpers,
+or callback tools.
+
 ## One-shot queries
 
-The Node/Bun entry point also exports `query()`, which composes spawn, session creation, one run,
+The Node/Bun and Deno entry points export `query()`, which composes spawn, session creation, one run,
 and cleanup while yielding the ordinary SDK event union:
 
 ```ts
@@ -141,6 +184,7 @@ task sdk:test
 task sdk:build
 task sdk:api:check
 task sdk:pack
+task sdk:deno
 ```
 
 The package is licensed under Apache-2.0.

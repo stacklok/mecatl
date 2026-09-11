@@ -72,6 +72,7 @@ var flagMetaByFlag = map[string]flagMeta{
 	"grpc-unix-socket": {group: groupServer, common: false, acp: acpExclude},
 	"ready-file":       {group: groupServer, common: false, acp: acpExclude},
 	"lifetime-pipe-fd": {group: groupServer, common: false, acp: acpExclude},
+	"lifetime-stdin":   {group: groupServer, common: false, acp: acpExclude},
 	"metrics-addr":     {group: groupServer, common: false, acp: acpExclude},
 
 	// ── Security (serve-only) ─────────────────────────────────────────────

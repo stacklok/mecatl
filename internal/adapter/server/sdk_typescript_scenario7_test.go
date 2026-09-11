@@ -20,6 +20,7 @@ type sdkScenario7Job struct {
 	Strategy struct {
 		FailFast *bool `yaml:"fail-fast"`
 		Matrix   struct {
+			DenoVersion []string `yaml:"deno-version"`
 			NodeVersion []string `yaml:"node-version"`
 		} `yaml:"matrix"`
 	} `yaml:"strategy"`
@@ -28,6 +29,7 @@ type sdkScenario7Job struct {
 }
 
 type sdkScenario7Step struct {
+	Env  map[string]string `yaml:"env"`
 	Run  string            `yaml:"run"`
 	Uses string            `yaml:"uses"`
 	With map[string]string `yaml:"with"`
@@ -112,15 +114,17 @@ func TestSDKTypescriptRelease_Scenario7_CompatibilityGateSeparation(t *testing.T
 	if err != nil {
 		t.Fatalf("glob API Extractor configs: %v", err)
 	}
-	if len(configs) != 2 {
-		t.Fatalf("API Extractor config count = %d, want only root and node configs: %v", len(configs), configs)
+	if len(configs) != 3 {
+		t.Fatalf("API Extractor config count = %d, want root, node, and deno configs: %v", len(configs), configs)
 	}
 
 	wantReports := map[string]string{
+		"api-extractor.deno.json": "mecatl-sdk-deno.api.md",
 		"api-extractor.json":      "mecatl-sdk.api.md",
 		"api-extractor.node.json": "mecatl-sdk-node.api.md",
 	}
 	wantEntries := map[string]string{
+		"api-extractor.deno.json": "<projectFolder>/dist/deno.d.ts",
 		"api-extractor.json":      "<projectFolder>/dist/index.d.ts",
 		"api-extractor.node.json": "<projectFolder>/dist/node.d.ts",
 	}
@@ -176,6 +180,67 @@ func TestSDKTypescriptRelease_Scenario7_CompatibilityGateSeparation(t *testing.T
 	}
 	if count := sdkScenario7WorkflowCommandCount(workflow, "git diff --exit-code -- contracts/gen sdk/typescript/src/gen"); count != 1 {
 		t.Errorf("generated Go/TypeScript diff gate count = %d, want 1", count)
+	}
+}
+
+// TestTypeScriptSDKDeno_Scenario1_RuntimeMatrix is AC1.3: the package claim,
+// CI floor/current matrix, release floor, and repository task stay one contract.
+func TestTypeScriptSDKDeno_Scenario1_RuntimeMatrix(t *testing.T) {
+	t.Parallel()
+
+	root := sdkScenario7RepoRoot(t)
+	ci := readSDKScenario7Workflow(t, filepath.Join(root, ".github", "workflows", "ci.yml"))
+	job, ok := ci.Jobs["sdk-deno"]
+	if !ok {
+		t.Fatal("CI workflow has no sdk-deno job")
+	}
+	if job.TimeoutMinutes <= 0 {
+		t.Fatal("sdk-deno job must declare a positive timeout-minutes")
+	}
+	if job.Strategy.FailFast == nil || *job.Strategy.FailFast {
+		t.Fatal("sdk-deno job must declare fail-fast: false")
+	}
+	wantVersions := []string{"2.9.3", "2.x"}
+	if !reflect.DeepEqual(job.Strategy.Matrix.DenoVersion, wantVersions) {
+		t.Fatalf("sdk-deno matrix = %v, want floor/current pins %v", job.Strategy.Matrix.DenoVersion, wantVersions)
+	}
+	assertSDKScenario7ActionInput(t, job, "denoland/setup-deno@", "deno-version", "${{ matrix.deno-version }}")
+	if count := sdkScenario7CommandCount(job, "task sdk:deno"); count != 1 {
+		t.Errorf("sdk-deno task count = %d, want 1", count)
+	}
+
+	release := readSDKScenario7Workflow(t, filepath.Join(root, ".github", "workflows", "release-sdk-typescript.yml"))
+	verify, ok := release.Jobs["verify"]
+	if !ok {
+		t.Fatal("SDK release workflow has no verify job")
+	}
+	assertSDKScenario7ActionInput(t, verify, "denoland/setup-deno@", "deno-version", "2.9.3")
+	if count := sdkScenario7CommandCount(verify, "task sdk:deno"); count != 1 {
+		t.Errorf("release Deno task count = %d, want 1", count)
+	}
+	for _, step := range verify.Steps {
+		if strings.TrimSpace(step.Run) == "task sdk:deno" && step.Env["MECATL_SDK_PACKED_TARBALL"] != "${{ github.workspace }}/sdk/typescript/.release/${{ steps.package.outputs.tarball }}" {
+			t.Error("release Deno gate must consume the exact packed release artifact")
+		}
+	}
+
+	var manifest struct {
+		Engines map[string]string `json:"engines"`
+		Exports map[string]any    `json:"exports"`
+	}
+	readSDKScenario7JSON(t, filepath.Join(root, "sdk", "typescript", "package.json"), &manifest)
+	if got := manifest.Engines["deno"]; got != ">=2.9.3 <3" {
+		t.Errorf("engines.deno = %q, want %q", got, ">=2.9.3 <3")
+	}
+	if _, ok := manifest.Exports["./deno"]; !ok {
+		t.Error("package exports have no ./deno entry point")
+	}
+
+	taskfile := string(readSDKScenario7File(t, filepath.Join(root, "sdk", "typescript", "Taskfile.yml")))
+	for _, required := range []string{"node scripts/run-deno-integration.mjs", "MECATL_SDK_PACKED_TARBALL"} {
+		if !strings.Contains(taskfile, required) {
+			t.Errorf("SDK Taskfile does not wire %q into the Deno gate", required)
+		}
 	}
 }
 

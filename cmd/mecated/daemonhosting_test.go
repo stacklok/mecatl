@@ -1287,9 +1287,9 @@ func TestSDKServerEnablers_Scenario8_FlagsAreRegisteredAndDefaultOff(t *testing.
 	if err != nil {
 		t.Fatalf("parseFlags(nil): %v", err)
 	}
-	if base.grpcUnixSocket != "" || base.readyFile != "" || base.lifetimePipeFD != 0 {
-		t.Fatalf("daemon-hosting flags are not off by default: socket=%q ready=%q fd=%d",
-			base.grpcUnixSocket, base.readyFile, base.lifetimePipeFD)
+	if base.grpcUnixSocket != "" || base.readyFile != "" || base.lifetimePipeFD != 0 || base.lifetimeStdin {
+		t.Fatalf("daemon-hosting flags are not off by default: socket=%q ready=%q fd=%d stdin=%t",
+			base.grpcUnixSocket, base.readyFile, base.lifetimePipeFD, base.lifetimeStdin)
 	}
 	if base.tcpGRPCConfigured() {
 		t.Error("tcpGRPCConfigured() is true with no --grpc-addr passed; the default must not read as a request")
@@ -1321,6 +1321,18 @@ func TestSDKServerEnablers_Scenario8_FlagsAreRegisteredAndDefaultOff(t *testing.
 	}
 	if err := validateEffectiveConfig(cfg); err != nil {
 		t.Fatalf("the spawned-daemon flag combination must validate: %v", err)
+	}
+
+	stdin, err := parseFlags([]string{"--lifetime-stdin"})
+	if err != nil {
+		t.Fatalf("parseFlags lifetime stdin: %v", err)
+	}
+	if !stdin.lifetimeStdin {
+		t.Error("lifetimeStdin = false, want true")
+	}
+	stdin.lifetimePipeFD = 7
+	if err := validateEffectiveConfig(stdin); err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Fatalf("lifetime stdin plus fd validation = %v, want mutual-exclusion error", err)
 	}
 
 	explicit, err := parseFlags([]string{"--grpc-addr", "127.0.0.1:9999"})

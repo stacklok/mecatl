@@ -310,7 +310,7 @@ and [ADR 0215](adr/0215-openai-subscription-manual-token.md).
 ### TypeScript SDK
 
 The ESM-only `@stacklok-oss/mecatl-sdk` package lives in `sdk/typescript/`, with its
-own pnpm lockfile and Node-focused build/test gates kept separate from the Go
+own pnpm lockfile and runtime-focused build/test gates kept separate from the Go
 modules and the npm-based `website/` tree. A release tag stages an inspected
 artifact on public npmjs through trusted publishing; a maintainer must approve
 the candidate with 2FA before it becomes public
@@ -319,9 +319,10 @@ with a bot-authored PR that advances `sdk/typescript/VERSION` and `package.json`
 together; merging that exact two-file change makes the release App create the
 path-qualified tag. Its public surface is split by
 transport: `.` is the transport-neutral core plus the browser HTTP/SSE client,
-while `./node` contains the Node/Bun real-gRPC transport (TCP and UDS), and
-`./gen` is reserved for protobuf-es types and service descriptors generated under
-`sdk/typescript/src/gen/` from `contracts/proto/mecatl/v1/`. Both transports feed
+`./node` contains the Node/Bun real-gRPC transport (TCP and UDS), `./deno`
+contains Deno-native local-process ownership over HTTP/SSE, and `./gen` is
+reserved for protobuf-es types and service descriptors generated under
+`sdk/typescript/src/gen/` from `contracts/proto/mecatl/v1/`. All transports feed
 the same `Client`/`Session`/single-consumption `Run` layer: compatibility is checked
 before ordinary calls; events and server errors are normalized into closed typed
 families; controls carry the current run id; permission responders do not hide raw
@@ -329,8 +330,12 @@ ask events; and prompt media is validated before transport selection. UDS dials 
 supplying connect-node's HTTP/2 node connection option for the socket path, never a
 `unix://` base URL. Unit tests inject transports; `sdk/typescript/e2e/` separately
 builds and spawns the same checkout's `mecated` with the offline mock provider to
-prove TCP, UDS, HTTP/SSE, asks, cancellation, and stale controls on real wire. See
-[ADR 0279](adr/0279-typescript-sdk-architecture.md).
+prove TCP, UDS, HTTP/SSE, asks, cancellation, and stale controls on real wire.
+The unbundled JavaScript names each sibling declaration through Deno's stable
+`@ts-self-types` directive. CI checks the packed package at Deno 2.9.3 and current
+Deno 2.x without unstable resolution flags. See
+[ADR 0279](adr/0279-typescript-sdk-architecture.md) and
+[ADR 0334](adr/0334-typescript-sdk-deno.md).
 
 The `./node` entry point can also own a local daemon through `spawn()`. It resolves an
 already-installed `mecated` from `binaryPath`, `MECATED_BIN`, then `PATH` without a
@@ -360,7 +365,20 @@ terminal local `invalid_state`, emits one diagnostic, and prevents a dead socket
 the later-operation error. See
 [ADR 0292](adr/0292-typescript-sdk-local-daemon-and-tools.md).
 
-The same `./node` entry point exposes `query()` as the one-shot layer over that existing
+The `./deno` entry point owns a separate `Deno.Command` launcher so the Deno
+module graph imports no Node built-ins. It starts ephemeral loopback gRPC and
+HTTP listeners, then uses the common HTTP/SSE client. The private ready document
+must name the captured child pid and the SDK-owned HTTP address before the first
+compatibility call can complete. Deno holds the child's piped stdin open and
+passes `--lifetime-stdin`; the daemon validates that pipe and treats EOF as
+parent death. Explicit disposal closes the pipe, applies bounded signal
+fallbacks through the child handle, and removes the temporary directory. Deno's
+runtime permission system controls executable, filesystem, and loopback access.
+The TCP topology does not receive client-provided MCP authority, so real gRPC,
+Unix-domain sockets, path media, and callback tools remain in `./node`. See
+[ADR 0335](adr/0335-typescript-sdk-deno-command.md).
+
+The `./node` and `./deno` entry points expose `query()` as the one-shot layer over that existing
 `Client`/`Session`/`Run` choreography. `await query(prompt, options)` resolves after session and
 run acceptance to a single-consumption `Query` whose iterator yields the ordinary `Event` union
 and whose `sessionId` identifies the session it created. Reaching the terminal result, returning
@@ -387,10 +405,10 @@ a distinct typed continuation-start failure. Run-bound attachments end at their 
 [ADR 0304](adr/0304-typescript-sdk-public-surface-and-release.md) Decision 4.
 
 The committed concise examples under `sdk/typescript/examples/` self-import only the package's
-three exported entry points. A dedicated no-emit project runs after the package build, so no source
+four exported entry points. A dedicated no-emit project runs after the package build, so no source
 path alias can hide an export/example drift. It covers remote and local Node/Bun use, callback
-tools, browser+BFF guidance, permissions, durable attachment, teams, schedules, and plan
-resolution. The browser BFF is explicitly a deployment shape, not SDK server code. The larger
+tools, Deno remote and local use, browser+BFF guidance, permissions, durable attachment, teams,
+schedules, and plan resolution. The browser BFF is explicitly a deployment shape, not SDK server code. The larger
 Slack bot remains a separate pnpm project and has its own package-export typecheck CI leg.
 
 Spawned Node/Bun clients also expose `client.tool(name, schema, handler, options)` for a

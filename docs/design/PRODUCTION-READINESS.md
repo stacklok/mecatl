@@ -120,6 +120,7 @@ record; current behaviour is in the linked [architecture](../architecture.md) do
 
 | Item | Status | Rationale |
 |---|---|---|
+| TypeScript SDK Deno integration | 🟦 Deferred beyond v0.1.0 | Native `Deno.Command` local ownership and HTTP/SSE qualification are implemented in [PR #1423](https://github.com/stacklok/mecatl/pull/1423), but explicitly excluded from v0.1.0. No later release version is assigned. See the [acceptance contract](../acceptance/sdk-typescript-deno.md). |
 | Multi-vendor model routing | ✅ | SHIPPED — server-side provider registry + native Anthropic Messages adapter + embedded models.dev catalog + OpenRouter, with per-session provider/model routing and capability intersection. See `docs/adr/0016-multi-provider.md` |
 | Repo map (tree-sitter PageRank) | ❌ removed | The Aider-style repo-map tool was **retired and removed** — its WASM tree-sitter binding leaked (~23 MB/session) and hung after ~160 files. See `docs/adr/0029-repomap-tree-sitter.md`. May return later from a clean design |
 | Slash commands | ✅ | `prompt.CommandExpander` + `DirCommandExpander` (`.mecatl/commands`/`.claude/commands` templates); `--commands-dir`/`--enable-commands`. (Skills since shipped too: Skill/SkillDraft tools + the `engine/tool` `SkillSource` port + the `/skills` browser.) |

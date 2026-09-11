@@ -1,0 +1,102 @@
+import { execFileSync } from "node:child_process";
+import { copyFile, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
+import { fileURLToPath } from "node:url";
+
+const sdkRoot = fileURLToPath(new URL("../", import.meta.url));
+const repositoryRoot = fileURLToPath(new URL("../../../", import.meta.url));
+const scratchRoot = join(repositoryRoot, ".scratch");
+const binary = join(repositoryRoot, "bin", "mecated");
+const deno = process.env.DENO_BIN || "deno";
+const manifest = JSON.parse(await readFile(join(sdkRoot, "package.json"), "utf8"));
+const archiveName = `${manifest.name.replace(/^@/u, "").replaceAll("/", "-")}-${manifest.version}.tgz`;
+const archive = process.env.MECATL_SDK_PACKED_TARBALL
+  ? resolve(sdkRoot, process.env.MECATL_SDK_PACKED_TARBALL)
+  : join(sdkRoot, ".api-extractor-temp", archiveName);
+
+await mkdir(scratchRoot, { recursive: true });
+const consumer = await mkdtemp(join(scratchRoot, "sdk-deno-consumer-"));
+try {
+  const installedRoot = join(consumer, "node_modules", ...manifest.name.split("/"));
+  await mkdir(installedRoot, { recursive: true });
+  execFileSync("tar", ["-xzf", archive, "--strip-components=1", "-C", installedRoot]);
+  const packedManifest = JSON.parse(await readFile(join(installedRoot, "package.json"), "utf8"));
+  for (const dependency of Object.keys(packedManifest.dependencies ?? {})) {
+    const destination = join(consumer, "node_modules", ...dependency.split("/"));
+    await mkdir(dirname(destination), { recursive: true });
+    await symlink(join(sdkRoot, "node_modules", ...dependency.split("/")), destination, "junction");
+  }
+  await writeFile(
+    join(consumer, "package.json"),
+    JSON.stringify({
+      type: "module",
+      dependencies: { [packedManifest.name]: packedManifest.version },
+    }),
+  );
+  await Promise.all([
+    copyFile(join(sdkRoot, "e2e", "deno.json"), join(consumer, "deno.json")),
+    copyFile(join(sdkRoot, "e2e", "deno.e2e.ts"), join(consumer, "deno.e2e.ts")),
+    copyFile(join(sdkRoot, "e2e", "deno-owner.ts"), join(consumer, "deno-owner.ts")),
+    ...["deno-local.ts", "deno-remote.ts"].map((name) =>
+      copyFile(join(sdkRoot, "examples", name), join(consumer, name)),
+    ),
+  ]);
+
+  // Run outside the SDK tree: bare imports must resolve the extracted tarball.
+  execFileSync(
+    deno,
+    [
+      "check",
+      "--config",
+      "deno.json",
+      "deno.e2e.ts",
+      "deno-owner.ts",
+      "deno-local.ts",
+      "deno-remote.ts",
+    ],
+    { cwd: consumer, stdio: "inherit" },
+  );
+  const runArguments = [
+    "run",
+    "--config",
+    "deno.json",
+    `--allow-read=${repositoryRoot}`,
+    `--allow-write=${scratchRoot}`,
+    `--allow-run=${binary}`,
+    "--allow-net=127.0.0.1",
+  ];
+  execFileSync(deno, [...runArguments, "deno.e2e.ts", binary, scratchRoot], {
+    cwd: consumer,
+    stdio: "inherit",
+  });
+
+  const ownerDirectory = join(consumer, "owner-runtime");
+  await mkdir(ownerDirectory);
+  const { pid } = JSON.parse(
+    execFileSync(deno, [...runArguments, "deno-owner.ts", binary, ownerDirectory], {
+      cwd: consumer,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "inherit"],
+      timeout: 45_000,
+    }),
+  );
+  if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error("Invalid owner fixture daemon pid");
+  const deadline = Date.now() + 15_000;
+  for (;;) {
+    try {
+      process.kill(pid, 0);
+    } catch (error) {
+      if (error.code === "ESRCH") break;
+      throw error;
+    }
+    if (Date.now() >= deadline) {
+      process.kill(pid, "SIGKILL");
+      throw new Error("Deno owner exit left its daemon running after stdin EOF");
+    }
+    await delay(20);
+  }
+  console.log("Deno owner-exit stdin EOF cleanup passed");
+} finally {
+  await rm(consumer, { recursive: true, force: true });
+}

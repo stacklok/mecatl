@@ -8,8 +8,8 @@ sidebar_position: 1
 
 # TypeScript SDK API reference
 
-`@stacklok-oss/mecatl-sdk` provides a transport-neutral client for browsers and
-a Node.js and Bun client with gRPC and local-process capabilities.
+`@stacklok-oss/mecatl-sdk` provides clients for browsers, Node.js, Bun, and
+Deno.
 
 ## Entry points
 
@@ -17,11 +17,12 @@ a Node.js and Bun client with gRPC and local-process capabilities.
 |-|-|
 |[`@stacklok-oss/mecatl-sdk`](./core.md)|HTTP and SSE transport, ergonomic client, sessions, runs, events, durable activity, and shared types.|
 |[`@stacklok-oss/mecatl-sdk/node`](./node.md)|Node.js and Bun gRPC transport, local daemon management, one-shot queries, filesystem media helpers, and callback tools. It also exports the core API.|
+|[`@stacklok-oss/mecatl-sdk/deno`](./deno.md)|Deno HTTP and SSE transport, `Deno.Command` local daemon management, and one-shot queries. It also exports the core API.|
 |`@stacklok-oss/mecatl-sdk/gen`|Generated protobuf-es messages and service descriptors. Use the [gRPC API reference](/reference/grpc-api.md) for the service contract.|
 
-The core and Node.js/Bun method pages are generated from the declarations in the
-published package. Edit their TSDoc under `sdk/typescript/src/`, then run
-`task sdk:docs`.
+The core, Node.js and Bun, and Deno method pages are generated from the
+declarations in the published package. Edit their TSDoc under
+`sdk/typescript/src/`, then run `task sdk:docs`.
 
 ## Runtime support
 
@@ -29,6 +30,7 @@ published package. Edit their TSDoc under `sdk/typescript/src/`, then run
 |-|-|
 |Node.js|Version 22 or later. Remote connections and local daemon management are supported on macOS and Linux. Windows supports remote connections.|
 |Bun|Version 1.4 or later on macOS and Linux.|
+|Deno|Version 2.9.3 or later in the Deno 2.x line. Remote connections and local daemon management are supported on macOS and Linux.|
 |Browsers|The latest two stable Chrome, Firefox, and Safari releases. Browser applications use the HTTP and SSE transport through a same-origin backend-for-frontend.|
 |TypeScript|Declarations compile with TypeScript 5.7 or later. The SDK is developed with TypeScript 6.|
 

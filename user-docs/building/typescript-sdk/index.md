@@ -1,8 +1,8 @@
 ---
 title: TypeScript SDK
 description:
-  Build Node.js, Bun, and browser applications that create and control Mecatl
-  sessions.
+  Build Node.js, Bun, Deno, and browser applications that create and control
+  Mecatl sessions.
 sidebar_position: 1
 ---
 
@@ -10,7 +10,10 @@ sidebar_position: 1
 
 Use `@stacklok-oss/mecatl-sdk` to create sessions, run agents, handle approvals,
 follow durable activity, and call the rest of the Mecatl API from TypeScript.
-The package supports Node.js, Bun, and browser applications.
+The package supports Node.js, Bun, Deno, and browser applications.
+
+The Deno integration described here is unreleased and excluded from SDK v0.1.0.
+Its first supported SDK release has not been assigned.
 
 Start with [Use the TypeScript SDK](/building/getting-started/typescript-sdk.md)
 to run one prompt against a private offline daemon.
@@ -18,9 +21,9 @@ to run one prompt against a private offline daemon.
 ## Choose a workflow
 
 - [Connect an application](./connect.md) to use an operator-owned daemon from
-  Node.js, Bun, or a browser.
-- [Run a private local daemon](./local-daemon.md) when a Node.js or Bun process
-  should own `mecated`, or when a script needs one `query()` call.
+  Node.js, Bun, Deno, or a browser.
+- [Run a private local daemon](./local-daemon.md) when a Node.js, Bun, or Deno
+  process should own `mecated`, or when a script needs one `query()` call.
 - [Work with sessions and runs](./sessions-and-runs.md) to stream events,
   receive a terminal result, send controls, or include media in a prompt.
 - [Handle permissions and plans](./permissions-and-plans.md) to resolve asks in
@@ -39,8 +42,9 @@ complete public surface.
 
 |Import|Use it for|
 |-|-|
-|`@stacklok-oss/mecatl-sdk`|Browser HTTP and SSE connections, injected transports, and transport-neutral types.|
+|`@stacklok-oss/mecatl-sdk`|Deno and browser HTTP and SSE connections, injected transports, and transport-neutral types.|
 |`@stacklok-oss/mecatl-sdk/node`|Node.js and Bun gRPC connections, local daemons, one-shot queries, filesystem media helpers, and callback tools.|
+|`@stacklok-oss/mecatl-sdk/deno`|Deno HTTP and SSE connections, `Deno.Command` local daemons, and one-shot queries.|
 |`@stacklok-oss/mecatl-sdk/gen`|Generated protobuf-es messages and service descriptors for low-level calls and typed namespace requests.|
 
 ## Related information

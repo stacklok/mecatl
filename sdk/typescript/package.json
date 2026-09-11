@@ -19,6 +19,7 @@
   "type": "module",
   "sideEffects": false,
   "engines": {
+    "deno": ">=2.9.3 <3",
     "node": ">=22"
   },
   "packageManager": "pnpm@11.25.0",
@@ -36,6 +37,10 @@
       "types": "./dist/node.d.ts",
       "import": "./dist/node.js"
     },
+    "./deno": {
+      "types": "./dist/deno.d.ts",
+      "import": "./dist/deno.js"
+    },
     "./gen": {
       "types": "./dist/gen/index.d.ts",
       "import": "./dist/gen/index.js"
@@ -49,10 +54,10 @@
     "test:browser": "playwright test --config e2e/browser/playwright.config.ts",
     "test:macos-spawn": "vitest run --config vitest.e2e.config.ts e2e/macos-spawn.e2e.test.ts",
     "test:e2e": "vitest run --config vitest.e2e.config.ts",
-    "build": "node --input-type=module --eval \"import { rmSync } from 'node:fs'; rmSync('dist', { recursive: true, force: true });\" && tsc -p tsconfig.build.json",
+    "build": "node --input-type=module --eval \"import { rmSync } from 'node:fs'; rmSync('dist', { recursive: true, force: true });\" && tsc -p tsconfig.build.json && node scripts/add-deno-self-types.mjs",
     "examples:typecheck": "tsc -p examples/tsconfig.json",
-    "api:check": "api-extractor run --config api-extractor.json && api-extractor run --config api-extractor.node.json",
-    "api:update": "api-extractor run --local --config api-extractor.json && api-extractor run --local --config api-extractor.node.json",
+    "api:check": "api-extractor run --config api-extractor.json && api-extractor run --config api-extractor.node.json && api-extractor run --config api-extractor.deno.json",
+    "api:update": "api-extractor run --local --config api-extractor.json && api-extractor run --local --config api-extractor.node.json && api-extractor run --local --config api-extractor.deno.json",
     "docs:generate": "node scripts/generate-api-docs.mjs",
     "prepack": "pnpm run build"
   },

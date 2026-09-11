@@ -107,7 +107,10 @@ type config struct {
 	// stream socketpair endpoint whose EOF means the spawning parent died; the
 	// daemon then stops through the ordinary shutdown path. 0 disables it
 	// (0/1/2 are the standard streams, never a lifetime descriptor).
-	lifetimePipeFD  int
+	lifetimePipeFD int
+	// lifetimeStdin adopts a piped stdin as the same parent-liveness channel.
+	// Deno.Command can create this pipe but cannot assign an arbitrary child fd.
+	lifetimeStdin   bool
 	workspace       string
 	model           string
 	defaultProvider string
@@ -1663,6 +1666,8 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 		"absolute path to write a JSON readiness document to, ATOMICALLY (temp file + rename) and only AFTER composition and every listener are up, so a spawning parent can wait on the path instead of racing a connect loop. Carries the pid, the transport, the bound gRPC/HTTP addresses, and the non-secret compatibility descriptor — never a credential. Empty writes nothing")
 	fs.IntVar(&cfg.lifetimePipeFD, "lifetime-pipe-fd", 0,
 		"file descriptor of an INHERITED pipe read end or connected UNIX-domain stream socketpair endpoint this daemon watches: EOF means the spawning parent exited or crashed, and the daemon then stops through the ordinary graceful-shutdown path. The parent holds the peer end and never writes to it — it has nothing to remember. 0 (default) disables; 1/2 are standard output/error and are rejected")
+	fs.BoolVar(&cfg.lifetimeStdin, "lifetime-stdin", false,
+		"adopt a PIPED stdin as the inherited parent-liveness channel; EOF stops the daemon through the ordinary graceful-shutdown path. Intended for supervisors such as Deno.Command that cannot assign an arbitrary child file descriptor. Mutually exclusive with --lifetime-pipe-fd")
 	fs.StringVar(&cfg.workspace, "workspace", cwd, "default session workspace root")
 	fs.StringVar(&cfg.model, "model", "", "model identifier sent to the provider (empty: use the provider-appropriate default)")
 	fs.StringVar(&cfg.defaultProvider, "default-provider", "", "server-configured deployment-wide default provider id shared by every client (e.g. openai, openrouter, anthropic); overrides the built-in provider preference for zero-selector sessions while a client-side selector still wins. Validated FAIL-FAST at startup: an unknown or unavailable provider refuses to start")
@@ -2183,13 +2188,17 @@ func serveWithBroker(ctx context.Context, cfg config, svc *server.Service, reg *
 	// The inherited lifetime pipe: EOF on it means the spawning parent is gone.
 	// Adopted here, after the binds, so a startup failure exits without having
 	// claimed a descriptor the parent may still be using.
-	parent, err := openLifetimePipe(cfg.lifetimePipeFD)
+	parent, err := openConfiguredLifetimePipe(cfg.lifetimePipeFD, cfg.lifetimeStdin)
 	if err != nil {
 		return err
 	}
 	defer parent.Close()
 	if parent.Enabled() {
-		slog.Info("watching the inherited lifetime pipe; EOF on it stops this daemon gracefully", "fd", cfg.lifetimePipeFD)
+		fd := cfg.lifetimePipeFD
+		if cfg.lifetimeStdin {
+			fd = 0
+		}
+		slog.Info("watching the inherited lifetime pipe; EOF on it stops this daemon gracefully", "fd", fd)
 	}
 
 	// AC8.3: published only now — composition is complete (app.Build ran before

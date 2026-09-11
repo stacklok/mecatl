@@ -317,7 +317,7 @@ readonly sessionId: string;
 
 <Heading as="h3" id="api-queryoptions-interface"><code>QueryOptions</code></Heading>
 
-Options for one `query()` call.
+Options for one Node.js or Bun `query()` call.
 
 ```ts
 export interface QueryOptions

@@ -19,8 +19,8 @@ type PackageJson = {
   bugs: { url: string };
   dependencies: Record<string, string>;
   dependencyLicenses: Record<string, string>;
-  engines: { node: string };
-  exports: Record<"." | "./gen" | "./node", { import: string; types: string }>;
+  engines: { deno: string; node: string };
+  exports: Record<"." | "./deno" | "./gen" | "./node", { import: string; types: string }>;
   homepage: string;
   license: string;
   name: string;
@@ -74,8 +74,8 @@ function readPackedFiles(archivePath: string): Map<string, Buffer> {
   return files;
 }
 
-function browserEntrypointGraph(): ReadonlySet<string> {
-  const pending = ["package/dist/index.js"];
+function entrypointGraph(entrypoint: string): ReadonlySet<string> {
+  const pending = [entrypoint];
   const visited = new Set<string>();
   while (pending.length > 0) {
     const current = pending.pop();
@@ -140,8 +140,8 @@ afterAll(() => {
   rmSync(fixtureRoot, { force: true, recursive: true });
 });
 
-test("exports map exposes exactly ., ./node, ./gen", () => {
-  expect(Object.keys(packageJson.exports)).toEqual([".", "./node", "./gen"]);
+test("exports map exposes exactly ., ./node, ./deno, ./gen", () => {
+  expect(Object.keys(packageJson.exports)).toEqual([".", "./node", "./deno", "./gen"]);
   expect(packageJson.type).toBe("module");
 
   for (const target of Object.values(packageJson.exports)) {
@@ -152,7 +152,7 @@ test("exports map exposes exactly ., ./node, ./gen", () => {
     expect(packedFiles.has(`package/${target.types.slice(2)}`)).toBe(true);
   }
 
-  for (const subpath of ["", "/node", "/gen"]) {
+  for (const subpath of ["", "/node", "/deno", "/gen"]) {
     execFileSync(
       process.execPath,
       ["--input-type=module", "--eval", `await import("@stacklok-oss/mecatl-sdk${subpath}");`],
@@ -178,7 +178,7 @@ test("exports map exposes exactly ., ./node, ./gen", () => {
 });
 
 test("packed tarball carries dist and license only", () => {
-  expect(packageJson.engines).toEqual({ node: ">=22" });
+  expect(packageJson.engines).toEqual({ deno: ">=2.9.3 <3", node: ">=22" });
   expect(packageJson.packageManager).toBe("pnpm@11.25.0");
 
   const expectedFiles = [
@@ -192,6 +192,18 @@ test("packed tarball carries dist and license only", () => {
     "package/dist/credentials.d.ts.map",
     "package/dist/credentials.js",
     "package/dist/credentials.js.map",
+    "package/dist/deno-query.d.ts",
+    "package/dist/deno-query.d.ts.map",
+    "package/dist/deno-query.js",
+    "package/dist/deno-query.js.map",
+    "package/dist/deno-spawn.d.ts",
+    "package/dist/deno-spawn.d.ts.map",
+    "package/dist/deno-spawn.js",
+    "package/dist/deno-spawn.js.map",
+    "package/dist/deno.d.ts",
+    "package/dist/deno.d.ts.map",
+    "package/dist/deno.js",
+    "package/dist/deno.js.map",
     "package/dist/errors.d.ts",
     "package/dist/errors.d.ts.map",
     "package/dist/errors.js",
@@ -248,6 +260,10 @@ test("packed tarball carries dist and license only", () => {
     "package/dist/node-media.d.ts.map",
     "package/dist/node-media.js",
     "package/dist/node-media.js.map",
+    "package/dist/node-query.d.ts",
+    "package/dist/node-query.d.ts.map",
+    "package/dist/node-query.js",
+    "package/dist/node-query.js.map",
     "package/dist/node-transport.d.ts",
     "package/dist/node-transport.d.ts.map",
     "package/dist/node-transport.js",
@@ -322,7 +338,7 @@ test("packed tarball carries dist and license only", () => {
     access: "public",
     registry: "https://registry.npmjs.org",
   });
-  expect(packedPackageJson.engines).toEqual({ node: ">=22" });
+  expect(packedPackageJson.engines).toEqual({ deno: ">=2.9.3 <3", node: ">=22" });
   expect(packedPackageJson.dependencies).toEqual(packageJson.dependencies);
   expect(packedPackageJson.dependencyLicenses).toEqual({ ajv: "MIT" });
   expect(packedFiles.get("package/LICENSE")?.toString("utf8")).toContain(
@@ -330,7 +346,26 @@ test("packed tarball carries dist and license only", () => {
   );
 });
 
-test("the namespace batches are exported from both supported entrypoints", () => {
+test("every JavaScript module declares its Deno type slot without shifting mappings", () => {
+  const modules = [...packedFiles.keys()].filter((path) => path.endsWith(".js"));
+  expect(modules.length).toBeGreaterThan(0);
+
+  for (const path of modules) {
+    const declaration = `./${path.slice(path.lastIndexOf("/") + 1, -3)}.d.ts`;
+    const source = packedFiles.get(path)?.toString("utf8") ?? "";
+    expect(source.startsWith(`// @ts-self-types=${JSON.stringify(declaration)}\n`), path).toBe(
+      true,
+    );
+
+    const sourceMap = JSON.parse(packedFiles.get(`${path}.map`)?.toString("utf8") ?? "{}") as {
+      mappings?: unknown;
+    };
+    expect(sourceMap.mappings, `${path}.map mappings`).toEqual(expect.any(String));
+    expect(String(sourceMap.mappings).startsWith(";"), `${path}.map first line`).toBe(true);
+  }
+});
+
+test("the namespace batches are exported from every runtime entrypoint", () => {
   const consumer = join(consumerRoot, "core-namespaces.mts");
   writeFileSync(
     consumer,
@@ -374,6 +409,15 @@ import type {
   UserModel as NodeUserModel,
   Worktrees as NodeWorktrees,
 } from "@stacklok-oss/mecatl-sdk/node";
+import type {
+  Agents as DenoAgents,
+  Client as DenoClient,
+  Commands as DenoCommands,
+  McpInventory as DenoMcpInventory,
+  Models as DenoModels,
+  SpawnedClient as DenoSpawnedClient,
+  Worktrees as DenoWorktrees,
+} from "@stacklok-oss/mecatl-sdk/deno";
 import {
   FireNowRequestSchema,
   ListAgentsRequestSchema,
@@ -387,6 +431,7 @@ import {
 
 declare const browser: Client;
 declare const node: NodeClient;
+declare const deno: DenoSpawnedClient;
 const browserNamespaces: readonly [McpInventory, Agents, Commands, Worktrees, Models] = [
   browser.mcp,
   browser.agents,
@@ -401,6 +446,14 @@ const nodeNamespaces: readonly [
   NodeWorktrees,
   NodeModels,
 ] = [node.mcp, node.agents, node.commands, node.worktrees, node.models];
+const denoNamespaces: readonly [
+  DenoMcpInventory,
+  DenoAgents,
+  DenoCommands,
+  DenoWorktrees,
+  DenoModels,
+] = [deno.mcp, deno.agents, deno.commands, deno.worktrees, deno.models];
+const denoClient: DenoClient = deno;
 const browserOperational: readonly [
   Skills,
   LearnedSkills,
@@ -468,6 +521,8 @@ const migrationResponse: Promise<SessionMigrationPlan> = node.storage.planMigrat
 void [
   browserNamespaces,
   nodeNamespaces,
+  denoNamespaces,
+  denoClient,
   browserOperational,
   nodeOperational,
   browserResponse,
@@ -503,11 +558,15 @@ void [
   expect(typecheck.stdout).toBe("");
   expect(typecheck.status).toBe(0);
 
-  const graph = browserEntrypointGraph();
-  expect(graph).toContain("package/dist/namespaces-core.js");
-  expect(graph).toContain("package/dist/namespaces-ops.js");
+  const rootGraph = entrypointGraph("package/dist/index.js");
+  expect(rootGraph).toContain("package/dist/namespaces-core.js");
+  expect(rootGraph).toContain("package/dist/namespaces-ops.js");
+  const denoGraph = entrypointGraph("package/dist/deno.js");
+  expect(denoGraph).toContain("package/dist/deno-spawn.js");
+  expect(denoGraph).not.toContain("package/dist/spawn.js");
+  expect(denoGraph).not.toContain("package/dist/node-transport.js");
   const builtins = new Set(builtinModules.map((name) => name.replace(/^node:/u, "")));
-  const builtinImports = [...graph].flatMap((path) => {
+  const builtinImports = [...new Set([...rootGraph, ...denoGraph])].flatMap((path) => {
     const source = packedFiles.get(path)?.toString("utf8") ?? "";
     return [...source.matchAll(/\b(?:from|import)\s*(?:\(\s*)?["']([^"']+)["']/gu)]
       .map((match) => match[1] ?? "")

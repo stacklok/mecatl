@@ -13,6 +13,8 @@ const conciseExamples = [
   "browser-bff.ts",
   "callback-tool.ts",
   "durable-attachment.ts",
+  "deno-local.ts",
+  "deno-remote.ts",
   "local-spawn.ts",
   "multimodal.ts",
   "one-shot-query.ts",
@@ -27,6 +29,7 @@ const conciseExamples = [
 const publicImports = new Set([
   "@stacklok-oss/mecatl-sdk",
   "@stacklok-oss/mecatl-sdk/gen",
+  "@stacklok-oss/mecatl-sdk/deno",
   "@stacklok-oss/mecatl-sdk/node",
 ]);
 
@@ -116,4 +119,35 @@ test("the Node and Bun examples cover connect spawn query and callback tools", (
   const inventory = readFileSync(join(examplesRoot, "README.md"), "utf8");
   expect(inventory).toContain("Node.js 22+ and Bun");
   expect(inventory).toContain("guidance, not shipped BFF server code");
+});
+
+test("the Deno examples cover remote connect and Deno.Command-backed local spawn", () => {
+  const remote = readFileSync(join(examplesRoot, "deno-remote.ts"), "utf8");
+  expect(remote).toContain('from "@stacklok-oss/mecatl-sdk"');
+  expect(remote).not.toContain("@stacklok-oss/mecatl-sdk/node");
+  expect(remote).toContain("connect(");
+
+  const local = readFileSync(join(examplesRoot, "deno-local.ts"), "utf8");
+  expect(local).toContain('from "@stacklok-oss/mecatl-sdk/deno"');
+  expect(local).not.toContain("@stacklok-oss/mecatl-sdk/node");
+  expect(local).toContain("spawn(");
+});
+
+test("the Deno gate runs the local Deno.Command lifecycle", () => {
+  const taskfile = readFileSync(join(packageRoot, "Taskfile.yml"), "utf8");
+  expect(taskfile).toContain("node scripts/run-deno-integration.mjs");
+
+  const integration = readFileSync(join(packageRoot, "e2e", "deno.e2e.ts"), "utf8");
+  expect(integration).toContain('from "@stacklok-oss/mecatl-sdk/deno"');
+  expect(integration).toContain("await spawn(");
+  expect(integration).toContain("await query(");
+  expect(integration).toContain("await client.close()");
+  expect(integration).toContain("runtimeDirectories()");
+  expect(integration).toContain("HarnessService.method.converse");
+
+  const launcher = readFileSync(join(sourceRoot, "deno-spawn.ts"), "utf8");
+  expect(launcher).toContain("new runtime.Command(");
+  expect(launcher).toContain('"--lifetime-stdin"');
+  expect(launcher).toContain("process.closeLifetime()");
+  expect(launcher).not.toMatch(/from\s+["']node:/u);
 });
