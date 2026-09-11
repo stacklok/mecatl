@@ -59,6 +59,19 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          # filter: blob:none makes this a PARTIAL clone. fetch-depth: 0 on this
+          # repo means 184 branches / 123 tags against a 306 MB history, which
+          # measured 5m18s of a 5m35s run — 95% of the job. Filtering blobs
+          # fetches the commit graph and trees but not historical file contents,
+          # which is all this job needs: commit metadata for release notes, and
+          # tip-of-branch files (fetched with the checkout) for the version bump.
+          #
+          # NOTE the interaction with persist-credentials: false below — after
+          # checkout there are no credentials, so a LAZY blob fetch would fail.
+          # Everything here reads either commit metadata or tip files, and
+          # `git diff --name-only` needs trees (included) not blobs. Do not add a
+          # step that reads a historical file's CONTENTS without re-authenticating.
+          filter: blob:none
           persist-credentials: false
 
       # releaseo hard-fails with "Reference already exists" if an earlier run died after
