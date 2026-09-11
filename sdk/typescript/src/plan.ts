@@ -37,7 +37,13 @@ export interface PlanResolutionResult {
 
 /** One atomic, single-consumption resolution of a durably parked plan. @public */
 export interface PlanResolution extends AsyncIterable<Event> {
-  /** Drains the merged stream and returns the resumed and optional continuation outcomes. */
+  /**
+   * Drains the merged stream and returns the resumed and optional continuation outcomes.
+   *
+   * @returns The resumed run and any continuation run started by approval.
+   * @throws `InvalidStateError` when the resolution is already being consumed.
+   * @throws `PlanContinuationStartError` when an approved continuation cannot start.
+   */
   result(): Promise<PlanResolutionResult>;
 }
 

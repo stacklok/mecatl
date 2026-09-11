@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"iter"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -32,14 +33,19 @@ import (
 )
 
 type lifecycleTool struct {
-	calls atomic.Int32
+	calls  atomic.Int32
+	schema json.RawMessage
 	// hold, when set, runs inside Execute with the run context, so a test can
 	// hold a continuation in flight and observe whether it gets cancelled.
 	hold func(context.Context)
 }
 
-func (*lifecycleTool) Spec() tool.ToolSpec {
-	return tool.ToolSpec{Name: "protected", Schema: json.RawMessage(`{"type":"object"}`)}
+func (t *lifecycleTool) Spec() tool.ToolSpec {
+	schema := t.schema
+	if schema == nil {
+		schema = json.RawMessage(`{"type":"object"}`)
+	}
+	return tool.ToolSpec{Name: "protected", Schema: schema}
 }
 func (*lifecycleTool) ReadOnly() bool { return false }
 func (t *lifecycleTool) Execute(ctx context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
@@ -48,6 +54,24 @@ func (t *lifecycleTool) Execute(ctx context.Context, call session.ToolCall, _ to
 		t.hold(ctx)
 	}
 	return session.NewToolResult(call.ID, "protected mutation complete"), nil
+}
+
+type lifecycleMarkerTool struct{ name string }
+
+func (t lifecycleMarkerTool) Spec() tool.ToolSpec {
+	return tool.ToolSpec{Name: t.name, Schema: json.RawMessage(`{"type":"object"}`)}
+}
+func (lifecycleMarkerTool) ReadOnly() bool { return true }
+func (t lifecycleMarkerTool) Execute(_ context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
+	return session.NewToolResult(call.ID, t.name), nil
+}
+
+type lifecycleSchemaTool struct{ spec tool.ToolSpec }
+
+func (t lifecycleSchemaTool) Spec() tool.ToolSpec { return t.spec }
+func (lifecycleSchemaTool) ReadOnly() bool        { return true }
+func (lifecycleSchemaTool) Execute(_ context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
+	return session.NewToolResult(call.ID, "ok"), nil
 }
 
 type lifecycleParkingTool struct {
@@ -80,6 +104,8 @@ type lifecycleAttachment struct {
 	statusHook         func()
 	honorStatusContext bool
 	cancelOutcome      brokercontract.CancelOutcome
+	refreshTools       []tool.Tool
+	refreshCalls       int
 }
 
 func (*lifecycleAttachment) Commit(context.Context) error { return nil }
@@ -88,6 +114,15 @@ func (a *lifecycleAttachment) Binding() session.ExternalBinding {
 	return session.ExternalBinding(a.binding)
 }
 func (a *lifecycleAttachment) Tools() []tool.Tool { return []tool.Tool{a.tool} }
+func (a *lifecycleAttachment) RefreshGrantedAuthorizationCatalogue(context.Context, session.ExternalAuthorization) ([]tool.Tool, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.refreshCalls++
+	if a.refreshTools != nil {
+		return append([]tool.Tool(nil), a.refreshTools...), nil
+	}
+	return []tool.Tool{a.tool}, nil
+}
 func (a *lifecycleAttachment) PresentAuthorization(context.Context, session.ExternalAuthorization) (string, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -144,11 +179,13 @@ func (*lifecycleBroker) DeleteSession(context.Context, session.SessionID) (broke
 }
 
 type lifecycleFixture struct {
-	svc     *Service
-	store   *memstore.Store
-	broker  *lifecycleBroker
-	attach  *lifecycleAttachment
-	pending session.PendingAuthorization
+	svc        *Service
+	store      *memstore.Store
+	broker     *lifecycleBroker
+	attach     *lifecycleAttachment
+	pending    session.PendingAuthorization
+	builtTools *[][]string
+	builtSpecs *[][]mcp.ServerConfig
 }
 
 // lifecyclePlacementProvider reattaches only the local ref the fixture binds
@@ -229,6 +266,11 @@ func newLifecycleFixture(t *testing.T, status session.AuthorizationStatus, attac
 
 func newLifecycleFixtureWithTurns(t *testing.T, status session.AuthorizationStatus, attachErr error, now func() time.Time, timer AuthorizationTimerFactory, turns ...mockllm.Turn) lifecycleFixture {
 	t.Helper()
+	return newLifecycleFixtureWithMode(t, status, attachErr, now, timer, session.ModeDefault, turns...)
+}
+
+func newLifecycleFixtureWithMode(t *testing.T, status session.AuthorizationStatus, attachErr error, now func() time.Time, timer AuthorizationTimerFactory, mode session.PermissionMode, turns ...mockllm.Turn) lifecycleFixture {
+	t.Helper()
 	store := memstore.New()
 	mutation := &lifecycleTool{}
 	attachment := &lifecycleAttachment{binding: "broker-binding", tool: mutation, status: status, url: "https://auth.example/authorize?state=live"}
@@ -241,6 +283,8 @@ func newLifecycleFixtureWithTurns(t *testing.T, status session.AuthorizationStat
 		return agent.NewEngine(agent.Deps{LLM: mockllm.New(turns...), Catalog: catalog, Policy: permpolicy.NewPolicy(nil, nil), Store: store, Model: "mock"})
 	}
 	shared := buildEngine(nil)
+	var builtTools [][]string
+	var builtSpecs [][]mcp.ServerConfig
 	cfg := Config{
 		Engine: shared, Store: store, PlacementProvider: lifecyclePlacementProvider{}, PlacementScope: "test",
 		MCPBroker: broker, Now: now, AuthorizationTimer: timer,
@@ -250,7 +294,13 @@ func newLifecycleFixtureWithTurns(t *testing.T, status session.AuthorizationStat
 	cfg.SessionEngine = func(_ context.Context, _ ProviderSelector, _ []mcp.ServerConfig, _ SessionProfile, _ string, mode session.PermissionMode) (SessionEngineResult, error) {
 		return SessionEngineResult{Engine: buildEngine(nil), BuiltForMode: mode, Close: func() error { return nil }}, nil
 	}
-	cfg.SessionEngineWithTools = func(_ context.Context, _ ProviderSelector, _ []mcp.ServerConfig, _ SessionProfile, _ string, mode session.PermissionMode, tools []tool.Tool) (SessionEngineResult, error) {
+	cfg.SessionEngineWithTools = func(_ context.Context, _ ProviderSelector, specs []mcp.ServerConfig, _ SessionProfile, _ string, mode session.PermissionMode, tools []tool.Tool) (SessionEngineResult, error) {
+		names := make([]string, 0, len(tools))
+		for _, candidate := range tools {
+			names = append(names, candidate.Spec().Name)
+		}
+		builtTools = append(builtTools, names)
+		builtSpecs = append(builtSpecs, specs)
 		return SessionEngineResult{Engine: buildEngine(tools), BuiltForMode: mode, Close: func() error { return nil }}, nil
 	}
 	svc, err := NewService(cfg)
@@ -260,7 +310,7 @@ func newLifecycleFixtureWithTurns(t *testing.T, status session.AuthorizationStat
 	call := session.NewToolCall("protected-call", "protected", json.RawMessage(`{"value":1}`))
 	deferred := session.NewToolCall("deferred-call", "later", json.RawMessage(`{}`))
 	pending := session.PendingAuthorization{Authorization: session.ExternalAuthorization{ID: "authorization:1", DisplayName: "Calendar", Binding: "opaque-binding", ExpiresAt: now().Add(time.Hour)}, Call: call, Deferred: []session.ToolCall{deferred}}
-	sess := session.New("authorization-session", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/repo", Revision: "in-tree-v1"}, session.Limits{}, now())
+	sess := session.New("authorization-session", mode, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/repo", Revision: "in-tree-v1"}, session.Limits{}, now())
 	sess.ExternalBinding = session.ExternalBinding(attachment.binding)
 	if err := sess.BeginTurn(); err != nil {
 		t.Fatal(err)
@@ -274,7 +324,7 @@ func newLifecycleFixtureWithTurns(t *testing.T, status session.AuthorizationStat
 	if err := store.Save(t.Context(), sess); err != nil {
 		t.Fatal(err)
 	}
-	return lifecycleFixture{svc: svc, store: store, broker: broker, attach: attachment, pending: pending}
+	return lifecycleFixture{svc: svc, store: store, broker: broker, attach: attachment, pending: pending, builtTools: &builtTools, builtSpecs: &builtSpecs}
 }
 
 func drainLifecycleRun(t *testing.T, svc *Service, result MCPAuthorizationResult) []session.Event {
@@ -386,7 +436,49 @@ func TestMCPAuthorizationCompetingGrantedControlsHaveOneWinner(t *testing.T) {
 	}
 }
 
-func TestMCPAuthorizationContinuationReplacesJustParkedRun(t *testing.T) {
+func TestAuthenticatedMCPMetadataReplacement_Scenario2_RebuildsParkedContinuation(t *testing.T) {
+	f := newLifecycleFixture(t, session.AuthorizationGranted, nil, time.Now, nil)
+	f.attach.refreshTools = []tool.Tool{f.attach.tool, lifecycleMarkerTool{name: "refreshed"}}
+	control := MCPAuthorizationControl{SessionID: "authorization-session", AuthorizationID: f.pending.Authorization.ID}
+	result, err := f.svc.RecheckMCPAuthorization(t.Context(), control.SessionID, control)
+	if err != nil || result.Run == nil {
+		t.Fatalf("RecheckMCPAuthorization = (%+v, %v)", result, err)
+	}
+	if f.attach.refreshCalls != 1 {
+		t.Fatalf("refreshed catalogue calls = %d, want 1", f.attach.refreshCalls)
+	}
+	if got := *f.builtTools; len(got) == 0 || !slices.Contains(got[len(got)-1], "refreshed") {
+		t.Fatalf("continuation engine tools = %v, want refreshed snapshot", got)
+	}
+	drainLifecycleRun(t, f.svc, result)
+}
+
+// TestAuthenticatedMCPMetadataReplacement_RebuildPreservesClientMCPSpecs pins
+// the fix for a session-engine rebuild silently dropping client-provided MCP
+// tools: buildAndRegisterSessionEngineWithBrokerTools hardcoded nil specs on
+// every rebuild (mode change, ADR-0310 enrollment freeze, and a lazy grant
+// refresh), so a session with client MCP configured lost it the first time any
+// of those rebuilt its engine. The Service must thread the session's original
+// specs (recorded at creation/load, s.clientMCPSpecs) through instead.
+func TestAuthenticatedMCPMetadataReplacement_RebuildPreservesClientMCPSpecs(t *testing.T) {
+	f := newLifecycleFixture(t, session.AuthorizationGranted, nil, time.Now, nil)
+	clientSpecs := []mcp.ServerConfig{{Name: "docs", URL: "https://docs.example/mcp"}}
+	f.svc.mu.Lock()
+	f.svc.clientMCPSpecs["authorization-session"] = clientSpecs
+	f.svc.mu.Unlock()
+
+	control := MCPAuthorizationControl{SessionID: "authorization-session", AuthorizationID: f.pending.Authorization.ID}
+	result, err := f.svc.RecheckMCPAuthorization(t.Context(), control.SessionID, control)
+	if err != nil || result.Run == nil {
+		t.Fatalf("RecheckMCPAuthorization = (%+v, %v)", result, err)
+	}
+	if got := *f.builtSpecs; len(got) == 0 || len(got[len(got)-1]) != len(clientSpecs) || got[len(got)-1][0].Name != clientSpecs[0].Name {
+		t.Fatalf("rebuild specs = %v, want %v", got, clientSpecs)
+	}
+	drainLifecycleRun(t, f.svc, result)
+}
+
+func TestAuthenticatedMCPMetadataReplacement_Scenario2_ReplacesJustParkedRun(t *testing.T) {
 	f := newLifecycleFixture(t, session.AuthorizationGranted, nil, time.Now, nil)
 	parkingTool := &lifecycleParkingTool{lifecycleTool: &lifecycleTool{}, authorization: f.pending.Authorization}
 	catalog := tool.NewCatalog()
@@ -425,6 +517,127 @@ func TestMCPAuthorizationContinuationReplacesJustParkedRun(t *testing.T) {
 	drainLifecycleRun(t, f.svc, result)
 	if got := f.attach.tool.calls.Load(); got != 1 {
 		t.Fatalf("protected executions = %d", got)
+	}
+}
+
+// TestAuthenticatedMCPMetadataReplacement_PlanModeBlocksMutatingRefresh pins the
+// fix for a plan-mode bypass: RefreshGrantedAuthorizationCatalogue can replace a
+// declared placeholder with live metadata that is now mutating. Catalog.Lookup
+// (used by PrepareAuthorizationContinuation) bypasses plan mode's ReadOnly
+// visibility filter, so a resumed continuation must recheck plan mode + ReadOnly
+// itself before executing — never trust whatever the tool looked like when it
+// parked.
+func TestAuthenticatedMCPMetadataReplacement_PlanModeBlocksMutatingRefresh(t *testing.T) {
+	f := newLifecycleFixtureWithMode(t, session.AuthorizationGranted, nil, time.Now, nil, session.ModePlan)
+	control := MCPAuthorizationControl{SessionID: "authorization-session", AuthorizationID: f.pending.Authorization.ID}
+	result, err := f.svc.RecheckMCPAuthorization(t.Context(), control.SessionID, control)
+	if err != nil || result.Run == nil {
+		t.Fatalf("RecheckMCPAuthorization = (%+v, %v)", result, err)
+	}
+	events := drainLifecycleRun(t, f.svc, result)
+	if got := f.attach.tool.calls.Load(); got != 0 {
+		t.Fatalf("plan-mode session executed a mutating refreshed tool: calls = %d", got)
+	}
+	var found bool
+	for _, ev := range events {
+		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == f.pending.Call.ID {
+			found = true
+			if !ev.ToolResult.IsError || !strings.Contains(ev.ToolResult.Content, "plan mode") {
+				t.Fatalf("tool result = %+v, want a plan-mode error", ev.ToolResult)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("no tool result recorded for the blocked continuation")
+	}
+}
+
+// TestAuthenticatedMCPMetadataReplacement_RejectsParkedArgumentsOutsideReplacementSchema
+// pins the narrow lazy-transition gate: the parked call was valid for its static
+// declaration, but must not execute after authenticated metadata narrows it.
+func TestAuthenticatedMCPMetadataReplacement_RejectsParkedArgumentsOutsideReplacementSchema(t *testing.T) {
+	f := newLifecycleFixture(t, session.AuthorizationGranted, nil, time.Now, nil)
+	replacement := &lifecycleTool{schema: json.RawMessage(`{"type":"object","required":["title"],"properties":{"title":{"type":"string"}}}`)}
+	f.attach.refreshTools = []tool.Tool{replacement}
+
+	control := MCPAuthorizationControl{SessionID: "authorization-session", AuthorizationID: f.pending.Authorization.ID}
+	result, err := f.svc.RecheckMCPAuthorization(t.Context(), control.SessionID, control)
+	if err != nil || result.Run == nil {
+		t.Fatalf("RecheckMCPAuthorization = (%+v, %v)", result, err)
+	}
+	events := drainLifecycleRun(t, f.svc, result)
+	if got := replacement.calls.Load(); got != 0 {
+		t.Fatalf("replacement tool executions = %d, want 0", got)
+	}
+	if got := f.attach.tool.calls.Load(); got != 0 {
+		t.Fatalf("static tool executions = %d, want 0", got)
+	}
+	results := make(map[session.ToolCallID]session.ToolResult)
+	for _, event := range events {
+		if event.Type == session.EvToolResult && event.ToolResult != nil {
+			results[event.ToolResult.CallID] = *event.ToolResult
+		}
+	}
+	if got, ok := results[f.pending.Call.ID]; !ok || !got.IsError || got.Content != authorizationSchemaMismatch {
+		t.Fatalf("parked call result = %+v, want schema rejection", got)
+	}
+	if got, ok := results[f.pending.Deferred[0].ID]; !ok || !got.IsError || got.Content != "authorization deferred sibling was not executed" {
+		t.Fatalf("deferred call result = %+v, want paired deferred error", got)
+	}
+}
+
+func TestValidateGrantedAuthorizationArgumentsFailsClosed(t *testing.T) {
+	validSchema := json.RawMessage(`{"type":"object","required":["title"],"properties":{"title":{"type":"string"}}}`)
+	cases := []struct {
+		name   string
+		schema json.RawMessage
+		args   json.RawMessage
+		wantOK bool
+	}{
+		{name: "valid", schema: validSchema, args: json.RawMessage(`{"title":"ok"}`), wantOK: true},
+		{name: "malformed schema", schema: json.RawMessage(`{`), args: json.RawMessage(`{}`)},
+		{name: "non-object schema", schema: json.RawMessage(`true`), args: json.RawMessage(`{}`)},
+		{name: "unresolvable schema", schema: json.RawMessage(`{"$ref":"https://schemas.example/required.json"}`), args: json.RawMessage(`{}`)},
+		{name: "malformed args", schema: validSchema, args: json.RawMessage(`{`)},
+		{name: "non-object args", schema: validSchema, args: json.RawMessage(`[]`)},
+		{name: "schema mismatch", schema: validSchema, args: json.RawMessage(`{"title":1}`)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateGrantedAuthorizationArguments([]tool.Tool{&lifecycleTool{schema: tc.schema}}, session.NewToolCall("call", "protected", tc.args))
+			if (err == nil) != tc.wantOK {
+				t.Fatalf("validateGrantedAuthorizationArguments() error = %v, wantOK %v", err, tc.wantOK)
+			}
+		})
+	}
+}
+
+// TestValidateGrantedAuthorizationArgumentsCanonicalizesQueryArgs pins the same
+// JSON-encoded args-object recovery that CallMcpWithQuery applies before invoking a
+// remote protected target. The server transition validates the recovered target
+// against the authenticated target schema, so restart/lazy continuation preserves
+// that execution-compatible input without accepting malformed remote arguments.
+func TestValidateGrantedAuthorizationArgumentsCanonicalizesQueryArgs(t *testing.T) {
+	querySpec := mcp.CallMcpWithQuerySpec()
+	targetSpec := tool.ToolSpec{Name: "mcp__github__create", Schema: json.RawMessage(`{"type":"object","required":["title"],"properties":{"title":{"type":"string"}}}`)}
+	tools := []tool.Tool{lifecycleSchemaTool{spec: querySpec}, lifecycleSchemaTool{spec: targetSpec}}
+	cases := []struct {
+		name string
+		args json.RawMessage
+		want bool
+	}{
+		{name: "encoded object", args: json.RawMessage(`{"server":"github","tool":"create","args":"{\"title\":\"ok\"}","jq_filter":"."}`), want: true},
+		{name: "encoded malformed object", args: json.RawMessage(`{"server":"github","tool":"create","args":"{","jq_filter":"."}`)},
+		{name: "encoded non-object", args: json.RawMessage(`{"server":"github","tool":"create","args":"[]","jq_filter":"."}`)},
+		{name: "authenticated target mismatch", args: json.RawMessage(`{"server":"github","tool":"create","args":"{\"title\":1}","jq_filter":"."}`)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateGrantedAuthorizationArguments(tools, session.NewToolCall("query", querySpec.Name, tc.args))
+			if (err == nil) != tc.want {
+				t.Fatalf("validateGrantedAuthorizationArguments() error = %v, want success %v", err, tc.want)
+			}
+		})
 	}
 }
 

@@ -150,10 +150,11 @@ mixed configuration after resolving the effective authority, including a loader 
 before constructing MCP, broker-process, or Redis resources. It accepts multiple configured
 OAuth upstreams. ToolHive owns their ordered browser flow, callback state, PKCE/code exchange,
 refresh, and provider-specific backend token injection. A protected backend with static `tools:`
-declarations is visible immediately; its first call starts that same opaque ToolHive bundle
-authorization. The grant unlocks only the declared tools during the active run. An undeclared
-backend, and undeclared tools on a declared backend, still require pre-prompt enrollment for
-authenticated discovery and the complete frozen catalogue. Each protected ToolHive process generates one
+declarations is visible immediately; those declarations are pre-authentication placeholders only,
+and a first call starts that same opaque ToolHive bundle authorization. After the grant, authenticated
+discovery replaces or removes the declared placeholders before the parked call resumes; definitions
+without declarations remain hidden. Pre-prompt enrollment remains the path for the complete frozen
+catalogue, including undeclared backends and tools. Each protected ToolHive process generates one
 confidential broker client; ToolHive persists only its hash, and mecatl retains the
 raw secret only in private process memory for HTTP-Basic code exchange and refresh
 ([ADR 0312](adr/0312-confidential-toolhive-broker-client.md)). Public enrollment controls carry aggregate status, a
@@ -172,8 +173,12 @@ flow and a preregistered client secret remains a Kubernetes Secret reference, ne
 profile data.
 
 Authenticated discovery results remain staged until the opaque pre-prompt enrollment succeeds.
-Mecatl then collision-checks every protected backend, freezes the complete model-visible catalogue,
-and rebuilds the session engine; a failure admits no partial catalogue. In a broker-only
+Mecatl then admits every live definition through the shared protected-route validation boundary,
+collision-checks the complete result, and atomically replaces all static placeholders with that
+session's authenticated membership, descriptions, schemas, and read-only hints. A declared tool
+omitted by live discovery disappears; an undeclared live tool appears. The resulting catalogue is
+frozen for the session, so later runs and token refreshes do not rediscover it; a fresh session
+performs a fresh discovery. A failure admits no mixed or partial catalogue. In a broker-only
 session with eligible frozen tools, `CallMcpWithQuery` is attachment-bound: it invokes the
 same frozen route and authorization transaction, applies bounded in-memory jq before normal
 result rendering, and never opens a direct upstream connection or exposes the raw successful

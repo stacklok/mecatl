@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
 	"golang.org/x/oauth2"
 
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	contract "github.com/stacklok/mecatl/internal/mcpbroker"
 )
@@ -76,6 +78,14 @@ type attachmentCatalogue struct {
 	routes map[string]route
 	tools  []tool.Tool
 	frozen contract.WorkspaceCatalogue
+	// refreshedFor is the zero value until a lazy bundle grant refresh
+	// publishes this exact catalogue; it then names the granting transaction.
+	// A retry against the SAME granted transaction (e.g. after a downstream
+	// session-engine rebuild failure) short-circuits on this rather than
+	// re-running live authenticated discovery — which would both waste the
+	// round trip and risk publishing a different snapshot than the one the
+	// caller already promised for that grant.
+	refreshedFor authorizationIdentity
 }
 
 func newAttachmentCatalogue(routes []route, tools []tool.Tool, frozen contract.WorkspaceCatalogue) *attachmentCatalogue {
@@ -99,6 +109,154 @@ func (c *attachmentCatalogue) Tools() []tool.Tool {
 		return nil
 	}
 	return append([]tool.Tool(nil), c.tools...)
+}
+
+// grantedBundle is the exact bundle authorization state read from the logical
+// session's locked fields, snapshotted for use after the lock is released.
+type grantedBundle struct {
+	transaction *authorizationTransaction
+	backends    []string
+	grant       *oauthGrant
+}
+
+// resolveGrantedBundle looks up the exact granted authorization and returns
+// its bundle backends and broker credential under the logical session lock.
+// unchanged reports a valid non-bundle grant, for which the caller must
+// return the existing catalogue without staging anything.
+func resolveGrantedBundle(logical *logicalSession, authorization session.ExternalAuthorization) (bundle grantedBundle, unchanged bool, err error) {
+	logical.mu.Lock()
+	defer logical.mu.Unlock()
+	transaction, err := lookupAuthorization(logical, authorization)
+	if err != nil || transaction.status != session.AuthorizationGranted {
+		return grantedBundle{}, false, contract.ErrAuthorizationNotFound
+	}
+	if transaction.bundleBackends == nil {
+		return grantedBundle{}, true, nil
+	}
+	grant := logical.brokerCredential
+	if grant == nil {
+		return grantedBundle{}, false, contract.ErrAuthorizationNotFound
+	}
+	return grantedBundle{
+		transaction: transaction,
+		backends:    append([]string(nil), transaction.bundleBackends...),
+		grant:       grant,
+	}, false, nil
+}
+
+// buildRefreshedCatalogue stages every configured backend's live metadata and
+// assembles the candidate attachment catalogue that replaces the static
+// declarations, without publishing it.
+func (a *Attachment) buildRefreshedCatalogue(ctx context.Context, logical *logicalSession, process *Process, backends []string) (*attachmentCatalogue, error) {
+	stagedRoutes, err := stageAuthenticatedDeclaredRoutes(ctx, process, &brokerTokenSource{runtime: a.runtime, logical: logical, ctx: ctx}, backends, a.catalogue, process.occupied)
+	if err != nil {
+		return nil, err
+	}
+	allRoutes := make([]route, 0, len(a.catalogue.routes)+len(stagedRoutes))
+	for _, route := range a.catalogue.routes {
+		// Static protected routes are replaced; prior broker routes are likewise
+		// replaced if this exact operation is retried after publication.
+		if route.oauth == nil && !route.broker {
+			allRoutes = append(allRoutes, route)
+		}
+	}
+	allRoutes = append(allRoutes, stagedRoutes...)
+	sortRoutes(allRoutes)
+	allTools := make([]tool.Tool, 0, len(allRoutes))
+	for _, route := range allRoutes {
+		base := &sessionTool{attachment: a, route: route}
+		if route.oauth != nil {
+			allTools = append(allTools, &protectedSessionTool{sessionTool: base})
+		} else {
+			allTools = append(allTools, base)
+		}
+	}
+	return newAttachmentCatalogue(allRoutes, allTools, nil), nil
+}
+
+// publishRefreshedCatalogue installs candidate only if the granting
+// authorization, broker credential, and process/attachment lifecycle are all
+// still exactly what they were when candidate was built. Holding the grant
+// and process lifecycle locks through the assignment gives close/deletion and
+// publication one winner.
+func (a *Attachment) publishRefreshedCatalogue(logical *logicalSession, process *Process, bundle grantedBundle, candidate *attachmentCatalogue) bool {
+	logical.mu.Lock()
+	defer logical.mu.Unlock()
+	process.lifecycleMu.Lock()
+	defer process.lifecycleMu.Unlock()
+	valid := !logical.deleted && logical.authorizations[bundle.transaction.identity] == bundle.transaction &&
+		bundle.transaction.status == session.AuthorizationGranted && logical.brokerCredential == bundle.grant &&
+		!process.closed && process.Runtime == a.runtime && !a.closed
+	if valid {
+		candidate.refreshedFor = bundle.transaction.identity
+		a.catalogue = candidate
+	}
+	return valid
+}
+
+// RefreshGrantedAuthorizationCatalogue replaces the static protected declarations
+// with admitted live metadata after the exact lazy bundle authorization succeeds.
+// A valid non-bundle grant returns the unchanged catalogue. Bundle publication
+// happens only after every configured backend has been queried successfully;
+// authenticated tools without declarations remain hidden.
+func (a *Attachment) RefreshGrantedAuthorizationCatalogue(ctx context.Context, authorization session.ExternalAuthorization) ([]tool.Tool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if a == nil {
+		return nil, ErrAuthenticatedDiscovery
+	}
+	opCtx, done, err := a.beginOperation(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer done()
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.closed {
+		return nil, contract.ErrAttachmentClosed
+	}
+	if err := a.stateErrorLocked(); err != nil {
+		return nil, err
+	}
+	if a.catalogue == nil {
+		return nil, ErrAuthenticatedDiscovery
+	}
+	logical := a.logical
+	bundle, unchanged, err := resolveGrantedBundle(logical, authorization)
+	if err != nil {
+		return nil, err
+	}
+	if unchanged {
+		return a.catalogue.Tools(), nil
+	}
+	if a.catalogue.refreshedFor != (authorizationIdentity{}) && a.catalogue.refreshedFor == bundle.transaction.identity {
+		// A retry for the exact same granted transaction (e.g. a caller whose
+		// downstream session-engine rebuild failed and restored the claim for
+		// another attempt): reuse the already-published, already-validated
+		// snapshot rather than re-running live authenticated discovery, which
+		// could return different metadata on a second call.
+		return a.catalogue.Tools(), nil
+	}
+
+	process := a.runtime.process
+	backends, _, ok := process.catalogueInputs(a.runtime)
+	if !ok || len(backends) == 0 || !slices.Equal(bundle.backends, backends) {
+		return nil, ErrAuthenticatedDiscovery
+	}
+	if a.catalogue.frozen != nil {
+		return a.catalogue.Tools(), nil
+	}
+
+	candidate, err := a.buildRefreshedCatalogue(opCtx, logical, process, backends)
+	if err != nil {
+		return nil, err
+	}
+	if !a.publishRefreshedCatalogue(logical, process, bundle, candidate) {
+		return nil, ErrAuthenticatedDiscovery
+	}
+	return candidate.Tools(), nil
 }
 
 // FreezeAuthenticatedCatalogue stages the configured protected backends in
@@ -201,6 +359,57 @@ func (a *Attachment) stateErrorLocked() error {
 	return nil
 }
 
+func stageAuthenticatedDeclaredRoutes(ctx context.Context, process *Process, brokerCredential oauth2.TokenSource, backends []string, base *attachmentCatalogue, occupied []string) ([]route, error) {
+	declared := make(map[string]string)
+	for _, route := range process.Runtime.catalogue.routes {
+		if route.oauth != nil && route.broker {
+			declared[route.spec.Name] = route.backend
+		}
+	}
+	seen := make(map[string]struct{}, len(occupied)+len(base.routes))
+	for _, name := range occupied {
+		if name == "" {
+			return nil, ErrInvalidCatalogue
+		}
+		seen[name] = struct{}{}
+	}
+	for _, route := range base.routes {
+		if route.oauth == nil && !route.broker {
+			seen[route.spec.Name] = struct{}{}
+		}
+	}
+	staged := make([]route, 0, len(declared))
+	for _, backend := range backends {
+		capabilities, err := process.QueryAuthenticatedCapabilities(ctx, brokerCredential, backend)
+		if err != nil || capabilities.Backend != backend {
+			process.diagnostics().Log(ctx, port.LevelWarn, "authenticated discovery failed; catalogue freeze aborted", "backend", backend)
+			return nil, ErrAuthenticatedDiscovery
+		}
+		process.diagnostics().Log(ctx, port.LevelInfo, "authenticated discovery succeeded", "backend", backend, "tools", len(capabilities.Tools))
+		for _, definition := range capabilities.Tools {
+			// Every discovered definition passes the shared admission boundary —
+			// qualified name, UTF-8, size, JSON-object schema, private material,
+			// and collision — before the declared-name membership rule decides
+			// whether it is staged. An invalid or oversized undeclared definition
+			// must abort the whole freeze, not be silently dropped.
+			route, err := validateAuthenticatedRoute(backend, definition, seen)
+			if err != nil {
+				return nil, err
+			}
+			seen[route.spec.Name] = struct{}{}
+			if declaredBackend, isDeclared := declared[definition.Name]; !isDeclared || declaredBackend != backend {
+				continue
+			}
+			route.broker = true
+			staged = append(staged, route)
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return staged, nil
+}
+
 func stageAuthenticatedRoutes(ctx context.Context, process *Process, brokerCredential oauth2.TokenSource, backends []string, base *attachmentCatalogue, occupied []string) ([]route, error) {
 	// The attachment lock remains held by FreezeAuthenticatedCatalogue throughout
 	// this work. Cancel/close races have one winner, and Tools cannot expose a
@@ -232,24 +441,7 @@ func stageAuthenticatedRoutes(ctx context.Context, process *Process, brokerCrede
 			return nil, ErrAuthenticatedDiscovery
 		}
 		process.diagnostics().Log(ctx, port.LevelInfo, "mcp broker authenticated catalogue backend", "event", diagnosticEventAuthenticatedCatalogueBackend, "reason", diagnosticReasonDiscovered, "backend_index", backendIndex, "tools", len(capabilities.Tools))
-		declaredTools := process.construction.staticByBackend[backend]
-		declaredNames := make(map[string]struct{}, len(declaredTools))
-		for _, declared := range declaredTools {
-			declaredNames["mcp__"+backend+"__"+declared.Name] = struct{}{}
-		}
-		definitions := make([]ToolDefinition, 0, len(capabilities.Tools)+len(declaredTools))
-		for _, discovered := range capabilities.Tools {
-			if _, staticallyDeclared := declaredNames[discovered.Name]; !staticallyDeclared {
-				definitions = append(definitions, discovered)
-			}
-		}
-		for _, declared := range declaredTools {
-			definitions = append(definitions, ToolDefinition{
-				Backend: backend, Name: "mcp__" + backend + "__" + declared.Name,
-				Description: declared.Description, Schema: append(json.RawMessage(nil), declared.Schema...), ReadOnly: declared.ReadOnly,
-			})
-		}
-		for _, definition := range definitions {
+		for _, definition := range capabilities.Tools {
 			route, err := validateAuthenticatedRoute(backend, definition, seen)
 			if err != nil {
 				return nil, err

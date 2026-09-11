@@ -36,6 +36,7 @@ export type PermissionAskResponder = (
 
 /** Options applied to one run. @public */
 export interface RunOptions {
+  /** Automatically answers ordinary permission asks. */
   onPermissionAsk?: PermissionAskResponder;
   /** Automatically answers only plan-originated PresentPlan asks. */
   onPlanApproval?: PlanApprovalResponder;
@@ -58,15 +59,44 @@ export interface RunResult {
 export interface Run extends AsyncIterable<Event> {
   readonly id: string;
   readonly sessionId: string;
-  /** Sends a permission verdict for a raw permission.ask event. Scenario 7 adds responders. */
+  /**
+   * Sends a Boolean permission verdict for a `permission.ask` event.
+   *
+   * @param askId - ID carried by the permission ask.
+   * @param allow - Whether to allow the call once.
+   * @returns A promise that resolves after the verdict is sent.
+   * @throws `PermissionAskAlreadyResolvedError` when the ask is no longer pending.
+   */
   approve(askId: string, allow: boolean): Promise<void>;
-  /** Resolves one pending ask on this run with the server's string verdict vocabulary. */
+  /**
+   * Resolves one pending ask on this run with the server's string verdict vocabulary.
+   *
+   * @param askId - ID carried by the permission ask.
+   * @param verdict - Decision to apply to the pending ask.
+   * @returns A promise that resolves after the server accepts the verdict.
+   * @throws `PermissionAskAlreadyResolvedError` when the ask is no longer pending.
+   * @throws `InvalidStateError` when used for a plan-approval ask.
+   */
   resolveAsk(askId: string, verdict: PermissionVerdict): Promise<void>;
-  /** Requests cancellation; consume the run normally to receive the cancelled outcome. */
+  /**
+   * Requests cancellation; consume the run normally to receive the cancelled outcome.
+   *
+   * @returns A promise that resolves after the cancellation request is sent.
+   */
   cancel(): Promise<void>;
-  /** Strictly steers this run. A late steer is refused and is never promoted. */
+  /**
+   * Strictly steers this run. A late steer is refused and is never promoted.
+   *
+   * @param text - Instruction to apply to the active run.
+   * @returns A promise that resolves after the steering request is sent.
+   */
   steer(text: string): Promise<void>;
-  /** Drains all remaining events and returns the typed terminal outcome. */
+  /**
+   * Drains all remaining events and returns the typed terminal outcome.
+   *
+   * @returns The terminal result for this run.
+   * @throws `InvalidStateError` when the run is already being consumed.
+   */
   result(): Promise<RunResult>;
 }
 

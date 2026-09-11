@@ -49,10 +49,10 @@ export interface ToolOptions {
   /**
    * Unverified caller assertion that the callback has no side effects.
    *
-   * The SDK carries this as MCP's `readOnlyHint`; mecatl trusts that hint when
-   * placing calls in its concurrent read batch. A mis-annotated callback may
-   * therefore run concurrently, and MCP names are not in plan mode's fixed
-   * mutation-deny set.
+   * The SDK carries this as MCP's `readOnlyHint`; Mecatl trusts that hint when
+   * scheduling concurrent read-only calls. A callback marked read-only may run
+   * concurrently even if it has side effects. Plan mode does not automatically
+   * classify MCP tool names as mutations.
    */
   readOnly?: boolean;
 }
@@ -71,9 +71,18 @@ export interface ToolDefinition {
   readonly schema: ToolSchema;
 }
 
-/** A Node/Bun Client with the local callback-tool registration surface. @public */
+/** A client for Node.js or Bun with local callback-tool registration. @public */
 export interface NodeClient extends Client {
-  /** Registers one callback tool in the client-wide immutable tool set. */
+  /**
+   * Registers one callback tool in the client-wide immutable tool set.
+   *
+   * @param name - Name advertised by the local MCP server.
+   * @param schema - JSON Schema 2020-12 value for the tool arguments.
+   * @param handler - Function invoked with validated arguments and an abort signal.
+   * @param options - Read-only assertion and per-tool concurrency limit.
+   * @returns The immutable registered-tool description and model-facing name.
+   * @throws `ToolRegistrationError` when the name, schema, or options are invalid.
+   */
   tool(
     name: string,
     schema: ToolSchema,

@@ -1,131 +1,145 @@
 ---
 sidebar_position: 4
 title: Use the TypeScript SDK
-description: Connect Node, Bun, or browser applications to Mecatl with the published TypeScript SDK.
+description: Run your first Mecatl prompt from TypeScript against a private offline daemon.
 ---
 
 # Use the TypeScript SDK
 
-`@stacklok/mecatl-sdk` is an ESM-only client for Node.js 22+, Bun, and modern
-browsers.
+In this tutorial, you will use `@stacklok/mecatl-sdk` to start a private
+`mecated` process, create a session, and run one prompt without model-provider
+credentials.
 
-## Install the interim preview
+## Prerequisites
 
-The `0.0.x` preview line is hosted on GitHub Packages. While the source
-repository is internal, readers must be Stacklok organization members and use
-a GitHub personal access token with `read:packages`. Expose the token as
-`GITHUB_PACKAGES_TOKEN` and add this to a user or project `.npmrc`; do not put
-the token value in the file:
+You need:
 
-```ini
+- macOS or Linux with [Homebrew](https://brew.sh/);
+- Node.js 22 or later;
+- a GitHub personal access token with `read:packages`; and
+- access to the internal `stacklok/mecatl` repository and its package.
+
+## Install `mecated`
+
+Install the released `mecated` executable from Stacklok's Homebrew tap, then
+verify that it is available on `PATH`:
+
+```sh
+brew install stacklok/tap/mecatl
+mecated --version
+```
+
+The version command prints the installed release tag.
+
+## Create a project
+
+Create an empty project directory, then initialize an ESM package:
+
+```sh
+mkdir mecatl-sdk-quickstart
+cd mecatl-sdk-quickstart
+npm init -y
+npm pkg set type=module
+```
+
+Expose your GitHub token to the package manager:
+
+```sh
+export GITHUB_PACKAGES_TOKEN=<GITHUB_TOKEN>
+```
+
+Create `.npmrc` in the project directory. The file refers to the environment
+variable and does not contain the token value:
+
+```ini title=".npmrc"
 @stacklok:registry=https://npm.pkg.github.com
 //npm.pkg.github.com/:_authToken=${GITHUB_PACKAGES_TOKEN}
 ```
 
-Install the first preview explicitly:
+Install the SDK preview and TypeScript:
 
 ```sh
-pnpm add @stacklok/mecatl-sdk@0.0.1
+npm install @stacklok/mecatl-sdk@0.0.1
+npm install --save-dev --save-exact typescript@6.0.3
 ```
 
-The range `^0.0.1` is patch-pinned by npm semver, so opt into each preview
-update deliberately. At `0.1.0`, the package moves to npmjs after the repository
-is public and trusted publishing is configured. The canonical registry flips;
-no GitHub Packages `0.0.x` artifact or version is republished to npmjs.
+## Configure TypeScript
 
-## Choose an entry point
+Create `tsconfig.json`:
 
-The package has three public entry points:
-
-| Import | Use it for |
-| --- | --- |
-| `@stacklok/mecatl-sdk` | Browser HTTP/SSE and transport-neutral types. |
-| `@stacklok/mecatl-sdk/node` | Node/Bun gRPC, local `spawn()` and `query()`, and callback tools. |
-| `@stacklok/mecatl-sdk/gen` | Generated protobuf-es messages and service descriptors. |
-
-The repository's [focused examples](https://github.com/stacklok/mecatl/tree/main/sdk/typescript/examples)
-compile against those package exports in CI. They do not import the SDK source
-tree, so an example fails when the published surface drifts.
-
-## Connect to a daemon or start one locally
-
-Use `connect()` when an operator owns the daemon:
-
-```ts
-import { connect } from "@stacklok/mecatl-sdk/node";
-
-await using client = connect({ baseUrl: "https://mecatl.example.com" });
-const session = await client.sessions.create({});
-const result = await (await session.run("Summarize this repository")).result();
-console.log(result.text);
+```json title="tsconfig.json"
+{
+  "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "outDir": "dist",
+    "strict": true,
+    "target": "ES2022"
+  },
+  "include": ["quickstart.ts"]
+}
 ```
 
-Use `spawn()` when the application should own a private local `mecated`, or
-`query()` for one spawn-create-run-cleanup operation. The SDK locates an
-already-installed binary; it does not download one. See the
-[`spawn()` and `query()` examples](https://github.com/stacklok/mecatl/tree/main/sdk/typescript/examples)
-and the [full lifecycle reference](https://github.com/stacklok/mecatl/blob/main/docs/architecture.md#typescript-sdk).
+## Run a prompt
 
-## Put a BFF in front of browser clients
+Create `quickstart.ts`:
 
-Browser code imports the transport-neutral entry point and connects through a
-same-origin backend-for-frontend (BFF). In production, that BFF should inject
-the daemon credential and enforce Origin and CSRF policy; do not expose a
-privileged daemon credential to browser JavaScript.
+```ts title="quickstart.ts"
+import { spawn } from "@stacklok/mecatl-sdk/node";
 
-```ts
-import { connect } from "@stacklok/mecatl-sdk";
+const client = await spawn({ args: ["--mock"] });
 
-await using client = connect({ baseUrl: "/mecatl", credentials: "include" });
+try {
+  const session = await client.sessions.create({});
+  const run = await session.run("Say hello from Mecatl");
+  const result = await run.result();
+
+  console.log(result.text);
+} finally {
+  await client.close();
+}
 ```
 
-The [browser+BFF example](https://github.com/stacklok/mecatl/blob/main/sdk/typescript/examples/browser-bff.ts)
-is deployment guidance and a browser-facing shape only. The package does
-**not** ship a BFF server, library, or service.
+Compile and run the program:
 
-## Resolve permissions and plans
+```sh
+npx tsc
+node dist/quickstart.js
+```
 
-Pass `onPermissionAsk` to a run when the application can make a narrow approval
-decision. Returning `undefined` leaves the raw ask unresolved; headless code
-should choose an explicit verdict. Server-side deny rules and plan-mode mutation
-denials still win. See the
-[permissions example](https://github.com/stacklok/mecatl/blob/main/sdk/typescript/examples/permissions.ts)
-and [permissions and posture guide](/features/permissions-and-posture.md).
+The offline provider returns:
 
-`session.resolvePlan()` models two runs, not one renamed result. It first resumes
-the durably parked plan run. Only when that run ends with `plan_approved` does
-the server start an optional continuation with a new run ID. Iterate the merged
-events or call `result()` once to receive `{ resumed, continuation }`; do not do
-both. A run attachment remains bound to one ID, while `session.activity()` can
-observe both.
+```plain
+Mock provider: no real model is configured. Set OPENAI_API_KEY for live use.
+```
 
-## Follow durable activity
-
-`session.attach(runId)` replays and follows one run. `session.activity()` follows
-the ordered cross-run session timeline, including schedule activity. Both expose
-an opaque serializable cursor for application-owned checkpoint storage and use
-at-least-once delivery, so side effects must be idempotent. The SDK never writes
-that cursor to browser storage or the filesystem for you. See the
-[durable attachment example](https://github.com/stacklok/mecatl/blob/main/sdk/typescript/examples/durable-attachment.ts).
-
-## Use teams, schedules, and callback tools
-
-- `client.teams.create()` returns a server-owned `Team` handle. Consume
-  `team.run()` by iteration or `result()`, then call `team.cleanup()` explicitly.
-  See the [teams example](https://github.com/stacklok/mecatl/blob/main/sdk/typescript/examples/teams.ts)
-  and [team behavior](/building/what-you-get/subagents-teams-parallel.md).
-- `client.schedules` exposes typed create, inspect, list, update, pause, resume,
-  fire-now, and fire-history operations. Availability depends on a configured
-  schedule store. See the [schedules example](https://github.com/stacklok/mecatl/blob/main/sdk/typescript/examples/schedules.ts)
-  and [scheduled tasks guide](/features/scheduled-tasks.md).
-- A client returned by `spawn()` can register callback tools before its first
-  session create. Connected remote clients cannot host callbacks. See the
-  [callback-tool example](https://github.com/stacklok/mecatl/blob/main/sdk/typescript/examples/callback-tool.ts)
-  and the [transport guide](/building/deployment/grpc-http.md#start-a-private-daemon-from-node-or-bun).
+Closing the client stops the private daemon and removes its runtime directory.
+You have created and consumed a complete Mecatl run from TypeScript.
 
 ## Next steps
 
-Read [Drive via gRPC / HTTP](/building/deployment/grpc-http.md) for transport and
-server API details, or the
-[TypeScript SDK architecture reference](https://github.com/stacklok/mecatl/blob/main/docs/architecture.md#typescript-sdk)
-for lifecycle, compatibility, and error contracts.
+- [Connect an application](/building/typescript-sdk/connect.md) to use an
+  operator-owned deployment.
+- [Run a private local daemon](/building/typescript-sdk/local-daemon.md) to
+  configure `spawn()` or use `query()`.
+- [Work with sessions and runs](/building/typescript-sdk/sessions-and-runs.md)
+  to stream events, send controls, and include media.
+
+## Troubleshooting
+
+<details>
+<summary>Package installation returns 401 or 404</summary>
+
+Confirm that `GITHUB_PACKAGES_TOKEN` contains a GitHub token with
+`read:packages` and that your GitHub account can access the internal
+`stacklok/mecatl` repository and package.
+
+</details>
+
+<details>
+<summary>The SDK cannot find mecated</summary>
+
+Run `mecated --version` in the same terminal. If the command is unavailable,
+install Mecatl or pass an absolute `binaryPath` to `spawn()`.
+
+</details>

@@ -18,7 +18,7 @@ import {
 import type { GetCompatibilityInfoResponse } from "./gen/mecatl/v1/harness_pb.js";
 import { HarnessService } from "./gen/mecatl/v1/harness_pb.js";
 
-/** Canonical routing hint for session-bound mecatl requests. It grants no authority. @public */
+/** Canonical routing hint for session-bound Mecatl requests. It grants no authority. @public */
 export const SESSION_ID_HEADER_NAME = "X-Mecatl-Session-ID";
 const MAX_SESSION_AFFINITY_BYTES = 256;
 
@@ -43,6 +43,11 @@ function validSessionAffinity(value: string): boolean {
  * Throws synchronously when sessionId cannot be represented byte-exactly as the affinity header.
  *
  * The binding is a routing hint only; authentication and authorization remain independent.
+ *
+ * @param sessionId - Session ID to carry as the affinity header.
+ * @param options - Existing call options whose headers must be preserved.
+ * @returns Call options containing exactly one session-affinity header.
+ * @throws `RangeError` when the session ID is not printable ASCII or is otherwise invalid.
  * @public
  */
 export function withSessionAffinity(sessionId: string, options: CallOptions = {}): CallOptions {
@@ -72,7 +77,7 @@ function withoutSessionAffinity(options?: CallOptions): CallOptions | undefined 
   return { ...options, headers };
 }
 
-/** @public */
+/** The API major implemented by this SDK. @public */
 export const SUPPORTED_API_MAJOR = 1;
 
 const transportKinds = new WeakMap<Transport, TransportKind>();
@@ -110,7 +115,13 @@ export function registerRawJson(message: object, value: JsonValue): void {
   rawJsonValues.set(message, value);
 }
 
-/** Returns the exact JSON value received by the HTTP transport, including unknown fields. @public */
+/**
+ * Returns the exact JSON value received by the HTTP transport, including unknown fields.
+ *
+ * @param message - Decoded protobuf message returned by the SDK.
+ * @returns The original JSON value, or `undefined` when none was recorded.
+ * @public
+ */
 export function getRawJson(message: object): JsonValue | undefined {
   return rawJsonValues.get(message);
 }
@@ -124,11 +135,13 @@ export function invalidateRawCompatibility(client: RawClient): void {
 export interface RawClient {
   /** Returns the build features learned from the shared compatibility probe. */
   features(options?: CallOptions): Promise<ReadonlySet<string>>;
+  /** Invokes one unary RPC after enforcing the SDK compatibility floor. */
   unary<I extends DescMessage, O extends DescMessage>(
     method: DescMethodUnary<I, O>,
     input: MessageInitShape<I>,
     options?: CallOptions,
   ): Promise<MessageShape<O>>;
+  /** Invokes one streaming RPC after enforcing the SDK compatibility floor. */
   stream<I extends DescMessage, O extends DescMessage>(
     method: DescMethodStreaming<I, O>,
     input: AsyncIterable<MessageInitShape<I>>,
@@ -136,9 +149,9 @@ export interface RawClient {
   ): AsyncIterable<MessageShape<O>>;
 }
 
-/** @public */
+/** Options for constructing the transport-neutral raw client. @public */
 export interface RawClientOptions {
-  /** A Connect-ES transport, including createRouterTransport() in tests. */
+  /** A caller-owned Connect-ES transport. */
   transport: Transport;
   /** Required only for an unregistered injected transport. Defaults to gRPC. */
   transportKind?: TransportKind;
@@ -152,11 +165,13 @@ function incompatible(cause: unknown, transport: TransportKind): IncompatibleSer
 }
 
 /**
- * Creates the transport-neutral raw operation seam.
+ * Creates a transport-neutral client for low-level RPC operations.
  *
- * Its first operation performs the state-free compatibility probe. No session is
- * created to infer support and there is no legacy mode.
+ * Before the first requested operation, the client performs a stateless
+ * compatibility check.
  *
+ * @param options - Caller-owned transport and its protocol kind.
+ * @returns A low-level client that enforces SDK compatibility before operations.
  * @public
  */
 export function createRawClient(options: RawClientOptions): RawClient {

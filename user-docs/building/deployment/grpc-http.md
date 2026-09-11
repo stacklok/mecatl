@@ -41,136 +41,26 @@ latter answers *which build is this?* and is bound by a privacy contract that
 keeps capabilities and configuration out of its response, while this one is
 exactly that negotiation data. A client wanting both makes both calls.
 
-### Start a private daemon from Node or Bun
+### Use the TypeScript SDK
 
-The in-repository TypeScript SDK's `@stacklok/mecatl-sdk/node` entry point provides
-`spawn()` for applications that want to own one local `mecated` process. It finds an
-already-installed binary from an explicit `binaryPath`, `MECATED_BIN`, or `PATH`; it never
-downloads one or invokes a shell. The spawned daemon uses a private Unix socket with HTTP
-disabled, and the client is returned only after the daemon publishes its ready document.
-Its `client.daemon` facts come from that document's non-secret allowlist. Setting
-`http: true` adds an ephemeral loopback HTTP listener but removes callback-tool support;
-setting `lifetimePipe: false` opts out of parent-crash cleanup without changing `close()`.
-Closing the client first cancels its owned runs and detaches its durable watches, then closes its
-owned transport, sends `SIGTERM` to that child, escalates to `SIGKILL` only after a bounded grace,
-and removes its private runtime directory. Cleanup continues after a failing step and reports the
-fault through `diagnostics`; `close()` and `Symbol.asyncDispose` remain idempotent and do not reject
-for teardown faults. If the daemon exits first, later operations fail with typed `invalid_state`.
-Startup errors distinguish an exited child from a live child that missed its readiness deadline.
-Their stderr report is bounded and redacted by whole line; applications can install the
-structured `diagnostics` callback, while the default writes nothing to `console`.
+`@stacklok/mecatl-sdk` provides ergonomic clients for both transports. Node.js
+and Bun applications can connect through gRPC. Browser applications use HTTP
+and SSE through a same-origin backend-for-frontend.
 
-Use `connect()` instead when another operator or service owns the daemon. A connected client
-never signals a process or removes a server directory.
+Start with the [TypeScript SDK quickstart](/building/getting-started/typescript-sdk.md),
+then choose the guide for your application:
 
-For a concise package-level introduction, browser BFF guidance, and focused examples for
-permissions, durable attachment, teams, and schedules, see
-[Use the TypeScript SDK](/building/getting-started/typescript-sdk.md).
+- [Connect an application](/building/typescript-sdk/connect.md) to use an
+  operator-owned daemon.
+- [Run a private local daemon](/building/typescript-sdk/local-daemon.md) to own a
+  `mecated` process or run a one-shot `query()` from Node.js or Bun.
+- [Work with sessions and runs](/building/typescript-sdk/sessions-and-runs.md) to
+  stream events, send controls, and read terminal results.
+- [Register callback tools](/building/typescript-sdk/callback-tools.md) before
+  creating sessions on an SDK-owned daemon.
 
-For a one-shot prompt, `query()` composes the same spawn, session, and run APIs and yields their
-ordinary events:
-
-```ts
-import { query } from "@stacklok/mecatl-sdk/node";
-
-const oneShot = await query("Summarize this repository", {
-  spawn: { binaryPath: "/opt/mecatl/bin/mecated" },
-});
-for await (const event of oneShot) {
-  // Handle the same Event union returned by Session.run().
-}
-```
-
-The default deletes the transient session and stops a daemon it spawned. Pass an existing
-`client` when the daemon must remain available; `retainSession: true` then leaves the session
-loadable by `oneShot.sessionId` for that daemon's lifetime. SDK-spawned daemons use an in-memory
-store unless you configure durable storage, so retention is not a persistence promise. Breaking
-iteration or aborting `signal` still cleans up. Without `onPermissionAsk`, an ordinary ask is
-denied and reported through the client's structured diagnostics sink while the run continues.
-
-Plan-mode queries must provide the separate approval callback before the SDK creates a session:
-
-```ts
-const planned = await query("Plan and implement the change", {
-  onPlanApproval: () => "approve",
-  session: { mode: 2 },
-});
-```
-
-The callback may return `"approve"`, `"accept_edits"`, or `"iterate"`. Approval finishes the
-current plan run, then opens a fresh run with the harness proceed prompt; the query yields both run
-streams in order. It never starts twice on one live stream.
-
-To resolve a plan that is already durably parked and has no locally live run, use
-`session.resolvePlan()` instead:
-
-```ts
-const { resumed, continuation } = await session.resolvePlan("approve").result();
-```
-
-The resumed run is always present. The optional continuation has a new run ID and exists only
-after `plan_approved`. A run attachment stops at its selected run's terminal; use
-`session.activity()` when one view must observe both IDs.
-
-A spawned client can register local callback tools before it creates a session:
-
-```ts
-import { spawn } from "@stacklok/mecatl-sdk/node";
-
-const client = await spawn();
-client.tool(
-  "lookup",
-  {
-    type: "object",
-    properties: { query: { type: "string" } },
-    required: ["query"],
-    additionalProperties: false,
-  },
-  async ({ query }) => `Result for ${query}`,
-  { readOnly: true },
-);
-const session = await client.sessions.create({});
-```
-
-The SDK accepts plain JSON Schema 2020-12 objects, validates arguments before the handler, and
-mounts the client-wide tool set under `mcp__sdk__*`. Registration closes after a session is
-created. Tools are treated as mutating unless `readOnly: true` is set. That flag is an unverified
-caller assertion with a dispatch consequence: mecatl may run asserted-read-only callbacks in its
-parallel read batch, so set it only when the handler truly has no side effects. Callback tools
-require the default private-UDS, HTTP-disabled spawned-daemon topology; use a different
-`toolServerName` if the operator already owns the `sdk` MCP namespace.
-
-Callback tools currently need the daemon to run with `--authority-evaluator noop`. Under the
-default `local` evaluator the daemon mints its capability set from the process-wide tool catalog
-before a session's client tools are mounted, so the call is denied — after the permission ask has
-already been allowed — with `tool "mcp__sdk__…" denied by authority: tool is absent from the
-capability set`. Pass the flag through `spawn({ args: ["--authority-evaluator", "noop"] })` for now,
-and only where that relaxation is acceptable. Lifting this needs a server change so the capability
-set carries a session's client tool names.
-
-Calling `tool()` on a connected client is refused locally with typed `unsupported_feature` before
-any RPC. The same code is returned by a spawned daemon that does not advertise
-`mcp_servers_on_create` (including `http: true`), with the missing feature named in the message.
-If session creation reaches the daemon, its `client_mcp_unsupported` or
-`client_mcp_unreachable` code is preserved unchanged.
-
-The SDK serves those callbacks from a bearer-protected ephemeral `127.0.0.1` listener. It exposes
-no CORS surface, rejects foreign origin or host headers, caps request bodies and queue growth, and
-runs at most eight handlers at once; `concurrency` can tighten that bound for one tool. Each handler
-receives an `AbortSignal` which fires on caller cancellation, deadline or client shutdown. Strings
-become MCP text, JSON values become structured content with a text mirror, and an explicit
-`CallToolResult` can intentionally return `isError: true`. A thrown exception is deliberately opaque
-to the model: it receives only a correlation id, while the full cause is sent to the optional
-`diagnostics` callback. Closing the client aborts active callbacks, drops queued work and releases
-the listener before stopping the daemon.
-
-The repository's offline SDK gate runs this public `spawn()` → callback → shutdown path on
-Node 22, Node 24, and Bun 1.4.1, including abrupt parent death through the lifetime descriptor. See the
-[full SDK lifecycle and protocol reference](https://github.com/stacklok/mecatl/blob/main/docs/architecture.md#typescript-sdk)
-for binary resolution, readiness, disposal, and the hand-written MCP subset.
-
-See the detailed gRPC and HTTP
-references for their request, response, privacy, and compatibility contracts.
+For exact methods and types, see the
+[TypeScript SDK API reference](/reference/typescript-sdk-api/index.md).
 
 ## The common lifecycle
 
@@ -190,18 +80,6 @@ references for their request, response, privacy, and compatibility contracts.
 Use the detailed references below for exact fields, response codes, event
 payloads, and feature-specific APIs such as schedules, teams, learning, and MCP
 inventories.
-
-### TypeScript direct-team handles
-
-The in-repository TypeScript SDK exposes the direct team lifecycle through
-`client.teams.create()`. The returned handle binds the server-created team ID across
-member spawn, message, cancel, run, list, and cleanup calls. A team run is single-use:
-iterate its typed member/outcome events or call `result()`, not both. Finishing that stream
-does not clean up the team; call `cleanup()` explicitly.
-
-The optional `maxTeamTokens` creation field maps directly to `max_team_tokens`. The server
-owns its unadvertised cap and treats the request as tighten-only; omission leaves that cap
-unchanged, and the client neither clamps nor invents a default.
 
 ## gRPC client contract
 

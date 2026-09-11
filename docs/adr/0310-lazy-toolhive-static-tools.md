@@ -4,7 +4,7 @@
 - Date: 2026-09-06
 - Scope: session-scoped MCP broker protected-tool admission
 - Supersedes: ADR 0311's pre-prompt-only static-tool admission decision
-- Superseded by: None
+- Superseded by: 0326 (the pre-prompt-only authenticated-discovery clause only — lazy bundle grants now also trigger authenticated discovery for the declared surface; the declared-tool membership boundary and pre-prompt enrollment's exclusive right to publish undeclared tools are unchanged)
 
 ## Context
 

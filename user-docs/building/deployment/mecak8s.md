@@ -382,10 +382,13 @@ not per-backend controls or OAuth material.
 Set `mcp.broker.callbackURL` to ToolHive's final public HTTPS redirect to mecatl. Your ingress
 or gateway must also route the complete fixed `/v1/mcp/broker/` prefix, including ToolHive's
 upstream callback, to the mecak8s HTTP listener. Helm rejects an OAuth server without the final
-callback URL and the runtime rejects an invalid URL. Protected static declarations are
-published as declared broker catalogue rows; protected connectors without admitted tools
-remain hidden until enrollment succeeds. Live discovery then freezes the complete catalogue.
-A failed enrollment admits no partial protected tools. OAuth broker mode also requires the chart's OIDC caller identity
+callback URL and the runtime rejects an invalid URL. Protected static declarations are visible
+before enrollment as pre-authentication placeholders, so calling one can start the ToolHive bundle
+authorization. Successful pre-prompt enrollment then strictly discovers every protected backend,
+collision-checks the complete result, and atomically replaces the placeholders with that session's
+live membership, descriptions, schemas, and read-only hints. A declared tool omitted by discovery
+disappears; the frozen catalogue does not refresh later in that session. A failed enrollment admits
+no partial protected tools. OAuth broker mode also requires the chart's OIDC caller identity
 (`oidc.enabled: true`, issuer, and audience), so broker authorization controls have verified
 callers. The broker profile and server metadata are non-secret ConfigMap data. A preregistered
 client secret remains a `SecretKeyRef` projection only—never a values field or ConfigMap entry;

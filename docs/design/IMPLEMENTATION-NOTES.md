@@ -5825,13 +5825,25 @@ is `/v1/mcp/broker/oauth/callback`; the separately configured callback URL is To
 redirect to mecatl, so ingress needs the complete fixed broker prefix plus the final callback
 path.
 
-Protected static declarations are represented as declared broker catalogue rows and
-remain visible as model tools before enrollment. Successful enrollment in
-`internal/adapter/mcpbroker/workspace_catalogue.go` (`FreezeAuthenticatedCatalogue`)
-adds authenticated discoveries to those static definitions, collision-checks the complete
-result, and atomically freezes the merged attachment catalogue before rebuilding the
-session engine. It either publishes that complete frozen catalogue or leaves the existing
-static declarations intact; no per-backend mecatl authorization continuation exists. `server.Service` attaches only after
+Protected static declarations are model-visible pre-authentication placeholders. Their first call
+can start the opaque ToolHive bundle authorization. After that exact grant succeeds,
+`internal/adapter/mcpbroker/workspace_catalogue.go` (`RefreshGrantedAuthorizationCatalogue`)
+queries every configured protected backend and atomically replaces or removes declared placeholders
+with admitted live description, schema, and `ReadOnly` metadata; undeclared definitions remain
+hidden. `internal/adapter/server/mcp_authorization.go` rebuilds the parked session engine from the
+returned exact snapshot before resuming the call. On successful pre-prompt enrollment,
+`internal/adapter/mcpbroker/workspace_catalogue.go` (`FreezeAuthenticatedCatalogue`) performs
+strict authenticated discovery for every configured protected backend, admits each live definition
+through the shared qualified-name, UTF-8, size, JSON-object-schema, private-material, and collision
+boundary, and atomically replaces every static placeholder with the complete authenticated
+catalogue. Live discovery controls post-authorization membership, description, schema, and
+`ReadOnly`; a declared tool omitted by a lazy-grant discovery disappears, and an absent live
+read-only hint defaults to false. The pre-prompt-enrollment frozen catalogue is immutable for that
+session: later runs and token refreshes do not rediscover it, while a fresh session performs a fresh
+query. A lazy-grant snapshot can be replaced atomically by a later grant in the same session, but it
+never exposes undeclared tools. Each path either publishes its complete target snapshot and rebuilds
+the session engine or retains the prior catalogue; no per-backend mecatl authorization continuation
+exists. `server.Service` attaches only after
 `SessionStore.Create` returns the canonical ID, persists `session.Session.ExternalBinding`, and
 passes `Attachment.Tools()` explicitly through `SessionEngineRequest.BrokerTools` into
 `assembleCatalog`. Reload reattaches through the same contract and accepts only an exact

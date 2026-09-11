@@ -1,9 +1,12 @@
 import { connect } from "@stacklok/mecatl-sdk/node";
 
 await using client = connect({
-  baseUrl: process.env.MECATL_URL ?? "http://127.0.0.1:8081",
+  baseUrl: process.env.MECATL_URL ?? "http://127.0.0.1:8080",
 });
-const session = await client.sessions.get(process.env.MECATL_SESSION_ID ?? "session-id");
+const sessionId = process.env.MECATL_SESSION_ID;
+if (sessionId === undefined) throw new Error("MECATL_SESSION_ID is required");
+
+const session = await client.sessions.get(sessionId);
 const previous = process.env.MECATL_CURSOR;
 await using activity = await session.activity(
   previous === undefined ? { from: "start" } : { from: previous },

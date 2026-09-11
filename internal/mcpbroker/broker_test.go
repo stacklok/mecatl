@@ -116,6 +116,9 @@ func (a *fakeAttachment) Binding() session.ExternalBinding {
 	return session.ExternalBinding(fmt.Sprintf("%s/%d", a.id, a.generation))
 }
 func (*fakeAttachment) Tools() []tool.Tool { return nil }
+func (*fakeAttachment) RefreshGrantedAuthorizationCatalogue(context.Context, session.ExternalAuthorization) ([]tool.Tool, error) {
+	return nil, nil
+}
 
 func (a *fakeAttachment) PresentAuthorization(_ context.Context, authorization session.ExternalAuthorization) (string, error) {
 	status, err := a.AuthorizationStatus(context.Background(), authorization)

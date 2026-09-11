@@ -152,6 +152,7 @@ PR after verification. There is no cleanup or status-only PR.
   an explicit human waiver of a separate amendment PR/merge for inclusion in the implementation PR.
 - [MCP broker DCR client](mcp-broker-dcr-client.md) — a third `mcp.servers[].auth.oauth.client.mode: dcr`, exposing ToolHive's existing RFC 7591 Dynamic Client Registration upstream-client support for protected MCP servers with no preregistered client or hosted CIMD document. Status: draft.
 - [Direct MCP Dynamic Client Registration](direct-mcp-dcr.md) — proposed contract for durable public-client DCR in a local direct MCP profile, reusing the existing authorization-code login while keeping broker and remote mecatui OIDC authority separate. Status: proposed.
+- [Live authenticated MCP metadata replaces static stand-ins](authenticated-mcp-metadata-replaces-static-standins.md) — replace protected-tool placeholders with safely admitted authenticated metadata after either lazy authorization or complete pre-prompt enrollment, without revealing undeclared tools on the lazy path. Status: in-progress.
 
 - [Local mecak8s Kind fixture](mecak8s-kind-fixture.md) — cleanly separates an
   operator-run mock/real-provider mecak8s fixture, optional Keycloak caller

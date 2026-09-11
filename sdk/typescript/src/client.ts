@@ -86,13 +86,15 @@ export type ConnectionStatusListener = (status: ConnectionStatus) => void;
 
 /** A multicast view of the client's latest connection status. @public */
 export interface ConnectionStatusStore {
+  /** Returns the client's current connection status. */
   getSnapshot(): ConnectionStatus;
+  /** Registers a listener and returns a function that removes it. */
   subscribe(listener: ConnectionStatusListener): () => void;
 }
 
 /** Options accepted by the isomorphic entry point when injecting a transport. @public */
 export interface InjectedTransportOptions {
-  /** A caller-owned Connect-ES transport, including createRouterTransport() in tests. */
+  /** A caller-owned Connect-ES transport. */
   transport: Transport;
   /** Required only when an unregistered transport speaks the HTTP/JSON/SSE protocol. */
   transportKind?: TransportKind;
@@ -103,66 +105,124 @@ export type ConnectOptions = HttpTransportOptions | InjectedTransportOptions;
 
 /** Optional stop conditions for a newly created session. @public */
 export interface SessionLimits {
+  /** Maximum consecutive tool failures; zero disables this limit. */
   maxConsecutiveFailures?: number;
+  /** Maximum tool calls; zero disables this limit. */
   maxToolCalls?: number;
+  /** Maximum model turns; zero disables this limit. */
   maxTurns?: number;
 }
 
 /** A client-provided streaming-HTTP MCP server. @public */
 export interface SessionMcpServer {
+  /** Command-shaped value used only to reject unsupported stdio configurations. */
   command?: string;
+  /** HTTP headers sent to the MCP server. Treat their values as secrets. */
   headers?: Record<string, string>;
+  /** Stable server name used in namespaced MCP tool names. */
   name?: string;
+  /** Transport type. The server accepts `http` or an empty value with a URL. */
   type?: string;
+  /** Absolute HTTPS endpoint, or an HTTP endpoint on an explicit loopback host. */
   url?: string;
 }
 
 /** Session-creation fields map directly onto CreateSessionRequest. @public */
 export interface CreateSessionOptions {
+  /** Configured server-global MCP servers selected for a diagnostic session. */
   debugMcpServers?: string[];
+  /** Existing session ID used to create a separate diagnostic session. */
   debugTargetSessionId?: string;
+  /** Stop conditions for the new session. */
   limits?: SessionLimits;
+  /** Client-provided streaming-HTTP MCP servers mounted for this session. */
   mcpServers?: SessionMcpServer[];
   /** PermissionMode enum value from the generated `./gen` entry point. */
   mode?: 0 | 1 | 2 | 3;
+  /** Model selector within `providerId`. */
   modelId?: string;
+  /** Tool-surface profile, or the deployment default when omitted. */
   profile?: string;
+  /** Configured model-provider ID, or the deployment default when omitted. */
   providerId?: string;
+  /** Requested reasoning-effort tier. The server reports the effective value. */
   reasoningEffort?: string;
 }
 
 /** Optional overrides accepted when forking a session. @public */
 export interface ForkSessionOptions {
+  /** Requested reasoning-effort tier for the forked session. */
   reasoningEffort?: string;
+  /** Human-readable title for the forked session. */
   title?: string;
 }
 
-/** A durable mecatl session handle. @public */
+/** A durable Mecatl session handle. @public */
 export interface Session {
   readonly id: string;
-  /** Attaches to an explicit run, or selects the newest run in the durable log. */
+  /**
+   * Attaches to an explicit run, or selects the newest run in the durable log.
+   *
+   * @param runId - Run ID to follow. Omit it to select the newest run.
+   * @param options - Replay position, event filtering, and cancellation options.
+   * @returns A single-consumption durable stream bound to the selected run.
+   * @throws `NoRunsError` when no run can be selected.
+   * @throws `CursorScopeError` when a cursor would widen its original filter.
+   */
   attach(runId?: string, options?: AttachOptions): Promise<AttachedRun>;
-  /** Opens the durable cross-run activity stream for this session. */
+  /**
+   * Opens the durable cross-run activity stream for this session.
+   *
+   * @param options - Replay position, event filtering, and cancellation options.
+   * @returns A single-consumption stream of session activity.
+   * @throws `CursorScopeError` when a cursor would widen its original filter.
+   */
   activity(options?: AttachOptions): Promise<SessionActivity>;
-  /** Starts a run and resolves once its first run-ID-bearing event arrives. */
+  /**
+   * Starts a run and resolves once its first run-ID-bearing event arrives.
+   *
+   * @param prompt - Text or ordered text, image, and audio parts for the run.
+   * @param options - Automatic permission and plan-approval responders.
+   * @returns A single-consumption handle for the accepted run.
+   * @throws `PromptValidationError` when the prompt is invalid or unsupported.
+   * @throws `SessionBusyError` when the session already has an active run.
+   */
   run(prompt: PromptInput, options?: RunOptions): Promise<Run>;
-  /** Atomically resolves a durably parked plan and streams its resumed and continuation runs. */
+  /**
+   * Atomically resolves a durably parked plan and streams its resumed and continuation runs.
+   *
+   * @param verdict - Plan decision. Defaults to `approve`.
+   * @returns A single-consumption plan-resolution stream.
+   * @throws `ServerError` when the session has no parked plan awaiting approval.
+   */
   resolvePlan(verdict?: PlanApprovalVerdict): PlanResolution;
-  /** Releases runtime resources without removing the durable session. */
+  /**
+   * Releases runtime resources without removing the durable session.
+   *
+   * @returns A promise that resolves after local session resources are released.
+   */
   close(): Promise<void>;
-  /** Permanently removes the durable session and its sidecars. */
+  /**
+   * Permanently removes the durable session and its sidecars.
+   *
+   * @returns A promise that resolves after the server removes the session.
+   */
   delete(): Promise<void>;
 }
 
 /** Session lifecycle operations exposed by a Client. @public */
 export interface Sessions {
+  /** Creates a session and returns its handle. */
   create(options: CreateSessionOptions): Promise<Session>;
+  /** Loads an existing session by ID. */
   get(sessionId: string): Promise<Session>;
+  /** Forks an existing session into a new session. */
   fork(sourceSessionId: string, options?: ForkSessionOptions): Promise<Session>;
+  /** Lists the sessions visible to the authenticated caller. */
   list(request: ListSessionsRequest, options?: RequestOptions): Promise<ListSessionsResponse>;
 }
 
-/** The ergonomic mecatl client. @public */
+/** The high-level Mecatl client. @public */
 export interface Client {
   readonly agents: Agents;
   readonly commands: Commands;
@@ -182,7 +242,9 @@ export interface Client {
   readonly teams: Teams;
   readonly userModel: UserModel;
   readonly worktrees: Worktrees;
+  /** Releases activity, transports, and resources owned by this client. */
   close(): Promise<void>;
+  /** Releases the same resources as close() when used with await using. */
   [Symbol.asyncDispose](): Promise<void>;
 }
 
@@ -1156,7 +1218,13 @@ export function connectTransport(options: ClientCoreOptions): Client {
   return new ClientImpl(options);
 }
 
-/** Creates an isomorphic Client over HTTP or a caller-injected transport. @public */
+/**
+ * Creates an isomorphic Client over HTTP or a caller-injected transport.
+ *
+ * @param options - HTTP transport settings or a caller-owned transport.
+ * @returns A high-level Mecatl client.
+ * @public
+ */
 export function connect(options: ConnectOptions): Client {
   if ("transport" in options) {
     return connectTransport({

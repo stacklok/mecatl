@@ -28,7 +28,7 @@ export const MECATL_WATCH_PHASES = [
 // END MECATL_WATCH_PHASES
 
 // BEGIN MECATL_ATTACH_FILTERED_KINDS
-/** Event kinds omitted by ergonomic attachment views unless requested. @public */
+/** Event kinds omitted by high-level attachment views unless requested. @public */
 export const MECATL_ATTACH_FILTERED_KINDS = [
   "approval",
   "compaction.archive",
@@ -41,14 +41,14 @@ export const MECATL_ATTACH_FILTERED_KINDS = [
 /** The compatibility feature required by every durable watch. */
 export const WATCH_SESSION_EVENTS_FEATURE = "watch_session_events";
 
-/** A serializable cursor issued by an ergonomic SDK attachment. @public */
+/** A serializable cursor issued by a durable SDK attachment. @public */
 export type SdkCursor = string;
 
 /** Where an attached run begins reading its durable activity. @public */
 export interface AttachOptions {
-  /** `now` still reads the durable replay over the wire, but discards it locally. */
+  /** Starts with events received after attachment, discarding the existing replay locally. */
   from?: "now" | "start" | SdkCursor;
-  /** Includes durable records omitted by the ergonomic view by default. */
+  /** Includes durable records omitted by the high-level view by default. */
   includeLogOnly?: boolean;
   /** Detaches this view when aborted; it never cancels a run. */
   signal?: AbortSignal;
@@ -102,9 +102,37 @@ export interface AttachedRun extends SessionActivity {
   readonly runId: string;
   /** True until this attachment observes its run's terminal result. */
   readonly live: boolean;
+  /**
+   * Cancels the attached run using its exact run ID.
+   *
+   * @returns A promise that resolves after the cancellation request is accepted.
+   */
   cancel(): Promise<void>;
+  /**
+   * Reports that approval controls are unavailable on durable attachments.
+   *
+   * @param askId - Permission-ask ID, retained for parity with a live run.
+   * @param allow - Boolean verdict, retained for parity with a live run.
+   * @returns A rejected promise.
+   * @throws `UnsupportedFeatureError` for every call.
+   */
   approve(askId: string, allow: boolean): Promise<never>;
+  /**
+   * Reports that ask resolution is unavailable on durable attachments.
+   *
+   * @param askId - Permission-ask ID, retained for parity with a live run.
+   * @param verdict - Permission verdict, retained for parity with a live run.
+   * @returns A rejected promise.
+   * @throws `UnsupportedFeatureError` for every call.
+   */
   resolveAsk(askId: string, verdict: PermissionVerdict): Promise<never>;
+  /**
+   * Reports that steering is unavailable on durable attachments.
+   *
+   * @param text - Steering text, retained for parity with a live run.
+   * @returns A rejected promise.
+   * @throws `UnsupportedFeatureError` for every call.
+   */
   steer(text: string): Promise<never>;
 }
 

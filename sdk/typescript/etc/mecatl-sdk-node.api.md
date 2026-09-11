@@ -31,8 +31,6 @@ export type AgentEvent = Exclude<KnownEvent, {
 export interface Agents {
     // Warning: (ae-forgotten-export) The symbol "ListAgentsRequest" needs to be exported by the entry point node.d.ts
     // Warning: (ae-forgotten-export) The symbol "ListAgentsResponse" needs to be exported by the entry point node.d.ts
-    //
-    // (undocumented)
     list(request: ListAgentsRequest, options?: RequestOptions): Promise<ListAgentsResponse>;
 }
 
@@ -72,16 +70,12 @@ export interface ArchivedConversationMessage {
 
 // @public
 export interface AttachedRun extends SessionActivity {
-    // (undocumented)
     approve(askId: string, allow: boolean): Promise<never>;
-    // (undocumented)
     cancel(): Promise<void>;
     readonly live: boolean;
-    // (undocumented)
     resolveAsk(askId: string, verdict: PermissionVerdict): Promise<never>;
     // (undocumented)
     readonly runId: string;
-    // (undocumented)
     steer(text: string): Promise<never>;
 }
 
@@ -113,7 +107,7 @@ export interface AudioPromptPart {
     readonly url?: string;
 }
 
-// @public (undocumented)
+// @public
 export class AuthenticationError extends MecatlError {
     constructor(message: string, options: Omit<MecatlErrorOptions, "code">);
 }
@@ -135,11 +129,9 @@ export interface CallToolResult {
 
 // @public
 export interface Client {
-    // (undocumented)
     [Symbol.asyncDispose](): Promise<void>;
     // (undocumented)
     readonly agents: Agents;
-    // (undocumented)
     close(): Promise<void>;
     // (undocumented)
     readonly commands: Commands;
@@ -186,8 +178,6 @@ export interface ClientDiagnosticsOptions {
 export interface Commands {
     // Warning: (ae-forgotten-export) The symbol "ListCommandsRequest" needs to be exported by the entry point node.d.ts
     // Warning: (ae-forgotten-export) The symbol "ListCommandsResponse" needs to be exported by the entry point node.d.ts
-    //
-    // (undocumented)
     list(request: ListCommandsRequest, options?: RequestOptions): Promise<ListCommandsResponse>;
 }
 
@@ -208,9 +198,7 @@ export type ConnectionStatusListener = (status: ConnectionStatus) => void;
 
 // @public
 export interface ConnectionStatusStore {
-    // (undocumented)
     getSnapshot(): ConnectionStatus;
-    // (undocumented)
     subscribe(listener: ConnectionStatusListener): () => void;
 }
 
@@ -228,45 +216,33 @@ export function createRawClient(options: RawClientOptions): RawClient;
 
 // @public
 export interface CreateSessionOptions {
-    // (undocumented)
     debugMcpServers?: string[];
-    // (undocumented)
     debugTargetSessionId?: string;
-    // (undocumented)
     limits?: SessionLimits;
-    // (undocumented)
     mcpServers?: SessionMcpServer[];
     mode?: 0 | 1 | 2 | 3;
-    // (undocumented)
     modelId?: string;
-    // (undocumented)
     profile?: string;
-    // (undocumented)
     providerId?: string;
-    // (undocumented)
     reasoningEffort?: string;
 }
 
 // @public
 export interface CreateTeamOptions {
-    // (undocumented)
     goal?: string;
     maxTeamTokens?: number;
-    // (undocumented)
     members?: readonly TeamMemberOptions[];
-    // (undocumented)
     name?: string;
-    // (undocumented)
     sessionId: string;
 }
 
-// @public (undocumented)
+// @public
 export interface CredentialOptions {
     credentialProvider?: CredentialProvider;
     headers?: HeadersInit;
 }
 
-// @public (undocumented)
+// @public
 export type CredentialProvider = () => HeadersInit | Promise<HeadersInit>;
 
 // @public
@@ -315,13 +291,9 @@ export type DiagnosticsSink = (record: DiagnosticRecord) => void;
 export interface DreamPlans {
     // Warning: (ae-forgotten-export) The symbol "DecideDreamPlanRequest" needs to be exported by the entry point node.d.ts
     // Warning: (ae-forgotten-export) The symbol "DecideDreamPlanResponse" needs to be exported by the entry point node.d.ts
-    //
-    // (undocumented)
     decide(request: DecideDreamPlanRequest, options?: RequestOptions): Promise<DecideDreamPlanResponse>;
     // Warning: (ae-forgotten-export) The symbol "GenerateDreamPlanRequest" needs to be exported by the entry point node.d.ts
     // Warning: (ae-forgotten-export) The symbol "GenerateDreamPlanResponse" needs to be exported by the entry point node.d.ts
-    //
-    // (undocumented)
     generate(request: GenerateDreamPlanRequest, options?: RequestOptions): Promise<GenerateDreamPlanResponse>;
 }
 
@@ -495,9 +467,7 @@ export interface EventUsage {
 
 // @public
 export interface ForkSessionOptions {
-    // (undocumented)
     reasoningEffort?: string;
-    // (undocumented)
     title?: string;
 }
 
@@ -516,9 +486,8 @@ export interface HookEventPayload {
     readonly tool: string;
 }
 
-// @public (undocumented)
+// @public
 export interface HttpTransportOptions extends CredentialOptions {
-    // (undocumented)
     baseUrl: string;
     credentials?: RequestCredentials;
     fetch?: typeof globalThis.fetch;
@@ -545,7 +514,7 @@ export interface ImagePromptPart {
     readonly url?: string;
 }
 
-// @public (undocumented)
+// @public
 export class IncompatibleServerError extends MecatlError {
     constructor(message: string, options: Omit<MecatlErrorOptions, "code">);
 }
@@ -556,7 +525,7 @@ export interface InjectedTransportOptions {
     transportKind?: TransportKind;
 }
 
-// @public (undocumented)
+// @public
 export class InvalidStateError extends MecatlError {
     constructor(message: string, options: Omit<MecatlErrorOptions, "code">);
 }
@@ -576,57 +545,36 @@ export type KnownEventKind = (typeof MECATL_EVENT_KINDS)[number];
 export interface LearnedSkills {
     // Warning: (ae-forgotten-export) The symbol "MutateLearnedSkillRequest" needs to be exported by the entry point node.d.ts
     // Warning: (ae-forgotten-export) The symbol "MutateLearnedSkillResponse" needs to be exported by the entry point node.d.ts
-    //
-    // (undocumented)
     activate(request: MutateLearnedSkillRequest, options?: RequestOptions): Promise<MutateLearnedSkillResponse>;
-    // (undocumented)
     archive(request: MutateLearnedSkillRequest, options?: RequestOptions): Promise<MutateLearnedSkillResponse>;
     // Warning: (ae-forgotten-export) The symbol "DiffLearnedSkillVersionsRequest" needs to be exported by the entry point node.d.ts
     // Warning: (ae-forgotten-export) The symbol "DiffLearnedSkillVersionsResponse" needs to be exported by the entry point node.d.ts
-    //
-    // (undocumented)
     diffVersions(request: DiffLearnedSkillVersionsRequest, options?: RequestOptions): Promise<DiffLearnedSkillVersionsResponse>;
     // Warning: (ae-forgotten-export) The symbol "GetLearnedSkillRequest" needs to be exported by the entry point node.d.ts
     // Warning: (ae-forgotten-export) The symbol "GetLearnedSkillResponse" needs to be exported by the entry point node.d.ts
-    //
-    // (undocumented)
     get(request: GetLearnedSkillRequest, options?: RequestOptions): Promise<GetLearnedSkillResponse>;
     // Warning: (ae-forgotten-export) The symbol "ListLearnedSkillsRequest" needs to be exported by the entry point node.d.ts
     // Warning: (ae-forgotten-export) The symbol "ListLearnedSkillsResponse" needs to be exported by the entry point node.d.ts
-    //
-    // (undocumented)
     list(request: ListLearnedSkillsRequest, options?: RequestOptions): Promise<ListLearnedSkillsResponse>;
     // Warning: (ae-forgotten-export) The symbol "ListSkillChangesRequest" needs to be exported by the entry point node.d.ts
     // Warning: (ae-forgotten-export) The symbol "ListSkillChangesResponse" needs to be exported by the entry point node.d.ts
-    //
-    // (undocumented)
     listChanges(request: ListSkillChangesRequest, options?: RequestOptions): Promise<ListSkillChangesResponse>;
-    // (undocumented)
     reject(request: MutateLearnedSkillRequest, options?: RequestOptions): Promise<MutateLearnedSkillResponse>;
     // Warning: (ae-forgotten-export) The symbol "RollbackLearnedSkillRequest" needs to be exported by the entry point node.d.ts
-    //
-    // (undocumented)
     rollback(request: RollbackLearnedSkillRequest, options?: RequestOptions): Promise<MutateLearnedSkillResponse>;
 }
 
 // @public
 export interface LearningAttempts {
-    // (undocumented)
     abandon(request: MutateLearningAttemptRequest, options?: RequestOptions): Promise<MutateLearningAttemptResponse>;
     // Warning: (ae-forgotten-export) The symbol "GetLearningAttemptRequest" needs to be exported by the entry point node.d.ts
     // Warning: (ae-forgotten-export) The symbol "GetLearningAttemptResponse" needs to be exported by the entry point node.d.ts
-    //
-    // (undocumented)
     get(request: GetLearningAttemptRequest, options?: RequestOptions): Promise<GetLearningAttemptResponse>;
     // Warning: (ae-forgotten-export) The symbol "ListLearningAttemptsRequest" needs to be exported by the entry point node.d.ts
     // Warning: (ae-forgotten-export) The symbol "ListLearningAttemptsResponse" needs to be exported by the entry point node.d.ts
-    //
-    // (undocumented)
     list(request: ListLearningAttemptsRequest, options?: RequestOptions): Promise<ListLearningAttemptsResponse>;
     // Warning: (ae-forgotten-export) The symbol "MutateLearningAttemptRequest" needs to be exported by the entry point node.d.ts
     // Warning: (ae-forgotten-export) The symbol "MutateLearningAttemptResponse" needs to be exported by the entry point node.d.ts
-    //
-    // (undocumented)
     retry(request: MutateLearningAttemptRequest, options?: RequestOptions): Promise<MutateLearningAttemptResponse>;
 }
 
@@ -634,23 +582,15 @@ export interface LearningAttempts {
 export interface LearningProposals {
     // Warning: (ae-forgotten-export) The symbol "DecideLearningProposalRequest" needs to be exported by the entry point node.d.ts
     // Warning: (ae-forgotten-export) The symbol "DecideLearningProposalResponse" needs to be exported by the entry point node.d.ts
-    //
-    // (undocumented)
     decide(request: DecideLearningProposalRequest, options?: RequestOptions): Promise<DecideLearningProposalResponse>;
     // Warning: (ae-forgotten-export) The symbol "GetLearningProposalRequest" needs to be exported by the entry point node.d.ts
     // Warning: (ae-forgotten-export) The symbol "GetLearningProposalResponse" needs to be exported by the entry point node.d.ts
-    //
-    // (undocumented)
     get(request: GetLearningProposalRequest, options?: RequestOptions): Promise<GetLearningProposalResponse>;
     // Warning: (ae-forgotten-export) The symbol "ListLearningProposalsRequest" needs to be exported by the entry point node.d.ts
     // Warning: (ae-forgotten-export) The symbol "ListLearningProposalsResponse" needs to be exported by the entry point node.d.ts
-    //
-    // (undocumented)
     list(request: ListLearningProposalsRequest, options?: RequestOptions): Promise<ListLearningProposalsResponse>;
     // Warning: (ae-forgotten-export) The symbol "UndoLearningPromotionRequest" needs to be exported by the entry point node.d.ts
     // Warning: (ae-forgotten-export) The symbol "UndoLearningPromotionResponse" needs to be exported by the entry point node.d.ts
-    //
-    // (undocumented)
     undoPromotion(request: UndoLearningPromotionRequest, options?: RequestOptions): Promise<UndoLearningPromotionResponse>;
 }
 
@@ -667,33 +607,21 @@ export const MAX_PROMPT_MEDIA_PARTS = 16;
 export interface McpInventory {
     // Warning: (ae-forgotten-export) The symbol "GetMcpPromptRequest" needs to be exported by the entry point node.d.ts
     // Warning: (ae-forgotten-export) The symbol "GetMcpPromptResponse" needs to be exported by the entry point node.d.ts
-    //
-    // (undocumented)
     getPrompt(request: GetMcpPromptRequest, options?: RequestOptions): Promise<GetMcpPromptResponse>;
     // Warning: (ae-forgotten-export) The symbol "ListMcpPromptsRequest" needs to be exported by the entry point node.d.ts
     // Warning: (ae-forgotten-export) The symbol "ListMcpPromptsResponse" needs to be exported by the entry point node.d.ts
-    //
-    // (undocumented)
     listPrompts(request: ListMcpPromptsRequest, options?: RequestOptions): Promise<ListMcpPromptsResponse>;
     // Warning: (ae-forgotten-export) The symbol "ListMcpResourcesRequest" needs to be exported by the entry point node.d.ts
     // Warning: (ae-forgotten-export) The symbol "ListMcpResourcesResponse" needs to be exported by the entry point node.d.ts
-    //
-    // (undocumented)
     listResources(request: ListMcpResourcesRequest, options?: RequestOptions): Promise<ListMcpResourcesResponse>;
     // Warning: (ae-forgotten-export) The symbol "ListMcpSourcesRequest" needs to be exported by the entry point node.d.ts
     // Warning: (ae-forgotten-export) The symbol "ListMcpSourcesResponse" needs to be exported by the entry point node.d.ts
-    //
-    // (undocumented)
     listSources(request: ListMcpSourcesRequest, options?: RequestOptions): Promise<ListMcpSourcesResponse>;
     // Warning: (ae-forgotten-export) The symbol "ListToolHiveGroupsRequest" needs to be exported by the entry point node.d.ts
     // Warning: (ae-forgotten-export) The symbol "ListToolHiveGroupsResponse" needs to be exported by the entry point node.d.ts
-    //
-    // (undocumented)
     listToolHiveGroups(request: ListToolHiveGroupsRequest, options?: RequestOptions): Promise<ListToolHiveGroupsResponse>;
     // Warning: (ae-forgotten-export) The symbol "ReadMcpResourceRequest" needs to be exported by the entry point node.d.ts
     // Warning: (ae-forgotten-export) The symbol "ReadMcpResourceResponse" needs to be exported by the entry point node.d.ts
-    //
-    // (undocumented)
     readResource(request: ReadMcpResourceRequest, options?: RequestOptions): Promise<ReadMcpResourceResponse>;
 }
 
@@ -718,40 +646,31 @@ export class MecatlError extends Error {
     readonly requestId: string | undefined;
     // (undocumented)
     readonly status: number | undefined;
-    // (undocumented)
     toJSON(): Record<string, unknown>;
     // (undocumented)
     readonly transport: ErrorOrigin;
 }
 
-// @public (undocumented)
+// @public
 export type MecatlErrorCode = ServerErrorCode | SDKErrorCode;
 
-// @public (undocumented)
+// @public
 export interface MecatlErrorOptions {
-    // (undocumented)
     cause?: unknown;
-    // (undocumented)
     code: MecatlErrorCode;
-    // (undocumented)
     requestId?: string | undefined;
-    // (undocumented)
     status?: number | undefined;
-    // (undocumented)
     transport: ErrorOrigin;
 }
 
 // @public
 export interface MediaPartOptions extends MediaPartSource {
-    // (undocumented)
     mimeType: string;
 }
 
 // @public
 export interface MediaPartSource {
-    // (undocumented)
     bytes?: Uint8Array;
-    // (undocumented)
     url?: string;
 }
 
@@ -767,8 +686,6 @@ export interface ModelRetryEventPayload {
 export interface Models {
     // Warning: (ae-forgotten-export) The symbol "ListModelsRequest" needs to be exported by the entry point node.d.ts
     // Warning: (ae-forgotten-export) The symbol "ListModelsResponse" needs to be exported by the entry point node.d.ts
-    //
-    // (undocumented)
     list(request: ListModelsRequest, options?: RequestOptions): Promise<ListModelsResponse>;
 }
 
@@ -780,12 +697,12 @@ export interface NodeClient extends Client {
 // @public
 export type NodeConnectOptions = (NodeTransportOptions | InjectedTransportOptions) & ClientDiagnosticsOptions;
 
-// @public (undocumented)
+// @public
 export interface NodeTransportCommonOptions extends CredentialOptions {
     nodeOptions?: Omit<ClientSessionOptions, "createConnection">;
 }
 
-// @public (undocumented)
+// @public
 export type NodeTransportOptions = NodeTransportCommonOptions & ({
     baseUrl: string;
     socketPath?: never;
@@ -923,7 +840,7 @@ export class PromptValidationError extends MecatlError {
 // @public
 export type PromptValidationReason = "capability" | "mime_type" | "prompt" | "size" | "source_xor" | "url";
 
-// @public (undocumented)
+// @public
 export class ProtocolError extends MecatlError {
     constructor(message: string, options: Omit<MecatlErrorOptions, "code">);
 }
@@ -950,13 +867,11 @@ export interface QueryOptions {
 // @public
 export interface RawClient {
     features(options?: CallOptions): Promise<ReadonlySet<string>>;
-    // (undocumented)
     stream<I extends DescMessage, O extends DescMessage>(method: DescMethodStreaming<I, O>, input: AsyncIterable<MessageInitShape<I>>, options?: CallOptions): AsyncIterable<MessageShape<O>>;
-    // (undocumented)
     unary<I extends DescMessage, O extends DescMessage>(method: DescMethodUnary<I, O>, input: MessageInitShape<I>, options?: CallOptions): Promise<MessageShape<O>>;
 }
 
-// @public (undocumented)
+// @public
 export interface RawClientOptions {
     transport: Transport;
     transportKind?: TransportKind;
@@ -966,8 +881,6 @@ export interface RawClientOptions {
 export interface Reflection {
     // Warning: (ae-forgotten-export) The symbol "ReflectSessionRequest" needs to be exported by the entry point node.d.ts
     // Warning: (ae-forgotten-export) The symbol "ReflectSessionResponse" needs to be exported by the entry point node.d.ts
-    //
-    // (undocumented)
     reflect(request: ReflectSessionRequest, options?: RequestOptions): Promise<ReflectSessionResponse>;
 }
 
@@ -1010,7 +923,6 @@ export interface Run extends AsyncIterable<Event_2> {
 
 // @public
 export interface RunOptions {
-    // (undocumented)
     onPermissionAsk?: PermissionAskResponder;
     onPlanApproval?: PlanApprovalResponder;
 }
@@ -1051,63 +963,43 @@ export interface ScheduleEventPayload {
 export interface Schedules {
     // Warning: (ae-forgotten-export) The symbol "CreateScheduleRequest" needs to be exported by the entry point node.d.ts
     // Warning: (ae-forgotten-export) The symbol "CreateScheduleResponse" needs to be exported by the entry point node.d.ts
-    //
-    // (undocumented)
     create(request: CreateScheduleRequest, options?: RequestOptions): Promise<CreateScheduleResponse>;
     // Warning: (ae-forgotten-export) The symbol "DeleteScheduleRequest" needs to be exported by the entry point node.d.ts
     // Warning: (ae-forgotten-export) The symbol "DeleteScheduleResponse" needs to be exported by the entry point node.d.ts
-    //
-    // (undocumented)
     delete(request: DeleteScheduleRequest, options?: RequestOptions): Promise<DeleteScheduleResponse>;
     // Warning: (ae-forgotten-export) The symbol "FireNowRequest" needs to be exported by the entry point node.d.ts
     // Warning: (ae-forgotten-export) The symbol "FireNowResponse" needs to be exported by the entry point node.d.ts
-    //
-    // (undocumented)
     fireNow(request: FireNowRequest, options?: RequestOptions): Promise<FireNowResponse>;
     // Warning: (ae-forgotten-export) The symbol "GetScheduleRequest" needs to be exported by the entry point node.d.ts
     // Warning: (ae-forgotten-export) The symbol "GetScheduleResponse" needs to be exported by the entry point node.d.ts
-    //
-    // (undocumented)
     get(request: GetScheduleRequest, options?: RequestOptions): Promise<GetScheduleResponse>;
     // Warning: (ae-forgotten-export) The symbol "GetFireRequest" needs to be exported by the entry point node.d.ts
     // Warning: (ae-forgotten-export) The symbol "GetFireResponse" needs to be exported by the entry point node.d.ts
-    //
-    // (undocumented)
     getFire(request: GetFireRequest, options?: RequestOptions): Promise<GetFireResponse>;
     // Warning: (ae-forgotten-export) The symbol "ListSchedulesRequest" needs to be exported by the entry point node.d.ts
     // Warning: (ae-forgotten-export) The symbol "ListSchedulesResponse" needs to be exported by the entry point node.d.ts
-    //
-    // (undocumented)
     list(request: ListSchedulesRequest, options?: RequestOptions): Promise<ListSchedulesResponse>;
     // Warning: (ae-forgotten-export) The symbol "ListFiresRequest" needs to be exported by the entry point node.d.ts
     // Warning: (ae-forgotten-export) The symbol "ListFiresResponse" needs to be exported by the entry point node.d.ts
-    //
-    // (undocumented)
     listFires(request: ListFiresRequest, options?: RequestOptions): Promise<ListFiresResponse>;
     // Warning: (ae-forgotten-export) The symbol "PauseScheduleRequest" needs to be exported by the entry point node.d.ts
     // Warning: (ae-forgotten-export) The symbol "PauseScheduleResponse" needs to be exported by the entry point node.d.ts
-    //
-    // (undocumented)
     pause(request: PauseScheduleRequest, options?: RequestOptions): Promise<PauseScheduleResponse>;
     // Warning: (ae-forgotten-export) The symbol "ResumeScheduleRequest" needs to be exported by the entry point node.d.ts
     // Warning: (ae-forgotten-export) The symbol "ResumeScheduleResponse" needs to be exported by the entry point node.d.ts
-    //
-    // (undocumented)
     resume(request: ResumeScheduleRequest, options?: RequestOptions): Promise<ResumeScheduleResponse>;
     // Warning: (ae-forgotten-export) The symbol "UpdateScheduleRequest" needs to be exported by the entry point node.d.ts
     // Warning: (ae-forgotten-export) The symbol "UpdateScheduleResponse" needs to be exported by the entry point node.d.ts
-    //
-    // (undocumented)
     update(request: UpdateScheduleRequest, options?: RequestOptions): Promise<UpdateScheduleResponse>;
 }
 
 // @public
 export type SdkCursor = string;
 
-// @public (undocumented)
+// @public
 export type SDKErrorCode = "authentication" | "cursor_scope" | "incompatible_server" | "invalid_prompt" | "invalid_state" | "no_runs" | "plan_continuation_start" | "protocol" | "readiness_timeout" | "spawn_failed" | "tool_registration" | "transport" | "unsupported_platform" | "unsupported_feature";
 
-// @public (undocumented)
+// @public
 export class ServerError extends MecatlError {
     constructor(message: string, options: Omit<MecatlErrorOptions, "code"> & {
         code: ServerErrorCode;
@@ -1116,7 +1008,7 @@ export class ServerError extends MecatlError {
     readonly code: ServerErrorCode;
 }
 
-// @public (undocumented)
+// @public
 export type ServerErrorCode = (typeof MECATL_ERROR_CODES)[number] | "unknown";
 
 // @public
@@ -1147,40 +1039,27 @@ export class SessionBusyError extends InvalidStateError {
 
 // @public
 export interface SessionLimits {
-    // (undocumented)
     maxConsecutiveFailures?: number;
-    // (undocumented)
     maxToolCalls?: number;
-    // (undocumented)
     maxTurns?: number;
 }
 
 // @public
 export interface SessionMcpServer {
-    // (undocumented)
     command?: string;
-    // (undocumented)
     headers?: Record<string, string>;
-    // (undocumented)
     name?: string;
-    // (undocumented)
     type?: string;
-    // (undocumented)
     url?: string;
 }
 
 // @public
 export interface Sessions {
-    // (undocumented)
     create(options: CreateSessionOptions): Promise<Session>;
-    // (undocumented)
     fork(sourceSessionId: string, options?: ForkSessionOptions): Promise<Session>;
-    // (undocumented)
     get(sessionId: string): Promise<Session>;
     // Warning: (ae-forgotten-export) The symbol "ListSessionsRequest" needs to be exported by the entry point node.d.ts
     // Warning: (ae-forgotten-export) The symbol "ListSessionsResponse" needs to be exported by the entry point node.d.ts
-    //
-    // (undocumented)
     list(request: ListSessionsRequest, options?: RequestOptions): Promise<ListSessionsResponse>;
 }
 
@@ -1202,8 +1081,6 @@ export interface SessionTitleEventPayload {
 export interface Skills {
     // Warning: (ae-forgotten-export) The symbol "ListSkillsRequest" needs to be exported by the entry point node.d.ts
     // Warning: (ae-forgotten-export) The symbol "ListSkillsResponse" needs to be exported by the entry point node.d.ts
-    //
-    // (undocumented)
     list(request: ListSkillsRequest, options?: RequestOptions): Promise<ListSkillsResponse>;
 }
 
@@ -1211,8 +1088,6 @@ export interface Skills {
 export interface Soul {
     // Warning: (ae-forgotten-export) The symbol "GetSoulRequest" needs to be exported by the entry point node.d.ts
     // Warning: (ae-forgotten-export) The symbol "GetSoulResponse" needs to be exported by the entry point node.d.ts
-    //
-    // (undocumented)
     get(request: GetSoulRequest, options?: RequestOptions): Promise<GetSoulResponse>;
 }
 
@@ -1261,48 +1136,28 @@ export interface SteerOutcomeEventPayload {
 interface Storage_2 {
     // Warning: (ae-forgotten-export) The symbol "ApplySessionCleanupRequest" needs to be exported by the entry point node.d.ts
     // Warning: (ae-forgotten-export) The symbol "CleanupJob" needs to be exported by the entry point node.d.ts
-    //
-    // (undocumented)
     applyCleanup(request: ApplySessionCleanupRequest, options?: RequestOptions): Promise<CleanupJob>;
     // Warning: (ae-forgotten-export) The symbol "ApplySessionMigrationRequest" needs to be exported by the entry point node.d.ts
     // Warning: (ae-forgotten-export) The symbol "SessionMigrationJob" needs to be exported by the entry point node.d.ts
-    //
-    // (undocumented)
     applyMigration(request: ApplySessionMigrationRequest, options?: RequestOptions): Promise<SessionMigrationJob>;
     // Warning: (ae-forgotten-export) The symbol "CancelSessionCleanupRequest" needs to be exported by the entry point node.d.ts
-    //
-    // (undocumented)
     cancelCleanup(request: CancelSessionCleanupRequest, options?: RequestOptions): Promise<CleanupJob>;
     // Warning: (ae-forgotten-export) The symbol "CancelSessionMigrationRequest" needs to be exported by the entry point node.d.ts
-    //
-    // (undocumented)
     cancelMigration(request: CancelSessionMigrationRequest, options?: RequestOptions): Promise<SessionMigrationJob>;
     // Warning: (ae-forgotten-export) The symbol "GetSessionCleanupJobRequest" needs to be exported by the entry point node.d.ts
-    //
-    // (undocumented)
     getCleanupJob(request: GetSessionCleanupJobRequest, options?: RequestOptions): Promise<CleanupJob>;
     // Warning: (ae-forgotten-export) The symbol "GetStorageHealthRequest" needs to be exported by the entry point node.d.ts
     // Warning: (ae-forgotten-export) The symbol "GetStorageHealthResponse" needs to be exported by the entry point node.d.ts
-    //
-    // (undocumented)
     getHealth(request: GetStorageHealthRequest, options?: RequestOptions): Promise<GetStorageHealthResponse>;
     // Warning: (ae-forgotten-export) The symbol "GetSessionMigrationJobRequest" needs to be exported by the entry point node.d.ts
-    //
-    // (undocumented)
     getMigrationJob(request: GetSessionMigrationJobRequest, options?: RequestOptions): Promise<SessionMigrationJob>;
     // Warning: (ae-forgotten-export) The symbol "PlanSessionCleanupRequest" needs to be exported by the entry point node.d.ts
     // Warning: (ae-forgotten-export) The symbol "PlanSessionCleanupResponse" needs to be exported by the entry point node.d.ts
-    //
-    // (undocumented)
     planCleanup(request: PlanSessionCleanupRequest, options?: RequestOptions): Promise<PlanSessionCleanupResponse>;
     // Warning: (ae-forgotten-export) The symbol "PlanSessionMigrationRequest" needs to be exported by the entry point node.d.ts
     // Warning: (ae-forgotten-export) The symbol "SessionMigrationPlan" needs to be exported by the entry point node.d.ts
-    //
-    // (undocumented)
     planMigration(request: PlanSessionMigrationRequest, options?: RequestOptions): Promise<SessionMigrationPlan>;
     // Warning: (ae-forgotten-export) The symbol "ResumeSessionMigrationRequest" needs to be exported by the entry point node.d.ts
-    //
-    // (undocumented)
     resumeMigration(request: ResumeSessionMigrationRequest, options?: RequestOptions): Promise<SessionMigrationJob>;
 }
 export { Storage_2 as Storage }
@@ -1350,36 +1205,25 @@ export interface SubagentEventPayload {
     readonly usage?: EventUsage | undefined;
 }
 
-// @public (undocumented)
+// @public
 export const SUPPORTED_API_MAJOR = 1;
 
 // @public
 export interface Team {
     // Warning: (ae-forgotten-export) The symbol "CancelTeammateResponse" needs to be exported by the entry point node.d.ts
-    //
-    // (undocumented)
     cancel(member: string, options?: RequestOptions): Promise<CancelTeammateResponse>;
     // Warning: (ae-forgotten-export) The symbol "CleanupTeamResponse" needs to be exported by the entry point node.d.ts
-    //
-    // (undocumented)
     cleanup(options?: RequestOptions): Promise<CleanupTeamResponse>;
     // (undocumented)
     readonly id: string;
     // Warning: (ae-forgotten-export) The symbol "TeamMember" needs to be exported by the entry point node.d.ts
     readonly initialMembers: readonly TeamMember[];
     // Warning: (ae-forgotten-export) The symbol "ListTeamResponse" needs to be exported by the entry point node.d.ts
-    //
-    // (undocumented)
     list(options?: RequestOptions): Promise<ListTeamResponse>;
     // Warning: (ae-forgotten-export) The symbol "SendTeammateMessageResponse" needs to be exported by the entry point node.d.ts
-    //
-    // (undocumented)
     message(message: TeamMessageOptions, options?: RequestOptions): Promise<SendTeammateMessageResponse>;
-    // (undocumented)
     run(options?: RequestOptions): TeamRun;
     // Warning: (ae-forgotten-export) The symbol "SpawnTeammateResponse" needs to be exported by the entry point node.d.ts
-    //
-    // (undocumented)
     spawn(member: TeamMemberOptions, options?: RequestOptions): Promise<SpawnTeammateResponse>;
 }
 
@@ -1452,15 +1296,10 @@ export interface TeamMemberDispositionEventPayload {
 
 // @public
 export interface TeamMemberOptions {
-    // (undocumented)
     agentType?: string;
-    // (undocumented)
     initialPrompt?: string;
-    // (undocumented)
     lead?: boolean;
-    // (undocumented)
     mutating?: boolean;
-    // (undocumented)
     name: string;
 }
 
@@ -1491,11 +1330,8 @@ export interface TeamMemberSpecEventPayload {
 
 // @public
 export interface TeamMessageOptions {
-    // (undocumented)
     body: string;
-    // (undocumented)
     from?: string;
-    // (undocumented)
     to: string;
 }
 
@@ -1521,7 +1357,6 @@ export type TeamRunEvent = TeamMemberRunEvent | TeamOutcomeRunEvent;
 
 // @public
 export interface Teams {
-    // (undocumented)
     create(request: CreateTeamOptions, options?: RequestOptions): Promise<Team>;
 }
 
@@ -1624,12 +1459,12 @@ export type ToolSchema = boolean | Readonly<Record<string, ToolJsonValue>>;
 
 export { Transport }
 
-// @public (undocumented)
+// @public
 export class TransportError extends MecatlError {
     constructor(message: string, options: Omit<MecatlErrorOptions, "code">);
 }
 
-// @public (undocumented)
+// @public
 export type TransportKind = "grpc" | "http";
 
 // @public
@@ -1677,7 +1512,7 @@ export interface UnknownWatchEnvelope {
     readonly phase: string;
 }
 
-// @public (undocumented)
+// @public
 export class UnsupportedFeatureError extends MecatlError {
     constructor(feature: string, options: Omit<MecatlErrorOptions, "code">);
     // (undocumented)
@@ -1688,8 +1523,6 @@ export class UnsupportedFeatureError extends MecatlError {
 export interface UserModel {
     // Warning: (ae-forgotten-export) The symbol "GetUserModelRequest" needs to be exported by the entry point node.d.ts
     // Warning: (ae-forgotten-export) The symbol "GetUserModelResponse" needs to be exported by the entry point node.d.ts
-    //
-    // (undocumented)
     get(request: GetUserModelRequest, options?: RequestOptions): Promise<GetUserModelResponse>;
 }
 
@@ -1741,8 +1574,6 @@ export function withSessionAffinity(sessionId: string, options?: CallOptions): C
 export interface Worktrees {
     // Warning: (ae-forgotten-export) The symbol "ListWorktreesRequest" needs to be exported by the entry point node.d.ts
     // Warning: (ae-forgotten-export) The symbol "ListWorktreesResponse" needs to be exported by the entry point node.d.ts
-    //
-    // (undocumented)
     list(request: ListWorktreesRequest, options?: RequestOptions): Promise<ListWorktreesResponse>;
 }
 

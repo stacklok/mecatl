@@ -52,6 +52,7 @@
     "examples:typecheck": "tsc -p examples/tsconfig.json",
     "api:check": "api-extractor run --config api-extractor.json && api-extractor run --config api-extractor.node.json",
     "api:update": "api-extractor run --local --config api-extractor.json && api-extractor run --local --config api-extractor.node.json",
+    "docs:generate": "node scripts/generate-api-docs.mjs",
     "prepack": "pnpm run build"
   },
   "devDependencies": {

@@ -15,6 +15,8 @@ behavior:
   behavior defined by the protobuf contracts.
 - [HTTP and SSE API reference](./http-sse-api.md) lists the handwritten HTTP
   routes and SSE stream behavior.
+- [TypeScript SDK API reference](./typescript-sdk-api/index.md) lists the
+  published package entry points, methods, types, and errors.
 
 For task-oriented instructions, start with [Building on Mecatl](/building/index.md)
 or [Use mecatui](/mecatui/index.md).

@@ -11,12 +11,15 @@ export const MAX_PROMPT_MEDIA_PARTS = 16;
 
 /** The source accepted by imagePart() and audioPart(). Exactly one field is required. @public */
 export interface MediaPartSource {
+  /** Inline media bytes. */
   bytes?: Uint8Array;
+  /** Absolute HTTPS media URL. */
   url?: string;
 }
 
 /** Options accepted by imagePart() and audioPart(). @public */
 export interface MediaPartOptions extends MediaPartSource {
+  /** Media type beginning with `image/` or `audio/` for the selected helper. */
   mimeType: string;
 }
 
@@ -48,22 +51,50 @@ export type PromptPart = TextPromptPart | ImagePromptPart | AudioPromptPart;
 /** A backwards-compatible string prompt or structured text/media parts. @public */
 export type PromptInput = string | readonly PromptPart[];
 
-/** Construct a text segment for a structured prompt. @public */
+/**
+ * Constructs a text segment for a structured prompt.
+ *
+ * @param text - Text to send in this prompt segment.
+ * @returns A text prompt part.
+ * @public
+ */
 export function textPart(text: string): TextPromptPart {
   return { kind: "text", text };
 }
 
-/** Construct an image part from inline bytes or an HTTPS URL. @public */
+/**
+ * Constructs an image part from inline bytes or an HTTPS URL.
+ *
+ * @param options - Image source and MIME type.
+ * @returns A validated image prompt part.
+ * @throws `PromptValidationError` when the source, MIME type, or size is invalid.
+ * @public
+ */
 export function imagePart(options: MediaPartOptions): ImagePromptPart {
   return mediaPart("image", options);
 }
 
-/** Construct an audio part from inline bytes or an HTTPS URL. @public */
+/**
+ * Constructs an audio part from inline bytes or an HTTPS URL.
+ *
+ * @param options - Audio source and MIME type.
+ * @returns A validated audio prompt part.
+ * @throws `PromptValidationError` when the source, MIME type, or size is invalid.
+ * @public
+ */
 export function audioPart(options: MediaPartOptions): AudioPromptPart {
   return mediaPart("audio", options);
 }
 
-/** Construct an image part from a browser Blob or File. @public */
+/**
+ * Constructs an image part from a browser Blob or File.
+ *
+ * @param blob - Browser media value to read.
+ * @param mimeType - Image MIME type. Defaults to the Blob's type.
+ * @returns A validated image prompt part containing the Blob's bytes.
+ * @throws `PromptValidationError` when the MIME type or size is invalid.
+ * @public
+ */
 export async function imagePartFromBlob(
   blob: Blob,
   mimeType: string = blob.type,
@@ -71,7 +102,15 @@ export async function imagePartFromBlob(
   return imagePart({ bytes: new Uint8Array(await blob.arrayBuffer()), mimeType });
 }
 
-/** Construct an audio part from a browser Blob or File. @public */
+/**
+ * Constructs an audio part from a browser Blob or File.
+ *
+ * @param blob - Browser media value to read.
+ * @param mimeType - Audio MIME type. Defaults to the Blob's type.
+ * @returns A validated audio prompt part containing the Blob's bytes.
+ * @throws `PromptValidationError` when the MIME type or size is invalid.
+ * @public
+ */
 export async function audioPartFromBlob(
   blob: Blob,
   mimeType: string = blob.type,

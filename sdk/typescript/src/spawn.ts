@@ -59,7 +59,7 @@ export interface SpawnOptions extends ClientDiagnosticsOptions {
   env?: Readonly<NodeJS.ProcessEnv>;
   /** Also expose the daemon's HTTP/SSE listener on an ephemeral loopback port. */
   http?: boolean;
-  /** Disable the inherited parent-liveness descriptor. Enabled by default. */
+  /** Keep the daemon tied to the parent-liveness descriptor. Defaults to `true`. */
   lifetimePipe?: boolean;
   /** Deadline for publication of a complete supported ready document. */
   readinessTimeoutMs?: number;
@@ -869,7 +869,16 @@ export async function spawnInternal(
   }
 }
 
-/** Starts one local mecated daemon and resolves after its ready-file barrier. @public */
+/**
+ * Starts one local `mecated` daemon and resolves when it reports that it is ready.
+ *
+ * @param options - Executable, environment, daemon, readiness, and diagnostic options.
+ * @returns A client that owns the ready daemon and its private runtime directory.
+ * @throws `MecatlError` with `unsupported_platform` on an unsupported operating system.
+ * @throws `MecatlError` with `spawn_failed` when the daemon cannot start correctly.
+ * @throws `MecatlError` with `readiness_timeout` when a live daemon misses its deadline.
+ * @public
+ */
 export function spawn(options: SpawnOptions = {}): Promise<SpawnedClient> {
   return spawnInternal(options);
 }

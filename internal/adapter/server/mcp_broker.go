@@ -24,16 +24,26 @@ type localBrokerAttachment struct {
 	owned      bool
 }
 
-func brokerTools(local *localBrokerAttachment) []tool.Tool {
-	if local == nil {
-		return nil
-	}
-	tools := local.attachment.Tools()
-	if query, ok := local.attachment.(interface{ CallMcpWithQueryTool() tool.Tool }); ok {
+// withAttachmentQueryTool appends the attachment-bound CallMcpWithQuery wrapper
+// to tools, if the attachment exposes one, mirroring brokerTools' own addition.
+// RefreshGrantedAuthorizationCatalogue only returns the declared/authenticated
+// catalogue tools, so a caller rebuilding a session engine from its exact tools
+// must add this separately, or a parked CallMcpWithQuery call resumes into a
+// catalogue that no longer has it registered.
+func withAttachmentQueryTool(attachment brokercontract.Attachment, tools []tool.Tool) []tool.Tool {
+	if query, ok := attachment.(interface{ CallMcpWithQueryTool() tool.Tool }); ok {
 		if candidate := query.CallMcpWithQueryTool(); candidate != nil {
 			tools = append(tools, candidate)
 		}
 	}
+	return tools
+}
+
+func brokerTools(local *localBrokerAttachment) []tool.Tool {
+	if local == nil {
+		return nil
+	}
+	tools := withAttachmentQueryTool(local.attachment, local.attachment.Tools())
 	return tools
 }
 

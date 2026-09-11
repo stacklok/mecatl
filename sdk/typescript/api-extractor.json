@@ -12,7 +12,8 @@
     "reportTempFolder": "<projectFolder>/.api-extractor-temp"
   },
   "docModel": {
-    "enabled": false
+    "enabled": true,
+    "apiJsonFilePath": "<projectFolder>/.api-extractor-temp/models/core/mecatl-sdk.api.json"
   },
   "dtsRollup": {
     "enabled": false
