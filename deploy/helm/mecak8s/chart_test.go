@@ -1757,7 +1757,7 @@ func TestMecak8sHelmChart_XDGImageVolumeSkillMount(t *testing.T) {
 func TestMecak8sHelmChart_OpenAIProjectedServiceAccountToken(t *testing.T) {
 	rendered, err := renderMCPValues(t, `
 extraArgs:
-  - --openai-base-url=https://llm-gateway.stacklok.dev/v1
+  - --openai-base-url=https://llm-gateway.example.com/v1
   - --openai-bearer-token-file=/var/run/secrets/llm-gateway/token
 extraVolumes:
   - name: llm-gateway-token
@@ -1778,7 +1778,7 @@ extraVolumeMounts:
 	deployment := deploymentFromRender(t, rendered)
 	container := deployment.Spec.Template.Spec.Containers[0]
 	for _, arg := range []string{
-		"--openai-base-url=https://llm-gateway.stacklok.dev/v1",
+		"--openai-base-url=https://llm-gateway.example.com/v1",
 		"--openai-bearer-token-file=/var/run/secrets/llm-gateway/token",
 	} {
 		if !slices.Contains(container.Args, arg) {

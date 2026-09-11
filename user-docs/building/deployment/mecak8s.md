@@ -238,7 +238,7 @@ ServiceAccount token and pass an explicit gateway base URL with the bearer file:
 
 ```yaml
 extraArgs:
-  - --openai-base-url=https://llm-gateway.stacklok.dev/v1
+  - --openai-base-url=https://llm-gateway.example.com/v1
   - --openai-bearer-token-file=/var/run/secrets/llm-gateway/token
 extraVolumes:
   - name: llm-gateway-token

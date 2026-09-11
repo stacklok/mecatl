@@ -105,13 +105,13 @@ task slack-bot:dev
 ### Connecting to a remote, OIDC-gated deployment instead
 
 Point the bot at a real deployed backend (for example the shared staging
-`mecak8s`, `mecak8s.stacklok.dev:443`) instead of a local `mecated` by
+`mecak8s`, `mecak8s.example.com:443`) instead of a local `mecated` by
 setting `MECATL_GRPC_TLS=true`. This switches the target to `https://` and
 requires an OAuth2 client_credentials M2M credential, which the bot uses to
 mint and refresh a bearer token per call (`src/m2mToken.ts`):
 
 ```sh
-export MECATL_GRPC_ADDRESS=mecak8s.stacklok.dev:443
+export MECATL_GRPC_ADDRESS=mecak8s.example.com:443
 export MECATL_GRPC_TLS=true
 export MECAK8S_OIDC_TOKEN_URL=https://<okta-org>/oauth2/<auth-server-id>/v1/token
 export MECAK8S_OIDC_CLIENT_ID=...
