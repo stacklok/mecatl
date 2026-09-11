@@ -1,4 +1,4 @@
-# ADR 0326 — Native LLM endpoint gateway credentials
+# ADR 0327 — Native LLM endpoint gateway credentials
 
 - Status: Accepted
 - Date: 2026-09-10
