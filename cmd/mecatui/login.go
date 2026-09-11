@@ -112,7 +112,12 @@ func runRemoteLogin(address string, args []string) error {
 		if tlsCA != "" || privateIssuer {
 			return errors.New("login: --tls-ca and --private-issuer require explicit --issuer, --client-id, and --audience")
 		}
-		return runDiscoveredRemoteLogin(address, grpcTarget, serverCAFile, flagWasSet(fs, "scopes"), noBrowser, timeout, storeMode)
+		return runDiscoveredRemoteLogin(
+			address,      // resourceAddress
+			grpcTarget,   // discoveryGRPCTargetOverride
+			serverCAFile, // savedServerCAFile
+			flagWasSet(fs, "scopes"), noBrowser, timeout, storeMode,
+		)
 	}
 	if issuer == "" || clientID == "" || audience == "" {
 		return errors.New("login: --issuer, --client-id, and --audience are required together")

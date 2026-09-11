@@ -2,16 +2,8 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/rsa"
-	"encoding/base64"
-	"encoding/json"
-	"encoding/pem"
 	"errors"
-	"math/big"
 	"net"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -520,30 +512,7 @@ func TestResolveTransportUsesPersistedServerCAWithExplicitOverride(t *testing.T)
 	xdg.ConfigHome = t.TempDir()
 	t.Cleanup(func() { xdg.ConfigHome = oldConfigHome })
 
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var issuer *httptest.Server
-	issuer = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/.well-known/openid-configuration":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"issuer": issuer.URL, "authorization_endpoint": issuer.URL + "/authorize",
-				"token_endpoint": issuer.URL + "/token", "jwks_uri": issuer.URL + "/keys",
-				"code_challenge_methods_supported": []string{"S256"},
-			})
-		case "/keys":
-			_ = json.NewEncoder(w).Encode(map[string]any{"keys": []map[string]string{{
-				"kty": "RSA", "use": "sig", "alg": "RS256", "kid": "transport-test",
-				"n": base64.RawURLEncoding.EncodeToString(key.N.Bytes()),
-				"e": base64.RawURLEncoding.EncodeToString(big.NewInt(int64(key.E)).Bytes()),
-			}}})
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	t.Cleanup(issuer.Close)
+	issuer := newOIDCTestIssuer(t, "transport-test", nil)
 
 	root := filepath.Join(xdg.ConfigHome, "mecatl")
 	issuerCA := filepath.Join(root, "issuer-ca.pem")
@@ -552,12 +521,9 @@ func TestResolveTransportUsesPersistedServerCAWithExplicitOverride(t *testing.T)
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	issuerPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: issuer.Certificate().Raw})
-	if err := os.WriteFile(issuerCA, issuerPEM, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	issuer.writeCA(t, issuerCA)
 	id := clientauth.Identity{
-		Target: "saved.example:443", Issuer: issuer.URL, ClientID: "client", Audience: "audience",
+		Target: "saved.example:443", Issuer: issuer.Server.URL, ClientID: "client", Audience: "audience",
 		RedirectURI: "http://127.0.0.1:18473/oauth/callback", Scopes: []string{"openid"},
 	}
 	registry, err := clientauth.OpenRegistry(root)
