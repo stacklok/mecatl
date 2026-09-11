@@ -19,8 +19,8 @@ type BearerSource interface {
 
 // NewGatewayHTTPClient returns a redirect-refusing client whose transport
 // validates the configured gateway origin and base-path boundary before asking
-// for a bearer. A 401 is retried once, before the response is returned to the
-// streaming decoder.
+// for a bearer. A 401 for a replayable request is retried once before the
+// response is returned to the streaming decoder.
 func NewGatewayHTTPClient(canonicalBase string, source BearerSource, base http.RoundTripper) (*http.Client, error) {
 	validated, err := CanonicalGatewayURL(canonicalBase)
 	if err != nil || validated != canonicalBase || source == nil {
@@ -60,6 +60,9 @@ func (t *gatewayBearerTransport) RoundTrip(req *http.Request) (*http.Response, e
 	resp, err := t.base.RoundTrip(first)
 	if err != nil || resp.StatusCode != http.StatusUnauthorized {
 		return resp, err
+	}
+	if req.Body != nil && req.GetBody == nil {
+		return resp, nil
 	}
 	_ = resp.Body.Close()
 	refreshed, err := t.source.Refresh(req.Context(), token)

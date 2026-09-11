@@ -5,7 +5,7 @@ package llmendpoint
 import (
 	"errors"
 	"net/url"
-	"sort"
+	"slices"
 )
 
 // OIDC identifies the native endpoint's exact authorization-server contract.
@@ -34,19 +34,14 @@ func NormalizeScopes(scopes []string) ([]string, error) {
 	if len(scopes) == 0 {
 		return nil, errors.New("at least one OAuth scope is required")
 	}
-	set := make(map[string]struct{}, len(scopes))
-	for _, scope := range scopes {
+	out := slices.Clone(scopes)
+	for _, scope := range out {
 		if scope == "" || !validScope(scope) {
 			return nil, errors.New("invalid OAuth scope")
 		}
-		set[scope] = struct{}{}
 	}
-	out := make([]string, 0, len(set))
-	for scope := range set {
-		out = append(out, scope)
-	}
-	sort.Strings(out)
-	return out, nil
+	slices.Sort(out)
+	return slices.Compact(out), nil
 }
 
 func validScope(scope string) bool {
