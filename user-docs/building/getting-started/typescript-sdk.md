@@ -14,11 +14,22 @@ credentials.
 
 You need:
 
+- macOS or Linux with [Homebrew](https://brew.sh/);
 - Node.js 22 or later;
-- an executable `mecated` on `PATH`, installed through the
-  [Mecatl installation guide](/install.md);
 - a GitHub personal access token with `read:packages`; and
 - access to the internal `stacklok/mecatl` repository and its package.
+
+## Install `mecated`
+
+Install the released `mecated` executable from Stacklok's Homebrew tap, then
+verify that it is available on `PATH`:
+
+```sh
+brew install stacklok/tap/mecatl
+mecated --version
+```
+
+The version command prints the installed release tag.
 
 ## Create a project
 

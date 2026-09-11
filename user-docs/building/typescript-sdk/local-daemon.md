@@ -12,9 +12,17 @@ cleanup.
 
 ## Prerequisites
 
-You need Node.js 22 or Bun 1.4 on macOS or Linux and an executable `mecated`.
-The SDK locates the binary from `binaryPath`, then `MECATED_BIN`, then `PATH`.
-It does not download a binary.
+You need Node.js 22 or Bun 1.4 on macOS or Linux. Install `mecated` from
+Stacklok's Homebrew tap, then verify that it is available on `PATH`:
+
+```sh
+brew install stacklok/tap/mecatl
+mecated --version
+```
+
+For release archives and source builds, see [Install Mecatl](/install.md). The
+SDK locates the binary from `binaryPath`, then `MECATED_BIN`, then `PATH`. It
+does not download a binary.
 
 ## Start a daemon with `spawn()`
 
