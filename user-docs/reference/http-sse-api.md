@@ -214,7 +214,7 @@ string: `""` = default, `"no-fs"`). Rules, all enforced server-side:
 - `"no-fs"` binds the server's filesystem-free placement; no workspace field exists.
   Omitted profile binds the server's deployment default.
 - Any other profile value is rejected loudly — never a silent fallback.
-- The no-FS session has **no** Read/ListDir/Edit/Write/Copy/Move/Remove/Grep/Glob/Bash/BashStatus, no
+- The no-FS session has **no** Read/ListDir/Edit/Write/Copy/Move/Remove/Grep/Glob/Shell/ShellStatus, no
   Parallel, and no SkillDraft. It keeps MCP tools (server-global + resource meta-tools +
   client MCP), the six memory tools, WebFetch, WebSearch, Skill (bodies are text
   injection; out-of-workspace skill assets are unreadable), and delegation —

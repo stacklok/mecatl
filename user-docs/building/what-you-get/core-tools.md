@@ -76,8 +76,8 @@ rules or guardrails when queries need an additional exfiltration control.
 
 :::
 
-An operator can disable shell access for the entire deployment. `mecated --no-bash`
-removes the `Bash` tool, and `--shell ""` has the same effect. This applies whether or
+An operator can disable shell access for the entire deployment. `mecated --no-shell`
+removes the `Shell` tool, and `--shell ""` has the same effect. This applies whether or
 not a client requests the `no-fs` session profile. See [Run mecated
 standalone](/building/deployment/mecated.md#flag-reference).
 
