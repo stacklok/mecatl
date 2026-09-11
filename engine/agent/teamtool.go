@@ -612,7 +612,7 @@ func projectTeamEvent(parentCallID, teamID string, te TeamEvent) (session.Event,
 	case session.EvTurnEnd:
 		if ev.TurnEnd != nil {
 			base.Usage = ev.TurnEnd.Usage
-			// The per-member context meter (ctrl+a overlay) reads the CURRENT context
+			// The per-member context meter (f6 overlay) reads the CURRENT context
 			// occupancy — this turn's input-token count — as its numerator, and the
 			// producing member engine's window as its denominator. Both ride the
 			// turn.end projection so a client can draw a band bar per member lane.
@@ -739,7 +739,7 @@ func projectTeamTasksSnapshot(tasks []team.Task) []session.TeamTaskSnapshot {
 }
 
 // projectTeamTasks wraps a task snapshot in a first-class EvTeamTasks event — the
-// team-WIDE projection the client routes to the ctrl+a task sub-view. It carries no
+// team-WIDE projection the client routes to the f6 task sub-view. It carries no
 // Member (the task list is team-wide, not per-member), so it does not borrow the
 // per-member EvTeamMember envelope.
 func projectTeamTasks(parentCallID, teamID string, tasks []session.TeamTaskSnapshot) session.Event {

@@ -49,21 +49,63 @@ func TestReadlineCursorKeysEditPrompt(t *testing.T) {
 	})
 }
 
-func TestCtrlAMovesPromptCursorWhileRunning(t *testing.T) {
-	m, _ := newQueueModel(t)
-	m = startRunning(t, m, "first")
-	m.prompt.Rewrite("queued draft")
+func TestReadlineCursorKeysEditPromptWhileRunning(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		text       string
+		before     []tea.KeyPressMsg
+		key        tea.KeyPressMsg
+		wantLine   int
+		wantColumn int
+	}{
+		{name: "ctrl+a moves to line start", text: "alpha\nbravo", key: ctrlKey('a'), wantLine: 1, wantColumn: 0},
+		{name: "ctrl+e moves to line end", text: "alpha\nbravo", before: []tea.KeyPressMsg{{Code: tea.KeyLeft}, {Code: tea.KeyLeft}}, key: ctrlKey('e'), wantLine: 1, wantColumn: 5},
+		{name: "ctrl+p moves to previous line", text: "alpha\nbravo", key: ctrlKey('p'), wantLine: 0, wantColumn: 5},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, _ := newQueueModel(t)
+			m = startRunning(t, m, "first")
+			m.prompt.Rewrite(tc.text)
+			for _, before := range tc.before {
+				mm, _ := m.Update(before)
+				m = mm.(Model)
+			}
 
-	mm, _ := m.Update(ctrlKey('a'))
-	m = mm.(Model)
-	if m.phase != phaseRunning {
-		t.Fatalf("phase = %v, want phaseRunning", m.phase)
+			mm, _ := m.Update(tc.key)
+			m = mm.(Model)
+			if m.phase != phaseRunning {
+				t.Fatalf("phase = %v, want phaseRunning", m.phase)
+			}
+			if m.team.view != teamNone {
+				t.Fatalf("key opened the agents overlay while running: view=%v", m.team.view)
+			}
+			if m.prompt.Line() != tc.wantLine || m.prompt.Column() != tc.wantColumn {
+				t.Fatalf("cursor = (%d,%d), want (%d,%d)", m.prompt.Line(), m.prompt.Column(), tc.wantLine, tc.wantColumn)
+			}
+		})
 	}
-	if m.team.view != teamNone {
-		t.Fatalf("ctrl+a opened the agents overlay while running: view=%v", m.team.view)
-	}
-	if m.prompt.Line() != 0 || m.prompt.Column() != 0 {
-		t.Fatalf("cursor = (%d,%d), want prompt start", m.prompt.Line(), m.prompt.Column())
+}
+
+func TestPromptUndoKeysRemainUnbound(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		key  tea.KeyPressMsg
+	}{
+		{name: "ctrl+_", key: ctrlKey('_')},
+		{name: "ctrl+-", key: ctrlKey('-')},
+		{name: "ctrl+shift+-", key: tea.KeyPressMsg{Code: '-', Mod: tea.ModCtrl | tea.ModShift}},
+		{name: "ctrl+shift+_", key: tea.KeyPressMsg{Code: '_', Mod: tea.ModCtrl | tea.ModShift}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, _ := newQueueModel(t)
+			m.prompt.Rewrite("unchanged draft")
+
+			mm, _ := m.Update(tc.key)
+			m = mm.(Model)
+			if got := m.prompt.Value(); got != "unchanged draft" {
+				t.Fatalf("prompt value = %q, want unchanged draft", got)
+			}
+		})
 	}
 }
 

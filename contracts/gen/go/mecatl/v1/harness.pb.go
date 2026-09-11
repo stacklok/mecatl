@@ -1257,7 +1257,7 @@ func (x *GetCompatibilityInfoResponse) GetDeployment() string {
 type ServerCapabilities struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// mcp is true when MCP inventory/resources/prompts are available (an MCP
-	// provider is wired). Gates ctrl+o / ctrl+r / ctrl+p.
+	// provider is wired). Gates ctrl+o / ctrl+r / f8.
 	Mcp bool `protobuf:"varint,1,opt,name=mcp,proto3" json:"mcp,omitempty"`
 	// slash_commands is true when slash-command discovery is available (a command
 	// lister is wired). Gates the / palette.
@@ -1270,7 +1270,7 @@ type ServerCapabilities struct {
 	// model's concern — the panel is discovery only.
 	Skills bool `protobuf:"varint,4,opt,name=skills,proto3" json:"skills,omitempty"`
 	// teams is true when agent teams are enabled (a member-engine factory is
-	// wired). Gates the ctrl+a deep view's relevance.
+	// wired). Gates the f6 deep view's relevance.
 	Teams bool `protobuf:"varint,5,opt,name=teams,proto3" json:"teams,omitempty"`
 	// bash is true when the Bash tool is registered (i.e. NOT --no-bash).
 	Bash bool `protobuf:"varint,6,opt,name=bash,proto3" json:"bash,omitempty"`
@@ -8626,7 +8626,7 @@ type Team struct {
 	Usage *Usage `protobuf:"bytes,12,opt,name=usage,proto3" json:"usage,omitempty"`
 	// context_used is the member's CURRENT context occupancy — the most recent
 	// turn's input-token count (team.member turn.end). It is the numerator of the
-	// per-member context meter in the ctrl+a agents overlay; 0 when unknown.
+	// per-member context meter in the f6 agents overlay; 0 when unknown.
 	ContextUsed int64 `protobuf:"varint,13,opt,name=context_used,json=contextUsed,proto3" json:"context_used,omitempty"`
 	// context_window is the producing member engine's context window in tokens —
 	// the meter's denominator (team.member turn.end). 0 when unknown (no meter is
@@ -8635,7 +8635,7 @@ type Team struct {
 	// tasks is a snapshot of the team's SHARED TASK LIST in creation order. It is
 	// set on a first-class team.tasks event (a team-wide event with no member, emitted
 	// on change, de-duped) and on team.end (the terminal snapshot). It feeds the
-	// ctrl+a agents task sub-view; it carries only task metadata, never member content.
+	// f6 agents task sub-view; it carries only task metadata, never member content.
 	// Reuses the existing TeamTask message.
 	Tasks []*TeamTask `protobuf:"bytes,15,rep,name=tasks,proto3" json:"tasks,omitempty"`
 	// findings is a snapshot of the team's SHARED FINDINGS LEDGER in append order. It

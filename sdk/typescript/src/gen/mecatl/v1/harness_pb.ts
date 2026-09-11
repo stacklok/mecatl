@@ -421,7 +421,7 @@ export const GetCompatibilityInfoResponseSchema: GenMessage<GetCompatibilityInfo
 export type ServerCapabilities = Message<"mecatl.v1.ServerCapabilities"> & {
   /**
    * mcp is true when MCP inventory/resources/prompts are available (an MCP
-   * provider is wired). Gates ctrl+o / ctrl+r / ctrl+p.
+   * provider is wired). Gates ctrl+o / ctrl+r / f8.
    *
    * @generated from field: bool mcp = 1;
    */
@@ -454,7 +454,7 @@ export type ServerCapabilities = Message<"mecatl.v1.ServerCapabilities"> & {
 
   /**
    * teams is true when agent teams are enabled (a member-engine factory is
-   * wired). Gates the ctrl+a deep view's relevance.
+   * wired). Gates the f6 deep view's relevance.
    *
    * @generated from field: bool teams = 5;
    */
@@ -4815,7 +4815,7 @@ export type Team = Message<"mecatl.v1.Team"> & {
   /**
    * context_used is the member's CURRENT context occupancy — the most recent
    * turn's input-token count (team.member turn.end). It is the numerator of the
-   * per-member context meter in the ctrl+a agents overlay; 0 when unknown.
+   * per-member context meter in the f6 agents overlay; 0 when unknown.
    *
    * @generated from field: int64 context_used = 13;
    */
@@ -4834,7 +4834,7 @@ export type Team = Message<"mecatl.v1.Team"> & {
    * tasks is a snapshot of the team's SHARED TASK LIST in creation order. It is
    * set on a first-class team.tasks event (a team-wide event with no member, emitted
    * on change, de-duped) and on team.end (the terminal snapshot). It feeds the
-   * ctrl+a agents task sub-view; it carries only task metadata, never member content.
+   * f6 agents task sub-view; it carries only task metadata, never member content.
    * Reuses the existing TeamTask message.
    *
    * @generated from field: repeated mecatl.v1.TeamTask tasks = 15;

@@ -995,7 +995,7 @@ func TestSupervisorRunsMemberCloseOnCleanup(t *testing.T) {
 
 // TestSupervisorRelaysMemberContextWindow is the relay half of the issue #63/#64
 // wiring (req 6): the supervisor must tag EVERY member event with the producing
-// member engine's ContextWindow() — the denominator the ctrl+a context meter and
+// member engine's ContextWindow() — the denominator the f6 context meter and
 // the proto TeamEvent.context_window carry. It builds a member engine on a
 // catalog-realistic window (1,050,000 — NOT the 128k floor) and asserts every
 // captured TeamEvent for that member reports that window verbatim. The composition

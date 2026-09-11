@@ -218,7 +218,7 @@ const (
 	// run (and as a terminal snapshot on EvTeamEnd's payload). It is a team-WIDE
 	// projection — NOT per-member — so it carries no Member; only TeamPayload.Tasks
 	// (the id/state/assignee/deps snapshot in creation order). It is the discriminant
-	// the client routes to the ctrl+a agents task sub-view. Snapshots are emitted
+	// the client routes to the f6 agents task sub-view. Snapshots are emitted
 	// only on change (de-duped) to bound wire volume.
 	EvTeamTasks EventType = "team.tasks"
 	// EvTeamFindings is emitted when the team's SHARED FINDINGS LEDGER changes during
@@ -1180,7 +1180,7 @@ const (
 )
 
 // TeamTaskSnapshot is one entry in the team's shared task list, projected onto the
-// event stream so the ctrl+a agents task sub-view can render the team's task state
+// event stream so the f6 agents task sub-view can render the team's task state
 // (id · state · assignee · deps) without an out-of-band ListTeam RPC — the team is
 // a Team-tool-local object the TUI cannot address. It is a plain value type
 // mirroring the proto TeamTask; it carries only task metadata (no member content).
@@ -1200,7 +1200,7 @@ type TeamTaskSnapshot struct {
 }
 
 // TeamFindingSnapshot is one entry of the team findings ledger, projected onto the
-// event stream so a watching client (the ctrl+a agents overlay) can see findings
+// event stream so a watching client (the f6 agents overlay) can see findings
 // accrue. It is a plain value type carrying only the recording member's name and a
 // BOUNDED body preview (clampPreview), never the raw finding. Like TeamTaskSnapshot
 // it lives in session (session never imports team); the team.Finding → snapshot
@@ -1326,7 +1326,7 @@ type TeamPayload struct {
 	// turn's input-token count (Usage.InputTokens of the turn just ended), i.e.
 	// what the next turn would carry into the model, not a cumulative sum. Set on
 	// EvTeamMember turn.end; 0 when unknown. It feeds the per-member context meter
-	// in the ctrl+a agents overlay (the team analogue of the main context meter).
+	// in the f6 agents overlay (the team analogue of the main context meter).
 	ContextUsed int64
 	// ContextWindow is the producing member engine's context window in tokens (the
 	// meter's denominator). Set on EvTeamMember turn.end; 0 when unknown (no meter
@@ -1335,12 +1335,12 @@ type TeamPayload struct {
 	// Tasks is a snapshot of the team's SHARED TASK LIST in creation order. It is
 	// set on an EvTeamTasks event (emitted on change, de-duped, from the Team tool's
 	// member-event sink) and on EvTeamEnd (the terminal snapshot, so the final task
-	// state always lands). It feeds the ctrl+a agents task sub-view; it carries only
+	// state always lands). It feeds the f6 agents task sub-view; it carries only
 	// task metadata, never member content.
 	Tasks []TeamTaskSnapshot
 	// Findings is a snapshot of the team's SHARED FINDINGS LEDGER in append order. It
 	// is set on an EvTeamFindings event (emitted on change, de-duped) and on EvTeamEnd
-	// (the terminal snapshot). It feeds the ctrl+a agents findings view; each entry
+	// (the terminal snapshot). It feeds the f6 agents findings view; each entry
 	// carries the recording member's name and a BOUNDED body preview, never the raw
 	// finding.
 	Findings []TeamFindingSnapshot

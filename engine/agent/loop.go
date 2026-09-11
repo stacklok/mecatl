@@ -494,7 +494,7 @@ func (e *Engine) Capabilities() port.ProviderCapabilities {
 // ContextWindow reports the model's context window in tokens, resolved LIVE via
 // Deps.ContextWindow at the point of call, or 0 when unknown/unset/disabled. The
 // team supervisor reads it from each member's engine so a forwarded turn.end can
-// carry the denominator for the per-member context meter in the ctrl+a agents
+// carry the denominator for the per-member context meter in the f6 agents
 // overlay (the resolver lives in private deps).
 func (e *Engine) ContextWindow() int {
 	if e.deps.ContextWindow == nil {
