@@ -15,8 +15,9 @@ provider registry, MCP, and skills wiring live in `internal/app` — the same
 composition layer the embedded TUI (`mecatui`) uses in-process.
 
 If you are deploying to Kubernetes without persistent volumes, see
-[mecak8s](/building/deployment/mecak8s.md) instead. That binary wires Redis + k8s Leases by
-default and is purpose-built for no-PVC pod deployments.
+[mecak8s](/building/deployment/mecak8s.md) instead. That binary is purpose-built
+for no-PVC pod deployments, with Redis-backed state when you configure
+`--redis-url` and Kubernetes Lease coordination enabled by default.
 
 ---
 
@@ -189,11 +190,11 @@ session the caller creates. `--oidc-audience` is required alongside it — an
 audience-less verifier would accept tokens minted for a different service.
 `--oidc-jwks-uri` pins the signing-key endpoint instead of discovering it.
 
-**This is attribution, not isolation.** Sessions, schedules and event-log
-records gain an owner so you can see who did what; nothing is refused on
-identity grounds. Any authenticated caller can still list and act on any
-session — per-caller access control is a separate, later piece of work. Do not
-deploy these flags as a tenancy boundary.
+**This is application-level caller isolation, not filesystem isolation.** The
+server authorizes access to sessions, schedules, teams, and memory records by
+their verified owner, and conceals foreign resources as absent. A shared
+workspace remains outside that boundary, so isolate callers' working files at
+the deployment layer when they must not share filesystem access.
 
 The production OIDC/JWT validator is a delegated, actively-maintained library —
 Mecatl never hand-rolls token verification. A bad OIDC
@@ -571,8 +572,8 @@ next write, so no migration step is needed.
 
 If you run `mecated` in Kubernetes with `--store-dir`, you need a PersistentVolume
 backed by ReadWriteOnce (or ReadWriteMany for multi-replica with affinity routing).
-If a PVC is a hard constraint, use `mecak8s` instead — it wires a Redis-backed store
-with no PVC requirement.
+If a PVC is a hard constraint, use `mecak8s` instead. When configured, its
+Redis-backed store has no PVC requirement.
 
 :::
 
@@ -596,7 +597,7 @@ The `--session-store-url` flag replaces the JSONL store with a remote gRPC drive
 or a custom store behind the driver protocol, and is mutually exclusive with
 `--store-dir`. The current driver protocol has no atomic create-only session RPC, so
 an OIDC/ownership-enforced server rejects `--session-store-url`; use the local JSONL
-backend (or mecak8s's directly wired Redis store) for multi-user deployments until
+backend (or the configured Redis store in `mecak8s`) for multi-user deployments until
 the driver adds `port.SessionCreator` parity.
 
 For distributed learning persistence, `--learning-store-url` selects one driver
@@ -965,7 +966,7 @@ EOF on an inherited `--lifetime-pipe-fd` takes this same path — see
 
 - [Pick your deployment shape](/building/getting-started/deployment-decision.md) — trade-offs between mecated, mecak8s, mecatequi, and engine embedding.
 - [Permissions & guardrails](/building/what-you-get/permissions.md) — the rule engine, posture ladder, and guardrail checker in detail.
-- [mecak8s — cloud-native k8s](/building/deployment/mecak8s.md) — the no-PVC Kubernetes peer with Redis + coordination.k8s.io Leases baked in.
+- [mecak8s — cloud-native k8s](/building/deployment/mecak8s.md) — the no-PVC Kubernetes peer with configured Redis and `coordination.k8s.io` Leases.
 - [The agent loop](/building/what-you-get/agent-loop.md) — what mecated is serving: the streaming loop, tool dispatch, and the permission handshake.
 
 ## Browsers and CORS

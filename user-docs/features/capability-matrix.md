@@ -32,10 +32,10 @@ of its server.
 | Need | `mecated` | `mecak8s` | `mecatui` embedded |
 | --- | --- | --- | --- |
 | Run a general-purpose server | ✓ | ✓ | Starts one locally |
-| Workspace and Shell namespace | Host-local workspace | Harness pod workspace | Host-local workspace |
+| Workspace and Shell namespace | Host-local workspace | Configured pod workspace or no-FS profile | Host-local workspace |
 | gRPC API | ✓ | ✓ | Private Unix socket |
 | HTTP/SSE API | ✓ | ✓ | — |
-| Durable state | Optional configured backend | Redis-backed | JSONL store by default |
+| Durable state | Optional configured backend | Redis-backed when configured | JSONL store by default |
 | Kubernetes leases and drain handling | — | ✓ | — |
 | Interactive permission approvals | Opt | Headless by default | ✓ |
 | ACP editor integration | ✓, `mecated acp` only | — | — |
@@ -61,10 +61,12 @@ Redis stores session state and durable events, Kubernetes leases coordinate
 ownership across replicas, and readiness/drain behavior suits a deployment
 controller.
 
-The workspace and any Shell command run in the harness pod namespace, not on a
-remote caller’s machine. `mecak8s` is headless by default, so unresolved
-permission asks need an explicit headless-reviewer strategy or are denied.
-ACP is intentionally not available in this deployment.
+When an operator configures a workspace, its filesystem tools and any Shell
+command run in the harness pod namespace, not on a remote caller’s machine.
+Without `--workspace`, `mecak8s` creates no-FS sessions by default. `mecak8s`
+is headless by default, so unresolved permission asks need an explicit
+headless-reviewer strategy or are denied. ACP is intentionally not available
+in this deployment.
 
 ### Use embedded `mecatui` for local interactive work
 

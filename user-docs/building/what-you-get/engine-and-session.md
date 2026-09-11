@@ -17,11 +17,19 @@ Mecatl has no `Agent` type. The word *agent* describes the **behaviour** that em
 The engine is the **loop runner**. It is long-lived and reusable — one engine per `(provider, model)` pair, shared across as many sessions as you like. It wires together the LLM adapter, tool catalog, permission policy, and hooks at construction time and exposes a single entry point:
 
 ```go
-env := tool.MustEnvironment(session.EnvironmentRef{}, workspace, nil)
+env := tool.MustEnvironment(
+    session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "example-v1"},
+    workspace,
+    memledger.New(),
+    nil,
+)
 run := eng.Run(ctx, sess, env, agent.RunRequest{Text: "your prompt here"})
 ```
 
 `Engine` is created once with `agent.NewEngine(agent.Deps{...})`. The `Deps` struct is the complete wiring surface — every capability the loop needs is injected there. The engine itself owns nothing stateful; state lives in the session.
+
+The example uses the `memledger` reference adapter for the environment's
+required read ledger.
 
 ### `*session.Session`
 
@@ -33,7 +41,7 @@ A session is created separately from the engine and passed in at run time:
 sess := session.New(
     "my-session-id",
     session.ModeDefault,
-    "/workspace/root",
+    session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace/root", Revision: "example-v1"},
     session.Limits{MaxTurns: 20, MaxToolCalls: 60},
     time.Now(),
 )

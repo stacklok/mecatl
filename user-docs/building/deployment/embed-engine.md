@@ -69,6 +69,7 @@ import (
     "time"
 
     "github.com/stacklok/mecatl/engine/adapter/memfs"
+    "github.com/stacklok/mecatl/engine/adapter/memledger"
     "github.com/stacklok/mecatl/engine/adapter/memstore"
     "github.com/stacklok/mecatl/engine/adapter/mockllm"
     "github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -114,18 +115,22 @@ func main() {
         Model: "my-model",
     })
 
-    // 4. Create a session and a workspace.
+    // 4. Create a session and a workspace. The ref identifies the same
+    //    environment for the session and the live tool environment.
+    ref := session.EnvironmentRef{
+        Kind: session.EnvKindMem, ID: "/workspace", Revision: "example-v1",
+    }
     sess := session.New(
         "my-session-id",
         session.ModeDefault,
-        "/workspace",
+        ref,
         session.Limits{MaxTurns: 20, MaxToolCalls: 50, MaxConsecutiveFailures: 3},
         time.Now(),
     )
     ws := memfs.NewWorkspace("/workspace")
 
     // 5. Start the run and drain events.
-    env := tool.MustEnvironment(session.EnvironmentRef{}, ws, nil)
+    env := tool.MustEnvironment(ref, ws, memledger.New(), nil)
     run := eng.Run(ctx, sess, env, agent.RunRequest{Text: "Summarize the project."})
     for ev := range run.Events() {
         fmt.Printf("%s %v\n", ev.Type, ev.Text)
@@ -153,7 +158,7 @@ remaining fields are optional — zero values or nil engage documented defaults.
 | `Catalog` | `*tool.Catalog` | **yes** | `tool.NewCatalog()` + `cat.MustRegister(...)` | Register only the tools your agent should use. |
 | `Policy` | `port.PermissionPolicy` | **yes** | `engine/adapter/permpolicy` + `engine/adapter/permstore` | `permpolicy.NewPolicy(rules, permstore.New())` is the standard wiring. |
 | `Hooks` | `port.HookRunner` | no | — | Nil hooks are supported and use the engine's no-op behavior. |
-| `Store` | `port.SessionStore` | no | `engine/adapter/memstore` | nil disables persistence. `memstore.New()` is the in-process default. |
+| `Store` | `port.SessionStore` | no | `engine/adapter/memstore` | nil disables persistence. Use `memstore.New()` for in-process persistence. |
 | `Clock` | `port.Clock` | no | `engine/adapter/wallclock` | nil → no tool-call timing. |
 | `Model` | `string` | **yes** | — | Sent on every `LLMRequest`. Must match your provider's model identifier. |
 | `PromptConfig` | `prompt.Config` | no | — | Seeds the stable system prompt prefix. `Env.Cwd`, `Env.Model`, `Env.Date`, `Env.Mode` are the meaningful fields for most embeddings. |

@@ -139,8 +139,7 @@ not refresh the token:
 
 ```console
 export MECATL_AUTH_TOKEN="$(your-oidc-cli print-access-token)"
-mecatui connect 127.0.0.1:8080 --auth-token "$MECATL_AUTH_TOKEN" \
-  --workspace /srv/mecatl/workspace
+mecatui connect 127.0.0.1:8080 --auth-token "$MECATL_AUTH_TOKEN"
 ```
 
 For managed remote OIDC, enroll once and then connect without putting a bearer on the

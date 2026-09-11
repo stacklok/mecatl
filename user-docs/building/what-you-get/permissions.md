@@ -55,7 +55,7 @@ durable authority ceiling. Start mecated with `--agents-dir` to use that managed
 tier:
 
 ```sh
-mecated --agents-dir /etc/mecatl/agents
+mecated serve --agents-dir /etc/mecatl/agents
 ```
 
 For example, `/etc/mecatl/agents/code-reviewer.md` can contain:
@@ -86,9 +86,9 @@ without acquiring those runtime resources.
 `mecated` selects the authority evaluator at startup:
 
 ```sh
-mecated --authority-evaluator=local
-mecated --authority-evaluator=noop
-mecated --authority-evaluator=cedar --cedar-authority-policy=/etc/mecatl/authority.cedar
+mecated serve --authority-evaluator=local
+mecated serve --authority-evaluator=noop
+mecated serve --authority-evaluator=cedar --cedar-authority-policy=/etc/mecatl/authority.cedar
 ```
 
 | Evaluator | Use it when | Behavior |

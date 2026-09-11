@@ -71,7 +71,7 @@ operations that can mutate state:
 
 | Default effect | Tools |
 | --- | --- |
-| Allow | `Read`, `Grep`, `Glob`, `WebFetch`, `WebSearch`, and read-only `Subagent` exploration |
+| Allow | `Read`, `ListDir`, `Grep`, `Glob`, `WebFetch`, `WebSearch`, and read-only `Subagent` exploration |
 | Ask | `Shell`, `Edit`, `Write`, `Team`, and `SkillDraft` |
 
 A matching `deny` always wins. Otherwise an `ask` wins over an `allow`, and

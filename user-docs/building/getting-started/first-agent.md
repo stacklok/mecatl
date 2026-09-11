@@ -28,7 +28,7 @@ you want to see tools, approval, teams, and background Subagents together.
 
 ## Before you start
 
-You need Go 1.26 or newer. The first-agent example is designed to run from a
+You need Go 1.26.6 or newer. The first-agent example is designed to run from a
 clean external module and imports only the public `github.com/stacklok/mecatl/engine`
 module and its reference adapters.
 
@@ -45,6 +45,7 @@ import (
     "time"
 
     "github.com/stacklok/mecatl/engine/adapter/memfs"
+    "github.com/stacklok/mecatl/engine/adapter/memledger"
     "github.com/stacklok/mecatl/engine/adapter/mockllm"
     "github.com/stacklok/mecatl/engine/adapter/permpolicy"
     "github.com/stacklok/mecatl/engine/adapter/permstore"
@@ -55,14 +56,29 @@ import (
 
 func main() {
     ws := memfs.NewWorkspace("/workspace")
-    env := tool.MustEnvironment(session.EnvironmentRef{}, ws, nil)
+    env := tool.MustEnvironment(
+        session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "example-v1"},
+        ws,
+        memledger.New(),
+        nil,
+    )
     eng := agent.NewEngine(agent.Deps{
         LLM: mockllm.New(mockllm.TextTurn("Hello from your first agent.")),
         Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, permstore.New()), Model: "mock",
     })
-    sess := session.New("first-agent", session.ModeDefault, "/workspace", session.Limits{}, time.Now())
+    sess := session.New(
+        "first-agent",
+        session.ModeDefault,
+        session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "example-v1"},
+        session.Limits{},
+        time.Now(),
+    )
     run := eng.Run(context.Background(), sess, env, agent.RunRequest{Text: "Say hello."})
-    for event := range run.Events() { if event.Type == session.EvResult { fmt.Println(event.Result.Text) } }
+    for event := range run.Events() {
+        if event.Type == session.EvResult && event.Result != nil {
+            fmt.Println(event.Result.Text)
+        }
+    }
 }
 ```
 
