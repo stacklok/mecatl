@@ -102,10 +102,32 @@ func TestParseMCPLoginDCRResetAndRetryFlags(t *testing.T) {
 	}
 
 	const secret = "registration-client-id-secret-canary"
-	recovery := errors.Join(app.ErrMCPLoginAuthorization, mcp.ErrOAuthDCRRecoveryRequired, errors.New(secret))
-	got := mcpLoginRemedy(recovery).Error()
-	if strings.Contains(got, secret) || !strings.Contains(got, "--retry-dcr-registration") || !strings.Contains(got, "--reset-dcr-registration") {
-		t.Fatalf("recovery remedy = %q", got)
+	for _, tc := range []struct {
+		name  string
+		kind  mcp.OAuthDCRRecoveryCategory
+		want  []string
+		avoid []string
+	}{
+		{name: "legacy pending", kind: mcp.OAuthDCRRecoveryPending, want: []string{"previous registration attempt did not complete", "safe failure stage was not recorded", "--retry-dcr-registration", "duplicate or orphan client"}, avoid: []string{"--reset-dcr-registration", secret}},
+		{name: "corrupt", kind: mcp.OAuthDCRRecoveryCorrupt, want: []string{"separate operator repair"}, avoid: []string{"--retry-dcr-registration", "--reset-dcr-registration", secret}},
+		{name: "unknown outcome", kind: mcp.OAuthDCRRecoveryRegistrationOutcomeUnknown, want: []string{"request outcome is unknown", "--retry-dcr-registration", "orphan client"}, avoid: []string{secret}},
+		{name: "invalid response", kind: mcp.OAuthDCRRecoveryResponseInvalid, want: []string{"provider returned a registration response", "could not safely use", "--retry-dcr-registration", "orphan client"}, avoid: []string{"contract validation", secret}},
+		{name: "persistence", kind: mcp.OAuthDCRRecoveryReadyPersistence, want: []string{"ready record was not persisted", "--retry-dcr-registration", "orphan client"}, avoid: []string{secret}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			recovery := errors.Join(app.ErrMCPLoginAuthorization, mcp.NewOAuthDCRRecoveryError(tc.kind), errors.New(secret))
+			got := mcpLoginRemedy(recovery).Error()
+			for _, want := range tc.want {
+				if !strings.Contains(got, want) {
+					t.Fatalf("recovery remedy = %q, want %q", got, want)
+				}
+			}
+			for _, forbidden := range tc.avoid {
+				if strings.Contains(got, forbidden) {
+					t.Fatalf("recovery remedy leaked or suggested forbidden %q: %q", forbidden, got)
+				}
+			}
+		})
 	}
 }
 

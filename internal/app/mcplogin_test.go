@@ -112,6 +112,7 @@ type loginFixture struct {
 	mcpBlockState   *loginMCPBlockState
 	redirectURL     string
 	dcr             bool
+	badDCRResponse  bool
 	register        int
 	basicRequests   int
 	tokenForms      []url.Values
@@ -367,6 +368,10 @@ func (f *loginFixture) serveRegister(w http.ResponseWriter, r *http.Request) {
 		clientID = loginClientID
 	}
 	response := map[string]any{"client_id": clientID, "token_endpoint_auth_method": "none", "redirect_uris": request.RedirectURIs, "grant_types": request.GrantTypes, "response_types": request.ResponseTypes, "scope": request.Scope}
+	if f.badDCRResponse {
+		response["token_endpoint_auth_method"] = "client_secret_basic"
+		response["client_secret"] = f.dcrRegAccess
+	}
 	if f.dcrRegAccess != "" {
 		response["registration_access_token"] = f.dcrRegAccess
 	}

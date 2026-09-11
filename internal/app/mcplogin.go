@@ -56,7 +56,7 @@ func loginDiagnostic(category, diagnostic error) error {
 	case errors.As(diagnostic, &bind):
 		diagnostic = &oauthlogin.CallbackBindError{Reason: bind.Reason}
 	case errors.Is(diagnostic, mcp.ErrOAuthDCRRecoveryRequired):
-		diagnostic = mcp.ErrOAuthDCRRecoveryRequired
+		diagnostic = mcp.NewOAuthDCRRecoveryError(mcp.OAuthDCRRecoveryCategoryOf(diagnostic))
 	default:
 		return category
 	}
@@ -105,6 +105,7 @@ func LoginMCPWithOptions(ctx context.Context, cfg mcp.ServerConfig, runtime *oau
 
 func loginMCPAuthorize(cfg mcp.ServerConfig, run func(oauthlogin.AuthorizeFunc) error) error {
 	var operationCategory error
+	var operationDiagnostic error
 	err := run(func(ctx context.Context, redirectURL string, present func(context.Context, string) (oauthlogin.Result, error)) error {
 		loginCfg := cfg
 		oauth := *cfg.OAuth
@@ -117,7 +118,8 @@ func loginMCPAuthorize(cfg mcp.ServerConfig, run func(oauthlogin.AuthorizeFunc) 
 
 		server, err := mcp.Connect(ctx, loginCfg, nil)
 		if err != nil {
-			if errors.Is(err, mcp.ErrOAuthLoginRequired) || errors.Is(err, mcp.ErrOAuthUnavailable) {
+			operationDiagnostic = err
+			if errors.Is(err, mcp.ErrOAuthLoginRequired) || errors.Is(err, mcp.ErrOAuthUnavailable) || errors.Is(err, mcp.ErrOAuthDCRRecoveryRequired) {
 				operationCategory = ErrMCPLoginAuthorization
 			} else {
 				operationCategory = ErrMCPLoginConnect
@@ -143,6 +145,9 @@ func loginMCPAuthorize(cfg mcp.ServerConfig, run func(oauthlogin.AuthorizeFunc) 
 		return err
 	}
 	if operationCategory != nil {
+		if operationDiagnostic != nil {
+			err = operationDiagnostic
+		}
 		return loginDiagnostic(operationCategory, err)
 	}
 	if errors.Is(err, oauthlogin.ErrAuthorizationFailed) {

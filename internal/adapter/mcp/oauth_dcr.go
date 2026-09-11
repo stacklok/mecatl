@@ -27,20 +27,105 @@ import (
 )
 
 const (
-	oauthDCRRegistrationSchema    = "mecatl.mcp.oauth-dcr-registration"
-	oauthDCRRegistrationVersion   = 1
-	oauthDCRRegistrationKeyDomain = "mecatl/mcp/oauth-dcr-registration-key/v1"
-	oauthDCRRedirectPolicy        = "ipv4-loopback-variable-port/v1"
-	oauthDCRCallbackPrefix        = "/oauth/callback/"
-	oauthDCRClientKind            = "dcr"
-	oauthDCRScope                 = "openid"
-	oauthDCRStatePending          = "pending"
-	oauthDCRStateReady            = "ready"
-	oauthHTTPURLScheme            = "http"
+	oauthDCRRegistrationSchema      = "mecatl.mcp.oauth-dcr-registration"
+	oauthDCRRegistrationVersion     = 1
+	oauthDCRRegistrationKeyDomain   = "mecatl/mcp/oauth-dcr-registration-key/v1"
+	oauthDCRRedirectPolicy          = "ipv4-loopback-variable-port/v1"
+	oauthDCRCallbackPrefix          = "/oauth/callback/"
+	oauthDCRClientKind              = "dcr"
+	oauthDCRScope                   = "openid"
+	oauthDCRStatePending            = "pending"
+	oauthDCRStateReady              = "ready"
+	oauthDCRFailureOutcomeUnknown   = "registration_outcome_unknown"
+	oauthDCRFailureResponseInvalid  = "registration_response_invalid"
+	oauthDCRFailureReadyPersistence = "ready_persistence_failed"
+	oauthDCRFailureRecordTimeout    = 2 * time.Second
+	oauthHTTPURLScheme              = "http"
 )
 
 // ErrOAuthDCRRecoveryRequired reports durable DCR state that requires an explicit operator recovery action.
 var ErrOAuthDCRRecoveryRequired = errors.New("OAuth DCR recovery required")
+
+// OAuthDCRRecoveryCategory distinguishes safe DCR recovery outcomes without
+// retaining registration response or credential details.
+type OAuthDCRRecoveryCategory uint8
+
+const (
+	// OAuthDCRRecoveryUnspecified reports no classified recovery stage.
+	OAuthDCRRecoveryUnspecified OAuthDCRRecoveryCategory = iota
+	// OAuthDCRRecoveryPending reports a legacy pending record without stage evidence.
+	OAuthDCRRecoveryPending
+	// OAuthDCRRecoveryCorrupt reports inconsistent or undecodable durable state.
+	OAuthDCRRecoveryCorrupt
+	// OAuthDCRRecoveryRegistrationOutcomeUnknown reports an uncertain registration POST outcome.
+	OAuthDCRRecoveryRegistrationOutcomeUnknown
+	// OAuthDCRRecoveryResponseInvalid reports an unusable registration response.
+	OAuthDCRRecoveryResponseInvalid
+	// OAuthDCRRecoveryReadyPersistence reports failure to persist an accepted registration.
+	OAuthDCRRecoveryReadyPersistence
+)
+
+// OAuthDCRRecoveryError preserves the recovery sentinel while carrying a
+// closed, safe category for the CLI remedy.
+type OAuthDCRRecoveryError struct {
+	category OAuthDCRRecoveryCategory
+}
+
+func (*OAuthDCRRecoveryError) Error() string { return ErrOAuthDCRRecoveryRequired.Error() }
+
+// Is preserves errors.Is compatibility with ErrOAuthDCRRecoveryRequired.
+func (*OAuthDCRRecoveryError) Is(target error) bool {
+	return target == ErrOAuthDCRRecoveryRequired
+}
+
+// NewOAuthDCRRecoveryError constructs a recovery error for a closed category.
+func NewOAuthDCRRecoveryError(category OAuthDCRRecoveryCategory) error {
+	return &OAuthDCRRecoveryError{category: category}
+}
+
+// OAuthDCRRecoveryCategoryOf returns a safe category, or unspecified when the
+// error is not a classified DCR recovery error.
+func OAuthDCRRecoveryCategoryOf(err error) OAuthDCRRecoveryCategory {
+	var recovery *OAuthDCRRecoveryError
+	if errors.As(err, &recovery) {
+		return recovery.category
+	}
+	return OAuthDCRRecoveryUnspecified
+}
+
+func dcrRecovery(category OAuthDCRRecoveryCategory) error {
+	return NewOAuthDCRRecoveryError(category)
+}
+
+func persistedDCRFailureCategory(category OAuthDCRRecoveryCategory) string {
+	switch category {
+	case OAuthDCRRecoveryRegistrationOutcomeUnknown:
+		return oauthDCRFailureOutcomeUnknown
+	case OAuthDCRRecoveryResponseInvalid:
+		return oauthDCRFailureResponseInvalid
+	case OAuthDCRRecoveryReadyPersistence:
+		return oauthDCRFailureReadyPersistence
+	default:
+		return ""
+	}
+}
+
+func recoveryCategoryForPersistedDCRFailure(category string) OAuthDCRRecoveryCategory {
+	switch category {
+	case oauthDCRFailureOutcomeUnknown:
+		return OAuthDCRRecoveryRegistrationOutcomeUnknown
+	case oauthDCRFailureResponseInvalid:
+		return OAuthDCRRecoveryResponseInvalid
+	case oauthDCRFailureReadyPersistence:
+		return OAuthDCRRecoveryReadyPersistence
+	default:
+		return OAuthDCRRecoveryPending
+	}
+}
+
+func validPersistedDCRFailureCategory(category string) bool {
+	return category == "" || category == oauthDCRFailureOutcomeUnknown || category == oauthDCRFailureResponseInvalid || category == oauthDCRFailureReadyPersistence
+}
 
 // ValidateDCRAuthorizationURL checks the final SDK authorization request before
 // the host presents it. The SDK may union challenge scopes after ScopeFilter runs.
@@ -82,6 +167,7 @@ type oauthDCRMetadata struct {
 	GrantTypes              []string `json:"grant_types"`
 	ResponseTypes           []string `json:"response_types"`
 	Scopes                  []string `json:"scopes"`
+	supportedScopes         []string
 }
 
 type oauthDCRRegistration struct {
@@ -106,6 +192,7 @@ type oauthDCRRecord struct {
 	Metadata            oauthDCRMetadata         `json:"metadata"`
 	MetadataFingerprint string                   `json:"metadata_fingerprint"`
 	PreviousAttempt     *oauthDCRPreviousAttempt `json:"previous_attempt,omitempty"`
+	FailureCategory     string                   `json:"failure_category,omitempty"`
 	Registration        *oauthDCRRegistration    `json:"registration,omitempty"`
 }
 
@@ -179,12 +266,15 @@ func PrepareOAuthDCRLogin(ctx context.Context, resource string, opts OAuthOption
 	if getErr == nil {
 		stored, decodeErr := decodeOAuthDCRRecord(record.Value, identity)
 		if decodeErr != nil {
-			return OAuthOptions{}, "", ErrOAuthDCRRecoveryRequired
+			return OAuthOptions{}, "", dcrRecovery(OAuthDCRRecoveryCorrupt)
 		}
 		if action == OAuthDCRLoginReuse {
 			meta.RedirectPath = stored.Metadata.RedirectPath
+			if stored.State == oauthDCRStatePending {
+				return OAuthOptions{}, "", dcrRecovery(recoveryCategoryForPersistedDCRFailure(stored.FailureCategory))
+			}
 			if stored.State != oauthDCRStateReady || stored.MetadataFingerprint != fingerprintDCRMetadata(meta) || !equalDCRMetadata(stored.Metadata, meta) {
-				return OAuthOptions{}, "", ErrOAuthDCRRecoveryRequired
+				return OAuthOptions{}, "", dcrRecovery(OAuthDCRRecoveryCorrupt)
 			}
 			if err := prepareDCRGrantForExplicitLogin(ctx, opts.CredentialStore, stored, transport.issuerOrigin); err != nil {
 				return OAuthOptions{}, "", err
@@ -362,13 +452,20 @@ func discoverDCRMetadata(ctx context.Context, resource string, opts OAuthOptions
 	if !slices.Contains(as.CodeChallengeMethodsSupported, "S256") || !slices.Contains(as.ResponseTypesSupported, "code") || !slices.Contains(as.GrantTypesSupported, "authorization_code") || !slices.Contains(as.TokenEndpointAuthMethodsSupported, "none") || !slices.Contains(as.ScopesSupported, oauthDCRScope) {
 		return oauthDCRMetadata{}, "", errors.New("OAuth DCR public authorization-code metadata is unsupported")
 	}
-	return oauthDCRMetadata{Issuer: opts.Issuer, Resource: resource, RedirectPolicy: oauthDCRRedirectPolicy, TokenEndpointAuthMethod: "none", GrantTypes: []string{"authorization_code"}, ResponseTypes: []string{"code"}, Scopes: []string{oauthDCRScope}}, as.RegistrationEndpoint, nil
+	return oauthDCRMetadata{
+		Issuer: opts.Issuer, Resource: resource, RedirectPolicy: oauthDCRRedirectPolicy,
+		TokenEndpointAuthMethod: "none", GrantTypes: []string{"authorization_code"},
+		ResponseTypes: []string{"code"}, Scopes: []string{oauthDCRScope},
+		supportedScopes: slices.Clone(as.ScopesSupported),
+	}, as.RegistrationEndpoint, nil
 }
 
 type dcrRegistrationResponseCapture struct {
-	base     http.RoundTripper
-	issuedAt *int64
-	invalid  bool
+	base        http.RoundTripper
+	issuedAt    *int64
+	status      int
+	invalid     bool
+	readFailure bool
 }
 
 func (c *dcrRegistrationResponseCapture) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -376,10 +473,15 @@ func (c *dcrRegistrationResponseCapture) RoundTrip(req *http.Request) (*http.Res
 	if err != nil || resp == nil || resp.Body == nil {
 		return resp, err
 	}
+	c.status = resp.StatusCode
 	body, readErr := io.ReadAll(io.LimitReader(resp.Body, credentialstore.MaxValueBytes+1))
 	_ = resp.Body.Close()
 	resp.Body = io.NopCloser(bytes.NewReader(body))
-	if readErr != nil || len(body) > credentialstore.MaxValueBytes {
+	if readErr != nil {
+		c.readFailure = true
+		return resp, nil
+	}
+	if len(body) > credentialstore.MaxValueBytes {
 		c.invalid = true
 		return resp, nil
 	}
@@ -462,11 +564,20 @@ func resolvePreparedDCR(ctx context.Context, resource string, opts OAuthOptions,
 	capture := &dcrRegistrationResponseCapture{base: transport}
 	registerClient.Transport = capture
 	response, err := oauthex.RegisterClient(ctx, ticket.registrationEndpoint, request, &registerClient)
-	if err != nil || capture.invalid || capture.issuedAt != nil && *capture.issuedAt < 0 || !validDCRRegistrationResponse(response, request) {
+	if err != nil {
 		if winner, ok := adoptDCRReady(ctx, opts.CredentialStore, ticket); ok {
 			return withResolvedDCR(opts, winner), nil
 		}
-		return OAuthOptions{}, ErrOAuthDCRRecoveryRequired
+		if capture.invalid || (!capture.readFailure && capture.status >= http.StatusOK && capture.status < http.StatusMultipleChoices) {
+			return failPreparedDCR(ctx, opts, ticket, OAuthDCRRecoveryResponseInvalid)
+		}
+		return failPreparedDCR(ctx, opts, ticket, OAuthDCRRecoveryRegistrationOutcomeUnknown)
+	}
+	if capture.invalid || capture.issuedAt != nil && *capture.issuedAt < 0 || !validDCRRegistrationResponse(response, request, ticket.record.Metadata.supportedScopes) {
+		if winner, ok := adoptDCRReady(ctx, opts.CredentialStore, ticket); ok {
+			return withResolvedDCR(opts, winner), nil
+		}
+		return failPreparedDCR(ctx, opts, ticket, OAuthDCRRecoveryResponseInvalid)
 	}
 	ready := ticket.record
 	ready.State = oauthDCRStateReady
@@ -477,16 +588,30 @@ func resolvePreparedDCR(ctx context.Context, resource string, opts OAuthOptions,
 	}
 	value, encodeErr := encodeOAuthDCRRecord(ready, ticket.record.Identity)
 	if encodeErr != nil {
-		return OAuthOptions{}, ErrOAuthDCRRecoveryRequired
+		return failPreparedDCR(ctx, opts, ticket, OAuthDCRRecoveryReadyPersistence)
 	}
 	if _, err = opts.CredentialStore.Put(ctx, ticket.key, value, &ticket.version); err != nil {
 		winner, ok := adoptDCRReady(ctx, opts.CredentialStore, ticket)
 		if !ok {
-			return OAuthOptions{}, ErrOAuthDCRRecoveryRequired
+			return failPreparedDCR(ctx, opts, ticket, OAuthDCRRecoveryReadyPersistence)
 		}
 		ready = winner
 	}
 	return withResolvedDCR(opts, ready), nil
+}
+
+func failPreparedDCR(ctx context.Context, opts OAuthOptions, ticket *oauthDCRTicket, category OAuthDCRRecoveryCategory) (OAuthOptions, error) {
+	persisted := persistedDCRFailureCategory(category)
+	if persisted != "" {
+		pending := ticket.record
+		pending.FailureCategory = persisted
+		if value, err := encodeOAuthDCRRecord(pending, pending.Identity); err == nil {
+			recordCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), oauthDCRFailureRecordTimeout)
+			_, _ = opts.CredentialStore.Put(recordCtx, ticket.key, value, &ticket.version)
+			cancel()
+		}
+	}
+	return OAuthOptions{}, dcrRecovery(category)
 }
 
 func adoptDCRReady(ctx context.Context, store credentialstore.Store, ticket *oauthDCRTicket) (oauthDCRRecord, bool) {
@@ -501,7 +626,7 @@ func adoptDCRReady(ctx context.Context, store credentialstore.Store, ticket *oau
 	return stored, true
 }
 
-func validDCRRegistrationResponse(response *oauthex.ClientRegistrationResponse, request *oauthex.ClientRegistrationMetadata) bool {
+func validDCRRegistrationResponse(response *oauthex.ClientRegistrationResponse, request *oauthex.ClientRegistrationMetadata, supportedScopes []string) bool {
 	if response == nil || validateSafeValue("OAuth DCR client ID", response.ClientID) != nil || response.ClientSecret != "" || response.TokenEndpointAuthMethod != "none" {
 		return false
 	}
@@ -514,8 +639,22 @@ func validDCRRegistrationResponse(response *oauthex.ClientRegistrationResponse, 
 	if len(response.GrantTypes) != 0 && !sameStrings(response.GrantTypes, request.GrantTypes) || len(response.ResponseTypes) != 0 && !sameStrings(response.ResponseTypes, request.ResponseTypes) {
 		return false
 	}
-	if response.Scope != "" && !sameStrings(strings.Fields(response.Scope), strings.Fields(request.Scope)) {
+	if response.Scope != "" && !validDCRResponseScopes(strings.Fields(response.Scope), strings.Fields(request.Scope), supportedScopes) {
 		return false
+	}
+	return true
+}
+
+func validDCRResponseScopes(returned, requested, supported []string) bool {
+	for _, scope := range requested {
+		if !slices.Contains(returned, scope) {
+			return false
+		}
+	}
+	for _, scope := range returned {
+		if !slices.Contains(supported, scope) {
+			return false
+		}
 	}
 	return true
 }
@@ -667,10 +806,13 @@ func validateOAuthDCRRecord(record oauthDCRRecord, expected oauthDCRIdentity) er
 	}
 	switch record.State {
 	case oauthDCRStatePending:
-		if record.Registration != nil {
-			return errors.New("OAuth DCR pending record contains registration")
+		if record.Registration != nil || !validPersistedDCRFailureCategory(record.FailureCategory) {
+			return errors.New("OAuth DCR pending record is invalid")
 		}
 	case oauthDCRStateReady:
+		if record.FailureCategory != "" {
+			return errors.New("OAuth DCR ready record contains failure category")
+		}
 		if record.Registration == nil || validateSafeValue("OAuth DCR client ID", record.Registration.ClientID) != nil || record.Registration.RegisteredRedirectURI == "" {
 			return errors.New("OAuth DCR ready record is invalid")
 		}

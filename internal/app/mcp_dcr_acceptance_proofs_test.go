@@ -3,6 +3,7 @@ package app_test
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -70,6 +71,40 @@ func loginDCRProfile(t *testing.T, fixture *loginFixture, settings string, looku
 	mcp.TrustOAuthCertificateForTest(t, cfg.OAuth, fixture.server.Certificate())
 	if err := app.LoginMCP(context.Background(), cfg, runtime); err != nil {
 		t.Fatalf("DCR login: %v", err)
+	}
+}
+
+func TestDirectMCPDCR_RegistrationFailureCategorySurvivesLoginWrapping(t *testing.T) {
+	fixture := newDCRLoginFixture(t)
+	fixture.badDCRResponse = true
+	fixture.dcrRegAccess = "registration-secret-must-not-surface"
+	settings, lookup := writeDCRSettings(t, fixture, filepath.Join(t.TempDir(), "credentials"))
+	resolver := permconfig.New(permconfig.Options{ExplicitFiles: []string{settings}})
+	profiles, err := loadAcceptanceMCPProfiles(t, resolver.OperatorMCP(), lookup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer profiles.Close()
+	cfg, ok := profiles.OAuthServer("protected")
+	if !ok {
+		t.Fatal("DCR profile was not resolved")
+	}
+	mcp.TrustOAuthCertificateForTest(t, cfg.OAuth, fixture.server.Certificate())
+	runtime, err := oauthlogin.New(oauthlogin.Options{Launcher: &loginBrowser{client: fixture.server.Client()}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	loginErr := app.LoginMCPWithOptions(context.Background(), cfg, runtime, app.MCPLoginOptions{})
+	if !errors.Is(loginErr, mcp.ErrOAuthDCRRecoveryRequired) ||
+		mcp.OAuthDCRRecoveryCategoryOf(loginErr) != mcp.OAuthDCRRecoveryResponseInvalid {
+		t.Fatalf("login error lost DCR recovery category: %v, category %v", loginErr, mcp.OAuthDCRRecoveryCategoryOf(loginErr))
+	}
+	if !errors.Is(loginErr, app.ErrMCPLoginAuthorization) || errors.Is(loginErr, app.ErrMCPLoginConnect) {
+		t.Fatalf("DCR registration failure category = %v, want authorization and not connect", loginErr)
+	}
+	if strings.Contains(loginErr.Error(), fixture.dcrRegAccess) {
+		t.Fatalf("DCR registration failure leaked response content: %q", loginErr)
 	}
 }
 

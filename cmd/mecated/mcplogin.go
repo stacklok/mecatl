@@ -109,7 +109,18 @@ func mcpLoginRemedy(err error) error {
 	var bind *oauthlogin.CallbackBindError
 	switch {
 	case errors.Is(err, mcp.ErrOAuthDCRRecoveryRequired):
-		return errors.New("MCP OAuth DCR registration recovery is required; use --retry-dcr-registration for a valid unresolved attempt or --reset-dcr-registration for a valid existing registration")
+		switch mcp.OAuthDCRRecoveryCategoryOf(err) {
+		case mcp.OAuthDCRRecoveryPending:
+			return errors.New("MCP OAuth DCR previous registration attempt did not complete and its exact safe failure stage was not recorded; use --retry-dcr-registration only if creating a duplicate or orphan client is acceptable")
+		case mcp.OAuthDCRRecoveryRegistrationOutcomeUnknown:
+			return errors.New("MCP OAuth DCR registration request outcome is unknown; use --retry-dcr-registration only if a possible orphan client is acceptable")
+		case mcp.OAuthDCRRecoveryResponseInvalid:
+			return errors.New("the OAuth provider returned a registration response that Mecatl could not safely use for DCR; use --retry-dcr-registration only if a possible orphan client is acceptable")
+		case mcp.OAuthDCRRecoveryReadyPersistence:
+			return errors.New("MCP OAuth DCR registration response was accepted but the ready record was not persisted; use --retry-dcr-registration only if a possible orphan client is acceptable")
+		default:
+			return errors.New("MCP OAuth DCR registration state requires separate operator repair; do not retry or reset registration")
+		}
 	case errors.As(err, &provider) && errors.Is(err, app.ErrMCPLoginAuthorization):
 		return fmt.Errorf("MCP OAuth authorization server rejected login (%s); review the requested scopes and provider policy", provider.Sanitized())
 	case errors.As(err, &rejected) && errors.Is(err, app.ErrMCPLoginAuthorization):

@@ -60,7 +60,7 @@ func projectOAuthError(err error) error {
 		return &OAuthError{kind: ErrOAuthUnavailable, diagnostic: rejected.Sanitized()}
 	}
 	if errors.Is(err, ErrOAuthDCRRecoveryRequired) {
-		return &OAuthError{kind: ErrOAuthDCRRecoveryRequired}
+		return &OAuthError{kind: ErrOAuthDCRRecoveryRequired, diagnostic: dcrRecovery(OAuthDCRRecoveryCategoryOf(err))}
 	}
 	if errors.Is(err, ErrOAuthLoginRequired) {
 		return &OAuthError{kind: ErrOAuthLoginRequired}
