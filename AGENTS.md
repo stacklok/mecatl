@@ -42,7 +42,7 @@ task e2e                # LIVE e2e vs OpenRouter (real money, needs OPENROUTER_A
 task bench              # hot-path testing.B microbenchmarks (-benchmem) for benchstat; BENCHCOUNT=N overrides — NOT part of task test
 task perf:scenarios     # OFFLINE whole-loop scenario benchmarks (perf-tracking Phase 2); MECATL_PERF_JSON=path for KPI JSON — NOT part of task test
 task pgo:collect        # collect a PROVISIONAL offline CPU profile for PGO into .scratch/pgo/ — NOT committed; see perf-tracking Phase 4
-task lint               # golangci-lint v2 + go vet (root module + engine module via --config ../.golangci.yml)
+task lint               # golangci-lint v2, including govet (root module + engine module via --config ../.golangci.yml)
 task vuln               # govulncheck reachable-vuln scan over BOTH modules (needs network for vuln DB) — NOT part of task test
 task tidy               # tidy the go.mod files: root tidy, go work sync, then engine + provider/* GOWORK=off tidy
 task generate           # regenerate contracts/gen from contracts/proto via buf

@@ -142,7 +142,7 @@ failed, harness-owned, primary, and ambiguous worktrees are retained.
 | Gate | What it pins |
 |---|---|
 | bundled acceptance-plan checker | plan shape, human-decision/status consistency, interface declaration, AC proofs, citations, scope |
-| `task lint` | lint, vet, layering rules |
+| `task lint` | golangci-lint (including govet), layering rules |
 | `task test` | full offline suite and engine standalone proof |
 | `task api:check` | guarded engine API compatibility |
 | `task docs` | generated docs and strict links |
