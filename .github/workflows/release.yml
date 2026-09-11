@@ -50,7 +50,11 @@ jobs:
   guard:
     name: Ensure the release tag is on main
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    # 10, not 5: the v0.0.35 release was LOST because an unfiltered depth-0 clone
+    # took 5m18s and tripped a 5-minute cap, skipping all six publish jobs. The
+    # blob filter below removes the cause; this removes the cliff, so a slow
+    # network cannot silently cost a release again.
+    timeout-minutes: 10
     permissions:
       contents: read
     env:
@@ -64,6 +68,11 @@ jobs:
           # 0 so origin/main is present to compare against. NOT `git fetch origin main`:
           # persist-credentials is false, so a fetch has no credentials on this repo.
           fetch-depth: 0
+          # This job reads NO file contents — only `git merge-base` and `git rev-parse`
+          # against the commit graph. An unfiltered depth-0 clone here cost ~5 minutes
+          # (306 MB, 184 branches, 123 tags) in front of every publish job, since all
+          # six `needs: guard`. blob:none fetches the graph without the blobs.
+          filter: blob:none
           ref: ${{ env.VERSION }}
 
       # HEAD, not $GITHUB_SHA: on workflow_dispatch $GITHUB_SHA is the branch head, while
@@ -758,6 +767,15 @@ jobs:
           # all tags even when `ref` names a tag — which is also what makes the
           # origin/main guard below work under persist-credentials: false.
           fetch-depth: 0
+          # GoReleaser needs the tag graph (previous-tag lookup, changelog) and the
+          # TIP tree to build — the tip's blobs arrive with the checkout regardless, so
+          # only historical blobs are filtered out. `changelog.use: github` reads the
+          # compare API, not local blobs, and mod_timestamp reads commit metadata.
+          #
+          # Same caveat as the guard job: with persist-credentials: false there are no
+          # credentials for a lazy blob fetch, so do not add a step here that reads a
+          # HISTORICAL file's contents.
+          filter: blob:none
           ref: ${{ env.VERSION }}
 
       # Eight cross-compiles (2 binaries x 4 platforms) of this dependency graph
