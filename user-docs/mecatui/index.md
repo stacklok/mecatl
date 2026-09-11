@@ -30,15 +30,18 @@ mecatui llm config set corp \
   --gateway-url https://gateway.example/v1 \
   --issuer https://issuer.example \
   --client-id mecatl \
-  --default-model corp-model \
-  --credential-home /absolute/path/to/mecatl-llm-credentials
+  --default-model corp-model
 mecatui llm login corp
 ```
 
 `config set` updates only the named endpoint in the operator-global Mecatl
-`settings.yaml`, preserving unrelated settings and other endpoints. The credential home must
-already be an owner-only (`0700`) directory; it is shared by all native endpoints, so later
-updates must use the configured home until credentials are migrated. It does not choose
+`settings.yaml`, preserving unrelated settings and other endpoints. By default it creates an
+owner-only (`0700`) credential home at `$XDG_STATE_HOME/mecatl/provider-oidc` (falling back
+to `~/.local/state/mecatl/provider-oidc`) and stores its canonical absolute path. To use a
+custom location, pass `--credential-home ABSOLUTE_PATH`; custom directories must already
+exist, be owned by the current user, and have mode `0700`. The credential home is shared by
+all native endpoints, so later updates must retain the configured home until credentials are
+migrated; omitting the flag never changes an existing custom home. `config set` does not choose
 `models.default_provider` or start login. Public CA trust is the default. For private
 PKI, add `--issuer-ca-bundle PATH` and/or `--gateway-ca-bundle PATH`. Add repeatable
 `--scope VALUE` flags to replace the default `openid` and `offline_access` scopes, and

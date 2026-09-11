@@ -19,7 +19,7 @@ composition layer the embedded TUI (`mecatui`) uses in-process.
 Native **LLM endpoints** are deployment-wide operator configuration, not remote-client
 settings. Create or update one in the user-global settings file with
 `mecatui llm config set ENDPOINT --gateway-url URL --issuer ISSUER --client-id ID
---default-model MODEL --credential-home ABSOLUTE_PATH`. This command preserves unrelated
+--default-model MODEL [--credential-home ABSOLUTE_PATH]`. This command preserves unrelated
 configuration, does not change `models.default_provider`, and does not start login. Public
 CA trust is the default; `--issuer-ca-bundle` and `--gateway-ca-bundle` configure the
 existing private-CA policies. Repeat `--scope` as needed (the defaults are `openid` and
@@ -28,11 +28,15 @@ existing private-CA policies. Repeat `--scope` as needed (the defaults are `open
 The resulting strict `llm.endpoints.ID` entry uses the Responses protocol and requires a
 canonical HTTPS gateway URL, default model, OIDC issuer/client/scopes, an optional resource
 audience, and independent issuer/gateway trust policies. `llm.credential_home` is shared by
-all native endpoints. The credential home must already be a canonical owner-only (`0700`)
-directory, and later updates must retain it until credentials are migrated. When `resource_audience` is omitted, Mecatl
+all native endpoints. When `--credential-home` is omitted, `config set` creates the conventional
+owner-only (`0700`) home at `$XDG_STATE_HOME/mecatl/provider-oidc` (or
+`~/.local/state/mecatl/provider-oidc`) and persists its canonical absolute path. An explicit
+custom home must already exist, be owned by the current user, and have mode `0700`; later
+updates, including ones that omit the flag, must retain the configured home until credentials
+are migrated. When `resource_audience` is omitted, Mecatl
 omits the authorization request parameter and does not require an audience during local
 access-token validation; a configured value remains strictly requested and matched. The
-native credential is encrypted and keyring-backed under that explicit home. `mecated` never
+native credential is encrypted and keyring-backed under that configured home. `mecated` never
 opens a browser: enroll with embedded `mecatui llm login ENDPOINT`, then start or
 restart mecated to use the same record. A missing record leaves an optional endpoint
 `not-enrolled`/unavailable, fails startup when it is the effective default, and never

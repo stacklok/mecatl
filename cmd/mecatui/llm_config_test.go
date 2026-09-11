@@ -15,7 +15,13 @@ import (
 )
 
 func nativeConfigArgs(home string, extra ...string) []string {
-	args := []string{"mecatui", "llm", "config", "set", "corp", "--gateway-url", "https://gateway.example/v1", "--issuer", "https://issuer.example", "--client-id", "mecatl", "--default-model", "model-a", "--credential-home", home}
+	args := nativeDefaultConfigArgs()
+	args = append(args, "--credential-home", home)
+	return append(args, extra...)
+}
+
+func nativeDefaultConfigArgs(extra ...string) []string {
+	args := []string{"mecatui", "llm", "config", "set", "corp", "--gateway-url", "https://gateway.example/v1", "--issuer", "https://issuer.example", "--client-id", "mecatl", "--default-model", "model-a"}
 	return append(args, extra...)
 }
 
@@ -65,6 +71,98 @@ func TestNativeLLMConfigSetGrammarAndCreation(t *testing.T) {
 	}
 }
 
+func TestNativeLLMConfigSetDefaultsCredentialHomeFromXDGState(t *testing.T) {
+	config, state := t.TempDir(), t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", config)
+	t.Setenv("XDG_STATE_HOME", state)
+
+	if _, err := runNativeConfigForTest(t, nativeDefaultConfigArgs()); err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(state, "mecatl", "provider-oidc")
+	assertNativeCredentialHome(t, config, want)
+	for _, path := range []string{filepath.Join(state, "mecatl"), want} {
+		info, err := os.Lstat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !info.IsDir() || info.Mode().Perm() != 0o700 {
+			t.Fatalf("default directory %q mode = %v, want owner-only directory", path, info.Mode())
+		}
+	}
+}
+
+func TestNativeLLMConfigSetDefaultsCredentialHomeFromUserHome(t *testing.T) {
+	config, home := t.TempDir(), t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", config)
+	t.Setenv("XDG_STATE_HOME", "")
+	t.Setenv("HOME", home)
+
+	if _, err := runNativeConfigForTest(t, nativeDefaultConfigArgs()); err != nil {
+		t.Fatal(err)
+	}
+	assertNativeCredentialHome(t, config, filepath.Join(home, ".local", "state", "mecatl", "provider-oidc"))
+}
+
+func TestNativeLLMConfigSetFallsBackFromRelativeXDGStateHome(t *testing.T) {
+	for _, stateHome := range []string{".", "relative-state"} {
+		t.Run(stateHome, func(t *testing.T) {
+			config, home, cwd := t.TempDir(), t.TempDir(), t.TempDir()
+			t.Chdir(cwd)
+			t.Setenv("XDG_CONFIG_HOME", config)
+			t.Setenv("XDG_STATE_HOME", stateHome)
+			t.Setenv("HOME", home)
+
+			if _, err := runNativeConfigForTest(t, nativeDefaultConfigArgs()); err != nil {
+				t.Fatal(err)
+			}
+			assertNativeCredentialHome(t, config, filepath.Join(home, ".local", "state", "mecatl", "provider-oidc"))
+			entries, err := os.ReadDir(cwd)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(entries) != 0 {
+				t.Fatalf("relative XDG_STATE_HOME wrote under cwd: %v", entries)
+			}
+		})
+	}
+}
+
+func assertNativeCredentialHome(t *testing.T, configDir, want string) {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(configDir, "mecatl", "settings.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg permconfig.Config
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.LLM.CredentialHome != want {
+		t.Fatalf("credential home = %q, want %q", cfg.LLM.CredentialHome, want)
+	}
+}
+
+func TestNativeLLMConfigSetRejectsSymlinkedDefaultCredentialHome(t *testing.T) {
+	config, state := t.TempDir(), t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", config)
+	t.Setenv("XDG_STATE_HOME", state)
+	parent := filepath.Join(state, "mecatl")
+	if err := os.Mkdir(parent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	target := t.TempDir()
+	if err := os.Symlink(target, filepath.Join(parent, "provider-oidc")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if _, err := runNativeConfigForTest(t, nativeDefaultConfigArgs()); err == nil {
+		t.Fatal("symlinked default credential home was accepted")
+	}
+	if _, err := os.Stat(filepath.Join(config, "mecatl", "settings.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("settings written for symlinked default credential home: %v", err)
+	}
+}
+
 func TestNativeLLMConfigSetUpdatePreservesUnrelatedAndSupportsOptions(t *testing.T) {
 	xdg := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", xdg)
@@ -106,7 +204,7 @@ func TestNativeLLMConfigSetUpdatePreservesUnrelatedAndSupportsOptions(t *testing
 	}
 }
 
-func TestNativeLLMConfigSetRejectsUnusableCredentialHome(t *testing.T) {
+func TestNativeLLMConfigSetRejectsUnusableExplicitCredentialHome(t *testing.T) {
 	xdg := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", xdg)
 	unsafe := filepath.Join(t.TempDir(), "unsafe")
@@ -156,6 +254,29 @@ func TestNativeLLMConfigSetRejectsDifferentSharedCredentialHome(t *testing.T) {
 	if !bytes.Equal(after, before) {
 		t.Fatalf("different shared credential home changed settings:\n%s", after)
 	}
+}
+
+func TestNativeLLMConfigSetOmittedHomeRejectsConfiguredSharedHome(t *testing.T) {
+	config, state := t.TempDir(), t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", config)
+	t.Setenv("XDG_STATE_HOME", state)
+	existing := filepath.Join(t.TempDir(), "credentials")
+	if err := os.Mkdir(existing, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runNativeConfigForTest(t, nativeConfigArgs(existing)); err != nil {
+		t.Fatal(err)
+	}
+
+	args := nativeDefaultConfigArgs()
+	args[4] = "other"
+	if _, err := runNativeConfigForTest(t, args); err == nil || !strings.Contains(err.Error(), "shared by all native endpoints") {
+		t.Fatalf("omitted shared credential home error = %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(state, "mecatl")); !os.IsNotExist(err) {
+		t.Fatalf("conflicting omitted home created default directories: %v", err)
+	}
+	assertNativeCredentialHome(t, config, existing)
 }
 
 func TestNativeLLMConfigSetInvalidInputDoesNotWriteOrLogin(t *testing.T) {

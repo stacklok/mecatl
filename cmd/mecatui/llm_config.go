@@ -17,7 +17,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/yamldiag"
 )
 
-const nativeLLMConfigUsage = "Usage: mecatui llm config set ENDPOINT --gateway-url URL --issuer ISSUER --client-id ID --default-model MODEL --credential-home ABSOLUTE_PATH [--resource-audience AUDIENCE] [--scope SCOPE] [--issuer-ca-bundle PATH] [--gateway-ca-bundle PATH]"
+const nativeLLMConfigUsage = "Usage: mecatui llm config set ENDPOINT --gateway-url URL --issuer ISSUER --client-id ID --default-model MODEL [--credential-home ABSOLUTE_PATH] [--resource-audience AUDIENCE] [--scope SCOPE] [--issuer-ca-bundle PATH] [--gateway-ca-bundle PATH]"
 
 type repeatedScopes []string
 
@@ -45,7 +45,7 @@ func runLLMConfigCommand(res invocationResolution, stdout, stderr io.Writer) err
 	fs.StringVar(&opts.issuer, "issuer", "", "HTTPS OIDC issuer URL")
 	fs.StringVar(&opts.clientID, "client-id", "", "OIDC public client ID")
 	fs.StringVar(&opts.defaultModel, "default-model", "", "default model for this endpoint")
-	fs.StringVar(&opts.credentialHome, "credential-home", "", "absolute directory for protected native LLM credentials")
+	fs.StringVar(&opts.credentialHome, "credential-home", "", "existing owner-only credential directory (default: $XDG_STATE_HOME/mecatl/provider-oidc)")
 	fs.StringVar(&opts.resourceAudience, "resource-audience", "", "optional OAuth resource audience")
 	fs.Var(&opts.scopes, "scope", "OIDC scope (repeatable; defaults to openid and offline_access)")
 	fs.StringVar(&opts.issuerCABundle, "issuer-ca-bundle", "", "PEM CA bundle for a private-CA OIDC issuer")
@@ -56,10 +56,10 @@ func runLLMConfigCommand(res invocationResolution, stdout, stderr io.Writer) err
 	if fs.NArg() != 0 {
 		return errors.New("llm config set: unexpected positional arguments; run `mecatui llm config --help`")
 	}
-	if opts.gatewayURL == "" || opts.issuer == "" || opts.clientID == "" || opts.defaultModel == "" || opts.credentialHome == "" {
-		return errors.New("llm config set: --gateway-url, --issuer, --client-id, --default-model, and --credential-home are required")
+	if opts.gatewayURL == "" || opts.issuer == "" || opts.clientID == "" || opts.defaultModel == "" {
+		return errors.New("llm config set: --gateway-url, --issuer, --client-id, and --default-model are required")
 	}
-	credentialHome, err := canonicalNativeCredentialHome(opts.credentialHome)
+	credentialHome, defaultCredentialHome, err := resolveNativeCredentialHome(opts.credentialHome)
 	if err != nil {
 		return err
 	}
@@ -73,6 +73,11 @@ func runLLMConfigCommand(res invocationResolution, stdout, stderr io.Writer) err
 	}
 	settings := &operatorLearningSettings{path: filepath.Join(base, "mecatl", "settings.yaml")}
 	if err := settings.withLockedDocument(func(doc *yamldiag.Document) error {
+		credentialHome, err := prepareNativeCredentialHome(doc, opts.credentialHome, defaultCredentialHome)
+		if err != nil {
+			return err
+		}
+		opts.credentialHome = credentialHome
 		return setNativeLLMEndpoint(doc, res.llmEndpoint, opts)
 	}); err != nil {
 		return fmt.Errorf("llm config set: %w", err)
@@ -96,7 +101,7 @@ func setNativeLLMEndpoint(doc *yamldiag.Document, endpointID string, opts native
 		section.Endpoints = make(permconfig.NativeEndpointDefinitions)
 	}
 	if section.CredentialHome != "" && section.CredentialHome != opts.credentialHome {
-		return fmt.Errorf("llm.credential_home is shared by all native endpoints; use the existing credential home %q or migrate credentials before changing it", section.CredentialHome)
+		return sharedNativeCredentialHomeError(section.CredentialHome)
 	}
 	section.CredentialHome = opts.credentialHome
 	section.Endpoints[endpointID] = permconfig.NativeEndpointDefinition{
@@ -134,6 +139,94 @@ func setNativeLLMEndpoint(doc *yamldiag.Document, endpointID string, opts native
 		return fmt.Errorf("configuration validation failed: %w", err)
 	}
 	return nil
+}
+
+func resolveNativeCredentialHome(path string) (string, bool, error) {
+	if path != "" {
+		canonical, err := canonicalNativeCredentialHome(path)
+		return canonical, false, err
+	}
+	base := xdgconfig.UserStateDir(xdgconfig.OSEnv)
+	if !filepath.IsAbs(base) {
+		home, err := xdgconfig.OSEnv.UserHomeDir()
+		if err != nil || !filepath.IsAbs(home) {
+			return "", true, errors.New("llm config set: native credential state path is unavailable; pass --credential-home")
+		}
+		base = filepath.Join(home, ".local", "state")
+	}
+	credentialHome := filepath.Join(base, "mecatl", "provider-oidc")
+	return filepath.Clean(credentialHome), true, nil
+}
+
+func prepareNativeCredentialHome(doc *yamldiag.Document, requested string, useDefault bool) (string, error) {
+	configured, err := configuredNativeCredentialHome(doc)
+	if err != nil {
+		return "", err
+	}
+	if configured != "" && configured != requested {
+		canonical, resolveErr := filepath.EvalSymlinks(requested)
+		if !useDefault || resolveErr != nil || filepath.Clean(canonical) != configured {
+			return "", sharedNativeCredentialHomeError(configured)
+		}
+	}
+	if useDefault {
+		return ensureDefaultNativeCredentialHome(requested)
+	}
+	return requested, nil
+}
+
+func configuredNativeCredentialHome(doc *yamldiag.Document) (string, error) {
+	llmNode, err := uniqueMappingValue(doc.Mapping(), "llm", false)
+	if err != nil || llmNode == nil {
+		return "", err
+	}
+	var section permconfig.LLMSection
+	if err := doc.Decode(llmNode, &section); err != nil {
+		return "", errors.New("existing llm configuration is invalid")
+	}
+	return section.CredentialHome, nil
+}
+
+func sharedNativeCredentialHomeError(home string) error {
+	return fmt.Errorf("llm.credential_home is shared by all native endpoints; use the existing credential home %q or migrate credentials before changing it", home)
+}
+
+func ensureDefaultNativeCredentialHome(path string) (string, error) {
+	var missing []string
+	ancestor := path
+	for {
+		info, err := os.Lstat(ancestor)
+		if err == nil {
+			if info.Mode()&os.ModeSymlink != 0 && ancestor == path {
+				return "", errors.New("default credential home must not be a symbolic link")
+			}
+			break
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return "", errors.New("default credential home is unavailable")
+		}
+		parent := filepath.Dir(ancestor)
+		if parent == ancestor {
+			return "", errors.New("default credential home has no existing ancestor")
+		}
+		missing = append(missing, filepath.Base(ancestor))
+		ancestor = parent
+	}
+	physical, err := filepath.EvalSymlinks(ancestor)
+	if err != nil {
+		return "", errors.New("default credential home is unavailable")
+	}
+	for i := len(missing) - 1; i >= 0; i-- {
+		physical = filepath.Join(physical, missing[i])
+		if err := os.Mkdir(physical, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
+			return "", errors.New("create default credential home")
+		}
+		info, err := os.Lstat(physical)
+		if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+			return "", errors.New("default credential home contains an unsafe path component")
+		}
+	}
+	return canonicalNativeCredentialHome(physical)
 }
 
 func canonicalNativeCredentialHome(path string) (string, error) {
