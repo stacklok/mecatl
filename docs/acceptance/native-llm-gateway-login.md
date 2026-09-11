@@ -2,7 +2,7 @@
 
 **Contract:** human-reviewed/v1
 **Phase:** Native organizational LLM-gateway authentication
-**Status:** in-progress, 2026-09-10. The Plan / Interface contract was approved by merge; implementation is underway from the approved baseline.
+**Status:** landed, 2026-09-10. Implementation is complete and becomes authoritative when the Implementation PR merges.
 **Delivery:** Split. This changes operator CLI/configuration, provider credential custody, durable secret lifecycle, and the trust boundary between mecatl, ToolHive, and remote callers, so the interface must be approved separately from implementation.
 **Expected tasks:** deferred to orchestration
 
