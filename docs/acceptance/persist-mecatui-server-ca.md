@@ -2,7 +2,7 @@
 
 **Contract:** human-reviewed/v2
 **Work classification:** Architectural — persisting target-specific server trust and superseding ADR 0287 establishes a durable client transport and security decision.
-**Decision record:** [ADR 0326](../adr/0326-persisted-mecatui-server-ca.md)
+**Decision record:** [ADR 0374](../adr/0374-persisted-mecatui-server-ca.md)
 **Phase:** focused mecatui remote-login capability
 **Status:** in-progress, 2026-09-08
 **Delivery:** Split. A separate plan/interface PR is required by the Architectural workflow; no waiver has been authorized.
