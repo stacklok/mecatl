@@ -3,11 +3,9 @@
 // holding per-provider secrets: an api_key for the existing keyed providers or
 // a manually supplied OAuth access-token snapshot for openai-codex.
 //
-// LAYERING: adapter-layer LEAF — stdlib + internal/adapter/xdgconfig only (mirrors
-// xdgconfig's own leaf shape: "Adapters MAY import it; no domain package ever may").
-// internal/cliconfig is its cmd-layer wiring consumer today; a future credential-
-// writing subcommand (e.g. `mecated auth login`) can depend on this package directly
-// without pulling in cliconfig's flag/model-alias machinery.
+// LAYERING: adapter-layer leaf — stdlib plus narrowly scoped root-internal
+// provider-ID, XDG, and YAML-diagnostic helpers. internal/cliconfig and local
+// operator setup consume it without pulling in CLI/model-alias machinery.
 package authfile
 
 import (
@@ -192,9 +190,9 @@ func Load(path string, explicit bool, env xdgconfig.ResolveEnv, knownProviders [
 	if len(data) > maxFileBytes {
 		return nil, fmt.Sprintf("auth file %s: %d bytes exceeds the %d-byte cap", path, len(data), maxFileBytes)
 	}
-	// Advisory-only permission check: mecatl never WRITES this file, so a loose
-	// mode can only be reported, not fixed on the operator's behalf. Checked
-	// before parsing (a permission problem is worth knowing about even if the
+	// Advisory-only permission check for reads. The targeted writer separately
+	// rejects loose existing modes and never tightens them on the operator's behalf.
+	// It is checked before parsing (a permission problem is worth knowing about even if the
 	// content also turns out to be malformed), and ACCUMULATED with any later
 	// content warning rather than clobbered by it — the permission finding is
 	// the security-relevant one, and the hand-edited files most likely to trip

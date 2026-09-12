@@ -6,18 +6,20 @@ import (
 	"fmt"
 	"net/url"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	"github.com/goccy/go-yaml"
 	"github.com/goccy/go-yaml/ast"
 
 	"github.com/stacklok/mecatl/internal/adapter/llmendpoint"
+	"github.com/stacklok/mecatl/internal/adapter/providerid"
 )
 
 const providerHTTPS = "https"
 
-var providerIDPattern = regexp.MustCompile(`^[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
+// ValidProviderID reports whether id uses the provider identifier grammar shared
+// by operator configuration and credential persistence.
+func ValidProviderID(id string) bool { return providerid.Valid(id) }
 
 var reservedProviderIDs = map[string]struct{}{
 	"anthropic": {}, "mock": {}, "openai": {}, "openai-codex": {}, "openrouter": {}, "opencode": {}, "toolhive": {},
@@ -176,7 +178,7 @@ func (n *NativeEndpointDefinitions) UnmarshalYAML(node ast.Node) error {
 	out := make(NativeEndpointDefinitions, len(mapping.Values))
 	for _, entry := range mapping.Values {
 		id, ok := permconfigMappingKey(entry.Key)
-		if !ok || !providerIDPattern.MatchString(id) || isReservedProviderID(id) {
+		if !ok || !providerid.Valid(id) || isReservedProviderID(id) {
 			return errors.New("llm.endpoints: invalid or reserved endpoint id")
 		}
 		if _, exists := out[id]; exists {
@@ -285,7 +287,7 @@ func (p *ProviderDefinitions) UnmarshalYAML(node ast.Node) error {
 	out := make(ProviderDefinitions, len(mapping.Values))
 	for _, entry := range mapping.Values {
 		id, ok := permconfigMappingKey(entry.Key)
-		if !ok || !providerIDPattern.MatchString(id) || isReservedProviderID(id) {
+		if !ok || !providerid.Valid(id) || isReservedProviderID(id) {
 			return errors.New("providers: invalid or reserved provider id")
 		}
 		if _, exists := out[id]; exists {
