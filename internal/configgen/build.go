@@ -32,7 +32,7 @@ func BuildModel(docs Docs) *Model {
 		reasoningEffortSubtree(docs),
 		planModeAutoApproveSubtree(docs),
 		providersSubtree(docs),
-		llmSubtree(docs),
+		credentialStoreSubtree(docs),
 		providerOverridesSubtree(docs),
 		learningSubtree(docs),
 		retentionSubtree(docs),
@@ -162,53 +162,32 @@ func guardrailsSubtree(docs Docs) *Subtree {
 const configStringType = "string"
 
 func providersSubtree(_ Docs) *Subtree {
-	return &Subtree{
-		Key:          "providers",
-		Tier:         TierOperator,
-		CommentedOut: true,
-		Doc:          "Strict operator-defined LLM providers. Project-tier definitions are ignored. Provider URLs must be HTTPS without userinfo, query, or fragment; credentials belong only in auth.yaml.",
-		Fields: []*Field{{
-			Key: "team-gateway", Type: "providerdefinition", Default: configAbsent, ExampleMapKey: "team-gateway",
-			Nested: []*Field{
-				{Key: "base_url", Type: configStringType, Default: configRequired, ExampleValue: "https://gateway.example/v1"},
-				{Key: "default_model", Type: configStringType, Default: configRequired, ExampleValue: "team-chat"},
-				{Key: "api_flavor", Type: configStringType, Default: configRequired, ExampleValue: "openai-responses"},
-				{Key: "auth", Type: "providerauth", Default: configAbsent, Nested: []*Field{{Key: "method", Type: configStringType, Default: "none", ExampleValue: "api_key"}}},
-			},
-		}},
+	trust := func(key string) *Field {
+		return &Field{Key: key, Type: "nativetrust", Default: configRequired, Nested: []*Field{
+			{Key: "policy", Type: configStringType, Default: configRequired, ExampleValue: "public"},
+			{Key: "ca_bundle", Type: configStringType, Default: "(forbidden for public)"},
+		}}
+	}
+	oidc := &Field{Key: "oidc", Type: "provideroidc", Default: "(required only for oidc)", Nested: []*Field{
+		{Key: "issuer", Type: configStringType, Default: configRequired, ExampleValue: "https://issuer.example"},
+		{Key: "client_id", Type: configStringType, Default: configRequired, ExampleValue: "mecatl"},
+		{Key: "scopes", Type: "[]string", Default: configRequired, ExampleValue: "[openid, offline_access]"},
+		{Key: "resource_audience", Type: configStringType, Default: "(optional)"},
+		trust("issuer_trust"), trust("gateway_trust"),
+	}}
+	return &Subtree{Key: "providers", Tier: TierOperator, CommentedOut: true,
+		Doc: "Strict operator-defined LLM providers. Project-tier definitions are ignored. Provider URLs must be HTTPS without userinfo, query, or fragment; credentials belong only in auth.yaml or the shared OIDC credential store.",
+		Fields: []*Field{{Key: "team-gateway", Type: "providerdefinition", Default: configAbsent, ExampleMapKey: "team-gateway", Nested: []*Field{
+			{Key: "base_url", Type: configStringType, Default: configRequired, ExampleValue: "https://gateway.example/v1"},
+			{Key: "default_model", Type: configStringType, Default: configRequired, ExampleValue: "team-chat"},
+			{Key: "api_flavor", Type: configStringType, Default: configRequired, ExampleValue: "openai-responses"},
+			{Key: "auth", Type: "providerauth", Default: configRequired, Nested: []*Field{{Key: "method", Type: configStringType, Default: configRequired, ExampleValue: "oidc"}, oidc}},
+		}}},
 	}
 }
 
-func llmSubtree(_ Docs) *Subtree {
-	trust := func(example string) *Field {
-		return &Field{Key: example, Type: "nativetrust", Default: configRequired, Nested: []*Field{
-			{Key: "policy", Type: configStringType, Default: configRequired, ExampleValue: "public"},
-			{Key: "ca_bundle", Type: configStringType, Default: "(forbidden for public)", ExampleValue: ""},
-		}}
-	}
-	return &Subtree{
-		Key: "llm", Tier: TierOperator, CommentedOut: true,
-		Doc: "Strict operator-tier native LLM endpoints and their explicit protected credential home. Project values are ignored. Lifecycle commands use exact endpoint IDs and never change provider selection.",
-		Fields: []*Field{
-			{Key: "credential_home", Type: configStringType, Default: "(required with endpoints)", ExampleValue: "/var/lib/mecatl/provider-oidc"},
-			{Key: "credential_key", Type: "nativecredentialkey", Default: "(keyring)", Doc: "Shared encryption-key source for all native endpoints; no automatic fallback or migration. Records always remain encrypted.", Nested: []*Field{
-				{Key: "source", Type: configStringType, Default: "keyring", ExampleValue: "environment", Doc: "Closed choice: keyring or environment. Omission of credential_key preserves the OS-keyring default."},
-				{Key: "key_env", Type: configStringType, Default: "(required for environment; forbidden for keyring)", ExampleValue: "MECATL_NATIVE_LLM_CREDENTIAL_KEY", Doc: "MECATL_* environment reference containing canonical padded base64 decoding to exactly 32 bytes. Only the reference belongs in settings, never the key value."},
-			}},
-			{Key: "endpoints", Type: "map[string]nativeendpoint", Default: configAbsent, ExampleMapKey: "corp-gateway", Nested: []*Field{
-				{Key: "protocol", Type: configStringType, Default: configRequired, ExampleValue: "openai-responses"},
-				{Key: "url", Type: configStringType, Default: configRequired, ExampleValue: "https://gateway.example/v1"},
-				{Key: "default_model", Type: configStringType, Default: configRequired, ExampleValue: "corp-model"},
-				{Key: "oidc", Type: "nativeoidc", Default: configRequired, Nested: []*Field{
-					{Key: "issuer", Type: configStringType, Default: configRequired, ExampleValue: "https://issuer.example"},
-					{Key: "client_id", Type: configStringType, Default: configRequired, ExampleValue: "mecatl"},
-					{Key: "resource_audience", Type: configStringType, Default: "(empty)", ExampleValue: "https://gateway.example", Doc: "Optional OAuth audience parameter and access-token audience binding. Empty omits both."},
-					{Key: "scopes", Type: "[]string", Default: configRequired, ExampleValue: "[models.read, offline_access]"},
-				}},
-				trust("issuer_trust"), trust("gateway_trust"),
-			}},
-		},
-	}
+func credentialStoreSubtree(_ Docs) *Subtree {
+	return &Subtree{Key: "credential_store", Tier: TierOperator, CommentedOut: true, Doc: "Shared encrypted credential store for OIDC providers.", Fields: []*Field{{Key: "oidc", Type: "oidccredentialstore", Default: configAbsent, Nested: []*Field{{Key: "home", Type: configStringType, Default: configRequired, ExampleValue: "/var/lib/mecatl/provider-oidc"}, {Key: "key", Type: "nativecredentialkey", Default: configRequired, Nested: []*Field{{Key: "source", Type: configStringType, Default: configRequired, ExampleValue: "keyring"}, {Key: "key_env", Type: configStringType, Default: "(required for environment; forbidden for keyring)", ExampleValue: "MECATL_NATIVE_LLM_CREDENTIAL_KEY"}}}}}}}
 }
 
 func providerOverridesSubtree(_ Docs) *Subtree {

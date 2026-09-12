@@ -120,48 +120,34 @@
 #| === providers === (tier: operator)
 #| Strict operator-defined LLM providers. Project-tier definitions are ignored. Provider
 #| URLs must be HTTPS without userinfo, query, or fragment; credentials belong only in
-#| auth.yaml.
+#| auth.yaml or the shared OIDC credential store.
 # providers:
 #   team-gateway:
 #     base_url: https://gateway.example/v1
 #     default_model: team-chat
 #     api_flavor: openai-responses
 #     auth:
-#       method: api_key
-
-#| === llm === (tier: operator)
-#| Strict operator-tier native LLM endpoints and their explicit protected credential
-#| home. Project values are ignored. Lifecycle commands use exact endpoint IDs and never
-#| change provider selection.
-# llm:
-#   credential_home: /var/lib/mecatl/provider-oidc
-#   # Shared encryption-key source for all native endpoints; no automatic fallback or
-#   # migration. Records always remain encrypted.
-#   credential_key:
-#     # Closed choice: keyring or environment. Omission of credential_key preserves the
-#     # OS-keyring default.
-#     source: environment
-#     # MECATL_* environment reference containing canonical padded base64 decoding to
-#     # exactly 32 bytes. Only the reference belongs in settings, never the key value.
-#     key_env: MECATL_NATIVE_LLM_CREDENTIAL_KEY
-#   endpoints:
-#     corp-gateway:
-#       protocol: openai-responses
-#       url: https://gateway.example/v1
-#       default_model: corp-model
+#       method: oidc
 #       oidc:
 #         issuer: https://issuer.example
 #         client_id: mecatl
-#         # Optional OAuth audience parameter and access-token audience binding. Empty
-#         # omits both.
-#         resource_audience: https://gateway.example
-#         scopes: [models.read, offline_access]
-#       issuer_trust:
-#         policy: public
-#         ca_bundle: ""
-#       gateway_trust:
-#         policy: public
-#         ca_bundle: ""
+#         scopes: [openid, offline_access]
+#         resource_audience: ""
+#         issuer_trust:
+#           policy: public
+#           ca_bundle: ""
+#         gateway_trust:
+#           policy: public
+#           ca_bundle: ""
+
+#| === credential_store === (tier: operator)
+#| Shared encrypted credential store for OIDC providers.
+# credential_store:
+#   oidc:
+#     home: /var/lib/mecatl/provider-oidc
+#     key:
+#       source: keyring
+#       key_env: MECATL_NATIVE_LLM_CREDENTIAL_KEY
 
 #| === provider_overrides === (tier: operator)
 #| Strict endpoint overrides for built-in openai, openrouter, anthropic, and opencode
