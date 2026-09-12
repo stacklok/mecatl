@@ -50,6 +50,50 @@ or retains it. Use separate deployments for mutually untrusted or per-user upstr
 authorization until a future explicit forwarded-token or RFC 8693 token-exchange
 contract exists.
 
+### Native credential storage failures
+
+Check `llm.credential_key.source` in the **server operator's** settings before trying to
+repair `storage-unavailable` or `corrupt` state. These statuses are not proof of a keyring
+failure:
+
+- **Keyring mode (the default):** if the OS keyring is unavailable or locked, enable or
+  unlock it for the account running login and the server. There is no automatic fallback
+  to an environment key. Switching the source does not migrate existing records.
+- **Environment-key mode, missing or malformed variable:** the OS keyring is not used.
+  Check that `llm.credential_key.key_env` names the variable actually provisioned to both
+  processes; an interactive shell export alone does not configure a service environment.
+  Restore the original secret-manager value and correct provisioning without printing it.
+  It must be canonical padded standard base64 for exactly 32 bytes, without whitespace or
+  line breaks. Missing/malformed values fail before OAuth or credential mutation; do not
+  generate a replacement key to fix a provisioning mistake.
+- **Environment-key mode, lost or replaced key:** a well-formed but different value cannot
+  decrypt the existing record and can report `corrupt`. Restore the original key if it is
+  available. Login refuses to overwrite unreadable records, and logout cannot read them to
+  revoke their tokens. If the original key cannot be restored, re-enrollment is required;
+  repeated login attempts or switching back to keyring will not recover the record.
+- **New environment-key enrollment:** an encrypted namespace that has not been initialized
+  reports `storage-unavailable`. After verifying the key and the owner-only credential home,
+  run `mecatui llm login ENDPOINT` to initialize it. Status and serving never create it.
+  For other storage failures, check ownership and permissions of the configured
+  `llm.credential_home`, not the connected client's authentication directory.
+
+If re-enrollment with a new key is unavoidable, stop all processes sharing the credential
+home and preserve the old encrypted home with its owner-only permissions; do not delete or
+overwrite it as a troubleshooting shortcut. Have the operator revoke the old authorization
+at the identity provider, create a new empty owner-owned directory with mode `0700`, and
+explicitly update `llm.credential_home` in operator settings to its canonical absolute path.
+Provision the new stable key and re-enroll **every required endpoint** using the
+[keyring-free enrollment procedure](/building/deployment/mecated.md#keyring-free-encrypted-credentials).
+The key source and home are shared across endpoints; this is a fresh enrollment, not a
+migration. Verify local status before restarting the server with the same settings and key.
+
+Never paste keys, access tokens, or refresh tokens into **CLI arguments, settings YAML,
+prompts, or logs**. Settings hold only an environment-variable reference; refresh tokens
+remain encrypted, never in a plaintext file. Do not dump the process environment to diagnose
+this issue. See the [`llm` configuration reference](/reference/configuration.md#llm) for the
+supported key-source fields.
+
+## Server connection or login fails
 
 These are distinct failures:
 

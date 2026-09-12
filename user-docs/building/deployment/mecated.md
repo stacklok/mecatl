@@ -47,23 +47,48 @@ falls back to another endpoint or ToolHive.
 
 ### Keyring-free encrypted credentials
 
-For an operator-managed environment without an OS keyring, add this shared block to the
-existing `llm` mapping in **operator settings**, alongside `credential_home` and `endpoints`:
+The default remains the OS keyring. Environment-key custody is an explicit operator opt-in;
+credentials remain encrypted, with **no plaintext refresh-token storage**. For a new
+enrollment in an environment without an OS keyring:
 
-```yaml
-credential_key:
-  source: environment
-  key_env: MECATL_NATIVE_LLM_CREDENTIAL_KEY
-```
+1. In a secret manager, generate and retain one stable key: canonical **padded standard
+   base64** encoding exactly **32 cryptographically random bytes**, with no whitespace or
+   line breaks. Provision it as `MECATL_NATIVE_LLM_CREDENTIAL_KEY` in both the embedded
+   `mecatui` login environment and the `mecated` service environment. Use the **same value**
+   for login, server execution, and every restart; do not generate a new key at startup.
+2. Add this block to the existing `llm` mapping in **operator settings**, alongside
+   `credential_home` and `endpoints` (do not replace those entries):
 
-Provision the referenced variable securely in both the embedded mecatui login process and
-the mecated service environment. Its value must be canonical **padded standard base64**
-encoding exactly **32 cryptographically random bytes**, with no whitespace or line breaks.
-Use a secret manager or protected service-environment provisioning; never put the value in
-settings, command arguments, shell history, logs, or an agent prompt. The reference must be
-a valid `MECATL_*` name; model-facing Shell environments scrub these variables. The
-access/refresh tokens still live only in the existing owner-only **encrypted** credential
-store, and refresh-token rotation is persisted there before a bearer is returned.
+   ```yaml
+   credential_key:
+     source: environment
+     key_env: MECATL_NATIVE_LLM_CREDENTIAL_KEY
+   ```
+
+   Settings contain only the environment-variable **reference**, never its value. The
+   reference must be a valid `MECATL_*` name; see the
+   [`llm` configuration reference](/reference/configuration.md#llm).
+3. With the key securely injected, enroll and inspect the exact configured endpoint ID
+   (replace `ENDPOINT` below):
+
+   ```sh
+   mecatui llm login ENDPOINT
+   mecatui llm status ENDPOINT
+   ```
+
+   Use `--no-browser` on login if needed, as described above. Confirm status is `usable`.
+4. Start or restart the service with the same operator settings, credential home, and key
+   value. For a foreground server in that provisioned environment:
+
+   ```sh
+   mecated serve
+   ```
+
+Use a secret manager or protected service-environment provisioning; never paste secrets into
+CLI arguments, settings YAML, shell history, prompts, or logs. Model-facing Shell environments
+scrub `MECATL_*` variables. Access/refresh tokens are persisted only in the owner-only
+**encrypted** credential store, and refresh-token rotation is persisted there before a bearer
+is returned.
 
 Omitting `credential_key` retains the existing OS-keyring behavior. Explicit
 `credential_key: {source: keyring}` is equivalent and forbids `key_env`, even when empty.
@@ -75,11 +100,15 @@ reports `storage-unavailable` in environment mode; login initializes it, while s
 logout, and serving never create it or a key.
 
 The source is shared across **all endpoints in that credential home**, not configured per
-endpoint. `llm config set` preserves the existing shared selection. Source and variable name
-are not part of credential identity: changing them does not migrate, re-encrypt, or overwrite
-records. Keep the original key available; losing it makes its records unreadable. Coordinate
-key provisioning across all processes sharing the home, and restart serving processes after
-an intentional change. Native and ToolHive credentials remain isolated.
+endpoint. `llm config set` preserves the existing shared selection. There is **no automatic
+migration**: changing the source or variable name does not migrate, re-encrypt, or overwrite
+records. Changing or losing the key value makes existing records unreadable; restore the
+original key or **re-enroll** with a new key and fresh protected storage. Login cannot
+overwrite an unreadable record. For an existing enrollment, follow the
+[native endpoint recovery guidance](/mecatui/troubleshooting.md#native-credential-storage-failures)
+before changing custody. Coordinate provisioning across all processes sharing the home,
+and restart serving processes after an intentional change. Native and ToolHive credentials
+remain isolated.
 
 Every admitted caller shares a usable endpoint's deployment-scoped gateway identity, quota,
 gateway-side audit/retention posture, and model availability. Use a dedicated deployment/service
