@@ -181,6 +181,8 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0215 — OpenAI subscription with a manual access token](./0215-openai-subscription-manual-token.md)
 - [0216 — Correlate provider requests with the active session](./0216-provider-session-correlation-header.md)
 
+- [0333 — Unified provider configuration and Mecatui provider commands](./0333-unified-provider-configuration-and-mecatui-provider-commands.md) *(proposed; supersedes the `llm.endpoints` facade and unifies the local provider CLI)*
+
 ### MCP
 - [0056 — MCP client reconnect](./0056-mcp-client-reconnect.md)
 - [0057 — MCP server notifications](./0057-mcp-server-notifications.md)

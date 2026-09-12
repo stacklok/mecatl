@@ -297,6 +297,8 @@ PR after verification. There is no cleanup or status-only PR.
   and `ShellStatus` model-facing names, safe legacy `Bash` input normalization, and
   parser-backed portable-POSIX feedback for model-facing shell commands. Status: proposed.
 
+- [Unified provider configuration and Mecatui provider commands](unified-provider-configuration-and-mecatui-provider-commands.md) — replace the `llm.endpoints` facade and `mecatui llm` surface with one provider model, bounded OIDC configuration, portable local setup, and comprehensive provider help. Status: proposed.
+
 ## See also
 
 - [Development process](../development-process.md) — the spine end to end.
