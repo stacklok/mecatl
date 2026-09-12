@@ -34,9 +34,22 @@ mecatui --version
 The version command should print a release tag. For signed archives and source
 builds, see [Install Mecatl](/install.md).
 
-## Start mecatui
+## Configure a provider and start mecatui
 
-Mecatl detects the provider from its environment variable. Set one of
+On Linux, you can explicitly launch the local, line-oriented provider setup:
+
+```sh
+mecatui llm setup
+```
+
+It can save a supported API key, choose a default model, and then start embedded
+`mecatui` after separate confirmations. It is not an automatic first-run wizard.
+Before using it, read [Set up a local embedded provider](/features/choose-models.md#set-up-a-local-embedded-provider)
+for credential custody, environment precedence, passive status, and platform
+limits.
+
+Alternatively, Mecatl detects a provider from its environment variable. This path
+also works on macOS, where local setup writes are unsupported. Set one of
 `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or `OPENROUTER_API_KEY` in the shell where
 you will run `mecatui`:
 
@@ -46,7 +59,9 @@ export <PROVIDER_API_KEY>="<API_KEY>"
 mecatui --workspace "$PWD"
 ```
 
-Replace `<PROVIDER_API_KEY>` with the variable for your provider.
+Replace `<PROVIDER_API_KEY>` with the variable for your provider. If setup already
+started `mecatui`, change to your project directory before running setup so that it
+uses the intended workspace.
 
 The welcome screen shows your workspace and active model. To use a different
 model, enter `/models`, select one, and press `enter`. A small, low-cost model is

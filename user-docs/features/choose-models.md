@@ -48,6 +48,105 @@ configuration and credentials determine the inventory. In `connect` mode, the
 remote server determines it; local embedded-server flags and credentials do not
 apply.
 
+### Set up a local embedded provider
+
+On Linux, run the explicit, terminal-only setup command to add or replace a
+provider key, choose the embedded server's default provider and model, or remove
+a saved key:
+
+```sh
+mecatui llm setup
+```
+
+This is a line-oriented CLI flow, not a first-run wizard: starting `mecatui`
+never launches it automatically. Credential and settings writes are unsupported
+on other operating systems because the local writer cannot prove the required
+filesystem properties there. On macOS and other unsupported systems, configure
+the environment or files manually as described in the
+[settings guide](/building/deployment/settings.md#configure-provider-credentials).
+
+Setup can write API keys for the `openai`, `anthropic`, `openrouter`, and
+`opencode` built-ins. It can also write a key for an existing custom `providers:`
+entry whose authentication method is `api_key`; it does not create custom provider
+definitions. Providers configured with no authentication, `openai-codex`, and
+OAuth-shaped records are not API-key choices.
+
+Before hidden key entry, the command identifies the provider console and explains
+that you need an API/developer key rather than a consumer subscription. Confirming
+a write stores the key as owner-only plaintext in the existing `auth.yaml`. Other
+processes running as the same operating-system user can read that file, as can an
+enabled agent Shell running under that user. Use a separate OS identity or another
+credential delivery mechanism if that custody is too broad. API use may incur
+provider charges.
+
+Existing startup precedence does not change. A built-in provider's matching
+environment variable wins over its file entry. OpenRouter checks
+`OPENROUTER_API_KEY` first and retains its environment-only `OPENAI_API_KEY`
+compatibility fallback; a custom provider key is file-only. Setup reports when an
+environment credential is active and does not copy it into the file. If you choose
+to replace a shadowed file key, the environment value continues to win.
+
+Use a specific credential file when needed:
+
+```sh
+mecatui llm setup --auth-file "$HOME/.config/mecatl/work-auth.yaml"
+mecatui llm status --auth-file "$HOME/.config/mecatl/work-auth.yaml"
+```
+
+An explicit missing auth file requires confirmation before setup creates only the
+file in an existing protected parent directory. It does not recursively create a
+custom parent. If setup offers to start `mecatui` after a successful change, that
+start carries the same `--auth-file` path and re-reads normal settings; it does not
+silently return to the conventional file.
+
+Setup confirms credential and default changes separately because `auth.yaml` and
+`settings.yaml` cannot be committed as one portable transaction. It prints one of
+these outcomes for each attempted write:
+
+- `no_op`: the requested value was already effective in that file;
+- `durable`: the file replacement and directory sync completed;
+- `not_applied`: the invocation did not commit the replacement; or
+- `replacement_applied_durability_unknown`: replacement occurred, but crash
+  durability could not be confirmed.
+
+On either error outcome, setup stops without retrying or rolling back. A credential
+may therefore be durable even when a later default-setting write fails. Run passive
+status after resolving the filesystem condition rather than assuming both files
+changed together.
+
+Removing a saved key does not revoke it at the provider, and an environment
+credential may remain active. If removal would leave the selected default without
+a credential, setup first requires a separately confirmed replacement default and
+commits it before attempting key removal.
+
+Inspect local configuration without entering setup:
+
+```sh
+mecatui llm status
+```
+
+No-target status reports built-in and configured providers, credential provenance
+and a shadowed-file presence flag, the selected default and model selector, native
+endpoint names, and the ToolHive handoff. It never prints key values or
+fingerprints. Every row says `verification: not checked`: status makes no network
+request, refresh, browser launch, model-list check, or paid inference, so it cannot
+prove that a key or model is accepted.
+
+Native endpoint OIDC and ToolHive keep separate custody. Selecting a configured
+native endpoint in setup asks before handing off to the existing in-process
+`mecatui llm login ENDPOINT` operation; an active `--auth-file` override rejects
+that handoff because native credentials do not use `auth.yaml`. ToolHive remains
+owned by `thv llm` tooling. Endpoint-specific native and ToolHive status likewise
+do not accept `--auth-file`.
+
+The model list in setup is a bounded convenience, not a health check. You can always
+enter a non-empty model selector manually; it remains unverified until an actual
+provider request. Active provider/model verification, an automatic first-run offer,
+OpenRouter OAuth or key minting, and Gemini onboarding are not part of this flow.
+
+See [Configure Mecatl](/building/deployment/settings.md) for the file locations and
+manual configuration schema.
+
 See [Use mecatui](./use-mecatui.md) for the command-line startup, connection,
 and keybinding details.
 

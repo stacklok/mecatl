@@ -47,6 +47,13 @@ PKI, add `--issuer-ca-bundle PATH` and/or `--gateway-ca-bundle PATH`. Add repeat
 `--scope VALUE` flags to replace the default `openid` and `offline_access` scopes, and
 use `--resource-audience VALUE` only when the issuer requires one.
 
+For an embedded local server on Linux, `mecatui llm setup [--auth-file PATH]`
+can save a supported API key and choose the default through separate confirmations.
+Use `mecatui llm status [--auth-file PATH]` for a passive local summary; it does
+not test the credential or contact a provider. See
+[Choose models and providers](/features/choose-models.md#set-up-a-local-embedded-provider)
+for custody, precedence, partial outcomes, and platform limits.
+
 Manage credentials for a locally configured native LLM endpoint with
 `mecatui llm login ENDPOINT`; add `--no-browser` to print the authorization URL
 to stderr and wait at the fixed ToolHive-compatible redirect
