@@ -4,7 +4,7 @@
 **Work classification:** Architectural — guided credential persistence establishes a durable operator-custody, partial-commit, and security contract across the CLI, `auth.yaml`, and provider defaults.
 **Decision record:** [ADR 0332](../adr/0332-mecatui-local-provider-enrollment.md)
 **Phase:** first usable local provider setup and passive status
-**Status:** proposed, 2026-09-12. High-level direction, custody, and split sequencing were approved by the directing human; the exact contract below remains subject to Plan / Interface review.
+**Status:** in-progress, 2026-09-12. High-level direction, custody, and split sequencing were approved by the directing human; the exact contract below remains subject to Plan / Interface review.
 **Delivery:** Split. Credential-writing and partial-commit behavior require contract review before implementation.
 **Expected tasks:** deferred to orchestration
 
