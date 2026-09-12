@@ -181,6 +181,7 @@ PR after verification. There is no cleanup or status-only PR.
   strict/lenient contracts, frontmatter parsing, and standalone engine closure.
   Status: draft.
 - [OpenAI Responses multiple visible text parts](openai-multiple-text-parts.md) — accept every ordered visible text delta from distinct Responses item/content identities through the existing `ChunkText`/`Message.Text` path, without changing phase, reasoning, tool-call, or post-visibility no-replay behavior. Status: landed.
+- [Mecatui local provider setup](mecatui-local-provider-setup.md) — proposed guided local API-key enrollment, passive provider status, separately confirmed model-default selection, and outcome-typed partial-commit persistence without changing existing credential precedence or native/ToolHive custody. Status: proposed.
 - [Operator-defined LLM providers](operator-defined-llm-providers.md) — operator-local,
   truthfully named gateway providers over the existing Responses, Chat Completions, and
   Anthropic Messages adapters, plus persistent built-in endpoint overrides. Status: draft.
