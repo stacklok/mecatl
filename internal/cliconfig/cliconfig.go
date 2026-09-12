@@ -16,7 +16,6 @@
 package cliconfig
 
 import (
-	"cmp"
 	"flag"
 	"fmt"
 	"os"
@@ -131,7 +130,7 @@ func (pf *ProviderFlags) Resolve() ResolvedCredentials {
 }
 
 func (pf *ProviderFlags) resolve(env xdgconfig.ResolveEnv, now time.Time) ResolvedCredentials {
-	keys := readProviderKeys(env.Getenv)
+	var keys ResolvedCredentials
 
 	explicitPath := ""
 	if pf != nil {
@@ -146,10 +145,10 @@ func (pf *ProviderFlags) resolve(env xdgconfig.ResolveEnv, now time.Time) Resolv
 		pf.authSnapshot, pf.authSnapshotReady, pf.authSnapshotWarn = af, true, warning
 	}
 	keys.AuthFileWarning = warning
-	keys.OpenAI = cmp.Or(keys.OpenAI, af.APIKey("openai"))
-	keys.OpenRouter = cmp.Or(keys.OpenRouter, af.APIKey("openrouter"))
-	keys.Anthropic = cmp.Or(keys.Anthropic, af.APIKey("anthropic"))
-	keys.OpenCode = cmp.Or(keys.OpenCode, af.APIKey("opencode"))
+	keys.OpenAI = resolveBuiltinCredential("openai", af.APIKey("openai"), env.Getenv).value
+	keys.OpenRouter = resolveBuiltinCredential("openrouter", af.APIKey("openrouter"), env.Getenv).value
+	keys.Anthropic = resolveBuiltinCredential("anthropic", af.APIKey("anthropic"), env.Getenv).value
+	keys.OpenCode = resolveBuiltinCredential("opencode", af.APIKey("opencode"), env.Getenv).value
 	oauth := af.OAuth("openai-codex")
 	if oauth.AccessToken != "" {
 		credential, err := openaicodex.NewCredential(oauth.AccessToken, oauth.AccountID, oauth.ExpiresAt, now)
@@ -180,9 +179,6 @@ func HasOperatorProviderDefinitions(conventional, importClaude bool, files []str
 // auth.yaml; they deliberately have no environment fallback.
 func ResolveProviderCredentials(pf *ProviderFlags, definitions permconfig.ProviderDefinitions, env xdgconfig.ResolveEnv) (ResolvedCredentials, error) {
 	var keys ResolvedCredentials
-	if pf != nil {
-		keys = readProviderKeys(env.Getenv)
-	}
 	path, explicit := authfile.DefaultPath(env), false
 	if pf != nil && value(pf.authFile) != "" {
 		path, explicit = value(pf.authFile), true
@@ -208,10 +204,14 @@ func ResolveProviderCredentials(pf *ProviderFlags, definitions permconfig.Provid
 			return ResolvedCredentials{}, err
 		}
 	}
-	keys.OpenAI = cmp.Or(keys.OpenAI, file.APIKey("openai"))
-	keys.OpenRouter = cmp.Or(keys.OpenRouter, file.APIKey("openrouter"))
-	keys.Anthropic = cmp.Or(keys.Anthropic, file.APIKey("anthropic"))
-	keys.OpenCode = cmp.Or(keys.OpenCode, file.APIKey("opencode"))
+	getenv := func(string) string { return "" }
+	if pf != nil {
+		getenv = env.Getenv
+	}
+	keys.OpenAI = resolveBuiltinCredential("openai", file.APIKey("openai"), getenv).value
+	keys.OpenRouter = resolveBuiltinCredential("openrouter", file.APIKey("openrouter"), getenv).value
+	keys.Anthropic = resolveBuiltinCredential("anthropic", file.APIKey("anthropic"), getenv).value
+	keys.OpenCode = resolveBuiltinCredential("opencode", file.APIKey("opencode"), getenv).value
 	keys.customAPIKeys = make(map[string]string, len(definitions))
 	keys.customMethods = make(map[string]string, len(definitions))
 	for id, definition := range definitions {
@@ -282,8 +282,13 @@ type CredentialSource struct {
 	FilePresent bool
 }
 
-// ResolveCredentialSource resolves presence-only credential provenance.
-func ResolveCredentialSource(provider string, filePresent bool, getenv func(string) string) CredentialSource {
+type credentialResolution struct {
+	value       string
+	source      string
+	filePresent bool
+}
+
+func resolveBuiltinCredential(provider, fileValue string, getenv func(string) string) credentialResolution {
 	var own string
 	switch provider {
 	case "openai":
@@ -295,16 +300,32 @@ func ResolveCredentialSource(provider string, filePresent bool, getenv func(stri
 	case "opencode":
 		own = envOpenCodeKey
 	}
-	if own != "" && getenv(own) != "" {
-		return CredentialSource{Source: own, FilePresent: filePresent}
+	filePresent := fileValue != ""
+	if own != "" {
+		if value := getenv(own); value != "" {
+			return credentialResolution{value: value, source: own, filePresent: filePresent}
+		}
 	}
 	if filePresent {
-		return CredentialSource{Source: "auth file", FilePresent: true}
+		return credentialResolution{value: fileValue, source: "auth file", filePresent: true}
 	}
-	if provider == "openrouter" && getenv(envOpenAIKey) != "" {
-		return CredentialSource{Source: envOpenAIKey + " compatibility fallback"}
+	if provider == "openrouter" {
+		if value := getenv(envOpenAIKey); value != "" {
+			return credentialResolution{value: value, source: envOpenAIKey + " compatibility fallback"}
+		}
 	}
-	return CredentialSource{Source: "missing", FilePresent: filePresent}
+	return credentialResolution{source: "missing"}
+}
+
+// ResolveCredentialSource resolves presence-only credential provenance through
+// the same scalar precedence fold used for startup credentials.
+func ResolveCredentialSource(provider string, filePresent bool, getenv func(string) string) CredentialSource {
+	fileValue := ""
+	if filePresent {
+		fileValue = "present"
+	}
+	resolved := resolveBuiltinCredential(provider, fileValue, getenv)
+	return CredentialSource{Source: resolved.source, FilePresent: resolved.filePresent}
 }
 
 // ReadProviderKeys reads provider credentials from the environment alone

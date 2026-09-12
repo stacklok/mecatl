@@ -1,4 +1,4 @@
-//go:build linux || darwin || freebsd || openbsd || netbsd || dragonfly
+//go:build linux
 
 package authfile
 
@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -198,20 +199,29 @@ func TestPanelRepair_AuthFileCanonicalParentsAndLeaves(t *testing.T) {
 			}
 		}
 	})
-	t.Run("conventional one-level directory creation", func(t *testing.T) {
+	t.Run("conventional path through XDG alias", func(t *testing.T) {
 		base := t.TempDir()
-		if err := os.Chmod(base, 0o700); err != nil {
+		realConfig := filepath.Join(base, "real-config")
+		if err := os.Mkdir(realConfig, 0o700); err != nil {
 			t.Fatal(err)
 		}
-		t.Setenv("XDG_CONFIG_HOME", base)
+		aliasConfig := filepath.Join(base, "config-alias")
+		if err := os.Symlink(realConfig, aliasConfig); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("XDG_CONFIG_HOME", aliasConfig)
 		path := DefaultPath(xdgconfig.OSEnv)
 		state, err := UpdateAPIKey(t.Context(), path, APIKeyUpdate{Provider: "openai", APIKey: &key})
 		if state != CommitDurable || err != nil {
-			t.Fatalf("conventional create = %q, %v", state, err)
+			t.Fatalf("conventional create through alias = %q, %v", state, err)
 		}
-		info, err := os.Stat(filepath.Dir(path))
+		physicalParent := filepath.Join(realConfig, "mecatl")
+		info, err := os.Stat(physicalParent)
 		if err != nil || info.Mode().Perm() != 0o700 {
-			t.Fatalf("created parent = %v, %v", info, err)
+			t.Fatalf("created physical parent = %v, %v", info, err)
+		}
+		if _, err := os.Stat(filepath.Join(physicalParent, "auth.yaml")); err != nil {
+			t.Fatalf("conventional physical auth file: %v", err)
 		}
 	})
 }
@@ -284,6 +294,108 @@ func TestMecatuiLocalProviderSetup_Scenario3_UnchangedAndSecretSafe(t *testing.T
 	if err != nil || !strings.Contains(string(got), "api_key: same") {
 		t.Fatalf("reserved update changed auth file: %q, %v", got, err)
 	}
+}
+
+func TestPanelRepair_CooperatingAuthWritersPreserveBothUpdates(t *testing.T) {
+	path := privateFile(t, "providers: {}\n")
+	firstKey, secondKey := "first-secret", "second-secret"
+	firstLocked := make(chan struct{})
+	secondAtLock := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	var beforeLocks atomic.Int32
+	oldHook := updateTestHook
+	updateTestHook = func(phase string) error {
+		switch phase {
+		case "before-lock":
+			if beforeLocks.Add(1) == 2 {
+				close(secondAtLock)
+			}
+		case "after-lock":
+			if beforeLocks.Load() == 1 {
+				close(firstLocked)
+				<-releaseFirst
+			}
+		}
+		return nil
+	}
+	defer func() { updateTestHook = oldHook }()
+
+	type result struct {
+		state CommitState
+		err   error
+	}
+	firstDone := make(chan result, 1)
+	secondDone := make(chan result, 1)
+	go func() {
+		state, err := UpdateAPIKey(t.Context(), path, APIKeyUpdate{Provider: "openai", APIKey: &firstKey})
+		firstDone <- result{state, err}
+	}()
+	<-firstLocked
+	go func() {
+		state, err := UpdateAPIKey(t.Context(), path, APIKeyUpdate{Provider: "anthropic", APIKey: &secondKey})
+		secondDone <- result{state, err}
+	}()
+	<-secondAtLock
+	select {
+	case got := <-secondDone:
+		t.Fatalf("second writer passed held cooperative lock: %+v", got)
+	default:
+	}
+	close(releaseFirst)
+	for name, ch := range map[string]<-chan result{"first": firstDone, "second": secondDone} {
+		got := <-ch
+		if got.state != CommitDurable || got.err != nil {
+			t.Fatalf("%s writer = %q, %v", name, got.state, got.err)
+		}
+	}
+	body, err := os.ReadFile(path)
+	if err != nil || !strings.Contains(string(body), "api_key: 'first-secret'") || !strings.Contains(string(body), "api_key: 'second-secret'") {
+		t.Fatalf("cooperating updates were lost: %q, %v", body, err)
+	}
+}
+
+func TestPanelRepair_AuthWriterErrorsNeverContainSecret(t *testing.T) {
+	const secret = "SYNTHETIC-FAULT-SECRET"
+	for _, phase := range []string{"before-lock", "after-lock", "after-temp-sync", "before-compare", "after-rename"} {
+		t.Run(phase, func(t *testing.T) {
+			path := privateFile(t, "providers:\n  openai:\n    api_key: old\n")
+			oldHook := updateTestHook
+			updateTestHook = func(got string) error {
+				if got == phase {
+					return errors.New("injected safe fault")
+				}
+				return nil
+			}
+			t.Cleanup(func() { updateTestHook = oldHook })
+			key := secret
+			state, err := UpdateAPIKey(t.Context(), path, APIKeyUpdate{Provider: "openai", APIKey: &key})
+			if err == nil || strings.Contains(err.Error(), secret) {
+				t.Fatalf("phase %s = %q, %v", phase, state, err)
+			}
+			if phase == "after-rename" && state != CommitReplacementAppliedDurabilityUnknown {
+				t.Fatalf("post-rename state = %q", state)
+			}
+			if phase != "after-rename" && state != CommitNotApplied {
+				t.Fatalf("pre-rename state = %q", state)
+			}
+		})
+	}
+	t.Run("target-mismatch", func(t *testing.T) {
+		path := privateFile(t, "providers:\n  openai:\n    api_key: old\n")
+		oldHook := updateTestHook
+		updateTestHook = func(phase string) error {
+			if phase == "before-compare" {
+				return os.WriteFile(path, []byte("providers:\n  openai:\n    api_key: "+secret+"\n"), 0o600)
+			}
+			return nil
+		}
+		t.Cleanup(func() { updateTestHook = oldHook })
+		key := secret
+		state, err := UpdateAPIKey(t.Context(), path, APIKeyUpdate{Provider: "openai", APIKey: &key})
+		if state != CommitNotApplied || err == nil || strings.Contains(err.Error(), secret) {
+			t.Fatalf("mismatch = %q, %v", state, err)
+		}
+	})
 }
 
 func mustMode(t *testing.T, path string) os.FileMode {

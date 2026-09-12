@@ -140,7 +140,9 @@ owned by `thv llm` tooling. Endpoint-specific native and ToolHive status likewis
 do not accept `--auth-file`.
 
 The model list in setup is a bounded convenience, not a health check. Manual
-entry remains available for a listed model or configured alias, but setup refuses
+entry is always available, including when suggestions exist, but the existing
+embedded-startup validator still requires a catalogued model, that provider's
+declared default, or a configured alias resolving to one of those. Setup refuses
 to persist an unknown deployment default that ordinary embedded startup would
 reject. `verification: not checked` means setup and status do not authenticate to
 the provider; it does not mean arbitrary provider or model identifiers are accepted.

@@ -138,6 +138,11 @@ func updateInParent(ctx context.Context, parent, leaf string, update APIKeyUpdat
 	defer func() { _ = unix.Close(lockFD) }()
 	lockCtx, cancel := context.WithTimeout(ctx, updateLockWait)
 	defer cancel()
+	if updateTestHook != nil {
+		if err := updateTestHook("before-lock"); err != nil {
+			return CommitNotApplied, errors.New("prepare credential lock")
+		}
+	}
 	if err := lockCtx.Err(); err != nil {
 		return CommitNotApplied, fmt.Errorf("acquire credential lock: %w", err)
 	}

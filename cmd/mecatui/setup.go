@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"sort"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -68,6 +67,10 @@ type setupDeps struct {
 }
 
 func defaultSetupDeps() setupDeps {
+	return setupDepsForRun(run)
+}
+
+func setupDepsForRun(runCommand func([]string) error) setupDeps {
 	return setupDeps{
 		load:           loadSetupSnapshot,
 		writeSupported: authfile.UpdateSupported,
@@ -77,7 +80,7 @@ func defaultSetupDeps() setupDeps {
 		updateDefaults: func(ctx context.Context, path string, d defaultSelection) (authfile.CommitState, error) {
 			return permconfig.UpdateDefaults(ctx, path, permconfig.DefaultUpdate{Provider: d.Provider, Model: d.Model})
 		},
-		start: func(path string) error { return run([]string{"mecatui", "--auth-file", path}) },
+		start: func(path string) error { return runCommand([]string{"mecatui", "--auth-file", path}) },
 	}
 }
 
@@ -139,7 +142,7 @@ func loadSetupSnapshot(path string, explicit bool) (setupSnapshot, error) {
 	}
 	s := setupSnapshot{
 		Models: map[string][]modelChoice{}, Aliases: map[string]string{}, ProviderDefaults: map[string]string{}, NativeDefaults: map[string]string{},
-		ToolHive: passiveToolHiveConfigured(""), ExplicitMissing: explicitMissing,
+		ToolHive: app.ToolhiveConfiguredPassive(""), ExplicitMissing: explicitMissing,
 	}
 	models := resolver.OperatorModelPolicy()
 	if models != nil {
@@ -192,19 +195,15 @@ func loadSetupSnapshot(path string, explicit bool) (setupSnapshot, error) {
 		}
 		s.Rows = append(s.Rows, providerStatus{ID: id, Kind: kind, CredentialSource: source, FilePresent: filePresent(id), Default: s.Default.Provider == id, Model: model, DefaultModel: def.DefaultModel, Mutable: mutable})
 	}
-	sort.Slice(s.Rows, func(i, j int) bool { return s.Rows[i].ID < s.Rows[j].ID })
-	sort.Strings(s.NativeIDs)
+	slices.SortFunc(s.Rows, func(a, b providerStatus) int { return strings.Compare(a.ID, b.ID) })
+	slices.Sort(s.NativeIDs)
 	return s, nil
-}
-
-func passiveToolHiveConfigured(path string) bool {
-	return app.ToolhiveConfiguredPassive(path)
 }
 
 //nolint:errcheck // Status rendering cannot recover from a failed command output stream.
 func writeAggregateStatus(out io.Writer, rows []providerStatus, native []string, nativeDefaults map[string]string, toolhive bool) {
 	rows = append([]providerStatus(nil), rows...)
-	sort.Slice(rows, func(i, j int) bool { return rows[i].ID < rows[j].ID })
+	slices.SortFunc(rows, func(a, b providerStatus) int { return strings.Compare(a.ID, b.ID) })
 	fmt.Fprintln(out, "Keyed providers:")
 	writeRows := func(kind string) {
 		for _, r := range rows {
@@ -286,7 +285,7 @@ func mutableProviderIDs(s setupSnapshot) []string {
 			ids = append(ids, r.ID)
 		}
 	}
-	sort.Strings(ids)
+	slices.Sort(ids)
 	return ids
 }
 
@@ -313,7 +312,7 @@ func setupModelChoices(existing string, catalog []modelChoice) []modelChoice {
 		out = append(out, modelChoice{ID: existing, Name: "current default", ToolCapable: true})
 		seen[existing] = true
 	}
-	sort.Slice(catalog, func(i, j int) bool { return catalog[i].ID < catalog[j].ID })
+	slices.SortFunc(catalog, func(a, b modelChoice) int { return strings.Compare(a.ID, b.ID) })
 	suggestions := 0
 	for _, m := range catalog {
 		if !m.ToolCapable || seen[m.ID] {
@@ -613,7 +612,7 @@ func (r *setupRunner) promptDefault(id string) (defaultSelection, error) {
 			return defaultSelection{}, err
 		}
 	}
-	if _, err := fmt.Fprintln(r.out, "  manual — enter a listed, declared, or aliased model selector (verification not checked)"); err != nil {
+	if _, err := fmt.Fprintln(r.out, "  manual — enter a model selector (authentication is unverified; the existing deployment-default validator still requires a catalogued model, this provider's declared default, or an alias resolving to one)"); err != nil {
 		return defaultSelection{}, err
 	}
 	sel, err := r.ask("Model selector: ")
@@ -626,10 +625,10 @@ func (r *setupRunner) promptDefault(id string) (defaultSelection, error) {
 	}
 	resolved, ok := resolveSetupModel(sel, r.snapshot.Aliases)
 	if !ok || resolved == "" {
-		return defaultSelection{}, errors.New("model selector is unknown; use a listed model, a configured alias, or an explicit provider/model-style selector")
+		return defaultSelection{}, errors.New("model selector is unknown; manual selectors must be catalogued for this provider, match its declared default, or be a configured alias resolving to one of those")
 	}
 	if err := app.ValidateDeploymentDefaultModel(id, resolved, r.snapshot.ProviderDefaults[id]); err != nil {
-		return defaultSelection{}, err
+		return defaultSelection{}, fmt.Errorf("manual model cannot be saved as the deployment default: %w", err)
 	}
 	return defaultSelection{Provider: id, Model: resolved}, nil
 }
@@ -640,7 +639,7 @@ func defaultProviderIDs(s setupSnapshot) []string {
 			ids = append(ids, row.ID)
 		}
 	}
-	sort.Strings(ids)
+	slices.Sort(ids)
 	return ids
 }
 

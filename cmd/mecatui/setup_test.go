@@ -5,6 +5,9 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io"
 	"os"
 	"path/filepath"
@@ -13,8 +16,32 @@ import (
 	"time"
 
 	"github.com/stacklok/mecatl/internal/adapter/authfile"
+	"github.com/stacklok/mecatl/internal/adapter/llmendpoint"
+	"github.com/stacklok/mecatl/internal/adapter/permconfig"
+	"github.com/stacklok/mecatl/internal/app"
 	"github.com/stacklok/mecatl/internal/cliconfig"
 )
+
+type setupRouteNativeHost struct {
+	ids       []string
+	login     []string
+	status    map[string]llmendpoint.Status
+	closeCall int
+}
+
+func (h *setupRouteNativeHost) EndpointIDs() []string { return append([]string(nil), h.ids...) }
+func (h *setupRouteNativeHost) Login(_ context.Context, id string) error {
+	h.login = append(h.login, id)
+	return nil
+}
+func (h *setupRouteNativeHost) Status(_ context.Context, id string) llmendpoint.Status {
+	return h.status[id]
+}
+func (*setupRouteNativeHost) Logout(context.Context, string) error { return nil }
+func (h *setupRouteNativeHost) Close() error {
+	h.closeCall++
+	return nil
+}
 
 func TestMecatuiLocalProviderSetup_Scenario1_PassiveAggregateStatus(t *testing.T) {
 	rows := []providerStatus{
@@ -38,20 +65,87 @@ func TestMecatuiLocalProviderSetup_Scenario1_StatusHasNoActiveSideEffects(t *tes
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
-	t.Setenv("OPENAI_API_KEY", "")
-	t.Setenv("OPENROUTER_API_KEY", "")
-	t.Setenv("ANTHROPIC_API_KEY", "")
-	t.Setenv("OPENCODE_API_KEY", "")
+	for _, name := range []string{"OPENAI_API_KEY", "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "OPENCODE_API_KEY"} {
+		t.Setenv(name, "")
+	}
 	authPath := filepath.Join(home, "missing-auth.yaml")
-	var out bytes.Buffer
-	if err := runAggregateStatus(authPath, true, &out, defaultSetupDeps()); err != nil {
+	out, err := os.CreateTemp(t.TempDir(), "status-output")
+	if err != nil {
 		t.Fatal(err)
+	}
+	defer out.Close()
+	forbidden := func() { t.Fatal("aggregate status crossed an active setup boundary") }
+	deps := defaultSetupDeps()
+	deps.updateKey = func(context.Context, string, authfile.APIKeyUpdate) (authfile.CommitState, error) {
+		forbidden()
+		return "", nil
+	}
+	deps.updateDefaults = func(context.Context, string, defaultSelection) (authfile.CommitState, error) {
+		forbidden()
+		return "", nil
+	}
+	deps.nativeLogin = func(context.Context, string) error { forbidden(); return nil }
+	deps.nativeUsable = func(context.Context, string) (bool, error) { forbidden(); return false, nil }
+	deps.start = func(string) error { forbidden(); return nil }
+	res := resolveLLMCommand([]string{"status", "--auth-file", authPath})
+	if res.err != nil {
+		t.Fatal(res.err)
+	}
+	hostCalls := 0
+	services := llmCommandDeps{setup: deps, openNative: func(context.Context, bool, io.Writer) (nativeLLMHost, error) {
+		hostCalls++
+		return nil, errors.New("must not initialize native host")
+	}}
+	if err := runLLMCommandWith(res, os.Stdin, out, io.Discard, services); err != nil {
+		t.Fatal(err)
+	}
+	if hostCalls != 0 {
+		t.Fatalf("aggregate status initialized native host %d times", hostCalls)
 	}
 	if _, err := os.Stat(filepath.Join(home, ".config", "toolhive", "config.yaml")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("passive status created or opened ToolHive state unexpectedly: %v", err)
 	}
-	if !strings.Contains(out.String(), "ToolHive:\n  not configured") {
-		t.Fatalf("empty host fabricated ToolHive status:\n%s", out.String())
+	if _, err := out.Seek(0, io.SeekStart); err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "ToolHive:\n  not configured") {
+		t.Fatalf("empty host fabricated ToolHive status:\n%s", body)
+	}
+
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "setup.go", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	forbiddenCalls := map[string]bool{"app.Build": true, "http.Get": true, "http.Post": true, "exec.Command": true, "openNativeLLMHost": true, "newNativeLLMHost": true}
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || (fn.Name.Name != "runAggregateStatus" && fn.Name.Name != "loadSetupSnapshot") {
+			continue
+		}
+		ast.Inspect(fn.Body, func(node ast.Node) bool {
+			call, ok := node.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			name := ""
+			switch fun := call.Fun.(type) {
+			case *ast.Ident:
+				name = fun.Name
+			case *ast.SelectorExpr:
+				if base, ok := fun.X.(*ast.Ident); ok {
+					name = base.Name + "." + fun.Sel.Name
+				}
+			}
+			if forbiddenCalls[name] {
+				t.Errorf("%s directly calls active boundary %s", fn.Name.Name, name)
+			}
+			return true
+		})
 	}
 }
 
@@ -91,6 +185,78 @@ func TestMecatuiLocalProviderSetup_Scenario2_ProviderChoicesAndLifecycleHandoffs
 	r.readLine = scriptedLines("corp", "y", "native-default", "n")
 	if err := r.chooseDefault(t.Context()); err != nil || checks != 1 {
 		t.Fatalf("consented native status: checks=%d err=%v", checks, err)
+	}
+}
+
+func TestPanelRepair_NativeSetupUsesProductionCommandWiring(t *testing.T) {
+	configHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	managed := filepath.Join(configHome, "mecatl")
+	if err := os.Mkdir(managed, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	authPath := filepath.Join(managed, "auth.yaml")
+	if err := os.WriteFile(authPath, []byte("providers: {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	input, err := os.CreateTemp(t.TempDir(), "setup-input")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer input.Close()
+	if _, err := input.WriteString("1\ncorp\ny\n4\n"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := input.Seek(0, io.SeekStart); err != nil {
+		t.Fatal(err)
+	}
+	output, err := os.CreateTemp(t.TempDir(), "setup-output")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer output.Close()
+	host := &setupRouteNativeHost{ids: []string{"corp"}}
+	deps := defaultSetupDeps()
+	deps.isTerminal = func(int) bool { return true }
+	deps.load = func(path string, explicit bool) (setupSnapshot, error) {
+		if path != authPath || explicit {
+			t.Fatalf("setup load path=%q explicit=%v", path, explicit)
+		}
+		return setupSnapshot{NativeIDs: []string{"corp"}, NativeDefaults: map[string]string{"corp": "corp/model"}}, nil
+	}
+	deps.updateKey = func(context.Context, string, authfile.APIKeyUpdate) (authfile.CommitState, error) {
+		t.Fatal("native login crossed API-key writer")
+		return "", nil
+	}
+	res := resolveLLMCommand([]string{"setup"})
+	if res.err != nil {
+		t.Fatal(res.err)
+	}
+	services := llmCommandDeps{setup: deps, openNative: func(context.Context, bool, io.Writer) (nativeLLMHost, error) { return host, nil }}
+	if err := runLLMCommandWith(res, input, output, io.Discard, services); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(host.login, ",") != "corp" || host.closeCall != 1 {
+		t.Fatalf("native host login=%v closes=%d", host.login, host.closeCall)
+	}
+
+	if _, err := input.Seek(0, io.SeekStart); err != nil {
+		t.Fatal(err)
+	}
+	host.login = nil
+	res = resolveLLMCommand([]string{"setup", "--auth-file", authPath})
+	if res.err != nil {
+		t.Fatal(res.err)
+	}
+	deps.load = func(string, bool) (setupSnapshot, error) {
+		return setupSnapshot{NativeIDs: []string{"corp"}}, nil
+	}
+	services.setup = deps
+	if err := runLLMCommandWith(res, input, output, io.Discard, services); err == nil || !strings.Contains(err.Error(), "does not use --auth-file") {
+		t.Fatalf("override native handoff = %v", err)
+	}
+	if len(host.login) != 0 {
+		t.Fatalf("override reached native login: %v", host.login)
 	}
 }
 
@@ -208,6 +374,60 @@ func TestMecatuiLocalProviderSetup_Scenario2_IndependentConfirmationsAndStart(t 
 	}
 	if got := strings.Join(order, ","); got != "credential,defaults,start:chosen-auth" {
 		t.Fatalf("lifecycle order = %s", got)
+	}
+}
+
+func TestPanelRepair_ProductionStartReparsesChosenAuthAndSavedDefaults(t *testing.T) {
+	configHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	managed := filepath.Join(configHome, "mecatl")
+	if err := os.Mkdir(managed, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	authPath := filepath.Join(managed, "work-auth.yaml")
+	settings := filepath.Join(managed, "settings.yaml")
+	if err := os.WriteFile(authPath, []byte("providers: {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(settings, []byte("models:\n  aliases:\n    fast: gpt-5-mini\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	key := "saved-key-sentinel"
+	if state, err := authfile.UpdateAPIKey(t.Context(), authPath, authfile.APIKeyUpdate{Provider: "openai", APIKey: &key}); state != authfile.CommitDurable || err != nil {
+		t.Fatalf("save auth = %q, %v", state, err)
+	}
+	if state, err := permconfig.UpdateDefaults(t.Context(), settings, permconfig.DefaultUpdate{Provider: "openai", Model: "gpt-5-mini"}); state != authfile.CommitDurable || err != nil {
+		t.Fatalf("save defaults = %q, %v", state, err)
+	}
+	called := 0
+	deps := setupDepsForRun(func(argv []string) error {
+		called++
+		if strings.Join(argv, "\x00") != strings.Join([]string{"mecatui", "--auth-file", authPath}, "\x00") {
+			t.Fatalf("startup argv = %q", argv)
+		}
+		res := resolveInvocation(argv)
+		if res.err != nil {
+			return res.err
+		}
+		cfg, err := parseRunConfig(res)
+		if err != nil {
+			return err
+		}
+		if cfg.providerKeys.OpenAI != key {
+			t.Fatalf("startup did not re-read chosen auth file")
+		}
+		snapshot, err := loadSetupSnapshot(authPath, true)
+		if err != nil {
+			return err
+		}
+		if snapshot.Default != (defaultSelection{Provider: "openai", Model: "gpt-5-mini"}) || snapshot.Aliases["fast"] != "gpt-5-mini" {
+			body, _ := os.ReadFile(settings)
+			t.Fatalf("startup defaults/aliases = %+v aliases=%v settings=%s", snapshot.Default, snapshot.Aliases, body)
+		}
+		return nil
+	})
+	if err := deps.start(authPath); err != nil || called != 1 {
+		t.Fatalf("production start wiring: called=%d err=%v", called, err)
 	}
 }
 
@@ -398,7 +618,7 @@ func TestPanelRepair_PerProviderDefaultsAndToolHiveIntent(t *testing.T) {
 	if rows[0].DefaultModel != "custom-model" || rows[1].DefaultModel != "native-model" {
 		t.Fatalf("provider defaults lost: %+v", rows)
 	}
-	if passiveToolHiveConfigured(filepath.Join(t.TempDir(), "missing.yaml")) {
+	if app.ToolhiveConfiguredPassive(filepath.Join(t.TempDir(), "missing.yaml")) {
 		t.Fatal("missing ToolHive config reported configured")
 	}
 	dir := t.TempDir()
@@ -406,7 +626,7 @@ func TestPanelRepair_PerProviderDefaultsAndToolHiveIntent(t *testing.T) {
 	if err := os.WriteFile(path, []byte("llm:\n  gateway_url: https://gateway.example\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if !passiveToolHiveConfigured(path) {
+	if !app.ToolhiveConfiguredPassive(path) {
 		t.Fatal("present ToolHive intent not detected")
 	}
 }

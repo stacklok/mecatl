@@ -553,22 +553,35 @@ var (
 	openNativeLLMHost = newNativeLLMHost
 )
 
+type llmCommandDeps struct {
+	setup      setupDeps
+	openNative func(context.Context, bool, io.Writer) (nativeLLMHost, error)
+}
+
+func defaultLLMCommandDeps() llmCommandDeps {
+	return llmCommandDeps{setup: defaultSetupDeps(), openNative: openNativeLLMHost}
+}
+
 func runLLMCommand(res invocationResolution) error {
+	return runLLMCommandWith(res, os.Stdin, os.Stdout, os.Stderr, defaultLLMCommandDeps())
+}
+
+func runLLMCommandWith(res invocationResolution, stdin, stdout *os.File, stderr io.Writer, services llmCommandDeps) error {
 	if len(res.remaining) == 1 && isHelpMetaFlag(res.remaining[0]) {
-		fmt.Fprintln(os.Stderr, "Usage: mecatui llm setup [--auth-file PATH] | mecatui llm config set ENDPOINT [flags] | mecatui llm login ENDPOINT [--no-browser] | mecatui llm status [--auth-file PATH] [ENDPOINT] | mecatui llm logout ENDPOINT")
-		fmt.Fprintln(os.Stderr, "Native endpoint login: --no-browser prints the authorization URL to stderr and waits at the fixed ToolHive-compatible callback http://localhost:8666/callback.")
-		fmt.Fprintln(os.Stderr, "ToolHive login: mecatui llm login toolhive [--skip-browser]")
+		_, _ = fmt.Fprintln(stderr, "Usage: mecatui llm setup [--auth-file PATH] | mecatui llm config set ENDPOINT [flags] | mecatui llm login ENDPOINT [--no-browser] | mecatui llm status [--auth-file PATH] [ENDPOINT] | mecatui llm logout ENDPOINT")
+		_, _ = fmt.Fprintln(stderr, "Native endpoint login: --no-browser prints the authorization URL to stderr and waits at the fixed ToolHive-compatible callback http://localhost:8666/callback.")
+		_, _ = fmt.Fprintln(stderr, "ToolHive login: mecatui llm login toolhive [--skip-browser]")
 		return flag.ErrHelp
 	}
 	if res.llmDeprecatedAlias {
-		fmt.Fprintln(os.Stderr, "WARNING: bare `mecatui llm login` is deprecated; use `mecatui llm login toolhive`")
+		_, _ = fmt.Fprintln(stderr, "WARNING: bare `mecatui llm login` is deprecated; use `mecatui llm login toolhive`")
 	}
 	if res.llmAction == llmActionStatus && res.llmEndpoint == "" {
 		path := res.llmAuthFile
 		if !res.llmAuthFileSet {
 			path = authfile.DefaultPath(xdgconfig.OSEnv)
 		}
-		return runAggregateStatus(path, res.llmAuthFileSet, os.Stdout, defaultSetupDeps())
+		return runAggregateStatus(path, res.llmAuthFileSet, stdout, services.setup)
 	}
 	ctx, cancel := newNativeLLMEnrollmentContext(nativeLLMEnrollmentTimeout)
 	defer cancel()
@@ -577,36 +590,36 @@ func runLLMCommand(res invocationResolution) error {
 		if !res.llmAuthFileSet {
 			path = authfile.DefaultPath(xdgconfig.OSEnv)
 		}
-		deps := defaultSetupDeps()
+		deps := services.setup
 		deps.nativeLogin = func(loginCtx context.Context, endpoint string) error {
-			host, err := openNativeLLMHost(loginCtx, false, os.Stderr)
+			host, err := services.openNative(loginCtx, false, stderr)
 			if err != nil {
 				return errors.New("native LLM endpoint lifecycle is unavailable")
 			}
 			defer func() { _ = host.Close() }()
-			return runNativeLLMCommand(loginCtx, llmActionLogin, endpoint, false, host, os.Stdout, os.Stderr)
+			return runNativeLLMCommand(loginCtx, llmActionLogin, endpoint, false, host, stdout, stderr)
 		}
 		deps.nativeUsable = func(statusCtx context.Context, endpoint string) (bool, error) {
-			host, err := openNativeLLMHost(statusCtx, false, os.Stderr)
+			host, err := services.openNative(statusCtx, false, stderr)
 			if err != nil {
 				return false, errors.New("native LLM endpoint lifecycle is unavailable")
 			}
 			defer func() { _ = host.Close() }()
 			return host.Status(statusCtx, endpoint) == llmendpoint.StatusUsable, nil
 		}
-		return runSetupCommand(ctx, path, res.llmAuthFileSet, os.Stdin, os.Stdout, deps)
+		return runSetupCommand(ctx, path, res.llmAuthFileSet, stdin, stdout, deps)
 	}
 	skipBrowser := len(res.remaining) == 1 && res.remaining[0] == "--skip-browser"
 	noBrowser := len(res.remaining) == 1 && res.remaining[0] == "--no-browser"
 	if res.llmEndpoint == toolHiveEndpointID {
-		return runNativeLLMCommand(ctx, res.llmAction, res.llmEndpoint, skipBrowser, nil, os.Stdout, os.Stderr)
+		return runNativeLLMCommand(ctx, res.llmAction, res.llmEndpoint, skipBrowser, nil, stdout, stderr)
 	}
-	host, err := openNativeLLMHost(ctx, noBrowser, os.Stderr)
+	host, err := services.openNative(ctx, noBrowser, stderr)
 	if err != nil {
 		return errors.New("native LLM endpoint lifecycle is unavailable")
 	}
 	defer func() { _ = host.Close() }()
-	return runNativeLLMCommand(ctx, res.llmAction, res.llmEndpoint, false, host, os.Stdout, os.Stderr)
+	return runNativeLLMCommand(ctx, res.llmAction, res.llmEndpoint, false, host, stdout, stderr)
 }
 
 func unknownNativeEndpointError(endpoint string, ids []string) error {

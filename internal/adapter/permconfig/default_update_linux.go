@@ -61,6 +61,11 @@ func UpdateDefaults(ctx context.Context, path string, update DefaultUpdate) (sta
 	defer func() { _ = unix.Close(lockFD) }()
 	lockCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
+	if defaultUpdateTestHook != nil {
+		if err := defaultUpdateTestHook("before-lock"); err != nil {
+			return authfile.CommitNotApplied, errors.New("settings default update: prepare lock")
+		}
+	}
 	if err := lockSettingsFile(lockCtx, lockFD); err != nil {
 		return authfile.CommitNotApplied, fmt.Errorf("settings default update: acquire lock: %w", err)
 	}
@@ -296,9 +301,13 @@ func mutateDefaults(data []byte, update DefaultUpdate) ([]byte, bool, error) {
 		return nil, false, err
 	}
 	if modelsNode == nil {
-		entry := defaultStaticEntry("models: {}\n")
+		entry := defaultStaticEntry("models:\n  default_provider: " + defaultQuote(update.Provider) + "\n  default: " + defaultQuote(update.Model) + "\n")
 		doc.Mapping().Values = append(doc.Mapping().Values, entry)
-		modelsNode = entry.Value
+		out := []byte(doc.String())
+		if err := ValidateYAML(out); err != nil {
+			return nil, false, errors.New("updated settings document is invalid")
+		}
+		return out, false, nil
 	}
 	models, ok := modelsNode.(*ast.MappingNode)
 	if !ok {
@@ -346,7 +355,7 @@ func uniqueDefaultValue(mapping *ast.MappingNode, wanted string) (ast.Node, erro
 }
 
 func setDefaultScalar(mapping *ast.MappingNode, key, value string) {
-	replacement := defaultStaticEntry(key + ": " + defaultQuote(value) + "\n")
+	replacement := defaultNestedEntry(key, value)
 	for _, entry := range mapping.Values {
 		existing, _ := defaultString(entry.Key)
 		if existing == key {
@@ -363,6 +372,18 @@ func defaultString(node ast.Node) (string, bool) {
 		return "", false
 	}
 	return value.Value, true
+}
+
+func defaultNestedEntry(key, value string) *ast.MappingValueNode {
+	doc, err := yamldiag.ParseSettingsDocument([]byte("models:\n  " + key + ": " + defaultQuote(value) + "\n"))
+	if err != nil || len(doc.Mapping().Values) != 1 {
+		panic("invalid static nested settings YAML")
+	}
+	models, ok := doc.Mapping().Values[0].Value.(*ast.MappingNode)
+	if !ok || len(models.Values) != 1 {
+		panic("invalid static nested settings mapping")
+	}
+	return models.Values[0]
 }
 
 func defaultStaticEntry(text string) *ast.MappingValueNode {
