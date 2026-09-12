@@ -32,6 +32,20 @@ method is exactly `api_key`. Preserve unrelated OAuth-shaped records. Native end
 after explicit consent, call the existing host login operation; ToolHive remains an external
 handoff. Neither lifecycle consumes or migrates `--auth-file` content.
 
+Expose existing manual `openai-codex` credentials as a distinct subscription-token row, separate
+from public OpenAI API keys. Reuse the runtime credential validator locally to project only
+missing, usable, or invalid/expired state; never reveal token/account/expiry/fingerprints or
+claim network verification or model entitlement. Locally usable credentials may select the
+ordinary Codex deployment default and reuse optional startup with the selected auth file
+unchanged. Codex has no static default or offline entitlement inventory: offer no invented
+suggestions, preserve a configured selector if present, and require manual entry through ordinary
+deployment-default validation. Catalog acceptance by that validator is not account entitlement.
+Normal startup retains its network activity; passive setup/status adds no verification requests. Add/removal
+requests show guidance for the existing manual auth-file contract, never a secret prompt or
+native endpoint login. No upstream enrollment, refresh, import, or Codex credential writer is
+introduced. The directing human authorized this narrow proposed-contract amendment and stacked
+continuation on 2026-09-12; the Plan / Interface PR remains unmerged.
+
 Keep API keys as owner-only plaintext records in existing `auth.yaml`. Environment credentials
 continue to win exactly as they do at startup, including OpenRouter's own-key precedence and its
 environment-only `OPENAI_API_KEY` compatibility fallback; custom IDs remain file-only. Before
