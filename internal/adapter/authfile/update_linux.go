@@ -28,6 +28,8 @@ const updateLockWait = 5 * time.Second
 
 var updateTestHook func(string) error
 
+func updateSupported() bool { return true }
+
 func updateAPIKey(ctx context.Context, path string, update APIKeyUpdate) (CommitState, error) {
 	operation := "set"
 	if update.APIKey == nil {
@@ -361,6 +363,12 @@ func mutateAuth(data []byte, update APIKeyUpdate) ([]byte, bool, error) {
 		providers.Values = append(providers.Values, target)
 	}
 	mapping := target.Value.(*ast.MappingNode)
+	for _, entry := range mapping.Values {
+		key, _ := authString(entry.Key)
+		if key == "oauth" {
+			return nil, false, errors.New("target provider uses OAuth and cannot be mutated as an API-key record")
+		}
+	}
 	var keyEntry *ast.MappingValueNode
 	for _, entry := range mapping.Values {
 		key, _ := authString(entry.Key)

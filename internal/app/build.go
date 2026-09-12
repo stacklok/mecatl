@@ -5130,8 +5130,10 @@ func validateDefaultModel(cfg Config, reg *providerRegistry) error {
 	if cfg.DefaultProvider != "" && reg.Default() != cfg.DefaultProvider {
 		return fmt.Errorf("--default-provider %q: unknown or unavailable provider (available: %v); a deployment-wide default must be known-good at startup", cfg.DefaultProvider, reg.Available())
 	}
-	if cfg.DefaultModel != "" && !modelCatalogued(reg.Default(), cfg.DefaultModel) && reg.DefaultModelFor(reg.Default()) != cfg.DefaultModel {
-		return fmt.Errorf("--default-model %q: not catalogued for the default provider %q; a deployment-wide default must be known-good at startup — either choose a catalogued model id, or pass it as the per-session passthrough --model (which accepts any model the provider serves)", cfg.DefaultModel, reg.Default())
+	if cfg.DefaultModel != "" {
+		if err := ValidateDeploymentDefaultModel(reg.Default(), cfg.DefaultModel, reg.DefaultModelFor(reg.Default())); err != nil {
+			return fmt.Errorf("--default-model %q: %w", cfg.DefaultModel, err)
+		}
 	}
 	if cfg.DefaultModel != "" && cfg.Model != "" {
 		// A configured default MODEL loses to the explicit --model (tier 1) —
@@ -5148,6 +5150,18 @@ func validateDefaultModel(cfg Config, reg *providerRegistry) error {
 		"server-configured default model ACTIVE: every zero-selector session inherits it (a client-side selector still wins; the per-provider builtin is superseded)",
 		"provider", reg.Default(),
 		"model", reg.ResolvedDefaultModel())
+	return nil
+}
+
+// ValidateDeploymentDefaultModel applies the same passive known-good model gate
+// used by Build to a provider/default pair assembled by local setup.
+func ValidateDeploymentDefaultModel(providerID, modelID, providerDefault string) error {
+	if strings.TrimSpace(modelID) == "" {
+		return errors.New("deployment default model must not be empty")
+	}
+	if modelID != providerDefault && !modelCatalogued(providerID, modelID) {
+		return fmt.Errorf("model is not catalogued for provider %q and is not that provider's configured default; choose a listed or declared model", providerID)
+	}
 	return nil
 }
 

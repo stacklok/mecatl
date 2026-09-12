@@ -25,17 +25,17 @@ import (
 	"github.com/stacklok/mecatl/internal/cliconfig"
 )
 
-const maxSetupAPIKeyBytes = 8 * 1024
+const (
+	maxSetupAPIKeyBytes      = 8 * 1024
+	credentialSourceAuthFile = "auth file"
+	credentialSourceMissing  = "missing"
+)
 
 var errSetupStarted = errors.New("setup launched mecatui")
 
-type credentialStatus struct {
-	Source      string
-	FilePresent bool
-}
 type providerStatus struct {
-	ID, Kind, CredentialSource, Model string
-	FilePresent, Default, Mutable     bool
+	ID, Kind, CredentialSource, Model, DefaultModel string
+	FilePresent, Default, Mutable                   bool
 }
 type modelChoice struct {
 	ID, Name    string
@@ -43,32 +43,37 @@ type modelChoice struct {
 }
 type defaultSelection struct{ Provider, Model string }
 type setupSnapshot struct {
-	Rows            []providerStatus
-	NativeIDs       []string
-	ToolHive        bool
-	Default         defaultSelection
-	Aliases         map[string]string
-	Models          map[string][]modelChoice
-	ExplicitMissing bool
+	Rows             []providerStatus
+	NativeIDs        []string
+	NativeDefaults   map[string]string
+	ToolHive         bool
+	Default          defaultSelection
+	Aliases          map[string]string
+	Models           map[string][]modelChoice
+	ProviderDefaults map[string]string
+	ExplicitMissing  bool
 }
 
 type setupDeps struct {
 	load           func(string, bool) (setupSnapshot, error)
-	active         func()
+	writeSupported func() bool
 	isTerminal     func(int) bool
 	readPassword   func(int) ([]byte, error)
+	readSecret     func(context.Context) ([]byte, error)
 	updateKey      func(context.Context, string, authfile.APIKeyUpdate) (authfile.CommitState, error)
 	updateDefaults func(context.Context, string, defaultSelection) (authfile.CommitState, error)
 	nativeLogin    func(context.Context, string) error
+	nativeUsable   func(context.Context, string) (bool, error)
 	start          func(string) error
 }
 
 func defaultSetupDeps() setupDeps {
 	return setupDeps{
-		load:         loadSetupSnapshot,
-		isTerminal:   term.IsTerminal,
-		readPassword: term.ReadPassword,
-		updateKey:    authfile.UpdateAPIKey,
+		load:           loadSetupSnapshot,
+		writeSupported: authfile.UpdateSupported,
+		isTerminal:     term.IsTerminal,
+		readPassword:   term.ReadPassword,
+		updateKey:      authfile.UpdateAPIKey,
 		updateDefaults: func(ctx context.Context, path string, d defaultSelection) (authfile.CommitState, error) {
 			return permconfig.UpdateDefaults(ctx, path, permconfig.DefaultUpdate{Provider: d.Provider, Model: d.Model})
 		},
@@ -80,6 +85,9 @@ func withSetupDefaults(deps setupDeps) setupDeps {
 	defaults := defaultSetupDeps()
 	if deps.load == nil {
 		deps.load = defaults.load
+	}
+	if deps.writeSupported == nil {
+		deps.writeSupported = defaults.writeSupported
 	}
 	if deps.isTerminal == nil {
 		deps.isTerminal = defaults.isTerminal
@@ -107,6 +115,7 @@ func settingsPath(env xdgconfig.ResolveEnv) string {
 	return filepath.Join(base, permconfig.UserSettingsRelPath)
 }
 
+//nolint:gocyclo // One passive snapshot keeps provider/default/provenance folding together.
 func loadSetupSnapshot(path string, explicit bool) (setupSnapshot, error) {
 	env := xdgconfig.OSEnv
 	resolver := permconfig.NewWithEnv(permconfig.Options{Conventional: true, ImportClaude: true, Diagnostics: port.NopDiagnostics{}}, env)
@@ -128,7 +137,10 @@ func loadSetupSnapshot(path string, explicit bool) (setupSnapshot, error) {
 	if warning != "" {
 		return setupSnapshot{}, errors.New(safeDisplay(warning))
 	}
-	s := setupSnapshot{Models: map[string][]modelChoice{}, Aliases: map[string]string{}, ToolHive: true, ExplicitMissing: explicitMissing}
+	s := setupSnapshot{
+		Models: map[string][]modelChoice{}, Aliases: map[string]string{}, ProviderDefaults: map[string]string{}, NativeDefaults: map[string]string{},
+		ToolHive: passiveToolHiveConfigured(""), ExplicitMissing: explicitMissing,
+	}
 	models := resolver.OperatorModelPolicy()
 	if models != nil {
 		s.Default = defaultSelection{Provider: models.DefaultProvider, Model: models.Default}
@@ -138,8 +150,14 @@ func loadSetupSnapshot(path string, explicit bool) (setupSnapshot, error) {
 	}
 	filePresent := func(id string) bool { return af != nil && af.APIKey(id) != "" }
 	for _, id := range []string{"anthropic", "openai", "opencode", "openrouter"} {
-		cs := resolveCredentialStatus(id, processCredentialPresence(), filePresent(id))
-		s.Rows = append(s.Rows, providerStatus{ID: id, Kind: "builtin", CredentialSource: cs.Source, FilePresent: cs.FilePresent, Default: s.Default.Provider == id, Model: s.Default.Model, Mutable: true})
+		cs := cliconfig.ResolveCredentialSource(id, filePresent(id), os.Getenv)
+		providerDefault := app.BuiltinDefaultModel(id)
+		s.ProviderDefaults[id] = providerDefault
+		model := providerDefault
+		if s.Default.Provider == id && s.Default.Model != "" {
+			model = s.Default.Model
+		}
+		s.Rows = append(s.Rows, providerStatus{ID: id, Kind: "builtin", CredentialSource: cs.Source, FilePresent: cs.FilePresent, Default: s.Default.Provider == id, Model: model, DefaultModel: providerDefault, Mutable: true})
 		if p, ok := providercatalog.Default().Provider(id); ok {
 			for _, m := range p.Models() {
 				s.Models[id] = append(s.Models[id], modelChoice{ID: m.ID(), Name: m.Name(), ToolCapable: m.SupportsToolCall()})
@@ -147,8 +165,10 @@ func loadSetupSnapshot(path string, explicit bool) (setupSnapshot, error) {
 		}
 	}
 	for id, def := range defs {
+		s.ProviderDefaults[id] = def.DefaultModel
 		if def.Native != nil {
 			s.NativeIDs = append(s.NativeIDs, id)
+			s.NativeDefaults[id] = def.DefaultModel
 			continue
 		}
 		if _, builtin := slices.BinarySearch([]string{"anthropic", "openai", "opencode", "openrouter"}, id); builtin {
@@ -161,35 +181,28 @@ func loadSetupSnapshot(path string, explicit bool) (setupSnapshot, error) {
 			kind = "configured"
 			mutable = true
 			if filePresent(id) {
-				source = "auth file"
+				source = credentialSourceAuthFile
 			} else {
-				source = "missing"
+				source = credentialSourceMissing
 			}
 		}
-		s.Rows = append(s.Rows, providerStatus{ID: id, Kind: kind, CredentialSource: source, FilePresent: filePresent(id), Default: s.Default.Provider == id, Model: s.Default.Model, Mutable: mutable})
+		model := def.DefaultModel
+		if s.Default.Provider == id && s.Default.Model != "" {
+			model = s.Default.Model
+		}
+		s.Rows = append(s.Rows, providerStatus{ID: id, Kind: kind, CredentialSource: source, FilePresent: filePresent(id), Default: s.Default.Provider == id, Model: model, DefaultModel: def.DefaultModel, Mutable: mutable})
 	}
 	sort.Slice(s.Rows, func(i, j int) bool { return s.Rows[i].ID < s.Rows[j].ID })
 	sort.Strings(s.NativeIDs)
 	return s, nil
 }
 
-func processCredentialPresence() map[string]string {
-	m := map[string]string{}
-	for _, name := range []string{"OPENAI_API_KEY", "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "OPENCODE_API_KEY"} {
-		if os.Getenv(name) != "" {
-			m[name] = "present"
-		}
-	}
-	return m
-}
-
-func resolveCredentialStatus(id string, env map[string]string, filePresent bool) credentialStatus {
-	resolved := cliconfig.ResolveCredentialSource(id, filePresent, func(name string) string { return env[name] })
-	return credentialStatus{Source: resolved.Source, FilePresent: resolved.FilePresent}
+func passiveToolHiveConfigured(path string) bool {
+	return app.ToolhiveConfiguredPassive(path)
 }
 
 //nolint:errcheck // Status rendering cannot recover from a failed command output stream.
-func writeAggregateStatus(out io.Writer, rows []providerStatus, native []string, toolhive bool) {
+func writeAggregateStatus(out io.Writer, rows []providerStatus, native []string, nativeDefaults map[string]string, toolhive bool) {
 	rows = append([]providerStatus(nil), rows...)
 	sort.Slice(rows, func(i, j int) bool { return rows[i].ID < rows[j].ID })
 	fmt.Fprintln(out, "Keyed providers:")
@@ -199,7 +212,7 @@ func writeAggregateStatus(out io.Writer, rows []providerStatus, native []string,
 				continue
 			}
 			shadowed := "absent"
-			if r.FilePresent && r.CredentialSource != "auth file" {
+			if r.FilePresent && r.CredentialSource != credentialSourceAuthFile {
 				shadowed = "present"
 			}
 			fmt.Fprintf(out, "  %s (%s)\n    credential source: %s\n    shadowed auth file: %s\n    selected default: %s\n    model selector: %s\n    verification: not checked\n", safeDisplay(r.ID), safeDisplay(r.Kind), safeDisplay(r.CredentialSource), shadowed, yesNo(r.Default), displayOrNone(r.Model))
@@ -213,7 +226,7 @@ func writeAggregateStatus(out io.Writer, rows []providerStatus, native []string,
 		fmt.Fprintln(out, "  none configured")
 	} else {
 		for _, id := range native {
-			fmt.Fprintf(out, "  %s: local enrollment not inspected; run `mecatui llm status %s`\n", safeDisplay(id), safeDisplay(id))
+			fmt.Fprintf(out, "  %s: local enrollment not inspected; declared default: %s; run `mecatui llm status %s`\n", safeDisplay(id), displayOrNone(nativeDefaults[id]), safeDisplay(id))
 		}
 	}
 	fmt.Fprintln(out, "ToolHive:")
@@ -262,7 +275,7 @@ func runAggregateStatus(path string, explicit bool, out io.Writer, deps setupDep
 	if _, err := fmt.Fprintln(out, label); err != nil {
 		return err
 	}
-	writeAggregateStatus(out, s.Rows, s.NativeIDs, s.ToolHive)
+	writeAggregateStatus(out, s.Rows, s.NativeIDs, s.NativeDefaults, s.ToolHive)
 	return nil
 }
 
@@ -324,7 +337,7 @@ func resolveSetupModel(selector string, aliases map[string]string) (string, bool
 	if resolved, known := app.ResolveModelSelector(selector, aliases); known {
 		return resolved, resolved != ""
 	}
-	return selector, true // explicit manual selection is always available and unverified
+	return "", false
 }
 
 //nolint:errcheck // Commit reports are best-effort once persistence has returned.
@@ -492,7 +505,7 @@ func (r *setupRunner) add(ctx context.Context) error {
 			row = candidate
 		}
 	}
-	if row.CredentialSource != "missing" && row.CredentialSource != "auth file" {
+	if row.CredentialSource != credentialSourceMissing && row.CredentialSource != credentialSourceAuthFile {
 		if !row.FilePresent {
 			fmt.Fprintf(r.out, "Existing credential source %s will be reused; no key is copied or written.\n", safeDisplay(row.CredentialSource))
 			reportCommit(r.out, "credential reuse", id, authfile.CommitNoop, nil)
@@ -513,7 +526,12 @@ func (r *setupRunner) add(ctx context.Context) error {
 		console = "the configured provider console"
 	}
 	fmt.Fprintf(r.out, "Open the provider console yourself: %s\nEnter an API/developer key, not a consumer subscription. API usage may incur charges.\nThe key is stored owner-only plaintext; same-UID processes and an enabled agent Shell can read it.\n", console)
-	keyBytes, err := r.deps.readPassword(r.inFD)
+	var keyBytes []byte
+	if r.deps.readSecret != nil {
+		keyBytes, err = r.deps.readSecret(ctx)
+	} else {
+		keyBytes, err = r.deps.readPassword(r.inFD)
+	}
 	fmt.Fprintln(r.out)
 	if err != nil {
 		return errors.New("hidden API-key read failed")
@@ -557,11 +575,35 @@ func (r *setupRunner) add(ctx context.Context) error {
 	if err := commitCredentialThenDefaults(ctx, r.authPath, r.settingsPath, id, key, next, r.out, r.deps); err != nil {
 		return err
 	}
+	r.setFileCredential(id, true)
+	if next != nil {
+		r.snapshot.Default = *next
+	}
 	return r.maybeStart()
 }
 
+func (r *setupRunner) setFileCredential(id string, present bool) {
+	for i := range r.snapshot.Rows {
+		row := &r.snapshot.Rows[i]
+		if row.ID != id {
+			continue
+		}
+		row.FilePresent = present
+		if row.CredentialSource == credentialSourceMissing || row.CredentialSource == credentialSourceAuthFile {
+			if present {
+				row.CredentialSource = credentialSourceAuthFile
+			} else {
+				row.CredentialSource = credentialSourceMissing
+			}
+		}
+	}
+}
+
 func (r *setupRunner) promptDefault(id string) (defaultSelection, error) {
-	existing := app.BuiltinDefaultModel(id)
+	existing := r.snapshot.ProviderDefaults[id]
+	if existing == "" {
+		existing = app.BuiltinDefaultModel(id)
+	}
 	if r.snapshot.Default.Provider == id && r.snapshot.Default.Model != "" {
 		existing = r.snapshot.Default.Model
 	}
@@ -571,7 +613,7 @@ func (r *setupRunner) promptDefault(id string) (defaultSelection, error) {
 			return defaultSelection{}, err
 		}
 	}
-	if _, err := fmt.Fprintln(r.out, "  manual — enter any non-empty model selector (unverified)"); err != nil {
+	if _, err := fmt.Fprintln(r.out, "  manual — enter a listed, declared, or aliased model selector (verification not checked)"); err != nil {
 		return defaultSelection{}, err
 	}
 	sel, err := r.ask("Model selector: ")
@@ -584,11 +626,37 @@ func (r *setupRunner) promptDefault(id string) (defaultSelection, error) {
 	}
 	resolved, ok := resolveSetupModel(sel, r.snapshot.Aliases)
 	if !ok || resolved == "" {
-		return defaultSelection{}, errors.New("model alias is not resolvable")
+		return defaultSelection{}, errors.New("model selector is unknown; use a listed model, a configured alias, or an explicit provider/model-style selector")
+	}
+	if err := app.ValidateDeploymentDefaultModel(id, resolved, r.snapshot.ProviderDefaults[id]); err != nil {
+		return defaultSelection{}, err
 	}
 	return defaultSelection{Provider: id, Model: resolved}, nil
 }
+func defaultProviderIDs(s setupSnapshot) []string {
+	var ids []string
+	for _, row := range s.Rows {
+		if row.Kind == "none required" || (row.Mutable && row.CredentialSource != credentialSourceMissing) {
+			ids = append(ids, row.ID)
+		}
+	}
+	sort.Strings(ids)
+	return ids
+}
+
 func (r *setupRunner) chooseDefault(ctx context.Context) error {
+	ids := defaultProviderIDs(r.snapshot)
+	if len(ids) == 0 && len(r.snapshot.NativeIDs) == 0 {
+		return errors.New("no provider has a usable credential or a configured no-auth definition; add or enroll one first")
+	}
+	if _, err := fmt.Fprintf(r.out, "Available default providers: %s\n", strings.Join(ids, ", ")); err != nil {
+		return err
+	}
+	if len(r.snapshot.NativeIDs) > 0 {
+		if _, err := fmt.Fprintf(r.out, "Native defaults require an explicit local enrollment check: %s\n", strings.Join(r.snapshot.NativeIDs, ", ")); err != nil {
+			return err
+		}
+	}
 	id, err := r.ask("Provider ID (blank cancels): ")
 	if err != nil {
 		return err
@@ -596,6 +664,26 @@ func (r *setupRunner) chooseDefault(ctx context.Context) error {
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return nil
+	}
+	if slices.Contains(r.snapshot.NativeIDs, id) {
+		consent, consentErr := r.ask("Inspect this native endpoint's encrypted local enrollment status? [y/N]: ")
+		if consentErr != nil {
+			return consentErr
+		}
+		if !affirmative(consent) {
+			return nil
+		}
+		if r.deps.nativeUsable == nil {
+			return errors.New("native enrollment status is unavailable; run endpoint-specific `mecatui llm status` first")
+		}
+		usable, statusErr := r.deps.nativeUsable(ctx, id)
+		if statusErr != nil || !usable {
+			return errors.New("native endpoint is not locally usable; run endpoint-specific login/status before selecting it as the default")
+		}
+		ids = append(ids, id)
+	}
+	if !slices.Contains(ids, id) {
+		return errors.New("provider is unknown or has no usable credential; add or enroll it before selecting it as the deployment default")
 	}
 	d, err := r.promptDefault(id)
 	if err != nil {
@@ -616,8 +704,10 @@ func (r *setupRunner) chooseDefault(ctx context.Context) error {
 		}
 		return err
 	}
+	r.snapshot.Default = d
 	return r.maybeStart()
 }
+
 func (r *setupRunner) remove(ctx context.Context) error {
 	id, err := r.ask("Provider ID to remove (blank cancels): ")
 	if err != nil {
@@ -639,7 +729,7 @@ func (r *setupRunner) remove(ctx context.Context) error {
 	}
 	remainingActive := false
 	for _, row := range r.snapshot.Rows {
-		if row.ID == id && row.CredentialSource != "auth file" && row.CredentialSource != "missing" {
+		if row.ID == id && row.CredentialSource != credentialSourceAuthFile && row.CredentialSource != credentialSourceMissing {
 			remainingActive = true
 			if _, err := fmt.Fprintf(r.out, "Remaining active credential source after file removal: %s\n", safeDisplay(row.CredentialSource)); err != nil {
 				return err
@@ -652,7 +742,11 @@ func (r *setupRunner) remove(ctx context.Context) error {
 		if e != nil {
 			return e
 		}
-		d, e := r.promptDefault(strings.TrimSpace(rid))
+		rid = strings.TrimSpace(rid)
+		if !slices.Contains(defaultProviderIDs(r.snapshot), rid) {
+			return errors.New("replacement provider is unknown or has no usable credential; add or enroll it before removing the active default key")
+		}
+		d, e := r.promptDefault(rid)
 		if e != nil {
 			return e
 		}
@@ -665,7 +759,14 @@ func (r *setupRunner) remove(ctx context.Context) error {
 		}
 		replacement = &d
 	}
-	return removeCredential(ctx, r.authPath, r.settingsPath, id, replacement, r.out, r.deps)
+	if err := removeCredential(ctx, r.authPath, r.settingsPath, id, replacement, r.out, r.deps); err != nil {
+		return err
+	}
+	r.setFileCredential(id, false)
+	if replacement != nil {
+		r.snapshot.Default = *replacement
+	}
+	return nil
 }
 func (r *setupRunner) maybeStart() error {
 	answer, err := r.ask("Start mecatui now? [y/N]: ")
@@ -732,8 +833,60 @@ func canonicalSetupTarget(path string, allowMissingManagedParent bool) (string, 
 	return filepath.Join(base, "mecatl", filepath.Base(abs)), nil
 }
 
+func readLineContext(ctx context.Context, in *os.File, reader *bufio.Reader) (string, error) {
+	result := make(chan struct {
+		value string
+		err   error
+	}, 1)
+	go func() {
+		value, err := reader.ReadString('\n')
+		result <- struct {
+			value string
+			err   error
+		}{value, err}
+	}()
+	select {
+	case got := <-result:
+		return got.value, got.err
+	case <-ctx.Done():
+		_ = in.Close()
+		<-result
+		return "", ctx.Err()
+	}
+}
+
+func readPasswordContext(ctx context.Context, in *os.File) ([]byte, error) {
+	fd := int(in.Fd())
+	state, stateErr := term.GetState(fd)
+	result := make(chan struct {
+		value []byte
+		err   error
+	}, 1)
+	go func() {
+		value, err := term.ReadPassword(fd)
+		result <- struct {
+			value []byte
+			err   error
+		}{value, err}
+	}()
+	select {
+	case got := <-result:
+		return got.value, got.err
+	case <-ctx.Done():
+		if stateErr == nil {
+			_ = term.Restore(fd, state)
+		}
+		_ = in.Close()
+		<-result
+		return nil, ctx.Err()
+	}
+}
+
 func runSetupCommand(ctx context.Context, path string, explicit bool, in, out *os.File, deps setupDeps) error {
 	deps = withSetupDefaults(deps)
+	if !deps.writeSupported() {
+		return errors.New("llm setup credential/default writes are unsupported on this platform; configure settings.yaml and auth.yaml manually with owner-only permissions")
+	}
 	if !deps.isTerminal(int(in.Fd())) || !deps.isTerminal(int(out.Fd())) {
 		return errors.New("llm setup requires terminal stdin and stdout")
 	}
@@ -745,11 +898,13 @@ func runSetupCommand(ctx context.Context, path string, explicit bool, in, out *o
 		return err
 	}
 	reader := bufio.NewReader(in)
+	deps.readSecret = func(readCtx context.Context) ([]byte, error) { return readPasswordContext(readCtx, in) }
+	readLine := func() (string, error) { return readLineContext(ctx, in, reader) }
 	if s.ExplicitMissing {
 		if _, e := fmt.Fprintf(out, "The explicit auth file %s is missing. Create that leaf in its existing protected parent? [y/N]: ", safeDisplay(path)); e != nil {
 			return e
 		}
-		answer, e := reader.ReadString('\n')
+		answer, e := readLine()
 		if e != nil {
 			return fmt.Errorf("confirm explicit auth path: %w", e)
 		}
@@ -757,6 +912,6 @@ func runSetupCommand(ctx context.Context, path string, explicit bool, in, out *o
 			return nil
 		}
 	}
-	r := setupRunner{inFD: int(in.Fd()), outFD: int(out.Fd()), out: out, deps: deps, snapshot: s, authPath: path, settingsPath: settingsPath(xdgconfig.OSEnv), explicit: explicit, readLine: func(string) (string, error) { line, e := reader.ReadString('\n'); return strings.TrimSpace(line), e }}
+	r := setupRunner{inFD: int(in.Fd()), outFD: int(out.Fd()), out: out, deps: deps, snapshot: s, authPath: path, settingsPath: settingsPath(xdgconfig.OSEnv), explicit: explicit, readLine: func(string) (string, error) { line, e := readLine(); return strings.TrimSpace(line), e }}
 	return r.run(ctx)
 }

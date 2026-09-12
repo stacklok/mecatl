@@ -139,10 +139,13 @@ that handoff because native credentials do not use `auth.yaml`. ToolHive remains
 owned by `thv llm` tooling. Endpoint-specific native and ToolHive status likewise
 do not accept `--auth-file`.
 
-The model list in setup is a bounded convenience, not a health check. You can always
-enter a non-empty model selector manually; it remains unverified until an actual
-provider request. Active provider/model verification, an automatic first-run offer,
-OpenRouter OAuth or key minting, and Gemini onboarding are not part of this flow.
+The model list in setup is a bounded convenience, not a health check. Manual
+entry remains available for a listed model or configured alias, but setup refuses
+to persist an unknown deployment default that ordinary embedded startup would
+reject. `verification: not checked` means setup and status do not authenticate to
+the provider; it does not mean arbitrary provider or model identifiers are accepted.
+Active provider/model verification, an automatic first-run offer, OpenRouter OAuth
+or key minting, and Gemini onboarding are not part of this flow.
 
 See [Configure Mecatl](/building/deployment/settings.md) for the file locations and
 manual configuration schema.

@@ -586,6 +586,14 @@ func runLLMCommand(res invocationResolution) error {
 			defer func() { _ = host.Close() }()
 			return runNativeLLMCommand(loginCtx, llmActionLogin, endpoint, false, host, os.Stdout, os.Stderr)
 		}
+		deps.nativeUsable = func(statusCtx context.Context, endpoint string) (bool, error) {
+			host, err := openNativeLLMHost(statusCtx, false, os.Stderr)
+			if err != nil {
+				return false, errors.New("native LLM endpoint lifecycle is unavailable")
+			}
+			defer func() { _ = host.Close() }()
+			return host.Status(statusCtx, endpoint) == llmendpoint.StatusUsable, nil
+		}
 		return runSetupCommand(ctx, path, res.llmAuthFileSet, os.Stdin, os.Stdout, deps)
 	}
 	skipBrowser := len(res.remaining) == 1 && res.remaining[0] == "--skip-browser"

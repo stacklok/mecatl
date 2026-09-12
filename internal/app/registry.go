@@ -1511,6 +1511,19 @@ func directBaseURL(gatewayURL string) string {
 	return joined
 }
 
+// ToolhiveConfiguredPassive reports local ToolHive LLM configuration intent
+// without probing the gateway or opening its credential store. An empty path
+// resolves exactly as ToolHive auto-detection does.
+func ToolhiveConfiguredPassive(path string) bool {
+	if path == "" {
+		if dir, err := os.UserConfigDir(); err == nil && dir != "" {
+			path = filepath.Join(dir, toolhivellm.DefaultConfigRelPath)
+		}
+	}
+	_, ok := toolhivellm.DetectConfig(path)
+	return ok
+}
+
 // ToolhiveAvailable reports whether a ToolHive LLM gateway would be registered
 // for this Config — an explicit --toolhive-llm-base-url, or a detected
 // locally-running proxy. It runs the SAME resolveToolhiveIntent detection Build

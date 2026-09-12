@@ -252,6 +252,34 @@ providers:
 	}
 }
 
+func TestCredentialPresenceProvenanceMatchesRuntimeFold(t *testing.T) {
+	for name, values := range map[string]map[string]string{
+		"file beats compatibility fallback": {"OPENAI_API_KEY": "fallback"},
+		"own environment beats file":        {"OPENAI_API_KEY": "fallback", "OPENROUTER_API_KEY": "own"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := "/virtual/auth.yaml"
+			env := xdgconfig.ResolveEnv{
+				Getenv:      func(key string) string { return values[key] },
+				UserHomeDir: func() (string, error) { return "/unused", nil },
+				ReadFile:    func(string) ([]byte, error) { return []byte("providers:\n  openrouter:\n    api_key: file\n"), nil },
+			}
+			resolved := (&ProviderFlags{authFile: &path}).resolve(env, time.Time{})
+			source := ResolveCredentialSource("openrouter", true, env.Getenv)
+			if resolved.OpenRouter == "" {
+				t.Fatal("runtime fold found no OpenRouter credential")
+			}
+			want := "auth file"
+			if values["OPENROUTER_API_KEY"] != "" {
+				want = "OPENROUTER_API_KEY"
+			}
+			if source.Source != want {
+				t.Fatalf("source=%q want=%q", source.Source, want)
+			}
+		})
+	}
+}
+
 func TestAuthFileReadOnce(t *testing.T) {
 	expires := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
 	contents := []byte(codexAuthYAML(codextest.Token(expires, "acct-once"), "acct-once", expires))

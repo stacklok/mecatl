@@ -1,14 +1,19 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stacklok/mecatl/internal/adapter/authfile"
+	"github.com/stacklok/mecatl/internal/cliconfig"
 )
 
 func TestMecatuiLocalProviderSetup_Scenario1_PassiveAggregateStatus(t *testing.T) {
@@ -17,7 +22,7 @@ func TestMecatuiLocalProviderSetup_Scenario1_PassiveAggregateStatus(t *testing.T
 		{ID: "openai", Kind: "builtin", CredentialSource: "OPENAI_API_KEY", FilePresent: true, Default: true, Model: "fast"},
 	}
 	var out bytes.Buffer
-	writeAggregateStatus(&out, rows, []string{"native-b"}, true)
+	writeAggregateStatus(&out, rows, []string{"native-b"}, map[string]string{"native-b": "native-model"}, true)
 	got := out.String()
 	for _, want := range []string{"Keyed providers:", "Native endpoints:", "ToolHive:", "verification: not checked", "shadowed auth file: present", "selected default: yes"} {
 		if !strings.Contains(got, want) {
@@ -30,16 +35,23 @@ func TestMecatuiLocalProviderSetup_Scenario1_PassiveAggregateStatus(t *testing.T
 }
 
 func TestMecatuiLocalProviderSetup_Scenario1_StatusHasNoActiveSideEffects(t *testing.T) {
-	calls := 0
-	deps := setupDeps{load: func(string, bool) (setupSnapshot, error) {
-		return setupSnapshot{Rows: []providerStatus{{ID: "openai"}}}, nil
-	}, active: func() { calls++ }}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("OPENROUTER_API_KEY", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("OPENCODE_API_KEY", "")
+	authPath := filepath.Join(home, "missing-auth.yaml")
 	var out bytes.Buffer
-	if err := runAggregateStatus("", false, &out, deps); err != nil {
+	if err := runAggregateStatus(authPath, true, &out, defaultSetupDeps()); err != nil {
 		t.Fatal(err)
 	}
-	if calls != 0 {
-		t.Fatalf("active side effects = %d", calls)
+	if _, err := os.Stat(filepath.Join(home, ".config", "toolhive", "config.yaml")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("passive status created or opened ToolHive state unexpectedly: %v", err)
+	}
+	if !strings.Contains(out.String(), "ToolHive:\n  not configured") {
+		t.Fatalf("empty host fabricated ToolHive status:\n%s", out.String())
 	}
 }
 
@@ -69,6 +81,16 @@ func TestMecatuiLocalProviderSetup_Scenario2_ProviderChoicesAndLifecycleHandoffs
 	called = false
 	if err := handoffNative(t.Context(), "corp", true, true, io.Discard, deps); err == nil || called {
 		t.Fatalf("override native handoff: called=%v err=%v", called, err)
+	}
+	checks := 0
+	nativeSnapshot := setupSnapshot{NativeIDs: []string{"corp"}, ProviderDefaults: map[string]string{"corp": "native-default"}}
+	r := setupRunner{out: io.Discard, deps: setupDeps{nativeUsable: func(context.Context, string) (bool, error) { checks++; return true, nil }}, snapshot: nativeSnapshot, readLine: scriptedLines("corp", "n")}
+	if err := r.chooseDefault(t.Context()); err != nil || checks != 0 {
+		t.Fatalf("declined native status consent: checks=%d err=%v", checks, err)
+	}
+	r.readLine = scriptedLines("corp", "y", "native-default", "n")
+	if err := r.chooseDefault(t.Context()); err != nil || checks != 1 {
+		t.Fatalf("consented native status: checks=%d err=%v", checks, err)
 	}
 }
 
@@ -111,16 +133,46 @@ func TestInvariant_mecatui_setup_secret_never_observable(t *testing.T) {
 	}
 }
 
+func TestPanelRepair_SecretReadAndPostReadFailuresNeverWrite(t *testing.T) {
+	const secret = "SYNTHETIC-POST-READ-SENTINEL"
+	for name, readPassword := range map[string]func(int) ([]byte, error){
+		"read error":    func(int) ([]byte, error) { return nil, errors.New("terminal read failed") },
+		"EOF after key": func(int) ([]byte, error) { return []byte(secret), nil },
+	} {
+		t.Run(name, func(t *testing.T) {
+			writes := 0
+			var out bytes.Buffer
+			r := setupRunner{
+				inFD: 1, outFD: 2, out: &out,
+				deps: setupDeps{isTerminal: func(int) bool { return true }, readPassword: readPassword, updateKey: func(context.Context, string, authfile.APIKeyUpdate) (authfile.CommitState, error) {
+					writes++
+					return authfile.CommitDurable, nil
+				}},
+				readLine: scriptedLines("1", "openai"),
+				snapshot: setupSnapshot{Rows: []providerStatus{{ID: "openai", CredentialSource: credentialSourceMissing, Mutable: true}}},
+			}
+			if err := r.run(t.Context()); err == nil {
+				t.Fatal("pre-confirmation failure succeeded")
+			}
+			if writes != 0 || strings.Contains(out.String(), secret) {
+				t.Fatalf("failure leaked or wrote: writes=%d output=%q", writes, out.String())
+			}
+		})
+	}
+}
+
 func TestMecatuiLocalProviderSetup_Scenario2_ExistingCredentialPrecedence(t *testing.T) {
-	status := resolveCredentialStatus("openrouter", map[string]string{"OPENAI_API_KEY": "env"}, true)
+	status := cliconfig.ResolveCredentialSource("openrouter", true, func(name string) string { return map[string]string{"OPENAI_API_KEY": "env"}[name] })
 	if status.Source != "auth file" || !status.FilePresent {
 		t.Fatalf("openrouter source = %+v", status)
 	}
-	status = resolveCredentialStatus("openrouter", map[string]string{"OPENROUTER_API_KEY": "own", "OPENAI_API_KEY": "fallback"}, true)
+	status = cliconfig.ResolveCredentialSource("openrouter", true, func(name string) string {
+		return map[string]string{"OPENROUTER_API_KEY": "own", "OPENAI_API_KEY": "fallback"}[name]
+	})
 	if status.Source != "OPENROUTER_API_KEY" || !status.FilePresent {
 		t.Fatalf("openrouter own source = %+v", status)
 	}
-	if got := resolveCredentialStatus("custom", map[string]string{"CUSTOM_API_KEY": "x"}, false); got.Source != "missing" {
+	if got := cliconfig.ResolveCredentialSource("custom", false, func(name string) string { return map[string]string{"CUSTOM_API_KEY": "x"}[name] }); got.Source != "missing" {
 		t.Fatalf("custom inferred env: %+v", got)
 	}
 }
@@ -133,7 +185,7 @@ func TestMecatuiLocalProviderSetup_Scenario2_IndependentConfirmationsAndStart(t 
 	if len(models) != 5 || models[0].ID != "existing" || models[1].ID != "a" {
 		t.Fatalf("model choices = %+v", models)
 	}
-	if got, ok := resolveSetupModel("manualbare", nil); !ok || got != "manualbare" {
+	if got, ok := resolveSetupModel("vendor/model", nil); !ok || got != "vendor/model" {
 		t.Fatalf("manual model = %q,%v", got, ok)
 	}
 	var order []string
@@ -150,7 +202,7 @@ func TestMecatuiLocalProviderSetup_Scenario2_IndependentConfirmationsAndStart(t 
 		},
 		start: func(path string) error { order = append(order, "start:"+path); return nil },
 	}
-	r := setupRunner{inFD: 1, outFD: 2, out: io.Discard, deps: deps, authPath: "chosen-auth", settingsPath: "settings", readLine: scriptedLines("1", "openai", "y", "y", "fast", "y", "y"), snapshot: setupSnapshot{Rows: []providerStatus{{ID: "openai", CredentialSource: "missing", Mutable: true}}, Aliases: map[string]string{"fast": "openai/gpt-5"}}}
+	r := setupRunner{inFD: 1, outFD: 2, out: io.Discard, deps: deps, authPath: "chosen-auth", settingsPath: "settings", readLine: scriptedLines("1", "openai", "y", "y", "fast", "y", "y"), snapshot: setupSnapshot{Rows: []providerStatus{{ID: "openai", CredentialSource: "missing", Mutable: true}}, Aliases: map[string]string{"fast": "openai/gpt-5"}, ProviderDefaults: map[string]string{"openai": "openai/gpt-5"}}}
 	if err := r.run(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -226,6 +278,163 @@ func TestMecatuiLocalProviderSetup_Scenario4_RemoveWithoutSilentDefaultReset(t *
 	}
 }
 
+func TestPanelRepair_LoadSnapshotKeepsProviderDefaults(t *testing.T) {
+	home := t.TempDir()
+	configDir := filepath.Join(home, "config")
+	mecatlDir := filepath.Join(configDir, "mecatl")
+	if err := os.MkdirAll(mecatlDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", configDir)
+	settings := `providers:
+  custom:
+    base_url: https://custom.example/v1
+    default_model: custom-default
+    api_flavor: openai-responses
+    auth:
+      method: api_key
+`
+	if err := os.WriteFile(filepath.Join(mecatlDir, "settings.yaml"), []byte(settings), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	authPath := filepath.Join(mecatlDir, "auth.yaml")
+	if err := os.WriteFile(authPath, []byte("providers:\n  custom:\n    api_key: fixture-key\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := loadSetupSnapshot(authPath, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.ProviderDefaults["custom"] != "custom-default" {
+		t.Fatalf("provider defaults = %+v native=%+v", snapshot.ProviderDefaults, snapshot.NativeDefaults)
+	}
+	var custom providerStatus
+	for _, row := range snapshot.Rows {
+		if row.ID == "custom" {
+			custom = row
+		}
+	}
+	if custom.Model != "custom-default" || custom.CredentialSource != "auth file" {
+		t.Fatalf("custom row = %+v", custom)
+	}
+}
+
+func TestPanelRepair_SetupPromptCancellationUnblocks(t *testing.T) {
+	read, write, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer write.Close()
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() {
+		_, readErr := readLineContext(ctx, read, bufio.NewReader(read))
+		done <- readErr
+	}()
+	cancel()
+	select {
+	case got := <-done:
+		if !errors.Is(got, context.Canceled) {
+			t.Fatalf("cancel error = %v", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("cancelled prompt remained blocked")
+	}
+}
+
+func TestPanelRepair_SetupPreflightRejectsPhysicalAlias(t *testing.T) {
+	dir := t.TempDir()
+	auth := filepath.Join(dir, "auth.yaml")
+	if err := os.WriteFile(auth, []byte("providers: {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(dir, "settings.yaml")
+	if err := os.Link(auth, alias); err != nil {
+		t.Fatal(err)
+	}
+	if err := preflightSetupPaths(auth, alias); err == nil {
+		t.Fatal("hard-linked auth/settings targets accepted")
+	}
+}
+func TestPanelRepair_DefaultSelectionRejectsUnstartableChoices(t *testing.T) {
+	writes := 0
+	deps := setupDeps{updateDefaults: func(context.Context, string, defaultSelection) (authfile.CommitState, error) {
+		writes++
+		return authfile.CommitDurable, nil
+	}}
+	snapshot := setupSnapshot{
+		Rows: []providerStatus{
+			{ID: "openai", Kind: "builtin", CredentialSource: "missing", Mutable: true, DefaultModel: "gpt-5-mini"},
+			{ID: "custom", Kind: "configured", CredentialSource: "auth file", Mutable: true, DefaultModel: "custom-model"},
+			{ID: "anonymous", Kind: "none required", CredentialSource: "none required", DefaultModel: "anon-model"},
+		},
+		ProviderDefaults: map[string]string{"openai": "gpt-5-mini", "custom": "custom-model", "anonymous": "anon-model"},
+	}
+	for name, lines := range map[string][]string{
+		"unknown-provider":     {"unknown"},
+		"missing-credential":   {"openai"},
+		"unknown-custom-model": {"custom", "typo-model"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := setupRunner{out: io.Discard, deps: deps, snapshot: snapshot, readLine: scriptedLines(lines...)}
+			if err := r.chooseDefault(t.Context()); err == nil {
+				t.Fatal("unstartable default accepted")
+			}
+		})
+	}
+	if writes != 0 {
+		t.Fatalf("unstartable defaults wrote settings %d times", writes)
+	}
+
+	r := setupRunner{out: io.Discard, deps: deps, snapshot: snapshot, readLine: scriptedLines("custom", "custom-model", "y", "n")}
+	if err := r.chooseDefault(t.Context()); err != nil || writes != 1 {
+		t.Fatalf("configured custom default: writes=%d err=%v", writes, err)
+	}
+}
+
+func TestPanelRepair_PerProviderDefaultsAndToolHiveIntent(t *testing.T) {
+	rows := []providerStatus{{ID: "custom", DefaultModel: "custom-model"}, {ID: "native", DefaultModel: "native-model"}}
+	if rows[0].DefaultModel != "custom-model" || rows[1].DefaultModel != "native-model" {
+		t.Fatalf("provider defaults lost: %+v", rows)
+	}
+	if passiveToolHiveConfigured(filepath.Join(t.TempDir(), "missing.yaml")) {
+		t.Fatal("missing ToolHive config reported configured")
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, []byte("llm:\n  gateway_url: https://gateway.example\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !passiveToolHiveConfigured(path) {
+		t.Fatal("present ToolHive intent not detected")
+	}
+}
+
+func TestPanelRepair_UnsupportedSetupFailsBeforeInteraction(t *testing.T) {
+	loaded, read, updated := false, false, false
+	deps := setupDeps{
+		writeSupported: func() bool { return false },
+		load:           func(string, bool) (setupSnapshot, error) { loaded = true; return setupSnapshot{}, nil },
+		isTerminal:     func(int) bool { return true },
+		readPassword:   func(int) ([]byte, error) { read = true; return nil, nil },
+		updateKey: func(context.Context, string, authfile.APIKeyUpdate) (authfile.CommitState, error) {
+			updated = true
+			return authfile.CommitDurable, nil
+		},
+	}
+	f, err := os.CreateTemp(t.TempDir(), "terminal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if err := runSetupCommand(t.Context(), "auth", false, f, f, deps); err == nil || !strings.Contains(err.Error(), "unsupported") {
+		t.Fatalf("unsupported setup error = %v", err)
+	}
+	if loaded || read || updated {
+		t.Fatalf("unsupported setup crossed interaction boundary: load=%v read=%v update=%v", loaded, read, updated)
+	}
+}
 func TestMecatuiLocalProviderSetup_Scenario4_StartupPointerOnly(t *testing.T) {
 	err := validateEmbeddedProvider(config{transportMode: modeLocal})
 	if err == nil || !strings.Contains(err.Error(), "run `mecatui llm setup`") {

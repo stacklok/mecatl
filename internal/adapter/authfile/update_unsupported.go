@@ -9,6 +9,8 @@ import (
 
 var updateTestHook func(string) error
 
+func updateSupported() bool { return false }
+
 func updateAPIKey(context.Context, string, APIKeyUpdate) (CommitState, error) {
 	return CommitNotApplied, errors.New("auth mutation is unsupported on this platform")
 }

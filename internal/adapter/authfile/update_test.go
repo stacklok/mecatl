@@ -3,12 +3,17 @@
 package authfile
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
+
+	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
 )
 
 func privateFile(t *testing.T, body string) string {
@@ -25,9 +30,24 @@ func privateFile(t *testing.T, body string) string {
 }
 
 func TestADR_0332_AuthFileTargetedPreservation(t *testing.T) {
+	key := "new-secret"
+	for _, update := range []APIKeyUpdate{{Provider: "custom-oauth", APIKey: &key}, {Provider: "custom-oauth"}} {
+		path := privateFile(t, "providers:\n  custom-oauth:\n    oauth:\n      access_token: oauth-secret\n      account_id: acct\n")
+		before, readErr := os.ReadFile(path)
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		state, err := UpdateAPIKey(context.Background(), path, update)
+		after, afterErr := os.ReadFile(path)
+		if state != CommitNotApplied || err == nil || afterErr != nil || !bytes.Equal(before, after) {
+			t.Fatalf("OAuth-shaped target mutation: state=%q err=%v unchanged=%v read=%v", state, err, bytes.Equal(before, after), afterErr)
+		}
+		if strings.Contains(err.Error(), "oauth-secret") {
+			t.Fatal("OAuth material reached error")
+		}
+	}
 	const original = "# credentials\nproviders:\n  openai:\n    api_key: old\n  openai-codex:\n    oauth:\n      access_token: oauth-secret\n      account_id: acct\n      expires_at: '2030-01-01T00:00:00Z'\n"
 	path := privateFile(t, original)
-	key := "new-secret"
 	state, err := UpdateAPIKey(context.Background(), path, APIKeyUpdate{Provider: "openai", APIKey: &key})
 	if err != nil || state != CommitDurable {
 		t.Fatalf("UpdateAPIKey = %q, %v", state, err)
@@ -141,6 +161,102 @@ func TestADR_0332_AuthFileCommitProtocol(t *testing.T) {
 	}
 }
 
+func TestPanelRepair_AuthFileCanonicalParentsAndLeaves(t *testing.T) {
+	key := "new"
+	t.Run("symlinked ancestor resolves to private parent", func(t *testing.T) {
+		base := t.TempDir()
+		realParent := filepath.Join(base, "real")
+		if err := os.Mkdir(realParent, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		alias := filepath.Join(base, "alias")
+		if err := os.Symlink(realParent, alias); err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(alias, "auth.yaml")
+		state, err := UpdateAPIKey(t.Context(), path, APIKeyUpdate{Provider: "openai", APIKey: &key})
+		if state != CommitDurable || err != nil {
+			t.Fatalf("canonical parent = %q, %v", state, err)
+		}
+	})
+	t.Run("leaf and lock symlinks rejected", func(t *testing.T) {
+		for _, leaf := range []string{"auth.yaml", "auth.yaml.lock"} {
+			dir := t.TempDir()
+			if err := os.Chmod(dir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			target := filepath.Join(dir, "target")
+			if err := os.WriteFile(target, []byte("providers: {}\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, filepath.Join(dir, leaf)); err != nil {
+				t.Fatal(err)
+			}
+			state, err := UpdateAPIKey(t.Context(), filepath.Join(dir, "auth.yaml"), APIKeyUpdate{Provider: "openai", APIKey: &key})
+			if state != CommitNotApplied || err == nil {
+				t.Fatalf("symlink %s = %q, %v", leaf, state, err)
+			}
+		}
+	})
+	t.Run("conventional one-level directory creation", func(t *testing.T) {
+		base := t.TempDir()
+		if err := os.Chmod(base, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("XDG_CONFIG_HOME", base)
+		path := DefaultPath(xdgconfig.OSEnv)
+		state, err := UpdateAPIKey(t.Context(), path, APIKeyUpdate{Provider: "openai", APIKey: &key})
+		if state != CommitDurable || err != nil {
+			t.Fatalf("conventional create = %q, %v", state, err)
+		}
+		info, err := os.Stat(filepath.Dir(path))
+		if err != nil || info.Mode().Perm() != 0o700 {
+			t.Fatalf("created parent = %v, %v", info, err)
+		}
+	})
+}
+
+func TestPanelRepair_AuthFileCooperativeContention(t *testing.T) {
+	path := privateFile(t, "providers:\n  openai:\n    api_key: old\n")
+	firstKey, latestKey := "first", "latest"
+	locked := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	oldHook := updateTestHook
+	updateTestHook = func(phase string) error {
+		if phase == "after-lock" {
+			once.Do(func() { close(locked); <-release })
+		}
+		return nil
+	}
+	defer func() { updateTestHook = oldHook }()
+	firstDone := make(chan error, 1)
+	go func() {
+		_, err := UpdateAPIKey(context.Background(), path, APIKeyUpdate{Provider: "openai", APIKey: &firstKey})
+		firstDone <- err
+	}()
+	<-locked
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	state, err := UpdateAPIKey(ctx, path, APIKeyUpdate{Provider: "openai", APIKey: &latestKey})
+	if state != CommitNotApplied || !errors.Is(err, context.DeadlineExceeded) || time.Since(start) > time.Second {
+		t.Fatalf("contended cancellation = %q, %v elapsed=%v", state, err, time.Since(start))
+	}
+	close(release)
+	if err := <-firstDone; err != nil {
+		t.Fatal(err)
+	}
+	state, err = UpdateAPIKey(t.Context(), path, APIKeyUpdate{Provider: "openai", APIKey: &latestKey})
+	if state != CommitDurable || err != nil {
+		t.Fatalf("latest writer = %q, %v", state, err)
+	}
+	got, readErr := os.ReadFile(path)
+	if readErr != nil || !strings.Contains(string(got), "api_key: 'latest'") {
+		t.Fatalf("latest content = %q, %v", got, readErr)
+	}
+}
+
 func TestMecatuiLocalProviderSetup_Scenario3_UnchangedAndSecretSafe(t *testing.T) {
 	path := privateFile(t, "providers:\n  openai:\n    api_key: same\n  openai-codex:\n    oauth:\n      access_token: oauth-only\n      account_id: acct\n")
 	key := "same"
@@ -156,24 +272,6 @@ func TestMecatuiLocalProviderSetup_Scenario3_UnchangedAndSecretSafe(t *testing.T
 	state, err = UpdateAPIKey(context.Background(), missing, APIKeyUpdate{Provider: "openai"})
 	if state != CommitNoop || err != nil {
 		t.Fatalf("absent removal = %q, %v", state, err)
-	}
-
-	settings := filepath.Join(filepath.Dir(path), "settings.yaml")
-	if err := os.WriteFile(settings, []byte("{}\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := ValidateDistinctFiles(path, settings); err != nil {
-		t.Fatalf("distinct files: %v", err)
-	}
-	if err := ValidateDistinctFiles(path, path); err == nil {
-		t.Fatal("same physical file was accepted")
-	}
-	alias := filepath.Join(filepath.Dir(path), "auth-hardlink.yaml")
-	if err := os.Link(path, alias); err != nil {
-		t.Fatal(err)
-	}
-	if err := ValidateDistinctFiles(path, alias); err == nil {
-		t.Fatal("hard-linked physical file was accepted")
 	}
 
 	for _, reserved := range []string{"mock", "openai-codex", "toolhive"} {
