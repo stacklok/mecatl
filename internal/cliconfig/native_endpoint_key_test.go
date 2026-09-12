@@ -127,7 +127,7 @@ func TestNativeEnvironmentKeyLifecycle(t *testing.T) {
 	}
 	defer func() { _ = store.Close() }()
 	old := llmendpoint.Token{AccessToken: "native-access-canary", RefreshToken: "native-refresh-canary", TokenType: "Bearer", Expiry: time.Now().Add(-time.Minute)}
-	rotated := llmendpoint.Token{AccessToken: "rotated-access-canary", RefreshToken: "rotated-refresh-canary", TokenType: "Bearer", Expiry: time.Now().Add(time.Hour).Round(0)}
+	rotated := llmendpoint.Token{AccessToken: "rotated-access-canary", RefreshToken: "rotated-refresh-canary", TokenType: "Bearer", Expiry: time.Now().Add(time.Hour).In(time.FixedZone("test", 0))}
 	lifecycle := r.lifecycle(repo)
 	lifecycle.Authorize = func(context.Context) (llmendpoint.Token, error) { return old, nil }
 	lifecycle.Exchange = func(_ context.Context, refresh string) (llmendpoint.Token, error) {
@@ -140,14 +140,22 @@ func TestNativeEnvironmentKeyLifecycle(t *testing.T) {
 	if err := lifecycle.Enroll(t.Context(), r.identity); err != nil {
 		t.Fatal(err)
 	}
+	committed := false
 	lifecycle.AfterCommit = func() {
 		loaded, err := repo.Load(t.Context(), r.identity)
-		if err != nil || loaded.Token != rotated {
+		if err != nil {
+			t.Fatalf("load rotated credential: %v", err)
+		}
+		// JSON preserves the instant, not time.Time's location or monotonic metadata.
+		if loaded.Token.AccessToken != rotated.AccessToken || loaded.Token.RefreshToken != rotated.RefreshToken || loaded.Token.TokenType != rotated.TokenType || !loaded.Token.Expiry.Equal(rotated.Expiry) {
 			t.Fatal("refresh returned before durable rotation")
 		}
+		committed = true
 	}
-	if _, err := lifecycle.Refresh(t.Context(), r.identity); err != nil {
+	if got, err := lifecycle.Refresh(t.Context(), r.identity); err != nil {
 		t.Fatal(err)
+	} else if !committed || got.AccessToken != rotated.AccessToken {
+		t.Fatal("refresh did not return the durably committed bearer")
 	}
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
@@ -299,7 +307,7 @@ func TestNativeDefaultKeyringCompatibility(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = store.Close() }()
-	token := llmendpoint.Token{AccessToken: "keyring-access", RefreshToken: "keyring-refresh", TokenType: "Bearer", Expiry: time.Now().Add(time.Hour).Round(0)}
+	token := llmendpoint.Token{AccessToken: "keyring-access", RefreshToken: "keyring-refresh", TokenType: "Bearer", Expiry: time.Now().Add(time.Hour).In(time.FixedZone("test", 0))}
 	if _, err := repo.Save(t.Context(), r.identity, token, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -313,7 +321,11 @@ func TestNativeDefaultKeyringCompatibility(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = legacy.Close() }()
-	if rec, err := llmendpoint.NewCredentialRepository(legacy).Load(t.Context(), r.identity); err != nil || rec.Token != token {
+	rec, err := llmendpoint.NewCredentialRepository(legacy).Load(t.Context(), r.identity)
+	if err != nil {
+		t.Fatalf("load credential with existing keyring encryption: %v", err)
+	}
+	if rec.Token.AccessToken != token.AccessToken || rec.Token.RefreshToken != token.RefreshToken || rec.Token.TokenType != token.TokenType || !rec.Token.Expiry.Equal(token.Expiry) {
 		t.Fatal("default record is incompatible with existing keyring encryption")
 	}
 }
