@@ -28,6 +28,7 @@ const (
 	maxSetupAPIKeyBytes      = 8 * 1024
 	credentialSourceAuthFile = "auth file"
 	credentialSourceMissing  = "missing"
+	openCodeProviderID       = "opencode"
 )
 
 var errSetupStarted = errors.New("setup launched mecatui")
@@ -131,7 +132,7 @@ func loadSetupSnapshot(path string, explicit bool) (setupSnapshot, error) {
 	if err != nil {
 		return setupSnapshot{}, fmt.Errorf("resolve operator providers: %w", err)
 	}
-	known := []string{"anthropic", "openai", "openrouter", "opencode", "openai-codex"}
+	known := []string{"anthropic", "openai", "openrouter", openCodeProviderID, "openai-codex"}
 	for id := range defs {
 		known = append(known, id)
 	}
@@ -157,7 +158,7 @@ func loadSetupSnapshot(path string, explicit bool) (setupSnapshot, error) {
 		}
 	}
 	filePresent := func(id string) bool { return af != nil && af.APIKey(id) != "" }
-	for _, id := range []string{"anthropic", "openai", "opencode", "openrouter"} {
+	for _, id := range []string{"anthropic", "openai", openCodeProviderID, "openrouter"} {
 		cs := cliconfig.ResolveCredentialSource(id, filePresent(id), os.Getenv)
 		providerDefault := app.BuiltinDefaultModel(id)
 		s.ProviderDefaults[id] = providerDefault
@@ -179,7 +180,7 @@ func loadSetupSnapshot(path string, explicit bool) (setupSnapshot, error) {
 			s.NativeDefaults[id] = def.DefaultModel
 			continue
 		}
-		if _, builtin := slices.BinarySearch([]string{"anthropic", "openai", "opencode", "openrouter"}, id); builtin {
+		if _, builtin := slices.BinarySearch([]string{"anthropic", "openai", openCodeProviderID, "openrouter"}, id); builtin {
 			continue
 		}
 		kind := "none required"
@@ -525,11 +526,15 @@ func (r *setupRunner) add(ctx context.Context) error {
 		}
 		fmt.Fprintln(r.out, "The active environment credential will continue to win; no credential value will be displayed.")
 	}
-	console := map[string]string{"openai": "https://platform.openai.com/api-keys", "anthropic": "https://console.anthropic.com/settings/keys", "openrouter": "https://openrouter.ai/settings/keys", "opencode": "https://opencode.ai/auth"}[id]
+	console := map[string]string{"openai": "https://platform.openai.com/api-keys", "anthropic": "https://console.anthropic.com/settings/keys", "openrouter": "https://openrouter.ai/settings/keys", openCodeProviderID: "https://opencode.ai/auth"}[id]
 	if console == "" {
 		console = "the configured provider console"
 	}
-	fmt.Fprintf(r.out, "Open the provider console yourself: %s\nEnter an API/developer key, not a consumer subscription. API usage may incur charges.\nThe key is stored owner-only plaintext; same-UID processes and an enabled agent Shell can read it.\n", console)
+	if id == openCodeProviderID {
+		fmt.Fprintf(r.out, "Open the provider console yourself: %s\nEnter your OpenCode API key with an active Go subscription. This built-in uses the Go endpoint, not Zen pay-as-you-go. API usage may incur charges.\nThe key is stored owner-only plaintext; same-UID processes and an enabled agent Shell can read it.\n", console)
+	} else {
+		fmt.Fprintf(r.out, "Open the provider console yourself: %s\nEnter an API/developer key, not a consumer subscription. API usage may incur charges.\nThe key is stored owner-only plaintext; same-UID processes and an enabled agent Shell can read it.\n", console)
+	}
 	var keyBytes []byte
 	if r.deps.readSecret != nil {
 		keyBytes, err = r.deps.readSecret(ctx)

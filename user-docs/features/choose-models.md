@@ -71,11 +71,13 @@ entry whose authentication method is `api_key`; it does not create custom provid
 definitions. Providers configured with no authentication, `openai-codex`, and
 OAuth-shaped records are not API-key choices.
 
-Before hidden key entry, the command identifies the provider console and explains
-that you need an API/developer key rather than a consumer subscription. Confirming
-a write stores the key as owner-only plaintext in the existing `auth.yaml`. Other
-processes running as the same operating-system user can read that file, as can an
-enabled agent Shell running under that user. Use a separate OS identity or another
+Before hidden key entry, the command identifies the provider console. For OpenCode,
+enter an OpenCode API key with an active Go subscription: the built-in uses the Go
+endpoint, not Zen pay-as-you-go. For every other API-key provider, you need an
+API/developer key rather than a consumer subscription. Confirming a write stores
+the key as owner-only plaintext in the existing `auth.yaml`. Other processes
+running as the same operating-system user can read that file, as can an enabled
+agent Shell running under that user. Use a separate OS identity or another
 credential delivery mechanism if that custody is too broad. API use may incur
 provider charges.
 

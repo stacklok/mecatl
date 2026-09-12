@@ -226,6 +226,50 @@ func TestInvariant_mecatui_setup_secret_never_observable(t *testing.T) {
 	}
 }
 
+func TestMecatuiLocalProviderSetup_OpenCodeCredentialDisclosure(t *testing.T) {
+	for _, tc := range []struct {
+		provider string
+		want     []string
+		absent   string
+	}{
+		{
+			provider: "opencode",
+			want:     []string{"OpenCode API key with an active Go subscription", "built-in uses the Go endpoint, not Zen pay-as-you-go", "same-UID", "agent Shell", "charges"},
+			absent:   "API/developer key, not a consumer subscription",
+		},
+		{
+			provider: "openai",
+			want:     []string{"API/developer key, not a consumer subscription"},
+		},
+		{
+			provider: "anthropic",
+			want:     []string{"API/developer key, not a consumer subscription"},
+		},
+	} {
+		t.Run(tc.provider, func(t *testing.T) {
+			var out bytes.Buffer
+			r := setupRunner{
+				inFD: 1, outFD: 2, out: &out,
+				deps:     setupDeps{isTerminal: func(int) bool { return true }, readPassword: func(int) ([]byte, error) { return []byte("test-key"), nil }},
+				readLine: scriptedLines("1", tc.provider, "n", "4"),
+				snapshot: setupSnapshot{Rows: []providerStatus{{ID: tc.provider, CredentialSource: credentialSourceMissing, Mutable: true}}},
+			}
+			if err := r.run(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			got := out.String()
+			for _, want := range tc.want {
+				if !strings.Contains(got, want) {
+					t.Errorf("disclosure missing %q:\n%s", want, got)
+				}
+			}
+			if tc.absent != "" && strings.Contains(got, tc.absent) {
+				t.Errorf("disclosure unexpectedly contains %q:\n%s", tc.absent, got)
+			}
+		})
+	}
+}
+
 func TestPanelRepair_SecretReadAndPostReadFailuresNeverWrite(t *testing.T) {
 	const secret = "SYNTHETIC-POST-READ-SENTINEL"
 	for name, readPassword := range map[string]func(int) ([]byte, error){
