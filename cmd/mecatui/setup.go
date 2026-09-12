@@ -623,8 +623,13 @@ func (r *setupRunner) promptDefault(id string) (defaultSelection, error) {
 	if sel == "" {
 		return defaultSelection{}, errors.New("model selector must not be empty")
 	}
-	resolved, ok := resolveSetupModel(sel, r.snapshot.Aliases)
-	if !ok || resolved == "" {
+	resolved, known := resolveSetupModel(sel, r.snapshot.Aliases)
+	if !known {
+		// Bare selectors may still be the provider's declared default or an
+		// authoritative catalog entry; the deployment-default gate decides that.
+		resolved = sel
+	}
+	if resolved == "" {
 		return defaultSelection{}, errors.New("model selector is unknown; manual selectors must be catalogued for this provider, match its declared default, or be a configured alias resolving to one of those")
 	}
 	if err := app.ValidateDeploymentDefaultModel(id, resolved, r.snapshot.ProviderDefaults[id]); err != nil {

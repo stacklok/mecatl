@@ -377,6 +377,36 @@ func TestMecatuiLocalProviderSetup_Scenario2_IndependentConfirmationsAndStart(t 
 	}
 }
 
+func TestMecatuiLocalProviderSetup_Scenario2_AC24_ManualBareDeclaredDefaultUsesAuthoritativeGate(t *testing.T) {
+	var saved defaultSelection
+	writes := 0
+	deps := setupDeps{updateDefaults: func(_ context.Context, _ string, d defaultSelection) (authfile.CommitState, error) {
+		writes++
+		saved = d
+		return authfile.CommitDurable, nil
+	}}
+	snapshot := setupSnapshot{
+		Rows:             []providerStatus{{ID: "custom", Kind: "configured", CredentialSource: credentialSourceAuthFile, Mutable: true}},
+		ProviderDefaults: map[string]string{"custom": "model"},
+	}
+
+	r := setupRunner{out: io.Discard, deps: deps, snapshot: snapshot, readLine: scriptedLines("custom", "model", "y", "n")}
+	if err := r.chooseDefault(t.Context()); err != nil {
+		t.Fatalf("declared bare default rejected: %v", err)
+	}
+	if writes != 1 || saved != (defaultSelection{Provider: "custom", Model: "model"}) {
+		t.Fatalf("declared bare default was not confirmed and saved: writes=%d saved=%+v", writes, saved)
+	}
+
+	r = setupRunner{out: io.Discard, deps: deps, snapshot: snapshot, readLine: scriptedLines("custom", "unknown", "y")}
+	if err := r.chooseDefault(t.Context()); err == nil {
+		t.Fatal("unknown bare selector accepted")
+	}
+	if writes != 1 {
+		t.Fatalf("unknown bare selector wrote settings %d times", writes)
+	}
+}
+
 func TestPanelRepair_ProductionStartReparsesChosenAuthAndSavedDefaults(t *testing.T) {
 	configHome := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", configHome)
