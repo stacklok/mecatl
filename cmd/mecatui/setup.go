@@ -55,6 +55,7 @@ type setupSnapshot struct {
 
 type setupDeps struct {
 	load           func(string, bool) (setupSnapshot, error)
+	preflight      func(string, string) error
 	writeSupported func() bool
 	isTerminal     func(int) bool
 	readPassword   func(int) ([]byte, error)
@@ -73,6 +74,7 @@ func defaultSetupDeps() setupDeps {
 func setupDepsForRun(runCommand func([]string) error) setupDeps {
 	return setupDeps{
 		load:           loadSetupSnapshot,
+		preflight:      preflightSetupDocuments,
 		writeSupported: authfile.UpdateSupported,
 		isTerminal:     term.IsTerminal,
 		readPassword:   term.ReadPassword,
@@ -88,6 +90,9 @@ func withSetupDefaults(deps setupDeps) setupDeps {
 	defaults := defaultSetupDeps()
 	if deps.load == nil {
 		deps.load = defaults.load
+	}
+	if deps.preflight == nil {
+		deps.preflight = defaults.preflight
 	}
 	if deps.writeSupported == nil {
 		deps.writeSupported = defaults.writeSupported
@@ -381,7 +386,7 @@ func removeCredential(ctx context.Context, authPath, settings, provider string, 
 	if replacement != nil {
 		state, err := deps.updateDefaults(ctx, settings, *replacement)
 		reportCommit(out, "replacement default", replacement.Provider, state, err)
-		if !commitSucceeded(state, err) {
+		if err != nil || state != authfile.CommitDurable {
 			if err == nil {
 				err = errors.New("replacement default was not durably committed")
 			}
@@ -648,6 +653,25 @@ func defaultProviderIDs(s setupSnapshot) []string {
 	return ids
 }
 
+func defaultProviderIDsAfterRemoval(s setupSnapshot, removed string) []string {
+	var ids []string
+	for _, row := range s.Rows {
+		if row.Kind == "none required" {
+			ids = append(ids, row.ID)
+			continue
+		}
+		if !row.Mutable || row.CredentialSource == credentialSourceMissing {
+			continue
+		}
+		if row.ID == removed && row.CredentialSource == credentialSourceAuthFile {
+			continue
+		}
+		ids = append(ids, row.ID)
+	}
+	slices.Sort(ids)
+	return ids
+}
+
 func (r *setupRunner) chooseDefault(ctx context.Context) error {
 	ids := defaultProviderIDs(r.snapshot)
 	if len(ids) == 0 && len(r.snapshot.NativeIDs) == 0 {
@@ -747,7 +771,7 @@ func (r *setupRunner) remove(ctx context.Context) error {
 			return e
 		}
 		rid = strings.TrimSpace(rid)
-		if !slices.Contains(defaultProviderIDs(r.snapshot), rid) {
+		if !slices.Contains(defaultProviderIDsAfterRemoval(r.snapshot, id), rid) {
 			return errors.New("replacement provider is unknown or has no usable credential; add or enroll it before removing the active default key")
 		}
 		d, e := r.promptDefault(rid)
@@ -813,6 +837,19 @@ func preflightSetupPaths(authPath, settings string) error {
 	}
 	if settingsErr != nil && !errors.Is(settingsErr, os.ErrNotExist) {
 		return errors.New("settings target is unavailable")
+	}
+	return nil
+}
+
+func preflightSetupDocuments(authPath, settings string) error {
+	if err := preflightSetupPaths(authPath, settings); err != nil {
+		return err
+	}
+	if err := authfile.PreflightAPIKeyUpdateTarget(authPath); err != nil {
+		return fmt.Errorf("validate auth target: %w", err)
+	}
+	if err := permconfig.PreflightDefaultsUpdateTarget(settings); err != nil {
+		return fmt.Errorf("validate settings target: %w", err)
 	}
 	return nil
 }
@@ -894,11 +931,12 @@ func runSetupCommand(ctx context.Context, path string, explicit bool, in, out *o
 	if !deps.isTerminal(int(in.Fd())) || !deps.isTerminal(int(out.Fd())) {
 		return errors.New("llm setup requires terminal stdin and stdout")
 	}
-	s, err := deps.load(path, explicit)
-	if err != nil {
+	settings := settingsPath(xdgconfig.OSEnv)
+	if err := deps.preflight(path, settings); err != nil {
 		return err
 	}
-	if err := preflightSetupPaths(path, settingsPath(xdgconfig.OSEnv)); err != nil {
+	s, err := deps.load(path, explicit)
+	if err != nil {
 		return err
 	}
 	reader := bufio.NewReader(in)
@@ -916,6 +954,6 @@ func runSetupCommand(ctx context.Context, path string, explicit bool, in, out *o
 			return nil
 		}
 	}
-	r := setupRunner{inFD: int(in.Fd()), outFD: int(out.Fd()), out: out, deps: deps, snapshot: s, authPath: path, settingsPath: settingsPath(xdgconfig.OSEnv), explicit: explicit, readLine: func(string) (string, error) { line, e := readLine(); return strings.TrimSpace(line), e }}
+	r := setupRunner{inFD: int(in.Fd()), outFD: int(out.Fd()), out: out, deps: deps, snapshot: s, authPath: path, settingsPath: settings, explicit: explicit, readLine: func(string) (string, error) { line, e := readLine(); return strings.TrimSpace(line), e }}
 	return r.run(ctx)
 }

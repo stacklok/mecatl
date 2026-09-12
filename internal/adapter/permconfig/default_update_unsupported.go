@@ -11,6 +11,10 @@ import (
 
 var defaultUpdateTestHook func(string) error
 
+func preflightDefaultsUpdateTarget(string) error {
+	return errors.New("settings default mutation is unsupported on this platform")
+}
+
 func UpdateDefaults(context.Context, string, DefaultUpdate) (authfile.CommitState, error) {
 	return authfile.CommitNotApplied, errors.New("settings default mutation is unsupported on this platform")
 }

@@ -59,6 +59,48 @@ func updateAPIKey(ctx context.Context, path string, update APIKeyUpdate) (Commit
 	return state, nil
 }
 
+func preflightAPIKeyUpdateTarget(path string) error {
+	if path == "" {
+		return errors.New("target path is unavailable")
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return errors.New("target path is unavailable")
+	}
+	parentPath := filepath.Dir(abs)
+	parent, err := filepath.EvalSymlinks(parentPath)
+	if errors.Is(err, os.ErrNotExist) && filepath.Clean(abs) == filepath.Clean(DefaultPath(xdgconfig.OSEnv)) {
+		base, baseErr := filepath.EvalSymlinks(filepath.Dir(parentPath))
+		if baseErr != nil {
+			return errors.New("conventional config directory is unavailable")
+		}
+		physical := filepath.Join(base, filepath.Base(parentPath))
+		if _, statErr := os.Lstat(physical); errors.Is(statErr, os.ErrNotExist) {
+			return nil
+		} else if statErr != nil {
+			return errors.New("credential parent is unavailable")
+		}
+		parent, err = physical, nil
+	}
+	if err != nil {
+		return errors.New("credential parent must already exist")
+	}
+	info, err := os.Lstat(parent)
+	if err != nil || !privateDir(info) {
+		return errors.New("credential parent must be an owner-only non-link directory")
+	}
+	parentFD, err := unix.Open(parent, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		return errors.New("open credential parent")
+	}
+	defer func() { _ = unix.Close(parentFD) }()
+	target, err := readTarget(parentFD, filepath.Base(abs))
+	if err != nil || !target.exists {
+		return err
+	}
+	return validateAuthDocument(target.data)
+}
+
 func canonicalUpdateParent(path string) (string, string, error) {
 	if path == "" {
 		return "", "", errors.New("target path is unavailable")
@@ -75,10 +117,39 @@ func canonicalUpdateParent(path string) (string, string, error) {
 		if baseErr != nil {
 			return "", "", errors.New("conventional config directory is unavailable")
 		}
-		physical = filepath.Join(physicalBase, filepath.Base(parent))
-		if mkdirErr := os.Mkdir(physical, 0o700); mkdirErr != nil && !errors.Is(mkdirErr, os.ErrExist) {
+		baseFD, openErr := unix.Open(physicalBase, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+		if openErr != nil {
+			return "", "", errors.New("open conventional config directory")
+		}
+		created := false
+		if mkdirErr := unix.Mkdirat(baseFD, filepath.Base(parent), 0o700); mkdirErr == nil {
+			created = true
+		} else if !errors.Is(mkdirErr, unix.EEXIST) {
+			_ = unix.Close(baseFD)
 			return "", "", errors.New("create conventional credential directory")
 		}
+		if created {
+			if updateTestHook != nil {
+				if hookErr := updateTestHook("before-created-parent-sync"); hookErr != nil {
+					_ = unix.Close(baseFD)
+					return "", "", errors.New("sync conventional config directory")
+				}
+			}
+			if syncErr := unix.Fsync(baseFD); syncErr != nil {
+				_ = unix.Close(baseFD)
+				return "", "", errors.New("sync conventional config directory")
+			}
+			if updateTestHook != nil {
+				if hookErr := updateTestHook("before-created-parent-close"); hookErr != nil {
+					_ = unix.Close(baseFD)
+					return "", "", errors.New("close conventional config directory")
+				}
+			}
+		}
+		if closeErr := unix.Close(baseFD); closeErr != nil {
+			return "", "", errors.New("close conventional config directory")
+		}
+		physical = filepath.Join(physicalBase, filepath.Base(parent))
 		err = nil
 	}
 	if err != nil {
@@ -246,11 +317,11 @@ func lockFile(ctx context.Context, fd int) error {
 }
 
 func openPrivateLeaf(parentFD int, leaf string, create bool, flags int) (int, error) {
-	fd, err := unix.Openat(parentFD, leaf, flags|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	fd, err := unix.Openat(parentFD, leaf, flags|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
 	if errors.Is(err, unix.ENOENT) && create {
-		fd, err = unix.Openat(parentFD, leaf, flags|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_CREAT|unix.O_EXCL, 0o600)
+		fd, err = unix.Openat(parentFD, leaf, flags|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CREAT|unix.O_EXCL, 0o600)
 		if errors.Is(err, unix.EEXIST) {
-			fd, err = unix.Openat(parentFD, leaf, flags|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+			fd, err = unix.Openat(parentFD, leaf, flags|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
 		}
 	}
 	if err != nil {
@@ -320,10 +391,50 @@ func writeAll(fd int, data []byte) error {
 	return nil
 }
 
+func validateAuthDocument(data []byte) error {
+	if len(bytes.TrimSpace(data)) == 0 {
+		return nil
+	}
+	doc, err := yamldiag.ParseSettingsDocument(data)
+	if err != nil {
+		return errors.New("auth document is invalid or ambiguous")
+	}
+	providersNode, err := uniqueAuthValue(doc.Mapping(), "providers", true)
+	if err != nil {
+		return err
+	}
+	if providersNode == nil {
+		return errors.New("auth document is missing providers mapping")
+	}
+	providers, ok := providersNode.(*ast.MappingNode)
+	if !ok {
+		return errors.New("auth providers must be a mapping")
+	}
+	seen := map[string]bool{}
+	for _, entry := range providers.Values {
+		name, ok := authString(entry.Key)
+		if !ok || !providerid.Valid(name) || seen[name] {
+			return errors.New("auth providers contain an invalid or duplicate id")
+		}
+		seen[name] = true
+		mapping, ok := entry.Value.(*ast.MappingNode)
+		if !ok {
+			return errors.New("auth provider entry must be a mapping")
+		}
+		if err := validateProviderMapping(mapping); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 //nolint:gocyclo // Schema validation and the one targeted mutation stay together to preserve the AST safely.
 func mutateAuth(data []byte, update APIKeyUpdate) ([]byte, bool, error) {
 	if len(bytes.TrimSpace(data)) == 0 {
 		data = []byte("providers: {}\n")
+	}
+	if err := validateAuthDocument(data); err != nil {
+		return nil, false, err
 	}
 	doc, err := yamldiag.ParseSettingsDocument(data)
 	if err != nil {

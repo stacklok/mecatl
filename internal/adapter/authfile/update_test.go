@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
 )
 
@@ -28,6 +30,102 @@ func privateFile(t *testing.T, body string) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+func TestFinalReview_AuthWriterRejectsFIFOWithoutBlocking(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "auth.yaml")
+	if err := unix.Mkfifo(path, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	key := "secret"
+	done := make(chan struct {
+		state CommitState
+		err   error
+	}, 1)
+	go func() {
+		state, err := UpdateAPIKey(t.Context(), path, APIKeyUpdate{Provider: "openai", APIKey: &key})
+		done <- struct {
+			state CommitState
+			err   error
+		}{state, err}
+	}()
+	select {
+	case got := <-done:
+		if got.state != CommitNotApplied || got.err == nil {
+			t.Fatalf("FIFO update = %q, %v", got.state, got.err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("FIFO update blocked waiting for a writer")
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("providers: {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	state, err := UpdateAPIKey(t.Context(), path, APIKeyUpdate{Provider: "openai", APIKey: &key})
+	if state != CommitDurable || err != nil {
+		t.Fatalf("lock was not released after FIFO rejection: %q, %v", state, err)
+	}
+}
+
+func TestFinalReview_AuthConventionalParentLinkIsSyncedBeforeCommit(t *testing.T) {
+	for _, faultPhase := range []string{"before-created-parent-sync", "before-created-parent-close"} {
+		t.Run(faultPhase, func(t *testing.T) {
+			config := t.TempDir()
+			if err := os.Chmod(config, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("XDG_CONFIG_HOME", config)
+			key := "secret"
+			oldHook := updateTestHook
+			updateTestHook = func(phase string) error {
+				if phase == faultPhase {
+					return errors.New("injected parent durability failure")
+				}
+				return nil
+			}
+			t.Cleanup(func() { updateTestHook = oldHook })
+			state, err := UpdateAPIKey(t.Context(), DefaultPath(xdgconfig.OSEnv), APIKeyUpdate{Provider: "openai", APIKey: &key})
+			if state != CommitNotApplied || err == nil {
+				t.Fatalf("created-parent fault = %q, %v", state, err)
+			}
+			if _, statErr := os.Stat(DefaultPath(xdgconfig.OSEnv)); !errors.Is(statErr, os.ErrNotExist) {
+				t.Fatalf("target committed after parent fault: %v", statErr)
+			}
+		})
+	}
+}
+
+func TestFinalReview_AuthConventionalParentCreationRejectsUnsafeRaceAndMissingBase(t *testing.T) {
+	key := "secret"
+	t.Run("unsafe pre-existing child", func(t *testing.T) {
+		config := t.TempDir()
+		t.Setenv("XDG_CONFIG_HOME", config)
+		if err := os.Mkdir(filepath.Join(config, "mecatl"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		state, err := UpdateAPIKey(t.Context(), DefaultPath(xdgconfig.OSEnv), APIKeyUpdate{Provider: "openai", APIKey: &key})
+		if state != CommitNotApplied || err == nil {
+			t.Fatalf("unsafe creation race = %q, %v", state, err)
+		}
+	})
+	t.Run("missing base is not recursively created", func(t *testing.T) {
+		root := t.TempDir()
+		base := filepath.Join(root, "missing", "config")
+		t.Setenv("XDG_CONFIG_HOME", base)
+		state, err := UpdateAPIKey(t.Context(), DefaultPath(xdgconfig.OSEnv), APIKeyUpdate{Provider: "openai", APIKey: &key})
+		if state != CommitNotApplied || err == nil {
+			t.Fatalf("missing base = %q, %v", state, err)
+		}
+		if _, statErr := os.Stat(filepath.Join(root, "missing")); !errors.Is(statErr, os.ErrNotExist) {
+			t.Fatalf("writer recursively created config ancestors: %v", statErr)
+		}
+	})
 }
 
 func TestADR_0332_AuthFileTargetedPreservation(t *testing.T) {

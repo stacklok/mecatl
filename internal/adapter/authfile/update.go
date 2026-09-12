@@ -56,6 +56,10 @@ func CanonicalPath(path string) (string, error) {
 // descriptor-anchored ownership and durability contract.
 func UpdateSupported() bool { return updateSupported() }
 
+// PreflightAPIKeyUpdateTarget validates an existing target with the same
+// descriptor and document checks used by UpdateAPIKey, without creating files.
+func PreflightAPIKeyUpdateTarget(path string) error { return preflightAPIKeyUpdateTarget(path) }
+
 // UpdateAPIKey performs a bounded, preserving, cooperative-lock update.
 func UpdateAPIKey(ctx context.Context, path string, update APIKeyUpdate) (CommitState, error) {
 	return updateAPIKey(ctx, path, update)

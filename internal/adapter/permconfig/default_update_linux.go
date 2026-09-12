@@ -25,6 +25,50 @@ import (
 
 var defaultUpdateTestHook func(string) error
 
+func preflightDefaultsUpdateTarget(path string) error {
+	if path == "" {
+		return errors.New("path is unavailable")
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return errors.New("path is unavailable")
+	}
+	parentPath := filepath.Dir(abs)
+	parent, err := filepath.EvalSymlinks(parentPath)
+	conventional := filepath.Join(xdgconfig.UserConfigDir(xdgconfig.OSEnv), UserSettingsRelPath)
+	if errors.Is(err, os.ErrNotExist) && filepath.Clean(abs) == filepath.Clean(conventional) {
+		base, baseErr := filepath.EvalSymlinks(filepath.Dir(parentPath))
+		if baseErr != nil {
+			return errors.New("conventional config directory is unavailable")
+		}
+		physical := filepath.Join(base, filepath.Base(parentPath))
+		if _, statErr := os.Lstat(physical); errors.Is(statErr, os.ErrNotExist) {
+			return nil
+		} else if statErr != nil {
+			return errors.New("settings parent is unavailable")
+		}
+		parent, err = physical, nil
+	}
+	if err != nil {
+		return errors.New("parent must already exist")
+	}
+	parentFD, err := unix.Open(parent, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		return errors.New("open settings parent")
+	}
+	defer func() { _ = unix.Close(parentFD) }()
+	var parentStat unix.Stat_t
+	if err := unix.Fstat(parentFD, &parentStat); err != nil || !settingsPrivateDir(&parentStat) {
+		return errors.New("settings parent must be an owner-only directory")
+	}
+	target, err := readSettingsTarget(parentFD, filepath.Base(abs))
+	if err != nil || !target.exists {
+		return err
+	}
+	_, _, err = mutateDefaults(target.data, DefaultUpdate{Provider: "openai", Model: "preflight"})
+	return err
+}
+
 // UpdateDefaults preserves the settings AST while changing only
 // models.default_provider and models.default.
 //
@@ -43,6 +87,11 @@ func UpdateDefaults(ctx context.Context, path string, update DefaultUpdate) (sta
 	parentFD, err := unix.Open(parent, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
 	if err != nil {
 		return authfile.CommitNotApplied, errors.New("settings default update: open parent")
+	}
+	var parentStat unix.Stat_t
+	if err := unix.Fstat(parentFD, &parentStat); err != nil || !settingsPrivateDir(&parentStat) {
+		_ = unix.Close(parentFD)
+		return authfile.CommitNotApplied, errors.New("settings default update: parent must be an owner-only directory")
 	}
 	defer func() {
 		if closeErr := unix.Close(parentFD); closeErr != nil && result == nil {
@@ -173,10 +222,39 @@ func canonicalSettingsParent(path string) (string, string, error) {
 		if baseErr != nil {
 			return "", "", errors.New("conventional config directory is unavailable")
 		}
-		parent = filepath.Join(base, filepath.Base(parentPath))
-		if mkdirErr := os.Mkdir(parent, 0o700); mkdirErr != nil && !errors.Is(mkdirErr, os.ErrExist) {
+		baseFD, openErr := unix.Open(base, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+		if openErr != nil {
+			return "", "", errors.New("open conventional config directory")
+		}
+		created := false
+		if mkdirErr := unix.Mkdirat(baseFD, filepath.Base(parentPath), 0o700); mkdirErr == nil {
+			created = true
+		} else if !errors.Is(mkdirErr, unix.EEXIST) {
+			_ = unix.Close(baseFD)
 			return "", "", errors.New("create conventional settings directory")
 		}
+		if created {
+			if defaultUpdateTestHook != nil {
+				if hookErr := defaultUpdateTestHook("before-created-parent-sync"); hookErr != nil {
+					_ = unix.Close(baseFD)
+					return "", "", errors.New("sync conventional config directory")
+				}
+			}
+			if syncErr := unix.Fsync(baseFD); syncErr != nil {
+				_ = unix.Close(baseFD)
+				return "", "", errors.New("sync conventional config directory")
+			}
+			if defaultUpdateTestHook != nil {
+				if hookErr := defaultUpdateTestHook("before-created-parent-close"); hookErr != nil {
+					_ = unix.Close(baseFD)
+					return "", "", errors.New("close conventional config directory")
+				}
+			}
+		}
+		if closeErr := unix.Close(baseFD); closeErr != nil {
+			return "", "", errors.New("close conventional config directory")
+		}
+		parent = filepath.Join(base, filepath.Base(parentPath))
 		err = nil
 	}
 	if err != nil {
@@ -211,11 +289,11 @@ func readSettingsTarget(parentFD int, leaf string) (settingsTarget, error) {
 }
 
 func openSettingsLeaf(parentFD int, leaf string, create bool, flags int) (int, error) {
-	fd, err := unix.Openat(parentFD, leaf, flags|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	fd, err := unix.Openat(parentFD, leaf, flags|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
 	if errors.Is(err, unix.ENOENT) && create {
-		fd, err = unix.Openat(parentFD, leaf, flags|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_CREAT|unix.O_EXCL, 0o600)
+		fd, err = unix.Openat(parentFD, leaf, flags|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CREAT|unix.O_EXCL, 0o600)
 		if errors.Is(err, unix.EEXIST) {
-			fd, err = unix.Openat(parentFD, leaf, flags|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+			fd, err = unix.Openat(parentFD, leaf, flags|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
 		}
 	}
 	if err != nil {
@@ -227,6 +305,14 @@ func openSettingsLeaf(parentFD int, leaf string, create bool, flags int) (int, e
 		return -1, errors.New("unsafe ownership, mode, or type")
 	}
 	return fd, nil
+}
+
+func settingsPrivateDir(stat *unix.Stat_t) bool {
+	if stat == nil || stat.Mode&unix.S_IFMT != unix.S_IFDIR || stat.Mode&0o777 != 0o700 {
+		return false
+	}
+	euid := os.Geteuid()
+	return euid >= 0 && stat.Uid == uint32(euid) // #nosec G115 -- nonnegative is checked before conversion.
 }
 
 func settingsPrivateFile(stat *unix.Stat_t) bool {
