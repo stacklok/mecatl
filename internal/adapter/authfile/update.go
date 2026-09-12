@@ -3,7 +3,6 @@ package authfile
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 )
@@ -34,11 +33,11 @@ const (
 func ValidateDistinctFiles(authPath, settingsPath string) error {
 	auth, err := CanonicalPath(authPath)
 	if err != nil {
-		return fmt.Errorf("resolve auth target: %w", err)
+		return errors.New("resolve auth target: path is unavailable")
 	}
 	settings, err := CanonicalPath(settingsPath)
 	if err != nil {
-		return fmt.Errorf("resolve settings target: %w", err)
+		return errors.New("resolve settings target: path is unavailable")
 	}
 	if auth == settings {
 		return errors.New("auth and settings targets resolve to the same file")
@@ -49,10 +48,10 @@ func ValidateDistinctFiles(authPath, settingsPath string) error {
 		return errors.New("auth and settings targets resolve to the same file")
 	}
 	if authErr != nil && !errors.Is(authErr, os.ErrNotExist) {
-		return fmt.Errorf("inspect auth target: %w", authErr)
+		return errors.New("inspect auth target: target is unavailable")
 	}
 	if settingsErr != nil && !errors.Is(settingsErr, os.ErrNotExist) {
-		return fmt.Errorf("inspect settings target: %w", settingsErr)
+		return errors.New("inspect settings target: target is unavailable")
 	}
 	return nil
 }

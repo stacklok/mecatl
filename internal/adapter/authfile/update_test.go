@@ -98,6 +98,26 @@ func TestADR_0332_AuthFileCommitProtocol(t *testing.T) {
 
 	oldHook := updateTestHook
 	defer func() { updateTestHook = oldHook }()
+	for _, phase := range []string{"after-lock", "after-temp-sync"} {
+		t.Run("cancel-"+phase, func(t *testing.T) {
+			cancelPath := privateFile(t, "providers:\n  openai:\n    api_key: old\n")
+			cancelCtx, cancelUpdate := context.WithCancel(context.Background())
+			updateTestHook = func(got string) error {
+				if got == phase {
+					cancelUpdate()
+				}
+				return nil
+			}
+			state, err := UpdateAPIKey(cancelCtx, cancelPath, APIKeyUpdate{Provider: "openai", APIKey: &key})
+			if state != CommitNotApplied || !errors.Is(err, context.Canceled) {
+				t.Fatalf("cancelled update = %q, %v", state, err)
+			}
+			got, readErr := os.ReadFile(cancelPath)
+			if readErr != nil || strings.Contains(string(got), "api_key: 'new'") {
+				t.Fatalf("cancelled update changed target: %q, %v", got, readErr)
+			}
+		})
+	}
 	updateTestHook = func(phase string) error {
 		if phase == "before-compare" {
 			return os.WriteFile(path, []byte("providers: {}\n"), 0o600)
@@ -122,7 +142,7 @@ func TestADR_0332_AuthFileCommitProtocol(t *testing.T) {
 }
 
 func TestMecatuiLocalProviderSetup_Scenario3_UnchangedAndSecretSafe(t *testing.T) {
-	path := privateFile(t, "providers:\n  openai:\n    api_key: same\n")
+	path := privateFile(t, "providers:\n  openai:\n    api_key: same\n  openai-codex:\n    oauth:\n      access_token: oauth-only\n      account_id: acct\n")
 	key := "same"
 	state, err := UpdateAPIKey(context.Background(), path, APIKeyUpdate{Provider: "openai\nFORGED", APIKey: &key})
 	if state != CommitNotApplied || err == nil || strings.Contains(err.Error(), key) || strings.Contains(err.Error(), "\n") {
@@ -147,6 +167,24 @@ func TestMecatuiLocalProviderSetup_Scenario3_UnchangedAndSecretSafe(t *testing.T
 	}
 	if err := ValidateDistinctFiles(path, path); err == nil {
 		t.Fatal("same physical file was accepted")
+	}
+	alias := filepath.Join(filepath.Dir(path), "auth-hardlink.yaml")
+	if err := os.Link(path, alias); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateDistinctFiles(path, alias); err == nil {
+		t.Fatal("hard-linked physical file was accepted")
+	}
+
+	for _, reserved := range []string{"mock", "openai-codex", "toolhive"} {
+		state, err := UpdateAPIKey(context.Background(), path, APIKeyUpdate{Provider: reserved, APIKey: &key})
+		if state != CommitNotApplied || err == nil {
+			t.Fatalf("reserved provider %q = %q, %v", reserved, state, err)
+		}
+	}
+	got, err := os.ReadFile(path)
+	if err != nil || !strings.Contains(string(got), "api_key: same") {
+		t.Fatalf("reserved update changed auth file: %q, %v", got, err)
 	}
 }
 

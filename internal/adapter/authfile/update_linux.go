@@ -36,6 +36,13 @@ func updateAPIKey(ctx context.Context, path string, update APIKeyUpdate) (Commit
 	if !providerid.Valid(update.Provider) {
 		return CommitNotApplied, errors.New("auth update for provider: invalid provider id")
 	}
+	switch update.Provider {
+	case "mock", "openai-codex", "toolhive":
+		return CommitNotApplied, fmt.Errorf("auth %s for provider %s: provider does not use API keys", operation, update.Provider)
+	}
+	if err := ctx.Err(); err != nil {
+		return CommitNotApplied, fmt.Errorf("auth %s for provider %s: %w", operation, update.Provider, err)
+	}
 	if update.APIKey != nil && !utf8.ValidString(*update.APIKey) {
 		return CommitNotApplied, fmt.Errorf("auth %s for provider %s: API key is not valid UTF-8", operation, update.Provider)
 	}
@@ -136,6 +143,14 @@ func updateInParent(ctx context.Context, parent, leaf string, update APIKeyUpdat
 		return CommitNotApplied, fmt.Errorf("acquire credential lock: %w", err)
 	}
 	defer func() { _ = unix.Flock(lockFD, unix.LOCK_UN) }()
+	if updateTestHook != nil {
+		if err := updateTestHook("after-lock"); err != nil {
+			return CommitNotApplied, errors.New("prepare credential update")
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return CommitNotApplied, fmt.Errorf("credential update cancelled: %w", err)
+	}
 
 	before, err := readTarget(parentFD, leaf)
 	if err != nil {
@@ -165,6 +180,14 @@ func updateInParent(ctx context.Context, parent, leaf string, update APIKeyUpdat
 	if err := writeAll(tempFD, out); err != nil || unix.Fsync(tempFD) != nil {
 		return CommitNotApplied, errors.New("write credential temporary file")
 	}
+	if updateTestHook != nil {
+		if err := updateTestHook("after-temp-sync"); err != nil {
+			return CommitNotApplied, errors.New("prepare credential replacement")
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return CommitNotApplied, fmt.Errorf("credential update cancelled: %w", err)
+	}
 	if err := unix.Close(tempFD); err != nil {
 		return CommitNotApplied, errors.New("close credential temporary file")
 	}
@@ -174,9 +197,15 @@ func updateInParent(ctx context.Context, parent, leaf string, update APIKeyUpdat
 			return CommitNotApplied, errors.New("prepare credential comparison")
 		}
 	}
+	if err := ctx.Err(); err != nil {
+		return CommitNotApplied, fmt.Errorf("credential update cancelled: %w", err)
+	}
 	current, err := readTarget(parentFD, leaf)
 	if err != nil || !sameSnapshot(before, current) {
 		return CommitNotApplied, errors.New("credential target changed before replacement")
+	}
+	if err := ctx.Err(); err != nil {
+		return CommitNotApplied, fmt.Errorf("credential update cancelled: %w", err)
 	}
 	if err := unix.Renameat(parentFD, tempLeaf, parentFD, leaf); err != nil {
 		return CommitNotApplied, errors.New("replace credential target")
