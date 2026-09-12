@@ -272,6 +272,41 @@ func (pf *ProviderFlags) EndpointOverrides() permconfig.ProviderOverrides {
 	return overrides
 }
 
+// CredentialSource reports precedence metadata without exposing a credential.
+// It is the passive-status twin of ResolveProviderCredentials: built-ins use
+// their established environment/file order, OpenRouter keeps the
+// environment-only OPENAI_API_KEY compatibility fallback, and custom providers
+// remain file-only.
+type CredentialSource struct {
+	Source      string
+	FilePresent bool
+}
+
+// ResolveCredentialSource resolves presence-only credential provenance.
+func ResolveCredentialSource(provider string, filePresent bool, getenv func(string) string) CredentialSource {
+	var own string
+	switch provider {
+	case "openai":
+		own = envOpenAIKey
+	case "openrouter":
+		own = envOpenRouterKey
+	case "anthropic":
+		own = envAnthropicKey
+	case "opencode":
+		own = envOpenCodeKey
+	}
+	if own != "" && getenv(own) != "" {
+		return CredentialSource{Source: own, FilePresent: filePresent}
+	}
+	if filePresent {
+		return CredentialSource{Source: "auth file", FilePresent: true}
+	}
+	if provider == "openrouter" && getenv(envOpenAIKey) != "" {
+		return CredentialSource{Source: envOpenAIKey + " compatibility fallback"}
+	}
+	return CredentialSource{Source: "missing", FilePresent: filePresent}
+}
+
 // ReadProviderKeys reads provider credentials from the environment alone
 // (no auth.yaml). It is the SINGLE definition of which env vars hold which credential.
 // A caller that must account for auth.yaml should call ProviderFlags.Resolve instead.

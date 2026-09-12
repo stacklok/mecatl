@@ -80,6 +80,10 @@ var builtinDefaultModel = map[string]string{
 	providerOpenCode: "glm-5.2",
 }
 
+// BuiltinDefaultModel returns the existing static default for a keyed built-in.
+// Unknown and custom providers return empty rather than assuming capability.
+func BuiltinDefaultModel(provider string) string { return builtinDefaultModel[provider] }
+
 // openRouterDefaultBaseURL is the OpenRouter Responses-compatible API base URL.
 // OpenRouter rides the SAME stateless openai adapter (it speaks the Responses
 // API) with this base URL substituted — there is NO separate wire adapter in P0.

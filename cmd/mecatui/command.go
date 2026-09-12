@@ -35,6 +35,7 @@ const (
 	modeConnect        transportMode = "connect"
 	llmActionLogin                   = "login"
 	llmActionStatus                  = "status"
+	llmActionSetup                   = "setup"
 	llmActionLogout                  = "logout"
 	llmActionConfig                  = "config"
 	llmConfigActionSet               = "set"
@@ -98,8 +99,8 @@ var topLevelCommands = []topLevelCommand{
 	},
 	{
 		name:     "llm",
-		synopsis: "llm <config|login|status|logout> [args]",
-		purpose:  "configure and manage native LLM endpoints; native login accepts --no-browser, while endpoint 'toolhive' retains --skip-browser",
+		synopsis: "llm <config|setup|login|status|logout> [args]",
+		purpose:  "configure, inspect, and manage LLM providers; setup guides API-key custody while native and ToolHive lifecycles remain separate",
 		resolve:  resolveLLMCommand,
 	},
 }
@@ -119,6 +120,8 @@ type invocationResolution struct {
 	remaining          []string
 	llmAction          string
 	llmEndpoint        string
+	llmAuthFile        string
+	llmAuthFileSet     bool
 	llmDeprecatedAlias bool
 	err                error
 }
@@ -249,7 +252,7 @@ func resolveRemoteLogoutCommand(args []string) invocationResolution {
 
 //nolint:gocyclo // Exact command grammar keeps each accepted form explicit.
 func resolveLLMCommand(args []string) invocationResolution {
-	const usage = "llm: usage: mecatui llm config set ENDPOINT [flags] | mecatui llm login ENDPOINT [--no-browser] | mecatui llm status [ENDPOINT] | mecatui llm logout ENDPOINT"
+	const usage = "llm: usage: mecatui llm setup [--auth-file PATH] | mecatui llm config set ENDPOINT [flags] | mecatui llm login ENDPOINT [--no-browser] | mecatui llm status [--auth-file PATH] [ENDPOINT] | mecatui llm logout ENDPOINT"
 	if len(args) == 1 && isHelpMetaFlag(args[0]) {
 		return invocationResolution{mode: modeLogin, remaining: args}
 	}
@@ -283,15 +286,18 @@ func resolveLLMCommand(args []string) invocationResolution {
 			return invocationResolution{err: errors.New(usage)}
 		}
 		return invocationResolution{mode: modeLogin, llmAction: action, llmEndpoint: args[1], remaining: args[2:]}
-	case llmActionStatus:
-		if len(args) > 2 || len(args) == 2 && strings.HasPrefix(args[1], "-") {
+	case llmActionSetup:
+		path, endpoint, set, ok := parseLLMAuthFileArgs(args[1:], false)
+		if !ok || endpoint != "" {
 			return invocationResolution{err: errors.New(usage)}
 		}
-		endpoint := ""
-		if len(args) == 2 {
-			endpoint = args[1]
+		return invocationResolution{mode: modeLogin, llmAction: action, llmAuthFile: path, llmAuthFileSet: set}
+	case llmActionStatus:
+		path, endpoint, set, ok := parseLLMAuthFileArgs(args[1:], true)
+		if !ok || endpoint != "" && set {
+			return invocationResolution{err: errors.New(usage)}
 		}
-		return invocationResolution{mode: modeLogin, llmAction: action, llmEndpoint: endpoint}
+		return invocationResolution{mode: modeLogin, llmAction: action, llmEndpoint: endpoint, llmAuthFile: path, llmAuthFileSet: set}
 	case llmActionLogout:
 		if len(args) != 2 || strings.HasPrefix(args[1], "-") {
 			return invocationResolution{err: errors.New(usage)}
@@ -300,6 +306,30 @@ func resolveLLMCommand(args []string) invocationResolution {
 	default:
 		return invocationResolution{err: errors.New(usage)}
 	}
+}
+
+func parseLLMAuthFileArgs(args []string, allowEndpoint bool) (path, endpoint string, set, ok bool) {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--auth-file" {
+			next := i + 1
+			if set || next >= len(args) {
+				return "", "", false, false
+			}
+			candidate := args[next] // #nosec G602 -- next was bounds-checked above.
+			if candidate == "" || strings.HasPrefix(candidate, "-") {
+				return "", "", false, false
+			}
+			set, path = true, candidate
+			i++
+			continue
+		}
+		if strings.HasPrefix(arg, "-") || !allowEndpoint || endpoint != "" {
+			return "", "", false, false
+		}
+		endpoint = arg
+	}
+	return path, endpoint, set, true
 }
 
 // resolveConnectCommand preserves connect's special grammar: ADDRESS must
@@ -397,7 +427,8 @@ func writeTopLevelHelp(out io.Writer) {
 	_, _ = fmt.Fprintln(out, "Bare 'mecatui [flags]' hosts an embedded mecated server in-process (no loopback probe).")
 	_, _ = fmt.Fprintln(out)
 	writeCommandSummary(out)
-	_, _ = fmt.Fprintln(out, "\nNative LLM configuration: mecatui llm config set ENDPOINT [flags]")
+	_, _ = fmt.Fprintln(out, "\nProvider setup/status: mecatui llm setup [--auth-file PATH] | mecatui llm status [--auth-file PATH] [ENDPOINT]")
+	_, _ = fmt.Fprintln(out, "Native LLM configuration: mecatui llm config set ENDPOINT [flags]")
 	_, _ = fmt.Fprintln(out, "Native LLM lifecycle: mecatui llm login ENDPOINT [--no-browser] | mecatui llm status [ENDPOINT] | mecatui llm logout ENDPOINT")
 	_, _ = fmt.Fprintln(out, "Remote mecatui uses `mecatui login ADDRESS`; ToolHive MCP discovery and manual openai-codex authentication are separate.")
 	_, _ = fmt.Fprintln(out, "\nHelp: mecatui --help, mecatui -h, or mecatui help")

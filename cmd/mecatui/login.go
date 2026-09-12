@@ -19,11 +19,13 @@ import (
 	"github.com/adrg/xdg"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/internal/adapter/authfile"
 	"github.com/stacklok/mecatl/internal/adapter/clientauth"
 	"github.com/stacklok/mecatl/internal/adapter/credentialstore"
 	"github.com/stacklok/mecatl/internal/adapter/llmendpoint"
 	"github.com/stacklok/mecatl/internal/adapter/oidcclient"
 	"github.com/stacklok/mecatl/internal/adapter/toolhivellm"
+	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
 	"github.com/stacklok/mecatl/internal/flaghelp"
 	"github.com/stacklok/mecatl/mcp/oauthlogin"
 )
@@ -553,7 +555,7 @@ var (
 
 func runLLMCommand(res invocationResolution) error {
 	if len(res.remaining) == 1 && isHelpMetaFlag(res.remaining[0]) {
-		fmt.Fprintln(os.Stderr, "Usage: mecatui llm config set ENDPOINT [flags] | mecatui llm login ENDPOINT [--no-browser] | mecatui llm status [ENDPOINT] | mecatui llm logout ENDPOINT")
+		fmt.Fprintln(os.Stderr, "Usage: mecatui llm setup [--auth-file PATH] | mecatui llm config set ENDPOINT [flags] | mecatui llm login ENDPOINT [--no-browser] | mecatui llm status [--auth-file PATH] [ENDPOINT] | mecatui llm logout ENDPOINT")
 		fmt.Fprintln(os.Stderr, "Native endpoint login: --no-browser prints the authorization URL to stderr and waits at the fixed ToolHive-compatible callback http://localhost:8666/callback.")
 		fmt.Fprintln(os.Stderr, "ToolHive login: mecatui llm login toolhive [--skip-browser]")
 		return flag.ErrHelp
@@ -561,10 +563,33 @@ func runLLMCommand(res invocationResolution) error {
 	if res.llmDeprecatedAlias {
 		fmt.Fprintln(os.Stderr, "WARNING: bare `mecatui llm login` is deprecated; use `mecatui llm login toolhive`")
 	}
-	skipBrowser := len(res.remaining) == 1 && res.remaining[0] == "--skip-browser"
-	noBrowser := len(res.remaining) == 1 && res.remaining[0] == "--no-browser"
+	if res.llmAction == llmActionStatus && res.llmEndpoint == "" {
+		path := res.llmAuthFile
+		if !res.llmAuthFileSet {
+			path = authfile.DefaultPath(xdgconfig.OSEnv)
+		}
+		return runAggregateStatus(path, res.llmAuthFileSet, os.Stdout, defaultSetupDeps())
+	}
 	ctx, cancel := newNativeLLMEnrollmentContext(nativeLLMEnrollmentTimeout)
 	defer cancel()
+	if res.llmAction == llmActionSetup {
+		path := res.llmAuthFile
+		if !res.llmAuthFileSet {
+			path = authfile.DefaultPath(xdgconfig.OSEnv)
+		}
+		deps := defaultSetupDeps()
+		deps.nativeLogin = func(loginCtx context.Context, endpoint string) error {
+			host, err := openNativeLLMHost(loginCtx, false, os.Stderr)
+			if err != nil {
+				return errors.New("native LLM endpoint lifecycle is unavailable")
+			}
+			defer func() { _ = host.Close() }()
+			return runNativeLLMCommand(loginCtx, llmActionLogin, endpoint, false, host, os.Stdout, os.Stderr)
+		}
+		return runSetupCommand(ctx, path, res.llmAuthFileSet, os.Stdin, os.Stdout, deps)
+	}
+	skipBrowser := len(res.remaining) == 1 && res.remaining[0] == "--skip-browser"
+	noBrowser := len(res.remaining) == 1 && res.remaining[0] == "--no-browser"
 	if res.llmEndpoint == toolHiveEndpointID {
 		return runNativeLLMCommand(ctx, res.llmAction, res.llmEndpoint, skipBrowser, nil, os.Stdout, os.Stderr)
 	}

@@ -1,0 +1,762 @@
+package main
+
+import (
+	"bufio"
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"slices"
+	"sort"
+	"strings"
+	"unicode"
+	"unicode/utf8"
+
+	"golang.org/x/term"
+
+	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/internal/adapter/authfile"
+	"github.com/stacklok/mecatl/internal/adapter/permconfig"
+	"github.com/stacklok/mecatl/internal/adapter/providercatalog"
+	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
+	"github.com/stacklok/mecatl/internal/app"
+	"github.com/stacklok/mecatl/internal/cliconfig"
+)
+
+const maxSetupAPIKeyBytes = 8 * 1024
+
+var errSetupStarted = errors.New("setup launched mecatui")
+
+type credentialStatus struct {
+	Source      string
+	FilePresent bool
+}
+type providerStatus struct {
+	ID, Kind, CredentialSource, Model string
+	FilePresent, Default, Mutable     bool
+}
+type modelChoice struct {
+	ID, Name    string
+	ToolCapable bool
+}
+type defaultSelection struct{ Provider, Model string }
+type setupSnapshot struct {
+	Rows            []providerStatus
+	NativeIDs       []string
+	ToolHive        bool
+	Default         defaultSelection
+	Aliases         map[string]string
+	Models          map[string][]modelChoice
+	ExplicitMissing bool
+}
+
+type setupDeps struct {
+	load           func(string, bool) (setupSnapshot, error)
+	active         func()
+	isTerminal     func(int) bool
+	readPassword   func(int) ([]byte, error)
+	updateKey      func(context.Context, string, authfile.APIKeyUpdate) (authfile.CommitState, error)
+	updateDefaults func(context.Context, string, defaultSelection) (authfile.CommitState, error)
+	nativeLogin    func(context.Context, string) error
+	start          func(string) error
+}
+
+func defaultSetupDeps() setupDeps {
+	return setupDeps{
+		load:         loadSetupSnapshot,
+		isTerminal:   term.IsTerminal,
+		readPassword: term.ReadPassword,
+		updateKey:    authfile.UpdateAPIKey,
+		updateDefaults: func(ctx context.Context, path string, d defaultSelection) (authfile.CommitState, error) {
+			return permconfig.UpdateDefaults(ctx, path, permconfig.DefaultUpdate{Provider: d.Provider, Model: d.Model})
+		},
+		start: func(path string) error { return run([]string{"mecatui", "--auth-file", path}) },
+	}
+}
+
+func withSetupDefaults(deps setupDeps) setupDeps {
+	defaults := defaultSetupDeps()
+	if deps.load == nil {
+		deps.load = defaults.load
+	}
+	if deps.isTerminal == nil {
+		deps.isTerminal = defaults.isTerminal
+	}
+	if deps.readPassword == nil {
+		deps.readPassword = defaults.readPassword
+	}
+	if deps.updateKey == nil {
+		deps.updateKey = defaults.updateKey
+	}
+	if deps.updateDefaults == nil {
+		deps.updateDefaults = defaults.updateDefaults
+	}
+	if deps.start == nil {
+		deps.start = defaults.start
+	}
+	return deps
+}
+
+func settingsPath(env xdgconfig.ResolveEnv) string {
+	base := xdgconfig.UserConfigDir(env)
+	if base == "" {
+		return ""
+	}
+	return filepath.Join(base, permconfig.UserSettingsRelPath)
+}
+
+func loadSetupSnapshot(path string, explicit bool) (setupSnapshot, error) {
+	env := xdgconfig.OSEnv
+	resolver := permconfig.NewWithEnv(permconfig.Options{Conventional: true, ImportClaude: true, Diagnostics: port.NopDiagnostics{}}, env)
+	defs, _, err := resolver.OperatorProviders()
+	if err != nil {
+		return setupSnapshot{}, fmt.Errorf("resolve operator providers: %w", err)
+	}
+	known := []string{"anthropic", "openai", "openrouter", "opencode", "openai-codex"}
+	for id := range defs {
+		known = append(known, id)
+	}
+	explicitMissing := false
+	if explicit {
+		if _, statErr := os.Stat(path); errors.Is(statErr, os.ErrNotExist) {
+			explicitMissing = true
+		}
+	}
+	af, warning := authfile.Load(path, explicit && !explicitMissing, env, known)
+	if warning != "" {
+		return setupSnapshot{}, errors.New(safeDisplay(warning))
+	}
+	s := setupSnapshot{Models: map[string][]modelChoice{}, Aliases: map[string]string{}, ToolHive: true, ExplicitMissing: explicitMissing}
+	models := resolver.OperatorModelPolicy()
+	if models != nil {
+		s.Default = defaultSelection{Provider: models.DefaultProvider, Model: models.Default}
+		for k, v := range models.Aliases {
+			s.Aliases[k] = v
+		}
+	}
+	filePresent := func(id string) bool { return af != nil && af.APIKey(id) != "" }
+	for _, id := range []string{"anthropic", "openai", "opencode", "openrouter"} {
+		cs := resolveCredentialStatus(id, processCredentialPresence(), filePresent(id))
+		s.Rows = append(s.Rows, providerStatus{ID: id, Kind: "builtin", CredentialSource: cs.Source, FilePresent: cs.FilePresent, Default: s.Default.Provider == id, Model: s.Default.Model, Mutable: true})
+		if p, ok := providercatalog.Default().Provider(id); ok {
+			for _, m := range p.Models() {
+				s.Models[id] = append(s.Models[id], modelChoice{ID: m.ID(), Name: m.Name(), ToolCapable: m.SupportsToolCall()})
+			}
+		}
+	}
+	for id, def := range defs {
+		if def.Native != nil {
+			s.NativeIDs = append(s.NativeIDs, id)
+			continue
+		}
+		if _, builtin := slices.BinarySearch([]string{"anthropic", "openai", "opencode", "openrouter"}, id); builtin {
+			continue
+		}
+		kind := "none required"
+		mutable := false
+		source := "none required"
+		if def.Auth.Method == "api_key" {
+			kind = "configured"
+			mutable = true
+			if filePresent(id) {
+				source = "auth file"
+			} else {
+				source = "missing"
+			}
+		}
+		s.Rows = append(s.Rows, providerStatus{ID: id, Kind: kind, CredentialSource: source, FilePresent: filePresent(id), Default: s.Default.Provider == id, Model: s.Default.Model, Mutable: mutable})
+	}
+	sort.Slice(s.Rows, func(i, j int) bool { return s.Rows[i].ID < s.Rows[j].ID })
+	sort.Strings(s.NativeIDs)
+	return s, nil
+}
+
+func processCredentialPresence() map[string]string {
+	m := map[string]string{}
+	for _, name := range []string{"OPENAI_API_KEY", "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "OPENCODE_API_KEY"} {
+		if os.Getenv(name) != "" {
+			m[name] = "present"
+		}
+	}
+	return m
+}
+
+func resolveCredentialStatus(id string, env map[string]string, filePresent bool) credentialStatus {
+	resolved := cliconfig.ResolveCredentialSource(id, filePresent, func(name string) string { return env[name] })
+	return credentialStatus{Source: resolved.Source, FilePresent: resolved.FilePresent}
+}
+
+//nolint:errcheck // Status rendering cannot recover from a failed command output stream.
+func writeAggregateStatus(out io.Writer, rows []providerStatus, native []string, toolhive bool) {
+	rows = append([]providerStatus(nil), rows...)
+	sort.Slice(rows, func(i, j int) bool { return rows[i].ID < rows[j].ID })
+	fmt.Fprintln(out, "Keyed providers:")
+	writeRows := func(kind string) {
+		for _, r := range rows {
+			if (kind == "keyed") != r.Mutable {
+				continue
+			}
+			shadowed := "absent"
+			if r.FilePresent && r.CredentialSource != "auth file" {
+				shadowed = "present"
+			}
+			fmt.Fprintf(out, "  %s (%s)\n    credential source: %s\n    shadowed auth file: %s\n    selected default: %s\n    model selector: %s\n    verification: not checked\n", safeDisplay(r.ID), safeDisplay(r.Kind), safeDisplay(r.CredentialSource), shadowed, yesNo(r.Default), displayOrNone(r.Model))
+		}
+	}
+	writeRows("keyed")
+	fmt.Fprintln(out, "No credential required:")
+	writeRows("none")
+	fmt.Fprintln(out, "Native endpoints:")
+	if len(native) == 0 {
+		fmt.Fprintln(out, "  none configured")
+	} else {
+		for _, id := range native {
+			fmt.Fprintf(out, "  %s: local enrollment not inspected; run `mecatui llm status %s`\n", safeDisplay(id), safeDisplay(id))
+		}
+	}
+	fmt.Fprintln(out, "ToolHive:")
+	if toolhive {
+		fmt.Fprintln(out, "  lifecycle owned by ToolHive; use `thv llm` tooling (not checked)")
+	} else {
+		fmt.Fprintln(out, "  not configured (not checked)")
+	}
+}
+
+func safeDisplay(v string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || unicode.In(r, unicode.Cf) {
+			return -1
+		}
+		return r
+	}, strings.ToValidUTF8(v, "�"))
+}
+func yesNo(v bool) string {
+	if v {
+		return "yes"
+	}
+	return "no"
+}
+func displayOrNone(v string) string {
+	if strings.TrimSpace(v) == "" {
+		return "none"
+	}
+	return safeDisplay(v)
+}
+
+func runAggregateStatus(path string, explicit bool, out io.Writer, deps setupDeps) error {
+	if deps.load == nil {
+		deps.load = loadSetupSnapshot
+	}
+	s, err := deps.load(path, explicit)
+	if err != nil {
+		return err
+	}
+	label := "Auth file: conventional path (absence is normal)"
+	if s.ExplicitMissing {
+		label = "Auth file: explicit path is missing"
+	} else if explicit {
+		label = "Auth file: explicit path loaded"
+	}
+	if _, err := fmt.Fprintln(out, label); err != nil {
+		return err
+	}
+	writeAggregateStatus(out, s.Rows, s.NativeIDs, s.ToolHive)
+	return nil
+}
+
+func mutableProviderIDs(s setupSnapshot) []string {
+	var ids []string
+	for _, r := range s.Rows {
+		if r.Mutable {
+			ids = append(ids, r.ID)
+		}
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+func handoffNative(ctx context.Context, id string, override, confirmed bool, out io.Writer, deps setupDeps) error {
+	if override {
+		return errors.New("native login does not use --auth-file; run `mecatui llm login " + safeDisplay(id) + "` separately")
+	}
+	if !confirmed {
+		return nil
+	}
+	if deps.nativeLogin == nil {
+		return errors.New("native LLM endpoint lifecycle is unavailable")
+	}
+	if _, err := fmt.Fprintln(out, "Handing off to native endpoint login."); err != nil {
+		return err
+	}
+	return deps.nativeLogin(ctx, id)
+}
+
+func setupModelChoices(existing string, catalog []modelChoice) []modelChoice {
+	out := []modelChoice{}
+	seen := map[string]bool{}
+	if strings.TrimSpace(existing) != "" {
+		out = append(out, modelChoice{ID: existing, Name: "current default", ToolCapable: true})
+		seen[existing] = true
+	}
+	sort.Slice(catalog, func(i, j int) bool { return catalog[i].ID < catalog[j].ID })
+	suggestions := 0
+	for _, m := range catalog {
+		if !m.ToolCapable || seen[m.ID] {
+			continue
+		}
+		out = append(out, m)
+		seen[m.ID] = true
+		suggestions++
+		if suggestions == 4 {
+			break
+		}
+	}
+	return out
+}
+
+func resolveSetupModel(selector string, aliases map[string]string) (string, bool) {
+	selector = strings.TrimSpace(selector)
+	if selector == "" {
+		return "", false
+	}
+	if resolved, known := app.ResolveModelSelector(selector, aliases); known {
+		return resolved, resolved != ""
+	}
+	return selector, true // explicit manual selection is always available and unverified
+}
+
+//nolint:errcheck // Commit reports are best-effort once persistence has returned.
+func reportCommit(out io.Writer, operation, provider string, state authfile.CommitState, err error) {
+	fmt.Fprintf(out, "%s %s: %s\n", safeDisplay(operation), safeDisplay(provider), state)
+	if err != nil {
+		fmt.Fprintln(out, "Operation stopped. Resolve the filesystem condition, then run `mecatui llm status` to inspect passive state.")
+	}
+}
+func commitSucceeded(s authfile.CommitState, err error) bool {
+	return err == nil && (s == authfile.CommitNoop || s == authfile.CommitDurable)
+}
+
+func commitCredentialThenDefaults(ctx context.Context, authPath, settings, provider, key string, next *defaultSelection, out io.Writer, deps setupDeps) error {
+	state, err := deps.updateKey(ctx, authPath, authfile.APIKeyUpdate{Provider: provider, APIKey: &key})
+	reportCommit(out, "credential", provider, state, err)
+	if !commitSucceeded(state, err) {
+		if err == nil {
+			err = errors.New("credential commit did not reach a safe state")
+		}
+		return err
+	}
+	if next == nil {
+		return nil
+	}
+	state, err = deps.updateDefaults(ctx, settings, *next)
+	reportCommit(out, "defaults", provider, state, err)
+	if !commitSucceeded(state, err) {
+		if err == nil {
+			err = errors.New("defaults commit did not reach a safe state")
+		}
+		return err
+	}
+	return nil
+}
+
+//nolint:errcheck // Post-commit clarification cannot change the persisted outcome.
+func removeCredential(ctx context.Context, authPath, settings, provider string, replacement *defaultSelection, out io.Writer, deps setupDeps) error {
+	if _, err := fmt.Fprintln(out, "Removing a saved key does not revoke it at the provider. An environment credential may remain active."); err != nil {
+		return err
+	}
+	if replacement != nil {
+		state, err := deps.updateDefaults(ctx, settings, *replacement)
+		reportCommit(out, "replacement default", replacement.Provider, state, err)
+		if !commitSucceeded(state, err) {
+			if err == nil {
+				err = errors.New("replacement default was not durably committed")
+			}
+			return err
+		}
+	}
+	state, err := deps.updateKey(ctx, authPath, authfile.APIKeyUpdate{Provider: provider})
+	reportCommit(out, "key removal", provider, state, err)
+	if !commitSucceeded(state, err) {
+		if replacement != nil {
+			if state == authfile.CommitReplacementAppliedDurabilityUnknown {
+				fmt.Fprintln(out, "The replacement default is durable; key removal may have applied.")
+			} else {
+				fmt.Fprintln(out, "The default moved; the old key may remain.")
+			}
+		}
+		if err == nil {
+			err = errors.New("key removal did not reach a safe state")
+		}
+		return err
+	}
+	return nil
+}
+
+type setupRunner struct {
+	inFD, outFD            int
+	out                    io.Writer
+	deps                   setupDeps
+	readLine               func(string) (string, error)
+	snapshot               setupSnapshot
+	authPath, settingsPath string
+	explicit               bool
+}
+
+func (r *setupRunner) ask(prompt string) (string, error) {
+	if _, err := fmt.Fprint(r.out, prompt); err != nil {
+		return "", err
+	}
+	return r.readLine(prompt)
+}
+func affirmative(v string) bool {
+	return strings.EqualFold(strings.TrimSpace(v), "y") || strings.EqualFold(strings.TrimSpace(v), "yes")
+}
+
+func (r *setupRunner) run(ctx context.Context) error {
+	if r.deps.isTerminal == nil {
+		r.deps.isTerminal = term.IsTerminal
+	}
+	if !r.deps.isTerminal(r.inFD) || !r.deps.isTerminal(r.outFD) {
+		return errors.New("llm setup requires terminal stdin and stdout")
+	}
+	for {
+		if _, err := fmt.Fprintln(r.out, "\nLLM setup\n  1) Add or replace provider\n  2) Choose default\n  3) Remove saved key\n  4) Exit"); err != nil {
+			return err
+		}
+		choice, err := r.ask("Choice: ")
+		if err != nil {
+			return fmt.Errorf("read setup choice: %w", err)
+		}
+		switch strings.TrimSpace(choice) {
+		case "1":
+			if err := r.add(ctx); err != nil {
+				if errors.Is(err, errSetupStarted) {
+					return nil
+				}
+				return err
+			}
+		case "2":
+			if err := r.chooseDefault(ctx); err != nil {
+				if errors.Is(err, errSetupStarted) {
+					return nil
+				}
+				return err
+			}
+		case "3":
+			if err := r.remove(ctx); err != nil {
+				return err
+			}
+		case "", "4", "exit", "q":
+			return nil
+		default:
+			return errors.New("invalid setup choice")
+		}
+	}
+}
+
+//nolint:gocyclo,errcheck // The menu keeps custody and lifecycle handoffs explicit.
+func (r *setupRunner) add(ctx context.Context) error {
+	ids := mutableProviderIDs(r.snapshot)
+	fmt.Fprintf(r.out, "API-key providers: %s\n", strings.Join(ids, ", "))
+	if len(r.snapshot.NativeIDs) > 0 {
+		fmt.Fprintf(r.out, "Native login handoff: %s\n", strings.Join(r.snapshot.NativeIDs, ", "))
+	}
+	fmt.Fprintln(r.out, "ToolHive credentials: use `thv llm` tooling")
+	id, err := r.ask("Provider ID (blank cancels): ")
+	if err != nil {
+		return err
+	}
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil
+	}
+	if slices.Contains(r.snapshot.NativeIDs, id) {
+		answer, e := r.ask("Continue with native in-process login? [y/N]: ")
+		if e != nil {
+			return e
+		}
+		return handoffNative(ctx, id, r.explicit, affirmative(answer), r.out, r.deps)
+	}
+	if id == "toolhive" {
+		fmt.Fprintln(r.out, "ToolHive owns this lifecycle; use `thv llm` tooling.")
+		return nil
+	}
+	if !slices.Contains(ids, id) {
+		return errors.New("provider is not eligible for API-key mutation")
+	}
+	row := providerStatus{}
+	for _, candidate := range r.snapshot.Rows {
+		if candidate.ID == id {
+			row = candidate
+		}
+	}
+	if row.CredentialSource != "missing" && row.CredentialSource != "auth file" {
+		if !row.FilePresent {
+			fmt.Fprintf(r.out, "Existing credential source %s will be reused; no key is copied or written.\n", safeDisplay(row.CredentialSource))
+			reportCommit(r.out, "credential reuse", id, authfile.CommitNoop, nil)
+			return nil
+		}
+		replace, readErr := r.ask("An environment credential is active and shadows a saved key. Replace the shadowed file key anyway? [y/N]: ")
+		if readErr != nil {
+			return readErr
+		}
+		if !affirmative(replace) {
+			reportCommit(r.out, "credential reuse", id, authfile.CommitNoop, nil)
+			return nil
+		}
+		fmt.Fprintln(r.out, "The active environment credential will continue to win; no credential value will be displayed.")
+	}
+	console := map[string]string{"openai": "https://platform.openai.com/api-keys", "anthropic": "https://console.anthropic.com/settings/keys", "openrouter": "https://openrouter.ai/settings/keys", "opencode": "https://opencode.ai/auth"}[id]
+	if console == "" {
+		console = "the configured provider console"
+	}
+	fmt.Fprintf(r.out, "Open the provider console yourself: %s\nEnter an API/developer key, not a consumer subscription. API usage may incur charges.\nThe key is stored owner-only plaintext; same-UID processes and an enabled agent Shell can read it.\n", console)
+	keyBytes, err := r.deps.readPassword(r.inFD)
+	fmt.Fprintln(r.out)
+	if err != nil {
+		return errors.New("hidden API-key read failed")
+	}
+	if len(keyBytes) > maxSetupAPIKeyBytes {
+		return errors.New("API key exceeds the accepted 8 KiB limit")
+	}
+	if !utf8.Valid(keyBytes) {
+		return errors.New("API key is not valid UTF-8")
+	}
+	key := string(keyBytes)
+	if key == "" {
+		return errors.New("API key must not be empty")
+	}
+	confirm, err := r.ask("Save this credential? [y/N]: ")
+	if err != nil {
+		return err
+	}
+	if !affirmative(confirm) {
+		return nil
+	}
+	var next *defaultSelection
+	setDefault, err := r.ask("Also choose this provider as the default? [y/N]: ")
+	if err != nil {
+		return err
+	}
+	if affirmative(setDefault) {
+		d, e := r.promptDefault(id)
+		if e != nil {
+			return e
+		}
+		next = &d
+		confirmDefault, e := r.ask("Commit this default separately? [y/N]: ")
+		if e != nil {
+			return e
+		}
+		if !affirmative(confirmDefault) {
+			next = nil
+		}
+	}
+	if err := commitCredentialThenDefaults(ctx, r.authPath, r.settingsPath, id, key, next, r.out, r.deps); err != nil {
+		return err
+	}
+	return r.maybeStart()
+}
+
+func (r *setupRunner) promptDefault(id string) (defaultSelection, error) {
+	existing := app.BuiltinDefaultModel(id)
+	if r.snapshot.Default.Provider == id && r.snapshot.Default.Model != "" {
+		existing = r.snapshot.Default.Model
+	}
+	choices := setupModelChoices(existing, r.snapshot.Models[id])
+	for _, m := range choices {
+		if _, err := fmt.Fprintf(r.out, "  %s — %s\n", safeDisplay(m.ID), safeDisplay(m.Name)); err != nil {
+			return defaultSelection{}, err
+		}
+	}
+	if _, err := fmt.Fprintln(r.out, "  manual — enter any non-empty model selector (unverified)"); err != nil {
+		return defaultSelection{}, err
+	}
+	sel, err := r.ask("Model selector: ")
+	if err != nil {
+		return defaultSelection{}, err
+	}
+	sel = strings.TrimSpace(sel)
+	if sel == "" {
+		return defaultSelection{}, errors.New("model selector must not be empty")
+	}
+	resolved, ok := resolveSetupModel(sel, r.snapshot.Aliases)
+	if !ok || resolved == "" {
+		return defaultSelection{}, errors.New("model alias is not resolvable")
+	}
+	return defaultSelection{Provider: id, Model: resolved}, nil
+}
+func (r *setupRunner) chooseDefault(ctx context.Context) error {
+	id, err := r.ask("Provider ID (blank cancels): ")
+	if err != nil {
+		return err
+	}
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil
+	}
+	d, err := r.promptDefault(id)
+	if err != nil {
+		return err
+	}
+	yes, err := r.ask("Commit this default? [y/N]: ")
+	if err != nil {
+		return err
+	}
+	if !affirmative(yes) {
+		return nil
+	}
+	state, err := r.deps.updateDefaults(ctx, r.settingsPath, d)
+	reportCommit(r.out, "defaults", id, state, err)
+	if !commitSucceeded(state, err) {
+		if err == nil {
+			err = errors.New("defaults not safely committed")
+		}
+		return err
+	}
+	return r.maybeStart()
+}
+func (r *setupRunner) remove(ctx context.Context) error {
+	id, err := r.ask("Provider ID to remove (blank cancels): ")
+	if err != nil {
+		return err
+	}
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil
+	}
+	if !slices.Contains(mutableProviderIDs(r.snapshot), id) {
+		return errors.New("provider is not eligible for API-key mutation")
+	}
+	yes, err := r.ask("Remove the saved key? This does not revoke it. [y/N]: ")
+	if err != nil {
+		return err
+	}
+	if !affirmative(yes) {
+		return nil
+	}
+	remainingActive := false
+	for _, row := range r.snapshot.Rows {
+		if row.ID == id && row.CredentialSource != "auth file" && row.CredentialSource != "missing" {
+			remainingActive = true
+			if _, err := fmt.Fprintf(r.out, "Remaining active credential source after file removal: %s\n", safeDisplay(row.CredentialSource)); err != nil {
+				return err
+			}
+		}
+	}
+	var replacement *defaultSelection
+	if r.snapshot.Default.Provider == id && !remainingActive {
+		rid, e := r.ask("Replacement default provider: ")
+		if e != nil {
+			return e
+		}
+		d, e := r.promptDefault(strings.TrimSpace(rid))
+		if e != nil {
+			return e
+		}
+		confirm, e := r.ask("Commit the replacement default before removing the key? [y/N]: ")
+		if e != nil {
+			return e
+		}
+		if !affirmative(confirm) {
+			return nil
+		}
+		replacement = &d
+	}
+	return removeCredential(ctx, r.authPath, r.settingsPath, id, replacement, r.out, r.deps)
+}
+func (r *setupRunner) maybeStart() error {
+	answer, err := r.ask("Start mecatui now? [y/N]: ")
+	if err != nil {
+		return err
+	}
+	if !affirmative(answer) {
+		return nil
+	}
+	if r.deps.start == nil {
+		return errors.New("startup unavailable")
+	}
+	if err := r.deps.start(r.authPath); err != nil {
+		return err
+	}
+	return errSetupStarted
+}
+
+func preflightSetupPaths(authPath, settings string) error {
+	auth, err := canonicalSetupTarget(authPath, filepath.Clean(authPath) == filepath.Clean(authfile.DefaultPath(xdgconfig.OSEnv)))
+	if err != nil {
+		return fmt.Errorf("resolve auth target: %w", err)
+	}
+	settingsTarget, err := canonicalSetupTarget(settings, true)
+	if err != nil {
+		return fmt.Errorf("resolve settings target: %w", err)
+	}
+	if auth == settingsTarget {
+		return errors.New("auth and settings targets resolve to the same file")
+	}
+	// #nosec G703 -- both paths were canonicalized through existing physical parents.
+	authInfo, authErr := os.Stat(auth)
+	// #nosec G703 -- both paths were canonicalized through existing physical parents.
+	settingsInfo, settingsErr := os.Stat(settingsTarget)
+	if authErr == nil && settingsErr == nil && os.SameFile(authInfo, settingsInfo) {
+		return errors.New("auth and settings targets resolve to the same file")
+	}
+	if authErr != nil && !errors.Is(authErr, os.ErrNotExist) {
+		return errors.New("auth target is unavailable")
+	}
+	if settingsErr != nil && !errors.Is(settingsErr, os.ErrNotExist) {
+		return errors.New("settings target is unavailable")
+	}
+	return nil
+}
+
+func canonicalSetupTarget(path string, allowMissingManagedParent bool) (string, error) {
+	target, err := authfile.CanonicalPath(path)
+	if err == nil || !allowMissingManagedParent {
+		return target, err
+	}
+	abs, absErr := filepath.Abs(path)
+	if absErr != nil {
+		return "", errors.New("path is unavailable")
+	}
+	parent := filepath.Dir(abs)
+	base, baseErr := filepath.EvalSymlinks(filepath.Dir(parent))
+	if baseErr != nil {
+		return "", errors.New("path parent is unavailable")
+	}
+	if filepath.Base(parent) != "mecatl" {
+		return "", errors.New("path parent is unavailable")
+	}
+	return filepath.Join(base, "mecatl", filepath.Base(abs)), nil
+}
+
+func runSetupCommand(ctx context.Context, path string, explicit bool, in, out *os.File, deps setupDeps) error {
+	deps = withSetupDefaults(deps)
+	if !deps.isTerminal(int(in.Fd())) || !deps.isTerminal(int(out.Fd())) {
+		return errors.New("llm setup requires terminal stdin and stdout")
+	}
+	s, err := deps.load(path, explicit)
+	if err != nil {
+		return err
+	}
+	if err := preflightSetupPaths(path, settingsPath(xdgconfig.OSEnv)); err != nil {
+		return err
+	}
+	reader := bufio.NewReader(in)
+	if s.ExplicitMissing {
+		if _, e := fmt.Fprintf(out, "The explicit auth file %s is missing. Create that leaf in its existing protected parent? [y/N]: ", safeDisplay(path)); e != nil {
+			return e
+		}
+		answer, e := reader.ReadString('\n')
+		if e != nil {
+			return fmt.Errorf("confirm explicit auth path: %w", e)
+		}
+		if !affirmative(answer) {
+			return nil
+		}
+	}
+	r := setupRunner{inFD: int(in.Fd()), outFD: int(out.Fd()), out: out, deps: deps, snapshot: s, authPath: path, settingsPath: settingsPath(xdgconfig.OSEnv), explicit: explicit, readLine: func(string) (string, error) { line, e := reader.ReadString('\n'); return strings.TrimSpace(line), e }}
+	return r.run(ctx)
+}
