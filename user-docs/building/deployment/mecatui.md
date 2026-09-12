@@ -57,6 +57,15 @@ replacement. Read the [operator setup and same-UID plaintext
 boundary](./settings.md#configure-provider-credentials)
 before adding the mount.
 
+For an already-configured token, `mecatui llm status [--auth-file PATH]` reports only
+local missing, usable, or invalid/expired state, never the token, account ID, or expiry.
+Account/model entitlement remains unverified. On Linux, `mecatui llm setup` can select
+this distinct provider as the embedded default without rewriting credentials; see
+[local provider setup](/features/choose-models.md#set-up-a-local-embedded-provider).
+Interactive Codex sign-in, refresh, and credential import are not supported. Replace
+expired or rejected manual credentials in the same auth file and restart. Remote
+Mecatl login and native organization-gateway login do not enroll this subscription.
+
 ## Runtime and sensitive local administration
 
 Each embedded instance creates its own private runtime directory. With `--perf`, ordinary

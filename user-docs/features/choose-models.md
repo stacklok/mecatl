@@ -71,6 +71,22 @@ entry whose authentication method is `api_key`; it does not create custom provid
 definitions. Providers configured with no authentication, `openai-codex`, and
 OAuth-shaped records are not API-key choices.
 
+**OpenAI (API key)** and **OpenAI Codex (existing subscription token)** are separate
+choices and billing identities. If you already configured a manual Codex OAuth token
+in `auth.yaml`, **Choose default** can reuse it without changing any credential bytes.
+Only credentials accepted by the existing local token/expiry validator are selectable;
+missing, invalid, or expired credentials require manual configuration or replacement.
+The [Codex manual-token guide](/building/deployment/mecatui.md#experimental-chatgpt-codex-subscription)
+explains the existing file contract. Setup does not collect Codex tokens, import another
+app's credentials, offer interactive sign-in/refresh, remove the OAuth record, or route
+Codex to `mecatui llm login ENDPOINT` (that is organization-gateway login).
+
+Codex has no static default or offline entitlement inventory. Setup offers a previously
+configured selector, if any, and manual entry—not public OpenAI's model list as
+subscription suggestions. Manual selectors pass the ordinary deployment-default
+validator, but catalog acceptance does not prove your account's entitlement. The
+provider's existing runtime discovery and request checks remain authoritative.
+
 Before hidden key entry, the command identifies the provider console. For OpenCode,
 enter an OpenCode API key with an active Go subscription: the built-in uses the Go
 endpoint, not Zen pay-as-you-go. For every other API-key provider, you need an
@@ -129,8 +145,9 @@ mecatui llm status
 
 No-target status reports built-in and configured providers, credential provenance
 and a shadowed-file presence flag, the selected default and model selector, native
-endpoint names, and the ToolHive handoff. It never prints key values or
-fingerprints. Every row says `verification: not checked`: status makes no network
+endpoint names, the separate Codex subscription-token state, and the ToolHive handoff.
+Codex state is `missing`, `locally usable`, or `invalid or expired`; token, account ID,
+expiry, and fingerprints are never printed. Every row says `verification: not checked`: status makes no network
 request, refresh, browser launch, model-list check, or paid inference, so it cannot
 prove that a key or model is accepted.
 

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -17,6 +18,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/adapter/authfile"
+	"github.com/stacklok/mecatl/internal/adapter/openaicodex"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/internal/adapter/providercatalog"
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
@@ -28,13 +30,18 @@ const (
 	maxSetupAPIKeyBytes      = 8 * 1024
 	credentialSourceAuthFile = "auth file"
 	credentialSourceMissing  = "missing"
+	openAIProviderID         = "openai"
 	openCodeProviderID       = "opencode"
+	codexProviderID          = "openai-codex"
+	credentialLocallyUsable  = "locally usable"
+	codexSetupGuidance       = "Existing Codex OAuth credentials in auth.yaml; interactive sign-in/refresh not supported. Configure or replace the manual token there and restart; setup does not collect, import, remove, or revoke it. See https://mecatl.dev/docs/building/deployment/mecatui#experimental-chatgpt-codex-subscription"
 )
 
 var errSetupStarted = errors.New("setup launched mecatui")
 
 type providerStatus struct {
 	ID, Kind, CredentialSource, Model, DefaultModel string
+	LocalCredential                                 string
 	FilePresent, Default, Mutable                   bool
 }
 type modelChoice struct {
@@ -132,7 +139,7 @@ func loadSetupSnapshot(path string, explicit bool) (setupSnapshot, error) {
 	if err != nil {
 		return setupSnapshot{}, fmt.Errorf("resolve operator providers: %w", err)
 	}
-	known := []string{"anthropic", "openai", "openrouter", openCodeProviderID, "openai-codex"}
+	known := []string{"anthropic", openAIProviderID, "openrouter", openCodeProviderID, "openai-codex"}
 	for id := range defs {
 		known = append(known, id)
 	}
@@ -158,7 +165,7 @@ func loadSetupSnapshot(path string, explicit bool) (setupSnapshot, error) {
 		}
 	}
 	filePresent := func(id string) bool { return af != nil && af.APIKey(id) != "" }
-	for _, id := range []string{"anthropic", "openai", openCodeProviderID, "openrouter"} {
+	for _, id := range []string{"anthropic", openAIProviderID, openCodeProviderID, "openrouter"} {
 		cs := cliconfig.ResolveCredentialSource(id, filePresent(id), os.Getenv)
 		providerDefault := app.BuiltinDefaultModel(id)
 		s.ProviderDefaults[id] = providerDefault
@@ -173,6 +180,20 @@ func loadSetupSnapshot(path string, explicit bool) (setupSnapshot, error) {
 			}
 		}
 	}
+	codex := providerStatus{ID: codexProviderID, Kind: "manual OAuth", CredentialSource: credentialSourceMissing, LocalCredential: credentialSourceMissing, Default: s.Default.Provider == codexProviderID}
+	if codex.Default {
+		codex.Model = s.Default.Model
+	}
+	oauth := af.OAuth(codexProviderID)
+	if oauth.AccessToken != "" {
+		codex.FilePresent = true
+		codex.CredentialSource = credentialSourceAuthFile
+		codex.LocalCredential = "invalid or expired"
+		if _, err := openaicodex.NewCredential(oauth.AccessToken, oauth.AccountID, oauth.ExpiresAt, time.Now()); err == nil {
+			codex.LocalCredential = credentialLocallyUsable
+		}
+	}
+	s.Rows = append(s.Rows, codex)
 	for id, def := range defs {
 		s.ProviderDefaults[id] = def.DefaultModel
 		if def.Native != nil {
@@ -180,7 +201,7 @@ func loadSetupSnapshot(path string, explicit bool) (setupSnapshot, error) {
 			s.NativeDefaults[id] = def.DefaultModel
 			continue
 		}
-		if _, builtin := slices.BinarySearch([]string{"anthropic", "openai", openCodeProviderID, "openrouter"}, id); builtin {
+		if _, builtin := slices.BinarySearch([]string{"anthropic", openAIProviderID, openCodeProviderID, "openrouter"}, id); builtin {
 			continue
 		}
 		kind := "none required"
@@ -213,19 +234,25 @@ func writeAggregateStatus(out io.Writer, rows []providerStatus, native []string,
 	fmt.Fprintln(out, "Keyed providers:")
 	writeRows := func(kind string) {
 		for _, r := range rows {
-			if (kind == "keyed") != r.Mutable {
+			if r.ID == codexProviderID || (kind == "keyed") != r.Mutable {
 				continue
 			}
 			shadowed := "absent"
 			if r.FilePresent && r.CredentialSource != credentialSourceAuthFile {
 				shadowed = "present"
 			}
-			fmt.Fprintf(out, "  %s (%s)\n    credential source: %s\n    shadowed auth file: %s\n    selected default: %s\n    model selector: %s\n    verification: not checked\n", safeDisplay(r.ID), safeDisplay(r.Kind), safeDisplay(r.CredentialSource), shadowed, yesNo(r.Default), displayOrNone(r.Model))
+			fmt.Fprintf(out, "  %s (%s)\n    credential source: %s\n    shadowed auth file: %s\n    selected default: %s\n    model selector: %s\n    verification: not checked\n", providerLabel(r.ID), safeDisplay(r.Kind), safeDisplay(r.CredentialSource), shadowed, yesNo(r.Default), displayOrNone(r.Model))
 		}
 	}
 	writeRows("keyed")
 	fmt.Fprintln(out, "No credential required:")
 	writeRows("none")
+	fmt.Fprintln(out, "Subscription tokens:")
+	for _, r := range rows {
+		if r.ID == codexProviderID {
+			fmt.Fprintf(out, "  %s (%s)\n    credential source: %s\n    local credential: %s\n    selected default: %s\n    model selector: %s\n    verification: not checked (account/model entitlement unverified)\n    %s\n", providerLabel(r.ID), safeDisplay(r.Kind), safeDisplay(r.CredentialSource), safeDisplay(r.LocalCredential), yesNo(r.Default), displayOrNone(r.Model), codexSetupGuidance)
+		}
+	}
 	fmt.Fprintln(out, "Native endpoints:")
 	if len(native) == 0 {
 		fmt.Fprintln(out, "  none configured")
@@ -239,6 +266,17 @@ func writeAggregateStatus(out io.Writer, rows []providerStatus, native []string,
 		fmt.Fprintln(out, "  lifecycle owned by ToolHive; use `thv llm` tooling (not checked)")
 	} else {
 		fmt.Fprintln(out, "  not configured (not checked)")
+	}
+}
+
+func providerLabel(id string) string {
+	switch id {
+	case openAIProviderID:
+		return "openai — OpenAI (API key)"
+	case codexProviderID:
+		return "openai-codex — OpenAI Codex (existing subscription token)"
+	default:
+		return safeDisplay(id)
 	}
 }
 
@@ -439,6 +477,9 @@ func (r *setupRunner) run(ctx context.Context) error {
 	if !r.deps.isTerminal(r.inFD) || !r.deps.isTerminal(r.outFD) {
 		return errors.New("llm setup requires terminal stdin and stdout")
 	}
+	if _, err := fmt.Fprintf(r.out, "%s; %s\n%s\n", providerLabel(openAIProviderID), providerLabel(codexProviderID), codexSetupGuidance); err != nil {
+		return err
+	}
 	for {
 		if _, err := fmt.Fprintln(r.out, "\nLLM setup\n  1) Add or replace provider\n  2) Choose default\n  3) Remove saved key\n  4) Exit"); err != nil {
 			return err
@@ -490,6 +531,10 @@ func (r *setupRunner) add(ctx context.Context) error {
 	if id == "" {
 		return nil
 	}
+	if id == codexProviderID {
+		_, err := fmt.Fprintln(r.out, codexSetupGuidance)
+		return err
+	}
 	if slices.Contains(r.snapshot.NativeIDs, id) {
 		answer, e := r.ask("Continue with native in-process login? [y/N]: ")
 		if e != nil {
@@ -526,7 +571,7 @@ func (r *setupRunner) add(ctx context.Context) error {
 		}
 		fmt.Fprintln(r.out, "The active environment credential will continue to win; no credential value will be displayed.")
 	}
-	console := map[string]string{"openai": "https://platform.openai.com/api-keys", "anthropic": "https://console.anthropic.com/settings/keys", "openrouter": "https://openrouter.ai/settings/keys", openCodeProviderID: "https://opencode.ai/auth"}[id]
+	console := map[string]string{openAIProviderID: "https://platform.openai.com/api-keys", "anthropic": "https://console.anthropic.com/settings/keys", "openrouter": "https://openrouter.ai/settings/keys", openCodeProviderID: "https://opencode.ai/auth"}[id]
 	if console == "" {
 		console = "the configured provider console"
 	}
@@ -616,6 +661,11 @@ func (r *setupRunner) promptDefault(id string) (defaultSelection, error) {
 	if r.snapshot.Default.Provider == id && r.snapshot.Default.Model != "" {
 		existing = r.snapshot.Default.Model
 	}
+	if id == codexProviderID {
+		if _, err := fmt.Fprintln(r.out, "Codex has no static default or offline entitlement inventory. Enter a model manually; normal deployment-default validation is not proof of subscription entitlement."); err != nil {
+			return defaultSelection{}, err
+		}
+	}
 	choices := setupModelChoices(existing, r.snapshot.Models[id])
 	for _, m := range choices {
 		if _, err := fmt.Fprintf(r.out, "  %s — %s\n", safeDisplay(m.ID), safeDisplay(m.Name)); err != nil {
@@ -650,7 +700,7 @@ func (r *setupRunner) promptDefault(id string) (defaultSelection, error) {
 func defaultProviderIDs(s setupSnapshot) []string {
 	var ids []string
 	for _, row := range s.Rows {
-		if row.Kind == "none required" || (row.Mutable && row.CredentialSource != credentialSourceMissing) {
+		if row.Kind == "none required" || row.LocalCredential == credentialLocallyUsable || (row.Mutable && row.CredentialSource != credentialSourceMissing) {
 			ids = append(ids, row.ID)
 		}
 	}
@@ -661,7 +711,7 @@ func defaultProviderIDs(s setupSnapshot) []string {
 func defaultProviderIDsAfterRemoval(s setupSnapshot, removed string) []string {
 	var ids []string
 	for _, row := range s.Rows {
-		if row.Kind == "none required" {
+		if row.Kind == "none required" || row.LocalCredential == credentialLocallyUsable {
 			ids = append(ids, row.ID)
 			continue
 		}
@@ -677,12 +727,17 @@ func defaultProviderIDsAfterRemoval(s setupSnapshot, removed string) []string {
 	return ids
 }
 
+//nolint:gocyclo // Default selection keeps local credential and native-consent gates together.
 func (r *setupRunner) chooseDefault(ctx context.Context) error {
 	ids := defaultProviderIDs(r.snapshot)
 	if len(ids) == 0 && len(r.snapshot.NativeIDs) == 0 {
 		return errors.New("no provider has a usable credential or a configured no-auth definition; add or enroll one first")
 	}
-	if _, err := fmt.Fprintf(r.out, "Available default providers: %s\n", strings.Join(ids, ", ")); err != nil {
+	labels := make([]string, len(ids))
+	for i, id := range ids {
+		labels[i] = providerLabel(id)
+	}
+	if _, err := fmt.Fprintf(r.out, "Available default providers: %s\n", strings.Join(labels, ", ")); err != nil {
 		return err
 	}
 	if len(r.snapshot.NativeIDs) > 0 {
@@ -741,6 +796,7 @@ func (r *setupRunner) chooseDefault(ctx context.Context) error {
 	return r.maybeStart()
 }
 
+//nolint:gocyclo // Removal separates read-only Codex guidance from ordered key/default commits.
 func (r *setupRunner) remove(ctx context.Context) error {
 	id, err := r.ask("Provider ID to remove (blank cancels): ")
 	if err != nil {
@@ -749,6 +805,10 @@ func (r *setupRunner) remove(ctx context.Context) error {
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return nil
+	}
+	if id == codexProviderID {
+		_, err := fmt.Fprintln(r.out, codexSetupGuidance)
+		return err
 	}
 	if !slices.Contains(mutableProviderIDs(r.snapshot), id) {
 		return errors.New("provider is not eligible for API-key mutation")
