@@ -9,12 +9,11 @@
   ┃                                                                                              ┃
   ┃    ✓ Read — 100 lines                                                                        ┃
   ┃    ✓ Read — 101 lines                                                                        ┃
-  ┃    ✓ Read — 102 lines                                                                        ┃
   ┃    … +9 more lines                                                                           ┃
-  ┃                                                                                              ┃
   ┃  esc back                                                                                    ┃
   ┃                                                                                              ┃
   ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
 
 │
 │ Ask mecatl to do something…  (enter to send · shift+enter for newline · ? for help)

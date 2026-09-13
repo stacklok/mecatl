@@ -1439,3 +1439,94 @@ func TestMecatuiAgentsOverlayFit_Scenario1_SelectedWinnerRetainsBothMarkers(t *t
 		t.Fatalf("active tab marker changed or conflated: %q", bar)
 	}
 }
+
+// TestMecatuiAgentsOverlayFit_Scenario2_CompactFallbackFitsShortViewport pins the
+// short-terminal fallback: it is one unframed, selectable line rather than a clipped card.
+func TestMecatuiAgentsOverlayFit_Scenario2_CompactFallbackFitsShortViewport(t *testing.T) {
+	th := aztec()
+	out := stripANSIstr(renderAgentsOverlay(th, tabSubagents, subagentState{}, parallelState{}, teamState{}, nil,
+		[]subagentLane{{childID: "child", goal: "audit"}}, nil, defaultHelpKeys(), 32, 1))
+	if lines := strings.Count(out, "\n") + 1; lines > 1 {
+		t.Fatalf("short viewport rendered %d lines, want compact one-line fallback:\n%s", lines, out)
+	}
+	if !strings.Contains(out, "▶") || !strings.Contains(out, "Subagents") || !strings.Contains(out, "esc close") {
+		t.Fatalf("compact roster = %q, want selected tab label and esc close", out)
+	}
+}
+
+// TestMecatuiAgentsOverlayFit_Scenario2_AllSubviewsFitViewport checks that normal
+// overlays budget their framed physical lines, including when the viewport is shorter
+// than the terminal that selected normal mode.
+func TestMecatuiAgentsOverlayFit_Scenario2_AllSubviewsFitViewport(t *testing.T) {
+	th, hk := aztec(), defaultHelpKeys()
+	team := &block{teamLanes: []teamLane{{name: strings.Repeat("member ", 20), role: strings.Repeat("role ", 20)}}}
+	fleet := []subagentLane{{childID: "child", goal: strings.Repeat("goal ", 30), current: strings.Repeat("tool ", 20)}}
+	groups := []parallelGroup{{parentCallID: "p", branches: []parallelBranch{{index: 0, label: strings.Repeat("branch ", 20), goal: strings.Repeat("goal ", 20)}}}}
+	for _, width := range []int{32, 80, 120} {
+		for height := 24; height <= 80; height++ {
+			for _, tc := range []struct {
+				name   string
+				tab    agentsTab
+				b      *block
+				fleet  []subagentLane
+				groups []parallelGroup
+			}{
+				{"subagents", tabSubagents, nil, fleet, nil}, {"parallel", tabParallel, nil, nil, groups}, {"teams", tabTeams, team, nil, nil},
+			} {
+				out := renderAgentsOverlay(th, tc.tab, subagentState{}, parallelState{}, teamState{view: teamRoster}, tc.b, tc.fleet, tc.groups, hk, width, height, height)
+				if got := lipgloss.Height(out); got > height {
+					t.Fatalf("%s %dx%d: %d physical lines", tc.name, width, height, got)
+				}
+			}
+		}
+	}
+}
+
+// TestMecatuiAgentsOverlayFit_Scenario2_RosterPagingMatchesRenderedWindow pins that
+// remappable page navigation changes the selected roster item without losing its marker.
+func TestMecatuiAgentsOverlayFit_Scenario2_RosterPagingMatchesRenderedWindow(t *testing.T) {
+	m := newMCPModel(t, aztec(), nil)
+	lanes := make([]subagentLane, 30)
+	for i := range lanes {
+		lanes[i] = subagentLane{childID: "child" + strconv.Itoa(i), goal: "agent " + strconv.Itoa(i)}
+	}
+	m = seedSubagents(m, "p", startSub("p", "child0", "agent 0"))
+	m.conv.subagentFleet = lanes
+	m.vp.SetHeight(20)
+	m.team = teamState{view: teamRoster}
+	m.agentsTab = tabSubagents
+	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyPgDown})
+	m = mm.(Model)
+	out := stripANSIstr(m.View().Content)
+	if !strings.Contains(out, "▶ ◐ agent "+strconv.Itoa(m.subagents.cursor)) {
+		t.Fatalf("selected page target is not wholly rendered:\n%s", out)
+	}
+}
+
+// TestMecatuiAgentsOverlayFit_Scenario2_OverflowContentReachable pins the existing
+// remappable navigation surface and live range indicator used for overflowed rosters.
+func TestMecatuiAgentsOverlayFit_Scenario2_OverflowContentReachable(t *testing.T) {
+	th := aztec()
+	lines := []string{"one", "two", "three", "four"}
+	out := stripANSIstr(windowRenderedLines(th, lines, 2, 1))
+	if !strings.Contains(out, "three") || !strings.Contains(out, "lines 3–3 of 4") {
+		t.Fatalf("window range is not live/accurate: %q", out)
+	}
+	if got := clampScroll(99, len(lines), 1); got != 3 {
+		t.Fatalf("end clamp = %d, want 3", got)
+	}
+}
+
+// TestMecatuiAgentsOverlayFit_Scenario2_WrappedDynamicContentFitsViewport pins that
+// long dynamic roster metadata is charged before framing, leaving the footer visible.
+func TestMecatuiAgentsOverlayFit_Scenario2_WrappedDynamicContentFitsViewport(t *testing.T) {
+	th := aztec()
+	lane := subagentLane{childID: "child", goal: strings.Repeat("unbreakable", 40), current: strings.Repeat("metadata", 40), done: true, stop: stopError, cause: strings.Repeat("failure ", 80), background: true}
+	out := stripANSIstr(renderAgentsOverlay(th, tabSubagents, subagentState{view: subagentFocus, child: "child"}, parallelState{}, teamState{}, nil, []subagentLane{lane}, nil, defaultHelpKeys(), 32, 20, 24))
+	if got := lipgloss.Height(out); got > 20 {
+		t.Fatalf("wrapped dynamic content is %d lines, want <= 20", got)
+	}
+	if !strings.Contains(out, "esc back") {
+		t.Fatalf("footer was hidden by wrapped dynamic content:\n%s", out)
+	}
+}

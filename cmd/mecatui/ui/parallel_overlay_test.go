@@ -314,6 +314,9 @@ func TestParallelOverlayBoundsBranchContent(t *testing.T) {
 func TestParallelGroupFocusHeightBounded(t *testing.T) {
 	m := newMCPModel(t, aztec(), nil)
 	m = resize(m, 100, 18)
+	// Compact is keyed by terminal height, while this test deliberately offers
+	// the normal UI an 18-line conversation viewport.
+	m.height = 24
 	var msgs []client.ParallelMsg
 	msgs = append(msgs, startPar("p1", "all", 4))
 	for i := 0; i < 4; i++ {

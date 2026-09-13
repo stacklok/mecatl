@@ -169,6 +169,26 @@ func (m Model) onAgentsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 	if m.team.view == teamNone {
 		return m, nil, false
 	}
+	if m.height > 0 && m.height < 24 {
+		// Compact mode intentionally exposes no normal-content navigation: only
+		// escape is meaningful, and it first returns a focus pane to its roster.
+		if key.Matches(msg, m.keys.Close) {
+			if !m.atAgentsRoster() {
+				switch m.agentsTab {
+				case tabSubagents:
+					m.subagents.view, m.subagents.child = subagentRoster, ""
+				case tabParallel:
+					m.parallel.view, m.parallel.group = parallelRoster, ""
+				default:
+					m.team.view, m.team.member = teamRoster, ""
+				}
+				return m, nil, true
+			}
+			mm, cmd := m.closeAgents()
+			return mm, cmd, true
+		}
+		return m, nil, true
+	}
 	// `tab` switches tabs from EITHER tab's roster (not mid-focus — a focus pane's esc
 	// steps back to its own roster first, matching the team overlay's esc semantics).
 	if key.Matches(msg, m.keys.NextTab) && m.atAgentsRoster() {
@@ -370,9 +390,19 @@ func (m Model) onParallelRosterKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // active tab highlighted) above the active tab's body, then frames the whole thing in the
 // shared card. The team block may be nil (no team yet) — the Teams tab then shows an
 // honest empty note rather than borrowing another tab's body.
-func renderAgentsOverlay(th theme.Theme, tab agentsTab, sub subagentState, par parallelState, team teamState, b *block, fleet []subagentLane, groups []parallelGroup, hk helpKeys, width, height int) string {
+func renderAgentsOverlay(th theme.Theme, tab agentsTab, sub subagentState, par parallelState, team teamState, b *block, fleet []subagentLane, groups []parallelGroup, hk helpKeys, width, height int, terminalHeight ...int) string {
+	// The conversation viewport can be shorter than the terminal because of the
+	// surrounding chrome. Compact is a terminal-height fallback, not a viewport
+	// fallback: a 24-row terminal still receives the normal, viewport-fitted card.
+	terminal := height
+	if len(terminalHeight) > 0 {
+		terminal = terminalHeight[0]
+	}
+	if terminal > 0 && terminal < 24 {
+		return renderCompactAgentsOverlay(th, tab, sub, par, team, hk, width)
+	}
 	bar := agentsTabBar(th, tab)
-	_, outerWidth, bodyWidth := agentsCardLayout(th, width)
+	card, outerWidth, bodyWidth := agentsCardLayout(th, width)
 	// The body gets the height MINUS the tab bar + its blank line (agentsTabBarLines),
 	// so the window math in the tab bodies still keeps the footer hint on-screen.
 	bodyHeight := agentsBodyHeight(height)
@@ -385,7 +415,64 @@ func renderAgentsOverlay(th theme.Theme, tab agentsTab, sub subagentState, par p
 	default:
 		body = renderTeamsTab(th, team, b, hk, bodyWidth, bodyHeight)
 	}
-	return centerAgentsCard(th, bar+"\n\n"+body, outerWidth, width, height)
+	// The frame consumes four physical lines (border plus vertical padding).
+	// Bound the assembled body before framing: styling is already per-line, so
+	// this cannot split an ANSI sequence or rely on placement clipping.
+	return centerAgentsCard(th, fitAgentsBody(bar+"\n\n"+body, max(0, height-card.GetVerticalFrameSize()-1)), outerWidth, width, height)
+}
+
+// renderCompactAgentsOverlay is deliberately unframed: on a short terminal a
+// card cannot honestly fit. It retains only the active context and escape action.
+func renderCompactAgentsOverlay(th theme.Theme, tab agentsTab, sub subagentState, par parallelState, team teamState, hk helpKeys, width int) string {
+	label := "Subagents"
+	focus := false
+	switch tab {
+	case tabParallel:
+		label, focus = "Parallel", par.view == parallelGroupView
+	case tabTeams:
+		label, focus = "Teams", team.view != teamRoster
+	default:
+		focus = sub.view == subagentFocus
+	}
+	if focus {
+		if tab == tabSubagents && sub.child != "" {
+			label = "subagent " + shortChildID(sub.child)
+		}
+		if tab == tabTeams && team.member != "" {
+			label = "agent " + sanitizeTerminal(team.member)
+		}
+		return renderDynamicCardChromeLine(th.Style("askTitle"), "", "▶ "+label+" · "+focusBackHint(hk), width)
+	}
+	return renderDynamicCardChromeLine(th.Style("askTitle"), "", "▶ "+label+" · "+hk.closeOnly+" close", width)
+}
+
+// fitAgentsBody preserves the title/context and the live footer when a narrow
+// offered viewport leaves less room than a view's optional metadata. The view
+// renderers already window selectable rows; this final physical-line budget is
+// the frame's fail-safe for wrapped dynamic metadata.
+func fitAgentsBody(body string, capacity int) string {
+	if capacity <= 0 {
+		return ""
+	}
+	lines := strings.Split(strings.TrimSuffix(body, "\n"), "\n")
+	if len(lines) <= capacity {
+		return strings.Join(lines, "\n")
+	}
+	if capacity == 1 {
+		return lines[len(lines)-1]
+	}
+	// Keep the final footer and the last meaningful content line (normally an
+	// overflow range/tail) so bounded views remain honest about omitted rows.
+	lastMeaningful := len(lines) - 2
+	for lastMeaningful >= 0 && strings.TrimSpace(lines[lastMeaningful]) == "" {
+		lastMeaningful--
+	}
+	if lastMeaningful < capacity-2 {
+		lastMeaningful = capacity - 2
+	}
+	kept := append([]string{}, lines[:capacity-2]...)
+	kept = append(kept, lines[lastMeaningful], lines[len(lines)-1])
+	return strings.Join(kept, "\n")
 }
 
 // agentsCardLayout derives the final card's outer and usable body widths from
@@ -419,7 +506,18 @@ func centerAgentsCard(th theme.Theme, body string, outerWidth, width, height int
 	if width <= 0 || height <= 0 {
 		return out
 	}
-	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, out)
+	// Do not use lipgloss.Place here: Place silently clips an oversized child.
+	// fitAgentsBody guarantees height; this only adds centering whitespace.
+	rows := strings.Split(out, "\n")
+	for i, row := range rows {
+		pad := max(0, (width-lipgloss.Width(row))/2)
+		rows[i] = strings.Repeat(" ", pad) + row
+	}
+	out = strings.Join(rows, "\n")
+	remaining := max(0, height-lipgloss.Height(out))
+	top := remaining / 2
+	bottom := remaining - top
+	return strings.Repeat("\n", top) + out + strings.Repeat("\n", bottom)
 }
 
 // agentsTabBarLines is how many vertical lines the unified overlay's tab strip costs

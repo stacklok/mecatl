@@ -2317,3 +2317,15 @@ The manifest forwards `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`,
 endpoints; mecatl auto-detects the provider from whichever key is set. Edit the
 manifest for a deployment that pins a single provider or a stricter egress
 profile.
+
+
+### Agents overlay viewport behavior
+
+F6 opens the client-only Agents overlay. At known terminal heights of 24 rows or
+more, each Subagents, Parallel, and Teams view is physically line-budgeted to the
+offered conversation viewport: frames, tabs, wrapped metadata, overflow range, and
+footer are included. The existing remappable `Up`, `Down`, `ScrollU`, `ScrollD`,
+`JumpTop`, and `JumpEnd` actions navigate rosters or overflowed detail. At known
+terminal heights below 24 rows, the overlay is an unframed, width-truncated compact
+line; it identifies the selected tab or focused item and retains `esc close` or
+`esc back`, while normal-content navigation is suspended.
