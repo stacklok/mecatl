@@ -119,6 +119,7 @@ PR after verification. There is no cleanup or status-only PR.
   plan/interface review before autonomous implementation, with exact interface
   declarations, run-local orchestration state, and a final human code-review gate.
   Status: landed in this Combined candidate; authoritative on merge.
+- [Mecatui unified Agents overlay fit](mecatui-unified-agents-overlay-fit.md) — aligns every F6 selectable roster with the Sessions picker’s unbordered selection treatment and bounds every Agents-overlay subview to its offered viewport, with reachable overflow and compact short-terminal fallback. Status: proposed.
 - [Mecatui live-feed reconnect](mecatui-live-reconnect.md) — regression closure for bearer-backed first-Recv authentication rejection, existing `/connect` recovery, cross-loop reconnect continuity/backoff, and real-event recovery without weakening generation, cancellation, or catch-up invariants. Status: landed.
 - [Mecatui broker polling liveness](mecatui-broker-polling-liveness.md) — restores automatic lazy MCP-authorization polling after a pending control event and bounds every workspace-enrollment attempt so broker consent cannot remain client-busy forever. Status: landed in this Combined candidate; authoritative on merge.
 - [Mecatui double-Escape draft clearing](mecatui-double-escape.md) — a fail-closed,
