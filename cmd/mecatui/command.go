@@ -49,7 +49,7 @@ const (
 	// modeProviderStatus is the passive local provider inventory. It deliberately
 	// does not construct an embedded server or a credential-store runtime.
 	modeProviderStatus transportMode = "provider-status"
-	// modeProviderCredential manages locally stored custom API-key credentials.
+	// modeProviderCredential manages locally stored custom API-key and OIDC credentials.
 	modeProviderCredential transportMode = "provider-credential"
 	// modeLogin is the CLI-only legacy lifecycle subcommand.
 	modeLogin transportMode = "llm-login"
@@ -260,7 +260,7 @@ func resolveRemoteLogoutCommand(args []string) invocationResolution {
 }
 
 func resolveProvidersCommand(args []string) invocationResolution {
-	const usage = "providers: usage: mecatui providers [status [PROVIDER] | login PROVIDER | logout PROVIDER]"
+	const usage = "providers: usage: mecatui providers [status [PROVIDER] | login PROVIDER [--no-browser] | logout PROVIDER]"
 	if len(args) == 1 && isHelpMetaFlag(args[0]) {
 		return invocationResolution{mode: modeProviderStatus, remaining: args}
 	}
@@ -277,13 +277,30 @@ func resolveProvidersCommand(args []string) invocationResolution {
 		}
 		return invocationResolution{mode: modeProviderStatus, llmAction: providerActionStatus, llmEndpoint: endpoint}
 	}
-	if (args[0] == providerActionLogin || args[0] == providerActionLogout) && len(args) == 2 && !strings.HasPrefix(args[1], "-") {
-		return invocationResolution{mode: modeProviderCredential, llmAction: args[0], llmEndpoint: args[1]}
-	}
-	if (args[0] == providerActionLogin || args[0] == providerActionLogout) && len(args) == 2 && isHelpMetaFlag(args[1]) {
-		return invocationResolution{mode: modeProviderCredential, llmAction: args[0], remaining: args[1:]}
+	if res, ok := resolveProviderCredentialCommand(args); ok {
+		return res
 	}
 	return invocationResolution{err: errors.New(usage)}
+}
+
+func resolveProviderCredentialCommand(args []string) (invocationResolution, bool) {
+	if len(args) == 2 && (args[0] == providerActionLogin || args[0] == providerActionLogout) && isHelpMetaFlag(args[1]) {
+		return invocationResolution{mode: modeProviderCredential, llmAction: args[0], remaining: args[1:]}, true
+	}
+	if len(args) < 2 || strings.HasPrefix(args[1], "-") {
+		return invocationResolution{}, false
+	}
+	switch args[0] {
+	case providerActionLogin:
+		if len(args) == 2 || (len(args) == 3 && args[2] == "--no-browser") {
+			return invocationResolution{mode: modeProviderCredential, llmAction: args[0], llmEndpoint: args[1], remaining: args[2:]}, true
+		}
+	case providerActionLogout:
+		if len(args) == 2 {
+			return invocationResolution{mode: modeProviderCredential, llmAction: args[0], llmEndpoint: args[1]}, true
+		}
+	}
+	return invocationResolution{}, false
 }
 
 // resolveConnectCommand preserves connect's special grammar: ADDRESS must

@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/stacklok/mecatl/internal/adapter/authfile"
+	"github.com/stacklok/mecatl/internal/adapter/llmendpoint"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 )
 
@@ -69,6 +71,75 @@ func TestProviderCredentialLoginCancellationDoesNotWrite(t *testing.T) {
 	}
 }
 
+func TestProviderCredentialOIDCLifecycleUsesConfiguredDefinition(t *testing.T) {
+	path := providerCredentialTestFile(t, "providers:\n  custom:\n    api_key: retained-secret\n")
+	definition := permconfig.ProviderDefinition{ID: "oidc", BaseURL: "https://gateway.example", Auth: permconfig.ProviderAuth{Method: "oidc"}}
+	oldLoad, oldOpen := loadProviderCredentialConfig, openProviderOIDCRuntime
+	t.Cleanup(func() { loadProviderCredentialConfig, openProviderOIDCRuntime = oldLoad, oldOpen })
+	loadProviderCredentialConfig = func() (providerCredentialConfig, error) {
+		return providerCredentialConfig{definitions: permconfig.ProviderDefinitions{"oidc": definition}, authPath: path}, nil
+	}
+	fake := &fakeProviderOIDCRuntime{}
+	var got permconfig.ProviderDefinition
+	var gotNoBrowser bool
+	openProviderOIDCRuntime = func(_ context.Context, def permconfig.ProviderDefinition, noBrowser bool, _ io.Writer) (nativeEndpointRuntime, error) {
+		got, gotNoBrowser = def, noBrowser
+		return fake, nil
+	}
+
+	res := providerCredentialResolution(providerActionLogin, "oidc")
+	res.remaining = []string{"--no-browser"}
+	var stdout, stderr bytes.Buffer
+	if err := runProviderCredentialCommand(res, &stdout, &stderr); err != nil {
+		t.Fatalf("OIDC login: %v", err)
+	}
+	if got != definition || !gotNoBrowser || fake.logins != 1 || fake.logouts != 0 || fake.closes != 1 {
+		t.Fatalf("OIDC handoff definition=%#v noBrowser=%t calls=%#v", got, gotNoBrowser, fake)
+	}
+	if content := readProviderCredentialTestFile(t, path); !strings.Contains(content, "retained-secret") {
+		t.Fatalf("OIDC lifecycle touched API-key custody: %q", content)
+	}
+
+	if err := runProviderCredentialCommand(providerCredentialResolution(providerActionLogout, "oidc"), &stdout, &stderr); err != nil {
+		t.Fatalf("OIDC logout: %v", err)
+	}
+	if fake.logouts != 1 {
+		t.Fatalf("OIDC logout calls = %d, want 1", fake.logouts)
+	}
+}
+
+func TestProviderCredentialOIDCCancellationPreservesCLIContract(t *testing.T) {
+	oldLoad, oldOpen := loadProviderCredentialConfig, openProviderOIDCRuntime
+	t.Cleanup(func() { loadProviderCredentialConfig, openProviderOIDCRuntime = oldLoad, oldOpen })
+	loadProviderCredentialConfig = func() (providerCredentialConfig, error) {
+		return providerCredentialConfig{definitions: permconfig.ProviderDefinitions{"oidc": {Auth: permconfig.ProviderAuth{Method: "oidc"}}}}, nil
+	}
+	openProviderOIDCRuntime = func(context.Context, permconfig.ProviderDefinition, bool, io.Writer) (nativeEndpointRuntime, error) {
+		return &fakeProviderOIDCRuntime{loginErr: context.Canceled}, nil
+	}
+	var stdout, stderr bytes.Buffer
+	err := runProviderCredentialCommand(providerCredentialResolution(providerActionLogin, "oidc"), &stdout, &stderr)
+	if !errors.Is(err, errProviderCredentialCancelled) || stdout.Len() != 0 || stderr.String() != "Cancelled; no changes made.\n" {
+		t.Fatalf("OIDC cancellation err=%v stdout=%q stderr=%q", err, stdout.String(), stderr.String())
+	}
+}
+
+func TestProviderCredentialToolHiveHandoff(t *testing.T) {
+	old := executeToolHiveLogin
+	t.Cleanup(func() { executeToolHiveLogin = old })
+	var noBrowser bool
+	executeToolHiveLogin = func(_ context.Context, got bool) error { noBrowser = got; return nil }
+	res := providerCredentialResolution(providerActionLogin, toolHiveEndpointID)
+	res.remaining = []string{"--no-browser"}
+	var stderr bytes.Buffer
+	if err := runProviderCredentialCommand(res, &bytes.Buffer{}, &stderr); err != nil || !noBrowser {
+		t.Fatalf("ToolHive handoff err=%v noBrowser=%t", err, noBrowser)
+	}
+	if err := runProviderCredentialCommand(providerCredentialResolution(providerActionLogout, toolHiveEndpointID), &bytes.Buffer{}, &bytes.Buffer{}); err == nil {
+		t.Fatal("ToolHive logout must remain externally owned")
+	}
+}
+
 func TestProviderCredentialRejectsUnavailableProviderWithoutMutation(t *testing.T) {
 	path := providerCredentialTestFile(t, "providers:\n  custom:\n    api_key: retained-secret\n")
 	oldLoad, oldRead, oldUpdate := loadProviderCredentialConfig, readProviderAPIKey, updateProviderAPIKey
@@ -79,6 +150,7 @@ func TestProviderCredentialRejectsUnavailableProviderWithoutMutation(t *testing.
 		return providerCredentialConfig{definitions: permconfig.ProviderDefinitions{
 			"custom": {Auth: permconfig.ProviderAuth{Method: "api_key"}},
 			"oidc":   {Auth: permconfig.ProviderAuth{Method: "oidc"}},
+			"none":   {Auth: permconfig.ProviderAuth{Method: "none"}},
 		}, authPath: path}, nil
 	}
 	readProviderAPIKey = func(string) (string, error) { t.Fatal("secret input must not be requested"); return "", nil }
@@ -91,7 +163,7 @@ func TestProviderCredentialRejectsUnavailableProviderWithoutMutation(t *testing.
 	for _, res := range []invocationResolution{
 		providerCredentialResolution(providerActionLogin, "missing"),
 		providerCredentialResolution(providerActionLogin, "openai"),
-		providerCredentialResolution(providerActionLogout, "oidc"),
+		providerCredentialResolution(providerActionLogout, "none"),
 	} {
 		if err := runProviderCredentialCommand(res, &bytes.Buffer{}, &bytes.Buffer{}); err == nil {
 			t.Fatalf("%s %s succeeded", res.llmAction, res.llmEndpoint)
@@ -101,6 +173,18 @@ func TestProviderCredentialRejectsUnavailableProviderWithoutMutation(t *testing.
 		t.Fatal("unavailable provider command mutated credentials")
 	}
 }
+
+type fakeProviderOIDCRuntime struct {
+	logins, logouts, closes int
+	loginErr                error
+}
+
+func (f *fakeProviderOIDCRuntime) Login(context.Context) error { f.logins++; return f.loginErr }
+func (*fakeProviderOIDCRuntime) Status(context.Context) llmendpoint.Status {
+	return llmendpoint.StatusNotEnrolled
+}
+func (f *fakeProviderOIDCRuntime) Logout(context.Context) error { f.logouts++; return nil }
+func (f *fakeProviderOIDCRuntime) Close() error                 { f.closes++; return nil }
 
 func providerCredentialResolution(action, provider string) invocationResolution {
 	return invocationResolution{mode: modeProviderCredential, llmAction: action, llmEndpoint: provider}
