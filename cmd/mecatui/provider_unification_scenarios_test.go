@@ -14,7 +14,6 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/authfile"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/internal/app"
-	"github.com/stacklok/mecatl/internal/cliconfig"
 )
 
 func TestProviderUnification_Scenario2_ProviderCommandGrammar(t *testing.T) {
@@ -200,12 +199,7 @@ func TestProviderUnification_Scenario2_ToolHiveLifecycleIsolation(t *testing.T) 
 	if err := runProviderCredentialCommand(providerCredentialResolution(providerActionLogout, toolHiveEndpointID), &bytes.Buffer{}, &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "ToolHive owns this provider lifecycle") {
 		t.Fatalf("ToolHive logout err=%v", err)
 	}
-	var toolHive providerStatus
-	for _, status := range builtinProviderStatuses(cliconfig.ResolvedCredentials{}, nil) {
-		if status.Name == toolHiveEndpointID {
-			toolHive = status
-		}
-	}
+	toolHive := toolHiveProviderStatus()
 	if toolHive.Class != "external" || toolHive.Auth != "managed externally" || toolHive.Next != "use `thv llm` tooling" {
 		t.Fatalf("ToolHive status = %#v", toolHive)
 	}

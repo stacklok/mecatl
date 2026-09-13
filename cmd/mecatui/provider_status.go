@@ -5,11 +5,14 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"slices"
 
 	"github.com/stacklok/mecatl/internal/adapter/authfile"
 	"github.com/stacklok/mecatl/internal/adapter/llmendpoint"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
+	"github.com/stacklok/mecatl/internal/adapter/toolhivellm"
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
 	"github.com/stacklok/mecatl/internal/cliconfig"
 )
@@ -35,25 +38,42 @@ type providerInspection struct {
 	selectedModel    string
 }
 
-var loadProviderStatuses = currentProviderStatuses
+var (
+	loadProviderStatuses    = currentProviderStatuses
+	loadAllProviderStatuses = currentAllProviderStatuses
+	toolHiveAvailable       = currentToolHiveAvailable
+)
 
 func runProviderStatusCommand(res invocationResolution, stdout, stderr io.Writer) error {
 	if len(res.remaining) == 1 && isHelpMetaFlag(res.remaining[0]) {
 		return providerHelpResult(stderr, res.llmAction)
 	}
-	statuses, err := loadProviderStatuses()
-	if err != nil {
-		return err
-	}
 	if res.llmEndpoint != "" {
-		for _, status := range statuses {
+		allStatuses, err := loadAllProviderStatuses()
+		if err != nil {
+			return err
+		}
+		for _, status := range allStatuses {
 			if status.Name == res.llmEndpoint {
 				return writeProviderStatus(stdout, status)
 			}
 		}
 		return fmt.Errorf("unknown provider %q; run `mecatui providers` to inspect configured providers", res.llmEndpoint)
 	}
-	for _, status := range statuses {
+	statuses, err := loadProviderStatuses()
+	if err != nil {
+		return err
+	}
+	if len(statuses) == 0 {
+		_, err := fmt.Fprintln(stdout, "No local providers are configured.\n\nRun `mecatui providers setup` to configure a built-in provider, or `mecatui providers add PROVIDER` to add a custom provider.")
+		return err
+	}
+	for i, status := range statuses {
+		if i > 0 {
+			if _, err := fmt.Fprintln(stdout); err != nil {
+				return err
+			}
+		}
 		if err := writeProviderStatus(stdout, status); err != nil {
 			return err
 		}
@@ -62,7 +82,7 @@ func runProviderStatusCommand(res invocationResolution, stdout, stderr io.Writer
 }
 
 func writeProviderStatus(out io.Writer, status providerStatus) error {
-	_, err := fmt.Fprintf(out, "%s\tclass=%s\tauth=%s\tdefault-model=%s\tnext=%s\n", status.Name, status.Class, status.Auth, status.DefaultModel, status.Next)
+	_, err := fmt.Fprintf(out, "%s (%s)\n  Authentication: %s\n  Default model: %s\n  Next step: %s\n", status.Name, status.Class, status.Auth, status.DefaultModel, status.Next)
 	return err
 }
 
@@ -71,7 +91,22 @@ func currentProviderStatuses() ([]providerStatus, error) {
 	if err != nil {
 		return nil, err
 	}
+	return providerStatuses(inspection, false), nil
+}
+
+func currentAllProviderStatuses() ([]providerStatus, error) {
+	inspection, err := inspectLocalProviders()
+	if err != nil {
+		return nil, err
+	}
+	return providerStatuses(inspection, true), nil
+}
+
+func providerStatuses(inspection providerInspection, includeUnconfiguredBuiltin bool) []providerStatus {
 	statuses := builtinProviderStatuses(inspection.credentials, inspection.shadowed)
+	if !includeUnconfiguredBuiltin {
+		statuses = slices.DeleteFunc(statuses, func(status providerStatus) bool { return status.Auth == "not configured" })
+	}
 	for id, definition := range inspection.definitions {
 		status := providerStatus{
 			Name:         id,
@@ -87,13 +122,29 @@ func currentProviderStatuses() ([]providerStatus, error) {
 		}
 		statuses = append(statuses, status)
 	}
+	if toolHiveAvailable() {
+		statuses = append(statuses, toolHiveProviderStatus())
+	}
 	for i := range statuses {
 		if statuses[i].Name == inspection.selectedProvider && inspection.selectedModel != "" {
 			statuses[i].DefaultModel = inspection.selectedModel
 		}
 	}
 	slices.SortFunc(statuses, func(a, b providerStatus) int { return cmp.Compare(a.Name, b.Name) })
-	return statuses, nil
+	return statuses
+}
+
+func toolHiveProviderStatus() providerStatus {
+	return providerStatus{Name: toolHiveEndpointID, Class: "external", Auth: "managed externally", DefaultModel: "ToolHive managed", Next: "use `thv llm` tooling"}
+}
+
+func currentToolHiveAvailable() bool {
+	dir, err := os.UserConfigDir()
+	if err != nil || dir == "" {
+		return false
+	}
+	_, found := toolhivellm.DetectConfig(filepath.Join(dir, toolhivellm.DefaultConfigRelPath))
+	return found
 }
 
 func inspectLocalProviders() (providerInspection, error) {
@@ -163,7 +214,6 @@ func builtinProviderStatuses(keys cliconfig.ResolvedCredentials, shadowed map[st
 		{Name: "openai-codex", Class: providerClassBuiltin, Auth: configured(keys.HasOpenAICodex()), DefaultModel: "provider default", Next: nextForAPIKey(keys.HasOpenAICodex())},
 		{Name: "opencode", Class: providerClassBuiltin, Auth: configuredSource(keys.OpenCode != "", shadowed["opencode"]), DefaultModel: "glm-5.2", Next: nextForAPIKey(keys.OpenCode != "")},
 		{Name: "openrouter", Class: providerClassBuiltin, Auth: configuredSource(keys.OpenRouter != "", shadowed["openrouter"]), DefaultModel: "openai/gpt-5", Next: nextForAPIKey(keys.OpenRouter != "")},
-		{Name: "toolhive", Class: "external", Auth: "managed externally", DefaultModel: "ToolHive managed", Next: "use `thv llm` tooling"},
 	}
 }
 
