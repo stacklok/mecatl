@@ -51,6 +51,8 @@ const (
 	modeProviderStatus transportMode = "provider-status"
 	// modeProviderCredential manages locally stored custom API-key and OIDC credentials.
 	modeProviderCredential transportMode = "provider-credential"
+	// modeProviderAdd interactively creates one custom provider definition.
+	modeProviderAdd transportMode = "provider-add"
 	// modeLogin is the CLI-only legacy lifecycle subcommand.
 	modeLogin transportMode = "llm-login"
 	// modeLLMConfig writes native endpoint configuration without starting lifecycle operations.
@@ -260,7 +262,7 @@ func resolveRemoteLogoutCommand(args []string) invocationResolution {
 }
 
 func resolveProvidersCommand(args []string) invocationResolution {
-	const usage = "providers: usage: mecatui providers [status [PROVIDER] | login PROVIDER [--no-browser] | logout PROVIDER]"
+	const usage = "providers: usage: mecatui providers [status [PROVIDER] | add PROVIDER [--no-login] | login PROVIDER [--no-browser] | logout PROVIDER]"
 	if len(args) == 1 && isHelpMetaFlag(args[0]) {
 		return invocationResolution{mode: modeProviderStatus, remaining: args}
 	}
@@ -277,10 +279,23 @@ func resolveProvidersCommand(args []string) invocationResolution {
 		}
 		return invocationResolution{mode: modeProviderStatus, llmAction: providerActionStatus, llmEndpoint: endpoint}
 	}
+	if res, ok := resolveProviderAddCommand(args); ok {
+		return res
+	}
 	if res, ok := resolveProviderCredentialCommand(args); ok {
 		return res
 	}
 	return invocationResolution{err: errors.New(usage)}
+}
+
+func resolveProviderAddCommand(args []string) (invocationResolution, bool) {
+	if len(args) < 2 || args[0] != providerActionAdd || strings.HasPrefix(args[1], "-") {
+		return invocationResolution{}, false
+	}
+	if len(args) == 2 || (len(args) == 3 && args[2] == "--no-login") {
+		return invocationResolution{mode: modeProviderAdd, llmAction: providerActionAdd, llmEndpoint: args[1], remaining: args[2:]}, true
+	}
+	return invocationResolution{}, false
 }
 
 func resolveProviderCredentialCommand(args []string) (invocationResolution, bool) {
