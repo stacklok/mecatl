@@ -6,16 +6,10 @@ description: Understand workspaces, shells, forks, and persisted execution envir
 
 # Execution environments
 
-An execution environment binds a session to the namespace in which its tools
-operate. It contains:
-
-- an in-process `EnvironmentRef` identity;
-- a non-nil workspace for file operations; and
-- an optional command runner bound to that same namespace.
-
-The runner is not given a per-call working directory. This prevents a tool from
-accidentally reading files from one namespace while executing commands in
-another.
+An execution environment keeps a session's file operations and commands in the
+same namespace. It binds an environment identity to a workspace and, when Shell
+is available, a command runner for that workspace. This prevents a tool from
+reading files in one namespace while running commands in another.
 
 ## Availability
 
@@ -34,9 +28,9 @@ version-aware conditional replacement so a concurrent change is never silently
 clobbered. Namespace operations are narrower: removal is non-recursive, copy
 accepts only regular files, and copy and move refuse an existing destination.
 
-The version ledger belongs to the live workspace/environment instance. A new
-run or process may require a fresh `Read` before an `Edit` or existing-file
-`Write`; this is intentional fail-safe behavior, not lost application data.
+The version ledger belongs to the live execution environment. A new run or
+process may require a fresh `Read` before an `Edit` or existing-file `Write`.
+This protects against overwriting a concurrent change.
 
 ## The no-filesystem profile
 
@@ -68,7 +62,7 @@ Different delegation modes use different environment strategies:
 - **Parallel branches** use hardened force-copy environments. The initial copy
   does not invoke Git; each branch then works in its own copied namespace.
 - **Mutating members and direct-write Subagents** use the parent environment and
-  intentionally modify the real workspace. They are serialized against sibling
+  modify the real workspace. They are serialized against sibling
   tool calls; there is no merge-back step.
 - A child environment's runner is built for the same child root. A failed
   worktree reservation can fall back to a copy, but the runner remains bound to
@@ -80,16 +74,14 @@ removed before a command runs.
 
 ## Persistence and reattachment
 
-The environment identity is persisted with a session snapshot. In-tree local
-and no-FS environments are reconstructed by composition. A non-local identity
-can be reattached only when the deployment supplies an
+The environment identity is persisted with a session snapshot. Mecatl
+reconstructs local and no-FS environments. A non-local identity can be
+reattached only when the deployment supplies an
 `EnvironmentResolver`; a missing resolver, mismatched identity, or nil workspace
-fails loudly rather than falling back to a local workspace.
+returns an error instead of using a local workspace.
 
-Environment reattachment and engine rehydration are separate operations. A
-persisted provider/model selection or no-FS profile can require rebuilding the
-per-session engine, while the environment resolver supplies the live workspace
-and runner.
+A resumed session restores its provider, model, and profile separately from its
+workspace and command runner.
 
 ## Limitations
 

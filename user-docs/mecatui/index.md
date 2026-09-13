@@ -9,9 +9,8 @@ description: Use mecatui to run local or remote sessions, inspect tools, and man
 `mecatui` is Mecatl's interactive terminal client. Use it to work with an agent,
 inspect tool activity, respond to permission requests, and resume sessions.
 
-Start with [Run your first local session](./getting-started.md). It runs a private
-Mecatl server in the same process, so you can learn the client before deploying
-a separate server.
+Start with [Run your first local session](./getting-started.md), which runs a
+private Mecatl server in the same process.
 
 ## Choose how to connect
 

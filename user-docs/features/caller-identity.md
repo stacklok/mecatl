@@ -6,26 +6,29 @@ description: Configure authenticated caller identity and ownership boundaries fo
 
 # Caller identity and OIDC
 
-Mecatl can require an OIDC bearer token on every gRPC and HTTP request and use
-the verified identity to isolate application resources. This is more than
-request authentication: sessions, schedules, teams, memory entries, and
-persisted child sessions are owned by the caller that created them.
+Mecatl can require an OIDC bearer token on every gRPC and HTTP request. The
+verified identity isolates application resources: sessions, schedules, teams,
+memory entries, and persisted child sessions belong to the caller that created
+them.
 
 ## Availability
 
 Caller identity is an opt-in server feature for `mecated` and `mecak8s`. It
-protects both wire surfaces with the same validator and ownership rules. `mecatui`
-can either send an operator-supplied static bearer with `--auth-token`, or enroll a
-remote target with `mecatui login` and obtain, validate, and refresh its own OIDC
-credential. With no explicit credential, an existing saved enrollment is preserved; any
-clean enrollment miss is attempted credential-free and the server decides whether caller
-authentication is required. Use connect-only `--anonymous` to intentionally bypass saved
-credentials when no static token is selected. A token supplied through `--auth-token` or
-`MECATL_AUTH_TOKEN` wins if both are present; `--anonymous` has no environment equivalent. Remote
-targets use verified TLS automatically; a static bearer is never
-sent over explicit non-loopback plaintext, and saved OIDC authentication always
-requires verified TLS. Those are distinct client modes; the server still only validates the
-bearer presented on each request.
+protects gRPC and HTTP with the same validator and ownership rules. `mecatui`
+can send an operator-supplied static bearer with `--auth-token` or enroll a
+remote target with `mecatui login` and manage its own OIDC credential.
+
+Without an explicit credential, `mecatui` uses an existing saved enrollment or
+attempts a credential-free connection. The server decides whether caller
+authentication is required. Use the connect-only `--anonymous` option to bypass
+a saved enrollment when no static token is selected. A token supplied through
+`--auth-token` or `MECATL_AUTH_TOKEN` takes precedence over `--anonymous`, which
+has no environment equivalent.
+
+Remote targets use verified TLS automatically. `mecatui` refuses to send a
+static bearer over explicit non-loopback plaintext, and saved OIDC
+authentication always requires verified TLS. The server validates the bearer
+presented on each request in either mode.
 
 With OIDC disabled, the server preserves the single-shared-deployment behavior:
 there is no caller subject and anyone who can reach the API is treated as the
@@ -46,7 +49,7 @@ The durable owner is the verified `(issuer, subject)` pair from the token:
 }
 ```
 
-`issuer` and `subject` are the identity key. `name` is only a cosmetic snapshot
+`issuer` and `subject` are the identity key. `name` is a display-only snapshot
 of the token's name claim and can change later. The owner is written at resource
 creation from the verified request context, never from a request-body field.
 
@@ -101,9 +104,8 @@ JWKS endpoints resolving to private, loopback, link-local, or metadata
 addresses. Initial configuration or key-fetch failure fails closed rather than
 starting an unauthenticated service.
 
-The production validator is a delegated, maintained OIDC/JWT library; Mecatl
-does not hand-roll signature verification. A successful JWKS fetch is cached in
-process. During a short IdP outage, the last-good keys may continue to work
+The validator caches a successful JWKS fetch in process. During a short IdP
+outage, the last-good keys may continue to work
 until the staleness limit; after that the service returns `503` until it can
 refresh. A malformed, expired, wrong-issuer, or wrong-audience token returns
 `401`. The cache is not persisted, so a restarted process fetches keys again.
@@ -112,13 +114,12 @@ refresh. A malformed, expired, wrong-issuer, or wrong-audience token returns
 
 A deployment may publish a canonical HTTPS resource profile with
 `--oidc-resource`, `--oidc-client-id`, and optional `--oidc-scopes`. RFC 9728
-fields (`resource`, `authorization_servers`, and `scopes_supported`) are kept
-separate from mecatl extensions (`com.stacklok.mecatl.audience` and
+fields (`resource`, `authorization_servers`, and `scopes_supported`) remain
+separate from Mecatl extensions (`com.stacklok.mecatl.audience` and
 `com.stacklok.mecatl.client_id`). The existing issuer and audience remain the
 OIDC validator's source of truth. Discovery is anonymous HTTPS bootstrap and is
-separate from authenticated gRPC transport; it never inherits private-issuer CA
-exceptions. ToolHive's metadata/networking code is provenance for the client
-implementation, not a runtime dependency of the engine. `scopes_supported` is a
+separate from authenticated gRPC transport, so it does not inherit
+private-issuer CA exceptions. `scopes_supported` is a
 narrow operator-configured public-client request allowlist, not server authorization
 policy: discovered login requests an advertised `scopes_supported` set exactly, or the
 fixed `openid,profile,offline_access` baseline when the member is omitted, and never
@@ -154,9 +155,9 @@ mecatui connect mecated.example.internal:443 \
   --tls --tls-ca /path/to/server-ca.pem
 ```
 
-The issuer CA bundle path/reference—not the CA contents—verifies issuer endpoints and is
-saved with the enrollment; the optional
-connect CA independently verifies the gRPC server. Managed credentials live in a
+The issuer CA bundle path or reference verifies issuer endpoints; the CA
+contents are not saved with the enrollment. The optional connect CA
+independently verifies the gRPC server. Managed credentials live in a
 keyring-wrapped encrypted store and refresh on later token demand. `connect` never opens
 a browser implicitly.
 
@@ -167,10 +168,11 @@ producing a model response.
 
 ### Credential-free private-network connection
 
-`--anonymous` means “bypass saved OIDC enrollment and send no bearer”; it is not a login
-mode and creates no saved state. A clean enrollment miss already gets a credential-free
-attempt. For remote use, verified TLS remains the default. If a Tailscale deployment
-deliberately uses the tailnet as shared authority and transport, explicitly select plaintext:
+`--anonymous` means "bypass saved OIDC enrollment and send no bearer." It is a
+connection option and creates no saved state. A clean enrollment miss already
+gets a credential-free attempt. For remote use, verified TLS remains the
+default. If a Tailscale deployment deliberately uses the tailnet as shared
+authority and transport, explicitly select plaintext:
 
 ```console
 mecatui connect ozzllama:9080 --tls=false
@@ -210,13 +212,12 @@ display names, grant types, and system-principal status cannot grant this
 authority. Destructive management also requires a working cross-process session
 lease; management permission alone is not a single-writer proof.
 
-This distinction is intentional:
+The controls answer different questions:
 
-- **authentication** answers “who made this request?”;
-- **ownership** answers “whose resource is this?”;
-- **management authority** answers “may this operator perform storage-wide
-  maintenance?”; and
-- **session leases** answer “does this process exclusively own the mutation?”
+- **Authentication:** Who made this request?
+- **Ownership:** Whose resource is this?
+- **Management authority:** May this operator perform storage-wide maintenance?
+- **Session leases:** Does this process exclusively own the mutation?
 
 ## Deployment limitations
 

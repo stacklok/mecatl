@@ -6,11 +6,11 @@ description: Choose the Mecatl deployment shape that fits your workflow, infrast
 
 # Pick your deployment shape
 
-Mecatl has one agent/server core and several delivery shapes. `mecated` and
-`mecak8s` expose the same core agent experience; they differ in how the service
-is operated and where durable state lives. `mecatui` is a terminal skin over an
-embedded or remote server, not a separate agent implementation. `mecatequi` and
-an engine embedding are purpose-built exceptions.
+Mecatl has one agent core and several deployment shapes. `mecated` and
+`mecak8s` differ mainly in how you operate the service and store durable state.
+`mecatui` is a terminal client for an embedded or remote server, while
+`mecatequi` handles single-run CI work. You can also embed the engine in your
+own Go application.
 
 Use this page to choose the operational boundary that fits your environment.
 
@@ -27,13 +27,16 @@ flowchart TD
     D -- no --> MECATED[mecated]
 ```
 
-If you landed on **mecated** but want multi-replica support without affinity routing, add a session lease backend and an externalized store such as the gRPC driver — or switch to **mecak8s**, which enables Kubernetes Leases by default and wires Redis when you configure `--redis-url`.
+If you chose **mecated** but need multiple replicas without affinity routing,
+add a session lease backend and an external store such as the gRPC driver. You
+can instead use **mecak8s**, which enables Kubernetes Leases by default and uses
+Redis when you configure `--redis-url`.
 
 ## Shape summary
 
 | Shape | When to choose | State model | Key dependency |
 |-------|---------------|-------------|----------------|
-| **Embed the engine** | You own the binary and want the loop in-process | You own it — implement the ports | `doublestar` + `robfig/cron/v3` + `github.com/goccy/go-yaml` + `x/net` + `x/sync` + `mvdan.cc/sh/v3` at runtime; `goleak` is test-only |
+| **Embed the engine** | You own the binary and want the loop in-process | You own it — implement the ports | The standalone Go engine module |
 | **mecated** | Single server, interactive clients (TUI, IDE), or a controlled service deployment | In-memory, JSONL on disk, or gRPC driver | A running process; durable local sessions need a PV or shared storage |
 | **mecak8s** | Kubernetes, no persistent volumes, multi-replica | Configured Redis + Kubernetes `coordination.k8s.io` lease | Redis StatefulSet + k8s RBAC for `leases` |
 | **mecatequi** | GitHub Actions (or any CI): label/comment → patch → PR | None — stateless per run | LLM provider key; GitHub Actions runner |
@@ -48,13 +51,17 @@ The cost: you own the composition. There is no out-of-the-box server, no auth la
 
 ## mecated
 
-`mecated` is the standalone composition root: flags in, a gRPC + HTTP/SSE server out. It handles auth (`--auth-token`, TLS/mTLS), rate limiting, observability (Prometheus, pprof, OTel traces), graceful shutdown, and the full operator surface (posture ladder, workspace trust, model slots, guardrails, web search).
+`mecated` is the standalone Mecatl server. It serves gRPC and HTTP/SSE and
+provides authentication, rate limiting, observability, graceful shutdown, and
+the full operator configuration surface.
 
 It defaults to loopback-only binds with no auth — the single-user localhost trust model. Before exposing off-loopback, configure `--auth-token` and TLS. A non-loopback bind with no auth generates a loud startup warning but does not hard-fail, because a service mesh may legitimately front it.
 
 Sessions are in-memory by default (`--store-dir ""` means no persistence). Add `--store-dir` for JSONL persistence on disk; it automatically uses a single-host flock lease under the store root. Remote or multi-host stores still need a Kubernetes or gRPC session-lease backend for cross-process single-writer enforcement.
 
-The cost: you run a process and keep it alive. Durable sessions mean a PV or shared storage. Multi-replica without affinity requires a lease backend. For Kubernetes deployments where storage-free pods are a hard requirement, mecak8s is a better fit.
+You must operate the process and its storage. Multiple replicas without affinity
+routing also require a lease backend. If storage-free Kubernetes pods are a
+requirement, use `mecak8s` instead.
 
 ## mecak8s
 
@@ -67,7 +74,11 @@ but it can serve interactive remote clients when configured with
 
 The `deploy/helm/mecak8s/` Helm chart provides the production deployment contract: namespace-scoped RBAC for `leases`, a storage-free agent Deployment (two replicas by default, or one when explicitly configured), Service, and a PodDisruptionBudget for the multi-replica mode. The production profile does not create Redis and does not ship a general workload NetworkPolicy; the Kind/local profile can create a disposable Redis fixture, and enabling OIDC can render a narrow raw-driver NetworkPolicy. General network isolation remains the cluster policy layer.
 
-The cost: Redis is a required dependency — you need a managed Redis or a Redis StatefulSet in-cluster. The ServiceAccount needs `get,create,update,delete` on `leases` in `coordination.k8s.io`. The Prometheus/OTel admin surface and the `perf-mcp` subcommand are dropped (not exposed by `mecak8s`). If you need those or want to keep the operator surface identical to `mecated`, run `mecated` with `--redis-url` is not an option — `mecated` does not expose that flag; the Redis store is wired only by `cmd/mecak8s`.
+Redis is required, either as a managed service or an in-cluster StatefulSet. The
+ServiceAccount needs `get`, `create`, `update`, and `delete` access to `leases`
+in `coordination.k8s.io`. `mecak8s` does not expose the Prometheus/OTel admin
+surface or the `perf-mcp` subcommand. `mecated` is not a drop-in alternative for
+this topology because it does not support `--redis-url`.
 
 ## mecatequi
 
@@ -77,7 +88,9 @@ The standard adoption path is the reusable workflow (`mecatequi-reusable.yml`, `
 
 The exit code is not "task accomplished" — read `stop-reason` and `non-empty-diff` from the action outputs to decide whether real work landed. Exit 0 means the run completed cleanly; it does not mean the result is useful.
 
-The cost: there is no session continuity across runs. Stateless by design. If your use case requires resuming prior runs, inspecting subagents across invocations, or serving interactive clients, this is not the right shape.
+There is no session continuity across runs. If you need to resume earlier work,
+inspect subagents across invocations, or serve interactive clients, choose
+another shape.
 
 ## What's next
 

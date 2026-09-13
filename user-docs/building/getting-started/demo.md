@@ -4,7 +4,12 @@ title: See it in 60 seconds
 description: Run the offline Mecatl demo to see tools, approvals, teams, and subagents in action.
 ---
 
-`mecademo` drives a real `agent.Engine` against a scripted offline provider — no network, no API key — and shows three scenarios: the core loop (tool call, permission pause, approval, result), a 2-member agent team, and a background subagent with deferred collection. The source is in [`cmd/mecademo/demo.go`](https://github.com/stacklok/mecatl/blob/main/cmd/mecademo/demo.go) if you want to read the engine wiring directly.
+# See it in 60 seconds
+
+`mecademo` runs three scenarios against a scripted offline provider: the core
+agent loop, a two-member agent team, and a background subagent. It needs no
+network connection or API key. To inspect the engine wiring, see
+[`cmd/mecademo/demo.go`](https://github.com/stacklok/mecatl/blob/main/cmd/mecademo/demo.go).
 
 ## Prerequisites
 
@@ -59,11 +64,14 @@ guardrails: OFF (no checker model configured; bind the `guardrail` model slot or
 | `approval`       | The verdict has been received and recorded (allow once, allow always, or deny).                                                                                                                                      |
 | `result`         | Terminal event. `stop` is the reason (`end_turn`, `max_turns`, `cancelled`, …), followed by the final assistant text and cumulative token usage. `cacheHitRate` is `cacheRead / inputTokens`.                        |
 
-The `permission.ask` / approve round-trip is the key integration point. Your client decides whether to allow or deny each ask; the loop resumes or surfaces an error result accordingly. In a live deployment you surface this to a human or route it through your own policy layer.
+The `permission.ask` and approval events are the key integration point. Your
+client decides whether to allow or deny each request. In a live deployment, you
+can present the request to a person or route it through your policy layer.
 
 ## Act 2 — agent team
 
-The second act runs a 2-member team: a lead and a worker. The worker records a finding to the shared ledger; the lead's final synthesis turn consolidates it into the team's deliverable.
+The second act runs a two-member team with a lead and a worker. The worker
+records a finding, and the lead turns it into the team's final report.
 
 ```console
 === mecatl team demo (offline) ===
@@ -84,7 +92,9 @@ This example only works offline. It will be disabled if you configure a live LLM
 
 ## Act 3 — background subagent
 
-The third act demonstrates the background subagent pattern: the parent starts a child with `background: true`, gets an immediate started-result, parks on `SubagentStatus` until the child finishes, then collects the result body after the harness injects a completion notice into the model's history.
+The third act starts a child with `background: true`. The parent receives an
+immediate start result, waits with `SubagentStatus`, and collects the result
+after the child finishes.
 
 ```console
 === mecatl background subagent demo (offline) ===
@@ -148,7 +158,7 @@ Without `--openai` the demo is fully offline. With `--openai` and no key set, it
 
 Currently only OpenAI and a mock model are supported in the demo.
 
-## What's next?
+## Next steps
 
 - [Deployment decision](./deployment-decision.md) — how to pick the right deployment topology for your use case
 - [The agent loop](/building/what-you-get/agent-loop.md) — how the loop, ports, and event types fit together

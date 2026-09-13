@@ -6,14 +6,18 @@ description: Understand Mecatl's built-in tools and the read-parallel, mutate-se
 
 # Core tools
 
-The **tool catalog** is the set of tools the model can invoke during a session. Mecatl assembles it at startup from the core built-ins, any configured MCP servers, and opt-in features (skills, memory). Every tool — built-in or remote — is the same `tool.Tool` interface, so the model and the dispatch layer see one uniform surface.
+The **tool catalog** contains the tools the model can invoke during a session.
+Mecatl assembles it from the built-in tools, configured MCP servers, and optional
+features such as skills and memory. Built-in and remote tools implement the same
+`tool.Tool` interface.
 
 Two dispatch rules govern execution:
 
 - **Read-only tools** run concurrently. Multiple read-only tool calls from one model turn execute in parallel.
 - **Mutating tools** are serialized. The dispatcher never runs two mutating tools at the same time.
 
-Each tool declares its own read-only status via `ReadOnly()`. This is enforced mechanically by the dispatcher — you do not configure it.
+Each tool declares its read-only status through `ReadOnly()`, and the dispatcher
+enforces that declaration.
 
 ---
 

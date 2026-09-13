@@ -6,13 +6,9 @@ description: Run the standalone Mecatl server with providers, persistence, secur
 
 # Run mecated standalone
 
-`mecated` is the standalone composition root for Mecatl: parse flags, delegate
-assembly to `internal/app.Build`, and serve the resulting `HarnessService` over
-gRPC and HTTP/SSE concurrently. Auth, TLS/mTLS, rate limiting, observability
-(Prometheus, pprof, OTel traces, the FlightRecorder), and graceful shutdown are
-owned by `mecated` directly; the agent loop, tool catalog, permission policy,
-provider registry, MCP, and skills wiring live in `internal/app` — the same
-composition layer the embedded TUI (`mecatui`) uses in-process.
+`mecated` runs Mecatl as a standalone service over gRPC and HTTP/SSE. It
+provides the operator controls needed for authentication, TLS/mTLS, rate
+limiting, observability, persistence, and graceful shutdown.
 
 ## Native LLM endpoints
 

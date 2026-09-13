@@ -6,11 +6,10 @@ description: Consolidate project memory and the user model with bounded, reviewe
 
 # Dreaming and memory consolidation
 
-Consolidation is maintenance for facts that are already in memory. It finds
-exact duplicates and, when explicitly reviewed, can propose synthesized
-replacements. It is deliberately separate from completed-trajectory learning:
-consolidation does not enable `learning.mode`, and learning does not silently
-rewrite memory.
+Consolidation maintains facts already in memory. It finds exact duplicates and,
+after explicit review, can propose synthesized replacements. Consolidation and
+completed-run learning are separate: consolidation does not enable
+`learning.mode`, and learning does not rewrite memory.
 
 ## Availability
 
@@ -37,7 +36,7 @@ mecated serve \
   --user-model-dir "$HOME/.local/state/mecatl/usermodel"
 ```
 
-Automatic application is deliberately narrow. The local file-backed store may
+Automatic application is narrow. The local file-backed store may
 only tombstone a source when its active value and description are byte-identical
 to the displayed survivor, and it must compare the expected versions
 atomically. The survivor is never rewritten. Synthesized replacements are not
@@ -49,7 +48,10 @@ schedule. Zero disables the corresponding schedule.
 
 ## Manual `/dream` review
 
-In mecatui, `/dream` opens the reviewed maintenance flow when the server advertises it. The exact command behavior and TUI interaction live in [Commands and memory](/mecatui/commands-and-memory.md); the consolidation semantics, authorization, and storage limitations are documented here.
+In `mecatui`, `/dream` opens the reviewed maintenance flow when the server
+advertises it. See
+[Commands and memory](/mecatui/commands-and-memory.md) for the TUI workflow.
+This page covers consolidation behavior, authorization, and storage limitations.
 
 The review evaluates the proposed survivor and source entries, exact duplicates,
 synthesized replacements, bounded reasons and evidence, and the canonical values

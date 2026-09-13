@@ -547,7 +547,7 @@ three verdicts:
 
 A run parked on an askable guardrail block resumes exactly like any other pending
 approval, including across a process restart. In a **headless** deployment there is
-no human to ask, so an askable block simply resolves as a terminal block — the same
+no human to ask, so an askable block resolves as a terminal block — the same
 fail-safe default as an unresolved Layer 1 ask.
 
 **Posture coupling.** Under the [`yolo` posture](#the-posture-ladder) — the fully

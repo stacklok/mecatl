@@ -6,9 +6,9 @@ description: Install the importable Mecatl engine and build a working Go agent.
 
 # Build your first agent
 
-This is the shortest path from a clean Go module to a working Mecatl agent. You
-will create an `agent.Engine`, give it a session-scoped `tool.Environment`, run
-one prompt, and consume the resulting events.
+This guide takes you from a clean Go module to a working Mecatl agent. You will
+create an `agent.Engine`, give it a session-scoped `tool.Environment`, run one
+prompt, and consume the resulting events.
 
 The engine is an importable Go module. It does not start a server or choose your
 provider, workspace, persistence, authentication, or observability for you. Your
@@ -22,9 +22,9 @@ application supplies those pieces through `agent.Deps` and the engine ports.
 4. Choose the next extension point, including a real provider or child
    delegation.
 
-The first example is deliberately offline and requires no API key. The richer
-[`mecademo` walkthrough](/building/getting-started/demo.md) remains useful when
-you want to see tools, approval, teams, and background Subagents together.
+The first example is offline and requires no API key. To see tools, approval,
+teams, and background subagents together, follow the
+[`mecademo` walkthrough](/building/getting-started/demo.md).
 
 ## Before you start
 
@@ -104,8 +104,8 @@ would use; this example passes no runner because it has no shell tool.
 
 ## First tool: register a custom tool
 
-A tool is a small implementation of `tool.Tool` registered on the catalog passed
-to `agent.Deps`. The [first-agent-tool example](https://github.com/stacklok/mecatl/blob/main/examples/first-agent-tool/main.go)
+A custom tool implements `tool.Tool` and is registered on the catalog passed to
+`agent.Deps`. The [first-agent-tool example](https://github.com/stacklok/mecatl/blob/main/examples/first-agent-tool/main.go)
 uses a scripted mock turn to call a `Ping` tool and prints:
 
 ```text
@@ -156,8 +156,8 @@ and [Permissions and posture](/features/permissions-and-posture.md).
 
 ## Real provider: OpenRouter
 
-Once the offline path works, replace `mockllm` with the public OpenAI-compatible
-provider module configured for OpenRouter:
+After the offline example works, replace `mockllm` with the public
+OpenAI-compatible provider module configured for OpenRouter:
 
 ```sh
 go get github.com/stacklok/mecatl/provider/openai@latest

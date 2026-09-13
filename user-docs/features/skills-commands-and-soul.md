@@ -6,7 +6,7 @@ description: Shape Mecatl runs with reusable skills, slash commands, and a durab
 
 # Skills, commands, and soul
 
-Mecatl has three ways to add reusable guidance to a run:
+Use three types of reusable guidance to shape a Mecatl run:
 
 - **Skills** are progressive-disclosure instruction bundles. Their metadata is
   always available, while the full `SKILL.md` body is loaded only when activated.
@@ -99,8 +99,8 @@ Enable file-backed command expansion with `--commands-dir`, or use
 Each command is a `<name>.md` template. Frontmatter is stripped and these
 placeholders are substituted:
 
-- `$ARGUMENTS` — the complete argument string;
-- `$1`, `$2`, and so on — positional arguments.
+- `$ARGUMENTS`: the complete argument string;
+- `$1`, `$2`, and so on: positional arguments.
 
 For example, `.mecatl/commands/review.md` can be invoked as
 `/review src/api.go`, with the path substituted into the template. An unknown
@@ -108,9 +108,9 @@ slash command passes through unchanged rather than becoming an empty prompt.
 
 Every discovered skill is also available as `/<skill-name>`. This expands the
 skill body directly, using the same placeholder rules as a file-backed command.
-The tool path is better when the model needs to inspect the asset inventory; the
-slash-command path is convenient when a human wants to start with a named
-workflow. Neither path loads asset contents automatically.
+Use the tool path when the model needs to inspect the asset inventory. Use the
+slash-command path to start a named workflow directly. Neither path loads asset
+contents automatically.
 
 Expansion precedence is first-match-wins:
 
@@ -145,8 +145,8 @@ file, for example `~/.config/mecatl/soul.md.sha256`:
 - `--approve-soul` accepts the current content by rewriting the baseline;
 - `--soul-strict` withholds a drifted soul until it is approved.
 
-This detects unexpected edits; it does not restore an old copy. The agent cannot
-modify either the soul or its baseline.
+Drift protection detects unexpected edits but does not restore an old copy. The
+agent cannot modify either the soul or its baseline.
 
 ## Trust and deployment limitations
 

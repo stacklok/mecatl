@@ -11,10 +11,8 @@ future time. Each fire starts a fresh, bounded, headless session with its own
 workspace, provider/model selection, permission mode, limits, and explicit
 mutation setting.
 
-The scheduler is a composition-layer feature. The detailed storage, claiming,
-lease, firing, event, and recovery model is documented in [Scheduled tasks for
-builders](/building/what-you-get/scheduled-tasks.md). This page focuses on using
-and operating the feature.
+For the storage, claiming, lease, firing, event, and recovery model, see
+[Scheduled tasks for builders](/building/what-you-get/scheduled-tasks.md).
 
 ## Availability
 
@@ -31,9 +29,10 @@ durable schedules.
 
 ## Create and manage a schedule
 
-Schedules can be managed from the in-chat `Schedule` tool, through gRPC, or
-through the REST API. The operations are create, list, inspect, pause, resume,
-delete, and fire-now. There is no separate `mecated schedules` CLI.
+Manage schedules with the in-chat `Schedule` tool, gRPC, the REST API, or the
+`mecatui` `/schedule` overlay. You can create, list, inspect, pause, resume,
+delete, or fire a schedule immediately. There is no separate `mecated schedules`
+CLI.
 
 A schedule uses exactly one trigger: a cron expression or a one-shot timestamp.
 It defaults to read-leaning behavior. A schedule that may use `Edit`, `Write`,
@@ -60,8 +59,8 @@ The REST routes are under `/v1/schedules`. The gRPC service is
 and the [schedule proto](https://github.com/stacklok/mecatl/blob/main/contracts/proto/mecatl/v1/schedule.proto)
 for exact request and response fields.
 
-In mecatui, the `/schedule` overlay provides the same management operations when
-the connected server advertises a reachable schedule store.
+The `mecatui` overlay is available when the connected server advertises a
+reachable schedule store.
 
 ## Automatic firing
 

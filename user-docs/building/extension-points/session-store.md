@@ -6,9 +6,13 @@ description: Implement session snapshots and append-only event logs through inde
 
 # SessionStore & EventLog
 
-Mecatl's persistence layer exposes two ports: `port.SessionStore` and `port.EventLog`. Both live in `engine/port/` and have no dependency on adapters or infrastructure — they are pure Go interfaces the engine consumes through injection.
+Mecatl exposes two persistence ports: `port.SessionStore` and `port.EventLog`.
+Both are Go interfaces in `engine/port/` and are supplied through composition.
 
-The two are distinct by design. The store is snapshot-based: each `Save` captures the full current state; `Load` restores a live `*session.Session` from the most recent snapshot. The event log is append-only: the relay records every event the loop emits in chronological order, and `Read` streams them back. Neither depends on the other; they are wired independently in composition.
+`SessionStore` saves the current session snapshot and restores a live
+`*session.Session`. `EventLog` appends loop events in chronological order and
+streams them through `Read`. The ports are independent and can use different
+backends.
 
 ---
 

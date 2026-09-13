@@ -6,7 +6,9 @@ description: Define specialist agents with reusable instructions, tools, models,
 
 # Agent definitions
 
-Agent definitions are named specialist profiles that give a subagent child a scoped system prompt, optional tool allowlist, per-def model, MCP servers, hooks, and persistent memory. Where an anonymous subagent explorer inherits the parent's defaults, a named specialist is pre-configured: the model invokes it by name and the harness builds a fully scoped engine for that call.
+Agent definitions configure named specialists with their own instructions, tools,
+model, MCP servers, hooks, and memory. Unlike an anonymous subagent that inherits
+the parent's defaults, a named specialist runs with the scope defined for it.
 
 Named definitions are consumed by **two delegation paths**:
 
@@ -196,7 +198,7 @@ An inline `mcpServers` entry that declares a `command:`, `type: stdio`, or any n
 
 The `memory` field accepts three values:
 
-| Value | Behaviour |
+| Value | Behavior |
 |---|---|
 | `""` (absent) | No memory; cold start (default) |
 | `"user"` | Cross-project per-agent dir under `$XDG_CONFIG_HOME/mecatl/agents-memory/<sanitized-name>/` |

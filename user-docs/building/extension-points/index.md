@@ -6,9 +6,9 @@ description: Replace providers, storage, and policies through Mecatl's ports and
 
 # Overview & the port model
 
-Mecatl is structured as a **hexagonal architecture** (ports & adapters). The agent loop in `engine/agent` targets only the interface definitions in `engine/port` — it never imports a concrete adapter, a provider SDK, or an OS package. Adapters implement those interfaces and are wired together at composition time in `internal/app` and the `cmd/` mains.
-
-This means you can replace any single capability — swap in a different LLM provider, plug in Redis-backed session storage, or wire a custom permission policy — without touching the loop, the domain model, or any other adapter.
+Mecatl uses ports and adapters to keep the agent loop independent of providers,
+storage, policy engines, and operating-system integrations. You can replace one
+of these capabilities without changing the loop or the other adapters.
 
 ---
 
@@ -38,7 +38,9 @@ graph LR
     end
 ```
 
-The key constraint: **`engine/agent` imports only `engine/port`, the domain packages, and the standard library.** Adapters are injected at construction; the loop never names them. This is machine-enforced by depguard, a DAG test in `engine/arch/layering_test.go`, and the module boundary itself (ADR 0036 — `engine/` is its own `go.mod`, so a stray `engine→internal` import breaks the standalone build outright).
+`engine/agent` depends on interfaces in `engine/port`, the domain packages, and
+the standard library. Construct the adapters in your composition root and inject
+them into the loop.
 
 ---
 
@@ -63,17 +65,35 @@ uses but the agent loop does not consume directly.
 | `Clock` | `port/clock.go` | Wall clock — `Now() time.Time` | `engine/adapter/wallclock` (production); test fakes inline in engine tests |
 | `SessionLease` | `port/lease.go` | Cross-process single-writer lease for a session id (optional; cloud-native Phase 4) | `engine/adapter/memlease`; `internal/adapter/flocklease`; `internal/adapter/k8slease`; `internal/adapter/grpcdriver` |
 
-### Ports that are NOT in `engine/port`
+### Ports outside `engine/port`
 
-Two interfaces that are conceptually ports live in `engine/tool` instead of `engine/port`:
+The filesystem and execution-environment ports live in `engine/tool`:
 
-- **`tool.FileSystem`**, **`tool.Workspace`**, and **`tool.Environment`** — these define the filesystem + execution-environment abstraction the tools execute against. They live in `engine/tool` because `port` already imports `tool` (for `LLMRequest.Tools []tool.ToolSpec`) and `Tool.Execute` takes an `Environment` — moving it into `port` would create a `port↔tool` import cycle. `Environment` bundles a `session.EnvironmentRef{Kind, ID}` (cycle-safe identity — a DURABLE snapshot field as of ADR 0214, so a non-in-tree ref survives a process restart and reattaches a live `Environment` via `server.Config.EnvironmentResolver`), a NON-NULL `Workspace`, and an OPTIONAL bound `CommandRunner` (nil → Shell surfaces `ErrNoShell`). `CommandRunner.Run`/`CommandStreamer.RunStreaming` take NO per-call workdir — a runner is bound to one namespace at construction. `Workspace` is version-aware: implementations mint opaque `FileVersion` values and expose version-bearing reads, create-only writes, and conditional replace-by-version. Public Workspace has no unconditional Write capability; concrete adapters may retain bootstrap/setup writers outside the interface. The additive `tool.WorkspaceNamespace` extension provides immediate directory listing, non-recursive removal, no-clobber rename, and no-clobber regular-file copy without breaking existing `Workspace` implementations; built-in namespace tools report unsupported when an embedder omits it. `RecordRead`/`RecordedVersion` form an I/O-free ledger scoped to the live Workspace/Environment instance; key normalization must be lexical (ordinary abs/relative forms converge, physical symlink aliases may safely miss). Implementations are `engine/adapter/memfs` (tests), `internal/adapter/osfs` (production), and the ACP editor-buffer workspace. `tool.EnvironmentForker` replaces `tool.WorkspaceForker` (Fork returns a complete child Environment); `tool.EnvironmentMerger` replaces `tool.ForkMerger` (Merge receives child/parent Environments). Existing engine embedders implementing `Workspace` must add `ReadVersion`, `CreateFile`, `ReplaceFile`, and `RecordedVersion`, update `RecordRead` to accept `FileVersion`, remove `Write` from their interface assumptions, update `Tool.Execute` to take `Environment`, update `CommandRunner.Run` to drop the workdir parameter, and update any `WorkspaceForker`/`ForkMerger` implementations to the `EnvironmentForker`/`EnvironmentMerger` signatures. See [ADR 0214](https://github.com/stacklok/mecatl/blob/main/docs/adr/0214-environment-persistence.md) (persistence/reattachment), [ADR 0211](https://github.com/stacklok/mecatl/blob/main/docs/adr/0211-execution-environment-runtime-seam.md) (runtime seam), and [ADR 0208](https://github.com/stacklok/mecatl/blob/main/docs/adr/0208-execution-environment.md) (version protocol).
+- `tool.FileSystem` provides the underlying filesystem operations.
+- `tool.Workspace` adds version-aware reads, create-only writes, conditional
+  replacement, and a per-environment read ledger. Implementations mint opaque
+  `FileVersion` values. The public interface has no unconditional overwrite.
+- `tool.Environment` combines a durable `session.EnvironmentRef`, a non-nil
+  `Workspace`, and an optional `CommandRunner`. A runner is bound to one
+  namespace when constructed; if it is absent, Shell returns `ErrNoShell`.
+- `tool.WorkspaceNamespace` optionally adds immediate directory listing,
+  non-recursive removal, no-clobber rename, and no-clobber regular-file copy.
+  Built-in namespace tools report unsupported when an embedder omits it.
+- `tool.EnvironmentForker` and `tool.EnvironmentMerger` create and merge child
+  environments for isolated work.
+
+Use `engine/adapter/memfs` for tests or `internal/adapter/osfs` for an OS-backed
+workspace. The ACP integration supplies an editor-buffer workspace. For the
+version protocol and environment lifecycle, see [ADR 0208](https://github.com/stacklok/mecatl/blob/main/docs/adr/0208-execution-environment.md),
+[ADR 0211](https://github.com/stacklok/mecatl/blob/main/docs/adr/0211-execution-environment-runtime-seam.md),
+and [ADR 0214](https://github.com/stacklok/mecatl/blob/main/docs/adr/0214-environment-persistence.md).
 
 ---
 
 ## When to implement a port vs. use the reference adapters
 
-Most deployments — embedding the engine in a service, running `mecated`, or wrapping it in a thin custom binary — use the reference adapters directly. Composition in `internal/app.Build` wires them together; you configure, not replace.
+Most deployments use the reference adapters directly. Implement a port only
+when your application needs a different capability at that boundary.
 
 Implement a port when you need to **swap a specific capability at the boundary**:
 
@@ -97,7 +117,9 @@ You do **not** need to implement a port to:
 
 ## How adapters are wired: the composition pattern
 
-Mecatl uses **explicit constructors with no DI framework**. All wiring happens in `internal/app/build.go` (`app.Build`), which is the single shared composition root. The `cmd/` mains call it; they do not wire anything themselves.
+Mecatl uses explicit constructors. The shipped commands share the composition
+root in `internal/app/build.go`; an embedding application can follow the same
+pattern in its own composition root.
 
 The schematic below shows how ports are satisfied for a typical deployment. Actual field names are illustrative; see `internal/app/build.go` for the live signatures.
 
@@ -144,9 +166,12 @@ func Build(cfg Config) (*server.Service, error) {
 }
 ```
 
-A few things to notice:
+The example demonstrates three composition rules:
 
-- **One object can satisfy multiple ports.** `jsonlstore.Store` implements `SessionStore`, `PrunableStore`, `EventLog`, and `ToolCallRecorder`. Nothing in `engine/agent` knows or cares — it sees distinct interface values. (The engine itself does not hold the `EventLog`; the service layer appends to it. The same store object is passed to both.)
+- **One object can satisfy multiple ports.** `jsonlstore.Store` implements
+  `SessionStore`, `PrunableStore`, `EventLog`, and `ToolCallRecorder`. Pass it
+  separately wherever each interface is required; the service, rather than the
+  engine, owns the `EventLog`.
 - **Adapters are never imported by the engine.** `agent.Deps` carries interface values only. A new LLM adapter never requires an engine change.
 - **Composition is the only place adapters meet.** Domain packages and `engine/agent` have no adapter imports, which the depguard allowlist and the DAG test verify on every build.
 
@@ -156,7 +181,7 @@ To swap, say, `SessionStore` for your own database backend:
 
 1. Implement `port.SessionStore` (and optionally `port.PrunableStore`) in a new package.
 2. In your composition root (either your own `main` or a fork of `internal/app/build.go`), construct your store and pass it in place of `jsonlstore.New(...)`.
-3. Nothing else changes — the engine, the server, the domain, the permission stack are all untouched.
+3. Leave the engine and unrelated adapters unchanged.
 
 To validate your implementation against the conformance suite:
 

@@ -39,7 +39,7 @@ needs for work in that tree:
 The discovery layer follows the repository's instruction-file conventions and
 combines applicable files for the workspace. A more local instruction file can
 refine guidance for its subtree. Instructions are context, not a permission
-rule: a repository saying “always run this command” does not make the command
+rule: a repository saying "always run this command" does not make the command
 allowed, and a deny or ask rule still wins.
 
 Treat instructions as untrusted model input. Do not put credentials, bearer
@@ -106,9 +106,9 @@ Trust can come from:
 - an undrifted remembered trust entry created by mecatui; or
 - the posture floor on an interactive root, where applicable.
 
-A headless root does not infer trust from its posture. Pass an explicit trust
-source when an unattended job must admit project instructions and project
-authority. A malformed trust configuration fails safe to untrusted.
+A headless root does not infer trust from its posture. Configure an explicit
+trust source when an unattended job must admit project instructions and project
+authority. A malformed trust configuration leaves the workspace untrusted.
 
 In mecatui's embedded interactive server, the first encounter with a project
 authority set can prompt:
@@ -130,8 +130,9 @@ human-authored settings file; a repository cannot edit itself into trust.
 
 ## What untrusted means
 
-An untrusted workspace is still usable. The built-in tools, your user-tier soul,
-user-tier rules/skills/commands/agents, and every deny/ask rule remain active.
+You can still use an untrusted workspace. The built-in tools, your user-tier
+soul, user-tier rules/skills/commands/agents, and every deny/ask rule remain
+active.
 The withheld project authority set includes:
 
 - project `allow` rules;

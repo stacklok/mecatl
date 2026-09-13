@@ -6,10 +6,10 @@ description: Send supported images and content blocks to models through Mecatl c
 
 # Multimodal input
 
-Mecatl accepts a provider-neutral prompt made from text and typed media parts.
-The server computes whether the selected model and provider can handle each
-modality before the prompt is admitted. Unsupported media fails loudly; it is
-never silently dropped or downgraded to an empty text prompt.
+Mecatl accepts provider-neutral prompts containing text and typed media parts.
+Before admitting a prompt, the server checks whether the selected model and
+provider support each modality. The server rejects unsupported media instead of
+dropping it or sending an empty text prompt.
 
 ## Availability
 
@@ -78,10 +78,9 @@ The server rejects a malformed part when:
 - the URL is invalid or violates the media URL safety policy; or
 - the prompt has neither text nor a media part.
 
-The same content validation path is reused by ACP and the wire adapters. A
-client receives an invalid-parameters error rather than a prompt that quietly
-lost an image or audio block. Inline bytes remain bytes; text repair rules do
-not rewrite binary media.
+ACP and the wire adapters use the same content validation. A client receives an
+invalid-parameters error when an image or audio block is invalid. Text repair
+rules do not rewrite inline binary media.
 
 URL-sourced media is fetched under the server's bounded public-URL policy. Do
 not use it as a way to reach private, loopback, link-local, metadata, or other

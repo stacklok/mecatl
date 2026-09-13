@@ -6,16 +6,14 @@ description: Run the signed mecatui container image as a brood-box agent or term
 
 # mecatui container image (brood-box)
 
-`mecatui` ships as a container image on every release, alongside `mecated`:
+`mecatui` ships as a container image with every release, alongside `mecated`:
 `ghcr.io/stacklok/mecatl/mecatui` (tagged `<version>` and `latest`, multi-arch
-`linux/amd64` + `linux/arm64`). It is built with [ko](https://ko.build/) from
-`./cmd/mecatui` and carries a [brood-box](https://github.com/stacklok/brood-box)
-agent manifest, so it can be imported as a brood-box agent without a separate
-Dockerfile or wrapper.
+`linux/amd64` + `linux/arm64`). It includes a
+[brood-box](https://github.com/stacklok/brood-box) agent manifest, so you can
+import it without a separate Dockerfile or wrapper.
 
-It is signed with cosign (keyless, via the release workflow's OIDC identity),
-ships an SPDX SBOM as a signed attestation, and carries SLSA build provenance —
-the same supply-chain story as the `mecated` image. See
+It is signed with keyless cosign, includes an SPDX SBOM attestation, and carries
+SLSA build provenance. See
 [the release workflow docs](https://github.com/stacklok/mecatl/blob/main/.github/workflows/README.md)
 for how to verify a signed image.
 

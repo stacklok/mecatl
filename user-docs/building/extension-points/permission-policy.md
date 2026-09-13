@@ -6,9 +6,12 @@ description: Implement a permission policy for custom authorization and tool app
 
 # PermissionPolicy
 
-`port.PermissionPolicy` is the seam through which the agent loop decides whether a tool call is allowed to run. If you need policy logic that cannot be expressed in YAML config files — tenant-specific rules, decisions from an external service, integration with an enterprise IAM system — you implement this interface and wire it in at composition.
+`port.PermissionPolicy` decides whether a tool call can run. Implement it when
+YAML configuration cannot express your policy, such as tenant-specific rules or
+decisions from an external authorization service, then inject it at composition.
 
-The reference implementation is `engine/adapter/permpolicy.Policy`. The production layer in `internal/adapter/permconfig` and `internal/app` builds on top of it. Start by understanding what the reference does before deciding to replace it.
+The reference implementation is `engine/adapter/permpolicy.Policy`. The shipped
+composition builds on it through `internal/adapter/permconfig` and `internal/app`.
 
 ---
 
@@ -228,7 +231,9 @@ These are not advisory — tests in `engine/` fail if you regress them, and the 
 2. **Configured-Ask is never suppressible.** If a rule with `Scope` above `ScopeBuiltinDefault` resolves to `Ask`, no `Allow` at any scope may suppress it. Set `ConfiguredAsk: true` on the decision when the winning Ask came from a configured rule.
 3. **Plan mode gates first.** When `mode == session.ModePlan`, `Edit` and `Write` must be denied, and non-read-only `Shell` must be denied, before any rule is consulted.
 4. **Learned allows are lowest-scope only.** A `Learn` call may record a session-scoped rule, but that rule must never be able to override a deny or a configured ask.
-5. **`Learn` must never learn compound or substituted Shell.** See the learnable-rule semantics above. A no-op on an unlearnable call is the correct behaviour.
+5. **`Learn` must never learn compound or substituted Shell.** See the
+   learnable-rule semantics above. A no-op on an unlearnable call is the correct
+   behavior.
 
 ---
 

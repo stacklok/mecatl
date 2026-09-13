@@ -33,7 +33,12 @@ the configured bearer token; configured TLS or mTLS requirements apply as usual.
 Do not treat this low-cost probe as public metadata: an unauthenticated call is
 rejected when authentication is enabled.
 
-This response is a privacy boundary. It never includes connection addresses other than the optional `llm_provider_display_endpoint`'s sanctioned scheme, host, optional port, and escaped clean path. It never includes userinfo, query, fragment, connection state, topology, arbitrary configuration, capabilities, authentication or TLS material, workspace paths, session or durable-store data, prompts, credentials, or raw errors. This sanitized diagnostic display projection is not connection configuration or a connection instruction. It is a side-effect-free lookup of the requested already-known provider: the RPC does not infer a default or session selection, discover providers, re-read configuration, or report alternatives.
+This response is a privacy boundary. Apart from the sanitized display endpoint,
+it contains no connection addresses, topology, configuration, capabilities,
+authentication or TLS material, workspace paths, session or durable-store data,
+prompts, credentials, or raw errors. The RPC performs a side-effect-free lookup
+of the requested provider; it does not infer a default or session selection,
+discover providers, re-read configuration, or report alternatives.
 
 The RPC is additive. Clients talking to a server predating it receive
 `UNIMPLEMENTED` and should degrade without surfacing the returned error body. A

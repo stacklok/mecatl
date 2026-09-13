@@ -11,7 +11,10 @@ the production Helm deployment, session snapshots and the durable event log
 live in Redis, while Kubernetes Leases coordinate session ownership. That
 makes the pod disposable without making the session disposable.
 
-A Mecatl deployment is "cloud-native" when it satisfies three properties: the process holds no irreplaceable state, all durable state lives outside the process, and the record of what happened survives process death. This page defines those three properties, maps each deployment shape against them, walks the four delivery phases that shipped them, and explains what the properties mean for operators.
+A Mecatl deployment is "cloud-native" when the process holds no irreplaceable
+state, durable state lives outside the process, and the record of what happened
+survives process failure. This page defines those properties and explains their
+operational consequences.
 
 ---
 
@@ -36,8 +39,6 @@ A process crash can still lose buffered message/reasoning deltas from only the i
 turn or leave an unterminated final sidecar record. Completed-turn deltas are coalesced
 into at most two durable appends while clients remain chunk-streamed.
 
-The harness was unusually close to this by construction: the LLM adapters keep no server-side state (`store:false`; full replay on every turn), and the session aggregate round-trips through a stable snapshot saved at every turn boundary. The remaining gaps were the snapshot missing three fields (session profile, provider/model selector, cumulative token usage), a process death while parked awaiting approval stranding the session, and the event stream being emitted and discarded rather than persisted.
-
 ### 2. Externalized state
 
 Nothing load-bearing lives only in process memory. The three durable artifacts that matter:
@@ -53,9 +54,9 @@ With a durable backend, the append-only event log survives process death. Two co
 - **Compaction archive** (`EvCompactionArchive`) — the pre-compaction conversation captured before `ReplaceHistory` rewrites it, so "what did the agent do in turn 12" stays answerable after compaction.
 - **Approval replay** (`EvApproval`) — allow-always verdicts (tool name + verdict string + askID, no raw args) replayed into a fresh permstore on load so a restarted process does not re-ask for every previously-granted tool.
 
-A third event, `EvUserPrompt`, records every user turn (the genuine prompt plus any synthetic continuation) for the same reason: so the durable log alone is enough to reconstruct what the user actually asked. All three are log-only — neither relay puts them on the client's own event stream, only the durable log the server writes to. `engine/adapter/eventsource.Fold` is the reference consumer that walks the log back into a full `*session.Session` for a `SessionStore.Load` that has no snapshot of its own (see [ADR 0038](https://github.com/stacklok/mecatl/blob/main/docs/adr/0038-event-sourced-rehydration.md)).
-
-The loop stays storage-agnostic throughout. It only emits — it never imports `port.EventLog` or calls `Append`. Persistence is handled by the server relay in `internal/adapter/server/grpc.go` and `internal/adapter/server/http.go`.
+A third event, `EvUserPrompt`, records every user turn, including synthetic
+continuations, so the durable log can reconstruct what the user asked. These
+events appear only in the server's durable log, not in the client event stream.
 
 #### Watching a session durably
 
@@ -109,61 +110,6 @@ than silently replaying the whole transcript.
 **mecated:** the `--store-dir` flag selects JSONL persistence (`internal/adapter/store/jsonlstore`), which implements `port.SessionStore`, `port.EventLog`, and `port.ToolCallRecorder` in one `Store` type. It automatically composes the single-host flock lease under `<store-dir>/.session-leases`. Remote or multi-host deployments must wire an appropriate session lease (`--session-lease-k8s-namespace` for Kubernetes or `--session-lease-url` for a gRPC driver); without one, session-affinity routing is the deployer's responsibility and destructive maintenance fails closed.
 
 **mecak8s:** with `--redis-url`, wires Redis for session store and event log (`internal/adapter/redisstore`) and the Kubernetes `coordination.k8s.io/v1` lease adapter (`internal/adapter/k8slease`) at startup. The three properties hold when the external Redis and lease prerequisites are available; the Redis connection itself must be pointed somewhere and secured — `--redis-url` plus either verified TLS (`--redis-tls` or `--redis-tls-ca`) or, for a disposable local fixture only, the explicit `--redis-allow-plaintext` opt-in.
-
----
-
-## The four delivery phases
-
-ADR 0027 delivered the cloud-native arc in four independently-shippable phases.
-
-### Phase 1 — Snapshot fidelity (SHIPPED)
-
-Made the snapshot faithful enough that a restarted process is indistinguishable mid-conversation. Three fields were added to `sessnap.Snapshot` (`engine/adapter/sessnap/sessnap.go`):
-
-- `profile` — session profile (`no-fs` vs default); every session also carries an exact valid `EnvironmentRef`, and no-FS rehydration is derived from server-owned durable state rather than workspace emptiness.
-- `ProviderID`/`ModelID` — the provider/model selector pair, so `Service.rehydrateSession` rebuilds the SAME per-session engine rather than falling to the default-provider floor.
-- `usage` — cumulative `session.Usage` (input + output tokens, cache excluded), so the `MaxRunTokens` budget brake continues across restart.
-
-These fields retain the `sessnap-json/1` envelope. Current snapshots also persist the exact private `EnvironmentRef{kind,id,revision}` as the sole placement identity; invalid or duplicate legacy placement state is rejected rather than inferred or migrated.
-
-### Phase 2 — Awaiting-approval evict/rehydrate (SHIPPED)
-
-The process now supports rehydrating a session while it is parked awaiting a human
-approval. A later approval request can resume the persisted ask; this is not a
-claim that an in-flight goroutine survives process death.
-
-The key addition is `engine/agent/loop.go` (`ResumeApproval`) → `engine/agent/dispatch.go` (`driveFromAwaiting`), reached from `internal/adapter/server/service.go` (`resumeFromAwaiting`) on a `LookupRun` miss. The pending tool call is resolved through the same post-authorize tail the live loop uses — exactly once — with every other unanswered tool call on the trailing assistant message closed out as synthetic aborted results, so `session.ValidateToolPairing` holds. The loop continues through the shared `runLoop` as normal.
-
-The same-process path (a live run) is unchanged and tried first.
-
-Wire exposure: the rehydrate-resume path is reachable only through `POST /v1/sessions/{id}/approve` (HTTP/SSE relay). The gRPC `Converse` stream resolves approvals against the stream's own live in-process run only.
-
-### Phase 3 — Durable event log and consumers (SHIPPED)
-
-Three sub-phases, all shipped.
-
-**3a** — Added the `port.EventLog` seam (`engine/port/eventlog.go`: `Append` + a streamable `Read` returning `iter.Seq2[session.Event, error]`). The local adapter is the jsonlstore `Store`, which now writes a `.events.jsonl` sidecar (`eventlog-json/1` per-record format tag). The relay appends every observed event to the log, decoupled from the client send — a dead client never stops the log.
-
-**3b** — Two consumers of the 3a log. The compaction archive (`EvCompactionArchive`) captures pre-compaction history. The approval-replay closure (`internal/app/approvalreplay.go`) re-drives `Policy.Learn` for every `EvApproval{AllowAlways}` on load, killing the Phase 2 wart where a restarted session re-asked for previously-granted tools.
-
-**3c** — The driver service (`EventLogService`, `contracts/proto/mecatl/driver/v1/event_log.proto`), the remote path for the durable log. Append is unary; Read is server-streaming (the first streaming driver RPC, chosen because a run's log grows unbounded). The client is `internal/adapter/grpcdriver/eventlog.go`; wire it with `--event-log-url`.
-
-### Phase 4 — Session leasing / multi-replica readiness (SHIPPED)
-
-Cross-process single-writer enforcement via `port.SessionLease` (`engine/port/lease.go`). The seam is optional and discovered by type assertion, exactly like `port.PrunableStore`; local JSONL stores additionally auto-compose the existing flock adapter beneath their store root.
-
-The lease is acquired at the run-entry funnel (`internal/adapter/server/service.go` (`acquireLease`)) after the per-session `runEntryMu`, so same-process exclusion stays cheap. A competing live owner gets `ErrSessionLeasedElsewhere` (gRPC `FAILED_PRECONDITION` / HTTP 409). The lease is renewed by a `Service`-owned goroutine (`renewLoop`) and released on `CloseSession` or shutdown.
-
-Four adapters ship:
-
-| Adapter | Package | Use case |
-|---|---|---|
-| In-memory | `engine/adapter/memlease` | Tests, single-process |
-| Flock | `internal/adapter/flocklease` | Single host, multiple processes |
-| Kubernetes lease | `internal/adapter/k8slease` | In-cluster multi-replica |
-| gRPC driver | `internal/adapter/grpcdriver` (`SessionLeaseService`) | Remote / multi-host |
-
-The loop never imports `port.SessionLease`. Acquire, renew, and release are entirely composition/`Service`-owned.
 
 ---
 

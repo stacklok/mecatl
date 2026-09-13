@@ -7,7 +7,10 @@ description: Work in the mecatui terminal interface, steer runs, review tools, a
 
 # Work in the TUI
 
-Assistant text streams into the conversation as it arrives. Tool calls appear as compact cards rather than raw JSON. When a card is collapsed, its tool arguments and result are shown as a **width-bounded preview**: the preview fits the available terminal width and may show only the first useful rows of a long result. This keeps a large tool response from making the conversation unreadable or pushing other cards off screen. Focus the card and press `ctrl+t` to open the expanded view, which exposes the complete tool output (and complete arguments when available). Press `ctrl+t` again to return to the collapsed preview. Edit and Write cards show their diff.
+Assistant text streams into the conversation as it arrives. Tool calls appear as
+compact cards with previews that fit the terminal width. Focus a card and press
+`ctrl+t` to view its complete output and arguments. Press `ctrl+t` again to return
+to the preview. Edit and Write cards show their diff.
 
 ## Keep working while a run is active
 
@@ -17,7 +20,15 @@ With an empty input, press `↑` to bring a pending steer or queued follow-up ba
 
 ## When a model stream fails
 
-Mecatui automatically repeats the exact failed model step once only when the server explicitly reports `retryable + precommit`. The retry adds no prompt and keeps any queued future messages in place. If that automatic retry fails again, use **`/retry`** to retry the same step manually. `/retry` is also the required action for a `retryable + visible` failure, including an eligible retry-pending session reopened from storage. It sends no synthetic prompt or user card, does not reset the textarea, and leaves queued prompts untouched. A visible retry adds a scrollback notice that the failed partial output is superseded; a precommit retry does not claim that output was visible. If no eligible failure is pending, `/retry` reports that fact and does nothing. Historical transcript replay alone never starts an automatic retry.
+When the server reports `retryable + precommit`, `mecatui` repeats the failed model
+step once. The retry adds no prompt and preserves queued messages. If it fails
+again, use `/retry` to retry the step manually. Also use `/retry` for a
+`retryable + visible` failure, including an eligible retry-pending session reopened
+from storage.
+
+`/retry` preserves the prompt textarea and queued prompts. For visible failures,
+scrollback marks the failed partial output as superseded. If no eligible failure
+is pending, the command reports that fact and makes no changes.
 
 ## Review approvals
 
@@ -26,7 +37,7 @@ When a tool needs permission, a modal shows what it wants to do. Read the reques
 ## Complete browser authorization
 
 When workspace-service enrollment or an MCP tool opens a browser authorization,
-complete consent there and return to the TUI. Mecatui observes the pending
+complete consent there and return to the TUI. `mecatui` observes the pending
 request automatically; do not press a refresh/recheck key. Each workspace-service
 connect, check, retry, or cancel attempt is bounded to 30 seconds. If that deadline
 expires, the server may have changed state even though mecatui did not receive the
@@ -46,4 +57,9 @@ copied only for that interaction and are not retained in the conversation.
 
 ## A short key reference
 
-Use `?` on an empty prompt for the live help overlay. The everyday defaults are `enter` to send—while work is running, steer when the server supports it or queue a follow-up otherwise—`shift+enter` to insert a newline, `ctrl+t` to inspect details, `pgup`/`pgdn` to scroll, and `/` to open commands. See [Keybindings](./keybindings.md) for approval controls, remapping, input-editing caveats, and the complete reference.
+Use `?` on an empty prompt for the live help overlay. The everyday defaults are
+`enter` to send or steer, `shift+enter` to insert a newline, `ctrl+t` to inspect
+details, `pgup`/`pgdn` to scroll, and `/` to open commands. If the server does not
+support steering, `enter` queues a follow-up while a run is active. See
+[Keybindings](./keybindings.md) for approval controls, remapping, and the complete
+reference.

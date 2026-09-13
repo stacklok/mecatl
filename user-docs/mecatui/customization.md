@@ -10,7 +10,10 @@ description: Customize mecatui's client settings while keeping embedded server s
 
 `mecatui` client settings control local presentation and input: themes, keybindings, and similar UI behavior. They apply whether the client uses an embedded or remote server.
 
-Bare `mecatui` also starts an embedded server, so its embedded-server flags can control local provider selection, storage, and policy for that server. With `mecatui connect`, those flags are rejected: credentials, provider/model availability, workspace policy, storage, retention, and learning belong to the remote server host. Change remote behavior only through that server's approved configuration path.
+Bare `mecatui` also starts an embedded server. Its server flags control local
+provider selection, storage, and policy. `mecatui connect` rejects those flags
+because the remote server controls credentials, available providers and models,
+workspace policy, storage, retention, and learning.
 
 ## Customize the client
 
@@ -20,10 +23,9 @@ Bare `mecatui` also starts an embedded server, so its embedded-server flags can 
 ### Status line
 
 `$XDG_CONFIG_HOME/mecatui/settings.yaml` may customize the local header and footer
-with `status_customization`. It is a client-only setting: project files and remote
-servers cannot configure it. Choose exactly one responsive template set or a local
-direct executable; the client receives raw command input only on stdin and never
-runs a configured shell string.
+with `status_customization`. Project files and remote servers cannot configure this
+client-only setting. Choose either a responsive template set or a local executable.
+The client sends command input only through standard input.
 
 See [Status line customization](./status-line.md) for the complete schema, input
 reference, StatusML grammar and escaping rules, safety limits, and copyable

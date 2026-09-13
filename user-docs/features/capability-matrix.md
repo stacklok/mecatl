@@ -6,10 +6,10 @@ description: Choose the Mecatl deployment surface that provides the capabilities
 
 # Capability and deployment matrix
 
-Most Mecatl capabilities come from the shared engine and server composition.
-Choose a deployment based on the differences that affect your environment:
-where the workspace lives, how state is stored, whether a person can approve
-requests, and which client/API surface you need.
+Choose a Mecatl deployment based on the differences that affect your
+environment: where the workspace lives, how state is stored, whether a person
+can approve requests, and which client or API surface you need. Most
+capabilities come from the shared engine and server.
 
 ## Shared server capabilities
 
@@ -34,18 +34,18 @@ of its server.
 | Run a general-purpose server | ✓ | ✓ | Starts one locally |
 | Workspace and Shell namespace | Host-local workspace | Configured pod workspace or no-FS profile | Host-local workspace |
 | gRPC API | ✓ | ✓ | Private Unix socket |
-| HTTP/SSE API | ✓ | ✓ | — |
+| HTTP/SSE API | ✓ | ✓ | No |
 | Durable state | Optional configured backend | Redis-backed when configured | JSONL store by default |
-| Kubernetes leases and drain handling | — | ✓ | — |
+| Kubernetes leases and drain handling | No | ✓ | No |
 | Interactive permission approvals | Opt | Headless by default | ✓ |
-| ACP editor integration | ✓, `mecated acp` only | — | — |
+| ACP editor integration | ✓, `mecated acp` only | No | No |
 
 ## Choose a deployment
 
 ### Use `mecated` for a general client/server deployment
 
-`mecated` is the general-purpose server for any environment outside the
-Kubernetes-native `mecak8s` shape. It serves gRPC and HTTP/SSE, can use local or
+`mecated` is the general-purpose server for environments outside Kubernetes. It
+serves gRPC and HTTP/SSE, can use local or
 configured storage, and supports optional server features such as MCP, schedules,
 and ACP.
 
@@ -95,7 +95,7 @@ restores conversation state but does not yet restore the editor-buffer override.
 
 ## Feature availability at runtime
 
-Optional feature availability is determined by the server’s configured seams and
+Optional feature availability depends on the server's configuration and
 registered tools. Check the capability snapshot returned when you create a
 session rather than assuming a feature is enabled because a deployment can
 support it.

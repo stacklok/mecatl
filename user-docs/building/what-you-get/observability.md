@@ -6,7 +6,9 @@ description: Monitor Mecatl runs with metrics, traces, diagnostics, and resilien
 
 # Observability & resilience
 
-Mecatl ships three distinct observability channels and a resilience decorator that wraps every LLM provider call. This doc describes what each one emits, what guarantees the LLM layer makes on failure, and which flags control the behavior.
+Mecatl exposes three observability channels and wraps LLM provider calls with a
+resilience layer. This page describes their outputs, failure guarantees, and
+configuration.
 
 ---
 

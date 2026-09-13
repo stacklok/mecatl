@@ -89,13 +89,13 @@ mecatui login mecated.example.com:443
 mecatui connect mecated.example.com:443
 ```
 
-Login opens the Authorization Code with PKCE flow in your browser and stores the
-result for that server. `connect` never opens a browser. Use `--no-browser` with
+Login opens an Authorization Code with PKCE flow in your browser and stores the
+credentials for that server. `connect` never opens a browser. Use `--no-browser` with
 `login` on a headless host, then open the printed URL from a workstation that
 can reach port `18473` on the login host, usually through SSH port forwarding.
 
-Login uses the system keyring on macOS. On Linux, automatic selection uses an
-available Secret Service or owner-only plaintext files on a headless host. Use
+Login uses the system keyring on macOS. On Linux, it uses an available Secret
+Service or owner-only plaintext files on a headless host. Use
 `--credential-store` when you need to choose the storage explicitly.
 
 If the server does not publish discovery metadata, its operator must also give

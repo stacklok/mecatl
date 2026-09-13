@@ -32,13 +32,22 @@ source build). `server_implementation` is the stable composition family only:
 `mecated`, `mecak8s`, or embedded `mecatui`; a generic embedding uses `unknown`.
 It is neither an instance identifier nor a deployment label.
 
-The optional `llm_provider_display_endpoint` is a sanitized diagnostic display projection for the supplied `provider_id`, or absent when unavailable; it is not connection configuration or a connection instruction. It retains only scheme, host, optional port, and escaped clean path; userinfo, query, fragment, invalid/control data, malformed values, and oversized values are omitted. The route does not infer a default or session selection, discover providers, re-read configuration, inspect session state, or list alternatives.
+The optional `llm_provider_display_endpoint` is a sanitized display value for the
+supplied `provider_id`, or absent when unavailable. It retains only the scheme,
+host, optional port, and escaped clean path; it omits userinfo, query,
+fragment, invalid or control data, malformed values, and oversized values. It is
+not connection configuration. The route does not infer a default or session
+selection, discover providers, re-read configuration, inspect session state, or
+list alternatives.
 
 The route is inside the normal API authentication boundary. When `--auth-token`
 (or `MECATL_AUTH_TOKEN`) is configured, send its bearer token exactly as for the
 other HTTP API routes; configured TLS or mTLS requirements also apply. A caller
 without required authentication receives the normal `401` response. The endpoint
-never reads or returns configuration beyond this sanctioned endpoint projection, capabilities, topology, listener or connection details, authentication or TLS material, workspace paths, session or durable state, prompts, credentials, or raw errors.
+never returns configuration beyond this sanitized endpoint projection, nor does
+it return capabilities, topology, listener details, authentication or TLS
+material, workspace paths, session or durable state, prompts, credentials, or
+raw errors.
 
 The route is additive. An older server returns `404`; clients should reduce that
 to their own safe unsupported status rather than display the response body. Clients

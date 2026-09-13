@@ -10,7 +10,9 @@ This is the builder-facing reference for lifecycle hooks and the `HookRunner`
 contract. For the operator-facing permission and guardrail behavior surrounding
 hooks, see [Permissions and posture](/features/permissions-and-posture.md).
 
-Hooks are lifecycle gates wired into the agent loop. They fire at fixed phases — before a tool runs, after it returns, when a session starts, when it ends — and they can block an action outright, rewrite what the model sees, or simply observe and notify. Hooks are operator-deployed: the model has no way to install, modify, or disable them. Every event starts as allowed; hooks only restrict or transform.
+Hooks run at fixed phases of the agent loop. They can block an action, rewrite
+what the model sees, or observe an event. Operators deploy hooks; the model
+cannot install, modify, or disable them. Every event starts as allowed.
 
 ## Hook phases
 
@@ -125,7 +127,12 @@ For `PreToolUse`, the permission policy runs on the **original, pre-mutation** a
 
 ## Guardrails: a built-in model-backed hook
 
-Everything above is a **shell** hook you write yourself. Mecatl also ships a built-in `PreToolUse`/`PostToolUse` pair that inspects tool content with a dedicated checker **model** instead of a script — a separate "guardrails" layer, off until you point it at a checker model, then on by default with a sensible ruleset (blocking `WebSearch`/`WebFetch`/all MCP tools/`Shell`) rather than empty. It exists for the case a shell hook can't handle well: judging whether a fetched web page looks like a prompt-injection attempt, or whether a tool call is about to exfiltrate a secret. See [Permissions & guardrails](permissions.md#layer-2--model-backed-guardrails) for the full picture, including the approve-once recovery flow when a guardrail blocks something you actually wanted.
+Mecatl also includes model-backed `PreToolUse` and `PostToolUse` hooks for
+content that scripts cannot reliably classify, such as prompt injection in a
+fetched page or possible secret exfiltration in tool arguments. These guardrails
+remain off until you configure a checker model. See
+[Permissions and guardrails](permissions.md#layer-2--model-backed-guardrails)
+for the default matchers, enforcement modes, and approval flow.
 
 ## What's next
 

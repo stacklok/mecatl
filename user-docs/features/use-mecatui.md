@@ -6,14 +6,13 @@ description: Use the Mecatl terminal UI to work with sessions, models, tools, an
 
 # Use mecatui
 
-`mecatui` is Mecatl's interactive terminal client. It is a skin over the shared
-agent/server core: bare `mecatui` hosts an embedded `mecated` server in the same
-process, while `mecatui connect ADDRESS` displays and controls a server that is
+`mecatui` is Mecatl's interactive terminal client. Run bare `mecatui` to host an
+embedded server, or run `mecatui connect ADDRESS` to control a server that is
 already running.
 
 Use it to work with sessions, switch models, approve actions, inspect tool calls,
-and monitor delegated work. The detailed mecatui section owns the client
-workflow and controls; this page is the feature-level entry point.
+and monitor delegated work. The `mecatui` guides linked below cover the detailed
+workflows and controls.
 
 ## Choose how to connect
 
@@ -53,29 +52,28 @@ mecatui debug TARGET
 mecatui connect ADDRESS debug TARGET
 ```
 
-`TARGET` accepts an exact full opaque session ID—including the exact final ID printed on exit—or
-the displayed 12-column short handle. Safe `[A-Za-z0-9._-]` bytes are literal except that a leading
-`-` is encoded as `%2D`; other UTF-8 bytes are uppercase `%HH` atoms, and only complete atoms that
-fit are shown. The literal has no leading `#`. A syntactically valid short target consults the
-complete caller-visible inventory. Exact full-ID equality wins; otherwise one unique projected
-match resolves. On ambiguity, open `/session`, copy the full exact ID, and pass it as `TARGET`
-through the same command. If inventory cannot be loaded or no handle matches, mecatui sends
-`TARGET` unchanged and reports the server's ordinary exact-ID authorization/not-found result.
-It creates a separate no-filesystem analysis session and is explicit consent
-to send bounded stored-session evidence—which may include secrets—to the selected model.
-It never resumes or mutates the target. Its bounded network view can correlate persisted,
-sanitized retry/transport evidence to that target without exposing raw errors or request data.
+`TARGET` accepts the full opaque session ID printed on exit or the displayed
+12-column short handle. When a short handle is ambiguous, open `/session`, copy
+the full ID, and pass it to the same command. If the session inventory is
+unavailable or no short handle matches, `mecatui` treats `TARGET` as a full ID
+and reports the server's authorization or not-found result.
+
+Debugging creates a separate no-filesystem analysis session and sends bounded
+stored-session evidence to the selected model. That evidence may include
+secrets. The debugger does not resume or modify the target session. It can
+correlate persisted, sanitized retry and transport evidence without exposing raw
+errors or request data.
 See [Sessions](../mecatui/sessions.md#diagnose-a-stored-session).
 
 Use the dedicated guides for those workflows:
 
-- [Getting started](../mecatui/getting-started.md) — launch a local session and
+- [Getting started](../mecatui/getting-started.md) - launch a local session and
   submit a first prompt.
-- [Sessions](../mecatui/sessions.md) — browse, inspect, continue, fork, and
+- [Sessions](../mecatui/sessions.md) - browse, inspect, continue, fork, and
   maintain chats.
-- [Using the TUI](../mecatui/using-the-tui.md) — streaming, steering, approvals,
+- [Using the TUI](../mecatui/using-the-tui.md) - streaming, steering, approvals,
   and model switching.
-- [Commands and memory](../mecatui/commands-and-memory.md) — learning,
+- [Commands and memory](../mecatui/commands-and-memory.md) - learning,
   reflections, and memory-maintenance commands.
 
 ## Keyboard help

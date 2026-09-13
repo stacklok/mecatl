@@ -7,11 +7,11 @@ description: Configure evidence-backed learning, reflection, and learned-skill a
 # Learning
 
 Mecatl's learning feature turns eligible completed runs into bounded, reviewable
-reflection proposals. A durable admitted attempt—not a process-local queue, receipt, or
-session EventLog—is the workflow authority once non-off standard learning is enabled.
-It is not a general conversation recorder and it does not
-let the model rewrite policy, safety rules, tools, or the soul. Explicit memory
-tools remain separate and available even when automatic learning is off.
+reflection proposals. When standard learning is enabled, each admitted attempt
+is stored durably so cooperating processes can recover and continue it. Learning
+does not record every conversation or let the model rewrite policy, safety
+rules, tools, or the soul. Explicit memory tools remain available when automatic
+learning is off.
 
 ## Availability
 
@@ -47,7 +47,7 @@ learning:
     max_tokens_per_principal: 50000
 ```
 
-The modes are deliberately different:
+The modes provide increasing levels of automation:
 
 - **`off`** disables automatic observation, admission, and coordinator work. With no
   `--learning-store-url`, it allocates no attempt repository or recovery worker and
@@ -61,21 +61,21 @@ The modes are deliberately different:
 - **`auto`** stages first and can promote only the narrow set of candidates that
   satisfy the explicit-principal evidence and trust rules.
 
-A project settings file may tighten the operator choice — for example, lower
-autonomy or change `validated` to `evaluated` — but cannot enable automatic
-learning, raise autonomy, or weaken assurance. The legacy
+A project settings file may tighten the operator choice by lowering autonomy or
+changing `validated` to `evaluated`. It cannot enable automatic learning, raise
+autonomy, or weaken assurance. The legacy
 `--user-model-review` flag is a temporary compatibility alias for `auto`.
 
 ## What can be learned
 
 After an eligible main-session completion, Mecatl evaluates evidence from the
-verified current run. Explicit procedure authority was the first durable slice: only a
-genuine current principal-authored imperative to create, make, build, learn, save, or turn
-a workflow into a skill is a hard admission signal, and only on the documented clean
-terminal set. Negation and questions about learning capability fail closed. The admitted
-work is durably created before `queued` and then follows the same attempt lifecycle that
-weighted automatic work uses; it does not activate a direct `SkillDraft`. Otherwise, the weighted
-signals must reach the configured sensitivity threshold:
+verified current run. A direct request from the current caller to create, make,
+build, learn, save, or turn a workflow into a skill is a hard admission signal
+only when the run ends in an eligible clean state. Negated requests and
+questions about learning are not admission signals. Mecatl stores admitted work
+before it enters the `queued` state. It follows the automatic attempt lifecycle
+instead of activating a direct `SkillDraft`. Other evidence must reach the
+configured sensitivity threshold:
 
 - `conservative`: 6 points;
 - `balanced`: 4 points;
@@ -99,19 +99,19 @@ startup sweep.
 
 ## Selected evidence and review safety
 
-A retained transcript or event history larger than the reflection request limit is
-not rejected only because of its raw size. After automatic admission—or immediately
-for explicit reflection—mecatl deterministically selects one bounded view. Connected
+A retained transcript or event history can exceed the reflection request limit.
+After automatic admission, or immediately for explicit reflection, Mecatl
+deterministically selects one bounded view. Connected
 tool turns are atomic: the assistant call and all corresponding tool results are
 included together or omitted together. The selected entries are returned in source
-order, and one selection produces at most one model request; mecatl does not chunk or
-merge multiple reflection passes.
+order, and one selection produces at most one model request. Mecatl does not
+chunk or merge multiple reflection passes.
 
 Each staged proposal retains a content-free manifest of the selected entries and their
 original coordinates and digests. Proposal lists remain metadata-only. Detail and
 approval re-read the source and verify that exact manifest instead of rerunning
 selection or substituting nearby content. If retained history was compacted, deleted,
-or changed, the proposal becomes non-approvable; mecatl does not expose a raw
+or changed, the proposal becomes non-approvable. Mecatl does not expose a raw
 transcript or manifest dump to recover it. Evidence previews remain bounded and
 redacted.
 

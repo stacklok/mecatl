@@ -10,9 +10,8 @@ A named agent is a reusable specialist profile. It gives a delegated child a
 name, instructions, and optional execution settings instead of repeating the
 same setup for every call.
 
-Named agents are different from one-off `Subagent` calls: a one-off call
-provides its task in the tool arguments, while a named agent is discovered and
-configured before the delegation runs.
+Unlike a one-off `Subagent` call, a named agent is discovered and configured
+before the delegation runs. The caller then provides the specific task.
 
 ## Availability
 
@@ -160,9 +159,8 @@ A team member can select the definition by its `AgentType`. This reuses the
 profile without copying the Markdown body. The team supplies the member's role
 briefing and task; the definition supplies its specialist configuration.
 
-The same definition can therefore be used by a direct `Subagent` delegation and
-by a team member, while each path keeps its own lifecycle, limits, and
-mutability rules.
+The same definition can be used by a direct `Subagent` delegation and a team
+member. Each path keeps its own lifecycle, limits, and mutability rules.
 
 ## Named agents versus one-off subagents
 
@@ -185,7 +183,7 @@ subject to the server's permission and trust policy.
 - Duplicate names resolve by source precedence; the lower-precedence definition
   is not merged into the winner.
 - An agent definition cannot use stdio MCP. Inline MCP is streamable HTTP only.
-- Per-definition hooks are powerful host-side commands; only use definitions
+- Per-definition hooks execute host-side commands; only use definitions
   from sources you trust.
 - A named specialist's model/provider selection does not change the parent
   session's provider or model.

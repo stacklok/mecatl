@@ -6,7 +6,11 @@ description: Deploy Mecatl on Kubernetes with Redis-backed state and lease-based
 
 # Cloud-native k8s with mecak8s
 
-`mecak8s` (`cmd/mecak8s`) is a thin composition-root binary that reuses the same `app.Build` assembly as `mecated`, but with Kubernetes-native defaults baked in. The chart defaults to two replicas for availability; one replica is supported when lower resource usage and simpler session routing are preferred over HA. The agent pods hold no durable state: session snapshots and the event log live in Redis, and single-writer enforcement per session uses `coordination.k8s.io` Leases backed by the Kubernetes API server.
+`mecak8s` runs Mecatl with Kubernetes-native defaults. The chart uses two
+replicas by default for availability; you can use one replica to reduce resource
+usage and simplify session routing. Agent pods hold no durable state: session
+snapshots and the event log live in Redis, while Kubernetes Leases enforce a
+single writer for each session.
 
 ```mermaid
 flowchart TD
@@ -21,7 +25,8 @@ flowchart TD
     Pods --> K8sAPI
 ```
 
-Kill any pod. The survivor acquires the lease and resumes interrupted sessions from the Redis snapshot. The pod is disposable; the session is not.
+If a pod stops, a surviving pod can acquire its leases and resume interrupted
+sessions from Redis. The pod is disposable; the session is not.
 
 ## Server-owned session placement
 
@@ -1170,7 +1175,7 @@ No session affinity is required on the Service. The lease is the exclusion mecha
 
 For two or more replicas, the PodDisruptionBudget (`minAvailable: 1`) prevents voluntary disruptions from taking all replicas offline simultaneously.
 
-For production load, note that Redis is a single point of failure in the default in-cluster setup (1 replica, no persistence). For high availability, use Redis Sentinel, Redis Cluster, or a managed service (ElastiCache, MemoryStore). The adapter talks to Redis generically — swapping the backing service is a manifest change; no adapter code changes.
+For production load, Redis is a single point of failure in the default in-cluster setup (1 replica, no persistence). For high availability, use Redis Sentinel, Redis Cluster, or a managed service (ElastiCache, MemoryStore). The adapter talks to Redis generically — swapping the backing service is a manifest change; no adapter code changes.
 
 ---
 

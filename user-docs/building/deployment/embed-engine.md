@@ -7,10 +7,12 @@ description: Embed the Mecatl engine in your Go service and wire its adapters in
 # Embed the engine directly
 
 Start with [Build your first agent](/building/getting-started/first-agent.md) for
-the shortest copyable path. This page is the detailed reference for embedders:
-You own the binary. The agent loop runs in-process, wired alongside your existing service code. No gRPC server, no separate process, no TLS handshake — just a Go `import` and a constructor call.
+the shortest copyable path. This page covers the details for embedders. The
+agent loop runs in your service process, so you own the binary and its wiring.
+You do not need a gRPC server, separate process, or TLS connection.
 
-This is the right choice when Mecatl needs to live inside a larger service you already operate, when you want fine-grained control over every dependency in your build graph, or when the overhead of standing up a `mecated` process is more than you want to carry.
+Choose this approach when Mecatl needs to run inside a service you already
+operate or when you want direct control over the dependencies in your build.
 
 ---
 
@@ -281,7 +283,7 @@ Now `go build` and `go test` resolve `github.com/stacklok/mecatl/engine` from th
 
 :::note[go.work is local-only]
 
-`go.work` files are for local development. Published modules should use a `replace` directive in `go.mod` for the same effect, or simply depend on a tagged release. Do not commit `go.work` to a repository that others will `go get` from.
+`go.work` files are for local development. Published modules should use a `replace` directive in `go.mod` for the same effect, or depend on a tagged release. Do not commit `go.work` to a repository that others will `go get` from.
 
 :::
 

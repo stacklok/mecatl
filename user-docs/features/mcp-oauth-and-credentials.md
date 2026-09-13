@@ -12,9 +12,7 @@ profiles, OAuth login, credential storage, and rotation. For MCP transport,
 tool discovery, namespacing, reconnects, resources, prompts, and typed results,
 see the [MCP client guide](/building/what-you-get/mcp-client.md).
 
-MCP profiles are operator configuration, not project configuration. A project
-`.mecatl/settings.yaml` cannot install or weaken a credential profile. The
-available profile modes are `none`, `static_bearer`, and `oauth`.
+The available profile modes are `none`, `static_bearer`, and `oauth`.
 
 ## Availability
 
@@ -24,9 +22,8 @@ project configuration. A project `.mecatl/settings.yaml` cannot install or
 weaken an MCP credential profile.
 
 A server configured with `--mcp-server name=URL` can also use the legacy
-`MCP_<NAME>_TOKEN` bearer-token convention. Operator `mcp.servers` profiles are
-the preferred path when OAuth, rotation, or deployment-managed credentials are
-needed.
+`MCP_<NAME>_TOKEN` bearer-token convention. Use operator `mcp.servers` profiles
+for OAuth, rotation, or deployment-managed credentials.
 
 ## Configure a profile
 
@@ -99,8 +96,8 @@ After login, start or restart the server and verify that the namespaced
 another browser interaction. Access-token refresh is lazy, and refresh-token
 rotation is persisted by the local store so the next restart remains warm.
 
-If the profile's identity metadata changes — issuer, client, principal, scopes,
-or resource — run login again. To roll back, replace the whole profile with
+If the profile's issuer, client, principal, scopes, or resource changes, run
+login again. To roll back, replace the whole profile with
 `static_bearer` or `none` and restart.
 
 ## Environment-backed credentials
@@ -119,24 +116,26 @@ for the Secret wiring.
 
 ## ToolHive broker OAuth
 
-For `mecak8s` broker mode, OAuth is not an environment-backed per-server credential.
-One session starts one opaque enrollment, and ToolHive drives the configured protected
-upstreams sequentially. ToolHive owns upstream callback state, code exchange, refresh, and
-provider-specific injection; a token for one backend is not used for another. Mecatl retains
-the session and pre-prompt enrollment boundary, then strictly discovers every protected backend
-and freezes the complete catalogue only after success. Static declarations are visible before
-connection as pre-authentication placeholders: calling one starts the same opaque ToolHive bundle
-authorization and, after success, performs authenticated discovery before retrying the parked call.
-The live metadata replaces or removes declared placeholders, while undeclared tools—including others
-on the same backend—stay hidden on this lazy path. Successful pre-prompt enrollment instead replaces
-every placeholder with that session's complete authenticated
-catalogue: live discovery controls membership, descriptions, input schemas, and read-only hints,
-so an omitted declaration disappears and a newly discovered tool appears. That catalogue remains
-fixed for the session; start a fresh session to discover changed metadata. The generated client
-between mecatl and ToolHive is confidential: ToolHive stores
-only its hash, while mecatl uses the process-private raw secret solely for HTTP-Basic token
-exchange and refresh. It is never included in the browser flow, controls, logs, snapshots, or
-upstream calls. A failed enrollment exposes no partial protected catalogue.
+In `mecak8s` broker mode, each session starts one opaque enrollment, and
+ToolHive authorizes the configured protected upstreams sequentially. ToolHive
+owns upstream callback state, code exchange, refresh, and provider-specific
+injection, so a token for one backend is not used for another. Mecatl discovers
+every protected backend and freezes the complete catalog only after successful
+enrollment.
+
+Static declarations appear before connection as pre-authentication placeholders.
+Calling one starts the ToolHive bundle authorization and, after success,
+performs authenticated discovery before retrying the parked call. Live metadata
+replaces or removes declared placeholders. Undeclared tools, including others on
+the same backend, stay hidden on this path. Successful pre-prompt enrollment
+instead replaces every placeholder with the session's complete authenticated
+catalog. Live discovery controls membership, descriptions, input schemas, and
+read-only hints. Start a fresh session to discover changed metadata.
+
+The generated client between Mecatl and ToolHive uses a process-private secret
+for HTTP Basic token exchange and refresh. ToolHive stores only its hash. The
+secret is excluded from browser flows, controls, logs, snapshots, and upstream
+calls. A failed enrollment exposes no partial protected catalog.
 
 A model switch creates a new session and therefore a new broker attachment. The
 new session does not inherit the old session's enrollment or authorization;

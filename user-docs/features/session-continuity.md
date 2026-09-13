@@ -6,11 +6,10 @@ description: Persist, resume, maintain, and recover Mecatl sessions across deplo
 
 # Session continuity
 
-A Mecatl session can survive a process restart when it is backed by a durable
-session store. The stored session contains the provider-neutral conversation,
-state, usage, limits, environment identity, and enough metadata to rebuild the
-same session profile. A later process loads that snapshot and resumes through the
-same run-entry rules instead of treating the old state as a new conversation.
+A durable session store lets a Mecatl session survive a process restart. The
+store preserves the provider-neutral conversation, state, usage, limits,
+environment identity, and metadata needed to rebuild the same session profile.
+A later process loads that snapshot and resumes the existing conversation.
 
 ## Availability
 
@@ -53,11 +52,27 @@ when necessary so a resumed provider request never contains an orphaned tool
 call. An `awaiting` session is different: it represents a pending approval and
 must be resumed through its approval path rather than reset by a new prompt.
 
-The durable event log is separate from the snapshot. The loop emits events, and
-the relay appends them independently of client delivery. This means a client
-that disconnects does not prevent the terminal event or approval metadata from
-being recorded. The log also preserves compaction archives and supports
-replaying `allow_always` approvals into a fresh in-memory permission policy.
+```mermaid
+flowchart TD
+    A[Prompt or approval for a stored session] --> B[Acquire the session lease]
+    B -->|held elsewhere| C[Return 409 or FAILED_PRECONDITION]
+    B -->|acquired| D[Load the durable snapshot]
+    D --> E{Awaiting approval?}
+    E -->|yes| F[Resume the pending approval]
+    E -->|no| G{Orphaned running state?}
+    G -->|yes| H[Repair to a recoverable state]
+    G -->|no| I[Prepare the terminal follow-up]
+    F --> J[Run with the stored session profile]
+    H --> J
+    I --> J
+    J --> K[Persist the snapshot and append events]
+```
+
+The durable event log is separate from the snapshot and is written independently
+of client delivery. A disconnected client does not prevent the terminal event
+or approval metadata from being recorded. The log also preserves compaction
+archives and supports replaying `allow_always` approvals into a fresh in-memory
+permission policy.
 Events are already redacted and do not contain raw approval arguments or denial
 reasons.
 

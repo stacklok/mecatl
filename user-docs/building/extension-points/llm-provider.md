@@ -6,7 +6,10 @@ description: Implement an LLMProvider to connect the Mecatl agent loop to a mode
 
 # LLMProvider
 
-`port.LLMProvider` is the seam between the agent loop and any LLM backend. The loop never imports the OpenAI or Anthropic SDKs; it calls this interface and assembles the resulting stream into domain types. Swap the implementation to point the loop at a different model, a local inference server, or a test double.
+`port.LLMProvider` connects the agent loop to an LLM backend. The loop consumes
+this interface and assembles its stream into domain types without importing a
+provider SDK. Implement it to connect another model service, a local inference
+server, or a test double.
 
 ---
 
@@ -228,7 +231,9 @@ Key implementation notes:
 - **Always emit `ChunkUsage` before `ChunkDone`**. The loop records usage on the `ChunkUsage` event; a missing usage chunk means the session tracks zero tokens, which breaks the `MaxRunTokens` budget check.
 - **Emit `ChunkDone` with the correct stop reason**. The loop maps the stop reason to session state: `StopEndTurn` continues cleanly, `StopError` fails the session, `StopMaxTokens` ends with a non-error terminal. Do not emit `ChunkDone` with `StopEndTurn` when the real reason was `max_tokens` — it masks truncated responses and breaks the no-progress nudge logic.
 - **Tool calls must arrive fully assembled on `ChunkToolCall`**, not fragmented per token. The loop dispatches the complete call; partial-call streaming is an adapter-internal concern.
-- **Honour context cancellation**. When `ctx.Done()` is closed, stop yielding chunks and return from the iterator. The loop manages the session state for a cancelled turn; the adapter just needs to stop.
+- **Honor context cancellation**. When `ctx.Done()` is closed, stop yielding
+  chunks and return from the iterator. The loop manages session state for the
+  cancelled turn.
 - **The outer error is for start failures**. If the provider returns an error before any chunks arrive (a bad request, an auth failure, a network timeout), return it as the outer `error`. If the stream starts and then breaks, yield the error from the iterator.
 
 ### The `Capabilities()` method and multimodal gating
@@ -243,7 +248,7 @@ If your provider does not support a modality, return `false` for it — even if 
 
 `internal/adapter/llmresilience` wraps any `LLMProvider` with three behaviours:
 
-| Behaviour | Default | Flag |
+| Behavior | Default | Flag |
 |-----------|---------|------|
 | Retry with exponential backoff | enabled | n/a |
 | Circuit breaker | enabled | n/a |

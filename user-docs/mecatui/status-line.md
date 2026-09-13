@@ -6,27 +6,17 @@ description: Customize mecatui's local header and footer status surfaces with te
 
 # Status line customization
 
-Mecatui can generate the optional header and footer status surfaces from templates
+`mecatui` can generate optional header and footer status lines from templates
 or from one local executable. This is a **client-only** customization: configure it
 only in `$XDG_CONFIG_HOME/mecatui/settings.yaml` (normally
 `~/.config/mecatui/settings.yaml`). It applies to both embedded and `mecatui
 connect` sessions. Project files, a remote server, prompts, and a session cannot
 select or alter it.
 
-With no `status_customization:` entry, mecatui uses its shipped responsive
+With no `status_customization:` entry, `mecatui` uses its shipped responsive
 templates. Keyboard help, the header posture/scroll/changed-file indicators, and
 the footer activity lane remain mecatui-owned chrome; customization cannot remove
 them.
-
-## Source and result boundary
-
-Mecatui keeps generation outside the Bubble Tea render model. The UI submits the
-latest raw `Input`; the source publishes a coalesced wake-up edge and the UI takes
-the newest `Result`. The result has independently optional `Header` and `Footer`
-surfaces, each with one ordered semantic span list. A span contains display text, one
-StatusML token, and optional validated link metadata—not ANSI, OSC, or final terminal
-styling. Headers are renderer-left-aligned and footers renderer-right-aligned. The
-active theme and the UI perform the final style, layout, clipping, and alignment work.
 
 ## Choose one source
 
@@ -48,13 +38,13 @@ status_customization:
 ```
 
 `header` and `footer` are independently optional. A supplied surface must provide
-all three variants: `full`, `compact`, and `minimal`. Mecatui submits the remaining
+all three variants: `full`, `compact`, and `minimal`. `mecatui` uses the remaining
 columns for each surface after reserving its mandatory chrome, then selects the
 richest variant that fits. Thus a compact header and a full footer may coexist; an
 omitted surface retains the matching shipped template.
 
 The interval also advances `.Clock.Now`, so the example above is a template-only
-clock and creates no subprocess. Restart mecatui after editing settings; v1 does
+clock and creates no subprocess. Restart `mecatui` after editing settings; v1 does
 not hot-reload this file.
 
 ## Template input and escaping
@@ -210,9 +200,7 @@ command-specific diagnostics to a separate destination that is not its standard
 error stream. StatusML markup used directly in a template is safely literalized when
 malformed; malformed command output instead triggers the fallback behavior above.
 
-The v1 token-to-palette mapping is a best effort, not a cross-widget compatibility
-promise. [Issue #799](https://github.com/stacklok/mecatl/issues/799) owns the
-stable semantic theme-token contract.
+The v1 token-to-palette mapping applies only to these status surfaces.
 
 ## Shipped template appendix
 
@@ -262,9 +250,8 @@ Use `command` when local information needs a program. `executable` must be an
 absolute path and `args` are literal arguments. The optional `passthrough_env` list
 is the only environment extension: each name must match `[A-Za-z_][A-Za-z0-9_]*` and
 must not be one of the reserved baseline or terminal-dimension names.
-There are no shell, `source`, command-string, or CWD fields in the schema. `/bin/sh` is permitted
-only by explicitly selecting it as `executable` and supplying its literal arguments;
-it is not a shell mode or a default.
+The schema has no shell, `source`, command-string, or working-directory fields.
+To use `/bin/sh`, select it as `executable` and supply its literal arguments.
 
 ```yaml
 status_customization:
@@ -313,7 +300,7 @@ trailing newline from the Python `print` example above while preserving whitespa
 inside markup text. A supplied header or footer replaces that surface;
 an omitted surface continues to use its shipped default.
 
-Mecatui runs the executable in the eligible local root of the active session when
+`mecatui` runs the executable in the eligible local root of the active session when
 its opt-in local session-context service can resolve one. It refreshes that private
 lookup after a session is created, adopted, cleared, forked, or switched, and
 ignores an older response after a newer session becomes active. The root is used
@@ -326,11 +313,10 @@ baseline: `HOME`, `PATH`, `TERM`, `LANG`, `LC_ALL`, `COLUMNS`, and `LINES` when
 available. `COLUMNS` and `LINES` come from the submitted terminal dimensions.
 
 `passthrough_env` may add only explicitly named parent variables. Each name must
-match `[A-Za-z_][A-Za-z0-9_]*`; reserved baseline and source-owned names are rejected
-rather than silently ignored. Names are deduplicated, unset variables are omitted, Do not list secrets: no other parent
-environment value is inherited, and mecatui never uses `os.Environ` for this command
-boundary. For example, `[TMUX]` makes an existing `TMUX` value available for a local
-tmux-aware integration.
+match `[A-Za-z_][A-Za-z0-9_]*`; reserved baseline and source-owned names are
+rejected. Names are deduplicated, and unset variables are omitted. Do not list
+secrets. No other parent environment values are inherited. For example, `[TMUX]`
+makes an existing `TMUX` value available to a local tmux-aware integration.
 
 Input changes are debounced for 250 ms. At most one contained command process tree
 runs at a time; replacement, timeout, and shutdown cancel it. Each invocation has

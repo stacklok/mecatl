@@ -6,7 +6,10 @@ description: Connect Mecatl to streaming-HTTP MCP servers and expose their tools
 
 # MCP client
 
-Mecatl includes a built-in [Model Context Protocol](https://modelcontextprotocol.io) client. Point it at one or more MCP servers; every tool those servers expose lands in the agent's tool catalog automatically, namespaced as `mcp__<server>__<tool>`. From the model's perspective those tools are identical to the built-ins — same dispatch rules, same permission system, same audit trail.
+Mecatl includes a built-in [Model Context Protocol](https://modelcontextprotocol.io)
+client. Tools from connected MCP servers enter the agent's catalog as
+`mcp__<server>__<tool>` and use the same dispatch, permission, and audit paths as
+built-in tools.
 
 ---
 

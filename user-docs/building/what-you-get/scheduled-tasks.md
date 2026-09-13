@@ -6,15 +6,22 @@ description: Run saved prompts autonomously on a durable cron or one-shot schedu
 
 # Scheduled tasks
 
-Scheduled tasks let an operator register a saved prompt to run on a cron cadence or once at a future time, and have Mecatl drive that run **autonomously, durably, and with at-most-once slot claiming** across a multi-replica deployment — with no human present at fire time.
+Scheduled tasks run a saved prompt on a cron cadence or once at a future time.
+Mecatl persists the schedule and uses at-most-once slot claiming across replicas,
+so no human needs to be present when the task fires.
 
-This exists because every other run in Mecatl starts with a human (or a client) sending a prompt. Unattended deployments — a nightly digest, an hourly heartbeat, a one-shot reminder — need a way to fire a prompt on a schedule without a human to approve a tool call, re-issue a prompt, or recover a stalled turn. So a fire is bounded (subagent-grade limits), posture-pinned (an explicit mutating opt-in, never "the schedule runs in yolo"), and recoverable through the same run-entry seams a human-driven run uses.
+Each fire creates a bounded run with a fixed posture. Mutating work requires an
+explicit opt-in, and recovery uses the same run-entry path as an interactive run.
 
-Scheduled tasks are a **composition-layer** subsystem — no change to `engine/agent`. Each fire mints a fresh, bounded session and drives it through the ordinary run-entry funnel; the tick loop, cron parsing, and leader-lease acquisition all live in composition, not the loop.
+Scheduling belongs to the composition layer rather than `engine/agent`. Each fire
+creates a fresh session; composition owns the tick loop, cron parsing, and leader
+lease.
 
 ## The `port.ScheduleStore` seam
 
-`port.ScheduleStore` (`engine/port/schedule.go`) is a durable schedule registry, a peer of `port.SessionLease` and `port.EventLog`. It's discovered by type assertion exactly like those ports: a backend that doesn't implement it is simply never consulted, and the default path is byte-identical with no scheduling.
+`port.ScheduleStore` (`engine/port/schedule.go`) is a durable schedule registry,
+parallel to `port.SessionLease` and `port.EventLog`. Composition discovers it by
+type assertion and disables scheduling when the backend does not implement it.
 
 A `Schedule` splits into two halves:
 
@@ -30,6 +37,19 @@ The core contract is `Claim`: it atomically advances `NextFireAt` **before** the
 The trade-off: a crash mid-fire skips the slot, because the advance already happened. A recurring schedule self-heals on the next tick via the misfire policy; a one-shot fire can be lost. This is the documented cost of at-most-once slot claiming without a distributed transaction.
 
 `ClaimNow` is the manual-trigger sibling — the same atomic advance, but without the due-check, so an operator can force an immediate fire that still claims atomically.
+
+```mermaid
+flowchart TD
+    A[Leader polls for due schedules] --> B[Apply the misfire policy]
+    B --> C[Claim the slot atomically]
+    C --> D[Advance NextFireAt before execution]
+    D --> E{Fire this slot?}
+    E -->|skip| F[Wait for the next due slot]
+    E -->|run| G[Create a fresh session]
+    G --> H[Run with per-fire limits]
+    H --> I[Record the terminal outcome]
+    I --> J[Store the fire result for queries]
+```
 
 ### Store adapters
 
@@ -47,7 +67,11 @@ Cron expressions themselves are parsed by `engine/adapter/cronparse`, a thin wra
 
 `internal/adapter/scheduler` runs the tick loop. On each tick it: polls `Due`, applies the misfire policy, calls `Claim` to win the slot, invokes the `FireFunc` composition seam, then calls `RecordFire` with the outcome.
 
-In a multi-replica deployment, the tick loop is gated behind a leader-lease on the well-known session id `__scheduler__` (`port.SchedulerLeaderLeaseID`), reusing the same `port.SessionLease` port as the run-entry lease. Only the leader replica ticks. This is **hygiene, not correctness** — the `Claim` fence is what actually prevents a double-fire; the lease just stops every replica from burning cycles polling the same store. With no lease backend configured, the scheduler runs standalone (single-replica by affinity) and a startup WARN names the multi-replica hazard rather than failing silently.
+In a multi-replica deployment, a leader lease on `__scheduler__`
+(`port.SchedulerLeaderLeaseID`) limits polling to one replica. The `Claim` fence,
+rather than the lease, prevents duplicate fires. Without a lease backend, the
+scheduler assumes a single replica with affinity and logs a startup warning about
+the multi-replica risk.
 
 ### Misfire policy
 
@@ -66,7 +90,10 @@ A schedule's `Singleton` flag (effectively always `true` in the current release 
 
 Each fire mints a brand-new top-level session (a `sched--`-prefixed id on the create-failure fallback path; ordinarily whatever id session creation mints) via the same `CreateSessionWithProfile` + `StartRunContent` calls any client uses, with subagent-grade defaults: bounded turn/tool-call budgets, a read-leaning posture unless the schedule opts into `Mutating: true`, and a headless ask model (there's no human to answer a permission prompt at fire time). There is no "schedule session" reused across fires — every fire starts with a fresh context. A schedule that needs continuity across fires (say, yesterday's digest) has to persist that itself, via memory or a file, and re-load it in the prompt.
 
-The fire's own conversation, tool calls, and usage live in the `SessionStore` under that session id. The `ScheduleFire` record the schedule store keeps is just the pointer to it — the fire id, the session id, the fired-at time, the terminal stop reason, and an error string if it failed. Result delivery is **pull-only in this release**: a caller polls `GetFire`/`ListFires` to see what happened, rather than the store pushing results out.
+The fire's conversation, tool calls, and usage live in `SessionStore` under its
+session ID. `ScheduleFire` records the fire ID, session ID, start time, terminal
+stop reason, and any error. Result delivery is pull-only: callers poll `GetFire`
+or `ListFires`.
 
 ## Host composition surfaces: in-chat, gRPC, and REST
 

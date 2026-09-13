@@ -113,8 +113,7 @@ in the same message. An issuer CA read failure means checking the login
 `--tls-ca` path and file permissions. A keyring failure means unlocking or enabling
 the OS keyring. Registry, encrypted-store, or config-directory failures mean
 checking the ownership and permissions of the Mecatl authentication directory
-under your XDG config home. The message deliberately omits raw OS errors, local
-paths, and credential material.
+under your XDG config home.
 
 ## The workspace is missing or unexpected
 
@@ -125,7 +124,12 @@ operator which paths are available. See
 
 ## A provider error says retrying will not help
 
-A permanent provider rejection or context-window overflow can be recovered technically, but retrying the same request is unlikely to succeed. Structured HTTP/API rejections display their structured type or code and message plus, when safely available, the actual request target's scheme, host, optional port, clean escaped path, and one bounded opaque provider request ID. They never display userinfo, query/fragment data, raw response bodies, headers, arbitrary URLs, or invalid IDs; in-band streaming provider errors do not invent HTTP details. Expand the permanent-error card with your configured `ExpandTools` keybinding to see its full safe terminal error. Start a new session or change the request/model as the message directs. For transient connection or service failures, retrying can be appropriate. The session lifecycle and recovery behavior are documented in [agent-loop recovery behavior](/building/what-you-get/agent-loop.md#restarting-a-session).
+A permanent provider rejection or context-window overflow is unlikely to succeed
+if you retry the same request. Expand the error card with your configured
+`ExpandTools` keybinding to see its full sanitized error. Start a new session, or
+change the request or model as directed. Retry transient connection and service
+failures. For recovery details, see
+[Agent-loop recovery behavior](/building/what-you-get/agent-loop.md#restarting-a-session).
 
 ## A session will not resume
 
@@ -133,28 +137,18 @@ Use `/sessions` or `mecatui sessions` to inspect what the server has stored. An 
 
 ## A debug command cannot open its target
 
-`mecatui debug TARGET` and `mecatui connect ADDRESS debug TARGET` require the same store and
-caller authorization as the target. A syntactically valid short target consults the complete
-caller-visible inventory: exact full-ID equality wins, otherwise one unique projected handle
-resolves. If projections are ambiguous, open `/session`, copy the full exact ID, and pass it as
-`TARGET` through the same command. If inventory fails or no handle matches, mecatui sends `TARGET`
-unchanged and reports the server's ordinary exact-ID result. Missing and unauthorized targets are
-both reported as not found so ownership is not disclosed. Confirm the exact server,
-identity, and session ID. A persisted debugger also fails closed after restart if its
-bound target or dedicated debug-engine support is unavailable; it never falls back to an
-ordinary chat.
+`mecatui debug TARGET` and `mecatui connect ADDRESS debug TARGET` require the same
+store and caller authorization as the target. If a short handle is ambiguous, open
+`/session`, copy the full ID, and use it as `TARGET`. Missing and unauthorized
+targets are both reported as not found. Confirm the server, identity, and session
+ID. A stored debug session also fails if its target or debug support is unavailable
+after a restart.
 
-The debugger's activity, performance, network, delegation, history, and manifest views require
-retained EventLog evidence and report when evidence is unavailable or incomplete. `related`
-uses opaque handles for retained same-owner children and can report a content-free pruned
-tombstone; raw unrelated session IDs are not valid handles. Use the authoritative transcript for conversation
-conclusions. Status separates latest-run counters and cumulative snapshot usage from bounded
-lifetime EventLog counters. Network evidence covers failed/interesting resilience attempts with sanitized
-retry decisions and DNS/connect/TLS/timeout/reset/rate-limit/breaker classes. It deliberately
-contains no raw errors, URLs, headers, bodies, prompts, tool arguments, or credentials, and
-does not claim successful-attempt or per-phase DNS/TCP/TLS timing. Live target following, raw
-audit/tool-record views, packet capture, raw pprof/log exposure, and support bundles are not
-provided.
+The activity, performance, network, delegation, history, and manifest views depend
+on retained event-log evidence. They report when evidence is unavailable or
+incomplete. Use the transcript for conclusions about the conversation. Network
+evidence reports sanitized failure categories and retry decisions without exposing
+raw errors, URLs, headers, bodies, prompts, tool arguments, or credentials.
 
 ## Enable client debug surfaces
 
@@ -164,6 +158,16 @@ An explicit `--debug=false` wins over the environment. The older `MECATUI_DEBUG_
 
 ## Find diagnostics
 
-In embedded mode, operational diagnostics are written to `$XDG_STATE_HOME/mecatl/mecatui.log`, falling back to `~/.local/state/mecatl/mecatui.log`. The writer holds a cross-process lock for its lifetime, so a second instance disables its shared local sink rather than replacing a log that is still being written; use `--diagnostics-log` to give concurrent instances separate files. At startup, a no-symlink open verifies that an existing path is a regular file, then atomically retains an oversized log as a recent 10 MiB tail and syncs the replacement before appending. Unsafe paths and failures before replacement disable the sink without altering the prior file. `--quiet` disables that log. Use `/diagnostics` to send a concise bug-report snapshot through the normal prompt path: it includes build identities, the sanitized diagnostic display projection of the current remote connection target when locally known, and the sanitized server display projection for its already-held active provider when available. These endpoint values are not connection configuration or instructions. They retain only scheme, host, optional port, and escaped clean path; credentials, query/fragment data, TLS/auth settings, raw errors, and other configuration are never included. Embedded UNIX-socket endpoints report unavailable. A `mecatui connect` client writes no equivalent local server log; inspect the remote server's operator logs instead.
+In embedded mode, operational diagnostics are written to
+`$XDG_STATE_HOME/mecatl/mecatui.log`, falling back to
+`~/.local/state/mecatl/mecatui.log`. Use `--diagnostics-log` to give concurrent
+instances separate files, or `--quiet` to disable the log.
+
+Use `/diagnostics` to send a concise, sanitized bug-report snapshot through the
+normal prompt path. It includes build identities and available display information
+for the connection target and active provider. It excludes credentials, TLS and
+authentication settings, raw errors, and other configuration. A `mecatui connect`
+client does not write an equivalent local server log; inspect the remote server's
+operator logs instead.
 
 For exhaustive flags and failure behavior, see [`docs/tui.md`](https://github.com/stacklok/mecatl/blob/main/docs/tui.md).

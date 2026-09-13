@@ -16,8 +16,8 @@ Mecatl has two separate safety controls:
 The permission rules are always present, including when no configuration file
 exists. Guardrails are disabled until an operator configures a checker model.
 
-This page is the user/operator guide. For the evaluator, authority-set, and
-custom-policy contracts, see [Permissions & guardrails for builders](/building/what-you-get/permissions.md).
+For evaluator, authority-set, and custom-policy contracts, see [Permissions and
+guardrails for builders](/building/what-you-get/permissions.md).
 
 ## Availability
 
@@ -26,9 +26,9 @@ embedded server hosted by mecatui. A connected mecatui uses the posture and
 permission configuration of the remote server; local embedded-server flags do
 not apply to `connect` sessions.
 
-Interactive clients such as mecatui can answer approval requests. Headless
-servers and one-shot jobs must be configured so that the calls they need do not
-wait for a human.
+Interactive clients such as `mecatui` can answer approval requests. For headless
+servers and one-shot jobs, configure the permissions required by the workload
+before it starts.
 
 ## Choose a posture
 
@@ -139,7 +139,7 @@ workspace. Project `deny` and `ask` rules remain effective, but project
 `allow` rules require project trust.
 
 Use `--import-claude-permissions` to import supported rules from Claude Code
-`settings.json`. The import is intentionally lossy and fail-safe: unsupported
+`settings.json`. The import is lossy and fail-safe: unsupported
 or ambiguous rules are dropped or demoted to approval rather than widening
 access.
 

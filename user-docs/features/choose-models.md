@@ -10,23 +10,21 @@ A Mecatl session runs with a provider and a base model selected by the server
 and, optionally, by the client. The server returns the effective selection and
 input capabilities when the session is created.
 
-The choice depends on how you use Mecatl, so this page separates three
-journeys:
+Choose the path that matches how you use Mecatl:
 
-- the **mecatui journey** for interactive selection;
-- the **CLI journey** for configuring a server or one-shot run; and
-- the **API journey** for clients that create sessions directly.
+- use **mecatui** for interactive selection;
+- use the **CLI** to configure a server or one-shot run; or
+- use the **API** when your client creates sessions directly.
 
 For the rest of the terminal workflow, see [Use mecatui](./use-mecatui.md).
 
 ## Mecatui journey
 
 When the connected server advertises model selection, type `/models` in
-mecatui. Filter the server's inventory, select a model, and press `enter`. The picker
-non-blockingly warns that the choice creates a new session, carries visible
-conversation/context, and may make a long history costly to replay. Mecatui keeps the
-visible conversation by creating a peer session seeded with its history; it does not
-change the provider or base model of the existing session in place.
+`mecatui`. Filter the server's inventory, select a model, and press **Enter**.
+The picker warns that the choice creates a peer session and carries over the
+visible conversation. Replaying a long history may be costly. The existing
+session's provider and base model do not change.
 
 A switch across providers keeps the visible conversation but drops provider-
 private replay state, such as reasoning state that the new provider cannot
@@ -38,12 +36,12 @@ MCP enrollment is session-scoped, so switching models may require enrolling the
 protected backends again; authorization is not silently copied from the old
 session.
 
-Type `/effort` to choose a reasoning-effort tier. Mecatui applies a changed
+Type `/effort` to choose a reasoning-effort tier. `mecatui` applies a changed
 tier by creating a peer session with the same provider, model, and conversation.
 The picker is available only when the connected server advertises the relevant
 capability.
 
-Mecatui's model choices are server-backed. In embedded mode, the local server's
+`mecatui` model choices are server-backed. In embedded mode, the local server's
 configuration and credentials determine the inventory. In `connect` mode, the
 remote server determines it; local embedded-server flags and credentials do not
 apply.
@@ -56,7 +54,7 @@ and keybinding details.
 ### Endpoint overrides
 
 The built-in provider endpoint flags (`--openai-base-url`, `--openrouter-base-url`,
-`--anthropic-base-url`, and `--opencode-base-url`) are non-secret command configuration.
+`--anthropic-base-url`, and `--opencode-base-url`) are non-secret configuration.
 They override the matching operator `provider_overrides` setting; settings override the
 built-in endpoint. Custom provider URLs remain defined only by their provider definition.
 OpenAI and Anthropic keep their SDK endpoint when neither source supplies an override.

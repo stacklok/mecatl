@@ -27,12 +27,11 @@ Mecatl resolves a window at the point of use, in this order:
 3. the embedded model catalog; and
 4. a 128K-token floor for an otherwise unknown model.
 
-The live resolution is a closure rather than a startup snapshot. If a catalog
-refresh discovers a better model window while a session is running, the next
-compaction check uses it without rebuilding the engine. The engine always uses a
-real positive floor; mecatui may briefly show an unresolved context denominator
-while the initial live refresh is still in progress, then heals the meter when
-metadata arrives.
+Mecatl resolves the value when it is needed instead of taking a startup
+snapshot. If a catalog refresh discovers a better model window while a session
+is running, the next compaction check uses it. The engine always uses a positive
+floor. `mecatui` may briefly show an unresolved context denominator during the
+initial refresh and updates the meter when metadata arrives.
 
 ## Configure an override
 
@@ -65,8 +64,8 @@ Choose the strategy with `--compaction`:
 
 - `heuristic` (default) preserves the goal, recently touched paths, and recent
   messages while truncating large tool bodies;
-- `cascade` tries cheaper reductions first — snip, strip tool bodies, collapse
-  large file contents, then summarize — and uses separate trigger and target
+- `cascade` tries cheaper reductions first: snip, strip tool bodies, collapse
+  large file contents, and then summarize. It uses separate trigger and target
   thresholds to avoid compacting repeatedly at the boundary.
 
 The token estimate is selected with `--tokenizer`:
@@ -93,7 +92,7 @@ shorter.
 
 ## Compact manually in mecatui
 
-When the server advertises manual compaction, enter bare `/compact` while the
+When the server advertises manual compaction, enter `/compact` while the
 session is idle. The command runs one pass without waiting for the 80% trigger. It
 does not send a prompt or start a chat turn, and the TUI keeps your visible
 scrollback. A notice says whether model history changed or was already compact.

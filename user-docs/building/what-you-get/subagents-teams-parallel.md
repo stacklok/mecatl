@@ -6,15 +6,29 @@ description: Delegate work to focused subagents, coordinated teams, and parallel
 
 # Subagents, teams, and parallel
 
-Mecatl gives the model three ways to delegate work to a child agent instead of doing everything itself in one long conversation: **Subagent** for focused work, **Parallel** for isolated writable or competing branches with built-in join/winner semantics, and **Team** only for specialists that must coordinate. All three are ordinary tools in the catalog. The model decides when to reach for one, based on its own tool descriptions.
+Mecatl provides three delegation tools: **Subagent** for focused work,
+**Parallel** for isolated writable or competing branches, and **Team** for
+specialists that must coordinate. The model selects among them from their tool
+descriptions.
 
-This page covers them from the caller's side: what each one does, the knobs you'll see on the wire (per-call arguments, flags, permission rules), and how to inspect or manage a child once it's running. For how delegation is actually implemented — workspace isolation, permission resolution, the redaction boundary between a child and its parent — see [`docs/architecture/subagents-and-teams.md`](https://github.com/stacklok/mecatl/blob/main/docs/architecture/subagents-and-teams.md) and [`docs/architecture/parallelism.md`](https://github.com/stacklok/mecatl/blob/main/docs/architecture/parallelism.md) in the architecture guide.
+This page describes when to use each tool, its call arguments, and how to inspect
+or manage a running child. For implementation details, see the architecture
+guides for [subagents and teams](https://github.com/stacklok/mecatl/blob/main/docs/architecture/subagents-and-teams.md)
+and [parallelism](https://github.com/stacklok/mecatl/blob/main/docs/architecture/parallelism.md).
 
-A rule all three share: **a child's transcript never enters the parent conversation.** The parent sees only a bounded summary — Subagent's result, a Parallel branch's summary, Team's synthesized report — plus lightweight status events. If you need to see what a child actually did, pull its transcript on demand with `InspectSubagent` (Subagent and Parallel branches) or `InspectMember` (team members). It's never automatic; it's always a deliberate read you ask for.
+A child's transcript never enters the parent conversation. The parent receives a
+bounded result or synthesis and lightweight status events. Use `InspectSubagent`
+for a subagent or Parallel branch, or `InspectMember` for a team member, when you
+need the child's transcript.
 
-### Watching a delegation in mecatui — bounded previews
+### Watch a delegation in `mecatui`
 
-In `mecatui` a running delegation is watchable at the same fidelity whichever tool produced it: a collapsed Subagent card shows the child's **live current-tool name**, and `ctrl+t` (the expanded trace) and the `f6` agents overlay's Subagent/Parallel focus panes show Team-format traces — tool chips with **bounded previews** of child tool args/results plus capped child message lines. Every preview is capped and control-byte-scrubbed, and this is a client-only view: nothing here enters the parent conversation, and a child's permission ask is never forwarded. The task board, findings ledger, per-member dispositions, mutating cue, and context meter remain Team-only. See [`docs/architecture/domain-model.md`](https://github.com/stacklok/mecatl/blob/main/docs/architecture/domain-model.md) and [`docs/tui.md`](https://github.com/stacklok/mecatl/blob/main/docs/tui.md) for the full projection and overlay reference.
+In `mecatui`, the collapsed Subagent card shows the child's current tool. Press
+`ctrl+t` or use the `f6` agents overlay to view bounded previews of child tool
+arguments, results, and messages. These previews are client-only and never enter
+the parent conversation. A child's permission request is not forwarded. Team
+views also show the task board, findings, member dispositions, mutating status,
+and context meter.
 
 ## Subagent — delegate one task
 
@@ -48,7 +62,9 @@ Because it mutates your workspace directly, a `read-write` call always runs seri
 
 ### Background subagents
 
-A `background: true` call returns instantly with an `agentId` and keeps the child running while you continue with your own work. When it finishes, you get a note naming it (nothing child-authored — just the id and outcome). Collect the actual result with the `SubagentStatus` tool:
+A `background: true` call immediately returns an `agentId` and keeps the child
+running. Completion sends a note with the ID and outcome. Collect the result with
+the `SubagentStatus` tool:
 
 - No arguments — see the roster of this run's subagents and their state.
 - `agent_id: <id>` — fetch that child's stored result (delivered exactly once).
@@ -58,7 +74,9 @@ A background subagent still running when your run ends is cancelled; its transcr
 
 ### Cancelling one child mid-run
 
-If a subagent (or a Parallel branch, or a team member) is taking the wrong approach, you don't have to cancel your whole run to stop it. Mecatl exposes a per-child cancel — the gRPC `ConverseRequest.cancel_child` field, `POST /v1/sessions/{id}/cancel-child` over HTTP, or the `x` key in `mecatui` — that stops just that one delegation without touching anything else in flight.
+Cancel one child without stopping the parent run through the gRPC
+`ConverseRequest.cancel_child` field, `POST /v1/sessions/{id}/cancel-child` over
+HTTP, or the `x` key in `mecatui`.
 
 ## Parallel — isolated writable or competing branches
 

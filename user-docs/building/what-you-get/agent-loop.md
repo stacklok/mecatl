@@ -6,7 +6,10 @@ description: Understand how the Mecatl engine runs turns, dispatches tools, reco
 
 # The agent loop
 
-When you call `Engine.Run`, the loop starts immediately in a background goroutine and returns a `*Run` handle. The goroutine drives turns — LLM call, tool dispatch, record, repeat — until the session reaches a terminal state. You do not poll or drive the loop yourself; you observe it through the event channel and send verdicts when the loop asks for approval.
+`Engine.Run` starts the loop in a background goroutine and immediately returns a
+`*Run` handle. The loop calls the model, dispatches tools, records results, and
+repeats until the session reaches a terminal state. Observe it through the event
+channel and send verdicts when it requests approval.
 
 The server keeps compaction and client context meters aligned through one context-window resolution path. Operators can declare exact final provider/model limits in user-global `settings.yaml` under `models.context_windows`; a global `--context-window-override` wins, followed by the exact configured value, live provider metadata, the models.dev catalog, and the 128K fallback. Project repositories cannot set these limits.
 
@@ -202,7 +205,11 @@ A session that ends in any terminal state can be re-entered:
 
 - **Completed** → `Reopen` moves it back to idle; you can submit a new prompt.
 - **Cancelled** → `Interrupt` closes out orphaned tool calls, then moves to idle.
-- **Failed** → `Recover` repairs the conversation and moves to idle, so a retry is *possible* — not guaranteed. If the failure had a permanent cause (a bad prompt, a persistently misconfigured provider), the retried run just fails cleanly again. When the server knows the failure was permanent (a 4xx rejection other than 408/429, a context-window overflow), mecatui shows a one-line summary block that names the error and plainly says retrying won't help — start a new session or change the request. A recover-notice warning appears once before the first turn so you see it before burning another provider call.
+- **Failed** → `Recover` repairs the conversation and moves it to idle, but a
+  permanent cause can make the next run fail again. When the server identifies a
+  permanent failure, such as a 4xx response other than 408 or 429 or a context
+  overflow, `mecatui` recommends starting a new session or changing the request.
+  A recovery warning appears before the first turn of the retried run.
 
 A persisted `running` snapshot is not a fourth terminal state. It can mean the
 process crashed or lost its host while driving. The service repairs a stale

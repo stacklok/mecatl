@@ -11,10 +11,11 @@ prompts. It has an opaque ID and retains its workspace, model selection,
 permission mode, and transcript according to the server's storage
 configuration.
 
-This page separates the two ways to use sessions:
+Choose the flow that matches your client:
 
-- the **mecatui flow**, where the terminal client creates or selects a session;
-- the **API flow**, where another client calls the server directly.
+- use the **mecatui flow** when the terminal client creates or selects a
+  session;
+- use the **API flow** when another client calls the server directly.
 
 For the rest of the interactive terminal workflow, see [Use mecatui](./use-mecatui.md).
 
@@ -69,8 +70,7 @@ The full request and event reference is in [Drive via gRPC / HTTP](/building/dep
 
 ### HTTP/SSE
 
-There is also an HTTP API; it is not a second session implementation. It is an
-HTTP/SSE adapter over the same server-side service and session store. The
+The HTTP/SSE API uses the same server-side service and session store. The
 server's default HTTP listener is `127.0.0.1:8081` (`--http-addr`). It provides
 JSON request/response endpoints for session operations and Server-Sent Events
 for streamed runs.
@@ -84,8 +84,8 @@ for endpoint details.
 
 ## Session states and continuation
 
-A session may be idle, running, awaiting an action, completed, cancelled, or
-failed. Clients normally only start a new prompt against an idle or eligible
+A session can be idle, running, awaiting an action, completed, cancelled, or
+failed. Clients normally start a new prompt only against an idle or eligible
 terminal main session.
 
 Completed, cancelled, and failed sessions can be used for a follow-up prompt.

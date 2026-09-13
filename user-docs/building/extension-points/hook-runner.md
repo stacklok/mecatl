@@ -6,7 +6,10 @@ description: Implement lifecycle hooks that observe, transform, approve, or bloc
 
 # HookRunner
 
-`port.HookRunner` is the port the loop calls at every lifecycle transition in a session. Hooks observe or intercept events ranging from individual tool calls to prompt submission to session termination. A hook can allow an action, block it, or rewrite its payload — with the understanding that only a `PreToolUse` block is a real veto (a `PreToolUse` block can optionally be refined into an interactive approval ask instead of a dead end — see `AskApproval` below).
+`port.HookRunner` handles lifecycle events for tool calls, prompt submission, and
+session termination. A hook can allow an action, block it, or rewrite its
+payload. Only a `PreToolUse` block prevents an action that has not yet occurred;
+`AskApproval` can turn that block into an interactive approval request.
 
 ---
 
@@ -52,7 +55,10 @@ type HookOutcome struct {
 - **`Block`** — when true, the hook vetoes the action. Effective only on phases that support blocking (see the table below).
 - **`Message`** — human-readable explanation surfaced to the model on a block, or as an annotation on mutation.
 - **`Mutated`** — when non-empty on an allowing outcome, replaces the phase's payload. The replacement must be valid JSON in the same shape as `HookEvent.Input` for that phase; a malformed payload is silently ignored and the original stands.
-- **`AskApproval`** — refines a `PreToolUse` `Block` into an *askable* block instead of a dead end: on an interactive engine, the loop surfaces it as an ordinary permission ask (pause → `EvPermissionAsk` → approve/deny), reusing the same machinery as Layer-1 permission asks — an allow runs the call, a deny refuses it. A headless (non-interactive) engine ignores the bit and the block simply stands, which is the fail-safe default. It's meaningless outside `PreToolUse Block == true` and is silently ignored elsewhere. A hook implementation that predates this field just never sets it, reproducing the pre-existing dead-end-block behavior exactly.
+- **`AskApproval`** turns a `PreToolUse` block into an interactive permission
+  request. Approval runs the call; denial preserves the block. A headless engine
+  ignores this field and preserves the block. The field has no effect outside a
+  `PreToolUse` result with `Block == true`.
 
 A `HookRunner` consumer can optionally also implement `port.HookApprovalLearner` (`LearnHookApproval(ctx, HookEvent)`), which the loop calls when the human resolves an askable block with "allow and don't ask again" — letting the consumer arm its own longer-lived waiver for that tool/pattern. It's a separate, optional interface (not a `HookRunner` method), so implementing it is opt-in and doesn't touch the required `HookRunner` surface.
 
@@ -238,7 +244,7 @@ A no-op runner is trivial. In tests and the demo, the composition layer wires `h
 hooks := hookexec.New(nil)
 ```
 
-A custom implementation just satisfies the `port.HookRunner` interface:
+A custom implementation satisfies the `port.HookRunner` interface:
 
 ```go
 type HookRunner interface {
@@ -267,7 +273,9 @@ port.HookRunner (hookexec.New)
                └── deps.Hooks  ← what the main engine sees
 ```
 
-The guardrail checker fires on `PreToolUse` (outbound exfiltration check) and `PostToolUse` (inbound injection check) using a separate, tool-less checker model. From the loop's perspective it is just a `HookRunner` that may return a Block or Mutate outcome. From the composition layer's perspective it is an additional layer stacked on top of the base runner.
+The guardrail checker runs on `PreToolUse` for outbound exfiltration and on
+`PostToolUse` for inbound injection. It uses a separate checker model with no
+tools and returns ordinary Block or Mutate outcomes through `HookRunner`.
 
 The guardrail `PostToolUse` block enforces via Mutate — exactly the pattern described in the caveat above. An enforcing inbound block rewrites the result to `{content: "blocked by guardrail: …", is_error: true}` rather than attempting to veto an already-run tool.
 
