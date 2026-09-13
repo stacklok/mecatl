@@ -8,7 +8,7 @@
 **Delivery:** Split. The cross-tab interaction and viewport contract needs human interface review before implementation.
 **Expected tasks:** 2
 **Issue:** [stacklok/mecatl#1446](https://github.com/stacklok/mecatl/issues/1446).
-**Plan PR:** absent — not opened
+**Plan PR:** [#1447](https://github.com/stacklok/mecatl/pull/1447)
 **Approved baseline:** absent until approved
 
 The F6 unified Agents overlay must make selection visible without per-row bordered-button
