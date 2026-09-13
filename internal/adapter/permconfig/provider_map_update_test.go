@@ -3,6 +3,7 @@
 package permconfig
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -14,6 +15,16 @@ import (
 
 	"github.com/stacklok/mecatl/internal/adapter/authfile"
 )
+
+// TestProviderUnification_Scenario5_LinuxAndDarwinWriteSupport is compiled only
+// for the two supported desktop Unix platforms by this file's build constraint.
+// A Darwin-native run is still required to claim macOS execution; this host run
+// establishes no such claim.
+func TestProviderUnification_Scenario5_LinuxAndDarwinWriteSupport(t *testing.T) {
+	if !authfile.UpdateSupported() {
+		t.Fatal("authfile writer is unsupported despite the linux/darwin build constraint")
+	}
+}
 
 func TestUpdateProviderMap_AddReplaceRemovePreservesSettings(t *testing.T) {
 	path := providerMapSettings(t, "permissions:\n  deny: [Shell]\nmodels:\n  default_provider: openai\n  default: gpt-5\nproviders:\n  old:\n    base_url: https://old.example/v1\n    default_model: old-model\n    api_flavor: openai-responses\n    auth: {method: none}\nunknown_top_level: preserved\n")
@@ -202,67 +213,135 @@ func TestUpdateDefaults_ChangedTargetAborts(t *testing.T) {
 	}
 }
 
-func TestUpdateProviderMap_RejectsUnsafeTargetsAndCancellation(t *testing.T) {
-	t.Run("symlink", func(t *testing.T) {
+func TestProviderUnification_Scenario5_PortableSafeWrite(t *testing.T) {
+	definition := &ProviderDefinition{BaseURL: "https://custom.example", DefaultModel: "m", APIFlavor: "openai-responses", Auth: ProviderAuth{Method: "none"}}
+	writers := []struct {
+		name   string
+		leaf   string
+		seed   string
+		update func(context.Context, string) (authfile.CommitState, error)
+	}{
+		{"API-key", "auth.yaml", "", func(ctx context.Context, path string) (authfile.CommitState, error) {
+			key := "writer-secret"
+			return authfile.UpdateAPIKey(ctx, path, authfile.APIKeyUpdate{Provider: "openai", APIKey: &key})
+		}},
+		{"default", "settings.yaml", "models: {}\n", func(ctx context.Context, path string) (authfile.CommitState, error) {
+			return UpdateDefaults(ctx, path, DefaultUpdate{Provider: "openai", Model: "gpt-5"})
+		}},
+		{"provider map", "settings.yaml", "providers: {}\n", func(ctx context.Context, path string) (authfile.CommitState, error) {
+			return UpdateProviderMap(ctx, path, ProviderMapUpdate{Provider: "custom", Definition: definition})
+		}},
+	}
+
+	t.Run("new credential file and private configuration targets are owner-private", func(t *testing.T) {
+		for _, writer := range writers {
+			t.Run(writer.name, func(t *testing.T) {
+				dir := t.TempDir()
+				if err := os.Chmod(dir, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				path := filepath.Join(dir, writer.leaf)
+				if writer.seed != "" {
+					if err := os.WriteFile(path, []byte(writer.seed), 0o600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if state, err := writer.update(context.Background(), path); err != nil || state != authfile.CommitDurable {
+					t.Fatalf("update = (%v, %v), want durable success", state, err)
+				}
+				info, err := os.Stat(path)
+				if err != nil {
+					t.Fatalf("stat new file: %v", err)
+				}
+				if info.Mode().Perm() != 0o600 {
+					t.Fatalf("new file mode = %v, want 0600", info.Mode())
+				}
+			})
+		}
+	})
+
+	for _, target := range []struct {
+		name string
+		make func(t *testing.T, dir, path string)
+	}{
+		{"symlink", func(t *testing.T, dir, path string) {
+			t.Helper()
+			if err := os.WriteFile(filepath.Join(dir, "real.yaml"), []byte("{}\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink("real.yaml", path); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"special file", func(t *testing.T, _ string, path string) {
+			t.Helper()
+			if err := unix.Mkfifo(path, 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(target.name+" targets are rejected", func(t *testing.T) {
+			for _, writer := range writers {
+				t.Run(writer.name, func(t *testing.T) {
+					dir := t.TempDir()
+					if err := os.Chmod(dir, 0o700); err != nil {
+						t.Fatal(err)
+					}
+					path := filepath.Join(dir, writer.leaf)
+					target.make(t, dir, path)
+					if state, err := writer.update(context.Background(), path); err == nil || state != authfile.CommitNotApplied {
+						t.Fatalf("unsafe target update = (%v, %v), want not-applied error", state, err)
+					}
+				})
+			}
+		})
+	}
+
+	t.Run("same-directory temporary is removed when cancellation prevents replacement", func(t *testing.T) {
 		dir := t.TempDir()
 		if err := os.Chmod(dir, 0o700); err != nil {
 			t.Fatal(err)
 		}
-		target := filepath.Join(dir, "target.yaml")
-		if err := os.WriteFile(target, []byte("providers: {}\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
 		path := filepath.Join(dir, "settings.yaml")
-		if err := os.Symlink(target, path); err != nil {
+		before := []byte("providers: {}\n")
+		if err := os.WriteFile(path, before, 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := UpdateProviderMap(context.Background(), path, ProviderMapUpdate{Provider: "custom", Definition: &ProviderDefinition{BaseURL: "https://custom.example", DefaultModel: "m", APIFlavor: "openai-responses", Auth: ProviderAuth{Method: "none"}}}); err == nil {
-			t.Fatal("symlink target accepted")
-		}
-	})
-	t.Run("special file", func(t *testing.T) {
-		dir := t.TempDir()
-		if err := os.Chmod(dir, 0o700); err != nil {
-			t.Fatal(err)
-		}
-		path := filepath.Join(dir, "settings.yaml")
-		if err := unix.Mkfifo(path, 0o600); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := UpdateProviderMap(context.Background(), path, ProviderMapUpdate{Provider: "custom", Definition: &ProviderDefinition{BaseURL: "https://custom.example", DefaultModel: "m", APIFlavor: "openai-responses", Auth: ProviderAuth{Method: "none"}}}); err == nil {
-			t.Fatal("special target accepted")
-		}
-	})
-	t.Run("cancelled", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
-		cancel()
-		path := providerMapSettings(t, "providers: {}\n")
-		state, err := UpdateProviderMap(ctx, path, ProviderMapUpdate{Provider: "custom", Definition: &ProviderDefinition{BaseURL: "https://custom.example", DefaultModel: "m", APIFlavor: "openai-responses", Auth: ProviderAuth{Method: "none"}}})
+		providerMapUpdateTestHook = func(stage string) error {
+			if stage != "after-temp-sync" {
+				return nil
+			}
+			entries, err := os.ReadDir(dir)
+			if err != nil {
+				return err
+			}
+			for _, entry := range entries {
+				if strings.HasPrefix(entry.Name(), ".settings-default-") && strings.HasSuffix(entry.Name(), ".tmp") {
+					cancel()
+					return nil
+				}
+			}
+			return errors.New("same-directory temporary was not observable")
+		}
+		t.Cleanup(func() { providerMapUpdateTestHook = nil })
+
+		state, err := UpdateProviderMap(ctx, path, ProviderMapUpdate{Provider: "custom", Definition: definition})
 		if state != authfile.CommitNotApplied || !errors.Is(err, context.Canceled) {
 			t.Fatalf("cancelled update = (%v, %v), want not-applied cancellation", state, err)
 		}
-	})
-	t.Run("cancelled before replacement", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		path := providerMapSettings(t, "providers: {}\n")
-		before, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
+		after, readErr := os.ReadFile(path)
+		if readErr != nil || !bytes.Equal(after, before) {
+			t.Fatalf("cancelled update changed settings: %v\n%s", readErr, after)
 		}
-		providerMapUpdateTestHook = func(stage string) error {
-			if stage == "after-temp-sync" {
-				cancel()
+		entries, readDirErr := os.ReadDir(dir)
+		if readDirErr != nil {
+			t.Fatal(readDirErr)
+		}
+		for _, entry := range entries {
+			if strings.HasPrefix(entry.Name(), ".settings-default-") || strings.Contains(entry.Name(), ".lock") {
+				t.Fatalf("temporary or lock artifact remains: %q", entry.Name())
 			}
-			return nil
-		}
-		t.Cleanup(func() { providerMapUpdateTestHook = nil })
-		state, err := UpdateProviderMap(ctx, path, ProviderMapUpdate{Provider: "custom", Definition: &ProviderDefinition{BaseURL: "https://custom.example", DefaultModel: "m", APIFlavor: "openai-responses", Auth: ProviderAuth{Method: "none"}}})
-		if state != authfile.CommitNotApplied || !errors.Is(err, context.Canceled) {
-			t.Fatalf("late cancellation = (%v, %v), want not-applied cancellation", state, err)
-		}
-		after, err := os.ReadFile(path)
-		if err != nil || string(after) != string(before) {
-			t.Fatalf("late cancellation changed settings: %v\n%s", err, after)
 		}
 	})
 }

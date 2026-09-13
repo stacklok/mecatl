@@ -2,6 +2,7 @@ package authfile
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -142,29 +143,65 @@ func TestDefaultPathIsSettingsYAMLSibling(t *testing.T) {
 	}
 }
 
-func TestUpdateAPIKey_ChangedTargetAborts(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.Chmod(dir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	path := writeFile(t, dir, "providers: {}\n", 0o600)
-	key := "sk-new"
-	updateTestHook = func(stage string) error {
-		if stage == "before-compare" {
-			return os.WriteFile(path, []byte("providers: {}\n# changed\n"), 0o600)
-		}
-		return nil
-	}
-	t.Cleanup(func() { updateTestHook = nil })
+func TestProviderUnification_Scenario5_TruthfulWriteFailureAndSecretSafety(t *testing.T) {
+	const oldKey = "sk-old-secret"
+	newKey := "sk-new-secret"
 
-	state, err := UpdateAPIKey(context.Background(), path, APIKeyUpdate{Provider: "openai", APIKey: &key})
-	if state != CommitNotApplied || err == nil || err.Error() != "Configuration changed while this command was running; no changes were made. Review the file and retry." {
-		t.Fatalf("UpdateAPIKey = (%v, %v), want changed-target error", state, err)
-	}
-	data, readErr := os.ReadFile(path)
-	if readErr != nil || !strings.Contains(string(data), "# changed") {
-		t.Fatalf("changed target was overwritten: %v\n%s", readErr, data)
-	}
+	t.Run("changed target reports the exact retryable outcome without leaking keys", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.Chmod(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		path := writeFile(t, dir, "providers:\n  anthropic:\n    api_key: "+oldKey+"\n", 0o600)
+		updateTestHook = func(stage string) error {
+			if stage == "before-compare" {
+				return os.WriteFile(path, []byte("providers: {}\n# changed\n"), 0o600)
+			}
+			return nil
+		}
+		t.Cleanup(func() { updateTestHook = nil })
+
+		state, err := UpdateAPIKey(context.Background(), path, APIKeyUpdate{Provider: "openai", APIKey: &newKey})
+		if state != CommitNotApplied || err == nil || err.Error() != "Configuration changed while this command was running; no changes were made. Review the file and retry." {
+			t.Fatalf("UpdateAPIKey = (%v, %v), want changed-target error", state, err)
+		}
+		for _, secret := range []string{oldKey, newKey} {
+			if strings.Contains(err.Error(), secret) {
+				t.Fatalf("changed-target error leaked credential %q: %q", secret, err)
+			}
+		}
+		data, readErr := os.ReadFile(path)
+		if readErr != nil || !strings.Contains(string(data), "# changed") {
+			t.Fatalf("changed target was overwritten: %v\n%s", readErr, data)
+		}
+	})
+
+	t.Run("post-rename failure is explicitly uncertain and remains secret-safe", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.Chmod(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		path := writeFile(t, dir, "providers: {}\n", 0o600)
+		updateTestHook = func(stage string) error {
+			if stage == "after-rename" {
+				return errors.New("injected sync failure")
+			}
+			return nil
+		}
+		t.Cleanup(func() { updateTestHook = nil })
+
+		state, err := UpdateAPIKey(context.Background(), path, APIKeyUpdate{Provider: "openai", APIKey: &newKey})
+		if state != CommitReplacementAppliedDurabilityUnknown || err == nil {
+			t.Fatalf("UpdateAPIKey = (%v, %v), want replacement-applied durability uncertainty", state, err)
+		}
+		if strings.Contains(err.Error(), newKey) {
+			t.Fatalf("post-rename error leaked credential: %q", err)
+		}
+		data, readErr := os.ReadFile(path)
+		if readErr != nil || !strings.Contains(string(data), newKey) {
+			t.Fatalf("replacement outcome was not preserved for inspection: %v\n%s", readErr, data)
+		}
+	})
 }
 
 func TestLoadFillsAPIKey(t *testing.T) {

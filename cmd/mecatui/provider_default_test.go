@@ -11,7 +11,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 )
 
-func TestProviderSetDefaultUsesResolvedFallbackAndSafeWriter(t *testing.T) {
+func TestProviderUnification_Scenario4_DefaultUsesStartupResolver(t *testing.T) {
 	oldResolve, oldUpdate, oldPath := resolveProviderDefaultForCommand, updateProviderDefaults, providerSettingsPath
 	t.Cleanup(func() {
 		resolveProviderDefaultForCommand, updateProviderDefaults, providerSettingsPath = oldResolve, oldUpdate, oldPath
