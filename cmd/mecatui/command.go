@@ -46,6 +46,8 @@ const (
 	llmActionStatus    = providerActionStatus
 	llmActionLogout    = providerActionLogout
 	toolHiveEndpointID = "toolhive"
+	// modeProviderSetup guides a newcomer through an existing provider setup flow.
+	modeProviderSetup transportMode = "provider-setup"
 	// modeProviderStatus is the passive local provider inventory. It deliberately
 	// does not construct an embedded server or a credential-store runtime.
 	modeProviderStatus transportMode = "provider-status"
@@ -266,7 +268,7 @@ func resolveRemoteLogoutCommand(args []string) invocationResolution {
 }
 
 func resolveProvidersCommand(args []string) invocationResolution {
-	const usage = "providers: usage: mecatui providers [status [PROVIDER] | add PROVIDER [--no-login] | login PROVIDER [--no-browser] | logout PROVIDER | set-default PROVIDER [MODEL] | remove PROVIDER]"
+	const usage = "providers: usage: mecatui providers [status [PROVIDER] | setup [PROVIDER] | add PROVIDER [--no-login] | login PROVIDER [--no-browser] | logout PROVIDER | set-default PROVIDER [MODEL] | remove PROVIDER]"
 	if len(args) == 1 && isHelpMetaFlag(args[0]) {
 		return invocationResolution{mode: modeProviderStatus, remaining: args}
 	}
@@ -283,6 +285,9 @@ func resolveProvidersCommand(args []string) invocationResolution {
 		}
 		return invocationResolution{mode: modeProviderStatus, llmAction: providerActionStatus, llmEndpoint: endpoint}
 	}
+	if res, ok := resolveProviderSetupCommand(args); ok {
+		return res
+	}
 	if res, ok := resolveProviderAddCommand(args); ok {
 		return res
 	}
@@ -296,6 +301,19 @@ func resolveProvidersCommand(args []string) invocationResolution {
 		return res
 	}
 	return invocationResolution{err: errors.New(usage)}
+}
+
+func resolveProviderSetupCommand(args []string) (invocationResolution, bool) {
+	if len(args) == 1 && args[0] == providerActionSetup {
+		return invocationResolution{mode: modeProviderSetup, llmAction: providerActionSetup}, true
+	}
+	if len(args) == 2 && args[0] == providerActionSetup && !strings.HasPrefix(args[1], "-") {
+		return invocationResolution{mode: modeProviderSetup, llmAction: providerActionSetup, llmEndpoint: args[1]}, true
+	}
+	if len(args) == 2 && args[0] == providerActionSetup && isHelpMetaFlag(args[1]) {
+		return invocationResolution{mode: modeProviderSetup, llmAction: providerActionSetup, remaining: args[1:]}, true
+	}
+	return invocationResolution{}, false
 }
 
 func resolveProviderAddCommand(args []string) (invocationResolution, bool) {

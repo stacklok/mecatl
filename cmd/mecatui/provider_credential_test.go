@@ -162,7 +162,6 @@ func TestProviderCredentialRejectsUnavailableProviderWithoutMutation(t *testing.
 
 	for _, res := range []invocationResolution{
 		providerCredentialResolution(providerActionLogin, "missing"),
-		providerCredentialResolution(providerActionLogin, "openai"),
 		providerCredentialResolution(providerActionLogout, "none"),
 	} {
 		if err := runProviderCredentialCommand(res, &bytes.Buffer{}, &bytes.Buffer{}); err == nil {

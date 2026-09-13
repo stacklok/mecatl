@@ -433,6 +433,8 @@ func runTestSignalHandler() error {
 func runSpecialMode(res invocationResolution) (bool, error) {
 	// Login routes are intentionally separate from transport setup.
 	switch res.mode {
+	case modeProviderSetup:
+		return true, runProviderSetupCommand(res, os.Stdout, os.Stderr)
 	case modeProviderStatus:
 		return true, runProviderStatusCommand(res, os.Stdout, os.Stderr)
 	case modeProviderCredential:

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -75,7 +76,19 @@ func runProviderAddCommand(res invocationResolution, stdout, stderr io.Writer) e
 		return nil
 	}
 	login := invocationResolution{mode: modeProviderCredential, llmAction: providerActionLogin, llmEndpoint: res.llmEndpoint}
-	return runProviderCredentialCommand(login, stdout, stderr)
+	var loginOut, loginErr bytes.Buffer
+	err = runProviderCredentialCommand(login, &loginOut, &loginErr)
+	if errors.Is(err, errProviderCredentialCancelled) {
+		_, writeErr := fmt.Fprintf(stderr, "Login cancelled; provider definition saved for %q.\n", res.llmEndpoint)
+		return writeErr
+	}
+	if _, writeErr := io.Copy(stdout, &loginOut); writeErr != nil {
+		return writeErr
+	}
+	if _, writeErr := io.Copy(stderr, &loginErr); writeErr != nil {
+		return writeErr
+	}
+	return err
 }
 
 func collectProviderDefinition() (permconfig.ProviderDefinition, error) {

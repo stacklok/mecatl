@@ -66,6 +66,9 @@ func runProviderCredentialCommand(res invocationResolution, stdout, stderr io.Wr
 	if err != nil {
 		return fmt.Errorf("providers %s: load configured providers: %w", res.llmAction, err)
 	}
+	if isBuiltinAPIKeyProvider(res.llmEndpoint) {
+		return runProviderAPIKeyCommand(res, cfg.authPath, stdout, stderr)
+	}
 	definition, ok := cfg.definitions[res.llmEndpoint]
 	if !ok {
 		return fmt.Errorf("provider %q is not a configured custom provider; login and logout are unavailable", res.llmEndpoint)
@@ -80,6 +83,15 @@ func runProviderCredentialCommand(res invocationResolution, stdout, stderr io.Wr
 		return runProviderOIDCCommand(res, definition, stdout, stderr)
 	default:
 		return fmt.Errorf("provider %q uses auth.method %q; login and logout require locally managed credentials", res.llmEndpoint, definition.Auth.Method)
+	}
+}
+
+func isBuiltinAPIKeyProvider(provider string) bool {
+	switch provider {
+	case "anthropic", "openai", "opencode", "openrouter":
+		return true
+	default:
+		return false
 	}
 }
 

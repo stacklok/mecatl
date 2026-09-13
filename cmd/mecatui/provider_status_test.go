@@ -59,12 +59,13 @@ func TestProvidersStatusToolHiveAndUnknownProvider(t *testing.T) {
 	}
 }
 
-func TestProvidersOnlySupportedProviderCommandsAreExecutable(t *testing.T) {
+func TestProvidersSupportedProviderCommandsAreExecutable(t *testing.T) {
 	for _, args := range [][]string{
+		{"mecatui", "providers", "setup"},
 		{"mecatui", "providers", "setup", "openai"},
 	} {
-		if got := resolveInvocation(args); got.err == nil {
-			t.Errorf("%v resolved to executable mode %+v", args, got)
+		if got := resolveInvocation(args); got.err != nil || got.mode != modeProviderSetup {
+			t.Errorf("%v resolved to %+v, want provider setup", args, got)
 		}
 	}
 	for _, args := range [][]string{
