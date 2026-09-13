@@ -189,7 +189,7 @@ func providersSubtree(_ Docs) *Subtree {
 func credentialStoreSubtree(_ Docs) *Subtree {
 	return &Subtree{Key: "credential_store", Tier: TierOperator, CommentedOut: true, Doc: "API-key file input and shared encrypted credential store for OIDC providers.", Fields: []*Field{
 		{Key: "api_key", Type: "apikeycredentialstore", Default: configAbsent, Nested: []*Field{{Key: "file", Type: configStringType, Default: "$XDG_CONFIG_HOME/mecatl/auth.yaml", ExampleValue: "/home/operator/.config/mecatl/auth.yaml"}}},
-		{Key: "oidc", Type: "oidccredentialstore", Default: configAbsent, Nested: []*Field{{Key: "home", Type: configStringType, Default: configRequired, ExampleValue: "/var/lib/mecatl/provider-oidc"}, {Key: "key", Type: "nativecredentialkey", Default: configRequired, Nested: []*Field{{Key: "source", Type: configStringType, Default: configRequired, ExampleValue: "keyring"}, {Key: "key_env", Type: configStringType, Default: "(required for environment; forbidden for keyring)", ExampleValue: "MECATL_NATIVE_LLM_CREDENTIAL_KEY"}}}}},
+		{Key: "oidc", Type: "oidccredentialstore", Default: configAbsent, Nested: []*Field{{Key: "home", Type: configStringType, Default: configRequired, ExampleValue: "/var/lib/mecatl/provider-oidc"}, {Key: "key", Type: "nativecredentialkey", Default: configRequired, Nested: []*Field{{Key: "source", Type: configStringType, Default: configRequired, ExampleValue: "environment"}, {Key: "key_env", Type: configStringType, Default: "(required for environment; forbidden for keyring)", ExampleValue: "MECATL_NATIVE_LLM_CREDENTIAL_KEY"}}}}},
 	}}
 }
 

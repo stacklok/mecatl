@@ -148,7 +148,8 @@
 #   oidc:
 #     home: /var/lib/mecatl/provider-oidc
 #     key:
-#       source: keyring
+#       source: environment
+#       key_env: MECATL_NATIVE_LLM_CREDENTIAL_KEY
 
 #| === provider_overrides === (tier: operator)
 #| Strict endpoint overrides for built-in openai, openrouter, anthropic, and opencode
