@@ -31,22 +31,25 @@ import (
 type transportMode string
 
 const (
-	modeLocal          transportMode = "local"
-	modeConnect        transportMode = "connect"
-	providerActionLogin      = "login"
-	providerActionStatus     = "status"
-	providerActionLogout     = "logout"
-	providerActionSetup      = "setup"
-	providerActionAdd        = "add"
-	providerActionSetDefault = "set-default"
-	providerActionRemove     = "remove"
+	modeLocal                transportMode = "local"
+	modeConnect              transportMode = "connect"
+	providerActionLogin                    = "login"
+	providerActionStatus                   = "status"
+	providerActionLogout                   = "logout"
+	providerActionSetup                    = "setup"
+	providerActionAdd                      = "add"
+	providerActionSetDefault               = "set-default"
+	providerActionRemove                   = "remove"
 	// Legacy implementation names are private compatibility shims for the OIDC runtime;
 	// command parsing accepts only the providers vocabulary.
-	llmActionLogin = providerActionLogin
-	llmActionStatus = providerActionStatus
-	llmActionLogout = providerActionLogout
-	toolHiveEndpointID               = "toolhive"
-	// modeLogin is the CLI-only `mecatui llm` lifecycle subcommand.
+	llmActionLogin     = providerActionLogin
+	llmActionStatus    = providerActionStatus
+	llmActionLogout    = providerActionLogout
+	toolHiveEndpointID = "toolhive"
+	// modeProviderStatus is the passive local provider inventory. It deliberately
+	// does not construct an embedded server or a credential-store runtime.
+	modeProviderStatus transportMode = "provider-status"
+	// modeLogin is the CLI-only legacy lifecycle subcommand.
 	modeLogin transportMode = "llm-login"
 	// modeLLMConfig writes native endpoint configuration without starting lifecycle operations.
 	modeLLMConfig transportMode = "llm-config"
@@ -255,30 +258,22 @@ func resolveRemoteLogoutCommand(args []string) invocationResolution {
 }
 
 func resolveProvidersCommand(args []string) invocationResolution {
-	const usage = "providers: usage: mecatui providers [status [PROVIDER] | setup [PROVIDER] | add PROVIDER [--no-login] | login PROVIDER [--no-browser] | logout PROVIDER | set-default PROVIDER [MODEL] | remove PROVIDER]"
+	const usage = "providers: usage: mecatui providers [status [PROVIDER]]"
 	if len(args) == 1 && isHelpMetaFlag(args[0]) {
-		return invocationResolution{mode: modeLogin, remaining: args}
+		return invocationResolution{mode: modeProviderStatus, remaining: args}
 	}
 	if len(args) == 0 {
-		return invocationResolution{mode: modeLogin, llmAction: providerActionStatus}
+		return invocationResolution{mode: modeProviderStatus, llmAction: providerActionStatus}
 	}
-	if len(args) == 2 && isHelpMetaFlag(args[1]) {
-		switch args[0] {
-		case providerActionStatus, providerActionSetup, providerActionAdd, providerActionLogin, providerActionLogout, providerActionSetDefault, providerActionRemove:
-			return invocationResolution{mode: modeLogin, llmAction: args[0], remaining: args[1:]}
-		}
+	if len(args) == 2 && args[0] == providerActionStatus && isHelpMetaFlag(args[1]) {
+		return invocationResolution{mode: modeProviderStatus, remaining: args[1:]}
 	}
-	action := args[0]
-	if action == providerActionStatus && len(args) <= 2 && (len(args) == 1 || !strings.HasPrefix(args[1], "-")) {
+	if args[0] == providerActionStatus && len(args) <= 2 && (len(args) == 1 || !strings.HasPrefix(args[1], "-")) {
 		endpoint := ""
-		if len(args) == 2 { endpoint = args[1] }
-		return invocationResolution{mode: modeLogin, llmAction: action, llmEndpoint: endpoint}
-	}
-	if (action == providerActionLogin || action == providerActionLogout || action == providerActionSetup || action == providerActionAdd || action == providerActionSetDefault || action == providerActionRemove) && len(args) >= 2 && !strings.HasPrefix(args[1], "-") {
-		if action == providerActionLogin && len(args) == 3 && args[2] == "--no-browser" { return invocationResolution{mode: modeLogin, llmAction: action, llmEndpoint: args[1], remaining: args[2:]} }
-		if action == providerActionAdd && len(args) == 3 && args[2] == "--no-login" { return invocationResolution{mode: modeLogin, llmAction: action, llmEndpoint: args[1], remaining: args[2:]} }
-		if (action == providerActionLogin || action == providerActionLogout || action == providerActionSetup || action == providerActionAdd || action == providerActionRemove) && len(args) == 2 { return invocationResolution{mode: modeLogin, llmAction: action, llmEndpoint: args[1]} }
-		if action == providerActionSetDefault && (len(args) == 2 || len(args) == 3) { return invocationResolution{mode: modeLogin, llmAction: action, llmEndpoint: args[1], remaining: args[2:]} }
+		if len(args) == 2 {
+			endpoint = args[1]
+		}
+		return invocationResolution{mode: modeProviderStatus, llmAction: providerActionStatus, llmEndpoint: endpoint}
 	}
 	return invocationResolution{err: errors.New(usage)}
 }
