@@ -9,6 +9,7 @@
 **Expected tasks:** 2
 **Issue:** [stacklok/mecatl#1446](https://github.com/stacklok/mecatl/issues/1446).
 **Plan PR:** [#1447](https://github.com/stacklok/mecatl/pull/1447)
+**Amendment:** 2026-09-13 — the operator explicitly waived the Split amendment process for #1446 and authorized this implementation-PR amendment: compact mode keys on terminal height, not the reduced conversation viewport.
 **Approved baseline:** `7a90f184297b653c5db255160f2272426c633ba8`
 
 The F6 unified Agents overlay must make selection visible without per-row bordered-button
@@ -18,16 +19,15 @@ windowing principle, while retaining the literal `▶ ` marker selected for alig
 not copy the Sessions picker’s fixed twelve-row, height-ignorant policy.
 
 The height contract covers every F6 view: Subagents and child focus; Parallel groups and
-branch focus; Teams roster and member focus; Team tasks and findings; and empty states.
-Every known positive viewport must render within its height. At offered heights 1–23, it
-renders an unframed, width-truncated compact line containing `▶`, the active tab label, and
-`esc close` for a roster; a focus view instead contains `▶`, the focused-item label, and
-`esc back`. Compact mode suspends normal-content
-navigation until the viewport reaches 24 lines. At 24 lines or more, overflowed content is
-keyboard-reachable with the remappable `Up`, `Down`, `ScrollU`, `ScrollD`, `JumpTop`, and
-`JumpEnd` actions; footers render their live markings and accurate visible ranges. This remains
-a pure mecatui client rendering change, as mecatui is documented as an event-rendering client
-in [`docs/tui.md`](../tui.md).
+branch focus; Teams roster and member focus; Team tasks and findings; and empty states. At a
+known terminal height from 1 through 23, it renders an unframed, width-truncated compact line
+containing `▶`, the active tab label, and `esc close` for a roster; a focus view instead
+contains `▶`, the focused-item label, and `esc back`. Compact mode suspends normal-content
+navigation. At a known terminal height of at least 24, normal mode applies; every F6 view must
+fit its offered conversation viewport and overflowed content is keyboard-reachable with the
+remappable `Up`, `Down`, `ScrollU`, `ScrollD`, `JumpTop`, and `JumpEnd` actions. Footers render
+their live markings and accurate visible ranges. This remains a pure mecatui client rendering
+change, as mecatui is documented as an event-rendering client in [`docs/tui.md`](../tui.md).
 
 ## Human decisions
 
@@ -35,7 +35,7 @@ in [`docs/tui.md`](../tui.md).
 - [x] Parallel winner semantics — Decision: a selected winning Parallel branch displays both `▶` and `★`; active-tab `▸` semantics are unchanged.
 - [x] F6 scope — Decision: apply the contract to every Subagents, Parallel, and Teams subview; do not migrate unrelated pickers in this change.
 - [x] Overflow traversal controls — Decision: every normal-height F6 subview reuses the existing remappable `Up`, `Down`, `ScrollU`, `ScrollD`, `JumpTop`, and `JumpEnd` actions. Roster and Parallel-branch views move the selection; Subagent/Team traces and Team tasks/findings scroll rendered lines. `ScrollU`/`ScrollD` move by the current physical-line window, endpoints clamp, selection remains visible, and footers show live markings plus the visible range.
-- [x] Compact-mode contract — Decision: at offered heights 1–23, an unframed width-truncated roster line contains `▶`, the active tab label, and `esc close`; a focus line contains `▶`, the focused-item label, and `esc back`. Compact mode suspends normal-content navigation until height 24.
+- [x] Compact-mode contract — Decision: at known terminal heights 1–23, an unframed width-truncated roster line contains `▶`, the active tab label, and `esc close`; a focus line contains `▶`, the focused-item label, and `esc back`. Compact mode suspends normal-content navigation. Terminal heights of at least 24 use normal mode, bounded by the reduced conversation viewport.
 
 ## Interface contract
 
@@ -77,9 +77,9 @@ final card. Cursor navigation and windowing must use that same current render bu
 shared cursor-following window pattern documents in [`cmd/mecatui/ui/window.go`](../../cmd/mecatui/ui/window.go). The implementation must retain the client-only layering and targeted rendering discipline in [`AGENTS.md`](../../AGENTS.md).
 
 **Acceptance:**
-- AC2.1: At every known positive offered viewport, each fully framed normal F6 subview fits after ANSI-aware wrapping; the fit test exercises every height from 24 through 80 at 32-, 80-, and 120-column widths, and no result relies on `lipgloss.Place` clipping.
+- AC2.1: At every known terminal height from 24 through 80, each fully framed normal F6 subview fits its offered conversation viewport after ANSI-aware wrapping; the fit test exercises 32-, 80-, and 120-column widths, and no result relies on `lipgloss.Place` clipping.
   - verify: `TestMecatuiAgentsOverlayFit_Scenario2_AllSubviewsFitViewport`
-- AC2.2: At each offered height from 1 through 23, the overlay uses the selected deterministic compact fallback instead of an oversized normal card; it renders no rows outside the viewport and retains the selected compact-state and `esc` behavior.
+- AC2.2: At each known terminal height from 1 through 23, the overlay uses the deterministic compact fallback instead of an oversized normal card; it renders no rows outside its offered conversation viewport and retains the selected compact-state and `esc` behavior.
   - verify: `TestMecatuiAgentsOverlayFit_Scenario2_CompactFallbackFitsShortViewport`
 - AC2.3: Each selectable roster and focused Parallel branch view windows by rendered physical-line capacity, charging frame, tab strip, metadata, wrapped rows, tails, and footer; Page Up/Page Down uses that same capacity and leaves the selected row wholly visible.
   - verify: `TestMecatuiAgentsOverlayFit_Scenario2_RosterPagingMatchesRenderedWindow`
