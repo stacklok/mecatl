@@ -37,6 +37,64 @@ func writeFile(t *testing.T, dir, contents string, mode os.FileMode) string {
 	return path
 }
 
+func TestAuthPersistenceUsesBlockYAMLForAPIKeys(t *testing.T) {
+	if !UpdateSupported() {
+		t.Skip("auth-file updates are unsupported on this platform")
+	}
+
+	for _, tt := range []struct {
+		name, initial, provider, key string
+	}{
+		{
+			name:     "created provider record",
+			provider: "openai",
+			key:      "sk-created",
+		},
+		{
+			name:     "updated provider record",
+			initial:  "# retain this comment\nproviders: {openai: {api_key: 'sk-old'}}\n",
+			provider: "openai",
+			key:      "sk-updated",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.Chmod(dir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(dir, "auth.yaml")
+			if tt.initial != "" {
+				writeFile(t, dir, tt.initial, 0o600)
+			}
+
+			state, err := UpdateAPIKey(context.Background(), path, APIKeyUpdate{Provider: tt.provider, APIKey: &tt.key})
+			if state != CommitDurable || err != nil {
+				t.Fatalf("UpdateAPIKey = (%v, %v), want durable update", state, err)
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			out := string(data)
+			for _, flow := range []string{"{", "}"} {
+				if strings.Contains(out, flow) {
+					t.Fatalf("persisted auth file contains flow YAML %q:\n%s", flow, out)
+				}
+			}
+			if !strings.Contains(out, "providers:\n") || !strings.Contains(out, tt.provider+":\n") || !strings.Contains(out, "api_key: '"+tt.key+"'") {
+				t.Fatalf("persisted auth file = %q, want block API-key record", out)
+			}
+			if tt.initial != "" && !strings.Contains(out, "# retain this comment") {
+				t.Fatalf("persisted auth file dropped its comment: %q", out)
+			}
+			file, warning := Load(path, false, fakeEnv(dir), testKnownProviders)
+			if warning != "" || file == nil || file.APIKey(tt.provider) != tt.key {
+				t.Fatalf("Load persisted auth file = (%v, %q), want API key", file, warning)
+			}
+		})
+	}
+}
+
 func TestGoccyYAMLMigration_Scenario2_AuthFileWholeFileVsEntryLocalFailure(t *testing.T) {
 	const validKey = "valid-sibling-key"
 	const invalidMaterial = "invalid-entry-material"

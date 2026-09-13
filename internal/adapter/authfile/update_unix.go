@@ -429,8 +429,15 @@ func mutateAuth(data []byte, update APIKeyUpdate) ([]byte, bool, error) {
 		if update.APIKey == nil {
 			return data, true, nil
 		}
-		target = staticAuthEntry(update.Provider + ": {}\n")
+		providers.SetIsFlowStyle(false)
+		target = staticAuthEntry(update.Provider + ":\n  api_key: " + quoteYAML(*update.APIKey) + "\n")
+		target.AddColumn(2)
 		providers.Values = append(providers.Values, target)
+		out := []byte(doc.String())
+		if err := validateUpdatedAuth(out); err != nil {
+			return nil, false, err
+		}
+		return out, false, nil
 	}
 	mapping := target.Value.(*ast.MappingNode)
 	for _, entry := range mapping.Values {
@@ -471,11 +478,15 @@ func mutateAuth(data []byte, update APIKeyUpdate) ([]byte, bool, error) {
 			if current == *update.APIKey {
 				return data, true, nil
 			}
+			providers.SetIsFlowStyle(false)
+			mapping.SetIsFlowStyle(false)
 			replacement := staticAuthEntry("api_key: " + quoteYAML(*update.APIKey) + "\n")
 			if err := keyEntry.Replace(replacement.Value); err != nil {
 				return nil, false, errors.New("replace auth api_key")
 			}
 		} else {
+			providers.SetIsFlowStyle(false)
+			mapping.SetIsFlowStyle(false)
 			mapping.Values = append(mapping.Values, staticAuthEntry("api_key: "+quoteYAML(*update.APIKey)+"\n"))
 		}
 	}
