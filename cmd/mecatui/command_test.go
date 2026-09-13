@@ -49,9 +49,6 @@ func TestResolveLocalWordIsUnknownCommand(t *testing.T) {
 	if !strings.Contains(res.err.Error(), "local") {
 		t.Errorf("error %q does not name the unknown command", res.err)
 	}
-	if !strings.Contains(res.err.Error(), "connect") {
-		t.Errorf("error %q does not name the available 'connect' command", res.err)
-	}
 }
 
 func TestResolveConnectStripsCommandWordAndAddress(t *testing.T) {
@@ -316,9 +313,6 @@ func TestResolveUnknownCommandFailsClosed(t *testing.T) {
 	}
 	if !strings.Contains(res.err.Error(), "loal") {
 		t.Errorf("error %q does not name the unknown command", res.err)
-	}
-	if !strings.Contains(res.err.Error(), "Available commands:") {
-		t.Errorf("error %q does not list available commands", res.err)
 	}
 }
 
@@ -1040,8 +1034,8 @@ func TestCommandSummaryUsesIndentedWrappedDescriptions(t *testing.T) {
 		t.Errorf("command summary put the connect description on its synopsis line:\n%s", summary)
 	}
 	unknown := unknownCommandError("unknown").Error()
-	if !strings.Contains(unknown, "  connect ADDRESS [sessions | debug TARGET] [flags]\n    dial a running mecated at ADDRESS (host:port), optionally browsing or\n    debugging a stored session\n") {
-		t.Errorf("unknown-command output did not reuse the indented, wrapped command summary:\n%s", unknown)
+	if unknown != `unknown command "unknown"` {
+		t.Errorf("unknown-command error = %q, want concise command name only", unknown)
 	}
 	for _, line := range strings.Split(strings.TrimSuffix(summary, "\n"), "\n") {
 		if len(line) > 80 {
@@ -1347,13 +1341,10 @@ func TestUsageErrorTrailerMarkers(t *testing.T) {
 	}
 }
 
-// TestUnknownCommandErrorListsCatalogHelpRoutes ensures unknown-command guidance
-// stays derived from the same catalog as resolution and top-level help.
-func TestUnknownCommandErrorListsCatalogHelpRoutes(t *testing.T) {
-	err := unknownCommandError("local")
-	for _, command := range topLevelCommands {
-		if !strings.Contains(err.Error(), "mecatui "+command.name+" --help") {
-			t.Errorf("unknown-command error missing %q help route: %v", command.name, err)
-		}
+// TestUnknownCommandErrorIsConcise keeps the resolver error separate from the one
+// top-level help trailer rendered by main.
+func TestUnknownCommandErrorIsConcise(t *testing.T) {
+	if got, want := unknownCommandError("local").Error(), `unknown command "local"`; got != want {
+		t.Errorf("unknown-command error = %q, want %q", got, want)
 	}
 }

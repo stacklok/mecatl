@@ -486,11 +486,10 @@ func writeDebugHelp(out io.Writer, connect bool) {
 	_, _ = fmt.Fprintln(out, "If inventory is unavailable or no handle matches, TARGET is sent unchanged for the server to authorize or reject as an exact ID.")
 }
 
-// unknownCommandError builds the error message for an unknown leading bare word.
+// unknownCommandError builds the concise error message for an unknown leading bare word.
+// main appends the command summary once for usageErrorTrailer errors.
 func unknownCommandError(arg string) error {
-	var commands strings.Builder
-	writeCommandSummary(&commands)
-	return fmt.Errorf("unknown command %q\n\nAvailable commands:\n%s\nBare 'mecatui [flags]' hosts an embedded mecated server in-process (no loopback probe).\nRun 'mecatui --help-flags' for bare-mode common flags", arg, strings.TrimPrefix(commands.String(), "Commands:\n"))
+	return fmt.Errorf("unknown command %q", arg)
 }
 
 // connectUsageError builds the error message for a bare/flag-first `connect`
