@@ -155,7 +155,8 @@ func UpdateDefaults(ctx context.Context, path string, update DefaultUpdate) (sta
 	}
 	current, err := readSettingsTarget(parentFD, leaf)
 	if err != nil || !sameSettingsTarget(before, current) {
-		return authfile.CommitNotApplied, errors.New("configuration changed while this command was running; no changes were made. Review the file and retry")
+		//nolint:revive,staticcheck // Exact CLI retry message is a published contract.
+		return authfile.CommitNotApplied, errors.New("Configuration changed while this command was running; no changes were made. Review the file and retry.")
 	}
 	if err := ctx.Err(); err != nil {
 		return authfile.CommitNotApplied, fmt.Errorf("settings default update: %w", err)

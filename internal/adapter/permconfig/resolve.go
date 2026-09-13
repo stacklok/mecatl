@@ -861,7 +861,7 @@ func (r *Resolver) applyTrustGate(rules []governance.Rule, report *Report) []gov
 // Read from the host filesystem via the injectable env (NOT a workspace — these
 // live outside any session root). Fail-soft per file.
 func (r *Resolver) captureOperatorParseError(data []byte, err error) {
-	if (hasTopLevelKey(data, "llm") || hasTopLevelKey(data, "providers") || hasTopLevelKey(data, "provider_overrides")) && r.operatorProviderConfigErr == nil {
+	if (hasTopLevelKey(data, "llm") || hasTopLevelKey(data, "providers") || hasTopLevelKey(data, "provider_overrides") || hasTopLevelKey(data, "credential_store")) && r.operatorProviderConfigErr == nil {
 		r.operatorProviderConfigErr = errors.New("operator provider configuration is invalid")
 	}
 	if hasTopLevelKey(data, "retention") && r.operatorRetentionErr == nil {

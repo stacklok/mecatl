@@ -7,6 +7,9 @@ import (
 	"path/filepath"
 )
 
+//nolint:revive,staticcheck // Exact CLI retry message is a published contract.
+var errConfigurationChanged = errors.New("Configuration changed while this command was running; no changes were made. Review the file and retry.")
+
 // APIKeyUpdate is one targeted auth.yaml mutation. A nil APIKey removes only
 // Provider's api_key field.
 type APIKeyUpdate struct {

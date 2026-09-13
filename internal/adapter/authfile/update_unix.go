@@ -51,6 +51,9 @@ func updateAPIKey(ctx context.Context, path string, update APIKeyUpdate) (Commit
 	}
 	state, err := updateInParent(ctx, parent, leaf, update)
 	if err != nil {
+		if errors.Is(err, errConfigurationChanged) {
+			return state, err
+		}
 		return state, fmt.Errorf("auth %s for provider %s: %w", operation, update.Provider, err)
 	}
 	return state, nil
@@ -248,7 +251,7 @@ func updateInParent(ctx context.Context, parent, leaf string, update APIKeyUpdat
 	}
 	current, err := readTarget(parentFD, leaf)
 	if err != nil || !sameSnapshot(before, current) {
-		return CommitNotApplied, errors.New("configuration changed while this command was running; no changes were made. Review the file and retry")
+		return CommitNotApplied, errConfigurationChanged
 	}
 	if err := ctx.Err(); err != nil {
 		return CommitNotApplied, fmt.Errorf("credential update cancelled: %w", err)

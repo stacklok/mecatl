@@ -120,6 +120,26 @@ func TestUpdateProviderMap_ChangedTargetAbortsWithoutLockArtifact(t *testing.T) 
 	}
 }
 
+func TestUpdateDefaults_ChangedTargetAborts(t *testing.T) {
+	path := providerMapSettings(t, "models:\n  default_provider: openai\n  default: gpt-5\n")
+	defaultUpdateTestHook = func(stage string) error {
+		if stage == "before-compare" {
+			return os.WriteFile(path, []byte("models:\n  default_provider: openai\n  default: gpt-5\n# changed\n"), 0o600)
+		}
+		return nil
+	}
+	t.Cleanup(func() { defaultUpdateTestHook = nil })
+
+	state, err := UpdateDefaults(context.Background(), path, DefaultUpdate{Provider: "openai", Model: "gpt-5.1"})
+	if state != authfile.CommitNotApplied || err == nil || err.Error() != "Configuration changed while this command was running; no changes were made. Review the file and retry." {
+		t.Fatalf("UpdateDefaults = (%v, %v), want changed-target error", state, err)
+	}
+	data, readErr := os.ReadFile(path)
+	if readErr != nil || !strings.Contains(string(data), "# changed") {
+		t.Fatalf("changed target was overwritten: %v\n%s", readErr, data)
+	}
+}
+
 func TestUpdateProviderMap_RejectsUnsafeTargetsAndCancellation(t *testing.T) {
 	t.Run("symlink", func(t *testing.T) {
 		dir := t.TempDir()
