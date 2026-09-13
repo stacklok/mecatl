@@ -9,7 +9,6 @@ import (
 
 	"github.com/stacklok/mecatl/internal/adapter/authfile"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
-	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
 	"github.com/stacklok/mecatl/internal/app"
 	"github.com/stacklok/mecatl/internal/cliconfig"
 )
@@ -51,32 +50,23 @@ func optionalProviderDefaultModel(args []string) string {
 }
 
 func resolveProviderDefault(provider, model string) (string, string, error) {
-	resolver := permconfig.NewWithEnv(permconfig.Options{Conventional: true}, xdgconfig.OSEnv)
-	definitions, _, err := resolver.OperatorProviders()
+	inspection, err := inspectLocalProviders()
 	if err != nil {
-		return "", "", fmt.Errorf("load configured providers: %w", err)
-	}
-	credentials, err := cliconfig.ResolveProviderCredentials(&cliconfig.ProviderFlags{}, definitions, xdgconfig.OSEnv)
-	if err != nil {
-		return "", "", fmt.Errorf("resolve provider credentials: %w", err)
-	}
-	var aliases map[string]string
-	if policy := resolver.OperatorModelPolicy(); policy != nil {
-		aliases = policy.Aliases
+		return "", "", fmt.Errorf("inspect local providers: %w", err)
 	}
 	nativeLoader := &cliconfig.NativeEndpointLoader{}
 	defer func() { _ = nativeLoader.Close() }()
 	return app.ResolveDeploymentDefault(context.Background(), app.Config{
 		DefaultProvider:                provider,
 		DefaultModel:                   model,
-		ModelAliases:                   aliases,
-		ProviderDefinitions:            definitions,
-		CustomProviderAPIKeys:          customProviderAPIKeys(credentials, definitions),
-		OpenAIKey:                      credentials.OpenAI,
-		OpenRouterKey:                  credentials.OpenRouter,
-		AnthropicKey:                   credentials.Anthropic,
-		OpenCodeKey:                    credentials.OpenCode,
-		OpenAICodexCredential:          credentials.OpenAICodex,
+		ModelAliases:                   inspection.aliases,
+		ProviderDefinitions:            inspection.definitions,
+		CustomProviderAPIKeys:          customProviderAPIKeys(inspection.credentials, inspection.definitions),
+		OpenAIKey:                      inspection.credentials.OpenAI,
+		OpenRouterKey:                  inspection.credentials.OpenRouter,
+		AnthropicKey:                   inspection.credentials.Anthropic,
+		OpenCodeKey:                    inspection.credentials.OpenCode,
+		OpenAICodexCredential:          inspection.credentials.OpenAICodex,
 		NativeEndpointCredentialLoader: nativeLoader,
 		ToolhiveLLM:                    true,
 	})

@@ -2,12 +2,15 @@ package main
 
 import (
 	"cmp"
+	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"slices"
 
+	"github.com/stacklok/mecatl/internal/adapter/authfile"
+	"github.com/stacklok/mecatl/internal/adapter/llmendpoint"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
 	"github.com/stacklok/mecatl/internal/cliconfig"
@@ -21,6 +24,17 @@ type providerStatus struct {
 	Auth         string
 	DefaultModel string
 	Next         string
+}
+
+// providerInspection is the local, value-free view used to inspect providers
+// and validate a proposed embedded deployment default.
+type providerInspection struct {
+	definitions      permconfig.ProviderDefinitions
+	credentials      cliconfig.ResolvedCredentials
+	aliases          map[string]string
+	shadowed         map[string]bool
+	selectedProvider string
+	selectedModel    string
 }
 
 var loadProviderStatuses = currentProviderStatuses
@@ -56,51 +70,102 @@ func writeProviderStatus(out io.Writer, status providerStatus) error {
 }
 
 func currentProviderStatuses() ([]providerStatus, error) {
-	resolver := permconfig.NewWithEnv(permconfig.Options{Conventional: true}, xdgconfig.OSEnv)
-	definitions, _, err := resolver.OperatorProviders()
+	inspection, err := inspectLocalProviders()
 	if err != nil {
 		return nil, err
 	}
-	flags := &cliconfig.ProviderFlags{}
-	credentials, err := cliconfig.ResolveProviderCredentials(flags, definitions, xdgconfig.OSEnv)
-	if err != nil {
-		return nil, err
-	}
-
-	selectedProvider, selectedModel := "", ""
-	if models := resolver.OperatorModelPolicy(); models != nil {
-		selectedProvider, selectedModel = models.DefaultProvider, models.Default
-	}
-	statuses := builtinProviderStatuses(credentials)
-	for id, definition := range definitions {
+	statuses := builtinProviderStatuses(inspection.credentials, inspection.shadowed)
+	for id, definition := range inspection.definitions {
 		status := providerStatus{
 			Name:         id,
 			Class:        "custom",
-			Auth:         customProviderAuth(credentials, id, definition.Auth.Method),
+			Auth:         customProviderAuth(inspection.credentials, id, definition.Auth.Method),
 			DefaultModel: definition.DefaultModel,
 			Next:         "configure this provider in operator settings",
 		}
-		if status.Auth == "configured" || status.Auth == "not required" {
+		if definition.Auth.Method == providerAuthOIDC {
+			status.Auth, status.Next = providerOIDCStatus(definition)
+		} else if status.Auth == "configured" || status.Auth == "not required" {
 			status.Next = "ready to use"
 		}
 		statuses = append(statuses, status)
 	}
 	for i := range statuses {
-		if statuses[i].Name == selectedProvider && selectedModel != "" {
-			statuses[i].DefaultModel = selectedModel
+		if statuses[i].Name == inspection.selectedProvider && inspection.selectedModel != "" {
+			statuses[i].DefaultModel = inspection.selectedModel
 		}
 	}
 	slices.SortFunc(statuses, func(a, b providerStatus) int { return cmp.Compare(a.Name, b.Name) })
 	return statuses, nil
 }
 
-func builtinProviderStatuses(keys cliconfig.ResolvedCredentials) []providerStatus {
+func inspectLocalProviders() (providerInspection, error) {
+	resolver := permconfig.NewWithEnv(permconfig.Options{Conventional: true}, xdgconfig.OSEnv)
+	definitions, _, err := resolver.OperatorProviders()
+	if err != nil {
+		return providerInspection{}, err
+	}
+	flags := &cliconfig.ProviderFlags{}
+	if store := resolver.OperatorCredentialStore(); store != nil && store.APIKey != nil {
+		flags.SetAPIKeyFile(store.APIKey.File)
+	}
+	credentials, err := cliconfig.ResolveProviderCredentials(flags, definitions, xdgconfig.OSEnv)
+	if err != nil {
+		return providerInspection{}, err
+	}
+	var aliases map[string]string
+	selectedProvider, selectedModel := "", ""
+	if policy := resolver.OperatorModelPolicy(); policy != nil {
+		aliases = policy.Aliases
+		selectedProvider, selectedModel = policy.DefaultProvider, policy.Default
+	}
+	path, explicit := flags.AuthFilePath()
+	known := []string{"anthropic", "openai", "openrouter", "opencode", "openai-codex"}
+	for id := range definitions {
+		known = append(known, id)
+	}
+	file, err := authfile.LoadStrict(path, explicit, xdgconfig.OSEnv, known)
+	if err != nil {
+		return providerInspection{}, err
+	}
+	env := cliconfig.ReadProviderKeys()
+	shadowed := map[string]bool{
+		"anthropic":  env.Anthropic != "" && file.APIKey("anthropic") != "",
+		"openai":     env.OpenAI != "" && file.APIKey("openai") != "",
+		"opencode":   env.OpenCode != "" && file.APIKey("opencode") != "",
+		"openrouter": env.OpenRouter != "" && file.APIKey("openrouter") != "",
+	}
+	return providerInspection{
+		definitions: definitions, credentials: credentials, aliases: aliases, shadowed: shadowed,
+		selectedProvider: selectedProvider, selectedModel: selectedModel,
+	}, nil
+}
+
+func providerOIDCStatus(definition permconfig.ProviderDefinition) (string, string) {
+	runtime, err := openProviderOIDCRuntime(context.Background(), definition, false, io.Discard)
+	if err != nil {
+		return "OIDC storage unavailable", "check locally managed OIDC enrollment"
+	}
+	defer func() { _ = runtime.Close() }()
+	switch runtime.Status(context.Background()) {
+	case llmendpoint.StatusUsable:
+		return "OIDC enrolled", "ready to use"
+	case llmendpoint.StatusNotEnrolled:
+		return "OIDC not enrolled", "run `mecatui providers login " + definition.ID + "`"
+	case llmendpoint.StatusExpired:
+		return "OIDC enrollment expired", "run `mecatui providers login " + definition.ID + "`"
+	default:
+		return "OIDC storage unavailable", "check locally managed OIDC enrollment"
+	}
+}
+
+func builtinProviderStatuses(keys cliconfig.ResolvedCredentials, shadowed map[string]bool) []providerStatus {
 	return []providerStatus{
-		{Name: "anthropic", Class: providerClassBuiltin, Auth: configured(keys.Anthropic != ""), DefaultModel: "claude-sonnet-4-6", Next: nextForAPIKey(keys.Anthropic != "")},
-		{Name: "openai", Class: providerClassBuiltin, Auth: configured(keys.OpenAI != ""), DefaultModel: "gpt-5", Next: nextForAPIKey(keys.OpenAI != "")},
+		{Name: "anthropic", Class: providerClassBuiltin, Auth: configuredSource(keys.Anthropic != "", shadowed["anthropic"]), DefaultModel: "claude-sonnet-4-6", Next: nextForAPIKey(keys.Anthropic != "")},
+		{Name: "openai", Class: providerClassBuiltin, Auth: configuredSource(keys.OpenAI != "", shadowed["openai"]), DefaultModel: "gpt-5", Next: nextForAPIKey(keys.OpenAI != "")},
 		{Name: "openai-codex", Class: providerClassBuiltin, Auth: configured(keys.HasOpenAICodex()), DefaultModel: "provider default", Next: nextForAPIKey(keys.HasOpenAICodex())},
-		{Name: "opencode", Class: providerClassBuiltin, Auth: configured(keys.OpenCode != ""), DefaultModel: "glm-5.2", Next: nextForAPIKey(keys.OpenCode != "")},
-		{Name: "openrouter", Class: providerClassBuiltin, Auth: configured(keys.OpenRouter != ""), DefaultModel: "openai/gpt-5", Next: nextForAPIKey(keys.OpenRouter != "")},
+		{Name: "opencode", Class: providerClassBuiltin, Auth: configuredSource(keys.OpenCode != "", shadowed["opencode"]), DefaultModel: "glm-5.2", Next: nextForAPIKey(keys.OpenCode != "")},
+		{Name: "openrouter", Class: providerClassBuiltin, Auth: configuredSource(keys.OpenRouter != "", shadowed["openrouter"]), DefaultModel: "openai/gpt-5", Next: nextForAPIKey(keys.OpenRouter != "")},
 		{Name: "toolhive", Class: "external", Auth: "managed externally", DefaultModel: "ToolHive managed", Next: "use `thv llm` tooling"},
 	}
 }
@@ -117,6 +182,13 @@ func configured(ok bool) string {
 		return "configured"
 	}
 	return "not configured"
+}
+
+func configuredSource(ok, shadowed bool) string {
+	if shadowed {
+		return "configured (environment shadows credential_store.api_key.file)"
+	}
+	return configured(ok)
 }
 
 func nextForAPIKey(configured bool) string {
