@@ -53,6 +53,8 @@ const (
 	modeProviderCredential transportMode = "provider-credential"
 	// modeProviderAdd interactively creates one custom provider definition.
 	modeProviderAdd transportMode = "provider-add"
+	// modeProviderRemove removes one custom provider definition and its locally managed credential.
+	modeProviderRemove transportMode = "provider-remove"
 	// modeLogin is the CLI-only legacy lifecycle subcommand.
 	modeLogin transportMode = "llm-login"
 	// modeLLMConfig writes native endpoint configuration without starting lifecycle operations.
@@ -262,7 +264,7 @@ func resolveRemoteLogoutCommand(args []string) invocationResolution {
 }
 
 func resolveProvidersCommand(args []string) invocationResolution {
-	const usage = "providers: usage: mecatui providers [status [PROVIDER] | add PROVIDER [--no-login] | login PROVIDER [--no-browser] | logout PROVIDER]"
+	const usage = "providers: usage: mecatui providers [status [PROVIDER] | add PROVIDER [--no-login] | login PROVIDER [--no-browser] | logout PROVIDER | remove PROVIDER]"
 	if len(args) == 1 && isHelpMetaFlag(args[0]) {
 		return invocationResolution{mode: modeProviderStatus, remaining: args}
 	}
@@ -282,6 +284,9 @@ func resolveProvidersCommand(args []string) invocationResolution {
 	if res, ok := resolveProviderAddCommand(args); ok {
 		return res
 	}
+	if res, ok := resolveProviderRemoveCommand(args); ok {
+		return res
+	}
 	if res, ok := resolveProviderCredentialCommand(args); ok {
 		return res
 	}
@@ -296,6 +301,13 @@ func resolveProviderAddCommand(args []string) (invocationResolution, bool) {
 		return invocationResolution{mode: modeProviderAdd, llmAction: providerActionAdd, llmEndpoint: args[1], remaining: args[2:]}, true
 	}
 	return invocationResolution{}, false
+}
+
+func resolveProviderRemoveCommand(args []string) (invocationResolution, bool) {
+	if len(args) != 2 || args[0] != providerActionRemove || strings.HasPrefix(args[1], "-") {
+		return invocationResolution{}, false
+	}
+	return invocationResolution{mode: modeProviderRemove, llmAction: providerActionRemove, llmEndpoint: args[1]}, true
 }
 
 func resolveProviderCredentialCommand(args []string) (invocationResolution, bool) {

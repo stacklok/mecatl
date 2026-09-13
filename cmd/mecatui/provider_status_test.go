@@ -62,7 +62,6 @@ func TestProvidersStatusToolHiveAndUnknownProvider(t *testing.T) {
 func TestProvidersOnlySupportedProviderCommandsAreExecutable(t *testing.T) {
 	for _, args := range [][]string{
 		{"mecatui", "providers", "setup", "openai"},
-		{"mecatui", "providers", "remove", "openai"},
 		{"mecatui", "providers", "set-default", "openai"},
 	} {
 		if got := resolveInvocation(args); got.err == nil {
@@ -72,9 +71,18 @@ func TestProvidersOnlySupportedProviderCommandsAreExecutable(t *testing.T) {
 	for _, args := range [][]string{
 		{"mecatui", "providers", "login", "custom"},
 		{"mecatui", "providers", "logout", "custom"},
+		{"mecatui", "providers", "remove", "custom"},
 	} {
-		if got := resolveInvocation(args); got.err != nil || got.mode != modeProviderCredential {
+		got := resolveInvocation(args)
+		if got.err != nil {
 			t.Errorf("%v resolution = %+v", args, got)
+			continue
+		}
+		if args[2] == "remove" && got.mode != modeProviderRemove {
+			t.Errorf("%v mode = %q, want %q", args, got.mode, modeProviderRemove)
+		}
+		if args[2] != "remove" && got.mode != modeProviderCredential {
+			t.Errorf("%v mode = %q, want %q", args, got.mode, modeProviderCredential)
 		}
 	}
 }
