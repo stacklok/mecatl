@@ -26,6 +26,27 @@ func TestProviderUnification_Scenario5_LinuxAndDarwinWriteSupport(t *testing.T) 
 	}
 }
 
+func TestUpdateProviderMap_CreatesMissingSettingsDocument(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "settings.yaml")
+	definition := ProviderDefinition{
+		BaseURL: "https://new.example/v1", DefaultModel: "new-model", APIFlavor: "openai-responses", Auth: ProviderAuth{Method: "api_key"},
+	}
+	if state, err := UpdateProviderMap(context.Background(), path, ProviderMapUpdate{Provider: "new", Definition: &definition}); err != nil || state != authfile.CommitDurable {
+		t.Fatalf("create settings = (%v, %v), want durable success", state, err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateYAML(data); err != nil {
+		t.Fatalf("created settings are invalid: %v\n%s", err, data)
+	}
+}
+
 func TestUpdateProviderMap_AddReplaceRemovePreservesSettings(t *testing.T) {
 	path := providerMapSettings(t, "permissions:\n  deny: [Shell]\nmodels:\n  default_provider: openai\n  default: gpt-5\nproviders:\n  old:\n    base_url: https://old.example/v1\n    default_model: old-model\n    api_flavor: openai-responses\n    auth: {method: none}\nunknown_top_level: preserved\n")
 

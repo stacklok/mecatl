@@ -129,7 +129,7 @@ func UpdateProviderMap(ctx context.Context, path string, update ProviderMapUpdat
 //nolint:gocyclo // AST-preserving update covers add, replace, and removal explicitly.
 func mutateProviderMap(data []byte, update ProviderMapUpdate) ([]byte, bool, error) {
 	if len(bytes.TrimSpace(data)) == 0 {
-		data = []byte("{}\n")
+		data = []byte("providers: {}\n")
 	}
 	if err := ValidateYAML(data); err != nil {
 		return nil, false, errors.New("settings document is invalid")
