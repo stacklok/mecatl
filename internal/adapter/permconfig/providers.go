@@ -15,7 +15,10 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/llmendpoint"
 )
 
-const providerHTTPS = "https"
+const (
+	providerHTTPS    = "https"
+	providerAuthOIDC = "oidc"
+)
 
 var providerIDPattern = regexp.MustCompile(`^[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
 
@@ -58,6 +61,7 @@ type NativeCredentialKey struct {
 	KeyEnv string `yaml:"key_env,omitempty"`
 }
 
+// Validate checks the credential-key source and its source-specific fields.
 func (k NativeCredentialKey) Validate() error {
 	switch k.Source {
 	case "", "keyring":
@@ -72,6 +76,7 @@ func (k NativeCredentialKey) Validate() error {
 	return nil
 }
 
+// UnmarshalYAML decodes and validates a native credential-key configuration.
 func (k *NativeCredentialKey) UnmarshalYAML(node ast.Node) error {
 	*k = NativeCredentialKey{}
 	if err := decodeStrictMapping(node, "credential_store.oidc.key", map[string]any{"source": &k.Source, "key_env": &k.KeyEnv}); err != nil {
@@ -88,8 +93,9 @@ func (k *NativeCredentialKey) UnmarshalYAML(node ast.Node) error {
 	return k.Validate()
 }
 
+// UnmarshalYAML decodes the strict credential-store section.
 func (s *CredentialStoreSection) UnmarshalYAML(node ast.Node) error {
-	if err := decodeStrictMapping(node, "credential_store", map[string]any{"oidc": newPermconfigNodePointer(&s.OIDC)}); err != nil {
+	if err := decodeStrictMapping(node, "credential_store", map[string]any{providerAuthOIDC: newPermconfigNodePointer(&s.OIDC)}); err != nil {
 		return err
 	}
 	if s.OIDC == nil {
@@ -98,6 +104,7 @@ func (s *CredentialStoreSection) UnmarshalYAML(node ast.Node) error {
 	return nil
 }
 
+// UnmarshalYAML decodes and validates the OIDC credential-store section.
 func (s *OIDCCredentialStore) UnmarshalYAML(node ast.Node) error {
 	if err := decodeStrictMapping(node, "credential_store.oidc", map[string]any{"home": &s.Home, "key": &s.Key}); err != nil {
 		return err
@@ -121,8 +128,10 @@ type LLMSection struct {
 	Endpoints      NativeEndpointDefinitions `yaml:"endpoints"`
 }
 
+// NativeEndpointDefinitions contains legacy native endpoint definitions by ID.
 type NativeEndpointDefinitions map[string]NativeEndpointDefinition
 
+// NativeEndpointDefinition describes a legacy native endpoint.
 type NativeEndpointDefinition struct {
 	ID           string      `yaml:"-"`
 	Protocol     string      `yaml:"protocol"`
@@ -143,6 +152,7 @@ type NativeEndpointIdentity struct {
 	GatewayTrust   NativeTrust
 }
 
+// NativeOIDC contains the OIDC identity for a native endpoint.
 type NativeOIDC struct {
 	Issuer           string   `yaml:"issuer"`
 	ClientID         string   `yaml:"client_id"`
@@ -150,6 +160,7 @@ type NativeOIDC struct {
 	Scopes           []string `yaml:"scopes"`
 }
 
+// NativeTrust configures trust validation for a native endpoint.
 type NativeTrust struct {
 	Policy   string `yaml:"policy"`
 	CABundle string `yaml:"ca_bundle,omitempty"`
@@ -174,10 +185,12 @@ type ProviderOIDC struct {
 // ProviderOverrides is the strict operator-owned built-in endpoint map.
 type ProviderOverrides map[string]ProviderOverride
 
+// ProviderOverride configures a built-in provider endpoint override.
 type ProviderOverride struct {
 	BaseURL string `yaml:"base_url"`
 }
 
+// UnmarshalYAML decodes the strict provider definitions map.
 func (p *ProviderDefinitions) UnmarshalYAML(node ast.Node) error {
 	mapping, ok := permconfigMapping(node)
 	if !ok {
@@ -203,6 +216,7 @@ func (p *ProviderDefinitions) UnmarshalYAML(node ast.Node) error {
 	return nil
 }
 
+// UnmarshalYAML decodes and validates one provider definition.
 func (p *ProviderDefinition) UnmarshalYAML(node ast.Node) error {
 	if err := decodeStrictMapping(node, "providers entry", map[string]any{"base_url": &p.BaseURL, "default_model": &p.DefaultModel, "api_flavor": &p.APIFlavor, "auth": &p.Auth}); err != nil {
 		return err
@@ -221,12 +235,13 @@ func (p *ProviderDefinition) UnmarshalYAML(node ast.Node) error {
 	return nil
 }
 
+// UnmarshalYAML decodes and validates provider authentication settings.
 func (a *ProviderAuth) UnmarshalYAML(node ast.Node) error {
-	if err := decodeStrictMapping(node, "providers entry auth", map[string]any{"method": &a.Method, "oidc": newPermconfigNodePointer(&a.OIDC)}); err != nil {
+	if err := decodeStrictMapping(node, "providers entry auth", map[string]any{"method": &a.Method, providerAuthOIDC: newPermconfigNodePointer(&a.OIDC)}); err != nil {
 		return err
 	}
 	switch a.Method {
-	case "oidc":
+	case providerAuthOIDC:
 		if a.OIDC == nil {
 			return errors.New("providers entry auth.oidc is required")
 		}
@@ -240,6 +255,7 @@ func (a *ProviderAuth) UnmarshalYAML(node ast.Node) error {
 	return nil
 }
 
+// UnmarshalYAML decodes and validates provider OIDC authentication settings.
 func (o *ProviderOIDC) UnmarshalYAML(node ast.Node) error {
 	if err := decodeStrictMapping(node, "providers entry auth.oidc", map[string]any{"issuer": &o.Issuer, "client_id": &o.ClientID, "resource_audience": &o.ResourceAudience, "scopes": &o.Scopes, "issuer_trust": &o.IssuerTrust, "gateway_trust": &o.GatewayTrust}); err != nil {
 		return err
@@ -255,6 +271,7 @@ func (o *ProviderOIDC) UnmarshalYAML(node ast.Node) error {
 	return nil
 }
 
+// UnmarshalYAML decodes and validates native trust settings.
 func (t *NativeTrust) UnmarshalYAML(node ast.Node) error {
 	if err := decodeStrictMapping(node, "providers entry auth.oidc trust", map[string]any{"policy": &t.Policy, "ca_bundle": &t.CABundle}); err != nil {
 		return err
@@ -267,7 +284,7 @@ func (t *NativeTrust) UnmarshalYAML(node ast.Node) error {
 
 func finalizeProviderDefinitions(definitions ProviderDefinitions, store *CredentialStoreSection) error {
 	for id, definition := range definitions {
-		if definition.Auth.Method != "oidc" {
+		if definition.Auth.Method != providerAuthOIDC {
 			continue
 		}
 		if definition.APIFlavor != "openai-responses" {
@@ -283,6 +300,7 @@ func finalizeProviderDefinitions(definitions ProviderDefinitions, store *Credent
 	return nil
 }
 
+// UnmarshalYAML decodes the strict provider overrides map.
 func (p *ProviderOverrides) UnmarshalYAML(node ast.Node) error {
 	mapping, ok := permconfigMapping(node)
 	if !ok {
@@ -310,6 +328,7 @@ func (p *ProviderOverrides) UnmarshalYAML(node ast.Node) error {
 	return nil
 }
 
+// UnmarshalYAML decodes and validates a provider endpoint override.
 func (p *ProviderOverride) UnmarshalYAML(node ast.Node) error {
 	if err := decodeStrictMapping(node, "provider override", map[string]any{"base_url": &p.BaseURL}); err != nil {
 		return err

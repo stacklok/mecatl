@@ -777,7 +777,7 @@ func (u *MCPOAuthUpstreamProfile) UnmarshalYAML(node ast.Node) error {
 		return err
 	}
 	switch u.Mode {
-	case "oidc":
+	case providerAuthOIDC:
 		if mappingHasKey(node, "oauth2") {
 			return errors.New("mcp.servers[].auth.oauth.upstream: oidc must not contain an oauth2 payload")
 		}
