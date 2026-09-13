@@ -1391,3 +1391,51 @@ func TestAgentsOverlayNothingRanHint(t *testing.T) {
 		t.Errorf("expected the nothing-ran hint, got %q", m.statusMsg)
 	}
 }
+
+func TestMecatuiAgentsOverlayFit_Scenario1_SelectedRowsUseSessionsTreatment(t *testing.T) {
+	th, hk := aztec(), defaultHelpKeys()
+	assertRows := func(name, out, selected, unselected string) {
+		t.Helper()
+		accentOpen, _, _ := strings.Cut(th.Style("spinner").Render("x"), "x")
+		if !strings.Contains(out, accentOpen+"▶ "+selected) {
+			t.Errorf("%s selected row lacks unbordered accent treatment: %q", name, out)
+		}
+		plain := stripANSIstr(out)
+		if !strings.Contains(plain, "  "+unselected) {
+			t.Errorf("%s unselected row lost two-cell prefix: %q", name, plain)
+		}
+	}
+
+	assertRows("subagent", renderSubagentRoster(th, subagentState{}, []subagentLane{{childID: "one", goal: "selected"}, {childID: "two", goal: "unselected"}}, hk, 0, 120), "◐ selected", "◐ unselected")
+	assertRows("parallel group", renderParallelRoster(th, parallelState{}, []parallelGroup{{parentCallID: "one", branchCount: 1}, {parentCallID: "two", branchCount: 1}}, hk, 0, 120), "◐ all", "◐ all")
+	assertRows("team", renderTeamRoster(th, teamState{}, &block{teamLanes: []teamLane{{name: "selected"}, {name: "unselected"}}}, hk, 0, 120), "◆ · selected", "◆ · unselected")
+
+	branches := []parallelBranch{{index: 0, label: "selected"}, {index: 1, label: "unselected"}}
+	assertRows("parallel branch", renderParallelBranchRow(th, &branches[0], -1, true, 120)+renderParallelBranchRow(th, &branches[1], -1, false, 120), "◐ selected", "◐ unselected")
+}
+
+func TestMecatuiAgentsOverlayFit_Scenario1_SelectedWrappedRowHasNoButtonChrome(t *testing.T) {
+	th := aztec()
+	branch := &parallelBranch{index: 0, label: strings.Repeat("long label ", 8)}
+	selected := stripANSIstr(renderParallelBranchRow(th, branch, -1, true, 20))
+	unselected := stripANSIstr(renderParallelBranchRow(th, branch, -1, false, 20))
+	if got, want := strings.Count(selected, "\n"), strings.Count(unselected, "\n"); got != want {
+		t.Fatalf("selected wrapped row has %d physical rows, want unselected row's %d: %q", got, want, selected)
+	}
+	if got, want := strings.Replace(selected, "▶ ", "  ", 1), unselected; got != want {
+		t.Fatalf("selected wrapped row differs from unselected beyond its marker (button chrome):\nselected: %q\nunselected: %q", selected, unselected)
+	}
+}
+
+func TestMecatuiAgentsOverlayFit_Scenario1_SelectedWinnerRetainsBothMarkers(t *testing.T) {
+	th := aztec()
+	branch := &parallelBranch{index: 1, label: "winner"}
+	out := stripANSIstr(renderParallelBranchRow(th, branch, 1, true, 120))
+	if !strings.HasPrefix(out, "▶ ★ ") {
+		t.Fatalf("selected winning branch markers = %q, want both ▶ and ★", out)
+	}
+	bar := stripANSIstr(agentsTabBar(th, tabParallel))
+	if !strings.Contains(bar, "▸ Parallel") || strings.Contains(bar, "▶ Parallel") {
+		t.Fatalf("active tab marker changed or conflated: %q", bar)
+	}
+}

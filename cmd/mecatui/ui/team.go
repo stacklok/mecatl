@@ -329,7 +329,7 @@ func teamWindow(cursor, total, rows int) (start, end, above, below int) {
 
 // renderTeamRoster renders the member roster WINDOWED to the available height:
 // a header (member count + resolved round/stop summary), then the slice of lanes
-// that fits — lead first — with the selected row highlighted and the window
+// that fits — lead first — with the selected row marked with the unbordered ▶ treatment and the window
 // following the cursor, bracketed by "· +K above" / "· +K below" affordances when
 // rows are hidden, and a footer hint that is ALWAYS visible. This gives the
 // uncapped overlay the same height-safety the inline card has (cap + roll-up):
@@ -362,7 +362,7 @@ func renderTeamRoster(th theme.Theme, st teamState, b *block, hk helpKeys, heigh
 		ln := &b.teamLanes[order[row]]
 		line := teamRosterLine(th, ln, nameW, b.teamDone)
 		if row == cursor {
-			out.WriteString(renderDelegationRows(th.Style("askButtonActive"), "› ", line, bodyWidth) + "\n")
+			out.WriteString(renderDelegationRows(th.Style("spinner"), "▶ ", line, bodyWidth) + "\n")
 		} else {
 			out.WriteString(renderDelegationRows(muted, "  ", line, bodyWidth) + "\n")
 		}

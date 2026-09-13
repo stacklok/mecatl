@@ -507,7 +507,7 @@ func renderSubagentTab(th theme.Theme, st subagentState, fleet []subagentLane, h
 
 // renderSubagentRoster renders the flat fleet roster WINDOWED to the available height,
 // mirroring renderTeamRoster: a header (running/done counts), the slice of rows that
-// fits with the selected row highlighted, "+K above/below" tails, and an always-visible
+// fits with the selected row marked with the unbordered ▶ treatment, "+K above/below" tails, and an always-visible
 // footer hint. An empty fleet reads as a muted "(no subagents)". height<=0 shows all.
 func renderSubagentRoster(th theme.Theme, st subagentState, fleet []subagentLane, hk helpKeys, height int, widths ...int) string {
 	muted := th.Style("muted")
@@ -535,7 +535,7 @@ func renderSubagentRoster(th theme.Theme, st subagentState, fleet []subagentLane
 	for row := start; row < end; row++ {
 		line := subagentRosterLine(&fleet[row])
 		if row == cursor {
-			out.WriteString(renderDelegationRows(th.Style("askButtonActive"), "› ", line, bodyWidth) + "\n")
+			out.WriteString(renderDelegationRows(th.Style("spinner"), "▶ ", line, bodyWidth) + "\n")
 		} else {
 			out.WriteString(renderDelegationRows(muted, "  ", line, bodyWidth) + "\n")
 		}
@@ -804,7 +804,7 @@ func renderParallelTab(th theme.Theme, st parallelState, groups []parallelGroup,
 
 // renderParallelRoster renders the Parallel group roster WINDOWED to the available height,
 // mirroring renderSubagentRoster: a header (running/done group counts), the slice of rows
-// that fits with the selected row highlighted, "+K above/below" tails, and a footer hint.
+// that fits with the selected row marked with the unbordered ▶ treatment, "+K above/below" tails, and a footer hint.
 // An empty group list reads as a muted "(no parallel runs)". height<=0 shows all.
 func renderParallelRoster(th theme.Theme, st parallelState, groups []parallelGroup, hk helpKeys, height int, widths ...int) string {
 	muted := th.Style("muted")
@@ -832,7 +832,7 @@ func renderParallelRoster(th theme.Theme, st parallelState, groups []parallelGro
 	for row := start; row < end; row++ {
 		line := parallelRosterLine(&groups[row])
 		if row == cursor {
-			out.WriteString(renderDelegationRows(th.Style("askButtonActive"), "› ", line, bodyWidth) + "\n")
+			out.WriteString(renderDelegationRows(th.Style("spinner"), "▶ ", line, bodyWidth) + "\n")
 		} else {
 			out.WriteString(renderDelegationRows(muted, "  ", line, bodyWidth) + "\n")
 		}
@@ -982,15 +982,19 @@ func renderParallelGroupFocus(th theme.Theme, st parallelState, groups []paralle
 }
 
 // renderParallelBranchRow renders one branch's roster line within a focused group: the
-// "›" cursor on the SELECTED row (the one the `x` cancel key addresses), the "★" on the
-// WINNER row, else a muted plain row. It always ends with a newline.
+// "▶" cursor on the SELECTED row (the one the `x` cancel key addresses), alongside
+// the "★" on a winning row, else a muted plain row. It always ends with a newline.
 func renderParallelBranchRow(th theme.Theme, br *parallelBranch, winner int, selected bool, width int) string {
 	line := parallelBranchLine(br)
 	switch {
 	case selected:
-		return th.Style("askButtonActive").Render(wrapFocusMetadataAtWidth("› "+line, width)) + "\n"
+		prefix := "▶ "
+		if br.index == winner {
+			prefix += "★ "
+		}
+		return th.Style("spinner").Render(wrapFocusMetadataAtWidth(prefix+line, width)) + "\n"
 	case br.index == winner:
-		return th.Style("askButtonActive").Render(wrapFocusMetadataAtWidth("★ "+line, width)) + "\n"
+		return th.Style("muted").Render(wrapFocusMetadataAtWidth("★ "+line, width)) + "\n"
 	default:
 		return th.Style("muted").Render(wrapFocusMetadataAtWidth("  "+line, width)) + "\n"
 	}

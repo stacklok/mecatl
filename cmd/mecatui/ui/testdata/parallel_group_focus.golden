@@ -10,13 +10,9 @@
   ┃    bounded previews — branch content is clamped + scrubbed, never in the parent              ┃
   ┃    conversation                                                                              ┃
   ┃                                                                                              ┃
-  ┃  ╭──────────────────────────────────────────────────────────────────────────╮                ┃
-  ┃  │  › ✓ branch-1 · refactor with a map · done · 900ms · 2 tools · ↑12K ↓3K  │                ┃
-  ┃  ╰──────────────────────────────────────────────────────────────────────────╯                ┃
+  ┃  ▶ ✓ branch-1 · refactor with a map · done · 900ms · 2 tools · ↑12K ↓3K                      ┃
   ┃    ✓ Edit                                                                                    ┃
-  ┃  ╭──────────────────────────────────────────────────────────────────────────────╮            ┃
-  ┃  │  ★ ✓ branch-2 · refactor with a slice · done · 900ms · 3 tools · ↑15K ↓4.2K  │            ┃
-  ┃  ╰──────────────────────────────────────────────────────────────────────────────╯            ┃
+  ┃  ★ ✓ branch-2 · refactor with a slice · done · 900ms · 3 tools · ↑15K ↓4.2K                  ┃
   ┃    ✓ Edit                                                                                    ┃
   ┃    ✓ Edit — file: svc.go                                                                     ┃
   ┃    slice approach is cleaner                                                                 ┃
