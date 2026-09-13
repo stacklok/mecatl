@@ -113,21 +113,25 @@ mecatui login mecated.example.com:443 \
 Run `mecatui logout mecated.example.com:443` to remove the saved enrollment. Use
 `/connect` inside the TUI to choose another saved server.
 
-## Manage local LLM endpoint credentials
+## Manage local provider credentials
 
-Remote enrollment and local LLM endpoint authentication are separate actions.
-`mecatui login ADDRESS` authenticates the client to a remote `mecated` server;
-`mecatui llm login ENDPOINT` authenticates a locally configured native LLM
-endpoint and never authenticates to remote `mecated`. Native login uses the
-fixed ToolHive-compatible registered redirect `http://localhost:8666/callback`,
-including with `--no-browser`, but stores a separate native Mecatl credential
-and never reads or copies ToolHive credentials. Remote `mecatui login ADDRESS`
-retains its separate fixed callback.
+Remote enrollment and embedded provider credentials are separate actions.
+`mecatui login ADDRESS` authenticates this client to a remote `mecated` server;
+it does not configure or enroll that server's providers. For an embedded local
+server, use `mecatui providers` to inspect providers and
+`mecatui providers login PROVIDER` or `logout PROVIDER` for locally managed
+credentials. `mecatui providers add PROVIDER` defines a custom provider, while
+`mecatui providers setup` provides a guided first-time path.
 
-Inspect local endpoint status with `mecatui llm status [ENDPOINT]` and remove
-its credential with `mecatui llm logout ENDPOINT`. The reserved
-`mecatui llm login toolhive` form remains compatible with ToolHive's LLM
-gateway. ToolHive MCP discovery and manual OpenAI Codex authentication are
+A custom OIDC provider supports `mecatui providers login PROVIDER --no-browser`
+when a browser cannot be opened. A connected client cannot use this command to
+enroll the remote server. Provider definitions and OIDC credential custody are
+operator `providers` and `credential_store` settings; API-key credentials can
+also come from the environment or a file selected with `--api-key-file`.
+
+ToolHive has a separate external lifecycle: it owns its LLM credentials and
+setup. Use `thv llm` tooling for ToolHive rather than local provider credential
+commands. ToolHive MCP discovery and manual OpenAI Codex authentication are
 separate workflows.
 
 ## Next steps

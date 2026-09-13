@@ -12,121 +12,80 @@ description:
 provides the operator controls needed for authentication, TLS/mTLS, rate
 limiting, observability, persistence, and graceful shutdown.
 
-## Native LLM endpoints
+## Configure providers
 
-Native **LLM endpoints** are deployment-wide operator configuration, not
-remote-client settings. Create or update one in the user-global settings file
-with
-`mecatui llm config set ENDPOINT --gateway-url URL --issuer ISSUER --client-id ID --default-model MODEL [--credential-home ABSOLUTE_PATH]`.
-This command preserves unrelated configuration, does not change
-`models.default_provider`, and does not start login. Public CA trust is the
-default; `--issuer-ca-bundle` and `--gateway-ca-bundle` configure the existing
-private-CA policies. Repeat `--scope` as needed (the defaults are `openid` and
-`offline_access`) and pass `--resource-audience` only when required.
+Provider definitions and locally managed credentials are operator configuration for an
+embedded `mecatui` or a `mecated` deployment; they are not settings for a connected
+client. Start with the guided workflow:
 
-The resulting strict `llm.endpoints.ID` entry uses the Responses protocol and
-requires a canonical HTTPS gateway URL, default model, OIDC
-issuer/client/scopes, an optional resource audience, and independent
-issuer/gateway trust policies. `llm.credential_home` is shared by all native
-endpoints. When `--credential-home` is omitted, `config set` creates the
-conventional owner-only (`0700`) home at `$XDG_STATE_HOME/mecatl/provider-oidc`
-(or `~/.local/state/mecatl/provider-oidc`) and persists its canonical absolute
-path. An explicit custom home must already exist, be owned by the current user,
-and have mode `0700`; later updates, including ones that omit the flag, must
-retain the configured home until credentials are migrated. When
-`resource_audience` is omitted, Mecatl omits the authorization request parameter
-and does not require an audience during local access-token validation; a
-configured value remains strictly requested and matched. The native credential
-is always encrypted under that configured home, using the OS keyring by default
-or the explicit environment-key option below. `mecated` never opens a browser:
-enroll with embedded `mecatui llm login ENDPOINT` (add `--no-browser` to print
-the authorization URL to stderr and wait at the fixed ToolHive-compatible
-redirect `http://localhost:8666/callback`), then start or restart mecated to use
-the same native Mecatl record. This registration compatibility does not reuse or
-copy ToolHive credentials. A missing record leaves an optional endpoint
-`not-enrolled`/unavailable, fails startup when it is the effective default, and
-never falls back to another endpoint or ToolHive.
+```sh
+mecatui providers setup
+mecatui providers
+```
 
-### Keyring-free encrypted credentials
+Use `mecatui providers add NAME` to define a custom provider. It asks for the HTTPS
+base URL, API flavor, default model, and authentication method, then offers login.
+Use `mecatui providers login NAME`, `logout NAME`, `set-default NAME [MODEL]`, and
+`remove NAME` to manage that provider. `mecatui providers` (or `status NAME`) shows
+local configuration state without revealing credentials.
 
-The default remains the OS keyring. Environment-key custody is an explicit
-operator opt-in; credentials remain encrypted, with **no plaintext refresh-token
-storage**. For a new enrollment in an environment without an OS keyring:
+Custom definitions live in operator `settings.yaml` under `providers`; OIDC providers
+share the `credential_store.oidc` configuration. For example:
 
-1. In a secret manager, generate and retain one stable key: canonical **padded
-   standard base64** encoding exactly **32 cryptographically random bytes**,
-   with no whitespace or line breaks. Provision it as
-   `MECATL_NATIVE_LLM_CREDENTIAL_KEY` in both the embedded `mecatui` login
-   environment and the `mecated` service environment. Use the **same value** for
-   login, server execution, and every restart; do not generate a new key at
-   startup.
-2. Add this block to the existing `llm` mapping in **operator settings**,
-   alongside `credential_home` and `endpoints` (do not replace those entries):
+```yaml
+providers:
+  corp:
+    base_url: https://gateway.example/v1
+    default_model: corp-model
+    api_flavor: openai-responses
+    auth:
+      method: oidc
+      oidc:
+        issuer: https://issuer.example
+        client_id: mecatl
+        scopes: [openid, offline_access]
+        issuer_trust: {policy: public}
+        gateway_trust: {policy: public}
+credential_store:
+  oidc:
+    home: /home/operator/.local/state/mecatl/provider-oidc
+    key:
+      source: keyring
+```
 
-   ```yaml
-   credential_key:
-     source: environment
-     key_env: MECATL_NATIVE_LLM_CREDENTIAL_KEY
-   ```
+`auth.method` may be `api_key`, `oidc`, or `none`. OIDC requires the
+`openai-responses` flavor and `credential_store.oidc`; select
+`key.source: environment` and set `key_env` only when the encryption key is supplied
+through an environment variable. The complete strict schema is in the
+[configuration reference](/reference/configuration.md#providers) and
+[credential-store reference](/reference/configuration.md#credential_store).
 
-   Settings contain only the environment-variable **reference**, never its
-   value. The reference must be a valid `MECATL_*` name; see the
-   [`llm` configuration reference](/reference/configuration.md#llm).
+For API-key providers, credentials can instead be supplied through the environment or
+a provider-credentials YAML file. Pass `--api-key-file PATH` to `mecatui` or
+`mecated` to select that file; operator settings can persist the same input as
+`credential_store.api_key.file`. The file uses this shape:
 
-3. With the key securely injected, enroll and inspect the exact configured
-   endpoint ID (replace `ENDPOINT` below):
+```yaml
+providers:
+  corp:
+    api_key: <API_KEY>
+```
 
-   ```sh
-   mecatui llm login ENDPOINT
-   mecatui llm status ENDPOINT
-   ```
+Do not put secrets in command-line arguments, settings YAML, prompts, or logs.
 
-   Use `--no-browser` on login if needed, as described above. Confirm status is
-   `usable`.
+The legacy `llm:` settings mapping is no longer supported. If startup reports that
+legacy configuration must be migrated, remove that mapping and recreate each provider
+with `mecatui providers add` (or write an equivalent `providers` and
+`credential_store` configuration), then enroll OIDC providers again with
+`mecatui providers login NAME`. Check `mecatui providers` before restarting the
+server; the migration does not silently select another provider.
 
-4. Start or restart the service with the same operator settings, credential
-   home, and key value. For a foreground server in that provisioned environment:
-
-   ```sh
-   mecated serve
-   ```
-
-Use a secret manager or protected service-environment provisioning; never paste
-secrets into CLI arguments, settings YAML, shell history, prompts, or logs.
-Model-facing Shell environments scrub `MECATL_*` variables. Access/refresh
-tokens are persisted only in the owner-only **encrypted** credential store, and
-refresh-token rotation is persisted there before a bearer is returned.
-
-Omitting `credential_key` retains the existing OS-keyring behavior. Explicit
-`credential_key: {source: keyring}` is equivalent and forbids `key_env`, even
-when empty. Unknown sources/fields and invalid combinations are rejected. There
-is **no automatic fallback** from a missing or broken keyring. An unset or
-malformed environment key fails before OAuth or credential mutation. A
-well-formed but wrong key cannot decrypt an existing record; login refuses
-before OAuth rather than overwriting it. A missing encrypted namespace reports
-`storage-unavailable` in environment mode; login initializes it, while status,
-logout, and serving never create it or a key.
-
-The source is shared across **all endpoints in that credential home**, not
-configured per endpoint. `llm config set` preserves the existing shared
-selection. There is **no automatic migration**: changing the source or variable
-name does not migrate, re-encrypt, or overwrite records. Changing or losing the
-key value makes existing records unreadable; restore the original key or
-**re-enroll** with a new key and fresh protected storage. Login cannot overwrite
-an unreadable record. For an existing enrollment, follow the
-[native endpoint recovery guidance](/mecatui/troubleshooting.md#native-credential-storage-failures)
-before changing custody. Coordinate provisioning across all processes sharing
-the home, and restart serving processes after an intentional change. Native and
-ToolHive credentials remain isolated.
-
-Every admitted caller shares a usable endpoint's deployment-scoped gateway
-identity, quota, gateway-side audit/retention posture, and model availability.
-Use a dedicated deployment/service gateway identity. Caller OIDC only
-authenticates/attributes ownership: mecatl drops the raw inbound caller bearer
-and never forwards or retains caller credentials. For mutually untrusted or
-per-user upstream authorization, use separate deployments pending an explicit
-forwarded-token or RFC 8693-style token exchange contract. Lifecycle
-confirmations are stderr-only and never print tokens.
+`mecated` never opens a browser. Run provider login in local embedded `mecatui` before
+starting or restarting the daemon. This is distinct from `mecatui login ADDRESS`,
+which enrolls the client with a remote `mecated` server and does not configure that
+server's providers. ToolHive is also external: it owns its LLM credentials and
+lifecycle. Use `thv llm` tooling for ToolHive setup and credentials; Mecatl only uses
+the configured or discovered ToolHive gateway.
 
 If you are deploying to Kubernetes without persistent volumes, see
 [mecak8s](/building/deployment/mecak8s.md) instead. That binary is purpose-built
@@ -224,16 +183,12 @@ local consistency assertion. See
 
 ## Operator-defined providers
 
-Operator-local `~/.config/mecatl/settings.yaml` can declare a named compatible
-provider with an HTTPS base URL, required default model, and one explicit API
-flavor: `openai-responses`, `openai-chat-completions`, or `anthropic-messages`.
-Keep an `api_key` provider's credential in the matching `providers.<id>.api_key`
-record in owner-readable `~/.config/mecatl/auth.yaml`; `auth.method: none` needs
-no credential. The ID is persisted with sessions, so removing or renaming it
-makes those sessions fail loudly instead of selecting another provider. Built-in
-endpoint settings belong under `provider_overrides`; the matching `--*-base-url`
-flag wins. See the [configuration reference](/reference/configuration.md) for
-the strict schema.
+Use the [provider configuration workflow](#configure-providers) to add a compatible
+provider and manage its local credentials. Custom provider definitions are operator-owned;
+the provider ID is persisted with sessions, so removing or renaming it makes those
+sessions fail loudly instead of selecting another provider. Built-in endpoint settings
+belong under `provider_overrides`; the matching `--*-base-url` flag wins. See the
+[configuration reference](/reference/configuration.md) for the strict schema.
 
 Self-hosted `openai-responses` endpoints, including vLLM, llama.cpp, and LiteLLM
 proxies, vary in their `/v1/responses` support. An endpoint can omit hosted
@@ -496,26 +451,21 @@ There are two routing modes for how the `toolhive` provider reaches the gateway,
 selected by `--toolhive-llm-mode` (default `auto`):
 
 - **Proxy mode** (the original path): Mecatl talks to a local reverse proxy
-  (`thv llm proxy`, loopback `127.0.0.1:<port>/v1`) that holds the credential
-  and forwards to the real `gateway_url`. The proxy must be running.
-- **Direct mode** (`auto` when configured, or `--toolhive-llm-mode direct`):
-  Mecatl imports ToolHive as a library and talks DIRECTLY to the real
-  `gateway_url` — no local proxy hop, no subprocess. The OIDC bearer token is
-  minted and refreshed in-process by a per-request HTTP RoundTripper. Get the
-  credential once with `mecatui llm login toolhive` (in-process interactive OIDC
-  flow; add `--skip-browser` for headless/SSH/CI) or `thv llm setup`. Direct
-  mode needs the OIDC trio (`gateway_url` + `issuer` + `client_id`) configured
-  AND an HTTPS `gateway_url` (`http://localhost`/`http://127.0.0.1` are the dev
-  carve-out); `auto` falls back to proxy when either is absent, `direct`
-  Build-fails fast with the remediation.
+  (`thv llm proxy`, loopback `127.0.0.1:<port>/v1`) that holds the credential and
+  forwards to the real `gateway_url`. The proxy must be running.
+- **Direct mode** (`auto` when configured, or `--toolhive-llm-mode direct`): Mecatl
+  imports ToolHive as a library and talks DIRECTLY to the real `gateway_url` — no local
+  proxy hop, no subprocess. The OIDC bearer token is minted and refreshed in-process
+  by a per-request HTTP RoundTripper. Direct mode needs the OIDC trio
+  (`gateway_url` + `issuer` + `client_id`) configured AND an HTTPS `gateway_url`
+  (`http://localhost`/`http://127.0.0.1` are the dev carve-out); `auto` falls back to
+  proxy when either is absent, `direct` fails fast with the remediation.
 
-`mecated` is headless, so a direct-mode cache-miss surfaces a terminal error
-(naming `thv llm setup` / `mecatui llm login toolhive` /
-`--toolhive-llm-mode proxy`) rather than launching a browser — run
-`mecatui llm login toolhive` (or `thv llm setup`) to obtain the credential, or
-`--toolhive-llm-mode proxy` to fall back. If your gateway uses a self-signed
-certificate, use `--toolhive-llm-mode proxy` — direct mode does not honor
-`tls_skip_verify` (an upstream ToolHive gap), and proxy mode does.
+`mecated` is headless, so a direct-mode cache miss surfaces a terminal error instead
+of launching a browser. ToolHive owns its credential lifecycle: use `thv llm setup`
+to obtain the credential, or `--toolhive-llm-mode proxy` to fall back. If your gateway
+uses a self-signed certificate, use `--toolhive-llm-mode proxy` — direct mode does not
+honor `tls_skip_verify` (an upstream ToolHive gap), and proxy mode does.
 
 |Flag|Default|Purpose|
 |-|-|-|
@@ -523,10 +473,9 @@ certificate, use `--toolhive-llm-mode proxy` — direct mode does not honor
 |`--toolhive-llm-base-url`|`""`|Use an explicit loopback proxy URL. This always selects proxy mode.|
 |`--toolhive-llm-mode`|`auto`|Use `direct` when the HTTPS gateway URL and OIDC settings are complete; otherwise use the loopback proxy. Set `proxy` or `direct` to require one path.|
 
-Run `mecatui llm login` for the interactive OIDC flow, or add `--skip-browser`
-to print the authorization URL for an SSH session. This command writes the
-refresh-token reference to ToolHive's configuration and does not start a Mecatl
-session.
+Run `thv llm` for ToolHive's interactive OIDC flow; use its headless option as
+documented by ToolHive. This writes the refresh-token reference to ToolHive's
+configuration and does not start a Mecatl session.
 
 Two things worth knowing before you rely on it:
 

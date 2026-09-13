@@ -21,53 +21,28 @@ private Mecatl server in the same process.
   `mecak8s` server. The server controls the workspace, model credentials,
   storage, and permissions.
 - Run `mecatui sessions` to browse stored sessions before opening one.
-- Run `mecatui login ADDRESS` to enroll with a remote server's OIDC issuer. This
-  is separate from local LLM endpoint authentication.
+- Run `mecatui login ADDRESS` to enroll with a remote server's OIDC issuer.
+  This is separate from local provider configuration and credentials.
 
-Configure a native endpoint without hand-editing YAML, then manage its local
-credentials:
+Configure providers for an embedded local server with the `providers` command:
 
 ```sh
-mecatui llm config set corp \
-  --gateway-url https://gateway.example/v1 \
-  --issuer https://issuer.example \
-  --client-id mecatl \
-  --default-model corp-model
-mecatui llm login corp
+mecatui providers setup
+mecatui providers
 ```
 
-`config set` updates only the named endpoint in the operator-global Mecatl
-`settings.yaml`, preserving unrelated settings and other endpoints. By default
-it creates an owner-only (`0700`) credential home at
-`$XDG_STATE_HOME/mecatl/provider-oidc` (falling back to
-`~/.local/state/mecatl/provider-oidc`) and stores its canonical absolute path.
-To use a custom location, pass `--credential-home ABSOLUTE_PATH`; custom
-directories must already exist, be owned by the current user, and have mode
-`0700`. The credential home is shared by all native endpoints, so later updates
-must retain the configured home until credentials are migrated; omitting the
-flag never changes an existing custom home. `config set` does not choose
-`models.default_provider` or start login. Public CA trust is the default. For
-private PKI, add `--issuer-ca-bundle PATH` and/or `--gateway-ca-bundle PATH`.
-Add repeatable `--scope VALUE` flags to replace the default `openid` and
-`offline_access` scopes, and use `--resource-audience VALUE` only when the
-issuer requires one.
+`setup` guides first-time configuration. To define a custom provider explicitly,
+run `mecatui providers add NAME`; it collects its HTTPS endpoint, API flavor,
+default model, and authentication method. Use `mecatui providers login NAME` or
+`logout NAME` for locally managed credentials, and `mecatui providers set-default
+NAME [MODEL]` to select the embedded default. The [standalone deployment guide](/building/deployment/mecated.md#configure-providers)
+documents the operator `providers` and `credential_store` schema, including
+`--api-key-file` for provider-credentials YAML.
 
-Manage credentials for a locally configured native LLM endpoint with
-`mecatui llm login ENDPOINT`; add `--no-browser` to print the authorization URL
-to stderr and wait at the fixed ToolHive-compatible redirect
-`http://localhost:8666/callback` when the current environment cannot launch a
-browser. This reuses the redirect registered for the existing ToolHive client
-ID; Mecatl still stores native credentials in its isolated credential home and
-never reads or copies ToolHive credentials. Inspect credentials with
-`mecatui llm status [ENDPOINT]`, and remove them with
-`mecatui llm logout ENDPOINT`. ToolHive remains compatible through the reserved
-`toolhive` endpoint and keeps its established
-`mecatui llm login toolhive --skip-browser` spelling; `--no-browser` is for
-native endpoints, not ToolHive. The one-release bare `mecatui llm login` alias
-warns and remains ToolHive-only. Login confirmations go to stderr, and Mecatl
-never prints access or refresh tokens, authorization codes, credential paths, or
-other credential material; stdout consumers must use ToolHive's explicit
-`thv llm token` tooling.
+`mecatui login ADDRESS` is different: it authenticates this client to a remote
+server. It neither configures nor enrolls that server's providers. ToolHive is
+external and owns its LLM credentials and lifecycle; use `thv llm` tooling for
+ToolHive setup rather than treating it as a locally managed provider credential.
 
 Follow [Connect to a server](./remote-servers.md) when you are ready to move the
 server out of your local process.
