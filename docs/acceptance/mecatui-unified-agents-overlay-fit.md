@@ -4,12 +4,12 @@
 **Work classification:** Bounded — this is a substantive, client-local interaction and layout correction with no durable architecture or public-contract decision.
 **Decision record:** None — the change aligns the F6 Agents overlay’s selectable rows with the established Sessions picker treatment while making its already-promised viewport bounds demonstrable.
 **Phase:** mecatui rendering correctness
-**Status:** proposed, 2026-09-13. Operator selected the Sessions picker’s unbordered accent treatment, shared remappable overflow navigation, and the 1–23-line compact fallback.
+**Status:** in-progress, 2026-09-13. Approved contract implementation is underway from `7a90f184297b653c5db255160f2272426c633ba8`.
 **Delivery:** Split. The cross-tab interaction and viewport contract needs human interface review before implementation.
 **Expected tasks:** 2
 **Issue:** [stacklok/mecatl#1446](https://github.com/stacklok/mecatl/issues/1446).
 **Plan PR:** [#1447](https://github.com/stacklok/mecatl/pull/1447)
-**Approved baseline:** absent until approved
+**Approved baseline:** `7a90f184297b653c5db255160f2272426c633ba8`
 
 The F6 unified Agents overlay must make selection visible without per-row bordered-button
 chrome and must remain usable within its offered conversation viewport. The implementation
