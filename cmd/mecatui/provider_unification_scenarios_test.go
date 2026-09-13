@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"flag"
 	"io"
 	"os"
 	"path/filepath"
@@ -236,3 +237,113 @@ func TestProviderUnification_Scenario5_ChangedTargetIsTruthful(t *testing.T) {
 }
 
 func stringPtr(v string) *string { return &v }
+
+func TestProviderUnification_Scenario3_AC31_HelpPathsAreSuccessfulAndDedicated(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"providers", []string{"mecatui", "providers", "--help"}, "Usage: mecatui providers [status"},
+		{"help providers", []string{"mecatui", "help", "providers"}, "Usage: mecatui providers [status"},
+		{"status", []string{"mecatui", "providers", "status", "--help"}, "Usage: mecatui providers status [PROVIDER]"},
+		{"setup", []string{"mecatui", "providers", "setup", "--help"}, "Usage: mecatui providers setup [PROVIDER]"},
+		{"add", []string{"mecatui", "providers", "add", "--help"}, "Usage: mecatui providers add PROVIDER"},
+		{"login", []string{"mecatui", "providers", "login", "--help"}, "Usage: mecatui providers login PROVIDER"},
+		{"logout", []string{"mecatui", "providers", "logout", "--help"}, "Usage: mecatui providers logout PROVIDER"},
+		{"set default", []string{"mecatui", "providers", "set-default", "--help"}, "Usage: mecatui providers set-default PROVIDER"},
+		{"remove", []string{"mecatui", "providers", "remove", "--help"}, "Usage: mecatui providers remove PROVIDER"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			res := resolveInvocation(tt.args)
+			if res.err != nil {
+				t.Fatalf("resolve %v: %v", tt.args, res.err)
+			}
+			var stdout, stderr bytes.Buffer
+			if err := runProviderCommandForHelpTest(res, &stdout, &stderr); !errors.Is(err, flag.ErrHelp) {
+				t.Fatalf("help error = %v, want flag.ErrHelp", err)
+			}
+			if stdout.Len() != 0 || !strings.Contains(stderr.String(), tt.want) {
+				t.Fatalf("help output stdout=%q stderr=%q, want dedicated %q help", stdout.String(), stderr.String(), tt.want)
+			}
+		})
+	}
+}
+
+func TestProviderUnification_Scenario3_AC32_StatusIsPassiveAndNeverPrintsSecrets(t *testing.T) {
+	configHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	t.Setenv("OPENAI_API_KEY", "environment-secret")
+	for _, name := range []string{"ANTHROPIC_API_KEY", "OPENROUTER_API_KEY", "OPENCODE_API_KEY"} {
+		t.Setenv(name, "")
+	}
+	authPath := filepath.Join(t.TempDir(), "provider-keys.yaml")
+	auth := []byte("providers:\n  openai:\n    api_key: file-secret\n")
+	if err := os.WriteFile(authPath, auth, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	settingsPath := filepath.Join(configHome, "mecatl", "settings.yaml")
+	settings := []byte("credential_store:\n  api_key:\n    file: " + authPath + "\n")
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(settingsPath, settings, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	res := resolveInvocation([]string{"mecatui", "providers", "status"})
+	var stdout, stderr bytes.Buffer
+	if res.err != nil || runProviderStatusCommand(res, &stdout, &stderr) != nil {
+		t.Fatalf("status failed: resolution=%+v stderr=%q", res, stderr.String())
+	}
+	for _, secret := range []string{"environment-secret", "file-secret"} {
+		if strings.Contains(stdout.String(), secret) || strings.Contains(stderr.String(), secret) {
+			t.Fatalf("status exposed %q: stdout=%q stderr=%q", secret, stdout.String(), stderr.String())
+		}
+	}
+	if got, err := os.ReadFile(authPath); err != nil || !bytes.Equal(got, auth) {
+		t.Fatalf("status changed credentials: got=%q err=%v", got, err)
+	}
+	if got, err := os.ReadFile(settingsPath); err != nil || !bytes.Equal(got, settings) {
+		t.Fatalf("status changed settings: got=%q err=%v", got, err)
+	}
+}
+
+func TestProviderUnification_Scenario3_AC33_SetupMenuCancelsBeforeMutation(t *testing.T) {
+	oldStatuses, oldChoice, oldCredentials, oldKey, oldUpdate := loadProviderStatuses, readProviderSetupField, loadProviderCredentialConfig, readProviderAPIKey, updateProviderAPIKey
+	t.Cleanup(func() {
+		loadProviderStatuses, readProviderSetupField = oldStatuses, oldChoice
+		loadProviderCredentialConfig, readProviderAPIKey, updateProviderAPIKey = oldCredentials, oldKey, oldUpdate
+	})
+	loadProviderStatuses = func() ([]providerStatus, error) {
+		return []providerStatus{{Name: "openai", Class: providerClassBuiltin}}, nil
+	}
+	readProviderSetupField = func(string) (string, error) { return "1", nil }
+	loadProviderCredentialConfig = func() (providerCredentialConfig, error) {
+		return providerCredentialConfig{authPath: "/safe/auth.yaml"}, nil
+	}
+	readProviderAPIKey = func(string) (string, error) { return "", context.Canceled }
+	updateProviderAPIKey = func(context.Context, string, authfile.APIKeyUpdate) (authfile.CommitState, error) {
+		t.Fatal("cancelled setup must not write credentials")
+		return authfile.CommitNotApplied, nil
+	}
+
+	var stdout, stderr bytes.Buffer
+	err := runProviderSetupCommand(invocationResolution{mode: modeProviderSetup}, &stdout, &stderr)
+	if !errors.Is(err, errProviderCredentialCancelled) || !strings.Contains(stdout.String(), "1. openai (API key)") || stderr.String() != "Cancelled; no changes made.\n" {
+		t.Fatalf("setup cancellation err=%v stdout=%q stderr=%q", err, stdout.String(), stderr.String())
+	}
+}
+
+func TestProviderUnification_Scenario3_AC34_NoProviderRecoveryIsLocalOnly(t *testing.T) {
+	local := config{transportMode: modeLocal, workspace: t.TempDir(), mode: "default"}
+	if err := local.validate(); err == nil || !strings.Contains(err.Error(), "mecatui providers setup") || !strings.Contains(err.Error(), "connect to mecated") {
+		t.Fatalf("local no-provider recovery = %v", err)
+	}
+	remote := config{transportMode: modeConnect, connectAddress: "mecated.example:443", mode: "default"}
+	if err := remote.validate(); err != nil {
+		t.Fatalf("remote connect must not require local provider setup: %v", err)
+	}
+}
