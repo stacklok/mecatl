@@ -69,6 +69,9 @@ func main() {
 		return
 	}
 	if err := run(os.Args); err != nil {
+		if errors.Is(err, errProviderCredentialCancelled) {
+			os.Exit(130)
+		}
 		// --help / --help-all is a successful action: the Usage hook (or the
 		// --help-all renderer) already printed help; mirror mecated's
 		// errors.Is(err, flag.ErrHelp) handling and exit 0 without printing
@@ -432,6 +435,8 @@ func runSpecialMode(res invocationResolution) (bool, error) {
 	switch res.mode {
 	case modeProviderStatus:
 		return true, runProviderStatusCommand(res, os.Stdout, os.Stderr)
+	case modeProviderCredential:
+		return true, runProviderCredentialCommand(res, os.Stdout, os.Stderr)
 	case modeLogin:
 		return true, runLLMCommand(res)
 	case modeLLMConfig:

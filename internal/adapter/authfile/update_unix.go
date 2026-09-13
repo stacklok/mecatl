@@ -453,6 +453,12 @@ func mutateAuth(data []byte, update APIKeyUpdate) ([]byte, bool, error) {
 				break
 			}
 		}
+		if len(mapping.Values) == 0 {
+			replacement := staticAuthEntry(update.Provider + ": {}\n")
+			if err := target.Replace(replacement.Value); err != nil {
+				return nil, false, errors.New("replace empty auth provider")
+			}
+		}
 	} else {
 		if keyEntry != nil {
 			current, ok := authString(keyEntry.Value)

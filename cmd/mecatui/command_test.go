@@ -344,8 +344,8 @@ func TestResolveLoginCommands(t *testing.T) {
 		t.Fatal("logout with a flag-first address must fail closed")
 	}
 	providers := resolveInvocation([]string{"mecatui", "providers", "login", "toolhive"})
-	if providers.err == nil {
-		t.Fatalf("provider lifecycle command must not execute, got %+v", providers)
+	if providers.err != nil || providers.mode != modeProviderCredential {
+		t.Fatalf("provider API-key lifecycle command did not resolve, got %+v", providers)
 	}
 	if got := resolveInvocation([]string{"mecatui", "llm"}); got.err == nil {
 		t.Fatalf("legacy llm command must fail, got %+v", got)

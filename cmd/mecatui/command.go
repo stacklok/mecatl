@@ -49,6 +49,8 @@ const (
 	// modeProviderStatus is the passive local provider inventory. It deliberately
 	// does not construct an embedded server or a credential-store runtime.
 	modeProviderStatus transportMode = "provider-status"
+	// modeProviderCredential manages locally stored custom API-key credentials.
+	modeProviderCredential transportMode = "provider-credential"
 	// modeLogin is the CLI-only legacy lifecycle subcommand.
 	modeLogin transportMode = "llm-login"
 	// modeLLMConfig writes native endpoint configuration without starting lifecycle operations.
@@ -258,7 +260,7 @@ func resolveRemoteLogoutCommand(args []string) invocationResolution {
 }
 
 func resolveProvidersCommand(args []string) invocationResolution {
-	const usage = "providers: usage: mecatui providers [status [PROVIDER]]"
+	const usage = "providers: usage: mecatui providers [status [PROVIDER] | login PROVIDER | logout PROVIDER]"
 	if len(args) == 1 && isHelpMetaFlag(args[0]) {
 		return invocationResolution{mode: modeProviderStatus, remaining: args}
 	}
@@ -274,6 +276,12 @@ func resolveProvidersCommand(args []string) invocationResolution {
 			endpoint = args[1]
 		}
 		return invocationResolution{mode: modeProviderStatus, llmAction: providerActionStatus, llmEndpoint: endpoint}
+	}
+	if (args[0] == providerActionLogin || args[0] == providerActionLogout) && len(args) == 2 && !strings.HasPrefix(args[1], "-") {
+		return invocationResolution{mode: modeProviderCredential, llmAction: args[0], llmEndpoint: args[1]}
+	}
+	if (args[0] == providerActionLogin || args[0] == providerActionLogout) && len(args) == 2 && isHelpMetaFlag(args[1]) {
+		return invocationResolution{mode: modeProviderCredential, llmAction: args[0], remaining: args[1:]}
 	}
 	return invocationResolution{err: errors.New(usage)}
 }

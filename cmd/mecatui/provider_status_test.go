@@ -59,17 +59,23 @@ func TestProvidersStatusToolHiveAndUnknownProvider(t *testing.T) {
 	}
 }
 
-func TestProvidersOnlyStatusIsExecutable(t *testing.T) {
+func TestProvidersOnlyConfiguredAPIKeyCredentialsAreExecutable(t *testing.T) {
 	for _, args := range [][]string{
 		{"mecatui", "providers", "setup", "openai"},
 		{"mecatui", "providers", "add", "custom"},
-		{"mecatui", "providers", "login", "openai"},
-		{"mecatui", "providers", "logout", "openai"},
 		{"mecatui", "providers", "remove", "openai"},
 		{"mecatui", "providers", "set-default", "openai"},
 	} {
 		if got := resolveInvocation(args); got.err == nil {
 			t.Errorf("%v resolved to executable mode %+v", args, got)
+		}
+	}
+	for _, args := range [][]string{
+		{"mecatui", "providers", "login", "custom"},
+		{"mecatui", "providers", "logout", "custom"},
+	} {
+		if got := resolveInvocation(args); got.err != nil || got.mode != modeProviderCredential {
+			t.Errorf("%v resolution = %+v", args, got)
 		}
 	}
 }
