@@ -16,6 +16,8 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
 )
 
+const providerAuthOIDC = "oidc"
+
 var (
 	readProviderAddField = readProviderAddFieldFromTerminal
 	providerSettingsPath = defaultProviderSettingsPath
@@ -50,8 +52,9 @@ func runProviderAddCommand(res invocationResolution, stdout, stderr io.Writer) e
 	}
 
 	state, err := updateProviderMap(context.Background(), providerSettingsPath(), permconfig.ProviderMapUpdate{
-		Provider:   res.llmEndpoint,
-		Definition: &definition,
+		Provider:            res.llmEndpoint,
+		Definition:          &definition,
+		OIDCCredentialStore: defaultProviderOIDCCredentialStore(definition),
 	})
 	if err != nil {
 		return fmt.Errorf("providers add: save provider definition: %w", err)
@@ -119,6 +122,20 @@ func collectProviderDefinition() (permconfig.ProviderDefinition, error) {
 	}
 	definition.Auth.OIDC = &oidc
 	return definition, nil
+}
+
+func defaultProviderOIDCCredentialStore(definition permconfig.ProviderDefinition) *permconfig.OIDCCredentialStore {
+	if definition.Auth.Method != providerAuthOIDC {
+		return nil
+	}
+	base := xdgconfig.UserStateDir(xdgconfig.OSEnv)
+	if !filepath.IsAbs(base) {
+		return nil
+	}
+	return &permconfig.OIDCCredentialStore{
+		Home: filepath.Join(base, "mecatl", "provider-oidc"),
+		Key:  permconfig.NativeCredentialKey{Source: "keyring"},
+	}
 }
 
 func collectProviderOIDC() (permconfig.ProviderOIDC, error) {

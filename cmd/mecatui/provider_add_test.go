@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"reflect"
 	"testing"
 
 	"github.com/stacklok/mecatl/internal/adapter/authfile"
+	"github.com/stacklok/mecatl/internal/adapter/llmendpoint"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 )
 
@@ -102,6 +104,38 @@ func TestProviderAddChainsToSelectedLogin(t *testing.T) {
 	}
 }
 
+func TestProviderAddChainsOIDCLoginAfterSavingCompleteConfiguration(t *testing.T) {
+	restoreProviderAddInput(t,
+		"https://gateway.example", "openai-responses", "model-1", "oidc",
+		"https://issuer.example", "client-id", "openid profile", "audience", "public", "public",
+	)
+	var saved permconfig.ProviderMapUpdate
+	restoreProviderAddWriter(t, func(_ context.Context, _ string, update permconfig.ProviderMapUpdate) (authfile.CommitState, error) {
+		saved = update
+		return authfile.CommitDurable, nil
+	})
+	oldLoad, oldRuntime := loadProviderCredentialConfig, openProviderOIDCRuntime
+	t.Cleanup(func() { loadProviderCredentialConfig, openProviderOIDCRuntime = oldLoad, oldRuntime })
+	definition := permconfig.ProviderDefinition{Auth: permconfig.ProviderAuth{Method: "oidc", OIDC: &permconfig.ProviderOIDC{CredentialStore: &permconfig.OIDCCredentialStore{Home: "/safe/oidc", Key: permconfig.NativeCredentialKey{Source: "keyring"}}}}}
+	loadProviderCredentialConfig = func() (providerCredentialConfig, error) {
+		return providerCredentialConfig{definitions: permconfig.ProviderDefinitions{"custom": definition}}, nil
+	}
+	runtime := &providerAddOIDCRuntime{}
+	openProviderOIDCRuntime = func(context.Context, permconfig.ProviderDefinition, bool, io.Writer) (nativeEndpointRuntime, error) {
+		return runtime, nil
+	}
+	var stdout, stderr bytes.Buffer
+	if err := runProviderAddCommand(invocationResolution{mode: modeProviderAdd, llmEndpoint: "custom"}, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if saved.OIDCCredentialStore == nil || saved.OIDCCredentialStore.Key.Source != "keyring" || !runtime.loggedIn {
+		t.Fatalf("saved update = %#v, OIDC login=%v", saved, runtime.loggedIn)
+	}
+	if stdout.String() != "Provider definition saved for \"custom\"\nOIDC login successful for provider \"custom\"\n" || stderr.Len() != 0 {
+		t.Fatalf("output = stdout %q stderr %q", stdout.String(), stderr.String())
+	}
+}
+
 func TestProviderAddCancellationDoesNotWrite(t *testing.T) {
 	oldRead, oldUpdate := readProviderAddField, updateProviderMap
 	t.Cleanup(func() { readProviderAddField, updateProviderMap = oldRead, oldUpdate })
@@ -138,3 +172,12 @@ func restoreProviderAddWriter(t *testing.T, writer func(context.Context, string,
 	providerSettingsPath = func() string { return "/safe/settings.yaml" }
 	updateProviderMap = writer
 }
+
+type providerAddOIDCRuntime struct{ loggedIn bool }
+
+func (r *providerAddOIDCRuntime) Login(context.Context) error { r.loggedIn = true; return nil }
+func (*providerAddOIDCRuntime) Status(context.Context) llmendpoint.Status {
+	return llmendpoint.StatusUsable
+}
+func (*providerAddOIDCRuntime) Logout(context.Context) error { return nil }
+func (*providerAddOIDCRuntime) Close() error                 { return nil }

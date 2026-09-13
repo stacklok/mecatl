@@ -61,7 +61,7 @@ func newNativeLLMHost(_ context.Context, noBrowser bool, urlWriter io.Writer) (n
 	}
 	native := make(permconfig.ProviderDefinitions)
 	for id, definition := range definitions {
-		if definition.Auth.Method == "oidc" {
+		if definition.Auth.Method == providerAuthOIDC {
 			native[id] = definition
 		}
 	}

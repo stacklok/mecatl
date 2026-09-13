@@ -198,11 +198,65 @@ func mutateProviderMap(data []byte, update ProviderMapUpdate) ([]byte, bool, err
 			}
 		}
 	}
+	if update.Definition != nil && update.Definition.Auth.Method == providerAuthOIDC && update.OIDCCredentialStore != nil {
+		if err := ensureOIDCCredentialStore(doc, *update.OIDCCredentialStore); err != nil {
+			return nil, false, err
+		}
+	}
 	out := []byte(doc.String())
 	if err := ValidateYAML(out); err != nil {
 		return nil, false, errors.New("updated settings document is invalid")
 	}
 	return out, false, nil
+}
+
+func ensureOIDCCredentialStore(doc *yamldiag.Document, store OIDCCredentialStore) error {
+	credentialStore, err := uniqueDefaultValue(doc.Mapping(), "credential_store")
+	if err != nil {
+		return err
+	}
+	if credentialStore == nil {
+		doc.Mapping().Values = append(doc.Mapping().Values, credentialStoreStaticEntry(store))
+		return nil
+	}
+	section, ok := credentialStore.(*ast.MappingNode)
+	if !ok {
+		return errors.New("credential_store must be a mapping")
+	}
+	existing, err := uniqueDefaultValue(section, providerAuthOIDC)
+	if err != nil {
+		return err
+	}
+	if existing == nil {
+		section.Values = append(section.Values, oidcCredentialStoreEntry(store))
+	}
+	return nil
+}
+
+func credentialStoreStaticEntry(store OIDCCredentialStore) *ast.MappingValueNode {
+	return defaultStaticEntry("credential_store:\n" + oidcCredentialStoreText(store))
+}
+
+func oidcCredentialStoreEntry(store OIDCCredentialStore) *ast.MappingValueNode {
+	section, ok := credentialStoreStaticEntry(store).Value.(*ast.MappingNode)
+	if !ok || len(section.Values) != 1 {
+		panic("invalid static credential store mapping")
+	}
+	return section.Values[0]
+}
+
+func oidcCredentialStoreText(store OIDCCredentialStore) string {
+	var text strings.Builder
+	text.WriteString("  oidc:\n    home: ")
+	text.WriteString(defaultQuote(store.Home))
+	text.WriteString("\n    key:\n      source: ")
+	text.WriteString(defaultQuote(store.Key.Source))
+	if store.Key.KeyEnv != "" {
+		text.WriteString("\n      key_env: ")
+		text.WriteString(defaultQuote(store.Key.KeyEnv))
+	}
+	text.WriteByte('\n')
+	return text.String()
 }
 
 func providerMapEntry(name string, definition ProviderDefinition) *ast.MappingValueNode {

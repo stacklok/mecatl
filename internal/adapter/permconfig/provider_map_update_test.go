@@ -95,6 +95,68 @@ func TestUpdateProviderMap_RejectsInvalidOrAmbiguousInput(t *testing.T) {
 	}
 }
 
+func TestUpdateProviderMap_AddOIDCAddsOrPreservesCredentialStore(t *testing.T) {
+	definition := ProviderDefinition{
+		BaseURL: "https://oidc.example/v1", DefaultModel: "model", APIFlavor: "openai-responses",
+		Auth: ProviderAuth{Method: "oidc", OIDC: &ProviderOIDC{
+			Issuer: "https://issuer.example", ClientID: "client", Scopes: []string{"openid"},
+			IssuerTrust: NativeTrust{Policy: "public"}, GatewayTrust: NativeTrust{Policy: "public"},
+		}},
+	}
+	defaultStore := &OIDCCredentialStore{Home: "/var/lib/mecatl/provider-oidc", Key: NativeCredentialKey{Source: "keyring"}}
+
+	t.Run("fresh", func(t *testing.T) {
+		path := providerMapSettings(t, "providers: {}\n")
+		if _, err := UpdateProviderMap(t.Context(), path, ProviderMapUpdate{Provider: "oidc", Definition: &definition, OIDCCredentialStore: defaultStore}); err != nil {
+			t.Fatal(err)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(data), "credential_store:") || !strings.Contains(string(data), "home: '/var/lib/mecatl/provider-oidc'") {
+			t.Fatalf("OIDC credential store was not saved:\n%s", data)
+		}
+		if err := ValidateYAML(data); err != nil {
+			t.Fatalf("OIDC settings are invalid: %v", err)
+		}
+	})
+
+	t.Run("existing", func(t *testing.T) {
+		path := providerMapSettings(t, "credential_store:\n  oidc:\n    home: /existing\n    key: {source: keyring}\n")
+		if _, err := UpdateProviderMap(t.Context(), path, ProviderMapUpdate{Provider: "oidc", Definition: &definition, OIDCCredentialStore: defaultStore}); err != nil {
+			t.Fatal(err)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(data), "home: /existing") || strings.Contains(string(data), "home: '/var/lib/mecatl/provider-oidc'") {
+			t.Fatalf("existing OIDC credential store was replaced:\n%s", data)
+		}
+	})
+}
+
+func TestUpdateProviderMap_InvalidOIDCDoesNotWrite(t *testing.T) {
+	path := providerMapSettings(t, "providers: {}\n")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	update := ProviderMapUpdate{
+		Provider:            "oidc",
+		Definition:          &ProviderDefinition{BaseURL: "https://oidc.example", DefaultModel: "model", APIFlavor: "anthropic-messages", Auth: ProviderAuth{Method: "oidc"}},
+		OIDCCredentialStore: &OIDCCredentialStore{Home: "/var/lib/mecatl/provider-oidc", Key: NativeCredentialKey{Source: "keyring"}},
+	}
+	if _, err := UpdateProviderMap(t.Context(), path, update); err == nil {
+		t.Fatal("invalid OIDC update succeeded")
+	}
+	after, err := os.ReadFile(path)
+	if err != nil || string(after) != string(before) {
+		t.Fatalf("invalid OIDC update changed settings: %v\n%s", err, after)
+	}
+}
+
 func TestUpdateProviderMap_ChangedTargetAbortsWithoutLockArtifact(t *testing.T) {
 	path := providerMapSettings(t, "providers: {}\n")
 	providerMapUpdateTestHook = func(stage string) error {

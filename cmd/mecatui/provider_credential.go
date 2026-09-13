@@ -79,7 +79,7 @@ func runProviderCredentialCommand(res invocationResolution, stdout, stderr io.Wr
 			return errors.New("providers login: --no-browser is available only for auth.method oidc")
 		}
 		return runProviderAPIKeyCommand(res, cfg.authPath, stdout, stderr)
-	case "oidc":
+	case providerAuthOIDC:
 		return runProviderOIDCCommand(res, definition, stdout, stderr)
 	default:
 		return fmt.Errorf("provider %q uses auth.method %q; login and logout require locally managed credentials", res.llmEndpoint, definition.Auth.Method)
