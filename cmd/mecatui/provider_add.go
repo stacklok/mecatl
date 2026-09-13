@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/stacklok/mecatl/internal/adapter/authfile"
@@ -16,7 +17,10 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
 )
 
-const providerAuthOIDC = "oidc"
+const (
+	providerAuthOIDC = "oidc"
+	providerAuthNone = "none"
+)
 
 var (
 	readProviderAddField = readProviderAddFieldFromTerminal
@@ -67,7 +71,7 @@ func runProviderAddCommand(res invocationResolution, stdout, stderr io.Writer) e
 	}
 
 	if len(res.remaining) == 1 && res.remaining[0] == "--no-login" {
-		if definition.Auth.Method == "none" {
+		if definition.Auth.Method == providerAuthNone {
 			_, err = fmt.Fprintf(stdout, "Provider definition saved for %q\n", res.llmEndpoint)
 		} else {
 			_, err = fmt.Fprintf(stdout, "Provider definition saved for %q\nNext login command: mecatui providers login %s\n", res.llmEndpoint, res.llmEndpoint)
@@ -78,7 +82,7 @@ func runProviderAddCommand(res invocationResolution, stdout, stderr io.Writer) e
 	if _, err := fmt.Fprintf(stdout, "Provider definition saved for %q\n", res.llmEndpoint); err != nil {
 		return err
 	}
-	if definition.Auth.Method == "none" {
+	if definition.Auth.Method == providerAuthNone {
 		return nil
 	}
 	login := invocationResolution{mode: modeProviderCredential, llmAction: providerActionLogin, llmEndpoint: res.llmEndpoint}
@@ -102,7 +106,7 @@ func collectProviderDefinition() (permconfig.ProviderDefinition, error) {
 	if err != nil {
 		return permconfig.ProviderDefinition{}, err
 	}
-	flavor, err := readProviderAddField("API flavor (openai-responses, openai-chat-completions, anthropic-messages)")
+	flavor, err := readProviderAddChoice("API flavor", []string{"openai-responses", "openai-chat-completions", "anthropic-messages"})
 	if err != nil {
 		return permconfig.ProviderDefinition{}, err
 	}
@@ -110,7 +114,7 @@ func collectProviderDefinition() (permconfig.ProviderDefinition, error) {
 	if err != nil {
 		return permconfig.ProviderDefinition{}, err
 	}
-	method, err := readProviderAddField("Auth method (api_key, oidc, none)")
+	method, err := readProviderAddChoice("Auth method", []string{"api_key", "oidc", providerAuthNone})
 	if err != nil {
 		return permconfig.ProviderDefinition{}, err
 	}
@@ -125,6 +129,26 @@ func collectProviderDefinition() (permconfig.ProviderDefinition, error) {
 	}
 	definition.Auth.OIDC = &oidc
 	return definition, nil
+}
+
+func readProviderAddChoice(label string, choices []string) (string, error) {
+	var prompt strings.Builder
+	prompt.WriteString(label)
+	prompt.WriteString(":\n")
+	for i, choice := range choices {
+		fmt.Fprintf(&prompt, "  %d. %s\n", i+1, choice)
+	}
+	prompt.WriteString("Selection")
+
+	selected, err := readProviderAddField(prompt.String())
+	if err != nil {
+		return "", err
+	}
+	index, err := strconv.Atoi(strings.TrimSpace(selected))
+	if err != nil || index < 1 || index > len(choices) {
+		return "", fmt.Errorf("enter a listed %s number", strings.ToLower(label))
+	}
+	return choices[index-1], nil
 }
 
 func defaultProviderOIDCCredentialStore(definition permconfig.ProviderDefinition) *permconfig.OIDCCredentialStore {
@@ -170,7 +194,7 @@ func collectProviderOIDC() (permconfig.ProviderOIDC, error) {
 }
 
 func collectProviderTrust(name string) (permconfig.NativeTrust, error) {
-	policy, err := readProviderAddField(name + " trust policy (public, private-ca)")
+	policy, err := readProviderAddChoice(name+" trust policy", []string{"public", "private-ca"})
 	if err != nil {
 		return permconfig.NativeTrust{}, err
 	}

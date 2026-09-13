@@ -150,7 +150,7 @@ func TestProviderUnification_Scenario2_RemoveDefinitionAndCredentials(t *testing
 
 func TestProviderUnification_Scenario2_AddChainsLoginUnlessOptedOut(t *testing.T) {
 	t.Run("default chains login", func(t *testing.T) {
-		restoreProviderAddInput(t, "https://gateway.example", "openai-responses", "model-1", "api_key")
+		restoreProviderAddInput(t, "https://gateway.example", "1", "model-1", "1")
 		restoreProviderAddWriter(t, func(context.Context, string, permconfig.ProviderMapUpdate) (authfile.CommitState, error) {
 			return authfile.CommitDurable, nil
 		})
@@ -173,7 +173,7 @@ func TestProviderUnification_Scenario2_AddChainsLoginUnlessOptedOut(t *testing.T
 		}
 	})
 	t.Run("--no-login prints next command", func(t *testing.T) {
-		restoreProviderAddInput(t, "https://gateway.example", "openai-responses", "model-1", "api_key")
+		restoreProviderAddInput(t, "https://gateway.example", "1", "model-1", "1")
 		writes := 0
 		restoreProviderAddWriter(t, func(context.Context, string, permconfig.ProviderMapUpdate) (authfile.CommitState, error) {
 			writes++
@@ -339,7 +339,7 @@ func TestProviderUnification_Scenario3_AC33_SetupMenuCancelsBeforeMutation(t *te
 
 func TestProviderUnification_Scenario3_AC34_NoProviderRecoveryIsLocalOnly(t *testing.T) {
 	local := config{transportMode: modeLocal, workspace: t.TempDir(), mode: "default"}
-	if err := local.validate(); err == nil || !strings.Contains(err.Error(), "mecatui providers setup") || !strings.Contains(err.Error(), "connect to mecated") {
+	if err := local.validate(); err == nil || !strings.Contains(err.Error(), "mecatui providers setup") || !strings.Contains(err.Error(), "mecatui connect ADDRESS") || !strings.Contains(err.Error(), "remote mecated's provider configuration is managed by its operator") {
 		t.Fatalf("local no-provider recovery = %v", err)
 	}
 	remote := config{transportMode: modeConnect, connectAddress: "mecated.example:443", mode: "default"}

@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/stacklok/mecatl/internal/adapter/authfile"
@@ -21,7 +23,7 @@ func TestCollectProviderDefinitionBuildsAPIKeyAndNoAuth(t *testing.T) {
 		{name: "no auth", method: "none"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			restoreProviderAddInput(t, "https://gateway.example/v1", "openai-chat-completions", "model-1", tc.method)
+			restoreProviderAddInput(t, "https://gateway.example/v1", "2", "model-1", map[string]string{"api_key": "1", "none": "3"}[tc.method])
 			got, err := collectProviderDefinition()
 			if err != nil {
 				t.Fatal(err)
@@ -34,11 +36,55 @@ func TestCollectProviderDefinitionBuildsAPIKeyAndNoAuth(t *testing.T) {
 	}
 }
 
+func TestProviderAddChoiceUsesNumberedValidatedSelections(t *testing.T) {
+	old := readProviderAddField
+	t.Cleanup(func() { readProviderAddField = old })
+
+	for _, tc := range []struct {
+		label   string
+		choices []string
+		input   string
+		want    string
+	}{
+		{"API flavor", []string{"openai-responses", "openai-chat-completions", "anthropic-messages"}, "2", "openai-chat-completions"},
+		{"Auth method", []string{"api_key", "oidc", "none"}, "3", "none"},
+		{"Issuer trust policy", []string{"public", "private-ca"}, "2", "private-ca"},
+	} {
+		t.Run(tc.label, func(t *testing.T) {
+			var prompt string
+			readProviderAddField = func(got string) (string, error) {
+				prompt = got
+				return tc.input, nil
+			}
+			choice, err := readProviderAddChoice(tc.label, tc.choices)
+			if err != nil || choice != tc.want {
+				t.Fatalf("choice = %q, %v", choice, err)
+			}
+			for i, choice := range tc.choices {
+				wantLine := fmt.Sprintf("  %d. %s", i+1, choice)
+				if !strings.Contains(prompt, wantLine) {
+					t.Errorf("prompt missing %q: %q", wantLine, prompt)
+				}
+			}
+		})
+	}
+
+	readProviderAddField = func(string) (string, error) { return "openai-chat-completions", nil }
+	if _, err := readProviderAddChoice("API flavor", []string{"openai-responses", "openai-chat-completions"}); err == nil || err.Error() != "enter a listed api flavor number" {
+		t.Fatalf("invalid selection error = %v", err)
+	}
+
+	readProviderAddField = func(string) (string, error) { return "", context.Canceled }
+	if _, err := readProviderAddChoice("Auth method", []string{"api_key", "oidc", "none"}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancellation error = %v", err)
+	}
+}
+
 func TestCollectProviderDefinitionBuildsOIDC(t *testing.T) {
 	restoreProviderAddInput(t,
-		"https://gateway.example/v1", "openai-responses", "model-1", "oidc",
+		"https://gateway.example/v1", "1", "model-1", "2",
 		"https://issuer.example", "client-id", "openid profile", "audience",
-		"private-ca", "/issuer-ca.pem", "public",
+		"2", "/issuer-ca.pem", "1",
 	)
 	got, err := collectProviderDefinition()
 	if err != nil {
@@ -54,7 +100,7 @@ func TestCollectProviderDefinitionBuildsOIDC(t *testing.T) {
 }
 
 func TestProviderAddNoLoginSavesOnlyDefinitionAndPrintsCommand(t *testing.T) {
-	restoreProviderAddInput(t, "https://gateway.example", "openai-responses", "model-1", "api_key")
+	restoreProviderAddInput(t, "https://gateway.example", "1", "model-1", "1")
 	var got permconfig.ProviderMapUpdate
 	restoreProviderAddWriter(t, func(_ context.Context, path string, update permconfig.ProviderMapUpdate) (authfile.CommitState, error) {
 		if path != "/safe/settings.yaml" {
@@ -78,7 +124,7 @@ func TestProviderAddNoLoginSavesOnlyDefinitionAndPrintsCommand(t *testing.T) {
 }
 
 func TestProviderAddChainsToSelectedLogin(t *testing.T) {
-	restoreProviderAddInput(t, "https://gateway.example", "openai-responses", "model-1", "api_key")
+	restoreProviderAddInput(t, "https://gateway.example", "1", "model-1", "1")
 	restoreProviderAddWriter(t, func(context.Context, string, permconfig.ProviderMapUpdate) (authfile.CommitState, error) {
 		return authfile.CommitDurable, nil
 	})
@@ -106,8 +152,8 @@ func TestProviderAddChainsToSelectedLogin(t *testing.T) {
 
 func TestProviderAddChainsOIDCLoginAfterSavingCompleteConfiguration(t *testing.T) {
 	restoreProviderAddInput(t,
-		"https://gateway.example", "openai-responses", "model-1", "oidc",
-		"https://issuer.example", "client-id", "openid profile", "audience", "public", "public",
+		"https://gateway.example", "1", "model-1", "2",
+		"https://issuer.example", "client-id", "openid profile", "audience", "1", "1",
 	)
 	var saved permconfig.ProviderMapUpdate
 	restoreProviderAddWriter(t, func(_ context.Context, _ string, update permconfig.ProviderMapUpdate) (authfile.CommitState, error) {

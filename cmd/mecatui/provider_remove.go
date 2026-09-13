@@ -99,7 +99,7 @@ func removeProviderCredential(provider string, definition permconfig.ProviderDef
 			return false, fmt.Errorf("providers remove: provider definition for %q remains; locally managed OIDC credentials may remain: %w", provider, err)
 		}
 		return true, nil
-	case "none":
+	case providerAuthNone:
 		return false, nil
 	default:
 		return false, fmt.Errorf("providers remove: provider definition for %q remains; unsupported auth.method %q", provider, definition.Auth.Method)

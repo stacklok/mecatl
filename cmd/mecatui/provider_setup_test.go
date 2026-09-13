@@ -95,11 +95,28 @@ func TestProviderSetupCancellationBeforeMutation(t *testing.T) {
 	}
 }
 
-func TestNoProviderRecoveryDoesNotStartSetup(t *testing.T) {
+func TestNoProviderRecoveryIsStructuredAndLocalOnly(t *testing.T) {
 	cfg := config{transportMode: modeLocal}
 	err := validateEmbeddedProvider(cfg)
-	if err == nil || !strings.Contains(err.Error(), "mecatui providers setup") || !strings.Contains(err.Error(), "connect to mecated") {
-		t.Fatalf("no-provider recovery = %v", err)
+	if err == nil {
+		t.Fatal("missing provider error")
+	}
+	want := []string{
+		"no LLM provider configured for the embedded server. Choose one:",
+		"  1. Run `mecatui providers setup` to configure a direct provider.",
+		"  2. Set a provider API key in the environment or use `--api-key-file PATH`.",
+		"  3. Enable a ToolHive LLM gateway.",
+		"  4. Start with `--mock` for offline testing.",
+		"  5. Connect to an existing remote server with `mecatui connect ADDRESS`.",
+		"These options configure only the embedded server; a remote mecated's provider configuration is managed by its operator.",
+	}
+	for _, line := range want {
+		if !strings.Contains(err.Error(), line) {
+			t.Errorf("recovery output missing %q:\n%s", line, err)
+		}
+	}
+	if strings.Contains(err.Error(), "run setup automatically") {
+		t.Errorf("recovery must not launch setup: %s", err)
 	}
 }
 
@@ -109,7 +126,7 @@ func TestProviderSetupReportsCompletedDefinitionWhenLoginIsCancelled(t *testing.
 		loadProviderStatuses, readProviderAddField, updateProviderMap = oldStatuses, oldRead, oldUpdate
 	})
 	loadProviderStatuses = func() ([]providerStatus, error) { return nil, nil }
-	values := []string{"https://gateway.example", "openai-responses", "model-1", "api_key"}
+	values := []string{"https://gateway.example", "1", "model-1", "1"}
 	readProviderAddField = func(string) (string, error) {
 		if len(values) == 0 {
 			t.Fatal("unexpected provider definition prompt")

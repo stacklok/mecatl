@@ -168,7 +168,7 @@ func builtinProviderStatuses(keys cliconfig.ResolvedCredentials, shadowed map[st
 }
 
 func customProviderAuth(keys cliconfig.ResolvedCredentials, id, method string) string {
-	if method == "none" {
+	if method == providerAuthNone {
 		return "not required"
 	}
 	return configured(keys.CustomAvailable(id))
