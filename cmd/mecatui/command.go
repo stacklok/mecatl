@@ -33,11 +33,18 @@ type transportMode string
 const (
 	modeLocal          transportMode = "local"
 	modeConnect        transportMode = "connect"
-	llmActionLogin                   = "login"
-	llmActionStatus                  = "status"
-	llmActionLogout                  = "logout"
-	llmActionConfig                  = "config"
-	llmConfigActionSet               = "set"
+	providerActionLogin      = "login"
+	providerActionStatus     = "status"
+	providerActionLogout     = "logout"
+	providerActionSetup      = "setup"
+	providerActionAdd        = "add"
+	providerActionSetDefault = "set-default"
+	providerActionRemove     = "remove"
+	// Legacy implementation names are private compatibility shims for the OIDC runtime;
+	// command parsing accepts only the providers vocabulary.
+	llmActionLogin = providerActionLogin
+	llmActionStatus = providerActionStatus
+	llmActionLogout = providerActionLogout
 	toolHiveEndpointID               = "toolhive"
 	// modeLogin is the CLI-only `mecatui llm` lifecycle subcommand.
 	modeLogin transportMode = "llm-login"
@@ -85,7 +92,7 @@ var topLevelCommands = []topLevelCommand{
 		resolve:  resolveConnectCommand,
 	},
 	{
-		name:     llmActionLogin,
+		name:     "login",
 		synopsis: "login ADDRESS",
 		purpose:  "log in to a remote mecated at ADDRESS using OIDC",
 		resolve:  resolveRemoteLoginCommand,
@@ -97,10 +104,10 @@ var topLevelCommands = []topLevelCommand{
 		resolve:  resolveRemoteLogoutCommand,
 	},
 	{
-		name:     "llm",
-		synopsis: "llm <config|login|status|logout> [args]",
-		purpose:  "configure and manage native LLM endpoints; native login accepts --no-browser, while endpoint 'toolhive' retains --skip-browser",
-		resolve:  resolveLLMCommand,
+		name:     "providers",
+		synopsis: "providers [command]",
+		purpose:  "inspect and manage embedded provider configuration and locally managed credentials",
+		resolve:  resolveProvidersCommand,
 	},
 }
 
@@ -215,7 +222,7 @@ func hasUnexpectedHelpOperands(command string, args []string) bool {
 	if command == "connect" && len(args) > 2 && isHelpMetaFlag(args[1]) {
 		return true
 	}
-	if command == "llm" && len(args) == 2 && args[0] == llmActionLogin && isHelpMetaFlag(args[1]) {
+	if command == "providers" && len(args) == 2 && args[0] == providerActionLogin && isHelpMetaFlag(args[1]) {
 		return false
 	}
 	return len(args) > 1 && isHelpMetaFlag(args[0])
@@ -247,59 +254,33 @@ func resolveRemoteLogoutCommand(args []string) invocationResolution {
 	return invocationResolution{mode: modeRemoteLogout, address: args[0], remaining: args[1:]}
 }
 
-//nolint:gocyclo // Exact command grammar keeps each accepted form explicit.
-func resolveLLMCommand(args []string) invocationResolution {
-	const usage = "llm: usage: mecatui llm config set ENDPOINT [flags] | mecatui llm login ENDPOINT [--no-browser] | mecatui llm status [ENDPOINT] | mecatui llm logout ENDPOINT"
+func resolveProvidersCommand(args []string) invocationResolution {
+	const usage = "providers: usage: mecatui providers [status [PROVIDER] | setup [PROVIDER] | add PROVIDER [--no-login] | login PROVIDER [--no-browser] | logout PROVIDER | set-default PROVIDER [MODEL] | remove PROVIDER]"
 	if len(args) == 1 && isHelpMetaFlag(args[0]) {
 		return invocationResolution{mode: modeLogin, remaining: args}
 	}
 	if len(args) == 0 {
-		return invocationResolution{err: errors.New(usage)}
+		return invocationResolution{mode: modeLogin, llmAction: providerActionStatus}
+	}
+	if len(args) == 2 && isHelpMetaFlag(args[1]) {
+		switch args[0] {
+		case providerActionStatus, providerActionSetup, providerActionAdd, providerActionLogin, providerActionLogout, providerActionSetDefault, providerActionRemove:
+			return invocationResolution{mode: modeLogin, llmAction: args[0], remaining: args[1:]}
+		}
 	}
 	action := args[0]
-	switch action {
-	case llmActionConfig:
-		if len(args) == 2 && isHelpMetaFlag(args[1]) {
-			return invocationResolution{mode: modeLLMConfig, remaining: args[1:]}
-		}
-		if len(args) < 3 || args[1] != llmConfigActionSet || strings.HasPrefix(args[2], "-") {
-			return invocationResolution{err: errors.New(usage)}
-		}
-		return invocationResolution{mode: modeLLMConfig, llmAction: llmConfigActionSet, llmEndpoint: args[2], remaining: args[3:]}
-	case llmActionLogin:
-		if len(args) == 1 {
-			return invocationResolution{mode: modeLogin, llmAction: action, llmEndpoint: toolHiveEndpointID, llmDeprecatedAlias: true}
-		}
-		if len(args) == 2 && args[1] == "--skip-browser" {
-			return invocationResolution{mode: modeLogin, llmAction: action, llmEndpoint: toolHiveEndpointID, llmDeprecatedAlias: true, remaining: args[1:]}
-		}
-		if len(args) >= 2 && args[1] == toolHiveEndpointID {
-			if len(args) > 3 || len(args) == 3 && args[2] != "--skip-browser" {
-				return invocationResolution{err: errors.New(usage)}
-			}
-			return invocationResolution{mode: modeLogin, llmAction: action, llmEndpoint: args[1], remaining: args[2:]}
-		}
-		if len(args) != 2 && len(args) != 3 || strings.HasPrefix(args[1], "-") || len(args) == 3 && args[2] != "--no-browser" {
-			return invocationResolution{err: errors.New(usage)}
-		}
-		return invocationResolution{mode: modeLogin, llmAction: action, llmEndpoint: args[1], remaining: args[2:]}
-	case llmActionStatus:
-		if len(args) > 2 || len(args) == 2 && strings.HasPrefix(args[1], "-") {
-			return invocationResolution{err: errors.New(usage)}
-		}
+	if action == providerActionStatus && len(args) <= 2 && (len(args) == 1 || !strings.HasPrefix(args[1], "-")) {
 		endpoint := ""
-		if len(args) == 2 {
-			endpoint = args[1]
-		}
+		if len(args) == 2 { endpoint = args[1] }
 		return invocationResolution{mode: modeLogin, llmAction: action, llmEndpoint: endpoint}
-	case llmActionLogout:
-		if len(args) != 2 || strings.HasPrefix(args[1], "-") {
-			return invocationResolution{err: errors.New(usage)}
-		}
-		return invocationResolution{mode: modeLogin, llmAction: action, llmEndpoint: args[1]}
-	default:
-		return invocationResolution{err: errors.New(usage)}
 	}
+	if (action == providerActionLogin || action == providerActionLogout || action == providerActionSetup || action == providerActionAdd || action == providerActionSetDefault || action == providerActionRemove) && len(args) >= 2 && !strings.HasPrefix(args[1], "-") {
+		if action == providerActionLogin && len(args) == 3 && args[2] == "--no-browser" { return invocationResolution{mode: modeLogin, llmAction: action, llmEndpoint: args[1], remaining: args[2:]} }
+		if action == providerActionAdd && len(args) == 3 && args[2] == "--no-login" { return invocationResolution{mode: modeLogin, llmAction: action, llmEndpoint: args[1], remaining: args[2:]} }
+		if (action == providerActionLogin || action == providerActionLogout || action == providerActionSetup || action == providerActionAdd || action == providerActionRemove) && len(args) == 2 { return invocationResolution{mode: modeLogin, llmAction: action, llmEndpoint: args[1]} }
+		if action == providerActionSetDefault && (len(args) == 2 || len(args) == 3) { return invocationResolution{mode: modeLogin, llmAction: action, llmEndpoint: args[1], remaining: args[2:]} }
+	}
+	return invocationResolution{err: errors.New(usage)}
 }
 
 // resolveConnectCommand preserves connect's special grammar: ADDRESS must
@@ -397,8 +378,7 @@ func writeTopLevelHelp(out io.Writer) {
 	_, _ = fmt.Fprintln(out, "Bare 'mecatui [flags]' hosts an embedded mecated server in-process (no loopback probe).")
 	_, _ = fmt.Fprintln(out)
 	writeCommandSummary(out)
-	_, _ = fmt.Fprintln(out, "\nNative LLM configuration: mecatui llm config set ENDPOINT [flags]")
-	_, _ = fmt.Fprintln(out, "Native LLM lifecycle: mecatui llm login ENDPOINT [--no-browser] | mecatui llm status [ENDPOINT] | mecatui llm logout ENDPOINT")
+	_, _ = fmt.Fprintln(out, "Provider configuration and lifecycle: mecatui providers [status [PROVIDER] | setup [PROVIDER] | add PROVIDER [--no-login] | login PROVIDER [--no-browser] | logout PROVIDER | set-default PROVIDER [MODEL] | remove PROVIDER]")
 	_, _ = fmt.Fprintln(out, "Remote mecatui uses `mecatui login ADDRESS`; ToolHive MCP discovery and manual openai-codex authentication are separate.")
 	_, _ = fmt.Fprintln(out, "\nHelp: mecatui --help, mecatui -h, or mecatui help")
 	_, _ = fmt.Fprintln(out, "      mecatui help <command> aliases mecatui <command> --help")

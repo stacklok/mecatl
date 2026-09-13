@@ -343,12 +343,12 @@ func TestResolveLoginCommands(t *testing.T) {
 	if got := resolveInvocation([]string{"mecatui", "logout", "--issuer=x"}); got.err == nil {
 		t.Fatal("logout with a flag-first address must fail closed")
 	}
-	llm := resolveInvocation([]string{"mecatui", "llm", "login", "--skip-browser"})
-	if llm.err != nil || llm.mode != modeLogin || len(llm.remaining) != 1 || llm.remaining[0] != "--skip-browser" {
-		t.Fatalf("llm login resolution = %+v", llm)
+	providers := resolveInvocation([]string{"mecatui", "providers", "login", "toolhive"})
+	if providers.err != nil || providers.mode != modeLogin || providers.llmEndpoint != "toolhive" {
+		t.Fatalf("provider login resolution = %+v", providers)
 	}
-	if got := resolveInvocation([]string{"mecatui", "llm"}); got.err == nil || !strings.Contains(got.err.Error(), "llm login") {
-		t.Fatalf("bare llm must fail with llm-login usage, got %+v", got)
+	if got := resolveInvocation([]string{"mecatui", "llm"}); got.err == nil {
+		t.Fatalf("legacy llm command must fail, got %+v", got)
 	}
 	if got := resolveInvocation([]string{"mecatui", "mcp", "login"}); got.err == nil {
 		t.Fatal("mcp login must remain unknown")
@@ -1024,7 +1024,7 @@ func TestCommandSummaryUsesIndentedWrappedDescriptions(t *testing.T) {
 		"  debug TARGET [flags]\n    diagnose by an exact session ID or displayed 12-column short handle; exact\n    identity wins, a unique handle resolves automatically, and ambiguity asks\n    for the full exact ID\n",
 		"  connect ADDRESS [sessions | debug TARGET] [flags]\n    dial a running mecated at ADDRESS (host:port), optionally browsing or\n    debugging a stored session\n",
 		"  login ADDRESS\n    log in to a remote mecated at ADDRESS using OIDC\n",
-		"  llm <config|login|status|logout> [args]\n    configure and manage native LLM endpoints; native login accepts\n    --no-browser, while endpoint 'toolhive' retains --skip-browser\n",
+		"  providers [command]\n    inspect and manage embedded provider configuration and locally managed\n    credentials\n",
 	} {
 		if !strings.Contains(summary, want) {
 			t.Errorf("command summary missing indented, wrapped description %q:\n%s", want, summary)

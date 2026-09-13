@@ -50,6 +50,24 @@ mecatui --workspace "$PWD"
 
 Replace `<PROVIDER_API_KEY>` with the variable for your provider.
 
+## Manage embedded providers
+
+`mecatui providers` displays local provider status without contacting a provider or
+revealing credentials. Use `mecatui providers setup` for guided first-time setup,
+or manage a named provider directly:
+
+```sh
+mecatui providers add example --no-login
+mecatui providers login example
+mecatui providers set-default example MODEL
+```
+
+The API-key file is selected by `--api-key-file` (default `auth.yaml` under the
+Mecatl configuration directory); matching environment credentials take precedence.
+`logout` clears locally managed credentials but keeps the provider definition.
+`remove` is destructive and requires confirmation. Remote `mecatui connect ADDRESS`
+uses the remote server's provider configuration instead.
+
 The welcome screen shows your workspace and active model. To use a different
 model, enter `/models`, select one, and press `enter`. A small, low-cost model
 is enough for this tutorial.
