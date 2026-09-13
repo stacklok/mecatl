@@ -248,7 +248,7 @@ func updateInParent(ctx context.Context, parent, leaf string, update APIKeyUpdat
 	}
 	current, err := readTarget(parentFD, leaf)
 	if err != nil || !sameSnapshot(before, current) {
-		return CommitNotApplied, errors.New("Configuration changed while this command was running; no changes were made. Review the file and retry.")
+		return CommitNotApplied, errors.New("configuration changed while this command was running; no changes were made. Review the file and retry")
 	}
 	if err := ctx.Err(); err != nil {
 		return CommitNotApplied, fmt.Errorf("credential update cancelled: %w", err)
@@ -308,7 +308,7 @@ func readTarget(parentFD int, leaf string) (targetSnapshot, error) {
 	if err != nil || len(data) > maxFileBytes {
 		return targetSnapshot{}, errors.New("credential target exceeds 16 KiB or cannot be read")
 	}
-	return targetSnapshot{data: data, dev: uint64(stat.Dev), inode: uint64(stat.Ino), exists: true}, nil
+	return targetSnapshot{data: data, dev: stat.Dev, inode: stat.Ino, exists: true}, nil
 }
 
 func sameSnapshot(a, b targetSnapshot) bool {

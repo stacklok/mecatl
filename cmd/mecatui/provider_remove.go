@@ -82,7 +82,7 @@ func removeProviderCredential(provider string, definition permconfig.ProviderDef
 		}
 		return true, nil
 	case "oidc":
-		ctx, cancel := newNativeLLMEnrollmentContext(nativeLLMEnrollmentTimeout)
+		ctx, cancel := newNativeLLMEnrollmentContext()
 		defer cancel()
 		runtime, err := openProviderOIDCRuntime(ctx, definition, false, stderr)
 		if err == nil {

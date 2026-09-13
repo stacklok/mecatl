@@ -54,8 +54,8 @@ type notifyContextFunc func(context.Context, ...os.Signal) (context.Context, con
 
 // newSavedLoginContext owns the post-TUI login lifetime. It deliberately does
 // not inherit Bubble Tea's already-cancelled context.
-func newNativeLLMEnrollmentContext(timeout time.Duration) (context.Context, context.CancelFunc) {
-	return newSavedLoginContext(timeout)
+func newNativeLLMEnrollmentContext() (context.Context, context.CancelFunc) {
+	return newSavedLoginContext(nativeLLMEnrollmentTimeout)
 }
 
 func newSavedLoginContext(timeout time.Duration) (context.Context, context.CancelFunc) {
@@ -563,7 +563,7 @@ func runLLMCommand(res invocationResolution) error {
 	}
 	skipBrowser := len(res.remaining) == 1 && res.remaining[0] == "--skip-browser"
 	noBrowser := len(res.remaining) == 1 && res.remaining[0] == "--no-browser"
-	ctx, cancel := newNativeLLMEnrollmentContext(nativeLLMEnrollmentTimeout)
+	ctx, cancel := newNativeLLMEnrollmentContext()
 	defer cancel()
 	if res.llmEndpoint == toolHiveEndpointID {
 		return runNativeLLMCommand(ctx, res.llmAction, res.llmEndpoint, skipBrowser, nil, os.Stdout, os.Stderr)

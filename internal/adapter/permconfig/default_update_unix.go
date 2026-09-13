@@ -155,7 +155,7 @@ func UpdateDefaults(ctx context.Context, path string, update DefaultUpdate) (sta
 	}
 	current, err := readSettingsTarget(parentFD, leaf)
 	if err != nil || !sameSettingsTarget(before, current) {
-		return authfile.CommitNotApplied, errors.New("Configuration changed while this command was running; no changes were made. Review the file and retry.")
+		return authfile.CommitNotApplied, errors.New("configuration changed while this command was running; no changes were made. Review the file and retry")
 	}
 	if err := ctx.Err(); err != nil {
 		return authfile.CommitNotApplied, fmt.Errorf("settings default update: %w", err)
@@ -259,7 +259,7 @@ func readSettingsTarget(parentFD int, leaf string) (settingsTarget, error) {
 	if err != nil || len(data) > maxConfigBytes {
 		return settingsTarget{}, errors.New("target exceeds size limit or cannot be read")
 	}
-	return settingsTarget{data: data, dev: uint64(stat.Dev), inode: uint64(stat.Ino), exists: true}, nil
+	return settingsTarget{data: data, dev: stat.Dev, inode: stat.Ino, exists: true}, nil
 }
 
 func openSettingsLeaf(parentFD int, leaf string, create bool, flags int) (int, error) {

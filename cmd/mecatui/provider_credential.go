@@ -132,7 +132,7 @@ func runProviderAPIKeyCommand(res invocationResolution, authPath string, stdout,
 
 func runProviderOIDCCommand(res invocationResolution, definition permconfig.ProviderDefinition, stdout, stderr io.Writer) error {
 	noBrowser := len(res.remaining) == 1 && res.remaining[0] == "--no-browser"
-	ctx, cancel := newNativeLLMEnrollmentContext(nativeLLMEnrollmentTimeout)
+	ctx, cancel := newNativeLLMEnrollmentContext()
 	defer cancel()
 	runtime, err := openProviderOIDCRuntime(ctx, definition, noBrowser, stderr)
 	if err == nil {
@@ -169,7 +169,7 @@ func runToolHiveProviderCredentialCommand(res invocationResolution, stderr io.Wr
 	if res.llmAction != providerActionLogin {
 		return errors.New("ToolHive owns this provider lifecycle; use `thv llm` tooling")
 	}
-	ctx, cancel := newNativeLLMEnrollmentContext(nativeLLMEnrollmentTimeout)
+	ctx, cancel := newNativeLLMEnrollmentContext()
 	defer cancel()
 	if err := executeToolHiveLogin(ctx, len(res.remaining) == 1 && res.remaining[0] == "--no-browser"); err != nil {
 		if errors.Is(err, context.Canceled) {
