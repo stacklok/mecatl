@@ -5,6 +5,7 @@ import (
 	"sort"
 
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
+	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
 	"github.com/stacklok/mecatl/internal/app"
 )
 
@@ -21,9 +22,25 @@ func NewProviderCredentialResolver(flags *ProviderFlags, keys ResolvedCredential
 	return &ProviderCredentialResolver{flags: flags, keys: keys}
 }
 
+// SetAPIKeyFile applies the composition-resolved credential_store.api_key.file.
+func (r *ProviderCredentialResolver) SetAPIKeyFile(path string) {
+	if r == nil || r.flags == nil {
+		return
+	}
+	r.flags.SetAPIKeyFile(path)
+}
+
 // Load validates custom auth IDs only after Build has resolved the operator
 // definitions, then returns a detached immutable-by-convention credential snapshot.
 func (r *ProviderCredentialResolver) Load(definitions permconfig.ProviderDefinitions) (app.ProviderCredentials, interface{ Close() error }, error) {
+	keys := r.keys
+	if r.flags != nil && r.flags.apiKeyFile != "" {
+		var err error
+		keys, err = ResolveProviderCredentials(r.flags, definitions, xdgconfig.OSEnv)
+		if err != nil {
+			return app.ProviderCredentials{}, nil, err
+		}
+	}
 	known := append([]string{}, knownAuthProviders...)
 	for id := range definitions {
 		known = append(known, id)
@@ -34,14 +51,14 @@ func (r *ProviderCredentialResolver) Load(definitions permconfig.ProviderDefinit
 	}
 
 	credentials := app.ProviderCredentials{
-		OpenAIKey: r.keys.OpenAI, OpenRouterKey: r.keys.OpenRouter,
-		AnthropicKey: r.keys.Anthropic, OpenCodeKey: r.keys.OpenCode,
-		OpenAICodexCredential: r.keys.OpenAICodex,
+		OpenAIKey: keys.OpenAI, OpenRouterKey: keys.OpenRouter,
+		AnthropicKey: keys.Anthropic, OpenCodeKey: keys.OpenCode,
+		OpenAICodexCredential: keys.OpenAICodex,
 		CustomProviderAPIKeys: make(map[string]string, len(definitions)),
 	}
 	for id, definition := range definitions {
 		if definition.Auth.Method == "api_key" {
-			key := r.keys.CustomAPIKey(id)
+			key := keys.CustomAPIKey(id)
 			if key == "" && r.flags != nil && r.flags.authSnapshot != nil {
 				key = r.flags.authSnapshot.APIKey(id)
 			}

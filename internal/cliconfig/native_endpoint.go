@@ -46,28 +46,28 @@ type NativeEndpointRuntime struct {
 // OpenNativeEndpointRuntime resolves local trust and identity without opening a
 // keyring, credential store, browser, or network connection.
 func OpenNativeEndpointRuntime(definition permconfig.ProviderDefinition, present NativeEndpointPresenter) (*NativeEndpointRuntime, error) {
-	if definition.Native == nil {
+	if definition.Auth.Method != "oidc" || definition.Auth.OIDC == nil || definition.Auth.OIDC.CredentialStore == nil {
 		return nil, llmendpoint.ErrNotEnrolled
 	}
-	issuerClient, issuerDigest, err := nativeTrustClient(definition.Native.OIDC.Issuer, definition.Native.IssuerTrust)
+	issuerClient, issuerDigest, err := nativeTrustClient(definition.Auth.OIDC.Issuer, definition.Auth.OIDC.IssuerTrust)
 	if err != nil {
 		return nil, llmendpoint.ErrNotEnrolled
 	}
-	gatewayClient, gatewayDigest, err := nativeTrustClient(definition.BaseURL, definition.Native.GatewayTrust)
+	gatewayClient, gatewayDigest, err := nativeTrustClient(definition.BaseURL, definition.Auth.OIDC.GatewayTrust)
 	if err != nil {
 		return nil, llmendpoint.ErrNotEnrolled
 	}
-	locker, err := llmendpoint.NewTransactionLocker(definition.Native.CredentialHome)
+	locker, err := llmendpoint.NewTransactionLocker(definition.Auth.OIDC.CredentialStore.Home)
 	if err != nil {
 		return nil, llmendpoint.ErrNotEnrolled
 	}
 	id := llmendpoint.CredentialIdentity{
 		SchemaVersion: 1, EndpointID: definition.ID, Gateway: definition.BaseURL,
-		Issuer: definition.Native.OIDC.Issuer, ClientID: definition.Native.OIDC.ClientID,
-		ResourceAudience: definition.Native.OIDC.ResourceAudience,
-		Scopes:           append([]string(nil), definition.Native.OIDC.Scopes...), RedirectURI: nativeRedirectURI,
-		IssuerTrust:  llmendpoint.TrustIdentity{Policy: definition.Native.IssuerTrust.Policy, CADigest: issuerDigest},
-		GatewayTrust: llmendpoint.TrustIdentity{Policy: definition.Native.GatewayTrust.Policy, CADigest: gatewayDigest},
+		Issuer: definition.Auth.OIDC.Issuer, ClientID: definition.Auth.OIDC.ClientID,
+		ResourceAudience: definition.Auth.OIDC.ResourceAudience,
+		Scopes:           append([]string(nil), definition.Auth.OIDC.Scopes...), RedirectURI: nativeRedirectURI,
+		IssuerTrust:  llmendpoint.TrustIdentity{Policy: definition.Auth.OIDC.IssuerTrust.Policy, CADigest: issuerDigest},
+		GatewayTrust: llmendpoint.TrustIdentity{Policy: definition.Auth.OIDC.GatewayTrust.Policy, CADigest: gatewayDigest},
 	}
 	return &NativeEndpointRuntime{definition: definition, identity: id, issuer: issuerClient, gateway: gatewayClient.Transport, present: present, locker: locker}, nil
 }
@@ -170,7 +170,7 @@ func (t originTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 }
 
 func (r *NativeEndpointRuntime) open(ctx context.Context, existingOnly bool) (*llmendpoint.CredentialRepository, credentialstore.Store, error) {
-	selection := r.definition.Native.CredentialKey
+	selection := r.definition.Auth.OIDC.CredentialStore.Key
 	if err := selection.Validate(); err != nil {
 		return nil, nil, err
 	}
@@ -178,13 +178,13 @@ func (r *NativeEndpointRuntime) open(ctx context.Context, existingOnly bool) (*l
 	if selection.Source == "environment" {
 		source = nativeEnvironmentKey(selection.KeyEnv)
 	} else {
-		keyring, err := oidcclient.NewKeyring(r.definition.Native.CredentialHome)
+		keyring, err := oidcclient.NewKeyring(r.definition.Auth.OIDC.CredentialStore.Home)
 		if err != nil {
 			return nil, nil, err
 		}
 		source = keyring
 	}
-	store, err := llmendpoint.NewProtectedStore(ctx, llmendpoint.ProtectedStoreConfig{Root: r.definition.Native.CredentialHome, KeySource: source, ExistingOnly: existingOnly})
+	store, err := llmendpoint.NewProtectedStore(ctx, llmendpoint.ProtectedStoreConfig{Root: r.definition.Auth.OIDC.CredentialStore.Home, KeySource: source, ExistingOnly: existingOnly})
 	if err != nil {
 		return nil, nil, err
 	}

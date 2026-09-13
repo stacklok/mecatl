@@ -783,7 +783,7 @@ func sortedProviderDefinitions(definitions permconfig.ProviderDefinitions) []per
 func addCustomProviderEntries(ctx context.Context, entries map[string]providerEntry, cfg Config, meta *liveMetaStore) (map[string]struct{}, error) {
 	unavailableNative := make(map[string]struct{})
 	for _, definition := range sortedProviderDefinitions(cfg.ProviderDefinitions) {
-		if definition.Native != nil {
+		if definition.Auth.Method == "oidc" {
 			if cfg.NativeEndpointCredentialLoader == nil {
 				unavailableNative[definition.ID] = struct{}{}
 				continue

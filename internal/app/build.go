@@ -1344,6 +1344,10 @@ func closeMCPProfileLifecycle(ctx context.Context, cfg Config) {
 	}
 }
 
+type providerCredentialFileSetter interface {
+	SetAPIKeyFile(string)
+}
+
 // ProviderCredentials is the immutable credential snapshot returned by a
 // ProviderCredentialLoader.
 type ProviderCredentials struct {
@@ -1353,19 +1357,6 @@ type ProviderCredentials struct {
 	OpenCodeKey           string
 	OpenAICodexCredential openaicodex.Credential
 	CustomProviderAPIKeys map[string]string
-}
-
-func legacyProviderDefinitions(definitions permconfig.ProviderDefinitions) permconfig.ProviderDefinitions {
-	if definitions == nil {
-		return nil
-	}
-	legacy := make(permconfig.ProviderDefinitions, len(definitions))
-	for id, definition := range definitions {
-		if definition.Native == nil {
-			legacy[id] = definition
-		}
-	}
-	return legacy
 }
 
 // Built is the result of Build: the assembled server.Service plus a Close func
@@ -1651,9 +1642,14 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		}
 		cfg.ProviderDefinitions = definitions
 		cfg.ProviderOverrides = mergeProviderOverrides(settingsOverrides, cfg.ProviderOverrides)
+		if store := resolver.OperatorCredentialStore(); store != nil && store.APIKey != nil {
+			if loader, ok := cfg.ProviderCredentialLoader.(providerCredentialFileSetter); ok {
+				loader.SetAPIKeyFile(store.APIKey.File)
+			}
+		}
 	}
 	if cfg.ProviderCredentialLoader != nil {
-		credentials, lifecycle, err := cfg.ProviderCredentialLoader.Load(legacyProviderDefinitions(definitions))
+		credentials, lifecycle, err := cfg.ProviderCredentialLoader.Load(definitions)
 		if err != nil {
 			return nil, err
 		}

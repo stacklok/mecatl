@@ -141,8 +141,10 @@
 #           ca_bundle: ""
 
 #| === credential_store === (tier: operator)
-#| Shared encrypted credential store for OIDC providers.
+#| API-key file input and shared encrypted credential store for OIDC providers.
 # credential_store:
+#   api_key:
+#     file: /home/operator/.config/mecatl/auth.yaml
 #   oidc:
 #     home: /var/lib/mecatl/provider-oidc
 #     key:

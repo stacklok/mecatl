@@ -47,7 +47,7 @@ credential_store:
 		t.Fatalf("anonymous auth method = %q, want none", got)
 	}
 	oidc := cfg.Providers["oidc"]
-	if oidc.Auth.Method != "oidc" || oidc.Auth.OIDC == nil || oidc.Auth.OIDC.ClientID != "mecatl" || oidc.Native == nil {
+	if oidc.Auth.Method != "oidc" || oidc.Auth.OIDC == nil || oidc.Auth.OIDC.ClientID != "mecatl" || oidc.Auth.OIDC.CredentialStore == nil {
 		t.Fatalf("OIDC provider was not retained: %+v", oidc)
 	}
 }

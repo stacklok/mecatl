@@ -67,11 +67,11 @@ func nativeKeyRuntime(t *testing.T, selection permconfig.NativeCredentialKey) *N
 	}
 	r, err := OpenNativeEndpointRuntime(permconfig.ProviderDefinition{
 		ID: "corp", BaseURL: "https://gateway.example/v1", DefaultModel: "model", APIFlavor: "openai-responses",
-		Native: &permconfig.NativeEndpointIdentity{
-			CredentialHome: root, CredentialKey: selection,
-			OIDC:        permconfig.NativeOIDC{Issuer: "https://issuer.example", ClientID: "mecatl", Scopes: []string{"openid", "offline_access"}},
+		Auth: permconfig.ProviderAuth{Method: "oidc", OIDC: &permconfig.ProviderOIDC{
+			CredentialStore: &permconfig.OIDCCredentialStore{Home: root, Key: selection},
+			Issuer:          "https://issuer.example", ClientID: "mecatl", Scopes: []string{"openid", "offline_access"},
 			IssuerTrust: permconfig.NativeTrust{Policy: "public"}, GatewayTrust: permconfig.NativeTrust{Policy: "public"},
-		},
+		}},
 	}, func(context.Context, string) (oauthlogin.Result, error) {
 		t.Error("unexpected authorization presenter")
 		return oauthlogin.Result{}, errors.New("unexpected authorization")
@@ -98,7 +98,7 @@ func TestNativeEnvironmentKeyLifecycle(t *testing.T) {
 	encoded := base64.StdEncoding.EncodeToString(raw)
 	t.Setenv(nativeKeyEnv, encoded)
 	r := nativeKeyRuntime(t, permconfig.NativeCredentialKey{Source: "environment", KeyEnv: nativeKeyEnv})
-	root := r.definition.Native.CredentialHome
+	root := r.definition.Auth.OIDC.CredentialStore.Home
 	toolhiveHome := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", toolhiveHome)
 	toolhivePath := filepath.Join(toolhiveHome, "auth.yaml")
@@ -212,7 +212,7 @@ func TestNativeEnvironmentKeyLifecycle(t *testing.T) {
 	}
 	t.Setenv(nativeKeyEnv, encoded)
 	// Changing the source does not change the credential identity or trigger migration.
-	r.definition.Native.CredentialKey = permconfig.NativeCredentialKey{Source: "keyring"}
+	r.definition.Auth.OIDC.CredentialStore.Key = permconfig.NativeCredentialKey{Source: "keyring"}
 	keyringRuntime, err := OpenNativeEndpointRuntime(r.definition, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -226,7 +226,7 @@ func TestNativeEnvironmentKeyLifecycle(t *testing.T) {
 	if _, err := keyringRuntime.Source(t.Context()); err == nil {
 		t.Fatal("broken keyring fell back to environment")
 	}
-	r.definition.Native.CredentialKey = permconfig.NativeCredentialKey{Source: "environment", KeyEnv: nativeKeyEnv}
+	r.definition.Auth.OIDC.CredentialStore.Key = permconfig.NativeCredentialKey{Source: "environment", KeyEnv: nativeKeyEnv}
 	repo, store, err = r.open(t.Context(), true)
 	if err != nil {
 		t.Fatal(err)
@@ -286,7 +286,7 @@ func TestNativeDefaultKeyringCompatibility(t *testing.T) {
 	t.Cleanup(keyringapi.MockInit)
 	t.Setenv(nativeKeyEnv, "ignored-malformed-env-key-canary")
 	r := nativeKeyRuntime(t, permconfig.NativeCredentialKey{})
-	keyring, err := oidcclient.NewKeyring(r.definition.Native.CredentialHome)
+	keyring, err := oidcclient.NewKeyring(r.definition.Auth.OIDC.CredentialStore.Home)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -316,7 +316,7 @@ func TestNativeDefaultKeyringCompatibility(t *testing.T) {
 		t.Fatal("default did not create the legacy root-bound key")
 	}
 	defer clear(key)
-	legacy, err := credentialstore.OpenExistingEncryptedFile(r.definition.Native.CredentialHome, llmendpoint.CredentialNamespace, key)
+	legacy, err := credentialstore.OpenExistingEncryptedFile(r.definition.Auth.OIDC.CredentialStore.Home, llmendpoint.CredentialNamespace, key)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -134,10 +134,12 @@ Strict operator-defined LLM providers. Project-tier definitions are ignored. Pro
 
 Tier: **operator**
 
-Shared encrypted credential store for OIDC providers.
+API-key file input and shared encrypted credential store for OIDC providers.
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
+| `credential_store.api_key` | `apikeycredentialstore` | `(absent)` |  |
+| `credential_store.api_key.file` | `string` | `$XDG_CONFIG_HOME/mecatl/auth.yaml` |  |
 | `credential_store.oidc` | `oidccredentialstore` | `(absent)` |  |
 | `credential_store.oidc.home` | `string` | `(required)` |  |
 | `credential_store.oidc.key` | `nativecredentialkey` | `(required)` |  |

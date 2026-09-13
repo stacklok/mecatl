@@ -57,7 +57,9 @@ func (f nativeRoundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) 
 func nativeDefinition(id string) permconfig.ProviderDefinition {
 	return permconfig.ProviderDefinition{
 		ID: id, BaseURL: "https://gateway.example.test/base/v1", DefaultModel: "native-model", APIFlavor: "openai-responses",
-		Native: &permconfig.NativeEndpointIdentity{CredentialHome: "/credentials"},
+		Auth: permconfig.ProviderAuth{Method: "oidc", OIDC: &permconfig.ProviderOIDC{
+			CredentialStore: &permconfig.OIDCCredentialStore{Home: "/credentials"},
+		}},
 	}
 }
 

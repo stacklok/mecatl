@@ -40,13 +40,17 @@ type ProviderDefinition struct {
 	DefaultModel string       `yaml:"default_model"`
 	APIFlavor    string       `yaml:"api_flavor"`
 	Auth         ProviderAuth `yaml:"auth"`
-	// Native is the composition-only projection used by the existing native OIDC runtime.
-	Native *NativeEndpointIdentity `yaml:"-"`
 }
 
 // CredentialStoreSection holds the shared OIDC credential-store schema.
 type CredentialStoreSection struct {
-	OIDC *OIDCCredentialStore `yaml:"oidc"`
+	APIKey *APIKeyCredentialStore `yaml:"api_key"`
+	OIDC   *OIDCCredentialStore   `yaml:"oidc"`
+}
+
+// APIKeyCredentialStore selects the optional file-backed API-key input.
+type APIKeyCredentialStore struct {
+	File string `yaml:"file"`
 }
 
 // OIDCCredentialStore selects the shared custody for OIDC provider credentials.
@@ -95,11 +99,16 @@ func (k *NativeCredentialKey) UnmarshalYAML(node ast.Node) error {
 
 // UnmarshalYAML decodes the strict credential-store section.
 func (s *CredentialStoreSection) UnmarshalYAML(node ast.Node) error {
-	if err := decodeStrictMapping(node, "credential_store", map[string]any{providerAuthOIDC: newPermconfigNodePointer(&s.OIDC)}); err != nil {
+	return decodeStrictMapping(node, "credential_store", map[string]any{"api_key": newPermconfigNodePointer(&s.APIKey), providerAuthOIDC: newPermconfigNodePointer(&s.OIDC)})
+}
+
+// UnmarshalYAML decodes the optional file-backed API-key input.
+func (s *APIKeyCredentialStore) UnmarshalYAML(node ast.Node) error {
+	if err := decodeStrictMapping(node, "credential_store.api_key", map[string]any{"file": &s.File}); err != nil {
 		return err
 	}
-	if s.OIDC == nil {
-		return errors.New("credential_store.oidc is required")
+	if strings.TrimSpace(s.File) == "" {
+		return errors.New("credential_store.api_key.file is required")
 	}
 	return nil
 }
@@ -174,12 +183,13 @@ type ProviderAuth struct {
 
 // ProviderOIDC is the exact OIDC authentication schema for one provider.
 type ProviderOIDC struct {
-	Issuer           string      `yaml:"issuer"`
-	ClientID         string      `yaml:"client_id"`
-	ResourceAudience string      `yaml:"resource_audience,omitempty"`
-	Scopes           []string    `yaml:"scopes"`
-	IssuerTrust      NativeTrust `yaml:"issuer_trust"`
-	GatewayTrust     NativeTrust `yaml:"gateway_trust"`
+	Issuer           string               `yaml:"issuer"`
+	ClientID         string               `yaml:"client_id"`
+	ResourceAudience string               `yaml:"resource_audience,omitempty"`
+	Scopes           []string             `yaml:"scopes"`
+	IssuerTrust      NativeTrust          `yaml:"issuer_trust"`
+	GatewayTrust     NativeTrust          `yaml:"gateway_trust"`
+	CredentialStore  *OIDCCredentialStore `yaml:"-"`
 }
 
 // ProviderOverrides is the strict operator-owned built-in endpoint map.
@@ -294,7 +304,8 @@ func finalizeProviderDefinitions(definitions ProviderDefinitions, store *Credent
 			return errors.New("credential_store.oidc is required for OIDC providers")
 		}
 		oidc := definition.Auth.OIDC
-		definition.Native = &NativeEndpointIdentity{CredentialHome: store.OIDC.Home, CredentialKey: store.OIDC.Key, OIDC: NativeOIDC{Issuer: oidc.Issuer, ClientID: oidc.ClientID, ResourceAudience: oidc.ResourceAudience, Scopes: append([]string(nil), oidc.Scopes...)}, IssuerTrust: oidc.IssuerTrust, GatewayTrust: oidc.GatewayTrust}
+		oidc.CredentialStore = store.OIDC
+		definition.Auth.OIDC = oidc
 		definitions[id] = definition
 	}
 	return nil

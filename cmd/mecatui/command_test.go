@@ -428,14 +428,14 @@ func TestMecatuiAuthFileOnlyParse(t *testing.T) {
 		t.Fatalf("parse: %v", err)
 	}
 	if cfg.anthropicKey != "sk-ant-file-only" {
-		t.Errorf("anthropic key = %q, want auth-file credential", cfg.anthropicKey)
+		t.Errorf("anthropic key = %q, want api-key-file credential", cfg.anthropicKey)
 	}
 	if err := cfg.validate(); err != nil {
-		t.Fatalf("validate auth-file credential: %v", err)
+		t.Fatalf("validate api-key-file credential: %v", err)
 	}
 	embedded := embeddedConfig(cfg, nil)
 	if embedded.AnthropicKey != cfg.anthropicKey {
-		t.Errorf("embedded AnthropicKey = %q, want resolved auth-file credential", embedded.AnthropicKey)
+		t.Errorf("embedded AnthropicKey = %q, want resolved api-key-file credential", embedded.AnthropicKey)
 	}
 	if cfg.providerKeys.AuthFileWarning != "" {
 		t.Errorf("valid auth file warning = %q", cfg.providerKeys.AuthFileWarning)
@@ -449,7 +449,7 @@ func TestMecatuiExplicitAuthFileWarningSurvivesValidation(t *testing.T) {
 	t.Setenv("OPENCODE_API_KEY", "")
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	missing := filepath.Join(t.TempDir(), "missing-auth.yaml")
-	_, cfg, err := parseTransportFlags(modeLocal, io.Discard, []string{"--workspace", "/abs", "--auth-file", missing, "--toolhive-llm=false"})
+	_, cfg, err := parseTransportFlags(modeLocal, io.Discard, []string{"--workspace", "/abs", "--api-key-file", missing, "--toolhive-llm=false"})
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -467,7 +467,7 @@ func TestRunPrintsExplicitAuthFileWarningBeforeProviderValidation(t *testing.T) 
 	}
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	missing := filepath.Join(t.TempDir(), "missing-auth.yaml")
-	args := []string{"mecatui", "--workspace", t.TempDir(), "--auth-file", missing, "--toolhive-llm=false"}
+	args := []string{"mecatui", "--workspace", t.TempDir(), "--api-key-file", missing, "--toolhive-llm=false"}
 
 	_, cfg, err := parseTransportFlags(modeLocal, io.Discard, args[1:])
 	if err != nil {
@@ -520,7 +520,7 @@ func TestMecatuiInvalidAuthFileWarningSurvivesValidation(t *testing.T) {
 	if err := os.WriteFile(path, []byte("providers:\n  openai:\n    wrong: not-a-key\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, cfg, err := parseTransportFlags(modeLocal, io.Discard, []string{"--workspace", "/abs", "--auth-file", path})
+	_, cfg, err := parseTransportFlags(modeLocal, io.Discard, []string{"--workspace", "/abs", "--api-key-file", path})
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -539,7 +539,7 @@ func TestMecatuiUnreadableAuthFileWarningSurvivesValidation(t *testing.T) {
 	if err := os.Mkdir(path, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	_, cfg, err := parseTransportFlags(modeLocal, io.Discard, []string{"--workspace", "/abs", "--auth-file", path})
+	_, cfg, err := parseTransportFlags(modeLocal, io.Discard, []string{"--workspace", "/abs", "--api-key-file", path})
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -597,7 +597,7 @@ func TestMecatuiConventionalMissingAuthFileWarnsWithoutProvider(t *testing.T) {
 func TestRejectEmbeddedOnlyFlagsInConnect(t *testing.T) {
 	embeddedOnly := []string{
 		"mock", "no-shell", "trust-project", "yolo", "posture",
-		"openai-base-url", "openrouter-base-url", "anthropic-base-url", "opencode-base-url", "auth-file",
+		"openai-base-url", "openrouter-base-url", "anthropic-base-url", "opencode-base-url", "api-key-file",
 		"toolhive-llm", "toolhive-llm-base-url",
 		"model", "default-provider", "default-model", "subagent-model",
 		"model-alias", "model-slot", "subagent-model-router",

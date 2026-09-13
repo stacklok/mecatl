@@ -216,6 +216,7 @@ type Resolver struct {
 	// provider configuration captured once at resolver construction.
 	operatorProviders         ProviderDefinitions
 	operatorProviderOverrides ProviderOverrides
+	operatorCredentialStore   *CredentialStoreSection
 	operatorProviderConfigErr error
 
 	mu    sync.RWMutex
@@ -230,6 +231,14 @@ func (r *Resolver) OperatorProviders() (ProviderDefinitions, ProviderOverrides, 
 		return nil, nil, nil
 	}
 	return r.operatorProviders, r.operatorProviderOverrides, r.operatorProviderConfigErr
+}
+
+// OperatorCredentialStore returns the operator-tier credential-store configuration.
+func (r *Resolver) OperatorCredentialStore() *CredentialStoreSection {
+	if r == nil {
+		return nil
+	}
+	return r.operatorCredentialStore
 }
 
 // OperatorStorageManagement returns the immutable operator-tier management
@@ -913,7 +922,7 @@ func (r *Resolver) loadUserRules(report *Report) []governance.Rule {
 		r.captureRetention(cfg.Retention)
 		r.captureStorageManagement(cfg.StorageManagement)
 		r.captureLegacyLLM(cfg.LLM)
-		r.captureProviders(cfg.Providers, cfg.ProviderOverrides)
+		r.captureProviders(cfg.Providers, cfg.ProviderOverrides, cfg.CredentialStore)
 	}
 
 	if !r.opts.Conventional {
@@ -954,7 +963,7 @@ func (r *Resolver) loadUserRules(report *Report) []governance.Rule {
 				r.captureStorageManagement(cfg.StorageManagement)
 				r.captureTemporaryStorage(cfg.TemporaryStorage)
 				r.captureLegacyLLM(cfg.LLM)
-				r.captureProviders(cfg.Providers, cfg.ProviderOverrides)
+				r.captureProviders(cfg.Providers, cfg.ProviderOverrides, cfg.CredentialStore)
 			}
 		}
 	}
@@ -984,12 +993,15 @@ func (r *Resolver) captureLegacyLLM(llm *LLMSection) {
 
 // captureProviders records the first complete operator provider snapshot. Explicit
 // files precede user-global settings, so the command-line operator tier wins.
-func (r *Resolver) captureProviders(definitions ProviderDefinitions, overrides ProviderOverrides) {
+func (r *Resolver) captureProviders(definitions ProviderDefinitions, overrides ProviderOverrides, store *CredentialStoreSection) {
 	if r.operatorProviders == nil && definitions != nil {
 		r.operatorProviders = definitions
 	}
 	if r.operatorProviderOverrides == nil && overrides != nil {
 		r.operatorProviderOverrides = overrides
+	}
+	if r.operatorCredentialStore == nil && store != nil {
+		r.operatorCredentialStore = store
 	}
 }
 

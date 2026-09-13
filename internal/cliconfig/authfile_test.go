@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
 	"github.com/stacklok/mecatl/internal/app"
 	"github.com/stacklok/mecatl/internal/testutil/codextest"
@@ -53,23 +54,23 @@ func clearProviderEnv(t *testing.T) {
 	t.Setenv(envOpenCodeKey, "")
 }
 
-// TestRegisterProviderFlagsRegistersAuthFile proves --auth-file is registered
+// TestRegisterProviderFlagsRegistersAuthFile proves --api-key-file is registered
 // alongside the three base-URL flags.
 func TestRegisterProviderFlagsRegistersAuthFile(t *testing.T) {
 	fs := flag.NewFlagSet("t", flag.ContinueOnError)
 	_ = RegisterProviderFlags(fs, ProviderFlagHelp{})
-	f := fs.Lookup("auth-file")
+	f := fs.Lookup("api-key-file")
 	if f == nil {
-		t.Fatal("flag --auth-file not registered")
+		t.Fatal("flag --api-key-file not registered")
 	}
 	if f.Usage == "" {
-		t.Error("flag --auth-file has empty help")
+		t.Error("flag --api-key-file has empty help")
 	}
 }
 
 // TestApplyFillsFromAuthFileWhenEnvUnset proves an auth.yaml entry fills a
 // still-empty provider credential at the conventional default path, with no
-// --auth-file flag needed, and reports no warning.
+// --api-key-file flag needed, and reports no warning.
 func TestApplyFillsFromAuthFileWhenEnvUnset(t *testing.T) {
 	clearProviderEnv(t)
 	writeAuthFile(t, `
@@ -168,7 +169,7 @@ func TestApplyMissingConventionalAuthFileIsSilentWithoutEnv(t *testing.T) {
 	}
 }
 
-// TestApplyExplicitAuthFileFlagIsUsed proves --auth-file overrides the
+// TestApplyExplicitAuthFileFlagIsUsed proves --api-key-file overrides the
 // conventional default path.
 func TestApplyExplicitAuthFileFlagIsUsed(t *testing.T) {
 	clearProviderEnv(t)
@@ -184,7 +185,7 @@ func TestApplyExplicitAuthFileFlagIsUsed(t *testing.T) {
 
 	fs := flag.NewFlagSet("t", flag.ContinueOnError)
 	pf := RegisterProviderFlags(fs, ProviderFlagHelp{})
-	if err := fs.Parse([]string{"--auth-file", explicitPath}); err != nil {
+	if err := fs.Parse([]string{"--api-key-file", explicitPath}); err != nil {
 		t.Fatalf("parse: %v", err)
 	}
 	var cfg app.Config
@@ -198,7 +199,7 @@ func TestApplyExplicitAuthFileFlagIsUsed(t *testing.T) {
 	}
 }
 
-// TestApplyMissingExplicitAuthFileWarns proves an explicit --auth-file
+// TestApplyMissingExplicitAuthFileWarns proves an explicit --api-key-file
 // pointed at a nonexistent path IS reported — the operator named that exact
 // path, so silence would hide a typo.
 func TestApplyMissingExplicitAuthFileWarns(t *testing.T) {
@@ -207,14 +208,14 @@ func TestApplyMissingExplicitAuthFileWarns(t *testing.T) {
 
 	fs := flag.NewFlagSet("t", flag.ContinueOnError)
 	pf := RegisterProviderFlags(fs, ProviderFlagHelp{})
-	if err := fs.Parse([]string{"--auth-file", missing}); err != nil {
+	if err := fs.Parse([]string{"--api-key-file", missing}); err != nil {
 		t.Fatalf("parse: %v", err)
 	}
 	var cfg app.Config
 	keys := pf.Apply(&cfg)
 
 	if keys.AuthFileWarning == "" {
-		t.Fatal("AuthFileWarning should be non-empty for a missing explicit --auth-file path")
+		t.Fatal("AuthFileWarning should be non-empty for a missing explicit --api-key-file path")
 	}
 	if !strings.Contains(keys.AuthFileWarning, missing) {
 		t.Errorf("AuthFileWarning = %q, want it to name the path %q", keys.AuthFileWarning, missing)
@@ -268,7 +269,7 @@ func TestAuthFileReadOnce(t *testing.T) {
 	pf := &ProviderFlags{authFile: &path}
 	resolved := pf.resolve(env, time.Now())
 	if reads != 1 {
-		t.Fatalf("auth-file reads = %d, want exactly 1", reads)
+		t.Fatalf("api-key-file reads = %d, want exactly 1", reads)
 	}
 	if !resolved.HasOpenAICodex() {
 		t.Fatal("resolved snapshot has no openai-codex credential")
@@ -369,5 +370,33 @@ func TestOpenAICodexCredentialRedactsWhenNested(t *testing.T) {
 		if !strings.Contains(got, "REDACTED") {
 			t.Errorf("structured log lacks redaction marker: %s", got)
 		}
+	}
+}
+
+func TestProviderUnification_Scenario4_CredentialPrecedenceAndSafeStatus(t *testing.T) {
+	const stockEnv = "stock-env-secret"
+	const stockFile = "stock-file-secret"
+	const customFile = "custom-file-secret"
+	clearProviderEnv(t)
+	t.Setenv(envOpenAIKey, stockEnv)
+	writeAuthFile(t, "providers:\n  openai:\n    api_key: "+stockFile+"\n  gateway:\n    api_key: "+customFile+"\n")
+
+	flags := &ProviderFlags{}
+	keys := flags.Resolve()
+	loader := NewProviderCredentialResolver(flags, keys)
+	profile, _, err := loader.Load(permconfig.ProviderDefinitions{"gateway": {
+		ID: "gateway", Auth: permconfig.ProviderAuth{Method: "api_key"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if profile.OpenAIKey != stockEnv {
+		t.Fatalf("stock API key = %q, want environment credential", profile.OpenAIKey)
+	}
+	if profile.CustomProviderAPIKeys["gateway"] != customFile {
+		t.Fatal("custom API-key provider did not use its file-only credential")
+	}
+	if strings.Contains(keys.AuthFileWarning, stockEnv) || strings.Contains(keys.AuthFileWarning, stockFile) || strings.Contains(keys.AuthFileWarning, customFile) {
+		t.Fatalf("credential status warning leaked a credential: %q", keys.AuthFileWarning)
 	}
 }
