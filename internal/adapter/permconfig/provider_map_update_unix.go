@@ -129,7 +129,17 @@ func UpdateProviderMap(ctx context.Context, path string, update ProviderMapUpdat
 //nolint:gocyclo // AST-preserving update covers add, replace, and removal explicitly.
 func mutateProviderMap(data []byte, update ProviderMapUpdate) ([]byte, bool, error) {
 	if len(bytes.TrimSpace(data)) == 0 {
-		data = []byte("providers: {}\n")
+		if update.Definition == nil {
+			return data, true, nil
+		}
+		out := []byte(providerMapStaticEntry(update.Provider, *update.Definition).String())
+		if update.Definition.Auth.Method == providerAuthOIDC && update.OIDCCredentialStore != nil {
+			out = append(out, []byte("\ncredential_store:\n"+oidcCredentialStoreText(*update.OIDCCredentialStore))...)
+		}
+		if err := ValidateYAML(out); err != nil {
+			return nil, false, errors.New("updated settings document is invalid")
+		}
+		return out, false, nil
 	}
 	if err := ValidateYAML(data); err != nil {
 		return nil, false, errors.New("settings document is invalid")
