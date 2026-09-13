@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 
@@ -20,8 +19,7 @@ var (
 
 func runProviderSetDefaultCommand(res invocationResolution, stdout, stderr io.Writer) error {
 	if len(res.remaining) == 1 && isHelpMetaFlag(res.remaining[0]) {
-		_, err := fmt.Fprintln(stderr, "Usage: mecatui providers set-default PROVIDER [MODEL]")
-		return errors.Join(flag.ErrHelp, err)
+		return providerHelpResult(stderr, providerActionSetDefault)
 	}
 	requestedModel := optionalProviderDefaultModel(res.remaining)
 	provider, model, err := resolveProviderDefaultForCommand(res.llmEndpoint, requestedModel)

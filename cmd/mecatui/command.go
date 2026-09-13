@@ -276,7 +276,7 @@ func resolveProvidersCommand(args []string) invocationResolution {
 		return invocationResolution{mode: modeProviderStatus, llmAction: providerActionStatus}
 	}
 	if len(args) == 2 && args[0] == providerActionStatus && isHelpMetaFlag(args[1]) {
-		return invocationResolution{mode: modeProviderStatus, remaining: args[1:]}
+		return invocationResolution{mode: modeProviderStatus, llmAction: providerActionStatus, remaining: args[1:]}
 	}
 	if args[0] == providerActionStatus && len(args) <= 2 && (len(args) == 1 || !strings.HasPrefix(args[1], "-")) {
 		endpoint := ""
@@ -317,6 +317,9 @@ func resolveProviderSetupCommand(args []string) (invocationResolution, bool) {
 }
 
 func resolveProviderAddCommand(args []string) (invocationResolution, bool) {
+	if len(args) == 2 && args[0] == providerActionAdd && isHelpMetaFlag(args[1]) {
+		return invocationResolution{mode: modeProviderAdd, llmAction: providerActionAdd, remaining: args[1:]}, true
+	}
 	if len(args) < 2 || args[0] != providerActionAdd || strings.HasPrefix(args[1], "-") {
 		return invocationResolution{}, false
 	}
@@ -327,6 +330,9 @@ func resolveProviderAddCommand(args []string) (invocationResolution, bool) {
 }
 
 func resolveProviderRemoveCommand(args []string) (invocationResolution, bool) {
+	if len(args) == 2 && args[0] == providerActionRemove && isHelpMetaFlag(args[1]) {
+		return invocationResolution{mode: modeProviderRemove, llmAction: providerActionRemove, remaining: args[1:]}, true
+	}
 	if len(args) != 2 || args[0] != providerActionRemove || strings.HasPrefix(args[1], "-") {
 		return invocationResolution{}, false
 	}
@@ -334,6 +340,9 @@ func resolveProviderRemoveCommand(args []string) (invocationResolution, bool) {
 }
 
 func resolveProviderSetDefaultCommand(args []string) (invocationResolution, bool) {
+	if len(args) == 2 && args[0] == providerActionSetDefault && isHelpMetaFlag(args[1]) {
+		return invocationResolution{mode: modeProviderSetDefault, llmAction: providerActionSetDefault, remaining: args[1:]}, true
+	}
 	if len(args) < 2 || len(args) > 3 || args[0] != providerActionSetDefault || strings.HasPrefix(args[1], "-") {
 		return invocationResolution{}, false
 	}

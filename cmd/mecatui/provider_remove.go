@@ -30,6 +30,9 @@ func readProviderRemovalConfirmationFromTerminal(provider string) (bool, error) 
 }
 
 func runProviderRemoveCommand(res invocationResolution, stdout, stderr io.Writer) error {
+	if len(res.remaining) == 1 && isHelpMetaFlag(res.remaining[0]) {
+		return providerHelpResult(stderr, providerActionRemove)
+	}
 	cfg, err := loadProviderCredentialConfig()
 	if err != nil {
 		return fmt.Errorf("providers remove: load configured providers: %w", err)

@@ -43,6 +43,9 @@ func readProviderAddFieldFromTerminal(prompt string) (string, error) {
 }
 
 func runProviderAddCommand(res invocationResolution, stdout, stderr io.Writer) error {
+	if len(res.remaining) == 1 && isHelpMetaFlag(res.remaining[0]) {
+		return providerHelpResult(stderr, providerActionAdd)
+	}
 	definition, err := collectProviderDefinition()
 	if err != nil {
 		if errors.Is(err, context.Canceled) {

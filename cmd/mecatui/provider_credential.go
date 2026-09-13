@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -56,8 +55,7 @@ var errProviderCredentialCancelled = errors.New("provider credential prompt canc
 
 func runProviderCredentialCommand(res invocationResolution, stdout, stderr io.Writer) error {
 	if len(res.remaining) == 1 && isHelpMetaFlag(res.remaining[0]) {
-		_, err := fmt.Fprintln(stderr, "Usage: mecatui providers login PROVIDER [--no-browser] | mecatui providers logout PROVIDER")
-		return errors.Join(flag.ErrHelp, err)
+		return providerHelpResult(stderr, res.llmAction)
 	}
 	if res.llmEndpoint == toolHiveEndpointID {
 		return runToolHiveProviderCredentialCommand(res, stderr)

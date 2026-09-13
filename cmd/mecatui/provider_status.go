@@ -3,8 +3,6 @@ package main
 import (
 	"cmp"
 	"context"
-	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"slices"
@@ -41,8 +39,7 @@ var loadProviderStatuses = currentProviderStatuses
 
 func runProviderStatusCommand(res invocationResolution, stdout, stderr io.Writer) error {
 	if len(res.remaining) == 1 && isHelpMetaFlag(res.remaining[0]) {
-		_, err := fmt.Fprintln(stderr, "Usage: mecatui providers [status [PROVIDER]]")
-		return errors.Join(flag.ErrHelp, err)
+		return providerHelpResult(stderr, res.llmAction)
 	}
 	statuses, err := loadProviderStatuses()
 	if err != nil {

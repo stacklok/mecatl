@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"strconv"
@@ -16,8 +15,7 @@ var readProviderSetupField = readProviderAddField
 
 func runProviderSetupCommand(res invocationResolution, stdout, stderr io.Writer) error {
 	if len(res.remaining) == 1 && isHelpMetaFlag(res.remaining[0]) {
-		_, err := fmt.Fprintln(stderr, "Usage: mecatui providers setup [PROVIDER]\n\nChoose a provider interactively, or name a configured provider to log in. An unknown name starts custom provider setup.")
-		return errors.Join(flag.ErrHelp, err)
+		return providerHelpResult(stderr, providerActionSetup)
 	}
 
 	provider := res.llmEndpoint
