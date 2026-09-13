@@ -441,6 +441,8 @@ func runSpecialMode(res invocationResolution) (bool, error) {
 		return true, runProviderAddCommand(res, os.Stdout, os.Stderr)
 	case modeProviderRemove:
 		return true, runProviderRemoveCommand(res, os.Stdout, os.Stderr)
+	case modeProviderSetDefault:
+		return true, runProviderSetDefaultCommand(res, os.Stdout, os.Stderr)
 	case modeLogin:
 		return true, runLLMCommand(res)
 	case modeLLMConfig:

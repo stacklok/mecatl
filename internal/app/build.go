@@ -270,6 +270,9 @@ type Config struct {
 	NativeEndpointCredentialLifecycle interface{ Close() error }
 	// nativeEndpointTransport is the hermetic transport seam used by tests.
 	nativeEndpointTransport http.RoundTripper
+	// skipProviderNetworkDiscovery keeps offline validation on the same registry and
+	// default resolver without probing provider model endpoints.
+	skipProviderNetworkDiscovery bool
 	// ProviderOverrides is the effective built-in endpoint source. Command-root CLI
 	// overrides are merged over operator settings before registry construction.
 	ProviderOverrides permconfig.ProviderOverrides

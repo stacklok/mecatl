@@ -694,8 +694,10 @@ func buildProviderRegistryContext(ctx context.Context, cfg Config, detect envDet
 	// provider — the t=0 floor every resolver reads before the background live swap.
 	meta.seedFromCatalog(reg.Available())
 	meta.seedCustomProviderFloors(reg)
-	if err := bootstrapOpenAICodexDefault(ctx, reg, cfg); err != nil {
-		return nil, err
+	if !cfg.skipProviderNetworkDiscovery {
+		if err := bootstrapOpenAICodexDefault(ctx, reg, cfg); err != nil {
+			return nil, err
+		}
 	}
 	// T7 post-assembly fixup: stamp each real adapter entry's shared .provider
 	// with the DEFAULT model's capability intersection (catalog ∩ adapter) and
@@ -723,8 +725,10 @@ func buildProviderRegistryContext(ctx context.Context, cfg Config, detect envDet
 	// exists (a single map lookup otherwise). It NEVER gates registration
 	// (already done above) — it drives the startup diagnostic, the initial
 	// provider_status + last-known-good seed, and default-model eligibility.
-	if err := probeToolhive(reg, cfg); err != nil {
-		return nil, err
+	if !cfg.skipProviderNetworkDiscovery {
+		if err := probeToolhive(reg, cfg); err != nil {
+			return nil, err
+		}
 	}
 	return reg, nil
 }
