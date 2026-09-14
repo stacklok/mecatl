@@ -1434,10 +1434,10 @@ func TestModelsEmptyCopy_PromotesAnyNonOkStatus(t *testing.T) {
 	}
 
 	unauthorized := []client.ProviderStatus{
-		{ProviderID: "toolhive", State: "unauthorized", Hint: "re-auth with `mecatui llm login`"},
+		{ProviderID: "toolhive", State: "unauthorized", Hint: "re-auth with `thv llm setup`"},
 	}
 	got = modelsEmptyCopy(client.Capabilities{ModelSelection: true}, unauthorized)
-	want = "toolhive: gateway rejected the credential — re-auth with `mecatui llm login`"
+	want = "toolhive: gateway rejected the credential — re-auth with `thv llm setup`"
 	if got != want {
 		t.Errorf("unauthorized empty copy = %q, want %q", got, want)
 	}
@@ -1538,9 +1538,9 @@ func TestRenderProviderStatusLines_UnreachableAndUnauthorized(t *testing.T) {
 		t.Fatalf("unreachable line = %v", lines)
 	}
 	lines = renderProviderStatusLines([]client.ProviderStatus{
-		{ProviderID: "toolhive", State: "unauthorized", Hint: "re-auth with `mecatui llm login`"},
+		{ProviderID: "toolhive", State: "unauthorized", Hint: "re-auth with `thv llm setup`"},
 	}, false)
-	if len(lines) != 1 || lines[0] != "toolhive: gateway rejected the credential — re-auth with `mecatui llm login`" {
+	if len(lines) != 1 || lines[0] != "toolhive: gateway rejected the credential — re-auth with `thv llm setup`" {
 		t.Fatalf("unauthorized line = %v", lines)
 	}
 }
@@ -1896,7 +1896,7 @@ func TestModelsPickerToolhiveUnreachableGolden(t *testing.T) {
 // #262 R6.2) when the model list is empty AND a status reports "empty".
 func TestModelsPickerGatewayEmptyGolden(t *testing.T) {
 	fm := &fakeModels{statuses: []client.ProviderStatus{
-		{ProviderID: "toolhive", State: "empty", Hint: "ask your platform admin or re-run `mecatui llm login`"},
+		{ProviderID: "toolhive", State: "empty", Hint: "ask your platform admin or re-run `thv llm setup`"},
 	}}
 	m := newModelsModel(t, fm, &fakeStore{}, modelsCaps(), client.ModelSelection{})
 	mm, cmd := m.runModels()
@@ -1913,7 +1913,7 @@ func TestModelsPickerGatewayEmptyGolden(t *testing.T) {
 func TestModelsPickerMixedDeploymentEmptyGolden(t *testing.T) {
 	fm := sampleModels()
 	fm.statuses = []client.ProviderStatus{
-		{ProviderID: "toolhive", State: "empty", Hint: "ask your platform admin or re-run `mecatui llm login`"},
+		{ProviderID: "toolhive", State: "empty", Hint: "ask your platform admin or re-run `thv llm setup`"},
 	}
 	m := newModelsModel(t, fm, &fakeStore{}, modelsCaps(), client.ModelSelection{ProviderID: "openai", ModelID: "gpt-5"})
 	mm, cmd := m.runModels()

@@ -77,6 +77,23 @@ func TestProviderRemoveSelectsAPIKeyAndOIDCCredentialLifecycle(t *testing.T) {
 	}
 }
 
+func TestProviderRemoveDoesNotClaimAbsentAPIKeyWasRemoved(t *testing.T) {
+	commands := removeCommands(providerCredentialConfig{definitions: permconfig.ProviderDefinitions{"custom": {Auth: permconfig.ProviderAuth{Method: providerAuthAPIKey}}}})
+	commands.backend.updateAPIKey = func(context.Context, string, authfile.APIKeyUpdate) (authfile.CommitState, error) {
+		return authfile.CommitNoop, nil
+	}
+	commands.backend.updateProviderMap = func(context.Context, string, permconfig.ProviderMapUpdate) (authfile.CommitState, error) {
+		return authfile.CommitDurable, nil
+	}
+	var stdout bytes.Buffer
+	if err := commands.runRemove(context.Background(), providerRemoveResolution("custom"), &stdout, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := stdout.String(), "Removed custom provider \"custom\".\n"; got != want {
+		t.Fatalf("output = %q, want %q", got, want)
+	}
+}
+
 func TestProviderRemoveDeletesDefinitionWithoutChangingSelectedDefault(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "settings")
 	if err := os.Mkdir(dir, 0o700); err != nil {

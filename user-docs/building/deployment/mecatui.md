@@ -50,7 +50,7 @@ provider or applies a stricter egress profile.
 Embedded mecatui can use provider `openai-codex` with a manual subscription
 token, but the shipped brood-box manifest does not mount that secret or allow
 `chatgpt.com` egress. Customize the manifest to mount owner-only `auth.yaml`,
-pass `--auth-file` and `--default-provider openai-codex`, and permit HTTPS to
+pass `--api-key-file` and `--default-provider openai-codex`, and permit HTTPS to
 `chatgpt.com`. This is not public OpenAI API credit: it uses an undocumented
 private backend, has no refresh flow, and requires relaunch after token
 replacement. Read the

@@ -2839,7 +2839,7 @@ func resolveProviderSelection(reg *providerRegistry, providerID string) (provide
 	}
 	if reg != nil {
 		if _, ok := reg.unavailableNative[providerID]; ok {
-			return providerEntry{}, fmt.Errorf("%w: %w: endpoint %q; run `mecatui llm login %s`", server.ErrInvalidArgument, llmendpoint.ErrNotEnrolled, providerID, providerID)
+			return providerEntry{}, fmt.Errorf("%w: %w: provider %q; run `mecatui providers login %s`", server.ErrInvalidArgument, llmendpoint.ErrNotEnrolled, providerID, providerID)
 		}
 	}
 	return providerEntry{}, fmt.Errorf("%w: unknown or unavailable provider %q", server.ErrInvalidArgument, providerID)
@@ -5079,7 +5079,7 @@ func validateToolhiveLLMMode(cfg Config) error {
 	}
 	if !toolhivellm.OIDCConfigured(path) {
 		return fmt.Errorf(
-			"--toolhive-llm-mode direct requires a ToolHive LLM gateway configured with the OIDC trio (gateway_url, oidc.issuer, oidc.client_id) — run `thv llm config set` and `thv llm setup` (or `mecatui llm login toolhive`), or use --toolhive-llm-mode auto/proxy")
+			"--toolhive-llm-mode direct requires a ToolHive LLM gateway configured with the OIDC trio (gateway_url, oidc.issuer, oidc.client_id) — run `thv llm config set` and `thv llm setup`, or use --toolhive-llm-mode auto/proxy")
 	}
 	return nil
 }

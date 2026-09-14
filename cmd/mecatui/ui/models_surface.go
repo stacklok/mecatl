@@ -211,7 +211,7 @@ func modelsRowsRendered(picker modelsState) bool {
 
 const modelsDisabledNote = "Model selection is not available on this server.\nConfigure a provider on the server, then reconnect."
 const modelsErrorHint = "the model service may be unavailable — check mecated is running (log: $XDG_STATE_HOME/mecatl/mecatui.log)"
-const modelsGatewayEmptyNote = "your gateway credential lists no models — ask your platform admin or re-run `mecatui llm login`"
+const modelsGatewayEmptyNote = "your gateway credential lists no models — ask your platform admin or re-run `thv llm setup`"
 
 func modelsEmptyCopy(caps client.Capabilities, statuses []client.ProviderStatus) string {
 	if s, ok := promotedStatus(statuses); ok {

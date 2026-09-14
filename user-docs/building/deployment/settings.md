@@ -18,7 +18,7 @@ server cannot reconfigure that server.
 |Plane|Practical location or input|Owner|What it configures|
 |-|-|-|-|
 |Operator settings|`$XDG_CONFIG_HOME/mecatl/settings.yaml` (normally `~/.config/mecatl/settings.yaml`)|Server operator|Providers and models, permissions, posture, MCP profiles, and other shared agent policy.|
-|Secret authentication|`$XDG_CONFIG_HOME/mecatl/auth.yaml` (normally `~/.config/mecatl/auth.yaml`), or `--auth-file`|Server operator|Provider API keys and the experimental Codex credential snapshot. Keep secrets out of `settings.yaml`.|
+|Secret authentication|`$XDG_CONFIG_HOME/mecatl/auth.yaml` (normally `~/.config/mecatl/auth.yaml`), or `--api-key-file`|Server operator|Provider API keys and the experimental Codex credential snapshot. Keep secrets out of `settings.yaml`.|
 |Daemon topology|A chosen `daemon.yaml`, passed to `mecated serve --config PATH`|`mecated` operator|Listener addresses, TLS material, and rate limits. It is not automatically loaded and never contains the API bearer token.|
 |CLI flags and environment|Invocation flags and documented environment variables|The process launcher|A deployment-specific override or one-run choice, such as workspace, provider/model, store, or transport.|
 |mecatui client settings|`$XDG_CONFIG_HOME/mecatui/settings.yaml` (normally `~/.config/mecatui/settings.yaml`)|Local terminal user|Keybindings and status-line presentation only.|
@@ -47,8 +47,8 @@ For the daemon and Kubernetes operating details, see
 
 `settings.yaml` is the normal user-global operator file. It is not a secret
 store: put custom-provider keys in `auth.yaml`, whose default path can be
-replaced with `--auth-file`. Both are read when the process starts, so restart
-the server or one-shot runner after changing them.
+replaced with `--api-key-file`. Both are read when the process starts, so
+restart the server or one-shot runner after changing them.
 
 A project can contribute only the settings that are allowed at project tier,
 from `.mecatl/settings.yaml` or `.mecatl/settings.local.yaml` in its workspace.
@@ -92,13 +92,13 @@ providers:
 For API-key providers, a matching environment variable takes precedence over the
 file entry. `openai-codex` is file-only and accepts only the `oauth` mapping
 shown above. The default path is `$XDG_CONFIG_HOME/mecatl/auth.yaml`, normally
-`~/.config/mecatl/auth.yaml`; `--auth-file` selects another path.
+`~/.config/mecatl/auth.yaml`; `--api-key-file` selects another path.
 
 The parser reports unknown providers, fields, duplicate keys, and invalid
 credential shapes without printing values. A missing conventional file is not an
-error. A missing explicit `--auth-file` path produces a warning. On Unix, Mecatl
-also warns when group or other users can read the file. Use mode `0600` on a
-shared host and restart the process after replacing a credential.
+error. A missing explicit `--api-key-file` path produces a warning. On Unix,
+Mecatl also warns when group or other users can read the file. Use mode `0600`
+on a shared host and restart the process after replacing a credential.
 
 The experimental `openai-codex` provider captures one immutable token snapshot
 at startup. It has no login or refresh flow. When both the token and file carry

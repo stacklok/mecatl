@@ -73,10 +73,11 @@ func (c providerCommands) runRemove(ctx context.Context, res invocationResolutio
 func (c providerCommands) removeCredential(ctx context.Context, provider string, definition permconfig.ProviderDefinition, authPath string, stderr io.Writer) (bool, error) {
 	switch definition.Auth.Method {
 	case "api_key":
-		if _, err := c.backend.updateAPIKey(ctx, authPath, authfile.APIKeyUpdate{Provider: provider}); err != nil {
+		state, err := c.backend.updateAPIKey(ctx, authPath, authfile.APIKeyUpdate{Provider: provider})
+		if err != nil {
 			return false, fmt.Errorf("providers remove: provider definition for %q remains; locally managed API key may remain: %w", provider, err)
 		}
-		return true, nil
+		return state == authfile.CommitDurable, nil
 	case providerAuthOIDC:
 		lifecycleCtx, cancel := context.WithTimeout(ctx, nativeLLMEnrollmentTimeout)
 		defer cancel()

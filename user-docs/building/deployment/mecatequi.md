@@ -293,8 +293,8 @@ For OpenRouter, Anthropic, or OpenCode Go, set the respective key and pass
 
 Experimental `openai-codex` is the exception: it has no environment key. Put a
 manual ChatGPT Codex OAuth snapshot in owner-only `auth.yaml`, pass
-`--auth-file PATH --default-provider openai-codex`, and replace the token plus
-restart the job when it expires or is rejected. It is a separate billing
+`--api-key-file PATH --default-provider openai-codex`, and replace the token
+plus restart the job when it expires or is rejected. It is a separate billing
 identity from public OpenAI API credit and uses an undocumented private backend;
 there is no login or refresh. See
 [Configure provider credentials](./settings.md#configure-provider-credentials).

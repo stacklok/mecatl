@@ -14,16 +14,17 @@ start and no TCP port. See [Run](#run).
 
 It is built on the Charm v2 stack (Bubble Tea / Lip Gloss / Bubbles / Glamour).
 
-### Native LLM endpoint login
+### Local provider credentials
 
-Embedded local mecatui can enroll an operator-configured native **LLM endpoint** with
-`mecatui llm login ENDPOINT`; `status [ENDPOINT]` only inspects local metadata and
-`logout ENDPOINT` removes local state before best-effort revocation. The lifecycle uses
-the explicit credential home and never prints tokens, codes, or authorization URLs.
-It is not `mecatui login ADDRESS`, which authenticates this client to a remote mecated,
-and it is not ToolHive MCP discovery, ToolHive LLM lifecycle, or the manual Codex
-subscription credential. A connected client does not enroll a gateway for its remote
-server: that server's operator owns its native endpoint records.
+Embedded local mecatui can manage an operator-configured provider with
+`mecatui providers login PROVIDER`; `providers status [PROVIDER]` only inspects
+local metadata and `providers logout PROVIDER` removes local state before
+best-effort revocation. The lifecycle uses the shared protected credential store
+and never prints tokens, codes, or authorization URLs. It is not
+`mecatui login ADDRESS`, which authenticates this client to a remote mecated, and
+it is not ToolHive MCP discovery, ToolHive LLM lifecycle, or the manual Codex
+subscription credential. A connected client does not enroll a provider for its
+remote server: that server's operator owns its provider records.
 
 ### Local status lines
 
@@ -123,7 +124,7 @@ through the distinct `openai-codex` provider. Put the manual OAuth snapshot in
 
 ```sh
 bin/mecatui --workspace "$PWD" \
-  --auth-file ~/.config/mecatl/auth.yaml \
+  --api-key-file ~/.config/mecatl/auth.yaml \
   --default-provider openai-codex
 ```
 
@@ -276,19 +277,16 @@ server is authoritative.
   guaranteed. Existing credential-only orphans cannot be pruned because the store has
   no enumeration operation.
 
-- **`mecatui llm login ENDPOINT`**, **`mecatui llm status [ENDPOINT]`**, and
-  **`mecatui llm logout ENDPOINT`** — manage an operator-configured native LLM
-  endpoint without connecting to `mecated`. Login is signal-aware and holds one
+- **`mecatui providers login PROVIDER`**, **`mecatui providers status [PROVIDER]`**,
+  and **`mecatui providers logout PROVIDER`** — manage an operator-configured
+  provider without connecting to `mecated`. Login is signal-aware and holds one
   bounded five-minute overall browser/callback budget, including time spent under
-  the endpoint lifecycle lock. Status is passive and local; with no configured
-  endpoints it reports how to configure `llm.endpoints` instead of succeeding with
-  empty output. Unknown IDs list the configured endpoint IDs and direct operators
-  to `mecatui llm status`. Login success is written to stderr and never prints the
-  access token. `ENDPOINT=toolhive` invokes the separate ToolHive login; the
-  one-release bare `mecatui llm login` alias warns and remains ToolHive-only.
-  `--skip-browser` is ToolHive-only and may print its authorization URL. Machine
-  consumers that previously read mecatl stdout must use ToolHive's explicit
-  `thv llm token` tooling. These commands are distinct from remote
+  the provider lifecycle lock. Status is passive and local; with no configured
+  providers it reports the available setup paths instead of succeeding with empty
+  output. Unknown names list configured providers and direct operators to
+  `mecatui providers`. Login success is written to stderr and never prints the
+  access token. ToolHive has a separate externally owned lifecycle; use `thv llm`
+  tooling for its setup and credentials. These commands are distinct from remote
   `mecatui login ADDRESS`, ToolHive MCP discovery, and manual Codex authentication.
 
 ### OIDC-connected server
@@ -545,7 +543,7 @@ a short directive with a longer brief. The seed fires ONCE: a `/models` restart 
 | `--anthropic-base-url` | – | native Anthropic API base URL override for the **embedded** server (compatible/proxy endpoints; key from `ANTHROPIC_API_KEY`) |
 | `--openai-base-url` | – | OpenAI base URL override for the **embedded** server |
 | `--openrouter-base-url` | – | OpenRouter base URL override for the **embedded** server (default `https://openrouter.ai/api/v1`) |
-| `--auth-file` | – (auto) | **embedded** server: path to the YAML credentials file (`providers.<name>.api_key`, or the experimental `providers.openai-codex.oauth` snapshot); overrides `$XDG_CONFIG_HOME/mecatl/auth.yaml`. Environment wins for API-key providers; Codex has no env alias. See [the exact schema](https://mecatl.dev/docs/building/deployment/settings#configure-provider-credentials) |
+| `--api-key-file` | – (auto) | **embedded** server: path to the YAML credentials file (`providers.<name>.api_key`, or the experimental `providers.openai-codex.oauth` snapshot); overrides `$XDG_CONFIG_HOME/mecatl/auth.yaml`. Environment wins for API-key providers; Codex has no env alias. See [the exact schema](https://mecatl.dev/docs/building/deployment/settings#configure-provider-credentials) |
 | `--mock` | off | **embedded** server: use the offline mock provider (no network) |
 | `--no-shell` | off | **embedded** server: disable the Shell tool (shell-less) |
 | `--memory-dir` | – (auto) | **embedded** server: per-project memory store dir; empty = a default under `$XDG_DATA_HOME/mecatui/memory` |

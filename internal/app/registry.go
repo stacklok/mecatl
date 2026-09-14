@@ -663,13 +663,13 @@ func buildProviderRegistryContext(ctx context.Context, cfg Config, detect envDet
 
 	if len(entries) == 0 {
 		if len(unavailableNative) > 0 {
-			return nil, fmt.Errorf("native LLM endpoint is not enrolled: run `mecatui llm login ENDPOINT`")
+			return nil, fmt.Errorf("OIDC provider is not enrolled: run `mecatui providers` to inspect configured providers, then `mecatui providers login PROVIDER`")
 		}
 		return nil, errNoProvider
 	}
 	if cfg.DefaultProvider != "" {
 		if _, unavailable := unavailableNative[cfg.DefaultProvider]; unavailable {
-			return nil, fmt.Errorf("native LLM endpoint %q is not enrolled: run `mecatui llm login %s`", cfg.DefaultProvider, cfg.DefaultProvider)
+			return nil, fmt.Errorf("provider %q is not enrolled: run `mecatui providers login %s`", cfg.DefaultProvider, cfg.DefaultProvider)
 		}
 	}
 
@@ -686,7 +686,7 @@ func buildProviderRegistryContext(ctx context.Context, cfg Config, detect envDet
 
 	outcomes := newLiveOutcomeStore()
 	for id := range unavailableNative {
-		outcomes.recordFailure(id, statusNotEnrolled, "run `mecatui llm login "+id+"`")
+		outcomes.recordFailure(id, statusNotEnrolled, "run `mecatui providers login "+id+"`")
 	}
 	reg := &providerRegistry{entries: entries, unavailableNative: unavailableNative, meta: meta, outcomes: outcomes}
 	reg.defaultID, reg.defaultModel = resolveDefaultModel(cfg, reg)
@@ -822,7 +822,7 @@ func newNativeProviderEntry(cfg Config, definition permconfig.ProviderDefinition
 	}
 	client, err := llmendpoint.NewGatewayHTTPClient(definition.BaseURL, source, transport)
 	if err != nil {
-		return providerEntry{}, fmt.Errorf("configure native LLM endpoint %q: %w", definition.ID, err)
+		return providerEntry{}, fmt.Errorf("configure OIDC provider %q: %w", definition.ID, err)
 	}
 	entry := newOpenAICompatEntry(cfg, definition.ID, "transport-owned", definition.BaseURL,
 		openai.WithHTTPClient(client), openai.WithMaxRetries(0))
