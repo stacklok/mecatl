@@ -361,7 +361,7 @@ func TestParallelRosterWindowed(t *testing.T) {
 		t.Fatalf("expected Parallel tab, got %v", m.agentsTab)
 	}
 	out := stripANSIstr(m.View().Content)
-	rows := teamRosterRows(agentsBodyHeight(m.vp.Height()))
+	rows := m.parallelRosterPageSize(m.conv.parallelGroups)
 	if rows >= n {
 		t.Fatalf("test premise broken: window %d must be < groups %d", rows, n)
 	}

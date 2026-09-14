@@ -144,7 +144,8 @@ func (m Model) onTeamKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 // that grows under the overlay never desyncs a stored scroll offset.
 func (m Model) onTeamRosterKey(msg tea.KeyPressMsg, b *block) (tea.Model, tea.Cmd) {
 	n := len(b.teamLanes)
-	page := teamRosterRows(m.vp.Height())
+	th, hk, width, height := m.agentsListGeometry()
+	page := agentsListPageSize(th, height, teamSelectableList(th, m.team, b, hk, width))
 	switch {
 	case key.Matches(msg, m.keys.Close):
 		return m.closeTeam()
@@ -273,59 +274,9 @@ func teamFocusRows(height int) int {
 // builders below. The former standalone renderTeamOverlay (which framed the body in
 // its own centerCard) is gone — the unified container owns the framing now.
 
-// teamRosterChromeLines is the number of NON-lane lines the roster card always
-// spends on chrome: the title, the blank line under the header, the blank line
-// above the footer, and the footer hint (4). The optional resolved sub-header and
-// the +K above/below tails are accounted for separately by teamRosterRows.
-const teamRosterChromeLines = 4
-
-// teamMinRosterRows is the floor on visible lane rows, so even an absurdly short
-// terminal still shows a usable slice of the roster (the window just gets tight)
-// rather than collapsing to zero rows.
+// teamMinRosterRows is the minimum logical-row allowance used by the
+// non-selectable task and findings windows.
 const teamMinRosterRows = 3
-
-// teamRosterRows is how many lane rows fit in the roster window for a card of
-// the given OUTER height (the conversation region height passed to the overlay).
-// It subtracts the card border+padding (4) and the fixed chrome lines, reserving
-// two extra lines for the potential +K above / +K below tails so the footer hint
-// is NEVER pushed off-screen by the tails. Floors at teamMinRosterRows. A
-// non-positive height (size unknown) yields 0 → renderTeamRoster shows all rows
-// (the pre-windowing behaviour, safe when we can't measure).
-func teamRosterRows(height int) int {
-	if height <= 0 {
-		return 0
-	}
-	const cardChrome = 4 // border (2) + vertical padding (2)
-	const tailReserve = 2
-	rows := height - cardChrome - teamRosterChromeLines - tailReserve
-	if rows < teamMinRosterRows {
-		return teamMinRosterRows
-	}
-	return rows
-}
-
-// teamWindow computes the [start, end) slice of the render order to show so the
-// cursor stays visible, scrolling the window to follow it. rows is the visible
-// capacity (0 = show all). The window is anchored to keep the cursor in view with
-// a stable, minimal scroll: it only moves when the cursor would fall outside the
-// current span, and clamps to the ends so the last page is full. It returns the
-// slice bounds plus how many rows are hidden above/below (for the +K tails).
-func teamWindow(cursor, total, rows int) (start, end, above, below int) {
-	if rows <= 0 || total <= rows {
-		return 0, total, 0, 0
-	}
-	// Center-ish: place the cursor with a little context above where possible, then
-	// clamp so the window never runs past either end (a full last page).
-	start = cursor - rows/2
-	if start < 0 {
-		start = 0
-	}
-	if start > total-rows {
-		start = total - rows
-	}
-	end = start + rows
-	return start, end, start, total - end
-}
 
 // renderTeamRoster renders the member roster WINDOWED to the available height:
 // a header (member count + resolved round/stop summary), then the slice of lanes
@@ -335,50 +286,36 @@ func teamWindow(cursor, total, rows int) (start, end, above, below int) {
 // uncapped overlay the same height-safety the inline card has (cap + roll-up):
 // at 20–32 members the card never grows taller than the terminal and clips its
 // footer or the selected row. height<=0 (size unknown) shows all rows.
-func renderTeamRoster(th theme.Theme, st teamState, b *block, hk helpKeys, height int, widths ...int) string {
+func teamSelectableList(th theme.Theme, st teamState, b *block, hk helpKeys, bodyWidth int) agentsSelectableList {
 	muted := th.Style("muted")
+	header := renderDelegationRows(th.Style("askTitle"), "", teamRosterHeader(b), bodyWidth)
+	if sub := teamRosterSubhead(b); sub != "" {
+		header += "\n" + renderDelegationRows(muted, "", sub, bodyWidth)
+	}
+	order := teamLaneOrder(b.teamLanes)
+	nameW := teamNameWidth(b.teamLanes, order)
+	cursor := clampCursor(st.cursor, len(order))
+	list := agentsSelectableList{
+		header: header,
+		footer: renderDynamicCardChromeLine(muted, "", hk.navUp+"/"+hk.navDown+" select · "+hk.choose+" focus · "+hk.cancelChild+" cancel · "+hk.tasks+" tasks · "+hk.findings+" findings · "+agentsEmptyHint(hk), bodyWidth),
+		cursor: cursor, muted: muted, noun: "rows",
+	}
+	for row, laneIndex := range order {
+		style, prefix := muted, "  "
+		if row == cursor {
+			style, prefix = th.Style("spinner"), "▶ "
+		}
+		list.rows = append(list.rows, renderDelegationRows(style, prefix, teamRosterLine(th, &b.teamLanes[laneIndex], nameW, b.teamDone), bodyWidth))
+	}
+	return list
+}
+
+func renderTeamRoster(th theme.Theme, st teamState, b *block, hk helpKeys, height int, widths ...int) string {
 	bodyWidth := 0
 	if len(widths) > 0 {
 		bodyWidth = widths[0]
 	}
-	var out strings.Builder
-
-	out.WriteString(renderDelegationRows(th.Style("askTitle"), "", teamRosterHeader(b), bodyWidth))
-	out.WriteString("\n")
-	if sub := teamRosterSubhead(b); sub != "" {
-		out.WriteString(renderDelegationRows(muted, "", sub, bodyWidth) + "\n")
-	}
-	out.WriteString("\n")
-
-	order := teamLaneOrder(b.teamLanes)
-	nameW := teamNameWidth(b.teamLanes, order)
-	cursor := clampCursor(st.cursor, len(order))
-	start, end, above, below := teamWindow(cursor, len(order), teamRosterRows(height))
-
-	if above > 0 {
-		out.WriteString(renderDelegationRows(muted, "  ", fmt.Sprintf("· +%d above", above), bodyWidth) + "\n")
-	}
-	for row := start; row < end; row++ {
-		ln := &b.teamLanes[order[row]]
-		line := teamRosterLine(th, ln, nameW, b.teamDone)
-		if row == cursor {
-			out.WriteString(renderDelegationRows(th.Style("spinner"), "▶ ", line, bodyWidth) + "\n")
-		} else {
-			out.WriteString(renderDelegationRows(muted, "  ", line, bodyWidth) + "\n")
-		}
-	}
-	if below > 0 {
-		out.WriteString(renderDelegationRows(muted, "  ", fmt.Sprintf("· +%d below", below), bodyWidth) + "\n")
-	}
-
-	// SHORTER than the old roster hint (the paging chords still work, unnamed): the
-	// added "x cancel" segment would otherwise push this card past a 100-col terminal
-	// — the hint is the card's widest line, so it directly sets the overlay width
-	// (centerCard does not wrap). Same discipline as the Subagents-tab hint. Every
-	// chord reads the LIVE keyMap markings (hk) so an override propagates (issue
-	// #457); with defaults the hint is byte-identical to the historical literal.
-	out.WriteString("\n" + renderDynamicCardChromeLine(muted, "", hk.navUp+"/"+hk.navDown+" select · "+hk.choose+" focus · "+hk.cancelChild+" cancel · "+hk.tasks+" tasks · "+hk.findings+" findings · "+agentsEmptyHint(hk), bodyWidth))
-	return out.String()
+	return teamSelectableList(th, st, b, hk, bodyWidth).render(th, height)
 }
 
 // teamRosterLine is one roster row: the inline lane line (state glyph + mutating
@@ -564,7 +501,7 @@ const (
 const teamTasksChromeLines = 5
 
 // teamTasksRows is how many task rows fit in the task sub-view for a card of the
-// given OUTER height. It mirrors teamRosterRows: subtract the card border+padding
+// given OUTER height. It subtracts the card border+padding
 // and the fixed chrome, reserve one line for the "+N more" tail, floor at
 // teamMinRosterRows. A non-positive height (size unknown) shows all rows.
 func teamTasksRows(height int) int {
@@ -658,8 +595,12 @@ func renderTeamTasks(th theme.Theme, b *block, hk helpKeys, height int, widths .
 	// Window the rows to the available height (cursor-free: the task sub-view has no
 	// selection, so it always anchors at the top, surfacing only a "+N more" tail).
 	rows := teamTasksRows(height)
-	start, end, _, below := teamWindow(0, len(b.teamTasks), rows)
-	for i := start; i < end; i++ {
+	end := len(b.teamTasks)
+	if rows > 0 {
+		end = min(end, rows)
+	}
+	below := len(b.teamTasks) - end
+	for i := 0; i < end; i++ {
 		out.WriteString(renderDynamicCardChromeLine(muted, "  ", taskRow(b.teamTasks[i], byID), bodyWidth) + "\n")
 	}
 	if below > 0 {
@@ -777,8 +718,12 @@ func renderTeamFindings(th theme.Theme, b *block, hk helpKeys, height int, width
 	// Window the rows to the available height (cursor-free: the findings sub-view has
 	// no selection, so it always anchors at the top, surfacing only a "+N more" tail).
 	rows := teamFindingsRows(height)
-	start, end, _, below := teamWindow(0, len(b.teamFindings), rows)
-	for i := start; i < end; i++ {
+	end := len(b.teamFindings)
+	if rows > 0 {
+		end = min(end, rows)
+	}
+	below := len(b.teamFindings) - end
+	for i := 0; i < end; i++ {
 		out.WriteString(renderDynamicCardChromeLine(muted, "  ", findingRow(b.teamFindings[i]), bodyWidth) + "\n")
 	}
 	if below > 0 {

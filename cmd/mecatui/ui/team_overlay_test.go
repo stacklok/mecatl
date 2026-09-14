@@ -714,7 +714,8 @@ func TestAgentsRosterWindowed(t *testing.T) {
 	m = mm.(Model)
 	out := stripANSIstr(m.View().Content)
 
-	rows := teamRosterRows(agentsBodyHeight(m.vp.Height()))
+	th, hk, width, height := m.agentsListGeometry()
+	rows := agentsListPageSize(th, height, teamSelectableList(th, m.team, m.conv.latestTeamBlock(), hk, width))
 	if rows >= n {
 		t.Fatalf("test premise broken: window %d must be smaller than roster %d", rows, n)
 	}
@@ -791,16 +792,19 @@ func TestAgentsPageKeys(t *testing.T) {
 	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
 
-	page := teamRosterRows(m.vp.Height())
+	th, hk, width, height := m.agentsListGeometry()
+	page := agentsListPageSize(th, height, teamSelectableList(th, m.team, m.conv.latestTeamBlock(), hk, width))
 	mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyPgDown})
 	m = mm.(Model)
 	if m.team.cursor != page {
 		t.Errorf("pgdn moved cursor to %d, want one page (%d)", m.team.cursor, page)
 	}
+	w := teamSelectableList(th, m.team, m.conv.latestTeamBlock(), hk, width).window(th, height)
+	wantUp := max(0, m.team.cursor-(w.end-w.start))
 	mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyPgUp})
 	m = mm.(Model)
-	if m.team.cursor != 0 {
-		t.Errorf("pgup from one page in should return to 0, got %d", m.team.cursor)
+	if m.team.cursor != wantUp {
+		t.Errorf("pgup moved cursor to %d, want current physical-window move to %d", m.team.cursor, wantUp)
 	}
 }
 
