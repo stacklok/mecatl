@@ -106,6 +106,12 @@ matched; omission skips both. No plaintext, environment fallback, migration,
 discovery, or credential material is persisted in sessions/events or exposed over
 RPC.
 
+The deprecated top-level `llm` settings key is deliberately outside this schema. The
+lenient top-level decoder ignores any syntactically valid value under it; it neither
+configures nor migrates providers. Strict decoding of the current `providers`,
+`provider_overrides`, and `credential_store` sections is unchanged, and an explicit
+selection absent from the current provider registry still fails closed.
+
 Only embedded local mecatui supplies the bounded browser/loopback presenter.
 `mecatui providers login PROVIDER` uses the ToolHive-compatible registered redirect
 `http://localhost:8666/callback`; it binds only that host, port, and path, while remote
@@ -119,6 +125,15 @@ context-aware, and holds the lifecycle through exchange and CAS commit; a crash 
 upstream rotation but before local commit may require login. The access token is the
 authorization-code exchange result only—not an ID token or a caller bearer—and gateway
 requests use one pre-stream 401 refresh/retry at most.
+
+Browser lifecycle errors are classified through wrapped sentinels and rendered only as
+fixed remediation text. Storage/keyring/corruption points to
+`credential_store.oidc.home` and `.key`; discovery points to issuer trust, DNS, TLS, and
+exact provider configuration; callback-address conflicts name localhost port 8666;
+authorization asks for the newest browser flow; token rejection points to audience,
+scopes, and OIDC settings; and missing enrollment names `mecatui providers login`.
+Provider OAuth response bodies, tokens, URLs, and wrapped source errors are never
+included in command output.
 
 The provider inventory is deployment-wide, not a caller entitlement. Mecated drops
 inbound caller bearers after verification and retains only the principal for ownership.

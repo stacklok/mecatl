@@ -11,8 +11,12 @@ import (
 	"golang.org/x/term"
 
 	"github.com/stacklok/mecatl/internal/adapter/authfile"
+	"github.com/stacklok/mecatl/internal/adapter/credentialstore"
+	"github.com/stacklok/mecatl/internal/adapter/llmendpoint"
+	"github.com/stacklok/mecatl/internal/adapter/oidcclient"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
+	"github.com/stacklok/mecatl/mcp/oauthlogin"
 )
 
 type providerCredentialConfig struct {
@@ -211,8 +215,30 @@ func (c providerCommands) runToolHiveCredential(ctx context.Context, res invocat
 }
 
 func providerOIDCLifecycleError(action, provider string, err error) error {
-	if errors.Is(err, context.DeadlineExceeded) {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
 		return errors.New("provider OIDC lifecycle timed out; retry and complete the browser callback within five minutes")
+	case errors.Is(err, oidcclient.ErrStorage), errors.Is(err, credentialstore.ErrUnavailable), errors.Is(err, credentialstore.ErrClosed), errors.Is(err, credentialstore.ErrCorrupt):
+		return errors.New("provider OIDC protected credential storage is unavailable; check credential_store.oidc.home and credential_store.oidc.key, then retry")
+	case errors.Is(err, oidcclient.ErrDiscovery):
+		return errors.New("provider OIDC issuer discovery failed; check issuer trust, DNS, TLS, and the exact provider configuration, then retry")
+	case callbackAddressInUse(err):
+		return errors.New("provider OIDC login cannot listen on localhost port 8666 because it is already in use; stop the process using port 8666, then retry")
+	case errors.Is(err, oidcclient.ErrAuthorization):
+		return errors.New("provider OIDC authorization was not completed; retry and complete the newest browser flow")
+	case errors.Is(err, oidcclient.ErrToken):
+		return errors.New("provider OIDC token was rejected; check the resource audience, scopes, and OIDC configuration, then retry login")
+	case errors.Is(err, llmendpoint.ErrNotEnrolled):
+		if action == providerActionLogout {
+			return fmt.Errorf("provider OIDC enrollment is unavailable for logout; check the provider configuration and run `mecatui providers status %s`", provider)
+		}
+		return fmt.Errorf("provider is not enrolled; run `mecatui providers login %s`", provider)
+	default:
+		return fmt.Errorf("provider %s OIDC lifecycle failed; retry or run `mecatui providers status %s` for local state", action, provider)
 	}
-	return fmt.Errorf("provider %s OIDC lifecycle failed; retry or run `mecatui providers status %s` for local state", action, provider)
+}
+
+func callbackAddressInUse(err error) bool {
+	var bind *oauthlogin.CallbackBindError
+	return errors.As(err, &bind) && bind.Reason == oauthlogin.CallbackBindAddressInUse
 }

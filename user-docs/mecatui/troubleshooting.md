@@ -36,18 +36,27 @@ OIDC provider on a host that cannot open a browser, use
 `mecatui providers login PROVIDER --no-browser` and complete the displayed flow.
 
 If the command reports an unknown provider, run `mecatui providers` and use the
-exact configured name. If settings reject `llm:` as legacy configuration, remove
-that mapping and recreate each provider with `mecatui providers add`, or migrate
-it to equivalent operator `providers` and `credential_store` entries. Re-enroll
-OIDC providers with `mecatui providers login PROVIDER`; migration does not silently
-reuse a legacy provider or select a fallback. Check `mecatui providers` before
-restarting the server.
+exact configured name. An obsolete top-level `llm` key is ignored and does not
+configure or migrate anything. Recreate each provider with `mecatui providers add`,
+or migrate it to equivalent operator `providers` and `credential_store` entries.
+Re-enroll OIDC providers with `mecatui providers login PROVIDER`; explicitly selecting
+a provider missing from the current registry fails instead of choosing a fallback.
+Check `mecatui providers` before restarting the server.
 
 `credential_store.oidc` is shared OIDC credential custody. With an environment
 key, confirm that `credential_store.oidc.key.key_env` names a value provisioned to
 both the login process and the server; restoring the original value is required to
 read existing encrypted credentials. If it cannot be restored, use a new credential
-home and re-enroll providers rather than overwriting an unreadable record. The
+home and re-enroll providers rather than overwriting an unreadable record. Provider
+OIDC commands report safe categories rather than OAuth response details: check the
+credential-store home/key for storage failures; issuer trust, DNS, TLS, and exact
+configuration for discovery failures; localhost port 8666 for callback conflicts; start
+a new browser flow for authorization failures; and check audience/scopes for token
+rejection. During login, a not-enrolled result directs you to
+`mecatui providers login PROVIDER`. During logout, an unavailable enrollment instead
+asks you to check the provider configuration and run `mecatui providers status PROVIDER`;
+it does not require creating a new enrollment to log out.
+The
 [provider configuration guide](/building/deployment/mecated.md#configure-providers)
 and [configuration reference](/reference/configuration.md#credential_store) describe
 the supported schema.

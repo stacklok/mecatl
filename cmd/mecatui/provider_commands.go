@@ -7,6 +7,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/authfile"
 	"github.com/stacklok/mecatl/internal/adapter/credentialstore"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
+	"github.com/stacklok/mecatl/internal/adapter/toolhivellm"
 )
 
 // providerTerminal is the complete interactive input boundary for provider
@@ -39,6 +40,10 @@ type providerBackend struct {
 type providerCommands struct {
 	terminal providerTerminal
 	backend  providerBackend
+}
+
+var executeToolHiveLogin = func(ctx context.Context, skipBrowser bool) error {
+	return toolhivellm.RunInteractiveLogin(ctx, "", skipBrowser, nil)
 }
 
 func newProviderCommands() providerCommands {

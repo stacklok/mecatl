@@ -113,7 +113,7 @@ func TestNativeLLMGatewayLogin_Scenario1_DurableIdentityFailsClosed(t *testing.T
 }
 
 func TestNativeLLMGatewayLogin_Scenario2_NoProviderEntitlementSurface(t *testing.T) {
-	for _, typ := range []reflect.Type{reflect.TypeOf(providerEntry{}), reflect.TypeOf(providerRegistry{}), reflect.TypeOf(permconfig.NativeEndpointDefinition{})} {
+	for _, typ := range []reflect.Type{reflect.TypeOf(providerEntry{}), reflect.TypeOf(providerRegistry{}), reflect.TypeOf(permconfig.ProviderDefinition{})} {
 		for i := 0; i < typ.NumField(); i++ {
 			name := strings.ToLower(typ.Field(i).Name)
 			if strings.Contains(name, "principal") || strings.Contains(name, "entitlement") || strings.Contains(name, "allowed") {

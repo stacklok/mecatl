@@ -86,9 +86,9 @@ credential_store:
 		}
 	}
 	r, _ := newCapturedResolver(t, "/etc/mecatl/operator.yaml", "llm:\n  credential_home: /private\n", true)
-	_, _, err := r.OperatorProviders()
-	if err == nil || !strings.Contains(err.Error(), "mecatui providers") {
-		t.Fatalf("legacy llm error = %v, want migration guidance", err)
+	providers, overrides, err := r.OperatorProviders()
+	if err != nil || providers != nil || overrides != nil {
+		t.Fatalf("legacy llm key was not ignored: providers=%v overrides=%v err=%v", providers, overrides, err)
 	}
 }
 

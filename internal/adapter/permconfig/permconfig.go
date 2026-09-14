@@ -157,7 +157,6 @@ func (c *Config) UnmarshalYAML(node ast.Node) error {
 		return fmt.Errorf("permission config must be a mapping")
 	}
 	known := map[string]any{
-		"llm":                    newPermconfigNodePointer(&c.LLM),
 		"credential_store":       newPermconfigNodePointer(&c.CredentialStore),
 		"providers":              &c.Providers,
 		"provider_overrides":     &c.ProviderOverrides,

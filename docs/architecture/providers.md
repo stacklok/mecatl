@@ -138,7 +138,12 @@ durable `provider_id`, and `default_model` is the deployment-wide inventory floo
 Custom OIDC is valid only with `api_flavor: openai-responses`. Its identity and trust
 configuration lives under `providers.<name>.auth.oidc`, while
 `credential_store.oidc` selects the shared protected credential home and encryption-key
-custody. Build does no authenticated model probe. A usable encrypted record makes live
+custody. The obsolete top-level `llm` key is treated like any other unknown
+compatibility key: its value is ignored without being parsed, whether it is a mapping,
+scalar, or sequence. It does not configure or migrate a provider. Current `providers`,
+`provider_overrides`, and `credential_store` sections remain strict, and explicitly
+selecting a provider absent from the current registry fails closed without fallback.
+Build does no authenticated model probe. A usable encrypted record makes live
 listing global to the deployment; a missing record leaves an optional provider
 unavailable and makes a selected/default provider fail closed without ToolHive or
 default fallback.
@@ -149,7 +154,15 @@ client, resource audience, scopes, redirect, and both trust identities. Its acce
 refresh tokens are never exposed through events, snapshots, diagnostics, model
 context, or RPC. `mecated` opens and refreshes an existing record only;
 browser/loopback enrollment belongs to embedded local
-`mecatui providers login PROVIDER`. Status is passive local inspection and logout
+`mecatui providers login PROVIDER`. Lifecycle failures are projected into safe,
+actionable categories without including wrapped OAuth responses, tokens, or URLs:
+credential-store/key failures name `credential_store.oidc.home` and `.key`; discovery
+names issuer trust, DNS, TLS, and exact configuration; callback binding names localhost
+port 8666; authorization asks for a new browser flow; token rejection names audience,
+scopes, and OIDC configuration. Missing enrollment during login points back to
+`providers login`; an unavailable enrollment during logout points to provider
+configuration and `providers status`, without asking the operator to log in.
+Status is passive local inspection and logout
 deletes local state before bounded best-effort revocation. The lifecycle uses a
 provider-scoped cross-process lock through exchange and CAS commit; a crash after
 upstream refresh rotation but before local persistence can require login again.

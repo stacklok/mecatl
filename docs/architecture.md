@@ -863,7 +863,7 @@ back. Usage and configuration are documented in
 `docs/tui.md`.
 
 **Remote mecatui OIDC.** The remote-login path is separate from the ToolHive LLM
-login: `mecatui llm login` remains the ToolHive gateway flow, while `mecatui login
+login: `mecatui providers login toolhive` remains the ToolHive gateway flow, while `mecatui login
 ADDRESS` performs public-client OIDC enrollment for one remote target. A bare DNS
 hostname or HTTPS resource URL discovers the issuer, public client ID, audience, and
 operator-configured requested scopes from the resource metadata. When metadata advertises
