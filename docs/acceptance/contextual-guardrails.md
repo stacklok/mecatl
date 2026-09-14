@@ -397,7 +397,7 @@ The corpus tests the replacement decision recorded by [ADR 0334](../adr/0334-con
   - verify: `TestADR_0334_ContextualGuardrails_Scenario6_RubricContract`, `TestADR_0334_ContextualGuardrails_Scenario6_AdditiveRulePrompt`
 - AC6.3: implementation builds a versioned measurement runner and report schema for false warnings, false blocks, misses, latency, investigation frequency, and spend; offline mocks prove protocol only and make no efficacy claim. Actual checker-model comparisons require separate operator route/spend authorization at release-validation time.
   - verify: `TestADR_0334_ContextualGuardrails_Scenario6_QualityReportSchema`
-- AC6.4: implementation-selected private evidence/trajectory count-and-byte capacities are finite, enforced before allocation, and aggregate exhaustion produces complete unresolved/incomplete behavior rather than acceptable; production-readiness claims additionally require separately authorized real-model quality results.
+- AC6.4: implementation-selected private evidence/trajectory count-and-byte capacities are finite, enforced before allocation, and aggregate exhaustion produces complete unresolved/incomplete behavior rather than acceptable.
   - verify: `TestADR_0334_ContextualGuardrails_Scenario6_ImplementationCalibration`
 - AC6.5: implementation review inspects an evidence report that records the selected finite capacity constants and units, rationale from native limits, measured offline stress experiments and results, and the corresponding pre-allocation/exhaustion proof artifacts. Neither this report nor separately authorized real-model quality results blocks plan proposal, Plan / Interface merge, or implementation review.
   - verify: inspection — implementation capacity-calibration report contains selected constants, rationale, stress experiments/results, and proof artifact references
@@ -412,7 +412,7 @@ Factory tests and inventory follow the model-visible-affordance and resource rul
   - verify: `TestADR_0334_ContextualGuardrails_Scenario7_TerminalSafety`
 - AC7.3: cloud inventory rows document transient detail, held-result map, evidence handles/previews, trajectory ledger, and contextual repeat grants in both List 1 and List 2 with ownership, lifetime, cleanup, and reset-by-design behavior.
   - verify: `TestADR_0334_ContextualGuardrails_Scenario7_ResourceInventory`
-- AC7.4: concrete protobuf review/approval fields preserve exact action-versus-inbound job, complete/unresolved/operational-failure inspection state, disposition, approval kind, repeat availability, and explicit approval origin through mapper and stream projection; invalid approval-kind/origin combinations fail before execution, release, learning, waiver, or misleading audit.
+- AC7.4: concrete protobuf review/approval fields preserve exact action-versus-inbound job, assessment (including unresolved), inspection state (complete or operational failure), disposition, approval kind, repeat availability, and explicit approval origin through mapper and stream projection; invalid approval-kind/origin combinations fail before execution, release, learning, waiver, or misleading audit.
   - verify: `TestADR_0334_ContextualGuardrails_Scenario7_InterfaceProjectionSafety`
 
 ## Out of scope
