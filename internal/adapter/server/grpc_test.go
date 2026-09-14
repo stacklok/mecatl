@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"iter"
 	"net"
 	"strings"
 	"sync/atomic"
@@ -23,6 +24,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/permstore"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/governance"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/server"
@@ -551,11 +553,22 @@ func TestGRPCConverseAllowAlwaysLearns(t *testing.T) {
 	}
 }
 
+// cancelAfterDeltaProvider cannot finish before the client's Cancel frame, even
+// when the transport buffers every event before the client starts receiving.
+type cancelAfterDeltaProvider struct{ blockingProvider }
+
+func (cancelAfterDeltaProvider) Stream(ctx context.Context, _ port.LLMRequest) (iter.Seq2[port.Chunk, error], error) {
+	return func(yield func(port.Chunk, error) bool) {
+		if yield(port.Chunk{Kind: port.ChunkText, Text: "thinking"}, nil) {
+			<-ctx.Done()
+		}
+	}, nil
+}
+
 // TestGRPCConverseCancel sends a Cancel frame on a blocked run and asserts a
 // terminal cancelled result.
 func TestGRPCConverseCancel(t *testing.T) {
-	llm := mockllm.New(mockllm.ChunksTurn(blockingChunks()...))
-	svc := newService(t, llm, allowRules())
+	svc, _ := newServiceWithEngine(t, cancelAfterDeltaProvider{}, tool.NewCatalog())
 	client, cleanup := dialGRPC(t, svc)
 	defer cleanup()
 

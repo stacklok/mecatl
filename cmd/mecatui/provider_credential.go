@@ -7,8 +7,8 @@ import (
 	"io"
 	"os"
 	"strings"
-
-	"golang.org/x/term"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/stacklok/mecatl/internal/adapter/authfile"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
@@ -34,43 +34,25 @@ func currentProviderCredentialConfig() (providerCredentialConfig, error) {
 }
 
 func readHiddenProviderAPIKey(ctx context.Context, provider string) (string, error) {
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
-	if _, err := fmt.Fprintf(os.Stderr, "API key for %s: ", provider); err != nil {
-		return "", err
-	}
-	result := make(chan struct {
-		key []byte
-		err error
-	})
-	go func() {
-		key, err := term.ReadPassword(int(os.Stdin.Fd()))
-		got := struct {
-			key []byte
-			err error
-		}{key, err}
-		select {
-		case result <- got:
-		case <-ctx.Done():
-			clear(key)
-		}
-	}()
-	select {
-	case <-ctx.Done():
-		_, _ = fmt.Fprintln(os.Stderr)
-		return "", ctx.Err()
-	case got := <-result:
-		_, _ = fmt.Fprintln(os.Stderr)
-		key := string(got.key)
-		clear(got.key)
-		return key, got.err
-	}
+	return readProviderTerminalLine(ctx, os.Stdin, os.Stderr, "API key for "+providerDisplay(provider), true)
 }
 
-var errProviderCredentialCancelled = errors.New("provider credential prompt cancelled")
+type providerTerminalError string
 
-func (c providerCommands) runCredential(ctx context.Context, res invocationResolution, stdout, stderr io.Writer) error {
+func (e providerTerminalError) Error() string { return string(e) }
+
+var (
+	errProviderCredentialCancelled = errors.New("provider credential prompt cancelled")
+	errProviderSaveDeclined        = errors.New("provider API key save declined")
+	errProviderInputTooLong        = errors.New("provider input exceeds the 8 KiB acceptance limit")
+)
+
+func (c providerCommands) runCredential(ctx context.Context, res invocationResolution, stdout, stderr io.Writer) (err error) {
+	defer func() {
+		if errors.Is(err, errProviderSaveDeclined) {
+			err = nil
+		}
+	}()
 	if len(res.remaining) == 1 && isHelpMetaFlag(res.remaining[0]) {
 		return providerHelpResult(stderr, res.providerAction)
 	}
@@ -106,7 +88,7 @@ func (c providerCommands) runCredential(ctx context.Context, res invocationResol
 
 func isBuiltinAPIKeyProvider(provider string) bool {
 	switch provider {
-	case "anthropic", "openai", "opencode", "openrouter":
+	case providerAnthropicID, providerOpenAIID, providerOpenCodeID, providerOpenRouterID:
 		return true
 	default:
 		return false
@@ -116,22 +98,47 @@ func isBuiltinAPIKeyProvider(provider string) bool {
 func (c providerCommands) runAPIKey(ctx context.Context, res invocationResolution, authPath string, stdout, stderr io.Writer) error {
 	var key *string
 	if res.providerAction == providerActionLogin {
+		if err := writeProviderKeyGuidance(stderr, res.providerName); err != nil {
+			return err
+		}
+		inspection, err := c.inspectForEnrollment()
+		if err != nil {
+			return err
+		}
+		if strings.HasSuffix(inspection.sources[res.providerName], " (environment)") {
+			if _, err := fmt.Fprintln(stderr, "Warning: the effective environment credential will still win over the saved file key; saving does not change that environment."); err != nil {
+				return err
+			}
+		}
 		entered, err := c.terminal.readAPIKey(ctx, res.providerName)
 		if err != nil {
-			if errors.Is(err, context.Canceled) {
-				return providerCredentialCancellation(stderr)
-			}
-			return fmt.Errorf("providers login: read API key: %w", err)
+			return c.providerKeyReadError(err, stderr)
 		}
-		if strings.TrimSpace(entered) == "" {
-			return errors.New("providers login: API key cannot be empty")
+		if err := validateProviderAPIKey(entered); err != nil {
+			return err
+		}
+		save, err := c.confirmProviderAction(ctx, "Save this API key to the configured owner-only plaintext file? [y/N]")
+		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				return c.credentialCancellation(stderr)
+			}
+			return errors.New("providers login: could not confirm saving; no API key saved")
+		}
+		if !save {
+			if _, err := fmt.Fprintln(stdout, "API key not saved; no credential changes made."); err != nil {
+				return err
+			}
+			return errProviderSaveDeclined
 		}
 		key = &entered
 	}
 	state, err := c.backend.updateAPIKey(ctx, authPath, authfile.APIKeyUpdate{Provider: res.providerName, APIKey: key})
+	if state == authfile.CommitReplacementAppliedDurabilityUnknown {
+		return fmt.Errorf("providers: replacement_applied_durability_unknown; the API key change may already be active; crash durability is uncertain. Inspect `mecatui providers status %s` and the configured credential file before a manual retry", providerDisplay(res.providerName))
+	}
 	if err != nil {
 		if state == authfile.CommitNotApplied && errors.Is(err, context.Canceled) {
-			return providerCredentialCancellation(stderr)
+			return c.credentialCancellation(stderr)
 		}
 		return fmt.Errorf("providers %s: update locally managed API key: %w", res.providerAction, err)
 	}
@@ -151,14 +158,45 @@ func (c providerCommands) runAPIKey(ctx context.Context, res invocationResolutio
 	return err
 }
 
+// Only fixed, reader-owned errors may cross the secret-input boundary verbatim.
+func (c providerCommands) providerKeyReadError(err error, stderr io.Writer) error {
+	if errors.Is(err, context.Canceled) || errors.Is(err, io.EOF) {
+		return c.credentialCancellation(stderr)
+	}
+	if errors.Is(err, errProviderInputTooLong) {
+		return errProviderInputTooLong
+	}
+	var safeError providerTerminalError
+	if errors.As(err, &safeError) {
+		return safeError
+	}
+	return errors.New("providers login: could not read API key from the local terminal")
+}
+
+func validateProviderAPIKey(key string) error {
+	if strings.TrimSpace(key) == "" {
+		return errors.New("providers login: API key cannot be empty")
+	}
+	if len(key) > 8*1024 {
+		return errProviderInputTooLong
+	}
+	if !utf8.ValidString(key) || strings.ContainsFunc(key, func(r rune) bool { return !unicode.IsPrint(r) || isTrustControl(r) }) {
+		return errors.New("providers login: API key contains unsupported control characters or invalid text")
+	}
+	return nil
+}
+
 func (c providerCommands) runOIDC(ctx context.Context, res invocationResolution, definition permconfig.ProviderDefinition, stdout, stderr io.Writer) error {
 	ctx, cancel := context.WithTimeout(ctx, nativeLLMEnrollmentTimeout)
 	defer cancel()
 	noBrowser := len(res.remaining) == 1 && res.remaining[0] == "--no-browser"
+	rootWasAbsent := false
 	if res.providerAction == providerActionLogin && c.backend.prepareOIDCRoot != nil {
 		if definition.Auth.OIDC == nil || definition.Auth.OIDC.CredentialStore == nil {
 			return providerOIDCLifecycleError(res.providerAction, res.providerName, errors.New("OIDC credential store is not configured"))
 		}
+		_, statErr := os.Lstat(definition.Auth.OIDC.CredentialStore.Home)
+		rootWasAbsent = errors.Is(statErr, os.ErrNotExist)
 		if err := c.backend.prepareOIDCRoot(definition.Auth.OIDC.CredentialStore.Home); err != nil {
 			return providerOIDCLifecycleError(res.providerAction, res.providerName, err)
 		}
@@ -174,7 +212,17 @@ func (c providerCommands) runOIDC(ctx context.Context, res invocationResolution,
 	}
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
-			return providerCredentialCancellation(stderr)
+			message := "Cancelled; OIDC enrollment did not complete. Inspect `mecatui providers status` before retrying; local and remote credential state is not asserted unchanged."
+			if res.providerAction != providerActionLogin {
+				message = "Cancelled; OIDC logout did not complete. Inspect `mecatui providers status` before retrying."
+			}
+			if rootWasAbsent {
+				message += " A local credential directory may have been created; it was not removed."
+			}
+			if _, writeErr := fmt.Fprintln(stderr, message); writeErr != nil {
+				return writeErr
+			}
+			return errProviderCredentialCancelled
 		}
 		return providerOIDCLifecycleError(res.providerAction, res.providerName, err)
 	}
@@ -184,6 +232,40 @@ func (c providerCommands) runOIDC(ctx context.Context, res invocationResolution,
 		_, err = fmt.Fprintf(stdout, "removed locally managed OIDC credentials for provider %q\n", res.providerName)
 	}
 	return err
+}
+
+func writeProviderKeyGuidance(out io.Writer, provider string) error {
+	guidance := "Custom provider: obtain an API key from your operator or service documentation; use the configured transport, not a guessed console."
+	switch provider {
+	case providerAnthropicID:
+		guidance = "Anthropic API: create a developer key at https://console.anthropic.com/settings/keys . Claude consumer subscriptions do not include API usage."
+	case providerOpenAIID:
+		guidance = "OpenAI API key (not the manual OpenAI Codex subscription token): https://platform.openai.com/api-keys . ChatGPT consumer subscriptions do not include developer API usage."
+	case providerOpenRouterID:
+		guidance = "OpenRouter API: create a key at https://openrouter.ai/settings/keys and arrange API credits/billing. Consumer chat subscriptions do not fund this API."
+	case providerOpenCodeID:
+		guidance = "OpenCode Go API: obtain a key with an active Go subscription at https://opencode.ai/go . Go is not interchangeable with a Zen key, subscription, or endpoint; unrelated consumer subscriptions do not grant Go API access."
+	}
+	_, err := fmt.Fprintln(out, guidance+"\nAPI use may incur charges; check the service's billing terms. No browser is opened.\nSaving is optional and requires separate consent. The configured credential_store.api_key.file is owner-only plaintext, readable by same-UID processes, including permitted agent Shell commands. Never paste a key into a command argument.")
+	return err
+}
+
+func (c providerCommands) confirmProviderAction(ctx context.Context, prompt string) (bool, error) {
+	value, err := c.terminal.readField(ctx, prompt)
+	if errors.Is(err, io.EOF) {
+		err = context.Canceled
+	}
+	if err != nil {
+		return false, err
+	}
+	return strings.EqualFold(strings.TrimSpace(value), "y") || strings.EqualFold(strings.TrimSpace(value), "yes"), nil
+}
+
+func (c providerCommands) credentialCancellation(stderr io.Writer) error {
+	if c.deferCredentialCancellation {
+		return errProviderCredentialCancelled
+	}
+	return providerCredentialCancellation(stderr)
 }
 
 func providerCredentialCancellation(stderr io.Writer) error {
@@ -202,7 +284,7 @@ func (c providerCommands) runToolHiveCredential(ctx context.Context, res invocat
 	defer cancel()
 	if err := c.backend.toolHiveLogin(ctx, len(res.remaining) == 1 && res.remaining[0] == "--no-browser"); err != nil {
 		if errors.Is(err, context.Canceled) {
-			return providerCredentialCancellation(stderr)
+			return c.credentialCancellation(stderr)
 		}
 		return errors.New("ToolHive LLM gateway login failed")
 	}

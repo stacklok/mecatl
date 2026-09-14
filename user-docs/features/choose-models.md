@@ -52,6 +52,106 @@ and keybinding details.
 
 ## CLI journey
 
+### Set up a local provider
+
+Run `mecatui providers setup [PROVIDER]` explicitly to configure the embedded
+server. Without a name, choose from the numbered, capability-labelled list.
+Setup never starts a server or opens the TUI automatically. Remote
+`mecatui connect ADDRESS` remains governed by the remote server's configuration.
+
+For an API-key provider, setup offers reuse of an effective existing credential
+or replacement. Reuse is a no-op: an environment key is not copied to disk.
+Replacement shows provider-specific guidance before hidden terminal entry:
+
+- **Anthropic:** create a developer key in the
+  [Anthropic console](https://console.anthropic.com/settings/keys). A Claude
+  consumer subscription does not include API usage.
+- **OpenAI API:** create a key in the
+  [OpenAI platform](https://platform.openai.com/api-keys). ChatGPT subscriptions
+  and manual Codex subscription tokens are separate identities.
+- **OpenRouter:** create a key in
+  [OpenRouter settings](https://openrouter.ai/settings/keys) and arrange API
+  credits or billing; consumer chat subscriptions do not fund the API.
+- **OpenCode:** the configured integration is
+  [OpenCode Go](https://opencode.ai/go), requiring Go access. A Zen key,
+  subscription, or endpoint is not interchangeable.
+- **Custom providers:** follow your operator's or service's documentation. Setup
+  does not guess a console or change the configured transport.
+
+API use may incur charges. Both input and prompt output must be local terminals;
+keys are hidden, never command arguments. Empty, invalid/control-character, and
+larger-than-8-KiB values are rejected before saving. Saving requires a separate
+confirmation. The owner-only API-key file is **plaintext**, readable by same-UID
+processes, including permitted agent Shell commands; private permissions are not
+an encryption boundary. Ctrl-C or Ctrl-D cancels entry and restores terminal
+state. Local terminal entry is supported on Linux and macOS; on other platforms,
+use the provider's API-key environment variable or manually configure the
+owner-only credential file without putting a secret in a command argument.
+
+Provider commands use the operator-global `credential_store.api_key.file`, or
+`auth.yaml` in the Mecatl configuration directory when it is unset. They accept
+neither `--api-key-file` nor the removed `--auth-file`; `--api-key-file` remains
+a startup flag. Project configuration cannot redirect credential custody. Login
+and setup can create a missing configured API-key file after save consent,
+subject to the existing private-parent and safe-writer requirements. Passive
+status still reports a missing explicitly configured file; malformed, unsafe, or
+unreadable existing files must be fixed before enrollment. Matching built-in
+environment keys win over file keys. OpenRouter uses its own environment key,
+then its own file key, then only the **environment** `OPENAI_API_KEY` fallback;
+an OpenAI file key is not a fallback. Custom API keys are file-only. Replacing a
+file key warns when an environment key will still win.
+
+After API-key save or reuse, successful custom-provider creation/login, or
+no-auth setup, setup separately offers to set the deployment default through
+`mecatui providers set-default PROVIDER [MODEL]`. Declining leaves the default
+unchanged. A later cancellation or default error does not undo already saved
+credentials or definitions. If default replacement reports
+`replacement_applied_durability_unknown`, the default may already be active:
+inspect passive `providers status` and operator settings before manually
+retrying. Direct `add` does not offer the optional default prompt. Direct
+`login PROVIDER` means replacement with save consent; direct `set-default`
+remains an explicit non-wizard action. An omitted model preserves the current
+selector for the same provider, otherwise resolving its declared default;
+providers without a default need an explicit selector. Known aliases and
+declared provider defaults use ordinary startup validation, not a live
+model-health or entitlement check.
+
+`mecatui providers` and `mecatui providers status [PROVIDER]` report passive
+local facts: credential source, shadowed file presence, selected default and
+model, and `verification: not checked`. Missing, malformed, and unreadable
+credential inputs have distinct diagnostics. Presence is not proof of account
+health, credit, or access to a model. OIDC status reads the existing protected
+local store without initializing it or refreshing tokens; ToolHive
+authentication is externally managed by `thv llm` tooling.
+
+### Reuse a manual OpenAI Codex token
+
+`openai-codex` is distinct from the public `openai` API-key provider. Status
+reports a manual subscription token as missing, locally usable, or
+invalid/expired using the same configured-file validator as runtime, without
+displaying the token, account ID, expiry, or fingerprint. A locally usable token
+can be reused by setup for optional default selection; setup never asks for a
+Codex token or writes its credential. Preserve an existing model selector or
+supply an explicit one: there is no synthetic Codex default or offline
+entitlement inventory.
+
+There is no Codex browser/device login, refresh, import, or credential removal
+in these commands. See the
+[manual subscription-token deployment guidance](/building/deployment/mecated.md#provider-and-model)
+for the supported manual configuration and lifecycle.
+
+`providers add PROVIDER` normally saves the custom definition and chains its
+capability-specific login; `--no-login` skips enrollment. `logout PROVIDER`
+removes only locally managed credentials. `remove PROVIDER` confirms removal of
+both a custom definition and its managed credentials, even when it is the
+selected default, without choosing a replacement. Inspect status and explicitly
+select another default before restarting. After an uncertain write, inspect
+local state rather than retrying blindly; separate settings and key writes are
+not a transaction. Cancelling OIDC enrollment does not prove that local or
+remote credential state is unchanged. A newly prepared credential directory may
+remain even if `add` restores its provider definition; the command reports this
+without recursively removing credential storage.
+
 ### Endpoint overrides
 
 The built-in provider endpoint flags (`--openai-base-url`,

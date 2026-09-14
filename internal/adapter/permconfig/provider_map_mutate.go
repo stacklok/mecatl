@@ -121,6 +121,9 @@ func mutateProviderMap(data []byte, update ProviderMapUpdate) ([]byte, bool, err
 			return nil, false, err
 		}
 	}
+	if doc.Mapping().IsFlowStyle {
+		doc.Mapping().SetIsFlowStyle(true)
+	}
 	out := []byte(doc.String())
 	if err := ValidateYAML(out); err != nil {
 		return nil, false, errors.New("updated settings document is invalid")

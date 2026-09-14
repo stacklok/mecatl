@@ -155,17 +155,22 @@ func (pf *ProviderFlags) resolve(env xdgconfig.ResolveEnv, now time.Time) Resolv
 	keys.OpenRouter = cmp.Or(keys.OpenRouter, af.APIKey("openrouter"))
 	keys.Anthropic = cmp.Or(keys.Anthropic, af.APIKey("anthropic"))
 	keys.OpenCode = cmp.Or(keys.OpenCode, af.APIKey("opencode"))
-	oauth := af.OAuth("openai-codex")
-	if oauth.AccessToken != "" {
-		credential, err := openaicodex.NewCredential(oauth.AccessToken, oauth.AccountID, oauth.ExpiresAt, now)
-		if err != nil {
-			keys.AuthFileWarning = joinCredentialWarnings(keys.AuthFileWarning,
-				fmt.Sprintf("auth file %s: openai-codex credential ignored: %v", path, err))
-		} else {
-			keys.OpenAICodex = credential
-		}
-	}
+	loadCodexCredential(&keys, af, path, now)
 	return keys
+}
+
+func loadCodexCredential(keys *ResolvedCredentials, file *authfile.File, path string, now time.Time) {
+	oauth := file.OAuth("openai-codex")
+	if oauth.AccessToken == "" {
+		return
+	}
+	credential, err := openaicodex.NewCredential(oauth.AccessToken, oauth.AccountID, oauth.ExpiresAt, now)
+	if err != nil {
+		keys.AuthFileWarning = joinCredentialWarnings(keys.AuthFileWarning,
+			fmt.Sprintf("auth file %s: openai-codex credential ignored: %v", path, err))
+		return
+	}
+	keys.OpenAICodex = credential
 }
 
 // HasOperatorProviderDefinitions reports whether the operator settings declare at
@@ -219,6 +224,7 @@ func ResolveProviderCredentials(pf *ProviderFlags, definitions permconfig.Provid
 	keys.OpenRouter = cmp.Or(keys.OpenRouter, file.APIKey("openrouter"))
 	keys.Anthropic = cmp.Or(keys.Anthropic, file.APIKey("anthropic"))
 	keys.OpenCode = cmp.Or(keys.OpenCode, file.APIKey("opencode"))
+	loadCodexCredential(&keys, file, path, time.Now())
 	keys.customAPIKeys = make(map[string]string, len(definitions))
 	keys.customMethods = make(map[string]string, len(definitions))
 	for id, definition := range definitions {
