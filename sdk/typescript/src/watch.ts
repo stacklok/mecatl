@@ -225,7 +225,8 @@ function watchFailureDisposition(error: unknown): WatchFailureDisposition {
     // aborted-signal checks before classification, so this remaining shape is a
     // transport drop of the one idempotent operation the SDK may reconnect.
     (error instanceof MecatlError && error.status === Code.Canceled) ||
-    (error instanceof MecatlError && error.code === "watch_lagging")
+    (error instanceof MecatlError &&
+      (error.code === "watch_capacity" || error.code === "watch_lagging"))
   ) {
     return "resume";
   }

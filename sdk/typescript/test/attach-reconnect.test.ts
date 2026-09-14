@@ -271,6 +271,36 @@ describe("attachment reconnect authority", () => {
     await client.close();
   });
 
+  it("watch_capacity resumes from the attachment checkpoint under the same filter", async () => {
+    const requests: Array<{ cursor: string; runId: string }> = [];
+    const transport = watchTransport(async function* (request) {
+      requests.push({ cursor: request.cursor, runId: request.runId });
+      if (requests.length === 1) {
+        yield boundary("");
+        yield event("capacity-1", "before capacity rejection");
+        throw codedError("watch_capacity", Code.ResourceExhausted);
+      }
+      yield boundary(request.cursor);
+      yield event("capacity-2", "after capacity rejection");
+      yield result("capacity-3");
+    });
+    const { client, session } = await sessionFor(transport);
+    const texts: string[] = [];
+
+    for await (const envelope of await session.attach(runId)) {
+      if (envelope.kind === "event" && envelope.event.kind === "message.delta") {
+        texts.push(envelope.event.text);
+      }
+    }
+
+    expect(texts).toEqual(["before capacity rejection", "after capacity rejection"]);
+    expect(requests).toEqual([
+      { cursor: "", runId },
+      { cursor: "capacity-1", runId },
+    ]);
+    await client.close();
+  });
+
   it("mutations, prompts, approvals, and owned runs are never retried", async () => {
     let mutationAttempts = 0;
     const mutation = createRouterTransport((router) => {
