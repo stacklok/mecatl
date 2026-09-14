@@ -9,25 +9,27 @@ description:
 
 # Use learning and memory commands
 
-These slash commands appear only when the connected server supports them.
-Availability can differ between an embedded session and a remote server because
-the commands use server-side storage and policy.
+Use these commands to connect protected workspace services and maintain stored
+learning. They appear only when the connected server supports them, so an
+embedded session and a remote server can expose different commands.
 
 ## Workspace service enrollment
 
-When the connected server advertises bundled protected workspace services,
-`/tools-connect` starts or rechecks the bundle and `/tools-cancel` cancels a
-pending connection. Both commands are absent when the server does not support
-this capability. The prompt stays usable while browser consent is pending. If
-the server requires the connection before accepting a prompt, `mecatui` submits
-the retained prompt after the connection succeeds.
+When the server provides protected workspace services, run `/tools-connect` to
+start or recheck the connection. Run `/tools-cancel` to cancel a pending
+connection. You can continue editing the prompt while browser consent is
+pending. If the server requires the connection before accepting a prompt,
+`mecatui` sends the retained prompt after the connection succeeds.
 
 ## Completed-session learning
 
-`/learning` cycles the server's completed-trajectory learning mode: **Off**,
-**Review**, or **Auto**. `/learning-sensitivity` cycles **Conservative**,
-**Balanced**, or **Eager**. They change pending settings and require a restart;
-they do not alter a separately configured consolidation schedule.
+|Command|Available values|Effect|
+|-|-|-|
+|`/learning`|**Off**, **Review**, **Auto**|Sets how the server handles learning from completed sessions.|
+|`/learning-sensitivity`|**Conservative**, **Balanced**, **Eager**|Sets the evidence threshold for learning proposals.|
+
+Both commands change pending settings and require a server restart. They do not
+change a separately configured consolidation schedule.
 
 In embedded mode, these settings live with the embedded server. In `connect`
 mode, ask the remote server operator to change the settings and restart the
@@ -37,17 +39,16 @@ server. For configuration details, see
 ## Review and maintain memory
 
 - `/dream` proposes maintenance for the selected project-memory or user-model
-  store. Review the bounded plan before applying it: generating a plan sends
-  selected memory values to the configured model and spends tokens. Confirming
-  applies the whole plan; dismissing changes nothing. Plans are short-lived and
-  cannot be recovered after a server restart.
+  store. Generating a plan sends selected memory values to the configured model
+  and uses tokens. Review the plan before applying it. Confirmation applies the
+  whole plan; dismissal changes nothing. A server restart discards pending
+  plans.
 - `/reflections` opens staged learning proposals. Review their evidence and
   approve or reject each proposal when the server allows it.
-- `/reflect` submits the current completed session for synchronous reflection.
-  It can work while automatic learning is off, provided the server supports it.
-  The status remains in progress until the call completes, then shows either a
-  proposal count, a stable no-evidence/bounds abstention, or a typed failure; an
-  abstention does not open proposal review or imply that anything was staged.
+- `/reflect` submits the completed session for immediate reflection, even when
+  automatic learning is off. On completion, it reports a proposal count, an
+  abstention because the evidence or bounds were insufficient, or a failure. An
+  abstention does not stage a proposal.
 
 If a command is absent or unavailable, the connected server does not support it
 under its current configuration and policy. For learning, consolidation, and
@@ -55,3 +56,8 @@ authorization behavior, see [Learning](/features/learning.md) and
 [Dreaming and memory consolidation](/features/dreaming.md). Builders configuring
 stores, retention, or learning should use the
 [memory guide](/building/what-you-get/memory.md).
+
+## Next steps
+
+- [Review learning behavior](/features/learning.md).
+- [Configure memory stores and retention](/building/what-you-get/memory.md).

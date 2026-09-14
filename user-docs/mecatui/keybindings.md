@@ -8,8 +8,8 @@ description:
 
 # Keybindings
 
-Press `?` on an empty prompt to open the live help overlay. It shows the active
-bindings after remapping and greys out features the connected server does not
+Press `?` on an empty prompt to open the live help overlay. The overlay shows
+your active bindings and dims features that the connected server does not
 provide.
 
 ## Everyday keys
@@ -20,7 +20,7 @@ provide.
 |`shift+enter` or `ctrl+j`|Insert a newline.|
 |`↑`|With empty input, bring queued follow-ups back for editing.|
 |`ctrl+u`|Clear the unsent draft, including staged attachments and large-paste placeholders (`ClearPrompt`; remappable).|
-|physical `esc` twice within 500ms|While idle, clear a focused draft, including staged attachments, large-paste content, and pending media. The first press is silent and only arms the gesture; an `esc` key release must follow, then a later non-repeat press completes it — key repeat cannot. Another key, an active selection, palette, approval, overlay, modal, or running-turn owners take precedence and disarm it. This requires enhanced key-event support and is not remappable. Use `ClearPrompt` (`ctrl+u`) in terminals that do not support it.|
+|physical `esc` twice within 500 ms|While idle, clear the draft and its staged content. This gesture requires enhanced key events and cannot be remapped.|
 |`esc`|Clear an active selection first. While work is running, cancel directly and preserve the draft, queued follow-ups, and steer. While idle with a paused queue, clear that queue but preserve the draft.|
 |`ctrl+t`|Expand a focused tool card or approval details. For a collapsed tool card, the expanded view shows the complete tool arguments and result; press it again to return to the width-bounded preview.|
 |`shift+tab`|Cycle the current session permission mode: **default → plan → accept-edits → default**. In an MCP prompt argument form, it instead moves to the previous required field.|
@@ -38,6 +38,11 @@ provide.
 
 Suspending does not stop an embedded server or active run. Cancel the run first
 if it should stop.
+
+The double-`esc` gesture requires two separate key presses and releases; key
+repeat does not trigger it. A selection, palette, approval, overlay, modal,
+active run, or another key disarms the gesture. Use `ClearPrompt` (`ctrl+u`) in
+terminals without enhanced key-event support.
 
 ## Approve or deny a request
 
@@ -78,34 +83,40 @@ Or override an action for one launch:
 bin/mecatui --keymap Agents=f10 --keymap Effort=f11 --keymap Prompts=f12
 ```
 
-Bindings resolve per action. The deprecated
-`$XDG_CONFIG_HOME/mecatl/settings.yaml` keymap has the lowest precedence, the
-client file overrides it, and `--keymap` wins for the named action. Restart
-`mecatui` after changing the settings file.
+Bindings resolve per action in this order, from lowest to highest precedence:
 
-Action names are exact. Global actions need a modified or special chord so
-normal typing stays available; approval and overlay actions can use bare
-letters. Invalid names, empty chords, conflicting bindings, a shared
-submit/newline key, or an unsafe approval collision fail startup with a
-`keymap:` error.
+1. The deprecated `$XDG_CONFIG_HOME/mecatl/settings.yaml` keymap.
+1. `$XDG_CONFIG_HOME/mecatui/settings.yaml`.
+1. A `--keymap` override for the named action.
+
+Restart `mecatui` after changing the settings file.
+
+Action names are exact. Global actions require a modified or special chord so
+normal typing remains available; approval and overlay actions can use bare
+letters. `mecatui` fails startup with a `keymap:` error for invalid names, empty
+chords, conflicts, a shared submit and newline key, or an unsafe approval
+collision.
 
 ### Input editing caveat
 
-The prompt textarea has editing keys that are not remappable through `--keymap`,
-apart from `SelectAll`, `CopySelection`, and `ClearPrompt`. For example,
-`ctrl+a`/`ctrl+e` move to the start or end of the current line,
-`ctrl+b`/`ctrl+f` move by character, `ctrl+w` deletes a word, and `ctrl+k`
-deletes to the end of the line.
+The prompt editor provides fixed editing keys. Only `SelectAll`,
+`CopySelection`, and `ClearPrompt` can be remapped with `--keymap`.
+
+|Key|Editing action|
+|-|-|
+|`ctrl+a` / `ctrl+e`|Move to the start or end of the current line.|
+|`ctrl+b` / `ctrl+f`|Move backward or forward by one character.|
+|`ctrl+w`|Delete the previous word.|
+|`ctrl+k`|Delete to the end of the line.|
 
 Use `shift+arrow` for keyboard selection. On the alternate screen, drag over
 prompt text for mouse selection. Starting a prompt selection clears a
 conversation selection and vice versa. Releasing the mouse does not copy the
-prompt; use `ctrl+y` or right-click to copy the active selection. Copying mirrors
-the text into both the system clipboard and, on X11 and Wayland, the primary
-selection, so a selection copied inside mecatui can be middle-click pasted
-elsewhere (install `wl-clipboard` or `xclip` for the primary-selection mirror on
-terminals that do not honour OSC52). With `--no-mouse`, the terminal retains
-native mouse selection, while keyboard selection remains available.
+prompt; use `ctrl+y` or right-click to copy the active selection. Copying writes
+the text to the system clipboard and, on X11 and Wayland, the primary selection.
+Install `wl-clipboard` or `xclip` when your terminal does not support the
+primary-selection mirror through OSC 52. With `--no-mouse`, the terminal retains
+native mouse selection and keyboard selection remains available.
 
 Client-owned actions take precedence over textarea chords. For example, `ctrl+t`
 expands details and `ctrl+v` handles paste. `ctrl+g` selects all only in the
@@ -115,3 +126,8 @@ a textarea chord gives the client-owned action precedence.
 For every action name, editing chord, overlay key, mouse behavior, and
 validation rule, see the
 [exhaustive `docs/tui.md` key reference](https://github.com/stacklok/mecatl/blob/main/docs/tui.md#keys).
+
+## Related information
+
+- [Work in the TUI](./using-the-tui.md) for steering, approvals, and common
+  conversation controls.
