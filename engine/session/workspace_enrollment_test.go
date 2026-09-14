@@ -448,6 +448,13 @@ func TestCompleteWorkspaceEnrollmentRequiresIdleSession(t *testing.T) {
 	}
 }
 
+func TestBeginWorkspaceEnrollmentAllowsEstablishedIdleConversation(t *testing.T) {
+	s := newEnrollmentSession(t)
+	s.Conversation.Append(NewUserMessage("prompt"))
+	if err := s.BeginWorkspaceEnrollment(testWorkspaceEnrollment()); err != nil {
+		t.Fatalf("BeginWorkspaceEnrollment: %v", err)
+	}
+}
 func TestCompleteWorkspaceEnrollmentAllowsEstablishedIdleConversation(t *testing.T) {
 	s, pending := sessionWithEnrollmentAuthority(t)
 	s.Conversation.Append(NewUserMessage("prompt"))
