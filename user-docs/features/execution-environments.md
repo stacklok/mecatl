@@ -40,7 +40,7 @@ was lost.
 
 Create a no-filesystem session by setting `profile: "no-fs"`:
 
-```console
+```sh
 curl -s -X POST http://127.0.0.1:8081/v1/sessions \
   -d '{"profile":"no-fs"}'
 ```

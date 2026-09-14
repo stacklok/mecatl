@@ -289,7 +289,7 @@ The default backend for `mecated`. The same package triples as
 Each session owns an authoritative v2 snapshot and two append-only sidecars
 under a `sid-v1` subdirectory, sharing one stem:
 
-```
+```text
 <store-dir>/sid-v1/sid-v1-<token>.session.json      authoritative v2 current snapshot
 <store-dir>/sid-v1/sid-v1-<token>.tools.jsonl       one record per tool call
 <store-dir>/sid-v1/sid-v1-<token>.events.jsonl      one record per relayed event (eventlog-json/1)

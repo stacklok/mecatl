@@ -16,7 +16,7 @@ The HTTP adapter wraps the same service. Every event is emitted as one SSE
 — so field names match the gRPC event shape, while protobuf enums are JSON
 numbers rather than protojson enum names.
 
-### Server identity
+## Server identity
 
 `GET /v1/info?provider_id=<active-provider>` is a process-wide, state-free
 identity probe. It takes no request body. `provider_id` is optional but must be
@@ -196,7 +196,7 @@ All examples below were captured against a live `mecated serve --mock`.
 
 ### Create a session
 
-```console
+```sh
 $ curl -s -X POST http://127.0.0.1:8081/v1/sessions -d '{}'
 {"session_id":"8867bdea940108c1dd82d13d3fb7fc61","placement":{"kind":"local"}}
 ```
@@ -237,7 +237,7 @@ A session can opt out of the filesystem entirely — useful for pure
 research/coordination agents (MCP tools + memory + web fetch) that should never
 touch a disk:
 
-```console
+```sh
 $ curl -s -X POST http://127.0.0.1:8081/v1/sessions \
        -d '{"profile":"no-fs"}'
 {"session_id":"..."}
@@ -264,7 +264,7 @@ string: `""` = default, `"no-fs"`). Rules, all enforced server-side:
 
 ### Inspect a session
 
-```console
+```sh
 $ curl -s http://127.0.0.1:8081/v1/sessions/8867bdea940108c1dd82d13d3fb7fc61
 {"session_id":"8867bdea940108c1dd82d13d3fb7fc61","state":"idle","mode":"default","placement":{"kind":"local"},"turns":0,"tool_calls":0}
 ```
@@ -276,7 +276,7 @@ A missing id returns `404` `{"error":"not found: \"...\""}`.
 Use the bodyless manual operation when the next prompt may not fit or when you
 want to reduce stored model history before continuing:
 
-```console
+```sh
 $ curl -s -X POST http://127.0.0.1:8081/v1/sessions/<id>/compact
 {"compacted":true}
 ```
@@ -299,7 +299,7 @@ leaves it false and returns `404` for the unknown route.
 
 ### Start a run (SSE stream)
 
-```console
+```sh
 $ curl -s -N -X POST http://127.0.0.1:8081/v1/sessions/8867bdea940108c1dd82d13d3fb7fc61/prompt \
        -d '{"text":"hello"}'
 data: {"type":"turn.start","seq":1}
@@ -329,7 +329,7 @@ and `stream_progress`: `0` unspecified, `1` unknown, `2` precommit, `3` visible,
 `4` complete. For example, an automatically safe retry result contains
 `"retry_disposition":2,"stream_progress":2`.
 
-```console
+```sh
 $ curl -s -N -X POST http://127.0.0.1:8081/v1/sessions/<id>/retry
 data: {"type":"session.init","seq":1}
 
@@ -355,7 +355,7 @@ safe.
 When the stream emits a `permission.ask` with an `ask.ask_id`, resolve it on a
 **second** connection while the SSE stream is still open:
 
-```console
+```sh
 $ curl -s -X POST http://127.0.0.1:8081/v1/sessions/<id>/approve \
        -d '{"ask_id":"<ask_id-from-the-event>","allow":true}'
 # 204 No Content
@@ -374,7 +374,7 @@ discriminator; no provenance field on the proto). Resolve it atomically with
 `POST /v1/sessions/{id}/plan:approve`
 ([ADR 0069](https://github.com/stacklok/mecatl/blob/main/docs/adr/0069-plan-approval-gate.md)):
 
-```console
+```sh
 $ curl -s -N -X POST http://127.0.0.1:8081/v1/sessions/<id>/plan:approve \
        -d '{"target_mode":"default","note":"looks good, proceed"}'
 # 200 text/event-stream — the resumed run's events, then (on allow) the
@@ -399,7 +399,7 @@ headless/cross-process composition of resume + continuation into one stream.
 
 ### Cancel a run
 
-```console
+```sh
 $ curl -s -X POST http://127.0.0.1:8081/v1/sessions/<id>/cancel
 # 204 No Content
 ```
@@ -421,7 +421,7 @@ older servers by 404.
 
 Send text, multimodal parts, or both:
 
-```console
+```sh
 $ curl -s -X POST http://127.0.0.1:8081/v1/sessions/<id>/steer \
        -H 'Content-Type: application/json' \
        -d '{"text":"Use the existing parser","message_id":"client-42","expected_run_id":"<run-id>"}'
@@ -451,7 +451,7 @@ session watch API with the returned run ID when the client needs its events.
 
 Retract a pending bundle before it reaches a turn boundary:
 
-```console
+```sh
 $ curl -s -X POST http://127.0.0.1:8081/v1/sessions/<id>/cancel-steer \
        -H 'Content-Type: application/json' \
        -d '{"message_id":"cancel-42","expected_run_id":"<run-id>"}'

@@ -30,7 +30,7 @@ to the user model.
 
 Enable the two scopes independently:
 
-```console
+```sh
 mecated serve \
   --memory-consolidate-interval 24h \
   --user-model-consolidate-interval 24h \

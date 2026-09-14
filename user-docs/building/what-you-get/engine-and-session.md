@@ -108,7 +108,7 @@ work through `Engine.Run(session)`.
 
 ## How it fits together
 
-```
+```text
 agent.Deps{LLM, Catalog, Policy, Hooks, Store, ...}
           │
           ▼

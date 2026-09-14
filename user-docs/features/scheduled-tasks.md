@@ -43,7 +43,7 @@ allow-all mode.
 
 Example REST workflow:
 
-```console
+```sh
 curl -X POST http://localhost:8080/v1/schedules \
   -H 'content-type: application/json' \
   -d '{"name":"nightly-report",

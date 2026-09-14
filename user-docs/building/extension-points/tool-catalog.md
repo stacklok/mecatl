@@ -39,7 +39,7 @@ if err := cat.Register(myTool); errors.Is(err, tool.ErrDuplicateTool) {
 **Collision rule: global-wins.** `assembleCatalog` in `internal/app` registers
 families in a fixed order:
 
-```
+```text
 core → server-global MCP (+ resource meta-tools) → client MCP →
 Subagent / InspectSubagent / SubagentStatus → Parallel →
 Team / InspectMember → memory → user-model → Skill → SkillDraft
@@ -225,7 +225,7 @@ advertising a tool `search_repos` registers as `mcp__github__search_repos`.
 
 ### The `--mcp-server` flag
 
-```
+```sh
 mecated serve --mcp-server github=https://mcp.github.example.com/v1 \
         --mcp-server slack=https://mcp.slack.example.com/v1
 ```

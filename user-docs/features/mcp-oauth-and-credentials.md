@@ -51,7 +51,7 @@ Use the generated [configuration reference](/reference/configuration.md) for the
 complete strict schema and exact field names. Keep the settings file owner-only
 and validate it before serving:
 
-```console
+```sh
 umask 077
 mecated config validate --file "$HOME/.config/mecatl/settings.yaml"
 ```
@@ -60,7 +60,7 @@ The local OAuth store requires an absolute root and a canonical base64-encoded
 32-byte encryption key. Generate the key outside YAML and provide it through the
 named environment variable:
 
-```console
+```sh
 umask 077
 mkdir -p "$HOME/.local/state"
 chmod 700 "$HOME/.local/state"
@@ -76,7 +76,7 @@ control, a command argument, `settings.yaml`, or a prompt.
 
 A mutable local profile is authorized explicitly by the operator:
 
-```console
+```sh
 mecated mcp login github
 mecated mcp login github --no-browser
 ```
@@ -86,7 +86,7 @@ authorization URL for a separate browser or for a headless operator. Use
 `--permission-config` to select trusted operator settings files; it does not
 carry an OAuth value:
 
-```console
+```sh
 mecated mcp login github \
   --permission-config /etc/mecatl/settings.yaml
 ```
@@ -172,7 +172,7 @@ durable outer broker routing is available.
 
 The legacy bearer path is simpler for a server that does not need OAuth:
 
-```console
+```sh
 export MCP_GITHUB_TOKEN='value-from-your-secret-manager'
 mecated serve --mcp-server github=https://mcp.example.com/github
 ```

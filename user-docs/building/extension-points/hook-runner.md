@@ -341,7 +341,7 @@ The model-backed guardrail checker (ADR 0021, `internal/adapter/modelhook`) is
 decorator around `port.HookRunner` at `internal/app/build.go`
 (`buildGuardrailsHooks`):
 
-```
+```text
 port.HookRunner (hookexec.New)
   └── maybeWrapUserModelReview (Phase-2b user-model reviewer)
         └── buildGuardrailsHooks (modelhook guardrail checker)

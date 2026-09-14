@@ -197,7 +197,7 @@ reaches any model-facing surface.
 A definition file is Markdown with a YAML frontmatter block. The `name` and
 `description` fields are required; everything else is optional.
 
-```
+```text
 .mecatl/agents/
 └── code-reviewer.md
 ```
@@ -306,7 +306,7 @@ the directories are absent — no error, no defs, no configuration required.
 The model invokes a specialist by passing the `agent` parameter to the Subagent
 tool:
 
-```
+```text
 Subagent(agent="code-reviewer", task="review the diff in HEAD")
 ```
 
@@ -326,7 +326,7 @@ flag instead.
 
 The `agent` and `model` Subagent parameters may be used together:
 
-```
+```text
 Subagent(agent="code-reviewer", model="opus", task="deep review")
 ```
 
@@ -344,7 +344,7 @@ A named specialist can also run **writable**: pass `mode: "read-write"`
 alongside `agent` and the specialist edits the real parent workspace directly,
 instead of running read-only in a throwaway worktree clone.
 
-```
+```text
 Subagent(agent="code-reviewer", mode="read-write", task="apply the review fixes")
 ```
 

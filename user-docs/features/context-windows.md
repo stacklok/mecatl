@@ -39,7 +39,7 @@ initial refresh and updates the meter when metadata arrives.
 Use an override when a provider reports an incorrect limit or a proxy hides the
 real model metadata:
 
-```console
+```sh
 mecated serve --context-window-override 128000
 ```
 

@@ -160,7 +160,7 @@ agent definitions; there is no separate skill-only trust switch.
 
 For a remote deployment, content sources can be supplied by a driver:
 
-```console
+```sh
 mecated serve \
   --skill-source-url 127.0.0.1:7443 \
   --soul-source-url 127.0.0.1:7443 \

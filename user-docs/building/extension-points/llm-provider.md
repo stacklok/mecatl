@@ -221,7 +221,7 @@ flag; it controls the capability advertisement to clients.
 The composition layer in `internal/app/capability.go` computes the effective
 capability as:
 
-```
+```text
 modelCapability = (per-model input modalities from live catalog) ∩ (adapter Capabilities())
 ```
 

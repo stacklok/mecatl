@@ -35,7 +35,7 @@ storage policy it does not own.
 
 Use a stable store directory when starting a daemon:
 
-```console
+```sh
 mecated serve \
   --store-dir "$HOME/.local/state/mecatl/sessions" \
   --workspace "$PWD"

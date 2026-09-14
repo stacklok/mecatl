@@ -18,14 +18,15 @@ network connection or API key. To inspect the engine wiring, see
 - **Go 1.26.6 or newer** (the `go` directive in `go.mod` sets this minimum
   version)
 - The repo cloned locally:
-  ```console
-  $ git clone https://github.com/stacklok/mecatl
-  $ cd mecatl
+
+  ```sh
+  git clone https://github.com/stacklok/mecatl
+  cd mecatl
   ```
 
 ## Act 1 — the core loop
 
-```console
+```text
 $ go run ./cmd/mecademo
 === mecatl demo (offline / mockllm) ===
 Driving a real agent.Engine: auto-allowed tool call -> permission ask + approval -> final result.
@@ -76,7 +77,7 @@ can present the request to a person or route it through your policy layer.
 The second act runs a two-member team with a lead and a worker. The worker
 records a finding, and the lead turns it into the team's final report.
 
-```console
+```text
 === mecatl team demo (offline) ===
 A lead + worker coordinate; the worker records a finding; the lead synthesises the consolidated report.
 
@@ -102,7 +103,7 @@ The third act starts a child with `background: true`. The parent receives an
 immediate start result, waits with `SubagentStatus`, and collects the result
 after the child finishes.
 
-```console
+```text
 === mecatl background subagent demo (offline) ===
 A subagent runs in the background; the harness notice lands at the next turn boundary; SubagentStatus collects the result.
 
@@ -153,9 +154,9 @@ backend.
 
 Drive the same scenario against a real model:
 
-```console
-$ export OPENAI_API_KEY=sk-...
-$ go run ./cmd/mecademo --openai --model gpt-5
+```sh
+export OPENAI_API_KEY=sk-...
+go run ./cmd/mecademo --openai --model gpt-5
 ```
 
 |Flag|Default|Meaning|

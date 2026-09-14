@@ -12,7 +12,7 @@ entry point, event lifecycle, and HTTP/SSE comparison, start with
 
 Service: `mecatl.v1.HarnessService` (`contracts/proto/mecatl/v1/harness.proto`).
 
-### Server identity
+## Server identity
 
 `GetServerInfo(GetServerInfoRequest) → GetServerInfoResponse` is a unary,
 process-wide identity probe. Its optional `provider_id` selector must be the
@@ -369,71 +369,71 @@ client is the simplest path:
 package main
 
 import (
-	"context"
-	"io"
-	"log"
+    "context"
+    "io"
+    "log"
 
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
+    "google.golang.org/grpc"
+    "google.golang.org/grpc/credentials/insecure"
 
-	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
+    mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 )
 
 func main() {
-	conn, err := grpc.NewClient("127.0.0.1:8080",
-		grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer conn.Close()
-	client := mecatlv1.NewHarnessServiceClient(conn)
+    conn, err := grpc.NewClient("127.0.0.1:8080",
+        grpc.WithTransportCredentials(insecure.NewCredentials()))
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer conn.Close()
+    client := mecatlv1.NewHarnessServiceClient(conn)
 
-	// 1. Create a session.
-	cs, err := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{
-		Mode: mecatlv1.PermissionMode_PERMISSION_MODE_DEFAULT,
-	})
-	if err != nil {
-		log.Fatal(err)
-	}
+    // 1. Create a session.
+    cs, err := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{
+        Mode: mecatlv1.PermissionMode_PERMISSION_MODE_DEFAULT,
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
 
-	// 2. Open the Converse stream and send the mandatory first Prompt.
-	stream, err := client.Converse(context.Background())
-	if err != nil {
-		log.Fatal(err)
-	}
-	if err := stream.Send(&mecatlv1.ConverseRequest{
-		Kind: &mecatlv1.ConverseRequest_Prompt{
-			Prompt: &mecatlv1.Prompt{SessionId: cs.GetSessionId(), Text: "List the Go files."},
-		},
-	}); err != nil {
-		log.Fatal(err)
-	}
+    // 2. Open the Converse stream and send the mandatory first Prompt.
+    stream, err := client.Converse(context.Background())
+    if err != nil {
+        log.Fatal(err)
+    }
+    if err := stream.Send(&mecatlv1.ConverseRequest{
+        Kind: &mecatlv1.ConverseRequest_Prompt{
+            Prompt: &mecatlv1.Prompt{SessionId: cs.GetSessionId(), Text: "List the Go files."},
+        },
+    }); err != nil {
+        log.Fatal(err)
+    }
 
-	// 3. Relay events; approve any permission.ask.
-	for {
-		resp, err := stream.Recv()
-		if err == io.EOF {
-			return // terminal result delivered, stream closed
-		}
-		if err != nil {
-			log.Fatal(err)
-		}
-		ev := resp.GetEvent()
-		log.Printf("[%d] %s %s", ev.GetSeq(), ev.GetType(), ev.GetText())
+    // 3. Relay events; approve any permission.ask.
+    for {
+        resp, err := stream.Recv()
+        if err == io.EOF {
+            return // terminal result delivered, stream closed
+        }
+        if err != nil {
+            log.Fatal(err)
+        }
+        ev := resp.GetEvent()
+        log.Printf("[%d] %s %s", ev.GetSeq(), ev.GetType(), ev.GetText())
 
-		if ev.GetType() == "permission.ask" {
-			_ = stream.Send(&mecatlv1.ConverseRequest{
-				Kind: &mecatlv1.ConverseRequest_ResumeApproval{
-					ResumeApproval: &mecatlv1.ResumeApproval{
-						AskId: ev.GetAsk().GetAskId(),
-						Allow: true,
-					},
-				},
-			})
-		}
-		// To abort instead, send a Cancel{} frame:
-		//   stream.Send(&mecatlv1.ConverseRequest{Kind: &mecatlv1.ConverseRequest_Cancel{Cancel: &mecatlv1.Cancel{}}})
-	}
+        if ev.GetType() == "permission.ask" {
+            _ = stream.Send(&mecatlv1.ConverseRequest{
+                Kind: &mecatlv1.ConverseRequest_ResumeApproval{
+                    ResumeApproval: &mecatlv1.ResumeApproval{
+                        AskId: ev.GetAsk().GetAskId(),
+                        Allow: true,
+                    },
+                },
+            })
+        }
+        // To abort instead, send a Cancel{} frame:
+        //   stream.Send(&mecatlv1.ConverseRequest{Kind: &mecatlv1.ConverseRequest_Cancel{Cancel: &mecatlv1.Cancel{}}})
+    }
 }
 ```
 

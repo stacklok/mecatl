@@ -651,7 +651,7 @@ Mecatl exposes command and file execution. The security model has three layers:
 A non-loopback bind with no auth is **permitted** (a service mesh may
 legitimately front Mecatl) but generates a prominent startup warning:
 
-```
+```text
 WARN  API bound to a NON-loopback address with NO caller authentication: it exposes
       UNAUTHENTICATED command/file execution to every network caller
 ```
@@ -661,7 +661,7 @@ auth layer. If you see it unexpectedly, add `--auth-token`.
 
 mecated logs the effective security posture once at startup:
 
-```
+```text
 INFO  API security posture  bearer_auth=true  tls=true  mutual_tls=false  rate_limit_rps=0  store=jsonl
 ```
 

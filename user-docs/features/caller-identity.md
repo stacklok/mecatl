@@ -92,7 +92,7 @@ The essential server settings are:
 
 A typical configuration uses the issuer and audience together:
 
-```console
+```sh
 mecated serve \
   --oidc-issuer https://idp.example.com/realms/operators \
   --oidc-audience mecatl \
@@ -138,7 +138,7 @@ For a static bearer, obtain a token through your identity provider and pass it
 to mecatui or another client. Keep it out of shell history where possible. This
 mode does not refresh the token:
 
-```console
+```sh
 export MECATL_AUTH_TOKEN="$(your-oidc-cli print-access-token)"
 mecatui connect 127.0.0.1:8080 --auth-token "$MECATL_AUTH_TOKEN"
 ```
@@ -146,7 +146,7 @@ mecatui connect 127.0.0.1:8080 --auth-token "$MECATL_AUTH_TOKEN"
 For managed remote OIDC, enroll once and then connect without putting a bearer
 on the command line:
 
-```console
+```sh
 mecatui login mecated.example.internal:443 \
   --issuer https://idp.example.internal \
   --client-id mecatui --audience mecatl \
@@ -174,7 +174,7 @@ gets a credential-free attempt. For remote use, verified TLS remains the
 default. If a Tailscale deployment deliberately uses the tailnet as shared
 authority and transport, explicitly select plaintext:
 
-```console
+```sh
 mecatui connect ozzllama:9080 --tls=false
 ```
 

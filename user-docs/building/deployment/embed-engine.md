@@ -308,7 +308,7 @@ go work use /path/to/mecatl/engine
 
 The resulting `go.work` file:
 
-```
+```text
 go 1.26
 
 use .
