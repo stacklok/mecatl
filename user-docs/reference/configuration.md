@@ -122,7 +122,7 @@ Strict operator-defined LLM providers. Project-tier definitions are ignored. Pro
 | `providers.team-gateway.auth.oidc.issuer` | `string` | `(required)` |  |
 | `providers.team-gateway.auth.oidc.client_id` | `string` | `(required)` |  |
 | `providers.team-gateway.auth.oidc.scopes` | `[]string` | `(required)` |  |
-| `providers.team-gateway.auth.oidc.resource_audience` | `string` | `(optional)` |  |
+| `providers.team-gateway.auth.oidc.resource_audience` | `string` | `(optional)` | Optional OAuth audience parameter and access-token audience binding. Empty omits both. |
 | `providers.team-gateway.auth.oidc.issuer_trust` | `nativetrust` | `(required)` |  |
 | `providers.team-gateway.auth.oidc.issuer_trust.policy` | `string` | `(required)` |  |
 | `providers.team-gateway.auth.oidc.issuer_trust.ca_bundle` | `string` | `(forbidden for public)` |  |
@@ -134,17 +134,17 @@ Strict operator-defined LLM providers. Project-tier definitions are ignored. Pro
 
 Tier: **operator**
 
-API-key file input and shared encrypted credential store for OIDC providers.
+API-key file input and shared protected credential home for OIDC providers. OIDC records always remain encrypted; changing key custody does not automatically migrate them or fall back to another source.
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `credential_store.api_key` | `apikeycredentialstore` | `(absent)` |  |
 | `credential_store.api_key.file` | `string` | `$XDG_CONFIG_HOME/mecatl/auth.yaml` |  |
 | `credential_store.oidc` | `oidccredentialstore` | `(absent)` |  |
-| `credential_store.oidc.home` | `string` | `(required)` |  |
-| `credential_store.oidc.key` | `nativecredentialkey` | `(required)` |  |
-| `credential_store.oidc.key.source` | `string` | `(required)` |  |
-| `credential_store.oidc.key.key_env` | `string` | `(required for environment; forbidden for keyring)` |  |
+| `credential_store.oidc.home` | `string` | `(required)` | Shared protected home for all OIDC provider credentials. |
+| `credential_store.oidc.key` | `nativecredentialkey` | `(optional; default keyring)` | Shared encryption-key source for the OIDC credential home; omission uses the OS-keyring default, and changing it does not migrate existing records. |
+| `credential_store.oidc.key.source` | `string` | `(required)` | Closed choice: keyring or environment. Omitting the whole key mapping uses the OS-keyring default. |
+| `credential_store.oidc.key.key_env` | `string` | `(required for environment; forbidden for keyring)` | MECATL_* environment reference containing canonical padded base64 that decodes to exactly 32 bytes. Only the reference belongs in settings, never the key value. |
 
 ## `provider_overrides`
 

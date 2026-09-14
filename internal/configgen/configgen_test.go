@@ -148,6 +148,28 @@ func TestGeneratedArtifactsDescribeSchemaDefaults(t *testing.T) {
 	}
 }
 
+func TestProviderCredentialArtifactsRetainSafetyDetails(t *testing.T) {
+	model := configgen.BuildModel(nil)
+	for name, artifact := range map[string]string{
+		"skeleton":  configgen.RenderSkeleton(model),
+		"reference": configgen.RenderReference(model),
+	} {
+		normalized := strings.Join(strings.Fields(strings.NewReplacer("#| ", "", "# ", "").Replace(artifact)), " ")
+		for _, want := range []string{
+			"Optional OAuth audience parameter and access-token audience binding. Empty omits both.",
+			"changing key custody does not automatically migrate them or fall back to another source",
+			"Closed choice: keyring or environment",
+			"omission uses the OS-keyring default",
+			"canonical padded base64 that decodes to exactly 32 bytes",
+			"Only the reference belongs in settings, never the key value",
+		} {
+			if !strings.Contains(normalized, want) {
+				t.Errorf("%s missing provider credential safety detail %q", name, want)
+			}
+		}
+	}
+}
+
 func TestLearningModeReferenceHasFieldDescription(t *testing.T) {
 	reference := configgen.RenderReference(configgen.BuildModel(configgen.Docs{
 		"LearningSection.Mode": "Mode documents off, review, auto, the default, and project tightening.",

@@ -172,7 +172,7 @@ func providersSubtree(_ Docs) *Subtree {
 		{Key: "issuer", Type: configStringType, Default: configRequired, ExampleValue: "https://issuer.example"},
 		{Key: "client_id", Type: configStringType, Default: configRequired, ExampleValue: "mecatl"},
 		{Key: "scopes", Type: "[]string", Default: configRequired, ExampleValue: "[openid, offline_access]"},
-		{Key: "resource_audience", Type: configStringType, Default: "(optional)"},
+		{Key: "resource_audience", Type: configStringType, Default: "(optional)", Doc: "Optional OAuth audience parameter and access-token audience binding. Empty omits both."},
 		trust("issuer_trust"), trust("gateway_trust"),
 	}}
 	return &Subtree{Key: "providers", Tier: TierOperator, CommentedOut: true,
@@ -187,9 +187,15 @@ func providersSubtree(_ Docs) *Subtree {
 }
 
 func credentialStoreSubtree(_ Docs) *Subtree {
-	return &Subtree{Key: "credential_store", Tier: TierOperator, CommentedOut: true, Doc: "API-key file input and shared encrypted credential store for OIDC providers.", Fields: []*Field{
+	return &Subtree{Key: "credential_store", Tier: TierOperator, CommentedOut: true, Doc: "API-key file input and shared protected credential home for OIDC providers. OIDC records always remain encrypted; changing key custody does not automatically migrate them or fall back to another source.", Fields: []*Field{
 		{Key: "api_key", Type: "apikeycredentialstore", Default: configAbsent, Nested: []*Field{{Key: "file", Type: configStringType, Default: "$XDG_CONFIG_HOME/mecatl/auth.yaml", ExampleValue: "/home/operator/.config/mecatl/auth.yaml"}}},
-		{Key: "oidc", Type: "oidccredentialstore", Default: configAbsent, Nested: []*Field{{Key: "home", Type: configStringType, Default: configRequired, ExampleValue: "/var/lib/mecatl/provider-oidc"}, {Key: "key", Type: "nativecredentialkey", Default: configRequired, Nested: []*Field{{Key: "source", Type: configStringType, Default: configRequired, ExampleValue: "environment"}, {Key: "key_env", Type: configStringType, Default: "(required for environment; forbidden for keyring)", ExampleValue: "MECATL_NATIVE_LLM_CREDENTIAL_KEY"}}}}},
+		{Key: "oidc", Type: "oidccredentialstore", Default: configAbsent, Nested: []*Field{
+			{Key: "home", Type: configStringType, Default: configRequired, Doc: "Shared protected home for all OIDC provider credentials.", ExampleValue: "/var/lib/mecatl/provider-oidc"},
+			{Key: "key", Type: "nativecredentialkey", Default: "(optional; default keyring)", Doc: "Shared encryption-key source for the OIDC credential home; omission uses the OS-keyring default, and changing it does not migrate existing records.", Nested: []*Field{
+				{Key: "source", Type: configStringType, Default: configRequired, Doc: "Closed choice: keyring or environment. Omitting the whole key mapping uses the OS-keyring default.", ExampleValue: "environment"},
+				{Key: "key_env", Type: configStringType, Default: "(required for environment; forbidden for keyring)", Doc: "MECATL_* environment reference containing canonical padded base64 that decodes to exactly 32 bytes. Only the reference belongs in settings, never the key value.", ExampleValue: "MECATL_NATIVE_LLM_CREDENTIAL_KEY"},
+			}},
+		}},
 	}}
 }
 
