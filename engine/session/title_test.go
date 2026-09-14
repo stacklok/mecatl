@@ -269,8 +269,8 @@ func TestIsGenuineUserPrompt(t *testing.T) {
 
 func TestSyntheticUserPromptReplay_Scenario1_GenuinePredicateRecognizesHarnessContinuations(t *testing.T) {
 	const (
-		gentle     = "Please continue. Make concrete progress on the task using your tools, or — if you are blocked or believe the task is complete — say so explicitly in a short message."
-		extractive = "Stop investigating now and do not run any more commands or tools. Using only the information you have already gathered, write your best final answer to the original task as a direct message now, even if it is incomplete or uncertain — note any gaps briefly. Do not plan further steps; deliver what you have."
+		gentle     = NoProgressNudgeText
+		extractive = NoProgressExtractiveNudgeText
 	)
 	multimodal := NewUserMessageWithParts("", []Content{{Kind: MediaImage, MIMEType: "image/png", Data: []byte("pixels")}})
 	tests := []struct {

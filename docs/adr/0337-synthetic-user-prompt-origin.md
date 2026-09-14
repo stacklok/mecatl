@@ -1,6 +1,6 @@
 # ADR 0337 — Classify synthetic user-prompt origin at emission
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-09-14
 - Scope: durable user-prompt events, replay projection, and genuine-user classification
 - Supersedes: ADR 0038 Decision 3 only where `EvUserPrompt` was origin-opaque and absent from the public replay projection; its complete-conversation fold and all other decisions remain in force

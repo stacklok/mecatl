@@ -39,6 +39,26 @@ const (
 	Tier4SummaryMarker      = "[earlier turns summarised]"
 )
 
+// NoProgressNudgeText is the GENTLE continuation the loop injects as a new user
+// message on the early no-progress attempt(s) (see engine/agent/loop.go
+// finishTurnNoTools). NoProgressExtractiveNudgeText is the FINAL no-progress
+// nudge injected on the last attempt before give-up. Both are harness-authored
+// continuations, not real user instructions, so IsGenuineUserPrompt excludes
+// them. Promoted here for the same reason as CompactionSummaryMarker/
+// Tier4SummaryMarker: the domain leaf needs the literal to classify against,
+// and engine/agent (which emits them) can import engine/session but not the
+// reverse. engine/agent/loop.go references these exported names rather than
+// keeping its own copies — do not let the two fall out of sync.
+const (
+	NoProgressNudgeText = "Please continue. Make concrete progress on the task using your tools, " +
+		"or — if you are blocked or believe the task is complete — say so explicitly in a short message."
+	NoProgressExtractiveNudgeText = "Stop investigating now and do not run any " +
+		"more commands or tools. Using only the information you have already gathered, " +
+		"write your best final answer to the original task as a direct message now, even " +
+		"if it is incomplete or uncertain — note any gaps briefly. Do not plan further " +
+		"steps; deliver what you have."
+)
+
 // TitleProvenance records who last authored a session title. The zero value is
 // legacy/unknown so snapshots written before provenance was introduced fail closed.
 type TitleProvenance string
@@ -128,21 +148,11 @@ func IsGenuineUserPrompt(m Message) bool {
 	if m.Role != RoleUser || IsSynthesisedSummary(m.Text) {
 		return false
 	}
-	if m.Text == noProgressNudgeText || m.Text == noProgressExtractiveNudgeText {
+	if m.Text == NoProgressNudgeText || m.Text == NoProgressExtractiveNudgeText {
 		return false
 	}
 	return !isHarnessBackgroundNotice(m.Text)
 }
-
-const (
-	noProgressNudgeText = "Please continue. Make concrete progress on the task using your tools, " +
-		"or — if you are blocked or believe the task is complete — say so explicitly in a short message."
-	noProgressExtractiveNudgeText = "Stop investigating now and do not run any " +
-		"more commands or tools. Using only the information you have already gathered, " +
-		"write your best final answer to the original task as a direct message now, even " +
-		"if it is incomplete or uncertain — note any gaps briefly. Do not plan further " +
-		"steps; deliver what you have."
-)
 
 func isHarnessBackgroundNotice(text string) bool {
 	if !strings.HasPrefix(text, "[harness note: ") || !strings.HasSuffix(text, "]") {

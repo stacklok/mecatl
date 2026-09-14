@@ -51,9 +51,10 @@ const defaultNoProgressNudges = 2
 // ("do not naively retry the same message array"; "avoid emitting text blocks right
 // after tool results") and never forces tool use (no tool_choice). The substring
 // "Make concrete progress on the task using your tools" is a stable test key — do not
-// change it.
-const noProgressNudgeText = "Please continue. Make concrete progress on the task using your tools, " +
-	"or — if you are blocked or believe the task is complete — say so explicitly in a short message."
+// change it. Promoted to session.NoProgressNudgeText (engine/session/title.go) so
+// IsGenuineUserPrompt can classify against it without engine/session importing this
+// package — keep the literal only there; this is a reference, not a second copy.
+const noProgressNudgeText = session.NoProgressNudgeText
 
 // noProgressExtractiveNudgeText is the FINAL no-progress nudge, injected on the LAST
 // attempt before give-up (the nudge where *noProgressNudges == nudgeCap-1; see
@@ -66,12 +67,9 @@ const noProgressNudgeText = "Please continue. Make concrete progress on the task
 // extractive nudge is structurally guaranteed one more model turn (it rides the same
 // return-false re-drive path), so a model that answers after it completes with
 // StopEndTurn, NOT StopNoProgress. The substring "Stop investigating now" is a stable
-// test key (extractiveNudgeMessagesIn) — do not change it.
-const noProgressExtractiveNudgeText = "Stop investigating now and do not run any " +
-	"more commands or tools. Using only the information you have already gathered, " +
-	"write your best final answer to the original task as a direct message now, even " +
-	"if it is incomplete or uncertain — note any gaps briefly. Do not plan further " +
-	"steps; deliver what you have."
+// test key (extractiveNudgeMessagesIn) — do not change it. Promoted to
+// session.NoProgressExtractiveNudgeText for the same reason as noProgressNudgeText above.
+const noProgressExtractiveNudgeText = session.NoProgressExtractiveNudgeText
 
 // shellLessPostureNote is the SINGLE model-visible shell-less posture clause, appended
 // to the per-request system prompt's VOLATILE suffix by buildRequest when the LIVE
