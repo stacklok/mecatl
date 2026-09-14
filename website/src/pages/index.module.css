@@ -1,228 +1,1305 @@
-.sectionInner {
-  max-width: 1100px;
-  margin: 0 auto;
-  padding: 0 2rem;
+/* ─── Homepage — typographically led, parallax scroll, brand palette ─────── */
+
+.root {
+  /* Brand palette (website/src/css/custom.css tokens). Large areas stay on
+     --mec-bg; surface-1/2 are deliberately NOT used as section fills. */
+  --bg: #141210; /* --mec-bg */
+  --bg2: #141210; /* alternating sections keep the page ground; hairlines separate them */
+  --text: #f0ece8; /* --mec-text */
+  --muted: #9e9690; /* --mec-text-muted */
+  --dim: #8a837c; /* warm tertiary, ≥ 5:1 on --bg */
+  --teal: #3dbdad; /* --mec-teal-bright: interaction + accent words */
+  --teal-dim: #1d7068; /* --mec-teal-dim: rules that should recede */
+  --copper: #c87941; /* --mec-copper: eyebrows, labels, numerals */
+  --copper-bright: #e08f52;
+  --rope: #d4a76a; /* --mec-rope: code / the install command, link hover */
+  --cta: var(--rope);
+  --line: #332f2b; /* --mec-border */
+  --line-strong: #4a4540;
+  --ghost-fill: rgba(240, 236, 232, 0.05);
+  --ghost-stroke: rgba(240, 236, 232, 0.11);
+  --display: 'Instrument Sans', 'Space Grotesk', system-ui, -apple-system, sans-serif;
+  --body: 'Inter', system-ui, -apple-system, sans-serif;
+  --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --pad: clamp(1.25rem, 5vw, 5rem);
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+
+  /* ── type scale ─────────────────────────────────────────────────────────
+     Three display moments only (hero h1, statement, closing). Everything else
+     steps down: section title → item title → lede → body → label. The ≤767px
+     block redefines these at roughly 60–70%. */
+  --fs-display-1: clamp(3.25rem, 7vw, 6.75rem); /* hero h1 */
+  --fs-display-2: clamp(2.25rem, 4.5vw, 4.25rem); /* statement */
+  --fs-display-3: clamp(2.5rem, 5.5vw, 5rem); /* closing */
+  --fs-section: clamp(2.25rem, 3.4vw, 3.25rem); /* h2 */
+  --fs-item: clamp(1.6rem, 2.4vw, 2.25rem); /* h3, deployment link-words */
+  --fs-lede: 1.2rem;
+  --fs-body: 1.05rem;
+  --fs-label: 0.78rem; /* mono eyebrows and numerals */
+
+  /* vertical rhythm */
+  --sect: clamp(4rem, 7vw, 6.5rem); /* section padding, top and bottom */
+  --gap-head: clamp(2rem, 3vw, 3rem); /* section header → its list */
+  --row: 1.7rem; /* list row padding, top and bottom */
+
+  position: relative;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--body);
+  font-size: 16px;
+  line-height: 1.5;
+  overflow-x: clip;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
-.sectionTitle {
-  max-width: 850px;
-  margin: 0 auto 0.75rem;
-  padding-bottom: 0 !important;
-  border-bottom: none !important;
-  color: var(--mec-text);
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: clamp(1.85rem, 3vw, 2.45rem);
-  font-weight: 700;
-  letter-spacing: -0.03em;
-  text-align: center;
-}
-
-.sectionSubtitle {
-  margin: 0 auto 3rem;
-  color: var(--mec-text-muted);
-  font-size: 1.05rem;
-  text-align: center;
-}
-
-.ctaPrimary, .ctaSecondary {
-  display: inline-block;
-  border-radius: 6px;
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 0.95rem;
-  text-decoration: none;
-}
-
-.ctaPrimary {
-  padding: 0.7rem 1.6rem;
-  background: var(--mec-teal);
-  color: #fff;
-  font-weight: 600;
-}
-
-.ctaPrimary:hover { background: var(--mec-teal-bright); color: #fff; text-decoration: none; }
-
-.ctaSecondary {
-  padding: 0.7rem 1.6rem;
-  border: 1px solid var(--mec-border);
-  color: var(--mec-text-muted);
-  font-weight: 500;
-}
-
-.ctaSecondary:hover { border-color: var(--mec-teal-dim); color: var(--mec-text); text-decoration: none; }
-
-.hero {
-  padding: 5rem 2rem 4rem;
-  background: var(--mec-bg);
-  border-bottom: 1px solid var(--mec-border);
-}
-
-.heroInner, .pronunciationInner {
-  display: flex;
-  align-items: center;
-  gap: 4rem;
-  max-width: 1100px;
-  margin: 0 auto;
-}
-
-.heroText { flex: 1; min-width: 0; }
-
-.eyebrow, .projectLabel, .deployLabel {
-  color: var(--mec-copper);
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-}
-
-.eyebrow { margin-bottom: 1.25rem; }
-
-.heroTitle {
-  margin-bottom: 1.25rem;
-  border-bottom: none !important;
-  color: var(--mec-text);
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: clamp(2.2rem, 4vw, 3.4rem);
-  font-weight: 700;
-  letter-spacing: -0.04em;
-  line-height: 1.1;
-}
-
-.heroSubtitle {
-  max-width: 560px;
-  margin-bottom: 2rem;
-  color: var(--mec-text-muted);
-  font-size: 1.1rem;
-  line-height: 1.7;
-}
-
-.heroCtas { display: flex; flex-wrap: wrap; gap: 1rem; }
-.heroMascot { flex-shrink: 0; width: 360px; }
-.mascotImg { width: 100%; height: auto; border-radius: 24px; }
-
-.statement, .outcomes, .features, .deploySection, .stacklok, .pronunciation { border-bottom: 1px solid var(--mec-border); }
-.statement { padding: 3.5rem 0; background: var(--mec-surface); }
-
-.statement p {
-  max-width: 900px;
-  margin: 0 auto;
-  color: var(--mec-text);
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: clamp(1.6rem, 3vw, 2.25rem);
-  font-weight: 600;
-  letter-spacing: -0.03em;
-  line-height: 1.2;
-  text-align: center;
-}
-
-.outcomes, .features, .deploySection, .stacklok { padding: 5rem 0; }
-.outcomes, .features, .stacklok { background: var(--mec-bg); }
-.deploySection { background: var(--mec-surface); }
-
-.featureGrid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
-  gap: 1.25rem;
-  margin-top: 3rem;
-}
-
-.capabilityGrid {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-.featureCard {
-  padding: 1.75rem;
-  border: 1px solid var(--mec-border);
-  border-radius: 10px;
-  background: var(--mec-surface);
-}
-
-.outcomes .featureCard { background: var(--mec-surface-2); }
-.featureCard:hover { border-color: var(--mec-teal-dim); }
-.featureIcon { margin-bottom: 0.75rem; color: var(--mec-teal); font-size: 1.5rem; }
-
-.featureTitle {
-  margin-bottom: 0.5rem;
-  border: none;
-  color: var(--mec-text) !important;
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 1rem;
-  font-weight: 600;
-}
-
-.featureBody, .deployDesc { margin: 0; color: var(--mec-text-muted); font-size: 0.9rem; line-height: 1.65; }
-
-.featureBody code, .deployDesc code {
+/* neutralise global theme styles inside this page */
+.root :where(h1, h2, h3) {
+  margin: 0;
   padding: 0;
   border: 0;
+  color: inherit;
+  font-family: var(--display);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+}
+.root :where(code) {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
   background: transparent;
   color: inherit;
+  font-family: var(--mono);
   font-size: 0.92em;
 }
-
-.pronunciation { padding: 3.5rem 2rem; background: var(--mec-surface); }
-
-.pronunciationInner { justify-content: center; gap: 2rem; max-width: 760px; }
-
-.pronunciation img { width: 150px; height: auto; border-radius: 16px; }
-
-.pronunciation h2 {
-  margin: 0;
-  border: none;
-  color: var(--mec-text);
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: clamp(1.5rem, 3vw, 2.2rem);
-  letter-spacing: -0.03em;
-  line-height: 1.2;
-}
-
-.deployGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; margin-top: 3rem; }
-
-.deployCard {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  padding: 1.5rem;
-  border: 1px solid var(--mec-border);
-  border-radius: 8px;
-  background: var(--mec-bg);
+.root :where(a) {
+  color: inherit;
   text-decoration: none;
 }
+.root :where(a):hover {
+  color: var(--rope);
+}
+.root a:focus-visible,
+.root button:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: 4px;
+  border-radius: 2px;
+}
+.root :where(em) {
+  font-style: normal;
+  color: var(--teal);
+}
 
-.deployCard:hover { border-color: var(--mec-teal-dim); background: var(--mec-surface-2); text-decoration: none; }
+/* ─── Reveal (hidden state only once JS stamps data-js on the root) ──────── */
 
-.projectCallout {
+.root[data-js] [data-reveal] {
+  opacity: 0;
+  transform: translate3d(0, 22px, 0);
+  transition:
+    opacity 0.9s var(--ease),
+    transform 0.9s var(--ease);
+  transition-delay: var(--d, 0ms);
+}
+.root[data-js] [data-reveal][data-revealed] {
+  opacity: 1;
+  transform: none;
+}
+
+/* parallax layers get a compositor layer only while the loop is live */
+.root [data-plx-on] [data-plx] {
+  will-change: transform;
+}
+
+/* ─── Nav ─────────────────────────────────────────────────────────────────── */
+
+.nav {
+  position: fixed;
+  top: 0;
+  right: 0;
+  left: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  height: 4.5rem;
+  padding: 0 var(--pad);
+  transition:
+    background-color 0.35s var(--ease),
+    box-shadow 0.35s var(--ease);
+}
+.navScrolled {
+  background: rgba(20, 18, 16, 0.72);
+  box-shadow: 0 1px 0 var(--line);
+  -webkit-backdrop-filter: blur(14px) saturate(1.2);
+  backdrop-filter: blur(14px) saturate(1.2);
+}
+/* with the menu panel open the bar goes solid so nothing bleeds through */
+.navOpen {
+  background: var(--bg);
+}
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.65rem;
+  margin-right: auto;
+  font-family: var(--display);
+  font-size: 1.05rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.brand img {
+  display: block;
+  width: 26px;
+  height: 26px;
+}
+.navLinks {
+  display: flex;
+  align-items: center;
+  gap: clamp(1rem, 2.2vw, 2.25rem);
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+.navLinks a {
+  padding: 0.3rem 0;
+  transition: color 0.25s var(--ease);
+}
+.navLinks a:hover {
+  color: var(--text);
+}
+.navInstall {
+  color: var(--teal) !important;
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  letter-spacing: 0.02em;
+}
+.navInstall:hover {
+  color: var(--text) !important;
+}
+/* compact menu toggle — only rendered visible below 768px */
+.menuBtn {
+  display: none;
+  flex-shrink: 0;
+  padding: 0.35rem 0;
+  border: 0;
+  border-bottom: 1px solid var(--line-strong);
+  background: none;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+/* section header blocks are their own parallax reference (see useParallax) */
+.head {
+  position: relative;
+}
+
+/* ─── Section scaffolding ─────────────────────────────────────────────────── */
+
+.section {
+  position: relative;
+  overflow: hidden;
+  overflow: clip;
+  padding: var(--sect) 0;
+  background: var(--bg);
+}
+.alt {
+  background: var(--bg2);
+  border-top: 1px solid var(--line);
+}
+.wrap {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 0 var(--pad);
+}
+
+/* eyebrow: "01 ── Outcomes" in small mono */
+.label {
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: var(--fs-label);
+  font-weight: 400;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.label b {
+  color: var(--copper);
+  font-weight: 500;
+}
+.label b::after {
+  content: '';
+  display: inline-block;
+  width: 1.5rem;
+  height: 1px;
+  margin-left: 0.75rem;
+  vertical-align: middle;
+  background: var(--line-strong);
+}
+
+/* section title — a clear step below display */
+.title {
+  margin: 1rem 0 0;
+  font-size: var(--fs-section);
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+}
+.lede {
+  max-width: 34em;
+  margin: 1rem 0 0;
+  color: var(--muted);
+  font-size: var(--fs-lede);
+  line-height: 1.55;
+}
+/* list rows shared by Outcomes and Capabilities: small mono numeral, item
+   title, body — aligned on the title baseline */
+.itemNum {
+  color: var(--copper);
+  font-family: var(--mono);
+  font-size: var(--fs-label);
+}
+.itemTitle {
+  font-size: var(--fs-item);
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+}
+.itemBody {
+  max-width: 34em;
+  margin: 0.5rem 0 0;
+  color: var(--muted);
+  font-size: var(--fs-body);
+  line-height: 1.6;
+}
+.itemBody code {
+  color: var(--text);
+}
+
+/* ghost words — far back, absolutely positioned and clipped by their section
+   so they never add height; sized to read as texture, not as headlines */
+.ghost {
+  position: absolute;
+  z-index: 0;
+  color: transparent;
+  font-family: var(--display);
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.05em;
+  white-space: nowrap;
+  pointer-events: none;
+  user-select: none;
+  -webkit-text-stroke: 1px var(--ghost-stroke);
+}
+
+/* ─── 01 Hero ─────────────────────────────────────────────────────────────── */
+
+/* The hero is only as tall as its copy: the eyebrow starts 3rem under the nav
+   (4.5rem) and the section ends --hero-pb after the last row, with Mecatito
+   standing on that bottom edge (see .mascot). */
+.hero {
+  --hero-pb: 3rem;
+  --mascot-w: clamp(260px, 24vw, 400px); /* ≥1024px, see .heroWrap */
+  padding: 7.5rem 0 var(--hero-pb);
+}
+.eyebrow {
+  margin: 0;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: var(--fs-label);
+  letter-spacing: 0.06em;
+}
+.eyebrow b {
+  color: var(--copper);
+  font-weight: 500;
+}
+.h1 {
+  margin-top: 1.5rem;
+  font-size: var(--fs-display-1);
+  line-height: 0.95;
+  letter-spacing: -0.04em;
+}
+.line {
+  display: block;
+}
+.heroBody {
+  max-width: 52rem;
+}
+.sub {
+  max-width: 36em;
+  margin: clamp(1.5rem, 3vh, 2rem) 0 0;
+  color: var(--muted);
+  font-size: var(--fs-lede);
+  line-height: 1.55;
+}
+/* Below 1024px Mecatito is a cameo pinned to the section's bottom-right corner:
+   .wrap is the positioning box, so the negative bottom reaches through the
+   section's bottom padding to its edge. */
+.mascot {
+  position: absolute;
+  z-index: 0;
+  right: var(--pad);
+  bottom: calc(-1 * var(--hero-pb));
+  display: block;
+  width: clamp(120px, 14vw, 190px);
+  height: auto;
+}
+
+/* ≥1024px: the copy and Mecatito share the last grid row. The dog's bottom
+   margin reaches through the section padding so its feet stand on the section's
+   edge, and its negative top margin lets its head rise one headline line — beside
+   the short last line ("building platforms"), never beside the long ones — so it
+   is as tall as it can be without ever meeting text. The row grows to fit it. */
+@media (min-width: 1024px) {
+  .heroWrap {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) var(--mascot-w);
+    grid-template-areas:
+      'eyebrow eyebrow'
+      'h1 h1'
+      'body mascot';
+    align-items: start;
+    column-gap: clamp(2.5rem, 3vw, 3.5rem);
+  }
+  .eyebrow {
+    grid-area: eyebrow;
+  }
+  .h1 {
+    grid-area: h1;
+  }
+  .heroBody {
+    grid-area: body;
+  }
+  .mascot {
+    grid-area: mascot;
+    position: static;
+    align-self: end;
+    justify-self: end;
+    width: var(--mascot-w);
+    margin: calc(-0.9 * var(--fs-display-1)) 0 calc(-1 * var(--hero-pb));
+  }
+}
+
+/* the primary CTA, set as typography */
+.cmd {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 2rem;
-  max-width: 780px;
-  margin: 3rem auto 0;
-  padding: 1.75rem;
-  border: 1px solid var(--mec-border);
-  border-radius: 10px;
-  background: var(--mec-surface);
+  gap: 1.5rem;
+  max-width: 52rem;
+  margin-top: clamp(2rem, 4vh, 3rem);
+  padding: 1.1rem 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  scroll-margin-top: 6rem;
+}
+.cmdText {
+  color: var(--cta);
+  font-family: var(--mono);
+  font-size: clamp(1rem, 2vw, 1.75rem);
+  font-weight: 400;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+.copy {
+  flex-shrink: 0;
+  padding: 0.35rem 0;
+  border: 0;
+  border-bottom: 1px solid var(--line-strong);
+  background: none;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition:
+    color 0.25s var(--ease),
+    border-color 0.25s var(--ease);
+}
+.copy:hover,
+.copied {
+  border-color: var(--teal);
+  color: var(--teal);
+}
+.after {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem 1.75rem;
+  margin: 1.1rem 0 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+.after code {
+  color: var(--text);
+  font-size: 0.88em;
+}
+.after a {
+  border-bottom: 1px solid var(--line-strong);
+  color: var(--text);
+  transition:
+    color 0.25s var(--ease),
+    border-color 0.25s var(--ease);
+}
+.after a:hover {
+  border-color: var(--teal);
+  color: var(--teal);
+}
+.afterNote {
+  color: var(--dim);
 }
 
-.projectLabel { margin: 0 0 0.5rem; }
-
-.projectCallout h3 { margin: 0 0 0.25rem; border: none; color: var(--mec-text) !important; font-family: 'Space Grotesk', sans-serif; }
-.projectCallout p:not(.projectLabel) { margin: 0; color: var(--mec-text-muted); }
-.projectCallout .ctaPrimary { flex-shrink: 0; white-space: nowrap; }
-.projectContent { display: flex; align-items: flex-start; gap: 0.75rem; }
-.toolHiveLogo { width: 48px; height: auto; }
-
-@media (max-width: 1080px) {
-  .outcomes .featureGrid, .deployGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .capabilityGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+/* Tablet band: the install bar and its links stop short of the cameo (which
+   stands in the section's bottom-right corner, beside them). Placed after the
+   .cmd / .after rules so it wins at equal specificity. */
+@media (min-width: 768px) and (max-width: 1023px) {
+  .cmd,
+  .after {
+    max-width: min(52rem, calc(100% - 14vw - 2.5rem));
+  }
 }
 
-@media (max-width: 768px) {
-  .heroInner { flex-direction: column-reverse; gap: 2rem; }
-  .heroMascot { width: 260px; }
-  .pronunciationInner, .projectCallout { flex-direction: column; text-align: center; }
-  .projectContent { justify-content: center; text-align: left; }
-  .sectionInner { padding: 0 1.25rem; }
-  .capabilityGrid { grid-template-columns: 1fr; }
-  .outcomes .featureGrid, .deployGrid { grid-template-columns: 1fr; }
+/* ─── 02 Statement ────────────────────────────────────────────────────────── */
+
+.statementText {
+  margin: 0;
+  font-family: var(--display);
+  font-size: var(--fs-display-2);
+  font-weight: 700;
+  line-height: 1.05;
+  letter-spacing: -0.035em;
+}
+
+/* ─── 03 Outcomes ─────────────────────────────────────────────────────────── */
+
+.olist {
+  margin: var(--gap-head) 0 0;
+  padding: 0;
+  border-top: 1px solid var(--line);
+  list-style: none;
+}
+.oitem {
+  display: grid;
+  grid-template-columns: 2.5rem 1fr;
+  gap: 0 1rem;
+  align-items: baseline;
+  padding: var(--row) 0;
+  border-bottom: 1px solid var(--line);
+  transition: opacity 0.6s var(--ease);
+}
+.oDim {
+  opacity: 0.45;
+}
+
+/* ─── 04 Pronunciation ────────────────────────────────────────────────────── */
+
+/* A feature moment: the band is a flex column tall enough for Mecatito to peek
+   over its bottom edge, with the sentence centred in it. --pup-w is his width;
+   the wrap reserves his column on BOTH sides so the sentence stays centred on
+   the page and its box can never reach him or his speech bubble. */
+.pron {
+  --pup-w: clamp(180px, 16vw, 260px);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: clamp(320px, 26vw, 390px);
+}
+/* filled rather than outlined: legible as texture, still far behind the words */
+.pronGhost {
+  top: calc(50% - 0.45em);
+  right: 0;
+  left: 0;
+  text-align: center;
+  font-size: clamp(4rem, 12vw, 12rem);
+  letter-spacing: -0.06em;
+  color: rgba(42, 157, 143, 0.16);
+  -webkit-text-stroke: 1px rgba(42, 157, 143, 0.34);
+}
+.pronWrap {
+  /* 3rem: the tilt widens his box by ~20px a side, and the bubble overhangs 8% */
+  padding-inline: calc(var(--pad) + var(--pup-w) + 3rem);
+}
+/* a soft vignette behind the sentence keeps it crisp wherever the ghost drifts */
+.pronWrap::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  inset: -40% 15%;
+  background: radial-gradient(ellipse at center, rgba(20, 18, 16, 0.92) 0%, rgba(20, 18, 16, 0) 70%);
+  pointer-events: none;
+}
+.pronText {
+  max-width: 24em;
+  margin: 0 auto;
+  font-family: var(--display);
+  font-size: var(--fs-section);
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.025em;
+  text-align: center;
+  text-wrap: balance;
+}
+.pronText code {
+  color: var(--teal);
+  font-weight: 500;
+  white-space: nowrap; /* never break the phonetic at its hyphens */
+}
+
+/* Mecatito, peeking: bottom-right with 22% of him below the band's edge (the
+   section clips), mirrored and tilted toward the sentence. .pup owns the motion
+   (hop in, then bob) and .pupFlip owns the mirror + tilt, so neither fights the
+   other. The bubble hangs off the top-left of his head, tail toward his mouth. */
+.pup {
+  position: absolute;
+  z-index: 2;
+  right: var(--pad);
+  bottom: calc(var(--pup-w) * -0.28);
+  width: var(--pup-w);
+  pointer-events: none;
+}
+/* the moving part; .pup itself never moves so the reveal observer can see it */
+.pupMotion {
+  position: relative;
+}
+.pupFlip {
+  transform: scaleX(-1) rotate(8deg);
+  transform-origin: 50% 85%;
+}
+.pupFlip img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.bubble {
+  position: absolute;
+  bottom: calc(100% + 0.5rem);
+  left: -8%;
+  padding: 0.5rem 0.8rem;
+  border-radius: 0.75rem;
+  background: var(--text);
+  color: var(--bg);
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  transform-origin: 70% 100%;
+}
+.bubble::after {
+  content: '';
+  position: absolute;
+  right: 22%;
+  bottom: -0.3rem;
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 0 0 2px 0;
+  background: var(--text);
+  transform: rotate(45deg);
+}
+
+/* motion only once JS has stamped data-js (SSR / no-JS: static and visible).
+   Hidden state: fully below the band's edge; revealed: one spring hop up, then a
+   gentle bob; the bubble pops once he has landed. */
+.root[data-js] .pup[data-reveal] {
+  opacity: 1;
+  transform: none;
+  transition: none;
+}
+.root[data-js] .pup[data-reveal] .pupMotion {
+  transform: translate3d(0, 110%, 0);
+}
+.root[data-js] .pup[data-reveal] .bubble {
+  opacity: 0;
+  transform: scale(0.3);
+}
+.root[data-js] .pup[data-reveal][data-revealed] .pupMotion {
+  animation:
+    pupHop 0.9s cubic-bezier(0.22, 1, 0.36, 1) both,
+    pupBob 3s ease-in-out 0.9s infinite;
+}
+.root[data-js] .pup[data-reveal][data-revealed] .bubble {
+  animation: bubblePop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) 0.7s both;
+}
+@keyframes pupHop {
+  0% {
+    transform: translate3d(0, 110%, 0);
+  }
+  62% {
+    transform: translate3d(0, -5%, 0);
+  }
+  82% {
+    transform: translate3d(0, 2%, 0);
+  }
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+}
+@keyframes pupBob {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+  35% {
+    transform: translate3d(0, -5px, 0);
+  }
+  75% {
+    transform: translate3d(0, 4px, 0);
+  }
+}
+@keyframes bubblePop {
+  0% {
+    opacity: 0;
+    transform: scale(0.3) translate3d(0, 6px, 0);
+  }
+  100% {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* 768–1023px: a smaller pup and a fluid sentence size so three balanced lines
+   still fit between his column and its mirror on the left */
+@media (min-width: 768px) and (max-width: 1023px) {
+  .pron {
+    --pup-w: clamp(150px, 16vw, 180px);
+  }
+  .pronText {
+    font-size: clamp(1.7rem, 3.6vw, 2.25rem);
+  }
+}
+
+/* ─── 05 Capabilities — six title + body pairs in two columns ─────────────── */
+
+.capList {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 4rem;
+  margin: var(--gap-head) 0 0;
+  padding: 0;
+  border-top: 1px solid var(--line);
+  list-style: none;
+}
+.capItem {
+  display: grid;
+  grid-template-columns: 2.5rem 1fr;
+  gap: 0 1rem;
+  align-items: baseline;
+  padding: var(--row) 0;
+  border-bottom: 1px solid var(--line);
+}
+
+/* ─── 06 Deployment — an index: word · description ……… arrow ─────────────── */
+
+.deployList {
+  margin: var(--gap-head) 0 0;
+  padding: 0;
+  border-top: 1px solid var(--line);
+  list-style: none;
+}
+.deployItem {
+  border-bottom: 1px solid var(--line);
+}
+.deployLink {
+  display: grid;
+  grid-template-columns: minmax(0, 20rem) minmax(0, 1fr) auto;
+  grid-template-areas: 'word desc arrow';
+  gap: 0.5rem 3rem;
+  align-items: baseline;
+  padding: calc(var(--row) - 0.15rem) 0;
+}
+.deployWord {
+  grid-area: word;
+  position: relative;
+  justify-self: start;
+  font-family: var(--display);
+  font-size: var(--fs-item);
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  transition: transform 0.5s var(--ease);
+}
+.deployWord::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  bottom: -0.1em;
+  left: 0;
+  height: 1px;
+  background: var(--teal);
+  transform: scaleX(0);
+  transform-origin: left center;
+  transition: transform 0.5s var(--ease);
+}
+.deployDesc {
+  grid-area: desc;
+  max-width: 34em;
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-body);
+  line-height: 1.6;
+}
+.deployDesc code {
+  color: var(--text);
+}
+.deployArrow {
+  grid-area: arrow;
+  justify-self: end;
+  color: var(--teal);
+  font-family: var(--display);
+  font-size: var(--fs-item);
+  font-weight: 500;
+  line-height: 1.2;
+  transition: transform 0.5s var(--ease);
+}
+.deployLink:hover .deployWord,
+.deployLink:focus-visible .deployWord {
+  transform: translate3d(6px, 0, 0);
+}
+.deployLink:hover .deployWord::after,
+.deployLink:focus-visible .deployWord::after {
+  transform: scaleX(1);
+}
+.deployLink:hover .deployArrow,
+.deployLink:focus-visible .deployArrow {
+  transform: translate3d(8px, 0, 0);
+}
+
+/* ─── 07 Stacklok ─────────────────────────────────────────────────────────── */
+
+.quote {
+  max-width: 24em;
+  text-wrap: balance; /* three even lines, no orphaned "stacks." */
+}
+.featured {
+  margin-top: clamp(2.5rem, 4vw, 4rem);
+  padding-top: var(--row);
+  border-top: 1px solid var(--line);
+}
+.featured .label {
+  margin-bottom: 1rem;
+}
+.featuredRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr);
+  gap: 1.5rem 4rem;
+  align-items: start;
+}
+.projectName {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0;
+  font-size: var(--fs-item);
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+}
+.projectName img {
+  display: block;
+  width: 1em; /* tracks --fs-item */
+  height: auto;
+}
+.projectBody {
+  max-width: 34em;
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-body);
+  line-height: 1.6;
+}
+.projectLink {
+  display: inline-block;
+  margin-top: 1rem;
+  border-bottom: 1px solid var(--line-strong);
+  color: var(--text);
+  font-size: 0.95rem;
+  transition:
+    color 0.25s var(--ease),
+    border-color 0.25s var(--ease);
+}
+.projectLink:hover {
+  border-color: var(--teal);
+  color: var(--teal);
+}
+
+/* ─── 08 Closing ──────────────────────────────────────────────────────────── */
+
+.closingGhost {
+  top: calc(50% - 0.5em);
+  right: -2vw;
+  font-size: clamp(8rem, 17vw, 18rem);
+}
+.closingTitle {
+  font-size: var(--fs-display-3);
+  line-height: 1;
+  letter-spacing: -0.04em;
+}
+
+/* ─── Footer ──────────────────────────────────────────────────────────────── */
+
+.footer {
+  position: relative;
+  padding: 3.5rem 0 2rem;
+  border-top: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+.footGrid {
+  display: grid;
+  grid-template-columns: 1.6fr repeat(3, 1fr);
+  gap: 2.5rem;
+}
+.footBrand p {
+  max-width: 22em;
+  margin: 1rem 0 0;
+}
+.footCol h3 {
+  margin: 0 0 1rem;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.footCol a {
+  display: block;
+  padding: 0.25rem 0;
+  color: var(--muted);
+  transition: color 0.25s var(--ease);
+}
+.footCol a:hover {
+  color: var(--text);
+}
+.footBottom {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 2.5rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--line);
+  color: var(--dim);
+  font-size: 0.8rem;
+}
+
+/* mobile-only line breaks inside display text (see Hero) — inert on desktop */
+.brM {
+  display: none;
+}
+
+/* ─── Sticky install bar (phones only, see useStickyInstall) ─────────────── */
+
+.stickyBar {
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 15;
+  display: none; /* flex below 768px */
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.6rem 1rem calc(0.6rem + env(safe-area-inset-bottom, 0px));
+  background: rgba(20, 18, 16, 0.86);
+  box-shadow: 0 -1px 0 var(--line);
+  -webkit-backdrop-filter: blur(14px) saturate(1.2);
+  backdrop-filter: blur(14px) saturate(1.2);
+  transform: translate3d(0, 100%, 0);
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    transform 0.45s var(--ease),
+    opacity 0.45s var(--ease),
+    visibility 0s linear 0.45s;
+}
+.stickyBarOn {
+  transform: none;
+  opacity: 1;
+  visibility: visible;
+  transition-delay: 0s;
+}
+.stickyCmd {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--cta);
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.stickyCopy {
+  flex-shrink: 0;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0 0.9rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 2px;
+  background: none;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition:
+    color 0.25s var(--ease),
+    border-color 0.25s var(--ease);
+}
+.stickyCopy.copied {
+  border-color: var(--teal);
+  color: var(--teal);
+}
+
+/* ─── Responsive ──────────────────────────────────────────────────────────── */
+
+@media (max-width: 1023px) {
+  .deployLink {
+    grid-template-columns: minmax(0, 13rem) minmax(0, 1fr) auto;
+    gap: 0.5rem 2rem;
+  }
+}
+
+@media (max-width: 899px) {
+  .capList {
+    grid-template-columns: 1fr;
+  }
+  .featuredRow {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+  .footGrid {
+    grid-template-columns: 1fr 1fr;
+  }
+  .footBrand {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 767px) {
+  /* ── mobile scale ───────────────────────────────────────────────────────
+     type at ~60–70% of desktop · sections 3.75rem · heading→list 1.5rem ·
+     list rows 1.25rem · nothing under 0.8rem · tap targets ≥ 44px (48px for
+     the primary Copy) */
+  .root {
+    --fs-display-1: clamp(2.4rem, 11vw, 3.25rem);
+    --fs-display-2: clamp(2rem, 8vw, 2.4rem);
+    --fs-display-3: clamp(1.9rem, 8.5vw, 2.6rem);
+    --fs-section: 1.9rem;
+    --fs-item: 1.35rem;
+    --fs-lede: 1rem;
+    --fs-body: 0.95rem;
+    --fs-label: 0.8rem;
+    --sect: 3.75rem;
+    --gap-head: 1.5rem;
+    --row: 1.35rem;
+  }
+  .stickyBar {
+    display: flex;
+  }
+
+  /* compact nav: brand, the install CTA and a menu toggle; the rest folds into a panel */
+  .menuBtn {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    padding: 0 0.15rem;
+    border-bottom: 0;
+    font-size: 0.8rem;
+    text-decoration: underline;
+    text-decoration-color: var(--line-strong);
+    text-underline-offset: 0.4em;
+  }
+  .navLinks a:not(.navInstall) {
+    display: none;
+  }
+  .navLinks .navInstall {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    padding: 0 0.15rem;
+  }
+  .navOpen .navLinks {
+    position: absolute;
+    top: 4.5rem;
+    right: 0;
+    left: 0;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0;
+    padding: 0.25rem var(--pad) 1.25rem;
+    background: var(--bg);
+    box-shadow: 0 1px 0 var(--line);
+  }
+  .navOpen .navLinks a {
+    display: flex;
+    align-items: center;
+    min-height: 3rem;
+    padding: 0.5rem 0;
+    border-top: 1px solid var(--line);
+    font-size: 1rem;
+  }
+  .navOpen .navLinks a:first-child {
+    border-top: 0;
+  }
+  .navOpen .navLinks .navInstall {
+    font-size: 0.9rem;
+  }
+
+  /* section scaffolding */
+  .title {
+    margin-top: 0.9rem;
+  }
+
+  /* 01 hero: six deliberate lines, everything above the fold at 390×844;
+     Mecatito shrinks to a 96px cameo tucked bottom-right, out of the text column */
+  .hero {
+    --hero-pb: 7.5rem; /* the bottom band is the mascot's: it never overlaps the copy */
+    padding-top: 6.5rem;
+  }
+  .h1 {
+    margin-top: 1.25rem;
+  }
+  .h1 .line {
+    display: inline;
+  }
+  .brM {
+    display: initial;
+  }
+  .heroBody {
+    max-width: none;
+  }
+  .sub {
+    max-width: 34em;
+    margin-top: 1rem;
+    line-height: 1.5;
+  }
+  .mascot {
+    width: 96px;
+  }
+
+  /* the install block: one-line command at 1rem mono, a full-width 48px Copy,
+     then the follow-up links as ≥44px rows */
+  .cmd {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.85rem;
+    max-width: none;
+    margin-top: 1.5rem;
+    padding: 1rem 0;
+  }
+  .cmdText {
+    font-size: 1rem;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .copy {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 48px;
+    padding: 0 1rem;
+    border: 1px solid var(--line-strong);
+    border-radius: 2px;
+  }
+  .after {
+    gap: 0 1.5rem;
+    margin-top: 0.5rem;
+    font-size: 0.95rem;
+  }
+  .after > span {
+    flex-basis: 100%;
+    padding: 0.6rem 0;
+  }
+  .after a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    border-bottom: 0;
+    text-decoration: underline;
+    text-decoration-color: var(--line-strong);
+    text-underline-offset: 0.25em;
+  }
+  .after a:hover {
+    text-decoration-color: var(--teal);
+  }
+
+  /* 02 statement: flows as one left-aligned paragraph (no orphaned "up") */
+  .statementText {
+    line-height: 1.1;
+    letter-spacing: -0.03em;
+  }
+  .statementText .line {
+    display: inline;
+  }
+
+  /* 03 outcomes + 05 capabilities: tighter numeral column; focus dimming
+     softened so the neighbours stay readable */
+  .oitem,
+  .capItem {
+    grid-template-columns: 2rem 1fr;
+    gap: 0 0.75rem;
+  }
+  .oDim {
+    opacity: 0.72;
+  }
+  .itemBody {
+    line-height: 1.55;
+  }
+
+  /* 04 pronunciation: the sentence centred in the band, Mecatito a 110px cameo
+     tucked bottom-right in a band of his own beneath it, the bubble at his side */
+  .pron {
+    --pup-w: 110px;
+    min-height: 0;
+    padding-bottom: calc(var(--sect) + 4.5rem);
+  }
+  .pronGhost {
+    top: calc(var(--sect) + 0.5rem);
+  }
+  .pronWrap {
+    padding-inline: var(--pad);
+  }
+  .pronWrap::before {
+    inset: -30% 0;
+  }
+  .bubble {
+    top: 12%;
+    right: 84%;
+    bottom: auto;
+    left: auto;
+    padding: 0.4rem 0.6rem;
+    font-size: 0.72rem;
+    transform-origin: 100% 50%;
+  }
+  .bubble::after {
+    top: calc(50% - 0.3rem);
+    right: -0.25rem;
+    bottom: auto;
+    width: 0.6rem;
+    height: 0.6rem;
+    border-radius: 0 2px 0 0;
+  }
+
+  /* 06 deployment: full-width rows ≥56px, arrow right-aligned on the word line,
+     description beneath */
+  .deployLink {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      'word arrow'
+      'desc desc';
+    gap: 0.35rem 1rem;
+    align-items: center;
+    min-height: 56px;
+    padding: 1rem 0;
+  }
+  .deployDesc {
+    line-height: 1.55;
+  }
+
+  /* 07 stacklok */
+  .quote {
+    max-width: none;
+  }
+  .featured {
+    margin-top: 2.5rem;
+    padding-top: 1.5rem;
+  }
+  .featured .label {
+    margin-bottom: 0.75rem;
+  }
+  .featuredRow {
+    gap: 0.75rem;
+  }
+  .projectName img {
+    width: 24px;
+  }
+  .projectBody {
+    line-height: 1.55;
+  }
+  .projectLink {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    margin-top: 0.25rem;
+    border-bottom: 0;
+    font-size: 0.95rem;
+    text-decoration: underline;
+    text-decoration-color: var(--line-strong);
+    text-underline-offset: 0.25em;
+  }
+  .projectLink:hover {
+    text-decoration-color: var(--teal);
+  }
+
+  /* 08 closing */
+  .closingGhost {
+    top: 0.75rem; /* behind the closing headline, not the install links */
+    font-size: 6.5rem;
+  }
+
+  /* footer: two link columns, ≥44px rows, room underneath for the sticky bar */
+  .footer {
+    padding: 3rem 0 calc(2rem + 4.5rem + env(safe-area-inset-bottom, 0px));
+  }
+  .footGrid {
+    grid-template-columns: 1fr 1fr;
+    gap: 2rem 1.5rem;
+  }
+  .footBrand {
+    grid-column: 1 / -1;
+  }
+  .footBrand p {
+    margin-top: 0.75rem;
+    font-size: 0.95rem;
+  }
+  .footCol h3 {
+    margin-bottom: 0.25rem;
+    font-size: 0.8rem;
+  }
+  .footCol a {
+    display: flex;
+    align-items: center;
+    min-height: 44px;
+    padding: 0.5rem 0;
+    font-size: 0.95rem;
+  }
+  .footBottom {
+    margin-top: 2rem;
+    gap: 0.35rem 1rem;
+  }
+}
+
+/* ─── Reduced motion ──────────────────────────────────────────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  .root[data-js] [data-reveal] {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+  /* Mecatito and his bubble: no hop, bob or pop — in place and visible */
+  .pupMotion,
+  .bubble {
+    animation: none !important;
+  }
+  .root[data-js] .pup[data-reveal] .pupMotion,
+  .root[data-js] .pup[data-reveal] .bubble {
+    opacity: 1;
+    transform: none;
+  }
+  .root * {
+    transition-duration: 0.01ms !important;
+  }
 }
