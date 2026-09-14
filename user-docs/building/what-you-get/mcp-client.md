@@ -13,7 +13,7 @@ Mecatl connects agents to
 tools enter the catalog as `mcp__<server>__<tool>` and use the same permission,
 dispatch, guardrail, and audit paths as built-in tools.
 
-## Streaming-HTTP only
+## Transport
 
 Mecatl supports the streaming-HTTP (streamable-HTTP JSON-RPC) transport. It does
 not start stdio MCP servers as subprocesses. To use a stdio server, place it
@@ -131,7 +131,7 @@ model can call `FetchMcpResource`, which rejects private and metadata addresses
 and revalidates redirects. For other URI schemes, use `ReadMcpResource` with the
 server that owns the resource.
 
-## Large and structured results: fail-closed truncation + CallMcpWithQuery
+## Large and structured results
 
 Mecatl truncates oversized plain-text results before they enter context. It
 returns an error for oversized structured results because truncating JSON can
@@ -146,11 +146,10 @@ a jq expression before the result enters context:
 - `args` contains the remote tool arguments.
 - `jq_filter` selects the required JSON fields.
 
-The filter runs in memory with file, standard input, and environment access
-disabled. Compute, input, and output limits prevent a filter from consuming an
-unbounded amount of time or context. Broker sessions use their existing frozen
-attachment and authorization; Mecatl does not create a second upstream
-connection or replay an ambiguous call.
+The filter runs in memory without file, standard input, or environment access.
+Compute, input, and output limits bound its resource use. Broker sessions use
+their existing attachment and authorization without a second upstream
+connection.
 
 ## Server-initiated notifications
 
@@ -181,7 +180,7 @@ per-session engines can remain open, so close sessions you no longer need with
 
 ## What's next
 
-- [Tool catalog](/building/extension-points/tool-catalog.md) to add custom tools
-  and control the catalog exposed to the model.
+- [Tool catalog extension point](/building/extension-points/tool-catalog.md) to
+  add custom tools and control the catalog exposed to the model.
 - [MCP OAuth and credentials](/features/mcp-oauth-and-credentials.md) to
   configure authentication and rotation.
