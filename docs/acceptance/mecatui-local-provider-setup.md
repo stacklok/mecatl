@@ -4,7 +4,7 @@
 **Work classification:** Bounded — completes provider-command UX and repairs implementation gaps within the already merged provider, credential-custody, and portable-writer contract; no new durable architecture decision.
 **Decision record:** None — ADR 0333 and its merged acceptance plan already own the CLI, schema, custody, platform, and concurrency decisions. This follow-up reuses those boundaries rather than reviving the prototype.
 **Phase:** provider setup/status/default follow-up after PR #1448
-**Status:** proposed, 2026-09-14. The directing human authorized this reconciliation and stacked preparation before plan merge; PR #1440 remains the human Plan / Interface gate, not an already merged approval.
+**Status:** in-progress, 2026-09-14. The directing human authorized implementation against this revised contract before plan merge. PR #1440 remains the human Plan / Interface gate; implementation is not landed and awaits parent review and final gates.
 **Delivery:** Split. Review the remaining behavior in existing Plan PR #1440; prepare it in existing draft Implementation PR #1441.
 **Expected tasks:** deferred to orchestration
 **Plan PR:** [stacklok/mecatl#1440](https://github.com/stacklok/mecatl/pull/1440)

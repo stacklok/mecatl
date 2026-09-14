@@ -3,11 +3,14 @@ package main
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
+	"unicode"
 
 	"github.com/stacklok/mecatl/internal/adapter/authfile"
 	"github.com/stacklok/mecatl/internal/adapter/llmendpoint"
@@ -18,6 +21,10 @@ import (
 )
 
 const (
+	providerOpenAIID      = "openai"
+	providerOpenRouterID  = "openrouter"
+	providerOpenCodeID    = "opencode"
+	providerAnthropicID   = "anthropic"
 	providerClassBuiltin  = "built-in"
 	openAICodexEndpointID = "openai-codex"
 )
@@ -30,6 +37,9 @@ type providerStatus struct {
 	Auth         string
 	DefaultModel string
 	Next         string
+	Source       string
+	Shadowed     bool
+	Selected     bool
 }
 
 // providerInspection is the local, value-free view used to inspect providers
@@ -39,6 +49,7 @@ type providerInspection struct {
 	credentials         cliconfig.ResolvedCredentials
 	aliases             map[string]string
 	shadowed            map[string]bool
+	sources             map[string]string
 	oidcStoreConfigured bool
 	selectedProvider    string
 	selectedModel       string
@@ -82,15 +93,41 @@ func (c providerCommands) runStatus(ctx context.Context, res invocationResolutio
 }
 
 func writeProviderStatus(out io.Writer, status providerStatus) error {
-	_, err := fmt.Fprintf(out, "%s (%s)\n  Authentication: %s\n  Default model: %s\n  Next step: %s\n", status.Name, status.Class, status.Auth, status.DefaultModel, status.Next)
+	marker, shadow := "", ""
+	if status.Selected {
+		marker = " [selected default]"
+	}
+	if status.Shadowed {
+		shadow = "; file present (shadowed)"
+	}
+	_, err := fmt.Fprintf(out, "%s (%s)%s\n  Authentication: %s\n  Auth method: %s\n  Source: %s%s\n  Default model: %s\n  verification: not checked\n  Next step: %s\n", providerDisplay(status.Name), providerDisplay(status.Class), marker, providerDisplay(status.Auth), providerDisplay(status.AuthMethod), providerDisplay(status.Source), shadow, providerDisplay(status.DefaultModel), providerDisplay(status.Next))
 	return err
 }
 
+func providerDisplay(value string) string {
+	value = strings.Map(func(r rune) rune {
+		if !unicode.IsPrint(r) || isTrustControl(r) {
+			return -1
+		}
+		return r
+	}, value)
+	runes := []rune(value)
+	if len(runes) > 240 {
+		return string(runes[:240]) + "…"
+	}
+	return value
+}
+
 func (c providerCommands) statuses(ctx context.Context, inspection providerInspection, includeUnconfiguredBuiltin bool) []providerStatus {
-	statuses := builtinProviderStatuses(inspection.credentials, inspection.shadowed)
+	// OpenRouter's last-resort credential is environment-only, just as in composition.
+	keys := inspection.credentials
+	if keys.OpenRouter == "" && inspection.sources[providerOpenRouterID] == "OPENAI_API_KEY (environment fallback)" {
+		keys.OpenRouter = keys.OpenAI
+	}
+	statuses := builtinProviderStatuses(keys, inspection.shadowed)
 	if !includeUnconfiguredBuiltin {
 		statuses = slices.DeleteFunc(statuses, func(status providerStatus) bool {
-			return status.Class == providerClassBuiltin && !status.Configured
+			return status.Class == providerClassBuiltin && !status.Configured && status.Name != inspection.selectedProvider && (status.Name != openAICodexEndpointID || keys.AuthFileWarning == "")
 		})
 	}
 	for id, definition := range inspection.definitions {
@@ -107,7 +144,7 @@ func (c providerCommands) statuses(ctx context.Context, inspection providerInspe
 			status.Auth, status.Next = c.oidcStatus(ctx, definition)
 			status.Configured = status.Auth == "OIDC enrolled"
 		} else if status.Configured {
-			status.Next = "ready to use"
+			status.Next = "select a default with `mecatui providers set-default " + id + "`"
 		} else if definition.Auth.Method == providerAuthAPIKey {
 			status.Next = "run `mecatui providers login " + id + "`"
 		}
@@ -116,13 +153,36 @@ func (c providerCommands) statuses(ctx context.Context, inspection providerInspe
 	if c.backend.toolHiveAvailable() {
 		statuses = append(statuses, toolHiveProviderStatus())
 	}
+	if inspection.selectedProvider != "" && !slices.ContainsFunc(statuses, func(s providerStatus) bool { return s.Name == inspection.selectedProvider }) {
+		statuses = append(statuses, providerStatus{Name: inspection.selectedProvider, Class: "unavailable", Auth: "not configured", Next: "restore this provider or select another with `mecatui providers set-default PROVIDER MODEL`"})
+	}
 	for i := range statuses {
-		if statuses[i].Name == inspection.selectedProvider && inspection.selectedModel != "" {
-			statuses[i].DefaultModel = inspection.selectedModel
+		status := &statuses[i]
+		status.Source = providerSource(inspection.sources[status.Name], status.AuthMethod)
+		status.Shadowed = inspection.shadowed[status.Name]
+		status.Selected = status.Name == inspection.selectedProvider
+		if status.Selected && inspection.selectedModel != "" {
+			status.DefaultModel = inspection.selectedModel
 		}
 	}
 	slices.SortFunc(statuses, func(a, b providerStatus) int { return cmp.Compare(a.Name, b.Name) })
 	return statuses
+}
+
+func providerSource(source, method string) string {
+	if source != "" {
+		return source
+	}
+	switch method {
+	case providerAuthNone:
+		return "not required"
+	case providerAuthOIDC:
+		return "encrypted local OIDC store"
+	case "external":
+		return "ToolHive configuration; authentication managed externally"
+	default:
+		return "none"
+	}
 }
 
 func toolHiveProviderStatus() providerStatus {
@@ -138,6 +198,7 @@ func currentToolHiveAvailable() bool {
 	return found
 }
 
+//nolint:gocyclo // Resolve credentials and their provenance from one file snapshot, including source precedence and custody errors.
 func inspectLocalProviders() (providerInspection, error) {
 	resolver := permconfig.NewWithEnv(permconfig.Options{Conventional: true}, xdgconfig.OSEnv)
 	definitions, _, err := resolver.OperatorProviders()
@@ -149,9 +210,18 @@ func inspectLocalProviders() (providerInspection, error) {
 	if credentialStore != nil && credentialStore.APIKey != nil {
 		flags.SetAPIKeyFile(credentialStore.APIKey.File)
 	}
-	credentials, err := cliconfig.ResolveProviderCredentials(flags, definitions, xdgconfig.OSEnv)
+	// Resolve and project the same file bytes; a concurrent replacement must not
+	// mix a runtime credential with provenance from another snapshot.
+	env := xdgconfig.OSEnv
+	var data []byte
+	var readErr error
+	env.ReadFile = func(path string) ([]byte, error) {
+		data, readErr = os.ReadFile(path)
+		return data, readErr
+	}
+	credentials, err := cliconfig.ResolveProviderCredentials(flags, definitions, env)
 	if err != nil {
-		return providerInspection{}, err
+		return providerInspection{}, providerCredentialInputError(readErr)
 	}
 	var aliases map[string]string
 	selectedProvider, selectedModel := "", ""
@@ -160,26 +230,55 @@ func inspectLocalProviders() (providerInspection, error) {
 		selectedProvider, selectedModel = policy.DefaultProvider, policy.Default
 	}
 	path, explicit := flags.AuthFilePath()
-	known := []string{"anthropic", "openai", "openrouter", "opencode", openAICodexEndpointID}
+	known := []string{providerAnthropicID, providerOpenAIID, providerOpenRouterID, providerOpenCodeID, openAICodexEndpointID}
 	for id := range definitions {
 		known = append(known, id)
 	}
-	file, err := authfile.LoadStrict(path, explicit, xdgconfig.OSEnv, known)
+	env.ReadFile = func(string) ([]byte, error) { return data, readErr }
+	file, err := authfile.LoadStrict(path, explicit, env, known)
 	if err != nil {
 		return providerInspection{}, err
 	}
-	env := cliconfig.ReadProviderKeys()
+	envKeys := cliconfig.ReadProviderKeys()
 	shadowed := map[string]bool{
-		"anthropic":  env.Anthropic != "" && file.APIKey("anthropic") != "",
-		"openai":     env.OpenAI != "" && file.APIKey("openai") != "",
-		"opencode":   env.OpenCode != "" && file.APIKey("opencode") != "",
-		"openrouter": env.OpenRouter != "" && file.APIKey("openrouter") != "",
+		providerAnthropicID:  envKeys.Anthropic != "" && file.APIKey("anthropic") != "",
+		providerOpenAIID:     envKeys.OpenAI != "" && file.APIKey(providerOpenAIID) != "",
+		providerOpenCodeID:   envKeys.OpenCode != "" && file.APIKey(providerOpenCodeID) != "",
+		providerOpenRouterID: envKeys.OpenRouter != "" && file.APIKey(providerOpenRouterID) != "",
+	}
+	sources := make(map[string]string)
+	for _, id := range known {
+		if file.APIKey(id) != "" {
+			sources[id] = "credential_store.api_key.file"
+		}
+	}
+	for id, key := range map[string]string{providerAnthropicID: envKeys.Anthropic, providerOpenAIID: envKeys.OpenAI, providerOpenCodeID: envKeys.OpenCode, providerOpenRouterID: envKeys.OpenRouter} {
+		if key != "" {
+			sources[id] = strings.ToUpper(id) + "_API_KEY (environment)"
+		}
+	}
+	if credentials.OpenRouter == "" && envKeys.OpenAI != "" {
+		sources[providerOpenRouterID] = "OPENAI_API_KEY (environment fallback)"
+	}
+	if credentials.HasOpenAICodex() || credentials.AuthFileWarning != "" {
+		sources[openAICodexEndpointID] = "credential_store.api_key.file (manual token)"
 	}
 	return providerInspection{
-		definitions: definitions, credentials: credentials, aliases: aliases, shadowed: shadowed,
+		definitions: definitions, credentials: credentials, aliases: aliases, shadowed: shadowed, sources: sources,
 		oidcStoreConfigured: credentialStore != nil && credentialStore.OIDC != nil,
 		selectedProvider:    selectedProvider, selectedModel: selectedModel,
 	}, nil
+}
+
+func providerCredentialInputError(readErr error) error {
+	switch {
+	case errors.Is(readErr, os.ErrNotExist):
+		return errors.New("configured credential input is missing; check credential_store.api_key.file")
+	case readErr != nil:
+		return errors.New("credential input is unreadable; check credential_store.api_key.file and access permissions")
+	default:
+		return errors.New("credential input is malformed or unsafe; check its schema and private permissions")
+	}
 }
 
 func (c providerCommands) oidcStatus(ctx context.Context, definition permconfig.ProviderDefinition) (string, string) {
@@ -202,12 +301,22 @@ func (c providerCommands) oidcStatus(ctx context.Context, definition permconfig.
 
 func builtinProviderStatuses(keys cliconfig.ResolvedCredentials, shadowed map[string]bool) []providerStatus {
 	return []providerStatus{
-		builtinAPIKeyStatus("anthropic", keys.Anthropic != "", shadowed["anthropic"], "claude-sonnet-4-6"),
-		builtinAPIKeyStatus("openai", keys.OpenAI != "", shadowed["openai"], "gpt-5"),
-		{Name: openAICodexEndpointID, Class: providerClassBuiltin, AuthMethod: "manual", Configured: keys.HasOpenAICodex(), Auth: configured(keys.HasOpenAICodex()), DefaultModel: "provider default", Next: nextForAPIKey(keys.HasOpenAICodex())},
-		builtinAPIKeyStatus("opencode", keys.OpenCode != "", shadowed["opencode"], "glm-5.2"),
-		builtinAPIKeyStatus("openrouter", keys.OpenRouter != "", shadowed["openrouter"], "openai/gpt-5"),
+		builtinAPIKeyStatus(providerAnthropicID, keys.Anthropic != "", shadowed[providerAnthropicID], "claude-sonnet-4-6"),
+		builtinAPIKeyStatus(providerOpenAIID, keys.OpenAI != "", shadowed[providerOpenAIID], "gpt-5"),
+		codexProviderStatus(keys),
+		builtinAPIKeyStatus(providerOpenCodeID, keys.OpenCode != "", shadowed[providerOpenCodeID], "glm-5.2"),
+		builtinAPIKeyStatus(providerOpenRouterID, keys.OpenRouter != "", shadowed[providerOpenRouterID], "openai/gpt-5"),
 	}
+}
+
+func codexProviderStatus(keys cliconfig.ResolvedCredentials) providerStatus {
+	auth := "manual subscription token missing"
+	if keys.HasOpenAICodex() {
+		auth = "manual subscription token locally usable"
+	} else if keys.AuthFileWarning != "" {
+		auth = "manual subscription token invalid or expired"
+	}
+	return providerStatus{Name: openAICodexEndpointID, Class: providerClassBuiltin, AuthMethod: "manual", Configured: keys.HasOpenAICodex(), Auth: auth, DefaultModel: "explicit model selector required", Next: "see manual OpenAI Codex token guidance in user-docs/features/choose-models.md; no login, refresh, import, or removal here"}
 }
 
 func builtinAPIKeyStatus(name string, available, shadowed bool, defaultModel string) providerStatus {
@@ -241,7 +350,7 @@ func configuredSource(ok, shadowed bool) string {
 
 func nextForAPIKey(configured bool) string {
 	if configured {
-		return "ready to use"
+		return "select a default with `mecatui providers set-default PROVIDER MODEL`"
 	}
 	return "configure an API key"
 }

@@ -19,6 +19,9 @@ func (c providerCommands) runSetDefault(ctx context.Context, res invocationResol
 	requestedModel := optionalProviderDefaultModel(res.remaining)
 	provider, model, err := c.backend.resolveDefault(ctx, res.providerName, requestedModel)
 	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			return providerCredentialCancellation(stderr)
+		}
 		return fmt.Errorf("providers set-default: %w", err)
 	}
 	if requestedModel != "" {
@@ -50,9 +53,14 @@ func resolveProviderDefaultWithContext(ctx context.Context, provider, model stri
 	if err != nil {
 		return "", "", fmt.Errorf("inspect local providers: %w", err)
 	}
+	preservedModel := ""
+	if model == "" && inspection.selectedProvider == provider {
+		model = inspection.selectedModel
+		preservedModel = model
+	}
 	nativeLoader := &cliconfig.NativeEndpointLoader{}
 	defer func() { _ = nativeLoader.Close() }()
-	return app.ResolveDeploymentDefault(ctx, app.Config{
+	resolvedProvider, resolvedModel, err := app.ResolveDeploymentDefault(ctx, app.Config{
 		DefaultProvider:                provider,
 		DefaultModel:                   model,
 		ModelAliases:                   inspection.aliases,
@@ -66,6 +74,10 @@ func resolveProviderDefaultWithContext(ctx context.Context, provider, model stri
 		NativeEndpointCredentialLoader: nativeLoader,
 		ToolhiveLLM:                    true,
 	})
+	if err == nil && preservedModel != "" {
+		resolvedModel = preservedModel
+	}
+	return resolvedProvider, resolvedModel, err
 }
 
 func customProviderAPIKeys(credentials cliconfig.ResolvedCredentials, definitions permconfig.ProviderDefinitions) map[string]string {
