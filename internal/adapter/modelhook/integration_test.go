@@ -466,8 +466,8 @@ func runShellGuardrailInteractive(t *testing.T, waiver *modelhook.WaiverHolder, 
 		evs = append(evs, ev)
 		if ev.Type == session.EvPermissionAsk && ev.Ask != nil && !asked {
 			asked = true
-			if !ev.Ask.HookOriginated {
-				t.Error("a guardrail block ask must carry HookOriginated=true")
+			if ev.Ask.Origin != session.ApprovalOriginHookGuardrail {
+				t.Error("a guardrail block ask must carry explicit hook-guardrail origin")
 			}
 			r.Approve(ev.Ask.AskID, verdict)
 		}

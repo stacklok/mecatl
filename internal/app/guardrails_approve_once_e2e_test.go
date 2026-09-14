@@ -44,14 +44,13 @@ func markerExists(t *testing.T, ws string) bool {
 // YOLO it demotes to advisory (tool runs, no ask, no block).
 
 // guardrailE2EScript scripts the shared mock provider for one Shell call: the agent's
-// tool-call turn, then the checker's UNSAFE verdict turn (a single JSON object — the
-// checker fires during the Shell call's preHook, between the agent's two turns), then the
-// agent's final turn. The checker output must be the whole-object verdict ParseVerdict
-// accepts.
+// tool-call turn, then the reviewer's PROHIBITED assessment turn (a single JSON
+// object — the reviewer fires during the Shell call's preHook, between the agent's
+// two turns), then the agent's final turn.
 func guardrailE2EScript(cmd string) []mockllm.Turn {
 	return []mockllm.Turn{
 		mockllm.ToolCallTurn(session.NewToolCall("c1", "Shell", json.RawMessage(`{"command":"`+cmd+`"}`))),
-		mockllm.TextTurn(`{"safe": false, "reason": "merges a PR unattended"}`),
+		mockllm.TextTurn(`{"assessment":"prohibited","concerns":[{"ref":"C1","category":"authority_crossing","rationale":"merges a PR unattended","source_ref":"call"}],"evidence":[],"missing_evidence":[]}`),
 		mockllm.TextTurn("done"),
 	}
 }

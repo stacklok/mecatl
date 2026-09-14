@@ -13,6 +13,18 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Added
 
+- **Contextual guardrail foundation** — adds the consumer-local `agent.ToolReviewer`,
+  `ReviewEvidenceSource`, and `ReviewDetailSink` interfaces and their bounded request,
+  result, evidence, trajectory, and detail value types. Adds session-owned machine
+  projections for guardrail reviews and approval scopes, plus explicit
+  `session.ApprovalOrigin` on pending and durable approval records. Added (minor).
+
+- **Explicit approval origin** — replaces `session.PendingAsk.HookOriginated`,
+  `PlanOriginated`, and the derived `AskOrigin` accessor/type with one serialized
+  `PendingAsk.Origin`. Missing or unrecognized origins now fail closed and cannot
+  execute, learn permission rules, arm hook waivers, or transition plan mode. Changed
+  (breaking, pre-v1 minor).
+
 - **Session-load failure classification** — adds `port.SessionLoadFailureClass`,
   `SessionLoadFailureError`, `ErrSessionLoadFailure`, `NewSessionLoadFailure`, and
   `ClassifySessionLoadFailure`. Snapshot-backed stores can distinguish bounded

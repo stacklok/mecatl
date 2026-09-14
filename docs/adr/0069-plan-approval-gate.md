@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-07-21
-- Scope: the plan-approval seam — the `engine/agent` PresentPlan signalling tool + the dispatcher's plan-ask surface, `engine/session` `PendingAsk.PlanOriginated`/`AskOrigin`/`Origin()`/`StopPlanApproved`, `engine/tool.PlanOnly` catalog gate, the `engine/agent.Run.planApprovedTarget` run-scoped flip, and the composition/adapter wiring (`internal/adapter/server.Service.ApprovePlan` + the `ApprovePlan` streaming RPC + `POST /v1/sessions/{id}/plan:approve` + the opt-in `--plan-mode-auto-approve` observer + the mecatui plan-approval modal). The `PermissionAsk` proto is UNCHANGED (no provenance field added; the tool name `PresentPlan` is the discriminator).
+- Scope: the plan-approval seam — the `engine/agent` PresentPlan signalling tool + the dispatcher's plan-ask surface, `engine/session` `PendingAsk`/`ApprovalOrigin`/`StopPlanApproved`, `engine/tool.PlanOnly` catalog gate, the `engine/agent.Run.planApprovedTarget` run-scoped flip, and the composition/adapter wiring (`internal/adapter/server.Service.ApprovePlan` + the `ApprovePlan` streaming RPC + `POST /v1/sessions/{id}/plan:approve` + the opt-in `--plan-mode-auto-approve` observer + the mecatui plan-approval modal). ADR 0342 replaced the former provenance booleans with explicit `PendingAsk.Origin` and added approval-origin wire projection.
 - Supersedes: none
 - Superseded by: none
 - Amended: 2026-07-23 — the deny/iterate path described in §3 ("On Deny it synthesizes a
@@ -32,9 +32,9 @@ permission-ask machinery (`PauseForApproval` → `StateAwaiting` → `EvPermissi
 `Approve` → `ResumeWith`), plus the cross-process resume seam
 (`Engine.ResumeApproval` → `driveFromAwaiting`, ADR 0027 Phase 2). ADR 0062 had JUST
 proven the pattern — a PreToolUse hook BLOCK refined into an askable block reusing that
-machinery, with a serialized `HookOriginated` marker so a fresh process resumes correctly.
+machinery, with a serialized `ApprovalOriginHookGuardrail` marker so a fresh process resumes correctly.
 A plan-approval gate is the same shape: a PresentPlan call refined into an askable ask,
-with a serialized `PlanOriginated` marker. Reusing one mechanism for policy asks,
+with a serialized `ApprovalOriginPlan` marker. Reusing one mechanism for policy asks,
 guardrail blocks, AND plan approvals is the obvious shape.
 
 Two further forces shape the design. First, the `opusplan` model swap (ADR 0030 Layer 3)
@@ -49,7 +49,7 @@ mode flip from `StateRunning`/`StateAwaiting` — it is legal only from `StateId
 
 ## Decision
 
-**A PresentPlan signalling tool → a `PlanOriginated` awaiting ask → an atomic
+**A PresentPlan signalling tool → a `ApprovalOriginPlan` awaiting ask → an atomic
 `ApprovePlan` RPC → a `StopPlanApproved` clean terminal → a `SetMode` flip at the
 terminal boundary. Plus an opt-in auto-approve observer in composition, NOT in the loop.**
 
@@ -88,22 +88,18 @@ signalling-only): it sets `r.planApprovedTarget` (AllowOnce → `ModeDefault`,
 AllowAlways → `ModeAccept`) and synthesizes an allow result. On Deny it synthesizes a
 deny result and the loop CONTINUES in plan mode (the model iterates on the plan).
 
-**4. The serialized `PlanOriginated` marker + `AskOrigin`.**
-`engine/session/session.go` (`PlanOriginated`) is a new serialized `bool`
-(`json:"plan_originated,omitempty"`), the plan-approval sibling of `HookOriginated`. It
-is CROSS-PROCESS LOAD-BEARING: the awaiting-resume path (`Engine.ResumeApproval` →
+**4. The serialized `ApprovalOriginPlan` value.**
+`engine/session/session.go` (`PendingAsk`) stores one explicit `ApprovalOrigin` in
+`json:"origin,omitempty"`; plan asks use `ApprovalOriginPlan`, while hook guardrail asks
+use `ApprovalOriginHookGuardrail` and permission asks use `ApprovalOriginPermission`.
+This enum replaced the former competing provenance booleans and derived accessor so an
+unknown or contradictory restored origin fails closed instead of being guessed. It is
+CROSS-PROCESS LOAD-BEARING: the awaiting-resume path (`Engine.ResumeApproval` →
 `resolvePendingCall` in `engine/agent/dispatch.go`) runs in a FRESH process and keys the
 plan-flip branch on it — an Allow must NOT re-present the plan or run any tool; it
 synthesizes the allow result and sets `r.planApprovedTarget`, exactly like the live path.
-The `session.AskOrigin` enum (`AskOriginNone`/`AskOriginHook`/`AskOriginPlan`) +
-`engine/session/session.go` (`Origin`) is a read-time convenience accessor
-DERIVED from the two serialized bools (`HookOriginated`, `PlanOriginated`); it is NOT a
-stored field. This RETIRES the `session.go` caveat that warned against folding a third
-provenance signal into an enum with the run-scoped `ConfiguredAsk`/`FlooredConfiguredAllow`:
-those two stay run-scoped and never-serialized, while the two serialized bools are the
-on-disk contract and `Origin()` derives the single provenance from them without conflation
-(Hook takes precedence if both were incorrectly set — a construction invariant violation,
-since only one site ever sets a given ask).
+The run-scoped `ConfiguredAsk`/`FlooredConfiguredAllow` policy hints remain separate and
+never substitute for approval origin.
 
 **5. The `StopPlanApproved` clean terminal + the terminal-boundary mode flip.**
 `engine/session/session.go` (`StopPlanApproved`) is a new `StopReason = "plan_approved"`,
@@ -121,7 +117,7 @@ moves the session to `StateCompleted`, `sess.SetMode(r.planApprovedTarget)` is l
 errored plan run stays in plan mode, honestly. The flipped mode is saved so a
 Reopen/restart continues in the approved posture. `r.planApprovedTarget` is RUN-SCOPED and
 deliberately NOT serialized: a parked plan-ask resumes via `resolvePendingCall`, which
-re-sets it on the resumed run before `runLoop` sees it (the serialized `PlanOriginated`
+re-sets it on the resumed run before `runLoop` sees it (the serialized `ApprovalOriginPlan`
 marker is the cross-process contract).
 
 **6. The atomic `ApprovePlan` RPC (composition, NOT the loop).**
@@ -129,7 +125,7 @@ marker is the cross-process contract).
 RPC. It composes EXISTING seams and adds NO new engine machinery: (1) a live run is
 rejected (`ErrNotAwaitingPlan` → 409 — an approve mid-run must use the `Converse`
 `ResumeApproval` frame); (2) the session is loaded and must be `StateAwaiting` on a
-`PlanOriginated` ask (`sess.PendingAsk().Origin() == AskOriginPlan`); (3) `target_mode →
+`ApprovalOriginPlan` ask (`sess.PendingAsk().Origin() == AskOriginPlan`); (3) `target_mode →
 verdict`: `ModeDefault` → `VerdictAllowOnce`, `ModeAccept` → `VerdictAllowAlways`,
 `ModePlan`/zero → `VerdictDeny` (iterate, no flip, no continuation); (4)
 `resumeFromAwaiting` re-enters the loop AT the ask, the run terminates `StopPlanApproved`,
@@ -187,15 +183,15 @@ diagnostic (`plan_mode_auto_approve: ON (NO HUMAN REVIEW)`) is emitted when on.
   `resolvePendingCall` resume path), so a restart-replay reconstructs the approval.
 - The `opusplan` model swap (plan→execute) rides the existing ADR 0030 Layer 3 seam — the
   gate flips the mode, the model swap happens for free at the run-entry rebuild.
-- Cross-process resume is correct: the serialized `PlanOriginated` marker prevents a
+- Cross-process resume is correct: the serialized `ApprovalOriginPlan` marker prevents a
   re-present, and the run-scoped `planApprovedTarget` is re-set by `resolvePendingCall`
-  before `runLoop` sees it. The `AskOrigin`/`Origin()` accessor retires the `session.go`
+  before `runLoop` sees it. The `ApprovalOrigin`/`Origin` accessor retires the `session.go`
   caveat cleanly — the two serialized bools are the on-disk contract; the read-time enum
   derives the single provenance without conflating the run-scoped hints.
 
 **Costs:**
 
-- A new serialized `bool` on `PendingAsk` (`PlanOriginated`) — additive, `omitempty` keeps
+- A new serialized `bool` on `PendingAsk` (`ApprovalOriginPlan`) — additive, `omitempty` keeps
   a pre-#206 snapshot decoding to `false` (covered by a snapshot round-trip test).
 - A new streaming RPC (`ApprovePlan`) + HTTP route + proto message. The `PermissionAsk`
   proto is UNCHANGED (the tool name is the discriminator), so no `task generate` is needed
@@ -208,23 +204,23 @@ diagnostic (`plan_mode_auto_approve: ON (NO HUMAN REVIEW)`) is emitted when on.
 
 **Cloud-native inventory (ADR 0027): NO new List 1 / List 2 row is needed.**
 `engine/agent/loop.go` (`planApprovedTarget`) is RUN-SCOPED (a within-run transient,
-deliberately NOT serialized — the serialized `PlanOriginated` marker is the cross-process
+deliberately NOT serialized — the serialized `ApprovalOriginPlan` marker is the cross-process
 contract, and `resolvePendingCall` re-sets `planApprovedTarget` on the resumed run before
 `runLoop` sees it). `Service.ApprovePlan` reuses `resumeFromAwaiting` + `StartRunContent`,
 BOTH already inventoried (the awaiting-resume seam, ADR 0027 Phase 2; the run-entry
 funnel, Phase 1). `PendingAsk.PlanOriginated` is a serialized `PendingAsk` field in the
-SAME class as `HookOriginated` (ADR 0062), already covered by the snapshot round-trip
+SAME class as `ApprovalOriginHookGuardrail` (ADR 0062), already covered by the snapshot round-trip
 discipline — no new outlives-a-call resource, no new rehydrate-fidelity ledger row.
 
 ## See also
 
 - [ADR 0062](./0062-guardrails-approve-once.md) — the guardrail approve-once pattern this
-  gate mirrors (the `HookOriginated` serialized-marker precedent, the shared `surfaceAsk`
+  gate mirrors (the `ApprovalOriginHookGuardrail` serialized-marker precedent, the shared `surfaceAsk`
   spine, the headless degrade inside the surface).
 - [ADR 0030](./0030-model-selection-heuristics.md) Layer 3 — the mode→model re-resolution
   the plan→execute flip rides (the run-entry `rehydrateSession` CASE 1 rebuild).
 - [ADR 0027](./0027-cloud-native.md) — the cloud-native arc; the awaiting-resume seam
-  (Phase 2) the `PlanOriginated` marker rides, and the inventory discipline (no new row —
+  (Phase 2) the `ApprovalOriginPlan` marker rides, and the inventory discipline (no new row —
   see Consequences).
 - [ADR 0007](./0007-twelve-patterns-audit.md) pattern 6 — explore-plan-act, the plan-mode
   feature this gate completes.

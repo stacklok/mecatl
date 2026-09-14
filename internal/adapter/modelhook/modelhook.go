@@ -47,25 +47,19 @@ package modelhook
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 
+	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/session"
 )
 
 // Bounds and markers for the guardrail enforcement paths.
 const (
-	// maxSanitizedBytes bounds a sanitize verdict's sanitized_content. A compromised
-	// checker could pad/launder content back into the trusted stream; an oversized
-	// rewrite is rejected (→ block). It is comfortably larger than any legitimate
-	// args object or trimmed result, but bounded.
-	maxSanitizedBytes = 64 * 1024
-	// guardrailRedactionMarker is prepended to a Post-sanitized result so the model
-	// knows it received EDITED content (it may otherwise confidently cite removed
-	// text). Pre arg-sanitizing stays silent (the model never sees the raw args).
-	guardrailRedactionMarker = "[guardrail: redacted unsafe content]"
 	// guardrailFindingMarker is a stable token on every finding diagnostic so an
 	// operator can grep the operator log for guardrail findings across sessions.
 	guardrailFindingMarker = "guardrail-finding"
@@ -116,10 +110,11 @@ type VerdictChecker interface {
 // New (so the breaker is per-session). It inspects PreToolUse/PostToolUse phases
 // against its compiled rules and delegates every other phase straight to inner.
 type Runner struct {
-	inner   port.HookRunner
-	rules   []CompiledRule
-	checker VerdictChecker
-	diag    port.Diagnostics
+	inner    port.HookRunner
+	rules    []CompiledRule
+	checker  VerdictChecker
+	reviewer agent.ToolReviewer
+	diag     port.Diagnostics
 	// failures tracks the CONSECUTIVE checker-failure streak so a persistently-down
 	// checker escalates to a one-time sticky "checker DOWN" WARN (a continuously-
 	// unguarded surface under fail-open must not vanish in a per-call WARN flood).
@@ -149,8 +144,11 @@ type Runner struct {
 type Options struct {
 	// Rules are the compiled guardrail rules (matcher + phases + mode + prompt).
 	Rules []CompiledRule
-	// Checker is the engine-backed verdict checker. A nil Checker makes the Runner a
-	// transparent pass-through to inner (the OFF posture) regardless of Rules.
+	// ToolReviewer is the contextual investigative reviewer used by production.
+	// It receives harness provenance and returns an explicit three-state assessment.
+	ToolReviewer agent.ToolReviewer
+	// Checker is retained only as an adapter test seam for callers compiled against
+	// the pre-contextual package. Production composition never wires it.
 	Checker VerdictChecker
 	// Diagnostics is the operator-logging sink (advisory findings, fail-open WARN).
 	// nil defaults to port.NopDiagnostics.
@@ -184,6 +182,7 @@ func New(inner port.HookRunner, opts Options) *Runner {
 		inner:             inner,
 		rules:             opts.Rules,
 		checker:           opts.Checker,
+		reviewer:          opts.ToolReviewer,
 		diag:              diag,
 		failures:          &failureStreak{threshold: guardrailDownThreshold},
 		minContentBytes:   opts.MinContentBytes,
@@ -200,12 +199,9 @@ var _ port.HookRunner = (*Runner)(nil)
 // on a human AllowAlways verdict for a hook-originated ask (ADR 0062).
 var _ port.HookApprovalLearner = (*Runner)(nil)
 
-// waiverKey is the concrete authorization key a waiver matches on for a PreToolUse
-// event: the Shell COMMAND (so two cosmetically-different invocations of the same
-// command normalize-equal), or the raw args JSON for any other tool. It is the SINGLE
-// key derivation shared by LearnHookApproval (arm) and check (consult) so the two
-// cannot drift. An unreadable Shell args object falls back to the raw input — the
-// waiver then keys on the verbatim args, still an EXACT match, never a blanket one.
+// waiverKey is retained only for the legacy Checker test seam. It extracts the
+// byte-exact Shell command when possible, otherwise raw args; production contextual
+// grants are derived by composition from the complete effective action and versions.
 func waiverKey(ev governance.HookEvent) string {
 	if ev.Tool == "Shell" {
 		if c, ok := shellCmdFromArgs(string(ev.Input)); ok {
@@ -215,12 +211,8 @@ func waiverKey(ev governance.HookEvent) string {
 	return string(ev.Input)
 }
 
-// LearnHookApproval arms a session waiver from a human "Allow & don't ask again"
-// verdict (ADR 0062). The engine calls it with the neutral governance.HookEvent for
-// the approved hook-blocked call; the Runner derives the CONCRETE waiver key (Shell
-// command, else raw args) and arms the shared holder for an EXACT (normalized) match.
-// A nil waiver holder (the off posture) makes it a no-op (ArmFromApproval on nil is a
-// no-op).
+// LearnHookApproval supports only the legacy Checker test seam. Production
+// contextual action review arms the complete HMAC digest directly in composition.
 func (r *Runner) LearnHookApproval(_ context.Context, ev governance.HookEvent) {
 	r.waiver.ArmFromApproval(ev.SessionID, ev.Tool, waiverKey(ev))
 }
@@ -239,7 +231,14 @@ func (r *Runner) Run(ctx context.Context, ev governance.HookEvent) (governance.H
 	innerOut, innerErr := r.inner.Run(ctx, ev)
 
 	phase, ok := phaseOf(ev.Phase)
-	if !ok || r.checker == nil {
+	if ok && phase == PhasePre && r.reviewer != nil {
+		// Production action review runs in the engine after trusted mutation and the
+		// second deterministic gate. This decorator retains only the inner mutation
+		// pass here; running the reviewer too would inspect the requested call and then
+		// duplicate the exact-effective-call review.
+		return innerOut, innerErr
+	}
+	if !ok || (r.reviewer == nil && r.checker == nil) {
 		// Not a tool phase, or the checker is off: inner's outcome is final.
 		return innerOut, innerErr
 	}
@@ -293,8 +292,10 @@ func (r *Runner) check(ctx context.Context, phase Phase, rule CompiledRule, ev g
 		return governance.HookOutcome{}
 	}
 
-	prompt := buildCheckPrompt(phase, rule, ev.Tool, content)
-	verdict, err := r.checker.Check(ctx, CheckRequest{Phase: phase, Tool: ev.Tool, Content: content, Prompt: prompt})
+	verdict, unresolved, err := r.review(ctx, phase, rule, ev, content)
+	if unresolved {
+		return r.onCompletedUnresolved(ctx, phase, rule, ev)
+	}
 	if err != nil {
 		return r.onCheckerError(ctx, phase, rule, ev, err)
 	}
@@ -305,6 +306,60 @@ func (r *Runner) check(ctx context.Context, phase Phase, rule CompiledRule, ev g
 	}
 	r.failures.reset()
 	return r.enforce(ctx, phase, rule, ev, verdict)
+}
+
+func (r *Runner) review(ctx context.Context, phase Phase, rule CompiledRule, ev governance.HookEvent, content string) (Verdict, bool, error) {
+	if r.reviewer == nil {
+		prompt := buildCheckPrompt(phase, rule, ev.Tool, content)
+		verdict, err := r.checker.Check(ctx, CheckRequest{Phase: phase, Tool: ev.Tool, Content: content, Prompt: prompt})
+		return verdict, false, err
+	}
+	job := agent.ReviewJobInbound
+	if phase == PhasePre {
+		job = agent.ReviewJobAction
+	}
+	facts := []agent.ReviewPrincipalFact(nil)
+	if strings.TrimSpace(rule.prompt) != "" {
+		facts = append(facts, agent.ReviewPrincipalFact{Kind: "operator_task_risk_policy", Ref: "operator-policy", Statement: rule.prompt})
+	}
+	result, err := r.reviewer.Review(ctx, agent.ToolReviewRequest{
+		ReviewID:               fmt.Sprintf("%s:%s", ev.SessionID, ev.CallID),
+		Job:                    job,
+		Event:                  ev,
+		EffectiveCall:          session.NewToolCall(session.ToolCallID(ev.CallID), ev.Tool, ev.Input),
+		PrincipalFacts:         facts,
+		PrincipalFactsComplete: true,
+		Caller:                 agent.ReviewCaller{Role: "main", Capabilities: []string{ev.Tool}},
+		EvidenceComplete:       true,
+		TrajectoryComplete:     true,
+	}, nil)
+	if err != nil {
+		return Verdict{}, false, err
+	}
+	switch result.Assessment {
+	case agent.ReviewAcceptable:
+		safe := true
+		return Verdict{Safe: &safe}, false, nil
+	case agent.ReviewProhibited:
+		safe := false
+		return Verdict{Safe: &safe, Reason: "contextual guardrail finding"}, false, nil
+	default:
+		return Verdict{}, true, nil
+	}
+}
+
+func (r *Runner) onCompletedUnresolved(ctx context.Context, phase Phase, rule CompiledRule, ev governance.HookEvent) governance.HookOutcome {
+	r.failures.reset()
+	if rule.mode == ModeAdvisory {
+		r.diag.Log(ctx, port.LevelWarn,
+			"guardrails: advisory unresolved assessment (content NOT altered)",
+			"tool", ev.Tool, "phase", string(phase), "session", ev.SessionID, "call", ev.CallID, "assessment", "unresolved")
+		return governance.HookOutcome{Message: "guardrail advisory unresolved: assessment incomplete"}
+	}
+	r.diag.Log(ctx, port.LevelInfo,
+		"guardrails: completed unresolved assessment; enforcing guardrail",
+		"tool", ev.Tool, "phase", string(phase), "session", ev.SessionID, "call", ev.CallID, "assessment", "unresolved")
+	return r.blockOutcome(phase, ev.Tool, "contextual guardrail assessment was unresolved")
 }
 
 // findingFields builds the correlatable diagnostic key/values shared by every
@@ -336,6 +391,21 @@ func findingFields(ev governance.HookEvent, phase Phase, extra ...any) []any {
 // even under the fail global). Advisory rules always fail-open regardless — an
 // advisory finding is observe-only by definition.
 func (r *Runner) onCheckerError(ctx context.Context, phase Phase, rule CompiledRule, ev governance.HookEvent, err error) governance.HookOutcome {
+	var terminal interface{ GuardrailReviewTerminalFailure() bool }
+	if errors.As(err, &terminal) && terminal.GuardrailReviewTerminalFailure() {
+		r.failures.reset()
+		reason := "guardrail review rejected stale, forbidden, or invalid authority"
+		if rule.mode == ModeAdvisory {
+			r.diag.Log(ctx, port.LevelWarn,
+				"guardrails: advisory inspection failure (content NOT altered)",
+				"tool", ev.Tool, "phase", string(phase), "session", ev.SessionID, "call", ev.CallID, "inspection_failure", "authority")
+			return governance.HookOutcome{Message: "guardrail advisory inspection failure: invalid review authority"}
+		}
+		r.diag.Log(ctx, port.LevelWarn,
+			"guardrails: invalid review authority; blocking independently of checker-down opt-out",
+			"tool", ev.Tool, "phase", string(phase), "session", ev.SessionID, "call", ev.CallID, "inspection_failure", "authority")
+		return r.blockOutcome(phase, ev.Tool, reason)
+	}
 	if down, n := r.failures.fail(); down {
 		r.diag.Log(ctx, port.LevelWarn,
 			"guardrails: checker DOWN — "+itoa(n)+" consecutive checker failures; tool I/O is currently UNGUARDED on fail-open rules until the checker recovers",
@@ -371,62 +441,12 @@ func (r *Runner) enforce(ctx context.Context, phase Phase, rule CompiledRule, ev
 			"guardrails: advisory finding (content NOT altered)",
 			findingFields(ev, phase, "reason", clamp(reason))...)
 		return governance.HookOutcome{Message: advisoryMessage(reason)}
-	case ModeSanitize:
-		return r.sanitizeOutcome(ctx, phase, ev, reason, v)
 	default: // ModeBlock
 		r.diag.Log(ctx, port.LevelInfo,
 			"guardrails: blocking finding (enforced)",
 			findingFields(ev, phase, "reason", clamp(reason))...)
 		return r.blockOutcome(phase, ev.Tool, reason)
 	}
-}
-
-// sanitizeOutcome bounds the sanitize path (the sanitize-laundering defense). A
-// sanitize verdict's sanitized_content re-enters as content the main agent trusts
-// MORE (it is "sanitized"), so:
-//
-//   - a NIL sanitized_content on an unsafe verdict ⇒ nothing safe to substitute ⇒
-//     fall back to a BLOCK (fail toward the safe outcome);
-//   - an OVERSIZED sanitized_content (a compromised checker padding/laundering) ⇒
-//     reject and fall back to a BLOCK;
-//   - on Pre, a sanitized payload that is not valid args JSON ⇒ the loop would ignore
-//     it and run the ORIGINAL UNSAFE args, so fall back to a BLOCK (NEVER let the
-//     unsafe original through);
-//   - on Post, the sanitized content is rewritten with a visible redaction marker so
-//     the model knows it received edited content (it may otherwise confidently cite a
-//     hole). Pre arg-fixing stays silent (the model never sees the raw args anyway).
-//
-// The trust assumption is explicit: a compromised checker can rewrite content;
-// sanitize TRUSTS the checker's output. Use enforce+sanitize only with a checker
-// model you trust (documented in GUARDRAILS.md).
-func (r *Runner) sanitizeOutcome(ctx context.Context, phase Phase, ev governance.HookEvent, reason string, v Verdict) governance.HookOutcome {
-	r.diag.Log(ctx, port.LevelInfo,
-		"guardrails: sanitizing finding (enforced)",
-		findingFields(ev, phase, "reason", clamp(reason))...)
-	if v.Sanitized == nil {
-		return r.blockOutcome(phase, ev.Tool, reason)
-	}
-	sanitized := *v.Sanitized
-	if len(sanitized) > maxSanitizedBytes {
-		r.diag.Log(ctx, port.LevelWarn,
-			"guardrails: sanitized_content exceeds the size bound; rejecting the rewrite and blocking instead",
-			findingFields(ev, phase, "bytes", len(sanitized), "bound", maxSanitizedBytes)...)
-		return r.blockOutcome(phase, ev.Tool, reason)
-	}
-	if phase == PhasePre {
-		// The sanitized payload IS the rewritten args JSON; it MUST be valid JSON or the
-		// loop would ignore it and run the original UNSAFE args. Validate, else block.
-		if !json.Valid([]byte(sanitized)) {
-			r.diag.Log(ctx, port.LevelWarn,
-				"guardrails: sanitized args are not valid JSON; blocking instead of running the original unsafe args",
-				findingFields(ev, phase)...)
-			return r.blockOutcome(phase, ev.Tool, reason)
-		}
-		return mutateOutcome(phase, ev.Tool, sanitized, false)
-	}
-	// Post: prepend a visible redaction marker so the model adapts (it may otherwise
-	// cite a removed hole as if present).
-	return mutateOutcome(phase, ev.Tool, guardrailRedactionMarker+"\n"+sanitized, false)
 }
 
 // advisoryMessage builds the client-visible EvHook text for an advisory finding:
@@ -449,7 +469,7 @@ func advisoryMessage(reason string) string {
 // ask reason the human sees on an interactive Pre, and the model-visible error
 // otherwise; either way it carries NO directive grammar (the old /guardrail-allow
 // hint is gone — the approve-once flow is an out-of-band modal, not a prompt prefix).
-func (*Runner) blockOutcome(phase Phase, tool, reason string) governance.HookOutcome {
+func (*Runner) blockOutcome(phase Phase, _ string, reason string) governance.HookOutcome {
 	msg := "blocked by guardrail"
 	if reason != "" {
 		msg = "blocked by guardrail: " + reason
@@ -464,7 +484,7 @@ func (*Runner) blockOutcome(phase Phase, tool, reason string) governance.HookOut
 	// PostToolUse: Block is inert (the tool already ran), so rewrite the RESULT to a
 	// model-visible error via Mutated. This is the load-bearing #1 constraint. Post is
 	// NOT askable (the approve-once flow is PreToolUse-only).
-	return mutateOutcome(phase, tool, msg, true)
+	return postBlockOutcome(msg)
 }
 
 // contentUnderReview extracts the raw content a phase inspects from the HookEvent.
@@ -544,9 +564,6 @@ func buildCheckPrompt(phase Phase, rule CompiledRule, tool, content string) stri
 	governance.WriteUntrustedBlock(&b, content)
 	b.WriteString("\nRespond with ONLY a single JSON object and nothing else — no prose, no code fences: " +
 		`{"safe": true|false, "reason": "<one short sentence>"`)
-	if rule.mode == ModeSanitize {
-		b.WriteString(`, "sanitized_content": "<the content with the unsafe portion removed; omit when safe>"`)
-	}
 	b.WriteString("}.")
 	return b.String()
 }

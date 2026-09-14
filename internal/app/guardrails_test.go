@@ -311,8 +311,7 @@ func TestGuardrailsOffReturnsInnerUnchanged(t *testing.T) {
 }
 
 // A model with NO explicit rules WRAPS inner with the DEFAULT block rule set (the
-// headline default: ON block for WebSearch/WebFetch/mcp__* + Shell with a read-only
-// pre-filter — ADR 0060).
+// headline contextual default: web/MCP, Shell, local mutations, and delegation).
 func TestGuardrailsModelOnlyShipsDefaultBlock(t *testing.T) {
 	inner := hookexec.New(nil)
 	llm := mockllm.New()
@@ -321,10 +320,10 @@ func TestGuardrailsModelOnlyShipsDefaultBlock(t *testing.T) {
 	if got == port.HookRunner(inner) {
 		t.Fatal("a guardrails model with no explicit rules must ship the DEFAULT block rules, not stay inert")
 	}
-	// The default set is WebSearch/WebFetch/FetchMcpResource/CallMcpWithQuery/mcp__* + Shell; assert it compiles to 6.
+	// The contextual action default expands the original six rules with five local mutations and three delegation families.
 	specs, usedDefaults := effectiveGuardrailSpecs(cfg)
-	if !usedDefaults || len(specs) != 6 {
-		t.Fatalf("model-only must use the 6-rule default set; usedDefaults=%v n=%d", usedDefaults, len(specs))
+	if !usedDefaults || len(specs) != 14 {
+		t.Fatalf("model-only must use the 14-rule contextual default set; usedDefaults=%v n=%d", usedDefaults, len(specs))
 	}
 	for _, s := range specs {
 		if s.Mode != string(modelhook.ModeBlock) {
@@ -433,8 +432,8 @@ func TestGuardrailsPostureCouplingDemotesDefaults(t *testing.T) {
 func TestGuardrailsDefaultModeAdvisory(t *testing.T) {
 	cfg := Config{UseMock: true, GuardrailsModel: "checker-model", GuardrailsDefaultMode: "advisory"}
 	specs, usedDefaults := effectiveGuardrailSpecs(cfg)
-	if !usedDefaults || len(specs) != 6 {
-		t.Fatalf("model-only with defaultMode must still use the 6-rule default set; usedDefaults=%v n=%d", usedDefaults, len(specs))
+	if !usedDefaults || len(specs) != 14 {
+		t.Fatalf("model-only with defaultMode must still use the 14-rule contextual default set; usedDefaults=%v n=%d", usedDefaults, len(specs))
 	}
 	for _, s := range specs {
 		if s.Mode != string(modelhook.ModeAdvisory) {

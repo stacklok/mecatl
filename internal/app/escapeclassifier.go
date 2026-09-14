@@ -128,7 +128,7 @@ type fsPathArg struct {
 //     canonical target is a pseudo-fs mount).
 func (c *escapeClassifier) classify(toolName string, args json.RawMessage) escapeKind {
 	switch toolName {
-	case "Read", "Write", "Edit":
+	case "Read", writeToolName, editToolName:
 	default:
 		return escapeInRoot
 	}

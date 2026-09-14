@@ -200,7 +200,7 @@ func (p *escapePolicy) Evaluate(ctx context.Context, sessionID session.SessionID
 				Effect: governance.Ask,
 				Reason: fmt.Sprintf("out-of-workspace read: %q lies outside the workspace root — approve to read it through the FS tool (a Shell cat of the same path is NOT a substitute)", path),
 			}
-		case "Write", "Edit":
+		case writeToolName, editToolName:
 			// Scenario 3: a WRITE escape is allowed at yolo and ASKS at auto —
 			// never a silent un-asked mutation below yolo. Scenario 4 extends
 			// the SAME ask to strict/trusted (whose Write/Edit floor Ask

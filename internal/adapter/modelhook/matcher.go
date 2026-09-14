@@ -13,11 +13,6 @@ const (
 	// or, because a PostToolUse Block is INERT (the tool already ran), rewrites the
 	// result to a model-visible error via HookOutcome.Mutated.
 	ModeBlock Mode = "block"
-	// ModeSanitize enforces by REWRITING: an "unsafe" verdict with a sanitized_content
-	// payload rewrites the call args (Pre) / tool result (Post) to the sanitized form.
-	// A sanitize verdict with no sanitized_content falls back to a block (the content
-	// was judged unsafe and there is nothing safe to substitute).
-	ModeSanitize Mode = "sanitize"
 )
 
 // Phase selects which tool-use phase(s) a rule inspects. A rule with no explicit
@@ -40,7 +35,7 @@ type RuleSpec struct {
 	Match string
 	// Phases is the directions this rule inspects ("pre"/"post"); empty = BOTH.
 	Phases []string
-	// Mode is the enforcement posture ("advisory"/"block"/"sanitize").
+	// Mode is the enforcement posture ("advisory"/"block").
 	Mode string
 	// Prompt overrides the built-in inspection prompt for the rule's direction.
 	Prompt string
@@ -101,8 +96,6 @@ func compileMode(s string) (Mode, bool) {
 		return ModeBlock, true
 	case string(ModeAdvisory):
 		return ModeAdvisory, true
-	case string(ModeSanitize):
-		return ModeSanitize, true
 	}
 	return "", false
 }
@@ -138,7 +131,7 @@ type CompiledRule struct {
 	// pre/post report whether this rule inspects the outbound/inbound direction.
 	pre  bool
 	post bool
-	// mode is the enforcement posture (advisory/block/sanitize).
+	// mode is the enforcement posture (advisory/block).
 	mode Mode
 	// prompt overrides the built-in inspection prompt for the rule's direction.
 	// Empty keeps the built-in default (defaultPrePrompt / defaultPostPrompt).
@@ -229,4 +222,35 @@ func resolve(rules []CompiledRule, tool string, phase Phase) (CompiledRule, bool
 		}
 	}
 	return best, found
+}
+
+// ResolveRule returns the effective compiled rule for a tool and phase. It is
+// used by composition to place action review after trusted mutation while keeping
+// matcher precedence owned by this adapter.
+func ResolveRule(rules []CompiledRule, tool string, phase Phase) (CompiledRule, bool) {
+	return resolve(rules, tool, phase)
+}
+
+// Advisory reports whether this rule observes without enforcing.
+func (r CompiledRule) Advisory() bool { return r.mode == ModeAdvisory }
+
+// Prompt returns the additive operator task-risk prompt for this rule.
+func (r CompiledRule) Prompt() string { return r.prompt }
+
+// FailClosed reports the effective checker-down posture for this rule.
+func (r CompiledRule) FailClosed(global bool) bool {
+	if r.failClosedSet {
+		return r.failClosed
+	}
+	return global
+}
+
+// SkipAction reports whether this rule's conservative Shell pre-filter proves
+// the exact action read-only. Ambiguous input never skips.
+func (r CompiledRule) SkipAction(tool, input string) bool {
+	if !r.skipReadOnlyShell || tool != "Shell" {
+		return false
+	}
+	command, ok := shellCmdFromArgs(input)
+	return ok && shellFullyReadOnly(command)
 }

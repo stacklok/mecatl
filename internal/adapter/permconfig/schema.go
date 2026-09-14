@@ -1257,6 +1257,74 @@ func (m *OpenRouterModelRoute) UnmarshalYAML(node ast.Node) error {
 	return decodeStrictMapping(node, "openrouter.models[]", m.strictFields())
 }
 
+// ModelSlotValue is one scalar slot selector, optionally carrying the operator-only
+// explicit provider route supported by the guardrail slot.
+type ModelSlotValue struct {
+	Model            string
+	Provider         string
+	ExplicitProvider bool
+}
+
+// ModelSlots is the strict models.slots mapping.
+type ModelSlots map[string]ModelSlotValue
+
+// UnmarshalYAML preserves scalar slot compatibility and admits an object only for guardrail.
+func (s *ModelSlots) UnmarshalYAML(node ast.Node) error {
+	mapping, ok := permconfigMapping(node)
+	if !ok {
+		return fmt.Errorf("models.slots: must be a mapping")
+	}
+	out := make(ModelSlots, len(mapping.Values))
+	for _, entry := range mapping.Values {
+		name, stringKey := permconfigMappingKey(entry.Key)
+		if !stringKey || strings.TrimSpace(name) == "" {
+			return fmt.Errorf("models.slots: slot key must be a non-empty string")
+		}
+		if _, duplicate := out[name]; duplicate {
+			return fmt.Errorf("models.slots.%s: duplicate slot key", name)
+		}
+		if fields, isMapping := permconfigMapping(entry.Value); isMapping {
+			if name != "guardrail" {
+				return fmt.Errorf("models.slots.%s: provider mapping is supported only for guardrail", name)
+			}
+			var value ModelSlotValue
+			seen := map[string]bool{}
+			for _, field := range fields.Values {
+				key, isString := permconfigMappingKey(field.Key)
+				if !isString || (key != "provider" && key != "model") {
+					return fmt.Errorf("models.slots.guardrail: unknown key %q", key)
+				}
+				if seen[key] {
+					return fmt.Errorf("models.slots.guardrail: duplicate key %q", key)
+				}
+				seen[key] = true
+				var scalar string
+				if err := yaml.NewDecoder(bytes.NewReader(nil)).DecodeFromNode(field.Value, &scalar); err != nil {
+					return fmt.Errorf("models.slots.guardrail.%s: must be a string", key)
+				}
+				if key == "provider" {
+					value.Provider = strings.TrimSpace(scalar)
+				} else {
+					value.Model = strings.TrimSpace(scalar)
+				}
+			}
+			if value.Provider == "" || value.Model == "" {
+				return fmt.Errorf("models.slots.guardrail: provider and model are both required and non-empty")
+			}
+			value.ExplicitProvider = true
+			out[name] = value
+			continue
+		}
+		var scalar string
+		if err := yaml.NewDecoder(bytes.NewReader(nil)).DecodeFromNode(entry.Value, &scalar); err != nil {
+			return fmt.Errorf("models.slots.%s: selector must be a string", name)
+		}
+		out[name] = ModelSlotValue{Model: scalar}
+	}
+	*s = out
+	return nil
+}
+
 // ModelsSection is the `models:` YAML subtree (ADR 0030): a per-slot model-binding
 // map, an alias map, a session-default binding, and the operator-tier allowlist cap.
 // The TOP mapping is parsed STRICTLY (unknown keys error); the inner Slots/Aliases
@@ -1274,7 +1342,7 @@ func (m *OpenRouterModelRoute) UnmarshalYAML(node ast.Node) error {
 type ModelsSection struct {
 	// Slots binds a slot name (a call-slot "compaction"/"ask-reviewer"/"guardrail" or
 	// a tier "cheap"/"fast"/"reasoning") to a model selector (alias or concrete id).
-	Slots map[string]string `yaml:"slots"`
+	Slots ModelSlots `yaml:"slots"`
 	// Aliases binds a short alias to a concrete model id (merged onto the CLI
 	// --model-alias map, CLI winning per key).
 	Aliases map[string]string `yaml:"aliases"`
@@ -1503,7 +1571,7 @@ type GuardrailsSection struct {
 	// warn; failClosed:false (explicit) loosens even under fail. Empty = warn.
 	OnCheckerDown string `yaml:"onCheckerDown"`
 	// DefaultMode sets the enforcement mode for the built-in default rules when no
-	// explicit rules are configured: "block" (default), "advisory", or "sanitize".
+	// explicit rules are configured: "block" (default) or "advisory".
 	// An explicit rules list replaces the defaults entirely (this key is ignored).
 	DefaultMode string `yaml:"defaultMode"`
 	// Escape is the ADR-0080 escape knob: when true AND a checker model is
@@ -1522,7 +1590,7 @@ type GuardrailRuleSpec struct {
 	Match string `yaml:"match"`
 	// Phases lists "pre"/"post"; empty = both.
 	Phases []string `yaml:"phases"`
-	// Mode is "block"/"sanitize"/"advisory"; empty defaults to block.
+	// Mode is "block"/"advisory"; empty defaults to block.
 	Mode string `yaml:"mode"`
 	// Prompt overrides the built-in inspection rubric.
 	Prompt string `yaml:"prompt"`
@@ -1539,7 +1607,13 @@ type GuardrailRuleSpec struct {
 // inside the guardrails subtree is a parse error — a typo like `moddel:` or `rulez:`
 // must not silently disable a guardrail. Same rationale as Permissions.UnmarshalYAML.
 func (g *GuardrailsSection) UnmarshalYAML(node ast.Node) error {
-	return decodeStrictMapping(node, "guardrails", g.strictFields())
+	if err := decodeStrictMapping(node, "guardrails", g.strictFields()); err != nil {
+		return err
+	}
+	if mode := strings.TrimSpace(g.DefaultMode); mode != "" && mode != "block" && mode != "advisory" {
+		return fmt.Errorf("guardrails.defaultMode: must be block or advisory")
+	}
+	return nil
 }
 
 func (g *GuardrailsSection) strictFields() map[string]any {
@@ -1572,6 +1646,9 @@ func (r *GuardrailRuleSpec) UnmarshalYAML(node ast.Node) error {
 	// Track whether failClosed was explicitly present so the global onCheckerDown
 	// toggle can distinguish a per-rule opt-out from an unset rule.
 	r.FailClosedPresent = mappingHasKey(node, "failClosed")
+	if mode := strings.TrimSpace(r.Mode); mode != "" && mode != "block" && mode != "advisory" {
+		return fmt.Errorf("guardrails.rules[].mode: must be block or advisory")
+	}
 	return nil
 }
 

@@ -1594,11 +1594,12 @@ func (s *Supervisor) driveOneTurn(ctx context.Context, m *memberRT, prompt strin
 		stopWatch := context.AfterFunc(m.ctx, cancelDrive)
 		defer stopWatch()
 	}
+	req := RunRequest{Text: prompt, reviewRoot: s.caps.reviewRoot, reviewIsolated: m.isolated}
 	var run *Run
 	if synthesis {
-		run = m.engine.runWithCurrentMainUsageBaseline(driveCtx, m.sess, m.env, RunRequest{Text: prompt})
+		run = m.engine.runWithCurrentMainUsageBaseline(driveCtx, m.sess, m.env, req)
 	} else {
-		run = m.engine.Run(driveCtx, m.sess, m.env, RunRequest{Text: prompt})
+		run = m.engine.Run(driveCtx, m.sess, m.env, req)
 	}
 	posture := childPosture{isolated: m.isolated, caps: s.caps, role: m.spec.Name,
 		// childID is the member SESSION id (MemberSessionID — NOT the member name role

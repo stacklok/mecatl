@@ -173,6 +173,10 @@ type Deps struct {
 	AuthorityEvaluator port.AuthorityEvaluator
 	// Hooks runs the PreToolUse / PostToolUse lifecycle hooks.
 	Hooks port.HookRunner
+	// ToolReviewer performs contextual action and inbound review when configured.
+	ToolReviewer ToolReviewer
+	// ReviewDetails receives bounded live-only human review detail.
+	ReviewDetails ReviewDetailSink
 	// Store persists session state (optional; nil disables persistence).
 	Store port.SessionStore
 	// SessionLiveness is the optional lifecycle-exclusion seam for engine-owned
@@ -745,6 +749,10 @@ type Run struct {
 	operatorProfile       []tool.MemoryEntry
 	operatorProfileLoaded bool
 	operatorProfileWarned bool
+	// reviewRoot is the delegation-root contextual trajectory and reviewer binding.
+	// Child runs inherit the same pointer through private RunRequest fields; no
+	// conversation content crosses that seam.
+	reviewRoot *reviewRoot
 	// currentPrompt is the accepted genuine prompt for this run. Completion locates
 	// it in the final history; if compaction removed it, automatic admission gets an
 	// invalid span and fails closed.
@@ -865,6 +873,10 @@ type RunRequest struct {
 	// r.req.AskIDDiscriminator, which may be empty or colon-bearing and would
 	// bypass the colon/empty fallback.
 	AskIDDiscriminator string
+	// reviewRoot is engine-owned delegation-root state. It is private so callers
+	// cannot inject reviewer authority or share trajectory across unrelated roots.
+	reviewRoot     *reviewRoot
+	reviewIsolated bool
 }
 
 // extraToolOptions records runtime-owned restrictions for an ExtraTools overlay.
@@ -1404,6 +1416,7 @@ func (e *Engine) prepareRun(ctx context.Context, sess *session.Session, req RunR
 		ctx:            ctx,
 		req:            req,
 		budgetBaseline: budgetBaseline,
+		reviewRoot:     req.reviewRoot,
 		hardAbort:      make(chan struct{}),
 		serial:         serial,
 		// Bind the run-scoped diagnostics ONCE here, where the live session is in
@@ -1412,6 +1425,9 @@ func (e *Engine) prepareRun(ctx context.Context, sess *session.Session, req RunR
 		// only the "session" key is bound. With on NopDiagnostics returns Nop, so an
 		// engine with no injected sink stays silent.
 		diag: e.bindRunDiag(sess.ID),
+	}
+	if r.reviewRoot == nil && e.deps.ToolReviewer != nil {
+		r.reviewRoot = newReviewRoot(e.deps.ToolReviewer, e.deps.ReviewDetails)
 	}
 	// Resolve the trailing askID discriminator once (ADR-0044 / ADR-0249); see
 	// askDiscriminatorFor for the precedence and the colon rule.

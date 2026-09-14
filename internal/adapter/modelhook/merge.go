@@ -27,32 +27,12 @@ func postResultContent(input json.RawMessage) (string, bool) {
 	return p.Content, true
 }
 
-// mutateOutcome builds a phase-correct HookOutcome.Mutated rewrite.
-//
-//   - PreToolUse: Mutated REPLACES the tool-call args JSON. The sanitized payload is
-//     the rewritten args object verbatim; isError is irrelevant (a Pre mutation has
-//     no error flag). The caller (sanitizeOutcome) has ALREADY validated the payload
-//     is valid JSON — an invalid payload never reaches here (it falls back to a block
-//     so the original unsafe args never run).
-//   - PostToolUse: Mutated REPLACES the result, interpreted as {content, is_error}.
-//     A block-on-post rewrites to {content:"blocked by guardrail: …", is_error:true};
-//     a sanitize-on-post rewrites to {content:<marker + sanitized>, is_error:false}.
-func mutateOutcome(phase Phase, _ string, payload string, isError bool) governance.HookOutcome {
-	if phase == PhasePre {
-		// The sanitized payload IS the rewritten args JSON. Surface a message so the
-		// EvHook annotation reads as a guardrail action.
-		return governance.HookOutcome{
-			Mutated: json.RawMessage(payload),
-			Message: "guardrail sanitized the tool-call arguments",
-		}
-	}
-	// PostToolUse: rewrite the result via the {content, is_error} shape.
-	body, _ := json.Marshal(resultPayload{Content: payload, IsError: isError})
-	msg := "guardrail rewrote the tool result"
-	if isError {
-		msg = payload // a blocked-post message reads as the block reason
-	}
-	return governance.HookOutcome{Mutated: body, Message: msg}
+// postBlockOutcome builds the PostToolUse result rewrite used for an enforcing block.
+// PostToolUse cannot veto because the tool already ran, so the result is replaced with
+// the {content, is_error} shape the loop understands.
+func postBlockOutcome(payload string) governance.HookOutcome {
+	body, _ := json.Marshal(resultPayload{Content: payload, IsError: true})
+	return governance.HookOutcome{Mutated: body, Message: payload}
 }
 
 // mergeOutcomes folds the inner runner's outcome with the guardrail checker's per

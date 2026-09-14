@@ -260,6 +260,9 @@ type Config struct {
 	DebugMCP bool
 	// Store persists and looks up sessions. Required.
 	Store port.SessionStore
+	// SessionCleared drops process-local state tied to a source session after a
+	// successful ClearSession successor publication. nil is inert.
+	SessionCleared func(session.SessionID)
 	// StorageManagementAuthorized gates process-wide storage health. A nil
 	// authorizer disables the management capability. It must be derived from the
 	// trusted request context, never request-supplied owner data.
@@ -5748,7 +5751,7 @@ func (s *Service) approvePlan(ctx context.Context, id session.SessionID, targetM
 		return nil, fmt.Errorf("%w: session %q is in state %q, not awaiting", ErrNotAwaitingPlan, id, sess.State)
 	}
 	ask, ok := sess.PendingAsk()
-	if !ok || ask.Origin() != session.AskOriginPlan {
+	if !ok || ask.Origin != session.ApprovalOriginPlan {
 		return nil, fmt.Errorf("%w: session %q is not awaiting a plan-approval ask", ErrNotAwaitingPlan, id)
 	}
 	// (3) targetMode → verdict.
@@ -6239,7 +6242,7 @@ func (s *Service) MaybeAutoApprovePlan(ctx context.Context, id session.SessionID
 	if ev.Type != session.EvPermissionAsk || ev.Ask == nil {
 		return
 	}
-	if ev.Ask.Origin() != session.AskOriginPlan {
+	if ev.Ask.Origin != session.ApprovalOriginPlan {
 		return
 	}
 	generation := s.captureRunEntryGeneration(id)

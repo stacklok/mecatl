@@ -78,8 +78,8 @@
 #   # failClosed:false (explicit) loosens even under fail. Empty = warn.
 #   onCheckerDown: ""
 #   # DefaultMode sets the enforcement mode for the built-in default rules when no
-#   # explicit rules are configured: "block" (default), "advisory", or "sanitize". An
-#   # explicit rules list replaces the defaults entirely (this key is ignored).
+#   # explicit rules are configured: "block" (default) or "advisory". An explicit rules
+#   # list replaces the defaults entirely (this key is ignored).
 #   defaultMode: ""
 #   # Escape is the ADR-0080 escape knob: when true AND a checker model is configured, an
 #   # out-of-root FS escape at posture auto routes through the guardrail checker (an

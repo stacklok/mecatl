@@ -74,7 +74,7 @@ func parkPlanAsk(t *testing.T, svc *server.Service, sessID session.SessionID) (a
 	go func() {
 		defer close(drainDone)
 		for ev := range r.Events() {
-			if ev.Type == session.EvPermissionAsk && ev.Ask != nil && ev.Ask.Origin() == session.AskOriginPlan {
+			if ev.Type == session.EvPermissionAsk && ev.Ask != nil && ev.Ask.Origin == session.ApprovalOriginPlan {
 				svc.Persist(context.Background(), sessID)
 				// Persist then deregister: the store has StateAwaiting, and the
 				// in-flight registry no longer holds this run, so ApprovePlan's
@@ -455,7 +455,7 @@ func TestApprovePlanNotPlanAskFails(t *testing.T) {
 	}
 	var parked bool
 	for ev := range r.Events() {
-		if ev.Type == session.EvPermissionAsk && ev.Ask != nil && ev.Ask.Origin() == session.AskOriginNone {
+		if ev.Type == session.EvPermissionAsk && ev.Ask != nil && ev.Ask.Origin == session.ApprovalOriginPermission {
 			parked = true
 			svc.Persist(context.Background(), sess.ID)
 			// Deregister and cancel: the run must not stay live (ApprovePlan rejects
@@ -927,7 +927,7 @@ func TestApprovePlanHTTPNotPlanAsk409(t *testing.T) {
 	}
 	var parked bool
 	for ev := range r.Events() {
-		if ev.Type == session.EvPermissionAsk && ev.Ask != nil && ev.Ask.Origin() == session.AskOriginNone {
+		if ev.Type == session.EvPermissionAsk && ev.Ask != nil && ev.Ask.Origin == session.ApprovalOriginPermission {
 			parked = true
 			svc.Persist(context.Background(), session.SessionID(id))
 			svc.FinishRun(session.SessionID(id), r)

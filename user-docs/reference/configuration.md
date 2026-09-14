@@ -65,12 +65,12 @@ OPERATOR-TIER LLM content-checker (issue #27). Parsed strictly. A project-tier g
 | `guardrails.minContentBytes` | `int` | `0` | MinContentBytes skips the checker for content shorter than this. 0 = check all. |
 | `guardrails.disabled` | `bool` | `false` | Disabled is the YAML-level kill switch (the CLI --guardrails=off also sets it). |
 | `guardrails.onCheckerDown` | `string` | `(empty)` | OnCheckerDown sets the global posture when the checker model is unavailable (error/timeout): "warn" (default, fail-open) or "fail" (fail-closed for all rules). Per-rule failClosed overrides: failClosed:true tightens even under warn; failClosed:false (explicit) loosens even under fail. Empty = warn. |
-| `guardrails.defaultMode` | `string` | `(empty)` | DefaultMode sets the enforcement mode for the built-in default rules when no explicit rules are configured: "block" (default), "advisory", or "sanitize". An explicit rules list replaces the defaults entirely (this key is ignored). |
+| `guardrails.defaultMode` | `string` | `(empty)` | DefaultMode sets the enforcement mode for the built-in default rules when no explicit rules are configured: "block" (default) or "advisory". An explicit rules list replaces the defaults entirely (this key is ignored). |
 | `guardrails.escape` | `bool` | `false` | Escape is the ADR-0080 escape knob: when true AND a checker model is configured, an out-of-root FS escape at posture auto routes through the guardrail checker (an unsafe verdict denies; a checker error fails closed to the write-escape Ask). Default false = the un-routed posture table. |
 | `guardrails.rules` | `[]guardrailrulespec` | `(absent)` | Rules is the guardrail rule list. |
 | `guardrails.rules[].match` | `string` | `(empty)` | Match is the tool-name matcher (exact / "prefix*" / "*"). |
 | `guardrails.rules[].phases` | `[]string` | `(absent)` | Phases lists "pre"/"post"; empty = both. |
-| `guardrails.rules[].mode` | `string` | `(empty)` | Mode is "block"/"sanitize"/"advisory"; empty defaults to block. |
+| `guardrails.rules[].mode` | `string` | `(empty)` | Mode is "block"/"advisory"; empty defaults to block. |
 | `guardrails.rules[].prompt` | `string` | `(empty)` | Prompt overrides the built-in inspection rubric. |
 | `guardrails.rules[].failClosed` | `bool` | `false` | FailClosed flips the fail-open default for enforcing modes. |
 
@@ -245,7 +245,7 @@ Per-slot/alias/default model config (ADR 0030) + the operator allowlist cap and 
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
-| `models.slots` | `map[string]string` | `(absent)` | Slots binds a slot name (a call-slot "compaction"/"ask-reviewer"/"guardrail" or a tier "cheap"/"fast"/"reasoning") to a model selector (alias or concrete id). |
+| `models.slots` | `map[string]modelslotvalue` | `(absent)` | Slots binds a slot name (a call-slot "compaction"/"ask-reviewer"/"guardrail" or a tier "cheap"/"fast"/"reasoning") to a model selector (alias or concrete id). |
 | `models.aliases` | `map[string]string` | `(absent)` | Aliases binds a short alias to a concrete model id (merged onto the CLI --model-alias map, CLI winning per key). |
 | `models.default` | `string` | `(empty)` | Default is the session-default model selector (alias or concrete id). It is the project-overridable session default (ADR 0030 Phase 4) — within the operator allowlist; the operator's own Default is uncapped. Empty = absent. |
 | `models.subagent` | `string` | `(empty)` | Subagent is the OPERATOR-TIER def-less child-default model selector (alias or concrete id): the settings.yaml twin of the --subagent-model flag (issue #288). It sets the global default model for every Subagent / Parallel-branch / team-member child that does not pin its own model (via an agent definition or a per-call override). Operator-tier ONLY: a project-tier subagent: is IGNORED with a WARN (the child-default model is an operator decision — the same operator-only captureModels discipline as default_provider/allowlist/router). The CLI --subagent-model WINS when both are set. Validated FAIL-FAST at Build (normalizeSubagentModel): a value that does not resolve to a usable model id is a startup error (unlike fail-soft models.default). Empty = absent (the flag/inherit-parent behaviour is unchanged). |

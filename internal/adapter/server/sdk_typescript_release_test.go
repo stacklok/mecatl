@@ -56,7 +56,14 @@ func TestSDKTypescriptRelease_Scenario1_RPCTransportCatalogParity(t *testing.T) 
 		t.Fatalf("stale generated mecatl.v1 service catalog/exclusion decision: %v", missing)
 	}
 
-	wantCounts := map[string]int{"HarnessService": 74, "ScheduleService": 10}
+	wantCounts := map[string]int{"HarnessService": 76, "ScheduleService": 10}
+	// Task 1 declares these RPCs additively, but their owner-authorized Service/HTTP
+	// implementations belong to Task 5. Keep them generated-only and unimplemented
+	// rather than projecting unsafe placeholder handlers into the public SDK catalog.
+	generatedOnly := stringSet(
+		"HarnessService.ListGuardrailCoverage",
+		"HarnessService.GetGuardrailReviewDetail",
+	)
 	wantKeys := make(map[string]struct{}, 84)
 	for service := range targetServices {
 		methods := descriptorsByService[service]
@@ -64,8 +71,16 @@ func TestSDKTypescriptRelease_Scenario1_RPCTransportCatalogParity(t *testing.T) 
 			t.Fatalf("%s descriptor count = %d, want pinned %d", service, len(methods), wantCounts[service])
 		}
 		for method := range methods {
-			wantKeys[service+"."+method] = struct{}{}
+			key := service + "." + method
+			if _, pending := generatedOnly[key]; pending {
+				delete(generatedOnly, key)
+				continue
+			}
+			wantKeys[key] = struct{}{}
 		}
+	}
+	if len(generatedOnly) != 0 {
+		t.Fatalf("stale generated-only RPC decisions: %v", generatedOnly)
 	}
 
 	gotKeys := make(map[string]struct{}, len(rows))

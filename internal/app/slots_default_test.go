@@ -17,7 +17,7 @@ func checkerModel(t *testing.T, cfg Config, parentModel string) string {
 	t.Helper()
 	var got string
 	obs := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(r port.LLMRequest) { got = r.Model })},
-		mockllm.TextTurn(`{"safe": true}`))
+		mockllm.TextTurn(`{"assessment":"acceptable","concerns":[],"evidence":[],"missing_evidence":[]}`))
 	checker := buildGuardrailsChecker(cfg, nil, obs, "openai", parentModel)
 	if checker == nil {
 		t.Fatalf("a configured guardrails model must build a checker")

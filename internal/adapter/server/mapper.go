@@ -278,6 +278,7 @@ func toProtoApproval(p session.ApprovalPayload) *mecatlv1.Approval {
 		Tool:        valid(p.Tool),
 		CallId:      string(p.Call),
 		AllowAlways: p.AllowAlways,
+		Origin:      string(p.Origin),
 	}
 }
 
@@ -710,11 +711,94 @@ func mediaKindFromBlock(k mecatlv1.ContentBlock_Kind) session.MediaKind {
 // toProtoAsk maps a session.PendingAsk to its proto PermissionAsk form.
 func toProtoAsk(a session.PendingAsk) *mecatlv1.PermissionAsk {
 	return &mecatlv1.PermissionAsk{
-		AskId:  a.AskID,
-		Tool:   valid(a.Tool),
-		Args:   valid(string(a.Args)),
-		Reason: valid(a.Reason),
+		AskId:     a.AskID,
+		Tool:      valid(a.Tool),
+		Args:      valid(string(a.Args)),
+		Reason:    valid(a.Reason),
+		Guardrail: toProtoGuardrailApprovalScope(a.Guardrail),
 	}
+}
+
+func toProtoGuardrailApprovalScope(scope *session.GuardrailPendingScope) *mecatlv1.GuardrailApprovalScope {
+	if scope == nil {
+		return nil
+	}
+	kind := mecatlv1.GuardrailApprovalKind_GUARDRAIL_APPROVAL_KIND_UNSPECIFIED
+	switch scope.Kind {
+	case session.GuardrailApprovalAction:
+		kind = mecatlv1.GuardrailApprovalKind_GUARDRAIL_APPROVAL_KIND_ACTION
+	case session.GuardrailApprovalResultRelease:
+		kind = mecatlv1.GuardrailApprovalKind_GUARDRAIL_APPROVAL_KIND_RESULT_RELEASE
+	}
+	return &mecatlv1.GuardrailApprovalScope{ReviewId: valid(scope.ReviewID), Kind: kind, GrantDigest: valid(scope.GrantDigest), SessionOnly: scope.SessionOnly, RepeatAvailable: scope.RepeatAvailable}
+}
+
+func toProtoGuardrailReview(review *session.GuardrailReviewPayload) *mecatlv1.GuardrailReview {
+	if review == nil {
+		return nil
+	}
+	refs := func(in []session.GuardrailRef) []*mecatlv1.GuardrailRef {
+		out := make([]*mecatlv1.GuardrailRef, 0, len(in))
+		for _, ref := range in {
+			out = append(out, &mecatlv1.GuardrailRef{Ref: valid(ref.Ref), Category: valid(ref.Category)})
+		}
+		return out
+	}
+	return &mecatlv1.GuardrailReview{
+		ReviewId: valid(review.ReviewID), Job: guardrailJobToProto(review.Job), Assessment: guardrailAssessmentToProto(review.Assessment),
+		Inspection: guardrailInspectionToProto(review.Inspection), Disposition: guardrailDispositionToProto(review.Disposition), ReasonCode: valid(review.ReasonCode),
+		RuleId: valid(review.RuleID), RuleOrigin: valid(review.RuleOrigin), CheckerProviderId: valid(review.CheckerProviderID), CheckerModelId: valid(review.CheckerModelID),
+		Concerns: refs(review.Concerns), Sources: refs(review.Sources),
+	}
+}
+
+func guardrailJobToProto(v string) mecatlv1.GuardrailJob {
+	if v == "action" {
+		return mecatlv1.GuardrailJob_GUARDRAIL_JOB_ACTION
+	}
+	if v == "inbound" {
+		return mecatlv1.GuardrailJob_GUARDRAIL_JOB_INBOUND
+	}
+	return mecatlv1.GuardrailJob_GUARDRAIL_JOB_UNSPECIFIED
+}
+func guardrailAssessmentToProto(v string) mecatlv1.GuardrailAssessment {
+	switch v {
+	case "acceptable":
+		return mecatlv1.GuardrailAssessment_GUARDRAIL_ASSESSMENT_ACCEPTABLE
+	case "prohibited":
+		return mecatlv1.GuardrailAssessment_GUARDRAIL_ASSESSMENT_PROHIBITED
+	case "unresolved":
+		return mecatlv1.GuardrailAssessment_GUARDRAIL_ASSESSMENT_UNRESOLVED
+	}
+	return mecatlv1.GuardrailAssessment_GUARDRAIL_ASSESSMENT_UNSPECIFIED
+}
+func guardrailInspectionToProto(v string) mecatlv1.GuardrailInspection {
+	if v == "complete" {
+		return mecatlv1.GuardrailInspection_GUARDRAIL_INSPECTION_COMPLETE
+	}
+	if v == "operational_failure" {
+		return mecatlv1.GuardrailInspection_GUARDRAIL_INSPECTION_OPERATIONAL_FAILURE
+	}
+	return mecatlv1.GuardrailInspection_GUARDRAIL_INSPECTION_UNSPECIFIED
+}
+func guardrailDispositionToProto(v string) mecatlv1.GuardrailDisposition {
+	switch v {
+	case "execute":
+		return mecatlv1.GuardrailDisposition_GUARDRAIL_DISPOSITION_EXECUTE
+	case "ask_action":
+		return mecatlv1.GuardrailDisposition_GUARDRAIL_DISPOSITION_ASK_ACTION
+	case "withhold_result":
+		return mecatlv1.GuardrailDisposition_GUARDRAIL_DISPOSITION_WITHHOLD_RESULT
+	case "release_result":
+		return mecatlv1.GuardrailDisposition_GUARDRAIL_DISPOSITION_RELEASE_RESULT
+	case "deny":
+		return mecatlv1.GuardrailDisposition_GUARDRAIL_DISPOSITION_DENY
+	case "pass_advisory":
+		return mecatlv1.GuardrailDisposition_GUARDRAIL_DISPOSITION_PASS_ADVISORY
+	case "continue_warning":
+		return mecatlv1.GuardrailDisposition_GUARDRAIL_DISPOSITION_CONTINUE_WARNING
+	}
+	return mecatlv1.GuardrailDisposition_GUARDRAIL_DISPOSITION_UNSPECIFIED
 }
 
 // toProtoResult maps a session.ResultPayload to its proto Result form.
@@ -771,10 +855,11 @@ func toProtoTurnEnd(p session.TurnEndPayload) *mecatlv1.TurnEnd {
 // toProtoHook maps a session.HookPayload to its proto Hook form.
 func toProtoHook(h session.HookPayload) *mecatlv1.Hook {
 	return &mecatlv1.Hook{
-		Phase:    valid(h.Phase),
-		Tool:     valid(h.Tool),
-		Decision: hookDecisionToProto(h.Decision),
-		CallId:   string(h.CallID),
+		Phase:     valid(h.Phase),
+		Tool:      valid(h.Tool),
+		Decision:  hookDecisionToProto(h.Decision),
+		CallId:    string(h.CallID),
+		Guardrail: toProtoGuardrailReview(h.Guardrail),
 	}
 }
 
