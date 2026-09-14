@@ -227,6 +227,9 @@ PR after verification. There is no cleanup or status-only PR.
 - [Draft-aware session inventory](draft-aware-session-inventory.md) — durable,
   content-free draft/active/unknown activity metadata, server-filtered Chats and
   Drafts pages, and active-only automatic latest resume. Status: proposed.
+- [Synthetic user-prompt replay](synthetic-user-prompt-replay.md) — emission-time
+  origin metadata for durable user-prompt events, shared genuine-user classification,
+  and mecatui notice rendering for harness-authored replay messages. Status: proposed.
 - [Steer-while-running](steer-while-running.md) — inject a user message into an
   in-flight run (Claude Code's "steer"): an engine-side supersedable inbox drained
   at the turn boundary, a gRPC `Converse` frame, the authoritative drain echo, and
