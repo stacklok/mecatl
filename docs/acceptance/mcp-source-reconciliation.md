@@ -8,7 +8,7 @@
 **Delivery:** Split. Generation ownership, durable authority migration, and additive public controls require contract review before implementation.
 **Expected tasks:** deferred to orchestration.
 **Issue:** [#1511](https://github.com/stacklok/mecatl/issues/1511)
-**Plan PR:** absent until opened.
+**Plan PR:** [#1527](https://github.com/stacklok/mecatl/pull/1527)
 **Approved baseline:** absent until the Plan / Interface PR merges.
 
 Mecatl currently resolves configured and ToolHive-discovered direct MCP servers into one process-start manager and catalogue. Later source observations and MCP list-changed notifications cannot safely replace existing session tools. This plan introduces one Build-owned, source-neutral reconciler over the ordered source seam in [`internal/adapter/mcp/source/source.go`](../../internal/adapter/mcp/source/source.go), preserving configured/static-over-ToolHive precedence. It publishes immutable generation-owned bundles instead of mutating `tool.Catalog` or `mcp.Manager` membership in place; [`internal/app/catalog.go`](../../internal/app/catalog.go) remains the single full catalogue registration path and accepts one explicit generation contribution.
