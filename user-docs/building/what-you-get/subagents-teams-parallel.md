@@ -20,6 +20,9 @@ A child's transcript stays out of the parent context. The parent receives a
 bounded result and status events. Use `InspectSubagent` for a Subagent or
 Parallel branch, and `InspectMember` for a team member.
 
+For how Mecatl isolates child workspaces and handles direct writes, see
+[Execution environments](/features/execution-environments.md).
+
 ### Watch a delegation in `mecatui`
 
 In `mecatui`, press `ctrl+t` or use the `f6` agents overlay to inspect bounded
@@ -42,7 +45,7 @@ Shell.
 |-|-|
 |`prompt`|Provide the complete task and expected result. The child cannot see the parent conversation unless you use `fork`.|
 |`description`|Label the work in status views.|
-|`agent`|Use a named specialist definition.|
+|`agent`|Use a [named specialist definition](/features/named-agents.md).|
 |`model`|Override the inherited model.|
 |`max_turns`, `max_tool_calls`|Tighten the configured limits.|
 |`max_run_tokens`|Tighten the child's cumulative token limit. Values below 25,000 are raised to that floor.|

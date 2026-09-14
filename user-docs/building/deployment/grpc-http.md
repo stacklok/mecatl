@@ -69,6 +69,9 @@ For exact methods and types, see the
 5. Read the final result. If the configured store supports durable sessions,
    you can later resume the session or replay its events.
 
+See [Session continuity](/features/session-continuity.md) for durable storage,
+event logs, recovery, and retention behavior.
+
 Use the detailed references below for exact fields, response codes, event
 payloads, and feature-specific APIs such as schedules, teams, learning, and MCP
 inventories.

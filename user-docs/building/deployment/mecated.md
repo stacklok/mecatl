@@ -144,6 +144,8 @@ default or the `no-fs` profile, but cannot submit a path. `ListWorktrees`
 returns short-lived selectors for `ClearSession` and `ForkSession`; selectors
 expire when the server restarts. Mecatl stores the exact placement privately and
 reattaches it before each run. See
+[Execution environments](/features/execution-environments.md) for the shared
+placement and reattachment model. For the underlying design, see
 [ADR 0291](https://github.com/stacklok/mecatl/blob/main/docs/adr/0291-server-owned-session-placement.md).
 
 ## Operator-defined providers

@@ -11,6 +11,10 @@ Agent definitions configure named specialists with their own instructions,
 tools, model, limits, hooks, MCP servers, and memory. The Subagent tool and
 agent teams use the same definitions.
 
+To configure and use named specialists, see
+[Named agents](/features/named-agents.md). This page covers the source interface
+and custom integrations.
+
 Implement `tool.AgentDefSource` to load definitions from a database, registry,
 or another backend. Use `engine/adapter/agentfs` to load Markdown files.
 

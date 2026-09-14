@@ -32,6 +32,8 @@ and where Mecatl is going.
 
 - **Use Mecatl:** [the `mecatui` guides](/mecatui/index.md) cover local and
   remote sessions, models, permissions, tools, and terminal controls.
+- **Configure Mecatl:** [feature guides](/features/index.md) cover shared
+  capabilities such as models, permissions, sessions, and agent behavior.
 - **Build with Mecatl:** [Building on Mecatl](/building/index.md) covers the Go
   engine, TypeScript SDK, and extension points.
 - **Deploy Mecatl:** [deployment guides](/building/deployment/index.md) cover

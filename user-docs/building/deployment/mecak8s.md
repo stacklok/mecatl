@@ -148,6 +148,9 @@ not send workspace paths or private environment references. By default, new
 sessions have no filesystem access. Schedules retain that placement, and
 delegation cannot add filesystem access that the parent lacks.
 
+See [Execution environments](/features/execution-environments.md) for the
+shared placement, no-FS, child-environment, and reattachment model.
+
 The no-FS default is intentional. A standard mecak8s pod is storage-free and has
 no authoritative filesystem root, so the server binds omitted/default profile to
 its configured no-FS placement. Clients never send a workspace path; explicit

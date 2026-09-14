@@ -121,7 +121,9 @@ A session created with `profile: "no-fs"` removes
 from the catalog. `WebFetch`, `WebSearch`, memory, and MCP tools remain.
 Children inherit the file-less catalog. Clients choose the profile when creating
 the session; the model cannot change it. See
-[Engine and session model](engine-and-session.md) for how a session is created.
+[Execution environments](/features/execution-environments.md) for filesystem
+and no-filesystem placement, and [Engine and session model](engine-and-session.md)
+for session creation.
 
 ---
 
