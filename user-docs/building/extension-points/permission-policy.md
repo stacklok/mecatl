@@ -42,8 +42,11 @@ type PermissionPolicy interface {
 |`governance.Deny`|Return the reason to the model without running the tool|
 
 An ask decision can also set `ConfiguredAsk` or `FlooredConfiguredAllow`. These
-fields are mutually exclusive and tell the loop whether an ask came from an
-operator rule or from the substitution safety floor.
+fields are mutually exclusive. `ConfiguredAsk` prevents a child approval layer
+from auto-approving an operator's ask. `FlooredConfiguredAllow` lets that layer
+auto-approve only when a configured allow covers the outer command, commands
+hidden by substitution are read-only, and the command remains confined to the
+isolated workspace.
 
 `workspace` is a read-only view used to resolve project configuration. Treat a
 nil value as no project configuration.
@@ -73,11 +76,12 @@ remain literal.
 
 Resolve matching rules with these safety properties:
 
-1. In plan mode, deny `Edit`, `Write`, and non-read-only `Shell` calls before
-   consulting rules.
+1. In plan mode, deny `Edit`, `Write`, `Copy`, `Move`, `Remove`, and
+   non-read-only `Shell` calls before consulting rules.
 1. A deny at any scope wins.
 1. A configured ask wins over every allow.
 1. A configured allow can loosen only the built-in ask floor.
+1. At the same scope, ask wins over allow.
 1. When effects match, the higher-precedence scope wins.
 1. Ask when no rule matches.
 
@@ -89,7 +93,9 @@ Scopes, from highest to lowest precedence, are `ScopeManaged`, `ScopeCLI`,
 `AudienceAll` is the zero value and matches every engine. Create separate
 policies for main and child engines when your application supports delegation.
 Top-level denies should use `AudienceAll` so they continue to protect child
-runs.
+runs. Build the supplied default child policy from
+`permpolicy.AllowAllFloorRules()` before appending child-specific rules. Its
+`ScopeBuiltinDefault` placement preserves the child approval provenance checks.
 
 ## Use the supplied policy
 
@@ -120,7 +126,8 @@ type PermissionStore interface {
 
 Implementations must be safe for concurrent use, deduplicate identical rules,
 and return a copy from `Rules`. `engine/adapter/permstore.New` provides an
-in-memory implementation capped at 256 rules per session.
+in-memory implementation capped at 256 rules per session. In a custom embedding,
+call its `Forget(sessionID)` method when the session closes.
 
 Use `permpolicy.NewPolicyWithResolver` when rules depend on the session
 workspace:
@@ -135,8 +142,9 @@ type RuleResolver interface {
 ```
 
 The policy calls the resolver during `Evaluate`, so cache file or network
-lookups. The shipped resolver reads user and project permission settings and
-refreshes its cache when the files change.
+lookups. The shipped resolver loads user and explicit CLI rules once at
+construction. It revalidates cached project files during evaluation and includes
+project allow rules only when constructed with `TrustProject: true`.
 
 ## Learn narrow rules
 

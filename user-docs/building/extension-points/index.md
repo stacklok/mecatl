@@ -53,6 +53,11 @@ them directly:
 |`tool.EnvironmentForker`|Create an isolated child environment|
 |`tool.EnvironmentMerger`|Merge a child environment into its parent|
 
+A custom `tool.Workspace` must also implement the optional
+`tool.WorkspaceNamespace` interface to support `ListDir`, `Copy`, `Move`, and
+`Remove`. Those tools report `tool.ErrFileOperationUnsupported` when the
+workspace does not provide the required namespace operation.
+
 Mecatl includes adapters for common deployments and in-memory implementations
 for tests. Implement a port when those adapters do not meet your application's
 requirements. You do not need a new port to select a model, configure permission

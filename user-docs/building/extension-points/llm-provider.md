@@ -40,6 +40,9 @@ type LLMRequest struct {
 Treat `Model` as an opaque provider identifier. Keep API keys, base URLs, and
 provider-specific options in your adapter's configuration.
 
+Use `port.SessionIDFromContext` to retrieve the session ID for correlation or
+provider routing. The value grants no authority.
+
 Mecatl sends the full conversation on every request. Preserve these values when
 translating messages:
 
@@ -104,9 +107,10 @@ type ProviderCapabilities struct {
 }
 ```
 
-The zero value is text-only. Mecatl enables a modality only when both the model
-catalog and the adapter report support for it. Return `false` when the adapter
-cannot translate a modality, even if some models at the provider support it.
+The zero value is text-only. For a model with catalog or live metadata, Mecatl
+enables a modality only when both that metadata and the adapter report support.
+For an uncatalogued model, the adapter's capabilities apply directly. Return
+`false` when the adapter cannot translate a modality.
 
 `EmbeddedContext` controls capability advertisement. Inline text resources are
 flattened into prompt text regardless of this value.
@@ -151,7 +155,7 @@ provider := mockllm.New(
         session.NewToolCall(
             "call-1",
             "Read",
-            map[string]any{"path": "main.go"},
+            json.RawMessage(`{"path":"main.go"}`),
         ),
     ),
     mockllm.TextTurn("The file defines the main package."),
@@ -175,10 +179,9 @@ uses.
 |`engine/adapter/mockllm`|Offline scripted test provider|
 
 The shipped commands add retry, circuit breaking, and a stream-idle watchdog
-around providers. Direct engine embeddings must add those behaviors if the
-application requires them. The wrapper also applies a 300-second default limit
-to connection and first-chunk establishment and a 180-second default limit
-between streamed chunks.
+around providers. They configure a 300-second limit for connection and
+first-chunk establishment and a 180-second limit between streamed chunks. A
+direct engine embedding must configure any required resilience and timeouts.
 
 ## Next steps
 

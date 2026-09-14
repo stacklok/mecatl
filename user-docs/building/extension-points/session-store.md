@@ -68,19 +68,18 @@ type PrunableStore interface {
 }
 ```
 
-`List` returns IDs and modification times without loading transcripts. `Delete`
-is idempotent for an unknown ID. Return `port.ErrPruneUnsupported` when the
-backend cannot perform these operations.
+`List` returns every stored session's ID and modification time without loading
+transcripts. It does not apply retention filters. `Delete` is idempotent for an
+unknown ID. Return `port.ErrPruneUnsupported` when the backend cannot perform
+these operations.
 
 Multi-writer backends should also implement `ConditionalPrunableStore`, which
 deletes a session only when its durable metadata still matches the cleanup plan.
-Cleanup revalidates candidates under a `SessionLease` and removes sidecars
-before the authoritative snapshot.
+The implementation must hold its mutation exclusion while it revalidates the
+metadata and removes sidecars before the authoritative snapshot.
 
 JSONL and Redis stores implement `SessionMigrationStore` for bounded, resumable
-storage migration. Stores without it report migration as unsupported. Migration
-and cleanup remain unavailable until the backend's inventory is in a verified
-ready state.
+storage migration. Stores without it report migration as unsupported.
 
 ## Implement EventLog
 
@@ -104,9 +103,10 @@ service commits it. The caller attempts each append once because an error can
 arrive after the write committed. Implementations do not need to deduplicate
 events.
 
-`Read` returns events in append order. A missing log yields an empty sequence.
-On an infrastructure or decoding error, yield the error and stop. Release open
-resources when the context is canceled or the caller stops iterating.
+`Read` returns events in append order without reordering them by `Event.Seq`. A
+missing log yields an empty sequence. On an infrastructure or decoding error,
+yield the error and stop. Release open resources when the context is canceled or
+the caller stops iterating.
 
 Implementations must support concurrent operations across session IDs. Mecatl
 serializes appends for one session through its event relay.
@@ -202,9 +202,14 @@ func TestStore(t *testing.T) {
 }
 ```
 
-Run `eventlogconformance.Run` for `EventLog` and `eventlogconformance.RunCursor`
-for `CursorEventLog`. The suites cover isolation, ordering, large records, early
-iterator termination, cursor semantics, and concurrent access.
+Run `eventlogconformance.Run` for `EventLog`. For `CursorEventLog`, pass
+`eventlogconformance.RunCursor` a `CursorSuite` with `New`, `Reset`, and
+`NewPair` functions. `New` creates an isolated log, `Reset` changes a log's
+positional basis, and `NewPair` returns independently constructed handles over
+the same durable state. Only an in-memory backend should use
+`SkipCrossProcess` instead of `NewPair`. The suites cover isolation, ordering,
+large records, early iterator termination, cursor semantics, and concurrent
+access.
 
 Run `storeconformance.RunPrunable` if your store implements `PrunableStore`.
 

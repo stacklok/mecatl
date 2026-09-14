@@ -36,6 +36,10 @@ guidance and continues the run.
 Each source must limit `Body` to `prompt.MaxRuleBytes` (20 KiB). `Origin` is an
 admission tier (`project`, `user`, or `driver`), not a filesystem path or URL.
 
+Validate a custom source with
+`engine/adapter/sourceconformance.RunRulesSource`. The test factory must return
+a fresh source that serves exactly `sourceconformance.RuleFixture`.
+
 `Paths` contains optional glob conditions. Mecatl includes these conditions in
 the prompt and relies on the model to apply them. An empty `Paths` slice makes a
 rule unconditional.
@@ -75,8 +79,9 @@ Omit it to make the rule unconditional.
 ## Apply prompt limits
 
 `prompt.RulesAssembler` injects at most 32 rules and 40 KiB of combined rule
-content. Content beyond either limit is omitted and reported in a warning. Rule
-loading fails soft: an unavailable source does not abort a run.
+content. When it omits rules beyond either limit, it appends a model-visible
+footer to the prompt fragment. Rule loading fails soft: an unavailable source
+does not abort a run.
 
 ## Next steps
 

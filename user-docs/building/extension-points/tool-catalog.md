@@ -60,13 +60,16 @@ type Tool interface {
 arguments. Explain when to use the tool, identify its important limits, and keep
 the schema as narrow as the implementation.
 
-`ReadOnly` controls dispatch concurrency. Mecatl runs adjacent read-only calls
-concurrently and runs mutating calls one at a time. Return `false` if the tool
-changes the workspace or other shared state.
+`ReadOnly` controls dispatch concurrency and plan-mode availability. Mecatl runs
+adjacent read-only calls concurrently, runs mutating calls one at a time, and
+offers only read-only tools in plan mode. Return `false` if the tool changes the
+workspace or other shared state.
 
 `Execute` receives the model's call and the session environment. Return a
-`ToolResult` with `IsError: true` for a failure the model can address. Reserve
-the Go error for a harness failure that should stop the run.
+`ToolResult` with `IsError: true` for a failure the model can address. Mecatl
+converts a non-nil Go error into a model-visible tool error and continues the
+run, so use it for unexpected implementation failures. The environment's
+`CommandRunner()` can be nil; check it before running a command.
 
 ### Add a custom tool
 
@@ -205,7 +208,9 @@ driver commands and MCP prompts. See
 [Skills, commands, and soul](/features/skills-commands-and-soul.md) for file
 format and discovery behavior.
 
-Validate a custom source with `engine/adapter/skillconformance`.
+Validate a custom source with
+`engine/adapter/sourceconformance.RunSkillSource`. The test factory must return
+a fresh source that serves exactly `sourceconformance.Fixture`.
 
 ## Share catalog state safely
 

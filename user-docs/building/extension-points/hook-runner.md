@@ -22,8 +22,8 @@ type HookRunner interface {
 }
 ```
 
-The agent waits for `Run` at phases that can affect execution. A nil
-`HookRunner` disables hooks.
+Mecatl calls `Run` synchronously for every configured phase. A nil `HookRunner`
+disables hooks.
 
 ```go
 type HookEvent struct {
@@ -88,7 +88,8 @@ To change a supported payload, return valid JSON in `Mutated`:
 The permission policy is not run again after a trusted hook changes `PreToolUse`
 arguments. Treat hook implementations as trusted code.
 
-Mecatl ignores malformed mutation JSON and emits a diagnostic hook event.
+Mecatl ignores malformed mutation JSON and emits a client-visible informational
+hook event.
 
 ### Redact a tool result
 
@@ -121,7 +122,8 @@ hooks := hookexec.New(map[governance.HookPhase]string{
 ```
 
 The runner writes `HookEvent` as JSON to the command's standard input. It uses
-`/bin/sh` and a 30-second timeout by default.
+`/bin/sh` and a 30-second timeout by default. On POSIX systems, cancellation or
+timeout terminates the hook's process group, including child processes.
 
 |Exit code|Outcome|
 |-|-|

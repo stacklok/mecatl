@@ -44,7 +44,9 @@ session. A same-owner reacquisition can retain the token.
 
 `Renew` returns a new value with the same token and a later expiry. Store the
 returned value. Return `port.ErrLeaseHeld` when the caller has lost ownership;
-the server treats this as a signal to cancel the run.
+the server treats this as a signal to cancel the run. A backend may reclaim an
+expired lease with the same owner and token only when it can prove that no
+competitor raced the renewal. Otherwise, treat expiry as ownership loss.
 
 `Release` removes only the caller's own hold. It is idempotent when the lease is
 unknown, expired, or owned under another token.
@@ -146,7 +148,7 @@ func TestLease(t *testing.T) {
         t *testing.T,
     ) (port.SessionLease, func(time.Duration)) {
         clock := newFakeClock()
-        lease := newLease(clock)
+        lease := newLease(clock, leaseconformance.TTL)
         return lease, clock.Advance
     })
 }

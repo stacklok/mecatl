@@ -30,7 +30,7 @@ or another backend. Use `engine/adapter/agentfs` to load Markdown files.
 |`PermissionMode`|Optional `default`, `plan`, or `acceptEdits` mode|
 |`MaxTurns`|Per-run turn limit; zero uses the caller default|
 |`MaxToolCalls`|Per-run tool-call limit; zero uses the caller default|
-|`Skills`|Skill bodies to preload|
+|`Skills`|Skill names whose bodies Mecatl preloads|
 |`MCPServers`|Referenced or inline MCP servers|
 |`Hooks`|Hook phase to shell-command mapping|
 |`Memory`|Empty, `user`, or `project` memory tier|
@@ -71,7 +71,10 @@ func TestAgentSource(t *testing.T) {
 }
 ```
 
-The suite checks field preservation, stable ordering, and content limits.
+The test factory must return a fresh source that serves exactly
+`sourceconformance.AgentFixture`. The suite compares every definition field
+except the source-specific `Origin` value and also checks stable ordering and
+content limits.
 
 ## Use definition files
 
@@ -134,8 +137,8 @@ The adapter scans once when the source is created. Restart or rebuild the source
 to pick up file changes.
 
 A remote implementation can expose `mecatl.driver.v1.AgentSourceService` and
-connect through `--agent-source-url`. The remote source replaces explicit and
-conventional filesystem discovery.
+connect through `--agent-source-url`. This disables conventional filesystem
+discovery. It cannot be combined with an explicit `--agents-dir`.
 
 ## Configure memory
 
@@ -163,8 +166,10 @@ Subagent(
 )
 ```
 
-Named subagents are read-only by default. When Shell is available and the
-workspace is trusted, the child inspects an isolated worktree.
+Named subagents are read-only by default. When `Shell` is available and the
+workspace is trusted, the child inspects an isolated worktree. Read-only runs
+remove mutating tools, including `Edit` and `Write`, even when the definition
+names them.
 
 A caller can add a model override for a read-only run. Definitions with inline
 MCP servers do not support this combination because the temporary engine has no
