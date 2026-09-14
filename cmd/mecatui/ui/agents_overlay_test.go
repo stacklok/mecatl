@@ -661,6 +661,56 @@ func TestSubagentBudgetStopThroughWire(t *testing.T) {
 	}
 }
 
+func TestSubagentRosterRowSeparatesTitleAndDetails(t *testing.T) {
+	ln := &subagentLane{
+		childID:       "explorer-abcdef",
+		goal:          "inspect the subagent roster layout carefully while checking every visible presentation detail",
+		background:    true,
+		routedModel:   "gpt-5-mini",
+		routingReason: "fast investigation",
+		current:       "Grep",
+		toolCount:     2,
+		usage:         client.Usage{InputTokens: 1200, OutputTokens: 340},
+	}
+
+	selected := stripANSIstr(renderSubagentRosterRow(aztec().Style("spinner"), "▶ ", ln, 80))
+	unselected := stripANSIstr(renderSubagentRosterRow(aztec().Style("muted"), "  ", ln, 80))
+	selectedRows := strings.Split(selected, "\n")
+	unselectedRows := strings.Split(unselected, "\n")
+	if len(selectedRows) != 2 || len(unselectedRows) != 2 {
+		t.Fatalf("normal-width rows = %q / %q, want title plus one details line", selected, unselected)
+	}
+	if !strings.HasPrefix(selectedRows[0], "▶ ◐ ") || !strings.HasPrefix(unselectedRows[0], "  ◐ ") {
+		t.Fatalf("selection markers changed title semantics: %q / %q", selectedRows[0], unselectedRows[0])
+	}
+	if selectedRows[1] != unselectedRows[1] || !strings.HasPrefix(selectedRows[1], "    ") {
+		t.Fatalf("details should retain one shared four-column indent: %q / %q", selectedRows[1], unselectedRows[1])
+	}
+	if !strings.Contains(selectedRows[0], "…") || !strings.Contains(selectedRows[0], "#abcdef ⇢ bg") {
+		t.Fatalf("title was not explicitly clipped while retaining child identity: %q", selectedRows[0])
+	}
+	if !strings.Contains(selectedRows[1], "gpt-5-mini") || !strings.Contains(selectedRows[1], "Grep… · 2 tools · ↑1.2K ↓340") {
+		t.Fatalf("details omitted readable metadata: %q", selectedRows[1])
+	}
+
+	narrow := stripANSIstr(renderSubagentRosterRow(aztec().Style("spinner"), "▶ ", ln, 28))
+	for _, row := range strings.Split(narrow, "\n") {
+		if lipgloss.Width(row) > 28 {
+			t.Fatalf("narrow row overflows body width: %d: %q", lipgloss.Width(row), row)
+		}
+	}
+	if len(strings.Split(narrow, "\n")) < 3 || !strings.Contains(narrow, "\n    ") {
+		t.Fatalf("narrow details did not wrap with the required indent: %q", narrow)
+	}
+
+	wide := *ln
+	wide.goal = "調査🙂調査🙂調査🙂調査🙂"
+	wideRow := stripANSIstr(renderSubagentRosterRow(aztec().Style("spinner"), "▶ ", &wide, 24))
+	if title := strings.Split(wideRow, "\n")[0]; lipgloss.Width(title) > 24 || !strings.Contains(title, "…") {
+		t.Fatalf("wide-rune title should be clipped to one physical line: %q", title)
+	}
+}
+
 // TestSubagentRosterWindowed asserts a fleet larger than the available height windows
 // like the team roster: only the rows that fit render, the footer hint stays visible,
 // and hidden rows surface via "+K below".
@@ -1639,7 +1689,7 @@ func TestMecatuiAgentsOverlayFit_Scenario2_AllSubviewsFitViewport(t *testing.T) 
 			m.conv.subagentFleet = []subagentLane{{childID: "subagent-selected", goal: "selected-subagent " + strings.Repeat("goal ", 12)}, {childID: "other", goal: "other"}}
 			return m
 		}},
-		{"subagent focus", "selected-subagent", "esc back|lines 1", func(m Model) Model {
+		{"subagent focus", "selected", "esc back|lines 1", func(m Model) Model {
 			m.team.view, m.agentsTab = teamRoster, tabSubagents
 			m.subagents = subagentState{view: subagentFocus, child: "subagent-selected"}
 			m.conv.subagentFleet = []subagentLane{{childID: "subagent-selected", goal: "selected-subagent", trace: trace, done: true, stop: stopError, cause: strings.Repeat("failure ", 30), background: true}}

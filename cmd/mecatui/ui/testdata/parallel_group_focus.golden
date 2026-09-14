@@ -11,14 +11,14 @@
   ┃    bounded previews — branch content is clamped + scrubbed, never in the parent              ┃
   ┃    conversation                                                                              ┃
   ┃                                                                                              ┃
-  ┃  ▶ ✓ branch-1 · refactor with a map · done · 900ms · 2 tools · ↑12K ↓3K                      ┃
-  ┃    ✓ Edit                                                                                    ┃
+  ┃  ▶ ✓ branch-1 · refactor with a map                                                          ┃
+  ┃      done · 900ms · 2 tools · ↑12K ↓3K                                                       ┃
+  ┃    │   ✓ Edit                                                                                ┃
   ┃    · +2 branches below                                                                       ┃
   ┃                                                                                              ┃
   ┃  ↑/↓ select · pgup/pgdn page · home/end first/last · esc back                                ┃
   ┃                                                                                              ┃
   ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-
 
 
 │

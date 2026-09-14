@@ -253,6 +253,40 @@ func TestParallelTabRoutingAndEsc(t *testing.T) {
 	}
 }
 
+func TestParallelBranchRowSeparatesSummaryAndActivity(t *testing.T) {
+	br := &parallelBranch{
+		index:         0,
+		label:         "branch-1",
+		goal:          "inspect every presentation detail in the parallel activity panel carefully",
+		done:          true,
+		stop:          "end_turn",
+		durationMs:    900,
+		routedModel:   "gpt-5-mini",
+		routingReason: "fast investigation",
+		toolCount:     2,
+		usage:         client.Usage{InputTokens: 1200, OutputTokens: 340},
+	}
+	selected := stripANSIstr(strings.TrimSuffix(renderParallelBranchRow(aztec(), br, -1, true, 80), "\n"))
+	unselected := stripANSIstr(strings.TrimSuffix(renderParallelBranchRow(aztec(), br, -1, false, 80), "\n"))
+	selectedRows := strings.Split(selected, "\n")
+	unselectedRows := strings.Split(unselected, "\n")
+	if len(selectedRows) != 2 || len(unselectedRows) != 2 {
+		t.Fatalf("branch summaries = %q / %q, want title plus details", selected, unselected)
+	}
+	if !strings.HasPrefix(selectedRows[0], "▶ ✓ branch-1") || !strings.HasPrefix(unselectedRows[0], "  ✓ branch-1") {
+		t.Fatalf("selection markers changed branch title semantics: %q / %q", selectedRows[0], unselectedRows[0])
+	}
+	if selectedRows[1] != unselectedRows[1] || !strings.HasPrefix(selectedRows[1], "    ") {
+		t.Fatalf("details should retain one shared four-column indent: %q / %q", selectedRows[1], unselectedRows[1])
+	}
+	if !strings.Contains(selectedRows[0], "…") || !strings.Contains(selectedRows[1], "gpt-5-mini") {
+		t.Fatalf("summary did not clip title or retain routing details: %q", selected)
+	}
+	if got := indentParallelBranchTrace("  ✓ Edit\n  · changed file", 32); got != "  │   ✓ Edit\n  │   · changed file" {
+		t.Fatalf("activity gutter = %q", got)
+	}
+}
+
 // TestParallelOverlayBoundsBranchContent is the client-side boundedness guard for the
 // Parallel group focus under ADR 0079: branch content reaches the overlay ONLY as
 // bounded previews (engine-clamped; the TUI caps them again) and the honesty note
@@ -284,7 +318,7 @@ func TestParallelOverlayBoundsBranchContent(t *testing.T) {
 	if strings.Contains(out, longPreview) {
 		t.Errorf("an unbounded preview leaked into the group focus (past maxTraceDetailLen):\n%s", out)
 	}
-	if !strings.Contains(out, strings.Repeat("z", maxTraceDetailLen-1)) {
+	if strings.Count(out, "z") < maxTraceDetailLen-1 {
 		t.Errorf("the bounded preview should render (truncated):\n%s", out)
 	}
 	// A canary in a tool NAME renders only as a name chip — never as a body line.

@@ -6,6 +6,7 @@ import (
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
@@ -324,7 +325,7 @@ func teamSelectableList(th theme.Theme, st teamState, b *block, hk helpKeys, bod
 		if row == cursor {
 			style, prefix = th.Style("spinner"), "▶ "
 		}
-		list.rows = append(list.rows, renderDelegationRows(style, prefix, teamRosterLine(th, &b.teamLanes[laneIndex], nameW, b.teamDone), bodyWidth))
+		list.rows = append(list.rows, renderTeamRosterRow(style, prefix, &b.teamLanes[laneIndex], nameW, b.teamDone, bodyWidth))
 	}
 	return list
 }
@@ -337,29 +338,57 @@ func renderTeamRoster(th theme.Theme, st teamState, b *block, hk helpKeys, heigh
 	return teamSelectableList(th, st, b, hk, bodyWidth).render(th, height)
 }
 
-// teamRosterLine is one roster row: the inline lane line (state glyph + mutating
-// cue + name + [lead] + current tool/state + usage), then the per-member context
-// meter band (only when the member's window is known), then the member's ROLE
-// appended as a dim suffix when present, then the opt-in model router's "routed:
-// <category> → <model>" cue when the member was routed — the detail the calm inline
-// card omits, surfaced here in the dedicated deep view. The context meter reuses the
-// footer's renderContextMeter so the band/percentage/⚠ vocabulary matches the main
-// meter exactly. It is GATED on a known window (ctxWindow>0): with no window there is
-// no denominator, so a bare "ctx <size>" with no band is suppressed entirely. The
-// role is sanitized (roster-derived) and truncated so a long role can't blow out the
-// row. The routed cue is bare metadata (a label + a model id), never member content.
-func teamRosterLine(th theme.Theme, ln *teamLane, nameW int, teamDone bool) string {
-	line := teamLaneLine(ln, nameW, teamDone)
+// renderTeamRosterRow keeps the member identity on a single clipped title line and
+// groups its volatile status, context, role, and routing metadata beneath it.
+func renderTeamRosterRow(style lipgloss.Style, prefix string, ln *teamLane, nameW int, teamDone bool, bodyWidth int) string {
+	title := teamRosterTitle(ln, nameW, teamDone)
+	if bodyWidth > 0 {
+		title = truncateDisplayWidth(title, max(1, bodyWidth-lipgloss.Width(prefix)))
+	}
+	return style.Render(prefix + title + "\n" + hangingIndentWrap(teamRosterDetails(ln, teamDone), "    ", bodyWidth))
+}
+
+func teamRosterTitle(ln *teamLane, nameW int, teamDone bool) string {
+	name := truncate(sanitizeTerminal(ln.name), maxTeamNameWidth)
+	if pad := nameW - len([]rune(name)); pad > 0 {
+		name += strings.Repeat(" ", pad)
+	}
+	if ln.lead {
+		name += " [lead]"
+	}
+	return teamGlyph(ln, teamDone) + " " + teamMutCue(ln) + " " + name
+}
+
+func teamRosterDetails(ln *teamLane, teamDone bool) string {
+	parts := []string{teamLaneState(ln, teamDone), "↑" + humanizeTokens(ln.usage.InputTokens) + " ↓" + humanizeTokens(ln.usage.OutputTokens)}
 	if ln.ctxWindow > 0 {
-		line += " · " + renderContextMeter(th, ln.ctxUsed, ln.ctxWindow)
+		parts = append(parts, renderContextMeterPlain(ln.ctxUsed, ln.ctxWindow))
 	}
 	if ln.role != "" {
-		line += " · " + truncate(sanitizeTerminal(ln.role), maxTeamRoleLen)
+		parts = append(parts, truncate(sanitizeTerminal(ln.role), maxTeamRoleLen))
 	}
-	if r := subagentModelLabel(ln.routedCategory, ln.routedModel, ln.routingReason, ln.model); r != "" {
-		line += " · " + r
+	if routed := subagentModelLabel(ln.routedCategory, ln.routedModel, ln.routingReason, ln.model); routed != "" {
+		parts = append(parts, routed)
 	}
-	return line
+	return strings.Join(parts, " · ")
+}
+
+// teamRosterLine remains the compact, unstyled form used by the essential fallback.
+func teamRosterLine(_ theme.Theme, ln *teamLane, nameW int, teamDone bool) string {
+	return teamRosterTitle(ln, nameW, teamDone) + " · " + teamRosterDetails(ln, teamDone)
+}
+
+// renderContextMeterPlain is the ANSI-free representation required before generic
+// roster wrapping; renderContextMeter's styled bar must not be sanitized as raw text.
+func renderContextMeterPlain(used, window int64) string {
+	if used < 0 {
+		used = 0
+	}
+	if window <= 0 {
+		return "ctx " + humanizeTokens(used)
+	}
+	frac := ctxFraction(used, window)
+	return "ctx " + ctxBar(frac) + " " + ctxLabel(frac) + " · " + humanizeTokens(used) + "/" + humanizeTokens(window)
 }
 
 // maxTeamRoleLen caps how many runes of a member's role show on a roster row so

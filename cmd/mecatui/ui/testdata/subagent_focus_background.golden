@@ -7,7 +7,8 @@
   ┃  ▸ Subagents    Parallel    Teams                                                            ┃
   ┃                                                                                              ┃
   ┃  subagent · background deep audit                                                            ┃
-  ┃  ◐ background deep audit #r-f8a6 ⇢ bg · Shell… · 3 tools · ↑0 ↓0                             ┃
+  ┃  ◐ background deep audit #r-f8a6 ⇢ bg                                                        ┃
+  ┃      Shell… · 3 tools · ↑0 ↓0                                                                ┃
   ┃    bounded previews — child content is clamped + scrubbed, never in the parent               ┃
   ┃      conversation                                                                            ┃
   ┃    background: runs detached; the agent collects its result via SubagentStatus               ┃
@@ -17,7 +18,6 @@
   ┃  x cancel · esc back · ↑/↓ scroll · pgup/pgdn · home/end                                     ┃
   ┃                                                                                              ┃
   ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-
 
 
 

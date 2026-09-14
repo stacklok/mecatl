@@ -633,7 +633,7 @@ func renderEssentialAgentsBody(th theme.Theme, tab agentsTab, sub subagentState,
 	var body agentsEssentialBody
 	switch tab {
 	case tabSubagents:
-		body = essentialSubagentBody(th, sub, fleet, hk, line)
+		body = essentialSubagentBody(th, sub, fleet, hk, line, width)
 	case tabParallel:
 		body = essentialParallelBody(th, par, groups, hk, line)
 	default:
@@ -648,21 +648,21 @@ func renderEssentialAgentsBody(th theme.Theme, tab agentsTab, sub subagentState,
 	return strings.Join(lines, "\n")
 }
 
-func essentialSubagentBody(th theme.Theme, st subagentState, fleet []subagentLane, hk helpKeys, line agentsEssentialLine) agentsEssentialBody {
+func essentialSubagentBody(th theme.Theme, st subagentState, fleet []subagentLane, hk helpKeys, line agentsEssentialLine, bodyWidth int) agentsEssentialBody {
 	body := agentsEssentialBody{
 		title:  line(th.Style("askTitle"), "", "subagents"),
 		footer: line(th.Style("muted"), "", agentsEmptyHint(hk)),
 	}
 	if st.view != subagentFocus {
 		if len(fleet) > 0 {
-			body.selected = line(th.Style("spinner"), "▶ ", subagentRosterLine(&fleet[clampCursor(st.cursor, len(fleet))]))
+			body.selected = renderSubagentRosterTitle(th.Style("spinner"), "▶ ", &fleet[clampCursor(st.cursor, len(fleet))], bodyWidth)
 		}
 		return body
 	}
 	body.footer = line(th.Style("muted"), "", focusBackHint(hk))
 	if lane := findFleetLane(fleet, st.child); lane != nil {
-		body.title = line(th.Style("askTitle"), "", "subagent · "+truncate(sanitizeTerminal(lane.goal), maxTeamNameWidth*2))
-		body.selected = line(th.Style("muted"), "", subagentRosterLine(lane))
+		body.title = line(th.Style("askTitle"), "", "subagent")
+		body.selected = renderEssentialSubagentFocus(th.Style("muted"), lane, bodyWidth)
 		if len(lane.trace) > 0 {
 			body.extra = append(body.extra, line(th.Style("muted"), "  ", fmt.Sprintf("… +%d more lines", len(lane.trace))))
 		}
@@ -1006,7 +1006,7 @@ func subagentSelectableList(th theme.Theme, st subagentState, fleet []subagentLa
 		if row == list.cursor {
 			style, prefix = th.Style("spinner"), "▶ "
 		}
-		list.rows = append(list.rows, renderDelegationRows(style, prefix, subagentRosterLine(&fleet[row]), bodyWidth))
+		list.rows = append(list.rows, renderSubagentRosterRow(style, prefix, &fleet[row], bodyWidth))
 	}
 	return list
 }
@@ -1036,34 +1036,80 @@ func fleetCounts(fleet []subagentLane) (running, done int) {
 	return countDone(fleet, func(ln subagentLane) bool { return ln.done })
 }
 
-// subagentRosterLine is one fleet row: a state glyph (◐ running / ✓ done / ✗ error),
-// the goal label, a short ChildID hash suffix (so two similar goals are unambiguous),
-// the background marker (detached children only), the current/last child tool, the
-// running tool count, and token usage. It is the Subagents analogue of
-// teamRosterLine, holding only redacted metadata.
+// subagentRosterLine returns the unstyled two-line fleet row. The roster and focus
+// callers supply their physical width through subagentRosterText; this form keeps the
+// metadata useful to narrow, unframed callers too.
 func subagentRosterLine(ln *subagentLane) string {
-	goal := truncate(sanitizeTerminal(ln.goal), maxSubagentGoalLen)
+	return subagentRosterText(ln, 0, 0)
+}
+
+// renderSubagentRosterRow applies a selection prefix only to the title. Details always
+// begin at four columns, so selected and unselected rows have the same readable shape.
+func renderSubagentRosterRow(style lipgloss.Style, prefix string, ln *subagentLane, bodyWidth int) string {
+	return style.Render(prefix + subagentRosterText(ln, bodyWidth, lipgloss.Width(prefix)))
+}
+
+func renderSubagentRosterTitle(style lipgloss.Style, prefix string, ln *subagentLane, bodyWidth int) string {
+	return style.Render(prefix + subagentRosterTitle(ln, bodyWidth, lipgloss.Width(prefix)))
+}
+
+func renderEssentialSubagentFocus(style lipgloss.Style, ln *subagentLane, bodyWidth int) string {
+	goal := sanitizeTerminal(ln.goal)
 	if goal == "" {
 		goal = "subagent"
 	}
+	if bodyWidth > 0 {
+		goal = truncateDisplayWidth(goal, max(1, bodyWidth-lipgloss.Width(subagentLaneGlyph(ln))-1))
+	} else {
+		goal = truncate(goal, maxSubagentGoalLen)
+	}
+	return style.Render(subagentLaneGlyph(ln) + " " + goal)
+}
+
+func subagentRosterText(ln *subagentLane, bodyWidth, titlePrefixWidth int) string {
+	return subagentRosterTitle(ln, bodyWidth, titlePrefixWidth) + "\n" +
+		hangingIndentWrap(subagentRosterDetails(ln), "    ", bodyWidth)
+}
+
+func subagentRosterTitle(ln *subagentLane, bodyWidth, titlePrefixWidth int) string {
 	marker := ""
 	if ln.background {
 		marker = " " + subagentBackgroundMarker
 	}
-	routed := ""
-	if r := subagentModelLabel(ln.routedCategory, ln.routedModel, ln.routingReason, ln.model); r != "" {
-		routed = " · " + r
+	suffix := " #" + shortChildID(ln.childID) + marker
+	goal := sanitizeTerminal(ln.goal)
+	if goal == "" {
+		goal = "subagent"
 	}
-	return fmt.Sprintf("%s %s #%s%s%s · %s · %s · ↑%s ↓%s",
-		subagentLaneGlyph(ln),
-		goal,
-		shortChildID(ln.childID),
-		marker,
-		routed,
+	if bodyWidth > 0 {
+		goal = truncateDisplayWidth(goal, max(1, bodyWidth-titlePrefixWidth-lipgloss.Width(subagentLaneGlyph(ln)+suffix)-1))
+	} else {
+		goal = truncate(goal, maxSubagentGoalLen)
+	}
+
+	title := subagentLaneGlyph(ln) + " " + goal + suffix
+	if bodyWidth > 0 {
+		return truncateDisplayWidth(title, max(1, bodyWidth-titlePrefixWidth))
+	}
+	return title
+}
+
+func subagentRosterDetails(ln *subagentLane) string {
+	details := []string{}
+	if routed := subagentModelLabel(ln.routedCategory, ln.routedModel, ln.routingReason, ln.model); routed != "" {
+		details = append(details, routed)
+	}
+	details = append(details,
 		subagentLaneState(ln),
 		plural(ln.toolCount, "tool"),
-		humanizeTokens(ln.usage.InputTokens),
-		humanizeTokens(ln.usage.OutputTokens))
+		"↑"+humanizeTokens(ln.usage.InputTokens)+" ↓"+humanizeTokens(ln.usage.OutputTokens))
+	return strings.Join(details, " · ")
+}
+
+// truncateDisplayWidth clips a terminal-sanitized title without allowing a wide rune
+// to push the title line past the physical card width.
+func truncateDisplayWidth(s string, width int) string {
+	return ansi.Truncate(s, width, "…")
 }
 
 // maxSubagentCauseWidth caps how many RUNES of a child's failure cause the focus pane
@@ -1201,9 +1247,9 @@ func renderSubagentFocusAt(th theme.Theme, fleet []subagentLane, child string, s
 	}
 	out.WriteString(th.Style("askTitle").Render(wrapFocusMetadataAtWidth("subagent · "+goal, bodyWidth)))
 	out.WriteString("\n")
-	out.WriteString(muted.Render(wrapFocusMetadataAtWidth(subagentRosterLine(ln), bodyWidth)))
+	out.WriteString(muted.Render(subagentRosterText(ln, bodyWidth, 0)))
 	out.WriteString("\n")
-	out.WriteString(muted.Render(hangingIndentWrap(boundedPreviewsSubNote, "  ", "    ", bodyWidth)))
+	out.WriteString(muted.Render(hangingIndentWrap(boundedPreviewsSubNote, "  ", bodyWidth)))
 	if fail := subagentFailureLineAtWidth(ln, bodyWidth); fail != "" {
 		// The ONE place the fleet answers "why did it fail". The inline Subagent card
 		// already carries the cause inside the tool result the agent received, but a
@@ -1220,7 +1266,7 @@ func renderSubagentFocusAt(th theme.Theme, fleet []subagentLane, child string, s
 		if ln.done {
 			note = "background: done — result ready for the agent (SubagentStatus)"
 		}
-		for _, row := range strings.Split(hangingIndentWrap(note, "  ", "    ", bodyWidth), "\n") {
+		for _, row := range strings.Split(hangingIndentWrap(note, "  ", bodyWidth), "\n") {
 			out.WriteString("\n")
 			out.WriteString(muted.Render(row))
 		}
@@ -1399,7 +1445,7 @@ func parallelBranchSelectableList(th theme.Theme, st parallelState, g *parallelG
 	cursor := clampCursor(st.branchCursor, len(ordered))
 	cancellable := false
 	list := agentsSelectableList{header: header, cursor: cursor, muted: muted, noun: "branches"}
-	r := &renderer{th: th, marks: hk, traceWidth: bodyWidth}
+	r := &renderer{th: th, marks: hk, traceWidth: max(1, bodyWidth-lipgloss.Width(parallelBranchTraceGutter))}
 	for i := range ordered {
 		br := &ordered[i]
 		if !br.done && br.childID != "" {
@@ -1407,7 +1453,7 @@ func parallelBranchSelectableList(th theme.Theme, st parallelState, g *parallelG
 		}
 		row := strings.TrimSuffix(renderParallelBranchRow(th, br, g.winner, i == cursor, bodyWidth), "\n")
 		if trace := r.renderTrace(br.trace); trace != "" {
-			row += "\n" + trace
+			row += "\n" + indentParallelBranchTrace(trace, bodyWidth)
 		}
 		list.rows = append(list.rows, row)
 	}
@@ -1433,23 +1479,87 @@ func renderParallelGroupFocus(th theme.Theme, st parallelState, groups []paralle
 	return parallelBranchSelectableList(th, st, g, hk, bodyWidth).render(th, height)
 }
 
-// renderParallelBranchRow renders one branch's roster line within a focused group: the
-// "▶" cursor on the SELECTED row (the one the `x` cancel key addresses), alongside
-// the "★" on a winning row, else a muted plain row. It always ends with a newline.
+// renderParallelBranchRow renders a branch's two-level summary within a focused
+// group. The title owns the selectable/winner markers; the details and activity below
+// are visibly subordinate while retaining every existing trace line.
 func renderParallelBranchRow(th theme.Theme, br *parallelBranch, winner int, selected bool, width int) string {
-	line := parallelBranchLine(br)
+	style, prefix := th.Style("muted"), "  "
 	switch {
 	case selected:
-		prefix := "▶ "
+		style, prefix = th.Style("spinner"), "▶ "
 		if br.index == winner {
 			prefix += "★ "
 		}
-		return th.Style("spinner").Render(wrapFocusMetadataAtWidth(prefix+line, width)) + "\n"
 	case br.index == winner:
-		return th.Style("muted").Render(wrapFocusMetadataAtWidth("★ "+line, width)) + "\n"
-	default:
-		return th.Style("muted").Render(wrapFocusMetadataAtWidth("  "+line, width)) + "\n"
+		prefix = "★ "
 	}
+	return style.Render(prefix+parallelBranchText(br, width, lipgloss.Width(prefix))) + "\n"
+}
+
+const parallelBranchTraceGutter = "  │ "
+
+func indentParallelBranchTrace(trace string, bodyWidth int) string {
+	if bodyWidth <= lipgloss.Width(parallelBranchTraceGutter) {
+		return trace
+	}
+	lines := strings.Split(trace, "\n")
+	for i, line := range lines {
+		lines[i] = parallelBranchTraceGutter + line
+	}
+	return strings.Join(lines, "\n")
+}
+
+func parallelBranchText(br *parallelBranch, bodyWidth, titlePrefixWidth int) string {
+	return parallelBranchTitle(br, bodyWidth, titlePrefixWidth) + "\n" +
+		hangingIndentWrap(parallelBranchDetails(br), "    ", bodyWidth)
+}
+
+func parallelBranchTitle(br *parallelBranch, bodyWidth, titlePrefixWidth int) string {
+	label := br.label
+	if label == "" {
+		label = fmt.Sprintf("branch-%d", br.index+1)
+	}
+	title := parallelBranchGlyph(br) + " " + sanitizeTerminal(label)
+	if goal := sanitizeTerminal(br.goal); goal != "" {
+		title += " · " + goal
+	}
+	if bodyWidth > 0 {
+		return truncateDisplayWidth(title, max(1, bodyWidth-titlePrefixWidth))
+	}
+	return truncate(title, maxParallelBranchLabelLen+maxSubagentGoalLen)
+}
+
+func parallelBranchDetails(br *parallelBranch) string {
+	parts := []string{}
+	if routed := subagentModelLabel(br.routedCategory, br.routedModel, br.routingReason, br.model); routed != "" {
+		parts = append(parts, routed)
+	}
+	parts = append(parts, parallelBranchState(br), plural(br.toolCount, "tool"), "↑"+humanizeTokens(br.usage.InputTokens)+" ↓"+humanizeTokens(br.usage.OutputTokens))
+	return strings.Join(parts, " · ")
+}
+
+func parallelBranchGlyph(br *parallelBranch) string {
+	if !br.done {
+		return "◐"
+	}
+	if br.failed {
+		return "✗"
+	}
+	return "✓"
+}
+
+func parallelBranchState(br *parallelBranch) string {
+	if br.done {
+		state := parallelBranchStopLabel(br)
+		if br.durationMs > 0 {
+			state += " · " + humanizeDuration(br.durationMs)
+		}
+		return state
+	}
+	if br.current != "" {
+		return truncate(sanitizeTerminal(br.current), maxTraceToolNameLen) + "…"
+	}
+	return "working…"
 }
 
 // maxParallelBranchLabelLen caps a server-provided branch label in the focus row,

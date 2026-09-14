@@ -497,7 +497,8 @@ func wrapFocusMetadataAtWidth(s string, budget int) string {
 // hangingIndentWrap wraps a detail row to the text budget while indenting continuation
 // rows deeper than its parent lane. It applies the continuation's narrower width to every
 // line, which guarantees both indentation forms fit the card without dropping content.
-func hangingIndentWrap(s, firstIndent, continuationIndent string, budget int) string {
+func hangingIndentWrap(s, firstIndent string, budget int) string {
+	const continuationIndent = "    "
 	if budget <= 0 {
 		return firstIndent + s
 	}

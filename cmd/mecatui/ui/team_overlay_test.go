@@ -882,15 +882,19 @@ func TestAgentsRosterContextMeter(t *testing.T) {
 	out := stripANSIstr(m.View().Content)
 
 	rosterLine := func(name string) string {
-		for _, ln := range strings.Split(out, "\n") {
+		lines := strings.Split(out, "\n")
+		for i, ln := range lines {
 			if strings.Contains(ln, name) {
-				return ln
+				return strings.Join(lines[i:min(i+2, len(lines))], "\n")
 			}
 		}
 		return ""
 	}
 
 	low := rosterLine("low")
+	if strings.Contains(low, "[38;") || strings.Contains(low, "[m") {
+		t.Errorf("roster context meter must not leak stripped ANSI control bytes, got %q", low)
+	}
 	if !strings.Contains(low, "ctx ") || !strings.Contains(low, "20%") {
 		t.Errorf("low-pressure lane should show 'ctx … 20%%', got %q", low)
 	}
