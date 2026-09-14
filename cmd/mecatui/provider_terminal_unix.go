@@ -40,37 +40,37 @@ func readProviderTerminalLine(ctx context.Context, input, output *os.File, promp
 	inputFD, inputErr := providerTerminalFD(input)
 	outputFD, outputErr := providerTerminalFD(output)
 	if inputErr != nil || outputErr != nil || !term.IsTerminal(inputFD) || !term.IsTerminal(outputFD) {
-		return "", errors.New("provider input and prompt output require local terminals")
+		return "", providerTerminalError("provider input and prompt output require local terminals")
 	}
 	fd, err := unix.FcntlInt(uintptr(inputFD), unix.F_DUPFD_CLOEXEC, 0)
 	if err != nil {
-		return "", errors.New("could not open terminal reader")
+		return "", providerTerminalError("could not open terminal reader")
 	}
 	defer func() {
 		if closeErr := unix.Close(fd); closeErr != nil {
-			value, err = "", errors.New("could not close terminal reader")
+			value, err = "", providerTerminalError("could not close terminal reader")
 		}
 	}()
 	flags, err := unix.FcntlInt(uintptr(fd), unix.F_GETFL, 0)
 	if err != nil {
-		return "", errors.New("could not read terminal flags")
+		return "", providerTerminalError("could not read terminal flags")
 	}
 	state, err := term.MakeRaw(fd)
 	if err != nil {
-		return "", errors.New("could not hide terminal input")
+		return "", providerTerminalError("could not hide terminal input")
 	}
 	defer func() {
 		_, flagErr := unix.FcntlInt(uintptr(fd), unix.F_SETFL, flags)
 		restoreErr := term.Restore(fd, state)
 		if flagErr != nil || restoreErr != nil {
-			value, err = "", errors.New("terminal restoration failed; restore the terminal before continuing")
+			value, err = "", providerTerminalError("terminal restoration failed; restore the terminal before continuing")
 		}
 	}()
 	if err := unix.SetNonblock(fd, true); err != nil {
-		return "", errors.New("could not configure terminal reader")
+		return "", providerTerminalError("could not configure terminal reader")
 	}
 	if _, err := fmt.Fprint(output, strings.ReplaceAll(prompt, "\n", "\r\n")+": "); err != nil {
-		return "", errors.New("could not write terminal prompt")
+		return "", providerTerminalError("could not write terminal prompt")
 	}
 	defer func() { _, _ = fmt.Fprint(output, "\r\n") }()
 	var line []byte
@@ -87,10 +87,10 @@ func readProviderTerminalLine(ctx context.Context, input, output *os.File, promp
 			if errors.Is(err, unix.EINTR) {
 				continue
 			}
-			return "", errors.New("terminal input failed")
+			return "", providerTerminalError("terminal input failed")
 		}
 		if poll[0].Revents&(unix.POLLERR|unix.POLLHUP|unix.POLLNVAL) != 0 {
-			return "", errors.New("terminal input disconnected")
+			return "", providerTerminalError("terminal input disconnected")
 		}
 		if poll[0].Revents&unix.POLLIN == 0 {
 			continue
@@ -100,7 +100,7 @@ func readProviderTerminalLine(ctx context.Context, input, output *os.File, promp
 			continue
 		}
 		if err != nil {
-			return "", errors.New("terminal input failed")
+			return "", providerTerminalError("terminal input failed")
 		}
 		if n == 0 {
 			return "", io.EOF
@@ -115,14 +115,14 @@ func readProviderTerminalLine(ctx context.Context, input, output *os.File, promp
 				return "", errProviderInputTooLong
 			}
 			if invalid {
-				return "", errors.New("terminal input contains unsupported control characters")
+				return "", providerTerminalError("terminal input contains unsupported control characters")
 			}
 			if !utf8.Valid(line) {
-				return "", errors.New("terminal input must be valid text")
+				return "", providerTerminalError("terminal input must be valid text")
 			}
 			for _, r := range string(line) {
 				if !unicode.IsPrint(r) || isTrustControl(r) {
-					return "", errors.New("terminal input contains unsupported control characters")
+					return "", providerTerminalError("terminal input contains unsupported control characters")
 				}
 			}
 			return string(line), nil
@@ -133,7 +133,7 @@ func readProviderTerminalLine(ctx context.Context, input, output *os.File, promp
 				line = line[:len(line)-size]
 				if !hidden {
 					if _, err := fmt.Fprint(output, "\b \b"); err != nil {
-						return "", errors.New("could not write terminal prompt")
+						return "", providerTerminalError("could not write terminal prompt")
 					}
 				}
 			}
@@ -149,7 +149,7 @@ func readProviderTerminalLine(ctx context.Context, input, output *os.File, promp
 			line = append(line, b)
 			if !hidden && b < 127 {
 				if _, err := output.Write(one[:]); err != nil {
-					return "", errors.New("could not write terminal prompt")
+					return "", providerTerminalError("could not write terminal prompt")
 				}
 			}
 		}

@@ -39,7 +39,7 @@ Show provider readiness, authentication state, default model, and suggested next
 	case providerActionSetup:
 		text = `Usage: mecatui providers setup [PROVIDER]
 
-Configure a provider interactively. Select a built-in provider, sign in to a configured provider, or create a custom provider.
+Interactively choose a built-in, external, or custom provider. For a configured API-key provider, reuse the effective credential or replace it with separate save consent; an unknown name starts custom-provider setup. Successful setup offers a separate optional deployment-default action. Setup can write operator configuration and, when authentication is needed, locally managed credentials or OIDC enrollment.
 
 Custom provider IDs contain 1–63 lowercase letters, digits, or hyphens; they must start with a letter and end with a letter or digit. Manage ToolHive providers with ` + "`thv llm`" + `.
 `
@@ -65,7 +65,9 @@ Remove locally stored credentials for PROVIDER. The provider configuration and d
 	case providerActionSetDefault:
 		text = `Usage: mecatui providers set-default PROVIDER [MODEL]
 
-Set the default provider and optional model for the embedded server. PROVIDER must be ready to use. This command does not change a remote mecated server.
+Set the operator deployment default used by the embedded mecated started by bare mecatui. PROVIDER must be usable under the current local provider configuration; when MODEL is omitted, the current selector is preserved for the same provider, otherwise its declared default is resolved. Providers without a default require an explicit selector. This writes local operator settings and does not alter a remote mecated.
+
+When no provider is usable, first run `mecatui providers setup` or `mecatui providers add PROVIDER`, authenticate it if required, and confirm with `mecatui providers status`.
 `
 	case providerActionRemove:
 		text = `Usage: mecatui providers remove PROVIDER

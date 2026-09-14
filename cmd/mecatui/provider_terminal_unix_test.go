@@ -88,7 +88,7 @@ func providerPTYOutput(t *testing.T, master *os.File, until string) string {
 }
 
 func TestInvariant_ProviderSetupFollowup_TerminalCancellationAndSecretSafety(t *testing.T) {
-	for _, mode := range []string{"success", "limit", "oversized", "cancel", "ctrl-c", "eof", "control", "read-failure", "echo-off", "nonblocking", "field-cancel"} {
+	for _, mode := range []string{"success", "limit", "oversized", "cancel", "ctrl-c", "eof", "control", "read-failure", "echo-off", "nonblocking", "field-cancel", "field-success", "invalid-text"} {
 		t.Run(mode, func(t *testing.T) {
 			master, slave := providerPTY(t)
 			if mode == "echo-off" {
@@ -129,13 +129,18 @@ func TestInvariant_ProviderSetupFollowup_TerminalCancellationAndSecretSafety(t *
 			}
 			done := make(chan result, 1)
 			go func() {
-				value, err := readProviderTerminalLine(ctx, readInput, slave, "Key", mode != "field-cancel")
+				value, err := readProviderTerminalLine(ctx, readInput, slave, "Key", mode != "field-cancel" && mode != "field-success")
 				done <- result{value, err}
 			}()
 			output := providerPTYOutput(t, master, "Key: ")
 			key := "sensitive-sentinel"
 			input := key + "x\x7f\r"
 			switch mode {
+			case "field-success":
+				key = "visible-value"
+				input = key + "x\x7f\r"
+			case "invalid-text":
+				input = "\xff\r"
 			case "limit":
 				key = strings.Repeat("s", 8192)
 				input = key + "\r"
@@ -166,7 +171,7 @@ func TestInvariant_ProviderSetupFollowup_TerminalCancellationAndSecretSafety(t *
 				<-done
 				t.Fatal("terminal reader did not stop")
 			}
-			if mode == "success" || mode == "limit" || mode == "echo-off" || mode == "nonblocking" {
+			if mode == "success" || mode == "limit" || mode == "echo-off" || mode == "nonblocking" || mode == "field-success" {
 				if got.err != nil || got.value != key {
 					t.Fatal("hidden entry did not round-trip")
 				}
@@ -182,6 +187,18 @@ func TestInvariant_ProviderSetupFollowup_TerminalCancellationAndSecretSafety(t *
 				t.Fatal("terminal reader descriptor leaked after return")
 			}
 			output += providerPTYOutput(t, master, "\r\n")
+			if mode == "field-success" && !strings.Contains(output, "visible-valuex\b \b") {
+				t.Fatal("visible field or backspace was not echoed")
+			}
+			if mode == "invalid-text" && (got.err == nil || !strings.Contains(got.err.Error(), "valid text")) {
+				t.Fatal("invalid text lacks safe guidance")
+			}
+			if mode == "eof" && !errors.Is(got.err, io.EOF) {
+				t.Fatal("EOF lost its distinct cancellation input")
+			}
+			if mode == "read-failure" && (got.err == nil || errors.Is(got.err, io.EOF) || errors.Is(got.err, context.Canceled)) {
+				t.Fatal("read failure mislabeled as cancellation")
+			}
 			if strings.Contains(output, "sensitive") || (got.err != nil && strings.Contains(got.err.Error(), "sensitive")) {
 				t.Fatal("secret leaked")
 			}
@@ -218,7 +235,7 @@ func TestInvariant_ProviderSetupFollowup_TerminalCancellationAndSecretSafety(t *
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestProviderTerminalCommandProcess$")
-		cmd.Env = append(os.Environ(), "MECATL_TEST_PROVIDER_TERMINAL=1")
+		cmd.Env = append(os.Environ(), "MECATL_TEST_PROVIDER_TERMINAL=1", "MECATL_TEST_PROVIDER_CONFIG_HOME="+os.Getenv("XDG_CONFIG_HOME"))
 		cmd.Stdin, cmd.Stdout, cmd.Stderr = slave, slave, slave
 		if err := cmd.Start(); err != nil {
 			t.Fatal(err)
@@ -257,7 +274,7 @@ func TestInvariant_ProviderSetupFollowup_TerminalCancellationAndSecretSafety(t *
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestProviderTerminalCommandProcess$")
-		cmd.Env = append(os.Environ(), "MECATL_TEST_PROVIDER_TERMINAL=1")
+		cmd.Env = append(os.Environ(), "MECATL_TEST_PROVIDER_TERMINAL=1", "MECATL_TEST_PROVIDER_CONFIG_HOME="+os.Getenv("XDG_CONFIG_HOME"))
 		cmd.Stdin, cmd.Stdout, cmd.Stderr = slave, slave, slave
 		if err := cmd.Start(); err != nil {
 			t.Fatal(err)
@@ -287,10 +304,86 @@ func TestInvariant_ProviderSetupFollowup_TerminalCancellationAndSecretSafety(t *
 	})
 }
 
-func TestProviderTerminalCommandProcess(_ *testing.T) {
+func TestProviderReviewTerminalCommandErrors(t *testing.T) {
+	for _, mode := range []string{"eof-key", "eof-default", "control", "invalid-text", "oversized"} {
+		t.Run(mode, func(t *testing.T) {
+			_, auth := followupHome(t, "{}\n", "")
+			master, slave := providerPTY(t)
+			original, err := term.GetState(int(slave.Fd()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestProviderTerminalCommandProcess$")
+			cmd.Env = append(os.Environ(), "MECATL_TEST_PROVIDER_TERMINAL=1", "MECATL_TEST_PROVIDER_CONFIG_HOME="+os.Getenv("XDG_CONFIG_HOME"), "MECATL_TEST_PROVIDER_SETUP="+mode)
+			cmd.Stdin, cmd.Stdout, cmd.Stderr = slave, slave, slave
+			if err := cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			output := providerPTYOutput(t, master, "API key for openai: ")
+			input, want, exitCode := "sensitive-sentinel\x04", "Cancelled; no changes made.", 130
+			switch mode {
+			case "eof-default":
+				input, want = "sensitive-sentinel\r", "API key remains saved"
+			case "control":
+				input, want, exitCode = "sensitive-sentinel\x1b[31m\r", "unsupported control characters", 1
+			case "invalid-text":
+				input, want, exitCode = "sensitive-sentinel\xff\r", "valid text", 1
+			case "oversized":
+				input, want, exitCode = strings.Repeat("s", 9000)+"sensitive-sentinel\r", "8 KiB acceptance limit", 1
+			}
+			if _, err := io.WriteString(master, input); err != nil {
+				t.Fatal(err)
+			}
+			if mode == "eof-default" {
+				output += providerPTYOutput(t, master, "[y/N]: ")
+				if _, err := io.WriteString(master, "yes\r"); err != nil {
+					t.Fatal(err)
+				}
+				output += providerPTYOutput(t, master, "deployment default? [y/N]: ")
+				if _, err := io.WriteString(master, "\x04"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			err = cmd.Wait()
+			var exit *exec.ExitError
+			if !errors.As(err, &exit) || exit.ExitCode() != exitCode {
+				t.Fatalf("exit = %v", err)
+			}
+			output += providerPTYOutput(t, master, want)
+			if strings.Contains(output, "sensitive-sentinel") || strings.Contains(output, "could not read") {
+				t.Fatal("secret leaked or actionable reader error lost")
+			}
+			if mode == "eof-default" {
+				if strings.Contains(output, "no changes made") || !strings.Contains(readProviderCredentialTestFile(t, auth), "sensitive-sentinel") {
+					t.Fatal("prior commit misreported")
+				}
+			} else if _, err := os.Stat(auth); !errors.Is(err, os.ErrNotExist) {
+				t.Fatal("failed input saved key")
+			}
+			state, err := term.GetState(int(slave.Fd()))
+			if err != nil || !reflect.DeepEqual(state, original) {
+				t.Fatal("terminal not restored")
+			}
+		})
+	}
+}
+
+func TestProviderTerminalCommandProcess(t *testing.T) {
 	if os.Getenv("MECATL_TEST_PROVIDER_TERMINAL") != "1" {
 		return
 	}
+	// TestMain isolates subprocess homes too; restore the parent's explicit test
+	// custody so its post-command filesystem assertions observe the actual writes.
+	home := os.Getenv("MECATL_TEST_PROVIDER_CONFIG_HOME")
+	if home == "" {
+		t.Fatal("missing subprocess test custody")
+	}
+	t.Setenv("XDG_CONFIG_HOME", home)
 	os.Args = []string{"mecatui", "providers", "login", "openai"}
+	if os.Getenv("MECATL_TEST_PROVIDER_SETUP") == "eof-default" {
+		os.Args[2] = "setup"
+	}
 	main()
 }
