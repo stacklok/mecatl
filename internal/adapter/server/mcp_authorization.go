@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/jsonschema-go/jsonschema"
+
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
