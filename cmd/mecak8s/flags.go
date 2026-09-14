@@ -69,6 +69,8 @@ const (
 	defaultGRPCStopTimeout     = 10 * time.Second
 	defaultHTTPShutdownTimeout = 5 * time.Second
 	defaultCloseTimeout        = 5 * time.Second
+	defaultRedisFollowPoolSize = 32
+	defaultRedisMaxFollowers   = 32
 )
 
 type positiveDurationValue struct {
@@ -162,6 +164,8 @@ type config struct {
 	redisAllowPlaintext bool
 	redisFilesystem     bool
 	redisReadLedger     bool
+	redisFollowPoolSize int
+	redisMaxFollowers   int
 
 	// Remote learning driver: the app validates that it advertises the complete
 	// distributed-learning repository capability set before startup proceeds.
@@ -371,6 +375,8 @@ func parseFlags(argv []string) (config, error) {
 	fs.StringVar(&cfg.redisPasswordFile, "redis-password-file", "", "path to optional Redis password in a mounted Secret; never pass the password as an argument; requires verified TLS")
 	fs.BoolVar(&cfg.redisTLS, "redis-tls", false, "verify Redis TLS against the host system trust store; use for a managed Redis whose certificate chains to a public CA. Use --redis-tls-ca instead for a private CA")
 	fs.StringVar(&cfg.redisTLSCAFile, "redis-tls-ca", "", "path to a PEM CA bundle in a mounted Secret used to verify Redis TLS, REPLACING the system trust store. Either this or --redis-tls is required whenever ACL credentials are configured")
+	fs.IntVar(&cfg.redisFollowPoolSize, "redis-follow-pool-size", defaultRedisFollowPoolSize, "maximum Redis connections reserved for blocking event followers")
+	fs.IntVar(&cfg.redisMaxFollowers, "redis-max-followers", defaultRedisMaxFollowers, "maximum number of event followers admitted by this process")
 	fs.StringVar(&cfg.learningStoreURL, "learning-store-url", "", "host:port of one distributed learning gRPC driver providing AttemptRepositoryService, ProposalRepositoryService, and SkillRepositoryService. The complete set must be explicitly advertised at startup; a partial or legacy driver fails closed with no local-repository fallback. Repository partitions are opaque on this transport")
 	fs.StringVar(&cfg.driverAuthToken, "driver-auth-token", "", "bearer token sent on every store-driver RPC (or MECATL_DRIVER_AUTH_TOKEN; empty disables driver auth). Refused over cleartext to a non-loopback driver — pair with --driver-tls")
 	fs.BoolVar(&cfg.driverTLS, "driver-tls", false, "enable transport TLS on store-driver connections")
@@ -589,6 +595,15 @@ func parseFlags(argv []string) (config, error) {
 	if (cfg.redisFilesystem || cfg.redisReadLedger) && cfg.redisURL == "" {
 		return config{}, errors.New("--redis-filesystem and --redis-read-ledger require --redis-url")
 	}
+	if cfg.redisFollowPoolSize < 1 {
+		return config{}, errors.New("--redis-follow-pool-size must be at least 1")
+	}
+	if cfg.redisMaxFollowers < 1 {
+		return config{}, errors.New("--redis-max-followers must be at least 1")
+	}
+	if cfg.redisMaxFollowers > cfg.redisFollowPoolSize {
+		return config{}, errors.New("--redis-max-followers must not exceed --redis-follow-pool-size")
+	}
 
 	return cfg, nil
 }
@@ -637,6 +652,8 @@ func appConfig(cfg config, diag port.Diagnostics, obs observability) app.Config 
 		RedisTLSCAFile:         cfg.redisTLSCAFile,
 		RedisTLS:               cfg.redisTLS,
 		RedisAllowPlaintext:    cfg.redisAllowPlaintext,
+		RedisFollowPoolSize:    cfg.redisFollowPoolSize,
+		RedisMaxFollowers:      cfg.redisMaxFollowers,
 		LearningStoreURL:       cfg.learningStoreURL,
 		DriverAuthToken:        cfg.driverAuthToken,
 		DriverTLS:              cfg.driverTLS,

@@ -770,6 +770,8 @@ func TestMecak8sHelmChart_DeployCheckProductionFixtureRuntimeAndSpread(t *testin
 		"--http-addr=0.0.0.0:8081",
 		"--drain-addr=0.0.0.0:8082",
 		"--redis-url=redis.example.internal:6379",
+		"--redis-follow-pool-size=32",
+		"--redis-max-followers=32",
 		"--session-lease-k8s-namespace=default",
 		"--headless=true",
 		"--posture=auto",

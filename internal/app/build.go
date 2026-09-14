@@ -191,6 +191,10 @@ type Config struct {
 	RedisTLSCAFile      string
 	RedisTLS            bool
 	RedisAllowPlaintext bool
+	// RedisFollowPoolSize and RedisMaxFollowers bound the isolated blocking
+	// event-follow path. Zero retains redisstore's defaults for non-CLI callers.
+	RedisFollowPoolSize int
+	RedisMaxFollowers   int
 	Shell               string
 	NoShell             bool
 	temporaryStorage    temporaryStorageConfig
@@ -3781,15 +3785,7 @@ func buildSessionStore(cfg Config) (port.SessionStore, port.EventLog, func(), er
 	// its own EventLog (like jsonlstore), so wire it as both. Mutually exclusive
 	// with StoreDir/SessionStoreURL (validateDriverConfig enforces it).
 	if cfg.RedisURL != "" {
-		st, err := redisstore.NewWithConfig(redisstore.Config{
-			Addr:           cfg.RedisURL,
-			UsernameFile:   cfg.RedisUsernameFile,
-			PasswordFile:   cfg.RedisPasswordFile,
-			CAFile:         cfg.RedisTLSCAFile,
-			TLS:            cfg.RedisTLS,
-			AllowPlaintext: cfg.RedisAllowPlaintext,
-			Diagnostics:    cfg.diag(),
-		})
+		st, err := redisstore.NewWithConfig(redisStoreConfig(cfg))
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("redis store: %w", err)
 		}
@@ -3823,6 +3819,20 @@ func buildSessionStore(cfg Config) (port.SessionStore, port.EventLog, func(), er
 	cfg.diag().Log(context.Background(), port.LevelInfo, "session store: jsonl", "dir", cfg.StoreDir)
 	// The one Store also implements port.EventLog — wire it as both.
 	return st, st, func() {}, nil
+}
+
+func redisStoreConfig(cfg Config) redisstore.Config {
+	return redisstore.Config{
+		Addr:           cfg.RedisURL,
+		UsernameFile:   cfg.RedisUsernameFile,
+		PasswordFile:   cfg.RedisPasswordFile,
+		CAFile:         cfg.RedisTLSCAFile,
+		TLS:            cfg.RedisTLS,
+		AllowPlaintext: cfg.RedisAllowPlaintext,
+		FollowPoolSize: cfg.RedisFollowPoolSize,
+		MaxFollowers:   cfg.RedisMaxFollowers,
+		Diagnostics:    cfg.diag(),
+	}
 }
 
 func logJSONLDurabilityPosture(diag port.Diagnostics, capability jsonlstore.SnapshotDurabilityCapability) {
