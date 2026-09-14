@@ -1,5 +1,7 @@
 # Writing how-to guides
 
+[Technical writing skill](../SKILL.md)
+
 A how-to guide is a recipe. The reader is a competent user with a real task in front of them: they know what they want to achieve and roughly what they're doing, and they need reliable directions for this specific goal. Unlike a tutorial's learner, they can adapt, fill small gaps, and recover from minor surprises. Respect that competence.
 
 How-to guides are usually the bulk of a documentation set: the task-oriented guide pages for each product area and the third-party integration guides.

@@ -1,5 +1,7 @@
 # Writing reference material
 
+[Technical writing skill](../SKILL.md)
+
 Reference is a map. The reader is working and needs to look something up: a flag, a field, a default, a supported version. They consult reference material the way they consult a dictionary; nobody reads it front to back. Its entire value is that the reader can trust it and find things in it fast.
 
 Reference material typically covers CLI commands, API and schema specs, configuration fields, and compatibility tables, either in a dedicated reference section or as reference pages inside product sections.

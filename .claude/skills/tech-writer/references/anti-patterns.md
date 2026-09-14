@@ -1,5 +1,7 @@
 # Write-time anti-patterns
 
+[Technical writing skill](../SKILL.md)
+
 These are the habits that most often degrade documentation drafts. Read this list before drafting and again during self-check. Most of them are natural tendencies of LLM-generated prose, which is exactly why they need active resistance at write time rather than cleanup at review time.
 
 Apply the same catalog when reviewing documentation. When a new recurring

@@ -1,6 +1,8 @@
 # Stacklok documentation style guide
 
-This is the canonical style guide for Mecatl's user-facing documentation. It is derived from Stacklok's [shared tech-writer skill](https://github.com/stacklok/claude-plugins/tree/main/plugins/docs/skills/tech-writer) and kept in this repository so every contributor and coding harness can apply the same rules. For information architecture, content ownership, links, and verification, follow [`user-docs/_README.md`](../../../../user-docs/_README.md).
+[Technical writing skill](../SKILL.md)
+
+This is the canonical style guide for Mecatl's user-facing documentation. It is derived from Stacklok's [shared tech-writer skill](https://github.com/stacklok/claude-plugins/tree/main/plugins/docs/skills/tech-writer) and kept in this repository so every contributor and coding harness can apply the same rules. For information architecture, content ownership, links, and verification, follow `user-docs/_README.md`.
 
 ## Content framework
 
@@ -207,8 +209,8 @@ Our preferred style elements include:
 
 Specific guidelines for sites built with Docusaurus:
 
-- Define the page title in front matter and repeat it as a matching Markdown H1. Sections within a page begin with Heading 2 (`##`). See [`user-docs/_README.md`](../../../../user-docs/_README.md#write-a-page).
-- Follow the repository's content-root-relative `.md` link convention for cross-section links. See [`website/AGENTS.md`](../../../../website/AGENTS.md#link-convention).
+- Define the page title in front matter and repeat it as a matching Markdown H1. Sections within a page begin with Heading 2 (`##`). See the "Write a page" section in `user-docs/_README.md`.
+- Follow the repository's content-root-relative `.md` link convention for cross-section links. See the "Link convention" section in `website/AGENTS.md`.
 - Use the `.md` extension for pages under `user-docs/`.
 - Use the front matter section on all pages. At a minimum, set the `title` (this is rendered into the page as an H1) and a short `description`. [[Reference](https://docusaurus.io/docs/api/plugins/@docusaurus/plugin-content-docs#markdown-front-matter)]
 - Use titles and line highlights in code blocks to provide context and improve readability. [[Reference](https://docusaurus.io/docs/markdown-features/code-blocks)]

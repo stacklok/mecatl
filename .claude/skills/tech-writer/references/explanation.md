@@ -1,5 +1,7 @@
 # Writing explanation
 
+[Technical writing skill](../SKILL.md)
+
 Explanation is a discussion. The reader is away from the keyboard, or at least away from the task, and wants to deepen their understanding: how does this work, why is it designed this way, how does it relate to the alternatives? Explanation is the mode that serves study rather than work, and it's the only mode where context, background, opinion, and trade-offs belong.
 
 Explanation typically lives in a concepts section (protocol primers, architecture overviews, security frameworks) and in each product section's Introduction page, which explains what the product is and who it's for.

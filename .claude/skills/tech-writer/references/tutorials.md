@@ -1,5 +1,7 @@
 # Writing tutorials
 
+[Technical writing skill](../SKILL.md)
+
 A tutorial is a lesson. The reader is a learner who wants to acquire skill by doing something under your guidance. They don't yet know what they need to know, so you, the teacher, carry all responsibility for their success. If a learner follows the steps exactly and something fails, the tutorial failed, not the learner.
 
 Tutorials are typically the quickstarts inside each product section and any end-to-end getting-started pages. A quickstart should deliver a working result in under 10 minutes.

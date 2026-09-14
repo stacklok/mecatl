@@ -14,19 +14,19 @@ Everything in this skill and its references is guidelines, not rules. Each one e
 
 Don't duplicate guidance; read it from where it lives:
 
-1. **`references/style-guide.md`** is Mecatl's canonical prose and style guide.
+1. **[Mecatl's style guide](references/style-guide.md)** is the canonical prose and style guide.
 2. **`user-docs/_README.md`** is the canonical information-architecture,
    ownership, link, and verification contract for public documentation. Its
    Mecatl-specific mechanics take precedence over general guidance here.
 3. **`website/AGENTS.md`** owns Docusaurus infrastructure and preview mechanics.
-4. **The mode references** in `references/` provide Diataxis discipline and
+4. **The mode references** in [`references/`](references/) provide Diataxis discipline and
    write-time anti-patterns.
 
 ## Workflow
 
 1. **Classify.** Use the compass below to decide the page's primary mode. Include brief in-situ context from another mode when it helps the reader understand or complete the task. Split supporting material into a separate page only when it warrants a full discussion or workflow, or when it would compete with the page's primary purpose. Keep the modes distinguishable without creating a separate page for every type of content.
 2. **Place.** For public documentation, follow `user-docs/_README.md`. For other documentation, place the page next to its closest siblings and match how peer content is organized. Placement problems are more expensive to fix after merge than prose problems, so settle this before drafting.
-3. **Read.** Read the reference file for your mode, plus `references/anti-patterns.md`, plus the style guide sections your task touches. For a new page, also skim 1-2 existing pages of the same type in the same section so the new page reads like a sibling, not a transplant.
+3. **Read.** Read the reference file for your mode, plus [the write-time anti-patterns](references/anti-patterns.md), plus the style guide sections your task touches. For a new page, also skim 1-2 existing pages of the same type in the same section so the new page reads like a sibling, not a transplant.
 4. **Draft.** Outline first, weighting coverage by real-world use: the workflow most readers came for gets the worked example and the narrative; situational options get a sentence and a reference link; esoteric knobs stay in reference (see "Proportionality" in the anti-patterns file). Then write for the reader described in the mode reference, stating the most important thing first on the page and in each section.
 5. **Self-check.** Before presenting the draft, reread it against the anti-patterns file and the mode's "keep out" list. Cut what fails. For substantial new content, use an independent editorial review when available; for small edits, the self-check is enough.
 
@@ -45,21 +45,21 @@ A quick tiebreaker: ask what the reader is doing when they open the page. Learni
 
 ## The four modes
 
-- **Tutorial** - a guided lesson where you take responsibility for the reader's success. Quickstarts and end-to-end getting-started pages. Read `references/tutorials.md`.
-- **How-to guide** - a recipe for a competent user with a real task. Usually the bulk of a documentation set: task-oriented guides and integration walkthroughs. Read `references/how-to-guides.md`.
-- **Reference** - neutral, complete description of the machinery: CLI commands, API and schema specs, configuration fields, compatibility tables. Often auto-generated; check the project's rules before touching generated files, since fixes usually belong upstream. Read `references/reference.md`.
-- **Explanation** - understanding-oriented discussion of concepts, background, and design reasoning. Concept pages and product introductions. Read `references/explanation.md`.
+- **Tutorial** - a guided lesson where you take responsibility for the reader's success. Quickstarts and end-to-end getting-started pages. Read [the tutorial guidance](references/tutorials.md).
+- **How-to guide** - a recipe for a competent user with a real task. Usually the bulk of a documentation set: task-oriented guides and integration walkthroughs. Read [the how-to guidance](references/how-to-guides.md).
+- **Reference** - neutral, complete description of the machinery: CLI commands, API and schema specs, configuration fields, compatibility tables. Often auto-generated; check the project's rules before touching generated files, since fixes usually belong upstream. Read [the reference guidance](references/reference.md).
+- **Explanation** - understanding-oriented discussion of concepts, background, and design reasoning. Concept pages and product introductions. Read [the explanation guidance](references/explanation.md).
 
 ## Reference files
 
 | When you are...                                | Read                          |
 | ---------------------------------------------- | ----------------------------- |
-| Writing or editing a tutorial or quickstart    | `references/tutorials.md`     |
-| Writing or editing a how-to guide              | `references/how-to-guides.md` |
-| Writing or editing reference material          | `references/reference.md`     |
-| Writing or editing concept/explanation content | `references/explanation.md`   |
-| Drafting anything (always, before self-check)  | `references/anti-patterns.md` |
-| Checking style, structure, or terminology      | `references/style-guide.md`   |
+| Writing or editing a tutorial or quickstart    | [Tutorials](references/tutorials.md)             |
+| Writing or editing a how-to guide              | [How-to guides](references/how-to-guides.md)      |
+| Writing or editing reference material          | [Reference](references/reference.md)              |
+| Writing or editing concept/explanation content | [Explanation](references/explanation.md)          |
+| Drafting anything (always, before self-check)  | [Write-time anti-patterns](references/anti-patterns.md) |
+| Checking style, structure, or terminology      | [Style guide](references/style-guide.md)           |
 
 ## Self-check
 
