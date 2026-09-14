@@ -34,24 +34,26 @@ func TestLogoutOutputOmitsZeroMissingCredentialCount(t *testing.T) {
 		name   string
 		result clientauth.LogoutResult
 		want   string
-		have   string
 	}{
 		{
 			name:   "single credential",
 			result: clientauth.LogoutResult{Target: "example.com:443", Entries: 1, CredentialsDeleted: 1, RegistryDeleted: true},
 			want:   "removed saved login for example.com:443 (1 credential removed)\n",
-			have:   "already absent",
 		},
 		{
 			name:   "multiple credentials",
 			result: clientauth.LogoutResult{Target: "example.com:443", Entries: 2, CredentialsDeleted: 2, RegistryDeleted: true},
 			want:   "removed saved login for example.com:443 (2 credentials removed)\n",
-			have:   "already absent",
 		},
 		{
 			name:   "missing credential is reported",
 			result: clientauth.LogoutResult{Target: "example.com:443", Entries: 1, CredentialsDeleted: 1, CredentialsMissing: 1, RegistryDeleted: true},
 			want:   "removed saved login for example.com:443 (1 credential removed, 1 already absent)\n",
+		},
+		{
+			name:   "all credentials already absent",
+			result: clientauth.LogoutResult{Target: "example.com:443", Entries: 1, CredentialsDeleted: 0, CredentialsMissing: 1, RegistryDeleted: true},
+			want:   "removed saved login for example.com:443 (0 credentials removed, 1 already absent)\n",
 		},
 	}
 	for _, tc := range cases {
@@ -61,9 +63,6 @@ func TestLogoutOutputOmitsZeroMissingCredentialCount(t *testing.T) {
 			got := out.String()
 			if got != tc.want {
 				t.Fatalf("logout output = %q, want %q", got, tc.want)
-			}
-			if tc.have != "" && strings.Contains(got, tc.have) {
-				t.Fatalf("logout output unexpectedly contains %q: %q", tc.have, got)
 			}
 		})
 	}

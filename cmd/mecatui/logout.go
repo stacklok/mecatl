@@ -83,11 +83,11 @@ func writeLogoutResult(out io.Writer, result clientauth.LogoutResult) {
 		if result.CredentialsDeleted != 1 {
 			credentialWord = "credentials"
 		}
+		suffix := ""
 		if result.CredentialsMissing > 0 {
-			_, _ = fmt.Fprintf(out, "removed saved login for %s (%d %s removed, %d already absent)\n", result.Target, result.CredentialsDeleted, credentialWord, result.CredentialsMissing)
-		} else {
-			_, _ = fmt.Fprintf(out, "removed saved login for %s (%d %s removed)\n", result.Target, result.CredentialsDeleted, credentialWord)
+			suffix = fmt.Sprintf(", %d already absent", result.CredentialsMissing)
 		}
+		_, _ = fmt.Fprintf(out, "removed saved login for %s (%d %s removed%s)\n", result.Target, result.CredentialsDeleted, credentialWord, suffix)
 	} else {
 		_, _ = fmt.Fprintf(out, "logout for %s is incomplete; saved metadata was retained to keep unresolved credentials reachable\n", result.Target)
 	}

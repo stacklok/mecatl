@@ -128,6 +128,20 @@ func TestADR_0277_BareHostnameFindsDefaultHTTPSLegacyTarget(t *testing.T) {
 	}
 }
 
+func TestADR_0277_BareHostnameDoesNotMatchNonDefaultPortTarget(t *testing.T) {
+	registry, err := OpenRegistry(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := resourceConnection("", "legacy.example.com:8443", "https://issuer.example.com")
+	if _, err := registry.Upsert(legacy); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := registry.Find("legacy.example.com"); !errors.Is(err, credentialstore.ErrNotFound) {
+		t.Fatalf("bare hostname lookup of non-default-port target = %v, want not found", err)
+	}
+}
+
 func TestADR_0277_BareHostnameLogoutRemovesDefaultHTTPSTarget(t *testing.T) {
 	registry, err := OpenRegistry(t.TempDir())
 	if err != nil {
