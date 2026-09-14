@@ -34,6 +34,7 @@ func (c *e2eClipboard) Write(_ context.Context, _ string, data []byte) error {
 	c.wrote = string(data)
 	return nil
 }
+func (*e2eClipboard) WritePrimary(context.Context, []byte) error { return nil }
 
 func TestSessionContinuityUX_Scenario6_EmbeddedAndConnectE2E(t *testing.T) {
 	starters := []struct {

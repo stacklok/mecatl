@@ -235,6 +235,22 @@ func TestCreateSessionCarriesReasoningEffort(t *testing.T) {
 	})
 }
 
+func TestCreateSessionUsesSessionMediaCapabilities(t *testing.T) {
+	fake := &fakeModelsClient{createResp: &mecatlv1.CreateSessionResponse{
+		SessionId:           "sess-1",
+		Capabilities:        &mecatlv1.ServerCapabilities{Image: false, Teams: true},
+		SessionCapabilities: &mecatlv1.SessionCapabilities{Image: true},
+	}}
+	cl := newFakeClient(fake)
+	_, caps, _, err := cl.CreateSession(context.Background(), mecatlv1.PermissionMode_PERMISSION_MODE_DEFAULT, ModelSelection{})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	if !caps.Image || !caps.Teams {
+		t.Fatalf("capabilities = %+v, want session image overlaid while global feature bits survive", caps)
+	}
+}
+
 // TestReasoningEffortIsZero asserts an effort-only selection is NOT zero (the client
 // must still send it) while a fully-empty selection is.
 func TestReasoningEffortIsZero(t *testing.T) {

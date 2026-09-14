@@ -83,7 +83,7 @@ a future Kubernetes Secret `resourceVersion` CAS backend. See
 [ADR 0218](../adr/0218-credential-store.md) and
 [ADR 0221](../adr/0221-read-only-credential-source.md).
 
-## Local microVM redesign contract (ADR 0334)
+## Local microVM redesign contract (ADR 0342)
 
 Tasks 59–65 complete ordinary `microvm-local` readiness, immutable Brood admission with
 in-process `toolhive-core/container/verifier`, the one-shot rootfs materializer,
@@ -165,7 +165,7 @@ signing, independent refresh channels, per-session fairness/quotas, dashboards, 
 exhaustive cache-poisoning controls. The historical subsection below records the superseded
 accumulator implementation only; it is not target architecture.
 
-### Local microVM development release activation (ADR 0334)
+### Local microVM development release activation (ADR 0342)
 
 The unsupported source workflow is compile-time absent unless both local roots are built with
 `microvm_dev`. Those tagged roots alone register the descriptor and acknowledgement flags;
@@ -454,16 +454,25 @@ retains only static client-CA loading and lifecycle closure. Invalid rotations r
 prior generation. Expiry diagnostics warn once per published generation with only an
 `expiring`/`expired` reason and rounded remaining duration; they never disable the published
 certificate or expose paths, subjects, serials, or PEM. Close joins watcher and observer.
-`internal/adapter/redisstore` similarly swaps a fully probed client generation for file-backed
-CA/ACL changes while leases keep displaced clients alive for in-flight work. Acquisition returns
-the concrete client explicitly through every helper and iterator; only the migration acquisition
-identity remains in context. A followed credential target must be regular. Shutdown rejects new
-work first, closes the watcher, cancels reload, and separately bounds the worker join; an
-uncancellable late read cannot publish into the closed generation manager. Generation retirement
-claims close once and executes it asynchronously. One fixed generation grace bounds both live
-leases and close completion without force-closing active clients; a timeout emits one count-only
-warning and eventual releases/closes continue. Reload retries use bounded jittered exponential
-delay, with a newer projection event explicitly restarting at attempt one. Partial or invalid
+`internal/adapter/redisstore` swaps a fully probed client pair for file-backed
+CA/ACL changes while leases keep displaced generations alive for in-flight work.
+Each generation contains a durability client with the standard connection
+defaults and an isolated follow client built through ToolHive Core v0.0.46 and
+`redisconn` v0.0.2. The follow client's `PoolSize` and `MaxActiveConns` equal
+`Config.FollowPoolSize`; a separate `followerRegistry` admits at most
+`Config.MaxFollowers` full iterators. Zero selects 32 for both, and
+configuration requires `1 <= MaxFollowers <= FollowPoolSize`. Acquisition
+returns the selected concrete client through every helper and iterator; only the
+migration acquisition identity remains in context. A followed credential target
+must be regular.
+Shutdown rejects new work first, closes the watcher, cancels reload, and
+separately bounds the worker join; an uncancellable late read cannot publish
+into the closed generation manager. Generation retirement claims close once and
+runs asynchronously. Store shutdown cancels admitted followers, waits
+cooperatively, and may force-close only isolated follow clients before the fixed
+total grace expires. Durability clients remain lease-safe. Reload retries use
+bounded jittered exponential delay, with a newer projection event explicitly restarting
+at attempt one. Partial or invalid
 rotations retain the previous generation. The
 server client-CA pool remains static and requires restart; CA rotation should overlap old
 and new roots before removing the old root.
@@ -480,7 +489,11 @@ Chart-owned annotations (`mecatl.stacklok.com/unsafe-real-provider`,
 release cannot forge or clear its own posture stamp. Empty provider/model
 and null token ceilings emit no flags; explicit ceilings are positive. Scheduling controls
 are empty by default and map directly to pod-spec topology spread, affinity, node selector,
-and toleration fields. The comprehensive production fixtures pin external verified Redis,
+and toleration fields. `redis.follow.poolSize` and
+`redis.follow.maxFollowers` default to 32. The schema requires positive
+integers,
+and the template helper requires the follower limit to fit within the pool. The
+comprehensive production fixtures pin external verified Redis,
 both secure transport options, provider/model, finite run/team ceilings, and hostname
 spreading; Kind remains mock and secret-free.
 
@@ -1151,8 +1164,17 @@ signals the run. The Service retracts local ask delivery and prevents later rela
 persistence, but leaves the durable `PendingAsk` unresolved and byte-identical for TTL
 takeover. Settled stale run
 references remove heavyweight held-lease/capability tombstones; the lightweight
-`lostOwnership` denial remains until explicit local session teardown so that stale
-Service cannot reacquire.
+`lostOwnership` denial otherwise fails every ordinary caller fast so that a stale
+Service cannot reacquire. It is cleared by explicit local session teardown
+(`CloseSession`), or automatically by the composition-level stale-session sweep's
+`ReconcileLeaseLossTombstone` (issue #1334): a bounded trial Acquire+immediate-Release
+against the real backend proves the lease is genuinely free before the tombstone is
+dropped, letting the next real run-entry repair the session (Interrupt for cancelled,
+the awaiting-resume machinery for awaiting) without waiting for teardown or a process
+restart. That trial is serialized against `onLeaseLost`'s own Release for the same id
+via a dedicated per-id lock (`leaseLossMu`), since `engine/port.SessionLease`'s
+same-id calls are caller-serialized and a conforming backend need not make an
+overlapping Acquire/Release safe on its own.
 
 The gRPC in-stream approval path also enters a Service-owned live-run gate: holding the
 Service mutex orders the verdict against lease invalidation before it reaches the parent
@@ -4303,9 +4325,11 @@ tool call refined into an askable ask, a serialized provenance marker, a verdict
   the model KNOWS to call `PresentPlan`).** Three reinforcing layers make the workflow
   explicit so the model does not improvise it (the reported bug: a model treated an
   inline "acceptable" as approval and kept executing, never surfacing the gate): (1)
-  `Spec().Description` (`engine/agent/presentplan.go` (`Spec`)) — call EXACTLY ONCE when
-  the plan is complete, then STOP; an inline "acceptable"/"looks good"/"approved" in chat
-  is NOT approval. (2) `internal/app/build.go` (`applyPlanModePosture` /
+  `Spec().Description` (`engine/agent/presentplan.go` (`Spec`)) — call exactly once
+  **per current presentation**, then STOP. If that review is denied for iteration or
+  its run is cancelled, wait for new user input; then present the revised or unchanged
+  plan through a NEW `PresentPlan` call and stop again. Later chat assent requests a
+  fresh gated review and is never execution approval. (2) `internal/app/build.go` (`applyPlanModePosture` /
   `planModePostureNote`) — appended to a plan-mode session engine's Role in
   `sessionEngineFactory` on create-in-plan AND on the CASE-1 rebuild when the session
   flips into plan mode. (3) `engine/prompt/builder.go` — the plan-mode volatile suffix
@@ -4368,7 +4392,11 @@ tool call refined into an askable ask, a serialized provenance marker, a verdict
   feedback; `runLoop` terminates with `StopPlanIterate` at the SAME two sites (EARLY
   + post-dispatch) — the run ENDS so the operator's next typed prompt drives the
   revision (the model does NOT continue iterating in-turn with no operator input,
-  the old behaviour the operator reported). The session stays `ModePlan` on Deny (no
+  the old behaviour the operator reported). Cancelling the pending plan run is a
+  separate terminal: no deny verdict is synthesized, `ModePlan` remains, and the next
+  prompt uses the ordinary cancelled-session `Interrupt` recovery to close the
+  interrupted tool pair before a new presentation. In both cases the next current
+  presentation gets a NEW call and fresh gate. The session stays `ModePlan` on Deny (no
   mode flip — `terminateComplete` only flips when `planApprovedTarget != ""`).
   `engine/agent/loop.go` (`terminateComplete`) flips the mode AT the terminal boundary:
   AFTER `sess.Stop(reason)` → `StateCompleted`, `sess.SetMode(planApprovedTarget)` is legal
@@ -4968,7 +4996,17 @@ isolated-child runner oracles prove provider credentials do not enter command-ru
 environments. Residual boundary: a same-UID Shell process can read a known plaintext
 `auth.yaml` path; mode `0600` is not privilege separation.
 
-### `openaicompat` + `toolhivellm` — ToolHive LLM gateway provider (issue #262, ADR 0064)
+### `openaicompat` + `toolhivellm` — ToolHive protocol providers (issue #262, ADR 0064, ADR 0334)
+
+One detected ToolHive gateway identity registers TWO protocol-specific entries.
+`toolhive` is unchanged: `openaicompat` discovers `/v1/models` and
+`provider/openai` infers through `/v1/responses`. `toolhive-anthropic` reuses
+`anthropic.NewLister` and `provider/anthropic`, discovering
+`/anthropic/v1/models` and inferring through `/anthropic/v1/messages`. Catalogs are
+never merged or failed over: status, counts, and process-local last-known-good data
+remain keyed by provider ID. `toolhive` stays the implicit default among the two.
+Anthropic catalog metadata may enrich a matching gateway-listed ID, but never
+creates gateway inventory by itself.
 
 Two-layer leaf split, mirroring the `providercatalog`/`openrouter` shape but for a
 config-detected (not credential-detected) provider. `internal/adapter/openaicompat`
@@ -5004,15 +5042,18 @@ Composition (`internal/app/registry.go`): `resolveToolhiveIntent` decides
 REGISTRATION from intent alone (an explicit `--toolhive-llm-base-url`, pre-validated
 loopback-only by `validateToolhiveBaseURL` — literal `127.0.0.0/8`/`[::1]`/
 `localhost` via `net.ParseIP`, NEVER a DNS lookup, TOCTOU-safe — or a config-file
-detect) — the network probe that follows NEVER gates whether the "toolhive" entry
-exists, only its diagnostics/default-model eligibility (D1's whole point: a
+detect) — the network probes that follow NEVER gate whether either ToolHive entry
+exists, only diagnostics/default-model eligibility (D1's whole point: a
 persisted `provider_id:"toolhive"` session must rehydrate even when the proxy is
 down, never the `ErrInvalidArgument` "unknown or unavailable provider" class of
-error). `newGatewayEntry` delegates to `newOpenAICompatEntry` (the renamed
+error). `newToolhiveEntries` preserves `newGatewayEntry` for the Responses surface
+and constructs the native surface through `newAnthropicEntryFor`. The former
+delegates to `newOpenAICompatEntry` (the renamed
 `newOpenAIEntry` — shared by openai/openrouter/toolhive, so all three cannot drift
 on resilience wrapping) with `toolhivellm.PlaceholderToken` (`"thv-proxy"`) as the
-credential. `providerEntry.intentDriven`/`intentGatewayURL`/`intentExplicit` are the
-three new fields: `intentDriven` tiers `preferredDefaultProvider` STRICTLY below
+credential. Both carry `providerEntry.intentDriven`/`intentGatewayURL`/
+`intentExplicit` plus the resolved ToolHive routing mode: `intentDriven` tiers
+`preferredDefaultProvider` STRICTLY below
 every key-driven provider (any resolved API key always wins the default,
 alphabetics be damned — pinned by an anthropic-keyed-beats-toolhive test, since
 "toolhive" sorts after "anthropic" and a naive sorted-pick would pass by accident)
@@ -5021,8 +5062,9 @@ gateway notices. `providerStatusProto` is broader only for the operator-actionab
 Codex entitlement boundary; ordinary openrouter/anthropic blips still never grow
 the client-facing `provider_status` wire list.
 
-`probeToolhive` is the BOUNDED (1.5s) Build-time probe, run once per Build
-immediately after registration: ok(N) → INFO + (if sole+unset) fills
+`probeToolhive` starts both protocol probes concurrently under ONE BOUNDED (1.5s)
+Build-time deadline immediately after registration. Each outcome updates only its
+own provider-keyed status/LKG. For the resolved default, ok(N) → INFO + (if unset) fills
 `reg.defaultModel` from the first-listed id, stamps `defaultModelAutoSelected`, and
 RE-RUNS the T7 caps fixup via the shared `remintEntry` helper; ok(0 models) on a
 SOLE/DEFAULT toolhive → `errToolhiveNoModels`, Build FAILS (R2.3 — there's genuinely
@@ -5148,12 +5190,12 @@ a redirect response (CWE-918).
 had become the de-facto remediation map for ALL providers via the shared classifier,
 so an ordinary openrouter outage could record the ToolHive-specific
 "start it with `thv llm proxy start`" hint (latent-wrong-vendor).
-`statusHintFor(pid, state)` (`internal/app/registry.go`) selects the ToolHive table
-for `providerToolhive`, the manual-token/account table for `providerOpenAICodex`,
-and `""` for ordinary providers; `resolveProviderModels`'s failure branch and
-`liveOutcomeStore.recordSuccess`'s empty-state hint both route through it.
-`probeToolhive` already keyed toolhive directly, so it needed no change. TRIP-WIRE:
-a new surfaced provider needs its own vendor table, never copied wording.
+`statusHintFor(entry, state)` (`internal/app/registry.go`) selects the proxy/direct
+ToolHive table for both protocol-specific provider IDs from the entry's structural
+`toolhiveMode`, the manual-token/account table for `providerOpenAICodex`, and `""`
+for ordinary providers. `resolveProviderModels`, `liveOutcomeStore.recordSuccess`,
+and `probeToolhive` all route through that one helper. TRIP-WIRE: a new surfaced
+provider needs its own vendor table, never copied wording.
 
 mecatui: `client.ProviderStatus` mirrors the proto message (now with an
 `AutoSelected bool`); `ModelsMsg.Statuses` threads it through `ListModelsCmd`;
@@ -5163,9 +5205,11 @@ remediation line from a PRIOR success must never render beneath an unrelated
 error); `renderModelsPanel`'s status-line loop is additionally gated on
 `st.err == nil` as render-time defense in depth. `renderProviderStatusLines`
 renders ONE muted line per non-`ok` status under the list/empty state
-(`"<provider_id>: <copy> — <hint>"`, e.g. `"toolhive: proxy not reachable — start
+(`"<provider_id>: <copy> — <hint>"`, e.g. `"toolhive: gateway not reachable — start
 it with `thv llm proxy start`"`), extracted into the shared `providerStatusLine`
-helper. `modelsEmptyCopy` (review finding 6) now calls `promotedStatus` FIRST —
+helper. The ToolHive clause is deliberately routing-neutral; the TUI never parses
+the mode-specific free-text hint to infer proxy versus direct routing.
+`modelsEmptyCopy` (review finding 6) now calls `promotedStatus` FIRST —
 the first entry whose state is neither `""` nor `"ok"` — and promotes ANY such
 status (not just `"empty"`) to the top-level empty-state cause line via
 `providerStatusLine`, ahead of the disabled note and the generic "No selectable
@@ -5249,8 +5293,8 @@ discipline). It feeds the UNCHANGED `preferredDefaultProvider` ladder as an
 explicit operator override — it does NOT lower the precedence of key-driven
 providers. See ADR 0064 D9.
 
-**DIRECT mode — in-process OIDC token injection (issue #265, ADR 0102).** The gateway
-entry can also talk DIRECTLY to the real `gateway_url` with no local proxy hop. The
+**DIRECT mode — in-process OIDC token injection (issue #265, ADR 0102).** Both gateway
+entries can talk DIRECTLY to the real `gateway_url` with no local proxy hop. The
 ToolHive Go import that ADR 0064 D8 said would never exist now lives in ONE file —
 `internal/adapter/toolhivellm/tokensource.go` (the package's sole toolhive-importing
 file alongside the stdlib-only `detect*.go`; the detector's
@@ -5271,20 +5315,27 @@ ToolHive credential with `thv llm setup`. Errors are sanitised via
 `llm.SanitizeTokenError` (strips any bearer material an IdP echoes back) before they
 cross any boundary.
 
-The token rides a custom `http.RoundTripper` inside the `*http.Client` passed to
-`openai.WithHTTPClient` — NOT a `port.LLMProvider` decorator. `bearerRoundTripper`
-(`internal/app/registry.go`) strips the openai-go SDK's placeholder `Authorization`
-header (the SDK's `SetAPIKey` stamps `Bearer <key>` before `*http.Client.Transport`
-fires) and sets `Bearer <real-token>`, mirroring the ToolHive proxy's `Rewrite`
+The ONE token source is shared by the two entries through a custom
+`http.RoundTripper` inside the `*http.Client` passed to both SDKs — NOT a
+`port.LLMProvider` decorator. `bearerRoundTripper` (`internal/app/registry.go`)
+strips conflicting `Authorization` AND `X-Api-Key` headers before setting
+`Bearer <real-token>` on every outbound attempt, mirroring the ToolHive proxy's `Rewrite`
 (`pkg/llm/proxy/proxy.go` <!-- lint:not-a-citation: path inside the toolhive dependency, not a repo file -->: `Del` then `Set`). The HTTP client composes TWO policies:
 `bearerRoundTripper` over the SDK default transport, AND
-`openaicompat.RefuseRedirects` (CWE-918). `newDirectGatewayEntry` passes both via
-`openai.WithHTTPClient`, and `newOpenAICompatEntry` closes `extra` into `construct()`
-so the option rides the default build AND every per-session/heal `remintEntry` re-mint
-(zero drift, the same property the proxy entry relies on for redirect refusal). The
+`openaicompat.RefuseRedirects` (CWE-918). `newDirectGatewayClient` constructs that
+shared policy once; the OpenAI and Anthropic entry constructors pass it through their
+SDK options, including every per-session/heal re-mint (zero drift, the same property
+the proxy entry relies on for redirect refusal). The
 token NEVER enters a log, an error string, or an env var (OS keyring; only its
 reference is persisted); the `RoundTripper` must never log the Authorization header —
 and by construction it does not.
+
+Proxy-mode native Anthropic uses the same normalizing transport with a static,
+non-secret `thv-proxy` token: it removes any Anthropic SDK `X-Api-Key` and conflicting
+authorization, then sends only `Authorization: Bearer thv-proxy` to the validated
+loopback hop. ToolHive replaces that header upstream. Both listing and inference
+clients refuse redirects; the lister's shallow client clone retains the underlying
+authenticated transport while adding its response-size cap.
 
 A new `--toolhive-llm-mode auto|proxy|direct` flag (default `auto`, registered by
 `cliconfig.RegisterToolhiveLLMFlags` on all four mains) drives the routing in
@@ -5294,8 +5345,10 @@ A new `--toolhive-llm-mode auto|proxy|direct` flag (default `auto`, registered b
 gateway would send the bearer over cleartext, CWE-319), else falls back to proxy with
 a WARN (byte-identical to pre-#265 when OIDC is absent); `proxy` forces the loopback
 path (the escape hatch for a misconfigured OIDC block or a self-signed cert); `direct`
-forces the gateway path. The direct base URL is DERIVED via `directBaseURL`
-(`gateway_url + "/v1"`, mirroring what the ToolHive proxy forwards), never hand-set —
+forces the gateway path. The direct bases are DERIVED via `directBaseURL` and
+`toolhiveAnthropicBaseURL` (`gateway_url + "/v1"` and `gateway_url + "/anthropic"`),
+never hand-set; the same helper preserves a legitimate path prefix and strips
+userinfo/query/fragment material —
 there is no `--toolhive-llm-direct-base-url` (it would duplicate the security-sensitive
 `--toolhive-llm-base-url` surface for zero gain). An explicit `--toolhive-llm-base-url`
 ALWAYS forces proxy (it is a loopback address; direct derives from the config's
@@ -6473,14 +6526,14 @@ the scoped WRITE path is deferred** (see below).
   constructs `AgentDef`s from wire metadata — `Memory` is **NOT** carried on the wire in v1 (no proto
   change); a driver-served def stays cold-start.
 
-### Historical environment placement implementation (superseded by ADR 0334 redesign)
+### Historical environment placement implementation (superseded by ADR 0342 redesign)
 
 This subsection describes the existing accumulator code and its test seams. Its
 session-per-VM lifecycle, derived image, deny-default networking, explicit init/recover,
 `--microvm`, external cosign, mode widening, and per-generation rootfs clone are removal
 inputs, not target decisions. The authoritative target is the redesign contract under
-[Local microVM redesign contract](#local-microvm-redesign-contract-adr-0334), the living
-[architecture](../architecture/microvm-environments.md), and ADR 0334.
+[Local microVM redesign contract](#local-microvm-redesign-contract-adr-0342), the living
+[architecture](../architecture/microvm-environments.md), and ADR 0342.
 
 `environment_profile` is independent from the existing tool-surface `profile`. The
 request carries only an alias resolved against `permconfig.Resolver`'s operator-only
@@ -6976,8 +7029,7 @@ round-trips the exact private EnvironmentRef. ACP binds/reattaches first and tre
 as an assertion against trusted configured local placement.
 
 The Build-owned selector key is inventoried in ADR 0027 List 1; List 2 records reset-by-design,
-unpersisted selectors, and relist-after-restart. `TestADR_0291_PlacementReauditInventoriesEphemeralSelectorKey`
-pins that lifecycle text.
+unpersisted selectors, and relist-after-restart.
 
 ### Snapshot fidelity — persisted per-session facts (cloud-native Phase 1)
 
@@ -7514,6 +7566,13 @@ allocates are `0027-cloud-native.md` List 1 rows 65–66.
   resuming from it would skip exactly the buffered envelopes the client never
   received. The client's own last-received envelope is the only correct resume
   point.
+- **Backend admission is distinct from transport lag.** A `CursorEventLog` may
+  return `port.ErrEventFollowCapacity` before storage work starts. The server
+  classifies it as `watch_capacity` and gRPC `RESOURCE_EXHAUSTED`; HTTP has
+  already committed status 200 and writes the same code in its terminal SSE
+  error frame. Redisstore uses this path when its process-local follower
+  registry is full. `watch_lagging` continues to mean that the server's
+  bounded delivery buffer could not keep pace with the transport consumer.
 - **Cursor assignment is at the ONE persistence chokepoint** (AC7.8):
   `internal/adapter/server/service.go` (`appendEvent`) type-asserts the cursor seam
   and calls `AppendEvent`. The returned cursor is DISCARDED — readers get positions
@@ -8869,24 +8928,37 @@ failures name only the class, never the value. The elapsed-time expiry leg is bo
 the only clock-dependent part because the official `oauth2.Token.Valid` has no injected
 clock.
 
-## TypeScript SDK — `sdk/typescript/` (M1–M4 public v0.1 surface, ADRs 0279, 0288, 0292 and 0304)
+## TypeScript SDK — `sdk/typescript/` (M1–M4 public surface and post-v0.1.0 Deno integration, ADRs 0279, 0288, 0292, 0304, 0328, 0337, 0338, and 0339)
 
-The ESM-only `@stacklok-oss/mecatl-sdk` has three exports. `.` owns the transport-neutral
+The ESM-only `@stacklok-oss/mecatl-sdk` has four exports. `.` owns the transport-neutral
 `Client`/`Session`/`Run` API, typed events/errors, prompt-media helpers, and the hand-written
 HTTP/JSON/SSE transport. `./node` re-exports that surface and adds connect-node real gRPC over
 HTTP/2: TCP uses an ordinary base URL; UDS keeps an ordinary HTTP authority and supplies a
 socket-opening `createConnection` through the HTTP/2 node options (`sdk/typescript/src/node-transport.ts`),
-never a `unix://` URL. `./gen` is the committed protobuf-es output generated only for
+never a `unix://` URL. `./deno` re-exports the transport-neutral surface, selects the same
+ConnectRPC gRPC transport for `connect()`, and adds Deno-native `spawn()` / `query()`.
+It uses Deno's Node compatibility for HTTP/2 while keeping process ownership in `Deno.Command`.
+`./gen` is the committed protobuf-es output generated only for
 `contracts/proto/mecatl/v1/`; it has a codegen freshness gate rather than an API Extractor
-report. The package requires Node 22 or newer, builds unbundled ESM plus declarations/source maps,
-and owns its pinned pnpm lock independently of the npm-based website. The
+report. The package declares Node 22 or newer and Deno `>=2.9.3 <3` engine ranges, builds
+unbundled ESM plus declarations/source maps, and owns its pinned pnpm lock independently of the
+npm-based website. The
 canonical published name is `@stacklok-oss/mecatl-sdk` on public npmjs
 (`sdk/typescript/v*` tags, `npm-publish` environment, staged trusted publishing,
 maintainer approval with 2FA, npm-native provenance). A manually dispatched
-release-App workflow advances `sdk/typescript/VERSION` and `package.json` in an
-exact two-file PR; its verified merge causes the App to push the matching tag
-and thereby trigger npm staging
+release-App workflow generates a package-scoped `sdk/typescript/CHANGELOG.md`
+entry and advances `sdk/typescript/VERSION` and `package.json` in an exact
+three-file PR. Its verified merge causes the App to push the matching tag and
+thereby trigger npm staging
 ([ADR 0328](../adr/0328-typescript-sdk-npmjs-stacklok-oss.md)).
+The post-build `scripts/add-deno-self-types.mjs` prepends every JavaScript module's stable
+`@ts-self-types` sibling declaration and one unmapped source-map line, because Deno does not infer
+TypeScript's adjacent declaration rule for relative `.js` imports.
+The published dependencies include `@types/node`, and the server transport declaration preserves
+its Node type reference, because the shared gRPC options expose Node's HTTP/2 and TLS types.
+The native Deno fixture rejects an invalid `nodeOptions` field during stable
+checking; this catches a missing declaration dependency that would otherwise degrade those options
+to `any` in Deno's dependency declarations.
 
 `sdk/typescript/src/raw.ts` enforces API-major compatibility before all non-compatibility RPCs;
 the ergonomic client also probes status and maps transport/auth/incompatibility states without
@@ -8912,7 +8984,7 @@ source XOR, MIME allowlists, per-part/count/aggregate bounds, and server capabil
 opening a run. The Node export adds path loaders; neither transport changes the normalized
 prompt model or event model.
 
-The offline real-wire lane is `sdk/typescript/e2e/`, separate from injected-transport unit
+The offline real-wire lanes are `sdk/typescript/e2e/`, separate from injected-transport unit
 tests and from the paid Go live suite below. `task sdk:e2e` first runs the repository Taskfile
 build, then Vitest spawns `bin/mecated` only on `127.0.0.1` or an owner-local UDS, with live
 provider credentials removed. Bare `--mock` remains its original single canned text turn.
@@ -8924,9 +8996,11 @@ examples compiler, pack, API reports, Go+TS codegen freshness, and this e2e; eac
 hard failure. `sdk/typescript/examples/slack-bot/` remains a separate pnpm project and CI job: its
 own `slack-bot:typecheck` task builds the same SDK `dist/` and supplies the second proof needed to
 cover every committed example without importing the Slack application's dependencies into the SDK
-package.
+package. `task sdk:deno` packs the package, applies stable `deno check` to `.`, `./deno`, and
+`./gen`, builds the same-checkout daemon, and runs the `Deno.Command` lifecycle at the declared
+runtime floor and current Deno 2.x CI lanes. The release workflow repeats the floor lane.
 
-M3's local-daemon root is `sdk/typescript/src/spawn.ts`. `spawn()` is reachable only from
+M3's Node/Bun local-daemon root is `sdk/typescript/src/spawn.ts`. Its `spawn()` is reachable only from
 `./node`; the transport-neutral entry point imports neither `node:child_process` nor the
 launcher module. Binary resolution is total and ordered: explicit `binaryPath`, then
 `MECATED_BIN`, then an SDK-owned `PATH` walk for `mecated`, with `stat` plus execute-access
@@ -8939,6 +9013,35 @@ is derived from the ready document's `features`, never from that option.
 `lifetimePipe: false` omits both the lifetime flag and the fourth stdio entry. Caller
 `env` values are merged over the inherited process environment before binary resolution
 and launch, and that environment is never used to build an outward-facing fact or message.
+
+Deno local ownership is isolated in `sdk/typescript/src/deno-spawn.ts` and exported only by
+`./deno`. The source uses structural runtime types so the NodeNext build does not absorb Deno
+ambient declarations; `denoRuntime()` resolves `globalThis.Deno` only when `spawn()` is called.
+The launcher creates `new Deno.Command(binaryPath ?? "mecated", options)` directly with no shell,
+inherits the parent environment, overlays caller `env`, pipes stderr, and opens piped stdin. Its
+fixed argv is `serve --grpc-addr 127.0.0.1:0 --http-addr "" --ready-file <ready>
+--lifetime-stdin`; all five hosting flag families are collision-rejected from caller `args`.
+The Deno client connects to the ready document's gRPC address through the shared ConnectRPC
+transport. That TCP topology intentionally omits the UDS-only `mcp_servers_on_create` feature,
+and the Deno client type has no callback registry.
+
+`--lifetime-stdin` is an advanced daemon-hosting flag for process APIs that cannot assign an
+arbitrary inherited child descriptor. It is mutually exclusive with `--lifetime-pipe-fd`.
+Composition selects fd 0 only when the boolean is explicit, validates that it is a pipe through
+the same `checkLifetimePipeFD` path, adopts it after listener bind, and feeds EOF into the ordinary
+graceful shutdown select. Deno retains the writable stream without sending bytes. Explicit close
+closes that writer first, waits a bounded grace, then applies `SIGTERM` and `SIGKILL` bounds through
+the captured child handle. Parent death lets the kernel close the same writer and preserves the
+EOF cleanup contract through the native process adapter.
+
+The Deno ready parser requires schema `mecated-ready/1`, positive pid/API major, a string feature
+list, `transport: "tcp"`, and an actual `127.0.0.1:<port>` gRPC address with a valid TCP port.
+It also requires the document pid to match the captured `Deno.ChildProcess.pid` before creating
+the shared gRPC transport and making the first
+compatibility call. `tempDirectory`, when present, is resolved through `Deno.realPath`; otherwise
+`Deno.makeTempDir` chooses the base. Failure disposal, stderr tail bounds/redaction, frozen daemon
+metadata, diagnostic records, unexpected-exit terminal state, and idempotent stop/removal follow
+the Node contract through the same `ClientImpl` daemon-lifecycle hooks.
 
 Each spawn creates a `0700` directory with `mkdtemp`, never adopts a caller-predictable path,
 and holds `ready.json` plus `mecated.sock` there. Socket paths are checked against Darwin's
@@ -9004,12 +9107,14 @@ releases client resources and removes the runtime directory, but `isRunning()` p
 the already-observed child. Ordinary `connect()` construction supplies no daemon hooks and therefore
 has no process or runtime-directory authority.
 
-The one-shot layer is `sdk/typescript/src/query.ts`. Its public options keep the three ownership
+The one-shot state machine is `sdk/typescript/src/query.ts`. Its public options keep the three ownership
 domains separate: `session` is passed to `Client.sessions.create`, `spawn` is consulted only when
 there is no supplied client, `onPermissionAsk` configures the ordinary `Run` responder, and
 `onPlanApproval` configures only `PresentPlan`. The module-internal `queryInternal` options bag
-replaces only the spawn function for tests; no launcher or resource seam enters the `./node`
-barrel. Plan mode requires `onPlanApproval` before that seam is invoked. The live plan ask is
+replaces only the spawn function for tests and the two runtime wrappers. `node-query.ts` injects
+the Node spawn function, while `deno-query.ts` injects the Deno function, so the common module has
+no launcher import. No launcher or resource seam enters a public barrel. Plan mode requires
+`onPlanApproval` before that seam is invoked. The live plan ask is
 resolved through its existing Converse approval frame; after the same-ID run yields
 `plan_approved`, `QueryImpl` opens a fresh Converse stream with the constant in
 `sdk/typescript/src/plan.ts` (`PLAN_APPROVED_PROCEED_TEXT`) and flattens both runs. It never calls
@@ -9052,9 +9157,10 @@ The executable documentation surface lives in `sdk/typescript/examples/`. Its to
 resolves the package's self-name through `package.json#exports` after `dist/` is built. The named
 Vitest oracle in `sdk/typescript/test/examples.test.ts` inventories those programs, rejects an SDK
 source-tree import from every TypeScript file below `examples/`, and checks that SDK imports use
-only `.`, `./node`, or `./gen`. The same oracle makes the separate Slack bot proof visible by
+only `.`, `./node`, `./deno`, or `./gen`. The same oracle makes the separate Slack bot proof visible by
 pinning its CI job and `task slack-bot:typecheck` invocation. The second named oracle keeps the
-Node/Bun `connect()`/`spawn()`/`query()`/callback-tool coverage from being reduced to prose.
+Node/Bun `connect()`/`spawn()`/`query()`/callback-tool coverage and Deno remote/local coverage from
+being reduced to prose.
 
 Callback-tool registration lives in `sdk/typescript/src/tool.ts` and is decorated onto the
 Node/Bun client type without widening the transport-neutral `Client`. The one registry owns a
@@ -9231,8 +9337,9 @@ pulls again. Neither moves its checkpoint past the last preceding envelope. Curs
 terminal here: restart-from-beginning remains caller-authored rather than an SDK fallback.
 
 Reconnect authority stays inside the named watch operation in `sdk/typescript/src/watch.ts`.
-`WatchConnection` resumes transport-shaped failures, `watch_lagging`, authentication failures,
-and clean EOF from the iterator's raw checkpoint token and unchanged server filter. It applies
+`WatchConnection` resumes transport-shaped failures, `watch_lagging`,
+`watch_capacity`, authentication failures, and clean EOF from the iterator's raw
+checkpoint token and unchanged server filter. It applies
 bounded exponential delay with jitter through the internal `delayFor`/`sleep` scheduler bag; a
 successful envelope resets the attempt count. The code-driven terminal arm is the single
 `terminalWatchCodes` set: `cursor_expired`, `cursor_malformed`, `activity_gap`,

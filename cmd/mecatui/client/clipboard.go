@@ -16,10 +16,12 @@ import (
 // content as a (mime, data) pair: an image/* mime when the clipboard holds an
 // image (which the UI stages as an inline media part), or a text mime (text/plain)
 // when it holds text (which the UI inserts into the textarea). The mime tells the
-// caller which branch to take. Write is the BEST-EFFORT shell-clipboard fallback
-// behind the in-app text-selection copy: the UI's primary copy path is OSC52
-// (tea.SetClipboard), and Write mirrors the same payload into the platform
-// clipboard binary so the copy still lands on terminals that don't honour OSC52.
+// caller which branch to take. Write and WritePrimary are the BEST-EFFORT
+// shell-clipboard fallbacks behind the in-app text-selection copy: the UI's copy
+// path is OSC52 (tea.SetClipboard for the clipboard, tea.SetPrimaryClipboard for
+// the X11/Wayland primary selection), and these mirror the same payload into the
+// platform clipboard binaries so the copy still lands (incl. middle-click paste) on
+// terminals that don't honour OSC52.
 // A Write error is non-fatal — OSC52 is the primary and the copy is considered to
 // have succeeded if either path works — so the UI must NOT surface it loudly. A
 // nil Clipboard on Deps cleanly disables BOTH ctrl+v read and the shell write (the
@@ -41,6 +43,14 @@ type Clipboard interface {
 	// failed subprocess returns an error the caller is expected to treat as a muted
 	// non-event, never a transcript error.
 	Write(ctx context.Context, mime string, data []byte) error
+	// WritePrimary copies text into the X11/Wayland PRIMARY selection (the
+	// select-to-copy buffer pasted by middle-click), so text selected INSIDE
+	// mecatui behaves like a native terminal selection and can be middle-click
+	// pasted elsewhere. It is the shell twin of the OSC52 primary write
+	// (tea.SetPrimaryClipboard), best-effort with the same muted-error contract as
+	// Write. Platforms with no primary selection (macOS/Windows) or no backend
+	// return ErrNoClipboardTool.
+	WritePrimary(ctx context.Context, data []byte) error
 }
 
 var (
@@ -127,6 +137,11 @@ type backend struct {
 	// writeTextArgs WRITES stdin to the clipboard (the copy fallback). Empty when
 	// the backend has no shell write path; Write then no-ops with an error.
 	writeTextArgs []string
+	// writePrimaryTextArgs WRITES stdin to the PRIMARY selection (the middle-click
+	// buffer). Empty on platforms with no primary selection (macOS/Windows) or when
+	// the backend has no primary write path; WritePrimary then reports
+	// ErrNoClipboardTool.
+	writePrimaryTextArgs []string
 }
 
 // selectBackend probes the environment + PATH for a usable clipboard backend, in
@@ -141,21 +156,23 @@ func (c *shellClipboard) selectBackend() (backend, error) {
 	switch {
 	case c.getenv("WAYLAND_DISPLAY") != "" && has(binWlPaste):
 		return backend{
-			name:            binWlPaste,
-			listTypesArgs:   []string{binWlPaste, "--list-types"},
-			imageArgs:       []string{binWlPaste, "--no-newline", "--type", "image/png"},
-			textArgs:        []string{binWlPaste, "--no-newline"},
-			primaryTextArgs: []string{binWlPaste, "--primary", "--no-newline"},
-			writeTextArgs:   writeArgsFor(c.lookPath, "wl-copy"),
+			name:                 binWlPaste,
+			listTypesArgs:        []string{binWlPaste, "--list-types"},
+			imageArgs:            []string{binWlPaste, "--no-newline", "--type", "image/png"},
+			textArgs:             []string{binWlPaste, "--no-newline"},
+			primaryTextArgs:      []string{binWlPaste, "--primary", "--no-newline"},
+			writeTextArgs:        writeArgsFor(c.lookPath, "wl-copy"),
+			writePrimaryTextArgs: primaryWriteArgsFor(c.lookPath, "wl-copy", "--primary"),
 		}, nil
 	case c.getenv("DISPLAY") != "" && has(binXclip):
 		return backend{
-			name:            binXclip,
-			listTypesArgs:   []string{binXclip, argSelection, "clipboard", "-t", "TARGETS", "-o"},
-			imageArgs:       []string{binXclip, argSelection, "clipboard", "-t", "image/png", "-o"},
-			textArgs:        []string{binXclip, argSelection, "clipboard", "-o"},
-			primaryTextArgs: []string{binXclip, argSelection, "primary", "-o"},
-			writeTextArgs:   []string{binXclip, argSelection, "clipboard", "-i"},
+			name:                 binXclip,
+			listTypesArgs:        []string{binXclip, argSelection, "clipboard", "-t", "TARGETS", "-o"},
+			imageArgs:            []string{binXclip, argSelection, "clipboard", "-t", "image/png", "-o"},
+			textArgs:             []string{binXclip, argSelection, "clipboard", "-o"},
+			primaryTextArgs:      []string{binXclip, argSelection, "primary", "-o"},
+			writeTextArgs:        []string{binXclip, argSelection, "clipboard", "-i"},
+			writePrimaryTextArgs: []string{binXclip, argSelection, "primary", "-i"},
 		}, nil
 	case has("pngpaste") || has("pbpaste"):
 		// macOS. pngpaste fetches a clipboard image to stdout ("-"); it has no
@@ -199,6 +216,16 @@ func writeArgsFor(lookPath func(string) (string, error), bin string) []string {
 	return []string{bin}
 }
 
+// primaryWriteArgsFor returns the write argv for the PRIMARY selection ({bin} plus
+// the supplied primary-targeting args, e.g. wl-copy --primary) when bin is on PATH,
+// or nil when it is not — the primary twin of writeArgsFor.
+func primaryWriteArgsFor(lookPath func(string) (string, error), bin string, args ...string) []string {
+	if _, err := lookPath(bin); err != nil {
+		return nil
+	}
+	return append([]string{bin}, args...)
+}
+
 // Write implements Clipboard's best-effort shell-clipboard WRITE: it resolves the
 // platform backend, pipes data to its write binary's stdin, and returns any
 // subprocess/backend error. It is the FALLBACK behind the UI's OSC52 copy — the UI
@@ -209,6 +236,22 @@ func writeArgsFor(lookPath func(string) (string, error), bin string) []string {
 // maxMediaBytes (parity with the read path) BEFORE any subprocess is spawned, so a
 // pathological selection can't pipe an unbounded blob into the clipboard binary.
 func (c *shellClipboard) Write(ctx context.Context, _ string, data []byte) error {
+	return c.writeSelection(ctx, data, func(b backend) []string { return b.writeTextArgs })
+}
+
+// WritePrimary implements Clipboard's best-effort PRIMARY-selection write (the
+// shell twin of tea.SetPrimaryClipboard): it pipes data to the backend's primary
+// write binary (wl-copy --primary / xclip -selection primary -i). Platforms with
+// no primary selection (macOS/Windows) resolve to an empty argv and return
+// ErrNoClipboardTool so the caller treats it as a muted non-event.
+func (c *shellClipboard) WritePrimary(ctx context.Context, data []byte) error {
+	return c.writeSelection(ctx, data, func(b backend) []string { return b.writePrimaryTextArgs })
+}
+
+// writeSelection is the shared body of Write/WritePrimary: resolve the backend,
+// size-cap the payload, and pipe it to the selected argv's stdin under the
+// clipboard timeout. argsFor picks the clipboard vs primary argv.
+func (c *shellClipboard) writeSelection(ctx context.Context, data []byte, argsFor func(backend) []string) error {
 	if len(data) > maxMediaBytes {
 		return fmt.Errorf("clipboard write payload is %d bytes, over the %d-byte limit", len(data), maxMediaBytes)
 	}
@@ -216,7 +259,8 @@ func (c *shellClipboard) Write(ctx context.Context, _ string, data []byte) error
 	if err != nil {
 		return err
 	}
-	if len(b.writeTextArgs) == 0 {
+	args := argsFor(b)
+	if len(args) == 0 {
 		return errors.New("no clipboard write backend")
 	}
 	if to := c.timeout; to > 0 {
@@ -224,7 +268,7 @@ func (c *shellClipboard) Write(ctx context.Context, _ string, data []byte) error
 		ctx, cancel = context.WithTimeout(ctx, to)
 		defer cancel()
 	}
-	return c.runStdin(ctx, data, b.writeTextArgs[0], b.writeTextArgs[1:]...)
+	return c.runStdin(ctx, data, args[0], args[1:]...)
 }
 
 // winImageScript fetches a clipboard image as raw PNG bytes on stdout. Kept as a

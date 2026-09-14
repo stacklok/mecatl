@@ -151,6 +151,7 @@ PR after verification. There is no cleanup or status-only PR.
   inventory and enrollment/catalogue status behind `/mcp`, without probes or new
   persistence. Status: approved; original plan PR merged, decisions recorded locally under
   an explicit human waiver of a separate amendment PR/merge for inclusion in the implementation PR.
+- [Idle-session MCP broker workspace refresh](idle-session-broker-workspace-refresh.md) — allows an owned idle broker session to explicitly refresh its complete protected-tool bundle after earlier turns and to recover after broker-process loss without resetting the conversation; retains ToolHive custody and broker-mode single-replica operation. Status: proposed.
 - [MCP broker DCR client](mcp-broker-dcr-client.md) — a third `mcp.servers[].auth.oauth.client.mode: dcr`, exposing ToolHive's existing RFC 7591 Dynamic Client Registration upstream-client support for protected MCP servers with no preregistered client or hosted CIMD document. Status: draft.
 - [Direct MCP Dynamic Client Registration](direct-mcp-dcr.md) — proposed contract for durable public-client DCR in a local direct MCP profile, reusing the existing authorization-code login while keeping broker and remote mecatui OIDC authority separate. Status: proposed.
 - [Live authenticated MCP metadata replaces static stand-ins](authenticated-mcp-metadata-replaces-static-standins.md) — replace protected-tool placeholders with safely admitted authenticated metadata after either lazy authorization or complete pre-prompt enrollment, without revealing undeclared tools on the lazy path. Status: in-progress.
@@ -179,6 +180,10 @@ PR after verification. There is no cleanup or status-only PR.
   injection; all callers admitted to one mecated share configured endpoint availability and
   gateway identity, while ToolHive remains explicit optional proxy compatibility with no
   cross-store secret migration. Status: proposed.
+- [ToolHive native Anthropic gateway support](toolhive-native-anthropic.md) — expose the
+  gateway's native Anthropic catalog and Messages endpoint as `toolhive-anthropic`, while
+  preserving the existing Responses-backed `toolhive` provider and shared gateway identity.
+  Status: implementation in progress under explicit workflow waiver; not approved or landed.
 - [Surface approval migration](surface-approval-migration.md) — final Phase-2 migration of the mecatui approval UI onto the dynamic surface contract, including ephemeral render-frame hit dispatch. Status: landed.
 - [Spine convergence](spine-convergence.md) — bring the
   to-acceptance-plan / plan-orchestrate / test-writer spine + ac-trace into
@@ -219,6 +224,12 @@ PR after verification. There is no cleanup or status-only PR.
 - [Session continuity UX](session-continuity-ux.md) — authoritative session-family
   metadata, honest replay/inspection, an active-session copy surface, startup resume,
   and a final session-ID handoff for mecatui. Status: landed.
+- [Draft-aware session inventory](draft-aware-session-inventory.md) — durable,
+  content-free draft/active/unknown activity metadata, server-filtered Chats and
+  Drafts pages, and active-only automatic latest resume. Status: proposed.
+- [Synthetic user-prompt replay](synthetic-user-prompt-replay.md) — emission-time
+  origin metadata for durable user-prompt events, shared genuine-user classification,
+  and mecatui notice rendering for harness-authored replay messages. Status: proposed.
 - [Steer-while-running](steer-while-running.md) — inject a user message into an
   in-flight run (Claude Code's "steer"): an engine-side supersedable inbox drained
   at the turn boundary, a gRPC `Converse` frame, the authoritative drain echo, and
@@ -281,8 +292,8 @@ PR after verification. There is no cleanup or status-only PR.
   approval deferred to an ack-only server route), and the offline
   daemon-restart and awaiting-resume e2e. Status: draft.
 - [Redis follow capacity](redis-follow-capacity.md) — isolated per-generation Redis follow
-  clients, fail-fast bounded follower admission, and store-owned follower shutdown. Status:
-  proposed.
+  clients, fail-fast bounded follower admission, store-owned follower shutdown, and the required
+  Go 1.27 compatibility-floor migration. Status: in-progress.
 - [TypeScript SDK local daemon and callback tools (M3)](sdk-typescript-local.md) —
   `@stacklok-oss/mecatl-sdk` M3: `spawn()`'s binary resolution, SDK-owned argv and
   ready-file barrier, the UDS-only tool-capable topology with its lifetime pipe,
@@ -296,6 +307,10 @@ PR after verification. There is no cleanup or status-only PR.
   resolution, TypeScript/Node/browser/macOS compatibility matrices, executable
   examples and public docs. The frozen plan closed on GitHub Packages `v0.0.1`;
   the canonical public cutover is npmjs `@stacklok-oss/mecatl-sdk@0.1.0` ([ADR 0328](../adr/0328-typescript-sdk-npmjs-stacklok-oss.md)). Status: draft.
+- [TypeScript SDK Deno runtime support](sdk-typescript-deno.md) - adds stable typed npm-package
+  imports, a Deno-native `./deno` entry point, `Deno.Command` local ownership, and real-wire
+  shared ConnectRPC gRPC coverage for Deno 2.9.3 through 2.x. Release scope: after v0.1.0, with no later
+  version assigned. Status: in-progress.
 
 - [Canonical Shell command tool](canonical-shell-command-tool.md) — canonical `Shell`
   and `ShellStatus` model-facing names, safe legacy `Bash` input normalization, and

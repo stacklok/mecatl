@@ -68,10 +68,22 @@ gh attestation verify mecatl_<VERSION>_darwin_arm64.tar.gz --repo stacklok/mecat
 The Cosign command verifies that a GitHub Actions workflow in the
 `stacklok/mecatl` repository signed the archive.
 
-## Container images
+## Container images and Helm chart
 
-Releases also publish signed container images to GHCR. See
-[the mecatui container image](/building/deployment/mecatui.md) for the
+Releases publish signed, multi-architecture container images to GHCR. Substitute
+the release number without its leading `v` for `<VERSION>`:
+
+```sh
+docker pull ghcr.io/stacklok/mecatl:v<VERSION>
+docker pull ghcr.io/stacklok/mecatl/mecak8s:v<VERSION>
+docker pull ghcr.io/stacklok/mecatl/mecatui:v<VERSION>
+```
+
+The first image runs `mecated`. The `mecak8s` Helm chart pulls the second image
+automatically and is published as
+`oci://ghcr.io/stacklok/mecatl/charts/mecak8s`.
+
+See [the mecatui container image](/building/deployment/mecatui.md) for the
 importable client image and
 [Run mecated standalone](/building/deployment/mecated.md) for server operation.
 [Cloud-native Kubernetes with mecak8s](/building/deployment/mecak8s.md) covers
@@ -79,7 +91,7 @@ the Kubernetes runtime, which is image-only and not part of the formula.
 
 ## Build from source
 
-A source build requires Go 1.26.6 or later and [Task](https://taskfile.dev/) v3.
+A source build requires Go 1.27 or later and [Task](https://taskfile.dev/) v3.
 Run the build from the repository root.
 
 Build all executables into `bin/`:
@@ -97,5 +109,5 @@ or `GOPATH/bin`, run `task install`.
   session.
 - [Run mecated standalone](/building/deployment/mecated.md) to operate the
   server.
-- [Pick your deployment shape](/building/getting-started/deployment-decision.md)
+- [Choose how to run Mecatl](/building/getting-started/deployment-decision.md)
   to choose between `mecated`, `mecak8s`, `mecatequi`, and an engine embedding.

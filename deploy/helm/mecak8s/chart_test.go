@@ -101,10 +101,41 @@ func deploymentFromRender(t *testing.T, rendered string) *appsv1.Deployment {
 	return nil
 }
 
-func workloadEnv(container corev1.Container) []corev1.EnvVar {
-	return slices.DeleteFunc(slices.Clone(container.Env), func(env corev1.EnvVar) bool {
-		return env.Name == "MECATL_INSTALLATION_ID"
+// installIDEnvVar is the chart-provisioned product-metrics install id
+// (install-id-configmap.yaml). It is UNCONDITIONAL — mecak8s is storage-free
+// (ADR 0048), so the local-file mechanism the other binaries use would mint a
+// fresh id on every pod restart — which means every env-shape assertion below
+// is about the OTHER, opt-in variables. appEnv drops it so those assertions
+// keep saying exactly what they said before it existed.
+const installIDEnvVar = "MECATL_PRODUCT_METRICS_INSTALL_ID"
+
+// installationIDEnvVar is the OPERATOR-facing `mecatl.installation.id` OTel
+// resource attribute (telemetry-configmap.yaml) — a different id, for a
+// different audience, than installIDEnvVar above. It is unconditional for the
+// same reason, so appEnv drops it too.
+const installationIDEnvVar = "MECATL_INSTALLATION_ID"
+
+// chartOwnedEnvVars are the two unconditional, chart-provisioned environment
+// variables every container carries. Both are dropped by appEnv/workloadEnv so
+// the pre-existing env-shape assertions below keep asserting exactly what they
+// asserted before either id existed.
+var chartOwnedEnvVars = []string{installIDEnvVar, installationIDEnvVar}
+
+// maskInstallID neutralises the per-render uuidv4 so two renders can be
+// compared for equality everywhere ELSE. See install-id-configmap.yaml.
+func maskInstallID(rendered string) string {
+	return regexp.MustCompile(`(?m)^  installId: .*$`).ReplaceAllString(rendered, "  installId: MASKED")
+}
+
+func appEnv(env []corev1.EnvVar) []corev1.EnvVar {
+	return slices.DeleteFunc(slices.Clone(env), func(e corev1.EnvVar) bool {
+		return slices.Contains(chartOwnedEnvVars, e.Name)
 	})
+}
+
+// workloadEnv is the container-taking form of appEnv.
+func workloadEnv(container corev1.Container) []corev1.EnvVar {
+	return appEnv(container.Env)
 }
 
 func TestMecak8sHelmChart_InstallationID(t *testing.T) {
@@ -770,6 +801,8 @@ func TestMecak8sHelmChart_DeployCheckProductionFixtureRuntimeAndSpread(t *testin
 		"--http-addr=0.0.0.0:8081",
 		"--drain-addr=0.0.0.0:8082",
 		"--redis-url=redis.example.internal:6379",
+		"--redis-follow-pool-size=32",
+		"--redis-max-followers=32",
 		"--session-lease-k8s-namespace=default",
 		"--headless=true",
 		"--posture=auto",
@@ -1431,7 +1464,10 @@ func TestMecak8sHelmChart_ServerTLS(t *testing.T) {
 	if err != nil {
 		t.Fatalf("render tls.enabled=false production values: %v", err)
 	}
-	if defaultRender != falseRender {
+	// The chart-owned install id is a fresh uuidv4 on every client-side render
+	// (lookup finds no cluster ConfigMap), so it differs between two otherwise
+	// identical renders by design — mask it rather than comparing it.
+	if maskInstallID(defaultRender) != maskInstallID(falseRender) {
 		t.Fatal("tls.enabled=false changed the default production render")
 	}
 	for _, forbidden := range []string{"--tls-cert", "--tls-key", "/var/run/secrets/tls", "name: tls", "scheme: HTTPS"} {
@@ -1628,13 +1664,73 @@ func TestMecak8sHelmChart_KindLiveProviderDisablesMock(t *testing.T) {
 	}
 }
 
+// TestMecak8sHelmChart_ProductMetricsInstallID pins the storage-free install-id
+// contract (ADR 0048): mecak8s keeps no local state, so a per-pod install-id
+// file would mint a fresh, never-reused id on every restart. The chart instead
+// provisions ONE id per release in a ConfigMap and mounts it as an env var, so
+// both halves — the generated value and the reference to it — must render
+// unconditionally, on the bare default values as well as a production fixture.
+func TestMecak8sHelmChart_ProductMetricsInstallID(t *testing.T) {
+	// A bare v4 UUID: nothing machine- or user-derived may appear here.
+	uuidV4 := regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
+
+	for _, tc := range []struct {
+		name, release string
+		args          []string
+	}{
+		{name: "production", release: "production", args: productionArgs()},
+		{name: "kind", release: "kind", args: kindFixtureArgs()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rendered, err := helm(t, tc.args...)
+			if err != nil {
+				t.Fatalf("render: %v", err)
+			}
+
+			name := tc.release + "-mecak8s-install-id"
+			cm := configMapFromRender(t, rendered, name)
+			id := cm.Data["installId"]
+			if !uuidV4.MatchString(id) {
+				t.Fatalf("ConfigMap %q installId = %q, want a v4 UUID", name, id)
+			}
+			if cm.Labels["app.kubernetes.io/name"] != "mecak8s" {
+				t.Fatalf("ConfigMap %q labels = %#v, want the chart's standard labels", name, cm.Labels)
+			}
+
+			container := deploymentFromRender(t, rendered).Spec.Template.Spec.Containers[0]
+			var got *corev1.EnvVar
+			for i := range container.Env {
+				if container.Env[i].Name == installIDEnvVar {
+					got = &container.Env[i]
+				}
+			}
+			if got == nil {
+				t.Fatalf("container environment = %#v, want %s", container.Env, installIDEnvVar)
+			}
+			// Referenced, never inlined: the id must come from the ConfigMap at
+			// pod start, so a `helm upgrade` that reuses the existing ConfigMap
+			// cannot be undone by a stale literal baked into the Deployment.
+			ref := got.ValueFrom
+			if got.Value != "" || ref == nil || ref.ConfigMapKeyRef == nil ||
+				ref.ConfigMapKeyRef.Name != name || ref.ConfigMapKeyRef.Key != "installId" {
+				t.Fatalf("%s = %#v, want a configMapKeyRef to %q/installId", installIDEnvVar, *got, name)
+			}
+		})
+	}
+}
+
 func TestMecak8sHelmChart_ExtraEnv(t *testing.T) {
 	rendered, err := helm(t, productionArgs()...)
 	if err != nil {
 		t.Fatalf("render production values: %v", err)
 	}
-	if !strings.Contains(rendered, "name: MECATL_INSTALLATION_ID") {
-		t.Fatal("default render missing chart-managed installation ID environment")
+	if env := appEnv(deploymentFromRender(t, rendered).Spec.Template.Spec.Containers[0].Env); len(env) != 0 {
+		t.Fatalf("default render (extraEnv unset) environment = %#v, want only the chart-owned ids", env)
+	}
+	for _, want := range []string{"name: " + installIDEnvVar, "name: " + installationIDEnvVar} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("default render missing chart-managed environment %q", want)
+		}
 	}
 
 	args := append(productionArgs(),
@@ -1969,12 +2065,15 @@ mcp:
 		env[0].ValueFrom.SecretKeyRef.Key != "bearer-token" {
 		t.Fatalf("static bearer environment = %#v", env)
 	}
+	// The install-id and telemetry ConfigMaps are both unconditional, so the
+	// OAuth-profile probe names the MCP settings ConfigMap specifically rather
+	// than any ConfigMap.
 	if strings.Contains(rendered, "production-mecak8s-mcp") || strings.Contains(rendered, "--permission-config=/etc/mecatl-mcp/settings.yaml") {
 		t.Fatal("static/no-auth MCP render unexpectedly created an OAuth profile")
 	}
 }
 
-func TestMecak8sHelmChart_MCPNoAuthDoesNotRenderEnv(t *testing.T) {
+func TestMecak8sHelmChart_MCPNoAuthRendersNoTokenEnv(t *testing.T) {
 	rendered, err := renderMCPValues(t, `
 mcp:
   servers:

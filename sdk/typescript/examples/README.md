@@ -2,12 +2,15 @@
 
 These small programs compile against the built `@stacklok-oss/mecatl-sdk` package exports. They
 are deliberately independent examples, not an application framework. Node.js 22+ and Bun use
-the same ESM `./node` entry point.
+the ESM `./node` entry point. Deno 2.9.3 through Deno 2.x uses `./deno` for gRPC and
+`Deno.Command` local ownership, or `.` for remote HTTP/SSE.
 
 | Example | Focus |
 | --- | --- |
 | [`quickstart.ts`](./quickstart.ts) | Run one prompt against a private offline daemon. |
 | [`remote-connect.ts`](./remote-connect.ts) | Connect to an operator-owned daemon from Node or Bun. |
+| [`deno-remote.ts`](./deno-remote.ts) | Connect to an operator-owned daemon from Deno over gRPC. |
+| [`deno-local.ts`](./deno-local.ts) | Start and own a local daemon with `Deno.Command`. |
 | [`local-spawn.ts`](./local-spawn.ts) | Spawn and dispose a private local daemon. |
 | [`one-shot-query.ts`](./one-shot-query.ts) | Run one local prompt with `query()`. |
 | [`callback-tool.ts`](./callback-tool.ts) | Register one local callback tool before session creation. |
@@ -24,6 +27,7 @@ Run the compiler gate from the repository root:
 
 ```sh
 task sdk:examples:typecheck
+task sdk:deno
 ```
 
 The larger [`slack-bot/`](./slack-bot/) example is intentionally a separate pnpm project. Its

@@ -166,6 +166,33 @@ jobs:
       - name: Login to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | ko login ghcr.io -u "${{ github.actor }}" --password-stdin
 
+      # Unwraps the plain ingest key from the MECATL_METRICS_KEY secret's
+      # {"mecatl": "<key>"} JSON blob (stacklok/infra#5604's ExternalSecret
+      # mirrors the same AWS Secrets Manager property shape) into
+      # MECATL_METRICS_INGEST_KEY, which .ko.yaml's ldflags read. GitHub
+      # already masks the raw secret in logs; ::add-mask:: additionally masks
+      # the unwrapped value, since deriving it doesn't inherit that automatically.
+      # An absent/empty secret degrades to a disabled pipeline (a bare `=`
+      # ldflag) rather than failing the release — only a SET-but-malformed
+      # secret (present, but no non-empty .mecatl property) is a hard error,
+      # since that is a real misconfiguration worth surfacing immediately.
+      - name: Extract the product-metrics ingest key
+        env:
+          MECATL_METRICS_KEY: ${{ secrets.MECATL_METRICS_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "$MECATL_METRICS_KEY" ]; then
+            echo "::warning::MECATL_METRICS_KEY secret is not set; this build will ship with product metrics disabled"
+            exit 0
+          fi
+          key=$(printf '%s' "$MECATL_METRICS_KEY" | jq -r '.mecatl // empty')
+          if [ -z "$key" ]; then
+            echo "::error::MECATL_METRICS_KEY secret is set but has no non-empty .mecatl property"
+            exit 1
+          fi
+          echo "::add-mask::$key"
+          echo "MECATL_METRICS_INGEST_KEY=$key" >> "$GITHUB_ENV"
+
       # Build multi-arch, push by digest, and have ko generate + push an SPDX
       # SBOM next to the image. --bare keeps the repo path clean (no import-path
       # suffix), matching `task ko:publish`. We tag both the version and latest.
@@ -678,6 +705,33 @@ jobs:
       - name: Login to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | ko login ghcr.io -u "${{ github.actor }}" --password-stdin
 
+      # Unwraps the plain ingest key from the MECATL_METRICS_KEY secret's
+      # {"mecatl": "<key>"} JSON blob (stacklok/infra#5604's ExternalSecret
+      # mirrors the same AWS Secrets Manager property shape) into
+      # MECATL_METRICS_INGEST_KEY, which .ko.yaml's ldflags read. GitHub
+      # already masks the raw secret in logs; ::add-mask:: additionally masks
+      # the unwrapped value, since deriving it doesn't inherit that automatically.
+      # An absent/empty secret degrades to a disabled pipeline (a bare `=`
+      # ldflag) rather than failing the release — only a SET-but-malformed
+      # secret (present, but no non-empty .mecatl property) is a hard error,
+      # since that is a real misconfiguration worth surfacing immediately.
+      - name: Extract the product-metrics ingest key
+        env:
+          MECATL_METRICS_KEY: ${{ secrets.MECATL_METRICS_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "$MECATL_METRICS_KEY" ]; then
+            echo "::warning::MECATL_METRICS_KEY secret is not set; this build will ship with product metrics disabled"
+            exit 0
+          fi
+          key=$(printf '%s' "$MECATL_METRICS_KEY" | jq -r '.mecatl // empty')
+          if [ -z "$key" ]; then
+            echo "::error::MECATL_METRICS_KEY secret is set but has no non-empty .mecatl property"
+            exit 1
+          fi
+          echo "::add-mask::$key"
+          echo "MECATL_METRICS_INGEST_KEY=$key" >> "$GITHUB_ENV"
+
       # Build multi-arch, push by digest, and have ko generate + push an SPDX
       # SBOM next to the image. --bare keeps the repo path clean (no import-path
       # suffix). We tag both the version and latest. The brood-box agent label
@@ -814,6 +868,33 @@ jobs:
       # username/password stored in secrets.
       - name: Login to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | ko login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      # Unwraps the plain ingest key from the MECATL_METRICS_KEY secret's
+      # {"mecatl": "<key>"} JSON blob (stacklok/infra#5604's ExternalSecret
+      # mirrors the same AWS Secrets Manager property shape) into
+      # MECATL_METRICS_INGEST_KEY, which .ko.yaml's ldflags read. GitHub
+      # already masks the raw secret in logs; ::add-mask:: additionally masks
+      # the unwrapped value, since deriving it doesn't inherit that automatically.
+      # An absent/empty secret degrades to a disabled pipeline (a bare `=`
+      # ldflag) rather than failing the release — only a SET-but-malformed
+      # secret (present, but no non-empty .mecatl property) is a hard error,
+      # since that is a real misconfiguration worth surfacing immediately.
+      - name: Extract the product-metrics ingest key
+        env:
+          MECATL_METRICS_KEY: ${{ secrets.MECATL_METRICS_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "$MECATL_METRICS_KEY" ]; then
+            echo "::warning::MECATL_METRICS_KEY secret is not set; this build will ship with product metrics disabled"
+            exit 0
+          fi
+          key=$(printf '%s' "$MECATL_METRICS_KEY" | jq -r '.mecatl // empty')
+          if [ -z "$key" ]; then
+            echo "::error::MECATL_METRICS_KEY secret is set but has no non-empty .mecatl property"
+            exit 1
+          fi
+          echo "::add-mask::$key"
+          echo "MECATL_METRICS_INGEST_KEY=$key" >> "$GITHUB_ENV"
 
       # Build multi-arch, push by digest, and have ko generate + push an SPDX
       # SBOM next to the image. --bare keeps the repo path clean (no import-path
@@ -1274,6 +1355,34 @@ jobs:
           owner: stacklok
           repositories: homebrew-tap
           permission-contents: write
+
+      # Unwraps the plain ingest key from the MECATL_METRICS_KEY secret's
+      # {"mecatl": "<key>"} JSON blob (stacklok/infra#5604's ExternalSecret
+      # mirrors the same AWS Secrets Manager property shape) into
+      # MECATL_METRICS_INGEST_KEY, which .goreleaser.yaml's ldflags read.
+      # GitHub already masks the raw secret in logs; ::add-mask:: additionally
+      # masks the unwrapped value, since deriving it doesn't inherit that
+      # automatically. An absent/empty secret degrades to a disabled pipeline
+      # (a bare `=` ldflag) rather than failing the release — only a
+      # SET-but-malformed secret (present, but no non-empty .mecatl property)
+      # is a hard error, since that is a real misconfiguration worth
+      # surfacing immediately.
+      - name: Extract the product-metrics ingest key
+        env:
+          MECATL_METRICS_KEY: ${{ secrets.MECATL_METRICS_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "$MECATL_METRICS_KEY" ]; then
+            echo "::warning::MECATL_METRICS_KEY secret is not set; this build will ship with product metrics disabled"
+            exit 0
+          fi
+          key=$(printf '%s' "$MECATL_METRICS_KEY" | jq -r '.mecatl // empty')
+          if [ -z "$key" ]; then
+            echo "::error::MECATL_METRICS_KEY secret is set but has no non-empty .mecatl property"
+            exit 1
+          fi
+          echo "::add-mask::$key"
+          echo "MECATL_METRICS_INGEST_KEY=$key" >> "$GITHUB_ENV"
 
       # `release --clean` wipes dist/, then builds, archives, SBOMs, checksums,
       # signs, creates the Release, uploads, and LAST pushes the formula.

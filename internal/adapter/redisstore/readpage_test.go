@@ -228,10 +228,9 @@ func (d *closeDiag) Log(_ context.Context, _ port.Level, msg string, args ...any
 // generous timeout therefore passes with the lease held and proves nothing (which
 // is exactly what the first version of this test did).
 //
-// This is NOT the whole of the lifecycle concern raised in review on #869: the
-// store still does not OWN its followers, so it cannot cancel an in-flight
-// blocking read, and a follower's own context remains the only prompt way to stop
-// one. What this establishes is that the LEAK is gone.
+// Store.Close now also owns and cancels followers. This older regression remains
+// useful because the per-cycle lease independently ensures a parked follower
+// cannot pin a retired credential generation while it crosses read cycles.
 func TestCloseDoesNotWaitOnAParkedFollower(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())

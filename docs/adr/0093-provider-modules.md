@@ -4,7 +4,7 @@
 - Date: 2026-08-04
 - Scope: the LLM provider wire-format adapters (anthropic, openai, openaichat, ssefilter), the monorepo module layout, and their release/tag grammar.
 - Supersedes: —
-- Superseded by: —
+- Superseded by: [ADR 0330](./0330-isolated-redis-follow-capacity.md) (Go compatibility floor only)
 
 ## Context
 

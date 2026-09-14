@@ -169,6 +169,7 @@ func (c *Config) UnmarshalYAML(node ast.Node) error {
 		"learning":               newPermconfigNodePointer(&c.Learning),
 		"steer":                  newPermconfigNodePointer(&c.Steer),
 		"openrouter":             newPermconfigNodePointer(&c.OpenRouter),
+		"telemetry":              newPermconfigNodePointer(&c.Telemetry),
 		"mcp":                    newPermconfigNodePointer(&c.MCP),
 		"retention":              newPermconfigNodePointer(&c.Retention),
 		"storage_management":     newPermconfigNodePointer(&c.StorageManagement),

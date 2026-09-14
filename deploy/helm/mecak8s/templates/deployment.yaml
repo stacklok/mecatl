@@ -101,6 +101,8 @@ spec:
             - --http-addr=0.0.0.0:8081
             - --drain-addr=0.0.0.0:8082
             - {{ printf "--redis-url=%s" .Values.redis.endpoint | quote }}
+            - {{ printf "--redis-follow-pool-size=%d" (int64 .Values.redis.follow.poolSize) | quote }}
+            - {{ printf "--redis-max-followers=%d" (int64 .Values.redis.follow.maxFollowers) | quote }}
             {{- if .Values.redis.filesystem.enabled }}
             - --redis-filesystem
             {{- end }}
@@ -202,6 +204,16 @@ spec:
             - --permission-config=/etc/mecatl-mcp/settings.yaml
             {{- end }}
           env:
+            {{- /* The chart-provisioned, stable-per-release product-metrics
+                   install id. Always present: mecak8s is storage-free (ADR
+                   0048), so the local-file mechanism the other binaries use
+                   would mint a fresh id on every pod restart. See
+                   install-id-configmap.yaml. */}}
+            - name: MECATL_PRODUCT_METRICS_INSTALL_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "mecak8s.fullname" . }}-install-id
+                  key: installId
             - name: MECATL_INSTALLATION_ID
               valueFrom:
                 configMapKeyRef:

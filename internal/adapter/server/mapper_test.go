@@ -11,6 +11,7 @@ import (
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/agent"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/team"
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
@@ -1012,9 +1013,12 @@ func TestToProtoTeamOutcomeQuiescentBudgetExhausted(t *testing.T) {
 func TestSessionMapping(t *testing.T) {
 	sess := session.New("s1", session.ModePlan, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"},
 		session.Limits{MaxTurns: 4, MaxToolCalls: 8, MaxConsecutiveFailures: 2}, time.Unix(1000, 0))
-	got := toProtoSession(sess, ResolvedModel{ProviderID: "openai", ModelID: "gpt-x", ContextWindow: 2048}, nil)
+	got := toProtoSession(sess, ResolvedModel{ProviderID: "openai", ModelID: "gpt-x", ContextWindow: 2048}, nil, port.ProviderCapabilities{Image: true})
 	if got.GetSessionId() != "s1" || got.GetState() != "idle" {
 		t.Fatalf("got %+v", got)
+	}
+	if !got.GetSessionCapabilities().GetImage() {
+		t.Fatal("session image capability was not projected")
 	}
 	if got.GetMode() != mecatlv1.PermissionMode_PERMISSION_MODE_PLAN {
 		t.Fatalf("mode = %v", got.GetMode())

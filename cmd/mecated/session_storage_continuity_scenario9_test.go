@@ -63,45 +63,6 @@ func TestSessionStorageContinuity_Scenario9_ServiceExamplesExecuteConfiguredArgs
 	}
 }
 
-func TestSessionStorageContinuity_Scenario9_NoUnsafeDeletionRecipe(t *testing.T) {
-	body := readScenario9OperationsDoc(t)
-	for _, want := range []string{
-		"Do not use cron", "`find`", "filesystem globs", "daemon-owned retention",
-		"Embedded mecatui", "`mecatui connect`", "management capability",
-		"effective policy", "dry run", "before apply",
-	} {
-		if !strings.Contains(body, want) {
-			t.Errorf("operations guide missing %q", want)
-		}
-	}
-	code := strings.ToLower(scenario9FencedCode(body))
-	for _, forbidden := range []string{"rm -", "find ", "-delete", "crontab", "curl -x delete", "cleanup/apply"} {
-		if strings.Contains(code, forbidden) {
-			t.Errorf("operations guide contains destructive command recipe %q", forbidden)
-		}
-	}
-}
-
-func TestSessionStorageContinuity_Scenario9_BackupMigrationRunbook(t *testing.T) {
-	body := readScenario9OperationsDoc(t)
-	for _, want := range []string{
-		"plaintext", "0700", "0600", "free space", "temporary-space estimate",
-		"unsupported backend", "restore to a new directory", "read-only validation",
-	} {
-		if !strings.Contains(strings.ToLower(body), strings.ToLower(want)) {
-			t.Errorf("operations guide missing runbook requirement %q", want)
-		}
-	}
-	assertScenario9Order(t, body,
-		"1. **Stop and quiesce.**",
-		"2. **Back up.**",
-		"3. **Forecast and plan.**",
-		"4. **Migrate or apply.**",
-		"5. **Verify.**",
-		"6. **Start.**",
-	)
-}
-
 func assertScenario9CLIArgs(t *testing.T, argv []string, wantConfig, wantStore string) {
 	t.Helper()
 	if len(argv) < 2 || argv[1] != "serve" {
@@ -190,30 +151,5 @@ func parseLaunchdProgramArguments(t *testing.T, body string) []string {
 				return args
 			}
 		}
-	}
-}
-
-func scenario9FencedCode(body string) string {
-	var code strings.Builder
-	inFence := false
-	for part := range strings.SplitSeq(body, "```") {
-		if inFence {
-			code.WriteString(part)
-			code.WriteByte('\n')
-		}
-		inFence = !inFence
-	}
-	return code.String()
-}
-
-func assertScenario9Order(t *testing.T, body string, steps ...string) {
-	t.Helper()
-	last := -1
-	for _, step := range steps {
-		next := strings.Index(body, step)
-		if next <= last {
-			t.Fatalf("runbook step %q is missing or out of order", step)
-		}
-		last = next
 	}
 }

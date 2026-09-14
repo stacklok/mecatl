@@ -31,6 +31,7 @@
     ifacemethod func (PrunableStore).Delete(ctx context.Context, id session.SessionID) error
     ifacemethod func (PrunableStore).List(ctx context.Context) ([]StoredSession, error)
     ifacemethod func (RetryDispositionError).RetryDisposition() session.RetryDisposition
+    ifacemethod func (RunAwareToolCallRecorder).ToolCallForRun(runID string, id session.SessionID, call session.ToolCall, result session.ToolResult, queued time.Duration, took time.Duration)
     ifacemethod func (ScheduleCreator).Create(ctx context.Context, s Schedule) error
     ifacemethod func (ScheduleDeletionStore).BeginDelete(ctx context.Context, name string, deletionID string) (Schedule, error)
     ifacemethod func (ScheduleDeletionStore).CompleteDelete(ctx context.Context, name string, deletionID string) error
@@ -191,6 +192,7 @@ type PrunableStore interface{Delete(ctx context.Context, id session.SessionID) e
 type ReadOptions struct{Limit int; Follow bool}
 type RetryDisposition = session.RetryDisposition
 type RetryDispositionError interface{RetryDisposition() session.RetryDisposition; error}
+type RunAwareToolCallRecorder interface{ToolCallForRun(runID string, id session.SessionID, call session.ToolCall, result session.ToolResult, queued time.Duration, took time.Duration)}
 type Schedule struct{Spec ScheduleSpec; State ScheduleState}
 type ScheduleCreator interface{Create(ctx context.Context, s Schedule) error}
 type ScheduleDeletionStore interface{BeginDelete(ctx context.Context, name string, deletionID string) (Schedule, error); CompleteDelete(ctx context.Context, name string, deletionID string) error}
@@ -235,6 +237,7 @@ type TriggerKind int
 type TriggerSpec struct{Cron string; OneShot time.Time}
 var ErrCursorExpired error
 var ErrCursorMalformed error
+var ErrEventFollowCapacity error
 var ErrFireNowOverlap error
 var ErrInvalidSessionLineageQuery error
 var ErrLeaseHeld error

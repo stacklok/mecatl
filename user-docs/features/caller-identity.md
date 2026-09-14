@@ -244,7 +244,7 @@ The controls answer different questions:
 
 For the full Kubernetes overlay, JWKS cache behavior, and troubleshooting steps,
 see
-[Caller identity and ownership isolation](/building/deployment/mecak8s.md#multi-user-caller-identity-and-ownership-isolation-opt-in).
+[Configure caller identity](/building/deployment/mecak8s.md#configure-caller-identity).
 
 ## Next steps
 

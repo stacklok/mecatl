@@ -327,7 +327,7 @@ one login after upgrade because target canonicalization changes their credential
 
 ```sh
 # A local port-forward is loopback, so it is the one plaintext bearer exception.
-kubectl port-forward -n mecatl service/mecak8s-agent 8080:8080 &
+kubectl port-forward -n mecatl service/mecak8s-mecak8s 8080:8080 &
 export MECATL_AUTH_TOKEN="$(your-oidc-cli print-access-token)"
 bin/mecatui connect 127.0.0.1:8080 --auth-token "$MECATL_AUTH_TOKEN"
 ```
@@ -951,6 +951,12 @@ successful empty account list is promoted into a provider-specific line with an
 actionable `auth.yaml`/restart or connectivity remedy. A prior successful list may
 remain visible during a later refresh failure, but that does not hide an inference
 failure. Codex rows never receive ToolHive's `org` intent label.
+
+One configured ToolHive gateway may contribute two picker namespaces:
+`toolhive` (OpenAI Responses) and `toolhive-anthropic` (native Anthropic Messages).
+Both receive the `org` provenance tag, but the header/footer treat them as one
+gateway family: when either is active, its sibling does not produce a duplicate
+"gateway available" notice. Catalog failures and counts remain independent.
 
 `enter` on the cursor row **switches immediately** — the conversation is ALWAYS kept.
 Because the provider is FIXED per session, switching live means a real handoff: a fresh

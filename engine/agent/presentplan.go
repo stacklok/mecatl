@@ -67,12 +67,13 @@ func NewPresentPlanTool() tool.Tool { return &presentPlanTool{} }
 func (*presentPlanTool) Spec() tool.ToolSpec {
 	return tool.ToolSpec{
 		Name: presentPlanToolName,
-		Description: "Call this EXACTLY ONCE when your plan is complete and presented in your message text, then " +
+		Description: "Call this EXACTLY ONCE PER CURRENT PRESENTATION when your plan is complete and presented in your message text, then " +
 			"STOP and wait for the operator. Pass the FULL plan text in the `plan` argument — the operator " +
 			"reads it in the approval modal (also present it in your message text for the transcript). " +
-			"The operator approves, requests edits, or iterates THROUGH this gate. " +
-			"An inline 'acceptable'/'looks good'/'approved' in chat is NOT approval — only an approval via this tool " +
-			"starts execution. Do NOT call any other tool or continue working after calling this.",
+			"Do NOT call any other tool or continue working after calling this. If this presentation is denied for iteration, " +
+			"or its pending run is cancelled, wait for new user input; do not automatically loop. In response, present the " +
+			"revised or unchanged plan via a NEW PresentPlan call, then stop and wait again. Later chat assent requests a " +
+			"fresh gated review and is never execution approval. Only the harness proceed message that follows approval through the current PresentPlan gate starts execution.",
 		Schema: presentPlanSchema,
 	}
 }

@@ -24,7 +24,7 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
-	tcredis "github.com/stacklok/toolhive-core/redis"
+	tcredis "github.com/stacklok/toolhive-core/redisconn"
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/adapter/filewatch"

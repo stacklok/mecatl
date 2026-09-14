@@ -466,6 +466,66 @@ func TestSDKServerEnablers_Scenario7_WatchTransportParity(t *testing.T) {
 	}
 }
 
+// TestRedisFollowCapacity_Scenario2_TransportClassification is AC2.4: backend
+// follower saturation remains a distinct stable error on both watch transports.
+// gRPC terminates with RESOURCE_EXHAUSTED plus ErrorInfo reason
+// "watch_capacity"; HTTP has already committed 200 and therefore carries the
+// same code in a terminal SSE error frame. The older watch_lagging code remains
+// distinct.
+func TestRedisFollowCapacity_Scenario2_TransportClassification(t *testing.T) {
+	log := followCapacityLog{CursorEventLog: memstore.NewEventLog()}
+	svc, client, id := watchedRun(t, log)
+
+	t.Run("gRPC RESOURCE_EXHAUSTED", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+
+		stream, err := client.WatchSessionEvents(ctx, &mecatlv1.WatchSessionEventsRequest{SessionId: string(id)})
+		if err != nil {
+			t.Fatalf("WatchSessionEvents: %v", err)
+		}
+		seenBoundary := false
+		for {
+			resp, recvErr := stream.Recv()
+			if recvErr != nil {
+				if got := status.Code(recvErr); got != codes.ResourceExhausted {
+					t.Fatalf("gRPC status = %v, want ResourceExhausted (err=%v)", got, recvErr)
+				}
+				if got := errorCodeOf(t, status.Convert(recvErr)); got != "watch_capacity" {
+					t.Fatalf("gRPC error code = %q, want watch_capacity", got)
+				}
+				break
+			}
+			if resp.GetEvent() == nil && resp.GetPhase() == server.WatchPhaseLive {
+				seenBoundary = true
+			}
+		}
+		if !seenBoundary {
+			t.Fatal("gRPC watch terminated before its replay-to-live boundary")
+		}
+	})
+
+	t.Run("HTTP 200 with terminal SSE error", func(t *testing.T) {
+		srv := httptest.NewServer(server.NewHTTPHandler(svc))
+		defer srv.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+
+		resp := openSSE(ctx, t, srv.URL+"/v1/sessions/"+string(id)+"/watch")
+		defer func() { _ = resp.Body.Close() }()
+		frames := make(chan sseFrame, 64)
+		go scanSSE(resp.Body, frames)
+		frame := awaitErrorFrame(t, frames)
+		if frame.Code != "watch_capacity" {
+			t.Fatalf("SSE terminal code = %q, want watch_capacity", frame.Code)
+		}
+	})
+
+	if got := server.ClassifyErrorCodeForTest(server.ErrWatchLagging); got != "watch_lagging" {
+		t.Fatalf("lagging code = %q, want watch_lagging", got)
+	}
+}
+
 // TestSDKServerEnablers_Scenario7_WatchUnsupportedIsHonest pins the refusal a
 // non-cursor backend earns. Degrading to "replay everything from the beginning"
 // would be a correctness problem dressed as a performance one: the client would

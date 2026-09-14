@@ -8,6 +8,7 @@ import (
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/agent"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/team"
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
@@ -822,7 +823,7 @@ func toProtoTokenUsage(in map[session.UsageKind]session.TokenUsage) map[string]*
 }
 
 // toProtoSession maps a session.Session aggregate to its proto snapshot.
-func toProtoSession(s *session.Session, rm ResolvedModel, caps *mecatlv1.ServerCapabilities) *mecatlv1.Session {
+func toProtoSession(s *session.Session, rm ResolvedModel, caps *mecatlv1.ServerCapabilities, sessionCaps port.ProviderCapabilities) *mecatlv1.Session {
 	//nolint:staticcheck // title/provenance are intentionally dual-written compatibility fields.
 	return &mecatlv1.Session{
 		SessionId:       string(s.ID),
@@ -838,6 +839,10 @@ func toProtoSession(s *session.Session, rm ResolvedModel, caps *mecatlv1.ServerC
 		TitleMetadata:   toProtoSessionTitle(titlePayload(s)),
 		TokenUsage:      toProtoTokenUsage(s.TokenUsageSnapshot()),
 		Capabilities:    caps,
+		SessionCapabilities: &mecatlv1.SessionCapabilities{
+			Image: sessionCaps.Image,
+			Audio: sessionCaps.Audio,
+		},
 		Kind:            string(s.Kind),
 		Relationship:    toProtoSessionRelationship(s.Relationship),
 		DebugMcpServers: validStrings(s.DebugMCPServers),

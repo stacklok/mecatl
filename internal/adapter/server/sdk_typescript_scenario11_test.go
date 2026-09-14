@@ -1,7 +1,10 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -13,8 +16,12 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/goccy/go-yaml"
+
+	"github.com/stacklok/mecatl/internal/adapter/gitenv"
+	"github.com/stacklok/mecatl/internal/adapter/procgroup"
 )
 
 type sdkScenario11Workflow struct {
@@ -168,6 +175,31 @@ func TestSDKTypescriptRelease_Scenario11_TagVersionParity(t *testing.T) {
 	exerciseSDKScenario11IdentityGate(t, identity)
 }
 
+const (
+	sdkScenario11CommandTimeout   = 30 * time.Second
+	sdkScenario11CommandWaitDelay = time.Second
+)
+
+func runSDKScenario11Command(t *testing.T, timeout time.Duration, dir, name string, env []string, args ...string) (string, error) {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(t.Context(), timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Dir = dir
+	cmd.Env = append(gitenv.Scrub(os.Environ()), env...)
+	cmd.WaitDelay = sdkScenario11CommandWaitDelay
+	procgroup.Configure(cmd)
+	output, err := cmd.CombinedOutput()
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return string(output), fmt.Errorf("%s %v in %s: %w\n%s", name, args, dir, ctxErr, output)
+	}
+	if err != nil {
+		return string(output), fmt.Errorf("%s %v in %s: %w\n%s", name, args, dir, err, output)
+	}
+	return string(output), nil
+}
+
 func exerciseSDKScenario11IdentityGate(t *testing.T, script string) {
 	t.Helper()
 
@@ -175,13 +207,11 @@ func exerciseSDKScenario11IdentityGate(t *testing.T, script string) {
 	runGit := func(args ...string) string {
 		t.Helper()
 		gitArgs := append([]string{"-c", "tag.gpgSign=false"}, args...)
-		cmd := exec.Command("git", gitArgs...)
-		cmd.Dir = repo
-		output, err := cmd.CombinedOutput()
+		output, err := runSDKScenario11Command(t, sdkScenario11CommandTimeout, repo, "git", nil, gitArgs...)
 		if err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, output)
+			t.Fatal(err)
 		}
-		return strings.TrimSpace(string(output))
+		return strings.TrimSpace(output)
 	}
 	runGit("init", "--initial-branch=main")
 	runGit("config", "user.name", "Scenario 11 fixture")
@@ -199,11 +229,11 @@ func exerciseSDKScenario11IdentityGate(t *testing.T, script string) {
 	}
 	writeManifest("0.0.1")
 	runGit("add", "sdk/typescript/package.json")
-	runGit("commit", "-m", "fixture main")
+	runGit("commit", "--no-gpg-sign", "--no-verify", "-m", "fixture main")
 	mainSHA := runGit("rev-parse", "HEAD")
 	runGit("update-ref", "refs/remotes/origin/main", mainSHA)
-	runGit("tag", "sdk/typescript/v0.0.1", mainSHA)
-	runGit("tag", "sdk/typescript/v0.0.9", mainSHA)
+	runGit("tag", "--no-sign", "sdk/typescript/v0.0.1", mainSHA)
+	runGit("tag", "--no-sign", "sdk/typescript/v0.0.9", mainSHA)
 
 	binDir := filepath.Join(t.TempDir(), "bin")
 	if err := os.MkdirAll(binDir, 0o755); err != nil {
@@ -217,19 +247,16 @@ func exerciseSDKScenario11IdentityGate(t *testing.T, script string) {
 	runIdentity := func(name, eventName, ref, sha, manifestVersion string, wantSuccess bool) {
 		t.Helper()
 		outputFile := filepath.Join(t.TempDir(), "github-output")
-		cmd := exec.Command("bash", "-c", script)
-		cmd.Dir = repo
-		cmd.Env = append(os.Environ(),
-			"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
-			"EVENT_NAME="+eventName,
-			"GITHUB_REF="+ref,
-			"GITHUB_SHA="+sha,
-			"GITHUB_OUTPUT="+outputFile,
-			"NODE_MANIFEST_VERSION="+manifestVersion,
-		)
-		output, err := cmd.CombinedOutput()
+		output, err := runSDKScenario11Command(t, sdkScenario11CommandTimeout, repo, "bash", []string{
+			"PATH=" + binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
+			"EVENT_NAME=" + eventName,
+			"GITHUB_REF=" + ref,
+			"GITHUB_SHA=" + sha,
+			"GITHUB_OUTPUT=" + outputFile,
+			"NODE_MANIFEST_VERSION=" + manifestVersion,
+		}, "-c", script)
 		if wantSuccess && err != nil {
-			t.Fatalf("%s: identity gate failed: %v\n%s", name, err, output)
+			t.Fatalf("%s: identity gate failed: %v", name, err)
 		}
 		if !wantSuccess && err == nil {
 			t.Fatalf("%s: identity gate unexpectedly succeeded\n%s", name, output)
@@ -249,15 +276,61 @@ func exerciseSDKScenario11IdentityGate(t *testing.T, script string) {
 
 	writeManifest("0.0.2")
 	runGit("add", "sdk/typescript/package.json")
-	runGit("commit", "-m", "fixture unmerged release")
+	runGit("commit", "--no-gpg-sign", "--no-verify", "-m", "fixture unmerged release")
 	unmergedSHA := runGit("rev-parse", "HEAD")
-	runGit("tag", "sdk/typescript/v0.0.2", unmergedSHA)
+	runGit("tag", "--no-sign", "sdk/typescript/v0.0.2", unmergedSHA)
 	runIdentity("checkout SHA mismatch", "workflow_dispatch", "refs/heads/fixture", mainSHA, "0.0.1", false)
 	runGit("checkout", "--detach", mainSHA)
 	runIdentity("tag commit mismatch", "push", "refs/tags/sdk/typescript/v0.0.2", mainSHA, "0.0.2", false)
 	runGit("checkout", "--detach", unmergedSHA)
 	runIdentity("unmerged release", "push", "refs/tags/sdk/typescript/v0.0.2", unmergedSHA, "0.0.2", false)
 	runIdentity("manual dry run", "workflow_dispatch", "refs/heads/fixture", unmergedSHA, "0.0.2", true)
+}
+
+func TestSDKTypescriptRelease_Scenario11_HostileAmbientGitConfigIsIgnored(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "helper-invoked")
+	helper := filepath.Join(t.TempDir(), "hostile-helper")
+	helperBody := "#!/bin/sh\nprintf '%s\\n' \"$0 $*\" >> \"$SCENARIO11_HELPER_MARKER\"\nexit 1\n"
+	if err := os.WriteFile(helper, []byte(helperBody), 0o755); err != nil {
+		t.Fatalf("write hostile helper: %v", err)
+	}
+	hooksDir := t.TempDir()
+	for _, hook := range []string{"pre-commit", "post-checkout"} {
+		if err := os.WriteFile(filepath.Join(hooksDir, hook), []byte(helperBody), 0o755); err != nil {
+			t.Fatalf("write hostile %s hook: %v", hook, err)
+		}
+	}
+	globalConfig := filepath.Join(t.TempDir(), "hostile-gitconfig")
+	config := "[commit]\n\tgpgSign = true\n[tag]\n\tgpgSign = true\n[gpg]\n\tprogram = " + helper + "\n[core]\n\teditor = " + helper + "\n\thooksPath = " + hooksDir + "\n"
+	if err := os.WriteFile(globalConfig, []byte(config), 0o600); err != nil {
+		t.Fatalf("write hostile global git config: %v", err)
+	}
+
+	t.Setenv("SCENARIO11_HELPER_MARKER", marker)
+	t.Setenv("GIT_CONFIG_GLOBAL", globalConfig)
+	t.Setenv("GIT_CONFIG_COUNT", "3")
+	t.Setenv("GIT_CONFIG_KEY_0", "commit.gpgsign")
+	t.Setenv("GIT_CONFIG_VALUE_0", "true")
+	t.Setenv("GIT_CONFIG_KEY_1", "tag.gpgsign")
+	t.Setenv("GIT_CONFIG_VALUE_1", "true")
+	t.Setenv("GIT_CONFIG_KEY_2", "core.hooksPath")
+	t.Setenv("GIT_CONFIG_VALUE_2", hooksDir)
+	t.Setenv("GIT_DIR", filepath.Join(t.TempDir(), "not-a-repository"))
+	t.Setenv("GIT_EDITOR", helper)
+	t.Setenv("GIT_SEQUENCE_EDITOR", helper)
+
+	workflow, _ := readSDKScenario11Workflow(t, sdkScenario11ReleaseWorkflow(t))
+	verify := workflow.Jobs["verify"]
+	identityIndex := sdkScenario11StepNamed(verify, "Validate immutable release identity")
+	if identityIndex < 0 {
+		t.Fatal("verify has no immutable release identity step")
+	}
+	exerciseSDKScenario11IdentityGate(t, verify.Steps[identityIndex].Run)
+	if invocation, err := os.ReadFile(marker); err == nil {
+		t.Fatalf("hostile ambient git helper was invoked: %s", invocation)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("read hostile helper marker: %v", err)
+	}
 }
 
 func TestSDKTypescriptRelease_Scenario11_GenerationCleanlinessGate(t *testing.T) {

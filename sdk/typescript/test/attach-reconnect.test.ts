@@ -271,6 +271,83 @@ describe("attachment reconnect authority", () => {
     await client.close();
   });
 
+  it("watch_capacity resumes from the attachment checkpoint under the same filter", async () => {
+    const requests: Array<{ cursor: string; runId: string }> = [];
+    const transport = watchTransport(async function* (request) {
+      requests.push({ cursor: request.cursor, runId: request.runId });
+      if (requests.length === 1) {
+        yield boundary("");
+        yield event("capacity-1", "before capacity rejection");
+        throw codedError("watch_capacity", Code.ResourceExhausted);
+      }
+      yield boundary(request.cursor);
+      yield event("capacity-2", "after capacity rejection");
+      yield result("capacity-3");
+    });
+    const { client, session } = await sessionFor(transport);
+    const texts: string[] = [];
+
+    for await (const envelope of await session.attach(runId)) {
+      if (envelope.kind === "event" && envelope.event.kind === "message.delta") {
+        texts.push(envelope.event.text);
+      }
+    }
+
+    expect(texts).toEqual(["before capacity rejection", "after capacity rejection"]);
+    expect(requests).toEqual([
+      { cursor: "", runId },
+      { cursor: "capacity-1", runId },
+    ]);
+    await client.close();
+  });
+
+  it("persistent watch_capacity increases backoff across no-progress boundaries", async () => {
+    const attempts: number[] = [];
+    let watches = 0;
+    const clientAbort = new AbortController();
+    const operations = {
+      cancelRun: async () => undefined,
+      clientSignal: clientAbort.signal,
+      features: async () => new Set([watchFeature]),
+      invalidateCompatibility: () => undefined,
+      transportKind: "grpc" as const,
+      watch: (_session: string, _run: string, cursor: string) =>
+        (async function* () {
+          watches += 1;
+          yield boundary(cursor);
+          if (watches <= 4) {
+            throw new ServerError("capacity", {
+              code: "watch_capacity",
+              status: Code.ResourceExhausted,
+              transport: "grpc",
+            });
+          }
+          throw terminalError("cursor_expired");
+        })(),
+    };
+    const attached = await createAttachedRun(
+      sessionId,
+      runId,
+      operations,
+      {},
+      {
+        scheduler: {
+          delayFor: (attempt) => {
+            attempts.push(attempt);
+            return 0;
+          },
+          sleep: async () => undefined,
+        },
+      },
+    );
+    const iterator = attached[Symbol.asyncIterator]();
+
+    expect((await iterator.next()).value).toMatchObject({ kind: "boundary" });
+    await expect(iterator.next()).rejects.toMatchObject({ code: "cursor_expired" });
+    expect(attempts).toEqual([0, 1, 2, 3]);
+    expect(watches).toBe(5);
+  });
+
   it("mutations, prompts, approvals, and owned runs are never retried", async () => {
     let mutationAttempts = 0;
     const mutation = createRouterTransport((router) => {

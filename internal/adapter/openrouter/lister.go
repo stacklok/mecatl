@@ -126,7 +126,7 @@ type wireModel struct {
 	Name          string `json:"name"`
 	ContextLength int    `json:"context_length"`
 	Architecture  struct {
-		InputModalities []string `json:"input_modalities"`
+		InputModalities *[]string `json:"input_modalities"`
 	} `json:"architecture"`
 	// TopProvider carries the upstream provider's per-model limits. Its
 	// max_completion_tokens is the output ceiling — NEW field captured for the
@@ -177,12 +177,16 @@ func (l *Lister) ListModels(ctx context.Context) ([]Model, error) {
 		if w.ID == "" {
 			continue // defensive: skip a malformed entry with no id
 		}
+		var inputModalities []string
+		if w.Architecture.InputModalities != nil {
+			inputModalities = append([]string{}, (*w.Architecture.InputModalities)...)
+		}
 		out = append(out, Model{
 			ID:              modeltext.TruncateRunes(w.ID, maxIDRunes),
 			DisplayName:     modeltext.TruncateRunes(w.Name, maxNameRunes),
 			ContextLimit:    w.ContextLength,
 			OutputLimit:     w.TopProvider.MaxCompletionTokens,
-			InputModalities: append([]string(nil), w.Architecture.InputModalities...),
+			InputModalities: inputModalities,
 			Reasoning:       slices.Contains(w.SupportedParameters, "reasoning"),
 			ToolCall:        slices.Contains(w.SupportedParameters, "tools"),
 		})

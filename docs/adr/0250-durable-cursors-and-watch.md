@@ -4,6 +4,7 @@
 - Date: 2026-08-28
 - Scope: `port.CursorEventLog`, the Redis event-log datatype, cursor encoding, gap
   markers, and the `WatchSessionEvents` delivery contract.
+- Superseded by: [ADR 0330](./0330-isolated-redis-follow-capacity.md) (shared-pool sizing deferral only)
 
 ## Context
 

@@ -80,6 +80,7 @@ export const MECATL_ERROR_CODES = [
   "too_many_teams",
   "unauthenticated",
   "unimplemented",
+  "watch_capacity",
   "watch_lagging",
   "watch_unsupported",
 ] as const;

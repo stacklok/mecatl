@@ -68,7 +68,8 @@ that signs images with **cosign** and emits an **SBOM** and **SLSA provenance**
 (health probes can switch TCP→httpGet against the endpoints above). A **live
 BDD e2e suite** (`e2e/`, `task e2e`, the `e2e-live.yml` workflow) exercises the
 harness against a real model; it is opt-in (real money) and deliberately not
-part of `task test`. The toolchain is **go 1.26.5** (both modules).
+part of `task test`. The toolchain is **go 1.27** across all modules and the
+workspace.
 
 **Supply-chain scanning** (#118) closes the loop on dependency hygiene:
 **`govulncheck`** runs per-module — the `engine` module is held STRICT-CLEAN,

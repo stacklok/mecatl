@@ -287,6 +287,17 @@ OPERATOR-TIER OpenRouter downstream-provider routing (issue #480): a per-model p
 | `openrouter.models.<key>.order` | `[]string` | `(absent)` | Order lists downstream provider slugs (lowercase-kebab, e.g. "anthropic", "google-vertex", "deepinfra/turbo") tried in order. Setting it disables OpenRouter's default price load-balancing. Base-slug matching applies: "google-vertex" matches all its regions/variants (service tiers excepted). |
 | `openrouter.models.<key>.allow_fallbacks` | `bool` | `(absent)` | AllowFallbacks, when explicitly false, pins the request to Order with no fallback to other downstreams. Omit the key to keep OpenRouter's default (true); set it to false to disable fallback. |
 
+## `telemetry`
+
+Tier: **operator**
+
+OPERATOR-TIER opt-out product/adoption metrics (telemetry.productMetrics). Honoured ONLY from the user-global + CLI tiers; a project-tier telemetry: block is IGNORED with a WARN (a project repo cannot flip a user's own telemetry choice in either direction). Omit entirely to fall through to the DO_NOT_TRACK env var and finally the enabled-by-default posture.
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `telemetry.productMetrics` | `productmetricssection` | `(absent)` | ProductMetrics is the opt-out product/adoption metrics config. |
+| `telemetry.productMetrics.enabled` | `bool` | `(absent)` | Enabled is a *bool so ABSENT (nil) is distinguishable from an explicit false: nil = absent (composition falls through to DO_NOT_TRACK then the enabled-by-default posture); a non-nil value is honoured exactly. |
+
 ## `mcp`
 
 Tier: **operator**

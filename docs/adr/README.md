@@ -76,9 +76,13 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0304 — TypeScript SDK public surface completeness and v0.1.0 release](./0304-typescript-sdk-public-surface-and-release.md) *(package identity and GitHub Packages interim superseded by 0328; 0313 superseded in full)*
 - [0313 — Interim GitHub Packages distribution and 0.0.x versioning](./0313-interim-github-packages-typescript-sdk.md) *(superseded by 0328)*
 - [0328 — Publish the TypeScript SDK to npmjs as `@stacklok-oss/mecatl-sdk`](./0328-typescript-sdk-npmjs-stacklok-oss.md) *(proposed)*
+- [0339 - Deno uses the TypeScript SDK HTTP/SSE entry point](./0339-typescript-sdk-deno.md) *(supersedes ADR 0279 only for the supported-runtime set)*
+- [0340 - Deno owns local daemons through Deno.Command](./0340-typescript-sdk-deno-command.md) *(supersedes ADR 0339 for the Deno public entry-point and local-process decisions)*
+- [0341 - Deno reuses the ConnectRPC gRPC transport](./0341-typescript-sdk-deno-grpc.md) *(supersedes ADRs 0339 and 0340 for the HTTP-only transport and Node-compatibility exclusions)*
 - [0036 — `engine/` is its own Go module (monorepo via `go.work`)](./0036-engine-module.md)
 - [0037 — Engine public-API stability contract](./0037-engine-stability-contract.md)
-- [0038 — Event-sourced SessionStore rehydration (the reference fold)](./0038-event-sourced-rehydration.md)
+- [0038 — Event-sourced SessionStore rehydration (the reference fold)](./0038-event-sourced-rehydration.md) *(Decision 3 origin-opacity and no-public-replay clauses proposed to be superseded by 0337)*
+- [0337 — Classify synthetic user-prompt origin at emission](./0337-synthetic-user-prompt-origin.md) *(proposed)*
 - [0043 — Ephemeral turn-0 instruction fragments](./0043-ephemeral-turn0-instruction-fragments.md)
 - [0044 — Host-supplied askID discriminator (cross-process-reconstructable askID)](./0044-host-supplied-askid-discriminator.md)
 - [0047 — Absolute path resolution inside the workspace root](./0047-absolute-path-resolution.md) *(skill read-root carve-out superseded by 0108)*
@@ -140,7 +144,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0208 — Execution environments and version-aware file mutation](./0208-execution-environment.md) *(runtime-seam deferral superseded by 0211; version protocol authoritative)*
 - [0211 — Execution-environment runtime seam](./0211-execution-environment-runtime-seam.md) *(supersedes 0208 decisions 1–3; phase-3 persistence deferral superseded by 0214)*
 - [0214 — Execution-environment persistence and reattachment](./0214-environment-persistence.md) *(supersedes 0211 decision 6 only)*
-- [0334 — Local microVM execution environments and developer-only release activation](./0334-microvm-execution-environments.md)
+- [0342 — Local microVM execution environments and developer-only release activation](./0342-microvm-execution-environments.md)
 
 ### Agents, teams & delegation
 - [0283 — Managed delegation-fork lifecycle](./0283-managed-delegation-fork-lifecycle.md) *(proposed; depends on 0281)*
@@ -159,7 +163,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0248 — SDK compatibility discovery and the typed error contract](./0248-sdk-compatibility-and-error-contract.md)
 - [0249 — Durable run identity: a host-minted `run_id`](./0249-durable-run-identity.md)
 - [0250 — Durable cursors and the session watch transport](./0250-durable-cursors-and-watch.md)
-- [0330 — Isolated bounded Redis follow capacity](./0330-isolated-redis-follow-capacity.md) *(proposed; supersedes ADR 0250's shared-pool sizing deferral and ADR 0240's no-force-close rule for isolated follow clients only)*
+- [0330 — Isolated bounded Redis follow capacity](./0330-isolated-redis-follow-capacity.md) *(raises mecatl's Go floor to 1.27, replaces ADR 0233's old shared-client package locator, supersedes ADR 0250's shared-pool sizing deferral, and supersedes ADR 0240's no-force-close rule for isolated follow clients only)*
 
 ### Providers & APIs
 - [0308 — Asynchronous session-title generation](./0308-session-title-generation-and-auxiliary-usage.md) *(proposed)*
@@ -212,6 +216,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0020 — Diagnostics](./0020-diagnostics.md)
 - [0045 — Explicit-bucket latency histograms (zero-config quantiles on `/metrics`)](./0045-explicit-bucket-latency-histograms.md)
 - [0098 — Telemetry for the headless binaries (mecatequi, mecak8s)](./0098-headless-telemetry.md)
+- [0338 — Product (adoption) metrics over OTLP](./0338-product-metrics.md)
 
 ### Governance & trust
 - [0241 — Canonical untrusted-content fences live in governance](./0241-governance-fence-ownership.md)
@@ -268,6 +273,8 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0295 — One scaled acceptance-plan spine for substantive work](./0295-unified-development-spine.md) *(single-PR decision superseded by 0301)*
 - [0296 — Opt-in local session context service](./0296-opt-in-local-session-context.md) *(proposed)*
 - [0303 — Fail closed double-Escape clearing on enhanced key-event support](./0303-fail-closed-double-escape.md)
+- [0336 — Draft-aware session inventory](./0336-draft-aware-session-inventory.md)
+  *(proposed)*
 
 ### Retired
 - [0029 — Repo-map tree-sitter](./0029-repomap-tree-sitter.md) *(retired)*

@@ -51,6 +51,8 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/mcpbroker"
 	"github.com/stacklok/mecatl/internal/adapter/mcpperf"
 	"github.com/stacklok/mecatl/internal/adapter/microvmmanager"
+	"github.com/stacklok/mecatl/internal/adapter/permconfig"
+	"github.com/stacklok/mecatl/internal/adapter/productmetrics"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/adapter/skills"
 	"github.com/stacklok/mecatl/internal/adapter/slogdiag"
@@ -112,7 +114,10 @@ type config struct {
 	// stream socketpair endpoint whose EOF means the spawning parent died; the
 	// daemon then stops through the ordinary shutdown path. 0 disables it
 	// (0/1/2 are the standard streams, never a lifetime descriptor).
-	lifetimePipeFD  int
+	lifetimePipeFD int
+	// lifetimeStdin adopts a piped stdin as the same parent-liveness channel.
+	// Deno.Command can create this pipe but cannot assign an arbitrary child fd.
+	lifetimeStdin   bool
 	workspace       string
 	model           string
 	defaultProvider string
@@ -192,6 +197,14 @@ type config struct {
 	otlpEndpoint string // OTLP collector endpoint (empty disables tracing)
 	otlpProtocol string // OTLP transport: "grpc" (default) or "http"
 	otlpInsecure bool   // skip TLS when dialing the OTLP collector (dev only)
+
+	// productMetrics reports anonymous product-adoption metrics to Stacklok.
+	// OPT-OUT: ON by default. See the --product-metrics flag help text.
+	productMetrics bool
+	// productMetricsDryRun logs every would-be product-metrics observation
+	// via diag instead of exporting it over OTLP — an audit mode to verify
+	// the no-PII claim before trusting --product-metrics for real.
+	productMetricsDryRun bool
 
 	// Runtime-introspection admin surface (loopback only, on the --metrics-addr
 	// listener): pprof + expvar + a runtime/metrics snapshot + a FlightRecorder.
@@ -931,6 +944,21 @@ func run(mode commandMode, remaining []string) error {
 		defer obs.recorder.Stop()
 	}
 
+	// Product metrics (opt-out, Task 11): resolve the effective enabled value
+	// and build the pipeline. Extracted into a helper (mirroring
+	// setupObservability) so run()'s cyclomatic complexity stays under the
+	// lint gate; the helper owns the resolve/build/disclosure branches and
+	// logs its own failure, so run() only threads the resulting handles.
+	pm, cancelHeartbeat, _ := setupProductMetrics(ctx, cfg, diag)
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if serr := pm.Shutdown(shutdownCtx); serr != nil {
+			slog.Warn("product metrics shutdown", "err", serr)
+		}
+	}()
+	defer cancelHeartbeat()
+
 	tracing := telemetry.NewTracing(otel.GetTracerProvider())
 
 	// Role-scoped main pair (issue #47): the MAIN engine records through the
@@ -950,6 +978,9 @@ func run(mode commandMode, remaining []string) error {
 		slowTurns = telemetry.NewSlowTurnBuffer(telemetry.DefaultSlowTurnCapacity, time.Now)
 		sinks = append(sinks, slowTurns.WithRole(telemetry.RoleMain))
 	}
+	if pm.Sink != nil {
+		sinks = append(sinks, pm.Sink)
+	}
 	sink := telemetry.NewSink(sinks...)
 
 	// Child role scoper (issue #47): the composition hands each CHILD engine a
@@ -966,7 +997,7 @@ func run(mode commandMode, remaining []string) error {
 		return telemetry.NewSink(childSinks...), scoped
 	}
 
-	composition := appConfig(cfg, sink, mainScoped, roleScoper, obs.metrics, diag)
+	composition := appConfig(cfg, sink, cliconfig.TeeToolCallRecorder(mainScoped, pm.ToolCallRecorder), roleScoper, obs.metrics, diag)
 	built, err := app.Build(ctx, composition)
 	if err != nil {
 		return err
@@ -1077,6 +1108,66 @@ func setupObservability(ctx context.Context, cfg config, diag port.Diagnostics) 
 		slog.Info("goroutine-leak watchdog armed", "threshold", cfg.goroutineWarnThreshold, "interval", cfg.goroutineWarnInterval)
 	}
 	return observability{providers: providers, metrics: metrics, recorder: recorder}, nil
+}
+
+// productMetricsSnapshot derives the closed-set FeatureSnapshot the product-
+// metrics heartbeat reports, from fields already resolved on cfg — never a
+// model id/alias, only whether each feature is configured at all.
+func productMetricsSnapshot(cfg config) productmetrics.FeatureSnapshot {
+	mode := productmetrics.ModeInteractive
+	if cfg.headless {
+		mode = productmetrics.ModeHeadless
+	}
+	return productmetrics.FeatureSnapshot{
+		Memory:     cfg.memoryDir != "",
+		Guardrails: cfg.guardrailsModel != "",
+		MCP:        cfg.mcpServers != nil && len(cfg.mcpServers.Servers()) > 0,
+		Scheduling: !cfg.noScheduler,
+		Provider:   cliconfig.ResolveProviderFamily(cfg.useOpenAI, cfg.defaultProvider),
+		Mode:       mode,
+	}
+}
+
+// setupProductMetrics resolves the opt-out product-metrics precedence and
+// builds the pipeline (Task 11). It reads the operator's
+// telemetry.productMetrics.enabled setting via a THROWAWAY resolver built
+// the SAME WAY internal/app/build.go's buildPermResolver constructs its —
+// app.Build's own resolver is internal and never exposed back to run(), so
+// this narrow read-only resolver mirrors mecated's mcplogin.go precedent
+// (loadMCPLoginProfiles). settings.yaml is parsed twice at boot (once here,
+// once inside app.Build); an accepted, negligible boot-time cost.
+//
+// It logs its own build failure. The first-run disclosure notice is printed
+// via a notify callback BuildProductMetrics itself invokes SYNCHRONOUSLY,
+// before starting the heartbeat goroutine and before returning — never
+// deferred to a check on the returned handles' FirstRun field afterward,
+// which would leave a window where the pipeline could record/export before
+// a human ever saw the notice (ADR 0338). run() only threads the resulting
+// handles and the heartbeat-context cancel func (both callers must defer
+// unconditionally: the handles' Shutdown is always a safe no-op when
+// disabled/errored). The returned error is informational only — a caller
+// that just wants the handles can discard it.
+func setupProductMetrics(ctx context.Context, cfg config, diag port.Diagnostics) (cliconfig.ProductMetricsHandles, func(), error) {
+	permResolver := permconfig.NewWithEnv(permconfig.Options{
+		Conventional:  cfg.permissionsConventional,
+		ImportClaude:  cfg.importClaudePermissions,
+		ExplicitFiles: cfg.permissionConfigs,
+		Diagnostics:   diag,
+	}, xdgconfig.OSEnv)
+	productMetricsEnabled := cliconfig.ResolveProductMetricsEnabled(cliconfig.ProductMetricsPrecedence{
+		FlagSet:         cfg.cliExplicit["product-metrics"],
+		FlagValue:       cfg.productMetrics,
+		SettingsEnabled: permResolver.OperatorProductMetricsEnabled(),
+	})
+	heartbeatCtx, cancelHeartbeat := context.WithCancel(context.Background())
+	pm, err := cliconfig.BuildProductMetrics(ctx, heartbeatCtx, productMetricsEnabled, cfg.productMetricsDryRun,
+		productmetrics.BinaryMecated, buildinfo.BuildID, productmetrics.DefaultHeartbeatInterval,
+		productMetricsSnapshot(cfg), "" /* no install-id override: local-file mechanism */, diag,
+		func(notice string) { fmt.Fprint(os.Stderr, notice) })
+	if err != nil {
+		slog.Warn("product metrics disabled: setup failed", "err", err)
+	}
+	return pm, cancelHeartbeat, err
 }
 
 // mecatedServerImplementation is the stable family reported to authenticated clients.
@@ -1606,6 +1697,8 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 		"absolute path to write a JSON readiness document to, ATOMICALLY (temp file + rename) and only AFTER composition and every listener are up, so a spawning parent can wait on the path instead of racing a connect loop. Carries the pid, the transport, the bound gRPC/HTTP addresses, and the non-secret compatibility descriptor — never a credential. Empty writes nothing")
 	fs.IntVar(&cfg.lifetimePipeFD, "lifetime-pipe-fd", 0,
 		"file descriptor of an INHERITED pipe read end or connected UNIX-domain stream socketpair endpoint this daemon watches: EOF means the spawning parent exited or crashed, and the daemon then stops through the ordinary graceful-shutdown path. The parent holds the peer end and never writes to it — it has nothing to remember. 0 (default) disables; 1/2 are standard output/error and are rejected")
+	fs.BoolVar(&cfg.lifetimeStdin, "lifetime-stdin", false,
+		"adopt a PIPED stdin as the inherited parent-liveness channel; EOF stops the daemon through the ordinary graceful-shutdown path. Intended for supervisors such as Deno.Command that cannot assign an arbitrary child file descriptor. Mutually exclusive with --lifetime-pipe-fd")
 	fs.StringVar(&cfg.workspace, "workspace", cwd, "default session workspace root")
 	fs.StringVar(&cfg.model, "model", "", "model identifier sent to the provider (empty: use the provider-appropriate default)")
 	fs.StringVar(&cfg.defaultProvider, "default-provider", "", "server-configured deployment-wide default provider id shared by every client (e.g. openai, openrouter, anthropic); overrides the built-in provider preference for zero-selector sessions while a client-side selector still wins. Validated FAIL-FAST at startup: an unknown or unavailable provider refuses to start")
@@ -1657,6 +1750,11 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 	fs.StringVar(&cfg.otlpEndpoint, "otlp-endpoint", "", "OTLP trace collector endpoint, e.g. localhost:4317 (empty disables tracing)")
 	fs.StringVar(&cfg.otlpProtocol, "otlp-protocol", telemetry.ProtocolGRPC, "OTLP transport: \"grpc\" (default) or \"http\"")
 	fs.BoolVar(&cfg.otlpInsecure, "otlp-insecure", false, "skip TLS when dialing the OTLP collector (development only)")
+
+	fs.BoolVar(&cfg.productMetrics, "product-metrics", true,
+		"report anonymous product-adoption metrics to Stacklok (version, OS/arch, enabled features, coarse session/run/tool-call counts — never a prompt, file path, tool name, or model id). ON by default; opt out with --product-metrics=false, MECATL_PRODUCT_METRICS=false, DO_NOT_TRACK=1, or telemetry.productMetrics.enabled: false in settings.yaml")
+	fs.BoolVar(&cfg.productMetricsDryRun, "product-metrics-dry-run", false,
+		"print every product-metrics observation to stderr instead of sending it — verify the no-PII claim yourself before enabling --product-metrics for real")
 
 	fs.IntVar(&cfg.mutexProfileFraction, "mutex-profile-fraction", 0, "runtime.SetMutexProfileFraction: report 1/N mutex contention events for /debug/pprof/mutex. 0 (default) disables it. Adds per-contention sampling overhead; enable only when investigating lock contention")
 	fs.IntVar(&cfg.blockProfileRate, "block-profile-rate", 0, "runtime.SetBlockProfileRate in nanoseconds: sample one blocking event per N ns blocked for /debug/pprof/block. 0 (default) disables it. Adds per-block-event overhead; enable only when investigating blocking")
@@ -2155,13 +2253,17 @@ func serveWithBroker(ctx context.Context, cfg config, svc *server.Service, reg *
 	// The inherited lifetime pipe: EOF on it means the spawning parent is gone.
 	// Adopted here, after the binds, so a startup failure exits without having
 	// claimed a descriptor the parent may still be using.
-	parent, err := openLifetimePipe(cfg.lifetimePipeFD)
+	parent, err := openConfiguredLifetimePipe(cfg.lifetimePipeFD, cfg.lifetimeStdin)
 	if err != nil {
 		return err
 	}
 	defer parent.Close()
 	if parent.Enabled() {
-		slog.Info("watching the inherited lifetime pipe; EOF on it stops this daemon gracefully", "fd", cfg.lifetimePipeFD)
+		fd := cfg.lifetimePipeFD
+		if cfg.lifetimeStdin {
+			fd = 0
+		}
+		slog.Info("watching the inherited lifetime pipe; EOF on it stops this daemon gracefully", "fd", fd)
 	}
 
 	// AC8.3: published only now — composition is complete (app.Build ran before

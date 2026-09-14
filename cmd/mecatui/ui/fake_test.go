@@ -516,6 +516,12 @@ type fakeClipboard struct {
 	wrote    [][]byte
 	writeErr error
 
+	// wrotePrimary records the payloads passed to WritePrimary (the PRIMARY-selection
+	// copy so a mecatui selection is middle-click pasteable elsewhere); primaryWriteErr,
+	// when set, is returned to model a missing/failed backend (which the UI swallows).
+	wrotePrimary    [][]byte
+	primaryWriteErr error
+
 	// primary/primaryErr script ReadPrimary (the middle-click primary-selection
 	// read); primaryCalls counts invocations so the request tests can assert the
 	// shell read actually ran (or was gated off).
@@ -555,6 +561,13 @@ func (f *fakeClipboard) ReadPrimary(_ context.Context) (string, error) {
 func (f *fakeClipboard) Write(_ context.Context, _ string, data []byte) error {
 	f.wrote = append(f.wrote, append([]byte(nil), data...))
 	return f.writeErr
+}
+
+// WritePrimary records the payload (so the copy tests can assert the PRIMARY-selection
+// mirror was invoked) and returns primaryWriteErr, modelling the best-effort backend.
+func (f *fakeClipboard) WritePrimary(_ context.Context, data []byte) error {
+	f.wrotePrimary = append(f.wrotePrimary, append([]byte(nil), data...))
+	return f.primaryWriteErr
 }
 
 // fakeMCP is a scripted client.MCP for the overlay tests: each method returns its

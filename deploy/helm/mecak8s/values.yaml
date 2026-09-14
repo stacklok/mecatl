@@ -158,6 +158,11 @@ redis:
   # unless an ACL key is also set. Verification is never disabled either way.
   caKey: ca.pem
   usernameKey: ""
+  # Dedicated bounds for blocking event followers. maxFollowers must not
+  # exceed poolSize.
+  follow:
+    poolSize: 32
+    maxFollowers: 32
   filesystem:
     # Principal-scoped persistent virtual files. Shell and filesystem forks stay disabled.
     enabled: false

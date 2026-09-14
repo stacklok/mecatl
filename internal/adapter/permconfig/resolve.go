@@ -196,6 +196,15 @@ type Resolver struct {
 	// (explicit files) out-ranks user-global (first-non-nil keeps CLI).
 	operatorOpenRouter *OpenRouterSection
 
+	// operatorTelemetry is the OPERATOR-TIER telemetry: subtree, read ONCE at
+	// construction from the user-global + CLI tiers ONLY (the SOLE capture path
+	// is captureTelemetry from loadUserRules — mirroring captureOpenRouter). A
+	// project-tier file's telemetry: block is IGNORED with a WARN in
+	// loadProjectRules. nil when no operator-tier file carried a telemetry:
+	// section. CLI (explicit files) out-ranks user-global (first-non-nil keeps
+	// CLI).
+	operatorTelemetry *TelemetrySection
+
 	// operatorMCP is the first complete operator-tier mcp: subtree. Explicit CLI
 	// files are visited before user-global settings, so precedence is whole-block,
 	// first-non-nil; project mcp blocks are warning-only and never captured.
@@ -410,6 +419,19 @@ func (r *Resolver) OperatorOpenRouter() *OpenRouterSection {
 		return nil
 	}
 	return r.operatorOpenRouter
+}
+
+// OperatorProductMetricsEnabled returns the operator-tier
+// telemetry.productMetrics.enabled: value (user-global + CLI only), or nil
+// when none was configured. It is the SOLE accessor composition uses to
+// read the product-metrics opt-out from config — by construction it never
+// returns a project-tier value (a project telemetry: block is ignored with
+// a WARN in loadProjectRules). nil-safe. Mirrors OperatorOpenRouter().
+func (r *Resolver) OperatorProductMetricsEnabled() *bool {
+	if r == nil || r.operatorTelemetry == nil || r.operatorTelemetry.ProductMetrics == nil {
+		return nil
+	}
+	return r.operatorTelemetry.ProductMetrics.Enabled
 }
 
 // OperatorMCP returns the complete operator-tier mcp subtree, or nil when absent.
@@ -693,6 +715,11 @@ func (r *Resolver) loadProjectRules(ws tool.WorkspaceReader) ([]governance.Rule,
 				"openrouter: IGNORING a project-tier openrouter: block (operator-tier only — a project repo cannot steer the OpenRouter downstream provider; set openrouter in your user-global settings.yaml)",
 				"file", src.path, "root", ws.Root())
 		}
+		if cfg.Telemetry != nil {
+			r.diag.Log(context.Background(), port.LevelWarn,
+				"telemetry: IGNORING a project-tier telemetry: block (operator-tier only — a project repo cannot change a user's own product-metrics opt-out in either direction; set telemetry in your user-global settings.yaml)",
+				"file", src.path, "root", ws.Root())
+		}
 		if cfg.MCP != nil {
 			r.diag.Log(context.Background(), port.LevelWarn,
 				"mcp: IGNORING a project-tier mcp: block (operator-tier only — a project repo cannot configure global MCP servers)",
@@ -932,6 +959,9 @@ func (r *Resolver) loadUserRules(report *Report) []governance.Rule {
 		r.captureModels(cfg.Models)
 		// Operator-tier openrouter: same first-non-nil-keeps-CLI discipline (issue #480).
 		r.captureOpenRouter(cfg.OpenRouter)
+		// Operator-tier telemetry (opt-out product metrics): same
+		// first-non-nil-keeps-CLI discipline as openrouter.
+		r.captureTelemetry(cfg.Telemetry)
 		// Operator-tier MCP profiles: capture the complete first block; never field-merge.
 		r.captureMCP(cfg.MCP)
 		r.captureRetention(cfg.Retention)
@@ -972,6 +1002,9 @@ func (r *Resolver) loadUserRules(report *Report) []governance.Rule {
 				r.captureModels(cfg.Models)
 				// User-global openrouter: captured only if no higher CLI file already did.
 				r.captureOpenRouter(cfg.OpenRouter)
+				// Operator-tier telemetry (opt-out product metrics): same
+				// first-non-nil-keeps-CLI discipline as openrouter.
+				r.captureTelemetry(cfg.Telemetry)
 				// User-global MCP: captured only if no higher CLI file already did.
 				r.captureMCP(cfg.MCP)
 				r.captureRetention(cfg.Retention)
@@ -1123,6 +1156,16 @@ func (r *Resolver) captureOpenRouter(s *OpenRouterSection) {
 		return
 	}
 	r.operatorOpenRouter = s
+}
+
+// captureTelemetry records the FIRST operator-tier telemetry: block seen
+// during loadUserRules (CLI files out-rank user-global, so first-non-nil
+// keeps CLI). Mirrors captureOpenRouter.
+func (r *Resolver) captureTelemetry(s *TelemetrySection) {
+	if s == nil || r.operatorTelemetry != nil {
+		return
+	}
+	r.operatorTelemetry = s
 }
 
 // captureMCP records the first complete operator-tier mcp block. It is called

@@ -209,4 +209,4 @@ schedules borrow their exact logical attachment, while independent schedules all
 attachment and persist a trusted ownership bit. Every fire reattaches that ref. Delete disables
 first, preserves a claimed/running record for scheduler recovery, and removes only the owned
 logical attachment; dirty state remains exact-reattachable and the repository VM/rootfs and
-siblings are never deleted. See [ADR 0334](../adr/0334-microvm-execution-environments.md).
+siblings are never deleted. See [ADR 0342](../adr/0342-microvm-execution-environments.md).

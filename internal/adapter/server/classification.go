@@ -410,6 +410,8 @@ var serviceAccessTable = map[string]ClassificationEntry{
 	"LeaseSweepDisabled":                 {KindExempt, "reads the process-wide sticky sweep-disabled flag SessionStale sets, consumed only by the composition-owned sweep"},
 	"StaleRunningCandidates":             {KindSharedInfrastructure, "root-authorized metadata-only enumeration of owned running, non-scheduled sessions; returns no transcript content"},
 	"SettleIfStale":                      {KindSharedInfrastructure, "root-authorized authoritative reload and settlement of a stale running candidate; ownerless records are rejected under ownership enforcement"},
+	"LostOwnershipCandidates":            {KindSharedInfrastructure, "root-authorized in-memory enumeration of this process's own lease-loss tombstone ids (issue #1334); no store scan, no transcript content"},
+	"ReconcileLeaseLossTombstone":        {KindSharedInfrastructure, "root-authorized trial-Acquire clearing this process's own lease-loss tombstone once the backend proves it free (issue #1334); no session-state mutation"},
 	"DeleteSessionForRetention":          {KindExempt, "legacy composition retention callback; revalidates durable taxonomy/state and acquires the session mutation lease before deletion"},
 	"DeleteSessionForRetentionCandidate": {KindExempt, "composition-owned retention callback over planner metadata; holds run-entry, lease, and backend family exclusions through conditional deletion"},
 }
@@ -472,7 +474,7 @@ var systemAccessTable = map[syscaller.Root]ClassificationEntry{
 	},
 	syscaller.RootStaleSessionReconcile: {
 		KindSharedInfrastructure,
-		"stale-session repair: may enumerate metadata and settle only owned, running, non-scheduled crash orphans through the root-authorized narrow server seam; cannot read transcripts or use caller memory",
+		"stale-session repair: may enumerate metadata and settle only owned, running, non-scheduled crash orphans through the root-authorized narrow server seam, AND (issue #1334) clear this process's own lease-loss tombstones for awaiting/cancelled sessions via a bounded trial-Acquire; cannot read transcripts or use caller memory",
 	},
 }
 

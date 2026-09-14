@@ -37,13 +37,14 @@ import (
 // MINID makes future retention safe precisely BECAUSE IDs are not positional.
 //
 // CONNECTION COST — the honest one. A blocking XREAD occupies a pooled
-// connection for the duration of its block, and this Store's pool is shared with
-// Save/Append. Follow therefore blocks in BOUNDED slices (followBlock) and
-// re-acquires between them, so a watcher parks a connection for at most one
-// slice at a time instead of indefinitely, and a cancelled follow gives the
-// connection back within one slice rather than on the next append. That bounds
-// the hold, it does not make it free: N concurrent watchers still want N
-// connections, so a deployment expecting many should size the pool for them.
+// connection for the duration of its block. Follow uses an isolated, bounded
+// client so it cannot exhaust the durability pool used by Save and Append. It
+// blocks in BOUNDED slices (followBlock) and re-acquires between them, so a
+// watcher parks a connection for at most one slice at a time instead of
+// indefinitely, and a cancelled follow gives the connection back within one
+// slice rather than on the next append. That bounds the hold, it does not make
+// it free: N concurrent watchers still want N connections. Process-local
+// admission therefore cannot exceed the configured follow-pool size.
 
 const (
 	// eventsGenerationKeyPrefix holds a session log's positional basis: an
@@ -219,8 +220,22 @@ func appendResult(out []any) (generation, entryID string, err error) {
 // resuming from the right one until data is already lost.
 func (st *Store) ReadAfter(ctx context.Context, id session.SessionID, after port.Cursor, opts port.ReadOptions) iter.Seq2[port.LogRecord, error] {
 	return func(yield func(port.LogRecord, error) bool) {
-		basis, legacy, position, err := st.readAfterBasis(ctx, id, after)
+		readCtx := ctx
+		if opts.Follow {
+			followCtx, release, err := st.followers.admit(ctx)
+			if err != nil {
+				yield(port.LogRecord{}, err)
+				return
+			}
+			defer release()
+			readCtx = followCtx
+		}
+
+		basis, legacy, position, err := st.readAfterBasis(readCtx, id, after, opts.Follow)
 		if err != nil {
+			if readCtx.Err() != nil {
+				return
+			}
 			yield(port.LogRecord{}, err)
 			return
 		}
@@ -232,7 +247,7 @@ func (st *Store) ReadAfter(ctx context.Context, id session.SessionID, after port
 			// empty generation, so a cursor issued here expires the moment that
 			// append mints a real one — which is correct, because the positions
 			// change from list indices to stream IDs.
-			st.readLegacyListAfter(ctx, id, position, opts, yield)
+			st.readLegacyListAfter(readCtx, id, position, opts, yield)
 			return
 		}
 
@@ -241,7 +256,7 @@ func (st *Store) ReadAfter(ctx context.Context, id session.SessionID, after port
 			yield(port.LogRecord{}, err)
 			return
 		}
-		st.readStreamAfter(ctx, id, basis, lastID, opts, yield)
+		st.readStreamAfter(readCtx, id, basis, lastID, opts, yield)
 	}
 }
 
@@ -253,8 +268,8 @@ func (st *Store) ReadAfter(ctx context.Context, id session.SessionID, after port
 // iterator pins a retired credential generation open — clientGenerations cannot
 // close a client while its refs are non-zero — so a credential rotation never
 // completes for as long as anyone is watching. Raised in review on #869.
-func (st *Store) readAfterBasis(ctx context.Context, id session.SessionID, after port.Cursor) (basis logBasis, legacy bool, position string, err error) {
-	client, release, err := st.clients.acquire()
+func (st *Store) readAfterBasis(ctx context.Context, id session.SessionID, after port.Cursor, follow bool) (basis logBasis, legacy bool, position string, err error) {
+	client, release, err := st.acquireReadClient(follow)
 	if err != nil {
 		return logBasis{}, false, "", err
 	}
@@ -273,6 +288,13 @@ func (st *Store) readAfterBasis(ctx context.Context, id session.SessionID, after
 	// resuming a real position and any later basis is a replacement, not a
 	// creation.
 	return logBasis{generation: generation, known: present || after != ""}, legacy, position, nil
+}
+
+func (st *Store) acquireReadClient(follow bool) (redis.UniversalClient, func(), error) {
+	if follow {
+		return st.clients.acquireFollow()
+	}
+	return st.clients.acquire()
 }
 
 // yieldReadError reports err to the consumer, preserving the classification a
@@ -401,7 +423,7 @@ func (st *Store) readStreamAfter(
 		if live {
 			block = followBlock
 		}
-		msgs, err := st.streamCycle(ctx, id, &basis, lastID, readCount(opts, sent), block)
+		msgs, err := st.streamCycle(ctx, id, &basis, lastID, readCount(opts, sent), block, opts.Follow)
 		switch {
 		case errors.Is(err, redis.Nil):
 			// Nothing more available. A plain read is done; a follower marks the
@@ -478,8 +500,9 @@ func (st *Store) streamCycle(
 	lastID string,
 	count int64,
 	block time.Duration,
+	follow bool,
 ) ([]redis.XMessage, error) {
-	client, release, err := st.clients.acquire()
+	client, release, err := st.acquireReadClient(follow)
 	if err != nil {
 		return nil, err
 	}
@@ -596,7 +619,7 @@ func (st *Store) readLegacyListAfter(
 	live := false
 	for {
 		page := readCount(opts, sent)
-		records, err := st.legacyCycle(ctx, id, next, page)
+		records, err := st.legacyCycle(ctx, id, next, page, opts.Follow)
 		if err != nil {
 			if ctx.Err() != nil {
 				return
@@ -660,8 +683,8 @@ func (st *Store) readLegacyListAfter(
 // Raised in review on #869 for the stream path; the list path had the same shape
 // with a worse trigger. It is also the same WRONGTYPE that broke the k8s e2e
 // earlier in this stack — code holding a datatype assumption across a migration.
-func (st *Store) legacyCycle(ctx context.Context, id session.SessionID, next, page int64) ([]string, error) {
-	client, release, err := st.clients.acquire()
+func (st *Store) legacyCycle(ctx context.Context, id session.SessionID, next, page int64, follow bool) ([]string, error) {
+	client, release, err := st.acquireReadClient(follow)
 	if err != nil {
 		return nil, err
 	}

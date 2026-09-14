@@ -87,12 +87,14 @@ or `--access` on the staging command.
 `sdk/typescript/VERSION` is the SDK release trigger and must equal the
 `package.json` version. A maintainer dispatches the SDK release-PR workflow and
 selects a semantic bump; the release GitHub App opens a PR changing exactly
-those two files. After a human merges that PR, a separate workflow verifies the
-App-authored branch, exact diff, monotonic version, previous tag, and package
+`sdk/typescript/CHANGELOG.md`, `sdk/typescript/VERSION`, and `package.json`. The
+changelog entry lists commits that changed the TypeScript SDK since its previous
+tag. After a human merges that PR, a separate workflow verifies the App-authored
+branch, exact diff, monotonic version, previous tag, changelog entry, and package
 identity before the App pushes `sdk/typescript/vX.Y.Z`. Using the App rather
-than `GITHUB_TOKEN` is load-bearing: its tag push starts the npm staging
-workflow. The first tag is `sdk/typescript/v0.1.0`. Root `v*` image releases
-and provider-module tags stay isolated.
+than `GITHUB_TOKEN` is load-bearing: its tag push starts the npm staging workflow.
+The first tag is `sdk/typescript/v0.1.0`. Root `v*` image releases and
+provider-module tags stay isolated.
 
 **9. Delete the GitHub Packages preview manually after an approved npm
 release.** Do not automate unpublish or deletion in the release workflow.

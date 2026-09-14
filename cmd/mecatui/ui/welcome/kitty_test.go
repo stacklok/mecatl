@@ -78,9 +78,47 @@ func TestDetectKittyTruthTable(t *testing.T) {
 	}
 }
 
-// transmitChunkControls splits a chunked Kitty graphics escape on the APC
+func TestKittyNativeResolution(t *testing.T) {
+	cases := []struct {
+		name string
+		env  map[string]string
+		want bool
+	}{
+		{name: "kitty term", env: map[string]string{"TERM": "xterm-kitty"}, want: true},
+		{name: "kitty window", env: map[string]string{"KITTY_WINDOW_ID": "42"}, want: true},
+		{name: "ghostty", env: map[string]string{"TERM_PROGRAM": "ghostty"}, want: false},
+		{name: "plain", env: map[string]string{"TERM": "xterm-256color"}, want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := kittyNativeResolution(mapLookup(tc.env)); got != tc.want {
+				t.Fatalf("kittyNativeResolution(%v) = %v, want %v", tc.env, got, tc.want)
+			}
+		})
+	}
+}
+
 // delimiter (ESC \ terminator) and returns each chunk's CONTROL portion (the
 // key=value list between "\x1b_G" and the payload-separating ";").
+func TestNativeKittyTransmitPreservesSourceAlpha(t *testing.T) {
+	out := transmitMascot(36, 18, true)
+	if out == "" {
+		t.Fatal("native Kitty transmit returned empty")
+	}
+	data := reassemblePayload(t, out)
+	img, err := png.Decode(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("native Kitty payload is not a PNG: %v", err)
+	}
+	if got := img.Bounds().Dx(); got != 1254 {
+		t.Fatalf("native Kitty payload width = %d, want 1254", got)
+	}
+	_, _, _, alpha := img.At(0, 0).RGBA()
+	if alpha != 0 {
+		t.Fatalf("native Kitty payload lost transparent corner: alpha=%d", alpha)
+	}
+}
+
 func transmitChunkControls(t *testing.T, out string) []string {
 	t.Helper()
 	var controls []string
@@ -327,7 +365,7 @@ func TestDeleteMascotWellFormed(t *testing.T) {
 // 1.3.1 stable (ghostty-org/ghostty#13056); keeping the payload small and
 // single-chunk sidesteps the worst of it.
 func TestTransmitMascotPayloadBounded(t *testing.T) {
-	out := TransmitMascot(60, 30)
+	out := transmitMascot(60, 30, false)
 	if out == "" {
 		t.Fatal("TransmitMascot returned empty")
 	}
@@ -387,7 +425,7 @@ func TestDownscaleMascotDims(t *testing.T) {
 func TestTransmitAndPlaceholderAgree(t *testing.T) {
 	const cols, rows, margin = 36, 18, 4
 
-	transmit := TransmitMascot(cols, rows)
+	transmit := transmitMascot(cols, rows, false)
 	if transmit == "" {
 		t.Fatal("TransmitMascot returned empty")
 	}

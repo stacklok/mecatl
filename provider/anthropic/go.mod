@@ -1,6 +1,6 @@
 module github.com/stacklok/mecatl/provider/anthropic
 
-go 1.26.6
+go 1.27
 
 require (
 	github.com/anthropics/anthropic-sdk-go v1.71.0

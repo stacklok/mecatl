@@ -875,7 +875,7 @@ func TestRefreshStaleModels_SkipsHealthyAndNonIntentDriven(t *testing.T) {
 		meta:     newLiveMetaStore(),
 		outcomes: newLiveOutcomeStore(),
 	}
-	reg.outcomes.recordSuccess(providerToolhive, []modelEntry{{ID: "already-ok"}}) // healthy, not stale
+	reg.outcomes.recordSuccess(reg.entries[providerToolhive], []modelEntry{{ID: "already-ok"}}) // healthy, not stale
 	st := &refreshStaleModelsState{}
 
 	refreshStaleModels(context.Background(), port.NopDiagnostics{}, reg, newFakeSwapper(), st)
@@ -897,7 +897,7 @@ func TestResolveProviderModels_OpenRouterRegressionPin(t *testing.T) {
 	lister := &fakeLister{err: errors.New("boom")}
 	reg := regWithLister(lister)
 	reg.outcomes = newLiveOutcomeStore()
-	reg.outcomes.recordSuccess(providerOpenRouter, []modelEntry{{ID: "should-never-win"}})
+	reg.outcomes.recordSuccess(reg.entries[providerOpenRouter], []modelEntry{{ID: "should-never-win"}})
 
 	got := resolveProviderModels(context.Background(), port.NopDiagnostics{}, reg, providerOpenRouter)
 	curated := orEmbeddedIDs(t)

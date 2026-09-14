@@ -2,7 +2,10 @@ package app
 
 import (
 	"context"
+	"errors"
+	"iter"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -296,6 +299,148 @@ func TestSweepStaleSessionsSkipsWhenLeaseSweepDisabled(t *testing.T) {
 	if got := f.state(t, id); got != session.StateRunning {
 		t.Fatalf("state after sweep = %q, want running (LeaseSweepDisabled must skip the whole pass)", got)
 	}
+}
+
+// fakeLease is a minimal programmable port.SessionLease for the sweep's
+// lease-loss-tombstone wiring test — a package-local counterpart to
+// internal/adapter/server's own (unexported, so not importable here) fakeLease.
+type fakeLease struct {
+	mu        sync.Mutex
+	acquires  int
+	renewHook func(port.Lease) (port.Lease, error)
+	releases  int
+}
+
+func (f *fakeLease) Acquire(_ context.Context, id session.SessionID, owner string) (port.Lease, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.acquires++
+	return port.Lease{SessionID: id, Owner: owner, Token: 1, Expiry: time.Now().Add(time.Hour)}, nil
+}
+
+func (f *fakeLease) Renew(_ context.Context, l port.Lease) (port.Lease, error) {
+	f.mu.Lock()
+	hook := f.renewHook
+	f.mu.Unlock()
+	if hook != nil {
+		return hook(l)
+	}
+	return l, nil
+}
+
+func (f *fakeLease) Release(context.Context, port.Lease) error {
+	f.mu.Lock()
+	f.releases++
+	f.mu.Unlock()
+	return nil
+}
+
+var _ port.SessionLease = (*fakeLease)(nil)
+
+// blockingLLM streams nothing until ctx is cancelled, then ends the stream —
+// so a run stays live (StateRunning) until something cancels it, giving the
+// renewer's lease-loss Cancel a live run to hit (mirrors
+// internal/adapter/server/lease_test.go's own blockingProvider).
+type blockingLLM struct{}
+
+func (blockingLLM) Stream(ctx context.Context, _ port.LLMRequest) (iter.Seq2[port.Chunk, error], error) {
+	return func(yield func(port.Chunk, error) bool) {
+		<-ctx.Done()
+		yield(port.Chunk{Kind: port.ChunkDone, Stop: session.StopCancelled}, nil)
+	}, nil
+}
+
+func (blockingLLM) Capabilities() port.ProviderCapabilities { return port.ProviderCapabilities{} }
+
+var _ port.LLMProvider = blockingLLM{}
+
+// TestSweepStaleSessionsClearsLeaseLossTombstone is issue #1334's composition-
+// wiring regression guard: sweepStaleSessions must itself call
+// reconcileLeaseLossTombstones on every pass — a regression dropping that one
+// call would pass every other sweep test in this file, since none of them
+// ever set up a lease-loss tombstone. It drives a REAL lease loss (a live run
+// cancelled by the renewer's definitive ErrLeaseHeld, exactly as
+// internal/adapter/server/lease_test.go's own Service-level tests do), then
+// proves the SWEEP itself (never a direct ReconcileLeaseLossTombstone call)
+// clears the tombstone: StartRun is refused before the sweep runs and
+// succeeds only after it.
+func TestSweepStaleSessionsClearsLeaseLossTombstone(t *testing.T) {
+	lease := &fakeLease{}
+	store := memstore.New()
+	cat := tool.NewCatalog()
+	engine := agent.NewEngine(agent.Deps{
+		LLM:     blockingLLM{},
+		Catalog: cat,
+		Policy:  permpolicy.NewPolicy(nil, permstore.New()),
+		Model:   "test-model",
+	})
+	svc, err := newTestServerService(server.Config{
+		Engine:             engine,
+		Store:              store,
+		SessionLease:       lease,
+		LeaseOwner:         "owner-test",
+		LeaseTTL:           90 * time.Millisecond,
+		LeaseRenewInterval: 15 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	t.Cleanup(svc.Close)
+
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	run, err := svc.StartRun(context.Background(), sess.ID, "go")
+	if err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+
+	var lost atomic.Bool
+	lease.mu.Lock()
+	lease.renewHook = func(port.Lease) (port.Lease, error) {
+		lost.Store(true)
+		return port.Lease{}, port.ErrLeaseHeld
+	}
+	lease.mu.Unlock()
+	for range run.Events() {
+	}
+	svc.FinishRun(sess.ID, run)
+	if !lost.Load() {
+		t.Fatal("precondition: the renewer never lost the lease")
+	}
+
+	// The engine has no Store wired, so the durable snapshot is whatever this
+	// test writes directly (the crash-orphan-test idiom): the cancelled shape
+	// the real onLeaseLost cancel path leaves behind.
+	cancelled := session.New(sess.ID, session.ModeDefault, sess.EnvironmentRef, session.Limits{}, time.Unix(0, 0))
+	if err := cancelled.RecordUserPrompt("go", nil); err != nil {
+		t.Fatalf("RecordUserPrompt: %v", err)
+	}
+	if err := cancelled.BeginTurn(); err != nil {
+		t.Fatalf("BeginTurn: %v", err)
+	}
+	if err := cancelled.Cancel(); err != nil {
+		t.Fatalf("Cancel: %v", err)
+	}
+	if err := store.Save(context.Background(), cancelled); err != nil {
+		t.Fatalf("overwrite Save: %v", err)
+	}
+
+	if _, err := svc.StartRun(context.Background(), sess.ID, "again"); !errors.Is(err, server.ErrSessionLeasedElsewhere) {
+		t.Fatalf("StartRun before sweep = %v, want ErrSessionLeasedElsewhere", err)
+	}
+
+	sweepStaleSessions(syscaller.Context(context.Background(), syscaller.RootStaleSessionReconcile), svc, port.NopDiagnostics{})
+
+	run2, err := svc.StartRun(context.Background(), sess.ID, "again")
+	if err != nil {
+		t.Fatalf("StartRun after sweep = %v, want success (the sweep must have cleared the lease-loss tombstone)", err)
+	}
+	run2.Cancel()
+	for range run2.Events() {
+	}
+	svc.FinishRun(sess.ID, run2)
 }
 
 // TestStartStaleSessionReconcileExitsOnCancel pins the goroutine-exit

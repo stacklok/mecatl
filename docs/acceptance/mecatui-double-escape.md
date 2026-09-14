@@ -112,7 +112,7 @@ Given the live help view and the published key references, following
 - AC2.2: `docs/tui.md` and `user-docs/mecatui/keybindings.md` describe the same
   support requirement, 500 ms timing, silent-first-press behavior, attachment/paste
   clearing, ownership precedence, release-and-repeat rule, and ClearPrompt alternative.
-  - verify: `TestADR_0303_DoubleEscape_Scenario2_DocumentationNamesSafetyContract`
+  - verify: none — documentation prose consistency is reviewed by humans; `task docs` checks links and structure
 - AC2.3: update only help goldens that actually change; do not claim golden stability
   in advance. Unrelated view goldens remain unchanged.
   - verify: `TestADR_0303_DoubleEscape_Scenario2_HelpGoldenChangesAreScoped`

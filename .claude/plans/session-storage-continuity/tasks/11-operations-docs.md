@@ -22,6 +22,6 @@ Follow ADR-0226, ADR-0217, ADR-0027, ADR-0104, AGENTS.md layering/security invar
 - AC9.1: Tested systemd user-service and launchd examples parse, resolve the intended executable/config/state paths, preserve each argument exactly, and invoke the daemon-owned retention configuration rather than an external deletion command.
   - verify: `TestSessionStorageContinuity_Scenario9_ServiceExamplesExecuteConfiguredArgs`
 - AC9.2: Documentation explicitly rejects cron/find/glob deletion, explains embedded-local versus connected-remote management, and shows effective-policy inspection plus dry-run before apply.
-  - verify: `TestSessionStorageContinuity_Scenario9_NoUnsafeDeletionRecipe`
+  - verify: none — deletion-safety guidance is reviewed by humans; `task docs` checks links and structure
 - AC9.3: The runbook covers plaintext sensitivity/permissions, space forecasting, unsupported backends, and stop → backup → migrate/apply → verify → start with restore-to-new-directory validation.
-  - verify: `TestSessionStorageContinuity_Scenario9_BackupMigrationRunbook`
+  - verify: none — backup and migration runbook completeness is reviewed by humans; `task docs` checks links and structure

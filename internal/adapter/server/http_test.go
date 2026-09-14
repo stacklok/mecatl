@@ -12,8 +12,14 @@ import (
 	"time"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
+	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
+	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
+	"github.com/stacklok/mecatl/engine/agent"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/engine/tool"
+	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
@@ -380,6 +386,89 @@ func TestHTTPGetSessionEchoesResolvedModel(t *testing.T) {
 	if got := *out.ResolvedModel; got != (resolvedModelBody{ProviderID: "anthropic", ModelID: "claude-x", ContextWindow: 200000}) {
 		t.Fatalf("resolved_model = %+v, want anthropic/claude-x/200000", got)
 	}
+}
+
+func TestHTTPSessionSnapshotsEchoPerSessionCapabilities(t *testing.T) {
+	capsFor := func(_ string, model string) port.ProviderCapabilities {
+		return port.ProviderCapabilities{Image: model != "text-only"}
+	}
+	factory := func(_ context.Context, sel server.ProviderSelector, _ []mcp.ServerConfig, _ server.SessionProfile, _ string, mode session.PermissionMode) (server.SessionEngineResult, error) {
+		caps := capsFor(sel.ProviderID, sel.ModelID)
+		eng := agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: sel.ModelID})
+		return server.SessionEngineResult{Engine: eng, ProviderID: sel.ProviderID, ModelID: sel.ModelID, Capabilities: caps, BuiltForMode: mode, Close: func() error { return nil }}, nil
+	}
+	svc, err := newPlacementTestService(server.Config{
+		Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil)}),
+		Store:  memstore.New(), SessionEngine: factory,
+		DefaultCapabilities: port.ProviderCapabilities{Image: true},
+		ResolveCapabilities: func(provider, model string, _ session.PermissionMode) port.ProviderCapabilities {
+			return capsFor(provider, model)
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	srv := httptest.NewServer(server.NewHTTPHandler(svc))
+	defer srv.Close()
+
+	request := func(method, path, body string, wantStatus int) map[string]json.RawMessage {
+		t.Helper()
+		req, reqErr := http.NewRequest(method, srv.URL+path, strings.NewReader(body))
+		if reqErr != nil {
+			t.Fatal(reqErr)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, doErr := http.DefaultClient.Do(req)
+		if doErr != nil {
+			t.Fatalf("%s %s: %v", method, path, doErr)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != wantStatus {
+			t.Fatalf("%s %s status = %d, want %d", method, path, resp.StatusCode, wantStatus)
+		}
+		var out map[string]json.RawMessage
+		if decodeErr := json.NewDecoder(resp.Body).Decode(&out); decodeErr != nil {
+			t.Fatalf("decode %s %s: %v", method, path, decodeErr)
+		}
+		return out
+	}
+	assertImage := func(out map[string]json.RawMessage, want bool) string {
+		t.Helper()
+		var caps struct {
+			Image bool `json:"image"`
+		}
+		if err := json.Unmarshal(out["session_capabilities"], &caps); err != nil {
+			t.Fatalf("session_capabilities: %v (response %v)", err, out)
+		}
+		if caps.Image != want {
+			t.Fatalf("session_capabilities.image = %t, want %t", caps.Image, want)
+		}
+		var id string
+		if err := json.Unmarshal(out["session_id"], &id); err != nil || id == "" {
+			t.Fatalf("session_id = %q, err=%v", id, err)
+		}
+		return id
+	}
+
+	defaultID := assertImage(request(http.MethodPost, "/v1/sessions", `{}`, http.StatusCreated), true)
+	assertImage(request(http.MethodGet, "/v1/sessions/"+defaultID, "", http.StatusOK), true)
+
+	textID := assertImage(request(http.MethodPost, "/v1/sessions", `{"provider_id":"gateway","model_id":"text-only"}`, http.StatusCreated), false)
+	assertImage(request(http.MethodGet, "/v1/sessions/"+textID, "", http.StatusOK), false)
+
+	successorID := func(out map[string]json.RawMessage) string {
+		t.Helper()
+		var id string
+		if err := json.Unmarshal(out["session_id"], &id); err != nil || id == "" {
+			t.Fatalf("session_id = %q, err=%v", id, err)
+		}
+		return id
+	}
+	clearID := successorID(request(http.MethodPost, "/v1/sessions/"+textID+"/clear", `{}`, http.StatusCreated))
+	assertImage(request(http.MethodGet, "/v1/sessions/"+clearID, "", http.StatusOK), false)
+
+	forkID := successorID(request(http.MethodPost, "/v1/sessions/"+textID+"/fork", `{"provider_id":"gateway","model_id":"vision"}`, http.StatusCreated))
+	assertImage(request(http.MethodGet, "/v1/sessions/"+forkID, "", http.StatusOK), true)
 }
 
 // TestHTTPGetSessionNotFound returns 404 for an unknown id.

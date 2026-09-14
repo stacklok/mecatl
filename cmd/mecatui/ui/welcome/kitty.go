@@ -142,6 +142,18 @@ func truthy(v string) bool {
 	return false
 }
 
+// kittyNativeResolution identifies the Kitty terminal itself, as opposed to a
+// terminal that merely advertises the Kitty graphics protocol. Kitty can resample
+// the original mascot cleanly; the Ghostty/WezTerm compatibility path deliberately
+// remains target-sized because of its virtual-placement bug.
+func kittyNativeResolution(look envLookup) bool {
+	if _, ok := look("KITTY_WINDOW_ID"); ok {
+		return true
+	}
+	term, ok := look("TERM")
+	return ok && strings.Contains(strings.ToLower(term), "kitty")
+}
+
 // TransmitMascot builds the OUT-OF-BAND Kitty escape that transmits the mascot
 // image data to the terminal AND creates a virtual placement (a=T + U=1) under
 // MascotImageID at cols×rows cells. The action MUST be transmit-and-put (a=T):
@@ -154,18 +166,20 @@ func truthy(v string) bool {
 // parse it into cells and desync the cursor), so interleaving it with frames is
 // harmless.
 //
-// The mascot is first DOWNSCALED to the cols×rows cell footprint (see
-// downscaleMascot) before being re-encoded to PNG. This matters on Ghostty: the
-// full 1254×1254 PNG is ~1 MB across ~265 base64 chunks, and the exact
-// a=T/U=1/U+10EEEE virtual-placement pattern is known-buggy on Ghostty 1.3.1
-// stable (ghostty-org/ghostty#13056) where a large transmit can render at a
-// fraction of its intended width. A small, target-resolution PNG (~tens of KB,
-// a handful of chunks) sidesteps the worst of that — the terminal's own
-// cell-size scaling is never invoked because the image is already at the cell
-// footprint's pixel dimensions. The data is chunked at kitty.MaxChunkSize.
+// The mascot is encoded at the source resolution for Kitty itself. Kitty's image
+// scaler has the real cell-size information and can resample the 1254px source
+// cleanly; pre-sampling to a 60px-ish cell footprint makes the result visibly
+// pixelated (especially on high-DPI Kitty windows). Ghostty still uses the small
+// target-resolution path because its virtual-placement implementation has a known
+// large-transmit bug (ghostty-org/ghostty#13056). The data is chunked at
+// kitty.MaxChunkSize.
 // Returns "" if the image can't be decoded (caller then keeps the half-block
 // path).
 func TransmitMascot(cols, rows int) string {
+	return transmitMascot(cols, rows, kittyNativeResolution(osEnvLookup))
+}
+
+func transmitMascot(cols, rows int, nativeResolution bool) string {
 	if cols <= 0 || rows <= 0 {
 		return ""
 	}
@@ -176,12 +190,13 @@ func TransmitMascot(cols, rows int) string {
 	if err != nil {
 		return ""
 	}
-	// Downscale to the target cell footprint so the transmitted PNG is small
-	// (kilobytes, not a megabyte) and the terminal does no pixel scaling. A
-	// terminal cell is ~1:2 (w:h), so a cols×rows cell block is roughly
-	// (cols*cellW)×(rows*cellH) pixels; we sample at cols×rows*2 to keep the
-	// dog's square aspect (rows is the cell-rows count, the image is square).
 	scaled := downscaleMascot(img, cols, rows*2)
+	if nativeResolution {
+		// Kitty supports PNG alpha directly. Keep the original image here so
+		// transparency and anti-aliased edges reach the terminal unchanged; the
+		// terminal performs the final cell-size resampling.
+		scaled = img
+	}
 	var buf bytes.Buffer
 	// f=100 (PNG), a=T (transmit AND put — a bare a=t would make U=1/c=/r= inert and
 	// create no placement, issue #44), i=ID, virtual placement (U=1), c=cols r=rows so

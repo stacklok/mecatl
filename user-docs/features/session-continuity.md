@@ -3,7 +3,7 @@ sidebar_position: 140
 title: Session continuity
 description:
   Persist, resume, maintain, and recover Mecatl sessions across deployment
-  shapes.
+  options.
 ---
 
 # Session continuity
@@ -143,6 +143,22 @@ request routing compatible with the shared store. A lease loss stops renewal and
 prevents unsafe release assumptions. Without a suitable lease backend,
 destructive maintenance fails closed rather than relying on process-local
 liveness.
+
+A lease loss is not always a genuine takeover: a missed renewal from a
+transient network blip looks the same, at first, as losing the session to a
+real competing owner. Either way, the owning process immediately stops acting
+as owner and marks the session locally off-limits, refusing every further
+prompt or resume attempt for it on its own. A background sweep, running every
+five minutes, then checks with the real lease backend whether the lease has
+actually become free; if it has, the sweep lifts the local mark automatically.
+A follow-up prompt or approval can then repair the session's terminal state
+through the ordinary run-entry recovery path, with no operator action and no
+process restart required. Recovery depends on the lease backend itself being
+reachable and able to confirm the lease is free: a failed or unavailable check
+leaves the session refused for that pass, and the sweep simply retries five
+minutes later, rather than assuming the lease is free on an inconclusive
+answer. If the lease backend does not support leasing at all, the sweep never
+runs, and the session stays refused until an explicit close.
 
 ## Restart and deployment limitations
 

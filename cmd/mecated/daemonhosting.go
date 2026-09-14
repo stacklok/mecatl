@@ -97,6 +97,9 @@ func validateDaemonHosting(cfg config) error {
 		return fmt.Errorf("--lifetime-pipe-fd %d is not an inherited lifetime descriptor: %d/%d/%d are stdin/stdout/stderr; pass the pipe or socketpair descriptor the parent duplicated (>= %d)",
 			cfg.lifetimePipeFD, 0, 1, 2, minLifetimePipeFD)
 	}
+	if cfg.lifetimeStdin && cfg.lifetimePipeFD != 0 {
+		return errors.New("--lifetime-stdin and --lifetime-pipe-fd are mutually exclusive: configure one parent-liveness channel")
+	}
 	if cfg.readyFile != "" && !filepath.IsAbs(cfg.readyFile) {
 		return fmt.Errorf("--ready-file %q must be an absolute path: it is written after the listeners bind, when the process working directory is not the parent's concern", cfg.readyFile)
 	}
@@ -472,6 +475,19 @@ func openLifetimePipe(fd int) (lifetimePipe, error) {
 	if fd == 0 {
 		return lifetimePipe{}, nil
 	}
+	return adoptLifetimePipe(fd)
+}
+
+// openConfiguredLifetimePipe selects the arbitrary inherited descriptor or the
+// stdin pipe used by runtimes that cannot assign an extra child descriptor.
+func openConfiguredLifetimePipe(fd int, stdin bool) (lifetimePipe, error) {
+	if stdin {
+		return adoptLifetimePipe(0)
+	}
+	return openLifetimePipe(fd)
+}
+
+func adoptLifetimePipe(fd int) (lifetimePipe, error) {
 	if err := checkLifetimePipeFD(fd); err != nil {
 		return lifetimePipe{}, err
 	}

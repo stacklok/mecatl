@@ -42,4 +42,4 @@ Yardstick, or vMCP. Keep `deploy/helm/mecak8s/values-kind.yaml` and the
   fixture from the production Helm chart and the `e2e/k8s/` suite, and does not
   claim production network isolation: it has no general NetworkPolicy and uses
   explicit loopback-only forwarding for host access.
-  - verify: `TestMecak8sKindFixture_Scenario1_DocumentationBoundaries`
+  - verify: none — fixture boundary claims in documentation are reviewed by humans; `task docs` checks links and structure

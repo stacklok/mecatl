@@ -343,7 +343,7 @@ func TestOpenAICodexAbsentPreservesExistingProviders(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildProviderRegistry: %v", err)
 	}
-	if got, want := reg.Available(), []string{providerOpenAI, providerOpenRouter, providerToolhive}; !reflect.DeepEqual(got, want) {
+	if got, want := reg.Available(), []string{providerOpenAI, providerOpenRouter, providerToolhive, providerToolhiveAnthropic}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("Available() = %v, want %v", got, want)
 	}
 	if reg.Default() != providerOpenAI {

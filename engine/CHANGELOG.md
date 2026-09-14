@@ -14,6 +14,10 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 ### Added
 
 - **Schedule placement ownership lifecycle** — adds `port.ScheduleSpec.PlacementOwned` as trusted durable host metadata, `ScheduleState.DeletionID`, the optional atomic `port.ScheduleDeletionStore`, and deletion lifecycle sentinels so schedule managers can distinguish exclusively provisioned placements from borrowed/legacy placements and safely retry exact cleanup without deleting a later same-name incarnation. Added (minor).
+- **Event-follow capacity classification** — adds
+  `port.ErrEventFollowCapacity`, allowing `CursorEventLog` backends to reject a
+  follow iterator before storage work begins when follower capacity is full.
+  Added (minor).
 
 - **Session-load failure classification** — adds `port.SessionLoadFailureClass`,
   `SessionLoadFailureError`, `ErrSessionLoadFailure`, `NewSessionLoadFailure`, and
@@ -29,6 +33,11 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 - **Exact durable-lineage edge selection** — adds optional `RecordID` and `RecordIncarnation` fields to `port.SessionLineageQuery`. Stores return at most the selected direct-edge record without exposing or enumerating sibling records, allowing callers to prove each ancestry hop against both the child's self record and its parent's direct-edge partition. Added (minor).
 
 - **Session placement authority repair** — removes the orphan exported `session.PlacementSelector` protocol, adds persisted display-only `session.PlacementMetadata`, requires a valid `EnvironmentRef` at aggregate construction, and rejects direct engine runs whose live environment does not match the session identity. Changed (breaking, pre-v1 minor).
+
+- `port.RunAwareToolCallRecorder`: an optional `ToolCallRecorder` extension
+  that additionally receives the calling run's `RunID`, letting a consumer
+  correlate a tool call to the run that made it. Purely additive — no
+  existing `ToolCallRecorder` implementer is affected. Added (minor).
 
 - **Delegation artifact boundary (ADR 0288)** — adds the distinct `agent.ArtifactHandle` type, changes `agent.PreservedForkStore.Preserve` to key retained forks by that opaque handle rather than a physical root, and removes `Workspace`/`WinnerWorkspace` from `session.ParallelPayload`. Parallel results now expose an opaque preserved-artifact handle while physical fork roots remain private orchestration state. Changed (breaking, pre-v1 minor).
 
@@ -208,6 +217,10 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 - **`port.SessionLease.Renew` doc comment narrowed (issue #1333)** — clarifies that bare expiry of the caller's own owner/token, with nothing else having taken the lease over, is not by itself one of the definitive-loss conditions `ErrLeaseHeld` documents; loss is specifically a holder or token change. An implementation that can prove no one else could have raced it (e.g. a single-host backend re-checking its own durable record under its stable transition lock) may reclaim instead of declaring loss — `internal/adapter/flocklease.Lease.Renew` now does exactly this. This narrows, never widens, when `ErrLeaseHeld` may be returned, so it is a documentation clarification, not a contract change; no exported signature changed. No `task api:update` needed.
 
 ### Changed
+
+- **Go compatibility floor** - the engine module requires Go 1.27. The root,
+  provider, and authentication modules use the same floor. Changed (breaking,
+  pre-v1 minor).
 
 - **Canonical Shell command tool** — replaces the exported `BashTool` / `NewBashTool`, `BashStatusTool` / `NewBashStatusTool`, and `tool.BashToolName` APIs with their Shell-named counterparts. The model-facing catalog names are `Shell` and `ShellStatus`; `ServerCapabilities.bash` and Go `Capabilities.Bash` remain stable shell-availability indicators. Changed (breaking, pre-v1 minor).
 

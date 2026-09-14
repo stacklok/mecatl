@@ -1,4 +1,4 @@
-# ADR 0334 — Repository-scoped local microVM execution environments
+# ADR 0342 — Repository-scoped local microVM execution environments
 
 - Status: Accepted
 - Date: 2026-08-19

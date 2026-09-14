@@ -140,6 +140,10 @@ var errorRegistry = []errorCodeEntry{
 	// ErrNoEventLog because it is the same class of honest refusal one level in:
 	// a log exists, it just cannot serve positions.
 	{Sentinel: ErrWatchUnsupported, Code: "watch_unsupported", GRPC: codes.Unimplemented, HTTPStatus: http.StatusNotImplemented, Title: "Durable event watch is not supported by the configured event log"},
+	// Follower admission is exhausted before storage work begins. Like lagging it
+	// is resumable from the client's last received cursor, but the distinct code
+	// keeps backend capacity separate from transport-consumer backpressure.
+	{Sentinel: port.ErrEventFollowCapacity, Code: "watch_capacity", GRPC: codes.ResourceExhausted, HTTPStatus: http.StatusTooManyRequests, Title: "Watch follower capacity is exhausted"},
 	// ResourceExhausted/429 says what actually happened — the bounded delivery
 	// buffer ran out — and marks the failure as the client's to retry. It is
 	// RESUMABLE: reconnect with the last cursor received.

@@ -1290,7 +1290,11 @@ func (e *Engine) execute(ctx context.Context, r *Run, sess *session.Session, env
 	res = session.RepairToolResult(res)
 
 	if e.deps.ToolCallRecorder != nil {
-		e.deps.ToolCallRecorder.ToolCall(sess.ID, c, res, queued, dur)
+		if aware, ok := e.deps.ToolCallRecorder.(port.RunAwareToolCallRecorder); ok {
+			aware.ToolCallForRun(r.RunID(), sess.ID, c, res, queued, dur)
+		} else {
+			e.deps.ToolCallRecorder.ToolCall(sess.ID, c, res, queued, dur)
+		}
 	}
 
 	e.emit(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(res)})

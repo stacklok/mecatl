@@ -230,6 +230,22 @@ describe("spawn startup failure", () => {
     expect(error.message).not.toContain("partial-");
   });
 
+  it("Node startup preserves Buffer handling of BOM and malformed UTF-8 stderr", async () => {
+    const executable = join(testRoot, "stderr-encoding-failure.mjs");
+    await writeFile(
+      executable,
+      `#!${process.execPath}\nimport { writeSync } from "node:fs";\nwriteSync(2, Buffer.from([0xef, 0xbb, 0xbf, 0x61, 0xff, 0x0d, 0x0a]));\nprocess.exit(19);\n`,
+    );
+    await chmod(executable, 0o700);
+    const error = await failure(
+      spawnInternal(
+        { binaryPath: executable },
+        { createTransport: () => routerTransport(), tempDirectory: testRoot },
+      ),
+    );
+    expect(error.stderrTail).toBe("\uFEFFa\uFFFD\r\n");
+  });
+
   it("a secret-shaped stderr line is redacted wholesale", async () => {
     const secrets = [
       "assignment-secret",

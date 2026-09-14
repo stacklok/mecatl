@@ -1,6 +1,7 @@
-# Opens a reviewed TypeScript SDK version-bump PR. Merging that PR is the only
-# supported way to advance sdk/typescript/VERSION; the tag workflow then creates
-# the path-qualified tag that starts npm staging.
+# Opens a reviewed TypeScript SDK version-bump PR with its generated changelog
+# entry. Merging that PR is the only supported way to advance
+# sdk/typescript/VERSION; the tag workflow then creates the path-qualified tag
+# that starts npm staging.
 name: Create TypeScript SDK Release PR
 
 on:
@@ -140,15 +141,89 @@ jobs:
           writeFileSync(manifestFile, `${JSON.stringify(manifest, null, 2)}\n`);
           NODE
 
+      - name: Generate the SDK changelog entry
+        env:
+          CURRENT: ${{ steps.version.outputs.current }}
+          REPOSITORY: ${{ github.repository }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { execFileSync } from "node:child_process";
+          import { readFileSync, writeFileSync } from "node:fs";
+
+          const changelogFile = "sdk/typescript/CHANGELOG.md";
+          const packageName = "@stacklok-oss/mecatl-sdk";
+          const preamble = [
+            "# Changelog",
+            "",
+            `Notable changes to \`${packageName}\` are recorded here.`,
+            "",
+            "For installation and API entry points, see the [TypeScript SDK README](./README.md).",
+            "",
+            "",
+          ].join("\n");
+          if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(process.env.REPOSITORY)) {
+            throw new Error(`invalid GitHub repository: ${process.env.REPOSITORY}`);
+          }
+
+          const shas = execFileSync("git", [
+            "log",
+            `sdk/typescript/v${process.env.CURRENT}..HEAD`,
+            "--no-merges",
+            "--reverse",
+            "--format=%H",
+            "--",
+            "sdk/typescript",
+            ":(exclude)sdk/typescript/CHANGELOG.md",
+          ], { encoding: "utf8" }).trim().split("\n").filter(Boolean);
+          if (shas.length === 0) {
+            throw new Error("no TypeScript SDK changes exist since the current release");
+          }
+          if (shas.length > 300) {
+            throw new Error(`too many TypeScript SDK changes for one release: ${shas.length}`);
+          }
+
+          const changes = shas.map((sha) => {
+            const subject = execFileSync(
+              "git", ["show", "-s", "--format=%s", sha], { encoding: "utf8" },
+            ).trim();
+            const short = sha.slice(0, 7);
+            return `- ${subject} ([\`${short}\`](https://github.com/${process.env.REPOSITORY}/commit/${sha}))`;
+          });
+          const npmURL = `https://www.npmjs.com/package/%40stacklok-oss%2Fmecatl-sdk/v/${process.env.VERSION}`;
+          const compareURL = `https://github.com/${process.env.REPOSITORY}/compare/sdk/typescript/v${process.env.CURRENT}...sdk/typescript/v${process.env.VERSION}`;
+          const entry = [
+            `## [${process.env.VERSION}](${npmURL})`,
+            "",
+            ...changes,
+            "",
+            `[Compare changes](${compareURL})`,
+          ].join("\n");
+
+          const changelog = readFileSync(changelogFile, "utf8");
+          if (!changelog.startsWith(preamble)) {
+            throw new Error(`${changelogFile} has an unexpected preamble`);
+          }
+          if (changelog.includes(`\n## [${process.env.VERSION}](`)) {
+            throw new Error(`${changelogFile} already contains ${process.env.VERSION}`);
+          }
+          writeFileSync(
+            changelogFile,
+            `${preamble}${entry}\n\n${changelog.slice(preamble.length)}`,
+          );
+          writeFileSync(`${process.env.RUNNER_TEMP}/sdk-changelog-entry.md`, `${entry}\n`);
+          NODE
+
       - name: Verify the release diff
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
           changed="$(git diff --name-only | sort)"
-          expected="$(printf '%s\n' sdk/typescript/VERSION sdk/typescript/package.json | sort)"
+          expected="$(printf '%s\n' sdk/typescript/CHANGELOG.md sdk/typescript/VERSION sdk/typescript/package.json | sort)"
           if [ "$changed" != "$expected" ]; then
-            echo "::error::the SDK release PR must change exactly VERSION and package.json"
+            echo "::error::the SDK release PR must change exactly CHANGELOG.md, VERSION, and package.json"
             printf 'got:\n%s\n' "${changed:-<no changes>}"
             exit 1
           fi
@@ -166,13 +241,14 @@ jobs:
             echo ""
             echo "Bumps \`@stacklok-oss/mecatl-sdk\` from \`${CURRENT}\` to \`${VERSION}\`."
             echo ""
-            echo "This PR changes only \`sdk/typescript/VERSION\` and \`sdk/typescript/package.json\`."
+            echo "This PR changes only \`sdk/typescript/CHANGELOG.md\`, \`sdk/typescript/VERSION\`,"
+            echo "and \`sdk/typescript/package.json\`."
             echo "Merging it creates \`sdk/typescript/v${VERSION}\` automatically; the tag workflow"
             echo "then runs the stage-only npm release workflow."
             echo ""
-            echo "## Shipping commits"
+            echo "## Generated changelog entry"
             echo ""
-            git log "sdk/typescript/v${CURRENT}..HEAD" --no-merges --format='- %s' | head -300
+            cat "$RUNNER_TEMP/sdk-changelog-entry.md"
           } > "$RUNNER_TEMP/sdk-release-pr.md"
 
       # Mint the App token only after every repo-controlled validation has run.
@@ -197,7 +273,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git switch -c "$BRANCH"
-          git add sdk/typescript/VERSION sdk/typescript/package.json
+          git add sdk/typescript/CHANGELOG.md sdk/typescript/VERSION sdk/typescript/package.json
           git commit -m "Release TypeScript SDK v${VERSION}"
           git push "https://x-access-token:${GH_TOKEN}@github.com/${REPOSITORY}.git" \
             "HEAD:refs/heads/${BRANCH}"

@@ -1,0 +1,11 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/api-extractor/v7/api-extractor.schema.json",
+  "extends": "./api-extractor.json",
+  "mainEntryPointFilePath": "<projectFolder>/dist/deno.d.ts",
+  "apiReport": {
+    "reportFileName": "mecatl-sdk-deno.api.md"
+  },
+  "docModel": {
+    "apiJsonFilePath": "<projectFolder>/.api-extractor-temp/models/deno/mecatl-sdk-deno.api.json"
+  }
+}

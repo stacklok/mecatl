@@ -18,13 +18,22 @@
     "redis": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["endpoint", "credentialsSecret", "passwordKey", "caKey", "usernameKey", "filesystem", "readLedger", "local"],
+      "required": ["endpoint", "credentialsSecret", "passwordKey", "caKey", "usernameKey", "follow", "filesystem", "readLedger", "local"],
       "properties": {
         "endpoint": {"type": "string"},
         "credentialsSecret": {"type": "string"},
         "passwordKey": {"type": "string"},
         "caKey": {"type": "string"},
         "usernameKey": {"type": "string"},
+        "follow": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["poolSize", "maxFollowers"],
+          "properties": {
+            "poolSize": {"type": "integer", "minimum": 1},
+            "maxFollowers": {"type": "integer", "minimum": 1}
+          }
+        },
         "filesystem": {"type": "object", "additionalProperties": false, "required": ["enabled"], "properties": {"enabled": {"type": "boolean"}}},
         "readLedger": {"type": "object", "additionalProperties": false, "required": ["enabled"], "properties": {"enabled": {"type": "boolean"}}},
         "local": {"type": "object", "additionalProperties": false, "required": ["enabled"], "properties": {"enabled": {"type": "boolean"}}}

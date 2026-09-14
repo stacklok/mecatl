@@ -83,7 +83,7 @@ user-annotated region — the only tool that explains *off-CPU* time precisely.
 Annotate with `trace.NewTask` / `trace.WithRegion` / `trace.Log` to make the
 trace domain-meaningful (a task per run, a region per turn, a region per tool).
 
-**`runtime/trace.FlightRecorder` (stdlib since Go 1.25; mecatl is on Go 1.26)**
+**`runtime/trace.FlightRecorder` (stdlib since Go 1.25; Mecatl is on Go 1.27)**
 is the production-safe form: a **continuously-running ring buffer** you arm at
 startup and snapshot *only on an interesting event* (a tail-latency turn, an
 error), so you pay tracing cost continuously but only write a bounded window when
@@ -279,7 +279,7 @@ stdlib > CNCF/Apache-2.0 > permissive-MIT > commercial.
 
 The headline: **most of items 1–8 are stdlib or already in mecatl's module
 graph** (`google/pprof`, `goleak`, the Prometheus `collectors` package are all
-present today; Go 1.26 ships FlightRecorder). The cost of the foundational layer
+present today; Go 1.27 ships FlightRecorder). The cost of the foundational layer
 is wiring, not new dependencies.
 </content>
 </invoke>

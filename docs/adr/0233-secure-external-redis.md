@@ -4,7 +4,7 @@
 - Date: 2026-08-19
 - Scope: Redis session-store adapter, mecak8s composition and Helm deployment
 - Supersedes: none
-- Superseded by: none
+- Superseded by: [ADR 0330](./0330-isolated-redis-follow-capacity.md) (ToolHive Redis construction-package locator only)
 
 ## Context
 

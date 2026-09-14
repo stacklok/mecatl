@@ -51,6 +51,10 @@ jobs:
         with:
           bun-version: '1.4.1'
 
+      - uses: denoland/setup-deno@e95548e56dfa95d4e1a28d6f422fafe75c4c26fb # v2.0.3
+        with:
+          deno-version: '2.9.3'
+
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
@@ -165,6 +169,11 @@ jobs:
         env:
           MECATL_SDK_PACKED_TARBALL: ${{ github.workspace }}/sdk/typescript/.release/${{ steps.package.outputs.tarball }}
         run: task sdk:package:check
+
+      - name: Qualify the exact packed artifact with Deno.Command
+        env:
+          MECATL_SDK_PACKED_TARBALL: ${{ github.workspace }}/sdk/typescript/.release/${{ steps.package.outputs.tarball }}
+        run: task sdk:deno
 
       - name: Verify packed manifest release metadata
         env:

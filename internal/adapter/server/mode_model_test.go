@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -165,6 +166,40 @@ func TestModeRebuildReEmitsCapabilities(t *testing.T) {
 	_ = drainAndFinish(t, svc, sess.ID, mustStart(t, svc, sess.ID, "t2"))
 	if caps := svc.SessionCapabilities(sess.ID); !caps.Image {
 		t.Fatalf("plan-mode SessionCapabilities.Image = false, want true (the rebuild re-emits the plan model's caps)")
+	}
+}
+
+func TestGetSessionResolvesPersistedSelectorCapabilitiesAfterRestart(t *testing.T) {
+	ctx := context.Background()
+	store := memstore.New()
+	var modes []session.PermissionMode
+	var calls atomic.Int32
+	first := modeServiceOverStore(t, store, modeRecordingFactory("selected", "", &modes, &calls), nil)
+	sess, err := first.CreateSessionWithProvider(ctx, session.ModeDefault, session.Limits{}, server.ProviderSelector{ProviderID: "gateway", ModelID: "selected"})
+	if err != nil {
+		t.Fatalf("CreateSessionWithProvider: %v", err)
+	}
+
+	restarted, err := newPlacementTestService(server.Config{
+		Engine:              agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil)}),
+		Store:               store,
+		DefaultCapabilities: port.ProviderCapabilities{},
+		ResolveCapabilities: func(providerID, modelID string, _ session.PermissionMode) port.ProviderCapabilities {
+			if providerID == "gateway" && modelID == "selected" {
+				return port.ProviderCapabilities{Image: true}
+			}
+			return port.ProviderCapabilities{}
+		},
+	})
+	if err != nil {
+		t.Fatalf("restart service: %v", err)
+	}
+	resp, err := server.NewHarnessServer(restarted).GetSession(ctx, &mecatlv1.GetSessionRequest{SessionId: string(sess.ID)})
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if !resp.GetSession().GetSessionCapabilities().GetImage() {
+		t.Fatal("GetSession lost selected model image capability after restart")
 	}
 }
 

@@ -389,8 +389,10 @@ func TestBuildToolsSchemaFidelity(t *testing.T) {
 }
 
 // TestAssistantThinkingBeforeToolUse is the 400-trap replay assertion: an
-// assistant message with packed reasoning + a tool call must reconstruct the
-// thinking block BEFORE the tool_use block in the outgoing request.
+// assistant message with packed reasoning, visible text, AND a tool call must
+// reconstruct blocks in the model's OWN generation order — thinking, then
+// text, then tool_use LAST (issue #1465: tool_use replayed anywhere but last
+// 400s with "assistant message prefill" once extended thinking is active).
 func TestAssistantThinkingBeforeToolUse(t *testing.T) {
 	packed := packReasoning([]reasoningBlock{
 		{Kind: reasoningKindThinking, Thinking: "ponder", Signature: "SIG=="},
@@ -398,23 +400,30 @@ func TestAssistantThinkingBeforeToolUse(t *testing.T) {
 	msg := session.Message{
 		Role:      session.RoleAssistant,
 		Reasoning: packed,
+		Text:      "I'll check the file.",
 		ToolCalls: []session.ToolCall{{ID: "toolu_1", Name: "read_file", Args: json.RawMessage(`{"path":"x"}`)}},
 	}
 	blocks := assistantBlocks(msg)
-	if len(blocks) != 2 {
-		t.Fatalf("assistant blocks = %d, want 2 (thinking, tool_use)", len(blocks))
+	if len(blocks) != 3 {
+		t.Fatalf("assistant blocks = %d, want 3 (thinking, text, tool_use)", len(blocks))
 	}
 	if blocks[0].OfThinking == nil {
-		t.Fatal("first block must be a thinking block (sequence rule: thinking before tool_use)")
+		t.Fatal("block 0 must be a thinking block (sequence rule: thinking first)")
 	}
 	if blocks[0].OfThinking.Signature != "SIG==" {
 		t.Errorf("thinking signature = %q, want SIG==", blocks[0].OfThinking.Signature)
 	}
-	if blocks[1].OfToolUse == nil {
-		t.Fatal("second block must be the tool_use block")
+	if blocks[1].OfText == nil {
+		t.Fatal("block 1 must be the text block (must precede tool_use)")
 	}
-	if blocks[1].OfToolUse.ID != "toolu_1" {
-		t.Errorf("tool_use id = %q, want toolu_1", blocks[1].OfToolUse.ID)
+	if blocks[1].OfText.Text != "I'll check the file." {
+		t.Errorf("text = %q, want %q", blocks[1].OfText.Text, "I'll check the file.")
+	}
+	if blocks[2].OfToolUse == nil {
+		t.Fatal("block 2 (last) must be the tool_use block")
+	}
+	if blocks[2].OfToolUse.ID != "toolu_1" {
+		t.Errorf("tool_use id = %q, want toolu_1", blocks[2].OfToolUse.ID)
 	}
 }
 

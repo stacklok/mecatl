@@ -145,6 +145,22 @@ func TestZeroStateGatewayNote(t *testing.T) {
 		t.Errorf("splash should NOT render the gateway line when the gateway is the default, got:\n%s", plain)
 	}
 
+	// Suppressed when either protocol-specific ToolHive provider is already
+	// active, even if its sibling is reported as available-but-not-default.
+	m.modelCatalog.statuses = []client.ProviderStatus{{
+		ProviderID:          "toolhive-anthropic",
+		State:               "ok",
+		ModelCount:          1,
+		AvailableNotDefault: true,
+	}}
+	for _, providerID := range []string{"toolhive", "toolhive-anthropic"} {
+		m.resolvedSessionModel = client.ResolvedModel{ProviderID: providerID, ModelID: "claude-sonnet-4-6"}
+		plain = stripANSIstr(m.renderZeroState())
+		if strings.Contains(plain, "gateway detected") {
+			t.Errorf("splash should NOT render a same-family gateway line for %q, got:\n%s", providerID, plain)
+		}
+	}
+
 	// Suppressed with no statuses (byte-identical pre-feature path).
 	m.modelCatalog.statuses = nil
 	plain = stripANSIstr(m.renderZeroState())

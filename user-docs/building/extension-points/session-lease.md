@@ -274,8 +274,8 @@ under `internal/adapter/`.
 
 ## What's next
 
-- [Pick your deployment shape](/building/getting-started/deployment-decision.md)
-  — when to add a lease backend and which one to choose.
+- [Choose how to run Mecatl](/building/getting-started/deployment-decision.md) —
+  when to add a lease backend and which one to choose.
 - [SessionStore & EventLog](session-store.md) — the session persistence port;
   the lease sits on top of it.
 - [Cloud-native deployment (mecak8s)](/building/deployment/mecak8s.md) — the k8s

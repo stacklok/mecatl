@@ -117,3 +117,27 @@ func (r capabilityToolCallRecorder) ToolCall(id session.SessionID, call session.
 		r.next.ToolCall(id, call, result, queued, took)
 	}
 }
+
+// ToolCallForRun satisfies port.RunAwareToolCallRecorder, forwarding to
+// r.next's richer form under the SAME capability.allows(id) gate ToolCall
+// uses. Without this method, wrapping a RunAwareToolCallRecorder-capable
+// recorder (e.g. productmetrics.Recorder) behind this capability guard would
+// ERASE the optional capability: the engine's dispatch.go type-assertion is
+// on Deps.ToolCallRecorder itself, so a wrapper implementing only the base
+// interface fails that assertion regardless of what it wraps, silently
+// disabling had_tool_call/tool_calls_per_run/time_to_first_value.
+func (r capabilityToolCallRecorder) ToolCallForRun(runID string, id session.SessionID, call session.ToolCall, result session.ToolResult, queued, took time.Duration) {
+	if !r.capability.allows(id) {
+		return
+	}
+	if aware, ok := r.next.(port.RunAwareToolCallRecorder); ok {
+		aware.ToolCallForRun(runID, id, call, result, queued, took)
+		return
+	}
+	r.next.ToolCall(id, call, result, queued, took)
+}
+
+// Compile-time interface check: capabilityToolCallRecorder must keep
+// forwarding port.RunAwareToolCallRecorder, or the same capability silently
+// goes inert whenever a productmetrics.Recorder is guarded by it.
+var _ port.RunAwareToolCallRecorder = capabilityToolCallRecorder{}

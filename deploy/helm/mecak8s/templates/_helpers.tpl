@@ -47,6 +47,9 @@ mounted
 {{- end -}}
 {{- end -}}
 {{- define "mecak8s.validateRedis" -}}
+{{- if gt (int .Values.redis.follow.maxFollowers) (int .Values.redis.follow.poolSize) -}}
+{{- fail "redis.follow.maxFollowers must not exceed redis.follow.poolSize" -}}
+{{- end -}}
 {{- if not .Values.redis.local.enabled -}}
 {{- $_ := required "redis.endpoint is required when redis.local.enabled is false" .Values.redis.endpoint -}}
 {{- $_ := include "mecak8s.redisPort" . -}}

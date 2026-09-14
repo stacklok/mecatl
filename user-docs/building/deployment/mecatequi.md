@@ -381,8 +381,8 @@ relative or symlinked `--workspace` still matches correctly.
 
 ## What's next
 
-- [Pick your deployment shape](/building/getting-started/deployment-decision.md)
-  — comparison of mecatequi, mecated, mecak8s, and the embedded engine.
+- [Choose how to run Mecatl](/building/getting-started/deployment-decision.md) —
+  comparison of mecatequi, mecated, mecak8s, and the embedded engine.
 - [Run mecated standalone](/building/deployment/mecated.md) — the long-running
   daemon with interactive clients, durable sessions, and multi-replica support.
 - [Cloud-native k8s with mecak8s](/building/deployment/mecak8s.md) —

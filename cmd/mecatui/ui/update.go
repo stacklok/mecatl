@@ -963,17 +963,20 @@ func (m Model) onResolvedModelMsg(msg client.ResolvedModelMsg) (Model, tea.Cmd, 
 	if msg.Err != nil || msg.SessionID != m.sessionID {
 		return m, nil, true
 	}
-	// Caps adoption (issue #348): a non-zero Capabilities means the server
-	// returned the feature-advertisement snapshot on the Session proto — adopt
-	// it. A zero value means an older server (field absent) — keep the current
-	// caps untouched (fail-conservative: a dead-builtins window is worse than
-	// stale caps, and the adopted session rides the same server as the prior
-	// sessions tab).
-	// INVARIANT: a real current server always reports non-zero Capabilities
-	// (the Posture field is unconditionally populated by the server). An
-	// all-zero struct can only mean the field was absent (pre-#348 server),
-	// so we keep the prior caps rather than regressing to empty.
-	if msg.Capabilities != (client.Capabilities{}) {
+	// A present SessionCapabilities message is authoritative even when both media
+	// values are false. If it is the only populated wire capability, overlay just
+	// media so an older server's absent global feature snapshot does not erase the
+	// already-known global bits.
+	incomingCaps := msg.Capabilities
+	mediaOnly := incomingCaps.SessionMediaPresent
+	incomingCaps.SessionMediaPresent = false
+	incomingCaps.Image = false
+	incomingCaps.Audio = false
+	if mediaOnly && incomingCaps == (client.Capabilities{}) {
+		m.caps.Image = msg.Capabilities.Image
+		m.caps.Audio = msg.Capabilities.Audio
+		m.caps.SessionMediaPresent = true
+	} else if msg.Capabilities != (client.Capabilities{}) {
 		m.caps = msg.Capabilities
 	}
 	// The snapshot is authoritative after reconnect/session adoption, so unlike the
@@ -4389,6 +4392,23 @@ func (m Model) shellWriteCmd(payload string) tea.Cmd {
 	ctx := m.deps.Ctx
 	return func() tea.Msg {
 		err := cb.Write(ctx, "text/plain", []byte(payload))
+		return shellWriteResultMsg{err: err}
+	}
+}
+
+// primaryWriteCmd is the PRIMARY-selection twin of shellWriteCmd: it mirrors
+// payload into the X11/Wayland primary selection (wl-copy --primary / xclip
+// -selection primary) so a selection copied inside mecatui can be middle-click
+// pasted elsewhere. Same best-effort contract — a nil Clipboard, a platform with
+// no primary selection, or any backend error is swallowed into a no-op result.
+func (m Model) primaryWriteCmd(payload string) tea.Cmd {
+	cb := m.deps.Clipboard
+	if cb == nil {
+		return nil
+	}
+	ctx := m.deps.Ctx
+	return func() tea.Msg {
+		err := cb.WritePrimary(ctx, []byte(payload))
 		return shellWriteResultMsg{err: err}
 	}
 }

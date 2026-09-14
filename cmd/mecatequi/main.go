@@ -73,7 +73,7 @@ func realMain(argv []string, stdout, stderr io.Writer) int {
 	// Observability (issue #343, ADR 0098): OPT-IN OTLP push. Built right after
 	// flag parse so the flush-on-exit defer covers EVERY exit path (setup-failure
 	// included). With no --otlp-* flags this is a no-op (byte-identical default).
-	obs, oerr := buildObservability(context.Background(), f)
+	obs, oerr := buildObservability(context.Background(), f, diag, stderr)
 	if oerr != nil {
 		_, _ = fmt.Fprintf(stderr, "mecatequi: telemetry: %v\n", oerr)
 		return 2

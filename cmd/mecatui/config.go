@@ -162,6 +162,20 @@ type config struct {
 	noSteer        bool
 	noSteerFlagSet bool
 
+	// productMetrics reports anonymous product-adoption metrics to Stacklok
+	// for the embedded server only (ignored under `mecatui connect`, which
+	// hosts no local engine). OPT-OUT: ON by default. See the
+	// --product-metrics flag help text. productMetricsFlagSet records an
+	// explicit --product-metrics so CLI out-ranks the operator-global
+	// settings.yaml telemetry.productMetrics.enabled: key (mirrors
+	// noSteerFlagSet).
+	productMetrics        bool
+	productMetricsFlagSet bool
+	// productMetricsDryRun logs every would-be product-metrics observation
+	// via diag instead of exporting it over OTLP — an audit mode to verify
+	// the no-PII claim before trusting --product-metrics for real.
+	productMetricsDryRun bool
+
 	// resumeID and resumeLatest select an existing owned main chat for static
 	// startup adoption. They are shared by embedded and connect modes and mutually
 	// exclusive; the first prompt still owns all run-entry attachment/revalidation.
@@ -466,6 +480,10 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string, brows
 	fs.BoolVar(&cfg.noCommands, "no-commands", false, "embedded server only: disable slash-command expansion entirely")
 	fs.StringVar(&cfg.skillsDir, "skills-dir", "", "embedded server only: directory of skill units (<name>/SKILL.md); empty = the conventional dirs (e.g. .claude/skills)")
 	fs.BoolVar(&cfg.noSkills, "no-skills", false, "embedded server only: disable skill discovery (the Skill tool) entirely")
+	fs.BoolVar(&cfg.productMetrics, "product-metrics", true,
+		"report anonymous product-adoption metrics to Stacklok (version, OS/arch, enabled features, coarse session/run/tool-call counts — never a prompt, file path, tool name, or model id). ON by default; opt out with --product-metrics=false, MECATL_PRODUCT_METRICS=false, DO_NOT_TRACK=1, or telemetry.productMetrics.enabled: false in settings.yaml")
+	fs.BoolVar(&cfg.productMetricsDryRun, "product-metrics-dry-run", false,
+		"print every product-metrics observation to stderr instead of sending it — verify the no-PII claim yourself before enabling --product-metrics for real")
 
 	fs.BoolVar(&cfg.perf, "perf", false, "embedded server only: expose the private perf-observability admin surface (/metrics, /debug/pprof, /debug/vars, /debug/flightrecorder) and wire domain metrics into the engine. OFF by default. Empty --perf-addr uses a per-instance UNIX socket. SECURITY: UNAUTHENTICATED — its output can embed prompt text/file paths/goroutine stacks")
 	fs.StringVar(&cfg.perfAddr, "perf-addr", "", "embedded server only: explicit loopback host:port for the --perf admin surface (empty = private per-instance UNIX socket, or ephemeral 127.0.0.1 TCP with --perf-mcp). Use 127.0.0.1:0 for explicit ephemeral TCP. Non-loopback addresses are refused. Only consulted with --perf")
@@ -665,6 +683,11 @@ func recordExplicitFlag(f *flag.Flag, cfg *config) {
 	case "no-steer":
 		// Record an explicit --no-steer so CLI out-ranks the settings.yaml steer: key.
 		cfg.noSteerFlagSet = true
+	case "product-metrics":
+		// Record an explicit --product-metrics so CLI out-ranks the settings.yaml
+		// telemetry.productMetrics.enabled: key (ResolveProductMetricsEnabled's
+		// highest-precedence input).
+		cfg.productMetricsFlagSet = true
 	case "reasoning-effort":
 		cfg.reasoningEffortFlagSet = true
 	case "default-provider":

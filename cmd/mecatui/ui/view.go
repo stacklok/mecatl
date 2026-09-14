@@ -340,7 +340,7 @@ func (m Model) headerIdentityParts(sid, withNext string) []string {
 	// toolhive — disclosure-only (no acknowledgment required), riding the same
 	// segment slice so the EXISTING width-shedding/fitHeader math applies
 	// unchanged (it sheds like any other low-priority segment under pressure).
-	if m.resolvedSessionModel.ProviderID == "toolhive" {
+	if isToolhiveProviderID(m.resolvedSessionModel.ProviderID) {
 		parts = append(parts, m.deps.Theme.Style("muted").Render("via ToolHive gateway"))
 	} else if row, ok := availableNotDefaultStatus(m.modelCatalog.statuses); ok {
 		// Sibling (N1): when an intent-driven provider is detected-and-reachable

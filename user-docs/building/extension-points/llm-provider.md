@@ -440,6 +440,5 @@ behaviors, then inject the wrapped provider through `agent.Deps`.
   implement the port that persists conversation state.
 - [PermissionPolicy extension point](/building/extension-points/permission-policy.md)
   — implement the port that gates tool execution.
-- [Pick your deployment shape](/building/getting-started/deployment-decision.md)
-  — choosing between embedding the engine, `mecated`, `mecak8s`, and
-  `mecatequi`.
+- [Choose how to run Mecatl](/building/getting-started/deployment-decision.md) —
+  choosing between embedding the engine, `mecated`, `mecak8s`, and `mecatequi`.

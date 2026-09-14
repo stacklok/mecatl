@@ -100,6 +100,20 @@ func TestListModels_MappingFromFixture(t *testing.T) {
 	}
 }
 
+func TestListModels_PreservesOmittedVersusExplicitEmptyModalities(t *testing.T) {
+	body := `{"data":[{"id":"omitted"},{"id":"empty","architecture":{"input_modalities":[]}}]}`
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return newResp(http.StatusOK, body), nil
+	})}
+	models, err := NewLister(client).ListModels(context.Background())
+	if err != nil {
+		t.Fatalf("ListModels: %v", err)
+	}
+	if len(models) != 2 || models[0].InputModalities != nil || models[1].InputModalities == nil || len(models[1].InputModalities) != 0 {
+		t.Fatalf("modalities = %#v, want nil for omitted and non-nil empty for explicit []", models)
+	}
+}
+
 func TestListModels_NonOKStatusIsError(t *testing.T) {
 	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
 		return newResp(http.StatusInternalServerError, "nope"), nil

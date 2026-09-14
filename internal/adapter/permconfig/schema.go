@@ -154,6 +154,14 @@ type Config struct {
 	// key was absent. The composition layer reads + validates the maps; permconfig
 	// only carries them.
 	OpenRouter *OpenRouterSection `yaml:"openrouter"`
+	// Telemetry holds the OPERATOR-TIER `telemetry:` subtree (opt-out product/
+	// adoption metrics). Like OpenRouter/Guardrails/Posture it is honoured ONLY
+	// from the user-global + CLI tiers; a project-tier file's telemetry: block
+	// is IGNORED with a WARN (a project repo cannot flip a user's own telemetry
+	// choice in either direction). Parsed STRICTLY (unknown keys error). A nil
+	// Telemetry means the key was absent — composition then falls through the
+	// DO_NOT_TRACK env var and finally defaults to enabled.
+	Telemetry *TelemetrySection `yaml:"telemetry"`
 	// MCP holds named global Streamable HTTP MCP server profiles. It is strict and
 	// OPERATOR-TIER ONLY: project files cannot choose endpoints, authentication,
 	// credential references, or egress policy. Values are metadata only; parsing
@@ -1331,6 +1339,46 @@ func (m *OpenRouterModelRoute) strictFields() map[string]any {
 		"order":           &m.Order,
 		"allow_fallbacks": newPermconfigNodePointer(&m.AllowFallbacks),
 	}
+}
+
+// TelemetrySection is the `telemetry:` operator-tier YAML subtree: the opt-out
+// switch for community/adoption product metrics. Parsed STRICTLY (unknown
+// keys error), mirroring OpenRouterSection/GuardrailsSection.
+type TelemetrySection struct {
+	// ProductMetrics is the opt-out product/adoption metrics config.
+	ProductMetrics *ProductMetricsSection `yaml:"productMetrics"`
+}
+
+func (s *TelemetrySection) strictFields() map[string]any {
+	return map[string]any{
+		"productMetrics": newPermconfigNodePointer(&s.ProductMetrics),
+	}
+}
+
+// UnmarshalYAML decodes the telemetry: mapping STRICTLY: an unknown key
+// (e.g. a typo'd product-metrics:) is a parse error, same discipline as
+// openrouter:/guardrails:.
+func (s *TelemetrySection) UnmarshalYAML(node ast.Node) error {
+	return decodeStrictMapping(node, "telemetry", s.strictFields())
+}
+
+// ProductMetricsSection is the `telemetry.productMetrics:` subtree.
+type ProductMetricsSection struct {
+	// Enabled is a *bool so ABSENT (nil) is distinguishable from an explicit
+	// false: nil = absent (composition falls through to DO_NOT_TRACK then the
+	// enabled-by-default posture); a non-nil value is honoured exactly.
+	Enabled *bool `yaml:"enabled"`
+}
+
+func (s *ProductMetricsSection) strictFields() map[string]any {
+	return map[string]any{
+		"enabled": newPermconfigNodePointer(&s.Enabled),
+	}
+}
+
+// UnmarshalYAML decodes the productMetrics: mapping STRICTLY.
+func (s *ProductMetricsSection) UnmarshalYAML(node ast.Node) error {
+	return decodeStrictMapping(node, "telemetry.productMetrics", s.strictFields())
 }
 
 // UnmarshalYAML decodes an openrouter.models.<id> entry STRICTLY.

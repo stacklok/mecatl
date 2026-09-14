@@ -161,6 +161,7 @@ stays in the issue, PR, plan, or ordinary test name. If you touched the engine's
   conformance suite runs against the real adapter. Fake-only is not proven.
 - "I'll hit the real provider to check." Never — offline only; the SSE
   adapters are fixture-tested, and `task e2e` is a separate, manual gate.
+- "I'll assert that a guide contains these phrases." Do not pin arbitrary prose or keyword lists. Test links/anchors, parsed executable examples, schemas, and generated-output freshness; leave prose semantics and completeness to human review. Model-visible prompt affordance tests remain required because runtime behavior depends on them.
 - "I changed a test because the implementation changed." When tests fail,
   fix the implementation, not the tests.
 - "My negative test passes." Did you watch it fail when the violation is

@@ -1425,7 +1425,7 @@ func TestModelsEmptyCopy_PromotesAnyNonOkStatus(t *testing.T) {
 		{ProviderID: "toolhive", State: "unreachable", Hint: "start it with `thv llm proxy start`"},
 	}
 	got := modelsEmptyCopy(client.Capabilities{ModelSelection: true}, unreachable)
-	want := "toolhive: proxy not reachable — start it with `thv llm proxy start`"
+	want := "toolhive: gateway not reachable — start it with `thv llm proxy start`"
 	if got != want {
 		t.Errorf("unreachable empty copy = %q, want %q", got, want)
 	}
@@ -1534,7 +1534,7 @@ func TestRenderProviderStatusLines_UnreachableAndUnauthorized(t *testing.T) {
 	lines := renderProviderStatusLines([]client.ProviderStatus{
 		{ProviderID: "toolhive", State: "unreachable", Hint: "start it with `thv llm proxy start`"},
 	}, false)
-	if len(lines) != 1 || lines[0] != "toolhive: proxy not reachable — start it with `thv llm proxy start`" {
+	if len(lines) != 1 || lines[0] != "toolhive: gateway not reachable — start it with `thv llm proxy start`" {
 		t.Fatalf("unreachable line = %v", lines)
 	}
 	lines = renderProviderStatusLines([]client.ProviderStatus{
@@ -1556,7 +1556,7 @@ func TestModelsPickerStatuses_ThreadedFromMsg(t *testing.T) {
 		t.Fatalf("models.statuses = %+v, want the threaded status", m.modelCatalog.statuses)
 	}
 	rendered := stripANSI([]byte(m.View().Content))
-	if !strings.Contains(string(rendered), "toolhive: proxy not reachable") {
+	if !strings.Contains(string(rendered), "toolhive: gateway not reachable") {
 		t.Fatalf("rendered picker missing the status line:\n%s", rendered)
 	}
 }
@@ -1587,7 +1587,7 @@ func TestModelsPickerCustomProviderStatusRendersAlongsideFloor(t *testing.T) {
 					t.Errorf("rendered picker missing %q:\n%s", want, rendered)
 				}
 			}
-			for _, unwanted := range []string{"proxy not reachable", "gateway rejected the credential", "credential lists no models", "https://", "listing response body", "gateway-secret"} {
+			for _, unwanted := range []string{"gateway not reachable", "gateway rejected the credential", "credential lists no models", "https://", "listing response body", "gateway-secret"} {
 				if strings.Contains(rendered, unwanted) {
 					t.Errorf("rendered custom status leaked or used ToolHive copy %q:\n%s", unwanted, rendered)
 				}
@@ -1661,6 +1661,16 @@ func TestHeaderToolhiveSegment(t *testing.T) {
 	m = applyAll(m, tea.WindowSizeMsg{Width: 160, Height: 30})
 	if !strings.Contains(stripANSIstr(m.renderHeader()), "via ToolHive gateway") {
 		t.Fatal("a toolhive session must show the gateway segment at a wide width")
+	}
+
+	m.resolvedSessionModel = client.ResolvedModel{ProviderID: "toolhive-anthropic", ModelID: "claude-sonnet-4-6"}
+	m.modelCatalog.statuses = []client.ProviderStatus{
+		{ProviderID: "toolhive", State: "ok", AvailableNotDefault: true},
+		{ProviderID: "toolhive-anthropic", State: "ok"},
+	}
+	header := stripANSIstr(m.renderHeader())
+	if !strings.Contains(header, "via ToolHive gateway") || strings.Contains(header, "gateway available") {
+		t.Fatalf("native ToolHive header must show one active-family segment, got:\n%s", header)
 	}
 
 	// At a narrow width the segment sheds along with the other low-priority
@@ -2082,6 +2092,26 @@ func TestGatewayNoticeNotFiredWhenNoAvailableNotDefault(t *testing.T) {
 	}
 }
 
+func TestGatewayNoticeNotFiredForActiveToolhiveFamily(t *testing.T) {
+	fm := gatewayModels()
+	statuses := []client.ProviderStatus{{
+		ProviderID:          "toolhive-anthropic",
+		State:               "ok",
+		ModelCount:          1,
+		AvailableNotDefault: true,
+	}}
+	for _, providerID := range []string{"toolhive", "toolhive-anthropic"} {
+		m := newModelsModel(t, fm, &fakeStore{}, modelsCaps(), client.ModelSelection{})
+		m.resolvedSessionModel = client.ResolvedModel{ProviderID: providerID, ModelID: "claude-sonnet-4-6"}
+		mm, _, _ := m.updateModelsMsg(client.ModelsMsg{Models: fm.models, Statuses: statuses})
+		m = mm.(Model)
+		if m.gatewayNotice != "" || m.gatewayNoticeShown {
+			t.Errorf("active provider %q armed same-family gateway notice %q (shown=%t)",
+				providerID, m.gatewayNotice, m.gatewayNoticeShown)
+		}
+	}
+}
+
 // TestGatewayNoticeClearedOnKeypress: any keypress at idle clears the notice text
 // (the latch stays true so it never re-fires).
 func TestGatewayNoticeClearedOnKeypress(t *testing.T) {
@@ -2171,6 +2201,7 @@ func TestModelRowOrgTagForConfigIntentProvider(t *testing.T) {
 func TestConfigIntentProviderSetExcludesOpenAICodexStatus(t *testing.T) {
 	got := configProvenanceProviderSet([]client.ProviderStatus{
 		{ProviderID: "toolhive", State: "ok"},
+		{ProviderID: "toolhive-anthropic", State: "ok"},
 		{ProviderID: "openai-codex", State: "ok"},
 	})
 	if !got["toolhive"] {
@@ -2178,6 +2209,21 @@ func TestConfigIntentProviderSetExcludesOpenAICodexStatus(t *testing.T) {
 	}
 	if got["openai-codex"] {
 		t.Fatal("Codex entitlement status was misclassified as config intent")
+	}
+	if !got["toolhive-anthropic"] {
+		t.Fatal("native ToolHive status lost its config-intent classification")
+	}
+}
+
+func TestToolhiveNativeAnthropic_Scenario3_StatusAndPresentation(t *testing.T) {
+	got := providerStatusLine(client.ProviderStatus{
+		ProviderID: "toolhive-anthropic",
+		State:      "unreachable",
+		Hint:       "check gateway connectivity or use `--toolhive-llm-mode proxy`",
+	})
+	want := "toolhive-anthropic: gateway not reachable — check gateway connectivity or use `--toolhive-llm-mode proxy`"
+	if got != want {
+		t.Fatalf("providerStatusLine = %q, want %q", got, want)
 	}
 }
 

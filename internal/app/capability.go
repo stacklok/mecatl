@@ -34,16 +34,10 @@ import (
 //     unknown/unavailable provider (or a nil registry) yields the zero value
 //     (text-only) — a provider we cannot reach transmits nothing. The adapter is ALWAYS
 //     the transmit-authority ceiling: every modality below is AND'd with adapterCaps.
-//   - (1) LIVE modalities (reg.meta.modalitiesFor): when a provider has a live lister
-//     (e.g. openrouter) the live input_modalities are AUTHORITATIVE for that model —
-//     Image = adapterCaps.Image AND hasImageModality(live); Audio likewise. A PRESENT
-//     live entry wins even with an EMPTY modality list (⇒ text-only), NOT a fall-through:
-//     this is exactly how the picker treats it, so present-but-empty cannot diverge into
-//     echo=true via a catalogued image row. This is the SAME live modelEntry.InputModalities
-//     the picker (projectModelEntry) reads, so the session echo / ACP gate and the picker
-//     provably AGREE (the single-source guarantee).
-//     It fixes the bug where an openrouter TEXT-ONLY model (sharing the openai adapter,
-//     Image:true) reported Image:true in the echo because nothing read its live modalities.
+//   - (1) LIVE modalities (reg.meta.modalitiesFor): when a live source declares
+//     input modalities, that non-nil list is AUTHORITATIVE for the exact model —
+//     including an explicitly empty list (text-only). Omitted metadata remains nil
+//     and falls through to the exact catalog row, then adapter capabilities.
 //   - (2) CATALOG floor: no live entry but the embedded catalog knows the model ⇒
 //     Image = adapterCaps.Image AND catalog-image; Audio = adapterCaps.Audio AND
 //     catalog-audio. The catalog carries NO audio field today, so catalog-audio is

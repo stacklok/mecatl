@@ -28,7 +28,7 @@ teams, and background subagents together, follow the
 
 ## Before you start
 
-You need Go 1.26.6 or newer. The first-agent example is designed to run from a
+You need Go 1.27 or newer. The first-agent example is designed to run from a
 clean external module and imports only the public
 `github.com/stacklok/mecatl/engine` module and its reference adapters.
 

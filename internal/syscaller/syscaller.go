@@ -44,7 +44,9 @@ const (
 	// not cover request-driven stale-model refreshes, which retain their caller.
 	RootModelCatalogRefresh Root = "model-catalog-refresh"
 	// RootStaleSessionReconcile enumerates and settles only crash-orphaned
-	// running-session metadata through the narrow server maintenance seam.
+	// running-session metadata through the narrow server maintenance seam,
+	// AND (issue #1334) clears this process's own lease-loss tombstones for
+	// awaiting/cancelled sessions once a trial-Acquire proves the lease free.
 	RootStaleSessionReconcile Root = "stale-session-reconcile"
 	// RootJWKSRefresh is the token validator's background JWKS refresh, which
 	// owns the server-root context handed to the validator constructor.

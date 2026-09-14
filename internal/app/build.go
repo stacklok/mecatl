@@ -216,6 +216,10 @@ type Config struct {
 	RedisTLSCAFile      string
 	RedisTLS            bool
 	RedisAllowPlaintext bool
+	// RedisFollowPoolSize and RedisMaxFollowers bound the isolated blocking
+	// event-follow path. Zero retains redisstore's defaults for non-CLI callers.
+	RedisFollowPoolSize int
+	RedisMaxFollowers   int
 	Shell               string
 	NoShell             bool
 	temporaryStorage    temporaryStorageConfig
@@ -1156,6 +1160,12 @@ type Config struct {
 	// OFFLINE and never contacts the real provider endpoint. Unexported: an internal
 	// composition detail, not an operator knob.
 	liveModelHTTPClient *http.Client
+
+	// toolhiveTokenSourceFactory is the composition-only test seam for direct
+	// ToolHive OIDC. Production uses toolhivellm.DirectTokenSource; tests inject
+	// a deterministic source so both protocol entries can be exercised offline
+	// and can prove that one shared login/refresh flow serves the family.
+	toolhiveTokenSourceFactory toolhiveTokenSourceFactory
 
 	// openAICodexNow/openAICodexTransport are composition-only test seams for the
 	// manual-token request policy. Production uses time.Now and the default
@@ -2259,6 +2269,18 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		// which has no per-session selector in P0. A per-session SELECTOR session (see
 		// the modelCapability call below, evaluated post-Swap) DOES get the live value.
 		DefaultCapabilities: modelCapability(reg, reg.Default(), cfg.Model),
+		ResolveCapabilities: func(providerID, modelID string, mode session.PermissionMode) port.ProviderCapabilities {
+			if providerID == "" {
+				providerID = reg.Default()
+			}
+			modelID = selectedProviderModel(reg, providerID, modelID)
+			if mode == session.ModePlan {
+				if planModel, configured := resolveSlotModel(cfg, slotPlan, modelID); configured && planModel != "" {
+					modelID = planModel
+				}
+			}
+			return modelCapability(reg, providerID, modelID)
+		},
 		// Posture: the resolved server-wide posture tier as a string, projected into the
 		// ServerCapabilities echo as CHROME (a client renders a "⚠ auto"/"⚠ yolo" badge).
 		// NOT session state — see server.Config.Posture.
@@ -3812,15 +3834,7 @@ func buildSessionStore(cfg Config) (port.SessionStore, port.EventLog, func(), er
 	// its own EventLog (like jsonlstore), so wire it as both. Mutually exclusive
 	// with StoreDir/SessionStoreURL (validateDriverConfig enforces it).
 	if cfg.RedisURL != "" {
-		st, err := redisstore.NewWithConfig(redisstore.Config{
-			Addr:           cfg.RedisURL,
-			UsernameFile:   cfg.RedisUsernameFile,
-			PasswordFile:   cfg.RedisPasswordFile,
-			CAFile:         cfg.RedisTLSCAFile,
-			TLS:            cfg.RedisTLS,
-			AllowPlaintext: cfg.RedisAllowPlaintext,
-			Diagnostics:    cfg.diag(),
-		})
+		st, err := redisstore.NewWithConfig(redisStoreConfig(cfg))
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("redis store: %w", err)
 		}
@@ -3854,6 +3868,20 @@ func buildSessionStore(cfg Config) (port.SessionStore, port.EventLog, func(), er
 	cfg.diag().Log(context.Background(), port.LevelInfo, "session store: jsonl", "dir", cfg.StoreDir)
 	// The one Store also implements port.EventLog — wire it as both.
 	return st, st, func() {}, nil
+}
+
+func redisStoreConfig(cfg Config) redisstore.Config {
+	return redisstore.Config{
+		Addr:           cfg.RedisURL,
+		UsernameFile:   cfg.RedisUsernameFile,
+		PasswordFile:   cfg.RedisPasswordFile,
+		CAFile:         cfg.RedisTLSCAFile,
+		TLS:            cfg.RedisTLS,
+		AllowPlaintext: cfg.RedisAllowPlaintext,
+		FollowPoolSize: cfg.RedisFollowPoolSize,
+		MaxFollowers:   cfg.RedisMaxFollowers,
+		Diagnostics:    cfg.diag(),
+	}
 }
 
 func logJSONLDurabilityPosture(diag port.Diagnostics, capability jsonlstore.SnapshotDurabilityCapability) {
@@ -8127,21 +8155,18 @@ DEBUG ANALYSIS SESSION — target %q. InspectSession is permanently bound to thi
 }
 
 // planModePostureNote is the system-prompt suffix a plan-mode session's Role
-// carries (issue #206). It makes the plan-approval workflow EXPLICIT so the
-// model does not improvise it: explore/read freely, and when the plan is
-// complete call PresentPlan EXACTLY ONCE and STOP. Two load-bearing clauses:
-// (1) an inline "acceptable"/"looks good"/"approved" in chat is NOT approval —
-// the ONLY approval channel is the PresentPlan tool gate; (2) after calling
-// PresentPlan the model must STOP and wait, not continue executing. Without
-// these the model treats any affirmative user word as the green light and
-// proceeds (the bug reported in #206's first real-world use).
+// carries (issue #206, corrected by #1472). It makes the plan-approval workflow
+// explicit so the model does not improvise it: explore/read freely; present each
+// current plan once and stop; after an iterate/deny or cancellation, wait for new
+// user input before presenting a revised or unchanged plan through a new gate.
+// Chat assent never authorizes execution; only the current gate's approval does.
 const planModePostureNote = "You are in PLAN MODE: explore, read, and reason, but make NO changes. " +
-	"When your plan is complete, present it in your message text and then call the PresentPlan tool EXACTLY ONCE, " +
+	"When your plan is complete, present it in your message text and then call the PresentPlan tool EXACTLY ONCE PER CURRENT PRESENTATION, " +
 	"and STOP — do not continue working after calling it. Pass the FULL plan text in the PresentPlan `plan` argument " +
-	"so the operator can read it in the approval modal. The plan is NOT approved until the operator approves it " +
-	"THROUGH the PresentPlan gate: an inline 'acceptable', 'looks good', 'approved', or 'go ahead' in chat is NOT " +
-	"approval and must NOT trigger execution. Only the harness proceed message that follows an approved PresentPlan " +
-	"starts execution."
+	"so the operator can read it in the approval modal. If this presentation is denied for iteration, or its pending run is cancelled, " +
+	"wait for new user input; do not automatically loop. In response, present the revised or unchanged plan via a NEW PresentPlan call, " +
+	"then stop and wait again. Later chat assent requests a fresh gated review and is never execution approval. " +
+	"Only the harness proceed message that follows approval through the current PresentPlan gate starts execution."
 
 // applyPlanModePosture appends the plan-approval contract to a plan-mode
 // session's Role (DefaultRole fallback first — the applyNoFSPosture idiom). It

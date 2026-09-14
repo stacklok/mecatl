@@ -220,7 +220,7 @@ func fileIdentity(info os.FileInfo) (uint64, uint64, bool) {
 	if !ok {
 		return 0, 0, false
 	}
-	//nolint:unconvert // Darwin exposes these fields with narrower integer types.
+	//nolint:unconvert,gosec // Darwin exposes narrower signed fields; kernel IDs are opaque bit patterns.
 	return uint64(stat.Dev), uint64(stat.Ino), true
 }
 

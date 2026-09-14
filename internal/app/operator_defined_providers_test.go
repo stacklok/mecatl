@@ -403,7 +403,7 @@ func TestOperatorDefinedLLMProviders_ListingFailureProjectsOnListModelsWire(t *t
 	}
 }
 
-func TestInvariant_custom_provider_live_metadata_conservative(t *testing.T) {
+func TestInvariant_custom_provider_omitted_live_modalities_use_adapter(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"data":[{"id":"gateway-default"}]}`))
 	}))
@@ -419,8 +419,8 @@ func TestInvariant_custom_provider_live_metadata_conservative(t *testing.T) {
 	}
 	fresh := resolveProviderModels(context.Background(), port.NopDiagnostics{}, reg, definition.ID)
 	reg.meta.mergeSwap(map[string][]modelEntry{definition.ID: fresh})
-	if caps := modelCapability(reg, definition.ID, definition.DefaultModel); caps.Image || caps.Audio {
-		t.Errorf("unknown custom live metadata capabilities = %+v, want text-only", caps)
+	if caps := modelCapability(reg, definition.ID, definition.DefaultModel); !caps.Image || caps.Audio {
+		t.Errorf("unknown custom live metadata capabilities = %+v, want adapter image capability", caps)
 	}
 	if info := projectModelEntry(reg, definition.ID, fresh[0]); info.GetContextLimit() != defaultContextWindowTokens {
 		t.Errorf("unknown custom live metadata context limit = %d, want conservative floor %d", info.GetContextLimit(), defaultContextWindowTokens)

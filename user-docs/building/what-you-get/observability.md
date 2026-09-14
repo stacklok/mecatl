@@ -313,6 +313,25 @@ these records — those feed into `mecatl_tool_calls_total` and
 
 ---
 
+## Product / adoption metrics (opt-out)
+
+The four channels above are all **operator-facing**: they help you observe your own deployment. Separately, Mecatl reports a small set of **anonymous, aggregate community-adoption metrics** to Stacklok, over its own independent pipeline (`internal/adapter/productmetrics`) — a distinct concern from everything above, sharing no import, `MeterProvider`, or destination with the operator observability pipeline. Disabling your own OTLP/Prometheus setup has zero effect on this, and disabling this has zero effect on your own OTLP/Prometheus setup.
+
+**What's collected:** version, OS/arch, an anonymous per-install identifier (a random UUID, unrelated to any user, machine, or organization identity), which major features you have enabled (`memory`, `guardrails`, `mcp`, `scheduling`), your configured LLM provider family (`anthropic`/`openai`/`openrouter`/`other` — never a model id or alias), which binary you're running, and coarse counts — sessions started, runs completed (by stop reason and whether the run made at least one successful tool call), tool calls executed (by bounded category — a built-in tool's own name, or `mcp` for anything MCP-server-provided, never a real MCP server/tool name — and outcome), token counts by kind, run duration, tool calls per run, a one-time-per-install "time to first value" duration, and whether the Subagent/Team delegation families were used at least once. Never a prompt, file path, raw MCP tool/server name, session/run/model identifier, or any other free text. The full catalog and the privacy-guard test discipline that enforces it are recorded in [ADR 0338](https://github.com/stacklok/mecatl/blob/main/docs/adr/0338-product-metrics.md).
+
+**It's on by default (opt-out).** The first time a run is actually about to send product metrics, Mecatl prints a one-time, non-blocking disclosure to stderr naming what's collected and how to turn it off. To disable it, use any of:
+
+- `--product-metrics=false` on the command line (all four binaries).
+- The `MECATL_PRODUCT_METRICS` environment variable set to `false`/`0` — a mecatl-specific override, checked before `DO_NOT_TRACK` below, so it can also opt you back **in** even if you have `DO_NOT_TRACK` set globally for other tools.
+- The `DO_NOT_TRACK` environment variable set to a truthy value (`"0"`/`"false"` do not opt out) — the same convention other tools already respect.
+- `telemetry.productMetrics.enabled: false` in your **operator-tier** `~/.config/mecatl/settings.yaml`. This setting is operator-tier only: a project repo's `.mecatl/settings.yaml` cannot change your telemetry choice in either direction.
+
+**Self-verify before trusting it.** `--product-metrics-dry-run` prints every observation this pipeline would have sent to stderr instead of exporting it, so you can check the "no PII" claim yourself rather than take the docs' word for it.
+
+**On Kubernetes.** The reported install identifier is an anonymous random UUID. `mecated`, `mecatui`, and `mecatequi` keep it in a local state file, but `mecak8s` is storage-free (no PVC), so a per-pod file would produce a brand-new id on every restart. The Helm chart therefore provisions the id once, into a `<release>-mecak8s-install-id` ConfigMap that is reused across every `helm upgrade`, and mounts it into the container as `MECATL_PRODUCT_METRICS_INSTALL_ID`. Delete that ConfigMap to reset the id, or opt out entirely with any of the switches above — the env var only decides *which* id is used when reporting is on.
+
+---
+
 ## What's next
 
 To configure Mecatl for production, see the deployment guide for how to wire an

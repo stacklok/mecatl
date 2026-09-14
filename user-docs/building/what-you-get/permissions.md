@@ -264,17 +264,31 @@ rules. The deny reason tells the model to present a plan and exit plan mode
 first.
 
 **Getting out of plan mode.** Once the model has a complete plan, it calls the
-`PresentPlan` tool. That parks the run on a **plan-approval** ask — a distinct
-gate from an ordinary permission ask, though it reuses the same ask machinery
-described above. On an interactive client (`mecatui` shows a dedicated "Plan
-ready for review" modal), you pick one of three outcomes: approve and run
-(switches to `default` mode, so mutating tools still go through the ordinary
-deny/ask/allow rules), approve with edits auto-accepted (switches to
-`acceptEdits` mode), or iterate (stay in plan mode while the model revises and
-re-presents).
+`PresentPlan` tool exactly once for that current presentation. That parks the run
+on a **plan-approval** ask — a distinct gate from an ordinary permission ask,
+though it reuses the same ask machinery described above. The model stops and
+waits, and the complete plan is carried in the tool arguments for review. On an
+interactive client (`mecatui` shows a dedicated "Plan ready for review" modal),
+you pick one of three outcomes: approve and run (switches to `default` mode, so
+mutating tools still go through the ordinary deny/ask/allow rules), approve with
+edits auto-accepted (switches to `acceptEdits` mode), or iterate.
+
+Iteration ends the current run in plan mode; the model does not revise in a loop
+without you. In `mecatui`, **Esc** on the plan review chooses this deny/iterate
+outcome. Type feedback in a new prompt, after which the model may present a
+revised or unchanged plan through a **new** `PresentPlan` call and fresh review.
+Later chat assent such as “looks good” also requires that fresh gate and never
+starts execution by itself.
+
+Cancellation is different from iteration. The guarded **Ctrl+C** quit path
+cancels the run; it is not a neutral dismissal of the plan review and does not
+record a deny verdict. The session remains in plan mode. On the next prompt the
+service recovers the cancelled run, closes out its interrupted tool-call history,
+and the model must make a new `PresentPlan` call. Merely hiding a client view does
+not by itself invalidate a plan ask that is still pending on the server.
 
 In a **headless** deployment there's no human to review the plan, so by default
-the ask is auto-denied and the model just keeps iterating. The opt-in
+the ask is denied and the run ends in plan mode until a new prompt arrives. The opt-in
 `--plan-mode-auto-approve` flag (operator-tier only, off by default) instead
 auto-approves a parked plan ask. This is a deliberate autonomous-approval
 capability for the operator, not a safety mechanism: the engine still requires

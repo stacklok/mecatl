@@ -217,12 +217,10 @@ func TestLiveMissFallsBackToCatalogRow(t *testing.T) {
 	}
 }
 
-// TestModalitiesForFromLiveStore: modalitiesFor returns the live input-modality list
-// when the store HAS the model; PRESENCE (not value) is the key — a present entry is
-// authoritative even with an EMPTY modality list (found=true, empty list ⇒ the caller
-// treats it text-only, matching the picker). Only a true MISS (absent model / nil store)
-// is found=false, so modelCapability falls through to the catalog floor. This is the
-// modality twin of contextWindowFor.
+// TestModalitiesForFromLiveStore: modalitiesFor returns an explicitly declared
+// live input-modality list. A non-nil empty list or ["text"] is authoritative
+// text-only; omitted metadata (nil) is unknown, as is an absent model, so callers
+// fall through to the exact catalog row and then adapter caps.
 func TestModalitiesForFromLiveStore(t *testing.T) {
 	s := newLiveMetaStore()
 	s.seedFromCatalog([]string{providerAnthropic})
@@ -239,18 +237,24 @@ func TestModalitiesForFromLiveStore(t *testing.T) {
 		t.Fatalf("modalitiesFor = %v, want [text image]", mods)
 	}
 
-	// An entry PRESENT but with NO modalities ⇒ found=true with an empty list (a live
-	// source that omits architecture.input_modalities is authoritative text-only; the
-	// caller must NOT fall through to the catalog floor, or picker≠echo diverges).
+	// An explicitly empty declaration is authoritative text-only.
 	s.Swap(map[string][]modelEntry{
-		providerOpenRouter: {{ID: "openai/gpt-4", InputModalities: nil}},
+		providerOpenRouter: {{ID: "openai/gpt-4", InputModalities: []string{}}},
 	})
 	mods, found = s.modalitiesFor(providerOpenRouter, "openai/gpt-4")
 	if !found {
-		t.Error("modalitiesFor: found=false for a present-but-empty entry, want true (presence is authoritative)")
+		t.Error("modalitiesFor: found=false for an explicit empty declaration")
 	}
 	if len(mods) != 0 {
-		t.Errorf("modalitiesFor = %v for a present-but-empty entry, want empty", mods)
+		t.Errorf("modalitiesFor = %v for an explicit empty declaration, want empty", mods)
+	}
+
+	// Omitted metadata is unknown and falls through to catalog/adapter resolution.
+	s.Swap(map[string][]modelEntry{
+		providerOpenRouter: {{ID: "openai/gpt-4"}},
+	})
+	if _, found := s.modalitiesFor(providerOpenRouter, "openai/gpt-4"); found {
+		t.Error("modalitiesFor: found=true for omitted metadata, want false")
 	}
 
 	// An absent model is a clean miss.

@@ -408,6 +408,11 @@ type Config struct {
 	// catalog or registry. The zero value (text-only) is the safe default for a
 	// child/member service with no provider. (multi-provider Phase 0, S5.)
 	DefaultCapabilities port.ProviderCapabilities
+	// ResolveCapabilities returns the composition-owned capability intersection for
+	// an exact persisted provider/model pair. It lets GetSession remain accurate
+	// after process restart before the per-session engine is rebuilt. Nil preserves
+	// the default-only behavior for lightweight consumers and tests.
+	ResolveCapabilities func(providerID, modelID string, mode session.PermissionMode) port.ProviderCapabilities
 
 	// Posture is the SERVER-WIDE operator posture-ladder tier as a string
 	// ("strict"/"trusted"/"auto"/"yolo"), projected into the ServerCapabilities echo
@@ -1033,13 +1038,45 @@ type Service struct {
 	heldLeases map[session.SessionID]*heldLease
 	// lostOwnership remembers that this Service definitively lost an id even after
 	// the heavyweight heldLease/capability tombstones are removed at lifecycle
-	// settlement. Cleared by explicit CloseSession teardown, and — the ONE other
-	// caller, narrowly scoped — by acquireLeaseCore's bypassTombstone=true path
-	// (used only via acquireMutationLeaseForStaleSettle, i.e. SettleIfStale/the
-	// stale-session reconcile sweep) on a genuine re-Acquire success. Every other
+	// settlement. Cleared by explicit CloseSession teardown, by acquireLeaseCore's
+	// bypassTombstone=true path (used only via acquireMutationLeaseForStaleSettle,
+	// i.e. SettleIfStale/the StateRunning stale-session reconcile sweep) on a
+	// genuine re-Acquire success, and by ReconcileLeaseLossTombstone (issue #1334)
+	// on a genuine trial-Acquire success — the awaiting/cancelled counterpart:
+	// onLeaseLost drives the session OUT of StateRunning as part of handling the
+	// loss, so it can never become a StateRunning candidate again for the sweep
+	// above to rediscover, and without ReconcileLeaseLossTombstone the tombstone
+	// would stay permanent short of CloseSession or a process restart. Every other
 	// caller (acquireLease/reaffirmLease with bypassTombstone=false) still fails
 	// fast on it forever.
 	lostOwnership map[session.SessionID]struct{}
+
+	// leaseLossMu serializes the THREE writers that touch a session id's
+	// lostOwnership tombstone and the real backend calls around it (issue
+	// #1334 panel review, two rounds): onLeaseLost's real Release, Reconcile
+	// LeaseLossTombstone's trial Acquire+Release, and closeSessionLocal's
+	// unconditional tombstone clear. onLeaseLost sets lostOwnership[id] and
+	// unlocks s.mu well before it calls SessionLease.Release, and either the
+	// composition-level sweep (a trial Acquire) or a concurrent CloseSession/
+	// DeleteSession (an unconditional tombstone clear that unblocks the NEXT
+	// real Acquire) can observe the tombstone and act while that Release is
+	// still in flight — a same-id Acquire/Release overlap engine/port/lease.go's
+	// CONCURRENCY contract explicitly leaves to the CALLER to prevent ("Calls
+	// for the SAME id from one process are serialised by the caller"). A
+	// conforming backend is not required to make that overlap safe. This is a
+	// DEDICATED lock, never runEntryMu: onLeaseLost's own doc forbids taking
+	// runEntryMu (lease loss cancels operations that may be holding it, so
+	// waiting on it here could deadlock their cancellation), and this lock is
+	// never held by any cancellation path, so acquiring it here carries no
+	// such risk. closeSessionLocal is the one exception that already holds
+	// runEntryMu (every caller does) before also taking leaseLossMu — a FIXED
+	// order (runEntryMu → leaseLossMu) that introduces no cycle, since neither
+	// onLeaseLost nor ReconcileLeaseLossTombstone ever takes runEntryMu. Held
+	// for each function's ENTIRE body (a keyedMutex, freed once no caller
+	// holds the key) so all three are strictly ordered relative to one
+	// another for the same id: exactly one of loss-handling, trial-reconcile,
+	// or close-teardown runs at a time, never interleaved mid-flight.
+	leaseLossMu keyedMutex
 
 	// leaseDisabled is set (once) when Config.SessionLease reports
 	// ErrLeaseUnsupported: the seam never works on this backend, so the run-entry
@@ -1055,7 +1092,9 @@ type Service struct {
 	// cross-replica unsoundness the lease check exists to prevent. Kept
 	// separate from leaseDisabled because it gates a DIFFERENT seam (the
 	// staleness sweep, not run-entry acquisition) with its own diagnostic.
-	// Guarded by s.mu.
+	// Shared with ReconcileLeaseLossTombstone (issue #1334), which runs the
+	// SAME kind of trial-Acquire probe against the SAME backend. Guarded by
+	// s.mu.
 	leaseSweepDisabled bool
 
 	// draining is the cloud-native drain gate (ADR 0048, mecak8s): once armed by
@@ -2785,8 +2824,22 @@ func (s *Service) closeSessionAuthorized(id session.SessionID) {
 
 // closeSessionLocal releases only process-local ownership. The caller must hold
 // brokerMu for id so no engine can borrow and install the attachment while it is
-// being closed.
+// being closed. It also takes leaseLossMu for id (JAORMX's follow-up on the
+// #1334 panel fix): this is the ONE place that unconditionally clears
+// lostOwnership[id] outside onLeaseLost/ReconcileLeaseLossTombstone, and every
+// caller (CloseSession/EndSession via closeSessionAuthorized, DeleteSession,
+// DeleteSessionForRetentionCandidate, DeleteSessionForRetention) already holds
+// runEntryMu for id — never leaseLossMu — so taking it here in the FIXED order
+// runEntryMu → leaseLossMu introduces no new cycle (onLeaseLost/
+// ReconcileLeaseLossTombstone never take runEntryMu, per onLeaseLost's own doc
+// comment). Without this, a close racing a trial reconcile could clear the
+// tombstone and let a new real Acquire begin while the trial's own Release was
+// still in flight — the same same-id Acquire/Release overlap leaseLossMu
+// exists to prevent, just reached via a second writer of the tombstone.
 func (s *Service) closeSessionLocal(id session.SessionID) {
+	unlockLeaseLoss := s.leaseLossMu.lock(id)
+	defer unlockLeaseLoss()
+
 	// Release composition-owned session-scoped state first (e.g. the per-session
 	// learned permission rules) so it never outlives the session, even if the
 	// per-session engine teardown below is a no-op for this id.
@@ -5334,6 +5387,25 @@ func (s *Service) SessionCapabilities(id session.SessionID) port.ProviderCapabil
 	return s.cfg.DefaultCapabilities
 }
 
+// sessionCapabilitiesFor resolves a loaded snapshot without requiring a
+// per-session engine registration. Persisted selector labels are trusted session
+// metadata; an exact composition resolver preserves their capability after restart.
+func (s *Service) sessionCapabilitiesFor(sess *session.Session) port.ProviderCapabilities {
+	if sess == nil {
+		return s.cfg.DefaultCapabilities
+	}
+	s.mu.Lock()
+	se, ok := s.sessionEngines[sess.ID]
+	s.mu.Unlock()
+	if ok {
+		return se.caps
+	}
+	if s.cfg.ResolveCapabilities != nil && (sess.ProviderID != "" || sess.ModelID != "") {
+		return s.cfg.ResolveCapabilities(sess.ProviderID, sess.ModelID, sess.Mode)
+	}
+	return s.cfg.DefaultCapabilities
+}
+
 // ResolvedModel reports the EFFECTIVE provider+model for the session under id:
 // the per-session engine's precomputed resolved model when a per-session engine is
 // registered (a non-default provider/model selector or client MCP), else the
@@ -6761,8 +6833,13 @@ func (s *Service) renewLoop(renewCtx context.Context, id session.SessionID, expe
 // timer and local broker transaction are also stopped/invalidated here; the
 // durable snapshot itself is never mutated. Do not acquire runEntryMu here: lease
 // loss cancels operations that may be holding it, so waiting for that lock would
-// deadlock their cancellation.
+// deadlock their cancellation. leaseLossMu IS taken, for the whole body, to keep
+// the tombstone-set + Release sequence atomic against ReconcileLeaseLossTombstone's
+// trial Acquire for the same id (see leaseLossMu's own doc comment).
 func (s *Service) onLeaseLost(ctx context.Context, id session.SessionID, expected *heldLease, cause error) {
+	unlock := s.leaseLossMu.lock(id)
+	defer unlock()
+
 	s.stopAuthorizationExpiry(id)
 	s.invalidateLocalAuthorization(context.WithoutCancel(ctx), id)
 	var run *agent.Run
@@ -6946,44 +7023,79 @@ func (s *Service) SessionStale(ctx context.Context, meta port.SessionMeta) bool 
 	if disabled {
 		return false
 	}
-	trialCtx, cancel := context.WithTimeout(ctx, leaseAcquireTimeout)
-	lease, err := s.cfg.SessionLease.Acquire(trialCtx, meta.ID, s.cfg.LeaseOwner+staleTrialLeaseSuffix)
-	cancel()
-	switch {
-	case errors.Is(err, port.ErrLeaseHeld):
-		s.mu.Lock()
-		_, selfHeld := s.heldLeases[meta.ID]
-		s.mu.Unlock()
+	free, held := s.leaseTrial(ctx, meta.ID, "session staleness sweep")
+	if held != nil {
 		// The self-held-lease correction: ErrLeaseHeld against our OWN trial
 		// call (a different owner string than the real hold, so the backend
 		// sees a genuine conflict) is NOT evidence of a live peer when this
 		// process itself is the one holding the real lease — it is evidence
 		// this process's own prior run died without releasing it.
+		s.mu.Lock()
+		_, selfHeld := s.heldLeases[meta.ID]
+		s.mu.Unlock()
 		return selfHeld
+	}
+	return free
+}
+
+// leaseTrial performs a bounded TRIAL Acquire+immediate-Release against the
+// real lease backend, proving whether id's lease is genuinely free right now
+// — the refinement SHARED by SessionStale (StateRunning crash-orphan
+// detection) and ReconcileLeaseLossTombstone (issue #1334's awaiting/
+// cancelled tombstone clearing). Both trial owners use the SAME suffixed
+// owner string (staleTrialLeaseSuffix, never a new unrelated string) so a
+// trial is self-attributable in lease-backend diagnostics, and neither ever
+// holds the trial lease across the caller's later decision — a successful
+// trial releases immediately, so there is nothing to hold across a write.
+//
+// held is non-nil ONLY for a genuine port.ErrLeaseHeld: the caller decides
+// what that means for ITS OWN bookkeeping — SessionStale's self-held-lease
+// correction consults s.heldLeases to distinguish "this process's own prior
+// run died without releasing it" (stale) from "a genuinely different live
+// owner holds it" (not stale); ReconcileLeaseLossTombstone simply leaves its
+// tombstone in place either way, since by definition it already knows this
+// process lost the lease. leaseTrial itself makes no ownership judgement on
+// ErrLeaseHeld. Every OTHER outcome is folded into (false, nil) so both
+// callers stay one switch shorter: ErrLeaseUnsupported stickily disables the
+// sweep for the process lifetime (logged once via logCtx), and any other
+// error/timeout is a fail-safe WARN (never treat ambiguity as free). Only
+// free==true (nobody held it) is safe to act on.
+func (s *Service) leaseTrial(ctx context.Context, id session.SessionID, logCtx string) (free bool, held error) {
+	trialCtx, cancel := context.WithTimeout(ctx, leaseAcquireTimeout)
+	lease, err := s.cfg.SessionLease.Acquire(trialCtx, id, s.cfg.LeaseOwner+staleTrialLeaseSuffix)
+	cancel()
+	switch {
+	case errors.Is(err, port.ErrLeaseHeld):
+		return false, err
 	case errors.Is(err, port.ErrLeaseUnsupported):
 		s.mu.Lock()
 		firstTime := !s.leaseSweepDisabled
 		s.leaseSweepDisabled = true
 		s.mu.Unlock()
 		if firstTime {
-			s.cfg.Diagnostics.Log(ctx, port.LevelInfo, "session staleness sweep: lease backend does not support leasing; disabling the sweep",
+			s.cfg.Diagnostics.Log(ctx, port.LevelInfo, logCtx+": lease backend does not support leasing; disabling the sweep",
 				"owner", s.cfg.LeaseOwner)
 		}
-		return false
+		return false, nil
 	case err != nil:
-		// Infra error or timeout — fail-safe: never mass-abandon on a flaky
-		// lease backend.
-		s.cfg.Diagnostics.Log(ctx, port.LevelWarn, "session staleness sweep: trial lease acquire failed; treating as not stale (fail-safe)",
-			"session", string(meta.ID), "err", err.Error())
-		return false
+		// Infra error or timeout — fail-safe: never treat ambiguity as free.
+		s.cfg.Diagnostics.Log(ctx, port.LevelWarn, logCtx+": trial lease acquire failed; treating as not free (fail-safe)",
+			"session", string(id), "err", err.Error())
+		return false, nil
 	}
 	// Success: nobody held it. Release the trial immediately — this function
-	// only decides staleness, it performs no write, so there is nothing to
-	// hold the lease across.
+	// only decides, it performs no write, so there is nothing to hold across
+	// the caller's later action.
 	relCtx, relCancel := context.WithTimeout(context.WithoutCancel(ctx), leaseAcquireTimeout)
-	_ = s.cfg.SessionLease.Release(relCtx, lease)
+	if relErr := s.cfg.SessionLease.Release(relCtx, lease); relErr != nil {
+		// A leaked trial silently pins the lease until its own TTL expiry with
+		// no diagnostic explaining the delay — worth one WARN even though the
+		// caller's decision (free==true) already went through.
+		s.cfg.Diagnostics.Log(ctx, port.LevelWarn, logCtx+": trial lease release failed; it will pin until TTL expiry",
+			"session", string(id), "err", relErr.Error())
+	}
 	relCancel()
-	return true
+	return true, nil
 }
 
 // LeaseSweepDisabled reports whether SessionStale has stickily disabled the
@@ -7057,6 +7169,143 @@ func (s *Service) SettleIfStale(ctx context.Context, id session.SessionID) (bool
 	}
 	if err := s.saveSession(ctx, sess); err != nil {
 		return false, fmt.Errorf("server: persist abandoned session: %w", err)
+	}
+	return true, nil
+}
+
+// LostOwnershipCandidates returns the ids this process currently holds a
+// lease-loss tombstone for (lostOwnership, set by onLeaseLost). It is an
+// in-memory snapshot of Service's OWN bookkeeping, NOT a store-wide scan:
+// lostOwnership is already scoped to exactly the ids this process itself
+// definitively lost, so there is no risk of the unbounded Acquire fan-out a
+// store-wide scan of every awaiting/cancelled session would cause — those are
+// the STEADY STATE for huge numbers of ordinary finished sessions (issue
+// #1334). Exported for internal/app's composition-level sweep, mirroring
+// StaleRunningCandidates.
+func (s *Service) LostOwnershipCandidates(ctx context.Context) ([]session.SessionID, error) {
+	if !staleReconcileAuthorized(ctx) {
+		return nil, ErrManagementUnauthorized
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.lostOwnership) == 0 {
+		return nil, nil
+	}
+	ids := make([]session.SessionID, 0, len(s.lostOwnership))
+	for id := range s.lostOwnership {
+		ids = append(ids, id)
+	}
+	return ids, nil
+}
+
+// ReconcileLeaseLossTombstone is StaleRunningCandidates/SettleIfStale's
+// counterpart for the OTHER shape issue #1334 fixes: onLeaseLost drives the
+// session OUT of StateRunning as part of handling the loss — to awaiting via
+// the preserveAwaiting branch, or eventually to cancelled via run.Cancel() —
+// so the StateRunning-only staleness sweep above can never rediscover it, and
+// the lostOwnership tombstone (by design a PERMANENT fail-fast for every
+// ordinary caller, see lostOwnership's own doc comment) would otherwise clear
+// only via CloseSession or a process restart, regardless of whether the
+// original loss was a genuine takeover or a false positive.
+//
+// Unlike SettleIfStale/acquireMutationLeaseForStaleSettle this performs NO
+// session-state repair and installs NO renewer: an awaiting/cancelled session
+// has no run currently driving it (HOLD-FOR-SESSION-LIFE is tied to an active
+// run), so re-acquiring and holding the lease here would leak it. Instead this
+// is a bounded TRIAL Acquire immediately released — proof the lease is
+// genuinely free, nothing ever held across the call — mirroring SessionStale's
+// own trial-lease refinement (same owner suffix, same fail-safe-on-any-
+// ambiguity posture: ErrLeaseHeld, a real Acquire error, or an unsupported
+// backend all leave the tombstone untouched; only a successful trial proves
+// the backend record is free, whether because a peer genuinely released it or
+// because it simply expired once this process's renewer stopped ticking after
+// the loss — Renew's ErrLeaseHeld cannot distinguish the two, so real time
+// passing is what makes a re-Acquire safe, exactly as
+// acquireMutationLeaseForStaleSettle's doc explains for the StateRunning
+// case). Clearing the tombstone only unblocks the NEXT genuine run-entry
+// (StartRunContent / ApproveRun's resumeFromAwaiting); that entry's own
+// loadAndReopen/resumeFromAwaiting still performs the actual session-state
+// repair (Interrupt for cancelled; the awaiting resume machinery for
+// awaiting) exactly as it always has — this function never touches session
+// state, only the local lease bookkeeping that was blocking it.
+//
+// Reports whether it actually cleared the tombstone (false, nil is the honest
+// no-op for "still held" / "already cleared by a concurrent caller"/"no
+// tombstone for this id"). Exported for internal/app's composition-level
+// sweep, mirroring SessionStale/SettleIfStale/StaleRunningCandidates.
+//
+// CloseSession can no longer interleave WITHIN this call: closeSessionLocal
+// (its one tombstone-clearing chokepoint) now also takes leaseLossMu for id,
+// so a concurrent close either completes entirely before this call starts or
+// blocks until this call's whole trial (Acquire + Release + tombstone-clear)
+// has finished — never mid-trial (issue #1334 panel follow-up; closeSessionLocal's
+// own doc comment has the lock-order rationale). The pre-trial and post-trial
+// re-checks of s.lostOwnership below are kept anyway as defense in depth
+// (e.g. a concurrent caller that legitimately re-acquired for real between the
+// checks), each still re-reading under s.mu, the same "last write wins,
+// re-verified under the lock" posture SettleIfStale documents for its own
+// TOCTOU window.
+//
+// The trial Acquire below is additionally serialized against onLeaseLost's
+// real Release for the same id via leaseLossMu (its own doc comment has the
+// full rationale): held for this function's ENTIRE body, so the trial can
+// never overlap a same-id Release still in flight.
+func (s *Service) ReconcileLeaseLossTombstone(ctx context.Context, id session.SessionID) (bool, error) {
+	if !staleReconcileAuthorized(ctx) {
+		return false, ErrManagementUnauthorized
+	}
+	if s.cfg.SessionLease == nil {
+		return false, nil
+	}
+
+	unlock := s.leaseLossMu.lock(id)
+	defer unlock()
+
+	s.mu.Lock()
+	if s.leaseDisabled {
+		s.mu.Unlock()
+		return false, nil
+	}
+	if _, lost := s.lostOwnership[id]; !lost {
+		s.mu.Unlock()
+		return false, nil
+	}
+	if h, held := s.heldLeases[id]; held && h.valid {
+		// A concurrent caller already re-acquired for real; nothing to do.
+		s.mu.Unlock()
+		return false, nil
+	}
+	disabled := s.leaseSweepDisabled
+	s.mu.Unlock()
+	if disabled {
+		return false, nil
+	}
+
+	free, held := s.leaseTrial(ctx, id, "lease-loss tombstone reconcile")
+	if held != nil || !free {
+		// Still genuinely held (a live peer, or this process's own
+		// not-yet-expired record from before the loss was declared), or the
+		// trial declined ambiguously (leaseTrial already logged the
+		// unsupported/error case) — leave the tombstone; the next sweep pass
+		// re-checks.
+		return false, nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, lost := s.lostOwnership[id]; !lost {
+		return false, nil // a concurrent caller (CloseSession, another pass) already cleared it.
+	}
+	if h, held := s.heldLeases[id]; held && h.valid {
+		return false, nil // a concurrent real acquire won the race while our trial ran.
+	}
+	delete(s.lostOwnership, id)
+	if h, held := s.heldLeases[id]; held && !h.valid {
+		// Stale local bookkeeping left behind by onLeaseLost's preserveAwaiting
+		// branch — clear it too, or acquireLeaseCore's separate
+		// heldLeases-held-but-invalid check would still hard-refuse the very
+		// next real Acquire attempt even with the tombstone gone.
+		delete(s.heldLeases, id)
 	}
 	return true, nil
 }

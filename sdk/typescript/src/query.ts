@@ -1,14 +1,13 @@
 import type { Client, CreateSessionOptions, Session } from "./client.js";
 import { clientDiagnostics } from "./client.js";
-import { type DiagnosticRecord, PlanApprovalRequiredError } from "./errors.js";
+import { type DiagnosticRecord, InvalidStateError, PlanApprovalRequiredError } from "./errors.js";
 import type { Event, PermissionAskEventPayload } from "./events.js";
 import type { PromptInput } from "./media.js";
 import { PLAN_APPROVED_PROCEED_TEXT, type PlanApprovalResponder } from "./plan.js";
 import type { PermissionAskResponder, Run } from "./run.js";
-import { type SpawnOptions, spawn } from "./spawn.js";
 
-/** Options for one `query()` call. @public */
-export interface QueryOptions {
+/** @internal */
+export interface QueryOptionsBase<LocalSpawnOptions> {
   /** Use an existing client instead of spawning a local daemon. The client remains caller-owned. */
   client?: Client;
   /** Automatically answer permission asks. With no responder, query denies each ask safely. */
@@ -22,7 +21,7 @@ export interface QueryOptions {
   /** Abort this query and clean up every resource it created. */
   signal?: AbortSignal;
   /** Daemon options used only when query creates its own client. */
-  spawn?: SpawnOptions;
+  spawn?: LocalSpawnOptions;
 }
 
 /** One query-owned event stream and its created session ID. @public */
@@ -31,8 +30,8 @@ export interface Query extends AsyncIterable<Event> {
   readonly sessionId: string;
 }
 
-interface QueryInternalOptions {
-  spawn?: (options?: SpawnOptions) => Promise<Client>;
+interface QueryInternalOptions<LocalSpawnOptions> {
+  spawn?: (options?: LocalSpawnOptions) => Promise<Client>;
 }
 
 function throwIfAborted(signal: AbortSignal | undefined): void {
@@ -244,10 +243,10 @@ class QueryImpl implements Query, AsyncIterator<Event> {
 }
 
 /** Internal construction seam used by the unit suite; not exported from the package entry point. */
-export async function queryInternal(
+export async function queryInternal<LocalSpawnOptions>(
   prompt: PromptInput,
-  options: QueryOptions = {},
-  internal: QueryInternalOptions = {},
+  options: QueryOptionsBase<LocalSpawnOptions> = {},
+  internal: QueryInternalOptions<LocalSpawnOptions> = {},
 ): Promise<Query> {
   const planMode = options.session?.mode === 2;
   if (planMode && options.onPlanApproval === undefined) throw new PlanApprovalRequiredError();
@@ -257,7 +256,15 @@ export async function queryInternal(
   let session: Session | undefined;
   const closeClient = client === undefined;
   try {
-    client ??= await (internal.spawn ?? spawn)(options.spawn);
+    if (client === undefined) {
+      const localSpawn = internal.spawn;
+      if (localSpawn === undefined) {
+        throw new InvalidStateError("A local spawn implementation is required", {
+          transport: "local",
+        });
+      }
+      client = await localSpawn(options.spawn);
+    }
     throwIfAborted(options.signal);
     session = await client.sessions.create(options.session ?? {});
     throwIfAborted(options.signal);
@@ -281,17 +288,4 @@ export async function queryInternal(
     await unwindSetup(closeClient ? client : undefined, session);
     throw error;
   }
-}
-
-/**
- * Spawns if needed, creates one session, runs one prompt, and cleans up owned resources.
- *
- * @param prompt - Text or ordered text, image, and audio parts for the run.
- * @param options - Session, responder, cancellation, retention, and daemon options.
- * @returns A single-consumption event stream for the query-created session.
- * @throws `PlanApprovalRequiredError` when plan mode has no approval responder.
- * @public
- */
-export function query(prompt: PromptInput, options: QueryOptions = {}): Promise<Query> {
-  return queryInternal(prompt, options);
 }

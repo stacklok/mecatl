@@ -112,7 +112,7 @@ Returns: `NodeClient`: A high-level client with callback-tool registration.
 
 <Heading as="h3" id="api-createnodetransport-function"><code>createNodeTransport</code></Heading>
 
-Creates a gRPC transport for Node.js or Bun over HTTP/2 or a Unix domain socket.
+Creates a gRPC transport for Node.js, Bun, or Deno over HTTP/2 or a Unix domain socket.
 
 ```ts
 export declare function createNodeTransport(options: NodeTransportOptions): Transport;
@@ -285,7 +285,7 @@ Throws: `ToolRegistrationError` when the name, schema, or options are invalid.
 
 <Heading as="h3" id="api-nodetransportcommonoptions-interface"><code>NodeTransportCommonOptions</code></Heading>
 
-Shared credentials and HTTP/2 settings for the gRPC transport in Node.js or Bun.
+Shared credentials and HTTP/2 settings for gRPC in Node.js, Bun, or Deno.
 
 ```ts
 export interface NodeTransportCommonOptions extends CredentialOptions
@@ -293,10 +293,10 @@ export interface NodeTransportCommonOptions extends CredentialOptions
 
 <Heading as="h4" id="api-nodetransportcommonoptions-nodeoptions-propertysignature"><code>NodeTransportCommonOptions.nodeOptions</code></Heading>
 
-Additional HTTP/2 session options. The SDK controls `createConnection` when using `socketPath`.
+HTTP/2 and TLS session options. The SDK controls `createConnection` when using `socketPath`.
 
 ```ts
-nodeOptions?: Omit<ClientSessionOptions, "createConnection">;
+nodeOptions?: Omit<SecureClientSessionOptions, "createConnection">;
 ```
 
 <Heading as="h3" id="api-query-interface"><code>Query</code></Heading>
@@ -317,7 +317,7 @@ readonly sessionId: string;
 
 <Heading as="h3" id="api-queryoptions-interface"><code>QueryOptions</code></Heading>
 
-Options for one `query()` call.
+Options for one Node.js or Bun `query()` call.
 
 ```ts
 export interface QueryOptions

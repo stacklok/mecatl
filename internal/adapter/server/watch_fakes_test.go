@@ -136,3 +136,18 @@ func (failingReadLog) Read(context.Context, session.SessionID) iter.Seq2[session
 }
 
 var _ port.EventLog = failingReadLog{}
+
+// followCapacityLog delegates replay and persistence to a real cursor log, but
+// injects the Redis follower-admission sentinel at the exact Follow read seam.
+// This keeps cursor/envelope behavior real while making backend saturation
+// deterministic for transport tests.
+type followCapacityLog struct{ port.CursorEventLog }
+
+func (l followCapacityLog) ReadAfter(ctx context.Context, id session.SessionID, after port.Cursor, opts port.ReadOptions) iter.Seq2[port.LogRecord, error] {
+	if !opts.Follow {
+		return l.CursorEventLog.ReadAfter(ctx, id, after, opts)
+	}
+	return func(yield func(port.LogRecord, error) bool) {
+		yield(port.LogRecord{}, port.ErrEventFollowCapacity)
+	}
+}

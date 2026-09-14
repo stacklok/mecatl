@@ -28,19 +28,23 @@ func TestPresentPlanSpecName(t *testing.T) {
 	}
 }
 
-// TestPresentPlanDescriptionCarriesApprovalContract pins issue #206 follow-up: the
-// Spec().Description carries the three load-bearing workflow clauses the model must
-// see even without the system-prompt note — (1) "EXACTLY ONCE" so it cannot call it
-// repeatedly, (2) "STOP" so it waits after calling, (3) "inline ... is NOT approval"
-// so it does not treat a chat "acceptable" as the green light.
+// TestPresentPlanDescriptionCarriesApprovalContract pins the model-visible tool
+// contract independently from the two system-prompt copies. Each current plan
+// presentation gets exactly one call and then stops. After feedback on an iterate/deny
+// or cancellation, only new user input may trigger a revised or unchanged presentation
+// through a new gated call; later chat assent is never execution approval.
 func TestPresentPlanDescriptionCarriesApprovalContract(t *testing.T) {
 	desc := NewPresentPlanTool().Spec().Description
 	for _, clause := range []string{
-		"EXACTLY ONCE",
+		"EXACTLY ONCE PER CURRENT PRESENTATION",
 		"STOP",
-		"inline",
-		"is NOT approval",
 		"wait for the operator",
+		"denied for iteration",
+		"pending run is cancelled",
+		"wait for new user input",
+		"revised or unchanged plan",
+		"NEW PresentPlan call",
+		"Later chat assent requests a fresh gated review and is never execution approval. Only the harness proceed message that follows approval through the current PresentPlan gate starts execution.",
 	} {
 		if !strings.Contains(desc, clause) {
 			t.Errorf("PresentPlan Spec().Description missing clause %q\ngot=%q", clause, desc)

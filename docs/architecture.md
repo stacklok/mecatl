@@ -283,11 +283,19 @@ append-only log can fold its `EventLog` (+ `SessionMeta`) into a session via
 reasoning providers (#115, [ADR 0038](adr/0038-event-sourced-rehydration.md)); and the
 supply chain gains per-module **`govulncheck`** (engine strict-clean; a
 fail-closed reachable-vuln gate on the root) plus **`dependabot`** over both
-modules and the SHA-pinned actions, on a **go 1.26.5** toolchain (#118). The LLM provider sits behind the `port.LLMProvider` seam, with each
+modules and the SHA-pinned actions, on a **go 1.27** toolchain (#118). The LLM
+provider sits behind the `port.LLMProvider` seam, with each
 wire format isolated entirely inside its own adapter — the OpenAI Responses API
 in `provider/openai`, the native Anthropic Messages API in
 `provider/anthropic` ([multi-provider](architecture/providers.md)) — so the core is provider-agnostic and
 unit-testable against fakes (`mockllm`, `memfs`, `memstore`).
+
+The ToolHive gateway composes those same two wire adapters as separate registry
+identities backed by one detected gateway configuration: `toolhive` remains the
+OpenAI Responses/default surface, while `toolhive-anthropic` exposes native
+Anthropic discovery and Messages inference. Their inventories and health are
+independent; their direct-mode OIDC source is shared. See the
+[provider chapter](architecture/providers.md#multi-provider--registry-per-session-routing--model-inventory).
 
 OpenAI has two deliberately separate registry identities. `openai` uses a public
 API key and the supported public Responses API. Experimental `openai-codex`
@@ -303,18 +311,20 @@ and [ADR 0215](adr/0215-openai-subscription-manual-token.md).
 ### TypeScript SDK
 
 The ESM-only `@stacklok-oss/mecatl-sdk` package lives in `sdk/typescript/`, with its
-own pnpm lockfile and Node-focused build/test gates kept separate from the Go
+own pnpm lockfile and runtime-focused build/test gates kept separate from the Go
 modules and the npm-based `website/` tree. A release tag stages an inspected
 artifact on public npmjs through trusted publishing; a maintainer must approve
 the candidate with 2FA before it becomes public
 ([ADR 0328](adr/0328-typescript-sdk-npmjs-stacklok-oss.md)). SDK releases begin
-with a bot-authored PR that advances `sdk/typescript/VERSION` and `package.json`
-together; merging that exact two-file change makes the release App create the
-path-qualified tag. Its public surface is split by
+with a bot-authored PR that adds a generated `sdk/typescript/CHANGELOG.md` entry
+and advances `sdk/typescript/VERSION` and `package.json` together. Merging that
+exact three-file change makes the release App create the path-qualified tag. Its
+public surface is split by
 transport: `.` is the transport-neutral core plus the browser HTTP/SSE client,
-while `./node` contains the Node/Bun real-gRPC transport (TCP and UDS), and
-`./gen` is reserved for protobuf-es types and service descriptors generated under
-`sdk/typescript/src/gen/` from `contracts/proto/mecatl/v1/`. Both transports feed
+`./node` contains the Node/Bun real-gRPC transport (TCP and UDS), `./deno`
+shares that gRPC transport and adds Deno-native local-process ownership, and `./gen` is
+reserved for protobuf-es types and service descriptors generated under
+`sdk/typescript/src/gen/` from `contracts/proto/mecatl/v1/`. All transports feed
 the same `Client`/`Session`/single-consumption `Run` layer: compatibility is checked
 before ordinary calls; events and server errors are normalized into closed typed
 families; controls carry the current run id; permission responders do not hide raw
@@ -322,8 +332,12 @@ ask events; and prompt media is validated before transport selection. UDS dials 
 supplying connect-node's HTTP/2 node connection option for the socket path, never a
 `unix://` base URL. Unit tests inject transports; `sdk/typescript/e2e/` separately
 builds and spawns the same checkout's `mecated` with the offline mock provider to
-prove TCP, UDS, HTTP/SSE, asks, cancellation, and stale controls on real wire. See
-[ADR 0279](adr/0279-typescript-sdk-architecture.md).
+prove TCP, UDS, HTTP/SSE, asks, cancellation, and stale controls on real wire.
+The unbundled JavaScript names each sibling declaration through Deno's stable
+`@ts-self-types` directive. CI checks the packed package at Deno 2.9.3 and current
+Deno 2.x without unstable resolution flags. See
+[ADR 0279](adr/0279-typescript-sdk-architecture.md) and
+[ADR 0339](adr/0339-typescript-sdk-deno.md).
 
 The `./node` entry point can also own a local daemon through `spawn()`. It resolves an
 already-installed `mecated` from `binaryPath`, `MECATED_BIN`, then `PATH` without a
@@ -353,7 +367,24 @@ terminal local `invalid_state`, emits one diagnostic, and prevents a dead socket
 the later-operation error. See
 [ADR 0292](adr/0292-typescript-sdk-local-daemon-and-tools.md).
 
-The same `./node` entry point exposes `query()` as the one-shot layer over that existing
+The `./deno` entry point reuses `@connectrpc/connect-node` through Deno's Node
+compatibility layer. Remote connections support TCP, TLS, and Unix sockets; client
+assembly shares credentials, diagnostics, and transport ownership with Node/Bun.
+The separate `Deno.Command` launcher starts one ephemeral loopback TCP gRPC listener
+with HTTP disabled. The private ready document must declare TCP transport, the
+captured child pid, and the SDK-owned loopback address before the first compatibility
+call can complete. Deno holds the child's piped stdin open and
+passes `--lifetime-stdin`; the daemon validates that pipe and treats EOF as
+parent death. Explicit disposal closes the pipe, applies bounded signal
+fallbacks through the child handle, and removes the temporary directory. Deno's
+runtime permission system controls executable, filesystem, and loopback access.
+The spawned TCP topology does not receive client-provided MCP authority. Deno returns
+the ordinary `Client`; path media and callback-tool helpers remain in `./node`.
+The packed-package floor/current qualification covers streaming, cancellation, TLS,
+Unix sockets, and native process cleanup. See
+[ADR 0341](adr/0341-typescript-sdk-deno-grpc.md).
+
+The `./node` and `./deno` entry points expose `query()` as the one-shot layer over that existing
 `Client`/`Session`/`Run` choreography. `await query(prompt, options)` resolves after session and
 run acceptance to a single-consumption `Query` whose iterator yields the ordinary `Event` union
 and whose `sessionId` identifies the session it created. Reaching the terminal result, returning
@@ -380,10 +411,10 @@ a distinct typed continuation-start failure. Run-bound attachments end at their 
 [ADR 0304](adr/0304-typescript-sdk-public-surface-and-release.md) Decision 4.
 
 The committed concise examples under `sdk/typescript/examples/` self-import only the package's
-three exported entry points. A dedicated no-emit project runs after the package build, so no source
+four exported entry points. A dedicated no-emit project runs after the package build, so no source
 path alias can hide an export/example drift. It covers remote and local Node/Bun use, callback
-tools, browser+BFF guidance, permissions, durable attachment, teams, schedules, and plan
-resolution. The browser BFF is explicitly a deployment shape, not SDK server code. The larger
+tools, Deno remote and local use, browser+BFF guidance, permissions, durable attachment, teams,
+schedules, and plan resolution. The browser BFF is explicitly a deployment shape, not SDK server code. The larger
 Slack bot remains a separate pnpm project and has its own package-export typecheck CI leg.
 
 Spawned Node/Bun clients also expose `client.tool(name, schema, handler, options)` for a
@@ -490,8 +521,9 @@ therefore carries it in a terminal `event: error` SSE frame. An expired cursor n
 implicit restart from the beginning; that recovery remains an explicit application decision.
 
 Attachment continuity is owned only by the durable watch. Transport failures,
-`watch_lagging`, authentication failures, and clean non-terminal EOF reconnect with bounded
-exponential backoff and jitter from the attachment checkpoint under the same filter. The client
+`watch_lagging`, `watch_capacity`, authentication failures, and clean
+non-terminal EOF reconnect with bounded exponential backoff and jitter from the
+attachment checkpoint under the same filter. The client
 invalidates and re-probes cached compatibility before each reconnect, so a replacement daemon's
 feature set is authoritative on the first attempt. The closed permanent-code set ends the view;
 ordinary mutations, prompts, permission verdicts, and owned run streams remain one-shot. An
@@ -1043,11 +1075,19 @@ files. The focused
 server chain for both listeners, watches projected-Secret swaps, and warns once per current
 certificate generation when its leaf is expiring or expired. Its fixed expiry ticker and
 watcher are both stopped and joined on shutdown; client CA trust remains static. File-backed
-Redis credentials reload as an atomically probed client generation. Each I/O path receives
-its leased client explicitly; shutdown rejects new work immediately, starts claimed client closes
-asynchronously, and waits on leases and close completion for only one fixed grace interval. It
-never force-closes a generation still held by an iterator or migration lock, and a blocked client
-`Close` cannot stall a swap. Credential targets must resolve to regular files. The reload-worker
+Redis credentials reload as an atomically probed client generation containing
+separate durability and follow clients. Durability operations retain the
+connection defaults, while blocking event followers use a dedicated pool.
+`--redis-follow-pool-size` bounds that pool and `--redis-max-followers` bounds
+process-local admission. Both default to 32, and the maximum followers value
+cannot exceed the pool size. Each I/O path receives its leased client
+explicitly.
+Shutdown rejects new work immediately, cancels and joins admitted followers,
+and waits on leases and close completion for one fixed grace interval. It may
+force-close an isolated follow client after the cooperative wait, but it never
+force-closes a durability client held by an iterator or migration lock. A
+blocked client `Close` cannot stall a swap. Credential
+targets must resolve to regular files. The reload-worker
 join is separately bounded after watcher close and cancellation; any candidate completing after a
 timeout is rejected and closed by the shut generation manager. Credential retries use capped
 jitter and restart at attempt one on a newer projection event.
@@ -1203,7 +1243,7 @@ idempotent readiness immediately before each actual default MicroVM provision at
 startup and no-FS creation do not run readiness or allocate a validation attachment. The live
 `microvm-local` support boundary is the signed Linux-amd64 `mecatui` release binary:
 ordinary source builds have no authenticated release defaults and fail closed. For source
-development only, [ADR 0334](adr/0334-microvm-execution-environments.md#6-keep-source-build-release-activation-developer-only) defines a
+development only, [ADR 0342](adr/0342-microvm-execution-environments.md#6-keep-source-build-release-activation-developer-only) defines a
 separately tagged `microvm_dev` mecated and embedded-local mecatui binaries whose
 development activation requires explicit
 acknowledgement and a strict owner-only local release descriptor. Untagged and published

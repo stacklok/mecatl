@@ -49,7 +49,7 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
-	tcredis "github.com/stacklok/toolhive-core/redis"
+	"github.com/stacklok/toolhive-core/redisconn"
 
 	"github.com/stacklok/mecatl/engine/adapter/sessnap"
 	"github.com/stacklok/mecatl/engine/port"
@@ -112,6 +112,7 @@ var (
 // the manager lock is held only for acquisition/publication, never Redis I/O.
 type Store struct {
 	clients     *clientGenerations
+	followers   *followerRegistry
 	reload      *reloadLifecycle
 	diagnostics port.Diagnostics
 	closeGrace  time.Duration
@@ -144,7 +145,13 @@ type Config struct {
 	// takes precedence when both are set.
 	TLS            bool
 	AllowPlaintext bool
-	Diagnostics    port.Diagnostics
+	// FollowPoolSize is the hard connection bound for the isolated client used
+	// only by ReadAfter calls with Follow set. Zero selects the default of 32.
+	FollowPoolSize int
+	// MaxFollowers is the process-local number of concurrently admitted follow
+	// iterators. Zero selects the default of 32.
+	MaxFollowers int
+	Diagnostics  port.Diagnostics
 }
 
 // New connects to a plaintext, unauthenticated Redis broker. It is retained for
@@ -170,17 +177,15 @@ func newWithConfig(cfg Config, deps storeDependencies) (*Store, error) {
 	if err := validateAddr(cfg.Addr); err != nil {
 		return nil, err
 	}
+	followPoolSize, maxFollowers, err := effectiveFollowLimits(cfg)
+	if err != nil {
+		return nil, err
+	}
 	conn, err := connectionConfigWithReader(cfg, deps.readFile)
 	if err != nil {
 		return nil, err
 	}
-	factory := deps.initialClient
-	if factory == nil {
-		factory = func(ctx context.Context, conn *tcredis.Config) (redis.UniversalClient, error) {
-			return tcredis.NewClient(ctx, conn)
-		}
-	}
-	client, err := factory(context.Background(), &conn)
+	pair, err := initialClientPair(context.Background(), &conn, followPoolSize, deps)
 	if err != nil {
 		// cfg.Addr is safe to name here: validateAddr has already rejected every
 		// URL-shaped value that could carry a credential in its userinfo.
@@ -191,12 +196,12 @@ func newWithConfig(cfg Config, deps storeDependencies) (*Store, error) {
 		diagnostics = port.NopDiagnostics{}
 	}
 	st := &Store{
-		clients: newClientGenerations(client), diagnostics: diagnostics,
+		clients: newClientGenerationsPair(pair), followers: newFollowerRegistry(maxFollowers), diagnostics: diagnostics,
 		closeGrace: deps.closeGrace,
 	}
 	initClient, release, err := st.clients.acquire()
 	if err != nil {
-		_ = client.Close()
+		closeClientPair(pair)
 		return nil, err
 	}
 	if err := initializeMetadataIndex(context.Background(), initClient); err != nil {
@@ -234,7 +239,7 @@ func newWithConfig(cfg Config, deps storeDependencies) (*Store, error) {
 // main session-store client (NewWithConfig with cfg.reloadEnabled()), this
 // client does NOT watch its credential/CA files and does NOT hot-reload after
 // an ACL or CA rotation — go-redis reconnects using the SAME static
-// Username/Password/TLS baked into tcredis.Config, which exposes no
+// Username/Password/TLS baked into redisconn.Config, which exposes no
 // credentials-provider or reload hook. After a rotation, this client's
 // reconnects fail with the stale material while /readyz (driven by the main
 // store's reload-aware client) stays green, masking the failure as broker-only
@@ -249,7 +254,7 @@ func NewClient(cfg Config) (redis.UniversalClient, error) {
 	if err != nil {
 		return nil, err
 	}
-	client, err := tcredis.NewClient(context.Background(), &conn)
+	client, err := redisconn.NewClient(context.Background(), &conn)
 	if err != nil {
 		return nil, fmt.Errorf("redisstore: connect %q: %w", cfg.Addr, err)
 	}
@@ -275,37 +280,57 @@ func validateAddr(addr string) error {
 
 // connectionConfigWithReader folds this adapter's file-and-policy layer into the shared
 // toolhive-core connection config. The reader seam keeps a descriptor read block testable.
-func connectionConfigWithReader(cfg Config, readFile credentialFileReader) (tcredis.Config, error) {
+func connectionConfigWithReader(cfg Config, readFile credentialFileReader) (redisconn.Config, error) {
 	verifiedTLS := cfg.TLS || cfg.CAFile != ""
 	hasCredentials := cfg.UsernameFile != "" || cfg.PasswordFile != ""
 	if !verifiedTLS && !hasCredentials {
 		if !cfg.AllowPlaintext {
-			return tcredis.Config{}, errors.New("redisstore: plaintext Redis requires explicit opt-in")
+			return redisconn.Config{}, errors.New("redisstore: plaintext Redis requires explicit opt-in")
 		}
-		return tcredis.Config{Addr: cfg.Addr}, nil
+		return redisconn.Config{Addr: cfg.Addr}, nil
 	}
 	if !verifiedTLS {
-		return tcredis.Config{}, errors.New("redisstore: Redis credentials require verified TLS: enable system-trust TLS or supply a PEM CA bundle")
+		return redisconn.Config{}, errors.New("redisstore: Redis credentials require verified TLS: enable system-trust TLS or supply a PEM CA bundle")
 	}
 	if cfg.UsernameFile != "" && cfg.PasswordFile == "" {
-		return tcredis.Config{}, errors.New("redisstore: a Redis username requires a password")
+		return redisconn.Config{}, errors.New("redisstore: a Redis username requires a password")
 	}
 	files, err := readConnectionFiles(cfg, readFile)
 	if err != nil {
-		return tcredis.Config{}, err
+		return redisconn.Config{}, err
 	}
 	username, password, err := credentialsFromFiles(cfg, files)
 	if err != nil {
-		return tcredis.Config{}, err
+		return redisconn.Config{}, err
 	}
 	// A non-nil TLSConfig with a nil CACert means "verify against the system
 	// trust store". An unparsable bundle is reported by the shared layer's
 	// BuildTLSConfig, before any network I/O.
-	tlsCfg := &tcredis.TLSConfig{}
+	tlsCfg := &redisconn.TLSConfig{}
 	if cfg.CAFile != "" {
 		tlsCfg.CACert = files.ca
 	}
-	return tcredis.Config{Addr: cfg.Addr, Username: username, Password: password, TLS: tlsCfg}, nil
+	return redisconn.Config{Addr: cfg.Addr, Username: username, Password: password, TLS: tlsCfg}, nil
+}
+
+const defaultFollowCapacity = 32
+
+func effectiveFollowLimits(cfg Config) (poolSize, maxFollowers int, err error) {
+	poolSize = cfg.FollowPoolSize
+	if poolSize == 0 {
+		poolSize = defaultFollowCapacity
+	}
+	maxFollowers = cfg.MaxFollowers
+	if maxFollowers == 0 {
+		maxFollowers = defaultFollowCapacity
+	}
+	if poolSize < 1 {
+		return 0, 0, errors.New("redisstore: follow pool size must be positive")
+	}
+	if maxFollowers < 1 || maxFollowers > poolSize {
+		return 0, 0, errors.New("redisstore: max followers must be positive and no greater than follow pool size")
+	}
+	return poolSize, maxFollowers, nil
 }
 
 const maxCredentialFileSize int64 = 1 << 20
@@ -718,20 +743,56 @@ func (st *Store) Ping(ctx context.Context) error {
 }
 
 // Close stops credential reload, rejects new work, and gives pinned operations a
-// fixed grace interval to finish. It never force-closes a client still in use;
-// that client closes exactly once when its final lease is released.
+// fixed grace interval to finish. Followers are store-owned: they are cancelled
+// and joined, then only isolated follow clients are force-closed when a read
+// ignores cancellation. Durability clients retain generation-lease semantics.
 func (st *Store) Close() error {
 	st.closeOnce.Do(func() {
-		st.clients.rejectNew()
+		deadline := time.Now().Add(st.closeGrace)
+		var followersDone <-chan struct{}
+		if st.followers != nil {
+			followersDone = st.followers.beginClose()
+		}
+		st.clients.beginClose()
 		if st.reload != nil {
 			st.reload.Close()
 		}
-		if pending := st.clients.close(st.closeGrace); pending > 0 {
+		if followersDone != nil {
+			firstWait := time.Until(deadline) / 2
+			if !waitForRedisShutdown(followersDone, firstWait) {
+				st.clients.forceCloseFollow()
+				_ = waitForRedisShutdown(followersDone, time.Until(deadline))
+			}
+		}
+		remaining := time.Until(deadline)
+		if remaining < 0 {
+			remaining = 0
+		}
+		if pending := st.clients.close(remaining); pending > 0 {
 			st.diagnostics.Log(context.Background(), port.LevelWarn, "redis store shutdown",
 				"component", "redis", "outcome", "timed_out", "reason", "active_operations", "count", pending)
 		}
 	})
 	return nil
+}
+
+func waitForRedisShutdown(done <-chan struct{}, duration time.Duration) bool {
+	if duration <= 0 {
+		select {
+		case <-done:
+			return true
+		default:
+			return false
+		}
+	}
+	timer := time.NewTimer(duration)
+	defer timer.Stop()
+	select {
+	case <-done:
+		return true
+	case <-timer.C:
+		return false
+	}
 }
 
 // ScheduleStore returns a port.ScheduleStore backed by the SAME Redis client as

@@ -81,6 +81,23 @@ type Capabilities struct {
 	DebugMCP bool
 	// WorkspaceEnrollment gates the bundled MCP workspace-enrollment flow.
 	WorkspaceEnrollment bool
+	// SessionMediaPresent records that the wire carried SessionCapabilities even
+	// when both media bools are false. The UI uses it to distinguish an explicit
+	// text-only snapshot from an older server that omitted the message.
+	SessionMediaPresent bool
+}
+
+// capabilitiesWithSessionMedia overlays the selected session's media support while
+// retaining server-wide feature bits. A nil session capability is an older-server
+// response, so the global media values remain unchanged.
+func capabilitiesWithSessionMedia(global *mecatlv1.ServerCapabilities, sessionCaps *mecatlv1.SessionCapabilities) Capabilities {
+	caps := capabilitiesFrom(global)
+	if sessionCaps != nil {
+		caps.Image = sessionCaps.GetImage()
+		caps.Audio = sessionCaps.GetAudio()
+		caps.SessionMediaPresent = true
+	}
+	return caps
 }
 
 // capabilitiesFrom maps a proto ServerCapabilities (nil-safe) to the plain

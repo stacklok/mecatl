@@ -350,6 +350,7 @@ func TestSubtreeTiersAreAsPinned(t *testing.T) {
 		"steer":                  configgen.TierOperator, // operator-only: a project cannot flip the mid-run steer surface (issue #512)
 		"models":                 configgen.TierProject,  // operator + project (project within the operator allowlist)
 		"openrouter":             configgen.TierOperator, // operator-only: a project cannot steer the OpenRouter downstream provider (issue #480)
+		"telemetry":              configgen.TierOperator, // operator-only: a project cannot flip a user's own telemetry choice
 		"mcp":                    configgen.TierOperator, // operator-only: endpoints, auth, credentials, and egress policy
 	}
 	got := map[string]configgen.Tier{}

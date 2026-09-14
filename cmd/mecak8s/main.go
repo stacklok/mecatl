@@ -76,7 +76,7 @@ func run() error {
 	// flags this is a no-op (byte-identical default). The flush defer runs BEFORE
 	// built.Close() (LIFO), so the OTLP flush completes before the service tears
 	// down on the SIGTERM path.
-	obs, oerr := buildObservability(ctx, cfg)
+	obs, oerr := buildObservability(ctx, cfg, diag)
 	if oerr != nil {
 		return fmt.Errorf("telemetry: %w", oerr)
 	}

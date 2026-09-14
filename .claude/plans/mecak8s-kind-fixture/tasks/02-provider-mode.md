@@ -41,3 +41,5 @@ default test may spend provider tokens.
   side effect; fixture instructions name it as a separate, explicit billable
   operator action.
   - verify: `TestMecak8sKindFixture_Scenario2_LiveSmokeIsExplicit`
+  - note: Human review verifies the fixture-instruction wording and billing
+    rationale; the named test verifies only that setup excludes the action.

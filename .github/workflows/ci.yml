@@ -217,6 +217,52 @@ jobs:
       - name: Run offline SDK e2e against same-checkout mecated
         run: task sdk:e2e
 
+  sdk-deno:
+    name: TypeScript SDK (Deno ${{ matrix.deno-version }})
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        deno-version: ['2.9.3', '2.x']
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 11.25.0
+          run_install: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.x'
+          cache: pnpm
+          cache-dependency-path: sdk/typescript/pnpm-lock.yaml
+
+      - uses: denoland/setup-deno@e95548e56dfa95d4e1a28d6f422fafe75c4c26fb # v2.0.3
+        with:
+          deno-version: ${{ matrix.deno-version }}
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            engine/go.sum
+
+      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+
+      - name: Install SDK dependencies (frozen)
+        run: task sdk:install
+
+      - name: Type-check and run the Deno.Command local integration
+        run: task sdk:deno
+
   sdk-browser:
     name: TypeScript SDK browser (${{ matrix.label }})
     needs: changes
@@ -1205,7 +1251,7 @@ jobs:
       # every module-scoped step below can just call `govulncheck`.
       - name: Install govulncheck (pinned, shared by every module below)
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
+          go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
       # `./...` from the root does NOT cross the engine module boundary, so the
@@ -1215,21 +1261,21 @@ jobs:
         run: |
           set -o pipefail
           govulncheck -format json ./... \
-            | go run .github/scripts/govulncheck-gate.go # v1.1.4 — no allowlist (toolhive v0.31.0 cleared the docker/docker vulns)
+            | go run .github/scripts/govulncheck-gate.go # v1.8.0 — no allowlist (toolhive v0.31.0 cleared the docker/docker vulns)
 
       - name: govulncheck (engine module — strict, no allowlist)
         shell: bash
         run: |
           set -o pipefail
           cd engine && govulncheck -format json ./... \
-            | go run ../.github/scripts/govulncheck-gate.go # v1.1.4
+            | go run ../.github/scripts/govulncheck-gate.go # v1.8.0
 
       - name: govulncheck (OIDC authn module — strict, no allowlist)
         shell: bash
         run: |
           set -o pipefail
           cd authn/oidc && govulncheck -format json ./... \
-            | go run ../../.github/scripts/govulncheck-gate.go # v1.1.4
+            | go run ../../.github/scripts/govulncheck-gate.go # v1.8.0
 
       # provider/ submodules (ADR 0093) — each its own module; scan against its
       # own go.mod so the provider library's closure is checked independently.
@@ -1238,13 +1284,13 @@ jobs:
         run: |
           set -o pipefail
           (cd provider/ssefilter && govulncheck -format json ./... \
-            | go run ../../.github/scripts/govulncheck-gate.go) # v1.1.4
+            | go run ../../.github/scripts/govulncheck-gate.go) # v1.8.0
           (cd provider/anthropic && govulncheck -format json ./... \
-            | go run ../../.github/scripts/govulncheck-gate.go) # v1.1.4
+            | go run ../../.github/scripts/govulncheck-gate.go) # v1.8.0
           (cd provider/openai && govulncheck -format json ./... \
-            | go run ../../.github/scripts/govulncheck-gate.go) # v1.1.4
+            | go run ../../.github/scripts/govulncheck-gate.go) # v1.8.0
           (cd provider/openaichat && govulncheck -format json ./... \
-            | go run ../../.github/scripts/govulncheck-gate.go) # v1.1.4
+            | go run ../../.github/scripts/govulncheck-gate.go) # v1.8.0
 
   docs:
     name: Docs (matlatl)
@@ -1274,16 +1320,15 @@ jobs:
             provider/openai/go.sum
             provider/openaichat/go.sum
 
-      # Documentation-only changes still run the repository's Go-backed document
-      # invariants (ADR numbering, citations, lifecycle, and reading-map checks).
+      # Documentation-only changes still run the repository's Go-backed structural
+      # checks (ADR numbering/shape, citations, lifecycle, and reading-map checks).
       - name: go test ./docs/lint
         run: go test ./docs/lint
 
-      # This command owns an executable contract for the session-storage
-      # operations guide under user-docs/. Keep it on the docs-only path: a
-      # documentation rename or edit must not leave a stale referenced runbook.
+      # This command validates the executable systemd, launchd, and retention
+      # examples in the session-storage operations guide under user-docs/.
       - name: go test documented mecated operations
-        run: go test ./cmd/mecated -run '^TestSessionStorageContinuity_Scenario9_'
+        run: go test ./cmd/mecated -run '^TestSessionStorageContinuity_Scenario9_ServiceExamplesExecuteConfiguredArgs$'
 
       # Freshness gate for the generated configuration reference + the embedded
       # config-init skeleton: regenerate both to a temp dir and fail if they differ

@@ -1,17 +1,17 @@
 ---
 title: Connect an application
 description:
-  Connect Node.js, Bun, or browser applications to an operator-owned Mecatl
-  daemon.
+  Connect Node.js, Bun, Deno, or browser applications to an operator-owned
+  Mecatl daemon.
 sidebar_position: 2
 ---
 
 # Connect an application
 
 Use `connect()` when an operator owns the Mecatl daemon and your application
-owns only the client connection. Node.js and Bun connect to the gRPC listener.
-Browser applications connect to the HTTP and SSE API through a same-origin
-backend-for-frontend (BFF).
+owns only the client connection. Node.js, Bun, and Deno connect to the gRPC listener.
+Browser applications use the HTTP and SSE API and
+connect through a same-origin backend-for-frontend (BFF).
 
 ## Connect from Node.js or Bun
 
@@ -51,6 +51,38 @@ const client = connect({
 Use `credentialProvider` instead when the application refreshes credentials. The
 SDK calls the provider for every request and does not persist its returned
 headers.
+
+## Connect from Deno
+
+The Deno integration is unreleased and excluded from SDK v0.1.0.
+
+Import `connect()` from the Deno entry point and pass the gRPC listener's HTTP
+or HTTPS authority. Deno uses the same ConnectRPC transport as Node.js and Bun:
+
+```ts
+import { connect } from '@stacklok-oss/mecatl-sdk/deno';
+
+await using client = connect({
+  baseUrl: 'https://mecatl.example.com',
+});
+
+const session = await client.sessions.create({});
+const result = await (await session.run('Summarize this repository')).result();
+console.log(result.text);
+```
+
+Grant network access to the daemon host when you run the application. For the
+example URL, use `--allow-net=mecatl.example.com`. Credentials use the same
+`headers` and `credentialProvider` options as Node.js and Bun. For a private CA,
+pass its certificate through `nodeOptions.ca`; grant read access if your
+application loads the certificate from disk.
+
+To connect to a Unix-domain socket, pass `socketPath` instead of `baseUrl` and
+grant network access with `--allow-net=unix:<ABSOLUTE_SOCKET_PATH>`. The socket's
+operating-system permissions also apply. See the
+[Deno API reference](/reference/typescript-sdk-api/deno.md) for connection options.
+If your daemon exposes only HTTP and SSE, import `connect()` from the root
+`@stacklok-oss/mecatl-sdk` entry point instead.
 
 ## Connect from a browser
 

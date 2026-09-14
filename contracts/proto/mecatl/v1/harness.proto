@@ -1429,6 +1429,11 @@ message Session {
   // usage types; `main` is ordinary main-session agent usage. Other keys are
   // server-defined and are not enumerated here.
   map<string, TokenUsage> token_usage = 20;
+  // session_capabilities is the selected provider+model's authoritative media
+  // input capability. It mirrors CreateSessionResponse.session_capabilities so
+  // GetSession, resume, clear, and fork retain accurate media gates. Nil on an
+  // older server tells clients to fall back to the server-wide capabilities.
+  SessionCapabilities session_capabilities = 21;
 }
 
 // SessionTitle is the canonical durable, source-free title lifecycle projection.

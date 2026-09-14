@@ -67,6 +67,15 @@ tasks:
       - task --dir ../.. build
       - pnpm run test:e2e
 
+  deno:
+    desc: Type-check the package exports and run the Deno.Command local integration
+    deps: [install]
+    cmds:
+      - test -x "${DENO_BIN:-}" || command -v deno >/dev/null 2>&1 || { echo "deno is required for the SDK Deno integration"; exit 1; }
+      - if [ -z "${MECATL_SDK_PACKED_TARBALL:-}" ]; then task pack; fi
+      - task --dir ../.. build
+      - node scripts/run-deno-integration.mjs
+
   browser:install:
     desc: Install the pinned Chromium, Firefox, and WebKit revisions and host dependencies
     deps: [install]
@@ -110,7 +119,7 @@ tasks:
       - pnpm run examples:typecheck
 
   api:check:
-    desc: Verify the public API reports for the root and node entry points
+    desc: Verify the public API reports for the root, Node/Bun, and Deno entry points
     deps: [build]
     cmds:
       - pnpm run api:check
@@ -139,6 +148,7 @@ tasks:
         pnpm run docs:generate --output "$sdk_docs_tmp"
         diff -u ../../user-docs/reference/typescript-sdk-api/core.md "$sdk_docs_tmp/core.md"
         diff -u ../../user-docs/reference/typescript-sdk-api/node.md "$sdk_docs_tmp/node.md"
+        diff -u ../../user-docs/reference/typescript-sdk-api/deno.md "$sdk_docs_tmp/deno.md"
 
   pack:
     desc: Build and pack the TypeScript SDK into the ignored temporary directory

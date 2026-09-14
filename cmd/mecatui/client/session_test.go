@@ -6,6 +6,22 @@ import (
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 )
 
+func TestSnapshotFromUsesSessionMediaCapabilities(t *testing.T) {
+	global := &mecatlv1.ServerCapabilities{Image: true, Teams: true}
+
+	textOnly := snapshotFrom(&mecatlv1.Session{
+		Capabilities:        global,
+		SessionCapabilities: &mecatlv1.SessionCapabilities{},
+	})
+	if textOnly.Capabilities.Image || !textOnly.Capabilities.Teams {
+		t.Fatalf("text-only snapshot capabilities = %+v", textOnly.Capabilities)
+	}
+	legacy := snapshotFrom(&mecatlv1.Session{Capabilities: global})
+	if !legacy.Capabilities.Image || !legacy.Capabilities.Teams {
+		t.Fatalf("legacy snapshot capabilities = %+v", legacy.Capabilities)
+	}
+}
+
 // TestSnapshotFromReadsState asserts snapshotFrom projects the proto Session's
 // State field (issue #245 Phase 1) — the picker row needs it to render an
 // "open existing session" affordance. Covers the populated and nil cases.

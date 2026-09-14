@@ -100,9 +100,12 @@ deletes to the end of the line.
 Use `shift+arrow` for keyboard selection. On the alternate screen, drag over
 prompt text for mouse selection. Starting a prompt selection clears a
 conversation selection and vice versa. Releasing the mouse does not copy the
-prompt; use `ctrl+y` or right-click to copy the active selection. With
-`--no-mouse`, the terminal retains native mouse selection, while keyboard
-selection remains available.
+prompt; use `ctrl+y` or right-click to copy the active selection. Copying mirrors
+the text into both the system clipboard and, on X11 and Wayland, the primary
+selection, so a selection copied inside mecatui can be middle-click pasted
+elsewhere (install `wl-clipboard` or `xclip` for the primary-selection mirror on
+terminals that do not honour OSC52). With `--no-mouse`, the terminal retains
+native mouse selection, while keyboard selection remains available.
 
 Client-owned actions take precedence over textarea chords. For example, `ctrl+t`
 expands details and `ctrl+v` handles paste. `ctrl+g` selects all only in the
