@@ -30,6 +30,7 @@ import (
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
+	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/session"
 )
 
@@ -273,20 +274,11 @@ func TestSteer_PromotedRelaySequential(t *testing.T) {
 		mockllm.TextTurn("promoted follow-up"),
 	)
 	svc := newSteerService(t, llm, nil)
-	client, stallRelease, cleanup := dialGRPCStall(t, svc, 2*time.Second)
+	// Keep the terminal relay parked for the test's existing total budget,
+	// rather than silently releasing it after two seconds under contention.
+	client, stallRelease, cleanup := dialGRPCStall(t, svc, 20*time.Second)
 	defer cleanup()
 
-	// This ctx is the SOLE timeout budget for the whole test: session setup,
-	// the pre-stall Recv loop, the promoted-run poll below, AND the final
-	// drain-to-EOF read all share it. Twice already de-flaked (#672, #816) by
-	// replacing a fixed sleep with a signal-driven poll — that poll is still
-	// correct (0/20 failures locally, -race, back-to-back), but a poll bounded
-	// by a tight shared deadline still fails outright under real scheduling
-	// contention (e.g. a full -race `task test` run with many packages
-	// building/testing concurrently) if enough of the 10s budget is spent
-	// before the poll even starts. Widen the budget instead of adding a
-	// sleep — matches the 15s the sibling TestSteer_ControlTargetsPromotedRun
-	// already uses for a comparably multi-step flow.
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
@@ -316,15 +308,20 @@ func TestSteer_PromotedRelaySequential(t *testing.T) {
 			break
 		}
 	}
-	// Capture the terminal original before sending the steer, mirroring
-	// TestSteer_ControlTargetsPromotedRun: observing a different registered
-	// run pointer afterward proves the handoff actually promoted, rather than
-	// guessing at a fixed sleep (which raced the internal closeSteerDrained
-	// transition under load and could classify the steer as live-accepted,
-	// merging it into the original run instead of promoting a new one).
+	// turn.end precedes closeSteerDrained. Wait for the terminal outcome,
+	// not merely a registered pointer, before sending a deliberately late steer.
 	original, ok := svc.LookupRun(session.SessionID(cs.GetSessionId()))
 	if !ok {
 		t.Fatal("original run is not registered in its terminal drain window")
+	}
+	poll := time.NewTicker(10 * time.Millisecond)
+	defer poll.Stop()
+	for original.Outcome() != agent.RunOutcomeCompleted {
+		select {
+		case <-ctx.Done():
+			t.Fatal("original run did not reach its terminal outcome")
+		case <-poll.C:
+		}
 	}
 	if err := stream.Send(&mecatlv1.ConverseRequest{
 		Kind: &mecatlv1.ConverseRequest_Steer{Steer: &mecatlv1.Steer{Text: "late steer", MessageId: "m-late", Parts: []*mecatlv1.Content{
@@ -337,8 +334,6 @@ func TestSteer_PromotedRelaySequential(t *testing.T) {
 	// The test context is the sole timeout budget. Keep the original stalled
 	// until the replacement pointer is observable, proving the handoff
 	// registered the promoted run before it can be allowed to drive.
-	poll := time.NewTicker(10 * time.Millisecond)
-	defer poll.Stop()
 	for {
 		if promoted, ok := svc.LookupRun(session.SessionID(cs.GetSessionId())); ok && promoted != original {
 			break
