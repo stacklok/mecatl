@@ -8,7 +8,7 @@
 **Delivery:** Split. The change crosses the engine API, event persistence, protobuf, and mecatui replay UI, so separate interface review is valuable.
 **Expected tasks:** 2
 **Issue:** [#1457](https://github.com/stacklok/mecatl/issues/1457)
-**Plan PR:** added when opened
+**Plan PR:** [#1478](https://github.com/stacklok/mecatl/pull/1478)
 **Approved baseline:** absent until the Plan / Interface PR merges
 
 A durable `user_prompt` event must distinguish a principal-authored prompt from a user-role
