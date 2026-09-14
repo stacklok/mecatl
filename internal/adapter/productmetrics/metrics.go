@@ -81,25 +81,39 @@ type firstValueTracker struct {
 	// firstSeenAt is this install's first-seen moment; the recorded duration is
 	// measured from it.
 	firstSeenAt time.Time
-	// done is true once the sample exists — either recorded by THIS process, or
-	// (per the persisted marker) by an earlier one.
+	// done is true once THIS process has attempted its one claim — either
+	// because the sample was already recorded (per the persisted marker) by
+	// an earlier process, or because this process itself just attempted the
+	// cross-process claim below. It does NOT by itself mean the sample was
+	// actually emitted — see claim()'s use of recordFn's won return.
 	done bool
-	// recordFn persists the marker so a LATER process invocation also stays
-	// disabled. Called at most once, best-effort.
-	recordFn func() error
+	// recordFn persists the marker as an ATOMIC cross-process claim and
+	// reports whether THIS call actually won it (won=true: this call
+	// created the marker first) versus lost it (won=false: another process
+	// already owns it — do not record, even though this process's own
+	// in-memory tracker had not yet observed that). Called at most once.
+	// Its error is best-effort: a failed write risks re-recording once on a
+	// later process (a fidelity wobble in a coarse onboarding signal, not a
+	// correctness bug worth failing anything over), so claim() still treats
+	// an ERRORING call as a win rather than silently dropping the sample.
+	recordFn func() (won bool, err error)
 }
 
 // EnableFirstValueTracking arms mecatl.product.time_to_first_value recording.
 // firstSeenAt is this install's first-seen timestamp; alreadyRecorded, when
 // true, permanently disables recording for this Recorder's lifetime (this
-// install already has its one sample). recordFn persists the local marker so a
-// later process invocation also stays disabled; it is called at most once, and
-// may be nil (in-memory-only tracking).
+// install already has its one sample). recordFn persists the local marker as
+// an ATOMIC cross-process claim so a later process invocation also stays
+// disabled; it is called at most once, and may be nil (in-memory-only
+// tracking). Its won return MUST reflect whether THIS call actually created
+// the marker — discarding it (always treating the call as a win) breaks the
+// "at most once per install, ever" contract across two processes that both
+// pass the alreadyRecorded=false startup check before either has recorded.
 //
 // It is a separate arming step rather than a NewRecorder parameter so that
 // NewRecorder's signature — and every existing caller and test of it — stays
 // unchanged; an unarmed Recorder simply never records this instrument.
-func (r *Recorder) EnableFirstValueTracking(firstSeenAt time.Time, alreadyRecorded bool, recordFn func() error) {
+func (r *Recorder) EnableFirstValueTracking(firstSeenAt time.Time, alreadyRecorded bool, recordFn func() (bool, error)) {
 	r.firstValue.mu.Lock()
 	defer r.firstValue.mu.Unlock()
 	r.firstValue.armed = true
@@ -108,9 +122,12 @@ func (r *Recorder) EnableFirstValueTracking(firstSeenAt time.Time, alreadyRecord
 	r.firstValue.recordFn = recordFn
 }
 
-// claim reports whether THIS observation is the install's first-value moment, marking it claimed and persisting the marker as one atomic step. It
-// returns the firstSeenAt to measure from; a false claim means the metric must
-// not be recorded (unarmed, already recorded, or no usable firstSeenAt).
+// claim reports whether THIS observation is the install's first-value
+// moment, persisting the marker as one atomic cross-process step and
+// honoring its outcome. It returns the firstSeenAt to measure from; a false
+// claim means the metric must not be recorded (unarmed, already recorded,
+// no usable firstSeenAt, OR — the cross-process case — this process's own
+// atomic marker-claim call reports that another process already won it).
 func (t *firstValueTracker) claim() (time.Time, bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -119,10 +136,22 @@ func (t *firstValueTracker) claim() (time.Time, bool) {
 	}
 	t.done = true
 	if t.recordFn != nil {
-		// Best-effort: a failed write risks re-recording once on a later
-		// process, which is a fidelity wobble in a coarse onboarding signal —
-		// not a correctness bug worth failing anything over.
-		_ = t.recordFn()
+		won, err := t.recordFn()
+		if err != nil {
+			// Best-effort: a failed write risks re-recording once on a later
+			// process, which is a fidelity wobble in a coarse onboarding
+			// signal — not a correctness bug worth failing anything over.
+			// Fall through and treat this call as the winner, matching the
+			// pre-existing behavior on a write failure.
+			return t.firstSeenAt, true
+		}
+		if !won {
+			// Another process's marker-claim call already won this
+			// install's one-ever sample — honor that result instead of
+			// discarding it, or two processes that both started before
+			// either recorded would each independently emit a sample.
+			return time.Time{}, false
+		}
 	}
 	return t.firstSeenAt, true
 }

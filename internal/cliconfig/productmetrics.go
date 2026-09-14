@@ -73,6 +73,23 @@ type ProductMetricsHandles struct {
 // FirstRun (nothing was minted here, and the chart — not this process — owns
 // the id's lifecycle). Every other binary passes "" and keeps the local-file
 // behaviour unchanged.
+//
+// notify, when firstRun is true, is called EXACTLY ONCE, SYNCHRONOUSLY,
+// BEFORE this function starts the heartbeat goroutine (whose first
+// Heartbeat call fires immediately — see RunHeartbeat) and before it
+// returns. ADR 0329 makes visible advance disclosure load-bearing for
+// opt-out collection: printing the notice only after the caller later
+// notices ProductMetricsHandles.FirstRun — e.g. after its own startup work,
+// or worse, only at shutdown/flush time — leaves a window where the
+// pipeline can record and export data before a human ever sees the notice.
+// Calling notify here, before ANY export-capable state exists, closes that
+// window regardless of what the caller does afterward (including an error
+// path that flushes and discards the handles without ever consulting
+// FirstRun). notify is nil-safe: a nil notify simply skips the call (kept
+// for the disabled/dry-run/override paths and existing test callers that
+// don't exercise disclosure). FirstRun is still returned on the handles for
+// callers/tests that want to observe it, but it must never be the sole
+// trigger for actually showing the notice.
 func BuildProductMetrics(
 	ctx, heartbeatCtx context.Context,
 	enabled, dryRun bool,
@@ -82,6 +99,7 @@ func BuildProductMetrics(
 	snap productmetrics.FeatureSnapshot,
 	installIDOverride string,
 	diag port.Diagnostics,
+	notify func(string),
 ) (ProductMetricsHandles, error) {
 	noop := func(context.Context) error { return nil }
 	if !enabled {
@@ -98,9 +116,20 @@ func BuildProductMetrics(
 	// below. Reinstated as a real, exported resource attribute (see
 	// provider.go's doc comment) after its cardinality cost was sized and
 	// accepted. An externally provisioned id (see installIDOverride) bypasses
-	// it: there is no file to read, write, or report a first run from.
+	// it entirely: there is no file to read, write, or report a first run
+	// from, so Available() gates ONLY this local-file branch — a keyless
+	// build (every local/dev/CI-test build) must not mint and persist an id
+	// file that a later release build's LoadOrCreateInstallIDDefault would
+	// then read back as "already exists", silently reporting firstRun=false
+	// for that build's genuine first export (see Available's doc comment).
+	// The override path still proceeds and fails later, at provider
+	// construction, exactly as before.
 	installID, firstRun := installIDOverride, false
 	if installID == "" {
+		if !productmetrics.Available() {
+			return ProductMetricsHandles{Shutdown: noop},
+				fmt.Errorf("product metrics: no ingest key baked into this build (see BUILD_LDFLAGS in Taskfile.yml)")
+		}
 		var err error
 		installID, firstRun, err = productmetrics.LoadOrCreateInstallIDDefault()
 		if err != nil {
@@ -121,6 +150,14 @@ func BuildProductMetrics(
 	if err != nil {
 		_ = provider.Shutdown(ctx)
 		return ProductMetricsHandles{Shutdown: noop}, fmt.Errorf("product metrics: recorder: %w", err)
+	}
+
+	// Disclosure BEFORE the pipeline goes live: notify runs synchronously,
+	// here, before the heartbeat goroutine below is even started — so no
+	// export-capable state exists yet when a human is expected to have seen
+	// the notice.
+	if firstRun && notify != nil {
+		notify(ProductMetricsDisclosureNotice)
 	}
 
 	go productmetrics.RunHeartbeat(heartbeatCtx, recorder, heartbeatInterval, snap)
@@ -180,8 +217,8 @@ func armFirstValueTracking(ctx context.Context, recorder *productmetrics.Recorde
 			"error", err)
 		already = false
 	}
-	recorder.EnableFirstValueTracking(time.Now(), already, func() error {
-		_, werr := productmetrics.LoadOrCreateFirstValueMarkerDefault()
-		return werr
+	recorder.EnableFirstValueTracking(time.Now(), already, func() (bool, error) {
+		alreadyExisted, werr := productmetrics.LoadOrCreateFirstValueMarkerDefault()
+		return !alreadyExisted, werr
 	})
 }

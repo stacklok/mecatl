@@ -1104,23 +1104,12 @@ func productMetricsSnapshot(cfg config) productmetrics.FeatureSnapshot {
 	if cfg.headless {
 		mode = productmetrics.ModeHeadless
 	}
-	provider := productmetrics.ProviderOther
-	switch {
-	case cfg.useOpenAI:
-		provider = productmetrics.ProviderOpenAI
-	case strings.Contains(strings.ToLower(cfg.defaultProvider), "openrouter"):
-		provider = productmetrics.ProviderOpenRouter
-	case strings.Contains(strings.ToLower(cfg.defaultProvider), "openai"):
-		provider = productmetrics.ProviderOpenAI
-	case cfg.defaultProvider == "" || strings.Contains(strings.ToLower(cfg.defaultProvider), "anthropic"):
-		provider = productmetrics.ProviderAnthropic
-	}
 	return productmetrics.FeatureSnapshot{
 		Memory:     cfg.memoryDir != "",
 		Guardrails: cfg.guardrailsModel != "",
 		MCP:        cfg.mcpServers != nil && len(cfg.mcpServers.Servers()) > 0,
 		Scheduling: !cfg.noScheduler,
-		Provider:   provider,
+		Provider:   cliconfig.ResolveProviderFamily(cfg.useOpenAI, cfg.defaultProvider),
 		Mode:       mode,
 	}
 }
@@ -1134,11 +1123,16 @@ func productMetricsSnapshot(cfg config) productmetrics.FeatureSnapshot {
 // (loadMCPLoginProfiles). settings.yaml is parsed twice at boot (once here,
 // once inside app.Build); an accepted, negligible boot-time cost.
 //
-// It logs its own build failure and prints the first-run disclosure, so run()
-// only threads the resulting handles and the heartbeat-context cancel func
-// (both callers must defer unconditionally: the handles' Shutdown is always
-// a safe no-op when disabled/errored). The returned error is informational
-// only — a caller that just wants the handles can discard it.
+// It logs its own build failure. The first-run disclosure notice is printed
+// via a notify callback BuildProductMetrics itself invokes SYNCHRONOUSLY,
+// before starting the heartbeat goroutine and before returning — never
+// deferred to a check on the returned handles' FirstRun field afterward,
+// which would leave a window where the pipeline could record/export before
+// a human ever saw the notice (ADR 0329). run() only threads the resulting
+// handles and the heartbeat-context cancel func (both callers must defer
+// unconditionally: the handles' Shutdown is always a safe no-op when
+// disabled/errored). The returned error is informational only — a caller
+// that just wants the handles can discard it.
 func setupProductMetrics(ctx context.Context, cfg config, diag port.Diagnostics) (cliconfig.ProductMetricsHandles, func(), error) {
 	permResolver := permconfig.NewWithEnv(permconfig.Options{
 		Conventional:  cfg.permissionsConventional,
@@ -1154,12 +1148,10 @@ func setupProductMetrics(ctx context.Context, cfg config, diag port.Diagnostics)
 	heartbeatCtx, cancelHeartbeat := context.WithCancel(context.Background())
 	pm, err := cliconfig.BuildProductMetrics(ctx, heartbeatCtx, productMetricsEnabled, cfg.productMetricsDryRun,
 		productmetrics.BinaryMecated, buildinfo.BuildID, productmetrics.DefaultHeartbeatInterval,
-		productMetricsSnapshot(cfg), "" /* no install-id override: local-file mechanism */, diag)
+		productMetricsSnapshot(cfg), "" /* no install-id override: local-file mechanism */, diag,
+		func(notice string) { fmt.Fprint(os.Stderr, notice) })
 	if err != nil {
 		slog.Warn("product metrics disabled: setup failed", "err", err)
-	}
-	if pm.FirstRun {
-		fmt.Fprint(os.Stderr, cliconfig.ProductMetricsDisclosureNotice)
 	}
 	return pm, cancelHeartbeat, err
 }

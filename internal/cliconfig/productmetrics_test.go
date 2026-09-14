@@ -2,6 +2,10 @@ package cliconfig
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -15,7 +19,7 @@ import (
 
 func TestBuildProductMetricsDisabledReturnsZeroHandles(t *testing.T) {
 	h, err := BuildProductMetrics(context.Background(), context.Background(), false, false,
-		productmetrics.BinaryMecated, "test-version", 0, productmetrics.FeatureSnapshot{}, "", port.NopDiagnostics{})
+		productmetrics.BinaryMecated, "test-version", 0, productmetrics.FeatureSnapshot{}, "", port.NopDiagnostics{}, nil)
 	if err != nil {
 		t.Fatalf("BuildProductMetrics(enabled=false): %v", err)
 	}
@@ -35,7 +39,7 @@ func TestBuildProductMetricsEnabledFailsClosedWithNoBakedKey(t *testing.T) {
 	// surface the error rather than silently disabling, so a caller notices
 	// its release build is missing the ldflag.
 	_, err := BuildProductMetrics(context.Background(), context.Background(), true, false,
-		productmetrics.BinaryMecated, "test-version", 0, productmetrics.FeatureSnapshot{}, "", port.NopDiagnostics{})
+		productmetrics.BinaryMecated, "test-version", 0, productmetrics.FeatureSnapshot{}, "", port.NopDiagnostics{}, nil)
 	if err == nil {
 		t.Fatal("expected an error when enabled=true with no baked ingest key, got nil")
 	}
@@ -48,7 +52,7 @@ func TestBuildProductMetricsEnabledFailsClosedWithNoBakedKey(t *testing.T) {
 // case (above) fails closed with no baked key.
 func TestBuildProductMetricsDryRunNeverTouchesInstallIDOrRealProvider(t *testing.T) {
 	h, err := BuildProductMetrics(context.Background(), context.Background(), true, true,
-		productmetrics.BinaryMecated, "test-version", 0, productmetrics.FeatureSnapshot{}, "", port.NopDiagnostics{})
+		productmetrics.BinaryMecated, "test-version", 0, productmetrics.FeatureSnapshot{}, "", port.NopDiagnostics{}, nil)
 	if err != nil {
 		t.Fatalf("BuildProductMetrics(enabled=true, dryRun=true): %v", err)
 	}
@@ -71,7 +75,7 @@ func TestBuildProductMetricsDryRunNeverTouchesInstallIDOrRealProvider(t *testing
 // regardless of the dry-run flag's value.
 func TestBuildProductMetricsDisabledDryRunStillNoop(t *testing.T) {
 	h, err := BuildProductMetrics(context.Background(), context.Background(), false, true,
-		productmetrics.BinaryMecated, "test-version", 0, productmetrics.FeatureSnapshot{}, "", port.NopDiagnostics{})
+		productmetrics.BinaryMecated, "test-version", 0, productmetrics.FeatureSnapshot{}, "", port.NopDiagnostics{}, nil)
 	if err != nil {
 		t.Fatalf("BuildProductMetrics(enabled=false, dryRun=true): %v", err)
 	}
@@ -85,30 +89,28 @@ func TestBuildProductMetricsDisabledDryRunStillNoop(t *testing.T) {
 // must bypass LoadOrCreateInstallIDDefault ENTIRELY, not merely take
 // precedence over whatever it returns.
 //
-// The oracle is which failure surfaces. With no resolvable state directory the
-// local-file mechanism cannot even mint an id, so the no-override call fails at
-// the install-id step; an override must get PAST that step and fail later, at
-// provider construction (no baked ingest key in any non-release build). If the
-// override were applied after the file read, both calls would report the same
-// install-id error.
+// The oracle is which failure surfaces, and at which layer. bakedKey is
+// empty in every non-release build/test, so BuildProductMetrics.Available()
+// gates the no-override path BEFORE it ever calls
+// LoadOrCreateInstallIDDefault — its error therefore has NO "provider:"
+// wrapping. An override skips that Available() gate (and the file read)
+// entirely and instead fails later, inside productmetrics.NewProvider
+// itself, whose error IS "provider:"-wrapped. If the override were applied
+// after the Available()/install-id gate, both calls would report the exact
+// same unwrapped error.
 func TestBuildProductMetricsInstallIDOverrideSkipsTheLocalFile(t *testing.T) {
-	// No XDG_STATE_HOME and no home dir => productmetrics.UserStateDir yields
-	// "" and LoadOrCreateInstallIDDefault fails closed.
-	t.Setenv("XDG_STATE_HOME", "")
-	t.Setenv("HOME", "")
-
 	_, err := BuildProductMetrics(context.Background(), context.Background(), true, false,
 		productmetrics.BinaryMecak8s, "test-version", 0, productmetrics.FeatureSnapshot{},
-		"", port.NopDiagnostics{})
-	if err == nil || !strings.Contains(err.Error(), "install id") {
-		t.Fatalf("no override with an unresolvable state dir: err = %v, want an install-id failure", err)
+		"", port.NopDiagnostics{}, nil)
+	if err == nil || strings.Contains(err.Error(), "provider:") {
+		t.Fatalf("no override: err = %v, want the unwrapped Available() gate error, not a provider-construction failure", err)
 	}
 
 	_, err = BuildProductMetrics(context.Background(), context.Background(), true, false,
 		productmetrics.BinaryMecak8s, "test-version", 0, productmetrics.FeatureSnapshot{},
-		"11111111-2222-3333-4444-555555555555", port.NopDiagnostics{})
-	if err == nil || strings.Contains(err.Error(), "install id") {
-		t.Fatalf("override with an unresolvable state dir: err = %v, want the install-id step skipped", err)
+		"11111111-2222-3333-4444-555555555555", port.NopDiagnostics{}, nil)
+	if err == nil || !strings.Contains(err.Error(), "provider:") {
+		t.Fatalf("override: err = %v, want a provider-construction failure (the Available()/install-id gate skipped)", err)
 	}
 }
 
@@ -128,7 +130,7 @@ func TestBuildProductMetricsInstallIDOverrideNeverReportsFirstRun(t *testing.T) 
 		t.Run(tc.name, func(t *testing.T) {
 			h, err := BuildProductMetrics(context.Background(), context.Background(), tc.enabled, tc.dryRun,
 				productmetrics.BinaryMecak8s, "test-version", 0, productmetrics.FeatureSnapshot{},
-				"11111111-2222-3333-4444-555555555555", port.NopDiagnostics{})
+				"11111111-2222-3333-4444-555555555555", port.NopDiagnostics{}, nil)
 			if err != nil {
 				t.Fatalf("BuildProductMetrics with an install-id override: %v", err)
 			}
@@ -180,5 +182,92 @@ func TestArmFirstValueTrackingSkipsWhenInstallIDIsOverridden(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// TestBuildProductMetricsNeverMintsInstallIDWithoutABakedKey pins the
+// keyless-build-to-release transition finding: without a baked ingest key
+// (every local/dev/CI-test build), BuildProductMetrics must return an error
+// WITHOUT ever creating the local install-id file. If it created that file
+// anyway (the prior ordering), a LATER release build with a real baked key
+// would read the file back as "already exists" and silently report
+// FirstRun=false on its genuine first export — skipping the ADR
+// 0329-mandated disclosure notice for that install's actual first
+// transmission.
+func TestBuildProductMetricsNeverMintsInstallIDWithoutABakedKey(t *testing.T) {
+	stateDir := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", stateDir)
+
+	_, err := BuildProductMetrics(context.Background(), context.Background(), true, false,
+		productmetrics.BinaryMecated, "test-version", 0, productmetrics.FeatureSnapshot{}, "", port.NopDiagnostics{}, nil)
+	if err == nil {
+		t.Fatal("expected an error with no baked ingest key, got nil")
+	}
+
+	if _, statErr := os.Stat(filepath.Join(stateDir, "mecatl", "telemetry-id")); statErr == nil {
+		t.Fatal("BuildProductMetrics must not create the install-id file when no ingest key is baked into this build")
+	} else if !os.IsNotExist(statErr) {
+		t.Fatalf("unexpected error checking for the install-id file: %v", statErr)
+	}
+}
+
+// TestBuildProductMetricsNotifiesSynchronouslyBeforeReturning pins the
+// disclosure-ordering fix: notify must be called EXACTLY ONCE, synchronously
+// — before BuildProductMetrics returns, before the heartbeat goroutine's
+// first (immediate) export-eligible recording — precisely when firstRun is
+// true, and never on a second call against the same install-id state (where
+// firstRun is false). This uses SetBakedKeyForTest/SetEndpointForTest
+// (pointed at a local httptest server, never the real production endpoint)
+// so the Available()-gated real-provider path actually runs.
+func TestBuildProductMetricsNotifiesSynchronouslyBeforeReturning(t *testing.T) {
+	restoreKey := productmetrics.SetBakedKeyForTest("test-key")
+	defer restoreKey()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	restoreEndpoint := productmetrics.SetEndpointForTest(srv.URL + "/v1/metrics")
+	defer restoreEndpoint()
+
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+
+	var notified []string
+	notify := func(s string) { notified = append(notified, s) }
+
+	heartbeatCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	h, err := BuildProductMetrics(context.Background(), heartbeatCtx, true, false,
+		productmetrics.BinaryMecated, "test-version", 0, productmetrics.FeatureSnapshot{}, "", port.NopDiagnostics{}, notify)
+	if err != nil {
+		t.Fatalf("BuildProductMetrics: %v", err)
+	}
+	defer h.Shutdown(context.Background())
+
+	if !h.FirstRun {
+		t.Fatal("want FirstRun=true on a fresh install-id state directory")
+	}
+	if len(notified) != 1 || notified[0] != ProductMetricsDisclosureNotice {
+		t.Fatalf("notify calls = %v, want exactly one call carrying ProductMetricsDisclosureNotice", notified)
+	}
+
+	// A second call against the SAME state directory reads back the
+	// already-minted id: firstRun is false, and notify must NOT fire again.
+	notified = nil
+	heartbeatCtx2, cancel2 := context.WithCancel(context.Background())
+	defer cancel2()
+	h2, err := BuildProductMetrics(context.Background(), heartbeatCtx2, true, false,
+		productmetrics.BinaryMecated, "test-version", 0, productmetrics.FeatureSnapshot{}, "", port.NopDiagnostics{}, notify)
+	if err != nil {
+		t.Fatalf("BuildProductMetrics (second call): %v", err)
+	}
+	defer h2.Shutdown(context.Background())
+
+	if h2.FirstRun {
+		t.Fatal("want FirstRun=false on the second call against an already-minted install id")
+	}
+	if len(notified) != 0 {
+		t.Fatalf("notify calls = %v, want none when firstRun is false", notified)
 	}
 }

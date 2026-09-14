@@ -10,6 +10,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/internal/adapter/productmetrics"
 )
 
 // doNotTrackOptOut reports whether a DO_NOT_TRACK env value means "opt out",
@@ -85,6 +86,33 @@ func ResolveProductMetricsEnabled(p ProductMetricsPrecedence) bool {
 		return *p.SettingsEnabled
 	}
 	return true
+}
+
+// ResolveProviderFamily derives the closed-set productmetrics.ProviderFamily
+// from the same two CLI-level signals every one of the four mecatl binaries
+// resolves at flag-parse time (useOpenAI is a dedicated --openai bool that
+// exists on mecated/mecatequi/mecak8s; defaultProvider is --default-provider
+// on all four). It NEVER returns the type's zero value — the enum has no
+// zero-value member, only ProviderAnthropic/OpenAI/OpenRouter/Other — so a
+// heartbeat can never emit the invalid provider_configured{family=""} that a
+// hand-rolled, only-partly-populated FeatureSnapshot produced before. Kept
+// here (not duplicated per binary) as the SINGLE shared oracle every
+// productMetricsSnapshot in cmd/mecated, cmd/mecatui, cmd/mecatequi, and
+// cmd/mecak8s calls, mirroring mecated's original Task 11 switch verbatim.
+func ResolveProviderFamily(useOpenAI bool, defaultProvider string) productmetrics.ProviderFamily {
+	lower := strings.ToLower(defaultProvider)
+	switch {
+	case useOpenAI:
+		return productmetrics.ProviderOpenAI
+	case strings.Contains(lower, "openrouter"):
+		return productmetrics.ProviderOpenRouter
+	case strings.Contains(lower, "openai"):
+		return productmetrics.ProviderOpenAI
+	case defaultProvider == "" || strings.Contains(lower, "anthropic"):
+		return productmetrics.ProviderAnthropic
+	default:
+		return productmetrics.ProviderOther
+	}
 }
 
 // TeeToolCallRecorder combines multiple ToolCallRecorders into one — the

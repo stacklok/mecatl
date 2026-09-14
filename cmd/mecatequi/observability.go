@@ -42,7 +42,14 @@ type observability struct {
 // product metrics are best-effort — so it degrades to a no-op Shutdown rather
 // than failing this function's error return (which stays meaningful for the
 // OTLP half only).
-func buildObservability(ctx context.Context, f flags, diag port.Diagnostics) (observability, error) {
+//
+// stderr receives the first-run disclosure notice, written SYNCHRONOUSLY by
+// BuildProductMetrics itself — before it starts the heartbeat goroutine and
+// before it returns — rather than deferred to a check on the returned
+// handles' FirstRun field at flush time (flushTelemetry previously printed
+// it there, AFTER already calling Shutdown/flushing the provider: exactly
+// the ordering ADR 0329 forbids for opt-out collection).
+func buildObservability(ctx context.Context, f flags, diag port.Diagnostics, stderr io.Writer) (observability, error) {
 	h, err := cliconfig.HeadlessTelemetry(ctx, cliconfig.HeadlessTelemetryConfig{
 		ServiceName:         "mecatequi",
 		OTLPTraceEndpoint:   f.otlpEndpoint,
@@ -74,8 +81,9 @@ func buildObservability(ctx context.Context, f flags, diag port.Diagnostics) (ob
 	})
 	pm, pmErr := cliconfig.BuildProductMetrics(ctx, context.Background(), enabled, f.productMetricsDryRun,
 		productmetrics.BinaryMecatequi, buildinfo.BuildID, 0, /* single fire, short-lived */
-		productmetrics.FeatureSnapshot{Mode: productmetrics.ModeHeadless},
-		"" /* no install-id override: local-file mechanism */, diag)
+		productMetricsSnapshot(f),
+		"" /* no install-id override: local-file mechanism */, diag,
+		func(notice string) { _, _ = fmt.Fprint(stderr, notice) })
 	if pmErr != nil {
 		// Mirror the existing telemetry-setup-failure posture: a warning, never
 		// a fatal error — product metrics are best-effort and must not block a
@@ -87,13 +95,30 @@ func buildObservability(ctx context.Context, f flags, diag port.Diagnostics) (ob
 	return observability{HeadlessTelemetryHandles: h, productMetrics: pm}, nil
 }
 
+// productMetricsSnapshot derives the closed-set FeatureSnapshot the product-
+// metrics heartbeat reports, from fields already resolved on f — never a
+// model id/alias, only whether each feature is configured at all. mecatequi
+// has no memory or scheduler flags (single-shot: no per-project memory
+// store, no persistent scheduler to opt out of), so Memory/Scheduling stay
+// false; Guardrails/MCP/Provider mirror mecated's productMetricsSnapshot.
+func productMetricsSnapshot(f flags) productmetrics.FeatureSnapshot {
+	return productmetrics.FeatureSnapshot{
+		Guardrails: f.guardrailsModel != "",
+		MCP:        f.mcpServers != nil && len(f.mcpServers.Servers()) > 0,
+		Provider:   cliconfig.ResolveProviderFamily(f.useOpenAI, f.defaultProvider),
+		Mode:       productmetrics.ModeHeadless,
+	}
+}
+
 // flushTelemetry runs the OTLP + product-metrics Shutdown (flush) with a
 // bounded ctx so a dead collector cannot hang the run. It is safe to call on a
 // zero observability (both Shutdowns are no-ops when telemetry is disabled). A
 // flush failure is logged to stderr and never aborts — telemetry is
 // best-effort at exit. The product-metrics first-run disclosure notice is
-// printed to stderr here too (mecatequi already writes plain informational
-// lines to stderr — see emitAuthFileWarning/verdictLine).
+// NOT printed here: buildObservability's notify callback already wrote it,
+// synchronously, before the pipeline could ever record/export anything — see
+// buildObservability's doc comment. Printing it here instead (after
+// Shutdown/flush has already run) is exactly the ordering ADR 0329 forbids.
 func flushTelemetry(stderr io.Writer, obs observability, timeout time.Duration) {
 	ctx := context.Background()
 	if timeout > 0 {
@@ -110,9 +135,6 @@ func flushTelemetry(stderr io.Writer, obs observability, timeout time.Duration) 
 		if err := obs.productMetrics.Shutdown(ctx); err != nil {
 			_, _ = fmt.Fprintf(stderr, "mecatequi: product metrics flush: %v\n", err)
 		}
-	}
-	if obs.productMetrics.FirstRun {
-		_, _ = fmt.Fprint(stderr, cliconfig.ProductMetricsDisclosureNotice)
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/internal/adapter/productmetrics"
 )
 
 func boolPtr(b bool) *bool { return &b }
@@ -14,6 +15,34 @@ func boolPtr(b bool) *bool { return &b }
 // returns "" (unset), matching os.Getenv's own behavior.
 func envMap(m map[string]string) func(string) string {
 	return func(name string) string { return m[name] }
+}
+
+// TestResolveProviderFamily pins the closed-set mapping the product-metrics
+// heartbeat relies on across all four mecatl binaries: it must never return
+// the type's zero value (empty string) — the enum has no such member — so
+// every case below lands on a real ProviderFamily.
+func TestResolveProviderFamily(t *testing.T) {
+	cases := []struct {
+		name            string
+		useOpenAI       bool
+		defaultProvider string
+		want            productmetrics.ProviderFamily
+	}{
+		{"empty defaults to anthropic", false, "", productmetrics.ProviderAnthropic},
+		{"useOpenAI wins regardless of defaultProvider", true, "openrouter/some-model", productmetrics.ProviderOpenAI},
+		{"defaultProvider names openrouter", false, "openrouter/anthropic/claude", productmetrics.ProviderOpenRouter},
+		{"defaultProvider names openai", false, "openai/gpt-5", productmetrics.ProviderOpenAI},
+		{"defaultProvider names anthropic", false, "anthropic/claude-opus", productmetrics.ProviderAnthropic},
+		{"defaultProvider is case-insensitive", false, "OpenRouter/x", productmetrics.ProviderOpenRouter},
+		{"unrecognized defaultProvider falls to other", false, "some-custom-gateway", productmetrics.ProviderOther},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ResolveProviderFamily(tc.useOpenAI, tc.defaultProvider); got != tc.want {
+				t.Errorf("ResolveProviderFamily(%v, %q) = %q, want %q", tc.useOpenAI, tc.defaultProvider, got, tc.want)
+			}
+		})
+	}
 }
 
 func TestResolveProductMetricsEnabledPrecedence(t *testing.T) {

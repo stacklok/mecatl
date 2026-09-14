@@ -45,14 +45,16 @@ type observability struct {
 // so it degrades to a no-op Shutdown rather than failing this function's error
 // return (which stays meaningful for the OTLP half only).
 //
-// The first-run disclosure notice is printed HERE, at setup time — NOT in
-// flushTelemetry — because mecak8s is a long-running daemon (unlike
-// mecatequi's single-shot process, where setup and flush are seconds apart):
-// printing only at shutdown would leave the notice invisible for as long as
-// the process runs (potentially days/weeks) and never printed at all on a
-// SIGKILL/OOM-kill with no graceful shutdown path. This mirrors
-// cmd/mecated/main.go's setupProductMetrics, which prints at setup for the
-// same reason.
+// The first-run disclosure notice is printed via a notify callback
+// BuildProductMetrics itself invokes SYNCHRONOUSLY — before it starts the
+// heartbeat goroutine and before it returns — not deferred to a check on the
+// returned handles' FirstRun field afterward. mecak8s is a long-running
+// daemon (unlike mecatequi's single-shot process, where setup and flush are
+// seconds apart): printing only at shutdown (flushTelemetry) would leave the
+// notice invisible for as long as the process runs (potentially days/weeks)
+// and never printed at all on a SIGKILL/OOM-kill with no graceful shutdown
+// path. This mirrors cmd/mecated/main.go's setupProductMetrics, which prints
+// at setup for the same reason.
 func buildObservability(ctx context.Context, cfg config, diag port.Diagnostics) (observability, error) {
 	h, err := cliconfig.HeadlessTelemetry(ctx, cliconfig.HeadlessTelemetryConfig{
 		ServiceName:         "mecak8s",
@@ -101,7 +103,12 @@ func buildObservability(ctx context.Context, cfg config, diag port.Diagnostics) 
 	installIDOverride := os.Getenv("MECATL_PRODUCT_METRICS_INSTALL_ID")
 	pm, pmErr := cliconfig.BuildProductMetrics(ctx, ctx, enabled, cfg.productMetricsDryRun,
 		productmetrics.BinaryMecak8s, buildinfo.BuildID, productmetrics.DefaultHeartbeatInterval,
-		productmetrics.FeatureSnapshot{Mode: productmetrics.ModeK8s}, installIDOverride, diag)
+		productMetricsSnapshot(cfg), installIDOverride, diag,
+		// stderr, not diag: mecak8s already writes plain informational lines to
+		// stderr elsewhere (e.g. boundedClose's timeout line in main.go), and the
+		// disclosure banner is a one-time, human-facing notice rather than a
+		// structured operational log line.
+		func(notice string) { _, _ = fmt.Fprint(os.Stderr, notice) })
 	if pmErr != nil {
 		// Mirror the existing telemetry-setup-failure posture: a warning, never
 		// a fatal error — product metrics are best-effort and must not block
@@ -109,15 +116,24 @@ func buildObservability(ctx context.Context, cfg config, diag port.Diagnostics) 
 		diag.Log(ctx, port.LevelWarn, "product metrics disabled: setup failed", "err", pmErr)
 		pm = cliconfig.ProductMetricsHandles{Shutdown: func(context.Context) error { return nil }}
 	}
-	if pm.FirstRun {
-		// stderr, not diag: mecak8s already writes plain informational lines to
-		// stderr elsewhere (e.g. boundedClose's timeout line in main.go), and the
-		// disclosure banner is a one-time, human-facing notice rather than a
-		// structured operational log line.
-		_, _ = fmt.Fprint(os.Stderr, cliconfig.ProductMetricsDisclosureNotice)
-	}
 
 	return observability{HeadlessTelemetryHandles: h, productMetrics: pm}, nil
+}
+
+// productMetricsSnapshot derives the closed-set FeatureSnapshot the product-
+// metrics heartbeat reports, from fields already resolved on cfg — never a
+// model id/alias, only whether each feature is configured at all. No Memory:
+// mecak8s runs storage-free with no PVC (ADR 0048) — the same reason its
+// install-id comes from a Helm ConfigMap rather than a local file (see
+// buildObservability's installIDOverride handling, above).
+func productMetricsSnapshot(cfg config) productmetrics.FeatureSnapshot {
+	return productmetrics.FeatureSnapshot{
+		Guardrails: cfg.guardrailsModel != "",
+		MCP:        cfg.mcpServers != nil && len(cfg.mcpServers.Servers()) > 0,
+		Scheduling: !cfg.noScheduler,
+		Provider:   cliconfig.ResolveProviderFamily(cfg.useOpenAI, cfg.defaultProvider),
+		Mode:       productmetrics.ModeK8s,
+	}
 }
 
 // flushTelemetry runs the OTLP + product-metrics Shutdown (flush) with a

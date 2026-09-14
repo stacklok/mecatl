@@ -136,7 +136,7 @@ func TestTelemetryDefaultIsNil(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseFlags: %v", err)
 	}
-	obs, err := buildObservability(context.Background(), f, newDiagnostics())
+	obs, err := buildObservability(context.Background(), f, newDiagnostics(), io.Discard)
 	if err != nil {
 		t.Fatalf("buildObservability: %v", err)
 	}

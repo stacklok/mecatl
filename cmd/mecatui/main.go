@@ -954,11 +954,6 @@ func resolveTransport(ctx context.Context, cfg config) (target string, dial clie
 		_ = diagCloser.Close()
 		return target, client.DialConfig{}, noop, fmt.Errorf("start embedded server: %w", err)
 	}
-	if pm.FirstRun {
-		// Through diag, never stderr: stderr would corrupt the Bubble Tea
-		// alt-screen once the TUI program starts.
-		diag.Log(ctx, port.LevelInfo, cliconfig.ProductMetricsDisclosureNotice)
-	}
 	if toFile {
 		// One line, written to the FILE sink (never the TUI), so an operator can find
 		// where the embedded server's diagnostics went.
@@ -994,12 +989,21 @@ func resolveTransport(ctx context.Context, cfg config) (target string, dial clie
 }
 
 // productMetricsSnapshot derives the closed-set FeatureSnapshot the product-
-// metrics heartbeat reports for the embedded server. mecatui's feature-flag
-// detection is out of scope for this task (the same simplification mecated's
-// Task 11 made): only Mode is populated here; Memory/Guardrails/MCP/Scheduling
-// stay false and Provider stays the zero value.
-func productMetricsSnapshot() productmetrics.FeatureSnapshot {
-	return productmetrics.FeatureSnapshot{Mode: productmetrics.ModeInteractive}
+// metrics heartbeat reports for the embedded server, from fields already
+// resolved on cfg — never a model id/alias, only whether each feature is
+// configured at all. mecatui has no dedicated flags for guardrails/MCP/the
+// scheduler on its embedded-server config (those are resolved deeper inside
+// app.Build from settings.yaml, not surfaced back to main.go), so
+// Guardrails/MCP/Scheduling stay false — but Memory and Provider ARE
+// available on cfg and must not be left at their zero values (an empty
+// Provider heartbeats as the invalid provider_configured{family=""},
+// outside the documented anthropic|openai|openrouter|other enum).
+func productMetricsSnapshot(cfg config) productmetrics.FeatureSnapshot {
+	return productmetrics.FeatureSnapshot{
+		Memory:   cfg.memoryDir != "",
+		Provider: cliconfig.ResolveProviderFamily(false, cfg.defaultProvider),
+		Mode:     productmetrics.ModeInteractive,
+	}
 }
 
 // setupProductMetrics resolves the opt-out product-metrics precedence and builds
@@ -1014,12 +1018,22 @@ func productMetricsSnapshot() productmetrics.FeatureSnapshot {
 // negligible boot-time cost.
 //
 // It logs its own build failure via diag (NEVER stderr — stderr would corrupt
-// the Bubble Tea alt-screen) and does NOT print the disclosure notice itself;
-// the caller prints cliconfig.ProductMetricsDisclosureNotice through diag.Log
-// when the returned handles' FirstRun is true, after the embedded server has
-// started successfully. The returned cancel func must be called/deferred
-// unconditionally by the caller (Shutdown on the handles is always a safe
-// no-op when disabled/errored).
+// the Bubble Tea alt-screen once the TUI program starts). The first-run
+// disclosure notice IS written to stderr — through a notify callback
+// BuildProductMetrics itself invokes SYNCHRONOUSLY, before starting the
+// heartbeat goroutine and before returning — because at the point this runs
+// (resolveTransport, well before tea.NewProgram(...).Run() ever enters the
+// alt-screen) stderr is still plain, unbuffered terminal output; a
+// diag.Log-routed notice would instead land only in the diagnostics FILE
+// (invisible, and dropped entirely under --quiet), defeating ADR 0329's
+// visible-disclosure requirement. This also runs BEFORE embed.Start, not
+// deferred to a check on the returned handles' FirstRun field after the
+// embedded server has started (which left a window where a failed
+// embed.Start could flush an already-recording pipeline via
+// shutdownProductMetrics without the notice ever having been shown). The
+// returned cancel func must be called/deferred unconditionally by the
+// caller (Shutdown on the handles is always a safe no-op when
+// disabled/errored).
 func setupProductMetrics(ctx context.Context, cfg config, diag port.Diagnostics) (cliconfig.ProductMetricsHandles, func()) {
 	permResolver := permconfig.NewWithEnv(permconfig.Options{
 		Conventional: true,
@@ -1034,7 +1048,8 @@ func setupProductMetrics(ctx context.Context, cfg config, diag port.Diagnostics)
 	heartbeatCtx, cancelHeartbeat := context.WithCancel(context.Background())
 	pm, err := cliconfig.BuildProductMetrics(ctx, heartbeatCtx, productMetricsEnabled, cfg.productMetricsDryRun,
 		productmetrics.BinaryMecatui, buildinfo.BuildID, productmetrics.DefaultHeartbeatInterval,
-		productMetricsSnapshot(), "" /* no install-id override: local-file mechanism */, diag)
+		productMetricsSnapshot(cfg), "" /* no install-id override: local-file mechanism */, diag,
+		func(notice string) { fmt.Fprint(os.Stderr, notice) })
 	if err != nil {
 		diag.Log(ctx, port.LevelWarn, "mecatui: product metrics disabled: setup failed", "err", err.Error())
 	}

@@ -63,39 +63,68 @@ func FirstValueRecordedDefault() (bool, error) {
 // the install-id file) resets the install and lets time_to_first_value fire
 // once more.
 //
-// readFile/writeFile/mkdirAll are injected for testing;
+// The create is an ATOMIC cross-process claim, not a read-then-write check:
+// createExclusive must fail when the marker already exists (os.IsExist),
+// e.g. via O_CREATE|O_EXCL. Two processes racing this call therefore never
+// both observe already==false — exactly one create wins, and the loser
+// reliably reports already==true, even when the two calls are strictly
+// sequential rather than concurrent (the marker created by an earlier
+// process's call is still there when a later process's call runs).
+// firstValueTracker.claim() depends on this: it treats a false "won" from
+// its recordFn as "another process already has this install's one sample"
+// and skips recording, so a non-atomic check-then-act here would silently
+// let two processes each record a sample.
+//
+// mkdirAll/createExclusive are injected for testing;
 // LoadOrCreateFirstValueMarkerDefault binds the real filesystem.
 func LoadOrCreateFirstValueMarker(
 	env xdgconfig.ResolveEnv,
-	readFile func(string) ([]byte, error),
-	writeFile func(string, []byte, os.FileMode) error,
 	mkdirAll func(string, os.FileMode) error,
+	createExclusive func(string, []byte, os.FileMode) error,
 ) (already bool, err error) {
 	path, err := firstValueMarkerPath(env)
 	if err != nil {
 		return false, err
 	}
 
-	if readFile != nil {
-		if _, rerr := readFile(path); rerr == nil {
-			return true, nil
-		}
-	}
 	if mkdirAll != nil {
 		if merr := mkdirAll(filepath.Dir(path), 0o700); merr != nil {
 			return false, fmt.Errorf("productmetrics: create state dir: %w", merr)
 		}
 	}
-	if writeFile != nil {
-		if werr := writeFile(path, []byte("1"), 0o600); werr != nil {
-			return false, fmt.Errorf("productmetrics: write first-value marker: %w", werr)
-		}
+	if createExclusive == nil {
+		return false, nil
 	}
-	return false, nil
+	switch cerr := createExclusive(path, []byte("1"), 0o600); {
+	case cerr == nil:
+		return false, nil
+	case os.IsExist(cerr):
+		return true, nil
+	default:
+		return false, fmt.Errorf("productmetrics: write first-value marker: %w", cerr)
+	}
+}
+
+// createFileExclusive creates path only if it does not already exist,
+// returning an os.IsExist-satisfying error otherwise (O_CREATE|O_EXCL) — the
+// atomic cross-process claim LoadOrCreateFirstValueMarker's contract
+// depends on; a plain os.WriteFile (create-or-truncate) would let two
+// concurrent callers both "win".
+func createFileExclusive(path string, data []byte, perm os.FileMode) error {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, perm)
+	if err != nil {
+		return err
+	}
+	_, werr := f.Write(data)
+	cerr := f.Close()
+	if werr != nil {
+		return werr
+	}
+	return cerr
 }
 
 // LoadOrCreateFirstValueMarkerDefault binds LoadOrCreateFirstValueMarker to the
 // real process environment and filesystem.
 func LoadOrCreateFirstValueMarkerDefault() (already bool, err error) {
-	return LoadOrCreateFirstValueMarker(xdgconfig.OSEnv, os.ReadFile, os.WriteFile, os.MkdirAll)
+	return LoadOrCreateFirstValueMarker(xdgconfig.OSEnv, os.MkdirAll, createFileExclusive)
 }
