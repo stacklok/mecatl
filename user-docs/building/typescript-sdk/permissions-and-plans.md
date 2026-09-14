@@ -1,6 +1,7 @@
 ---
 title: Handle permissions and plans
-description: Resolve Mecatl permission asks and continue approved plans from TypeScript.
+description:
+  Resolve Mecatl permission asks and continue approved plans from TypeScript.
 sidebar_position: 5
 ---
 
@@ -88,7 +89,7 @@ needs the durable timeline across both run IDs.
 
 ## Related information
 
-- [TypeScript SDK core API](/reference/typescript-sdk-api/core.md) for responder,
-  error, and plan-resolution types.
+- [TypeScript SDK core API](/reference/typescript-sdk-api/core.md) for
+  responder, error, and plan-resolution types.
 - [Permissions and guardrails for builders](/building/what-you-get/permissions.md)
 - [Start and resume sessions](/features/start-and-resume-sessions.md)

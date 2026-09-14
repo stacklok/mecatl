@@ -1,7 +1,8 @@
 ---
 sidebar_position: 300
 title: Permissions and posture
-description: Control approvals, project trust, guardrails, and autonomous Mecatl operation.
+description:
+  Control approvals, project trust, guardrails, and autonomous Mecatl operation.
 ---
 
 # Permissions and posture
@@ -16,8 +17,8 @@ Mecatl has two separate safety controls:
 The permission rules are always present, including when no configuration file
 exists. Guardrails are disabled until an operator configures a checker model.
 
-For evaluator, authority-set, and custom-policy contracts, see [Permissions and
-guardrails for builders](/building/what-you-get/permissions.md).
+For evaluator, authority-set, and custom-policy contracts, see
+[Permissions and guardrails for builders](/building/what-you-get/permissions.md).
 
 ## Availability
 
@@ -41,10 +42,9 @@ before it starts.
 |`auto`|Enables the allow-all posture for the main agent and children while keeping deny rules and deliberately configured asks effective. Child substitution defenses remain enabled.|
 |`yolo`|Extends `auto` by allowing child command substitutions, backticks, and heredoc-style substitutions that `auto` keeps behind the child safety floor. Use only for isolated, disposable, single-tenant deployments.|
 
-`--yolo` and `--trust-project` are compatibility aliases that raise the
-posture tier. The highest effective tier wins. An operator-global `posture:`
-setting can also provide the baseline; a project file cannot raise the
-operator's posture.
+`--yolo` and `--trust-project` are compatibility aliases that raise the posture
+tier. The highest effective tier wins. An operator-global `posture:` setting can
+also provide the baseline; a project file cannot raise the operator's posture.
 
 Deployment defaults differ: `mecated` is interactive and defaults to `strict`,
 while unattended `mecak8s` and `mecatequi` deployments commonly select `auto`.
@@ -87,8 +87,8 @@ needs approval, an interactive client shows the call and lets the operator:
 
 An allow-always decision is learned only at the lowest built-in scope. It never
 overrides a deny or configured ask. Headless deployments do not have a human
-approval channel, so configure explicit allows or choose an appropriate
-posture before starting work.
+approval channel, so configure explicit allows or choose an appropriate posture
+before starting work.
 
 ### Plan mode
 
@@ -135,13 +135,12 @@ The configuration scopes, from highest to lowest precedence, are:
 6. the built-in default floor.
 
 Project permission files are resolved per session against that session's
-workspace. Project `deny` and `ask` rules remain effective, but project
-`allow` rules require project trust.
+workspace. Project `deny` and `ask` rules remain effective, but project `allow`
+rules require project trust.
 
 Use `--import-claude-permissions` to import supported rules from Claude Code
-`settings.json`. The import is lossy and fail-safe: unsupported
-or ambiguous rules are dropped or demoted to approval rather than widening
-access.
+`settings.json`. The import is lossy and fail-safe: unsupported or ambiguous
+rules are dropped or demoted to approval rather than widening access.
 
 ## Project trust
 
@@ -182,8 +181,8 @@ weaken or disable the operator's checker. A checker failure follows the
 configured fail-open/fail-closed behavior, and unsafe or malformed sanitized
 content is not silently accepted.
 
-See the [guardrails reference](/building/what-you-get/permissions.md)
-for matchers, modes, and checker failure handling.
+See the [guardrails reference](/building/what-you-get/permissions.md) for
+matchers, modes, and checker failure handling.
 
 ## Limitations
 
@@ -204,8 +203,8 @@ for matchers, modes, and checker failure handling.
 
 ## Next steps
 
-- [Permissions and guardrails](/building/what-you-get/permissions.md) for the detailed
-  rule-resolution and approval reference.
+- [Permissions and guardrails](/building/what-you-get/permissions.md) for the
+  detailed rule-resolution and approval reference.
 - [Project instructions and rules](./project-instructions-and-rules.md) for
   project-ingestion behavior.
 - [Execution environments](./execution-environments.md) for workspace and shell

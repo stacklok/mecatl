@@ -1,6 +1,7 @@
 ---
 title: Register callback tools
-description: Expose local Node.js or Bun handlers as tools on an SDK-owned Mecatl daemon.
+description:
+  Expose local Node.js or Bun handlers as tools on an SDK-owned Mecatl daemon.
 sidebar_position: 7
 ---
 

@@ -1,7 +1,8 @@
 ---
 sidebar_position: 110
 title: Choose models and providers
-description: Select the provider, model, and reasoning effort for a Mecatl session.
+description:
+  Select the provider, model, and reasoning effort for a Mecatl session.
 ---
 
 # Choose models and providers
@@ -53,11 +54,12 @@ and keybinding details.
 
 ### Endpoint overrides
 
-The built-in provider endpoint flags (`--openai-base-url`, `--openrouter-base-url`,
-`--anthropic-base-url`, and `--opencode-base-url`) are non-secret configuration.
-They override the matching operator `provider_overrides` setting; settings override the
-built-in endpoint. Custom provider URLs remain defined only by their provider definition.
-OpenAI and Anthropic keep their SDK endpoint when neither source supplies an override.
+The built-in provider endpoint flags (`--openai-base-url`,
+`--openrouter-base-url`, `--anthropic-base-url`, and `--opencode-base-url`) are
+non-secret configuration. They override the matching operator
+`provider_overrides` setting; settings override the built-in endpoint. Custom
+provider URLs remain defined only by their provider definition. OpenAI and
+Anthropic keep their SDK endpoint when neither source supplies an override.
 
 ### Configure a server default
 
@@ -75,8 +77,8 @@ same example is valid only when that server's OpenAI provider can use it. The
 server's built-in OpenAI default remains available when no explicit model is
 configured.
 
-For a zero-selector session, server-side resolution is separate for provider
-and model:
+For a zero-selector session, server-side resolution is separate for provider and
+model:
 
 - provider: `--default-provider`, otherwise the automatic available-provider
   preference;
@@ -89,22 +91,26 @@ default fails startup rather than silently selecting a different provider or
 model.
 
 `mecatui` accepts these flags for its embedded server. They do not reconfigure a
-server used through `mecatui connect`. `mecak8s` exposes the corresponding server
-configuration. See the [operator provider and model reference](/building/deployment/mecated.md#provider-and-model)
+server used through `mecatui connect`. `mecak8s` exposes the corresponding
+server configuration. See the
+[operator provider and model reference](/building/deployment/mecated.md#provider-and-model)
 for credential sources and deployment options.
 
 ### Operator-defined gateways
 
-An operator can declare a named HTTPS gateway in the user-global `settings.yaml` under
-`providers:` and make it the deployment default with `models.default_provider`. API-key
-gateways use the matching provider ID in the operator-local `auth.yaml`; credentials are
-never read from a project file or supplied by `mecatui connect`. The server snapshots these
-settings and credentials once while it starts, so changing either file requires a restart.
-When a custom provider's live model listing is unreachable, unauthorized, or empty,
-`/models` keeps its configured default model selectable and displays only a safe
-provider status; endpoints, credentials, and raw listing errors or response bodies
-are never published to clients. Built-in `--*-base-url` flags still take precedence over eligible built-in endpoint overrides.
-See the [provider configuration reference](/reference/configuration.md#providers) for the accepted flavors and fields.
+An operator can declare a named HTTPS gateway in the user-global `settings.yaml`
+under `providers:` and make it the deployment default with
+`models.default_provider`. API-key gateways use the matching provider ID in the
+operator-local `auth.yaml`; credentials are never read from a project file or
+supplied by `mecatui connect`. The server snapshots these settings and
+credentials once while it starts, so changing either file requires a restart.
+When a custom provider's live model listing is unreachable, unauthorized, or
+empty, `/models` keeps its configured default model selectable and displays only
+a safe provider status; endpoints, credentials, and raw listing errors or
+response bodies are never published to clients. Built-in `--*-base-url` flags
+still take precedence over eligible built-in endpoint overrides. See the
+[provider configuration reference](/reference/configuration.md#providers) for
+the accepted flavors and fields.
 
 ### Configure aliases, slots, and task routing
 
@@ -135,7 +141,8 @@ models:
         description: Deep reasoning, architecture, and subtle concurrency bugs.
         model: heavy
       - name: medium
-        description: Multi-file implementation, integration, and substantial tests.
+        description:
+          Multi-file implementation, integration, and substantial tests.
         model: coder
       - name: small
         description: Focused edits, known fixes, and quick lookups.
@@ -152,19 +159,19 @@ These mechanisms are independent:
   `guardrail`, `plan`, and `router` do not replace the session model. The `plan`
   slot can use a stronger model while a plan is being written; compaction and
   checker slots can use cheaper models.
-- **`title` is an explicit opt-in slot** for automatic session-title generation. It
-  has no fallback at all: if the binding is absent, or if it is present but cannot
-  be resolved for the session's fixed provider, generation is disabled and the
-  server makes no title-provider call. This differs from other invalid slot or
-  route targets, which may warn and fall back to the session model. With a
-  compatible `title` binding, the server generates a title asynchronously from up
-  to three early genuine prompts; it never delays or changes the chat. Its token
-  usage is stored separately as `session_title`, not charged to the chat's
+- **`title` is an explicit opt-in slot** for automatic session-title generation.
+  It has no fallback at all: if the binding is absent, or if it is present but
+  cannot be resolved for the session's fixed provider, generation is disabled
+  and the server makes no title-provider call. This differs from other invalid
+  slot or route targets, which may warn and fall back to the session model. With
+  a compatible `title` binding, the server generates a title asynchronously from
+  up to three early genuine prompts; it never delays or changes the chat. Its
+  token usage is stored separately as `session_title`, not charged to the chat's
   displayed usage or run budget.
-- **Router categories** select a model for a plain delegated Subagent, an unpinned
-  named specialist (including `mode: "read-write"`), a Parallel branch, or an undefined
-  team member from the task description. A taxonomy enables the router; with no taxonomy,
-  delegation keeps its inherited/default model.
+- **Router categories** select a model for a plain delegated Subagent, an
+  unpinned named specialist (including `mode: "read-write"`), a Parallel branch,
+  or an undefined team member from the task description. A taxonomy enables the
+  router; with no taxonomy, delegation keeps its inherited/default model.
 
 With the example above, routing resolves as:
 
@@ -175,32 +182,34 @@ small  → quick  → gemini-3.5-flash
 image  → image  → gpt-5.6-terra
 ```
 
-Resolution is fail-soft for slots and routes other than `title`: an invalid alias,
-slot, or route target warns and falls back to the session model. The `title` slot is
-the exception described above; an absent or unresolvable title binding disables
-generation rather than falling back or making a provider call. Explicit per-call
-models, model-pinned named agents, fork or resume choices, and other higher-
-precedence selectors are not overridden by the router. A named definition with no
-`model:` is routable; `model: inherit` is an explicit pin. Writable named routing
-keeps the specialist's direct-write scope, while explicit `read-write`+`agent`+`model`
-remains invalid. Model slots and router taxonomies are operator decisions; project
-model settings are ignored unless the operator explicitly allows the relevant model
-set on a trusted project via `models.allowlist`.
+Resolution is fail-soft for slots and routes other than `title`: an invalid
+alias, slot, or route target warns and falls back to the session model. The
+`title` slot is the exception described above; an absent or unresolvable title
+binding disables generation rather than falling back or making a provider call.
+Explicit per-call models, model-pinned named agents, fork or resume choices, and
+other higher- precedence selectors are not overridden by the router. A named
+definition with no `model:` is routable; `model: inherit` is an explicit pin.
+Writable named routing keeps the specialist's direct-write scope, while explicit
+`read-write`+`agent`+`model` remains invalid. Model slots and router taxonomies
+are operator decisions; project model settings are ignored unless the operator
+explicitly allows the relevant model set on a trusted project via
+`models.allowlist`.
 
-An allowlisted model is not scoped to a particular use: a trusted project can bind any
-allowlisted model to any slot, including the `guardrail` and `ask-reviewer` safety
-checkers, not just the session default. Do not allowlist a model you would be
-unwilling to see used as a safety checker.
+An allowlisted model is not scoped to a particular use: a trusted project can
+bind any allowlisted model to any slot, including the `guardrail` and
+`ask-reviewer` safety checkers, not just the session default. Do not allowlist a
+model you would be unwilling to see used as a safety checker.
 
-This configuration belongs in the operator-global settings file, not a checked-in
-project file. See the [configuration reference](/reference/configuration.md#models)
-for the complete field schema and defaults.
+This configuration belongs in the operator-global settings file, not a
+checked-in project file. See the
+[configuration reference](/reference/configuration.md#models) for the complete
+field schema and defaults.
 
 ### Route OpenRouter models through preferred downstreams
 
-OpenRouter can serve one model through several downstream inference providers. By
-default, it balances among them by price. An operator can instead set a preferred
-order for each model in the operator-tier `settings.yaml`:
+OpenRouter can serve one model through several downstream inference providers.
+By default, it balances among them by price. An operator can instead set a
+preferred order for each model in the operator-tier `settings.yaml`:
 
 ```yaml
 openrouter:
@@ -212,29 +221,30 @@ openrouter:
       order: ['deepinfra/turbo']
 ```
 
-`order` accepts lowercase-kebab downstream slugs and disables OpenRouter's default
-price balancing. An absent `allow_fallbacks` keeps OpenRouter's default (`true`), so
-it may try other downstreams after exhausting the list. Setting it to `false` pins
-the request to the listed downstreams and can fail the turn when none are available.
+`order` accepts lowercase-kebab downstream slugs and disables OpenRouter's
+default price balancing. An absent `allow_fallbacks` keeps OpenRouter's default
+(`true`), so it may try other downstreams after exhausting the list. Setting it
+to `false` pins the request to the listed downstreams and can fail the turn when
+none are available.
 
 This configuration is operator-tier only because it controls spend, compliance,
-and capabilities. Mecatl ignores a project-tier `openrouter` block with a warning.
-Invalid slugs and empty orders are also dropped with a warning.
+and capabilities. Mecatl ignores a project-tier `openrouter` block with a
+warning. Invalid slugs and empty orders are also dropped with a warning.
 
 For each OpenRouter turn, Mecatl reports the selected downstream as a
 `provider.route` event when OpenRouter supplies that metadata. The value may be
-absent on a cache hit. It is OpenRouter's display name, such as `Google`, not the
-configuration slug such as `google-vertex`, so treat it as human-readable status
-rather than a round-trippable identifier.
+absent on a cache hit. It is OpenRouter's display name, such as `Google`, not
+the configuration slug such as `google-vertex`, so treat it as human-readable
+status rather than a round-trippable identifier.
 
-See the [configuration reference](/reference/configuration.md#openrouter) for the
-full field schema.
+See the [configuration reference](/reference/configuration.md#openrouter) for
+the full field schema.
 
 ### Run one shot with mecatequi
 
 `mecatequi` creates a new session for one prompt. It accepts model/provider
-defaults and reasoning-effort settings, but has no interactive model picker.
-Use it when the caller already knows the deployment and model configuration.
+defaults and reasoning-effort settings, but has no interactive model picker. Use
+it when the caller already knows the deployment and model configuration.
 
 ### Configure reasoning effort
 
@@ -244,23 +254,24 @@ The accepted reasoning-effort values are:
 auto, low, medium, high, xhigh, max
 ```
 
-`reasoning-effort` may be set as a server default or supplied per session.
-The important distinction is:
+`reasoning-effort` may be set as a server default or supplied per session. The
+important distinction is:
 
 - omitted effort uses the server's configured default, or the provider default
   when no server default exists;
 - explicit `auto` requests the provider's default effort; and
 - a valid non-empty per-session value overrides the server default.
 
-An invalid server value is ignored with a warning and becomes unset. An
-invalid per-session value is ignored with a warning and falls back to the
-server default. The server may normalize, clamp, or drop a value according to
-the selected provider and known model capabilities.
+An invalid server value is ignored with a warning and becomes unset. An invalid
+per-session value is ignored with a warning and falls back to the server
+default. The server may normalize, clamp, or drop a value according to the
+selected provider and known model capabilities.
 
-The effective result is returned in `resolved_model.reasoning_effort`, so clients
-can display what the server actually applied. Provider-specific effort mapping
-belongs in the [configuration reference](/reference/configuration.md#reasoning-effort),
-not in the selection workflow.
+The effective result is returned in `resolved_model.reasoning_effort`, so
+clients can display what the server actually applied. Provider-specific effort
+mapping belongs in the
+[configuration reference](/reference/configuration.md#reasoning-effort), not in
+the selection workflow.
 
 ## API journey
 
@@ -301,13 +312,14 @@ A bare `model_id` returns HTTP 400 or gRPC `InvalidArgument`. The same applies
 to an unknown or unavailable provider. The API returns the new session ID and
 resolved model information after successful creation.
 
-See [Drive via gRPC / HTTP](/building/deployment/grpc-http.md) for the shared session
-lifecycle and [the HTTP/SSE API reference](/reference/http-sse-api.md)
+See [Drive via gRPC / HTTP](/building/deployment/grpc-http.md) for the shared
+session lifecycle and [the HTTP/SSE API reference](/reference/http-sse-api.md)
 for endpoint details.
 
 ## Model inventory and capabilities
 
-`ListModels` and mecatui's `/models` inventory expose public metadata, including:
+`ListModels` and mecatui's `/models` inventory expose public metadata,
+including:
 
 - provider ID and opaque model ID;
 - display name when available;
@@ -321,12 +333,12 @@ configured at startup. A provider's live model catalog may refresh while the
 server is running.
 
 Models whose catalog includes it can call the read-only `DiscoverModels` tool to
-inspect this same resolved inventory. Results contain the exact `provider_id` plus
-`model_id` selection handle and the same safe metadata as `ListModels`; equal model
-IDs under different providers remain separate. Exact provider/model filters are
-supported. Output defaults to 20 entries and is capped at 50 entries and 32 KiB.
-The tool does not probe providers, accept endpoints or credentials, or change the
-current session, and remains available in no-filesystem sessions.
+inspect this same resolved inventory. Results contain the exact `provider_id`
+plus `model_id` selection handle and the same safe metadata as `ListModels`;
+equal model IDs under different providers remain separate. Exact provider/model
+filters are supported. Output defaults to 20 entries and is capped at 50 entries
+and 32 KiB. The tool does not probe providers, accept endpoints or credentials,
+or change the current session, and remains available in no-filesystem sessions.
 
 For a known model, the session's effective capabilities combine the model's
 metadata with the selected adapter's transport capabilities. For an uncatalogued

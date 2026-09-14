@@ -1,6 +1,8 @@
 ---
 title: Work with sessions and runs
-description: Create Mecatl sessions, consume run events or results, send controls, and attach media.
+description:
+  Create Mecatl sessions, consume run events or results, send controls, and
+  attach media.
 sidebar_position: 4
 ---
 

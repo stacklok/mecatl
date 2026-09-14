@@ -1,12 +1,16 @@
 ---
 sidebar_position: 6
 title: Keybindings
-description: Use mecatui keyboard shortcuts to send prompts, navigate chats, and inspect activity.
+description:
+  Use mecatui keyboard shortcuts to send prompts, navigate chats, and inspect
+  activity.
 ---
 
 # Keybindings
 
-Press `?` on an empty prompt to open the live help overlay. It shows the active bindings after remapping and greys out features the connected server does not provide.
+Press `?` on an empty prompt to open the live help overlay. It shows the active
+bindings after remapping and greys out features the connected server does not
+provide.
 
 ## Everyday keys
 
@@ -46,11 +50,14 @@ In a permission modal, inspect the request before choosing:
 |`d`, `n`, or `esc`|Deny.|
 |`tab` or `←` / `→`|Move between buttons.|
 
-`Allow always` is session-scoped, applies only to the exact main-agent action, and never overrides configured policy. Long arguments can be scrolled; `ctrl+t` opens a full-screen view when offered.
+`Allow always` is session-scoped, applies only to the exact main-agent action,
+and never overrides configured policy. Long arguments can be scrolled; `ctrl+t`
+opens a full-screen view when offered.
 
 ## Remap actions
 
-Put client-owned bindings in `$XDG_CONFIG_HOME/mecatui/settings.yaml` (normally `~/.config/mecatui/settings.yaml`):
+Put client-owned bindings in `$XDG_CONFIG_HOME/mecatui/settings.yaml` (normally
+`~/.config/mecatui/settings.yaml`):
 
 ```yaml
 keymap:
@@ -76,7 +83,11 @@ Bindings resolve per action. The deprecated
 client file overrides it, and `--keymap` wins for the named action. Restart
 `mecatui` after changing the settings file.
 
-Action names are exact. Global actions need a modified or special chord so normal typing stays available; approval and overlay actions can use bare letters. Invalid names, empty chords, conflicting bindings, a shared submit/newline key, or an unsafe approval collision fail startup with a `keymap:` error.
+Action names are exact. Global actions need a modified or special chord so
+normal typing stays available; approval and overlay actions can use bare
+letters. Invalid names, empty chords, conflicting bindings, a shared
+submit/newline key, or an unsafe approval collision fail startup with a
+`keymap:` error.
 
 ### Input editing caveat
 
@@ -87,15 +98,17 @@ apart from `SelectAll`, `CopySelection`, and `ClearPrompt`. For example,
 deletes to the end of the line.
 
 Use `shift+arrow` for keyboard selection. On the alternate screen, drag over
-prompt text for mouse selection. Starting a prompt selection clears a conversation
-selection and vice versa. Releasing the mouse does not copy the prompt; use
-`ctrl+y` or right-click to copy the active selection. With `--no-mouse`, the
-terminal retains native mouse selection, while keyboard selection remains
-available.
+prompt text for mouse selection. Starting a prompt selection clears a
+conversation selection and vice versa. Releasing the mouse does not copy the
+prompt; use `ctrl+y` or right-click to copy the active selection. With
+`--no-mouse`, the terminal retains native mouse selection, while keyboard
+selection remains available.
 
 Client-owned actions take precedence over textarea chords. For example, `ctrl+t`
 expands details and `ctrl+v` handles paste. `ctrl+g` selects all only in the
-prompt; in the models picker it sets the global default. Remapping an action to a
-textarea chord gives the client-owned action precedence.
+prompt; in the models picker it sets the global default. Remapping an action to
+a textarea chord gives the client-owned action precedence.
 
-For every action name, editing chord, overlay key, mouse behavior, and validation rule, see the [exhaustive `docs/tui.md` key reference](https://github.com/stacklok/mecatl/blob/main/docs/tui.md#keys).
+For every action name, editing chord, overlay key, mouse behavior, and
+validation rule, see the
+[exhaustive `docs/tui.md` key reference](https://github.com/stacklok/mecatl/blob/main/docs/tui.md#keys).

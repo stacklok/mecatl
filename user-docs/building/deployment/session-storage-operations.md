@@ -1,32 +1,37 @@
 ---
 sidebar_position: 110
 title: Operate local session storage
-description: Operate and protect the local JSONL session store through Mecatl's management API.
+description:
+  Operate and protect the local JSONL session store through Mecatl's management
+  API.
 ---
 
 # Operate local session storage
 
-This guide is for a single-user `mecated` daemon with the embedded JSONL store. It keeps the
-executable, operator policy, and plaintext session state at stable paths, and uses Mecatl's
-management API rather than editing store files. For the storage-management API,
-see the [gRPC reference](/reference/grpc-api.md); for the interactive workflow,
-see [mecatui session maintenance](/mecatui/sessions.md#privacy-and-maintenance).
+This guide is for a single-user `mecated` daemon with the embedded JSONL store.
+It keeps the executable, operator policy, and plaintext session state at stable
+paths, and uses Mecatl's management API rather than editing store files. For the
+storage-management API, see the [gRPC reference](/reference/grpc-api.md); for
+the interactive workflow, see
+[mecatui session maintenance](/mecatui/sessions.md#privacy-and-maintenance).
 
 :::warning[The store contains plaintext]
 
-The state directory contains prompts, model output, tool arguments/results, event history, owner
-metadata, and possibly secrets in **plaintext**. Keep the directory and every backup owner-only:
-`0700` for directories and `0600` for regular files. Do not put the state tree in a shared sync
-folder, source-control checkout, or unencrypted multi-user backup. The service account must be the
-only account that can read it.
+The state directory contains prompts, model output, tool arguments/results,
+event history, owner metadata, and possibly secrets in **plaintext**. Keep the
+directory and every backup owner-only: `0700` for directories and `0600` for
+regular files. Do not put the state tree in a shared sync folder, source-control
+checkout, or unencrypted multi-user backup. The service account must be the only
+account that can read it.
 
 :::
 
 ## Put retention in operator settings
 
-Automatic cleanup is daemon-owned retention. Save this policy at the service's exact
-`--permission-config` path. Main-session deletion remains disabled; change it only after inspecting
-the effective policy and acknowledging its impact. Every zero disables that limit.
+Automatic cleanup is daemon-owned retention. Save this policy at the service's
+exact `--permission-config` path. Main-session deletion remains disabled; change
+it only after inspecting the effective policy and acknowledging its impact.
+Every zero disables that limit.
 
 {/* scenario9-retention */}
 
@@ -46,19 +51,23 @@ retention:
   acknowledge_main_deletion: false
 ```
 
-The operator settings file is policy, not the daemon topology file. Keep it mode `0600`; create its
-parent directory mode `0700`. Unknown keys, negative values, and unsupported versions fail startup.
-Explicit retention flags override this file. If main retention is enabled, startup also requires
-`acknowledge_main_deletion: true` (or the equivalent explicit flag) after logging the effective
-planner summary. Unknown, corrupt, active, awaiting, live, and leased sessions remain protected.
+The operator settings file is policy, not the daemon topology file. Keep it mode
+`0600`; create its parent directory mode `0700`. Unknown keys, negative values,
+and unsupported versions fail startup. Explicit retention flags override this
+file. If main retention is enabled, startup also requires
+`acknowledge_main_deletion: true` (or the equivalent explicit flag) after
+logging the effective planner summary. Unknown, corrupt, active, awaiting, live,
+and leased sessions remain protected.
 
 ## Linux: systemd user service
 
-Install the released `mecated` executable at `/usr/local/bin/mecated`. A Homebrew install puts it in
-`$(brew --prefix)/bin` instead — `/home/linuxbrew/.linuxbrew/bin/mecated` on Linux — so either point
-`ExecStart` at that absolute path or symlink the executable into `/usr/local/bin/mecated`; systemd
-performs no `PATH` lookup or shell expansion. See [Install Mecatl](/install.md). Create the config and
-state directories before enabling the service; `%h` is systemd's stable home-directory specifier. Save
+Install the released `mecated` executable at `/usr/local/bin/mecated`. A
+Homebrew install puts it in `$(brew --prefix)/bin` instead —
+`/home/linuxbrew/.linuxbrew/bin/mecated` on Linux — so either point `ExecStart`
+at that absolute path or symlink the executable into `/usr/local/bin/mecated`;
+systemd performs no `PATH` lookup or shell expansion. See
+[Install Mecatl](/install.md). Create the config and state directories before
+enabling the service; `%h` is systemd's stable home-directory specifier. Save
 the following as `~/.config/systemd/user/mecated.service`.
 
 {/* scenario9-systemd */}
@@ -80,20 +89,23 @@ UMask=0077
 WantedBy=default.target
 ```
 
-`ExecStart` is deliberately one directive with no shell, substitution, or wrapper. systemd passes
-each whitespace-delimited argument exactly as shown. Provider credentials should come from the
-user service manager's protected environment or credential facility, not from this world-readable
-example and not from `settings.yaml`.
+`ExecStart` is deliberately one directive with no shell, substitution, or
+wrapper. systemd passes each whitespace-delimited argument exactly as shown.
+Provider credentials should come from the user service manager's protected
+environment or credential facility, not from this world-readable example and not
+from `settings.yaml`.
 
 ## macOS: launchd user agent
 
-Install the released executable at `/usr/local/bin/mecated`. A Homebrew install puts it under
-`$(brew --prefix)/bin`, which is `/opt/homebrew/bin/mecated` on Apple silicon and
-`/usr/local/bin/mecated` on Intel; confirm the location with `brew --prefix mecatl` and use that exact
-absolute path in `ProgramArguments`. See [Install Mecatl](/install.md). Replace `USERNAME` with the login
-account in every path, create both `Library/Application Support/mecatl` and its `sessions`
+Install the released executable at `/usr/local/bin/mecated`. A Homebrew install
+puts it under `$(brew --prefix)/bin`, which is `/opt/homebrew/bin/mecated` on
+Apple silicon and `/usr/local/bin/mecated` on Intel; confirm the location with
+`brew --prefix mecatl` and use that exact absolute path in `ProgramArguments`.
+See [Install Mecatl](/install.md). Replace `USERNAME` with the login account in
+every path, create both `Library/Application Support/mecatl` and its `sessions`
 subdirectory owner-only, and save this as
-`~/Library/LaunchAgents/com.stacklok.mecatl.plist`. launchd does not expand `~` or shell variables.
+`~/Library/LaunchAgents/com.stacklok.mecatl.plist`. launchd does not expand `~`
+or shell variables.
 
 {/* scenario9-launchd */}
 
@@ -128,35 +140,41 @@ subdirectory owner-only, and save this as
 </plist>
 ```
 
-Every token is one `ProgramArguments` item. In particular, each path containing spaces is one item;
-do not collapse the array into a shell command string. Keep provider credentials in a protected
-launchd environment or secret facility rather than embedding them in the plist.
+Every token is one `ProgramArguments` item. In particular, each path containing
+spaces is one item; do not collapse the array into a shell command string. Keep
+provider credentials in a protected launchd environment or secret facility
+rather than embedding them in the plist.
 
 ## Management truth and safe cleanup
 
-**Do not use cron, `find`, filesystem globs, shell loops, systemd timers, launchd calendar jobs, or
-file-age rules to delete anything below the store directory.** External deletion bypasses
-session-family ordering, cross-process locks, live-run and lease checks, durable taxonomy,
-generation-bound plans, and sidecar-first/snapshot-last deletion. Filename patterns are not a
-session-kind authority. There is intentionally no external deletion recipe here.
+**Do not use cron, `find`, filesystem globs, shell loops, systemd timers,
+launchd calendar jobs, or file-age rules to delete anything below the store
+directory.** External deletion bypasses session-family ordering, cross-process
+locks, live-run and lease checks, durable taxonomy, generation-bound plans, and
+sidecar-first/snapshot-last deletion. Filename patterns are not a session-kind
+authority. There is intentionally no external deletion recipe here.
 
 The management surface depends on where mecatui runs:
 
-- **Embedded mecatui** owns its local server and local state. Its local retention flags/settings and
-  Maintenance tab describe that embedded backend only.
-- **`mecatui connect`** is a client of the remote daemon. It cannot configure remote retention.
-  Storage health, optimization, and cleanup appear only when the server advertises the corresponding
-  management capability and the authenticated caller has authority. Missing capability means
-  unavailable, not zero usage or zero reclaimable bytes.
+- **Embedded mecatui** owns its local server and local state. Its local
+  retention flags/settings and Maintenance tab describe that embedded backend
+  only.
+- **`mecatui connect`** is a client of the remote daemon. It cannot configure
+  remote retention. Storage health, optimization, and cleanup appear only when
+  the server advertises the corresponding management capability and the
+  authenticated caller has authority. Missing capability means unavailable, not
+  zero usage or zero reclaimable bytes.
 
-Storage health also reports bounded, content-free counts and identifier samples of the **ownerless**
-sessions and schedules still in the store, so an operator can assess an OIDC ownership cutover before
-admitting tenant traffic. Enabling caller identity makes every pre-existing ownerless record
-permanently unavailable to every caller, with no adoption path — see
+Storage health also reports bounded, content-free counts and identifier samples
+of the **ownerless** sessions and schedules still in the store, so an operator
+can assess an OIDC ownership cutover before admitting tenant traffic. Enabling
+caller identity makes every pre-existing ownerless record permanently
+unavailable to every caller, with no adoption path — see
 [Kubernetes deployment](./mecak8s.md) for the cutover procedure.
 
-For a remote OIDC daemon, authentication alone is not management authority. The operator must list
-exact verified issuer/subject pairs in the operator-tier settings file:
+For a remote OIDC daemon, authentication alone is not management authority. The
+operator must list exact verified issuer/subject pairs in the operator-tier
+settings file:
 
 ```yaml
 storage_management:
@@ -166,76 +184,92 @@ storage_management:
       subject: storage-admin
 ```
 
-An absent or empty list fails closed and does not advertise remote storage management. Project
-settings, request owner claims, display names, grant types, and system-principal status cannot grant
-this authority. Destructive migration, cleanup, and automatic retention additionally require a
-working cross-process session-lease backend for every shareable store; a missing, disabled, or
-`UNIMPLEMENTED` lease makes destructive management unavailable and causes automatic deletion to
-fail closed. A lease held by another process skips the protected family without mutation.
-Management authority never doubles as a single-writer proof. Local JSONL stores remain convenient
-because every `--store-dir` composition automatically wires the existing flock session lease beneath
-the store root; multiple local processes sharing that root contend on the same per-session locks.
-Only the process-private in-memory store can safely omit that lease.
+An absent or empty list fails closed and does not advertise remote storage
+management. Project settings, request owner claims, display names, grant types,
+and system-principal status cannot grant this authority. Destructive migration,
+cleanup, and automatic retention additionally require a working cross-process
+session-lease backend for every shareable store; a missing, disabled, or
+`UNIMPLEMENTED` lease makes destructive management unavailable and causes
+automatic deletion to fail closed. A lease held by another process skips the
+protected family without mutation. Management authority never doubles as a
+single-writer proof. Local JSONL stores remain convenient because every
+`--store-dir` composition automatically wires the existing flock session lease
+beneath the store root; multiple local processes sharing that root contend on
+the same per-session locks. Only the process-private in-memory store can safely
+omit that lease.
 
-Before any change, open **Sessions → Maintenance** and inspect **Storage health**. Record the
-effective policy, current/reclaimable bytes, format and durable-kind counts, last/next sweep, active
-job, and last failure. Then run **Optimize storage** or **Clean up sessions** to obtain the read-only
-dry run. Review its exact scope, protected counts, generation, reclaimable estimate, and temporary
-space requirement **before apply**. Optimization preserves sessions; cleanup is destructive and
-requires its separate high-friction confirmation. A stale plan must be discarded and planned again.
+Before any change, open **Sessions → Maintenance** and inspect **Storage
+health**. Record the effective policy, current/reclaimable bytes, format and
+durable-kind counts, last/next sweep, active job, and last failure. Then run
+**Optimize storage** or **Clean up sessions** to obtain the read-only dry run.
+Review its exact scope, protected counts, generation, reclaimable estimate, and
+temporary space requirement **before apply**. Optimization preserves sessions;
+cleanup is destructive and requires its separate high-friction confirmation. A
+stale plan must be discarded and planned again.
 
-An unsupported backend must be treated as unsupported: do not infer safety from empty fields, do not
-fall back to filesystem deletion, and do not copy a local-backend procedure onto a connected remote
-store. Ask that backend's operator for its advertised maintenance and backup contract.
+An unsupported backend must be treated as unsupported: do not infer safety from
+empty fields, do not fall back to filesystem deletion, and do not copy a
+local-backend procedure onto a connected remote store. Ask that backend's
+operator for its advertised maintenance and backup contract.
 
 ## Quiesced backup, migration, and restore runbook
 
-Use this sequence for upgrades, v1-to-v2 optimization, retention-policy changes, and recovery drills.
-It contains no destructive shell command examples; use your platform's backup tooling with the
-service stopped.
+Use this sequence for upgrades, v1-to-v2 optimization, retention-policy changes,
+and recovery drills. It contains no destructive shell command examples; use your
+platform's backup tooling with the service stopped.
 
-1. **Stop and quiesce.** Stop the user service and confirm the daemon has exited. Confirm no other
-   process or replica points at the same local store and no maintenance job is active. The
-   configured store path and every ancestor must be physical non-symlink directories; on macOS,
-   use the physical `/private/...` spelling instead of `/var/...`.
-   A filesystem copy while the daemon is writing is not a supported backup. The stable
-   family flock coordinates cooperating Mecatl processes only; it cannot make an
-   external copy or arbitrary writer consistent. V2 snapshots and sidecars sync where
-   supported, but `SnapshotDurability` can report a weaker filesystem, so a successful
-   snapshot operation must not be advertised as host-crash safe there. Even when all
-   probes pass, the guarantee depends on an underlying filesystem/storage stack that
-   honors successful sync and atomic rename; a probe proves syscall support, not media
-   persistence, and does not make tmpfs survive power loss. Strict EventLog append
-   requires both file and directory sync. Delete, retention, and migration fail before
-   mutation when directory sync is unavailable, reducing maintenance availability. An
-   existing canonical snapshot can retain a weaker Save capability, but the first Save
-   of a root-level legacy family then fails before migration. Tool-call audit attempts
-   every available sync and may leave an unsynced or partially synced best-effort record.
-   An interrupted final JSONL record is the only tolerated torn tail; a blank,
-   whitespace-only, or otherwise malformed complete record fails loudly and needs
-   operator recovery.
-2. **Back up.** Snapshot or copy the complete state directory—not selected globs—including current
-   snapshots, legacy files, tool/event sidecars, catalog data, maintenance job state, and lock
-   sentinels. Preserve ownership, mode, timestamps, and filesystem boundaries. Record the executable
-   version, config file, effective policy, and backup checksum alongside it. Keep the backup
+1. **Stop and quiesce.** Stop the user service and confirm the daemon has
+   exited. Confirm no other process or replica points at the same local store
+   and no maintenance job is active. The configured store path and every
+   ancestor must be physical non-symlink directories; on macOS, use the physical
+   `/private/...` spelling instead of `/var/...`. A filesystem copy while the
+   daemon is writing is not a supported backup. The stable family flock
+   coordinates cooperating Mecatl processes only; it cannot make an external
+   copy or arbitrary writer consistent. V2 snapshots and sidecars sync where
+   supported, but `SnapshotDurability` can report a weaker filesystem, so a
+   successful snapshot operation must not be advertised as host-crash safe
+   there. Even when all probes pass, the guarantee depends on an underlying
+   filesystem/storage stack that honors successful sync and atomic rename; a
+   probe proves syscall support, not media persistence, and does not make tmpfs
+   survive power loss. Strict EventLog append requires both file and directory
+   sync. Delete, retention, and migration fail before mutation when directory
+   sync is unavailable, reducing maintenance availability. An existing canonical
+   snapshot can retain a weaker Save capability, but the first Save of a
+   root-level legacy family then fails before migration. Tool-call audit
+   attempts every available sync and may leave an unsynced or partially synced
+   best-effort record. An interrupted final JSONL record is the only tolerated
+   torn tail; a blank, whitespace-only, or otherwise malformed complete record
+   fails loudly and needs operator recovery.
+2. **Back up.** Snapshot or copy the complete state directory—not selected
+   globs—including current snapshots, legacy files, tool/event sidecars, catalog
+   data, maintenance job state, and lock sentinels. Preserve ownership, mode,
+   timestamps, and filesystem boundaries. Record the executable version, config
+   file, effective policy, and backup checksum alongside it. Keep the backup
    plaintext-sensitive with `0700` directories and `0600` files.
-3. **Forecast and plan.** Check filesystem **free space** for the backup plus the migration plan's
-   **temporary-space estimate** and safety margin. Open the restored or production instance's
-   storage health, then request an optimization or cleanup dry run. If health, planning, durability,
-   or management is unavailable, stop: this is an **unsupported backend** for this runbook.
-4. **Migrate or apply.** Start only the intended single daemon, recheck the effective policy and dry
-   run, and apply that exact generation-bound plan. Follow durable job progress; resume bounded
-   migration batches after interruption. Cancellation stops future items and does not roll back
-   completed items. Never combine physical migration and destructive cleanup as one assumed action.
-5. **Verify.** Require a completed job or account for every sanitized per-item failure. Recheck
-   storage health, inventory counts, format counts, policy, and free space. For restore validation,
-   **restore to a new directory**, preserve owner-only permissions, point a separate single test
-   instance at that directory, and perform read-only validation: inventory pages, representative
-   transcripts, sidecars, storage health, and a migration dry run. Never validate by overwriting the
-   production directory.
-6. **Start.** Stop the validation instance, leave the validated backup unchanged, and start the
-   normal service with its original stable config and state paths. Confirm health, effective policy,
-   inventory, and the next sweep before admitting new work.
+3. **Forecast and plan.** Check filesystem **free space** for the backup plus
+   the migration plan's **temporary-space estimate** and safety margin. Open the
+   restored or production instance's storage health, then request an
+   optimization or cleanup dry run. If health, planning, durability, or
+   management is unavailable, stop: this is an **unsupported backend** for this
+   runbook.
+4. **Migrate or apply.** Start only the intended single daemon, recheck the
+   effective policy and dry run, and apply that exact generation-bound plan.
+   Follow durable job progress; resume bounded migration batches after
+   interruption. Cancellation stops future items and does not roll back
+   completed items. Never combine physical migration and destructive cleanup as
+   one assumed action.
+5. **Verify.** Require a completed job or account for every sanitized per-item
+   failure. Recheck storage health, inventory counts, format counts, policy, and
+   free space. For restore validation, **restore to a new directory**, preserve
+   owner-only permissions, point a separate single test instance at that
+   directory, and perform read-only validation: inventory pages, representative
+   transcripts, sidecars, storage health, and a migration dry run. Never
+   validate by overwriting the production directory.
+6. **Start.** Stop the validation instance, leave the validated backup
+   unchanged, and start the normal service with its original stable config and
+   state paths. Confirm health, effective policy, inventory, and the next sweep
+   before admitting new work.
 
-If verification fails, stop the daemon and diagnose before choosing the validated new-directory
-restore as the replacement. Do not merge partial trees or delete the only known-good backup.
+If verification fails, stop the daemon and diagnose before choosing the
+validated new-directory restore as the replacement. Do not merge partial trees
+or delete the only known-good backup.

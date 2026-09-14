@@ -1,7 +1,9 @@
 ---
 sidebar_position: 330
 title: Execution environments
-description: Understand workspaces, shells, forks, and persisted execution environments in Mecatl.
+description:
+  Understand workspaces, shells, forks, and persisted execution environments in
+  Mecatl.
 ---
 
 # Execution environments
@@ -44,14 +46,15 @@ curl -s -X POST http://127.0.0.1:8081/v1/sessions \
 ```
 
 The profile requires an empty `workspace`. Any other profile value is rejected;
-there is no silent fallback. A no-FS catalog removes `Read`, `ListDir`,
-`Write`, `Edit`, `Copy`, `Move`, `Remove`, `Grep`, `Glob`, `Shell`, `ShellStatus`,
-`Parallel`, and `SkillDraft`. It retains
-web tools, memory, MCP tools, skills, `Subagent`, and `Team`; children use the
-same file-less surface and cannot create a shell or fork a workspace.
+there is no silent fallback. A no-FS catalog removes `Read`, `ListDir`, `Write`,
+`Edit`, `Copy`, `Move`, `Remove`, `Grep`, `Glob`, `Shell`, `ShellStatus`,
+`Parallel`, and `SkillDraft`. It retains web tools, memory, MCP tools, skills,
+`Subagent`, and `Team`; children use the same file-less surface and cannot
+create a shell or fork a workspace.
 
 The profile is fixed at session creation. The model cannot switch it during a
-run. See [Core tools](/building/what-you-get/core-tools.md) for the complete catalog.
+run. See [Core tools](/building/what-you-get/core-tools.md) for the complete
+catalog.
 
 ## Child environments
 
@@ -64,8 +67,8 @@ Different delegation modes use different environment strategies:
 - **Parallel branches** use hardened force-copy environments. The initial copy
   does not invoke Git; each branch then works in its own copied namespace.
 - **Mutating members and direct-write Subagents** use the parent environment and
-  modify the real workspace. They are serialized against sibling
-  tool calls; there is no merge-back step.
+  modify the real workspace. They are serialized against sibling tool calls;
+  there is no merge-back step.
 - A child environment's runner is built for the same child root. A failed
   worktree reservation can fall back to a copy, but the runner remains bound to
   the environment that was actually returned.
@@ -78,21 +81,21 @@ removed before a command runs.
 
 The environment identity is persisted with a session snapshot. Mecatl
 reconstructs local and no-FS environments. A non-local identity can be
-reattached only when the deployment supplies an
-`EnvironmentResolver`; a missing resolver, mismatched identity, or nil workspace
-returns an error instead of using a local workspace.
+reattached only when the deployment supplies an `EnvironmentResolver`; a missing
+resolver, mismatched identity, or nil workspace returns an error instead of
+using a local workspace.
 
 A resumed session restores its provider, model, and profile separately from its
 workspace and command runner.
 
 ## Limitations
 
-- No-FS sessions cannot use local file tools, shell commands, workspace forks, or
-  parallel branches.
+- No-FS sessions cannot use local file tools, shell commands, workspace forks,
+  or parallel branches.
 - Read-only child shells depend on project trust; this is separate from the
   parent's ability to run its own shell.
-- Direct-write children can leave partial edits if cancelled or interrupted;
-  the parent workspace and Git are the rollback boundary.
+- Direct-write children can leave partial edits if cancelled or interrupted; the
+  parent workspace and Git are the rollback boundary.
 - Environment identity is an in-process binding for local deployments. Remote
   reattachment requires an explicit resolver and is not supplied by default.
 

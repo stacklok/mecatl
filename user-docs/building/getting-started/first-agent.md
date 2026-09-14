@@ -29,8 +29,8 @@ teams, and background subagents together, follow the
 ## Before you start
 
 You need Go 1.26.6 or newer. The first-agent example is designed to run from a
-clean external module and imports only the public `github.com/stacklok/mecatl/engine`
-module and its reference adapters.
+clean external module and imports only the public
+`github.com/stacklok/mecatl/engine` module and its reference adapters.
 
 ## First agent: offline and deterministic
 
@@ -82,7 +82,8 @@ func main() {
 }
 ```
 
-The same source is available at [`examples/first-agent/main.go`](https://github.com/stacklok/mecatl/blob/main/examples/first-agent/main.go).
+The same source is available at
+[`examples/first-agent/main.go`](https://github.com/stacklok/mecatl/blob/main/examples/first-agent/main.go).
 Run it from a clean module rather than from the Mecatl checkout:
 
 ```sh
@@ -98,14 +99,16 @@ It prints:
 Hello from your first agent.
 ```
 
-The example uses the offline `mockllm` adapter, so it needs no API key or network.
-The `tool.Environment` binds the workspace and optional command runner that tools
-would use; this example passes no runner because it has no shell tool.
+The example uses the offline `mockllm` adapter, so it needs no API key or
+network. The `tool.Environment` binds the workspace and optional command runner
+that tools would use; this example passes no runner because it has no shell
+tool.
 
 ## First tool: register a custom tool
 
 A custom tool implements `tool.Tool` and is registered on the catalog passed to
-`agent.Deps`. The [first-agent-tool example](https://github.com/stacklok/mecatl/blob/main/examples/first-agent-tool/main.go)
+`agent.Deps`. The
+[first-agent-tool example](https://github.com/stacklok/mecatl/blob/main/examples/first-agent-tool/main.go)
 uses a scripted mock turn to call a `Ping` tool and prints:
 
 ```text
@@ -121,7 +124,8 @@ read-only calls. The example allows `Ping` in its permission policy; the next
 step changes that rule to require approval.
 
 For the complete interface, catalog registration rules, MCP integration, and
-progressive disclosure, see [Tool catalog](/building/extension-points/tool-catalog.md).
+progressive disclosure, see
+[Tool catalog](/building/extension-points/tool-catalog.md).
 
 ## Approval: let the host decide
 
@@ -151,8 +155,9 @@ for the matching call. `Deny` skips execution and sends a model-visible error
 result back to the loop. A headless host must supply its own policy or verdict
 strategy; an approval request is not an automatic grant.
 
-For rule evaluation, scopes, and deny-dominant behavior, see [PermissionPolicy](/building/extension-points/permission-policy.md)
-and [Permissions and posture](/features/permissions-and-posture.md).
+For rule evaluation, scopes, and deny-dominant behavior, see
+[PermissionPolicy](/building/extension-points/permission-policy.md) and
+[Permissions and posture](/features/permissions-and-posture.md).
 
 ## Real provider: OpenRouter
 
@@ -165,21 +170,24 @@ export OPENROUTER_API_KEY='your-key-from-a-secret-manager'
 go run .
 ```
 
-Copy the [OpenRouter example](https://github.com/stacklok/mecatl/blob/main/examples/first-agent-openrouter/main.go)
-into the clean module first. It reads `OPENROUTER_API_KEY` from the environment and defaults to
-`openai/gpt-5.6-luna`. Set `OPENROUTER_MODEL` to another OpenRouter model ID when
-needed. This path makes a real network request and may incur provider charges;
-never put the key in source, command arguments, or documentation.
+Copy the
+[OpenRouter example](https://github.com/stacklok/mecatl/blob/main/examples/first-agent-openrouter/main.go)
+into the clean module first. It reads `OPENROUTER_API_KEY` from the environment
+and defaults to `openai/gpt-5.6-luna`. Set `OPENROUTER_MODEL` to another
+OpenRouter model ID when needed. This path makes a real network request and may
+incur provider charges; never put the key in source, command arguments, or
+documentation.
 
-The engine remains provider-neutral. The public `provider/openai` adapter supplies
-the OpenAI Responses-compatible wire implementation and OpenRouter base URL;
-retry/watchdog policy, persistence, authentication, transport, and observability
-remain host responsibilities for a direct embedder.
+The engine remains provider-neutral. The public `provider/openai` adapter
+supplies the OpenAI Responses-compatible wire implementation and OpenRouter base
+URL; retry/watchdog policy, persistence, authentication, transport, and
+observability remain host responsibilities for a direct embedder.
 
 ## Compatibility for engine consumers
 
 The stable contract is the exported API of the eight core engine packages. Read
-[API stability](../api-stability.md) before upgrading or implementing an adapter.
+[API stability](../api-stability.md) before upgrading or implementing an
+adapter.
 
 - `engine/COMPATIBILITY.md` defines the compatibility policy.
 - `engine/CHANGELOG.md` records intentional API additions and breaks.
@@ -188,9 +196,9 @@ The stable contract is the exported API of the eight core engine packages. Read
 - `engine/adapter/*` reference adapters are useful, but are not stable API; rely
   on the port interfaces in `engine/port` and `engine/tool` instead.
 
-The engine is versioned independently from the host repository. A direct embedder
-should pin the engine and provider module versions together and run the standalone
-engine checks when upgrading.
+The engine is versioned independently from the host repository. A direct
+embedder should pin the engine and provider module versions together and run the
+standalone engine checks when upgrading.
 
 ## Where to go next
 

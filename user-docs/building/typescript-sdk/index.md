@@ -1,6 +1,8 @@
 ---
 title: TypeScript SDK
-description: Build Node.js, Bun, and browser applications that create and control Mecatl sessions.
+description:
+  Build Node.js, Bun, and browser applications that create and control Mecatl
+  sessions.
 sidebar_position: 1
 ---
 
@@ -19,8 +21,8 @@ to run one prompt against a private offline daemon.
   Node.js, Bun, or a browser.
 - [Run a private local daemon](./local-daemon.md) when a Node.js or Bun process
   should own `mecated`, or when a script needs one `query()` call.
-- [Work with sessions and runs](./sessions-and-runs.md) to stream events, receive
-  a terminal result, send controls, or include media in a prompt.
+- [Work with sessions and runs](./sessions-and-runs.md) to stream events,
+  receive a terminal result, send controls, or include media in a prompt.
 - [Handle permissions and plans](./permissions-and-plans.md) to resolve asks in
   application code and continue an approved plan.
 - [Resume durable activity](./durable-activity.md) to follow one run or a

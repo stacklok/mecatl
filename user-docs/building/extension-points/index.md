@@ -1,7 +1,8 @@
 ---
 sidebar_position: 1
 title: Overview & the port model
-description: Replace providers, storage, and policies through Mecatl's ports and adapters.
+description:
+  Replace providers, storage, and policies through Mecatl's ports and adapters.
 ---
 
 # Overview & the port model
@@ -46,9 +47,9 @@ them into the loop.
 
 ## The port interfaces
 
-Most seams the loop can be extended through are defined in `engine/port`. The table
-also includes service-owned persistence seams such as `EventLog`, which the relay
-uses but the agent loop does not consume directly.
+Most seams the loop can be extended through are defined in `engine/port`. The
+table also includes service-owned persistence seams such as `EventLog`, which
+the relay uses but the agent loop does not consume directly.
 
 |Interface|File|Abstracts|Reference adapters|
 |-|-|-|-|
@@ -84,18 +85,21 @@ The filesystem and execution-environment ports live in `engine/tool`:
 
 Use `engine/adapter/memfs` for tests or `internal/adapter/osfs` for an OS-backed
 workspace. The ACP integration supplies an editor-buffer workspace. For the
-version protocol and environment lifecycle, see [ADR 0208](https://github.com/stacklok/mecatl/blob/main/docs/adr/0208-execution-environment.md),
+version protocol and environment lifecycle, see
+[ADR 0208](https://github.com/stacklok/mecatl/blob/main/docs/adr/0208-execution-environment.md),
 [ADR 0211](https://github.com/stacklok/mecatl/blob/main/docs/adr/0211-execution-environment-runtime-seam.md),
-and [ADR 0214](https://github.com/stacklok/mecatl/blob/main/docs/adr/0214-environment-persistence.md).
+and
+[ADR 0214](https://github.com/stacklok/mecatl/blob/main/docs/adr/0214-environment-persistence.md).
 
 ---
 
 ## When to implement a port vs. use the reference adapters
 
-Most deployments use the reference adapters directly. Implement a port only
-when your application needs a different capability at that boundary.
+Most deployments use the reference adapters directly. Implement a port only when
+your application needs a different capability at that boundary.
 
-Implement a port when you need to **swap a specific capability at the boundary**:
+Implement a port when you need to **swap a specific capability at the
+boundary**:
 
 |Scenario|Port to implement|
 |-|-|
@@ -108,9 +112,12 @@ Implement a port when you need to **swap a specific capability at the boundary**
 
 You do **not** need to implement a port to:
 
-- Change which model is used — pass the model name through `internal/app`'s provider registry.
-- Change permission rules — write `settings.yaml` config. The existing `PermissionPolicy` adapter picks it up per session.
-- Add lifecycle hooks — write shell hooks or use `internal/adapter/hookexec`. The `HookRunner` port is for replacing the execution engine, not adding hooks.
+- Change which model is used — pass the model name through `internal/app`'s
+  provider registry.
+- Change permission rules — write `settings.yaml` config. The existing
+  `PermissionPolicy` adapter picks it up per session.
+- Add lifecycle hooks — write shell hooks or use `internal/adapter/hookexec`.
+  The `HookRunner` port is for replacing the execution engine, not adding hooks.
 - Add tools — extend the `tool.Catalog` at composition time.
 
 ---
@@ -121,7 +128,9 @@ Mecatl uses explicit constructors. The shipped commands share the composition
 root in `internal/app/build.go`; an embedding application can follow the same
 pattern in its own composition root.
 
-The schematic below shows how ports are satisfied for a typical deployment. Actual field names are illustrative; see `internal/app/build.go` for the live signatures.
+The schematic below shows how ports are satisfied for a typical deployment.
+Actual field names are illustrative; see `internal/app/build.go` for the live
+signatures.
 
 ```go
 // internal/app/build.go (schematic)
@@ -172,15 +181,21 @@ The example demonstrates three composition rules:
   `SessionStore`, `PrunableStore`, `EventLog`, and `ToolCallRecorder`. Pass it
   separately wherever each interface is required; the service, rather than the
   engine, owns the `EventLog`.
-- **Adapters are never imported by the engine.** `agent.Deps` carries interface values only. A new LLM adapter never requires an engine change.
-- **Composition is the only place adapters meet.** Domain packages and `engine/agent` have no adapter imports, which the depguard allowlist and the DAG test verify on every build.
+- **Adapters are never imported by the engine.** `agent.Deps` carries interface
+  values only. A new LLM adapter never requires an engine change.
+- **Composition is the only place adapters meet.** Domain packages and
+  `engine/agent` have no adapter imports, which the depguard allowlist and the
+  DAG test verify on every build.
 
 ### Replacing a single adapter
 
 To swap, say, `SessionStore` for your own database backend:
 
-1. Implement `port.SessionStore` (and optionally `port.PrunableStore`) in a new package.
-2. In your composition root (either your own `main` or a fork of `internal/app/build.go`), construct your store and pass it in place of `jsonlstore.New(...)`.
+1. Implement `port.SessionStore` (and optionally `port.PrunableStore`) in a new
+   package.
+2. In your composition root (either your own `main` or a fork of
+   `internal/app/build.go`), construct your store and pass it in place of
+   `jsonlstore.New(...)`.
 3. Leave the engine and unrelated adapters unchanged.
 
 To validate your implementation against the conformance suite:
@@ -190,13 +205,20 @@ To validate your implementation against the conformance suite:
 storeconformance.Run(t, func(t *testing.T) port.SessionStore { return yourstore.New() })
 ```
 
-Conformance suites ship in `engine/adapter/storeconformance`, `leaseconformance`, `fsconformance`, `sourceconformance`, `memconformance`, `eventlogconformance`, and `scheduleconformance`. An adapter that passes its suite is compatible with Mecatl's expectations.
+Conformance suites ship in `engine/adapter/storeconformance`,
+`leaseconformance`, `fsconformance`, `sourceconformance`, `memconformance`,
+`eventlogconformance`, and `scheduleconformance`. An adapter that passes its
+suite is compatible with Mecatl's expectations.
 
 ---
 
 ## What's next
 
-- [LLM provider](llm-provider.md) — implement `port.LLMProvider` to route to a custom model endpoint.
-- [Session store](session-store.md) — implement `port.SessionStore` (and the optional `PrunableStore` / `EventLog` seams) for your own persistence backend.
-- [Permission policy](permission-policy.md) — replace Layer 1's rule engine with your own authorization logic.
-- [Session lease](session-lease.md) — implement `port.SessionLease` for cross-process single-writer session exclusion.
+- [LLM provider](llm-provider.md) — implement `port.LLMProvider` to route to a
+  custom model endpoint.
+- [Session store](session-store.md) — implement `port.SessionStore` (and the
+  optional `PrunableStore` / `EventLog` seams) for your own persistence backend.
+- [Permission policy](permission-policy.md) — replace Layer 1's rule engine with
+  your own authorization logic.
+- [Session lease](session-lease.md) — implement `port.SessionLease` for
+  cross-process single-writer session exclusion.

@@ -1,7 +1,9 @@
 ---
 sidebar_position: 1
 title: Deployment overview
-description: Choose how to embed, run, or operate Mecatl across local and cloud environments.
+description:
+  Choose how to embed, run, or operate Mecatl across local and cloud
+  environments.
 ---
 
 # Deployment overview
@@ -10,8 +12,9 @@ Mecatl runs the same agent loop as an embedded library, standalone service,
 Kubernetes workload, or single CI task. Choose the form that matches who owns
 the process, state, and execution environment.
 
-Start with [Pick your deployment](/building/getting-started/deployment-decision.md)
-if you have not chosen one yet.
+Start with
+[Pick your deployment](/building/getting-started/deployment-decision.md) if you
+have not chosen one yet.
 
 ## Choose a deployment
 

@@ -1,7 +1,9 @@
 ---
 sidebar_position: 150
 title: Scheduled tasks
-description: Schedule recurring and one-shot Mecatl runs with durable delivery and recovery.
+description:
+  Schedule recurring and one-shot Mecatl runs with durable delivery and
+  recovery.
 ---
 
 # Scheduled tasks
@@ -55,8 +57,9 @@ curl http://localhost:8080/v1/schedules/nightly-report/fires/<fire-id>
 ```
 
 The REST routes are under `/v1/schedules`. The gRPC service is
-`mecatl.v1.ScheduleService`. See the [gRPC API reference](/reference/grpc-api.md)
-and the [schedule proto](https://github.com/stacklok/mecatl/blob/main/contracts/proto/mecatl/v1/schedule.proto)
+`mecatl.v1.ScheduleService`. See the
+[gRPC API reference](/reference/grpc-api.md) and the
+[schedule proto](https://github.com/stacklok/mecatl/blob/main/contracts/proto/mecatl/v1/schedule.proto)
 for exact request and response fields.
 
 The `mecatui` overlay is available when the connected server advertises a
@@ -92,8 +95,8 @@ the task requires.
 
 A recurring schedule uses its configured misfire policy after a missed slot. A
 one-shot may be lost if the process crashes after its slot is claimed and before
-execution completes; use an external job system when that work cannot be lost.
-A fire that times out or is interrupted remains recoverable through the normal
+execution completes; use an external job system when that work cannot be lost. A
+fire that times out or is interrupted remains recoverable through the normal
 session lifecycle.
 
 ## Limitations
@@ -107,8 +110,9 @@ session lifecycle.
 - Retained fire sessions and event logs may contain sensitive plaintext; protect
   the backing store accordingly.
 
-For the claim-before-fire, at-most-once, singleton, leader-lease, event, metrics,
-and shutdown details, see [Scheduled tasks for builders](/building/what-you-get/scheduled-tasks.md).
+For the claim-before-fire, at-most-once, singleton, leader-lease, event,
+metrics, and shutdown details, see
+[Scheduled tasks for builders](/building/what-you-get/scheduled-tasks.md).
 
 ## Next steps
 

@@ -1,14 +1,16 @@
 ---
 sidebar_position: 9
 title: Project rules
-description: Implement the rules source that discovers trusted, path-scoped project guidance.
+description:
+  Implement the rules source that discovers trusted, path-scoped project
+  guidance.
 ---
 
 # Project rules
 
-This is the builder reference for the `RulesSource` discovery seam. Project rules
-are per-file Markdown companions to `AGENTS.md`/`CLAUDE.md`, discovered from
-`.claude/rules/` and `.mecatl/rules/` and optionally scoped with `paths:`
+This is the builder reference for the `RulesSource` discovery seam. Project
+rules are per-file Markdown companions to `AGENTS.md`/`CLAUDE.md`, discovered
+from `.claude/rules/` and `.mecatl/rules/` and optionally scoped with `paths:`
 frontmatter.
 
 For the user-facing explanation of project content and trust admission, see
@@ -16,9 +18,10 @@ For the user-facing explanation of project content and trust admission, see
 
 Project rules share the trust boundary used for `AGENTS.md`, `CLAUDE.md`, and
 the project soul. See
-[Skills, commands, and soul](/features/skills-commands-and-soul.md)
-for the user-facing discovery and trust behavior, and
-[ADR 0081](https://github.com/stacklok/mecatl/blob/main/docs/adr/0081-rules-source-port.md) for the design.
+[Skills, commands, and soul](/features/skills-commands-and-soul.md) for the
+user-facing discovery and trust behavior, and
+[ADR 0081](https://github.com/stacklok/mecatl/blob/main/docs/adr/0081-rules-source-port.md)
+for the design.
 
 ## Discovery
 
@@ -57,11 +60,11 @@ When answering about Go tests, always run them before declaring done.
 
 ## Trust gate
 
-The **project tier** (the `<workspace>/*` locations) is **trust-gated**: rules under
-`<workspace>/.claude/rules` in an untrusted workspace are withheld until you trust
-the repo (`--trust-project` or `trustedWorkspaces`). The user-tier lanes
-(`$XDG_CONFIG_HOME/...`, `~/.claude/rules`) are never gated; your own rules
-always apply.
+The **project tier** (the `<workspace>/*` locations) is **trust-gated**: rules
+under `<workspace>/.claude/rules` in an untrusted workspace are withheld until
+you trust the repo (`--trust-project` or `trustedWorkspaces`). The user-tier
+lanes (`$XDG_CONFIG_HOME/...`, `~/.claude/rules`) are never gated; your own
+rules always apply.
 
 ## Caps and fail-soft
 

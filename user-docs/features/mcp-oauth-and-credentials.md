@@ -8,9 +8,9 @@ description: Configure MCP OAuth profiles and protect the credentials they use.
 
 Mecatl can authenticate configured MCP servers with no credential in the server
 URL or in model-visible tool arguments. This page covers operator authentication
-profiles, OAuth login, credential storage, and rotation. For MCP transport,
-tool discovery, namespacing, reconnects, resources, prompts, and typed results,
-see the [MCP client guide](/building/what-you-get/mcp-client.md).
+profiles, OAuth login, credential storage, and rotation. For MCP transport, tool
+discovery, namespacing, reconnects, resources, prompts, and typed results, see
+the [MCP client guide](/building/what-you-get/mcp-client.md).
 
 The available profile modes are `none`, `static_bearer`, and `oauth`.
 
@@ -47,9 +47,9 @@ mcp:
             key_env: MECATL_MCP_CREDENTIAL_KEY
 ```
 
-Use the generated [configuration reference](/reference/configuration.md)
-for the complete strict schema and exact field names. Keep the settings file
-owner-only and validate it before serving:
+Use the generated [configuration reference](/reference/configuration.md) for the
+complete strict schema and exact field names. Keep the settings file owner-only
+and validate it before serving:
 
 ```console
 umask 077
@@ -97,8 +97,8 @@ another browser interaction. Access-token refresh is lazy, and refresh-token
 rotation is persisted by the local store so the next restart remains warm.
 
 If the profile's issuer, client, principal, scopes, or resource changes, run
-login again. To roll back, replace the whole profile with
-`static_bearer` or `none` and restart.
+login again. To roll back, replace the whole profile with `static_bearer` or
+`none` and restart.
 
 ## Environment-backed credentials
 
@@ -107,12 +107,13 @@ record. Provision the opaque record and its secret outside Mecatl, inject it
 into the process, and restart after rotation. The environment reader is
 read-only; `mecated mcp login` cannot populate or update it.
 
-For global OAuth profiles, `mecak8s` does not open a browser and uses a Kubernetes
-Secret-backed credential. Broker OAuth instead uses an external browser to complete a
-session enrollment; its preregistered client secret, when needed, is still a Kubernetes
-Secret. Agent-facing shells receive a scrubbed environment so MCP/provider credentials are
-not exposed through Shell. See the [Kubernetes deployment guide](/building/deployment/mecak8s.md)
-for the Secret wiring.
+For global OAuth profiles, `mecak8s` does not open a browser and uses a
+Kubernetes Secret-backed credential. Broker OAuth instead uses an external
+browser to complete a session enrollment; its preregistered client secret, when
+needed, is still a Kubernetes Secret. Agent-facing shells receive a scrubbed
+environment so MCP/provider credentials are not exposed through Shell. See the
+[Kubernetes deployment guide](/building/deployment/mecak8s.md) for the Secret
+wiring.
 
 ## ToolHive broker OAuth
 
@@ -144,27 +145,30 @@ protected backends may need to be enrolled again.
 A protected broker upstream may instead use `client.mode: dcr`. This asks
 ToolHive to dynamically register the upstream client from the configured HTTPS
 RFC 8414 discovery document, so no preregistered client secret or client-ID
-metadata document is needed. The upstream authorization server mints that
-client identity and ToolHive persists its registration state in the broker
-store. DCR requires an explicit OAuth2 upstream, remains operator-only
-configuration, and does not permit an insecure-HTTP or private-IP override.
-See the [mecak8s deployment guide](/building/deployment/mecak8s.md) for the
-Helm value shape.
+metadata document is needed. The upstream authorization server mints that client
+identity and ToolHive persists its registration state in the broker store. DCR
+requires an explicit OAuth2 upstream, remains operator-only configuration, and
+does not permit an insecure-HTTP or private-IP override. See the
+[mecak8s deployment guide](/building/deployment/mecak8s.md) for the Helm value
+shape.
 
-Mecatl controls reveal only the enrollment reference, aggregate state, configured-service count,
-and temporary presentation URL. They never reveal an upstream name, OAuth state/code, endpoint,
-or access/refresh token. The broker origin serves two callback roles: providers return to
-ToolHive's fixed `/v1/mcp/broker/oauth/callback` route, then ToolHive completes at the configured
-mecatl callback URL. Route the complete `/v1/mcp/broker/` prefix and the final callback path to
-the same listener. See the [Kubernetes deployment guide](/building/deployment/mecak8s.md) for
-Helm configuration.
+Mecatl controls reveal only the enrollment reference, aggregate state,
+configured-service count, and temporary presentation URL. They never reveal an
+upstream name, OAuth state/code, endpoint, or access/refresh token. The broker
+origin serves two callback roles: providers return to ToolHive's fixed
+`/v1/mcp/broker/oauth/callback` route, then ToolHive completes at the configured
+mecatl callback URL. Route the complete `/v1/mcp/broker/` prefix and the final
+callback path to the same listener. See the
+[Kubernetes deployment guide](/building/deployment/mecak8s.md) for Helm
+configuration.
 
-Broker session attachments and outer callback correlation remain process-local. ToolHive's
-configured Redis storage can preserve its inner upstream authorization/token records, but a
-mecatl restart cannot correlate a persisted pending aggregate back to that inner operation: it
-discards the old pending correlation and starts a fresh enrollment rather than recovering it.
-The mode is not safe behind the default multi-replica `mecak8s` Service until affinity or durable
-outer broker routing is available.
+Broker session attachments and outer callback correlation remain process-local.
+ToolHive's configured Redis storage can preserve its inner upstream
+authorization/token records, but a mecatl restart cannot correlate a persisted
+pending aggregate back to that inner operation: it discards the old pending
+correlation and starts a fresh enrollment rather than recovering it. The mode is
+not safe behind the default multi-replica `mecak8s` Service until affinity or
+durable outer broker routing is available.
 
 The legacy bearer path is simpler for a server that does not need OAuth:
 
@@ -181,36 +185,39 @@ environment-variable name.
 ## Runtime behavior and limitations
 
 - Global-profile serving, ACP, `mecatequi`, and `mecak8s` never open a browser.
-  Authorize global profiles locally beforehand or provision an environment credential.
-  A browser may instead complete an already-started ToolHive broker enrollment externally;
-  `mecak8s` does not launch that browser.
-- DCR and ACP cannot provide OAuth profiles or install/drive authorization. After
-  an operator authorizes a global profile, ACP sessions may invoke its shared
-  tools under ordinary permissions.
-- Client-provided per-session MCP and inline agent MCP servers cannot provide OAuth
-  profiles. The configured ToolHive broker is the exception: it owns its configured
-  multi-upstream OAuth chain, while mecatl exposes only the aggregate enrollment.
+  Authorize global profiles locally beforehand or provision an environment
+  credential. A browser may instead complete an already-started ToolHive broker
+  enrollment externally; `mecak8s` does not launch that browser.
+- DCR and ACP cannot provide OAuth profiles or install/drive authorization.
+  After an operator authorizes a global profile, ACP sessions may invoke its
+  shared tools under ordinary permissions.
+- Client-provided per-session MCP and inline agent MCP servers cannot provide
+  OAuth profiles. The configured ToolHive broker is the exception: it owns its
+  configured multi-upstream OAuth chain, while mecatl exposes only the aggregate
+  enrollment.
 - A configured profile that is unreachable or malformed is a deployment error;
   it does not silently become an unauthenticated server.
-- OAuth credentials authenticate the MCP connection. They do not grant the
-  model permission to call a tool: every namespaced MCP tool still passes through
-  the ordinary permission policy and audit path.
+- OAuth credentials authenticate the MCP connection. They do not grant the model
+  permission to call a tool: every namespaced MCP tool still passes through the
+  ordinary permission policy and audit path.
 - OAuth remains constrained to RFC 9728 metadata with one exact
-  resource/authorization server, S256, and Basic-authenticated confidential clients.
-  RFC 9207 issuer validation follows authorization-server metadata: if the server
-  advertises `authorization_response_iss_parameter_supported`, its callback must
-  include the matching `iss`; otherwise `iss` may be omitted, but any supplied
-  issuer must still match.
-- A connection drop can trigger one bounded reconnect and retry. A server-declared
-  tool failure is not replayed automatically because the call may have mutated
-  remote state. The startup tool catalog is retained across reconnects; changed
-  remote tool lists take effect after the next Mecatl process start.
+  resource/authorization server, S256, and Basic-authenticated confidential
+  clients. RFC 9207 issuer validation follows authorization-server metadata: if
+  the server advertises `authorization_response_iss_parameter_supported`, its
+  callback must include the matching `iss`; otherwise `iss` may be omitted, but
+  any supplied issuer must still match.
+- A connection drop can trigger one bounded reconnect and retry. A
+  server-declared tool failure is not replayed automatically because the call
+  may have mutated remote state. The startup tool catalog is retained across
+  reconnects; changed remote tool lists take effect after the next Mecatl
+  process start.
 - Treat the local credential store and configuration backups as sensitive. Keep
   roots owner-only and use your deployment's secret manager for rotation.
 
 For MCP tool discovery, namespacing, permissions, reconnect behavior, resources,
-and prompts, see [MCP client](/building/what-you-get/mcp-client.md). For the complete
-operator profile rules, see the [configuration reference](/reference/configuration.md#mcp).
+and prompts, see [MCP client](/building/what-you-get/mcp-client.md). For the
+complete operator profile rules, see the
+[configuration reference](/reference/configuration.md#mcp).
 
 ## Next steps
 

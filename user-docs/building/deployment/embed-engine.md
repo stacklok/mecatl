@@ -1,13 +1,14 @@
 ---
 sidebar_position: 10
 title: Embed the engine directly
-description: Embed the Mecatl engine in your Go service and wire its adapters in process.
+description:
+  Embed the Mecatl engine in your Go service and wire its adapters in process.
 ---
 
 # Embed the engine directly
 
-Start with [Build your first agent](/building/getting-started/first-agent.md) for
-the shortest copyable path. This page covers the details for embedders. The
+Start with [Build your first agent](/building/getting-started/first-agent.md)
+for the shortest copyable path. This page covers the details for embedders. The
 agent loop runs in your service process, so you own the binary and its wiring.
 You do not need a gRPC server, separate process, or TLS connection.
 
@@ -20,18 +21,28 @@ operate or when you want direct control over the dependencies in your build.
 
 Choose in-process embedding when:
 
-- You are building a product (a code review service, a CI orchestrator, an IDE backend) and want the agent loop as a library component, not a sidecar.
-- You need to keep the binary's dependency footprint small — specifically, you want to avoid pulling in the OpenAI/Anthropic SDKs, gRPC, the TUI, or `client-go`.
-- You already have a runtime (HTTP server, worker loop, queue consumer) and want the agent to live inside it.
-- You want to supply your own `port.LLMProvider` implementation — a custom model proxy, a router over internal endpoints, or a mock for tests.
+- You are building a product (a code review service, a CI orchestrator, an IDE
+  backend) and want the agent loop as a library component, not a sidecar.
+- You need to keep the binary's dependency footprint small — specifically, you
+  want to avoid pulling in the OpenAI/Anthropic SDKs, gRPC, the TUI, or
+  `client-go`.
+- You already have a runtime (HTTP server, worker loop, queue consumer) and want
+  the agent to live inside it.
+- You want to supply your own `port.LLMProvider` implementation — a custom model
+  proxy, a router over internal endpoints, or a mock for tests.
 
-Choose a pre-built binary (`mecated`, `mecak8s`, `mecatequi`) when you want the composition done for you, or when you need the full operator surface (auth, TLS, Prometheus, posture flags, gRPC clients).
+Choose a pre-built binary (`mecated`, `mecak8s`, `mecatequi`) when you want the
+composition done for you, or when you need the full operator surface (auth, TLS,
+Prometheus, posture flags, gRPC clients).
 
 ---
 
 ## Dependency footprint
 
-The engine is a separate Go module: `github.com/stacklok/mecatl/engine`. Its runtime dependency closure includes `doublestar`, `robfig/cron/v3`, `github.com/goccy/go-yaml`, `golang.org/x/net`, and `golang.org/x/sync`; `go.uber.org/goleak` is test-only:
+The engine is a separate Go module: `github.com/stacklok/mecatl/engine`. Its
+runtime dependency closure includes `doublestar`, `robfig/cron/v3`,
+`github.com/goccy/go-yaml`, `golang.org/x/net`, and `golang.org/x/sync`;
+`go.uber.org/goleak` is test-only:
 
 |Package|Role|
 |-|-|
@@ -42,7 +53,10 @@ The engine is a separate Go module: `github.com/stacklok/mecatl/engine`. Its run
 |`github.com/robfig/cron/v3`|Cron expression parsing in `engine/adapter/cronparse`|
 |`go.uber.org/goleak`|Test-only leaked-goroutine detection; never enters a production build|
 
-Nothing from Mecatl's heavy require cone — no OpenAI/Anthropic SDKs, no gRPC, no Bubble Tea TUI, no `k8s.io/client-go` — enters your build graph. A `go get github.com/stacklok/mecatl/engine` does not transitively pull the root module.
+Nothing from Mecatl's heavy require cone — no OpenAI/Anthropic SDKs, no gRPC, no
+Bubble Tea TUI, no `k8s.io/client-go` — enters your build graph. A
+`go get github.com/stacklok/mecatl/engine` does not transitively pull the root
+module.
 
 ---
 
@@ -52,13 +66,17 @@ Nothing from Mecatl's heavy require cone — no OpenAI/Anthropic SDKs, no gRPC, 
 go get github.com/stacklok/mecatl/engine@latest
 ```
 
-That's the only step. The engine module is self-contained; it does not require any other `mecatl` module.
+That's the only step. The engine module is self-contained; it does not require
+any other `mecatl` module.
 
 ---
 
 ## Minimum wiring
 
-The engine is built from an `agent.Deps` struct — a bag of injected ports and configuration. A useful run supplies an LLM provider, tool catalog, permission policy, and model identifier; hooks, persistence, timing, and prompt helpers are optional and have documented defaults.
+The engine is built from an `agent.Deps` struct — a bag of injected ports and
+configuration. A useful run supplies an LLM provider, tool catalog, permission
+policy, and model identifier; hooks, persistence, timing, and prompt helpers are
+optional and have documented defaults.
 
 Here is the minimum viable wiring, modelled after `cmd/mecademo/demo.go`:
 
@@ -145,7 +163,11 @@ func main() {
 }
 ```
 
-The call to `eng.Run` returns a `*Run` immediately; the loop drives in a background goroutine. Drain `run.Events()` to consume the event stream — the channel closes when the run terminates. See [The agent loop](/building/what-you-get/agent-loop.md) for the full event taxonomy and permission flow.
+The call to `eng.Run` returns a `*Run` immediately; the loop drives in a
+background goroutine. Drain `run.Events()` to consume the event stream — the
+channel closes when the run terminates. See
+[The agent loop](/building/what-you-get/agent-loop.md) for the full event
+taxonomy and permission flow.
 
 ---
 
@@ -180,62 +202,71 @@ Optional fields with non-trivial defaults:
 
 `Deps.MaxRunTokens` is an independently enforced ceiling for each engine, not a
 shared delegation-tree allowance. A main engine, Subagent, Parallel branch, team
-member, and lead synthesis inherit the configured value, while each checks only its
-own session usage. Child spend is excluded from parent usage, so a delegation tree
-can exceed that ceiling.
+member, and lead synthesis inherit the configured value, while each checks only
+its own session usage. Child spend is excluded from parent usage, so a
+delegation tree can exceed that ceiling.
 
 For teams, `agent.WithTeamTokenBudget` configures the separate aggregate
-`MaxTeamTokens` equivalent on the `agent.Supervisor`. It is checked between rounds:
-when crossed, it prevents another round, while the current round and lead synthesis
-complete. It is distinct from and composes with `Deps.MaxRunTokens`; it does not
-provide a cross-tree aggregate outside that team.
+`MaxTeamTokens` equivalent on the `agent.Supervisor`. It is checked between
+rounds: when crossed, it prevents another round, while the current round and
+lead synthesis complete. It is distinct from and composes with
+`Deps.MaxRunTokens`; it does not provide a cross-tree aggregate outside that
+team.
 
 ---
 
 ## Optional evidence reflection
 
-Embedders use `learning.MaterializeEvidence` as the storage-neutral selection boundary.
-A `learning.MaterializationRequest` carries the owned trajectory, eligible events, verified
-mandatory span, signals, and explicit limits. The selected result contains one bounded
-`learning.Input`, canonical bytes, and an immutable aggregate manifest; abstained or skipped
-results carry only a closed, content-free reason. Hosts persist the complete manifest with any
-staged proposal and re-materialize its exact original coordinates for detail or approval instead
-of rerunning ranking. New records use `reflection-evidence/v1`; historical input-local evidence
-ordinals remain explicitly `reflection-evidence/legacy-v0`.
+Embedders use `learning.MaterializeEvidence` as the storage-neutral selection
+boundary. A `learning.MaterializationRequest` carries the owned trajectory,
+eligible events, verified mandatory span, signals, and explicit limits. The
+selected result contains one bounded `learning.Input`, canonical bytes, and an
+immutable aggregate manifest; abstained or skipped results carry only a closed,
+content-free reason. Hosts persist the complete manifest with any staged
+proposal and re-materialize its exact original coordinates for detail or
+approval instead of rerunning ranking. New records use `reflection-evidence/v1`;
+historical input-local evidence ordinals remain explicitly
+`reflection-evidence/legacy-v0`.
 
-The compatibility structural signal detector and current-span-scoped detector operate on the
-bounded input. `learning.ThresholdPolicy` is the pure standard admission policy over closed sensitivity,
-class, reason, request, and decision contracts; `AlwaysPolicy` and `NeverPolicy` are simple
-host alternatives. `Trajectory` additively carries session kind, run counters, and a verified
-current message span. `learning.Activity` is the closed content-free metrics projection.
-`agent.NewEvidenceReflector` adds an optional
-single-call model-backed reflector over an injected provider, selected model, token
-counter, and explicit limits. It has no tools or filesystem access and returns only a
+The compatibility structural signal detector and current-span-scoped detector
+operate on the bounded input. `learning.ThresholdPolicy` is the pure standard
+admission policy over closed sensitivity, class, reason, request, and decision
+contracts; `AlwaysPolicy` and `NeverPolicy` are simple host alternatives.
+`Trajectory` additively carries session kind, run counters, and a verified
+current message span. `learning.Activity` is the closed content-free metrics
+projection. `agent.NewEvidenceReflector` adds an optional single-call
+model-backed reflector over an injected provider, selected model, token counter,
+and explicit limits. It has no tools or filesystem access and returns only a
 strictly evidence-backed proposal set or explicit abstention.
 
-The module also exposes replaceable, CAS-only learned-skill lifecycle contracts. Hosts can
-validate body-only agent-owned bundles, store content-addressed versions with bounded
-provenance and evaluations, and explicitly link a historical deferred procedure proposal to a
-draft. `engine/adapter/memskill` is the in-memory reference,
-`engine/adapter/skillvalidation` is the logical admission validator, and
-`engine/adapter/skillmaterialize` is the recoverable proposal-to-draft linker. The host repository
-ships `internal/adapter/skillstore` as a durable single-host flock/manifest implementation with
-immutable content-addressed `SKILL.md` files. Procedure materialization uses recoverable
-create-then-CAS-link semantics, so retry after a crash does not duplicate a draft.
-`engine/adapter/skilllifecycle.Pipeline` supplies the synchronous off/review/auto policy over an
-injected repository, validator, evaluator, and atomic publisher. Its `ActivationPolicy` zero value is
-`evaluated` for source-compatible PASS-only behavior. A host may select `validated` only when its
-repository implements the optional `learning.ValidatedSkillActivator`, whose atomic contract accepts
-non-legacy, evidence-backed, accepted/exact, staged ABSTAIN versions under owner/partition/CAS.
-Evaluator FAIL remains deny-dominant. Evaluator infrastructure errors durably reject with a generic
-ERROR verdict before the original error is returned; raw error detail is neither persisted nor logged.
-`engine/adapter/skillfs.AtomicCatalog`
-supplies a complete-generation live Skill tool while preserving existing snapshot sources. Standard
-Mecatl composition wires these into its caller-partitioned gRPC/HTTP review surface; an embedder may
-replace every seam.
+The module also exposes replaceable, CAS-only learned-skill lifecycle contracts.
+Hosts can validate body-only agent-owned bundles, store content-addressed
+versions with bounded provenance and evaluations, and explicitly link a
+historical deferred procedure proposal to a draft. `engine/adapter/memskill` is
+the in-memory reference, `engine/adapter/skillvalidation` is the logical
+admission validator, and `engine/adapter/skillmaterialize` is the recoverable
+proposal-to-draft linker. The host repository ships
+`internal/adapter/skillstore` as a durable single-host flock/manifest
+implementation with immutable content-addressed `SKILL.md` files. Procedure
+materialization uses recoverable create-then-CAS-link semantics, so retry after
+a crash does not duplicate a draft. `engine/adapter/skilllifecycle.Pipeline`
+supplies the synchronous off/review/auto policy over an injected repository,
+validator, evaluator, and atomic publisher. Its `ActivationPolicy` zero value is
+`evaluated` for source-compatible PASS-only behavior. A host may select
+`validated` only when its repository implements the optional
+`learning.ValidatedSkillActivator`, whose atomic contract accepts non-legacy,
+evidence-backed, accepted/exact, staged ABSTAIN versions under
+owner/partition/CAS. Evaluator FAIL remains deny-dominant. Evaluator
+infrastructure errors durably reject with a generic ERROR verdict before the
+original error is returned; raw error detail is neither persisted nor logged.
+`engine/adapter/skillfs.AtomicCatalog` supplies a complete-generation live Skill
+tool while preserving existing snapshot sources. Standard Mecatl composition
+wires these into its caller-partitioned gRPC/HTTP review surface; an embedder
+may replace every seam.
 
-The engine library seam itself does not choose persistence, schedule jobs, or expose a transport. Hosts
-that consume proposals own review, authorization, and persistence. See the
+The engine library seam itself does not choose persistence, schedule jobs, or
+expose a transport. Hosts that consume proposals own review, authorization, and
+persistence. See the
 [architecture guide](https://github.com/stacklok/mecatl/blob/main/docs/architecture.md#evidence-backed-reflection)
 for the evidence and output-validation contract.
 
@@ -243,7 +274,8 @@ for the evidence and output-validation contract.
 
 ## What you do not get
 
-In-process embedding is the engine and nothing else. You are responsible for everything outside it:
+In-process embedding is the engine and nothing else. You are responsible for
+everything outside it:
 
 |Capability|Status|
 |-|-|
@@ -256,13 +288,17 @@ In-process embedding is the engine and nothing else. You are responsible for eve
 |OpenAI / Anthropic provider adapters|Not included in the engine module — but they ARE importable as opt-in submodules. Import `github.com/stacklok/mecatl/provider/openai` (Responses API), `github.com/stacklok/mecatl/provider/openaichat` (Chat Completions API), or `github.com/stacklok/mecatl/provider/anthropic` (native Messages API) and you pull only that provider's SDK plus the engine module, never the root module (see [ADR 0093](https://github.com/stacklok/mecatl/blob/main/docs/adr/0093-provider-modules.md)).|
 |Session store backends (JSONL, Redis)|Not included in the engine module. `memstore` is. For durable or Redis-backed storage, import the root module's adapters.|
 
-If you need several of those capabilities, `mecated` (or the `internal/app` composition layer) assembles them for you. See [Run mecated standalone](mecated.md).
+If you need several of those capabilities, `mecated` (or the `internal/app`
+composition layer) assembles them for you. See
+[Run mecated standalone](mecated.md).
 
 ---
 
 ## go.work for monorepo development
 
-The engine is a separate Go module inside the Mecatl monorepo, connected via `go.work`. If you develop against a local checkout of Mecatl rather than the published module, set up a `go.work` in your own repo's parent:
+The engine is a separate Go module inside the Mecatl monorepo, connected via
+`go.work`. If you develop against a local checkout of Mecatl rather than the
+published module, set up a `go.work` in your own repo's parent:
 
 ```sh
 # In your project root (where your go.mod lives):
@@ -279,11 +315,15 @@ use .
 use /path/to/mecatl/engine
 ```
 
-Now `go build` and `go test` resolve `github.com/stacklok/mecatl/engine` from the local checkout rather than the module proxy. Commit `go.work.sum` alongside `go.work` if others on your team check out both repos.
+Now `go build` and `go test` resolve `github.com/stacklok/mecatl/engine` from
+the local checkout rather than the module proxy. Commit `go.work.sum` alongside
+`go.work` if others on your team check out both repos.
 
 :::note[go.work is local-only]
 
-`go.work` files are for local development. Published modules should use a `replace` directive in `go.mod` for the same effect, or depend on a tagged release. Do not commit `go.work` to a repository that others will `go get` from.
+`go.work` files are for local development. Published modules should use a
+`replace` directive in `go.mod` for the same effect, or depend on a tagged
+release. Do not commit `go.work` to a repository that others will `go get` from.
 
 :::
 
@@ -291,8 +331,14 @@ Now `go build` and `go test` resolve `github.com/stacklok/mecatl/engine` from th
 
 ## What's next
 
-- [The agent loop](/building/what-you-get/agent-loop.md) — event taxonomy, permission pause/resume, compaction, and terminal states.
-- [Permissions & guardrails](/building/what-you-get/permissions.md) — how to configure rules, posture, and the model-backed guardrail layer.
-- [API stability](/building/api-stability.md) — what's guaranteed not to break in the engine module you just imported, and how a breaking change is classified and surfaced.
-- [Run mecated standalone](mecated.md) — if you want the composition done for you (auth, TLS, gRPC, Prometheus).
-- [Cloud-native k8s with mecak8s](mecak8s.md) — stateless Kubernetes deployment backed by Redis and k8s leases.
+- [The agent loop](/building/what-you-get/agent-loop.md) — event taxonomy,
+  permission pause/resume, compaction, and terminal states.
+- [Permissions & guardrails](/building/what-you-get/permissions.md) — how to
+  configure rules, posture, and the model-backed guardrail layer.
+- [API stability](/building/api-stability.md) — what's guaranteed not to break
+  in the engine module you just imported, and how a breaking change is
+  classified and surfaced.
+- [Run mecated standalone](mecated.md) — if you want the composition done for
+  you (auth, TLS, gRPC, Prometheus).
+- [Cloud-native k8s with mecak8s](mecak8s.md) — stateless Kubernetes deployment
+  backed by Redis and k8s leases.

@@ -1,7 +1,9 @@
 ---
 sidebar_position: 200
 title: Define named agents
-description: Define specialist agents with their own instructions, tools, and model settings.
+description:
+  Define specialist agents with their own instructions, tools, and model
+  settings.
 ---
 
 # Define named agents
@@ -72,8 +74,8 @@ A definition's body is instructions to the specialist. Keep it focused on the
 role, expected output, and boundaries. Do not put credentials in frontmatter,
 headers, or the body.
 
-Definitions are bounded: descriptions are capped at 2000 bytes and bodies at
-32 KiB. Unknown frontmatter keys are ignored for forward compatibility.
+Definitions are bounded: descriptions are capped at 2000 bytes and bodies at 32
+KiB. Unknown frontmatter keys are ignored for forward compatibility.
 
 ## Choose where definitions are discovered
 
@@ -104,9 +106,8 @@ a startup failure.
 ## Trust and execution boundaries
 
 Project definitions under the workspace are project-provided instructions. They
-are admitted only when the workspace has project trust. User-global and
-explicit operator-managed definitions are not subject to the project trust
-switch.
+are admitted only when the workspace has project trust. User-global and explicit
+operator-managed definitions are not subject to the project trust switch.
 
 Treat an agent source as part of the harness trust boundary:
 
@@ -136,21 +137,22 @@ The main model invokes the `Subagent` tool with the definition name:
 
 The specialist receives its definition instructions plus this task. The
 `agentId` in the result identifies the child session for inspection or a later
-resume when child persistence is configured. A named specialist is still a
-child run: its workspace, shell, limits, and mutability follow the selected
-mode and deployment posture.
+resume when child persistence is configured. A named specialist is still a child
+run: its workspace, shell, limits, and mutability follow the selected mode and
+deployment posture.
 
-A per-call `model` override can rebuild a named read-only specialist on another model when
-the deployment supports the agent model factory. A named `agent` and `model`
-combination is a scoped specialist override, not a change to the parent's
-session model.
+A per-call `model` override can rebuild a named read-only specialist on another
+model when the deployment supports the agent model factory. A named `agent` and
+`model` combination is a scoped specialist override, not a change to the
+parent's session model.
 
-For a `mode: "read-write"` named specialist, omit the call's `model`. If the definition also
-omits its frontmatter `model:`, an enabled semantic router may choose the model while retaining
-the specialist's scoped tools and instructions and its direct-write access to the parent
-workspace. Set `model: inherit` (or another definition model) to pin it and bypass routing.
-An unavailable routed target falls back to the specialist's ordinary resolved model; a
-definition that switches provider or uses inline MCP is not eligible for this routed writable
+For a `mode: "read-write"` named specialist, omit the call's `model`. If the
+definition also omits its frontmatter `model:`, an enabled semantic router may
+choose the model while retaining the specialist's scoped tools and instructions
+and its direct-write access to the parent workspace. Set `model: inherit` (or
+another definition model) to pin it and bypass routing. An unavailable routed
+target falls back to the specialist's ordinary resolved model; a definition that
+switches provider or uses inline MCP is not eligible for this routed writable
 path. Explicit `read-write` + `agent` + `model` remains invalid.
 
 ### Use in a team
@@ -183,8 +185,8 @@ subject to the server's permission and trust policy.
 - Duplicate names resolve by source precedence; the lower-precedence definition
   is not merged into the winner.
 - An agent definition cannot use stdio MCP. Inline MCP is streamable HTTP only.
-- Per-definition hooks execute host-side commands; only use definitions
-  from sources you trust.
+- Per-definition hooks execute host-side commands; only use definitions from
+  sources you trust.
 - A named specialist's model/provider selection does not change the parent
   session's provider or model.
 - `memory: user` and `memory: project` are read-only; named agents do not get a

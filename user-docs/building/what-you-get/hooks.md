@@ -1,7 +1,9 @@
 ---
 sidebar_position: 4
 title: Hook system
-description: Understand hook phases and how hooks observe, transform, or block agent actions.
+description:
+  Understand hook phases and how hooks observe, transform, or block agent
+  actions.
 ---
 
 # Hook system
@@ -28,11 +30,14 @@ cannot install, modify, or disable them. Every event starts as allowed.
 |`TaskCreated`|When the team supervisor creates a task|No|No|—|
 |`TaskCompleted`|When a team member completes a task|No|No|—|
 
-`SessionStart` and `UserPromptSubmit` are fail-safe: a hook execution error (not just exit 2) also ends the run. `PreToolUse` and `PostToolUse` treat execution errors as annotations — neither aborts the run.
+`SessionStart` and `UserPromptSubmit` are fail-safe: a hook execution error (not
+just exit 2) also ends the run. `PreToolUse` and `PostToolUse` treat execution
+errors as annotations — neither aborts the run.
 
 ## Shell hook contract
 
-Each hook is a shell command run as `<shell> -c <command>` (default `/bin/sh`). The JSON `HookEvent` is written to the process's stdin:
+Each hook is a shell command run as `<shell> -c <command>` (default `/bin/sh`).
+The JSON `HookEvent` is written to the process's stdin:
 
 ```json
 {
@@ -43,7 +48,9 @@ Each hook is a shell command run as `<shell> -c <command>` (default `/bin/sh`). 
 }
 ```
 
-`Input` is phase-specific. For `PreToolUse` it is the tool's raw arguments JSON. For `PostToolUse` it is `{"content": "...", "is_error": false}`. For `UserPromptSubmit` it is `{"prompt": "..."}`.
+`Input` is phase-specific. For `PreToolUse` it is the tool's raw arguments JSON.
+For `PostToolUse` it is `{"content": "...", "is_error": false}`. For
+`UserPromptSubmit` it is `{"prompt": "..."}`.
 
 ### Exit codes
 
@@ -66,9 +73,14 @@ On exit 0, if stdout is a JSON object, it is parsed as a control envelope:
 }
 ```
 
-`mutated` must have the same shape as `Input` for that phase. For `PreToolUse` it replaces the tool's arguments before execution. For `PostToolUse` it replaces the result the model and client see. For `UserPromptSubmit` it replaces the recorded prompt text.
+`mutated` must have the same shape as `Input` for that phase. For `PreToolUse`
+it replaces the tool's arguments before execution. For `PostToolUse` it replaces
+the result the model and client see. For `UserPromptSubmit` it replaces the
+recorded prompt text.
 
-A malformed (non-JSON-object) stdout is treated as a plain message and the original payload stands — so hooks that only print a message or produce no output at all are unaffected.
+A malformed (non-JSON-object) stdout is treated as a plain message and the
+original payload stands — so hooks that only print a message or produce no
+output at all are unaffected.
 
 ## Block example: guard Shell against `rm -rf`
 
@@ -83,13 +95,15 @@ fi
 exit 0
 ```
 
-Exit 2 causes Mecatl to substitute an error `ToolResult` in place of running the command. The model sees a tool failure, not a silent skip.
+Exit 2 causes Mecatl to substitute an error `ToolResult` in place of running the
+command. The model sees a tool failure, not a silent skip.
 
 ## Mutation examples
 
 ### Rewrite the prompt before it is recorded
 
-A `UserPromptSubmit` hook that strips a leaked API key pattern from user input before it reaches the model or the session store:
+A `UserPromptSubmit` hook that strips a leaked API key pattern from user input
+before it reaches the model or the session store:
 
 ```sh
 #!/bin/sh
@@ -104,7 +118,8 @@ The mutated prompt is what gets recorded into the session and sent to the model.
 
 ### Redact a secret from a tool result
 
-A `PostToolUse` hook that scrubs AWS credentials from shell output before the model sees it:
+A `PostToolUse` hook that scrubs AWS credentials from shell output before the
+model sees it:
 
 ```sh
 #!/bin/sh
@@ -119,11 +134,20 @@ print(json.dumps({'mutated': {'content': content, 'is_error': False}}))
 exit 0
 ```
 
-Because the mutation happens before the result is emitted, the client stream and the model's conversation history both show the redacted version — there is no divergence.
+Because the mutation happens before the result is emitted, the client stream and
+the model's conversation history both show the redacted version — there is no
+divergence.
 
 ## Permission policy evaluates original args
 
-For `PreToolUse`, the permission policy runs on the **original, pre-mutation** args. A hook that rewrites the args is not re-permission-checked after the rewrite. This is deliberate: a hook is operator-deployed and is treated as more trusted than the model. The practical consequence is that a hook can widen a call past the policy that gated the model's original request — for example, normalizing a path that would otherwise have triggered a confirmation. Don't use this to bypass security controls you intend to enforce; use it to implement your own operator-controlled transformations.
+For `PreToolUse`, the permission policy runs on the **original, pre-mutation**
+args. A hook that rewrites the args is not re-permission-checked after the
+rewrite. This is deliberate: a hook is operator-deployed and is treated as more
+trusted than the model. The practical consequence is that a hook can widen a
+call past the policy that gated the model's original request — for example,
+normalizing a path that would otherwise have triggered a confirmation. Don't use
+this to bypass security controls you intend to enforce; use it to implement your
+own operator-controlled transformations.
 
 ## Guardrails: a built-in model-backed hook
 
@@ -136,5 +160,8 @@ for the default matchers, enforcement modes, and approval flow.
 
 ## What's next
 
-- [Permissions & guardrails](./permissions.md) — the other governance surface; controls what the model can request before hooks fire, and the model-backed guardrail checker.
-- [Extension points — HookRunner](/building/extension-points/hook-runner.md) — how to implement a custom hook runner as a port adapter.
+- [Permissions & guardrails](./permissions.md) — the other governance surface;
+  controls what the model can request before hooks fire, and the model-backed
+  guardrail checker.
+- [Extension points — HookRunner](/building/extension-points/hook-runner.md) —
+  how to implement a custom hook runner as a port adapter.

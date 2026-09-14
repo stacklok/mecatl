@@ -18,5 +18,5 @@ behavior:
 - [TypeScript SDK API reference](./typescript-sdk-api/index.md) lists the
   published package entry points, methods, types, and errors.
 
-For task-oriented instructions, start with [Building on Mecatl](/building/index.md)
-or [Use mecatui](/mecatui/index.md).
+For task-oriented instructions, start with
+[Building on Mecatl](/building/index.md) or [Use mecatui](/mecatui/index.md).

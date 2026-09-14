@@ -1,7 +1,9 @@
 ---
 sidebar_position: 1
 title: See it in 60 seconds
-description: Run the offline Mecatl demo to see tools, approvals, teams, and subagents in action.
+description:
+  Run the offline Mecatl demo to see tools, approvals, teams, and subagents in
+  action.
 ---
 
 # See it in 60 seconds
@@ -13,7 +15,8 @@ network connection or API key. To inspect the engine wiring, see
 
 ## Prerequisites
 
-- **Go 1.26.6 or newer** (the `go` directive in `go.mod` sets this minimum version)
+- **Go 1.26.6 or newer** (the `go` directive in `go.mod` sets this minimum
+  version)
 - The repo cloned locally:
   ```console
   $ git clone https://github.com/stacklok/mecatl
@@ -82,11 +85,14 @@ team finished in 2 round(s); quiescent=true
 Consolidated report: the worker confirmed greeting.txt reads cleanly; nothing to fix.
 ```
 
-The report is the lead's synthesis, not a concatenation of member outputs. See [Subagents & teams](/building/what-you-get/subagents-teams-parallel.md) for how teams work.
+The report is the lead's synthesis, not a concatenation of member outputs. See
+[Subagents & teams](/building/what-you-get/subagents-teams-parallel.md) for how
+teams work.
 
 :::note
 
-This example only works offline. It will be disabled if you configure a live LLM backend.
+This example only works offline. It will be disabled if you configure a live LLM
+backend.
 
 :::
 
@@ -131,11 +137,15 @@ A subagent runs in the background; the harness notice lands at the next turn bou
 [harness note: 1 background subagent(s) finished: subagent-demo-background-session-call-bg-1 (end_turn). Collect each result with SubagentStatus before relying on it.]
 ```
 
-The `user_prompt` at event 017 is the harness notice — a recorded user-role message the model sees at the next turn boundary. It is not a user keystroke; it is the mechanism by which the loop informs the model that a background child finished.
+The `user_prompt` at event 017 is the harness notice — a recorded user-role
+message the model sees at the next turn boundary. It is not a user keystroke; it
+is the mechanism by which the loop informs the model that a background child
+finished.
 
 :::note
 
-This example only works offline. It will be disabled if you configure a live LLM backend.
+This example only works offline. It will be disabled if you configure a live LLM
+backend.
 
 :::
 
@@ -154,11 +164,14 @@ $ go run ./cmd/mecademo --openai --model gpt-5
 |`--model`|`mock-model`|Model identifier when `--openai` is set|
 |`--openai-base-url`|`""`|Override the OpenAI API base URL (any OpenAI-compatible endpoint)|
 
-Without `--openai` the demo is fully offline. With `--openai` and no key set, it exits immediately with an error.
+Without `--openai` the demo is fully offline. With `--openai` and no key set, it
+exits immediately with an error.
 
 Currently only OpenAI and a mock model are supported in the demo.
 
 ## Next steps
 
-- [Deployment decision](./deployment-decision.md) — how to pick the right deployment topology for your use case
-- [The agent loop](/building/what-you-get/agent-loop.md) — how the loop, ports, and event types fit together
+- [Deployment decision](./deployment-decision.md) — how to pick the right
+  deployment topology for your use case
+- [The agent loop](/building/what-you-get/agent-loop.md) — how the loop, ports,
+  and event types fit together

@@ -1,6 +1,7 @@
 ---
 title: TypeScript SDK Node.js and Bun API
-description: Look up the Node.js and Bun TypeScript SDK functions, methods, and types.
+description:
+  Look up the Node.js and Bun TypeScript SDK functions, methods, and types.
 sidebar_position: 3
 toc_max_heading_level: 2
 ---
@@ -9,9 +10,12 @@ import Heading from "@theme/Heading";
 
 # TypeScript SDK Node.js and Bun API
 
-{/* Generated from API Extractor models and sdk/typescript/src TSDoc. Regenerate with task sdk:docs. DO NOT EDIT. */}
+{/* Generated from API Extractor models and sdk/typescript/src TSDoc. Regenerate
+with task sdk:docs. DO NOT EDIT. */}
 
-This page lists declarations added or changed by `@stacklok-oss/mecatl-sdk/node`. The entry point also exports the [shared core API](./core.md).
+This page lists declarations added or changed by
+`@stacklok-oss/mecatl-sdk/node`. The entry point also exports the
+[shared core API](./core.md).
 
 ## Symbol index
 
@@ -53,7 +57,8 @@ A callback tool could not be added to the client registry.
 export declare class ToolRegistrationError extends MecatlError
 ```
 
-Callable members: [`constructor`](#api-toolregistrationerror-constructor-constructor)
+Callable members:
+[`constructor`](#api-toolregistrationerror-constructor-constructor)
 
 <Heading as="h4" id="api-toolregistrationerror-constructor-constructor"><code>ToolRegistrationError.constructor</code></Heading>
 
@@ -95,7 +100,8 @@ Parameters:
 - `path` (`string | URL`): File path or file URL to read.
 - `mimeType` (`string`): Audio MIME type for the file contents.
 
-Returns: `Promise<AudioPromptPart>`: A validated audio prompt part containing the file's bytes.
+Returns: `Promise<AudioPromptPart>`: A validated audio prompt part containing
+the file's bytes.
 
 Throws: `PromptValidationError` when the MIME type or size is invalid.
 
@@ -109,7 +115,8 @@ export declare function connect(options: NodeConnectOptions): NodeClient;
 
 Parameters:
 
-- `options` (`NodeConnectOptions`): gRPC endpoint, credentials, diagnostics, or a caller-owned transport.
+- `options` (`NodeConnectOptions`): gRPC endpoint, credentials, diagnostics, or
+  a caller-owned transport.
 
 Returns: `NodeClient`: A high-level client with callback-tool registration.
 
@@ -125,7 +132,8 @@ export declare function createNodeTransport(
 
 Parameters:
 
-- `options` (`NodeTransportOptions`): TCP authority or Unix socket plus credentials and HTTP/2 settings.
+- `options` (`NodeTransportOptions`): TCP authority or Unix socket plus
+  credentials and HTTP/2 settings.
 
 Returns: `Transport`: A Connect-ES gRPC transport.
 
@@ -145,13 +153,15 @@ Parameters:
 - `path` (`string | URL`): File path or file URL to read.
 - `mimeType` (`string`): Image MIME type for the file contents.
 
-Returns: `Promise<ImagePromptPart>`: A validated image prompt part containing the file's bytes.
+Returns: `Promise<ImagePromptPart>`: A validated image prompt part containing
+the file's bytes.
 
 Throws: `PromptValidationError` when the MIME type or size is invalid.
 
 <Heading as="h3" id="api-query-function"><code>query</code></Heading>
 
-Spawns if needed, creates one session, runs one prompt, and cleans up owned resources.
+Spawns if needed, creates one session, runs one prompt, and cleans up owned
+resources.
 
 ```ts
 export declare function query(
@@ -162,10 +172,13 @@ export declare function query(
 
 Parameters:
 
-- `prompt` (`PromptInput`): Text or ordered text, image, and audio parts for the run.
-- `options` (`QueryOptions`, optional): Session, responder, cancellation, retention, and daemon options.
+- `prompt` (`PromptInput`): Text or ordered text, image, and audio parts for the
+  run.
+- `options` (`QueryOptions`, optional): Session, responder, cancellation,
+  retention, and daemon options.
 
-Returns: `Promise<Query>`: A single-consumption event stream for the query-created session.
+Returns: `Promise<Query>`: A single-consumption event stream for the
+query-created session.
 
 Throws: `PlanApprovalRequiredError` when plan mode has no approval responder.
 
@@ -179,15 +192,20 @@ export declare function spawn(options?: SpawnOptions): Promise<SpawnedClient>;
 
 Parameters:
 
-- `options` (`SpawnOptions`, optional): Executable, environment, daemon, readiness, and diagnostic options.
+- `options` (`SpawnOptions`, optional): Executable, environment, daemon,
+  readiness, and diagnostic options.
 
-Returns: `Promise<SpawnedClient>`: A client that owns the ready daemon and its private runtime directory.
+Returns: `Promise<SpawnedClient>`: A client that owns the ready daemon and its
+private runtime directory.
 
-Throws: `MecatlError` with `unsupported_platform` on an unsupported operating system.
+Throws: `MecatlError` with `unsupported_platform` on an unsupported operating
+system.
 
-Throws: `MecatlError` with `spawn_failed` when the daemon cannot start correctly.
+Throws: `MecatlError` with `spawn_failed` when the daemon cannot start
+correctly.
 
-Throws: `MecatlError` with `readiness_timeout` when a live daemon misses its deadline.
+Throws: `MecatlError` with `readiness_timeout` when a live daemon misses its
+deadline.
 
 ## Interfaces
 
@@ -287,10 +305,13 @@ Parameters:
 
 - `name` (`string`): Name advertised by the local MCP server.
 - `schema` (`ToolSchema`): JSON Schema 2020-12 value for the tool arguments.
-- `handler` (`ToolHandler`): Function invoked with validated arguments and an abort signal.
-- `options` (`ToolOptions`, optional): Read-only assertion and per-tool concurrency limit.
+- `handler` (`ToolHandler`): Function invoked with validated arguments and an
+  abort signal.
+- `options` (`ToolOptions`, optional): Read-only assertion and per-tool
+  concurrency limit.
 
-Returns: `ToolDefinition`: The immutable registered-tool description and model-facing name.
+Returns: `ToolDefinition`: The immutable registered-tool description and
+model-facing name.
 
 Throws: `ToolRegistrationError` when the name, schema, or options are invalid.
 
@@ -304,7 +325,8 @@ export interface NodeTransportCommonOptions extends CredentialOptions
 
 <Heading as="h4" id="api-nodetransportcommonoptions-nodeoptions-propertysignature"><code>NodeTransportCommonOptions.nodeOptions</code></Heading>
 
-Additional HTTP/2 session options. The SDK controls `createConnection` when using `socketPath`.
+Additional HTTP/2 session options. The SDK controls `createConnection` when
+using `socketPath`.
 
 ```ts
 nodeOptions?: Omit<ClientSessionOptions, "createConnection">;
@@ -336,7 +358,8 @@ export interface QueryOptions
 
 <Heading as="h4" id="api-queryoptions-client-propertysignature"><code>QueryOptions.client</code></Heading>
 
-Use an existing client instead of spawning a local daemon. The client remains caller-owned.
+Use an existing client instead of spawning a local daemon. The client remains
+caller-owned.
 
 ```ts
 client?: Client;
@@ -344,7 +367,8 @@ client?: Client;
 
 <Heading as="h4" id="api-queryoptions-onpermissionask-propertysignature"><code>QueryOptions.onPermissionAsk</code></Heading>
 
-Automatically answer permission asks. With no responder, query denies each ask safely.
+Automatically answer permission asks. With no responder, query denies each ask
+safely.
 
 ```ts
 onPermissionAsk?: PermissionAskResponder;
@@ -360,7 +384,8 @@ onPlanApproval?: PlanApprovalResponder;
 
 <Heading as="h4" id="api-queryoptions-retainsession-propertysignature"><code>QueryOptions.retainSession</code></Heading>
 
-Keep the created session after the query. SDK-spawned daemons use an in-memory store.
+Keep the created session after the query. SDK-spawned daemons use an in-memory
+store.
 
 ```ts
 retainSession?: boolean;
@@ -416,7 +441,8 @@ export interface SpawnOptions extends ClientDiagnosticsOptions
 
 <Heading as="h4" id="api-spawnoptions-args-propertysignature"><code>SpawnOptions.args</code></Heading>
 
-Additional daemon arguments. SDK-owned listener and lifecycle flags cannot be replaced.
+Additional daemon arguments. SDK-owned listener and lifecycle flags cannot be
+replaced.
 
 ```ts
 args?: readonly string[];
@@ -544,7 +570,8 @@ export interface ToolOptions
 
 <Heading as="h4" id="api-tooloptions-concurrency-propertysignature"><code>ToolOptions.concurrency</code></Heading>
 
-Tightens the client-wide handler concurrency cap for this tool. Values above the client cap never raise it.
+Tightens the client-wide handler concurrency cap for this tool. Values above the
+client cap never raise it.
 
 ```ts
 concurrency?: number;
@@ -552,7 +579,11 @@ concurrency?: number;
 
 <Heading as="h4" id="api-tooloptions-readonly-propertysignature"><code>ToolOptions.readOnly</code></Heading>
 
-Unverified caller assertion that the callback has no side effects. The SDK carries this as MCP's `readOnlyHint`; Mecatl trusts that hint when scheduling concurrent read-only calls. A callback marked read-only may run concurrently even if it has side effects. Plan mode does not automatically classify MCP tool names as mutations.
+Unverified caller assertion that the callback has no side effects. The SDK
+carries this as MCP's `readOnlyHint`; Mecatl trusts that hint when scheduling
+concurrent read-only calls. A callback marked read-only may run concurrently
+even if it has side effects. Plan mode does not automatically classify MCP tool
+names as mutations.
 
 ```ts
 readOnly?: boolean;

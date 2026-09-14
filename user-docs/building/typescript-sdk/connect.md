@@ -1,6 +1,8 @@
 ---
 title: Connect an application
-description: Connect Node.js, Bun, or browser applications to an operator-owned Mecatl daemon.
+description:
+  Connect Node.js, Bun, or browser applications to an operator-owned Mecatl
+  daemon.
 sidebar_position: 2
 ---
 
@@ -46,8 +48,8 @@ const client = connect({
 });
 ```
 
-Use `credentialProvider` instead when the application refreshes credentials.
-The SDK calls the provider for every request and does not persist its returned
+Use `credentialProvider` instead when the application refreshes credentials. The
+SDK calls the provider for every request and does not persist its returned
 headers.
 
 ## Connect from a browser
@@ -72,9 +74,10 @@ The BFF must inject the daemon credential and enforce Origin and CSRF policy.
 Keep privileged daemon credentials out of browser JavaScript. The SDK supplies
 the browser-facing HTTP and SSE client; it does not include a BFF server.
 
-For local browser development, an operator can configure the daemon's exact
-CORS origins. See [Drive Mecatl through gRPC or HTTP](/building/deployment/grpc-http.md)
-for listener and transport configuration.
+For local browser development, an operator can configure the daemon's exact CORS
+origins. See
+[Drive Mecatl through gRPC or HTTP](/building/deployment/grpc-http.md) for
+listener and transport configuration.
 
 ## Observe connection status
 

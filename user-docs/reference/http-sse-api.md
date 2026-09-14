@@ -1,14 +1,15 @@
 ---
 title: HTTP and SSE API reference
-description: Look up Mecatl HTTP routes, SSE events, request bodies, and responses.
+description:
+  Look up Mecatl HTTP routes, SSE events, request bodies, and responses.
 sidebar_position: 3
 ---
 
 # HTTP and SSE API reference
 
 This is the detailed operator and wire reference. For the client-integration
-entry point, shared event lifecycle, and gRPC comparison, start with [Drive via
-gRPC / HTTP](/building/deployment/grpc-http.md).
+entry point, shared event lifecycle, and gRPC comparison, start with
+[Drive via gRPC / HTTP](/building/deployment/grpc-http.md).
 
 The HTTP adapter wraps the same service. Every event is emitted as one SSE
 `data:` line carrying the generated proto Go value marshalled by `encoding/json`
@@ -17,11 +18,11 @@ numbers rather than protojson enum names.
 
 ### Server identity
 
-`GET /v1/info?provider_id=<active-provider>` is a process-wide, state-free identity
-probe. It takes no request body. `provider_id` is optional but must be the caller's
-already-known active provider; it may appear exactly once. Absent, repeated, or
-unknown selectors leave `llm_provider_display_endpoint` unavailable. It returns `200 OK`
-with this JSON object:
+`GET /v1/info?provider_id=<active-provider>` is a process-wide, state-free
+identity probe. It takes no request body. `provider_id` is optional but must be
+the caller's already-known active provider; it may appear exactly once. Absent,
+repeated, or unknown selectors leave `llm_provider_display_endpoint`
+unavailable. It returns `200 OK` with this JSON object:
 
 ```json
 {
@@ -36,9 +37,9 @@ source build). `server_implementation` is the stable composition family only:
 `mecated`, `mecak8s`, or embedded `mecatui`; a generic embedding uses `unknown`.
 It is neither an instance identifier nor a deployment label.
 
-The optional `llm_provider_display_endpoint` is a sanitized display value for the
-supplied `provider_id`, or absent when unavailable. It retains only the scheme,
-host, optional port, and escaped clean path; it omits userinfo, query,
+The optional `llm_provider_display_endpoint` is a sanitized display value for
+the supplied `provider_id`, or absent when unavailable. It retains only the
+scheme, host, optional port, and escaped clean path; it omits userinfo, query,
 fragment, invalid or control data, malformed values, and oversized values. It is
 not connection configuration. The route does not infer a default or session
 selection, discover providers, re-read configuration, inspect session state, or
@@ -54,10 +55,10 @@ material, workspace paths, session or durable state, prompts, credentials, or
 raw errors.
 
 The route is additive. An older server returns `404`; clients should reduce that
-to their own safe unsupported status rather than display the response body. Clients
-must tolerate an absent or blank `server_implementation` in an otherwise valid
-response as `unknown`, and preserve an unfamiliar non-empty family for forward
-compatibility. `build_id` is not a semantic-version API.
+to their own safe unsupported status rather than display the response body.
+Clients must tolerate an absent or blank `server_implementation` in an otherwise
+valid response as `unknown`, and preserve an unfamiliar non-empty family for
+forward compatibility. `build_id` is not a semantic-version API.
 
 **Sessions & runs:**
 
@@ -86,42 +87,51 @@ compatibility. `build_id` is not a semantic-version API.
 |`POST /v1/sessions/{id}/clear`|`{"worktree_selector":"..."}` optional|`201` `{session_id, placement}` — distinct empty-history successor; omitted selector inherits exact source placement|
 |`POST /v1/sessions/{id}/fork`|optional `{title, reasoning_effort, provider_id, model_id, worktree_selector}`|`201` `{session_id, placement}` — history-carrying successor; omitted selector inherits exact placement, supplied selector must be fresh and source-scoped; all overrides resolve atomically|
 
-`WorkspaceEnrollment` contains only `enrollment_id`, `status`, `required_services`, and the ephemeral `presentation_url` when a new enrollment needs browser presentation. These unary controls reject every request body, validate the session and enrollment correlation from the path, retain the request context, and do not expose callbacks, selectors, or broker state.
+`WorkspaceEnrollment` contains only `enrollment_id`, `status`,
+`required_services`, and the ephemeral `presentation_url` when a new enrollment
+needs browser presentation. These unary controls reject every request body,
+validate the session and enrollment correlation from the path, retain the
+request context, and do not expose callbacks, selectors, or broker state.
 
 `mcp_servers` mounts client-provided streaming-HTTP MCP servers for the created
 session's lifetime, via a per-session engine. Each entry is
 `{name, url, type?, headers?}` — the HTTP mirror of the gRPC
 `CreateSessionRequest.mcp_servers` field, documented in full in
 [the gRPC API guide](./grpc-api.md). The short version: client MCP is a separate
-listener-scoped outbound-network/credential policy ([ADR 0248](https://github.com/stacklok/mecatl/blob/main/docs/adr/0248-sdk-compatibility-and-error-contract.md)). Only a `--grpc-unix-socket` daemon with `--http-addr ""`
-accepts it — which means the HTTP surface never does, since serving HTTP at all is
-a TCP listener; every other deployment, loopback included, returns `501` /
-`client_mcp_unsupported`. Check `mcp_servers_on_create` in `GET /v1/compatibility`
-`features` first. Mounting is all-or-nothing: a server that does not connect fails
-the create with `503` / `client_mcp_unreachable` rather than returning a session
-quietly missing its tools. A `stdio` or `sse` entry is `400` on every deployment
-(Mecatl never spawns an MCP server process); each `name` must be 1-64 chars of
-`[A-Za-z0-9._-]`, contain no `__`, and be unique in the request; a URL carrying
-userinfo credentials is `400` (use `headers`); and header values are never logged,
-evented, or echoed in an error.
+listener-scoped outbound-network/credential policy
+([ADR 0248](https://github.com/stacklok/mecatl/blob/main/docs/adr/0248-sdk-compatibility-and-error-contract.md)).
+Only a `--grpc-unix-socket` daemon with `--http-addr ""` accepts it — which
+means the HTTP surface never does, since serving HTTP at all is a TCP listener;
+every other deployment, loopback included, returns `501` /
+`client_mcp_unsupported`. Check `mcp_servers_on_create` in
+`GET /v1/compatibility` `features` first. Mounting is all-or-nothing: a server
+that does not connect fails the create with `503` / `client_mcp_unreachable`
+rather than returning a session quietly missing its tools. A `stdio` or `sse`
+entry is `400` on every deployment (Mecatl never spawns an MCP server process);
+each `name` must be 1-64 chars of `[A-Za-z0-9._-]`, contain no `__`, and be
+unique in the request; a URL carrying userinfo credentials is `400` (use
+`headers`); and header values are never logged, evented, or echoed in an error.
 
-**The create body is decoded strictly.** An unrecognized field is `400` naming the
-field, rather than being silently ignored. This matters most for `mcp_servers`: the
-protojson spelling `mcpServers` used to be dropped, returning `201` for a session
-with none of the requested servers. It applies to every field on the body, so a
-client sending stray keys that previously succeeded now gets a `400`.
+**The create body is decoded strictly.** An unrecognized field is `400` naming
+the field, rather than being silently ignored. This matters most for
+`mcp_servers`: the protojson spelling `mcpServers` used to be dropped, returning
+`201` for a session with none of the requested servers. It applies to every
+field on the body, so a client sending stray keys that previously succeeded now
+gets a `400`.
 
-**Placement is server-owned.** The create body has no workspace, cwd, placement ID,
-exact EnvironmentRef, or worktree selector. Local/embedded `--workspace` is trusted
-server configuration only. `GET /v1/commands?session_id=...` and
-`GET /v1/worktrees?session_id=...` authorize and exactly reattach that source session;
-no-FS returns empty without touching filesystem providers. Worktrees contain bounded
-display metadata and an opaque caller/source-scoped selector accepted only by the clear
-and fork successor routes. Selectors are not paths or durable IDs and expire on server
-restart, so clients relist. Sessions/snapshots and trusted driver storage retain the
-exact private `EnvironmentRef{kind,id,revision}`; HTTP projections never do.
+**Placement is server-owned.** The create body has no workspace, cwd, placement
+ID, exact EnvironmentRef, or worktree selector. Local/embedded `--workspace` is
+trusted server configuration only. `GET /v1/commands?session_id=...` and
+`GET /v1/worktrees?session_id=...` authorize and exactly reattach that source
+session; no-FS returns empty without touching filesystem providers. Worktrees
+contain bounded display metadata and an opaque caller/source-scoped selector
+accepted only by the clear and fork successor routes. Selectors are not paths or
+durable IDs and expire on server restart, so clients relist. Sessions/snapshots
+and trusted driver storage retain the exact private
+`EnvironmentRef{kind,id,revision}`; HTTP projections never do.
 
-**Inventory & introspection** (the HTTP mirrors of the gRPC inventory RPCs in §9):
+**Inventory & introspection** (the HTTP mirrors of the gRPC inventory RPCs in
+§9):
 
 |Method & path|Response|
 |-|-|
@@ -150,20 +160,25 @@ exact private `EnvironmentRef{kind,id,revision}`; HTTP projections never do.
 |`GET /v1/mcp/sources`|the resolved MCP source inventory|
 |`GET /v1/mcp/toolhive/groups`|the ToolHive groups in the resolved inventory|
 
-Manual dream generation sends the selected bounded memory values/descriptions to the configured
-planner and spends tokens; regeneration is explicit and spends again. Apply/dismiss is whole-plan,
-with no client-supplied operations or per-source toggles. Exact duplicates keep the survivor;
-approved synthesis atomically rewrites the displayed survivor and tombstones the displayed sources
-per operation, while independent operations can yield a partial receipt. Plans expire after ten
-minutes and exist only on the generating process: expiry, restart, or a wrong replica returns `404`
-and makes the old decision non-retryable while allowing explicit fresh generation. A same-decision
-request while apply is running returns `409` and remains explicitly retryable; an opposite request
-returns `412` while apply is active and `410` after the opposite terminal decision. Only the terminal
-case offers fresh generation. Genuinely indeterminate transport failures preserve the exact plan ID and
-decision for same-decision retry because the first request may already have applied. No error path offers
-the opposite decision. Capacity pressure returns `429`, and an unavailable deployment/target `501`. Ownership enforcement
-disables manual dream review. This does not change the separate, off-by-default schedule flags or
-`learning.mode`, and no recall counters or provider/model identity are returned.
+Manual dream generation sends the selected bounded memory values/descriptions to
+the configured planner and spends tokens; regeneration is explicit and spends
+again. Apply/dismiss is whole-plan, with no client-supplied operations or
+per-source toggles. Exact duplicates keep the survivor; approved synthesis
+atomically rewrites the displayed survivor and tombstones the displayed sources
+per operation, while independent operations can yield a partial receipt. Plans
+expire after ten minutes and exist only on the generating process: expiry,
+restart, or a wrong replica returns `404` and makes the old decision
+non-retryable while allowing explicit fresh generation. A same-decision request
+while apply is running returns `409` and remains explicitly retryable; an
+opposite request returns `412` while apply is active and `410` after the
+opposite terminal decision. Only the terminal case offers fresh generation.
+Genuinely indeterminate transport failures preserve the exact plan ID and
+decision for same-decision retry because the first request may already have
+applied. No error path offers the opposite decision. Capacity pressure returns
+`429`, and an unavailable deployment/target `501`. Ownership enforcement
+disables manual dream review. This does not change the separate, off-by-default
+schedule flags or `learning.mode`, and no recall counters or provider/model
+identity are returned.
 
 **Agent teams** (with `--enable-teams`, the default):
 
@@ -199,9 +214,9 @@ Optional fields:
 }
 ```
 
-`mode` accepts `default`, `plan`, `acceptedits` (also `accept_edits` / `accept`);
-unknown/empty falls back to the server default (`default`). Each omitted or zero
-`limits` field inherits its deployment default:
+`mode` accepts `default`, `plan`, `acceptedits` (also `accept_edits` /
+`accept`); unknown/empty falls back to the server default (`default`). Each
+omitted or zero `limits` field inherits its deployment default:
 
 |Limit|Deployment default|
 |-|-|
@@ -209,11 +224,12 @@ unknown/empty falls back to the server default (`default`). Each omitted or zero
 |`max_tool_calls`|`8000`|
 |`max_consecutive_failures`|`5`|
 
-A non-zero field overrides only that limit; other zero fields still inherit their
-defaults.
+A non-zero field overrides only that limit; other zero fields still inherit
+their defaults.
 
 A `workspace`, `cwd`, placement ID, or exact environment ref is an unknown field
-and the strict decoder returns `400`; configure local `--workspace` on the server.
+and the strict decoder returns `400`; configure local `--workspace` on the
+server.
 
 ### Create a no-filesystem session (`profile: "no-fs"`)
 
@@ -230,15 +246,16 @@ $ curl -s -X POST http://127.0.0.1:8081/v1/sessions \
 The same `profile` field exists on the gRPC `CreateSessionRequest` (enum-as-
 string: `""` = default, `"no-fs"`). Rules, all enforced server-side:
 
-- `"no-fs"` binds the server's filesystem-free placement; no workspace field exists.
-  Omitted profile binds the server's deployment default.
+- `"no-fs"` binds the server's filesystem-free placement; no workspace field
+  exists. Omitted profile binds the server's deployment default.
 - Any other profile value is rejected loudly — never a silent fallback.
-- The no-FS session has **no** Read/ListDir/Edit/Write/Copy/Move/Remove/Grep/Glob/Shell/ShellStatus, no
-  Parallel, and no SkillDraft. It keeps MCP tools (server-global + resource meta-tools +
-  client MCP), the six memory tools, WebFetch, WebSearch, Skill (bodies are text
-  injection; out-of-workspace skill assets are unreadable), and delegation —
-  Subagent and Team children run the same file-less surface with **no**
-  worktree/fork isolation (there is nothing to isolate) and no shell.
+- The no-FS session has **no**
+  Read/ListDir/Edit/Write/Copy/Move/Remove/Grep/Glob/Shell/ShellStatus, no
+  Parallel, and no SkillDraft. It keeps MCP tools (server-global + resource
+  meta-tools + client MCP), the six memory tools, WebFetch, WebSearch, Skill
+  (bodies are text injection; out-of-workspace skill assets are unreadable), and
+  delegation — Subagent and Team children run the same file-less surface with
+  **no** worktree/fork isolation (there is nothing to isolate) and no shell.
 - The model is told up front (a system-prompt posture note plus an honest
   Subagent tool description), so it plans around MCP/memory/web search+fetch
   instead of burning turns on unknown-tool errors.
@@ -256,8 +273,8 @@ A missing id returns `404` `{"error":"not found: \"...\""}`.
 
 ### Compact model history without a turn
 
-Use the bodyless manual operation when the next prompt may not fit or when you want
-to reduce stored model history before continuing:
+Use the bodyless manual operation when the next prompt may not fit or when you
+want to reduce stored model history before continuing:
 
 ```console
 $ curl -s -X POST http://127.0.0.1:8081/v1/sessions/<id>/compact
@@ -265,20 +282,20 @@ $ curl -s -X POST http://127.0.0.1:8081/v1/sessions/<id>/compact
 ```
 
 The server runs the configured compactor once regardless of the automatic 0.8
-trigger. It adds no prompt and starts no model turn, although the cascade strategy
-may make a compaction-slot summarization call. `false` is a successful no-op and
-causes no save or event append. The legal states are idle, completed, cancelled,
-and failed; state is preserved. Running/awaiting, scheduled, child, or same-process
-live sessions return `412`. A lease held by another replica returns `409`. Missing
-and foreign-owned IDs both return `404`; configured HTTP authentication still
-applies before ownership checks.
+trigger. It adds no prompt and starts no model turn, although the cascade
+strategy may make a compaction-slot summarization call. `false` is a successful
+no-op and causes no save or event append. The legal states are idle, completed,
+cancelled, and failed; state is preserved. Running/awaiting, scheduled, child,
+or same-process live sessions return `412`. A lease held by another replica
+returns `409`. Missing and foreign-owned IDs both return `404`; configured HTTP
+authentication still applies before ownership checks.
 
 On change, the compacted snapshot is saved before the existing compaction notice
 and archive are appended. Save failure returns `500` without appending them. An
-event-log append failure after save does not roll back the snapshot or change the
-`200` response, so the log may lack that manual compaction record. Clients can
-check `capabilities.manual_compaction` on session creation; an old server leaves it
-false and returns `404` for the unknown route.
+event-log append failure after save does not roll back the snapshot or change
+the `200` response, so the log may lack that manual compaction record. Clients
+can check `capabilities.manual_compaction` on session creation; an old server
+leaves it false and returns `404` for the unknown route.
 
 ### Start a run (SSE stream)
 
@@ -299,14 +316,14 @@ data: {"type":"result","seq":3,"result":{"stop":"end_turn","text":"Mock provider
 > `tool_call`, `tool_result`, `ask` (`{ask_id, tool, args, reason}`),
 > `is_error`, `call_id`.
 
-Disconnecting the client (closing the curl connection) cancels the run.
-`text` is required — omitting it returns `400` `{"error":"text is required"}`.
+Disconnecting the client (closing the curl connection) cancels the run. `text`
+is required — omitting it returns `400` `{"error":"text is required"}`.
 
 ### Retry the failed model step
 
-When a terminal result explicitly carries `retry_disposition: 2` (retryable)
-and `stream_progress: 2` (precommit) or `3` (visible), repeat that exact model
-step without submitting another prompt. The concrete SSE mappings are
+When a terminal result explicitly carries `retry_disposition: 2` (retryable) and
+`stream_progress: 2` (precommit) or `3` (visible), repeat that exact model step
+without submitting another prompt. The concrete SSE mappings are
 `retry_disposition`: `0` unspecified, `1` unknown, `2` retryable, `3` permanent;
 and `stream_progress`: `0` unspecified, `1` unknown, `2` precommit, `3` visible,
 `4` complete. For example, an automatically safe retry result contains
@@ -319,17 +336,19 @@ data: {"type":"session.init","seq":1}
 # model events follow, ending with a terminal result
 ```
 
-The route has no request body. It persists failed-step retry intent before launch and
-adds no user message. Persisted conversation/tool state is reused while live turn-0
-instructions, operator profile, and system-prompt sources are re-resolved. Normal
-`/prompt` requests are rejected while intent is pending. A clean pre-turn brake leaves
-it pending; cancellation clears it. A `409` means the server rejected eligibility. Retrying after `VISIBLE` output is an
-explicit operator choice; automated clients should use the narrower typed
+The route has no request body. It persists failed-step retry intent before
+launch and adds no user message. Persisted conversation/tool state is reused
+while live turn-0 instructions, operator profile, and system-prompt sources are
+re-resolved. Normal `/prompt` requests are rejected while intent is pending. A
+clean pre-turn brake leaves it pending; cancellation clears it. A `409` means
+the server rejected eligibility. Retrying after `VISIBLE` output is an explicit
+operator choice; automated clients should use the narrower typed
 `RETRYABLE + PRECOMMIT` case and a finite retry bound.
 
 The terminal Result fields are optional for wire compatibility. Presence with
-`UNKNOWN` is an explicit conservative answer from a new server. Absence means the
-server predates typed semantic retry and is not evidence that replay is safe.
+`UNKNOWN` is an explicit conservative answer from a new server. Absence means
+the server predates typed semantic retry and is not evidence that replay is
+safe.
 
 ### Approve / deny a pending ask
 
@@ -352,7 +371,8 @@ In plan mode, once the model has presented a complete plan it calls the
 `PresentPlan` signalling tool, which parks the run `awaiting` on a
 **plan-approval** ask (`ask.tool == "PresentPlan"` — the tool name is the
 discriminator; no provenance field on the proto). Resolve it atomically with
-`POST /v1/sessions/{id}/plan:approve` ([ADR 0069](https://github.com/stacklok/mecatl/blob/main/docs/adr/0069-plan-approval-gate.md)):
+`POST /v1/sessions/{id}/plan:approve`
+([ADR 0069](https://github.com/stacklok/mecatl/blob/main/docs/adr/0069-plan-approval-gate.md)):
 
 ```console
 $ curl -s -N -X POST http://127.0.0.1:8081/v1/sessions/<id>/plan:approve \
@@ -365,16 +385,16 @@ $ curl -s -N -X POST http://127.0.0.1:8081/v1/sessions/<id>/plan:approve \
 `target_mode` selects the verdict and the resulting posture:
 
 - `"default"` → allow-once: flip to `default` mode (deny→ask→allow) and execute.
-- `"accept_edits"` → allow-always: flip to `acceptEdits` mode (auto-accept
-  edits for the execution phase).
-- `"plan"` or `""` → deny/iterate: stay in plan mode, NO continuation run
-  starts (the model re-plans on the next prompt).
+- `"accept_edits"` → allow-always: flip to `acceptEdits` mode (auto-accept edits
+  for the execution phase).
+- `"plan"` or `""` → deny/iterate: stay in plan mode, NO continuation run starts
+  (the model re-plans on the next prompt).
 
 A `409` means a precondition failed: the session has a live run (use the
-`Converse` `resume_approval` frame for an in-flight run), is not `awaiting`,
-or is awaiting a non-plan ask. A `404` means an unknown session. An
-in-flight `Converse` run that parked on the plan ask may ALSO be resolved by
-the `resume_approval` frame on its own stream; the `plan:approve` RPC is the
+`Converse` `resume_approval` frame for an in-flight run), is not `awaiting`, or
+is awaiting a non-plan ask. A `404` means an unknown session. An in-flight
+`Converse` run that parked on the plan ask may ALSO be resolved by the
+`resume_approval` frame on its own stream; the `plan:approve` RPC is the
 headless/cross-process composition of resume + continuation into one stream.
 
 ### Cancel a run
@@ -390,10 +410,10 @@ The run terminates with a `result` whose `stop` is `cancelled`. No in-flight run
 ### Steer a running session
 
 A steer injects operator input into an in-flight run. The run commits it at the
-next turn boundary, after any current model response and tool batch settle.
-HTTP clients use the unary `steer` and `cancel-steer` routes. gRPC clients use
-the `steer` and `steer_cancel` arms on the bidirectional `Converse` stream. ACP
-does not support steer.
+next turn boundary, after any current model response and tool batch settle. HTTP
+clients use the unary `steer` and `cancel-steer` routes. gRPC clients use the
+`steer` and `steer_cancel` arms on the bidirectional `Converse` stream. ACP does
+not support steer.
 
 Check for both the runtime `steer` capability and the `http_steer` compatibility
 feature before using the HTTP routes. The feature prevents clients from probing
@@ -419,8 +439,8 @@ event echoes the latest message ID as a watermark for the committed bundle.
 finished, or has been replaced, the server returns `409` with the problem code
 `stale_run_control`. It never promotes a strict steer to another run.
 
-Without `expected_run_id`, a steer that loses the terminal race is promoted to
-a new follow-up run. The response remains JSON, not SSE:
+Without `expected_run_id`, a steer that loses the terminal race is promoted to a
+new follow-up run. The response remains JSON, not SSE:
 
 ```json
 { "outcome": "too_late", "promoted": true, "run_id": "<new-run-id>" }
@@ -453,12 +473,13 @@ Bodies larger than 32 MiB return `413`. Stale strict controls return `409`.
 stdin/stdout — for an editor that spawned `mecated` as a subprocess. It is the
 stdio alternative to the gRPC/HTTP listeners (which are skipped); everything
 else is the **same wiring**: the engine, tools, permission policy, session
-store, MCP, and skills come from the same `app.Build` assembly. ACP `session/new`
-binds the trusted configured placement and `session/load` exactly reattaches the persisted
-private ref before access. The editor-provided cwd is only a local consistency assertion;
-a mismatch is rejected and cwd cannot select or construct authority. Other ACP session,
-discovery, error, and event projections remain path-free. Logs go to **stderr**, so stdout carries
-only JSON-RPC frames.
+store, MCP, and skills come from the same `app.Build` assembly. ACP
+`session/new` binds the trusted configured placement and `session/load` exactly
+reattaches the persisted private ref before access. The editor-provided cwd is
+only a local consistency assertion; a mismatch is rejected and cwd cannot select
+or construct authority. Other ACP session, discovery, error, and event
+projections remain path-free. Logs go to **stderr**, so stdout carries only
+JSON-RPC frames.
 
 - There is **no TLS / auth / rate limiting** on this surface — stdio to the
   parent process is itself the trust boundary.

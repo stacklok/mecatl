@@ -1,6 +1,8 @@
 ---
 title: Resume durable activity
-description: Replay and follow Mecatl run or session activity from an application-owned cursor.
+description:
+  Replay and follow Mecatl run or session activity from an application-owned
+  cursor.
 sidebar_position: 6
 ---
 
@@ -41,7 +43,8 @@ for await (const envelope of activity) {
 Replace the checkpoint log with application-owned persistence. Commit each side
 effect before its cursor. Delivery of durably appended events is ordered and at
 least once, so make the side effect idempotent. A storage failure can create the
-gaps described under [Handle terminal watch errors](#handle-terminal-watch-errors).
+gaps described under
+[Handle terminal watch errors](#handle-terminal-watch-errors).
 
 The SDK stores reconnect state only in memory. It does not write cursors to
 browser storage or the filesystem.

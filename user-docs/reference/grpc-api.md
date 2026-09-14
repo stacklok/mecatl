@@ -7,8 +7,8 @@ sidebar_position: 2
 # gRPC API reference
 
 This is the detailed operator and wire reference. For the client-integration
-entry point, event lifecycle, and HTTP/SSE comparison, start with [Drive via
-gRPC / HTTP](/building/deployment/grpc-http.md).
+entry point, event lifecycle, and HTTP/SSE comparison, start with
+[Drive via gRPC / HTTP](/building/deployment/grpc-http.md).
 
 Service: `mecatl.v1.HarnessService` (`contracts/proto/mecatl/v1/harness.proto`).
 
@@ -16,10 +16,10 @@ Service: `mecatl.v1.HarnessService` (`contracts/proto/mecatl/v1/harness.proto`).
 
 `GetServerInfo(GetServerInfoRequest) → GetServerInfoResponse` is a unary,
 process-wide identity probe. Its optional `provider_id` selector must be the
-caller's already-known active provider; it accepts no session or workspace selector
-and does not create or inspect state. An absent or unknown `provider_id` leaves the
-sanitized diagnostic display endpoint unavailable. Its response contains these
-content-free strings:
+caller's already-known active provider; it accepts no session or workspace
+selector and does not create or inspect state. An absent or unknown
+`provider_id` leaves the sanitized diagnostic display endpoint unavailable. Its
+response contains these content-free strings:
 
 |Field|Meaning|
 |-|-|
@@ -68,119 +68,130 @@ semantic-version protocol.
 
 **Watching a session durably.** `StreamSessionEvents` replays and ENDS;
 `StreamSessionLive` is live but process-local and DROPS for a slow client;
-`WatchSessionEvents` is the one call that does both durably. Treat the `cursor` as
-bytes to hand back — never parse, build, or edit one. Persist it once per frame you
-have PROCESSED, and on any reconnect (including after a `watch_lagging`
-termination) pass that value back: the watch continues from exactly the next
-record. Do NOT resume from a cursor you saw but did not process. A cursor is
-SCOPED TO THE `run_id` IT WAS ISSUED UNDER — a filtered watch advances its
-position over the records the filter dropped, so handing that cursor back under a
-different `run_id`, or none, skips them silently. Resume with the same filter, or
-start from the beginning. A `gap` frame, or
-an `activity_gap` termination, means events that should have been recorded were
-not — a retry does not recover them. That guarantee is deliberately bounded: it
+`WatchSessionEvents` is the one call that does both durably. Treat the `cursor`
+as bytes to hand back — never parse, build, or edit one. Persist it once per
+frame you have PROCESSED, and on any reconnect (including after a
+`watch_lagging` termination) pass that value back: the watch continues from
+exactly the next record. Do NOT resume from a cursor you saw but did not
+process. A cursor is SCOPED TO THE `run_id` IT WAS ISSUED UNDER — a filtered
+watch advances its position over the records the filter dropped, so handing that
+cursor back under a different `run_id`, or none, skips them silently. Resume
+with the same filter, or start from the beginning. A `gap` frame, or an
+`activity_gap` termination, means events that should have been recorded were not
+— a retry does not recover them. That guarantee is deliberately bounded: it
 covers durably-appended events, and a total backend outage combined with loss of
 the process holding the watchers leaves a gap nothing can report.
 
 **Server-owned placement.** `CreateSessionRequest` has no workspace, cwd, exact
 EnvironmentRef, placement ID, or worktree selector. Omitted `profile` binds the
-trusted deployment default; `profile:"no-fs"` explicitly attenuates filesystem access.
-The response and `GetSession` expose bounded `PlacementMetadata` only. Exact
-`EnvironmentRef{Kind, ID, Revision}` remains private in the session snapshot and trusted
-driver storage and is reattached exactly at run entry—never inferred from a current
-default.
+trusted deployment default; `profile:"no-fs"` explicitly attenuates filesystem
+access. The response and `GetSession` expose bounded `PlacementMetadata` only.
+Exact `EnvironmentRef{Kind, ID, Revision}` remains private in the session
+snapshot and trusted driver storage and is reattached exactly at run entry—never
+inferred from a current default.
 
 `ListCommandsRequest` and `ListWorktreesRequest` carry `session_id`, not a root.
-The server owner-authorizes and exactly reattaches that source before discovery; no-FS
-returns empty without invoking filesystem providers. Each worktree has display-safe
-metadata and an opaque caller/source-scoped selector accepted only by ClearSession or
-ForkSession. Local selectors expire on restart and must be relisted; they are neither
-paths nor durable bearer IDs.
+The server owner-authorizes and exactly reattaches that source before discovery;
+no-FS returns empty without invoking filesystem providers. Each worktree has
+display-safe metadata and an opaque caller/source-scoped selector accepted only
+by ClearSession or ForkSession. Local selectors expire on restart and must be
+relisted; they are neither paths nor durable bearer IDs.
 
-**Dedicated debugger creation.** Set `CreateSessionRequest.profile = "no-fs"` and set `debug_target_session_id` to the exact authorized target.
-Optional repeated `debug_mcp_servers` names only already-configured server-global
-streaming-HTTP MCP servers. The response advertises `session_debug`/`debug_mcp` and persists
-the selected names plus exact tool ceiling. The resulting conversation uses ordinary
-`Converse`; `InspectSession` returns target-incarnation-bound evidence, and every selected
-MCP call—including tools marked read-only—surfaces a fresh ordinary `PermissionAsk` that the
-client resolves with `ResumeApproval`. Denies remain absolute, headless calls deny, and
-allow-always executes only the current call: it is not learned and the next call asks again.
-The target is never entered, leased, or
-mutated by evidence reads. See [ADR 0256](https://github.com/stacklok/mecatl/blob/main/docs/adr/0256-session-debugger-evidence-and-reporting.md).
+**Dedicated debugger creation.** Set `CreateSessionRequest.profile = "no-fs"`
+and set `debug_target_session_id` to the exact authorized target. Optional
+repeated `debug_mcp_servers` names only already-configured server-global
+streaming-HTTP MCP servers. The response advertises `session_debug`/`debug_mcp`
+and persists the selected names plus exact tool ceiling. The resulting
+conversation uses ordinary `Converse`; `InspectSession` returns
+target-incarnation-bound evidence, and every selected MCP call—including tools
+marked read-only—surfaces a fresh ordinary `PermissionAsk` that the client
+resolves with `ResumeApproval`. Denies remain absolute, headless calls deny, and
+allow-always executes only the current call: it is not learned and the next call
+asks again. The target is never entered, leased, or mutated by evidence reads.
+See
+[ADR 0256](https://github.com/stacklok/mecatl/blob/main/docs/adr/0256-session-debugger-evidence-and-reporting.md).
 
 **Client-provided MCP servers.** `CreateSessionRequest.mcp_servers` mounts
 streaming-HTTP MCP servers for the lifetime of the created session, via a
-per-session engine, so their tools and their auth headers never leak into another
-session. Each entry carries `name`, `url`, `type` (`"http"`, or empty with a
-`url`), and optional `headers`.
+per-session engine, so their tools and their auth headers never leak into
+another session. Each entry carries `name`, `url`, `type` (`"http"`, or empty
+with a `url`), and optional `headers`.
 
-The field is **listener-scoped** as a separate outbound-network/credential policy
-([ADR 0248](https://github.com/stacklok/mecatl/blob/main/docs/adr/0248-sdk-compatibility-and-error-contract.md)), not as workspace authority. Exactly
-one topology accepts it: a `--grpc-unix-socket` listener with `--http-addr ""`.
-Every other deployment, loopback TCP included, refuses every non-empty value with
-`UNIMPLEMENTED` / code `client_mcp_unsupported`. A UNIX socket is guarded by
-filesystem permissions on an owner-only directory; loopback TCP is reachable by
-other local processes. The refusal is server-enforced.
+The field is **listener-scoped** as a separate outbound-network/credential
+policy
+([ADR 0248](https://github.com/stacklok/mecatl/blob/main/docs/adr/0248-sdk-compatibility-and-error-contract.md)),
+not as workspace authority. Exactly one topology accepts it: a
+`--grpc-unix-socket` listener with `--http-addr ""`. Every other deployment,
+loopback TCP included, refuses every non-empty value with `UNIMPLEMENTED` / code
+`client_mcp_unsupported`. A UNIX socket is guarded by filesystem permissions on
+an owner-only directory; loopback TCP is reachable by other local processes. The
+refusal is server-enforced.
 
 Check `mcp_servers_on_create` in `GetCompatibilityInfo.features` before sending
 the field; the advertisement and the enforcement read the same value, so an
 advertised deployment will accept it and an unadvertised one will not. An empty
 list is not a use of the feature and is accepted everywhere.
 
-Mounting is **all-or-nothing**. Every requested server must connect or the create
-fails with `UNAVAILABLE` / code `client_mcp_unreachable`, naming the servers that
-did not answer; no session is created. The two codes are distinct on purpose:
-`client_mcp_unsupported` is permanent and a client should stop asking, while
-`client_mcp_unreachable` is transient and the client's own endpoint to fix. A
-partial mount is never reported as success — a session silently missing some of
-its tools is indistinguishable from a working one at the API.
+Mounting is **all-or-nothing**. Every requested server must connect or the
+create fails with `UNAVAILABLE` / code `client_mcp_unreachable`, naming the
+servers that did not answer; no session is created. The two codes are distinct
+on purpose: `client_mcp_unsupported` is permanent and a client should stop
+asking, while `client_mcp_unreachable` is transient and the client's own
+endpoint to fix. A partial mount is never reported as success — a session
+silently missing some of its tools is indistinguishable from a working one at
+the API.
 
-Transport is streaming-HTTP only on EVERY deployment, regardless of that policy: a
-`stdio` entry (or an untyped entry carrying a `command`) and an `sse` entry are
-`INVALID_ARGUMENT` — Mecatl never spawns an MCP server process.
+Transport is streaming-HTTP only on EVERY deployment, regardless of that policy:
+a `stdio` entry (or an untyped entry carrying a `command`) and an `sse` entry
+are `INVALID_ARGUMENT` — Mecatl never spawns an MCP server process.
 
 Each `name` must be 1–64 characters of `[A-Za-z0-9._-]`, must not contain `__`,
 and must be unique within the request; a violation is `INVALID_ARGUMENT`. The
 rules are the tool namespace's, not cosmetic: names become
-`mcp__<name>__<tool>`, so `__` inside one would forge another server's namespace,
-and duplicates would collide in the catalog with one set silently dropped. Note
-the namespace is FLAT and shared with operator-configured servers, so a client
-naming its server `github` can inherit an operator permission rule written for
-the real one — one more reason the field is gated to a local-only daemon.
+`mcp__<name>__<tool>`, so `__` inside one would forge another server's
+namespace, and duplicates would collide in the catalog with one set silently
+dropped. Note the namespace is FLAT and shared with operator-configured servers,
+so a client naming its server `github` can inherit an operator permission rule
+written for the real one — one more reason the field is gated to a local-only
+daemon.
 
 Credentials belong in `headers`, and nowhere else. A URL carrying userinfo
-(`https://user:pass@host/mcp`) is `INVALID_ARGUMENT`, because Go promotes it to a
-`Basic` header that would bypass every protection `headers` gets. Header values
-are secret-shaped: never logged, never carried in an event, never included in an
-error. A URL is redacted to `scheme://host/path` wherever it is logged or echoed
-in a message — in the message text, in the attributes beside it, and inside the
-underlying transport error, which embeds the full request URL of its own accord —
-so a token in the query string does not reach the operator's log.
+(`https://user:pass@host/mcp`) is `INVALID_ARGUMENT`, because Go promotes it to
+a `Basic` header that would bypass every protection `headers` gets. Header
+values are secret-shaped: never logged, never carried in an event, never
+included in an error. A URL is redacted to `scheme://host/path` wherever it is
+logged or echoed in a message — in the message text, in the attributes beside
+it, and inside the underlying transport error, which embeds the full request URL
+of its own accord — so a token in the query string does not reach the operator's
+log.
 
-A client endpoint may not redirect: a URL that passes validation is not permitted
-to send the daemon onward to a host that never did. Operator-configured servers
-are unaffected.
+A client endpoint may not redirect: a URL that passes validation is not
+permitted to send the daemon onward to a host that never did.
+Operator-configured servers are unaffected.
 
 **Manual compaction.** Check
-`CreateSessionResponse.capabilities.manual_compaction` before offering this action.
-Call `CompactSession` with the owned session ID. The server runs the configured
-compactor once even when the automatic 0.8 threshold has not been reached. It does
-not start `Converse`, add a user message, or create a model turn. A cascade pass may
-still invoke its summarization model through the compaction slot.
+`CreateSessionResponse.capabilities.manual_compaction` before offering this
+action. Call `CompactSession` with the owned session ID. The server runs the
+configured compactor once even when the automatic 0.8 threshold has not been
+reached. It does not start `Converse`, add a user message, or create a model
+turn. A cascade pass may still invoke its summarization model through the
+compaction slot.
 
 `compacted=true` means the shorter history was saved. `compacted=false` is a
 successful no-op for an empty, identical, or non-reducing candidate; nothing is
-saved and no compaction events are appended. Idle, completed, cancelled, and failed
-main chats are legal and retain their state. Running or awaiting sessions, scheduled
-sessions, delegation children, and an in-process live run return
-`FAILED_PRECONDITION`. Another replica holding the mutation lease also returns
-`FAILED_PRECONDITION`. An absent or foreign-owned ID returns `NOT_FOUND`, avoiding an
-ownership oracle; normal transport authentication still applies. A save failure is
-`INTERNAL`. Once save succeeds, later event-log append failure does not change the
-successful response or roll back the compacted snapshot.
+saved and no compaction events are appended. Idle, completed, cancelled, and
+failed main chats are legal and retain their state. Running or awaiting
+sessions, scheduled sessions, delegation children, and an in-process live run
+return `FAILED_PRECONDITION`. Another replica holding the mutation lease also
+returns `FAILED_PRECONDITION`. An absent or foreign-owned ID returns
+`NOT_FOUND`, avoiding an ownership oracle; normal transport authentication still
+applies. A save failure is `INTERNAL`. Once save succeeds, later event-log
+append failure does not change the successful response or roll back the
+compacted snapshot.
 
-The capability is additive. New clients reading an old server see false and should
-hide the action. Calling an old server's unknown method returns `UNIMPLEMENTED`.
+The capability is additive. New clients reading an old server see false and
+should hide the action. Calling an old server's unknown method returns
+`UNIMPLEMENTED`.
 
 **Inventory & introspection** (read-only; most are snapshots taken at startup):
 
@@ -206,27 +217,33 @@ hide the action. Calling an old server's unknown method returns `UNIMPLEMENTED`.
 |`ListMcpSources`|unary|the resolved MCP source inventory (static / ToolHive) + diagnostics|
 |`ListToolHiveGroups`|unary|the distinct ToolHive groups in the resolved inventory (no live ToolHive call)|
 
-**Manual dream review.** Read `CreateSessionResponse.capabilities.manual_dream` to discover
-generation and decision availability independently for project memory and the user model. Generation
-sends the selected bounded values/descriptions to the configured planner and spends tokens. The
-returned plan has a ten-minute process-local lifetime; apply/dismiss is a whole-plan decision and
-regeneration is an explicit second provider call. Exact duplicates leave the survivor unchanged;
-an approved synthesis atomically rewrites its displayed survivor and tombstones its displayed
-sources per operation. Independent operations can produce a partial receipt; there are no per-source
+**Manual dream review.** Read `CreateSessionResponse.capabilities.manual_dream`
+to discover generation and decision availability independently for project
+memory and the user model. Generation sends the selected bounded
+values/descriptions to the configured planner and spends tokens. The returned
+plan has a ten-minute process-local lifetime; apply/dismiss is a whole-plan
+decision and regeneration is an explicit second provider call. Exact duplicates
+leave the survivor unchanged; an approved synthesis atomically rewrites its
+displayed survivor and tombstones its displayed sources per operation.
+Independent operations can produce a partial receipt; there are no per-source
 decisions or grouped undo.
 
-Plan IDs are opaque and accepted only by the process that generated them. Expiry, restart, or a
-wrong-replica request returns `NOT_FOUND`; the old decision cannot be retried and the client may offer
-explicit fresh generation. Same decisions are idempotent. A same-decision request while apply is still
-running returns `ABORTED` and may be retried explicitly to retrieve the receipt. An opposite request
-against an applying record returns `FAILED_PRECONDITION` and is non-retryable; against a terminal
-record it returns `ALREADY_EXISTS`, after which explicit fresh generation is safe. Genuinely
-indeterminate transport errors preserve the exact ID and decision for same-decision retry because the
-first request may already have applied. No error state enables the opposite decision. Registry pressure
-returns `RESOURCE_EXHAUSTED`, and an unavailable target returns `UNIMPLEMENTED`. Manual review is disabled
-under ownership enforcement and when the planner or both reviewed atomic store capabilities are
-missing. It is separate from `learning.mode` and the off-by-default consolidation interval flags,
-and exposes neither recall counters nor provider/model identity.
+Plan IDs are opaque and accepted only by the process that generated them.
+Expiry, restart, or a wrong-replica request returns `NOT_FOUND`; the old
+decision cannot be retried and the client may offer explicit fresh generation.
+Same decisions are idempotent. A same-decision request while apply is still
+running returns `ABORTED` and may be retried explicitly to retrieve the receipt.
+An opposite request against an applying record returns `FAILED_PRECONDITION` and
+is non-retryable; against a terminal record it returns `ALREADY_EXISTS`, after
+which explicit fresh generation is safe. Genuinely indeterminate transport
+errors preserve the exact ID and decision for same-decision retry because the
+first request may already have applied. No error state enables the opposite
+decision. Registry pressure returns `RESOURCE_EXHAUSTED`, and an unavailable
+target returns `UNIMPLEMENTED`. Manual review is disabled under ownership
+enforcement and when the planner or both reviewed atomic store capabilities are
+missing. It is separate from `learning.mode` and the off-by-default
+consolidation interval flags, and exposes neither recall counters nor
+provider/model identity.
 
 **Agent teams** (experimental; registered with `--enable-teams`, the default):
 
@@ -246,10 +263,10 @@ The bidi stream drives exactly one run:
 
 1. The client sends the **mandatory first frame**. Use
    `Prompt{session_id, text, parts}` for a new user message; `parts` optionally
-   carries multimodal media (image/audio `Content` parts, capability-gated on the
-   session's provider). Use `RetryStart{session_id}` to repeat an eligible failed
-   model step without adding another prompt. A first frame of any other kind is
-   `InvalidArgument`.
+   carries multimodal media (image/audio `Content` parts, capability-gated on
+   the session's provider). Use `RetryStart{session_id}` to repeat an eligible
+   failed model step without adding another prompt. A first frame of any other
+   kind is `InvalidArgument`.
 2. The server streams `ConverseResponse{Event}` envelopes in sequence order.
 3. On a `permission.ask` event, the client sends a control frame
    `ResumeApproval{ask_id, verdict}` — `ask_id` echoes `Event.ask.ask_id`, and
@@ -274,20 +291,21 @@ The bidi stream drives exactly one run:
 |`cancel` (`Cancel{}`)|abort the in-flight run|
 |`cancel_child` (`CancelChild{child_id}`)|cancel ONE child run by its id (the `agentId:` / `child_id` handle), leaving the run and sibling children untouched; unknown/finished ids are ignored on the stream|
 
-A received second `prompt` or `retry` is `InvalidArgument`; unknown control frames
-are ignored. A single `Converse` stream drives a single run. Because the server
-closes the stream on the terminal result, a control frame still in transit at that
-boundary may instead observe normal EOF.
+A received second `prompt` or `retry` is `InvalidArgument`; unknown control
+frames are ignored. A single `Converse` stream drives a single run. Because the
+server closes the stream on the terminal result, a control frame still in
+transit at that boundary may instead observe normal EOF.
 
 For a failed model stream, inspect the terminal Result's optional
-`retry_disposition` and `stream_progress`. New servers set both fields even when the
-value is `UNKNOWN`; an absent field identifies an older server and must not be treated
-as safely retryable. `RetryStart` is prompt-free: the server persists aggregate-owned
-retry intent, blocks ordinary prompts while it is pending, and skips prompt hooks and
-the first retry turn's boundary injections. This avoids duplicate prompts and tool
-effects. Clients may explicitly retry typed `retryable` failures at `precommit` or
-`visible`; automatic retry should be narrower and bounded. Mecatui performs one
-automatic retry only for typed `retryable + precommit`.
+`retry_disposition` and `stream_progress`. New servers set both fields even when
+the value is `UNKNOWN`; an absent field identifies an older server and must not
+be treated as safely retryable. `RetryStart` is prompt-free: the server persists
+aggregate-owned retry intent, blocks ordinary prompts while it is pending, and
+skips prompt hooks and the first retry turn's boundary injections. This avoids
+duplicate prompts and tool effects. Clients may explicitly retry typed
+`retryable` failures at `precommit` or `visible`; automatic retry should be
+narrower and bounded. Mecatui performs one automatic retry only for typed
+`retryable + precommit`.
 
 ### Event envelope
 
@@ -323,23 +341,23 @@ child loop's lifecycle without leaking its content: all three carry the same
 BOUNDED PREVIEWS (ADR 0079) — ids, tool names/counts, usage, stop, plus capped,
 control-byte-scrubbed `text`/`detail` previews of child message text and tool
 args/results; the task board, findings ledger, dispositions, mutating cue, and
-context meter stay Team-only. Every preview is capped and a child's
-permission asks are never forwarded.
+context meter stay Team-only. Every preview is capped and a child's permission
+asks are never forwarded.
 
 `Result.stop` is one of: `end_turn`, `max_turns`, `max_tool_calls`,
-`max_consecutive_failures`, `budget` (the `--max-run-tokens` ceiling crossed —
-a clean, reopen-able terminal), `no_progress`, `cancelled`, `error`. A child's
+`max_consecutive_failures`, `budget` (the `--max-run-tokens` ceiling crossed — a
+clean, reopen-able terminal), `no_progress`, `cancelled`, `error`. A child's
 stop (on `subagent.end` / in a Subagent result) may additionally be
-`structured_output` — a structured-output child that exhausted its
-validation retries. A plan-approval allow emits `plan_approved` — the clean
-terminal ([ADR 0069](https://github.com/stacklok/mecatl/blob/main/docs/adr/0069-plan-approval-gate.md)) that flips the session
-out of plan mode at the terminal boundary.
+`structured_output` — a structured-output child that exhausted its validation
+retries. A plan-approval allow emits `plan_approved` — the clean terminal
+([ADR 0069](https://github.com/stacklok/mecatl/blob/main/docs/adr/0069-plan-approval-gate.md))
+that flips the session out of plan mode at the terminal boundary.
 
-`error` includes an upstream provider content filter blocking a response. Some routes,
-including Azure OpenAI upstreams, can moderate benign security or credentials wording.
-Mecatl treats this as a terminal stop and does not retry the same input. Retype or resend
-the triggering message. Repeated blocks on legitimate input require a provider-side
-moderation change.
+`error` includes an upstream provider content filter blocking a response. Some
+routes, including Azure OpenAI upstreams, can moderate benign security or
+credentials wording. Mecatl treats this as a terminal stop and does not retry
+the same input. Retype or resend the triggering message. Repeated blocks on
+legitimate input require a provider-side moderation change.
 
 ### Go client snippet
 
@@ -420,12 +438,12 @@ func main() {
 ```
 
 `GetSession` returns a snapshot (`session_id`, `state`, `mode`, bounded
-`placement` metadata, `limits`, `turns`, `tool_calls`, `created_at_unix`). It never
-returns the exact private EnvironmentRef or a filesystem path.
+`placement` metadata, `limits`, `turns`, `tool_calls`, `created_at_unix`). It
+never returns the exact private EnvironmentRef or a filesystem path.
 
 **Inspecting / reopening a past session:** `ListSessions` returns the stored-
-session inventory (picker rows: id, timestamps, state, turn count, model id —
-no conversation content), sorted most-recently-active first. `StreamSessionEvents`
+session inventory (picker rows: id, timestamps, state, turn count, model id — no
+conversation content), sorted most-recently-active first. `StreamSessionEvents`
 then replays a session's FULL durable timeline as a server stream of `Event`
 envelopes — including the log-only `approval` / `compaction_archive` /
 `user_prompt` events a LIVE `Converse` relay skips on the client wire. A client
@@ -456,47 +474,51 @@ The embedded server enables every **free + local** feature by default — memory
 (per-project, under `$XDG_DATA_HOME/mecatui/memory`), server-side slash-command
 expansion (`.mecatl/commands` / `.claude/commands`), skills (conventional
 discovery), agent definitions, soul, user model, child-session retention GC,
-ToolHive MCP discovery, and the MCP resource/prompt meta-tools. Only the
-opt-ins that spend tokens or need explicit configuration stay off: static
-`--mcp-server` registrations, the `SkillDraft` quarantine, the background
-user-model reviewer, and memory consolidation — run a full `mecated serve` and
-`connect` to it for those. It also accepts **`--perf`** (off by default) to bring up the same
-sensitive observability surface `mecated` exposes — `/metrics`, `/debug/pprof/*`,
-`/debug/vars`, `/debug/flightrecorder`. With no `--perf-addr`, ordinary perf uses an
-owner-private `admin.sock` beside this mecatui instance's private gRPC socket, so
-simultaneous instances do not collide. An explicit `--perf-addr host:port` selects TCP
-and must be loopback; `127.0.0.1:0` requests an ephemeral port. The resolved network and
-address are logged at startup (`--perf-goroutine-warn-threshold` arms the goroutine alarm).
-With **`--perf-mcp`**, an empty address instead selects ephemeral loopback TCP because
-the supported MCP transport is streaming HTTP and needs a URL; the resolved `/mcp` URL
-is logged. No stdio MCP is used, and this raw admin data is not injected into the model
-or dedicated session debugger.
-The embedded server also accepts `--yolo` (the
-allow-all operator posture — same semantics, root refusal, and `MECATL_SANDBOX`/
-`IS_SANDBOX` env as `mecated`; see the allow-all note in §12). It is **rejected in
-`connect` mode** — the dialed server owns its own posture. Note the TUI's **built-in slash commands**
-(`/clear`, `/help`, and the caps-gated `/mcp`, `/agents`, `/team`, `/skills`,
-`/soul`, `/usermodel`, `/reflections`, `/reflect`, `/models`, `/effort`, `/worktrees`) still work
+ToolHive MCP discovery, and the MCP resource/prompt meta-tools. Only the opt-ins
+that spend tokens or need explicit configuration stay off: static `--mcp-server`
+registrations, the `SkillDraft` quarantine, the background user-model reviewer,
+and memory consolidation — run a full `mecated serve` and `connect` to it for
+those. It also accepts **`--perf`** (off by default) to bring up the same
+sensitive observability surface `mecated` exposes — `/metrics`,
+`/debug/pprof/*`, `/debug/vars`, `/debug/flightrecorder`. With no `--perf-addr`,
+ordinary perf uses an owner-private `admin.sock` beside this mecatui instance's
+private gRPC socket, so simultaneous instances do not collide. An explicit
+`--perf-addr host:port` selects TCP and must be loopback; `127.0.0.1:0` requests
+an ephemeral port. The resolved network and address are logged at startup
+(`--perf-goroutine-warn-threshold` arms the goroutine alarm). With
+**`--perf-mcp`**, an empty address instead selects ephemeral loopback TCP
+because the supported MCP transport is streaming HTTP and needs a URL; the
+resolved `/mcp` URL is logged. No stdio MCP is used, and this raw admin data is
+not injected into the model or dedicated session debugger. The embedded server
+also accepts `--yolo` (the allow-all operator posture — same semantics, root
+refusal, and `MECATL_SANDBOX`/ `IS_SANDBOX` env as `mecated`; see the allow-all
+note in §12). It is **rejected in `connect` mode** — the dialed server owns its
+own posture. Note the TUI's **built-in slash commands** (`/clear`, `/help`, and
+the caps-gated `/mcp`, `/agents`, `/team`, `/skills`, `/soul`, `/usermodel`,
+`/reflections`, `/reflect`, `/models`, `/effort`, `/worktrees`) still work
 regardless — they act on the TUI itself, not the server, so typing `/` always
 opens a useful palette even with workspace slash-command expansion off
-(`/agents` browses the agent-definition inventory; `/team`, also `ctrl+a`,
-opens the live agent-team overlay; `/skills` the skills inventory; `/soul` and
-`/usermodel` the persona/user-model views; `/reflections` lists bounded staged proposals and supports
-CAS approve/reject/undo; `/reflect` explicitly reflects the current completed session even when
-automatic learning is off; `/models` the model picker;
-`/effort` picks the session's reasoning-effort tier (`auto`/`low`/`medium`/`high`/`xhigh`/`max`) and **restarts the session** to apply it (a per-session server setting, like a model switch);
-`/worktrees` the sibling-git-worktree switch — it lists the repo's worktrees and,
-on select, starts a NEW session rooted at the chosen worktree so all local tools
-bind there; gated on the server advertising `worktrees`, so it is honestly absent
-against a no-FS/cloud server). See
-[Work in the TUI](/mecatui/using-the-tui.md) for the interactive workflow.
+(`/agents` browses the agent-definition inventory; `/team`, also `ctrl+a`, opens
+the live agent-team overlay; `/skills` the skills inventory; `/soul` and
+`/usermodel` the persona/user-model views; `/reflections` lists bounded staged
+proposals and supports CAS approve/reject/undo; `/reflect` explicitly reflects
+the current completed session even when automatic learning is off; `/models` the
+model picker; `/effort` picks the session's reasoning-effort tier
+(`auto`/`low`/`medium`/`high`/`xhigh`/`max`) and **restarts the session** to
+apply it (a per-session server setting, like a model switch); `/worktrees` the
+sibling-git-worktree switch — it lists the repo's worktrees and, on select,
+starts a NEW session rooted at the chosen worktree so all local tools bind
+there; gated on the server advertising `worktrees`, so it is honestly absent
+against a no-FS/cloud server). See [Work in the TUI](/mecatui/using-the-tui.md)
+for the interactive workflow.
 
 It streams the conversation (glamour markdown for assistant text, themed cards
 for tool I/O), shows a thinking spinner and a usage footer, and pops an inline
-modal for permission asks that you approve/deny without leaving the stream. It is
-themeable (Aztec default, plus `mono`/`solar`, plus drop-in JSON themes) and
+modal for permission asks that you approve/deny without leaving the stream. It
+is themeable (Aztec default, plus `mono`/`solar`, plus drop-in JSON themes) and
 respects the same trust model: it refuses to send `--auth-token` in cleartext to
-a non-loopback server (use `--tls`). See [Connect to a server](/mecatui/remote-servers.md),
+a non-loopback server (use `--tls`). See
+[Connect to a server](/mecatui/remote-servers.md),
 [Keybindings](/mecatui/keybindings.md), and [Themes](/mecatui/themes.md).
 
 ---

@@ -2,7 +2,8 @@
 sidebar_position: 1
 slug: /
 title: Mecatl documentation
-description: Run AI agents as cloud-native workloads on infrastructure you control.
+description:
+  Run AI agents as cloud-native workloads on infrastructure you control.
 ---
 
 # Mecatl documentation
@@ -19,8 +20,8 @@ without replacing the agent loop.
 
 With `mecak8s`, agent pods are disposable. Redis stores session state and event
 history, while Kubernetes Leases coordinate session ownership across replicas.
-Choose the model providers, clients, storage backends, and execution environments
-that fit your infrastructure.
+Choose the model providers, clients, storage backends, and execution
+environments that fit your infrastructure.
 
 ## Choose a component
 

@@ -1,7 +1,8 @@
 ---
 sidebar_position: 4
 title: Use the TypeScript SDK
-description: Run your first Mecatl prompt from TypeScript against a private offline daemon.
+description:
+  Run your first Mecatl prompt from TypeScript against a private offline daemon.
 ---
 
 # Use the TypeScript SDK

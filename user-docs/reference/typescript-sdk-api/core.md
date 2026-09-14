@@ -1,6 +1,8 @@
 ---
 title: TypeScript SDK core API
-description: Look up the transport-neutral TypeScript SDK functions, methods, types, and errors.
+description:
+  Look up the transport-neutral TypeScript SDK functions, methods, types, and
+  errors.
 sidebar_position: 2
 toc_max_heading_level: 2
 ---
@@ -9,9 +11,11 @@ import Heading from "@theme/Heading";
 
 # TypeScript SDK core API
 
-{/* Generated from API Extractor models and sdk/typescript/src TSDoc. Regenerate with task sdk:docs. DO NOT EDIT. */}
+{/* Generated from API Extractor models and sdk/typescript/src TSDoc. Regenerate
+with task sdk:docs. DO NOT EDIT. */}
 
-This reference describes the declarations exported by `@stacklok-oss/mecatl-sdk`.
+This reference describes the declarations exported by
+`@stacklok-oss/mecatl-sdk`.
 
 ## Symbol index
 
@@ -206,7 +210,8 @@ Credential resolution or server authentication failed.
 export declare class AuthenticationError extends MecatlError
 ```
 
-Callable members: [`constructor`](#api-authenticationerror-constructor-constructor)
+Callable members:
+[`constructor`](#api-authenticationerror-constructor-constructor)
 
 <Heading as="h4" id="api-authenticationerror-constructor-constructor"><code>AuthenticationError.constructor</code></Heading>
 
@@ -229,7 +234,8 @@ The server cursor belongs to a superseded event-log generation.
 export declare class CursorExpiredError extends MecatlError
 ```
 
-Callable members: [`constructor`](#api-cursorexpirederror-constructor-constructor)
+Callable members:
+[`constructor`](#api-cursorexpirederror-constructor-constructor)
 
 <Heading as="h4" id="api-cursorexpirederror-constructor-constructor"><code>CursorExpiredError.constructor</code></Heading>
 
@@ -252,7 +258,8 @@ An SDK cursor is not a structurally valid `sdkcur/1` envelope.
 export declare class CursorMalformedError extends MecatlError
 ```
 
-Callable members: [`constructor`](#api-cursormalformederror-constructor-constructor)
+Callable members:
+[`constructor`](#api-cursormalformederror-constructor-constructor)
 
 <Heading as="h4" id="api-cursormalformederror-constructor-constructor"><code>CursorMalformedError.constructor</code></Heading>
 
@@ -269,7 +276,8 @@ Parameters:
 
 <Heading as="h3" id="api-cursorscopeerror-class"><code>CursorScopeError</code></Heading>
 
-An SDK cursor would widen the set of durable events delivered by its source view.
+An SDK cursor would widen the set of durable events delivered by its source
+view.
 
 ```ts
 export declare class CursorScopeError extends MecatlError
@@ -297,7 +305,8 @@ The connected server does not satisfy the SDK compatibility floor.
 export declare class IncompatibleServerError extends MecatlError
 ```
 
-Callable members: [`constructor`](#api-incompatibleservererror-constructor-constructor)
+Callable members:
+[`constructor`](#api-incompatibleservererror-constructor-constructor)
 
 <Heading as="h4" id="api-incompatibleservererror-constructor-constructor"><code>IncompatibleServerError.constructor</code></Heading>
 
@@ -320,7 +329,8 @@ An operation is invalid for the current local SDK lifecycle state.
 export declare class InvalidStateError extends MecatlError
 ```
 
-Callable members: [`constructor`](#api-invalidstateerror-constructor-constructor)
+Callable members:
+[`constructor`](#api-invalidstateerror-constructor-constructor)
 
 <Heading as="h4" id="api-invalidstateerror-constructor-constructor"><code>InvalidStateError.constructor</code></Heading>
 
@@ -343,7 +353,8 @@ Base class for every error authored by the SDK.
 export declare class MecatlError extends Error
 ```
 
-Callable members: [`constructor`](#api-mecatlerror-constructor-constructor), [`toJSON()`](#api-mecatlerror-tojson-method)
+Callable members: [`constructor`](#api-mecatlerror-constructor-constructor),
+[`toJSON()`](#api-mecatlerror-tojson-method)
 
 <Heading as="h4" id="api-mecatlerror-code-property"><code>MecatlError.code</code></Heading>
 
@@ -418,7 +429,8 @@ A permission ask is no longer pending on its originating run.
 export declare class PermissionAskAlreadyResolvedError extends InvalidStateError
 ```
 
-Callable members: [`constructor`](#api-permissionaskalreadyresolvederror-constructor-constructor)
+Callable members:
+[`constructor`](#api-permissionaskalreadyresolvederror-constructor-constructor)
 
 <Heading as="h4" id="api-permissionaskalreadyresolvederror-askid-property"><code>PermissionAskAlreadyResolvedError.askId</code></Heading>
 
@@ -447,7 +459,8 @@ query() plan mode was requested without its required plan-specific responder.
 export declare class PlanApprovalRequiredError extends InvalidStateError
 ```
 
-Callable members: [`constructor`](#api-planapprovalrequirederror-constructor-constructor)
+Callable members:
+[`constructor`](#api-planapprovalrequirederror-constructor-constructor)
 
 <Heading as="h4" id="api-planapprovalrequirederror-constructor-constructor"><code>PlanApprovalRequiredError.constructor</code></Heading>
 
@@ -459,13 +472,15 @@ constructor();
 
 <Heading as="h3" id="api-plancontinuationstarterror-class"><code>PlanContinuationStartError</code></Heading>
 
-The approved plan's continuation could not be admitted before it received a run ID.
+The approved plan's continuation could not be admitted before it received a run
+ID.
 
 ```ts
 export declare class PlanContinuationStartError extends MecatlError
 ```
 
-Callable members: [`constructor`](#api-plancontinuationstarterror-constructor-constructor)
+Callable members:
+[`constructor`](#api-plancontinuationstarterror-constructor-constructor)
 
 <Heading as="h4" id="api-plancontinuationstarterror-constructor-constructor"><code>PlanContinuationStartError.constructor</code></Heading>
 
@@ -488,7 +503,8 @@ A structured prompt failed local validation before any request was sent.
 export declare class PromptValidationError extends MecatlError
 ```
 
-Callable members: [`constructor`](#api-promptvalidationerror-constructor-constructor)
+Callable members:
+[`constructor`](#api-promptvalidationerror-constructor-constructor)
 
 <Heading as="h4" id="api-promptvalidationerror-constructor-constructor"><code>PromptValidationError.constructor</code></Heading>
 
@@ -602,7 +618,8 @@ The connected server does not advertise a required feature.
 export declare class UnsupportedFeatureError extends MecatlError
 ```
 
-Callable members: [`constructor`](#api-unsupportedfeatureerror-constructor-constructor)
+Callable members:
+[`constructor`](#api-unsupportedfeatureerror-constructor-constructor)
 
 <Heading as="h4" id="api-unsupportedfeatureerror-constructor-constructor"><code>UnsupportedFeatureError.constructor</code></Heading>
 
@@ -657,7 +674,8 @@ Parameters:
 - `blob` (`Blob`): Browser media value to read.
 - `mimeType` (`string`, optional): Audio MIME type. Defaults to the Blob's type.
 
-Returns: `Promise<AudioPromptPart>`: A validated audio prompt part containing the Blob's bytes.
+Returns: `Promise<AudioPromptPart>`: A validated audio prompt part containing
+the Blob's bytes.
 
 Throws: `PromptValidationError` when the MIME type or size is invalid.
 
@@ -671,13 +689,15 @@ export declare function connect(options: ConnectOptions): Client;
 
 Parameters:
 
-- `options` (`ConnectOptions`): HTTP transport settings or a caller-owned transport.
+- `options` (`ConnectOptions`): HTTP transport settings or a caller-owned
+  transport.
 
 Returns: `Client`: A high-level Mecatl client.
 
 <Heading as="h3" id="api-createhttptransport-function"><code>createHttpTransport</code></Heading>
 
-Creates a browser-compatible Connect-ES transport over Mecatl's HTTP and SSE API.
+Creates a browser-compatible Connect-ES transport over Mecatl's HTTP and SSE
+API.
 
 ```ts
 export declare function createHttpTransport(
@@ -687,13 +707,15 @@ export declare function createHttpTransport(
 
 Parameters:
 
-- `options` (`HttpTransportOptions`): HTTP endpoint, credentials, and fetch implementation.
+- `options` (`HttpTransportOptions`): HTTP endpoint, credentials, and fetch
+  implementation.
 
 Returns: `Transport`: A Connect-ES transport for Mecatl's HTTP and SSE routes.
 
 <Heading as="h3" id="api-createrawclient-function"><code>createRawClient</code></Heading>
 
-Creates a transport-neutral client for low-level RPC operations. Before the first requested operation, the client performs a stateless compatibility check.
+Creates a transport-neutral client for low-level RPC operations. Before the
+first requested operation, the client performs a stateless compatibility check.
 
 ```ts
 export declare function createRawClient(options: RawClientOptions): RawClient;
@@ -703,11 +725,13 @@ Parameters:
 
 - `options` (`RawClientOptions`): Caller-owned transport and its protocol kind.
 
-Returns: `RawClient`: A low-level client that enforces SDK compatibility before operations.
+Returns: `RawClient`: A low-level client that enforces SDK compatibility before
+operations.
 
 <Heading as="h3" id="api-getrawjson-function"><code>getRawJson</code></Heading>
 
-Returns the exact JSON value received by the HTTP transport, including unknown fields.
+Returns the exact JSON value received by the HTTP transport, including unknown
+fields.
 
 ```ts
 export declare function getRawJson(message: object): JsonValue | undefined;
@@ -717,7 +741,8 @@ Parameters:
 
 - `message` (`object`): Decoded protobuf message returned by the SDK.
 
-Returns: `JsonValue | undefined`: The original JSON value, or `undefined` when none was recorded.
+Returns: `JsonValue | undefined`: The original JSON value, or `undefined` when
+none was recorded.
 
 <Heading as="h3" id="api-imagepart-function"><code>imagePart</code></Heading>
 
@@ -751,7 +776,8 @@ Parameters:
 - `blob` (`Blob`): Browser media value to read.
 - `mimeType` (`string`, optional): Image MIME type. Defaults to the Blob's type.
 
-Returns: `Promise<ImagePromptPart>`: A validated image prompt part containing the Blob's bytes.
+Returns: `Promise<ImagePromptPart>`: A validated image prompt part containing
+the Blob's bytes.
 
 Throws: `PromptValidationError` when the MIME type or size is invalid.
 
@@ -771,7 +797,10 @@ Returns: `TextPromptPart`: A text prompt part.
 
 <Heading as="h3" id="api-withsessionaffinity-function"><code>withSessionAffinity</code></Heading>
 
-Returns call options bound to one explicit session without replacing caller headers. Throws synchronously when sessionId cannot be represented byte-exactly as the affinity header. The binding is a routing hint only; authentication and authorization remain independent.
+Returns call options bound to one explicit session without replacing caller
+headers. Throws synchronously when sessionId cannot be represented byte-exactly
+as the affinity header. The binding is a routing hint only; authentication and
+authorization remain independent.
 
 ```ts
 export declare function withSessionAffinity(
@@ -783,11 +812,14 @@ export declare function withSessionAffinity(
 Parameters:
 
 - `sessionId` (`string`): Session ID to carry as the affinity header.
-- `options` (`CallOptions`, optional): Existing call options whose headers must be preserved.
+- `options` (`CallOptions`, optional): Existing call options whose headers must
+  be preserved.
 
-Returns: `CallOptions`: Call options containing exactly one session-affinity header.
+Returns: `CallOptions`: Call options containing exactly one session-affinity
+header.
 
-Throws: `RangeError` when the session ID is not printable ASCII or is otherwise invalid.
+Throws: `RangeError` when the session ID is not printable ASCII or is otherwise
+invalid.
 
 ## Interfaces
 
@@ -918,7 +950,10 @@ A durable activity stream bound to one run.
 export interface AttachedRun extends SessionActivity
 ```
 
-Callable members: [`approve()`](#api-attachedrun-approve-methodsignature), [`cancel()`](#api-attachedrun-cancel-methodsignature), [`resolveAsk()`](#api-attachedrun-resolveask-methodsignature), [`steer()`](#api-attachedrun-steer-methodsignature)
+Callable members: [`approve()`](#api-attachedrun-approve-methodsignature),
+[`cancel()`](#api-attachedrun-cancel-methodsignature),
+[`resolveAsk()`](#api-attachedrun-resolveask-methodsignature),
+[`steer()`](#api-attachedrun-steer-methodsignature)
 
 <Heading as="h4" id="api-attachedrun-approve-methodsignature"><code>AttachedRun.approve</code></Heading>
 
@@ -945,7 +980,8 @@ Cancels the attached run using its exact run ID.
 cancel(): Promise<void>;
 ```
 
-Returns: `Promise<void>`: A promise that resolves after the cancellation request is accepted.
+Returns: `Promise<void>`: A promise that resolves after the cancellation request
+is accepted.
 
 <Heading as="h4" id="api-attachedrun-live-propertysignature"><code>AttachedRun.live</code></Heading>
 
@@ -966,7 +1002,8 @@ resolveAsk(askId: string, verdict: PermissionVerdict): Promise<never>;
 Parameters:
 
 - `askId` (`string`): Permission-ask ID, retained for parity with a live run.
-- `verdict` (`PermissionVerdict`): Permission verdict, retained for parity with a live run.
+- `verdict` (`PermissionVerdict`): Permission verdict, retained for parity with
+  a live run.
 
 Returns: `Promise<never>`: A rejected promise.
 
@@ -1004,7 +1041,8 @@ export interface AttachOptions
 
 <Heading as="h4" id="api-attachoptions-from-propertysignature"><code>AttachOptions.from</code></Heading>
 
-Starts with events received after attachment, discarding the existing replay locally.
+Starts with events received after attachment, discarding the existing replay
+locally.
 
 ```ts
 from?: "now" | "start" | SdkCursor;
@@ -1066,7 +1104,9 @@ The high-level Mecatl client.
 export interface Client
 ```
 
-Callable members: [`[Symbol.asyncDispose]()`](#api-client-symbol-asyncdispose-methodsignature), [`close()`](#api-client-close-methodsignature)
+Callable members:
+[`[Symbol.asyncDispose]()`](#api-client-symbol-asyncdispose-methodsignature),
+[`close()`](#api-client-close-methodsignature)
 
 <Heading as="h4" id="api-client-symbol-asyncdispose-methodsignature"><code>Client[Symbol.asyncDispose]</code></Heading>
 
@@ -1198,7 +1238,8 @@ readonly worktrees: Worktrees;
 
 <Heading as="h3" id="api-clientdiagnosticsoptions-interface"><code>ClientDiagnosticsOptions</code></Heading>
 
-Client-construction option shared by SDK entry points that emit local diagnostics.
+Client-construction option shared by SDK entry points that emit local
+diagnostics.
 
 ```ts
 export interface ClientDiagnosticsOptions
@@ -1259,7 +1300,9 @@ A multicast view of the client's latest connection status.
 export interface ConnectionStatusStore
 ```
 
-Callable members: [`getSnapshot()`](#api-connectionstatusstore-getsnapshot-methodsignature), [`subscribe()`](#api-connectionstatusstore-subscribe-methodsignature)
+Callable members:
+[`getSnapshot()`](#api-connectionstatusstore-getsnapshot-methodsignature),
+[`subscribe()`](#api-connectionstatusstore-subscribe-methodsignature)
 
 <Heading as="h4" id="api-connectionstatusstore-getsnapshot-methodsignature"><code>ConnectionStatusStore.getSnapshot</code></Heading>
 
@@ -1383,7 +1426,8 @@ goal?: string;
 
 <Heading as="h4" id="api-createteamoptions-maxteamtokens-propertysignature"><code>CreateTeamOptions.maxTeamTokens</code></Heading>
 
-Optional team-wide token limit. The daemon applies the lower of this value and its configured cap. Omit it to use the daemon's cap.
+Optional team-wide token limit. The daemon applies the lower of this value and
+its configured cap. Omit it to use the daemon's cap.
 
 ```ts
 maxTeamTokens?: number;
@@ -1439,7 +1483,8 @@ headers?: HeadersInit;
 
 <Heading as="h3" id="api-diagnosticrecord-interface"><code>DiagnosticRecord</code></Heading>
 
-A structured SDK-local observation that is separate from the server event stream.
+A structured SDK-local observation that is separate from the server event
+stream.
 
 ```ts
 export interface DiagnosticRecord
@@ -1493,7 +1538,8 @@ Dream-plan generation and server-owned decision operations.
 export interface DreamPlans
 ```
 
-Callable members: [`decide()`](#api-dreamplans-decide-methodsignature), [`generate()`](#api-dreamplans-generate-methodsignature)
+Callable members: [`decide()`](#api-dreamplans-decide-methodsignature),
+[`generate()`](#api-dreamplans-generate-methodsignature)
 
 <Heading as="h4" id="api-dreamplans-decide-methodsignature"><code>DreamPlans.decide</code></Heading>
 
@@ -2119,7 +2165,14 @@ Learned-skill inventory and server-owned lifecycle operations.
 export interface LearnedSkills
 ```
 
-Callable members: [`activate()`](#api-learnedskills-activate-methodsignature), [`archive()`](#api-learnedskills-archive-methodsignature), [`diffVersions()`](#api-learnedskills-diffversions-methodsignature), [`get()`](#api-learnedskills-get-methodsignature), [`list()`](#api-learnedskills-list-methodsignature), [`listChanges()`](#api-learnedskills-listchanges-methodsignature), [`reject()`](#api-learnedskills-reject-methodsignature), [`rollback()`](#api-learnedskills-rollback-methodsignature)
+Callable members: [`activate()`](#api-learnedskills-activate-methodsignature),
+[`archive()`](#api-learnedskills-archive-methodsignature),
+[`diffVersions()`](#api-learnedskills-diffversions-methodsignature),
+[`get()`](#api-learnedskills-get-methodsignature),
+[`list()`](#api-learnedskills-list-methodsignature),
+[`listChanges()`](#api-learnedskills-listchanges-methodsignature),
+[`reject()`](#api-learnedskills-reject-methodsignature),
+[`rollback()`](#api-learnedskills-rollback-methodsignature)
 
 <Heading as="h4" id="api-learnedskills-activate-methodsignature"><code>LearnedSkills.activate</code></Heading>
 
@@ -2249,7 +2302,10 @@ Learning-attempt inventory and server-owned lifecycle operations.
 export interface LearningAttempts
 ```
 
-Callable members: [`abandon()`](#api-learningattempts-abandon-methodsignature), [`get()`](#api-learningattempts-get-methodsignature), [`list()`](#api-learningattempts-list-methodsignature), [`retry()`](#api-learningattempts-retry-methodsignature)
+Callable members: [`abandon()`](#api-learningattempts-abandon-methodsignature),
+[`get()`](#api-learningattempts-get-methodsignature),
+[`list()`](#api-learningattempts-list-methodsignature),
+[`retry()`](#api-learningattempts-retry-methodsignature)
 
 <Heading as="h4" id="api-learningattempts-abandon-methodsignature"><code>LearningAttempts.abandon</code></Heading>
 
@@ -2319,7 +2375,10 @@ Learning-proposal inventory and server-owned decision operations.
 export interface LearningProposals
 ```
 
-Callable members: [`decide()`](#api-learningproposals-decide-methodsignature), [`get()`](#api-learningproposals-get-methodsignature), [`list()`](#api-learningproposals-list-methodsignature), [`undoPromotion()`](#api-learningproposals-undopromotion-methodsignature)
+Callable members: [`decide()`](#api-learningproposals-decide-methodsignature),
+[`get()`](#api-learningproposals-get-methodsignature),
+[`list()`](#api-learningproposals-list-methodsignature),
+[`undoPromotion()`](#api-learningproposals-undopromotion-methodsignature)
 
 <Heading as="h4" id="api-learningproposals-decide-methodsignature"><code>LearningProposals.decide</code></Heading>
 
@@ -2389,7 +2448,12 @@ MCP resource, prompt, source, and ToolHive-group inventory operations.
 export interface McpInventory
 ```
 
-Callable members: [`getPrompt()`](#api-mcpinventory-getprompt-methodsignature), [`listPrompts()`](#api-mcpinventory-listprompts-methodsignature), [`listResources()`](#api-mcpinventory-listresources-methodsignature), [`listSources()`](#api-mcpinventory-listsources-methodsignature), [`listToolHiveGroups()`](#api-mcpinventory-listtoolhivegroups-methodsignature), [`readResource()`](#api-mcpinventory-readresource-methodsignature)
+Callable members: [`getPrompt()`](#api-mcpinventory-getprompt-methodsignature),
+[`listPrompts()`](#api-mcpinventory-listprompts-methodsignature),
+[`listResources()`](#api-mcpinventory-listresources-methodsignature),
+[`listSources()`](#api-mcpinventory-listsources-methodsignature),
+[`listToolHiveGroups()`](#api-mcpinventory-listtoolhivegroups-methodsignature),
+[`readResource()`](#api-mcpinventory-readresource-methodsignature)
 
 <Heading as="h4" id="api-mcpinventory-getprompt-methodsignature"><code>McpInventory.getPrompt</code></Heading>
 
@@ -2547,7 +2611,8 @@ mimeType: string;
 
 <Heading as="h3" id="api-mediapartsource-interface"><code>MediaPartSource</code></Heading>
 
-The source accepted by imagePart() and audioPart(). Exactly one field is required.
+The source accepted by imagePart() and audioPart(). Exactly one field is
+required.
 
 ```ts
 export interface MediaPartSource
@@ -2816,13 +2881,15 @@ Callable members: [`result()`](#api-planresolution-result-methodsignature)
 
 <Heading as="h4" id="api-planresolution-result-methodsignature"><code>PlanResolution.result</code></Heading>
 
-Drains the merged stream and returns the resumed and optional continuation outcomes.
+Drains the merged stream and returns the resumed and optional continuation
+outcomes.
 
 ```ts
 result(): Promise<PlanResolutionResult>;
 ```
 
-Returns: `Promise<PlanResolutionResult>`: The resumed run and any continuation run started by approval.
+Returns: `Promise<PlanResolutionResult>`: The resumed run and any continuation
+run started by approval.
 
 Throws: `InvalidStateError` when the resolution is already being consumed.
 
@@ -2856,7 +2923,9 @@ Transport-neutral, descriptor-driven operations beneath Client/Session/Run.
 export interface RawClient
 ```
 
-Callable members: [`features()`](#api-rawclient-features-methodsignature), [`stream()`](#api-rawclient-stream-methodsignature), [`unary()`](#api-rawclient-unary-methodsignature)
+Callable members: [`features()`](#api-rawclient-features-methodsignature),
+[`stream()`](#api-rawclient-stream-methodsignature),
+[`unary()`](#api-rawclient-unary-methodsignature)
 
 <Heading as="h4" id="api-rawclient-features-methodsignature"><code>RawClient.features</code></Heading>
 
@@ -3011,7 +3080,11 @@ One accepted server run and its single-consumption event stream.
 export interface Run extends AsyncIterable<Event>
 ```
 
-Callable members: [`approve()`](#api-run-approve-methodsignature), [`cancel()`](#api-run-cancel-methodsignature), [`resolveAsk()`](#api-run-resolveask-methodsignature), [`result()`](#api-run-result-methodsignature), [`steer()`](#api-run-steer-methodsignature)
+Callable members: [`approve()`](#api-run-approve-methodsignature),
+[`cancel()`](#api-run-cancel-methodsignature),
+[`resolveAsk()`](#api-run-resolveask-methodsignature),
+[`result()`](#api-run-result-methodsignature),
+[`steer()`](#api-run-steer-methodsignature)
 
 <Heading as="h4" id="api-run-approve-methodsignature"><code>Run.approve</code></Heading>
 
@@ -3032,13 +3105,15 @@ Throws: `PermissionAskAlreadyResolvedError` when the ask is no longer pending.
 
 <Heading as="h4" id="api-run-cancel-methodsignature"><code>Run.cancel</code></Heading>
 
-Requests cancellation; consume the run normally to receive the cancelled outcome.
+Requests cancellation; consume the run normally to receive the cancelled
+outcome.
 
 ```ts
 cancel(): Promise<void>;
 ```
 
-Returns: `Promise<void>`: A promise that resolves after the cancellation request is sent.
+Returns: `Promise<void>`: A promise that resolves after the cancellation request
+is sent.
 
 <Heading as="h4" id="api-run-id-propertysignature"><code>Run.id</code></Heading>
 
@@ -3048,7 +3123,8 @@ readonly id: string;
 
 <Heading as="h4" id="api-run-resolveask-methodsignature"><code>Run.resolveAsk</code></Heading>
 
-Resolves one pending ask on this run with the server's string verdict vocabulary.
+Resolves one pending ask on this run with the server's string verdict
+vocabulary.
 
 ```ts
 resolveAsk(askId: string, verdict: PermissionVerdict): Promise<void>;
@@ -3059,7 +3135,8 @@ Parameters:
 - `askId` (`string`): ID carried by the permission ask.
 - `verdict` (`PermissionVerdict`): Decision to apply to the pending ask.
 
-Returns: `Promise<void>`: A promise that resolves after the server accepts the verdict.
+Returns: `Promise<void>`: A promise that resolves after the server accepts the
+verdict.
 
 Throws: `PermissionAskAlreadyResolvedError` when the ask is no longer pending.
 
@@ -3095,7 +3172,8 @@ Parameters:
 
 - `text` (`string`): Instruction to apply to the active run.
 
-Returns: `Promise<void>`: A promise that resolves after the steering request is sent.
+Returns: `Promise<void>`: A promise that resolves after the steering request is
+sent.
 
 <Heading as="h3" id="api-runoptions-interface"><code>RunOptions</code></Heading>
 
@@ -3123,7 +3201,8 @@ onPlanApproval?: PlanApprovalResponder;
 
 <Heading as="h3" id="api-runresult-interface"><code>RunResult</code></Heading>
 
-The terminal outcome of a consumed run. Server-declared stops are values, not errors.
+The terminal outcome of a consumed run. Server-declared stops are values, not
+errors.
 
 ```ts
 export interface RunResult
@@ -3227,7 +3306,16 @@ Schedule and fire inventory plus server-owned lifecycle operations.
 export interface Schedules
 ```
 
-Callable members: [`create()`](#api-schedules-create-methodsignature), [`delete()`](#api-schedules-delete-methodsignature), [`fireNow()`](#api-schedules-firenow-methodsignature), [`get()`](#api-schedules-get-methodsignature), [`getFire()`](#api-schedules-getfire-methodsignature), [`list()`](#api-schedules-list-methodsignature), [`listFires()`](#api-schedules-listfires-methodsignature), [`pause()`](#api-schedules-pause-methodsignature), [`resume()`](#api-schedules-resume-methodsignature), [`update()`](#api-schedules-update-methodsignature)
+Callable members: [`create()`](#api-schedules-create-methodsignature),
+[`delete()`](#api-schedules-delete-methodsignature),
+[`fireNow()`](#api-schedules-firenow-methodsignature),
+[`get()`](#api-schedules-get-methodsignature),
+[`getFire()`](#api-schedules-getfire-methodsignature),
+[`list()`](#api-schedules-list-methodsignature),
+[`listFires()`](#api-schedules-listfires-methodsignature),
+[`pause()`](#api-schedules-pause-methodsignature),
+[`resume()`](#api-schedules-resume-methodsignature),
+[`update()`](#api-schedules-update-methodsignature)
 
 <Heading as="h4" id="api-schedules-create-methodsignature"><code>Schedules.create</code></Heading>
 
@@ -3387,7 +3475,12 @@ A durable Mecatl session handle.
 export interface Session
 ```
 
-Callable members: [`activity()`](#api-session-activity-methodsignature), [`attach()`](#api-session-attach-methodsignature), [`close()`](#api-session-close-methodsignature), [`delete()`](#api-session-delete-methodsignature), [`resolvePlan()`](#api-session-resolveplan-methodsignature), [`run()`](#api-session-run-methodsignature)
+Callable members: [`activity()`](#api-session-activity-methodsignature),
+[`attach()`](#api-session-attach-methodsignature),
+[`close()`](#api-session-close-methodsignature),
+[`delete()`](#api-session-delete-methodsignature),
+[`resolvePlan()`](#api-session-resolveplan-methodsignature),
+[`run()`](#api-session-run-methodsignature)
 
 <Heading as="h4" id="api-session-activity-methodsignature"><code>Session.activity</code></Heading>
 
@@ -3399,9 +3492,11 @@ activity(options?: AttachOptions): Promise<SessionActivity>;
 
 Parameters:
 
-- `options` (`AttachOptions`, optional): Replay position, event filtering, and cancellation options.
+- `options` (`AttachOptions`, optional): Replay position, event filtering, and
+  cancellation options.
 
-Returns: `Promise<SessionActivity>`: A single-consumption stream of session activity.
+Returns: `Promise<SessionActivity>`: A single-consumption stream of session
+activity.
 
 Throws: `CursorScopeError` when a cursor would widen its original filter.
 
@@ -3415,10 +3510,13 @@ attach(runId?: string, options?: AttachOptions): Promise<AttachedRun>;
 
 Parameters:
 
-- `runId` (`string`, optional): Run ID to follow. Omit it to select the newest run.
-- `options` (`AttachOptions`, optional): Replay position, event filtering, and cancellation options.
+- `runId` (`string`, optional): Run ID to follow. Omit it to select the newest
+  run.
+- `options` (`AttachOptions`, optional): Replay position, event filtering, and
+  cancellation options.
 
-Returns: `Promise<AttachedRun>`: A single-consumption durable stream bound to the selected run.
+Returns: `Promise<AttachedRun>`: A single-consumption durable stream bound to
+the selected run.
 
 Throws: `NoRunsError` when no run can be selected.
 
@@ -3432,7 +3530,8 @@ Releases runtime resources without removing the durable session.
 close(): Promise<void>;
 ```
 
-Returns: `Promise<void>`: A promise that resolves after local session resources are released.
+Returns: `Promise<void>`: A promise that resolves after local session resources
+are released.
 
 <Heading as="h4" id="api-session-delete-methodsignature"><code>Session.delete</code></Heading>
 
@@ -3442,7 +3541,8 @@ Permanently removes the durable session and its sidecars.
 delete(): Promise<void>;
 ```
 
-Returns: `Promise<void>`: A promise that resolves after the server removes the session.
+Returns: `Promise<void>`: A promise that resolves after the server removes the
+session.
 
 <Heading as="h4" id="api-session-id-propertysignature"><code>Session.id</code></Heading>
 
@@ -3452,7 +3552,8 @@ readonly id: string;
 
 <Heading as="h4" id="api-session-resolveplan-methodsignature"><code>Session.resolvePlan</code></Heading>
 
-Atomically resolves a durably parked plan and streams its resumed and continuation runs.
+Atomically resolves a durably parked plan and streams its resumed and
+continuation runs.
 
 ```ts
 resolvePlan(verdict?: PlanApprovalVerdict): PlanResolution;
@@ -3460,7 +3561,8 @@ resolvePlan(verdict?: PlanApprovalVerdict): PlanResolution;
 
 Parameters:
 
-- `verdict` (`PlanApprovalVerdict`, optional): Plan decision. Defaults to `approve`.
+- `verdict` (`PlanApprovalVerdict`, optional): Plan decision. Defaults to
+  `approve`.
 
 Returns: `PlanResolution`: A single-consumption plan-resolution stream.
 
@@ -3476,8 +3578,10 @@ run(prompt: PromptInput, options?: RunOptions): Promise<Run>;
 
 Parameters:
 
-- `prompt` (`PromptInput`): Text or ordered text, image, and audio parts for the run.
-- `options` (`RunOptions`, optional): Automatic permission and plan-approval responders.
+- `prompt` (`PromptInput`): Text or ordered text, image, and audio parts for the
+  run.
+- `options` (`RunOptions`, optional): Automatic permission and plan-approval
+  responders.
 
 Returns: `Promise<Run>`: A single-consumption handle for the accepted run.
 
@@ -3599,7 +3703,10 @@ Session lifecycle operations exposed by a Client.
 export interface Sessions
 ```
 
-Callable members: [`create()`](#api-sessions-create-methodsignature), [`fork()`](#api-sessions-fork-methodsignature), [`get()`](#api-sessions-get-methodsignature), [`list()`](#api-sessions-list-methodsignature)
+Callable members: [`create()`](#api-sessions-create-methodsignature),
+[`fork()`](#api-sessions-fork-methodsignature),
+[`get()`](#api-sessions-get-methodsignature),
+[`list()`](#api-sessions-list-methodsignature)
 
 <Heading as="h4" id="api-sessions-create-methodsignature"><code>Sessions.create</code></Heading>
 
@@ -3813,7 +3920,16 @@ Storage health, migration, and cleanup operations owned by the server.
 export interface Storage
 ```
 
-Callable members: [`applyCleanup()`](#api-storage-applycleanup-methodsignature), [`applyMigration()`](#api-storage-applymigration-methodsignature), [`cancelCleanup()`](#api-storage-cancelcleanup-methodsignature), [`cancelMigration()`](#api-storage-cancelmigration-methodsignature), [`getCleanupJob()`](#api-storage-getcleanupjob-methodsignature), [`getHealth()`](#api-storage-gethealth-methodsignature), [`getMigrationJob()`](#api-storage-getmigrationjob-methodsignature), [`planCleanup()`](#api-storage-plancleanup-methodsignature), [`planMigration()`](#api-storage-planmigration-methodsignature), [`resumeMigration()`](#api-storage-resumemigration-methodsignature)
+Callable members: [`applyCleanup()`](#api-storage-applycleanup-methodsignature),
+[`applyMigration()`](#api-storage-applymigration-methodsignature),
+[`cancelCleanup()`](#api-storage-cancelcleanup-methodsignature),
+[`cancelMigration()`](#api-storage-cancelmigration-methodsignature),
+[`getCleanupJob()`](#api-storage-getcleanupjob-methodsignature),
+[`getHealth()`](#api-storage-gethealth-methodsignature),
+[`getMigrationJob()`](#api-storage-getmigrationjob-methodsignature),
+[`planCleanup()`](#api-storage-plancleanup-methodsignature),
+[`planMigration()`](#api-storage-planmigration-methodsignature),
+[`resumeMigration()`](#api-storage-resumemigration-methodsignature)
 
 <Heading as="h4" id="api-storage-applycleanup-methodsignature"><code>Storage.applyCleanup</code></Heading>
 
@@ -4089,7 +4205,12 @@ A handle for direct team operations.
 export interface Team
 ```
 
-Callable members: [`cancel()`](#api-team-cancel-methodsignature), [`cleanup()`](#api-team-cleanup-methodsignature), [`list()`](#api-team-list-methodsignature), [`message()`](#api-team-message-methodsignature), [`run()`](#api-team-run-methodsignature), [`spawn()`](#api-team-spawn-methodsignature)
+Callable members: [`cancel()`](#api-team-cancel-methodsignature),
+[`cleanup()`](#api-team-cleanup-methodsignature),
+[`list()`](#api-team-list-methodsignature),
+[`message()`](#api-team-message-methodsignature),
+[`run()`](#api-team-run-methodsignature),
+[`spawn()`](#api-team-spawn-methodsignature)
 
 <Heading as="h4" id="api-team-cancel-methodsignature"><code>Team.cancel</code></Heading>
 
@@ -4128,7 +4249,8 @@ readonly id: string;
 
 <Heading as="h4" id="api-team-initialmembers-propertysignature"><code>Team.initialMembers</code></Heading>
 
-The typed initial roster returned atomically by CreateTeam. This is not a live view.
+The typed initial roster returned atomically by CreateTeam. This is not a live
+view.
 
 ```ts
 readonly initialMembers: readonly TeamMember[];
@@ -5062,7 +5184,8 @@ export type DiagnosticsSink = (record: DiagnosticRecord) => void;
 
 <Heading as="h3" id="api-errororigin-typealias"><code>ErrorOrigin</code></Heading>
 
-The request transport, or `local` when validation failed before transport selection.
+The request transport, or `local` when validation failed before transport
+selection.
 
 ```ts
 export type ErrorOrigin = TransportKind | 'local';
@@ -5150,7 +5273,8 @@ export type PlanApprovalResponder = (
 
 <Heading as="h3" id="api-planapprovalverdict-typealias"><code>PlanApprovalVerdict</code></Heading>
 
-The plan-specific decisions accepted by session.resolvePlan() and onPlanApproval.
+The plan-specific decisions accepted by session.resolvePlan() and
+onPlanApproval.
 
 ```ts
 export type PlanApprovalVerdict = 'approve' | 'accept_edits' | 'iterate';
@@ -5489,7 +5613,8 @@ MECATL_WATCH_PHASES: readonly[('gap', 'live', 'replay')];
 
 <Heading as="h3" id="api-session-id-header-name-variable"><code>SESSION_ID_HEADER_NAME</code></Heading>
 
-Canonical routing hint for session-bound Mecatl requests. It grants no authority.
+Canonical routing hint for session-bound Mecatl requests. It grants no
+authority.
 
 ```ts
 SESSION_ID_HEADER_NAME = 'X-Mecatl-Session-ID';

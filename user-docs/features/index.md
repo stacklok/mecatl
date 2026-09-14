@@ -1,7 +1,9 @@
 ---
 sidebar_position: 1
 title: Features
-description: Explore Mecatl features for sessions, models, permissions, tools, and project guidance.
+description:
+  Explore Mecatl features for sessions, models, permissions, tools, and project
+  guidance.
 ---
 
 # Features
@@ -26,8 +28,8 @@ environments.
   reasoning-effort selection.
 - [Multimodal input](./multimodal-input.md) covers image and other content
   blocks supported by the selected provider.
-- [Context windows](./context-windows.md) covers model context-window
-  resolution and overrides.
+- [Context windows](./context-windows.md) covers model context-window resolution
+  and overrides.
 - [Session continuity](./session-continuity.md) covers persistence, recovery,
   retention, and maintenance.
 - [Scheduled tasks](./scheduled-tasks.md) covers recurring and one-shot runs.

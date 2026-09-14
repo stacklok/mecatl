@@ -1,7 +1,8 @@
 ---
 sidebar_position: 210
 title: Skills, commands, and soul
-description: Shape Mecatl runs with reusable skills, slash commands, and a durable persona.
+description:
+  Shape Mecatl runs with reusable skills, slash commands, and a durable persona.
 ---
 
 # Skills, commands, and soul
@@ -9,15 +10,16 @@ description: Shape Mecatl runs with reusable skills, slash commands, and a durab
 Use three types of reusable guidance to shape a Mecatl run:
 
 - **Skills** are progressive-disclosure instruction bundles. Their metadata is
-  always available, while the full `SKILL.md` body is loaded only when activated.
+  always available, while the full `SKILL.md` body is loaded only when
+  activated.
 - **Slash commands** are templates that expand a prompt before the run. They can
   be file-backed, skill-backed, or supplied by a remote content source.
 - **Soul** is a user-scoped, read-only persona fragment that describes the
   agent's identity and style.
 
 These sources steer the model; they do not bypass the normal permission policy.
-Treat repository-provided content as untrusted until the workspace is admitted by
-project trust.
+Treat repository-provided content as untrusted until the workspace is admitted
+by project trust.
 
 ## Skills
 
@@ -169,8 +171,7 @@ A remote skill source replaces local skill discovery and is snapshotted at
 startup. A remote soul source occupies the user soul slot and is revalidated
 locally. A remote command source composes with local commands and is consulted
 live. Configure driver TLS and authentication as described in the
-[settings guide](/building/deployment/settings.md); use only drivers you
-trust.
+[settings guide](/building/deployment/settings.md); use only drivers you trust.
 
 The legacy `SkillDraft`/`mecated skills promote` path is a quarantine workflow,
 not automatic publishing. A drafted skill is not active in the writing session.

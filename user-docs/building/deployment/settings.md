@@ -2,7 +2,8 @@
 sidebar_position: 100
 title: Configure Mecatl
 sidebar_label: Settings guide
-description: Choose the right settings file or flag for each Mecatl deployment shape.
+description:
+  Choose the right settings file or flag for each Mecatl deployment shape.
 ---
 
 # Configure Mecatl
@@ -22,10 +23,10 @@ server cannot reconfigure that server.
 |CLI flags and environment|Invocation flags and documented environment variables|The process launcher|A deployment-specific override or one-run choice, such as workspace, provider/model, store, or transport.|
 |mecatui client settings|`$XDG_CONFIG_HOME/mecatui/settings.yaml` (normally `~/.config/mecatui/settings.yaml`)|Local terminal user|Keybindings and status-line presentation only.|
 
-The generated [configuration reference](/reference/configuration.md)
-is the exhaustive schema, defaults, and tier table for the shared operator
-`settings.yaml`. Use `mecated config init` to scaffold it and `mecated config
-validate` to validate it without starting a server.
+The generated [configuration reference](/reference/configuration.md) is the
+exhaustive schema, defaults, and tier table for the shared operator
+`settings.yaml`. Use `mecated config init` to scaffold it and
+`mecated config validate` to validate it without starting a server.
 
 ## Which settings apply?
 
@@ -37,9 +38,10 @@ validate` to validate it without starting a server.
 |`mecatequi`|Read by the one-shot process at startup.|Not used; it has no listeners.|Configure that one run.|Not used.|Headless by default; use its own flags and operator settings for the single run.|
 |`mecak8s`|Mount `settings.yaml` from an operator-controlled ConfigMap and `auth.yaml` from a read-only Secret; use documented Secret-projected environment variables for provider or MCP credentials.|Not used; Helm and Kubernetes own listener topology.|Helm values supply command arguments and environment to the `mecak8s` process.|Not used.|Kubernetes-native defaults: headless/`auto` posture, no-FS placement, pod listeners, Redis-backed durable state when `redis.endpoint` is configured, and Kubernetes Lease coordination. [Use the mecak8s deployment guide.](./mecak8s.md)|
 
-For the daemon and Kubernetes operating details, see [Run mecated
-standalone](./mecated.md) and [Cloud-native k8s with mecak8s](./mecak8s.md).
-For one-shot CI ownership, see [Single-shot CI with mecatequi](./mecatequi.md).
+For the daemon and Kubernetes operating details, see
+[Run mecated standalone](./mecated.md) and
+[Cloud-native k8s with mecak8s](./mecak8s.md). For one-shot CI ownership, see
+[Single-shot CI with mecatequi](./mecatequi.md).
 
 ## Ownership and precedence
 
@@ -52,8 +54,9 @@ A project can contribute only the settings that are allowed at project tier,
 from `.mecatl/settings.yaml` or `.mecatl/settings.local.yaml` in its workspace.
 Operator-only settings remain user-global; project authority is also subject to
 the trust gate. Permission sources have their own ordered scopes, including
-explicit `--permission-config` files. See [Permissions and posture](/features/permissions-and-posture.md)
-for the applicable trust and precedence rules.
+explicit `--permission-config` files. See
+[Permissions and posture](/features/permissions-and-posture.md) for the
+applicable trust and precedence rules.
 
 For settings with a matching flag, an explicit applicable CLI value overrides
 the file value. Environment variables and flags are command/root-specific: a
@@ -86,39 +89,42 @@ providers:
     api_key: <OPENCODE_API_KEY>
 ```
 
-For API-key providers, a matching environment variable takes precedence over
-the file entry. `openai-codex` is file-only and accepts only the `oauth` mapping
+For API-key providers, a matching environment variable takes precedence over the
+file entry. `openai-codex` is file-only and accepts only the `oauth` mapping
 shown above. The default path is `$XDG_CONFIG_HOME/mecatl/auth.yaml`, normally
 `~/.config/mecatl/auth.yaml`; `--auth-file` selects another path.
 
 The parser reports unknown providers, fields, duplicate keys, and invalid
-credential shapes without printing values. A missing conventional file is not
-an error. A missing explicit `--auth-file` path produces a warning. On Unix,
-Mecatl also warns when group or other users can read the file. Use mode `0600`
-on a shared host and restart the process after replacing a credential.
+credential shapes without printing values. A missing conventional file is not an
+error. A missing explicit `--auth-file` path produces a warning. On Unix, Mecatl
+also warns when group or other users can read the file. Use mode `0600` on a
+shared host and restart the process after replacing a credential.
 
 The experimental `openai-codex` provider captures one immutable token snapshot
 at startup. It has no login or refresh flow. When both the token and file carry
 an account or expiry claim, the values must agree and the earlier expiry wins.
 Mode `0600` prevents access by other users, but another process running as the
-same user can still read a known plaintext path. Use a dedicated operating-system
-identity or a stronger sandbox when that residual risk is unacceptable.
+same user can still read a known plaintext path. Use a dedicated
+operating-system identity or a stronger sandbox when that residual risk is
+unacceptable.
 
 ## Embedded and connected mecatui
 
 Bare `mecatui` embeds a private server, so its local operator settings,
 `auth.yaml`, and embedded-server flags determine provider availability,
-workspace policy, storage, and permissions. `mecatui connect ADDRESS` only
-dials an existing server: that remote operator remains authoritative for all of
-those choices. Local settings cannot set a remote workspace, provider, model, or
-policy; connection credentials authenticate to the server but do not configure it.
+workspace policy, storage, and permissions. `mecatui connect ADDRESS` only dials
+an existing server: that remote operator remains authoritative for all of those
+choices. Local settings cannot set a remote workspace, provider, model, or
+policy; connection credentials authenticate to the server but do not configure
+it.
 
 The terminal client still reads its own `$XDG_CONFIG_HOME/mecatui/settings.yaml`
 in both modes. Its UI settings do not alter server behavior. For keymaps, the
 legacy `keymap:` in the shared Mecatl settings file is lowest priority, the
 client file is next, and `mecatui --keymap` wins for that action. See
-[Keybindings](/mecatui/keybindings.md), [Customize mecatui](/mecatui/customization.md),
-and [Connect to a server](/mecatui/remote-servers.md) for client and transport
+[Keybindings](/mecatui/keybindings.md),
+[Customize mecatui](/mecatui/customization.md), and
+[Connect to a server](/mecatui/remote-servers.md) for client and transport
 details.
 
 ## Configure a specific concern

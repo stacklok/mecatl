@@ -1,7 +1,8 @@
 ---
 sidebar_position: 3
 title: Connect to a server
-description: Run mecated separately and connect mecatui to local or remote Mecatl servers.
+description:
+  Run mecated separately and connect mecatui to local or remote Mecatl servers.
 ---
 
 # Connect to a server
@@ -10,8 +11,8 @@ description: Run mecated separately and connect mecatui to local or remote Mecat
 This separates the terminal client from the process that owns the workspace,
 model access, session storage, and permissions.
 
-Start with both processes on one machine. The same connection model applies
-when an operator gives you a remote address and credentials.
+Start with both processes on one machine. The same connection model applies when
+an operator gives you a remote address and credentials.
 
 ## Prerequisites
 
@@ -24,8 +25,8 @@ You need:
 ## Start the server
 
 Open a terminal for the server. Change to the project that it will use as its
-workspace. Set `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or
-`OPENROUTER_API_KEY` for your provider, then start `mecated`:
+workspace. Set `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or `OPENROUTER_API_KEY`
+for your provider, then start `mecated`:
 
 ```sh title="Terminal 1: server"
 cd <PROJECT_DIRECTORY>
@@ -35,8 +36,8 @@ mecated serve --workspace "$PWD"
 
 Replace `<PROVIDER_API_KEY>` with the variable for your provider.
 
-Keep this terminal open. It displays server logs and continues running until
-you stop it with `ctrl+c`.
+Keep this terminal open. It displays server logs and continues running until you
+stop it with `ctrl+c`.
 
 The server listens for gRPC connections on `127.0.0.1:8080`. Its loopback-only,
 single-user defaults do not require TLS or authentication.
@@ -90,9 +91,10 @@ mecatui connect mecated.example.com:443
 ```
 
 Login opens an Authorization Code with PKCE flow in your browser and stores the
-credentials for that server. `connect` never opens a browser. Use `--no-browser` with
-`login` on a headless host, then open the printed URL from a workstation that
-can reach port `18473` on the login host, usually through SSH port forwarding.
+credentials for that server. `connect` never opens a browser. Use `--no-browser`
+with `login` on a headless host, then open the printed URL from a workstation
+that can reach port `18473` on the login host, usually through SSH port
+forwarding.
 
 Login uses the system keyring on macOS. On Linux, it uses an available Secret
 Service or owner-only plaintext files on a headless host. Use
@@ -108,24 +110,25 @@ mecatui login mecated.example.com:443 \
   --audience mecatl
 ```
 
-Run `mecatui logout mecated.example.com:443` to remove the saved enrollment.
-Use `/connect` inside the TUI to choose another saved server.
+Run `mecatui logout mecated.example.com:443` to remove the saved enrollment. Use
+`/connect` inside the TUI to choose another saved server.
 
 ## Manage local LLM endpoint credentials
 
 Remote enrollment and local LLM endpoint authentication are separate actions.
 `mecatui login ADDRESS` authenticates the client to a remote `mecated` server;
 `mecatui llm login ENDPOINT` authenticates a locally configured native LLM
-endpoint and never authenticates to remote `mecated`. Native login uses the fixed
-ToolHive-compatible registered redirect `http://localhost:8666/callback`, including with
-`--no-browser`, but stores a separate native Mecatl credential and never reads or copies
-ToolHive credentials. Remote `mecatui login ADDRESS` retains its separate fixed callback.
+endpoint and never authenticates to remote `mecated`. Native login uses the
+fixed ToolHive-compatible registered redirect `http://localhost:8666/callback`,
+including with `--no-browser`, but stores a separate native Mecatl credential
+and never reads or copies ToolHive credentials. Remote `mecatui login ADDRESS`
+retains its separate fixed callback.
 
-Inspect local endpoint status with `mecatui llm status [ENDPOINT]` and remove its
-credential with `mecatui llm logout ENDPOINT`. The reserved
-`mecatui llm login toolhive` form remains compatible with ToolHive's LLM gateway.
-ToolHive MCP discovery and manual OpenAI Codex authentication are separate
-workflows.
+Inspect local endpoint status with `mecatui llm status [ENDPOINT]` and remove
+its credential with `mecatui llm logout ENDPOINT`. The reserved
+`mecatui llm login toolhive` form remains compatible with ToolHive's LLM
+gateway. ToolHive MCP discovery and manual OpenAI Codex authentication are
+separate workflows.
 
 ## Next steps
 

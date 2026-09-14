@@ -1,13 +1,15 @@
 ---
 sidebar_position: 5
 title: HookRunner
-description: Implement lifecycle hooks that observe, transform, approve, or block agent actions.
+description:
+  Implement lifecycle hooks that observe, transform, approve, or block agent
+  actions.
 ---
 
 # HookRunner
 
-`port.HookRunner` handles lifecycle events for tool calls, prompt submission, and
-session termination. A hook can allow an action, block it, or rewrite its
+`port.HookRunner` handles lifecycle events for tool calls, prompt submission,
+and session termination. A hook can allow an action, block it, or rewrite its
 payload. Only a `PreToolUse` block prevents an action that has not yet occurred;
 `AskApproval` can turn that block into an interactive approval request.
 
@@ -22,7 +24,9 @@ type HookRunner interface {
 }
 ```
 
-The loop calls `Run` synchronously at each hook phase and waits for the result before continuing. A `nil` `HookRunner` is a supported no-op: every fire site in the loop skips the call cleanly when `Deps.Hooks == nil`.
+The loop calls `Run` synchronously at each hook phase and waits for the result
+before continuing. A `nil` `HookRunner` is a supported no-op: every fire site in
+the loop skips the call cleanly when `Deps.Hooks == nil`.
 
 ### HookEvent
 
@@ -39,7 +43,11 @@ type HookEvent struct {
 }
 ```
 
-The `Input` shape is phase-specific. For `PreToolUse` it is the raw tool-call arguments JSON. For `PostToolUse` it is `{"args": ..., "content": "...", "is_error": bool}`. For `UserPromptSubmit` it is `{"prompt": "..."}`. For `Stop` it is `{"stop_reason": "..."}`. Lifecycle phases with nothing to carry (e.g. `SessionStart`) have an empty `Input`.
+The `Input` shape is phase-specific. For `PreToolUse` it is the raw tool-call
+arguments JSON. For `PostToolUse` it is
+`{"args": ..., "content": "...", "is_error": bool}`. For `UserPromptSubmit` it
+is `{"prompt": "..."}`. For `Stop` it is `{"stop_reason": "..."}`. Lifecycle
+phases with nothing to carry (e.g. `SessionStart`) have an empty `Input`.
 
 ### HookOutcome
 
@@ -52,25 +60,37 @@ type HookOutcome struct {
 }
 ```
 
-- **`Block`** — when true, the hook vetoes the action. Effective only on phases that support blocking (see the table below).
-- **`Message`** — human-readable explanation surfaced to the model on a block, or as an annotation on mutation.
-- **`Mutated`** — when non-empty on an allowing outcome, replaces the phase's payload. The replacement must be valid JSON in the same shape as `HookEvent.Input` for that phase; a malformed payload is silently ignored and the original stands.
+- **`Block`** — when true, the hook vetoes the action. Effective only on phases
+  that support blocking (see the table below).
+- **`Message`** — human-readable explanation surfaced to the model on a block,
+  or as an annotation on mutation.
+- **`Mutated`** — when non-empty on an allowing outcome, replaces the phase's
+  payload. The replacement must be valid JSON in the same shape as
+  `HookEvent.Input` for that phase; a malformed payload is silently ignored and
+  the original stands.
 - **`AskApproval`** turns a `PreToolUse` block into an interactive permission
   request. Approval runs the call; denial preserves the block. A headless engine
   ignores this field and preserves the block. The field has no effect outside a
   `PreToolUse` result with `Block == true`.
 
-A `HookRunner` consumer can optionally also implement `port.HookApprovalLearner` (`LearnHookApproval(ctx, HookEvent)`), which the loop calls when the human resolves an askable block with "allow and don't ask again" — letting the consumer arm its own longer-lived waiver for that tool/pattern. It's a separate, optional interface (not a `HookRunner` method), so implementing it is opt-in and doesn't touch the required `HookRunner` surface.
+A `HookRunner` consumer can optionally also implement `port.HookApprovalLearner`
+(`LearnHookApproval(ctx, HookEvent)`), which the loop calls when the human
+resolves an askable block with "allow and don't ask again" — letting the
+consumer arm its own longer-lived waiver for that tool/pattern. It's a separate,
+optional interface (not a `HookRunner` method), so implementing it is opt-in and
+doesn't touch the required `HookRunner` surface.
 
 ---
 
 ## Hook phases
 
-Nine lifecycle phases are defined in `engine/governance/hookevent.go`. They fall into three groups:
+Nine lifecycle phases are defined in `engine/governance/hookevent.go`. They fall
+into three groups:
 
 ### Per-tool phases
 
-These fire from `engine/agent/dispatch.go` for every tool call that clears the permission gate.
+These fire from `engine/agent/dispatch.go` for every tool call that clears the
+permission gate.
 
 |Phase|When it fires|Input shape|Supports block|Supports mutate|
 |-|-|-|-|-|
@@ -89,7 +109,10 @@ These fire from `engine/agent/hooks.go` for the main engine lifecycle.
 
 ### Subagent and team phases
 
-These fire from `engine/agent/subagent.go`, `engine/agent/teamsupervisor.go`, and `engine/agent/teamtools.go`. They are best-effort notifications: `fireNotify` is the common path, which detaches from a cancelled context (5s timeout) and discards any block or error.
+These fire from `engine/agent/subagent.go`, `engine/agent/teamsupervisor.go`,
+and `engine/agent/teamtools.go`. They are best-effort notifications:
+`fireNotify` is the common path, which detaches from a cancelled context (5s
+timeout) and discards any block or error.
 
 |Phase|When it fires|Input shape|Supports block|Supports mutate|
 |-|-|-|-|-|
@@ -121,36 +144,53 @@ flowchart TD
 
 ### Allow (passthrough)
 
-Exit code 0 or returning `HookOutcome{}` with `Block: false` and empty `Mutated`. The original action proceeds unchanged. This is what a no-op hook (e.g. `hookexec.New(nil)`) always returns.
+Exit code 0 or returning `HookOutcome{}` with `Block: false` and empty
+`Mutated`. The original action proceeds unchanged. This is what a no-op hook
+(e.g. `hookexec.New(nil)`) always returns.
 
 ### Block
 
 Set `Block: true` in the outcome. What happens depends on the phase:
 
-- **`PreToolUse` block** — the tool never executes. The loop synthesizes a permission-denied `ToolResult` and feeds it to the model, which can adapt.
-- **`SessionStart` / `UserPromptSubmit` block** — the run aborts before any model call. A hook execution error on these phases is treated identically (fail-safe: the verdict is unknown, so the run cannot proceed).
+- **`PreToolUse` block** — the tool never executes. The loop synthesizes a
+  permission-denied `ToolResult` and feeds it to the model, which can adapt.
+- **`SessionStart` / `UserPromptSubmit` block** — the run aborts before any
+  model call. A hook execution error on these phases is treated identically
+  (fail-safe: the verdict is unknown, so the run cannot proceed).
 - **`TaskCreated` / `TaskCompleted` block** — the task operation is vetoed.
 - **`PostToolUse` block** — see the caveat below.
 
-A block on a best-effort phase (`Stop`, `SubagentStop`, `TeammateIdle`) is ignored.
+A block on a best-effort phase (`Stop`, `SubagentStop`, `TeammateIdle`) is
+ignored.
 
 ### Mutate
 
-Return a non-empty `Mutated` JSON payload in an allowing outcome. The loop applies it symmetrically with the `HookEvent.Input` shape:
+Return a non-empty `Mutated` JSON payload in an allowing outcome. The loop
+applies it symmetrically with the `HookEvent.Input` shape:
 
-- **`UserPromptSubmit`** — `{"prompt": "..."}`. The rewritten text becomes the effective prompt the model sees.
-- **`PreToolUse`** — the rewritten tool-call arguments. The permission policy is NOT re-evaluated on the mutated args; a hook is trusted more than the model.
-- **`PostToolUse`** — `{"content": "...", "is_error": bool}`. The rewritten result becomes what the model is shown and what is recorded in history. The client event stream shows the same effective result — no hidden divergence.
+- **`UserPromptSubmit`** — `{"prompt": "..."}`. The rewritten text becomes the
+  effective prompt the model sees.
+- **`PreToolUse`** — the rewritten tool-call arguments. The permission policy is
+  NOT re-evaluated on the mutated args; a hook is trusted more than the model.
+- **`PostToolUse`** — `{"content": "...", "is_error": bool}`. The rewritten
+  result becomes what the model is shown and what is recorded in history. The
+  client event stream shows the same effective result — no hidden divergence.
 
-A malformed (non-JSON) `Mutated` payload is silently ignored and the original stands. The loop emits a `hook.info` event to surface the ignored mutation for observability.
+A malformed (non-JSON) `Mutated` payload is silently ignored and the original
+stands. The loop emits a `hook.info` event to surface the ignored mutation for
+observability.
 
 ---
 
 ## PostToolUse Block caveat
 
-`PostToolUse` Block does **not** veto. The tool has already executed by the time the post hook fires. A `Block` outcome on this phase surfaces a warning-severity annotation on the tool card in the client stream, but the result itself is neither undone nor suppressed.
+`PostToolUse` Block does **not** veto. The tool has already executed by the time
+the post hook fires. A `Block` outcome on this phase surfaces a warning-severity
+annotation on the tool card in the client stream, but the result itself is
+neither undone nor suppressed.
 
-To suppress a bad inbound result — for example, because it contains injected instructions or a secret — use **Mutate** instead:
+To suppress a bad inbound result — for example, because it contains injected
+instructions or a secret — use **Mutate** instead:
 
 ```json
 {
@@ -159,13 +199,19 @@ To suppress a bad inbound result — for example, because it contains injected i
 }
 ```
 
-The loop records the mutated result in the session history, emits it on the client event stream, and delivers it to the model — all three views agree on the rewritten result. The raw tool output never reaches the model.
+The loop records the mutated result in the session history, emits it on the
+client event stream, and delivers it to the model — all three views agree on the
+rewritten result. The raw tool output never reaches the model.
 
-Only `PreToolUse` Block is a real veto — and even there, setting `AskApproval` turns it from a dead end into an interactive ask rather than removing the veto.
+Only `PreToolUse` Block is a real veto — and even there, setting `AskApproval`
+turns it from a dead end into an interactive ask rather than removing the veto.
 
 :::note[Loop consistency guarantee]
 
-When a PostToolUse hook mutates a result, the effective (rewritten) result is what the loop records, emits on the client stream, and delivers to the model. There is no hidden divergence between the three views — a redacting hook's redaction reaches the audit recorder too, not just the model.
+When a PostToolUse hook mutates a result, the effective (rewritten) result is
+what the loop records, emits on the client stream, and delivers to the model.
+There is no hidden divergence between the three views — a redacting hook's
+redaction reaches the audit recorder too, not just the model.
 
 :::
 
@@ -173,18 +219,23 @@ When a PostToolUse hook mutates a result, the effective (rewritten) result is wh
 
 ## The shell hook executor
 
-`internal/adapter/hookexec` is the production `port.HookRunner` that `mecated` uses. It maps each `HookPhase` to a shell command, forks a process per event, and interprets the exit code as the outcome.
+`internal/adapter/hookexec` is the production `port.HookRunner` that `mecated`
+uses. It maps each `HookPhase` to a shell command, forks a process per event,
+and interprets the exit code as the outcome.
 
 ```go
 // internal/adapter/hookexec/hookexec.go
 func New(hooks map[governance.HookPhase]string, opts ...Option) *Runner
 ```
 
-A `nil` or empty `hooks` map means no hooks configured — every event is allowed. Pass a map with a command per phase to activate those phases.
+A `nil` or empty `hooks` map means no hooks configured — every event is allowed.
+Pass a map with a command per phase to activate those phases.
 
 ### Protocol
 
-The runner executes each registered command as `<shell> -c <command>` (default shell `/bin/sh`). The `HookEvent` is serialized as JSON and written to the hook process's stdin.
+The runner executes each registered command as `<shell> -c <command>` (default
+shell `/bin/sh`). The `HookEvent` is serialized as JSON and written to the hook
+process's stdin.
 
 **Exit codes:**
 
@@ -194,7 +245,8 @@ The runner executes each registered command as `<shell> -c <command>` (default s
 |`2`|Block|
 |anything else non-zero|Error (hook execution failure)|
 
-**Stdout on exit 0:** If stdout begins with `{`, it is parsed as a control envelope:
+**Stdout on exit 0:** If stdout begins with `{`, it is parsed as a control
+envelope:
 
 ```json
 {
@@ -203,13 +255,20 @@ The runner executes each registered command as `<shell> -c <command>` (default s
 }
 ```
 
-`mutated` becomes `HookOutcome.Mutated` (the phase-appropriate rewrite payload). `message` becomes `HookOutcome.Message`. Plain prose stdout (not starting with `{`) is used as `HookOutcome.Message` verbatim — existing hooks that print a status line are unaffected.
+`mutated` becomes `HookOutcome.Mutated` (the phase-appropriate rewrite payload).
+`message` becomes `HookOutcome.Message`. Plain prose stdout (not starting with
+`{`) is used as `HookOutcome.Message` verbatim — existing hooks that print a
+status line are unaffected.
 
-**Stdout on exit 2:** The runner prefers stdout for the block message, falling back to stderr.
+**Stdout on exit 2:** The runner prefers stdout for the block message, falling
+back to stderr.
 
-**Timeout:** `DefaultTimeout` is 30 seconds per invocation. Override with `hookexec.WithTimeout`. On POSIX, the process runs in its own process group so a timeout kills the whole subprocess tree, not just the immediate shell.
+**Timeout:** `DefaultTimeout` is 30 seconds per invocation. Override with
+`hookexec.WithTimeout`. On POSIX, the process runs in its own process group so a
+timeout kills the whole subprocess tree, not just the immediate shell.
 
-**Shell override:** `hookexec.WithShell` changes the interpreter (default `/bin/sh`).
+**Shell override:** `hookexec.WithShell` changes the interpreter (default
+`/bin/sh`).
 
 ### Example registration
 
@@ -232,12 +291,18 @@ Wire it into `agent.Deps.Hooks` at composition time.
 
 You may want a custom `HookRunner` when:
 
-- **Policy enforcement** — block specific tool calls based on runtime context that the static permission rule engine cannot express (e.g. calling an external rate limiter or consulting a live policy store).
-- **Audit logging** — record every tool call and result to an append-only log outside the harness.
-- **Side effects** — trigger downstream systems on tool events (notifications, metrics, CI signals).
-- **Result rewriting** — redact secrets or truncate enormous tool results before they enter the model's context.
+- **Policy enforcement** — block specific tool calls based on runtime context
+  that the static permission rule engine cannot express (e.g. calling an
+  external rate limiter or consulting a live policy store).
+- **Audit logging** — record every tool call and result to an append-only log
+  outside the harness.
+- **Side effects** — trigger downstream systems on tool events (notifications,
+  metrics, CI signals).
+- **Result rewriting** — redact secrets or truncate enormous tool results before
+  they enter the model's context.
 
-A no-op runner is trivial. In tests and the demo, the composition layer wires `hookexec.New(nil)`:
+A no-op runner is trivial. In tests and the demo, the composition layer wires
+`hookexec.New(nil)`:
 
 ```go
 // hookexec.New(nil) satisfies port.HookRunner and allows every event.
@@ -252,19 +317,29 @@ type HookRunner interface {
 }
 ```
 
-The loop is synchronous on hook calls — the hook runs under the caller's context (plus the hookexec timeout for the shell adapter). Keep hook implementations fast for the blocking phases (`PreToolUse`, `SessionStart`, `UserPromptSubmit`); the best-effort phases (`Stop`, `SubagentStop`, `TeammateIdle`) run on a detached context so a slow hook on those phases does not block the run.
+The loop is synchronous on hook calls — the hook runs under the caller's context
+(plus the hookexec timeout for the shell adapter). Keep hook implementations
+fast for the blocking phases (`PreToolUse`, `SessionStart`, `UserPromptSubmit`);
+the best-effort phases (`Stop`, `SubagentStop`, `TeammateIdle`) run on a
+detached context so a slow hook on those phases does not block the run.
 
 Error handling differs by phase:
 
-- **Blocking phases** (`SessionStart`, `UserPromptSubmit`): a hook error is treated as a block (fail-safe — the verdict is unknown).
-- **Tool-use phases** (`PreToolUse`): a hook error is treated as a block (same fail-safe reasoning).
-- **Best-effort phases** (`PostToolUse`, `Stop`, `SubagentStop`, `TeammateIdle`): a hook error is ignored; the run continues unaffected.
+- **Blocking phases** (`SessionStart`, `UserPromptSubmit`): a hook error is
+  treated as a block (fail-safe — the verdict is unknown).
+- **Tool-use phases** (`PreToolUse`): a hook error is treated as a block (same
+  fail-safe reasoning).
+- **Best-effort phases** (`PostToolUse`, `Stop`, `SubagentStop`,
+  `TeammateIdle`): a hook error is ignored; the run continues unaffected.
 
 ---
 
 ## Relationship to guardrails
 
-The model-backed guardrail checker (ADR 0021, `internal/adapter/modelhook`) is **not** part of the `HookRunner` port itself. It is wired as a composition-layer decorator around `port.HookRunner` at `internal/app/build.go` (`buildGuardrailsHooks`):
+The model-backed guardrail checker (ADR 0021, `internal/adapter/modelhook`) is
+**not** part of the `HookRunner` port itself. It is wired as a composition-layer
+decorator around `port.HookRunner` at `internal/app/build.go`
+(`buildGuardrailsHooks`):
 
 ```
 port.HookRunner (hookexec.New)
@@ -277,15 +352,28 @@ The guardrail checker runs on `PreToolUse` for outbound exfiltration and on
 `PostToolUse` for inbound injection. It uses a separate checker model with no
 tools and returns ordinary Block or Mutate outcomes through `HookRunner`.
 
-The guardrail `PostToolUse` block enforces via Mutate — exactly the pattern described in the caveat above. An enforcing inbound block rewrites the result to `{content: "blocked by guardrail: …", is_error: true}` rather than attempting to veto an already-run tool.
+The guardrail `PostToolUse` block enforces via Mutate — exactly the pattern
+described in the caveat above. An enforcing inbound block rewrites the result to
+`{content: "blocked by guardrail: …", is_error: true}` rather than attempting to
+veto an already-run tool.
 
-The guardrail runner is wired **only** onto the main engine's hooks. Child engines (subagent explorers, team members, parallel branches) use the unwrapped `hookexec.New(nil)` runner — this is the no-recursion guard: a guardrail checker spawning a checker-instrumented child would recurse.
+The guardrail runner is wired **only** onto the main engine's hooks. Child
+engines (subagent explorers, team members, parallel branches) use the unwrapped
+`hookexec.New(nil)` runner — this is the no-recursion guard: a guardrail checker
+spawning a checker-instrumented child would recurse.
 
 ---
 
 ## What's next
 
-- [Permissions & guardrails](/building/what-you-get/permissions.md) — the rule-based permission layer (Layer 1) that gates every tool call before hooks fire, and the model-backed guardrail checker (Layer 2) that is wired on top of `HookRunner`.
-- [The agent loop](/building/what-you-get/agent-loop.md) — the full turn structure and where `PreToolUse` / `PostToolUse` fit in the dispatch sequence.
-- [PermissionPolicy](/building/extension-points/permission-policy.md) — the other port that fires on every tool call, before hooks, to decide allow / ask / deny.
-- [Tool catalog](/building/extension-points/tool-catalog.md) — add, replace, or remove tools from the catalog the loop dispatches against.
+- [Permissions & guardrails](/building/what-you-get/permissions.md) — the
+  rule-based permission layer (Layer 1) that gates every tool call before hooks
+  fire, and the model-backed guardrail checker (Layer 2) that is wired on top of
+  `HookRunner`.
+- [The agent loop](/building/what-you-get/agent-loop.md) — the full turn
+  structure and where `PreToolUse` / `PostToolUse` fit in the dispatch sequence.
+- [PermissionPolicy](/building/extension-points/permission-policy.md) — the
+  other port that fires on every tool call, before hooks, to decide allow / ask
+  / deny.
+- [Tool catalog](/building/extension-points/tool-catalog.md) — add, replace, or
+  remove tools from the catalog the loop dispatches against.

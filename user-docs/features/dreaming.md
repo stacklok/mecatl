@@ -1,7 +1,9 @@
 ---
 sidebar_position: 240
 title: Dreaming and memory consolidation
-description: Consolidate project memory and the user model with bounded, reviewed operations.
+description:
+  Consolidate project memory and the user model with bounded, reviewed
+  operations.
 ---
 
 # Dreaming and memory consolidation
@@ -36,11 +38,11 @@ mecated serve \
   --user-model-dir "$HOME/.local/state/mecatl/usermodel"
 ```
 
-Automatic application is narrow. The local file-backed store may
-only tombstone a source when its active value and description are byte-identical
-to the displayed survivor, and it must compare the expected versions
-atomically. The survivor is never rewritten. Synthesized replacements are not
-applied by this unattended path.
+Automatic application is narrow. The local file-backed store may only tombstone
+a source when its active value and description are byte-identical to the
+displayed survivor, and it must compare the expected versions atomically. The
+survivor is never rewritten. Synthesized replacements are not applied by this
+unattended path.
 
 These intervals do not change `learning.mode`. A project setting of
 `learning.mode: off` cannot suppress an explicit operator consolidation
@@ -49,9 +51,9 @@ schedule. Zero disables the corresponding schedule.
 ## Manual `/dream` review
 
 In `mecatui`, `/dream` opens the reviewed maintenance flow when the server
-advertises it. See
-[Commands and memory](/mecatui/commands-and-memory.md) for the TUI workflow.
-This page covers consolidation behavior, authorization, and storage limitations.
+advertises it. See [Commands and memory](/mecatui/commands-and-memory.md) for
+the TUI workflow. This page covers consolidation behavior, authorization, and
+storage limitations.
 
 The review evaluates the proposed survivor and source entries, exact duplicates,
 synthesized replacements, bounded reasons and evidence, and the canonical values
@@ -71,14 +73,14 @@ retained.
 The plan is process-local and short-lived. Restart, expiry, or another replica
 makes it unavailable and offers a fresh plan. A same-decision request that is
 still applying, or an indeterminate transport error, preserves the plan ID for
-explicit same-decision receipt retrieval; do not submit the opposite decision.
-A known terminal conflict permits a new generation, but an opposite decision
-while an apply is in progress does not.
+explicit same-decision receipt retrieval; do not submit the opposite decision. A
+known terminal conflict permits a new generation, but an opposite decision while
+an apply is in progress does not.
 
 ## Safety and authorization
 
-Manual dreaming is a maintenance authorization, not an ordinary memory write.
-It is unavailable when:
+Manual dreaming is a maintenance authorization, not an ordinary memory write. It
+is unavailable when:
 
 - ownership enforcement is enabled;
 - no planner is configured;
@@ -104,8 +106,8 @@ are not exposed by the manual review surface.
 |User model|Cross-project `user/` namespace|Operator preferences and durable personal facts|
 
 Project operations require a convergence-capable project store for the exact
-trusted configured workspace. Candidates from another or alternate workspace
-may remain staged and inspectable but cannot approve, undo, or write launch-root
+trusted configured workspace. Candidates from another or alternate workspace may
+remain staged and inspectable but cannot approve, undo, or write launch-root
 project memory. User-model operations use the configured user-model store.
 
 ## Limitations
@@ -126,8 +128,9 @@ project memory. User-model operations use the configured user-model store.
   no-network maintenance operation.
 
 For the underlying memory tools, tiers, lifecycle versions, and learning
-boundary, see [Memory & knowledge](/building/what-you-get/memory.md). For the broader
-`/dream` UI and receipt behavior, see [mecatui memory commands](/mecatui/commands-and-memory.md#review-and-maintain-memory).
+boundary, see [Memory & knowledge](/building/what-you-get/memory.md). For the
+broader `/dream` UI and receipt behavior, see
+[mecatui memory commands](/mecatui/commands-and-memory.md#review-and-maintain-memory).
 
 ## Next steps
 
