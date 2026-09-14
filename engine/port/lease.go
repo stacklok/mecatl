@@ -79,12 +79,20 @@ type SessionLease interface {
 	// Renew extends a lease the caller still holds, returning a REFRESHED Lease
 	// (new Expiry, SAME Token — the immutable-value-object discipline; the caller
 	// stores the returned value). It returns ErrLeaseHeld (wrapped) when the
-	// caller no longer holds the lease — it expired and was taken by another
-	// owner, was released, or the owner/token no longer match. That error is the
-	// LOSS SIGNAL: the renewer treats it as "cancel the run". ErrLeaseUnsupported
-	// is wrapped only by a backend that never supported leasing (an
-	// already-acquired lease implies the backend supports it, so a healthy seam
-	// never starts returning Unsupported mid-hold).
+	// caller no longer holds the lease — definitively, the record now names a
+	// different owner or a different token, meaning it was taken over by another
+	// owner or released and re-acquired. Bare expiry of the caller's own
+	// owner/token, with nothing else having taken it over, is NOT by itself one
+	// of these definitive-loss conditions: an implementation that can prove no
+	// one else could have raced it (e.g. a single-host backend re-checking its
+	// own durable record) may reclaim instead of declaring loss — this narrows,
+	// never widens, when ErrLeaseHeld may be returned, so existing callers are
+	// unaffected. An implementation that cannot prove this may still always
+	// treat expiry as loss. Either way, ErrLeaseHeld is the LOSS SIGNAL: the
+	// renewer treats it as "cancel the run". ErrLeaseUnsupported is wrapped only
+	// by a backend that never supported leasing (an already-acquired lease
+	// implies the backend supports it, so a healthy seam never starts returning
+	// Unsupported mid-hold).
 	Renew(ctx context.Context, l Lease) (Lease, error)
 
 	// Release relinquishes a lease the caller holds; it is IDEMPOTENT (releasing

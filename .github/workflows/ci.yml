@@ -446,6 +446,9 @@ jobs:
       - name: go build (microVM module)
         run: cd environment/microvm && go build ./...
 
+      - name: go vet (microVM module)
+        run: cd environment/microvm && go vet ./...
+
       # provider/ holds the opt-in LLM-provider Go submodules (ADR 0093), each
       # its own module under the workspace — build them explicitly too.
       - name: go build (provider modules)

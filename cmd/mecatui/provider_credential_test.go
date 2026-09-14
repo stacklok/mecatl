@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -11,8 +12,11 @@ import (
 	"testing"
 
 	"github.com/stacklok/mecatl/internal/adapter/authfile"
+	"github.com/stacklok/mecatl/internal/adapter/credentialstore"
 	"github.com/stacklok/mecatl/internal/adapter/llmendpoint"
+	"github.com/stacklok/mecatl/internal/adapter/oidcclient"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
+	"github.com/stacklok/mecatl/mcp/oauthlogin"
 )
 
 func credentialCommands(cfg providerCredentialConfig, input func(context.Context, string) (string, error)) providerCommands {
@@ -104,6 +108,74 @@ func TestProviderCredentialOIDCCancellationPreservesCLIContract(t *testing.T) {
 	}
 }
 
+func TestProviderCredentialOIDCLifecycleDiagnostics(t *testing.T) {
+	const canary = "SENSITIVE-OAUTH-BODY-TOKEN-URL"
+	wrapped := func(err error) error { return fmt.Errorf("outer: %w: %s", err, canary) }
+	callbackErr := wrapped(&oauthlogin.CallbackBindError{Reason: oauthlogin.CallbackBindAddressInUse})
+	cases := []struct {
+		name, action, stage, want string
+		err                       error
+	}{
+		{"storage setup", providerActionLogin, "setup", "check credential_store.oidc.home and credential_store.oidc.key", wrapped(oidcclient.ErrStorage)},
+		{"unavailable open", providerActionLogout, "open", "check credential_store.oidc.home and credential_store.oidc.key", wrapped(credentialstore.ErrUnavailable)},
+		{"corrupt runtime", providerActionLogin, "runtime", "check credential_store.oidc.home and credential_store.oidc.key", wrapped(credentialstore.ErrCorrupt)},
+		{"closed runtime", providerActionLogout, "runtime", "check credential_store.oidc.home and credential_store.oidc.key", wrapped(credentialstore.ErrClosed)},
+		{"discovery", providerActionLogin, "runtime", "check issuer trust, DNS, TLS, and the exact provider configuration", wrapped(oidcclient.ErrDiscovery)},
+		{"callback address", providerActionLogin, "runtime", "localhost port 8666", callbackErr},
+		{"authorization", providerActionLogin, "runtime", "complete the newest browser flow", wrapped(oidcclient.ErrAuthorization)},
+		{"token", providerActionLogin, "runtime", "check the resource audience, scopes, and OIDC configuration", wrapped(oidcclient.ErrToken)},
+		{"not enrolled login", providerActionLogin, "runtime", "mecatui providers login oidc", wrapped(llmendpoint.ErrNotEnrolled)},
+		{"not enrolled logout", providerActionLogout, "runtime", "mecatui providers status oidc", wrapped(llmendpoint.ErrNotEnrolled)},
+		{"deadline", providerActionLogin, "runtime", "complete the browser callback within five minutes", wrapped(context.DeadlineExceeded)},
+		{"generic", providerActionLogout, "runtime", "mecatui providers status oidc", errors.New(canary)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			definition := permconfig.ProviderDefinition{
+				ID: "oidc",
+				Auth: permconfig.ProviderAuth{Method: providerAuthOIDC, OIDC: &permconfig.ProviderOIDC{
+					CredentialStore: &permconfig.OIDCCredentialStore{Home: "/configured"},
+				}},
+			}
+			commands := credentialCommands(providerCredentialConfig{definitions: permconfig.ProviderDefinitions{"oidc": definition}}, nil)
+			commands.backend.prepareOIDCRoot = func(string) error {
+				if tc.stage == "setup" {
+					return tc.err
+				}
+				return nil
+			}
+			commands.backend.openOIDCRuntime = func(context.Context, permconfig.ProviderDefinition, bool, io.Writer) (nativeEndpointRuntime, error) {
+				if tc.stage == "open" {
+					return nil, tc.err
+				}
+				fake := &fakeProviderOIDCRuntime{}
+				if tc.action == providerActionLogin {
+					fake.loginErr = tc.err
+				} else {
+					fake.logoutErr = tc.err
+				}
+				return fake, nil
+			}
+			var stdout, stderr bytes.Buffer
+			err := commands.runCredential(context.Background(), providerCredentialResolution(tc.action, "oidc"), &stdout, &stderr)
+			all := ""
+			if err != nil {
+				all = err.Error()
+			}
+			all += stdout.String() + stderr.String()
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want safe diagnostic containing %q", err, tc.want)
+			}
+			if tc.action == providerActionLogout && errors.Is(tc.err, llmendpoint.ErrNotEnrolled) && strings.Contains(err.Error(), "mecatui providers login") {
+				t.Fatalf("logout error must not instruct login: %v", err)
+			}
+			if strings.Contains(all, canary) {
+				t.Fatalf("sensitive cause leaked: err=%v stdout=%q stderr=%q", err, stdout.String(), stderr.String())
+			}
+		})
+	}
+}
+
 func TestProviderCredentialToolHiveHandoff(t *testing.T) {
 	commands := testProviderCommands()
 	var noBrowser bool
@@ -145,15 +217,18 @@ func TestProviderCredentialRejectsUnavailableProviderWithoutMutation(t *testing.
 
 type fakeProviderOIDCRuntime struct {
 	logins, logouts, closes int
-	loginErr                error
+	loginErr, logoutErr     error
 }
 
 func (f *fakeProviderOIDCRuntime) Login(context.Context) error { f.logins++; return f.loginErr }
 func (*fakeProviderOIDCRuntime) Status(context.Context) llmendpoint.Status {
 	return llmendpoint.StatusNotEnrolled
 }
-func (f *fakeProviderOIDCRuntime) Logout(context.Context) error { f.logouts++; return nil }
-func (f *fakeProviderOIDCRuntime) Close() error                 { f.closes++; return nil }
+func (f *fakeProviderOIDCRuntime) Logout(context.Context) error {
+	f.logouts++
+	return f.logoutErr
+}
+func (f *fakeProviderOIDCRuntime) Close() error { f.closes++; return nil }
 
 func providerCredentialResolution(action, provider string) invocationResolution {
 	return invocationResolution{mode: modeProviderCredential, providerAction: action, providerName: provider}

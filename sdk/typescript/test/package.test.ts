@@ -35,6 +35,7 @@ const packageRoot = fileURLToPath(new URL("../", import.meta.url));
 const packageJson = JSON.parse(
   readFileSync(join(packageRoot, "package.json"), "utf8"),
 ) as PackageJson;
+const packageVersion = readFileSync(join(packageRoot, "VERSION"), "utf8").trim();
 
 let fixtureRoot: string;
 let packedFiles: Map<string, Buffer>;
@@ -303,7 +304,8 @@ test("packed tarball carries dist and license only", () => {
     packedFiles.get("package/package.json")?.toString("utf8") ?? "{}",
   ) as PackageJson;
   expect(packedPackageJson.name).toBe("@stacklok-oss/mecatl-sdk");
-  expect(packedPackageJson.version).toBe("0.1.0");
+  expect(packageJson.version).toBe(packageVersion);
+  expect(packedPackageJson.version).toBe(packageVersion);
   expect(packedPackageJson.license).toBe("Apache-2.0");
   expect(packedPackageJson.repository).toEqual({
     directory: "sdk/typescript",

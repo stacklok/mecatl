@@ -1,0 +1,224 @@
+# Opens a reviewed TypeScript SDK version-bump PR. Merging that PR is the only
+# supported way to advance sdk/typescript/VERSION; the tag workflow then creates
+# the path-qualified tag that starts npm staging.
+name: Create TypeScript SDK Release PR
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump_type:
+        description: 'Version bump type'
+        required: true
+        type: choice
+        options: [patch, minor, major]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: create-sdk-typescript-release-pr
+  cancel-in-progress: false
+
+jobs:
+  release-pr:
+    name: Open TypeScript SDK release PR
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # The App key is environment-scoped and the environment accepts only main.
+    # A modified workflow on a branch therefore cannot mint the write token.
+    environment: release
+    permissions:
+      contents: write # delete a stale SDK release branch with GITHUB_TOKEN
+      pull-requests: read # reject an already-open SDK release PR
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          filter: blob:none
+          persist-credentials: false
+          ref: ${{ github.sha }}
+
+      - name: Refuse or clean up an in-flight SDK release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          open_prs="$(gh pr list --repo "$REPOSITORY" --state open --limit 200 \
+            --json number,headRefName \
+            --jq '[.[] | select(.headRefName | startswith("release/sdk-typescript/v"))]')"
+          if [ "$(printf '%s' "$open_prs" | jq 'length')" != "0" ]; then
+            echo "::error::a TypeScript SDK release PR is already open"
+            printf '%s\n' "$open_prs" | jq -r '.[] | "  #\(.number) on \(.headRefName)"'
+            exit 1
+          fi
+
+          gh api --paginate "/repos/${REPOSITORY}/git/matching-refs/heads/release/sdk-typescript/v" \
+            --jq '.[].ref' | while read -r ref; do
+              version="${ref#refs/heads/release/sdk-typescript/v}"
+              if ! printf '%s' "$version" | grep -qE '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'; then
+                echo "skipping ${ref} (not an SDK release semver branch)"
+                continue
+              fi
+              gh api -X DELETE "/repos/${REPOSITORY}/git/refs/${ref#refs/}"
+              echo "deleted stale ${ref}"
+            done
+
+      - name: Resolve the next SDK version
+        id: version
+        env:
+          BUMP_TYPE: ${{ inputs.bump_type }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { appendFileSync, readFileSync } from "node:fs";
+
+          const versionFile = "sdk/typescript/VERSION";
+          const manifestFile = "sdk/typescript/package.json";
+          const stable = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/;
+          const current = readFileSync(versionFile, "utf8").trim();
+          const match = stable.exec(current);
+          if (match == null) throw new Error(`invalid SDK VERSION: ${JSON.stringify(current)}`);
+
+          const manifest = JSON.parse(readFileSync(manifestFile, "utf8"));
+          if (manifest.name !== "@stacklok-oss/mecatl-sdk" || manifest.version !== current) {
+            throw new Error("SDK VERSION and package.json identity do not agree");
+          }
+
+          let [major, minor, patch] = match.slice(1).map(Number);
+          switch (process.env.BUMP_TYPE) {
+            case "major": major += 1; minor = 0; patch = 0; break;
+            case "minor": minor += 1; patch = 0; break;
+            case "patch": patch += 1; break;
+            default: throw new Error(`invalid bump type: ${process.env.BUMP_TYPE}`);
+          }
+          const version = `${major}.${minor}.${patch}`;
+          const tag = `sdk/typescript/v${version}`;
+          const branch = `release/sdk-typescript/v${version}`;
+          appendFileSync(process.env.GITHUB_OUTPUT,
+            `current=${current}\nversion=${version}\ntag=${tag}\nbranch=${branch}\n`);
+          NODE
+
+      - name: Verify the current release lineage
+        env:
+          CURRENT: ${{ steps.version.outputs.current }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          current_tag="sdk/typescript/v${CURRENT}"
+          if ! git rev-parse -q --verify "refs/tags/${current_tag}^{commit}" >/dev/null; then
+            echo "::error::current SDK version ${CURRENT} has no release tag"
+            exit 1
+          fi
+          git merge-base --is-ancestor "refs/tags/${current_tag}^{commit}" HEAD
+          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+            echo "::error::next SDK tag ${TAG} already exists"
+            exit 1
+          fi
+
+      - name: Apply the SDK version bump
+        env:
+          CURRENT: ${{ steps.version.outputs.current }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { readFileSync, writeFileSync } from "node:fs";
+
+          const versionFile = "sdk/typescript/VERSION";
+          const manifestFile = "sdk/typescript/package.json";
+          if (readFileSync(versionFile, "utf8").trim() !== process.env.CURRENT) {
+            throw new Error("SDK VERSION changed during release preparation");
+          }
+          const manifest = JSON.parse(readFileSync(manifestFile, "utf8"));
+          if (manifest.version !== process.env.CURRENT) {
+            throw new Error("package.json changed during release preparation");
+          }
+          manifest.version = process.env.VERSION;
+          writeFileSync(versionFile, `${process.env.VERSION}\n`);
+          writeFileSync(manifestFile, `${JSON.stringify(manifest, null, 2)}\n`);
+          NODE
+
+      - name: Verify the release diff
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          changed="$(git diff --name-only | sort)"
+          expected="$(printf '%s\n' sdk/typescript/VERSION sdk/typescript/package.json | sort)"
+          if [ "$changed" != "$expected" ]; then
+            echo "::error::the SDK release PR must change exactly VERSION and package.json"
+            printf 'got:\n%s\n' "${changed:-<no changes>}"
+            exit 1
+          fi
+          test "$(tr -d '[:space:]' < sdk/typescript/VERSION)" = "$VERSION"
+          test "$(node -p "require('./sdk/typescript/package.json').version")" = "$VERSION"
+
+      - name: Prepare the release PR body
+        env:
+          CURRENT: ${{ steps.version.outputs.current }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## TypeScript SDK v${VERSION}"
+            echo ""
+            echo "Bumps \`@stacklok-oss/mecatl-sdk\` from \`${CURRENT}\` to \`${VERSION}\`."
+            echo ""
+            echo "This PR changes only \`sdk/typescript/VERSION\` and \`sdk/typescript/package.json\`."
+            echo "Merging it creates \`sdk/typescript/v${VERSION}\` automatically; the tag workflow"
+            echo "then runs the stage-only npm release workflow."
+            echo ""
+            echo "## Shipping commits"
+            echo ""
+            git log "sdk/typescript/v${CURRENT}..HEAD" --no-merges --format='- %s' | head -300
+          } > "$RUNNER_TEMP/sdk-release-pr.md"
+
+      # Mint the App token only after every repo-controlled validation has run.
+      - name: Mint the release app token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Push the version bump and open the PR
+        id: pr
+        env:
+          BRANCH: ${{ steps.version.outputs.branch }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPOSITORY: ${{ github.repository }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git switch -c "$BRANCH"
+          git add sdk/typescript/VERSION sdk/typescript/package.json
+          git commit -m "Release TypeScript SDK v${VERSION}"
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${REPOSITORY}.git" \
+            "HEAD:refs/heads/${BRANCH}"
+          pr_url="$(gh pr create --repo "$REPOSITORY" --base main --head "$BRANCH" \
+            --title "Release TypeScript SDK v${VERSION}" \
+            --body-file "$RUNNER_TEMP/sdk-release-pr.md")"
+          echo "url=${pr_url}" >> "$GITHUB_OUTPUT"
+          echo "number=${pr_url##*/}" >> "$GITHUB_OUTPUT"
+
+      - name: Summary
+        env:
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          PR_URL: ${{ steps.pr.outputs.url }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          {
+            echo "## TypeScript SDK release PR created"
+            echo ""
+            echo "- Version: \`$VERSION\`"
+            echo "- PR: [#$PR_NUMBER]($PR_URL)"
+            echo ""
+            echo "Review and merge the PR. The release App will then create the tag and"
+            echo "the npm workflow will wait for its environment approval."
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -83,10 +83,16 @@ run `actions/attest-build-provenance` or `gh attestation verify` on this
 workflow. Provenance is asserted on npm's output, not by passing `--provenance`
 or `--access` on the staging command.
 
-**8. Keep path-qualified release tags.** Release with `sdk/typescript/v0.1.0`.
-The tag must match `package.json` version, resolve to the tagged commit, and
-be an ancestor of `origin/main`. Root `v*` image releases and provider-module
-tags stay isolated.
+**8. Automate reviewed version bumps and path-qualified tags.**
+`sdk/typescript/VERSION` is the SDK release trigger and must equal the
+`package.json` version. A maintainer dispatches the SDK release-PR workflow and
+selects a semantic bump; the release GitHub App opens a PR changing exactly
+those two files. After a human merges that PR, a separate workflow verifies the
+App-authored branch, exact diff, monotonic version, previous tag, and package
+identity before the App pushes `sdk/typescript/vX.Y.Z`. Using the App rather
+than `GITHUB_TOKEN` is load-bearing: its tag push starts the npm staging
+workflow. The first tag is `sdk/typescript/v0.1.0`. Root `v*` image releases
+and provider-module tags stay isolated.
 
 **9. Delete the GitHub Packages preview manually after an approved npm
 release.** Do not automate unpublish or deletion in the release workflow.
@@ -105,6 +111,8 @@ Approve and verify `@stacklok-oss/mecatl-sdk@0.1.0` first.
   disallows tokens.
 - A tag stages `0.1.0`; it does not move `latest` or expose the SDK until an npm
   maintainer approves it with 2FA.
+- Later releases require only a reviewed version-bump PR plus the GitHub
+  Environment and npm approvals; automation creates the immutable tag.
 - A failed or rejected npm stage still leaves the GitHub Packages preview
   intact until a human deletes it.
 - In-repository examples depend on the SDK via `file:` until

@@ -172,9 +172,19 @@ func (l *Lease) Acquire(ctx context.Context, id session.SessionID, owner string)
 	return out, nil
 }
 
-// Renew extends only the exact current, unexpired, locally retained generation.
-// Expiry or replacement is definitive loss: the local generation handle is
-// relinquished and ErrLeaseHeld is returned.
+// Renew extends the exact current, locally retained generation, identified by
+// matching owner+token in the durable record — read under the same stable
+// transition lock Acquire/Release use to serialize takeovers. A record whose
+// owner or token no longer match is definitive loss (a genuine competitor took
+// over): the local generation handle is relinquished and ErrLeaseHeld is
+// returned. Bare EXPIRY with the record still naming the caller at the
+// caller's token is NOT, by itself, loss: on a single host that can only be
+// true if nobody else raced an Acquire/takeover in the interim (issue #1333 —
+// a process suspended past the TTL, e.g. laptop sleep, must not lose the
+// lease to a competitor that never ran). Renew reclaims it with a fresh expiry
+// instead, keeping the token unchanged. `held == nil` still hard-fails
+// regardless of the record: it means a PRIOR Renew already declared loss and
+// tore down local state.
 func (l *Lease) Renew(ctx context.Context, in port.Lease) (out port.Lease, err error) {
 	unlock, err := l.lockSession(ctx, in.SessionID)
 	if err != nil {
@@ -196,11 +206,11 @@ func (l *Lease) Renew(ctx context.Context, in port.Lease) (out port.Lease, err e
 	if readErr != nil {
 		return out, readErr
 	}
-	now := l.clock.Now()
-	if held == nil || cur.Owner != in.Owner || cur.Token != in.Token || !now.Before(cur.Expiry) {
+	if held == nil || cur.Owner != in.Owner || cur.Token != in.Token {
 		closeErr := l.relinquish(gen)
 		return out, errors.Join(port.ErrLeaseHeld, closeErr)
 	}
+	now := l.clock.Now()
 	out, err = l.writeRecord(in.SessionID, in.Owner, in.Token, now)
 	if err != nil {
 		return port.Lease{}, err

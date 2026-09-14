@@ -2,6 +2,7 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 
+import packageManifest from "../package.json" with { type: "json" };
 import type { DiagnosticsSink } from "./errors.js";
 import type { AdvertisedTool, CallToolResult, ToolHostBinding, ToolJsonValue } from "./tool.js";
 
@@ -394,7 +395,7 @@ export class LoopbackToolHost implements ToolHostBinding {
         jsonResponse(response, rpc.id, {
           capabilities: { tools: {} },
           protocolVersion,
-          serverInfo: { name: "@stacklok-oss/mecatl-sdk", version: "0.1.0" },
+          serverInfo: { name: packageManifest.name, version: packageManifest.version },
           supportedVersions: [...MCP_PROTOCOL_VERSIONS],
         });
         return;

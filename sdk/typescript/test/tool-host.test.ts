@@ -6,6 +6,8 @@ import { fileURLToPath } from "node:url";
 import { createRouterTransport } from "@connectrpc/connect";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import packageManifest from "../package.json" with { type: "json" };
+
 import { connectTransport, type SessionMcpServer } from "../src/client.js";
 import type { DiagnosticRecord } from "../src/errors.js";
 import { HarnessService } from "../src/gen/mecatl/v1/harness_pb.js";
@@ -628,7 +630,7 @@ describe("loopback callback tool host", () => {
     expect(supported.value.result).toEqual({
       capabilities: { tools: {} },
       protocolVersion: "2025-06-18",
-      serverInfo: { name: "@stacklok-oss/mecatl-sdk", version: "0.1.0" },
+      serverInfo: { name: packageManifest.name, version: packageManifest.version },
       supportedVersions: MCP_PROTOCOL_VERSIONS,
     });
     expect(MCP_PROTOCOL_VERSIONS).toContain(

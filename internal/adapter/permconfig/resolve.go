@@ -630,20 +630,16 @@ func (r *Resolver) loadProjectRules(ws tool.WorkspaceReader) ([]governance.Rule,
 				"lost_deny", deny, "lost_ask", ask, "lost_allow", allow, "counts_known", counted)
 			continue
 		}
-		// Guardrails are OPERATOR-TIER ONLY (issue #27, decision 3): a project file's
-		// guardrails: block is IGNORED with a loud WARN. Honouring it would let a
-		// project repo weaken or disable a security checker — a downgrade the usual
-		// tighten-only project gate does NOT permit (it reverses here: project config
-		// can only TIGHTEN permissions, but a guardrail relaxation is a LOOSENING).
-		if cfg.LLM != nil {
-			r.diag.Log(context.Background(), port.LevelWarn, "llm: IGNORING project-tier llm block (operator-tier only)", "file", src.path, "root", ws.Root())
-		}
+		// Provider configuration is OPERATOR-TIER ONLY.
 		if cfg.Providers != nil {
 			r.diag.Log(context.Background(), port.LevelWarn, "providers: IGNORING project-tier providers block (operator-tier only)", "file", src.path, "root", ws.Root())
 		}
 		if cfg.ProviderOverrides != nil {
 			r.diag.Log(context.Background(), port.LevelWarn, "provider_overrides: IGNORING project-tier provider_overrides block (operator-tier only)", "file", src.path, "root", ws.Root())
 		}
+		// Guardrails are OPERATOR-TIER ONLY (issue #27, decision 3): a project file's
+		// guardrails block is ignored because letting a project weaken or disable a
+		// security checker would reverse the usual tighten-only project gate.
 		if cfg.Guardrails != nil {
 			r.diag.Log(context.Background(), port.LevelWarn,
 				"guardrails: IGNORING a project-tier guardrails: block (operator-tier only — a project repo cannot configure/disable a security checker; set guardrails in your user-global settings.yaml or via --guardrails-model)",
@@ -877,7 +873,7 @@ func (r *Resolver) applyTrustGate(rules []governance.Rule, report *Report) []gov
 // Read from the host filesystem via the injectable env (NOT a workspace — these
 // live outside any session root). Fail-soft per file.
 func (r *Resolver) captureOperatorParseError(data []byte, err error) {
-	if (hasTopLevelKey(data, "llm") || hasTopLevelKey(data, "providers") || hasTopLevelKey(data, "provider_overrides") || hasTopLevelKey(data, "credential_store")) && r.operatorProviderConfigErr == nil {
+	if (hasTopLevelKey(data, "providers") || hasTopLevelKey(data, "provider_overrides") || hasTopLevelKey(data, "credential_store")) && r.operatorProviderConfigErr == nil {
 		r.operatorProviderConfigErr = errors.New("operator provider configuration is invalid")
 	}
 	if hasTopLevelKey(data, "retention") && r.operatorRetentionErr == nil {
@@ -940,7 +936,6 @@ func (r *Resolver) loadUserRules(report *Report) []governance.Rule {
 		r.captureMCP(cfg.MCP)
 		r.captureRetention(cfg.Retention)
 		r.captureStorageManagement(cfg.StorageManagement)
-		r.captureLegacyLLM(cfg.LLM)
 		r.captureExecution(cfg.Execution)
 		r.captureProviders(cfg.Providers, cfg.ProviderOverrides, cfg.CredentialStore)
 	}
@@ -983,7 +978,6 @@ func (r *Resolver) loadUserRules(report *Report) []governance.Rule {
 				r.captureStorageManagement(cfg.StorageManagement)
 				r.captureExecution(cfg.Execution)
 				r.captureTemporaryStorage(cfg.TemporaryStorage)
-				r.captureLegacyLLM(cfg.LLM)
 				r.captureProviders(cfg.Providers, cfg.ProviderOverrides, cfg.CredentialStore)
 			}
 		}
@@ -1004,12 +998,6 @@ func (r *Resolver) loadUserRules(report *Report) []governance.Rule {
 	}
 
 	return rules
-}
-
-func (r *Resolver) captureLegacyLLM(llm *LLMSection) {
-	if llm != nil && r.operatorProviderConfigErr == nil {
-		r.operatorProviderConfigErr = errors.New("llm: legacy configuration is no longer supported; migrate provider configuration with mecatui providers")
-	}
 }
 
 // captureProviders records the first complete operator provider snapshot. Explicit

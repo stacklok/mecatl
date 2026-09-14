@@ -7,8 +7,8 @@
 // Final grammar (ADR 0089): bare `mecatui [flags]` is the canonical default — it
 // ALWAYS hosts an embedded server and NEVER probes loopback. `mecatui connect
 // ADDRESS` ALWAYS dials ADDRESS and NEVER probes/embeds. `sessions` opens the
-// embedded session browser. ToolHive LLM login is `mecatui llm login`; the
-// top-level `login ADDRESS` is reserved for remote login. There is no
+// embedded session browser. Local provider enrollment is under `mecatui providers`;
+// the top-level `login ADDRESS` is reserved for remote login. There is no
 // compatibility path: `mecatui local` is an unknown command (fail-closed, the
 // error names `connect`) and `--server` is an unknown flag.
 //
@@ -41,11 +41,7 @@ const (
 	providerActionSetDefault               = "set-default"
 	providerActionRemove                   = "remove"
 	helpLongFlag                           = "--help"
-	// Legacy native-LLM runtime actions; command parsing accepts only providers.
-	llmActionLogin     = "login"
-	llmActionStatus    = "status"
-	llmActionLogout    = "logout"
-	toolHiveEndpointID = "toolhive"
+	toolHiveEndpointID                     = "toolhive"
 	// modeProviderSetup guides a newcomer through an existing provider setup flow.
 	modeProviderSetup transportMode = "provider-setup"
 	// modeProviderStatus is the passive local provider inventory. It deliberately
@@ -59,15 +55,10 @@ const (
 	modeProviderRemove transportMode = "provider-remove"
 	// modeProviderSetDefault updates the embedded server's operator deployment default.
 	modeProviderSetDefault transportMode = "provider-set-default"
-	// modeLogin is the CLI-only legacy lifecycle subcommand.
-	modeLogin transportMode = "llm-login"
-	// modeLLMConfig writes native endpoint configuration without starting lifecycle operations.
-	modeLLMConfig transportMode = "llm-config"
 	// modeRemoteLogout removes one saved remote enrolment without starting a transport.
 	modeRemoteLogout transportMode = "remote-logout"
-	// modeRemoteLogin is the reserved remote-login route. It must remain
-	// distinct from modeLogin so an address can never accidentally invoke the
-	// ToolHive browser flow.
+	// modeRemoteLogin is the reserved remote-login route. It stays distinct from
+	// provider login so an address can never invoke local provider enrollment.
 	modeRemoteLogin transportMode = "remote-login"
 )
 
@@ -130,17 +121,16 @@ var topLevelCommands = []topLevelCommand{
 // is the connect or remote-login target ("" for bare/local or login help). run
 // preparation handles the help output and error wrapping after this resolver returns.
 type invocationResolution struct {
-	mode               transportMode
-	address            string // connect or remote-login target; empty for local/login help
-	browseSessions     bool   // launch directly into the shared stored-session inventory
-	debugTarget        string // immutable target for a dedicated no-filesystem debug session
-	debugHelp          bool   // render dedicated debug help instead of transport flag help
-	helpIndex          bool   // render the top-level command index
-	remaining          []string
-	providerAction     string
-	providerName       string
-	llmDeprecatedAlias bool
-	err                error
+	mode           transportMode
+	address        string // connect or remote-login target; empty for local/login help
+	browseSessions bool   // launch directly into the shared stored-session inventory
+	debugTarget    string // immutable target for a dedicated no-filesystem debug session
+	debugHelp      bool   // render dedicated debug help instead of transport flag help
+	helpIndex      bool   // render the top-level command index
+	remaining      []string
+	providerAction string
+	providerName   string
+	err            error
 }
 
 // resolveInvocation classifies argv (the FULL arg vector, argv[0] included as

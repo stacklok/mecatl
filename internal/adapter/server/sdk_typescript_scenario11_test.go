@@ -20,7 +20,9 @@ import (
 type sdkScenario11Workflow struct {
 	On struct {
 		Push struct {
-			Tags []string `yaml:"tags"`
+			Branches []string `yaml:"branches"`
+			Paths    []string `yaml:"paths"`
+			Tags     []string `yaml:"tags"`
 		} `yaml:"push"`
 	} `yaml:"on"`
 	Permissions map[string]string           `yaml:"permissions"`

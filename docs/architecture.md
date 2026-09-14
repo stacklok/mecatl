@@ -307,7 +307,10 @@ own pnpm lockfile and Node-focused build/test gates kept separate from the Go
 modules and the npm-based `website/` tree. A release tag stages an inspected
 artifact on public npmjs through trusted publishing; a maintainer must approve
 the candidate with 2FA before it becomes public
-([ADR 0328](adr/0328-typescript-sdk-npmjs-stacklok-oss.md)). Its public surface is split by
+([ADR 0328](adr/0328-typescript-sdk-npmjs-stacklok-oss.md)). SDK releases begin
+with a bot-authored PR that advances `sdk/typescript/VERSION` and `package.json`
+together; merging that exact two-file change makes the release App create the
+path-qualified tag. Its public surface is split by
 transport: `.` is the transport-neutral core plus the browser HTTP/SSE client,
 while `./node` contains the Node/Bun real-gRPC transport (TCP and UDS), and
 `./gen` is reserved for protobuf-es types and service descriptors generated under
@@ -864,7 +867,7 @@ back. Usage and configuration are documented in
 `docs/tui.md`.
 
 **Remote mecatui OIDC.** The remote-login path is separate from the ToolHive LLM
-login: `mecatui llm login` remains the ToolHive gateway flow, while `mecatui login
+login: `mecatui providers login toolhive` remains the ToolHive gateway flow, while `mecatui login
 ADDRESS` performs public-client OIDC enrollment for one remote target. A bare DNS
 hostname or HTTPS resource URL discovers the issuer, public client ID, audience, and
 operator-configured requested scopes from the resource metadata. When metadata advertises

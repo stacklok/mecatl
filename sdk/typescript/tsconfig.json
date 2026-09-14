@@ -4,6 +4,7 @@
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
+    "resolveJsonModule": true,
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
     "isolatedModules": true,

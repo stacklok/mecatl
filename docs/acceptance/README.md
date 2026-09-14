@@ -280,6 +280,9 @@ PR after verification. There is no cleanup or status-only PR.
   set, an HTTP-only attached `cancel` carrying `expected_run_id` (attached
   approval deferred to an ack-only server route), and the offline
   daemon-restart and awaiting-resume e2e. Status: draft.
+- [Redis follow capacity](redis-follow-capacity.md) — isolated per-generation Redis follow
+  clients, fail-fast bounded follower admission, and store-owned follower shutdown. Status:
+  proposed.
 - [TypeScript SDK local daemon and callback tools (M3)](sdk-typescript-local.md) —
   `@stacklok-oss/mecatl-sdk` M3: `spawn()`'s binary resolution, SDK-owned argv and
   ready-file barrier, the UDS-only tool-capable topology with its lifetime pipe,

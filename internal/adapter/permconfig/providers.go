@@ -129,46 +129,6 @@ func (s *OIDCCredentialStore) UnmarshalYAML(node ast.Node) error {
 	return nil
 }
 
-// LLMSection is retained only for command-source compatibility. Settings parsing
-// rejects the legacy llm mapping in favor of providers and credential_store.
-type LLMSection struct {
-	CredentialHome string                    `yaml:"credential_home"`
-	CredentialKey  NativeCredentialKey       `yaml:"credential_key"`
-	Endpoints      NativeEndpointDefinitions `yaml:"endpoints"`
-}
-
-// NativeEndpointDefinitions contains legacy native endpoint definitions by ID.
-type NativeEndpointDefinitions map[string]NativeEndpointDefinition
-
-// NativeEndpointDefinition describes a legacy native endpoint.
-type NativeEndpointDefinition struct {
-	ID           string      `yaml:"-"`
-	Protocol     string      `yaml:"protocol"`
-	URL          string      `yaml:"url"`
-	DefaultModel string      `yaml:"default_model"`
-	OIDC         NativeOIDC  `yaml:"oidc"`
-	IssuerTrust  NativeTrust `yaml:"issuer_trust"`
-	GatewayTrust NativeTrust `yaml:"gateway_trust"`
-}
-
-// NativeEndpointIdentity carries the unified OIDC provider identity on the
-// existing composition path.
-type NativeEndpointIdentity struct {
-	CredentialHome string
-	CredentialKey  NativeCredentialKey
-	OIDC           NativeOIDC
-	IssuerTrust    NativeTrust
-	GatewayTrust   NativeTrust
-}
-
-// NativeOIDC contains the OIDC identity for a native endpoint.
-type NativeOIDC struct {
-	Issuer           string   `yaml:"issuer"`
-	ClientID         string   `yaml:"client_id"`
-	ResourceAudience string   `yaml:"resource_audience,omitempty"`
-	Scopes           []string `yaml:"scopes"`
-}
-
 // NativeTrust configures trust validation for a native endpoint.
 type NativeTrust struct {
 	Policy   string `yaml:"policy"`

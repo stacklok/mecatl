@@ -36,18 +36,19 @@ OIDC provider on a host that cannot open a browser, use
 `mecatui providers login PROVIDER --no-browser` and complete the displayed flow.
 
 If the command reports an unknown provider, run `mecatui providers` and use the
-exact configured name. If settings reject `llm:` as legacy configuration, remove
-that mapping and recreate each provider with `mecatui providers add`, or migrate
-it to equivalent operator `providers` and `credential_store` entries. Re-enroll
-OIDC providers with `mecatui providers login PROVIDER`; migration does not silently
-reuse a legacy provider or select a fallback. Check `mecatui providers` before
-restarting the server.
+exact configured name. Use `mecatui providers add NAME` to define a new provider.
 
 `credential_store.oidc` is shared OIDC credential custody. With an environment
 key, confirm that `credential_store.oidc.key.key_env` names a value provisioned to
 both the login process and the server; restoring the original value is required to
 read existing encrypted credentials. If it cannot be restored, use a new credential
-home and re-enroll providers rather than overwriting an unreadable record. The
+home and re-enroll providers rather than overwriting an unreadable record. For OIDC
+command errors, verify the provider configuration, credential-store home and key,
+issuer trust, and network/TLS settings. Callback conflicts use localhost port 8666;
+authorization failures require a new browser flow; token rejection requires checking
+audience and scopes. During logout, an unavailable enrollment calls for checking the
+provider configuration and `mecatui providers status PROVIDER`, not enrolling again.
+The
 [provider configuration guide](/building/deployment/mecated.md#configure-providers)
 and [configuration reference](/reference/configuration.md#credential_store) describe
 the supported schema.

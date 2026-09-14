@@ -85,11 +85,6 @@ credential_store:
 			t.Fatal("invalid unified OIDC config was accepted")
 		}
 	}
-	r, _ := newCapturedResolver(t, "/etc/mecatl/operator.yaml", "llm:\n  credential_home: /private\n", true)
-	_, _, err := r.OperatorProviders()
-	if err == nil || !strings.Contains(err.Error(), "mecatui providers") {
-		t.Fatalf("legacy llm error = %v, want migration guidance", err)
-	}
 }
 
 func TestProviderUnification_Scenario1_ProviderIdentityCollisionAndSelectorFailure(t *testing.T) {

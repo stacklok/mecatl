@@ -112,8 +112,8 @@ require 'needs: [validate-release-ref, resolve-brood-base]' "$release"
 require 'name: Validate immutable release tag ref' "$release"
 require 'if [ "${GITHUB_REF}" != "${signing_ref}" ]; then' "$release"
 validation_line=$(grep -n 'name: Require the run itself to use the requested tag ref' "$release" | head -n1 | cut -d: -f1)
-first_checkout_line=$(grep -n 'uses: actions/checkout@' "$release" | head -n1 | cut -d: -f1)
-test "$validation_line" -lt "$first_checkout_line"
+validate_checkout_line=$(awk '/^  validate-release-ref:/{in_job=1; next} in_job && /^  [a-zA-Z0-9_-]+:/{exit} in_job && /uses: actions\/checkout@/{print NR; exit}' "$release")
+test "$validation_line" -lt "$validate_checkout_line"
 require 'signing_ref: ${{ steps.validate.outputs.signing_ref }}' "$release"
 assemble_bundle=$(awk '/^      - name: Assemble versioned platform bootstrap bundle$/{in_block=1; next} in_block && /^      - name: /{exit} in_block{print}' "$release")
 test "$(printf '%s\n' "$assemble_bundle" | grep -Fc 'signing_ref="${{ needs.validate-release-ref.outputs.signing_ref }}"')" -eq 1
@@ -122,10 +122,10 @@ checkout_count=$(grep -c 'uses: actions/checkout@' "$release")
 bound_checkout_count=$(grep -c 'ref: ${{ github.sha }}' "$release")
 version_checkout_count=$(grep -c 'ref: ${{ env.VERSION }}' "$release")
 head_assertion_count=$(grep -c 'run: test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"' "$release")
-# The CLI publisher deliberately checks out the validated release tag so
-# GoReleaser can inspect tag history; every other release checkout remains bound
-# to the workflow SHA and immediately asserts it.
-test "$version_checkout_count" -eq 1
+# The tag guard and CLI publisher deliberately check out the validated release tag;
+# every other release checkout remains bound to the workflow SHA and immediately
+# asserts it.
+test "$version_checkout_count" -eq 2
 test "$checkout_count" -eq "$((bound_checkout_count + version_checkout_count))"
 test "$bound_checkout_count" -eq "$head_assertion_count"
 if "$validate_release_ref" v1.2.3 refs/heads/main >/dev/null 2>&1; then
