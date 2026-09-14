@@ -43,4 +43,4 @@ ToolHive, RFC 8693, and the ToolHive CA workaround outside this task.
 - AC3.7: Fixture instructions document authorization-code + PKCE as the normal
   login journey; any fixture password grant is identified as a narrowly scoped
   test helper and is not presented as the normal client flow.
-  - verify: `TestMecak8sKindFixture_Scenario3_LoginDocumentation`
+  - verify: none — login-journey documentation is reviewed by humans; `task docs` checks links and structure

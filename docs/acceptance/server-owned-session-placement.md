@@ -184,7 +184,7 @@ placement providers before serving; no stable public placement-ID registry is re
 process-lifetime resource, and List 2 records its reset-by-design restart semantics.
 Selectors are not persisted, restart requires relisting, and no selector registry/map is
 introduced.
-  - verify: `TestADR_0291_PlacementReauditInventoriesEphemeralSelectorKey`
+  - verify: none — the ADR 0027 resource inventory is reviewed by humans; `task docs` checks its citations and structure
 
 ## Out of scope
 

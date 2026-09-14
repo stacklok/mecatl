@@ -57,31 +57,6 @@ func TestMecak8sKindFixture_Scenario1_DedicatedKubeconfig(t *testing.T) {
 	}
 }
 
-// TestMecak8sKindFixture_Scenario1_DocumentationBoundaries pins that the
-// local operator fixture is neither the production chart nor e2e/k8s, and
-// makes no production isolation claim.
-func TestMecak8sKindFixture_Scenario1_DocumentationBoundaries(t *testing.T) {
-	body, err := os.ReadFile("README.md")
-	if err != nil {
-		t.Fatal(err)
-	}
-	text := string(body)
-	baseDocs, _, _ := strings.Cut(text, "\n## Optional Keycloak login journey")
-	for _, want := range []string{
-		"operator-run", "deploy/helm/mecak8s/", "e2e/k8s/", "no general NetworkPolicy",
-		"127.0.0.1", "NodePort", "extraPortMappings",
-	} {
-		if !strings.Contains(text, want) {
-			t.Fatalf("fixture documentation missing boundary %q", want)
-		}
-	}
-	for _, forbidden := range []string{"production network isolation", "ToolHive", "vMCP"} {
-		if strings.Contains(baseDocs, forbidden) {
-			t.Fatalf("ToolHive-free fixture documentation contains %q", forbidden)
-		}
-	}
-}
-
 // TestMecak8sKindFixture_Scenario2_MockDefault pins the cost-free fixture
 // default: without an operator credential setup selects the canned provider and
 // never contacts a provider.
@@ -119,6 +94,14 @@ func TestMecak8sKindFixture_Scenario2_MockDefault(t *testing.T) {
 		if strings.Contains(string(rendered), forbidden) {
 			t.Fatalf("mock fixture render retains provider Secret projection %q", forbidden)
 		}
+	}
+}
+
+// TestMecak8sKindFixture_Scenario2_LiveSmokeIsExplicit pins that the executable
+// setup task closure excludes the billable live-provider smoke action.
+func TestMecak8sKindFixture_Scenario2_LiveSmokeIsExplicit(t *testing.T) {
+	if strings.Contains(fixtureTaskClosure(t, "kind-setup"), "live-smoke") {
+		t.Fatal("setup must not invoke the live-provider smoke action")
 	}
 }
 
@@ -185,24 +168,6 @@ func TestMecak8sKindFixture_Scenario2_ResetToMock(t *testing.T) {
 	}
 	if strings.Contains(string(mockValues), "OPENROUTER_API_KEY") {
 		t.Fatal("mock overlay retains an OpenRouter credential projection")
-	}
-}
-
-// TestMecak8sKindFixture_Scenario2_LiveSmokeIsExplicit pins that billing is an
-// operator decision, documented outside setup and default tests.
-func TestMecak8sKindFixture_Scenario2_LiveSmokeIsExplicit(t *testing.T) {
-	body, err := os.ReadFile("README.md")
-	if err != nil {
-		t.Fatal(err)
-	}
-	text := string(body)
-	for _, want := range []string{"OPENROUTER_API_KEY", "billable", "A real-provider smoke call", "operator action"} {
-		if !strings.Contains(text, want) {
-			t.Fatalf("fixture instructions missing live-provider boundary %q", want)
-		}
-	}
-	if strings.Contains(fixtureTaskClosure(t, "kind-setup"), "live-smoke") {
-		t.Fatal("setup must not invoke the live-provider smoke action")
 	}
 }
 
@@ -434,41 +399,6 @@ func TestMecak8sKindFixture_Scenario3_LoopbackReachability(t *testing.T) {
 	for _, want := range []string{"127.0.0.1 keycloak.mecatl.svc.cluster.local", "grep -Fqx", "sudo sh -c", "sudo sed -i.bak"} {
 		if !strings.Contains(hostsTasks, want) {
 			t.Fatalf("Keycloak hosts lifecycle missing %q", want)
-		}
-	}
-}
-
-func TestMecak8sKindFixture_Scenario3_LoginDocumentation(t *testing.T) {
-	for _, path := range []string{
-		"README.md", "../mecak8s-vmcp/README.md", "../README.md",
-	} {
-		body, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatalf("read %s: %v", path, err)
-		}
-		text := string(body)
-		for _, want := range []string{"Authorization Code + PKCE", "password grant", "test helper"} {
-			if !strings.Contains(text, want) {
-				t.Fatalf("%s does not document Keycloak login boundary %q", path, want)
-			}
-		}
-		if path == "README.md" && !strings.Contains(text, "offline_access") {
-			t.Fatalf("%s does not document the optional offline_access scope", path)
-		}
-		if strings.Index(text, "Authorization Code + PKCE") > strings.Index(text, "password grant") {
-			t.Fatalf("%s presents password grant before the normal PKCE journey", path)
-		}
-	}
-	deploymentGuide, err := os.ReadFile("../../user-docs/building/deployment/mecak8s.md")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{
-		"/building/getting-started/kubernetes.md",
-		"deploy/mecak8s-kind/README.md",
-	} {
-		if !strings.Contains(string(deploymentGuide), want) {
-			t.Fatalf("production deployment guide does not route local fixture readers to %q", want)
 		}
 	}
 }

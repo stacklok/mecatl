@@ -1224,16 +1224,15 @@ jobs:
             provider/openai/go.sum
             provider/openaichat/go.sum
 
-      # Documentation-only changes still run the repository's Go-backed document
-      # invariants (ADR numbering, citations, lifecycle, and reading-map checks).
+      # Documentation-only changes still run the repository's Go-backed structural
+      # checks (ADR numbering/shape, citations, lifecycle, and reading-map checks).
       - name: go test ./docs/lint
         run: go test ./docs/lint
 
-      # This command owns an executable contract for the session-storage
-      # operations guide under user-docs/. Keep it on the docs-only path: a
-      # documentation rename or edit must not leave a stale referenced runbook.
+      # This command validates the executable systemd, launchd, and retention
+      # examples in the session-storage operations guide under user-docs/.
       - name: go test documented mecated operations
-        run: go test ./cmd/mecated -run '^TestSessionStorageContinuity_Scenario9_'
+        run: go test ./cmd/mecated -run '^TestSessionStorageContinuity_Scenario9_ServiceExamplesExecuteConfiguredArgs$'
 
       # Freshness gate for the generated configuration reference + the embedded
       # config-init skeleton: regenerate both to a temp dir and fail if they differ

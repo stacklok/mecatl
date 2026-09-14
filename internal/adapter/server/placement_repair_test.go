@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -214,22 +213,6 @@ func TestInvariant_placement_storage_errors_are_content_free(t *testing.T) {
 	}
 	if !strings.Contains(diag.text, "[redacted]") || strings.Contains(diag.text, private) {
 		t.Fatalf("placement storage diagnostic was not detailed and sanitized: %q", diag.text)
-	}
-}
-
-func TestInvariant_successor_lease_publication_window_is_explicit(t *testing.T) {
-	source, err := os.ReadFile("placement_successor.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	docs, err := os.ReadFile("../../../docs/design/IMPLEMENTATION-NOTES.md")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(source), "SessionStore has no lease-token CAS Save") ||
-		!strings.Contains(string(docs), "accepted residual window") ||
-		!strings.Contains(string(docs), "not claimed as cancellation atomicity") {
-		t.Fatal("successor lease-publication residual is not explicitly documented in code and design notes")
 	}
 }
 

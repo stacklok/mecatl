@@ -6561,8 +6561,7 @@ round-trips the exact private EnvironmentRef. ACP binds/reattaches first and tre
 as an assertion against trusted configured local placement.
 
 The Build-owned selector key is inventoried in ADR 0027 List 1; List 2 records reset-by-design,
-unpersisted selectors, and relist-after-restart. `TestADR_0291_PlacementReauditInventoriesEphemeralSelectorKey`
-pins that lifecycle text.
+unpersisted selectors, and relist-after-restart.
 
 ### Snapshot fidelity — persisted per-session facts (cloud-native Phase 1)
 

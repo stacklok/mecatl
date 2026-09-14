@@ -341,7 +341,7 @@ otherwise concentrate traffic on one selected replica.
   authoritative provider context, lease-loss limits, close/drain/handoff sequence, and
   the fact that routing grants no authority; they distinguish modeled PR tests from
   infrastructure rollout verification.
-  - verify: `TestADR_0294_DocumentationContract`
+  - verify: none — documentation completeness and semantics are reviewed by humans; `task docs` checks links and structure
 - AC8.4: The generated configuration reference contains the new ADR and acceptance-plan
   contract and is fresh after `task docs`.
   - verify: demonstration — `task docs` regenerates and checks the documentation corpus
