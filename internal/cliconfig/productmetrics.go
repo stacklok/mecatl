@@ -28,7 +28,7 @@ file path, raw tool name, or model id) to help Stacklok understand community
 adoption. This is on by default. To opt out: pass
 --product-metrics=false, set MECATL_PRODUCT_METRICS=false, set DO_NOT_TRACK=1,
 or set telemetry.productMetrics.enabled: false in your settings.yaml. Details:
-see docs/adr/0329-product-metrics.md.
+see docs/adr/0338-product-metrics.md.
 `
 
 // ProductMetricsHandles bundles the handles a cmd main threads into its
@@ -77,7 +77,7 @@ type ProductMetricsHandles struct {
 // notify, when firstRun is true, is called EXACTLY ONCE, SYNCHRONOUSLY,
 // BEFORE this function starts the heartbeat goroutine (whose first
 // Heartbeat call fires immediately — see RunHeartbeat) and before it
-// returns. ADR 0329 makes visible advance disclosure load-bearing for
+// returns. ADR 0338 makes visible advance disclosure load-bearing for
 // opt-out collection: printing the notice only after the caller later
 // notices ProductMetricsHandles.FirstRun — e.g. after its own startup work,
 // or worse, only at shutdown/flush time — leaves a window where the

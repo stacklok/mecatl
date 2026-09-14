@@ -48,7 +48,7 @@ type observability struct {
 // before it returns — rather than deferred to a check on the returned
 // handles' FirstRun field at flush time (flushTelemetry previously printed
 // it there, AFTER already calling Shutdown/flushing the provider: exactly
-// the ordering ADR 0329 forbids for opt-out collection).
+// the ordering ADR 0338 forbids for opt-out collection).
 func buildObservability(ctx context.Context, f flags, diag port.Diagnostics, stderr io.Writer) (observability, error) {
 	h, err := cliconfig.HeadlessTelemetry(ctx, cliconfig.HeadlessTelemetryConfig{
 		ServiceName:         "mecatequi",
@@ -118,7 +118,7 @@ func productMetricsSnapshot(f flags) productmetrics.FeatureSnapshot {
 // NOT printed here: buildObservability's notify callback already wrote it,
 // synchronously, before the pipeline could ever record/export anything — see
 // buildObservability's doc comment. Printing it here instead (after
-// Shutdown/flush has already run) is exactly the ordering ADR 0329 forbids.
+// Shutdown/flush has already run) is exactly the ordering ADR 0338 forbids.
 func flushTelemetry(stderr io.Writer, obs observability, timeout time.Duration) {
 	ctx := context.Background()
 	if timeout > 0 {

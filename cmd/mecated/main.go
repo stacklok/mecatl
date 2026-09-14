@@ -1128,7 +1128,7 @@ func productMetricsSnapshot(cfg config) productmetrics.FeatureSnapshot {
 // before starting the heartbeat goroutine and before returning — never
 // deferred to a check on the returned handles' FirstRun field afterward,
 // which would leave a window where the pipeline could record/export before
-// a human ever saw the notice (ADR 0329). run() only threads the resulting
+// a human ever saw the notice (ADR 0338). run() only threads the resulting
 // handles and the heartbeat-context cancel func (both callers must defer
 // unconditionally: the handles' Shutdown is always a safe no-op when
 // disabled/errored). The returned error is informational only — a caller

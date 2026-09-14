@@ -56,7 +56,7 @@ var bakedKey = ""
 // build) that instead created the install-id file first, then failed here,
 // would leave that file behind — so a LATER release build's genuine first
 // export would read it back and report firstRun=false, silently skipping
-// the disclosure notice ADR 0329 requires before that first export.
+// the disclosure notice ADR 0338 requires before that first export.
 func Available() bool { return bakedKey != "" }
 
 // SetBakedKeyForTest overrides bakedKey for the duration of a test and

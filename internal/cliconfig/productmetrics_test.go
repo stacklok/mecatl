@@ -192,7 +192,7 @@ func TestArmFirstValueTrackingSkipsWhenInstallIDIsOverridden(t *testing.T) {
 // anyway (the prior ordering), a LATER release build with a real baked key
 // would read the file back as "already exists" and silently report
 // FirstRun=false on its genuine first export — skipping the ADR
-// 0329-mandated disclosure notice for that install's actual first
+// 0338-mandated disclosure notice for that install's actual first
 // transmission.
 func TestBuildProductMetricsNeverMintsInstallIDWithoutABakedKey(t *testing.T) {
 	stateDir := t.TempDir()

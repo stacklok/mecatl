@@ -1025,7 +1025,7 @@ func productMetricsSnapshot(cfg config) productmetrics.FeatureSnapshot {
 // (resolveTransport, well before tea.NewProgram(...).Run() ever enters the
 // alt-screen) stderr is still plain, unbuffered terminal output; a
 // diag.Log-routed notice would instead land only in the diagnostics FILE
-// (invisible, and dropped entirely under --quiet), defeating ADR 0329's
+// (invisible, and dropped entirely under --quiet), defeating ADR 0338's
 // visible-disclosure requirement. This also runs BEFORE embed.Start, not
 // deferred to a check on the returned handles' FirstRun field after the
 // embedded server has started (which left a window where a failed
