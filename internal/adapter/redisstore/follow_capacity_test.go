@@ -82,6 +82,55 @@ func TestRedisFollowCapacity_Scenario1_GenerationPublishesIsolatedClientPair(t *
 	})
 }
 
+func TestADR_0330_ProductionWiringIsolatesBoundedFollowPool(t *testing.T) {
+	server := miniredis.RunT(t)
+	store, err := NewWithConfig(Config{
+		Addr: server.Addr(), AllowPlaintext: true, FollowPoolSize: 2, MaxFollowers: 2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	durability, ok := store.testClient().(*redis.Client)
+	if !ok {
+		t.Fatalf("production durability client = %T, want *redis.Client", store.testClient())
+	}
+	follow, ok := store.testFollowClient().(*redis.Client)
+	if !ok {
+		t.Fatalf("production follow client = %T, want *redis.Client", store.testFollowClient())
+	}
+	if durability == follow {
+		t.Fatal("production wiring published one client for durability and follow traffic")
+	}
+	if opts := follow.Options(); opts.PoolSize != 2 || opts.MaxActiveConns != 2 {
+		t.Fatalf("production follow pool limits = %d/%d, want 2/2", opts.PoolSize, opts.MaxActiveConns)
+	}
+
+	// Hold every real follow-pool connection. If production wiring accidentally
+	// shares this bounded pool with durability traffic, either operation below
+	// waits for capacity until its context expires.
+	for range 2 {
+		conn := follow.Conn()
+		t.Cleanup(func() { _ = conn.Close() })
+		if err := conn.Ping(t.Context()).Err(); err != nil {
+			t.Fatalf("occupy follow connection: %v", err)
+		}
+	}
+	if stats := follow.PoolStats(); stats.TotalConns != 2 || stats.IdleConns != 0 {
+		t.Fatalf("saturated follow pool = total %d idle %d, want 2/0", stats.TotalConns, stats.IdleConns)
+	}
+
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	if _, err := store.AppendEvent(ctx, "production-isolation-append", session.Event{Type: session.EvResult}); err != nil {
+		t.Fatalf("AppendEvent waited behind saturated follow pool: %v", err)
+	}
+	if err := store.Save(ctx, testSession("production-isolation-save")); err != nil {
+		t.Fatalf("Save waited behind saturated follow pool: %v", err)
+	}
+}
+
 func TestRedisFollowCapacity_Scenario1_CredentialReloadSwapsPairAtomically(t *testing.T) {
 	oldServer := miniredis.RunT(t)
 	store, err := New(oldServer.Addr())
@@ -170,6 +219,15 @@ func TestRedisFollowCapacity_Scenario1_ReadRoutingIsComplete(t *testing.T) {
 	}
 	if got := len(allCommands(durabilitySpy)); got == 0 {
 		t.Fatal("Follow:false issued no command through durability client")
+	}
+
+	clearSpy(durabilitySpy)
+	clearSpy(followSpy)
+	if _, err := store.AppendEvent(t.Context(), id, session.Event{Type: session.EvMessageDelta, Text: "routed append"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(allCommands(durabilitySpy)) == 0 || len(allCommands(followSpy)) != 0 {
+		t.Fatalf("AppendEvent routing: durability=%v follow=%v", allCommands(durabilitySpy), allCommands(followSpy))
 	}
 
 	clearSpy(durabilitySpy)
