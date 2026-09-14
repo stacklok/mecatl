@@ -433,6 +433,70 @@ func TestClipboardWriteOverCap(t *testing.T) {
 	}
 }
 
+// TestClipboardWritePrimaryWayland: a Wayland environment with wl-copy on PATH
+// writes the payload to the PRIMARY selection via `wl-copy --primary` (stdin), so a
+// mecatui selection is middle-click pasteable.
+func TestClipboardWritePrimaryWayland(t *testing.T) {
+	rec := &stdinRecorder{}
+	cb := clipWriteWith(rec, map[string]bool{"wl-paste": true, "wl-copy": true}, map[string]string{"WAYLAND_DISPLAY": "wayland-0"})
+
+	if err := cb.WritePrimary(context.Background(), []byte("primary copy")); err != nil {
+		t.Fatalf("WritePrimary: %v", err)
+	}
+	if len(rec.got) != 1 || !reflect.DeepEqual(rec.got[0], []string{"wl-copy", "--primary"}) {
+		t.Fatalf("primary write argv = %v, want [wl-copy --primary]", rec.got)
+	}
+	if !bytes.Equal(rec.stdin[0], []byte("primary copy")) {
+		t.Errorf("stdin = %q, want the payload", rec.stdin[0])
+	}
+}
+
+// TestClipboardWritePrimaryX11: an X11 environment writes the PRIMARY selection via
+// `xclip -selection primary -i` with the payload on stdin.
+func TestClipboardWritePrimaryX11(t *testing.T) {
+	rec := &stdinRecorder{}
+	cb := clipWriteWith(rec, map[string]bool{"xclip": true}, map[string]string{"DISPLAY": ":0"})
+
+	if err := cb.WritePrimary(context.Background(), []byte("x11 primary")); err != nil {
+		t.Fatalf("WritePrimary: %v", err)
+	}
+	if len(rec.got) != 1 || !reflect.DeepEqual(rec.got[0], []string{"xclip", "-selection", "primary", "-i"}) {
+		t.Fatalf("primary write argv = %v, want xclip -selection primary -i", rec.got)
+	}
+	if !bytes.Equal(rec.stdin[0], []byte("x11 primary")) {
+		t.Errorf("stdin = %q, want the payload", rec.stdin[0])
+	}
+}
+
+// TestClipboardWritePrimaryMacNoPrimarySelection: macOS has no primary selection,
+// so WritePrimary resolves to an empty argv and runs nothing (a no-op error the UI
+// swallows — the OSC52 primary write still ran).
+func TestClipboardWritePrimaryMacNoPrimarySelection(t *testing.T) {
+	rec := &stdinRecorder{}
+	cb := clipWriteWith(rec, map[string]bool{"pbpaste": true, "pbcopy": true}, map[string]string{})
+
+	if err := cb.WritePrimary(context.Background(), []byte("x")); err == nil {
+		t.Error("WritePrimary on macOS (no primary selection) should error")
+	}
+	if len(rec.got) != 0 {
+		t.Errorf("no primary write path should run nothing, ran %v", rec.got)
+	}
+}
+
+// TestClipboardWritePrimaryNoBackend: with no clipboard binary at all, WritePrimary
+// returns ErrNoClipboardTool (the caller swallows it — OSC52 carried the copy).
+func TestClipboardWritePrimaryNoBackend(t *testing.T) {
+	rec := &stdinRecorder{}
+	cb := clipWriteWith(rec, map[string]bool{}, map[string]string{})
+
+	if err := cb.WritePrimary(context.Background(), []byte("x")); !errors.Is(err, ErrNoClipboardTool) {
+		t.Errorf("WritePrimary err = %v, want ErrNoClipboardTool", err)
+	}
+	if len(rec.got) != 0 {
+		t.Errorf("no backend should run nothing, ran %v", rec.got)
+	}
+}
+
 // TestClipboardPrimaryWayland: a Wayland environment reads the primary selection
 // via the EXACT `wl-paste --primary --no-newline` argv (not a shell).
 func TestClipboardPrimaryWayland(t *testing.T) {

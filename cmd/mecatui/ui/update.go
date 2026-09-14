@@ -4383,6 +4383,23 @@ func (m Model) shellWriteCmd(payload string) tea.Cmd {
 	}
 }
 
+// primaryWriteCmd is the PRIMARY-selection twin of shellWriteCmd: it mirrors
+// payload into the X11/Wayland primary selection (wl-copy --primary / xclip
+// -selection primary) so a selection copied inside mecatui can be middle-click
+// pasted elsewhere. Same best-effort contract — a nil Clipboard, a platform with
+// no primary selection, or any backend error is swallowed into a no-op result.
+func (m Model) primaryWriteCmd(payload string) tea.Cmd {
+	cb := m.deps.Clipboard
+	if cb == nil {
+		return nil
+	}
+	ctx := m.deps.Ctx
+	return func() tea.Msg {
+		err := cb.WritePrimary(ctx, []byte(payload))
+		return shellWriteResultMsg{err: err}
+	}
+}
+
 // onScrollKey is the shared conversation-scroll handler used by both onIdleKey and
 // onRunningKey: pgup/pgdn delegate to the viewport (which does its own scroll
 // math), home/end jump to top/bottom, then conversationView observes the result.

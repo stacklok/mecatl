@@ -62,7 +62,13 @@ func (m Model) copyPayload(payload string) (Model, tea.Cmd) {
 		return m, nil
 	}
 	m.statusMsg = m.deps.Theme.Style("muted").Render(fmt.Sprintf("copied %s", plural(len([]rune(payload)), "char")))
-	return m, tea.Batch(tea.SetClipboard(payload), m.shellWriteCmd(payload))
+	// Mirror the copy into BOTH the clipboard (ctrl/cmd+v) and the X11/Wayland
+	// PRIMARY selection (middle-click paste), each via OSC52 AND its shell fallback,
+	// so a selection made inside mecatui behaves like a native terminal selection.
+	return m, tea.Batch(
+		tea.SetClipboard(payload), m.shellWriteCmd(payload),
+		tea.SetPrimaryClipboard(payload), m.primaryWriteCmd(payload),
+	)
 }
 
 func (m Model) copyActiveSelection() (tea.Model, tea.Cmd) {

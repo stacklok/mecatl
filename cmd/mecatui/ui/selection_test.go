@@ -947,8 +947,10 @@ func TestPressDragReleaseCopiesSelection(t *testing.T) {
 			osc52++
 		}
 	}
-	if osc52 != 1 || shellWrites != 1 {
-		t.Fatalf("copy transports = OSC52:%d shell:%d, want one each", osc52, shellWrites)
+	// Copy mirrors into BOTH the clipboard and the PRIMARY selection, each via OSC52
+	// AND its shell fallback: two OSC52 commands, two shell-write commands.
+	if osc52 != 2 || shellWrites != 2 {
+		t.Fatalf("copy transports = OSC52:%d shell:%d, want two each (clipboard + primary)", osc52, shellWrites)
 	}
 	payload, ok := osc52Payload(leaves)
 	if !ok || payload != "hello world" {
@@ -963,6 +965,9 @@ func TestPressDragReleaseCopiesSelection(t *testing.T) {
 	}
 	if len(cb.wrote) != 1 || string(cb.wrote[0]) != "hello world" {
 		t.Fatalf("release shell clipboard writes = %q", cb.wrote)
+	}
+	if len(cb.wrotePrimary) != 1 || string(cb.wrotePrimary[0]) != "hello world" {
+		t.Fatalf("release primary-selection writes = %q, want one %q (middle-click paste)", cb.wrotePrimary, "hello world")
 	}
 }
 
