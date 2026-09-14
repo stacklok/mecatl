@@ -8,7 +8,7 @@
 **Delivery:** Split. The change alters session authority/persistence semantics, a public control's eligibility, restart behavior, and broker deployment documentation.
 **Expected tasks:** deferred to orchestration.
 **Issue:** [#1463](https://github.com/stacklok/mecatl/issues/1463)
-**Plan PR:** absent until opened.
+**Plan PR:** [#1464](https://github.com/stacklok/mecatl/pull/1464)
 **Approved baseline:** absent until the Plan / Interface PR merges.
 
 A caller who owns an idle broker-backed mecak8s session can run `/tools-connect` after any completed conversation turn. The existing `ConnectWorkspaceServices` gRPC/HTTP control starts, observes, retries, or cancels one ToolHive-owned whole-bundle operation. Starting refresh is an explicit destructive replacement: active broker wrappers become unavailable until a complete verified replacement succeeds. No connector selector, new command grammar, or new wire message is introduced.
