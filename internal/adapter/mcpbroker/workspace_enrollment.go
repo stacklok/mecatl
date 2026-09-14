@@ -6,6 +6,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/engine/tool"
 	contract "github.com/stacklok/mecatl/internal/mcpbroker"
 )
 
@@ -68,6 +69,47 @@ func existingWorkspaceEnrollmentLocked(a *Attachment, logical *logicalSession) (
 		return contract.WorkspaceEnrollmentPresentation{}, true, errors.New("mcpbroker: authorization record capacity reached")
 	}
 	return contract.WorkspaceEnrollmentPresentation{}, false, nil
+}
+
+// ResetWorkspaceEnrollment withdraws the completed authenticated catalogue while
+// preserving the logical broker session and its grant custody. The next explicit
+// BeginWorkspaceEnrollment creates a fresh whole-bundle operation.
+func (a *Attachment) ResetWorkspaceEnrollment(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	opCtx, done, err := a.beginOperation(ctx)
+	if err != nil {
+		return err
+	}
+	defer done()
+	if err := opCtx.Err(); err != nil {
+		return err
+	}
+	a.enrollmentMu.Lock()
+	defer a.enrollmentMu.Unlock()
+	a.logical.mu.Lock()
+	defer a.logical.mu.Unlock()
+	if a.logical.deleted {
+		return contract.ErrStateUnavailable
+	}
+	a.logical.completedEnrollment = nil
+	a.mu.Lock()
+	staticRoutes := make([]route, 0, len(a.runtime.catalogue.routes))
+	for _, route := range a.runtime.catalogue.routes {
+		if route.oauth != nil {
+			continue
+		}
+		staticRoutes = append(staticRoutes, route)
+	}
+	tools := make([]tool.Tool, len(staticRoutes))
+	for i, route := range staticRoutes {
+		base := &sessionTool{attachment: a, route: route}
+		tools[i] = base
+	}
+	a.catalogue = newAttachmentCatalogue(staticRoutes, tools, nil)
+	a.mu.Unlock()
+	return nil
 }
 
 // BeginWorkspaceEnrollment starts, or idempotently re-presents, the one

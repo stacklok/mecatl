@@ -157,10 +157,6 @@ func TestBeginWorkspaceEnrollmentPrerequisites(t *testing.T) {
 	}{
 		{"unbound authority", func(*Session) {}},
 		{"not idle", func(s *Session) { _ = s.BindAuthority(Authority{Provenance: "test"}); _ = s.BeginTurn() }},
-		{"conversation not empty", func(s *Session) {
-			_ = s.BindAuthority(Authority{Provenance: "test"})
-			s.Conversation.Append(Message{Role: RoleUser, Text: "prompt"})
-		}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -436,28 +432,26 @@ func TestCompleteWorkspaceEnrollmentRejectsAggregateBoundsAtomically(t *testing.
 	}
 }
 
-func TestCompleteWorkspaceEnrollmentRequiresIdleEmptyConversation(t *testing.T) {
-	for _, tc := range []struct {
-		name   string
-		mutate func(*Session)
-	}{
-		{"non-idle", func(s *Session) { s.State = StateRunning }},
-		{"non-empty conversation", func(s *Session) { s.Conversation.Append(NewUserMessage("prompt")) }},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			s, pending := sessionWithEnrollmentAuthority(t)
-			before, _ := s.BoundAuthority()
-			tc.mutate(s)
-			if err := s.CompleteWorkspaceEnrollment(pending, []string{"replacement"}); err == nil {
-				t.Fatal("CompleteWorkspaceEnrollment accepted invalid aggregate state")
-			}
-			after, _ := s.BoundAuthority()
-			if !reflect.DeepEqual(after, before) {
-				t.Fatalf("rejected completion changed authority: %+v", after)
-			}
-			if got, ok := s.PendingWorkspaceEnrollment(); !ok || got != pending {
-				t.Fatalf("rejected completion changed pending: %+v, %v", got, ok)
-			}
-		})
+func TestCompleteWorkspaceEnrollmentRequiresIdleSession(t *testing.T) {
+	s, pending := sessionWithEnrollmentAuthority(t)
+	before, _ := s.BoundAuthority()
+	s.State = StateRunning
+	if err := s.CompleteWorkspaceEnrollment(pending, []string{"replacement"}); err == nil {
+		t.Fatal("CompleteWorkspaceEnrollment accepted non-idle aggregate state")
+	}
+	after, _ := s.BoundAuthority()
+	if !reflect.DeepEqual(after, before) {
+		t.Fatalf("rejected completion changed authority: %+v", after)
+	}
+	if got, ok := s.PendingWorkspaceEnrollment(); !ok || got != pending {
+		t.Fatalf("rejected completion changed pending: %+v, %v", got, ok)
+	}
+}
+
+func TestCompleteWorkspaceEnrollmentAllowsEstablishedIdleConversation(t *testing.T) {
+	s, pending := sessionWithEnrollmentAuthority(t)
+	s.Conversation.Append(NewUserMessage("prompt"))
+	if err := s.CompleteWorkspaceEnrollment(pending, []string{"replacement"}); err != nil {
+		t.Fatalf("CompleteWorkspaceEnrollment: %v", err)
 	}
 }

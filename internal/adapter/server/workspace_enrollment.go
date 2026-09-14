@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	brokercontract "github.com/stacklok/mecatl/internal/mcpbroker"
 )
@@ -35,6 +36,12 @@ func (s *Service) ConnectWorkspaceServices(ctx context.Context, id session.Sessi
 
 	pending, exists := sess.PendingWorkspaceEnrollment()
 	if !exists {
+		if len(sess.Conversation.Messages) != 0 {
+			if err := enroller.ResetWorkspaceEnrollment(ctx); err != nil {
+				return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: reset workspace enrollment", ErrFailedPrecondition)
+			}
+			s.withdrawBrokerEngine(id)
+		}
 		presentation, beginErr := enroller.BeginWorkspaceEnrollment(ctx)
 		if beginErr != nil || !presentation.Valid() {
 			return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: begin workspace enrollment", ErrFailedPrecondition)
@@ -71,12 +78,18 @@ func (s *Service) ConnectWorkspaceServices(ctx context.Context, id session.Sessi
 	release = func() {}
 	sel := ProviderSelector{ProviderID: sess.ProviderID, ModelID: sess.ModelID, ReasoningEffort: sess.ReasoningEffort}
 	if _, err := s.buildAndRegisterSessionEngineWithBrokerTools(ctx, sess, sel, profileForSession(sess), sess.Mode, true, exactTools, true); err != nil {
+		_ = enroller.ResetWorkspaceEnrollment(context.WithoutCancel(ctx))
+		s.withdrawBrokerEngine(sess.ID)
 		return WorkspaceEnrollmentProjection{}, err
 	}
 	if err := sess.CompleteWorkspaceEnrollment(pending, toolNames); err != nil {
+		_ = enroller.ResetWorkspaceEnrollment(context.WithoutCancel(ctx))
+		s.withdrawBrokerEngine(sess.ID)
 		return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: complete workspace enrollment", ErrFailedPrecondition)
 	}
 	if err := s.saveSession(ctx, sess); err != nil {
+		_ = enroller.ResetWorkspaceEnrollment(context.WithoutCancel(ctx))
+		s.withdrawBrokerEngine(sess.ID)
 		return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: persist workspace enrollment completion", ErrInternal)
 	}
 	return WorkspaceEnrollmentProjection{Ref: result.Ref, Status: result.Status}, nil
@@ -177,8 +190,16 @@ func (s *Service) workspaceEnrollmentTarget(ctx context.Context, id session.Sess
 	if err != nil || sess == nil || sess.ID != id || s.authorizeSession(ctx, sess) != nil {
 		return nil, nil, nil, ErrNotFound
 	}
-	if s.cfg.MCPBroker == nil || sess.State != session.StateIdle || sess.Conversation == nil || len(sess.Conversation.Messages) != 0 {
-		return nil, nil, nil, fmt.Errorf("%w: workspace enrollment must precede the first prompt", ErrFailedPrecondition)
+	if sess.State == session.StateCompleted {
+		if err := sess.Reopen(); err != nil {
+			return sess, nil, nil, fmt.Errorf("%w: reopen workspace enrollment session", ErrFailedPrecondition)
+		}
+		if err := s.saveSession(ctx, sess); err != nil {
+			return sess, nil, nil, fmt.Errorf("%w: persist workspace enrollment reopen", ErrInternal)
+		}
+	}
+	if s.cfg.MCPBroker == nil || sess.State != session.StateIdle || sess.Conversation == nil {
+		return nil, nil, nil, fmt.Errorf("%w: workspace enrollment requires an idle session", ErrFailedPrecondition)
 	}
 	if _, live := s.LookupRun(id); live {
 		return nil, nil, nil, fmt.Errorf("%w: session has an active run", ErrFailedPrecondition)
@@ -206,6 +227,20 @@ func (s *Service) workspaceEnrollmentTarget(ctx context.Context, id session.Sess
 	return sess, enroller, brokerUnlock, nil
 }
 
+// withdrawBrokerEngine removes only the broker-bearing session engine. It is
+// deliberately narrower than closeSessionLocal: the logical broker attachment,
+// session placement, and unrelated session state remain available for retry.
+func (s *Service) withdrawBrokerEngine(id session.SessionID) {
+	s.mu.Lock()
+	engine, ok := s.sessionEngines[id]
+	delete(s.sessionEngines, id)
+	s.mu.Unlock()
+	if ok && engine.close != nil {
+		if err := engine.close(); err != nil {
+			s.cfg.Diagnostics.Log(context.Background(), port.LevelWarn, "broker session engine withdrawal failed")
+		}
+	}
+}
 func cancelWorkspaceEnrollmentDetached(ctx context.Context, enroller brokercontract.WorkspaceEnrollmentAttachment, ref brokercontract.WorkspaceEnrollmentRef) {
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), engineCloseTimeout)
 	defer cancel()
