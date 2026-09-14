@@ -177,7 +177,7 @@ const config: Config = {
       // Dark-only site — only need the dark theme.
       theme: prismThemes.dracula,
       darkTheme: prismThemes.dracula,
-      additionalLanguages: ['bash', 'go', 'yaml', 'toml', 'json'],
+      additionalLanguages: ['bash', 'go', 'yaml', 'toml', 'json', 'protobuf', 'ini'],
     },
   } satisfies Preset.ThemeConfig,
 };
