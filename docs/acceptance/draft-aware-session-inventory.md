@@ -23,7 +23,7 @@ exact-resume, stale-running, ownership, and first-prompt run-entry guarantees re
 
 ## Human decisions
 
-None — the operator selected a separate locally grouped Drafts tab for known-empty main sessions, with the durable metadata and compatibility boundary defined in [ADR 0336](../adr/0336-draft-aware-session-inventory.md).
+None — the operator selected a separate locally grouped Drafts tab for known-empty main sessions, and [ADR 0336](../adr/0336-draft-aware-session-inventory.md) resolves the resulting durable metadata and compatibility boundary.
 
 ## Interface contract
 
@@ -41,8 +41,7 @@ None — the operator selected a separate locally grouped Drafts tab for known-e
 
 The domain classifier uses the existing genuine-user predicate, including its exclusion of
 harness-authored compaction summaries, rather than a client-local approximation. This follows
-the persisted-history boundary in
-[ADR 0336](../adr/0336-draft-aware-session-inventory.md).
+the persisted-history boundary in [ADR 0336](../adr/0336-draft-aware-session-inventory.md).
 
 **Acceptance:**
 - AC1.1: A valid empty conversation is `draft`; a valid conversation with at least one message satisfying `IsGenuineUserPrompt` is `active`, including an empty user message when that predicate classifies it as genuine.
