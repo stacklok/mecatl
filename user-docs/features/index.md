@@ -8,15 +8,14 @@ description:
 
 # Features
 
-This section documents Mecatl capabilities by the task they help you complete.
-Most features belong to the shared agent/server core; deployment pages explain
-how `mecated`, `mecak8s`, and mecatui expose that core in different operating
-environments.
+Find the Mecatl capability you want to use or configure. These features belong
+to the shared agent and server core. Deployment guides cover the differences
+between `mecated`, `mecak8s`, and `mecatui`.
 
 ## Get oriented
 
 - [Capability and deployment matrix](./capability-matrix.md) explains the
-  operational differences among the server and terminal deployment surfaces.
+  operational differences among server and terminal deployments.
 - [Use mecatui](./use-mecatui.md) covers the terminal UI, keymaps, panels, and
   interactive workflows.
 
@@ -38,8 +37,8 @@ environments.
 
 - [Define named agents](./named-agents.md) covers agent definitions and
   specialist delegation.
-- [Skills, commands, and soul](./skills-commands-and-soul.md) covers the
-  reusable instructions and persona that shape a run.
+- [Skills, commands, and soul](./skills-commands-and-soul.md) covers reusable
+  instructions and persona.
 - [Project instructions and rules](./project-instructions-and-rules.md) covers
   trusted project guidance and `.claude/rules`.
 - [Learning](./learning.md) covers evidence-backed learning, reflection, and
@@ -56,5 +55,4 @@ environments.
 - [MCP OAuth and credentials](./mcp-oauth-and-credentials.md) covers OAuth
   profiles and credential storage.
 - [Execution environments](./execution-environments.md) covers workspaces,
-  shells, forks, and environment persistence. Background Shell is documented in
-  [Core tools](/building/what-you-get/core-tools.md#background-commands).
+  shells, forks, and environment persistence.

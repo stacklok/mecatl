@@ -2,20 +2,17 @@
 sidebar_position: 10
 title: Capability and deployment matrix
 description:
-  Choose the Mecatl deployment surface that provides the capabilities you need.
+  Choose the Mecatl deployment that provides the capabilities you need.
 ---
 
 # Capability and deployment matrix
 
-Choose a Mecatl deployment based on the differences that affect your
-environment: where the workspace lives, how state is stored, whether a person
-can approve requests, and which client or API surface you need. Most
-capabilities come from the shared engine and server.
+Choose a deployment based on its workspace, storage, approval, and API support.
+Most capabilities come from the shared engine and server.
 
 ## Shared server capabilities
 
-When enabled and configured, both `mecated` and `mecak8s` provide the same core
-agent experience:
+When configured, `mecated` and `mecak8s` provide the same core capabilities:
 
 - the agent loop, core tools, permissions, approvals, posture, and model
   routing;
@@ -25,9 +22,8 @@ agent experience:
   multimodal input; and
 - gRPC and HTTP/SSE session APIs.
 
-Individual features can still require configuration, a capable model, a trusted
-workspace, or a storage backend. A connected client inherits the capabilities of
-its server.
+Some features require additional configuration, model support, project trust, or
+durable storage. A connected client uses the server's capabilities.
 
 ## Deployment differences
 
@@ -50,17 +46,14 @@ its server.
 serves gRPC and HTTP/SSE, can use local or configured storage, and supports
 optional server features such as MCP, schedules, and ACP.
 
-Use it when clients and the harness run as separate processes, when the harness
-should work in a host-local workspace, when an operator needs the local
-ACP/editor integration, or when you want to choose the storage and network
-configuration directly.
+Choose `mecated` for separate client and server processes, a host-local
+workspace, ACP editor integration, or direct control of storage and networking.
 
 ### Use `mecak8s` for Kubernetes-native operation
 
-`mecak8s` serves the same agent and API surfaces with cloud-native defaults:
-Redis stores session state and durable events, Kubernetes leases coordinate
-ownership across replicas, and readiness/drain behavior suits a deployment
-controller.
+`mecak8s` serves the same agent and APIs with cloud-native defaults: Redis
+stores session state and durable events, Kubernetes leases coordinate ownership
+across replicas, and readiness/drain behavior suits a deployment controller.
 
 When an operator configures a workspace, its filesystem tools and any Shell
 command run in the harness pod namespace, not on a remote caller’s machine.
@@ -72,8 +65,7 @@ this deployment.
 ### Use embedded `mecatui` for local interactive work
 
 Running bare `mecatui` starts an in-process server behind a private Unix gRPC
-socket. It is an interactive local product: it can use local provider, posture,
-trust, storage, and resilience configuration, and it surfaces permission asks in
+socket. It uses local server configuration and displays permission requests in
 the TUI.
 
 Its durable store defaults to a per-workspace JSONL location under XDG state.
@@ -104,9 +96,6 @@ support it.
 
 ## Related information
 
-- [Features](./index.md)
-- [Project instructions and rules](./project-instructions-and-rules.md)
 - [Deployment decision](/building/getting-started/deployment-decision.md)
-- [Workspace trust](/features/permissions-and-posture.md)
-- [gRPC API](/reference/grpc-api.md)
-- [HTTP/SSE API](/reference/http-sse-api.md)
+- [Permissions and posture](./permissions-and-posture.md)
+- [Execution environments](./execution-environments.md)

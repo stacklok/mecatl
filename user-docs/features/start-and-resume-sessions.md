@@ -7,18 +7,12 @@ description:
 
 # Start and resume sessions
 
-A session is the server-side conversation and execution context that receives
-prompts. It has an opaque ID and retains its workspace, model selection,
-permission mode, and transcript according to the server's storage configuration.
+A session retains a conversation and its server-side execution settings. Choose
+the flow that matches your client:
 
-Choose the flow that matches your client:
-
-- use the **mecatui flow** when the terminal client creates or selects a
+- use the **`mecatui` flow** when the terminal client creates or selects a
   session;
 - use the **API flow** when another client calls the server directly.
-
-For the rest of the interactive terminal workflow, see
-[Use mecatui](./use-mecatui.md).
 
 ## Availability
 
@@ -37,10 +31,9 @@ restart. An in-memory store only lasts for the lifetime of that process.
 
 ## Mecatui flow
 
-Mecatui can create a local session, browse stored sessions, or resume one by
-exact ID or with `--resume-latest`. Its session browser also supports
-inspection, continuation, forking, and maintenance when the server advertises
-those capabilities.
+Mecatui can create a session, browse stored sessions, or resume one by exact ID
+or with `--resume-latest`. Its session browser supports inspection,
+continuation, forking, and maintenance when the server provides those features.
 
 For the terminal-specific startup and seed-prompt path, see
 [Mecatui getting started](/mecatui/getting-started.md). For session selectors,
@@ -50,15 +43,14 @@ For local versus remote connection ownership, see
 
 ## API flow
 
-An API client normally:
+To continue a session through an API:
 
 1. creates a session and receives an opaque `session_id`;
 2. retains that ID; and
 3. sends prompts to that session until it is closed or no longer usable.
 
-The session keeps its server-side workspace and configuration between prompts. A
-client must not infer ownership, session kind, or permissions from the ID's
-spelling.
+The session keeps its server-side workspace and configuration between prompts.
+Treat the ID as opaque.
 
 ### gRPC
 
@@ -70,8 +62,7 @@ The gRPC `HarnessService` provides the primary streaming interface:
 - `ListSessions` returns stored-session inventory for clients that provide their
   own picker.
 
-Use gRPC when you want generated protocol bindings and bidirectional streaming.
-The full request and event reference is in
+Use gRPC for generated protocol bindings and bidirectional streaming. See
 [Drive via gRPC / HTTP](/building/deployment/grpc-http.md).
 
 ### HTTP/SSE
@@ -81,10 +72,9 @@ server's default HTTP listener is `127.0.0.1:8081` (`--http-addr`). It provides
 JSON request/response endpoints for session operations and Server-Sent Events
 for streamed runs.
 
-Use HTTP/SSE when the client is a browser or another language with an HTTP
-library rather than generated gRPC bindings. The HTTP and gRPC surfaces share
-the same session lifecycle, authorization, approval behavior, and event model.
-See [Drive via gRPC / HTTP](/building/deployment/grpc-http.md) and the
+Use HTTP/SSE for browsers and clients without generated gRPC bindings. HTTP and
+gRPC share the same session lifecycle, authorization, approvals, and events. See
+[Drive via gRPC / HTTP](/building/deployment/grpc-http.md) and the
 [HTTP/SSE API reference](/reference/http-sse-api.md) for endpoint details.
 
 ## Session states and continuation
@@ -125,5 +115,3 @@ live run based only on a persisted snapshot.
 - [Use mecatui](./use-mecatui.md) for the interactive terminal workflow.
 - [Drive via gRPC / HTTP](/building/deployment/grpc-http.md) for client
   integrations.
-- [Capability and deployment matrix](./capability-matrix.md) for deployment
-  availability.

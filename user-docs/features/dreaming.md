@@ -8,18 +8,17 @@ description:
 
 # Dreaming and memory consolidation
 
-Consolidation maintains facts already in memory. It finds exact duplicates and,
-after explicit review, can propose synthesized replacements. Consolidation and
-completed-run learning are separate: consolidation does not enable
-`learning.mode`, and learning does not rewrite memory.
+Consolidation removes duplicate memory entries and can propose synthesized
+replacements for review. It is separate from completed-run learning and does not
+change `learning.mode`.
 
 ## Availability
 
-Two maintenance surfaces are available:
+Two maintenance options are available:
 
 - **Automatic consolidation** is optional, off by default, and intended for
   exact duplicate cleanup on supported local stores.
-- **Manual review** is available in mecatui through `/dream` when the server
+- **Manual review** is available in `mecatui` through `/dream` when the server
   advertises a planner and reviewed atomic operations for the selected store.
 
 Both can target either per-project memory or the cross-project user model. The
@@ -55,9 +54,8 @@ advertises it. See [Commands and memory](/mecatui/commands-and-memory.md) for
 the TUI workflow. This page covers consolidation behavior, authorization, and
 storage limitations.
 
-The review evaluates the proposed survivor and source entries, exact duplicates,
-synthesized replacements, bounded reasons and evidence, and the canonical values
-needed for an informed decision.
+The review shows the proposed survivor, source entries, replacement text,
+reasons, and evidence.
 
 The operator applies or dismisses the entire plan. The receipt reports planned,
 applied, conflicted, skipped, and failed source counts. There are no per-source
@@ -70,12 +68,10 @@ survivor unchanged. Hidden controls and Unicode format characters in
 model-authored replacement or reason text reject the plan before it can be
 retained.
 
-The plan is process-local and short-lived. Restart, expiry, or another replica
-makes it unavailable and offers a fresh plan. A same-decision request that is
-still applying, or an indeterminate transport error, preserves the plan ID for
-explicit same-decision receipt retrieval; do not submit the opposite decision. A
-known terminal conflict permits a new generation, but an opposite decision while
-an apply is in progress does not.
+The plan is process-local and short-lived. Generate a new plan after it expires
+or the process or replica changes. If application is still running or its result
+is uncertain, use the same decision and plan ID to retrieve the receipt. Do not
+submit the opposite decision.
 
 ## Safety and authorization
 
@@ -95,8 +91,8 @@ normal management authorization and a working cross-process lease where the
 backend is shareable.
 
 The model never receives raw secrets, tool arguments, or hidden control data as
-part of the review rendering. Provider/model identity and recall-usage telemetry
-are not exposed by the manual review surface.
+part of the review. Manual review does not expose provider and model identity or
+recall-usage telemetry.
 
 ## Project memory and user model
 
@@ -107,8 +103,8 @@ are not exposed by the manual review surface.
 
 Project operations require a convergence-capable project store for the exact
 trusted configured workspace. Candidates from another or alternate workspace may
-remain staged and inspectable but cannot approve, undo, or write launch-root
-project memory. User-model operations use the configured user-model store.
+remain staged and inspectable but cannot approve, undo, or change the configured
+project's memory. User-model operations use the configured user-model store.
 
 ## Limitations
 
@@ -124,8 +120,7 @@ project memory. User-model operations use the configured user-model store.
   plans, and conflicts do not cross between them.
 - Consolidation does not provide semantic or embedding recall. Memory search
   remains BM25 lexical search, and consolidation does not create vectors.
-- The feature requires bounded model calls for manual planning. It is not a
-  no-network maintenance operation.
+- Manual planning requires a model call.
 
 For the underlying memory tools, tiers, lifecycle versions, and learning
 boundary, see [Memory & knowledge](/building/what-you-get/memory.md). For the
@@ -137,4 +132,3 @@ broader `/dream` UI and receipt behavior, see
 - [Learning](./learning.md)
 - [Memory and knowledge](/building/what-you-get/memory.md)
 - [Session continuity](./session-continuity.md)
-- [Capability and deployment matrix](./capability-matrix.md)

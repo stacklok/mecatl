@@ -7,17 +7,22 @@ description:
 
 # Choose models and providers
 
-A Mecatl session runs with a provider and a base model selected by the server
-and, optionally, by the client. The server returns the effective selection and
-input capabilities when the session is created.
+A Mecatl session uses a provider and base model selected by the server or
+client. The server returns the effective selection and capabilities when it
+creates the session.
 
 Choose the path that matches how you use Mecatl:
 
-- use **mecatui** for interactive selection;
+- use **`mecatui`** for interactive selection;
 - use the **CLI** to configure a server or one-shot run; or
 - use the **API** when your client creates sessions directly.
 
-For the rest of the terminal workflow, see [Use mecatui](./use-mecatui.md).
+## Availability
+
+Provider, model, and reasoning-effort selection is available in `mecated`,
+`mecak8s`, `mecatequi`, `mecatui`'s embedded server, and the session APIs. A
+connected `mecatui` uses the remote server's providers, credentials, and model
+inventory.
 
 ## Mecatui journey
 
@@ -27,10 +32,8 @@ The picker warns that the choice creates a peer session and carries over the
 visible conversation. Replaying a long history may be costly. The existing
 session's provider and base model do not change.
 
-A switch across providers keeps the visible conversation but drops provider-
-private replay state, such as reasoning state that the new provider cannot
-understand. The new session's provider, model, and capabilities are reported by
-the server.
+A switch across providers keeps the visible conversation but drops private
+provider state that the new provider cannot understand.
 
 When broker OAuth is enabled, this peer is also a new broker session. Protected
 MCP enrollment is session-scoped, so switching models may require enrolling the
@@ -42,13 +45,8 @@ tier by creating a peer session with the same provider, model, and conversation.
 The picker is available only when the connected server advertises the relevant
 capability.
 
-`mecatui` model choices are server-backed. In embedded mode, the local server's
-configuration and credentials determine the inventory. In `connect` mode, the
-remote server determines it; local embedded-server flags and credentials do not
-apply.
-
-See [Use mecatui](./use-mecatui.md) for the command-line startup, connection,
-and keybinding details.
+In embedded mode, local server configuration and credentials determine the
+inventory. In `connect` mode, the remote server determines it.
 
 ## CLI journey
 
@@ -72,10 +70,8 @@ mecated serve \
   --default-model gpt-5.6-terra
 ```
 
-`gpt-5.6-terra` is an example model ID. Model IDs are provider-specific, so the
-same example is valid only when that server's OpenAI provider can use it. The
-server's built-in OpenAI default remains available when no explicit model is
-configured.
+Model IDs are provider-specific. The example works only if the server's OpenAI
+provider can use `gpt-5.6-terra`.
 
 For a zero-selector session, server-side resolution is separate for provider and
 model:
@@ -85,10 +81,8 @@ model:
 - model: `--model`, then `--default-model`, then the selected provider's
   built-in default.
 
-`--model` is a higher-priority deployment override. `--default-model` is the
-validated default for the configured default provider. An invalid deployment
-default fails startup rather than silently selecting a different provider or
-model.
+`--model` has higher priority than `--default-model`. An invalid deployment
+default prevents startup.
 
 `mecatui` accepts these flags for its embedded server. They do not reconfigure a
 server used through `mecatui connect`. `mecak8s` exposes the corresponding
@@ -98,53 +92,45 @@ for credential sources and deployment options.
 
 ### Operator-defined gateways
 
-An operator can declare a named HTTPS gateway in the user-global `settings.yaml`
-under `providers:` and make it the deployment default with
-`models.default_provider`. API-key gateways use the matching provider ID in the
-operator-local `auth.yaml`; credentials are never read from a project file or
-supplied by `mecatui connect`. The server snapshots these settings and
-credentials once while it starts, so changing either file requires a restart.
-When a custom provider's live model listing is unreachable, unauthorized, or
-empty, `/models` keeps its configured default model selectable and displays only
-a safe provider status; endpoints, credentials, and raw listing errors or
-response bodies are never published to clients. Built-in `--*-base-url` flags
-still take precedence over eligible built-in endpoint overrides. See the
+Define a named HTTPS gateway under `providers:` in the user-global
+`settings.yaml`, then select it with `models.default_provider`. API-key gateways
+use the matching provider ID in operator-local `auth.yaml`. Restart after
+changing either file.
+
+If live model listing fails or returns no models, `/models` keeps the configured
+default selectable and shows a safe status without endpoints, credentials, or
+raw errors. Built-in `--*-base-url` flags take precedence over settings. See the
 [provider configuration reference](/reference/configuration.md#providers) for
 the accepted flavors and fields.
 
 ### Select ToolHive gateway models
 
-When ToolHive gateway discovery is enabled, one configured gateway identity appears
-as two protocol-specific Mecatl providers:
+When ToolHive gateway discovery is enabled, one configured gateway identity
+appears as two protocol-specific Mecatl providers:
 
-| Provider ID | Model discovery | Inference |
-| --- | --- | --- |
-| `toolhive` | `GET /v1/models` | `POST /v1/responses` |
-| `toolhive-anthropic` | `GET /anthropic/v1/models` | `POST /anthropic/v1/messages` |
+|Provider ID|Model discovery|Inference|
+|-|-|-|
+|`toolhive`|`GET /v1/models`|`POST /v1/responses`|
+|`toolhive-anthropic`|`GET /anthropic/v1/models`|`POST /anthropic/v1/messages`|
 
-Select a native Anthropic model under `toolhive-anthropic`. Mecatl keeps the
-inventories separate so that model always uses Anthropic Messages rather than the
-OpenAI Responses adapter. The native catalog retains the model's context and output
-limits plus image and thinking capabilities.
+Select native Anthropic models under `toolhive-anthropic`. Mecatl keeps the
+inventories separate so these models use Anthropic Messages.
 
 `toolhive` remains the automatic default between the two gateway providers. A
-configured key-driven provider still takes precedence unless the operator explicitly
-sets `toolhive` or `toolhive-anthropic` as the server default. When the gateway is
-available but not selected, `/models` shows both protocol inventories so you can
-choose one without removing another provider's credential.
+configured key-driven provider still takes precedence unless the operator
+explicitly sets `toolhive` or `toolhive-anthropic` as the server default. When
+the gateway is available but not selected, `/models` shows both protocol
+inventories so you can choose one without removing another provider's
+credential.
 
-Each provider has its own model count, availability state, and process-local
-last-known-good catalog. A failure or empty response from one protocol endpoint does
-not erase the healthy sibling inventory. Client-visible status contains no endpoint,
-credential, raw response body, or authentication header.
+Each provider has its own availability and last-known-good catalog. A failure
+from one protocol endpoint does not erase the other inventory.
 
-If `/models` reports an unreachable provider, follow its routing-mode-specific hint:
-start the local proxy in proxy mode, or check direct gateway connectivity and OIDC
-setup in direct mode. A valid credential that lists no models requires the gateway
-administrator to grant access. If a listed alias later fails with a routing or cost
-enforcement error, select a fully qualified or provider-namespaced model slug or ask
-the gateway administrator to add a route. Create a fresh session after correcting a
-previously unresolved default model.
+If `/models` reports an unreachable provider, follow its hint to start the local
+proxy or check direct gateway connectivity and OIDC. An empty list means the
+gateway administrator must grant model access. For routing or cost errors,
+select a fully qualified model slug or ask the administrator to add a route.
+Create a new session after correcting an unresolved default model.
 
 For proxy/direct routing, OIDC setup, TLS constraints, and daemon flags, see
 [Run mecated standalone](/building/deployment/mecated.md#the-toolhive-llm-gateway-no-api-key-needed).
@@ -189,22 +175,17 @@ models:
         model: image
 ```
 
-These mechanisms are independent:
+Use these mechanisms independently:
 
 - **Aliases** map readable names to concrete provider-specific model IDs.
 - **Slots** select models for internal calls. `compaction`, `ask-reviewer`,
   `guardrail`, `plan`, and `router` do not replace the session model. The `plan`
   slot can use a stronger model while a plan is being written; compaction and
   checker slots can use cheaper models.
-- **`title` is an explicit opt-in slot** for automatic session-title generation.
-  It has no fallback at all: if the binding is absent, or if it is present but
-  cannot be resolved for the session's fixed provider, generation is disabled
-  and the server makes no title-provider call. This differs from other invalid
-  slot or route targets, which may warn and fall back to the session model. With
-  a compatible `title` binding, the server generates a title asynchronously from
-  up to three early genuine prompts; it never delays or changes the chat. Its
-  token usage is stored separately as `session_title`, not charged to the chat's
-  displayed usage or run budget.
+- **`title`** opts into automatic session titles. Without a compatible binding,
+  generation is disabled and makes no model call. With one, the server generates
+  a title asynchronously from up to three early prompts and records its usage
+  separately from the chat.
 - **Router categories** select a model for a plain delegated Subagent, an
   unpinned named specialist (including `mode: "read-write"`), a Parallel branch,
   or an undefined team member from the task description. A taxonomy enables the
@@ -219,18 +200,11 @@ small  → quick  → gemini-3.5-flash
 image  → image  → gpt-5.6-terra
 ```
 
-Resolution is fail-soft for slots and routes other than `title`: an invalid
-alias, slot, or route target warns and falls back to the session model. The
-`title` slot is the exception described above; an absent or unresolvable title
-binding disables generation rather than falling back or making a provider call.
-Explicit per-call models, model-pinned named agents, fork or resume choices, and
-other higher- precedence selectors are not overridden by the router. A named
-definition with no `model:` is routable; `model: inherit` is an explicit pin.
-Writable named routing keeps the specialist's direct-write scope, while explicit
-`read-write`+`agent`+`model` remains invalid. Model slots and router taxonomies
-are operator decisions; project model settings are ignored unless the operator
-explicitly allows the relevant model set on a trusted project via
-`models.allowlist`.
+Invalid aliases, slots, and routes warn and fall back to the session model. The
+`title` slot instead disables generation. Explicit model choices and pinned
+named agents take precedence over routing. A named definition without `model:`
+is routable; `model: inherit` pins it. Project settings can select only models
+that the operator exposes through `models.allowlist` in a trusted project.
 
 An allowlisted model is not scoped to a particular use: a trusted project can
 bind any allowlisted model to any slot, including the `guardrail` and
@@ -299,10 +273,9 @@ important distinction is:
 - explicit `auto` requests the provider's default effort; and
 - a valid non-empty per-session value overrides the server default.
 
-An invalid server value is ignored with a warning and becomes unset. An invalid
-per-session value is ignored with a warning and falls back to the server
-default. The server may normalize, clamp, or drop a value according to the
-selected provider and known model capabilities.
+An invalid server value becomes unset. An invalid session value falls back to
+the server default. Mecatl warns in either case and may normalize or drop an
+effort that the selected provider or model does not support.
 
 The effective result is returned in `resolved_model.reasoning_effort`, so
 clients can display what the server actually applied. Provider-specific effort
@@ -355,7 +328,7 @@ for endpoint details.
 
 ## Model inventory and capabilities
 
-`ListModels` and mecatui's `/models` inventory expose public metadata,
+`ListModels` and `mecatui`'s `/models` inventory expose public metadata,
 including:
 
 - provider ID and opaque model ID;
@@ -364,10 +337,8 @@ including:
 - reasoning support; and
 - context limit when known.
 
-They do not expose API keys or provider-private credentials. The inventory is
-server-specific and can differ according to the providers and credentials
-configured at startup. A provider's live model catalog may refresh while the
-server is running.
+The server-specific inventory contains no API keys or private credentials. Live
+provider catalogs can refresh while the server runs.
 
 Models whose catalog includes it can call the read-only `DiscoverModels` tool to
 inspect this same resolved inventory. Results contain the exact `provider_id`
@@ -386,10 +357,10 @@ session as authoritative.
 ## Limitations
 
 - Provider credentials and model availability belong to the server host. A
-  connected mecatui cannot use credentials configured only on the TUI host.
+  connected `mecatui` cannot use credentials configured only on the TUI host.
 - Model IDs are provider- and deployment-specific opaque strings.
 - Listing a model does not guarantee that a later provider request will succeed.
-- In mecatui, changing the provider or base model creates a peer session. The
+- In `mecatui`, changing the provider or base model creates a peer session. The
   client adopts the peer's complete authoritative transcript before making it
   interactive, then closes the source best-effort; if creation or transcript
   hydration fails, the open source chat remains available. API clients must
@@ -404,5 +375,3 @@ session as authoritative.
 - [Start and resume sessions](./start-and-resume-sessions.md) for session
   creation and continuation.
 - [Context windows](./context-windows.md) for context limits and fallback.
-- [Capability and deployment matrix](./capability-matrix.md) for deployment
-  availability.

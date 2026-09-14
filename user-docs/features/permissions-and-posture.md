@@ -7,15 +7,15 @@ description:
 
 # Permissions and posture
 
-Mecatl has two separate safety controls:
+Configure two independent safety controls:
 
 1. **Permissions** decide whether a tool call is allowed, needs approval, or is
    denied before it runs.
 2. **Guardrails** are an optional model-backed checker that inspects selected
    tool arguments and results. They are independent of the permission rules.
 
-The permission rules are always present, including when no configuration file
-exists. Guardrails are disabled until an operator configures a checker model.
+Permissions always apply. Guardrails require an operator-configured checker
+model.
 
 For evaluator, authority-set, and custom-policy contracts, see
 [Permissions and guardrails for builders](/building/what-you-get/permissions.md).
@@ -23,7 +23,7 @@ For evaluator, authority-set, and custom-policy contracts, see
 ## Availability
 
 Permissions and posture apply to `mecated`, `mecak8s`, `mecatequi`, and the
-embedded server hosted by mecatui. A connected mecatui uses the posture and
+embedded server hosted by `mecatui`. A connected `mecatui` uses the posture and
 permission configuration of the remote server; local embedded-server flags do
 not apply to `connect` sessions.
 
@@ -42,9 +42,8 @@ before it starts.
 |`auto`|Enables the allow-all posture for the main agent and children while keeping deny rules and deliberately configured asks effective. Child substitution defenses remain enabled.|
 |`yolo`|Extends `auto` by allowing child command substitutions, backticks, and heredoc-style substitutions that `auto` keeps behind the child safety floor. Use only for isolated, disposable, single-tenant deployments.|
 
-`--yolo` and `--trust-project` are compatibility aliases that raise the posture
-tier. The highest effective tier wins. An operator-global `posture:` setting can
-also provide the baseline; a project file cannot raise the operator's posture.
+`--yolo`, `--trust-project`, and operator-global `posture:` settings can raise
+the posture tier; the highest tier wins. A project file cannot raise it.
 
 Deployment defaults differ: `mecated` is interactive and defaults to `strict`,
 while unattended `mecak8s` and `mecatequi` deployments commonly select `auto`.
@@ -66,9 +65,8 @@ explicitly declares an isolated sandbox with `MECATL_SANDBOX=1` or
 
 ## Choose a permission mode
 
-A permission mode is session-scoped and controls how that session handles tool
-calls. It is separate from the deployment-wide posture and from configured
-permission rules.
+A permission mode controls one session. It works alongside the deployment
+posture and configured rules.
 
 |Mode|Behavior|
 |-|-|
@@ -111,9 +109,8 @@ needs approval, an interactive client shows the call and lets the operator:
 - allow the matching call for the session; or
 - deny it.
 
-An allow-always decision is learned only at the lowest built-in scope. It never
-overrides a deny or configured ask. Headless deployments do not have a human
-approval channel, so configure explicit allows or choose an appropriate posture
+An allow-always decision never overrides a deny or configured ask. Headless
+deployments have no human approval channel, so configure their required access
 before starting work.
 
 ### Plan mode
@@ -131,9 +128,9 @@ In `mecatui`, **Esc** from the plan review means iterate/deny. The guarded
 does not record a deny verdict. The next prompt recovers the cancelled session,
 which remains in plan mode, before a fresh plan review can be presented. Hiding
 a client review does not itself clear an ask that remains pending on the server.
-Headless plan approval is denied by default;
-`--plan-mode-auto-approve` is an explicit operator opt-in and should be treated
-as an autonomous approval capability.
+Headless plan approval is denied by default; `--plan-mode-auto-approve` is an
+explicit operator opt-in and should be treated as an autonomous approval
+capability.
 
 ## Configure permission rules
 
@@ -180,8 +177,7 @@ rules are dropped or demoted to approval rather than widening access.
 
 ## Project trust
 
-Project trust is a separate positive decision from permission evaluation. It
-controls whether project-provided authority is admitted, including:
+Project trust controls whether Mecatl admits project-provided authority:
 
 - permission `allow` rules;
 - project instructions and rules;
@@ -193,10 +189,9 @@ undrifted remembered trust decision, or the interactive posture floor. A
 headless root does not gain project trust merely because it uses `trusted`,
 `auto`, or `yolo`; it needs an explicit trust source.
 
-This means `--posture auto` on an untrusted headless checkout can provide
-allow-all behavior for the admitted tools without admitting attacker-controlled
-project steering or a read-only child shell. Treat `--trust-project` as an
-operator assertion that the repository and its `.git` metadata are trusted.
+On an untrusted headless checkout, `--posture auto` can allow admitted tools
+without loading project steering or enabling a read-only child shell.
+`--trust-project` asserts that you trust the repository and its `.git` metadata.
 
 ## Guardrails
 
@@ -222,9 +217,8 @@ matchers, modes, and checker failure handling.
 
 ## Limitations
 
-- `strict` does not mean every call is denied; it preserves the built-in
-  read-allow/mutate-ask floor.
-- `auto` and `yolo` do not override a deny or a deliberately configured ask.
+- `strict` preserves the built-in read-allow and mutate-ask floor.
+- `auto` and `yolo` preserve denies and configured asks.
 - Headless main-session asks can still wait indefinitely unless the deployment
   configures the required permissions; headless child asks use the fail-safe
   child path instead of waiting for a client.
@@ -235,7 +229,7 @@ matchers, modes, and checker failure handling.
   disable guardrails, and a guardrail advisory does not change the tool's
   permission result.
 - `--posture`, `--trust-project`, and permission configuration on a local
-  mecatui invocation do not change a remote server used through `connect`.
+  `mecatui` invocation do not change a remote server used through `connect`.
 
 ## Next steps
 
@@ -245,5 +239,3 @@ matchers, modes, and checker failure handling.
   project-ingestion behavior.
 - [Execution environments](./execution-environments.md) for workspace and shell
   isolation.
-- [Start and resume sessions](./start-and-resume-sessions.md) for session
-  lifecycle.
