@@ -8498,6 +8498,11 @@ and thereby trigger npm staging
 The post-build `scripts/add-deno-self-types.mjs` prepends every JavaScript module's stable
 `@ts-self-types` sibling declaration and one unmapped source-map line, because Deno does not infer
 TypeScript's adjacent declaration rule for relative `.js` imports.
+The published dependencies include `@types/node`, and the server transport declaration preserves
+its Node type reference, because the shared gRPC options expose Node's HTTP/2 and TLS types.
+The native Deno fixture rejects an invalid `nodeOptions` field during stable
+checking; this catches a missing declaration dependency that would otherwise degrade those options
+to `any` in Deno's dependency declarations.
 
 `sdk/typescript/src/raw.ts` enforces API-major compatibility before all non-compatibility RPCs;
 the ergonomic client also probes status and maps transport/auth/incompatibility states without
