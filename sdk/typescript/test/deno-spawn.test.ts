@@ -15,6 +15,7 @@ afterEach(() => {
 
 interface FixtureOptions {
   stubborn?: boolean;
+  pendingStatusAfterKill?: boolean;
   stderr?: readonly Uint8Array[];
 }
 
@@ -55,7 +56,10 @@ function fixture(ready: unknown, options: FixtureOptions = {}) {
   const stdin = new WritableStream<Uint8Array>({ close });
   const kill = vi.fn((signal: "SIGTERM" | "SIGKILL") => {
     events.push({ kind: signal, at: Date.now() });
-    if (signal === "SIGKILL") exit(signal);
+    if (signal === "SIGKILL") {
+      if (options.pendingStatusAfterKill) stderrController.close();
+      else exit(signal);
+    }
   });
   const remove = vi.fn(async () => {
     events.push({ kind: "remove", at: Date.now() });
@@ -219,6 +223,83 @@ test.each(["close", "startup failure"])(
       { kind: "remove", at: 6_000 },
     ]);
     expect(checks.close).toHaveBeenCalledOnce();
+    expect(checks.stderr.locked).toBe(false);
+    expect(checks.stdin.locked).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
+  },
+);
+
+test.each(["close", "startup failure"])(
+  "Deno %s bounds a pending child status to one second after SIGKILL",
+  async (mode) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const checks = fixture(
+      mode === "close" ? validReady : { ...validReady, schema: "unsupported" },
+      { stubborn: true, pendingStatusAfterKill: true },
+    );
+    const diagnostics: DiagnosticRecord[] = [];
+    const options = { diagnostics: (record: DiagnosticRecord) => diagnostics.push(record) };
+    const operation = mode === "close" ? (await spawn(options)).close() : spawn(options);
+    let settled = false;
+    let failure: unknown;
+    const completion = operation.then(
+      () => {
+        settled = true;
+      },
+      (error: unknown) => {
+        failure = error;
+        settled = true;
+      },
+    );
+
+    await vi.advanceTimersByTimeAsync(6_000);
+    expect(checks.events).toEqual([
+      { kind: "EOF", at: 0 },
+      { kind: "SIGTERM", at: 3_000 },
+      { kind: "SIGKILL", at: 6_000 },
+    ]);
+    // Stdio is already closed; the child status alone must not hold cleanup open.
+    expect(checks.stderr.locked).toBe(false);
+    expect(checks.stdin.locked).toBe(false);
+    await vi.advanceTimersByTimeAsync(999);
+    expect(settled).toBe(false);
+    expect(checks.remove).not.toHaveBeenCalled();
+    expect(diagnostics).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(settled).toBe(true);
+    await completion;
+
+    if (mode === "close") {
+      expect(failure).toBeUndefined();
+      expect(diagnostics).toEqual([
+        {
+          code: "client_disposal_failed",
+          fields: { errorName: "AggregateError", step: "daemon_stop" },
+          level: "error",
+          message: "Client disposal could not complete the daemon_stop step",
+        },
+      ]);
+    } else {
+      expect(failure).toBeInstanceOf(MecatlError);
+      expect(failure).toMatchObject({ code: "spawn_failed", cleanupFailed: true });
+      expect(diagnostics).toEqual([
+        {
+          code: "spawn_failed",
+          fields: { cleanupFailed: true },
+          level: "error",
+          message: 'Unsupported ready-file schema "unsupported"; expected mecated-ready/1',
+        },
+      ]);
+    }
+    expect(checks.events).toEqual([
+      { kind: "EOF", at: 0 },
+      { kind: "SIGTERM", at: 3_000 },
+      { kind: "SIGKILL", at: 6_000 },
+      { kind: "remove", at: 7_000 },
+    ]);
+    expect(checks.close).toHaveBeenCalledOnce();
+    expect(checks.remove).toHaveBeenCalledExactlyOnceWith(checks.directory, { recursive: true });
     expect(checks.stderr.locked).toBe(false);
     expect(checks.stdin.locked).toBe(false);
     expect(vi.getTimerCount()).toBe(0);
