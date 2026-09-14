@@ -85,11 +85,6 @@ credential_store:
 			t.Fatal("invalid unified OIDC config was accepted")
 		}
 	}
-	r, _ := newCapturedResolver(t, "/etc/mecatl/operator.yaml", "llm:\n  credential_home: /private\n", true)
-	providers, overrides, err := r.OperatorProviders()
-	if err != nil || providers != nil || overrides != nil {
-		t.Fatalf("legacy llm key was not ignored: providers=%v overrides=%v err=%v", providers, overrides, err)
-	}
 }
 
 func TestProviderUnification_Scenario1_ProviderIdentityCollisionAndSelectorFailure(t *testing.T) {

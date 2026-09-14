@@ -73,15 +73,6 @@ providers:
 
 Do not put secrets in command-line arguments, settings YAML, prompts, or logs.
 
-The obsolete top-level `llm` settings key is ignored as an unknown compatibility key,
-regardless of whether its syntactically valid value is a mapping, scalar, or sequence.
-It does **not** configure or migrate a provider. Recreate each provider with `mecatui
-providers add` (or write equivalent `providers` and `credential_store` configuration),
-then enroll OIDC providers with `mecatui providers login NAME`. Current provider and
-credential-store sections remain strict. Check `mecatui providers` before restarting:
-explicitly selecting a provider missing from the current registry fails instead of
-silently choosing a fallback.
-
 `mecated` never opens a browser. Run provider login in local embedded `mecatui` before
 starting or restarting the daemon. This is distinct from `mecatui login ADDRESS`,
 which enrolls the client with a remote `mecated` server and does not configure that
