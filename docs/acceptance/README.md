@@ -111,6 +111,7 @@ PR after verification. There is no cleanup or status-only PR.
 
 ## Plans
 
+- [Contextual investigative guardrails](contextual-guardrails.md) — draft Architectural contract for live-only Allow-once review of exact policy-rechecked effective actions, finite authority-bound evidence handles, bounded main/worker trajectory metadata, exact checker routing/disclosure, machine-only durable status, and owner-authorized coverage; restart-complete/cloud-native security state remains deferred. Status: draft.
 - [Development-spine work classification](adr-scope-classification.md) — routes Spike,
   Routine, Bounded, and Architectural work; keeps acceptance planning for substantive work
   while reserving ADRs for genuinely durable architecture decisions. Status: landed in this
