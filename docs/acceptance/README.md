@@ -111,7 +111,7 @@ PR after verification. There is no cleanup or status-only PR.
 
 ## Plans
 
-- [Contextual investigative guardrails](contextual-guardrails.md) — draft Architectural contract for one contextual action/inbound reviewer, exact post-mutation permission re-evaluation, session-only exact repeat grants, held-result release-once, main/worker trajectory, session-provider-bound guardrail-slot routing, and separate durable-machine/transient-human status. Product choices are approved; real-checker route/quality thresholds remain an unchecked shipping gate. Status: draft.
+- [Contextual investigative guardrails](contextual-guardrails.md) — proposed Architectural contract for one contextual action/inbound reviewer, exact post-mutation permission re-evaluation, session-only exact repeat grants, held-result release-once, main/worker trajectory, session-provider-bound guardrail-slot routing, and separate durable-machine/transient-human status. Product choices are approved; implementation builds capacity calibration and quality-measurement deliverables, while separately authorized real-model release validation is required before any production-readiness claim. Status: proposed.
 - [Development-spine work classification](adr-scope-classification.md) — routes Spike,
   Routine, Bounded, and Architectural work; keeps acceptance planning for substantive work
   while reserving ADRs for genuinely durable architecture decisions. Status: landed in this

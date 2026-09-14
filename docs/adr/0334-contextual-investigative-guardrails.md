@@ -1,6 +1,6 @@
 # ADR 0334 — Contextual investigative guardrails
 
-- Status: Draft
+- Status: Proposed
 - Date: 2026-09-14
 - Scope: contextual action/inbound review, exact effective-call ordering, live repeat grants and result release, main/worker trajectory, checker routing, and safe status
 - Proposed supersession: ADR 0021's one-payload/tool-less classifier architecture; ADR 0051's generic advisory projection; ADR 0060's narrow default coverage; ADR 0062's waiver identity and approval-origin behavior
@@ -20,9 +20,9 @@ Provider/model selection is also an authority boundary. The existing scalar `mod
 
 Finally, an `EvHook` is observed by the durable relay before live delivery. Checker rationale placed there is durable even if a UI calls it transient. Human-readable rationale therefore needs a separate owner-authorized live channel.
 
-## Draft decision
+## Proposed decision
 
-This record remains Draft for two unresolved shipping gates: the selected real checker route has not been evaluated and no numerical false-warning, false-block, miss, latency, or spend threshold has been approved; and cumulative evidence/trajectory capacity bounds have not been sized or approved. The approved product direction and exact proposed interface live in the [acceptance plan](../acceptance/contextual-guardrails.md); neither document authorizes implementation until the Plan / Interface gate is merged.
+The product direction and exact proposed interface live in the [acceptance plan](../acceptance/contextual-guardrails.md). The plan is ready for Plan / Interface review; neither document authorizes implementation until that Split gate is merged. Implementation must build finite capacity calibration and quality-measurement deliverables, while separately authorized release validation supplies any actual checker-model efficacy evidence before a production-readiness claim.
 
 ### One reviewer, two jobs
 
@@ -39,7 +39,7 @@ The inbound rubric is not the action-risk rubric reused. Both prompts require af
 
 The harness supplies immutable provenance for the current genuine user task, genuinely admitted project instructions, actual positive plan/approval callbacks, caller capabilities, environment identity, and relevant current-root trajectory. Text remains untrusted; provenance is not inferred from filenames, domains, or words such as “approved.” Workers receive bounded harness facts, not parent transcripts.
 
-A review-local source exposes only opaque handles minted for objects already implicated by the call or trusted session state. A handle binds owner, session, environment revision, review, checker route, caller authority, source version, and expiry. Tool/MCP/source names are untrusted display metadata and never paths or authority. Forbidden/secret evidence is not disclosed. The reviewer has no Shell, network, general repository discovery, MCP, memory, skills, or recursive guardrails. Finite handle-count and cumulative evidence-byte bounds are required per review, with units and effective values visible to the reviewer request; values remain an explicit readiness decision. Textual file previews reuse native Read's existing 2,000-line/25,000-byte output shaping and continuation semantics, but not its current whole-file `ReadVersion` allocation: bounded backend access or preflight must reject an oversized source before allocation. Existing incoming tool results remain fully reviewed under ADRs 0049/0050; this secondary budget controls only additional fetched evidence. Incomplete or unavailable capacity is explicit and cannot yield an acceptable decision when omitted content could matter.
+A review-local source exposes only opaque handles minted for objects already implicated by the call or trusted session state. A handle binds owner, session, environment revision, review, checker route, caller authority, source version, and expiry. Tool/MCP/source names are untrusted display metadata and never paths or authority. Forbidden/secret evidence is not disclosed. The reviewer has no Shell, network, general repository discovery, MCP, memory, skills, or recursive guardrails. Implementation selects finite handle-count and cumulative evidence-byte bounds as private internal constants using native tool/provider context limits and measured stress workload; units and effective values are visible to the reviewer request and documented with the implementation evidence report. Textual file previews reuse native Read's existing 2,000-line/25,000-byte output shaping and continuation semantics, but not its current whole-file `ReadVersion` allocation: bounded backend access or preflight must reject an oversized source before allocation. Existing incoming tool results remain fully reviewed under ADRs 0049/0050; this secondary budget controls only additional fetched evidence. Incomplete or unavailable capacity is explicit and cannot yield an acceptable decision when omitted content could matter.
 
 The normal path makes one whole-output structured assessment. Investigation is allowed only when named missing evidence could change the verdict; it has one read-evidence tool and one terminal-submit tool. No arbitrary read/turn count is added.
 
@@ -71,13 +71,13 @@ Read-batch execution stays parallel. Cleared siblings execute, run PostToolUse a
 
 A delegation-root Run owns a metadata-only trajectory shared by harness callbacks from main and workers. It links relevant sensitive reads, sends, delegation, denials, materially safer replacements, and new genuine approval without copying child conversations into the parent prompt. Scope ends after child drain at root-run termination; there is no cross-session/restart state.
 
-No arbitrary 512-item cap is introduced. Authorization-relevant facts cannot be silently omitted. Exact duplicates or superseded non-authorizing status may be compacted only when authorization-equivalent. Required per-root fact-count and byte bounds remain a readiness decision; implementations enforce them before allocation and mark trajectory incomplete when exhausted. Once incomplete, bounded metadata must retain the authorization-relevant class/direction/target/decision or the affected review fails unresolved—never blindly acceptable. Implementation inventories the trajectory, evidence handles, held results, and transient detail under the cloud-native resource rules.
+No arbitrary 512-item cap is introduced. Authorization-relevant facts cannot be silently omitted. Exact duplicates or superseded non-authorizing status may be compacted only when authorization-equivalent. Implementation selects and enforces private per-root fact-count and byte bounds before allocation; when exhausted it marks trajectory incomplete. Once incomplete, bounded metadata must retain the authorization-relevant class/direction/target/decision or the affected review fails unresolved—never blindly acceptable. Implementation inventories the trajectory, evidence handles, held results, and transient detail under the cloud-native resource rules.
 
 ### Checker route and budget
 
 Reuse `models.slots.guardrail` and the shared alias machinery. Resolve one provider/model pair at Build and capture it for all main/session/worker checker factories. The current scalar guardrail slot—including its `cheap` tier fallback—resolves its model selector and binds it to the captured deployment default `reg.Default()`; it continues to win over the legacy gate model. This ADR proposes a strict optional `models.slots.guardrail: {provider: configured-id, model: existing-selector}` form when the operator wants another configured provider. Both object fields are mandatory; the object is operator-tier only and a valid project-tier object is WARN-ignored without changing existing project scalar behavior. No provider is inferred from opaque model text. Unknown keys, missing fields, unknown configured providers, and unresolvable guardrail selectors fail startup rather than disabling/falling back. Validation uses the local provider registry and does not require a live model-inventory network call. Other slots retain existing scalar and provider behavior. This is a proposed API realization of the approved independent existing slot, not a claim that the object exists today; it adds no `guardrails.checker` subtree or provider flag.
 
-One 90-second deadline covers setup, evidence, provider recovery, and at most three complete attempts. Only classified recoverable operational failures retry inside that same deadline; completed findings do not. Human waiting is excluded. Revalidation after a human answer runs once under the remaining normal operation/parent context, without resetting model budget, reviewer recall, or claiming universal filesystem/remote atomicity. A deadline does not bound memory: shipping also requires approved `max_evidence_handles`/`max_evidence_bytes` per review and `max_trajectory_facts`/`max_trajectory_bytes` per delegation-root Run, enforced before allocation. This ADR invents no values.
+One 90-second deadline covers setup, evidence, provider recovery, and at most three complete attempts. Only classified recoverable operational failures retry inside that same deadline; completed findings do not. Human waiting is excluded. Revalidation after a human answer runs once under the remaining normal operation/parent context, without resetting model budget, reviewer recall, or claiming universal filesystem/remote atomicity. A deadline does not bound memory: implementation calibrates private `max_evidence_handles`/`max_evidence_bytes` per review and `max_trajectory_facts`/`max_trajectory_bytes` per delegation-root Run, enforces them before allocation, and documents values and stress experiments in implementation review. They are internal capacities, not public deployment configuration fields.
 
 Operational checker failure is distinct from a prohibited finding. In enforcing mode the existing `onCheckerDown: fail` posture recovers within budget, then asks an interactive human or blocks unattended. Explicit `warn` may continue with warning only for operational failure. It cannot override permission denial, prohibited findings, forbidden evidence, stale authority, or invalid identity. Advisory remains non-enforcing and reports finding versus failure accurately.
 
@@ -85,7 +85,7 @@ Operational checker failure is distinct from a prohibited finding. In enforcing 
 
 When enabled, defaults review before execution: Shell; local mutations; WebSearch/WebFetch; MCP calls including `CallMcpWithQuery`; and Subagent/Parallel/Team. They review before delivery: Shell; Read/ListDir/Grep/Glob; WebSearch/WebFetch; MCP results including `FetchMcpResource` and `CallMcpWithQuery`. The same applicable rules bind main and workers; checker engines are inert.
 
-Expanded defaults are not empirically approved merely because protocol tests pass. A paired benign/adversarial corpus and separately authorized real-model evaluation must measure false warnings, false blocks, misses, latency, investigation frequency, and spend. Release thresholds remain an explicit unchecked decision in the plan.
+Expanded defaults are not empirically effective merely because protocol tests pass. Implementation builds a paired benign/adversarial corpus, measurement runner, quality baseline, and paired-regression report for false warnings, false blocks, misses, latency, investigation frequency, and spend. Actual checker-model comparisons require separate operator authorization of route and spend at release validation; their results are required before a production-readiness claim, not before the plan can be proposed, merged, or implemented.
 
 ### Projection and discoverability
 
@@ -99,7 +99,7 @@ The model receives only fixed harness guidance: what boundary was enforced, the 
 
 The reviewer can inspect actual effective actions and narrowly selected evidence without becoming a privileged general agent. Permission policy remains authoritative. Exact repeat grants retain usable interactive UX without widening permission or restart authority. Inbound content can be held and released without repeating side effects. Main/worker trajectory detects read-to-send and alternate-worker bypass within one root run.
 
-Costs are extra review latency/spend, additive engine/protobuf surfaces, dispatch restructuring, transient run/service resources, and explicit UI handling for action versus result-release asks. Enforcing operational failures and lost held results fail closed. Quality remains unproven until the named evaluation gate is completed, and memory safety remains unapproved until evidence/trajectory capacity values are selected and tested.
+Costs are extra review latency/spend, additive engine/protobuf surfaces, dispatch restructuring, transient run/service resources, and explicit UI handling for action versus result-release asks. Enforcing operational failures and lost held results fail closed. Quality efficacy is not established by implementation mocks; a separately authorized real-model release validation is required before claiming production readiness. Capacity calibration remains fail-closed throughout implementation and review.
 
 ## Deferred
 
@@ -108,7 +108,7 @@ Costs are extra review latency/spend, additive engine/protobuf surfaces, dispatc
 - cross-session trajectory;
 - provider-aware object forms for slots other than `guardrail`, or implicit provider fallback;
 - general reviewer exploration, DLP, or secret discovery; and
-- real-model efficacy claims before separately authorized evaluation and approved thresholds.
+- real-model efficacy claims or production-readiness signoff before separately authorized route/spend evaluation.
 
 ## Primary-source inspiration
 
