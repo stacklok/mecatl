@@ -100,6 +100,25 @@ func TestKittyNativeResolution(t *testing.T) {
 
 // delimiter (ESC \ terminator) and returns each chunk's CONTROL portion (the
 // key=value list between "\x1b_G" and the payload-separating ";").
+func TestNativeKittyTransmitPreservesSourceAlpha(t *testing.T) {
+	out := transmitMascot(36, 18, true)
+	if out == "" {
+		t.Fatal("native Kitty transmit returned empty")
+	}
+	data := reassemblePayload(t, out)
+	img, err := png.Decode(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("native Kitty payload is not a PNG: %v", err)
+	}
+	if got := img.Bounds().Dx(); got != 1254 {
+		t.Fatalf("native Kitty payload width = %d, want 1254", got)
+	}
+	_, _, _, alpha := img.At(0, 0).RGBA()
+	if alpha != 0 {
+		t.Fatalf("native Kitty payload lost transparent corner: alpha=%d", alpha)
+	}
+}
+
 func transmitChunkControls(t *testing.T, out string) []string {
 	t.Helper()
 	var controls []string

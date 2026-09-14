@@ -192,11 +192,10 @@ func transmitMascot(cols, rows int, nativeResolution bool) string {
 	}
 	var scaled image.Image = downscaleMascot(img, cols, rows*2)
 	if nativeResolution {
-		// Keep the white-field keying while retaining all source pixels. The
-		// terminal performs the final cell-size resampling, rather than us
-		// throwing away the detail before Kitty sees it.
-		bounds := img.Bounds()
-		scaled = downscaleMascot(img, bounds.Dx(), bounds.Dy())
+		// Kitty supports PNG alpha directly. Keep the original image here so
+		// transparency and anti-aliased edges reach the terminal unchanged; the
+		// terminal performs the final cell-size resampling.
+		scaled = img
 	}
 	var buf bytes.Buffer
 	// f=100 (PNG), a=T (transmit AND put — a bare a=t would make U=1/c=/r= inert and
