@@ -4621,6 +4621,13 @@ func (s *Service) startRunContent(ctx context.Context, id session.SessionID, tex
 			}
 		}()
 	}
+	if interruptedAuthorization {
+		// A restored broker authorization has already been repaired to an
+		// interrupted terminal result. An ordinary prompt must not turn that
+		// repair into a brokerless continuation: only the authorization control
+		// owns the paired result/resolution lifecycle.
+		return nil, fmt.Errorf("%w: restored MCP authorization requires its control", ErrFailedPrecondition)
+	}
 	engine, env, err := s.engineAndEnvironmentFor(ctx, sess)
 	if err != nil {
 		return nil, err

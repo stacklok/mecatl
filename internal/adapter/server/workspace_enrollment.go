@@ -78,17 +78,14 @@ func (s *Service) ConnectWorkspaceServices(ctx context.Context, id session.Sessi
 	release = func() {}
 	sel := ProviderSelector{ProviderID: sess.ProviderID, ModelID: sess.ModelID, ReasoningEffort: sess.ReasoningEffort}
 	if _, err := s.buildAndRegisterSessionEngineWithBrokerTools(ctx, sess, sel, profileForSession(sess), sess.Mode, true, exactTools, true); err != nil {
-		_ = enroller.ResetWorkspaceEnrollment(context.WithoutCancel(ctx))
 		s.withdrawBrokerEngine(sess.ID)
 		return WorkspaceEnrollmentProjection{}, err
 	}
 	if err := sess.CompleteWorkspaceEnrollment(pending, toolNames); err != nil {
-		_ = enroller.ResetWorkspaceEnrollment(context.WithoutCancel(ctx))
 		s.withdrawBrokerEngine(sess.ID)
 		return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: complete workspace enrollment", ErrFailedPrecondition)
 	}
 	if err := s.saveSession(ctx, sess); err != nil {
-		_ = enroller.ResetWorkspaceEnrollment(context.WithoutCancel(ctx))
 		s.withdrawBrokerEngine(sess.ID)
 		return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: persist workspace enrollment completion", ErrInternal)
 	}
