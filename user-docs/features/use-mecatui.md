@@ -67,13 +67,13 @@ See [Sessions](../mecatui/sessions.md#diagnose-a-stored-session).
 
 Use the dedicated guides for those workflows:
 
-- [Getting started](../mecatui/getting-started.md) - launch a local session and
+- [Getting started](../mecatui/getting-started.md) — launch a local session and
   submit a first prompt.
-- [Sessions](../mecatui/sessions.md) - browse, inspect, continue, fork, and
+- [Sessions](../mecatui/sessions.md) — browse, inspect, continue, fork, and
   maintain chats.
-- [Using the TUI](../mecatui/using-the-tui.md) - streaming, steering, approvals,
+- [Using the TUI](../mecatui/using-the-tui.md) — streaming, steering, approvals,
   and model switching.
-- [Commands and memory](../mecatui/commands-and-memory.md) - learning,
+- [Commands and memory](../mecatui/commands-and-memory.md) — learning,
   reflections, and memory-maintenance commands.
 
 ## Keyboard help

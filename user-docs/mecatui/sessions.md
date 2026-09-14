@@ -37,7 +37,7 @@ Debugging a session creates a separate analysis chat instead of continuing the
 target chat:
 
 ```sh
-# Exact ID or displayed short handle: both use the same TARGET grammar.
+# TARGET can be an exact ID or a displayed short handle.
 mecatui debug 01JOPAQUESES
 mecatui connect 127.0.0.1:8080 debug 01JOPAQUESES
 mecatui debug 01JOPAQUESESSIONID
@@ -56,8 +56,9 @@ mecatui debug 01JOPAQUESESSIONID \
 
 1. Pass the full target ID from `/session`, `/sessions`, or the
    `mecatui: final-session-id=...` line printed when the TUI exits. You can also
-   pass the displayed short handle. If a short handle is ambiguous, open
-   `/session`, copy the full ID, and use it as `TARGET`.
+   pass the displayed 12-column short handle. Exact full-ID equality wins;
+   otherwise the handle must resolve to one session. If a short handle is
+   ambiguous, open `/session`, copy the full ID, and use it as `TARGET`.
 2. Run `mecatui debug TARGET` against the same embedded store, or use
    `mecatui connect ADDRESS debug TARGET` against the server that owns the target.
 3. `mecatui` prints a privacy disclosure before entering the alternate screen.
@@ -102,8 +103,9 @@ but are not placed in model context.
 Use `/title <text>` while an ordinary chat is open to set its title. `mecatui`
 updates the label immediately while the server validates and saves it. If the
 request is rejected, `mecatui` restores the stored title. A manual title stops
-automatic title generation for that chat. Use bare `/title` to display the title
-and whether it was generated or set by an operator.
+automatic title generation permanently and records `operator` provenance. Use
+bare `/title` to display the title and whether it was generated or set by an
+operator.
 
 Automatic titles are optional. An operator enables them with an explicit compatible
 `models.slots.title` binding; without that slot no extra model call occurs. The

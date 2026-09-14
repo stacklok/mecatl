@@ -30,7 +30,9 @@ accepts only regular files, and copy and move refuse an existing destination.
 
 The version ledger belongs to the live execution environment. A new run or
 process may require a fresh `Read` before an `Edit` or existing-file `Write`.
-This protects against overwriting a concurrent change.
+That read records the version used by later conditional writes. Requiring it is
+expected fail-safe behavior of a new ledger, not evidence that application data
+was lost.
 
 ## The no-filesystem profile
 

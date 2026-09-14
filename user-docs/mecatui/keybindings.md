@@ -16,7 +16,7 @@ Press `?` on an empty prompt to open the live help overlay. It shows the active 
 | `shift+enter` or `ctrl+j` | Insert a newline. |
 | `↑` | With empty input, bring queued follow-ups back for editing. |
 | `ctrl+u` | Clear the unsent draft, including staged attachments and large-paste placeholders (`ClearPrompt`; remappable). |
-| physical `esc` twice within 500ms | While idle, clear a focused draft, including attachments and pending media. This gesture requires enhanced key-event support and is not remappable. Use `ClearPrompt` (`ctrl+u`) in terminals that do not support it. |
+| physical `esc` twice within 500ms | While idle, clear a focused draft, including attachments and pending media. The first press only arms the gesture; release it, then press it again without key repeat. Another key, an active selection, palette, approval, overlay, modal, or running turn disarms it. This requires enhanced key-event support and is not remappable. Use `ClearPrompt` (`ctrl+u`) in terminals that do not support it. |
 | `esc` | Clear an active selection first. While work is running, cancel directly and preserve the draft, queued follow-ups, and steer. While idle with a paused queue, clear that queue but preserve the draft. |
 | `ctrl+t` | Expand a focused tool card or approval details. For a collapsed tool card, the expanded view shows the complete tool arguments and result; press it again to return to the width-bounded preview. |
 | `shift+tab` | Cycle the current session permission mode: **default → plan → accept-edits → default**. In an MCP prompt argument form, it instead moves to the previous required field. |
@@ -88,12 +88,14 @@ deletes to the end of the line.
 
 Use `shift+arrow` for keyboard selection. On the alternate screen, drag over
 prompt text for mouse selection. Starting a prompt selection clears a conversation
-selection and vice versa. Use `ctrl+y` or right-click to copy the active selection.
-With `--no-mouse`, the terminal retains native mouse selection, while keyboard
-selection remains available.
+selection and vice versa. Releasing the mouse does not copy the prompt; use
+`ctrl+y` or right-click to copy the active selection. With `--no-mouse`, the
+terminal retains native mouse selection, while keyboard selection remains
+available.
 
 Client-owned actions take precedence over textarea chords. For example, `ctrl+t`
-expands details and `ctrl+v` handles paste. Remapping an action to a textarea chord
-gives the client-owned action precedence.
+expands details and `ctrl+v` handles paste. `ctrl+g` selects all only in the
+prompt; in the models picker it sets the global default. Remapping an action to a
+textarea chord gives the client-owned action precedence.
 
 For every action name, editing chord, overlay key, mouse behavior, and validation rule, see the [exhaustive `docs/tui.md` key reference](https://github.com/stacklok/mecatl/blob/main/docs/tui.md#keys).

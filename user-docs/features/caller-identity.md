@@ -155,8 +155,8 @@ mecatui connect mecated.example.internal:443 \
   --tls --tls-ca /path/to/server-ca.pem
 ```
 
-The issuer CA bundle path or reference verifies issuer endpoints; the CA
-contents are not saved with the enrollment. The optional connect CA
+The issuer CA bundle path or reference is saved with the enrollment and verifies
+issuer endpoints; the CA contents are not saved. The optional connect CA
 independently verifies the gRPC server. Managed credentials live in a
 keyring-wrapped encrypted store and refresh on later token demand. `connect` never opens
 a browser implicitly.

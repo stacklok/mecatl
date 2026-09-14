@@ -40,10 +40,9 @@ The trade-off: a crash mid-fire skips the slot, because the advance already happ
 
 ```mermaid
 flowchart TD
-    A[Leader polls for due schedules] --> B[Apply the misfire policy]
-    B --> C[Claim the slot atomically]
-    C --> D[Advance NextFireAt before execution]
-    D --> E{Fire this slot?}
+    A[Leader polls for due schedules] --> B[Select the action from the misfire policy]
+    B --> C[Claim the slot atomically and advance NextFireAt]
+    C --> E{Selected action}
     E -->|skip| F[Wait for the next due slot]
     E -->|run| G[Create a fresh session]
     G --> H[Run with per-fire limits]

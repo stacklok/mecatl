@@ -160,8 +160,12 @@ An explicit `--debug=false` wins over the environment. The older `MECATUI_DEBUG_
 
 In embedded mode, operational diagnostics are written to
 `$XDG_STATE_HOME/mecatl/mecatui.log`, falling back to
-`~/.local/state/mecatl/mecatui.log`. Use `--diagnostics-log` to give concurrent
-instances separate files, or `--quiet` to disable the log.
+`~/.local/state/mecatl/mecatui.log`. One process holds the default log lock; a
+second instance disables that shared sink instead of replacing an active log.
+Use `--diagnostics-log` to give concurrent instances separate files, or `--quiet`
+to disable the log. At startup, an oversized log is atomically reduced to its
+most recent 10 MiB. An unsafe path disables the sink without altering the
+existing file.
 
 Use `/diagnostics` to send a concise, sanitized bug-report snapshot through the
 normal prompt path. It includes build identities and available display information

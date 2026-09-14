@@ -200,7 +200,9 @@ command-specific diagnostics to a separate destination that is not its standard
 error stream. StatusML markup used directly in a template is safely literalized when
 malformed; malformed command output instead triggers the fallback behavior above.
 
-The v1 token-to-palette mapping applies only to these status surfaces.
+The v1 token-to-palette mapping is a best effort, not a cross-widget compatibility
+promise. [Issue #799](https://github.com/stacklok/mecatl/issues/799) tracks the
+stable semantic theme-token contract.
 
 ## Shipped template appendix
 
