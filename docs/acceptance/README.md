@@ -219,6 +219,9 @@ PR after verification. There is no cleanup or status-only PR.
 - [Session continuity UX](session-continuity-ux.md) — authoritative session-family
   metadata, honest replay/inspection, an active-session copy surface, startup resume,
   and a final session-ID handoff for mecatui. Status: landed.
+- [Draft-aware session inventory](draft-aware-session-inventory.md) — durable,
+  content-free draft/active/unknown activity metadata, server-filtered Chats and
+  Drafts pages, and active-only automatic latest resume. Status: proposed.
 - [Steer-while-running](steer-while-running.md) — inject a user message into an
   in-flight run (Claude Code's "steer"): an engine-side supersedable inbox drained
   at the turn boundary, a gRPC `Converse` frame, the authoritative drain echo, and
