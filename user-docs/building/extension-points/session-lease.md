@@ -123,9 +123,18 @@ Key points from the implementation:
 - Release uses a **cancel-detached context** (the same pattern as `appendEvent`
   for the durable event log) — a dead client's cancelled context cannot abort
   the lease release.
-- A `Renew` returning `ErrLeaseHeld` means another process took over (the TTL
-  lapsed). The renewer goroutine cancels the run so the rogue-run scenario
+- A `Renew` returning `ErrLeaseHeld` means the backend has definitively lost the
+  lease to a competitor: the durable record now names a different owner or
+  token. The renewer goroutine cancels the run so the rogue-run scenario
   becomes a clean, recoverable cancellation rather than a diverged write.
+  `flocklease` makes one narrow exception to this: if the TTL lapsed but the
+  durable record still names the caller's own owner and token — proving no
+  other process raced an `Acquire` in the gap — `Renew` reclaims the lease
+  with a fresh expiry instead of failing. This covers a process merely
+  suspended past its TTL (e.g. laptop sleep) that should not lose its lease
+  to a competitor that never actually ran. Every other backend, and every
+  case where the record names someone else, keeps the stricter behavior
+  above unchanged.
 - The `heldLeases` registry on `Service` ensures SIGTERM-time cleanup: the
   shutdown path iterates the registry and releases all held leases, so survivors
   take over immediately rather than waiting for TTL expiry.

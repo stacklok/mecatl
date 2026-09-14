@@ -69,31 +69,41 @@ func TestRenewReclaimsExpiredLeaseWithNoCompetitor(t *testing.T) {
 
 // TestRenewStillFailsAfterGenuineTakeover is the critical safety case: a
 // record whose owner/token DID change during the gap — a genuine competitor
-// took over — must still return ErrLeaseHeld unconditionally, even though on
-// a real single host this specific race can't happen concurrently (it is
-// simulated here by an out-of-band Acquire under a different owner).
+// took over — must still return ErrLeaseHeld unconditionally. A paused holder
+// (e.g. laptop sleep) past its TTL and a second local process racing an
+// Acquire in that gap is a real single-host scenario, not merely a simulated
+// one, so the competitor's takeover runs through a SECOND *Lease instance
+// over the same directory. That keeps the original holder's `held` map entry
+// intact (only its OWN Acquire/Renew/Release calls ever touch it), so
+// Renew(first) is forced through the durable owner/token mismatch check
+// instead of short-circuiting on the unrelated held == nil branch.
 func TestRenewStillFailsAfterGenuineTakeover(t *testing.T) {
 	const ttl = time.Minute
+	dir := t.TempDir()
 	clk := &fakeClock{t: time.Unix(1_700_000_000, 0)}
-	adapter, err := flocklease.New(t.TempDir(), ttl, clk)
+	holder, err := flocklease.New(dir, ttl, clk)
 	if err != nil {
-		t.Fatalf("New: %v", err)
+		t.Fatalf("New holder: %v", err)
+	}
+	rival, err := flocklease.New(dir, ttl, clk)
+	if err != nil {
+		t.Fatalf("New rival: %v", err)
 	}
 	ctx := context.Background()
 	id := session.SessionID("contested-expiry")
-	first, err := adapter.Acquire(ctx, id, "owner-a")
+	first, err := holder.Acquire(ctx, id, "owner-a")
 	if err != nil {
 		t.Fatalf("Acquire first: %v", err)
 	}
 	clk.advance(ttl)
-	competitor, err := adapter.Acquire(ctx, id, "owner-b")
+	competitor, err := rival.Acquire(ctx, id, "owner-b")
 	if err != nil {
 		t.Fatalf("Acquire competitor: %v", err)
 	}
 	if competitor.Token <= first.Token {
 		t.Fatalf("competitor token = %d, want > original token %d", competitor.Token, first.Token)
 	}
-	if _, err := adapter.Renew(ctx, first); !errors.Is(err, port.ErrLeaseHeld) {
+	if _, err := holder.Renew(ctx, first); !errors.Is(err, port.ErrLeaseHeld) {
 		t.Fatalf("Renew after genuine takeover = %v, want ErrLeaseHeld", err)
 	}
 }
