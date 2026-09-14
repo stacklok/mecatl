@@ -25,36 +25,21 @@ type LLMProvider interface {
 }
 ```
 
-**`Stream`** starts a streaming model call and returns a Go 1.23
-`iter.Seq2[Chunk, error]` iterator. The outer error reports a failure to start
-the stream. An error emitted from the iterator is a stream failure. Do not infer
-retry safety from where the error appears: the resilience decorator combines
-typed retry disposition with semantic stream progress. Reasoning, replay
-metadata, phase, route, usage, tool calls, and leading whitespace can remain
-precommit after raw chunks have arrived; meaningful text commits the attempt.
+`Stream` starts a model call and returns an `iter.Seq2[Chunk, error]`. Return a
+startup failure as the outer error and an in-stream failure from the iterator.
+Error position alone does not determine whether retrying is safe; report retry
+disposition through the typed error contracts described below.
 
-Context cancellation is the API "cancel" verb — cancel the context to interrupt
-an in-flight turn mid-stream. Both the OpenAI and Anthropic adapters stop
-yielding on `ctx.Done()`.
+Stop the model request and iterator when the context is canceled.
 
-The same context carries the exact active session ID through
-`port.SessionIDFromContext`. Mecatl's three real HTTP adapters send a legal
-value as `X-Mecatl-Session-ID` on each inference request, which lets gateways
-correlate a request with the durable parent, child, member, or auxiliary session
-that made it; compaction inside a run keeps that run's ID. The header is
-optional and correlation-only—not authentication, tracing, idempotency, provider
-conversation state, safety/user identity, or a cache key. Missing or Go-illegal
-HTTP header values are omitted without failing the model call. Custom providers
-may use the context helper without adding a field to `LLMRequest`. See
-[ADR 0216](https://github.com/stacklok/mecatl/blob/main/docs/adr/0216-provider-session-correlation-header.md).
+`port.SessionIDFromContext` returns the active session ID for optional provider
+correlation. The supplied HTTP adapters send legal IDs as `X-Mecatl-Session-ID`
+and omit invalid values. The header is not authentication, tracing, idempotency,
+provider state, user identity, or a cache key.
 
-**`Capabilities`** reports which non-text prompt content the provider accepts.
-The composition layer computes a capability intersection (model-level modalities
-∩ adapter capabilities) and uses it to gate multimodal content at the ACP
-surface — rejecting unsupported image or audio parts loudly rather than silently
-dropping them. A decorator that wraps another `LLMProvider` **must** forward the
-inner provider's `Capabilities()` unchanged; replacing it with the zero value
-breaks multimodal gating.
+`Capabilities` reports accepted non-text content. Mecatl enables a modality only
+when both the model and adapter advertise it. A decorator must forward the
+wrapped provider's capabilities.
 
 ---
 
@@ -71,40 +56,22 @@ type LLMRequest struct {
 
 ### Provider-neutral discipline
 
-`LLMRequest` is deliberately provider-neutral, enforced by a reflection guard
-test at `engine/port/llm_neutral_test.go`. If a new field is added, the test
-fails until the design is reviewed.
+`LLMRequest` is provider-neutral. `Model` is an opaque identifier; API keys,
+base URLs, and endpoints belong to adapter construction. The loop does not
+branch on provider identity.
 
-`Model` is a bare opaque string — no API key, no base URL, no endpoint. Those
-are server-side registry concerns handled at construction time by the adapter.
-The loop never branches on provider identity.
-
-Provider-private knobs that differ by adapter — OpenAI's `store`/`include`
-flags, Anthropic's `thinking_budget`, reasoning effort on O-series models — are
-adapter construction `Option` values (e.g.
-`openai.WithReasoningEffort("high")`), not `LLMRequest` fields. Adding them to
-the request would force every adapter to ignore fields it does not understand
-and would make the domain layer provider-aware.
+Configure provider-specific behavior through adapter options, such as
+`openai.WithReasoningEffort("high")`, instead of adding it to `LLMRequest`.
 
 ### The stateless contract
 
-Mecatl sends the **full conversation history on every turn** (`store: false`).
-There is no server-side conversation state. This has two consequences:
+Mecatl sends the full conversation on every turn and does not rely on
+provider-side conversation state:
 
-1. **The system prompt is a `prompt.Layered` struct**, not a raw string. It has
-   a stable prefix (the agent persona, tool schemas, and instructions — the part
-   that does not change turn-to-turn) and a volatile suffix (per-turn context
-   that does change). The byte-stable prefix is what provider-side prompt
-   caching originally keyed on; it now also caches the growing **conversation
-   itself** — Anthropic places breakpoints on the conversation history (not just
-   the system prefix), and OpenAI/OpenRouter carry a routing/observability hint
-   (`prompt_cache_key`) alongside the API's own implicit caching. Changing
-   anything in the stable prefix still busts the cache. See
-   [ADR 0100](https://github.com/stacklok/mecatl/blob/main/docs/adr/0100-provider-prompt-caching.md).
-2. **`Messages` carries every message the session has recorded**, including tool
-   calls and results. The adapters re-serialise this into the provider's wire
-   format on each request. Compaction trims the history when it approaches the
-   context limit, but it never enables server-side state as a workaround.
+1. `System` uses `prompt.Layered` to separate a byte-stable prefix from per-turn
+   context for prompt caching.
+1. `Messages` contains recorded text, tool calls, and tool results. Compaction
+   trims this history near the context limit.
 
 ### Reasoning and phase markers
 
@@ -117,21 +84,12 @@ stateless replay without being interpreted:
   on the next call. It is never displayed and never parsed; the display summary
   arrives on `ChunkReasoning` instead.
 
-  It is one string, but a provider's replay unit may be a _list_ — several
-  OpenAI reasoning items, several Anthropic thinking blocks, one per step of a
-  turn that interleaves reasoning with tool calls. When that happens the adapter
-  packs the ordered list into its own JSON envelope inside this one string and
-  unpacks it on replay. Emitting one `ChunkReasoningItem` per unit and letting
-  the loop concatenate them does **not** work: the loop keeps only the last item
-  id, so per-unit ids are lost and OpenAI rejects the replay with
-  `invalid_encrypted_content`. Structure belongs in your envelope, never in the
-  loop's concatenation.
+  When a provider returns several reasoning units, pack the ordered list into
+  one provider-owned envelope and emit one `ChunkReasoningItem` per turn.
+  Emitting one chunk per unit loses their structure and can make replay invalid.
 
 - **`Message.ProviderPhase`** — an OpenAI Responses API phase marker
-  (`commentary` / `final_answer`). GPT-5.x uses it to distinguish intermediate
-  preambles from the actual answer. The loop stores and replays it verbatim;
-  dropping it causes the model to treat every preamble as the final answer and
-  stop early.
+  (`commentary` / `final_answer`). The loop stores and replays it verbatim.
 
 Neither of these widens `LLMRequest`. The structure is neutral (one opaque blob
 per message); the contents are provider-private.
@@ -164,41 +122,23 @@ in that order. A stream error yields no `ChunkDone`; the loop recognizes it as
 
 ### Classify failures without leaking provider data
 
-Provider errors may implement `RetryDispositionError` and `StreamProgressError`;
-the root resilience adapter also classifies established `StatusCode() int`,
-permanent-error, and transport-error shapes. Use `Retryable` only when replaying
-the identical request is safe at the transport/provider level; use `Permanent`
-for a known rejection, and leave unknown facts `Unknown`. These facts do not
-decide retry policy or circuit-breaker health by themselves.
+Provider errors can implement `RetryDispositionError` and `StreamProgressError`.
+Mark a request `Retryable` only when replaying it is safe, use `Permanent` for a
+known rejection, and leave unknown facts `Unknown`.
 
-A provider may also implement the structural `ProviderErrorMetadataError`
-contract. Its primitive getters expose HTTP or in-band status, provider code,
-and one correlation kind/ID pair without coupling an independently released
-provider module to a new engine-owned value type. The resilience and loop
-boundaries validate statuses and closed vocabularies before emitting anything.
-Emitted diagnostics and `network.attempt` evidence retain numeric statuses only;
-raw provider codes are omitted, while an accepted correlation value becomes a
-fixed domain-separated SHA-256 digest paired with its closed kind. Raw
-correlation IDs are never emitted or persisted. Do not put response bodies,
-prompts, URLs, arbitrary headers, tokens, or credentials in metadata. A
-gateway-backed adapter, including ToolHive over Responses, can report only
-fields the gateway actually exposes.
+A provider can implement `ProviderErrorMetadataError` to report a status,
+provider code, and one correlation kind and ID. Diagnostics retain numeric
+statuses and hash accepted correlation IDs. They omit raw provider codes and raw
+correlation IDs. Never include response bodies, prompts, URLs, arbitrary
+headers, tokens, or credentials in error metadata.
 
-The resilience layer buffers tentative chunks in wire order. The first
-meaningful text flushes and marks the attempt visible; a clean done flushes
-tool-only or whitespace-only turns. Only a typed retryable error while still
-precommit can be discarded and replayed transparently. Unknown future chunk
-kinds commit conservatively.
+Only a typed retryable error before semantically visible output can be replayed
+transparently. Unknown chunk kinds commit the attempt.
 
 ### Why streaming matters
 
-The loop emits a `message.delta` event for each `ChunkText` chunk. The client
-sees text as the model produces it rather than after the turn completes. For the
-agent loop this also means the model can start streaming a reasoning preamble
-while the next tool results are still being assembled — the loop records the
-text as it arrives and dispatches the tool calls only after `ChunkDone`.
-
----
+Mecatl emits each `ChunkText` as a `message.delta` and waits for `ChunkDone`
+before dispatching complete tool calls.
 
 ## ProviderCapabilities
 
@@ -210,27 +150,20 @@ type ProviderCapabilities struct {
 }
 ```
 
-The zero value is text-only. An image-capable adapter returns `Image: true`.
-Audio is wired but dormant — the OpenAI Responses path has no audio input in the
-current wire format.
+The zero value is text-only. Return `Image: true` for image input. Audio is
+defined but is not accepted by the current OpenAI Responses adapter.
 
-`EmbeddedContext` gates whether the adapter advertises embedded-context support.
-Inline-text resources always flatten into the prompt text regardless of this
-flag; it controls the capability advertisement to clients.
+`EmbeddedContext` controls capability advertisement. Inline-text resources are
+flattened into prompt text regardless of this value.
 
-The composition layer in `internal/app/capability.go` computes the effective
-capability as:
+Mecatl computes:
 
 ```text
 modelCapability = (per-model input modalities from live catalog) ∩ (adapter Capabilities())
 ```
 
-It reads live modalities first (the same source the model picker uses), with the
-catalog as a floor and the adapter as the final constraint. This avoids a class
-of bugs where a text-only model on a shared multimodal adapter would falsely
-report `Image: true`. The result is stored once and fed to `ListModels`, the
-`CreateSessionResponse` echo, and the ACP gate — computed once so all three
-agree.
+The result is shared by model listing, session creation, and ACP admission so
+all three surfaces agree.
 
 ---
 
@@ -244,25 +177,15 @@ agree.
 |`internal/adapter/openrouter`|thin wrapper|Routes to `provider/openai` with an OpenRouter base URL; used for multi-model deployments|
 |`engine/adapter/mockllm`|`*mockllm.Provider`|Deterministic scripted test double; no network access|
 
-The production wire adapters are their own **opt-in Go submodules** under
-`provider/`
-([ADR 0093](https://github.com/stacklok/mecatl/blob/main/docs/adr/0093-provider-modules.md))
-— they import the OpenAI and Anthropic SDKs, which the engine module is not
-allowed to depend on. A consumer `go get`s exactly the provider(s) it wants and
-pulls only that SDK, never the root module. The composition layer in
-`internal/app` wires the appropriate adapter based on the session's provider
-selection.
-
-The mock lives in `engine/adapter/mockllm` because the engine module's own tests
-use it — nothing under `engine/` is allowed to import `internal/...`.
+Production adapters are opt-in Go modules under `provider/`. Import only the
+provider modules your application uses.
 
 ---
 
 ## The test double: `engine/adapter/mockllm`
 
-`mockllm.Provider` is the implementation you reach for in any engine test. It
-replays a scripted list of turns — one per `Stream` call — and never touches the
-network.
+`mockllm.Provider` replays one scripted turn per `Stream` call without network
+access.
 
 ```go
 p := mockllm.New(
@@ -278,10 +201,10 @@ Turn builders cover the common shapes:
 |-|-|
 |`TextTurn(text)`|Text delta → zero usage → `StopEndTurn`|
 |`ToolCallTurn(calls...)`|Tool calls → zero usage → `StopEndTurn`|
-|`EmptyTurn()`|No text, no calls → zero usage → `StopEndTurn` (the no-progress shape)|
-|`EmptyTurnWithStop(stop)`|No text, no calls → zero usage → `stop` (scripts `max_tokens`, `error`, etc.)|
-|`ReasoningTurn(reasoning, text)`|Reasoning display delta → text delta → done|
-|`ReasoningOnlyTurn(summary, blob)`|Reasoning display + replay blob, no text (the no-progress reasoning shape)|
+|`EmptyTurn()`|No text or calls, then `StopEndTurn`|
+|`EmptyTurnWithStop(stop)`|No text or calls, then the supplied stop|
+|`ReasoningTurn(reasoning, text)`|Reasoning summary followed by text|
+|`ReasoningOnlyTurn(summary, blob)`|Reasoning summary and replay blob without text|
 |`ErrorTurn(err, chunks...)`|Scripted chunks then a genuine in-stream Go error|
 |`ChunksTurn(chunks...)`|Full control — assemble any chunk sequence by hand|
 
@@ -310,8 +233,7 @@ p := mockllm.NewWith(
 )
 ```
 
-`p.Calls()` returns the number of `Stream` calls made (useful for turn-count
-assertions). `p.Reset()` rewinds to the first turn.
+Use `p.Calls()` to inspect the number of stream calls and `p.Reset()` to rewind.
 
 ---
 
@@ -371,7 +293,8 @@ capability for it to be enabled.
 
 ## The resilience decorator
 
-`internal/adapter/llmresilience` wraps any `LLMProvider` with three behaviours:
+The shipped commands wrap providers with retry, circuit breaking, and a
+stream-idle watchdog:
 
 |Behavior|Default|Flag|
 |-|-|-|
@@ -379,56 +302,38 @@ capability for it to be enabled.
 |Circuit breaker|enabled|n/a|
 |Stream-idle watchdog|180 s|`--llm-stream-idle-timeout`|
 
-**The stream-idle watchdog** bounds mid-stream stalls. After the first chunk
-arrives, a per-chunk timer runs. If no new chunk arrives within
-`StreamIdleTimeout`, the decorator synthesizes a terminal `*StreamIdleError`
-(which satisfies `errors.Is(_, context.DeadlineExceeded)`) and ends the stream.
-This matters because the OpenAI and Anthropic adapters swallow context errors on
-cancel (they yield nothing), so the wrapper must synthesize the terminal signal
-rather than waiting for the inner iterator.
-
-A mid-stream stall is **terminal, never retried** — the
-no-replay-after-first-chunk contract holds.
+When no chunk arrives within `StreamIdleTimeout`, the wrapper returns a terminal
+`*StreamIdleError` that satisfies `errors.Is(_, context.DeadlineExceeded)`.
+Mid-stream stalls are not retried.
 
 ---
 
 ## Provider-side prompt caching
 
-Caching is ON by default and adapter-construction-Option-driven, like the
-reasoning-effort knob above
-([ADR 0100](https://github.com/stacklok/mecatl/blob/main/docs/adr/0100-provider-prompt-caching.md)):
+Prompt caching is on by default and configured through adapter options:
 
 |Knob|Default|Flag|
 |-|-|-|
 |Caching enabled|enabled|`--no-prompt-cache` disables it|
 |Anthropic cache TTL|API default (5 min)|`--anthropic-cache-ttl` (`5m` or `1h`)|
 
-The OpenAI/OpenRouter cache dialect — which hints get sent, if any — is gated on
-`(provider id, resolved base URL)`, never the provider id alone: a non-canonical
-base URL (`--openai-base-url` pointed at vLLM/LiteLLM, or
-`--openrouter-base-url` overridden) degrades to no hints at all, since a
-strict-compatible upstream can 400 on an unrecognised field.
+OpenAI and OpenRouter send cache hints only to their canonical base URLs. A
+`--openai-base-url` or `--openrouter-base-url` override disables them so a
+compatible endpoint does not receive an unsupported field.
 
-**`PerAttemptTimeout`** (default 300 s, `--llm-per-attempt-timeout`) bounds only
-the establishment phase: connect plus the first chunk. It is implemented as a
-`time.Timer` that fires `cancel()` if no first chunk arrives in time. It is
-explicitly **not** a `context.WithTimeout` — a fixed deadline that stays live
-through streaming would truncate slow reasoning turns when the absolute deadline
-passes.
+`--llm-per-attempt-timeout` defaults to 300 seconds and covers connection plus
+the first chunk. It stops after streaming begins, so it does not truncate a long
+active turn.
 
 ```
 PerAttemptTimeout  → bounds:  connect + first chunk
 StreamIdleTimeout  → bounds:  gap between any two consecutive chunks
 ```
 
-Both decorators are transparent to `Capabilities()` — the resilience wrapper
-forwards the inner provider's capabilities unchanged.
+The wrapper forwards the provider's capabilities unchanged.
 
-**Consumer note.** If you use `mecated` or `mecak8s`, the resilience decorator
-is already wired for you at composition time. If you embed the engine directly,
-the engine module does not expose this host adapter; provide your own retry,
-breaker, and stream-watchdog wrapper around `port.LLMProvider` if you need those
-behaviors, then inject the wrapped provider through `agent.Deps`.
+`mecated` and `mecak8s` include this wrapper. Direct engine embeddings must
+provide their own retry, breaker, and idle-timeout behavior when needed.
 
 ---
 

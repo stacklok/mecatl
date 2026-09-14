@@ -29,25 +29,16 @@ type SessionStore interface {
 }
 ```
 
-**`Save`** serializes the session's current state to stable storage and
-overwrites any prior snapshot for the same id. The call is idempotent over the
-session's state: calling `Save` twice on the same session object is safe — the
-second call replaces the first. Implementations must deep-copy the session at
-`Save` time so that mutations the caller makes afterward do not silently corrupt
-the stored snapshot.
+`Save` replaces the current snapshot for an ID and is idempotent for the same
+session state. The stored value must not alias the caller's live session.
 
-**`Load`** deserializes the snapshot stored under `id` and returns a live
-`*session.Session`. The aggregate's invariants hold on the returned session —
-the state machine is driven through the correct lifecycle transitions during
-restore, not patched directly. If no session exists under `id`, `Load` returns
-an error that wraps the port-level sentinel `port.ErrSessionNotFound`, so
-callers that cannot import the adapter can distinguish "no such session" from an
-infrastructure failure via `errors.Is`:
+`Load` returns an independent, live `*session.Session` with valid lifecycle
+state. A missing session must wrap `port.ErrSessionNotFound`:
 
 ```go
 sess, err := store.Load(ctx, id)
 if errors.Is(err, port.ErrSessionNotFound) {
-    // first run — no prior state
+    // No prior state.
 }
 ```
 
@@ -62,15 +53,14 @@ type SessionCreator interface {
 }
 ```
 
-`Create` publishes the first authoritative snapshot only when the session ID is
-absent. The check and publication must be backend-atomic across processes; a
-collision wraps `port.ErrSessionAlreadyExists` and leaves the existing snapshot,
-metadata, event log, and tool-call sidecar unchanged. `Save` remains the update
-operation after a successful create. Mecatl refuses ownership-enforced
-composition with a store that lacks this capability. The current gRPC
-session-store driver does not advertise atomic create, so `--session-store-url`
-cannot be combined with OIDC ownership enforcement; use an in-tree atomic
-backend until the driver protocol adds that operation.
+`Create` publishes only when the ID is absent. The check and write must be
+atomic across processes. A collision wraps `port.ErrSessionAlreadyExists` and
+must not change any existing snapshot, metadata, event log, or audit sidecar.
+Use `Save` only after creation.
+
+Caller ownership enforcement requires `SessionCreator`. The current gRPC store
+driver does not provide it, so `--session-store-url` cannot be combined with
+OIDC ownership enforcement.
 
 ### PrunableStore — the optional retention seam
 
@@ -110,63 +100,38 @@ it does not run cleanup or migration.
 
 ### Resumable v1-to-v2 migration
 
-Jsonlstore and Redis implement the optional `port.SessionMigrationStore`
-management capability. For jsonlstore, an authenticated plan reports
-v1/v2/invalid/skipped families, current and estimated reclaimable bytes, and the
-maximum temporary space for one family. Apply processes a bounded batch and
-returns a durable job handle; use resume to process later batches or continue
-after a server restart. Each job's complete load-to-checkpoint drive is
-protected by a stable cross-process job exclusion, so overlapping resumes cannot
-replay a batch or regress counters. A stale concurrent resume returns conflict.
-Cancel waits for any committed in-flight batch, then becomes monotonic: later
-resume attempts conflict and cannot restore the running state. Already-migrated
-families remain committed.
+JSONL and Redis stores implement the optional `port.SessionMigrationStore`. Its
+contract is:
 
-Migration preserves the complete snapshot, owner, durable kind (including
-`unknown`), logical modification time, and tool/event sidecars. For jsonlstore
-it acquires the ordinary run-entry lease and the family's cross-process lock,
-rereads and verifies v2 before removing v1, and reports corrupt/torn records
-without discarding them. Redis uses the same authenticated, durable, bounded job
-to adopt the derivative metadata index on upgrade: inventory and cleanup remain
-unavailable while stale; stable inspection verifies that every valid snapshot
-has its exact global/owner index row and makes missing or bad coverage a repair
-candidate; each repair and final publication atomically verifies the job's exact
-lock token before any write. Concurrent Save/Delete advances the source
-generation, and `ready` is published only after clean per-snapshot coverage plus
-the final constant-work cardinality check. Invalid snapshots complete the job
-with failures while keeping paging unavailable; repair or remove them, then
-create a fresh plan/job. Job errors expose stable reason codes and sanitized
-text only. Memstore and remote stores advertise migration as unsupported rather
-than returning fabricated zero counts.
+- Planning reports current, target, invalid, and skipped records plus bounded
+  storage estimates.
+- Apply processes bounded batches and returns a durable job handle that can
+  resume after restart.
+- Cross-process exclusion prevents concurrent resumes from replaying a batch.
+- Cancel waits for a committed batch and is final. Completed batches remain
+  committed.
+- Migration preserves the snapshot, owner, durable kind, modification time,
+  event log, and tool audit.
+- Corrupt records are reported and retained. Paging and cleanup remain
+  unavailable until the backend reaches a verified ready state.
+- Concurrent saves or deletes invalidate stale inventory. Errors expose stable,
+  sanitized reason codes.
+
+Stores without this interface advertise migration as unsupported.
 
 ### Authenticated cleanup planning
 
-The server exposes one retention planner to both automatic sweeps and
-authenticated manual cleanup. A manual dry-run is non-destructive and
-owner-scoped. On a shared store, it samples cross-process lease status at the
-planning instant with sequential bounded trial acquire/immediate-release calls;
-this does not promise that a candidate remains idle for apply, which always
-reacquires and revalidates. It reports only durable kind/state counts, age or
-cap reasons, modification times, and byte estimates; transcript, tool arguments,
-paths, credentials, and foreign-owner rows are never projected. Unknown,
-invalid, corrupt, running, awaiting, live, and leased sessions are protected and
-do not consume count-cap slots.
+Manual cleanup uses a non-destructive, owner-scoped plan. It reports counts,
+reasons, modification times, and byte estimates without exposing transcripts,
+tool arguments, paths, credentials, or other owners' records. Running, awaiting,
+live, leased, corrupt, invalid, and unknown sessions are protected.
 
-Apply requires the opaque confirmation token returned by the dry-run. The token
-binds the caller, exact kind scope, inventory generation, and effective policy
-version. A changed catalog or policy returns a stale-plan result without
-deleting anything. Cleanup-capable backends implement
-`port.ConditionalPrunableStore`: each candidate is revalidated under run-entry
-serialization and the maintenance lease, then the backend holds its family
-mutation exclusion across a final metadata comparison and
-sidecar-first/snapshot-last deletion. Remotely reachable and multi-writer
-composition must provide a working `port.SessionLease`; missing or
-backend-unsupported leasing suppresses migration/cleanup capability
-advertisement and fails apply closed. Only private embedded mecatui explicitly
-proves the local single-process posture that may substitute process-local
-`IsLive` plus family locking. Partial failures use stable, sanitized reason
-codes and can be retried by planning again. Unsupported stores report
-`backend_unsupported`; they never claim zero impact.
+Apply requires the plan's opaque confirmation token, which binds the caller,
+scope, inventory generation, and policy version. Each candidate is revalidated
+under the maintenance lease before sidecars and then the snapshot are deleted.
+Remote and multi-writer deployments must provide `port.SessionLease`; otherwise
+cleanup and migration fail closed. Retry partial failures by creating a new
+plan.
 
 ### Snapshot mechanics via sessnap
 
@@ -198,27 +163,18 @@ type EventLog interface {
 }
 ```
 
-**`Append`** durably records `ev` under the session id. The durability
-obligation is strict: `Append` must return nil only after the record is on
-stable storage or committed to the backing service. For local jsonlstore that
-means both the file and its directory have synced; without either capability
-append fails. An implementation that buffers without guaranteeing durability
-violates the contract. Callers must attempt each event at most once because an
-error may arrive after the write committed. The relay uses a cancel-detached
-context so a dead client's cancellation cannot abort it. Clients still receive
-every original chunk, while the run-scoped recorder coalesces message and
-reasoning into UTF-8-safe chunks capped at 1 MiB—small enough for the JSONL
-reader under worst-case escaping. Normal turns use one record per present kind;
-oversized turns use the minimum bounded count. Every chunk is cleared after its
-single attempt, append failure warns once per recorder, and later
-boundary/result events continue. A crash or failed append can leave a log gap;
-the completed session snapshot remains authoritative.
+`Append` returns nil only after the event reaches stable storage or the backing
+service commits it. Callers attempt each event once because an error can arrive
+after a successful write. A failed append can leave a log gap; the completed
+session snapshot remains authoritative.
 
-**`Read`** returns the session's events in append order as a lazy
-`iter.Seq2[session.Event, error]`, following the same streaming idiom as
-`port.LLMProvider.Stream`. Streaming matters: a long session log can exceed a
-gRPC message limit if read as a single unary response; `Read` maps 1:1 to a
-server-streaming RPC and avoids the size cap. Key contract points:
+The supplied relay records UTF-8-safe message and reasoning chunks of at most 1
+MiB. It attempts each chunk once, warns on failure, and continues with later
+boundary and result events.
+
+`Read` returns events in append order as a lazy
+`iter.Seq2[session.Event, error]`. Streaming avoids loading a long log into one
+response. Implementations must follow these rules:
 
 - A miss (no log recorded for `id`) yields an **empty sequence, not an error**.
   Absence is data.
@@ -228,10 +184,8 @@ server-streaming RPC and avoids the size cap. Key contract points:
   connection) when the consumer breaks out of the `range` early, exactly like a
   well-behaved `iter.Seq2`.
 
-**Concurrency contract.** Implementations must be safe for concurrent `Append`
-and `Read` across session ids — the server shares one `EventLog` across all
-relay goroutines. Per-id append order is only well-defined for a single
-session's appends (the server serializes those through one relay loop per run).
+Implementations must support concurrent `Append` and `Read` operations across
+session IDs. The server serializes one session's appends through its relay.
 
 ### EventLog vs EventSink
 
@@ -246,18 +200,17 @@ These are separate seams and must not be confused:
 |Where it lives|`engine/port/`|`engine/port/`|
 |Loop awareness|Loop emits; relay mirrors to sinks|Loop is storage-agnostic; relay calls `Append`|
 
-The loop never imports `port.EventLog` or calls `Append`. Persistence is a relay
-concern — it lives in `internal/adapter/server`.
+The loop emits events; the relay appends them to `EventLog`.
 
 ---
 
 ## The three reference backends
 
-|Backend|Package|Notes|
+|Backend|Package|Use|
 |-|-|-|
-|In-memory|`engine/adapter/memstore`|Default; test/single-process; implements `SessionStore` + `PrunableStore` + `EventLog` as siblings|
-|JSONL on disk|`internal/adapter/store/jsonlstore`|Default for `mecated`; triples as `SessionStore` + `EventLog` + `ToolCallRecorder`. The configured path and every ancestor must be physical non-symlink directories (use macOS `/private/...`, not a `/var/...` symlink path). Existing canonical snapshot Save may retain weaker capability; first legacy-family Save, EventLog append, Delete, retention, and migration fail closed when their required sync is unavailable. ToolCall audit is best-effort and may be unsynced or partially synced. Capability probes establish syscall support, not media persistence.|
-|Redis|`internal/adapter/redisstore`|Used by `mecak8s`; validated by conformance suites over miniredis|
+|In-memory|`engine/adapter/memstore`|Tests and non-persistent single-process deployments|
+|JSONL|`internal/adapter/store/jsonlstore`|Persistent `mecated` deployments|
+|Redis|`internal/adapter/redisstore`|Persistent `mecak8s` deployments|
 
 ### engine/adapter/memstore — in-memory
 
@@ -419,10 +372,9 @@ If your store also implements `port.PrunableStore`, run the retention suite too:
     })
 ```
 
-The store suite pins the contract — snapshot encoding, isolation (Save and Load
-must not alias the caller's pointer), lifecycle-state fidelity for all six
-session states, multi-session keying, not-found sentinel wrapping, and overwrite
-semantics. It does not assert wire format or file layout.
+The suite covers snapshot isolation, lifecycle states, multi-session keying,
+not-found wrapping, and replacement. It does not require a wire format or file
+layout.
 
 Similarly, any `EventLog` implementation can be validated against
 `engine/adapter/eventlogconformance`:
@@ -437,14 +389,9 @@ func TestMyEventLog(t *testing.T) {
 }
 ```
 
-The event log suite covers: append-then-read order, miss as empty sequence (not
-error), distinct-session isolation, no Seq-based reordering (contract is raw
-append order), large event round-trip, cumulative log crossing the framing
-boundary (the streaming-vs-unary correctness test), early-break resource
-release, and concurrent append/read safety under `-race`.
-
-Both suites are the same ones `jsonlstore` and `redisstore` pass — passing them
-is the bar for a production-grade implementation.
+The event-log suite covers append order, empty misses, session isolation, large
+events, streaming boundaries, early-break cleanup, and concurrent access under
+`-race`. The supplied JSONL and Redis stores pass these same suites.
 
 ---
 
