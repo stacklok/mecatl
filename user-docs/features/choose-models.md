@@ -83,26 +83,38 @@ keys are hidden, never command arguments. Empty, invalid/control-character, and
 larger-than-8-KiB values are rejected before saving. Saving requires a separate
 confirmation. The owner-only API-key file is **plaintext**, readable by same-UID
 processes, including permitted agent Shell commands; private permissions are not
-an encryption boundary. Ctrl-C stops the reader and restores terminal state.
+an encryption boundary. Ctrl-C or Ctrl-D cancels entry and restores terminal
+state. Local terminal entry is supported on Linux and macOS; on other platforms,
+use the provider's API-key environment variable or manually configure the
+owner-only credential file without putting a secret in a command argument.
 
 Provider commands use the operator-global `credential_store.api_key.file`, or
 `auth.yaml` in the Mecatl configuration directory when it is unset. They accept
 neither `--api-key-file` nor the removed `--auth-file`; `--api-key-file` remains
-a startup flag. Project configuration cannot redirect credential custody.
-Matching built-in environment keys win over file keys. OpenRouter uses its own
-environment key, then its own file key, then only the **environment**
-`OPENAI_API_KEY` fallback; an OpenAI file key is not a fallback. Custom API keys
-are file-only. Replacing a file key warns when an environment key will still
-win.
+a startup flag. Project configuration cannot redirect credential custody. Login
+and setup can create a missing configured API-key file after save consent,
+subject to the existing private-parent and safe-writer requirements. Passive
+status still reports a missing explicitly configured file; malformed, unsafe, or
+unreadable existing files must be fixed before enrollment. Matching built-in
+environment keys win over file keys. OpenRouter uses its own environment key,
+then its own file key, then only the **environment** `OPENAI_API_KEY` fallback;
+an OpenAI file key is not a fallback. Custom API keys are file-only. Replacing a
+file key warns when an environment key will still win.
 
-After API-key save or reuse, setup separately offers to set the deployment
-default through `mecatui providers set-default PROVIDER [MODEL]`. Declining
-leaves the default unchanged. A later cancellation or default error does not
-undo a saved key; the command reports that it remains saved. Direct
+After API-key save or reuse, successful custom-provider creation/login, or
+no-auth setup, setup separately offers to set the deployment default through
+`mecatui providers set-default PROVIDER [MODEL]`. Declining leaves the default
+unchanged. A later cancellation or default error does not undo already saved
+credentials or definitions. If default replacement reports
+`replacement_applied_durability_unknown`, the default may already be active:
+inspect passive `providers status` and operator settings before manually
+retrying. Direct `add` does not offer the optional default prompt. Direct
 `login PROVIDER` means replacement with save consent; direct `set-default`
-remains an explicit non-wizard action. Known aliases and declared provider
-defaults use ordinary startup validation, not a live model-health or entitlement
-check.
+remains an explicit non-wizard action. An omitted model preserves the current
+selector for the same provider, otherwise resolving its declared default;
+providers without a default need an explicit selector. Known aliases and
+declared provider defaults use ordinary startup validation, not a live
+model-health or entitlement check.
 
 `mecatui providers` and `mecatui providers status [PROVIDER]` report passive
 local facts: credential source, shadowed file presence, selected default and
@@ -135,7 +147,10 @@ both a custom definition and its managed credentials, even when it is the
 selected default, without choosing a replacement. Inspect status and explicitly
 select another default before restarting. After an uncertain write, inspect
 local state rather than retrying blindly; separate settings and key writes are
-not a transaction.
+not a transaction. Cancelling OIDC enrollment does not prove that local or
+remote credential state is unchanged. A newly prepared credential directory may
+remain even if `add` restores its provider definition; the command reports this
+without recursively removing credential storage.
 
 ### Endpoint overrides
 

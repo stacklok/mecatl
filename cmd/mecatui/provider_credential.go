@@ -37,6 +37,10 @@ func readHiddenProviderAPIKey(ctx context.Context, provider string) (string, err
 	return readProviderTerminalLine(ctx, os.Stdin, os.Stderr, "API key for "+providerDisplay(provider), true)
 }
 
+type providerTerminalError string
+
+func (e providerTerminalError) Error() string { return string(e) }
+
 var (
 	errProviderCredentialCancelled = errors.New("provider credential prompt cancelled")
 	errProviderSaveDeclined        = errors.New("provider API key save declined")
@@ -97,7 +101,7 @@ func (c providerCommands) runAPIKey(ctx context.Context, res invocationResolutio
 		if err := writeProviderKeyGuidance(stderr, res.providerName); err != nil {
 			return err
 		}
-		inspection, err := c.backend.inspect()
+		inspection, err := c.inspectForEnrollment()
 		if err != nil {
 			return err
 		}
@@ -108,13 +112,7 @@ func (c providerCommands) runAPIKey(ctx context.Context, res invocationResolutio
 		}
 		entered, err := c.terminal.readAPIKey(ctx, res.providerName)
 		if err != nil {
-			if errors.Is(err, context.Canceled) {
-				return c.credentialCancellation(stderr)
-			}
-			if errors.Is(err, errProviderInputTooLong) {
-				return errProviderInputTooLong
-			}
-			return errors.New("providers login: could not read API key from the local terminal")
+			return c.providerKeyReadError(err, stderr)
 		}
 		if err := validateProviderAPIKey(entered); err != nil {
 			return err
@@ -157,6 +155,21 @@ func (c providerCommands) runAPIKey(ctx context.Context, res invocationResolutio
 	return err
 }
 
+// Only fixed, reader-owned errors may cross the secret-input boundary verbatim.
+func (c providerCommands) providerKeyReadError(err error, stderr io.Writer) error {
+	if errors.Is(err, context.Canceled) || errors.Is(err, io.EOF) {
+		return c.credentialCancellation(stderr)
+	}
+	if errors.Is(err, errProviderInputTooLong) {
+		return errProviderInputTooLong
+	}
+	var safeError providerTerminalError
+	if errors.As(err, &safeError) {
+		return safeError
+	}
+	return errors.New("providers login: could not read API key from the local terminal")
+}
+
 func validateProviderAPIKey(key string) error {
 	if strings.TrimSpace(key) == "" {
 		return errors.New("providers login: API key cannot be empty")
@@ -174,10 +187,13 @@ func (c providerCommands) runOIDC(ctx context.Context, res invocationResolution,
 	ctx, cancel := context.WithTimeout(ctx, nativeLLMEnrollmentTimeout)
 	defer cancel()
 	noBrowser := len(res.remaining) == 1 && res.remaining[0] == "--no-browser"
+	rootWasAbsent := false
 	if res.providerAction == providerActionLogin && c.backend.prepareOIDCRoot != nil {
 		if definition.Auth.OIDC == nil || definition.Auth.OIDC.CredentialStore == nil {
 			return providerOIDCLifecycleError(res.providerAction, res.providerName, errors.New("OIDC credential store is not configured"))
 		}
+		_, statErr := os.Lstat(definition.Auth.OIDC.CredentialStore.Home)
+		rootWasAbsent = errors.Is(statErr, os.ErrNotExist)
 		if err := c.backend.prepareOIDCRoot(definition.Auth.OIDC.CredentialStore.Home); err != nil {
 			return providerOIDCLifecycleError(res.providerAction, res.providerName, err)
 		}
@@ -193,7 +209,17 @@ func (c providerCommands) runOIDC(ctx context.Context, res invocationResolution,
 	}
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
-			return c.credentialCancellation(stderr)
+			message := "Cancelled; OIDC enrollment did not complete. Inspect `mecatui providers status` before retrying; local and remote credential state is not asserted unchanged."
+			if res.providerAction != providerActionLogin {
+				message = "Cancelled; OIDC logout did not complete. Inspect `mecatui providers status` before retrying."
+			}
+			if rootWasAbsent {
+				message += " A local credential directory may have been created; it was not removed."
+			}
+			if _, writeErr := fmt.Fprintln(stderr, message); writeErr != nil {
+				return writeErr
+			}
+			return errProviderCredentialCancelled
 		}
 		return providerOIDCLifecycleError(res.providerAction, res.providerName, err)
 	}
@@ -223,6 +249,9 @@ func writeProviderKeyGuidance(out io.Writer, provider string) error {
 
 func (c providerCommands) confirmProviderAction(ctx context.Context, prompt string) (bool, error) {
 	value, err := c.terminal.readField(ctx, prompt)
+	if errors.Is(err, io.EOF) {
+		err = context.Canceled
+	}
 	if err != nil {
 		return false, err
 	}

@@ -100,7 +100,7 @@ func TestProviderCredentialOIDCCancellationPreservesCLIContract(t *testing.T) {
 	}
 	var stdout, stderr bytes.Buffer
 	err := commands.runCredential(context.Background(), providerCredentialResolution(providerActionLogin, "oidc"), &stdout, &stderr)
-	if !errors.Is(err, errProviderCredentialCancelled) || stdout.Len() != 0 || !strings.HasSuffix(stderr.String(), "Cancelled; no changes made.\n") {
+	if !errors.Is(err, errProviderCredentialCancelled) || stdout.Len() != 0 || !strings.Contains(stderr.String(), "Cancelled; OIDC enrollment did not complete.") || strings.Contains(stderr.String(), "no changes made") {
 		t.Fatalf("OIDC cancellation err=%v stdout=%q stderr=%q", err, stdout.String(), stderr.String())
 	}
 }

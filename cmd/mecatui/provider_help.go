@@ -46,7 +46,7 @@ Built-in and custom providers are locally configured for embedded mecatui. ToolH
 	case providerActionSetup:
 		text = `Usage: mecatui providers setup [PROVIDER]
 
-Interactively choose a built-in, external, or custom provider. Naming a configured provider starts its local login flow; an unknown name starts custom-provider setup. Setup can write operator configuration and, when authentication is needed, locally managed credentials or OIDC enrollment.
+Interactively choose a built-in, external, or custom provider. For a configured API-key provider, reuse the effective credential or replace it with separate save consent; an unknown name starts custom-provider setup. Successful setup offers a separate optional deployment-default action. Setup can write operator configuration and, when authentication is needed, locally managed credentials or OIDC enrollment.
 
 ToolHive remains externally managed and delegates its lifecycle to ` + "`thv llm`" + `. Use ` + "`mecatui providers status`" + ` first when recovering from a no-provider installation.
 `
@@ -74,7 +74,7 @@ This is a side-effecting local operation. To recover a provider afterward, run `
 	case providerActionSetDefault:
 		text = `Usage: mecatui providers set-default PROVIDER [MODEL]
 
-Set the operator deployment default used by the embedded mecated started by bare mecatui. PROVIDER must be usable under the current local provider configuration; MODEL is optional and otherwise resolves to that provider's default. This writes local operator settings and does not alter a remote mecated.
+Set the operator deployment default used by the embedded mecated started by bare mecatui. PROVIDER must be usable under the current local provider configuration; when MODEL is omitted, the current selector is preserved for the same provider, otherwise its declared default is resolved. Providers without a default require an explicit selector. This writes local operator settings and does not alter a remote mecated.
 
 When no provider is usable, first run ` + "`mecatui providers setup`" + ` or ` + "`mecatui providers add PROVIDER`" + `, authenticate it if required, and confirm with ` + "`mecatui providers status`" + `.
 `

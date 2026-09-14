@@ -44,7 +44,7 @@ func (c providerCommands) runSetup(ctx context.Context, res invocationResolution
 }
 
 func (c providerCommands) chooseForSetup(ctx context.Context, out io.Writer) (string, error) {
-	inspection, err := c.backend.inspect()
+	inspection, err := c.inspectForEnrollment()
 	if err != nil {
 		return "", err
 	}
@@ -103,7 +103,7 @@ func providerSetupCapability(status providerStatus) string {
 }
 
 func (c providerCommands) runNamedSetup(ctx context.Context, provider string, stdout, stderr io.Writer) error {
-	inspection, err := c.backend.inspect()
+	inspection, err := c.inspectForEnrollment()
 	if err != nil {
 		return err
 	}
@@ -118,13 +118,19 @@ func (c providerCommands) runNamedSetup(ctx context.Context, provider string, st
 			if _, err := fmt.Fprintln(stdout, "Reusing the locally usable manual OpenAI Codex subscription token; no credential writes or entitlement checks."); err != nil {
 				return err
 			}
-			return c.offerSetupDefault(ctx, provider, false, stdout, stderr)
+			return c.offerSetupDefault(ctx, provider, "", stdout, stderr)
 		}
 		if status.AuthMethod == providerAuthNone {
-			return c.offerSetupDefault(ctx, provider, false, stdout, stderr)
+			return c.offerSetupDefault(ctx, provider, "", stdout, stderr)
 		}
 		if status.AuthMethod != providerAuthAPIKey {
-			return c.runCredential(ctx, invocationResolution{mode: modeProviderCredential, providerAction: providerActionLogin, providerName: provider}, stdout, stderr)
+			if err := c.runCredential(ctx, invocationResolution{mode: modeProviderCredential, providerAction: providerActionLogin, providerName: provider}, stdout, stderr); err != nil {
+				return err
+			}
+			if status.AuthMethod == providerAuthOIDC {
+				return c.offerSetupDefault(ctx, provider, "Completed OIDC enrollment remains saved", stdout, stderr)
+			}
+			return nil
 		}
 		if status.Configured {
 			reuse, err := c.confirmProviderAction(ctx, "Reuse the effective credential from "+providerDisplay(status.Source)+"? [y/N; no replaces it]")
@@ -135,7 +141,7 @@ func (c providerCommands) runNamedSetup(ctx context.Context, provider string, st
 				return err
 			}
 			if reuse {
-				return c.offerSetupDefault(ctx, provider, false, stdout, stderr)
+				return c.offerSetupDefault(ctx, provider, "", stdout, stderr)
 			}
 		}
 		cfg, err := c.backend.loadCredentials()
@@ -149,18 +155,37 @@ func (c providerCommands) runNamedSetup(ctx context.Context, provider string, st
 		if err != nil {
 			return err
 		}
-		return c.offerSetupDefault(ctx, provider, true, stdout, stderr)
+		return c.offerSetupDefault(ctx, provider, "API key remains saved", stdout, stderr)
 	}
-	return c.runAdd(ctx, invocationResolution{mode: modeProviderAdd, providerAction: providerActionAdd, providerName: provider}, stdout, stderr)
+	return c.setupCustomProvider(ctx, provider, stdout, stderr)
 }
 
-func (c providerCommands) offerSetupDefault(ctx context.Context, provider string, keySaved bool, stdout, stderr io.Writer) error {
+func (c providerCommands) setupCustomProvider(ctx context.Context, provider string, stdout, stderr io.Writer) error {
+	if err := c.runAdd(ctx, invocationResolution{mode: modeProviderAdd, providerAction: providerActionAdd, providerName: provider}, stdout, stderr); err != nil {
+		return err
+	}
+	inspection, err := c.inspectForEnrollment()
+	if err != nil {
+		return fmt.Errorf("provider definition was saved; inspect before continuing: %w", err)
+	}
+	if _, exists := inspection.definitions[provider]; !exists {
+		return errors.New("provider definition is no longer present; credentials may remain saved. Inspect `mecatui providers status` and settings before retrying")
+	}
+	for _, status := range c.statuses(ctx, inspection, true) {
+		if status.Name == provider && (status.Configured || status.AuthMethod == providerAuthNone) {
+			return c.offerSetupDefault(ctx, provider, "Provider definition and any completed credential enrollment remain saved", stdout, stderr)
+		}
+	}
+	return nil
+}
+
+func (c providerCommands) offerSetupDefault(ctx context.Context, provider, committed string, stdout, stderr io.Writer) error {
 	// Capture downstream cancellation output: the default action cannot claim
 	// whole-command rollback after the independently committed key operation.
 	var defaultErr strings.Builder
 	err := c.setupDefault(ctx, provider, stdout, &defaultErr)
-	if keySaved && errors.Is(err, errProviderCredentialCancelled) {
-		if _, writeErr := fmt.Fprintln(stderr, "Cancelled; API key remains saved. Deployment default was not changed."); writeErr != nil {
+	if committed != "" && errors.Is(err, errProviderCredentialCancelled) {
+		if _, writeErr := fmt.Fprintln(stderr, "Cancelled; "+committed+". Deployment default was not changed."); writeErr != nil {
 			return writeErr
 		}
 		return errProviderCredentialCancelled
@@ -168,8 +193,8 @@ func (c providerCommands) offerSetupDefault(ctx context.Context, provider string
 	if _, writeErr := io.WriteString(stderr, defaultErr.String()); writeErr != nil {
 		return writeErr
 	}
-	if keySaved && err != nil {
-		return fmt.Errorf("API key remains saved; default selection failed: %w", err)
+	if committed != "" && err != nil {
+		return fmt.Errorf("%s; default selection failed: %w", committed, err)
 	}
 	return err
 }

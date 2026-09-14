@@ -217,6 +217,13 @@ func inspectLocalProviders() (providerInspection, error) {
 	var readErr error
 	env.ReadFile = func(path string) ([]byte, error) {
 		data, readErr = os.ReadFile(path)
+		if errors.Is(readErr, os.ErrNotExist) {
+			if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+				readErr = errors.New("credential path is not an absent regular file")
+			} else {
+				return nil, nil
+			}
+		}
 		return data, readErr
 	}
 	credentials, err := cliconfig.ResolveProviderCredentials(flags, definitions, env)
@@ -234,7 +241,13 @@ func inspectLocalProviders() (providerInspection, error) {
 	for id := range definitions {
 		known = append(known, id)
 	}
-	env.ReadFile = func(string) ([]byte, error) { return data, readErr }
+	missing := errors.Is(readErr, os.ErrNotExist)
+	env.ReadFile = func(string) ([]byte, error) {
+		if missing {
+			return nil, nil
+		}
+		return data, readErr
+	}
 	file, err := authfile.LoadStrict(path, explicit, env, known)
 	if err != nil {
 		return providerInspection{}, err
@@ -263,11 +276,26 @@ func inspectLocalProviders() (providerInspection, error) {
 	if credentials.HasOpenAICodex() || credentials.AuthFileWarning != "" {
 		sources[openAICodexEndpointID] = "credential_store.api_key.file (manual token)"
 	}
+	if missing && explicit {
+		err = errProviderCredentialMissing
+	}
 	return providerInspection{
 		definitions: definitions, credentials: credentials, aliases: aliases, shadowed: shadowed, sources: sources,
 		oidcStoreConfigured: credentialStore != nil && credentialStore.OIDC != nil,
 		selectedProvider:    selectedProvider, selectedModel: selectedModel,
-	}, nil
+	}, err
+}
+
+var errProviderCredentialMissing = errors.New("configured credential input is missing; check credential_store.api_key.file")
+
+// Enrollment may create an absent configured file, but never ignore a malformed
+// or unreadable existing input. Passive inspection still reports explicit absence.
+func (c providerCommands) inspectForEnrollment() (providerInspection, error) {
+	inspection, err := c.backend.inspect()
+	if errors.Is(err, errProviderCredentialMissing) {
+		err = nil
+	}
+	return inspection, err
 }
 
 func providerCredentialInputError(readErr error) error {
@@ -316,7 +344,7 @@ func codexProviderStatus(keys cliconfig.ResolvedCredentials) providerStatus {
 	} else if keys.AuthFileWarning != "" {
 		auth = "manual subscription token invalid or expired"
 	}
-	return providerStatus{Name: openAICodexEndpointID, Class: providerClassBuiltin, AuthMethod: "manual", Configured: keys.HasOpenAICodex(), Auth: auth, DefaultModel: "explicit model selector required", Next: "see manual OpenAI Codex token guidance in user-docs/features/choose-models.md; no login, refresh, import, or removal here"}
+	return providerStatus{Name: openAICodexEndpointID, Class: providerClassBuiltin, AuthMethod: "manual", Configured: keys.HasOpenAICodex(), Auth: auth, DefaultModel: "explicit model selector required", Next: "see manual OpenAI Codex token guidance at https://mecatl.dev/docs/features/choose-models#reuse-a-manual-openai-codex-token; no login, refresh, import, or removal here"}
 }
 
 func builtinAPIKeyStatus(name string, available, shadowed bool, defaultModel string) providerStatus {

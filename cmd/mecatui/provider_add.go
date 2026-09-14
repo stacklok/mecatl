@@ -40,7 +40,7 @@ func (c providerCommands) runAdd(ctx context.Context, res invocationResolution, 
 	if len(res.remaining) == 1 && isHelpMetaFlag(res.remaining[0]) {
 		return providerHelpResult(stderr, providerActionAdd)
 	}
-	inspection, err := c.backend.inspect()
+	inspection, err := c.inspectForEnrollment()
 	if err != nil {
 		return fmt.Errorf("providers add: inspect configured providers: %w", err)
 	}
@@ -108,6 +108,12 @@ func (c providerCommands) finishProviderAdd(ctx context.Context, provider string
 		})
 		if rollbackErr != nil || rollbackState == authfile.CommitNotApplied {
 			return fmt.Errorf("providers add: login cancelled; provider definition %q may remain because rollback failed: %w", provider, errors.Join(rollbackErr, errors.New("definition retention is uncertain")))
+		}
+		if definition.Auth.Method == providerAuthOIDC {
+			if _, writeErr := fmt.Fprintln(stderr, "Provider definition restored; the OIDC state described above was not rolled back."); writeErr != nil {
+				return writeErr
+			}
+			return errProviderCredentialCancelled
 		}
 		return providerCredentialCancellation(stderr)
 	}

@@ -28,6 +28,9 @@ func (c providerCommands) runSetDefault(ctx context.Context, res invocationResol
 		model = requestedModel
 	}
 	state, err := c.backend.updateDefaults(ctx, c.backend.settingsPath(), permconfig.DefaultUpdate{Provider: provider, Model: model})
+	if state == authfile.CommitReplacementAppliedDurabilityUnknown {
+		return fmt.Errorf("providers set-default: replacement_applied_durability_unknown; the default may already be active. Inspect `mecatui providers status` and settings before a manual retry: %w", err)
+	}
 	if err != nil {
 		if state == authfile.CommitNotApplied && errors.Is(err, context.Canceled) {
 			return providerCredentialCancellation(stderr)
