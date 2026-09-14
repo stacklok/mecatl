@@ -709,8 +709,9 @@ for your provider, MCP, Redis, identity-provider, and Kubernetes API traffic.
 Deployment details:
 
 - Two replicas use `RollingUpdate`, `maxSurge: 1`, and `maxUnavailable: 0`.
-- `terminationGracePeriodSeconds` defaults to 60 seconds, above the 43-second
-  default shutdown budget.
+- `terminationGracePeriodSeconds` defaults to 60 seconds. The schema requires at
+  least 44 seconds, the first whole second above the 43-second default shutdown
+  budget.
 - No PVC, no `--store-dir`. The only `volumeMount` is `/tmp` for the Go runtime
   and SSE buffering under `readOnlyRootFilesystem: true`.
 - A `preStop` hook calls the Pod-only plaintext drain listener on port 8082 and
@@ -739,7 +740,8 @@ traffic cannot invoke `/drain`. Direct Pod-IP access to 8082 remains an operator
 network-isolation responsibility. The `readyz` probe is dynamic: it calls
 `svc.StorageReady`, which pings the Redis store with a 2-second timeout. A Redis
 failure shows up as not-ready and removes the pod from Service endpoints without
-a restart.
+a restart. The startup and readiness probes use a 3-second kubelet timeout so the
+2-second Redis bound can complete before Kubernetes abandons the request.
 
 ---
 
@@ -765,8 +767,9 @@ sequenceDiagram
 The shutdown budget is 43 seconds: three seconds for endpoint propagation, 15
 for run drain, 10 for gRPC, and five each for HTTP, resource closure, and
 telemetry. The Helm `terminationGracePeriodSeconds` default is 60. Increase it
-when you increase any runtime bound. If a bound expires, the server cancels
-in-flight runs; a successor can recover them from Redis.
+when you increase any runtime bound; the schema's 44-second minimum covers only
+the defaults. If a bound expires, the server cancels in-flight runs; a successor
+can recover them from Redis.
 
 A surviving pod can acquire a gracefully released lease immediately. After a
 hard stop, it must wait for the 30-second default lease TTL.
