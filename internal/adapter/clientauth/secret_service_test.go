@@ -23,7 +23,13 @@ func TestHeadlessCredentialStorage_Scenario1_HelperFailuresFailClosed(t *testing
 				command.Env = []string{"MECATL_TEST_DETECTOR=" + mode, "GORACE=atexit_sleep_ms=0"}
 				return command
 			}
-			state, err := runSecretServiceDetector(t.Context(), 3*time.Second, factory)
+			// Only stall tests the detector deadline. Other modes must have
+			// time to start the race-instrumented helper and report their exit.
+			budget := 5 * time.Second
+			if mode == "stall" {
+				budget = 100 * time.Millisecond
+			}
+			state, err := runSecretServiceDetector(t.Context(), budget, factory)
 			switch mode {
 			case "80":
 				if err != nil || state != secretServicePresent {
