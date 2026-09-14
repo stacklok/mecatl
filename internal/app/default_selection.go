@@ -14,10 +14,12 @@ func ResolveDeploymentDefault(ctx context.Context, cfg Config) (string, string, 
 	cfg.DefaultModel = strings.TrimSpace(cfg.DefaultModel)
 	if cfg.DefaultModel != "" {
 		model, known := lookupModelAlias(cfg, cfg.DefaultModel)
-		if !known || model == "" {
-			return "", "", fmt.Errorf("default model %q is unknown or means inherit", cfg.DefaultModel)
+		if known {
+			if model == "" {
+				return "", "", fmt.Errorf("default model %q means inherit", cfg.DefaultModel)
+			}
+			cfg.DefaultModel = model
 		}
-		cfg.DefaultModel = model
 	}
 	cfg.skipProviderNetworkDiscovery = true
 	reg, err := buildProviderRegistryContext(ctx, cfg, cfg.envDetector)
