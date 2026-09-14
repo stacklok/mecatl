@@ -369,3 +369,20 @@ func TestClosedSessionsSurfaceDropsStalePageResponse(t *testing.T) {
 		t.Fatalf("stale page response resurrected modal: %T", m.modal)
 	}
 }
+
+func TestSyntheticUserPromptReplay_Scenario2_TranscriptRendersNoticeNotUserBubble(t *testing.T) {
+	st := newSessionsPanelState()
+	st.applyReplayEvent(client.UserPromptMsg{Text: "harness continuation", Synthetic: true})
+	st.applyReplayEvent(client.UserPromptMsg{Text: "operator prompt", Parts: []client.ContentBlock{{Kind: "image", MimeType: "image/png"}}})
+
+	if len(st.transcript.blocks) != 2 {
+		t.Fatalf("blocks = %d, want 2", len(st.transcript.blocks))
+	}
+	notice, user := st.transcript.blocks[0], st.transcript.blocks[1]
+	if notice.kind != blockNotice || notice.raw != "harness continuation" {
+		t.Fatalf("synthetic replay block = %+v, want persistent notice", notice)
+	}
+	if user.kind != blockUser || user.raw != "operator prompt" || len(user.media) != 1 || user.media[0] != "image/png (inline)" {
+		t.Fatalf("genuine replay block = %+v, want user bubble with media descriptor", user)
+	}
+}

@@ -274,7 +274,9 @@ func (s *sessionsState) applyReplayEvent(msg tea.Msg) {
 	c := &s.transcript
 	switch msg := msg.(type) {
 	case client.UserPromptMsg:
-		if descs := mediaDescriptors(msg.Parts); len(descs) > 0 {
+		if msg.Synthetic {
+			c.addNotice(msg.Text)
+		} else if descs := mediaDescriptors(msg.Parts); len(descs) > 0 {
 			c.addUserWithMedia(msg.Text, descs)
 		} else {
 			c.addUser(msg.Text)

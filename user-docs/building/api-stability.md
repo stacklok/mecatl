@@ -170,7 +170,11 @@ environment identity, profile, provider, model, owner, or creation time. The
 caller must supply this data through `eventsource.SessionMeta`.
 
 `EvUserPrompt` carries client prompts and harness-generated continuations, so a
-fold can reconstruct the conversation in stream order.
+fold can reconstruct the conversation in stream order. Its `synthetic` field is
+server-authored origin metadata for replay clients only — `true` identifies a
+harness continuation, absent/false means genuine or legacy-unknown — and a
+fold does not consult it: the reconstructed conversation is the same either
+way.
 
 ### Replay-fidelity limitation
 

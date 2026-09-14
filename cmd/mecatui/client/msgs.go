@@ -714,11 +714,13 @@ type ApprovalMsg struct {
 // replay. Text carries the flattened prompt body (or a harness-authored
 // continuation/notice); Parts carries any non-text media (image/audio) that rode
 // alongside it, projected to the plain ContentBlock type (image/audio only).
+// Synthetic is the server-authored origin bit; false remains genuine/legacy.
 // A delivery-patterned user_prompt (the fire-result delivery channel, ADR 0075)
 // maps to DeliveryNoteMsg instead — see deliverNoteFrom.
 type UserPromptMsg struct {
-	Text  string
-	Parts []ContentBlock
+	Text      string
+	Parts     []ContentBlock
+	Synthetic bool
 }
 
 // DeliveryNoteMsg is a fire-result delivery note (ADR 0075 Scenario 5): the
@@ -1144,7 +1146,7 @@ func EventToMsg(ev *mecatlv1.Event) tea.Msg {
 		if dn := deliverNoteFrom(text, parts); dn != nil {
 			return *dn
 		}
-		return UserPromptMsg{Text: text, Parts: parts}
+		return UserPromptMsg{Text: text, Parts: parts, Synthetic: up.GetSynthetic()}
 	case "compaction.archive":
 		return compactionArchiveMsg(ev.GetCompactionArchive())
 	default:
