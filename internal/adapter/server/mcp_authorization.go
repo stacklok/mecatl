@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/google/jsonschema-go/jsonschema"
-
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
@@ -135,7 +134,7 @@ func (s *Service) RecheckMCPAuthorization(ctx context.Context, id session.Sessio
 		s.cfg.Diagnostics.Log(ctx, port.LevelDebug, "MCP authorization recheck: attachment unavailable",
 			"session", string(id), "authorization", pending.Authorization.ID, "err", err.Error(), "broker_state_lost", brokerStateLost(err))
 		if brokerStateLost(err) {
-			return s.resolveAuthorizationWithoutContinuationLocked(ctx, sess, pending, session.AuthorizationInterrupted)
+			return s.resolveAuthorizationWithoutContinuationLocked(ctx, sess, pending)
 		}
 		return MCPAuthorizationResult{}, err
 	}
@@ -147,7 +146,7 @@ func (s *Service) RecheckMCPAuthorization(ctx context.Context, id session.Sessio
 	if statusErr != nil {
 		release()
 		if brokerStateLost(statusErr) {
-			return s.resolveAuthorizationWithoutContinuationLocked(ctx, sess, pending, session.AuthorizationInterrupted)
+			return s.resolveAuthorizationWithoutContinuationLocked(ctx, sess, pending)
 		}
 		return MCPAuthorizationResult{}, statusErr
 	}
@@ -197,7 +196,7 @@ func (s *Service) CancelMCPAuthorization(ctx context.Context, id session.Session
 	attachment, release, attachErr := s.authorizationAttachment(ctx, sess)
 	if attachErr != nil {
 		if brokerStateLost(attachErr) {
-			return s.resolveAuthorizationWithoutContinuationLocked(ctx, sess, pending, session.AuthorizationInterrupted)
+			return s.resolveAuthorizationWithoutContinuationLocked(ctx, sess, pending)
 		}
 		return MCPAuthorizationResult{}, attachErr
 	}
@@ -205,7 +204,7 @@ func (s *Service) CancelMCPAuthorization(ctx context.Context, id session.Session
 	if cancelErr != nil {
 		release()
 		if brokerStateLost(cancelErr) {
-			return s.resolveAuthorizationWithoutContinuationLocked(ctx, sess, pending, session.AuthorizationInterrupted)
+			return s.resolveAuthorizationWithoutContinuationLocked(ctx, sess, pending)
 		}
 		return MCPAuthorizationResult{}, cancelErr
 	}
@@ -272,7 +271,7 @@ func (s *Service) recheckExpiredAuthorizationLocked(ctx context.Context, sess *s
 	attachment, release, err := s.authorizationAttachment(ctx, sess)
 	if err != nil {
 		if brokerStateLost(err) {
-			return s.resolveAuthorizationWithoutContinuationLocked(ctx, sess, pending, session.AuthorizationInterrupted)
+			return s.resolveAuthorizationWithoutContinuationLocked(ctx, sess, pending)
 		}
 		return MCPAuthorizationResult{}, err
 	}
@@ -287,7 +286,7 @@ func (s *Service) recheckExpiredAuthorizationLocked(ctx context.Context, sess *s
 	release()
 	if err != nil {
 		if brokerStateLost(err) {
-			return s.resolveAuthorizationWithoutContinuationLocked(ctx, sess, pending, session.AuthorizationInterrupted)
+			return s.resolveAuthorizationWithoutContinuationLocked(ctx, sess, pending)
 		}
 		return MCPAuthorizationResult{}, err
 	}
@@ -590,8 +589,8 @@ func (s *Service) resolveAuthorizationLocked(ctx context.Context, sess *session.
 	return s.resolveAuthorizationWithFailureLocked(ctx, sess, pending, status, "", true)
 }
 
-func (s *Service) resolveAuthorizationWithoutContinuationLocked(ctx context.Context, sess *session.Session, pending session.PendingAuthorization, status session.AuthorizationStatus) (MCPAuthorizationResult, error) {
-	return s.resolveAuthorizationWithFailureLocked(ctx, sess, pending, status, "", false)
+func (s *Service) resolveAuthorizationWithoutContinuationLocked(ctx context.Context, sess *session.Session, pending session.PendingAuthorization) (MCPAuthorizationResult, error) {
+	return s.resolveAuthorizationWithFailureLocked(ctx, sess, pending, session.AuthorizationInterrupted, "", false)
 }
 
 // resolveAuthorizationWithFailureLocked retains the authorization status while
