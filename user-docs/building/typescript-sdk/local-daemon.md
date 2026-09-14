@@ -56,8 +56,8 @@ This example requires a build of the unreleased Deno integration. SDK v0.1.0
 does not include it.
 
 Import `spawn()` from `@stacklok-oss/mecatl-sdk/deno`. Deno starts the daemon
-with `Deno.Command` and connects through an ephemeral loopback HTTP and SSE
-listener.
+with `Deno.Command` and connects through an ephemeral loopback gRPC listener
+using the shared ConnectRPC transport. The HTTP listener is disabled.
 
 ```ts title="deno-local.ts"
 import { spawn } from '@stacklok-oss/mecatl-sdk/deno';
@@ -88,7 +88,9 @@ deno run \
 
 The Deno client owns the readiness file and runtime directory. It keeps the
 daemon's standard input open as a parent-liveness channel. Closing the client
-closes that channel and waits for the daemon to exit.
+closes that channel and waits for the daemon to exit. `client.daemon.grpcAddress`
+reports the bound address, and `client.daemon.transport` is `"grpc"`. Deno clients
+do not expose the Node/Bun callback-tool or filesystem media helpers.
 
 ## Run one prompt with `query()`
 

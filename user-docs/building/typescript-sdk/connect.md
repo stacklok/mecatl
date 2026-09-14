@@ -9,8 +9,8 @@ sidebar_position: 2
 # Connect an application
 
 Use `connect()` when an operator owns the Mecatl daemon and your application
-owns only the client connection. Node.js and Bun connect to the gRPC listener.
-Deno and browser applications use the HTTP and SSE API. Browser applications
+owns only the client connection. Node.js, Bun, and Deno connect to the gRPC listener.
+Browser applications use the HTTP and SSE API and
 connect through a same-origin backend-for-frontend (BFF).
 
 ## Connect from Node.js or Bun
@@ -54,11 +54,13 @@ headers.
 
 ## Connect from Deno
 
-Import `connect()` from the transport-neutral entry point and pass the HTTP
-listener's URL:
+The Deno integration is unreleased and excluded from SDK v0.1.0.
+
+Import `connect()` from the Deno entry point and pass the gRPC listener's HTTP
+or HTTPS authority. Deno uses the same ConnectRPC transport as Node.js and Bun:
 
 ```ts
-import { connect } from '@stacklok-oss/mecatl-sdk';
+import { connect } from '@stacklok-oss/mecatl-sdk/deno';
 
 await using client = connect({
   baseUrl: 'https://mecatl.example.com',
@@ -70,7 +72,16 @@ console.log(result.text);
 ```
 
 Grant network access to the daemon host when you run the application. For the
-example URL, use `--allow-net=mecatl.example.com`.
+example URL, use `--allow-net=mecatl.example.com`. Credentials use the same
+`headers` and `credentialProvider` options as Node.js and Bun. For a private CA,
+pass its certificate through `nodeOptions.ca`; grant read access if your
+application loads the certificate from disk.
+
+To connect to a Unix-domain socket, pass `socketPath` instead of `baseUrl` and
+grant read and write access to that path. See the
+[Deno API reference](/reference/typescript-sdk-api/deno.md) for connection options.
+If your daemon exposes only HTTP and SSE, import `connect()` from the root
+`@stacklok-oss/mecatl-sdk` entry point instead.
 
 ## Connect from a browser
 

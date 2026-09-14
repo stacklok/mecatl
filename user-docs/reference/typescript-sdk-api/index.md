@@ -17,7 +17,7 @@ Deno.
 |-|-|
 |[`@stacklok-oss/mecatl-sdk`](./core.md)|HTTP and SSE transport, ergonomic client, sessions, runs, events, durable activity, and shared types.|
 |[`@stacklok-oss/mecatl-sdk/node`](./node.md)|Node.js and Bun gRPC transport, local daemon management, one-shot queries, filesystem media helpers, and callback tools. It also exports the core API.|
-|[`@stacklok-oss/mecatl-sdk/deno`](./deno.md)|Deno HTTP and SSE transport, `Deno.Command` local daemon management, and one-shot queries. It also exports the core API.|
+|[`@stacklok-oss/mecatl-sdk/deno`](./deno.md)|Deno gRPC over TCP, TLS, or Unix sockets, `Deno.Command` local daemon management, and one-shot queries. It also exports the core API.|
 |`@stacklok-oss/mecatl-sdk/gen`|Generated protobuf-es messages and service descriptors. Use the [gRPC API reference](/reference/grpc-api.md) for the service contract.|
 
 The core, Node.js and Bun, and Deno method pages are generated from the

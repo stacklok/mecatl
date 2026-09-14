@@ -8473,15 +8473,17 @@ failures name only the class, never the value. The elapsed-time expiry leg is bo
 the only clock-dependent part because the official `oauth2.Token.Valid` has no injected
 clock.
 
-## TypeScript SDK — `sdk/typescript/` (M1–M4 public surface and post-v0.1.0 Deno integration, ADRs 0279, 0288, 0292, 0304, 0328, 0334, and 0335)
+## TypeScript SDK — `sdk/typescript/` (M1–M4 public surface and post-v0.1.0 Deno integration, ADRs 0279, 0288, 0292, 0304, 0328, 0334, 0335, and 0336)
 
 The ESM-only `@stacklok-oss/mecatl-sdk` has four exports. `.` owns the transport-neutral
 `Client`/`Session`/`Run` API, typed events/errors, prompt-media helpers, and the hand-written
 HTTP/JSON/SSE transport. `./node` re-exports that surface and adds connect-node real gRPC over
 HTTP/2: TCP uses an ordinary base URL; UDS keeps an ordinary HTTP authority and supplies a
 socket-opening `createConnection` through the HTTP/2 node options (`sdk/typescript/src/node-transport.ts`),
-never a `unix://` URL. `./deno` re-exports the transport-neutral surface and adds Deno-native
-`spawn()` / `query()` over HTTP/SSE without importing the Node graph. `./gen` is the committed protobuf-es output generated only for
+never a `unix://` URL. `./deno` re-exports the transport-neutral surface, selects the same
+ConnectRPC gRPC transport for `connect()`, and adds Deno-native `spawn()` / `query()`.
+It uses Deno's Node compatibility for HTTP/2 while keeping process ownership in `Deno.Command`.
+`./gen` is the committed protobuf-es output generated only for
 `contracts/proto/mecatl/v1/`; it has a codegen freshness gate rather than an API Extractor
 report. The package declares Node 22 or newer and Deno `>=2.9.3 <3` engine ranges, builds
 unbundled ESM plus declarations/source maps, and owns its pinned pnpm lock independently of the
@@ -8556,10 +8558,10 @@ Deno local ownership is isolated in `sdk/typescript/src/deno-spawn.ts` and expor
 ambient declarations; `denoRuntime()` resolves `globalThis.Deno` only when `spawn()` is called.
 The launcher creates `new Deno.Command(binaryPath ?? "mecated", options)` directly with no shell,
 inherits the parent environment, overlays caller `env`, pipes stderr, and opens piped stdin. Its
-fixed argv is `serve --grpc-addr 127.0.0.1:0 --http-addr 127.0.0.1:0 --ready-file <ready>
+fixed argv is `serve --grpc-addr 127.0.0.1:0 --http-addr "" --ready-file <ready>
 --lifetime-stdin`; all five hosting flag families are collision-rejected from caller `args`.
-`mecated` always requires a gRPC listener, but the Deno client uses only the ready document's
-HTTP address. That TCP topology intentionally omits the UDS-only `mcp_servers_on_create` feature,
+The Deno client connects to the ready document's gRPC address through the shared ConnectRPC
+transport. That TCP topology intentionally omits the UDS-only `mcp_servers_on_create` feature,
 and the Deno client type has no callback registry.
 
 `--lifetime-stdin` is an advanced daemon-hosting flag for process APIs that cannot assign an
@@ -8569,11 +8571,12 @@ the same `checkLifetimePipeFD` path, adopts it after listener bind, and feeds EO
 graceful shutdown select. Deno retains the writable stream without sending bytes. Explicit close
 closes that writer first, waits a bounded grace, then applies `SIGTERM` and `SIGKILL` bounds through
 the captured child handle. Parent death lets the kernel close the same writer and preserves the
-EOF cleanup contract without Node compatibility.
+EOF cleanup contract through the native process adapter.
 
 The Deno ready parser requires schema `mecated-ready/1`, positive pid/API major, a string feature
-list, and an actual `127.0.0.1:<port>` HTTP address. It also requires the document pid to match the
-captured `Deno.ChildProcess.pid` before creating the common HTTP transport and making the first
+list, `transport: "tcp"`, and an actual `127.0.0.1:<port>` gRPC address with a valid TCP port.
+It also requires the document pid to match the captured `Deno.ChildProcess.pid` before creating
+the shared gRPC transport and making the first
 compatibility call. `tempDirectory`, when present, is resolved through `Deno.realPath`; otherwise
 `Deno.makeTempDir` chooses the base. Failure disposal, stderr tail bounds/redaction, frozen daemon
 metadata, diagnostic records, unexpected-exit terminal state, and idempotent stop/removal follow

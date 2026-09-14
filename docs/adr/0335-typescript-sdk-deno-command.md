@@ -2,6 +2,8 @@
 
 - Status: Accepted
 - Date: 2026-09-11
+- Superseded by: [ADR 0336](./0336-typescript-sdk-deno-grpc.md), for the HTTP-only transport and
+  Node-compatibility exclusions.
 - Scope: `sdk/typescript/`, daemon parent-liveness hosting, package exports, runtime qualification,
   release verification, and public documentation.
 - Supersedes: [ADR 0334](./0334-typescript-sdk-deno.md), for its Deno public entry-point and

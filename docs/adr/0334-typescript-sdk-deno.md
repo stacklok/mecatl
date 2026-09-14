@@ -3,7 +3,8 @@
 - Status: Accepted
 - Date: 2026-09-11
 - Superseded by: [ADR 0335](./0335-typescript-sdk-deno-command.md), for the public entry-point and
-  local-process decisions.
+  local-process decisions; [ADR 0336](./0336-typescript-sdk-deno-grpc.md), for the HTTP-only
+  transport and Node-compatibility exclusions.
 - Scope: `sdk/typescript/`, its npm package metadata, emitted declarations, runtime matrix,
   release verification, and public documentation.
 - Supersedes: [ADR 0279](./0279-typescript-sdk-architecture.md), only for the supported-runtime

@@ -78,6 +78,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0328 — Publish the TypeScript SDK to npmjs as `@stacklok-oss/mecatl-sdk`](./0328-typescript-sdk-npmjs-stacklok-oss.md) *(proposed)*
 - [0334 - Deno uses the TypeScript SDK HTTP/SSE entry point](./0334-typescript-sdk-deno.md) *(supersedes ADR 0279 only for the supported-runtime set)*
 - [0335 - Deno owns local daemons through Deno.Command](./0335-typescript-sdk-deno-command.md) *(supersedes ADR 0334 for the Deno public entry-point and local-process decisions)*
+- [0336 - Deno reuses the ConnectRPC gRPC transport](./0336-typescript-sdk-deno-grpc.md) *(supersedes ADRs 0334 and 0335 for the HTTP-only transport and Node-compatibility exclusions)*
 - [0036 — `engine/` is its own Go module (monorepo via `go.work`)](./0036-engine-module.md)
 - [0037 — Engine public-API stability contract](./0037-engine-stability-contract.md)
 - [0038 — Event-sourced SessionStore rehydration (the reference fold)](./0038-event-sourced-rehydration.md) *(Decision 3 origin-opacity and no-public-replay clauses proposed to be superseded by 0337)*

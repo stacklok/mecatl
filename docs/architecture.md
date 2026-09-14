@@ -320,7 +320,7 @@ together; merging that exact two-file change makes the release App create the
 path-qualified tag. Its public surface is split by
 transport: `.` is the transport-neutral core plus the browser HTTP/SSE client,
 `./node` contains the Node/Bun real-gRPC transport (TCP and UDS), `./deno`
-contains Deno-native local-process ownership over HTTP/SSE, and `./gen` is
+shares that gRPC transport and adds Deno-native local-process ownership, and `./gen` is
 reserved for protobuf-es types and service descriptors generated under
 `sdk/typescript/src/gen/` from `contracts/proto/mecatl/v1/`. All transports feed
 the same `Client`/`Session`/single-consumption `Run` layer: compatibility is checked
@@ -365,18 +365,22 @@ terminal local `invalid_state`, emits one diagnostic, and prevents a dead socket
 the later-operation error. See
 [ADR 0292](adr/0292-typescript-sdk-local-daemon-and-tools.md).
 
-The `./deno` entry point owns a separate `Deno.Command` launcher so the Deno
-module graph imports no Node built-ins. It starts ephemeral loopback gRPC and
-HTTP listeners, then uses the common HTTP/SSE client. The private ready document
-must name the captured child pid and the SDK-owned HTTP address before the first
-compatibility call can complete. Deno holds the child's piped stdin open and
+The `./deno` entry point reuses `@connectrpc/connect-node` through Deno's Node
+compatibility layer. Remote connections support TCP, TLS, and Unix sockets; client
+assembly shares credentials, diagnostics, and transport ownership with Node/Bun.
+The separate `Deno.Command` launcher starts one ephemeral loopback TCP gRPC listener
+with HTTP disabled. The private ready document must declare TCP transport, the
+captured child pid, and the SDK-owned loopback address before the first compatibility
+call can complete. Deno holds the child's piped stdin open and
 passes `--lifetime-stdin`; the daemon validates that pipe and treats EOF as
 parent death. Explicit disposal closes the pipe, applies bounded signal
 fallbacks through the child handle, and removes the temporary directory. Deno's
 runtime permission system controls executable, filesystem, and loopback access.
-The TCP topology does not receive client-provided MCP authority, so real gRPC,
-Unix-domain sockets, path media, and callback tools remain in `./node`. See
-[ADR 0335](adr/0335-typescript-sdk-deno-command.md).
+The spawned TCP topology does not receive client-provided MCP authority. Deno returns
+the ordinary `Client`; path media and callback-tool helpers remain in `./node`.
+The packed-package floor/current qualification covers streaming, cancellation, TLS,
+Unix sockets, and native process cleanup. See
+[ADR 0336](adr/0336-typescript-sdk-deno-grpc.md).
 
 The `./node` and `./deno` entry points expose `query()` as the one-shot layer over that existing
 `Client`/`Session`/`Run` choreography. `await query(prompt, options)` resolves after session and

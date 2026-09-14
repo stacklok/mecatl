@@ -21,7 +21,7 @@ The package has four public entry points:
 
 - `@stacklok-oss/mecatl-sdk` - transport-neutral core plus browser and Deno remote HTTP/SSE;
 - `@stacklok-oss/mecatl-sdk/node` - Node/Bun gRPC and local-process features;
-- `@stacklok-oss/mecatl-sdk/deno` - Deno HTTP/SSE plus `Deno.Command` local-process features;
+- `@stacklok-oss/mecatl-sdk/deno` - Deno gRPC plus `Deno.Command` local-process features;
 - `@stacklok-oss/mecatl-sdk/gen` - protobuf-es types and service descriptors.
 
 ## Examples
@@ -94,7 +94,7 @@ structured safe record; without it the SDK never writes to `console`.
 ## Deno local daemon
 
 Deno callers import `spawn` from `@stacklok-oss/mecatl-sdk/deno`. The SDK launches an
-installed `mecated` with `Deno.Command`, opens an ephemeral loopback HTTP/SSE
+installed `mecated` with `Deno.Command`, opens an ephemeral loopback gRPC
 connection, and returns after the ready-file and compatibility barriers succeed:
 
 ```ts
@@ -125,9 +125,15 @@ inherits the parent environment, and `env` values override individual entries.
 The SDK reserves its listener, ready-file, and lifetime arguments. It holds a
 piped stdin open as the parent-liveness channel, so parent exit produces EOF and
 gracefully stops the daemon. `close()` closes that channel, applies bounded
-signal fallbacks, and removes the private runtime directory. Deno local clients
-use HTTP/SSE and do not expose real gRPC, Unix-domain sockets, path media helpers,
-or callback tools.
+signal fallbacks, and removes the private runtime directory. Deno uses the same
+ConnectRPC gRPC transport as Node and Bun. Local spawn disables the HTTP listener;
+`client.daemon` reports `grpcAddress` and `transport: "grpc"`.
+
+For an operator-owned daemon, import `connect` from `@stacklok-oss/mecatl-sdk/deno`
+and pass its gRPC `baseUrl` or Unix `socketPath`. TLS settings use `nodeOptions`.
+Grant Deno network access to the selected host; Unix sockets require read and write
+access to the socket path. The root import still provides HTTP/SSE. Path media helpers
+and callback-tool registration remain Node/Bun features.
 
 ## One-shot queries
 
