@@ -1050,12 +1050,26 @@ func TestOnLeaseLostSerializesAgainstReconcileTrial(t *testing.T) {
 // way onLeaseLost's Release could — CloseSession could observe the tombstone,
 // clear it (without ever calling the real backend itself), and let a brand
 // new StartRun perform a REAL Acquire while the trial's own self-Release
-// (leaseTrial's immediate Acquire-then-Release) was still in flight. This
-// blocks that trial Release, races a concurrent CloseSession against it,
-// confirms CloseSession cannot complete until the trial Release returns, and
-// then confirms the REOPENING StartRun's real Acquire only happens after —
-// proving closeSessionLocal's own leaseLossMu acquisition orders them, not
-// timing.
+// (leaseTrial's immediate Acquire-then-Release) was still in flight.
+//
+// A third-round follow-up review found this version's assertion vacuous: it
+// only called the reopening StartRun AFTER both CloseSession and Reconcile
+// had already been confirmed done, by which point the trial Release had
+// necessarily already completed — so overlap could never be observed either
+// way. Fixed by starting a POLLING reopen goroutine concurrently with
+// CloseSession, immediately once the trial Release is confirmed blocked
+// (before it is ever unblocked): while the tombstone is genuinely still set
+// (the fixed behaviour), each poll is refused locally with
+// ErrSessionLeasedElsewhere and never reaches the backend at all, so the
+// reopening real Acquire can only happen once the tombstone is actually
+// cleared — exactly the moment this test needs to observe. The same review
+// also flagged that draining to StopCancelled only proves onLeaseLost called
+// run.Cancel(), which happens BEFORE its own Release in the function body —
+// not that the Release itself had returned — so swapping in the
+// trial-blocking releaseHook right after was not provably safe from
+// intercepting that first Release instead of the trial's. Fixed by an
+// explicit "first Release completed" signal, installed before triggering the
+// loss and waited on before installing the trial-blocking hook.
 func TestCloseSessionSerializesAgainstReconcileTrial(t *testing.T) {
 	lease := &fakeLease{}
 	store := memstore.New()
@@ -1089,18 +1103,28 @@ func TestCloseSessionSerializesAgainstReconcileTrial(t *testing.T) {
 		t.Fatalf("StartRun: %v", err)
 	}
 
-	var lost atomic.Bool
+	// Installed BEFORE the loss so onLeaseLost's own Release (the FIRST
+	// Release call, made from inside its function body AFTER run.Cancel())
+	// is provably observed complete before this test ever installs the
+	// trial-blocking hook below.
+	firstReleaseDone := make(chan struct{})
+	var firstReleaseOnce sync.Once
 	lease.mu.Lock()
+	lease.releaseHook = func(port.Lease) error {
+		firstReleaseOnce.Do(func() { close(firstReleaseDone) })
+		return nil
+	}
+	var lost atomic.Bool
 	lease.renewHook = func(port.Lease) (port.Lease, error) {
 		lost.Store(true)
 		return port.Lease{}, port.ErrLeaseHeld
 	}
 	lease.mu.Unlock()
 
-	// Drive the loss to completion FIRST (onLeaseLost's own Release runs
-	// unblocked): the tombstone is set and the lease's real Release has
-	// already happened, mirroring the sequential setup in
-	// TestReconcileLeaseLossTombstoneRecoversCancelledSession.
+	// Drive the loss: draining to StopCancelled only proves onLeaseLost
+	// called run.Cancel(), which precedes its own Release call in the
+	// function body — the explicit wait below is what actually proves that
+	// Release returned.
 	for ev := range run.Events() {
 		if ev.Type == session.EvResult && ev.Result != nil && ev.Result.Stop == session.StopCancelled {
 			break
@@ -1109,6 +1133,11 @@ func TestCloseSessionSerializesAgainstReconcileTrial(t *testing.T) {
 	svc.FinishRun(sess.ID, run)
 	if !lost.Load() {
 		t.Fatal("precondition: the renewer never lost the lease")
+	}
+	select {
+	case <-firstReleaseDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("onLeaseLost never completed its own Release")
 	}
 
 	// Overwrite with the StateCancelled shape onLeaseLost's real cancel path
@@ -1129,10 +1158,9 @@ func TestCloseSessionSerializesAgainstReconcileTrial(t *testing.T) {
 	}
 
 	// Now block the TRIAL's own self-Release (leaseTrial's immediate
-	// Acquire-then-Release). onLeaseLost's own Release already ran above,
-	// unblocked, under the default nil releaseHook (f.releases already
-	// counts it) — this NEW hook only ever observes the trial's call, so its
-	// own first invocation IS the trial's self-Release.
+	// Acquire-then-Release). onLeaseLost's own Release is already provably
+	// complete (firstReleaseDone above), so this hook's first invocation IS
+	// the trial's self-Release.
 	trialReleaseStarted := make(chan struct{})
 	trialReleaseProceed := make(chan struct{})
 	var unblockOnce sync.Once
@@ -1194,6 +1222,40 @@ func TestCloseSessionSerializesAgainstReconcileTrial(t *testing.T) {
 	default:
 	}
 
+	// Start the REOPENING StartRun NOW, concurrently with the still-blocked
+	// trial Release — not after everything settles. While the tombstone is
+	// genuinely still set, each attempt is refused LOCALLY with
+	// ErrSessionLeasedElsewhere and never reaches the backend, so this loop
+	// only performs its real Acquire once the tombstone is actually cleared:
+	// the exact moment that must not precede the trial Release completing.
+	var run2 *agent.Run
+	reopenDone := make(chan struct{})
+	go func() {
+		defer close(reopenDone)
+		for {
+			r, err := svc.StartRun(context.Background(), sess.ID, "again")
+			if err == nil {
+				run2 = r
+				return
+			}
+			if errors.Is(err, server.ErrSessionLeasedElsewhere) {
+				time.Sleep(2 * time.Millisecond)
+				continue
+			}
+			t.Errorf("StartRun reopen: %v", err)
+			return
+		}
+	}()
+
+	// The reopen must still be spinning on the tombstone: it must not have
+	// succeeded (a real Acquire) while the trial Release is still blocked.
+	time.Sleep(100 * time.Millisecond)
+	select {
+	case <-reopenDone:
+		t.Fatal("reopening StartRun succeeded before the trial Release completed; the tombstone was cleared too early")
+	default:
+	}
+
 	unblockTrialRelease()
 
 	select {
@@ -1206,14 +1268,13 @@ func TestCloseSessionSerializesAgainstReconcileTrial(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("CloseSession never completed after the trial Release was unblocked")
 	}
-
-	// The tombstone is gone (whichever of Reconcile/Close cleared it last),
-	// so a normal re-entry now succeeds — and, critically, its real Acquire
-	// must only have happened (if at all so far) after the trial Release
-	// returned.
-	run2, err := svc.StartRun(context.Background(), sess.ID, "again")
-	if err != nil {
-		t.Fatalf("StartRun after close+reconcile = %v, want success (tombstone should be cleared)", err)
+	select {
+	case <-reopenDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("reopening StartRun never completed after the trial Release was unblocked")
+	}
+	if run2 == nil {
+		t.Fatal("reopening StartRun failed for a reason other than ErrSessionLeasedElsewhere")
 	}
 	run2.Cancel()
 	for range run2.Events() {

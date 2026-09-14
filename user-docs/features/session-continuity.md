@@ -148,13 +148,17 @@ A lease loss is not always a genuine takeover: a missed renewal from a
 transient network blip looks the same, at first, as losing the session to a
 real competing owner. Either way, the owning process immediately stops acting
 as owner and marks the session locally off-limits, refusing every further
-prompt or resume attempt for it on its own. A background sweep then checks with
-the real lease backend, on a bounded interval, whether the lease has actually
-become free; if it has, the sweep lifts the local mark automatically. A
-follow-up prompt or approval can then repair the session's terminal state
+prompt or resume attempt for it on its own. A background sweep, running every
+five minutes, then checks with the real lease backend whether the lease has
+actually become free; if it has, the sweep lifts the local mark automatically.
+A follow-up prompt or approval can then repair the session's terminal state
 through the ordinary run-entry recovery path, with no operator action and no
-process restart required. Until the sweep confirms this, the session stays
-refused, even if the original loss turns out to have been a false alarm.
+process restart required. Recovery depends on the lease backend itself being
+reachable and able to confirm the lease is free: a failed or unavailable check
+leaves the session refused for that pass, and the sweep simply retries five
+minutes later, rather than assuming the lease is free on an inconclusive
+answer. If the lease backend does not support leasing at all, the sweep never
+runs, and the session stays refused until an explicit close.
 
 ## Restart and deployment limitations
 
