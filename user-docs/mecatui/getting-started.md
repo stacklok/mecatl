@@ -37,8 +37,8 @@ The version command should print a release tag.
 
 ## Set up a provider
 
-For most people, the fastest way to get started is to use an API key. Run the
-interactive setup and select your provider:
+Use an API key for this tutorial. Run the interactive setup and select your
+provider:
 
 ```sh
 mecatui providers setup
@@ -48,16 +48,21 @@ Enter the API key when prompted. `mecatui` saves locally managed credentials
 without displaying them. You can check the configured provider later with
 `mecatui providers status`.
 
-Gateway and OAuth-based provider setups are available when your organization
-requires them, but they are not needed for a typical first local session. See
-[Choose models and providers](/features/choose-models.md) when you need those
-options.
+For custom providers and gateways that use API keys or OIDC, see
+[Use mecatui](./index.md#choose-how-to-connect).
 
 ## Start mecatui
 
 ```sh
 cd <PROJECT_DIRECTORY>
 mecatui
+```
+
+To submit the first prompt at startup while keeping the session interactive,
+pass `--prompt`:
+
+```sh
+mecatui --prompt "Summarize the failing tests in this repository"
 ```
 
 The welcome screen shows your workspace and active model. To use a different
