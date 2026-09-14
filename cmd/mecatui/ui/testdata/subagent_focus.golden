@@ -15,7 +15,7 @@
   ┃    ✓ Grep — pattern: auth                                                                    ┃
   ┃    checking the login flow                                                                   ┃
   ┃                                                                                              ┃
-  ┃  x cancel · esc back                                                                         ┃
+  ┃  x cancel · esc back · ↑/↓ scroll · pgup/pgdn · home/end                                     ┃
   ┃                                                                                              ┃
   ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 

@@ -41,6 +41,7 @@ type teamState struct {
 	view   teamView
 	cursor int    // selected row in the roster (an index into the render order)
 	member string // the focused member's name (teamFocus)
+	scroll int    // rendered-line offset in focus/tasks/findings
 }
 
 // openTeam opens the roster overlay over the most-recent populated Team card.
@@ -100,6 +101,10 @@ func (m Model) onTeamKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 		return mm, cmd, true
 	}
 	if m.team.view == teamFocus {
+		if next, handled := m.navigateAgentsDetail(msg, m.team.scroll); handled {
+			m.team.scroll = next
+			return m, nil, true
+		}
 		// Focus pane: esc returns to the roster; x cancels the focused member (live
 		// teams only — the key no-ops once the team ended or the member stopped). The
 		// trace is height-bounded (no live viewport), so no other key is consumed.
@@ -107,6 +112,7 @@ func (m Model) onTeamKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 		case key.Matches(msg, m.keys.Close):
 			m.team.view = teamRoster
 			m.team.member = ""
+			m.team.scroll = 0
 		case key.Matches(msg, m.keys.CancelChild):
 			mm, cmd := m.cancelTeamLane(b, teamFindLane(b, m.team.member))
 			return mm, cmd, true
@@ -114,20 +120,30 @@ func (m Model) onTeamKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 		return m, nil, true
 	}
 	if m.team.view == teamTasks {
+		if next, handled := m.navigateAgentsDetail(msg, m.team.scroll); handled {
+			m.team.scroll = next
+			return m, nil, true
+		}
 		// Subagent sub-view: BOTH esc and 't' return to the roster (t toggles, esc steps
 		// back). It is a calm read-only surface like the focus pane — no other key is
 		// consumed (the list is height-windowed, no live viewport).
 		if key.Matches(msg, m.keys.Close) || key.Matches(msg, m.keys.Tasks) {
 			m.team.view = teamRoster
+			m.team.scroll = 0
 		}
 		return m, nil, true
 	}
 	if m.team.view == teamFindings {
+		if next, handled := m.navigateAgentsDetail(msg, m.team.scroll); handled {
+			m.team.scroll = next
+			return m, nil, true
+		}
 		// Findings sub-view: BOTH esc and 'f' return to the roster (f toggles, esc
 		// steps back), mirroring the task sub-view. Read-only, height-windowed, no
 		// live viewport.
 		if key.Matches(msg, m.keys.Close) || key.Matches(msg, m.keys.Findings) {
 			m.team.view = teamRoster
+			m.team.scroll = 0
 		}
 		return m, nil, true
 	}
@@ -151,9 +167,11 @@ func (m Model) onTeamRosterKey(msg tea.KeyPressMsg, b *block) (tea.Model, tea.Cm
 		return m.closeTeam()
 	case key.Matches(msg, m.keys.Tasks):
 		m.team.view = teamTasks
+		m.team.scroll = 0
 		return m, nil
 	case key.Matches(msg, m.keys.Findings):
 		m.team.view = teamFindings
+		m.team.scroll = 0
 		return m, nil
 	}
 	if next, handled := navigateRosterCursor(msg, m.keys, m.team.cursor, n, page); handled {
@@ -168,6 +186,7 @@ func (m Model) onTeamRosterKey(msg tea.KeyPressMsg, b *block) (tea.Model, tea.Cm
 		}
 		m.team.member = b.teamLanes[order[m.team.cursor]].name
 		m.team.view = teamFocus
+		m.team.scroll = 0
 		return m, nil
 	case key.Matches(msg, m.keys.CancelChild):
 		order := teamLaneOrder(b.teamLanes)
@@ -380,6 +399,10 @@ func teamRosterSubhead(b *block) string {
 // matching lane (the member vanished — defensive) falls back to a muted note. All
 // text is sanitized.
 func renderTeamFocus(th theme.Theme, b *block, member string, hk helpKeys, bodyWidth, height int) string {
+	return renderTeamFocusAt(th, b, member, 0, hk, bodyWidth, height)
+}
+
+func renderTeamFocusAt(th theme.Theme, b *block, member string, scroll int, hk helpKeys, bodyWidth, height int) string {
 	muted := th.Style("muted")
 	ln := teamFindLane(b, member)
 	if ln == nil {
@@ -411,7 +434,9 @@ func renderTeamFocus(th theme.Theme, b *block, member string, hk helpKeys, bodyW
 		// source in renderTrace). It must NOT go through truncateLines, which
 		// sanitizeTerminal-strips ESC bytes and would mangle the styling — cap it by
 		// line count ANSI-safely instead, to the rows that fit the terminal height.
-		out.WriteString(capRenderedLines(th, trace, teamFocusRows(height)))
+		lines := strings.Split(trace, "\n")
+		w := renderedLineWindow(scroll, len(lines), teamFocusRows(height))
+		out.WriteString(strings.Join(lines[w.start:w.end], "\n"))
 	}
 
 	// A benched-on-error member surfaces WHY its last failed round failed, mirroring
@@ -426,28 +451,15 @@ func renderTeamFocus(th theme.Theme, b *block, member string, hk helpKeys, bodyW
 	// The cancel hint shows only for a CANCELLABLE member: a live team, a lane not
 	// already stopped, and a known session id (the CancelChild handle). The chords
 	// read the LIVE CancelChild/Close markings (issue #457).
-	hint := focusBackHint(hk)
+	traceLines := renderedTraceLines(th, hk, bodyWidth, ln.trace)
+	w := renderedLineWindow(scroll, len(traceLines), teamFocusRows(height))
+	lead := focusBackHint(hk)
 	if !b.teamDone && !ln.stopped && ln.sessionID != "" {
-		hint = hk.cancelChild + " cancel · " + focusBackHint(hk)
+		lead = hk.cancelChild + " cancel · " + lead
 	}
+	hint := agentsDetailHint(hk, w, lead)
 	out.WriteString("\n\n" + renderDynamicCardChromeLine(muted, "", hint, bodyWidth))
 	return out.String()
-}
-
-// capRenderedLines clamps an ALREADY-RENDERED (ANSI-carrying) string to maxLines,
-// appending a muted "+N more lines" tail when it overflows. Unlike truncateLines,
-// it does NOT sanitizeTerminal the input (that would strip the ESC bytes of the
-// embedded styling), so it is the right cap for content whose text was already
-// sanitized at render time (the team trace chips/messages). The tail does not
-// reference ctrl+t (the focus pane has no expand toggle).
-func capRenderedLines(th theme.Theme, s string, maxLines int) string {
-	lines := strings.Split(s, "\n")
-	if len(lines) <= maxLines {
-		return s
-	}
-	extra := len(lines) - maxLines
-	kept := strings.Join(lines[:maxLines], "\n")
-	return kept + "\n" + th.Style("muted").Render(fmt.Sprintf("  … +%s", plural(extra, "more line")))
 }
 
 // teamFailureLine renders the focus pane's failure block for a team member that ended
@@ -568,7 +580,31 @@ func teamSubViewHint(hk helpKeys, flip string) string {
 // task (glyph · id · state · assignee · deps). An empty list reads as a muted
 // "(no tasks)". All task-derived strings are terminal-sanitized. It mirrors the
 // roster's height-window math so a long task list never clips the footer.
+func renderedTaskLines(th theme.Theme, b *block, bodyWidth int) []string {
+	byID := make(map[string]string, len(b.teamTasks))
+	for _, task := range b.teamTasks {
+		byID[task.id] = task.state
+	}
+	var lines []string
+	for _, task := range b.teamTasks {
+		lines = append(lines, strings.Split(renderDynamicCardChromeLine(th.Style("muted"), "  ", taskRow(task, byID), bodyWidth), "\n")...)
+	}
+	return lines
+}
+
+func agentsDetailHint(hk helpKeys, w renderedLineWindowBounds, lead string) string {
+	hint := ""
+	if w.total > w.window {
+		hint = fmt.Sprintf("lines %d–%d of %d · ", w.start+1, w.end, w.total)
+	}
+	return hint + lead + " · " + hk.navUp + "/" + hk.navDown + " scroll · " + hk.scroll + " · " + hk.jumpTop + "/" + hk.jumpEnd
+}
+
 func renderTeamTasks(th theme.Theme, b *block, hk helpKeys, height int, widths ...int) string {
+	return renderTeamTasksAt(th, b, 0, hk, height, widths...)
+}
+
+func renderTeamTasksAt(th theme.Theme, b *block, scroll int, hk helpKeys, height int, widths ...int) string {
 	muted := th.Style("muted")
 	bodyWidth := 0
 	if len(widths) > 0 {
@@ -592,22 +628,10 @@ func renderTeamTasks(th theme.Theme, b *block, hk helpKeys, height int, widths .
 		byID[t.id] = t.state
 	}
 
-	// Window the rows to the available height (cursor-free: the task sub-view has no
-	// selection, so it always anchors at the top, surfacing only a "+N more" tail).
-	rows := teamTasksRows(height)
-	end := len(b.teamTasks)
-	if rows > 0 {
-		end = min(end, rows)
-	}
-	below := len(b.teamTasks) - end
-	for i := 0; i < end; i++ {
-		out.WriteString(renderDynamicCardChromeLine(muted, "  ", taskRow(b.teamTasks[i], byID), bodyWidth) + "\n")
-	}
-	if below > 0 {
-		out.WriteString(renderDelegationRows(muted, "  ", fmt.Sprintf("· +%d more", below), bodyWidth) + "\n")
-	}
-
-	out.WriteString("\n" + renderDynamicCardChromeLine(muted, "", teamSubViewHint(hk, hk.tasks), bodyWidth))
+	lines := renderedTaskLines(th, b, bodyWidth)
+	w := renderedLineWindow(scroll, len(lines), teamTasksRows(height))
+	out.WriteString(strings.Join(lines[w.start:w.end], "\n"))
+	out.WriteString("\n\n" + renderDynamicCardChromeLine(muted, "", agentsDetailHint(hk, w, teamSubViewHint(hk, hk.tasks)), bodyWidth))
 	return out.String()
 }
 
@@ -696,7 +720,19 @@ func teamFindingsRows(height int) int {
 // (member · body). An empty ledger reads as a muted "(no findings)". All
 // finding-derived strings are terminal-sanitized. It mirrors renderTeamTasks's
 // chrome and height-window math so a long ledger never clips the footer.
+func renderedFindingLines(th theme.Theme, b *block, bodyWidth int) []string {
+	var lines []string
+	for _, finding := range b.teamFindings {
+		lines = append(lines, strings.Split(renderDynamicCardChromeLine(th.Style("muted"), "  ", findingRow(finding), bodyWidth), "\n")...)
+	}
+	return lines
+}
+
 func renderTeamFindings(th theme.Theme, b *block, hk helpKeys, height int, widths ...int) string {
+	return renderTeamFindingsAt(th, b, 0, hk, height, widths...)
+}
+
+func renderTeamFindingsAt(th theme.Theme, b *block, scroll int, hk helpKeys, height int, widths ...int) string {
 	muted := th.Style("muted")
 	bodyWidth := 0
 	if len(widths) > 0 {
@@ -715,22 +751,10 @@ func renderTeamFindings(th theme.Theme, b *block, hk helpKeys, height int, width
 		return out.String()
 	}
 
-	// Window the rows to the available height (cursor-free: the findings sub-view has
-	// no selection, so it always anchors at the top, surfacing only a "+N more" tail).
-	rows := teamFindingsRows(height)
-	end := len(b.teamFindings)
-	if rows > 0 {
-		end = min(end, rows)
-	}
-	below := len(b.teamFindings) - end
-	for i := 0; i < end; i++ {
-		out.WriteString(renderDynamicCardChromeLine(muted, "  ", findingRow(b.teamFindings[i]), bodyWidth) + "\n")
-	}
-	if below > 0 {
-		out.WriteString(renderDelegationRows(muted, "  ", fmt.Sprintf("· +%d more", below), bodyWidth) + "\n")
-	}
-
-	out.WriteString("\n" + renderDynamicCardChromeLine(muted, "", teamSubViewHint(hk, hk.findings), bodyWidth))
+	lines := renderedFindingLines(th, b, bodyWidth)
+	w := renderedLineWindow(scroll, len(lines), teamFindingsRows(height))
+	out.WriteString(strings.Join(lines[w.start:w.end], "\n"))
+	out.WriteString("\n\n" + renderDynamicCardChromeLine(muted, "", agentsDetailHint(hk, w, teamSubViewHint(hk, hk.findings)), bodyWidth))
 	return out.String()
 }
 

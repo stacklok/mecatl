@@ -1,19 +1,19 @@
  mecatui  ·  session sess-test-00  ·  mock-model  ·  mode default  ·  127.0.0.1:8080
 ────────────────────────────────────────────────────────────────────────────────────────────────────
-
-
   ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
   ┃                                                                                              ┃
   ┃    Subagents    Parallel  ▸ Teams                                                            ┃
   ┃                                                                                              ┃
   ┃  agent · scout                                                                               ┃
   ┃  ◆ · scout [lead] · Read… · ↑0 ↓0                                                            ┃
-  ┃    … +12 more lines                                                                          ┃
-  ┃  esc back                                                                                    ┃
+  ┃                                                                                              ┃
+  ┃    ✓ Read — 100 lines                                                                        ┃
+  ┃    ✓ Read — 101 lines                                                                        ┃
+  ┃    ✓ Read — 102 lines                                                                        ┃
+  ┃                                                                                              ┃
+  ┃  lines 1–3 of 12 · esc back · ↑/↓ scroll · pgup/pgdn · home/end                              ┃
   ┃                                                                                              ┃
   ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-
-
 
 │
 │ Ask mecatl to do something…  (enter to send · shift+enter for newline · ? for help)

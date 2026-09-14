@@ -1721,6 +1721,7 @@ func (m Model) onResize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 	// the rendered regions in chrome().
 	m.relayout()
 	m.clampHelpScroll()
+	m.clampAgentsDetailScroll()
 	if widthChanged && m.vp.Height() == viewportHeight {
 		m.refreshView()
 		m.conversationView.observe(m.vp)

@@ -1620,35 +1620,7 @@ func TestMecatuiAgentsOverlayFit_Scenario2_RosterPagingMatchesRenderedWindow(t *
 // TestMecatuiAgentsOverlayFit_Scenario2_OverflowContentReachable pins the existing
 // remappable navigation surface and live range indicator used for overflowed rosters.
 func TestMecatuiAgentsOverlayFit_Scenario2_OverflowContentReachable(t *testing.T) {
-	th := aztec()
-	lines := []string{"one", "two", "three", "four"}
-	out := stripANSIstr(windowRenderedLines(th, lines, 2, 1))
-	if !strings.Contains(out, "three") || !strings.Contains(out, "lines 3–3 of 4") {
-		t.Fatalf("window range is not live/accurate: %q", out)
-	}
-	if got := clampScroll(99, len(lines), 1); got != 3 {
-		t.Fatalf("end clamp = %d, want 3", got)
-	}
-
-	m := resize(newMCPModel(t, th, nil), 32, 40)
-	m.conv.subagentFleet = make([]subagentLane, 12)
-	for i := range m.conv.subagentFleet {
-		m.conv.subagentFleet[i] = subagentLane{childID: fmt.Sprintf("child-%02d", i), goal: fmt.Sprintf("row-%02d wrapped metadata", i), current: "long-tool-name"}
-	}
-	m.team, m.agentsTab = teamState{view: teamRoster}, tabSubagents
-	m.keys = applyKeyOverrides(m.keys, map[string][]string{"Up": {"u"}, "Down": {"d"}, "JumpEnd": {"e"}})
-	mm, _ := m.Update(tea.KeyPressMsg{Code: 'e', Text: "e"})
-	m = mm.(Model)
-	listTh, hk, width, height := m.agentsListGeometry()
-	w := subagentSelectableList(listTh, m.subagents, m.conv.subagentFleet, hk, width).window(listTh, height)
-	out = stripANSIstr(m.View().Content)
-	wantAbove := fmt.Sprintf("+%d rows above", w.above)
-	if w.above == 0 || !strings.Contains(out, wantAbove) || !strings.Contains(out, "▶ ◐ row-11") {
-		t.Fatalf("selectable range/endpoint is not live and accurate (want %q):\n%s", wantAbove, out)
-	}
-	if !strings.Contains(out, "u/d select") {
-		t.Fatalf("selectable footer did not use live key markings:\n%s", out)
-	}
+	testAgentsDetailScrolling(t)
 }
 
 // TestMecatuiAgentsOverlayFit_Scenario2_WrappedDynamicContentFitsViewport pins that

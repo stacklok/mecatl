@@ -1437,20 +1437,20 @@ func TestAgentsFocusWindowed(t *testing.T) {
 	if !strings.Contains(out, "esc back") {
 		t.Errorf("focus footer clipped by the height bound, got %q", out)
 	}
-	// The overflow is surfaced by the "… +N more lines" tail.
-	if !strings.Contains(out, "more line") {
-		t.Errorf("a bounded focus pane should show a '… +N more lines' tail, got %q", out)
+	// The overflow is surfaced by the accurate rendered-line range.
+	if !strings.Contains(out, "lines 1–") {
+		t.Errorf("a bounded focus pane should show an accurate visible range, got %q", out)
 	}
 	// On a TALL terminal the same trace fits with no tail (the bound is min(cap, fit)).
 	tall := resize(m, 100, 80)
 	tallOut := stripANSIstr(tall.View().Content)
-	if strings.Contains(tallOut, "more line") {
+	if strings.Contains(tallOut, " of 12") {
 		t.Errorf("a tall terminal should not truncate the trace, got %q", tallOut)
 	}
 }
 
 // TestAgentsFocusWindowedGolden locks the bounded focus pane at a ~24-row
-// terminal: a capped trace, the "… +N more lines" tail, and the header + "esc
+// terminal: a capped trace, its accurate visible range, and the header + "esc
 // back" footer all visible (no clipping).
 func TestAgentsFocusWindowedGolden(t *testing.T) {
 	m := newMCPModel(t, aztec(), nil)
