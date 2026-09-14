@@ -3180,7 +3180,7 @@ func (m Model) preparePromptContent(text string) (string, client.MediaResult, bo
 		text = strings.TrimSpace(expandPastePlaceholders(text, m.stagedPastes))
 	}
 	var media client.MediaResult
-	if files := attachableMentions(m.deps.Workspace, text); len(files) > 0 {
+	if files := attachableMentions(m.deps.Workspace, text, mentionHomeDir(m.deps)); len(files) > 0 {
 		res, err := client.ExpandMentions(files, m.caps)
 		if err != nil {
 			return "", client.MediaResult{}, hadPastes, false, err

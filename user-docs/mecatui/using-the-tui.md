@@ -17,6 +17,34 @@ their diff.
 Focus a tool card and press `ctrl+t` to view its complete arguments and output.
 Press `ctrl+t` again to return to the preview.
 
+## Attach a local file
+
+Type `@` to complete and attach a file. Ordinary `@path` and `@./path` completion
+search the client workspace, preserving a leading `./` on insertion. One or more
+leading `../` components search the corresponding parent of that workspace and remain
+in the inserted path, so they may select files outside the workspace. A token starting
+with literal `~/` instead searches the home directory of the **mecatui client process**,
+retains `~/` when inserted, supports leading `./` and `../` components after `~/`, and
+also works when the client workspace is empty. With no client workspace, non-home
+completion has no implicit process-cwd fallback. Completion lists files only, prunes
+hidden files and directories, and is bounded; use `↑`/`↓` then `tab` or `enter` to
+select a result.
+
+On send, mecatui reads a mentioned regular file and uploads its bytes into the
+conversation: text files are inlined and supported media becomes an attachment. The
+source path is not a server workspace path and is never mounted, materialized, or made
+readable/editable through server tools. Therefore in a remote, containerized, or no-FS
+session, `~` still means the machine running mecatui, not the server/container.
+Traversal outside the client workspace still uploads content only and grants no
+execution-environment filesystem access. Treat this as sharing local content and avoid
+attaching sensitive home-directory files.
+
+Only literal leading `~/` has this home-expansion meaning. `~user` receives no
+home expansion, but can still attach as an ordinary workspace-relative mention when
+such a file exists. Quoted paths and embedded tildes remain ordinary prose; a path
+containing whitespace cannot be one mention token. If mecatui cannot determine its
+home directory, `@~/…` also remains prose.
+
 ## Keep working while a run is active
 
 Type your next instruction while the agent is running, then press `enter`.

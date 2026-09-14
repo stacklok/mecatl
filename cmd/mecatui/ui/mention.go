@@ -9,6 +9,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 
+	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
 
@@ -93,7 +94,7 @@ func (m Model) syncMention() Model {
 		m.mention.open = false
 		return m
 	}
-	m.mention.matches = matchWorkspaceFiles(m.deps.Workspace, token, maxMentionRows)
+	m.mention.matches = matchMentionFilesWithHome(m.deps.Workspace, token, mentionHomeDir(m.deps))
 	m.mention.open = len(m.mention.matches) > 0
 	if m.mention.cursor >= len(m.mention.matches) {
 		m.mention.cursor = 0
@@ -101,15 +102,46 @@ func (m Model) syncMention() Model {
 	return m
 }
 
-// matchWorkspaceFiles walks the workspace root (bounded) and returns up to limit
-// workspace-relative file paths whose path matches the @-token: an empty token
-// matches every file, otherwise a file matches when its relative path or its base
-// name contains the token (case-insensitive substring) — forgiving enough to find
-// "main.go" by typing "@main" or "@cmd/main". Directories, dotfiles/dot-dirs (so a
-// .git tree is skipped), and anything past the walk cap are excluded. Results are
-// path-sorted for a stable menu. A nil/empty root or a walk error yields no rows
-// (the menu simply stays closed — never a crash).
-func matchWorkspaceFiles(root, token string, limit int) []string {
+func mentionHomeDir(deps Deps) func() (string, error) {
+	if deps.homeDir != nil {
+		return deps.homeDir
+	}
+	return os.UserHomeDir
+}
+
+// matchMentionFilesWithHome walks the workspace root, or the local client-process
+// home for a literal ~/ token. Leading ./ and ../ components select the matching
+// local root while retaining their original spelling in completion results.
+func matchMentionFilesWithHome(workspace, token string, homeDir func() (string, error)) []string {
+	root, matchToken, prefix := workspace, token, ""
+	if rest, ok := strings.CutPrefix(token, "~/"); ok {
+		home, err := homeDir()
+		if err != nil || home == "" {
+			return nil
+		}
+		root, matchToken, prefix = home, rest, "~/"
+	} else if root == "" {
+		return nil
+	}
+	for {
+		if rest, ok := strings.CutPrefix(matchToken, "../"); ok {
+			root = filepath.Join(root, "..")
+			matchToken = rest
+			prefix += "../"
+			continue
+		}
+		if rest, ok := strings.CutPrefix(matchToken, "./"); ok {
+			matchToken = rest
+			prefix += "./"
+			continue
+		}
+		return matchFiles(root, matchToken, prefix, maxMentionRows)
+	}
+}
+
+// matchFiles walks root (bounded) and returns up to limit paths whose path matches
+// token. Results retain prefix, which is ~/ for local-home completion.
+func matchFiles(root, token, prefix string, limit int) []string {
 	if root == "" {
 		return nil
 	}
@@ -144,7 +176,7 @@ func matchWorkspaceFiles(root, token string, limit int) []string {
 		if lower == "" ||
 			strings.Contains(strings.ToLower(rel), lower) ||
 			strings.Contains(strings.ToLower(name), lower) {
-			out = append(out, rel)
+			out = append(out, prefix+rel)
 		}
 		return nil
 	})
@@ -176,10 +208,29 @@ func parseMentionPaths(text string) []string {
 	return out
 }
 
-// resolveMention turns a user-typed @-mention path into an absolute filesystem
-// path. A relative path resolves against the workspace root; an absolute path is
-// used as-is. (The server re-validates everything; this only locates the bytes to
-// read on the client.)
+// resolveMentionWithHome turns a user-typed @-mention path into an absolute local
+// path. A literal ~/ prefix resolves against the mecatui process's home directory; a
+// failed home lookup leaves it unresolved so it remains ordinary prompt prose.
+func resolveMentionWithHome(workspace, p string, homeDir func() (string, error)) (string, bool) {
+	if rest, ok := strings.CutPrefix(p, "~/"); ok {
+		home, err := homeDir()
+		if err != nil || home == "" {
+			return "", false
+		}
+		return filepath.Join(home, rest), true
+	}
+	if filepath.IsAbs(p) {
+		return p, true
+	}
+	if workspace == "" {
+		return "", false
+	}
+	return filepath.Join(workspace, p), true
+}
+
+// resolveMention retains the clipboard path-paste behavior: absolute paths are
+// used as typed and relative paths resolve against the workspace (or process cwd
+// when no workspace is configured).
 func resolveMention(workspace, p string) string {
 	if filepath.IsAbs(p) {
 		return p
@@ -189,19 +240,21 @@ func resolveMention(workspace, p string) string {
 
 // attachableMentions resolves the prompt's @-mention tokens against the workspace
 // and STAT-FILTERS them to existing REGULAR files — the gate that decides
-// attachment-vs-prose. A token that does not stat to a regular file (nonexistent,
-// a directory, a dangling symlink, a device, …) is NOT an attachment: it stays
-// literal prose in the prompt, so "ping me @oncall" or "@somedir" sends as text
-// with no error. Only the surviving real-file paths are handed to
-// client.ExpandMentions (which then routes each to a part / inline text / a loud
-// error by content type). os.Stat in the ui cmd package is fine — the ui already
-// uses os (e.g. theme/load.go), and this touches no proto/internal type.
-func attachableMentions(workspace, text string) []string {
-	var out []string
+// attachment-vs-prose. A token whose final component does not lstat to a regular
+// non-symlink file (nonexistent, a directory, a symlink, a device, …) is NOT an
+// attachment: it stays literal prose in the prompt, so "ping me @oncall" or
+// "@somedir" sends as text with no error. Only the surviving path plus original
+// mention label are handed to client.ExpandMentions, which revalidates the opened
+// file identity before reading it.
+func attachableMentions(workspace, text string, homeDir func() (string, error)) []client.MentionAttachment {
+	var out []client.MentionAttachment
 	for _, tok := range parseMentionPaths(text) {
-		path := resolveMention(workspace, tok)
-		if fi, err := os.Stat(path); err == nil && fi.Mode().IsRegular() {
-			out = append(out, path)
+		path, ok := resolveMentionWithHome(workspace, tok, homeDir)
+		if !ok {
+			continue
+		}
+		if fi, err := os.Lstat(path); err == nil && fi.Mode().IsRegular() {
+			out = append(out, client.MentionAttachment{Path: path, Label: tok})
 		}
 	}
 	return out

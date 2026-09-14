@@ -1092,9 +1092,29 @@ Typing `@` opens an inline **file-completion menu** — the same kind of dropdow
 the `/` palette, mutually exclusive with it (a line is either a `/command` or has an
 `@token` word, never both). It lists workspace files matching the typed token
 (case-insensitive substring on the path or base name; dotfiles/`.git` pruned; capped
-to 8 rows and a bounded directory walk so a huge tree never blocks). `↑`/`↓` select,
-`tab`/`enter` complete the highlighted path into the input (`@<path> `), `esc`
-dismisses.
+to 8 rows and a bounded directory walk so a huge tree never blocks). Ordinary paths and
+paths beginning `./` resolve from the client workspace; `./` remains in a completed
+insertion. One or more leading `../` components walk to the corresponding parent of
+that workspace and remain in the insertion, so they may select files outside it. A
+token starting with literal `~/` instead searches the **mecatui client process's home
+directory** and keeps `~/` in the completed insertion; it also supports leading `./`
+and `../` components after `~/`, and works even when the client has no workspace.
+With no client workspace, non-home completion has no implicit process-cwd fallback.
+`↑`/`↓` select, `tab`/`enter` complete the highlighted path into the input
+(`@<path> `), `esc` dismisses.
+
+All of these are local attachment spellings, not server workspace paths. On submit,
+mecatui reads the local file and uploads its content bytes into the conversation; the
+source is not mounted, materialized, or made readable/editable through server tools.
+This matters for remote, containerized, and no-FS sessions: `~` means the machine
+running mecatui, not the server/container or any server workspace. Traversal outside
+the client workspace still uploads content only; it grants no execution-environment
+filesystem access. Attach only content you intend to share, especially from a home
+directory. Only literal leading `~/` is recognized for home expansion; `~user` has
+no home-expansion meaning but can still attach as an ordinary workspace-relative path
+when a file with that name exists. Quoted forms and embedded tildes are ordinary
+prose; a path containing whitespace cannot be completed or mentioned as one token. If the local home cannot be determined, the mention also
+remains prose.
 
 On submit, every `@path` in the prompt is read and routed by sniffed content type:
 
