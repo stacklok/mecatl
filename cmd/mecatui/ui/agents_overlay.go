@@ -8,6 +8,7 @@ import (
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
@@ -393,7 +394,7 @@ func (m Model) onParallelRosterKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 func renderAgentsOverlay(th theme.Theme, tab agentsTab, sub subagentState, par parallelState, team teamState, b *block, fleet []subagentLane, groups []parallelGroup, hk helpKeys, width, height int, terminalHeight ...int) string {
 	// The conversation viewport can be shorter than the terminal because of the
 	// surrounding chrome. Compact is a terminal-height fallback, not a viewport
-	// fallback: a 24-row terminal still receives the normal, viewport-fitted card.
+	// fallback: a 24-row terminal still receives the normal layout attempt.
 	terminal := height
 	if len(terminalHeight) > 0 {
 		terminal = terminalHeight[0]
@@ -401,24 +402,222 @@ func renderAgentsOverlay(th theme.Theme, tab agentsTab, sub subagentState, par p
 	if terminal > 0 && terminal < 24 {
 		return renderCompactAgentsOverlay(th, tab, sub, par, team, hk, width)
 	}
-	bar := agentsTabBar(th, tab)
+
+	layout := newAgentsOverlayLayout(th, tab, width, height)
+	body, ok := layout.renderBody(func(bodyHeight int) string {
+		switch tab {
+		case tabSubagents:
+			return renderSubagentTab(th, sub, fleet, hk, layout.bodyWidth, bodyHeight)
+		case tabParallel:
+			return renderParallelTab(th, par, groups, hk, layout.bodyWidth, bodyHeight)
+		default:
+			return renderTeamsTab(th, team, b, hk, layout.bodyWidth, bodyHeight)
+		}
+	}, func() string {
+		return renderEssentialAgentsBody(th, tab, sub, par, team, b, fleet, groups, hk, layout.bodyWidth)
+	})
+	if !ok {
+		return renderViewportAgentsFallback(th, tab, sub, par, team, hk, width)
+	}
+	return centerAgentsCard(th, layout.tabStrip+"\n"+body, layout.outerWidth, width, height)
+}
+
+// agentsOverlayLayout is the overlay's single physical-line boundary. It derives
+// the usable body budget from askCard's actual frame and the already-rendered,
+// ANSI-safe tab strip. Tab bodies receive only that remaining budget; framing is
+// attempted only after their complete rendered rows fit it.
+type agentsOverlayLayout struct {
+	tabStrip                string
+	outerWidth, bodyWidth   int
+	bodyCapacity, frameRows int
+	bounded                 bool
+}
+
+func newAgentsOverlayLayout(th theme.Theme, tab agentsTab, width, height int) agentsOverlayLayout {
 	card, outerWidth, bodyWidth := agentsCardLayout(th, width)
-	// The body gets the height MINUS the tab bar + its blank line (agentsTabBarLines),
-	// so the window math in the tab bodies still keeps the footer hint on-screen.
-	bodyHeight := agentsBodyHeight(height)
-	var body string
+	tabStrip := agentsTabBar(th, tab)
+	if bodyWidth > 0 {
+		tabStrip = ansi.Hardwrap(tabStrip, bodyWidth, true)
+	}
+	layout := agentsOverlayLayout{
+		tabStrip:   tabStrip + "\n", // the blank separator is fixed tab chrome
+		outerWidth: outerWidth,
+		bodyWidth:  bodyWidth,
+		frameRows:  card.GetVerticalFrameSize(),
+		bounded:    height > 0,
+	}
+	if layout.bounded {
+		layout.bodyCapacity = height - layout.frameRows - lipgloss.Height(layout.tabStrip)
+	}
+	return layout
+}
+
+// renderBody lets the existing section renderers reduce their content window
+// against the real physical result. It never crops assembled output: a body is
+// accepted whole, or the normal card is declined. The added frameRows translate
+// the body-only capacity to the historical renderer-height convention while R2/R3
+// replace the current cursor windows.
+func (l agentsOverlayLayout) renderBody(build func(int) string, essential func() string) (string, bool) {
+	if !l.bounded {
+		return build(0), true
+	}
+	if l.bodyCapacity <= 0 {
+		return "", false
+	}
+	for capacity := l.bodyCapacity; capacity > 0; capacity-- {
+		body := build(capacity + l.frameRows)
+		if lipgloss.Height(body) <= l.bodyCapacity {
+			return body, true
+		}
+	}
+	body := essential()
+	if lipgloss.Height(body) <= l.bodyCapacity {
+		return body, true
+	}
+	return "", false
+}
+
+// renderEssentialAgentsBody is the normal card's smallest honest body. Each
+// section is rendered as a complete, width-bounded physical line before joining:
+// context, the selected/current row when one exists, and the live footer. It is
+// used only when optional metadata cannot fit the offered body capacity.
+type agentsEssentialBody struct {
+	title, selected, footer string
+	extra                   []string
+}
+
+type agentsEssentialLine func(lipgloss.Style, string, string) string
+
+func renderEssentialAgentsBody(th theme.Theme, tab agentsTab, sub subagentState, par parallelState, team teamState, b *block, fleet []subagentLane, groups []parallelGroup, hk helpKeys, width int) string {
+	line := func(style lipgloss.Style, prefix, text string) string {
+		return renderDynamicCardChromeLine(style, prefix, text, width)
+	}
+	var body agentsEssentialBody
 	switch tab {
 	case tabSubagents:
-		body = renderSubagentTab(th, sub, fleet, hk, bodyWidth, bodyHeight)
+		body = essentialSubagentBody(th, sub, fleet, hk, line)
 	case tabParallel:
-		body = renderParallelTab(th, par, groups, hk, bodyWidth, bodyHeight)
+		body = essentialParallelBody(th, par, groups, hk, line)
 	default:
-		body = renderTeamsTab(th, team, b, hk, bodyWidth, bodyHeight)
+		body = essentialTeamBody(th, team, b, hk, line)
 	}
-	// The frame consumes four physical lines (border plus vertical padding).
-	// Bound the assembled body before framing: styling is already per-line, so
-	// this cannot split an ANSI sequence or rely on placement clipping.
-	return centerAgentsCard(th, fitAgentsBody(bar+"\n\n"+body, max(0, height-card.GetVerticalFrameSize()-1)), outerWidth, width, height)
+	if body.selected == "" {
+		body.selected = line(th.Style("muted"), "", "(no entries)")
+	}
+	lines := []string{body.title, body.selected}
+	lines = append(lines, body.extra...)
+	lines = append(lines, body.footer)
+	return strings.Join(lines, "\n")
+}
+
+func essentialSubagentBody(th theme.Theme, st subagentState, fleet []subagentLane, hk helpKeys, line agentsEssentialLine) agentsEssentialBody {
+	body := agentsEssentialBody{
+		title:  line(th.Style("askTitle"), "", "subagents"),
+		footer: line(th.Style("muted"), "", agentsEmptyHint(hk)),
+	}
+	if st.view != subagentFocus {
+		if len(fleet) > 0 {
+			body.selected = line(th.Style("spinner"), "▶ ", subagentRosterLine(&fleet[clampCursor(st.cursor, len(fleet))]))
+		}
+		return body
+	}
+	body.footer = line(th.Style("muted"), "", focusBackHint(hk))
+	if lane := findFleetLane(fleet, st.child); lane != nil {
+		body.title = line(th.Style("askTitle"), "", "subagent · "+truncate(sanitizeTerminal(lane.goal), maxTeamNameWidth*2))
+		body.selected = line(th.Style("muted"), "", subagentRosterLine(lane))
+		if len(lane.trace) > 0 {
+			body.extra = append(body.extra, line(th.Style("muted"), "  ", fmt.Sprintf("… +%d more lines", len(lane.trace))))
+		}
+	}
+	return body
+}
+
+func essentialParallelBody(th theme.Theme, st parallelState, groups []parallelGroup, hk helpKeys, line agentsEssentialLine) agentsEssentialBody {
+	body := agentsEssentialBody{
+		title:  line(th.Style("askTitle"), "", "parallel"),
+		footer: line(th.Style("muted"), "", agentsEmptyHint(hk)),
+	}
+	if st.view != parallelGroupView {
+		if len(groups) > 0 {
+			body.selected = line(th.Style("spinner"), "▶ ", parallelRosterLine(&groups[clampCursor(st.cursor, len(groups))]))
+		}
+		return body
+	}
+	body.footer = line(th.Style("muted"), "", focusBackHint(hk))
+	group := findParallelGroup(groups, st.group)
+	if group == nil {
+		return body
+	}
+	body.title = line(th.Style("askTitle"), "", "parallel · join="+group.join)
+	ordered := branchesByIndex(group.branches)
+	if len(ordered) > 0 {
+		body.selected = line(th.Style("spinner"), "▶ ", parallelBranchLine(&ordered[clampCursor(st.branchCursor, len(ordered))]))
+		body.extra = append(body.extra, line(th.Style("muted"), "  ", fmt.Sprintf("· +%d more branch(es)", max(0, len(ordered)-1))))
+	}
+	return body
+}
+
+func essentialTeamBody(th theme.Theme, st teamState, b *block, hk helpKeys, line agentsEssentialLine) agentsEssentialBody {
+	body := agentsEssentialBody{
+		title:  line(th.Style("askTitle"), "", "agents"),
+		footer: line(th.Style("muted"), "", agentsEmptyHint(hk)),
+	}
+	if b == nil {
+		body.selected = line(th.Style("muted"), "", "no team has run this session")
+		return body
+	}
+	switch st.view {
+	case teamFocus:
+		body.footer = line(th.Style("muted"), "", focusBackHint(hk))
+		if lane := teamFindLane(b, st.member); lane != nil {
+			body.title = line(th.Style("askTitle"), "", "agent · "+truncate(sanitizeTerminal(lane.name), maxTeamNameWidth))
+			body.selected = line(th.Style("muted"), "", teamLaneLine(lane, 0, b.teamDone))
+			if len(lane.trace) > 0 {
+				body.extra = append(body.extra, line(th.Style("muted"), "  ", fmt.Sprintf("… +%d more lines", len(lane.trace))))
+			}
+		}
+	case teamTasks:
+		body.title = line(th.Style("askTitle"), "", "tasks")
+		body.footer = line(th.Style("muted"), "", teamSubViewHint(hk, hk.tasks))
+		if len(b.teamTasks) > 0 {
+			byID := make(map[string]string, len(b.teamTasks))
+			for _, task := range b.teamTasks {
+				byID[task.id] = task.state
+			}
+			body.selected = line(th.Style("muted"), "  ", taskRow(b.teamTasks[0], byID))
+		}
+	case teamFindings:
+		body.title = line(th.Style("askTitle"), "", "findings")
+		body.footer = line(th.Style("muted"), "", teamSubViewHint(hk, hk.findings))
+		if len(b.teamFindings) > 0 {
+			body.selected = line(th.Style("muted"), "  ", findingRow(b.teamFindings[0]))
+		}
+	default:
+		order := teamLaneOrder(b.teamLanes)
+		if len(order) > 0 {
+			lane := &b.teamLanes[order[clampCursor(st.cursor, len(order))]]
+			body.selected = line(th.Style("spinner"), "▶ ", teamRosterLine(th, lane, teamNameWidth(b.teamLanes, order), b.teamDone))
+		}
+	}
+	return body
+}
+
+// renderViewportAgentsFallback is distinct from terminal-height compact mode: it
+// has no selection marker and explicitly says that the offered conversation area,
+// rather than the terminal, is too short for the normal frame and essential footer.
+func renderViewportAgentsFallback(th theme.Theme, tab agentsTab, sub subagentState, par parallelState, team teamState, hk helpKeys, width int) string {
+	label, focus := "Subagents", sub.view == subagentFocus
+	switch tab {
+	case tabParallel:
+		label, focus = "Parallel", par.view == parallelGroupView
+	case tabTeams:
+		label, focus = "Teams", team.view == teamFocus || team.view == teamTasks || team.view == teamFindings
+	}
+	hint := hk.closeOnly + " close"
+	if focus {
+		hint = focusBackHint(hk)
+	}
+	return renderDynamicCardChromeLine(th.Style("askTitle"), "", label+" · vp short · "+hint, width)
 }
 
 // renderCompactAgentsOverlay is deliberately unframed: on a short terminal a
@@ -444,35 +643,6 @@ func renderCompactAgentsOverlay(th theme.Theme, tab agentsTab, sub subagentState
 		return renderDynamicCardChromeLine(th.Style("askTitle"), "", "▶ "+label+" · "+focusBackHint(hk), width)
 	}
 	return renderDynamicCardChromeLine(th.Style("askTitle"), "", "▶ "+label+" · "+hk.closeOnly+" close", width)
-}
-
-// fitAgentsBody preserves the title/context and the live footer when a narrow
-// offered viewport leaves less room than a view's optional metadata. The view
-// renderers already window selectable rows; this final physical-line budget is
-// the frame's fail-safe for wrapped dynamic metadata.
-func fitAgentsBody(body string, capacity int) string {
-	if capacity <= 0 {
-		return ""
-	}
-	lines := strings.Split(strings.TrimSuffix(body, "\n"), "\n")
-	if len(lines) <= capacity {
-		return strings.Join(lines, "\n")
-	}
-	if capacity == 1 {
-		return lines[len(lines)-1]
-	}
-	// Keep the final footer and the last meaningful content line (normally an
-	// overflow range/tail) so bounded views remain honest about omitted rows.
-	lastMeaningful := len(lines) - 2
-	for lastMeaningful >= 0 && strings.TrimSpace(lines[lastMeaningful]) == "" {
-		lastMeaningful--
-	}
-	if lastMeaningful < capacity-2 {
-		lastMeaningful = capacity - 2
-	}
-	kept := append([]string{}, lines[:capacity-2]...)
-	kept = append(kept, lines[lastMeaningful], lines[len(lines)-1])
-	return strings.Join(kept, "\n")
 }
 
 // agentsCardLayout derives the final card's outer and usable body widths from
@@ -507,7 +677,7 @@ func centerAgentsCard(th theme.Theme, body string, outerWidth, width, height int
 		return out
 	}
 	// Do not use lipgloss.Place here: Place silently clips an oversized child.
-	// fitAgentsBody guarantees height; this only adds centering whitespace.
+	// The physical layout boundary guarantees height; this only adds centering whitespace.
 	rows := strings.Split(out, "\n")
 	for i, row := range rows {
 		pad := max(0, (width-lipgloss.Width(row))/2)
@@ -520,20 +690,14 @@ func centerAgentsCard(th theme.Theme, body string, outerWidth, width, height int
 	return strings.Repeat("\n", top) + out + strings.Repeat("\n", bottom)
 }
 
-// agentsTabBarLines is how many vertical lines the unified overlay's tab strip costs
-// (the tab bar itself + the blank line under it). The tab bodies are given the OUTER
-// height minus this so their height-window math (teamRosterRows/teamFocusRows/…) keeps
-// the footer hint on-screen under the tab bar.
-const agentsTabBarLines = 2
-
-// agentsBodyHeight is the height available to the active tab's body: the outer
-// overlay height minus the tab bar. A non-positive (unknown) height passes through so
-// the bodies' "size unknown → show all rows" path is preserved.
+// agentsBodyHeight retains the tab-body renderer-height convention used by the
+// roster window tests: the tab strip and its separator consume two rows. The
+// physical layout boundary additionally charges the actual card frame.
 func agentsBodyHeight(height int) int {
 	if height <= 0 {
 		return height
 	}
-	return height - agentsTabBarLines
+	return height - 2
 }
 
 // agentsEmptyHint is the "tab switch · esc close" footer used by the empty

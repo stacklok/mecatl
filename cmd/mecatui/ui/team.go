@@ -660,7 +660,7 @@ func renderTeamTasks(th theme.Theme, b *block, hk helpKeys, height int, widths .
 	rows := teamTasksRows(height)
 	start, end, _, below := teamWindow(0, len(b.teamTasks), rows)
 	for i := start; i < end; i++ {
-		out.WriteString(renderDelegationRows(muted, "  ", taskRow(b.teamTasks[i], byID), bodyWidth) + "\n")
+		out.WriteString(renderDynamicCardChromeLine(muted, "  ", taskRow(b.teamTasks[i], byID), bodyWidth) + "\n")
 	}
 	if below > 0 {
 		out.WriteString(renderDelegationRows(muted, "  ", fmt.Sprintf("· +%d more", below), bodyWidth) + "\n")
@@ -779,7 +779,7 @@ func renderTeamFindings(th theme.Theme, b *block, hk helpKeys, height int, width
 	rows := teamFindingsRows(height)
 	start, end, _, below := teamWindow(0, len(b.teamFindings), rows)
 	for i := start; i < end; i++ {
-		out.WriteString(renderDelegationRows(muted, "  ", findingRow(b.teamFindings[i]), bodyWidth) + "\n")
+		out.WriteString(renderDynamicCardChromeLine(muted, "  ", findingRow(b.teamFindings[i]), bodyWidth) + "\n")
 	}
 	if below > 0 {
 		out.WriteString(renderDelegationRows(muted, "  ", fmt.Sprintf("· +%d more", below), bodyWidth) + "\n")

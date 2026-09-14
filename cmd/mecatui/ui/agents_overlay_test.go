@@ -1530,3 +1530,45 @@ func TestMecatuiAgentsOverlayFit_Scenario2_WrappedDynamicContentFitsViewport(t *
 		t.Fatalf("footer was hidden by wrapped dynamic content:\n%s", out)
 	}
 }
+
+func TestAgentsOverlayLayoutBoundaryExactFitAndOneLineShort(t *testing.T) {
+	th, hk := aztec(), defaultHelpKeys()
+	const width = 80
+	// askCard costs four rows, the tab strip plus separator costs two, and the
+	// empty Teams body costs three complete rows.
+	exact := stripANSIstr(renderAgentsOverlay(th, tabTeams, subagentState{}, parallelState{}, teamState{}, nil, nil, nil, hk, width, 9, 24))
+	if !strings.Contains(exact, "┏") || !strings.Contains(exact, "no team has run this session") || !strings.Contains(exact, "esc close") {
+		t.Fatalf("exact-fit normal card lost its frame or essential body:\n%s", exact)
+	}
+
+	short := stripANSIstr(renderAgentsOverlay(th, tabTeams, subagentState{}, parallelState{}, teamState{}, nil, nil, nil, hk, width, 8, 24))
+	if strings.Contains(short, "┏") || !strings.Contains(short, "vp short") || !strings.Contains(short, "esc close") {
+		t.Fatalf("one-line-short viewport must use the unframed viewport fallback:\n%s", short)
+	}
+}
+
+func TestAgentsOverlayLayoutBoundaryChargesWrappedTabStrip(t *testing.T) {
+	th, hk := aztec(), defaultHelpKeys()
+	const width, height = 32, 12
+	out := stripANSIstr(renderAgentsOverlay(th, tabTeams, subagentState{}, parallelState{}, teamState{}, nil, nil, nil, hk, width, height, 24))
+	if !strings.Contains(out, "┏") || !strings.Contains(out, "no team has run") || !strings.Contains(out, "esc close") {
+		t.Fatalf("wrapped fixed chrome was not charged as complete rows:\n%s", out)
+	}
+	for i, line := range strings.Split(out, "\n") {
+		if got := lipgloss.Width(line); got > width {
+			t.Fatalf("line %d width = %d, want <= %d: %q", i, got, width, line)
+		}
+	}
+}
+
+func TestAgentsOverlayLayoutBoundaryTinyConversationViewportUsesDistinctFallback(t *testing.T) {
+	th, hk := aztec(), defaultHelpKeys()
+	out := stripANSIstr(renderAgentsOverlay(th, tabSubagents, subagentState{}, parallelState{}, teamState{}, nil,
+		[]subagentLane{{childID: "child", goal: "audit"}}, nil, hk, 32, 1, 24))
+	if strings.Contains(out, "┏") || strings.Contains(out, "▶") || !strings.Contains(out, "vp short") || !strings.Contains(out, "esc close") {
+		t.Fatalf("normal-mode tiny viewport fallback must be unframed and distinct from compact mode: %q", out)
+	}
+	if got := lipgloss.Height(out); got > 1 {
+		t.Fatalf("tiny viewport fallback height = %d, want <= 1", got)
+	}
+}
