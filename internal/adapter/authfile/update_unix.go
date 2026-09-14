@@ -311,7 +311,7 @@ func readTarget(parentFD int, leaf string) (targetSnapshot, error) {
 	if err != nil || len(data) > maxFileBytes {
 		return targetSnapshot{}, errors.New("credential target exceeds 16 KiB or cannot be read")
 	}
-	return targetSnapshot{data: data, dev: stat.Dev, inode: stat.Ino, exists: true}, nil
+	return targetSnapshot{data: data, dev: uint64(stat.Dev), inode: uint64(stat.Ino), exists: true}, nil
 }
 
 func sameSnapshot(a, b targetSnapshot) bool {
