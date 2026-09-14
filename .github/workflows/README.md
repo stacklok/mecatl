@@ -40,9 +40,11 @@ the root binaries:
 
 1. Dispatch [Create TypeScript SDK Release PR](create-sdk-typescript-release-pr.yml)
    from `main` and select `patch`, `minor`, or `major`.
-2. Review and merge the bot-authored PR. Its entire diff is
-   [`sdk/typescript/VERSION`](../../sdk/typescript/VERSION) and the matching
-   `package.json` version.
+2. Review and merge the bot-authored PR. Its entire diff contains the generated
+   [`sdk/typescript/CHANGELOG.md`](../../sdk/typescript/CHANGELOG.md) entry,
+   [`sdk/typescript/VERSION`](../../sdk/typescript/VERSION), and the matching
+   `package.json` version. The changelog lists package changes since the previous
+   SDK tag.
 3. [Create TypeScript SDK Release Tag](create-sdk-typescript-release-tag.yml)
    verifies the merged PR and pushes `sdk/typescript/vX.Y.Z` with the release App.
 4. [Release TypeScript SDK](release-sdk-typescript.yml) builds and inspects the

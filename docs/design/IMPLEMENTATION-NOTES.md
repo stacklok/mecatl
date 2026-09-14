@@ -8493,9 +8493,10 @@ and owns its pinned pnpm lock independently of the npm-based website. The
 canonical published name is `@stacklok-oss/mecatl-sdk` on public npmjs
 (`sdk/typescript/v*` tags, `npm-publish` environment, staged trusted publishing,
 maintainer approval with 2FA, npm-native provenance). A manually dispatched
-release-App workflow advances `sdk/typescript/VERSION` and `package.json` in an
-exact two-file PR; its verified merge causes the App to push the matching tag
-and thereby trigger npm staging
+release-App workflow generates a package-scoped `sdk/typescript/CHANGELOG.md`
+entry and advances `sdk/typescript/VERSION` and `package.json` in an exact
+three-file PR. Its verified merge causes the App to push the matching tag and
+thereby trigger npm staging
 ([ADR 0328](../adr/0328-typescript-sdk-npmjs-stacklok-oss.md)).
 
 `sdk/typescript/src/raw.ts` enforces API-major compatibility before all non-compatibility RPCs;

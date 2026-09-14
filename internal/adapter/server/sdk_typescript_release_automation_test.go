@@ -20,6 +20,13 @@ func TestADR_0328_SDKReleasePRAndTagAutomation(t *testing.T) {
 	if manifest.Name != "@stacklok-oss/mecatl-sdk" || manifest.Version != version {
 		t.Fatalf("SDK identity/version = %s@%s, VERSION = %s", manifest.Name, manifest.Version, version)
 	}
+	changelog := string(readSDKScenario11File(t,
+		filepath.Join(root, "sdk", "typescript", "CHANGELOG.md")))
+	expectedChangelogHeading := "## [" + version + "](" +
+		"https://www.npmjs.com/package/%40stacklok-oss%2Fmecatl-sdk/v/" + version + ")"
+	if !strings.Contains(changelog, expectedChangelogHeading) {
+		t.Errorf("SDK changelog is missing %q", expectedChangelogHeading)
+	}
 
 	prWorkflow, prSource := readSDKScenario11Workflow(t,
 		filepath.Join(root, ".github", "workflows", "create-sdk-typescript-release-pr.yml"))
@@ -42,7 +49,10 @@ func TestADR_0328_SDKReleasePRAndTagAutomation(t *testing.T) {
 
 	for _, proof := range []string{
 		"workflow_dispatch:", "options: [patch, minor, major]",
-		"release/sdk-typescript/v", "sdk/typescript/VERSION", "sdk/typescript/package.json",
+		"release/sdk-typescript/v", "sdk/typescript/CHANGELOG.md", "sdk/typescript/VERSION",
+		"sdk/typescript/package.json", "Generate the SDK changelog entry",
+		`:(exclude)sdk/typescript/CHANGELOG.md`, "no TypeScript SDK changes exist",
+		"sdk-changelog-entry.md", "www.npmjs.com/package/%40stacklok-oss%2Fmecatl-sdk/v/",
 		"SDK VERSION and package.json identity do not agree", "git diff --name-only | sort",
 		"actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1",
 		"vars.RELEASE_APP_CLIENT_ID", "secrets.RELEASE_APP_PRIVATE_KEY", "gh pr create",
@@ -78,7 +88,8 @@ func TestADR_0328_SDKReleasePRAndTagAutomation(t *testing.T) {
 	}
 	for _, proof := range []string{
 		"sdk/typescript/v${version}", "release/sdk-typescript/v${version}",
-		`.user.type == "Bot"`, "git diff --name-only", "sdk/typescript/package.json",
+		`.user.type == "Bot"`, "git diff --name-only", "sdk/typescript/CHANGELOG.md",
+		"SDK changelog does not start with", "sdk/typescript/package.json",
 		"previous_tag", "git merge-base --is-ancestor", "should_tag=true",
 		"actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1",
 		"release-sdk-typescript.yml",

@@ -11,6 +11,9 @@ The package is public on [npmjs](https://www.npmjs.com/package/@stacklok-oss/mec
 pnpm add @stacklok-oss/mecatl-sdk
 ```
 
+See the [SDK changelog](https://github.com/stacklok/mecatl/blob/main/sdk/typescript/CHANGELOG.md)
+for release notes.
+
 ## Public entry points
 
 The package has three public entry points:

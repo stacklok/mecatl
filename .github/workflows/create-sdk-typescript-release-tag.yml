@@ -47,6 +47,24 @@ jobs:
             echo "::error::SDK VERSION ${version} != package.json ${manifest_version}"
             exit 1
           fi
+          VERSION="$version" node --input-type=module <<'NODE'
+          import { readFileSync } from "node:fs";
+
+          const changelog = readFileSync("sdk/typescript/CHANGELOG.md", "utf8");
+          const expected = `## [${process.env.VERSION}](https://www.npmjs.com/package/%40stacklok-oss%2Fmecatl-sdk/v/${process.env.VERSION})`;
+          const preamble = [
+            "# Changelog",
+            "",
+            "Notable changes to `@stacklok-oss/mecatl-sdk` are recorded here.",
+            "",
+            "For installation and API entry points, see the [TypeScript SDK README](./README.md).",
+            "",
+            "",
+          ].join("\n");
+          if (!changelog.startsWith(`${preamble}${expected}\n`)) {
+            throw new Error(`SDK changelog does not start with the ${process.env.VERSION} entry`);
+          }
+          NODE
           {
             echo "version=${version}"
             echo "tag=sdk/typescript/v${version}"
@@ -108,9 +126,9 @@ jobs:
           fi
 
           changed="$(git diff --name-only "${SHA}^" "$SHA" | sort)"
-          expected="$(printf '%s\n' sdk/typescript/VERSION sdk/typescript/package.json | sort)"
+          expected="$(printf '%s\n' sdk/typescript/CHANGELOG.md sdk/typescript/VERSION sdk/typescript/package.json | sort)"
           if [ "$changed" != "$expected" ]; then
-            echo "::error::the SDK release commit must contain only the version bump"
+            echo "::error::the SDK release commit must contain only the version bump and changelog"
             printf 'got:\n%s\n' "$changed"
             exit 1
           fi
