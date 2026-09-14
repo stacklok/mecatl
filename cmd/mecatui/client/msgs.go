@@ -147,10 +147,18 @@ type MCPAuthorizationMsg struct {
 // PermissionAskMsg opens the approval modal; AskID is the exact correlation key
 // echoed back in ResumeApproval — never inferred from the tool name.
 type PermissionAskMsg struct {
-	AskID  string
-	Tool   string
-	Args   string // raw JSON
-	Reason string
+	AskID     string
+	Tool      string
+	Args      string // raw JSON
+	Reason    string
+	Guardrail *GuardrailApprovalScope
+}
+
+// GuardrailApprovalScope distinguishes an outbound action approval from release
+// of an already-produced, privately-held result.
+type GuardrailApprovalScope struct {
+	ReviewID, Kind, GrantDigest  string
+	SessionOnly, RepeatAvailable bool
 }
 
 // PermissionRetractMsg withdraws a previously surfaced permission ask: the
@@ -184,10 +192,19 @@ const (
 // per-tool phases), and the Decision (info/blocked/modified/advisory) so the ui can
 // render it distinctly from a compaction notice and colour a blocked or advisory hook.
 type HookMsg struct {
-	Text     string
-	Phase    string
-	Tool     string
-	Decision HookDecision
+	Text      string
+	Phase     string
+	Tool      string
+	Decision  HookDecision
+	Guardrail *GuardrailReview
+}
+
+// GuardrailReview is the machine-only durable review projection. Human rationale
+// is fetched separately from the live detail RPC.
+type GuardrailReview struct {
+	ReviewID, Job, Assessment, Inspection, Disposition, ReasonCode string
+	RuleID, RuleOrigin, CheckerProviderID, CheckerModelID          string
+	ConcernRefs, SourceRefs                                        []string
 }
 
 // SubagentKind discriminates the three subagent.* event kinds carried by a
@@ -1115,20 +1132,13 @@ func EventToMsg(ev *mecatlv1.Event) tea.Msg {
 	case "tool.progress":
 		return ToolProgressMsg{Text: ev.GetText()}
 	case "permission.ask":
-		a := ev.GetAsk()
-		return PermissionAskMsg{AskID: a.GetAskId(), Tool: a.GetTool(), Args: a.GetArgs(), Reason: a.GetReason()}
+		return permissionAskMsg(ev.GetAsk())
 	case "permission.retract":
 		// The retraction payload rides the same ask field, carrying the AskID only
 		// (server-authored; no tool/args/reason).
 		return PermissionRetractMsg{AskID: ev.GetAsk().GetAskId()}
 	case "hook":
-		h := ev.GetHook()
-		return HookMsg{
-			Text:     ev.GetText(),
-			Phase:    h.GetPhase(),
-			Tool:     h.GetTool(),
-			Decision: hookDecisionFrom(h.GetDecision()),
-		}
+		return hookMsg(ev)
 	case "result":
 		return resultMsg(ev.GetResult())
 	case "approval":
@@ -1161,6 +1171,37 @@ func EventToMsg(ev *mecatlv1.Event) tea.Msg {
 		}
 		return delegationEventToMsg(ev)
 	}
+}
+
+func permissionAskMsg(a *mecatlv1.PermissionAsk) PermissionAskMsg {
+	msg := PermissionAskMsg{AskID: a.GetAskId(), Tool: a.GetTool(), Args: a.GetArgs(), Reason: a.GetReason()}
+	if scope := a.GetGuardrail(); scope != nil {
+		kind := string(SessionKindUnknown)
+		switch scope.GetKind() {
+		case mecatlv1.GuardrailApprovalKind_GUARDRAIL_APPROVAL_KIND_ACTION:
+			kind = "action"
+		case mecatlv1.GuardrailApprovalKind_GUARDRAIL_APPROVAL_KIND_RESULT_RELEASE:
+			kind = "result_release"
+		}
+		msg.Guardrail = &GuardrailApprovalScope{ReviewID: scope.GetReviewId(), Kind: kind, GrantDigest: scope.GetGrantDigest(), SessionOnly: scope.GetSessionOnly(), RepeatAvailable: scope.GetRepeatAvailable()}
+	}
+	return msg
+}
+
+func hookMsg(ev *mecatlv1.Event) HookMsg {
+	h := ev.GetHook()
+	msg := HookMsg{Text: ev.GetText(), Phase: h.GetPhase(), Tool: h.GetTool(), Decision: hookDecisionFrom(h.GetDecision())}
+	if review := h.GetGuardrail(); review != nil {
+		machine := &GuardrailReview{ReviewID: review.GetReviewId(), Job: guardrailJob(review.GetJob()), Assessment: guardrailAssessment(review.GetAssessment()), Inspection: guardrailInspection(review.GetInspection()), Disposition: guardrailDisposition(review.GetDisposition()), ReasonCode: review.GetReasonCode(), RuleID: review.GetRuleId(), RuleOrigin: review.GetRuleOrigin(), CheckerProviderID: review.GetCheckerProviderId(), CheckerModelID: review.GetCheckerModelId()}
+		for _, ref := range review.GetConcerns() {
+			machine.ConcernRefs = append(machine.ConcernRefs, ref.GetRef())
+		}
+		for _, ref := range review.GetSources() {
+			machine.SourceRefs = append(machine.SourceRefs, ref.GetRef())
+		}
+		msg.Guardrail = machine
+	}
+	return msg
 }
 
 func sessionTitleMsg(title *mecatlv1.SessionTitle) SessionTitleMsg {

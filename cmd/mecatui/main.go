@@ -293,6 +293,7 @@ func runWithOptions(argv []string, options runOptions) error {
 		Conv:                   cl,
 		MCP:                    cl,
 		Cmds:                   cl,
+		Guardrails:             cl,
 		Skills:                 cl,
 		Agents:                 cl,
 		Soul:                   cl,

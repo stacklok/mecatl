@@ -1566,9 +1566,10 @@ type GuardrailsSection struct {
 	// Disabled is the YAML-level kill switch (the CLI --guardrails=off also sets it).
 	Disabled bool `yaml:"disabled"`
 	// OnCheckerDown sets the global posture when the checker model is unavailable
-	// (error/timeout): "warn" (default, fail-open) or "fail" (fail-closed for all
-	// rules). Per-rule failClosed overrides: failClosed:true tightens even under
-	// warn; failClosed:false (explicit) loosens even under fail. Empty = warn.
+	// (error/timeout): "fail" (default, fail-closed) or explicit "warn"
+	// (continue with an operational warning). Per-rule failClosed overrides:
+	// failClosed:true tightens under warn; explicit false loosens under fail.
+	// Empty = fail.
 	OnCheckerDown string `yaml:"onCheckerDown"`
 	// DefaultMode sets the enforcement mode for the built-in default rules when no
 	// explicit rules are configured: "block" (default) or "advisory".
@@ -1594,7 +1595,7 @@ type GuardrailRuleSpec struct {
 	Mode string `yaml:"mode"`
 	// Prompt overrides the built-in inspection rubric.
 	Prompt string `yaml:"prompt"`
-	// FailClosed flips the fail-open default for enforcing modes.
+	// FailClosed optionally overrides the fail-closed global default for this rule.
 	FailClosed bool `yaml:"failClosed"`
 	// FailClosedPresent reports whether the failClosed key was explicitly set in
 	// the YAML — a bool can't distinguish "false" from "not set", so this lets the
@@ -1609,6 +1610,9 @@ type GuardrailRuleSpec struct {
 func (g *GuardrailsSection) UnmarshalYAML(node ast.Node) error {
 	if err := decodeStrictMapping(node, "guardrails", g.strictFields()); err != nil {
 		return err
+	}
+	if posture := strings.TrimSpace(g.OnCheckerDown); posture != "" && posture != "fail" && posture != "warn" {
+		return fmt.Errorf("guardrails.onCheckerDown: must be fail or warn")
 	}
 	if mode := strings.TrimSpace(g.DefaultMode); mode != "" && mode != "block" && mode != "advisory" {
 		return fmt.Errorf("guardrails.defaultMode: must be block or advisory")

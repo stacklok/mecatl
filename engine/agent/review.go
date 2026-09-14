@@ -130,3 +130,10 @@ type ReviewDetail struct {
 type ReviewDetailSink interface {
 	PublishReviewDetail(context.Context, ReviewDetail)
 }
+
+// rootReviewDetailSink is the optional root-aware lifecycle binding used by the
+// in-tree Service. Keeping it optional preserves ReviewDetailSink compatibility
+// for engine consumers while preventing child ids from becoming standalone authority.
+type rootReviewDetailSink interface {
+	PublishReviewDetailForRoot(context.Context, session.SessionID, ReviewDetail)
+}

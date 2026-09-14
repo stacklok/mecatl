@@ -57,14 +57,7 @@ func TestSDKTypescriptRelease_Scenario1_RPCTransportCatalogParity(t *testing.T) 
 	}
 
 	wantCounts := map[string]int{"HarnessService": 76, "ScheduleService": 10}
-	// Task 1 declares these RPCs additively, but their owner-authorized Service/HTTP
-	// implementations belong to Task 5. Keep them generated-only and unimplemented
-	// rather than projecting unsafe placeholder handlers into the public SDK catalog.
-	generatedOnly := stringSet(
-		"HarnessService.ListGuardrailCoverage",
-		"HarnessService.GetGuardrailReviewDetail",
-	)
-	wantKeys := make(map[string]struct{}, 84)
+	wantKeys := make(map[string]struct{}, 86)
 	for service := range targetServices {
 		methods := descriptorsByService[service]
 		if len(methods) != wantCounts[service] {
@@ -72,15 +65,8 @@ func TestSDKTypescriptRelease_Scenario1_RPCTransportCatalogParity(t *testing.T) 
 		}
 		for method := range methods {
 			key := service + "." + method
-			if _, pending := generatedOnly[key]; pending {
-				delete(generatedOnly, key)
-				continue
-			}
 			wantKeys[key] = struct{}{}
 		}
-	}
-	if len(generatedOnly) != 0 {
-		t.Fatalf("stale generated-only RPC decisions: %v", generatedOnly)
 	}
 
 	gotKeys := make(map[string]struct{}, len(rows))
@@ -123,7 +109,7 @@ func TestADR_0304_ExactGRPCOnlySet(t *testing.T) {
 			routeFamily[row.method] = struct{}{}
 		}
 	}
-	assertSDKStringSetsEqual(t, "ADR 0304 gRPC-only methods", stringSet("StreamSessionLive"), grpcOnly)
+	assertSDKStringSetsEqual(t, "ADR 0304 gRPC-only methods", stringSet("StreamSessionLive", "ListGuardrailCoverage", "GetGuardrailReviewDetail"), grpcOnly)
 	assertSDKStringSetsEqual(t, "ADR 0304 route-family methods", stringSet("Converse"), routeFamily)
 	assertSDKRPCManifest(t, source, "MECATL_RPC_ROUTE_FAMILIES", stringSet("Converse"))
 	assertSDKRPCManifest(

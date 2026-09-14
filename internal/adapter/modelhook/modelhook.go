@@ -231,11 +231,11 @@ func (r *Runner) Run(ctx context.Context, ev governance.HookEvent) (governance.H
 	innerOut, innerErr := r.inner.Run(ctx, ev)
 
 	phase, ok := phaseOf(ev.Phase)
-	if ok && phase == PhasePre && r.reviewer != nil {
-		// Production action review runs in the engine after trusted mutation and the
-		// second deterministic gate. This decorator retains only the inner mutation
-		// pass here; running the reviewer too would inspect the requested call and then
-		// duplicate the exact-effective-call review.
+	if ok && r.reviewer != nil {
+		// Production contextual review is owned by the engine at its exact action
+		// and repaired-result choke points. This decorator retains only ordinary
+		// operator hooks; invoking the reviewer here would inspect the requested
+		// action or rewrite an inbound result before it can be held for release.
 		return innerOut, innerErr
 	}
 	if !ok || (r.reviewer == nil && r.checker == nil) {

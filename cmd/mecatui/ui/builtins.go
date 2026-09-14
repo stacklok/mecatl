@@ -39,6 +39,7 @@ type wiredCollaborators struct {
 	Dream        bool
 	Compactor    bool
 	Models       bool // mirrors client.Capabilities.ModelSelection
+	Guardrails   bool
 	Worktrees    bool
 	Scheduling   bool
 	Sessions     bool // /sessions picker — gated on inventory + authoritative transcript
@@ -62,6 +63,7 @@ func (m Model) wiredCollaborators() wiredCollaborators {
 		MCP: m.deps.MCP != nil, MCPConnector: mcpConnector,
 		Agents: m.deps.Agents != nil, Skills: m.deps.Skills != nil,
 		Soul: m.deps.Soul != nil, UserModel: m.deps.UserModel != nil, Models: m.deps.Models != nil,
+		Guardrails:  m.deps.Guardrails != nil,
 		Reflections: m.deps.Reflections != nil,
 		Dream:       m.deps.Dream != nil,
 		Compactor:   m.deps.Compactor != nil,
@@ -197,6 +199,9 @@ func builtinCommands(caps client.Capabilities, w wiredCollaborators) []builtin {
 	}
 	if caps.ManualDream != nil && w.Dream {
 		out = append(out, builtin{name: "dream", desc: "manually consolidate project memory or the user model", run: Model.runDream})
+	}
+	if w.Guardrails {
+		out = append(out, builtin{name: "guardrails", desc: "show contextual guardrail coverage and checker health", run: Model.runGuardrails})
 	}
 	if caps.ModelSelection && w.Models {
 		out = append(out, builtin{

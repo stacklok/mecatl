@@ -752,7 +752,8 @@ type Run struct {
 	// reviewRoot is the delegation-root contextual trajectory and reviewer binding.
 	// Child runs inherit the same pointer through private RunRequest fields; no
 	// conversation content crosses that seam.
-	reviewRoot *reviewRoot
+	reviewRoot     *reviewRoot
+	ownsReviewRoot bool
 	// currentPrompt is the accepted genuine prompt for this run. Completion locates
 	// it in the final history; if compaction removed it, automatic admission gets an
 	// invalid span and fails closed.
@@ -922,6 +923,12 @@ func (r *Run) setOutcome(outcome RunOutcome) { r.outcome.Store(int32(outcome)) }
 // allow rule for the matching tool+pattern. It is non-blocking and safe to call
 // from another goroutine; an unknown or already-resolved askID is ignored.
 func (r *Run) Approve(askID string, v session.ApprovalVerdict) {
+	// A result-release ask accepts Release once or Deny only. Ignore unsupported
+	// verdicts while the ask and held bytes remain live, before any resolution,
+	// audit event, aggregate transition, or deletion.
+	if r.reviewRoot != nil && r.reviewRoot.isReleaseAsk(askID) && v != session.VerdictAllowOnce && v != session.VerdictDeny {
+		return
+	}
 	// Router-first: a foreign (child-namespaced) askID belongs to a SURFACED subagent
 	// ask — route the verdict to the owning child Run. Because child askIDs are prefixed
 	// by a distinct child session id, they never collide with this run's own asks, so a
@@ -1335,7 +1342,7 @@ func (e *Engine) PrepareAuthorizationContinuation(ctx context.Context, sess *ses
 			reject("no longer permitted in plan mode", fmt.Sprintf("authorization continuation is no longer permitted: plan mode is active and %q now mutates the workspace; present a plan and exit plan mode first", pending.Call.Name))
 			return
 		}
-		result := e.execute(ctx, r, sess, env, sess.Counters.Turns, pending.Call, toolToRun, time.Time{})
+		result, cancelled := e.execute(ctx, r, sess, env, sess.Counters.Turns, pending.Call, toolToRun, time.Time{})
 		results := []session.ToolResult{result}
 		for _, deferred := range pending.Deferred {
 			deferredResult := session.NewToolError(deferred.ID, "authorization deferred sibling was not executed")
@@ -1347,6 +1354,10 @@ func (e *Engine) PrepareAuthorizationContinuation(ctx context.Context, sess *ses
 			return
 		}
 		e.save(ctx, r, sess)
+		if cancelled {
+			e.terminate(ctx, r, sess, session.StopCancelled, "", session.Usage{}, nil, false)
+			return
+		}
 		e.emitAuthorizationResolution(r, sess.Counters.Turns, pending.Authorization, pending.Call.ID, status, nil)
 		e.runLoop(ctx, r, sess, env, session.Usage{}, "", false)
 	}), nil
@@ -1428,6 +1439,8 @@ func (e *Engine) prepareRun(ctx context.Context, sess *session.Session, req RunR
 	}
 	if r.reviewRoot == nil && e.deps.ToolReviewer != nil {
 		r.reviewRoot = newReviewRoot(e.deps.ToolReviewer, e.deps.ReviewDetails)
+		r.reviewRoot.rootSessionID = sess.ID
+		r.ownsReviewRoot = true
 	}
 	// Resolve the trailing askID discriminator once (ADR-0044 / ADR-0249); see
 	// askDiscriminatorFor for the precedence and the colon rule.
@@ -1497,6 +1510,9 @@ func (e *Engine) prepareRun(ctx context.Context, sess *session.Session, req RunR
 	r.children.unregisterAsk = r.unregisterChildAsk
 	start := func() {
 		go func() {
+			if r.ownsReviewRoot {
+				defer r.reviewRoot.clearHeld()
+			}
 			// Defers run LIFO: cancel first (releases the run's ctx tree), then the
 			// belt-and-braces seal — its abort-before-emitMu ordering closes emitAbort,
 			// which is what unwinds any guarded send still parked on a full events
@@ -1741,6 +1757,13 @@ func (e *Engine) runLoop(ctx context.Context, r *Run, sess *session.Session, env
 func (e *Engine) dispatchTurn(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, calls []session.ToolCall, lastText string, total session.Usage) bool {
 	results, park, cancelled := e.dispatch(ctx, r, sess, env, turnIdx, calls)
 	if cancelled {
+		if len(results) > 0 {
+			if err := sess.RecordToolResults(results); err != nil {
+				e.terminate(ctx, r, sess, session.StopError, lastText, total, err, false)
+				return true
+			}
+			e.save(context.WithoutCancel(ctx), r, sess)
+		}
 		e.terminate(ctx, r, sess, session.StopCancelled, lastText, total, nil, false)
 		return true
 	}

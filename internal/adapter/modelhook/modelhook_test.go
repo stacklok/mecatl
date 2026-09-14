@@ -389,7 +389,9 @@ func TestADR_0342_ContextualGuardrails_Scenario2_FailureMatrix(t *testing.T) {
 			if !ok {
 				t.Fatal("failed to compile test rule")
 			}
+			reviewerCalls := 0
 			reviewer := toolReviewerFunc(func(context.Context, agent.ToolReviewRequest, agent.ReviewEvidenceSource) (agent.ToolReviewResult, error) {
+				reviewerCalls++
 				return agent.ToolReviewResult{Assessment: agent.ReviewUnresolved}, nil
 			})
 			r := New(&passInner{}, Options{Rules: []CompiledRule{rule}, ToolReviewer: reviewer, Diagnostics: diag, FailOnCheckerDown: tc.fail})
@@ -398,26 +400,15 @@ func TestADR_0342_ContextualGuardrails_Scenario2_FailureMatrix(t *testing.T) {
 				if runErr != nil {
 					t.Fatalf("Run() error = %v", runErr)
 				}
-				if tc.mode == ModeBlock && len(out.Mutated) == 0 {
-					t.Fatalf("completed unresolved inbound review must use the existing post withholding rewrite: %+v", out)
+				if out.Block || out.Message != "" || len(out.Mutated) != 0 {
+					t.Fatalf("production contextual Post review must be engine-owned, got adapter outcome %+v", out)
 				}
-				if tc.mode == ModeAdvisory && (out.Block || len(out.Mutated) != 0) {
-					t.Fatalf("completed unresolved advisory review altered original: %+v", out)
-				}
-				if strings.Contains(out.Message, raw) || strings.Contains(string(out.Mutated), raw) {
-					t.Fatalf("raw reviewed input escaped in rationale: %+v", out)
-				}
+			}
+			if reviewerCalls != 0 {
+				t.Fatalf("adapter reran contextual inbound reviewer %d times", reviewerCalls)
 			}
 			if n := diag.count("checker DOWN"); n != 0 {
-				t.Fatalf("completed unresolved assessment incremented checker-DOWN state: %d", n)
-			}
-			if tc.mode == ModeAdvisory {
-				if n := diag.count("advisory unresolved"); n == 0 {
-					t.Fatalf("advisory unresolved status missing: %v", diag.lines)
-				}
-				if n := diag.count("advisory finding"); n != 0 {
-					t.Fatalf("unresolved assessment mislabeled as finding: %v", diag.lines)
-				}
+				t.Fatalf("engine-owned review altered adapter checker-DOWN state: %d", n)
 			}
 		})
 	}

@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -14,10 +13,12 @@ import (
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/modelhook"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
+	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
 const (
 	editToolName  = "Edit"
+	readToolName  = "Read"
 	writeToolName = "Write"
 )
 
@@ -50,7 +51,7 @@ func foldOperatorGuardrails(cfg Config) Config {
 	if cfg.GuardrailsMinContentBytes == 0 {
 		cfg.GuardrailsMinContentBytes = g.MinContentBytes
 	}
-	// OnCheckerDown: YAML supplies it (no flag); empty = warn (the default).
+	// OnCheckerDown: YAML supplies it (no flag); empty = fail (the safe default).
 	if cfg.GuardrailsOnCheckerDown == "" {
 		cfg.GuardrailsOnCheckerDown = strings.TrimSpace(g.OnCheckerDown)
 	}
@@ -141,40 +142,70 @@ func (c engineGuardrailsChecker) Check(ctx context.Context, req modelhook.CheckR
 // fabricated "safe".
 var errGuardrailVerdictUnparseable = guardrailError("guardrail checker verdict unparseable or ambiguous")
 
+func guardrailFailClosed(value string) bool {
+	return !strings.EqualFold(strings.TrimSpace(value), "warn")
+}
+
 type guardrailError string
 
 func (e guardrailError) Error() string { return string(e) }
 
 type guardrailActionReviewer struct {
-	base       agent.ToolReviewer
-	rules      []modelhook.CompiledRule
-	failClosed bool
-	grants     *modelhook.WaiverHolder
+	base                agent.ToolReviewer
+	rules               []modelhook.CompiledRule
+	failClosed          bool
+	grants              *modelhook.WaiverHolder
+	providerID, modelID string
+	ruleOrigin          string
+}
+
+// GuardrailReviewPolicy is the private engine duck-type that keeps configured
+// rule matching and enforcement posture attached to the reviewer without
+// widening the public ToolReviewer protocol.
+func (r *guardrailActionReviewer) GuardrailReviewPolicy(toolName string, job agent.ReviewJob, operationalFailure bool) (applies, enforce bool) {
+	phase := modelhook.PhasePre
+	if job == agent.ReviewJobInbound {
+		phase = modelhook.PhasePost
+	}
+	rule, matched := modelhook.ResolveRule(r.rules, toolName, phase)
+	if !matched {
+		return false, false
+	}
+	if rule.Advisory() {
+		return true, false
+	}
+	if operationalFailure {
+		return true, rule.FailClosed(r.failClosed)
+	}
+	return true, true
+}
+
+func (r *guardrailActionReviewer) GuardrailReviewMetadata(toolName string, job agent.ReviewJob) (ruleID, ruleOrigin, providerID, modelID string) {
+	phase := modelhook.PhasePre
+	if job == agent.ReviewJobInbound {
+		phase = modelhook.PhasePost
+	}
+	rule, matched := modelhook.ResolveRule(r.rules, toolName, phase)
+	if matched {
+		ruleID = rule.Match()
+	}
+	ruleOrigin = r.ruleOrigin
+	return ruleID, ruleOrigin, r.providerID, r.modelID
 }
 
 func (r *guardrailActionReviewer) Review(ctx context.Context, req agent.ToolReviewRequest, source agent.ReviewEvidenceSource) (agent.ToolReviewResult, error) {
-	rule, matched := modelhook.ResolveRule(r.rules, req.EffectiveCall.Name, modelhook.PhasePre)
-	if !matched || rule.SkipAction(req.EffectiveCall.Name, string(req.EffectiveCall.Args)) {
+	phase := modelhook.PhasePre
+	if req.Job == agent.ReviewJobInbound {
+		phase = modelhook.PhasePost
+	}
+	rule, matched := modelhook.ResolveRule(r.rules, req.EffectiveCall.Name, phase)
+	if !matched || (phase == modelhook.PhasePre && rule.SkipAction(req.EffectiveCall.Name, string(req.EffectiveCall.Args))) {
 		return agent.ToolReviewResult{Assessment: agent.ReviewAcceptable}, nil
 	}
 	if prompt := strings.TrimSpace(rule.Prompt()); prompt != "" {
 		req.PrincipalFacts = append(req.PrincipalFacts, agent.ReviewPrincipalFact{Kind: "operator_task_risk_policy", Ref: "operator-policy", Statement: prompt})
 	}
-	result, err := r.base.Review(ctx, req, source)
-	if rule.Advisory() {
-		result.Assessment = agent.ReviewAcceptable
-		return result, nil
-	}
-	if err != nil {
-		var terminal interface{ GuardrailReviewTerminalFailure() bool }
-		if errors.As(err, &terminal) && terminal.GuardrailReviewTerminalFailure() {
-			return result, err
-		}
-		if !rule.FailClosed(r.failClosed) {
-			return agent.ToolReviewResult{Assessment: agent.ReviewAcceptable}, nil
-		}
-	}
-	return result, err
+	return r.base.Review(ctx, req, source)
 }
 
 func (r *guardrailActionReviewer) GrantDigest(req agent.ToolReviewRequest) (string, bool) {
@@ -229,10 +260,62 @@ func buildGuardrailsActionReviewer(cfg Config, provReg *providerRegistry, provid
 	if !ok {
 		return nil
 	}
-	return &guardrailActionReviewer{base: base, rules: rules, failClosed: strings.EqualFold(strings.TrimSpace(cfg.GuardrailsOnCheckerDown), "fail"), grants: grants}
+	origin := "default"
+	if len(cfg.GuardrailsRules) > 0 {
+		origin = "operator"
+	}
+	providerID, modelID := cfg.guardrailProviderID, cfg.guardrailModel
+	if routed, ok := base.(interface{ GuardrailCheckerRoute() (string, string) }); ok {
+		providerID, modelID = routed.GuardrailCheckerRoute()
+	}
+	return &guardrailActionReviewer{base: base, rules: rules, failClosed: guardrailFailClosed(cfg.GuardrailsOnCheckerDown), grants: grants, providerID: providerID, modelID: modelID, ruleOrigin: origin}
 }
 
-// buildGuardrailsHooks decorates inner with the issue #27 guardrails Runner, or
+func guardrailCoverageFor(cfg Config, sess *session.Session) server.GuardrailCoverage {
+	coverage := server.GuardrailCoverage{
+		Enabled:           cfg.guardrailConfigured && !cfg.GuardrailsDisabled,
+		CheckerProviderID: cfg.guardrailProviderID,
+		CheckerModelID:    cfg.guardrailModel,
+	}
+	if !coverage.Enabled || sess == nil {
+		return coverage
+	}
+	specs, _ := effectiveGuardrailSpecs(cfg)
+	rules, ok := compileGuardrailRules(cfg, specs)
+	if !ok {
+		coverage.Enabled = false
+		return coverage
+	}
+	origin := "operator"
+	if len(cfg.GuardrailsRules) == 0 {
+		origin = "default"
+	}
+	authority, bound := sess.BoundAuthority()
+	if !bound {
+		return coverage
+	}
+	tools := append([]string(nil), authority.CapabilitySet.Tools...)
+	sort.Strings(tools)
+	for _, toolName := range tools {
+		for _, phase := range []modelhook.Phase{modelhook.PhasePre, modelhook.PhasePost} {
+			rule, matched := modelhook.ResolveRule(rules, toolName, phase)
+			if !matched {
+				continue
+			}
+			job := string(agent.ReviewJobAction)
+			if phase == modelhook.PhasePost {
+				job = string(agent.ReviewJobInbound)
+			}
+			coverage.Entries = append(coverage.Entries, server.GuardrailCoverageEntry{
+				Tool: toolName, Phase: string(phase), Job: job, Mode: string(rule.Mode()),
+				RuleID: rule.Match(), RuleOrigin: origin,
+				Reason: "not inspected: this row reports configured applicability; completed review health appears on review events",
+			})
+		}
+	}
+	return coverage
+}
+
 // returns inner UNCHANGED when guardrails are unconfigured (OFF-by-default,
 // byte-identical to the pre-feature posture). It is called at BOTH main-engine hook
 // sites — buildEngine (the shared default-provider engine) and sessionEngineFactory
@@ -269,7 +352,7 @@ func buildGuardrailsHooks(cfg Config, provReg *providerRegistry, provider port.L
 		ToolReviewer:      reviewer,
 		Diagnostics:       cfg.diag(),
 		MinContentBytes:   cfg.GuardrailsMinContentBytes,
-		FailOnCheckerDown: strings.EqualFold(strings.TrimSpace(cfg.GuardrailsOnCheckerDown), "fail"),
+		FailOnCheckerDown: guardrailFailClosed(cfg.GuardrailsOnCheckerDown),
 		Waiver:            waiver,
 	})
 }
@@ -318,7 +401,11 @@ var defaultGuardrailSpecs = []modelhook.RuleSpec{
 	// rubric (defaultPrePrompt) false-positives on ordinary local writes (a local write
 	// is data STAYING on the machine, not exfiltration), so Shell gets a concrete-trigger,
 	// fail-toward-safe rubric instead. ADR 0060.
-	{Match: "Shell", Phases: []string{string(modelhook.PhasePre)}, Mode: string(modelhook.ModeBlock), SkipReadOnlyShell: true, Prompt: modelhook.DefaultShellPrePrompt},
+	{Match: "Shell", Phases: []string{string(modelhook.PhasePre), string(modelhook.PhasePost)}, Mode: string(modelhook.ModeBlock), SkipReadOnlyShell: true, Prompt: modelhook.DefaultShellPrePrompt},
+	{Match: readToolName, Phases: []string{string(modelhook.PhasePost)}, Mode: string(modelhook.ModeBlock)},
+	{Match: "ListDir", Phases: []string{string(modelhook.PhasePost)}, Mode: string(modelhook.ModeBlock)},
+	{Match: "Grep", Phases: []string{string(modelhook.PhasePost)}, Mode: string(modelhook.ModeBlock)},
+	{Match: "Glob", Phases: []string{string(modelhook.PhasePost)}, Mode: string(modelhook.ModeBlock)},
 	{Match: editToolName, Phases: []string{string(modelhook.PhasePre)}, Mode: string(modelhook.ModeBlock)},
 	{Match: writeToolName, Phases: []string{string(modelhook.PhasePre)}, Mode: string(modelhook.ModeBlock)},
 	{Match: "Copy", Phases: []string{string(modelhook.PhasePre)}, Mode: string(modelhook.ModeBlock)},

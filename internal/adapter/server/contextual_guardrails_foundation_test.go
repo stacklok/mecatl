@@ -1,6 +1,8 @@
 package server
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"google.golang.org/protobuf/proto"
@@ -34,5 +36,33 @@ func TestADR_0342_ContextualGuardrails_Scenario1_ApprovalOriginProtoProjection(t
 	}
 	if old.GetOrigin() != "" {
 		t.Fatalf("absent additive origin = %q", old.GetOrigin())
+	}
+}
+
+func TestADR_0342_ContextualGuardrails_Scenario5_NoContentLeak(t *testing.T) {
+	secret := "held-result-secret-token"
+	event := session.Event{Type: session.EvHook, Hook: &session.HookPayload{Guardrail: &session.GuardrailReviewPayload{
+		ReviewID: "r", Job: "inbound", Assessment: "prohibited", Inspection: "complete", Disposition: "withhold_result",
+		ReasonCode: "authority_crossing", Concerns: []session.GuardrailRef{{Ref: "C1", Category: "redirection"}},
+	}}}
+	raw, err := json.Marshal(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wire, err := proto.Marshal(toProto(event))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), secret) || strings.Contains(string(wire), secret) {
+		t.Fatal("durable machine projection leaked held result content")
+	}
+	fields := toProto(event).GetHook().GetGuardrail().ProtoReflect().Descriptor().Fields()
+	for i := 0; i < fields.Len(); i++ {
+		name := string(fields.Get(i).Name())
+		for _, forbidden := range []string{"rationale", "args", "evidence_body", "held_result", "target_path", "transcript", "call_body"} {
+			if name == forbidden {
+				t.Fatalf("durable GuardrailReview exposes forbidden field %q", name)
+			}
+		}
 	}
 }

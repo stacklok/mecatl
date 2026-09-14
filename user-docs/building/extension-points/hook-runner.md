@@ -348,19 +348,19 @@ port.HookRunner (hookexec.New)
                └── deps.Hooks  ← what the main engine sees
 ```
 
-The guardrail checker runs on `PreToolUse` for outbound exfiltration and on
-`PostToolUse` for inbound injection. It uses a separate checker model with no
-tools and returns ordinary Block or Mutate outcomes through `HookRunner`.
+The contextual guardrail reviewer is downstream of trusted hook mutation rather
+than a replacement `HookRunner` outcome. Action review sees the exact effective
+call after deterministic gates are repeated when mutation changed arguments.
+Inbound review runs after the tool and PostToolUse hook, then privately holds an
+enforcing finding before recorder, history, event, client, or model delivery.
 
-The guardrail `PostToolUse` block enforces via Mutate — exactly the pattern
-described in the caveat above. An enforcing inbound block rewrites the result to
-`{content: "blocked by guardrail: …", is_error: true}` rather than attempting to
-veto an already-run tool.
+A held result can be released exactly once by an interactive owner. Release does
+not rerun the tool, PostToolUse hook, or checker. Checker rationale is not added
+to hook events: machine fields are durable, while bounded concern/source/next-action
+text is fetched from the live owner-authorized detail RPC.
 
-The guardrail runner is wired **only** onto the main engine's hooks. Child
-engines (subagent explorers, team members, parallel branches) use the unwrapped
-`hookexec.New(nil)` runner — this is the no-recursion guard: a guardrail checker
-spawning a checker-instrumented child would recurse.
+The same applicable review rules bind main and worker calls. Only the dedicated
+checker engine is inert and tool-limited; this is the recursion guard.
 
 ---
 

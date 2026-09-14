@@ -399,7 +399,7 @@ The corpus tests the replacement decision recorded by [ADR 0342](../adr/0342-con
   - verify: `TestADR_0342_ContextualGuardrails_Scenario6_QualityReportSchema`
 - AC6.4: implementation-selected private evidence/trajectory count-and-byte capacities are finite, enforced before allocation, and aggregate exhaustion produces complete unresolved/incomplete behavior rather than acceptable.
   - verify: `TestADR_0342_ContextualGuardrails_Scenario6_ImplementationCalibration`
-- AC6.5: implementation review inspects an evidence report that records the selected finite capacity constants and units, rationale from native limits, measured offline stress experiments and results, and the corresponding pre-allocation/exhaustion proof artifacts. Neither this report nor separately authorized real-model quality results blocks plan proposal, Plan / Interface merge, or implementation review.
+- AC6.5: implementation review inspects the [private-capacity evidence report](../design/contextual-guardrails-capacity.md), which records the selected finite capacity constants and units, rationale from native limits, measured offline stress experiments and results, and the corresponding pre-allocation/exhaustion proof artifacts. Neither this report nor separately authorized real-model quality results blocks plan proposal, Plan / Interface merge, or implementation review.
   - verify: inspection — implementation capacity-calibration report contains selected constants, rationale, stress experiments/results, and proof artifact references
 
 ### Scenario 7 — prompt discoverability and lifecycle

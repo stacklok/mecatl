@@ -133,6 +133,12 @@ func (s *approvalSurface) HandleMsg(msg tea.Msg) (tea.Cmd, bool, bool) {
 		}
 		return nil, true, false
 	}
+	if detail, ok := msg.(client.GuardrailReviewDetailMsg); ok {
+		if detail.Err == nil && s.ask.guardrail != nil && detail.Detail.ReviewID == s.ask.guardrail.ReviewID {
+			s.ask.reviewDetail = detail.Detail
+		}
+		return nil, true, false
+	}
 	hit, ok := msg.(surfaceHitMsg)
 	if !ok {
 		return nil, false, false
@@ -227,6 +233,16 @@ func (s *approvalSurface) takeSurfaceIntent() surfaceIntent {
 // id classifies as the main agent (offers always-allow), and if sessionID were
 // empty everything would classify as a child (the always button is merely
 // withheld — never a wrong allow).
+func guardrailReviewSessionID(askID, parentID string) string {
+	if !isChildAsk(askID, parentID) {
+		return parentID
+	}
+	if i := strings.IndexByte(askID, ':'); i > 0 {
+		return askID[:i]
+	}
+	return parentID
+}
+
 func isChildAsk(askID, sessionID string) bool {
 	return strings.Contains(askID, ":") && !strings.HasPrefix(askID, sessionID+":")
 }
@@ -245,13 +261,13 @@ func (s *approvalSurface) applyPermissionAsk(msg client.PermissionAskMsg, open b
 	if s.known(msg.AskID) {
 		return false
 	}
+	offerAlways := !isChildAsk(msg.AskID, s.sessionID) && !s.isDebugMCPMutationAsk(msg)
+	if msg.Guardrail != nil {
+		offerAlways = msg.Guardrail.Kind == "action" && msg.Guardrail.RepeatAvailable
+	}
 	next := pendingAsk{
-		AskID:          msg.AskID,
-		Tool:           msg.Tool,
-		Args:           msg.Args,
-		Reason:         msg.Reason,
-		focusedVerdict: client.VerdictAllowOnce,
-		offerAlways:    !isChildAsk(msg.AskID, s.sessionID) && !s.isDebugMCPMutationAsk(msg),
+		AskID: msg.AskID, Tool: msg.Tool, Args: msg.Args, Reason: msg.Reason,
+		focusedVerdict: client.VerdictAllowOnce, offerAlways: offerAlways, guardrail: msg.Guardrail,
 	}
 	if open {
 		s.enqueue(next)
@@ -310,11 +326,25 @@ func (s *approvalSurface) resolveAsk(v client.Verdict) approvalResolvedIntent {
 	s.clearAskArgsView()
 
 	notice := "permission allowed"
+	if s.ask.guardrail != nil {
+		notice = "guardrail action approved to run once"
+		if s.ask.guardrail.Kind == "result_release" {
+			notice = "guardrail released the already-produced result once (tool not rerun)"
+		}
+	}
 	switch v {
 	case client.VerdictAllowAlways:
-		notice = "permission allowed (always, this session)"
+		if s.ask.guardrail != nil {
+			notice = "guardrail action approved for this exact scope in this session"
+		} else {
+			notice = "permission allowed (always, this session)"
+		}
 	case client.VerdictDeny:
-		notice = "permission denied"
+		if s.ask.guardrail != nil {
+			notice = "guardrail review cancelled"
+		} else {
+			notice = "permission denied"
+		}
 	}
 	return approvalResolvedIntent{
 		askID: askID, verdict: v, notice: notice,
@@ -472,6 +502,8 @@ type pendingAsk struct {
 	Reason         string
 	focusedVerdict client.Verdict
 	offerAlways    bool
+	guardrail      *client.GuardrailApprovalScope
+	reviewDetail   client.GuardrailReviewDetail
 }
 
 // isPlanAsk reports whether a permission ask is a plan-approval gate (the model
@@ -823,6 +855,16 @@ func capApprovalCardBody(body string, height, actionRows int, marker string) str
 // and the hit-test therefore measure the same wrap, and height bounds the region's
 // row budget so centerCard never receives an over-region body. argsOffset is the
 // args mini-viewport's YOffset.
+func guardrailApprovalDescription(scope *client.GuardrailApprovalScope) string {
+	if scope.Kind == "result_release" {
+		return "Result review: Release once or Cancel. This releases the same already-produced result; the tool and its side effects are not run again."
+	}
+	if scope.RepeatAvailable {
+		return "Action review: Run once, Don't ask again for this exact action in this session, or Cancel."
+	}
+	return "Action review: Run once or Cancel. Repeat approval is unavailable because the complete action scope could not be version-bound."
+}
+
 func (s *approvalSurface) permissionModalBodyParts(width, height int) (body string, buttonsRow int) {
 	th := s.deps.theme
 	ask := s.ask
@@ -832,8 +874,15 @@ func (s *approvalSurface) permissionModalBodyParts(width, height int) (body stri
 	queued := len(s.queue)
 	argsOffset := s.askVPOffset
 	titleText := "Permission required"
+	if ask.guardrail != nil {
+		if ask.guardrail.Kind == "result_release" {
+			titleText = "Guardrail result held"
+		} else {
+			titleText = "Guardrail action review"
+		}
+	}
 	if queued > 0 {
-		titleText = fmt.Sprintf("Permission required (1 of %d)", queued+1)
+		titleText = fmt.Sprintf("%s (1 of %d)", titleText, queued+1)
 	}
 	title := th.Style("askTitle").Render(titleText)
 
@@ -844,6 +893,19 @@ func (s *approvalSurface) permissionModalBodyParts(width, height int) (body stri
 	var b strings.Builder
 	b.WriteString(title + "\n\n")
 	b.WriteString(th.Style("toolName").Render(sanitizeTerminal(ask.Tool)) + "\n")
+	if ask.guardrail != nil {
+		kind := guardrailApprovalDescription(ask.guardrail)
+		b.WriteString(th.Style("muted").Render(wrapApprovalReason(kind, askArgsCardContentWidth(th, width))) + "\n")
+		if ask.reviewDetail.Concern != "" {
+			b.WriteString(th.Style("muted").Render(wrapApprovalReason("Concern: "+ask.reviewDetail.Concern, askArgsCardContentWidth(th, width))) + "\n")
+			if ask.reviewDetail.SourceDisplay != "" {
+				b.WriteString(th.Style("muted").Render(wrapApprovalReason("Source: "+ask.reviewDetail.SourceDisplay, askArgsCardContentWidth(th, width))) + "\n")
+			}
+			if ask.reviewDetail.NextAction != "" {
+				b.WriteString(th.Style("muted").Render(wrapApprovalReason("Next: "+ask.reviewDetail.NextAction, askArgsCardContentWidth(th, width))) + "\n")
+			}
+		}
+	}
 	// Prefer a concrete diff for Edit/Write. It is always capped to the rows left
 	// above the pinned actions; ctrl+t opens the complete, scrollable diff in the
 	// approval-details view. Fall back to pretty JSON for any other tool, or when
@@ -1042,6 +1104,19 @@ func approvalButtons(th theme.Theme, hk helpKeys, ask pendingAsk, plan bool) []a
 				return planApprovalButtonLabel(hk.allowAlways, "Always", "auto-accept edits")
 			default:
 				return planApprovalButtonLabel(hk.deny, "Deny", "iterate")
+			}
+		}
+		if ask.guardrail != nil {
+			switch verdict {
+			case client.VerdictAllowOnce:
+				if ask.guardrail.Kind == "result_release" {
+					return "[" + approvalMnemonic(hk.allow) + "] Release once"
+				}
+				return "[" + approvalMnemonic(hk.allow) + "] Run once"
+			case client.VerdictAllowAlways:
+				return "[" + approvalMnemonic(hk.allowAlways) + "] Don't ask again"
+			default:
+				return "[" + approvalMnemonic(hk.deny) + "] Cancel"
 			}
 		}
 		switch verdict {

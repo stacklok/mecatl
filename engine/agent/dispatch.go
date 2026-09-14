@@ -141,11 +141,17 @@ func (e *Engine) dispatch(ctx context.Context, r *Run, sess *session.Session, en
 		}
 
 		batchRes, cancelled := e.runReadBatch(ctx, r, sess, env, turnIdx, batch, enqueue)
-		if cancelled {
-			return nil, nil, true
-		}
 		for id, res := range batchRes {
 			results[id] = res
+		}
+		if cancelled {
+			for _, remaining := range calls[j:] {
+				e.openCard(r, turnIdx, remaining)
+				result := session.NewToolError(remaining.ID, withheldResultText+": dispatch was cancelled before execution")
+				e.emit(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(result)})
+				results[remaining.ID] = result
+			}
+			return orderedDispatchResults(calls, results), nil, true
 		}
 		i = j
 	}
@@ -170,6 +176,7 @@ type readBatchPending struct {
 	call       session.ToolCall
 	t          tool.Tool
 	assessment *actionReviewAssessment
+	record     executionRecord
 	armGrant   bool
 }
 
@@ -233,8 +240,10 @@ func (e *Engine) prepareReadBatch(ctx context.Context, r *Run, sess *session.Ses
 		}
 		p := readBatchPending{call: pre.effective, t: actualTool}
 		if r.reviewRoot != nil && r.reviewRoot.reviewer != nil {
-			assessment := e.prepareActionAssessment(ctx, r, sess, env, pre.effective)
-			p.assessment = &assessment
+			if applies, _ := reviewPolicy(r.reviewRoot.reviewer, pre.effective.Name, ReviewJobAction, false); applies {
+				assessment := e.prepareActionAssessment(ctx, r, sess, env, pre.effective)
+				p.assessment = &assessment
+			}
 		}
 		prepared = append(prepared, p)
 	}
@@ -304,27 +313,41 @@ func (e *Engine) runReadBatch(ctx context.Context, r *Run, sess *session.Session
 	}
 	toRun = cleared
 
-	// Phase 2: execute the cleared read-only calls concurrently.
-	var mu sync.Mutex
+	// Phase 2: execute, PostToolUse, repair, and inbound-review the cleared
+	// read-only calls concurrently into private indexed records. No final result,
+	// recorder write, aggregate mutation, or release ask occurs in these goroutines.
 	var wg sync.WaitGroup
-	for _, p := range toRun {
+	for i := range toRun {
 		wg.Add(1)
-		go func(p readBatchPending) {
+		go func(p *readBatchPending) {
 			defer wg.Done()
-			res := e.execute(ctx, r, sess, env, turnIdx, p.call, p.t, enqueue)
-			mu.Lock()
-			out[p.call.ID] = res
-			mu.Unlock()
-		}(p)
+			p.record = e.executePrivate(ctx, r, sess, env, turnIdx, p.call, p.t, enqueue)
+		}(&toRun[i])
 	}
 	wg.Wait()
 
-	e.armReadBatchGrants(ctx, r, sess, env, toRun, out)
-
-	if ctx.Err() != nil {
-		return nil, true
+	// Drain inbound decisions in original call order. Only this dispatcher phase
+	// may surface result-release asks or finalize recorder/event output.
+	cancelled = false
+	for i := range toRun {
+		p := &toRun[i]
+		var result session.ToolResult
+		if cancelled || ctx.Err() != nil {
+			cancelled = true
+			if p.record.assessment.request.ReviewID != "" {
+				key := heldResultKey{reviewID: p.record.assessment.request.ReviewID, session: sess.ID, call: p.call.ID, env: env.Ref()}
+				r.reviewRoot.dropHeld(key)
+			}
+			result = session.NewToolError(p.call.ID, withheldResultText+": batch release was cancelled")
+		} else {
+			result, cancelled = e.resolveInbound(ctx, r, sess, env, turnIdx, p.call, p.record.result, p.record.assessment)
+		}
+		e.finalizeToolResult(r, sess, turnIdx, p.call, p.record, result)
+		out[p.call.ID] = result
 	}
-	return out, false
+
+	e.armReadBatchGrants(ctx, r, sess, env, toRun, out)
+	return out, cancelled
 }
 
 func (e *Engine) armReadBatchGrants(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, pending []readBatchPending, results map[session.ToolCallID]session.ToolResult) {
@@ -572,13 +595,29 @@ func validatePendingApproval(ask session.PendingAsk) error {
 		if ask.Guardrail == nil {
 			return errors.New("hook guardrail approval is missing its scope")
 		}
-		if ask.Guardrail.Kind != session.GuardrailApprovalAction {
+		if ask.Guardrail.Kind != session.GuardrailApprovalAction && ask.Guardrail.Kind != session.GuardrailApprovalResultRelease {
 			return fmt.Errorf("unsupported guardrail approval kind %q", ask.Guardrail.Kind)
 		}
 		return nil
 	default:
 		return fmt.Errorf("unknown approval origin %q", ask.Origin)
 	}
+}
+
+func (e *Engine) rejectUnresumableApproval(r *Run, turnIdx int, call session.ToolCall, ask session.PendingAsk) (session.ToolResult, bool) {
+	if err := validatePendingApproval(ask); err != nil {
+		e.openCard(r, turnIdx, call)
+		res := session.NewToolError(call.ID, "approval unresolved: "+err.Error())
+		e.emit(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(res)})
+		return res, true
+	}
+	if ask.Origin == session.ApprovalOriginHookGuardrail && ask.Guardrail.Kind == session.GuardrailApprovalResultRelease {
+		e.openCard(r, turnIdx, call)
+		res := session.NewToolError(call.ID, withheldResultText+": held result was lost across process restart")
+		e.emit(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(res)})
+		return res, true
+	}
+	return session.ToolResult{}, false
 }
 
 // resolvePendingCall applies verdict to the pending tool call EXACTLY ONCE and
@@ -591,10 +630,7 @@ func validatePendingApproval(ask session.PendingAsk) error {
 // 3b makes it durable). The card is opened before the gate/result (the "ToolCall card
 // before the gate" invariant) on every branch.
 func (e *Engine) resolvePendingCall(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, pendingCall session.ToolCall, ask session.PendingAsk, verdict session.ApprovalVerdict) (session.ToolResult, *dispatchPark, bool) {
-	if err := validatePendingApproval(ask); err != nil {
-		e.openCard(r, turnIdx, pendingCall)
-		res := session.NewToolError(pendingCall.ID, "approval unresolved: "+err.Error())
-		e.emit(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(res)})
+	if res, rejected := e.rejectUnresumableApproval(r, turnIdx, pendingCall, ask); rejected {
 		return res, nil, false
 	}
 	// Record the resolved verdict on the event stream (the resume-from-awaiting
@@ -824,7 +860,8 @@ func (e *Engine) postPreToolUse(ctx context.Context, r *Run, sess *session.Sessi
 			return session.ToolResult{}, &dispatchPark{authorization: authorization, call: c, requester: requester}, false
 		}
 	}
-	return e.execute(ctx, r, sess, env, turnIdx, c, t, enqueue), nil, false
+	res, cancelled := e.execute(ctx, r, sess, env, turnIdx, c, t, enqueue)
+	return res, nil, cancelled
 }
 
 // surfaceAsk is the shared SPINE both ask sites (authorize's policy ask and
@@ -1352,12 +1389,15 @@ func planApprovedTargetForVerdict(v session.ApprovalVerdict) session.PermissionM
 // otherwise best-effort: a hook execution error does not abort, and a block only
 // annotates (the tool already ran; a block neither undoes nor suppresses the
 // result).
-func (e *Engine) execute(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, c session.ToolCall, t tool.Tool, enqueue time.Time) session.ToolResult {
-	// Execution begins now. queued is the wait from enqueue (when the call entered
-	// dispatch) to this point — for a mutating call serialized behind an earlier
-	// tool, or any call held behind a permission ask, this is the real queue time
-	// (perf-observability §5 decision 2). The same execStart anchors the execution
-	// duration, so queued + took partition the wall time from enqueue to result.
+type executionRecord struct {
+	result     session.ToolResult
+	queued     time.Duration
+	duration   time.Duration
+	assessment inboundAssessment
+	postEvents []session.Event
+}
+
+func (e *Engine) executePrivate(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, c session.ToolCall, t tool.Tool, enqueue time.Time) executionRecord {
 	var execStart time.Time
 	var queued time.Duration
 	if e.deps.Clock != nil {
@@ -1385,30 +1425,33 @@ func (e *Engine) execute(ctx context.Context, r *Run, sess *session.Session, env
 	} else {
 		res, dur = e.timeExecute(ctx, r, sess, env, turnIdx, c, t, execStart)
 	}
-
-	// PostToolUse may rewrite the result. The effective (possibly rewritten) result
-	// is what we log, emit, and return, so the audit log, the client event stream,
-	// and the model's recorded history all agree — in particular, a redacting hook's
-	// redaction reaches the audit log too rather than leaking the raw tool output.
-	res = e.postHook(ctx, r, sess, turnIdx, c, res)
-
-	// Normalize the effective result to valid UTF-8 BEFORE it is logged,
-	// emitted, or recorded (issue #402): a tool can hand back arbitrary bytes
-	// (a command's stdout, a file's contents, an MCP server's text), and a
-	// protobuf string field rejects invalid UTF-8 at marshal time, killing the
-	// Converse stream. Repairing here — after PostToolUse, before the three
-	// consumers — keeps the recorded == streamed == model-view invariant: all
-	// three carry the SAME repaired text. The protobuf mapper keeps its own
-	// backstop for producers that never pass through execute; this is the
-	// semantic repair, not the last-resort one.
+	res, postEvents := e.postHook(ctx, sess, turnIdx, c, res)
 	res = session.RepairToolResult(res)
+	assessment := e.prepareInboundAssessment(r, sess, env, c, res)
+	assessInbound(ctx, r, &assessment)
+	return executionRecord{result: res, queued: queued, duration: dur, assessment: assessment, postEvents: postEvents}
+}
 
-	if e.deps.ToolCallRecorder != nil {
-		e.deps.ToolCallRecorder.ToolCall(sess.ID, c, res, queued, dur)
+func (e *Engine) finalizeToolResult(r *Run, sess *session.Session, turnIdx int, c session.ToolCall, record executionRecord, result session.ToolResult) {
+	// A held assessment suppresses PostToolUse annotation prose even after a
+	// release: a hook is allowed to quote its input, and no annotation may become
+	// a side channel around the held-result decision.
+	if !inboundNeedsHold(record.assessment) {
+		for _, event := range record.postEvents {
+			e.emit(r, event)
+		}
 	}
+	if e.deps.ToolCallRecorder != nil {
+		e.deps.ToolCallRecorder.ToolCall(sess.ID, c, result, record.queued, record.duration)
+	}
+	e.emit(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(result)})
+}
 
-	e.emit(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(res)})
-	return res
+func (e *Engine) execute(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, c session.ToolCall, t tool.Tool, enqueue time.Time) (session.ToolResult, bool) {
+	record := e.executePrivate(ctx, r, sess, env, turnIdx, c, t, enqueue)
+	result, cancelled := e.resolveInbound(ctx, r, sess, env, turnIdx, c, record.result, record.assessment)
+	e.finalizeToolResult(r, sess, turnIdx, c, record, result)
+	return result, cancelled
 }
 
 const callMcpWithQueryToolName = "CallMcpWithQuery"
@@ -2036,9 +2079,9 @@ func postHookContent(res session.ToolResult) string {
 // what the model sees the tool returned (e.g. redact secrets from output). Because
 // execute emits the EFFECTIVE result, the client stream shows the rewritten result
 // too — there is no hidden divergence between the client and model views.
-func (e *Engine) postHook(ctx context.Context, r *Run, sess *session.Session, turnIdx int, c session.ToolCall, res session.ToolResult) session.ToolResult {
+func (e *Engine) postHook(ctx context.Context, sess *session.Session, turnIdx int, c session.ToolCall, res session.ToolResult) (session.ToolResult, []session.Event) {
 	if e.deps.Hooks == nil || ctx.Err() != nil {
-		return res
+		return res, nil
 	}
 	input, _ := json.Marshal(struct {
 		Args    json.RawMessage `json:"args"`
@@ -2046,49 +2089,38 @@ func (e *Engine) postHook(ctx context.Context, r *Run, sess *session.Session, tu
 		IsError bool            `json:"is_error"`
 	}{Args: c.Args, Content: postHookContent(res), IsError: res.IsError})
 	ev := governance.HookEvent{
-		Phase:     governance.PhasePostToolUse,
-		Tool:      c.Name,
-		Input:     input,
-		SessionID: string(sess.ID),
-		CallID:    string(c.ID),
+		Phase: governance.PhasePostToolUse, Tool: c.Name, Input: input,
+		SessionID: string(sess.ID), CallID: string(c.ID),
 	}
 	outcome, err := e.deps.Hooks.Run(ctx, ev)
 	if err != nil {
-		// Best-effort: a PostToolUse execution error never aborts and never alters
-		// the result.
-		return res
+		return res, nil
 	}
+	var events []session.Event
 	if outcome.Block && outcome.Message != "" {
-		// PostToolUse can't veto an already-run tool, but a Block message is the
-		// hook flagging the output — surface it as a blocked-severity notice so it
-		// reads distinctly from a benign annotation.
-		e.emit(r, session.Event{Type: session.EvHook, Turn: turnIdx, Text: outcome.Message,
+		events = append(events, session.Event{Type: session.EvHook, Turn: turnIdx, Text: outcome.Message,
 			Hook: &session.HookPayload{Phase: string(governance.PhasePostToolUse), Tool: c.Name, Decision: session.HookBlocked, CallID: c.ID}})
 	}
 	if len(outcome.Mutated) > 0 {
-		// Apply the mutation: decode the same {"content", "is_error"} shape and
-		// rebuild the result via the value-object constructors, preserving CallID.
 		if json.Valid(outcome.Mutated) {
 			var p resultPayload
 			if jerr := json.Unmarshal(outcome.Mutated, &p); jerr == nil {
-				e.emit(r, session.Event{Type: session.EvHook, Turn: turnIdx, Text: "PostToolUse hook rewrote the tool result for " + c.Name,
+				events = append(events, session.Event{Type: session.EvHook, Turn: turnIdx, Text: "PostToolUse hook rewrote the tool result for " + c.Name,
 					Hook: &session.HookPayload{Phase: string(governance.PhasePostToolUse), Tool: c.Name, Decision: session.HookModified, CallID: c.ID}})
 				if p.IsError {
-					return session.NewToolError(res.CallID, p.Content)
+					return session.NewToolError(res.CallID, p.Content), events
 				}
-				return session.NewToolResult(res.CallID, p.Content)
+				return session.NewToolResult(res.CallID, p.Content), events
 			}
 		}
-		e.emit(r, session.Event{Type: session.EvHook, Turn: turnIdx, Text: "PostToolUse hook returned a malformed result mutation (ignored)",
+		events = append(events, session.Event{Type: session.EvHook, Turn: turnIdx, Text: "PostToolUse hook returned a malformed result mutation (ignored)",
 			Hook: &session.HookPayload{Phase: string(governance.PhasePostToolUse), Tool: c.Name, Decision: session.HookInfo, CallID: c.ID}})
 	}
 	if outcome.Message != "" && !outcome.Block && len(outcome.Mutated) == 0 {
-		// An advisory (message-only) outcome: the result is unchanged, but the hook
-		// flagged content — surface a client-visible EvHook (model-invisible).
-		e.emit(r, session.Event{Type: session.EvHook, Turn: turnIdx, Text: outcome.Message,
+		events = append(events, session.Event{Type: session.EvHook, Turn: turnIdx, Text: outcome.Message,
 			Hook: &session.HookPayload{Phase: string(governance.PhasePostToolUse), Tool: c.Name, Decision: session.HookAdvisory, CallID: c.ID}})
 	}
-	return res
+	return res, events
 }
 
 // openCard emits the EvToolCall "open card" event for a call. It is called BEFORE

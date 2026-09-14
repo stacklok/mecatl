@@ -105,10 +105,11 @@ type LearningSettings interface {
 // imports client + theme only — never contracts/gen or any internal/... package;
 // all proto contact happens behind Converser/SessionCreator.
 type Deps struct {
-	Session SessionCreator
-	Conv    Converser
-	MCP     client.MCP       // MCP/ToolHive inventory + resources/prompts; nil disables the overlay
-	Cmds    client.Commander // slash-command discovery for the input palette; nil disables it
+	Session    SessionCreator
+	Conv       Converser
+	MCP        client.MCP             // MCP/ToolHive inventory + resources/prompts; nil disables the overlay
+	Cmds       client.Commander       // slash-command discovery for the input palette; nil disables it
+	Guardrails client.GuardrailClient // contextual coverage and live-only review detail; nil disables /guardrails
 	// ServerInfo reads the safe build and composition identities when /diagnostics is invoked against a remote server.
 	ServerInfo ServerInfoGetter
 	// ServerImpl is the locally-known embedded server family. It is used without

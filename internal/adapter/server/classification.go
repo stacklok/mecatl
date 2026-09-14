@@ -307,6 +307,8 @@ var serviceAccessTable = map[string]ClassificationEntry{
 	"RecheckMCPAuthorization":      {KindCallerOwned, "authorizes the session owner before caller-selected run-entry locking, then claims the exact broker outcome under the mutation lease"},
 	"CancelMCPAuthorization":       {KindCallerOwned, "authorizes the session owner before caller-selected run-entry locking, then cancels and settles the exact pending authorization under the mutation lease"},
 	"ListSessionMcpConnectors":     {KindCallerOwned, "requires enforced ownership and a verified matching session owner before inspecting the exact broker binding"},
+	"ListGuardrailCoverage":        {KindCallerOwned, "authorizes the exact session owner before projecting its assembled authority and checker rules"},
+	"GetGuardrailReviewDetail":     {KindCallerOwned, "resolves only a live registered root/child reference and authorizes the root session owner before transient disclosure"},
 	"ConnectWorkspaceServices":     {KindCallerOwned, "authorizes and locks the owned pre-prompt session before beginning or observing its broker enrollment"},
 	"RetryWorkspaceEnrollment":     {KindCallerOwned, "authorizes and locks the owned pre-prompt session before replacing the exact enrollment correlation"},
 	"CancelWorkspaceEnrollment":    {KindCallerOwned, "authorizes and locks the owned pre-prompt session before cancelling the exact enrollment correlation"},

@@ -211,6 +211,41 @@ func (h *HarnessServer) GetSession(ctx context.Context, req *mecatlv1.GetSession
 	return &mecatlv1.GetSessionResponse{Session: proto}, nil
 }
 
+func (h *HarnessServer) ListGuardrailCoverage(ctx context.Context, req *mecatlv1.ListGuardrailCoverageRequest) (*mecatlv1.ListGuardrailCoverageResponse, error) {
+	if err := validateGRPCSessionAffinity(ctx, req.GetSessionId()); err != nil {
+		return nil, err
+	}
+	if req.GetSessionId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "session_id is required")
+	}
+	coverage, err := h.svc.ListGuardrailCoverage(ctx, session.SessionID(req.GetSessionId()))
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	entries := make([]*mecatlv1.GuardrailCoverageEntry, 0, len(coverage.Entries))
+	for _, entry := range coverage.Entries {
+		entries = append(entries, &mecatlv1.GuardrailCoverageEntry{
+			Tool: valid(entry.Tool), Phase: valid(entry.Phase), Job: guardrailJobToProto(entry.Job), Mode: valid(entry.Mode),
+			RuleId: valid(entry.RuleID), RuleOrigin: valid(entry.RuleOrigin), Inspection: guardrailInspectionToProto(entry.Inspection), Reason: valid(entry.Reason),
+		})
+	}
+	return &mecatlv1.ListGuardrailCoverageResponse{Enabled: coverage.Enabled, CheckerProviderId: valid(coverage.CheckerProviderID), CheckerModelId: valid(coverage.CheckerModelID), Entries: entries}, nil
+}
+
+func (h *HarnessServer) GetGuardrailReviewDetail(ctx context.Context, req *mecatlv1.GetGuardrailReviewDetailRequest) (*mecatlv1.GetGuardrailReviewDetailResponse, error) {
+	if err := validateGRPCSessionAffinity(ctx, req.GetSessionId()); err != nil {
+		return nil, err
+	}
+	if req.GetSessionId() == "" || req.GetReviewId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "session_id and review_id are required")
+	}
+	detail, err := h.svc.GetGuardrailReviewDetail(ctx, session.SessionID(req.GetSessionId()), req.GetReviewId())
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return &mecatlv1.GetGuardrailReviewDetailResponse{ReviewId: valid(detail.ReviewID), Concern: valid(detail.Concern), SourceDisplay: valid(detail.SourceDisplay), NextAction: valid(detail.NextAction)}, nil
+}
+
 // GetSessionTranscript returns the owned session's snapshot-derived transcript.
 func (h *HarnessServer) GetSessionTranscript(ctx context.Context, req *mecatlv1.GetSessionTranscriptRequest) (*mecatlv1.GetSessionTranscriptResponse, error) {
 	if err := validateGRPCSessionAffinity(ctx, req.GetSessionId()); err != nil {

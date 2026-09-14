@@ -231,6 +231,12 @@ func ResolveRule(rules []CompiledRule, tool string, phase Phase) (CompiledRule, 
 	return resolve(rules, tool, phase)
 }
 
+// Match returns the configured tool-name matcher used as the stable rule id.
+func (r CompiledRule) Match() string { return r.match }
+
+// Mode returns the effective enforcement mode.
+func (r CompiledRule) Mode() Mode { return r.mode }
+
 // Advisory reports whether this rule observes without enforcing.
 func (r CompiledRule) Advisory() bool { return r.mode == ModeAdvisory }
 

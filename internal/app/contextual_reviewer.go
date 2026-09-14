@@ -261,6 +261,10 @@ func newContextualToolReviewer(engine *agent.Engine, providerID, modelID string)
 	return &contextualToolReviewer{engine: engine, checkerProviderID: providerID, checkerModelID: modelID}
 }
 
+func (r *contextualToolReviewer) GuardrailCheckerRoute() (string, string) {
+	return r.checkerProviderID, r.checkerModelID
+}
+
 func (r *contextualToolReviewer) Review(ctx context.Context, req agent.ToolReviewRequest, source agent.ReviewEvidenceSource) (agent.ToolReviewResult, error) {
 	deadline := r.deadline
 	if deadline <= 0 {

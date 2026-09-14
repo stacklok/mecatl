@@ -334,6 +334,10 @@ type Config struct {
 	// this callback with its assembled catalog. Carryover forks copy their source
 	// authority instead of invoking it.
 	RootAuthority func(session.SessionKind) session.Authority
+	ReviewDetails *ReviewDetailRegistry
+	// GuardrailCoverage projects the effective checker route and rules over the
+	// already-assembled, session-specific authority. Nil reports guardrails disabled.
+	GuardrailCoverage func(*session.Session) GuardrailCoverage
 	// DefaultMode is applied when a CreateSession request leaves mode
 	// unspecified. Defaults to session.ModeDefault when empty.
 	DefaultMode session.PermissionMode
@@ -891,6 +895,8 @@ type Service struct {
 	mu    sync.Mutex
 	runs  map[session.SessionID]*runState
 	teams map[string]*teamState
+	// reviewDetails is live-only human display data owned by root-run lifecycle.
+	reviewDetails *ReviewDetailRegistry
 	// teamsReserving counts CreateTeam calls that have passed the MaxTeams check
 	// but have not yet registered. Enrolment acquires member leases and publishes
 	// durable member snapshots, so the cap must be claimed BEFORE that work: a
@@ -1388,6 +1394,7 @@ func NewServiceContext(ctx context.Context, cfg Config) (*Service, error) {
 		shutdownCancel:      shutdownCancel,
 		runs:                make(map[session.SessionID]*runState),
 		teams:               make(map[string]*teamState),
+		reviewDetails:       configuredReviewDetailRegistry(cfg.ReviewDetails),
 		sessionEngines:      make(map[session.SessionID]*sessionEngine),
 		brokerAttachments:   make(map[session.SessionID]brokercontract.Attachment),
 		authorizationExpiry: make(map[session.SessionID]*authorizationExpiry),
@@ -2808,6 +2815,7 @@ func (s *Service) closeSessionLocal(id session.SessionID) {
 	// from growing unbounded on a long-lived server.
 	s.recoverNotices.Delete(id)
 	delete(s.lostOwnership, id)
+	s.reviewDetails.clear(id)
 	s.mu.Unlock()
 	if expiry != nil && expiry.timer != nil {
 		expiry.timer.Stop()
@@ -2882,6 +2890,7 @@ func (s *Service) Close() {
 	// and before engine-close so runs unblock promptly rather than waiting on
 	// the full shutdown sequence.
 	s.shutdownCancel()
+	s.reviewDetails.clearAll()
 
 	s.prepareAuthorizationClose()
 
@@ -7138,6 +7147,7 @@ func (s *Service) FinishRun(id session.SessionID, run *agent.Run) {
 		pending, pendingOK = st.sess.PendingAuthorization()
 	}
 	s.removeRunState(id, st)
+	s.clearGuardrailReviewDetails(id)
 	if parked {
 		s.scheduleAuthorizationExpiry(id, pending, pendingOK)
 	}

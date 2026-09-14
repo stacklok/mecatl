@@ -203,6 +203,10 @@ func TestPathEscapePosture_GuardrailRoutedEscape(t *testing.T) {
 		f := setupEscapeFS(t)
 		bcfg := escapeCfg(t, f, PostureAuto, readEscapeTurns(f.target)...)
 		bcfg.GuardrailsModel = "checker-model"
+		// Isolate the escape-route assertion from ADR 0342's default inbound Read
+		// coverage: an explicit unrelated rule keeps guardrails enabled without
+		// reviewing this Read result through the ordinary tool boundary.
+		bcfg.GuardrailsRules = []GuardrailRule{{Match: "Shell", Phases: []string{"pre"}, Mode: "block"}}
 		built, err := Build(context.Background(), bcfg)
 		if err != nil {
 			t.Fatalf("Build: %v", err)

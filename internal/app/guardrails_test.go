@@ -320,17 +320,17 @@ func TestGuardrailsModelOnlyShipsDefaultBlock(t *testing.T) {
 	if got == port.HookRunner(inner) {
 		t.Fatal("a guardrails model with no explicit rules must ship the DEFAULT block rules, not stay inert")
 	}
-	// The contextual action default expands the original six rules with five local mutations and three delegation families.
+	// The inbound default adds four local read/search tools; Shell now covers both phases.
 	specs, usedDefaults := effectiveGuardrailSpecs(cfg)
-	if !usedDefaults || len(specs) != 14 {
-		t.Fatalf("model-only must use the 14-rule contextual default set; usedDefaults=%v n=%d", usedDefaults, len(specs))
+	if !usedDefaults || len(specs) != 18 {
+		t.Fatalf("model-only must use the 18-rule contextual default set; usedDefaults=%v n=%d", usedDefaults, len(specs))
 	}
 	for _, s := range specs {
 		if s.Mode != string(modelhook.ModeBlock) {
 			t.Fatalf("default rules must be block (enforcement); got %q for %q", s.Mode, s.Match)
 		}
 	}
-	// The Shell spec is present with pre-only, block, and the read-only pre-filter on.
+	// The Shell spec is present for action and inbound review, with the read-only pre-filter on.
 	var bash *modelhook.RuleSpec
 	for i := range specs {
 		if specs[i].Match == "Shell" {
@@ -340,8 +340,8 @@ func TestGuardrailsModelOnlyShipsDefaultBlock(t *testing.T) {
 	if bash == nil {
 		t.Fatal("the default set must include a Shell rule (ADR 0060)")
 	}
-	if len(bash.Phases) != 1 || bash.Phases[0] != "pre" {
-		t.Fatalf("the default Shell rule must be pre-only; phases=%v", bash.Phases)
+	if len(bash.Phases) != 2 || bash.Phases[0] != "pre" || bash.Phases[1] != "post" {
+		t.Fatalf("the default Shell rule must cover pre and post; phases=%v", bash.Phases)
 	}
 	if bash.Mode != string(modelhook.ModeBlock) {
 		t.Fatalf("the default Shell rule must be block; got %q", bash.Mode)
@@ -432,8 +432,8 @@ func TestGuardrailsPostureCouplingDemotesDefaults(t *testing.T) {
 func TestGuardrailsDefaultModeAdvisory(t *testing.T) {
 	cfg := Config{UseMock: true, GuardrailsModel: "checker-model", GuardrailsDefaultMode: "advisory"}
 	specs, usedDefaults := effectiveGuardrailSpecs(cfg)
-	if !usedDefaults || len(specs) != 14 {
-		t.Fatalf("model-only with defaultMode must still use the 14-rule contextual default set; usedDefaults=%v n=%d", usedDefaults, len(specs))
+	if !usedDefaults || len(specs) != 18 {
+		t.Fatalf("model-only with defaultMode must still use the 18-rule contextual default set; usedDefaults=%v n=%d", usedDefaults, len(specs))
 	}
 	for _, s := range specs {
 		if s.Mode != string(modelhook.ModeAdvisory) {

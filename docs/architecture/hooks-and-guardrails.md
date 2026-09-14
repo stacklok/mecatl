@@ -75,32 +75,40 @@ hook's stdout is a JSON **object** it is parsed as a control envelope —
 hooks are unaffected. This is what lets **real shell hooks** emit mutations (not
 just custom Go `HookRunner` adapters).
 
-### Model-backed guardrails (`internal/adapter/modelhook`)
+### Contextual model-backed guardrails (`engine/agent`, `internal/app`)
 
-A second `HookRunner` implementation runs a **quarantined checker model** over tool
-I/O on configured (phase, tool) matchers — PostToolUse for prompt-injection in
-inbound web/MCP results, PreToolUse for secret/exfil in outbound args. The verdict
-is `block` / `sanitize` / `advisory`, fail-safe. Two non-obvious points:
+A dedicated checker reviews two distinct jobs on configured `(phase, tool)` rules:
 
-- **PostToolUse Block does NOT veto.** By the time the post hook fires the tool has
-  already run, so an enforce-blocking inbound result is **rewritten** via
-  `HookOutcome.Mutated` (to an error result), not blocked — only PreToolUse Block
-  is a real veto. The effective-payload guarantee above (recorded history == client
-  stream == model view) carries the rewrite.
-- **Operator-tier-only config.** Guardrails are read from the user-global
-  `settings.yaml` `guardrails:` block + CLI, **never** the project-tier file — a
-  project weakening a checker would be a security downgrade, so the usual
-  tighten-only project gate is reversed here (project blocks ignored with a WARN).
+- **action** reviews the exact effective call after trusted mutation and deterministic
+  permission re-evaluation, before execution; and
+- **inbound** reviews the already-produced effective result before recording, event,
+  client, or working-model delivery.
 
-The verdict parse uses the whole-output-single-object discipline (not the fail-open
-prose-extracting `ValidateJSON`), sanitize is bounded against laundering, and the
-checker engine is built tool-less with no recursion into guardrails. The canonical
-fence and framing-neutralisation helpers shared with the child-ask reviewer live in
-`engine/governance/fence.go` (exported, single source of truth).
-`engine/agent/fence.go` retains the agent-specific `StripLoneCodeFence` parser and
-private delegation-result wrapper; the public framing APIs live only in governance.
-`StripLoneCodeFence` remains shared by the verdict parsers. Full mechanics:
-`docs/adr/0021-guardrails.md`.
+The fixed rubric requires affirmative evidence of attempted authority crossing or
+redirection. Imperatives, ordinary issue requirements, admitted project instructions,
+and quoted attack examples are not findings by themselves. The reviewer may read only
+bounded review-local evidence handles and must treat their content as untrusted data.
+The checker engine has no ordinary tools and cannot recursively invoke guardrails.
+
+Rules use `block` or `advisory`; sanitize and checker-authored replacement actions do not
+exist. An interactive action finding offers **Run once**, **Don't ask again** only when
+the exact action and dependencies are version-bound, or **Cancel**. An enforcing inbound
+finding holds the exact produced result privately and offers **Release once** or
+**Cancel**. Release consumes that same result without rerunning the tool or side effects
+and authorizes reading, never following embedded instructions.
+
+Machine status is emitted without checker prose or reviewed content. Bounded human
+concern/source/next-action text is available only from the owner-authorized, process-local
+detail RPC while the delegation-root run is live. Mecatui's `/guardrails` view reports
+the configured checker and the actual session catalog/rule coverage; an operational
+inspection failure is shown as an outage, never as a finding. The transient registry and
+held results disappear on run cleanup, cancellation, disconnect, shutdown, or restart.
+
+Guardrails are operator-tier configuration. The checker provider/model pair is captured
+at Build: a scalar `models.slots.guardrail` uses the deployment default provider, while
+the strict object form names both a configured provider and model selector. The same
+applicable rules bind main and worker calls; only the checker engine is inert. See
+[ADR 0342](../adr/0342-contextual-investigative-guardrails.md).
 
 ## Prerequisites
 

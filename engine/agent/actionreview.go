@@ -24,6 +24,36 @@ const (
 	reviewClassGenuineApproval   = "genuine_approval"
 )
 
+type reviewRuleMetadataProvider interface {
+	GuardrailReviewMetadata(string, ReviewJob) (ruleID, ruleOrigin, providerID, modelID string)
+}
+
+func reviewMachinePayload(reviewer ToolReviewer, req ToolReviewRequest, result ToolReviewResult, reviewErr error, disposition string) *session.GuardrailReviewPayload {
+	payload := &session.GuardrailReviewPayload{ReviewID: req.ReviewID, Job: string(req.Job), Assessment: string(result.Assessment), Inspection: "complete", Disposition: disposition}
+	if reviewErr != nil {
+		payload.Inspection = "operational_failure"
+		payload.Assessment = string(ReviewUnresolved)
+		payload.ReasonCode = "checker_unavailable"
+	} else if result.Assessment == ReviewUnresolved {
+		payload.ReasonCode = "inspection_unresolved"
+	} else if result.Assessment == ReviewProhibited {
+		payload.ReasonCode = "authority_crossing"
+	}
+	if metadata, ok := reviewer.(reviewRuleMetadataProvider); ok {
+		payload.RuleID, payload.RuleOrigin, payload.CheckerProviderID, payload.CheckerModelID = metadata.GuardrailReviewMetadata(req.EffectiveCall.Name, req.Job)
+	}
+	for _, concern := range result.Concerns {
+		payload.Concerns = append(payload.Concerns, session.GuardrailRef{Ref: concern.Ref, Category: concern.Category})
+		if concern.SourceRef != "" {
+			payload.Sources = append(payload.Sources, session.GuardrailRef{Ref: concern.SourceRef, Category: "source"})
+		}
+	}
+	for _, missing := range result.Missing {
+		payload.Sources = append(payload.Sources, session.GuardrailRef{Ref: missing.Ref, Category: missing.Kind})
+	}
+	return payload
+}
+
 // reviewGrantIssuer is an optional composition capability implemented by the
 // contextual reviewer. It keeps keyed repeat-grant state outside the engine while
 // leaving ToolReviewer as the public review protocol.
@@ -44,6 +74,9 @@ type reviewRoot struct {
 	details           ReviewDetailSink
 	principal         []ReviewPrincipalFact
 	principalComplete bool
+	held              map[heldResultKey]heldResult
+	heldBytes         int64
+	rootSessionID     session.SessionID
 }
 
 func newReviewRoot(reviewer ToolReviewer, details ReviewDetailSink) *reviewRoot {
@@ -117,23 +150,28 @@ type actionReview struct {
 	repeat       bool
 }
 
-func (e *Engine) prepareActionReview(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, call session.ToolCall) actionReview {
-	target, paths := reviewTarget(call)
-	if e.deps.Role == "" {
-		principal := make([]ReviewPrincipalFact, 0, len(r.fragments)+1)
-		if r.currentPrompt != nil {
-			principal = append(principal, ReviewPrincipalFact{Kind: "genuine_user_task", Ref: "current-user", Statement: r.currentPrompt.Text, PositiveVerdict: true})
-		}
-		for i, fragment := range r.fragments {
-			provenance := prompt.InstructionProvenanceUnknown
-			if i < len(r.fragmentManifest) {
-				provenance = r.fragmentManifest[i].Provenance
-			}
-			positive := provenance == prompt.InstructionProvenanceProject || provenance == prompt.InstructionProvenanceRules
-			principal = append(principal, ReviewPrincipalFact{Kind: "admitted_" + provenance + "_instruction", Ref: fmt.Sprintf("instruction-%d", i), Statement: fragment.Text, PositiveVerdict: positive})
-		}
-		r.reviewRoot.establishPrincipal(principal, r.currentPrompt != nil)
+func (e *Engine) establishReviewPrincipal(r *Run) {
+	if e.deps.Role != "" {
+		return
 	}
+	principal := make([]ReviewPrincipalFact, 0, len(r.fragments)+1)
+	if r.currentPrompt != nil {
+		principal = append(principal, ReviewPrincipalFact{Kind: "genuine_user_task", Ref: "current-user", Statement: r.currentPrompt.Text, PositiveVerdict: true})
+	}
+	for i, fragment := range r.fragments {
+		provenance := prompt.InstructionProvenanceUnknown
+		if i < len(r.fragmentManifest) {
+			provenance = r.fragmentManifest[i].Provenance
+		}
+		positive := provenance == prompt.InstructionProvenanceProject || provenance == prompt.InstructionProvenanceRules
+		principal = append(principal, ReviewPrincipalFact{Kind: "admitted_" + provenance + "_instruction", Ref: fmt.Sprintf("instruction-%d", i), Statement: fragment.Text, PositiveVerdict: positive})
+	}
+	r.reviewRoot.establishPrincipal(principal, r.currentPrompt != nil)
+}
+
+func (e *Engine) prepareActionReview(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, call session.ToolCall) actionReview {
+	e.establishReviewPrincipal(r)
+	target, paths := reviewTarget(call)
 	facts, complete := r.reviewRoot.principalSnapshot()
 	facts = append([]ReviewPrincipalFact(nil), facts...)
 	deps, depsComplete := snapshotActionDependencies(ctx, env.Workspace(), paths)
@@ -267,12 +305,54 @@ func reviewFact(call session.ToolCall, target ReviewTarget, decision string) Rev
 	return ReviewTrajectoryFact{Call: call.ID, Ref: string(call.ID), Direction: direction, DataClass: class, TargetID: target.DestinationID, Decision: decision}
 }
 
-func (r *Run) publishActionConcerns(ctx context.Context, sessionID session.SessionID, reviewID string, concerns []ReviewConcern) {
+func (r *Run) publishReviewDetail(ctx context.Context, detail ReviewDetail) {
+	if r.reviewRoot == nil || r.reviewRoot.details == nil {
+		return
+	}
+	if sink, ok := r.reviewRoot.details.(rootReviewDetailSink); ok && r.reviewRoot.rootSessionID != "" {
+		sink.PublishReviewDetailForRoot(ctx, r.reviewRoot.rootSessionID, detail)
+		return
+	}
+	r.reviewRoot.details.PublishReviewDetail(ctx, detail)
+}
+
+func reviewConcernDisplay(concern ReviewConcern) string {
+	switch concern.Category {
+	case "authority_crossing":
+		return "The proposed action may cross the caller's established authority."
+	case "redirection", "prompt_injection":
+		return "The reviewed content may redirect the agent across its authority boundary."
+	case "exfiltration", "exfil":
+		return "The proposed action may send data outside the established authorization."
+	default:
+		return "The reviewer identified a potential authority-boundary concern."
+	}
+}
+
+func (r *Run) publishActionDetail(ctx context.Context, sessionID session.SessionID, reviewID string, result ToolReviewResult, reviewErr error) {
 	if r.reviewRoot.details == nil {
 		return
 	}
-	for _, concern := range concerns {
-		r.reviewRoot.details.PublishReviewDetail(ctx, ReviewDetail{SessionID: sessionID, ReviewID: reviewID, Concern: concern.Rationale, SourceDisplay: concern.SourceRef, NextAction: "Run once, approve this exact repeatable action for this session when available, or cancel."})
+	next := "No human action is required."
+	if reviewErr != nil {
+		r.publishReviewDetail(ctx, ReviewDetail{SessionID: sessionID, ReviewID: reviewID, Concern: "Inspection could not complete; no unsafe finding was inferred.", NextAction: "Run once or cancel when enforcement requires a human decision."})
+		return
+	}
+	if result.Assessment == ReviewAcceptable {
+		r.publishReviewDetail(ctx, ReviewDetail{SessionID: sessionID, ReviewID: reviewID, Concern: "Inspection completed; no attempted authority crossing was found.", NextAction: next})
+		return
+	}
+	if result.Assessment == ReviewUnresolved {
+		next = "Run once or cancel; missing evidence is not itself an unsafe finding."
+	}
+	for _, concern := range result.Concerns {
+		r.publishReviewDetail(ctx, ReviewDetail{SessionID: sessionID, ReviewID: reviewID, Concern: reviewConcernDisplay(concern), SourceDisplay: concern.SourceRef, NextAction: "Run once, approve this exact repeatable action for this session when available, or cancel."})
+	}
+	for _, missing := range result.Missing {
+		r.publishReviewDetail(ctx, ReviewDetail{SessionID: sessionID, ReviewID: reviewID, Concern: "Inspection was unresolved because required evidence was unavailable.", SourceDisplay: missing.Ref, NextAction: next})
+	}
+	if len(result.Concerns) == 0 && len(result.Missing) == 0 {
+		r.publishReviewDetail(ctx, ReviewDetail{SessionID: sessionID, ReviewID: reviewID, Concern: "Inspection was unresolved without a specific unsafe finding.", NextAction: next})
 	}
 }
 
@@ -310,9 +390,27 @@ func (e *Engine) resolveActionAssessment(ctx context.Context, r *Run, sess *sess
 		decision = "unresolved"
 		result.Assessment = ReviewUnresolved
 	}
+	_, enforce := reviewPolicy(r.reviewRoot.reviewer, call.Name, ReviewJobAction, assessment.err != nil)
+	if assessment.err != nil {
+		var terminal interface{ GuardrailReviewTerminalFailure() bool }
+		if errors.As(assessment.err, &terminal) && terminal.GuardrailReviewTerminalFailure() {
+			enforce = true
+		}
+	}
 	r.reviewRoot.record(reviewFact(call, assessment.action.request.Target, decision))
-	r.publishActionConcerns(ctx, sess.ID, assessment.action.request.ReviewID, result.Concerns)
-	if result.Assessment == ReviewAcceptable {
+	r.publishActionDetail(ctx, sess.ID, assessment.action.request.ReviewID, result, assessment.err)
+	disposition := "execute"
+	if result.Assessment != ReviewAcceptable && !enforce {
+		disposition = "pass_advisory"
+	}
+	if result.Assessment != ReviewAcceptable && enforce && e.deps.Interactive {
+		disposition = "ask_action"
+	}
+	if result.Assessment != ReviewAcceptable && enforce && !e.deps.Interactive {
+		disposition = "deny"
+	}
+	e.emit(r, session.Event{Type: session.EvHook, Turn: turnIdx, Hook: &session.HookPayload{Phase: string(governance.PhasePreToolUse), Tool: call.Name, Decision: session.HookInfo, CallID: call.ID, Guardrail: reviewMachinePayload(r.reviewRoot.reviewer, assessment.action.request, result, assessment.err, disposition)}})
+	if result.Assessment == ReviewAcceptable || !enforce {
 		return session.ToolResult{}, false, true, false
 	}
 	reason := "contextual guardrail could not approve this action"
@@ -324,6 +422,10 @@ func (e *Engine) resolveActionAssessment(ctx context.Context, r *Run, sess *sess
 		e.emit(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(res)})
 		return res, false, false, false
 	}
+	return e.resolveActionAsk(ctx, r, sess, env, turnIdx, call, assessment, reason)
+}
+
+func (e *Engine) resolveActionAsk(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, call session.ToolCall, assessment actionReviewAssessment, reason string) (session.ToolResult, bool, bool, bool) {
 	ask := session.PendingAsk{
 		AskID: newAskID(sess.ID, sess.Counters.ToolCalls, call.ID, r.askDiscriminator), Tool: call.Name, Args: call.Args,
 		Reason: reason, Call: call.ID, Origin: session.ApprovalOriginHookGuardrail,
@@ -356,6 +458,9 @@ func (e *Engine) resolveActionAssessment(ctx context.Context, r *Run, sess *sess
 
 func (e *Engine) reviewAction(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, call session.ToolCall, t tool.Tool, enqueue time.Time) (session.ToolResult, *dispatchPark, bool, bool) {
 	if r.reviewRoot == nil || r.reviewRoot.reviewer == nil {
+		return session.ToolResult{}, nil, false, true
+	}
+	if applies, _ := reviewPolicy(r.reviewRoot.reviewer, call.Name, ReviewJobAction, false); !applies {
 		return session.ToolResult{}, nil, false, true
 	}
 	assessment := e.prepareActionAssessment(ctx, r, sess, env, call)
