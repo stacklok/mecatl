@@ -1043,24 +1043,31 @@ type Service struct {
 	// fast on it forever.
 	lostOwnership map[session.SessionID]struct{}
 
-	// leaseLossMu serializes onLeaseLost's real backend Release against
-	// ReconcileLeaseLossTombstone's trial Acquire for the SAME session id
-	// (issue #1334 panel finding): onLeaseLost sets lostOwnership[id] and
-	// unlocks s.mu well before it calls SessionLease.Release, and the
-	// composition-level sweep can observe the tombstone and start a trial
-	// Acquire while that Release is still in flight — a same-id Acquire/
-	// Release overlap engine/port/lease.go's CONCURRENCY contract explicitly
-	// leaves to the CALLER to prevent ("Calls for the SAME id from one
-	// process are serialised by the caller"). A conforming backend is not
-	// required to make that overlap safe. This is a DEDICATED lock, never
-	// runEntryMu: onLeaseLost's own doc forbids taking runEntryMu (lease loss
-	// cancels operations that may be holding it, so waiting on it here could
-	// deadlock their cancellation), and this lock is never held by any
-	// cancellation path, so acquiring it here carries no such risk. Held for
-	// each function's ENTIRE body (a keyedMutex, freed once no caller holds
-	// the key) so the two are strictly ordered: either the whole loss
-	// handling (tombstone + Release) completes before a trial starts, or the
-	// whole trial (+ tombstone-clear) completes before a loss is handled.
+	// leaseLossMu serializes the THREE writers that touch a session id's
+	// lostOwnership tombstone and the real backend calls around it (issue
+	// #1334 panel review, two rounds): onLeaseLost's real Release, Reconcile
+	// LeaseLossTombstone's trial Acquire+Release, and closeSessionLocal's
+	// unconditional tombstone clear. onLeaseLost sets lostOwnership[id] and
+	// unlocks s.mu well before it calls SessionLease.Release, and either the
+	// composition-level sweep (a trial Acquire) or a concurrent CloseSession/
+	// DeleteSession (an unconditional tombstone clear that unblocks the NEXT
+	// real Acquire) can observe the tombstone and act while that Release is
+	// still in flight — a same-id Acquire/Release overlap engine/port/lease.go's
+	// CONCURRENCY contract explicitly leaves to the CALLER to prevent ("Calls
+	// for the SAME id from one process are serialised by the caller"). A
+	// conforming backend is not required to make that overlap safe. This is a
+	// DEDICATED lock, never runEntryMu: onLeaseLost's own doc forbids taking
+	// runEntryMu (lease loss cancels operations that may be holding it, so
+	// waiting on it here could deadlock their cancellation), and this lock is
+	// never held by any cancellation path, so acquiring it here carries no
+	// such risk. closeSessionLocal is the one exception that already holds
+	// runEntryMu (every caller does) before also taking leaseLossMu — a FIXED
+	// order (runEntryMu → leaseLossMu) that introduces no cycle, since neither
+	// onLeaseLost nor ReconcileLeaseLossTombstone ever takes runEntryMu. Held
+	// for each function's ENTIRE body (a keyedMutex, freed once no caller
+	// holds the key) so all three are strictly ordered relative to one
+	// another for the same id: exactly one of loss-handling, trial-reconcile,
+	// or close-teardown runs at a time, never interleaved mid-flight.
 	leaseLossMu keyedMutex
 
 	// leaseDisabled is set (once) when Config.SessionLease reports
@@ -2798,8 +2805,22 @@ func (s *Service) closeSessionAuthorized(id session.SessionID) {
 
 // closeSessionLocal releases only process-local ownership. The caller must hold
 // brokerMu for id so no engine can borrow and install the attachment while it is
-// being closed.
+// being closed. It also takes leaseLossMu for id (JAORMX's follow-up on the
+// #1334 panel fix): this is the ONE place that unconditionally clears
+// lostOwnership[id] outside onLeaseLost/ReconcileLeaseLossTombstone, and every
+// caller (CloseSession/EndSession via closeSessionAuthorized, DeleteSession,
+// DeleteSessionForRetentionCandidate, DeleteSessionForRetention) already holds
+// runEntryMu for id — never leaseLossMu — so taking it here in the FIXED order
+// runEntryMu → leaseLossMu introduces no new cycle (onLeaseLost/
+// ReconcileLeaseLossTombstone never take runEntryMu, per onLeaseLost's own doc
+// comment). Without this, a close racing a trial reconcile could clear the
+// tombstone and let a new real Acquire begin while the trial's own Release was
+// still in flight — the same same-id Acquire/Release overlap leaseLossMu
+// exists to prevent, just reached via a second writer of the tombstone.
 func (s *Service) closeSessionLocal(id session.SessionID) {
+	unlockLeaseLoss := s.leaseLossMu.lock(id)
+	defer unlockLeaseLoss()
+
 	// Release composition-owned session-scoped state first (e.g. the per-session
 	// learned permission rules) so it never outlives the session, even if the
 	// per-session engine teardown below is a no-op for this id.
@@ -7155,13 +7176,17 @@ func (s *Service) LostOwnershipCandidates(ctx context.Context) ([]session.Sessio
 // tombstone for this id"). Exported for internal/app's composition-level
 // sweep, mirroring SessionStale/SettleIfStale/StaleRunningCandidates.
 //
-// RESIDUAL INTERLEAVE (bounded, safe): CloseSession can race this call and
-// clear s.lostOwnership[id] itself (unconditionally, via closeSessionLocal)
-// between the pre-trial check and the post-trial re-check below. Both
-// re-checks re-read s.lostOwnership under s.mu, so a CloseSession that wins
-// the race simply makes this call an honest no-op (false, nil) rather than a
-// double-clear or a stale write — the same "last write wins, re-verified
-// under the lock" posture SettleIfStale documents for its own TOCTOU window.
+// CloseSession can no longer interleave WITHIN this call: closeSessionLocal
+// (its one tombstone-clearing chokepoint) now also takes leaseLossMu for id,
+// so a concurrent close either completes entirely before this call starts or
+// blocks until this call's whole trial (Acquire + Release + tombstone-clear)
+// has finished — never mid-trial (issue #1334 panel follow-up; closeSessionLocal's
+// own doc comment has the lock-order rationale). The pre-trial and post-trial
+// re-checks of s.lostOwnership below are kept anyway as defense in depth
+// (e.g. a concurrent caller that legitimately re-acquired for real between the
+// checks), each still re-reading under s.mu, the same "last write wins,
+// re-verified under the lock" posture SettleIfStale documents for its own
+// TOCTOU window.
 //
 // The trial Acquire below is additionally serialized against onLeaseLost's
 // real Release for the same id via leaseLossMu (its own doc comment has the

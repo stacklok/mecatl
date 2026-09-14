@@ -947,6 +947,13 @@ func TestOnLeaseLostSerializesAgainstReconcileTrial(t *testing.T) {
 
 	releaseStarted := make(chan struct{})
 	releaseProceed := make(chan struct{})
+	var unblockOnce sync.Once
+	unblockRelease := func() { unblockOnce.Do(func() { close(releaseProceed) }) }
+	// Register the unblock as cleanup FIRST, before anything can Fatal: an
+	// earlier failure (e.g. the very overlap this test guards against) must
+	// still release the blocked Release/reconcile goroutines rather than
+	// leaking them (JAORMX's non-blocking test-robustness follow-up).
+	t.Cleanup(unblockRelease)
 	var released atomic.Bool
 	var blockedOnce sync.Once
 	lease.mu.Lock()
@@ -1022,7 +1029,7 @@ func TestOnLeaseLostSerializesAgainstReconcileTrial(t *testing.T) {
 	default:
 	}
 
-	close(releaseProceed)
+	unblockRelease()
 
 	select {
 	case <-reconcileDone:
@@ -1034,6 +1041,187 @@ func TestOnLeaseLostSerializesAgainstReconcileTrial(t *testing.T) {
 	}
 	if trialAcquires.Load() != 1 {
 		t.Fatalf("trial Acquire count = %d, want 1", trialAcquires.Load())
+	}
+}
+
+// TestCloseSessionSerializesAgainstReconcileTrial is JAORMX's second-round
+// panel follow-up: closeSessionLocal's unconditional tombstone clear is a
+// SECOND writer that could race ReconcileLeaseLossTombstone's trial the same
+// way onLeaseLost's Release could — CloseSession could observe the tombstone,
+// clear it (without ever calling the real backend itself), and let a brand
+// new StartRun perform a REAL Acquire while the trial's own self-Release
+// (leaseTrial's immediate Acquire-then-Release) was still in flight. This
+// blocks that trial Release, races a concurrent CloseSession against it,
+// confirms CloseSession cannot complete until the trial Release returns, and
+// then confirms the REOPENING StartRun's real Acquire only happens after —
+// proving closeSessionLocal's own leaseLossMu acquisition orders them, not
+// timing.
+func TestCloseSessionSerializesAgainstReconcileTrial(t *testing.T) {
+	lease := &fakeLease{}
+	store := memstore.New()
+	ps := permstore.New()
+	cat := tool.NewCatalog()
+	engine := agent.NewEngine(agent.Deps{
+		LLM:     blockingProvider{},
+		Catalog: cat,
+		Policy:  permpolicy.NewPolicy(nil, ps),
+		Model:   "test-model",
+	})
+	svc, err := newPlacementTestService(server.Config{
+		Engine:             engine,
+		Store:              store,
+		SessionLease:       lease,
+		LeaseOwner:         "owner-test",
+		LeaseTTL:           90 * time.Millisecond,
+		LeaseRenewInterval: 15 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	t.Cleanup(svc.Close)
+
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	run, err := svc.StartRun(context.Background(), sess.ID, "go")
+	if err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+
+	var lost atomic.Bool
+	lease.mu.Lock()
+	lease.renewHook = func(port.Lease) (port.Lease, error) {
+		lost.Store(true)
+		return port.Lease{}, port.ErrLeaseHeld
+	}
+	lease.mu.Unlock()
+
+	// Drive the loss to completion FIRST (onLeaseLost's own Release runs
+	// unblocked): the tombstone is set and the lease's real Release has
+	// already happened, mirroring the sequential setup in
+	// TestReconcileLeaseLossTombstoneRecoversCancelledSession.
+	for ev := range run.Events() {
+		if ev.Type == session.EvResult && ev.Result != nil && ev.Result.Stop == session.StopCancelled {
+			break
+		}
+	}
+	svc.FinishRun(sess.ID, run)
+	if !lost.Load() {
+		t.Fatal("precondition: the renewer never lost the lease")
+	}
+
+	// Overwrite with the StateCancelled shape onLeaseLost's real cancel path
+	// leaves behind (this Config has no Store wired into the engine, so the
+	// durable snapshot is whatever this test writes directly).
+	cancelled := session.New(sess.ID, session.ModeDefault, sess.EnvironmentRef, session.Limits{}, time.Unix(0, 0))
+	if err := cancelled.RecordUserPrompt("go", nil); err != nil {
+		t.Fatalf("RecordUserPrompt: %v", err)
+	}
+	if err := cancelled.BeginTurn(); err != nil {
+		t.Fatalf("BeginTurn: %v", err)
+	}
+	if err := cancelled.Cancel(); err != nil {
+		t.Fatalf("Cancel: %v", err)
+	}
+	if err := store.Save(context.Background(), cancelled); err != nil {
+		t.Fatalf("overwrite Save: %v", err)
+	}
+
+	// Now block the TRIAL's own self-Release (leaseTrial's immediate
+	// Acquire-then-Release). onLeaseLost's own Release already ran above,
+	// unblocked, under the default nil releaseHook (f.releases already
+	// counts it) — this NEW hook only ever observes the trial's call, so its
+	// own first invocation IS the trial's self-Release.
+	trialReleaseStarted := make(chan struct{})
+	trialReleaseProceed := make(chan struct{})
+	var unblockOnce sync.Once
+	unblockTrialRelease := func() { unblockOnce.Do(func() { close(trialReleaseProceed) }) }
+	t.Cleanup(unblockTrialRelease)
+	var trialReleaseDone atomic.Bool
+	var blockedOnce sync.Once
+	lease.mu.Lock()
+	lease.releaseHook = func(port.Lease) error {
+		blockedOnce.Do(func() {
+			close(trialReleaseStarted)
+			<-trialReleaseProceed
+			trialReleaseDone.Store(true)
+		})
+		return nil
+	}
+	lease.mu.Unlock()
+
+	var overlap atomic.Bool
+	lease.mu.Lock()
+	lease.acquireHook = func(_ session.SessionID, owner string) {
+		if strings.HasSuffix(owner, "-stale-trial") {
+			return // the reconcile's own trial Acquire, not the reopening real one.
+		}
+		if !trialReleaseDone.Load() {
+			overlap.Store(true)
+		}
+	}
+	lease.mu.Unlock()
+
+	staleCtx := syscaller.Context(context.Background(), syscaller.RootStaleSessionReconcile)
+	reconcileDone := make(chan struct{})
+	go func() {
+		defer close(reconcileDone)
+		if _, err := svc.ReconcileLeaseLossTombstone(staleCtx, sess.ID); err != nil {
+			t.Errorf("ReconcileLeaseLossTombstone: %v", err)
+		}
+	}()
+
+	select {
+	case <-trialReleaseStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("ReconcileLeaseLossTombstone never reached its trial Release")
+	}
+
+	closeDone := make(chan struct{})
+	go func() {
+		defer close(closeDone)
+		svc.CloseSession(sess.ID)
+	}()
+
+	// CloseSession must still be blocked on leaseLossMu: it must not have
+	// cleared the tombstone (or returned at all) while the trial Release is
+	// still in flight.
+	time.Sleep(100 * time.Millisecond)
+	select {
+	case <-closeDone:
+		t.Fatal("CloseSession returned before the trial Release completed; leaseLossMu did not serialize closeSessionLocal")
+	default:
+	}
+
+	unblockTrialRelease()
+
+	select {
+	case <-reconcileDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("ReconcileLeaseLossTombstone never completed after its trial Release was unblocked")
+	}
+	select {
+	case <-closeDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("CloseSession never completed after the trial Release was unblocked")
+	}
+
+	// The tombstone is gone (whichever of Reconcile/Close cleared it last),
+	// so a normal re-entry now succeeds — and, critically, its real Acquire
+	// must only have happened (if at all so far) after the trial Release
+	// returned.
+	run2, err := svc.StartRun(context.Background(), sess.ID, "again")
+	if err != nil {
+		t.Fatalf("StartRun after close+reconcile = %v, want success (tombstone should be cleared)", err)
+	}
+	run2.Cancel()
+	for range run2.Events() {
+	}
+	svc.FinishRun(sess.ID, run2)
+
+	if overlap.Load() {
+		t.Fatal("a real Acquire ran while the trial Release was still in flight — same-id overlap")
 	}
 }
 

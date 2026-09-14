@@ -144,6 +144,18 @@ prevents unsafe release assumptions. Without a suitable lease backend,
 destructive maintenance fails closed rather than relying on process-local
 liveness.
 
+A lease loss is not always a genuine takeover: a missed renewal from a
+transient network blip looks the same, at first, as losing the session to a
+real competing owner. Either way, the owning process immediately stops acting
+as owner and marks the session locally off-limits, refusing every further
+prompt or resume attempt for it on its own. A background sweep then checks with
+the real lease backend, on a bounded interval, whether the lease has actually
+become free; if it has, the sweep lifts the local mark automatically. A
+follow-up prompt or approval can then repair the session's terminal state
+through the ordinary run-entry recovery path, with no operator action and no
+process restart required. Until the sweep confirms this, the session stays
+refused, even if the original loss turns out to have been a false alarm.
+
 ## Restart and deployment limitations
 
 - A durable snapshot does not preserve an in-flight Go goroutine. A process that
