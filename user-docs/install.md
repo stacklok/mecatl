@@ -109,5 +109,5 @@ or `GOPATH/bin`, run `task install`.
   session.
 - [Run mecated standalone](/building/deployment/mecated.md) to operate the
   server.
-- [Pick your deployment shape](/building/getting-started/deployment-decision.md)
+- [Choose how to run Mecatl](/building/getting-started/deployment-decision.md)
   to choose between `mecated`, `mecak8s`, `mecatequi`, and an engine embedding.

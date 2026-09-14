@@ -3,7 +3,7 @@ sidebar_position: 100
 title: Configure Mecatl
 sidebar_label: Settings guide
 description:
-  Choose the right settings file or flag for each Mecatl deployment shape.
+  Choose the right settings file or flag for each way of running Mecatl.
 ---
 
 # Configure Mecatl
@@ -30,7 +30,7 @@ exhaustive schema, defaults, and tier table for the shared operator
 
 ## Which settings apply?
 
-|Running shape|Operator `settings.yaml` and `auth.yaml`|`daemon.yaml`|Agent/server flags|Client-only mecatui settings|Effective defaults|
+|Deployment option|Operator `settings.yaml` and `auth.yaml`|`daemon.yaml`|Agent/server flags|Client-only mecatui settings|Effective defaults|
 |-|-|-|-|-|-|
 |`mecated serve`|Read by the daemon at startup.|Available through `mecated serve --config PATH`.|Configure this daemon; applicable explicit flags override file values.|Not used unless a separate mecatui client connects.|Daemon defaults, then operator settings, then applicable explicit flags.|
 |Bare `mecatui` (embedded server)|Read by the in-process server at startup.|Not used; it does not start a network daemon.|Embedded-server flags configure that local server.|Read locally for UI behavior.|Embedded-server defaults apply before operator settings; applicable embedded flags then override.|
@@ -95,8 +95,8 @@ shown above. The default path is `$XDG_CONFIG_HOME/mecatl/auth.yaml`, normally
 `~/.config/mecatl/auth.yaml`; `--api-key-file` selects another path.
 
 The parser reports unknown providers, fields, duplicate keys, and invalid
-credential shapes without printing values. A missing conventional file is not an
-error. A missing explicit `--api-key-file` path produces a warning. On Unix,
+credential formats without printing values. A missing conventional file is not
+an error. A missing explicit `--api-key-file` path produces a warning. On Unix,
 Mecatl also warns when group or other users can read the file. Use mode `0600`
 on a shared host and restart the process after replacing a credential.
 

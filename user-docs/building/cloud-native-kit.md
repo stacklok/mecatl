@@ -80,7 +80,7 @@ call for both: `WatchSessionEvents` over gRPC, or `GET /v1/sessions/{id}/watch`
 over HTTP/SSE. It replays the durable log from a position, announces when it is
 caught up, and then follows as the run appends — and because it reads durable
 storage rather than an in-process registry, it works when the client reconnects
-to a _different replica_, which is exactly the shape `mecak8s` deployments have.
+to a _different replica_, which is how `mecak8s` deployments work.
 
 Each frame is `{event, cursor, phase}`:
 
@@ -116,9 +116,9 @@ Redis, JSONL, and the gRPC driver do; a server without one answers
 
 ---
 
-## How each deployment shape relates to the three properties
+## How each deployment option relates to the three properties
 
-|Shape|Disposable process|Externalized state|Durable record|
+|Option|Disposable process|Externalized state|Durable record|
 |-|-|-|-|
 |**Embed the engine**|No — you wire it|You implement `port.SessionStore` and `port.EventLog`|You implement `port.EventLog`|
 |**mecated**|Yes, with `--store-dir` (single-host flock lease is automatic) or a remote store + `--session-lease-*`|JSONL on disk (`--store-dir`) or gRPC driver (`--session-store-url`); Redis not exposed; schedule registry via `--schedule-store-url` (`ScheduleStoreService` + `ScheduleOneShotReArmerService`)|JSONL sidecar (`.events.jsonl`) or gRPC driver (`--event-log-url`)|
@@ -267,8 +267,8 @@ calls with synthetic error results, and continues.
 
 - [mecak8s deployment](/building/deployment/mecak8s.md) — manifests, RBAC, Redis
   topology, and the kind-based e2e suite.
-- [Pick your deployment shape](/building/getting-started/deployment-decision.md)
-  — compare all four shapes against your operational requirements.
+- [Choose how to run Mecatl](/building/getting-started/deployment-decision.md) —
+  compare all four options against your operational requirements.
 - [The agent loop](/building/what-you-get/agent-loop.md) — how the loop
   interacts with the session aggregate, permission pauses, and terminal states.
 - [Extension points](/building/extension-points/index.md) — implement

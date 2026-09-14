@@ -14,14 +14,14 @@ directories; do not create a manual sidebar to express this structure.
 |Location|Audience and content|Exclusions|
 |-|-|-|
 |`intro.md`|New readers choosing between the terminal-client and builder paths.|Detailed instructions and reference material. Link to the owning section.|
-|`install.md`|Anyone who needs Mecatl's executables on a workstation or host: Homebrew, release archives and their verification, and the pointer to a source build.|First-run workflow, configuration, and per-shape deployment steps. Link to the owning client or deployment page.|
+|`install.md`|Anyone who needs Mecatl's executables on a workstation or host: Homebrew, release archives and their verification, and the pointer to a source build.|First-run workflow, configuration, and deployment-specific steps. Link to the owning client or deployment page.|
 |`mecatui/`|Terminal users who need to start, connect, configure, or troubleshoot the `mecatui` client.|Server deployment, server policy, and shared feature semantics. Link to the owning server or feature page.|
 |`building/getting-started/`|Builders and embedders following a first path, such as creating an agent or choosing a deployment.|Exhaustive API reference, operations procedures, and feature configuration.|
 |`building/typescript-sdk/`|TypeScript developers connecting applications, controlling sessions and runs, or owning a local daemon.|Wire-protocol reference and shared feature semantics. Link to the owning reference or feature page.|
-|`building/what-you-get/`|Builders who need an overview or technical reference for engine capabilities included in an embedding.|Operator procedures and feature configuration that applies across deployment shapes. Link to the feature page for those.|
+|`building/what-you-get/`|Builders who need an overview or technical reference for engine capabilities included in an embedding.|Operator procedures and feature configuration that applies across deployment options. Link to the feature page for those.|
 |`building/extension-points/`|Developers integrating with Mecatl's public seams, ports, and APIs.|How to operate a supplied deployment or use an existing feature.|
-|`building/deployment/`|Operators and platform builders deploying, securing, and maintaining a specific Mecatl delivery shape.|Client workflows and shared feature behavior except where a deployment changes availability or operation.|
-|`features/`|Users and operators enabling or understanding a capability of the shared agent and server core. Each feature page states availability and links to shape-specific deployment instructions.|Terminal-client controls, embedding APIs, and deployment runbooks.|
+|`building/deployment/`|Operators and platform builders deploying, securing, and maintaining a specific Mecatl deployment.|Client workflows and shared feature behavior except where a deployment changes availability or operation.|
+|`features/`|Users and operators enabling or understanding a capability of the shared agent and server core. Each feature page states availability and links to deployment-specific instructions.|Terminal-client controls, embedding APIs, and deployment runbooks.|
 |`reference/`|Readers looking up generated configuration or SDK fields and exact gRPC and HTTP/SSE contracts.|Tutorials, deployment workflows, and conceptual background. Link to the owning guide.|
 
 `building/` is the builder and operator umbrella. Its `index.md` routes readers

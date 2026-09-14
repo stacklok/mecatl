@@ -100,4 +100,4 @@ git at runtime.
   posture ladder and workspace trust behave identically inside the container.
 - [Install Mecatl](/install.md) — the same release publishes native `mecatui`
   and `mecated` executables through Homebrew and signed archives, for when a
-  container is not the right shape.
+  container is not the right choice.
