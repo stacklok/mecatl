@@ -415,7 +415,7 @@ func TestADR_0325_DCRResetAndRetryCLI(t *testing.T) {
 			}
 		}
 	}
-	registrationKey := dcrLoginRecordKey("mecatl/mcp/oauth-dcr-registration-key/v1", "work", "operator", fixture.resource(), fixture.server.URL)
+	registrationKey := dcrLoginRecordKey("mecatl/mcp/oauth-dcr-lifecycle-key/v1", "connector")
 	getRecord := func(t *testing.T, key []byte) credentialstore.Record {
 		t.Helper()
 		profiles, err := loadMCPLoginProfiles([]string{settings})
