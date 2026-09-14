@@ -39,13 +39,20 @@ func providerPTYDescriptors(t *testing.T, originalFD int) int {
 	if err := unix.Fstat(originalFD, &original); err != nil {
 		t.Fatal(err)
 	}
-	entries, err := os.ReadDir("/dev/fd")
+	dir, err := os.Open("/dev/fd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = dir.Close() }()
+	// Darwin's descriptor directory includes entries that cannot be statted.
+	// Read names only; Fstat below determines which descriptors are still live.
+	entries, err := dir.Readdirnames(-1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	count := 0
 	for _, entry := range entries {
-		fd, err := strconv.Atoi(entry.Name())
+		fd, err := strconv.Atoi(entry)
 		if err != nil {
 			continue
 		}
@@ -58,6 +65,44 @@ func providerPTYDescriptors(t *testing.T, originalFD int) int {
 		t.Fatal("PTY descriptor inventory missed the original")
 	}
 	return count
+}
+
+func providerPTYWrite(t *testing.T, master *os.File, input string) {
+	t.Helper()
+	fd := master.Fd()
+	flags, err := unix.FcntlInt(fd, unix.F_GETFL, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := unix.SetNonblock(int(fd), true); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if _, err := unix.FcntlInt(fd, unix.F_SETFL, flags); err != nil {
+			t.Error(err)
+		}
+	}()
+	deadline := time.Now().Add(10 * time.Second)
+	for len(input) > 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("terminal input did not drain")
+		}
+		// A pasted line can exceed Darwin's PTY queue. Preserve partial writes
+		// and wait for the reader instead of treating backpressure as failure.
+		n, err := unix.Write(int(fd), []byte(input))
+		if n > 0 {
+			input = input[n:]
+		}
+		if err != nil && !errors.Is(err, unix.EAGAIN) && !errors.Is(err, unix.EINTR) {
+			t.Fatal(err)
+		}
+		if len(input) > 0 {
+			poll := []unix.PollFd{{Fd: int32(fd), Events: unix.POLLOUT}}
+			if _, err := unix.Poll(poll, 50); err != nil && !errors.Is(err, unix.EINTR) {
+				t.Fatal(err)
+			}
+		}
+	}
 }
 
 func providerPTYOutput(t *testing.T, master *os.File, until string) string {
@@ -159,9 +204,7 @@ func TestInvariant_ProviderSetupFollowup_TerminalCancellationAndSecretSafety(t *
 				input = "sensitive-sentinel"
 			}
 			if input != "" {
-				if _, err := io.WriteString(master, input); err != nil {
-					t.Fatal(err)
-				}
+				providerPTYWrite(t, master, input)
 			}
 			var got result
 			select {
@@ -333,9 +376,7 @@ func TestProviderReviewTerminalCommandErrors(t *testing.T) {
 			case "oversized":
 				input, want, exitCode = strings.Repeat("s", 9000)+"sensitive-sentinel\r", "8 KiB acceptance limit", 1
 			}
-			if _, err := io.WriteString(master, input); err != nil {
-				t.Fatal(err)
-			}
+			providerPTYWrite(t, master, input)
 			if mode == "eof-default" {
 				output += providerPTYOutput(t, master, "[y/N]: ")
 				if _, err := io.WriteString(master, "yes\r"); err != nil {
