@@ -327,7 +327,7 @@ one login after upgrade because target canonicalization changes their credential
 
 ```sh
 # A local port-forward is loopback, so it is the one plaintext bearer exception.
-kubectl port-forward -n mecatl service/mecak8s-agent 8080:8080 &
+kubectl port-forward -n mecatl service/mecak8s-mecak8s 8080:8080 &
 export MECATL_AUTH_TOKEN="$(your-oidc-cli print-access-token)"
 bin/mecatui connect 127.0.0.1:8080 --auth-token "$MECATL_AUTH_TOKEN"
 ```
