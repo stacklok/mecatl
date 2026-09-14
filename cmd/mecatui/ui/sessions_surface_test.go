@@ -10,6 +10,18 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 )
 
+func TestSessionsNextTabCyclesVisibleTabsWhenDraftsAreHidden(t *testing.T) {
+	st := newSessionsPanelState()
+	st.activityInventory = false
+	visible := []sessionsTab{tabChats, tabScheduledRuns, tabChildRuns, tabOtherRuns}
+	for i, want := range visible {
+		st.tab = want
+		st.nextTab()
+		if got := st.tab; got != visible[(i+1)%len(visible)] {
+			t.Fatalf("nextTab from %v = %v, want %v", want, got, visible[(i+1)%len(visible)])
+		}
+	}
+}
 func TestSessionsSurfaceConsumesPickerKeysAndMessages(t *testing.T) {
 	st := newSessionsPanelState()
 	st.loading = false

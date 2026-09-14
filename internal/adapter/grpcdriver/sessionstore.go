@@ -54,12 +54,13 @@ var ErrNotFound = fmt.Errorf("grpcdriver: session not found: %w", port.ErrSessio
 // driver. Encode/decode happens HERE (sessnap), harness-side: the driver only
 // ever sees the opaque envelope.
 type SessionStore struct {
-	client         driverv1.SessionStoreServiceClient
-	list           bool
-	metadataPaging bool
-	delete         bool
-	lineage        bool
-	create         bool
+	client             driverv1.SessionStoreServiceClient
+	list               bool
+	metadataPaging     bool
+	activityProjection bool
+	delete             bool
+	lineage            bool
+	create             bool
 }
 
 // compile-time assertions that SessionStore satisfies the base port and keeps
@@ -67,12 +68,13 @@ type SessionStore struct {
 // negotiated flags are authoritative: unsupported calls return the existing
 // port sentinels without advertising those operations to inventory consumers.
 var (
-	_ port.SessionStore         = (*SessionStore)(nil)
-	_ port.SessionCreator       = (*SessionStore)(nil)
-	_ port.PrunableStore        = (*SessionStore)(nil)
-	_ port.SessionMetadataPager = (*SessionStore)(nil)
-	_ port.SessionDeleteSupport = (*SessionStore)(nil)
-	_ port.SessionLineageReader = (*SessionStore)(nil)
+	_ port.SessionStore                   = (*SessionStore)(nil)
+	_ port.SessionCreator                 = (*SessionStore)(nil)
+	_ port.PrunableStore                  = (*SessionStore)(nil)
+	_ port.SessionMetadataPager           = (*SessionStore)(nil)
+	_ port.SessionActivityProjectionPager = (*SessionStore)(nil)
+	_ port.SessionDeleteSupport           = (*SessionStore)(nil)
+	_ port.SessionLineageReader           = (*SessionStore)(nil)
 )
 
 const sessionCapabilityTimeout = 5 * time.Second
@@ -93,6 +95,7 @@ func NewSessionStore(ctx context.Context, conn grpc.ClientConnInterface) (*Sessi
 	}
 	st.list = caps.GetList()
 	st.metadataPaging = caps.GetMetadataPaging()
+	st.activityProjection = caps.GetActivityProjection()
 	st.delete = caps.GetDelete()
 	st.lineage = caps.GetLineage()
 	st.create = caps.GetCreate()
@@ -103,6 +106,10 @@ func NewSessionStore(ctx context.Context, conn grpc.ClientConnInterface) (*Sessi
 // keeps implementing PrunableStore unconditionally for compatibility.
 func (st *SessionStore) SupportsSessionDelete() bool { return st.delete }
 
+// SupportsSessionActivityProjection reports the driver's negotiated atomic
+// activity projection capability.
+func (st *SessionStore) SupportsSessionActivityProjection() bool { return st.activityProjection }
+
 // Save encodes s via sessnap and persists it under s.ID on the driver,
 // overwriting any prior snapshot. A nil session fails client-side with
 // sessnap.ErrNilSession (no RPC), matching the local stores.
@@ -111,10 +118,13 @@ func (st *SessionStore) Save(ctx context.Context, s *session.Session) error {
 	if err != nil {
 		return err
 	}
-	if _, err := st.client.Save(ctx, &driverv1.SaveRequest{
-		SessionId: string(s.ID),
-		Snapshot:  &driverv1.SessionSnapshot{Format: SnapshotFormat, Payload: line},
-	}); err != nil {
+	request := &driverv1.SaveRequest{
+		SessionId: string(s.ID), Snapshot: &driverv1.SessionSnapshot{Format: SnapshotFormat, Payload: line},
+	}
+	if st.activityProjection {
+		request.ActivityState = string(session.ActivityOf(s.Conversation.Messages))
+	}
+	if _, err := st.client.Save(ctx, request); err != nil {
 		return rpcErr(ctx, "save", err)
 	}
 	return nil
@@ -129,7 +139,11 @@ func (st *SessionStore) Create(ctx context.Context, s *session.Session) error {
 	if err != nil {
 		return err
 	}
-	if _, err := st.client.Create(ctx, &driverv1.SaveRequest{SessionId: string(s.ID), Snapshot: &driverv1.SessionSnapshot{Format: SnapshotFormat, Payload: line}}); err != nil {
+	request := &driverv1.SaveRequest{SessionId: string(s.ID), Snapshot: &driverv1.SessionSnapshot{Format: SnapshotFormat, Payload: line}}
+	if st.activityProjection {
+		request.ActivityState = string(session.ActivityOf(s.Conversation.Messages))
+	}
+	if _, err := st.client.Create(ctx, request); err != nil {
 		if status.Code(err) == codes.AlreadyExists {
 			return fmt.Errorf("grpcdriver: create %q: %w", s.ID, port.ErrSessionAlreadyExists)
 		}
@@ -376,7 +390,7 @@ func (st *SessionStore) PageSessionMetadata(ctx context.Context, request port.Se
 		}
 		return port.SessionMetadataPage{}, rpcErr(ctx, "page metadata", err)
 	}
-	page, err := metadataPageFromProto(resp)
+	page, err := metadataPageFromProto(resp, st.activityProjection)
 	if err != nil {
 		return port.SessionMetadataPage{}, err
 	}
@@ -410,7 +424,7 @@ func pageMetadataRequest(request port.SessionMetadataPageRequest) (*driverv1.Pag
 	return req, nil
 }
 
-func metadataPageFromProto(resp *driverv1.PageSessionMetadataResponse) (port.SessionMetadataPage, error) {
+func metadataPageFromProto(resp *driverv1.PageSessionMetadataResponse, activityProjection bool) (port.SessionMetadataPage, error) {
 	page := port.SessionMetadataPage{TotalCount: int(resp.GetTotalCount()), Sessions: make([]port.SessionDiscoveryMeta, 0, len(resp.GetSessions()))}
 	for _, entry := range resp.GetSessions() {
 		if entry == nil {
@@ -422,7 +436,7 @@ func metadataPageFromProto(resp *driverv1.PageSessionMetadataResponse) (port.Ses
 		if ts := entry.GetCreatedAt(); ts != nil && ts.CheckValid() != nil {
 			return port.SessionMetadataPage{}, fmt.Errorf("grpcdriver: page metadata: driver returned an invalid creation time")
 		}
-		page.Sessions = append(page.Sessions, metadataFromProto(entry))
+		page.Sessions = append(page.Sessions, metadataFromProto(entry, activityProjection))
 	}
 	if cursor := resp.GetNextCursor(); cursor != nil {
 		if cursor.GetModifiedAt() == nil || cursor.GetModifiedAt().CheckValid() != nil || cursor.GetSessionId() == "" ||
@@ -437,7 +451,11 @@ func metadataPageFromProto(resp *driverv1.PageSessionMetadataResponse) (port.Ses
 	return page, nil
 }
 
-func metadataFromProto(entry *driverv1.SessionMetadataEntry) port.SessionDiscoveryMeta {
+func metadataFromProto(entry *driverv1.SessionMetadataEntry, activityProjection bool) port.SessionDiscoveryMeta {
+	activity := session.ActivityUnknown
+	if activityProjection {
+		activity = session.ValidActivity(session.ActivityState(entry.GetActivityState()))
+	}
 	meta := port.SessionDiscoveryMeta{
 		ID:              session.SessionID(entry.GetSessionId()),
 		State:           session.State(entry.GetState()),
@@ -448,6 +466,7 @@ func metadataFromProto(entry *driverv1.SessionMetadataEntry) port.SessionDiscove
 		EnvironmentRef:  environmentRefFromProto(entry.GetEnvironmentRef()),
 		Kind:            session.SessionKind(entry.GetKind()),
 		EstimatedBytes:  entry.GetEstimatedBytes(),
+		Activity:        activity,
 		Relationship: session.SessionRelationship{
 			ParentSessionID:        session.SessionID(entry.GetParentSessionId()),
 			ParentIncarnation:      session.IncarnationID(entry.GetParentIncarnation()),

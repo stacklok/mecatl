@@ -43,7 +43,7 @@ func TestSessionContinuityUX_Scenario4_FamilyTabs(t *testing.T) {
 		{tabOtherRuns, []string{"legacy-unknown"}},
 	}
 	for _, tc := range cases {
-		got := filterSessionsByTab(rows, tc.tab)
+		got := filterSessionsByTabWithActivity(rows, tc.tab, false)
 		if len(got) != len(tc.want) {
 			t.Fatalf("tab %v rows = %v, want %v", tc.tab, got, tc.want)
 		}

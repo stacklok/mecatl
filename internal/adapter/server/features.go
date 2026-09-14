@@ -62,15 +62,11 @@ const (
 	// FeatureMCPServersOnCreate is client-provided MCP servers on session
 	// creation — CreateSessionRequest.mcp_servers and its HTTP peer (issue #821,
 	// ADR 0237).
-	//
-	// It is the FIRST listener-scoped feature, and the reason serverFeatures grew
-	// a scope argument. Unlike its siblings it answers a DEPLOYMENT question, not
-	// a build one: every build implements the field, and whether a given
-	// deployment accepts it depends on whether any of its API listeners is a
-	// network boundary. A client that reads this identifier learns "I may send
-	// mcp_servers HERE" — which is the only useful form of the answer, since a
-	// build-only claim would be true on a daemon that refuses every such request.
 	FeatureMCPServersOnCreate = "mcp_servers_on_create"
+
+	// FeatureSessionActivityInventory reports that ListSessions pages carry the
+	// atomically persisted activity projection.
+	FeatureSessionActivityInventory = "session_activity_inventory"
 )
 
 // FeatureScope is what the DEPLOYMENT permits, as distinct from what the build
@@ -86,6 +82,9 @@ type FeatureScope struct {
 	// ClientMCPOnCreate reports whether this deployment accepts
 	// CreateSessionRequest.mcp_servers.
 	ClientMCPOnCreate bool
+	// SessionActivityInventory reports whether ListSessions reads an atomic,
+	// activity-projecting metadata pager.
+	SessionActivityInventory bool
 }
 
 // allFeatures is the registry: the single source of truth both transports read.
@@ -103,6 +102,7 @@ var allFeatures = []string{
 	FeatureHTTPSteer,
 	FeatureMCPServersOnCreate,
 	FeatureServerInfo,
+	FeatureSessionActivityInventory,
 	FeatureWatchSessionEvents,
 }
 
@@ -117,6 +117,8 @@ func permittedBy(scope FeatureScope, feature string) bool {
 	switch feature {
 	case FeatureMCPServersOnCreate:
 		return scope.ClientMCPOnCreate
+	case FeatureSessionActivityInventory:
+		return scope.SessionActivityInventory
 	default:
 		return true
 	}

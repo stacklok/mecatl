@@ -275,6 +275,7 @@ func (st *Store) readInventoryScope(scope inventoryCatalogScope) ([]port.Session
 		if err := json.Unmarshal(scanner.Bytes(), &row); err != nil {
 			return nil, err
 		}
+		row.Activity = session.ValidActivity(row.Activity)
 		rows = append(rows, row)
 	}
 	if err := scanner.Err(); err != nil {

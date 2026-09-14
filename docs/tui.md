@@ -1663,6 +1663,14 @@ clipboard failure or a session change instead of claiming a stale copy. `esc` cl
 
 **`/sessions` (session continuity).** The session inventory has four session tabs:
 **Chats**, **Scheduled runs**, **Child runs**, and **Other**. When the server
+advertises `session_activity_inventory`, it adds a **Drafts** tab: known empty
+main sessions render there as **`New — no messages`**, while Chats contains only
+active and unknown main rows. Drafts remain selectable for explicit continuation
+or exact-ID `--resume`; `--resume-latest` considers only active main rows and
+checks each authoritative transcript, falling back to older candidates when one
+is unavailable or empty. A server without that feature keeps the historical
+mixed Chats view and hides Drafts. Delete is explicit and permanent when
+permitted; closing this panel never deletes a draft or any other session. When the server
 advertises authenticated bounded storage health or either maintenance operation, a fifth
 **Maintenance** tab appears. Its status view shows current/reclaimable availability,
 aggregate bytes/files/formats/kinds/corruption, effective retention policy, sweep timing,

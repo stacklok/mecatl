@@ -21,8 +21,13 @@ mecatui --resume 01JOPAQUESESSIONID
 mecatui connect 127.0.0.1:8080 --resume-latest
 ```
 
-`--resume-latest` continues the newest eligible chat. If none exists, it starts
-a new chat. Storage and listing failures still produce an error.
+`--resume-latest` continues the newest eligible chat. On servers that advertise
+session activity inventory, it considers only active main chats and verifies each
+candidate's authoritative transcript before continuing; drafts and unknown legacy
+rows are never selected automatically. Older servers retain the historical
+mixed-inventory behavior but still reject an empty authoritative transcript. If
+none qualifies, it starts a new chat. Storage and listing failures still produce
+an error.
 
 A resumed chat is the stored chat, not a copy. It keeps its stored workspace and
 model. You can combine a resume selector with `--prompt` to send one next task
@@ -171,9 +176,15 @@ session, and delete it when the server permits. The server rechecks every action
 against active-session and lease protections. Caller identity records ownership
 when enabled, but it does not isolate sessions between authenticated callers.
 
-Use `/sessions` from an open chat for the same inventory. It has separate tabs
-for chats, scheduled runs, child runs, and other rows; search and pagination
-keep large inventories usable.
+Use `/sessions` from an open chat for the same inventory. Servers that advertise
+session activity inventory place known empty main sessions in a **Drafts** tab,
+where they render as `New — no messages`; **Chats** then contains active and
+unknown main rows. Drafts remain explicitly continuable by selecting them or
+using their exact ID. On an older server, Drafts is hidden and Chats retains the
+historical mixed view. Delete is permanent when the server permits it; Close
+only closes this local inventory surface and never deletes a draft or chat.
+Scheduled, child, and other rows retain their separate tabs; search and
+pagination keep large inventories usable.
 
 Use `/worktrees` to move a history-carrying successor to an eligible
 server-owned worktree. The client sends the source session ID, receives only

@@ -128,6 +128,42 @@ func IsGenuineUserPrompt(m Message) bool {
 	return m.Role == RoleUser && !IsSynthesisedSummary(m.Text)
 }
 
+// ActivityState is the content-free activity classification of persisted history.
+type ActivityState string
+
+const (
+	// ActivityUnknown is reserved for unavailable or unproved discovery metadata.
+	ActivityUnknown ActivityState = ""
+	// ActivityDraft means the history has no genuine user prompt.
+	ActivityDraft ActivityState = "draft"
+	// ActivityActive means the history has at least one genuine user prompt.
+	ActivityActive ActivityState = "active"
+)
+
+// ActivityOf classifies successfully decoded conversation history. It is pure and
+// deliberately uses the persisted-history genuine-user predicate, so harness-authored
+// compaction summaries do not activate an otherwise empty draft.
+func ActivityOf(messages []Message) ActivityState {
+	for _, message := range messages {
+		if IsGenuineUserPrompt(message) {
+			return ActivityActive
+		}
+	}
+	return ActivityDraft
+}
+
+// ValidActivity clamps a decoded or wire-carried ActivityState to the closed
+// {draft, active} set, treating anything else (corrupt, legacy, or a future
+// value this build doesn't recognize) as Unknown. It is the ONE fail-closed
+// validity rule for the type — storage/driver adapters call it instead of each
+// re-deriving the same allow-list check independently.
+func ValidActivity(a ActivityState) ActivityState {
+	if a == ActivityDraft || a == ActivityActive {
+		return a
+	}
+	return ActivityUnknown
+}
+
 // ClampTitle trims and normalizes whitespace, then, if the rune count exceeds
 // maxTitleRunes, truncates to maxTitleRunes and appends a single "…" ellipsis.
 // A short or empty input is returned trimmed (empty stays ""). It is the ONE

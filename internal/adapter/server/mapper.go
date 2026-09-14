@@ -1091,6 +1091,7 @@ func toProtoSessionSummary(s SessionSummary) *mecatlv1.SessionSummary {
 		Owner:           toProtoPrincipal(s.Owner),
 		Kind:            string(s.Kind),
 		Relationship:    toProtoSessionRelationship(s.Relationship),
+		ActivityState:   valid(string(s.Activity)),
 		Capabilities: &mecatlv1.SessionInventoryCapabilities{
 			PublicChat:              s.Capabilities.PublicChat,
 			Inspect:                 s.Capabilities.Inspect,

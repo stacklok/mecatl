@@ -101,8 +101,8 @@ func TestSessionContinuityUX_Scenario6_LatestSelection(t *testing.T) {
 			{ID: "older", ModifiedAt: 50, Kind: client.SessionKindMain, State: "completed", Capabilities: client.SessionInventoryCapabilities{PublicChat: true}},
 		},
 		transcripts: map[string]client.SessionTranscript{
-			"newest-readable": {SessionID: "newest-readable", Complete: true},
-			"older":           {SessionID: "older", Complete: true},
+			"newest-readable": {SessionID: "newest-readable", Complete: true, Messages: []client.ConversationMessage{{Role: "user", Text: "hi"}}},
+			"older":           {SessionID: "older", Complete: true, Messages: []client.ConversationMessage{{Role: "user", Text: "older"}}},
 		},
 	}
 	got, err := resolveStartupResume(context.Background(), source, "", true)
@@ -167,7 +167,7 @@ func TestResumeLatest_AdoptsWhenEligible(t *testing.T) {
 		rows: []client.SessionListItem{
 			{ID: "newest", ModifiedAt: 60, Kind: client.SessionKindMain, State: "completed", Capabilities: client.SessionInventoryCapabilities{PublicChat: true}},
 		},
-		transcripts: map[string]client.SessionTranscript{"newest": {SessionID: "newest", Complete: true}},
+		transcripts: map[string]client.SessionTranscript{"newest": {SessionID: "newest", Complete: true, Messages: []client.ConversationMessage{{Role: "user", Text: "hi"}}}},
 		snapshots:   map[string]client.SessionSnapshot{"newest": {State: "completed", Placement: client.Placement{Kind: "local", Label: "adopted"}}},
 	}
 	sel, ws, err := startupResumeConfig(context.Background(), source, config{resumeLatest: true, workspace: "/ws"})

@@ -35,6 +35,7 @@ type Store struct {
 	// port.PrunableStore List/Delete retention seam.
 	savedAt             map[session.SessionID]time.Time
 	estimatedBytes      map[session.SessionID]int64
+	activities          map[session.SessionID]session.ActivityState
 	lineageByKey        map[string]port.SessionLineageRecord
 	lineageByID         map[session.SessionID]map[string]port.SessionLineageRecord
 	lineageEdges        map[string]map[string]port.SessionLineageRecord
@@ -97,6 +98,7 @@ func New(opts ...Option) *Store {
 		sessions:       make(map[session.SessionID]sessnap.Snapshot),
 		savedAt:        make(map[session.SessionID]time.Time),
 		estimatedBytes: make(map[session.SessionID]int64),
+		activities:     make(map[session.SessionID]session.ActivityState),
 		lineageByKey:   make(map[string]port.SessionLineageRecord),
 		lineageByID:    make(map[session.SessionID]map[string]port.SessionLineageRecord),
 		lineageEdges:   make(map[string]map[string]port.SessionLineageRecord),
@@ -128,6 +130,7 @@ func (st *Store) Save(_ context.Context, s *session.Session) error {
 	st.putLineage(lineageSnapshotRecord(s.ID, snap, port.SessionLineageRetained, time.Time{}))
 	st.savedAt[s.ID] = st.now()
 	st.estimatedBytes[s.ID] = estimatedBytes
+	st.activities[s.ID] = session.ActivityOf(s.Conversation.Messages)
 	st.generation++
 	st.mu.Unlock()
 	return nil
@@ -153,6 +156,7 @@ func (st *Store) Create(_ context.Context, s *session.Session) error {
 	st.putLineage(lineageSnapshotRecord(s.ID, snap, port.SessionLineageRetained, time.Time{}))
 	st.savedAt[s.ID] = st.now()
 	st.estimatedBytes[s.ID] = estimatedBytes
+	st.activities[s.ID] = session.ActivityOf(s.Conversation.Messages)
 	st.generation++
 	return nil
 }
@@ -185,6 +189,10 @@ func (st *Store) List(_ context.Context) ([]port.StoredSession, error) {
 	return out, nil
 }
 
+// SupportsSessionActivityProjection reports that the in-memory metadata page
+// atomically reflects the latest snapshot's activity.
+func (*Store) SupportsSessionActivityProjection() bool { return true }
+
 // PageSessionMetadata returns one owner-filtered keyset page from a consistent
 // in-memory snapshot of the store maps.
 func (st *Store) PageSessionMetadata(_ context.Context, request port.SessionMetadataPageRequest) (port.SessionMetadataPage, error) {
@@ -200,6 +208,7 @@ func (st *Store) PageSessionMetadata(_ context.Context, request port.SessionMeta
 			Turns: snap.Counters.Turns, ModelID: snap.ModelID, CreatedAt: snap.CreatedAt,
 			Title: snap.Title, TitleProvenance: snap.TitleProvenance, EnvironmentRef: snap.EnvironmentRef,
 			Kind: kind, Relationship: snap.Relationship, Owner: snap.Owner,
+			Activity:       st.activities[id],
 			EstimatedBytes: st.estimatedBytes[id],
 		})
 	}

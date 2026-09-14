@@ -27,6 +27,18 @@ const (
 	SessionKindUnknown        SessionKind = "unknown"
 )
 
+// SessionActivityState is the safe, content-free persisted-history activity.
+type SessionActivityState string
+
+const (
+	// SessionActivityUnknown means activity is unavailable or unproved.
+	SessionActivityUnknown SessionActivityState = ""
+	// SessionActivityDraft means no genuine user prompt is recorded.
+	SessionActivityDraft SessionActivityState = "draft"
+	// SessionActivityActive means at least one genuine user prompt is recorded.
+	SessionActivityActive SessionActivityState = "active"
+)
+
 // CapabilityReason explains why a session action is unavailable.
 type CapabilityReason string
 
@@ -95,6 +107,7 @@ type SessionListItem struct {
 	Capabilities    SessionInventoryCapabilities
 	Reasons         SessionInventoryActionReasons
 	ReasonCode      CapabilityReason
+	UsageState      SessionActivityState
 }
 
 // SessionsListedMsg carries one session inventory listing result.
@@ -110,9 +123,10 @@ var ErrSessionInventoryRestart = errors.New("session inventory changed; restart 
 
 // SessionInventoryPage is one proto-free bounded inventory page.
 type SessionInventoryPage struct {
-	Sessions   []SessionListItem
-	NextCursor string
-	TotalCount int
+	Sessions          []SessionListItem
+	NextCursor        string
+	TotalCount        int
+	ActivityInventory bool
 }
 
 // SessionInventoryPageMsg carries one progressive page result to Bubble Tea.
@@ -194,9 +208,21 @@ func listSessionsFromProto(in []*mecatlv1.SessionSummary) []SessionListItem {
 				Fork: CapabilityReason(reasons.GetFork()), Rename: CapabilityReason(reasons.GetRename()), Delete: CapabilityReason(reasons.GetDelete()),
 			},
 			ReasonCode: CapabilityReason(s.GetReasonCode()),
+			UsageState: activityFromSummary(s.GetActivityState()),
 		})
 	}
 	return out
+}
+
+func activityFromSummary(activity string) SessionActivityState {
+	switch activity {
+	case string(SessionActivityDraft):
+		return SessionActivityDraft
+	case string(SessionActivityActive):
+		return SessionActivityActive
+	default:
+		return SessionActivityUnknown
+	}
 }
 
 func titleFromSummary(s *mecatlv1.SessionSummary) string {
@@ -239,10 +265,19 @@ type LiveStreamer interface {
 var _ SessionReplayer = (*Client)(nil)
 var _ LiveStreamer = (*Client)(nil)
 
+// SessionActivityInventoryDetector reports whether server inventory rows include
+// atomically persisted activity projections.
+type SessionActivityInventoryDetector interface {
+	SupportsSessionActivityInventory(context.Context) bool
+}
+
 // ListSessionsPageCmd returns a command that fetches exactly one inventory page.
 func ListSessionsPageCmd(ctx context.Context, s SessionPager, cursor string, requestToken uint64) tea.Cmd {
 	return func() tea.Msg {
 		page, err := s.ListSessionPage(ctx, cursor)
+		if detector, ok := s.(SessionActivityInventoryDetector); ok {
+			page.ActivityInventory = detector.SupportsSessionActivityInventory(ctx)
+		}
 		return SessionInventoryPageMsg{Page: page, Cursor: cursor, RequestToken: requestToken, Err: err}
 	}
 }
