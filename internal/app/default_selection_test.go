@@ -5,6 +5,52 @@ import (
 	"testing"
 )
 
+func TestProviderSetupFollowup_Scenario3_SharedDefaultResolution(t *testing.T) {
+	for _, tc := range []struct {
+		name, selector, declared, alias string
+		wantOK                          bool
+	}{
+		{"bare declared", "model", "model", "", true},
+		{"unknown bare", "unknown", "model", "", false},
+		{"mismatched literal", "other-model", "model", "", false},
+		{"operator alias", "chosen", "model", "model", true},
+		{"alias overrides declared token", "chosen", "chosen", "different", false},
+		{"inherit", "inherit", "model", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := customProviderConfig()
+			def := cfg.ProviderDefinitions["gateway-responses"]
+			def.DefaultModel = tc.declared
+			cfg.ProviderDefinitions[def.ID] = def
+			cfg.DefaultProvider, cfg.DefaultModel = def.ID, tc.selector
+			cfg.envDetector = fakeEnv(nil)
+			cfg.skipProviderNetworkDiscovery = true
+			if tc.alias != "" {
+				cfg.ModelAliases = map[string]string{tc.selector: tc.alias}
+			}
+			provider, model, err := ResolveDeploymentDefault(t.Context(), cfg)
+			if (err == nil) != tc.wantOK {
+				t.Fatalf("shared resolver success = %v, want %v: %v", err == nil, tc.wantOK, err)
+			}
+			if !tc.wantOK {
+				return
+			}
+			cfg.DefaultProvider, cfg.DefaultModel = provider, model
+			cfg.Workspace = t.TempDir()
+			cfg.NoSoul = true
+			cfg.permConfigEnv = isolatedPermConfigEnv(t)
+			built, err := Build(t.Context(), cfg)
+			if err != nil {
+				t.Fatalf("ordinary startup rejected shared selection: %v", err)
+			}
+			defer built.Close()
+			if provider != def.ID || model != tc.declared {
+				t.Fatalf("resolved pair = %s/%s", provider, model)
+			}
+		})
+	}
+}
+
 func TestResolveDeploymentDefaultAgreesWithStartupResolver(t *testing.T) {
 	cfg := Config{
 		DefaultProvider: "openrouter",
