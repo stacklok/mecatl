@@ -518,6 +518,24 @@ func classicHist(t *testing.T, data map[string]metricdata.Aggregation, name stri
 	return h.DataPoints[0]
 }
 
+// int64HistPointByAttr returns the metricdata.Histogram[int64] data point of
+// the named instrument whose attribute key equals value, failing if the
+// instrument is absent, not an int64 histogram, or has no matching point.
+func int64HistPointByAttr(t *testing.T, data map[string]metricdata.Aggregation, name, key, value string) metricdata.HistogramDataPoint[int64] {
+	t.Helper()
+	h, ok := data[name].(metricdata.Histogram[int64])
+	if !ok {
+		t.Fatalf("%s is %T, want Histogram[int64]", name, data[name])
+	}
+	for _, dp := range h.DataPoints {
+		if v, present := dp.Attributes.Value(attribute.Key(key)); present && v.AsString() == value {
+			return dp
+		}
+	}
+	t.Fatalf("%s: no data point with %s=%q (points: %d)", name, key, value, len(h.DataPoints))
+	return metricdata.HistogramDataPoint[int64]{}
+}
+
 // TestMetricsLatencyInstruments asserts the five latency instruments — turn
 // duration, TTFT, inter-token (mean), inter-token (max), and tool queue — all
 // collect as classic explicit-bucket histograms (ADR 0045) with sane unit-converted
@@ -896,4 +914,93 @@ type countingSink struct {
 func (c *countingSink) Emit(ctx context.Context, _ session.Event) {
 	c.n++
 	c.lastCtx = ctx
+}
+
+// TestMetricsGenAI_TokenUsageAndOperationDuration covers the two OTel GenAI
+// semantic-convention instruments recordTurnEnd additionally records
+// (alongside, never instead of, mecatl.tokens/mecatl.turn.duration):
+// gen_ai.client.token.usage (one point per gen_ai.token.type) and
+// gen_ai.client.operation.duration, sourced from TurnEndPayload's Model/
+// Provider/Usage/DurationMs.
+func TestMetricsGenAI_TokenUsageAndOperationDuration(t *testing.T) {
+	m, reader := newTestMetrics(t)
+
+	m.Emit(context.Background(), session.Event{Type: session.EvTurnEnd, TurnEnd: &session.TurnEndPayload{
+		Model: "claude-sonnet-5", Provider: "anthropic", DurationMs: 250,
+		Usage: session.Usage{InputTokens: 100, OutputTokens: 50},
+	}})
+
+	data := collect(t, reader)
+
+	inputPt := int64HistPointByAttr(t, data, "gen_ai.client.token.usage", "gen_ai.token.type", "input")
+	if inputPt.Count != 1 || inputPt.Sum != 100 {
+		t.Errorf("token.usage{type=input} count=%d sum=%d, want 1,100", inputPt.Count, inputPt.Sum)
+	}
+	outputPt := int64HistPointByAttr(t, data, "gen_ai.client.token.usage", "gen_ai.token.type", "output")
+	if outputPt.Count != 1 || outputPt.Sum != 50 {
+		t.Errorf("token.usage{type=output} count=%d sum=%d, want 1,50", outputPt.Count, outputPt.Sum)
+	}
+	for _, dp := range []metricdata.HistogramDataPoint[int64]{inputPt, outputPt} {
+		for key, want := range map[string]string{
+			"gen_ai.operation.name": "chat",
+			"gen_ai.provider.name":  "anthropic",
+			"gen_ai.request.model":  "claude-sonnet-5",
+			"gen_ai.response.model": "claude-sonnet-5",
+		} {
+			if got, present := dp.Attributes.Value(attribute.Key(key)); !present || got.AsString() != want {
+				t.Errorf("token.usage attribute %s = %q (present=%v), want %q", key, got.AsString(), present, want)
+			}
+		}
+	}
+
+	dur := classicHist(t, data, "gen_ai.client.operation.duration")
+	if dur.Count != 1 {
+		t.Errorf("operation.duration count = %d, want 1", dur.Count)
+	}
+	if got := dur.Sum; got < 0.249 || got > 0.251 { // 250ms
+		t.Errorf("operation.duration sum = %v, want ≈0.25", got)
+	}
+	for key, want := range map[string]string{
+		"gen_ai.operation.name": "chat",
+		"gen_ai.provider.name":  "anthropic",
+		"gen_ai.request.model":  "claude-sonnet-5",
+	} {
+		if got, present := dur.Attributes.Value(attribute.Key(key)); !present || got.AsString() != want {
+			t.Errorf("operation.duration attribute %s = %q (present=%v), want %q", key, got.AsString(), present, want)
+		}
+	}
+
+	// mecatl.turn.duration must ALSO record from the same call — additive, not
+	// a replacement.
+	turn := classicHist(t, data, turnDurationInstrument)
+	if turn.Count != 1 {
+		t.Errorf("turn.duration count = %d, want 1 (gen_ai instruments must be additive)", turn.Count)
+	}
+}
+
+// TestMetricsGenAI_SkippedWhenIdentityEmpty proves the two gen_ai instruments
+// are skipped (not recorded with an empty-string attribute) when Model or
+// Provider is unresolved — the same shape TestMetricsLatencyInstruments'
+// EvTurnEnd payloads already use, which must keep working unaffected.
+func TestMetricsGenAI_SkippedWhenIdentityEmpty(t *testing.T) {
+	m, reader := newTestMetrics(t)
+
+	m.Emit(context.Background(), session.Event{Type: session.EvTurnEnd, TurnEnd: &session.TurnEndPayload{
+		DurationMs: 195,
+		Usage:      session.Usage{InputTokens: 10, OutputTokens: 5},
+	}})
+
+	data := collect(t, reader)
+	if _, ok := data["gen_ai.client.token.usage"]; ok {
+		t.Errorf("gen_ai.client.token.usage recorded with no Model/Provider identity")
+	}
+	if _, ok := data["gen_ai.client.operation.duration"]; ok {
+		t.Errorf("gen_ai.client.operation.duration recorded with no Model/Provider identity")
+	}
+	// mecatl.turn.duration must still record — the skip is scoped to the
+	// gen_ai instruments only.
+	turn := classicHist(t, data, turnDurationInstrument)
+	if turn.Count != 1 {
+		t.Errorf("turn.duration count = %d, want 1", turn.Count)
+	}
 }
