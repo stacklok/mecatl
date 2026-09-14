@@ -8,16 +8,20 @@ import { setTimeout as delay } from "node:timers/promises";
 import type { Transport } from "@connectrpc/connect";
 
 import { connectTransport, disposeTransport } from "./client.js";
-import {
-  type ClientDiagnosticsOptions,
-  type DiagnosticFieldValue,
-  type DiagnosticRecord,
-  type DiagnosticsSink,
-  InvalidStateError,
-  MecatlError,
-} from "./errors.js";
+import { type ClientDiagnosticsOptions, InvalidStateError, MecatlError } from "./errors.js";
 import { createNodeTransport } from "./node-transport.js";
 import { createRawClient } from "./raw.js";
+import {
+  BoundedByteTail,
+  ChildExitedBeforeReady,
+  createStartupError,
+  emitStartupDiagnostic,
+  localError,
+  reportableStderr,
+  SDK_OWNED_FLAGS,
+  type StartupError,
+  validateExtraArguments,
+} from "./spawn-common.js";
 import {
   DEFAULT_TOOL_SERVER_NAME,
   type NodeClient,
@@ -37,17 +41,6 @@ const STOP_GRACE_MS = 3_000;
 const STOP_KILL_WAIT_MS = 1_000;
 const HTTP_LOOPBACK_ADDRESS = "127.0.0.1:0";
 const CLIENT_MCP_ON_CREATE_FEATURE = "mcp_servers_on_create";
-const STDERR_CAPTURE_BYTES = 64 * 1024;
-const STDERR_REPORT_BYTES = 4 * 1024;
-const REDACTED_LINE = "[REDACTED]";
-
-const SDK_OWNED_FLAGS = [
-  "--grpc-unix-socket",
-  "--grpc-addr",
-  "--http-addr",
-  "--ready-file",
-  "--lifetime-pipe-fd",
-] as const;
 
 /** Options for starting one SDK-owned local daemon. @public */
 export interface SpawnOptions extends ClientDiagnosticsOptions {
@@ -194,45 +187,6 @@ const defaultFileSystem: SpawnFileSystem = {
   unlink,
 };
 
-class BoundedByteTail {
-  #bytes = Buffer.alloc(0);
-
-  append(chunk: Uint8Array): void {
-    const suffix = Buffer.from(chunk).subarray(-STDERR_CAPTURE_BYTES);
-    const joined = Buffer.concat([this.#bytes, suffix]);
-    this.#bytes = joined.subarray(-STDERR_CAPTURE_BYTES);
-  }
-
-  value(): Uint8Array {
-    return this.#bytes;
-  }
-}
-
-class ChildExitedBeforeReady extends Error {
-  constructor(readonly status: ProcessExit) {
-    super("mecated exited before readiness");
-  }
-}
-
-type StartupError = MecatlError & {
-  cleanupFailed?: true;
-  exitCode?: number | null;
-  signal?: NodeJS.Signals | null;
-  stderrTail?: string;
-};
-
-function localError(
-  code: "readiness_timeout" | "spawn_failed" | "unsupported_platform",
-  message: string,
-  cause?: unknown,
-): MecatlError {
-  return new MecatlError(message, {
-    ...(cause === undefined ? {} : { cause }),
-    code,
-    transport: "local",
-  });
-}
-
 function errnoCode(error: unknown): string | undefined {
   return typeof error === "object" && error !== null && "code" in error
     ? String(error.code)
@@ -266,83 +220,11 @@ function realLauncher(request: LaunchRequest): LaunchedProcess {
   };
 }
 
-function reportableStderr(bytes: Uint8Array): string {
-  const captured = Buffer.from(bytes);
-  const start = Math.max(0, captured.length - STDERR_REPORT_BYTES);
-  let report = captured.subarray(start);
-  if (start > 0 && captured[start - 1] !== 0x0a) {
-    const firstNewline = report.indexOf(0x0a);
-    report = firstNewline === -1 ? Buffer.alloc(0) : report.subarray(firstNewline + 1);
-  }
-  return redactStderr(report.toString("utf8"));
-}
-
-function secretShapedLine(line: string): boolean {
-  const value = line.endsWith("\r") ? line.slice(0, -1) : line;
-  return (
-    /^[\t ]*(?:export[\t ]+)?[A-Za-z_][A-Za-z0-9_]*[\t ]*=.*$/.test(value) ||
-    /(?:^|[^A-Za-z0-9])(?:sk-|ghp_|xox[abps]-|eyJ)[A-Za-z0-9._-]*/.test(value)
-  );
-}
-
-function redactStderr(stderr: string): string {
-  return stderr
-    .split("\n")
-    .map((line) => {
-      if (!secretShapedLine(line)) return line;
-      return line.endsWith("\r") ? `${REDACTED_LINE}\r` : REDACTED_LINE;
-    })
-    .join("\n");
-}
-
 function startupError(reason: unknown, process: LaunchedProcess | undefined): StartupError {
-  const exited = reason instanceof ChildExitedBeforeReady ? reason.status : undefined;
-  const code = reason instanceof MecatlError ? reason.code : "spawn_failed";
-  const base =
-    reason instanceof ChildExitedBeforeReady
-      ? localError(
-          "spawn_failed",
-          `mecated exited before readiness (code=${String(exited?.code)}, signal=${String(exited?.signal)})`,
-        )
-      : reason instanceof MecatlError && (code === "spawn_failed" || code === "readiness_timeout")
-        ? reason
-        : localError("spawn_failed", "mecated failed during startup", reason);
-  const tail = reportableStderr(process?.stderrTail?.() ?? new Uint8Array());
-  const error = (
-    tail === ""
-      ? base
-      : new MecatlError(`${base.message}\nstderr tail:\n${tail}`, {
-          cause: base,
-          code: base.code,
-          transport: "local",
-        })
-  ) as StartupError;
-  if (exited !== undefined) {
-    error.exitCode = exited.code;
-    error.signal = exited.signal;
-  }
-  if (tail !== "") error.stderrTail = tail;
-  return error;
-}
-
-function emitStartupDiagnostic(sink: DiagnosticsSink | undefined, error: StartupError): void {
-  if (sink === undefined) return;
-  const fields: Record<string, DiagnosticFieldValue> = {};
-  if (error.cleanupFailed === true) fields.cleanupFailed = true;
-  if (error.exitCode !== undefined) fields.exitCode = error.exitCode;
-  if (error.signal !== undefined) fields.signal = error.signal;
-  if (error.stderrTail !== undefined) fields.stderrTail = error.stderrTail;
-  const record: DiagnosticRecord = Object.freeze({
-    code: error.code,
-    fields: Object.freeze(fields),
-    level: "error",
-    message: error.message,
-  });
-  try {
-    sink(record);
-  } catch {
-    // Diagnostics observers never replace the startup failure they are observing.
-  }
+  const tail = reportableStderr(process?.stderrTail?.() ?? new Uint8Array(), (bytes) =>
+    Buffer.from(bytes).toString("utf8"),
+  );
+  return createStartupError(reason, tail);
 }
 
 function defaultSleep(ms: number, signal?: AbortSignal): Promise<void> {
@@ -358,25 +240,6 @@ class ReadyPollAborted extends Error {}
 // the signal really can flip between the two checks.
 function pollAborted(signal: AbortSignal | undefined): boolean {
   return signal?.aborted === true;
-}
-
-function rejectsOwnedFlag(argument: string): string | undefined {
-  // mecated parses with Go's flag package, which treats -flag, --flag, -flag=v
-  // and --flag=v identically and lets the last occurrence win. Matching only the
-  // double-dash spelling would let `-http-addr 0.0.0.0:8080` replace an
-  // SDK-owned listener value.
-  if (!argument.startsWith("-")) return undefined;
-  const bare = argument.replace(/^--?/, "").split("=", 1)[0];
-  return SDK_OWNED_FLAGS.find((flag) => flag.slice(2) === bare);
-}
-
-function validateExtraArguments(args: readonly string[]): void {
-  for (const argument of args) {
-    const flag = rejectsOwnedFlag(argument);
-    if (flag !== undefined) {
-      throw localError("spawn_failed", `Extra argument ${flag} collides with an SDK-owned flag`);
-    }
-  }
 }
 
 async function isExecutableFile(path: string, fileSystem: SpawnFileSystem): Promise<boolean> {
@@ -716,7 +579,7 @@ async function spawnAttempt(
   registryForHost = toolRegistry;
 
   const args = options.args ?? [];
-  validateExtraArguments(args);
+  validateExtraArguments(args, SDK_OWNED_FLAGS);
   const fileSystem: SpawnFileSystem = { ...defaultFileSystem, ...internal.fileSystem };
   const env = { ...(internal.env ?? process.env), ...options.env };
   const executable = await resolveBinary(options, env, fileSystem);

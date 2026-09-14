@@ -1,14 +1,19 @@
 import type { Client } from "./client.js";
 import { connectTransport, disposeTransport } from "./client.js";
-import {
-  type ClientDiagnosticsOptions,
-  type DiagnosticFieldValue,
-  type DiagnosticRecord,
-  type DiagnosticsSink,
-  MecatlError,
-} from "./errors.js";
+import type { ClientDiagnosticsOptions } from "./errors.js";
 import { createNodeTransport } from "./node-transport.js";
 import { createRawClient } from "./raw.js";
+import {
+  SDK_OWNED_FLAGS as BASE_SDK_OWNED_FLAGS,
+  BoundedByteTail,
+  ChildExitedBeforeReady,
+  createStartupError,
+  emitStartupDiagnostic,
+  localError,
+  reportableStderr,
+  type StartupError,
+  validateExtraArguments,
+} from "./spawn-common.js";
 
 const READY_SCHEMA = "mecated-ready/1";
 const READY_FILE_NAME = "ready.json";
@@ -17,18 +22,7 @@ const READY_POLL_INTERVAL_MS = 20;
 const STOP_GRACE_MS = 3_000;
 const STOP_KILL_WAIT_MS = 1_000;
 const GRPC_LOOPBACK_ADDRESS = "127.0.0.1:0";
-const STDERR_CAPTURE_BYTES = 64 * 1024;
-const STDERR_REPORT_BYTES = 4 * 1024;
-const REDACTED_LINE = "[REDACTED]";
-
-const SDK_OWNED_FLAGS = [
-  "--grpc-unix-socket",
-  "--grpc-addr",
-  "--http-addr",
-  "--ready-file",
-  "--lifetime-pipe-fd",
-  "--lifetime-stdin",
-] as const;
+const SDK_OWNED_FLAGS = [...BASE_SDK_OWNED_FLAGS, "--lifetime-stdin"] as const;
 
 /** Options for starting one Deno-owned local daemon. @public */
 export interface SpawnOptions extends ClientDiagnosticsOptions {
@@ -119,37 +113,7 @@ interface LaunchedProcess {
   kill(signal: "SIGKILL" | "SIGTERM"): void;
 }
 
-type StartupError = MecatlError & {
-  cleanupFailed?: true;
-  exitCode?: number | null;
-  signal?: string | null;
-  stderrTail?: string;
-};
-
-class ChildExitedBeforeReady extends Error {
-  constructor(readonly status: NativeCommandStatus) {
-    super("mecated exited before readiness");
-  }
-}
-
 class ReadyPollAborted extends Error {}
-
-class BoundedByteTail {
-  #bytes = new Uint8Array();
-
-  append(chunk: Uint8Array): void {
-    const suffix = chunk.subarray(Math.max(0, chunk.length - STDERR_CAPTURE_BYTES));
-    const retained = Math.min(this.#bytes.length, STDERR_CAPTURE_BYTES - suffix.length);
-    const joined = new Uint8Array(retained + suffix.length);
-    joined.set(this.#bytes.subarray(this.#bytes.length - retained));
-    joined.set(suffix, retained);
-    this.#bytes = joined;
-  }
-
-  value(): Uint8Array {
-    return this.#bytes;
-  }
-}
 
 function denoRuntime(): DenoRuntime {
   const runtime = (globalThis as typeof globalThis & { Deno?: DenoRuntime }).Deno;
@@ -157,18 +121,6 @@ function denoRuntime(): DenoRuntime {
     throw localError("spawn_failed", "The Deno runtime and Deno.Command are required");
   }
   return runtime;
-}
-
-function localError(
-  code: "readiness_timeout" | "spawn_failed",
-  message: string,
-  cause?: unknown,
-): MecatlError {
-  return new MecatlError(message, {
-    ...(cause === undefined ? {} : { cause }),
-    code,
-    transport: "local",
-  });
 }
 
 function errorNamed(error: unknown, name: string): boolean {
@@ -195,21 +147,6 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
     };
     signal?.addEventListener("abort", abort, { once: true });
   });
-}
-
-function rejectsOwnedFlag(argument: string): string | undefined {
-  if (!argument.startsWith("-")) return undefined;
-  const bare = argument.replace(/^--?/, "").split("=", 1)[0];
-  return SDK_OWNED_FLAGS.find((flag) => flag.slice(2) === bare);
-}
-
-function validateExtraArguments(args: readonly string[]): void {
-  for (const argument of args) {
-    const flag = rejectsOwnedFlag(argument);
-    if (flag !== undefined) {
-      throw localError("spawn_failed", `Extra argument ${flag} collides with an SDK-owned flag`);
-    }
-  }
 }
 
 async function readReadyDocument(
@@ -400,82 +337,11 @@ async function removeRuntime(runtime: DenoRuntime, directory: string): Promise<v
   }
 }
 
-function secretShapedLine(line: string): boolean {
-  const value = line.endsWith("\r") ? line.slice(0, -1) : line;
-  return (
-    /^[\t ]*(?:export[\t ]+)?[A-Za-z_][A-Za-z0-9_]*[\t ]*=.*$/.test(value) ||
-    /(?:^|[^A-Za-z0-9])(?:sk-|ghp_|xox[abps]-|eyJ)[A-Za-z0-9._-]*/.test(value)
-  );
-}
-
-function redactStderr(stderr: string): string {
-  return stderr
-    .split("\n")
-    .map((line) => {
-      if (!secretShapedLine(line)) return line;
-      return line.endsWith("\r") ? `${REDACTED_LINE}\r` : REDACTED_LINE;
-    })
-    .join("\n");
-}
-
-function reportableStderr(bytes: Uint8Array): string {
-  const start = Math.max(0, bytes.length - STDERR_REPORT_BYTES);
-  let report = bytes.subarray(start);
-  if (start > 0 && bytes[start - 1] !== 0x0a) {
-    const firstNewline = report.indexOf(0x0a);
-    report = firstNewline === -1 ? new Uint8Array() : report.subarray(firstNewline + 1);
-  }
-  return redactStderr(new TextDecoder().decode(report));
-}
-
 function startupError(reason: unknown, process: LaunchedProcess | undefined): StartupError {
-  const exited = reason instanceof ChildExitedBeforeReady ? reason.status : undefined;
-  const code = reason instanceof MecatlError ? reason.code : "spawn_failed";
-  const base =
-    reason instanceof ChildExitedBeforeReady
-      ? localError(
-          "spawn_failed",
-          `mecated exited before readiness (code=${String(exited?.code)}, signal=${String(exited?.signal)})`,
-        )
-      : reason instanceof MecatlError && (code === "spawn_failed" || code === "readiness_timeout")
-        ? reason
-        : localError("spawn_failed", "mecated failed during startup", reason);
-  const tail = reportableStderr(process?.stderr.value() ?? new Uint8Array());
-  const error = (
-    tail === ""
-      ? base
-      : new MecatlError(`${base.message}\nstderr tail:\n${tail}`, {
-          cause: base,
-          code: base.code,
-          transport: "local",
-        })
-  ) as StartupError;
-  if (exited !== undefined) {
-    error.exitCode = exited.code;
-    error.signal = exited.signal;
-  }
-  if (tail !== "") error.stderrTail = tail;
-  return error;
-}
-
-function emitStartupDiagnostic(sink: DiagnosticsSink | undefined, error: StartupError): void {
-  if (sink === undefined) return;
-  const fields: Record<string, DiagnosticFieldValue> = {};
-  if (error.cleanupFailed === true) fields.cleanupFailed = true;
-  if (error.exitCode !== undefined) fields.exitCode = error.exitCode;
-  if (error.signal !== undefined) fields.signal = error.signal;
-  if (error.stderrTail !== undefined) fields.stderrTail = error.stderrTail;
-  const record: DiagnosticRecord = Object.freeze({
-    code: error.code,
-    fields: Object.freeze(fields),
-    level: "error",
-    message: error.message,
-  });
-  try {
-    sink(record);
-  } catch {
-    // Diagnostics observers never replace the startup failure they are observing.
-  }
+  const tail = reportableStderr(process?.stderr.value() ?? new Uint8Array(), (bytes) =>
+    new TextDecoder().decode(bytes),
+  );
+  return createStartupError(reason, tail);
 }
 
 function withDaemonInfo(client: Client, ready: ReadyDocument): SpawnedClient {
@@ -505,7 +371,7 @@ export async function spawn(options: SpawnOptions = {}): Promise<SpawnedClient> 
   let runtime: DenoRuntime;
   try {
     runtime = denoRuntime();
-    validateExtraArguments(options.args ?? []);
+    validateExtraArguments(options.args ?? [], SDK_OWNED_FLAGS);
   } catch (reason) {
     const error = startupError(reason, undefined);
     emitStartupDiagnostic(options.diagnostics, error);

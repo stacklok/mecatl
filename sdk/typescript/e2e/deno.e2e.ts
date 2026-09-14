@@ -91,10 +91,14 @@ try {
       client.daemon.grpcAddress.startsWith("127.0.0.1:"),
       "Deno spawn did not use loopback gRPC",
     );
-    assert(
-      (await runtimeDirectories()).length === 1,
-      "Deno spawn did not own one runtime directory",
-    );
+    const directories = await runtimeDirectories();
+    assert(directories.length === 1, "Deno spawn did not own one runtime directory");
+    const ready = JSON.parse(
+      await Deno.readTextFile(`${fixtureRoot}/${directories[0]}/ready.json`),
+    ) as Record<string, unknown>;
+    assert(ready.pid === client.daemon.pid, "Deno ready document belongs to a different child");
+    assert(ready.grpc_address === daemonAddress, "Deno ready document changed the gRPC address");
+    assert(!("http_address" in ready), "Deno spawn unexpectedly enabled an HTTP listener");
 
     const session = await client.sessions.create({});
     const run = await session.run("complete the Deno.Command integration");
