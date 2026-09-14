@@ -4,7 +4,7 @@
 **Work classification:** Bounded — this is a substantive, client-local interaction and layout correction with no durable architecture or public-contract decision.
 **Decision record:** None — the change aligns the F6 Agents overlay’s selectable rows with the established Sessions picker treatment while making its already-promised viewport bounds demonstrable.
 **Phase:** mecatui rendering correctness
-**Status:** in-progress, 2026-09-13. Approved contract implementation is underway from `7a90f184297b653c5db255160f2272426c633ba8`.
+**Status:** landed, 2026-09-13. Implementation candidate is complete from `7a90f184297b653c5db255160f2272426c633ba8`; the operator waived `task ac-trace-strict` because its repository-wide failure is tracked separately.
 **Delivery:** Split. The cross-tab interaction and viewport contract needs human interface review before implementation.
 **Expected tasks:** 2
 **Issue:** [stacklok/mecatl#1446](https://github.com/stacklok/mecatl/issues/1446).
