@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -45,10 +46,11 @@ func runProviderSetupCommand(res invocationResolution, stdout, stderr io.Writer)
 }
 
 func chooseProviderForSetup(out io.Writer) (string, error) {
-	statuses, err := loadProviderStatuses()
+	statuses, err := loadAllProviderStatuses()
 	if err != nil {
 		return "", err
 	}
+	statuses = providerSetupCandidates(statuses)
 	if _, err := fmt.Fprintln(out, "Provider setup\n\nChoose a provider:"); err != nil {
 		return "", err
 	}
@@ -72,6 +74,12 @@ func chooseProviderForSetup(out io.Writer) (string, error) {
 		return customProviderSetupChoice, nil
 	}
 	return statuses[choice-1].Name, nil
+}
+
+func providerSetupCandidates(statuses []providerStatus) []providerStatus {
+	return slices.DeleteFunc(statuses, func(status providerStatus) bool {
+		return status.Class == providerClassBuiltin && status.Auth != "not configured"
+	})
 }
 
 func providerSetupCapability(status providerStatus) string {

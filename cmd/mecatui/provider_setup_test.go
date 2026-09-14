@@ -12,13 +12,13 @@ import (
 )
 
 func TestProviderSetupMenuSelectionAndCapabilityLabels(t *testing.T) {
-	oldStatuses, oldRead := loadProviderStatuses, readProviderSetupField
+	oldStatuses, oldAllStatuses, oldRead := loadProviderStatuses, loadAllProviderStatuses, readProviderSetupField
 	t.Cleanup(func() {
-		loadProviderStatuses, readProviderSetupField = oldStatuses, oldRead
+		loadProviderStatuses, loadAllProviderStatuses, readProviderSetupField = oldStatuses, oldAllStatuses, oldRead
 	})
-	loadProviderStatuses = func() ([]providerStatus, error) {
+	loadAllProviderStatuses = func() ([]providerStatus, error) {
 		return []providerStatus{
-			{Name: "openai", Class: providerClassBuiltin},
+			{Name: "openai", Class: providerClassBuiltin, Auth: "not configured"},
 			{Name: toolHiveEndpointID, Class: "external"},
 			{Name: "corp", Class: "custom", Auth: "configured"},
 		}, nil
@@ -38,6 +38,49 @@ func TestProviderSetupMenuSelectionAndCapabilityLabels(t *testing.T) {
 	} {
 		if !strings.Contains(output.String(), want) {
 			t.Errorf("menu missing %q:\n%s", want, output.String())
+		}
+	}
+}
+
+func TestProviderSetupMenuUsesFullInventoryNotBareStatus(t *testing.T) {
+	oldStatuses, oldAllStatuses, oldRead := loadProviderStatuses, loadAllProviderStatuses, readProviderSetupField
+	t.Cleanup(func() {
+		loadProviderStatuses, loadAllProviderStatuses, readProviderSetupField = oldStatuses, oldAllStatuses, oldRead
+	})
+	loadProviderStatuses = func() ([]providerStatus, error) {
+		return []providerStatus{{Name: "openai", Class: providerClassBuiltin, Auth: "configured", DefaultModel: "gpt-5", Next: "ready to use"}}, nil
+	}
+	loadAllProviderStatuses = func() ([]providerStatus, error) {
+		return []providerStatus{
+			{Name: "anthropic", Class: providerClassBuiltin, Auth: "not configured"},
+			{Name: "openai", Class: providerClassBuiltin, Auth: "configured"},
+			{Name: "corp", Class: "custom", Auth: "not configured"},
+		}, nil
+	}
+	readProviderSetupField = func(string) (string, error) { return "1", nil }
+
+	bare := resolveInvocation([]string{"mecatui", "providers"})
+	var statusOutput, setupOutput bytes.Buffer
+	if err := runProviderStatusCommand(bare, &statusOutput, &bytes.Buffer{}); err != nil {
+		t.Fatalf("bare providers: %v", err)
+	}
+	provider, err := chooseProviderForSetup(&setupOutput)
+	if err != nil || provider != "anthropic" {
+		t.Fatalf("newly unconfigured stock selection = %q, %v", provider, err)
+	}
+	if strings.Contains(statusOutput.String(), "anthropic") || !strings.Contains(statusOutput.String(), "openai (built-in)") {
+		t.Fatalf("bare configured-only output = %q", statusOutput.String())
+	}
+	if strings.Contains(setupOutput.String(), "openai (API key)") {
+		t.Fatalf("setup menu included configured stock provider: %q", setupOutput.String())
+	}
+	for _, want := range []string{
+		"1. anthropic (API key)",
+		"2. corp (custom not configured)",
+		"3. custom (custom provider: API key, OIDC, or no authentication)",
+	} {
+		if !strings.Contains(setupOutput.String(), want) {
+			t.Errorf("setup menu missing %q:\n%s", want, setupOutput.String())
 		}
 	}
 }
@@ -69,12 +112,12 @@ func TestProviderSetupNamedCustomDispatchesToLoginWithoutDefinitionEdit(t *testi
 }
 
 func TestProviderSetupCancellationBeforeMutation(t *testing.T) {
-	oldStatuses, oldRead, oldUpdate := loadProviderStatuses, readProviderSetupField, updateProviderAPIKey
+	oldStatuses, oldAllStatuses, oldRead, oldUpdate := loadProviderStatuses, loadAllProviderStatuses, readProviderSetupField, updateProviderAPIKey
 	t.Cleanup(func() {
-		loadProviderStatuses, readProviderSetupField, updateProviderAPIKey = oldStatuses, oldRead, oldUpdate
+		loadProviderStatuses, loadAllProviderStatuses, readProviderSetupField, updateProviderAPIKey = oldStatuses, oldAllStatuses, oldRead, oldUpdate
 	})
-	loadProviderStatuses = func() ([]providerStatus, error) {
-		return []providerStatus{{Name: "openai", Class: providerClassBuiltin}}, nil
+	loadAllProviderStatuses = func() ([]providerStatus, error) {
+		return []providerStatus{{Name: "openai", Class: providerClassBuiltin, Auth: "not configured"}}, nil
 	}
 	readProviderSetupField = func(string) (string, error) { return "1", nil }
 	oldLoad, oldKeyRead := loadProviderCredentialConfig, readProviderAPIKey

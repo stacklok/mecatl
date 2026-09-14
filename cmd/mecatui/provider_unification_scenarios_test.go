@@ -306,13 +306,13 @@ func TestProviderUnification_Scenario3_AC32_StatusIsPassiveAndNeverPrintsSecrets
 }
 
 func TestProviderUnification_Scenario3_AC33_SetupMenuCancelsBeforeMutation(t *testing.T) {
-	oldStatuses, oldChoice, oldCredentials, oldKey, oldUpdate := loadProviderStatuses, readProviderSetupField, loadProviderCredentialConfig, readProviderAPIKey, updateProviderAPIKey
+	oldStatuses, oldAllStatuses, oldChoice, oldCredentials, oldKey, oldUpdate := loadProviderStatuses, loadAllProviderStatuses, readProviderSetupField, loadProviderCredentialConfig, readProviderAPIKey, updateProviderAPIKey
 	t.Cleanup(func() {
-		loadProviderStatuses, readProviderSetupField = oldStatuses, oldChoice
+		loadProviderStatuses, loadAllProviderStatuses, readProviderSetupField = oldStatuses, oldAllStatuses, oldChoice
 		loadProviderCredentialConfig, readProviderAPIKey, updateProviderAPIKey = oldCredentials, oldKey, oldUpdate
 	})
-	loadProviderStatuses = func() ([]providerStatus, error) {
-		return []providerStatus{{Name: "openai", Class: providerClassBuiltin}}, nil
+	loadAllProviderStatuses = func() ([]providerStatus, error) {
+		return []providerStatus{{Name: "openai", Class: providerClassBuiltin, Auth: "not configured"}}, nil
 	}
 	readProviderSetupField = func(string) (string, error) { return "1", nil }
 	loadProviderCredentialConfig = func() (providerCredentialConfig, error) {
