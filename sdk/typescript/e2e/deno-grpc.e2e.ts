@@ -1,5 +1,15 @@
+import { Http2SessionManager } from "@connectrpc/connect-node";
 import { type Client, MecatlError } from "@stacklok-oss/mecatl-sdk";
 import { connect, type DenoConnectOptions } from "@stacklok-oss/mecatl-sdk/deno";
+
+const invalidNodeOptions: DenoConnectOptions = {
+  baseUrl: "http://127.0.0.1",
+  nodeOptions: {
+    // @ts-expect-error Native HTTP/2 options must reject unknown fields.
+    notAnHttp2Option: true,
+  },
+};
+void invalidNodeOptions;
 
 const [binaryPath, fixtureRoot, mode] = Deno.args;
 if (
@@ -28,10 +38,33 @@ async function bounded<T>(operation: Promise<T>, label: string, milliseconds = 1
   }
 }
 
+async function drain(iterator: AsyncIterator<unknown>): Promise<void> {
+  while (!(await iterator.next()).done) {
+    // Buffered items are not proof that the stream has terminated.
+  }
+}
+
+type NativeSession = NonNullable<Awaited<ReturnType<Http2SessionManager["request"]>>["session"]>;
+
 async function verify(client: Client): Promise<void> {
-  assert(!("tool" in client), "Deno connect exposed callback-tool registration");
-  const session = await bounded(client.sessions.create({}), "createSession");
+  const sessions = new Map<NativeSession, Promise<void>>();
+  const originalRequest = Http2SessionManager.prototype.request;
+  // Observe the native sessions used by the real transport without replacing its requests.
+  Http2SessionManager.prototype.request = async function (
+    this: Http2SessionManager,
+    ...args: Parameters<typeof originalRequest>
+  ) {
+    const stream = await originalRequest.apply(this, args);
+    const session = stream.session;
+    assert(session !== undefined, "ConnectRPC request did not expose its native HTTP/2 session");
+    if (!sessions.has(session)) {
+      sessions.set(session, new Promise<void>((resolve) => session.once("close", resolve)));
+    }
+    return stream;
+  };
   try {
+    assert(!("tool" in client), "Deno connect exposed callback-tool registration");
+    const session = await bounded(client.sessions.create({}), "createSession");
     const run = await session.run("cancel this active scripted run");
     let sawActiveTurn = false;
     let cancelled = false;
@@ -55,9 +88,16 @@ async function verify(client: Client): Promise<void> {
     const attachment = await session.attach(running.id);
     const watch = attachment[Symbol.asyncIterator]();
     assert(!(await watch.next()).done, "durable watch did not start before client close");
+    assert(sessions.size > 0, "gRPC qualification did not observe a native HTTP/2 session");
+    assert(
+      [...sessions.keys()].some((native) => !native.closed && !native.destroyed),
+      "native HTTP/2 session closed before client disposal",
+    );
     await bounded(client.close(), "active gRPC client disposal");
-    // Both active consumers must settle after close, rather than wait forever on HTTP/2.
-    await bounded(Promise.allSettled([iterator.next(), watch.next()]), "stream/watch abort");
+    // Drain through buffered events until each consumer reaches done or rejects.
+    await bounded(Promise.allSettled([drain(iterator), drain(watch)]), "stream/watch abort");
+    // The daemon is still alive: its shutdown must not conceal a leaked client session.
+    await bounded(Promise.all(sessions.values()), "native HTTP/2 session close");
     await client[Symbol.asyncDispose]();
     let rejected = false;
     try {
@@ -67,6 +107,7 @@ async function verify(client: Client): Promise<void> {
     }
     assert(rejected, "disposed Deno client still admitted RPCs");
   } finally {
+    Http2SessionManager.prototype.request = originalRequest;
     await client.close();
   }
 }
@@ -168,7 +209,7 @@ try {
     await observer.close();
   }
   console.log(
-    `Deno ${Deno.version.deno}: ${mode} gRPC, active cancellation, stream/watch disposal passed`,
+    `Deno ${Deno.version.deno}: ${mode} gRPC, active cancellation, stream/watch and HTTP/2 session disposal passed`,
   );
 } finally {
   await lifetime.close().catch(() => {});

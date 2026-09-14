@@ -59,16 +59,16 @@ try {
     ],
     { cwd: consumer, stdio: "inherit" },
   );
-  const runArguments = [
+  const runArguments = (socketPath) => [
     "run",
     "--config",
     "deno.json",
     `--allow-read=${repositoryRoot}`,
     `--allow-write=${scratchRoot}`,
     `--allow-run=${binary}`,
-    "--allow-net=127.0.0.1",
+    socketPath === undefined ? "--allow-net=127.0.0.1" : `--allow-net=127.0.0.1,unix:${socketPath}`,
   ];
-  execFileSync(deno, [...runArguments, "deno.e2e.ts", binary, scratchRoot], {
+  execFileSync(deno, [...runArguments(), "deno.e2e.ts", binary, scratchRoot], {
     cwd: consumer,
     stdio: "inherit",
     timeout: 60_000,
@@ -143,19 +143,30 @@ try {
           const script = JSON.parse(source);
           return writeFile(
             join(directory, "cancel.json"),
-            JSON.stringify({ turns: [...script.turns, ...script.turns] }),
+            JSON.stringify({
+              // Exceed the stream-disposal deadline so natural completion cannot satisfy it.
+              turns: [...script.turns, ...script.turns].map((turn) => ({
+                ...turn,
+                delay_ms: 30_000,
+              })),
+            }),
           );
         }),
         ...["ca.pem", "server.pem", "server-key.pem"].map((name) =>
           copyFile(join(certificates, name), join(directory, name)),
         ),
       ]);
-      // Timeout makes leaked HTTP/2 sessions or unresolved cancellation fail the gate.
-      execFileSync(deno, [...runArguments, "deno-grpc.e2e.ts", binary, directory, mode], {
-        cwd: consumer,
-        stdio: "inherit",
-        timeout: 45_000,
-      });
+      execFileSync(
+        deno,
+        [
+          ...runArguments(mode === "uds" ? join(directory, "g.sock") : undefined),
+          "deno-grpc.e2e.ts",
+          binary,
+          directory,
+          mode,
+        ],
+        { cwd: consumer, stdio: "inherit", timeout: 45_000 },
+      );
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
@@ -164,7 +175,7 @@ try {
   const ownerDirectory = join(consumer, "owner-runtime");
   await mkdir(ownerDirectory);
   const { pid } = JSON.parse(
-    execFileSync(deno, [...runArguments, "deno-owner.ts", binary, ownerDirectory], {
+    execFileSync(deno, [...runArguments(), "deno-owner.ts", binary, ownerDirectory], {
       cwd: consumer,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "inherit"],

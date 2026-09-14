@@ -17,6 +17,9 @@ importers:
       '@connectrpc/connect-node':
         specifier: 2.2.0
         version: 2.2.0(@bufbuild/protobuf@2.14.1)(@connectrpc/connect@2.2.0(@bufbuild/protobuf@2.14.1))
+      '@types/node':
+        specifier: 24.13.3
+        version: 24.13.3
       ajv:
         specifier: 8.20.0
         version: 8.20.0
@@ -30,9 +33,6 @@ importers:
       '@playwright/test':
         specifier: 1.63.0
         version: 1.63.0
-      '@types/node':
-        specifier: 24.13.3
-        version: 24.13.3
       typescript:
         specifier: 6.0.3
         version: 6.0.3

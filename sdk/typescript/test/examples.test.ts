@@ -158,10 +158,16 @@ test("the Deno gate runs the local Deno.Command lifecycle", () => {
   expect(grpc).toContain("await run.cancel()");
   expect(grpc).toContain('event.payload.stop === "cancelled"');
   expect(grpc).toContain('"stream/watch abort"');
+  expect(grpc).toContain("Promise.allSettled([drain(iterator), drain(watch)])");
+  expect(grpc).toContain('session.once("close", resolve)');
+  expect(grpc).toContain('"native HTTP/2 session close"');
   expect(grpc).toContain("nodeOptions: { ca }");
   expect(grpc).toContain('mode === "uds"');
   expect(grpc).toContain("? { socketPath }");
   const runner = readFileSync(join(packageRoot, "scripts", "run-deno-integration.mjs"), "utf8");
   expect(runner).toContain('["tcp", "tls", "uds"]');
+  expect(runner).toMatch(/--allow-net=127\.0\.0\.1,unix:\$\{socketPath\}/u);
+  expect(runner).toContain('runArguments(mode === "uds" ? join(directory, "g.sock") : undefined)');
+  expect(runner).toContain("delay_ms: 30_000");
   expect(runner).toContain("timeout: 45_000");
 });

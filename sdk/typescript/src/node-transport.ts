@@ -1,3 +1,5 @@
+/// <reference types="node" preserve="true" />
+
 import type { SecureClientSessionOptions } from "node:http2";
 import { connect as connectSocket } from "node:net";
 import type { Transport } from "@connectrpc/connect";

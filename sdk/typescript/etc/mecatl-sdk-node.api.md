@@ -4,6 +4,8 @@
 
 ```ts
 
+/// <reference types="node" />
+
 import type { CallOptions } from '@connectrpc/connect';
 import type { DescMessage } from '@bufbuild/protobuf';
 import type { DescMethodStreaming } from '@bufbuild/protobuf';
