@@ -1,10 +1,10 @@
-# ADR 0336 - Deno reuses the ConnectRPC gRPC transport
+# ADR 0339 - Deno reuses the ConnectRPC gRPC transport
 
 - Status: Accepted
 - Date: 2026-09-14
 - Scope: TypeScript SDK Deno connections, local daemon transport, and runtime qualification.
-- Supersedes: [ADR 0334](./0334-typescript-sdk-deno.md) and
-  [ADR 0335](./0335-typescript-sdk-deno-command.md), for their Deno HTTP-only transport and
+- Supersedes: [ADR 0337](./0337-typescript-sdk-deno.md) and
+  [ADR 0338](./0338-typescript-sdk-deno-command.md), for their Deno HTTP-only transport and
   Node-compatibility exclusions. Their declaration strategy, runtime range, native process
   ownership, and callback-tool authority decisions remain in force.
 

@@ -1,9 +1,9 @@
-# ADR 0334 - Deno uses the TypeScript SDK HTTP/SSE entry point
+# ADR 0337 - Deno uses the TypeScript SDK HTTP/SSE entry point
 
 - Status: Accepted
 - Date: 2026-09-11
-- Superseded by: [ADR 0335](./0335-typescript-sdk-deno-command.md), for the public entry-point and
-  local-process decisions; [ADR 0336](./0336-typescript-sdk-deno-grpc.md), for the HTTP-only
+- Superseded by: [ADR 0338](./0338-typescript-sdk-deno-command.md), for the public entry-point and
+  local-process decisions; [ADR 0339](./0339-typescript-sdk-deno-grpc.md), for the HTTP-only
   transport and Node-compatibility exclusions.
 - Scope: `sdk/typescript/`, its npm package metadata, emitted declarations, runtime matrix,
   release verification, and public documentation.

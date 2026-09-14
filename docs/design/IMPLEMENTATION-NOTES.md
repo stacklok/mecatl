@@ -8473,7 +8473,7 @@ failures name only the class, never the value. The elapsed-time expiry leg is bo
 the only clock-dependent part because the official `oauth2.Token.Valid` has no injected
 clock.
 
-## TypeScript SDK — `sdk/typescript/` (M1–M4 public surface and post-v0.1.0 Deno integration, ADRs 0279, 0288, 0292, 0304, 0328, 0334, 0335, and 0336)
+## TypeScript SDK — `sdk/typescript/` (M1–M4 public surface and post-v0.1.0 Deno integration, ADRs 0279, 0288, 0292, 0304, 0328, 0337, 0338, and 0339)
 
 The ESM-only `@stacklok-oss/mecatl-sdk` has four exports. `.` owns the transport-neutral
 `Client`/`Session`/`Run` API, typed events/errors, prompt-media helpers, and the hand-written
