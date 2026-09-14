@@ -22,12 +22,36 @@ task site:dev       # start dev server at http://localhost:3001 (background)
 task site:build     # full build into website/build/ (catches broken links)
 task site:stop      # stop the dev server
 task site:typecheck # TypeScript check
+task site:format    # prettier --write over user-docs/ (see Formatting below)
 task site:clear     # wipe .docusaurus/ and build/
 ```
 
 `task site:build` is the authoritative broken-link check. The site is configured with
 `onBrokenLinks: 'throw'` and `onBrokenMarkdownLinks: 'throw'`, so a build failure
 means a link is broken, not a warning.
+
+### Formatting
+
+`task site:format` runs prettier over `../user-docs/` for normalization
+(consistent prose wrapping, list/table spacing, fence style). It is **not**
+enforced in CI — nothing fails a PR for unformatted markdown. Run it before
+committing sizeable prose edits if you want the diff to stay clean; skip it
+for small, targeted changes.
+
+`user-docs/.prettierignore` excludes the generated reference pages
+(`reference/configuration.md`, `reference/typescript-sdk-api/core.md`,
+`reference/typescript-sdk-api/node.md`) so prettier never fights their own
+generators — see [`../user-docs/_README.md`](../user-docs/_README.md#verify-behavior).
+
+Prettier resolves `.prettierignore` relative to the invoking process's `cwd`,
+not by walking up from each file the way `.prettierrc` config resolution
+does. The `format` npm script in `website/package.json` pins this explicitly
+(`--ignore-path ../user-docs/.prettierignore`) because it targets `user-docs/`
+from `website/`'s cwd. Running prettier directly from inside `user-docs/`
+picks up its `.prettierignore` by prettier's own default behavior and needs
+no flag; running it from anywhere else with `user-docs` as a path argument
+does not, and will silently reformat the generated pages if the flag is
+missing.
 
 ---
 

@@ -14,7 +14,7 @@
     "write-translations": "docusaurus write-translations",
     "write-heading-ids": "docusaurus write-heading-ids",
     "typecheck": "tsc",
-    "format": "prettier --write ../user-docs"
+    "format": "prettier --write ../user-docs --ignore-path ../user-docs/.prettierignore"
   },
   "dependencies": {
     "@docusaurus/core": "^3.10.2",
