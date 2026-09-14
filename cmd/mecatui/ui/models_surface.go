@@ -239,13 +239,13 @@ var customProviderStatusCopy = map[string]string{
 	"unauthorized": "model service rejected access — check provider access configuration",
 	"empty":        "no selectable models",
 }
-var toolhiveStatusCopy = map[string]string{"unreachable": "proxy not reachable", "unauthorized": "gateway rejected the credential", "empty": "credential lists no models"}
+var toolhiveStatusCopy = map[string]string{"unreachable": "gateway not reachable", "unauthorized": "gateway rejected the credential", "empty": "credential lists no models"}
 var openAICodexStatusCopy = map[string]string{"unreachable": "ChatGPT Codex service not reachable", "unauthorized": "manual token rejected", "empty": "account lists no selectable models"}
 
 func providerStatusLine(s client.ProviderStatus) string {
 	copyByState := customProviderStatusCopy
 	switch s.ProviderID {
-	case "toolhive":
+	case "toolhive", "toolhive-anthropic":
 		copyByState = toolhiveStatusCopy
 	case "openai-codex":
 		copyByState = openAICodexStatusCopy

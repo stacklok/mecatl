@@ -63,11 +63,15 @@ func (d *toolhiveLevelDiag) has(sub string) bool {
 // an injected transport — never a real network call.
 func toolhiveModelsClient(t *testing.T, body string) *http.Client {
 	t.Helper()
-	return &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+	return &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		responseBody := body
+		if strings.HasSuffix(req.URL.Path, "/anthropic/v1/models") {
+			responseBody = toolhiveAnthropicFixtureJSON
+		}
 		return &http.Response{
 			StatusCode: http.StatusOK,
-			Body:       io.NopCloser(strings.NewReader(body)),
-			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(responseBody)),
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
 		}, nil
 	})}
 }
@@ -82,6 +86,13 @@ const toolhiveFixtureJSON = `{"object":"list","data":[
   {"id":"claude-sonnet-4-6","display_name":"Claude Sonnet 4.6"},
   {"id":"gpt-5","display_name":"GPT-5"}
 ]}`
+
+const toolhiveAnthropicFixtureJSON = `{"data":[{
+  "id":"claude-sonnet-4-6","type":"model","display_name":"Claude Sonnet 4.6",
+  "created_at":"2026-01-01T00:00:00Z","max_input_tokens":1000000,"max_tokens":64000,
+  "capabilities":{"image_input":{"supported":true},"thinking":{"supported":true,
+    "types":{"adaptive":{"supported":true},"enabled":{"supported":false}}}}
+}],"has_more":false,"first_id":"claude-sonnet-4-6","last_id":"claude-sonnet-4-6"}`
 
 // writeToolhiveConfig writes a minimal ToolHive config.yaml fixture (an `llm:`
 // block only) and returns its path — the toolhiveConfigPath test seam always
@@ -147,6 +158,9 @@ func TestToolhiveIntent_ProbeOK_Registered(t *testing.T) {
 	}
 	if !diag.hasAtLevel(port.LevelInfo, "registered and reachable") {
 		t.Error("expected an INFO 'registered and reachable' diagnostic")
+	}
+	if native, ok := reg.Lookup(providerToolhiveAnthropic); !ok || native.lister == nil || !native.intentDriven {
+		t.Fatal("toolhive-anthropic entry not registered with its native lister")
 	}
 }
 
@@ -558,7 +572,7 @@ func TestProviderStatusProto_ToolhiveScopedOnly(t *testing.T) {
 		outcomes: newLiveOutcomeStore(),
 	}
 	reg.outcomes.recordFailure(providerOpenRouter, statusUnreachable, "should never surface")
-	reg.outcomes.recordSuccess(providerToolhive, []modelEntry{{ID: "m1"}})
+	reg.outcomes.recordSuccess(reg.entries[providerToolhive], []modelEntry{{ID: "m1"}})
 
 	out := providerStatusProto(reg)
 	if len(out) != 1 {
@@ -575,7 +589,7 @@ func TestProviderStatusProto_AllFourStates(t *testing.T) {
 		outcomes: newLiveOutcomeStore(),
 	}
 
-	reg.outcomes.recordSuccess(providerToolhive, []modelEntry{{ID: "m1"}})
+	reg.outcomes.recordSuccess(reg.entries[providerToolhive], []modelEntry{{ID: "m1"}})
 	if got := providerStatusProto(reg)[0].GetState(); got != statusOK {
 		t.Errorf("state = %q, want ok", got)
 	}
@@ -590,7 +604,7 @@ func TestProviderStatusProto_AllFourStates(t *testing.T) {
 		t.Errorf("row = %+v, want unauthorized with a hint", got)
 	}
 
-	reg.outcomes.recordSuccess(providerToolhive, nil) // empty embedded catalog too
+	reg.outcomes.recordSuccess(reg.entries[providerToolhive], nil) // empty embedded catalog too
 	if got := providerStatusProto(reg)[0]; got.GetState() != statusEmpty || got.GetHint() == "" {
 		t.Errorf("row = %+v, want empty with a hint", got)
 	}
@@ -615,8 +629,8 @@ func TestProviderStatusProto_AutoSelectedBit(t *testing.T) {
 			t.Fatalf("buildProviderRegistry: %v", err)
 		}
 		rows := providerStatusProto(reg)
-		if len(rows) != 1 || !rows[0].GetDefaultModelAutoSelected() {
-			t.Fatalf("rows = %+v, want exactly one toolhive row with DefaultModelAutoSelected=true", rows)
+		if len(rows) != 2 || rows[0].GetProviderId() != providerToolhive || !rows[0].GetDefaultModelAutoSelected() {
+			t.Fatalf("rows = %+v, want both ToolHive rows with only toolhive auto-selected", rows)
 		}
 	})
 
@@ -632,8 +646,8 @@ func TestProviderStatusProto_AutoSelectedBit(t *testing.T) {
 			t.Fatalf("Default() = %q, want toolhive (still the sole provider)", reg.Default())
 		}
 		rows := providerStatusProto(reg)
-		if len(rows) != 1 || rows[0].GetDefaultModelAutoSelected() {
-			t.Fatalf("rows = %+v, want exactly one toolhive row with DefaultModelAutoSelected=false (operator-configured)", rows)
+		if len(rows) != 2 || rows[0].GetDefaultModelAutoSelected() || rows[1].GetDefaultModelAutoSelected() {
+			t.Fatalf("rows = %+v, want both ToolHive rows with DefaultModelAutoSelected=false (operator-configured)", rows)
 		}
 	})
 }
@@ -658,8 +672,8 @@ func TestProviderStatusProto_AvailableNotDefault_TrueWhenKeyedProviderIsDefault(
 		t.Fatalf("Default() = %q, want %q (keyed provider must outrank intent-driven)", reg.Default(), providerOpenRouter)
 	}
 	rows := providerStatusProto(reg)
-	if len(rows) != 1 {
-		t.Fatalf("rows = %d, want 1 (toolhive only): %+v", len(rows), rows)
+	if len(rows) != 2 {
+		t.Fatalf("rows = %d, want 2 (both ToolHive protocols): %+v", len(rows), rows)
 	}
 	row := rows[0]
 	if row.GetProviderId() != providerToolhive {
@@ -698,8 +712,8 @@ func TestProviderStatusProto_AvailableNotDefault_FalseWhenSoleProviderIsDefault(
 		t.Fatalf("Default() = %q, want %q (sole provider)", reg.Default(), providerToolhive)
 	}
 	rows := providerStatusProto(reg)
-	if len(rows) != 1 {
-		t.Fatalf("rows = %d, want 1: %+v", len(rows), rows)
+	if len(rows) != 2 {
+		t.Fatalf("rows = %d, want 2: %+v", len(rows), rows)
 	}
 	row := rows[0]
 	if row.GetAvailableNotDefault() {
@@ -724,8 +738,8 @@ func TestProviderStatusProto_AvailableNotDefault_FalseWhenUnreachable(t *testing
 		t.Fatalf("buildProviderRegistry: %v", err)
 	}
 	rows := providerStatusProto(reg)
-	if len(rows) != 1 {
-		t.Fatalf("rows = %d, want 1: %+v", len(rows), rows)
+	if len(rows) != 2 {
+		t.Fatalf("rows = %d, want 2: %+v", len(rows), rows)
 	}
 	row := rows[0]
 	if row.GetAvailableNotDefault() {

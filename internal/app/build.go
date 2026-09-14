@@ -1136,6 +1136,12 @@ type Config struct {
 	// composition detail, not an operator knob.
 	liveModelHTTPClient *http.Client
 
+	// toolhiveTokenSourceFactory is the composition-only test seam for direct
+	// ToolHive OIDC. Production uses toolhivellm.DirectTokenSource; tests inject
+	// a deterministic source so both protocol entries can be exercised offline
+	// and can prove that one shared login/refresh flow serves the family.
+	toolhiveTokenSourceFactory toolhiveTokenSourceFactory
+
 	// openAICodexNow/openAICodexTransport are composition-only test seams for the
 	// manual-token request policy. Production uses time.Now and the default
 	// transport. Tests inject a fixed clock and capturing transport so every

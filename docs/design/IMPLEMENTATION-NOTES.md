@@ -4707,7 +4707,17 @@ isolated-child runner oracles prove provider credentials do not enter command-ru
 environments. Residual boundary: a same-UID Shell process can read a known plaintext
 `auth.yaml` path; mode `0600` is not privilege separation.
 
-### `openaicompat` + `toolhivellm` — ToolHive LLM gateway provider (issue #262, ADR 0064)
+### `openaicompat` + `toolhivellm` — ToolHive protocol providers (issue #262, ADR 0064, ADR 0334)
+
+One detected ToolHive gateway identity registers TWO protocol-specific entries.
+`toolhive` is unchanged: `openaicompat` discovers `/v1/models` and
+`provider/openai` infers through `/v1/responses`. `toolhive-anthropic` reuses
+`anthropic.NewLister` and `provider/anthropic`, discovering
+`/anthropic/v1/models` and inferring through `/anthropic/v1/messages`. Catalogs are
+never merged or failed over: status, counts, and process-local last-known-good data
+remain keyed by provider ID. `toolhive` stays the implicit default among the two.
+Anthropic catalog metadata may enrich a matching gateway-listed ID, but never
+creates gateway inventory by itself.
 
 Two-layer leaf split, mirroring the `providercatalog`/`openrouter` shape but for a
 config-detected (not credential-detected) provider. `internal/adapter/openaicompat`
@@ -4743,15 +4753,18 @@ Composition (`internal/app/registry.go`): `resolveToolhiveIntent` decides
 REGISTRATION from intent alone (an explicit `--toolhive-llm-base-url`, pre-validated
 loopback-only by `validateToolhiveBaseURL` — literal `127.0.0.0/8`/`[::1]`/
 `localhost` via `net.ParseIP`, NEVER a DNS lookup, TOCTOU-safe — or a config-file
-detect) — the network probe that follows NEVER gates whether the "toolhive" entry
-exists, only its diagnostics/default-model eligibility (D1's whole point: a
+detect) — the network probes that follow NEVER gate whether either ToolHive entry
+exists, only diagnostics/default-model eligibility (D1's whole point: a
 persisted `provider_id:"toolhive"` session must rehydrate even when the proxy is
 down, never the `ErrInvalidArgument` "unknown or unavailable provider" class of
-error). `newGatewayEntry` delegates to `newOpenAICompatEntry` (the renamed
+error). `newToolhiveEntries` preserves `newGatewayEntry` for the Responses surface
+and constructs the native surface through `newAnthropicEntryFor`. The former
+delegates to `newOpenAICompatEntry` (the renamed
 `newOpenAIEntry` — shared by openai/openrouter/toolhive, so all three cannot drift
 on resilience wrapping) with `toolhivellm.PlaceholderToken` (`"thv-proxy"`) as the
-credential. `providerEntry.intentDriven`/`intentGatewayURL`/`intentExplicit` are the
-three new fields: `intentDriven` tiers `preferredDefaultProvider` STRICTLY below
+credential. Both carry `providerEntry.intentDriven`/`intentGatewayURL`/
+`intentExplicit` plus the resolved ToolHive routing mode: `intentDriven` tiers
+`preferredDefaultProvider` STRICTLY below
 every key-driven provider (any resolved API key always wins the default,
 alphabetics be damned — pinned by an anthropic-keyed-beats-toolhive test, since
 "toolhive" sorts after "anthropic" and a naive sorted-pick would pass by accident)
@@ -4760,8 +4773,9 @@ gateway notices. `providerStatusProto` is broader only for the operator-actionab
 Codex entitlement boundary; ordinary openrouter/anthropic blips still never grow
 the client-facing `provider_status` wire list.
 
-`probeToolhive` is the BOUNDED (1.5s) Build-time probe, run once per Build
-immediately after registration: ok(N) → INFO + (if sole+unset) fills
+`probeToolhive` starts both protocol probes concurrently under ONE BOUNDED (1.5s)
+Build-time deadline immediately after registration. Each outcome updates only its
+own provider-keyed status/LKG. For the resolved default, ok(N) → INFO + (if unset) fills
 `reg.defaultModel` from the first-listed id, stamps `defaultModelAutoSelected`, and
 RE-RUNS the T7 caps fixup via the shared `remintEntry` helper; ok(0 models) on a
 SOLE/DEFAULT toolhive → `errToolhiveNoModels`, Build FAILS (R2.3 — there's genuinely
@@ -4887,12 +4901,12 @@ a redirect response (CWE-918).
 had become the de-facto remediation map for ALL providers via the shared classifier,
 so an ordinary openrouter outage could record the ToolHive-specific
 "start it with `thv llm proxy start`" hint (latent-wrong-vendor).
-`statusHintFor(pid, state)` (`internal/app/registry.go`) selects the ToolHive table
-for `providerToolhive`, the manual-token/account table for `providerOpenAICodex`,
-and `""` for ordinary providers; `resolveProviderModels`'s failure branch and
-`liveOutcomeStore.recordSuccess`'s empty-state hint both route through it.
-`probeToolhive` already keyed toolhive directly, so it needed no change. TRIP-WIRE:
-a new surfaced provider needs its own vendor table, never copied wording.
+`statusHintFor(entry, state)` (`internal/app/registry.go`) selects the proxy/direct
+ToolHive table for both protocol-specific provider IDs from the entry's structural
+`toolhiveMode`, the manual-token/account table for `providerOpenAICodex`, and `""`
+for ordinary providers. `resolveProviderModels`, `liveOutcomeStore.recordSuccess`,
+and `probeToolhive` all route through that one helper. TRIP-WIRE: a new surfaced
+provider needs its own vendor table, never copied wording.
 
 mecatui: `client.ProviderStatus` mirrors the proto message (now with an
 `AutoSelected bool`); `ModelsMsg.Statuses` threads it through `ListModelsCmd`;
@@ -4902,9 +4916,11 @@ remediation line from a PRIOR success must never render beneath an unrelated
 error); `renderModelsPanel`'s status-line loop is additionally gated on
 `st.err == nil` as render-time defense in depth. `renderProviderStatusLines`
 renders ONE muted line per non-`ok` status under the list/empty state
-(`"<provider_id>: <copy> — <hint>"`, e.g. `"toolhive: proxy not reachable — start
+(`"<provider_id>: <copy> — <hint>"`, e.g. `"toolhive: gateway not reachable — start
 it with `thv llm proxy start`"`), extracted into the shared `providerStatusLine`
-helper. `modelsEmptyCopy` (review finding 6) now calls `promotedStatus` FIRST —
+helper. The ToolHive clause is deliberately routing-neutral; the TUI never parses
+the mode-specific free-text hint to infer proxy versus direct routing.
+`modelsEmptyCopy` (review finding 6) now calls `promotedStatus` FIRST —
 the first entry whose state is neither `""` nor `"ok"` — and promotes ANY such
 status (not just `"empty"`) to the top-level empty-state cause line via
 `providerStatusLine`, ahead of the disabled note and the generic "No selectable
@@ -4988,8 +5004,8 @@ discipline). It feeds the UNCHANGED `preferredDefaultProvider` ladder as an
 explicit operator override — it does NOT lower the precedence of key-driven
 providers. See ADR 0064 D9.
 
-**DIRECT mode — in-process OIDC token injection (issue #265, ADR 0102).** The gateway
-entry can also talk DIRECTLY to the real `gateway_url` with no local proxy hop. The
+**DIRECT mode — in-process OIDC token injection (issue #265, ADR 0102).** Both gateway
+entries can talk DIRECTLY to the real `gateway_url` with no local proxy hop. The
 ToolHive Go import that ADR 0064 D8 said would never exist now lives in ONE file —
 `internal/adapter/toolhivellm/tokensource.go` (the package's sole toolhive-importing
 file alongside the stdlib-only `detect*.go`; the detector's
@@ -5010,20 +5026,27 @@ ToolHive credential with `thv llm setup`. Errors are sanitised via
 `llm.SanitizeTokenError` (strips any bearer material an IdP echoes back) before they
 cross any boundary.
 
-The token rides a custom `http.RoundTripper` inside the `*http.Client` passed to
-`openai.WithHTTPClient` — NOT a `port.LLMProvider` decorator. `bearerRoundTripper`
-(`internal/app/registry.go`) strips the openai-go SDK's placeholder `Authorization`
-header (the SDK's `SetAPIKey` stamps `Bearer <key>` before `*http.Client.Transport`
-fires) and sets `Bearer <real-token>`, mirroring the ToolHive proxy's `Rewrite`
+The ONE token source is shared by the two entries through a custom
+`http.RoundTripper` inside the `*http.Client` passed to both SDKs — NOT a
+`port.LLMProvider` decorator. `bearerRoundTripper` (`internal/app/registry.go`)
+strips conflicting `Authorization` AND `X-Api-Key` headers before setting
+`Bearer <real-token>` on every outbound attempt, mirroring the ToolHive proxy's `Rewrite`
 (`pkg/llm/proxy/proxy.go` <!-- lint:not-a-citation: path inside the toolhive dependency, not a repo file -->: `Del` then `Set`). The HTTP client composes TWO policies:
 `bearerRoundTripper` over the SDK default transport, AND
-`openaicompat.RefuseRedirects` (CWE-918). `newDirectGatewayEntry` passes both via
-`openai.WithHTTPClient`, and `newOpenAICompatEntry` closes `extra` into `construct()`
-so the option rides the default build AND every per-session/heal `remintEntry` re-mint
-(zero drift, the same property the proxy entry relies on for redirect refusal). The
+`openaicompat.RefuseRedirects` (CWE-918). `newDirectGatewayClient` constructs that
+shared policy once; the OpenAI and Anthropic entry constructors pass it through their
+SDK options, including every per-session/heal re-mint (zero drift, the same property
+the proxy entry relies on for redirect refusal). The
 token NEVER enters a log, an error string, or an env var (OS keyring; only its
 reference is persisted); the `RoundTripper` must never log the Authorization header —
 and by construction it does not.
+
+Proxy-mode native Anthropic uses the same normalizing transport with a static,
+non-secret `thv-proxy` token: it removes any Anthropic SDK `X-Api-Key` and conflicting
+authorization, then sends only `Authorization: Bearer thv-proxy` to the validated
+loopback hop. ToolHive replaces that header upstream. Both listing and inference
+clients refuse redirects; the lister's shallow client clone retains the underlying
+authenticated transport while adding its response-size cap.
 
 A new `--toolhive-llm-mode auto|proxy|direct` flag (default `auto`, registered by
 `cliconfig.RegisterToolhiveLLMFlags` on all four mains) drives the routing in
@@ -5033,8 +5056,10 @@ A new `--toolhive-llm-mode auto|proxy|direct` flag (default `auto`, registered b
 gateway would send the bearer over cleartext, CWE-319), else falls back to proxy with
 a WARN (byte-identical to pre-#265 when OIDC is absent); `proxy` forces the loopback
 path (the escape hatch for a misconfigured OIDC block or a self-signed cert); `direct`
-forces the gateway path. The direct base URL is DERIVED via `directBaseURL`
-(`gateway_url + "/v1"`, mirroring what the ToolHive proxy forwards), never hand-set —
+forces the gateway path. The direct bases are DERIVED via `directBaseURL` and
+`toolhiveAnthropicBaseURL` (`gateway_url + "/v1"` and `gateway_url + "/anthropic"`),
+never hand-set; the same helper preserves a legitimate path prefix and strips
+userinfo/query/fragment material —
 there is no `--toolhive-llm-direct-base-url` (it would duplicate the security-sensitive
 `--toolhive-llm-base-url` surface for zero gain). An explicit `--toolhive-llm-base-url`
 ALWAYS forces proxy (it is a loopback address; direct derives from the config's

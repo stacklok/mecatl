@@ -275,7 +275,7 @@ func (s *liveMetaStore) outputLimitFor(providerID, modelID string) int {
 	if m, ok := s.lookup(providerID, modelID); ok && m.OutputLimit > 0 {
 		return clampLive(m.OutputLimit, maxLiveOutputLimit)
 	}
-	if providerID == providerAnthropic {
+	if providerID == providerAnthropic || providerID == providerToolhiveAnthropic {
 		return anthropicOutputLimit(modelID)
 	}
 	return 0

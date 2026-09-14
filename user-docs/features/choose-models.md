@@ -112,6 +112,43 @@ still take precedence over eligible built-in endpoint overrides. See the
 [provider configuration reference](/reference/configuration.md#providers) for
 the accepted flavors and fields.
 
+### Select ToolHive gateway models
+
+When ToolHive gateway discovery is enabled, one configured gateway identity appears
+as two protocol-specific Mecatl providers:
+
+| Provider ID | Model discovery | Inference |
+| --- | --- | --- |
+| `toolhive` | `GET /v1/models` | `POST /v1/responses` |
+| `toolhive-anthropic` | `GET /anthropic/v1/models` | `POST /anthropic/v1/messages` |
+
+Select a native Anthropic model under `toolhive-anthropic`. Mecatl keeps the
+inventories separate so that model always uses Anthropic Messages rather than the
+OpenAI Responses adapter. The native catalog retains the model's context and output
+limits plus image and thinking capabilities.
+
+`toolhive` remains the automatic default between the two gateway providers. A
+configured key-driven provider still takes precedence unless the operator explicitly
+sets `toolhive` or `toolhive-anthropic` as the server default. When the gateway is
+available but not selected, `/models` shows both protocol inventories so you can
+choose one without removing another provider's credential.
+
+Each provider has its own model count, availability state, and process-local
+last-known-good catalog. A failure or empty response from one protocol endpoint does
+not erase the healthy sibling inventory. Client-visible status contains no endpoint,
+credential, raw response body, or authentication header.
+
+If `/models` reports an unreachable provider, follow its routing-mode-specific hint:
+start the local proxy in proxy mode, or check direct gateway connectivity and OIDC
+setup in direct mode. A valid credential that lists no models requires the gateway
+administrator to grant access. If a listed alias later fails with a routing or cost
+enforcement error, select a fully qualified or provider-namespaced model slug or ask
+the gateway administrator to add a route. Create a fresh session after correcting a
+previously unresolved default model.
+
+For proxy/direct routing, OIDC setup, TLS constraints, and daemon flags, see
+[Run mecated standalone](/building/deployment/mecated.md#the-toolhive-llm-gateway-no-api-key-needed).
+
 ### Configure aliases, slots, and task routing
 
 For a deployment with several kinds of work, use the operator-global

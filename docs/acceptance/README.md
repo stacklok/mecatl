@@ -151,6 +151,7 @@ PR after verification. There is no cleanup or status-only PR.
   inventory and enrollment/catalogue status behind `/mcp`, without probes or new
   persistence. Status: approved; original plan PR merged, decisions recorded locally under
   an explicit human waiver of a separate amendment PR/merge for inclusion in the implementation PR.
+- [Idle-session MCP broker workspace refresh](idle-session-broker-workspace-refresh.md) — allows an owned idle broker session to explicitly refresh its complete protected-tool bundle after earlier turns and to recover after broker-process loss without resetting the conversation; retains ToolHive custody and broker-mode single-replica operation. Status: proposed.
 - [MCP broker DCR client](mcp-broker-dcr-client.md) — a third `mcp.servers[].auth.oauth.client.mode: dcr`, exposing ToolHive's existing RFC 7591 Dynamic Client Registration upstream-client support for protected MCP servers with no preregistered client or hosted CIMD document. Status: draft.
 - [Direct MCP Dynamic Client Registration](direct-mcp-dcr.md) — proposed contract for durable public-client DCR in a local direct MCP profile, reusing the existing authorization-code login while keeping broker and remote mecatui OIDC authority separate. Status: proposed.
 - [Live authenticated MCP metadata replaces static stand-ins](authenticated-mcp-metadata-replaces-static-standins.md) — replace protected-tool placeholders with safely admitted authenticated metadata after either lazy authorization or complete pre-prompt enrollment, without revealing undeclared tools on the lazy path. Status: in-progress.
@@ -179,6 +180,10 @@ PR after verification. There is no cleanup or status-only PR.
   injection; all callers admitted to one mecated share configured endpoint availability and
   gateway identity, while ToolHive remains explicit optional proxy compatibility with no
   cross-store secret migration. Status: proposed.
+- [ToolHive native Anthropic gateway support](toolhive-native-anthropic.md) — expose the
+  gateway's native Anthropic catalog and Messages endpoint as `toolhive-anthropic`, while
+  preserving the existing Responses-backed `toolhive` provider and shared gateway identity.
+  Status: implementation in progress under explicit workflow waiver; not approved or landed.
 - [Surface approval migration](surface-approval-migration.md) — final Phase-2 migration of the mecatui approval UI onto the dynamic surface contract, including ephemeral render-frame hit dispatch. Status: landed.
 - [Spine convergence](spine-convergence.md) — bring the
   to-acceptance-plan / plan-orchestrate / test-writer spine + ac-trace into

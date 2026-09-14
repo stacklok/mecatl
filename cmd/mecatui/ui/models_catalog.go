@@ -77,7 +77,7 @@ func (m Model) applyModelsCatalog(msg client.ModelsMsg) (tea.Model, tea.Cmd, boo
 		surface.catalog = m.modelCatalog
 		surface.provenance = m.modelProvenanceLine()
 	}
-	if !m.gatewayNoticeShown {
+	if !m.gatewayNoticeShown && !isToolhiveProviderID(m.resolvedSessionModel.ProviderID) {
 		if row, ok := availableNotDefaultStatus(msg.Statuses); ok {
 			pid := sanitizeTerminal(row.ProviderID)
 			m.gatewayNotice = pid + " gateway available (" + strconv.Itoa(int(row.ModelCount)) +
@@ -193,7 +193,7 @@ func statusAutoSelected(statuses []client.ProviderStatus, providerID string) boo
 func configProvenanceProviderSet(statuses []client.ProviderStatus) map[string]bool {
 	var out map[string]bool
 	for _, s := range statuses {
-		if s.ProviderID == "toolhive" {
+		if isToolhiveProviderID(s.ProviderID) {
 			if out == nil {
 				out = make(map[string]bool, 1)
 			}
@@ -201,6 +201,10 @@ func configProvenanceProviderSet(statuses []client.ProviderStatus) map[string]bo
 		}
 	}
 	return out
+}
+
+func isToolhiveProviderID(providerID string) bool {
+	return providerID == "toolhive" || providerID == "toolhive-anthropic"
 }
 
 // availableNotDefaultStatus returns the first reachable intent-driven provider

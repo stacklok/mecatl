@@ -112,12 +112,12 @@ func NewLister(key, baseURL string, httpClient *http.Client) *Lister {
 }
 
 type listerStatusError struct {
-	err        error
 	statusCode int
 }
 
-func (e *listerStatusError) Error() string   { return "anthropic: list models: " + e.err.Error() }
-func (e *listerStatusError) Unwrap() error   { return e.err }
+func (e *listerStatusError) Error() string {
+	return fmt.Sprintf("anthropic: list models: HTTP %d", e.statusCode)
+}
 func (e *listerStatusError) StatusCode() int { return e.statusCode }
 
 // ListModels GETs the live Anthropic catalog (auto-paging) and maps each ModelInfo
@@ -142,7 +142,10 @@ func (l *Lister) ListModels(ctx context.Context) ([]Model, error) {
 	if err := pager.Err(); err != nil {
 		var apiErr *sdk.Error
 		if errors.As(err, &apiErr) {
-			return nil, &listerStatusError{err: err, statusCode: apiErr.StatusCode}
+			// SDK API errors include the response body. Preserve only the status
+			// needed for classification so a gateway that reflects request
+			// credentials cannot place them in caller diagnostics.
+			return nil, &listerStatusError{statusCode: apiErr.StatusCode}
 		}
 		return nil, fmt.Errorf("anthropic: list models: %w", err)
 	}

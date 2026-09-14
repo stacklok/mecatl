@@ -291,14 +291,17 @@ prompt-cache prefix untouched. The routed downstream echoes back as
 (`"provider.route"`), absent on a cache hit — never fabricated. See
 [`docs/adr/0210-openrouter-downstream-provider-steering.md`](../adr/0210-openrouter-downstream-provider-steering.md).
 
-**Intent-driven availability (issue #262, ADR 0064).** Every provider above is
-**key-driven** — available iff a credential resolves. The ToolHive LLM gateway proxy
-entry (`providerToolhive`, id `"toolhive"`) is **intent-driven** instead: it is
-registered when `resolveToolhiveIntent` detects ToolHive's own config file (or an
-explicit `--toolhive-llm-base-url`) — no credential required, and NEVER gated by
-reachability (register-on-intent; a session persisting `provider_id: "toolhive"` must
-survive a restart with the proxy down, never rejected as "unknown or unavailable
-provider"). Each `providerEntry` carries an `intentDriven` bit that
+**Intent-driven availability (issue #262, ADR 0064; ADR 0334).** Every provider above
+is **key-driven** — available iff a credential resolves. One ToolHive gateway identity
+instead registers two **intent-driven**, protocol-specific entries: `toolhive` uses
+OpenAI Responses (`GET /v1/models`, `POST /v1/responses`) and
+`toolhive-anthropic` uses native Anthropic Messages (`GET /anthropic/v1/models`,
+`POST /anthropic/v1/messages`). Both are registered when `resolveToolhiveIntent`
+detects ToolHive's config (or an explicit `--toolhive-llm-base-url`) — no credential
+required, and NEVER gated by reachability. Their inventories, status, counts, and
+last-known-good snapshots are independent; model IDs are never merged across wire
+adapters. `toolhive` remains the preferred intent-driven default. Each
+`providerEntry` carries an `intentDriven` bit that
 `preferredDefaultProvider` reads to place intent-driven providers at an explicit
 LOWEST-preference tier (any key-driven provider always wins the default).
 `ListModels` `provider_status` projects operator-actionable live-listing outcomes
@@ -306,23 +309,23 @@ for intent-driven gateways, Codex entitlements, and operator-defined custom
 providers (identified by their configured custom default model); it exposes only
 safe provider ID/state/hint metadata, never an endpoint, credential, or raw
 listing error/body. `intentDriven` alone controls the TUI's `org` tier and gateway
-availability notices. A BOUNDED (≤1.5s) Build-time probe runs immediately after
-registration and drives ONLY the startup diagnostic, the initial live-model snapshot,
-and default-model eligibility for a SOLE intent-driven provider — never registration
-itself. See `docs/adr/0064-toolhive-llm-gateway-provider.md` for the full design
+availability notices. The two bounded Build-time probes start concurrently under one
+≤1.5s deadline and drive ONLY startup diagnostics, initial live-model snapshots, and
+default-model eligibility — never registration itself. See
+`docs/adr/0064-toolhive-llm-gateway-provider.md` and
+`docs/adr/0334-toolhive-protocol-specific-providers.md` for the designs
 (including the accepted sole+probe-down boot deviation) and
 `internal/adapter/openaicompat` / `internal/adapter/toolhivellm` for the two-layer leaf
 split (protocol-generic lister + the one ToolHive-aware config reader).
 
-**DIRECT mode (issue #265, ADR 0102).** The gateway entry can also talk DIRECTLY to the
+**DIRECT mode (issue #265, ADR 0102).** Both gateway entries can talk DIRECTLY to the
 real `gateway_url` with no local proxy hop: mecatl imports ToolHive as a Go library (one
 file, `internal/adapter/toolhivellm/tokensource.go`, the package's sole toolhive-importing
 file alongside the stdlib-only `detect*.go`) and builds an in-process OIDC token source
 — the SAME `llm.NewTokenSource` `thv llm token` uses — so the bearer is minted and
-refreshed in-process. The token rides a custom `http.RoundTripper` inside the
-`*http.Client` passed to `openai.WithHTTPClient` (`bearerRoundTripper` in
-`internal/app/registry.go`), which strips the SDK's placeholder `Authorization` header
-and sets `Bearer <real-token>` per request — mirroring the ToolHive proxy's own `Rewrite`.
+refreshed in-process. One token source and bearer-authenticated `*http.Client` serve
+both protocol adapters. `bearerRoundTripper` strips conflicting `Authorization` and
+`X-Api-Key` headers and sets `Bearer <real-token>` on every outbound attempt.
 The `WithHTTPClient` option rides every per-session/heal re-mint (the
 `newOpenAICompatEntry` closure appends it to every `construct()` call), so the token
 injection cannot drift off a re-minted adapter. A new `--toolhive-llm-mode
@@ -332,7 +335,10 @@ auto|proxy|direct` flag (default `auto`) drives the routing in
 (`http://localhost`/`http://127.0.0.1` carve-out; a non-HTTPS gateway would send the
 bearer over cleartext), else falls back to the loopback proxy with a WARN; `proxy`
 forces the loopback path; `direct` forces the gateway path and Build-fails when OIDC
-is absent. The direct base URL is derived (`gateway_url + "/v1"`), never hand-set. The
+is absent. Direct bases are derived (`gateway_url + "/v1"` for Responses and
+`gateway_url + "/anthropic"` for the Anthropic SDK), while proxy mode uses the
+equivalent loopback paths. Legitimate path prefixes survive; userinfo, query, and
+fragment data do not. The
 token never enters a log, an error string, or an env var (OS keyring; only its
 reference is persisted; errors are sanitised via `llm.SanitizeTokenError`). ToolHive's
 own `thv llm setup` command runs the interactive OIDC flow; a headless `mecated` cache
