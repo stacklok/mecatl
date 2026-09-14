@@ -374,72 +374,58 @@ function renderReference({ description, entryPoint, items, position, sharedRefer
 }
 
 const { output } = parseArguments(process.argv.slice(2));
-const coreModelPath = resolve(projectRoot, ".api-extractor-temp/models/core/mecatl-sdk.api.json");
-const nodeModelPath = resolve(
-  projectRoot,
-  ".api-extractor-temp/models/node/mecatl-sdk-node.api.json",
+const entryPoints = [
+  {
+    name: "core",
+    model: "mecatl-sdk.api.json",
+    description:
+      "Look up the transport-neutral TypeScript SDK functions, methods, types, and errors.",
+    entryPoint: "@stacklok-oss/mecatl-sdk",
+    position: 2,
+    title: "TypeScript SDK core API",
+  },
+  {
+    name: "node",
+    model: "mecatl-sdk-node.api.json",
+    description: "Look up the Node.js and Bun TypeScript SDK functions, methods, and types.",
+    entryPoint: "@stacklok-oss/mecatl-sdk/node",
+    position: 3,
+    sharedReference: "./core.md",
+    title: "TypeScript SDK Node.js and Bun API",
+  },
+  {
+    name: "deno",
+    model: "mecatl-sdk-deno.api.json",
+    description: "Look up the Deno TypeScript SDK local-process functions, methods, and types.",
+    entryPoint: "@stacklok-oss/mecatl-sdk/deno",
+    position: 4,
+    sharedReference: "./core.md",
+    title: "TypeScript SDK Deno API",
+  },
+];
+const entries = await Promise.all(
+  entryPoints.map(async (entry) => {
+    const modelPath = resolve(projectRoot, ".api-extractor-temp/models", entry.name, entry.model);
+    const model = JSON.parse(await readFile(modelPath, "utf8"));
+    return { ...entry, items: loadEntryPoint(model, modelPath) };
+  }),
 );
-const denoModelPath = resolve(
-  projectRoot,
-  ".api-extractor-temp/models/deno/mecatl-sdk-deno.api.json",
-);
-const [coreModel, nodeModel, denoModel] = await Promise.all([
-  readFile(coreModelPath, "utf8").then(JSON.parse),
-  readFile(nodeModelPath, "utf8").then(JSON.parse),
-  readFile(denoModelPath, "utf8").then(JSON.parse),
-]);
-const coreItems = loadEntryPoint(coreModel, coreModelPath);
-const nodeItems = loadEntryPoint(nodeModel, nodeModelPath);
-const denoItems = loadEntryPoint(denoModel, denoModelPath);
+const coreItems = entries.find((entry) => entry.name === "core").items;
 const coreByReference = new Map(coreItems.map((item) => [item.canonicalReference, item]));
-const entryPointSpecificItems = (items) =>
-  items.filter((item) => {
-    const core = coreByReference.get(item.canonicalReference);
-    return core === undefined || excerpt(core) !== excerpt(item);
-  });
-const nodeSpecificItems = entryPointSpecificItems(nodeItems);
-const denoSpecificItems = entryPointSpecificItems(denoItems);
-
-validateDocumentation(coreItems, "@stacklok-oss/mecatl-sdk");
-validateDocumentation(nodeSpecificItems, "@stacklok-oss/mecatl-sdk/node");
-validateDocumentation(denoSpecificItems, "@stacklok-oss/mecatl-sdk/deno");
+for (const entry of entries) {
+  if (entry.sharedReference !== undefined) {
+    entry.items = entry.items.filter((item) => {
+      const core = coreByReference.get(item.canonicalReference);
+      return core === undefined || excerpt(core) !== excerpt(item);
+    });
+  }
+  validateDocumentation(entry.items, entry.entryPoint);
+}
 await mkdir(output, { recursive: true });
-await Promise.all([
-  writeFile(
-    resolve(output, "core.md"),
-    renderReference({
-      description:
-        "Look up the transport-neutral TypeScript SDK functions, methods, types, and errors.",
-      entryPoint: "@stacklok-oss/mecatl-sdk",
-      items: coreItems,
-      position: 2,
-      title: "TypeScript SDK core API",
-    }),
-  ),
-  writeFile(
-    resolve(output, "node.md"),
-    renderReference({
-      description: "Look up the Node.js and Bun TypeScript SDK functions, methods, and types.",
-      entryPoint: "@stacklok-oss/mecatl-sdk/node",
-      items: nodeSpecificItems,
-      position: 3,
-      sharedReference: "./core.md",
-      title: "TypeScript SDK Node.js and Bun API",
-    }),
-  ),
-  writeFile(
-    resolve(output, "deno.md"),
-    renderReference({
-      description: "Look up the Deno TypeScript SDK local-process functions, methods, and types.",
-      entryPoint: "@stacklok-oss/mecatl-sdk/deno",
-      items: denoSpecificItems,
-      position: 4,
-      sharedReference: "./core.md",
-      title: "TypeScript SDK Deno API",
-    }),
-  ),
-]);
+await Promise.all(
+  entries.map((entry) => writeFile(resolve(output, `${entry.name}.md`), renderReference(entry))),
+);
 
-process.stdout.write(`generated ${resolve(output, "core.md")}\n`);
-process.stdout.write(`generated ${resolve(output, "node.md")}\n`);
-process.stdout.write(`generated ${resolve(output, "deno.md")}\n`);
+for (const entry of entries) {
+  process.stdout.write(`generated ${resolve(output, `${entry.name}.md`)}\n`);
+}

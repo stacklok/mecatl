@@ -176,7 +176,6 @@ SDK includes a bounded, credential-redacted tail of the daemon's stderr.
 <summary>Deno reports a permission error</summary>
 
 Grant `--allow-run` for `mecated`, read and write access to the configured
-runtime directory, and `--allow-net=127.0.0.1` for the local HTTP and SSE
-connection.
+runtime directory, and `--allow-net=127.0.0.1` for the local gRPC connection.
 
 </details>

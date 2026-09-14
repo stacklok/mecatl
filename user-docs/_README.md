@@ -135,8 +135,8 @@ Generated reference pages are exceptions to direct editing:
 
 - For `reference/configuration.md`, change the configuration schema or
   generator, then run `task docs:configref`.
-- For `reference/typescript-sdk-api/core.md` and `node.md`, change the TSDoc in
-  `sdk/typescript/src/` or the SDK documentation generator, then run
+- For `reference/typescript-sdk-api/core.md`, `node.md`, and `deno.md`, change the
+  TSDoc in `sdk/typescript/src/` or the SDK documentation generator, then run
   `task sdk:docs`. Use `task sdk:docs:check` to verify that the committed output
   is current without changing it.
 
