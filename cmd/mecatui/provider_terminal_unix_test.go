@@ -251,7 +251,7 @@ func TestInvariant_ProviderSetupFollowup_TerminalCancellationAndSecretSafety(t *
 			}
 			afterFlags, err := unix.FcntlInt(originalFD, unix.F_GETFL, 0)
 			if err != nil || afterFlags != flags {
-				t.Fatal("stdin flags not restored")
+				t.Fatalf("stdin flags not restored: before=%#x after=%#x nonblock=%#x err=%v", flags, afterFlags, unix.O_NONBLOCK, err)
 			}
 		})
 	}
