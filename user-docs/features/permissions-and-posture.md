@@ -64,6 +64,32 @@ Allow-all postures are refused when running as root unless the deployment
 explicitly declares an isolated sandbox with `MECATL_SANDBOX=1` or
 `IS_SANDBOX=1`.
 
+## Choose a permission mode
+
+A permission mode is session-scoped and controls how that session handles tool
+calls. It is separate from the deployment-wide posture and from configured
+permission rules.
+
+|Mode|Behavior|
+|-|-|
+|`default`|Uses the normal permission policy: read-only work is usually allowed, while operations that can mutate state normally ask first.|
+|`plan`|Exposes a read-only toolset so the model can inspect the workspace and prepare a plan without changing it.|
+|`accept-edits`|Automatically allows `Edit` and `Write` when they would otherwise hit only the built-in approval floor. Shell commands and other tools still use the normal policy, and configured asks and denies still win.|
+
+In `mecatui`, press `shift+tab` to cycle the active session through **default →
+plan → accept-edits → default**. You can remap the `ModeSwitch` action in the
+client keymap or with `--keymap`; see [Keybindings](/mecatui/keybindings.md).
+
+To select the initial mode when launching `mecatui`, use `--mode`:
+
+```sh
+mecatui --workspace "$PWD" --mode plan
+mecatui --workspace "$PWD" --mode accept-edits
+```
+
+The header displays the active mode. Changing modes does not bypass configured
+permission rules or guardrails.
+
 ## Approve and constrain work
 
 The built-in permission floor allows read-only exploration and asks before
