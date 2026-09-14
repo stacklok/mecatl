@@ -135,14 +135,20 @@ For an embedded deployment, see the
 ## Local microVM execution
 
 For optional isolated local execution on Linux amd64, install and authenticate the
-release-stamped host binary for the journey you use: `mecatui` for an embedded
-interactive session, or `mecated` for a headless HTTP/gRPC server. Installing both is
-optional. Follow the [verified host-binary installation steps](./docs/usage/microvm-environments.md#before-either-journey) before running either command sequence:
+release-stamped host binaries: both `mecatui` and `mecated` for interactive use, or
+just `mecated` for headless use. `mecatui` runs the embedded interactive server;
+`mecated` supplies local microVM administration. Follow the
+[verified host-binary installation steps](https://mecatl.dev/docs/building/deployment/microvm-environments#local-microvm-environments)
+before running either command sequence:
 
 ```sh
-# Interactive, mecatui-only journey:
-mecatui microvm doctor
-mecatui --default-placement microvm-local
+# Interactive embedded journey: configure the operator-owned deployment setting
+# in ~/.config/mecatl/settings.yaml:
+#
+# execution:
+#   default_placement: microvm-local
+mecated microvm doctor
+mecatui
 
 # Or headless, mecated-only journey:
 mecated microvm doctor
@@ -151,20 +157,19 @@ mecated serve --headless --default-placement microvm-local
 # Ordinary POST /v1/sessions uses the deployment default; clients send no path or placement.
 ```
 
-Release binaries verify and prepare the required runtime when the deployment selects the
-provider. Source builds do not support this profile; repository developers can use the
-separate [developer source workflow](./docs/usage/microvm-environments.md#developer-source-workflow).
-`microvm doctor` and `microvm status` are read-only. Guest IPv4 egress is permissive
-by default; external IPv6 is unrouted and unsupported. A local composition root can
-instead select `--microvm-guest-egress=deny-all` or
-`--microvm-guest-egress=allowlist` with repeatable
-`--microvm-guest-allow=HOST:PORT/tcp|udp` rules (use `mecated serve --headless ...`, or
-local embedded `mecatui --default-placement microvm-local ...`). The allowlist
-requires at least one valid hostname rule; invalid input or enforcement failure stops
-startup. HTTP/gRPC clients and project configuration cannot set or weaken this
-host-only policy. Agent edits live in the host session worktree printed by
-`mecated microvm status` or `mecatui microvm status`, not in the original checkout.
-The [local microVM operator guide](./docs/usage/microvm-environments.md) covers
+Release binaries verify and prepare the required runtime when the deployment selects
+`microvm-local`. Source builds do not support this profile; repository developers can
+use the separate [developer source workflow](./docs/usage/microvm-environments.md#developer-source-workflow).
+`microvm doctor` and `microvm status` are read-only `mecated` administration commands.
+Guest IPv4 egress is permissive by default; external IPv6 is unrouted and unsupported.
+The local host operator can instead select `deny-all` or `allowlist` in
+`execution.microvm.guest_egress`, or use `mecated serve`'s
+`--microvm-guest-egress=deny-all` or `--microvm-guest-egress=allowlist` with repeatable
+`--microvm-guest-allow=HOST:PORT/tcp|udp` rules. The allowlist requires at least one
+valid hostname rule; invalid input or enforcement failure stops startup. HTTP/gRPC
+clients and project configuration cannot set or weaken this host-only policy. Agent
+edits live in an isolated session worktree, not in the original checkout. The [local
+microVM operator guide](https://mecatl.dev/docs/building/deployment/microvm-environments) covers
 verified installation, headless use, guest-egress controls, host-versus-guest
 boundaries, and platform limits.
 

@@ -32,6 +32,8 @@
     ifacemethod func (PrunableStore).List(ctx context.Context) ([]StoredSession, error)
     ifacemethod func (RetryDispositionError).RetryDisposition() session.RetryDisposition
     ifacemethod func (ScheduleCreator).Create(ctx context.Context, s Schedule) error
+    ifacemethod func (ScheduleDeletionStore).BeginDelete(ctx context.Context, name string, deletionID string) (Schedule, error)
+    ifacemethod func (ScheduleDeletionStore).CompleteDelete(ctx context.Context, name string, deletionID string) error
     ifacemethod func (ScheduleManager).CreateSchedule(ctx context.Context, spec ScheduleSpec) (Schedule, error)
     ifacemethod func (ScheduleManager).DeleteSchedule(ctx context.Context, name string) error
     ifacemethod func (ScheduleManager).FireNow(ctx context.Context, name string) (ScheduleFire, error)
@@ -191,12 +193,13 @@ type RetryDisposition = session.RetryDisposition
 type RetryDispositionError interface{RetryDisposition() session.RetryDisposition; error}
 type Schedule struct{Spec ScheduleSpec; State ScheduleState}
 type ScheduleCreator interface{Create(ctx context.Context, s Schedule) error}
+type ScheduleDeletionStore interface{BeginDelete(ctx context.Context, name string, deletionID string) (Schedule, error); CompleteDelete(ctx context.Context, name string, deletionID string) error}
 type ScheduleFire struct{ID string; ScheduleName string; SessionID session.SessionID; FiredAt time.Time; StartedAt time.Time; ProgressAt time.Time; Deadline time.Time; Stop session.StopReason; Err string}
 type ScheduleManager interface{CreateSchedule(ctx context.Context, spec ScheduleSpec) (Schedule, error); DeleteSchedule(ctx context.Context, name string) error; FireNow(ctx context.Context, name string) (ScheduleFire, error); GetSchedule(ctx context.Context, name string) (Schedule, error); ListFires(ctx context.Context, scheduleName string) ([]ScheduleFire, error); ListSchedules(ctx context.Context) ([]Schedule, error); PauseSchedule(ctx context.Context, name string) error; ResumeSchedule(ctx context.Context, name string) error; UpdateSchedule(ctx context.Context, spec ScheduleSpec) (Schedule, error)}
 type ScheduleOneShotReArmer interface{ReArmOneShot(ctx context.Context, name string, nextFire time.Time) error}
 type ScheduleProviderSelector struct{ProviderID string; ModelID string}
-type ScheduleSpec struct{Name string; Prompt string; Parts []session.Content; Trigger TriggerSpec; Selector ScheduleProviderSelector; Profile string; EnvironmentRef session.EnvironmentRef; PlacementScope string; Mode session.PermissionMode; Limits session.Limits; Mutating bool; MaxFires int; Misfire MisfirePolicy; Singleton bool; Timezone string; CreatedAt time.Time; OneShotRetry bool; OneShotMaxRetries int; CarryContext bool; OriginSessionID session.SessionID; Owner *session.Principal; FireTimeout time.Duration}
-type ScheduleState struct{NextFireAt time.Time; LastFireAt time.Time; FireCount int; Enabled bool; LastFireSessionID session.SessionID; OneShotRetryCount int; LastFireStartedAt time.Time; LastFireProgressAt time.Time; FireDeadline time.Time}
+type ScheduleSpec struct{Name string; Prompt string; Parts []session.Content; Trigger TriggerSpec; Selector ScheduleProviderSelector; Profile string; EnvironmentRef session.EnvironmentRef; PlacementScope string; PlacementOwned bool; Mode session.PermissionMode; Limits session.Limits; Mutating bool; MaxFires int; Misfire MisfirePolicy; Singleton bool; Timezone string; CreatedAt time.Time; OneShotRetry bool; OneShotMaxRetries int; CarryContext bool; OriginSessionID session.SessionID; Owner *session.Principal; FireTimeout time.Duration}
+type ScheduleState struct{NextFireAt time.Time; LastFireAt time.Time; FireCount int; Enabled bool; DeletionID string; LastFireSessionID session.SessionID; OneShotRetryCount int; LastFireStartedAt time.Time; LastFireProgressAt time.Time; FireDeadline time.Time}
 type ScheduleStore interface{Claim(ctx context.Context, name string, now time.Time, nextFire time.Time) (Schedule, error); ClaimNow(ctx context.Context, name string, now time.Time, nextFire time.Time) (Schedule, error); Delete(ctx context.Context, name string) error; Due(ctx context.Context, now time.Time) ([]Schedule, error); List(ctx context.Context) ([]Schedule, error); ListFires(ctx context.Context, scheduleName string) ([]ScheduleFire, error); Load(ctx context.Context, name string) (Schedule, error); LoadFire(ctx context.Context, fireID string) (ScheduleFire, error); RecordFire(ctx context.Context, f ScheduleFire) error; RecordFireProgress(ctx context.Context, name string, fireID string, at time.Time) error; RecordFireStart(ctx context.Context, name string, fire ScheduleFire) error; Save(ctx context.Context, s Schedule) error; SetEnabled(ctx context.Context, name string, enabled bool) error}
 type SessionCreator interface{Create(ctx context.Context, s *session.Session) error}
 type SessionDeleteSupport interface{SupportsSessionDelete() bool}
@@ -237,7 +240,9 @@ var ErrInvalidSessionLineageQuery error
 var ErrLeaseHeld error
 var ErrLeaseUnsupported error
 var ErrPruneUnsupported error
+var ErrScheduleActiveFire error
 var ErrScheduleAlreadyExists error
+var ErrScheduleDeleting error
 var ErrScheduleNotFound error
 var ErrScheduleUnsupported error
 var ErrSessionAlreadyExists error

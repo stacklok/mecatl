@@ -203,5 +203,10 @@ Deferred after the MVP: repository-VM deletion UX,
 sophisticated retention, crash-orphan reconciliation, crash-durable and cross-process
 merge, Linux arm64 and macOS live support, upstream Brood signing, independent refresh
 channels, per-session fairness and quotas, dashboards, and exhaustive cache-poisoning
-controls. Non-Git, scheduled, remote, multi-user, and cross-principal placement also remain
-out of scope. See [ADR 0334](../adr/0334-microvm-execution-environments.md).
+controls. Non-Git, remote, multi-user, and cross-principal placement remain out of scope.
+Scheduled tasks are supported through the existing server-owned placement contract: origin-backed
+schedules borrow their exact logical attachment, while independent schedules allocate one logical
+attachment and persist a trusted ownership bit. Every fire reattaches that ref. Delete disables
+first, preserves a claimed/running record for scheduler recovery, and removes only the owned
+logical attachment; dirty state remains exact-reattachable and the repository VM/rootfs and
+siblings are never deleted. See [ADR 0334](../adr/0334-microvm-execution-environments.md).

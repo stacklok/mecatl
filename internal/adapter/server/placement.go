@@ -159,6 +159,25 @@ type PlacementReattacher interface {
 	Reattach(context.Context, PlacementReattachRequest) (PlacementBinding, error)
 }
 
+// PlacementDeleteRequest authorizes cleanup of one exact schedule-owned
+// placement. It contains no path and cannot select a current default.
+type PlacementDeleteRequest struct {
+	Ref       session.EnvironmentRef
+	Principal *session.Principal
+	Scope     PlacementScope
+}
+
+// PlacementDeleteResult reports whether cleanup retained dirty worktree state.
+type PlacementDeleteResult struct {
+	Retained bool
+}
+
+// PlacementDeleter is the optional exact-ref cleanup capability used only for
+// placements durably marked as owned by an independent schedule.
+type PlacementDeleter interface {
+	DeletePlacement(context.Context, PlacementDeleteRequest) (PlacementDeleteResult, error)
+}
+
 // PlacementReattachRequest carries the trusted authorization context and the
 // exact durable identity to reattach. Ref must include Kind, ID, and Revision.
 type PlacementReattachRequest struct {
@@ -282,28 +301,65 @@ func (s *Service) persistPlacedCreatedSession(ctx context.Context, sess *session
 	return s.persistCreatedSession(ctx, sess, owner, request)
 }
 
-func (s *Service) resolveSchedulePlacement(ctx context.Context, ref session.EnvironmentRef, profile SessionProfile) (session.EnvironmentRef, string, SessionProfile, error) {
+type schedulePlacement struct {
+	ref      session.EnvironmentRef
+	scope    string
+	profile  SessionProfile
+	owned    bool
+	release  func() error
+	rollback func(context.Context) error
+}
+
+func (s *Service) resolveSchedulePlacement(ctx context.Context, ref session.EnvironmentRef, profile SessionProfile) (schedulePlacement, error) {
 	if profile == ProfileNoFS {
 		binding, err := s.BindPlacement(ctx, NoFSPlacement(), PlacementOperationCreate)
 		if err != nil {
-			return session.EnvironmentRef{}, "", profile, err
+			return schedulePlacement{}, err
 		}
-		return binding.Ref, string(s.cfg.PlacementScope), ProfileNoFS, nil
+		return schedulePlacement{ref: binding.Ref, scope: string(s.cfg.PlacementScope), profile: ProfileNoFS, release: binding.Close}, nil
 	}
 	if profile != ProfileDefault {
-		return session.EnvironmentRef{}, "", profile, fmt.Errorf("%w: unknown schedule profile %q", ErrInvalidArgument, profile)
+		return schedulePlacement{}, fmt.Errorf("%w: unknown schedule profile %q", ErrInvalidArgument, profile)
 	}
 	var binding PlacementBinding
 	var err error
+	newBinding := !ref.Valid()
 	if ref.Valid() {
 		binding, err = s.ReattachPlacement(ctx, ref)
 	} else {
 		binding, err = s.BindPlacement(ctx, DefaultPlacement(), PlacementOperationCreate)
 	}
 	if err != nil {
-		return session.EnvironmentRef{}, "", profile, err
+		return schedulePlacement{}, err
 	}
-	return binding.Ref, string(s.cfg.PlacementScope), ProfileDefault, nil
+	deleter, canDelete := s.cfg.PlacementProvider.(PlacementDeleter)
+	owned := newBinding && canDelete && binding.Ref.Kind != session.EnvKindLocal && binding.Ref.Kind != session.EnvKindNoFS
+	resolved := schedulePlacement{
+		ref: binding.Ref, scope: string(s.cfg.PlacementScope), profile: ProfileDefault,
+		owned: owned, release: binding.Close,
+	}
+	if owned {
+		owner := session.PrincipalFromContext(ctx)
+		resolved.rollback = func(cleanupCtx context.Context) error {
+			_, deleteErr := deleter.DeletePlacement(cleanupCtx, PlacementDeleteRequest{Ref: binding.Ref, Principal: owner, Scope: s.cfg.PlacementScope})
+			return deleteErr
+		}
+	}
+	return resolved, nil
+}
+
+func (s *Service) deleteSchedulePlacement(ctx context.Context, ref session.EnvironmentRef, scope string) (bool, error) {
+	if scope != string(s.cfg.PlacementScope) || !ref.Valid() {
+		return false, ErrPlacementNotFound
+	}
+	deleter, ok := s.cfg.PlacementProvider.(PlacementDeleter)
+	if !ok {
+		return false, ErrPlacementUnavailable
+	}
+	result, err := deleter.DeletePlacement(ctx, PlacementDeleteRequest{
+		Ref: ref, Principal: session.PrincipalFromContext(ctx), Scope: s.cfg.PlacementScope,
+	})
+	return result.Retained, sanitizePlacementProviderError(err)
 }
 
 func (s *Service) privateCompositionRoot(ctx context.Context, sess *session.Session) (string, error) {

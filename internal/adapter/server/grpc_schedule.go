@@ -312,6 +312,7 @@ func scheduleStateToProto(in port.ScheduleState) *mecatlv1.ScheduleState {
 		Enabled:           in.Enabled,
 		LastFireSessionId: string(in.LastFireSessionID),
 		OneShotRetryCount: ClampInt32(in.OneShotRetryCount),
+		DeletionPending:   in.DeletionID != "",
 	}
 	if !in.NextFireAt.IsZero() {
 		out.NextFireAt = timestamppb.New(in.NextFireAt)

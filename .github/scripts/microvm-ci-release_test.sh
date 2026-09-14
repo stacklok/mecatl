@@ -11,6 +11,7 @@ sign="$repo_root/.github/scripts/sign-microvm-release-evidence.sh"
 install="$repo_root/.github/scripts/install-microvm-release.sh"
 validate_release_ref="$repo_root/.github/scripts/validate-release-ref.sh"
 reuse_platform_assets="$repo_root/.github/scripts/reuse-platform-release-assets.sh"
+goreleaser="$repo_root/.goreleaser.yaml"
 
 require() {
   pattern=$1
@@ -102,6 +103,30 @@ require 'TEST_RUN_ROOT="${RUN_ROOT_BASE}/${LIVE_TEST}"' "$taskfile"
 require 'run_live_tests "^${LIVE_TEST}$" "${TEST_RUN_ROOT}"' "$taskfile"
 require 'rm -rf "${TEST_RUN_ROOT}"' "$taskfile"
 forbid 'LIVE_TESTS="${MECATL_MICROVM_E2E_TESTS:-' "$taskfile"
+
+# create-release owns release creation in this workflow. The CLI publisher remains
+# independent of microVM artifact production, but cannot race create-release.
+create_release_section=$(awk '/^  create-release:/{on=1; next} on && /^  [a-zA-Z0-9_-]+:/{exit} on' "$release")
+publish_microvm_needs=$(awk '/^  publish-microvm:/{on=1; next} on && /^  [a-zA-Z0-9_-]+:/{exit} on' "$release")
+publish_cli_needs=$(awk '/^  publish-cli:/{on=1; next} on && /^  [a-zA-Z0-9_-]+:/{exit} on' "$release")
+printf '%s\n' "$create_release_section" | grep -Fx '    needs: validate-release-ref' >/dev/null
+printf '%s\n' "$publish_microvm_needs" | grep -Fx '    needs: [validate-release-ref, create-release, endorse-brood-resolution]' >/dev/null
+printf '%s\n' "$publish_cli_needs" | grep -Fx '    needs: [guard, create-release]' >/dev/null
+# GoReleaser uploads to the release created above without replacing its notes.
+require 'mode: keep-existing' "$goreleaser"
+
+# The PR-only hypervisor journey installs cosign for verification only; it does
+# not sign or attest, so OIDC must not be available to it.
+hypervisor_section=$(awk '/^  live-hypervisor:/{on=1; next} on && /^  [a-zA-Z0-9_-]+:/{exit} on' "$e2e")
+printf '%s\n' "$hypervisor_section" | grep -Fx '      contents: read' >/dev/null
+if printf '%s\n' "$hypervisor_section" | grep -F 'id-token: write' >/dev/null; then
+  echo 'live-hypervisor grants unnecessary id-token: write' >&2
+  exit 1
+fi
+if printf '%s\n' "$hypervisor_section" | grep -E 'cosign (sign|attest)' >/dev/null; then
+  echo 'live-hypervisor performs keyless signing' >&2
+  exit 1
+fi
 
 # The release job must package and publish the nested runtime payloads and evidence.
 require 'package-microvm-release.sh' "$release"

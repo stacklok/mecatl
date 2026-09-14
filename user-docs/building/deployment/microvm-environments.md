@@ -8,8 +8,9 @@ title: Local microVM environments
 Use `microvm-local` on Linux amd64 with KVM to run model-controlled filesystem and
 shell tools in a local microVM. Providers, MCP, hooks, credentials, memory, and the
 mecatl server remain on the host. It is for one local operator and Git repository;
-Linux arm64, macOS, remote placement, schedules, multi-user sharing, and non-Git
-sources are not available.
+Linux arm64, macOS, remote placement, multi-user sharing, and non-Git
+sources are not available. Recurring and one-shot schedules are supported on the
+same repository-scoped VM and use durable logical worktrees.
 
 Install and verify published, release-stamped `mecatui` **and** `mecated` binaries before
 use. `mecatui` runs the embedded server; `mecated` supplies the local `microvm doctor`,
@@ -82,6 +83,23 @@ mecatui --resume SESSION_ID
 A microVM session remains on its exact server-owned placement for its lifetime; it is
 never moved to host execution. `mecatui connect ADDRESS` is a pure remote client and never
 resolves, starts, or forwards local MicroVM placement.
+
+## Scheduled tasks
+
+A schedule created from a running session borrows that session's exact logical worktree.
+Deleting or updating the schedule never deletes or replaces the originating session's
+placement. A schedule created independently provisions one logical worktree at creation and
+reuses that exact ref for every recurring or one-shot fire, including after a harness restart;
+there is no current-default or fresh-worktree fallback.
+
+Deleting an independently placed schedule first disables it. A claimed or running fire must
+settle through scheduler recovery before deletion can be retried. Before the first claim, deletion
+removes a clean schedule-owned worktree and retains a dirty one under its exact ref. The first atomic
+claim hands placement lifetime to the fire-session lineage: after that point, deleting the schedule
+removes only the schedule record and retains the worktree, clean or dirty, for historical or resumable
+fire sessions. Cleanup never deletes the repository VM, its shared rootfs, an originating session, or
+sibling logical worktrees. Legacy schedule records without explicit ownership metadata are treated as
+borrowed and are never destructively cleaned up.
 
 ## Headless mecated-only journey
 

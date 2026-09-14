@@ -331,7 +331,7 @@ func TestRepositoryAttachmentInventoryAndDeleteSurviveRestart(t *testing.T) {
 	}
 	retained := page("")
 	retained = page(retained.Continuation)
-	if len(retained.Entries) != 1 || retained.Entries[0].State != EnvironmentDestroyed || !strings.Contains(retained.Entries[0].Error, "dirty worktree retained") {
+	if len(retained.Entries) != 1 || retained.Entries[0].State != EnvironmentReady || retained.Entries[0].Health != GenerationStale || retained.Entries[0].Error == "" {
 		t.Fatalf("restarted retained inventory = %+v", retained)
 	}
 }
@@ -432,8 +432,18 @@ func TestRepositoryProductionInventoryPaginationAndLogicalDelete(t *testing.T) {
 		t.Fatalf("dirty logical state was not retained: %v", statErr)
 	}
 	retained := inventory("")
-	if len(retained.Entries) != 1 || retained.Entries[0].Health != GenerationStale || !strings.Contains(retained.Entries[0].Error, "repository VM deletion is not supported") {
+	if len(retained.Entries) != 1 || retained.Entries[0].State != EnvironmentReady || retained.Entries[0].Health != GenerationStale || retained.Entries[0].Error == "" {
 		t.Fatalf("retained logical inventory = %+v", retained)
+	}
+	reattached, err := composition.Attachments.Reattach(t.Context(), LogicalEnvironmentRequest{Owner: "local", Checkout: repository, Verified: verified}, attachments[1].Environment.Ref())
+	if err != nil {
+		t.Fatalf("reattach retained dirty logical environment: %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(reattached.Logical.WorktreePath, "dirty.txt")); statErr != nil {
+		t.Fatalf("reattached dirty state is unavailable: %v", statErr)
+	}
+	if err := reattached.Logical.Detach(); err != nil {
+		t.Fatalf("detach reattached dirty logical environment: %v", err)
 	}
 }
 

@@ -17,9 +17,9 @@ on:
         type: string
 
 # Least-privilege default. Jobs elevate individually, and only to exactly what
-# they need: ko-push + cosign-keyless for the image jobs, and additionally
-# contents: write for publish-cli, which is the only job that creates a
-# GitHub Release.
+# they need: ko-push + cosign-keyless for image jobs, `contents: write` for the
+# release creator and release-asset publishers, and artifact attestations where
+# applicable.
 permissions:
   contents: read
 
@@ -1148,7 +1148,7 @@ jobs:
   #   gh release delete <tag> --cleanup-tag=false --yes
   # before re-dispatching. See .claude/skills/cut-release.
   publish-cli:
-    needs: guard
+    needs: [guard, create-release]
     name: Build, publish, sign, attest CLI archives + Homebrew formula
     runs-on: ubuntu-24.04
     # 60, measured rather than guessed. On the v0.0.30 run the disk reclaim took
@@ -1158,12 +1158,12 @@ jobs:
     # than the 30 min that timed that attempt out.
     timeout-minutes: 60
     permissions:
-      contents: write # create the GitHub Release + upload assets (read covers the changelog compare API)
+      contents: write # upload immutable release assets (read covers the changelog compare API)
       id-token: write # OIDC: cosign keyless sign-blob AND provenance
       attestations: write # SLSA build provenance via actions/attest-build-provenance
-      # NOTE: the only job here holding contents: write, and it is scoped to THIS
-      # repo. The write to stacklok/homebrew-tap uses the separately minted App
-      # installation token below, never GITHUB_TOKEN.
+      # This job writes release assets in this repository. The write to
+      # stacklok/homebrew-tap uses the separately minted App installation token
+      # below, never GITHUB_TOKEN.
     env:
       # On workflow_dispatch github.ref_name is the default branch, so prefer the
       # explicit input; on a tag push github.ref_name is the tag.

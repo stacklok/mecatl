@@ -41,6 +41,19 @@ It defaults to read-leaning behavior. A schedule that may use `Edit`, `Write`,
 or `Shell` must explicitly set `mutating: true`; this is not an implicit
 allow-all mode.
 
+Placement is resolved once when the schedule is created and every fire exactly reattaches
+that durable placement. An in-chat schedule borrows its originating session's worktree;
+an independent schedule owns a separately provisioned placement when the deployment provider
+supports that lifecycle (including `microvm-local`). Updates cannot change either relationship.
+Deleting a borrowed schedule leaves its origin untouched. Deleting an independently placed
+schedule first persists an atomic, restart-safe deletion marker; claimed/running fires must settle
+before that transition, and inspect/list report deletion pending until conditional completion succeeds.
+Before the first claim, deletion cleans the owned placement while preserving dirty state. The first
+atomic claim hands placement lifetime to the fire-session lineage; after it, deleting the schedule
+removes only its record and retains the clean or dirty worktree for historical and resumable fire
+sessions. Deletion never destroys a shared repository VM, rootfs, or sibling worktree. Legacy records
+with ambiguous ownership keep the prior direct-delete behavior and are never guessed to be owned.
+
 Example REST workflow:
 
 ```sh

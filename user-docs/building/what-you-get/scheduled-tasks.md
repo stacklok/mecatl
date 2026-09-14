@@ -132,6 +132,22 @@ posture unless the schedule opts into `Mutating: true`, and a headless ask model
 A schedule that needs continuity across fires (say, yesterday's digest) has to
 persist that itself, via memory or a file, and re-load it in the prompt.
 
+The conversation is fresh, but the execution placement is stable. Creation resolves one
+exact durable ref and each fire reattaches it without following a changed deployment default.
+Origin-backed schedules borrow their session's placement. Independent schedules provision one
+placement when the provider supports ownership cleanup; MicroVM schedules therefore reuse the
+same logical worktree and repository VM across fires and harness restarts. Ownership is durable,
+immutable host metadata that public request mappings cannot set. Legacy records default to
+borrowed, never owned. Owned deletion atomically refuses a claimed/running fire or persists a
+disabled, restart-safe deletion marker. While marked, create/update/pause/resume/fire and one-shot
+re-arm cannot mutate the record; inspect/list expose `deletion_pending`, and retry resumes against
+the same schedule incarnation. Conditional completion cannot delete a later same-name schedule.
+Before the first claim, deletion cleans the owned attachment while retaining dirty state. The first
+atomic claim hands placement lifetime to the fire-session lineage; after it, schedule deletion removes
+only the record and retains the clean or dirty attachment for historical and resumable fire sessions.
+Borrowed, no-FS, host-local, and legacy-ambiguous records preserve the prior idempotent direct-delete
+behavior. It never deletes the repository-scoped VM/rootfs, sibling worktrees, or an origin session.
+
 The fire's conversation, tool calls, and usage live in `SessionStore` under its
 session ID. `ScheduleFire` records the fire ID, session ID, start time, terminal
 stop reason, and any error. Result delivery is pull-only: callers poll `GetFire`

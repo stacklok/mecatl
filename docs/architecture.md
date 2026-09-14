@@ -1221,8 +1221,12 @@ release/binary, loaded-config, policy, profile-set, and socket identities to mat
 A mismatch or unhealthy daemon is left untouched and readiness fails with local repair
 guidance. It supports local single-user Git sessions on
 Linux amd64 with KVM. Linux arm64 and Apple Silicon macOS have compile/static coverage only;
-live support is deferred. Schedules, remote placement, multi-user enforcement, non-Git
-sources, and unified host+guest egress policy remain out of scope. See the [microVM architecture](architecture/microvm-environments.md) and
+live support is deferred. Remote placement, multi-user enforcement, non-Git
+sources, and unified host+guest egress policy remain out of scope. Schedules reuse one
+exact logical attachment across fires. Before the first claim, deleting an independently
+placed schedule cleans its attachment while preserving dirty state. After the first claim,
+the attachment is retained for historical and resumable fire sessions when the schedule is deleted.
+See the [microVM architecture](architecture/microvm-environments.md) and
 [operator guide](usage/microvm-environments.md) (ADR 0108).
 
 Discovery is source-session scoped. `ListCommands(session_id)` and
@@ -1246,8 +1250,14 @@ In broker mode, each successor receives a fresh broker attachment and persists i
 binding before publication; broker enrollment and authorization are not copied from the
 source. A missing or mismatched binding during later reattachment still fails closed.
 Schedules similarly
-persist their resolved exact ref, durable owner, and placement scope—not a selector or
-"current default" intent—and reauthorize and exactly reattach at each fire.
+persist their resolved exact ref, durable owner, placement scope, and trusted ownership bit—not
+a selector or "current default" intent—and reauthorize and exactly reattach at each fire.
+An origin-backed schedule borrows its session placement. An independent schedule owns a newly
+provisioned placement only when its provider supports exact path-free deletion; legacy records
+without the bit remain conservatively borrowed. Delete disables first, refuses cleanup while a
+claim/run is active, and destroys only the owned logical attachment after the registry delete
+succeeds. MicroVM cleanup preserves dirty worktrees as exact-reattachable and never destroys the
+repository VM/rootfs or sibling attachments.
 
 Delegation never accepts placement input: Team derives the owning session environment;
 Subagent and Parallel share or server-fork the parent Environment. Preserved-fork,

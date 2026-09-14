@@ -1516,6 +1516,7 @@ func (s *Service) wireScheduleManager(cfg Config) {
 	// schedule-capable Service; it binds the deployment default for out-of-band
 	// creates and reauthorizes an invoking session's exact ref.
 	s.schedMgr.setPlacementForCreate(s.resolveSchedulePlacement)
+	s.schedMgr.setPlacementDeleter(s.deleteSchedulePlacement)
 }
 
 // SetModels atomically swaps the selectable-model inventory. It is the composition

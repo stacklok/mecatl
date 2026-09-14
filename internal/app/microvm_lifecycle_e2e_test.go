@@ -16,8 +16,10 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	microvmadapter "github.com/stacklok/mecatl/internal/adapter/microvm"
@@ -33,6 +35,7 @@ type placementTestDaemon struct {
 	next         int
 	guests       map[string]string
 	execBindings []string
+	deleteClaims []string
 }
 
 func startPlacementTestDaemon(t *testing.T) *placementTestDaemon {
@@ -108,6 +111,26 @@ func (d *placementTestDaemon) serveConn(conn net.Conn) {
 		if !d.hasBinding(binding) {
 			response = map[string]any{"error_code": "not_found", "error": "generation unavailable"}
 		}
+	case "delete":
+		guestRoot, ok := d.guestRoot(binding)
+		if !ok {
+			response = map[string]any{"error_code": "not_found", "error": "generation unavailable"}
+			break
+		}
+		if err := os.Remove(guestRoot); err != nil {
+			response = map[string]any{"error_code": "delete_failed", "error": "guest root cleanup failed"}
+			break
+		}
+		environmentID, _ := binding["environment_id"].(string)
+		ref, _ := binding["ref"].(string)
+		sessionID, _ := binding["session_id"].(string)
+		generation, _ := binding["generation"].(float64)
+		d.mu.Lock()
+		delete(d.guests, environmentID)
+		d.deleteClaims = append(d.deleteClaims, fmt.Sprintf("%s/%s/%s/%s/%.0f", binding["owner"], sessionID, environmentID, ref, generation))
+		d.mu.Unlock()
+		payload, _ := json.Marshal(map[string]bool{"worktree_retained": false})
+		response = map[string]any{"binding": binding, "payload": json.RawMessage(payload)}
 	case "fork":
 		parentRoot, ok := d.guestRoot(binding)
 		if !ok {
@@ -230,6 +253,12 @@ func (d *placementTestDaemon) operationCount(want string) int {
 		}
 	}
 	return count
+}
+
+func (d *placementTestDaemon) deleteClaimsSnapshot() []string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return append([]string(nil), d.deleteClaims...)
 }
 
 func (d *placementTestDaemon) executedBindings() []string {
@@ -456,6 +485,154 @@ func TestHostLocalOmissionDoesNoMicroVMWork(t *testing.T) {
 	}
 	if factoryCalled || sess.EnvironmentRef.Kind != session.EnvKindLocal {
 		t.Fatalf("omitted placement did MicroVM work or selected wrong backend: factory=%v ref=%+v", factoryCalled, sess.EnvironmentRef)
+	}
+}
+
+func TestMicroVMScheduledPlacementSurvivesFiresRestartAndDeletion(t *testing.T) {
+	ctx := context.Background()
+	daemon := startPlacementTestDaemon(t)
+	storeDir := t.TempDir()
+	workspace := t.TempDir()
+	const scope server.PlacementScope = "deployment"
+
+	build := func(llm *mockllm.Provider) *Built {
+		t.Helper()
+		provider, err := microvmadapter.NewPlacementProvider(daemon.endpoint(), workspace, "microvm-local", scope, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		built, err := Build(ctx, Config{
+			Workspace: workspace, StoreDir: storeDir, UseMock: true, MockProvider: llm,
+			Shell: "/bin/sh", AllowAllTools: true, TrustProject: true,
+			PlacementProvider: provider, PlacementScope: scope,
+			EnvironmentForkers: map[session.EnvironmentKind]tool.EnvironmentForker{session.EnvironmentKind("microvm"): provider},
+			EnvironmentMergers: map[session.EnvironmentKind]tool.EnvironmentMerger{session.EnvironmentKind("microvm"): provider},
+			SchedulerEnabled:   true, SchedulerTickInterval: time.Hour, SessionLeaseTTL: 200 * time.Millisecond,
+		})
+		if err != nil {
+			t.Fatalf("Build: %v", err)
+		}
+		return built
+	}
+
+	first := build(mockllm.New(
+		mockllm.ToolCallTurn(session.NewToolCall("write-first", "Shell", json.RawMessage(`{"command":"printf first > shared.txt"}`))),
+		mockllm.TextTurn("first fire complete"),
+	))
+	origin, err := first.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
+	if err != nil {
+		first.Close()
+		t.Fatal(err)
+	}
+	borrowed, err := first.Service.CreateSchedule(ctx, port.ScheduleSpec{Name: "borrowed", Prompt: "unused", Trigger: port.TriggerSpec{Cron: "0 0 * * *"}, OriginSessionID: origin.ID, Mutating: true})
+	if err != nil {
+		first.Close()
+		t.Fatal(err)
+	}
+	if borrowed.Spec.PlacementOwned || borrowed.Spec.EnvironmentRef != origin.EnvironmentRef {
+		first.Close()
+		t.Fatalf("borrowed placement = %+v", borrowed.Spec)
+	}
+	neverFired, err := first.Service.CreateSchedule(ctx, port.ScheduleSpec{Name: "never-fired", Prompt: "unused", Trigger: port.TriggerSpec{Cron: "0 0 * * *"}, Mutating: true})
+	if err != nil {
+		first.Close()
+		t.Fatal(err)
+	}
+	if !neverFired.Spec.PlacementOwned || daemon.operationCount("create") != 2 {
+		first.Close()
+		t.Fatalf("never-fired independent allocation = owned:%v creates:%d", neverFired.Spec.PlacementOwned, daemon.operationCount("create"))
+	}
+	parts := strings.SplitN(neverFired.Spec.EnvironmentRef.ID, ".", 2)
+	if len(parts) != 2 {
+		first.Close()
+		t.Fatalf("invalid never-fired ref: %+v", neverFired.Spec.EnvironmentRef)
+	}
+	if err := first.Service.DeleteSchedule(ctx, neverFired.Spec.Name); err != nil {
+		first.Close()
+		t.Fatal(err)
+	}
+	wantDeleteClaim := fmt.Sprintf("local/%s/%s/%s@%s/%s", parts[0], parts[1], parts[1], neverFired.Spec.EnvironmentRef.Revision, neverFired.Spec.EnvironmentRef.Revision)
+	if claims := daemon.deleteClaimsSnapshot(); len(claims) != 1 || claims[0] != wantDeleteClaim {
+		first.Close()
+		t.Fatalf("never-fired delete binding = %v, want [%s]", claims, wantDeleteClaim)
+	}
+	if _, err := os.Stat(filepath.Join(daemon.root, parts[1])); !errors.Is(err, fs.ErrNotExist) {
+		first.Close()
+		t.Fatalf("never-fired worktree survived daemon cleanup: %v", err)
+	}
+	if _, err := first.Service.GetSchedule(ctx, neverFired.Spec.Name); !errors.Is(err, port.ErrScheduleNotFound) {
+		first.Close()
+		t.Fatalf("never-fired schedule survived cleanup: %v", err)
+	}
+	if _, err := first.Service.GetSession(ctx, origin.ID); err != nil {
+		first.Close()
+		t.Fatalf("never-fired cleanup tore down borrowed origin: %v", err)
+	}
+	created, err := first.Service.CreateSchedule(ctx, port.ScheduleSpec{Name: "durable", Prompt: "maintain shared marker", Trigger: port.TriggerSpec{Cron: "0 0 * * *"}, Mutating: true})
+	if err != nil {
+		first.Close()
+		t.Fatal(err)
+	}
+	if !created.Spec.PlacementOwned || daemon.operationCount("create") != 3 {
+		first.Close()
+		t.Fatalf("independent allocation = owned:%v creates:%d", created.Spec.PlacementOwned, daemon.operationCount("create"))
+	}
+	fire1, err := first.Service.FireNow(ctx, "durable")
+	if err != nil || fire1.Stop != session.StopEndTurn {
+		first.Close()
+		t.Fatalf("first FireNow = %+v, %v", fire1, err)
+	}
+	first.Close()
+
+	second := build(mockllm.New(
+		mockllm.ToolCallTurn(session.NewToolCall("verify-second", "Shell", json.RawMessage(`{"command":"test \"$(cat shared.txt)\" = first && printf second >> shared.txt"}`))),
+		mockllm.TextTurn("second fire complete"),
+		mockllm.ToolCallTurn(session.NewToolCall("verify-resume", "Shell", json.RawMessage(`{"command":"test \"$(cat shared.txt)\" = firstsecond"}`))),
+		mockllm.TextTurn("historic fire resumed"),
+	))
+	defer second.Close()
+	loaded, err := second.Service.GetSchedule(ctx, "durable")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Spec.EnvironmentRef != created.Spec.EnvironmentRef || !loaded.Spec.PlacementOwned || daemon.operationCount("create") != 3 {
+		t.Fatalf("restart rebound placement: ref=%+v owned=%v creates=%d", loaded.Spec.EnvironmentRef, loaded.Spec.PlacementOwned, daemon.operationCount("create"))
+	}
+	var fire2 port.ScheduleFire
+	if !eventually(5*time.Second, func() bool {
+		fire2, err = second.Service.FireNow(ctx, "durable")
+		return err == nil
+	}) || fire2.Stop != session.StopEndTurn {
+		t.Fatalf("second FireNow = %+v, %v", fire2, err)
+	}
+	if err := second.Service.DeleteSchedule(ctx, "borrowed"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := second.Service.GetSession(ctx, origin.ID); err != nil {
+		t.Fatalf("borrowed-origin session lost: %v", err)
+	}
+	detaches := daemon.operationCount("detach")
+	if err := second.Service.DeleteSchedule(ctx, "durable"); err != nil {
+		t.Fatal(err)
+	}
+	if daemon.operationCount("detach") != detaches {
+		t.Fatal("post-claim schedule deletion destroyed its placement")
+	}
+	run, err := second.Service.StartScheduledRunContent(ctx, fire2.SessionID, "resume after schedule deletion", nil)
+	if err != nil {
+		t.Fatalf("resume historical fire session: %v", err)
+	}
+	var result *session.ResultPayload
+	for event := range run.Events() {
+		if event.Result != nil {
+			result = event.Result
+		}
+		if event.ToolResult != nil && event.ToolResult.IsError {
+			t.Fatalf("resumed historical fire tool failed: %s", event.ToolResult.Content)
+		}
+	}
+	if result == nil || result.Stop == session.StopError {
+		t.Fatalf("resumed historical fire result = %+v", result)
 	}
 }
 

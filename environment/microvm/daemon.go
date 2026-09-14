@@ -534,6 +534,9 @@ func (d *Daemon) repositoryInventory(ctx context.Context, owner string, pageSize
 			WorktreePath: record.worktreePath, State: record.repository.State,
 		}
 		switch {
+		case record.worktreeRetained && !record.deleted:
+			entry.Health = GenerationStale
+			entry.Error = "dirty schedule worktree retained and exact-reattachable for recovery"
 		case record.deleted && record.worktreeRetained:
 			entry.State, entry.Health = EnvironmentDestroyed, GenerationStale
 			entry.Error = "logical attachment was deleted; dirty worktree retained for recovery; repository VM deletion is not supported"

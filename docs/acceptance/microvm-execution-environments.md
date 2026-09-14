@@ -8,8 +8,10 @@
 **Accumulator branch:** `acc/microvm-execution-environments`
 
 The MVP uses one mutable microVM and one rootfs for one local operator and one canonical
-Git repository. Sessions and isolated children reuse that repository VM but receive
-separate daemon-created worktrees and authenticated logical `EnvironmentRef`s. This is a
+Git repository. Sessions, schedules, and isolated children reuse that repository VM but receive
+separate daemon-created worktrees and authenticated logical `EnvironmentRef`s. A schedule
+created from a session borrows its exact worktree; an independent schedule owns one logical
+worktree reused by every fire. This is a
 small local, single-user, Git-only capability: it deliberately does not solve fleet
 management, comprehensive lifecycle automation, or cross-process merge coordination.
 

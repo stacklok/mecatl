@@ -68,6 +68,7 @@ type ScheduleState struct {
 	LastFireAt        time.Time
 	FireCount         int32
 	Enabled           bool
+	DeletionPending   bool
 	LastFireSessionID string
 	// LastFireStartedAt is when the current fire's run began (RecordFireStart),
 	// the in-flight liveness marker. Zero means the run has not started. #386.
@@ -375,6 +376,7 @@ func mapScheduleState(in *mecatlv1.ScheduleState) ScheduleState {
 	out := ScheduleState{
 		FireCount:         in.GetFireCount(),
 		Enabled:           in.GetEnabled(),
+		DeletionPending:   in.GetDeletionPending(),
 		LastFireSessionID: in.GetLastFireSessionId(),
 	}
 	if ts := in.GetNextFireAt(); ts != nil {

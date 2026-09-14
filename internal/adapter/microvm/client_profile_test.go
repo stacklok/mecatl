@@ -140,3 +140,43 @@ func mustJSON(t *testing.T, value any) []byte {
 	}
 	return data
 }
+
+func TestDeletePlacementUsesExactBindingAndReturnsOnlyRetention(t *testing.T) {
+	socket := testUnixSocketPath(t)
+	listener, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = listener.Close() }()
+	seen := make(chan lifecycleRequest, 1)
+	go func() {
+		conn, acceptErr := listener.Accept()
+		if acceptErr != nil {
+			return
+		}
+		defer func() { _ = conn.Close() }()
+		var request lifecycleRequest
+		if readFrame(conn, &request) != nil {
+			return
+		}
+		seen <- request
+		_ = writeFrame(conn, lifecycleResponse{Payload: mustJSON(t, DeleteResult{WorktreePath: "/private/retained", WorktreeRetained: true})})
+	}()
+	client, err := NewPlacementProvider("unix://"+socket, "/source", "microvm-local", "deployment", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal := &session.Principal{Subject: "alice"}
+	ref := session.EnvironmentRef{Kind: kindMicroVM, ID: "placement.logical", Revision: "7"}
+	result, err := client.DeletePlacement(t.Context(), server.PlacementDeleteRequest{Ref: ref, Principal: principal, Scope: "deployment"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := <-seen
+	if request.Operation != "delete" || request.Binding.SessionID != "placement" || request.Binding.EnvironmentID != "logical" || request.Binding.Generation != 7 {
+		t.Fatalf("delete request = %+v", request)
+	}
+	if !result.Retained {
+		t.Fatal("dirty retention was not returned")
+	}
+}

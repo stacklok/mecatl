@@ -115,6 +115,24 @@ state. The existing single-client isolated-child merge behavior is sufficient: n
 crash-durable merge journal, cross-process serialization, or multi-client proof is part of
 the MVP.
 
+Schedules use the same repository-scoped lifecycle rather than a session-per-VM variant.
+`internal/adapter/server/schedule_manager.go` (`CreateSchedule`) provisions one logical
+attachment only for an independent schedule and persists `PlacementOwned`; origin-backed,
+no-FS, host-local, and legacy records remain borrowed. Update carries origin, ref, scope,
+profile, owner, and ownership forward unchanged. Fire uses exact reattachment, so interrupted
+or dirty state survives recurring and one-shot runs and harness restart. Before the first claim,
+owned deletion uses the optional `port.ScheduleDeletionStore`: one atomic begin refuses an active
+fire or persists a disabled deleting marker with an opaque incarnation token. `FireCount`, incremented
+by the atomic claim before fire-session publication, is the ownership handoff: after any claim,
+deleting the schedule removes only its record and retains the exact placement for historical and
+resumable fire sessions, including a claim that failed before session publication. The tombstone
+remains listable and retryable through cleanup and restart; every lifecycle mutation is fenced, and
+conditional completion removes only the same marked incarnation. Cleanup failure never restores or
+upserts an old spec. Borrowed, no-FS, host-local, and legacy-ambiguous records retain the prior
+idempotent direct-delete path. The MicroVM
+provider deletes only the logical attachment; `environment/microvm/repository_logical.go`
+(`DeletePreservingDirty`) leaves dirty records exact-reattachable and never removes the repository VM/rootfs or siblings.
+
 The runtime consumes admitted Brood Linux amd64 bytes directly, independently verifies and
 injects the guest agent into the singleton rootfs, and creates no session/child rootfs copy.
 On Linux the backend supplies namespace-side UID/GID 65532 through go-microvm's
@@ -196,9 +214,10 @@ requested local owner, sorts actionable records by exact session/ref/generation 
 and returns at most 64 rows plus an HMAC-authenticated opaque continuation. Tokens bind the
 owner and cursor, so modification or cross-owner reuse fails closed; each page probes only
 its ready runtime identities and projects exact session/ref/generation, lifecycle state,
-host worktree, and `healthy`/`stale`/`error` status. Destroyed tombstones are normally omitted; a tombstone
-whose dirty worktree was retained remains as an actionable `destroyed`/`stale` inventory
-row, so checked orphan destruction does not hide the recovery path or imply a replacement.
+host worktree, and `healthy`/`stale`/`error` status. Clean deleted attachments are removed
+from inventory. A dirty attachment is detached but remains a ready durable record with the
+same exact ref, so a persisted session can reattach for recovery instead of being converted
+into an unresumable destroyed tombstone.
 `internal/adapter/microvm/client.go` (`Inventory`)
 rechecks the owner and bound; `internal/adapter/microvmmanager/manager.go` (`Status`)
 never opens registry files. `Status` holds one bounded page and its continuation instead of

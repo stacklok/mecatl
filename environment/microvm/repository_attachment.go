@@ -278,7 +278,14 @@ func (m *RepositoryAttachmentManager) delete(ctx context.Context, binding contro
 	}
 	m.mu.Lock()
 	record := m.records[binding.Ref]
-	if record == nil || record.binding != binding || record.deleted || record.deleting {
+	if record == nil {
+		// Exact generation identities are never reused. Absence therefore means a
+		// prior cleanup completed, which is the idempotent retry result needed when
+		// schedule-record completion failed after cleanup.
+		m.mu.Unlock()
+		return LifecycleDeleteResult{}, nil
+	}
+	if record.binding != binding || record.deleted || record.deleting {
 		m.mu.Unlock()
 		return LifecycleDeleteResult{}, control.ErrBindingMismatch
 	}
@@ -301,9 +308,13 @@ func (m *RepositoryAttachmentManager) delete(ctx context.Context, binding contro
 	}
 	m.mu.Lock()
 	if retained {
+		// Dirty logical worktrees remain exact-reattachable. Deleting the owning
+		// schedule releases process-local handles but deliberately does not turn
+		// the durable attachment into a tombstone; the persisted fire session can
+		// resume against this same ref for operator recovery.
 		updated := *record
 		updated.attachment = nil
-		updated.deleted = true
+		updated.deleted = false
 		updated.worktreeRetained = true
 		updated.deleting = false
 		if err := persistRepositoryAttachment(&updated); err != nil {

@@ -81,19 +81,21 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	ScheduleStoreService_SaveSchedule_FullMethodName       = "/mecatl.driver.v1.ScheduleStoreService/SaveSchedule"
-	ScheduleStoreService_LoadSchedule_FullMethodName       = "/mecatl.driver.v1.ScheduleStoreService/LoadSchedule"
-	ScheduleStoreService_DeleteSchedule_FullMethodName     = "/mecatl.driver.v1.ScheduleStoreService/DeleteSchedule"
-	ScheduleStoreService_ListSchedules_FullMethodName      = "/mecatl.driver.v1.ScheduleStoreService/ListSchedules"
-	ScheduleStoreService_DueSchedules_FullMethodName       = "/mecatl.driver.v1.ScheduleStoreService/DueSchedules"
-	ScheduleStoreService_ClaimSchedule_FullMethodName      = "/mecatl.driver.v1.ScheduleStoreService/ClaimSchedule"
-	ScheduleStoreService_ClaimScheduleNow_FullMethodName   = "/mecatl.driver.v1.ScheduleStoreService/ClaimScheduleNow"
-	ScheduleStoreService_SetScheduleEnabled_FullMethodName = "/mecatl.driver.v1.ScheduleStoreService/SetScheduleEnabled"
-	ScheduleStoreService_RecordFire_FullMethodName         = "/mecatl.driver.v1.ScheduleStoreService/RecordFire"
-	ScheduleStoreService_RecordFireStart_FullMethodName    = "/mecatl.driver.v1.ScheduleStoreService/RecordFireStart"
-	ScheduleStoreService_RecordFireProgress_FullMethodName = "/mecatl.driver.v1.ScheduleStoreService/RecordFireProgress"
-	ScheduleStoreService_LoadFire_FullMethodName           = "/mecatl.driver.v1.ScheduleStoreService/LoadFire"
-	ScheduleStoreService_ListFires_FullMethodName          = "/mecatl.driver.v1.ScheduleStoreService/ListFires"
+	ScheduleStoreService_SaveSchedule_FullMethodName           = "/mecatl.driver.v1.ScheduleStoreService/SaveSchedule"
+	ScheduleStoreService_LoadSchedule_FullMethodName           = "/mecatl.driver.v1.ScheduleStoreService/LoadSchedule"
+	ScheduleStoreService_DeleteSchedule_FullMethodName         = "/mecatl.driver.v1.ScheduleStoreService/DeleteSchedule"
+	ScheduleStoreService_ListSchedules_FullMethodName          = "/mecatl.driver.v1.ScheduleStoreService/ListSchedules"
+	ScheduleStoreService_DueSchedules_FullMethodName           = "/mecatl.driver.v1.ScheduleStoreService/DueSchedules"
+	ScheduleStoreService_ClaimSchedule_FullMethodName          = "/mecatl.driver.v1.ScheduleStoreService/ClaimSchedule"
+	ScheduleStoreService_ClaimScheduleNow_FullMethodName       = "/mecatl.driver.v1.ScheduleStoreService/ClaimScheduleNow"
+	ScheduleStoreService_SetScheduleEnabled_FullMethodName     = "/mecatl.driver.v1.ScheduleStoreService/SetScheduleEnabled"
+	ScheduleStoreService_BeginScheduleDelete_FullMethodName    = "/mecatl.driver.v1.ScheduleStoreService/BeginScheduleDelete"
+	ScheduleStoreService_CompleteScheduleDelete_FullMethodName = "/mecatl.driver.v1.ScheduleStoreService/CompleteScheduleDelete"
+	ScheduleStoreService_RecordFire_FullMethodName             = "/mecatl.driver.v1.ScheduleStoreService/RecordFire"
+	ScheduleStoreService_RecordFireStart_FullMethodName        = "/mecatl.driver.v1.ScheduleStoreService/RecordFireStart"
+	ScheduleStoreService_RecordFireProgress_FullMethodName     = "/mecatl.driver.v1.ScheduleStoreService/RecordFireProgress"
+	ScheduleStoreService_LoadFire_FullMethodName               = "/mecatl.driver.v1.ScheduleStoreService/LoadFire"
+	ScheduleStoreService_ListFires_FullMethodName              = "/mecatl.driver.v1.ScheduleStoreService/ListFires"
 )
 
 // ScheduleStoreServiceClient is the client API for ScheduleStoreService service.
@@ -138,6 +140,10 @@ type ScheduleStoreServiceClient interface {
 	// SetEnabled atomically sets the schedule's Enabled flag without touching
 	// any other State field (the pause/resume primitive).
 	SetScheduleEnabled(ctx context.Context, in *SetScheduleEnabledRequest, opts ...grpc.CallOption) (*SetScheduleEnabledResponse, error)
+	// BeginDelete atomically marks one exact schedule incarnation as deleting.
+	BeginScheduleDelete(ctx context.Context, in *BeginScheduleDeleteRequest, opts ...grpc.CallOption) (*BeginScheduleDeleteResponse, error)
+	// CompleteDelete removes only the record carrying the matching deletion id.
+	CompleteScheduleDelete(ctx context.Context, in *CompleteScheduleDeleteRequest, opts ...grpc.CallOption) (*CompleteScheduleDeleteResponse, error)
 	// RecordFire records the terminal outcome of a fire, updating the
 	// schedule's LastFireSessionID and clearing in-flight state. It is
 	// IDEMPOTENT per fire id (a repeat for the same id is a no-op).
@@ -245,6 +251,26 @@ func (c *scheduleStoreServiceClient) SetScheduleEnabled(ctx context.Context, in 
 	return out, nil
 }
 
+func (c *scheduleStoreServiceClient) BeginScheduleDelete(ctx context.Context, in *BeginScheduleDeleteRequest, opts ...grpc.CallOption) (*BeginScheduleDeleteResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(BeginScheduleDeleteResponse)
+	err := c.cc.Invoke(ctx, ScheduleStoreService_BeginScheduleDelete_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *scheduleStoreServiceClient) CompleteScheduleDelete(ctx context.Context, in *CompleteScheduleDeleteRequest, opts ...grpc.CallOption) (*CompleteScheduleDeleteResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CompleteScheduleDeleteResponse)
+	err := c.cc.Invoke(ctx, ScheduleStoreService_CompleteScheduleDelete_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *scheduleStoreServiceClient) RecordFire(ctx context.Context, in *RecordFireRequest, opts ...grpc.CallOption) (*RecordFireResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(RecordFireResponse)
@@ -337,6 +363,10 @@ type ScheduleStoreServiceServer interface {
 	// SetEnabled atomically sets the schedule's Enabled flag without touching
 	// any other State field (the pause/resume primitive).
 	SetScheduleEnabled(context.Context, *SetScheduleEnabledRequest) (*SetScheduleEnabledResponse, error)
+	// BeginDelete atomically marks one exact schedule incarnation as deleting.
+	BeginScheduleDelete(context.Context, *BeginScheduleDeleteRequest) (*BeginScheduleDeleteResponse, error)
+	// CompleteDelete removes only the record carrying the matching deletion id.
+	CompleteScheduleDelete(context.Context, *CompleteScheduleDeleteRequest) (*CompleteScheduleDeleteResponse, error)
 	// RecordFire records the terminal outcome of a fire, updating the
 	// schedule's LastFireSessionID and clearing in-flight state. It is
 	// IDEMPOTENT per fire id (a repeat for the same id is a no-op).
@@ -387,6 +417,12 @@ func (UnimplementedScheduleStoreServiceServer) ClaimScheduleNow(context.Context,
 }
 func (UnimplementedScheduleStoreServiceServer) SetScheduleEnabled(context.Context, *SetScheduleEnabledRequest) (*SetScheduleEnabledResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SetScheduleEnabled not implemented")
+}
+func (UnimplementedScheduleStoreServiceServer) BeginScheduleDelete(context.Context, *BeginScheduleDeleteRequest) (*BeginScheduleDeleteResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method BeginScheduleDelete not implemented")
+}
+func (UnimplementedScheduleStoreServiceServer) CompleteScheduleDelete(context.Context, *CompleteScheduleDeleteRequest) (*CompleteScheduleDeleteResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CompleteScheduleDelete not implemented")
 }
 func (UnimplementedScheduleStoreServiceServer) RecordFire(context.Context, *RecordFireRequest) (*RecordFireResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method RecordFire not implemented")
@@ -568,6 +604,42 @@ func _ScheduleStoreService_SetScheduleEnabled_Handler(srv interface{}, ctx conte
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ScheduleStoreService_BeginScheduleDelete_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(BeginScheduleDeleteRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ScheduleStoreServiceServer).BeginScheduleDelete(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ScheduleStoreService_BeginScheduleDelete_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ScheduleStoreServiceServer).BeginScheduleDelete(ctx, req.(*BeginScheduleDeleteRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ScheduleStoreService_CompleteScheduleDelete_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CompleteScheduleDeleteRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ScheduleStoreServiceServer).CompleteScheduleDelete(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ScheduleStoreService_CompleteScheduleDelete_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ScheduleStoreServiceServer).CompleteScheduleDelete(ctx, req.(*CompleteScheduleDeleteRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _ScheduleStoreService_RecordFire_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(RecordFireRequest)
 	if err := dec(in); err != nil {
@@ -696,6 +768,14 @@ var ScheduleStoreService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SetScheduleEnabled",
 			Handler:    _ScheduleStoreService_SetScheduleEnabled_Handler,
+		},
+		{
+			MethodName: "BeginScheduleDelete",
+			Handler:    _ScheduleStoreService_BeginScheduleDelete_Handler,
+		},
+		{
+			MethodName: "CompleteScheduleDelete",
+			Handler:    _ScheduleStoreService_CompleteScheduleDelete_Handler,
 		},
 		{
 			MethodName: "RecordFire",

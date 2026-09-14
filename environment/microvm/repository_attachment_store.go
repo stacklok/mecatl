@@ -141,7 +141,7 @@ func readRepositoryAttachment(registry *RepositoryVMRegistry, filename string) (
 		environmentID != "logical-"+parts[5] || identity.value.StateDirectory != repositoryRoot || identity.value.Key != document.Repository.RepositoryKey ||
 		document.WorktreePath != filepath.Join(logicalRoot, "worktree") || document.MetadataPath != filepath.Join(logicalRoot, "metadata") ||
 		document.SourceRoot != document.Repository.GitCommonDirectory || !filepath.IsAbs(document.SourceRoot) || document.Branch != "mecatl/"+parts[5] ||
-		document.WorktreeRetained != document.Deleted {
+		document.Deleted && !document.WorktreeRetained {
 		return nil, errors.New("repository attachment metadata is inconsistent")
 	}
 	if err := registry.validateRepositoryRecord(identity.value, document.Repository); err != nil {

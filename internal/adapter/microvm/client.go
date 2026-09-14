@@ -483,9 +483,35 @@ func (c *Client) Delete(ctx context.Context, sess *session.Session) error {
 var (
 	_ server.PlacementProvider   = (*Client)(nil)
 	_ server.PlacementReattacher = (*Client)(nil)
+	_ server.PlacementDeleter    = (*Client)(nil)
 	_ tool.EnvironmentForker     = (*Client)(nil)
 	_ tool.EnvironmentMerger     = (*Client)(nil)
 )
+
+// DeletePlacement removes one exact schedule-owned logical attachment. The
+// server receives only whether dirty state was retained; daemon paths stay
+// private to the adapter.
+func (c *Client) DeletePlacement(ctx context.Context, request server.PlacementDeleteRequest) (server.PlacementDeleteResult, error) {
+	if request.Scope != c.scope {
+		return server.PlacementDeleteResult{}, server.ErrPlacementNotFound
+	}
+	claim, err := bindingForRef(request.Ref, request.Principal)
+	if err != nil {
+		return server.PlacementDeleteResult{}, server.ErrPlacementNotFound
+	}
+	response, err := c.call(ctx, lifecycleRequest{Version: protocolVersion, Operation: "delete", Binding: claim})
+	if err != nil {
+		return server.PlacementDeleteResult{}, err
+	}
+	var result DeleteResult
+	if len(response.Payload) == 0 {
+		return server.PlacementDeleteResult{}, errors.New("microvmd delete response omitted cleanup result")
+	}
+	if err := json.Unmarshal(response.Payload, &result); err != nil {
+		return server.PlacementDeleteResult{}, fmt.Errorf("decode microvmd delete result: %w", err)
+	}
+	return server.PlacementDeleteResult{Retained: result.WorktreeRetained}, nil
+}
 
 // Fork asks microvmd to create a complete isolated child generation.
 func (c *Client) Fork(ctx context.Context, base tool.Environment, label string) (tool.Environment, func() error, string, error) {
