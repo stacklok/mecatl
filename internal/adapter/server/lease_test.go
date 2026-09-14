@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"iter"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -31,6 +32,14 @@ type fakeLease struct {
 	acquireErr    error
 	acquires      int
 	acquireExpiry time.Time // expiry the next Acquire grants (zero = time.Now()+1h)
+	// acquireHook, when set, runs synchronously inside Acquire (after the count
+	// bump, before the grant is returned), passed the requested owner string so
+	// a test can distinguish a trial Acquire (owner suffixed with
+	// staleTrialLeaseSuffix) from an ordinary run-entry Acquire — used by
+	// concurrency tests that need to observe or assert on exactly when an
+	// Acquire call happened relative to some other in-flight call (e.g. a
+	// same-id Release).
+	acquireHook func(id session.SessionID, owner string)
 
 	renewHook         func(port.Lease) (port.Lease, error)
 	releaseHook       func(port.Lease) error
@@ -41,8 +50,14 @@ type fakeLease struct {
 
 func (f *fakeLease) Acquire(_ context.Context, id session.SessionID, owner string) (port.Lease, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.acquires++
+	hook := f.acquireHook
+	f.mu.Unlock()
+	if hook != nil {
+		hook(id, owner)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.acquireErr != nil {
 		return port.Lease{}, f.acquireErr
 	}
@@ -887,6 +902,139 @@ func TestReconcileLeaseLossTombstoneRecoversCancelledSession(t *testing.T) {
 	for range run2.Events() {
 	}
 	svc.FinishRun(sess.ID, run2)
+}
+
+// TestOnLeaseLostSerializesAgainstReconcileTrial is the panel finding's
+// regression test (issue #1334 follow-up): onLeaseLost's real Release for a
+// lost session id must never overlap ReconcileLeaseLossTombstone's trial
+// Acquire for the SAME id (engine/port/lease.go's "callers serialize same-id
+// calls" contract). It blocks the Release call mid-flight, asserts a
+// concurrently-invoked ReconcileLeaseLossTombstone has NOT yet started its
+// trial Acquire, then unblocks Release and confirms the Acquire only happens
+// once Release has returned — proving leaseLossMu, not luck, orders them.
+func TestOnLeaseLostSerializesAgainstReconcileTrial(t *testing.T) {
+	lease := &fakeLease{}
+	store := memstore.New()
+	ps := permstore.New()
+	cat := tool.NewCatalog()
+	engine := agent.NewEngine(agent.Deps{
+		LLM:     blockingProvider{},
+		Catalog: cat,
+		Policy:  permpolicy.NewPolicy(nil, ps),
+		Model:   "test-model",
+	})
+	svc, err := newPlacementTestService(server.Config{
+		Engine:             engine,
+		Store:              store,
+		SessionLease:       lease,
+		LeaseOwner:         "owner-test",
+		LeaseTTL:           90 * time.Millisecond,
+		LeaseRenewInterval: 15 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	t.Cleanup(svc.Close)
+
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	run, err := svc.StartRun(context.Background(), sess.ID, "go")
+	if err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+
+	releaseStarted := make(chan struct{})
+	releaseProceed := make(chan struct{})
+	var released atomic.Bool
+	var blockedOnce sync.Once
+	lease.mu.Lock()
+	lease.releaseHook = func(port.Lease) error {
+		// Only onLeaseLost's OWN Release (the first one) is under test; a
+		// later trial's self-Release (leaseTrial's immediate Acquire+Release)
+		// must run normally or it would deadlock on releaseProceed too.
+		blockedOnce.Do(func() {
+			close(releaseStarted)
+			<-releaseProceed
+			released.Store(true)
+		})
+		return nil
+	}
+	var lost atomic.Bool
+	lease.renewHook = func(port.Lease) (port.Lease, error) {
+		lost.Store(true)
+		return port.Lease{}, port.ErrLeaseHeld
+	}
+	lease.mu.Unlock()
+
+	var overlap atomic.Bool
+	var trialAcquires atomic.Int32
+	lease.mu.Lock()
+	lease.acquireHook = func(_ session.SessionID, owner string) {
+		if !strings.HasSuffix(owner, "-stale-trial") {
+			return // the initial real run-entry Acquire, not the reconcile's trial.
+		}
+		trialAcquires.Add(1)
+		if !released.Load() {
+			overlap.Store(true)
+		}
+	}
+	lease.mu.Unlock()
+
+	// Drain to StopCancelled: onLeaseLost's run.Cancel() runs BEFORE its Release
+	// call, so the run can finish while our Release hook is still blocked.
+	for ev := range run.Events() {
+		if ev.Type == session.EvResult && ev.Result != nil && ev.Result.Stop == session.StopCancelled {
+			break
+		}
+	}
+	svc.FinishRun(sess.ID, run)
+	if !lost.Load() {
+		t.Fatal("precondition: the renewer never lost the lease")
+	}
+
+	select {
+	case <-releaseStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("onLeaseLost never called Release")
+	}
+
+	staleCtx := syscaller.Context(context.Background(), syscaller.RootStaleSessionReconcile)
+	reconcileDone := make(chan struct{})
+	go func() {
+		defer close(reconcileDone)
+		if _, err := svc.ReconcileLeaseLossTombstone(staleCtx, sess.ID); err != nil {
+			t.Errorf("ReconcileLeaseLossTombstone: %v", err)
+		}
+	}()
+
+	// Give the reconcile goroutine ample time to run ahead if leaseLossMu did
+	// NOT serialize it: it must still be blocked on the per-id lock, so no
+	// trial Acquire can have happened yet.
+	time.Sleep(100 * time.Millisecond)
+	if n := trialAcquires.Load(); n != 0 {
+		t.Fatalf("trial Acquire count = %d before Release returned, want 0 (Acquire started while Release was still in flight)", n)
+	}
+	select {
+	case <-reconcileDone:
+		t.Fatal("ReconcileLeaseLossTombstone returned before Release completed; leaseLossMu did not serialize it")
+	default:
+	}
+
+	close(releaseProceed)
+
+	select {
+	case <-reconcileDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("ReconcileLeaseLossTombstone never completed after Release was unblocked")
+	}
+	if overlap.Load() {
+		t.Fatal("trial Acquire ran while Release was still in flight — same-id overlap")
+	}
+	if trialAcquires.Load() != 1 {
+		t.Fatalf("trial Acquire count = %d, want 1", trialAcquires.Load())
+	}
 }
 
 // TestReconcileLeaseLossTombstoneRecoversAwaitingSession is the awaiting

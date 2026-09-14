@@ -881,8 +881,17 @@ signals the run. The Service retracts local ask delivery and prevents later rela
 persistence, but leaves the durable `PendingAsk` unresolved and byte-identical for TTL
 takeover. Settled stale run
 references remove heavyweight held-lease/capability tombstones; the lightweight
-`lostOwnership` denial remains until explicit local session teardown so that stale
-Service cannot reacquire.
+`lostOwnership` denial otherwise fails every ordinary caller fast so that a stale
+Service cannot reacquire. It is cleared by explicit local session teardown
+(`CloseSession`), or automatically by the composition-level stale-session sweep's
+`ReconcileLeaseLossTombstone` (issue #1334): a bounded trial Acquire+immediate-Release
+against the real backend proves the lease is genuinely free before the tombstone is
+dropped, letting the next real run-entry repair the session (Interrupt for cancelled,
+the awaiting-resume machinery for awaiting) without waiting for teardown or a process
+restart. That trial is serialized against `onLeaseLost`'s own Release for the same id
+via a dedicated per-id lock (`leaseLossMu`), since `engine/port.SessionLease`'s
+same-id calls are caller-serialized and a conforming backend need not make an
+overlapping Acquire/Release safe on its own.
 
 The gRPC in-stream approval path also enters a Service-owned live-run gate: holding the
 Service mutex orders the verdict against lease invalidation before it reaches the parent

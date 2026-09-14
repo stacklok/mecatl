@@ -1043,6 +1043,26 @@ type Service struct {
 	// fast on it forever.
 	lostOwnership map[session.SessionID]struct{}
 
+	// leaseLossMu serializes onLeaseLost's real backend Release against
+	// ReconcileLeaseLossTombstone's trial Acquire for the SAME session id
+	// (issue #1334 panel finding): onLeaseLost sets lostOwnership[id] and
+	// unlocks s.mu well before it calls SessionLease.Release, and the
+	// composition-level sweep can observe the tombstone and start a trial
+	// Acquire while that Release is still in flight — a same-id Acquire/
+	// Release overlap engine/port/lease.go's CONCURRENCY contract explicitly
+	// leaves to the CALLER to prevent ("Calls for the SAME id from one
+	// process are serialised by the caller"). A conforming backend is not
+	// required to make that overlap safe. This is a DEDICATED lock, never
+	// runEntryMu: onLeaseLost's own doc forbids taking runEntryMu (lease loss
+	// cancels operations that may be holding it, so waiting on it here could
+	// deadlock their cancellation), and this lock is never held by any
+	// cancellation path, so acquiring it here carries no such risk. Held for
+	// each function's ENTIRE body (a keyedMutex, freed once no caller holds
+	// the key) so the two are strictly ordered: either the whole loss
+	// handling (tombstone + Release) completes before a trial starts, or the
+	// whole trial (+ tombstone-clear) completes before a loss is handled.
+	leaseLossMu keyedMutex
+
 	// leaseDisabled is set (once) when Config.SessionLease reports
 	// ErrLeaseUnsupported: the seam never works on this backend, so the run-entry
 	// gate stickily stops consulting it and degrades to the no-lease path (the
@@ -6734,8 +6754,13 @@ func (s *Service) renewLoop(renewCtx context.Context, id session.SessionID, expe
 // timer and local broker transaction are also stopped/invalidated here; the
 // durable snapshot itself is never mutated. Do not acquire runEntryMu here: lease
 // loss cancels operations that may be holding it, so waiting for that lock would
-// deadlock their cancellation.
+// deadlock their cancellation. leaseLossMu IS taken, for the whole body, to keep
+// the tombstone-set + Release sequence atomic against ReconcileLeaseLossTombstone's
+// trial Acquire for the same id (see leaseLossMu's own doc comment).
 func (s *Service) onLeaseLost(ctx context.Context, id session.SessionID, expected *heldLease, cause error) {
+	unlock := s.leaseLossMu.lock(id)
+	defer unlock()
+
 	s.stopAuthorizationExpiry(id)
 	s.invalidateLocalAuthorization(context.WithoutCancel(ctx), id)
 	var run *agent.Run
@@ -7137,6 +7162,11 @@ func (s *Service) LostOwnershipCandidates(ctx context.Context) ([]session.Sessio
 // the race simply makes this call an honest no-op (false, nil) rather than a
 // double-clear or a stale write — the same "last write wins, re-verified
 // under the lock" posture SettleIfStale documents for its own TOCTOU window.
+//
+// The trial Acquire below is additionally serialized against onLeaseLost's
+// real Release for the same id via leaseLossMu (its own doc comment has the
+// full rationale): held for this function's ENTIRE body, so the trial can
+// never overlap a same-id Release still in flight.
 func (s *Service) ReconcileLeaseLossTombstone(ctx context.Context, id session.SessionID) (bool, error) {
 	if !staleReconcileAuthorized(ctx) {
 		return false, ErrManagementUnauthorized
@@ -7144,6 +7174,10 @@ func (s *Service) ReconcileLeaseLossTombstone(ctx context.Context, id session.Se
 	if s.cfg.SessionLease == nil {
 		return false, nil
 	}
+
+	unlock := s.leaseLossMu.lock(id)
+	defer unlock()
+
 	s.mu.Lock()
 	if s.leaseDisabled {
 		s.mu.Unlock()
