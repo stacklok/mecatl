@@ -2,7 +2,7 @@
 
 **Contract:** human-reviewed/v2
 **Work classification:** Architectural — this adds exported engine and port contracts, durable discovery metadata, public and driver protobuf fields, and automatic continuation behavior.
-**Decision record:** [ADR 0334](../adr/0334-draft-aware-session-inventory.md)
+**Decision record:** [ADR 0336](../adr/0336-draft-aware-session-inventory.md)
 **Phase:** session continuity and inventory clarity
 **Status:** proposed, 2026-09-14. The operator selected a locally grouped Drafts tab; this proposed contract awaits Plan / Interface review.
 **Delivery:** Split. The change crosses engine, durable stores, remote driver, server, and mecatui boundaries, so separate interface review is valuable.
@@ -23,7 +23,7 @@ exact-resume, stale-running, ownership, and first-prompt run-entry guarantees re
 
 ## Human decisions
 
-None — the operator selected a separate locally grouped Drafts tab for known-empty main sessions, and [ADR 0334](../adr/0334-draft-aware-session-inventory.md) resolves the resulting durable metadata and compatibility boundary.
+None — the operator selected a separate locally grouped Drafts tab for known-empty main sessions, and [ADR 0336](../adr/0336-draft-aware-session-inventory.md) resolves the resulting durable metadata and compatibility boundary.
 
 ## Interface contract
 
@@ -41,7 +41,7 @@ None — the operator selected a separate locally grouped Drafts tab for known-e
 
 The domain classifier uses the existing genuine-user predicate, including its exclusion of
 harness-authored compaction summaries, rather than a client-local approximation. This follows
-the persisted-history boundary in [ADR 0334](../adr/0334-draft-aware-session-inventory.md).
+the persisted-history boundary in [ADR 0336](../adr/0336-draft-aware-session-inventory.md).
 
 **Acceptance:**
 - AC1.1: A valid empty conversation is `draft`; a valid conversation with at least one message satisfying `IsGenuineUserPrompt` is `active`, including an empty user message when that predicate classifies it as genuine.
