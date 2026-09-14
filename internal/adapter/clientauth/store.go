@@ -843,8 +843,9 @@ func (r *Registry) readRows() ([]registryRow, error) {
 // ordinary, idempotent miss and anything else as a hard local-storage failure.
 func (r *Registry) Find(alias string) (Connection, error) {
 	var (
-		match func(Connection) bool
-		err   error
+		match          func(Connection) bool
+		fallbackTarget string
+		err            error
 	)
 	if strings.Contains(alias, "://") {
 		resource, resourceErr := canonicalResourceURL(alias)
@@ -863,6 +864,9 @@ func (r *Registry) Find(alias string) (Connection, error) {
 			return Connection{}, credentialstore.ErrNotFound
 		}
 		match = func(conn Connection) bool { return conn.ResourceURL != "" && conn.ResourceURL == resource }
+		if parsed, parseErr := url.Parse(resource); parseErr == nil {
+			fallbackTarget = net.JoinHostPort(parsed.Hostname(), "443")
+		}
 	}
 	all, err := r.List()
 	if err != nil {
@@ -872,6 +876,16 @@ func (r *Registry) Find(alias string) (Connection, error) {
 	for _, conn := range all {
 		if match(conn) {
 			found = append(found, conn)
+		}
+	}
+	// Explicit-identity and legacy rows have no ResourceURL. A bare hostname
+	// naturally denotes the default HTTPS target when the resource alias misses.
+	if len(found) == 0 && fallbackTarget != "" {
+		found = found[:0]
+		for _, conn := range all {
+			if conn.Identity.Target == fallbackTarget {
+				found = append(found, conn)
+			}
 		}
 	}
 	if len(found) == 0 {

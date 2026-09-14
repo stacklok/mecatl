@@ -29,6 +29,46 @@ func TestLogoutOutputIsSecretFreeAndHonestAboutPartialState(t *testing.T) {
 	}
 }
 
+func TestLogoutOutputOmitsZeroMissingCredentialCount(t *testing.T) {
+	cases := []struct {
+		name   string
+		result clientauth.LogoutResult
+		want   string
+		have   string
+	}{
+		{
+			name:   "single credential",
+			result: clientauth.LogoutResult{Target: "example.com:443", Entries: 1, CredentialsDeleted: 1, RegistryDeleted: true},
+			want:   "removed saved login for example.com:443 (1 credential removed)\n",
+			have:   "already absent",
+		},
+		{
+			name:   "multiple credentials",
+			result: clientauth.LogoutResult{Target: "example.com:443", Entries: 2, CredentialsDeleted: 2, RegistryDeleted: true},
+			want:   "removed saved login for example.com:443 (2 credentials removed)\n",
+			have:   "already absent",
+		},
+		{
+			name:   "missing credential is reported",
+			result: clientauth.LogoutResult{Target: "example.com:443", Entries: 1, CredentialsDeleted: 1, CredentialsMissing: 1, RegistryDeleted: true},
+			want:   "removed saved login for example.com:443 (1 credential removed, 1 already absent)\n",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var out bytes.Buffer
+			writeLogoutResult(&out, tc.result)
+			got := out.String()
+			if got != tc.want {
+				t.Fatalf("logout output = %q, want %q", got, tc.want)
+			}
+			if tc.have != "" && strings.Contains(got, tc.have) {
+				t.Fatalf("logout output unexpectedly contains %q: %q", tc.have, got)
+			}
+		})
+	}
+}
+
 func TestLogoutPublicIssuerUsesManagedPublicPolicy(t *testing.T) {
 	client, owned, err := logoutIssuerClient(context.Background(), clientauth.Connection{
 		Identity: clientauth.Identity{Issuer: "https://8.8.8.8"}, IssuerAddressPolicy: clientauth.IssuerAddressPolicyPublic,
