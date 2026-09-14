@@ -72,7 +72,7 @@ func TestProviderAddCancelledLoginRollbackSuccess(t *testing.T) {
 	}
 	var stdout, stderr bytes.Buffer
 	err := commands.runAdd(context.Background(), invocationResolution{mode: modeProviderAdd, providerName: "custom"}, &stdout, &stderr)
-	if !errors.Is(err, errProviderCredentialCancelled) || writes != 2 || stdout.Len() != 0 || stderr.String() != "Cancelled; no changes made.\n" {
+	if !errors.Is(err, errProviderCredentialCancelled) || writes != 2 || stdout.Len() != 0 || !strings.HasSuffix(stderr.String(), "Cancelled; no changes made.\n") {
 		t.Fatalf("err=%v writes=%d stdout=%q stderr=%q", err, writes, stdout.String(), stderr.String())
 	}
 }
@@ -92,7 +92,7 @@ func TestProviderAddCancelledLoginRollbackFailureIsTruthful(t *testing.T) {
 	if err == nil || errors.Is(err, errProviderCredentialCancelled) || !strings.Contains(err.Error(), `provider definition "custom" may remain`) {
 		t.Fatalf("rollback failure = %v", err)
 	}
-	if stdout.Len() != 0 || stderr.Len() != 0 {
+	if stdout.Len() != 0 || strings.Contains(stderr.String(), "Cancelled; no changes made.") {
 		t.Fatalf("false cancellation claim: stdout=%q stderr=%q", stdout.String(), stderr.String())
 	}
 }

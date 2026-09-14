@@ -115,20 +115,16 @@ func mutateAuth(data []byte, update APIKeyUpdate) ([]byte, bool, error) {
 		}
 	}
 	if update.APIKey == nil {
-		if keyEntry == nil {
-			return data, true, nil
-		}
-		for i, entry := range mapping.Values {
-			if entry == keyEntry {
-				mapping.Values = append(mapping.Values[:i], mapping.Values[i+1:]...)
+		// Remove the empty credential record as well: leaving a custom ID behind
+		// makes strict loading fail after its provider definition is removed.
+		for i, entry := range providers.Values {
+			if entry == target {
+				providers.Values = append(providers.Values[:i], providers.Values[i+1:]...)
 				break
 			}
 		}
-		if len(mapping.Values) == 0 {
-			replacement := staticAuthEntry(update.Provider + ": {}\n")
-			if err := target.Replace(replacement.Value); err != nil {
-				return nil, false, errors.New("replace empty auth provider")
-			}
+		if len(providers.Values) == 0 {
+			providers.SetIsFlowStyle(true)
 		}
 	} else if keyEntry != nil {
 		current, ok := authString(keyEntry.Value)

@@ -28,6 +28,9 @@ func mutateDefaults(data []byte, update DefaultUpdate) ([]byte, bool, error) {
 	if modelsNode == nil {
 		entry := defaultStaticEntry("models:\n  default_provider: " + defaultQuote(update.Provider) + "\n  default: " + defaultQuote(update.Model) + "\n")
 		doc.Mapping().Values = append(doc.Mapping().Values, entry)
+		if doc.Mapping().IsFlowStyle {
+			doc.Mapping().SetIsFlowStyle(true)
+		}
 		out := []byte(doc.String())
 		if err := ValidateYAML(out); err != nil {
 			return nil, false, errors.New("updated settings document is invalid")

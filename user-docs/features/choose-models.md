@@ -7,51 +7,17 @@ description:
 
 # Choose models and providers
 
-A Mecatl session uses a provider and base model selected by the server or
-client. The server returns the effective selection and capabilities when it
-creates the session.
+A Mecatl session runs with a provider and a base model selected by the server
+and, optionally, by the client. The server returns the effective selection and
+input capabilities when the session is created.
 
 Choose the path that matches how you use Mecatl:
 
-- use **`mecatui`** for interactive selection;
+- use **mecatui** for interactive selection;
 - use the **CLI** to configure a server or one-shot run; or
 - use the **API** when your client creates sessions directly.
 
-## Availability
-
-Provider, model, and reasoning-effort selection is available in `mecated`,
-`mecak8s`, `mecatequi`, `mecatui`'s embedded server, and the session APIs. A
-connected `mecatui` uses the remote server's providers, credentials, and model
-inventory.
-
-For the rest of the terminal workflow, see [Use mecatui](/mecatui/index.md).
-
-## Authenticate to a model provider
-
-Model-provider authentication is separate from signing in to a remote Mecatl
-server. The supported paths depend on the provider type:
-
-|Provider type|Authentication path|
-|-|-|
-|Anthropic, OpenAI, OpenRouter, or OpenCode|Provider API key|
-|Custom HTTPS gateway|API key, OIDC, or no authentication, as configured by the gateway operator|
-|ToolHive-managed LLM gateway|ToolHive's external `thv llm` lifecycle|
-|Experimental `openai-codex`|Manually supplied ChatGPT Codex token with no login or refresh flow|
-
-Mecatl does not provide a browser sign-in flow for OpenAI or Anthropic consumer
-accounts. A ChatGPT Plus or Pro subscription cannot replace an OpenAI API key in
-`mecatui providers setup`. Custom-provider OIDC works only with a gateway whose
-operator supplies its issuer, client ID, scopes, and trust configuration.
-
-`mecatui login ADDRESS` is another distinct flow. It authenticates the terminal
-client to a remote `mecated` server and does not grant that server access to a
-model provider.
-
-The experimental `openai-codex` provider uses an undocumented private backend
-and a manually managed token snapshot. It is not an SSO alternative for the
-guided setup. See
-[Configure provider credentials](/building/deployment/settings.md#configure-provider-credentials)
-for its explicit limitations.
+For the rest of the terminal workflow, see [Use mecatui](./use-mecatui.md).
 
 ## Mecatui journey
 
@@ -61,8 +27,10 @@ The picker warns that the choice creates a peer session and carries over the
 visible conversation. Replaying a long history may be costly. The existing
 session's provider and base model do not change.
 
-A switch across providers keeps the visible conversation but drops private
-provider state that the new provider cannot understand.
+A switch across providers keeps the visible conversation but drops provider-
+private replay state, such as reasoning state that the new provider cannot
+understand. The new session's provider, model, and capabilities are reported by
+the server.
 
 When broker OAuth is enabled, this peer is also a new broker session. Protected
 MCP enrollment is session-scoped, so switching models may require enrolling the
@@ -74,45 +42,100 @@ tier by creating a peer session with the same provider, model, and conversation.
 The picker is available only when the connected server advertises the relevant
 capability.
 
-In embedded mode, local server configuration and credentials determine the
-inventory. In `connect` mode, the remote server determines it.
+`mecatui` model choices are server-backed. In embedded mode, the local server's
+configuration and credentials determine the inventory. In `connect` mode, the
+remote server determines it; local embedded-server flags and credentials do not
+apply.
+
+See [Use mecatui](./use-mecatui.md) for the command-line startup, connection,
+and keybinding details.
 
 ## CLI journey
 
-### Configure a custom provider
+### Set up a local provider
 
-Use a custom provider when an HTTPS gateway implements OpenAI Responses, OpenAI
-Chat Completions, or Anthropic Messages:
+Run `mecatui providers setup [PROVIDER]` explicitly to configure the embedded
+server. Without a name, choose from the numbered, capability-labelled list.
+Setup never starts a server or opens the TUI automatically. Remote
+`mecatui connect ADDRESS` remains governed by the remote server's configuration.
 
-```sh
-mecatui providers setup
-```
+For an API-key provider, setup offers reuse of an effective existing credential
+or replacement. Reuse is a no-op: an environment key is not copied to disk.
+Replacement shows provider-specific guidance before hidden terminal entry:
 
-Choose **custom**, then enter the gateway's base URL, API flavor, exact default
-model ID, and authentication method. A provider ID must:
+- **Anthropic:** create a developer key in the
+  [Anthropic console](https://console.anthropic.com/settings/keys). A Claude
+  consumer subscription does not include API usage.
+- **OpenAI API:** create a key in the
+  [OpenAI platform](https://platform.openai.com/api-keys). ChatGPT subscriptions
+  and manual Codex subscription tokens are separate identities.
+- **OpenRouter:** create a key in
+  [OpenRouter settings](https://openrouter.ai/settings/keys) and arrange API
+  credits or billing; consumer chat subscriptions do not fund the API.
+- **OpenCode:** the configured integration is
+  [OpenCode Go](https://opencode.ai/go), requiring Go access. A Zen key,
+  subscription, or endpoint is not interchangeable.
+- **Custom providers:** follow your operator's or service's documentation. Setup
+  does not guess a console or change the configured transport.
 
-- contain 1 to 63 lowercase letters, numbers, or hyphens;
-- start with a lowercase letter;
-- end with a lowercase letter or number; and
-- differ from built-in IDs such as `openai`, `anthropic`, and `openrouter`.
+API use may incur charges. Both input and prompt output must be local terminals;
+keys are hidden, never command arguments. Empty, invalid/control-character, and
+larger-than-8-KiB values are rejected before saving. Saving requires a separate
+confirmation. The owner-only API-key file is **plaintext**, readable by same-UID
+processes, including permitted agent Shell commands; private permissions are not
+an encryption boundary. Ctrl-C stops the reader and restores terminal state.
 
-For example, `local-gateway` is valid. `Local`, `local_gateway`, and `local-`
-are not. The provider ID names the gateway configuration; the model ID is the
-exact value that the gateway accepts.
+Provider commands use the operator-global `credential_store.api_key.file`, or
+`auth.yaml` in the Mecatl configuration directory when it is unset. They accept
+neither `--api-key-file` nor the removed `--auth-file`; `--api-key-file` remains
+a startup flag. Project configuration cannot redirect credential custody.
+Matching built-in environment keys win over file keys. OpenRouter uses its own
+environment key, then its own file key, then only the **environment**
+`OPENAI_API_KEY` fallback; an OpenAI file key is not a fallback. Custom API keys
+are file-only. Replacing a file key warns when an environment key will still
+win.
 
-After setup, inspect the provider and make it the embedded server default:
+After API-key save or reuse, setup separately offers to set the deployment
+default through `mecatui providers set-default PROVIDER [MODEL]`. Declining
+leaves the default unchanged. A later cancellation or default error does not
+undo a saved key; the command reports that it remains saved. Direct
+`login PROVIDER` means replacement with save consent; direct `set-default`
+remains an explicit non-wizard action. Known aliases and declared provider
+defaults use ordinary startup validation, not a live model-health or entitlement
+check.
 
-```sh
-mecatui providers status local-gateway
-mecatui providers set-default local-gateway <MODEL_ID>
-```
+`mecatui providers` and `mecatui providers status [PROVIDER]` report passive
+local facts: credential source, shadowed file presence, selected default and
+model, and `verification: not checked`. Missing, malformed, and unreadable
+credential inputs have distinct diagnostics. Presence is not proof of account
+health, credit, or access to a model. OIDC status reads the existing protected
+local store without initializing it or refreshing tokens; ToolHive
+authentication is externally managed by `thv llm` tooling.
 
-The setup command cannot determine whether the chosen API flavor matches the
-gateway or whether the model supports the requests Mecatl sends. Before changing
-models, start with the gateway's documented model ID and confirm that it appears
-in `/models`. If discovery or inference fails, use the provider status and
-gateway logs together; see
-[Troubleshoot mecatui](/mecatui/troubleshooting.md#provider-is-not-configured-or-credentials-are-unavailable).
+### Reuse a manual OpenAI Codex token
+
+`openai-codex` is distinct from the public `openai` API-key provider. Status
+reports a manual subscription token as missing, locally usable, or
+invalid/expired using the same configured-file validator as runtime, without
+displaying the token, account ID, expiry, or fingerprint. A locally usable token
+can be reused by setup for optional default selection; setup never asks for a
+Codex token or writes its credential. Preserve an existing model selector or
+supply an explicit one: there is no synthetic Codex default or offline
+entitlement inventory.
+
+There is no Codex browser/device login, refresh, import, or credential removal
+in these commands. See the
+[manual subscription-token deployment guidance](/building/deployment/mecated.md#provider-and-model)
+for the supported manual configuration and lifecycle.
+
+`providers add PROVIDER` normally saves the custom definition and chains its
+capability-specific login; `--no-login` skips enrollment. `logout PROVIDER`
+removes only locally managed credentials. `remove PROVIDER` confirms removal of
+both a custom definition and its managed credentials, even when it is the
+selected default, without choosing a replacement. Inspect status and explicitly
+select another default before restarting. After an uncertain write, inspect
+local state rather than retrying blindly; separate settings and key writes are
+not a transaction.
 
 ### Endpoint overrides
 
@@ -134,8 +157,10 @@ mecated serve \
   --default-model gpt-5.6-terra
 ```
 
-Model IDs are provider-specific. The example works only if the server's OpenAI
-provider can use `gpt-5.6-terra`.
+`gpt-5.6-terra` is an example model ID. Model IDs are provider-specific, so the
+same example is valid only when that server's OpenAI provider can use it. The
+server's built-in OpenAI default remains available when no explicit model is
+configured.
 
 For a zero-selector session, server-side resolution is separate for provider and
 model:
@@ -145,8 +170,10 @@ model:
 - model: `--model`, then `--default-model`, then the selected provider's
   built-in default.
 
-`--model` has higher priority than `--default-model`. An invalid deployment
-default prevents startup.
+`--model` is a higher-priority deployment override. `--default-model` is the
+validated default for the configured default provider. An invalid deployment
+default fails startup rather than silently selecting a different provider or
+model.
 
 `mecatui` accepts these flags for its embedded server. They do not reconfigure a
 server used through `mecatui connect`. `mecak8s` exposes the corresponding
@@ -156,57 +183,19 @@ for credential sources and deployment options.
 
 ### Operator-defined gateways
 
-Define a named HTTPS gateway under `providers:` in the user-global
-`settings.yaml`, then select it with `models.default_provider`. API-key gateways
-use the matching provider ID in operator-local `auth.yaml`; credentials are never
-read from a project file or supplied by `mecatui connect`. The server snapshots
-these settings and credentials once while it starts, so restart after changing
-either file.
-
-If live model listing is unreachable, unauthorized, or empty, `/models` keeps the
-configured default selectable and shows a safe provider status without endpoints,
-credentials, raw listing errors, or response bodies. Selecting that configured
-fallback does not make an unknown context window safe: before the first run,
-Mecatl waits for bounded live discovery. If discovery still fails or returns no
-models and no exact window is configured, the run returns
-`context_window_unavailable` without recording the prompt. Restore discovery or
-set `models.context_windows.<provider-id>.<final-model-id>`, then retry. Built-in
-`--*-base-url` flags take precedence over eligible built-in endpoint overrides.
-See the
+An operator can declare a named HTTPS gateway in the user-global `settings.yaml`
+under `providers:` and make it the deployment default with
+`models.default_provider`. API-key gateways use the matching provider ID in the
+operator-local `auth.yaml`; credentials are never read from a project file or
+supplied by `mecatui connect`. The server snapshots these settings and
+credentials once while it starts, so changing either file requires a restart.
+When a custom provider's live model listing is unreachable, unauthorized, or
+empty, `/models` keeps its configured default model selectable and displays only
+a safe provider status; endpoints, credentials, and raw listing errors or
+response bodies are never published to clients. Built-in `--*-base-url` flags
+still take precedence over eligible built-in endpoint overrides. See the
 [provider configuration reference](/reference/configuration.md#providers) for
 the accepted flavors and fields.
-
-### Select models from a ToolHive-managed gateway
-
-When Mecatl detects gateway configuration managed by ToolHive, one configured
-gateway identity appears as two protocol-specific Mecatl providers:
-
-|Provider ID|Model discovery|Inference|
-|-|-|-|
-|`toolhive`|`GET /v1/models`|`POST /v1/responses`|
-|`toolhive-anthropic`|`GET /anthropic/v1/models`|`POST /anthropic/v1/messages`|
-
-Select native Anthropic models under `toolhive-anthropic`. Mecatl keeps the
-inventories separate so these models use Anthropic Messages.
-
-`toolhive` remains the automatic default between the two gateway providers. A
-configured key-driven provider still takes precedence unless the operator
-explicitly sets `toolhive` or `toolhive-anthropic` as the server default. When
-the gateway is available but not selected, `/models` shows both protocol
-inventories so you can choose one without removing another provider's
-credential.
-
-Each provider has its own availability and last-known-good catalog. A failure
-from one protocol endpoint does not erase the other inventory.
-
-If `/models` reports an unreachable provider, follow its hint to start the local
-proxy or check direct gateway connectivity and OIDC. An empty list means the
-gateway administrator must grant model access. For routing or cost errors,
-select a fully qualified model slug or ask the administrator to add a route.
-Create a new session after correcting an unresolved default model.
-
-For proxy/direct routing, OIDC setup, TLS constraints, and daemon flags, see
-[Run mecated standalone](/building/deployment/mecated.md#a-toolhive-managed-llm-gateway-no-api-key-needed).
 
 ### Configure aliases, slots, and task routing
 
@@ -248,17 +237,22 @@ models:
         model: image
 ```
 
-Use these mechanisms independently:
+These mechanisms are independent:
 
 - **Aliases** map readable names to concrete provider-specific model IDs.
 - **Slots** select models for internal calls. `compaction`, `ask-reviewer`,
   `guardrail`, `plan`, and `router` do not replace the session model. The `plan`
   slot can use a stronger model while a plan is being written; compaction and
   checker slots can use cheaper models.
-- **`title`** opts into automatic session titles. Without a compatible binding,
-  generation is disabled and makes no model call. With one, the server generates
-  a title asynchronously from up to three early prompts and records its usage
-  separately from the chat.
+- **`title` is an explicit opt-in slot** for automatic session-title generation.
+  It has no fallback at all: if the binding is absent, or if it is present but
+  cannot be resolved for the session's fixed provider, generation is disabled
+  and the server makes no title-provider call. This differs from other invalid
+  slot or route targets, which may warn and fall back to the session model. With
+  a compatible `title` binding, the server generates a title asynchronously from
+  up to three early genuine prompts; it never delays or changes the chat. Its
+  token usage is stored separately as `session_title`, not charged to the chat's
+  displayed usage or run budget.
 - **Router categories** select a model for a plain delegated Subagent, an
   unpinned named specialist (including `mode: "read-write"`), a Parallel branch,
   or an undefined team member from the task description. A taxonomy enables the
@@ -273,11 +267,18 @@ small  → quick  → gemini-3.5-flash
 image  → image  → gpt-5.6-terra
 ```
 
-Invalid aliases, slots, and routes warn and fall back to the session model. The
-`title` slot instead disables generation. Explicit model choices and pinned
-named agents take precedence over routing. A named definition without `model:`
-is routable; `model: inherit` pins it. Project settings can select only models
-that the operator exposes through `models.allowlist` in a trusted project.
+Resolution is fail-soft for slots and routes other than `title`: an invalid
+alias, slot, or route target warns and falls back to the session model. The
+`title` slot is the exception described above; an absent or unresolvable title
+binding disables generation rather than falling back or making a provider call.
+Explicit per-call models, model-pinned named agents, fork or resume choices, and
+other higher- precedence selectors are not overridden by the router. A named
+definition with no `model:` is routable; `model: inherit` is an explicit pin.
+Writable named routing keeps the specialist's direct-write scope, while explicit
+`read-write`+`agent`+`model` remains invalid. Model slots and router taxonomies
+are operator decisions; project model settings are ignored unless the operator
+explicitly allows the relevant model set on a trusted project via
+`models.allowlist`.
 
 An allowlisted model is not scoped to a particular use: a trusted project can
 bind any allowlisted model to any slot, including the `guardrail` and
@@ -346,9 +347,10 @@ important distinction is:
 - explicit `auto` requests the provider's default effort; and
 - a valid non-empty per-session value overrides the server default.
 
-An invalid server value becomes unset. An invalid session value falls back to
-the server default. Mecatl warns in either case and may normalize or drop an
-effort that the selected provider or model does not support.
+An invalid server value is ignored with a warning and becomes unset. An invalid
+per-session value is ignored with a warning and falls back to the server
+default. The server may normalize, clamp, or drop a value according to the
+selected provider and known model capabilities.
 
 The effective result is returned in `resolved_model.reasoning_effort`, so
 clients can display what the server actually applied. Provider-specific effort
@@ -401,7 +403,7 @@ for endpoint details.
 
 ## Model inventory and capabilities
 
-`ListModels` and `mecatui`'s `/models` inventory expose public metadata,
+`ListModels` and mecatui's `/models` inventory expose public metadata,
 including:
 
 - provider ID and opaque model ID;
@@ -410,8 +412,10 @@ including:
 - reasoning support; and
 - context limit when known.
 
-The server-specific inventory contains no API keys or private credentials. Live
-provider catalogs can refresh while the server runs.
+They do not expose API keys or provider-private credentials. The inventory is
+server-specific and can differ according to the providers and credentials
+configured at startup. A provider's live model catalog may refresh while the
+server is running.
 
 Models whose catalog includes it can call the read-only `DiscoverModels` tool to
 inspect this same resolved inventory. Results contain the exact `provider_id`
@@ -430,10 +434,10 @@ session as authoritative.
 ## Limitations
 
 - Provider credentials and model availability belong to the server host. A
-  connected `mecatui` cannot use credentials configured only on the TUI host.
+  connected mecatui cannot use credentials configured only on the TUI host.
 - Model IDs are provider- and deployment-specific opaque strings.
 - Listing a model does not guarantee that a later provider request will succeed.
-- In `mecatui`, changing the provider or base model creates a peer session. The
+- In mecatui, changing the provider or base model creates a peer session. The
   client adopts the peer's complete authoritative transcript before making it
   interactive, then closes the source best-effort; if creation or transcript
   hydration fails, the open source chat remains available. API clients must
@@ -444,7 +448,9 @@ session as authoritative.
 
 ## Next steps
 
-- [Use mecatui](/mecatui/index.md) for the interactive model and effort pickers.
+- [Use mecatui](./use-mecatui.md) for the interactive model and effort pickers.
 - [Start and resume sessions](./start-and-resume-sessions.md) for session
   creation and continuation.
 - [Context windows](./context-windows.md) for context limits and fallback.
+- [Capability and deployment matrix](./capability-matrix.md) for deployment
+  availability.

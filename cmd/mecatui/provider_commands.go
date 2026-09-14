@@ -38,8 +38,9 @@ type providerBackend struct {
 // providerCommands owns one invocation's terminal and provider backend dependencies.
 // Tests customize a value instead of mutating process-wide package state.
 type providerCommands struct {
-	terminal providerTerminal
-	backend  providerBackend
+	terminal                    providerTerminal
+	backend                     providerBackend
+	deferCredentialCancellation bool // add must establish rollback before claiming no changes
 }
 
 var executeToolHiveLogin = func(ctx context.Context, skipBrowser bool) error {

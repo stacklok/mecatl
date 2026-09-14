@@ -23,6 +23,7 @@ func credentialCommands(cfg providerCredentialConfig, input func(context.Context
 	commands := testProviderCommands()
 	commands.backend.loadCredentials = providerCredentialConfigLoader(cfg)
 	commands.backend.updateAPIKey = authfile.UpdateAPIKey
+	commands.terminal.readField = func(context.Context, string) (string, error) { return "yes", nil }
 	if input != nil {
 		commands.terminal.readAPIKey = input
 	}
@@ -52,7 +53,7 @@ func TestProviderCredentialLogoutRemovesOnlyLocalKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := readProviderCredentialTestFile(t, path)
-	if strings.Contains(content, "managed-secret") || !strings.Contains(content, "custom:") || !strings.Contains(content, "retained-secret") {
+	if strings.Contains(content, "managed-secret") || strings.Contains(content, "custom:") || !strings.Contains(content, "retained-secret") {
 		t.Fatalf("logout did not preserve unrelated data: %q", content)
 	}
 }
@@ -62,7 +63,7 @@ func TestProviderCredentialLoginCancellationDoesNotWrite(t *testing.T) {
 	commands := credentialCommands(providerCredentialConfig{definitions: permconfig.ProviderDefinitions{"custom": {Auth: permconfig.ProviderAuth{Method: providerAuthAPIKey}}}, authPath: path}, func(context.Context, string) (string, error) { return "", context.Canceled })
 	var stdout, stderr bytes.Buffer
 	err := commands.runCredential(context.Background(), providerCredentialResolution(providerActionLogin, "custom"), &stdout, &stderr)
-	if !errors.Is(err, errProviderCredentialCancelled) || stderr.String() != "Cancelled; no changes made.\n" || stdout.Len() != 0 {
+	if !errors.Is(err, errProviderCredentialCancelled) || !strings.HasSuffix(stderr.String(), "Cancelled; no changes made.\n") || stdout.Len() != 0 {
 		t.Fatalf("cancellation err=%v stdout=%q stderr=%q", err, stdout.String(), stderr.String())
 	}
 	if readProviderCredentialTestFile(t, path) != "providers:\n  custom:\n    api_key: retained-secret\n" {
@@ -103,7 +104,7 @@ func TestProviderCredentialOIDCCancellationPreservesCLIContract(t *testing.T) {
 	}
 	var stdout, stderr bytes.Buffer
 	err := commands.runCredential(context.Background(), providerCredentialResolution(providerActionLogin, "oidc"), &stdout, &stderr)
-	if !errors.Is(err, errProviderCredentialCancelled) || stdout.Len() != 0 || stderr.String() != "Cancelled; no changes made.\n" {
+	if !errors.Is(err, errProviderCredentialCancelled) || stdout.Len() != 0 || !strings.HasSuffix(stderr.String(), "Cancelled; no changes made.\n") {
 		t.Fatalf("OIDC cancellation err=%v stdout=%q stderr=%q", err, stdout.String(), stderr.String())
 	}
 }

@@ -83,7 +83,7 @@ func (c providerCommands) chooseForSetup(ctx context.Context, out io.Writer) (st
 func providerSetupCandidates(statuses []providerStatus) []providerStatus {
 	candidates := slices.DeleteFunc(slices.Clone(statuses), func(status providerStatus) bool {
 		if status.Name == openAICodexEndpointID {
-			return true
+			return !status.Configured
 		}
 		return status.Class == "custom" && status.AuthMethod == providerAuthNone
 	})
@@ -117,9 +117,86 @@ func (c providerCommands) runNamedSetup(ctx context.Context, provider string, st
 			continue
 		}
 		if provider == openAICodexEndpointID {
-			return errors.New("providers setup: openai-codex uses a manually managed credential; run `mecatui providers status openai-codex` for local state")
+			if !status.Configured {
+				return writeProviderStatus(stdout, status)
+			}
+			if _, err := fmt.Fprintln(stdout, "Reusing the locally usable manual OpenAI Codex subscription token; no credential writes or entitlement checks."); err != nil {
+				return err
+			}
+			return c.offerSetupDefault(ctx, provider, false, stdout, stderr)
 		}
-		return c.runCredential(ctx, invocationResolution{mode: modeProviderCredential, providerAction: providerActionLogin, providerName: provider}, stdout, stderr)
+		if status.AuthMethod == providerAuthNone {
+			return c.offerSetupDefault(ctx, provider, false, stdout, stderr)
+		}
+		if status.AuthMethod != providerAuthAPIKey {
+			return c.runCredential(ctx, invocationResolution{mode: modeProviderCredential, providerAction: providerActionLogin, providerName: provider}, stdout, stderr)
+		}
+		if status.Configured {
+			reuse, err := c.confirmProviderAction(ctx, "Reuse the effective credential from "+providerDisplay(status.Source)+"? [y/N; no replaces it]")
+			if err != nil {
+				if errors.Is(err, context.Canceled) {
+					return providerCredentialCancellation(stderr)
+				}
+				return err
+			}
+			if reuse {
+				return c.offerSetupDefault(ctx, provider, false, stdout, stderr)
+			}
+		}
+		cfg, err := c.backend.loadCredentials()
+		if err != nil {
+			return err
+		}
+		err = c.runAPIKey(ctx, invocationResolution{providerAction: providerActionLogin, providerName: provider}, cfg.authPath, stdout, stderr)
+		if errors.Is(err, errProviderSaveDeclined) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		return c.offerSetupDefault(ctx, provider, true, stdout, stderr)
 	}
 	return c.runAdd(ctx, invocationResolution{mode: modeProviderAdd, providerAction: providerActionAdd, providerName: provider}, stdout, stderr)
+}
+
+func (c providerCommands) offerSetupDefault(ctx context.Context, provider string, keySaved bool, stdout, stderr io.Writer) error {
+	// Capture downstream cancellation output: the default action cannot claim
+	// whole-command rollback after the independently committed key operation.
+	var defaultErr strings.Builder
+	err := c.setupDefault(ctx, provider, stdout, &defaultErr)
+	if keySaved && errors.Is(err, errProviderCredentialCancelled) {
+		if _, writeErr := fmt.Fprintln(stderr, "Cancelled; API key remains saved. Deployment default was not changed."); writeErr != nil {
+			return writeErr
+		}
+		return errProviderCredentialCancelled
+	}
+	if _, writeErr := io.WriteString(stderr, defaultErr.String()); writeErr != nil {
+		return writeErr
+	}
+	if keySaved && err != nil {
+		return fmt.Errorf("API key remains saved; default selection failed: %w", err)
+	}
+	return err
+}
+
+func (c providerCommands) setupDefault(ctx context.Context, provider string, stdout, stderr io.Writer) error {
+	selectDefault, err := c.confirmProviderAction(ctx, "Set this provider as the embedded deployment default? [y/N]")
+	if errors.Is(err, context.Canceled) {
+		return providerCredentialCancellation(stderr)
+	}
+	if err != nil || !selectDefault {
+		return err
+	}
+	model, err := c.terminal.readField(ctx, "Model selector (blank keeps the current selector or declared default; no network lookup)")
+	if errors.Is(err, context.Canceled) {
+		return providerCredentialCancellation(stderr)
+	}
+	if err != nil {
+		return err
+	}
+	var args []string
+	if model != "" {
+		args = []string{model}
+	}
+	return c.runSetDefault(ctx, invocationResolution{providerName: provider, remaining: args}, stdout, stderr)
 }

@@ -73,7 +73,7 @@ func TestProviderSetupCustomPromptStatesProviderIDFormat(t *testing.T) {
 func TestProviderSetupNamedCustomDispatchesToLoginWithoutDefinitionEdit(t *testing.T) {
 	path := providerCredentialTestFile(t, "providers:\n  custom:\n    api_key: old-secret\n")
 	inspection := providerInspection{definitions: permconfig.ProviderDefinitions{"custom": {ID: "custom", Auth: permconfig.ProviderAuth{Method: providerAuthAPIKey}}}}
-	commands := setupCommands(t, inspection)
+	commands := setupCommands(t, inspection, "yes", "no")
 	commands.backend.loadCredentials = providerCredentialConfigLoader(providerCredentialConfig{definitions: inspection.definitions, authPath: path})
 	commands.terminal.readAPIKey = func(context.Context, string) (string, error) { return "new-secret", nil }
 	commands.backend.updateAPIKey = authfile.UpdateAPIKey
@@ -95,7 +95,7 @@ func TestProviderSetupCancellationBeforeMutation(t *testing.T) {
 	}
 	var stdout, stderr bytes.Buffer
 	err := commands.runSetup(context.Background(), invocationResolution{mode: modeProviderSetup}, &stdout, &stderr)
-	if !errors.Is(err, errProviderCredentialCancelled) || stderr.String() != "Cancelled; no changes made.\n" {
+	if !errors.Is(err, errProviderCredentialCancelled) || !strings.HasSuffix(stderr.String(), "Cancelled; no changes made.\n") {
 		t.Fatalf("cancellation err=%v stdout=%q stderr=%q", err, stdout.String(), stderr.String())
 	}
 }
@@ -138,7 +138,7 @@ func TestProviderSetupRollsBackDefinitionWhenLoginIsCancelled(t *testing.T) {
 	commands.terminal.readAPIKey = func(context.Context, string) (string, error) { return "", context.Canceled }
 	var stdout, stderr bytes.Buffer
 	err := commands.runSetup(context.Background(), invocationResolution{mode: modeProviderSetup, providerName: "custom"}, &stdout, &stderr)
-	if !errors.Is(err, errProviderCredentialCancelled) || writes != 2 || stdout.Len() != 0 || stderr.String() != "Cancelled; no changes made.\n" {
+	if !errors.Is(err, errProviderCredentialCancelled) || writes != 2 || stdout.Len() != 0 || !strings.HasSuffix(stderr.String(), "Cancelled; no changes made.\n") {
 		t.Fatalf("rollback err=%v writes=%d stdout=%q stderr=%q", err, writes, stdout.String(), stderr.String())
 	}
 }

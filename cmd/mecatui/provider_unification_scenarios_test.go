@@ -44,13 +44,14 @@ func TestProviderUnification_Scenario2_LoginUsesSelectedAuthentication(t *testin
 }
 
 func TestProviderUnification_Scenario2_LogoutPreservesProvider(t *testing.T) {
-	path := providerCredentialTestFile(t, "providers:\n  custom:\n    api_key: managed-secret\n")
-	commands := credentialCommands(providerCredentialConfig{definitions: permconfig.ProviderDefinitions{"custom": {Auth: permconfig.ProviderAuth{Method: providerAuthAPIKey}}}, authPath: path}, nil)
+	settings := strings.ReplaceAll(followupCustomSettings, "method: none", "method: api_key")
+	sp, ap := followupHome(t, settings, "providers:\n  custom:\n    api_key: managed-secret\n")
+	commands := newProviderCommands()
 	if err := commands.runCredential(context.Background(), providerCredentialResolution(providerActionLogout, "custom"), io.Discard, io.Discard); err != nil {
 		t.Fatal(err)
 	}
-	if got := readProviderCredentialTestFile(t, path); strings.Contains(got, "managed-secret") || !strings.Contains(got, "custom:") {
-		t.Fatalf("logout changed definition: %q", got)
+	if readProviderCredentialTestFile(t, sp) != settings || strings.Contains(readProviderCredentialTestFile(t, ap), "managed-secret") {
+		t.Fatal("logout changed definition or retained credential")
 	}
 }
 
@@ -72,6 +73,7 @@ func TestProviderUnification_Scenario2_RemoveDefinitionAndCredentials(t *testing
 
 func TestProviderUnification_Scenario2_AddChainsLoginUnlessOptedOut(t *testing.T) {
 	commands := cancelledAddCommands(t)
+	commands.terminal.readField = providerInput(t, "https://gateway.example", "1", "model", "1", "yes")
 	commands.terminal.readAPIKey = func(context.Context, string) (string, error) { return "secret", nil }
 	commands.backend.updateProviderMap = func(context.Context, string, permconfig.ProviderMapUpdate) (authfile.CommitState, error) {
 		return authfile.CommitDurable, nil

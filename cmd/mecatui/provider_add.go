@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -30,32 +29,11 @@ func defaultProviderSettingsPath() string {
 }
 
 func readProviderFieldFromTerminal(ctx context.Context, prompt string) (string, error) {
-	if err := ctx.Err(); err != nil {
-		return "", err
+	value, err := readProviderTerminalLine(ctx, os.Stdin, os.Stderr, prompt, false)
+	if errors.Is(err, io.EOF) {
+		err = context.Canceled
 	}
-	if _, err := fmt.Fprint(os.Stderr, prompt+": "); err != nil {
-		return "", err
-	}
-	result := make(chan struct {
-		value string
-		err   error
-	}, 1)
-	go func() {
-		line, err := bufio.NewReader(os.Stdin).ReadString('\n')
-		if errors.Is(err, io.EOF) && line == "" {
-			err = context.Canceled
-		}
-		result <- struct {
-			value string
-			err   error
-		}{strings.TrimSpace(line), err}
-	}()
-	select {
-	case <-ctx.Done():
-		return "", ctx.Err()
-	case got := <-result:
-		return got.value, got.err
-	}
+	return strings.TrimSpace(value), err
 }
 
 func (c providerCommands) runAdd(ctx context.Context, res invocationResolution, stdout, stderr io.Writer) error {
@@ -116,8 +94,9 @@ func (c providerCommands) runAdd(ctx context.Context, res invocationResolution, 
 
 func (c providerCommands) finishProviderAdd(ctx context.Context, provider string, definition permconfig.ProviderDefinition, insertedStore *permconfig.OIDCCredentialStore, inspection providerInspection, stdout, stderr io.Writer) error {
 	login := invocationResolution{mode: modeProviderCredential, providerAction: providerActionLogin, providerName: provider}
-	var loginOut, loginErr bytes.Buffer
-	err := c.runCredential(ctx, login, &loginOut, &loginErr)
+	var loginOut bytes.Buffer
+	c.deferCredentialCancellation = true
+	err := c.runCredential(ctx, login, &loginOut, stderr)
 	if errors.Is(err, errProviderCredentialCancelled) {
 		rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), providerRollbackMax)
 		defer cancel()
@@ -139,9 +118,6 @@ func (c providerCommands) finishProviderAdd(ctx context.Context, provider string
 		return writeErr
 	}
 	if _, writeErr := io.Copy(stdout, &loginOut); writeErr != nil {
-		return writeErr
-	}
-	if _, writeErr := io.Copy(stderr, &loginErr); writeErr != nil {
 		return writeErr
 	}
 	return err

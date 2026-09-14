@@ -130,7 +130,7 @@ func TestProviderAddRejectsInvalidProviderNameBeforeCollectingDefinition(t *test
 
 func TestProviderAddChainsToSelectedLogin(t *testing.T) {
 	commands := testProviderCommands()
-	commands.terminal.readField = providerInput(t, "https://gateway.example", "1", "model-1", "1")
+	commands.terminal.readField = providerInput(t, "https://gateway.example", "1", "model-1", "1", "yes")
 	commands.terminal.readAPIKey = func(context.Context, string) (string, error) { return "secret", nil }
 	commands.backend.settingsPath = func() string { return "/safe/settings.yaml" }
 	commands.backend.updateProviderMap = func(context.Context, string, permconfig.ProviderMapUpdate) (authfile.CommitState, error) {
@@ -146,7 +146,7 @@ func TestProviderAddChainsToSelectedLogin(t *testing.T) {
 	if err := commands.runAdd(context.Background(), invocationResolution{mode: modeProviderAdd, providerName: "custom"}, &stdout, &stderr); err != nil {
 		t.Fatal(err)
 	}
-	if calls != 1 || stdout.String() != "Provider definition saved for \"custom\"\nAPI key saved for provider \"custom\"\n" || stderr.Len() != 0 {
+	if calls != 1 || stdout.String() != "Provider definition saved for \"custom\"\nAPI key saved for provider \"custom\"\n" || !strings.Contains(stderr.String(), "plaintext") {
 		t.Fatalf("login chain calls=%d stdout=%q stderr=%q", calls, stdout.String(), stderr.String())
 	}
 }
