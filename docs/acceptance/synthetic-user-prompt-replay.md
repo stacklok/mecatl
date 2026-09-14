@@ -4,7 +4,7 @@
 **Work classification:** Architectural — this changes the exported engine event payload, durable event meaning, protobuf replay contract, and mecatui transcript projection.
 **Decision record:** [ADR 0337](../adr/0337-synthetic-user-prompt-origin.md)
 **Phase:** durable session replay fidelity
-**Status:** in-progress, 2026-09-14. Implementation is underway against the human-approved Plan / Interface baseline.
+**Status:** landed, 2026-09-14. Implemented and verified in this Implementation candidate; authoritative when the PR merges.
 **Delivery:** Split. The change crosses the engine API, event persistence, protobuf, and mecatui replay UI, so separate interface review is valuable.
 **Expected tasks:** 2
 **Issue:** [#1457](https://github.com/stacklok/mecatl/issues/1457)
