@@ -4,7 +4,7 @@
 **Work classification:** Architectural — this changes the Go compatibility floor, exported engine and TypeScript SDK error contracts, operator CLI and Helm configuration, and ownership of process-lifetime Redis clients and follower goroutines.
 **Decision record:** [ADR 0330](../adr/0330-isolated-redis-follow-capacity.md)
 **Phase:** Cloud-native durable event watch
-**Status:** proposed, 2026-09-14. Original decisions were approved while grilling [issue #876](https://github.com/stacklok/mecatl/issues/876); the user approved the Go 1.27 migration after ToolHive Core's released module metadata blocked implementation.
+**Status:** in-progress, 2026-09-14. Original decisions were approved while grilling [issue #876](https://github.com/stacklok/mecatl/issues/876); the user approved the Go 1.27 migration after ToolHive Core's released module metadata blocked implementation.
 **Delivery:** Split. The Go compatibility floor, exported Go API, public error code, operator configuration, and shutdown resource boundary warrant independent Plan / Interface review before implementation.
 **Expected tasks:** deferred to orchestration
 **Issue:** [stacklok/mecatl#876](https://github.com/stacklok/mecatl/issues/876).

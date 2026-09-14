@@ -285,7 +285,7 @@ PR after verification. There is no cleanup or status-only PR.
   daemon-restart and awaiting-resume e2e. Status: draft.
 - [Redis follow capacity](redis-follow-capacity.md) — isolated per-generation Redis follow
   clients, fail-fast bounded follower admission, store-owned follower shutdown, and the required
-  Go 1.27 compatibility-floor migration. Status: proposed.
+  Go 1.27 compatibility-floor migration. Status: in-progress.
 - [TypeScript SDK local daemon and callback tools (M3)](sdk-typescript-local.md) —
   `@stacklok-oss/mecatl-sdk` M3: `spawn()`'s binary resolution, SDK-owned argv and
   ready-file barrier, the UDS-only tool-capable topology with its lifetime pipe,
