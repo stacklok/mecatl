@@ -1,18 +1,18 @@
-# ADR 0338 - Deno owns local daemons through Deno.Command
+# ADR 0339 - Deno owns local daemons through Deno.Command
 
 - Status: Accepted
 - Date: 2026-09-11
-- Superseded by: [ADR 0339](./0339-typescript-sdk-deno-grpc.md), for the HTTP-only transport and
+- Superseded by: [ADR 0340](./0340-typescript-sdk-deno-grpc.md), for the HTTP-only transport and
   Node-compatibility exclusions.
 - Scope: `sdk/typescript/`, daemon parent-liveness hosting, package exports, runtime qualification,
   release verification, and public documentation.
-- Supersedes: [ADR 0337](./0337-typescript-sdk-deno.md), for its Deno public entry-point and
-  local-process exclusions. ADR 0337's runtime range and emitted declaration decisions remain in
+- Supersedes: [ADR 0338](./0338-typescript-sdk-deno.md), for its Deno public entry-point and
+  local-process exclusions. ADR 0338's runtime range and emitted declaration decisions remain in
   force.
 
 ## Context
 
-ADR 0337 qualified the transport-neutral TypeScript SDK and generated declarations in Deno. It
+ADR 0338 qualified the transport-neutral TypeScript SDK and generated declarations in Deno. It
 excluded local process ownership because the existing `./node` implementation combines Node child
 processes, Unix-domain gRPC, filesystem media helpers, and callback-tool hosting.
 
@@ -72,7 +72,7 @@ verification repeats the floor integration before publication.
 
 ## See also
 
-- [TypeScript SDK Deno HTTP/SSE support](./0337-typescript-sdk-deno.md)
+- [TypeScript SDK Deno HTTP/SSE support](./0338-typescript-sdk-deno.md)
 - [TypeScript SDK local daemon and callback tools](./0292-typescript-sdk-local-daemon-and-tools.md)
 - [TypeScript SDK Deno support acceptance plan](../acceptance/sdk-typescript-deno.md)
 - [TypeScript SDK architecture](../architecture.md#typescript-sdk)
