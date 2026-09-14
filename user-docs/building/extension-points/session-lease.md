@@ -123,18 +123,18 @@ Key points from the implementation:
 - Release uses a **cancel-detached context** (the same pattern as `appendEvent`
   for the durable event log) — a dead client's cancelled context cannot abort
   the lease release.
-- A `Renew` returning `ErrLeaseHeld` means the backend has definitively lost the
-  lease to a competitor: the durable record now names a different owner or
-  token. The renewer goroutine cancels the run so the rogue-run scenario
-  becomes a clean, recoverable cancellation rather than a diverged write.
-  `flocklease` makes one narrow exception to this: if the TTL lapsed but the
-  durable record still names the caller's own owner and token — proving no
-  other process raced an `Acquire` in the gap — `Renew` reclaims the lease
-  with a fresh expiry instead of failing. This covers a process merely
-  suspended past its TTL (e.g. laptop sleep) that should not lose its lease
-  to a competitor that never actually ran. Every other backend, and every
-  case where the record names someone else, keeps the stricter behavior
-  above unchanged.
+- A `Renew` returning `ErrLeaseHeld` is the backend's definitive-loss signal,
+  and causes the renewer to cancel the run so the rogue-run scenario becomes a
+  clean, recoverable cancellation rather than a diverged write. It does *not*
+  necessarily mean a competitor took over — a backend may treat bare TTL
+  expiry as loss even when the durable record still names the caller.
+  `memlease` and `k8slease` do exactly that: `Renew` fails once the TTL has
+  lapsed, whether or not the owner/token still match. `flocklease` instead
+  reclaims an expired lease when it still holds the local generation *and*
+  the durable owner/token match under the transition lock — a process merely
+  suspended past its TTL (e.g. laptop sleep) then does not lose its lease to
+  a competitor that never actually ran. A changed owner/token, or a missing
+  local generation, is always loss, on every backend.
 - The `heldLeases` registry on `Service` ensures SIGTERM-time cleanup: the
   shutdown path iterates the registry and releases all held leases, so survivors
   take over immediately rather than waiting for TTL expiry.
