@@ -2,7 +2,9 @@
 sidebar_position: 2
 title: Run your first local session
 sidebar_label: Get started
-description: Run mecatui in a project and use an embedded Mecatl server for your first session.
+description:
+  Run mecatui in a project and use an embedded Mecatl server for your first
+  session.
 ---
 
 # Run your first local session
@@ -37,8 +39,8 @@ builds, see [Install Mecatl](/install.md).
 ## Start mecatui
 
 Mecatl detects the provider from its environment variable. Set one of
-`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or `OPENROUTER_API_KEY` in the shell where
-you will run `mecatui`:
+`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or `OPENROUTER_API_KEY` in the shell
+where you will run `mecatui`:
 
 ```sh
 cd <PROJECT_DIRECTORY>
@@ -48,13 +50,31 @@ mecatui --workspace "$PWD"
 
 Replace `<PROVIDER_API_KEY>` with the variable for your provider.
 
-The welcome screen shows your workspace and active model. To use a different
-model, enter `/models`, select one, and press `enter`. A small, low-cost model is
-enough for this tutorial.
+## Manage embedded providers
 
-The header also shows `mode default`, identifying the active permission mode. With the
-default permission policy, read-only tools can run without approval and actions that
-change the workspace ask first.
+`mecatui providers` displays local provider status without contacting a provider or
+revealing credentials. Use `mecatui providers setup` for guided first-time setup,
+or manage a named provider directly:
+
+```sh
+mecatui providers add example --no-login
+mecatui providers login example
+mecatui providers set-default example MODEL
+```
+
+The API-key file is selected by `--api-key-file` (default `auth.yaml` under the
+Mecatl configuration directory); matching environment credentials take precedence.
+`logout` clears locally managed credentials but keeps the provider definition.
+`remove` is destructive and requires confirmation. Remote `mecatui connect ADDRESS`
+uses the remote server's provider configuration instead.
+
+The welcome screen shows your workspace and active model. To use a different
+model, enter `/models`, select one, and press `enter`. A small, low-cost model
+is enough for this tutorial.
+
+The header also shows `mode default`, identifying the active permission mode.
+With the default permission policy, read-only tools can run without approval and
+actions that change the workspace ask first.
 
 ## Inspect the project
 
@@ -79,8 +99,8 @@ mecatui --workspace "$PWD" --resume-latest
 ## Add tools from local MCP servers (optional)
 
 MCP servers give agents tools for working with external services and data.
-[ToolHive](https://docs.stacklok.com/toolhive/) is Stacklok's open source runtime
-for running MCP servers locally.
+[ToolHive](https://docs.stacklok.com/toolhive/) is Stacklok's open source
+runtime for running MCP servers locally.
 
 If ToolHive has MCP servers running in its default group, the embedded server
 discovers them at startup. Enter `/mcp` to inspect the available MCP sources and

@@ -150,7 +150,7 @@ var flagMetaByFlag = map[string]flagMeta{
 	"openrouter-base-url":   {group: groupProvider, common: false, acp: acpInclude},
 	"anthropic-base-url":    {group: groupProvider, common: false, acp: acpInclude},
 	"opencode-base-url":     {group: groupProvider, common: false, acp: acpInclude},
-	"auth-file":             {group: groupProvider, common: false, acp: acpInclude},
+	"api-key-file":          {group: groupProvider, common: false, acp: acpInclude},
 	"mock":                  {group: groupProvider, common: false, acp: acpInclude},
 	"mock-script":           {group: groupProvider, common: false, acp: acpInclude},
 	"toolhive-llm":          {group: groupProvider, common: false, acp: acpInclude},

@@ -129,30 +129,33 @@ into the opaque `Message.Reasoning` STRING) are absorbed at adapter-construction
 the DTO. `UseMock` short-circuits to a single synthetic
 `mock` entry (offline). The zero-keys case is the named, actionable `errNoProvider`.
 
-### Native LLM endpoints
+### Operator-defined OIDC providers
 
-The operator-only `llm.endpoints` facade adds explicitly configured native **LLM
-endpoints** to the same composition-owned registry; it does not create a second
-registry or an entitlement layer. Each exact endpoint ID is the existing durable
-`provider_id`, and `default_model` is the deployment-wide inventory floor. Native
-entries accept only the Responses protocol and require an explicit credential home,
-OIDC profile, and separately configured issuer and gateway HTTPS trust policies.
-Build does no authenticated model probe. A usable encrypted record makes live listing
-global to the deployment; a missing record leaves an optional endpoint unavailable and
-makes a selected/default endpoint fail closed without ToolHive or default fallback.
+An operator-defined `providers.<name>` entry with `auth.method: oidc` adds an
+OIDC-backed Responses provider to the same composition-owned registry; it does not
+create a second registry or entitlement layer. The exact provider name is the existing
+durable `provider_id`, and `default_model` is the deployment-wide inventory floor.
+Custom OIDC is valid only with `api_flavor: openai-responses`. Its identity and trust
+configuration lives under `providers.<name>.auth.oidc`, while
+`credential_store.oidc` selects the shared protected credential home and encryption-key
+custody. Build does no authenticated model probe. A usable encrypted record makes live
+listing global to the deployment; a missing record leaves an optional provider
+unavailable and makes a selected/default provider fail closed without ToolHive or
+default fallback.
 
-The endpoint record is in `mecatl/provider-oidc/v1`, encrypted under the explicit
-credential home and bound to the endpoint, canonical gateway, exact issuer, client,
-resource, scopes, redirect, and both trust identities. Its access and refresh tokens
-are never exposed through events, snapshots, diagnostics, model context, or RPC.
-`mecated` opens/refreshes an existing record only; browser/loopback enrollment belongs
-to embedded local `mecatui llm login ENDPOINT`. Status is passive local inspection and
-logout deletes local state before bounded best-effort revocation. The lifecycle uses
-an endpoint-scoped cross-process lock through exchange and CAS commit; a crash after
+The provider record is in `mecatl/provider-oidc/v1`, encrypted under the shared
+credential home and bound to the provider name, canonical gateway, exact issuer,
+client, resource audience, scopes, redirect, and both trust identities. Its access and
+refresh tokens are never exposed through events, snapshots, diagnostics, model
+context, or RPC. `mecated` opens and refreshes an existing record only;
+browser/loopback enrollment belongs to embedded local
+`mecatui providers login PROVIDER`. Status is passive local inspection and logout
+deletes local state before bounded best-effort revocation. The lifecycle uses a
+provider-scoped cross-process lock through exchange and CAS commit; a crash after
 upstream refresh rotation but before local persistence can require login again.
 
 Gateway authority is deployment-scoped. All callers admitted by mecated share a usable
-endpoint's gateway identity, quota, gateway-side audit/retention posture, and model
+provider's gateway identity, quota, gateway-side audit/retention posture, and model
 availability; operators should use a dedicated deployment/service identity. Caller
 OIDC remains authentication and session ownership only: raw inbound caller bearers are
 dropped after authentication and are never forwarded or retained. Separate deployments
@@ -331,10 +334,10 @@ bearer over cleartext), else falls back to the loopback proxy with a WARN; `prox
 forces the loopback path; `direct` forces the gateway path and Build-fails when OIDC
 is absent. The direct base URL is derived (`gateway_url + "/v1"`), never hand-set. The
 token never enters a log, an error string, or an env var (OS keyring; only its
-reference is persisted; errors are sanitised via `llm.SanitizeTokenError`). `mecatui
-llm login` runs the interactive OIDC flow in-process; a headless `mecated` cache-miss
-surfaces an actionable error naming `thv llm setup` / `mecatui llm login` /
-`--toolhive-llm-mode proxy`. `tls_skip_verify` is NOT honored in direct mode (upstream
+reference is persisted; errors are sanitised via `llm.SanitizeTokenError`). ToolHive's
+own `thv llm setup` command runs the interactive OIDC flow; a headless `mecated` cache
+miss surfaces an actionable error naming `thv llm setup` or the
+`--toolhive-llm-mode proxy` escape hatch. `tls_skip_verify` is NOT honored in direct mode (upstream
 gap) — a self-signed gateway must use `--toolhive-llm-mode proxy`. See
 `docs/adr/0102-toolhive-direct-mode.md` for the full design.
 

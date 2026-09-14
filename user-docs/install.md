@@ -1,7 +1,9 @@
 ---
 sidebar_position: 2
 title: Install Mecatl
-description: Install the mecatui client and the mecated server with Homebrew, a signed release archive, or a source build.
+description:
+  Install the mecatui client and the mecated server with Homebrew, a signed
+  release archive, or a source build.
 ---
 
 # Install Mecatl
@@ -32,8 +34,8 @@ brew pin mecatl
 brew uninstall mecatl
 ```
 
-Homebrew links the executables into `$(brew --prefix)/bin`. For an absolute path,
-use `$(brew --prefix mecatl)/bin/mecatui` or
+Homebrew links the executables into `$(brew --prefix)/bin`. For an absolute
+path, use `$(brew --prefix mecatl)/bin/mecatui` or
 `$(brew --prefix mecatl)/bin/mecated`.
 
 ## Release archives
@@ -72,13 +74,13 @@ Releases also publish signed container images to GHCR. See
 [the mecatui container image](/building/deployment/mecatui.md) for the
 importable client image and
 [Run mecated standalone](/building/deployment/mecated.md) for server operation.
-[Cloud-native Kubernetes with mecak8s](/building/deployment/mecak8s.md) covers the
-Kubernetes runtime, which is image-only and not part of the formula.
+[Cloud-native Kubernetes with mecak8s](/building/deployment/mecak8s.md) covers
+the Kubernetes runtime, which is image-only and not part of the formula.
 
 ## Build from source
 
-A source build requires Go 1.26.6 or later and
-[Task](https://taskfile.dev/) v3. Run the build from the repository root.
+A source build requires Go 1.26.6 or later and [Task](https://taskfile.dev/) v3.
+Run the build from the repository root.
 
 Build all executables into `bin/`:
 
@@ -86,12 +88,14 @@ Build all executables into `bin/`:
 task build
 ```
 
-Run an executable from `bin/`. To install `mecatui` and `mecated` into `GOBIN` or
-`GOPATH/bin`, run `task install`.
+Run an executable from `bin/`. To install `mecatui` and `mecated` into `GOBIN`
+or `GOPATH/bin`, run `task install`.
 
 ## Next steps
 
-- [Get started with mecatui](/mecatui/getting-started.md) to launch a local session.
-- [Run mecated standalone](/building/deployment/mecated.md) to operate the server.
+- [Get started with mecatui](/mecatui/getting-started.md) to launch a local
+  session.
+- [Run mecated standalone](/building/deployment/mecated.md) to operate the
+  server.
 - [Pick your deployment shape](/building/getting-started/deployment-decision.md)
   to choose between `mecated`, `mecak8s`, `mecatequi`, and an engine embedding.

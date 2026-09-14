@@ -56,6 +56,14 @@ func TestOperatorDefinedLLMProviders_Scenario1_InvalidDefinitionsFailClosed(t *t
 	}
 }
 
+func TestOperatorDefinedLLMProviders_CredentialStoreParseFailureFailsClosed(t *testing.T) {
+	r, _ := newCapturedResolver(t, "/etc/mecatl/operator.yaml", "credential_store:\n  oidc:\n    home: /var/lib/mecatl\n    key: {source: unsupported}\n", true)
+	_, _, err := r.OperatorProviders()
+	if err == nil || err.Error() != "operator provider configuration is invalid" {
+		t.Fatalf("OperatorProviders error = %v, want fail-closed provider configuration error", err)
+	}
+}
+
 func TestInvariant_custom_providers_operator_tier_only(t *testing.T) {
 	r, logs := newCapturedResolver(t, "/etc/mecatl/operator.yaml", `
 providers:

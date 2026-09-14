@@ -88,10 +88,11 @@ type ProviderFlags struct {
 	authSnapshot      *authfile.File
 	authSnapshotReady bool
 	authSnapshotWarn  string
+	apiKeyFile        string
 }
 
 // RegisterProviderFlags registers --openai-base-url / --openrouter-base-url /
-// --anthropic-base-url / --auth-file on fs and returns the binding to pass to Apply
+// --anthropic-base-url / --api-key-file on fs and returns the binding to pass to Apply
 // later. The help text comes from help, falling back per-field to
 // DefaultProviderFlagHelp so a caller may pass a zero value (or override only the
 // fields it words differently).
@@ -108,7 +109,7 @@ func RegisterProviderFlags(fs *flag.FlagSet, help ProviderFlagHelp) *ProviderFla
 	fs.StringVar(pf.openRouterBaseURL, "openrouter-base-url", "", help.OpenRouterBaseURL)
 	fs.StringVar(pf.anthropicBaseURL, "anthropic-base-url", "", help.AnthropicBaseURL)
 	fs.StringVar(pf.openCodeBaseURL, "opencode-base-url", "", help.OpenCodeBaseURL)
-	fs.StringVar(pf.authFile, "auth-file", "", help.AuthFile)
+	fs.StringVar(pf.authFile, "api-key-file", "", help.AuthFile)
 	return pf
 }
 
@@ -138,10 +139,14 @@ func (pf *ProviderFlags) resolve(env xdgconfig.ResolveEnv, now time.Time) Resolv
 		explicitPath = value(pf.authFile)
 	}
 	path := explicitPath
+	if path == "" && pf != nil {
+		path = pf.apiKeyFile
+	}
 	if path == "" {
 		path = authfile.DefaultPath(env)
 	}
-	af, warning := authfile.Load(path, explicitPath != "", env, nil)
+	configuredPath := explicitPath != "" || (pf != nil && pf.apiKeyFile != "")
+	af, warning := authfile.Load(path, configuredPath, env, nil)
 	if pf != nil {
 		pf.authSnapshot, pf.authSnapshotReady, pf.authSnapshotWarn = af, true, warning
 	}
@@ -186,6 +191,8 @@ func ResolveProviderCredentials(pf *ProviderFlags, definitions permconfig.Provid
 	path, explicit := authfile.DefaultPath(env), false
 	if pf != nil && value(pf.authFile) != "" {
 		path, explicit = value(pf.authFile), true
+	} else if pf != nil && pf.apiKeyFile != "" {
+		path, explicit = pf.apiKeyFile, true
 	}
 	known := append([]string{}, knownAuthProviders...)
 	for id := range definitions {
@@ -223,13 +230,29 @@ func ResolveProviderCredentials(pf *ProviderFlags, definitions permconfig.Provid
 	return keys, nil
 }
 
+// SetAPIKeyFile applies the operator-configured API-key file unless the command
+// line already selected one. It is called by composition after operator settings
+// are resolved and before the immutable credential snapshot is loaded.
+func (pf *ProviderFlags) SetAPIKeyFile(path string) {
+	if pf == nil || value(pf.authFile) != "" {
+		return
+	}
+	pf.apiKeyFile = path
+	pf.authSnapshot = nil
+	pf.authSnapshotReady = false
+	pf.authSnapshotWarn = ""
+}
+
 // AuthFilePath reports the path Resolve would inspect and whether it came from
-// --auth-file. It exposes path provenance without exposing credentials so a
+// --api-key-file. It exposes path provenance without exposing credentials so a
 // command-specific startup policy can decide how to present a conventional
 // missing-file result.
 func (pf *ProviderFlags) AuthFilePath() (path string, explicit bool) {
 	if pf != nil && value(pf.authFile) != "" {
 		return value(pf.authFile), true
+	}
+	if pf != nil && pf.apiKeyFile != "" {
+		return pf.apiKeyFile, true
 	}
 	return authfile.DefaultPath(xdgconfig.OSEnv), false
 }
@@ -306,7 +329,7 @@ type ResolvedCredentials struct {
 	customAPIKeys map[string]string
 	customMethods map[string]string
 	// AuthFileWarning is non-empty when the auth.yaml credentials file (the explicit
-	// --auth-file path, or the conventional default) could not be read or parsed
+	// --api-key-file path, or the conventional default) could not be read or parsed
 	// cleanly. It is set by Resolve/Apply (ReadProviderKeys alone never touches the file).
 	// Never fatal — Apply always falls back to whatever was resolved from the
 	// environment — but a caller should log it (cmd/ mains: slog.Warn) so a typo in

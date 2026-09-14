@@ -6,42 +6,46 @@ import (
 	"testing"
 )
 
-func TestNativeLLMGatewayLogin_Scenario2_SharedGatewayIdentityDocumentation(t *testing.T) {
-	doc := readNativeLLMDoc(t, "../../user-docs/building/deployment/mecated.md")
+func TestProviderConfiguration_SharedGatewayIdentityDocumentation(t *testing.T) {
+	doc := readProviderDoc(t, "../../docs/architecture/providers.md")
 	for _, want := range []string{
-		"deployment-scoped gateway identity",
-		"quota", "gateway-side audit/retention posture", "model availability",
-		"dedicated deployment/service gateway identity",
+		"Gateway authority is deployment-scoped", "gateway identity", "quota",
+		"gateway-side audit/retention posture", "model availability",
+		"dedicated deployment/service identity",
 	} {
 		if !strings.Contains(doc, want) {
-			t.Errorf("usage documentation must state %q", want)
+			t.Errorf("provider documentation must state %q", want)
 		}
 	}
 }
 
-func TestNativeLLMGatewayLogin_Scenario8_UpstreamAuthorizationBoundary(t *testing.T) {
-	doc := readNativeLLMDoc(t, "../../user-docs/building/deployment/mecated.md")
+func TestProviderConfiguration_UpstreamAuthorizationBoundary(t *testing.T) {
+	doc := readProviderDoc(t, "../../docs/architecture/providers.md")
 	for _, want := range []string{
-		"drops the raw inbound caller bearer", "never forwards or retains caller credentials",
-		"separate deployments", "RFC 8693-style token exchange",
+		"raw inbound caller bearers are dropped after authentication",
+		"never forwarded or retained", "Separate deployments",
+		"RFC 8693 token-exchange contracts",
 	} {
 		if !strings.Contains(doc, want) {
-			t.Errorf("usage documentation must state %q", want)
+			t.Errorf("provider documentation must state %q", want)
 		}
 	}
 }
 
-func TestNativeLLMGatewayLogin_Scenario8_UserFacingEndpointVocabulary(t *testing.T) {
-	doc := readNativeLLMDoc(t, "../../user-docs/mecatui/index.md")
-	if !strings.Contains(doc, "LLM endpoint") {
-		t.Error("user documentation must call configured entries LLM endpoints")
+func TestProviderConfiguration_UserFacingVocabulary(t *testing.T) {
+	doc := readProviderDoc(t, "../../user-docs/mecatui/index.md")
+	if !strings.Contains(doc, "custom provider") {
+		t.Error("user documentation must call configured entries providers")
+	}
+	if strings.Contains(doc, "LLM endpoint") {
+		t.Error("user documentation must not call configured entries LLM endpoints")
 	}
 	if strings.Contains(doc, "native provider") {
-		t.Error("user documentation must not call native entries providers")
+		t.Error("user documentation must not call configured entries native providers")
 	}
 }
 
-func readNativeLLMDoc(t *testing.T, path string) string {
+func readProviderDoc(t *testing.T, path string) string {
 	t.Helper()
 	body, err := os.ReadFile(path)
 	if err != nil {

@@ -62,7 +62,7 @@ type TokenSourceFunc func(ctx context.Context) (string, error)
 // credential — it carries no secret.
 //
 //nolint:gosec // G101 false positive: see above.
-const ErrTokenRequiredHint = "no cached ToolHive LLM gateway credential — run `thv llm setup` (or `mecatui llm login toolhive`) to log in, or use `--toolhive-llm-mode proxy`"
+const ErrTokenRequiredHint = "no cached ToolHive LLM gateway credential — run `thv llm setup` to log in, or use `--toolhive-llm-mode proxy`"
 
 // resolveConfigPath turns a possibly-empty configPath into a CONCRETE file
 // path. A non-empty configPath (the test-fixture seam) passes through
@@ -177,7 +177,7 @@ func OIDCConfigured(configPath string) bool {
 // It mirrors buildLLMTokenSource in toolhive's own cmd/thv/app/llm.go so there
 // is ONE token-source construction path, not two. interactive controls whether
 // a genuine cache miss may launch the browser OIDC flow (false for the
-// headless direct-mode provider, true for `mecatui llm login toolhive`); skipBrowser
+// headless direct-mode provider, true only for RunInteractiveLogin); skipBrowser
 // prints the auth URL instead of opening a browser (headless/SSH/CI), and has
 // no effect unless interactive is also true.
 func buildTokenSource(llmCfg llm.Config, configPath string, interactive, skipBrowser bool, diag port.Diagnostics) (*llm.TokenSource, error) {

@@ -2,7 +2,8 @@
 sidebar_position: 1
 slug: /
 title: Mecatl documentation
-description: Run AI agents as cloud-native workloads on infrastructure you control.
+description:
+  Run AI agents as cloud-native workloads on infrastructure you control.
 ---
 
 # Mecatl documentation
@@ -19,18 +20,18 @@ without replacing the agent loop.
 
 With `mecak8s`, agent pods are disposable. Redis stores session state and event
 history, while Kubernetes Leases coordinate session ownership across replicas.
-Choose the model providers, clients, storage backends, and execution environments
-that fit your infrastructure.
+Choose the model providers, clients, storage backends, and execution
+environments that fit your infrastructure.
 
 ## Choose a component
 
-| Component | Use it when you want to |
-| --- | --- |
-| [`mecatui`](/mecatui/index.md) | Work interactively in a terminal. It can start a private embedded server or connect to an existing one. |
-| [`mecated`](/building/deployment/mecated.md) | Run the general-purpose server for terminal clients or gRPC and HTTP/SSE integrations. |
-| [`mecak8s`](/building/deployment/mecak8s.md) | Run Mecatl on Kubernetes with session state in Redis and coordination through Kubernetes Leases. |
-| [`mecatequi`](/building/deployment/mecatequi.md) | Run one task in CI and return a patch, summary, and exit status. |
-| [Go engine](/building/deployment/embed-engine.md) | Embed the agent loop in your own Go application and supply its adapters. |
+|Component|Use it when you want to|
+|-|-|
+|[`mecatui`](/mecatui/index.md)|Work interactively in a terminal. It can start a private embedded server or connect to an existing one.|
+|[`mecated`](/building/deployment/mecated.md)|Run the general-purpose server for terminal clients or gRPC and HTTP/SSE integrations.|
+|[`mecak8s`](/building/deployment/mecak8s.md)|Run Mecatl on Kubernetes with session state in Redis and coordination through Kubernetes Leases.|
+|[`mecatequi`](/building/deployment/mecatequi.md)|Run one task in CI and return a patch, summary, and exit status.|
+|[Go engine](/building/deployment/embed-engine.md)|Embed the agent loop in your own Go application and supply its adapters.|
 
 Start with `mecatui` if you are new to Mecatl. You can use the same terminal
 client when you move the server into a separate process or Kubernetes.

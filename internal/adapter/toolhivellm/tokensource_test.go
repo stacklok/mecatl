@@ -53,8 +53,8 @@ func (s staticTokenSource) Token(context.Context) (string, error) { return strin
 
 // TestTokenRequiredHint (F5 AC #7): when the raw error is llm.ErrTokenRequired,
 // sanitizeTokenError returns ErrTokenRequiredHint, which names BOTH remediations
-// (thv llm setup / mecatui llm login toolhive AND --toolhive-llm-mode proxy) so a headless
-// operator sees the exact next step.
+// (thv llm setup AND --toolhive-llm-mode proxy) so a headless operator sees the
+// exact next step.
 func TestTokenRequiredHint(t *testing.T) {
 	err := sanitizeTokenError(llm.ErrTokenRequired)
 	if err == nil {
@@ -63,12 +63,14 @@ func TestTokenRequiredHint(t *testing.T) {
 	msg := err.Error()
 	for _, want := range []string{
 		"thv llm setup",
-		"mecatui llm login toolhive",
 		"--toolhive-llm-mode proxy",
 	} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("error message missing %q: %s", want, msg)
 		}
+	}
+	if strings.Contains(msg, "mecatui llm") {
+		t.Errorf("error message names removed command: %s", msg)
 	}
 }
 

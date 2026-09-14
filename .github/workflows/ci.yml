@@ -500,6 +500,10 @@ jobs:
               exit 1
             fi
           done
+      - name: Exercise provider configuration writes
+        run: |
+          go test ./internal/adapter/privatefile ./internal/adapter/authfile ./internal/adapter/permconfig ./internal/adapter/credentialstore -count=1
+          go test ./cmd/mecatui -run '^TestProviderCommandsOIDCLoginPreparesAbsentPrivateRoot$' -count=1
 
   managed-temp-macos:
     name: Managed temporary storage (macOS)

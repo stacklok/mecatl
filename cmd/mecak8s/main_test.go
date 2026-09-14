@@ -85,7 +85,7 @@ func TestMecak8sRejectsOpenAICodexCredential(t *testing.T) {
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, err := parseFlags([]string{"--auth-file", path})
+	_, err := parseFlags([]string{"--api-key-file", path})
 	if err == nil {
 		t.Fatal("mecak8s accepted an openai-codex credential")
 	}

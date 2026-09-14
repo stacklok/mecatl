@@ -911,7 +911,15 @@ func validateEmbeddedProvider(c config) error {
 	if app.ToolhiveAvailable(probe) {
 		return nil
 	}
-	return errors.New("no LLM provider configured: set a provider credential, use --auth-file, enable a ToolHive gateway, pass --mock, or connect to mecated; see https://mecatl.dev/docs/features/choose-models")
+	return errors.New(`no LLM provider configured for the embedded server. Choose one:
+  1. Run ` + "`mecatui providers setup`" + ` to configure a direct provider.
+  2. Set a provider API key in the environment or use ` + "`--api-key-file PATH`" + `.
+  3. Enable a ToolHive LLM gateway.
+  4. Start with ` + "`--mock`" + ` for offline testing.
+  5. Connect to an existing remote server with ` + "`mecatui connect ADDRESS`" + `.
+
+These options configure only the embedded server; a remote mecated's provider configuration is managed by its operator.
+See https://mecatl.dev/docs/features/choose-models`)
 }
 
 // mayEmbed reports whether this run may host an embedded server, and so is

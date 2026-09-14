@@ -386,6 +386,7 @@ Exit codes (read stop_reason in the summary — the code alone is coarse):
 // appConfig constructs the complete declarative app.Config for the command root.
 // app.Build loads the injected provider credential after resolving operator definitions.
 func appConfig(f flags, diag port.Diagnostics, obs observability) app.Config {
+	nativeEndpointLoader := &cliconfig.NativeEndpointLoader{}
 	out := app.Config{
 		Workspace:       f.workspace,
 		Model:           f.model,
@@ -405,15 +406,17 @@ func appConfig(f flags, diag port.Diagnostics, obs observability) app.Config {
 		// MCP_<NAME>_TOKEN bearer already resolved into Headers at parse time),
 		// consumed by app.Build's static MCP source. Nil-safe when the flag was
 		// never registered (a hand-built test config).
-		MCPServers:               f.mcpServers.Servers(),
-		MCPProfileLoader:         cliconfig.NewMCPProfileResolver(f.mcpServers, os.LookupEnv),
-		MCPAuthorityLoader:       cliconfig.NewMCPProfileResolver(f.mcpServers, os.LookupEnv),
-		MCPAuthorityDefault:      mcpauthority.Global,
-		MCPBrokerSupported:       false,
-		ProviderCredentialLoader: cliconfig.NewProviderCredentialResolver(f.providerFlags, f.providerCredentials),
-		ProviderOverrides:        f.providerFlags.EndpointOverrides(),
-		PermissionsConventional:  true,
-		PermissionConfigs:        f.permissionConfigs,
+		MCPServers:                        f.mcpServers.Servers(),
+		MCPProfileLoader:                  cliconfig.NewMCPProfileResolver(f.mcpServers, os.LookupEnv),
+		MCPAuthorityLoader:                cliconfig.NewMCPProfileResolver(f.mcpServers, os.LookupEnv),
+		MCPAuthorityDefault:               mcpauthority.Global,
+		MCPBrokerSupported:                false,
+		ProviderCredentialLoader:          cliconfig.NewProviderCredentialResolver(f.providerFlags, f.providerCredentials),
+		NativeEndpointCredentialLoader:    nativeEndpointLoader,
+		NativeEndpointCredentialLifecycle: nativeEndpointLoader,
+		ProviderOverrides:                 f.providerFlags.EndpointOverrides(),
+		PermissionsConventional:           true,
+		PermissionConfigs:                 f.permissionConfigs,
 
 		GuardrailsModel:    f.guardrailsModel,
 		GuardrailsDisabled: f.guardrailsOff,

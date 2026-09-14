@@ -27,31 +27,31 @@ See [ADR 0321](./adr/0321-canonical-user-documentation-ownership.md) for the own
 
 See [Permissions and guardrails](https://mecatl.dev/docs/building/what-you-get/permissions#plan-mode).
 
-## LLM endpoint login and ToolHive
+## Provider login and ToolHive
 
-Native organizational LLM endpoints are configured only in the operator-tier
-`llm.endpoints` settings. Embedded local mecatui manages their local credential with:
+Operator-defined providers live under the operator-tier `providers` settings, with
+shared OIDC custody under `credential_store.oidc`. Embedded local mecatui manages
+providers and their locally owned credentials with:
 
 ```sh
-mecatui llm status [ENDPOINT]
-mecatui llm login ENDPOINT
-mecatui llm logout ENDPOINT
+mecatui providers
+mecatui providers login PROVIDER
+mecatui providers logout PROVIDER
 ```
 
-Status is passive and local. An empty configuration or unknown endpoint reports an
-actionable settings/status remedy; it never guesses a default, hostname, or model.
+Status is passive and local. An empty configuration or unknown provider reports an
+actionable setup/status remedy; it never guesses a default, hostname, or model.
 Enrollment is signal-aware and bounded to one five-minute overall browser/callback
 operation while the lifecycle lock is held. Success goes to stderr and no access or
 refresh token is printed. All callers admitted to the same standalone deployment
-share the configured endpoint's dedicated deployment/service gateway identity,
-quota, gateway-side audit/retention posture, and model inventory. Use separate
-deployments for mutually untrusted or per-user upstream authorization.
+share the configured provider's dedicated deployment/service gateway identity, quota,
+gateway-side audit/retention posture, and model inventory. Use separate deployments
+for mutually untrusted or per-user upstream authorization.
 
 `mecatui login ADDRESS` instead authenticates mecatui to a remote mecated. ToolHive
-MCP discovery and manual Codex authentication are also separate. For the ToolHive
-LLM gateway, use `mecatui llm login toolhive`; the one-release bare
-`mecatui llm login` alias warns and remains ToolHive-only. Mecatl no longer prints a
-ToolHive token. Scripts that need token stdout must call ToolHive's explicit
+MCP discovery, ToolHive LLM setup, and manual Codex authentication are also separate.
+Use `thv llm` tooling for ToolHive's externally owned credential lifecycle; Mecatl
+does not print or copy a ToolHive token.
 `thv llm token` tooling.
 
 See [Run mecated standalone](https://mecatl.dev/docs/building/deployment/mecated#the-toolhive-llm-gateway-no-api-key-needed).

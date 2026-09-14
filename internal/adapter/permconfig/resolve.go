@@ -216,7 +216,7 @@ type Resolver struct {
 	// provider configuration captured once at resolver construction.
 	operatorProviders         ProviderDefinitions
 	operatorProviderOverrides ProviderOverrides
-	operatorLLM               *LLMSection
+	operatorCredentialStore   *CredentialStoreSection
 	operatorProviderConfigErr error
 
 	mu    sync.RWMutex
@@ -231,6 +231,14 @@ func (r *Resolver) OperatorProviders() (ProviderDefinitions, ProviderOverrides, 
 		return nil, nil, nil
 	}
 	return r.operatorProviders, r.operatorProviderOverrides, r.operatorProviderConfigErr
+}
+
+// OperatorCredentialStore returns the operator-tier credential-store configuration.
+func (r *Resolver) OperatorCredentialStore() *CredentialStoreSection {
+	if r == nil {
+		return nil
+	}
+	return r.operatorCredentialStore
 }
 
 // OperatorStorageManagement returns the immutable operator-tier management
@@ -485,7 +493,6 @@ func newWithEnv(opts Options, env xdgconfig.ResolveEnv) *Resolver {
 	}
 	var report Report
 	r.userRules = r.loadUserRules(&report)
-	r.normalizeNativeEndpoints()
 	r.logReport(&report, "user-global")
 	return r
 }
@@ -854,7 +861,7 @@ func (r *Resolver) applyTrustGate(rules []governance.Rule, report *Report) []gov
 // Read from the host filesystem via the injectable env (NOT a workspace — these
 // live outside any session root). Fail-soft per file.
 func (r *Resolver) captureOperatorParseError(data []byte, err error) {
-	if (hasTopLevelKey(data, "llm") || hasTopLevelKey(data, "providers") || hasTopLevelKey(data, "provider_overrides")) && r.operatorProviderConfigErr == nil {
+	if (hasTopLevelKey(data, "llm") || hasTopLevelKey(data, "providers") || hasTopLevelKey(data, "provider_overrides") || hasTopLevelKey(data, "credential_store")) && r.operatorProviderConfigErr == nil {
 		r.operatorProviderConfigErr = errors.New("operator provider configuration is invalid")
 	}
 	if hasTopLevelKey(data, "retention") && r.operatorRetentionErr == nil {
@@ -914,8 +921,8 @@ func (r *Resolver) loadUserRules(report *Report) []governance.Rule {
 		r.captureMCP(cfg.MCP)
 		r.captureRetention(cfg.Retention)
 		r.captureStorageManagement(cfg.StorageManagement)
-		r.captureLLM(cfg.LLM)
-		r.captureProviders(cfg.Providers, cfg.ProviderOverrides)
+		r.captureLegacyLLM(cfg.LLM)
+		r.captureProviders(cfg.Providers, cfg.ProviderOverrides, cfg.CredentialStore)
 	}
 
 	if !r.opts.Conventional {
@@ -955,8 +962,8 @@ func (r *Resolver) loadUserRules(report *Report) []governance.Rule {
 				r.captureRetention(cfg.Retention)
 				r.captureStorageManagement(cfg.StorageManagement)
 				r.captureTemporaryStorage(cfg.TemporaryStorage)
-				r.captureLLM(cfg.LLM)
-				r.captureProviders(cfg.Providers, cfg.ProviderOverrides)
+				r.captureLegacyLLM(cfg.LLM)
+				r.captureProviders(cfg.Providers, cfg.ProviderOverrides, cfg.CredentialStore)
 			}
 		}
 	}
@@ -978,44 +985,23 @@ func (r *Resolver) loadUserRules(report *Report) []governance.Rule {
 	return rules
 }
 
-// captureLLM records the first complete operator native-endpoint facade.
-func (r *Resolver) captureLLM(llm *LLMSection) {
-	if r.operatorLLM == nil && llm != nil {
-		r.operatorLLM = llm
+func (r *Resolver) captureLegacyLLM(llm *LLMSection) {
+	if llm != nil && r.operatorProviderConfigErr == nil {
+		r.operatorProviderConfigErr = errors.New("llm: legacy configuration is no longer supported; migrate provider configuration with mecatui providers")
 	}
-}
-
-// normalizeNativeEndpoints folds the facade into the one existing provider-
-// definition snapshot exactly once, after operator precedence is resolved.
-func (r *Resolver) normalizeNativeEndpoints() {
-	if r.operatorLLM == nil || r.operatorProviderConfigErr != nil {
-		return
-	}
-	native := r.operatorLLM.ProviderDefinitions()
-	for id := range native {
-		if _, exists := r.operatorProviders[id]; exists {
-			r.operatorProviderConfigErr = errors.New("operator LLM endpoint id collides with providers")
-			return
-		}
-	}
-	merged := make(ProviderDefinitions, len(r.operatorProviders)+len(native))
-	for id, definition := range r.operatorProviders {
-		merged[id] = definition
-	}
-	for id, definition := range native {
-		merged[id] = definition
-	}
-	r.operatorProviders = merged
 }
 
 // captureProviders records the first complete operator provider snapshot. Explicit
 // files precede user-global settings, so the command-line operator tier wins.
-func (r *Resolver) captureProviders(definitions ProviderDefinitions, overrides ProviderOverrides) {
+func (r *Resolver) captureProviders(definitions ProviderDefinitions, overrides ProviderOverrides, store *CredentialStoreSection) {
 	if r.operatorProviders == nil && definitions != nil {
 		r.operatorProviders = definitions
 	}
 	if r.operatorProviderOverrides == nil && overrides != nil {
 		r.operatorProviderOverrides = overrides
+	}
+	if r.operatorCredentialStore == nil && store != nil {
+		r.operatorCredentialStore = store
 	}
 }
 

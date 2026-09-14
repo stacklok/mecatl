@@ -54,8 +54,8 @@ type notifyContextFunc func(context.Context, ...os.Signal) (context.Context, con
 
 // newSavedLoginContext owns the post-TUI login lifetime. It deliberately does
 // not inherit Bubble Tea's already-cancelled context.
-func newNativeLLMEnrollmentContext(timeout time.Duration) (context.Context, context.CancelFunc) {
-	return newSavedLoginContext(timeout)
+func newNativeLLMEnrollmentContext() (context.Context, context.CancelFunc) {
+	return newSavedLoginContext(nativeLLMEnrollmentTimeout)
 }
 
 func newSavedLoginContext(timeout time.Duration) (context.Context, context.CancelFunc) {
@@ -563,17 +563,17 @@ func runLLMCommand(res invocationResolution) error {
 	}
 	skipBrowser := len(res.remaining) == 1 && res.remaining[0] == "--skip-browser"
 	noBrowser := len(res.remaining) == 1 && res.remaining[0] == "--no-browser"
-	ctx, cancel := newNativeLLMEnrollmentContext(nativeLLMEnrollmentTimeout)
+	ctx, cancel := newNativeLLMEnrollmentContext()
 	defer cancel()
-	if res.llmEndpoint == toolHiveEndpointID {
-		return runNativeLLMCommand(ctx, res.llmAction, res.llmEndpoint, skipBrowser, nil, os.Stdout, os.Stderr)
+	if res.providerName == toolHiveEndpointID {
+		return runNativeLLMCommand(ctx, res.providerAction, res.providerName, skipBrowser, nil, os.Stdout, os.Stderr)
 	}
 	host, err := openNativeLLMHost(ctx, noBrowser, os.Stderr)
 	if err != nil {
 		return errors.New("native LLM endpoint lifecycle is unavailable")
 	}
 	defer func() { _ = host.Close() }()
-	return runNativeLLMCommand(ctx, res.llmAction, res.llmEndpoint, false, host, os.Stdout, os.Stderr)
+	return runNativeLLMCommand(ctx, res.providerAction, res.providerName, false, host, os.Stdout, os.Stderr)
 }
 
 func unknownNativeEndpointError(endpoint string, ids []string) error {

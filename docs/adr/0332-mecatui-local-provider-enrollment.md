@@ -1,8 +1,15 @@
 # ADR 0332 — Mecatui local provider enrollment preserves existing credential custody
 
-- Status: Proposed
+- Status: Superseded proposal — never accepted; superseded by [ADR 0333](0333-unified-provider-configuration-and-mecatui-provider-commands.md) and merged PR #1448
 - Date: 2026-09-12
-- Scope: local mecatui provider setup, API-key persistence, provider-default persistence, and passive status
+- Scope: historical local provider setup prototype only; not an implementation contract
+
+> Historical proposal retained for traceability. Its `llm` commands, per-command
+> auth-file flags, Linux-only/cooperative-lock writer, optional startup, and
+> replacement-before-removal policy must not be implemented. The current bounded
+> follow-up is the revised [acceptance plan](../acceptance/mecatui-local-provider-setup.md),
+> under ADR 0333. The proposal text below records the abandoned direction, not a
+> competing accepted decision.
 
 ## Context
 

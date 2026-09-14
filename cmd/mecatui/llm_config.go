@@ -78,11 +78,11 @@ func runLLMConfigCommand(res invocationResolution, stdout, stderr io.Writer) err
 			return err
 		}
 		opts.credentialHome = credentialHome
-		return setNativeLLMEndpoint(doc, res.llmEndpoint, opts)
+		return setNativeLLMEndpoint(doc, res.providerName, opts)
 	}); err != nil {
 		return fmt.Errorf("llm config set: %w", err)
 	}
-	_, err = fmt.Fprintf(stdout, "Configured native LLM endpoint %q in %s. Next run: mecatui llm login %s\n", res.llmEndpoint, settings.path, res.llmEndpoint)
+	_, err = fmt.Fprintf(stdout, "Configured native LLM endpoint %q in %s. Next run: mecatui llm login %s\n", res.providerName, settings.path, res.providerName)
 	return err
 }
 

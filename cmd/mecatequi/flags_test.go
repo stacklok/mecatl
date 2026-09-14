@@ -36,7 +36,7 @@ func TestOpenAICodexCommandRootReusesResolvedSnapshot(t *testing.T) {
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	flags, err := parseFlags([]string{"--prompt", "test", "--auth-file", path})
+	flags, err := parseFlags([]string{"--prompt", "test", "--api-key-file", path})
 	if err != nil {
 		t.Fatalf("parseFlags: %v", err)
 	}
@@ -70,7 +70,7 @@ func TestOpenAICodexCommandRootSurfaces(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := realMain([]string{
 		"--prompt", "test",
-		"--auth-file", path,
+		"--api-key-file", path,
 		"--mock",
 		"--workspace", t.TempDir(), // deliberately not a git repository
 	}, &stdout, &stderr)

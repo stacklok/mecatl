@@ -1,6 +1,7 @@
 ---
 title: Run a private local daemon
-description: Start and dispose a private Mecatl daemon from a Node.js or Bun application.
+description:
+  Start and dispose a private Mecatl daemon from a Node.js or Bun application.
 sidebar_position: 3
 ---
 
@@ -30,11 +31,11 @@ This example uses the offline provider so you can verify process ownership
 without model-provider credentials:
 
 ```ts
-import { spawn } from "@stacklok-oss/mecatl-sdk/node";
+import { spawn } from '@stacklok-oss/mecatl-sdk/node';
 
-await using client = await spawn({ args: ["--mock"] });
+await using client = await spawn({ args: ['--mock'] });
 const session = await client.sessions.create({});
-const result = await (await session.run("List the main packages")).result();
+const result = await (await session.run('List the main packages')).result();
 
 console.log(result.text);
 ```
@@ -44,8 +45,7 @@ environment and ordinary `mecated` configuration. Pass `env` to override an
 environment value or `args` to add `mecated serve` flags.
 
 `spawn()` owns the daemon's private Unix socket, readiness file, lifetime pipe,
-and shutdown arguments. Application-supplied `args` cannot replace those
-values.
+and shutdown arguments. Application-supplied `args` cannot replace those values.
 
 ## Run one prompt with `query()`
 
@@ -53,14 +53,14 @@ values.
 and daemon shutdown:
 
 ```ts
-import { query } from "@stacklok-oss/mecatl-sdk/node";
+import { query } from '@stacklok-oss/mecatl-sdk/node';
 
-const oneShot = await query("Summarize the current working tree", {
-  spawn: { args: ["--mock"] },
+const oneShot = await query('Summarize the current working tree', {
+  spawn: { args: ['--mock'] },
 });
 
 for await (const event of oneShot) {
-  if (event.kind === "result") console.log(event.payload.text);
+  if (event.kind === 'result') console.log(event.payload.text);
 }
 ```
 
@@ -76,8 +76,8 @@ detaches durable watches, closes callback-tool and transport resources, stops
 the child process, and removes the private runtime directory. Closing a client
 created with `connect()` never signals an operator-owned daemon.
 
-The SDK reports cleanup faults through the configured `diagnostics` callback
-and continues the remaining cleanup steps.
+The SDK reports cleanup faults through the configured `diagnostics` callback and
+continues the remaining cleanup steps.
 
 ## Next steps
 
@@ -104,7 +104,7 @@ executable's absolute path as `binaryPath`.
 <details>
 <summary>spawn() reports readiness_timeout</summary>
 
-Inspect the structured diagnostic delivered to your `diagnostics` callback.
-The SDK includes a bounded, credential-redacted tail of the daemon's stderr.
+Inspect the structured diagnostic delivered to your `diagnostics` callback. The
+SDK includes a bounded, credential-redacted tail of the daemon's stderr.
 
 </details>

@@ -158,6 +158,7 @@ func (c *Config) UnmarshalYAML(node ast.Node) error {
 	}
 	known := map[string]any{
 		"llm":                    newPermconfigNodePointer(&c.LLM),
+		"credential_store":       newPermconfigNodePointer(&c.CredentialStore),
 		"providers":              &c.Providers,
 		"provider_overrides":     &c.ProviderOverrides,
 		"permissions":            &c.Permissions,
@@ -191,12 +192,8 @@ func (c *Config) UnmarshalYAML(node ast.Node) error {
 			}
 		}
 	}
-	if c.LLM != nil {
-		for id := range c.LLM.Endpoints {
-			if _, exists := c.Providers[id]; exists {
-				return &permconfigSchemaError{section: "llm", err: fmt.Errorf("endpoint id collides with providers")}
-			}
-		}
+	if err := finalizeProviderDefinitions(c.Providers, c.CredentialStore); err != nil {
+		return &permconfigSchemaError{section: "providers", err: err}
 	}
 	return nil
 }

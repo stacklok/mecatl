@@ -1,23 +1,25 @@
 ---
 sidebar_position: 210
 title: Skills, commands, and soul
-description: Shape Mecatl runs with reusable skills, slash commands, and a durable persona.
+description:
+  Shape Mecatl runs with reusable skills, slash commands, and a durable persona.
 ---
 
 # Skills, commands, and soul
 
-Mecatl has three ways to add reusable guidance to a run:
+Use three types of reusable guidance to shape a Mecatl run:
 
 - **Skills** are progressive-disclosure instruction bundles. Their metadata is
-  always available, while the full `SKILL.md` body is loaded only when activated.
+  always available, while the full `SKILL.md` body is loaded only when
+  activated.
 - **Slash commands** are templates that expand a prompt before the run. They can
   be file-backed, skill-backed, or supplied by a remote content source.
 - **Soul** is a user-scoped, read-only persona fragment that describes the
   agent's identity and style.
 
 These sources steer the model; they do not bypass the normal permission policy.
-Treat repository-provided content as untrusted until the workspace is admitted by
-project trust.
+Treat repository-provided content as untrusted until the workspace is admitted
+by project trust.
 
 ## Skills
 
@@ -41,7 +43,7 @@ license: Apache-2.0
 compatibility: mecatl >= 0.1
 metadata:
   owner: platform
-allowed-tools: "Read Grep Shell"
+allowed-tools: 'Read Grep Shell'
 ---
 
 # Deploy
@@ -61,11 +63,11 @@ Skills are opt-in. Configure one or more explicit directories with
 `--skills-dir` (repeatable), or enable the conventional locations with
 `--skills-conventional`:
 
-| Tier | Location | Admission |
-| --- | --- | --- |
-| Explicit | each `--skills-dir` | operator-configured; always admitted |
-| Project | `<workspace>/.mecatl/skills`, `<workspace>/.claude/skills` | requires project trust |
-| User | `$XDG_CONFIG_HOME/mecatl/skills`, `~/.claude/skills` | user-owned; always admitted |
+|Tier|Location|Admission|
+|-|-|-|
+|Explicit|each `--skills-dir`|operator-configured; always admitted|
+|Project|`<workspace>/.mecatl/skills`, `<workspace>/.claude/skills`|requires project trust|
+|User|`$XDG_CONFIG_HOME/mecatl/skills`, `~/.claude/skills`|user-owned; always admitted|
 
 Explicit directories have higher precedence than conventional sources. With no
 source configured, the `Skill` tool is disabled. A malformed `SKILL.md` is
@@ -79,7 +81,7 @@ materialized or executable. To read one textual asset, call the tool again with
 its logical name:
 
 ```json
-{"name":"deploy","asset":"references/api.md"}
+{ "name": "deploy", "asset": "references/api.md" }
 ```
 
 Do not tell a model to use `Read` on a skill directory or to execute a bundled
@@ -99,8 +101,8 @@ Enable file-backed command expansion with `--commands-dir`, or use
 Each command is a `<name>.md` template. Frontmatter is stripped and these
 placeholders are substituted:
 
-- `$ARGUMENTS` — the complete argument string;
-- `$1`, `$2`, and so on — positional arguments.
+- `$ARGUMENTS`: the complete argument string;
+- `$1`, `$2`, and so on: positional arguments.
 
 For example, `.mecatl/commands/review.md` can be invoked as
 `/review src/api.go`, with the path substituted into the template. An unknown
@@ -108,9 +110,9 @@ slash command passes through unchanged rather than becoming an empty prompt.
 
 Every discovered skill is also available as `/<skill-name>`. This expands the
 skill body directly, using the same placeholder rules as a file-backed command.
-The tool path is better when the model needs to inspect the asset inventory; the
-slash-command path is convenient when a human wants to start with a named
-workflow. Neither path loads asset contents automatically.
+Use the tool path when the model needs to inspect the asset inventory. Use the
+slash-command path to start a named workflow directly. Neither path loads asset
+contents automatically.
 
 Expansion precedence is first-match-wins:
 
@@ -145,8 +147,8 @@ file, for example `~/.config/mecatl/soul.md.sha256`:
 - `--approve-soul` accepts the current content by rewriting the baseline;
 - `--soul-strict` withholds a drifted soul until it is approved.
 
-This detects unexpected edits; it does not restore an old copy. The agent cannot
-modify either the soul or its baseline.
+Drift protection detects unexpected edits but does not restore an old copy. The
+agent cannot modify either the soul or its baseline.
 
 ## Trust and deployment limitations
 
@@ -158,7 +160,7 @@ agent definitions; there is no separate skill-only trust switch.
 
 For a remote deployment, content sources can be supplied by a driver:
 
-```console
+```sh
 mecated serve \
   --skill-source-url 127.0.0.1:7443 \
   --soul-source-url 127.0.0.1:7443 \
@@ -169,8 +171,7 @@ A remote skill source replaces local skill discovery and is snapshotted at
 startup. A remote soul source occupies the user soul slot and is revalidated
 locally. A remote command source composes with local commands and is consulted
 live. Configure driver TLS and authentication as described in the
-[settings guide](/building/deployment/settings.md); use only drivers you
-trust.
+[settings guide](/building/deployment/settings.md); use only drivers you trust.
 
 The legacy `SkillDraft`/`mecated skills promote` path is a quarantine workflow,
 not automatic publishing. A drafted skill is not active in the writing session.

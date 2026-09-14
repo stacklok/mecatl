@@ -1,7 +1,8 @@
 ---
 sidebar_position: 4
 title: Use the TypeScript SDK
-description: Run your first Mecatl prompt from TypeScript against a private offline daemon.
+description:
+  Run your first Mecatl prompt from TypeScript against a private offline daemon.
 ---
 
 # Use the TypeScript SDK
@@ -69,13 +70,13 @@ Create `tsconfig.json`:
 Create `quickstart.ts`:
 
 ```ts title="quickstart.ts"
-import { spawn } from "@stacklok-oss/mecatl-sdk/node";
+import { spawn } from '@stacklok-oss/mecatl-sdk/node';
 
-const client = await spawn({ args: ["--mock"] });
+const client = await spawn({ args: ['--mock'] });
 
 try {
   const session = await client.sessions.create({});
-  const run = await session.run("Say hello from Mecatl");
+  const run = await session.run('Say hello from Mecatl');
   const result = await run.result();
 
   console.log(result.text);

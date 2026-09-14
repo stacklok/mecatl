@@ -55,12 +55,12 @@ func TestADR_0238_BuildLoadsProviderCredentialLoaderOnce(t *testing.T) {
 	}
 }
 
-func TestNativeEndpointBypassesLegacyCredentialLoader(t *testing.T) {
+func TestProviderCredentialLoaderReceivesOIDCDefinitions(t *testing.T) {
 	loader := &capturingProviderCredentialLoader{}
 	definitions := permconfig.ProviderDefinitions{
 		"native": {
 			ID: "native", BaseURL: "https://gateway.example/v1", DefaultModel: "model", APIFlavor: "openai-responses",
-			Native: &permconfig.NativeEndpointIdentity{CredentialHome: "/credentials"},
+			Auth: permconfig.ProviderAuth{Method: "oidc"},
 		},
 		"legacy": {
 			ID: "legacy", BaseURL: "https://legacy.example/v1", DefaultModel: "model", APIFlavor: "openai-responses",
@@ -75,11 +75,29 @@ func TestNativeEndpointBypassesLegacyCredentialLoader(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer built.Close()
-	if _, exists := loader.definitions["native"]; exists {
-		t.Fatal("native endpoint reached the legacy provider credential loader")
+	if _, exists := loader.definitions["native"]; !exists {
+		t.Fatal("OIDC provider was excluded from the API-key credential snapshot")
 	}
-	if _, exists := loader.definitions["legacy"]; !exists {
-		t.Fatal("legacy provider definition was not passed to its credential loader")
+}
+
+func TestProviderUnification_Scenario4_CredentialStoreIsolation(t *testing.T) {
+	loader := &capturingProviderCredentialLoader{}
+	definitions := permconfig.ProviderDefinitions{
+		"oidc": {
+			ID: "oidc", BaseURL: "https://gateway.example/v1", DefaultModel: "model", APIFlavor: "openai-responses",
+			Auth: permconfig.ProviderAuth{Method: "oidc"},
+		},
+	}
+	built, err := Build(context.Background(), Config{
+		Workspace: t.TempDir(), Model: "mock", MockProvider: mockllm.New(),
+		ProviderDefinitions: definitions, ProviderCredentialLoader: loader,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer built.Close()
+	if _, exists := loader.definitions["oidc"]; !exists {
+		t.Fatal("OIDC provider was excluded from the API-key credential snapshot")
 	}
 }
 

@@ -34,7 +34,7 @@ var openNativeEndpointRuntime = func(_ context.Context, definition permconfig.Pr
 			return oauthlogin.Result{}, err
 		}
 		var result oauthlogin.Result
-		err = runtime.Authorize(ctx, definition.Native.OIDC.Issuer, func(ctx context.Context, _ string, present func(context.Context, string) (oauthlogin.Result, error)) error {
+		err = runtime.Authorize(ctx, definition.Auth.OIDC.Issuer, func(ctx context.Context, _ string, present func(context.Context, string) (oauthlogin.Result, error)) error {
 			var presentErr error
 			result, presentErr = present(ctx, authorizationURL)
 			return presentErr
@@ -61,7 +61,7 @@ func newNativeLLMHost(_ context.Context, noBrowser bool, urlWriter io.Writer) (n
 	}
 	native := make(permconfig.ProviderDefinitions)
 	for id, definition := range definitions {
-		if definition.Native != nil {
+		if definition.Auth.Method == providerAuthOIDC {
 			native[id] = definition
 		}
 	}

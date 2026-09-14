@@ -1058,7 +1058,7 @@ func TestValidateEmbeddedProviderRequired(t *testing.T) {
 	} else {
 		msg := err.Error()
 		for _, want := range []string{
-			"no LLM provider", "--auth-file", "ToolHive", "--mock", "connect", "https://mecatl.dev/docs/features/choose-models",
+			"no LLM provider", "--api-key-file", "ToolHive", "--mock", "connect", "https://mecatl.dev/docs/features/choose-models",
 		} {
 			if !strings.Contains(msg, want) {
 				t.Errorf("validate() error %q does not mention %q", msg, want)
@@ -1116,7 +1116,7 @@ func TestConfigValidateAcceptsAuthFileCredential(t *testing.T) {
 			if err := os.WriteFile(path, []byte(test.body), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			cfg, err := parseFlags([]string{"--workspace", "/abs", "--auth-file", path, "--toolhive-llm=false"})
+			cfg, err := parseFlags([]string{"--workspace", "/abs", "--api-key-file", path, "--toolhive-llm=false"})
 			if err != nil {
 				t.Fatalf("parseFlags: %v", err)
 			}
@@ -1138,7 +1138,7 @@ func TestConfigValidateAcceptsAuthFileCredential(t *testing.T) {
 
 	t.Run("warning emitted once outside pure projection", func(t *testing.T) {
 		missing := filepath.Join(t.TempDir(), "missing-auth.yaml")
-		cfg, err := parseFlags([]string{"--workspace", "/abs", "--auth-file", missing, "--mock"})
+		cfg, err := parseFlags([]string{"--workspace", "/abs", "--api-key-file", missing, "--mock"})
 		if err != nil {
 			t.Fatalf("parseFlags: %v", err)
 		}
@@ -1161,7 +1161,7 @@ func TestOpenAICodexCommandRootSurfaces(t *testing.T) {
 		t.Setenv(envName, "")
 	}
 	help := helpRenderOut(t, modeLocal, []string{"--help"})
-	if !hasFlagHeader(help, "auth-file") || !strings.Contains(help, "provider credentials YAML") {
+	if !hasFlagHeader(help, "api-key-file") || !strings.Contains(help, "provider credentials YAML") {
 		t.Fatalf("embedded help does not surface provider file auth:\n%s", help)
 	}
 
@@ -1172,7 +1172,7 @@ func TestOpenAICodexCommandRootSurfaces(t *testing.T) {
 	if err := os.WriteFile(expiredPath, []byte(expiredBody), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	expiredCfg, err := parseFlags([]string{"--workspace", "/abs", "--auth-file", expiredPath, "--mock"})
+	expiredCfg, err := parseFlags([]string{"--workspace", "/abs", "--api-key-file", expiredPath, "--mock"})
 	if err != nil {
 		t.Fatalf("parse expired credential: %v", err)
 	}
@@ -1204,7 +1204,7 @@ func TestConnectSkipsLocalAuthFile(t *testing.T) {
 		t.Fatalf("parseTransportFlags(connect): %v", err)
 	}
 	if cfg.providerKeys.Any() || cfg.providerKeys.AuthFileWarning != "" {
-		t.Fatal("connect mode read or retained local auth-file state")
+		t.Fatal("connect mode read or retained local api-key-file state")
 	}
 	if err := cfg.validate(); err != nil {
 		t.Fatalf("connect mode rejected: %v", err)

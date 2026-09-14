@@ -3,6 +3,7 @@ package cliconfig
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
@@ -79,6 +80,23 @@ func TestInvariant_custom_provider_authfile_strict(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "secret") || strings.Contains(err.Error(), "unknown") {
 		t.Fatalf("strict auth error leaked file data: %v", err)
+	}
+}
+
+func TestProviderCredentialResolverFailsClosedForMalformedConventionalAuthWithCustomProviders(t *testing.T) {
+	env := envWithAuth("/config/mecatl/auth.yaml", "providers: [malformed")
+	flags := &ProviderFlags{}
+	keys := flags.resolve(env, time.Now())
+	if keys.AuthFileWarning == "" {
+		t.Fatal("malformed conventional auth file did not produce the stock-provider warning")
+	}
+	resolver := NewProviderCredentialResolver(flags, keys)
+	if _, _, err := resolver.Load(nil); err != nil {
+		t.Fatalf("stock-provider-only startup lost warning-only behavior: %v", err)
+	}
+	definitions := permconfig.ProviderDefinitions{"custom": {ID: "custom", Auth: permconfig.ProviderAuth{Method: "api_key"}}}
+	if _, _, err := resolver.Load(definitions); err == nil {
+		t.Fatal("custom provider accepted malformed conventional auth file")
 	}
 }
 

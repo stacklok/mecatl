@@ -1,19 +1,20 @@
 ---
 sidebar_position: 20
 title: Use mecatui
-description: Use the Mecatl terminal UI to work with sessions, models, tools, and approvals.
+description:
+  Use the Mecatl terminal UI to work with sessions, models, tools, and
+  approvals.
 ---
 
 # Use mecatui
 
-`mecatui` is Mecatl's interactive terminal client. It is a skin over the shared
-agent/server core: bare `mecatui` hosts an embedded `mecated` server in the same
-process, while `mecatui connect ADDRESS` displays and controls a server that is
+`mecatui` is Mecatl's interactive terminal client. Run bare `mecatui` to host an
+embedded server, or run `mecatui connect ADDRESS` to control a server that is
 already running.
 
-Use it to work with sessions, switch models, approve actions, inspect tool calls,
-and monitor delegated work. The detailed mecatui section owns the client
-workflow and controls; this page is the feature-level entry point.
+Use it to work with sessions, switch models, approve actions, inspect tool
+calls, and monitor delegated work. The `mecatui` guides linked below cover the
+detailed workflows and controls.
 
 ## Choose how to connect
 
@@ -22,13 +23,13 @@ workflow and controls; this page is the feature-level entry point.
   policy configuration.
 - **Client/server deployment:** run `mecatui connect ADDRESS` when an operator
   has already started `mecated` or `mecak8s`. The remote server owns the
-  workspace, credentials, storage, capabilities, and policy; local embedded-server
-  settings do not apply.
+  workspace, credentials, storage, capabilities, and policy; local
+  embedded-server settings do not apply.
 
-A loopback connect can select an absolute path interpreted on the server host. For a
-non-loopback target, mecatui sends no cwd and rejects `--workspace`; the server's
-listener authority chooses its configured root or no-FS profile. Neither mode uploads
-or shares a checkout from the computer running the TUI.
+A loopback connect can select an absolute path interpreted on the server host.
+For a non-loopback target, mecatui sends no cwd and rejects `--workspace`; the
+server's listener authority chooses its configured root or no-FS profile.
+Neither mode uploads or shares a checkout from the computer running the TUI.
 
 Start here for connection ownership, TLS, bearer authentication, and remote
 workspace rules: [Connect to a server](../mecatui/remote-servers.md).
@@ -44,28 +45,27 @@ mecatui --workspace "$PWD" \
   --prompt "Summarize the failing tests in this repository"
 ```
 
-The TUI can browse and continue stored sessions, switch models without losing the
-visible conversation, approve permission requests, steer a running session, and launch
-a dedicated debugger when the connected server supports it:
+The TUI can browse and continue stored sessions, switch models without losing
+the visible conversation, approve permission requests, steer a running session,
+and launch a dedicated debugger when the connected server supports it:
 
 ```sh
 mecatui debug TARGET
 mecatui connect ADDRESS debug TARGET
 ```
 
-`TARGET` accepts an exact full opaque session ID—including the exact final ID printed on exit—or
-the displayed 12-column short handle. Safe `[A-Za-z0-9._-]` bytes are literal except that a leading
-`-` is encoded as `%2D`; other UTF-8 bytes are uppercase `%HH` atoms, and only complete atoms that
-fit are shown. The literal has no leading `#`. A syntactically valid short target consults the
-complete caller-visible inventory. Exact full-ID equality wins; otherwise one unique projected
-match resolves. On ambiguity, open `/session`, copy the full exact ID, and pass it as `TARGET`
-through the same command. If inventory cannot be loaded or no handle matches, mecatui sends
-`TARGET` unchanged and reports the server's ordinary exact-ID authorization/not-found result.
-It creates a separate no-filesystem analysis session and is explicit consent
-to send bounded stored-session evidence—which may include secrets—to the selected model.
-It never resumes or mutates the target. Its bounded network view can correlate persisted,
-sanitized retry/transport evidence to that target without exposing raw errors or request data.
-See [Sessions](../mecatui/sessions.md#diagnose-a-stored-session).
+`TARGET` accepts the full opaque session ID printed on exit or the displayed
+12-column short handle. When a short handle is ambiguous, open `/session`, copy
+the full ID, and pass it to the same command. If the session inventory is
+unavailable or no short handle matches, `mecatui` treats `TARGET` as a full ID
+and reports the server's authorization or not-found result.
+
+Debugging creates a separate no-filesystem analysis session and sends bounded
+stored-session evidence to the selected model. That evidence may include
+secrets. The debugger does not resume or modify the target session. It can
+correlate persisted, sanitized retry and transport evidence without exposing raw
+errors or request data. See
+[Sessions](../mecatui/sessions.md#diagnose-a-stored-session).
 
 Use the dedicated guides for those workflows:
 
@@ -93,14 +93,16 @@ Client settings such as themes, keymaps, terminal rendering, and mouse behavior
 belong to mecatui. Provider selection, posture, workspace trust, tools, storage,
 and other agent behavior belong to the embedded or connected server.
 
-For embedded-server flags, see [Run mecated standalone](../building/deployment/mecated.md).
-For model selection, see [Choose models and providers](./choose-models.md). For
-permissions and trust, see [Permissions and posture](./permissions-and-posture.md).
+For embedded-server flags, see
+[Run mecated standalone](../building/deployment/mecated.md). For model
+selection, see [Choose models and providers](./choose-models.md). For
+permissions and trust, see
+[Permissions and posture](./permissions-and-posture.md).
 
 ## Limitations
 
-- `connect` never discovers or starts a server and does not fall back to embedded
-  mode.
+- `connect` never discovers or starts a server and does not fall back to
+  embedded mode.
 - A connected server may expose different tools, models, media capabilities, and
   storage features than an embedded server.
 - Remote clients cannot use the TUI host's local files unless those files are

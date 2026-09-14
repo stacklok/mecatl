@@ -1,6 +1,8 @@
 ---
 title: TypeScript SDK
-description: Build Node.js, Bun, and browser applications that create and control Mecatl sessions.
+description:
+  Build Node.js, Bun, and browser applications that create and control Mecatl
+  sessions.
 sidebar_position: 1
 ---
 
@@ -19,8 +21,8 @@ to run one prompt against a private offline daemon.
   Node.js, Bun, or a browser.
 - [Run a private local daemon](./local-daemon.md) when a Node.js or Bun process
   should own `mecated`, or when a script needs one `query()` call.
-- [Work with sessions and runs](./sessions-and-runs.md) to stream events, receive
-  a terminal result, send controls, or include media in a prompt.
+- [Work with sessions and runs](./sessions-and-runs.md) to stream events,
+  receive a terminal result, send controls, or include media in a prompt.
 - [Handle permissions and plans](./permissions-and-plans.md) to resolve asks in
   application code and continue an approved plan.
 - [Resume durable activity](./durable-activity.md) to follow one run or a
@@ -35,11 +37,11 @@ complete public surface.
 
 ## Package entry points
 
-| Import | Use it for |
-| --- | --- |
-| `@stacklok-oss/mecatl-sdk` | Browser HTTP and SSE connections, injected transports, and transport-neutral types. |
-| `@stacklok-oss/mecatl-sdk/node` | Node.js and Bun gRPC connections, local daemons, one-shot queries, filesystem media helpers, and callback tools. |
-| `@stacklok-oss/mecatl-sdk/gen` | Generated protobuf-es messages and service descriptors for low-level calls and typed namespace requests. |
+|Import|Use it for|
+|-|-|
+|`@stacklok-oss/mecatl-sdk`|Browser HTTP and SSE connections, injected transports, and transport-neutral types.|
+|`@stacklok-oss/mecatl-sdk/node`|Node.js and Bun gRPC connections, local daemons, one-shot queries, filesystem media helpers, and callback tools.|
+|`@stacklok-oss/mecatl-sdk/gen`|Generated protobuf-es messages and service descriptors for low-level calls and typed namespace requests.|
 
 ## Related information
 

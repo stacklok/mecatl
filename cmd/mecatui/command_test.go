@@ -49,9 +49,6 @@ func TestResolveLocalWordIsUnknownCommand(t *testing.T) {
 	if !strings.Contains(res.err.Error(), "local") {
 		t.Errorf("error %q does not name the unknown command", res.err)
 	}
-	if !strings.Contains(res.err.Error(), "connect") {
-		t.Errorf("error %q does not name the available 'connect' command", res.err)
-	}
 }
 
 func TestResolveConnectStripsCommandWordAndAddress(t *testing.T) {
@@ -317,9 +314,6 @@ func TestResolveUnknownCommandFailsClosed(t *testing.T) {
 	if !strings.Contains(res.err.Error(), "loal") {
 		t.Errorf("error %q does not name the unknown command", res.err)
 	}
-	if !strings.Contains(res.err.Error(), "Available commands:") {
-		t.Errorf("error %q does not list available commands", res.err)
-	}
 }
 
 // TestResolveLoginCommands pins the split login grammar: the top-level login is
@@ -343,12 +337,18 @@ func TestResolveLoginCommands(t *testing.T) {
 	if got := resolveInvocation([]string{"mecatui", "logout", "--issuer=x"}); got.err == nil {
 		t.Fatal("logout with a flag-first address must fail closed")
 	}
-	llm := resolveInvocation([]string{"mecatui", "llm", "login", "--skip-browser"})
-	if llm.err != nil || llm.mode != modeLogin || len(llm.remaining) != 1 || llm.remaining[0] != "--skip-browser" {
-		t.Fatalf("llm login resolution = %+v", llm)
+	providers := resolveInvocation([]string{"mecatui", "providers", "login", "toolhive"})
+	if providers.err != nil || providers.mode != modeProviderCredential {
+		t.Fatalf("provider API-key lifecycle command did not resolve, got %+v", providers)
 	}
-	if got := resolveInvocation([]string{"mecatui", "llm"}); got.err == nil || !strings.Contains(got.err.Error(), "llm login") {
-		t.Fatalf("bare llm must fail with llm-login usage, got %+v", got)
+	if got := resolveInvocation([]string{"mecatui", "providers", "login", "custom", "--no-browser"}); got.err != nil || got.mode != modeProviderCredential || got.providerName != "custom" || len(got.remaining) != 1 || got.remaining[0] != "--no-browser" {
+		t.Fatalf("provider OIDC login resolution = %+v", got)
+	}
+	if got := resolveInvocation([]string{"mecatui", "providers", "login", "custom", "--skip-browser"}); got.err == nil {
+		t.Fatal("provider login must reject non-provider --no-browser aliases")
+	}
+	if got := resolveInvocation([]string{"mecatui", "llm"}); got.err == nil {
+		t.Fatalf("legacy llm command must fail, got %+v", got)
 	}
 	if got := resolveInvocation([]string{"mecatui", "mcp", "login"}); got.err == nil {
 		t.Fatal("mcp login must remain unknown")
@@ -428,14 +428,14 @@ func TestMecatuiAuthFileOnlyParse(t *testing.T) {
 		t.Fatalf("parse: %v", err)
 	}
 	if cfg.anthropicKey != "sk-ant-file-only" {
-		t.Errorf("anthropic key = %q, want auth-file credential", cfg.anthropicKey)
+		t.Errorf("anthropic key = %q, want api-key-file credential", cfg.anthropicKey)
 	}
 	if err := cfg.validate(); err != nil {
-		t.Fatalf("validate auth-file credential: %v", err)
+		t.Fatalf("validate api-key-file credential: %v", err)
 	}
 	embedded := embeddedConfig(cfg, nil)
 	if embedded.AnthropicKey != cfg.anthropicKey {
-		t.Errorf("embedded AnthropicKey = %q, want resolved auth-file credential", embedded.AnthropicKey)
+		t.Errorf("embedded AnthropicKey = %q, want resolved api-key-file credential", embedded.AnthropicKey)
 	}
 	if cfg.providerKeys.AuthFileWarning != "" {
 		t.Errorf("valid auth file warning = %q", cfg.providerKeys.AuthFileWarning)
@@ -449,7 +449,7 @@ func TestMecatuiExplicitAuthFileWarningSurvivesValidation(t *testing.T) {
 	t.Setenv("OPENCODE_API_KEY", "")
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	missing := filepath.Join(t.TempDir(), "missing-auth.yaml")
-	_, cfg, err := parseTransportFlags(modeLocal, io.Discard, []string{"--workspace", "/abs", "--auth-file", missing, "--toolhive-llm=false"})
+	_, cfg, err := parseTransportFlags(modeLocal, io.Discard, []string{"--workspace", "/abs", "--api-key-file", missing, "--toolhive-llm=false"})
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -467,7 +467,7 @@ func TestRunPrintsExplicitAuthFileWarningBeforeProviderValidation(t *testing.T) 
 	}
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	missing := filepath.Join(t.TempDir(), "missing-auth.yaml")
-	args := []string{"mecatui", "--workspace", t.TempDir(), "--auth-file", missing, "--toolhive-llm=false"}
+	args := []string{"mecatui", "--workspace", t.TempDir(), "--api-key-file", missing, "--toolhive-llm=false"}
 
 	_, cfg, err := parseTransportFlags(modeLocal, io.Discard, args[1:])
 	if err != nil {
@@ -520,7 +520,7 @@ func TestMecatuiInvalidAuthFileWarningSurvivesValidation(t *testing.T) {
 	if err := os.WriteFile(path, []byte("providers:\n  openai:\n    wrong: not-a-key\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, cfg, err := parseTransportFlags(modeLocal, io.Discard, []string{"--workspace", "/abs", "--auth-file", path})
+	_, cfg, err := parseTransportFlags(modeLocal, io.Discard, []string{"--workspace", "/abs", "--api-key-file", path})
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -539,7 +539,7 @@ func TestMecatuiUnreadableAuthFileWarningSurvivesValidation(t *testing.T) {
 	if err := os.Mkdir(path, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	_, cfg, err := parseTransportFlags(modeLocal, io.Discard, []string{"--workspace", "/abs", "--auth-file", path})
+	_, cfg, err := parseTransportFlags(modeLocal, io.Discard, []string{"--workspace", "/abs", "--api-key-file", path})
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -597,7 +597,7 @@ func TestMecatuiConventionalMissingAuthFileWarnsWithoutProvider(t *testing.T) {
 func TestRejectEmbeddedOnlyFlagsInConnect(t *testing.T) {
 	embeddedOnly := []string{
 		"mock", "no-shell", "trust-project", "yolo", "posture",
-		"openai-base-url", "openrouter-base-url", "anthropic-base-url", "opencode-base-url", "auth-file",
+		"openai-base-url", "openrouter-base-url", "anthropic-base-url", "opencode-base-url", "api-key-file",
 		"toolhive-llm", "toolhive-llm-base-url",
 		"model", "default-provider", "default-model", "subagent-model",
 		"model-alias", "model-slot", "subagent-model-router",
@@ -1024,7 +1024,7 @@ func TestCommandSummaryUsesIndentedWrappedDescriptions(t *testing.T) {
 		"  debug TARGET [flags]\n    diagnose by an exact session ID or displayed 12-column short handle; exact\n    identity wins, a unique handle resolves automatically, and ambiguity asks\n    for the full exact ID\n",
 		"  connect ADDRESS [sessions | debug TARGET] [flags]\n    dial a running mecated at ADDRESS (host:port), optionally browsing or\n    debugging a stored session\n",
 		"  login ADDRESS\n    log in to a remote mecated at ADDRESS using OIDC\n",
-		"  llm <config|login|status|logout> [args]\n    configure and manage native LLM endpoints; native login accepts\n    --no-browser, while endpoint 'toolhive' retains --skip-browser\n",
+		"  providers [command]\n    inspect and manage embedded provider configuration and locally managed\n    credentials\n",
 	} {
 		if !strings.Contains(summary, want) {
 			t.Errorf("command summary missing indented, wrapped description %q:\n%s", want, summary)
@@ -1034,8 +1034,8 @@ func TestCommandSummaryUsesIndentedWrappedDescriptions(t *testing.T) {
 		t.Errorf("command summary put the connect description on its synopsis line:\n%s", summary)
 	}
 	unknown := unknownCommandError("unknown").Error()
-	if !strings.Contains(unknown, "  connect ADDRESS [sessions | debug TARGET] [flags]\n    dial a running mecated at ADDRESS (host:port), optionally browsing or\n    debugging a stored session\n") {
-		t.Errorf("unknown-command output did not reuse the indented, wrapped command summary:\n%s", unknown)
+	if unknown != `unknown command "unknown"` {
+		t.Errorf("unknown-command error = %q, want concise command name only", unknown)
 	}
 	for _, line := range strings.Split(strings.TrimSuffix(summary, "\n"), "\n") {
 		if len(line) > 80 {
@@ -1341,13 +1341,10 @@ func TestUsageErrorTrailerMarkers(t *testing.T) {
 	}
 }
 
-// TestUnknownCommandErrorListsCatalogHelpRoutes ensures unknown-command guidance
-// stays derived from the same catalog as resolution and top-level help.
-func TestUnknownCommandErrorListsCatalogHelpRoutes(t *testing.T) {
-	err := unknownCommandError("local")
-	for _, command := range topLevelCommands {
-		if !strings.Contains(err.Error(), "mecatui "+command.name+" --help") {
-			t.Errorf("unknown-command error missing %q help route: %v", command.name, err)
-		}
+// TestUnknownCommandErrorIsConcise keeps the resolver error separate from the one
+// top-level help trailer rendered by main.
+func TestUnknownCommandErrorIsConcise(t *testing.T) {
+	if got, want := unknownCommandError("local").Error(), `unknown command "local"`; got != want {
+		t.Errorf("unknown-command error = %q, want %q", got, want)
 	}
 }

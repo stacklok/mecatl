@@ -119,6 +119,7 @@ PR after verification. There is no cleanup or status-only PR.
   plan/interface review before autonomous implementation, with exact interface
   declarations, run-local orchestration state, and a final human code-review gate.
   Status: landed in this Combined candidate; authoritative on merge.
+- [Mecatui unified Agents overlay fit](mecatui-unified-agents-overlay-fit.md) — aligns every F6 selectable roster with the Sessions picker’s unbordered selection treatment and bounds every Agents-overlay subview to its offered viewport, with reachable overflow and compact short-terminal fallback. Status: proposed.
 - [Mecatui live-feed reconnect](mecatui-live-reconnect.md) — regression closure for bearer-backed first-Recv authentication rejection, existing `/connect` recovery, cross-loop reconnect continuity/backoff, and real-event recovery without weakening generation, cancellation, or catch-up invariants. Status: landed.
 - [Mecatui broker polling liveness](mecatui-broker-polling-liveness.md) — restores automatic lazy MCP-authorization polling after a pending control event and bounds every workspace-enrollment attempt so broker consent cannot remain client-busy forever. Status: landed in this Combined candidate; authoritative on merge.
 - [Mecatui double-Escape draft clearing](mecatui-double-escape.md) — a fail-closed,
@@ -170,7 +171,7 @@ PR after verification. There is no cleanup or status-only PR.
   strict/lenient contracts, frontmatter parsing, and standalone engine closure.
   Status: draft.
 - [OpenAI Responses multiple visible text parts](openai-multiple-text-parts.md) — accept every ordered visible text delta from distinct Responses item/content identities through the existing `ChunkText`/`Message.Text` path, without changing phase, reasoning, tool-call, or post-visibility no-replay behavior. Status: landed.
-- [Mecatui local provider setup](mecatui-local-provider-setup.md) — proposed guided local API-key enrollment, passive provider status, separately confirmed model-default selection, and outcome-typed partial-commit persistence without changing existing credential precedence or native/ToolHive custody. Status: proposed.
+- [Mecatui local provider setup](mecatui-local-provider-setup.md) — bounded follow-up to the merged unified-provider commands: custody-aware key entry/reuse, truthful passive status, manual Codex/default resolution, and shared portable-writer regression coverage. Replaces the superseded prototype proposal. Status: proposed.
 - [Operator-defined LLM providers](operator-defined-llm-providers.md) — operator-local,
   truthfully named gateway providers over the existing Responses, Chat Completions, and
   Anthropic Messages adapters, plus persistent built-in endpoint overrides. Status: draft.
@@ -297,6 +298,8 @@ PR after verification. There is no cleanup or status-only PR.
 - [Canonical Shell command tool](canonical-shell-command-tool.md) — canonical `Shell`
   and `ShellStatus` model-facing names, safe legacy `Bash` input normalization, and
   parser-backed portable-POSIX feedback for model-facing shell commands. Status: proposed.
+
+- [Unified provider configuration and Mecatui provider commands](unified-provider-configuration-and-mecatui-provider-commands.md) — replace the `llm.endpoints` facade and `mecatui llm` surface with one provider model, bounded OIDC configuration, portable local setup, and comprehensive provider help. Status: proposed.
 
 ## See also
 

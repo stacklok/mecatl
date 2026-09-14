@@ -72,6 +72,12 @@ tasks:
     cmds:
       - npm run typecheck
 
+  format:
+    desc: Format ../user-docs with prettier
+    deps: [install]
+    cmds:
+      - npm run format
+
   clear:
     desc: Clear the Docusaurus cache (.docusaurus/ and build/)
     cmds:
