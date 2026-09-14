@@ -8,26 +8,37 @@ description:
 
 # See it in 60 seconds
 
-`mecademo` runs three scenarios against a scripted offline provider: the core
-agent loop, a two-member agent team, and a background subagent. It needs no
-network connection or API key. To inspect the engine wiring, see
-[`cmd/mecademo/demo.go`](https://github.com/stacklok/mecatl/blob/main/cmd/mecademo/demo.go).
+Run `mecademo` to see the agent loop, a two-member team, and a background
+subagent. The demo uses a scripted model provider, so it needs no API key or
+network connection.
 
 ## Prerequisites
 
-- **Go 1.27 or newer** (the `go` directive in `go.mod` sets this minimum
-  version)
-- The repo cloned locally:
+You need Go 1.27 or later and a local clone of the Mecatl repository:
 
-  ```sh
-  git clone https://github.com/stacklok/mecatl
-  cd mecatl
-  ```
+```sh
+git clone https://github.com/stacklok/mecatl
+cd mecatl
+```
 
-## Act 1 — the core loop
+## Run the demo
 
-```text
-$ go run ./cmd/mecademo
+From the repository root, run:
+
+```sh
+go run ./cmd/mecademo
+```
+
+The command runs three scenarios in sequence.
+
+### Core agent loop
+
+The first scenario shows every event in a three-turn agent loop. It reads a
+file, pauses for approval before writing another file, and returns a final
+response. The highlighted lines show the tool calls, approval round trip, and
+terminal result.
+
+```text {10-11,15-18,22-23}
 === mecatl demo (offline / mockllm) ===
 Driving a real agent.Engine: auto-allowed tool call -> permission ask + approval -> final result.
 guardrails: OFF (no checker model configured; bind the `guardrail` model slot or set --guardrails-model to enable)
@@ -53,31 +64,24 @@ guardrails: OFF (no checker model configured; bind the `guardrail` model slot or
       usage: in=4100 out=125 cacheRead=3600 cacheWrite=0 cacheHitRate=0.88
 ```
 
-## What each event means
+Read the trace as a sequence of provider turns and tool interactions:
 
-|Event|What it represents|
+|Events|What happens|
 |-|-|
-|`session.init`|Once, before the first turn — the run has started and the session is initialised.|
-|`user_prompt`|The user message has been recorded into the session history.|
-|`turn.start`|A new model call begins. `turn=N` increments each time the loop calls the provider.|
-|`message.delta`|Streamed assistant text for this turn. In production this arrives incrementally.|
-|`turn.end`|The model finished streaming this turn (text + any tool calls received).|
-|`tool.call`|The model requested a tool, with the raw JSON `args` it supplied.|
-|`tool.result`|The tool's output. `error=false` means it ran cleanly; the result text is what gets fed back to the model.|
-|`permission.ask`|The loop paused for client approval. Carries the tool name, proposed args, and a human-readable `reason`. The demo immediately calls `run.Approve(askID, true)`. Over HTTP this is `POST /v1/sessions/{id}/approve`.|
-|`approval`|The verdict has been received and recorded (allow once, allow always, or deny).|
-|`result`|Terminal event. `stop` is the reason (`end_turn`, `max_turns`, `cancelled`, …), followed by the final assistant text and cumulative token usage. `cacheHitRate` is `cacheRead / inputTokens`.|
+|`session.init`, `user_prompt`|The run starts and records the prompt in session history.|
+|`turn.start`, `message.delta`, `turn.end`|The provider streams one turn. Each tool result starts another provider turn.|
+|`tool.call`, `tool.result`|The model requests a tool, and the loop returns the tool's output to the model.|
+|`permission.ask`, `approval`|The write pauses until the demo client approves it.|
+|`result`|The run ends with the final response, stop reason, and cumulative usage.|
 
-The `permission.ask` and approval events are the key integration point. Your
-client decides whether to allow or deny each request. In a live deployment, you
-can present the request to a person or route it through your policy layer.
+A production client can present a permission request to a person or resolve it
+through a policy layer.
 
-## Act 2 — agent team
+### Agent team
 
-The second act runs a two-member team with a lead and a worker. The worker
-records a finding, and the lead turns it into the team's final report.
+The second scenario assigns work to a lead and a worker:
 
-```text
+```text {4-6}
 === mecatl team demo (offline) ===
 A lead + worker coordinate; the worker records a finding; the lead synthesises the consolidated report.
 
@@ -86,93 +90,67 @@ team finished in 2 round(s); quiescent=true
 Consolidated report: the worker confirmed greeting.txt reads cleanly; nothing to fix.
 ```
 
-The report is the lead's synthesis, not a concatenation of member outputs. See
-[Subagents & teams](/building/what-you-get/subagents-teams-parallel.md) for how
-teams work.
+The worker records a finding, and the lead turns it into the final report.
 
-:::note
+### Background subagent
 
-This example only works offline. It will be disabled if you configure a live LLM
-backend.
+The final scenario starts a child agent in the background. The `Subagent` call
+returns immediately with the child's ID, so the parent can continue before it
+waits for the child and collects the result with `SubagentStatus`.
 
-:::
+The excerpt shortens long result bodies with `...` and omits repeated
+turn-boundary events.
 
-## Act 3 — background subagent
-
-The third act starts a child with `background: true`. The parent receives an
-immediate start result, waits with `SubagentStatus`, and collects the result
-after the child finishes.
-
-```text
-=== mecatl background subagent demo (offline) ===
-A subagent runs in the background; the harness notice lands at the next turn boundary; SubagentStatus collects the result.
-
-[001] turn=0 session.init
-[002] turn=0 user_prompt
-[003] turn=0 turn.start
-[004] turn=0 message.delta  text="I'll start a background subagent to verify the greeting while I keep this turn."
-[005] turn=0 turn.end
+```text {1-3,5-6,8-10}
 [006] turn=0 tool.call      tool=Subagent args={"prompt":"verify the greeting file in the background","background":true}
 [007] turn=0 subagent.start child=subagent-demo-background-session-call-bg-1 background=true goal="verify the greeting file in the background"
-[008] turn=0 tool.result    error=false result="agentId: subagent-demo-background-session-call-bg-1 ⏎  ⏎ subagent started in the background. ..."
-[009] turn=1 turn.start
-[010] turn=1 message.delta  text="Waiting for the background subagent to finish."
-[011] turn=1 turn.end
+[008] turn=0 tool.result    error=false result="agentId: subagent-demo-background-session-call-bg-1 ... subagent started in the background. ..."
+[...]
 [012] turn=1 tool.call      tool=SubagentStatus args={"wait_ms":30000}
-[013] turn=0 subagent.tool
-[014] turn=0 subagent.tool
 [015] turn=0 subagent.end   child=subagent-demo-background-session-call-bg-1 stop=end_turn
-[016] turn=1 tool.result    error=false result="Subagents of this run (1): ⏎ - subagent-demo-background-session-call-bg-1 [subagent, background] done (end_turn) — result ready; collect it with agent_id"
+[...]
 [017] turn=2 user_prompt
-[018] turn=2 turn.start
-[019] turn=2 message.delta  text="The harness notice says it finished — collecting its result."
-[020] turn=2 turn.end
 [021] turn=2 tool.call      tool=SubagentStatus args={"agent_id":"subagent-demo-background-session-call-bg-1"}
-[022] turn=2 tool.result    error=false result="agentId: subagent-demo-background-session-call-bg-1 ⏎  ⏎ Background check complete: greeting.txt is intact and well-formed."
-[023] turn=3 turn.start
-[024] turn=3 message.delta  text="Done: the background subagent verified the greeting and I collected its result."
-[025] turn=3 turn.end
-[026] turn=0 result         stop=end_turn text="Done: the background subagent verified the greeting and I collected its result."
-      usage: in=0 out=0 cacheRead=0 cacheWrite=0 cacheHitRate=0.00
---- harness notice(s) injected into the model's history at the turn boundary ---
-[harness note: 1 background subagent(s) finished: subagent-demo-background-session-call-bg-1 (end_turn). Collect each result with SubagentStatus before relying on it.]
+[022] turn=2 tool.result    error=false result="agentId: subagent-demo-background-session-call-bg-1 ... Background check complete: greeting.txt is intact and well-formed."
 ```
 
-The `user_prompt` at event 017 is the harness notice — a recorded user-role
-message the model sees at the next turn boundary. It is not a user keystroke; it
-is the mechanism by which the loop informs the model that a background child
-finished.
+The `user_prompt` at event 017 is a harness-generated completion notice in the
+model's history. It tells the parent that the background child has finished so
+the parent can collect the result with `SubagentStatus`.
 
-:::note
+You have now run the agent loop, an agent team, and a background subagent
+without configuring a model provider.
 
-This example only works offline. It will be disabled if you configure a live LLM
-backend.
+## Run the demo with OpenAI
 
-:::
-
-## Run it live (optional)
-
-Drive the same scenario against a real model:
+After completing the offline demo, you can run its core-loop scenario against
+the OpenAI Responses API:
 
 ```sh
-export OPENAI_API_KEY=sk-...
+export OPENAI_API_KEY='<OPENAI_API_KEY>'
 go run ./cmd/mecademo --openai --model gpt-5
 ```
 
-|Flag|Default|Meaning|
+|Flag|Default|Description|
 |-|-|-|
-|`--openai`|`false`|Use the live OpenAI Responses API (reads `OPENAI_API_KEY`)|
-|`--model`|`mock-model`|Model identifier when `--openai` is set|
-|`--openai-base-url`|`""`|Override the OpenAI API base URL (any OpenAI-compatible endpoint)|
+|`--openai`|`false`|Use the OpenAI Responses API with `OPENAI_API_KEY`.|
+|`--model`|`mock-model`|Set the model ID used with `--openai`.|
+|`--openai-base-url`|`""`|Use an OpenAI-compatible API endpoint.|
 
-Without `--openai` the demo is fully offline. With `--openai` and no key set, it
-exits immediately with an error.
-
-Currently only OpenAI and a mock model are supported in the demo.
+The team and background-subagent scenarios use the scripted provider and do not
+run when you enable the live provider. A live request may incur provider
+charges.
 
 ## Next steps
 
-- [Deployment decision](./deployment-decision.md) — how to pick the right
-  deployment topology for your use case
-- [The agent loop](/building/what-you-get/agent-loop.md) — how the loop, ports,
-  and event types fit together
+- [Build your first agent](./first-agent.md) to embed the engine in a Go
+  application.
+- [Choose how to run Mecatl](./deployment-decision.md) to select a deployment
+  topology.
+- [Explore the agent loop](/building/what-you-get/agent-loop.md) to understand
+  the events and control flow shown by the demo.
+
+## Related information
+
+- [Subagents, teams, and parallel work](/building/what-you-get/subagents-teams-parallel.md)
+- [`mecademo` source](https://github.com/stacklok/mecatl/blob/main/cmd/mecademo/demo.go)
