@@ -25,9 +25,10 @@ type SessionSnapshot struct {
 	TitleProvenance string
 	TitleRevision   uint64
 	// Capabilities is the server's feature-advertisement snapshot from the Session
-	// proto (the SAME value CreateSessionResponse carries). A client that reloads
-	// or switches to a persisted session (continue, /effort fork, /clear successor)
-	// reads this to re-derive its affordances. An older server (nil field) yields
+	// proto (the SAME global value CreateSessionResponse carries), with per-session
+	// media overlaid when SessionCapabilities is present. A client that reloads or
+	// switches to a persisted session (continue, /effort fork, /clear successor)
+	// reads this to re-derive its affordances. An older server (nil fields) yields
 	// the zero value, which the consumer treats as "keep current caps".
 	Capabilities Capabilities
 }
@@ -45,7 +46,7 @@ func snapshotFrom(s *mecatlv1.Session) SessionSnapshot {
 		Title:           titleFromProto(s),
 		TitleProvenance: titleProvenanceFromProto(s),
 		TitleRevision:   s.GetTitleMetadata().GetRevision(),
-		Capabilities:    capabilitiesFrom(s.GetCapabilities()),
+		Capabilities:    capabilitiesWithSessionMedia(s.GetCapabilities(), s.GetSessionCapabilities()),
 	}
 }
 
@@ -115,11 +116,13 @@ func (c *Client) SetMode(ctx context.Context, id, mode string) (string, error) {
 // set-once in submitPrompt only seeds from a prompt the user typed HERE). The
 // reducer adopts it only when the local sessionTitle is still empty (set-once).
 //
-// Capabilities carries the server's feature-advertisement snapshot from the
-// Session proto (issue #348). It arrives on the SAME GetSession refetch so the
-// caps-heal path (/sessions continue, /effort fork) can re-derive affordances in
-// one round-trip. A zero value means an older server (field absent) — the reducer
-// keeps the current caps untouched (fail-conservative).
+// Capabilities carries the server's global feature-advertisement snapshot with
+// per-session media overlaid when SessionCapabilities was present (issue #348).
+// It arrives on the SAME GetSession refetch so the caps-heal path (/sessions
+// continue, /effort fork) can re-derive affordances in one round-trip. A zero
+// value means an older server omitted both fields; the reducer keeps current caps
+// untouched. SessionMediaPresent distinguishes an explicit text-only media
+// snapshot from that older-server absence.
 type ResolvedModelMsg struct {
 	SessionID string
 	Resolved  ResolvedModel

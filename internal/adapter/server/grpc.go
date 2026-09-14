@@ -198,7 +198,7 @@ func (h *HarnessServer) GetSession(ctx context.Context, req *mecatlv1.GetSession
 	if err != nil {
 		return nil, toStatus(err)
 	}
-	proto := toProtoSession(sess, h.svc.ResolvedModel(sess.ID), h.svc.capabilitiesFor(ctx))
+	proto := toProtoSession(sess, h.svc.ResolvedModel(sess.ID), h.svc.capabilitiesFor(ctx), h.svc.sessionCapabilitiesFor(sess))
 	// Lazy display-time fallback: a session whose snapshot Title was never seeded
 	// (or is empty) gets a derived label so GetSession shows one without a
 	// write-on-read — sess.Title is NOT mutated.
@@ -238,7 +238,7 @@ func (h *HarnessServer) SetMode(ctx context.Context, req *mecatlv1.SetModeReques
 	if err != nil {
 		return nil, toStatus(err)
 	}
-	return &mecatlv1.SetModeResponse{Session: toProtoSession(sess, h.svc.ResolvedModel(sess.ID), h.svc.capabilitiesFor(ctx))}, nil
+	return &mecatlv1.SetModeResponse{Session: toProtoSession(sess, h.svc.ResolvedModel(sess.ID), h.svc.capabilitiesFor(ctx), h.svc.sessionCapabilitiesFor(sess))}, nil
 }
 
 // CloseSession ends a session and releases its server-side resources. It returns
@@ -270,7 +270,7 @@ func (h *HarnessServer) RenameSession(ctx context.Context, req *mecatlv1.RenameS
 	if err != nil {
 		return nil, toStatus(err)
 	}
-	return &mecatlv1.RenameSessionResponse{Session: toProtoSession(sess, h.svc.ResolvedModel(sess.ID), h.svc.capabilitiesFor(ctx))}, nil
+	return &mecatlv1.RenameSessionResponse{Session: toProtoSession(sess, h.svc.ResolvedModel(sess.ID), h.svc.capabilitiesFor(ctx), h.svc.sessionCapabilitiesFor(sess))}, nil
 }
 
 // DeleteSession physically removes an idle main session and store-managed sidecars.

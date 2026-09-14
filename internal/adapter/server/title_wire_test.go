@@ -9,6 +9,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 )
 
@@ -37,7 +38,7 @@ func TestSessionTitleGeneration_Scenario2_TitleMetadataRoundTrip(t *testing.T) {
 	}
 	s.RecordTokenUsage(session.UsageKindSessionTitle, "provider", "model", session.Usage{InputTokens: 3, OutputTokens: 2})
 
-	got := toProtoSession(s, ResolvedModel{}, nil)
+	got := toProtoSession(s, ResolvedModel{}, nil, port.ProviderCapabilities{})
 	meta := got.GetTitleMetadata()
 	if meta.GetTitle() != "First prompt" || meta.GetProvenance() != "first-prompt" || meta.GetGenerationState() != "pending" {
 		t.Fatalf("title metadata = %#v", meta)
@@ -109,7 +110,7 @@ func TestSessionTitleGeneration_Scenario5_TokenUsageRoundTripAndProjection(t *te
 		s.RecordTokenUsage(session.UsageKindSessionTitle, "provider", "model", session.Usage{InputTokens: i})
 	}
 
-	usage := toProtoSession(s, ResolvedModel{}, nil).GetTokenUsage()["session_title"]
+	usage := toProtoSession(s, ResolvedModel{}, nil, port.ProviderCapabilities{}).GetTokenUsage()["session_title"]
 	if got := usage.GetTotal(); got.GetInputTokens() != 136 || usage.GetModels()["provider/model"].GetInputTokens() != 136 {
 		t.Fatalf("canonical aggregated usage = %#v", usage)
 	}

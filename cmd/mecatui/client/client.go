@@ -467,7 +467,7 @@ func (c *Client) createSession(ctx context.Context, req *mecatlv1.CreateSessionR
 	if err != nil {
 		return "", Capabilities{}, ResolvedModel{}, fmt.Errorf("create session: %w", err)
 	}
-	return resp.GetSessionId(), capabilitiesFrom(resp.GetCapabilities()), resolvedModelFrom(resp.GetResolvedModel()), nil
+	return resp.GetSessionId(), capabilitiesWithSessionMedia(resp.GetCapabilities(), resp.GetSessionCapabilities()), resolvedModelFrom(resp.GetResolvedModel()), nil
 }
 
 // ClearSession creates an empty-history successor. A nil selector inherits the

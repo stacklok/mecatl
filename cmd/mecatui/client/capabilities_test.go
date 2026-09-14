@@ -6,6 +6,19 @@ import (
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 )
 
+func TestCapabilitiesWithSessionMedia(t *testing.T) {
+	global := &mecatlv1.ServerCapabilities{Image: true, Audio: true, Teams: true}
+
+	overlaid := capabilitiesWithSessionMedia(global, &mecatlv1.SessionCapabilities{})
+	if overlaid.Image || overlaid.Audio || !overlaid.Teams || !overlaid.SessionMediaPresent {
+		t.Fatalf("explicit text-only session capabilities = %+v", overlaid)
+	}
+	fallback := capabilitiesWithSessionMedia(global, nil)
+	if !fallback.Image || !fallback.Audio || !fallback.Teams || fallback.SessionMediaPresent {
+		t.Fatalf("older-server fallback capabilities = %+v", fallback)
+	}
+}
+
 // TestCapabilitiesFrom covers the proto→plain translation, including the nil
 // (older-server) case that MUST degrade to the all-false zero value rather than
 // panic — the backward-compat guarantee.

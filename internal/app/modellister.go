@@ -195,9 +195,8 @@ var _ modelSwapper = (*server.Service)(nil)
 // intersection consume: nothing provider-private, no key, no URL. It NEVER leaves
 // internal/app (the server adapter receives only []*mecatlv1.ModelInfo).
 //
-// InputModalities is the authoritative modality list for THIS model — the single
-// source the image capability is derived from (via hasImageModality), so a live
-// model and an embedded model are tested by the SAME predicate.
+// InputModalities is nil when the source omitted modality metadata. A non-nil
+// slice is authoritative, including an explicitly empty/text-only declaration.
 type modelEntry struct {
 	ID              string
 	DisplayName     string
@@ -267,12 +266,14 @@ func (l openAICodexLister) ListModels(ctx context.Context) ([]modelEntry, error)
 	out := make([]modelEntry, 0, len(raw))
 	for _, m := range raw {
 		entry := modelEntry{
-			ID:              m.ID,
-			DisplayName:     m.DisplayName,
-			ContextLimit:    m.ContextLimit,
-			InputModalities: append([]string(nil), m.InputModalities...),
-			Reasoning:       m.Reasoning,
-			ToolCall:        m.ToolCall,
+			ID:           m.ID,
+			DisplayName:  m.DisplayName,
+			ContextLimit: m.ContextLimit,
+			Reasoning:    m.Reasoning,
+			ToolCall:     m.ToolCall,
+		}
+		if m.InputModalitiesKnown {
+			entry.InputModalities = append([]string{}, m.InputModalities...)
 		}
 		catalog, catalogued := metadata[m.ID]
 		if entry.DisplayName == "" && catalogued {
@@ -348,9 +349,9 @@ func (l anthropicLister) ListModels(ctx context.Context) ([]modelEntry, error) {
 	}
 	out := make([]modelEntry, 0, len(raw))
 	for _, m := range raw {
-		var mods []string
+		mods := []string{"text"}
 		if m.Image {
-			mods = []string{"image"} // feed the SHARED hasImageModality predicate
+			mods = append(mods, "image") // feed the SHARED hasImageModality predicate
 		}
 		out = append(out, modelEntry{
 			ID:              m.ID,
@@ -396,10 +397,11 @@ func (l gatewayLister) ListModels(ctx context.Context) ([]modelEntry, error) {
 			// lesson: an over-permissive local flag fails safe via the
 			// provider's own 4xx, never a silent wrong local guess).
 			ToolCall: true,
-			// Reasoning stays false and InputModalities stays nil (image=false,
-			// conservative): the generic OpenAI-shaped /v1/models envelope
-			// carries no modality/reasoning metadata. An absent context_window
-			// decodes to 0, so the resolver falls back to the catalog then 128k.
+			// The generic OpenAI-shaped /v1/models envelope carries no
+			// modality/reasoning metadata. Keep InputModalities nil: omitted
+			// metadata is unknown, so resolution falls through to the exact
+			// catalog row and then adapter caps. An absent context_window decodes
+			// to 0, so that resolver similarly falls back to catalog then 128k.
 		})
 	}
 	return out, nil
@@ -410,16 +412,11 @@ func (l gatewayLister) ListModels(ctx context.Context) ([]modelEntry, error) {
 // static input modalities (text+image) rather than leaving them nil.
 //
 // Why: OpenCode Go's /models envelope carries no modality metadata, so a raw
-// gatewayLister row has InputModalities==nil. modelCapability treats a PRESENT
-// live row as authoritative, so nil would FLIP an uncatalogued model's Image from
-// the adapter-static default (true) to false the instant a live refresh lands —
-// contradicting the documented "uncatalogued → adapter static caps" fallback and
-// making the picker/session echo diverge before vs after the refresh. Stamping the
-// adapter modalities resolves the unknown-metadata case to that documented
-// fallback STABLY (no flip), and the picker (projectModelEntry) + the session echo
-// (modelCapability) agree for free since both read this same modelEntry. (ToolHive
-// keeps the conservative nil-modality gatewayLister — a separate, deliberate
-// choice, unchanged.)
+// gatewayLister row has InputModalities==nil, which now means unknown and falls
+// through to the exact catalog row then adapter caps. OpenCode still stamps the
+// adapter modalities explicitly so its picker rows report that documented static
+// capability directly; the session echo reaches the same result through fallback.
+// (ToolHive keeps the nil-modality gatewayLister and therefore uses fallback.)
 type openCodeLister struct {
 	inner *openaicompat.Lister
 }
@@ -489,7 +486,7 @@ func embeddedModels(providerID string) []modelEntry {
 			DisplayName:     m.Name(),
 			ContextLimit:    m.ContextLimit(),
 			OutputLimit:     m.OutputLimit(),
-			InputModalities: m.InputModalities(),
+			InputModalities: append([]string{}, m.InputModalities()...),
 			Reasoning:       m.SupportsReasoning(),
 			ToolCall:        m.SupportsToolCall(),
 			// Thinking stays zero (Known=false): the embedded catalog has no thinking-
@@ -536,11 +533,15 @@ func projectModelEntry(reg *providerRegistry, providerID string, m modelEntry) *
 			contextLimit = defaultContextWindowTokens
 		}
 	}
+	image := modelCapability(reg, providerID, m.ID).Image
+	if m.InputModalities != nil {
+		image = modelAdapterCaps(reg, providerID).Image && hasImageModality(m.InputModalities)
+	}
 	return &mecatlv1.ModelInfo{
 		Id:           m.ID,
 		ProviderId:   providerID,
 		DisplayName:  name,
-		Image:        modelAdapterCaps(reg, providerID).Image && hasImageModality(m.InputModalities),
+		Image:        image,
 		Reasoning:    m.Reasoning,
 		ContextLimit: int64(contextLimit),
 	}

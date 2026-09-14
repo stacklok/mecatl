@@ -419,6 +419,9 @@ type sessionResp struct {
 	Placement *placementMetadataJSON `json:"placement,omitempty"`
 	Turns     int                    `json:"turns"`
 	ToolCalls int                    `json:"tool_calls"`
+	// SessionCapabilities mirrors the per-session media capability carried by the
+	// create and gRPC snapshot surfaces. Global feature bits remain on capabilities.
+	SessionCapabilities *sessionCapabilitiesJSON `json:"session_capabilities,omitempty"`
 	// Title is the human-readable session label (snapshot Title, or the lazy
 	// deriveTitle fallback when the snapshot Title is empty). Omitted via
 	// omitempty only when both are empty (no genuine prompt).
@@ -626,7 +629,7 @@ func (h *HTTPHandler) createSession(w http.ResponseWriter, r *http.Request) {
 		writeServiceError(w, err)
 		return
 	}
-	scaps := h.svc.SessionCapabilities(sess.ID)
+	scaps := h.svc.sessionCapabilitiesFor(sess)
 	writeJSON(w, http.StatusCreated, createSessionResp{
 		SessionID:           string(sess.ID),
 		Capabilities:        capabilitiesJSON(h.svc.capabilitiesFor(r.Context())),
@@ -756,20 +759,22 @@ func (h *HTTPHandler) writeSession(w http.ResponseWriter, status int, sess *sess
 		// Lazy display-time fallback (no write-on-read: sess.Title is not mutated).
 		title = DeriveTitle(sess)
 	}
+	scaps := h.svc.sessionCapabilitiesFor(sess)
 	writeJSON(w, status, sessionResp{
-		SessionID:       string(sess.ID),
-		State:           string(sess.State),
-		Mode:            string(sess.Mode),
-		Placement:       placementMetadataToJSON(sess.Placement),
-		Turns:           sess.Counters.Turns,
-		ToolCalls:       sess.Counters.ToolCalls,
-		Title:           valid(title),
-		TitleProvenance: valid(string(sess.TitleProvenance)),
-		TitleMetadata:   sessionTitleToJSON(titlePayload(sess)),
-		TokenUsage:      tokenUsageToJSON(sess.TokenUsageSnapshot()),
-		ResolvedModel:   resolvedModelToJSON(h.svc.ResolvedModel(sess.ID)),
-		Kind:            string(sess.Kind),
-		Relationship:    toProtoSessionRelationship(sess.Relationship),
+		SessionID:           string(sess.ID),
+		State:               string(sess.State),
+		Mode:                string(sess.Mode),
+		Placement:           placementMetadataToJSON(sess.Placement),
+		Turns:               sess.Counters.Turns,
+		ToolCalls:           sess.Counters.ToolCalls,
+		SessionCapabilities: &sessionCapabilitiesJSON{Image: scaps.Image, Audio: scaps.Audio},
+		Title:               valid(title),
+		TitleProvenance:     valid(string(sess.TitleProvenance)),
+		TitleMetadata:       sessionTitleToJSON(titlePayload(sess)),
+		TokenUsage:          tokenUsageToJSON(sess.TokenUsageSnapshot()),
+		ResolvedModel:       resolvedModelToJSON(h.svc.ResolvedModel(sess.ID)),
+		Kind:                string(sess.Kind),
+		Relationship:        toProtoSessionRelationship(sess.Relationship),
 	})
 }
 

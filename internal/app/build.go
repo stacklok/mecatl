@@ -2228,6 +2228,18 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		// which has no per-session selector in P0. A per-session SELECTOR session (see
 		// the modelCapability call below, evaluated post-Swap) DOES get the live value.
 		DefaultCapabilities: modelCapability(reg, reg.Default(), cfg.Model),
+		ResolveCapabilities: func(providerID, modelID string, mode session.PermissionMode) port.ProviderCapabilities {
+			if providerID == "" {
+				providerID = reg.Default()
+			}
+			modelID = selectedProviderModel(reg, providerID, modelID)
+			if mode == session.ModePlan {
+				if planModel, configured := resolveSlotModel(cfg, slotPlan, modelID); configured && planModel != "" {
+					modelID = planModel
+				}
+			}
+			return modelCapability(reg, providerID, modelID)
+		},
 		// Posture: the resolved server-wide posture tier as a string, projected into the
 		// ServerCapabilities echo as CHROME (a client renders a "⚠ auto"/"⚠ yolo" badge).
 		// NOT session state — see server.Config.Posture.

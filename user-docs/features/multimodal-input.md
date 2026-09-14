@@ -15,15 +15,14 @@ dropping it or sending an empty text prompt.
 ## Availability
 
 Image input is available when the selected model and its provider adapter both
-advertise image support. The capability is the intersection of:
+advertise image support. Authoritative live modality metadata wins, including an
+explicit text-only declaration. If a gateway omits modality metadata, Mecatl uses
+an exact catalog match when available and otherwise falls back to the adapter's
+capability; it does not guess from similarly named models on another provider.
 
-1. the live model's input modalities;
-2. the catalog metadata floor; and
-3. the adapter's capabilities.
-
-That same computed result is used for model listings, the session capability
-echo, and prompt validation, so a shared multimodal adapter cannot make a
-text-only model appear image-capable.
+That same resolved result is intersected with the adapter capability and used for
+model listings, session capability echoes, and prompt validation, so a shared
+multimodal adapter cannot make a known text-only model appear image-capable.
 
 Audio is represented in the neutral wire contract and validation path, but the
 OpenAI Responses path currently has no audio input support. Treat audio as
@@ -95,7 +94,10 @@ capabilities. Model metadata is live-first, so a catalog refresh can change the
 reported modality for a model without changing the shared provider adapter. For
 a session created with a provider/model selector, use the capability echo
 returned at creation rather than assuming that every model on that endpoint has
-the same input support.
+the same input support. `GetSession` returns the same per-session media capability,
+so resumed sessions and mecatui's clear/fork flows keep attachment and paste gates
+aligned with the selected model. Older servers that omit this additive snapshot
+field fall back to their server-wide capability echo.
 
 If a session is restored with a persisted provider/model selector, the service
 rehydrates the matching per-session engine before accepting a prompt. A missing

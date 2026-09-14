@@ -166,10 +166,14 @@ func TestFooterHealCatalogued128KNeverRefetches(t *testing.T) {
 func TestFooterHealDropsStaleSession(t *testing.T) {
 	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
 	m := healModel(t, conv) // sessionID == "sess-test-0001", window 0
+	m.caps = client.Capabilities{Image: true, Teams: true}
 
-	m = applyAll(m, client.ResolvedModelMsg{SessionID: "sess-OTHER", Resolved: client.ResolvedModel{ContextWindow: 1_050_000}})
+	m = applyAll(m, client.ResolvedModelMsg{SessionID: "sess-OTHER", Resolved: client.ResolvedModel{ContextWindow: 1_050_000}, Capabilities: client.Capabilities{SessionMediaPresent: true}})
 	if got := m.resolvedSessionModel.ContextWindow; got != 0 {
 		t.Fatalf("stale-session heal landed: window = %d, want 0 (dropped)", got)
+	}
+	if !m.caps.Image || !m.caps.Teams {
+		t.Fatalf("stale-session heal changed capabilities: %+v", m.caps)
 	}
 }
 
@@ -198,6 +202,7 @@ func TestFooterHealRaiseOnly(t *testing.T) {
 func TestFooterHealErrorBenign(t *testing.T) {
 	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}, getSessionErr: errFakeGet}
 	m := healModel(t, conv)
+	m.caps = client.Capabilities{Image: true, Teams: true}
 
 	mm, cmd := m.Update(client.TurnEndMsg{Turn: 1, Usage: client.Usage{InputTokens: 40000}})
 	m = mm.(Model)
@@ -209,9 +214,74 @@ func TestFooterHealErrorBenign(t *testing.T) {
 		t.Fatalf("GetSession called %d times, want 1", n)
 	}
 	// Feed the error result back: window stays unknown (0), no panic, footer degraded.
-	m = applyAll(m, client.ResolvedModelMsg{SessionID: "sess-test-0001", Err: errFakeGet})
+	m = applyAll(m, client.ResolvedModelMsg{SessionID: "sess-test-0001", Capabilities: client.Capabilities{SessionMediaPresent: true}, Err: errFakeGet})
 	if got := m.resolvedSessionModel.ContextWindow; got != 0 {
 		t.Fatalf("error heal changed the window to %d, want 0 (benign)", got)
+	}
+	if !m.caps.Image || !m.caps.Teams {
+		t.Fatalf("error heal changed capabilities: %+v", m.caps)
+	}
+}
+
+func TestSessionCapabilitiesSnapshotUpdatesMediaWithoutLosingGlobals(t *testing.T) {
+	seed := client.Capabilities{
+		Image: true, Audio: true, MCP: true, Teams: true, Memory: true,
+	}
+	preserved := seed
+	preserved.Image = false
+	preserved.Audio = false
+	preserved.SessionMediaPresent = true
+
+	tests := []struct {
+		name string
+		caps client.Capabilities
+		want client.Capabilities
+	}{
+		{
+			name: "explicit false",
+			caps: client.Capabilities{SessionMediaPresent: true},
+			want: preserved,
+		},
+		{
+			name: "image",
+			caps: client.Capabilities{SessionMediaPresent: true, Image: true},
+			want: func() client.Capabilities { c := preserved; c.Image = true; return c }(),
+		},
+		{
+			name: "audio",
+			caps: client.Capabilities{SessionMediaPresent: true, Audio: true},
+			want: func() client.Capabilities { c := preserved; c.Audio = true; return c }(),
+		},
+		{
+			name: "both",
+			caps: client.Capabilities{SessionMediaPresent: true, Image: true, Audio: true},
+			want: func() client.Capabilities { c := preserved; c.Image = true; c.Audio = true; return c }(),
+		},
+		{
+			name: "full snapshot replaces globals",
+			caps: client.Capabilities{SessionMediaPresent: true, Image: true, SlashCommands: true},
+			want: client.Capabilities{SessionMediaPresent: true, Image: true, SlashCommands: true},
+		},
+		{
+			name: "legacy absent snapshot",
+			caps: client.Capabilities{},
+			want: seed,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
+			m := healModel(t, conv)
+			m.caps = seed
+			m = applyAll(m, client.ResolvedModelMsg{
+				SessionID:    "sess-test-0001",
+				Capabilities: tt.caps,
+			})
+			if m.caps != tt.want {
+				t.Fatalf("capabilities = %+v, want %+v", m.caps, tt.want)
+			}
+		})
 	}
 }
 

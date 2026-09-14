@@ -408,6 +408,11 @@ type Config struct {
 	// catalog or registry. The zero value (text-only) is the safe default for a
 	// child/member service with no provider. (multi-provider Phase 0, S5.)
 	DefaultCapabilities port.ProviderCapabilities
+	// ResolveCapabilities returns the composition-owned capability intersection for
+	// an exact persisted provider/model pair. It lets GetSession remain accurate
+	// after process restart before the per-session engine is rebuilt. Nil preserves
+	// the default-only behavior for lightweight consumers and tests.
+	ResolveCapabilities func(providerID, modelID string, mode session.PermissionMode) port.ProviderCapabilities
 
 	// Posture is the SERVER-WIDE operator posture-ladder tier as a string
 	// ("strict"/"trusted"/"auto"/"yolo"), projected into the ServerCapabilities echo
@@ -5296,6 +5301,25 @@ func (s *Service) SessionCapabilities(id session.SessionID) port.ProviderCapabil
 	s.mu.Unlock()
 	if ok {
 		return se.caps
+	}
+	return s.cfg.DefaultCapabilities
+}
+
+// sessionCapabilitiesFor resolves a loaded snapshot without requiring a
+// per-session engine registration. Persisted selector labels are trusted session
+// metadata; an exact composition resolver preserves their capability after restart.
+func (s *Service) sessionCapabilitiesFor(sess *session.Session) port.ProviderCapabilities {
+	if sess == nil {
+		return s.cfg.DefaultCapabilities
+	}
+	s.mu.Lock()
+	se, ok := s.sessionEngines[sess.ID]
+	s.mu.Unlock()
+	if ok {
+		return se.caps
+	}
+	if s.cfg.ResolveCapabilities != nil && (sess.ProviderID != "" || sess.ModelID != "") {
+		return s.cfg.ResolveCapabilities(sess.ProviderID, sess.ModelID, sess.Mode)
 	}
 	return s.cfg.DefaultCapabilities
 }

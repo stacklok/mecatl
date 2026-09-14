@@ -223,7 +223,7 @@ func TestModelCapability_LivePresentButEmpty_AgreesWithPicker(t *testing.T) {
 	if imageModel == "" {
 		t.Skip("no catalogued openrouter image model")
 	}
-	empty := modelEntry{ID: imageModel, InputModalities: nil} // present, but no modalities
+	empty := modelEntry{ID: imageModel, InputModalities: []string{}} // explicitly declared, but empty
 	reg := regWithMeta(providerOpenRouter, port.ProviderCapabilities{Image: true}, []modelEntry{empty})
 
 	echo := modelCapability(reg, providerOpenRouter, imageModel).Image
@@ -236,6 +236,22 @@ func TestModelCapability_LivePresentButEmpty_AgreesWithPicker(t *testing.T) {
 	}
 	if echo != picker {
 		t.Errorf("picker/echo DISAGREE for present-but-empty %q: echo=%v picker=%v", imageModel, echo, picker)
+	}
+}
+
+func TestModelCapability_LiveOmittedModalitiesFallsBack(t *testing.T) {
+	imageModel, _ := catalogModels(t, providerOpenRouter)
+	if imageModel == "" {
+		t.Skip("no catalogued openrouter image model")
+	}
+	reg := regWithMeta(providerOpenRouter, port.ProviderCapabilities{Image: true}, []modelEntry{{ID: imageModel}})
+	if got := modelCapability(reg, providerOpenRouter, imageModel); !got.Image {
+		t.Fatal("catalogued image model with omitted live modalities lost catalog capability")
+	}
+	const unknown = "gateway/uncatalogued"
+	reg.meta.Swap(map[string][]modelEntry{providerOpenRouter: {{ID: unknown}}})
+	if got := modelCapability(reg, providerOpenRouter, unknown); !got.Image {
+		t.Fatal("uncatalogued model with omitted live modalities lost adapter capability")
 	}
 }
 
