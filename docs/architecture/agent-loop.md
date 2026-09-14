@@ -276,13 +276,18 @@ askable ask, a serialized provenance marker, and a verdict tail.
   opt-in from the model's side: the tool description, the plan-mode Role suffix
   (`internal/app/build.go` (`applyPlanModePosture`)), and the per-turn plan-mode
   prompt reminder (`engine/prompt/builder.go`) all state the contract — present the
-  plan, call `PresentPlan` once, and STOP; an inline "acceptable" in chat is NOT
-  approval.
+  current plan, call `PresentPlan` once for that presentation, and STOP. If the
+  operator chooses iterate/deny or cancels the pending run, the model waits for new
+  user input; it then presents a revised or unchanged plan through a new
+  `PresentPlan` call and stops again. Later chat assent requests another gated
+  review and never authorizes execution.
 - **The dispatcher intercepts by name+mode.** `engine/agent/dispatch.go`
   (`surfacePlanAsk`) — a sibling of `askHookApproval` over the shared `surfaceAsk`
   spine — mints a `session.PendingAsk{PlanOriginated: true}`, parks the run
-  `StateAwaiting`, and emits `EvPermissionAsk`. It is sequenced one-at-a-time in
-  dispatch Phase 1 (never the parallel fan-out). The headless guard
+  `StateAwaiting`, and emits `EvPermissionAsk`. A presentation remains pending until
+  a verdict resolves it or its run is cancelled; merely hiding or leaving a client
+  review view does not invalidate a server-side pending ask. It is sequenced
+  one-at-a-time in dispatch Phase 1 (never the parallel fan-out). The headless guard
   (`!Interactive && !PlanModeAutoApprove`) synthesizes a deny result (fail-safe —
   no silent mode flip); the opt-in `PlanModeAutoApprove` surfaces the ask even
   headless so the composition observer can resolve it.
@@ -290,7 +295,11 @@ askable ask, a serialized provenance marker, and a verdict tail.
   `ModeAccept`; deny → terminate CLEANLY with `engine/session/session.go`
   (`StopPlanIterate`) (the iterate pause — issue #206 UX fix: the run ENDS so the
   operator's next typed prompt drives the revision; the model does NOT continue
-  iterating in-turn with no operator input). The session stays `ModePlan` on Deny
+  iterating in-turn with no operator input). Cancellation is distinct from Deny:
+  it leaves the session cancelled in `ModePlan`, and the next prompt enters through
+  the service's normal `Interrupt` recovery, which pairs the interrupted tool call
+  without recording a deny verdict. Either path requires a new `PresentPlan` call
+  and fresh approval before execution. The session stays `ModePlan` on Deny
   (no mode flip). On Allow the run
   terminates with the clean `engine/session/session.go` (`StopPlanApproved`)
   terminal; `engine/agent/loop.go` (`terminateComplete`) flips the mode AT the

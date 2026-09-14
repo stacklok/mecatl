@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -104,11 +105,61 @@ func parkPlanAsk(t *testing.T, svc *server.Service, sessID session.SessionID) (a
 			}
 			svc.FinishRun(sessID, r)
 		}
-		return a, cleanup
+		var once sync.Once
+		finish := func() { once.Do(cleanup) }
+		t.Cleanup(finish)
+		return a, finish
 	case <-drainDone:
 		t.Fatal("the run drained without surfacing a plan-approval EvPermissionAsk")
 		return "", nil
 	}
+}
+
+func awaitLivePlanAsk(t *testing.T, r *agent.Run, wantCall session.ToolCallID, wantPlan string) (string, []session.Event) {
+	t.Helper()
+	var seen []session.Event
+	for ev := range r.Events() {
+		seen = append(seen, ev)
+		if ev.Type != session.EvPermissionAsk || ev.Ask == nil || ev.Ask.Origin() != session.AskOriginPlan {
+			continue
+		}
+		ask := ev.Ask
+		if ask.Tool != "PresentPlan" || ask.Call != wantCall || ask.Origin() != session.AskOriginPlan {
+			t.Fatalf("fresh plan ask = %+v, want Tool=PresentPlan Call=%q Origin=AskOriginPlan", ask, wantCall)
+		}
+		var args struct {
+			Plan string `json:"plan"`
+		}
+		if err := json.Unmarshal(ask.Args, &args); err != nil {
+			t.Fatalf("decode fresh plan ask args %q: %v", ask.Args, err)
+		}
+		if args.Plan != wantPlan {
+			t.Fatalf("fresh plan ask plan = %q, want %q", args.Plan, wantPlan)
+		}
+		return ask.AskID, seen
+	}
+	t.Fatal("the run drained without surfacing a plan-approval EvPermissionAsk")
+	return "", nil
+}
+
+func cleanupStartedRun(t *testing.T, svc *server.Service, sessID session.SessionID, r *agent.Run) func() {
+	t.Helper()
+	var once sync.Once
+	cleanup := func() {
+		once.Do(func() {
+			r.Cancel()
+			for range r.Events() {
+			}
+			svc.FinishRun(sessID, r)
+		})
+	}
+	finish := func() {
+		once.Do(func() {
+			svc.FinishRun(sessID, r)
+		})
+	}
+	t.Cleanup(cleanup)
+	return finish
 }
 
 // drainApprovedEvents drains a Service-returned event channel (from ApprovePlan)
@@ -259,10 +310,9 @@ func TestApprovePlanAllowAlwaysFlipsToAcceptEdits(t *testing.T) {
 // revision on the operator's typed feedback (the operator-types-feedback path).
 func TestApprovePlanDenyIterates(t *testing.T) {
 	llm := mockllm.New(
-		mockllm.ToolCallTurn(call("c1", "PresentPlan", `{"note":"x"}`)),
-		// Reached by the follow-up StartRunContent below (the operator-types-feedback
-		// path), NOT by the resumed run (which terminates StopPlanIterate).
-		mockllm.TextTurn("revised after operator feedback"),
+		mockllm.ToolCallTurn(call("c1", "PresentPlan", `{"plan":"original"}`)),
+		// Reached only after the operator supplies feedback in a new run.
+		mockllm.ToolCallTurn(call("c2", "PresentPlan", `{"plan":"revised"}`)),
 	)
 	svc := planApprovalService(t, llm, allowRules())
 
@@ -270,7 +320,7 @@ func TestApprovePlanDenyIterates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
-	_, finishParked := parkPlanAsk(t, svc, sess.ID)
+	firstAskID, finishParked := parkPlanAsk(t, svc, sess.ID)
 	defer finishParked()
 
 	events, err := svc.ApprovePlan(context.Background(), sess.ID, session.ModePlan, "")
@@ -322,30 +372,144 @@ func TestApprovePlanDenyIterates(t *testing.T) {
 		t.Fatalf("deny-path session state = %q, want %q (clean terminal — pause for operator feedback)", sess.State, session.StateCompleted)
 	}
 
-	// The operator-types-feedback path: a follow-up StartRunContent (the operator's
-	// typed message) drives the revision. The session was StopPlanIterate-completed
-	// (Reopen-recoverable), so loadAndReopen reopens it to idle and the model runs on
-	// the operator's feedback. The llm's second scripted turn ("revised after operator
-	// feedback") is consumed here, ending StopEndTurn.
+	// A later user message starts a second run. The revised plan must be presented
+	// through a NEW call and fresh ask; no automatic model turn ran after denial.
 	cont, cerr := svc.StartRunContent(context.Background(), sess.ID, "the plan needs to handle the edge case", nil)
 	if cerr != nil {
 		t.Fatalf("follow-up StartRunContent (operator feedback): %v", cerr)
 	}
-	var contEvs []session.Event
-	for ev := range cont.Events() {
-		contEvs = append(contEvs, ev)
+	contCleanup := cleanupStartedRun(t, svc, sess.ID, cont)
+	secondAskID, _ := awaitLivePlanAsk(t, cont, "c2", "revised")
+	svc.Persist(context.Background(), sess.ID)
+	if secondAskID == firstAskID {
+		t.Fatalf("re-presentation reused ask id %q; want a fresh gated review", secondAskID)
 	}
-	if !hasResultWithStop(contEvs, session.StopEndTurn) {
-		t.Fatalf("follow-up run must reach StopEndTurn (the operator's feedback drove the revision); stops seen = %v", stopReasonsOf(contEvs))
-	}
-	// The session must still be in plan mode (the follow-up did not flip it).
 	sess, err = svc.GetSession(context.Background(), sess.ID)
 	if err != nil {
-		t.Fatalf("GetSession after follow-up: %v", err)
+		t.Fatalf("GetSession at fresh ask: %v", err)
 	}
-	if sess.Mode != session.ModePlan {
-		t.Fatalf("mode after follow-up = %q, want %q (still plan mode)", sess.Mode, session.ModePlan)
+	if sess.Mode != session.ModePlan || sess.State != session.StateAwaiting {
+		t.Fatalf("fresh ask session = mode %q state %q, want plan/awaiting", sess.Mode, sess.State)
 	}
+
+	// A real verdict on the fresh ask is still required to leave plan mode.
+	if err := svc.Approve(context.Background(), sess.ID, secondAskID, session.VerdictAllowOnce); err != nil {
+		t.Fatalf("Approve fresh plan ask: %v", err)
+	}
+	contEvs := drainApprovedEvents(t, cont.Events())
+	if !hasResultWithStop(contEvs, session.StopPlanApproved) {
+		t.Fatalf("fresh approval must reach StopPlanApproved; stops seen = %v", stopReasonsOf(contEvs))
+	}
+	contCleanup()
+	sess, err = svc.GetSession(context.Background(), sess.ID)
+	if err != nil {
+		t.Fatalf("GetSession after fresh approval: %v", err)
+	}
+	if sess.Mode != session.ModeDefault {
+		t.Fatalf("mode after fresh approval = %q, want %q", sess.Mode, session.ModeDefault)
+	}
+}
+
+func TestCancelledPlanReviewRecoversAndRequiresFreshAsk(t *testing.T) {
+	llm := mockllm.New(
+		mockllm.ToolCallTurn(call("c1", "PresentPlan", `{"plan":"original"}`)),
+		mockllm.ToolCallTurn(call("c2", "PresentPlan", `{"plan":"unchanged"}`)),
+	)
+	svc := planApprovalService(t, llm, allowRules())
+
+	sess, err := svc.CreateSession(context.Background(), session.ModePlan, session.Limits{})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	first, err := svc.StartRunContent(context.Background(), sess.ID, "plan a task", nil)
+	if err != nil {
+		t.Fatalf("StartRunContent: %v", err)
+	}
+	firstCleanup := cleanupStartedRun(t, svc, sess.ID, first)
+	firstAskID, firstEvs := awaitLivePlanAsk(t, first, "c1", "original")
+	first.Cancel()
+	firstEvs = append(firstEvs, drainApprovedEvents(t, first.Events())...)
+	firstCleanup()
+
+	planAsks := 0
+	approvals := 0
+	cancelledResults := 0
+	for _, ev := range firstEvs {
+		switch ev.Type {
+		case session.EvPermissionAsk:
+			if ev.Ask != nil && ev.Ask.Origin() == session.AskOriginPlan && ev.Ask.Call == "c1" {
+				planAsks++
+			}
+		case session.EvApproval:
+			approvals++
+		case session.EvResult:
+			if ev.Result != nil && ev.Result.Stop == session.StopCancelled {
+				cancelledResults++
+			}
+		}
+	}
+	if planAsks != 1 {
+		t.Fatalf("cancelled first run plan ask count = %d, want exactly 1", planAsks)
+	}
+	if approvals != 0 {
+		t.Fatalf("cancelled first run approval count = %d, want 0", approvals)
+	}
+	if cancelledResults != 1 {
+		t.Fatalf("cancelled first run StopCancelled result count = %d, want exactly 1", cancelledResults)
+	}
+
+	sess, err = svc.GetSession(context.Background(), sess.ID)
+	if err != nil {
+		t.Fatalf("GetSession after cancel: %v", err)
+	}
+	if sess.Mode != session.ModePlan || sess.State != session.StateCancelled {
+		t.Fatalf("cancelled review session = mode %q state %q, want plan/cancelled", sess.Mode, sess.State)
+	}
+
+	// StartRunContent owns cancelled-session recovery. A later user message may
+	// present the unchanged plan, but it must do so through a new call and ask.
+	second, err := svc.StartRunContent(context.Background(), sess.ID, "show me the plan again", nil)
+	if err != nil {
+		t.Fatalf("StartRunContent after cancellation: %v", err)
+	}
+	secondCleanup := cleanupStartedRun(t, svc, sess.ID, second)
+	secondAskID, _ := awaitLivePlanAsk(t, second, "c2", "unchanged")
+	svc.Persist(context.Background(), sess.ID)
+	if secondAskID == firstAskID {
+		t.Fatalf("post-cancellation presentation reused ask id %q", secondAskID)
+	}
+	sess, err = svc.GetSession(context.Background(), sess.ID)
+	if err != nil {
+		t.Fatalf("GetSession at fresh ask: %v", err)
+	}
+	if sess.Mode != session.ModePlan || sess.State != session.StateAwaiting {
+		t.Fatalf("post-cancellation fresh ask = mode %q state %q, want plan/awaiting", sess.Mode, sess.State)
+	}
+	if len(sess.Conversation.Messages) == 0 {
+		t.Fatal("fresh plan ask has empty history")
+	}
+	// The final assistant message is the newly-pending c2 call. Everything before
+	// it includes the interrupted c1 turn and must already be fully paired.
+	prior := sess.Conversation.Messages[:len(sess.Conversation.Messages)-1]
+	if err := session.ValidateToolPairing(prior); err != nil {
+		t.Fatalf("recovered interrupted plan history is unpaired: %v", err)
+	}
+	foundInterrupted := false
+	for _, msg := range prior {
+		if msg.Role != session.RoleTool || msg.ToolResult == nil || msg.ToolResult.CallID != "c1" {
+			continue
+		}
+		foundInterrupted = true
+		if !msg.ToolResult.IsError || msg.ToolResult.Content != "tool call interrupted by cancellation" {
+			t.Fatalf("c1 cancellation close-out = %+v, want error result %q", msg.ToolResult, "tool call interrupted by cancellation")
+		}
+	}
+	if !foundInterrupted {
+		t.Fatal("service recovery did not close out the cancelled PresentPlan call")
+	}
+	second.Cancel()
+	_ = drainApprovedEvents(t, second.Events())
+	secondCleanup()
 }
 
 // stopReasonsOf returns the set of stop reasons carried by EvResult events in evs.

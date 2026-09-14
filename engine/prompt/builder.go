@@ -184,12 +184,12 @@ func Build(cfg Config) Layered {
 		suffix += "\n\nPlan mode is active: this is a read-only planning phase — " +
 			"do not modify files, run mutating commands, or make outward-facing " +
 			"changes; produce a plan instead." +
-			"\nWhen your plan is complete, present it in your message text and then call the PresentPlan tool EXACTLY ONCE, " +
+			"\nWhen your plan is complete, present it in your message text and then call the PresentPlan tool EXACTLY ONCE PER CURRENT PRESENTATION, " +
 			"and STOP — do not continue working after calling it. Pass the FULL plan text in the PresentPlan `plan` argument " +
-			"so the operator can read it in the approval modal. The plan is NOT approved until the operator approves it " +
-			"THROUGH the PresentPlan gate: an inline 'acceptable', 'looks good', 'approved', or 'go ahead' in chat is NOT " +
-			"approval and must NOT trigger execution. Only the harness proceed message that follows an approved PresentPlan " +
-			"starts execution."
+			"so the operator can read it in the approval modal. If this presentation is denied for iteration, or its pending run is cancelled, " +
+			"wait for new user input; do not automatically loop. In response, present the revised or unchanged plan via a NEW PresentPlan call, " +
+			"then stop and wait again. Later chat assent requests a fresh gated review and is never execution approval. " +
+			"Only the harness proceed message that follows approval through the current PresentPlan gate starts execution."
 	}
 
 	return Layered{

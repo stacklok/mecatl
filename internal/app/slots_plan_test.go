@@ -219,11 +219,14 @@ func TestApplyPlanModePostureAppendsNote(t *testing.T) {
 	}
 	for _, clause := range []string{
 		"PLAN MODE",
-		"call the PresentPlan tool EXACTLY ONCE",
+		"call the PresentPlan tool EXACTLY ONCE PER CURRENT PRESENTATION",
 		"and STOP",
-		"inline",
-		"is NOT approval",
-		"PresentPlan gate",
+		"denied for iteration",
+		"pending run is cancelled",
+		"wait for new user input",
+		"revised or unchanged plan",
+		"NEW PresentPlan call",
+		"Later chat assent requests a fresh gated review and is never execution approval. Only the harness proceed message that follows approval through the current PresentPlan gate starts execution.",
 		"Pass the FULL plan text in the PresentPlan `plan` argument",
 	} {
 		if !strings.Contains(pc.Role, clause) {
@@ -302,11 +305,14 @@ func TestPlanModeEngineSystemPromptContainsPlanApprovalContract(t *testing.T) {
 	// combined Render() oracle is vacuous against the wiring removal.
 	for _, clause := range []string{
 		"PLAN MODE",
-		"call the PresentPlan tool EXACTLY ONCE",
+		"call the PresentPlan tool EXACTLY ONCE PER CURRENT PRESENTATION",
 		"and STOP",
-		"inline",
-		"is NOT approval",
-		"PresentPlan gate",
+		"denied for iteration",
+		"pending run is cancelled",
+		"wait for new user input",
+		"revised or unchanged plan",
+		"NEW PresentPlan call",
+		"Later chat assent requests a fresh gated review and is never execution approval. Only the harness proceed message that follows approval through the current PresentPlan gate starts execution.",
 		"Pass the FULL plan text in the PresentPlan `plan` argument",
 	} {
 		if !strings.Contains(captured.StablePrefix, clause) {

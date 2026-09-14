@@ -94,8 +94,18 @@ before starting work.
 
 Plan mode denies `Edit`, `Write`, and mutating Shell commands. Read-only
 exploration remains available so the model can inspect the workspace and prepare
-a plan. In an interactive client, the model presents the completed plan for
-review before leaving plan mode. Headless plan approval is denied by default;
+a plan. For each current presentation, the model calls `PresentPlan` once and
+stops for review before leaving plan mode. Choosing iterate/deny ends that run;
+your next prompt supplies feedback, and a revised or unchanged plan requires a
+new `PresentPlan` call and fresh approval. Later chat assent never starts
+execution by itself.
+
+In `mecatui`, **Esc** from the plan review means iterate/deny. The guarded
+**Ctrl+C** quit path instead cancels the run; it is not a neutral dismissal and
+does not record a deny verdict. The next prompt recovers the cancelled session,
+which remains in plan mode, before a fresh plan review can be presented. Hiding
+a client review does not itself clear an ask that remains pending on the server.
+Headless plan approval is denied by default;
 `--plan-mode-auto-approve` is an explicit operator opt-in and should be treated
 as an autonomous approval capability.
 

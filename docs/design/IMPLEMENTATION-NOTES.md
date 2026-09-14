@@ -4033,9 +4033,11 @@ tool call refined into an askable ask, a serialized provenance marker, a verdict
   the model KNOWS to call `PresentPlan`).** Three reinforcing layers make the workflow
   explicit so the model does not improvise it (the reported bug: a model treated an
   inline "acceptable" as approval and kept executing, never surfacing the gate): (1)
-  `Spec().Description` (`engine/agent/presentplan.go` (`Spec`)) — call EXACTLY ONCE when
-  the plan is complete, then STOP; an inline "acceptable"/"looks good"/"approved" in chat
-  is NOT approval. (2) `internal/app/build.go` (`applyPlanModePosture` /
+  `Spec().Description` (`engine/agent/presentplan.go` (`Spec`)) — call exactly once
+  **per current presentation**, then STOP. If that review is denied for iteration or
+  its run is cancelled, wait for new user input; then present the revised or unchanged
+  plan through a NEW `PresentPlan` call and stop again. Later chat assent requests a
+  fresh gated review and is never execution approval. (2) `internal/app/build.go` (`applyPlanModePosture` /
   `planModePostureNote`) — appended to a plan-mode session engine's Role in
   `sessionEngineFactory` on create-in-plan AND on the CASE-1 rebuild when the session
   flips into plan mode. (3) `engine/prompt/builder.go` — the plan-mode volatile suffix
@@ -4098,7 +4100,11 @@ tool call refined into an askable ask, a serialized provenance marker, a verdict
   feedback; `runLoop` terminates with `StopPlanIterate` at the SAME two sites (EARLY
   + post-dispatch) — the run ENDS so the operator's next typed prompt drives the
   revision (the model does NOT continue iterating in-turn with no operator input,
-  the old behaviour the operator reported). The session stays `ModePlan` on Deny (no
+  the old behaviour the operator reported). Cancelling the pending plan run is a
+  separate terminal: no deny verdict is synthesized, `ModePlan` remains, and the next
+  prompt uses the ordinary cancelled-session `Interrupt` recovery to close the
+  interrupted tool pair before a new presentation. In both cases the next current
+  presentation gets a NEW call and fresh gate. The session stays `ModePlan` on Deny (no
   mode flip — `terminateComplete` only flips when `planApprovedTarget != ""`).
   `engine/agent/loop.go` (`terminateComplete`) flips the mode AT the terminal boundary:
   AFTER `sess.Stop(reason)` → `StateCompleted`, `sess.SetMode(planApprovedTarget)` is legal

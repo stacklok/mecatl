@@ -8091,21 +8091,18 @@ DEBUG ANALYSIS SESSION — target %q. InspectSession is permanently bound to thi
 }
 
 // planModePostureNote is the system-prompt suffix a plan-mode session's Role
-// carries (issue #206). It makes the plan-approval workflow EXPLICIT so the
-// model does not improvise it: explore/read freely, and when the plan is
-// complete call PresentPlan EXACTLY ONCE and STOP. Two load-bearing clauses:
-// (1) an inline "acceptable"/"looks good"/"approved" in chat is NOT approval —
-// the ONLY approval channel is the PresentPlan tool gate; (2) after calling
-// PresentPlan the model must STOP and wait, not continue executing. Without
-// these the model treats any affirmative user word as the green light and
-// proceeds (the bug reported in #206's first real-world use).
+// carries (issue #206, corrected by #1472). It makes the plan-approval workflow
+// explicit so the model does not improvise it: explore/read freely; present each
+// current plan once and stop; after an iterate/deny or cancellation, wait for new
+// user input before presenting a revised or unchanged plan through a new gate.
+// Chat assent never authorizes execution; only the current gate's approval does.
 const planModePostureNote = "You are in PLAN MODE: explore, read, and reason, but make NO changes. " +
-	"When your plan is complete, present it in your message text and then call the PresentPlan tool EXACTLY ONCE, " +
+	"When your plan is complete, present it in your message text and then call the PresentPlan tool EXACTLY ONCE PER CURRENT PRESENTATION, " +
 	"and STOP — do not continue working after calling it. Pass the FULL plan text in the PresentPlan `plan` argument " +
-	"so the operator can read it in the approval modal. The plan is NOT approved until the operator approves it " +
-	"THROUGH the PresentPlan gate: an inline 'acceptable', 'looks good', 'approved', or 'go ahead' in chat is NOT " +
-	"approval and must NOT trigger execution. Only the harness proceed message that follows an approved PresentPlan " +
-	"starts execution."
+	"so the operator can read it in the approval modal. If this presentation is denied for iteration, or its pending run is cancelled, " +
+	"wait for new user input; do not automatically loop. In response, present the revised or unchanged plan via a NEW PresentPlan call, " +
+	"then stop and wait again. Later chat assent requests a fresh gated review and is never execution approval. " +
+	"Only the harness proceed message that follows approval through the current PresentPlan gate starts execution."
 
 // applyPlanModePosture appends the plan-approval contract to a plan-mode
 // session's Role (DefaultRole fallback first — the applyNoFSPosture idiom). It

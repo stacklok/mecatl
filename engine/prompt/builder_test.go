@@ -323,11 +323,14 @@ func TestBuildPlanModeReminder(t *testing.T) {
 	// plan-mode volatile suffix — it tells the model to call PresentPlan and
 	// that inline "acceptable" is NOT approval.
 	for _, clause := range []string{
-		"call the PresentPlan tool EXACTLY ONCE",
+		"call the PresentPlan tool EXACTLY ONCE PER CURRENT PRESENTATION",
 		"and STOP",
-		"inline",
-		"is NOT approval",
-		"PresentPlan gate",
+		"denied for iteration",
+		"pending run is cancelled",
+		"wait for new user input",
+		"revised or unchanged plan",
+		"NEW PresentPlan call",
+		"Later chat assent requests a fresh gated review and is never execution approval. Only the harness proceed message that follows approval through the current PresentPlan gate starts execution.",
 		"Pass the FULL plan text in the PresentPlan `plan` argument",
 	} {
 		if !strings.Contains(plan.VolatileSuffix, clause) {
