@@ -76,9 +76,9 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0304 — TypeScript SDK public surface completeness and v0.1.0 release](./0304-typescript-sdk-public-surface-and-release.md) *(package identity and GitHub Packages interim superseded by 0328; 0313 superseded in full)*
 - [0313 — Interim GitHub Packages distribution and 0.0.x versioning](./0313-interim-github-packages-typescript-sdk.md) *(superseded by 0328)*
 - [0328 — Publish the TypeScript SDK to npmjs as `@stacklok-oss/mecatl-sdk`](./0328-typescript-sdk-npmjs-stacklok-oss.md) *(proposed)*
-- [0338 - Deno uses the TypeScript SDK HTTP/SSE entry point](./0338-typescript-sdk-deno.md) *(supersedes ADR 0279 only for the supported-runtime set)*
-- [0339 - Deno owns local daemons through Deno.Command](./0339-typescript-sdk-deno-command.md) *(supersedes ADR 0338 for the Deno public entry-point and local-process decisions)*
-- [0340 - Deno reuses the ConnectRPC gRPC transport](./0340-typescript-sdk-deno-grpc.md) *(supersedes ADRs 0338 and 0339 for the HTTP-only transport and Node-compatibility exclusions)*
+- [0339 - Deno uses the TypeScript SDK HTTP/SSE entry point](./0339-typescript-sdk-deno.md) *(supersedes ADR 0279 only for the supported-runtime set)*
+- [0340 - Deno owns local daemons through Deno.Command](./0340-typescript-sdk-deno-command.md) *(supersedes ADR 0339 for the Deno public entry-point and local-process decisions)*
+- [0341 - Deno reuses the ConnectRPC gRPC transport](./0341-typescript-sdk-deno-grpc.md) *(supersedes ADRs 0339 and 0340 for the HTTP-only transport and Node-compatibility exclusions)*
 - [0036 — `engine/` is its own Go module (monorepo via `go.work`)](./0036-engine-module.md)
 - [0037 — Engine public-API stability contract](./0037-engine-stability-contract.md)
 - [0038 — Event-sourced SessionStore rehydration (the reference fold)](./0038-event-sourced-rehydration.md) *(Decision 3 origin-opacity and no-public-replay clauses proposed to be superseded by 0337)*

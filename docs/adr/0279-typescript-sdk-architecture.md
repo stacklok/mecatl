@@ -5,7 +5,7 @@
 - Scope: `sdk/typescript/` (the `@stacklok/mecatl-sdk` package), `buf.gen.yaml`, the root Taskfile/CI wiring for the SDK tree.
 - Supersedes: [ADR 0253](./0253-sdk-mocking-testkit.md) Decisions 1–2, in part — the vendored unary automocker and the SPDX-relicense surface it carried (see Decision 3). Also supersedes the npm package name `@stacklok/mecatl` as used in [#821](https://github.com/stacklok/mecatl/issues/821) and ADRs [0248](./0248-sdk-compatibility-and-error-contract.md)/[0252](./0252-http-steer-endpoint.md)/[0253](./0253-sdk-mocking-testkit.md). ADR 0253's Decisions 3–4 (name the residual; no premature shared package) stand.
 - Superseded by: [ADR 0328](./0328-typescript-sdk-npmjs-stacklok-oss.md) (Decision 6 — published package name)
-- Superseded by: [ADR 0338](./0338-typescript-sdk-deno.md), only for the supported-runtime set.
+- Superseded by: [ADR 0339](./0339-typescript-sdk-deno.md), only for the supported-runtime set.
 
 ## Context
 

@@ -335,7 +335,7 @@ The unbundled JavaScript names each sibling declaration through Deno's stable
 `@ts-self-types` directive. CI checks the packed package at Deno 2.9.3 and current
 Deno 2.x without unstable resolution flags. See
 [ADR 0279](adr/0279-typescript-sdk-architecture.md) and
-[ADR 0338](adr/0338-typescript-sdk-deno.md).
+[ADR 0339](adr/0339-typescript-sdk-deno.md).
 
 The `./node` entry point can also own a local daemon through `spawn()`. It resolves an
 already-installed `mecated` from `binaryPath`, `MECATED_BIN`, then `PATH` without a
@@ -380,7 +380,7 @@ The spawned TCP topology does not receive client-provided MCP authority. Deno re
 the ordinary `Client`; path media and callback-tool helpers remain in `./node`.
 The packed-package floor/current qualification covers streaming, cancellation, TLS,
 Unix sockets, and native process cleanup. See
-[ADR 0340](adr/0340-typescript-sdk-deno-grpc.md).
+[ADR 0341](adr/0341-typescript-sdk-deno-grpc.md).
 
 The `./node` and `./deno` entry points expose `query()` as the one-shot layer over that existing
 `Client`/`Session`/`Run` choreography. `await query(prompt, options)` resolves after session and

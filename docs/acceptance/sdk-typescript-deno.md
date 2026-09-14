@@ -6,7 +6,7 @@
 **Status:** in-progress
 **Work classification:** Architectural - this expands the SDK's durable public runtime and local
 process ownership contract.
-**Decision record:** [ADR 0340](../adr/0340-typescript-sdk-deno-grpc.md)
+**Decision record:** [ADR 0341](../adr/0341-typescript-sdk-deno-grpc.md)
 **Delivery:** Split is the normal requirement for this public-interface change; this PR uses the
 directing-user exception below, not the workflow-only Combined exception.
 **Delivery exception:** Implementation and acceptance documentation are presented together at the
@@ -64,7 +64,7 @@ runtime directory without unstable flags. Remote gRPC exercises TCP, TLS, and Un
 scripted active run proves cancellation before completion.
 
 This scenario enforces the runtime and process-ownership boundary in
-[ADR 0340](../adr/0340-typescript-sdk-deno-grpc.md).
+[ADR 0341](../adr/0341-typescript-sdk-deno-grpc.md).
 
 **Acceptance:**
 
