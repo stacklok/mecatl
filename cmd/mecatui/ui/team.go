@@ -338,14 +338,18 @@ func renderTeamRoster(th theme.Theme, st teamState, b *block, hk helpKeys, heigh
 	return teamSelectableList(th, st, b, hk, bodyWidth).render(th, height)
 }
 
-// renderTeamRosterRow keeps the member identity on a single clipped title line and
-// groups its volatile status, context, role, and routing metadata beneath it.
+// renderTeamRosterRow uses three fixed physical lines: identity, work summary, and
+// runtime metadata. Each line is clipped to its own budget instead of allowing an
+// arbitrary wrap to split related fields across rows.
 func renderTeamRosterRow(style lipgloss.Style, prefix string, ln *teamLane, nameW int, teamDone bool, bodyWidth int) string {
 	title := teamRosterTitle(ln, nameW, teamDone)
+	work, runtime := teamRosterWork(ln, teamDone), teamRosterRuntime(ln)
 	if bodyWidth > 0 {
 		title = truncateDisplayWidth(title, max(1, bodyWidth-lipgloss.Width(prefix)))
+		work = truncateDisplayWidth(work, max(1, bodyWidth-4))
+		runtime = truncateDisplayWidth(runtime, max(1, bodyWidth-4))
 	}
-	return style.Render(prefix + title + "\n" + hangingIndentWrap(teamRosterDetails(ln, teamDone), "    ", bodyWidth))
+	return style.Render(prefix + title + "\n    " + work + "\n    " + runtime)
 }
 
 func teamRosterTitle(ln *teamLane, nameW int, teamDone bool) string {
@@ -359,13 +363,18 @@ func teamRosterTitle(ln *teamLane, nameW int, teamDone bool) string {
 	return teamGlyph(ln, teamDone) + " " + teamMutCue(ln) + " " + name
 }
 
-func teamRosterDetails(ln *teamLane, teamDone bool) string {
-	parts := []string{teamLaneState(ln, teamDone), "↑" + humanizeTokens(ln.usage.InputTokens) + " ↓" + humanizeTokens(ln.usage.OutputTokens)}
-	if ln.ctxWindow > 0 {
-		parts = append(parts, renderContextMeterPlain(ln.ctxUsed, ln.ctxWindow))
-	}
+func teamRosterWork(ln *teamLane, teamDone bool) string {
+	parts := []string{teamLaneState(ln, teamDone)}
 	if ln.role != "" {
 		parts = append(parts, truncate(sanitizeTerminal(ln.role), maxTeamRoleLen))
+	}
+	return strings.Join(parts, " · ")
+}
+
+func teamRosterRuntime(ln *teamLane) string {
+	parts := []string{"↑" + humanizeTokens(ln.usage.InputTokens) + " ↓" + humanizeTokens(ln.usage.OutputTokens)}
+	if ln.ctxWindow > 0 {
+		parts = append(parts, renderContextMeterPlain(ln.ctxUsed, ln.ctxWindow))
 	}
 	if routed := subagentModelLabel(ln.routedCategory, ln.routedModel, ln.routingReason, ln.model); routed != "" {
 		parts = append(parts, routed)
@@ -375,7 +384,7 @@ func teamRosterDetails(ln *teamLane, teamDone bool) string {
 
 // teamRosterLine remains the compact, unstyled form used by the essential fallback.
 func teamRosterLine(_ theme.Theme, ln *teamLane, nameW int, teamDone bool) string {
-	return teamRosterTitle(ln, nameW, teamDone) + " · " + teamRosterDetails(ln, teamDone)
+	return teamRosterTitle(ln, nameW, teamDone) + " · " + teamRosterWork(ln, teamDone) + " · " + teamRosterRuntime(ln)
 }
 
 // renderContextMeterPlain is the ANSI-free representation required before generic

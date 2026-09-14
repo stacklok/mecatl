@@ -374,7 +374,7 @@ func TestAgentsRosterUncapped(t *testing.T) {
 	// Give the overlay enough vertical room for all n lanes: it windows to the body
 	// height (terminal minus chrome — header/footer/input + the input top-pad row), so
 	// size up generously rather than depend on the exact chrome height.
-	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 40})
+	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 80})
 	m = seedTeam(m, func(c *conversation) { c.setTeamStart("t1", "", big) })
 	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
@@ -857,6 +857,33 @@ func ctxTurnEnd(name string, used, window int64) client.TeamMsg {
 	})
 }
 
+func TestTeamRosterRowUsesIdentityWorkAndRuntimeLines(t *testing.T) {
+	ln := &teamLane{
+		name:           "overlay-reader",
+		role:           "Inspect the Agents overlay rendering and report problems",
+		current:        "RecordFinding",
+		ctxUsed:        33800,
+		ctxWindow:      1100000,
+		routedCategory: "medium",
+		routedModel:    "gpt-5.6-terra",
+		usage:          client.Usage{InputTokens: 100600, OutputTokens: 626},
+	}
+	row := stripANSIstr(renderTeamRosterRow(aztec().Style("spinner"), "▶ ", ln, 0, false, 100))
+	lines := strings.Split(row, "\n")
+	if len(lines) != 3 {
+		t.Fatalf("team row has %d lines, want identity/work/runtime: %q", len(lines), row)
+	}
+	if !strings.HasPrefix(lines[0], "▶ ◆ · overlay-reader") {
+		t.Fatalf("identity line lost selection or member identity: %q", lines[0])
+	}
+	if !strings.HasPrefix(lines[1], "    RecordFinding… · Inspect the Agents") {
+		t.Fatalf("work line should group current action and role: %q", lines[1])
+	}
+	if !strings.HasPrefix(lines[2], "    ↑100.6K ↓626 · ctx ") || !strings.Contains(lines[2], "medium → gpt-5.6-terra") {
+		t.Fatalf("runtime line should group tokens, context, and route: %q", lines[2])
+	}
+}
+
 // TestAgentsRosterContextMeter asserts each roster lane shows the per-member
 // context band (the footer's renderContextMeter vocabulary) once a turn.end has
 // carried a known window: a low-pressure member reads "ctx … NN%" with no ⚠, a
@@ -877,6 +904,7 @@ func TestAgentsRosterContextMeter(t *testing.T) {
 		c.addTeamMember(member("nowin", "turn.end", client.TeamMsg{
 			Usage: client.Usage{InputTokens: 1200}}))
 	})
+	m = resize(m, 100, 80)
 	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
 	out := stripANSIstr(m.View().Content)
@@ -885,7 +913,7 @@ func TestAgentsRosterContextMeter(t *testing.T) {
 		lines := strings.Split(out, "\n")
 		for i, ln := range lines {
 			if strings.Contains(ln, name) {
-				return strings.Join(lines[i:min(i+2, len(lines))], "\n")
+				return strings.Join(lines[i:min(i+3, len(lines))], "\n")
 			}
 		}
 		return ""
