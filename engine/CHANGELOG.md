@@ -212,6 +212,10 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Changed
 
+- **Go compatibility floor** - the engine module requires Go 1.27. The root,
+  provider, and authentication modules use the same floor. Changed (breaking,
+  pre-v1 minor).
+
 - **Canonical Shell command tool** — replaces the exported `BashTool` / `NewBashTool`, `BashStatusTool` / `NewBashStatusTool`, and `tool.BashToolName` APIs with their Shell-named counterparts. The model-facing catalog names are `Shell` and `ShellStatus`; `ServerCapabilities.bash` and Go `Capabilities.Bash` remain stable shell-availability indicators. Changed (breaking, pre-v1 minor).
 
 - **Durable main-usage budget baseline** — `Session.Usage` is now permanently the

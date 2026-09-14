@@ -79,7 +79,7 @@ the Kubernetes runtime, which is image-only and not part of the formula.
 
 ## Build from source
 
-A source build requires Go 1.26.6 or later and [Task](https://taskfile.dev/) v3.
+A source build requires Go 1.27 or later and [Task](https://taskfile.dev/) v3.
 Run the build from the repository root.
 
 Build all executables into `bin/`:

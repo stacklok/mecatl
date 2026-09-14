@@ -159,6 +159,33 @@ durable resume cursor. The adapter is validated by the same
 `storeconformance.RunPrunable` suites that `jsonlstore` passes, tested offline
 against `miniredis`.
 
+### Size durable event followers
+
+Each `mecak8s` process uses a dedicated Redis client for blocking durable-event
+followers. This keeps session saves, event appends, and metadata operations on
+the durability client when watches are idle.
+
+|CLI flag|Helm value|Default|
+|-|-|-|
+|`--redis-follow-pool-size`|`redis.follow.poolSize`|`32`|
+|`--redis-max-followers`|`redis.follow.maxFollowers`|`32`|
+
+Both values must be positive integers, and the maximum follower count must not
+exceed the follow pool size. `mecak8s` and the Helm chart reject invalid values
+at startup or render time.
+
+Keep the defaults unless one pod must serve more than 32 concurrent durable
+watches. Size the follower limit for the expected per-pod watch concurrency,
+then give the pool at least that many connections. Include every replica and
+briefly overlapping credential generations in the Redis connection budget.
+
+When the process has admitted the maximum number of followers, a new watch
+ends with `watch_capacity`. gRPC reports `RESOURCE_EXHAUSTED`; HTTP retains its
+status 200 event stream and sends a terminal `event: error` frame. The
+TypeScript SDK reconnects from the last processed cursor with the same filter.
+This code is separate from `watch_lagging`, which means a client did not consume
+the server's bounded delivery buffer quickly enough.
+
 ## Production Helm chart
 
 `deploy/helm/mecak8s/` defines the production deployment contract. It creates no
@@ -777,14 +804,15 @@ a username uses Redis's default ACL user, while a username requires a password.
 `mecak8s` watches the lexical parent directories of every configured Redis CA,
 username, and password file, so Kubernetes projected-Secret `..data` swaps are
 observed. One coalesced event re-reads the **complete** configured file set. The
-process builds a fresh client through the same validation and verified-TLS path,
-and publishes it only after a bounded successful PING/TLS/auth probe. Invalid or
+process builds fresh durability and follow clients through the same validation
+and verified-TLS path, and publishes the pair only after bounded successful
+PING/TLS/auth probes. Invalid or
 partially projected material leaves the last valid client active; bounded
 single-flight retries cover the window where the Secret projection and
 Redis-side ACL/trust update settle in different orders. New operations use the
-replacement, while in-flight operations and migration locks finish on their
-original client before it closes. No Redis files configured means no reload
-watcher. Credential files may end in one newline, as Kubernetes Secret
+replacement pair, while in-flight operations and migration locks finish on their
+original durability client before it closes. No Redis files configured means no
+reload watcher. Credential files may end in one newline, as Kubernetes Secret
 projections commonly do; other whitespace remains part of the credential.
 
 `--redis-url` takes a bare `host:port`. A `redis://` or `rediss://` URL is
@@ -793,7 +821,7 @@ address back — a URL's userinfo can carry a password, and these errors land in
 the operator's log.
 
 Client-certificate (mTLS) authentication is **not supported**: the shared
-`toolhive-core/redis` connection layer cannot express it
+`toolhive-core/redisconn` connection layer cannot express it
 ([ADR 0233](https://github.com/stacklok/mecatl/blob/main/docs/adr/0233-secure-external-redis.md)),
 and it is tracked upstream at
 [toolhive-core#240](https://github.com/stacklok/toolhive-core/issues/240).

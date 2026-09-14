@@ -66,18 +66,25 @@ semantic-version protocol.
 |`WatchSessionEvents(WatchSessionEventsRequest) → stream WatchSessionEventsResponse`|server-stream|**durable replay-then-follow** ([ADR 0250](https://github.com/stacklok/mecatl/blob/main/docs/adr/0250-durable-cursors-and-watch.md)): replay from an opaque `cursor` (empty = the beginning), then keep following as the run appends. Each frame is `{event, cursor, phase}`; `phase` is an OPEN STRING (`replay`/`live`/`gap`) — tolerate an unknown value. Exactly one PHASE-ONLY `live` frame (no `event`) marks the replay→live boundary, so a client renders the transcript and shows a live view WITHOUT waiting for the next event, which on an idle session may never arrive. A `gap` frame (also event-less) marks a position whose durable append is known to have failed. Optional `run_id` narrows delivery to one run; gap frames are delivered either way. Relays the FULL timeline like `StreamSessionEvents`, log-only kinds included. Errors: `watch_unsupported` (`UNIMPLEMENTED`) when the log has no cursor seam, `no_event_log` (`UNIMPLEMENTED`), `cursor_malformed` (`INVALID_ARGUMENT`), `cursor_expired` (`FAILED_PRECONDITION` — restart from the beginning), `watch_lagging` (`RESOURCE_EXHAUSTED` — **resumable**, reconnect with your last cursor), `activity_gap` (`DATA_LOSS`)|
 |`ListSessions(ListSessionsRequest) → ListSessionsResponse`|unary|the stored-session inventory — picker metadata (id, timestamps, state, turns, model id; no conversation content), sorted most-recently-active first; an empty list when the store does not implement `PrunableStore`|
 
+`WatchSessionEvents` also returns `watch_capacity` with
+`RESOURCE_EXHAUSTED` when the storage backend cannot admit another durable
+follower. This error is resumable from the last processed cursor with the same
+`run_id` filter; retry with bounded backoff. `watch_lagging` remains the
+separate classification for a
+client that does not consume the bounded delivery buffer quickly enough.
+
 **Watching a session durably.** `StreamSessionEvents` replays and ENDS;
 `StreamSessionLive` is live but process-local and DROPS for a slow client;
 `WatchSessionEvents` is the one call that does both durably. Treat the `cursor`
 as bytes to hand back — never parse, build, or edit one. Persist it once per
 frame you have PROCESSED, and on any reconnect (including after a
-`watch_lagging` termination) pass that value back: the watch continues from
-exactly the next record. Do NOT resume from a cursor you saw but did not
-process. A cursor is SCOPED TO THE `run_id` IT WAS ISSUED UNDER — a filtered
-watch advances its position over the records the filter dropped, so handing that
-cursor back under a different `run_id`, or none, skips them silently. Resume
-with the same filter, or start from the beginning. A `gap` frame, or an
-`activity_gap` termination, means events that should have been recorded were not
+`watch_capacity` or `watch_lagging` termination) pass that value back: the watch
+continues from exactly the next record. Do NOT resume from a cursor you saw but
+did not process. A cursor is SCOPED TO THE `run_id` IT WAS ISSUED UNDER — a
+filtered watch advances its position over the records the filter dropped, so
+handing that cursor back under a different `run_id`, or none, skips them
+silently. Resume with the same filter, or start from the beginning. A `gap`
+frame, or an `activity_gap` termination, means events that should have been recorded were not
 — a retry does not recover them. That guarantee is deliberately bounded: it
 covers durably-appended events, and a total backend outage combined with loss of
 the process holding the watchers leaves a gap nothing can report.

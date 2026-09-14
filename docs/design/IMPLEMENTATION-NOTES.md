@@ -184,16 +184,25 @@ retains only static client-CA loading and lifecycle closure. Invalid rotations r
 prior generation. Expiry diagnostics warn once per published generation with only an
 `expiring`/`expired` reason and rounded remaining duration; they never disable the published
 certificate or expose paths, subjects, serials, or PEM. Close joins watcher and observer.
-`internal/adapter/redisstore` similarly swaps a fully probed client generation for file-backed
-CA/ACL changes while leases keep displaced clients alive for in-flight work. Acquisition returns
-the concrete client explicitly through every helper and iterator; only the migration acquisition
-identity remains in context. A followed credential target must be regular. Shutdown rejects new
-work first, closes the watcher, cancels reload, and separately bounds the worker join; an
-uncancellable late read cannot publish into the closed generation manager. Generation retirement
-claims close once and executes it asynchronously. One fixed generation grace bounds both live
-leases and close completion without force-closing active clients; a timeout emits one count-only
-warning and eventual releases/closes continue. Reload retries use bounded jittered exponential
-delay, with a newer projection event explicitly restarting at attempt one. Partial or invalid
+`internal/adapter/redisstore` swaps a fully probed client pair for file-backed
+CA/ACL changes while leases keep displaced generations alive for in-flight work.
+Each generation contains a durability client with the standard connection
+defaults and an isolated follow client built through ToolHive Core v0.0.46 and
+`redisconn` v0.0.2. The follow client's `PoolSize` and `MaxActiveConns` equal
+`Config.FollowPoolSize`; a separate `followerRegistry` admits at most
+`Config.MaxFollowers` full iterators. Zero selects 32 for both, and
+configuration requires `1 <= MaxFollowers <= FollowPoolSize`. Acquisition
+returns the selected concrete client through every helper and iterator; only the
+migration acquisition identity remains in context. A followed credential target
+must be regular.
+Shutdown rejects new work first, closes the watcher, cancels reload, and
+separately bounds the worker join; an uncancellable late read cannot publish
+into the closed generation manager. Generation retirement claims close once and
+runs asynchronously. Store shutdown cancels admitted followers, waits
+cooperatively, and may force-close only isolated follow clients before the fixed
+total grace expires. Durability clients remain lease-safe. Reload retries use
+bounded jittered exponential delay, with a newer projection event explicitly restarting
+at attempt one. Partial or invalid
 rotations retain the previous generation. The
 server client-CA pool remains static and requires restart; CA rotation should overlap old
 and new roots before removing the old root.
@@ -210,7 +219,11 @@ Chart-owned annotations (`mecatl.stacklok.com/unsafe-real-provider`,
 release cannot forge or clear its own posture stamp. Empty provider/model
 and null token ceilings emit no flags; explicit ceilings are positive. Scheduling controls
 are empty by default and map directly to pod-spec topology spread, affinity, node selector,
-and toleration fields. The comprehensive production fixtures pin external verified Redis,
+and toleration fields. `redis.follow.poolSize` and
+`redis.follow.maxFollowers` default to 32. The schema requires positive
+integers,
+and the template helper requires the follower limit to fit within the pool. The
+comprehensive production fixtures pin external verified Redis,
 both secure transport options, provider/model, finite run/team ceilings, and hostname
 spreading; Kind remains mock and secret-free.
 
@@ -7099,6 +7112,13 @@ allocates are `0027-cloud-native.md` List 1 rows 65–66.
   resuming from it would skip exactly the buffered envelopes the client never
   received. The client's own last-received envelope is the only correct resume
   point.
+- **Backend admission is distinct from transport lag.** A `CursorEventLog` may
+  return `port.ErrEventFollowCapacity` before storage work starts. The server
+  classifies it as `watch_capacity` and gRPC `RESOURCE_EXHAUSTED`; HTTP has
+  already committed status 200 and writes the same code in its terminal SSE
+  error frame. Redisstore uses this path when its process-local follower
+  registry is full. `watch_lagging` continues to mean that the server's
+  bounded delivery buffer could not keep pace with the transport consumer.
 - **Cursor assignment is at the ONE persistence chokepoint** (AC7.8):
   `internal/adapter/server/service.go` (`appendEvent`) type-asserts the cursor seam
   and calls `AppendEvent`. The returned cursor is DISCARDED — readers get positions
@@ -8816,8 +8836,9 @@ pulls again. Neither moves its checkpoint past the last preceding envelope. Curs
 terminal here: restart-from-beginning remains caller-authored rather than an SDK fallback.
 
 Reconnect authority stays inside the named watch operation in `sdk/typescript/src/watch.ts`.
-`WatchConnection` resumes transport-shaped failures, `watch_lagging`, authentication failures,
-and clean EOF from the iterator's raw checkpoint token and unchanged server filter. It applies
+`WatchConnection` resumes transport-shaped failures, `watch_lagging`,
+`watch_capacity`, authentication failures, and clean EOF from the iterator's raw
+checkpoint token and unchanged server filter. It applies
 bounded exponential delay with jitter through the internal `delayFor`/`sleep` scheduler bag; a
 successful envelope resets the attempt count. The code-driven terminal arm is the single
 `terminalWatchCodes` set: `cursor_expired`, `cursor_malformed`, `activity_gap`,

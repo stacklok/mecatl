@@ -87,8 +87,12 @@ still advances over omitted records, preserving the source log's order.
 - `CursorScopeError` means a cursor was reused with a wider run or event filter.
 - `NoRunsError` means the readable session log contains no run-bearing event.
 
-Transient classified read failures reconnect with bounded backoff. The SDK does
-not retry prompts, approvals, mutations, or owned runs automatically.
+Transient classified read failures reconnect with bounded backoff. This includes
+`watch_capacity`, which means the server's durable-follow admission limit is
+full, and `watch_lagging`, which means the client did not consume the server's
+bounded delivery buffer quickly enough. Both reconnect from the last processed
+cursor with the same filter. The SDK does not retry prompts, approvals,
+mutations, or owned runs automatically.
 
 ## Next steps
 

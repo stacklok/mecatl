@@ -7,7 +7,7 @@
 # Build context is the repository root (see docker-compose.yml) since
 # mecated needs the whole Go workspace (go.work references ./engine and the
 # other in-repo modules).
-FROM golang:1.26.6-bookworm AS build
+FROM golang:1.27-bookworm AS build
 WORKDIR /src
 COPY . .
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/mecated ./cmd/mecated

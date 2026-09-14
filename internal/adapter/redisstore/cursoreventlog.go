@@ -37,13 +37,14 @@ import (
 // MINID makes future retention safe precisely BECAUSE IDs are not positional.
 //
 // CONNECTION COST — the honest one. A blocking XREAD occupies a pooled
-// connection for the duration of its block, and this Store's pool is shared with
-// Save/Append. Follow therefore blocks in BOUNDED slices (followBlock) and
-// re-acquires between them, so a watcher parks a connection for at most one
-// slice at a time instead of indefinitely, and a cancelled follow gives the
-// connection back within one slice rather than on the next append. That bounds
-// the hold, it does not make it free: N concurrent watchers still want N
-// connections, so a deployment expecting many should size the pool for them.
+// connection for the duration of its block. Follow uses an isolated, bounded
+// client so it cannot exhaust the durability pool used by Save and Append. It
+// blocks in BOUNDED slices (followBlock) and re-acquires between them, so a
+// watcher parks a connection for at most one slice at a time instead of
+// indefinitely, and a cancelled follow gives the connection back within one
+// slice rather than on the next append. That bounds the hold, it does not make
+// it free: N concurrent watchers still want N connections. Process-local
+// admission therefore cannot exceed the configured follow-pool size.
 
 const (
 	// eventsGenerationKeyPrefix holds a session log's positional basis: an

@@ -158,7 +158,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0248 — SDK compatibility discovery and the typed error contract](./0248-sdk-compatibility-and-error-contract.md)
 - [0249 — Durable run identity: a host-minted `run_id`](./0249-durable-run-identity.md)
 - [0250 — Durable cursors and the session watch transport](./0250-durable-cursors-and-watch.md)
-- [0330 — Isolated bounded Redis follow capacity](./0330-isolated-redis-follow-capacity.md) *(proposed; raises mecatl's Go floor to 1.27, replaces ADR 0233's old shared-client package locator, supersedes ADR 0250's shared-pool sizing deferral, and supersedes ADR 0240's no-force-close rule for isolated follow clients only)*
+- [0330 — Isolated bounded Redis follow capacity](./0330-isolated-redis-follow-capacity.md) *(raises mecatl's Go floor to 1.27, replaces ADR 0233's old shared-client package locator, supersedes ADR 0250's shared-pool sizing deferral, and supersedes ADR 0240's no-force-close rule for isolated follow clients only)*
 
 ### Providers & APIs
 - [0308 — Asynchronous session-title generation](./0308-session-title-generation-and-auxiliary-usage.md) *(proposed)*
@@ -267,6 +267,8 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0295 — One scaled acceptance-plan spine for substantive work](./0295-unified-development-spine.md) *(single-PR decision superseded by 0301)*
 - [0296 — Opt-in local session context service](./0296-opt-in-local-session-context.md) *(proposed)*
 - [0303 — Fail closed double-Escape clearing on enhanced key-event support](./0303-fail-closed-double-escape.md)
+- [0336 — Draft-aware session inventory](./0336-draft-aware-session-inventory.md)
+  *(proposed)*
 
 ### Retired
 - [0029 — Repo-map tree-sitter](./0029-repomap-tree-sitter.md) *(retired)*

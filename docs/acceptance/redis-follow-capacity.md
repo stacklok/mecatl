@@ -4,14 +4,14 @@
 **Work classification:** Architectural — this changes the Go compatibility floor, exported engine and TypeScript SDK error contracts, operator CLI and Helm configuration, and ownership of process-lifetime Redis clients and follower goroutines.
 **Decision record:** [ADR 0330](../adr/0330-isolated-redis-follow-capacity.md)
 **Phase:** Cloud-native durable event watch
-**Status:** in-progress, 2026-09-14. Original decisions were approved while grilling [issue #876](https://github.com/stacklok/mecatl/issues/876); the user approved the Go 1.27 migration after ToolHive Core's released module metadata blocked implementation.
-**Delivery:** Split. The Go compatibility floor, exported Go API, public error code, operator configuration, and shutdown resource boundary warrant independent Plan / Interface review before implementation.
+**Status:** landed, 2026-09-14. Original decisions were approved while grilling [issue #876](https://github.com/stacklok/mecatl/issues/876); the user approved the Go 1.27 migration after ToolHive Core's released module metadata blocked implementation.
+**Delivery:** One Implementation PR under the explicit amendment-review waiver below. The original Plan / Interface review remains authoritative.
 **Expected tasks:** deferred to orchestration
 **Issue:** [stacklok/mecatl#876](https://github.com/stacklok/mecatl/issues/876).
 **Plan PR:** [stacklok/mecatl#1422](https://github.com/stacklok/mecatl/pull/1422)
 **Amendment PR:** [stacklok/mecatl#1462](https://github.com/stacklok/mecatl/pull/1462), closed without merge after the directing user explicitly waived separate amendment ceremony in favor of one Implementation PR
 **Human waiver:** The Go 1.27 amendment is reviewed together with implementation; TDD, repository gates, panel review, and human merge remain mandatory.
-**Approved baseline:** `3ad4a689bb68db01a21c72995daef1854c295866` for the original plan; the amendment baseline is absent until approved
+**Approved baseline:** `3ad4a689bb68db01a21c72995daef1854c295866` for the original plan; the Go 1.27 amendment was approved inline under the human waiver and has no separate merged baseline
 
 Redis durable followers get their own bounded connection pool and fail-fast admission limit,
 so any admitted follower can block without consuming the durability capacity used by session
@@ -75,7 +75,7 @@ The admission error extends the typed watch contract from [ADR 0250](../adr/0250
 - AC2.4: Both watch transports classify the sentinel as public `watch_capacity`; gRPC returns `RESOURCE_EXHAUSTED`, while HTTP retains `200` and emits a terminal SSE error frame. `watch_lagging` behavior remains unchanged.
   - verify: `TestRedisFollowCapacity_Scenario2_TransportClassification`
 - AC2.5: TypeScript `MECATL_ERROR_CODES` includes `watch_capacity`, and `WatchConnection` treats it like `watch_lagging`: it reconnects under bounded backoff from the last processed cursor and unchanged run filter rather than terminating or replaying acknowledged envelopes.
-  - verify: vitest:sdk/typescript/test/attach-reconnect.test.ts — `watch_capacity` resumes from the attachment checkpoint under the same filter
+  - verify: vitest:sdk/typescript/test/attach-reconnect.test.ts#d2F0Y2hfY2FwYWNpdHkgcmVzdW1lcyBmcm9tIHRoZSBhdHRhY2htZW50IGNoZWNrcG9pbnQgdW5kZXIgdGhlIHNhbWUgZmlsdGVy — `sdk/typescript/test/attach-reconnect.test.ts :: "watch_capacity resumes from the attachment checkpoint under the same filter"`
 
 ### Scenario 3 — The Redis store owns and bounds follower shutdown
 
@@ -107,7 +107,8 @@ The exact flags and Helm values are part of the storage-free deployment surface 
 - AC4.4: ADR 0027 List 1 gains separate rows for per-generation isolated follow clients and for the process-scoped admission/lifecycle registry, including owner, scope, cleanup, re-attach, and evidence; the change explicitly adds no List 2 row because neither resource contains durable state.
   - verify: inspection — [ADR 0027](../adr/0027-cloud-native.md) contains both cited List 1 rows and an explicit no-List-2 statement; `task docs` validates citations.
 - AC4.5: Living architecture and implementation notes, canonical `user-docs/` deployment and gRPC/HTTP/TypeScript references, compatibility pointers under `docs/usage/`, Helm documentation/schema, generated TypeScript API docs and API snapshots, and the engine changelog/API baseline describe the exact limits, typed error, and Go 1.27 compatibility floor. The Taskfile requirement and source-build container use Go 1.27 or newer. No new metric, trace, or diagnostic counter is introduced.
-  - verify: `TestRedisFollowCapacity_Scenario4_Go127SourceBuildSurfaces`, `task docs`, `task site:build`, and `task api:check`
+  - verify: `TestRedisFollowCapacity_Scenario4_Go127SourceBuildSurfaces`
+  - integration proof: `task docs`, `task site:build`, and `task api:check`
 
 ## Out of scope
 

@@ -4,8 +4,9 @@
 > open standard). `CLAUDE.md` is a **symlink to this file**, so Claude Code and any
 > AGENTS.md-aware tool read the same contract. Edit `AGENTS.md`, never the symlink.
 
-A **headless agentic coding harness** in Go 1.26 (hexagonal/DDD): the streaming agent
-loop, ~7 tools, permissions, hooks, and subagents behind a provider-agnostic port.
+A **headless agentic coding harness** in Go 1.27 (hexagonal/DDD): the streaming
+agent loop, ~7 tools, permissions, hooks, and subagents behind a
+provider-agnostic port.
 Driven over gRPC + HTTP; an optional Bubble Tea TUI (`mecatui`) is a client.
 
 > **Documentation lifecycle (ADR 0002 + ADR 0003 + ADR 0321):**

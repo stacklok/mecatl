@@ -1,6 +1,6 @@
 # ADR 0330 — Isolated bounded Redis follow capacity
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-09-11
 - Scope: repository Go compatibility, redisstore client-generation ownership, follower admission and shutdown, and mecak8s operator sizing
 - Supersedes: ADR 0233's `github.com/stacklok/toolhive-core/redis` construction-package locator, ADR 0250's shared-pool sizing deferral, and ADR 0240's no-force-close rule for isolated follow clients only; all three ADRs remain authoritative elsewhere

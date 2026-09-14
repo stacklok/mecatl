@@ -97,10 +97,12 @@ Each frame is `{event, cursor, phase}`:
   come.
 - **`run_id`** optionally narrows delivery to one run's events.
 
-Two terminations matter to an operator. A client that falls too far behind its
-bounded server-side delivery buffer is **terminated** with `watch_lagging`
-rather than having events silently dropped — reconnect with your last cursor and
-nothing is lost. A failed durable append terminates watchers with
+Three terminations matter to an operator. When the Redis follower admission
+limit is full, the server returns `watch_capacity`; retry with bounded backoff
+from the last processed cursor and the same filter. A client that falls too far
+behind its bounded server-side delivery buffer is **terminated** with
+`watch_lagging` instead of silently dropping events. Reconnect with your last
+cursor and nothing is lost. A failed durable append terminates watchers with
 `activity_gap`, and an event-less `gap` frame marks the position when the marker
 itself lands. Neither affects the run: a broken or slow watch never breaks or
 slows a live session.

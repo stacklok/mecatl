@@ -15,7 +15,7 @@ network connection or API key. To inspect the engine wiring, see
 
 ## Prerequisites
 
-- **Go 1.26.6 or newer** (the `go` directive in `go.mod` sets this minimum
+- **Go 1.27 or newer** (the `go` directive in `go.mod` sets this minimum
   version)
 - The repo cloned locally:
 

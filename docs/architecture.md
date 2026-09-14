@@ -282,7 +282,8 @@ append-only log can fold its `EventLog` (+ `SessionMeta`) into a session via
 reasoning providers (#115, [ADR 0038](adr/0038-event-sourced-rehydration.md)); and the
 supply chain gains per-module **`govulncheck`** (engine strict-clean; a
 fail-closed reachable-vuln gate on the root) plus **`dependabot`** over both
-modules and the SHA-pinned actions, on a **go 1.26.5** toolchain (#118). The LLM provider sits behind the `port.LLMProvider` seam, with each
+modules and the SHA-pinned actions, on a **go 1.27** toolchain (#118). The LLM
+provider sits behind the `port.LLMProvider` seam, with each
 wire format isolated entirely inside its own adapter — the OpenAI Responses API
 in `provider/openai`, the native Anthropic Messages API in
 `provider/anthropic` ([multi-provider](architecture/providers.md)) — so the core is provider-agnostic and
@@ -496,8 +497,9 @@ therefore carries it in a terminal `event: error` SSE frame. An expired cursor n
 implicit restart from the beginning; that recovery remains an explicit application decision.
 
 Attachment continuity is owned only by the durable watch. Transport failures,
-`watch_lagging`, authentication failures, and clean non-terminal EOF reconnect with bounded
-exponential backoff and jitter from the attachment checkpoint under the same filter. The client
+`watch_lagging`, `watch_capacity`, authentication failures, and clean
+non-terminal EOF reconnect with bounded exponential backoff and jitter from the
+attachment checkpoint under the same filter. The client
 invalidates and re-probes cached compatibility before each reconnect, so a replacement daemon's
 feature set is authoritative on the first attempt. The closed permanent-code set ends the view;
 ordinary mutations, prompts, permission verdicts, and owned run streams remain one-shot. An
@@ -1049,11 +1051,19 @@ files. The focused
 server chain for both listeners, watches projected-Secret swaps, and warns once per current
 certificate generation when its leaf is expiring or expired. Its fixed expiry ticker and
 watcher are both stopped and joined on shutdown; client CA trust remains static. File-backed
-Redis credentials reload as an atomically probed client generation. Each I/O path receives
-its leased client explicitly; shutdown rejects new work immediately, starts claimed client closes
-asynchronously, and waits on leases and close completion for only one fixed grace interval. It
-never force-closes a generation still held by an iterator or migration lock, and a blocked client
-`Close` cannot stall a swap. Credential targets must resolve to regular files. The reload-worker
+Redis credentials reload as an atomically probed client generation containing
+separate durability and follow clients. Durability operations retain the
+connection defaults, while blocking event followers use a dedicated pool.
+`--redis-follow-pool-size` bounds that pool and `--redis-max-followers` bounds
+process-local admission. Both default to 32, and the maximum followers value
+cannot exceed the pool size. Each I/O path receives its leased client
+explicitly.
+Shutdown rejects new work immediately, cancels and joins admitted followers,
+and waits on leases and close completion for one fixed grace interval. It may
+force-close an isolated follow client after the cooperative wait, but it never
+force-closes a durability client held by an iterator or migration lock. A
+blocked client `Close` cannot stall a swap. Credential
+targets must resolve to regular files. The reload-worker
 join is separately bounded after watcher close and cancellation; any candidate completing after a
 timeout is rejected and closed by the shut generation manager. Credential retries use capped
 jitter and restart at attempt one on a newer projection event.

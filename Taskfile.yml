@@ -1,7 +1,7 @@
 # Taskfile for mecatl (https://taskfile.dev).
 #
 # Required tools (assumed on PATH; install commands below):
-#   - go            >= 1.26.6   (the toolchain)
+#   - go            >= 1.27     (the toolchain)
 #   - golangci-lint (version in scripts/install-golangci-lint.sh)
 #                               task tools:golangci-lint (installs the CI-matching
 #                               official release binary into .tools/bin)
