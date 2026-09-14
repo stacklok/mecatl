@@ -12,7 +12,7 @@ needs no API key or network connection.
 
 ## Prerequisites
 
-You need Go 1.27 or later.
+You need Go 1.27 or newer.
 
 ## Create a Go module
 
