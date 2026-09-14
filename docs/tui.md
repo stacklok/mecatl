@@ -2324,8 +2324,15 @@ profile.
 F6 opens the client-only Agents overlay. At known terminal heights of 24 rows or
 more, each Subagents, Parallel, and Teams view is physically line-budgeted to the
 offered conversation viewport: frames, tabs, wrapped metadata, overflow range, and
-footer are included. The existing remappable `Up`, `Down`, `ScrollU`, `ScrollD`,
-`JumpTop`, and `JumpEnd` actions navigate rosters or overflowed detail. At known
-terminal heights below 24 rows, the overlay is an unframed, width-truncated compact
-line; it identifies the selected tab or focused item and retains `esc close` or
-`esc back`, while normal-content navigation is suspended.
+footer are included. The remappable `Up`, `Down`, `ScrollU`, `ScrollD`, `JumpTop`,
+and `JumpEnd` actions move the selection in Subagent and Team rosters and in a
+focused Parallel group; in Subagent or Team focus, tasks, and findings views they
+scroll the rendered lines. If the surrounding UI leaves too little conversation
+space for even the complete minimal card, an unframed `vp short` line identifies
+the active tab and the available `esc` action instead of clipping the card.
+
+At known terminal heights below 24 rows, the overlay uses a separate unframed,
+width-truncated compact line. A roster identifies its active tab; focus identifies
+the child, Parallel group, or team member, while task and finding views identify
+their subview. The line retains `esc close` or `esc back`, and other overlay
+navigation is suspended.

@@ -1,6 +1,10 @@
 package ui
 
-import "github.com/stacklok/mecatl/cmd/mecatui/client"
+import (
+	"strings"
+
+	"github.com/stacklok/mecatl/cmd/mecatui/client"
+)
 
 // maxTraceEntries caps how many trace entries a delegation lane (a subagent block,
 // a fleet lane, a parallel branch, a team member) retains for the expanded/focus
@@ -822,6 +826,14 @@ type parallelBranch struct {
 // stop, plus the ordered list of its branches. It is the grouped
 // analogue of the subagentFleet (which is flat). branches preserves first-seen index order
 // via branchIndex (BranchIndex → slot).
+const maxParallelJoinModeLen = 24
+
+// parallelJoinMode bounds untrusted server metadata once at ingestion so every
+// roster, focus, essential, and compact projection reads the same safe value.
+func parallelJoinMode(join string) string {
+	return truncate(strings.Join(strings.Fields(sanitizeTerminal(join)), " "), maxParallelJoinModeLen)
+}
+
 type parallelGroup struct {
 	parentCallID string
 	join         string
@@ -880,7 +892,7 @@ func (c *conversation) parallelStart(parentCallID, join string, branchCount int)
 		return
 	}
 	g := c.parallelGroupFor(parentCallID)
-	g.join = join
+	g.join = parallelJoinMode(join)
 	g.branchCount = branchCount
 }
 
@@ -944,7 +956,7 @@ func (c *conversation) parallelEnd(parentCallID, join string, branchCount, winne
 	}
 	g := c.parallelGroupFor(parentCallID)
 	g.done = true
-	g.join = join
+	g.join = parallelJoinMode(join)
 	if branchCount > 0 {
 		g.branchCount = branchCount
 	}

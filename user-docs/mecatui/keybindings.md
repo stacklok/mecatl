@@ -29,7 +29,7 @@ provide.
 | `ctrl+p` | Move to the previous prompt line. |
 | `ctrl+y` | Copy the active prompt or conversation selection; no selection is a no-op. |
 | `f6` / `f7` / `f8` | Open Agents / Effort / MCP Prompts. |
-| Agents overlay controls | In the normal-height F6 Agents overlay, remappable `Up`, `Down`, `ScrollU`, `ScrollD`, `JumpTop`, and `JumpEnd` move the selected roster item or traverse overflowed activity; `enter` focuses a roster item and `esc` goes back or closes. On terminals below 24 rows, F6 shows a compact context line and only `esc` is active. |
+| Agents overlay controls | At terminal heights of 24 rows or more, remappable `Up`, `Down`, `ScrollU`, `ScrollD`, `JumpTop`, and `JumpEnd` move selection in Subagent and Team rosters and focused Parallel groups, or scroll Subagent/Team activity, tasks, and findings. `enter` focuses a roster item; `esc` goes back or closes. If the conversation area cannot fit the minimal card, an unframed `vp short` line preserves the active context and `esc` action. Below 24 terminal rows, a compact line identifies the active roster tab or focused child/group/member (or Tasks/Findings); only `esc` is active. |
 | `pgup` / `pgdn` | Scroll the conversation. |
 | `home` / `end` | Jump to the top or bottom; `end` resumes auto-follow. |
 | `/` | Open the slash-command palette. |

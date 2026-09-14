@@ -686,7 +686,7 @@ func essentialParallelBody(th theme.Theme, st parallelState, groups []parallelGr
 	if group == nil {
 		return body
 	}
-	body.title = line(th.Style("askTitle"), "", "parallel · join="+group.join)
+	body.title = line(th.Style("askTitle"), "", "parallel · join="+parallelJoinMode(group.join))
 	ordered := branchesByIndex(group.branches)
 	if len(ordered) > 0 {
 		body.selected = line(th.Style("spinner"), "▶ ", parallelBranchLine(&ordered[clampCursor(st.branchCursor, len(ordered))]))
@@ -766,8 +766,17 @@ func renderCompactAgentsOverlay(th theme.Theme, tab agentsTab, sub subagentState
 	switch tab {
 	case tabParallel:
 		label, focus = "Parallel", par.view == parallelGroupView
+		if focus && par.group != "" {
+			label = "parallel " + sanitizeTerminal(par.group)
+		}
 	case tabTeams:
 		label, focus = "Teams", team.view != teamRoster
+		switch team.view {
+		case teamTasks:
+			label = "Tasks"
+		case teamFindings:
+			label = "Findings"
+		}
 	default:
 		focus = sub.view == subagentFocus
 	}
@@ -1325,7 +1334,7 @@ func parallelRosterLine(g *parallelGroup) string {
 	if g.done {
 		glyph = "✓"
 	}
-	join := g.join
+	join := parallelJoinMode(g.join)
 	if join == "" {
 		join = "all"
 	}
@@ -1376,7 +1385,7 @@ func branchHumanLabel(g *parallelGroup, index int) string {
 // group reads as a muted note.
 func parallelBranchSelectableList(th theme.Theme, st parallelState, g *parallelGroup, hk helpKeys, bodyWidth int) agentsSelectableList {
 	muted := th.Style("muted")
-	join := g.join
+	join := parallelJoinMode(g.join)
 	if join == "" {
 		join = "all"
 	}

@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 )
@@ -525,5 +526,56 @@ func TestParallelBranchRoutedMetadata(t *testing.T) {
 	// unknown-model branch shows nothing.
 	if n := strings.Count(out, "model:"); n != 1 {
 		t.Errorf("exactly one plain model: cue expected (the inherited-model branch only), got %d:\n%s", n, out)
+	}
+}
+
+// TestParallelJoinModeIsSanitizedAndBounded plants hostile server-derived join
+// metadata and exercises both roster and focused render boundaries through Update/View.
+func TestParallelJoinModeIsSanitizedAndBounded(t *testing.T) {
+	const tail = "HOSTILE_TAIL"
+	join := "judge\x1b]0;owned\a" + strings.Repeat("oversized", 40) + tail
+	m := resize(newMCPModel(t, aztec(), nil), 32, 40)
+	m = seedParallel(m, "p1",
+		startPar("p1", join, 1),
+		branchStartPar("p1", 0, "branch-1", "inspect"),
+	)
+	m.team, m.agentsTab = teamState{view: teamRoster}, tabParallel
+	stored := m.conv.parallelGroups[0].join
+	if strings.ContainsAny(stored, "\x1b\a") || strings.Contains(stored, tail) {
+		t.Fatalf("hostile join was not sanitized and bounded at ingestion: %q", stored)
+	}
+
+	// Plant the violation behind the ingestion boundary: every renderer remains a
+	// trust boundary for directly restored or future-populated state.
+	m.conv.parallelGroups[0].join = join
+	g := &m.conv.parallelGroups[0]
+	for name, rendered := range map[string]string{
+		"roster":    parallelRosterLine(g),
+		"essential": renderEssentialAgentsBody(aztec(), tabParallel, subagentState{}, parallelState{}, teamState{}, nil, nil, m.conv.parallelGroups, defaultHelpKeys(), 120),
+		"focus":     renderParallelGroupFocus(aztec(), parallelState{view: parallelGroupView, group: "p1"}, m.conv.parallelGroups, defaultHelpKeys(), 120, 0),
+	} {
+		plain := stripANSIstr(rendered)
+		if strings.ContainsAny(plain, "\x1b\a") || strings.Contains(plain, tail) {
+			t.Fatalf("%s boundary rendered hostile or unbounded join: %q", name, plain)
+		}
+	}
+
+	for _, focused := range []bool{false, true} {
+		if focused {
+			mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+			m = mm.(Model)
+		}
+		out := m.View().Content
+		plain := stripANSIstr(out)
+		if strings.Contains(plain, tail) {
+			t.Fatalf("focused=%v: unbounded join mode reached final View:\n%s", focused, plain)
+		}
+		for i, line := range strings.Split(plain, "\n") {
+			if strings.Contains(line, "judge") {
+				if got := lipgloss.Width(line); got > 32 {
+					t.Fatalf("focused=%v join line %d width=%d, want <=32: %q", focused, i, got, line)
+				}
+			}
+		}
 	}
 }
