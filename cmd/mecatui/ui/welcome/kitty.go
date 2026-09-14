@@ -190,7 +190,7 @@ func transmitMascot(cols, rows int, nativeResolution bool) string {
 	if err != nil {
 		return ""
 	}
-	var scaled image.Image = downscaleMascot(img, cols, rows*2)
+	scaled := downscaleMascot(img, cols, rows*2)
 	if nativeResolution {
 		// Kitty supports PNG alpha directly. Keep the original image here so
 		// transparency and anti-aliased edges reach the terminal unchanged; the
