@@ -24,7 +24,15 @@ func (s *Service) ConnectWorkspaceServices(ctx context.Context, id session.Sessi
 	if err := s.acquireLease(ctx, id); err != nil {
 		return WorkspaceEnrollmentProjection{}, err
 	}
+	return s.connectWorkspaceServicesLocked(ctx, id)
+}
 
+// connectWorkspaceServicesLocked is ConnectWorkspaceServices' body. The caller
+// must already hold runEntryMu for id and have acquired the session lease.
+// RetryWorkspaceEnrollment composes this with cancelWorkspaceEnrollmentLocked
+// under ONE lock/lease acquisition so a prompt can never enter between the
+// cancellation and the replacement begin.
+func (s *Service) connectWorkspaceServicesLocked(ctx context.Context, id session.SessionID) (WorkspaceEnrollmentProjection, error) {
 	sess, enroller, release, err := s.workspaceEnrollmentTarget(ctx, id)
 	if err != nil {
 		if sess != nil && errors.Is(err, brokercontract.ErrStateUnavailable) {
@@ -104,25 +112,37 @@ func (s *Service) recordObservedWorkspaceEnrollment(ctx context.Context, sess *s
 	return WorkspaceEnrollmentProjection{Ref: result.Ref, Status: result.Status}, nil
 }
 
-// RetryWorkspaceEnrollment cancels one exact bundle before beginning a replacement.
+// RetryWorkspaceEnrollment cancels one exact bundle before beginning a
+// replacement, holding runEntryMu continuously across both so no prompt can
+// enter between the cancellation and the replacement begin (a single
+// acquire-then-release pair per call, rather than composing the two public
+// methods, each of which independently acquires and releases the lock).
 func (s *Service) RetryWorkspaceEnrollment(ctx context.Context, id session.SessionID, enrollmentID session.WorkspaceEnrollmentID) (WorkspaceEnrollmentProjection, error) {
-	if _, err := s.cancelWorkspaceEnrollment(ctx, id, enrollmentID); err != nil {
-		return WorkspaceEnrollmentProjection{}, err
-	}
-	return s.ConnectWorkspaceServices(ctx, id)
-}
-
-// CancelWorkspaceEnrollment cancels one exact bundle and clears its prompt gate.
-func (s *Service) CancelWorkspaceEnrollment(ctx context.Context, id session.SessionID, enrollmentID session.WorkspaceEnrollmentID) (WorkspaceEnrollmentProjection, error) {
-	return s.cancelWorkspaceEnrollment(ctx, id, enrollmentID)
-}
-
-func (s *Service) cancelWorkspaceEnrollment(ctx context.Context, id session.SessionID, enrollmentID session.WorkspaceEnrollmentID) (WorkspaceEnrollmentProjection, error) {
 	unlock := s.runEntryMu.lock(id)
 	defer unlock()
 	if err := s.acquireLease(ctx, id); err != nil {
 		return WorkspaceEnrollmentProjection{}, err
 	}
+	if _, err := s.cancelWorkspaceEnrollmentLocked(ctx, id, enrollmentID); err != nil {
+		return WorkspaceEnrollmentProjection{}, err
+	}
+	return s.connectWorkspaceServicesLocked(ctx, id)
+}
+
+// CancelWorkspaceEnrollment cancels one exact bundle and clears its prompt gate.
+func (s *Service) CancelWorkspaceEnrollment(ctx context.Context, id session.SessionID, enrollmentID session.WorkspaceEnrollmentID) (WorkspaceEnrollmentProjection, error) {
+	unlock := s.runEntryMu.lock(id)
+	defer unlock()
+	if err := s.acquireLease(ctx, id); err != nil {
+		return WorkspaceEnrollmentProjection{}, err
+	}
+	return s.cancelWorkspaceEnrollmentLocked(ctx, id, enrollmentID)
+}
+
+// cancelWorkspaceEnrollmentLocked is the shared cancel body for
+// RetryWorkspaceEnrollment and CancelWorkspaceEnrollment. The caller must
+// already hold runEntryMu for id and have acquired the session lease.
+func (s *Service) cancelWorkspaceEnrollmentLocked(ctx context.Context, id session.SessionID, enrollmentID session.WorkspaceEnrollmentID) (WorkspaceEnrollmentProjection, error) {
 	sess, enroller, release, err := s.workspaceEnrollmentTarget(ctx, id)
 	if err != nil {
 		if sess != nil && errors.Is(err, brokercontract.ErrStateUnavailable) {
@@ -208,9 +228,11 @@ func (s *Service) workspaceEnrollmentTarget(ctx context.Context, id session.Sess
 			brokerUnlock()
 			return sess, nil, nil, err
 		}
-		// This seam is pre-prompt by construction, so a lost incarnation costs the
-		// session nothing durable: adopt the live one rather than strand it behind
-		// a binding no restarted process can ever match.
+		// This seam is reached only from an explicit refresh (ADR 0335 Scenario
+		// 2): a binding lost to broker-process restart can never match again, so
+		// adopt a fresh live attachment rather than strand the session behind it.
+		// Ordinary run rehydration never calls rebind — a restored session with a
+		// mismatched binding simply builds its engine without broker tools.
 		if local, err = s.rebindBrokerAttachment(ctx, sess); err != nil {
 			brokerUnlock()
 			return sess, nil, nil, err
