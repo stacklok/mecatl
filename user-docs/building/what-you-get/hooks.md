@@ -16,17 +16,17 @@ cannot install, modify, or disable them. Every event starts as allowed.
 
 ## Hook phases
 
-| Phase | When it fires | Can block? | Can mutate? | Mutation target |
-|---|---|---|---|---|
-| `SessionStart` | Once at the very start of a run, before the prompt is recorded | Yes — aborts the run | No | — |
-| `UserPromptSubmit` | After command expansion, before the prompt is recorded | Yes — ends the run | Yes | The prompt text (`{"prompt": "..."}`) |
-| `PreToolUse` | After permission clears, before the tool executes | Yes — substitutes an error result; the tool does not run | Yes | The tool's args JSON |
-| `PostToolUse` | After the tool executes, before the result is emitted to the client or model | No — the tool already ran; a block only annotates | Yes | The result object (`{"content": "...", "is_error": false}`) |
-| `Stop` | Once at the terminal end of any run path, even if the context is already cancelled | No — terminal notification only | No | — |
-| `SubagentStop` | When a subagent's loop stops (mirrors `Stop` for child agents) | No — terminal notification only | No | — |
-| `TeammateIdle` | When a team member goes idle between rounds | No | No | — |
-| `TaskCreated` | When the team supervisor creates a task | No | No | — |
-| `TaskCompleted` | When a team member completes a task | No | No | — |
+|Phase|When it fires|Can block?|Can mutate?|Mutation target|
+|-|-|-|-|-|
+|`SessionStart`|Once at the very start of a run, before the prompt is recorded|Yes — aborts the run|No|—|
+|`UserPromptSubmit`|After command expansion, before the prompt is recorded|Yes — ends the run|Yes|The prompt text (`{"prompt": "..."}`)|
+|`PreToolUse`|After permission clears, before the tool executes|Yes — substitutes an error result; the tool does not run|Yes|The tool's args JSON|
+|`PostToolUse`|After the tool executes, before the result is emitted to the client or model|No — the tool already ran; a block only annotates|Yes|The result object (`{"content": "...", "is_error": false}`)|
+|`Stop`|Once at the terminal end of any run path, even if the context is already cancelled|No — terminal notification only|No|—|
+|`SubagentStop`|When a subagent's loop stops (mirrors `Stop` for child agents)|No — terminal notification only|No|—|
+|`TeammateIdle`|When a team member goes idle between rounds|No|No|—|
+|`TaskCreated`|When the team supervisor creates a task|No|No|—|
+|`TaskCompleted`|When a team member completes a task|No|No|—|
 
 `SessionStart` and `UserPromptSubmit` are fail-safe: a hook execution error (not just exit 2) also ends the run. `PreToolUse` and `PostToolUse` treat execution errors as annotations — neither aborts the run.
 
@@ -47,11 +47,11 @@ Each hook is a shell command run as `<shell> -c <command>` (default `/bin/sh`). 
 
 ### Exit codes
 
-| Exit code | Outcome |
-|---|---|
-| `0` | Allow — stdout is read as an optional message or mutation envelope |
-| `2` | Block — the action is vetoed; the reason is read from stdout (preferred) or stderr |
-| anything else | Hook error — surfaced as an annotation or run abort depending on the phase |
+|Exit code|Outcome|
+|-|-|
+|`0`|Allow — stdout is read as an optional message or mutation envelope|
+|`2`|Block — the action is vetoed; the reason is read from stdout (preferred) or stderr|
+|anything else|Hook error — surfaced as an annotation or run abort depending on the phase|
 
 A single invocation is bounded by a 30-second timeout.
 

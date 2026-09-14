@@ -41,8 +41,7 @@ provider can implement the same private Bind/Reattach contract without changing 
 
 The chart runs a plaintext, Pod-only drain listener on port 8082. Kubernetes calls
 `GET /drain` there during preStop; normal HTTP/SSE API traffic, including TLS traffic,
-has no drain route. The Service intentionally exposes only gRPC and HTTP, not port
-8082. This protects Service and gateway traffic, but it is not a Pod-IP firewall:
+has no drain route. The Service intentionally exposes only gRPC and HTTP, not port 8082. This protects Service and gateway traffic, but it is not a Pod-IP firewall:
 operators must restrict direct access to port 8082 with NetworkPolicy, mesh policy, or
 equivalent controls.
 
@@ -69,24 +68,23 @@ pod bind addresses. Metadata bootstrap is anonymous HTTPS and intentionally
 separate from authenticated gRPC transport. ToolHive supplied implementation
 provenance for the client discovery path; it is not an engine dependency.
 
-
 `mecak8s` has a deliberately narrower surface than `mecated`. The differences are not runtime configuration — they are compile-time defaults and removed capabilities.
 
-| Dimension | `mecated` | `mecak8s` |
-|---|---|---|
-| `--headless` default | `false` (interactive) | `true` (headless daemon) |
-| `--posture` default | `strict` | `auto` |
-| Project-tier ingestion + read-only child shell | granted at `auto`/`yolo` by the interactive ladder | one root-aware trust decision — explicit `--trust-project`, `trustedWorkspaces:`, or remembered trust admits BOTH; without trust, headless auto gives allow-all with neither |
-| Bind address default | `127.0.0.1` (loopback) | `0.0.0.0` (pod netns) |
-| Session placement | Server-owned local default configured by the operator; public clients send no path | **Server-owned no-FS default; no mounted root by default** |
-| New-session profile | Omitted profile binds the configured default; `no-fs` explicitly attenuates | Omitted or `no-fs` binds the no-FS default; no public workspace field |
-| Session store | In-memory or JSONL on disk (`--store-dir`); optional `--session-store-url` | **Redis only** (`--redis-url`; no `--store-dir`) |
-| Session lease | Optional (`--session-lease-k8s-namespace`) | **On by default** (`--session-lease-k8s-namespace=mecatl`) |
-| Prometheus `/metrics` listener | Yes | Opt-in (`--metrics-addr`, loopback only) |
-| OTel / admin mux | Yes | Opt-in (`--otlp-*` push; `/metrics` loopback scrape) |
-| `perf-mcp` subcommand | Yes | No |
-| `skills promote` / `config` subcommands | Yes | No |
-| ACP surface | Yes | No |
+|Dimension|`mecated`|`mecak8s`|
+|-|-|-|
+|`--headless` default|`false` (interactive)|`true` (headless daemon)|
+|`--posture` default|`strict`|`auto`|
+|Project-tier ingestion + read-only child shell|granted at `auto`/`yolo` by the interactive ladder|one root-aware trust decision — explicit `--trust-project`, `trustedWorkspaces:`, or remembered trust admits BOTH; without trust, headless auto gives allow-all with neither|
+|Bind address default|`127.0.0.1` (loopback)|`0.0.0.0` (pod netns)|
+|Session placement|Server-owned local default configured by the operator; public clients send no path|**Server-owned no-FS default; no mounted root by default**|
+|New-session profile|Omitted profile binds the configured default; `no-fs` explicitly attenuates|Omitted or `no-fs` binds the no-FS default; no public workspace field|
+|Session store|In-memory or JSONL on disk (`--store-dir`); optional `--session-store-url`|**Redis only** (`--redis-url`; no `--store-dir`)|
+|Session lease|Optional (`--session-lease-k8s-namespace`)|**On by default** (`--session-lease-k8s-namespace=mecatl`)|
+|Prometheus `/metrics` listener|Yes|Opt-in (`--metrics-addr`, loopback only)|
+|OTel / admin mux|Yes|Opt-in (`--otlp-*` push; `/metrics` loopback scrape)|
+|`perf-mcp` subcommand|Yes|No|
+|`skills promote` / `config` subcommands|Yes|No|
+|ACP surface|Yes|No|
 
 The `--redis-url` flag exists **only on `cmd/mecak8s`**. `mecated` does not expose it. If you want Redis-backed state with `mecated`, you need `mecak8s`.
 
@@ -135,12 +133,12 @@ Redis durability, backups, capacity and eviction policy remain operator concerns
 
 `mecak8s` maps each `port` interface to a managed service:
 
-| State | Service | Adapter | Port |
-|---|---|---|---|
-| Session snapshots | Redis | `internal/adapter/redisstore` | `port.SessionStore` |
-| Durable event log | Redis | `internal/adapter/redisstore` | `port.EventLog` |
-| Session retention / GC | Redis | `internal/adapter/redisstore` | `port.PrunableStore` |
-| Single-writer lease | k8s API server | `internal/adapter/k8slease` | `port.SessionLease` |
+|State|Service|Adapter|Port|
+|-|-|-|-|
+|Session snapshots|Redis|`internal/adapter/redisstore`|`port.SessionStore`|
+|Durable event log|Redis|`internal/adapter/redisstore`|`port.EventLog`|
+|Session retention / GC|Redis|`internal/adapter/redisstore`|`port.PrunableStore`|
+|Single-writer lease|k8s API server|`internal/adapter/k8slease`|`port.SessionLease`|
 
 The `redisstore` adapter reuses `sessnap.Marshal`/`Unmarshal` — the same snapshot format `jsonlstore` and the gRPC driver use (`sessnap-json/1`). It is a transport alternative, not a new format. Event log records use `XADD`/`XRANGE` on a Redis Stream so append order is preserved, and the entry ID doubles as the durable resume cursor. The adapter is validated by the same `storeconformance.Run`, `eventlogconformance.Run`, and `storeconformance.RunPrunable` suites that `jsonlstore` passes, tested offline against `miniredis`.
 
@@ -364,13 +362,13 @@ mcp:
   servers:
     - name: public
       url: https://public-mcp.example/mcp
-      auth: {mode: none}
+      auth: { mode: none }
     - name: github
       url: https://github-mcp.example/mcp
       auth:
         mode: staticBearer
         staticBearer:
-          secretKeyRef: {name: mecak8s-mcp, key: github-token}
+          secretKeyRef: { name: mecak8s-mcp, key: github-token }
 ```
 
 The static token is projected as `MCP_GITHUB_TOKEN`; it never appears in Helm
@@ -421,7 +419,7 @@ auth:
       mode: preregistered
       preregistered:
         id: mecak8s
-        secretKeyRef: {name: mecak8s-mcp-oauth, key: client-secret}
+        secretKeyRef: { name: mecak8s-mcp-oauth, key: client-secret }
     scopes: [mcp.read]
     requestRefreshToken: true
     network:
@@ -522,15 +520,15 @@ skills:
   autoDiscover: true
 extraArgs: [--no-user-model]
 extraVolumeMounts:
-  - {name: mecatl-config, mountPath: /etc/mecatl-config, readOnly: true}
+  - { name: mecatl-config, mountPath: /etc/mecatl-config, readOnly: true }
 extraVolumes:
   - name: mecatl-config
     configMap:
       name: mecatl-config-v1
       items:
-        - {key: review-skill, path: mecatl/skills/review/SKILL.md}
-        - {key: reviewer-agent, path: mecatl/agents/reviewer.md}
-        - {key: base-rules, path: mecatl/rules/base.md}
+        - { key: review-skill, path: mecatl/skills/review/SKILL.md }
+        - { key: reviewer-agent, path: mecatl/agents/reviewer.md }
+        - { key: base-rules, path: mecatl/rules/base.md }
 ```
 
 Use a read-only mount and preferably an immutable ConfigMap. An immutable
@@ -549,7 +547,7 @@ Mount each artifact at `<XDG_CONFIG_HOME>/mecatl/skills/<skill-name>` and keep
 
 ```yaml
 extraEnv:
-  - {name: XDG_CONFIG_HOME, value: /etc/mecatl-config}
+  - { name: XDG_CONFIG_HOME, value: /etc/mecatl-config }
 skills:
   autoDiscover: true
 extraArgs: [--no-user-model]
@@ -728,15 +726,15 @@ An address-only `--redis-url` is plaintext and unauthenticated, and is **rejecte
 `deploy/helm/mecak8s/templates/` renders the full cloud-native topology for a
 production install:
 
-| Template | What it creates |
-|---|---|
-| `rbac.yaml` | ServiceAccount + Role (lease verbs only) + RoleBinding |
-| `deployment.yaml` | Agent Deployment — `replicas: 2` by default (one is supported), no PVC, storage-free |
-| `telemetry-configmap.yaml` | Chart-owned, non-secret installation UUID projected into the agent for OTel resource identity |
-| `service.yaml` | ClusterIP Service exposing gRPC (8080) and HTTP/SSE (8081) |
-| `pdb.yaml` | PodDisruptionBudget (`minAvailable: 1`) when `replicaCount >= 2`; omitted for one replica |
-| `raw-driver-networkpolicy.yaml` | Rendered only when `oidc.enabled` — scopes ingress on `app.kubernetes.io/component: raw-driver` pods to the agent pod only |
-| `redis-local.yaml` | Rendered only under the disposable `values-kind.yaml` profile (`redis.local.enabled`) — an in-cluster Redis StatefulSet + Service for Kind/offline use, never for production |
+|Template|What it creates|
+|-|-|
+|`rbac.yaml`|ServiceAccount + Role (lease verbs only) + RoleBinding|
+|`deployment.yaml`|Agent Deployment — `replicas: 2` by default (one is supported), no PVC, storage-free|
+|`telemetry-configmap.yaml`|Chart-owned, non-secret installation UUID projected into the agent for OTel resource identity|
+|`service.yaml`|ClusterIP Service exposing gRPC (8080) and HTTP/SSE (8081)|
+|`pdb.yaml`|PodDisruptionBudget (`minAvailable: 1`) when `replicaCount >= 2`; omitted for one replica|
+|`raw-driver-networkpolicy.yaml`|Rendered only when `oidc.enabled` — scopes ingress on `app.kubernetes.io/component: raw-driver` pods to the agent pod only|
+|`redis-local.yaml`|Rendered only under the disposable `values-kind.yaml` profile (`redis.local.enabled`) — an in-cluster Redis StatefulSet + Service for Kind/offline use, never for production|
 
 The chart intentionally creates no namespace and no general NetworkPolicy: the
 namespace is a `helm --create-namespace` (or pre-existing) concern, and network
@@ -800,11 +798,11 @@ fullnameOverride=<name>` at install time to pin a different one.
 
 mecak8s exposes two unauthenticated probe endpoints on the HTTP port (default `0.0.0.0:8081`). A separate plaintext, Pod-only drain listener defaults to `0.0.0.0:8082` and serves only `GET /drain`:
 
-| Endpoint | Purpose |
-|---|---|
-| `GET /healthz` | Liveness — returns 200 unless the process is hung |
-| `GET /readyz` | Readiness — returns 200 only when `!draining && redisOK`; flips to 503 on drain or Redis failure |
-| `GET /drain` on port 8082 | preStop hook target — arms the drain gate, blocks ~3s for endpoint propagation, returns 200 |
+|Endpoint|Purpose|
+|-|-|
+|`GET /healthz`|Liveness — returns 200 unless the process is hung|
+|`GET /readyz`|Readiness — returns 200 only when `!draining && redisOK`; flips to 503 on drain or Redis failure|
+|`GET /drain` on port 8082|preStop hook target — arms the drain gate, blocks ~3s for endpoint propagation, returns 200|
 
 The Service exposes only ports 8080 and 8081, so normal Service/gateway API traffic cannot invoke `/drain`. Direct Pod-IP access to 8082 remains an operator network-isolation responsibility. The `readyz` probe is dynamic: it calls `svc.StorageReady`, which pings the Redis store with a 2-second timeout. A Redis failure shows up as not-ready and removes the pod from Service endpoints without a restart.
 
@@ -885,7 +883,7 @@ Now kill pod A gracefully — the way a node drain or a rolling update would, no
 kubectl delete pod -n mecatl "$POD_A"
 ```
 
-`kubectl get pods -n mecatl --watch` to see its replacement come up. Then port-forward **pod B** — a replica that was already running the whole time, not the replacement — and send the *same* session id through it:
+`kubectl get pods -n mecatl --watch` to see its replacement come up. Then port-forward **pod B** — a replica that was already running the whole time, not the replacement — and send the _same_ session id through it:
 
 ```sh
 kubectl port-forward -n mecatl "pod/$POD_B" 8082:8081 &
@@ -897,7 +895,7 @@ curl -s -X POST "http://127.0.0.1:8082/v1/sessions/$SESSION_ID/prompt" \
 
 That 200 is the whole point: pod B never touched this session before, yet it picked up the conversation with full context, because the conversation was never pod A's to keep — it was always in Redis. `kubectl get lease -n mecatl -o wide` again to see the `HOLDER` column has moved to pod B.
 
-Try the same thing again, but with a hard kill this time. Pod B is now the session's holder, so force-kill *it* — not pod A, which is already gone — and retry the session via a third replica (any agent pod that isn't pod B; `kubectl get pods -n mecatl -l app.kubernetes.io/component=agent` to find one, port-forward it the same way as above):
+Try the same thing again, but with a hard kill this time. Pod B is now the session's holder, so force-kill _it_ — not pod A, which is already gone — and retry the session via a third replica (any agent pod that isn't pod B; `kubectl get pods -n mecatl -l app.kubernetes.io/component=agent` to find one, port-forward it the same way as above):
 
 ```sh
 kubectl delete pod -n mecatl "$POD_B" --force --grace-period=0
@@ -998,12 +996,12 @@ helm upgrade --install mecak8s deploy/helm/mecak8s --namespace mecatl --create-n
   --set oidc.audience=mecatl
 ```
 
-| Value | Flag | Meaning |
-|---|---|---|
-| `oidc.issuer` | `--oidc-issuer` | your IdP's issuer URL, compared **byte-exact** against the token's `iss` |
-| `oidc.audience` | `--oidc-audience` | the audience this deployment accepts. **Required** — an audience-less verifier accepts tokens minted for a different service |
-| `oidc.jwksURI` | `--oidc-jwks-uri` | *optional.* Pin the signing-key endpoint and skip discovery. Only for an air-gapped or pinned-key deployment; leave it out and the issuer's discovery document is used |
-| `oidc.maxJWKSStaleness` (default `1h`) | `--oidc-max-jwks-staleness` | Maximum time a last-good JWKS remains trusted when refresh cannot reach the IdP. `0` deliberately disables the bound. |
+|Value|Flag|Meaning|
+|-|-|-|
+|`oidc.issuer`|`--oidc-issuer`|your IdP's issuer URL, compared **byte-exact** against the token's `iss`|
+|`oidc.audience`|`--oidc-audience`|the audience this deployment accepts. **Required** — an audience-less verifier accepts tokens minted for a different service|
+|`oidc.jwksURI`|`--oidc-jwks-uri`|_optional._ Pin the signing-key endpoint and skip discovery. Only for an air-gapped or pinned-key deployment; leave it out and the issuer's discovery document is used|
+|`oidc.maxJWKSStaleness` (default `1h`)|`--oidc-max-jwks-staleness`|Maximum time a last-good JWKS remains trusted when refresh cannot reach the IdP. `0` deliberately disables the bound.|
 
 Point it at a **real IdP over HTTPS**. That is the only configuration that works
 with the validator's defaults intact: it refuses an `http://` issuer, and refuses
@@ -1083,12 +1081,16 @@ kind e2e suite additionally exercises it against a real in-cluster Dex.
 `GET /v1/sessions` carries the owner, so `curl` is enough:
 
 ```json
-{ "session_id": "9bfb79d9…",
+{
+  "session_id": "9bfb79d9…",
   "state": "completed",
-  "owner": { "issuer": "https://idp.example.com",
-             "subject": "CglhbGljZS11aWQSBWxvY2Fs",
-             "grant_type": "user",
-             "name": "alice" } }
+  "owner": {
+    "issuer": "https://idp.example.com",
+    "subject": "CglhbGljZS11aWQSBWxvY2Fs",
+    "grant_type": "user",
+    "name": "alice"
+  }
+}
 ```
 
 `(issuer, subject)` is the durable identity. `subject` is whatever your IdP uses
@@ -1104,7 +1106,7 @@ sessions created before you enabled identity stay ownerless — and once
 enforcement is on, an ownerless session is unavailable to every caller, not
 merely unattributed.
 
-### Who *did* something, versus who owns it
+### Who _did_ something, versus who owns it
 
 These are different questions, and internal system work is the routine case
 where the answers differ: a schedule fires under the **scheduler's own explicit
@@ -1153,17 +1155,17 @@ is visible in the agent's output — you will see the status code and nothing el
 
 Stated plainly so it is not inferred:
 
-| | |
-|---|---|
-| **Filesystem isolation** | None. All sessions run in the same pod filesystem at the same workspace path — application-level ownership enforcement does not sandbox the workspace. |
-| **Raw driver enforcement** | None yet. A remote `SessionStore`/`MemoryStore` driver process is trusted infrastructure, not caller-enforced: it takes the owner identity from its own wire without verifying it. The raw-driver NetworkPolicy above restricts which **workloads** can reach it, which is a real but partial control — it depends on a policy-enforcing CNI, and it does nothing about a caller who arrives at mecated with a token. Do not treat it as a tenant boundary. Caller enforcement is tracked by issue #452 / ADR-0213. |
-| **Historical data migration** | None. Enabling identity makes every pre-existing ownerless session/schedule/team/memory entry permanently unavailable to every caller — there is no adoption-by-first-reader and no migration path. Export or back up anything you need first. |
-| **Signing-key revocation** | Bounded, not immediate: with the default `--oidc-max-jwks-staleness=1h`, a last-good JWKS may remain trusted for up to one hour during an IdP outage; then validation fails 503 until refresh succeeds. `0` deliberately restores unbounded exposure. This is **not per-token revocation**: an otherwise valid token remains accepted until expiry. |
-| **Rate limiting / quotas** | mecak8s registers no rate-limit flags at all; a pod is assumed to sit behind a Service or mesh. One caller can exhaust the shared Redis, lease namespace and provider budget. |
-| **Store confidentiality** | Verified TLS and ACL credentials are available (`--redis-tls` / `--redis-tls-ca`, `--redis-password-file`), and any credential *requires* TLS. Without them — the `--redis-allow-plaintext` fixture path — conversations and owner labels sit in plaintext, protected only by the NetworkPolicy. Client-certificate (mTLS) authentication is not supported. |
-| **PII controls** | `name` (often an email) is copied onto every durable event, the session snapshot and schedule records, unredacted, with no retention or erasure hook. |
-| **Audit signals** | Telemetry is opt-in and off by default (`--metrics-addr` to expose `/metrics`, `--otlp-*` to push to a collector), and **no authn metric exists at all** — the emitted set covers runs, events, permission asks and process stats, not authentication outcomes. Combined with failures not being logged, an authn problem is invisible: you see the caller's status code and nothing on the server side. |
-| **Machine-vs-human grant** | `grant_type` is best-effort and IdP-dependent. A token with no grant hint resolves to `user`, which includes most IdPs' service accounts. |
+|||
+|-|-|
+|**Filesystem isolation**|None. All sessions run in the same pod filesystem at the same workspace path — application-level ownership enforcement does not sandbox the workspace.|
+|**Raw driver enforcement**|None yet. A remote `SessionStore`/`MemoryStore` driver process is trusted infrastructure, not caller-enforced: it takes the owner identity from its own wire without verifying it. The raw-driver NetworkPolicy above restricts which **workloads** can reach it, which is a real but partial control — it depends on a policy-enforcing CNI, and it does nothing about a caller who arrives at mecated with a token. Do not treat it as a tenant boundary. Caller enforcement is tracked by issue #452 / ADR-0213.|
+|**Historical data migration**|None. Enabling identity makes every pre-existing ownerless session/schedule/team/memory entry permanently unavailable to every caller — there is no adoption-by-first-reader and no migration path. Export or back up anything you need first.|
+|**Signing-key revocation**|Bounded, not immediate: with the default `--oidc-max-jwks-staleness=1h`, a last-good JWKS may remain trusted for up to one hour during an IdP outage; then validation fails 503 until refresh succeeds. `0` deliberately restores unbounded exposure. This is **not per-token revocation**: an otherwise valid token remains accepted until expiry.|
+|**Rate limiting / quotas**|mecak8s registers no rate-limit flags at all; a pod is assumed to sit behind a Service or mesh. One caller can exhaust the shared Redis, lease namespace and provider budget.|
+|**Store confidentiality**|Verified TLS and ACL credentials are available (`--redis-tls` / `--redis-tls-ca`, `--redis-password-file`), and any credential _requires_ TLS. Without them — the `--redis-allow-plaintext` fixture path — conversations and owner labels sit in plaintext, protected only by the NetworkPolicy. Client-certificate (mTLS) authentication is not supported.|
+|**PII controls**|`name` (often an email) is copied onto every durable event, the session snapshot and schedule records, unredacted, with no retention or erasure hook.|
+|**Audit signals**|Telemetry is opt-in and off by default (`--metrics-addr` to expose `/metrics`, `--otlp-*` to push to a collector), and **no authn metric exists at all** — the emitted set covers runs, events, permission asks and process stats, not authentication outcomes. Combined with failures not being logged, an authn problem is invisible: you see the caller's status code and nothing on the server side.|
+|**Machine-vs-human grant**|`grant_type` is best-effort and IdP-dependent. A token with no grant hint resolves to `user`, which includes most IdPs' service accounts.|
 
 ## Scaling
 
@@ -1191,15 +1193,15 @@ a separate Kubernetes Secret or external-secret design. Do not mount a local
 Codex OAuth entry and assume the binary will accept it. See [ADR
 0104](https://github.com/stacklok/mecatl/blob/main/docs/adr/0215-openai-subscription-manual-token.md).
 
-| Capability | mecated | mecak8s |
-|---|---|---|
-| Interactive TUI clients | Yes (`mecatui` connects; `--headless=false` default) | No (`--headless=true` default; headless-only) |
-| Prometheus `/metrics` listener | Yes (`--metrics-addr`) | Opt-in (`--metrics-addr`, loopback only — [ADR 0098](https://github.com/stacklok/mecatl/blob/main/docs/adr/0098-headless-telemetry.md)) |
-| OTel traces and runtime admin mux | Yes | Opt-in (`--otlp-*` push + the `/metrics` loopback admin mux — [ADR 0098](https://github.com/stacklok/mecatl/blob/main/docs/adr/0098-headless-telemetry.md)) |
-| `perf-mcp` diagnostics subcommand | Yes | No |
-| `skills promote` / `config` subcommands | Yes | No |
-| JSONL on-disk session store | Yes (`--store-dir`) | No — Redis only |
-| Single-replica without external state | Yes (in-memory or JSONL) | No — Redis is required |
+|Capability|mecated|mecak8s|
+|-|-|-|
+|Interactive TUI clients|Yes (`mecatui` connects; `--headless=false` default)|No (`--headless=true` default; headless-only)|
+|Prometheus `/metrics` listener|Yes (`--metrics-addr`)|Opt-in (`--metrics-addr`, loopback only — [ADR 0098](https://github.com/stacklok/mecatl/blob/main/docs/adr/0098-headless-telemetry.md))|
+|OTel traces and runtime admin mux|Yes|Opt-in (`--otlp-*` push + the `/metrics` loopback admin mux — [ADR 0098](https://github.com/stacklok/mecatl/blob/main/docs/adr/0098-headless-telemetry.md))|
+|`perf-mcp` diagnostics subcommand|Yes|No|
+|`skills promote` / `config` subcommands|Yes|No|
+|JSONL on-disk session store|Yes (`--store-dir`)|No — Redis only|
+|Single-replica without external state|Yes (in-memory or JSONL)|No — Redis is required|
 
 If you need the `perf-mcp` diagnostics subcommand, the `skills promote` or
 `config` subcommands, or an interactive TUI client, run `mecated` instead.

@@ -51,18 +51,18 @@ guardrails: OFF (no checker model configured; bind the `guardrail` model slot or
 
 ## What each event means
 
-| Event            | What it represents                                                                                                                                                                                                   |
-| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `session.init`   | Once, before the first turn — the run has started and the session is initialised.                                                                                                                                    |
-| `user_prompt`    | The user message has been recorded into the session history.                                                                                                                                                         |
-| `turn.start`     | A new model call begins. `turn=N` increments each time the loop calls the provider.                                                                                                                                  |
-| `message.delta`  | Streamed assistant text for this turn. In production this arrives incrementally.                                                                                                                                     |
-| `turn.end`       | The model finished streaming this turn (text + any tool calls received).                                                                                                                                             |
-| `tool.call`      | The model requested a tool, with the raw JSON `args` it supplied.                                                                                                                                                    |
-| `tool.result`    | The tool's output. `error=false` means it ran cleanly; the result text is what gets fed back to the model.                                                                                                           |
-| `permission.ask` | The loop paused for client approval. Carries the tool name, proposed args, and a human-readable `reason`. The demo immediately calls `run.Approve(askID, true)`. Over HTTP this is `POST /v1/sessions/{id}/approve`. |
-| `approval`       | The verdict has been received and recorded (allow once, allow always, or deny).                                                                                                                                      |
-| `result`         | Terminal event. `stop` is the reason (`end_turn`, `max_turns`, `cancelled`, …), followed by the final assistant text and cumulative token usage. `cacheHitRate` is `cacheRead / inputTokens`.                        |
+|Event|What it represents|
+|-|-|
+|`session.init`|Once, before the first turn — the run has started and the session is initialised.|
+|`user_prompt`|The user message has been recorded into the session history.|
+|`turn.start`|A new model call begins. `turn=N` increments each time the loop calls the provider.|
+|`message.delta`|Streamed assistant text for this turn. In production this arrives incrementally.|
+|`turn.end`|The model finished streaming this turn (text + any tool calls received).|
+|`tool.call`|The model requested a tool, with the raw JSON `args` it supplied.|
+|`tool.result`|The tool's output. `error=false` means it ran cleanly; the result text is what gets fed back to the model.|
+|`permission.ask`|The loop paused for client approval. Carries the tool name, proposed args, and a human-readable `reason`. The demo immediately calls `run.Approve(askID, true)`. Over HTTP this is `POST /v1/sessions/{id}/approve`.|
+|`approval`|The verdict has been received and recorded (allow once, allow always, or deny).|
+|`result`|Terminal event. `stop` is the reason (`end_turn`, `max_turns`, `cancelled`, …), followed by the final assistant text and cumulative token usage. `cacheHitRate` is `cacheRead / inputTokens`.|
 
 The `permission.ask` and approval events are the key integration point. Your
 client decides whether to allow or deny each request. In a live deployment, you
@@ -148,11 +148,11 @@ $ export OPENAI_API_KEY=sk-...
 $ go run ./cmd/mecademo --openai --model gpt-5
 ```
 
-| Flag                | Default      | Meaning                                                           |
-| ------------------- | ------------ | ----------------------------------------------------------------- |
-| `--openai`          | `false`      | Use the live OpenAI Responses API (reads `OPENAI_API_KEY`)        |
-| `--model`           | `mock-model` | Model identifier when `--openai` is set                           |
-| `--openai-base-url` | `""`         | Override the OpenAI API base URL (any OpenAI-compatible endpoint) |
+|Flag|Default|Meaning|
+|-|-|-|
+|`--openai`|`false`|Use the live OpenAI Responses API (reads `OPENAI_API_KEY`)|
+|`--model`|`mock-model`|Model identifier when `--openai` is set|
+|`--openai-base-url`|`""`|Override the OpenAI API base URL (any OpenAI-compatible endpoint)|
 
 Without `--openai` the demo is fully offline. With `--openai` and no key set, it exits immediately with an error.
 

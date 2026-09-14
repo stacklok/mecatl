@@ -13,11 +13,11 @@ and [Dreaming and memory consolidation](/features/dreaming.md).
 
 Mecatl ships three distinct memory-adjacent systems out of the box. Each solves a different problem and they don't overlap:
 
-| System | Problem it solves |
-|--------|------------------|
-| **Tiered session memory** | Lets the agent persist and retrieve facts across sessions within a project |
-| **Soul** | Gives the agent a stable, operator-controlled persona that survives compaction |
-| **User model** | Accumulates durable facts about the operator across every project |
+|System|Problem it solves|
+|-|-|
+|**Tiered session memory**|Lets the agent persist and retrieve facts across sessions within a project|
+|**Soul**|Gives the agent a stable, operator-controlled persona that survives compaction|
+|**User model**|Accumulates durable facts about the operator across every project|
 
 These are independent. The soul is read-only to the agent; memory and the user model are agent-writable. The soul shapes who the agent is; memory and the user model shape what it knows.
 
@@ -31,11 +31,11 @@ Per-project memory is on by default. The agent can store entries that survive ac
 
 Memory is organized into three tiers:
 
-| Tier | What it holds | How the model accesses it |
-|------|--------------|--------------------------|
-| **Tier 0 — index** | A one-line-per-entry digest of every stored key and its description | Always in context at session start, injected before the first user prompt |
-| **Tier 1 — entry** | The full value stored under a key | On demand, via the Recall tool |
-| **Tier 2 — cold archive** | Raw historical entries beyond the index cap | Via the SearchMemory tool |
+|Tier|What it holds|How the model accesses it|
+|-|-|-|
+|**Tier 0 — index**|A one-line-per-entry digest of every stored key and its description|Always in context at session start, injected before the first user prompt|
+|**Tier 1 — entry**|The full value stored under a key|On demand, via the Recall tool|
+|**Tier 2 — cold archive**|Raw historical entries beyond the index cap|Via the SearchMemory tool|
 
 The tier-0 index is capped at 200 entries (~8 KB). If the store exceeds the cap, the oldest entries roll off the visible index but remain searchable. The footer in the index tells the agent how to retrieve them.
 
@@ -85,17 +85,17 @@ stores). It shows no provider/model identity and collects no recall-usage teleme
 
 When memory is enabled, the agent has access to these tools in every session:
 
-| Tool | What it does |
-|------|-------------|
-| **Remember** | Stores a key-value entry with an optional one-line description |
-| **Recall** | Retrieves the full value for a key (or lists entries matching a prefix) |
-| **SearchMemory** | BM25 keyword search across all stored entries, including those trimmed from the index |
-| **RememberUser** | Stores a fact about the operator in the cross-project user model (see below) |
-| **RecallUser** | Retrieves a user-model entry by key |
-| **SearchUserModel** | BM25 search across user-model entries |
-| **InspectMemory / InspectUserMemory** | Reads an exact value, version, provenance, timestamps, and bounded history |
-| **ForgetMemory / ForgetUserMemory** | Writes a reversible tombstone after permission approval (asks by default) |
-| **UndoMemory / UndoUserMemory** | Appends a compensating revision restoring the previous state |
+|Tool|What it does|
+|-|-|
+|**Remember**|Stores a key-value entry with an optional one-line description|
+|**Recall**|Retrieves the full value for a key (or lists entries matching a prefix)|
+|**SearchMemory**|BM25 keyword search across all stored entries, including those trimmed from the index|
+|**RememberUser**|Stores a fact about the operator in the cross-project user model (see below)|
+|**RecallUser**|Retrieves a user-model entry by key|
+|**SearchUserModel**|BM25 search across user-model entries|
+|**InspectMemory / InspectUserMemory**|Reads an exact value, version, provenance, timestamps, and bounded history|
+|**ForgetMemory / ForgetUserMemory**|Writes a reversible tombstone after permission approval (asks by default)|
+|**UndoMemory / UndoUserMemory**|Appends a compensating revision restoring the previous state|
 
 The first scope operates on the project store and the `*UserMemory` scope operates on the user model. Lifecycle tools appear only when the configured store positively advertises complete versioned-history support; old remote drivers expose only Remember/Recall/Search. Remember remains non-modal and overwrites normally when `expected_version` is omitted. Supplying a non-empty version requests CAS and a stale version conflicts; Forget and Undo require an explicit current version. Remember, Recall, Search, Inspect, and Undo are allowed at the overridable built-in floor; Forget asks by default. Forget and Undo require copying the opaque expected_version verbatim from an exact Recall result, Inspect result, or mutation receipt in the same scope. If none is available or it may be stale, use InspectMemory (project) or InspectUserMemory (user/user-model) first. Never guess or interpret it. Learning mode `off` does not remove these explicit tools.
 
@@ -117,12 +117,12 @@ The soul is loaded from `~/.config/mecatl/soul.md` (or `$XDG_CONFIG_HOME/mecatl/
 
 ### Configuration
 
-| Flag | Effect |
-|------|--------|
-| `--soul-file PATH` | Use a soul file at an explicit path instead of the default XDG location |
-| `--no-soul` | Disable the soul entirely for this run |
-| `--approve-soul` | Accept a changed soul file, writing a new hash baseline |
-| `--soul-strict` | Refuse to load a soul whose content has drifted from the approved baseline |
+|Flag|Effect|
+|-|-|
+|`--soul-file PATH`|Use a soul file at an explicit path instead of the default XDG location|
+|`--no-soul`|Disable the soul entirely for this run|
+|`--approve-soul`|Accept a changed soul file, writing a new hash baseline|
+|`--soul-strict`|Refuse to load a soul whose content has drifted from the approved baseline|
 
 The soul file is free-form Markdown. A missing, empty, oversized (> 20 KiB), or injection-flagged soul file degrades to no fragment — it never aborts a run.
 
@@ -138,13 +138,13 @@ The user model is a cross-project, agent-writable store of durable facts about t
 
 ### How it differs from project memory
 
-| | Per-project memory | User model |
-|---|---|---|
-| **Scope** | One workspace | All workspaces on this machine |
-| **What it stores** | Project-specific context and notes | Facts about the operator |
-| **Writable by agent?** | Yes | Yes |
-| **Default location** | Computed from workspace path | `~/.config/mecatl/usermodel` |
-| **Survives project change?** | No | Yes |
+||Per-project memory|User model|
+|-|-|-|
+|**Scope**|One workspace|All workspaces on this machine|
+|**What it stores**|Project-specific context and notes|Facts about the operator|
+|**Writable by agent?**|Yes|Yes|
+|**Default location**|Computed from workspace path|`~/.config/mecatl/usermodel`|
+|**Survives project change?**|No|Yes|
 
 ### How it surfaces
 
@@ -210,18 +210,18 @@ the user model, but only on a supported local lifecycle store and never under ow
 
 ## What's on by default
 
-| Feature | Default state | How to change |
-|---------|--------------|---------------|
-| Per-project memory tools | **On** (mecatui: per-project dir under `~/.local/share/mecatui/memory/`) | `--no-memory` to disable; `--memory-dir` to relocate |
-| Tier-0 memory index (at session start) | **On** when memory is enabled | Automatic; not configurable separately |
-| BM25 SearchMemory | **On** when memory is enabled | Automatic |
-| Dream consolidation schedules | **Off** | `--memory-consolidate-interval` / `--user-model-consolidate-interval` |
-| Manual dream review | **Available when advertised** | mecatui `/dream`; unavailable under ownership enforcement or without a supported planner/store |
-| Soul | **On** if `~/.config/mecatl/soul.md` exists | `--no-soul` to disable; `--soul-file` to relocate |
-| User model tools + live operator profile | **On** | `--no-user-model` to disable; `--user-model-dir` to relocate |
-| Automatic evidence reflection | **Off** | `learning.mode: review` stages proposals; `auto` may conservatively promote eligible facts |
-| User-model consolidation | **Off** | `--user-model-consolidate-interval` |
-| Semantic/embedding recall | **Not available** | No embedding backend required or supported |
+|Feature|Default state|How to change|
+|-|-|-|
+|Per-project memory tools|**On** (mecatui: per-project dir under `~/.local/share/mecatui/memory/`)|`--no-memory` to disable; `--memory-dir` to relocate|
+|Tier-0 memory index (at session start)|**On** when memory is enabled|Automatic; not configurable separately|
+|BM25 SearchMemory|**On** when memory is enabled|Automatic|
+|Dream consolidation schedules|**Off**|`--memory-consolidate-interval` / `--user-model-consolidate-interval`|
+|Manual dream review|**Available when advertised**|mecatui `/dream`; unavailable under ownership enforcement or without a supported planner/store|
+|Soul|**On** if `~/.config/mecatl/soul.md` exists|`--no-soul` to disable; `--soul-file` to relocate|
+|User model tools + live operator profile|**On**|`--no-user-model` to disable; `--user-model-dir` to relocate|
+|Automatic evidence reflection|**Off**|`learning.mode: review` stages proposals; `auto` may conservatively promote eligible facts|
+|User-model consolidation|**Off**|`--user-model-consolidate-interval`|
+|Semantic/embedding recall|**Not available**|No embedding backend required or supported|
 
 No external service, embedding backend, or vector database is required for any of the default-on features.
 

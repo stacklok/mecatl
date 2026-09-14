@@ -34,7 +34,7 @@ Configure learning in the operator-tier `settings.yaml`:
 
 ```yaml
 learning:
-  mode: review       # off | review | auto
+  mode: review # off | review | auto
   sensitivity: balanced # conservative | balanced | eager
   skills:
     activation: validated # validated | evaluated

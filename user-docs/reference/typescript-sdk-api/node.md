@@ -15,33 +15,33 @@ This page lists declarations added or changed by `@stacklok-oss/mecatl-sdk/node`
 
 ## Symbol index
 
-| Symbol | Kind |
-| --- | --- |
-| [`audioPartFromPath`](#api-audiopartfrompath-function) | Function |
-| [`CallToolContent`](#api-calltoolcontent-typealias) | Type alias |
-| [`CallToolResult`](#api-calltoolresult-interface) | Interface |
-| [`connect`](#api-connect-function) | Function |
-| [`createNodeTransport`](#api-createnodetransport-function) | Function |
-| [`DaemonInfo`](#api-daemoninfo-interface) | Interface |
-| [`imagePartFromPath`](#api-imagepartfrompath-function) | Function |
-| [`NodeClient`](#api-nodeclient-interface) | Interface |
-| [`NodeConnectOptions`](#api-nodeconnectoptions-typealias) | Type alias |
-| [`NodeTransportCommonOptions`](#api-nodetransportcommonoptions-interface) | Interface |
-| [`NodeTransportOptions`](#api-nodetransportoptions-typealias) | Type alias |
-| [`query`](#api-query-function) | Function |
-| [`Query`](#api-query-interface) | Interface |
-| [`QueryOptions`](#api-queryoptions-interface) | Interface |
-| [`spawn`](#api-spawn-function) | Function |
-| [`SpawnedClient`](#api-spawnedclient-interface) | Interface |
-| [`SpawnOptions`](#api-spawnoptions-interface) | Interface |
-| [`ToolDefinition`](#api-tooldefinition-interface) | Interface |
-| [`ToolHandler`](#api-toolhandler-typealias) | Type alias |
-| [`ToolHandlerContext`](#api-toolhandlercontext-interface) | Interface |
-| [`ToolJsonValue`](#api-tooljsonvalue-typealias) | Type alias |
-| [`ToolOptions`](#api-tooloptions-interface) | Interface |
-| [`ToolRegistrationError`](#api-toolregistrationerror-class) | Class |
-| [`ToolRegistrationReason`](#api-toolregistrationreason-typealias) | Type alias |
-| [`ToolSchema`](#api-toolschema-typealias) | Type alias |
+|Symbol|Kind|
+|-|-|
+|[`audioPartFromPath`](#api-audiopartfrompath-function)|Function|
+|[`CallToolContent`](#api-calltoolcontent-typealias)|Type alias|
+|[`CallToolResult`](#api-calltoolresult-interface)|Interface|
+|[`connect`](#api-connect-function)|Function|
+|[`createNodeTransport`](#api-createnodetransport-function)|Function|
+|[`DaemonInfo`](#api-daemoninfo-interface)|Interface|
+|[`imagePartFromPath`](#api-imagepartfrompath-function)|Function|
+|[`NodeClient`](#api-nodeclient-interface)|Interface|
+|[`NodeConnectOptions`](#api-nodeconnectoptions-typealias)|Type alias|
+|[`NodeTransportCommonOptions`](#api-nodetransportcommonoptions-interface)|Interface|
+|[`NodeTransportOptions`](#api-nodetransportoptions-typealias)|Type alias|
+|[`query`](#api-query-function)|Function|
+|[`Query`](#api-query-interface)|Interface|
+|[`QueryOptions`](#api-queryoptions-interface)|Interface|
+|[`spawn`](#api-spawn-function)|Function|
+|[`SpawnedClient`](#api-spawnedclient-interface)|Interface|
+|[`SpawnOptions`](#api-spawnoptions-interface)|Interface|
+|[`ToolDefinition`](#api-tooldefinition-interface)|Interface|
+|[`ToolHandler`](#api-toolhandler-typealias)|Type alias|
+|[`ToolHandlerContext`](#api-toolhandlercontext-interface)|Interface|
+|[`ToolJsonValue`](#api-tooljsonvalue-typealias)|Type alias|
+|[`ToolOptions`](#api-tooloptions-interface)|Interface|
+|[`ToolRegistrationError`](#api-toolregistrationerror-class)|Class|
+|[`ToolRegistrationReason`](#api-toolregistrationreason-typealias)|Type alias|
+|[`ToolSchema`](#api-toolschema-typealias)|Type alias|
 
 ## Classes
 
@@ -84,7 +84,10 @@ readonly reason: ToolRegistrationReason;
 Reads a Node.js or Bun path into an audio prompt part.
 
 ```ts
-export declare function audioPartFromPath(path: string | URL, mimeType: string): Promise<AudioPromptPart>;
+export declare function audioPartFromPath(
+  path: string | URL,
+  mimeType: string
+): Promise<AudioPromptPart>;
 ```
 
 Parameters:
@@ -115,7 +118,9 @@ Returns: `NodeClient`: A high-level client with callback-tool registration.
 Creates a gRPC transport for Node.js or Bun over HTTP/2 or a Unix domain socket.
 
 ```ts
-export declare function createNodeTransport(options: NodeTransportOptions): Transport;
+export declare function createNodeTransport(
+  options: NodeTransportOptions
+): Transport;
 ```
 
 Parameters:
@@ -129,7 +134,10 @@ Returns: `Transport`: A Connect-ES gRPC transport.
 Reads a Node.js or Bun path into an image prompt part.
 
 ```ts
-export declare function imagePartFromPath(path: string | URL, mimeType: string): Promise<ImagePromptPart>;
+export declare function imagePartFromPath(
+  path: string | URL,
+  mimeType: string
+): Promise<ImagePromptPart>;
 ```
 
 Parameters:
@@ -146,7 +154,10 @@ Throws: `PromptValidationError` when the MIME type or size is invalid.
 Spawns if needed, creates one session, runs one prompt, and cleans up owned resources.
 
 ```ts
-export declare function query(prompt: PromptInput, options?: QueryOptions): Promise<Query>;
+export declare function query(
+  prompt: PromptInput,
+  options?: QueryOptions
+): Promise<Query>;
 ```
 
 Parameters:
@@ -555,7 +566,7 @@ One JSON-serializable MCP content block returned by a callback tool.
 
 ```ts
 export type CallToolContent = Readonly<Record<string, ToolJsonValue>> & {
-    readonly type: string;
+  readonly type: string;
 };
 ```
 
@@ -564,7 +575,10 @@ export type CallToolContent = Readonly<Record<string, ToolJsonValue>> & {
 Options accepted by `connect()` in Node.js or Bun.
 
 ```ts
-export type NodeConnectOptions = (NodeTransportOptions | InjectedTransportOptions) & ClientDiagnosticsOptions;
+export type NodeConnectOptions = (
+  NodeTransportOptions | InjectedTransportOptions
+) &
+  ClientDiagnosticsOptions;
 ```
 
 <Heading as="h3" id="api-nodetransportoptions-typealias"><code>NodeTransportOptions</code></Heading>
@@ -572,13 +586,17 @@ export type NodeConnectOptions = (NodeTransportOptions | InjectedTransportOption
 Selects a TCP authority or Unix domain socket for the gRPC transport.
 
 ```ts
-export type NodeTransportOptions = NodeTransportCommonOptions & ({
-    baseUrl: string;
-    socketPath?: never;
-} | {
-    baseUrl?: string;
-    socketPath: string;
-});
+export type NodeTransportOptions = NodeTransportCommonOptions &
+  (
+    | {
+        baseUrl: string;
+        socketPath?: never;
+      }
+    | {
+        baseUrl?: string;
+        socketPath: string;
+      }
+  );
 ```
 
 <Heading as="h3" id="api-toolhandler-typealias"><code>ToolHandler</code></Heading>
@@ -586,7 +604,10 @@ export type NodeTransportOptions = NodeTransportCommonOptions & ({
 A locally registered callback tool implementation.
 
 ```ts
-export type ToolHandler = (arguments_: Readonly<Record<string, ToolJsonValue>>, context: ToolHandlerContext) => unknown | Promise<unknown>;
+export type ToolHandler = (
+  arguments_: Readonly<Record<string, ToolJsonValue>>,
+  context: ToolHandlerContext
+) => unknown | Promise<unknown>;
 ```
 
 <Heading as="h3" id="api-tooljsonvalue-typealias"><code>ToolJsonValue</code></Heading>
@@ -594,9 +615,15 @@ export type ToolHandler = (arguments_: Readonly<Record<string, ToolJsonValue>>, 
 The JSON values accepted by callback tool schemas and handlers.
 
 ```ts
-export type ToolJsonValue = boolean | number | string | null | readonly ToolJsonValue[] | {
-    readonly [key: string]: ToolJsonValue;
-};
+export type ToolJsonValue =
+  | boolean
+  | number
+  | string
+  | null
+  | readonly ToolJsonValue[]
+  | {
+      readonly [key: string]: ToolJsonValue;
+    };
 ```
 
 <Heading as="h3" id="api-toolregistrationreason-typealias"><code>ToolRegistrationReason</code></Heading>
@@ -604,7 +631,12 @@ export type ToolJsonValue = boolean | number | string | null | readonly ToolJson
 Stable authoring-error reasons carried by ToolRegistrationError.
 
 ```ts
-export type ToolRegistrationReason = "duplicate_name" | "invalid_options" | "invalid_schema" | "invalid_server_name" | "invalid_tool_name";
+export type ToolRegistrationReason =
+  | 'duplicate_name'
+  | 'invalid_options'
+  | 'invalid_schema'
+  | 'invalid_server_name'
+  | 'invalid_tool_name';
 ```
 
 <Heading as="h3" id="api-toolschema-typealias"><code>ToolSchema</code></Heading>

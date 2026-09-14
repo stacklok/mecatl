@@ -75,7 +75,8 @@ Two fields on `session.Message` carry provider-private blobs that ride the state
 
 - **`Message.Reasoning`** — an opaque replay blob (OpenAI `reasoning_item.encrypted_content`, or Anthropic's `(thinking, signature)` pair). The loop stores it on the assistant message and sends it back verbatim on the next call. It is never displayed and never parsed; the display summary arrives on `ChunkReasoning` instead.
 
-  It is one string, but a provider's replay unit may be a *list* — several OpenAI reasoning items, several Anthropic thinking blocks, one per step of a turn that interleaves reasoning with tool calls. When that happens the adapter packs the ordered list into its own JSON envelope inside this one string and unpacks it on replay. Emitting one `ChunkReasoningItem` per unit and letting the loop concatenate them does **not** work: the loop keeps only the last item id, so per-unit ids are lost and OpenAI rejects the replay with `invalid_encrypted_content`. Structure belongs in your envelope, never in the loop's concatenation.
+  It is one string, but a provider's replay unit may be a _list_ — several OpenAI reasoning items, several Anthropic thinking blocks, one per step of a turn that interleaves reasoning with tool calls. When that happens the adapter packs the ordered list into its own JSON envelope inside this one string and unpacks it on replay. Emitting one `ChunkReasoningItem` per unit and letting the loop concatenate them does **not** work: the loop keeps only the last item id, so per-unit ids are lost and OpenAI rejects the replay with `invalid_encrypted_content`. Structure belongs in your envelope, never in the loop's concatenation.
+
 - **`Message.ProviderPhase`** — an OpenAI Responses API phase marker (`commentary` / `final_answer`). GPT-5.x uses it to distinguish intermediate preambles from the actual answer. The loop stores and replays it verbatim; dropping it causes the model to treat every preamble as the final answer and stop early.
 
 Neither of these widens `LLMRequest`. The structure is neutral (one opaque blob per message); the contents are provider-private.
@@ -86,15 +87,15 @@ Neither of these widens `LLMRequest`. The structure is neutral (one opaque blob 
 
 `Stream` yields a sequence of `port.Chunk` values. Each chunk has a `Kind` discriminator:
 
-| Kind | Payload field | What it carries |
-|------|--------------|-----------------|
-| `ChunkText` | `Text` | An assistant text delta — append to the in-progress message |
-| `ChunkReasoning` | `Text` | A human-readable reasoning summary delta — display-only, not replayed |
-| `ChunkReasoningItem` | `Text` | The opaque reasoning replay blob — stored on `Message.Reasoning`, never displayed. Emit **one per turn**; pack a multi-unit payload into your own envelope |
-| `ChunkToolCall` | `ToolCall` | A fully assembled tool call, emitted once complete (not streamed per-token) |
-| `ChunkUsage` | `Usage` | Terminal usage/cache accounting — input tokens, output tokens, cache hits |
-| `ChunkDone` | `Stop` | End of stream with the stop reason (`end_turn`, `max_tokens`, `error`, etc.) |
-| `ChunkPhase` | `Text` | Provider phase marker — stored on `Message.ProviderPhase`, never interpreted |
+|Kind|Payload field|What it carries|
+|-|-|-|
+|`ChunkText`|`Text`|An assistant text delta — append to the in-progress message|
+|`ChunkReasoning`|`Text`|A human-readable reasoning summary delta — display-only, not replayed|
+|`ChunkReasoningItem`|`Text`|The opaque reasoning replay blob — stored on `Message.Reasoning`, never displayed. Emit **one per turn**; pack a multi-unit payload into your own envelope|
+|`ChunkToolCall`|`ToolCall`|A fully assembled tool call, emitted once complete (not streamed per-token)|
+|`ChunkUsage`|`Usage`|Terminal usage/cache accounting — input tokens, output tokens, cache hits|
+|`ChunkDone`|`Stop`|End of stream with the stop reason (`end_turn`, `max_tokens`, `error`, etc.)|
+|`ChunkPhase`|`Text`|Provider phase marker — stored on `Message.ProviderPhase`, never interpreted|
 
 The loop assembles these into a `session.Message` and records it. Tool calls arrive fully assembled (the adapter buffers the per-token JSON and emits the complete call once it is valid), so the dispatch layer never deals with partial tool calls.
 
@@ -140,13 +141,13 @@ It reads live modalities first (the same source the model picker uses), with the
 
 ## Reference implementations
 
-| Package | Type | Description |
-|---------|------|-------------|
-| `provider/openai` | `*openai.Provider` | OpenAI Responses API (GPT-4o, O3, GPT-5.x); streaming SSE → chunk translation; handles reasoning items, phase markers, and function-call streaming |
-| `provider/anthropic` | `*anthropic.Provider` | Anthropic Messages API (Claude 3.x, Claude 4.x); native extended thinking; `(thinking, signature)` reasoning replay |
-| `provider/openaichat` | `*openaichat.Provider` | OpenAI Chat Completions API (OpenCode Go, Groq, Together, DeepSeek, vLLM, …); generic Chat Completions wire protocol |
-| `internal/adapter/openrouter` | thin wrapper | Routes to `provider/openai` with an OpenRouter base URL; used for multi-model deployments |
-| `engine/adapter/mockllm` | `*mockllm.Provider` | Deterministic scripted test double; no network access |
+|Package|Type|Description|
+|-|-|-|
+|`provider/openai`|`*openai.Provider`|OpenAI Responses API (GPT-4o, O3, GPT-5.x); streaming SSE → chunk translation; handles reasoning items, phase markers, and function-call streaming|
+|`provider/anthropic`|`*anthropic.Provider`|Anthropic Messages API (Claude 3.x, Claude 4.x); native extended thinking; `(thinking, signature)` reasoning replay|
+|`provider/openaichat`|`*openaichat.Provider`|OpenAI Chat Completions API (OpenCode Go, Groq, Together, DeepSeek, vLLM, …); generic Chat Completions wire protocol|
+|`internal/adapter/openrouter`|thin wrapper|Routes to `provider/openai` with an OpenRouter base URL; used for multi-model deployments|
+|`engine/adapter/mockllm`|`*mockllm.Provider`|Deterministic scripted test double; no network access|
 
 The production wire adapters are their own **opt-in Go submodules** under `provider/` ([ADR 0093](https://github.com/stacklok/mecatl/blob/main/docs/adr/0093-provider-modules.md)) — they import the OpenAI and Anthropic SDKs, which the engine module is not allowed to depend on. A consumer `go get`s exactly the provider(s) it wants and pulls only that SDK, never the root module. The composition layer in `internal/app` wires the appropriate adapter based on the session's provider selection.
 
@@ -168,16 +169,16 @@ p := mockllm.New(
 
 Turn builders cover the common shapes:
 
-| Builder | What it scripts |
-|---------|----------------|
-| `TextTurn(text)` | Text delta → zero usage → `StopEndTurn` |
-| `ToolCallTurn(calls...)` | Tool calls → zero usage → `StopEndTurn` |
-| `EmptyTurn()` | No text, no calls → zero usage → `StopEndTurn` (the no-progress shape) |
-| `EmptyTurnWithStop(stop)` | No text, no calls → zero usage → `stop` (scripts `max_tokens`, `error`, etc.) |
-| `ReasoningTurn(reasoning, text)` | Reasoning display delta → text delta → done |
-| `ReasoningOnlyTurn(summary, blob)` | Reasoning display + replay blob, no text (the no-progress reasoning shape) |
-| `ErrorTurn(err, chunks...)` | Scripted chunks then a genuine in-stream Go error |
-| `ChunksTurn(chunks...)` | Full control — assemble any chunk sequence by hand |
+|Builder|What it scripts|
+|-|-|
+|`TextTurn(text)`|Text delta → zero usage → `StopEndTurn`|
+|`ToolCallTurn(calls...)`|Tool calls → zero usage → `StopEndTurn`|
+|`EmptyTurn()`|No text, no calls → zero usage → `StopEndTurn` (the no-progress shape)|
+|`EmptyTurnWithStop(stop)`|No text, no calls → zero usage → `stop` (scripts `max_tokens`, `error`, etc.)|
+|`ReasoningTurn(reasoning, text)`|Reasoning display delta → text delta → done|
+|`ReasoningOnlyTurn(summary, blob)`|Reasoning display + replay blob, no text (the no-progress reasoning shape)|
+|`ErrorTurn(err, chunks...)`|Scripted chunks then a genuine in-stream Go error|
+|`ChunksTurn(chunks...)`|Full control — assemble any chunk sequence by hand|
 
 `WithCapabilities` flips the mock to image- or audio-capable:
 
@@ -248,11 +249,11 @@ If your provider does not support a modality, return `false` for it — even if 
 
 `internal/adapter/llmresilience` wraps any `LLMProvider` with three behaviours:
 
-| Behavior | Default | Flag |
-|-----------|---------|------|
-| Retry with exponential backoff | enabled | n/a |
-| Circuit breaker | enabled | n/a |
-| Stream-idle watchdog | 180 s | `--llm-stream-idle-timeout` |
+|Behavior|Default|Flag|
+|-|-|-|
+|Retry with exponential backoff|enabled|n/a|
+|Circuit breaker|enabled|n/a|
+|Stream-idle watchdog|180 s|`--llm-stream-idle-timeout`|
 
 **The stream-idle watchdog** bounds mid-stream stalls. After the first chunk arrives, a per-chunk timer runs. If no new chunk arrives within `StreamIdleTimeout`, the decorator synthesizes a terminal `*StreamIdleError` (which satisfies `errors.Is(_, context.DeadlineExceeded)`) and ends the stream. This matters because the OpenAI and Anthropic adapters swallow context errors on cancel (they yield nothing), so the wrapper must synthesize the terminal signal rather than waiting for the inner iterator.
 
@@ -264,10 +265,10 @@ A mid-stream stall is **terminal, never retried** — the no-replay-after-first-
 
 Caching is ON by default and adapter-construction-Option-driven, like the reasoning-effort knob above ([ADR 0100](https://github.com/stacklok/mecatl/blob/main/docs/adr/0100-provider-prompt-caching.md)):
 
-| Knob | Default | Flag |
-|-----------|---------|------|
-| Caching enabled | enabled | `--no-prompt-cache` disables it |
-| Anthropic cache TTL | API default (5 min) | `--anthropic-cache-ttl` (`5m` or `1h`) |
+|Knob|Default|Flag|
+|-|-|-|
+|Caching enabled|enabled|`--no-prompt-cache` disables it|
+|Anthropic cache TTL|API default (5 min)|`--anthropic-cache-ttl` (`5m` or `1h`)|
 
 The OpenAI/OpenRouter cache dialect — which hints get sent, if any — is gated on `(provider id, resolved base URL)`, never the provider id alone: a non-canonical base URL (`--openai-base-url` pointed at vLLM/LiteLLM, or `--openrouter-base-url` overridden) degrades to no hints at all, since a strict-compatible upstream can 400 on an unrecognised field.
 

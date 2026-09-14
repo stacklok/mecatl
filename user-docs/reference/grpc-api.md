@@ -21,11 +21,11 @@ and does not create or inspect state. An absent or unknown `provider_id` leaves 
 sanitized diagnostic display endpoint unavailable. Its response contains these
 content-free strings:
 
-| Field | Meaning |
-| --- | --- |
-| `build_id` | Linker-stamped build identity (`dev` for an unstamped source build). |
-| `server_implementation` | Stable server composition family: `mecated`, `mecak8s`, or embedded `mecatui`; a generic embedding reports `unknown`. It is not an instance ID or a deployment label. |
-| `llm_provider_display_endpoint` | Sanitized diagnostic display projection for the supplied `provider_id`, only when that provider is already available in composition; empty means unavailable. It is not connection configuration or a connection instruction. It contains only URL scheme, host, optional port, and escaped clean path. |
+|Field|Meaning|
+|-|-|
+|`build_id`|Linker-stamped build identity (`dev` for an unstamped source build).|
+|`server_implementation`|Stable server composition family: `mecated`, `mecak8s`, or embedded `mecatui`; a generic embedding reports `unknown`. It is not an instance ID or a deployment label.|
+|`llm_provider_display_endpoint`|Sanitized diagnostic display projection for the supplied `provider_id`, only when that provider is already available in composition; empty means unavailable. It is not connection configuration or a connection instruction. It contains only URL scheme, host, optional port, and escaped clean path.|
 
 The RPC uses the same configured transport authentication as every
 `HarnessService` RPC. With `mecated --auth-token` (or `MECATL_AUTH_TOKEN`), send
@@ -50,21 +50,21 @@ semantic-version protocol.
 
 **Sessions & runs:**
 
-| RPC | Kind | Purpose |
-| --- | --- | --- |
-| `CreateSession(CreateSessionRequest) → CreateSessionResponse` | unary | allocate a server-side session, return its id |
-| `GetSession(GetSessionRequest) → GetSessionResponse` | unary | snapshot of an existing session, including authoritative title/provenance, title-generation lifecycle, and canonical durable token usage when present |
-| `RenameSession(RenameSessionRequest) → RenameSessionResponse` | unary | replace an owned idle main session's title and mark its provenance operator-authored; this permanently disables automatic title generation; ownership, kind, state, liveness, and lease are revalidated at execution |
-| `DeleteSession(DeleteSessionRequest) → DeleteSessionResponse` | unary | permanently remove an owned idle main session snapshot and store-managed sidecars; the same execution-time gates apply |
-| `CompactSession(CompactSessionRequest) → CompactSessionResponse` | unary | force one configured compaction pass on an owned main chat at an idle or terminal boundary; creates no conversation turn and returns `compacted` to distinguish a rewrite from a successful no-op |
-| `CloseSession(CloseSessionRequest) → CloseSessionResponse` | unary | end a session and release its server-side resources; idempotent |
-| `ClearSession(ClearSessionRequest) → ClearSessionResponse` | unary | create a distinct empty-history successor. With no `worktree_selector`, inherit the source's exact placement and labels; a fresh source-scoped selector may choose one currently eligible worktree. The source is unchanged and failures publish nothing |
-| `ForkSession(ForkSessionRequest) → ForkSessionResponse` | unary | create a history-carrying successor. Placement inherits exactly unless a fresh source-scoped `worktree_selector` is supplied; provider/model/reasoning overrides and placement resolve atomically. The source must be owned and at a legal turn boundary; failure creates no partial successor |
-| `Converse(stream ConverseRequest) → stream ConverseResponse` | bidi | drive one agent run; the first frame is either a new `Prompt` or prompt-free `RetryStart` |
-| `ApprovePlan(ApprovePlanRequest) → stream Event` | server-stream | atomically resolve a parked **plan-approval** ask (a `PresentPlan` call surfaced in plan mode, issue #206 / [ADR 0069](https://github.com/stacklok/mecatl/blob/main/docs/adr/0069-plan-approval-gate.md)) and — on an ALLOW verdict — start a FRESH continuation run carrying the proceed message, streaming BOTH runs' events on one stream. `target_mode` selects the verdict: `DEFAULT` → allow-once (flip to default), `ACCEPT_EDITS` → allow-always (flip to accept-edits), `PLAN`/`UNSPECIFIED` → deny (iterate, no flip, no continuation run). A live run is rejected (`FAILED_PRECONDITION` — use the `Converse` `resume_approval` frame for an in-flight run); a session not `awaiting` a `PlanOriginated` ask is `FAILED_PRECONDITION` (`ErrNotAwaitingPlan`); an unknown session is `NOT_FOUND`. |
-| `StreamSessionEvents(StreamSessionEventsRequest) → stream Event` | server-stream | replay a session's durable event log (cloud-native Phase 3a read-back); an unknown id yields an empty stream; `UNIMPLEMENTED` when no durable `EventLog` is wired. **Replays the FULL timeline, including the log-only `approval`/`compaction_archive`/`user_prompt` events a live `Converse` skips** — a client opening a past session gets the verdicts and user prompts, which ARE the transcript |
-| `WatchSessionEvents(WatchSessionEventsRequest) → stream WatchSessionEventsResponse` | server-stream | **durable replay-then-follow** ([ADR 0250](https://github.com/stacklok/mecatl/blob/main/docs/adr/0250-durable-cursors-and-watch.md)): replay from an opaque `cursor` (empty = the beginning), then keep following as the run appends. Each frame is `{event, cursor, phase}`; `phase` is an OPEN STRING (`replay`/`live`/`gap`) — tolerate an unknown value. Exactly one PHASE-ONLY `live` frame (no `event`) marks the replay→live boundary, so a client renders the transcript and shows a live view WITHOUT waiting for the next event, which on an idle session may never arrive. A `gap` frame (also event-less) marks a position whose durable append is known to have failed. Optional `run_id` narrows delivery to one run; gap frames are delivered either way. Relays the FULL timeline like `StreamSessionEvents`, log-only kinds included. Errors: `watch_unsupported` (`UNIMPLEMENTED`) when the log has no cursor seam, `no_event_log` (`UNIMPLEMENTED`), `cursor_malformed` (`INVALID_ARGUMENT`), `cursor_expired` (`FAILED_PRECONDITION` — restart from the beginning), `watch_lagging` (`RESOURCE_EXHAUSTED` — **resumable**, reconnect with your last cursor), `activity_gap` (`DATA_LOSS`) |
-| `ListSessions(ListSessionsRequest) → ListSessionsResponse` | unary | the stored-session inventory — picker metadata (id, timestamps, state, turns, model id; no conversation content), sorted most-recently-active first; an empty list when the store does not implement `PrunableStore` |
+|RPC|Kind|Purpose|
+|-|-|-|
+|`CreateSession(CreateSessionRequest) → CreateSessionResponse`|unary|allocate a server-side session, return its id|
+|`GetSession(GetSessionRequest) → GetSessionResponse`|unary|snapshot of an existing session, including authoritative title/provenance, title-generation lifecycle, and canonical durable token usage when present|
+|`RenameSession(RenameSessionRequest) → RenameSessionResponse`|unary|replace an owned idle main session's title and mark its provenance operator-authored; this permanently disables automatic title generation; ownership, kind, state, liveness, and lease are revalidated at execution|
+|`DeleteSession(DeleteSessionRequest) → DeleteSessionResponse`|unary|permanently remove an owned idle main session snapshot and store-managed sidecars; the same execution-time gates apply|
+|`CompactSession(CompactSessionRequest) → CompactSessionResponse`|unary|force one configured compaction pass on an owned main chat at an idle or terminal boundary; creates no conversation turn and returns `compacted` to distinguish a rewrite from a successful no-op|
+|`CloseSession(CloseSessionRequest) → CloseSessionResponse`|unary|end a session and release its server-side resources; idempotent|
+|`ClearSession(ClearSessionRequest) → ClearSessionResponse`|unary|create a distinct empty-history successor. With no `worktree_selector`, inherit the source's exact placement and labels; a fresh source-scoped selector may choose one currently eligible worktree. The source is unchanged and failures publish nothing|
+|`ForkSession(ForkSessionRequest) → ForkSessionResponse`|unary|create a history-carrying successor. Placement inherits exactly unless a fresh source-scoped `worktree_selector` is supplied; provider/model/reasoning overrides and placement resolve atomically. The source must be owned and at a legal turn boundary; failure creates no partial successor|
+|`Converse(stream ConverseRequest) → stream ConverseResponse`|bidi|drive one agent run; the first frame is either a new `Prompt` or prompt-free `RetryStart`|
+|`ApprovePlan(ApprovePlanRequest) → stream Event`|server-stream|atomically resolve a parked **plan-approval** ask (a `PresentPlan` call surfaced in plan mode, issue #206 / [ADR 0069](https://github.com/stacklok/mecatl/blob/main/docs/adr/0069-plan-approval-gate.md)) and — on an ALLOW verdict — start a FRESH continuation run carrying the proceed message, streaming BOTH runs' events on one stream. `target_mode` selects the verdict: `DEFAULT` → allow-once (flip to default), `ACCEPT_EDITS` → allow-always (flip to accept-edits), `PLAN`/`UNSPECIFIED` → deny (iterate, no flip, no continuation run). A live run is rejected (`FAILED_PRECONDITION` — use the `Converse` `resume_approval` frame for an in-flight run); a session not `awaiting` a `PlanOriginated` ask is `FAILED_PRECONDITION` (`ErrNotAwaitingPlan`); an unknown session is `NOT_FOUND`.|
+|`StreamSessionEvents(StreamSessionEventsRequest) → stream Event`|server-stream|replay a session's durable event log (cloud-native Phase 3a read-back); an unknown id yields an empty stream; `UNIMPLEMENTED` when no durable `EventLog` is wired. **Replays the FULL timeline, including the log-only `approval`/`compaction_archive`/`user_prompt` events a live `Converse` skips** — a client opening a past session gets the verdicts and user prompts, which ARE the transcript|
+|`WatchSessionEvents(WatchSessionEventsRequest) → stream WatchSessionEventsResponse`|server-stream|**durable replay-then-follow** ([ADR 0250](https://github.com/stacklok/mecatl/blob/main/docs/adr/0250-durable-cursors-and-watch.md)): replay from an opaque `cursor` (empty = the beginning), then keep following as the run appends. Each frame is `{event, cursor, phase}`; `phase` is an OPEN STRING (`replay`/`live`/`gap`) — tolerate an unknown value. Exactly one PHASE-ONLY `live` frame (no `event`) marks the replay→live boundary, so a client renders the transcript and shows a live view WITHOUT waiting for the next event, which on an idle session may never arrive. A `gap` frame (also event-less) marks a position whose durable append is known to have failed. Optional `run_id` narrows delivery to one run; gap frames are delivered either way. Relays the FULL timeline like `StreamSessionEvents`, log-only kinds included. Errors: `watch_unsupported` (`UNIMPLEMENTED`) when the log has no cursor seam, `no_event_log` (`UNIMPLEMENTED`), `cursor_malformed` (`INVALID_ARGUMENT`), `cursor_expired` (`FAILED_PRECONDITION` — restart from the beginning), `watch_lagging` (`RESOURCE_EXHAUSTED` — **resumable**, reconnect with your last cursor), `activity_gap` (`DATA_LOSS`)|
+|`ListSessions(ListSessionsRequest) → ListSessionsResponse`|unary|the stored-session inventory — picker metadata (id, timestamps, state, turns, model id; no conversation content), sorted most-recently-active first; an empty list when the store does not implement `PrunableStore`|
 
 **Watching a session durably.** `StreamSessionEvents` replays and ENDS;
 `StreamSessionLive` is live but process-local and DROPS for a slow client;
@@ -184,27 +184,27 @@ hide the action. Calling an old server's unknown method returns `UNIMPLEMENTED`.
 
 **Inventory & introspection** (read-only; most are snapshots taken at startup):
 
-| RPC | Kind | Purpose |
-| --- | --- | --- |
-| `ListModels` | unary | the selectable provider/model inventory — public metadata only (powers the `/models` picker; see §3) |
-| `ListAgents` | unary | the discovered agent-definition registry (name, description, resolved model, tool scope) |
-| `ListCommands` | unary | slash commands for an owned source session; owner-authorizes and exactly reattaches first; no-FS returns empty |
-| `ListWorktrees` | unary | display-safe eligible worktrees plus opaque caller/source-scoped selectors for ClearSession/ForkSession; no paths or exact refs; relist after restart |
-| `ListSkills` | unary | the discovered skills inventory (name + one-line description) |
-| `GetSoul` | unary | the resolved soul's build-time snapshot: content, size/hash, provenance, trust + drift state |
-| `GetUserModel` | unary | the **live**, bounded user-model index; optional `key` lazily returns exact read-only detail plus up to 16 revisions, including proposal linkage when present. No mutation rides this RPC — Forget remains a permission-gated tool |
-| `ReflectSession` | unary | synchronously reflect one caller-owned completed session through its persisted provider/model (the reflection slot may change only the model); remains available with automatic mode off through lazy Build-owned initialization |
-| `GetLearningAttempt` / `ListLearningAttempts` | unary | content-free lifecycle metadata from only the verified caller's private attempt partition; list accepts closed `state`, opaque `cursor`, and a bounded `limit` (default 50, maximum 200). Foreign and missing IDs are both `NOT_FOUND`; no attempt watch or EventLog projection is exposed |
-| `RetryLearningAttempt` / `AbandonLearningAttempt` | unary | retry a failed attempt or non-compensatingly abandon an unclaimed nonterminal attempt using its opaque `expected_version`. Both mutate only the caller-partitioned attempt repository; stale versions, terminal conflicts, and live claims return closed conflict errors without changing state, and abandon promises no downstream rollback |
-| `GenerateDreamPlan` | unary | spend one planner call to generate a bounded-lifetime review for exactly `project_memory` or `user_model`; returns displayed exact-duplicate and synthesized-replacement operations plus an opaque process-local plan id |
-| `DecideDreamPlan` | unary | apply or dismiss the authoritative retained whole plan by id; accepts no operation content and returns planned/applied/conflicted/skipped/failed source counts |
-| `ListLearningProposals` / `GetLearningProposal` | unary | bounded, cursor-paged proposal metadata in the verified caller partition; optional project partitions remain reviewable, while approve/undo is limited to the trusted launch root; evidence reports digest-verified availability without returning source text |
-| `DecideLearningProposal` | unary | CAS approve or reject of a staged proposal; stale versions/transitions return `ABORTED` |
-| `UndoLearningPromotion` | unary | CAS compensating revision only while the linked promoted memory revision remains current; stale/newer revisions return `ABORTED` |
-| `ListMcpResources` / `ReadMcpResource` | unary | static MCP resource snapshots; read one resource by URI |
-| `ListMcpPrompts` / `GetMcpPrompt` | unary | MCP prompt snapshots; expand one prompt to its rendered messages |
-| `ListMcpSources` | unary | the resolved MCP source inventory (static / ToolHive) + diagnostics |
-| `ListToolHiveGroups` | unary | the distinct ToolHive groups in the resolved inventory (no live ToolHive call) |
+|RPC|Kind|Purpose|
+|-|-|-|
+|`ListModels`|unary|the selectable provider/model inventory — public metadata only (powers the `/models` picker; see §3)|
+|`ListAgents`|unary|the discovered agent-definition registry (name, description, resolved model, tool scope)|
+|`ListCommands`|unary|slash commands for an owned source session; owner-authorizes and exactly reattaches first; no-FS returns empty|
+|`ListWorktrees`|unary|display-safe eligible worktrees plus opaque caller/source-scoped selectors for ClearSession/ForkSession; no paths or exact refs; relist after restart|
+|`ListSkills`|unary|the discovered skills inventory (name + one-line description)|
+|`GetSoul`|unary|the resolved soul's build-time snapshot: content, size/hash, provenance, trust + drift state|
+|`GetUserModel`|unary|the **live**, bounded user-model index; optional `key` lazily returns exact read-only detail plus up to 16 revisions, including proposal linkage when present. No mutation rides this RPC — Forget remains a permission-gated tool|
+|`ReflectSession`|unary|synchronously reflect one caller-owned completed session through its persisted provider/model (the reflection slot may change only the model); remains available with automatic mode off through lazy Build-owned initialization|
+|`GetLearningAttempt` / `ListLearningAttempts`|unary|content-free lifecycle metadata from only the verified caller's private attempt partition; list accepts closed `state`, opaque `cursor`, and a bounded `limit` (default 50, maximum 200). Foreign and missing IDs are both `NOT_FOUND`; no attempt watch or EventLog projection is exposed|
+|`RetryLearningAttempt` / `AbandonLearningAttempt`|unary|retry a failed attempt or non-compensatingly abandon an unclaimed nonterminal attempt using its opaque `expected_version`. Both mutate only the caller-partitioned attempt repository; stale versions, terminal conflicts, and live claims return closed conflict errors without changing state, and abandon promises no downstream rollback|
+|`GenerateDreamPlan`|unary|spend one planner call to generate a bounded-lifetime review for exactly `project_memory` or `user_model`; returns displayed exact-duplicate and synthesized-replacement operations plus an opaque process-local plan id|
+|`DecideDreamPlan`|unary|apply or dismiss the authoritative retained whole plan by id; accepts no operation content and returns planned/applied/conflicted/skipped/failed source counts|
+|`ListLearningProposals` / `GetLearningProposal`|unary|bounded, cursor-paged proposal metadata in the verified caller partition; optional project partitions remain reviewable, while approve/undo is limited to the trusted launch root; evidence reports digest-verified availability without returning source text|
+|`DecideLearningProposal`|unary|CAS approve or reject of a staged proposal; stale versions/transitions return `ABORTED`|
+|`UndoLearningPromotion`|unary|CAS compensating revision only while the linked promoted memory revision remains current; stale/newer revisions return `ABORTED`|
+|`ListMcpResources` / `ReadMcpResource`|unary|static MCP resource snapshots; read one resource by URI|
+|`ListMcpPrompts` / `GetMcpPrompt`|unary|MCP prompt snapshots; expand one prompt to its rendered messages|
+|`ListMcpSources`|unary|the resolved MCP source inventory (static / ToolHive) + diagnostics|
+|`ListToolHiveGroups`|unary|the distinct ToolHive groups in the resolved inventory (no live ToolHive call)|
 
 **Manual dream review.** Read `CreateSessionResponse.capabilities.manual_dream` to discover
 generation and decision availability independently for project memory and the user model. Generation
@@ -230,15 +230,15 @@ and exposes neither recall counters nor provider/model identity.
 
 **Agent teams** (experimental; registered with `--enable-teams`, the default):
 
-| RPC | Kind | Purpose |
-| --- | --- | --- |
-| `CreateTeam(CreateTeamRequest) → CreateTeamResponse` | unary | allocate a team (optionally enrolling an initial roster); accepts the tighten-only `max_team_tokens` |
-| `SpawnTeammate` | unary | enrol a member in an existing team (before `RunTeam`) |
-| `SendTeammateMessage` | unary | post a message into a member's inbox, delivered at its next turn boundary |
-| `CancelTeammate` | unary | cancel ONE member of a **running** team mid-round: it de-schedules with the `cancelled` stop reason and releases its claimed tasks; the team still delivers its report. Not-running team → `FailedPrecondition`; unknown member → `NotFound` |
-| `RunTeam(RunTeamRequest) → stream TeamEvent` | server-stream | drive the team to quiescence; every member's events stream tagged with the member name, and the stream **ends with a single terminal frame carrying `TeamEvent.outcome`** (rounds, stop, `budget_exhausted`, usage, dispositions, findings) |
-| `ListTeam` | unary | snapshot of the roster, shared task list, and quiescence |
-| `CleanupTeam` | unary | tear down a finished team and release its resources |
+|RPC|Kind|Purpose|
+|-|-|-|
+|`CreateTeam(CreateTeamRequest) → CreateTeamResponse`|unary|allocate a team (optionally enrolling an initial roster); accepts the tighten-only `max_team_tokens`|
+|`SpawnTeammate`|unary|enrol a member in an existing team (before `RunTeam`)|
+|`SendTeammateMessage`|unary|post a message into a member's inbox, delivered at its next turn boundary|
+|`CancelTeammate`|unary|cancel ONE member of a **running** team mid-round: it de-schedules with the `cancelled` stop reason and releases its claimed tasks; the team still delivers its report. Not-running team → `FailedPrecondition`; unknown member → `NotFound`|
+|`RunTeam(RunTeamRequest) → stream TeamEvent`|server-stream|drive the team to quiescence; every member's events stream tagged with the member name, and the stream **ends with a single terminal frame carrying `TeamEvent.outcome`** (rounds, stop, `budget_exhausted`, usage, dispositions, findings)|
+|`ListTeam`|unary|snapshot of the roster, shared task list, and quiescence|
+|`CleanupTeam`|unary|tear down a finished team and release its resources|
 
 ### The `Converse` flow
 
@@ -266,13 +266,13 @@ The bidi stream drives exactly one run:
 
 `ConverseRequest` is a `oneof`:
 
-| Field | When |
-| --- | --- |
-| `prompt` (`Prompt{session_id, text, parts}`) | first frame for a normal run; records a new user message |
-| `retry` (`RetryStart{session_id}`) | first frame for a prompt-free failed-step retry; records no prompt, reuses conversation/tool state, re-resolves live instruction sources, and delegates eligibility to persisted server state |
-| `resume_approval` (`ResumeApproval{ask_id, verdict, allow}`) | resolve a paused ask (three-way `verdict`; the `allow` bool is the legacy fallback) |
-| `cancel` (`Cancel{}`) | abort the in-flight run |
-| `cancel_child` (`CancelChild{child_id}`) | cancel ONE child run by its id (the `agentId:` / `child_id` handle), leaving the run and sibling children untouched; unknown/finished ids are ignored on the stream |
+|Field|When|
+|-|-|
+|`prompt` (`Prompt{session_id, text, parts}`)|first frame for a normal run; records a new user message|
+|`retry` (`RetryStart{session_id}`)|first frame for a prompt-free failed-step retry; records no prompt, reuses conversation/tool state, re-resolves live instruction sources, and delegates eligibility to persisted server state|
+|`resume_approval` (`ResumeApproval{ask_id, verdict, allow}`)|resolve a paused ask (three-way `verdict`; the `allow` bool is the legacy fallback)|
+|`cancel` (`Cancel{}`)|abort the in-flight run|
+|`cancel_child` (`CancelChild{child_id}`)|cancel ONE child run by its id (the `agentId:` / `child_id` handle), leaving the run and sibling children untouched; unknown/finished ids are ignored on the stream|
 
 A received second `prompt` or `retry` is `InvalidArgument`; unknown control frames
 are ignored. A single `Converse` stream drives a single run. Because the server

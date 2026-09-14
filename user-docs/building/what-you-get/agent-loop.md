@@ -21,15 +21,15 @@ The server keeps compaction and client context meters aligned through one contex
 
 Events you will see, roughly in order:
 
-| Event | When it fires |
-|---|---|
-| `session.init` | Once, before the first turn — the run has started |
-| `turn.start` | Beginning of each LLM turn |
-| `message.delta` | Streaming text fragments from the model |
-| `tool.call` | A tool call is about to execute |
-| `tool.result` | A tool finished and returned a result |
-| `permission.ask` | The loop is paused waiting for your approval (see below) |
-| `result` | Terminal event — carries cumulative usage and the stop reason |
+|Event|When it fires|
+|-|-|
+|`session.init`|Once, before the first turn — the run has started|
+|`turn.start`|Beginning of each LLM turn|
+|`message.delta`|Streaming text fragments from the model|
+|`tool.call`|A tool call is about to execute|
+|`tool.result`|A tool finished and returned a result|
+|`permission.ask`|The loop is paused waiting for your approval (see below)|
+|`result`|Terminal event — carries cumulative usage and the stop reason|
 
 The sequence for a single turn with one tool call looks like this:
 
@@ -191,11 +191,11 @@ When the budget is crossed, the run ends cleanly with stop reason `budget`. That
 
 Every run ends in exactly one of three terminal states:
 
-| State | Meaning |
-|---|---|
-| `completed` (stop reason `end_turn`, `budget`, `no_progress`, `max_turns`) | The model or a limit ended the run cleanly |
-| `cancelled` | `Run.Cancel()` was called, or the context was cancelled |
-| `failed` | An unrecoverable error (e.g. the LLM provider returned an error that exhausted retries) |
+|State|Meaning|
+|-|-|
+|`completed` (stop reason `end_turn`, `budget`, `no_progress`, `max_turns`)|The model or a limit ended the run cleanly|
+|`cancelled`|`Run.Cancel()` was called, or the context was cancelled|
+|`failed`|An unrecoverable error (e.g. the LLM provider returned an error that exhausted retries)|
 
 `Run.Cancel()` cancels the run's context. The loop detects the cancellation at the next turn boundary or mid-dispatch and ends as `cancelled`. A cancelled run can be interrupted and restarted — orphaned in-flight tool calls are closed out with synthetic error results so the conversation stays consistent on restart.
 

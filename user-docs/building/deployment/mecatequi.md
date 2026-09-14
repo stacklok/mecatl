@@ -23,26 +23,26 @@ credential and restart the job. See [MCP client](/building/what-you-get/mcp-clie
 
 A run emits up to three artifacts, plus an exit code:
 
-| Artifact | Flag | Default | Description |
-|---|---|---|---|
-| Git diff patch | `--out-diff` | disabled (empty) | A unified patch that reproduces modified, added, and deleted files. Suitable for `git apply`. |
-| Summary JSON | `--out-summary` | stdout (`-`) | Machine-readable run result (`Summary`, schema version 1). Additive-only contract. |
-| JSONL event log | `--out-events` | disabled (empty) | One redacted `session.Event` per line. An artifact for forensics, not a rehydration source. |
+|Artifact|Flag|Default|Description|
+|-|-|-|-|
+|Git diff patch|`--out-diff`|disabled (empty)|A unified patch that reproduces modified, added, and deleted files. Suitable for `git apply`.|
+|Summary JSON|`--out-summary`|stdout (`-`)|Machine-readable run result (`Summary`, schema version 1). Additive-only contract.|
+|JSONL event log|`--out-events`|disabled (empty)|One redacted `session.Event` per line. An artifact for forensics, not a rehydration source.|
 
 ### The Summary JSON
 
 `Summary` in `cmd/mecatequi/run.go` is the stable contract `publish.sh` and any downstream consumer reads. Fields:
 
-| Field | JSON key | Notes |
-|---|---|---|
-| `SchemaVersion` | `schema_version` | Always `1`; bumped only on a breaking change |
-| `SessionID` | `session_id` | The session that drove this run |
-| `StopReason` | `stop_reason` | Verbatim `session.StopReason` string (see below) |
-| `NonEmptyDiff` | `non_empty_diff` | Whether the run left an uncommitted working-tree change |
-| `DiffBytes` | `diff_bytes` | Byte length of the computed patch |
-| `Usage` | `usage` | `{input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens, total_tokens}` |
-| `FinalText` | `final_text` | Terminal assistant prose |
-| `Error` | `error` | Non-empty only when `stop_reason == "error"` |
+|Field|JSON key|Notes|
+|-|-|-|
+|`SchemaVersion`|`schema_version`|Always `1`; bumped only on a breaking change|
+|`SessionID`|`session_id`|The session that drove this run|
+|`StopReason`|`stop_reason`|Verbatim `session.StopReason` string (see below)|
+|`NonEmptyDiff`|`non_empty_diff`|Whether the run left an uncommitted working-tree change|
+|`DiffBytes`|`diff_bytes`|Byte length of the computed patch|
+|`Usage`|`usage`|`{input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens, total_tokens}`|
+|`FinalText`|`final_text`|Terminal assistant prose|
+|`Error`|`error`|Non-empty only when `stop_reason == "error"`|
 
 The summary is written indented with a trailing newline. When `--out-summary` is `-` (the default), it goes to stdout, making `mecatequi ... | jq .stop_reason` work without any flag.
 
@@ -61,11 +61,11 @@ The git environment is scrubbed (`internal/adapter/gitenv.Scrub`) and every git 
 
 Exit codes are coarse. Always read `stop_reason` and `non_empty_diff` from the summary to judge whether real work landed.
 
-| Exit code | Meaning |
-|---|---|
-| `0` | Clean terminal: `end_turn`, `no_progress`, `budget`, `max_turns`, `max_tool_calls`, `max_consecutive_failures`, `structured_output` |
-| `1` | Run failure: model error (`stop_reason: error`), cancelled run, no-approver cancel-on-ask, `--timeout` exceeded |
-| `2` | Setup failure: bad flags, missing prompt, `app.Build` / `CreateSession` error, non-git or non-top-level workspace, colliding output sinks, write failure |
+|Exit code|Meaning|
+|-|-|
+|`0`|Clean terminal: `end_turn`, `no_progress`, `budget`, `max_turns`, `max_tool_calls`, `max_consecutive_failures`, `structured_output`|
+|`1`|Run failure: model error (`stop_reason: error`), cancelled run, no-approver cancel-on-ask, `--timeout` exceeded|
+|`2`|Setup failure: bad flags, missing prompt, `app.Build` / `CreateSession` error, non-git or non-top-level workspace, colliding output sinks, write failure|
 
 :::note[Exit 0 is not "task accomplished"]
 
@@ -100,11 +100,11 @@ This invariant holds across both adoption paths — the reusable workflow (§ Re
 
 ## Prompt trust boundary
 
-| Source | Trust | Handling |
-|---|---|---|
-| Issue / comment text | Untrusted — attacker-controllable | Extracted via `extract-prompt.sh`, passed via `--prompt-file`, fenced by `--untrusted-prompt` |
-| Operator workflow config (posture, flags, model) | Trusted | Set by a maintainer in the workflow; passed as action inputs |
-| `--instructions` content | Trusted | Emitted outside the untrusted-prompt fence, never fenced |
+|Source|Trust|Handling|
+|-|-|-|
+|Issue / comment text|Untrusted — attacker-controllable|Extracted via `extract-prompt.sh`, passed via `--prompt-file`, fenced by `--untrusted-prompt`|
+|Operator workflow config (posture, flags, model)|Trusted|Set by a maintainer in the workflow; passed as action inputs|
+|`--instructions` content|Trusted|Emitted outside the untrusted-prompt fence, never fenced|
 
 `--untrusted-prompt` wraps the prompt body in the harness's canonical untrusted-data fence (`governance.FenceUntrusted` in `engine/governance/fence.go`) so the model treats the issue text as data to act on, not instructions to obey. The cmd invokes that shared helper while assembling the prompt; no engine-loop or composition behavior is changed for it.
 
@@ -184,32 +184,32 @@ select explicit trusted settings with higher precedence. The binary reads provid
 
 ### Prompt and output
 
-| Flag | Default | Notes |
-|---|---|---|
-| `--prompt` | — | Literal prompt text. At least one of `--prompt` or `--prompt-file` is required. |
-| `--prompt-file` | — | Path to a file whose contents are the prompt body. |
-| `--untrusted-prompt` | `false` | Wrap the prompt body in the untrusted-data fence. Set `true` for issue-text input. |
-| `--instructions` | `""` | Trusted operator framing emitted outside the fence. The GitHub Action sets a non-empty default (PR-description + self-verify framing). |
-| `--out-summary` | `-` (stdout) | Where to write the `Summary` JSON. |
-| `--out-diff` | `""` (disabled) | Where to write the git patch. Opt in with a path. |
-| `--out-events` | `""` (disabled) | Where to write the JSONL event log. Opt in with a path. |
+|Flag|Default|Notes|
+|-|-|-|
+|`--prompt`|—|Literal prompt text. At least one of `--prompt` or `--prompt-file` is required.|
+|`--prompt-file`|—|Path to a file whose contents are the prompt body.|
+|`--untrusted-prompt`|`false`|Wrap the prompt body in the untrusted-data fence. Set `true` for issue-text input.|
+|`--instructions`|`""`|Trusted operator framing emitted outside the fence. The GitHub Action sets a non-empty default (PR-description + self-verify framing).|
+|`--out-summary`|`-` (stdout)|Where to write the `Summary` JSON.|
+|`--out-diff`|`""` (disabled)|Where to write the git patch. Opt in with a path.|
+|`--out-events`|`""` (disabled)|Where to write the JSONL event log. Opt in with a path.|
 
 No two outputs may share a sink. Two writers on one stream interleave and corrupt both.
 
 ### Engine and run control
 
-| Flag | Default | Notes |
-|---|---|---|
-| `--workspace` | cwd | Session workspace root. Must be a git repository top level. |
-| `--default-provider` | `""` | Select a provider by id (`openai`, `openai-codex`, `openrouter`, `anthropic`, `opencode`). |
-| `--model` | `""` | Per-session passthrough model id. Accepts any id the provider serves, including ids newer than the embedded catalog. Prefer this over `--default-model` for newer models. |
-| `--posture` | `""` (strict) | Operator posture ladder: `strict < trusted < auto < yolo`. For an autonomous CI run use `--posture auto` (allow-all, child injection-defence on). With `strict` posture and `--headless`, a main-engine permission ask cancels the run and exits 1. |
-| `--trust-project` | `false` | One-shot workspace trust. Admits BOTH cloned-repo steering and the read-only child shell (vouches for `.git`). Headless posture never grants trust; `trustedWorkspaces:` or undrifted remembered trust are equivalent persistent/declarative sources. With no source, auto gives allow-all with neither steering nor child shell. See [ADR 0095](https://github.com/stacklok/mecatl/blob/main/docs/adr/0095-root-aware-project-trust.md). |
-| `--headless` | `true` | Default on (inverted from `mecated`). A single-shot CI run has no human approver; child asks are auto-denied or routed to the opt-in ask reviewer. |
-| `--timeout` | `0` (disabled) | Wall-clock bound on the whole run (e.g. `40m`). A timeout-cancelled run exits 1 with `stop_reason: cancelled`. |
-| `--max-run-tokens` | `0` (unlimited) | Per-engine cumulative input+output token ceiling. The same ceiling is inherited by the main engine, subagents, Parallel branches, team members, and lead synthesis, but each enforces it only against its own session usage. Child spend is excluded from the parent, so a delegation tree can exceed it. Crossing an engine's ceiling ends that engine cleanly with `stop_reason: budget`. |
-| `--max-team-tokens` | `0` (unlimited) | Separate team-round aggregate token ceiling, not a per-engine run ceiling. When crossed, it prevents new team rounds; the current round and lead synthesis still complete. It does not enforce or report a cross-tree aggregate outside that team. |
-| `--max-turns` | `0` (deployment default) | Turn cap for this run. `0` inherits the composition default. |
+|Flag|Default|Notes|
+|-|-|-|
+|`--workspace`|cwd|Session workspace root. Must be a git repository top level.|
+|`--default-provider`|`""`|Select a provider by id (`openai`, `openai-codex`, `openrouter`, `anthropic`, `opencode`).|
+|`--model`|`""`|Per-session passthrough model id. Accepts any id the provider serves, including ids newer than the embedded catalog. Prefer this over `--default-model` for newer models.|
+|`--posture`|`""` (strict)|Operator posture ladder: `strict < trusted < auto < yolo`. For an autonomous CI run use `--posture auto` (allow-all, child injection-defence on). With `strict` posture and `--headless`, a main-engine permission ask cancels the run and exits 1.|
+|`--trust-project`|`false`|One-shot workspace trust. Admits BOTH cloned-repo steering and the read-only child shell (vouches for `.git`). Headless posture never grants trust; `trustedWorkspaces:` or undrifted remembered trust are equivalent persistent/declarative sources. With no source, auto gives allow-all with neither steering nor child shell. See [ADR 0095](https://github.com/stacklok/mecatl/blob/main/docs/adr/0095-root-aware-project-trust.md).|
+|`--headless`|`true`|Default on (inverted from `mecated`). A single-shot CI run has no human approver; child asks are auto-denied or routed to the opt-in ask reviewer.|
+|`--timeout`|`0` (disabled)|Wall-clock bound on the whole run (e.g. `40m`). A timeout-cancelled run exits 1 with `stop_reason: cancelled`.|
+|`--max-run-tokens`|`0` (unlimited)|Per-engine cumulative input+output token ceiling. The same ceiling is inherited by the main engine, subagents, Parallel branches, team members, and lead synthesis, but each enforces it only against its own session usage. Child spend is excluded from the parent, so a delegation tree can exceed it. Crossing an engine's ceiling ends that engine cleanly with `stop_reason: budget`.|
+|`--max-team-tokens`|`0` (unlimited)|Separate team-round aggregate token ceiling, not a per-engine run ceiling. When crossed, it prevents new team rounds; the current round and lead synthesis still complete. It does not enforce or report a cross-tree aggregate outside that team.|
+|`--max-turns`|`0` (deployment default)|Turn cap for this run. `0` inherits the composition default.|
 
 ### Provider keys
 
@@ -227,14 +227,14 @@ credentials](./settings.md#configure-provider-credentials).
 
 mecatequi is single-shot and short-lived, so a Prometheus scrape does not fit it. Instead it PUSHES metrics + traces to an OTLP collector when the flags are set, and flushes before exit. Both endpoints empty (the default) leaves the pipeline off. See [ADR 0098](https://github.com/stacklok/mecatl/blob/main/docs/adr/0098-headless-telemetry.md) and [Key flags](#key-flags).
 
-| Flag | Default | Notes |
-|---|---|---|
-| `--otlp-endpoint` | `""` (off) | OTLP trace collector endpoint; empty disables tracing. |
-| `--otlp-protocol` | `grpc` | OTLP transport for traces (`grpc` or `http`). |
-| `--otlp-insecure` | `false` | Skip TLS when dialing the collector (dev only). |
-| `--otlp-metrics-endpoint` | `""` (off) | OTLP METRICS collector endpoint; empty disables metrics push. |
-| `--otlp-metrics-protocol` | `grpc` | OTLP transport for metrics (`grpc` or `http`). |
-| `--otlp-shutdown-timeout` | `5s` | Bound on the flush at exit (so a dead collector cannot hang the run). |
+|Flag|Default|Notes|
+|-|-|-|
+|`--otlp-endpoint`|`""` (off)|OTLP trace collector endpoint; empty disables tracing.|
+|`--otlp-protocol`|`grpc`|OTLP transport for traces (`grpc` or `http`).|
+|`--otlp-insecure`|`false`|Skip TLS when dialing the collector (dev only).|
+|`--otlp-metrics-endpoint`|`""` (off)|OTLP METRICS collector endpoint; empty disables metrics push.|
+|`--otlp-metrics-protocol`|`grpc`|OTLP transport for metrics (`grpc` or `http`).|
+|`--otlp-shutdown-timeout`|`5s`|Bound on the flush at exit (so a dead collector cannot hang the run).|
 
 The flush runs before the diff/summary emit defer unwinds (LIFO) so a single run's metrics reach the collector before `os.Exit`. The metric surface reuses the existing instruments (`mecatl.tokens`, `mecatl.runs`, the latency histograms, …) labelled with the bounded issue-#47 closed `role` set — no session/model ids. A `mecatl.cost` counter is deferred to #192.
 
@@ -254,13 +254,13 @@ The intended CI posture is `--posture auto`: allow-all for the main agent and ch
 
 ## What mecatequi does not support
 
-| Capability | Where to look instead |
-|---|---|
-| Session continuity across runs | `mecated` or `mecak8s` with a durable session store |
-| Resuming prior runs | `mecated` (`Service.StartRunContent` on a prior session id) |
-| Interactive clients (TUI, IDE) | `mecated` + `mecatui` |
-| Inspecting subagents across invocations | `mecated` with `InspectSubagent` and a persisted subagent store |
-| Multi-turn conversational bot | Deferred (`mecatequi` v2, pending cloud-native rehydration seam) |
+|Capability|Where to look instead|
+|-|-|
+|Session continuity across runs|`mecated` or `mecak8s` with a durable session store|
+|Resuming prior runs|`mecated` (`Service.StartRunContent` on a prior session id)|
+|Interactive clients (TUI, IDE)|`mecated` + `mecatui`|
+|Inspecting subagents across invocations|`mecated` with `InspectSubagent` and a persisted subagent store|
+|Multi-turn conversational bot|Deferred (`mecatequi` v2, pending cloud-native rehydration seam)|
 
 The stateless design is deliberate. A single-shot run reads its task from the issue, produces artifacts, and exits. The forge (GitHub issue + pull request) is the durable record. There is nothing to re-attach to between runs.
 

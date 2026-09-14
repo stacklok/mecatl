@@ -68,33 +68,33 @@ standard input. The JSON field names are shown here in their emitted Go encoding
 Unknown values use the normal zero value: strings are empty, counts and dimensions
 are zero, and `Clock.Now` is the zero time until the source refreshes it.
 
-| JSON path | Type | Meaning |
-| --- | --- | --- |
-| `Version` | integer | Status input protocol version (currently `3`). |
-| `Server.DisplayTarget` | string | Credential-free target shown by the client. |
-| `Server.ConnectionMode` | string | `embedded`, `connect`, or empty while unknown. |
-| `Session.Title` | string | Optional display title. |
-| `Session.Handle` | string | Fixed 12-column ordinary session handle used by shipped headers: safe `[A-Za-z0-9._-]` bytes are literal except that a leading `-` is encoded as `%2D`; other UTF-8 bytes are uppercase `%HH`, and only complete atoms that fit are included. It has no leading `#` and replaces the v1 `Session.Digest` field in protocol v2; no digest alias is emitted. |
-| `Session.Mode` | string | Active or pending permission mode used by the shipped header. |
-| `Session.ReasoningEffort` | string | `low`, `medium`, `high`, `xhigh`, `max`, or empty. |
-| `Model.ProviderID`, `Model.ID`, `Model.DisplayName`, `Model.Route` | strings | Provider/model routing identifiers, display label, and observed downstream route. |
-| `Model.ContextWindow.{Raw,Human}` | integer, string | Resolved context capacity as exact and display-ready values. |
-| `Usage.{Input,Output,CacheRead,CacheWrite}.{Raw,Human}` | integer, string | Cumulative exact and display-ready token atoms. `CacheRead` is a subset of input. |
-| `Usage.CacheReadPercent` | integer | `CacheRead.Raw / Input.Raw` as an integer percentage, or `0` when input is zero. |
-| `Context.{Used,Window}.{Raw,Human}` | integer, string | Current context use and capacity as exact and display-ready values. |
-| `Context.Percent` | integer | `Used.Raw / Window.Raw` as an integer percentage, or `0` when unknown. |
-| `Workspace.Location` | string | `local`, `remote`, or `unknown`. |
-| `Workspace.Name` | string | Provider-supplied workspace display metadata. It is not a directory basename or a usable path. |
-| `Workspace.Path` | string | Exact local root returned by the privileged local-context RPC. It is available to status templates through their StatusML-escaped projection and to a configured direct local status command. It is empty for remote, untrusted, no-FS, unavailable, and otherwise ineligible sessions. |
-| `Terminal.Rows`, `Terminal.Cols` | integers | Measured terminal dimensions. |
-| `Terminal.HeaderAvailCols`, `Terminal.FooterAvailCols` | integers | Columns remaining after mecatui reserves mandatory header and footer lanes. |
-| `MainAgent.State` | string | `connecting`, `idle`, `thinking`, `running_tool`, `awaiting_approval`, `completed`, `failed`, or `cancelled`. |
-| `MainAgent.Activity` | string | Bounded display activity label. |
-| `MainAgent.Approval` | string | `none` or `awaiting`. |
-| `Delegation.{Total,DirectSubagent,TeamMember,ParallelBranch}` | object | Flat delegated-leaf counts by unit. Each object has `Running`, `AwaitingApproval`, `Completed`, `Failed`, `Cancelled`, and `Stopped` integer fields. `Total` is their component-wise sum. |
-| `Delegation.Subagents`, `Delegation.Parallel` | object | Display summaries with `Running` and terminal-state-collapsed `Finished` counts. |
-| `Delegation.Team` | object | Live-team display summary: `ID`, `Working`, and `Total`; all fields are zero/empty once the team is no longer live. |
-| `Clock.Now` | RFC 3339 time | Source-owned current time; an interval refreshes it. |
+|JSON path|Type|Meaning|
+|-|-|-|
+|`Version`|integer|Status input protocol version (currently `3`).|
+|`Server.DisplayTarget`|string|Credential-free target shown by the client.|
+|`Server.ConnectionMode`|string|`embedded`, `connect`, or empty while unknown.|
+|`Session.Title`|string|Optional display title.|
+|`Session.Handle`|string|Fixed 12-column ordinary session handle used by shipped headers: safe `[A-Za-z0-9._-]` bytes are literal except that a leading `-` is encoded as `%2D`; other UTF-8 bytes are uppercase `%HH`, and only complete atoms that fit are included. It has no leading `#` and replaces the v1 `Session.Digest` field in protocol v2; no digest alias is emitted.|
+|`Session.Mode`|string|Active or pending permission mode used by the shipped header.|
+|`Session.ReasoningEffort`|string|`low`, `medium`, `high`, `xhigh`, `max`, or empty.|
+|`Model.ProviderID`, `Model.ID`, `Model.DisplayName`, `Model.Route`|strings|Provider/model routing identifiers, display label, and observed downstream route.|
+|`Model.ContextWindow.{Raw,Human}`|integer, string|Resolved context capacity as exact and display-ready values.|
+|`Usage.{Input,Output,CacheRead,CacheWrite}.{Raw,Human}`|integer, string|Cumulative exact and display-ready token atoms. `CacheRead` is a subset of input.|
+|`Usage.CacheReadPercent`|integer|`CacheRead.Raw / Input.Raw` as an integer percentage, or `0` when input is zero.|
+|`Context.{Used,Window}.{Raw,Human}`|integer, string|Current context use and capacity as exact and display-ready values.|
+|`Context.Percent`|integer|`Used.Raw / Window.Raw` as an integer percentage, or `0` when unknown.|
+|`Workspace.Location`|string|`local`, `remote`, or `unknown`.|
+|`Workspace.Name`|string|Provider-supplied workspace display metadata. It is not a directory basename or a usable path.|
+|`Workspace.Path`|string|Exact local root returned by the privileged local-context RPC. It is available to status templates through their StatusML-escaped projection and to a configured direct local status command. It is empty for remote, untrusted, no-FS, unavailable, and otherwise ineligible sessions.|
+|`Terminal.Rows`, `Terminal.Cols`|integers|Measured terminal dimensions.|
+|`Terminal.HeaderAvailCols`, `Terminal.FooterAvailCols`|integers|Columns remaining after mecatui reserves mandatory header and footer lanes.|
+|`MainAgent.State`|string|`connecting`, `idle`, `thinking`, `running_tool`, `awaiting_approval`, `completed`, `failed`, or `cancelled`.|
+|`MainAgent.Activity`|string|Bounded display activity label.|
+|`MainAgent.Approval`|string|`none` or `awaiting`.|
+|`Delegation.{Total,DirectSubagent,TeamMember,ParallelBranch}`|object|Flat delegated-leaf counts by unit. Each object has `Running`, `AwaitingApproval`, `Completed`, `Failed`, `Cancelled`, and `Stopped` integer fields. `Total` is their component-wise sum.|
+|`Delegation.Subagents`, `Delegation.Parallel`|object|Display summaries with `Running` and terminal-state-collapsed `Finished` counts.|
+|`Delegation.Team`|object|Live-team display summary: `ID`, `Working`, and `Total`; all fields are zero/empty once the team is no longer live.|
+|`Clock.Now`|RFC 3339 time|Source-owned current time; an interval refreshes it.|
 
 The input deliberately excludes prompts, transcript and tool content, credentials,
 authentication metadata, diagnostics, and command output. `Workspace.Path` is the
@@ -151,11 +151,11 @@ quotes are also required when a value is placed in an attribute. StatusML decode
 those entities back to literal display text, so an escaped value cannot create a
 tag or alter styling:
 
-| Raw value | StatusML text-node value |
-| --- | --- |
-| `A & B` | `A &amp; B` |
-| `<untrusted>` | `&lt;untrusted&gt;` |
-| `</text><error>forged</error>` | `&lt;/text&gt;&lt;error&gt;forged&lt;/error&gt;` |
+|Raw value|StatusML text-node value|
+|-|-|
+|`A & B`|`A &amp; B`|
+|`<untrusted>`|`&lt;untrusted&gt;`|
+|`</text><error>forged</error>`|`&lt;/text&gt;&lt;error&gt;forged&lt;/error&gt;`|
 
 For example, a command written in Python can safely include a dynamic label:
 
@@ -271,7 +271,8 @@ separate configuration mode:
 status_customization:
   command:
     executable: /bin/sh
-    args: [-c, 'read input; printf "<footer><text>local status</text></footer>"']
+    args:
+      [-c, 'read input; printf "<footer><text>local status</text></footer>"']
 ```
 
 The program is invoked directly and receives the raw `Input` JSON only on stdin.

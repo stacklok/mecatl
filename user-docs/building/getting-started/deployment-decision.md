@@ -34,12 +34,12 @@ Redis when you configure `--redis-url`.
 
 ## Shape summary
 
-| Shape | When to choose | State model | Key dependency |
-|-------|---------------|-------------|----------------|
-| **Embed the engine** | You own the binary and want the loop in-process | You own it — implement the ports | The standalone Go engine module |
-| **mecated** | Single server, interactive clients (TUI, IDE), or a controlled service deployment | In-memory, JSONL on disk, or gRPC driver | A running process; durable local sessions need a PV or shared storage |
-| **mecak8s** | Kubernetes, no persistent volumes, multi-replica | Configured Redis + Kubernetes `coordination.k8s.io` lease | Redis StatefulSet + k8s RBAC for `leases` |
-| **mecatequi** | GitHub Actions (or any CI): label/comment → patch → PR | None — stateless per run | LLM provider key; GitHub Actions runner |
+|Shape|When to choose|State model|Key dependency|
+|-|-|-|-|
+|**Embed the engine**|You own the binary and want the loop in-process|You own it — implement the ports|The standalone Go engine module|
+|**mecated**|Single server, interactive clients (TUI, IDE), or a controlled service deployment|In-memory, JSONL on disk, or gRPC driver|A running process; durable local sessions need a PV or shared storage|
+|**mecak8s**|Kubernetes, no persistent volumes, multi-replica|Configured Redis + Kubernetes `coordination.k8s.io` lease|Redis StatefulSet + k8s RBAC for `leases`|
+|**mecatequi**|GitHub Actions (or any CI): label/comment → patch → PR|None — stateless per run|LLM provider key; GitHub Actions runner|
 
 ## Embed the engine
 

@@ -16,14 +16,14 @@ UI or audit consumer can still observe it.
 for decisions the application is authorized to make:
 
 ```ts
-import { connect } from "@stacklok-oss/mecatl-sdk/node";
+import { connect } from '@stacklok-oss/mecatl-sdk/node';
 
 await using client = connect({
-  baseUrl: process.env.MECATL_URL ?? "http://127.0.0.1:8080",
+  baseUrl: process.env.MECATL_URL ?? 'http://127.0.0.1:8080',
 });
 const session = await client.sessions.create({});
-const run = await session.run("Inspect the repository without changing it", {
-  onPermissionAsk: (ask) => (ask.tool === "Read" ? "allow_once" : "deny"),
+const run = await session.run('Inspect the repository without changing it', {
+  onPermissionAsk: (ask) => (ask.tool === 'Read' ? 'allow_once' : 'deny'),
 });
 
 console.log((await run.result()).text);
@@ -43,11 +43,11 @@ Plan approval is separate from ordinary permission approval. Pass
 `onPlanApproval` when the run can call `PresentPlan`:
 
 ```ts
-import { PermissionMode } from "@stacklok-oss/mecatl-sdk/gen";
+import { PermissionMode } from '@stacklok-oss/mecatl-sdk/gen';
 
 const planSession = await client.sessions.create({ mode: PermissionMode.PLAN });
-const run = await planSession.run("Plan and implement the requested change", {
-  onPlanApproval: (_ask, signal) => (signal.aborted ? undefined : "approve"),
+const run = await planSession.run('Plan and implement the requested change', {
+  onPlanApproval: (_ask, signal) => (signal.aborted ? undefined : 'approve'),
 });
 
 console.log((await run.result()).stopReason);
@@ -64,11 +64,11 @@ Use `session.resolvePlan()` when a plan is durably parked and no local `Run`
 handle remains:
 
 ```ts
-const resolution = session.resolvePlan("approve");
+const resolution = session.resolvePlan('approve');
 const { continuation, resumed } = await resolution.result();
 
-console.log("resumed", resumed.runId);
-if (continuation !== undefined) console.log("continuation", continuation.runId);
+console.log('resumed', resumed.runId);
+if (continuation !== undefined) console.log('continuation', continuation.runId);
 ```
 
 The resumed plan run keeps its original run ID. An approved plan starts a

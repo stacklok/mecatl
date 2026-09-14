@@ -16,24 +16,24 @@ Load the session, restore its previous cursor when present, and open the
 activity stream:
 
 ```ts
-import { connect } from "@stacklok-oss/mecatl-sdk/node";
+import { connect } from '@stacklok-oss/mecatl-sdk/node';
 
 await using client = connect({
-  baseUrl: process.env.MECATL_URL ?? "http://127.0.0.1:8080",
+  baseUrl: process.env.MECATL_URL ?? 'http://127.0.0.1:8080',
 });
 const sessionId = process.env.MECATL_SESSION_ID;
-if (sessionId === undefined) throw new Error("MECATL_SESSION_ID is required");
+if (sessionId === undefined) throw new Error('MECATL_SESSION_ID is required');
 
 const session = await client.sessions.get(sessionId);
 const previous = process.env.MECATL_CURSOR;
 await using activity = await session.activity(
-  previous === undefined ? { from: "start" } : { from: previous },
+  previous === undefined ? { from: 'start' } : { from: previous }
 );
 
 for await (const envelope of activity) {
-  if ("cursor" in envelope) {
+  if ('cursor' in envelope) {
     // Persist after the application's side effect.
-    console.log("checkpoint", envelope.cursor);
+    console.log('checkpoint', envelope.cursor);
   }
 }
 ```
@@ -52,12 +52,12 @@ Pass a run ID when the application already knows which run to follow:
 
 ```ts
 const runId = process.env.MECATL_RUN_ID;
-if (runId === undefined) throw new Error("MECATL_RUN_ID is required");
+if (runId === undefined) throw new Error('MECATL_RUN_ID is required');
 
-await using attached = await session.attach(runId, { from: "start" });
+await using attached = await session.attach(runId, { from: 'start' });
 
 for await (const envelope of attached) {
-  if (envelope.kind === "event") console.log(envelope.event);
+  if (envelope.kind === 'event') console.log(envelope.event);
 }
 ```
 

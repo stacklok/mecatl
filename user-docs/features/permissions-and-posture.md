@@ -34,12 +34,12 @@ before it starts.
 
 `--posture` selects the operator posture ladder:
 
-| Posture | Behavior |
-| --- | --- |
-| `strict` | Default for interactive `mecated`; read-only calls are allowed and mutating calls use the permission rules, normally asking before they run. Project trust is not granted by the posture. |
-| `trusted` | Interactive roots admit trusted project instructions and project permission allows, but mutating calls still use the normal approval rules. |
-| `auto` | Enables the allow-all posture for the main agent and children while keeping deny rules and deliberately configured asks effective. Child substitution defenses remain enabled. |
-| `yolo` | Extends `auto` by allowing child command substitutions, backticks, and heredoc-style substitutions that `auto` keeps behind the child safety floor. Use only for isolated, disposable, single-tenant deployments. |
+|Posture|Behavior|
+|-|-|
+|`strict`|Default for interactive `mecated`; read-only calls are allowed and mutating calls use the permission rules, normally asking before they run. Project trust is not granted by the posture.|
+|`trusted`|Interactive roots admit trusted project instructions and project permission allows, but mutating calls still use the normal approval rules.|
+|`auto`|Enables the allow-all posture for the main agent and children while keeping deny rules and deliberately configured asks effective. Child substitution defenses remain enabled.|
+|`yolo`|Extends `auto` by allowing child command substitutions, backticks, and heredoc-style substitutions that `auto` keeps behind the child safety floor. Use only for isolated, disposable, single-tenant deployments.|
 
 `--yolo` and `--trust-project` are compatibility aliases that raise the
 posture tier. The highest effective tier wins. An operator-global `posture:`
@@ -69,10 +69,10 @@ explicitly declares an isolated sandbox with `MECATL_SANDBOX=1` or
 The built-in permission floor allows read-only exploration and asks before
 operations that can mutate state:
 
-| Default effect | Tools |
-| --- | --- |
-| Allow | `Read`, `ListDir`, `Grep`, `Glob`, `WebFetch`, `WebSearch`, and read-only `Subagent` exploration |
-| Ask | `Shell`, `Edit`, `Write`, `Team`, and `SkillDraft` |
+|Default effect|Tools|
+|-|-|
+|Allow|`Read`, `ListDir`, `Grep`, `Glob`, `WebFetch`, `WebSearch`, and read-only `Subagent` exploration|
+|Ask|`Shell`, `Edit`, `Write`, `Team`, and `SkillDraft`|
 
 A matching `deny` always wins. Otherwise an `ask` wins over an `allow`, and
 higher configuration scopes break ties. A configured allow can loosen only the
@@ -107,17 +107,17 @@ section:
 ```yaml
 permissions:
   allow:
-    - "Read"
-    - "Shell(go test:*)"
+    - 'Read'
+    - 'Shell(go test:*)'
   ask:
-    - "Shell(git push:*)"
+    - 'Shell(git push:*)'
   deny:
-    - "Shell(rm:*)"
+    - 'Shell(rm:*)'
   subagent:
     deny:
-      - "Shell(gh pr merge:*)"
+      - 'Shell(gh pr merge:*)'
     allow:
-      - "Shell(go vet:*)"
+      - 'Shell(go vet:*)'
 ```
 
 Rules use `Tool(pattern)` syntax. A bare tool name applies to the whole tool;

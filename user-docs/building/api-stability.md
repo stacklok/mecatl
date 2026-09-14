@@ -14,16 +14,16 @@ description: Understand the engine API contract, versioning rules, and compatibi
 
 The contract covers the **exported identifiers** of eight core packages:
 
-| Package | Role |
-|---|---|
-| `engine/session` | the `Session` aggregate, value objects, the event taxonomy |
-| `engine/governance` | permission `Effect`/`Scope`/`Rule` + `Evaluator`, hook event types |
-| `engine/learning` | evidence-backed reflection and learned-skill lifecycle contracts |
-| `engine/tool` | `Tool`/`Catalog`, `FileSystem`/`Workspace`, source port interfaces |
-| `engine/prompt` | two-layer prompt assembly + discovery ports |
-| `engine/port` | the port interfaces the agent loop consumes |
-| `engine/team` | the agent-team domain |
-| `engine/agent` | the loop, dispatch, delegation tools, the team `Supervisor` |
+|Package|Role|
+|-|-|
+|`engine/session`|the `Session` aggregate, value objects, the event taxonomy|
+|`engine/governance`|permission `Effect`/`Scope`/`Rule` + `Evaluator`, hook event types|
+|`engine/learning`|evidence-backed reflection and learned-skill lifecycle contracts|
+|`engine/tool`|`Tool`/`Catalog`, `FileSystem`/`Workspace`, source port interfaces|
+|`engine/prompt`|two-layer prompt assembly + discovery ports|
+|`engine/port`|the port interfaces the agent loop consumes|
+|`engine/team`|the agent-team domain|
+|`engine/agent`|the loop, dispatch, delegation tools, the team `Supervisor`|
 
 Every exported identifier — const, var, func, type, exported method, exported struct field — in those packages is part of the contract. The authoritative list is `arch.CorePackages` in `engine/arch/surface.go`. The API gate derives its guarded set from that constant and asserts equality, so a new core package cannot escape the gate and a removed one does not silently linger.
 
@@ -40,11 +40,11 @@ Exported methods and interface methods are enumerated in full.
 
 ## What is explicitly excluded
 
-| Excluded | Reason |
-|---|---|
-| `engine/adapter/*` | Reference adapters: test doubles (`mockllm`, `memfs`, `memstore`, `permpolicy`) and sane defaults (`wallclock`, `nofs`, `sessnap`, `memlease`) plus the `*conformance` suites. These ship as offline test infrastructure and default wiring, not as a stable API. Note: the conformance suites' real contract is the port interfaces in `engine/port` and `engine/tool`, which ARE guarded — the suites merely exercise them. |
-| `engine/arch` | Test-support only: the layering proofs and the `arch.CorePackages` list. |
-| Root module (`internal/`, `cmd/`, `contracts/`, `perf/`) | Outside the engine module boundary (ADR 0036). No external compatibility promise applies. |
+|Excluded|Reason|
+|-|-|
+|`engine/adapter/*`|Reference adapters: test doubles (`mockllm`, `memfs`, `memstore`, `permpolicy`) and sane defaults (`wallclock`, `nofs`, `sessnap`, `memlease`) plus the `*conformance` suites. These ship as offline test infrastructure and default wiring, not as a stable API. Note: the conformance suites' real contract is the port interfaces in `engine/port` and `engine/tool`, which ARE guarded — the suites merely exercise them.|
+|`engine/arch`|Test-support only: the layering proofs and the `arch.CorePackages` list.|
+|Root module (`internal/`, `cmd/`, `contracts/`, `perf/`)|Outside the engine module boundary (ADR 0036). No external compatibility promise applies.|
 
 The `engine/adapter/*` exclusion matters in practice: if you embed Mecatl, you may use `engine/adapter/mockllm` and `engine/adapter/memfs` in your own tests, but you should treat them as a convenience, not a stable dependency. Their signatures can change in any minor release. The port interfaces those adapters implement — in `engine/port` and `engine/tool` — are what the contract actually guarantees.
 
@@ -56,10 +56,10 @@ The engine module tags independently from the host repository using the Go submo
 
 ### While v0.x (current)
 
-| Release type | Tag grammar | When used |
-|---|---|---|
-| Minor | `engine/v0.Y+1.0` | Additive changes (new exported identifiers) **and** breaking changes. Pre-v1 SemVer permits breaking changes in a minor bump; every break must be CHANGELOG-noted and classified. |
-| Patch | `engine/v0.Y.Z+1` | Bug fixes with no surface change. |
+|Release type|Tag grammar|When used|
+|-|-|-|
+|Minor|`engine/v0.Y+1.0`|Additive changes (new exported identifiers) **and** breaking changes. Pre-v1 SemVer permits breaking changes in a minor bump; every break must be CHANGELOG-noted and classified.|
+|Patch|`engine/v0.Y.Z+1`|Bug fixes with no surface change.|
 
 ### v1.0.0 and beyond
 
@@ -134,17 +134,17 @@ Mecatl persists a session as a snapshot (`engine/adapter/sessnap`). A host whose
 
 ### What a fold MUST populate vs. what is safe to lose
 
-| Field | Round-trip obligation | Event source |
-|---|---|---|
-| `Conversation` (user prompts, assistant text, tool calls, tool results — tool-pairing-valid) | **MUST** | `EvUserPrompt` (user-role turns — genuine prompt + harness continuations), `EvMessageDelta` (assistant text), `EvToolCall`, `EvToolResult`; pre-compaction head from `EvCompactionArchive` |
-| `State` (idle / running / awaiting / completed / failed / cancelled) | **MUST** | Derived from the terminal `EvResult.Stop`; a trailing unanswered `EvPermissionAsk` → awaiting; no terminal → idle |
-| Recorded stop reason | **MUST** | `EvResult.Stop` |
-| `PendingAsk` (when awaiting) | **MUST** | The trailing `EvPermissionAsk` with no following `EvApproval` or `EvResult` |
-| Cumulative `Usage` | **MUST** | The **sum** of every per-run `EvResult.Usage` (each is per-run; the token-budget brake reads the cumulative aggregate) |
-| Title, title provenance, title generation, and title revision | **MUST** | Authoritative values from `eventsource.SessionMeta`; an empty legacy title falls back to the first genuine `EvUserPrompt` |
-| Creation metadata: id, mode, limits, exact `EnvironmentRef`, placement metadata, profile, provider/model selector, reasoning effort, session kind and relationship, owner, authority, external binding, createdAt | **MUST** (supplied out-of-band) | **Not in any event** — provided by the caller via `eventsource.SessionMeta` |
-| `Counters` (turns / tool calls / consecutive failures) | Run-scoped — reflect the latest run segment (reset on `Reopen`) | `EvTurnStart` (turns), `EvToolResult` (tool calls, consecutive failures) |
-| Run plumbing: diagnostics binding, askID serials, context | Safe to lose — rebuilt fresh | n/a |
+|Field|Round-trip obligation|Event source|
+|-|-|-|
+|`Conversation` (user prompts, assistant text, tool calls, tool results — tool-pairing-valid)|**MUST**|`EvUserPrompt` (user-role turns — genuine prompt + harness continuations), `EvMessageDelta` (assistant text), `EvToolCall`, `EvToolResult`; pre-compaction head from `EvCompactionArchive`|
+|`State` (idle / running / awaiting / completed / failed / cancelled)|**MUST**|Derived from the terminal `EvResult.Stop`; a trailing unanswered `EvPermissionAsk` → awaiting; no terminal → idle|
+|Recorded stop reason|**MUST**|`EvResult.Stop`|
+|`PendingAsk` (when awaiting)|**MUST**|The trailing `EvPermissionAsk` with no following `EvApproval` or `EvResult`|
+|Cumulative `Usage`|**MUST**|The **sum** of every per-run `EvResult.Usage` (each is per-run; the token-budget brake reads the cumulative aggregate)|
+|Title, title provenance, title generation, and title revision|**MUST**|Authoritative values from `eventsource.SessionMeta`; an empty legacy title falls back to the first genuine `EvUserPrompt`|
+|Creation metadata: id, mode, limits, exact `EnvironmentRef`, placement metadata, profile, provider/model selector, reasoning effort, session kind and relationship, owner, authority, external binding, createdAt|**MUST** (supplied out-of-band)|**Not in any event** — provided by the caller via `eventsource.SessionMeta`|
+|`Counters` (turns / tool calls / consecutive failures)|Run-scoped — reflect the latest run segment (reset on `Reopen`)|`EvTurnStart` (turns), `EvToolResult` (tool calls, consecutive failures)|
+|Run plumbing: diagnostics binding, askID serials, context|Safe to lose — rebuilt fresh|n/a|
 
 **Creation metadata is not in events.** No event carries the session id, limits, exact environment identity, placement metadata, profile, provider/model selector, reasoning effort, title metadata, identity labels, or creation timestamp. There is deliberately no `EvSessionCreated` event (ADR 0038 notes it as a possible future extension). The caller who created the session supplies this data alongside the stream via `eventsource.SessionMeta`.
 

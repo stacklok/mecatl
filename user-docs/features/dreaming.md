@@ -98,10 +98,10 @@ are not exposed by the manual review surface.
 
 ## Project memory and user model
 
-| Target | Scope | Typical content |
-| --- | --- | --- |
-| Project memory | One workspace/project | Repository conventions, project decisions, local facts |
-| User model | Cross-project `user/` namespace | Operator preferences and durable personal facts |
+|Target|Scope|Typical content|
+|-|-|-|
+|Project memory|One workspace/project|Repository conventions, project decisions, local facts|
+|User model|Cross-project `user/` namespace|Operator preferences and durable personal facts|
 
 Project operations require a convergence-capable project store for the exact
 trusted configured workspace. Candidates from another or alternate workspace

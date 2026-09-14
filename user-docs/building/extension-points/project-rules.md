@@ -40,9 +40,11 @@ A rule file is markdown with optional YAML frontmatter:
 ```markdown
 ---
 paths:
-  - "**/*_test.go"
+  - '**/*_test.go'
 ---
+
 # Testing rule
+
 When answering about Go tests, always run them before declaring done.
 ```
 

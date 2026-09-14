@@ -29,16 +29,16 @@ of its server.
 
 ## Deployment differences
 
-| Need | `mecated` | `mecak8s` | `mecatui` embedded |
-| --- | --- | --- | --- |
-| Run a general-purpose server | ✓ | ✓ | Starts one locally |
-| Workspace and Shell namespace | Host-local workspace | Configured pod workspace or no-FS profile | Host-local workspace |
-| gRPC API | ✓ | ✓ | Private Unix socket |
-| HTTP/SSE API | ✓ | ✓ | No |
-| Durable state | Optional configured backend | Redis-backed when configured | JSONL store by default |
-| Kubernetes leases and drain handling | No | ✓ | No |
-| Interactive permission approvals | Opt | Headless by default | ✓ |
-| ACP editor integration | ✓, `mecated acp` only | No | No |
+|Need|`mecated`|`mecak8s`|`mecatui` embedded|
+|-|-|-|-|
+|Run a general-purpose server|✓|✓|Starts one locally|
+|Workspace and Shell namespace|Host-local workspace|Configured pod workspace or no-FS profile|Host-local workspace|
+|gRPC API|✓|✓|Private Unix socket|
+|HTTP/SSE API|✓|✓|No|
+|Durable state|Optional configured backend|Redis-backed when configured|JSONL store by default|
+|Kubernetes leases and drain handling|No|✓|No|
+|Interactive permission approvals|Opt|Headless by default|✓|
+|ACP editor integration|✓, `mecated acp` only|No|No|
 
 ## Choose a deployment
 

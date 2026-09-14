@@ -52,21 +52,21 @@ concrete correctness risks and missing tests. Do not modify files.
 
 The most useful fields are:
 
-| Field | Purpose |
-| --- | --- |
-| `name` | Name passed to `Subagent(agent=...)` or a team member's `AgentType`. |
-| `description` | Short routing summary that is always available when choosing the specialist. |
-| `tools` | Allowlist of core tools for the specialist. |
-| `disallowedTools` | Removes tools after the allowlist/default set is applied. |
-| `model` | Model alias or ID; empty or `inherit` keeps the parent model. |
-| `provider` | Provider ID; empty inherits the session provider. |
-| `permissionMode` | Specialist mode such as `default`, `plan`, or `acceptEdits`. |
-| `maxTurns` / `maxToolCalls` | Per-run limits for this specialist. |
-| `skills` | Skills to preload into its instructions. |
-| `mcpServers` | Configured server references or inline streamable-HTTP servers. |
-| `memory` | Optional read-only `user` or `project` memory tier. |
-| `hooks` | Per-definition lifecycle hook commands. |
-| `color` | Display hint only; it does not affect execution. |
+|Field|Purpose|
+|-|-|
+|`name`|Name passed to `Subagent(agent=...)` or a team member's `AgentType`.|
+|`description`|Short routing summary that is always available when choosing the specialist.|
+|`tools`|Allowlist of core tools for the specialist.|
+|`disallowedTools`|Removes tools after the allowlist/default set is applied.|
+|`model`|Model alias or ID; empty or `inherit` keeps the parent model.|
+|`provider`|Provider ID; empty inherits the session provider.|
+|`permissionMode`|Specialist mode such as `default`, `plan`, or `acceptEdits`.|
+|`maxTurns` / `maxToolCalls`|Per-run limits for this specialist.|
+|`skills`|Skills to preload into its instructions.|
+|`mcpServers`|Configured server references or inline streamable-HTTP servers.|
+|`memory`|Optional read-only `user` or `project` memory tier.|
+|`hooks`|Per-definition lifecycle hook commands.|
+|`color`|Display hint only; it does not affect execution.|
 
 A definition's body is instructions to the specialist. Keep it focused on the
 role, expected output, and boundaries. Do not put credentials in frontmatter,
@@ -164,12 +164,12 @@ member. Each path keeps its own lifecycle, limits, and mutability rules.
 
 ## Named agents versus one-off subagents
 
-| Use a named agent when… | Use a one-off subagent when… |
-| --- | --- |
-| the role will be reused; | the task is unique; |
-| the same tools and instructions should apply repeatedly; | the caller can describe the role completely in one prompt; |
-| a team needs a stable specialist type; | no persistent discovery or configuration is needed; |
-| the role needs its own model, skills, or hooks. | a fresh read-only exploration is enough. |
+|Use a named agent when…|Use a one-off subagent when…|
+|-|-|
+|the role will be reused;|the task is unique;|
+|the same tools and instructions should apply repeatedly;|the caller can describe the role completely in one prompt;|
+|a team needs a stable specialist type;|no persistent discovery or configuration is needed;|
+|the role needs its own model, skills, or hooks.|a fresh read-only exploration is enough.|
 
 A named definition does not make a child automatically writable. Mutability is
 selected by the delegation call and supported deployment path, and remains

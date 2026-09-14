@@ -23,24 +23,24 @@ A single `<name>.md` file covers both paths without duplication.
 
 `engine/tool.AgentDef` is the data type that crosses the port boundary. It is a pure value object with no path, directory, or infrastructure type. Where a definition came from is the adapter's private business; the `Origin` field carries only a tier label for observability.
 
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `Name` | `string` | yes | The routing key passed to the Subagent `agent` arg; also the `AgentType` handle for team members |
-| `Description` | `string` | yes | One-line routing summary, capped at `MaxAgentDescriptionBytes` (2000 bytes). Always in context on every request; keep it concise |
-| `Body` | `string` | — | The specialist's full instructions, capped at `MaxAgentBodyBytes` (32 KiB). Composed into the def's system prompt |
-| `Tools` | `[]string` | — | Allowlist of core tool names. Absent means the call-site default. `Subagent`/`Parallel`/`ToolSearch` are always excluded regardless |
-| `DisallowedTools` | `[]string` | — | Subtractive filter applied after `Tools`/default |
-| `Model` | `string` | — | Model alias or full ID. Empty or `"inherit"` means parent model |
-| `Provider` | `string` | — | Provider ID (`"openai"`, `"openrouter"`, …). Empty inherits the session provider |
-| `PermissionMode` | `string` | — | Raw permission mode string (`default`, `plan`, `acceptEdits`) |
-| `MaxTurns` | `int` | — | Per-run turn cap. Zero means call-site default |
-| `MaxToolCalls` | `int` | — | Per-run tool-call cap. Zero means call-site default |
-| `Skills` | `[]string` | — | Skill names to preload into this def's system prompt at startup |
-| `MCPServers` | `[]AgentMCPServer` | — | Per-def MCP servers (reference or inline; see below) |
-| `Hooks` | `map[string]string` | — | Phase → shell command map scoped to this def's engine |
-| `Memory` | `string` | — | Persistent memory tier: `""` (none), `"user"`, or `"project"` (read-only in v1) |
-| `Color` | `string` | — | UX hint only; never affects execution |
-| `Origin` | `AgentOrigin` | — | Admission tier label (set by the source adapter, not the file itself) |
+|Field|Type|Required|Description|
+|-|-|-|-|
+|`Name`|`string`|yes|The routing key passed to the Subagent `agent` arg; also the `AgentType` handle for team members|
+|`Description`|`string`|yes|One-line routing summary, capped at `MaxAgentDescriptionBytes` (2000 bytes). Always in context on every request; keep it concise|
+|`Body`|`string`|—|The specialist's full instructions, capped at `MaxAgentBodyBytes` (32 KiB). Composed into the def's system prompt|
+|`Tools`|`[]string`|—|Allowlist of core tool names. Absent means the call-site default. `Subagent`/`Parallel`/`ToolSearch` are always excluded regardless|
+|`DisallowedTools`|`[]string`|—|Subtractive filter applied after `Tools`/default|
+|`Model`|`string`|—|Model alias or full ID. Empty or `"inherit"` means parent model|
+|`Provider`|`string`|—|Provider ID (`"openai"`, `"openrouter"`, …). Empty inherits the session provider|
+|`PermissionMode`|`string`|—|Raw permission mode string (`default`, `plan`, `acceptEdits`)|
+|`MaxTurns`|`int`|—|Per-run turn cap. Zero means call-site default|
+|`MaxToolCalls`|`int`|—|Per-run tool-call cap. Zero means call-site default|
+|`Skills`|`[]string`|—|Skill names to preload into this def's system prompt at startup|
+|`MCPServers`|`[]AgentMCPServer`|—|Per-def MCP servers (reference or inline; see below)|
+|`Hooks`|`map[string]string`|—|Phase → shell command map scoped to this def's engine|
+|`Memory`|`string`|—|Persistent memory tier: `""` (none), `"user"`, or `"project"` (read-only in v1)|
+|`Color`|`string`|—|UX hint only; never affects execution|
+|`Origin`|`AgentOrigin`|—|Admission tier label (set by the source adapter, not the file itself)|
 
 The two byte caps are canonical — the filesystem parser truncates on discovery, and a remote-driver client re-truncates wire data defensively:
 
@@ -71,12 +71,12 @@ stdio and non-HTTP transports are rejected outright. Only streamable-HTTP inline
 
 `AgentOrigin` is a closed label set:
 
-| Constant | Tier |
-|---|---|
-| `AgentOriginExplicit` | Operator-configured path or `--agents-dir` flag |
-| `AgentOriginProject` | Workspace-local (trust-gated at source construction) |
-| `AgentOriginUser` | User-global (never trust-gated) |
-| `AgentOriginDriver` | Remote gRPC driver (`--agent-source-url`) |
+|Constant|Tier|
+|-|-|
+|`AgentOriginExplicit`|Operator-configured path or `--agents-dir` flag|
+|`AgentOriginProject`|Workspace-local (trust-gated at source construction)|
+|`AgentOriginUser`|User-global (never trust-gated)|
+|`AgentOriginDriver`|Remote gRPC driver (`--agent-source-url`)|
 
 Origin is stamped by the source adapter, not the file. A consumer that encounters an unrecognised value normalizes it to `AgentOriginDriver`.
 
@@ -125,12 +125,12 @@ func TestMyAgentSource(t *testing.T) {
 
 The production adapter reads flat `<name>.md` files from one or more directories. It graduated into the importable engine module (`engine/adapter/agentfs`, issue #328) so an external consumer can compose its own sources directly; the in-repo binaries consume it through the `internal/adapter/agents` package, which re-exports it via thin aliases (there is no second copy to drift). The main types:
 
-| Type | Role |
-|---|---|
-| `DirSource` | Scans one local directory; stamps each def with an admission tier and a diagnostics detail string |
-| `MultiSource` | Composes an ordered list of `AgentSource`s; earlier-wins on name collisions |
-| `FSSource` | Snapshot `tool.AgentDefSource` built by running `NewMultiSource` once at construction |
-| `Registry` | Immutable name-indexed view used by the composition layer; not a port type |
+|Type|Role|
+|-|-|
+|`DirSource`|Scans one local directory; stamps each def with an admission tier and a diagnostics detail string|
+|`MultiSource`|Composes an ordered list of `AgentSource`s; earlier-wins on name collisions|
+|`FSSource`|Snapshot `tool.AgentDefSource` built by running `NewMultiSource` once at construction|
+|`Registry`|Immutable name-indexed view used by the composition layer; not a port type|
 
 `ResolveSources(opts ResolveOptions)` builds the ordered, highest-precedence-first source list from the conventional locations and any explicit paths. Precedence (highest first):
 
@@ -176,7 +176,7 @@ mcpServers:
   - github
   - name: jira
     url: https://jira.example/mcp
-    headers: { Authorization: "Bearer ${TOKEN}" }
+    headers: { Authorization: 'Bearer ${TOKEN}' }
 memory: project
 ---
 You are a meticulous code reviewer. Focus on correctness first, then style.
@@ -198,11 +198,11 @@ An inline `mcpServers` entry that declares a `command:`, `type: stdio`, or any n
 
 The `memory` field accepts three values:
 
-| Value | Behavior |
-|---|---|
-| `""` (absent) | No memory; cold start (default) |
-| `"user"` | Cross-project per-agent dir under `$XDG_CONFIG_HOME/mecatl/agents-memory/<sanitized-name>/` |
-| `"project"` | Workspace-relative: `<workspace>/.mecatl/agents-memory/<sanitized-name>/`, **trust-gated** |
+|Value|Behavior|
+|-|-|
+|`""` (absent)|No memory; cold start (default)|
+|`"user"`|Cross-project per-agent dir under `$XDG_CONFIG_HOME/mecatl/agents-memory/<sanitized-name>/`|
+|`"project"`|Workspace-relative: `<workspace>/.mecatl/agents-memory/<sanitized-name>/`, **trust-gated**|
 
 The `MEMORY.md` head (bounded at ~8 KiB) is injected as fenced `UNTRUSTED DATA` into the def's cache-stable system-prompt prefix at startup. **Read-only in v1** — the agent gains no write tools.
 
@@ -269,7 +269,7 @@ A few scope limits apply:
 
 - **`agent` + `model` + `mode: "read-write"` together is rejected.** A writable specialist always runs on its own resolved model; there's no per-call model override for this path. Drop `model` (or drop `agent` to get a writable explorer on a chosen model).
 - **The deployment must wire writable-specialist support**, or the call fails with "not supported in this deployment." A no-filesystem session never wires this path, so writable specialists are unavailable there.
-- **The def's own tool allowlist still governs.** Running writable only *permits* Edit/Write/Shell to survive scoping — it doesn't force-inject them. A def whose `tools` allowlist excludes Edit/Write stays non-mutating even when invoked with `mode: "read-write"`.
+- **The def's own tool allowlist still governs.** Running writable only _permits_ Edit/Write/Shell to survive scoping — it doesn't force-inject them. A def whose `tools` allowlist excludes Edit/Write stays non-mutating even when invoked with `mode: "read-write"`.
 - **Inline MCP servers are declined** on this path (a v1 scope limit — an inline server's live connection has no process-lifetime owner on a per-call engine). Reference-only MCP servers (naming a configured main server) work fine, since they borrow the shared connection.
 - **Permissions resolve at main-session parity.** The child's posture is non-isolated, so it does not get the isolated-child auto-approve for read-only/build commands — its Shell, Edit, and Write asks resolve under the operator's normal posture and policy, the same as the main agent's own tools.
 

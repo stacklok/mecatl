@@ -14,12 +14,12 @@ configuration.
 
 ## Overview
 
-| Channel | What it carries |
-|---|---|
-| **Prometheus metrics** (`/metrics`) | Domain counters, gauges, and latency histograms — composition-dependent |
-| **OTel traces** (OTLP) | Run/turn/tool spans — on when `--otlp-endpoint` is set |
-| **Structured diagnostics** (stderr/log file) | Lifecycle and degraded-mode warnings from the harness |
-| **Tool call audit** (`jsonlstore` sidecar) | One structured record per tool execution, with timing |
+|Channel|What it carries|
+|-|-|
+|**Prometheus metrics** (`/metrics`)|Domain counters, gauges, and latency histograms — composition-dependent|
+|**OTel traces** (OTLP)|Run/turn/tool spans — on when `--otlp-endpoint` is set|
+|**Structured diagnostics** (stderr/log file)|Lifecycle and degraded-mode warnings from the harness|
+|**Tool call audit** (`jsonlstore` sidecar)|One structured record per tool execution, with timing|
 
 All four are injected at composition. Nothing reaches for a global logger or hardcoded sink.
 
@@ -37,30 +37,30 @@ recorder and exporter.
 
 Engine- and run-derived series carry a bounded `role` label (`main`, `subagent`, `member`, `parallel`, `usermodel`, `child`) so you can split per-engine-family without free-text cardinality leaking session ids or model names. The target-free `mecatl_session_load_failures_total` counter is the deliberate exception: it is emitted by the service load boundary rather than an engine run and carries only `class`.
 
-| Series | Type | Labels | What it measures |
-|---|---|---|---|
-| `mecatl_runs_total` | counter | `stop`, `role` | One per completed run, tagged by terminal stop reason |
-| `mecatl_turns_total` | counter | `role` | One per completed LLM turn (every model exchange that reached a turn boundary) |
-| `mecatl_turn_empty_total` | counter | `role` | Turns that produced neither a tool call nor text (the no-progress subset) |
-| `mecatl_events_total` | counter | `type`, `role` | One per emitted session event, by event type |
-| `mecatl_tool_calls_total` | counter | `tool`, `error`, `role` | One per tool execution |
-| `mecatl_tool_duration_seconds` | histogram | `tool`, `role` | Tool execution latency — explicit-bucket histogram (millisecond resolution up to 300s), so `promtool`/a plain scrape gets usable p50/p90/p99 with no extra config |
-| `mecatl_tokens_total` | counter | `kind`, `role` | Token consumption by kind (input, output, cache read, cache write) |
-| `mecatl_cache_hit_ratio` | gauge | `role` | Ratio of cache-read tokens to total input tokens |
-| `mecatl_active_runs` | gauge | `role` | Currently running Engine.Run goroutines |
-| `mecatl_permission_asks_total` | counter | `role` | Permission pause events |
-| `mecatl_session_load_failures_total` | counter | `class` | Ownership-concealed non-not-found session loads, classified as `store`, `snapshot`, or `unknown` |
+|Series|Type|Labels|What it measures|
+|-|-|-|-|
+|`mecatl_runs_total`|counter|`stop`, `role`|One per completed run, tagged by terminal stop reason|
+|`mecatl_turns_total`|counter|`role`|One per completed LLM turn (every model exchange that reached a turn boundary)|
+|`mecatl_turn_empty_total`|counter|`role`|Turns that produced neither a tool call nor text (the no-progress subset)|
+|`mecatl_events_total`|counter|`type`, `role`|One per emitted session event, by event type|
+|`mecatl_tool_calls_total`|counter|`tool`, `error`, `role`|One per tool execution|
+|`mecatl_tool_duration_seconds`|histogram|`tool`, `role`|Tool execution latency — explicit-bucket histogram (millisecond resolution up to 300s), so `promtool`/a plain scrape gets usable p50/p90/p99 with no extra config|
+|`mecatl_tokens_total`|counter|`kind`, `role`|Token consumption by kind (input, output, cache read, cache write)|
+|`mecatl_cache_hit_ratio`|gauge|`role`|Ratio of cache-read tokens to total input tokens|
+|`mecatl_active_runs`|gauge|`role`|Currently running Engine.Run goroutines|
+|`mecatl_permission_asks_total`|counter|`role`|Permission pause events|
+|`mecatl_session_load_failures_total`|counter|`class`|Ownership-concealed non-not-found session loads, classified as `store`, `snapshot`, or `unknown`|
 
 `turn_empty_total` counts `EvNoProgress` emissions — the loop emits one per advisory nudge and once on give-up (up to `MaxNoProgressNudges + 1` per stuck sequence), so `turn_empty_total / turns_total` gives the empty-turn share, not a disjoint count.
 
 The admin endpoint also serves runtime introspection paths:
 
-| Path | What it returns |
-|---|---|
-| `/metrics` | Prometheus scrape endpoint |
-| `/debug/pprof/*` | Go pprof handlers (heap, goroutine, allocs, cpu, mutex, block) |
-| `/debug/vars` | Curated `runtime/metrics` snapshot |
-| `/debug/flightrecorder` | Snapshot of the in-memory execution-trace ring (8 MiB / 5s window) |
+|Path|What it returns|
+|-|-|
+|`/metrics`|Prometheus scrape endpoint|
+|`/debug/pprof/*`|Go pprof handlers (heap, goroutine, allocs, cpu, mutex, block)|
+|`/debug/vars`|Curated `runtime/metrics` snapshot|
+|`/debug/flightrecorder`|Snapshot of the in-memory execution-trace ring (8 MiB / 5s window)|
 
 The flight recorder is armed at startup when `--flight-recorder=true` (default). The mutex and block pprof profiles are off by default; enable them with `--mutex-profile-fraction` and `--block-profile-rate` only while investigating contention, as they carry runtime overhead.
 
@@ -88,11 +88,11 @@ debugger or any model context.
 
 Tracing is enabled when `--otlp-endpoint` is non-empty. With an empty endpoint, the tracer is a no-op and only metrics run.
 
-| Flag | Default | Description |
-|---|---|---|
-| `--otlp-endpoint` | `""` | OTLP collector endpoint. Empty disables tracing. |
-| `--otlp-protocol` | `grpc` | Transport: `grpc` or `http`. |
-| `--otlp-insecure` | `false` | Skip TLS — useful for a local collector. |
+|Flag|Default|Description|
+|-|-|-|
+|`--otlp-endpoint`|`""`|OTLP collector endpoint. Empty disables tracing.|
+|`--otlp-protocol`|`grpc`|Transport: `grpc` or `http`.|
+|`--otlp-insecure`|`false`|Skip TLS — useful for a local collector.|
 
 When tracing is active, Mecatl models a run/turn/tool span hierarchy. The `EventSink.Emit` call carries the run's context so telemetry can parent a run span to an inbound request span.
 
@@ -110,9 +110,9 @@ Every LLM provider is wrapped by a resilience decorator (`llmresilience`) that s
 
 Retries apply **only before the first committing chunk** (the first text, tool call, usage count, or done signal from the stream). Once streaming has begun, the decorator never re-issues the call.
 
-| Flag | Default | Description |
-|---|---|---|
-| `--llm-max-attempts` | `3` | Total attempts (initial call plus retries). |
+|Flag|Default|Description|
+|-|-|-|
+|`--llm-max-attempts`|`3`|Total attempts (initial call plus retries).|
 
 What triggers a retry: transient establishment failures — rate limits (429), server errors (5xx), timeouts, network errors, and a truncated or malformed first SSE frame (a decode error before any chunk has committed). Permanent client errors (4xx other than 408/429) and caller cancellations do not trigger retries and do not count toward the breaker.
 
@@ -122,10 +122,10 @@ After retries are exhausted the call surfaces as an `ExhaustedError`, which reac
 
 The breaker tracks consecutive transient establishment failures across attempts. On reaching the threshold it opens and short-circuits subsequent calls with a `BreakerError` until the cooldown period ends, at which point it half-opens to admit a trial.
 
-| Flag | Default | Description |
-|---|---|---|
-| `--llm-breaker-threshold` | `5` | Consecutive transient failures that open the breaker (0 disables). |
-| `--llm-breaker-cooldown` | `30s` | Duration the breaker stays open before admitting a half-open trial. |
+|Flag|Default|Description|
+|-|-|-|
+|`--llm-breaker-threshold`|`5`|Consecutive transient failures that open the breaker (0 disables).|
+|`--llm-breaker-cooldown`|`30s`|Duration the breaker stays open before admitting a half-open trial.|
 
 A successful call resets the consecutive-failure counter. Permanent errors and cancellations are not counted.
 
@@ -133,9 +133,9 @@ A successful call resets the consecutive-failure counter. Permanent errors and c
 
 `--llm-per-attempt-timeout` bounds **only establishment** — from the call start to the first committing chunk. It is enforced by a separate timer that is stopped as soon as the first committing chunk arrives, so it never cuts an actively-streaming turn.
 
-| Flag | Default | Description |
-|---|---|---|
-| `--llm-per-attempt-timeout` | `300s` | Establishment bound: connect + first committing chunk. 0 disables. |
+|Flag|Default|Description|
+|-|-|-|
+|`--llm-per-attempt-timeout`|`300s`|Establishment bound: connect + first committing chunk. 0 disables.|
 
 A timeout here is retryable (it counts as a transient failure toward the breaker). The default is deliberately generous to accommodate reasoning models that have long thinking phases before their first output token. If your model is reliably fast to first token you can lower this value.
 
@@ -143,9 +143,9 @@ A timeout here is retryable (it counts as a transient failure toward the breaker
 
 The idle watchdog applies **after the first chunk** and governs the rest of the stream. It caps the gap between consecutive chunks. A stall beyond this limit is **terminal and not retried** — replaying a half-streamed turn to the model is unsafe.
 
-| Flag | Default | Description |
-|---|---|---|
-| `--llm-stream-idle-timeout` | `180s` | Max idle gap between stream chunks after the first chunk. 0 disables. |
+|Flag|Default|Description|
+|-|-|-|
+|`--llm-stream-idle-timeout`|`180s`|Max idle gap between stream chunks after the first chunk. 0 disables.|
 
 When the watchdog fires it synthesizes a terminal `StreamIdleError`. The LLM provider adapters deliberately suppress the context cancellation error on cancel and would otherwise yield nothing; the wrapper synthesizes the error explicitly so the caller always sees a clean terminal signal.
 
@@ -155,10 +155,10 @@ Pre-first-chunk stalls (before any chunk is received) are governed by `--llm-per
 
 Caching is ON by default across all three provider adapters (Anthropic, OpenAI/OpenRouter, and the dormant openaichat path) — see [ADR 0100](https://github.com/stacklok/mecatl/blob/main/docs/adr/0100-provider-prompt-caching.md). It caches the growing conversation, not just the system prompt.
 
-| Flag | Default | Description |
-|---|---|---|
-| `--no-prompt-cache` | `false` | Disable caching entirely: every adapter's cache dialect degrades to `None`, reproducing the pre-caching wire exactly. |
-| `--anthropic-cache-ttl` | `""` (API default, `5m`) | TTL stamped on every Anthropic ephemeral `cache_control` breakpoint. Accepts `5m` or `1h`; any other value is ignored with a WARN. |
+|Flag|Default|Description|
+|-|-|-|
+|`--no-prompt-cache`|`false`|Disable caching entirely: every adapter's cache dialect degrades to `None`, reproducing the pre-caching wire exactly.|
+|`--anthropic-cache-ttl`|`""` (API default, `5m`)|TTL stamped on every Anthropic ephemeral `cache_control` breakpoint. Accepts `5m` or `1h`; any other value is ignored with a WARN.|
 
 The token-accounting facets already surface cache activity per-turn: `mecatl_tokens_total{kind="cache read"}` / `{kind="cache write"}` and `mecatl_cache_hit_ratio` (both above) climb once caching is actually hitting. On OpenAI/OpenRouter, cache-write tokens are probed from the raw usage JSON (there is no typed SDK field for them yet) and clamped so they never exceed the turn's input tokens.
 
@@ -211,11 +211,11 @@ missing sessions and foreign-owner concealment remain silent.
 
 Use the bounded class to choose a target-free response:
 
-| Class | Meaning | Safe operator action |
-|---|---|---|
-| `store` | The store could not retrieve the snapshot, including transport failures. | Check backend health, connectivity, credentials, TLS, and timeouts; use backend-wide health signals rather than asking for or logging the requested session ID. |
-| `snapshot` | Bytes were retrieved but the snapshot format, decoding, persisted identity, or validation failed. | Check storage-integrity and mis-keying alerts, then follow the backend's documented backup or repair procedure without copying snapshot contents into logs. |
-| `unknown` | A custom store returned an untyped failure that Mecatl cannot classify safely. | Check the custom adapter's bounded health diagnostics and update it to wrap failures with the public `engine/port` classification contract; do not infer a class from error text. |
+|Class|Meaning|Safe operator action|
+|-|-|-|
+|`store`|The store could not retrieve the snapshot, including transport failures.|Check backend health, connectivity, credentials, TLS, and timeouts; use backend-wide health signals rather than asking for or logging the requested session ID.|
+|`snapshot`|Bytes were retrieved but the snapshot format, decoding, persisted identity, or validation failed.|Check storage-integrity and mis-keying alerts, then follow the backend's documented backup or repair procedure without copying snapshot contents into logs.|
+|`unknown`|A custom store returned an untyped failure that Mecatl cannot classify safely.|Check the custom adapter's bounded health diagnostics and update it to wrap failures with the public `engine/port` classification contract; do not infer a class from error text.|
 
 The counter identifies a failure family, not a target. It deliberately cannot answer
 which session was requested; do not weaken ownership concealment to obtain that detail.

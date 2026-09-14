@@ -25,23 +25,23 @@ enforces that declaration.
 
 These tools are always present in a default session (no extra configuration required). The catalog name is what appears in tool specs and permission rules.
 
-| Catalog name | Purpose | Read-only? |
-|---|---|---|
-| `Read` | Read a file from the workspace by path. The primary way the model loads source code, config, and data files; detected PNG, JPEG, GIF, and WebP files return typed image content when the selected model supports images. | Yes |
-| `ListDir` | List one directory's immediate children. Results are sorted and directories carry a trailing `/`; virtual workspaces may derive directories from file paths and omit empty directories. | Yes |
-| `Write` | Create a missing file or conditionally replace an existing file in the workspace. A replacement requires a prior Read and an unchanged version; concurrent changes and creations surface as model-visible conflicts rather than being silently clobbered. | No |
-| `Edit` | Apply an exact-string replacement to a file. Enforces read-before-edit, exact match, and uniqueness (or `replace_all`). The file must be unchanged since it was read; a concurrent change or deletion since the read surfaces as a model-visible refusal to re-read and retry. Safer than Write for targeted changes. | No |
-| `Copy` | Copy one regular file to a new path. The destination must not exist; directories and overwrites are refused. | No |
-| `Move` | Move a file or directory to a new path. The destination must not exist, so an existing path is never silently replaced. | No |
-| `Remove` | Remove one file or empty physical directory. Removal is never recursive; non-empty and virtual derived directories are refused. | No |
-| `Shell` | Execute a shell command. The model's general-purpose escape hatch for tasks no other tool covers. Subject to permission rules. Supports `background: true` for long-running commands (see below). | No |
-| `ShellStatus` | Check on the background commands `Shell` started in this run: poll a job's output tail, collect a finished job's result, or cancel a job. Registered wherever `Shell` is. | Yes |
-| `Grep` | Search file contents for a pattern (regex or literal) across the workspace. Returns matching lines with context. Supports `**` recursive globs when scoping the search to a subtree; broad unscoped searches have a safety budget, so supply `path` for large workspaces. | Yes |
-| `Glob` | List files matching a glob pattern. Useful for discovering which files exist before reading them. Supports `**` for recursive matching across any number of directory levels. | Yes |
-| `DiscoverModels` | Inspect the server's resolved model inventory through a bounded, safe projection. Each returned `provider_id` + `model_id` pair is an exact selection handle. Present in default and no-filesystem profiles. | Yes |
-| `WebFetch` | Fetch readable text from a public HTTP(S) URL. Present in both default and no-filesystem session profiles. | Yes |
-| `WebSearch` | Run a web search and return results. Present in both default and no-filesystem session profiles. | Yes |
-| `ToolSearch` | Search the catalog for hidden (progressively-disclosed) tools by keyword and hydrate them into the session. Only registered when progressive tool disclosure is enabled. | Yes |
+|Catalog name|Purpose|Read-only?|
+|-|-|-|
+|`Read`|Read a file from the workspace by path. The primary way the model loads source code, config, and data files; detected PNG, JPEG, GIF, and WebP files return typed image content when the selected model supports images.|Yes|
+|`ListDir`|List one directory's immediate children. Results are sorted and directories carry a trailing `/`; virtual workspaces may derive directories from file paths and omit empty directories.|Yes|
+|`Write`|Create a missing file or conditionally replace an existing file in the workspace. A replacement requires a prior Read and an unchanged version; concurrent changes and creations surface as model-visible conflicts rather than being silently clobbered.|No|
+|`Edit`|Apply an exact-string replacement to a file. Enforces read-before-edit, exact match, and uniqueness (or `replace_all`). The file must be unchanged since it was read; a concurrent change or deletion since the read surfaces as a model-visible refusal to re-read and retry. Safer than Write for targeted changes.|No|
+|`Copy`|Copy one regular file to a new path. The destination must not exist; directories and overwrites are refused.|No|
+|`Move`|Move a file or directory to a new path. The destination must not exist, so an existing path is never silently replaced.|No|
+|`Remove`|Remove one file or empty physical directory. Removal is never recursive; non-empty and virtual derived directories are refused.|No|
+|`Shell`|Execute a shell command. The model's general-purpose escape hatch for tasks no other tool covers. Subject to permission rules. Supports `background: true` for long-running commands (see below).|No|
+|`ShellStatus`|Check on the background commands `Shell` started in this run: poll a job's output tail, collect a finished job's result, or cancel a job. Registered wherever `Shell` is.|Yes|
+|`Grep`|Search file contents for a pattern (regex or literal) across the workspace. Returns matching lines with context. Supports `**` recursive globs when scoping the search to a subtree; broad unscoped searches have a safety budget, so supply `path` for large workspaces.|Yes|
+|`Glob`|List files matching a glob pattern. Useful for discovering which files exist before reading them. Supports `**` for recursive matching across any number of directory levels.|Yes|
+|`DiscoverModels`|Inspect the server's resolved model inventory through a bounded, safe projection. Each returned `provider_id` + `model_id` pair is an exact selection handle. Present in default and no-filesystem profiles.|Yes|
+|`WebFetch`|Fetch readable text from a public HTTP(S) URL. Present in both default and no-filesystem session profiles.|Yes|
+|`WebSearch`|Run a web search and return results. Present in both default and no-filesystem session profiles.|Yes|
+|`ToolSearch`|Search the catalog for hidden (progressively-disclosed) tools by keyword and hydrate them into the session. Only registered when progressive tool disclosure is enabled.|Yes|
 
 `Read` detects image content from its bytes rather than its filename. Image reads
 do not support `offset` or `limit`, are capped at 10 MiB, and retain a concise
@@ -118,17 +118,17 @@ A session can be created with `profile: "no-fs"` — for a workspace that has no
 
 Six base memory tools are registered when the two stores are configured. A lifecycle-capable store adds `InspectMemory`, `ForgetMemory`, and `UndoMemory` for project scope plus `InspectUserMemory`, `ForgetUserMemory`, and `UndoUserMemory` for user scope. Remember/Recall/Search/Inspect/Undo are **floor-scoped allows**; Forget is a **floor-scoped ask**. Forget and Undo require an expected_version copied exactly from an exact Recall result, Inspect result, or mutation receipt in the same scope. If none is available or it may be stale, use InspectMemory (project scope) or InspectUserMemory (user/user-model scope) first. The token is opaque, so never guess or interpret it. Every default is operator-overridable.
 
-| Catalog name | Scope | What it does |
-|---|---|---|
-| `Remember` | Per-project | Stores a named fact in the current project's memory store. |
-| `Recall` | Per-project | Retrieves a named fact from the current project's memory store. |
-| `SearchMemory` | Per-project | BM25-indexed search over the project's memory entries. |
-| `RememberUser` | Cross-project (user model) | Stores a durable operator fact under the `user/` namespace, shared across all projects. Requires the user-model store to be configured. |
-| `RecallUser` | Cross-project (user model) | Retrieves a named fact from the cross-project user model. |
-| `SearchUserModel` | Cross-project (user model) | Searches the cross-project user model by query. |
-| `InspectMemory` / `InspectUserMemory` | Both | Reads exact version, provenance, timestamps, and bounded history. |
-| `ForgetMemory` / `ForgetUserMemory` | Both | Writes a reversible tombstone after an approval by default. |
-| `UndoMemory` / `UndoUserMemory` | Both | Appends a compensating revision restoring the previous state. |
+|Catalog name|Scope|What it does|
+|-|-|-|
+|`Remember`|Per-project|Stores a named fact in the current project's memory store.|
+|`Recall`|Per-project|Retrieves a named fact from the current project's memory store.|
+|`SearchMemory`|Per-project|BM25-indexed search over the project's memory entries.|
+|`RememberUser`|Cross-project (user model)|Stores a durable operator fact under the `user/` namespace, shared across all projects. Requires the user-model store to be configured.|
+|`RecallUser`|Cross-project (user model)|Retrieves a named fact from the cross-project user model.|
+|`SearchUserModel`|Cross-project (user model)|Searches the cross-project user model by query.|
+|`InspectMemory` / `InspectUserMemory`|Both|Reads exact version, provenance, timestamps, and bounded history.|
+|`ForgetMemory` / `ForgetUserMemory`|Both|Writes a reversible tombstone after an approval by default.|
+|`UndoMemory` / `UndoUserMemory`|Both|Appends a compensating revision restoring the previous state.|
 
 The project tools require project memory to be enabled; the cross-project tools use `--user-model-dir` or its conventional XDG location and disappear with `--no-user-model`.
 
@@ -140,11 +140,11 @@ For the full memory architecture — live operator profile, lifecycle history, d
 
 Three delegation tools are always registered in a default session. They let the model decompose work across child agents running in parallel or in coordination.
 
-| Catalog name | What it enables |
-|---|---|
-| `Subagent` | Spawn a child agent to handle a subtask. Supports background mode, structured output schemas, fork-from-parent history, named specialist agent definitions, and per-call model overrides. |
-| `Parallel` | Fan out a set of tasks to isolated branches, then join all results or select a winner. Branches run concurrently; a single-branch winner is merged back into the parent by default, multi-branch runs never auto-merge. |
-| `Team` | Coordinate a named crew of specialist members under a lead. The lead synthesizes a consolidated report from member findings. |
+|Catalog name|What it enables|
+|-|-|
+|`Subagent`|Spawn a child agent to handle a subtask. Supports background mode, structured output schemas, fork-from-parent history, named specialist agent definitions, and per-call model overrides.|
+|`Parallel`|Fan out a set of tasks to isolated branches, then join all results or select a winner. Branches run concurrently; a single-branch winner is merged back into the parent by default, multi-branch runs never auto-merge.|
+|`Team`|Coordinate a named crew of specialist members under a lead. The lead synthesizes a consolidated report from member findings.|
 
 `Subagent` and `Parallel` are read-parallel by default — each isolates its child's
 writes in its own workspace, so the dispatcher can run them alongside other

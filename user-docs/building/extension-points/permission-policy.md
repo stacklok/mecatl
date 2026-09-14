@@ -62,34 +62,34 @@ type Rule struct {
 
 ### `governance.Effect`
 
-| Value | Meaning |
-|---|---|
-| `Allow` | Tool call runs without prompting |
-| `Ask` | Loop pauses; client must send a verdict |
-| `Deny` | Call never runs; model receives the Reason |
+|Value|Meaning|
+|-|-|
+|`Allow`|Tool call runs without prompting|
+|`Ask`|Loop pauses; client must send a verdict|
+|`Deny`|Call never runs; model receives the Reason|
 
 ### `governance.Scope`
 
 Scopes encode where a rule came from. Precedence runs highest-to-lowest:
 
-| Scope constant | Source | Numeric order |
-|---|---|---|
-| `ScopeManaged` | Enterprise/managed floor | 0 (highest) |
-| `ScopeCLI` | CLI flags at invocation | 1 |
-| `ScopeLocalProject` | `.mecatl/settings.local.yaml` (gitignored) | 2 |
-| `ScopeSharedProject` | `.mecatl/settings.yaml` (checked-in) | 3 |
-| `ScopeUser` | `$XDG_CONFIG_HOME/mecatl/settings.yaml` | 4 |
-| `ScopeBuiltinDefault` | The harness's built-in floor | 5 (lowest) |
+|Scope constant|Source|Numeric order|
+|-|-|-|
+|`ScopeManaged`|Enterprise/managed floor|0 (highest)|
+|`ScopeCLI`|CLI flags at invocation|1|
+|`ScopeLocalProject`|`.mecatl/settings.local.yaml` (gitignored)|2|
+|`ScopeSharedProject`|`.mecatl/settings.yaml` (checked-in)|3|
+|`ScopeUser`|`$XDG_CONFIG_HOME/mecatl/settings.yaml`|4|
+|`ScopeBuiltinDefault`|The harness's built-in floor|5 (lowest)|
 
 `Scope.HasHigherPrecedenceThan(other Scope) bool` is the numeric comparison (`s < other`).
 
 ### `governance.Audience`
 
-| Value | Binds |
-|---|---|
-| `AudienceAll` (zero value) | Every evaluator — back-compat default |
-| `AudienceMain` | Main engine only |
-| `AudienceSubagent` | Child engines (subagent, team member, parallel branch) |
+|Value|Binds|
+|-|-|
+|`AudienceAll` (zero value)|Every evaluator — back-compat default|
+|`AudienceMain`|Main engine only|
+|`AudienceSubagent`|Child engines (subagent, team member, parallel branch)|
 
 Matching is symmetric-permissive: a rule binds an evaluator when either side is `AudienceAll` or both carry the same value. An untagged rule (`AudienceAll`) binds everywhere.
 
@@ -201,12 +201,12 @@ If you are running `mecated` or `mecak8s`, you do not wire `permpolicy` directly
 
 **`internal/app`** — the `app.Build` composition root wires the posture ladder on top. The ladder is:
 
-| `--posture` | allow-all | child substitution floor | project trust |
-|---|---|---|---|
-| `strict` (default) | off | gated | (your own `--trust-project`) |
-| `trusted` | off | gated | on |
-| `auto` | on (main + children) | gated (injection defence on) | on |
-| `yolo` | on (main + children) | loosened (injection defence off) | on |
+|`--posture`|allow-all|child substitution floor|project trust|
+|-|-|-|-|
+|`strict` (default)|off|gated|(your own `--trust-project`)|
+|`trusted`|off|gated|on|
+|`auto`|on (main + children)|gated (injection defence on)|on|
+|`yolo`|on (main + children)|loosened (injection defence off)|on|
 
 The posture applies `governance.WithLooseSubstitution` and injects a `ScopeCLI`/`AudienceSubagent` allow-all rule under `yolo`/`auto` (`permpolicy.AllowAllFloorRules()` provides the canonical child floor). The deny-dominance and configured-ask invariants hold at every tier.
 
@@ -242,6 +242,7 @@ These are not advisory — tests in `engine/` fail if you regress them, and the 
 The loop constructs two distinct policies — one for the main engine, one for child engines — and pins each with a `governance.Audience` tag so audience-scoped rules bind the right engine class.
 
 **Main engine policy:**
+
 ```go
 permpolicy.NewPolicyWithResolver(
     mainRules,
@@ -254,6 +255,7 @@ permpolicy.NewPolicyWithResolver(
 The main engine's policy receives all static rules tagged `AudienceAll` and `AudienceMain`. Top-level `allow`/`ask` rules from permconfig are tagged `AudienceMain` and therefore do not reach child engines.
 
 **Child engine policy:**
+
 ```go
 permpolicy.NewPolicy(
     append(permpolicy.AllowAllFloorRules(), childConfiguredRules...),

@@ -67,11 +67,11 @@ Every tool discovered from an MCP server is registered under `mcp__<server>__<to
 
 Examples:
 
-| Server name | MCP tool name | Catalog name |
-|---|---|---|
-| `github` | `create_issue` | `mcp__github__create_issue` |
-| `linear` | `search_issues` | `mcp__linear__search_issues` |
-| `exa` | `web_search_exa` | `mcp__exa__web_search_exa` |
+|Server name|MCP tool name|Catalog name|
+|-|-|-|
+|`github`|`create_issue`|`mcp__github__create_issue`|
+|`linear`|`search_issues`|`mcp__linear__search_issues`|
+|`exa`|`web_search_exa`|`mcp__exa__web_search_exa`|
 
 The catalog name is what appears in permission rules. To allow or deny a specific MCP tool, use its full namespaced name:
 
@@ -156,7 +156,7 @@ through; only image and audio are gated on modality support.
 content block can carry an `Audience` hint (e.g. `["user"]`) suggesting it's
 meant for a human viewer rather than the model. Mecatl treats this as
 advisory only — an MCP server is an untrusted supply-chain surface, and
-trusting a server's own audience tag to *hide* content from the model would
+trusting a server's own audience tag to _hide_ content from the model would
 let a malicious server smuggle a payload past the model's view (CWE-345). A
 `["user"]`-tagged block may additionally render for a human-facing client;
 the model always still gets its copy.

@@ -62,7 +62,7 @@ A rule can be unconditional or use `paths:` frontmatter:
 ```markdown
 ---
 paths:
-  - "**/*_test.go"
+  - '**/*_test.go'
 ---
 
 # Testing rule

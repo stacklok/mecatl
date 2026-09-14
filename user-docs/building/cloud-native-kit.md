@@ -65,17 +65,17 @@ for both: `WatchSessionEvents` over gRPC, or `GET /v1/sessions/{id}/watch` over
 HTTP/SSE. It replays the durable log from a position, announces when it is caught
 up, and then follows as the run appends — and because it reads durable storage
 rather than an in-process registry, it works when the client reconnects to a
-*different replica*, which is exactly the shape `mecak8s` deployments have.
+_different replica_, which is exactly the shape `mecak8s` deployments have.
 
 Each frame is `{event, cursor, phase}`:
 
 - **`cursor`** is an opaque resume token. Treat it as bytes to hand back — never
-  parse, build, or edit one. Persist it once per frame you have *processed*; on any
+  parse, build, or edit one. Persist it once per frame you have _processed_; on any
   reconnect, pass that value back and the watch continues from the next record. An
   empty cursor means "from the beginning", which is the normal first attachment.
 - **`phase`** is an open string, not an enum: `replay` (already durable when you
   attached), `live` (appended while you were following), or `gap`. Tolerate a value
-  you do not recognise. Exactly one *event-less* `live` frame marks the replay→live
+  you do not recognise. Exactly one _event-less_ `live` frame marks the replay→live
   boundary, so you can render the transcript and switch to a live view without
   waiting for a next event that, on an idle session, may never come.
 - **`run_id`** optionally narrows delivery to one run's events.
@@ -98,12 +98,12 @@ than silently replaying the whole transcript.
 
 ## How each deployment shape relates to the three properties
 
-| Shape | Disposable process | Externalized state | Durable record |
-|---|---|---|---|
-| **Embed the engine** | No — you wire it | You implement `port.SessionStore` and `port.EventLog` | You implement `port.EventLog` |
-| **mecated** | Yes, with `--store-dir` (single-host flock lease is automatic) or a remote store + `--session-lease-*` | JSONL on disk (`--store-dir`) or gRPC driver (`--session-store-url`); Redis not exposed; schedule registry via `--schedule-store-url` (`ScheduleStoreService` + `ScheduleOneShotReArmerService`) | JSONL sidecar (`.events.jsonl`) or gRPC driver (`--event-log-url`) |
-| **mecak8s** | Yes, when deployed with a durable store | Redis (`internal/adapter/redisstore`) when `--redis-url` is configured | Redis via the same adapter when configured |
-| **mecatequi** | No — one-shot process | None — stateless per run | No durable record after the run |
+|Shape|Disposable process|Externalized state|Durable record|
+|-|-|-|-|
+|**Embed the engine**|No — you wire it|You implement `port.SessionStore` and `port.EventLog`|You implement `port.EventLog`|
+|**mecated**|Yes, with `--store-dir` (single-host flock lease is automatic) or a remote store + `--session-lease-*`|JSONL on disk (`--store-dir`) or gRPC driver (`--session-store-url`); Redis not exposed; schedule registry via `--schedule-store-url` (`ScheduleStoreService` + `ScheduleOneShotReArmerService`)|JSONL sidecar (`.events.jsonl`) or gRPC driver (`--event-log-url`)|
+|**mecak8s**|Yes, when deployed with a durable store|Redis (`internal/adapter/redisstore`) when `--redis-url` is configured|Redis via the same adapter when configured|
+|**mecatequi**|No — one-shot process|None — stateless per run|No durable record after the run|
 
 **Embed:** the engine exports the ports; the reference adapters under `engine/adapter/` — `memstore`, `memlease`, `sessnap` — give you a working in-process starting point. For real externalization, implement `port.SessionStore`, `port.EventLog`, and `port.SessionLease` against your own backing service and wire them in composition.
 

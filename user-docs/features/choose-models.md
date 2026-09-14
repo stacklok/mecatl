@@ -177,15 +177,15 @@ image  → image  → gpt-5.6-terra
 
 Resolution is fail-soft for slots and routes other than `title`: an invalid alias,
 slot, or route target warns and falls back to the session model. The `title` slot is
-  the exception described above; an absent or unresolvable title binding disables
-  generation rather than falling back or making a provider call. Explicit per-call
-  models, model-pinned named agents, fork or resume choices, and other higher-
-  precedence selectors are not overridden by the router. A named definition with no
-  `model:` is routable; `model: inherit` is an explicit pin. Writable named routing
- keeps the specialist's direct-write scope, while explicit `read-write`+`agent`+`model`
- remains invalid. Model slots and router taxonomies are operator decisions; project
- model settings are ignored unless the operator explicitly allows the relevant model
- set on a trusted project via `models.allowlist`.
+the exception described above; an absent or unresolvable title binding disables
+generation rather than falling back or making a provider call. Explicit per-call
+models, model-pinned named agents, fork or resume choices, and other higher-
+precedence selectors are not overridden by the router. A named definition with no
+`model:` is routable; `model: inherit` is an explicit pin. Writable named routing
+keeps the specialist's direct-write scope, while explicit `read-write`+`agent`+`model`
+remains invalid. Model slots and router taxonomies are operator decisions; project
+model settings are ignored unless the operator explicitly allows the relevant model
+set on a trusted project via `models.allowlist`.
 
 An allowlisted model is not scoped to a particular use: a trusted project can bind any
 allowlisted model to any slot, including the `guardrail` and `ask-reviewer` safety
@@ -205,11 +205,11 @@ order for each model in the operator-tier `settings.yaml`:
 ```yaml
 openrouter:
   models:
-    "anthropic/claude-sonnet-4-6":
-      order: ["anthropic", "google-vertex"]
+    'anthropic/claude-sonnet-4-6':
+      order: ['anthropic', 'google-vertex']
       allow_fallbacks: false
-    "openai/gpt-5":
-      order: ["deepinfra/turbo"]
+    'openai/gpt-5':
+      order: ['deepinfra/turbo']
 ```
 
 `order` accepts lowercase-kebab downstream slugs and disables OpenRouter's default
@@ -289,13 +289,13 @@ rejected.
 
 ### Selector rules
 
-| `provider_id` | `model_id` | Result |
-| --- | --- | --- |
-| omitted | omitted | Use the server-resolved provider and model. |
-| set | omitted | Use that provider's own default model. The server's `--default-model` does not carry across to a different explicitly selected provider. |
-| set | set | Use that provider and pass the model ID through to it. An uncatalogued model may be accepted and fail later at the provider. |
-| omitted | set | Reject the request: a bare model ID is ambiguous. |
-| unknown or unavailable | any | Reject the request; do not silently fall back to another provider. |
+|`provider_id`|`model_id`|Result|
+|-|-|-|
+|omitted|omitted|Use the server-resolved provider and model.|
+|set|omitted|Use that provider's own default model. The server's `--default-model` does not carry across to a different explicitly selected provider.|
+|set|set|Use that provider and pass the model ID through to it. An uncatalogued model may be accepted and fail later at the provider.|
+|omitted|set|Reject the request: a bare model ID is ambiguous.|
+|unknown or unavailable|any|Reject the request; do not silently fall back to another provider.|
 
 A bare `model_id` returns HTTP 400 or gRPC `InvalidArgument`. The same applies
 to an unknown or unavailable provider. The API returns the new session ID and

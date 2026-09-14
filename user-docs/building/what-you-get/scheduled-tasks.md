@@ -32,7 +32,7 @@ The store is ground truth. An in-memory timer, if one exists, is only a derived 
 
 ### At-most-once via claim-before-fire
 
-The core contract is `Claim`: it atomically advances `NextFireAt` **before** the fire runs, along with `LastFireAt`, `FireCount`, and a `LastFireSessionID` placeholder (`port.PendingFireSessionID`). Once a slot is claimed, a peer replica's `Due` no longer returns it, so a second `Claim` on the same slot is structurally impossible. There's no owner/claim-holder field the way `SessionLease` has one — the durable `NextFireAt` advance *is* the fence.
+The core contract is `Claim`: it atomically advances `NextFireAt` **before** the fire runs, along with `LastFireAt`, `FireCount`, and a `LastFireSessionID` placeholder (`port.PendingFireSessionID`). Once a slot is claimed, a peer replica's `Due` no longer returns it, so a second `Claim` on the same slot is structurally impossible. There's no owner/claim-holder field the way `SessionLease` has one — the durable `NextFireAt` advance _is_ the fence.
 
 The trade-off: a crash mid-fire skips the slot, because the advance already happened. A recurring schedule self-heals on the next tick via the misfire policy; a one-shot fire can be lost. This is the documented cost of at-most-once slot claiming without a distributed transaction.
 
@@ -52,11 +52,11 @@ flowchart TD
 
 ### Store adapters
 
-| Adapter | Package | Fit |
-|---|---|---|
-| Reference / in-memory | `engine/adapter/memschedulestore` | Tests, offline development |
-| Single-host durable | `internal/adapter/store/jsonlstore` | One `mecated` replica with a local store directory |
-| Multi-replica durable | `internal/adapter/redisstore` | `mecak8s` or any multi-replica deployment sharing a Redis backend, using a Lua script for the atomic `Claim` |
+|Adapter|Package|Fit|
+|-|-|-|
+|Reference / in-memory|`engine/adapter/memschedulestore`|Tests, offline development|
+|Single-host durable|`internal/adapter/store/jsonlstore`|One `mecated` replica with a local store directory|
+|Multi-replica durable|`internal/adapter/redisstore`|`mecak8s` or any multi-replica deployment sharing a Redis backend, using a Lua script for the atomic `Claim`|
 
 All three pass the shared `engine/adapter/scheduleconformance` test suite, so they behave identically from a caller's perspective. A deployment gets scheduling over its configured durable store via type assertion; `mecated` can alternatively select a remote schedule store with `--schedule-store-url`. When OIDC caller ownership is enabled, the selected schedule store must also provide atomic create-only publication (`port.ScheduleCreator`); current remote schedule-store drivers do not, so that combination is rejected at startup rather than falling back to a racy check-then-upsert.
 
@@ -76,10 +76,10 @@ the multi-replica risk.
 
 Read from `ScheduleSpec.Misfire` at tick time (not by the store itself):
 
-| Policy | Behavior |
-|---|---|
-| `MisfireFireOnceNow` (default) | Fires once immediately for a missed slot, then resumes the normal cadence. Does not cascade — a slot missed by an hour fires once, not sixty times. |
-| `MisfireSkip` | Skips the missed slot entirely and waits for the next due fire. `Claim` still advances `NextFireAt` (so the slot isn't re-returned), but `Fire` is never called. |
+|Policy|Behavior|
+|-|-|
+|`MisfireFireOnceNow` (default)|Fires once immediately for a missed slot, then resumes the normal cadence. Does not cascade — a slot missed by an hour fires once, not sixty times.|
+|`MisfireSkip`|Skips the missed slot entirely and waits for the next due fire. `Claim` still advances `NextFireAt` (so the slot isn't re-returned), but `Fire` is never called.|
 
 ### The singleton guard
 
@@ -103,23 +103,22 @@ The in-chat `Schedule` tool supports `create`, `list`, `inspect`, `pause`, `resu
 `delete`, and `fire`; it is registered only when the session's store provides a
 `ScheduleStore`.
 
-
 **gRPC** — `mecatl.v1.ScheduleService` (`contracts/proto/mecatl/v1/schedule.proto`): `CreateSchedule`, `GetSchedule`, `ListSchedules`, `UpdateSchedule`, `DeleteSchedule` (idempotent), `FireNow`, `PauseSchedule`, `ResumeSchedule`, `GetFire`, `ListFires`.
 
 **REST** (under `/v1/schedules`):
 
-| Method | Route | RPC |
-|---|---|---|
-| POST | `/v1/schedules` | CreateSchedule |
-| GET | `/v1/schedules` | ListSchedules |
-| GET | `/v1/schedules/{name}` | GetSchedule |
-| PUT | `/v1/schedules/{name}` | UpdateSchedule |
-| DELETE | `/v1/schedules/{name}` | DeleteSchedule |
-| POST | `/v1/schedules/{name}/fire` | FireNow |
-| POST | `/v1/schedules/{name}/pause` | PauseSchedule |
-| POST | `/v1/schedules/{name}/resume` | ResumeSchedule |
-| GET | `/v1/schedules/{name}/fires` | ListFires |
-| GET | `/v1/schedules/{name}/fires/{id}` | GetFire |
+|Method|Route|RPC|
+|-|-|-|
+|POST|`/v1/schedules`|CreateSchedule|
+|GET|`/v1/schedules`|ListSchedules|
+|GET|`/v1/schedules/{name}`|GetSchedule|
+|PUT|`/v1/schedules/{name}`|UpdateSchedule|
+|DELETE|`/v1/schedules/{name}`|DeleteSchedule|
+|POST|`/v1/schedules/{name}/fire`|FireNow|
+|POST|`/v1/schedules/{name}/pause`|PauseSchedule|
+|POST|`/v1/schedules/{name}/resume`|ResumeSchedule|
+|GET|`/v1/schedules/{name}/fires`|ListFires|
+|GET|`/v1/schedules/{name}/fires/{id}`|GetFire|
 
 A backend whose store doesn't expose a `ScheduleStore` (the plain in-memory session store, for instance) honestly reports every schedule RPC as `Unimplemented` (gRPC) / 501 (HTTP) rather than pretending to work. `FireNow` on a paused or exhausted schedule is `FailedPrecondition` / 412; an unknown schedule or fire is `NotFound` / 404.
 
@@ -154,12 +153,12 @@ mecak8s --redis-url redis.example:6379 --redis-tls          # multi-replica, tic
 mecated serve --store-dir ./state --no-scheduler                  # opt out (manual management still works)
 ```
 
-| Flag | Default | Description |
-|---|---|---|
-| `--no-scheduler` | `false` | Disable the in-process scheduler tick loop (ON by default on any schedule-capable store). The create/list/fire API and the in-chat `Schedule` tool still work — manual management is independent of the tick loop. |
-| `--scheduler-tick-interval` | `30s` | How often the tick loop polls `ScheduleStore.Due`. |
-| `--scheduler-min-interval` | `1m` | The frequency floor enforced at schedule-create time — a schedule tighter than this is rejected, fail-closed, by BOTH the in-chat `Schedule` tool and the REST/gRPC create. Defaults to `1m` so an on-by-default scheduler plus the floor-Allow `Schedule` tool cannot mint an unbounded tight-cadence recurring fire out of the box; set it explicitly to tighten, or to `0` to disable the floor. |
-| `--scheduler-max-concurrent-fires` | `4` | Bounds the per-tick fire fan-out. |
+|Flag|Default|Description|
+|-|-|-|
+|`--no-scheduler`|`false`|Disable the in-process scheduler tick loop (ON by default on any schedule-capable store). The create/list/fire API and the in-chat `Schedule` tool still work — manual management is independent of the tick loop.|
+|`--scheduler-tick-interval`|`30s`|How often the tick loop polls `ScheduleStore.Due`.|
+|`--scheduler-min-interval`|`1m`|The frequency floor enforced at schedule-create time — a schedule tighter than this is rejected, fail-closed, by BOTH the in-chat `Schedule` tool and the REST/gRPC create. Defaults to `1m` so an on-by-default scheduler plus the floor-Allow `Schedule` tool cannot mint an unbounded tight-cadence recurring fire out of the box; set it explicitly to tighten, or to `0` to disable the floor.|
+|`--scheduler-max-concurrent-fires`|`4`|Bounds the per-tick fire fan-out.|
 
 :::note[Singleton is currently always effectively true]
 
@@ -175,10 +174,10 @@ The scheduler emits a lifecycle event for each fire — `EvScheduleFired`, `EvSc
 
 Two metrics instruments are emitted:
 
-| Metric | Type | Labels | Notes |
-|---|---|---|---|
-| `mecatl.schedule.fires` | Counter | `outcome` = `fired`/`skipped`/`failed` | One increment per tick-loop decision |
-| `mecatl.schedule.fire_duration` | Histogram (seconds) | — | Due-to-terminal duration; skipped fires record no duration |
+|Metric|Type|Labels|Notes|
+|-|-|-|-|
+|`mecatl.schedule.fires`|Counter|`outcome` = `fired`/`skipped`/`failed`|One increment per tick-loop decision|
+|`mecatl.schedule.fire_duration`|Histogram (seconds)|—|Due-to-terminal duration; skipped fires record no duration|
 
 Neither carries a role label — a fire's own run already reports `role="main"` on its usual per-run metrics.
 

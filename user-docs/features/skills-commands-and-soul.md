@@ -41,7 +41,7 @@ license: Apache-2.0
 compatibility: mecatl >= 0.1
 metadata:
   owner: platform
-allowed-tools: "Read Grep Shell"
+allowed-tools: 'Read Grep Shell'
 ---
 
 # Deploy
@@ -61,11 +61,11 @@ Skills are opt-in. Configure one or more explicit directories with
 `--skills-dir` (repeatable), or enable the conventional locations with
 `--skills-conventional`:
 
-| Tier | Location | Admission |
-| --- | --- | --- |
-| Explicit | each `--skills-dir` | operator-configured; always admitted |
-| Project | `<workspace>/.mecatl/skills`, `<workspace>/.claude/skills` | requires project trust |
-| User | `$XDG_CONFIG_HOME/mecatl/skills`, `~/.claude/skills` | user-owned; always admitted |
+|Tier|Location|Admission|
+|-|-|-|
+|Explicit|each `--skills-dir`|operator-configured; always admitted|
+|Project|`<workspace>/.mecatl/skills`, `<workspace>/.claude/skills`|requires project trust|
+|User|`$XDG_CONFIG_HOME/mecatl/skills`, `~/.claude/skills`|user-owned; always admitted|
 
 Explicit directories have higher precedence than conventional sources. With no
 source configured, the `Skill` tool is disabled. A malformed `SKILL.md` is
@@ -79,7 +79,7 @@ materialized or executable. To read one textual asset, call the tool again with
 its logical name:
 
 ```json
-{"name":"deploy","asset":"references/api.md"}
+{ "name": "deploy", "asset": "references/api.md" }
 ```
 
 Do not tell a model to use `Read` on a skill directory or to execute a bundled

@@ -80,11 +80,11 @@ for ev := range run.Events() {
 
 ## The things you pass in
 
-| What | Type | What it does |
-|---|---|---|
-| **Environment** | `tool.Environment` | Binds the non-nil filesystem workspace, optional command runner, and environment identity for this run. |
-| **Catalog** | `*tool.Catalog` (on `Deps`) | The tool registry. Holds `Read`, `Write`, `Edit`, `Shell`, MCP servers, and any custom tools you register. The engine reads `Specs(mode)` to tell the model what it can do. |
-| **LLMProvider** | `port.LLMProvider` (on `Deps`) | The model backend. The engine calls `Stream(ctx, LLMRequest)` and receives a neutral chunk stream. The OpenAI and Anthropic adapters ship out of the box; implement this interface to bring your own. |
+|What|Type|What it does|
+|-|-|-|
+|**Environment**|`tool.Environment`|Binds the non-nil filesystem workspace, optional command runner, and environment identity for this run.|
+|**Catalog**|`*tool.Catalog` (on `Deps`)|The tool registry. Holds `Read`, `Write`, `Edit`, `Shell`, MCP servers, and any custom tools you register. The engine reads `Specs(mode)` to tell the model what it can do.|
+|**LLMProvider**|`port.LLMProvider` (on `Deps`)|The model backend. The engine calls `Stream(ctx, LLMRequest)` and receives a neutral chunk stream. The OpenAI and Anthropic adapters ship out of the box; implement this interface to bring your own.|
 
 ---
 

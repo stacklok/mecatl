@@ -176,14 +176,14 @@ type EventLog interface {
 
 These are separate seams and must not be confused:
 
-| | `port.EventSink` | `port.EventLog` |
-|---|---|---|
-| Purpose | Live telemetry mirror | Durable chronological record |
-| Direction | One-way write | Write + read-back |
-| Durability | None guaranteed (fire-and-forget) | Strict (nil means on stable storage) |
-| Consumer | Metrics, ACP, TUI relay | Restart rehydration, approval replay, Phase 3 consumers |
-| Where it lives | `engine/port/` | `engine/port/` |
-| Loop awareness | Loop emits; relay mirrors to sinks | Loop is storage-agnostic; relay calls `Append` |
+||`port.EventSink`|`port.EventLog`|
+|-|-|-|
+|Purpose|Live telemetry mirror|Durable chronological record|
+|Direction|One-way write|Write + read-back|
+|Durability|None guaranteed (fire-and-forget)|Strict (nil means on stable storage)|
+|Consumer|Metrics, ACP, TUI relay|Restart rehydration, approval replay, Phase 3 consumers|
+|Where it lives|`engine/port/`|`engine/port/`|
+|Loop awareness|Loop emits; relay mirrors to sinks|Loop is storage-agnostic; relay calls `Append`|
 
 The loop never imports `port.EventLog` or calls `Append`. Persistence is a relay concern — it lives in `internal/adapter/server`.
 
@@ -191,11 +191,11 @@ The loop never imports `port.EventLog` or calls `Append`. Persistence is a relay
 
 ## The three reference backends
 
-| Backend | Package | Notes |
-|---|---|---|
-| In-memory | `engine/adapter/memstore` | Default; test/single-process; implements `SessionStore` + `PrunableStore` + `EventLog` as siblings |
-| JSONL on disk | `internal/adapter/store/jsonlstore` | Default for `mecated`; triples as `SessionStore` + `EventLog` + `ToolCallRecorder`. The configured path and every ancestor must be physical non-symlink directories (use macOS `/private/...`, not a `/var/...` symlink path). Existing canonical snapshot Save may retain weaker capability; first legacy-family Save, EventLog append, Delete, retention, and migration fail closed when their required sync is unavailable. ToolCall audit is best-effort and may be unsynced or partially synced. Capability probes establish syscall support, not media persistence. |
-| Redis | `internal/adapter/redisstore` | Used by `mecak8s`; validated by conformance suites over miniredis |
+|Backend|Package|Notes|
+|-|-|-|
+|In-memory|`engine/adapter/memstore`|Default; test/single-process; implements `SessionStore` + `PrunableStore` + `EventLog` as siblings|
+|JSONL on disk|`internal/adapter/store/jsonlstore`|Default for `mecated`; triples as `SessionStore` + `EventLog` + `ToolCallRecorder`. The configured path and every ancestor must be physical non-symlink directories (use macOS `/private/...`, not a `/var/...` symlink path). Existing canonical snapshot Save may retain weaker capability; first legacy-family Save, EventLog append, Delete, retention, and migration fail closed when their required sync is unavailable. ToolCall audit is best-effort and may be unsynced or partially synced. Capability probes establish syscall support, not media persistence.|
+|Redis|`internal/adapter/redisstore`|Used by `mecak8s`; validated by conformance suites over miniredis|
 
 ### engine/adapter/memstore — in-memory
 
@@ -271,16 +271,16 @@ func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Se
 
 The table below is derived from `engine/COMPATIBILITY.md` ("Session reconstruction contract"):
 
-| Field | Round-trip obligation | Event source |
-|---|---|---|
-| `Conversation` (user prompts, assistant text, tool calls, tool results — pairing-valid) | **MUST** | `EvUserPrompt` (genuine prompt + harness continuations), `EvMessageDelta`, `EvToolCall`, `EvToolResult`; pre-compaction head from `EvCompactionArchive` |
-| `State` (idle / running / awaiting / completed / failed / cancelled) | **MUST** | derived from terminal `EvResult.Stop`; trailing unanswered `EvPermissionAsk` → awaiting; no terminal → idle |
-| Recorded stop reason (`RecordedStopReason`) | **MUST** | `EvResult.Stop` |
-| Pending ask (`PendingAsk`, when awaiting) | **MUST** | trailing `EvPermissionAsk` with no following `EvApproval` or `EvResult` |
-| Cumulative `Usage` | **MUST** | **SUM** of every per-run `EvResult.Usage` (each is per-run; the budget brake reads the cumulative aggregate) |
-| Creation metadata (id, mode, limits, workspace, profile, provider/model selector, reasoning-effort, createdAt) | **MUST** — supplied out-of-band | **Not in any event** — provided via `eventsource.SessionMeta` |
-| `Counters` (turns / tool calls / consecutive failures) | run-scoped — latest run segment only | `EvTurnStart` (turns), `EvToolResult` (tool calls / consecutive failures) |
-| Run plumbing (diagnostics binding, askID serials) | safe to lose — rebuilt fresh | n/a |
+|Field|Round-trip obligation|Event source|
+|-|-|-|
+|`Conversation` (user prompts, assistant text, tool calls, tool results — pairing-valid)|**MUST**|`EvUserPrompt` (genuine prompt + harness continuations), `EvMessageDelta`, `EvToolCall`, `EvToolResult`; pre-compaction head from `EvCompactionArchive`|
+|`State` (idle / running / awaiting / completed / failed / cancelled)|**MUST**|derived from terminal `EvResult.Stop`; trailing unanswered `EvPermissionAsk` → awaiting; no terminal → idle|
+|Recorded stop reason (`RecordedStopReason`)|**MUST**|`EvResult.Stop`|
+|Pending ask (`PendingAsk`, when awaiting)|**MUST**|trailing `EvPermissionAsk` with no following `EvApproval` or `EvResult`|
+|Cumulative `Usage`|**MUST**|**SUM** of every per-run `EvResult.Usage` (each is per-run; the budget brake reads the cumulative aggregate)|
+|Creation metadata (id, mode, limits, workspace, profile, provider/model selector, reasoning-effort, createdAt)|**MUST** — supplied out-of-band|**Not in any event** — provided via `eventsource.SessionMeta`|
+|`Counters` (turns / tool calls / consecutive failures)|run-scoped — latest run segment only|`EvTurnStart` (turns), `EvToolResult` (tool calls / consecutive failures)|
+|Run plumbing (diagnostics binding, askID serials)|safe to lose — rebuilt fresh|n/a|
 
 ### Replay-fidelity limitation
 
@@ -290,7 +290,7 @@ A fold reconstructs the structural conversation faithfully and is byte-identical
 - `Message.ProviderPhase` — the OpenAI Responses phase marker
 - `ToolCall.ItemID` — the provider-assigned item id
 
-`EvReasoningDelta` carries a human-readable reasoning *summary*, which the loop deliberately never places on `Message.Reasoning` — a fold must not do so either.
+`EvReasoningDelta` carries a human-readable reasoning _summary_, which the loop deliberately never places on `Message.Reasoning` — a fold must not do so either.
 
 For plain-chat providers (including `mockllm`) those fields are empty and the fold is byte-identical. For reasoning providers (OpenAI, Anthropic) the fold produces a structurally correct but not byte-identical conversation. This is why Mecatl's own resume uses the snapshot; the fold is for event-log-SoR hosts that accept this boundary or carry those fields in their own richer event schema.
 

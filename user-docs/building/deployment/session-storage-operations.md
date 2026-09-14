@@ -29,6 +29,7 @@ Automatic cleanup is daemon-owned retention. Save this policy at the service's e
 the effective policy and acknowledging its impact. Every zero disables that limit.
 
 {/* scenario9-retention */}
+
 ```yaml
 retention:
   version: 1
@@ -61,6 +62,7 @@ state directories before enabling the service; `%h` is systemd's stable home-dir
 the following as `~/.config/systemd/user/mecated.service`.
 
 {/* scenario9-systemd */}
+
 ```ini
 [Unit]
 Description=mecatl agent service
@@ -94,6 +96,7 @@ subdirectory owner-only, and save this as
 `~/Library/LaunchAgents/com.stacklok.mecatl.plist`. launchd does not expand `~` or shell variables.
 
 {/* scenario9-launchd */}
+
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

@@ -17,15 +17,17 @@ Import `connect()` from the Node.js and Bun entry point, then pass the gRPC
 listener's HTTP or HTTPS authority:
 
 ```ts
-import { connect } from "@stacklok-oss/mecatl-sdk/node";
+import { connect } from '@stacklok-oss/mecatl-sdk/node';
 
 const client = connect({
-  baseUrl: process.env.MECATL_URL ?? "http://127.0.0.1:8080",
+  baseUrl: process.env.MECATL_URL ?? 'http://127.0.0.1:8080',
 });
 
 try {
   const session = await client.sessions.create({});
-  const result = await (await session.run("Summarize this repository")).result();
+  const result = await (
+    await session.run('Summarize this repository')
+  ).result();
   console.log(result.text);
 } finally {
   await client.close();
@@ -36,10 +38,10 @@ Pass fixed request headers with `headers`:
 
 ```ts
 const token = process.env.MECATL_TOKEN;
-if (token === undefined) throw new Error("MECATL_TOKEN is required");
+if (token === undefined) throw new Error('MECATL_TOKEN is required');
 
 const client = connect({
-  baseUrl: "https://mecatl.example.com",
+  baseUrl: 'https://mecatl.example.com',
   headers: { authorization: `Bearer ${token}` },
 });
 ```
@@ -54,15 +56,15 @@ Import from the transport-neutral entry point and use the BFF's same-origin
 path:
 
 ```ts
-import { connect } from "@stacklok-oss/mecatl-sdk";
+import { connect } from '@stacklok-oss/mecatl-sdk';
 
 await using client = connect({
-  baseUrl: "/mecatl",
-  credentials: "include",
+  baseUrl: '/mecatl',
+  credentials: 'include',
 });
 
 const session = await client.sessions.create({});
-const result = await (await session.run("Explain the selected file")).result();
+const result = await (await session.run('Explain the selected file')).result();
 console.log(result.text);
 ```
 
@@ -81,7 +83,7 @@ for listener and transport configuration.
 
 ```ts
 const unsubscribe = client.status.subscribe((status) => {
-  console.log("Mecatl connection:", status);
+  console.log('Mecatl connection:', status);
 });
 
 unsubscribe();

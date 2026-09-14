@@ -35,11 +35,11 @@ complete public surface.
 
 ## Package entry points
 
-| Import | Use it for |
-| --- | --- |
-| `@stacklok-oss/mecatl-sdk` | Browser HTTP and SSE connections, injected transports, and transport-neutral types. |
-| `@stacklok-oss/mecatl-sdk/node` | Node.js and Bun gRPC connections, local daemons, one-shot queries, filesystem media helpers, and callback tools. |
-| `@stacklok-oss/mecatl-sdk/gen` | Generated protobuf-es messages and service descriptors for low-level calls and typed namespace requests. |
+|Import|Use it for|
+|-|-|
+|`@stacklok-oss/mecatl-sdk`|Browser HTTP and SSE connections, injected transports, and transport-neutral types.|
+|`@stacklok-oss/mecatl-sdk/node`|Node.js and Bun gRPC connections, local daemons, one-shot queries, filesystem media helpers, and callback tools.|
+|`@stacklok-oss/mecatl-sdk/gen`|Generated protobuf-es messages and service descriptors for low-level calls and typed namespace requests.|
 
 ## Related information
 

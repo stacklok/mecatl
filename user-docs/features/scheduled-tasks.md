@@ -70,14 +70,14 @@ manual create, list, inspect, and fire operations available.
 
 Important operator settings include:
 
-| Flag | Default | Purpose |
-| --- | --- | --- |
-| `--no-scheduler` | `false` | Disable automatic polling; manual management remains available. |
-| `--scheduler-tick-interval` | `30s` | Poll interval for due schedules. |
-| `--scheduler-min-interval` | `1m` | Minimum recurring cadence; `0` disables the floor. |
-| `--scheduler-max-concurrent-fires` | `4` | Maximum due fires processed in parallel per tick. |
-| `--schedule-fire-retention` | `7d` when unset | Retention for persisted fire sessions. |
-| `--schedule-store-url` | empty | Remote schedule-store driver, independent of the session store. |
+|Flag|Default|Purpose|
+|-|-|-|
+|`--no-scheduler`|`false`|Disable automatic polling; manual management remains available.|
+|`--scheduler-tick-interval`|`30s`|Poll interval for due schedules.|
+|`--scheduler-min-interval`|`1m`|Minimum recurring cadence; `0` disables the floor.|
+|`--scheduler-max-concurrent-fires`|`4`|Maximum due fires processed in parallel per tick.|
+|`--schedule-fire-retention`|`7d` when unset|Retention for persisted fire sessions.|
+|`--schedule-store-url`|empty|Remote schedule-store driver, independent of the session store.|
 
 ## Results and recovery
 

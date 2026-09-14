@@ -72,31 +72,31 @@ Nine lifecycle phases are defined in `engine/governance/hookevent.go`. They fall
 
 These fire from `engine/agent/dispatch.go` for every tool call that clears the permission gate.
 
-| Phase | When it fires | Input shape | Supports block | Supports mutate |
-|---|---|---|---|---|
-| `PreToolUse` | Before the tool executes. Permission policy has already resolved to allow. | Tool-call args JSON | **Yes** (real veto) | Yes — rewrites the args the tool sees |
-| `PostToolUse` | After the tool executes and returns a result. | `{"args": ..., "content": "...", "is_error": bool}` | Annotation only — see caveat below | Yes — rewrites the result the model sees |
+|Phase|When it fires|Input shape|Supports block|Supports mutate|
+|-|-|-|-|-|
+|`PreToolUse`|Before the tool executes. Permission policy has already resolved to allow.|Tool-call args JSON|**Yes** (real veto)|Yes — rewrites the args the tool sees|
+|`PostToolUse`|After the tool executes and returns a result.|`{"args": ..., "content": "...", "is_error": bool}`|Annotation only — see caveat below|Yes — rewrites the result the model sees|
 
 ### Run-level phases
 
 These fire from `engine/agent/hooks.go` for the main engine lifecycle.
 
-| Phase | When it fires | Input shape | Supports block | Supports mutate |
-|---|---|---|---|---|
-| `SessionStart` | Once, before the first prompt is recorded and before any model call. | (empty) | **Yes** (aborts the run) | No |
-| `UserPromptSubmit` | After command expansion, before the prompt is recorded and before the first model call. | `{"prompt": "..."}` | **Yes** (rejects the prompt) | Yes — rewrites the effective prompt |
-| `Stop` | When the main loop reaches any terminal path (complete, error, cancel). Runs on a detached context (5s timeout) so a cancelled run still notifies. | `{"stop_reason": "..."}` | Annotation only | No |
+|Phase|When it fires|Input shape|Supports block|Supports mutate|
+|-|-|-|-|-|
+|`SessionStart`|Once, before the first prompt is recorded and before any model call.|(empty)|**Yes** (aborts the run)|No|
+|`UserPromptSubmit`|After command expansion, before the prompt is recorded and before the first model call.|`{"prompt": "..."}`|**Yes** (rejects the prompt)|Yes — rewrites the effective prompt|
+|`Stop`|When the main loop reaches any terminal path (complete, error, cancel). Runs on a detached context (5s timeout) so a cancelled run still notifies.|`{"stop_reason": "..."}`|Annotation only|No|
 
 ### Subagent and team phases
 
 These fire from `engine/agent/subagent.go`, `engine/agent/teamsupervisor.go`, and `engine/agent/teamtools.go`. They are best-effort notifications: `fireNotify` is the common path, which detaches from a cancelled context (5s timeout) and discards any block or error.
 
-| Phase | When it fires | Input shape | Supports block | Supports mutate |
-|---|---|---|---|---|
-| `SubagentStop` | When a subagent child loop stops. | `{"stop_reason": "..."}` | No (best-effort notify) | No |
-| `TeammateIdle` | When an agent-team member goes idle after a turn. Best-effort. | varies | No | No |
-| `TaskCreated` | Before a team task is created. | task JSON | **Yes** (vetoes the creation) | No |
-| `TaskCompleted` | Before a team task is marked complete. | task JSON | **Yes** (vetoes the completion) | No |
+|Phase|When it fires|Input shape|Supports block|Supports mutate|
+|-|-|-|-|-|
+|`SubagentStop`|When a subagent child loop stops.|`{"stop_reason": "..."}`|No (best-effort notify)|No|
+|`TeammateIdle`|When an agent-team member goes idle after a turn. Best-effort.|varies|No|No|
+|`TaskCreated`|Before a team task is created.|task JSON|**Yes** (vetoes the creation)|No|
+|`TaskCompleted`|Before a team task is marked complete.|task JSON|**Yes** (vetoes the completion)|No|
 
 ### Phase summary
 
@@ -188,11 +188,11 @@ The runner executes each registered command as `<shell> -c <command>` (default s
 
 **Exit codes:**
 
-| Exit code | Meaning |
-|---|---|
-| `0` | Allow |
-| `2` | Block |
-| anything else non-zero | Error (hook execution failure) |
+|Exit code|Meaning|
+|-|-|
+|`0`|Allow|
+|`2`|Block|
+|anything else non-zero|Error (hook execution failure)|
 
 **Stdout on exit 0:** If stdout begins with `{`, it is parsed as a control envelope:
 

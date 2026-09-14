@@ -12,12 +12,12 @@ does not duplicate every RPC or HTTP route.
 
 ## Choose a transport
 
-| Use gRPC when you need | Use HTTP/SSE when you need |
-| --- | --- |
-| Generated, typed client bindings | JSON over ordinary HTTP |
-| A bidirectional `Converse` stream | A browser or a client without gRPC support |
-| In-flight control frames, including steering | A request that returns an SSE event stream |
-| The strongest machine-readable contract: protobuf | The detailed HTTP route reference |
+|Use gRPC when you need|Use HTTP/SSE when you need|
+|-|-|
+|Generated, typed client bindings|JSON over ordinary HTTP|
+|A bidirectional `Converse` stream|A browser or a client without gRPC support|
+|In-flight control frames, including steering|A request that returns an SSE event stream|
+|The strongest machine-readable contract: protobuf|The detailed HTTP route reference|
 
 Both transports create and run server-side sessions. Both expose the same core
 live run events, permission approval, cancellation, capability discovery, and
@@ -37,7 +37,7 @@ Authenticated callers may also use gRPC `GetCompatibilityInfo` or HTTP `GET
 major, the operator-enabled capability set, the build's feature identifiers, and
 an optional deployment label — without creating a session first. That is a
 separate endpoint from `GetServerInfo` / `GET /v1/info` above on purpose: the
-latter answers *which build is this?* and is bound by a privacy contract that
+latter answers _which build is this?_ and is bound by a privacy contract that
 keeps capabilities and configuration out of its response, while this one is
 exactly that negotiation data. A client wanting both makes both calls.
 

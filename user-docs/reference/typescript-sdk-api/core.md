@@ -15,163 +15,163 @@ This reference describes the declarations exported by `@stacklok-oss/mecatl-sdk`
 
 ## Symbol index
 
-| Symbol | Kind |
-| --- | --- |
-| [`ActivityGapError`](#api-activitygaperror-class) | Class |
-| [`AgentEvent`](#api-agentevent-typealias) | Type alias |
-| [`Agents`](#api-agents-interface) | Interface |
-| [`ApprovalEventPayload`](#api-approvaleventpayload-interface) | Interface |
-| [`ArchivedConversationMessage`](#api-archivedconversationmessage-interface) | Interface |
-| [`AttachedRun`](#api-attachedrun-interface) | Interface |
-| [`AttachOptions`](#api-attachoptions-interface) | Interface |
-| [`audioPart`](#api-audiopart-function) | Function |
-| [`audioPartFromBlob`](#api-audiopartfromblob-function) | Function |
-| [`AudioPromptPart`](#api-audiopromptpart-interface) | Interface |
-| [`AuthenticationError`](#api-authenticationerror-class) | Class |
-| [`Client`](#api-client-interface) | Interface |
-| [`ClientDiagnosticsOptions`](#api-clientdiagnosticsoptions-interface) | Interface |
-| [`Commands`](#api-commands-interface) | Interface |
-| [`CompactionArchiveEventPayload`](#api-compactionarchiveeventpayload-interface) | Interface |
-| [`connect`](#api-connect-function) | Function |
-| [`ConnectionStatus`](#api-connectionstatus-typealias) | Type alias |
-| [`ConnectionStatusListener`](#api-connectionstatuslistener-typealias) | Type alias |
-| [`ConnectionStatusStore`](#api-connectionstatusstore-interface) | Interface |
-| [`ConnectOptions`](#api-connectoptions-typealias) | Type alias |
-| [`createHttpTransport`](#api-createhttptransport-function) | Function |
-| [`createRawClient`](#api-createrawclient-function) | Function |
-| [`CreateSessionOptions`](#api-createsessionoptions-interface) | Interface |
-| [`CreateTeamOptions`](#api-createteamoptions-interface) | Interface |
-| [`CredentialOptions`](#api-credentialoptions-interface) | Interface |
-| [`CredentialProvider`](#api-credentialprovider-typealias) | Type alias |
-| [`CursorExpiredError`](#api-cursorexpirederror-class) | Class |
-| [`CursorMalformedError`](#api-cursormalformederror-class) | Class |
-| [`CursorScopeError`](#api-cursorscopeerror-class) | Class |
-| [`DiagnosticFieldValue`](#api-diagnosticfieldvalue-typealias) | Type alias |
-| [`DiagnosticLevel`](#api-diagnosticlevel-typealias) | Type alias |
-| [`DiagnosticRecord`](#api-diagnosticrecord-interface) | Interface |
-| [`DiagnosticsSink`](#api-diagnosticssink-typealias) | Type alias |
-| [`DreamPlans`](#api-dreamplans-interface) | Interface |
-| [`ErrorOrigin`](#api-errororigin-typealias) | Type alias |
-| [`Event`](#api-event-typealias) | Type alias |
-| [`EventCommon`](#api-eventcommon-interface) | Interface |
-| [`EventContent`](#api-eventcontent-interface) | Interface |
-| [`EventContentBlock`](#api-eventcontentblock-interface) | Interface |
-| [`EventOf`](#api-eventof-typealias) | Type alias |
-| [`EventPayloads`](#api-eventpayloads-interface) | Interface |
-| [`EventUsage`](#api-eventusage-interface) | Interface |
-| [`ForkSessionOptions`](#api-forksessionoptions-interface) | Interface |
-| [`getRawJson`](#api-getrawjson-function) | Function |
-| [`HookEventPayload`](#api-hookeventpayload-interface) | Interface |
-| [`HttpTransportOptions`](#api-httptransportoptions-interface) | Interface |
-| [`imagePart`](#api-imagepart-function) | Function |
-| [`imagePartFromBlob`](#api-imagepartfromblob-function) | Function |
-| [`ImagePromptPart`](#api-imagepromptpart-interface) | Interface |
-| [`IncompatibleServerError`](#api-incompatibleservererror-class) | Class |
-| [`InjectedTransportOptions`](#api-injectedtransportoptions-interface) | Interface |
-| [`InvalidStateError`](#api-invalidstateerror-class) | Class |
-| [`KnownEvent`](#api-knownevent-typealias) | Type alias |
-| [`KnownEventKind`](#api-knowneventkind-typealias) | Type alias |
-| [`LearnedSkills`](#api-learnedskills-interface) | Interface |
-| [`LearningAttempts`](#api-learningattempts-interface) | Interface |
-| [`LearningProposals`](#api-learningproposals-interface) | Interface |
-| [`MAX_MEDIA_PART_BYTES`](#api-max-media-part-bytes-variable) | Variable |
-| [`MAX_PROMPT_MEDIA_BYTES`](#api-max-prompt-media-bytes-variable) | Variable |
-| [`MAX_PROMPT_MEDIA_PARTS`](#api-max-prompt-media-parts-variable) | Variable |
-| [`McpInventory`](#api-mcpinventory-interface) | Interface |
-| [`MECATL_ATTACH_FILTERED_KINDS`](#api-mecatl-attach-filtered-kinds-variable) | Variable |
-| [`MECATL_ERROR_CODES`](#api-mecatl-error-codes-variable) | Variable |
-| [`MECATL_EVENT_KINDS`](#api-mecatl-event-kinds-variable) | Variable |
-| [`MECATL_WATCH_PHASES`](#api-mecatl-watch-phases-variable) | Variable |
-| [`MecatlError`](#api-mecatlerror-class) | Class |
-| [`MecatlErrorCode`](#api-mecatlerrorcode-typealias) | Type alias |
-| [`MecatlErrorOptions`](#api-mecatlerroroptions-interface) | Interface |
-| [`MediaPartOptions`](#api-mediapartoptions-interface) | Interface |
-| [`MediaPartSource`](#api-mediapartsource-interface) | Interface |
-| [`ModelRetryEventPayload`](#api-modelretryeventpayload-interface) | Interface |
-| [`Models`](#api-models-interface) | Interface |
-| [`NoRunsError`](#api-norunserror-class) | Class |
-| [`ParallelEventPayload`](#api-paralleleventpayload-interface) | Interface |
-| [`PermissionAskAlreadyResolvedError`](#api-permissionaskalreadyresolvederror-class) | Class |
-| [`PermissionAskEventPayload`](#api-permissionaskeventpayload-interface) | Interface |
-| [`PermissionAskResponder`](#api-permissionaskresponder-typealias) | Type alias |
-| [`PermissionVerdict`](#api-permissionverdict-typealias) | Type alias |
-| [`PlanApprovalRequiredError`](#api-planapprovalrequirederror-class) | Class |
-| [`PlanApprovalResponder`](#api-planapprovalresponder-typealias) | Type alias |
-| [`PlanApprovalVerdict`](#api-planapprovalverdict-typealias) | Type alias |
-| [`PlanContinuationStartError`](#api-plancontinuationstarterror-class) | Class |
-| [`PlanResolution`](#api-planresolution-interface) | Interface |
-| [`PlanResolutionResult`](#api-planresolutionresult-interface) | Interface |
-| [`PromptInput`](#api-promptinput-typealias) | Type alias |
-| [`PromptPart`](#api-promptpart-typealias) | Type alias |
-| [`PromptValidationError`](#api-promptvalidationerror-class) | Class |
-| [`PromptValidationReason`](#api-promptvalidationreason-typealias) | Type alias |
-| [`ProtocolError`](#api-protocolerror-class) | Class |
-| [`RawClient`](#api-rawclient-interface) | Interface |
-| [`RawClientOptions`](#api-rawclientoptions-interface) | Interface |
-| [`Reflection`](#api-reflection-interface) | Interface |
-| [`RequestOptions`](#api-requestoptions-typealias) | Type alias |
-| [`ResultEventPayload`](#api-resulteventpayload-interface) | Interface |
-| [`RetryDisposition`](#api-retrydisposition-typealias) | Type alias |
-| [`Run`](#api-run-interface) | Interface |
-| [`RunOptions`](#api-runoptions-interface) | Interface |
-| [`RunResult`](#api-runresult-interface) | Interface |
-| [`ScheduleEventPayload`](#api-scheduleeventpayload-interface) | Interface |
-| [`Schedules`](#api-schedules-interface) | Interface |
-| [`SdkCursor`](#api-sdkcursor-typealias) | Type alias |
-| [`SDKErrorCode`](#api-sdkerrorcode-typealias) | Type alias |
-| [`ServerError`](#api-servererror-class) | Class |
-| [`ServerErrorCode`](#api-servererrorcode-typealias) | Type alias |
-| [`Session`](#api-session-interface) | Interface |
-| [`SESSION_ID_HEADER_NAME`](#api-session-id-header-name-variable) | Variable |
-| [`SessionActivity`](#api-sessionactivity-interface) | Interface |
-| [`SessionBusyError`](#api-sessionbusyerror-class) | Class |
-| [`SessionLimits`](#api-sessionlimits-interface) | Interface |
-| [`SessionMcpServer`](#api-sessionmcpserver-interface) | Interface |
-| [`Sessions`](#api-sessions-interface) | Interface |
-| [`SessionTitleEventPayload`](#api-sessiontitleeventpayload-interface) | Interface |
-| [`Skills`](#api-skills-interface) | Interface |
-| [`Soul`](#api-soul-interface) | Interface |
-| [`SteerEventPayload`](#api-steereventpayload-interface) | Interface |
-| [`SteerOutcomeEventPayload`](#api-steeroutcomeeventpayload-interface) | Interface |
-| [`Storage`](#api-storage-interface) | Interface |
-| [`StreamProgress`](#api-streamprogress-typealias) | Type alias |
-| [`SubagentEventPayload`](#api-subagenteventpayload-interface) | Interface |
-| [`SUPPORTED_API_MAJOR`](#api-supported-api-major-variable) | Variable |
-| [`Team`](#api-team-interface) | Interface |
-| [`TeamEvent`](#api-teamevent-typealias) | Type alias |
-| [`TeamEventPayload`](#api-teameventpayload-interface) | Interface |
-| [`TeamFindingEventPayload`](#api-teamfindingeventpayload-interface) | Interface |
-| [`TeamMemberDispositionEventPayload`](#api-teammemberdispositioneventpayload-interface) | Interface |
-| [`TeamMemberOptions`](#api-teammemberoptions-interface) | Interface |
-| [`TeamMemberRunEvent`](#api-teammemberrunevent-typealias) | Type alias |
-| [`TeamMemberSpecEventPayload`](#api-teammemberspeceventpayload-interface) | Interface |
-| [`TeamMessageOptions`](#api-teammessageoptions-interface) | Interface |
-| [`TeamOutcomeRunEvent`](#api-teamoutcomerunevent-interface) | Interface |
-| [`TeamRun`](#api-teamrun-interface) | Interface |
-| [`TeamRunEvent`](#api-teamrunevent-typealias) | Type alias |
-| [`Teams`](#api-teams-interface) | Interface |
-| [`TeamTaskEventPayload`](#api-teamtaskeventpayload-interface) | Interface |
-| [`textPart`](#api-textpart-function) | Function |
-| [`TextPromptPart`](#api-textpromptpart-interface) | Interface |
-| [`TitleAttemptEventPayload`](#api-titleattempteventpayload-interface) | Interface |
-| [`ToolCallEventPayload`](#api-toolcalleventpayload-interface) | Interface |
-| [`ToolResultEventPayload`](#api-toolresulteventpayload-interface) | Interface |
-| [`TransportError`](#api-transporterror-class) | Class |
-| [`TransportKind`](#api-transportkind-typealias) | Type alias |
-| [`TurnEndEventPayload`](#api-turnendeventpayload-interface) | Interface |
-| [`UnknownEvent`](#api-unknownevent-typealias) | Type alias |
-| [`UnknownGrpcEvent`](#api-unknowngrpcevent-interface) | Interface |
-| [`UnknownHttpEvent`](#api-unknownhttpevent-interface) | Interface |
-| [`UnknownWatchEnvelope`](#api-unknownwatchenvelope-interface) | Interface |
-| [`UnsupportedFeatureError`](#api-unsupportedfeatureerror-class) | Class |
-| [`UserModel`](#api-usermodel-interface) | Interface |
-| [`UserPromptEventPayload`](#api-userprompteventpayload-interface) | Interface |
-| [`WatchBoundaryEnvelope`](#api-watchboundaryenvelope-interface) | Interface |
-| [`WatchEnvelope`](#api-watchenvelope-typealias) | Type alias |
-| [`WatchEventEnvelope`](#api-watcheventenvelope-interface) | Interface |
-| [`WatchGapEnvelope`](#api-watchgapenvelope-interface) | Interface |
-| [`withSessionAffinity`](#api-withsessionaffinity-function) | Function |
-| [`Worktrees`](#api-worktrees-interface) | Interface |
+|Symbol|Kind|
+|-|-|
+|[`ActivityGapError`](#api-activitygaperror-class)|Class|
+|[`AgentEvent`](#api-agentevent-typealias)|Type alias|
+|[`Agents`](#api-agents-interface)|Interface|
+|[`ApprovalEventPayload`](#api-approvaleventpayload-interface)|Interface|
+|[`ArchivedConversationMessage`](#api-archivedconversationmessage-interface)|Interface|
+|[`AttachedRun`](#api-attachedrun-interface)|Interface|
+|[`AttachOptions`](#api-attachoptions-interface)|Interface|
+|[`audioPart`](#api-audiopart-function)|Function|
+|[`audioPartFromBlob`](#api-audiopartfromblob-function)|Function|
+|[`AudioPromptPart`](#api-audiopromptpart-interface)|Interface|
+|[`AuthenticationError`](#api-authenticationerror-class)|Class|
+|[`Client`](#api-client-interface)|Interface|
+|[`ClientDiagnosticsOptions`](#api-clientdiagnosticsoptions-interface)|Interface|
+|[`Commands`](#api-commands-interface)|Interface|
+|[`CompactionArchiveEventPayload`](#api-compactionarchiveeventpayload-interface)|Interface|
+|[`connect`](#api-connect-function)|Function|
+|[`ConnectionStatus`](#api-connectionstatus-typealias)|Type alias|
+|[`ConnectionStatusListener`](#api-connectionstatuslistener-typealias)|Type alias|
+|[`ConnectionStatusStore`](#api-connectionstatusstore-interface)|Interface|
+|[`ConnectOptions`](#api-connectoptions-typealias)|Type alias|
+|[`createHttpTransport`](#api-createhttptransport-function)|Function|
+|[`createRawClient`](#api-createrawclient-function)|Function|
+|[`CreateSessionOptions`](#api-createsessionoptions-interface)|Interface|
+|[`CreateTeamOptions`](#api-createteamoptions-interface)|Interface|
+|[`CredentialOptions`](#api-credentialoptions-interface)|Interface|
+|[`CredentialProvider`](#api-credentialprovider-typealias)|Type alias|
+|[`CursorExpiredError`](#api-cursorexpirederror-class)|Class|
+|[`CursorMalformedError`](#api-cursormalformederror-class)|Class|
+|[`CursorScopeError`](#api-cursorscopeerror-class)|Class|
+|[`DiagnosticFieldValue`](#api-diagnosticfieldvalue-typealias)|Type alias|
+|[`DiagnosticLevel`](#api-diagnosticlevel-typealias)|Type alias|
+|[`DiagnosticRecord`](#api-diagnosticrecord-interface)|Interface|
+|[`DiagnosticsSink`](#api-diagnosticssink-typealias)|Type alias|
+|[`DreamPlans`](#api-dreamplans-interface)|Interface|
+|[`ErrorOrigin`](#api-errororigin-typealias)|Type alias|
+|[`Event`](#api-event-typealias)|Type alias|
+|[`EventCommon`](#api-eventcommon-interface)|Interface|
+|[`EventContent`](#api-eventcontent-interface)|Interface|
+|[`EventContentBlock`](#api-eventcontentblock-interface)|Interface|
+|[`EventOf`](#api-eventof-typealias)|Type alias|
+|[`EventPayloads`](#api-eventpayloads-interface)|Interface|
+|[`EventUsage`](#api-eventusage-interface)|Interface|
+|[`ForkSessionOptions`](#api-forksessionoptions-interface)|Interface|
+|[`getRawJson`](#api-getrawjson-function)|Function|
+|[`HookEventPayload`](#api-hookeventpayload-interface)|Interface|
+|[`HttpTransportOptions`](#api-httptransportoptions-interface)|Interface|
+|[`imagePart`](#api-imagepart-function)|Function|
+|[`imagePartFromBlob`](#api-imagepartfromblob-function)|Function|
+|[`ImagePromptPart`](#api-imagepromptpart-interface)|Interface|
+|[`IncompatibleServerError`](#api-incompatibleservererror-class)|Class|
+|[`InjectedTransportOptions`](#api-injectedtransportoptions-interface)|Interface|
+|[`InvalidStateError`](#api-invalidstateerror-class)|Class|
+|[`KnownEvent`](#api-knownevent-typealias)|Type alias|
+|[`KnownEventKind`](#api-knowneventkind-typealias)|Type alias|
+|[`LearnedSkills`](#api-learnedskills-interface)|Interface|
+|[`LearningAttempts`](#api-learningattempts-interface)|Interface|
+|[`LearningProposals`](#api-learningproposals-interface)|Interface|
+|[`MAX_MEDIA_PART_BYTES`](#api-max-media-part-bytes-variable)|Variable|
+|[`MAX_PROMPT_MEDIA_BYTES`](#api-max-prompt-media-bytes-variable)|Variable|
+|[`MAX_PROMPT_MEDIA_PARTS`](#api-max-prompt-media-parts-variable)|Variable|
+|[`McpInventory`](#api-mcpinventory-interface)|Interface|
+|[`MECATL_ATTACH_FILTERED_KINDS`](#api-mecatl-attach-filtered-kinds-variable)|Variable|
+|[`MECATL_ERROR_CODES`](#api-mecatl-error-codes-variable)|Variable|
+|[`MECATL_EVENT_KINDS`](#api-mecatl-event-kinds-variable)|Variable|
+|[`MECATL_WATCH_PHASES`](#api-mecatl-watch-phases-variable)|Variable|
+|[`MecatlError`](#api-mecatlerror-class)|Class|
+|[`MecatlErrorCode`](#api-mecatlerrorcode-typealias)|Type alias|
+|[`MecatlErrorOptions`](#api-mecatlerroroptions-interface)|Interface|
+|[`MediaPartOptions`](#api-mediapartoptions-interface)|Interface|
+|[`MediaPartSource`](#api-mediapartsource-interface)|Interface|
+|[`ModelRetryEventPayload`](#api-modelretryeventpayload-interface)|Interface|
+|[`Models`](#api-models-interface)|Interface|
+|[`NoRunsError`](#api-norunserror-class)|Class|
+|[`ParallelEventPayload`](#api-paralleleventpayload-interface)|Interface|
+|[`PermissionAskAlreadyResolvedError`](#api-permissionaskalreadyresolvederror-class)|Class|
+|[`PermissionAskEventPayload`](#api-permissionaskeventpayload-interface)|Interface|
+|[`PermissionAskResponder`](#api-permissionaskresponder-typealias)|Type alias|
+|[`PermissionVerdict`](#api-permissionverdict-typealias)|Type alias|
+|[`PlanApprovalRequiredError`](#api-planapprovalrequirederror-class)|Class|
+|[`PlanApprovalResponder`](#api-planapprovalresponder-typealias)|Type alias|
+|[`PlanApprovalVerdict`](#api-planapprovalverdict-typealias)|Type alias|
+|[`PlanContinuationStartError`](#api-plancontinuationstarterror-class)|Class|
+|[`PlanResolution`](#api-planresolution-interface)|Interface|
+|[`PlanResolutionResult`](#api-planresolutionresult-interface)|Interface|
+|[`PromptInput`](#api-promptinput-typealias)|Type alias|
+|[`PromptPart`](#api-promptpart-typealias)|Type alias|
+|[`PromptValidationError`](#api-promptvalidationerror-class)|Class|
+|[`PromptValidationReason`](#api-promptvalidationreason-typealias)|Type alias|
+|[`ProtocolError`](#api-protocolerror-class)|Class|
+|[`RawClient`](#api-rawclient-interface)|Interface|
+|[`RawClientOptions`](#api-rawclientoptions-interface)|Interface|
+|[`Reflection`](#api-reflection-interface)|Interface|
+|[`RequestOptions`](#api-requestoptions-typealias)|Type alias|
+|[`ResultEventPayload`](#api-resulteventpayload-interface)|Interface|
+|[`RetryDisposition`](#api-retrydisposition-typealias)|Type alias|
+|[`Run`](#api-run-interface)|Interface|
+|[`RunOptions`](#api-runoptions-interface)|Interface|
+|[`RunResult`](#api-runresult-interface)|Interface|
+|[`ScheduleEventPayload`](#api-scheduleeventpayload-interface)|Interface|
+|[`Schedules`](#api-schedules-interface)|Interface|
+|[`SdkCursor`](#api-sdkcursor-typealias)|Type alias|
+|[`SDKErrorCode`](#api-sdkerrorcode-typealias)|Type alias|
+|[`ServerError`](#api-servererror-class)|Class|
+|[`ServerErrorCode`](#api-servererrorcode-typealias)|Type alias|
+|[`Session`](#api-session-interface)|Interface|
+|[`SESSION_ID_HEADER_NAME`](#api-session-id-header-name-variable)|Variable|
+|[`SessionActivity`](#api-sessionactivity-interface)|Interface|
+|[`SessionBusyError`](#api-sessionbusyerror-class)|Class|
+|[`SessionLimits`](#api-sessionlimits-interface)|Interface|
+|[`SessionMcpServer`](#api-sessionmcpserver-interface)|Interface|
+|[`Sessions`](#api-sessions-interface)|Interface|
+|[`SessionTitleEventPayload`](#api-sessiontitleeventpayload-interface)|Interface|
+|[`Skills`](#api-skills-interface)|Interface|
+|[`Soul`](#api-soul-interface)|Interface|
+|[`SteerEventPayload`](#api-steereventpayload-interface)|Interface|
+|[`SteerOutcomeEventPayload`](#api-steeroutcomeeventpayload-interface)|Interface|
+|[`Storage`](#api-storage-interface)|Interface|
+|[`StreamProgress`](#api-streamprogress-typealias)|Type alias|
+|[`SubagentEventPayload`](#api-subagenteventpayload-interface)|Interface|
+|[`SUPPORTED_API_MAJOR`](#api-supported-api-major-variable)|Variable|
+|[`Team`](#api-team-interface)|Interface|
+|[`TeamEvent`](#api-teamevent-typealias)|Type alias|
+|[`TeamEventPayload`](#api-teameventpayload-interface)|Interface|
+|[`TeamFindingEventPayload`](#api-teamfindingeventpayload-interface)|Interface|
+|[`TeamMemberDispositionEventPayload`](#api-teammemberdispositioneventpayload-interface)|Interface|
+|[`TeamMemberOptions`](#api-teammemberoptions-interface)|Interface|
+|[`TeamMemberRunEvent`](#api-teammemberrunevent-typealias)|Type alias|
+|[`TeamMemberSpecEventPayload`](#api-teammemberspeceventpayload-interface)|Interface|
+|[`TeamMessageOptions`](#api-teammessageoptions-interface)|Interface|
+|[`TeamOutcomeRunEvent`](#api-teamoutcomerunevent-interface)|Interface|
+|[`TeamRun`](#api-teamrun-interface)|Interface|
+|[`TeamRunEvent`](#api-teamrunevent-typealias)|Type alias|
+|[`Teams`](#api-teams-interface)|Interface|
+|[`TeamTaskEventPayload`](#api-teamtaskeventpayload-interface)|Interface|
+|[`textPart`](#api-textpart-function)|Function|
+|[`TextPromptPart`](#api-textpromptpart-interface)|Interface|
+|[`TitleAttemptEventPayload`](#api-titleattempteventpayload-interface)|Interface|
+|[`ToolCallEventPayload`](#api-toolcalleventpayload-interface)|Interface|
+|[`ToolResultEventPayload`](#api-toolresulteventpayload-interface)|Interface|
+|[`TransportError`](#api-transporterror-class)|Class|
+|[`TransportKind`](#api-transportkind-typealias)|Type alias|
+|[`TurnEndEventPayload`](#api-turnendeventpayload-interface)|Interface|
+|[`UnknownEvent`](#api-unknownevent-typealias)|Type alias|
+|[`UnknownGrpcEvent`](#api-unknowngrpcevent-interface)|Interface|
+|[`UnknownHttpEvent`](#api-unknownhttpevent-interface)|Interface|
+|[`UnknownWatchEnvelope`](#api-unknownwatchenvelope-interface)|Interface|
+|[`UnsupportedFeatureError`](#api-unsupportedfeatureerror-class)|Class|
+|[`UserModel`](#api-usermodel-interface)|Interface|
+|[`UserPromptEventPayload`](#api-userprompteventpayload-interface)|Interface|
+|[`WatchBoundaryEnvelope`](#api-watchboundaryenvelope-interface)|Interface|
+|[`WatchEnvelope`](#api-watchenvelope-typealias)|Type alias|
+|[`WatchEventEnvelope`](#api-watcheventenvelope-interface)|Interface|
+|[`WatchGapEnvelope`](#api-watchgapenvelope-interface)|Interface|
+|[`withSessionAffinity`](#api-withsessionaffinity-function)|Function|
+|[`Worktrees`](#api-worktrees-interface)|Interface|
 
 ## Classes
 
@@ -646,7 +646,10 @@ Throws: `PromptValidationError` when the source, MIME type, or size is invalid.
 Constructs an audio part from a browser Blob or File.
 
 ```ts
-export declare function audioPartFromBlob(blob: Blob, mimeType?: string): Promise<AudioPromptPart>;
+export declare function audioPartFromBlob(
+  blob: Blob,
+  mimeType?: string
+): Promise<AudioPromptPart>;
 ```
 
 Parameters:
@@ -677,7 +680,9 @@ Returns: `Client`: A high-level Mecatl client.
 Creates a browser-compatible Connect-ES transport over Mecatl's HTTP and SSE API.
 
 ```ts
-export declare function createHttpTransport(options: HttpTransportOptions): Transport;
+export declare function createHttpTransport(
+  options: HttpTransportOptions
+): Transport;
 ```
 
 Parameters:
@@ -735,7 +740,10 @@ Throws: `PromptValidationError` when the source, MIME type, or size is invalid.
 Constructs an image part from a browser Blob or File.
 
 ```ts
-export declare function imagePartFromBlob(blob: Blob, mimeType?: string): Promise<ImagePromptPart>;
+export declare function imagePartFromBlob(
+  blob: Blob,
+  mimeType?: string
+): Promise<ImagePromptPart>;
 ```
 
 Parameters:
@@ -766,7 +774,10 @@ Returns: `TextPromptPart`: A text prompt part.
 Returns call options bound to one explicit session without replacing caller headers. Throws synchronously when sessionId cannot be represented byte-exactly as the affinity header. The binding is a routing hint only; authentication and authorization remain independent.
 
 ```ts
-export declare function withSessionAffinity(sessionId: string, options?: CallOptions): CallOptions;
+export declare function withSessionAffinity(
+  sessionId: string,
+  options?: CallOptions
+): CallOptions;
 ```
 
 Parameters:
@@ -4979,9 +4990,12 @@ Returns: `Promise<ListWorktreesResponse>`
 The agent-lifecycle portion of the known event union.
 
 ```ts
-export type AgentEvent = Exclude<KnownEvent, {
+export type AgentEvent = Exclude<
+  KnownEvent,
+  {
     readonly kind: `team.${string}`;
-}>;
+  }
+>;
 ```
 
 <Heading as="h3" id="api-connectionstatus-typealias"><code>ConnectionStatus</code></Heading>
@@ -4989,7 +5003,13 @@ export type AgentEvent = Exclude<KnownEvent, {
 The complete connection-state vocabulary exposed by the SDK.
 
 ```ts
-export type ConnectionStatus = "connecting" | "online" | "reconnecting" | "offline" | "unauthorized" | "incompatible";
+export type ConnectionStatus =
+  | 'connecting'
+  | 'online'
+  | 'reconnecting'
+  | 'offline'
+  | 'unauthorized'
+  | 'incompatible';
 ```
 
 <Heading as="h3" id="api-connectionstatuslistener-typealias"><code>ConnectionStatusListener</code></Heading>
@@ -5029,7 +5049,7 @@ export type DiagnosticFieldValue = boolean | number | string | null;
 Severity attached to one SDK-local diagnostic record.
 
 ```ts
-export type DiagnosticLevel = "debug" | "error" | "info" | "warn";
+export type DiagnosticLevel = 'debug' | 'error' | 'info' | 'warn';
 ```
 
 <Heading as="h3" id="api-diagnosticssink-typealias"><code>DiagnosticsSink</code></Heading>
@@ -5045,7 +5065,7 @@ export type DiagnosticsSink = (record: DiagnosticRecord) => void;
 The request transport, or `local` when validation failed before transport selection.
 
 ```ts
-export type ErrorOrigin = TransportKind | "local";
+export type ErrorOrigin = TransportKind | 'local';
 ```
 
 <Heading as="h3" id="api-event-typealias"><code>Event</code></Heading>
@@ -5061,9 +5081,12 @@ export type Event = KnownEvent | UnknownEvent;
 Selects one known event variant by its literal kind.
 
 ```ts
-export type EventOf<Kind extends KnownEventKind> = Extract<KnownEvent, {
+export type EventOf<Kind extends KnownEventKind> = Extract<
+  KnownEvent,
+  {
     readonly kind: Kind;
-}>;
+  }
+>;
 ```
 
 <Heading as="h3" id="api-knownevent-typealias"><code>KnownEvent</code></Heading>
@@ -5072,10 +5095,10 @@ All currently known agent and team event variants.
 
 ```ts
 export type KnownEvent = {
-    [Kind in KnownEventKind]: EventCommon & {
-        readonly kind: Kind;
-        readonly payload: EventPayloads[Kind];
-    };
+  [Kind in KnownEventKind]: EventCommon & {
+    readonly kind: Kind;
+    readonly payload: EventPayloads[Kind];
+  };
 }[KnownEventKind];
 ```
 
@@ -5100,7 +5123,10 @@ export type MecatlErrorCode = ServerErrorCode | SDKErrorCode;
 An optional automatic responder invoked for each permission ask on a run.
 
 ```ts
-export type PermissionAskResponder = (ask: PermissionAskEventPayload, signal: AbortSignal) => PermissionVerdict | undefined | Promise<PermissionVerdict | undefined>;
+export type PermissionAskResponder = (
+  ask: PermissionAskEventPayload,
+  signal: AbortSignal
+) => PermissionVerdict | undefined | Promise<PermissionVerdict | undefined>;
 ```
 
 <Heading as="h3" id="api-permissionverdict-typealias"><code>PermissionVerdict</code></Heading>
@@ -5108,7 +5134,7 @@ export type PermissionAskResponder = (ask: PermissionAskEventPayload, signal: Ab
 A server permission verdict accepted by run.resolveAsk().
 
 ```ts
-export type PermissionVerdict = "allow_once" | "allow_always" | "deny";
+export type PermissionVerdict = 'allow_once' | 'allow_always' | 'deny';
 ```
 
 <Heading as="h3" id="api-planapprovalresponder-typealias"><code>PlanApprovalResponder</code></Heading>
@@ -5116,7 +5142,10 @@ export type PermissionVerdict = "allow_once" | "allow_always" | "deny";
 An automatic responder invoked only for a PresentPlan approval ask.
 
 ```ts
-export type PlanApprovalResponder = (ask: PermissionAskEventPayload, signal: AbortSignal) => PlanApprovalVerdict | undefined | Promise<PlanApprovalVerdict | undefined>;
+export type PlanApprovalResponder = (
+  ask: PermissionAskEventPayload,
+  signal: AbortSignal
+) => PlanApprovalVerdict | undefined | Promise<PlanApprovalVerdict | undefined>;
 ```
 
 <Heading as="h3" id="api-planapprovalverdict-typealias"><code>PlanApprovalVerdict</code></Heading>
@@ -5124,7 +5153,7 @@ export type PlanApprovalResponder = (ask: PermissionAskEventPayload, signal: Abo
 The plan-specific decisions accepted by session.resolvePlan() and onPlanApproval.
 
 ```ts
-export type PlanApprovalVerdict = "approve" | "accept_edits" | "iterate";
+export type PlanApprovalVerdict = 'approve' | 'accept_edits' | 'iterate';
 ```
 
 <Heading as="h3" id="api-promptinput-typealias"><code>PromptInput</code></Heading>
@@ -5148,7 +5177,8 @@ export type PromptPart = TextPromptPart | ImagePromptPart | AudioPromptPart;
 Stable reasons reported by PromptValidationError.
 
 ```ts
-export type PromptValidationReason = "capability" | "mime_type" | "prompt" | "size" | "source_xor" | "url";
+export type PromptValidationReason =
+  'capability' | 'mime_type' | 'prompt' | 'size' | 'source_xor' | 'url';
 ```
 
 <Heading as="h3" id="api-requestoptions-typealias"><code>RequestOptions</code></Heading>
@@ -5180,7 +5210,21 @@ export type SdkCursor = string;
 Error codes produced locally by the SDK.
 
 ```ts
-export type SDKErrorCode = "authentication" | "cursor_scope" | "incompatible_server" | "invalid_prompt" | "invalid_state" | "no_runs" | "plan_continuation_start" | "protocol" | "readiness_timeout" | "spawn_failed" | "tool_registration" | "transport" | "unsupported_platform" | "unsupported_feature";
+export type SDKErrorCode =
+  | 'authentication'
+  | 'cursor_scope'
+  | 'incompatible_server'
+  | 'invalid_prompt'
+  | 'invalid_state'
+  | 'no_runs'
+  | 'plan_continuation_start'
+  | 'protocol'
+  | 'readiness_timeout'
+  | 'spawn_failed'
+  | 'tool_registration'
+  | 'transport'
+  | 'unsupported_platform'
+  | 'unsupported_feature';
 ```
 
 <Heading as="h3" id="api-servererrorcode-typealias"><code>ServerErrorCode</code></Heading>
@@ -5188,7 +5232,7 @@ export type SDKErrorCode = "authentication" | "cursor_scope" | "incompatible_ser
 Error codes returned by the Mecatl server, plus `unknown` for future codes.
 
 ```ts
-export type ServerErrorCode = (typeof MECATL_ERROR_CODES)[number] | "unknown";
+export type ServerErrorCode = (typeof MECATL_ERROR_CODES)[number] | 'unknown';
 ```
 
 <Heading as="h3" id="api-streamprogress-typealias"><code>StreamProgress</code></Heading>
@@ -5204,9 +5248,12 @@ export type StreamProgress = 0 | 1 | 2 | 3 | 4;
 Team lifecycle events projected onto an agent run.
 
 ```ts
-export type TeamEvent = Extract<KnownEvent, {
+export type TeamEvent = Extract<
+  KnownEvent,
+  {
     readonly kind: `team.${string}`;
-}>;
+  }
+>;
 ```
 
 <Heading as="h3" id="api-teammemberrunevent-typealias"><code>TeamMemberRunEvent</code></Heading>
@@ -5215,7 +5262,7 @@ A run event tagged with the team member that produced it.
 
 ```ts
 export type TeamMemberRunEvent = Event & {
-    readonly member: string;
+  readonly member: string;
 };
 ```
 
@@ -5232,7 +5279,7 @@ export type TeamRunEvent = TeamMemberRunEvent | TeamOutcomeRunEvent;
 Transport implementations supported by the SDK.
 
 ```ts
-export type TransportKind = "grpc" | "http";
+export type TransportKind = 'grpc' | 'http';
 ```
 
 <Heading as="h3" id="api-unknownevent-typealias"><code>UnknownEvent</code></Heading>
@@ -5248,7 +5295,11 @@ export type UnknownEvent = UnknownHttpEvent | UnknownGrpcEvent;
 One decoded durable-watch delivery envelope.
 
 ```ts
-export type WatchEnvelope = WatchEventEnvelope | WatchBoundaryEnvelope | WatchGapEnvelope | UnknownWatchEnvelope;
+export type WatchEnvelope =
+  | WatchEventEnvelope
+  | WatchBoundaryEnvelope
+  | WatchGapEnvelope
+  | UnknownWatchEnvelope;
 ```
 
 ## Variables
@@ -5258,7 +5309,7 @@ export type WatchEnvelope = WatchEventEnvelope | WatchBoundaryEnvelope | WatchGa
 Maximum inline bytes in one image or audio part.
 
 ```ts
-MAX_MEDIA_PART_BYTES: number
+MAX_MEDIA_PART_BYTES: number;
 ```
 
 <Heading as="h3" id="api-max-prompt-media-bytes-variable"><code>MAX_PROMPT_MEDIA_BYTES</code></Heading>
@@ -5266,7 +5317,7 @@ MAX_MEDIA_PART_BYTES: number
 Maximum inline media bytes in one prompt.
 
 ```ts
-MAX_PROMPT_MEDIA_BYTES: number
+MAX_PROMPT_MEDIA_BYTES: number;
 ```
 
 <Heading as="h3" id="api-max-prompt-media-parts-variable"><code>MAX_PROMPT_MEDIA_PARTS</code></Heading>
@@ -5274,7 +5325,7 @@ MAX_PROMPT_MEDIA_BYTES: number
 Maximum image and audio parts in one prompt.
 
 ```ts
-MAX_PROMPT_MEDIA_PARTS = 16
+MAX_PROMPT_MEDIA_PARTS = 16;
 ```
 
 <Heading as="h3" id="api-mecatl-attach-filtered-kinds-variable"><code>MECATL_ATTACH_FILTERED_KINDS</code></Heading>
@@ -5282,7 +5333,13 @@ MAX_PROMPT_MEDIA_PARTS = 16
 Event kinds omitted by high-level attachment views unless requested.
 
 ```ts
-MECATL_ATTACH_FILTERED_KINDS: readonly ["approval", "compaction.archive", "network.attempt", "request.manifest", "user_prompt"]
+MECATL_ATTACH_FILTERED_KINDS: readonly[
+  ('approval',
+  'compaction.archive',
+  'network.attempt',
+  'request.manifest',
+  'user_prompt')
+];
 ```
 
 <Heading as="h3" id="api-mecatl-error-codes-variable"><code>MECATL_ERROR_CODES</code></Heading>
@@ -5290,7 +5347,86 @@ MECATL_ATTACH_FILTERED_KINDS: readonly ["approval", "compaction.archive", "netwo
 Stable server error codes, kept in parity with the Go registry.
 
 ```ts
-MECATL_ERROR_CODES: readonly ["activity_gap", "attempt_live_claim_conflict", "attempt_terminal_conflict", "attempt_version_conflict", "child_not_found", "cleanup_backend", "cleanup_plan_stale", "cleanup_unsupported", "client_mcp_unreachable", "client_mcp_unsupported", "conflict", "cursor_expired", "cursor_malformed", "draining", "dream_apply_failed", "dream_capacity", "dream_conflict", "dream_deadline", "dream_generate_failed", "dream_in_progress", "dream_not_found", "dream_request_failed", "dream_terminal_conflict", "dream_unavailable", "failed_precondition", "failed_step_retry_ineligible", "fire_now_overlap", "internal", "invalid_argument", "learning_unavailable", "management_unauthorized", "mcp_connector_unavailable", "migration_backend", "migration_conflict", "migration_unsupported", "mcp_authorization_pending", "no_active_run", "no_event_log", "no_mcp_provider", "no_schedule_store", "not_awaiting_plan", "not_found", "placement_binding_invalid", "placement_changed", "placement_selector_invalid", "placement_selector_not_found", "placement_selector_stale", "placement_unavailable", "proposal_conflict", "reflection_cancelled", "reflection_deadline", "reflection_failed", "reflection_queue_full", "request_too_large", "resource_exhausted", "schedule_disabled", "schedule_exhausted", "schedule_not_found", "schedule_not_leader", "schedule_unsupported", "scheduler_not_running", "session_delete_unsupported", "session_leased_elsewhere", "session_metadata_cursor_restart", "session_metadata_paging_unsupported", "session_not_found", "stale_run_control", "storage_health_backend", "team_not_found", "team_not_running", "team_running", "teams_disabled", "too_many_session_engines", "too_many_teams", "unauthenticated", "unimplemented", "watch_lagging", "watch_unsupported"]
+MECATL_ERROR_CODES: readonly[
+  ('activity_gap',
+  'attempt_live_claim_conflict',
+  'attempt_terminal_conflict',
+  'attempt_version_conflict',
+  'child_not_found',
+  'cleanup_backend',
+  'cleanup_plan_stale',
+  'cleanup_unsupported',
+  'client_mcp_unreachable',
+  'client_mcp_unsupported',
+  'conflict',
+  'cursor_expired',
+  'cursor_malformed',
+  'draining',
+  'dream_apply_failed',
+  'dream_capacity',
+  'dream_conflict',
+  'dream_deadline',
+  'dream_generate_failed',
+  'dream_in_progress',
+  'dream_not_found',
+  'dream_request_failed',
+  'dream_terminal_conflict',
+  'dream_unavailable',
+  'failed_precondition',
+  'failed_step_retry_ineligible',
+  'fire_now_overlap',
+  'internal',
+  'invalid_argument',
+  'learning_unavailable',
+  'management_unauthorized',
+  'mcp_connector_unavailable',
+  'migration_backend',
+  'migration_conflict',
+  'migration_unsupported',
+  'mcp_authorization_pending',
+  'no_active_run',
+  'no_event_log',
+  'no_mcp_provider',
+  'no_schedule_store',
+  'not_awaiting_plan',
+  'not_found',
+  'placement_binding_invalid',
+  'placement_changed',
+  'placement_selector_invalid',
+  'placement_selector_not_found',
+  'placement_selector_stale',
+  'placement_unavailable',
+  'proposal_conflict',
+  'reflection_cancelled',
+  'reflection_deadline',
+  'reflection_failed',
+  'reflection_queue_full',
+  'request_too_large',
+  'resource_exhausted',
+  'schedule_disabled',
+  'schedule_exhausted',
+  'schedule_not_found',
+  'schedule_not_leader',
+  'schedule_unsupported',
+  'scheduler_not_running',
+  'session_delete_unsupported',
+  'session_leased_elsewhere',
+  'session_metadata_cursor_restart',
+  'session_metadata_paging_unsupported',
+  'session_not_found',
+  'stale_run_control',
+  'storage_health_backend',
+  'team_not_found',
+  'team_not_running',
+  'team_running',
+  'teams_disabled',
+  'too_many_session_engines',
+  'too_many_teams',
+  'unauthenticated',
+  'unimplemented',
+  'watch_lagging',
+  'watch_unsupported')
+];
 ```
 
 <Heading as="h3" id="api-mecatl-event-kinds-variable"><code>MECATL_EVENT_KINDS</code></Heading>
@@ -5298,7 +5434,49 @@ MECATL_ERROR_CODES: readonly ["activity_gap", "attempt_live_claim_conflict", "at
 Stable event kinds, kept in parity with the Go server vocabulary.
 
 ```ts
-MECATL_EVENT_KINDS: readonly ["approval", "authorization.required", "authorization.resolved", "compaction", "compaction.archive", "hook", "message.delta", "model.retry", "network.attempt", "no_progress", "parallel.branch", "parallel.end", "parallel.start", "permission.ask", "permission.retract", "provider.route", "reasoning.delta", "recover_notice", "request.manifest", "result", "schedule.failed", "schedule.fired", "schedule.skipped", "session.init", "session.title", "steer", "steer.outcome", "subagent.end", "subagent.start", "subagent.tool", "team.end", "team.findings", "team.member", "team.start", "team.tasks", "tool.call", "tool.progress", "tool.result", "turn.end", "turn.start", "user_prompt"]
+MECATL_EVENT_KINDS: readonly[
+  ('approval',
+  'authorization.required',
+  'authorization.resolved',
+  'compaction',
+  'compaction.archive',
+  'hook',
+  'message.delta',
+  'model.retry',
+  'network.attempt',
+  'no_progress',
+  'parallel.branch',
+  'parallel.end',
+  'parallel.start',
+  'permission.ask',
+  'permission.retract',
+  'provider.route',
+  'reasoning.delta',
+  'recover_notice',
+  'request.manifest',
+  'result',
+  'schedule.failed',
+  'schedule.fired',
+  'schedule.skipped',
+  'session.init',
+  'session.title',
+  'steer',
+  'steer.outcome',
+  'subagent.end',
+  'subagent.start',
+  'subagent.tool',
+  'team.end',
+  'team.findings',
+  'team.member',
+  'team.start',
+  'team.tasks',
+  'tool.call',
+  'tool.progress',
+  'tool.result',
+  'turn.end',
+  'turn.start',
+  'user_prompt')
+];
 ```
 
 <Heading as="h3" id="api-mecatl-watch-phases-variable"><code>MECATL_WATCH_PHASES</code></Heading>
@@ -5306,7 +5484,7 @@ MECATL_EVENT_KINDS: readonly ["approval", "authorization.required", "authorizati
 Watch phases this SDK understands.
 
 ```ts
-MECATL_WATCH_PHASES: readonly ["gap", "live", "replay"]
+MECATL_WATCH_PHASES: readonly[('gap', 'live', 'replay')];
 ```
 
 <Heading as="h3" id="api-session-id-header-name-variable"><code>SESSION_ID_HEADER_NAME</code></Heading>
@@ -5314,7 +5492,7 @@ MECATL_WATCH_PHASES: readonly ["gap", "live", "replay"]
 Canonical routing hint for session-bound Mecatl requests. It grants no authority.
 
 ```ts
-SESSION_ID_HEADER_NAME = "X-Mecatl-Session-ID"
+SESSION_ID_HEADER_NAME = 'X-Mecatl-Session-ID';
 ```
 
 <Heading as="h3" id="api-supported-api-major-variable"><code>SUPPORTED_API_MAJOR</code></Heading>
@@ -5322,5 +5500,5 @@ SESSION_ID_HEADER_NAME = "X-Mecatl-Session-ID"
 The API major implemented by this SDK.
 
 ```ts
-SUPPORTED_API_MAJOR = 1
+SUPPORTED_API_MAJOR = 1;
 ```

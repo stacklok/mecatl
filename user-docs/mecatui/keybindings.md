@@ -10,27 +10,27 @@ Press `?` on an empty prompt to open the live help overlay. It shows the active 
 
 ## Everyday keys
 
-| Key | Action |
-| --- | --- |
-| `enter` | Send a prompt; while work is running, steer when the server supports it or queue a follow-up otherwise. |
-| `shift+enter` or `ctrl+j` | Insert a newline. |
-| `↑` | With empty input, bring queued follow-ups back for editing. |
-| `ctrl+u` | Clear the unsent draft, including staged attachments and large-paste placeholders (`ClearPrompt`; remappable). |
-| physical `esc` twice within 500ms | While idle, clear a focused draft, including attachments and pending media. The first press only arms the gesture; release it, then press it again without key repeat. Another key, an active selection, palette, approval, overlay, modal, or running turn disarms it. This requires enhanced key-event support and is not remappable. Use `ClearPrompt` (`ctrl+u`) in terminals that do not support it. |
-| `esc` | Clear an active selection first. While work is running, cancel directly and preserve the draft, queued follow-ups, and steer. While idle with a paused queue, clear that queue but preserve the draft. |
-| `ctrl+t` | Expand a focused tool card or approval details. For a collapsed tool card, the expanded view shows the complete tool arguments and result; press it again to return to the width-bounded preview. |
-| `shift+tab` | Cycle the current session permission mode: **default → plan → accept-edits → default**. In an MCP prompt argument form, it instead moves to the previous required field. |
-| `ctrl+g` | Select all prompt text. |
-| `ctrl+a` / `ctrl+e` | Move to the start / end of the current prompt line. |
-| `ctrl+p` | Move to the previous prompt line. |
-| `ctrl+y` | Copy the active prompt or conversation selection; no selection is a no-op. |
-| `f6` / `f7` / `f8` | Open Agents / Effort / MCP Prompts. |
-| `pgup` / `pgdn` | Scroll the conversation. |
-| `home` / `end` | Jump to the top or bottom; `end` resumes auto-follow. |
-| `/` | Open the slash-command palette. |
-| `ctrl+c` twice on an empty prompt | Quit safely. |
-| `/quit` (or `/exit`) | Quit immediately and cancel an active run. `/quit` appears in the slash palette; `/exit` is a dispatch-only alias. |
-| `ctrl+z` | Suspend to the shell; use `fg` to return. |
+|Key|Action|
+|-|-|
+|`enter`|Send a prompt; while work is running, steer when the server supports it or queue a follow-up otherwise.|
+|`shift+enter` or `ctrl+j`|Insert a newline.|
+|`↑`|With empty input, bring queued follow-ups back for editing.|
+|`ctrl+u`|Clear the unsent draft, including staged attachments and large-paste placeholders (`ClearPrompt`; remappable).|
+|physical `esc` twice within 500ms|While idle, clear a focused draft, including attachments and pending media. The first press only arms the gesture; release it, then press it again without key repeat. Another key, an active selection, palette, approval, overlay, modal, or running turn disarms it. This requires enhanced key-event support and is not remappable. Use `ClearPrompt` (`ctrl+u`) in terminals that do not support it.|
+|`esc`|Clear an active selection first. While work is running, cancel directly and preserve the draft, queued follow-ups, and steer. While idle with a paused queue, clear that queue but preserve the draft.|
+|`ctrl+t`|Expand a focused tool card or approval details. For a collapsed tool card, the expanded view shows the complete tool arguments and result; press it again to return to the width-bounded preview.|
+|`shift+tab`|Cycle the current session permission mode: **default → plan → accept-edits → default**. In an MCP prompt argument form, it instead moves to the previous required field.|
+|`ctrl+g`|Select all prompt text.|
+|`ctrl+a` / `ctrl+e`|Move to the start / end of the current prompt line.|
+|`ctrl+p`|Move to the previous prompt line.|
+|`ctrl+y`|Copy the active prompt or conversation selection; no selection is a no-op.|
+|`f6` / `f7` / `f8`|Open Agents / Effort / MCP Prompts.|
+|`pgup` / `pgdn`|Scroll the conversation.|
+|`home` / `end`|Jump to the top or bottom; `end` resumes auto-follow.|
+|`/`|Open the slash-command palette.|
+|`ctrl+c` twice on an empty prompt|Quit safely.|
+|`/quit` (or `/exit`)|Quit immediately and cancel an active run. `/quit` appears in the slash palette; `/exit` is a dispatch-only alias.|
+|`ctrl+z`|Suspend to the shell; use `fg` to return.|
 
 Suspending does not stop an embedded server or active run. Cancel the run first
 if it should stop.
@@ -39,12 +39,12 @@ if it should stop.
 
 In a permission modal, inspect the request before choosing:
 
-| Key | Action |
-| --- | --- |
-| `a`, `y`, or `enter` | Allow this call once. |
-| `w` | Allow this exact main-agent call for the current session when the option is offered. |
-| `d`, `n`, or `esc` | Deny. |
-| `tab` or `←` / `→` | Move between buttons. |
+|Key|Action|
+|-|-|
+|`a`, `y`, or `enter`|Allow this call once.|
+|`w`|Allow this exact main-agent call for the current session when the option is offered.|
+|`d`, `n`, or `esc`|Deny.|
+|`tab` or `←` / `→`|Move between buttons.|
 
 `Allow always` is session-scoped, applies only to the exact main-agent action, and never overrides configured policy. Long arguments can be scrolled; `ctrl+t` opens a full-screen view when offered.
 

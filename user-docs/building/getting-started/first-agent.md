@@ -194,14 +194,14 @@ engine checks when upgrading.
 
 ## Where to go next
 
-| You want to… | Read next |
-| --- | --- |
-| Understand `Engine`, `Session`, `Run`, and `Environment` | [Engine and session model](../what-you-get/engine-and-session.md) |
-| Add a tool or inspect the catalog | [Tool catalog](../extension-points/tool-catalog.md) |
-| Configure approval and denial rules | [PermissionPolicy](../extension-points/permission-policy.md) and [Permissions and posture](/features/permissions-and-posture.md) |
-| Add lifecycle hooks | [HookRunner](../extension-points/hook-runner.md) and [Hook system](../what-you-get/hooks.md) |
-| Persist sessions and event logs | [SessionStore and EventLog](../extension-points/session-store.md) |
-| Use another model provider | [LLMProvider](../extension-points/llm-provider.md) |
-| Run delegated child work | [Subagents, teams, and parallel](../what-you-get/subagents-teams-parallel.md) |
-| Serve clients over gRPC or HTTP/SSE | [Drive via gRPC / HTTP](../deployment/grpc-http.md) |
-| Understand the complete embedding boundary | [Embed the engine directly](../deployment/embed-engine.md) |
+|You want to…|Read next|
+|-|-|
+|Understand `Engine`, `Session`, `Run`, and `Environment`|[Engine and session model](../what-you-get/engine-and-session.md)|
+|Add a tool or inspect the catalog|[Tool catalog](../extension-points/tool-catalog.md)|
+|Configure approval and denial rules|[PermissionPolicy](../extension-points/permission-policy.md) and [Permissions and posture](/features/permissions-and-posture.md)|
+|Add lifecycle hooks|[HookRunner](../extension-points/hook-runner.md) and [Hook system](../what-you-get/hooks.md)|
+|Persist sessions and event logs|[SessionStore and EventLog](../extension-points/session-store.md)|
+|Use another model provider|[LLMProvider](../extension-points/llm-provider.md)|
+|Run delegated child work|[Subagents, teams, and parallel](../what-you-get/subagents-teams-parallel.md)|
+|Serve clients over gRPC or HTTP/SSE|[Drive via gRPC / HTTP](../deployment/grpc-http.md)|
+|Understand the complete embedding boundary|[Embed the engine directly](../deployment/embed-engine.md)|

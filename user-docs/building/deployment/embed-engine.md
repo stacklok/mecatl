@@ -33,14 +33,14 @@ Choose a pre-built binary (`mecated`, `mecak8s`, `mecatequi`) when you want the 
 
 The engine is a separate Go module: `github.com/stacklok/mecatl/engine`. Its runtime dependency closure includes `doublestar`, `robfig/cron/v3`, `github.com/goccy/go-yaml`, `golang.org/x/net`, and `golang.org/x/sync`; `go.uber.org/goleak` is test-only:
 
-| Package | Role |
-|---|---|
-| `golang.org/x/sync` | `errgroup` for concurrent tool dispatch |
-| `github.com/bmatcuk/doublestar/v4` | Glob matching for permission patterns in `engine/adapter/memfs` |
-| `github.com/goccy/go-yaml` | YAML parsing used by core configuration/value handling |
-| `golang.org/x/net` | HTML parsing used by core web-content handling |
-| `github.com/robfig/cron/v3` | Cron expression parsing in `engine/adapter/cronparse` |
-| `go.uber.org/goleak` | Test-only leaked-goroutine detection; never enters a production build |
+|Package|Role|
+|-|-|
+|`golang.org/x/sync`|`errgroup` for concurrent tool dispatch|
+|`github.com/bmatcuk/doublestar/v4`|Glob matching for permission patterns in `engine/adapter/memfs`|
+|`github.com/goccy/go-yaml`|YAML parsing used by core configuration/value handling|
+|`golang.org/x/net`|HTML parsing used by core web-content handling|
+|`github.com/robfig/cron/v3`|Cron expression parsing in `engine/adapter/cronparse`|
+|`go.uber.org/goleak`|Test-only leaked-goroutine detection; never enters a production build|
 
 Nothing from Mecatl's heavy require cone — no OpenAI/Anthropic SDKs, no gRPC, no Bubble Tea TUI, no `k8s.io/client-go` — enters your build graph. A `go get github.com/stacklok/mecatl/engine` does not transitively pull the root module.
 
@@ -154,27 +154,27 @@ The call to `eng.Run` returns a `*Run` immediately; the loop drives in a backgro
 `agent.Deps` has a small set of required runtime seams for a meaningful run. The
 remaining fields are optional — zero values or nil engage documented defaults.
 
-| Field | Type | Required? | Reference adapter | Notes |
-|---|---|---|---|---|
-| `LLM` | `port.LLMProvider` | **yes** | `engine/adapter/mockllm` for tests; bring your own for production | Implement `Stream` + `Capabilities`. See `engine/port/llm.go`. |
-| `Catalog` | `*tool.Catalog` | **yes** | `tool.NewCatalog()` + `cat.MustRegister(...)` | Register only the tools your agent should use. |
-| `Policy` | `port.PermissionPolicy` | **yes** | `engine/adapter/permpolicy` + `engine/adapter/permstore` | `permpolicy.NewPolicy(rules, permstore.New())` is the standard wiring. |
-| `Hooks` | `port.HookRunner` | no | — | Nil hooks are supported and use the engine's no-op behavior. |
-| `Store` | `port.SessionStore` | no | `engine/adapter/memstore` | nil disables persistence. Use `memstore.New()` for in-process persistence. |
-| `Clock` | `port.Clock` | no | `engine/adapter/wallclock` | nil → no tool-call timing. |
-| `Model` | `string` | **yes** | — | Sent on every `LLMRequest`. Must match your provider's model identifier. |
-| `PromptConfig` | `prompt.Config` | no | — | Seeds the stable system prompt prefix. `Env.Cwd`, `Env.Model`, `Env.Date`, `Env.Mode` are the meaningful fields for most embeddings. |
+|Field|Type|Required?|Reference adapter|Notes|
+|-|-|-|-|-|
+|`LLM`|`port.LLMProvider`|**yes**|`engine/adapter/mockllm` for tests; bring your own for production|Implement `Stream` + `Capabilities`. See `engine/port/llm.go`.|
+|`Catalog`|`*tool.Catalog`|**yes**|`tool.NewCatalog()` + `cat.MustRegister(...)`|Register only the tools your agent should use.|
+|`Policy`|`port.PermissionPolicy`|**yes**|`engine/adapter/permpolicy` + `engine/adapter/permstore`|`permpolicy.NewPolicy(rules, permstore.New())` is the standard wiring.|
+|`Hooks`|`port.HookRunner`|no|—|Nil hooks are supported and use the engine's no-op behavior.|
+|`Store`|`port.SessionStore`|no|`engine/adapter/memstore`|nil disables persistence. Use `memstore.New()` for in-process persistence.|
+|`Clock`|`port.Clock`|no|`engine/adapter/wallclock`|nil → no tool-call timing.|
+|`Model`|`string`|**yes**|—|Sent on every `LLMRequest`. Must match your provider's model identifier.|
+|`PromptConfig`|`prompt.Config`|no|—|Seeds the stable system prompt prefix. `Env.Cwd`, `Env.Model`, `Env.Date`, `Env.Mode` are the meaningful fields for most embeddings.|
 
 Optional fields with non-trivial defaults:
 
-| Field | Default behaviour |
-|---|---|
-| `Compactor` | `HeuristicCompactor` — trims the conversation to the context window threshold. |
-| `TokenCounter` | `HeuristicTokenCounter` — character-based estimate. |
-| `ContextWindow` | nil → compaction disabled. Wire a closure that returns the model's window in tokens to enable it. |
-| `MaxNoProgressNudges` | `2` — the loop injects up to two continuation nudges when the model produces an empty/reasoning-only turn before terminating with `StopNoProgress`. |
-| `MaxRunTokens` | `0` — no per-engine token budget. Set a positive value to cap an engine session's cumulative spend. The same ceiling is inherited by subagents, Parallel branches, team members, and lead synthesis, but each engine enforces it against its own session usage; child spend is excluded from the parent, so a delegation tree can exceed it. |
-| `Instructions` | `prompt.RootAssembler` — looks for `AGENTS.md` / `CLAUDE.md` at the workspace root. |
+|Field|Default behaviour|
+|-|-|
+|`Compactor`|`HeuristicCompactor` — trims the conversation to the context window threshold.|
+|`TokenCounter`|`HeuristicTokenCounter` — character-based estimate.|
+|`ContextWindow`|nil → compaction disabled. Wire a closure that returns the model's window in tokens to enable it.|
+|`MaxNoProgressNudges`|`2` — the loop injects up to two continuation nudges when the model produces an empty/reasoning-only turn before terminating with `StopNoProgress`.|
+|`MaxRunTokens`|`0` — no per-engine token budget. Set a positive value to cap an engine session's cumulative spend. The same ceiling is inherited by subagents, Parallel branches, team members, and lead synthesis, but each engine enforces it against its own session usage; child spend is excluded from the parent, so a delegation tree can exceed it.|
+|`Instructions`|`prompt.RootAssembler` — looks for `AGENTS.md` / `CLAUDE.md` at the workspace root.|
 
 ### Token budgets with delegation
 
@@ -245,16 +245,16 @@ for the evidence and output-validation contract.
 
 In-process embedding is the engine and nothing else. You are responsible for everything outside it:
 
-| Capability | Status |
-|---|---|
-| HTTP / gRPC server | Not included. Wire your own transport and relay events to it. |
-| Auth (token, mTLS) | Not included. Your binary; your auth layer. |
-| TLS | Not included. |
-| Prometheus metrics | Not included. Wire `port.ToolCallRecorder` and `port.Diagnostics` to your own observability stack. |
-| Kubernetes manifests | Not included. The engine has no concept of k8s. |
-| CLI flag surface (`--posture`, `--store-dir`, …) | Not included. You set `Deps` fields in code. |
-| OpenAI / Anthropic provider adapters | Not included in the engine module — but they ARE importable as opt-in submodules. Import `github.com/stacklok/mecatl/provider/openai` (Responses API), `github.com/stacklok/mecatl/provider/openaichat` (Chat Completions API), or `github.com/stacklok/mecatl/provider/anthropic` (native Messages API) and you pull only that provider's SDK plus the engine module, never the root module (see [ADR 0093](https://github.com/stacklok/mecatl/blob/main/docs/adr/0093-provider-modules.md)). |
-| Session store backends (JSONL, Redis) | Not included in the engine module. `memstore` is. For durable or Redis-backed storage, import the root module's adapters. |
+|Capability|Status|
+|-|-|
+|HTTP / gRPC server|Not included. Wire your own transport and relay events to it.|
+|Auth (token, mTLS)|Not included. Your binary; your auth layer.|
+|TLS|Not included.|
+|Prometheus metrics|Not included. Wire `port.ToolCallRecorder` and `port.Diagnostics` to your own observability stack.|
+|Kubernetes manifests|Not included. The engine has no concept of k8s.|
+|CLI flag surface (`--posture`, `--store-dir`, …)|Not included. You set `Deps` fields in code.|
+|OpenAI / Anthropic provider adapters|Not included in the engine module — but they ARE importable as opt-in submodules. Import `github.com/stacklok/mecatl/provider/openai` (Responses API), `github.com/stacklok/mecatl/provider/openaichat` (Chat Completions API), or `github.com/stacklok/mecatl/provider/anthropic` (native Messages API) and you pull only that provider's SDK plus the engine module, never the root module (see [ADR 0093](https://github.com/stacklok/mecatl/blob/main/docs/adr/0093-provider-modules.md)).|
+|Session store backends (JSONL, Redis)|Not included in the engine module. `memstore` is. For durable or Redis-backed storage, import the root module's adapters.|
 
 If you need several of those capabilities, `mecated` (or the `internal/app` composition layer) assembles them for you. See [Run mecated standalone](mecated.md).
 

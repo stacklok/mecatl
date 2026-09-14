@@ -38,19 +38,19 @@ By default a subagent is **read-only**: it can Read/Grep/Glob and run build/test
 
 ### Key call arguments
 
-| Argument | What it does |
-|---|---|
-| `prompt` | The self-contained instruction. Unless you set `fork` (below), the child can't see your conversation, so state everything it needs, including the expected output format. |
-| `description` | A short label shown wherever the subagent's progress is displayed. |
-| `agent` | Route to a named specialist agent definition instead of the default explorer (see [Extension points: agent definitions](/building/extension-points/agent-definitions.md)). |
-| `model` | Pin this call to a specific model — a cheaper one for wide fan-out, a stronger one for deep analysis. Omit to inherit the parent's model. |
-| `max_turns` / `max_tool_calls` | Tighten-only caps on this call — you can make a subagent stricter than the operator's default, never looser. |
-| `max_run_tokens` | A cumulative input+output token budget for this child engine's session, tighten-only. Omit it in almost all cases — the configured default is inherited independently and usually unlimited. This does not cap parent or delegation-tree spend. If you do set one, values below 25,000 are automatically raised to that floor, since the system prompt and project instructions get replayed every turn. |
-| `timeout_ms` | A wall-clock deadline; exceeding it cancels the child and returns a time-budget error. |
-| `output_schema` | A JSON schema for a structured result, when you need to mechanically consume the answer (e.g. comparing several subagents). The child is given a `SubmitResult` tool and must deliver by calling it; a bad submission gets up to two bounded correction retries before the call gives up. |
-| `fork` | Seed the child from a copy of your current conversation instead of an empty one, so it inherits everything you've already established. Runs on your model; not combinable with `model`, `agent`, or `resume`. |
-| `resume` | Continue a previous subagent (the `agentId` from its earlier result) with a follow-up prompt. It keeps its conversational memory but runs in a fresh workspace checkout — file changes from its earlier run are gone. Resuming resets the turn and tool-call counters but preserves cumulative token usage, so it does not replenish `max_run_tokens`. A `failed` subagent can be resumed like other terminal states. |
-| `background` | Return immediately with the child's `agentId` while it keeps working; collect the result later with `SubagentStatus`. |
+|Argument|What it does|
+|-|-|
+|`prompt`|The self-contained instruction. Unless you set `fork` (below), the child can't see your conversation, so state everything it needs, including the expected output format.|
+|`description`|A short label shown wherever the subagent's progress is displayed.|
+|`agent`|Route to a named specialist agent definition instead of the default explorer (see [Extension points: agent definitions](/building/extension-points/agent-definitions.md)).|
+|`model`|Pin this call to a specific model — a cheaper one for wide fan-out, a stronger one for deep analysis. Omit to inherit the parent's model.|
+|`max_turns` / `max_tool_calls`|Tighten-only caps on this call — you can make a subagent stricter than the operator's default, never looser.|
+|`max_run_tokens`|A cumulative input+output token budget for this child engine's session, tighten-only. Omit it in almost all cases — the configured default is inherited independently and usually unlimited. This does not cap parent or delegation-tree spend. If you do set one, values below 25,000 are automatically raised to that floor, since the system prompt and project instructions get replayed every turn.|
+|`timeout_ms`|A wall-clock deadline; exceeding it cancels the child and returns a time-budget error.|
+|`output_schema`|A JSON schema for a structured result, when you need to mechanically consume the answer (e.g. comparing several subagents). The child is given a `SubmitResult` tool and must deliver by calling it; a bad submission gets up to two bounded correction retries before the call gives up.|
+|`fork`|Seed the child from a copy of your current conversation instead of an empty one, so it inherits everything you've already established. Runs on your model; not combinable with `model`, `agent`, or `resume`.|
+|`resume`|Continue a previous subagent (the `agentId` from its earlier result) with a follow-up prompt. It keeps its conversational memory but runs in a fresh workspace checkout — file changes from its earlier run are gone. Resuming resets the turn and tool-call counters but preserves cumulative token usage, so it does not replenish `max_run_tokens`. A `failed` subagent can be resumed like other terminal states.|
+|`background`|Return immediately with the child's `agentId` while it keeps working; collect the result later with `SubagentStatus`.|
 
 Every Subagent result carries an `agentId: <id>` trailer, whatever the outcome (success, timeout, error). That's your handle for `InspectSubagent`, `SubagentStatus`, or a later `resume` call.
 
@@ -92,11 +92,11 @@ Each branch can implement, not just explore: it has the full read-write toolset 
 
 ### `join` — how the result comes back
 
-| `join` value | Behavior |
-|---|---|
-| `all` (default) | Every branch's summary comes back so you can pick. Every fork is torn down after the join — copy anything you need out of the summaries, because the forks are gone. |
-| `first` | The first branch that succeeds wins; the rest are cancelled. The winner's fork is **preserved** and its path is reported. |
-| `judge` (or `best`) | An LLM judge picks the single best branch against your `criteria`. Same preservation as `first`. |
+|`join` value|Behavior|
+|-|-|
+|`all` (default)|Every branch's summary comes back so you can pick. Every fork is torn down after the join — copy anything you need out of the summaries, because the forks are gone.|
+|`first`|The first branch that succeeds wins; the rest are cancelled. The winner's fork is **preserved** and its path is reported.|
+|`judge` (or `best`)|An LLM judge picks the single best branch against your `criteria`. Same preservation as `first`.|
 
 A **single isolated branch** with `join: first` or `join: judge` is the supported conditional-merge case: its winner is auto-merged back into your workspace by default. Its diff is applied via `git apply`, and the merge refuses anything that touches `.gitattributes`. A **multi-branch** run never auto-merges, even with `join: first`/`judge`. You inspect the preserved winner's fork path yourself if you want its changes. A conflicting merge is never forced — the tool error preserves the fork so you can resolve it by hand.
 
@@ -124,7 +124,7 @@ A team-level token ceiling (operator flag `--max-team-tokens`, default unlimited
 
 Beyond a flat `--subagent-model` default, an operator can configure a **model router** that picks a model per delegation automatically, based on what the task actually needs — a cheap model for a mechanical rename, a stronger one for a subtle concurrency bug — instead of every delegation using the same one model.
 
-**It's on the moment an operator configures it — there's no separate enable flag.** A non-empty category taxonomy in the operator's `settings.yaml` *is* the switch:
+**It's on the moment an operator configures it — there's no separate enable flag.** A non-empty category taxonomy in the operator's `settings.yaml` _is_ the switch:
 
 ```yaml
 models:
@@ -142,7 +142,7 @@ models:
 
 :::note[The one gotcha: `model: inherit` is not the same as no `model:` key]
 
-If a named specialist agent definition has no `model:` key at all, it's eligible for routing. Set `model: inherit` explicitly instead, and you've opted it *out* — that's a deliberate pin to the session model, not "no preference." Worth knowing if you maintain agent definitions and expect the router to route them.
+If a named specialist agent definition has no `model:` key at all, it's eligible for routing. Set `model: inherit` explicitly instead, and you've opted it _out_ — that's a deliberate pin to the session model, not "no preference." Worth knowing if you maintain agent definitions and expect the router to route them.
 
 :::
 
@@ -153,7 +153,7 @@ writable named specialist this fallback keeps its scoped direct-write engine. A 
 breaker gives up on the classifier for the rest of that run after 3 consecutive misses (a hit
 resets the count), rather than keep paying for a classifier call that keeps failing.
 
-**You can see *why* a delegation wasn't routed.** Every delegation-start event carries a short `routing_reason`: empty when the router picked and successfully built a model, otherwise a plain label like `router-disabled`, `pinned-model`, `agent-def-pinned-model`, `route-target-unavailable`, `resume`, `fork`, or `breaker-open`. mecatui shows it on the delegation's model line as ` · not routed: <reason>`, so you can tell "the router is off" apart from "this agent pinned its own model" apart from "the classifier kept failing" or "the selected target was unavailable" at a glance.
+**You can see _why_ a delegation wasn't routed.** Every delegation-start event carries a short `routing_reason`: empty when the router picked and successfully built a model, otherwise a plain label like `router-disabled`, `pinned-model`, `agent-def-pinned-model`, `route-target-unavailable`, `resume`, `fork`, or `breaker-open`. mecatui shows it on the delegation's model line as ` · not routed: <reason>`, so you can tell "the router is off" apart from "this agent pinned its own model" apart from "the classifier kept failing" or "the selected target was unavailable" at a glance.
 
 See [Choose models and providers](/features/choose-models.md#configure-aliases-slots-and-task-routing)
 for the taxonomy schema. The `--subagent-model-router` flag is a kill switch:

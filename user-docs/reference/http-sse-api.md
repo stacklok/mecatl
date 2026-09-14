@@ -24,7 +24,11 @@ unknown selectors leave `llm_provider_display_endpoint` unavailable. It returns 
 with this JSON object:
 
 ```json
-{"build_id":"dev","server_implementation":"mecated","llm_provider_display_endpoint":"https://api.example/v1"}
+{
+  "build_id": "dev",
+  "server_implementation": "mecated",
+  "llm_provider_display_endpoint": "https://api.example/v1"
+}
 ```
 
 `build_id` is the opaque linker-stamped build identity (`dev` in an unstamped
@@ -57,30 +61,30 @@ compatibility. `build_id` is not a semantic-version API.
 
 **Sessions & runs:**
 
-| Method & path | Body | Response |
-| --- | --- | --- |
-| `POST /v1/sessions` | `{mode?, limits?, provider_id?, model_id?, profile?, mcp_servers?}`; `profile` omitted = server default, `"no-fs"` = explicit attenuation | `201` `{session_id, placement}` where placement is bounded display metadata; no path or exact private ref |
-| `GET /v1/sessions` | — | `200` `{sessions: [...]}` — path-free stored-session inventory |
-| `GET /v1/sessions/{id}` | — | `200` authoritative session snapshot, including title/provenance, title-generation lifecycle, and canonical durable token usage when present |
-| `GET /v1/sessions/{id}/events` | — | `200` `text/event-stream` — replay a session's durable event log (including `session.title` changes and the log-only `approval`/`compaction_archive`/`user_prompt` a live prompt stream skips); empty for an unknown id, `501` when no durable `EventLog` is wired |
-| `GET /v1/sessions/{id}/watch?cursor=&run_id=` | — | `200` `text/event-stream` — **durable replay-then-follow** ([ADR 0250](https://github.com/stacklok/mecatl/blob/main/docs/adr/0250-durable-cursors-and-watch.md)). Each `data:` frame is `{event, cursor, phase}` (NOT a bare Event like `/events`); `phase` is an open string `replay`/`live`/`gap`. Exactly one event-less `live` frame marks the replay→live boundary; an event-less `gap` frame marks a failed durable append. `cursor` is opaque — empty means the beginning; hand back the last one you PROCESSED to resume. Optional `run_id` narrows delivery to one run; a cursor is **scoped to the `run_id` it was issued under** — resume with the same filter, or from the beginning, since a filtered watch's position advances past the records it dropped. The stream STAYS OPEN (unlike `/events`, which ends). `501` when no durable `EventLog` or no cursor seam, `404` when the caller may not read the session, `400` for a delegation-child session id. A **cursor fault is not a status code on this route**: the cursor is decoded after the `200` is committed, so a malformed or expired cursor arrives as the same terminal frame everything else does (`cursor_malformed` / `cursor_expired`); over gRPC it is a status. A mid-stream fault arrives as a final SSE frame tagged `event: error` whose `data:` line carries `{"code","error"}` — `watch_lagging` is **resumable** (reconnect with your last cursor), `activity_gap` means recorded events are missing |
-| `POST /v1/sessions/{id}/rename` | `{title}` | `200` updated session snapshot with operator title provenance; `412` when kind/state/liveness gates reject the stale action, `409` when another replica holds the session lease |
-| `POST /v1/sessions/{id}/delete` | — | `204` after permanently removing the snapshot and store-managed sidecars; `412` when the target is active, awaiting, or not a main chat, `409` when another replica holds the session lease, `501` when the configured store cannot physically delete |
-| `POST /v1/sessions/{id}/compact` | no body | `200` `{"compacted":true}` when one forced pass saved shorter model history, or `{"compacted":false}` for a successful no-op; `412` for an active/awaiting/non-main session, `409` when another replica holds its lease |
-| `POST /v1/sessions/{id}/workspace-enrollment/connect` | no body | `200` safe `WorkspaceEnrollment` projection; begins an eligible pre-prompt workspace-service enrollment or observes its exact pending enrollment |
-| `POST /v1/sessions/{id}/workspace-enrollment/{enrollment_id}/retry` | no body | `200` safe `WorkspaceEnrollment` projection; cancels the exact pending enrollment before beginning its replacement; stale IDs return `412` |
-| `POST /v1/sessions/{id}/workspace-enrollment/{enrollment_id}/cancel` | no body | `200` safe `WorkspaceEnrollment` projection; cancels only the exact pending enrollment and clears its prompt gate; stale IDs return `412` |
-| `DELETE /v1/sessions/{id}` | — | `204` — close the session, releasing its per-session resources (not physical stored-session deletion) |
-| `POST /v1/sessions/{id}/prompt` | `{text}` | `200` `text/event-stream` of events; rejected while failed-step retry intent is pending |
-| `POST /v1/sessions/{id}/retry` | no body | `200` `text/event-stream` for a prompt-free failed-step retry; reuses conversation/tool state but re-resolves live instruction sources; `409` unless persisted state is eligible |
-| `POST /v1/sessions/{id}/approve` | `{ask_id, allow}` | `204` |
-| `POST /v1/sessions/{id}/plan:approve` | `{"target_mode": "default" \| "accept_edits" \| "plan", "note": "..."}` | `200` `text/event-stream` — atomically resolve a parked **plan-approval** ask ([ADR 0069](https://github.com/stacklok/mecatl/blob/main/docs/adr/0069-plan-approval-gate.md)): on `default`/`accept_edits` resume the parked run AND start the continuation run (both streamed); on `plan`/`""` iterate (no continuation). `409` on a precondition failure (live run / not awaiting / not a plan ask), `404` on an unknown session |
-| `POST /v1/sessions/{id}/cancel` | — | `204` |
-| `POST /v1/sessions/{id}/cancel-child` | `{child_id}` | `204`; `404` for an unknown / already-finished child |
-| `POST /v1/sessions/{id}/steer` | `{text?, parts?, message_id?, expected_run_id?}`; text or at least one part is required | `200` `{outcome, message_id?, promoted?, run_id?}` |
-| `POST /v1/sessions/{id}/cancel-steer` | optional `{message_id?, expected_run_id?}` | `200` `{outcome, message_id?}` |
-| `POST /v1/sessions/{id}/clear` | `{"worktree_selector":"..."}` optional | `201` `{session_id, placement}` — distinct empty-history successor; omitted selector inherits exact source placement |
-| `POST /v1/sessions/{id}/fork` | optional `{title, reasoning_effort, provider_id, model_id, worktree_selector}` | `201` `{session_id, placement}` — history-carrying successor; omitted selector inherits exact placement, supplied selector must be fresh and source-scoped; all overrides resolve atomically |
+|Method & path|Body|Response|
+|-|-|-|
+|`POST /v1/sessions`|`{mode?, limits?, provider_id?, model_id?, profile?, mcp_servers?}`; `profile` omitted = server default, `"no-fs"` = explicit attenuation|`201` `{session_id, placement}` where placement is bounded display metadata; no path or exact private ref|
+|`GET /v1/sessions`|—|`200` `{sessions: [...]}` — path-free stored-session inventory|
+|`GET /v1/sessions/{id}`|—|`200` authoritative session snapshot, including title/provenance, title-generation lifecycle, and canonical durable token usage when present|
+|`GET /v1/sessions/{id}/events`|—|`200` `text/event-stream` — replay a session's durable event log (including `session.title` changes and the log-only `approval`/`compaction_archive`/`user_prompt` a live prompt stream skips); empty for an unknown id, `501` when no durable `EventLog` is wired|
+|`GET /v1/sessions/{id}/watch?cursor=&run_id=`|—|`200` `text/event-stream` — **durable replay-then-follow** ([ADR 0250](https://github.com/stacklok/mecatl/blob/main/docs/adr/0250-durable-cursors-and-watch.md)). Each `data:` frame is `{event, cursor, phase}` (NOT a bare Event like `/events`); `phase` is an open string `replay`/`live`/`gap`. Exactly one event-less `live` frame marks the replay→live boundary; an event-less `gap` frame marks a failed durable append. `cursor` is opaque — empty means the beginning; hand back the last one you PROCESSED to resume. Optional `run_id` narrows delivery to one run; a cursor is **scoped to the `run_id` it was issued under** — resume with the same filter, or from the beginning, since a filtered watch's position advances past the records it dropped. The stream STAYS OPEN (unlike `/events`, which ends). `501` when no durable `EventLog` or no cursor seam, `404` when the caller may not read the session, `400` for a delegation-child session id. A **cursor fault is not a status code on this route**: the cursor is decoded after the `200` is committed, so a malformed or expired cursor arrives as the same terminal frame everything else does (`cursor_malformed` / `cursor_expired`); over gRPC it is a status. A mid-stream fault arrives as a final SSE frame tagged `event: error` whose `data:` line carries `{"code","error"}` — `watch_lagging` is **resumable** (reconnect with your last cursor), `activity_gap` means recorded events are missing|
+|`POST /v1/sessions/{id}/rename`|`{title}`|`200` updated session snapshot with operator title provenance; `412` when kind/state/liveness gates reject the stale action, `409` when another replica holds the session lease|
+|`POST /v1/sessions/{id}/delete`|—|`204` after permanently removing the snapshot and store-managed sidecars; `412` when the target is active, awaiting, or not a main chat, `409` when another replica holds the session lease, `501` when the configured store cannot physically delete|
+|`POST /v1/sessions/{id}/compact`|no body|`200` `{"compacted":true}` when one forced pass saved shorter model history, or `{"compacted":false}` for a successful no-op; `412` for an active/awaiting/non-main session, `409` when another replica holds its lease|
+|`POST /v1/sessions/{id}/workspace-enrollment/connect`|no body|`200` safe `WorkspaceEnrollment` projection; begins an eligible pre-prompt workspace-service enrollment or observes its exact pending enrollment|
+|`POST /v1/sessions/{id}/workspace-enrollment/{enrollment_id}/retry`|no body|`200` safe `WorkspaceEnrollment` projection; cancels the exact pending enrollment before beginning its replacement; stale IDs return `412`|
+|`POST /v1/sessions/{id}/workspace-enrollment/{enrollment_id}/cancel`|no body|`200` safe `WorkspaceEnrollment` projection; cancels only the exact pending enrollment and clears its prompt gate; stale IDs return `412`|
+|`DELETE /v1/sessions/{id}`|—|`204` — close the session, releasing its per-session resources (not physical stored-session deletion)|
+|`POST /v1/sessions/{id}/prompt`|`{text}`|`200` `text/event-stream` of events; rejected while failed-step retry intent is pending|
+|`POST /v1/sessions/{id}/retry`|no body|`200` `text/event-stream` for a prompt-free failed-step retry; reuses conversation/tool state but re-resolves live instruction sources; `409` unless persisted state is eligible|
+|`POST /v1/sessions/{id}/approve`|`{ask_id, allow}`|`204`|
+|`POST /v1/sessions/{id}/plan:approve`|`{"target_mode": "default" \| "accept_edits" \| "plan", "note": "..."}`|`200` `text/event-stream` — atomically resolve a parked **plan-approval** ask ([ADR 0069](https://github.com/stacklok/mecatl/blob/main/docs/adr/0069-plan-approval-gate.md)): on `default`/`accept_edits` resume the parked run AND start the continuation run (both streamed); on `plan`/`""` iterate (no continuation). `409` on a precondition failure (live run / not awaiting / not a plan ask), `404` on an unknown session|
+|`POST /v1/sessions/{id}/cancel`|—|`204`|
+|`POST /v1/sessions/{id}/cancel-child`|`{child_id}`|`204`; `404` for an unknown / already-finished child|
+|`POST /v1/sessions/{id}/steer`|`{text?, parts?, message_id?, expected_run_id?}`; text or at least one part is required|`200` `{outcome, message_id?, promoted?, run_id?}`|
+|`POST /v1/sessions/{id}/cancel-steer`|optional `{message_id?, expected_run_id?}`|`200` `{outcome, message_id?}`|
+|`POST /v1/sessions/{id}/clear`|`{"worktree_selector":"..."}` optional|`201` `{session_id, placement}` — distinct empty-history successor; omitted selector inherits exact source placement|
+|`POST /v1/sessions/{id}/fork`|optional `{title, reasoning_effort, provider_id, model_id, worktree_selector}`|`201` `{session_id, placement}` — history-carrying successor; omitted selector inherits exact placement, supplied selector must be fresh and source-scoped; all overrides resolve atomically|
 
 `WorkspaceEnrollment` contains only `enrollment_id`, `status`, `required_services`, and the ephemeral `presentation_url` when a new enrollment needs browser presentation. These unary controls reject every request body, validate the session and enrollment correlation from the path, retain the request context, and do not expose callbacks, selectors, or broker state.
 
@@ -119,32 +123,32 @@ exact private `EnvironmentRef{kind,id,revision}`; HTTP projections never do.
 
 **Inventory & introspection** (the HTTP mirrors of the gRPC inventory RPCs in §9):
 
-| Method & path | Response |
-| --- | --- |
-| `GET /v1/models` | the selectable provider/model inventory (`ListModels`) |
-| `GET /v1/agents` | the agent-definition inventory |
-| `GET /v1/skills` | the skills inventory |
-| `GET /v1/commands?session_id=...` | slash commands for an owned, exactly reattached source; no-FS returns empty |
-| `GET /v1/worktrees?session_id=...` | display-safe worktrees plus ephemeral caller/source-scoped selectors; no paths/exact refs |
-| `GET /v1/soul` | the resolved soul snapshot (provenance, trust, drift) |
-| `GET /v1/usermodel` | the live bounded user-model index; `?key=<exact-key>` also returns read-only value/version/provenance/proposal linkage/timestamps/bounded history when available |
-| `POST /v1/sessions/{id}/reflect` | synchronously reflect a caller-owned completed session on its persisted provider (optional empty/`{}` body); returns bounded abstained/staged/promoted/conflicted counts |
-| `GET /v1/learning/attempts` | content-free caller-partitioned attempt page; accepts closed `state`, opaque `cursor`, and bounded `limit` (default 50, maximum 200) |
-| `GET /v1/learning/attempts/{id}` | content-free attempt lifecycle detail; foreign and missing IDs both return `404` |
-| `POST /v1/learning/attempts/{id}/retry` | body `{"expected_version":"<opaque>"}`; failed-to-queued attempt CAS only |
-| `POST /v1/learning/attempts/{id}/abandon` | body `{"expected_version":"<opaque>"}`; non-compensating attempt CAS only, with no downstream rollback promise |
-| `POST /v1/dream/plans` | body `{"target":"project_memory"}` or `{"target":"user_model"}`; spends one planner call and returns the bounded-lifetime exact/synthesized review plan plus opaque process-local id |
-| `POST /v1/dream/plans/{plan_id}/decision` | body `{"decision":"apply"}` or `{"decision":"dismiss"}`; decides the authoritative retained whole plan and returns planned/applied/conflicted/skipped/failed source counts |
-| `GET /v1/learning/proposals` | bounded caller-partitioned proposal page (`status`, `cursor`, `limit`, optional reviewable `project`; promotion remains launch-root/trust-gated) |
-| `GET /v1/learning/proposals/{id}` | bounded proposal detail with digest availability, never raw evidence text |
-| `POST /v1/learning/proposals/{id}/decision` | approve/reject with `expected_version`; stale versions return `409` |
-| `POST /v1/learning/proposals/{id}/undo` | compensating undo with `expected_version`; stale/current-memory conflicts return `409` |
-| `GET /v1/mcp/resources` | MCP resource snapshots |
-| `GET /v1/mcp/resources/read` | read one MCP resource by URI |
-| `GET /v1/mcp/prompts` | the MCP prompt inventory |
-| `POST /v1/mcp/prompts/get` | expand one MCP prompt (rendered messages) |
-| `GET /v1/mcp/sources` | the resolved MCP source inventory |
-| `GET /v1/mcp/toolhive/groups` | the ToolHive groups in the resolved inventory |
+|Method & path|Response|
+|-|-|
+|`GET /v1/models`|the selectable provider/model inventory (`ListModels`)|
+|`GET /v1/agents`|the agent-definition inventory|
+|`GET /v1/skills`|the skills inventory|
+|`GET /v1/commands?session_id=...`|slash commands for an owned, exactly reattached source; no-FS returns empty|
+|`GET /v1/worktrees?session_id=...`|display-safe worktrees plus ephemeral caller/source-scoped selectors; no paths/exact refs|
+|`GET /v1/soul`|the resolved soul snapshot (provenance, trust, drift)|
+|`GET /v1/usermodel`|the live bounded user-model index; `?key=<exact-key>` also returns read-only value/version/provenance/proposal linkage/timestamps/bounded history when available|
+|`POST /v1/sessions/{id}/reflect`|synchronously reflect a caller-owned completed session on its persisted provider (optional empty/`{}` body); returns bounded abstained/staged/promoted/conflicted counts|
+|`GET /v1/learning/attempts`|content-free caller-partitioned attempt page; accepts closed `state`, opaque `cursor`, and bounded `limit` (default 50, maximum 200)|
+|`GET /v1/learning/attempts/{id}`|content-free attempt lifecycle detail; foreign and missing IDs both return `404`|
+|`POST /v1/learning/attempts/{id}/retry`|body `{"expected_version":"<opaque>"}`; failed-to-queued attempt CAS only|
+|`POST /v1/learning/attempts/{id}/abandon`|body `{"expected_version":"<opaque>"}`; non-compensating attempt CAS only, with no downstream rollback promise|
+|`POST /v1/dream/plans`|body `{"target":"project_memory"}` or `{"target":"user_model"}`; spends one planner call and returns the bounded-lifetime exact/synthesized review plan plus opaque process-local id|
+|`POST /v1/dream/plans/{plan_id}/decision`|body `{"decision":"apply"}` or `{"decision":"dismiss"}`; decides the authoritative retained whole plan and returns planned/applied/conflicted/skipped/failed source counts|
+|`GET /v1/learning/proposals`|bounded caller-partitioned proposal page (`status`, `cursor`, `limit`, optional reviewable `project`; promotion remains launch-root/trust-gated)|
+|`GET /v1/learning/proposals/{id}`|bounded proposal detail with digest availability, never raw evidence text|
+|`POST /v1/learning/proposals/{id}/decision`|approve/reject with `expected_version`; stale versions return `409`|
+|`POST /v1/learning/proposals/{id}/undo`|compensating undo with `expected_version`; stale/current-memory conflicts return `409`|
+|`GET /v1/mcp/resources`|MCP resource snapshots|
+|`GET /v1/mcp/resources/read`|read one MCP resource by URI|
+|`GET /v1/mcp/prompts`|the MCP prompt inventory|
+|`POST /v1/mcp/prompts/get`|expand one MCP prompt (rendered messages)|
+|`GET /v1/mcp/sources`|the resolved MCP source inventory|
+|`GET /v1/mcp/toolhive/groups`|the ToolHive groups in the resolved inventory|
 
 Manual dream generation sends the selected bounded memory values/descriptions to the configured
 planner and spends tokens; regeneration is explicit and spends again. Apply/dismiss is whole-plan,
@@ -163,15 +167,15 @@ disables manual dream review. This does not change the separate, off-by-default 
 
 **Agent teams** (with `--enable-teams`, the default):
 
-| Method & path | Body | Response |
-| --- | --- | --- |
-| `POST /v1/teams` | team spec (incl. the tighten-only `max_team_tokens?`) | create a team |
-| `POST /v1/teams/{id}/members` | member spec | spawn a teammate |
-| `POST /v1/teams/{id}/messages` | message | post into a member's inbox |
-| `POST /v1/teams/{id}/members/cancel` | `{"member": "..."}` | cancel one member of a running team (404 unknown team/member, 412 not running) |
-| `POST /v1/teams/{id}/run` | — | `text/event-stream` of `TeamEvent`s, ending with the terminal `outcome` frame |
-| `GET /v1/teams/{id}` | — | team snapshot (roster, tasks, quiescence) |
-| `DELETE /v1/teams/{id}` | — | clean up the team |
+|Method & path|Body|Response|
+|-|-|-|
+|`POST /v1/teams`|team spec (incl. the tighten-only `max_team_tokens?`)|create a team|
+|`POST /v1/teams/{id}/members`|member spec|spawn a teammate|
+|`POST /v1/teams/{id}/messages`|message|post into a member's inbox|
+|`POST /v1/teams/{id}/members/cancel`|`{"member": "..."}`|cancel one member of a running team (404 unknown team/member, 412 not running)|
+|`POST /v1/teams/{id}/run`|—|`text/event-stream` of `TeamEvent`s, ending with the terminal `outcome` frame|
+|`GET /v1/teams/{id}`|—|team snapshot (roster, tasks, quiescence)|
+|`DELETE /v1/teams/{id}`|—|clean up the team|
 
 All examples below were captured against a live `mecated serve --mock`.
 
@@ -187,7 +191,11 @@ Optional fields:
 ```json
 {
   "mode": "plan",
-  "limits": { "max_turns": 20, "max_tool_calls": 80, "max_consecutive_failures": 3 }
+  "limits": {
+    "max_turns": 20,
+    "max_tool_calls": 80,
+    "max_consecutive_failures": 3
+  }
 }
 ```
 
@@ -195,11 +203,11 @@ Optional fields:
 unknown/empty falls back to the server default (`default`). Each omitted or zero
 `limits` field inherits its deployment default:
 
-| Limit | Deployment default |
-| --- | --- |
-| `max_turns` | `2000` |
-| `max_tool_calls` | `8000` |
-| `max_consecutive_failures` | `5` |
+|Limit|Deployment default|
+|-|-|
+|`max_turns`|`2000`|
+|`max_tool_calls`|`8000`|
+|`max_consecutive_failures`|`5`|
 
 A non-zero field overrides only that limit; other zero fields still inherit their
 defaults.
@@ -415,7 +423,7 @@ Without `expected_run_id`, a steer that loses the terminal race is promoted to
 a new follow-up run. The response remains JSON, not SSE:
 
 ```json
-{"outcome":"too_late","promoted":true,"run_id":"<new-run-id>"}
+{ "outcome": "too_late", "promoted": true, "run_id": "<new-run-id>" }
 ```
 
 The server drains and records the promoted run in the background. Use the

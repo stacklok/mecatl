@@ -64,6 +64,7 @@ enrollment in an environment without an OS keyring:
    Settings contain only the environment-variable **reference**, never its value. The
    reference must be a valid `MECATL_*` name; see the
    [`llm` configuration reference](/reference/configuration.md#llm).
+
 3. With the key securely injected, enroll and inspect the exact configured endpoint ID
    (replace `ENDPOINT` below):
 
@@ -73,6 +74,7 @@ enrollment in an environment without an OS keyring:
    ```
 
    Use `--no-browser` on login if needed, as described above. Confirm status is `usable`.
+
 4. Start or restart the service with the same operator settings, credential home, and key
    value. For a foreground server in that provisioned environment:
 
@@ -148,11 +150,11 @@ permissions. See [MCP client](/building/what-you-get/mcp-client.md).
 
 Default addresses:
 
-| Listener | Default |
-|---|---|
-| gRPC | `127.0.0.1:8080` |
-| HTTP/SSE | `127.0.0.1:8081` |
-| Prometheus + admin | `127.0.0.1:9090` |
+|Listener|Default|
+|-|-|
+|gRPC|`127.0.0.1:8080`|
+|HTTP/SSE|`127.0.0.1:8081`|
+|Prometheus + admin|`127.0.0.1:9090`|
 
 A slightly more configured invocation for unattended local operation:
 
@@ -260,26 +262,26 @@ loopback-only server. Flags not covered here are advanced operator tuning; run
 
 ### Server
 
-| Flag | Default | Notes |
-|---|---|---|
-| `--grpc-addr` | `127.0.0.1:8080` | gRPC listen address |
-| `--http-addr` | `127.0.0.1:8081` | HTTP/SSE listen address. **Empty disables the HTTP/SSE listener and the admin listener together** — see [Hosting a spawned daemon](#hosting-a-spawned-daemon) |
-| `--metrics-addr` | `127.0.0.1:9090` | Prometheus + admin listener; empty disables it |
-| `--grpc-unix-socket` | `""` (off) | Serve gRPC on a UNIX-domain socket instead of a TCP port. Mutually exclusive with a configured `--grpc-addr`. See [Hosting a spawned daemon](#hosting-a-spawned-daemon) |
-| `--ready-file` | `""` (off) | Absolute path to write a JSON readiness document to, atomically, once every listener is up |
-| `--lifetime-pipe-fd` | `0` (off) | File descriptor of an inherited pipe read end or connected UNIX-domain stream socketpair endpoint; EOF on it stops the daemon gracefully (the parent-crash path) |
-| `--auth-token` | `""` (off) | Bearer token required on every request; also `MECATL_AUTH_TOKEN` |
-| `--tls-cert` | `""` | PEM server certificate; enables TLS on both listeners when paired with `--tls-key` |
-| `--tls-key` | `""` | PEM server private key |
-| `--client-ca` | `""` | PEM client-CA bundle; enables mTLS (requires `--tls-cert`/`--tls-key`) |
-| `--cors-origins` | `""` (off) | Allow a browser at this **exact** origin to call the HTTP API; repeatable. Local development only — see [Browsers and CORS](#browsers-and-cors) |
-| `--deployment-id` | `""` | Optional opaque label for this deployment, echoed on `GetCompatibilityInfo`. Never inferred from the host |
-| `--rate-limit` | `0` (off) | Sustained per-client request rate in req/s; with OIDC, also limits rejected bearer validation per direct transport peer IP |
-| `--rate-burst` | `0` (derived) | Token-bucket burst; zero derives a sane default from `--rate-limit`, including the OIDC rejected-token bucket |
-| `--oidc-issuer` | `""` (off) | OIDC issuer URL whose tokens identify callers; setting it turns caller identity on. See [Caller identity](#caller-identity-oidc) |
-| `--oidc-jwks-uri` | `""` (derived) | Static JWKS endpoint, short-circuiting OIDC discovery (air-gapped or pinned-key deployments) |
-| `--oidc-audience` | `""` | Audience (`aud`) this deployment accepts; **required** with `--oidc-issuer` |
-| `--oidc-max-jwks-staleness` | `1h` | Maximum age of last-good signing keys during an IdP outage. `0` deliberately disables this bound; negative values are rejected. |
+|Flag|Default|Notes|
+|-|-|-|
+|`--grpc-addr`|`127.0.0.1:8080`|gRPC listen address|
+|`--http-addr`|`127.0.0.1:8081`|HTTP/SSE listen address. **Empty disables the HTTP/SSE listener and the admin listener together** — see [Hosting a spawned daemon](#hosting-a-spawned-daemon)|
+|`--metrics-addr`|`127.0.0.1:9090`|Prometheus + admin listener; empty disables it|
+|`--grpc-unix-socket`|`""` (off)|Serve gRPC on a UNIX-domain socket instead of a TCP port. Mutually exclusive with a configured `--grpc-addr`. See [Hosting a spawned daemon](#hosting-a-spawned-daemon)|
+|`--ready-file`|`""` (off)|Absolute path to write a JSON readiness document to, atomically, once every listener is up|
+|`--lifetime-pipe-fd`|`0` (off)|File descriptor of an inherited pipe read end or connected UNIX-domain stream socketpair endpoint; EOF on it stops the daemon gracefully (the parent-crash path)|
+|`--auth-token`|`""` (off)|Bearer token required on every request; also `MECATL_AUTH_TOKEN`|
+|`--tls-cert`|`""`|PEM server certificate; enables TLS on both listeners when paired with `--tls-key`|
+|`--tls-key`|`""`|PEM server private key|
+|`--client-ca`|`""`|PEM client-CA bundle; enables mTLS (requires `--tls-cert`/`--tls-key`)|
+|`--cors-origins`|`""` (off)|Allow a browser at this **exact** origin to call the HTTP API; repeatable. Local development only — see [Browsers and CORS](#browsers-and-cors)|
+|`--deployment-id`|`""`|Optional opaque label for this deployment, echoed on `GetCompatibilityInfo`. Never inferred from the host|
+|`--rate-limit`|`0` (off)|Sustained per-client request rate in req/s; with OIDC, also limits rejected bearer validation per direct transport peer IP|
+|`--rate-burst`|`0` (derived)|Token-bucket burst; zero derives a sane default from `--rate-limit`, including the OIDC rejected-token bucket|
+|`--oidc-issuer`|`""` (off)|OIDC issuer URL whose tokens identify callers; setting it turns caller identity on. See [Caller identity](#caller-identity-oidc)|
+|`--oidc-jwks-uri`|`""` (derived)|Static JWKS endpoint, short-circuiting OIDC discovery (air-gapped or pinned-key deployments)|
+|`--oidc-audience`|`""`|Audience (`aud`) this deployment accepts; **required** with `--oidc-issuer`|
+|`--oidc-max-jwks-staleness`|`1h`|Maximum age of last-good signing keys during an IdP outage. `0` deliberately disables this bound; negative values are rejected.|
 
 #### Caller identity (OIDC)
 
@@ -357,36 +359,36 @@ secrets or raw file content. See [ADR 0088](https://github.com/stacklok/mecatl/b
 
 ### Session state
 
-| Flag | Default | Notes |
-|---|---|---|
-| `--store-dir` | `""` (in-memory) | Directory for the JSONL session store. Empty = in-memory, no persistence across restart |
-| `--session-lease-dir` | `""` | Single-host flock lease backend; see [multi-replica](#multi-replica) |
-| `--session-lease-k8s-namespace` | `""` | k8s `coordination.k8s.io` Lease backend; see [multi-replica](#multi-replica) |
-| `--session-lease-ttl` | `30s` | Lease lifetime; a crashed holder's lease becomes claimable after this long |
-| `--session-store-url` | `""` | gRPC driver endpoint replacing the local JSONL store (mutually exclusive with `--store-dir`) |
+|Flag|Default|Notes|
+|-|-|-|
+|`--store-dir`|`""` (in-memory)|Directory for the JSONL session store. Empty = in-memory, no persistence across restart|
+|`--session-lease-dir`|`""`|Single-host flock lease backend; see [multi-replica](#multi-replica)|
+|`--session-lease-k8s-namespace`|`""`|k8s `coordination.k8s.io` Lease backend; see [multi-replica](#multi-replica)|
+|`--session-lease-ttl`|`30s`|Lease lifetime; a crashed holder's lease becomes claimable after this long|
+|`--session-store-url`|`""`|gRPC driver endpoint replacing the local JSONL store (mutually exclusive with `--store-dir`)|
 
 ### Scheduled tasks
 
-| Flag | Default | Notes |
-|---|---|---|
-| `--no-scheduler` | `false` | Disable the in-process scheduler tick loop (ON by default when the store exposes a `ScheduleStore` — `--store-dir` or redisstore). The create/list/fire API still works. The removed `--scheduler` opt-in fails fast as an unknown flag |
-| `--scheduler-tick-interval` | `30s` | How often the tick loop polls for due schedules |
-| `--scheduler-min-interval` | `1m` | Frequency floor enforced at schedule-create time (fail-closed, by both the in-chat `Schedule` tool and the REST/gRPC create). Defaults to `1m`; `0` disables the floor |
-| `--scheduler-max-concurrent-fires` | `4` | Max schedules fired in parallel per tick |
-| `--schedule-store-url` | `""` | gRPC driver endpoint (`ScheduleStoreService` + `ScheduleOneShotReArmerService`) for the durable schedule registry, **independent of the session store** — when set, replaces the `ScheduleStore()` discovery from the configured store. Empty keeps the default (the configured store's own `ScheduleStore()`, or no scheduling). The driver runs atomic fire advancement server-side, but current remote drivers do not expose atomic create-only publication; this option is therefore rejected when OIDC caller ownership is enabled |
-| `--learning-store-url` | `""` | One distributed-learning driver endpoint. Startup requires explicit capability advertisement of the complete Attempt/Proposal/Skill repository set and, when automatic learning is non-off, the automatic admission ledger; partial drivers fail instead of mixing remote and local persistence or accounting. The explicit flag still dials/probes/composes repositories in off mode for explicit reflection, learned-skill inspection, and recovery of already-admitted work; it does not enable automatic admission. Repository partitions are opaque on the wire. Current raw RPCs are permitted only as trusted single-tenant infrastructure with `OwnershipEnforced=false`; ownership-enforced/multi-tenant startup fails closed pending ADR-0213 workload-authenticated ownership |
+|Flag|Default|Notes|
+|-|-|-|
+|`--no-scheduler`|`false`|Disable the in-process scheduler tick loop (ON by default when the store exposes a `ScheduleStore` — `--store-dir` or redisstore). The create/list/fire API still works. The removed `--scheduler` opt-in fails fast as an unknown flag|
+|`--scheduler-tick-interval`|`30s`|How often the tick loop polls for due schedules|
+|`--scheduler-min-interval`|`1m`|Frequency floor enforced at schedule-create time (fail-closed, by both the in-chat `Schedule` tool and the REST/gRPC create). Defaults to `1m`; `0` disables the floor|
+|`--scheduler-max-concurrent-fires`|`4`|Max schedules fired in parallel per tick|
+|`--schedule-store-url`|`""`|gRPC driver endpoint (`ScheduleStoreService` + `ScheduleOneShotReArmerService`) for the durable schedule registry, **independent of the session store** — when set, replaces the `ScheduleStore()` discovery from the configured store. Empty keeps the default (the configured store's own `ScheduleStore()`, or no scheduling). The driver runs atomic fire advancement server-side, but current remote drivers do not expose atomic create-only publication; this option is therefore rejected when OIDC caller ownership is enabled|
+|`--learning-store-url`|`""`|One distributed-learning driver endpoint. Startup requires explicit capability advertisement of the complete Attempt/Proposal/Skill repository set and, when automatic learning is non-off, the automatic admission ledger; partial drivers fail instead of mixing remote and local persistence or accounting. The explicit flag still dials/probes/composes repositories in off mode for explicit reflection, learned-skill inspection, and recovery of already-admitted work; it does not enable automatic admission. Repository partitions are opaque on the wire. Current raw RPCs are permitted only as trusted single-tenant infrastructure with `OwnershipEnforced=false`; ownership-enforced/multi-tenant startup fails closed pending ADR-0213 workload-authenticated ownership|
 
 See [Scheduled tasks](/building/what-you-get/scheduled-tasks.md) for the in-chat `Schedule` tool and the gRPC/REST management surface.
 
 ### LLM resilience
 
-| Flag | Default | Notes |
-|---|---|---|
-| `--llm-per-attempt-timeout` | `300s` | Bounds **establishing** the stream only (connect + first chunk). Does not cut an actively-streaming turn |
-| `--llm-stream-idle-timeout` | `180s` | Max idle gap between chunks after the first arrives. A stall exceeding this is terminal and not retried |
-| `--llm-max-attempts` | `3` | Max stream-establish attempts (initial call + retries) |
-| `--llm-breaker-threshold` | `5` | Consecutive LLM failures that open the circuit breaker; `0` disables |
-| `--llm-breaker-cooldown` | `30s` | How long the breaker stays open before half-opening |
+|Flag|Default|Notes|
+|-|-|-|
+|`--llm-per-attempt-timeout`|`300s`|Bounds **establishing** the stream only (connect + first chunk). Does not cut an actively-streaming turn|
+|`--llm-stream-idle-timeout`|`180s`|Max idle gap between chunks after the first arrives. A stall exceeding this is terminal and not retried|
+|`--llm-max-attempts`|`3`|Max stream-establish attempts (initial call + retries)|
+|`--llm-breaker-threshold`|`5`|Consecutive LLM failures that open the circuit breaker; `0` disables|
+|`--llm-breaker-cooldown`|`30s`|How long the breaker stays open before half-opening|
 
 `--llm-per-attempt-timeout` uses a separate timer that fires only if no first chunk
 arrived — it does NOT set a `context.WithTimeout` that would silently truncate a
@@ -395,16 +397,16 @@ slow reasoning turn. Once the first chunk arrives, the timer is stopped and only
 
 ### Provider and model
 
-| Flag | Default | Notes |
-|---|---|---|
-| `--model` | `""` | Model id sent to the provider; empty uses the provider-appropriate default |
-| `--default-provider` | `""` | Deployment-wide default provider (`openai`, `openrouter`, `anthropic`, `opencode`); validated fail-fast |
-| `--default-model` | `""` | Deployment-wide default model id for the default provider; validated fail-fast |
-| `--subagent-model` | `""` | Global default model for child engines (Subagent, Parallel branches, team members) that do not pin their own |
-| `--no-prompt-cache` | `false` | Disable provider-side prompt caching (on by default — see [ADR 0100](https://github.com/stacklok/mecatl/blob/main/docs/adr/0100-provider-prompt-caching.md)) |
-| `--anthropic-cache-ttl` | `""` (API default, `5m`) | TTL on every Anthropic ephemeral cache breakpoint: `5m` or `1h` |
-| `--mock` | `false` | Offline canned provider — one text turn, no credentials; smoke tests only |
-| `--mock-script` | `""` | Path to a strict JSON mock script; implies the offline provider and replaces its canned turn with ordered text/tool-call turns |
+|Flag|Default|Notes|
+|-|-|-|
+|`--model`|`""`|Model id sent to the provider; empty uses the provider-appropriate default|
+|`--default-provider`|`""`|Deployment-wide default provider (`openai`, `openrouter`, `anthropic`, `opencode`); validated fail-fast|
+|`--default-model`|`""`|Deployment-wide default model id for the default provider; validated fail-fast|
+|`--subagent-model`|`""`|Global default model for child engines (Subagent, Parallel branches, team members) that do not pin their own|
+|`--no-prompt-cache`|`false`|Disable provider-side prompt caching (on by default — see [ADR 0100](https://github.com/stacklok/mecatl/blob/main/docs/adr/0100-provider-prompt-caching.md))|
+|`--anthropic-cache-ttl`|`""` (API default, `5m`)|TTL on every Anthropic ephemeral cache breakpoint: `5m` or `1h`|
+|`--mock`|`false`|Offline canned provider — one text turn, no credentials; smoke tests only|
+|`--mock-script`|`""`|Path to a strict JSON mock script; implies the offline provider and replaces its canned turn with ordered text/tool-call turns|
 
 Provider credentials are read from environment variables — `OPENAI_API_KEY`,
 `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `OPENCODE_API_KEY` — never flag
@@ -488,11 +490,11 @@ credential, or `--toolhive-llm-mode proxy` to fall back. If your gateway uses a
 self-signed certificate, use `--toolhive-llm-mode proxy` — direct mode does not honor
 `tls_skip_verify` (an upstream ToolHive gap), and proxy mode does.
 
-| Flag | Default | Purpose |
-| --- | --- | --- |
-| `--toolhive-llm` | `true` | Detect ToolHive's local LLM configuration. Set it to `false` on a shared host where this process must not use another operator's configuration. |
-| `--toolhive-llm-base-url` | `""` | Use an explicit loopback proxy URL. This always selects proxy mode. |
-| `--toolhive-llm-mode` | `auto` | Use `direct` when the HTTPS gateway URL and OIDC settings are complete; otherwise use the loopback proxy. Set `proxy` or `direct` to require one path. |
+|Flag|Default|Purpose|
+|-|-|-|
+|`--toolhive-llm`|`true`|Detect ToolHive's local LLM configuration. Set it to `false` on a shared host where this process must not use another operator's configuration.|
+|`--toolhive-llm-base-url`|`""`|Use an explicit loopback proxy URL. This always selects proxy mode.|
+|`--toolhive-llm-mode`|`auto`|Use `direct` when the HTTPS gateway URL and OIDC settings are complete; otherwise use the loopback proxy. Set `proxy` or `direct` to require one path.|
 
 Run `mecatui llm login` for the interactive OIDC flow, or add `--skip-browser`
 to print the authorization URL for an SSH session. This command writes the
@@ -503,7 +505,7 @@ Two things worth knowing before you rely on it:
 
 - **The proxy has to actually be reachable.** `/models` names the exact fix when it isn't:
   `thv llm proxy start` if the proxy isn't running, `thv llm setup` if your credential was
-  rejected. An empty model list from a *valid* credential is an organizational problem
+  rejected. An empty model list from a _valid_ credential is an organizational problem
   (ask your platform admin), not a local one.
 - **A model that lists fine can still fail at request time.** Some gateways expose "friendly"
   model aliases that have no cost route configured, so a request to one 5xxs with a
@@ -516,12 +518,12 @@ Two things worth knowing before you rely on it:
 
 ### Posture
 
-| Flag | Notes |
-|---|---|
-| `--posture strict` | Default. Every mutating call asks for approval |
-| `--posture trusted` | Honour a project's ALLOW rules (alias: `--trust-project`) |
-| `--posture auto` | Allow-all server-wide + main substitution loosening; child injection defence **on**. Recommended for unattended use |
-| `--posture yolo` | Also loosens child substitution (injection defence **off**). Isolated single-tenant only. Refused as root without `MECATL_SANDBOX=1` |
+|Flag|Notes|
+|-|-|
+|`--posture strict`|Default. Every mutating call asks for approval|
+|`--posture trusted`|Honour a project's ALLOW rules (alias: `--trust-project`)|
+|`--posture auto`|Allow-all server-wide + main substitution loosening; child injection defence **on**. Recommended for unattended use|
+|`--posture yolo`|Also loosens child substitution (injection defence **off**). Isolated single-tenant only. Refused as root without `MECATL_SANDBOX=1`|
 
 On a **headless** root (`--headless`), posture never raises `TrustProject`. Explicit
 `--trust-project`, `trustedWorkspaces:`, or undrifted remembered trust admits BOTH repo steering and
@@ -536,10 +538,10 @@ and out-ranked by the CLI flag when both are set.
 
 ### Guardrails
 
-| Flag | Default | Notes |
-|---|---|---|
-| `--guardrails-model` | `""` (off) | Model id or alias for the content checker. Configuring a model **enables** guardrails |
-| `--guardrails` | `""` | Kill-switch only: pass `--guardrails=off` to force off regardless of model config |
+|Flag|Default|Notes|
+|-|-|-|
+|`--guardrails-model`|`""` (off)|Model id or alias for the content checker. Configuring a model **enables** guardrails|
+|`--guardrails`|`""`|Kill-switch only: pass `--guardrails=off` to force off regardless of model config|
 
 The rule list and cost knobs live in the operator-global `settings.yaml`
 (`guardrails:` subtree). A project-tier `guardrails:` block is ignored with a WARN —
@@ -547,13 +549,13 @@ a checked-in file weakening a security checker would be a downgrade.
 
 ### MCP
 
-| Flag | Default | Notes |
-|---|---|---|
-| `--mcp-server name=URL` | (none) | Remote MCP server, repeatable. Per-server bearer token from `MCP_<NAME>_TOKEN`; a token-bearing URL must be `https` (or `http` to loopback) |
-| `--mcp-server-insecure-http name` | (none) | Per-server opt-in, repeatable: let the named server's bearer ride plain `http` off-host (cleartext on the network path — rely on network-layer controls + short-lived tokens). Unregistered or already-`https`/loopback names fail startup |
-| `--mcp-resource-tools` | `true` | Register `ListMcpResources`/`ReadMcpResource` meta-tools when a server exposes resources |
-| `--toolhive` | `true` | Discover MCP servers from running ToolHive workloads (fails soft when no container runtime is reachable) |
-| `--toolhive-group` | `""` (default group) | ToolHive group to discover from |
+|Flag|Default|Notes|
+|-|-|-|
+|`--mcp-server name=URL`|(none)|Remote MCP server, repeatable. Per-server bearer token from `MCP_<NAME>_TOKEN`; a token-bearing URL must be `https` (or `http` to loopback)|
+|`--mcp-server-insecure-http name`|(none)|Per-server opt-in, repeatable: let the named server's bearer ride plain `http` off-host (cleartext on the network path — rely on network-layer controls + short-lived tokens). Unregistered or already-`https`/loopback names fail startup|
+|`--mcp-resource-tools`|`true`|Register `ListMcpResources`/`ReadMcpResource` meta-tools when a server exposes resources|
+|`--toolhive`|`true`|Discover MCP servers from running ToolHive workloads (fails soft when no container runtime is reachable)|
+|`--toolhive-group`|`""` (default group)|ToolHive group to discover from|
 
 `--mcp-server` uses streaming-HTTP transport only. Mecatl never speaks stdio MCP
 directly; ToolHive stdio backends are HTTP-proxied and fine. A `mecatui connect … debug
@@ -566,11 +568,11 @@ and draft first, then send a separate current publication request and approve ex
 
 ### Skills
 
-| Flag | Default | Notes |
-|---|---|---|
-| `--skills-dir` | (none) | Trusted local Agent Skills directory; repeatable |
-| `--skills-conventional` | `false` | Add conventional project/user skill locations |
-| `--skill-source-url` | (none) | Remote `SkillSourceService`; replaces local discovery and snapshots metadata at startup |
+|Flag|Default|Notes|
+|-|-|-|
+|`--skills-dir`|(none)|Trusted local Agent Skills directory; repeatable|
+|`--skills-conventional`|`false`|Add conventional project/user skill locations|
+|`--skill-source-url`|(none)|Remote `SkillSourceService`; replaces local discovery and snapshots metadata at startup|
 
 The `Skill` tool uses path-free progressive disclosure. `{name}` loads instructions
 and a logical asset inventory; `{name, asset}` fetches one bounded textual asset.
@@ -581,14 +583,14 @@ where ordinary Write/Shell permissions apply.
 
 ### Observability
 
-| Flag | Default | Notes |
-|---|---|---|
-| `--otlp-endpoint` | `""` (off) | OTLP trace collector, e.g. `localhost:4317`; empty disables tracing |
-| `--otlp-protocol` | `grpc` | OTLP transport: `grpc` or `http` |
-| `--flight-recorder` | `true` | Arm the execution-trace ring buffer; snapshots at `/debug/flightrecorder` |
-| `--perf-mcp` | `false` | Mount a read-only perf MCP server at `/mcp` on the admin listener. Requires loopback `--metrics-addr` (unauthenticated surface) |
-| `--mutex-profile-fraction` | `0` (off) | `runtime.SetMutexProfileFraction`; adds overhead when > 0 |
-| `--block-profile-rate` | `0` (off) | `runtime.SetBlockProfileRate` in ns; adds overhead when > 0 |
+|Flag|Default|Notes|
+|-|-|-|
+|`--otlp-endpoint`|`""` (off)|OTLP trace collector, e.g. `localhost:4317`; empty disables tracing|
+|`--otlp-protocol`|`grpc`|OTLP transport: `grpc` or `http`|
+|`--flight-recorder`|`true`|Arm the execution-trace ring buffer; snapshots at `/debug/flightrecorder`|
+|`--perf-mcp`|`false`|Mount a read-only perf MCP server at `/mcp` on the admin listener. Requires loopback `--metrics-addr` (unauthenticated surface)|
+|`--mutex-profile-fraction`|`0` (off)|`runtime.SetMutexProfileFraction`; adds overhead when > 0|
+|`--block-profile-rate`|`0` (off)|`runtime.SetBlockProfileRate` in ns; adds overhead when > 0|
 
 The admin listener (`--metrics-addr`) is separate from the harness API and loopback by
 default. It carries `/metrics`, `/debug/pprof`, `/debug/vars`, and
@@ -789,11 +791,11 @@ second replica returns `FAILED_PRECONDITION` (gRPC) / HTTP 409.
 
 Three lease backends are available:
 
-| Backend | Flag | When to use |
-|---|---|---|
-| flock (single-host) | `--session-lease-dir <dir>` | Multiple `mecated` processes on one machine. flock auto-releases on crash |
-| k8s Lease | `--session-lease-k8s-namespace <ns>` | Multi-replica in Kubernetes; uses `coordination.k8s.io` Leases |
-| gRPC driver | `--session-lease-url <host:port>` | Custom or managed lease backend via the driver protocol |
+|Backend|Flag|When to use|
+|-|-|-|
+|flock (single-host)|`--session-lease-dir <dir>`|Multiple `mecated` processes on one machine. flock auto-releases on crash|
+|k8s Lease|`--session-lease-k8s-namespace <ns>`|Multi-replica in Kubernetes; uses `coordination.k8s.io` Leases|
+|gRPC driver|`--session-lease-url <host:port>`|Custom or managed lease backend via the driver protocol|
 
 The ServiceAccount for the k8s backend needs `get,create,update,delete` on
 `leases.coordination.k8s.io` in the configured namespace — no `list` or `watch`.
@@ -927,7 +929,7 @@ local process may connect to. Some details worth knowing:
   macOS and 107 on Linux. mecated checks this at startup and tells you the path, its
   length, and the limit, instead of letting `bind` fail with a bare `EINVAL`.
 
-**An empty `--http-addr`** disables the HTTP/SSE listener *and* the `--metrics-addr`
+**An empty `--http-addr`** disables the HTTP/SSE listener _and_ the `--metrics-addr`
 admin listener. They go together deliberately: both are TCP listeners you did not
 have to ask for, and "HTTP is off" would not be true if a second one on port 9090
 survived it. `--perf-mcp` is refused in this mode, since the listener it mounts on no
@@ -989,10 +991,10 @@ mount streaming-HTTP MCP servers for that session's lifetime — its own tools, 
 its own auth headers, isolated to that session. Whether the daemon accepts the
 field depends on where it listens:
 
-| Listener topology | `mcp_servers` |
-|---|---|
-| `--grpc-unix-socket` **and** `--http-addr ""` | accepted |
-| Anything else — including plain loopback TCP | refused on **every** listener, with `UNIMPLEMENTED` / `501` and the code `client_mcp_unsupported` |
+|Listener topology|`mcp_servers`|
+|-|-|
+|`--grpc-unix-socket` **and** `--http-addr ""`|accepted|
+|Anything else — including plain loopback TCP|refused on **every** listener, with `UNIMPLEMENTED` / `501` and the code `client_mcp_unsupported`|
 
 Only the fully socket-bound daemon qualifies. A loopback TCP port does **not**, and
 neither does a socket-plus-HTTP daemon: serving HTTP at all means serving TCP.

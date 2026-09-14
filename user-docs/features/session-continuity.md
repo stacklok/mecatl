@@ -78,13 +78,13 @@ reasons.
 
 ## Storage choices
 
-| Deployment | Session store | Event log | Continuity |
-| --- | --- | --- | --- |
-| `mecated` without `--store-dir` | in memory | in memory | process lifetime only |
-| `mecated --store-dir DIR` | local JSONL | JSONL sidecar | restart-safe on one host |
-| `mecated --session-store-url` | remote gRPC driver | local/default or separate driver | depends on driver durability |
-| `mecated --event-log-url` | independent of session store | remote gRPC driver | event replay depends on driver |
-| `mecak8s --redis-url` | Redis | Redis | suitable for stateless pods with shared Redis |
+|Deployment|Session store|Event log|Continuity|
+|-|-|-|-|
+|`mecated` without `--store-dir`|in memory|in memory|process lifetime only|
+|`mecated --store-dir DIR`|local JSONL|JSONL sidecar|restart-safe on one host|
+|`mecated --session-store-url`|remote gRPC driver|local/default or separate driver|depends on driver durability|
+|`mecated --event-log-url`|independent of session store|remote gRPC driver|event replay depends on driver|
+|`mecak8s --redis-url`|Redis|Redis|suitable for stateless pods with shared Redis|
 
 `--session-store-url` replaces `--store-dir`; the two are mutually exclusive.
 `--event-log-url` is independent and can be combined with either session-store

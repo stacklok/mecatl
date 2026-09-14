@@ -41,13 +41,13 @@ Team / InspectMember → memory → user-model → Skill → SkillDraft
 
 ### Querying
 
-| Method | Returns |
-|---|---|
-| `cat.Lookup(name)` | `(Tool, bool)` — the registered tool or `(nil, false)` |
-| `cat.Tools()` | All registered tools, sorted by name for determinism |
-| `cat.Available(mode)` | Mode-filtered tools: in `ModePlan`, non-read-only tools are excluded |
-| `cat.Specs(mode)` | `[]ToolSpec` of `Available(mode)` |
-| `cat.AdvertisedSpecs(mode)` | Per-turn specs under progressive disclosure — tools that implement `Disclosable` return their lightweight `Advertised()` spec instead of the full one |
+|Method|Returns|
+|-|-|
+|`cat.Lookup(name)`|`(Tool, bool)` — the registered tool or `(nil, false)`|
+|`cat.Tools()`|All registered tools, sorted by name for determinism|
+|`cat.Available(mode)`|Mode-filtered tools: in `ModePlan`, non-read-only tools are excluded|
+|`cat.Specs(mode)`|`[]ToolSpec` of `Available(mode)`|
+|`cat.AdvertisedSpecs(mode)`|Per-turn specs under progressive disclosure — tools that implement `Disclosable` return their lightweight `Advertised()` spec instead of the full one|
 
 Plan-mode filtering is enforced at the catalog level, before dispatch reaches the tool. A non-read-only tool that the model calls in plan mode never executes — the catalog does not expose it.
 
@@ -323,10 +323,10 @@ type ToolCallRecorder interface {
 
 The `jsonlstore.Store` implements `port.ToolCallRecorder` alongside `port.SessionStore` and `port.EventLog`. It writes one JSON record per `ToolCall` invocation to a `.tools.jsonl` sidecar in the session's family directory (`<store-dir>/sid-v1/`; see [Session store](./session-store.md) for the layout and why the filename is not the session id). The `.tools.jsonl` file is parallel to, not a superset of, the `.events.jsonl` event log:
 
-| File | What it captures |
-|---|---|
-| `*.tools.jsonl` | Structured per-tool audit: args, queue/exec timing |
-| `*.events.jsonl` | Relayed run stream: reasoning, ask/verdict pairs, delegation lifecycle |
+|File|What it captures|
+|-|-|
+|`*.tools.jsonl`|Structured per-tool audit: args, queue/exec timing|
+|`*.events.jsonl`|Relayed run stream: reasoning, ask/verdict pairs, delegation lifecycle|
 
 Neither subsumes the other. Wire a `ToolCallRecorder` when you need structured latency/audit data per tool call that is separate from the model's event stream.
 

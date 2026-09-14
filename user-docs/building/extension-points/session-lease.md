@@ -44,12 +44,12 @@ type SessionLease interface {
 
 The `Lease` value type carries four fields:
 
-| Field | Type | Meaning |
-|---|---|---|
-| `SessionID` | `session.SessionID` | The session this lease guards |
-| `Owner` | `string` | The holding process's owner-identity string (e.g. `<hostname>-<pid>-<build-nonce>`); composition builds it once per `app.Build` |
-| `Token` | `uint64` | Monotone fencing epoch; advances on every takeover (free/expired/other-owner → new holder), stable across a successful `Renew` |
-| `Expiry` | `time.Time` | Wall-clock instant the lease lapses if not renewed |
+|Field|Type|Meaning|
+|-|-|-|
+|`SessionID`|`session.SessionID`|The session this lease guards|
+|`Owner`|`string`|The holding process's owner-identity string (e.g. `<hostname>-<pid>-<build-nonce>`); composition builds it once per `app.Build`|
+|`Token`|`uint64`|Monotone fencing epoch; advances on every takeover (free/expired/other-owner → new holder), stable across a successful `Renew`|
+|`Expiry`|`time.Time`|Wall-clock instant the lease lapses if not renewed|
 
 Implementations return `port.Lease` as an immutable value. `Acquire` and `Renew` return a fresh value — callers store the returned value, never mutate one in place.
 
@@ -103,12 +103,12 @@ Key points from the implementation:
 
 Deploy them in this order as you scale up:
 
-| Backend | Package | Flag | Use case |
-|---|---|---|---|
-| `memlease` | `engine/adapter/memlease` | (none — explicit construction) | Tests, offline, single-replica |
-| `flocklease` | `internal/adapter/flocklease` | `--session-lease-dir <dir>` | Single host, multiple processes |
-| `k8slease` | `internal/adapter/k8slease` | `--session-lease-k8s-namespace <ns>` | Kubernetes multi-replica (mecak8s) |
-| `grpcdriver` | `internal/adapter/grpcdriver` | `--session-lease-url <host:port>` | Remote or multi-host lease service |
+|Backend|Package|Flag|Use case|
+|-|-|-|-|
+|`memlease`|`engine/adapter/memlease`|(none — explicit construction)|Tests, offline, single-replica|
+|`flocklease`|`internal/adapter/flocklease`|`--session-lease-dir <dir>`|Single host, multiple processes|
+|`k8slease`|`internal/adapter/k8slease`|`--session-lease-k8s-namespace <ns>`|Kubernetes multi-replica (mecak8s)|
+|`grpcdriver`|`internal/adapter/grpcdriver`|`--session-lease-url <host:port>`|Remote or multi-host lease service|
 
 ### `engine/adapter/memlease` — in-process reference
 
