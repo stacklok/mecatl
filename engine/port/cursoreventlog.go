@@ -35,6 +35,15 @@ var ErrCursorMalformed = errors.New("port: malformed event-log cursor")
 // beginning or reloads the transcript.
 var ErrCursorExpired = errors.New("port: event-log cursor expired")
 
+// ErrEventFollowCapacity is yielded by a CursorEventLog follow read when the
+// backend cannot immediately admit another follower. Callers may retry from
+// their last processed cursor; the rejected read performs no storage work.
+//
+// It is deliberately distinct from delivery lag. Capacity means the backend
+// rejected the iterator before it began, while lag means an admitted consumer
+// could not keep up with records already being delivered.
+var ErrEventFollowCapacity = errors.New("port: event-log follow capacity exhausted")
+
 // cursorEnvelopeVersion tags the encoded cursor so a future encoding change is
 // distinguishable from corruption. A cursor carrying an unrecognised version is
 // malformed, never coerced.

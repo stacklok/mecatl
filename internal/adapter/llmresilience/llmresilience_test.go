@@ -1693,6 +1693,7 @@ func emptyJSONErr() error {
 
 func TestDefaultClassifier(t *testing.T) {
 	mk := func(code int) error { return apiErr(code) }
+	wrappedHTTP2 := error(&http2.StreamError{StreamID: 1, Code: http2.ErrCodeInternal})
 	cases := []struct {
 		name string
 		err  error
@@ -1709,7 +1710,7 @@ func TestDefaultClassifier(t *testing.T) {
 		{"connection error retryable", &net.OpError{Op: "dial", Err: errors.New("refused")}, true},
 		{"deadline exceeded retryable", context.DeadlineExceeded, true},
 		{"http2 stream error retryable", &http2.StreamError{StreamID: 45, Code: http2.ErrCodeInternal}, true},
-		{"wrapped http2 stream error retryable", fmt.Errorf("x: %w", &http2.StreamError{StreamID: 1, Code: http2.ErrCodeInternal}), true},
+		{"wrapped http2 stream error retryable", fmt.Errorf("x: %w", wrappedHTTP2), true},
 		{"context canceled not", context.Canceled, false},
 		{"wrapped canceled not", fmt.Errorf("x: %w", context.Canceled), false},
 		{"unknown not", errors.New("mystery"), false},

@@ -13,6 +13,11 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Added
 
+- **Event-follow capacity classification** — adds
+  `port.ErrEventFollowCapacity`, allowing `CursorEventLog` backends to reject a
+  follow iterator before storage work begins when follower capacity is full.
+  Added (minor).
+
 - **Session-load failure classification** — adds `port.SessionLoadFailureClass`,
   `SessionLoadFailureError`, `ErrSessionLoadFailure`, `NewSessionLoadFailure`, and
   `ClassifySessionLoadFailure`. Snapshot-backed stores can distinguish bounded

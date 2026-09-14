@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
-	tcredis "github.com/stacklok/toolhive-core/redis"
+	"github.com/stacklok/toolhive-core/redisconn"
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/adapter/filewatch"
@@ -28,7 +28,8 @@ const (
 	reloadJoinGrace      = 2 * time.Second
 )
 
-type clientFactory func(context.Context, *tcredis.Config) (redis.UniversalClient, error)
+type clientFactory func(context.Context, *redisconn.Config) (redis.UniversalClient, error)
+type clientPairFactory func(context.Context, *redisconn.Config, int) (clientPair, error)
 type watcherFactory func([]string, time.Duration, time.Duration, func(), func(error)) (*filewatch.Watcher, error)
 type credentialFileReader func(*os.File, int64) ([]byte, error)
 
@@ -46,6 +47,8 @@ func readCredentialFile(file *os.File, maxBytes int64) ([]byte, error) {
 type storeDependencies struct {
 	initialClient clientFactory
 	candidate     clientFactory
+	initialPair   clientPairFactory
+	candidatePair clientPairFactory
 	watcher       watcherFactory
 	backoff       func(int) time.Duration
 	jitter        func(time.Duration) time.Duration
@@ -55,12 +58,15 @@ type storeDependencies struct {
 }
 
 func defaultStoreDependencies() storeDependencies {
-	newClient := func(ctx context.Context, cfg *tcredis.Config) (redis.UniversalClient, error) {
-		return tcredis.NewClient(ctx, cfg)
+	newClient := func(ctx context.Context, cfg *redisconn.Config) (redis.UniversalClient, error) {
+		return redisconn.NewClient(ctx, cfg)
+	}
+	newPair := func(ctx context.Context, cfg *redisconn.Config, poolSize int) (clientPair, error) {
+		return buildClientPair(ctx, cfg, poolSize, newClient)
 	}
 	return storeDependencies{
-		initialClient: newClient,
-		candidate:     newClient,
+		initialPair:   newPair,
+		candidatePair: newPair,
 		watcher:       filewatch.New,
 		jitter: func(delay time.Duration) time.Duration {
 			spread := delay / 4
@@ -235,23 +241,26 @@ func reloadRetryDelay(attempt int, backoff time.Duration, deps storeDependencies
 }
 
 func reloadCandidate(ctx context.Context, st *Store, cfg Config, deps storeDependencies) error {
+	followPoolSize, _, err := effectiveFollowLimits(cfg)
+	if err != nil {
+		return err
+	}
 	conn, err := connectionConfigWithReader(cfg, deps.readFile)
 	if err != nil {
 		return err
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, reloadProbeTimeout)
 	defer cancel()
-	factory := deps.candidate
-	candidate, err := factory(probeCtx, &conn)
+	candidate, err := candidateClientPair(probeCtx, &conn, followPoolSize, deps)
 	if err != nil {
 		return err
 	}
 	if err := probeCtx.Err(); err != nil {
-		_ = candidate.Close()
+		closeClientPair(candidate)
 		return err
 	}
-	if err := st.clients.swap(candidate); err != nil {
-		_ = candidate.Close()
+	if err := st.clients.swapPair(candidate); err != nil {
+		closeClientPair(candidate)
 		return err
 	}
 	return nil
