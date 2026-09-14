@@ -162,8 +162,8 @@ task site:format # prettier normalization pass (optional, not CI-enforced)
 ```
 
 `task site:build` is required for a documentation change. It fails on broken
-links. `task site:format` is optional prose/list/table normalization; nothing
-in CI checks formatting. It skips the generated reference pages listed above
+links. `task site:format` is optional prose/list/table normalization; nothing in
+CI checks formatting. It skips the generated reference pages listed above
 (`user-docs/.prettierignore`) so it never fights their own generators. Do not
 put working plans, authoring ledgers, or internal implementation queues in
 `user-docs/`; keep them in issues, project planning, or an acceptance plan.

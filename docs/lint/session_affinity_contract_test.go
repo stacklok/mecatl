@@ -3,9 +3,19 @@ package lint
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
+
+// collapseWhitespace normalizes runs of whitespace (including the line breaks
+// that Prettier's proseWrap introduces) to a single space, so a needle that
+// happens to straddle a reflowed line break still matches.
+var whitespaceRun = regexp.MustCompile(`\s+`)
+
+func collapseWhitespace(s string) string {
+	return whitespaceRun.ReplaceAllString(s, " ")
+}
 
 func TestADR_0294_DocumentationContract(t *testing.T) {
 	t.Parallel()
@@ -40,14 +50,14 @@ func TestADR_0294_DocumentationContract(t *testing.T) {
 	}
 
 	for name, needles := range requirements {
-		name, needles := name, needles
 		t.Run(name, func(t *testing.T) {
 			body, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(name)))
 			if err != nil {
 				t.Fatalf("read %s: %v", name, err)
 			}
+			normalized := collapseWhitespace(string(body))
 			for _, needle := range needles {
-				if !strings.Contains(string(body), needle) {
+				if !strings.Contains(normalized, collapseWhitespace(needle)) {
 					t.Errorf("%s does not document %q", name, needle)
 				}
 			}
