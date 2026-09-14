@@ -136,6 +136,13 @@ func TestInvariant_ProviderSetupFollowup_TerminalCancellationAndSecretSafety(t *
 	for _, mode := range []string{"success", "limit", "oversized", "cancel", "ctrl-c", "eof", "control", "read-failure", "echo-off", "nonblocking", "field-cancel", "field-success", "invalid-text"} {
 		t.Run(mode, func(t *testing.T) {
 			master, slave := providerPTY(t)
+			// Input and output share this descriptor. Prime output before the
+			// flag snapshot: Darwin adds its immutable FWASWRITTEN bit on the
+			// first write, independently of the reader's restorable flags.
+			if _, err := io.WriteString(slave, "\n"); err != nil {
+				t.Fatal(err)
+			}
+			providerPTYOutput(t, master, "\r\n")
 			if mode == "echo-off" {
 				state, err := term.MakeRaw(int(slave.Fd()))
 				if err != nil {
