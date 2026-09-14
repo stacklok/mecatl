@@ -239,7 +239,7 @@ A delegation-root `Run` owns a trajectory ledger until normal child drain/termin
 
 Narrow approval correctness is in scope. Every new `PendingAsk` and `ApprovalPayload` carries the explicit origin `permission`, `hook_guardrail`, or `plan`; absent is unknown. `surfaceAsk` copies the pending origin into the verdict event. In `resolvePendingCall`, validate approval kind and switch on origin before any `Policy.Learn`, waiver operation, plan transition, execution, or held-result release: permission may follow the ordinary learning/execution path; hook-guardrail may execute an approved action or release the one bound held result and may arm only the exact process/session waiver; plan performs only the existing plan transition and never executes or learns; unknown fails closed with a paired synthetic error. `replayApprovals` consumes only `AllowAlways` events whose origin is exactly permission. Old events/snapshots with no origin are unknown and conservatively re-ask on a later call; call/tool names and old booleans are never used to guess permission origin. The `EvApproval` remains a verdict mirror and adds only this small machine origin field—no args, result, rationale, or grant body.
 
-A contextual action repeat grant never calls permission learning and never survives restart. Repeat is offered only for a repeatable, version-bound action, and the human detail names the exact session/environment/caller/tool/effective-call/target scope and every implicated script, configuration, or target dependency included in it. Its `GrantDigest` is an opaque HMAC-SHA256 over a canonical length-delimited encoding of that scope and the identified dependency versions, keyed by the existing Build-owned random secret used for process-local opaque selectors (or a sibling key from the same Build owner). It is not an unkeyed hash of secret-shaped args and cannot collide through delimiter ambiguity. If required dependency evidence is missing, unverifiable, or marked incomplete by review, set `RepeatAvailable=false`, explain the precise limitation to the human, and still offer Run once; do not silently downgrade all approvals or claim to discover every dynamic Shell dependency. Safe common direct actions with complete versioned bindings retain repeat. A known script/config/target version change misses the grant and triggers a fresh review; an incomplete dynamic dependency can never mint a new repeat grant. The exact tool call remains in existing session history; no call body is copied into the approval event. This is the approved narrow replay repair, not a general event-log/restart redesign.
+A contextual action repeat grant never calls permission learning and never survives restart. Repeat is offered only for a repeatable, version-bound action, and the human detail names the exact session/environment/caller/tool/effective-call/target scope and every implicated script, configuration, or target dependency included in it. Its `GrantDigest` is an opaque HMAC-SHA256 over one shared canonical preimage helper used by both creation and recomputation: the exact ASCII bytes `mecatl/guardrail-grant/v1`, followed by one NUL byte, followed by the canonical length-delimited encoding of that scope and the identified dependency versions. The HMAC key is the existing Build-owned random secret used for process-local opaque selectors or a sibling key from the same Build owner, but domain separation is mandatory in either case. A wrong-purpose MAC made with the same key and identical subsequent fields never validates. Neither the key nor the preimage is logged. The digest is not an unkeyed hash of secret-shaped args and cannot collide through delimiter ambiguity. If required dependency evidence is missing, unverifiable, or marked incomplete by review, set `RepeatAvailable=false`, explain the precise limitation to the human, and still offer Run once; do not silently downgrade all approvals or claim to discover every dynamic Shell dependency. Safe common direct actions with complete versioned bindings retain repeat. A known script/config/target version change misses the grant and triggers a fresh review; an incomplete dynamic dependency can never mint a new repeat grant. The exact tool call remains in existing session history; no call body is copied into the approval event. This is the approved narrow replay repair, not a general event-log/restart redesign.
 
 ### 6. Security / authority
 
@@ -259,6 +259,26 @@ If cancellation, decline, disconnect/run cleanup, or restart makes a held result
 
 ## Runtime behavior and defaults
 
+### Completed-review disposition matrix
+
+`inspection=complete` means the checker completed its protocol; it does not imply that the checker had enough evidence to decide. In particular, `assessment=unresolved` caused by exhausted capacity, incomplete trajectory, or specifically missing decision-relevant evidence is a completed assessment, not an operational checker outage.
+
+| Rule mode | Job | Assessment | Inspection | Runtime disposition |
+|---|---|---|---|---|
+| enforcing (`block`) | action | acceptable | complete | execute after binding revalidation |
+| enforcing (`block`) | action | prohibited | complete | ask for action approval interactively; deny headless |
+| enforcing (`block`) | action | unresolved | complete | ask for action approval interactively; deny headless, naming actual missing-evidence source refs |
+| enforcing (`block`) | inbound | acceptable | complete | release the result |
+| enforcing (`block`) | inbound | prohibited | complete | hold for `result_release` interactively; withhold headless |
+| enforcing (`block`) | inbound | unresolved | complete | hold for `result_release` interactively; withhold headless, naming actual missing-evidence source refs |
+| advisory | action or inbound | acceptable | complete | original action/result unchanged, with acceptable status |
+| advisory | action or inbound | prohibited | complete | original action/result unchanged, with an explicit finding |
+| advisory | action or inbound | unresolved | complete | original action/result unchanged, with explicit unresolved/incomplete status; never label it an unsafe finding |
+| enforcing (`block`, `onCheckerDown: fail`) | action or inbound | no completed assessment | operational_failure | bounded recovery, then the job-appropriate interactive approval or unattended deny/withhold |
+| enforcing (`block`, `onCheckerDown: warn`) or advisory | action or inbound | no completed assessment | operational_failure | original action/result unchanged with an explicit checker-failure warning |
+
+`onCheckerDown` and its warning/fail streak apply only to operational checker failure. A completed unresolved assessment does not increment the checker-DOWN streak. Invalid authority, stale binding, forbidden evidence, and deterministic permission/plan/system-scope denial fail closed in their owning gate and never become checker-DOWN. Missing-evidence reporting references only actual unavailable/incomplete sources; it must not fabricate an attack or prohibited finding.
+
 ### Coverage
 
 When guardrails are enabled, the default enforcing rules are:
@@ -269,6 +289,14 @@ When guardrails are enabled, the default enforcing rules are:
 | before result delivery | Shell; Read, ListDir, Grep, Glob; WebSearch, WebFetch; `mcp__*`; `FetchMcpResource`; `CallMcpWithQuery` | inbound |
 
 The same applicable checks run for main, read-only/writable Subagent, Parallel branches, Team members, and lead. Checker engines are inert and cannot recursively invoke guardrails. Explicit operator rules replace matching defaults using existing precedence; `advisory` remains explicit. No local-read pre-check is implied.
+
+### Pre-action read-batch assessment and execution
+
+The dispatcher serially performs existing tool lookup, requested-call permission/plan/system-scope checks, trusted mutation exactly once, effective-call policy/system-scope checks when mutation changed arguments, immutable review-request preparation, and a repeat tool lookup for every sibling. Static `DispatchSerial`, call-specific `MutatesParent`, mutating, and unknown-tool barriers retain their current semantics and are never admitted to this speculative phase.
+
+For an eligible ordinary read-only sibling, only the independent `ToolReviewer.Review` assessment runs concurrently, each into a private indexed record. Assessment goroutines do not mutate `Session`, recorder, event stream, trajectory ledger, transient detail, or any approval state. No tool action—including a read-only action—executes speculatively. After all assessments join, the dispatcher drains decisions and any action asks in original call order, with at most one live ask. After every wait and immediately before execution, it revalidates authority, environment, dependencies, and the reviewed binding. It then dispatches only the approved actual read-only tools concurrently through the existing read batch. WebSearch, WebFetch, Subagent, and Parallel remain eligible when their existing static/call-specific classification is read-only; contextual review must not impose a global serial-LLM regression on them.
+
+Cancellation joins all assessment work and closes every admitted call with an ordered paired error result. Concurrency proofs use channels to establish that all reviewers entered before unblock and that approved read execution overlaps; ordering proofs observe surfaced asks directly and use no sleeps.
 
 ### Post-result hold and release
 
@@ -294,12 +322,14 @@ This changes the hook-approval contract in [ADR 0062](../adr/0062-guardrails-app
 
 - AC1.1: trusted mutation runs once; changed effective args are re-evaluated by permission, plan, and system-scope gates; unchanged calls do not receive a duplicate ask; execution receives byte-identical reviewed args.
   - verify: `TestADR_0334_ContextualGuardrails_Scenario1_EffectiveCallOrder`
-- AC1.2: Run once executes once; Don't ask again is offered only when implicated script/config/target dependencies are identified and version-bound, matches only the exact displayed session/environment/caller/tool/effective-call/target/dependency digest, and never reaches permission learning or permission replay. A known script change misses; an incomplete dynamic dependency sets `repeat_available=false` with a precise human limitation while Run once remains available; complete safe direct actions retain repeat.
-  - verify: `TestADR_0334_ContextualGuardrails_Scenario1_ExactRepeatGrant`
+- AC1.2: Run once executes once; Don't ask again is offered only when implicated script/config/target dependencies are identified and version-bound, matches only the exact displayed session/environment/caller/tool/effective-call/target/dependency digest, and never reaches permission learning or permission replay. Grant creation and recomputation share one HMAC preimage helper that prepends exact ASCII `mecatl/guardrail-grant/v1` plus NUL before the canonical length-delimited scope; the prefix is mandatory even with a sibling key, a wrong-purpose MAC made with the same key and fields never validates, and neither key nor preimage is logged. A known script change misses; an incomplete dynamic dependency sets `repeat_available=false` with a precise human limitation while Run once remains available; complete safe direct actions retain repeat.
+  - verify: `TestADR_0334_ContextualGuardrails_Scenario1_ExactRepeatGrant`, `TestADR_0334_ContextualGuardrails_Scenario1_GrantDomainSeparation`
 - AC1.3: permission, hook-guardrail, and plan approvals carry distinct explicit origins through live and awaiting paths; JSON event replay accepts only explicit permission origin, the `Approval.origin=6` proto projection preserves exact parity through mapper and `StreamSessionEvents`, and absent/unrecognized origins fail closed before learning/action.
   - verify: `TestADR_0334_ContextualGuardrails_Scenario1_ApprovalOriginReplay`, `TestADR_0334_ContextualGuardrails_Scenario1_ApprovalOriginProtoProjection`
 - AC1.4: sanitize configuration and implementation paths are absent/rejected, with no legacy reviewer selector or replacement-action execution.
   - verify: `TestADR_0334_ContextualGuardrails_Scenario1_ReplacementRemoval`
+- AC1.5: requested/effective deterministic gates, trusted mutation, immutable request preparation, and repeat lookup remain serial on the dispatcher; independent action reviews for eligible read-only siblings enter concurrently into mutation-free private records, then decisions/action asks drain in original order with at most one live ask. After each wait authority/environment/dependencies are revalidated before approved read-only tools execute concurrently. Static `DispatchSerial`, call-specific `MutatesParent`, mutating, and unknown-tool barriers remain serial; cancellation joins reviews and produces complete ordered paired errors; no tool action is speculative and WebSearch/WebFetch/Subagent/Parallel incur no blanket serial-review regression.
+  - verify: `TestADR_0334_ContextualGuardrails_Scenario1_ConcurrentActionReviews`
 
 ### Scenario 2 — evidence, budget, and failure behavior
 
@@ -309,7 +339,7 @@ Evidence remains narrower than the checker quarantine established by [ADR 0021](
   - verify: `TestADR_0334_ContextualGuardrails_Scenario2_EvidenceAuthority`
 - AC2.2: one 90-second deadline covers setup, evidence, provider recovery, and at most three complete recoverable attempts; genuine assessments are not retried; human wait is excluded and revalidation neither resets budget nor uses a fixed five-second context.
   - verify: `TestADR_0334_ContextualGuardrails_Scenario2_TotalBudget`
-- AC2.3: checker failure maps to interactive approval or unattended block under `fail`, and only explicit `warn` continues with warning; findings, deterministic denial, stale/forbidden evidence, and authority failure never use the operational opt-out.
+- AC2.3: operational checker failure maps to job-appropriate interactive approval or unattended deny/withhold under `fail`, and only explicit `warn` continues with warning. A completed unresolved assessment caused by capacity exhaustion, incomplete trajectory, or named missing evidence follows the explicit mode/job matrix: enforcing asks action approval or holds result release interactively and denies/withholds headless; advisory leaves the original unchanged with unresolved/incomplete status, never an unsafe finding. Completed unresolved does not increment checker-DOWN state. Findings, deterministic denial, stale/forbidden evidence, and invalid authority fail closed in their owning path and never use the operational opt-out; missing-evidence refs are real rather than fabricated attacks.
   - verify: `TestADR_0334_ContextualGuardrails_Scenario2_FailureMatrix`
 - AC2.4: revalidation narrows races using existing versions/context without claiming an exact universal filesystem snapshot or remote atomicity.
   - verify: `TestADR_0334_ContextualGuardrails_Scenario2_RevalidationResidual`
@@ -367,8 +397,10 @@ The corpus tests the replacement decision recorded by [ADR 0334](../adr/0334-con
   - verify: `TestADR_0334_ContextualGuardrails_Scenario6_RubricContract`, `TestADR_0334_ContextualGuardrails_Scenario6_AdditiveRulePrompt`
 - AC6.3: implementation builds a versioned measurement runner and report schema for false warnings, false blocks, misses, latency, investigation frequency, and spend; offline mocks prove protocol only and make no efficacy claim. Actual checker-model comparisons require separate operator route/spend authorization at release-validation time.
   - verify: `TestADR_0334_ContextualGuardrails_Scenario6_QualityReportSchema`
-- AC6.4: implementation selects private evidence/trajectory count-and-byte capacities from native limits and measured stress workload, proves pre-allocation rejection and aggregate-exhaustion-to-unresolved offline, and records the values, rationale, and experiments in its implementation review report. Production-readiness claims additionally require separately authorized real-model quality results; neither deliverable blocks plan proposal, Plan / Interface merge, or implementation review.
+- AC6.4: implementation-selected private evidence/trajectory count-and-byte capacities are finite, enforced before allocation, and aggregate exhaustion produces complete unresolved/incomplete behavior rather than acceptable; production-readiness claims additionally require separately authorized real-model quality results.
   - verify: `TestADR_0334_ContextualGuardrails_Scenario6_ImplementationCalibration`
+- AC6.5: implementation review inspects an evidence report that records the selected finite capacity constants and units, rationale from native limits, measured offline stress experiments and results, and the corresponding pre-allocation/exhaustion proof artifacts. Neither this report nor separately authorized real-model quality results blocks plan proposal, Plan / Interface merge, or implementation review.
+  - verify: inspection — implementation capacity-calibration report contains selected constants, rationale, stress experiments/results, and proof artifact references
 
 ### Scenario 7 — prompt discoverability and lifecycle
 
@@ -380,8 +412,8 @@ Factory tests and inventory follow the model-visible-affordance and resource rul
   - verify: `TestADR_0334_ContextualGuardrails_Scenario7_TerminalSafety`
 - AC7.3: cloud inventory rows document transient detail, held-result map, evidence handles/previews, trajectory ledger, and contextual repeat grants in both List 1 and List 2 with ownership, lifetime, cleanup, and reset-by-design behavior.
   - verify: `TestADR_0334_ContextualGuardrails_Scenario7_ResourceInventory`
-- AC7.4: generated proto, API snapshots/changelog, strict config reference, owning user docs, and Mecatui approval/status UI agree with the seven interface categories.
-  - verify: `TestADR_0334_ContextualGuardrails_Scenario7_InterfaceConformance`
+- AC7.4: concrete protobuf review/approval fields preserve exact action-versus-inbound job, complete/unresolved/operational-failure inspection state, disposition, approval kind, repeat availability, and explicit approval origin through mapper and stream projection; invalid approval-kind/origin combinations fail before execution, release, learning, waiver, or misleading audit.
+  - verify: `TestADR_0334_ContextualGuardrails_Scenario7_InterfaceProjectionSafety`
 
 ## Out of scope
 
@@ -399,9 +431,9 @@ Factory tests and inventory follow the model-visible-affordance and resource rul
 
 1. Implementation review includes the selected private evidence/trajectory count-and-byte capacities, rationale, stress experiments, and offline proofs that reads fail before oversized allocation and aggregate exhaustion resolves safely; these values are internal constants, not new public configuration.
 2. The implementation builds the paired corpus, measurement runner, baseline, and paired-regression report. Any real-model comparison is separately operator-authorized for route and spend at release validation; do not claim empirical efficacy or production readiness before its results exist.
-3. Implementation updates living architecture/implementation notes, owning user docs, generated configuration reference, proto, API snapshots/changelog, and the minimum List 1/List 2 inventory rows without marking behavior shipped before it lands.
-4. Every named acceptance proof exists in the actual harness path; paired quality fixtures distinguish protocol tests from empirical evaluation.
-5. `task lint`, `task test`, `task docs`, `task api:check`, `task ac-trace-strict`, `task site:build`, and `go run ./cmd/mecademo` pass; ordinary tests remain offline.
+3. Implementation updates and human inspection reconcile living architecture/implementation notes, owning user docs, generated configuration reference, generated proto, API snapshots/changelog, and Mecatui approval/status UI without marking behavior shipped before it lands; no single code test is treated as proof of prose, generated-artifact freshness, or UI semantics.
+4. Every named executable acceptance proof exists in the actual harness path; inspection-only AC6.5 has its report artifact; paired quality fixtures distinguish protocol tests from empirical evaluation.
+5. `task lint`, `task test`, `task docs`, `task api:check`, `task ac-trace-strict`, `task site:build`, and `go run ./cmd/mecademo` pass; `task docs`, API compatibility, and site build are the explicit generated-doc/API/site gates, while UI behavior also receives owning golden/manual inspection. Ordinary tests remain offline.
 6. The implementation PR links the merged Plan / Interface commit and stops on contract drift.
 
 ## Primary-source inspiration
