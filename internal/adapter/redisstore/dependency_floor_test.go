@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -77,8 +78,14 @@ func TestRedisFollowCapacity_Scenario1_Go127DependencyFloor(t *testing.T) {
 			t.Errorf("root go.mod does not pin %s %s", module, version)
 		}
 	}
-	if strings.Contains(text, "replace github.com/stacklok/toolhive-core/redisconn") {
-		t.Error("root go.mod replaces redisconn; the released module must be consumed directly")
+	for _, module := range []string{
+		"github.com/stacklok/toolhive-core",
+		"github.com/stacklok/toolhive-core/redisconn",
+	} {
+		replacement := regexp.MustCompile(`(?m)^\s*(?:replace\s+)?` + regexp.QuoteMeta(module) + `(?:\s+v\S+)?\s*=>`)
+		if replacement.MatchString(text) {
+			t.Errorf("root go.mod replaces %s; the released module must be consumed directly", module)
+		}
 	}
 }
 

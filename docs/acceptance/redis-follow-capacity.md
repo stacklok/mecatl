@@ -5,7 +5,7 @@
 **Decision record:** [ADR 0330](../adr/0330-isolated-redis-follow-capacity.md)
 **Phase:** Cloud-native durable event watch
 **Status:** landed, 2026-09-14. Original decisions were approved while grilling [issue #876](https://github.com/stacklok/mecatl/issues/876); the user approved the Go 1.27 migration after ToolHive Core's released module metadata blocked implementation.
-**Delivery:** One Implementation PR under the explicit amendment-review waiver below. The original Plan / Interface review remains authoritative.
+**Delivery:** Split. The original Plan / Interface review remains authoritative; the Go 1.27 amendment is reviewed in the one Implementation PR under the explicit waiver below.
 **Expected tasks:** deferred to orchestration
 **Issue:** [stacklok/mecatl#876](https://github.com/stacklok/mecatl/issues/876).
 **Plan PR:** [stacklok/mecatl#1422](https://github.com/stacklok/mecatl/pull/1422)

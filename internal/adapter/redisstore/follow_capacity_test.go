@@ -314,6 +314,45 @@ func TestRedisFollowCapacity_Scenario2_ReplayBypassesAdmission(t *testing.T) {
 }
 
 func TestRedisFollowCapacity_Scenario3_CloseLinearizesWithAdmission(t *testing.T) {
+	t.Run("admission wins", func(t *testing.T) {
+		server := miniredis.RunT(t)
+		follow := newControlledFollowClient(redis.NewClient(&redis.Options{Addr: server.Addr()}), followCooperative)
+		store := newPairedTestStore(t, redis.NewClient(&redis.Options{Addr: server.Addr()}), follow, 1, 300*time.Millisecond)
+		errorsSeen := make(chan error, 1)
+		done := startFollowersReporting(context.Background(), store, 1, errorsSeen)
+		awaitSignals(t, follow.started, 1, "admitted follower did not enter its blocking read")
+
+		if err := store.Close(); err != nil {
+			t.Fatal(err)
+		}
+		awaitClosed(t, done, store.closeGrace, "admitted follower missed the close cancellation snapshot")
+		assertNoReportedErrors(t, errorsSeen)
+		assertNoActiveFollowers(t, store)
+	})
+
+	t.Run("close wins", func(t *testing.T) {
+		server := miniredis.RunT(t)
+		follow := newControlledFollowClient(redis.NewClient(&redis.Options{Addr: server.Addr()}), followCooperative)
+		store := newPairedTestStore(t, redis.NewClient(&redis.Options{Addr: server.Addr()}), follow, 1, 300*time.Millisecond)
+		if err := store.Close(); err != nil {
+			t.Fatal(err)
+		}
+
+		var got error
+		for _, err := range store.ReadAfter(t.Context(), "closed-before-admission", "", port.ReadOptions{Follow: true}) {
+			got = err
+			break
+		}
+		if !errors.Is(got, errStoreClosed) {
+			t.Fatalf("post-close admission error = %v, want errStoreClosed", got)
+		}
+		if calls := follow.calls.Load(); calls != 0 {
+			t.Fatalf("post-close admission performed %d Redis calls, want 0", calls)
+		}
+	})
+
+	// Keep an adversarial concurrent stress pass in addition to the deterministic
+	// proofs above. Every outcome must be one of the two mutex-linearized cases.
 	for attempt := range 40 {
 		server := miniredis.RunT(t)
 		follow := newControlledFollowClient(redis.NewClient(&redis.Options{Addr: server.Addr()}), followCooperative)
@@ -352,18 +391,28 @@ func TestRedisFollowCapacity_Scenario3_CloseCancelsAndJoinsFollowers(t *testing.
 	server := miniredis.RunT(t)
 	follow := newControlledFollowClient(redis.NewClient(&redis.Options{Addr: server.Addr()}), followCooperative)
 	store := newPairedTestStore(t, redis.NewClient(&redis.Options{Addr: server.Addr()}), follow, 2, 300*time.Millisecond)
+	diagnostics := &closeDiag{}
+	store.diagnostics = diagnostics
 	errorsSeen := make(chan error, 2)
 	done := startFollowersReporting(context.Background(), store, 2, errorsSeen)
 	awaitSignals(t, follow.started, 2, "followers did not park")
-	if err := store.Close(); err != nil {
-		t.Fatal(err)
+	closeDone := make(chan error, 1)
+	go func() { closeDone <- store.Close() }()
+	select {
+	case err := <-closeDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(store.closeGrace):
+		t.Fatal("Close did not join cooperative followers within its configured grace")
 	}
 	awaitClosed(t, done, time.Second, "Close returned without joining cooperative followers")
-	close(errorsSeen)
-	for err := range errorsSeen {
-		if err != nil {
-			t.Fatalf("store-owned cancellation surfaced as event-log fault: %v", err)
-		}
+	assertNoReportedErrors(t, errorsSeen)
+	diagnostics.mu.Lock()
+	timedOut := diagnostics.timedOut
+	diagnostics.mu.Unlock()
+	if timedOut {
+		t.Fatal("cooperative follower shutdown produced an outstanding-operation warning")
 	}
 	if follow.closes.Load() != 1 {
 		t.Fatalf("follow closes = %d, want normal generation close once", follow.closes.Load())
@@ -379,13 +428,37 @@ func TestADR_0330_ForceCloseIsFollowOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	done := startFollowersReporting(context.Background(), store, 1, nil)
+	errorsSeen := make(chan error, 1)
+	done := startFollowersReporting(context.Background(), store, 1, errorsSeen)
 	awaitSignals(t, follow.started, 1, "follower did not park")
 
-	if err := store.Close(); err != nil {
-		t.Fatal(err)
+	started := time.Now()
+	deadline := started.Add(store.closeGrace)
+	closeDeadline := deadline.Add(50 * time.Millisecond)
+	closeDone := make(chan error, 1)
+	go func() { closeDone <- store.Close() }()
+	select {
+	case <-follow.closed:
+		if elapsed := time.Since(started); elapsed < store.closeGrace/3 {
+			t.Fatalf("follow client force-closed before the cooperative wait elapsed: %v", elapsed)
+		}
+	case <-time.After(time.Until(deadline)):
+		t.Fatal("follow client was not force-closed within the total close grace")
 	}
-	awaitClosed(t, done, time.Second, "force-closed follower was not joined")
+	select {
+	case err := <-closeDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Until(closeDeadline)):
+		t.Fatal("Store.Close did not return after force-closing the follow client")
+	}
+	select {
+	case <-done:
+	default:
+		t.Fatal("Store.Close returned before the force-closed follower was joined")
+	}
+	assertNoReportedErrors(t, errorsSeen)
 	if follow.closes.Load() != 1 {
 		t.Fatalf("follow closes = %d, want 1", follow.closes.Load())
 	}
@@ -403,7 +476,7 @@ func TestRedisFollowCapacity_Scenario3_PathologicalCloseRemainsBounded(t *testin
 	server := miniredis.RunT(t)
 	durability := &closeTrackingClient{UniversalClient: redis.NewClient(&redis.Options{Addr: server.Addr()})}
 	follow := newControlledFollowClient(redis.NewClient(&redis.Options{Addr: server.Addr()}), followPathological)
-	store := newPairedTestStore(t, durability, follow, 1, 80*time.Millisecond)
+	store := newPairedTestStore(t, durability, follow, 1, 500*time.Millisecond)
 	done := startFollowersReporting(context.Background(), store, 1, nil)
 	awaitSignals(t, follow.started, 1, "pathological follower did not park")
 
@@ -411,7 +484,7 @@ func TestRedisFollowCapacity_Scenario3_PathologicalCloseRemainsBounded(t *testin
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if elapsed := time.Since(started); elapsed > 300*time.Millisecond {
+	if elapsed := time.Since(started); elapsed > store.closeGrace+100*time.Millisecond {
 		t.Fatalf("Close exceeded fixed total grace: %v", elapsed)
 	}
 	if durability.closes.Load() != 0 {
@@ -590,6 +663,16 @@ func startFollowersReporting(ctx context.Context, store *Store, count int, errs 
 		close(done)
 	}()
 	return done
+}
+
+func assertNoReportedErrors(t *testing.T, errorsSeen chan error) {
+	t.Helper()
+	close(errorsSeen)
+	for err := range errorsSeen {
+		if err != nil {
+			t.Fatalf("store-owned shutdown surfaced as event-log fault: %v", err)
+		}
+	}
 }
 
 func consumeFollow(t *testing.T, store *Store, id session.SessionID, cursor port.Cursor, opts port.ReadOptions) {

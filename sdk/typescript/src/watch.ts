@@ -397,7 +397,14 @@ class WatchConnection {
         this.#source ??= this.#open(cursor);
         const next = await this.#source.next();
         if (!next.done) {
-          this.#attempt = 0;
+          // The server emits a phase-only boundary before attempting follow
+          // admission. A saturated follow can therefore return a boundary and
+          // then watch_capacity on every reconnect. Reset backoff only when the
+          // stream advances, otherwise persistent saturation retries forever at
+          // the minimum delay.
+          if (next.value.event !== undefined || next.value.cursor !== cursor) {
+            this.#attempt = 0;
+          }
           this.#status.set("online");
           return next;
         }

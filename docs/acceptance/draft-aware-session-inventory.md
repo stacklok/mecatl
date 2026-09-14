@@ -23,10 +23,7 @@ exact-resume, stale-running, ownership, and first-prompt run-entry guarantees re
 
 ## Human decisions
 
-None. The operator selected a separate locally grouped Drafts tab for
-known-empty main sessions. The resulting durable metadata and compatibility
-boundary is defined in
-[ADR 0336](../adr/0336-draft-aware-session-inventory.md).
+None — the operator selected a separate locally grouped Drafts tab for known-empty main sessions, with the durable metadata and compatibility boundary defined in [ADR 0336](../adr/0336-draft-aware-session-inventory.md).
 
 ## Interface contract
 
