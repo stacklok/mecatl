@@ -23,7 +23,7 @@ func TestProviderSetupMenuSelectionAndCapabilityLabels(t *testing.T) {
 			{Name: "corp", Class: "custom", Auth: "configured"},
 		}, nil
 	}
-	readProviderSetupField = func(string) (string, error) { return "2", nil }
+	readProviderSetupField = func(string) (string, error) { return "3", nil }
 
 	var output bytes.Buffer
 	provider, err := chooseProviderForSetup(&output)
@@ -31,9 +31,9 @@ func TestProviderSetupMenuSelectionAndCapabilityLabels(t *testing.T) {
 		t.Fatalf("selection = %q, %v", provider, err)
 	}
 	for _, want := range []string{
-		"1. openai (API key)",
-		"2. toolhive (external lifecycle)",
-		"3. corp (custom configured)",
+		"1. corp (custom API key)",
+		"2. openai (API key)",
+		"3. toolhive (external lifecycle)",
 		"4. custom (custom provider: API key, OIDC, or no authentication)",
 	} {
 		if !strings.Contains(output.String(), want) {
@@ -48,13 +48,20 @@ func TestProviderSetupMenuUsesFullInventoryNotBareStatus(t *testing.T) {
 		loadProviderStatuses, loadAllProviderStatuses, readProviderSetupField = oldStatuses, oldAllStatuses, oldRead
 	})
 	loadProviderStatuses = func() ([]providerStatus, error) {
-		return []providerStatus{{Name: "openai", Class: providerClassBuiltin, Auth: "configured", DefaultModel: "gpt-5", Next: "ready to use"}}, nil
+		return []providerStatus{
+			{Name: "openai", Class: providerClassBuiltin, Auth: "configured", DefaultModel: "gpt-5", Next: "ready to use"},
+			{Name: "corp-api", Class: "custom", Auth: "configured"},
+		}, nil
 	}
 	loadAllProviderStatuses = func() ([]providerStatus, error) {
 		return []providerStatus{
-			{Name: "anthropic", Class: providerClassBuiltin, Auth: "not configured"},
+			{Name: "openrouter", Class: providerClassBuiltin, Auth: "not configured"},
+			{Name: "openai-codex", Class: providerClassBuiltin, Auth: "configured"},
 			{Name: "openai", Class: providerClassBuiltin, Auth: "configured"},
-			{Name: "corp", Class: "custom", Auth: "not configured"},
+			{Name: "corp-oidc", Class: "custom", Auth: "OIDC not enrolled"},
+			{Name: "anthropic", Class: providerClassBuiltin, Auth: "not configured"},
+			{Name: "corp-api", Class: "custom", Auth: "configured"},
+			{Name: "local", Class: "custom", Auth: "not required"},
 		}, nil
 	}
 	readProviderSetupField = func(string) (string, error) { return "1", nil }
@@ -66,34 +73,40 @@ func TestProviderSetupMenuUsesFullInventoryNotBareStatus(t *testing.T) {
 	}
 	provider, err := chooseProviderForSetup(&setupOutput)
 	if err != nil || provider != "anthropic" {
-		t.Fatalf("newly unconfigured stock selection = %q, %v", provider, err)
+		t.Fatalf("first setup selection = %q, %v", provider, err)
 	}
-	if strings.Contains(statusOutput.String(), "anthropic") || !strings.Contains(statusOutput.String(), "openai (built-in)") {
+	if strings.Contains(statusOutput.String(), "anthropic") || strings.Contains(statusOutput.String(), "openrouter") || !strings.Contains(statusOutput.String(), "openai (built-in)") || !strings.Contains(statusOutput.String(), "corp-api (custom)") {
 		t.Fatalf("bare configured-only output = %q", statusOutput.String())
-	}
-	if strings.Contains(setupOutput.String(), "openai (API key)") {
-		t.Fatalf("setup menu included configured stock provider: %q", setupOutput.String())
 	}
 	for _, want := range []string{
 		"1. anthropic (API key)",
-		"2. corp (custom not configured)",
-		"3. custom (custom provider: API key, OIDC, or no authentication)",
+		"2. corp-api (custom API key)",
+		"3. corp-oidc (custom OIDC)",
+		"4. openai (API key)",
+		"5. openrouter (API key)",
+		"6. custom (custom provider: API key, OIDC, or no authentication)",
 	} {
 		if !strings.Contains(setupOutput.String(), want) {
 			t.Errorf("setup menu missing %q:\n%s", want, setupOutput.String())
+		}
+	}
+	for _, unexpected := range []string{"openai-codex", "local ("} {
+		if strings.Contains(setupOutput.String(), unexpected) {
+			t.Errorf("setup menu included provider without a local setup action %q:\n%s", unexpected, setupOutput.String())
 		}
 	}
 }
 
 func TestProviderSetupNamedCustomDispatchesToLoginWithoutDefinitionEdit(t *testing.T) {
 	path := providerCredentialTestFile(t, "providers:\n  custom:\n    api_key: old-secret\n")
-	oldStatuses, oldLoad, oldRead := loadProviderStatuses, loadProviderCredentialConfig, readProviderAPIKey
+	oldStatuses, oldAll, oldLoad, oldRead := loadProviderStatuses, loadAllProviderStatuses, loadProviderCredentialConfig, readProviderAPIKey
 	t.Cleanup(func() {
-		loadProviderStatuses, loadProviderCredentialConfig, readProviderAPIKey = oldStatuses, oldLoad, oldRead
+		loadProviderStatuses, loadAllProviderStatuses, loadProviderCredentialConfig, readProviderAPIKey = oldStatuses, oldAll, oldLoad, oldRead
 	})
 	loadProviderStatuses = func() ([]providerStatus, error) {
 		return []providerStatus{{Name: "custom", Class: "custom", Auth: "not configured"}}, nil
 	}
+	loadAllProviderStatuses = loadProviderStatuses
 	loadProviderCredentialConfig = func() (providerCredentialConfig, error) {
 		return providerCredentialConfig{definitions: permconfig.ProviderDefinitions{"custom": {Auth: permconfig.ProviderAuth{Method: "api_key"}}}, authPath: path}, nil
 	}

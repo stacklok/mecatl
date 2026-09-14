@@ -17,7 +17,10 @@ import (
 	"github.com/stacklok/mecatl/internal/cliconfig"
 )
 
-const providerClassBuiltin = "built-in"
+const (
+	providerClassBuiltin  = "built-in"
+	openAICodexEndpointID = "openai-codex"
+)
 
 type providerStatus struct {
 	Name         string
@@ -168,7 +171,7 @@ func inspectLocalProviders() (providerInspection, error) {
 		selectedProvider, selectedModel = policy.DefaultProvider, policy.Default
 	}
 	path, explicit := flags.AuthFilePath()
-	known := []string{"anthropic", "openai", "openrouter", "opencode", "openai-codex"}
+	known := []string{"anthropic", "openai", "openrouter", "opencode", openAICodexEndpointID}
 	for id := range definitions {
 		known = append(known, id)
 	}
@@ -211,7 +214,7 @@ func builtinProviderStatuses(keys cliconfig.ResolvedCredentials, shadowed map[st
 	return []providerStatus{
 		{Name: "anthropic", Class: providerClassBuiltin, Auth: configuredSource(keys.Anthropic != "", shadowed["anthropic"]), DefaultModel: "claude-sonnet-4-6", Next: nextForAPIKey(keys.Anthropic != "")},
 		{Name: "openai", Class: providerClassBuiltin, Auth: configuredSource(keys.OpenAI != "", shadowed["openai"]), DefaultModel: "gpt-5", Next: nextForAPIKey(keys.OpenAI != "")},
-		{Name: "openai-codex", Class: providerClassBuiltin, Auth: configured(keys.HasOpenAICodex()), DefaultModel: "provider default", Next: nextForAPIKey(keys.HasOpenAICodex())},
+		{Name: openAICodexEndpointID, Class: providerClassBuiltin, Auth: configured(keys.HasOpenAICodex()), DefaultModel: "provider default", Next: nextForAPIKey(keys.HasOpenAICodex())},
 		{Name: "opencode", Class: providerClassBuiltin, Auth: configuredSource(keys.OpenCode != "", shadowed["opencode"]), DefaultModel: "glm-5.2", Next: nextForAPIKey(keys.OpenCode != "")},
 		{Name: "openrouter", Class: providerClassBuiltin, Auth: configuredSource(keys.OpenRouter != "", shadowed["openrouter"]), DefaultModel: "openai/gpt-5", Next: nextForAPIKey(keys.OpenRouter != "")},
 	}

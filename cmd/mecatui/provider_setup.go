@@ -77,26 +77,34 @@ func chooseProviderForSetup(out io.Writer) (string, error) {
 }
 
 func providerSetupCandidates(statuses []providerStatus) []providerStatus {
-	return slices.DeleteFunc(statuses, func(status providerStatus) bool {
-		return status.Class == providerClassBuiltin && status.Auth != "not configured"
+	candidates := slices.DeleteFunc(slices.Clone(statuses), func(status providerStatus) bool {
+		if status.Name == openAICodexEndpointID {
+			return true
+		}
+		return status.Class == "custom" && status.Auth == "not required"
 	})
+	slices.SortFunc(candidates, func(a, b providerStatus) int { return strings.Compare(a.Name, b.Name) })
+	return candidates
 }
 
 func providerSetupCapability(status providerStatus) string {
 	switch status.Name {
 	case toolHiveEndpointID:
 		return "external lifecycle"
-	case "openai-codex":
+	case openAICodexEndpointID:
 		return "manual credential"
 	}
 	if status.Class == "custom" {
-		return "custom " + status.Auth
+		if strings.HasPrefix(status.Auth, "OIDC") {
+			return "custom OIDC"
+		}
+		return "custom API key"
 	}
 	return "API key"
 }
 
 func runNamedProviderSetup(provider string, stdout, stderr io.Writer) error {
-	statuses, err := loadProviderStatuses()
+	statuses, err := loadAllProviderStatuses()
 	if err != nil {
 		return err
 	}
@@ -104,7 +112,7 @@ func runNamedProviderSetup(provider string, stdout, stderr io.Writer) error {
 		if status.Name != provider {
 			continue
 		}
-		if provider == "openai-codex" {
+		if provider == openAICodexEndpointID {
 			return errors.New("providers setup: openai-codex uses a manually managed credential; run `mecatui providers status openai-codex` for local state")
 		}
 		return runProviderCredentialCommand(invocationResolution{mode: modeProviderCredential, llmAction: providerActionLogin, llmEndpoint: provider}, stdout, stderr)
