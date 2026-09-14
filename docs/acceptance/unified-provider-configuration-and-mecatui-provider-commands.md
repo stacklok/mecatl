@@ -8,8 +8,8 @@
 **Delivery:** Split. The configuration, CLI, credential-custody, platform-write, and migration decisions require a separate human Plan / Interface review before implementation.
 **Expected tasks:** deferred to orchestration
 **Issue:** [stacklok/mecatl#1443](https://github.com/stacklok/mecatl/issues/1443).
-**Plan PR:** pending.
-**Approved baseline:** absent until the Plan / Interface PR merges.
+**Plan PR:** [stacklok/mecatl#1444](https://github.com/stacklok/mecatl/pull/1444)
+**Approved baseline:** `db70d83aa844e87afe50a4a9843cbcdac32968d4` (merged Plan / Interface commit; schema amendment `1c21e51b02fe766f169de81a5aaa3c89a63145a5`)
 
 This work makes the named **provider** the sole local operator concept for selecting models, configuring a compatible service, and managing that provider's credentials. It replaces the split between `providers:` API-key/no-auth configuration and `llm.endpoints` OIDC configuration, and replaces the confusing `mecatui llm` command group with `mecatui providers`.
 

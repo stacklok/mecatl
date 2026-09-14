@@ -46,6 +46,9 @@ func (r *ProviderCredentialResolver) Load(definitions permconfig.ProviderDefinit
 		known = append(known, id)
 	}
 	sort.Strings(known)
+	if len(definitions) > 0 && r.flags != nil && r.flags.authSnapshotReady && r.flags.authSnapshot == nil && r.flags.authSnapshotWarn != "" {
+		return app.ProviderCredentials{}, nil, errors.New("auth file validation failed")
+	}
 	if r.flags != nil && r.flags.authSnapshotReady && r.flags.authSnapshot != nil && r.flags.authSnapshot.ValidateKnown(known) != "" {
 		return app.ProviderCredentials{}, nil, errors.New("auth file validation failed")
 	}

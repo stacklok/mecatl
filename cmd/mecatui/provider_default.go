@@ -12,25 +12,23 @@ import (
 	"github.com/stacklok/mecatl/internal/cliconfig"
 )
 
-var (
-	updateProviderDefaults           = permconfig.UpdateDefaults
-	resolveProviderDefaultForCommand = resolveProviderDefault
-)
-
-func runProviderSetDefaultCommand(res invocationResolution, stdout, stderr io.Writer) error {
+func (c providerCommands) runSetDefault(ctx context.Context, res invocationResolution, stdout, stderr io.Writer) error {
 	if len(res.remaining) == 1 && isHelpMetaFlag(res.remaining[0]) {
 		return providerHelpResult(stderr, providerActionSetDefault)
 	}
 	requestedModel := optionalProviderDefaultModel(res.remaining)
-	provider, model, err := resolveProviderDefaultForCommand(res.llmEndpoint, requestedModel)
+	provider, model, err := c.backend.resolveDefault(ctx, res.providerName, requestedModel)
 	if err != nil {
 		return fmt.Errorf("providers set-default: %w", err)
 	}
 	if requestedModel != "" {
 		model = requestedModel
 	}
-	state, err := updateProviderDefaults(context.Background(), providerSettingsPath(), permconfig.DefaultUpdate{Provider: provider, Model: model})
+	state, err := c.backend.updateDefaults(ctx, c.backend.settingsPath(), permconfig.DefaultUpdate{Provider: provider, Model: model})
 	if err != nil {
+		if state == authfile.CommitNotApplied && errors.Is(err, context.Canceled) {
+			return providerCredentialCancellation(stderr)
+		}
 		return fmt.Errorf("providers set-default: save deployment default: %w", err)
 	}
 	if state == authfile.CommitNotApplied {
@@ -47,14 +45,14 @@ func optionalProviderDefaultModel(args []string) string {
 	return ""
 }
 
-func resolveProviderDefault(provider, model string) (string, string, error) {
+func resolveProviderDefaultWithContext(ctx context.Context, provider, model string) (string, string, error) {
 	inspection, err := inspectLocalProviders()
 	if err != nil {
 		return "", "", fmt.Errorf("inspect local providers: %w", err)
 	}
 	nativeLoader := &cliconfig.NativeEndpointLoader{}
 	defer func() { _ = nativeLoader.Close() }()
-	return app.ResolveDeploymentDefault(context.Background(), app.Config{
+	return app.ResolveDeploymentDefault(ctx, app.Config{
 		DefaultProvider:                provider,
 		DefaultModel:                   model,
 		ModelAliases:                   inspection.aliases,
@@ -73,7 +71,7 @@ func resolveProviderDefault(provider, model string) (string, string, error) {
 func customProviderAPIKeys(credentials cliconfig.ResolvedCredentials, definitions permconfig.ProviderDefinitions) map[string]string {
 	keys := make(map[string]string, len(definitions))
 	for id, definition := range definitions {
-		if definition.Auth.Method == "api_key" {
+		if definition.Auth.Method == providerAuthAPIKey {
 			if key := credentials.CustomAPIKey(id); key != "" {
 				keys[id] = key
 			}

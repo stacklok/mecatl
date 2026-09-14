@@ -565,15 +565,15 @@ func runLLMCommand(res invocationResolution) error {
 	noBrowser := len(res.remaining) == 1 && res.remaining[0] == "--no-browser"
 	ctx, cancel := newNativeLLMEnrollmentContext()
 	defer cancel()
-	if res.llmEndpoint == toolHiveEndpointID {
-		return runNativeLLMCommand(ctx, res.llmAction, res.llmEndpoint, skipBrowser, nil, os.Stdout, os.Stderr)
+	if res.providerName == toolHiveEndpointID {
+		return runNativeLLMCommand(ctx, res.providerAction, res.providerName, skipBrowser, nil, os.Stdout, os.Stderr)
 	}
 	host, err := openNativeLLMHost(ctx, noBrowser, os.Stderr)
 	if err != nil {
 		return errors.New("native LLM endpoint lifecycle is unavailable")
 	}
 	defer func() { _ = host.Close() }()
-	return runNativeLLMCommand(ctx, res.llmAction, res.llmEndpoint, false, host, os.Stdout, os.Stderr)
+	return runNativeLLMCommand(ctx, res.providerAction, res.providerName, false, host, os.Stdout, os.Stderr)
 }
 
 func unknownNativeEndpointError(endpoint string, ids []string) error {

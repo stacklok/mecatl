@@ -430,21 +430,47 @@ func runTestSignalHandler() error {
 	return nil
 }
 
-func runSpecialMode(res invocationResolution) (bool, error) {
-	// Login routes are intentionally separate from transport setup.
+func runProviderMode(res invocationResolution) (bool, error) {
+	var run func(context.Context, providerCommands) error
 	switch res.mode {
 	case modeProviderSetup:
-		return true, runProviderSetupCommand(res, os.Stdout, os.Stderr)
+		run = func(ctx context.Context, commands providerCommands) error {
+			return commands.runSetup(ctx, res, os.Stdout, os.Stderr)
+		}
 	case modeProviderStatus:
-		return true, runProviderStatusCommand(res, os.Stdout, os.Stderr)
+		run = func(ctx context.Context, commands providerCommands) error {
+			return commands.runStatus(ctx, res, os.Stdout, os.Stderr)
+		}
 	case modeProviderCredential:
-		return true, runProviderCredentialCommand(res, os.Stdout, os.Stderr)
+		run = func(ctx context.Context, commands providerCommands) error {
+			return commands.runCredential(ctx, res, os.Stdout, os.Stderr)
+		}
 	case modeProviderAdd:
-		return true, runProviderAddCommand(res, os.Stdout, os.Stderr)
+		run = func(ctx context.Context, commands providerCommands) error {
+			return commands.runAdd(ctx, res, os.Stdout, os.Stderr)
+		}
 	case modeProviderRemove:
-		return true, runProviderRemoveCommand(res, os.Stdout, os.Stderr)
+		run = func(ctx context.Context, commands providerCommands) error {
+			return commands.runRemove(ctx, res, os.Stdout, os.Stderr)
+		}
 	case modeProviderSetDefault:
-		return true, runProviderSetDefaultCommand(res, os.Stdout, os.Stderr)
+		run = func(ctx context.Context, commands providerCommands) error {
+			return commands.runSetDefault(ctx, res, os.Stdout, os.Stderr)
+		}
+	default:
+		return false, nil
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return true, run(ctx, newProviderCommands())
+}
+
+func runSpecialMode(res invocationResolution) (bool, error) {
+	// Login routes are intentionally separate from transport setup.
+	if handled, err := runProviderMode(res); handled {
+		return true, err
+	}
+	switch res.mode {
 	case modeLogin:
 		return true, runLLMCommand(res)
 	case modeLLMConfig:

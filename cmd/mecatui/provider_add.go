@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/stacklok/mecatl/internal/adapter/authfile"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
@@ -18,39 +19,57 @@ import (
 )
 
 const (
-	providerAuthOIDC = "oidc"
-	providerAuthNone = "none"
-)
-
-var (
-	readProviderAddField = readProviderAddFieldFromTerminal
-	providerSettingsPath = defaultProviderSettingsPath
-	updateProviderMap    = permconfig.UpdateProviderMap
+	providerAuthAPIKey  = "api_key"
+	providerAuthOIDC    = "oidc"
+	providerAuthNone    = "none"
+	providerRollbackMax = 5 * time.Second
 )
 
 func defaultProviderSettingsPath() string {
 	return filepath.Join(xdgconfig.UserConfigDir(xdgconfig.OSEnv), permconfig.UserSettingsRelPath)
 }
 
-func readProviderAddFieldFromTerminal(prompt string) (string, error) {
+func readProviderFieldFromTerminal(ctx context.Context, prompt string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	if _, err := fmt.Fprint(os.Stderr, prompt+": "); err != nil {
 		return "", err
 	}
-	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
-	if errors.Is(err, io.EOF) && line == "" {
-		return "", context.Canceled
+	result := make(chan struct {
+		value string
+		err   error
+	}, 1)
+	go func() {
+		line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+		if errors.Is(err, io.EOF) && line == "" {
+			err = context.Canceled
+		}
+		result <- struct {
+			value string
+			err   error
+		}{strings.TrimSpace(line), err}
+	}()
+	select {
+	case <-ctx.Done():
+		return "", ctx.Err()
+	case got := <-result:
+		return got.value, got.err
 	}
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(line), nil
 }
 
-func runProviderAddCommand(res invocationResolution, stdout, stderr io.Writer) error {
+func (c providerCommands) runAdd(ctx context.Context, res invocationResolution, stdout, stderr io.Writer) error {
 	if len(res.remaining) == 1 && isHelpMetaFlag(res.remaining[0]) {
 		return providerHelpResult(stderr, providerActionAdd)
 	}
-	definition, err := collectProviderDefinition()
+	inspection, err := c.backend.inspect()
+	if err != nil {
+		return fmt.Errorf("providers add: inspect configured providers: %w", err)
+	}
+	if _, exists := inspection.definitions[res.providerName]; exists {
+		return fmt.Errorf("providers add: provider %q is already configured; use `mecatui providers login %s` to replace its credential", res.providerName, res.providerName)
+	}
+	definition, err := c.collectDefinition(ctx)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return providerCredentialCancellation(stderr)
@@ -58,12 +77,18 @@ func runProviderAddCommand(res invocationResolution, stdout, stderr io.Writer) e
 		return fmt.Errorf("providers add: collect definition: %w", err)
 	}
 
-	state, err := updateProviderMap(context.Background(), providerSettingsPath(), permconfig.ProviderMapUpdate{
-		Provider:            res.llmEndpoint,
-		Definition:          &definition,
-		OIDCCredentialStore: defaultProviderOIDCCredentialStore(definition),
+	store := defaultProviderOIDCCredentialStore(definition)
+	state, err := c.backend.updateProviderMap(ctx, c.backend.settingsPath(), permconfig.ProviderMapUpdate{
+		Provider:                          res.providerName,
+		Definition:                        &definition,
+		ExpectedAbsent:                    true,
+		OIDCCredentialStore:               store,
+		ExpectedOIDCCredentialStoreAbsent: store != nil && !inspection.oidcStoreConfigured,
 	})
 	if err != nil {
+		if state == authfile.CommitNotApplied && errors.Is(err, context.Canceled) {
+			return providerCredentialCancellation(stderr)
+		}
 		return fmt.Errorf("providers add: save provider definition: %w", err)
 	}
 	if state == authfile.CommitNotApplied {
@@ -72,24 +97,42 @@ func runProviderAddCommand(res invocationResolution, stdout, stderr io.Writer) e
 
 	if len(res.remaining) == 1 && res.remaining[0] == "--no-login" {
 		if definition.Auth.Method == providerAuthNone {
-			_, err = fmt.Fprintf(stdout, "Provider definition saved for %q\n", res.llmEndpoint)
+			_, err = fmt.Fprintf(stdout, "Provider definition saved for %q\n", res.providerName)
 		} else {
-			_, err = fmt.Fprintf(stdout, "Provider definition saved for %q\nNext login command: mecatui providers login %s\n", res.llmEndpoint, res.llmEndpoint)
+			_, err = fmt.Fprintf(stdout, "Provider definition saved for %q\nNext login command: mecatui providers login %s\n", res.providerName, res.providerName)
 		}
 		return err
 	}
 
-	if _, err := fmt.Fprintf(stdout, "Provider definition saved for %q\n", res.llmEndpoint); err != nil {
+	if definition.Auth.Method == providerAuthNone {
+		_, err = fmt.Fprintf(stdout, "Provider definition saved for %q\n", res.providerName)
 		return err
 	}
-	if definition.Auth.Method == providerAuthNone {
-		return nil
-	}
-	login := invocationResolution{mode: modeProviderCredential, llmAction: providerActionLogin, llmEndpoint: res.llmEndpoint}
+	return c.finishProviderAdd(ctx, res.providerName, definition, store, inspection, stdout, stderr)
+}
+
+func (c providerCommands) finishProviderAdd(ctx context.Context, provider string, definition permconfig.ProviderDefinition, insertedStore *permconfig.OIDCCredentialStore, inspection providerInspection, stdout, stderr io.Writer) error {
+	login := invocationResolution{mode: modeProviderCredential, providerAction: providerActionLogin, providerName: provider}
 	var loginOut, loginErr bytes.Buffer
-	err = runProviderCredentialCommand(login, &loginOut, &loginErr)
+	err := c.runCredential(ctx, login, &loginOut, &loginErr)
 	if errors.Is(err, errProviderCredentialCancelled) {
-		_, writeErr := fmt.Fprintf(stderr, "Login cancelled; provider definition saved for %q.\n", res.llmEndpoint)
+		rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), providerRollbackMax)
+		defer cancel()
+		var removeStore *permconfig.OIDCCredentialStore
+		if definition.Auth.Method == providerAuthOIDC && !inspection.oidcStoreConfigured {
+			removeStore = insertedStore
+		}
+		rollbackState, rollbackErr := c.backend.updateProviderMap(rollbackCtx, c.backend.settingsPath(), permconfig.ProviderMapUpdate{
+			Provider:                  provider,
+			ExpectedDefinition:        &definition,
+			RemoveOIDCCredentialStore: removeStore,
+		})
+		if rollbackErr != nil || rollbackState == authfile.CommitNotApplied {
+			return fmt.Errorf("providers add: login cancelled; provider definition %q may remain because rollback failed: %w", provider, errors.Join(rollbackErr, errors.New("definition retention is uncertain")))
+		}
+		return providerCredentialCancellation(stderr)
+	}
+	if _, writeErr := fmt.Fprintf(stdout, "Provider definition saved for %q\n", provider); writeErr != nil {
 		return writeErr
 	}
 	if _, writeErr := io.Copy(stdout, &loginOut); writeErr != nil {
@@ -101,20 +144,20 @@ func runProviderAddCommand(res invocationResolution, stdout, stderr io.Writer) e
 	return err
 }
 
-func collectProviderDefinition() (permconfig.ProviderDefinition, error) {
-	baseURL, err := readProviderAddField("Base HTTPS URL")
+func (c providerCommands) collectDefinition(ctx context.Context) (permconfig.ProviderDefinition, error) {
+	baseURL, err := c.terminal.readField(ctx, "Base HTTPS URL")
 	if err != nil {
 		return permconfig.ProviderDefinition{}, err
 	}
-	flavor, err := readProviderAddChoice("API flavor", []string{"openai-responses", "openai-chat-completions", "anthropic-messages"})
+	flavor, err := c.readChoice(ctx, "API flavor", []string{"openai-responses", "openai-chat-completions", "anthropic-messages"})
 	if err != nil {
 		return permconfig.ProviderDefinition{}, err
 	}
-	model, err := readProviderAddField("Default model")
+	model, err := c.terminal.readField(ctx, "Default model")
 	if err != nil {
 		return permconfig.ProviderDefinition{}, err
 	}
-	method, err := readProviderAddChoice("Auth method", []string{"api_key", "oidc", providerAuthNone})
+	method, err := c.readChoice(ctx, "Auth method", []string{providerAuthAPIKey, "oidc", providerAuthNone})
 	if err != nil {
 		return permconfig.ProviderDefinition{}, err
 	}
@@ -123,7 +166,7 @@ func collectProviderDefinition() (permconfig.ProviderDefinition, error) {
 	if method != "oidc" {
 		return definition, nil
 	}
-	oidc, err := collectProviderOIDC()
+	oidc, err := c.collectOIDC(ctx)
 	if err != nil {
 		return permconfig.ProviderDefinition{}, err
 	}
@@ -131,7 +174,7 @@ func collectProviderDefinition() (permconfig.ProviderDefinition, error) {
 	return definition, nil
 }
 
-func readProviderAddChoice(label string, choices []string) (string, error) {
+func (c providerCommands) readChoice(ctx context.Context, label string, choices []string) (string, error) {
 	var prompt strings.Builder
 	prompt.WriteString(label)
 	prompt.WriteString(":\n")
@@ -140,7 +183,7 @@ func readProviderAddChoice(label string, choices []string) (string, error) {
 	}
 	prompt.WriteString("Selection")
 
-	selected, err := readProviderAddField(prompt.String())
+	selected, err := c.terminal.readField(ctx, prompt.String())
 	if err != nil {
 		return "", err
 	}
@@ -165,36 +208,36 @@ func defaultProviderOIDCCredentialStore(definition permconfig.ProviderDefinition
 	}
 }
 
-func collectProviderOIDC() (permconfig.ProviderOIDC, error) {
-	issuer, err := readProviderAddField("OIDC issuer")
+func (c providerCommands) collectOIDC(ctx context.Context) (permconfig.ProviderOIDC, error) {
+	issuer, err := c.terminal.readField(ctx, "OIDC issuer")
 	if err != nil {
 		return permconfig.ProviderOIDC{}, err
 	}
-	clientID, err := readProviderAddField("OIDC client ID")
+	clientID, err := c.terminal.readField(ctx, "OIDC client ID")
 	if err != nil {
 		return permconfig.ProviderOIDC{}, err
 	}
-	scopes, err := readProviderAddField("OIDC scopes (space-separated)")
+	scopes, err := c.terminal.readField(ctx, "OIDC scopes (space-separated)")
 	if err != nil {
 		return permconfig.ProviderOIDC{}, err
 	}
-	audience, err := readProviderAddField("OIDC audience (optional)")
+	audience, err := c.terminal.readField(ctx, "OIDC audience (optional)")
 	if err != nil {
 		return permconfig.ProviderOIDC{}, err
 	}
-	issuerTrust, err := collectProviderTrust("Issuer")
+	issuerTrust, err := c.collectTrust(ctx, "Issuer")
 	if err != nil {
 		return permconfig.ProviderOIDC{}, err
 	}
-	gatewayTrust, err := collectProviderTrust("Gateway")
+	gatewayTrust, err := c.collectTrust(ctx, "Gateway")
 	if err != nil {
 		return permconfig.ProviderOIDC{}, err
 	}
 	return permconfig.ProviderOIDC{Issuer: issuer, ClientID: clientID, Scopes: strings.Fields(scopes), ResourceAudience: audience, IssuerTrust: issuerTrust, GatewayTrust: gatewayTrust}, nil
 }
 
-func collectProviderTrust(name string) (permconfig.NativeTrust, error) {
-	policy, err := readProviderAddChoice(name+" trust policy", []string{"public", "private-ca"})
+func (c providerCommands) collectTrust(ctx context.Context, name string) (permconfig.NativeTrust, error) {
+	policy, err := c.readChoice(ctx, name+" trust policy", []string{"public", "private-ca"})
 	if err != nil {
 		return permconfig.NativeTrust{}, err
 	}
@@ -202,7 +245,7 @@ func collectProviderTrust(name string) (permconfig.NativeTrust, error) {
 	if policy != "private-ca" {
 		return trust, nil
 	}
-	bundle, err := readProviderAddField(name + " CA bundle")
+	bundle, err := c.terminal.readField(ctx, name+" CA bundle")
 	if err != nil {
 		return permconfig.NativeTrust{}, err
 	}

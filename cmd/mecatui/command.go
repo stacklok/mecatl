@@ -40,11 +40,10 @@ const (
 	providerActionAdd                      = "add"
 	providerActionSetDefault               = "set-default"
 	providerActionRemove                   = "remove"
-	// Legacy implementation names are private compatibility shims for the OIDC runtime;
-	// command parsing accepts only the providers vocabulary.
-	llmActionLogin     = providerActionLogin
-	llmActionStatus    = providerActionStatus
-	llmActionLogout    = providerActionLogout
+	// Legacy native-LLM runtime actions; command parsing accepts only providers.
+	llmActionLogin     = "login"
+	llmActionStatus    = "status"
+	llmActionLogout    = "logout"
 	toolHiveEndpointID = "toolhive"
 	// modeProviderSetup guides a newcomer through an existing provider setup flow.
 	modeProviderSetup transportMode = "provider-setup"
@@ -137,8 +136,8 @@ type invocationResolution struct {
 	debugHelp          bool   // render dedicated debug help instead of transport flag help
 	helpIndex          bool   // render the top-level command index
 	remaining          []string
-	llmAction          string
-	llmEndpoint        string
+	providerAction     string
+	providerName       string
 	llmDeprecatedAlias bool
 	err                error
 }
@@ -273,17 +272,17 @@ func resolveProvidersCommand(args []string) invocationResolution {
 		return invocationResolution{mode: modeProviderStatus, remaining: args}
 	}
 	if len(args) == 0 {
-		return invocationResolution{mode: modeProviderStatus, llmAction: providerActionStatus}
+		return invocationResolution{mode: modeProviderStatus, providerAction: providerActionStatus}
 	}
 	if len(args) == 2 && args[0] == providerActionStatus && isHelpMetaFlag(args[1]) {
-		return invocationResolution{mode: modeProviderStatus, llmAction: providerActionStatus, remaining: args[1:]}
+		return invocationResolution{mode: modeProviderStatus, providerAction: providerActionStatus, remaining: args[1:]}
 	}
 	if args[0] == providerActionStatus && len(args) <= 2 && (len(args) == 1 || !strings.HasPrefix(args[1], "-")) {
 		endpoint := ""
 		if len(args) == 2 {
 			endpoint = args[1]
 		}
-		return invocationResolution{mode: modeProviderStatus, llmAction: providerActionStatus, llmEndpoint: endpoint}
+		return invocationResolution{mode: modeProviderStatus, providerAction: providerActionStatus, providerName: endpoint}
 	}
 	if res, ok := resolveProviderSetupCommand(args); ok {
 		return res
@@ -305,53 +304,53 @@ func resolveProvidersCommand(args []string) invocationResolution {
 
 func resolveProviderSetupCommand(args []string) (invocationResolution, bool) {
 	if len(args) == 1 && args[0] == providerActionSetup {
-		return invocationResolution{mode: modeProviderSetup, llmAction: providerActionSetup}, true
+		return invocationResolution{mode: modeProviderSetup, providerAction: providerActionSetup}, true
 	}
 	if len(args) == 2 && args[0] == providerActionSetup && !strings.HasPrefix(args[1], "-") {
-		return invocationResolution{mode: modeProviderSetup, llmAction: providerActionSetup, llmEndpoint: args[1]}, true
+		return invocationResolution{mode: modeProviderSetup, providerAction: providerActionSetup, providerName: args[1]}, true
 	}
 	if len(args) == 2 && args[0] == providerActionSetup && isHelpMetaFlag(args[1]) {
-		return invocationResolution{mode: modeProviderSetup, llmAction: providerActionSetup, remaining: args[1:]}, true
+		return invocationResolution{mode: modeProviderSetup, providerAction: providerActionSetup, remaining: args[1:]}, true
 	}
 	return invocationResolution{}, false
 }
 
 func resolveProviderAddCommand(args []string) (invocationResolution, bool) {
 	if len(args) == 2 && args[0] == providerActionAdd && isHelpMetaFlag(args[1]) {
-		return invocationResolution{mode: modeProviderAdd, llmAction: providerActionAdd, remaining: args[1:]}, true
+		return invocationResolution{mode: modeProviderAdd, providerAction: providerActionAdd, remaining: args[1:]}, true
 	}
 	if len(args) < 2 || args[0] != providerActionAdd || strings.HasPrefix(args[1], "-") {
 		return invocationResolution{}, false
 	}
 	if len(args) == 2 || (len(args) == 3 && args[2] == "--no-login") {
-		return invocationResolution{mode: modeProviderAdd, llmAction: providerActionAdd, llmEndpoint: args[1], remaining: args[2:]}, true
+		return invocationResolution{mode: modeProviderAdd, providerAction: providerActionAdd, providerName: args[1], remaining: args[2:]}, true
 	}
 	return invocationResolution{}, false
 }
 
 func resolveProviderRemoveCommand(args []string) (invocationResolution, bool) {
 	if len(args) == 2 && args[0] == providerActionRemove && isHelpMetaFlag(args[1]) {
-		return invocationResolution{mode: modeProviderRemove, llmAction: providerActionRemove, remaining: args[1:]}, true
+		return invocationResolution{mode: modeProviderRemove, providerAction: providerActionRemove, remaining: args[1:]}, true
 	}
 	if len(args) != 2 || args[0] != providerActionRemove || strings.HasPrefix(args[1], "-") {
 		return invocationResolution{}, false
 	}
-	return invocationResolution{mode: modeProviderRemove, llmAction: providerActionRemove, llmEndpoint: args[1]}, true
+	return invocationResolution{mode: modeProviderRemove, providerAction: providerActionRemove, providerName: args[1]}, true
 }
 
 func resolveProviderSetDefaultCommand(args []string) (invocationResolution, bool) {
 	if len(args) == 2 && args[0] == providerActionSetDefault && isHelpMetaFlag(args[1]) {
-		return invocationResolution{mode: modeProviderSetDefault, llmAction: providerActionSetDefault, remaining: args[1:]}, true
+		return invocationResolution{mode: modeProviderSetDefault, providerAction: providerActionSetDefault, remaining: args[1:]}, true
 	}
 	if len(args) < 2 || len(args) > 3 || args[0] != providerActionSetDefault || strings.HasPrefix(args[1], "-") {
 		return invocationResolution{}, false
 	}
-	return invocationResolution{mode: modeProviderSetDefault, llmAction: providerActionSetDefault, llmEndpoint: args[1], remaining: args[2:]}, true
+	return invocationResolution{mode: modeProviderSetDefault, providerAction: providerActionSetDefault, providerName: args[1], remaining: args[2:]}, true
 }
 
 func resolveProviderCredentialCommand(args []string) (invocationResolution, bool) {
 	if len(args) == 2 && (args[0] == providerActionLogin || args[0] == providerActionLogout) && isHelpMetaFlag(args[1]) {
-		return invocationResolution{mode: modeProviderCredential, llmAction: args[0], remaining: args[1:]}, true
+		return invocationResolution{mode: modeProviderCredential, providerAction: args[0], remaining: args[1:]}, true
 	}
 	if len(args) < 2 || strings.HasPrefix(args[1], "-") {
 		return invocationResolution{}, false
@@ -359,11 +358,11 @@ func resolveProviderCredentialCommand(args []string) (invocationResolution, bool
 	switch args[0] {
 	case providerActionLogin:
 		if len(args) == 2 || (len(args) == 3 && args[2] == "--no-browser") {
-			return invocationResolution{mode: modeProviderCredential, llmAction: args[0], llmEndpoint: args[1], remaining: args[2:]}, true
+			return invocationResolution{mode: modeProviderCredential, providerAction: args[0], providerName: args[1], remaining: args[2:]}, true
 		}
 	case providerActionLogout:
 		if len(args) == 2 {
-			return invocationResolution{mode: modeProviderCredential, llmAction: args[0], llmEndpoint: args[1]}, true
+			return invocationResolution{mode: modeProviderCredential, providerAction: args[0], providerName: args[1]}, true
 		}
 	}
 	return invocationResolution{}, false

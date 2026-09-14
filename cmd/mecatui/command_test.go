@@ -341,7 +341,7 @@ func TestResolveLoginCommands(t *testing.T) {
 	if providers.err != nil || providers.mode != modeProviderCredential {
 		t.Fatalf("provider API-key lifecycle command did not resolve, got %+v", providers)
 	}
-	if got := resolveInvocation([]string{"mecatui", "providers", "login", "custom", "--no-browser"}); got.err != nil || got.mode != modeProviderCredential || got.llmEndpoint != "custom" || len(got.remaining) != 1 || got.remaining[0] != "--no-browser" {
+	if got := resolveInvocation([]string{"mecatui", "providers", "login", "custom", "--no-browser"}); got.err != nil || got.mode != modeProviderCredential || got.providerName != "custom" || len(got.remaining) != 1 || got.remaining[0] != "--no-browser" {
 		t.Fatalf("provider OIDC login resolution = %+v", got)
 	}
 	if got := resolveInvocation([]string{"mecatui", "providers", "login", "custom", "--skip-browser"}); got.err == nil {

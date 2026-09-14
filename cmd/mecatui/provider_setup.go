@@ -12,17 +12,15 @@ import (
 
 const customProviderSetupChoice = "custom"
 
-var readProviderSetupField = readProviderAddField
-
-func runProviderSetupCommand(res invocationResolution, stdout, stderr io.Writer) error {
+func (c providerCommands) runSetup(ctx context.Context, res invocationResolution, stdout, stderr io.Writer) error {
 	if len(res.remaining) == 1 && isHelpMetaFlag(res.remaining[0]) {
 		return providerHelpResult(stderr, providerActionSetup)
 	}
 
-	provider := res.llmEndpoint
+	provider := res.providerName
 	if provider == "" {
 		var err error
-		provider, err = chooseProviderForSetup(stdout)
+		provider, err = c.chooseForSetup(ctx, stdout)
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
 				return providerCredentialCancellation(stderr)
@@ -30,7 +28,7 @@ func runProviderSetupCommand(res invocationResolution, stdout, stderr io.Writer)
 			return fmt.Errorf("providers setup: select provider: %w", err)
 		}
 		if provider == customProviderSetupChoice {
-			provider, err = readProviderSetupField("Custom provider name")
+			provider, err = c.terminal.readField(ctx, "Custom provider name")
 			if err != nil {
 				if errors.Is(err, context.Canceled) {
 					return providerCredentialCancellation(stderr)
@@ -42,14 +40,15 @@ func runProviderSetupCommand(res invocationResolution, stdout, stderr io.Writer)
 			}
 		}
 	}
-	return runNamedProviderSetup(provider, stdout, stderr)
+	return c.runNamedSetup(ctx, provider, stdout, stderr)
 }
 
-func chooseProviderForSetup(out io.Writer) (string, error) {
-	statuses, err := loadAllProviderStatuses()
+func (c providerCommands) chooseForSetup(ctx context.Context, out io.Writer) (string, error) {
+	inspection, err := c.backend.inspect()
 	if err != nil {
 		return "", err
 	}
+	statuses := c.statuses(ctx, inspection, true)
 	statuses = providerSetupCandidates(statuses)
 	if _, err := fmt.Fprintln(out, "Provider setup\n\nChoose a provider:"); err != nil {
 		return "", err
@@ -62,7 +61,7 @@ func chooseProviderForSetup(out io.Writer) (string, error) {
 	if _, err := fmt.Fprintf(out, "  %d. custom (custom provider: API key, OIDC, or no authentication)\n", len(statuses)+1); err != nil {
 		return "", err
 	}
-	selected, err := readProviderSetupField("Selection")
+	selected, err := c.terminal.readField(ctx, "Selection")
 	if err != nil {
 		return "", err
 	}
@@ -81,7 +80,7 @@ func providerSetupCandidates(statuses []providerStatus) []providerStatus {
 		if status.Name == openAICodexEndpointID {
 			return true
 		}
-		return status.Class == "custom" && status.Auth == "not required"
+		return status.Class == "custom" && status.AuthMethod == providerAuthNone
 	})
 	slices.SortFunc(candidates, func(a, b providerStatus) int { return strings.Compare(a.Name, b.Name) })
 	return candidates
@@ -95,7 +94,7 @@ func providerSetupCapability(status providerStatus) string {
 		return "manual credential"
 	}
 	if status.Class == "custom" {
-		if strings.HasPrefix(status.Auth, "OIDC") {
+		if status.AuthMethod == providerAuthOIDC {
 			return "custom OIDC"
 		}
 		return "custom API key"
@@ -103,19 +102,19 @@ func providerSetupCapability(status providerStatus) string {
 	return "API key"
 }
 
-func runNamedProviderSetup(provider string, stdout, stderr io.Writer) error {
-	statuses, err := loadAllProviderStatuses()
+func (c providerCommands) runNamedSetup(ctx context.Context, provider string, stdout, stderr io.Writer) error {
+	inspection, err := c.backend.inspect()
 	if err != nil {
 		return err
 	}
-	for _, status := range statuses {
+	for _, status := range c.statuses(ctx, inspection, true) {
 		if status.Name != provider {
 			continue
 		}
 		if provider == openAICodexEndpointID {
 			return errors.New("providers setup: openai-codex uses a manually managed credential; run `mecatui providers status openai-codex` for local state")
 		}
-		return runProviderCredentialCommand(invocationResolution{mode: modeProviderCredential, llmAction: providerActionLogin, llmEndpoint: provider}, stdout, stderr)
+		return c.runCredential(ctx, invocationResolution{mode: modeProviderCredential, providerAction: providerActionLogin, providerName: provider}, stdout, stderr)
 	}
-	return runProviderAddCommand(invocationResolution{mode: modeProviderAdd, llmAction: providerActionAdd, llmEndpoint: provider}, stdout, stderr)
+	return c.runAdd(ctx, invocationResolution{mode: modeProviderAdd, providerAction: providerActionAdd, providerName: provider}, stdout, stderr)
 }

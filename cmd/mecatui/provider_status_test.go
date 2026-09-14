@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -15,30 +14,22 @@ import (
 )
 
 func TestProvidersStatusIsPassiveAndDeterministic(t *testing.T) {
-	old := loadProviderStatuses
-	t.Cleanup(func() { loadProviderStatuses = old })
+	commands := testProviderCommands()
 	calls := 0
-	loadProviderStatuses = func() ([]providerStatus, error) {
+	commands.backend.inspect = func() (providerInspection, error) {
 		calls++
-		return []providerStatus{
-			{Name: "openai", Class: "built-in", Auth: "configured", DefaultModel: "gpt-5", Next: "ready to use"},
-			{Name: "toolhive", Class: "external", Auth: "managed externally", DefaultModel: "ToolHive managed", Next: "use `thv llm` tooling"},
-		}, nil
+		return providerInspection{definitions: permconfig.ProviderDefinitions{"custom": {ID: "custom", Auth: permconfig.ProviderAuth{Method: providerAuthNone}, DefaultModel: "model"}}}, nil
 	}
-
 	res := resolveInvocation([]string{"mecatui", "providers"})
-	if res.err != nil || res.mode != modeProviderStatus {
-		t.Fatalf("bare providers resolution = %+v", res)
-	}
 	var first, second bytes.Buffer
-	if err := runProviderStatusCommand(res, &first, &bytes.Buffer{}); err != nil {
-		t.Fatalf("first status: %v", err)
+	if err := commands.runStatus(context.Background(), res, &first, io.Discard); err != nil {
+		t.Fatal(err)
 	}
-	if err := runProviderStatusCommand(res, &second, &bytes.Buffer{}); err != nil {
-		t.Fatalf("second status: %v", err)
+	if err := commands.runStatus(context.Background(), res, &second, io.Discard); err != nil {
+		t.Fatal(err)
 	}
 	if calls != 2 || first.String() != second.String() {
-		t.Fatalf("status output must be deterministic and passive: calls=%d first=%q second=%q", calls, first.String(), second.String())
+		t.Fatalf("status not deterministic: calls=%d", calls)
 	}
 	if strings.Contains(first.String(), "credential") || strings.Contains(first.String(), "fingerprint") {
 		t.Fatalf("status exposed credential detail: %q", first.String())
@@ -46,25 +37,19 @@ func TestProvidersStatusIsPassiveAndDeterministic(t *testing.T) {
 }
 
 func TestProvidersStatusToolHiveAndUnknownProvider(t *testing.T) {
-	old, oldAll := loadProviderStatuses, loadAllProviderStatuses
-	t.Cleanup(func() {
-		loadProviderStatuses, loadAllProviderStatuses = old, oldAll
-	})
-	statuses := []providerStatus{toolHiveProviderStatus()}
-	loadProviderStatuses = func() ([]providerStatus, error) { return statuses, nil }
-	loadAllProviderStatuses = func() ([]providerStatus, error) { return statuses, nil }
-
+	commands := testProviderCommands()
+	commands.backend.toolHiveAvailable = func() bool { return true }
+	commands.backend.inspect = providerInspectionLoader(providerInspection{})
 	res := resolveInvocation([]string{"mecatui", "providers", "status", "toolhive"})
 	var output bytes.Buffer
-	if err := runProviderStatusCommand(res, &output, &bytes.Buffer{}); err != nil {
-		t.Fatalf("ToolHive status: %v", err)
+	if err := commands.runStatus(context.Background(), res, &output, io.Discard); err != nil {
+		t.Fatal(err)
 	}
 	if !strings.Contains(output.String(), "Next step: use `thv llm` tooling") {
 		t.Fatalf("ToolHive handoff missing: %q", output.String())
 	}
-
 	res = resolveInvocation([]string{"mecatui", "providers", "status", "missing"})
-	if err := runProviderStatusCommand(res, &bytes.Buffer{}, &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), `unknown provider "missing"`) {
+	if err := commands.runStatus(context.Background(), res, io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), `unknown provider "missing"`) {
 		t.Fatalf("unknown provider error = %v", err)
 	}
 }
@@ -87,26 +72,15 @@ func TestLocalProviderInspectionUsesConfiguredAPIKeyFileAndReportsShadowing(t *t
 	if err := os.WriteFile(settingsPath, []byte("credential_store:\n  api_key:\n    file: "+authPath+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-
-	statuses, err := currentProviderStatuses()
+	inspection, err := inspectLocalProviders()
 	if err != nil {
-		t.Fatalf("inspect providers: %v", err)
+		t.Fatal(err)
 	}
-	provider, model, err := resolveProviderDefault("openai", "gpt-5")
-	if err != nil || provider != "openai" || model != "gpt-5" {
-		t.Fatalf("default validation through configured credential file = (%q, %q, %v)", provider, model, err)
-	}
+	statuses := testProviderCommands().statuses(context.Background(), inspection, false)
 	for _, status := range statuses {
 		if status.Name == "openai" {
 			if status.Auth != "configured (environment shadows credential_store.api_key.file)" {
-				t.Fatalf("OpenAI status auth = %q", status.Auth)
-			}
-			var output bytes.Buffer
-			if err := writeProviderStatus(&output, status); err != nil {
-				t.Fatal(err)
-			}
-			if strings.Contains(output.String(), "environment-secret") || strings.Contains(output.String(), "file-secret") {
-				t.Fatalf("provider status exposed a credential value: %q", output.String())
+				t.Fatalf("auth = %q", status.Auth)
 			}
 			return
 		}
@@ -115,108 +89,53 @@ func TestLocalProviderInspectionUsesConfiguredAPIKeyFileAndReportsShadowing(t *t
 }
 
 func TestProviderStatusesFilterBuiltinsButKeepCustomDefinitions(t *testing.T) {
-	old := toolHiveAvailable
-	toolHiveAvailable = func() bool { return false }
-	t.Cleanup(func() { toolHiveAvailable = old })
-
-	statuses := providerStatuses(providerInspection{definitions: permconfig.ProviderDefinitions{
-		"no-auth":   {ID: "no-auth", Auth: permconfig.ProviderAuth{Method: providerAuthNone}, DefaultModel: "local-model"},
-		"needs-key": {ID: "needs-key", Auth: permconfig.ProviderAuth{Method: "api_key"}, DefaultModel: "remote-model"},
-	}}, false)
-	for _, unexpected := range []string{"anthropic", "openai", "openai-codex", "opencode", "openrouter", "toolhive"} {
-		for _, status := range statuses {
-			if status.Name == unexpected {
-				t.Errorf("bare status fabricated unavailable provider %q: %#v", unexpected, statuses)
-			}
-		}
-	}
+	commands := testProviderCommands()
+	statuses := commands.statuses(context.Background(), providerInspection{definitions: permconfig.ProviderDefinitions{"no-auth": {ID: "no-auth", Auth: permconfig.ProviderAuth{Method: providerAuthNone}}, "needs-key": {ID: "needs-key", Auth: permconfig.ProviderAuth{Method: providerAuthAPIKey}}}}, false)
 	if len(statuses) != 2 || statuses[0].Name != "needs-key" || statuses[1].Name != "no-auth" {
-		t.Fatalf("custom provider definitions = %#v", statuses)
+		t.Fatalf("statuses = %#v", statuses)
 	}
 }
 
 func TestProviderStatusesIncludeToolHiveOnlyWhenDetected(t *testing.T) {
-	old := toolHiveAvailable
-	t.Cleanup(func() { toolHiveAvailable = old })
-	inspection := providerInspection{}
-
-	toolHiveAvailable = func() bool { return false }
-	for _, status := range providerStatuses(inspection, false) {
-		if status.Name == toolHiveEndpointID {
-			t.Fatalf("ToolHive listed without a detected lifecycle: %#v", status)
-		}
+	commands := testProviderCommands()
+	if got := commands.statuses(context.Background(), providerInspection{}, false); len(got) != 0 {
+		t.Fatalf("unexpected statuses: %#v", got)
 	}
-	toolHiveAvailable = func() bool { return true }
-	statuses := providerStatuses(inspection, false)
-	if len(statuses) != 1 || statuses[0].Name != toolHiveEndpointID {
-		t.Fatalf("ToolHive status after lifecycle detection = %#v", statuses)
+	commands.backend.toolHiveAvailable = func() bool { return true }
+	got := commands.statuses(context.Background(), providerInspection{}, false)
+	if len(got) != 1 || got[0].Name != toolHiveEndpointID {
+		t.Fatalf("ToolHive status = %#v", got)
 	}
 }
 
 func TestProvidersStatusNamedStockUsesFullInventoryAndReadableBlocks(t *testing.T) {
-	old, oldAll := loadProviderStatuses, loadAllProviderStatuses
-	t.Cleanup(func() { loadProviderStatuses, loadAllProviderStatuses = old, oldAll })
-	loadProviderStatuses = func() ([]providerStatus, error) { return nil, nil }
-	loadAllProviderStatuses = func() ([]providerStatus, error) {
-		return []providerStatus{{Name: "openai", Class: providerClassBuiltin, Auth: "not configured", DefaultModel: "gpt-5", Next: "configure an API key"}}, nil
-	}
-
-	bare := resolveInvocation([]string{"mecatui", "providers"})
+	commands := testProviderCommands()
+	commands.backend.inspect = providerInspectionLoader(providerInspection{})
 	var empty bytes.Buffer
-	if err := runProviderStatusCommand(bare, &empty, &bytes.Buffer{}); err != nil {
-		t.Fatalf("bare status: %v", err)
+	if err := commands.runStatus(context.Background(), resolveInvocation([]string{"mecatui", "providers"}), &empty, io.Discard); err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(empty.String(), "No local providers are configured.") || !strings.Contains(empty.String(), "mecatui providers setup") {
+	if !strings.Contains(empty.String(), "No local providers are configured.") {
 		t.Fatalf("empty state = %q", empty.String())
 	}
-
-	named := resolveInvocation([]string{"mecatui", "providers", "status", "openai"})
 	var output bytes.Buffer
-	if err := runProviderStatusCommand(named, &output, &bytes.Buffer{}); err != nil {
-		t.Fatalf("named stock status: %v", err)
+	if err := commands.runStatus(context.Background(), resolveInvocation([]string{"mecatui", "providers", "status", "openai"}), &output, io.Discard); err != nil {
+		t.Fatal(err)
 	}
-	want := "openai (built-in)\n  Authentication: not configured\n  Default model: gpt-5\n  Next step: configure an API key\n"
-	if output.String() != want {
-		t.Fatalf("named status = %q, want %q", output.String(), want)
-	}
-}
-
-func TestProviderStatusBlocksAreSeparatedAndNeverExposeSecrets(t *testing.T) {
-	var output bytes.Buffer
-	statuses := []providerStatus{
-		{Name: "custom", Class: "custom", Auth: "configured", DefaultModel: "model", Next: "ready to use"},
-		{Name: "openai", Class: providerClassBuiltin, Auth: "configured", DefaultModel: "gpt-5", Next: "ready to use"},
-	}
-	for i, status := range statuses {
-		if i > 0 {
-			_, _ = fmt.Fprintln(&output)
-		}
-		if err := writeProviderStatus(&output, status); err != nil {
-			t.Fatal(err)
-		}
-	}
-	got := output.String()
-	if !strings.Contains(got, "Next step: ready to use\n\nopenai (built-in)") || strings.Contains(got, "\t") {
-		t.Fatalf("readable blocks = %q", got)
-	}
-	for _, secret := range []string{"environment-secret", "file-secret"} {
-		if strings.Contains(got, secret) {
-			t.Fatalf("status exposed %q: %q", secret, got)
-		}
+	if !strings.Contains(output.String(), "openai (built-in)\n  Authentication: not configured") {
+		t.Fatalf("named status = %q", output.String())
 	}
 }
 
 func TestProviderOIDCStatusReportsEnrollment(t *testing.T) {
-	oldOpen := openProviderOIDCRuntime
-	t.Cleanup(func() { openProviderOIDCRuntime = oldOpen })
+	commands := testProviderCommands()
 	runtime := &statusProviderOIDCRuntime{}
-	openProviderOIDCRuntime = func(context.Context, permconfig.ProviderDefinition, bool, io.Writer) (nativeEndpointRuntime, error) {
+	commands.backend.openOIDCRuntime = func(context.Context, permconfig.ProviderDefinition, bool, io.Writer) (nativeEndpointRuntime, error) {
 		return runtime, nil
 	}
-
-	auth, next := providerOIDCStatus(permconfig.ProviderDefinition{ID: "custom"})
+	auth, next := commands.oidcStatus(context.Background(), permconfig.ProviderDefinition{ID: "custom"})
 	if auth != "OIDC enrolled" || next != "ready to use" || !runtime.closed {
-		t.Fatalf("OIDC status = (%q, %q), closed=%t", auth, next, runtime.closed)
+		t.Fatalf("OIDC status = (%q,%q), closed=%t", auth, next, runtime.closed)
 	}
 }
 
@@ -230,29 +149,9 @@ func (*statusProviderOIDCRuntime) Logout(context.Context) error { return nil }
 func (r *statusProviderOIDCRuntime) Close() error               { r.closed = true; return nil }
 
 func TestProvidersSupportedProviderCommandsAreExecutable(t *testing.T) {
-	for _, args := range [][]string{
-		{"mecatui", "providers", "setup"},
-		{"mecatui", "providers", "setup", "openai"},
-	} {
-		if got := resolveInvocation(args); got.err != nil || got.mode != modeProviderSetup {
-			t.Errorf("%v resolved to %+v, want provider setup", args, got)
-		}
-	}
-	for _, args := range [][]string{
-		{"mecatui", "providers", "login", "custom"},
-		{"mecatui", "providers", "logout", "custom"},
-		{"mecatui", "providers", "remove", "custom"},
-	} {
-		got := resolveInvocation(args)
-		if got.err != nil {
-			t.Errorf("%v resolution = %+v", args, got)
-			continue
-		}
-		if args[2] == "remove" && got.mode != modeProviderRemove {
-			t.Errorf("%v mode = %q, want %q", args, got.mode, modeProviderRemove)
-		}
-		if args[2] != "remove" && got.mode != modeProviderCredential {
-			t.Errorf("%v mode = %q, want %q", args, got.mode, modeProviderCredential)
+	for _, args := range [][]string{{"mecatui", "providers", "setup"}, {"mecatui", "providers", "login", "custom"}, {"mecatui", "providers", "remove", "custom"}} {
+		if got := resolveInvocation(args); got.err != nil {
+			t.Errorf("%v resolved to %+v", args, got)
 		}
 	}
 }

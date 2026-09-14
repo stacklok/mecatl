@@ -20,15 +20,6 @@ type providerCredentialConfig struct {
 	authPath    string
 }
 
-var (
-	loadProviderCredentialConfig = currentProviderCredentialConfig
-	readProviderAPIKey           = readHiddenProviderAPIKey
-	updateProviderAPIKey         = authfile.UpdateAPIKey
-	openProviderOIDCRuntime      = func(ctx context.Context, definition permconfig.ProviderDefinition, noBrowser bool, urlWriter io.Writer) (nativeEndpointRuntime, error) {
-		return openNativeEndpointRuntime(ctx, definition, noBrowser, urlWriter)
-	}
-)
-
 func currentProviderCredentialConfig() (providerCredentialConfig, error) {
 	resolver := permconfig.NewWithEnv(permconfig.Options{Conventional: true}, xdgconfig.OSEnv)
 	definitions, _, err := resolver.OperatorProviders()
@@ -42,45 +33,74 @@ func currentProviderCredentialConfig() (providerCredentialConfig, error) {
 	return providerCredentialConfig{definitions: definitions, authPath: path}, nil
 }
 
-func readHiddenProviderAPIKey(provider string) (string, error) {
+func readHiddenProviderAPIKey(ctx context.Context, provider string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	if _, err := fmt.Fprintf(os.Stderr, "API key for %s: ", provider); err != nil {
 		return "", err
 	}
-	key, err := term.ReadPassword(int(os.Stdin.Fd()))
-	_, _ = fmt.Fprintln(os.Stderr)
-	return string(key), err
+	result := make(chan struct {
+		key []byte
+		err error
+	})
+	go func() {
+		key, err := term.ReadPassword(int(os.Stdin.Fd()))
+		got := struct {
+			key []byte
+			err error
+		}{key, err}
+		select {
+		case result <- got:
+		case <-ctx.Done():
+			clear(key)
+		}
+	}()
+	select {
+	case <-ctx.Done():
+		_, _ = fmt.Fprintln(os.Stderr)
+		return "", ctx.Err()
+	case got := <-result:
+		_, _ = fmt.Fprintln(os.Stderr)
+		key := string(got.key)
+		clear(got.key)
+		return key, got.err
+	}
 }
 
 var errProviderCredentialCancelled = errors.New("provider credential prompt cancelled")
 
-func runProviderCredentialCommand(res invocationResolution, stdout, stderr io.Writer) error {
+func (c providerCommands) runCredential(ctx context.Context, res invocationResolution, stdout, stderr io.Writer) error {
 	if len(res.remaining) == 1 && isHelpMetaFlag(res.remaining[0]) {
-		return providerHelpResult(stderr, res.llmAction)
+		return providerHelpResult(stderr, res.providerAction)
 	}
-	if res.llmEndpoint == toolHiveEndpointID {
-		return runToolHiveProviderCredentialCommand(res, stderr)
+	if res.providerName == toolHiveEndpointID {
+		return c.runToolHiveCredential(ctx, res, stderr)
 	}
-	cfg, err := loadProviderCredentialConfig()
+	cfg, err := c.backend.loadCredentials()
 	if err != nil {
-		return fmt.Errorf("providers %s: load configured providers: %w", res.llmAction, err)
+		return fmt.Errorf("providers %s: load configured providers: %w", res.providerAction, err)
 	}
-	if isBuiltinAPIKeyProvider(res.llmEndpoint) {
-		return runProviderAPIKeyCommand(res, cfg.authPath, stdout, stderr)
-	}
-	definition, ok := cfg.definitions[res.llmEndpoint]
-	if !ok {
-		return fmt.Errorf("provider %q is not a configured custom provider; login and logout are unavailable", res.llmEndpoint)
-	}
-	switch definition.Auth.Method {
-	case "api_key":
+	if isBuiltinAPIKeyProvider(res.providerName) {
 		if len(res.remaining) != 0 {
 			return errors.New("providers login: --no-browser is available only for auth.method oidc")
 		}
-		return runProviderAPIKeyCommand(res, cfg.authPath, stdout, stderr)
+		return c.runAPIKey(ctx, res, cfg.authPath, stdout, stderr)
+	}
+	definition, ok := cfg.definitions[res.providerName]
+	if !ok {
+		return fmt.Errorf("provider %q is not a configured custom provider; login and logout are unavailable", res.providerName)
+	}
+	switch definition.Auth.Method {
+	case providerAuthAPIKey:
+		if len(res.remaining) != 0 {
+			return errors.New("providers login: --no-browser is available only for auth.method oidc")
+		}
+		return c.runAPIKey(ctx, res, cfg.authPath, stdout, stderr)
 	case providerAuthOIDC:
-		return runProviderOIDCCommand(res, definition, stdout, stderr)
+		return c.runOIDC(ctx, res, definition, stdout, stderr)
 	default:
-		return fmt.Errorf("provider %q uses auth.method %q; login and logout require locally managed credentials", res.llmEndpoint, definition.Auth.Method)
+		return fmt.Errorf("provider %q uses auth.method %q; login and logout require locally managed credentials", res.providerName, definition.Auth.Method)
 	}
 }
 
@@ -93,10 +113,10 @@ func isBuiltinAPIKeyProvider(provider string) bool {
 	}
 }
 
-func runProviderAPIKeyCommand(res invocationResolution, authPath string, stdout, stderr io.Writer) error {
+func (c providerCommands) runAPIKey(ctx context.Context, res invocationResolution, authPath string, stdout, stderr io.Writer) error {
 	var key *string
-	if res.llmAction == providerActionLogin {
-		entered, err := readProviderAPIKey(res.llmEndpoint)
+	if res.providerAction == providerActionLogin {
+		entered, err := c.terminal.readAPIKey(ctx, res.providerName)
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
 				return providerCredentialCancellation(stderr)
@@ -108,34 +128,45 @@ func runProviderAPIKeyCommand(res invocationResolution, authPath string, stdout,
 		}
 		key = &entered
 	}
-	state, err := updateProviderAPIKey(context.Background(), authPath, authfile.APIKeyUpdate{Provider: res.llmEndpoint, APIKey: key})
+	state, err := c.backend.updateAPIKey(ctx, authPath, authfile.APIKeyUpdate{Provider: res.providerName, APIKey: key})
 	if err != nil {
-		return fmt.Errorf("providers %s: update locally managed API key: %w", res.llmAction, err)
+		if state == authfile.CommitNotApplied && errors.Is(err, context.Canceled) {
+			return providerCredentialCancellation(stderr)
+		}
+		return fmt.Errorf("providers %s: update locally managed API key: %w", res.providerAction, err)
 	}
-	if res.llmAction == providerActionLogin {
+	if res.providerAction == providerActionLogin {
 		if state == authfile.CommitNoop {
-			_, err = fmt.Fprintf(stdout, "API key for provider %q is already configured\n", res.llmEndpoint)
+			_, err = fmt.Fprintf(stdout, "API key for provider %q is already configured\n", res.providerName)
 		} else {
-			_, err = fmt.Fprintf(stdout, "API key saved for provider %q\n", res.llmEndpoint)
+			_, err = fmt.Fprintf(stdout, "API key saved for provider %q\n", res.providerName)
 		}
 		return err
 	}
 	if state == authfile.CommitNoop {
-		_, err = fmt.Fprintf(stdout, "no locally managed API key for provider %q\n", res.llmEndpoint)
+		_, err = fmt.Fprintf(stdout, "no locally managed API key for provider %q\n", res.providerName)
 	} else {
-		_, err = fmt.Fprintf(stdout, "removed locally managed API key for provider %q\n", res.llmEndpoint)
+		_, err = fmt.Fprintf(stdout, "removed locally managed API key for provider %q\n", res.providerName)
 	}
 	return err
 }
 
-func runProviderOIDCCommand(res invocationResolution, definition permconfig.ProviderDefinition, stdout, stderr io.Writer) error {
-	noBrowser := len(res.remaining) == 1 && res.remaining[0] == "--no-browser"
-	ctx, cancel := newNativeLLMEnrollmentContext()
+func (c providerCommands) runOIDC(ctx context.Context, res invocationResolution, definition permconfig.ProviderDefinition, stdout, stderr io.Writer) error {
+	ctx, cancel := context.WithTimeout(ctx, nativeLLMEnrollmentTimeout)
 	defer cancel()
-	runtime, err := openProviderOIDCRuntime(ctx, definition, noBrowser, stderr)
+	noBrowser := len(res.remaining) == 1 && res.remaining[0] == "--no-browser"
+	if res.providerAction == providerActionLogin && c.backend.prepareOIDCRoot != nil {
+		if definition.Auth.OIDC == nil || definition.Auth.OIDC.CredentialStore == nil {
+			return providerOIDCLifecycleError(res.providerAction, res.providerName, errors.New("OIDC credential store is not configured"))
+		}
+		if err := c.backend.prepareOIDCRoot(definition.Auth.OIDC.CredentialStore.Home); err != nil {
+			return providerOIDCLifecycleError(res.providerAction, res.providerName, err)
+		}
+	}
+	runtime, err := c.backend.openOIDCRuntime(ctx, definition, noBrowser, stderr)
 	if err == nil {
 		defer func() { _ = runtime.Close() }()
-		if res.llmAction == providerActionLogin {
+		if res.providerAction == providerActionLogin {
 			err = runtime.Login(ctx)
 		} else {
 			err = runtime.Logout(ctx)
@@ -145,12 +176,12 @@ func runProviderOIDCCommand(res invocationResolution, definition permconfig.Prov
 		if errors.Is(err, context.Canceled) {
 			return providerCredentialCancellation(stderr)
 		}
-		return providerOIDCLifecycleError(res.llmAction, res.llmEndpoint, err)
+		return providerOIDCLifecycleError(res.providerAction, res.providerName, err)
 	}
-	if res.llmAction == providerActionLogin {
-		_, err = fmt.Fprintf(stdout, "OIDC login successful for provider %q\n", res.llmEndpoint)
+	if res.providerAction == providerActionLogin {
+		_, err = fmt.Fprintf(stdout, "OIDC login successful for provider %q\n", res.providerName)
 	} else {
-		_, err = fmt.Fprintf(stdout, "removed locally managed OIDC credentials for provider %q\n", res.llmEndpoint)
+		_, err = fmt.Fprintf(stdout, "removed locally managed OIDC credentials for provider %q\n", res.providerName)
 	}
 	return err
 }
@@ -163,13 +194,13 @@ func providerCredentialCancellation(stderr io.Writer) error {
 	return errProviderCredentialCancelled
 }
 
-func runToolHiveProviderCredentialCommand(res invocationResolution, stderr io.Writer) error {
-	if res.llmAction != providerActionLogin {
+func (c providerCommands) runToolHiveCredential(ctx context.Context, res invocationResolution, stderr io.Writer) error {
+	if res.providerAction != providerActionLogin {
 		return errors.New("ToolHive owns this provider lifecycle; use `thv llm` tooling")
 	}
-	ctx, cancel := newNativeLLMEnrollmentContext()
+	ctx, cancel := context.WithTimeout(ctx, nativeLLMEnrollmentTimeout)
 	defer cancel()
-	if err := executeToolHiveLogin(ctx, len(res.remaining) == 1 && res.remaining[0] == "--no-browser"); err != nil {
+	if err := c.backend.toolHiveLogin(ctx, len(res.remaining) == 1 && res.remaining[0] == "--no-browser"); err != nil {
 		if errors.Is(err, context.Canceled) {
 			return providerCredentialCancellation(stderr)
 		}

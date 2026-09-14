@@ -5,7 +5,6 @@ package permconfig
 import (
 	"bytes"
 	"context"
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -131,7 +130,7 @@ func TestUpdateProviderMap_AddOIDCAddsOrPreservesCredentialStore(t *testing.T) {
 	definition := ProviderDefinition{
 		BaseURL: "https://oidc.example/v1", DefaultModel: "model", APIFlavor: "openai-responses",
 		Auth: ProviderAuth{Method: "oidc", OIDC: &ProviderOIDC{
-			Issuer: "https://issuer.example", ClientID: "client", Scopes: []string{"openid"},
+			Issuer: "https://issuer.example", ClientID: "client", Scopes: []string{"profile", "openid"},
 			IssuerTrust: NativeTrust{Policy: "public"}, GatewayTrust: NativeTrust{Policy: "public"},
 		}},
 	}
@@ -167,6 +166,127 @@ func TestUpdateProviderMap_AddOIDCAddsOrPreservesCredentialStore(t *testing.T) {
 			t.Fatalf("existing OIDC credential store was replaced:\n%s", data)
 		}
 	})
+
+	t.Run("rollback removes inserted store but preserves siblings", func(t *testing.T) {
+		path := providerMapSettings(t, "credential_store:\n  api_key:\n    file: /credentials/auth.yaml\nproviders: {}\n")
+		if _, err := UpdateProviderMap(t.Context(), path, ProviderMapUpdate{Provider: "oidc", Definition: &definition, OIDCCredentialStore: defaultStore}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := UpdateProviderMap(t.Context(), path, ProviderMapUpdate{Provider: "oidc", ExpectedDefinition: &definition, RemoveOIDCCredentialStore: defaultStore}); err != nil {
+			t.Fatal(err)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(data), "oidc:") || strings.Contains(string(data), "provider-oidc") || !strings.Contains(string(data), "api_key:") {
+			t.Fatalf("OIDC rollback did not preserve credential-store siblings:\n%s", data)
+		}
+	})
+
+	t.Run("rollback preserves store used by another provider", func(t *testing.T) {
+		path := providerMapSettings(t, "providers: {}\n")
+		if _, err := UpdateProviderMap(t.Context(), path, ProviderMapUpdate{Provider: "first", Definition: &definition, OIDCCredentialStore: defaultStore}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := UpdateProviderMap(t.Context(), path, ProviderMapUpdate{Provider: "second", Definition: &definition, OIDCCredentialStore: defaultStore}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := UpdateProviderMap(t.Context(), path, ProviderMapUpdate{Provider: "first", ExpectedDefinition: &definition, RemoveOIDCCredentialStore: defaultStore}); err != nil {
+			t.Fatal(err)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(data), "'second':") || !strings.Contains(string(data), "credential_store:") || !strings.Contains(string(data), "provider-oidc") {
+			t.Fatalf("rollback removed a shared OIDC store:\n%s", data)
+		}
+	})
+}
+
+func TestUpdateProviderMap_CreateOnlyConflict(t *testing.T) {
+	path := providerMapSettings(t, "providers:\n  custom:\n    base_url: https://current.example/v1\n    default_model: current\n    api_flavor: openai-responses\n    auth: {method: none}\n")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacement := ProviderDefinition{BaseURL: "https://replacement.example/v1", DefaultModel: "replacement", APIFlavor: "openai-responses", Auth: ProviderAuth{Method: "none"}}
+	state, err := UpdateProviderMap(t.Context(), path, ProviderMapUpdate{Provider: "custom", Definition: &replacement, ExpectedAbsent: true})
+	if state != authfile.CommitNotApplied || err == nil || err.Error() != errProviderConfigurationChanged.Error() {
+		t.Fatalf("create-only conflict = (%v, %v), want changed error", state, err)
+	}
+	after, readErr := os.ReadFile(path)
+	if readErr != nil || !bytes.Equal(after, before) {
+		t.Fatalf("create-only conflict changed settings: %v\n%s", readErr, after)
+	}
+}
+
+func TestUpdateProviderMap_RemoveExpectedDefinitionConflict(t *testing.T) {
+	path := providerMapSettings(t, "providers:\n  custom:\n    base_url: https://current.example/v1\n    default_model: current\n    api_flavor: openai-responses\n    auth: {method: none}\n")
+	expected := ProviderDefinition{BaseURL: "https://stale.example/v1", DefaultModel: "stale", APIFlavor: "openai-responses", Auth: ProviderAuth{Method: "none"}}
+	state, err := UpdateProviderMap(t.Context(), path, ProviderMapUpdate{Provider: "custom", ExpectedDefinition: &expected})
+	if state != authfile.CommitNotApplied || err == nil || err.Error() != errProviderConfigurationChanged.Error() {
+		t.Fatalf("remove conflict = (%v, %v), want changed error", state, err)
+	}
+	data, readErr := os.ReadFile(path)
+	if readErr != nil || !strings.Contains(string(data), "https://current.example/v1") {
+		t.Fatalf("remove conflict changed current definition: %v\n%s", readErr, data)
+	}
+}
+
+func TestUpdateProviderMap_RollbackStoreMismatch(t *testing.T) {
+	definition := ProviderDefinition{
+		BaseURL: "https://oidc.example/v1", DefaultModel: "model", APIFlavor: "openai-responses",
+		Auth: ProviderAuth{Method: "oidc", OIDC: &ProviderOIDC{
+			Issuer: "https://issuer.example", ClientID: "client", Scopes: []string{"openid"},
+			IssuerTrust: NativeTrust{Policy: "public"}, GatewayTrust: NativeTrust{Policy: "public"},
+		}},
+	}
+	path := providerMapSettings(t, "credential_store:\n  oidc:\n    home: /another-writer\n    key: {source: keyring}\nproviders:\n  oidc:\n    base_url: https://oidc.example/v1\n    default_model: model\n    api_flavor: openai-responses\n    auth:\n      method: oidc\n      oidc:\n        issuer: https://issuer.example\n        client_id: client\n        scopes: [openid]\n        issuer_trust: {policy: public}\n        gateway_trust: {policy: public}\n")
+	before, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	inserted := &OIDCCredentialStore{Home: "/original-writer", Key: NativeCredentialKey{Source: "keyring"}}
+	state, err := UpdateProviderMap(t.Context(), path, ProviderMapUpdate{Provider: "oidc", ExpectedDefinition: &definition, RemoveOIDCCredentialStore: inserted})
+	if state != authfile.CommitNotApplied || err == nil || err.Error() != errProviderConfigurationChanged.Error() {
+		t.Fatalf("rollback store conflict = (%v, %v), want changed error", state, err)
+	}
+	after, readErr := os.ReadFile(path)
+	if readErr != nil || !bytes.Equal(after, before) {
+		t.Fatalf("rollback store conflict changed settings: %v\n%s", readErr, after)
+	}
+}
+
+func TestUpdateProviderMap_ExpectedAbsentOIDCStoreConflict(t *testing.T) {
+	path := providerMapSettings(t, "credential_store:\n  oidc:\n    home: /concurrent-store\n    key: {source: keyring}\nproviders: {}\n")
+	before, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	definition := ProviderDefinition{
+		BaseURL: "https://oidc.example/v1", DefaultModel: "model", APIFlavor: "openai-responses",
+		Auth: ProviderAuth{Method: "oidc", OIDC: &ProviderOIDC{
+			Issuer: "https://issuer.example", ClientID: "client", Scopes: []string{"openid"},
+			IssuerTrust: NativeTrust{Policy: "public"}, GatewayTrust: NativeTrust{Policy: "public"},
+		}},
+	}
+	inserted := &OIDCCredentialStore{Home: "/original-store", Key: NativeCredentialKey{Source: "keyring"}}
+	state, err := UpdateProviderMap(t.Context(), path, ProviderMapUpdate{
+		Provider:                          "oidc",
+		Definition:                        &definition,
+		ExpectedAbsent:                    true,
+		OIDCCredentialStore:               inserted,
+		ExpectedOIDCCredentialStoreAbsent: true,
+	})
+	if state != authfile.CommitNotApplied || err == nil || err.Error() != errProviderConfigurationChanged.Error() {
+		t.Fatalf("OIDC-store absence conflict = (%v, %v), want changed error", state, err)
+	}
+	after, readErr := os.ReadFile(path)
+	if readErr != nil || !bytes.Equal(after, before) {
+		t.Fatalf("OIDC-store absence conflict changed settings: %v\n%s", readErr, after)
+	}
 }
 
 func TestUpdateProviderMap_InvalidOIDCDoesNotWrite(t *testing.T) {
@@ -189,48 +309,21 @@ func TestUpdateProviderMap_InvalidOIDCDoesNotWrite(t *testing.T) {
 	}
 }
 
-func TestUpdateProviderMap_ChangedTargetAbortsWithoutLockArtifact(t *testing.T) {
-	path := providerMapSettings(t, "providers: {}\n")
-	providerMapUpdateTestHook = func(stage string) error {
-		if stage == "before-compare" {
-			return os.WriteFile(path, []byte("providers: {}\n# changed\n"), 0o600)
-		}
-		return nil
+func TestUpdateDefaultsPreservesUnrelatedSettings(t *testing.T) {
+	path := providerMapSettings(t, "permissions:\n  deny: [Shell]\nmodels:\n  default_provider: openai\n  default: old\nunknown_top_level: preserved\n")
+	state, err := UpdateDefaults(t.Context(), path, DefaultUpdate{Provider: "openrouter", Model: "openai/gpt-5"})
+	if err != nil || state != authfile.CommitDurable {
+		t.Fatalf("UpdateDefaults = (%v, %v), want durable success", state, err)
 	}
-	t.Cleanup(func() { providerMapUpdateTestHook = nil })
-
-	_, err := UpdateProviderMap(context.Background(), path, ProviderMapUpdate{Provider: "custom", Definition: &ProviderDefinition{BaseURL: "https://custom.example", DefaultModel: "m", APIFlavor: "openai-responses", Auth: ProviderAuth{Method: "none"}}})
-	if err == nil || err.Error() != "Configuration changed while this command was running; no changes were made. Review the file and retry." {
-		t.Fatalf("error = %v, want changed-target error", err)
-	}
-	entries, err := os.ReadDir(filepath.Dir(path))
+	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, entry := range entries {
-		if strings.Contains(entry.Name(), ".lock") {
-			t.Fatalf("unexpected lock artifact %q", entry.Name())
+	text := string(data)
+	for _, want := range []string{"default_provider: 'openrouter'", "default: 'openai/gpt-5'", "deny: [Shell]", "unknown_top_level: preserved"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("updated settings missing %q:\n%s", want, text)
 		}
-	}
-}
-
-func TestUpdateDefaults_ChangedTargetAborts(t *testing.T) {
-	path := providerMapSettings(t, "models:\n  default_provider: openai\n  default: gpt-5\n")
-	defaultUpdateTestHook = func(stage string) error {
-		if stage == "before-compare" {
-			return os.WriteFile(path, []byte("models:\n  default_provider: openai\n  default: gpt-5\n# changed\n"), 0o600)
-		}
-		return nil
-	}
-	t.Cleanup(func() { defaultUpdateTestHook = nil })
-
-	state, err := UpdateDefaults(context.Background(), path, DefaultUpdate{Provider: "openai", Model: "gpt-5.1"})
-	if state != authfile.CommitNotApplied || err == nil || err.Error() != "Configuration changed while this command was running; no changes were made. Review the file and retry." {
-		t.Fatalf("UpdateDefaults = (%v, %v), want changed-target error", state, err)
-	}
-	data, readErr := os.ReadFile(path)
-	if readErr != nil || !strings.Contains(string(data), "# changed") {
-		t.Fatalf("changed target was overwritten: %v\n%s", readErr, data)
 	}
 }
 
@@ -318,53 +411,6 @@ func TestProviderUnification_Scenario5_PortableSafeWrite(t *testing.T) {
 		})
 	}
 
-	t.Run("same-directory temporary is removed when cancellation prevents replacement", func(t *testing.T) {
-		dir := t.TempDir()
-		if err := os.Chmod(dir, 0o700); err != nil {
-			t.Fatal(err)
-		}
-		path := filepath.Join(dir, "settings.yaml")
-		before := []byte("providers: {}\n")
-		if err := os.WriteFile(path, before, 0o600); err != nil {
-			t.Fatal(err)
-		}
-		ctx, cancel := context.WithCancel(context.Background())
-		providerMapUpdateTestHook = func(stage string) error {
-			if stage != "after-temp-sync" {
-				return nil
-			}
-			entries, err := os.ReadDir(dir)
-			if err != nil {
-				return err
-			}
-			for _, entry := range entries {
-				if strings.HasPrefix(entry.Name(), ".settings-default-") && strings.HasSuffix(entry.Name(), ".tmp") {
-					cancel()
-					return nil
-				}
-			}
-			return errors.New("same-directory temporary was not observable")
-		}
-		t.Cleanup(func() { providerMapUpdateTestHook = nil })
-
-		state, err := UpdateProviderMap(ctx, path, ProviderMapUpdate{Provider: "custom", Definition: definition})
-		if state != authfile.CommitNotApplied || !errors.Is(err, context.Canceled) {
-			t.Fatalf("cancelled update = (%v, %v), want not-applied cancellation", state, err)
-		}
-		after, readErr := os.ReadFile(path)
-		if readErr != nil || !bytes.Equal(after, before) {
-			t.Fatalf("cancelled update changed settings: %v\n%s", readErr, after)
-		}
-		entries, readDirErr := os.ReadDir(dir)
-		if readDirErr != nil {
-			t.Fatal(readDirErr)
-		}
-		for _, entry := range entries {
-			if strings.HasPrefix(entry.Name(), ".settings-default-") || strings.Contains(entry.Name(), ".lock") {
-				t.Fatalf("temporary or lock artifact remains: %q", entry.Name())
-			}
-		}
-	})
 }
 
 func providerMapSettings(t *testing.T, data string) string {

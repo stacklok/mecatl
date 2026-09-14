@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"flag"
 	"strings"
@@ -63,7 +64,7 @@ func TestProviderHelpCommandsSucceedWithoutProviderOrSideEffects(t *testing.T) {
 				t.Fatalf("resolve %v: %v", tt.args, res.err)
 			}
 			var stdout, stderr bytes.Buffer
-			err := runProviderCommandForHelpTest(res, &stdout, &stderr)
+			err := runProviderHelpForTest(testProviderCommands(), res, &stdout, &stderr)
 			if !errors.Is(err, flag.ErrHelp) {
 				t.Fatalf("help error = %v, want flag.ErrHelp (main exits successfully)", err)
 			}
@@ -80,20 +81,20 @@ func TestProviderHelpCommandsSucceedWithoutProviderOrSideEffects(t *testing.T) {
 	}
 }
 
-func runProviderCommandForHelpTest(res invocationResolution, stdout, stderr *bytes.Buffer) error {
+func runProviderHelpForTest(commands providerCommands, res invocationResolution, stdout, stderr *bytes.Buffer) error {
 	switch res.mode {
 	case modeProviderStatus:
-		return runProviderStatusCommand(res, stdout, stderr)
+		return commands.runStatus(context.Background(), res, stdout, stderr)
 	case modeProviderSetup:
-		return runProviderSetupCommand(res, stdout, stderr)
+		return commands.runSetup(context.Background(), res, stdout, stderr)
 	case modeProviderAdd:
-		return runProviderAddCommand(res, stdout, stderr)
+		return commands.runAdd(context.Background(), res, stdout, stderr)
 	case modeProviderCredential:
-		return runProviderCredentialCommand(res, stdout, stderr)
+		return commands.runCredential(context.Background(), res, stdout, stderr)
 	case modeProviderSetDefault:
-		return runProviderSetDefaultCommand(res, stdout, stderr)
+		return commands.runSetDefault(context.Background(), res, stdout, stderr)
 	case modeProviderRemove:
-		return runProviderRemoveCommand(res, stdout, stderr)
+		return commands.runRemove(context.Background(), res, stdout, stderr)
 	default:
 		return errors.New("provider help resolved to a non-provider mode")
 	}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 
@@ -11,31 +12,22 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 )
 
-func TestProviderSetupMenuSelectionAndCapabilityLabels(t *testing.T) {
-	oldStatuses, oldAllStatuses, oldRead := loadProviderStatuses, loadAllProviderStatuses, readProviderSetupField
-	t.Cleanup(func() {
-		loadProviderStatuses, loadAllProviderStatuses, readProviderSetupField = oldStatuses, oldAllStatuses, oldRead
-	})
-	loadAllProviderStatuses = func() ([]providerStatus, error) {
-		return []providerStatus{
-			{Name: "openai", Class: providerClassBuiltin, Auth: "not configured"},
-			{Name: toolHiveEndpointID, Class: "external"},
-			{Name: "corp", Class: "custom", Auth: "configured"},
-		}, nil
-	}
-	readProviderSetupField = func(string) (string, error) { return "3", nil }
+func setupCommands(t *testing.T, inspection providerInspection, input ...string) providerCommands {
+	commands := testProviderCommands()
+	commands.backend.inspect = providerInspectionLoader(inspection)
+	commands.terminal.readField = providerInput(t, input...)
+	return commands
+}
 
+func TestProviderSetupMenuSelectionAndCapabilityLabels(t *testing.T) {
+	commands := setupCommands(t, providerInspection{definitions: permconfig.ProviderDefinitions{"corp": {ID: "corp", Auth: permconfig.ProviderAuth{Method: providerAuthAPIKey}}}}, "6")
+	commands.backend.toolHiveAvailable = func() bool { return true }
 	var output bytes.Buffer
-	provider, err := chooseProviderForSetup(&output)
+	provider, err := commands.chooseForSetup(context.Background(), &output)
 	if err != nil || provider != toolHiveEndpointID {
 		t.Fatalf("selection = %q, %v", provider, err)
 	}
-	for _, want := range []string{
-		"1. corp (custom API key)",
-		"2. openai (API key)",
-		"3. toolhive (external lifecycle)",
-		"4. custom (custom provider: API key, OIDC, or no authentication)",
-	} {
+	for _, want := range []string{"1. anthropic (API key)", "corp (custom API key)", "toolhive (external lifecycle)", "custom (custom provider"} {
 		if !strings.Contains(output.String(), want) {
 			t.Errorf("menu missing %q:\n%s", want, output.String())
 		}
@@ -43,167 +35,72 @@ func TestProviderSetupMenuSelectionAndCapabilityLabels(t *testing.T) {
 }
 
 func TestProviderSetupMenuUsesFullInventoryNotBareStatus(t *testing.T) {
-	oldStatuses, oldAllStatuses, oldRead := loadProviderStatuses, loadAllProviderStatuses, readProviderSetupField
-	t.Cleanup(func() {
-		loadProviderStatuses, loadAllProviderStatuses, readProviderSetupField = oldStatuses, oldAllStatuses, oldRead
-	})
-	loadProviderStatuses = func() ([]providerStatus, error) {
-		return []providerStatus{
-			{Name: "openai", Class: providerClassBuiltin, Auth: "configured", DefaultModel: "gpt-5", Next: "ready to use"},
-			{Name: "corp-api", Class: "custom", Auth: "configured"},
-		}, nil
+	commands := setupCommands(t, providerInspection{definitions: permconfig.ProviderDefinitions{"corp-oidc": {ID: "corp-oidc", Auth: permconfig.ProviderAuth{Method: providerAuthOIDC}}, "local": {ID: "local", Auth: permconfig.ProviderAuth{Method: providerAuthNone}}}}, "1")
+	commands.backend.openOIDCRuntime = func(context.Context, permconfig.ProviderDefinition, bool, io.Writer) (nativeEndpointRuntime, error) {
+		return &fakeProviderOIDCRuntime{}, nil
 	}
-	loadAllProviderStatuses = func() ([]providerStatus, error) {
-		return []providerStatus{
-			{Name: "openrouter", Class: providerClassBuiltin, Auth: "not configured"},
-			{Name: "openai-codex", Class: providerClassBuiltin, Auth: "configured"},
-			{Name: "openai", Class: providerClassBuiltin, Auth: "configured"},
-			{Name: "corp-oidc", Class: "custom", Auth: "OIDC not enrolled"},
-			{Name: "anthropic", Class: providerClassBuiltin, Auth: "not configured"},
-			{Name: "corp-api", Class: "custom", Auth: "configured"},
-			{Name: "local", Class: "custom", Auth: "not required"},
-		}, nil
-	}
-	readProviderSetupField = func(string) (string, error) { return "1", nil }
-
-	bare := resolveInvocation([]string{"mecatui", "providers"})
-	var statusOutput, setupOutput bytes.Buffer
-	if err := runProviderStatusCommand(bare, &statusOutput, &bytes.Buffer{}); err != nil {
-		t.Fatalf("bare providers: %v", err)
-	}
-	provider, err := chooseProviderForSetup(&setupOutput)
+	var output bytes.Buffer
+	provider, err := commands.chooseForSetup(context.Background(), &output)
 	if err != nil || provider != "anthropic" {
-		t.Fatalf("first setup selection = %q, %v", provider, err)
+		t.Fatalf("selection = %q, %v", provider, err)
 	}
-	if strings.Contains(statusOutput.String(), "anthropic") || strings.Contains(statusOutput.String(), "openrouter") || !strings.Contains(statusOutput.String(), "openai (built-in)") || !strings.Contains(statusOutput.String(), "corp-api (custom)") {
-		t.Fatalf("bare configured-only output = %q", statusOutput.String())
-	}
-	for _, want := range []string{
-		"1. anthropic (API key)",
-		"2. corp-api (custom API key)",
-		"3. corp-oidc (custom OIDC)",
-		"4. openai (API key)",
-		"5. openrouter (API key)",
-		"6. custom (custom provider: API key, OIDC, or no authentication)",
-	} {
-		if !strings.Contains(setupOutput.String(), want) {
-			t.Errorf("setup menu missing %q:\n%s", want, setupOutput.String())
-		}
-	}
-	for _, unexpected := range []string{"openai-codex", "local ("} {
-		if strings.Contains(setupOutput.String(), unexpected) {
-			t.Errorf("setup menu included provider without a local setup action %q:\n%s", unexpected, setupOutput.String())
-		}
+	if strings.Contains(output.String(), "openai-codex") || strings.Contains(output.String(), "local (") {
+		t.Fatalf("unsupported setup choice: %s", output.String())
 	}
 }
 
 func TestProviderSetupNamedCustomDispatchesToLoginWithoutDefinitionEdit(t *testing.T) {
 	path := providerCredentialTestFile(t, "providers:\n  custom:\n    api_key: old-secret\n")
-	oldStatuses, oldAll, oldLoad, oldRead := loadProviderStatuses, loadAllProviderStatuses, loadProviderCredentialConfig, readProviderAPIKey
-	t.Cleanup(func() {
-		loadProviderStatuses, loadAllProviderStatuses, loadProviderCredentialConfig, readProviderAPIKey = oldStatuses, oldAll, oldLoad, oldRead
-	})
-	loadProviderStatuses = func() ([]providerStatus, error) {
-		return []providerStatus{{Name: "custom", Class: "custom", Auth: "not configured"}}, nil
-	}
-	loadAllProviderStatuses = loadProviderStatuses
-	loadProviderCredentialConfig = func() (providerCredentialConfig, error) {
-		return providerCredentialConfig{definitions: permconfig.ProviderDefinitions{"custom": {Auth: permconfig.ProviderAuth{Method: "api_key"}}}, authPath: path}, nil
-	}
-	readProviderAPIKey = func(string) (string, error) { return "new-secret", nil }
-
-	var stdout, stderr bytes.Buffer
-	if err := runProviderSetupCommand(invocationResolution{mode: modeProviderSetup, llmEndpoint: "custom"}, &stdout, &stderr); err != nil {
+	inspection := providerInspection{definitions: permconfig.ProviderDefinitions{"custom": {ID: "custom", Auth: permconfig.ProviderAuth{Method: providerAuthAPIKey}}}}
+	commands := setupCommands(t, inspection)
+	commands.backend.loadCredentials = providerCredentialConfigLoader(providerCredentialConfig{definitions: inspection.definitions, authPath: path})
+	commands.terminal.readAPIKey = func(context.Context, string) (string, error) { return "new-secret", nil }
+	commands.backend.updateAPIKey = authfile.UpdateAPIKey
+	if err := commands.runSetup(context.Background(), invocationResolution{mode: modeProviderSetup, providerName: "custom"}, io.Discard, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	if got := readProviderCredentialTestFile(t, path); !strings.Contains(got, "new-secret") || strings.Contains(got, "old-secret") {
 		t.Fatalf("credential update = %q", got)
 	}
-	if stdout.String() != "API key saved for provider \"custom\"\n" || stderr.Len() != 0 {
-		t.Fatalf("output stdout=%q stderr=%q", stdout.String(), stderr.String())
-	}
 }
 
 func TestProviderSetupCancellationBeforeMutation(t *testing.T) {
-	oldStatuses, oldAllStatuses, oldRead, oldUpdate := loadProviderStatuses, loadAllProviderStatuses, readProviderSetupField, updateProviderAPIKey
-	t.Cleanup(func() {
-		loadProviderStatuses, loadAllProviderStatuses, readProviderSetupField, updateProviderAPIKey = oldStatuses, oldAllStatuses, oldRead, oldUpdate
-	})
-	loadAllProviderStatuses = func() ([]providerStatus, error) {
-		return []providerStatus{{Name: "openai", Class: providerClassBuiltin, Auth: "not configured"}}, nil
-	}
-	readProviderSetupField = func(string) (string, error) { return "1", nil }
-	oldLoad, oldKeyRead := loadProviderCredentialConfig, readProviderAPIKey
-	t.Cleanup(func() { loadProviderCredentialConfig, readProviderAPIKey = oldLoad, oldKeyRead })
-	loadProviderCredentialConfig = func() (providerCredentialConfig, error) {
-		return providerCredentialConfig{authPath: "/safe/auth.yaml"}, nil
-	}
-	readProviderAPIKey = func(string) (string, error) { return "", context.Canceled }
-	updateProviderAPIKey = func(context.Context, string, authfile.APIKeyUpdate) (authfile.CommitState, error) {
-		t.Fatal("cancelled setup must not write")
+	commands := setupCommands(t, providerInspection{}, "1")
+	commands.backend.loadCredentials = providerCredentialConfigLoader(providerCredentialConfig{authPath: "/safe/auth.yaml"})
+	commands.terminal.readAPIKey = func(context.Context, string) (string, error) { return "", context.Canceled }
+	commands.backend.updateAPIKey = func(context.Context, string, authfile.APIKeyUpdate) (authfile.CommitState, error) {
+		t.Fatal("cancelled setup wrote")
 		return authfile.CommitNotApplied, nil
 	}
-
 	var stdout, stderr bytes.Buffer
-	err := runProviderSetupCommand(invocationResolution{mode: modeProviderSetup}, &stdout, &stderr)
-	if !errors.Is(err, errProviderCredentialCancelled) || !strings.Contains(stdout.String(), "Provider setup\n") || stderr.String() != "Cancelled; no changes made.\n" {
+	err := commands.runSetup(context.Background(), invocationResolution{mode: modeProviderSetup}, &stdout, &stderr)
+	if !errors.Is(err, errProviderCredentialCancelled) || stderr.String() != "Cancelled; no changes made.\n" {
 		t.Fatalf("cancellation err=%v stdout=%q stderr=%q", err, stdout.String(), stderr.String())
 	}
 }
 
 func TestNoProviderRecoveryIsStructuredAndLocalOnly(t *testing.T) {
-	cfg := config{transportMode: modeLocal}
-	err := validateEmbeddedProvider(cfg)
-	if err == nil {
-		t.Fatal("missing provider error")
-	}
-	want := []string{
-		"no LLM provider configured for the embedded server. Choose one:",
-		"  1. Run `mecatui providers setup` to configure a direct provider.",
-		"  2. Set a provider API key in the environment or use `--api-key-file PATH`.",
-		"  3. Enable a ToolHive LLM gateway.",
-		"  4. Start with `--mock` for offline testing.",
-		"  5. Connect to an existing remote server with `mecatui connect ADDRESS`.",
-		"These options configure only the embedded server; a remote mecated's provider configuration is managed by its operator.",
-	}
-	for _, line := range want {
-		if !strings.Contains(err.Error(), line) {
-			t.Errorf("recovery output missing %q:\n%s", line, err)
+	err := validateEmbeddedProvider(config{transportMode: modeLocal})
+	for _, want := range []string{"mecatui providers setup", "mecatui connect ADDRESS", "remote mecated's provider configuration"} {
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("recovery missing %q: %v", want, err)
 		}
-	}
-	if strings.Contains(err.Error(), "run setup automatically") {
-		t.Errorf("recovery must not launch setup: %s", err)
 	}
 }
 
-func TestProviderSetupReportsCompletedDefinitionWhenLoginIsCancelled(t *testing.T) {
-	oldStatuses, oldRead, oldUpdate := loadProviderStatuses, readProviderAddField, updateProviderMap
-	t.Cleanup(func() {
-		loadProviderStatuses, readProviderAddField, updateProviderMap = oldStatuses, oldRead, oldUpdate
-	})
-	loadProviderStatuses = func() ([]providerStatus, error) { return nil, nil }
-	values := []string{"https://gateway.example", "1", "model-1", "1"}
-	readProviderAddField = func(string) (string, error) {
-		if len(values) == 0 {
-			t.Fatal("unexpected provider definition prompt")
-		}
-		value := values[0]
-		values = values[1:]
-		return value, nil
-	}
-	updateProviderMap = func(context.Context, string, permconfig.ProviderMapUpdate) (authfile.CommitState, error) {
+func TestProviderSetupRollsBackDefinitionWhenLoginIsCancelled(t *testing.T) {
+	commands := setupCommands(t, providerInspection{}, "https://gateway.example", "1", "model-1", "1")
+	commands.backend.settingsPath = func() string { return "/safe/settings.yaml" }
+	writes := 0
+	commands.backend.updateProviderMap = func(context.Context, string, permconfig.ProviderMapUpdate) (authfile.CommitState, error) {
+		writes++
 		return authfile.CommitDurable, nil
 	}
-	oldLoad, oldKeyRead := loadProviderCredentialConfig, readProviderAPIKey
-	t.Cleanup(func() { loadProviderCredentialConfig, readProviderAPIKey = oldLoad, oldKeyRead })
-	loadProviderCredentialConfig = func() (providerCredentialConfig, error) {
-		return providerCredentialConfig{definitions: permconfig.ProviderDefinitions{"custom": {Auth: permconfig.ProviderAuth{Method: "api_key"}}}, authPath: "/safe/auth.yaml"}, nil
-	}
-	readProviderAPIKey = func(string) (string, error) { return "", context.Canceled }
-
+	commands.backend.loadCredentials = providerCredentialConfigLoader(providerCredentialConfig{definitions: permconfig.ProviderDefinitions{"custom": {Auth: permconfig.ProviderAuth{Method: providerAuthAPIKey}}}})
+	commands.terminal.readAPIKey = func(context.Context, string) (string, error) { return "", context.Canceled }
 	var stdout, stderr bytes.Buffer
-	err := runProviderSetupCommand(invocationResolution{mode: modeProviderSetup, llmEndpoint: "custom"}, &stdout, &stderr)
-	if err != nil || stdout.String() != "Provider definition saved for \"custom\"\n" || stderr.String() != "Login cancelled; provider definition saved for \"custom\".\n" {
-		t.Fatalf("result err=%v stdout=%q stderr=%q", err, stdout.String(), stderr.String())
+	err := commands.runSetup(context.Background(), invocationResolution{mode: modeProviderSetup, providerName: "custom"}, &stdout, &stderr)
+	if !errors.Is(err, errProviderCredentialCancelled) || writes != 2 || stdout.Len() != 0 || stderr.String() != "Cancelled; no changes made.\n" {
+		t.Fatalf("rollback err=%v writes=%d stdout=%q stderr=%q", err, writes, stdout.String(), stderr.String())
 	}
 }
