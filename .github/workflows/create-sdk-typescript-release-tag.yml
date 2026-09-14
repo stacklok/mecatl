@@ -47,9 +47,11 @@ jobs:
             echo "::error::SDK VERSION ${version} != package.json ${manifest_version}"
             exit 1
           fi
-          echo "version=${version}" >> "$GITHUB_OUTPUT"
-          echo "tag=sdk/typescript/v${version}" >> "$GITHUB_OUTPUT"
-          echo "branch=release/sdk-typescript/v${version}" >> "$GITHUB_OUTPUT"
+          {
+            echo "version=${version}"
+            echo "tag=sdk/typescript/v${version}"
+            echo "branch=release/sdk-typescript/v${version}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Decide whether to tag
         id: decide
