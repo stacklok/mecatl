@@ -8,7 +8,7 @@
 **Delivery:** Split. The change crosses engine, durable stores, remote driver, server, and mecatui boundaries, so separate interface review is valuable.
 **Expected tasks:** 3
 **Issue:** [#1458](https://github.com/stacklok/mecatl/issues/1458)
-**Plan PR:** absent until opened
+**Plan PR:** [#1459](https://github.com/stacklok/mecatl/pull/1459)
 **Approved baseline:** absent until the Plan / Interface PR merges
 
 A valid main session created before its first genuine user prompt is a durable draft, not a
