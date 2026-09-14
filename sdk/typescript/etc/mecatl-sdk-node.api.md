@@ -5,7 +5,6 @@
 ```ts
 
 import type { CallOptions } from '@connectrpc/connect';
-import type { ClientSessionOptions } from 'node:http2';
 import type { DescMessage } from '@bufbuild/protobuf';
 import type { DescMethodStreaming } from '@bufbuild/protobuf';
 import type { DescMethodUnary } from '@bufbuild/protobuf';
@@ -14,6 +13,7 @@ import type { JsonValue } from '@bufbuild/protobuf';
 import type { Message } from '@bufbuild/protobuf';
 import type { MessageInitShape } from '@bufbuild/protobuf';
 import type { MessageShape } from '@bufbuild/protobuf';
+import type { SecureClientSessionOptions } from 'node:http2';
 import type { Timestamp } from '@bufbuild/protobuf/wkt';
 import { Transport } from '@connectrpc/connect';
 
@@ -699,7 +699,7 @@ export type NodeConnectOptions = (NodeTransportOptions | InjectedTransportOption
 
 // @public
 export interface NodeTransportCommonOptions extends CredentialOptions {
-    nodeOptions?: Omit<ClientSessionOptions, "createConnection">;
+    nodeOptions?: Omit<SecureClientSessionOptions, "createConnection">;
 }
 
 // @public

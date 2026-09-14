@@ -13,6 +13,7 @@ import type { JsonValue } from '@bufbuild/protobuf';
 import type { Message } from '@bufbuild/protobuf';
 import type { MessageInitShape } from '@bufbuild/protobuf';
 import type { MessageShape } from '@bufbuild/protobuf';
+import type { SecureClientSessionOptions } from 'node:http2';
 import type { Timestamp } from '@bufbuild/protobuf/wkt';
 import { Transport } from '@connectrpc/connect';
 
@@ -169,7 +170,7 @@ export interface CompactionArchiveEventPayload {
 }
 
 // @public
-export function connect(options: ConnectOptions): Client;
+export function connect(options: DenoConnectOptions): Client;
 
 // @public
 export type ConnectionStatus = "connecting" | "online" | "reconnecting" | "offline" | "unauthorized" | "incompatible";
@@ -242,10 +243,13 @@ export class CursorScopeError extends MecatlError {
 export interface DaemonInfo {
     readonly apiMajor: number;
     readonly features: readonly string[];
-    readonly httpAddress: string;
+    readonly grpcAddress: string;
     readonly pid: number;
-    readonly transport: "http";
+    readonly transport: "grpc";
 }
+
+// @public
+export type DenoConnectOptions = (NodeTransportOptions | InjectedTransportOptions) & ClientDiagnosticsOptions;
 
 // @public
 export type DiagnosticFieldValue = boolean | number | string | null;
@@ -663,6 +667,20 @@ export interface Models {
     // Warning: (ae-forgotten-export) The symbol "ListModelsResponse" needs to be exported by the entry point deno.d.ts
     list(request: ListModelsRequest, options?: RequestOptions): Promise<ListModelsResponse>;
 }
+
+// @public
+export interface NodeTransportCommonOptions extends CredentialOptions {
+    nodeOptions?: Omit<SecureClientSessionOptions, "createConnection">;
+}
+
+// @public
+export type NodeTransportOptions = NodeTransportCommonOptions & ({
+    baseUrl: string;
+    socketPath?: never;
+} | {
+    baseUrl?: string;
+    socketPath: string;
+});
 
 // @public
 export class NoRunsError extends MecatlError {

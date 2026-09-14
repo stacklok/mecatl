@@ -1,5 +1,5 @@
 import { type Client, type EventOf, MecatlError } from "@stacklok-oss/mecatl-sdk";
-import { type DaemonInfo, query, spawn } from "@stacklok-oss/mecatl-sdk/deno";
+import { connect, type DaemonInfo, query, spawn } from "@stacklok-oss/mecatl-sdk/deno";
 import { HarnessService } from "@stacklok-oss/mecatl-sdk/gen";
 
 const [binaryArgument, scratchArgument] = Deno.args;
@@ -81,13 +81,15 @@ try {
     env: daemonEnv,
     tempDirectory: fixtureRoot,
   });
-  const daemonAddress = client.daemon.httpAddress;
+  const daemonAddress = client.daemon.grpcAddress;
   try {
-    assert(client.daemon.transport === "http", "Deno spawn did not select HTTP/SSE");
+    assert(client.daemon.transport === "grpc", "Deno spawn did not select gRPC");
+    assert(!("tool" in client), "Deno spawn exposed callback-tool authority");
+    assert(!client.daemon.features.includes("mcp_servers_on_create"), "TCP granted MCP authority");
     assert(client.daemon.pid > 0, "Deno spawn did not publish a child pid");
     assert(
-      client.daemon.httpAddress.startsWith("127.0.0.1:"),
-      "Deno spawn did not use loopback HTTP",
+      client.daemon.grpcAddress.startsWith("127.0.0.1:"),
+      "Deno spawn did not use loopback gRPC",
     );
     assert(
       (await runtimeDirectories()).length === 1,
@@ -117,13 +119,16 @@ try {
     (await runtimeDirectories()).length === 0,
     "Deno client close leaked its runtime directory",
   );
+  const disconnected = connect({ baseUrl: `http://${daemonAddress}` });
   try {
-    await fetch(`http://${daemonAddress}/v1/features`);
+    await disconnected.sessions.create({});
     throw new Error("Deno client close left its daemon reachable");
   } catch (error) {
     if (error instanceof Error && error.message === "Deno client close left its daemon reachable") {
       throw error;
     }
+  } finally {
+    await disconnected.close();
   }
 
   const oneShot = await query("complete the Deno one-shot query", {
@@ -147,3 +152,6 @@ try {
 }
 
 if (failure !== undefined) throw failure;
+console.log(
+  `Deno ${Deno.version.deno}: native spawn, gRPC stream/attach, query and cleanup passed`,
+);

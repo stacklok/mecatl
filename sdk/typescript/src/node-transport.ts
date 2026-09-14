@@ -1,4 +1,4 @@
-import type { ClientSessionOptions } from "node:http2";
+import type { SecureClientSessionOptions } from "node:http2";
 import { connect as connectSocket } from "node:net";
 import type { Transport } from "@connectrpc/connect";
 import type { GrpcTransportOptions } from "@connectrpc/connect-node";
@@ -7,10 +7,10 @@ import type { CredentialOptions } from "./credentials.js";
 import { credentialInterceptor } from "./credentials.js";
 import { registerTransport } from "./raw.js";
 
-/** Shared credentials and HTTP/2 settings for the gRPC transport in Node.js or Bun. @public */
+/** Shared credentials and HTTP/2 settings for gRPC in Node.js, Bun, or Deno. @public */
 export interface NodeTransportCommonOptions extends CredentialOptions {
-  /** Additional HTTP/2 session options. The SDK controls `createConnection` when using `socketPath`. */
-  nodeOptions?: Omit<ClientSessionOptions, "createConnection">;
+  /** HTTP/2 and TLS session options. The SDK controls `createConnection` when using `socketPath`. */
+  nodeOptions?: Omit<SecureClientSessionOptions, "createConnection">;
 }
 
 /** Selects a TCP authority or Unix domain socket for the gRPC transport. @public */
@@ -30,7 +30,7 @@ export type NodeTransportOptions = NodeTransportCommonOptions &
   );
 
 /**
- * Creates a gRPC transport for Node.js or Bun over HTTP/2 or a Unix domain socket.
+ * Creates a gRPC transport for Node.js, Bun, or Deno over HTTP/2 or a Unix domain socket.
  *
  * @param options - TCP authority or Unix socket plus credentials and HTTP/2 settings.
  * @returns A Connect-ES gRPC transport.

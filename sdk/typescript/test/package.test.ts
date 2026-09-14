@@ -232,6 +232,10 @@ test("packed tarball carries dist and license only", () => {
     "package/dist/gen/mecatl/v1/schedule_pb.d.ts.map",
     "package/dist/gen/mecatl/v1/schedule_pb.js",
     "package/dist/gen/mecatl/v1/schedule_pb.js.map",
+    "package/dist/grpc-client.d.ts",
+    "package/dist/grpc-client.d.ts.map",
+    "package/dist/grpc-client.js",
+    "package/dist/grpc-client.js.map",
     "package/dist/http.d.ts",
     "package/dist/http.d.ts.map",
     "package/dist/http.js",
@@ -564,9 +568,14 @@ void [
   const denoGraph = entrypointGraph("package/dist/deno.js");
   expect(denoGraph).toContain("package/dist/deno-spawn.js");
   expect(denoGraph).not.toContain("package/dist/spawn.js");
-  expect(denoGraph).not.toContain("package/dist/node-transport.js");
+  expect(denoGraph).toContain("package/dist/node-transport.js");
+  expect(denoGraph).toContain("package/dist/grpc-client.js");
+  expect(denoGraph).not.toContain("package/dist/node-client.js");
+  expect(denoGraph).not.toContain("package/dist/node-media.js");
+  expect(denoGraph).not.toContain("package/dist/tool.js");
+  expect(denoGraph).not.toContain("package/dist/tool-host.js");
   const builtins = new Set(builtinModules.map((name) => name.replace(/^node:/u, "")));
-  const builtinImports = [...new Set([...rootGraph, ...denoGraph])].flatMap((path) => {
+  const builtinImports = [...rootGraph].flatMap((path) => {
     const source = packedFiles.get(path)?.toString("utf8") ?? "";
     return [...source.matchAll(/\b(?:from|import)\s*(?:\(\s*)?["']([^"']+)["']/gu)]
       .map((match) => match[1] ?? "")

@@ -7,7 +7,7 @@ import {
   type DiagnosticsSink,
   MecatlError,
 } from "./errors.js";
-import { createHttpTransport } from "./http.js";
+import { createNodeTransport } from "./node-transport.js";
 import { createRawClient } from "./raw.js";
 
 const READY_SCHEMA = "mecated-ready/1";
@@ -16,7 +16,7 @@ const DEFAULT_READINESS_TIMEOUT_MS = 30_000;
 const READY_POLL_INTERVAL_MS = 20;
 const STOP_GRACE_MS = 3_000;
 const STOP_KILL_WAIT_MS = 1_000;
-const HTTP_LOOPBACK_ADDRESS = "127.0.0.1:0";
+const GRPC_LOOPBACK_ADDRESS = "127.0.0.1:0";
 const STDERR_CAPTURE_BYTES = 64 * 1024;
 const STDERR_REPORT_BYTES = 4 * 1024;
 const REDACTED_LINE = "[REDACTED]";
@@ -50,12 +50,12 @@ export interface DaemonInfo {
   readonly apiMajor: number;
   /** Deployment-scoped feature identifiers reported by the daemon. */
   readonly features: readonly string[];
-  /** Loopback HTTP/SSE address used by this client. */
-  readonly httpAddress: string;
+  /** Loopback TCP gRPC address used by this client. */
+  readonly grpcAddress: string;
   /** The spawned daemon's process identifier. */
   readonly pid: number;
-  /** Deno-spawned clients use the HTTP/SSE transport. */
-  readonly transport: "http";
+  /** Deno-spawned clients use the shared ConnectRPC gRPC transport. */
+  readonly transport: "grpc";
 }
 
 /** A Client that owns one Deno.Command-launched local daemon. @public */
@@ -105,7 +105,7 @@ interface DenoRuntime {
 interface ReadyDocument {
   readonly apiMajor: number;
   readonly features: readonly string[];
-  readonly httpAddress: string;
+  readonly grpcAddress: string;
   readonly pid: number;
 }
 
@@ -250,19 +250,26 @@ async function readReadyDocument(
   ) {
     throw localError("spawn_failed", "The ready document does not contain a valid feature list");
   }
+  if (document.transport !== "tcp") {
+    throw localError(
+      "spawn_failed",
+      "The ready document does not name the SDK-owned TCP transport",
+    );
+  }
   if (
-    typeof document.http_address !== "string" ||
-    !/^127\.0\.0\.1:[1-9][0-9]*$/.test(document.http_address)
+    typeof document.grpc_address !== "string" ||
+    !/^127\.0\.0\.1:[1-9][0-9]{0,4}$/.test(document.grpc_address) ||
+    Number(document.grpc_address.split(":")[1]) > 65535
   ) {
     throw localError(
       "spawn_failed",
-      "The ready document does not contain the SDK-owned loopback HTTP address",
+      "The ready document does not contain the SDK-owned loopback gRPC address",
     );
   }
   return {
     apiMajor: Number(document.api_major),
     features: [...document.features],
-    httpAddress: document.http_address,
+    grpcAddress: document.grpc_address,
     pid: Number(document.pid),
   };
 }
@@ -475,9 +482,9 @@ function withDaemonInfo(client: Client, ready: ReadyDocument): SpawnedClient {
   const daemon: DaemonInfo = Object.freeze({
     apiMajor: ready.apiMajor,
     features: Object.freeze([...ready.features]),
-    httpAddress: ready.httpAddress,
+    grpcAddress: ready.grpcAddress,
     pid: ready.pid,
-    transport: "http",
+    transport: "grpc",
   });
   Object.defineProperty(client, "daemon", {
     configurable: false,
@@ -517,7 +524,7 @@ export async function spawn(options: SpawnOptions = {}): Promise<SpawnedClient> 
 
   let directory: string | undefined;
   let process: LaunchedProcess | undefined;
-  let transport: ReturnType<typeof createHttpTransport> | undefined;
+  let transport: ReturnType<typeof createNodeTransport> | undefined;
   const readyPoll = new AbortController();
   let stopPromise: Promise<void> | undefined;
   let removePromise: Promise<void> | undefined;
@@ -547,9 +554,9 @@ export async function spawn(options: SpawnOptions = {}): Promise<SpawnedClient> 
       [
         "serve",
         "--grpc-addr",
-        HTTP_LOOPBACK_ADDRESS,
+        GRPC_LOOPBACK_ADDRESS,
         "--http-addr",
-        HTTP_LOOPBACK_ADDRESS,
+        "",
         "--ready-file",
         readyFile,
         "--lifetime-stdin",
@@ -571,8 +578,8 @@ export async function spawn(options: SpawnOptions = {}): Promise<SpawnedClient> 
     if (ready.pid !== process.pid) {
       throw localError("spawn_failed", "The ready document pid does not match the spawned daemon");
     }
-    transport = createHttpTransport({ baseUrl: `http://${ready.httpAddress}` });
-    await createRawClient({ transport, transportKind: "http" }).features({ timeoutMs });
+    transport = createNodeTransport({ baseUrl: `http://${ready.grpcAddress}` });
+    await createRawClient({ transport, transportKind: "grpc" }).features({ timeoutMs });
     return withDaemonInfo(
       connectTransport({
         ...(options.diagnostics === undefined ? {} : { diagnostics: options.diagnostics }),
@@ -585,7 +592,7 @@ export async function spawn(options: SpawnOptions = {}): Promise<SpawnedClient> 
         },
         owned: true,
         transport,
-        transportKind: "http",
+        transportKind: "grpc",
         visibility: false,
       }),
       ready,

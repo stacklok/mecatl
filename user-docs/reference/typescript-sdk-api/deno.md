@@ -17,7 +17,11 @@ This page lists declarations added or changed by `@stacklok-oss/mecatl-sdk/deno`
 
 | Symbol | Kind |
 | --- | --- |
+| [`connect`](#api-connect-function) | Function |
 | [`DaemonInfo`](#api-daemoninfo-interface) | Interface |
+| [`DenoConnectOptions`](#api-denoconnectoptions-typealias) | Type alias |
+| [`NodeTransportCommonOptions`](#api-nodetransportcommonoptions-interface) | Interface |
+| [`NodeTransportOptions`](#api-nodetransportoptions-typealias) | Type alias |
 | [`query`](#api-query-function) | Function |
 | [`Query`](#api-query-interface) | Interface |
 | [`QueryOptions`](#api-queryoptions-interface) | Interface |
@@ -26,6 +30,20 @@ This page lists declarations added or changed by `@stacklok-oss/mecatl-sdk/deno`
 | [`SpawnOptions`](#api-spawnoptions-interface) | Interface |
 
 ## Functions
+
+<Heading as="h3" id="api-connect-function"><code>connect</code></Heading>
+
+Creates a Deno client using the shared ConnectRPC gRPC transport.
+
+```ts
+export declare function connect(options: DenoConnectOptions): Client;
+```
+
+Parameters:
+
+- `options` (`DenoConnectOptions`): TCP authority, Unix socket, credentials, HTTP/2 settings, or a caller-owned transport.
+
+Returns: `Client`: A high-level client without callback-tool registration.
 
 <Heading as="h3" id="api-query-function"><code>query</code></Heading>
 
@@ -84,12 +102,12 @@ Deployment-scoped feature identifiers reported by the daemon.
 readonly features: readonly string[];
 ```
 
-<Heading as="h4" id="api-daemoninfo-httpaddress-propertysignature"><code>DaemonInfo.httpAddress</code></Heading>
+<Heading as="h4" id="api-daemoninfo-grpcaddress-propertysignature"><code>DaemonInfo.grpcAddress</code></Heading>
 
-Loopback HTTP/SSE address used by this client.
+Loopback TCP gRPC address used by this client.
 
 ```ts
-readonly httpAddress: string;
+readonly grpcAddress: string;
 ```
 
 <Heading as="h4" id="api-daemoninfo-pid-propertysignature"><code>DaemonInfo.pid</code></Heading>
@@ -102,10 +120,26 @@ readonly pid: number;
 
 <Heading as="h4" id="api-daemoninfo-transport-propertysignature"><code>DaemonInfo.transport</code></Heading>
 
-Deno-spawned clients use the HTTP/SSE transport.
+Deno-spawned clients use the shared ConnectRPC gRPC transport.
 
 ```ts
-readonly transport: "http";
+readonly transport: "grpc";
+```
+
+<Heading as="h3" id="api-nodetransportcommonoptions-interface"><code>NodeTransportCommonOptions</code></Heading>
+
+Shared credentials and HTTP/2 settings for gRPC in Node.js, Bun, or Deno.
+
+```ts
+export interface NodeTransportCommonOptions extends CredentialOptions
+```
+
+<Heading as="h4" id="api-nodetransportcommonoptions-nodeoptions-propertysignature"><code>NodeTransportCommonOptions.nodeOptions</code></Heading>
+
+HTTP/2 and TLS session options. The SDK controls `createConnection` when using `socketPath`.
+
+```ts
+nodeOptions?: Omit<SecureClientSessionOptions, "createConnection">;
 ```
 
 <Heading as="h3" id="api-query-interface"><code>Query</code></Heading>
@@ -250,4 +284,28 @@ Parent directory for the private ready-file directory. Defaults to Deno's tempor
 
 ```ts
 tempDirectory?: string;
+```
+
+## Type aliases
+
+<Heading as="h3" id="api-denoconnectoptions-typealias"><code>DenoConnectOptions</code></Heading>
+
+Options accepted by gRPC `connect()` in Deno.
+
+```ts
+export type DenoConnectOptions = (NodeTransportOptions | InjectedTransportOptions) & ClientDiagnosticsOptions;
+```
+
+<Heading as="h3" id="api-nodetransportoptions-typealias"><code>NodeTransportOptions</code></Heading>
+
+Selects a TCP authority or Unix domain socket for the gRPC transport.
+
+```ts
+export type NodeTransportOptions = NodeTransportCommonOptions & ({
+    baseUrl: string;
+    socketPath?: never;
+} | {
+    baseUrl?: string;
+    socketPath: string;
+});
 ```

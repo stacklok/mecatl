@@ -1,8 +1,12 @@
 import { afterEach, expect, test, vi } from "vitest";
 import { spawn } from "../src/deno-spawn.js";
+import { createNodeTransport } from "../src/node-transport.js";
+
+vi.mock("../src/node-transport.js", () => ({ createNodeTransport: vi.fn() }));
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.clearAllMocks();
 });
 
 function fixture(ready: unknown) {
@@ -43,14 +47,19 @@ const validReady = {
   pid: 42,
   api_major: 1,
   features: [],
-  http_address: "127.0.0.1:9000",
+  transport: "tcp",
+  grpc_address: "127.0.0.1:9000",
 };
 
 test.each([
   ["stale pid", { pid: 43 }, "does not match the spawned daemon"],
   ["invalid pid", { pid: 0 }, "valid daemon pid"],
-  ["remote address", { http_address: "example.com:9000" }, "loopback HTTP address"],
-  ["unbound address", { http_address: "127.0.0.1:0" }, "loopback HTTP address"],
+  ["remote address", { grpc_address: "example.com:9000" }, "loopback gRPC address"],
+  ["unbound address", { grpc_address: "127.0.0.1:0" }, "loopback gRPC address"],
+  ["out-of-range port", { grpc_address: "127.0.0.1:65536" }, "loopback gRPC address"],
+  ["non-canonical port", { grpc_address: "127.0.0.1:09000" }, "loopback gRPC address"],
+  ["Unix transport", { transport: "unix" }, "TCP transport"],
+  ["missing transport", { transport: undefined }, "TCP transport"],
   ["unsupported schema", { schema: "mecated-ready/99" }, "Unsupported ready-file schema"],
 ] as const)(
   "Deno spawn rejects %s before connecting and cleans up",
@@ -61,6 +70,7 @@ test.each([
       message: expect.stringContaining(message),
     });
     expect(checks.fetch).not.toHaveBeenCalled();
+    expect(createNodeTransport).not.toHaveBeenCalled();
     expect(checks.close).toHaveBeenCalledOnce();
     expect(checks.kill).not.toHaveBeenCalled();
     expect(checks.remove).toHaveBeenCalledExactlyOnceWith(checks.directory, { recursive: true });
@@ -73,6 +83,7 @@ test("Deno readiness timeout closes stdin and removes the runtime directory", as
     code: "readiness_timeout",
   });
   expect(checks.fetch).not.toHaveBeenCalled();
+  expect(createNodeTransport).not.toHaveBeenCalled();
   expect(checks.close).toHaveBeenCalledOnce();
   expect(checks.kill).not.toHaveBeenCalled();
   expect(checks.remove).toHaveBeenCalledExactlyOnceWith(checks.directory, { recursive: true });

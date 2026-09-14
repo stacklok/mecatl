@@ -123,7 +123,7 @@ test("the Node and Bun examples cover connect spawn query and callback tools", (
 
 test("the Deno examples cover remote connect and Deno.Command-backed local spawn", () => {
   const remote = readFileSync(join(examplesRoot, "deno-remote.ts"), "utf8");
-  expect(remote).toContain('from "@stacklok-oss/mecatl-sdk"');
+  expect(remote).toContain('from "@stacklok-oss/mecatl-sdk/deno"');
   expect(remote).not.toContain("@stacklok-oss/mecatl-sdk/node");
   expect(remote).toContain("connect(");
 
@@ -149,5 +149,19 @@ test("the Deno gate runs the local Deno.Command lifecycle", () => {
   expect(launcher).toContain("new runtime.Command(");
   expect(launcher).toContain('"--lifetime-stdin"');
   expect(launcher).toContain("process.closeLifetime()");
+  expect(launcher).toContain("createNodeTransport(");
+  expect(integration).toContain('client.daemon.transport === "grpc"');
+  expect(integration).toContain("client.daemon.grpcAddress");
   expect(launcher).not.toMatch(/from\s+["']node:/u);
+  const grpc = readFileSync(join(packageRoot, "e2e", "deno-grpc.e2e.ts"), "utf8");
+  expect(grpc).toContain('event.kind === "turn.start"');
+  expect(grpc).toContain("await run.cancel()");
+  expect(grpc).toContain('event.payload.stop === "cancelled"');
+  expect(grpc).toContain('"stream/watch abort"');
+  expect(grpc).toContain("nodeOptions: { ca }");
+  expect(grpc).toContain('mode === "uds"');
+  expect(grpc).toContain("? { socketPath }");
+  const runner = readFileSync(join(packageRoot, "scripts", "run-deno-integration.mjs"), "utf8");
+  expect(runner).toContain('["tcp", "tls", "uds"]');
+  expect(runner).toContain("timeout: 45_000");
 });
