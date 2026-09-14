@@ -119,9 +119,11 @@ type PlacementBinding struct {
 	Environment tool.Environment
 	Ref         session.EnvironmentRef
 	Metadata    PlacementMetadata
-	// CompositionRoot is the trusted host root used only to assemble host-side
-	// project policy and prompt sources. It is independent of the execution
-	// namespace exposed by Environment.Workspace().Root(). No-FS bindings leave it empty.
+	// CompositionRoot is explicit trusted host context used only to assemble
+	// host-side project policy and prompt sources. It is independent of the
+	// execution namespace exposed by Environment.Workspace().Root(). Non-local
+	// bindings leave it empty when there is no host context; guest roots are never
+	// used as a fallback. No-FS bindings always leave it empty.
 	CompositionRoot string
 	// Close releases provisional provider resources. It is called after creation
 	// because ordinary bindings are reattached fresh at run entry.
@@ -315,8 +317,9 @@ func (s *Service) privateCompositionRoot(ctx context.Context, sess *session.Sess
 	return PlacementCompositionRoot(binding)
 }
 
-// PlacementCompositionRoot returns the validated host-side project root for a binding.
-// It never treats a guest execution root as host composition context.
+// PlacementCompositionRoot returns explicit host-side composition context when
+// provided. A non-local empty root means no host context and never falls back to
+// the execution namespace; local bindings preserve their historical fallback.
 func PlacementCompositionRoot(binding PlacementBinding) (string, error) {
 	if binding.Ref.Kind == session.EnvKindNoFS {
 		if binding.CompositionRoot != "" {
@@ -333,8 +336,7 @@ func PlacementCompositionRoot(binding PlacementBinding) (string, error) {
 	if binding.Ref.Kind == session.EnvKindLocal {
 		return binding.Environment.Workspace().Root(), nil
 	}
-	// Other remote placements may intentionally have no host-side project context.
-	// MicroVM cannot reach this branch because validation requires CompositionRoot.
+	// Remote placements may intentionally have no host-side project context.
 	return "", nil
 }
 
@@ -427,8 +429,7 @@ func validatePlacementBinding(binding PlacementBinding) error {
 	if binding.Environment.Ref() != binding.Ref {
 		return ErrInvalidPlacementBinding
 	}
-	if binding.Ref.Kind == session.EnvKindNoFS && binding.CompositionRoot != "" ||
-		binding.Ref.Kind == session.EnvironmentKind("microvm") && binding.CompositionRoot == "" {
+	if binding.Ref.Kind == session.EnvKindNoFS && binding.CompositionRoot != "" {
 		return ErrInvalidPlacementBinding
 	}
 	if runner := binding.Environment.CommandRunner(); runner != nil {

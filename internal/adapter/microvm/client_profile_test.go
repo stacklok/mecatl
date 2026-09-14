@@ -3,10 +3,12 @@ package microvm
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"strings"
 	"testing"
 
+	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
@@ -73,6 +75,39 @@ func TestMicroVMWorkspaceProvidesConfinedAuthorityResourceIdentity(t *testing.T)
 		if _, _, err := resolver.AuthorityResourcePath(escaped); err == nil {
 			t.Errorf("AuthorityResourcePath(%q) accepted an invalid path", escaped)
 		}
+	}
+}
+
+func TestMissingSourceCheckoutFailsBeforeReadinessOrDaemonIO(t *testing.T) {
+	client, err := New("unix:///run/unused-microvmd.sock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.profile = "microvm-local"
+	client.scope = "deployment"
+	readinessCalls := 0
+	client.readiness = func(context.Context) error {
+		readinessCalls++
+		return nil
+	}
+
+	if _, err := client.Bind(t.Context(), server.PlacementBindRequest{Selector: server.DefaultPlacement(), Scope: "deployment", Operation: server.PlacementOperationCreate}); !errors.Is(err, server.ErrInvalidPlacementBinding) {
+		t.Fatalf("Bind error = %v, want ErrInvalidPlacementBinding", err)
+	}
+	ref := session.EnvironmentRef{Kind: kindMicroVM, ID: "session.environment", Revision: "1"}
+	if _, err := client.Reattach(t.Context(), server.PlacementReattachRequest{Ref: ref, Scope: "deployment"}); !errors.Is(err, server.ErrInvalidPlacementBinding) {
+		t.Fatalf("Reattach error = %v, want ErrInvalidPlacementBinding", err)
+	}
+	if readinessCalls != 0 {
+		t.Fatalf("readiness calls = %d, want 0", readinessCalls)
+	}
+
+	noFS, err := client.Bind(t.Context(), server.PlacementBindRequest{Selector: server.NoFSPlacement(), Scope: "deployment", Operation: server.PlacementOperationCreate})
+	if err != nil {
+		t.Fatalf("no-fs Bind: %v", err)
+	}
+	if _, err := client.Reattach(t.Context(), server.PlacementReattachRequest{Ref: noFS.Ref, Scope: "deployment"}); err != nil {
+		t.Fatalf("no-fs Reattach: %v", err)
 	}
 }
 

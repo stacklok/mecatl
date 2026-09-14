@@ -153,6 +153,9 @@ func (c *Client) Bind(ctx context.Context, request server.PlacementBindRequest) 
 	if !request.Selector.IsDefault() {
 		return server.PlacementBinding{}, server.ErrInvalidPlacementSelection
 	}
+	if c.sourceCheckout == "" {
+		return server.PlacementBinding{}, server.ErrInvalidPlacementBinding
+	}
 	if c.readiness != nil {
 		if err := c.readiness(ctx); err != nil {
 			return server.PlacementBinding{}, fmt.Errorf("microvm readiness: %w", err)
@@ -176,6 +179,9 @@ func (c *Client) Reattach(ctx context.Context, request server.PlacementReattachR
 	claim, err := bindingForRef(request.Ref, request.Principal)
 	if err != nil {
 		return server.PlacementBinding{}, server.ErrPlacementNotFound
+	}
+	if c.sourceCheckout == "" {
+		return server.PlacementBinding{}, server.ErrInvalidPlacementBinding
 	}
 	resolveCtx, cancelResolve := context.WithTimeoutCause(ctx, resolvePhaseTimeout, errors.New("microvmd resolve phase timed out"))
 	defer cancelResolve()

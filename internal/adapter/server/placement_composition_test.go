@@ -23,6 +23,8 @@ import (
 
 type placementLifecycleSpy struct {
 	compositionRoot string
+	kind            session.EnvironmentKind
+	invalid         bool
 	binds           atomic.Int32
 	defaultBinds    atomic.Int32
 	noFSBinds       atomic.Int32
@@ -51,12 +53,20 @@ func (p *placementLifecycleSpy) Reattach(_ context.Context, req server.Placement
 }
 
 func (p *placementLifecycleSpy) binding() server.PlacementBinding {
-	ref := session.EnvironmentRef{Kind: "microvm", ID: "opaque", Revision: "7"}
-	return server.PlacementBinding{
+	kind := p.kind
+	if kind == "" {
+		kind = "microvm"
+	}
+	ref := session.EnvironmentRef{Kind: kind, ID: "opaque", Revision: "7"}
+	binding := server.PlacementBinding{
 		Ref: ref, Environment: tool.MustEnvironment(ref, memfs.NewWorkspace("/workspace"), memledger.New(), nil),
 		CompositionRoot: p.compositionRoot,
 		Close:           func() error { p.closes.Add(1); return nil },
 	}
+	if p.invalid {
+		binding.Ref.Revision = ""
+	}
+	return binding
 }
 
 func placementLifecycleConfig(provider server.PlacementProvider, store *memstore.Store) server.Config {
@@ -238,8 +248,45 @@ func TestLoadACPSessionOwnsExactBindingUntilOverrideLifecycleEnds(t *testing.T) 
 	}
 }
 
+func TestRemotePlacementWithoutCompositionRootNeverUsesGuestRoot(t *testing.T) {
+	for _, kind := range []session.EnvironmentKind{"microvm", "another-remote-backend"} {
+		t.Run(string(kind), func(t *testing.T) {
+			provider := &placementLifecycleSpy{kind: kind}
+			cfg := placementLifecycleConfig(provider, memstore.New())
+			var roots []string
+			cfg.SessionEngine = func(_ context.Context, _ server.ProviderSelector, _ []mcp.ServerConfig, _ server.SessionProfile, compositionRoot string, _ session.PermissionMode) (server.SessionEngineResult, error) {
+				roots = append(roots, compositionRoot)
+				return server.SessionEngineResult{Engine: cfg.Engine}, nil
+			}
+			svc, err := server.NewService(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer svc.Close()
+
+			sess, err := svc.CreateSession(t.Context(), session.ModeDefault, session.Limits{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			svc.DropSessionEngineForTest(sess.ID)
+			run, err := svc.StartRunContent(t.Context(), sess.ID, "continue", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for range run.Events() {
+			}
+			if len(roots) != 2 || roots[0] != "" || roots[1] != "" {
+				t.Fatalf("composition roots = %q, want two empty roots (never guest /workspace)", roots)
+			}
+			if provider.defaultBinds.Load() != 1 || provider.reattaches.Load() == 0 {
+				t.Fatalf("placement calls: bind=%d reattach=%d, want one bind and exact reattach", provider.defaultBinds.Load(), provider.reattaches.Load())
+			}
+		})
+	}
+}
+
 func TestInvalidProviderBindingIsClosed(t *testing.T) {
-	provider := &placementLifecycleSpy{}
+	provider := &placementLifecycleSpy{invalid: true}
 	svc, err := server.NewService(placementLifecycleConfig(provider, memstore.New()))
 	if err != nil {
 		t.Fatal(err)

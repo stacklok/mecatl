@@ -100,6 +100,37 @@ func TestInvariant_server_owned_placement_ids_fail_closed(t *testing.T) {
 	}
 }
 
+func TestPlacementBinderTreatsRemoteKindsGenerically(t *testing.T) {
+	for _, kind := range []session.EnvironmentKind{"microvm", "another-remote-backend"} {
+		for _, root := range []string{"", "/host/source"} {
+			name := string(kind) + "/empty"
+			if root != "" {
+				name = string(kind) + "/explicit"
+			}
+			t.Run(name, func(t *testing.T) {
+				ref := session.EnvironmentRef{Kind: kind, ID: "opaque", Revision: "v1"}
+				binder, err := NewPlacementBinder(placementProviderFunc(func(context.Context, PlacementBindRequest) (PlacementBinding, error) {
+					return PlacementBinding{Ref: ref, Environment: placementTestEnvironment(ref), CompositionRoot: root}, nil
+				}))
+				if err != nil {
+					t.Fatal(err)
+				}
+				binding, err := binder.Bind(t.Context(), PlacementBindRequest{Selector: DefaultPlacement(), Operation: PlacementOperationCreate, Scope: "tenant-a"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				got, err := PlacementCompositionRoot(binding)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got != root {
+					t.Fatalf("PlacementCompositionRoot = %q, want %q", got, root)
+				}
+			})
+		}
+	}
+}
+
 func TestPlacementBinderRejectsMismatchedOrUnsafeProviderOutput(t *testing.T) {
 	t.Parallel()
 
