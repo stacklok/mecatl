@@ -1,4 +1,4 @@
-# ADR 0330 — Draft-aware session inventory
+# ADR 0334 — Draft-aware session inventory
 
 - Status: Proposed
 - Date: 2026-09-14
