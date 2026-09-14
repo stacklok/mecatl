@@ -289,8 +289,9 @@ func toProtoApproval(p session.ApprovalPayload) *mecatlv1.Approval {
 // StreamSessionEvents replay surfaces what the user asked.
 func toProtoUserPrompt(p session.UserPromptPayload) *mecatlv1.UserPrompt {
 	return &mecatlv1.UserPrompt{
-		Text:  valid(p.Text),
-		Parts: contentToProto(p.Parts),
+		Text:      valid(p.Text),
+		Parts:     contentToProto(p.Parts),
+		Synthetic: p.Synthetic,
 	}
 }
 

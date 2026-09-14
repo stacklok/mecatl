@@ -279,7 +279,7 @@ func (e *Engine) closeSteerDrained(ctx context.Context, r *Run, sess *session.Se
 	r.closeSteer()
 }
 
-// commitSteer records one drained steer text as an ordinary harness-authored
+// commitSteer records one drained steer text as an ordinary principal-authored
 // user continuation and emits the authoritative EvSteer echo + persists. It is
 // the shared commit of the Step 2a drain and the terminal close-drain — the
 // two paths can never drift on record/echo/save ordering.
@@ -295,7 +295,7 @@ func (e *Engine) commitSteer(ctx context.Context, r *Run, sess *session.Session,
 	if err := sess.RecordUserPromptWithParts(content.text, content.parts, nil); err != nil {
 		return fmt.Errorf("agent: record steer: %w", err)
 	}
-	e.emitUserPrompt(r, sess.Counters.Turns, content.text, content.parts)
+	e.emitUserPrompt(r, sess.Counters.Turns, content.text, content.parts, false)
 	e.emit(r, session.Event{Type: session.EvSteer, Turn: sess.Counters.Turns,
 		Steer: &session.SteerPayload{Text: content.text, Parts: content.parts, MessageID: content.messageID}})
 	e.save(ctx, r, sess)

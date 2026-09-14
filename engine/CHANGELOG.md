@@ -20,6 +20,8 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 - **Draft-aware session activity classification** — adds `session.ActivityState`, the `ActivityUnknown`/`ActivityDraft`/`ActivityActive` constants, and pure `session.ActivityOf`, using `IsGenuineUserPrompt` so empty and multimodal genuine user history is active while harness compaction summaries remain drafts. `port.SessionDiscoveryMeta.Activity` carries the atomically written, content-free activity projection; unavailable, corrupt, legacy, and unsupported discovery metadata normalizes to unknown. Adds `session.ValidActivity` (the one fail-closed validity clamp for the type, replacing three adapters' independent inline checks) and `port.SupportsActivityProjection` (the one capability-probe rule for `SessionActivityProjectionPager`, replacing three duplicated type-assertion call sites). Added (minor).
 
+- **Authoritative synthetic user-prompt origin** — adds `session.UserPromptPayload.Synthetic` so durable user-prompt events distinguish harness-authored continuations from principal and legacy prompts without changing folded conversation messages. Added (minor).
+
 - **Session-load failure classification** — adds `port.SessionLoadFailureClass`,
   `SessionLoadFailureError`, `ErrSessionLoadFailure`, `NewSessionLoadFailure`, and
   `ClassifySessionLoadFailure`. Snapshot-backed stores can distinguish bounded

@@ -113,8 +113,8 @@ func IsSynthesisedSummary(text string) bool {
 
 // IsGenuineUserPrompt reports whether m is a GENUINE user instruction — the thing
 // the title fallback and the event-sourced Fold anchor a session label on — as
-// opposed to a harness-authored RoleUser synthesised compaction summary. It is
-// m.Role == RoleUser && !IsSynthesisedSummary(m.Text).
+// opposed to a harness-authored RoleUser compaction summary, no-progress nudge,
+// or background notice. Empty-text and multimodal user messages remain genuine.
 //
 // It deliberately does NOT check prompt.IsInjectedTurn0Fragment: the domain leaf
 // cannot import engine/prompt, and as of ADR 0043 the turn-0 fragments are
@@ -125,7 +125,33 @@ func IsSynthesisedSummary(text string) bool {
 // defense-in-depth for legacy history; this domain predicate is for the persisted
 // read path and is correct without it.
 func IsGenuineUserPrompt(m Message) bool {
-	return m.Role == RoleUser && !IsSynthesisedSummary(m.Text)
+	if m.Role != RoleUser || IsSynthesisedSummary(m.Text) {
+		return false
+	}
+	if m.Text == noProgressNudgeText || m.Text == noProgressExtractiveNudgeText {
+		return false
+	}
+	return !isHarnessBackgroundNotice(m.Text)
+}
+
+const (
+	noProgressNudgeText = "Please continue. Make concrete progress on the task using your tools, " +
+		"or — if you are blocked or believe the task is complete — say so explicitly in a short message."
+	noProgressExtractiveNudgeText = "Stop investigating now and do not run any " +
+		"more commands or tools. Using only the information you have already gathered, " +
+		"write your best final answer to the original task as a direct message now, even " +
+		"if it is incomplete or uncertain — note any gaps briefly. Do not plan further " +
+		"steps; deliver what you have."
+)
+
+func isHarnessBackgroundNotice(text string) bool {
+	if !strings.HasPrefix(text, "[harness note: ") || !strings.HasSuffix(text, "]") {
+		return false
+	}
+	return strings.Contains(text, " background subagent(s) finished: ") ||
+		strings.Contains(text, " background command(s) finished: ") ||
+		strings.Contains(text, " background subagent(s) still running: ") ||
+		strings.Contains(text, " background command(s) still running: ")
 }
 
 // ActivityState is the content-free activity classification of persisted history.

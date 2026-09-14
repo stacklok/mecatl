@@ -2031,6 +2031,9 @@ message UserPrompt {
   // parts carries any non-text media (image/audio) that rode alongside the text on
   // the user message; nil for a text-only prompt.
   repeated Content parts = 2;
+  // synthetic is true when the harness authored this user-role continuation.
+  // False means principal-authored or legacy-unknown.
+  bool synthetic = 3;
 }
 
 // CompactionArchive is the proto projection of session.CompactionArchivePayload

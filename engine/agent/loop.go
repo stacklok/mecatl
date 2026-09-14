@@ -2302,7 +2302,7 @@ func (e *Engine) recordPrompt(ctx context.Context, r *Run, sess *session.Session
 	// Emit the durable, log-only EvUserPrompt so the EventLog records WHAT THE USER
 	// ASKED (the relay never re-emits the prompt to the client). Turn 0 — the genuine
 	// prompt opens the run. parts ride verbatim so a fold rebuilds a multimodal prompt.
-	e.emitUserPrompt(r, 0, finalText, parts)
+	e.emitUserPrompt(r, 0, finalText, parts, false)
 	return true, "", nil
 }
 
@@ -2313,9 +2313,9 @@ func (e *Engine) recordPrompt(ctx context.Context, r *Run, sess *session.Session
 // nudge, background-completion notice) — so the durable log (and an event-sourced
 // fold) sees a COMPLETE user-turn sequence. The event is log-only: the relay appends
 // it and skips it on the live client wire (the client already holds the prompt).
-func (e *Engine) emitUserPrompt(r *Run, turnIdx int, text string, parts []session.Content) {
+func (e *Engine) emitUserPrompt(r *Run, turnIdx int, text string, parts []session.Content, synthetic bool) {
 	e.emit(r, session.Event{Type: session.EvUserPrompt, Turn: turnIdx,
-		UserPrompt: &session.UserPromptPayload{Text: text, Parts: parts}})
+		UserPrompt: &session.UserPromptPayload{Text: text, Parts: parts, Synthetic: synthetic}})
 }
 
 // recordContinuation records a harness-authored synthetic user-role continuation
@@ -2327,7 +2327,7 @@ func (e *Engine) recordContinuation(r *Run, sess *session.Session, turnIdx int, 
 	if err := sess.RecordUserPrompt(text, nil); err != nil {
 		return err
 	}
-	e.emitUserPrompt(r, turnIdx, text, nil)
+	e.emitUserPrompt(r, turnIdx, text, nil, true)
 	return nil
 }
 

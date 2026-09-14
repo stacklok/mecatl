@@ -266,3 +266,34 @@ func TestIsGenuineUserPrompt(t *testing.T) {
 		})
 	}
 }
+
+func TestSyntheticUserPromptReplay_Scenario1_GenuinePredicateRecognizesHarnessContinuations(t *testing.T) {
+	const (
+		gentle     = "Please continue. Make concrete progress on the task using your tools, or — if you are blocked or believe the task is complete — say so explicitly in a short message."
+		extractive = "Stop investigating now and do not run any more commands or tools. Using only the information you have already gathered, write your best final answer to the original task as a direct message now, even if it is incomplete or uncertain — note any gaps briefly. Do not plan further steps; deliver what you have."
+	)
+	multimodal := NewUserMessageWithParts("", []Content{{Kind: MediaImage, MIMEType: "image/png", Data: []byte("pixels")}})
+	tests := []struct {
+		name string
+		msg  Message
+		want bool
+	}{
+		{name: "ordinary", msg: NewUserMessage("fix it"), want: true},
+		{name: "empty", msg: NewUserMessage(""), want: true},
+		{name: "multimodal", msg: multimodal, want: true},
+		{name: "compaction", msg: NewUserMessage(CompactionSummaryMarker + " prior"), want: false},
+		{name: "tier4 summary", msg: NewUserMessage(Tier4SummaryMarker + " prior"), want: false},
+		{name: "gentle nudge", msg: NewUserMessage(gentle), want: false},
+		{name: "extractive nudge", msg: NewUserMessage(extractive), want: false},
+		{name: "background completion", msg: NewUserMessage("[harness note: 1 background subagent(s) finished: subagent-1 (end_turn). Collect each result with SubagentStatus before relying on it.]"), want: false},
+		{name: "background pending", msg: NewUserMessage("[harness note: 1 background command(s) still running: shellcmd-1. Collect or wait for them with ShellStatus, cancel them, or finish — anything still running when you finish will be cancelled.]"), want: false},
+		{name: "assistant", msg: NewAssistantMessage("fix it", "", nil), want: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := IsGenuineUserPrompt(tc.msg); got != tc.want {
+				t.Fatalf("IsGenuineUserPrompt(%q, %q) = %v, want %v", tc.msg.Role, tc.msg.Text, got, tc.want)
+			}
+		})
+	}
+}
