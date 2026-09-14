@@ -310,7 +310,7 @@ PR after verification. There is no cleanup or status-only PR.
 - [TypeScript SDK Deno runtime support](sdk-typescript-deno.md) - adds stable typed npm-package
   imports, a Deno-native `./deno` entry point, `Deno.Command` local ownership, and real-wire
   shared ConnectRPC gRPC coverage for Deno 2.9.3 through 2.x. Release scope: after v0.1.0, with no later
-  version assigned. Status: landed.
+  version assigned. Status: in-progress.
 
 - [Canonical Shell command tool](canonical-shell-command-tool.md) — canonical `Shell`
   and `ShellStatus` model-facing names, safe legacy `Bash` input normalization, and

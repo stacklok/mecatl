@@ -131,9 +131,9 @@ ConnectRPC gRPC transport as Node and Bun. Local spawn disables the HTTP listene
 
 For an operator-owned daemon, import `connect` from `@stacklok-oss/mecatl-sdk/deno`
 and pass its gRPC `baseUrl` or Unix `socketPath`. TLS settings use `nodeOptions`.
-Grant Deno network access to the selected host; Unix sockets require read and write
-access to the socket path. The root import still provides HTTP/SSE. Path media helpers
-and callback-tool registration remain Node/Bun features.
+Grant Deno network access to the selected host; for Unix sockets, use
+`--allow-net=unix:<ABSOLUTE_SOCKET_PATH>`. The root import still provides HTTP/SSE.
+Path media helpers and callback-tool registration remain Node/Bun features.
 
 ## One-shot queries
 

@@ -78,7 +78,8 @@ pass its certificate through `nodeOptions.ca`; grant read access if your
 application loads the certificate from disk.
 
 To connect to a Unix-domain socket, pass `socketPath` instead of `baseUrl` and
-grant read and write access to that path. See the
+grant network access with `--allow-net=unix:<ABSOLUTE_SOCKET_PATH>`. The socket's
+operating-system permissions also apply. See the
 [Deno API reference](/reference/typescript-sdk-api/deno.md) for connection options.
 If your daemon exposes only HTTP and SSE, import `connect()` from the root
 `@stacklok-oss/mecatl-sdk` entry point instead.
